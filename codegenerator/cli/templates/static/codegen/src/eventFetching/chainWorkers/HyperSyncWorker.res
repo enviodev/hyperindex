@@ -8,10 +8,12 @@ module Make = (
     let endpointUrl: string
     let allEventSignatures: array<string>
     let shouldUseHypersyncClientDecoder: bool
+    let eventModLookup: EventModLookup.t
   },
 ): S => {
   let name = "HyperSync"
   let chain = T.chain
+  let eventModLookup = T.eventModLookup
 
   let hscDecoder: ref<option<HyperSyncClient.Decoder.t>> = ref(None)
   let getHscDecoder = () => {
@@ -108,6 +110,20 @@ module Make = (
     }
   }
 
+  let getLogSelectionOrThrow = (~contractAddressMapping): array<LogSelection.t> => {
+    T.contracts->Belt.Array.keepMap((contract): option<LogSelection.t> => {
+      switch contractAddressMapping->ContractAddressingMap.getAddressesFromContractName(
+        ~contractName=contract.name,
+      ) {
+      | [] => None
+      | addresses =>
+        let topicSelection = LogSelection.makeTopicSelection(~topic0=contract.sighashes)->Utils.unwrapResultExn
+
+        Some(LogSelection.make(~addresses, ~topicSelections=[topicSelection]))
+      }
+    })
+  }
+
   let getNextPage = async (
     ~fromBlock,
     ~toBlock,
@@ -133,13 +149,15 @@ module Make = (
       ~contractAddressMapping,
     )
 
-    let logSelections =
-      contractInterfaceManager
-      ->ContractInterfaceManager.getLogSelection
-      ->ErrorHandling.unwrapLogAndRaise(
+    let logSelections = try {
+      getLogSelectionOrThrow(~contractAddressMapping)
+    } catch {
+    | exn =>
+      exn->ErrorHandling.mkLogAndRaise(
         ~logger,
         ~msg="Failed getting log selection in contract interface manager",
       )
+    }
 
     let startFetchingBatchTimeRef = Hrtime.makeTimer()
 
@@ -168,7 +186,6 @@ module Make = (
     ~currentBlockHeight,
     ~setCurrentBlockHeight,
   ) => {
-    let config = Config.getGenerated()
     let mkLogAndRaise = ErrorHandling.mkLogAndRaise(~logger, ...)
     try {
       let {
@@ -279,12 +296,12 @@ module Make = (
           let (event, eventMod) = switch event
           ->getNullableExn(~msg="Event was unexpectedly parsed as undefined", ~logger)
           ->Converters.convertHyperSyncEvent(
-            ~config,
-            ~contractInterfaceManager,
+            ~eventModLookup,
+            ~contractAddressMapping,
             ~log=item.log,
             ~block,
             ~transaction,
-            ~chainId,
+            ~chain,
           ) {
           | Ok(v) => v
           | Error(exn) =>
@@ -310,11 +327,11 @@ module Make = (
           let chainId = chain->ChainMap.Chain.toChainId
           switch Converters.parseEvent(
             ~log=item.log,
-            ~config,
+            ~eventModLookup,
             ~transaction=item.transaction,
             ~block=item.block,
             ~contractInterfaceManager,
-            ~chainId,
+            ~chain,
           ) {
           | Ok((event, eventMod)) =>
             (

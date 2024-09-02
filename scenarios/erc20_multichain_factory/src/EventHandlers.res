@@ -1,4 +1,3 @@
-open Types
 open Entities
 
 Handlers.ERC20Factory.TokenCreated.contractRegister(({event, context}) => {

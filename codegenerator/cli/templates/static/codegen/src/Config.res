@@ -1,8 +1,10 @@
+open Belt
 type contract = {
   name: string,
   abi: Ethers.abi,
   addresses: array<Address.t>,
   events: array<module(Types.Event)>,
+  sighashes: array<string>,
 }
 
 type syncConfig = {
@@ -43,7 +45,6 @@ type historyFlag = FullHistory | MinHistory
 type rollbackFlag = RollbackOnReorg | NoRollback
 type historyConfig = {rollbackFlag: rollbackFlag, historyFlag: historyFlag}
 
-
 let getSyncConfig = ({
   initialBlockInterval,
   backoffMultiplicative,
@@ -52,19 +53,19 @@ let getSyncConfig = ({
   backoffMillis,
   queryTimeoutMillis,
 }) => {
-  initialBlockInterval: Env.Configurable.SyncConfig.initialBlockInterval->Belt.Option.getWithDefault(
+  initialBlockInterval: Env.Configurable.SyncConfig.initialBlockInterval->Option.getWithDefault(
     initialBlockInterval,
   ),
   // After an RPC error, how much to scale back the number of blocks requested at once
-  backoffMultiplicative: Env.Configurable.SyncConfig.backoffMultiplicative->Belt.Option.getWithDefault(
+  backoffMultiplicative: Env.Configurable.SyncConfig.backoffMultiplicative->Option.getWithDefault(
     backoffMultiplicative,
   ),
   // Without RPC errors or timeouts, how much to increase the number of blocks requested by for the next batch
-  accelerationAdditive: Env.Configurable.SyncConfig.accelerationAdditive->Belt.Option.getWithDefault(
+  accelerationAdditive: Env.Configurable.SyncConfig.accelerationAdditive->Option.getWithDefault(
     accelerationAdditive,
   ),
   // Do not further increase the block interval past this limit
-  intervalCeiling: Env.Configurable.SyncConfig.intervalCeiling->Belt.Option.getWithDefault(
+  intervalCeiling: Env.Configurable.SyncConfig.intervalCeiling->Option.getWithDefault(
     intervalCeiling,
   ),
   // After an error, how long to wait before retrying
@@ -78,7 +79,6 @@ type t = {
   isUnorderedMultichainMode: bool,
   chainMap: ChainMap.t<chainConfig>,
   defaultChain: option<chainConfig>,
-  events: dict<module(Types.InternalEvent)>,
   enableRawEvents: bool,
   entities: array<module(Entities.InternalEntity)>,
 }
@@ -91,25 +91,13 @@ let make = (
   ~enableRawEvents=false,
   ~entities=[],
 ) => {
-  let events = Js.Dict.empty()
-  chains->Js.Array2.forEach(chainConfig => {
-    chainConfig.contracts->Js.Array2.forEach(contract => {
-      contract.events->Js.Array2.forEach(
-        eventMod => {
-          let eventMod = eventMod->Types.eventModWithoutArgTypeToInternal
-          let module(Event) = eventMod
-          events->Js.Dict.set(Event.key, eventMod)
-        },
-      )
-    })
-  })
   {
     historyConfig: {
       rollbackFlag: shouldRollbackOnReorg ? RollbackOnReorg : NoRollback,
       historyFlag: shouldSaveFullHistory ? FullHistory : MinHistory,
     },
-    isUnorderedMultichainMode: Env.Configurable.isUnorderedMultichainMode->Belt.Option.getWithDefault(
-      Env.Configurable.unstable__temp_unordered_head_mode->Belt.Option.getWithDefault(
+    isUnorderedMultichainMode: Env.Configurable.isUnorderedMultichainMode->Option.getWithDefault(
+      Env.Configurable.unstable__temp_unordered_head_mode->Option.getWithDefault(
         isUnorderedMultichainMode,
       ),
     ),
@@ -118,25 +106,12 @@ let make = (
       (n.chain, n)
     })
     ->ChainMap.fromArrayUnsafe,
-    defaultChain: chains->Belt.Array.get(0),
-    events,
+    defaultChain: chains->Array.get(0),
     enableRawEvents,
     entities: entities->(
       Utils.magic: array<module(Entities.Entity)> => array<module(Entities.InternalEntity)>
     ),
   }
-}
-
-%%private(let generatedConfigRef = ref(None))
-
-let getGenerated = () =>
-  switch generatedConfigRef.contents {
-  | Some(c) => c
-  | None => Js.Exn.raiseError("Config not yet generated")
-  }
-
-let setGenerated = (config: t) => {
-  generatedConfigRef := Some(config)
 }
 
 let shouldRollbackOnReorg = config =>
@@ -158,12 +133,4 @@ let getChain = (config, ~chainId) => {
     : Js.Exn.raiseError(
         "No chain with id " ++ chain->ChainMap.Chain.toString ++ " found in config.yaml",
       )
-}
-
-let getEventModOrThrow = (config, ~contractName, ~topic0) => {
-  let key = `${contractName}_${topic0}`
-  switch config.events->Js.Dict.get(key) {
-  | Some(event) => event
-  | None => Js.Exn.raiseError("No registered event found with key " ++ key)
-  }
 }

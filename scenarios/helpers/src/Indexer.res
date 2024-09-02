@@ -60,15 +60,22 @@ module type S = {
       block: Block.t,
     }
 
+    module HandlerTypes: {
+      module Register: {
+        type t<'eventArgs>
+      }
+    }
+
     module type Event = {
-      let key: string
+      let sighash: string
       let name: string
       let contractName: string
-      let sighash: string
+      let chains: array<ChainMap.Chain.t>
       type eventArgs
       let eventArgsSchema: RescriptSchema.S.schema<eventArgs>
       let convertHyperSyncEventArgs: HyperSyncClient.Decoder.decodedEvent => eventArgs
       let decodeHyperFuelData: string => eventArgs
+      let handlerRegister: HandlerTypes.Register.t<eventArgs>
     }
     module type InternalEvent = Event with type eventArgs = internalEventArgs
 
@@ -105,7 +112,6 @@ module type S = {
       eventFilters?: eventFilters,
     }
   }
-
 
   module ReorgDetection: {
     type blockNumberAndHash = {
@@ -167,6 +173,7 @@ module type S = {
       abi: Ethers.abi,
       addresses: array<Address.t>,
       events: array<module(Types.Event)>,
+      sighashes: array<string>,
     }
 
     type syncConfig = {

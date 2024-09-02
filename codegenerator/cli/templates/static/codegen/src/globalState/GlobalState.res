@@ -136,8 +136,7 @@ Takes in a chain manager and sets all chains timestamp caught up to head
 when valid state lines up and returns an updated chain manager
 */
 let checkAndSetSyncedChains = (~nextQueueItemIsKnownNone=false, chainManager: ChainManager.t) => {
-  let nextQueueItemIsNone =
-    nextQueueItemIsKnownNone || chainManager->ChainManager.peakNextBatchItem->Option.isNone
+  let nextQueueItemIsNone = nextQueueItemIsKnownNone || chainManager->ChainManager.nextItemIsNone
 
   let allChainsAtHead =
     chainManager.chainFetchers
@@ -414,8 +413,8 @@ let actionReducer = (state: t, action: action) => {
       dynamicContractRegistrations: Some({registrations, unprocessedBatch}),
     }) =>
     let updatedArbQueue = Utils.Array.mergeSorted((a, b) => {
-      a->EventUtils.getEventComparatorFromQueueItem <= b->EventUtils.getEventComparatorFromQueueItem
-    }, unprocessedBatch, state.chainManager.arbitraryEventQueue)
+      a->EventUtils.getEventComparatorFromQueueItem > b->EventUtils.getEventComparatorFromQueueItem
+    }, unprocessedBatch->Array.reverse, state.chainManager.arbitraryEventQueue)
 
     let nextTasks = [
       UpdateChainMetaDataAndCheckForExit(NoExit),
@@ -656,7 +655,13 @@ let checkAndFetchForChain = (
   ~dispatchAction,
 ) => async chain => {
   let chainFetcher = state.chainManager.chainFetchers->ChainMap.get(chain)
-  let {fetchState, chainConfig: {chainWorker}, logger, currentBlockHeight, isFetchingBatch} = chainFetcher
+  let {
+    fetchState,
+    chainConfig: {chainWorker},
+    logger,
+    currentBlockHeight,
+    isFetchingBatch,
+  } = chainFetcher
 
   if (
     !isFetchingBatch &&
@@ -702,7 +707,6 @@ let injectedTaskReducer = (
   ~waitForNewBlock,
   ~executeNextQuery,
   ~rollbackLastBlockHashesToReorgLocation,
-  ~registeredEvents,
 ) => async (
   //required args
   state: t,
@@ -811,7 +815,6 @@ let injectedTaskReducer = (
           ~inMemoryStore,
           ~checkContractIsRegistered,
           ~latestProcessedBlocks,
-          ~registeredEvents,
           ~loadLayer=state.loadLayer,
           ~config=state.config,
         ) {
@@ -906,5 +909,4 @@ let taskReducer = injectedTaskReducer(
   ~waitForNewBlock,
   ~executeNextQuery,
   ~rollbackLastBlockHashesToReorgLocation=ChainFetcher.rollbackLastBlockHashesToReorgLocation(_),
-  ~registeredEvents=RegisteredEvents.global,
 )

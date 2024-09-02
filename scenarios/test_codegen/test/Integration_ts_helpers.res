@@ -14,15 +14,17 @@ let getLocalChainConfig = (nftFactoryContractAddress): chainConfig => {
   let contracts = [
     {
       Config.name: "NftFactory",
-      abi: Abis.nftFactoryAbi->Ethers.makeAbi,
+      abi: Types.NftFactory.abi,
       addresses: [nftFactoryContractAddress],
       events: [module(Types.NftFactory.SimpleNftCreated)],
+      sighashes: [Types.NftFactory.SimpleNftCreated.sighash],
     },
     {
       name: "SimpleNft",
-      abi: Abis.simpleNftAbi->Ethers.makeAbi,
+      abi: Types.SimpleNft.abi,
       addresses: [],
       events: [module(Types.SimpleNft.Transfer)],
+      sighashes: [Types.SimpleNft.Transfer.sighash],
     },
   ]
   let rpcConfig: Config.rpcConfig = {
@@ -44,11 +46,17 @@ let getLocalChainConfig = (nftFactoryContractAddress): chainConfig => {
     endBlock: None,
     chain,
     contracts,
-    chainWorker: module(RpcWorker.Make({
-      let chain = chain
-      let contracts = contracts
-      let rpcConfig = rpcConfig
-    })),
+    chainWorker: module(
+      RpcWorker.Make({
+        let chain = chain
+        let contracts = contracts
+        let rpcConfig = rpcConfig
+        let eventModLookup =
+          contracts
+          ->Belt.Array.flatMap(contract => contract.events)
+          ->EventModLookup.fromArrayOrThrow(~chain)
+      })
+    ),
   }
 }
 

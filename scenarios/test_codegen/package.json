@@ -4,6 +4,7 @@
   "scripts": {
     "ts:clean": "tsc --clean",
     "ts:build": "hardhat compile && tsc --build",
+    "ts:test": "tsc --noEmit",
     "ts:watch": "tsc --watch",
     "gen:clean": "(cd generated && rescript clean)",
     "gen:build": "(cd generated && rescript)",
@@ -44,7 +45,7 @@
     "hardhat": "2.22.5",
     "mocha": "^10.2.0",
     "nyc": "^15.1.0",
-    "rescript": "11.1.0",
+    "rescript": "11.1.3",
     "rescript-express": "0.4.1",
     "rescript-schema": "8.0.0",
     "sinon": "^15.0.4",

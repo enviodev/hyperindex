@@ -5,8 +5,8 @@ interfaces and their related contracts and addresses.
 Used to work with event topic hashes and in the parsing of events.
 */
 type interfaceAndAbi = {
-  interface: Ethers.Interface.t,
   abi: Ethers.abi,
+  sighashes: array<string>,
 }
 type t = {
   contractAddressMapping: ContractAddressingMap.mapping,
@@ -20,21 +20,10 @@ let make = (
   let contractNameInterfaceMapping = Js.Dict.empty()
 
   contracts->Belt.Array.forEach(contract => {
-    let {name, abi} = contract
-    let interface = Ethers.Interface.make(~abi)
-    contractNameInterfaceMapping->Js.Dict.set(name, {interface, abi})
+    contractNameInterfaceMapping->Js.Dict.set(contract.name, contract :> interfaceAndAbi)
   })
 
   {contractAddressMapping, contractNameInterfaceMapping}
-}
-
-let getAbiMapping = (self: t) => {
-  self.contractAddressMapping.nameByAddress
-  ->Js.Dict.entries
-  ->Belt.Array.keepMap(((addr, name)) => {
-    self.contractNameInterfaceMapping->Js.Dict.get(name)->Belt.Option.map(v => (addr, v.abi))
-  })
-  ->Js.Dict.fromArray
 }
 
 let getInterfaceByName = (self: t, ~contractName) =>
@@ -72,11 +61,10 @@ let makeFromSingleContract = (
 
   let contractNameInterfaceMapping = Js.Dict.empty()
   let contractAddressMapping = ContractAddressingMap.make()
-  let {abi, name} = contract
-  let interface = Ethers.Interface.make(~abi)
-  contractNameInterfaceMapping->Js.Dict.set(name, {interface, abi})
+  let {name} = contract
+  contractNameInterfaceMapping->Js.Dict.set(name, contract :> interfaceAndAbi)
   contractAddressMapping->ContractAddressingMap.addAddress(
-    ~name=contract.name,
+    ~name,
     ~address=contractAddress,
   )
 
@@ -143,8 +131,8 @@ let getAllTopicsAndAddresses = (self: t): addressesAndTopics => {
       exn->raise
     | Some(interface) => {
         //Add the topic hash from each event on the interface
-        interface.interface->Ethers.Interface.forEachEvent((eventFragment, _i) => {
-          topics->Js.Array2.push(eventFragment.topicHash)->ignore
+        interface.sighashes->Js.Array2.forEach(topic0 => {
+          topics->Js.Array2.push(topic0)->ignore
         })
 
         //Add the addresses for each contract
@@ -156,39 +144,6 @@ let getAllTopicsAndAddresses = (self: t): addressesAndTopics => {
   })
 
   {addresses, topics}
-}
-
-let getLogSelection = (self: t): result<array<LogSelection.t>, exn> => {
-  try {
-    self.contractAddressMapping.addressesByName
-    ->Js.Dict.keys
-    ->Belt.Array.map(contractName => {
-      let interfaceOpt = self->getInterfaceByName(~contractName)
-      switch interfaceOpt {
-      | None => UndefinedInterface(contractName)->raise
-      | Some({interface}) => {
-          let topic0 = []
-          //Add the topic hash from each event on the interface
-          interface->Ethers.Interface.forEachEvent((eventFragment, _i) => {
-            topic0->Js.Array2.push(eventFragment.topicHash)->ignore
-          })
-
-          let topicSelection = LogSelection.makeTopicSelection(~topic0)->Utils.unwrapResultExn
-
-          let addresses = []
-          //Add the addresses for each contract
-          self.contractAddressMapping
-          ->ContractAddressingMap.getAddressesFromContractName(~contractName)
-          ->Belt.Array.forEach(address => addresses->Js.Array2.push(address)->ignore)
-
-          LogSelection.make(~addresses, ~topicSelections=[topicSelection])
-        }
-      }
-    })
-    ->Ok
-  } catch {
-  | exn => exn->Error
-  }
 }
 
 let getContractNameFromAddress = (self: t, ~contractAddress) => {
@@ -214,7 +169,7 @@ let getCombinedEthersFilter = (
   }
 }
 
-type parseError = ParseError(Ethers.Interface.parseLogError) | UndefinedInterface(Address.t)
+type parseError = ParseError(Viem.decodeEventLogError) | UndefinedInterface(Address.t)
 
 let parseLogViem = (self: t, ~log: Types.Log.t) => {
   let abiOpt =

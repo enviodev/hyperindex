@@ -208,39 +208,19 @@ let rollback = (self: t, ~lastKnownValidBlock) => {
   {...self, partitions}
 }
 
-type earliestEventResponse = {
-  getUpdatedPartitionedFetchState: unit => t,
-  earliestQueueItem: FetchState.queueItem,
-}
-
-let getEarliestEvent = (self: t) => {
-  self.partitions
-  ->List.reduceWithIndex(None, (accum, fetchState, partitionId) => {
+let getEarliestEvent = (self: t) =>
+  self.partitions->List.reduce(None, (accum, fetchState) => {
     // If the fetch state has reached the end block we don't need to consider it
     if fetchState->FetchState.isActivelyIndexing {
       let nextItem = fetchState->FetchState.getEarliestEvent
       switch accum {
-      | Some((accumItem, _accumIndex))
-        if FetchState.qItemLt(
-          accumItem.FetchState.earliestQueueItem,
-          nextItem.earliestQueueItem,
-        ) => accum
-      | _ => Some((nextItem, partitionId))
+      | Some(accumItem) if FetchState.qItemLt(accumItem, nextItem) => accum
+      | _ => Some(nextItem)
       }
     } else {
       accum
     }
   })
-  ->Option.map((({earliestQueueItem, getUpdatedFetchState}, partitionId)) => {
-    {
-      getUpdatedPartitionedFetchState: () =>
-        self
-        ->updatePartition(~fetchState=getUpdatedFetchState(), ~partitionId)
-        ->Utils.unwrapResultExn,
-      earliestQueueItem,
-    }
-  })
-}
 
 let queueSize = ({partitions}: t) =>
   partitions->List.reduce(0, (accum, partition) => accum + partition->FetchState.queueSize)
@@ -280,3 +260,5 @@ let getFirstEventBlockNumber = ({partitions}: t) => {
     Utils.Math.minOptInt(accum, partition.firstEventBlockNumber)
   })
 }
+
+let copy = (self: t) => {...self, partitions: self.partitions->List.map(FetchState.copy)}

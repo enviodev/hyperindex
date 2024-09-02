@@ -2,7 +2,7 @@ open Belt
 open RescriptMocha
 
 let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) => {
-  let config = Config.getGenerated()
+  let config = RegisterHandlers.registerAllHandlers()
   let allEvents = []
 
   let arbitraryEventPriorityQueue = ref([])
@@ -292,6 +292,7 @@ describe("determineNextEvent", () => {
         event: "SINGLE TEST EVENT"->Utils.magic,
       }
     }
+
     let makeMockFetchState = (~latestFetchedBlockTimestamp, ~item): FetchState.t => {
       isFetchingAtHead: false,
       registerType: RootRegister({endBlock: None}),
@@ -322,7 +323,7 @@ describe("determineNextEvent", () => {
         let singleItem = makeMockQItem(654, MockConfig.chain137)
         let earliestItem = makeNoItem(5) /* earlier timestamp than the test event */
 
-        let fetchStatesMap = Config.getGenerated().chainMap->ChainMap.mapWithKey(
+        let fetchStatesMap = RegisterHandlers.registerAllHandlers().chainMap->ChainMap.mapWithKey(
           (chain, _) =>
             switch chain->ChainMap.Chain.toChainId {
             | 1 =>
@@ -337,20 +338,18 @@ describe("determineNextEvent", () => {
             },
         )
 
-        let {earliestEventResponse: {earliestQueueItem}} =
-          determineNextEvent_unordered(fetchStatesMap)->Result.getExn
+        let {earliestEvent} = determineNextEvent_unordered(fetchStatesMap)->Result.getExn
 
         Assert.deepEqual(
-          earliestQueueItem,
-          Item(singleItem),
+          earliestEvent->FetchState_test.getItem,
+          Some(singleItem),
           ~message="Should have taken the single item",
         )
 
-        let {earliestEventResponse: {earliestQueueItem}} =
-          determineNextEvent_ordered(fetchStatesMap)->Result.getExn
+        let {earliestEvent} = determineNextEvent_ordered(fetchStatesMap)->Result.getExn
 
         Assert.deepEqual(
-          earliestQueueItem,
+          earliestEvent,
           earliestItem,
           ~message="Should return the `NoItem` that is earliest since it is earlier than the `Item`",
         )
@@ -363,7 +362,7 @@ describe("determineNextEvent", () => {
         let singleItemTimestamp = 654
         let singleItem = makeMockQItem(singleItemTimestamp, MockConfig.chain137)
 
-        let fetchStatesMap = Config.getGenerated().chainMap->ChainMap.mapWithKey(
+        let fetchStatesMap = RegisterHandlers.registerAllHandlers().chainMap->ChainMap.mapWithKey(
           (chain, _) =>
             switch chain->ChainMap.Chain.toChainId {
             | 1 =>
@@ -394,20 +393,18 @@ describe("determineNextEvent", () => {
         //   NoItem(655 /* later timestamp than the test event */, {id:1}),
         // ]
 
-        let {earliestEventResponse: {earliestQueueItem}} =
-          determineNextEvent_unordered(fetchStatesMap)->Result.getExn
+        let {earliestEvent} = determineNextEvent_unordered(fetchStatesMap)->Result.getExn
 
         Assert.deepEqual(
-          earliestQueueItem,
-          Item(singleItem),
+          earliestEvent->FetchState_test.getItem,
+          Some(singleItem),
           ~message="Should have taken the single item",
         )
 
-        let {earliestEventResponse: {earliestQueueItem}} =
-          determineNextEvent_ordered(fetchStatesMap)->Result.getExn
+        let {earliestEvent} = determineNextEvent_ordered(fetchStatesMap)->Result.getExn
 
         Assert.deepEqual(
-          earliestQueueItem,
+          earliestEvent,
           makeNoItem(earliestItemTimestamp),
           ~message="Should return the `NoItem` that is earliest since it is earlier than the `Item`",
         )
