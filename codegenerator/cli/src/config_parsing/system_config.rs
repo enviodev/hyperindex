@@ -163,7 +163,7 @@ impl SystemConfig {
         let mut filtered_unique_abi_files = self
             .get_contracts()
             .into_iter()
-            .filter_map(|c| c.abi.path.clone())
+            .filter_map(|c| c.abi.get_path())
             .collect::<HashSet<_>>()
             .into_iter()
             .collect::<Vec<_>>();
@@ -180,6 +180,7 @@ impl SystemConfig {
         schema: Schema,
         project_paths: &ParsedProjectPaths,
     ) -> Result<Self> {
+        // TODO: Add similar validation for Fuel
         validation::validate_deserialized_config_yaml(&evm_config)?;
 
         let mut networks: NetworkMap = HashMap::new();
@@ -188,26 +189,21 @@ impl SystemConfig {
         //Add all global contracts
         if let Some(global_contracts) = evm_config.contracts {
             for g_contract in global_contracts {
-                let abi_from_file =
-                    EvmAbi::from_file(&g_contract.config.abi_file_path, project_paths)?;
-
-                let events = g_contract
-                    .config
-                    .events
-                    .iter()
-                    .cloned()
-                    .map(|e| Event::from_evm_event_config(e, &abi_from_file))
-                    .collect::<Result<Vec<_>>>()
-                    .context(format!(
-                        "Failed parsing abi types for events in global contract {}",
-                        g_contract.name,
-                    ))?;
+                let (events, evm_abi) = Event::from_evm_events_config(
+                    g_contract.config.events,
+                    &g_contract.config.abi_file_path,
+                    &project_paths,
+                )
+                .context(format!(
+                    "Failed parsing abi types for events in global contract {}",
+                    g_contract.name,
+                ))?;
 
                 let contract = Contract::new(
                     g_contract.name.clone(),
                     g_contract.config.handler.clone(),
                     events,
-                    abi_from_file,
+                    Abi::Evm(evm_abi),
                 )
                 .context("Failed parsing globally defined contract")?;
 
@@ -222,24 +218,27 @@ impl SystemConfig {
                 //Add values for local contract
                 match contract.config {
                     Some(l_contract) => {
-                        //If there is a local contract, parse it and insert into contracts
-                        let abi_from_file =
-                            EvmAbi::from_file(&l_contract.abi_file_path, project_paths)?;
+                        let (events, evm_abi) = Event::from_evm_events_config(
+                            l_contract.events,
+                            &l_contract.abi_file_path,
+                            &project_paths,
+                        )
+                        .context(format!(
+                            "Failed parsing abi types for events in contract {} on network {}",
+                            contract.name, network.id,
+                        ))?;
 
-                        let events = l_contract
-                            .events
-                            .iter()
-                            .cloned()
-                            .map(|e| Event::from_evm_event_config(e, &abi_from_file))
-                            .collect::<Result<Vec<_>>>()?;
-
-                        let contract =
-                            Contract::new(contract.name, l_contract.handler, events, abi_from_file)
-                                .context(format!(
-                                    "Failed parsing locally defined network contract at network \
+                        let contract = Contract::new(
+                            contract.name,
+                            l_contract.handler,
+                            events,
+                            Abi::Evm(evm_abi),
+                        )
+                        .context(format!(
+                            "Failed parsing locally defined network contract at network \
                                      id {}",
-                                    network.id
-                                ))?;
+                            network.id
+                        ))?;
 
                         //Check if contract exists
                         unique_hashmap::try_insert(&mut contracts, contract.name.clone(), contract)
@@ -331,32 +330,21 @@ impl SystemConfig {
         //Add all global contracts
         if let Some(global_contracts) = &fuel_config.contracts {
             for g_contract in global_contracts {
-                let abi_path = path_utils::get_config_path_relative_to_root(
-                    project_paths,
-                    PathBuf::from(&g_contract.config.abi_file_path),
+                let (events, fuel_abi) = Event::from_fuel_events_config(
+                    &g_contract.config.events,
+                    &g_contract.config.abi_file_path,
+                    &project_paths,
                 )
-                .context("Failed to get path to ABI relative to the root of the project")?;
-                let fuel_abi = FuelAbi::parse(abi_path).context(format!(
-                    "Failed to parse ABI for the contract {}",
-                    g_contract.name
+                .context(format!(
+                    "Failed parsing abi types for events in global contract {}",
+                    g_contract.name,
                 ))?;
-                let events = g_contract
-                    .config
-                    .events
-                    .iter()
-                    .cloned()
-                    .map(|e| Event::from_fuel_event_config(e, &fuel_abi))
-                    .collect::<Result<Vec<_>>>()
-                    .context(format!(
-                        "Failed parsing abi types for events in global contract {}",
-                        g_contract.name,
-                    ))?;
 
                 let contract = Contract::new(
                     g_contract.name.clone(),
                     g_contract.config.handler.clone(),
                     events,
-                    None,
+                    Abi::Fuel(fuel_abi),
                 )?;
 
                 //Check if contract exists
@@ -370,25 +358,22 @@ impl SystemConfig {
                 //Add values for local contract
                 match contract.config {
                     Some(l_contract) => {
-                        let abi_path = path_utils::get_config_path_relative_to_root(
-                            project_paths,
-                            PathBuf::from(&l_contract.abi_file_path),
+                        let (events, fuel_abi) = Event::from_fuel_events_config(
+                            &l_contract.events,
+                            &l_contract.abi_file_path,
+                            &project_paths,
                         )
-                        .context("Failed to get path to ABI relative to the root of the project")?;
-                        let fuel_abi = FuelAbi::parse(abi_path).context(format!(
-                            "Failed to parse ABI for the contract {}",
-                            contract.name
+                        .context(format!(
+                            "Failed parsing abi types for events in contract {} on network {}",
+                            contract.name, network.id,
                         ))?;
-                        let events = l_contract
-                            .events
-                            .iter()
-                            .cloned()
-                            .map(|e| Event::from_fuel_event_config(e, &fuel_abi))
-                            .collect::<Result<Vec<_>>>()?;
 
-                        // FIXME: Support Fuel for contract
-                        let contract =
-                            Contract::new(contract.name.clone(), l_contract.handler, events, None)?;
+                        let contract = Contract::new(
+                            contract.name.clone(),
+                            l_contract.handler,
+                            events,
+                            Abi::Fuel(fuel_abi),
+                        )?;
 
                         //Check if contract exists
                         unique_hashmap::try_insert(&mut contracts, contract.name.clone(), contract)
@@ -566,14 +551,15 @@ pub enum SyncSource {
     HyperfuelConfig(HyperfuelConfig),
 }
 
-// Check if the given RPC URL is valid in terms of formatting.
-// For now, we only check if it starts with http:// or https://
-fn validate_url(url: &str) -> bool {
+// Check if the given URL is valid in terms of formatting
+fn parse_url(url: &str) -> Option<String> {
     // Check URL format
     if !url.starts_with("http://") && !url.starts_with("https://") {
-        return false;
+        return None;
     }
-    true
+    // Trim any trailing slashes from the URL
+    let trimmed_url = url.trim_end_matches('/').to_string();
+    Some(trimmed_url)
 }
 
 impl SyncSource {
@@ -612,53 +598,56 @@ impl SyncSource {
                 sync_config
               }),
               ..
-          } => {
-            let urls: Vec<String> = url.into();
-            for url in urls.iter() {
-              if !validate_url(url) {
-                return Err(anyhow!("EE109: The RPC url \"{}\" is incorrect format. The RPC url needs to start with either http:// or https://", url));
+            } => {
+              let config_urls: Vec<String> = url.into();
+              let mut urls = vec![];
+              for url in config_urls.iter() {
+                match parse_url(url) {
+                    None => return Err(anyhow!("EE109: The RPC url \"{}\" is incorrect format. The RPC url needs to start with either http:// or https://", url)),
+                    Some(endpoint_url) => urls.push(endpoint_url)
+                }
               }
-            }
-            Ok(Self::RpcConfig(RpcConfig {
-                urls,
-                sync_config: match sync_config {
-                    None => SyncConfig::default(),
-                    Some(c) => {
-                      let query_timeout_millis = c
-                        .query_timeout_millis
-                        .unwrap_or_else(|| SyncConfig::default().query_timeout_millis);
-                      SyncConfig {
-                        acceleration_additive: c
-                            .acceleration_additive
-                            .unwrap_or_else(|| SyncConfig::default().acceleration_additive),
-                        backoff_millis: c
-                            .backoff_millis
-                            .unwrap_or_else(|| SyncConfig::default().backoff_millis),
-                        backoff_multiplicative: c
-                            .backoff_multiplicative
-                            .unwrap_or_else(|| SyncConfig::default().backoff_multiplicative),
-                        initial_block_interval: c
-                            .initial_block_interval
-                            .unwrap_or_else(|| SyncConfig::default().initial_block_interval),
-                        interval_ceiling: c
-                            .interval_ceiling
-                            .unwrap_or_else(|| SyncConfig::default().interval_ceiling),
-                        query_timeout_millis,
-                        fallback_stall_timeout: c
-                            .fallback_stall_timeout
-                            .unwrap_or_else(|| query_timeout_millis / 2),
-                    }},
-                },
-            }))},
+              Ok(Self::RpcConfig(RpcConfig {
+                  urls,
+                  sync_config: match sync_config {
+                      None => SyncConfig::default(),
+                      Some(c) => {
+                        let query_timeout_millis = c
+                          .query_timeout_millis
+                          .unwrap_or_else(|| SyncConfig::default().query_timeout_millis);
+                        SyncConfig {
+                          acceleration_additive: c
+                              .acceleration_additive
+                              .unwrap_or_else(|| SyncConfig::default().acceleration_additive),
+                          backoff_millis: c
+                              .backoff_millis
+                              .unwrap_or_else(|| SyncConfig::default().backoff_millis),
+                          backoff_multiplicative: c
+                              .backoff_multiplicative
+                              .unwrap_or_else(|| SyncConfig::default().backoff_multiplicative),
+                          initial_block_interval: c
+                              .initial_block_interval
+                              .unwrap_or_else(|| SyncConfig::default().initial_block_interval),
+                          interval_ceiling: c
+                              .interval_ceiling
+                              .unwrap_or_else(|| SyncConfig::default().interval_ceiling),
+                          query_timeout_millis,
+                          fallback_stall_timeout: c
+                              .fallback_stall_timeout
+                              .unwrap_or_else(|| query_timeout_millis / 2),
+                      }},
+                  },
+              }))
+            },
             human_config::evm::Network {
               hypersync_config: Some(human_config::evm::HypersyncConfig { url }),
               rpc_config: None,
               ..
-          } => {
-                if !validate_url(&url) {
-                  return Err(anyhow!("EE106: The HyperSync url \"{}\" is incorrect format. The HyperSync url needs to start with either http:// or https://", url));
-                }
-                Ok(Self::HypersyncConfig(HypersyncConfig { endpoint_url: url, is_client_decoder }))
+            } => {
+              match parse_url(&url) {
+                  None => Err(anyhow!("EE106: The HyperSync url \"{}\" is incorrect format. The HyperSync url needs to start with either http:// or https://", url)),
+                  Some(endpoint_url) => Ok(Self::HypersyncConfig(HypersyncConfig { endpoint_url, is_client_decoder }))
+              }
             }
         }
     }
@@ -700,6 +689,37 @@ pub struct EvmAbi {
 }
 
 impl EvmAbi {
+    pub fn event_signature_from_abi_event(abi_event: &ethers::abi::Event) -> String {
+        format!(
+            "{}({}){}",
+            abi_event.name,
+            abi_event
+                .inputs
+                .iter()
+                .map(|input| {
+                    let param_type = input.kind.to_string();
+                    let indexed_keyword = if input.indexed { " indexed " } else { " " };
+                    let param_name = input.name.clone();
+
+                    format!("{}{}{}", param_type, indexed_keyword, param_name)
+                })
+                .collect::<Vec<_>>()
+                .join(", "),
+            if abi_event.anonymous {
+                " anonymous"
+            } else {
+                ""
+            },
+        )
+    }
+
+    pub fn get_event_signatures(&self) -> Vec<String> {
+        self.typed
+            .events()
+            .map(|event| Self::event_signature_from_abi_event(event))
+            .collect()
+    }
+
     pub fn from_file(
         abi_file_path: &Option<String>,
         project_paths: &ParsedProjectPaths,
@@ -744,47 +764,41 @@ impl EvmAbi {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub enum Abi {
+    Evm(EvmAbi),
+    Fuel(FuelAbi),
+}
+
+impl Abi {
+    fn get_path(&self) -> Option<PathBuf> {
+        match self {
+            Abi::Evm(abi) => abi.path.clone(),
+            Abi::Fuel(abi) => Some(abi.path_buf.clone()),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct Contract {
     pub name: ContractNameKey,
     pub handler_path: String,
-    pub abi: EvmAbi,
+    pub abi: Abi,
     pub events: Vec<Event>,
 }
 
 impl Contract {
-    pub fn new(
-        name: String,
-        handler_path: String,
-        events: Vec<Event>,
-        abi_from_file: Option<EvmAbi>,
-    ) -> Result<Self> {
-        let mut events_abi = ethers::abi::Abi::default();
-
-        let mut event_names = Vec::new();
-        for event in &events {
-            let event_abi = event.get_event();
-            events_abi
-                .events
-                .entry(event_abi.name.clone())
-                .or_default()
-                .push(event_abi.clone());
-
-            event_names.push(event.name.clone());
-        }
-        validate_names_valid_rescript(&event_names, "event".to_string())?;
-
-        let events_abi_raw = serde_json::to_string(&events_abi)
-            .context("Failed serializing ABI with filtered events")?;
+    pub fn new(name: String, handler_path: String, events: Vec<Event>, abi: Abi) -> Result<Self> {
+        // TODO: Validatate that all event names are unique
+        validate_names_valid_rescript(
+            &events.iter().map(|e| e.name.clone()).collect(),
+            "event".to_string(),
+        )?;
 
         Ok(Self {
             name,
             events,
             handler_path,
-            abi: EvmAbi {
-                path: abi_from_file.and_then(|abi| abi.path),
-                raw: events_abi_raw,
-                typed: events_abi,
-            },
+            abi,
         })
     }
 
@@ -800,6 +814,20 @@ impl Contract {
 
         Ok(handler_path)
     }
+
+    pub fn get_chain_ids(&self, system_config: &SystemConfig) -> Vec<u64> {
+        system_config
+            .get_networks()
+            .iter()
+            .filter_map(|network| {
+                if network.contracts.iter().any(|c| c.name == self.name) {
+                    Some(network.id)
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -810,8 +838,6 @@ pub enum EventPayload {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Event {
-    // TODO: Remove EthAbiEvent from Event struct
-    event: NormalizedEthAbiEvent,
     pub payload: EventPayload,
     pub name: String,
     pub sighash: String,
@@ -852,60 +878,98 @@ impl Event {
         }
     }
 
-    pub fn from_evm_event_config(
-        event_config: EvmEventConfig,
-        opt_abi: &Option<EvmAbi>,
-    ) -> Result<Self> {
-        let event: NormalizedEthAbiEvent =
-            Event::get_abi_event(&event_config.event, opt_abi)?.into();
-        let sighash = ethers::core::utils::hex::encode_prefixed(ethers::utils::keccak256(
-            event.0.abi_signature().as_bytes(),
-        ));
+    pub fn from_evm_events_config(
+        events_config: Vec<EvmEventConfig>,
+        abi_file_path: &Option<String>,
+        project_paths: &ParsedProjectPaths,
+    ) -> Result<(Vec<Self>, EvmAbi)> {
+        let abi_from_file = EvmAbi::from_file(&abi_file_path, &project_paths)?;
 
-        Ok(Event {
-            name: event_config.name.unwrap_or(event.0.name.to_owned()),
-            payload: EventPayload::Params(event.0.inputs.clone()),
-            event,
-            sighash,
-        })
+        let mut events = vec![];
+        let mut events_abi = ethers::abi::Abi::default();
+
+        for event_config in events_config.iter() {
+            let event = Event::get_abi_event(&event_config.event, &abi_from_file)?;
+            let sighash = ethers::core::utils::hex::encode_prefixed(ethers::utils::keccak256(
+                event.abi_signature().as_bytes(),
+            ));
+
+            let abi_name = event.name.clone();
+            let name = event_config.name.clone().unwrap_or(abi_name.clone());
+
+            let normalized_unnamed_params: Vec<EventParam> = event
+                .clone()
+                .inputs
+                .into_iter()
+                .enumerate()
+                .map(|(i, e)| {
+                    let name = if e.name == "" {
+                        format!("_{}", i)
+                    } else {
+                        e.name
+                    };
+                    EventParam { name, ..e }
+                })
+                .collect();
+
+            events_abi.events.entry(abi_name).or_default().push(event);
+            events.push(Event {
+                name,
+                payload: EventPayload::Params(normalized_unnamed_params),
+                sighash,
+            })
+        }
+
+        let events_abi_raw = serde_json::to_string(&events_abi)
+            .context("Failed serializing ABI from filtered events")?;
+
+        Ok((
+            events,
+            EvmAbi {
+                path: match abi_from_file {
+                    Some(abi) => abi.path.clone(),
+                    None => None,
+                },
+                raw: events_abi_raw,
+                typed: events_abi,
+            },
+        ))
     }
 
-    // TODO: Validatate that all event names are unique
-    // TODO: Validatate that event names are not reserved
-    pub fn from_fuel_event_config(
-        event_config: FuelEventConfig,
-        fuel_abi: &FuelAbi,
-    ) -> Result<Self> {
-        let event: NormalizedEthAbiEvent =
-            Event::get_abi_event(&format!("{}()", event_config.name), &None)?.into();
+    pub fn from_fuel_events_config(
+        events_config: &Vec<FuelEventConfig>,
+        abi_file_path: &String,
+        project_paths: &ParsedProjectPaths,
+    ) -> Result<(Vec<Self>, FuelAbi)> {
+        let abi_path: PathBuf = path_utils::get_config_path_relative_to_root(
+            project_paths,
+            PathBuf::from(&abi_file_path),
+        )
+        .context("Failed to get path to ABI relative to the root of the project")?;
+        let fuel_abi = FuelAbi::parse(abi_path).context(format!("Failed to parse ABI",))?;
 
-        let log = match event_config.log_id {
-            None => {
-                let logged_type = fuel_abi
-                    .get_type_by_struct_name(event_config.name.clone())
-                    .context(
-                        "Failed to derive log ids from the event name. Use the lodId field to set \
-                         it explicitely.",
-                    )?;
-                fuel_abi.get_log_by_type(logged_type.id)?
-            }
-            Some(log_id) => fuel_abi.get_log(&log_id)?,
-        };
+        let mut events = vec![];
 
-        Ok(Event {
-            name: event_config.name,
-            event,
-            payload: EventPayload::Data(log.data_type),
-            sighash: log.id,
-        })
-    }
+        for event_config in events_config.iter() {
+            let log = match &event_config.log_id {
+                None => {
+                    let logged_type = fuel_abi.get_type_by_struct_name(event_config.name.clone()).context(
+                "Failed to derive log ids from the event name. Use the lodId field to set it explicitely."
+              )?;
+                    fuel_abi.get_log_by_type(logged_type.id)?
+                }
+                Some(log_id) => fuel_abi.get_log(&log_id)?,
+            };
 
-    fn get_event(&self) -> &EthAbiEvent {
-        &self.event.0
-    }
+            events.push(Event {
+                name: event_config.name.clone(),
+                payload: EventPayload::Data(log.data_type),
+                sighash: log.id,
+            })
+        }
 
-    pub fn get_event_signature(&self) -> String {
-        EvmEventConfig::event_string_from_abi_event(&self.event.0)
+        // TODO: Clean up fuel_abi to include only relevant events
+        Ok((events, fuel_abi))
     }
 }
 
@@ -997,33 +1061,6 @@ impl FieldSelection {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
-struct NormalizedEthAbiEvent(EthAbiEvent);
-
-impl From<EthAbiEvent> for NormalizedEthAbiEvent {
-    fn from(value: EthAbiEvent) -> Self {
-        let normalized_unnamed_params: Vec<EventParam> = value
-            .inputs
-            .into_iter()
-            .enumerate()
-            .map(|(i, e)| {
-                let name = if e.name == "" {
-                    format!("_{}", i)
-                } else {
-                    e.name
-                };
-                EventParam { name, ..e }
-            })
-            .collect();
-        let event = EthAbiEvent {
-            inputs: normalized_unnamed_params,
-            ..value
-        };
-
-        NormalizedEthAbiEvent(event)
-    }
-}
-
 #[cfg(test)]
 mod test {
     use std::path::PathBuf;
@@ -1087,12 +1124,14 @@ mod test {
 
         let contract_name = "Contract1".to_string();
 
-        let contract_abi = config
+        let contract_abi = match &config
             .get_contract(&contract_name)
             .expect("Failed getting contract")
             .abi
-            .typed
-            .clone();
+        {
+            super::Abi::Evm(abi) => abi.typed.clone(),
+            super::Abi::Fuel(_) => panic!("Fuel abi should not be parsed"),
+        };
 
         let expected_abi_string = r#"
                 [
@@ -1221,26 +1260,28 @@ mod test {
     }
 
     #[test]
-    fn test_valid_urls() {
+    fn test_parse_url() {
         let valid_url_1 = "https://eth-mainnet.g.alchemy.com/v2/T7uPV59s7knYTOUardPPX0hq7n7_rQwv";
         let valid_url_2 = "http://api.example.org:8080";
         let valid_url_3 = "https://eth.com/rpc-endpoint";
-        let is_valid_url_1 = super::validate_url(valid_url_1);
-        let is_valid_url_2 = super::validate_url(valid_url_2);
-        let is_valid_url_3 = super::validate_url(valid_url_3);
-        assert!(is_valid_url_1);
-        assert!(is_valid_url_2);
-        assert!(is_valid_url_3);
-    }
+        assert_eq!(super::parse_url(valid_url_1), Some(valid_url_1.to_string()));
+        assert_eq!(super::parse_url(valid_url_2), Some(valid_url_2.to_string()));
+        assert_eq!(super::parse_url(valid_url_3), Some(valid_url_3.to_string()));
 
-    #[test]
-    fn test_invalid_urls() {
         let invalid_url_missing_slash = "http:/example.com";
         let invalid_url_other_protocol = "ftp://example.com";
-        let is_invalid_missing_slash = super::validate_url(invalid_url_missing_slash);
-        let is_invalid_other_protocol = super::validate_url(invalid_url_other_protocol);
-        assert!(!is_invalid_missing_slash);
-        assert!(!is_invalid_other_protocol);
+        assert_eq!(super::parse_url(invalid_url_missing_slash), None);
+        assert_eq!(super::parse_url(invalid_url_other_protocol), None);
+
+        // With trailing slashes
+        assert_eq!(
+            super::parse_url("https://somechain.hypersync.xyz/"),
+            Some("https://somechain.hypersync.xyz".to_string())
+        );
+        assert_eq!(
+            super::parse_url("https://somechain.hypersync.xyz//"),
+            Some("https://somechain.hypersync.xyz".to_string())
+        );
     }
 
     #[test]
@@ -1273,5 +1314,31 @@ mod test {
         assert_eq!(name_with_space, expected_name_with_space);
         assert_eq!(name_with_special_chars, expected_name_with_special_chars);
         assert_eq!(name_with_numbers, expected_name_with_numbers);
+    }
+
+    #[test]
+    fn test_hypersync_url_trailing_slash_trimming() {
+        use crate::config_parsing::human_config::evm::{HypersyncConfig, Network as EvmNetwork};
+
+        let network = EvmNetwork {
+            id: 1,
+            hypersync_config: Some(HypersyncConfig {
+                url: "https://somechain.hypersync.xyz//".to_string(),
+            }),
+            rpc_config: None,
+            start_block: 0,
+            end_block: None,
+            confirmed_block_threshold: None,
+            contracts: vec![],
+        };
+
+        let sync_source = SyncSource::from_evm_network_config(network, None).unwrap();
+
+        match sync_source {
+            SyncSource::HypersyncConfig(config) => {
+                assert_eq!(config.endpoint_url, "https://somechain.hypersync.xyz");
+            }
+            _ => panic!("Expected HypersyncConfig"),
+        }
     }
 }

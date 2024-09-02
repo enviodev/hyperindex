@@ -13,6 +13,7 @@ module InMemoryStore = {
         },
         ~entityId=entity->Entities.getEntityId,
       ),
+      ~shouldRollbackOnReorg=RegisterHandlers.getConfig()->Config.shouldRollbackOnReorg,
     )
   }
 

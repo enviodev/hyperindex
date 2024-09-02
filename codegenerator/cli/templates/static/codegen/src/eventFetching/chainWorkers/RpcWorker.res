@@ -6,10 +6,12 @@ module Make = (
     let rpcConfig: Config.rpcConfig
     let chain: ChainMap.Chain.t
     let contracts: array<Config.contract>
+    let eventModLookup: EventModLookup.t
   },
 ): S => {
   let name = "RPC"
   let chain = T.chain
+  let eventModLookup = T.eventModLookup
 
   let blockIntervals = Js.Dict.empty()
 
@@ -70,7 +72,6 @@ module Make = (
     ~currentBlockHeight,
     ~setCurrentBlockHeight,
   ) => {
-    let config = Config.getGenerated()
     try {
       let {
         fromBlock,
@@ -91,7 +92,7 @@ module Make = (
 
       let currentBlockInterval =
         blockIntervals
-        ->Js.Dict.get(partitionId->Belt.Int.toString)
+        ->Utils.Dict.dangerouslyGetNonOption(partitionId->Belt.Int.toString)
         ->Belt.Option.getWithDefault(T.rpcConfig.syncConfig.initialBlockInterval)
 
       let targetBlock = Pervasives.min(toBlock, fromBlock + currentBlockInterval - 1)
@@ -122,7 +123,7 @@ module Make = (
         ~chain,
         ~blockLoader,
         ~logger,
-        ~config,
+        ~eventModLookup,
       )
 
       let eventBatches = await eventBatchPromises->Promise.all
@@ -213,4 +214,3 @@ module Make = (
     ->Promise.catch(exn => exn->Error->Promise.resolve)
   }
 }
-

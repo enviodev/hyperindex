@@ -1,7 +1,7 @@
 open Belt
 open RescriptMocha
 
-let config = Config.getGenerated()
+let config = RegisterHandlers.registerAllHandlers()
 
 module Mock = {
   let mockChainDataEmpty = MockChainData.make(
@@ -112,7 +112,6 @@ module Stubs = {
         chainFetcher->ChainFetcher.rollbackLastBlockHashesToReorgLocation(
           ~getBlockHashes=getBlockHashes(mockChainData),
         ),
-      ~registeredEvents=RegisteredEvents.global,
     )(
       ~dispatchAction=action => dispatchAction(gsManager, action),
       gsManager->GlobalStateManager.getState,

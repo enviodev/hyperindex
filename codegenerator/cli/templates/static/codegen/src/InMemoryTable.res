@@ -141,7 +141,11 @@ module Entity = {
   }
 
   let setRow = set
-  let set = (inMemTable: t<'entity>, entityUpdate: Types.entityUpdate<'entity>) => {
+  let set = (
+    inMemTable: t<'entity>,
+    entityUpdate: Types.entityUpdate<'entity>,
+    ~shouldRollbackOnReorg,
+  ) => {
     let {entityRow, entityIndices} = switch inMemTable.table->get(entityUpdate.entityId) {
     | Some({entityRow: InitialReadFromDb(entity_read), entityIndices}) =>
       let entityRow = Types.Updated({
@@ -151,7 +155,7 @@ module Entity = {
       })
       {entityRow, entityIndices}
     | Some({entityRow: Updated(previous_values), entityIndices})
-      if !(Config.getGenerated()->Config.shouldRollbackOnReorg) ||
+      if !shouldRollbackOnReorg ||
       //Rollback initial state cases should not save history
       !previous_values.latest.shouldSaveHistory ||
       // This prevents two db actions in the same event on the same entity from being recorded to the history table.

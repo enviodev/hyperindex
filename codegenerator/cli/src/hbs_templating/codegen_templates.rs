@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::{collections::HashMap, fmt::Display};
 
 use super::hbs_dir_generator::HandleBarsDirGenerator;
-use crate::config_parsing::system_config::{Ecosystem, EventPayload, HyperfuelConfig};
+use crate::config_parsing::system_config::{Abi, Ecosystem, EventPayload, HyperfuelConfig};
 use crate::rescript_types::{RescriptRecordField, RescriptTypeExpr, RescriptTypeIdent};
 use crate::{
     config_parsing::{
@@ -458,8 +458,8 @@ impl EventTemplate {
 pub struct ContractTemplate {
     pub name: CapitalizedOptions,
     pub codegen_events: Vec<EventTemplate>,
-    pub abi: StringifiedAbi,
-    pub event_signatures: Vec<String>,
+    pub chain_ids: Vec<u64>,
+    pub module_code: String,
     pub handler: HandlerPathsTemplate,
 }
 
@@ -467,6 +467,7 @@ impl ContractTemplate {
     fn from_config_contract(
         contract: &system_config::Contract,
         project_paths: &ParsedProjectPaths,
+        config: &SystemConfig,
     ) -> Result<Self> {
         let name = contract.name.to_capitalized_options();
         let handler = HandlerPathsTemplate::from_contract(contract, project_paths)
@@ -477,18 +478,41 @@ impl ContractTemplate {
             .map(|event| EventTemplate::from_config_event(event))
             .collect::<Result<_>>()?;
 
-        let event_signatures = contract
-            .events
-            .iter()
-            .map(|event| event.get_event_signature())
-            .collect();
+        let module_code = match &contract.abi {
+            Abi::Evm(abi) => {
+                let signatures = abi.get_event_signatures();
+
+                format!(
+                    "let abi = Ethers.makeAbi((%raw(`{}`): Js.Json.t))\nlet eventSignatures = [{}]",
+                    abi.raw,
+                    signatures
+                        .iter()
+                        .map(|w| format!("\"{}\"", w))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            }
+            Abi::Fuel(abi) => {
+                let abi_res_type_declarations = abi
+                    .to_rescript_type_decl_multi()
+                    .context(format!(
+                        "Failed getting types from the '{}' contract ABI",
+                        contract.name
+                    ))?
+                    .to_string();
+
+                format!("let abi = %raw(`null`)\n{}", abi_res_type_declarations)
+            }
+        };
+
+        let chain_ids = contract.get_chain_ids(config);
 
         Ok(ContractTemplate {
             name,
             handler,
             codegen_events,
-            abi: contract.abi.raw.clone(),
-            event_signatures,
+            chain_ids,
+            module_code,
         })
     }
 }
@@ -537,7 +561,6 @@ impl PerNetworkContractTemplate {
 }
 
 type EthAddress = String;
-type StringifiedAbi = String;
 
 #[derive(Debug, Serialize, PartialEq, Clone)]
 struct NetworkTemplate {
@@ -708,7 +731,9 @@ impl ProjectTemplate {
         let codegen_contracts: Vec<ContractTemplate> = cfg
             .get_contracts()
             .iter()
-            .map(|cfg_contract| ContractTemplate::from_config_contract(cfg_contract, project_paths))
+            .map(|cfg_contract| {
+                ContractTemplate::from_config_contract(cfg_contract, project_paths, cfg)
+            })
             .collect::<Result<_>>()
             .context("Failed generating contract template types")?;
 
@@ -791,10 +816,7 @@ mod test {
 
     use super::*;
     use crate::{
-        config_parsing::{
-            human_config,
-            system_config::{RpcConfig, SystemConfig},
-        },
+        config_parsing::system_config::{RpcConfig, SystemConfig},
         project_paths::ParsedProjectPaths,
         utils::text::Capitalize,
     };
@@ -1091,16 +1113,12 @@ mod test {
 
     #[test]
     fn event_template_with_empty_params() {
-        let event_template = EventTemplate::from_config_event(
-            &system_config::Event::from_evm_event_config(
-                human_config::evm::EventConfig {
-                    event: "NewGravatar()".to_string(),
-                    name: None,
-                },
-                &None,
-            )
-            .unwrap(),
-        )
+        let event_template = EventTemplate::from_config_event(&system_config::Event {
+            name: "NewGravatar".to_string(),
+            payload: system_config::EventPayload::Params(vec![]),
+            sighash: "0x50f7d27e90d1a5a38aeed4ceced2e8ec1ff185737aca96d15791b470d3f17363"
+                .to_string(),
+        })
         .unwrap();
 
         assert_eq!(

@@ -489,32 +489,6 @@ pub mod evm {
         #[serde(skip_serializing_if = "Option::is_none")]
         pub name: Option<String>,
     }
-
-    impl EventConfig {
-        pub fn event_string_from_abi_event(abi_event: &ethers::abi::Event) -> String {
-            format!(
-                "{}({}){}",
-                abi_event.name,
-                abi_event
-                    .inputs
-                    .iter()
-                    .map(|input| {
-                        let param_type = input.kind.to_string();
-                        let indexed_keyword = if input.indexed { " indexed " } else { " " };
-                        let param_name = input.name.clone();
-
-                        format!("{}{}{}", param_type, indexed_keyword, param_name)
-                    })
-                    .collect::<Vec<_>>()
-                    .join(", "),
-                if abi_event.anonymous {
-                    " anonymous"
-                } else {
-                    ""
-                },
-            )
-        }
-    }
 }
 
 pub mod fuel {

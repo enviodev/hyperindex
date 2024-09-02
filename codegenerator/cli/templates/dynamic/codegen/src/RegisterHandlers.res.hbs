@@ -22,124 +22,147 @@ let registerContractHandlers = (
   }
 }
 
-// TODO: Start using only config returned by registerAllHandlers instead of Config.getGenerated and Config.setGenerated
 %%private(
-  let chains = [
-    {{#each chain_configs as | chain_config |}}
-    {
-      let contracts = [
-        {{#each chain_config.codegen_contracts as | contract |}}
-        {
-          Config.name: "{{contract.name.capitalized}}",
-          abi: Abis.{{contract.name.uncapitalized}}Abi->Ethers.makeAbi,
-          addresses: [
-            {{#each contract.addresses as | address |}}
-            {{#if ../../../is_evm_ecosystem}}
-            "{{address}}"->Address.Evm.fromStringOrThrow
-            {{else}}
-            "{{address}}"->Address.unsafeFromString
-            {{/if}},
-            {{/each}}
-          ],
-          events: [
-            {{#each contract.events as | event |}}
-            module(Types.{{contract.name.capitalized}}.{{event.name.capitalized}}),
-            {{/each}}
-          ],
-        },
-        {{/each}}
-      ]
-      let chain = ChainMap.Chain.makeUnsafe(~chainId={{chain_config.network_config.id}})
-      {{#if chain_config.network_config.rpc_config }}
-      let rpcConfig: Config.rpcConfig = {
-        provider: Ethers.JsonRpcProvider.make(
-          ~rpcUrls={{vec_to_array chain_config.network_config.rpc_config.urls}},
-          ~chainId={{chain_config.network_config.id}},
-          ~fallbackStallTimeout={{chain_config.network_config.rpc_config.sync_config.fallback_stall_timeout}},
-        ),
-        {{#with chain_config.network_config.rpc_config.sync_config as | sync_config |}}
-        syncConfig: Config.getSyncConfig({
-          initialBlockInterval: {{sync_config.initial_block_interval}},
-          backoffMultiplicative: {{sync_config.backoff_multiplicative}},
-          accelerationAdditive: {{sync_config.acceleration_additive}},
-          intervalCeiling: {{sync_config.interval_ceiling}},
-          backoffMillis: {{sync_config.backoff_millis}},
-          queryTimeoutMillis: {{sync_config.query_timeout_millis}},
-        }),
-        {{/with}}
-      }
-      {{/if}}
+  let makeGeneratedConfig = () => {
+    let chains = [
+      {{#each chain_configs as | chain_config |}}
       {
-        Config.confirmedBlockThreshold: {{chain_config.network_config.confirmed_block_threshold}},
-        syncSource: 
-          {{#if chain_config.network_config.rpc_config}}
-          Rpc(rpcConfig)
-          {{/if}}
-          {{#if chain_config.network_config.hypersync_config}}
-          HyperSync({endpointUrl: "{{chain_config.network_config.hypersync_config.endpoint_url}}"})
-          {{/if}}
-          {{#if chain_config.network_config.hyperfuel_config}}
-          HyperFuel({endpointUrl: "{{chain_config.network_config.hyperfuel_config.endpoint_url}}"})
-          {{/if}},
-        startBlock: {{chain_config.network_config.start_block}},
-        endBlock: {{#if chain_config.network_config.end_block}} Some({{chain_config.network_config.end_block}}) {{else}} None {{/if}},
-        chain,
-        contracts,
-        chainWorker:
-          {{#if chain_config.network_config.rpc_config }}
-          module(RpcWorker.Make({
-            let chain = chain
-            let contracts = contracts
-            let rpcConfig = rpcConfig
-          }))
-          {{/if}}
-          {{#if chain_config.network_config.hypersync_config }}
-          {{#with chain_config.network_config.hypersync_config as | hypersync_config |}}
-          module(HyperSyncWorker.Make({
-            let chain = chain
-            let contracts = contracts
-            let endpointUrl = "{{hypersync_config.endpoint_url}}"
-            let allEventSignatures = Abis.EventSignatures.all
-            /*
-              Determines whether to use HypersyncClient Decoder or Viem for parsing events
-              Default is hypersync client decoder, configurable in config with:
-              ```yaml
-              event_decoder: "viem" || "hypersync-client"
-              ```
-            */
-            let shouldUseHypersyncClientDecoder = Env.Configurable.shouldUseHypersyncClientDecoder->Belt.Option.getWithDefault(
-              {{hypersync_config.is_client_decoder}},
-            )
-          }))
+        let contracts = [
+          {{#each chain_config.codegen_contracts as | contract |}}
+          {
+            Config.name: "{{contract.name.capitalized}}",
+            abi: Types.{{contract.name.capitalized}}.abi,
+            addresses: [
+              {{#each contract.addresses as | address |}}
+              {{#if ../../../is_evm_ecosystem}}
+              "{{address}}"->Address.Evm.fromStringOrThrow
+              {{else}}
+              "{{address}}"->Address.unsafeFromString
+              {{/if}},
+              {{/each}}
+            ],
+            events: [
+              {{#each contract.events as | event |}}
+              module(Types.{{contract.name.capitalized}}.{{event.name.capitalized}}),
+              {{/each}}
+            ],
+            sighashes: [
+              {{#each contract.events as | event |}}
+              Types.{{contract.name.capitalized}}.{{event.name.capitalized}}.sighash,
+              {{/each}}
+            ],
+          },
+          {{/each}}
+        ]
+        let chain = ChainMap.Chain.makeUnsafe(~chainId={{chain_config.network_config.id}})
+        {{#if chain_config.network_config.rpc_config }}
+        let rpcConfig: Config.rpcConfig = {
+          provider: Ethers.JsonRpcProvider.make(
+            ~rpcUrls={{vec_to_array chain_config.network_config.rpc_config.urls}},
+            ~chainId={{chain_config.network_config.id}},
+            ~fallbackStallTimeout={{chain_config.network_config.rpc_config.sync_config.fallback_stall_timeout}},
+          ),
+          {{#with chain_config.network_config.rpc_config.sync_config as | sync_config |}}
+          syncConfig: Config.getSyncConfig({
+            initialBlockInterval: {{sync_config.initial_block_interval}},
+            backoffMultiplicative: {{sync_config.backoff_multiplicative}},
+            accelerationAdditive: {{sync_config.acceleration_additive}},
+            intervalCeiling: {{sync_config.interval_ceiling}},
+            backoffMillis: {{sync_config.backoff_millis}},
+            queryTimeoutMillis: {{sync_config.query_timeout_millis}},
+          }),
           {{/with}}
-          {{/if}}
-          {{#if chain_config.network_config.hyperfuel_config }}
-          {{#with chain_config.network_config.hyperfuel_config as | hyperfuel_config |}}
-          module(HyperFuelWorker.Make({
-            let chain = chain
-            let contracts = contracts
-            let endpointUrl = "{{hyperfuel_config.endpoint_url}}"
-          }))
-          {{/with}}
-          {{/if}}
-      }
-    },
-    {{/each}}
-  ]
+        }
+        {{/if}}
+        {
+          Config.confirmedBlockThreshold: {{chain_config.network_config.confirmed_block_threshold}},
+          syncSource: 
+            {{#if chain_config.network_config.rpc_config}}
+            Rpc(rpcConfig)
+            {{/if}}
+            {{#if chain_config.network_config.hypersync_config}}
+            HyperSync({endpointUrl: "{{chain_config.network_config.hypersync_config.endpoint_url}}"})
+            {{/if}}
+            {{#if chain_config.network_config.hyperfuel_config}}
+            HyperFuel({endpointUrl: "{{chain_config.network_config.hyperfuel_config.endpoint_url}}"})
+            {{/if}},
+          startBlock: {{chain_config.network_config.start_block}},
+          endBlock: {{#if chain_config.network_config.end_block}} Some({{chain_config.network_config.end_block}}) {{else}} None {{/if}},
+          chain,
+          contracts,
+          chainWorker:
+            {{#if chain_config.network_config.rpc_config }}
+            module(RpcWorker.Make({
+              let chain = chain
+              let contracts = contracts
+              let rpcConfig = rpcConfig
+              let eventModLookup =
+                contracts
+                ->Belt.Array.flatMap(contract => contract.events)
+                ->EventModLookup.fromArrayOrThrow(~chain)
+            }))
+            {{/if}}
+            {{#if chain_config.network_config.hypersync_config }}
+            {{#with chain_config.network_config.hypersync_config as | hypersync_config |}}
+            module(HyperSyncWorker.Make({
+              let chain = chain
+              let contracts = contracts
+              let endpointUrl = "{{hypersync_config.endpoint_url}}"
+              let allEventSignatures = [
+                {{#each ../codegen_contracts as |contract|}}
+                Types.{{contract.name.capitalized}}.eventSignatures,
+                {{/each}}
+              ]->Belt.Array.concatMany
+              let eventModLookup =
+                contracts
+                ->Belt.Array.flatMap(contract => contract.events)
+                ->EventModLookup.fromArrayOrThrow(~chain)
+              /*
+                Determines whether to use HypersyncClient Decoder or Viem for parsing events
+                Default is hypersync client decoder, configurable in config with:
+                ```yaml
+                event_decoder: "viem" || "hypersync-client"
+                ```
+              */
+              let shouldUseHypersyncClientDecoder = Env.Configurable.shouldUseHypersyncClientDecoder->Belt.Option.getWithDefault(
+                {{hypersync_config.is_client_decoder}},
+              )
+            }))
+            {{/with}}
+            {{/if}}
+            {{#if chain_config.network_config.hyperfuel_config }}
+            {{#with chain_config.network_config.hyperfuel_config as | hyperfuel_config |}}
+            module(HyperFuelWorker.Make({
+              let chain = chain
+              let contracts = contracts
+              let endpointUrl = "{{hyperfuel_config.endpoint_url}}"
+              let eventModLookup =
+                contracts
+                ->Belt.Array.flatMap(contract => contract.events)
+                ->EventModLookup.fromArrayOrThrow(~chain)
+            }))
+            {{/with}}
+            {{/if}}
+        }
+      },
+      {{/each}}
+    ]
 
-  let config = Config.make(
-    ~shouldRollbackOnReorg={{should_rollback_on_reorg}},
-    ~shouldSaveFullHistory={{should_save_full_history}},
-    ~isUnorderedMultichainMode={{is_unordered_multichain_mode}},
-    ~chains,
-    ~enableRawEvents={{enable_raw_events}},
-    ~entities=[
-    {{#each entities as |entity|}}
-      module(Entities.{{entity.name.capitalized}}),
-    {{/each}}
-    ],
-  )
-  Config.setGenerated(config)
+    Config.make(
+      ~shouldRollbackOnReorg={{should_rollback_on_reorg}},
+      ~shouldSaveFullHistory={{should_save_full_history}},
+      ~isUnorderedMultichainMode={{is_unordered_multichain_mode}},
+      ~chains,
+      ~enableRawEvents={{enable_raw_events}},
+      ~entities=[
+      {{#each entities as |entity|}}
+        module(Entities.{{entity.name.capitalized}}),
+      {{/each}}
+      ],
+    )
+  }
+
+  let config: ref<option<Config.t>> = ref(None)
 )
 
 let registerAllHandlers = () => {
@@ -150,5 +173,15 @@ let registerAllHandlers = () => {
     ~handlerPathRelativeToConfig="{{contract.handler.relative_to_config}}",
   )
 {{/each}}
-  config
+
+  let generatedConfig = makeGeneratedConfig()
+  config := Some(generatedConfig)
+  generatedConfig
+}
+
+let getConfig = () => {
+  switch config.contents {
+  | Some(config) => config
+  | None => registerAllHandlers()
+  }
 }

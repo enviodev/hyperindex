@@ -89,6 +89,7 @@ up to the root.
 type fetchStateData = {
   latestFetchedBlock: blockNumberAndTimestamp,
   contractAddressMapping: ContractAddressingMap.mapping,
+  //Events ordered from latest to earliest
   fetchedEventQueue: array<Types.eventBatchQueueItem>,
   //Used to prune dynamic contract registrations in the event
   //of a rollback.
@@ -163,6 +164,28 @@ module Parent = {
   }
 }
 
+let shallowCopyRegister = (self: t) => {
+  ...self,
+  fetchedEventQueue: self.fetchedEventQueue->Array.copy,
+}
+
+let copy = (self: t) => {
+  let rec loop = (self: t, ~parent=?) =>
+    switch self.registerType {
+    | RootRegister(_) =>
+      let copied = self->shallowCopyRegister
+      switch parent {
+      | Some(parent) => parent->Parent.joinChild(copied)
+      | None => copied
+      }
+    | DynamicContractRegister(dynamicContractId, nextRegistered) =>
+      nextRegistered->loop(
+        ~parent=self->shallowCopyRegister->Parent.make(~dynamicContractId, ~parent),
+      )
+    }
+
+  loop(self)
+}
 /**
 Comapritor for two events from the same chain. No need for chain id or timestamp
 */
@@ -171,9 +194,9 @@ let getEventCmp = (event: Types.eventBatchQueueItem) => {
 }
 
 /**
-Returns the earliest of two events on the same chain
+Returns the latest of two events on the same chain
 */
-let eventCmp = (a, b) => a->getEventCmp <= b->getEventCmp
+let eventCmp = (a, b) => a->getEventCmp > b->getEventCmp
 
 /**
 Merges two event queues on a single event fetcher
@@ -252,6 +275,7 @@ events.
 let updateRegister = (
   self: t,
   ~latestFetchedBlock,
+  //Events ordered earliest to latest
   ~newFetchedEvents: array<Types.eventBatchQueueItem>,
   ~isFetchingAtHead,
 ) => {
@@ -264,7 +288,7 @@ let updateRegister = (
     isFetchingAtHead,
     latestFetchedBlock,
     firstEventBlockNumber,
-    fetchedEventQueue: Array.concat(self.fetchedEventQueue, newFetchedEvents),
+    fetchedEventQueue: Array.concat(newFetchedEvents->Array.reverse, self.fetchedEventQueue),
   }
 }
 
@@ -327,6 +351,8 @@ let rec pruneAndMergeNextRegistered = (self: t, ~isMerged=false) => {
 /**
 Updates node at given id with given values and checks to see if it can be merged into its next register.
 Returns Error if the node with given id cannot be found (unexpected)
+
+fetchedEvents are ordered earliest to latest (as they are returned from the worker)
 */
 let update = (self: t, ~id, ~latestFetchedBlock, ~fetchedEvents, ~currentBlockHeight): result<
   t,
@@ -488,12 +514,14 @@ let getNextQuery = (~eventFilters=?, ~currentBlockHeight, ~partitionId, self: t)
   }
 }
 
+type itemWithPopFn = {item: Types.eventBatchQueueItem, popItemOffQueue: unit => unit}
+
 /**
 Represents a fetchState registers head of the  fetchedEventQueue as either
 an existing item, or no item with latest fetched block data
 */
 type queueItem =
-  | Item(Types.eventBatchQueueItem)
+  | Item(itemWithPopFn)
   | NoItem(blockNumberAndTimestamp)
 
 /**
@@ -505,7 +533,7 @@ Note: on the chain manager, when comparing multi chain, the timestamp is the hig
 */
 let getCmpVal = qItem =>
   switch qItem {
-  | Item({blockNumber, logIndex}) => (blockNumber, logIndex)
+  | Item({item: {blockNumber, logIndex}}) => (blockNumber, logIndex)
   | NoItem({blockNumber}) => (blockNumber, 0)
   }
 
@@ -516,37 +544,16 @@ let makeNoItem = ({latestFetchedBlock}: t) => NoItem(latestFetchedBlock)
 
 let qItemLt = (a, b) => a->getCmpVal < b->getCmpVal
 
-type earliestEventResponse = {
-  //make this lazy to prevent extra array duplications
-  //before evaluation of earliestQueueItem
-  getUpdatedFetchState: unit => t,
-  earliestQueueItem: queueItem,
-}
-
 /**
 Returns queue item WITHOUT the updated fetch state. Used for checking values
 not updating state
 */
 let getEarliestEventInRegister = (self: t) => {
-  switch self.fetchedEventQueue[0] {
-  | Some(head) => Item(head)
+  switch self.fetchedEventQueue->Utils.Array.last {
+  | Some(head) =>
+    Item({item: head, popItemOffQueue: () => self.fetchedEventQueue->Js.Array2.pop->ignore})
   | None => makeNoItem(self)
   }
-}
-
-/**
-Returns queue item WITH the updated fetch state. 
-*/
-let getEarliestEventInRegisterWithUpdatedQueue = (self: t) => {
-  let (getUpdatedFetchState, earliestQueueItem) = switch self.fetchedEventQueue[0] {
-  | None => (() => self, makeNoItem(self))
-  | Some(head) => (
-      () => {...self, fetchedEventQueue: self.fetchedEventQueue->Array.sliceToEnd(1)},
-      Item(head),
-    )
-  }
-
-  {getUpdatedFetchState, earliestQueueItem}
 }
 
 /**
@@ -579,21 +586,12 @@ fetch state with that item.
 
 Recurses through registers and Errors if ID does not exist
 */
-let rec popQItemAtRegisterId = (self: t, ~id, ~parent: option<Parent.t>=?) => {
+let rec popQItemAtRegisterId = (self: t, ~id) => {
   switch self.registerType {
   | RootRegister(_)
   | DynamicContractRegister(_) if id == self->getRegisterId =>
-    let updated = self->getEarliestEventInRegisterWithUpdatedQueue
-    switch parent {
-    | Some(parent) =>
-      {
-        ...updated,
-        getUpdatedFetchState: () => parent->Parent.joinChild(updated.getUpdatedFetchState()),
-      }->Ok
-    | None => Ok(updated)
-    }
-  | DynamicContractRegister(dynamicContractId, nextRegister) =>
-    nextRegister->popQItemAtRegisterId(~id, ~parent=self->Parent.make(~dynamicContractId, ~parent))
+    self->getEarliestEventInRegister->Ok
+  | DynamicContractRegister(_, nextRegister) => nextRegister->popQItemAtRegisterId(~id)
   | RootRegister(_) => Error(UnexpectedRegisterDoesNotExist(id))
   }
 }
@@ -799,18 +797,19 @@ let checkContainsRegisteredContractAddress = (self: t, ~contractName, ~contractA
 */
 let getLatestFullyFetchedBlock = (self: t) => self.latestFetchedBlock
 
-let rec pruneQueuePastValidBlock = (
-  queue: array<Types.eventBatchQueueItem>,
-  ~index=0,
-  ~accum=[],
-  ~lastKnownValidBlock,
-) => {
-  switch queue[index] {
-  | Some(head) if head.blockNumber <= lastKnownValidBlock.blockNumber =>
-    let _ = accum->Js.Array2.push(head)
-    queue->pruneQueuePastValidBlock(~lastKnownValidBlock, ~accum, ~index=index + 1)
-  | _ => accum
+let pruneQueuePastValidBlock = (queue: array<Types.eventBatchQueueItem>, ~lastKnownValidBlock) => {
+  let prunedQueue = []
+  let rec loop = index => {
+    switch queue[index] {
+    | Some(head) =>
+      if head.blockNumber <= lastKnownValidBlock.blockNumber {
+        prunedQueue->Js.Array2.push(head)->ignore
+      }
+      loop(index + 1)
+    | None => prunedQueue
+    }
   }
+  loop(0)
 }
 
 let pruneDynamicContractAddressesPastValidBlock = (~lastKnownValidBlock, register: t) => {

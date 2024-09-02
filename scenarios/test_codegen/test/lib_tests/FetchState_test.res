@@ -3,6 +3,12 @@ open RescriptMocha
 open FetchState
 open Enums.ContractType
 
+let getItem = item =>
+  switch item {
+  | Item({item}) => item->Some
+  | NoItem(_) => None
+  }
+
 let mockAddress1 = TestHelpers.Addresses.mockAddresses[0]->Option.getExn
 let mockAddress2 = TestHelpers.Addresses.mockAddresses[1]->Option.getExn
 let mockAddress3 = TestHelpers.Addresses.mockAddresses[2]->Option.getExn
@@ -192,9 +198,9 @@ describe("FetchState.fetchState", () => {
       firstEventBlockNumber: None,
       dynamicContracts: DynamicContractsMap.empty->DynamicContractsMap.add(dcId, [mockAddress2]),
       fetchedEventQueue: [
-        mockEvent(~blockNumber=1, ~logIndex=2),
-        mockEvent(~blockNumber=5),
         mockEvent(~blockNumber=6, ~logIndex=1),
+        mockEvent(~blockNumber=5),
+        mockEvent(~blockNumber=1, ~logIndex=2),
       ],
       registerType: DynamicContractRegister(
         dcId,
@@ -207,9 +213,9 @@ describe("FetchState.fetchState", () => {
           firstEventBlockNumber: None,
           dynamicContracts: DynamicContractsMap.empty,
           fetchedEventQueue: [
-            mockEvent(~blockNumber=1, ~logIndex=1),
-            mockEvent(~blockNumber=4),
             mockEvent(~blockNumber=6, ~logIndex=2),
+            mockEvent(~blockNumber=4),
+            mockEvent(~blockNumber=1, ~logIndex=1),
           ],
           registerType: RootRegister({endBlock: None}),
         },
@@ -226,12 +232,12 @@ describe("FetchState.fetchState", () => {
       firstEventBlockNumber: None,
       dynamicContracts: DynamicContractsMap.empty->DynamicContractsMap.add(dcId, [mockAddress2]),
       fetchedEventQueue: [
-        mockEvent(~blockNumber=1, ~logIndex=1),
-        mockEvent(~blockNumber=1, ~logIndex=2),
-        mockEvent(~blockNumber=4),
-        mockEvent(~blockNumber=5),
-        mockEvent(~blockNumber=6, ~logIndex=1),
         mockEvent(~blockNumber=6, ~logIndex=2),
+        mockEvent(~blockNumber=6, ~logIndex=1),
+        mockEvent(~blockNumber=5),
+        mockEvent(~blockNumber=4),
+        mockEvent(~blockNumber=1, ~logIndex=2),
+        mockEvent(~blockNumber=1, ~logIndex=1),
       ],
       registerType: RootRegister({endBlock: None}),
     }
@@ -241,9 +247,9 @@ describe("FetchState.fetchState", () => {
 
   it("update register", () => {
     let currentEvents = [
-      mockEvent(~blockNumber=1, ~logIndex=1),
-      mockEvent(~blockNumber=1, ~logIndex=2),
       mockEvent(~blockNumber=4),
+      mockEvent(~blockNumber=1, ~logIndex=2),
+      mockEvent(~blockNumber=1, ~logIndex=1),
     ]
     let root = {
       latestFetchedBlock: getBlockData(~blockNumber=500),
@@ -276,7 +282,7 @@ describe("FetchState.fetchState", () => {
       ...root,
       latestFetchedBlock: getBlockData(~blockNumber=600),
       isFetchingAtHead: true,
-      fetchedEventQueue: Array.concat(currentEvents, newEvents),
+      fetchedEventQueue: Array.concat(newEvents->Array.reverse, currentEvents),
     }
 
     Assert.deepEqual(expected1, updated1)
@@ -345,7 +351,7 @@ describe("FetchState.fetchState", () => {
         dcId2,
         {
           ...fetchState1,
-          fetchedEventQueue: Array.concat(fetchState1.fetchedEventQueue, newEvents),
+          fetchedEventQueue: Array.concat(newEvents->Array.reverse, fetchState1.fetchedEventQueue),
           firstEventBlockNumber: Some(5),
           registerType: DynamicContractRegister(dcId1, root),
         },
@@ -368,9 +374,9 @@ describe("FetchState.fetchState", () => {
       firstEventBlockNumber: None,
       dynamicContracts: DynamicContractsMap.empty->DynamicContractsMap.add(dcId, [mockAddress2]),
       fetchedEventQueue: [
-        mockEvent(~blockNumber=1, ~logIndex=2),
-        mockEvent(~blockNumber=5),
         mockEvent(~blockNumber=6, ~logIndex=1),
+        mockEvent(~blockNumber=5),
+        mockEvent(~blockNumber=1, ~logIndex=2),
       ],
       registerType: DynamicContractRegister(
         dcId,
@@ -383,18 +389,18 @@ describe("FetchState.fetchState", () => {
           firstEventBlockNumber: None,
           dynamicContracts: DynamicContractsMap.empty,
           fetchedEventQueue: [
-            mockEvent(~blockNumber=1, ~logIndex=1),
-            mockEvent(~blockNumber=4),
             mockEvent(~blockNumber=6, ~logIndex=2),
+            mockEvent(~blockNumber=4),
+            mockEvent(~blockNumber=1, ~logIndex=1),
           ],
           registerType: RootRegister({endBlock: None}),
         },
       ),
     }
 
-    let {earliestQueueItem} = fetchState->getEarliestEvent
+    let earliestQueueItem = fetchState->getEarliestEvent->getItem->Option.getExn
 
-    Assert.deepEqual(earliestQueueItem, Item(mockEvent(~blockNumber=1, ~logIndex=1)))
+    Assert.deepEqual(earliestQueueItem, mockEvent(~blockNumber=1, ~logIndex=1))
   })
 
   it("getNextQuery", () => {
@@ -408,9 +414,9 @@ describe("FetchState.fetchState", () => {
       firstEventBlockNumber: None,
       dynamicContracts: DynamicContractsMap.empty,
       fetchedEventQueue: [
-        mockEvent(~blockNumber=1, ~logIndex=1),
-        mockEvent(~blockNumber=4),
         mockEvent(~blockNumber=6, ~logIndex=2),
+        mockEvent(~blockNumber=4),
+        mockEvent(~blockNumber=1, ~logIndex=1),
       ],
       registerType: RootRegister({endBlock: None}),
     }
@@ -461,9 +467,9 @@ describe("FetchState.fetchState", () => {
       firstEventBlockNumber: None,
       dynamicContracts: DynamicContractsMap.empty->DynamicContractsMap.add(dcId, [mockAddress2]),
       fetchedEventQueue: [
-        mockEvent(~blockNumber=1, ~logIndex=2),
-        mockEvent(~blockNumber=5),
         mockEvent(~blockNumber=6, ~logIndex=1),
+        mockEvent(~blockNumber=5),
+        mockEvent(~blockNumber=1, ~logIndex=2),
       ],
       registerType: DynamicContractRegister(
         dcId,
@@ -476,9 +482,9 @@ describe("FetchState.fetchState", () => {
           firstEventBlockNumber: None,
           dynamicContracts: DynamicContractsMap.empty,
           fetchedEventQueue: [
-            mockEvent(~blockNumber=1, ~logIndex=1),
-            mockEvent(~blockNumber=4),
             mockEvent(~blockNumber=6, ~logIndex=2),
+            mockEvent(~blockNumber=4),
+            mockEvent(~blockNumber=1, ~logIndex=1),
           ],
           registerType: RootRegister({endBlock: None}),
         },
@@ -503,7 +509,7 @@ describe("FetchState.fetchState", () => {
       isFetchingAtHead: false,
       firstEventBlockNumber: None,
       dynamicContracts: DynamicContractsMap.empty,
-      fetchedEventQueue: [mockEvent(~blockNumber=99), mockEvent(~blockNumber=140)],
+      fetchedEventQueue: [mockEvent(~blockNumber=140), mockEvent(~blockNumber=99)],
       registerType: RootRegister({endBlock: Some(150)}),
     }
 
@@ -554,7 +560,7 @@ describe("FetchState.fetchState", () => {
       isFetchingAtHead: false,
       firstEventBlockNumber: None,
       dynamicContracts: DynamicContractsMap.empty,
-      fetchedEventQueue: [mockEvent(~blockNumber=99), mockEvent(~blockNumber=140)],
+      fetchedEventQueue: [mockEvent(~blockNumber=140), mockEvent(~blockNumber=99)],
       registerType: RootRegister({endBlock: None}),
     }
 
@@ -579,9 +585,9 @@ describe("FetchState.fetchState", () => {
       firstEventBlockNumber: None,
       dynamicContracts: DynamicContractsMap.empty->DynamicContractsMap.add(dcId1, [mockAddress2]),
       fetchedEventQueue: [
-        mockEvent(~blockNumber=1, ~logIndex=2),
-        mockEvent(~blockNumber=5),
         mockEvent(~blockNumber=6, ~logIndex=1),
+        mockEvent(~blockNumber=5),
+        mockEvent(~blockNumber=1, ~logIndex=2),
       ],
       registerType: DynamicContractRegister(dcId1, register2),
     }
@@ -619,9 +625,9 @@ describe("FetchState.fetchState", () => {
       firstEventBlockNumber: None,
       dynamicContracts: DynamicContractsMap.empty->DynamicContractsMap.add(dcId, [mockAddress2]),
       fetchedEventQueue: [
-        mockEvent(~blockNumber=1, ~logIndex=2),
-        mockEvent(~blockNumber=5),
         mockEvent(~blockNumber=6, ~logIndex=1),
+        mockEvent(~blockNumber=5),
+        mockEvent(~blockNumber=1, ~logIndex=2),
       ],
       registerType: DynamicContractRegister(
         dcId,
@@ -634,9 +640,9 @@ describe("FetchState.fetchState", () => {
           firstEventBlockNumber: None,
           dynamicContracts: DynamicContractsMap.empty,
           fetchedEventQueue: [
-            mockEvent(~blockNumber=1, ~logIndex=1),
-            mockEvent(~blockNumber=4),
             mockEvent(~blockNumber=6, ~logIndex=2),
+            mockEvent(~blockNumber=4),
+            mockEvent(~blockNumber=1, ~logIndex=1),
           ],
           registerType: RootRegister({endBlock: None}),
         },

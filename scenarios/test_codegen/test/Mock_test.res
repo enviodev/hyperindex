@@ -17,12 +17,11 @@ describe("E2E Mock Event Batch", () => {
       eventMod: module(Types.Event with type eventArgs = 'a),
     ) => {
       let eventMod = eventMod->Types.eventModToInternal
-      switch RegisteredEvents.global
-      ->RegisteredEvents.get(eventMod)
-      ->Option.flatMap(registeredEvent => registeredEvent.loaderHandler) {
-      | Some(handler) =>
+      let module(Event) = eventMod
+      switch Event.handlerRegister->Types.HandlerTypes.Register.getLoaderHandler {
+      | Some(loaderHandler) =>
         await event->EventProcessing.runEventHandler(
-          ~handler,
+          ~loaderHandler,
           ~latestProcessedBlocks=EventProcessing.EventsProcessed.makeEmpty(~config),
           ~inMemoryStore,
           ~logger=Logging.logger,
@@ -70,7 +69,6 @@ describe_skip("E2E Db check", () => {
       ~eventBatch=MockEvents.eventBatchItems,
       ~checkContractIsRegistered=checkContractIsRegisteredStub,
       ~latestProcessedBlocks=EventProcessing.EventsProcessed.makeEmpty(~config),
-      ~registeredEvents=RegisteredEvents.global,
       ~loadLayer,
       ~config,
     )

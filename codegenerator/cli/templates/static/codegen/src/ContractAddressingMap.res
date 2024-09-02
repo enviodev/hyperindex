@@ -12,17 +12,17 @@ let addAddress = (map: mapping, ~name: string, ~address: Address.t) => {
   map.nameByAddress->Js.Dict.set(address->Address.toString, name)
 
   let oldAddresses =
-    map.addressesByName->Js.Dict.get(name)->Belt.Option.getWithDefault(Belt.Set.String.empty)
+    map.addressesByName->Utils.Dict.dangerouslyGetNonOption(name)->Belt.Option.getWithDefault(Belt.Set.String.empty)
   let newAddresses = oldAddresses->Belt.Set.String.add(address->Address.toString)
   map.addressesByName->Js.Dict.set(name, newAddresses)
 }
 
 let getAddresses = (map: mapping, name: string) => {
-  map.addressesByName->Js.Dict.get(name)
+  map.addressesByName->Utils.Dict.dangerouslyGetNonOption(name)
 }
 
 let getName = (map: mapping, address: string) => {
-  map.nameByAddress->Js.Dict.get(address)
+  map.nameByAddress->Utils.Dict.dangerouslyGetNonOption(address)
 }
 
 let make = () => {

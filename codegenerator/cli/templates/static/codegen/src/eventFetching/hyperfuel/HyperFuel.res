@@ -6,7 +6,7 @@ module CachedClients = {
   let cache: Js.Dict.t<HyperFuelClient.t> = Js.Dict.empty()
 
   let getClient = url => {
-    switch cache->Js.Dict.get(url) {
+    switch cache->Utils.Dict.dangerouslyGetNonOption(url) {
     | Some(client) => client
     | None =>
       let newClient = HyperFuelClient.make({url: url})
@@ -158,7 +158,7 @@ module LogsQuery = {
     receipts->Belt.Array.map(receipt => {
       let block =
         blocksDict
-        ->Js.Dict.get(receipt.blockHeight->(Utils.magic: int => string))
+        ->Utils.Dict.dangerouslyGetNonOption(receipt.blockHeight->(Utils.magic: int => string))
         ->getParam("Failed to find block associated to receipt")
       {
         transactionId: receipt.txId,
