@@ -251,6 +251,7 @@ pub enum RescriptTypeIdent {
     Address,
     String,
     Bool,
+    Timestamp,
     //Enums defined in the user's schema
     SchemaEnum(CapitalizedOptions),
     Array(Box<RescriptTypeIdent>),
@@ -288,6 +289,7 @@ impl RescriptTypeIdent {
             Self::String => "string".to_string(),
             Self::ID => "id".to_string(),
             Self::Bool => "bool".to_string(),
+            Self::Timestamp => "Js.Date.t".to_string(),
             Self::Array(inner_type) => {
                 format!("array<{}>", inner_type.to_string())
             }
@@ -335,6 +337,12 @@ impl RescriptTypeIdent {
             Self::String => "S.string".to_string(),
             Self::ID => "S.string".to_string(),
             Self::Bool => "S.bool".to_string(),
+            Self::Timestamp => {
+                // Don't use S.unknown, since it's not serializable to json
+                // In a nutshell, this is completely unsafe.
+                "S.json(~validate=false)->(Utils.magic: S.t<Js.Json.t> => S.t<Js.Date.t>)"
+                    .to_string()
+            }
             Self::Array(inner_type) => {
                 format!("S.array({})", inner_type.to_rescript_schema())
             }
@@ -402,6 +410,7 @@ impl RescriptTypeIdent {
             Self::String => "\"foo\"".to_string(),
             Self::ID => "\"my_id\"".to_string(),
             Self::Bool => "false".to_string(),
+            Self::Timestamp => "Js.Date.fromFloat(0.)".to_string(),
             Self::Array(_) => "[]".to_string(),
             Self::Option(_) => "None".to_string(),
             Self::SchemaEnum(enum_name) => {
@@ -467,6 +476,7 @@ impl RescriptTypeIdent {
             Self::String => "\"foo\"".to_string(),
             Self::ID => "\"my_id\"".to_string(),
             Self::Bool => "false".to_string(),
+            Self::Timestamp => "new Date(0)".to_string(),
             Self::Array(_) => "[]".to_string(),
             Self::Option(_) => "null".to_string(),
             Self::SchemaEnum(enum_name) => {

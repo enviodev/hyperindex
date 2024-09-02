@@ -10,8 +10,8 @@ type fieldType =
   | @as("TEXT") Text
   | @as("SERIAL") Serial
   | @as("JSON") Json
-  | @as("TIMESTAMP") Timestamp
-  | @as("TIMESTAMP WITH TIME ZONE NULL") TimestampWithTZNull
+  | @as("TIMESTAMP WITH TIME ZONE") Timestamp
+  | @as("TIMESTAMP") TimestampWithoutTimezone
   | Enum(string)
 
 type field = {
