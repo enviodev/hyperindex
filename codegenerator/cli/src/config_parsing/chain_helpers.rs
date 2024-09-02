@@ -533,9 +533,11 @@ mod test {
         "poa-sokol",
         "gnosis",
         "matic",
+        "mumbai",
         "fantom",
         "fantom-testnet",
         "bsc",
+        "chapel",
         "clover",
         "avalanche",
         "fuji",
@@ -568,9 +570,7 @@ mod test {
             .into_iter()
             .map(|s| {
                 GraphNetwork::deserialize(serde_json::Value::String(s.clone()))
-                    // serde_json::from_str::<GraphNetwork>(&s)
                     .expect(format!("Invalid graph network: {}", s).as_str())
-                // GraphNetwork::from_str(&s).expect(format!("Invalid graph network: {}", s).as_str())
             })
             .collect::<Vec<GraphNetwork>>();
 
