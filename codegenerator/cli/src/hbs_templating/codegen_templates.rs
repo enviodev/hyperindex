@@ -2,7 +2,8 @@ use std::path::PathBuf;
 use std::{collections::HashMap, fmt::Display};
 
 use super::hbs_dir_generator::HandleBarsDirGenerator;
-use crate::config_parsing::system_config::{Abi, Ecosystem, EventPayload, HyperfuelConfig};
+use crate::config_parsing::event_parsing::eth_type_to_topic_filter;
+use crate::config_parsing::system_config::{Ecosystem, EventPayload, HyperfuelConfig};
 use crate::rescript_types::{RescriptRecordField, RescriptTypeExpr, RescriptTypeIdent};
 use crate::{
     config_parsing::{
@@ -351,15 +352,49 @@ impl EventTemplate {
         "(_) => Js.Exn.raiseError(\"HyperFuel decoder not implemented\")";
 
     const GET_TOPIC_SELECTION_CODE_STUB: &'static str = r#"eventFilter =>
-      LogSelection.makeTopicSelection(
-        ~topic0=[sighash],
-        ~topic1=eventFilter.owner->Belt.Array.map(Viem.TopicFilter.fromAddress),
-        ~topic2=eventFilter.spender->Belt.Array.map(Viem.TopicFilter.fromAddress),
-      )->Utils.unwrapResultExn
+      LogSelection.makeTopicSelection(~topic0=[sighash])->Utils.unwrapResultExn
     "#;
 
-    const EVENT_FILTER_TYPE_STUB: &'static str =
-        "{owner: array<Address.t>, spender: array<Address.t>}";
+    const EVENT_FILTER_TYPE_STUB: &'static str = "{}";
+
+    pub fn generate_event_filter_type(params: &Vec<EventParam>) -> String {
+        let field_rows = params
+            .iter()
+            .filter(|param| param.indexed)
+            .map(|param| {
+                format!(
+                    "@as(\"{}\") {}: array<{}>",
+                    param.name,
+                    RescriptRecordField::to_valid_res_name(&param.name),
+                    abi_to_rescript_type(&param.into())
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+
+        format!("{{ {field_rows} }}")
+    }
+
+    pub fn generate_get_topic_selection_code(params: &Vec<EventParam>) -> String {
+        let indexed_params = params.iter().filter(|param| param.indexed);
+
+        let topic_filter_calls = indexed_params
+            .enumerate()
+            .map(|(i, param)| {
+                let topic_number = i + 1;
+                let param_name = RescriptRecordField::to_valid_res_name(&param.name);
+                let topic_filter = eth_type_to_topic_filter(&param.into());
+                format!(
+                    "~topic{topic_number}=eventFilter.{param_name}->Belt.Array.\
+                     map({topic_filter}), "
+                )
+            })
+            .collect::<String>();
+
+        format!(
+            "(eventFilter) => LogSelection.makeTopicSelection(~topic0=[sighash], {topic_filter_calls})->Utils.unwrapResultExn"
+        )
+    }
 
     pub fn generate_convert_hyper_sync_event_args_code(params: &Vec<EventParam>) -> String {
         if params.is_empty() {
@@ -449,8 +484,8 @@ impl EventTemplate {
                     convert_hyper_sync_event_args_code:
                         Self::generate_convert_hyper_sync_event_args_code(params),
                     decode_hyper_fuel_data_code: Self::DECODE_HYPER_FUEL_DATA_CODE.to_string(),
-                    event_filter_type: Self::EVENT_FILTER_TYPE_STUB.to_string(),
-                    get_topic_selection_code: Self::GET_TOPIC_SELECTION_CODE_STUB.to_string(),
+                    event_filter_type: Self::generate_event_filter_type(params),
+                    get_topic_selection_code: Self::generate_get_topic_selection_code(params),
                 })
             }
             EventPayload::Data(type_indent) => Ok(EventTemplate {

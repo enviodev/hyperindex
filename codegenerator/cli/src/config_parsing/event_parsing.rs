@@ -16,6 +16,21 @@ impl<'a> From<&'a EthAbiEventParam> for EthereumEventParam<'a> {
     }
 }
 
+pub fn eth_type_to_topic_filter(param: &EthereumEventParam) -> String {
+    match &param.abi_type {
+        EthAbiParamType::Address => "Viem.TopicFilter.fromAddress",
+        EthAbiParamType::Uint(_size) | EthAbiParamType::Int(_size) => "Viem.TopicFilter.fromBigInt",
+        EthAbiParamType::Bytes | EthAbiParamType::FixedBytes(_) => "Viem.TopicFilter.fromBytes",
+        EthAbiParamType::Bool => "Viem.TopicFilter.fromBool",
+        EthAbiParamType::String => "Viem.TopicFilter.fromString",
+        EthAbiParamType::Array(_) | EthAbiParamType::FixedArray(_, _) => {
+            todo!("Unhandled array as topic")
+        }
+        EthAbiParamType::Tuple(_) => todo!("Unhandled tuple as topic"),
+    }
+    .to_string()
+}
+
 pub fn abi_to_rescript_type(param: &EthereumEventParam) -> RescriptTypeIdent {
     match &param.abi_type {
         EthAbiParamType::Uint(_size) => RescriptTypeIdent::BigInt,
