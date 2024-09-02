@@ -2212,17 +2212,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a7a70ba024b9dc04c27ea2f0c0548feb474ec5c54bba33a7f72f873a39d07b24"
 
 [[package]]
-name = "managementScripts"
-version = "0.1.0"
-dependencies = [
- "envio",
- "reqwest",
- "serde",
- "strum 0.24.1",
- "tokio",
-]
-
-[[package]]
 name = "md-5"
 version = "0.10.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3422,6 +3411,17 @@ name = "scopeguard"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
+
+[[package]]
+name = "scripts"
+version = "0.1.0"
+dependencies = [
+ "envio",
+ "reqwest",
+ "serde",
+ "strum 0.24.1",
+ "tokio",
+]
 
 [[package]]
 name = "scrypt"
