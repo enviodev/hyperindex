@@ -566,14 +566,15 @@ pub enum SyncSource {
     HyperfuelConfig(HyperfuelConfig),
 }
 
-// Check if the given RPC URL is valid in terms of formatting.
-// For now, we only check if it starts with http:// or https://
-fn validate_url(url: &str) -> bool {
+// Check if the given URL is valid in terms of formatting
+fn parse_url(url: &str) -> Option<String> {
     // Check URL format
     if !url.starts_with("http://") && !url.starts_with("https://") {
-        return false;
+        return None;
     }
-    true
+    // Trim any trailing slashes from the URL
+    let trimmed_url = url.trim_end_matches('/').to_string();
+    Some(trimmed_url)
 }
 
 impl SyncSource {
@@ -613,10 +614,12 @@ impl SyncSource {
               }),
               ..
             } => {
-              let urls: Vec<String> = url.into();
-              for url in urls.iter() {
-                if !validate_url(url) {
-                  return Err(anyhow!("EE109: The RPC url \"{}\" is incorrect format. The RPC url needs to start with either http:// or https://", url));
+              let config_urls: Vec<String> = url.into();
+              let mut urls = vec![];
+              for url in config_urls.iter() {
+                match parse_url(url) {
+                    None => return Err(anyhow!("EE109: The RPC url \"{}\" is incorrect format. The RPC url needs to start with either http:// or https://", url)),
+                    Some(endpoint_url) => urls.push(endpoint_url)
                 }
               }
               Ok(Self::RpcConfig(RpcConfig {
@@ -656,12 +659,10 @@ impl SyncSource {
               rpc_config: None,
               ..
             } => {
-              if !validate_url(&url) {
-                return Err(anyhow!("EE106: The HyperSync url \"{}\" is incorrect format. The HyperSync url needs to start with either http:// or https://", url));
+              match parse_url(&url) {
+                  None => Err(anyhow!("EE106: The HyperSync url \"{}\" is incorrect format. The HyperSync url needs to start with either http:// or https://", url)),
+                  Some(endpoint_url) => Ok(Self::HypersyncConfig(HypersyncConfig { endpoint_url, is_client_decoder }))
               }
-              // Trim any trailing slashes from the URL
-              let trimmed_url = url.trim_end_matches('/').to_string();
-              Ok(Self::HypersyncConfig(HypersyncConfig { endpoint_url: trimmed_url, is_client_decoder }))
             }
         }
     }
@@ -1224,26 +1225,28 @@ mod test {
     }
 
     #[test]
-    fn test_valid_urls() {
+    fn test_parse_url() {
         let valid_url_1 = "https://eth-mainnet.g.alchemy.com/v2/T7uPV59s7knYTOUardPPX0hq7n7_rQwv";
         let valid_url_2 = "http://api.example.org:8080";
         let valid_url_3 = "https://eth.com/rpc-endpoint";
-        let is_valid_url_1 = super::validate_url(valid_url_1);
-        let is_valid_url_2 = super::validate_url(valid_url_2);
-        let is_valid_url_3 = super::validate_url(valid_url_3);
-        assert!(is_valid_url_1);
-        assert!(is_valid_url_2);
-        assert!(is_valid_url_3);
-    }
+        assert_eq!(super::parse_url(valid_url_1), Some(valid_url_1.to_string()));
+        assert_eq!(super::parse_url(valid_url_2), Some(valid_url_2.to_string()));
+        assert_eq!(super::parse_url(valid_url_3), Some(valid_url_3.to_string()));
 
-    #[test]
-    fn test_invalid_urls() {
         let invalid_url_missing_slash = "http:/example.com";
         let invalid_url_other_protocol = "ftp://example.com";
-        let is_invalid_missing_slash = super::validate_url(invalid_url_missing_slash);
-        let is_invalid_other_protocol = super::validate_url(invalid_url_other_protocol);
-        assert!(!is_invalid_missing_slash);
-        assert!(!is_invalid_other_protocol);
+        assert_eq!(super::parse_url(invalid_url_missing_slash), None);
+        assert_eq!(super::parse_url(invalid_url_other_protocol), None);
+
+        // With trailing slashes
+        assert_eq!(
+            super::parse_url("https://somechain.hypersync.xyz/"),
+            Some("https://somechain.hypersync.xyz".to_string())
+        );
+        assert_eq!(
+            super::parse_url("https://somechain.hypersync.xyz//"),
+            Some("https://somechain.hypersync.xyz".to_string())
+        );
     }
 
     #[test]
