@@ -110,7 +110,7 @@ module Make = (
     }
   }
 
-  let getLogSelection = (~contractAddressMapping): array<LogSelection.t> => {
+  let getLogSelectionOrThrow = (~contractAddressMapping): array<LogSelection.t> => {
     T.contracts->Belt.Array.keepMap((contract): option<LogSelection.t> => {
       switch contractAddressMapping->ContractAddressingMap.getAddressesFromContractName(
         ~contractName=contract.name,
@@ -150,7 +150,7 @@ module Make = (
     )
 
     let logSelections = try {
-      getLogSelection(~contractAddressMapping)
+      getLogSelectionOrThrow(~contractAddressMapping)
     } catch {
     | exn =>
       exn->ErrorHandling.mkLogAndRaise(
