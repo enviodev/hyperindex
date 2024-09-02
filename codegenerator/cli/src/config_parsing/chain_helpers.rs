@@ -53,7 +53,9 @@ pub enum Network {
     #[subenum(GraphNetwork)]
     PoaSokol = 77,
     #[subenum(GraphNetwork)]
-    Chapel = 97,
+    Mumbai = 80001,
+    #[subenum(HypersyncNetwork, GraphNetwork(serde(rename = "chapel")))]
+    BscTestnet = 97,
     #[subenum(GraphNetwork)]
     PoaCore = 99,
     #[subenum(HypersyncNetwork, NetworkWithExplorer, GraphNetwork)]
@@ -94,7 +96,7 @@ pub enum Network {
     ArbitrumNova = 42170,
     #[subenum(NetworkWithExplorer, GraphNetwork)]
     ArbitrumGoerli = 421613,
-    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
+    #[subenum(HypersyncNetwork, NetworkWithExplorer, GraphNetwork)]
     ArbitrumSepolia = 421614,
     #[subenum(HypersyncNetwork, GraphNetwork, NetworkWithExplorer)]
     Celo = 42220,
@@ -104,8 +106,6 @@ pub enum Network {
     Avalanche = 43114,
     #[subenum(GraphNetwork)]
     CeloAlfajores = 44787,
-    #[subenum(HypersyncNetwork, NetworkWithExplorer, GraphNetwork)]
-    Mumbai = 80001,
     #[subenum(HypersyncNetwork, GraphNetwork)]
     // Blockscout: https://explorer.aurora.dev/
     Aurora = 1313161554,
@@ -116,7 +116,7 @@ pub enum Network {
     // https://explorer.harmony.one/
     // https://getblock.io/explorers/harmony/
     Harmony = 1666600000, // shard 0
-    #[subenum(GraphNetwork)]
+    #[subenum(GraphNetwork(serde(rename = "base-testnet")))]
     BaseGoerli = 84531,
     #[subenum(HypersyncNetwork, GraphNetwork)]
     ZksyncEra = 324,
@@ -143,10 +143,6 @@ pub enum Network {
     // blockscout: https://pacific-explorer.manta.network/
     // w3w.ai: https://manta.socialscan.io/
     Manta = 169,
-    #[subenum(HypersyncNetwork)]
-    // Explorers:
-    // blockscout: https://explorer.jolnir.taiko.xyz/
-    TaikoJolnr = 167007,
     #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     Kroma = 255,
     #[subenum(HypersyncNetwork)]
@@ -174,14 +170,6 @@ pub enum Network {
     Zora = 7777777,
     #[subenum(HypersyncNetwork)]
     // Explorers:
-    // https://explorer.publicgoods.network/
-    PublicGoods = 424,
-    #[subenum(HypersyncNetwork)]
-    // Explorers:
-    // Blockscout: https://explorer-mainnet-algorand-rollup.a1.milkomeda.com/
-    A1Milkomeda = 2002,
-    #[subenum(HypersyncNetwork)]
-    // Explorers:
     // Blockscout: https://explorer-mainnet-cardano-evm.c1.milkomeda.com/
     C1Milkomeda = 2001,
     #[subenum(HypersyncNetwork)]
@@ -199,10 +187,6 @@ pub enum Network {
     // https://explorer.zetachain.com/
     // https://zetachain.explorers.guru/
     Zeta = 7000,
-    #[subenum(HypersyncNetwork)]
-    // Explorers:
-    // https://artio.beratrail.io/
-    BerachainArtio = 80085,
     #[subenum(HypersyncNetwork)]
     // Explorers:
     // https://neonscan.org/
@@ -245,6 +229,25 @@ pub enum Network {
     // // Explorers:
     // // https://explorer.degen.tips/
     // Degen = 666666666,
+    #[subenum(HypersyncNetwork)]
+    Chiliz = 8888,
+    #[subenum(HypersyncNetwork)]
+    IncoGentryTestnet = 9090,
+    #[subenum(HypersyncNetwork)]
+    Zircuit = 48900,
+    #[subenum(HypersyncNetwork)]
+    MevCommit = 17864,
+    #[subenum(HypersyncNetwork)]
+    GaladrielDevnet = 696969,
+    #[subenum(HypersyncNetwork)]
+    SophonTestnet = 531050104,
+    #[subenum(HypersyncNetwork)]
+    KakarotSepolia = 1802203764,
+    #[subenum(HypersyncNetwork)]
+    BerachainBartio = 80084,
+    // Still syncing
+    // #[subenum(HypersyncNetwork)]
+    // Saakuru = 7225878,
 }
 
 impl Network {
@@ -260,39 +263,41 @@ impl Network {
     //TODO: research a sufficient threshold for all chain (some should be 0)
     pub fn get_confirmed_block_threshold(&self) -> i32 {
         match self {
-            Network::EthereumMainnet
-            | Network::Goerli
+            //Reorgs do not happen on these networks
+            Network::OptimismGoerli
+            | Network::OptimismSepolia
             | Network::Optimism
-            | Network::Base
+            | Network::ArbitrumOne
+            | Network::ArbitrumNova
+            | Network::ArbitrumGoerli
+            | Network::ArbitrumSepolia => 0,
+            //TODO: research a sufficient threshold for all chains
+            Network::Base
+            | Network::Mumbai
             | Network::BaseSepolia
             | Network::Bsc
-            | Network::PoaSokol
-            | Network::Chapel
-            | Network::PoaCore
+            | Network::Goerli
             | Network::Gnosis
-            | Network::Fuse
             | Network::Fantom
             | Network::Polygon
             | Network::Boba
-            | Network::OptimismGoerli
-            | Network::OptimismSepolia
+            | Network::Celo
+            | Network::Aurora
+            | Network::AuroraTestnet
+            | Network::Harmony
+            | Network::EthereumMainnet
+            | Network::PoaSokol
+            | Network::BscTestnet
+            | Network::PoaCore
+            | Network::Fuse
             | Network::Clover
             | Network::Moonbeam
             | Network::Moonriver
             | Network::Mbase
             | Network::FantomTestnet
-            | Network::ArbitrumOne
-            | Network::ArbitrumNova
-            | Network::ArbitrumGoerli
-            | Network::ArbitrumSepolia
-            | Network::Celo
             | Network::Fuji
             | Network::Avalanche
             | Network::CeloAlfajores
-            | Network::Mumbai
-            | Network::Aurora
-            | Network::AuroraTestnet
-            | Network::Harmony
             | Network::BaseGoerli
             | Network::ZksyncEra
             | Network::Sepolia
@@ -305,7 +310,6 @@ impl Network {
             | Network::Scroll
             | Network::Metis
             | Network::Manta
-            | Network::TaikoJolnr
             | Network::Kroma
             | Network::Lukso
             | Network::XLayerTestnet
@@ -313,13 +317,10 @@ impl Network {
             | Network::Holesky
             | Network::GnosisChiado
             | Network::Zora
-            | Network::PublicGoods
-            | Network::A1Milkomeda
             | Network::C1Milkomeda
             | Network::Flare
             | Network::Mantle
             | Network::Zeta
-            | Network::BerachainArtio
             | Network::NeonEvm
             | Network::Rsk
             | Network::ShimmerEvm
@@ -329,7 +330,15 @@ impl Network {
             | Network::Amoy
             | Network::Crab
             | Network::Darwinia
-            | Network::Cyber => DEFAULT_CONFIRMED_BLOCK_THRESHOLD,
+            | Network::Cyber
+            | Network::Chiliz
+            | Network::IncoGentryTestnet
+            | Network::Zircuit
+            | Network::MevCommit
+            | Network::GaladrielDevnet
+            | Network::SophonTestnet
+            | Network::KakarotSepolia
+            | Network::BerachainBartio => DEFAULT_CONFIRMED_BLOCK_THRESHOLD,
         }
     }
 }
@@ -469,9 +478,11 @@ pub fn get_confirmed_block_threshold_from_id(id: u64) -> i32 {
 
 #[cfg(test)]
 mod test {
+
     use super::{get_etherscan_client, GraphNetwork, HypersyncNetwork, NetworkWithExplorer};
     use crate::config_parsing::chain_helpers::Network;
     use pretty_assertions::assert_eq;
+    use serde::Deserialize;
     use strum::IntoEnumIterator;
 
     #[test]
@@ -500,7 +511,7 @@ mod test {
     #[test]
     fn network_deserialize_graph() {
         /*List of networks supported by graph found here:
-         * https://github.com/graphprotocol/graph-tooling/blob/main/packages/cli/src/protocols/index.ts#L76-L117
+         * https://github.com/graphprotocol/graph-tooling/blob/main/packages/cli/src/protocols/index.ts#L94-L132
          */
         let networks = r#"[
         "mainnet",
@@ -526,11 +537,12 @@ mod test {
         "mbase",
         "arbitrum-one",
         "arbitrum-goerli",
+        "arbitrum-sepolia",
         "optimism",
         "optimism-goerli",
         "aurora",
         "aurora-testnet",
-        "base-goerli",
+        "base-testnet",
         "base",
         "zksync-era",
         "zksync-era-testnet",
@@ -541,7 +553,16 @@ mod test {
         "scroll"
     ]"#;
 
-        let supported_graph_networks = serde_json::from_str::<Vec<GraphNetwork>>(networks).unwrap();
+        let supported_graph_networks = serde_json::from_str::<Vec<String>>(networks)
+            .unwrap()
+            .into_iter()
+            .map(|s| {
+                GraphNetwork::deserialize(serde_json::Value::String(s.clone()))
+                    // serde_json::from_str::<GraphNetwork>(&s)
+                    .expect(format!("Invalid graph network: {}", s).as_str())
+                // GraphNetwork::from_str(&s).expect(format!("Invalid graph network: {}", s).as_str())
+            })
+            .collect::<Vec<GraphNetwork>>();
 
         let defined_networks = GraphNetwork::iter().collect::<Vec<_>>();
 
