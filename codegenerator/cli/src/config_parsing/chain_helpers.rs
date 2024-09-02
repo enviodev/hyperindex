@@ -261,6 +261,7 @@ impl Network {
     //TODO: research a sufficient threshold for all chain (some should be 0)
     pub fn get_confirmed_block_threshold(&self) -> i32 {
         match self {
+            //Reorgs do not happen on these networks
             Network::OptimismGoerli
             | Network::OptimismSepolia
             | Network::Optimism
@@ -268,8 +269,73 @@ impl Network {
             | Network::ArbitrumNova
             | Network::ArbitrumGoerli
             | Network::ArbitrumSepolia => 0,
-
-            _ => DEFAULT_CONFIRMED_BLOCK_THRESHOLD,
+            //TODO: research a sufficient threshold for all chains
+            Network::Base
+            | Network::BaseSepolia
+            | Network::Bsc
+            | Network::Goerli
+            | Network::Gnosis
+            | Network::Fantom
+            | Network::Polygon
+            | Network::Boba
+            | Network::Celo
+            | Network::Aurora
+            | Network::AuroraTestnet
+            | Network::Harmony
+            | Network::EthereumMainnet
+            | Network::PoaSokol
+            | Network::BscTestnet
+            | Network::PoaCore
+            | Network::Fuse
+            | Network::Clover
+            | Network::Moonbeam
+            | Network::Moonriver
+            | Network::Mbase
+            | Network::FantomTestnet
+            | Network::Fuji
+            | Network::Avalanche
+            | Network::CeloAlfajores
+            | Network::BaseGoerli
+            | Network::ZksyncEra
+            | Network::Sepolia
+            | Network::Linea
+            | Network::Rinkeby
+            | Network::ZksyncEraTestnet
+            | Network::PolygonZkevmTestnet
+            | Network::PolygonZkevm
+            | Network::ScrollSepolia
+            | Network::Scroll
+            | Network::Metis
+            | Network::Manta
+            | Network::Kroma
+            | Network::Lukso
+            | Network::XLayerTestnet
+            | Network::XLayer
+            | Network::Holesky
+            | Network::GnosisChiado
+            | Network::Zora
+            | Network::C1Milkomeda
+            | Network::Flare
+            | Network::Mantle
+            | Network::Zeta
+            | Network::NeonEvm
+            | Network::Rsk
+            | Network::ShimmerEvm
+            | Network::Blast
+            | Network::BlastSepolia
+            | Network::FhenixTestnet
+            | Network::Amoy
+            | Network::Crab
+            | Network::Darwinia
+            | Network::Cyber
+            | Network::Chiliz
+            | Network::IncoGentryTestnet
+            | Network::Zircuit
+            | Network::MevCommit
+            | Network::GaladrielDevnet
+            | Network::SophonTestnet
+            | Network::KakarotSepolia
+            | Network::BerachainBartio => DEFAULT_CONFIRMED_BLOCK_THRESHOLD,
         }
     }
 }
