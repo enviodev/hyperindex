@@ -237,14 +237,14 @@ pub enum Network {
     #[subenum(HypersyncNetwork)]
     MevCommit = 17864,
     #[subenum(HypersyncNetwork)]
-    GaladrialDevnet = 696969,
+    GaladrielDevnet = 696969,
     #[subenum(HypersyncNetwork)]
     SophonTestnet = 531050104,
     #[subenum(HypersyncNetwork)]
     KakarotSepolia = 1802203764,
     #[subenum(HypersyncNetwork)]
     BerachainBartio = 80084,
-    /// Still syncing
+    // Still syncing
     // #[subenum(HypersyncNetwork)]
     // Saakuru = 7225878,
 }
