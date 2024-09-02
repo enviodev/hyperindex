@@ -4,6 +4,7 @@
   "scripts": {
     "ts:clean": "tsc --clean",
     "ts:build": "hardhat compile && tsc --build",
+    "ts:test": "tsc --build",
     "ts:watch": "tsc --watch",
     "gen:clean": "(cd generated && rescript clean)",
     "gen:build": "(cd generated && rescript)",
