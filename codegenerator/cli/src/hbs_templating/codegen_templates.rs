@@ -1,22 +1,22 @@
-use std::path::PathBuf;
-use std::{collections::HashMap, fmt::Display};
+use std::{collections::HashMap, fmt::Display, path::PathBuf};
 
 use super::hbs_dir_generator::HandleBarsDirGenerator;
-use crate::config_parsing::event_parsing::eth_type_to_topic_filter;
-use crate::config_parsing::system_config::{Ecosystem, EventPayload, HyperfuelConfig};
-use crate::rescript_types::{RescriptRecordField, RescriptTypeExpr, RescriptTypeIdent};
 use crate::{
     config_parsing::{
         entity_parsing::{Entity, Field, GraphQLEnum, MultiFieldIndex, Schema},
-        event_parsing::abi_to_rescript_type,
+        event_parsing::{abi_to_rescript_type, eth_type_to_topic_filter},
         postgres_types,
-        system_config::{self, HypersyncConfig, RpcConfig, SystemConfig},
+        system_config::{
+            self, Abi, Ecosystem, EventPayload, HyperfuelConfig, HypersyncConfig, RpcConfig,
+            SystemConfig,
+        },
     },
     persisted_state::{PersistedState, PersistedStateJsonString},
     project_paths::{
         handler_paths::HandlerPathsTemplate, path_utils::add_trailing_relative_dot,
         ParsedProjectPaths,
     },
+    rescript_types::{RescriptRecordField, RescriptTypeExpr, RescriptTypeIdent},
     template_dirs::TemplateDirs,
     utils::text::{Capitalize, CapitalizedOptions, CaseOptions},
 };
@@ -351,9 +351,8 @@ impl EventTemplate {
     const DECODE_HYPER_FUEL_DATA_CODE: &'static str =
         "(_) => Js.Exn.raiseError(\"HyperFuel decoder not implemented\")";
 
-    const GET_TOPIC_SELECTION_CODE_STUB: &'static str = r#"eventFilter =>
-      LogSelection.makeTopicSelection(~topic0=[sighash])->Utils.unwrapResultExn
-    "#;
+    const GET_TOPIC_SELECTION_CODE_STUB: &'static str =
+        "eventFilter => LogSelection.makeTopicSelection(~topic0=[sighash])->Utils.unwrapResultExn";
 
     const EVENT_FILTER_TYPE_STUB: &'static str = "{}";
 
@@ -392,7 +391,8 @@ impl EventTemplate {
             .collect::<String>();
 
         format!(
-            "(eventFilter) => LogSelection.makeTopicSelection(~topic0=[sighash], {topic_filter_calls})->Utils.unwrapResultExn"
+            "(eventFilter) => LogSelection.makeTopicSelection(~topic0=[sighash], \
+             {topic_filter_calls})->Utils.unwrapResultExn"
         )
     }
 
@@ -1163,6 +1163,11 @@ mod test {
                                s.field(\"displayName\", S.string), imageUrl: \
                                s.field(\"imageUrl\", S.string)})"
                 .to_string(),
+            get_topic_selection_code: "(eventFilter) => \
+                                       LogSelection.makeTopicSelection(~topic0=[sighash], \
+                                       )->Utils.unwrapResultExn"
+                .to_string(),
+            event_filter_type: "{  }".to_string(),
         }
     }
 
@@ -1192,6 +1197,11 @@ mod test {
                                               implemented\")"
                     .to_string(),
                 data_schema_code: "S.literal(%raw(`null`))->S.variant(_ => ())".to_string(),
+                get_topic_selection_code: "(eventFilter) => \
+                                           LogSelection.makeTopicSelection(~topic0=[sighash], \
+                                           )->Utils.unwrapResultExn"
+                    .to_string(),
+                event_filter_type: "{  }".to_string(),
             }
         );
     }
