@@ -36,6 +36,11 @@ module type S = {
     type t<'a>
   }
 
+  module LogSelection: {
+    type t
+    type topicSelection
+  }
+
   module Types: {
     type internalEventArgs
 
@@ -70,12 +75,13 @@ module type S = {
       let sighash: string
       let name: string
       let contractName: string
-      let chains: array<ChainMap.Chain.t>
       type eventArgs
       let eventArgsSchema: RescriptSchema.S.schema<eventArgs>
       let convertHyperSyncEventArgs: HyperSyncClient.Decoder.decodedEvent => eventArgs
       let decodeHyperFuelData: string => eventArgs
       let handlerRegister: HandlerTypes.Register.t<eventArgs>
+      type eventFilter
+      let getTopicSelection: eventFilter => LogSelection.topicSelection
     }
     module type InternalEvent = Event with type eventArgs = internalEventArgs
 

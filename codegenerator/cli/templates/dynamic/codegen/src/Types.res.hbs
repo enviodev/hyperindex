@@ -420,8 +420,31 @@ let makeEventOptions = (
   })
 }
 
+@genType.import(("./bindings/OpaqueTypes.ts", "HandlerWithOptions"))
+type fnWithEventConfig<'fn, 'eventConfig> = ('fn, ~eventConfig: 'eventConfig=?) => unit
+
+@genType
+type handlerWithOptions<'eventArgs, 'loaderReturn, 'eventFilter> = fnWithEventConfig<
+  HandlerTypes.handler<'eventArgs, 'loaderReturn>,
+  HandlerTypes.eventConfig<'eventFilter>,
+>
+
+@genType
+type loaderHandlerWithOptions<'eventArgs, 'loaderReturn, 'eventFilter> = fnWithEventConfig<
+  HandlerTypes.loaderHandler<'eventArgs, 'loaderReturn>,
+  HandlerTypes.eventConfig<'eventFilter>,
+>
+
+@genType
+type contractRegisterWithOptions<'eventArgs, 'eventFilter> = fnWithEventConfig<
+  HandlerTypes.contractRegister<'eventArgs>,
+  HandlerTypes.eventConfig<'eventFilter>,
+>
 module MakeRegister = (Event: Event) => {
-  let handler = (handler, ~eventConfig=?) =>
+  let handler: handlerWithOptions<Event.eventArgs, unit, Event.eventFilter> = (
+    handler,
+    ~eventConfig=?,
+  ) =>
     Event.handlerRegister->HandlerTypes.Register.setLoaderHandler(
       {
         loader: _ => Promise.resolve(),
@@ -430,13 +453,20 @@ module MakeRegister = (Event: Event) => {
       ~eventOptions=makeEventOptions(eventConfig, module(Event)),
     )
 
-  let contractRegister = (contractRegister, ~eventConfig=?) =>
+  let contractRegister: contractRegisterWithOptions<Event.eventArgs, Event.eventFilter> = (
+    contractRegister,
+    ~eventConfig=?,
+  ) =>
     Event.handlerRegister->HandlerTypes.Register.setContractRegister(
       contractRegister,
       ~eventOptions=makeEventOptions(eventConfig, module(Event)),
     )
 
-  let handlerWithLoader = (args, ~eventConfig=?) =>
+  let handlerWithLoader: loaderHandlerWithOptions<
+    Event.eventArgs,
+    'loaderReturn,
+    Event.eventFilter,
+  > = (args, ~eventConfig=?) =>
     Event.handlerRegister->HandlerTypes.Register.setLoaderHandler(
       args,
       ~eventOptions=makeEventOptions(eventConfig, module(Event)),
