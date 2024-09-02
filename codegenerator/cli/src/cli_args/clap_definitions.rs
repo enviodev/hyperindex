@@ -62,13 +62,18 @@ pub enum CommandType {
     ///Start the indexer without any automatic codegen
     Start(StartArgs),
 
-    ///Print help into a markdown file
-    ///Command to run: cargo run --bin envio -- print-all-help > CommandLineHelp.md
     #[clap(hide = true)]
+    #[command(subcommand)]
+    Script(Script),
+}
+
+#[derive(Debug, Subcommand)]
+pub enum Script {
+    ///Print missing networks from the API
+    PrintMissingNetworks,
+    ///Print help into a markdown file
     PrintCliHelpMd,
     ///Print help into a markdown file
-    ///Command to run: cargo run --bin envio -- print-all-help > CommandLineHelp.md
-    #[clap(hide = true)]
     #[command(subcommand)]
     PrintConfigJsonSchema(JsonSchema),
 }

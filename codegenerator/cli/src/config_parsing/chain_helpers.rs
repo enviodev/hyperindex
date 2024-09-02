@@ -6,6 +6,7 @@ use clap::ValueEnum;
 use ethers::etherscan;
 use serde::{Deserialize, Serialize};
 use strum::FromRepr;
+use strum::IntoEnumIterator;
 use strum_macros::{Display, EnumIter, EnumString};
 use subenum::subenum;
 
@@ -248,6 +249,10 @@ pub enum Network {
     // Still syncing
     // #[subenum(HypersyncNetwork)]
     // Saakuru = 7225878,
+    // #[subenum(HypersyncNetwork)]
+    // CitreaDevnet = 62298,
+    // #[subenum(HypersyncNetwork)]
+    // MorphTestnet = 2810,
 }
 
 impl Network {
@@ -340,6 +345,13 @@ impl Network {
             | Network::KakarotSepolia
             | Network::BerachainBartio => DEFAULT_CONFIRMED_BLOCK_THRESHOLD,
         }
+    }
+}
+
+impl HypersyncNetwork {
+    // This is a custom iterator that returns all the HypersyncNetwork enums that is made public accross crates (for convenience)
+    pub fn iter_hypersync_networks() -> impl Iterator<Item = HypersyncNetwork> {
+        HypersyncNetwork::iter()
     }
 }
 
@@ -558,9 +570,7 @@ mod test {
             .into_iter()
             .map(|s| {
                 GraphNetwork::deserialize(serde_json::Value::String(s.clone()))
-                    // serde_json::from_str::<GraphNetwork>(&s)
                     .expect(format!("Invalid graph network: {}", s).as_str())
-                // GraphNetwork::from_str(&s).expect(format!("Invalid graph network: {}", s).as_str())
             })
             .collect::<Vec<GraphNetwork>>();
 

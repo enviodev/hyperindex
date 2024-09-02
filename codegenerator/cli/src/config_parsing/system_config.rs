@@ -235,8 +235,7 @@ impl SystemConfig {
                             Abi::Evm(evm_abi),
                         )
                         .context(format!(
-                            "Failed parsing locally defined network contract at network \
-                                     id {}",
+                            "Failed parsing locally defined network contract at network id {}",
                             network.id
                         ))?;
 
@@ -953,9 +952,12 @@ impl Event {
         for event_config in events_config.iter() {
             let log = match &event_config.log_id {
                 None => {
-                    let logged_type = fuel_abi.get_type_by_struct_name(event_config.name.clone()).context(
-                "Failed to derive log ids from the event name. Use the lodId field to set it explicitely."
-              )?;
+                    let logged_type = fuel_abi
+                        .get_type_by_struct_name(event_config.name.clone())
+                        .context(
+                            "Failed to derive log ids from the event name. Use the lodId field to \
+                             set it explicitely.",
+                        )?;
                     fuel_abi.get_log_by_type(logged_type.id)?
                 }
                 Some(log_id) => fuel_abi.get_log(&log_id)?,

@@ -1,10 +1,11 @@
 use crate::{
-    clap_definitions::JsonSchema,
+    clap_definitions::{JsonSchema, Script},
     cli_args::clap_definitions::{CommandLineArgs, CommandType},
     commands,
     config_parsing::{human_config, system_config::SystemConfig},
     persisted_state::{PersistedState, PersistedStateExists, CURRENT_CRATE_VERSION},
     project_paths::ParsedProjectPaths,
+    scripts,
 };
 
 mod codegen;
@@ -90,10 +91,10 @@ pub async fn execute(command_line_args: CommandLineArgs) -> Result<()> {
             local::run_local(&local_commands, &parsed_project_paths).await?;
         }
 
-        CommandType::PrintCliHelpMd => {
+        CommandType::Script(Script::PrintCliHelpMd) => {
             println!("{}", CommandLineArgs::generate_markdown_help());
         }
-        CommandType::PrintConfigJsonSchema(json_schema) => match json_schema {
+        CommandType::Script(Script::PrintConfigJsonSchema(json_schema)) => match json_schema {
             JsonSchema::Evm => {
                 let schema = schema_for!(human_config::evm::HumanConfig);
                 println!(
@@ -111,6 +112,11 @@ pub async fn execute(command_line_args: CommandLineArgs) -> Result<()> {
                 );
             }
         },
+        CommandType::Script(Script::PrintMissingNetworks) => {
+            scripts::print_missing_networks::run()
+                .await
+                .context("Failed print missing networks script")?;
+        }
     };
 
     Ok(())
