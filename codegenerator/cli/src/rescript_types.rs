@@ -337,7 +337,12 @@ impl RescriptTypeIdent {
             Self::String => "S.string".to_string(),
             Self::ID => "S.string".to_string(),
             Self::Bool => "S.bool".to_string(),
-            Self::Timestamp => "S.datetime(S.string)".to_string(),
+            Self::Timestamp => {
+                // Don't use S.unknown, since it's not serializable to json
+                // In a nutshell, this is completely unsafe.
+                "S.json(~validate=false)->(Utils.magic: S.t<Js.Json.t> => S.t<Js.Date.t>)"
+                    .to_string()
+            }
             Self::Array(inner_type) => {
                 format!("S.array({})", inner_type.to_rescript_schema())
             }

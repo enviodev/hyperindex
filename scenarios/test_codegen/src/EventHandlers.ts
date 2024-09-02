@@ -9,7 +9,6 @@ import {
 const zeroAddress = "0x0000000000000000000000000000000000000000";
 
 NftFactory.SimpleNftCreated.contractRegister(({ event, context }) => {
-  console.log(event);
   context.addSimpleNft(event.params.contractAddress);
 });
 
@@ -25,9 +24,13 @@ NftFactory.SimpleNftCreated.handlerWithLoader({
       currentSupply: 0,
     };
     context.NftCollection.set(nftCollection);
-    context.EntityWithFields.set({
-      id: "testingBigDecimalWorks",
+    context.EntityWithBigDecimal.set({
+      id: "testingEntityWithBigDecimal",
       bigDecimal: new BigDecimal(123.456),
+    });
+    context.EntityWithTimestamp.set({
+      id: "testingEntityWithTimestamp",
+      timestamp: new Date(1725265940437),
     });
   },
 });

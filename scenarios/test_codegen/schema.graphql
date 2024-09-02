@@ -47,9 +47,14 @@ type Token
   owner: User!
 }
 
-type EntityWithFields {
+type EntityWithBigDecimal {
   id: ID!
   bigDecimal: BigDecimal!
+}
+
+type EntityWithTimestamp {
+  id: ID!
+  timestamp: Timestamp!
 }
 
 type A {

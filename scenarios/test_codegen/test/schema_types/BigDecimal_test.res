@@ -15,16 +15,16 @@ describe("Load and save an entity with a BigDecimal from DB", () => {
 
     let sql = DbFunctions.sql
     /// Setup DB
-    let testEntity1: Entities.EntityWithFields.t = {
+    let testEntity1: Entities.EntityWithBigDecimal.t = {
       id: "testEntity",
       bigDecimal: BigDecimal.fromFloat(123.456),
     }
-    let testEntity2: Entities.EntityWithFields.t = {
+    let testEntity2: Entities.EntityWithBigDecimal.t = {
       id: "testEntity2",
       bigDecimal: BigDecimal.fromFloat(654.321),
     }
 
-    await DbFunctionsEntities.batchSet(~entityMod=module(Entities.EntityWithFields))(
+    await DbFunctionsEntities.batchSet(~entityMod=module(Entities.EntityWithBigDecimal))(
       sql,
       [testEntity1, testEntity2],
     )
@@ -41,16 +41,16 @@ describe("Load and save an entity with a BigDecimal from DB", () => {
 
     let loaderContext = contextEnv->ContextEnv.getLoaderContext(~loadLayer, ~inMemoryStore)
 
-    let _ = loaderContext.entityWithFields.get(testEntity1.id)
-    let _ = loaderContext.entityWithFields.get(testEntity2.id)
+    let _ = loaderContext.entityWithBigDecimal.get(testEntity1.id)
+    let _ = loaderContext.entityWithBigDecimal.get(testEntity2.id)
 
     let handlerContext = contextEnv->ContextEnv.getHandlerContext(~inMemoryStore, ~loadLayer)
 
-    switch await handlerContext.entityWithFields.get(testEntity1.id) {
+    switch await handlerContext.entityWithBigDecimal.get(testEntity1.id) {
     | Some(entity) => Assert.equal(entity.bigDecimal.toString(), "123.456")
     | None => Assert.fail("Entity should exist")
     }
-    switch await handlerContext.entityWithFields.get(testEntity2.id) {
+    switch await handlerContext.entityWithBigDecimal.get(testEntity2.id) {
     | Some(entity) => Assert.equal(entity.bigDecimal.toString(), "654.321")
     | None => Assert.fail("Entity should exist")
     }
