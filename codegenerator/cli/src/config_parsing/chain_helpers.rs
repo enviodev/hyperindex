@@ -52,7 +52,9 @@ pub enum Network {
     Bsc = 56,
     #[subenum(GraphNetwork)]
     PoaSokol = 77,
-    #[subenum(HypersyncNetwork, GraphNetwork)]
+    #[subenum(GraphNetwork)]
+    Mumbai = 80001,
+    #[subenum(HypersyncNetwork, GraphNetwork(serde(rename = "chapel")))]
     BscTestnet = 97,
     #[subenum(GraphNetwork)]
     PoaCore = 99,
@@ -94,7 +96,7 @@ pub enum Network {
     ArbitrumNova = 42170,
     #[subenum(NetworkWithExplorer, GraphNetwork)]
     ArbitrumGoerli = 421613,
-    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
+    #[subenum(HypersyncNetwork, NetworkWithExplorer, GraphNetwork)]
     ArbitrumSepolia = 421614,
     #[subenum(HypersyncNetwork, GraphNetwork, NetworkWithExplorer)]
     Celo = 42220,
@@ -114,7 +116,7 @@ pub enum Network {
     // https://explorer.harmony.one/
     // https://getblock.io/explorers/harmony/
     Harmony = 1666600000, // shard 0
-    #[subenum(GraphNetwork)]
+    #[subenum(GraphNetwork(serde(rename = "base-testnet")))]
     BaseGoerli = 84531,
     #[subenum(HypersyncNetwork, GraphNetwork)]
     ZksyncEra = 324,
@@ -271,6 +273,7 @@ impl Network {
             | Network::ArbitrumSepolia => 0,
             //TODO: research a sufficient threshold for all chains
             Network::Base
+            | Network::Mumbai
             | Network::BaseSepolia
             | Network::Bsc
             | Network::Goerli
@@ -475,9 +478,11 @@ pub fn get_confirmed_block_threshold_from_id(id: u64) -> i32 {
 
 #[cfg(test)]
 mod test {
+
     use super::{get_etherscan_client, GraphNetwork, HypersyncNetwork, NetworkWithExplorer};
     use crate::config_parsing::chain_helpers::Network;
     use pretty_assertions::assert_eq;
+    use serde::Deserialize;
     use strum::IntoEnumIterator;
 
     #[test]
@@ -506,7 +511,7 @@ mod test {
     #[test]
     fn network_deserialize_graph() {
         /*List of networks supported by graph found here:
-         * https://github.com/graphprotocol/graph-tooling/blob/main/packages/cli/src/protocols/index.ts#L76-L117
+         * https://github.com/graphprotocol/graph-tooling/blob/main/packages/cli/src/protocols/index.ts#L94-L132
          */
         let networks = r#"[
         "mainnet",
@@ -516,6 +521,7 @@ mod test {
         "poa-sokol",
         "gnosis",
         "matic",
+        "mumbai",
         "fantom",
         "fantom-testnet",
         "bsc",
@@ -531,11 +537,12 @@ mod test {
         "mbase",
         "arbitrum-one",
         "arbitrum-goerli",
+        "arbitrum-sepolia",
         "optimism",
         "optimism-goerli",
         "aurora",
         "aurora-testnet",
-        "base-goerli",
+        "base-testnet",
         "base",
         "zksync-era",
         "zksync-era-testnet",
@@ -546,7 +553,16 @@ mod test {
         "scroll"
     ]"#;
 
-        let supported_graph_networks = serde_json::from_str::<Vec<GraphNetwork>>(networks).unwrap();
+        let supported_graph_networks = serde_json::from_str::<Vec<String>>(networks)
+            .unwrap()
+            .into_iter()
+            .map(|s| {
+                GraphNetwork::deserialize(serde_json::Value::String(s.clone()))
+                    // serde_json::from_str::<GraphNetwork>(&s)
+                    .expect(format!("Invalid graph network: {}", s).as_str())
+                // GraphNetwork::from_str(&s).expect(format!("Invalid graph network: {}", s).as_str())
+            })
+            .collect::<Vec<GraphNetwork>>();
 
         let defined_networks = GraphNetwork::iter().collect::<Vec<_>>();
 
