@@ -5,32 +5,37 @@ type errorKind = WildcardSighashCollision | Duplicate
 type eventError = {eventMod: eventMod, errorKind: errorKind}
 module ContractEventMods = {
   type t = {
+    mutable wildcard: option<eventMod>,
     all: array<eventMod>,
     byContractName: dict<eventMod>,
   }
 
   let empty = () => {
+    wildcard: None,
     all: [],
     byContractName: Js.Dict.empty(),
   }
 
   let isWildcard = (eventMod: eventMod) => {
     let module(Event) = eventMod
-    Event.handlerRegister->Types.HandlerTypes.Register.getEventOptions->(v => v.Types.HandlerTypes.wildcard)
+    Event.handlerRegister
+    ->Types.HandlerTypes.Register.getEventOptions
+    ->(v => v.Types.HandlerTypes.wildcard)
   }
 
-  let hasWildcardCollision = (eventModA, eventModB) => {
-    eventModA->isWildcard || eventModB->isWildcard
-  }
-
-  let set = ({all, byContractName}: t, eventMod: eventMod) => {
+  let set = (t: t, eventMod: eventMod) => {
+    let {all, byContractName} = t
     let module(Event) = eventMod
-    switch byContractName->Js.Dict.get(Event.contractName) {
+    switch byContractName->Utils.Dict.dangerouslyGetNonOption(Event.contractName) {
     | Some(_) => Error({eventMod, errorKind: Duplicate})
     | None =>
-      if all->Array.some(hasWildcardCollision(_, eventMod)) {
+      let isWildcard = eventMod->isWildcard
+      if isWildcard && t.wildcard->Option.isSome {
         Error({eventMod, errorKind: WildcardSighashCollision})
       } else {
+        if isWildcard {
+          t.wildcard = Some(eventMod)
+        }
         all->Js.Array2.push(eventMod)->ignore
         byContractName->Js.Dict.set(Event.contractName, eventMod)
         Ok()
@@ -38,46 +43,48 @@ module ContractEventMods = {
     }
   }
 
-  let getByContractName = ({byContractName}, ~contractName) => {
-    byContractName->Js.Dict.get(contractName)
-  }
+  let get = (t: t, ~contractAddress, ~contractAddressMapping) =>
+    switch t {
+    | {all: [eventMod]} => Some(eventMod)
+    | {wildcard, byContractName} =>
+      switch contractAddressMapping->ContractAddressingMap.getContractNameFromAddress(
+        ~contractAddress,
+      ) {
+      | Some(contractName) => byContractName->Utils.Dict.dangerouslyGetNonOption(contractName)
+      | None => wildcard
+      }
+    }
 
-  let findWildcard = ({all}) => {
-    all->Js.Array2.find(event => event->isWildcard)
+  let getByContractName = ({byContractName}, ~contractName) => {
+    byContractName->Utils.Dict.dangerouslyGetNonOption(contractName)
   }
 }
 type t = dict<ContractEventMods.t>
 
 let empty = () => Js.Dict.empty()
 
-let set = (eventModLookup: t, eventMod: eventMod) => {
+let set = (eventModLookup: t, eventMod: module(Types.Event)) => {
   let module(Event) = eventMod
-  let events = switch eventModLookup->Js.Dict.get(Event.sighash) {
+  let events = switch eventModLookup->Utils.Dict.dangerouslyGetNonOption(Event.sighash) {
   | None =>
     let events = ContractEventMods.empty()
     eventModLookup->Js.Dict.set(Event.sighash, events)
     events
   | Some(events) => events
   }
-  events->ContractEventMods.set(eventMod)
+  events->ContractEventMods.set(
+    eventMod->(Utils.magic: module(Types.Event) => module(Types.InternalEvent)),
+  )
 }
 
 let get = (eventModLookup: t, ~sighash, ~contractAddress, ~contractAddressMapping) =>
-  switch eventModLookup->Js.Dict.get(sighash) {
-  | Some({all: [eventMod]}) => Some(eventMod)
-  | Some({all: []}) | None => None
-  | Some(eventsByContract) =>
-    switch contractAddressMapping->ContractAddressingMap.getContractNameFromAddress(
-      ~contractAddress,
-    ) {
-    | Some(contractName) => eventsByContract->ContractEventMods.getByContractName(~contractName)
-    | None => eventsByContract->ContractEventMods.findWildcard
-    }
-  }
+  eventModLookup
+  ->Utils.Dict.dangerouslyGetNonOption(sighash)
+  ->Option.flatMap(ContractEventMods.get(_, ~contractAddress, ~contractAddressMapping))
 
 let getByKey = (eventModLookup: t, ~sighash, ~contractName) =>
   eventModLookup
-  ->Js.Dict.get(sighash)
+  ->Utils.Dict.dangerouslyGetNonOption(sighash)
   ->Option.flatMap(eventsByContractName =>
     eventsByContractName->ContractEventMods.getByContractName(~contractName)
   )
@@ -102,7 +109,7 @@ let fromArrayOrThrow = (eventMods: array<module(Types.Event)>, ~chain): t => {
   let t = empty()
   eventMods->Belt.Array.forEach(eventMod => {
     t
-    ->set(eventMod->(Utils.magic: module(Types.Event) => module(Types.InternalEvent)))
+    ->set(eventMod)
     ->unwrapAddEventResponse(~chain)
   })
   t

@@ -79,7 +79,7 @@ module CachedClients = {
   let cache: dict<HyperSyncClient.t> = Js.Dict.empty()
 
   let getClient = url => {
-    switch cache->Js.Dict.get(url) {
+    switch cache->Utils.Dict.dangerouslyGetNonOption(url) {
     | Some(client) => client
     | None =>
       let newClient = HyperSyncClient.make(~url)
@@ -111,7 +111,7 @@ module LogsQuery = {
     fieldNames->Array.keepMap(fieldName => {
       returnedObj
       ->(Utils.magic: 'a => Js.Dict.t<unknown>)
-      ->Js.Dict.get(fieldName)
+      ->Utils.Dict.dangerouslyGetNonOption(fieldName)
       ->Utils.Option.mapNone(prefix ++ "." ++ fieldName)
     })
   }

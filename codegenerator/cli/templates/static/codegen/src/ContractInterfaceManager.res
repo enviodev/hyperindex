@@ -27,7 +27,7 @@ let make = (
 }
 
 let getInterfaceByName = (self: t, ~contractName) =>
-  self.contractNameInterfaceMapping->Js.Dict.get(contractName)
+  self.contractNameInterfaceMapping->Utils.Dict.dangerouslyGetNonOption(contractName)
 
 let getInterfaceByAddress = (self: t, ~contractAddress) => {
   self.contractAddressMapping
