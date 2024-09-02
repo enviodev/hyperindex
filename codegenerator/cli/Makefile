@@ -10,7 +10,7 @@ update-help:
 	@echo "Updating help doc..."
 	cargo run -- script print-cli-help-md > ./CommandLineHelp.md
 
-# Target to update help
+# Target to help find missing networks
 print-missing-networks:
 	@echo "Printing missing networks..."
 	cargo run -- script print-missing-networks
