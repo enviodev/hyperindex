@@ -34,7 +34,7 @@ describe("getGeneratedByChainId Test", () => {
     Assert.deepEqual(
       configYaml,
       {
-        syncSource: HyperSync({endpointUrl: "https://eth.hypersync.xyz"}),
+        syncSource: HyperSync({endpointUrl: "https://1.hypersync.xyz"}),
         startBlock: 1,
         confirmedBlockThreshold: 200,
         contracts: Js.Dict.empty(),

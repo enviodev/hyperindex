@@ -972,7 +972,7 @@ mod test {
             id: 1,
             rpc_config: None,
             hypersync_config: Some(HypersyncConfig {
-                endpoint_url: "https://eth.hypersync.xyz".to_string(),
+                endpoint_url: "https://1.hypersync.xyz".to_string(),
                 is_client_decoder: true,
             }),
             hyperfuel_config: None,
@@ -1020,7 +1020,7 @@ mod test {
             id: 5,
             rpc_config: None,
             hypersync_config: Some(HypersyncConfig {
-                endpoint_url: "https://goerli.hypersync.xyz".to_string(),
+                endpoint_url: "https://5.hypersync.xyz".to_string(),
                 is_client_decoder: true,
             }),
             hyperfuel_config: None,
