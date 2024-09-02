@@ -122,6 +122,11 @@ jobs:
           pnpm hardhat compile --verbose
           pnpm res:build
 
+      - name: test_codegen test TS types
+        if: steps.changes.outputs.testChanges == 'true'
+        working-directory: scenarios/test_codegen
+        run: pnpm ts:test
+
       - name: test_codegen test
         if: steps.changes.outputs.testChanges == 'true'
         working-directory: scenarios/test_codegen
