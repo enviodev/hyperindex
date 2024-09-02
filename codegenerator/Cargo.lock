@@ -988,7 +988,7 @@ dependencies = [
  "serde_yaml",
  "sha2",
  "sqlx",
- "strum 0.26.3",
+ "strum",
  "strum_macros",
  "subenum",
  "tempdir",
@@ -1203,7 +1203,7 @@ dependencies = [
  "rlp",
  "serde",
  "serde_json",
- "strum 0.26.3",
+ "strum",
  "syn 2.0.72",
  "tempfile",
  "thiserror",
@@ -2002,7 +2002,7 @@ dependencies = [
  "anyhow",
  "envio",
  "reqwest",
- "strum 0.26.3",
+ "strum",
  "tempfile",
  "tokio",
 ]
@@ -3413,17 +3413,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
 
 [[package]]
-name = "scripts"
-version = "0.1.0"
-dependencies = [
- "envio",
- "reqwest",
- "serde",
- "strum 0.24.1",
- "tokio",
-]
-
-[[package]]
 name = "scrypt"
 version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3985,12 +3974,6 @@ name = "strsim"
 version = "0.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7da8b5736845d9f2fcb837ea5d9e2628564b3b043a70948a3f0b778838c5fb4f"
-
-[[package]]
-name = "strum"
-version = "0.24.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "063e6045c0e62079840579a7e47a355ae92f60eb74daaf156fb1e84ba164e63f"
 
 [[package]]
 name = "strum"
