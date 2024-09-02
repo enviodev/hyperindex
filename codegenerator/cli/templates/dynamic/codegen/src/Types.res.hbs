@@ -419,12 +419,13 @@ module MakeRegister = (Event: Event) => {
 
 {{#each codegen_contracts as | contract |}}
 module {{contract.name.capitalized}} = {
+{{contract.module_code}}
   let contractName = "{{contract.name.capitalized}}"
   let chains = [
 {{#each contract.chain_ids as | chain_id |}}
   {{chain_id}},
 {{/each}}
-    ]->Belt.Array.map(chainId => ChainMap.Chain.makeUnsafe(~chainId))
+  ]->Belt.Array.map(chainId => ChainMap.Chain.makeUnsafe(~chainId))
 {{#each contract.codegen_events as | event |}}
   module {{event.name.capitalized}} = {
     let sighash = "{{event.sighash}}"
@@ -445,8 +446,7 @@ module {{contract.name.capitalized}} = {
     )
 
   }
-
-{{/each}}
+  {{/each}}
 }
 
 {{/each}}

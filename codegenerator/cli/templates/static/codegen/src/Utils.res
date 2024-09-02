@@ -8,6 +8,14 @@ module Option = {
     }
   }
 
+  let catchToNone: (unit => 'a) => option<'a> = unsafeFunc => {
+    try {
+      unsafeFunc()->Some
+    } catch {
+    | _ => None
+    }
+  }
+
   let flatten = opt =>
     switch opt {
     | None => None

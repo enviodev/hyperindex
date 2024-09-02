@@ -110,6 +110,20 @@ module Make = (
     }
   }
 
+  let getLogSelectionOrThrow = (~contractAddressMapping): array<LogSelection.t> => {
+    T.contracts->Belt.Array.keepMap((contract): option<LogSelection.t> => {
+      switch contractAddressMapping->ContractAddressingMap.getAddressesFromContractName(
+        ~contractName=contract.name,
+      ) {
+      | [] => None
+      | addresses =>
+        let topicSelection = LogSelection.makeTopicSelection(~topic0=contract.sighashes)->Utils.unwrapResultExn
+
+        Some(LogSelection.make(~addresses, ~topicSelections=[topicSelection]))
+      }
+    })
+  }
+
   let getNextPage = async (
     ~fromBlock,
     ~toBlock,
@@ -135,13 +149,15 @@ module Make = (
       ~contractAddressMapping,
     )
 
-    let logSelections =
-      contractInterfaceManager
-      ->ContractInterfaceManager.getLogSelection
-      ->ErrorHandling.unwrapLogAndRaise(
+    let logSelections = try {
+      getLogSelectionOrThrow(~contractAddressMapping)
+    } catch {
+    | exn =>
+      exn->ErrorHandling.mkLogAndRaise(
         ~logger,
         ~msg="Failed getting log selection in contract interface manager",
       )
+    }
 
     let startFetchingBatchTimeRef = Hrtime.makeTimer()
 

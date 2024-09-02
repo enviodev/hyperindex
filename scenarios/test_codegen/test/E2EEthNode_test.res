@@ -20,9 +20,15 @@ describe("E2E Integration Test", () => {
       let contracts = [
         {
           Config.name: "GravatarRegistry",
-          abi: Abis.gravatarAbi->Ethers.makeAbi,
-          addresses: ["0x5FbDB2315678afecb367f032d93F642f64180aa3"->Address.Evm.fromStringOrThrow],
+          abi: Types.Gravatar.abi,
+          addresses: [
+            "0x5FbDB2315678afecb367f032d93F642f64180aa3"->Address.Evm.fromStringOrThrow,
+          ],
           events: [module(Types.Gravatar.NewGravatar), module(Types.Gravatar.UpdatedGravatar)],
+          sighashes: [
+            Types.Gravatar.NewGravatar.sighash,
+            Types.Gravatar.UpdatedGravatar.sighash,
+          ],
         },
       ]
       let rpcConfig: Config.rpcConfig = {

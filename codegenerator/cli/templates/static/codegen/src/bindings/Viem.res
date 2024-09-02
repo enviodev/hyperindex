@@ -11,9 +11,11 @@ type decodedEvent<'a> = {
 
 @module("viem") external decodeEventLogUnsafe: eventLog => decodedEvent<'a> = "decodeEventLog"
 
+type decodeEventLogError = EventNotFound | ParseError(exn)
+
 let decodeEventLog: eventLog => result<
   decodedEvent<'a>,
-  Ethers.Interface.parseLogError,
+  decodeEventLogError,
 > = eventLog =>
   try {
     let decoded = eventLog->decodeEventLogUnsafe

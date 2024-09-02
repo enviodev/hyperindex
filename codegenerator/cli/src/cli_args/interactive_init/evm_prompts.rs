@@ -13,7 +13,7 @@ use crate::{
     config_parsing::{
         chain_helpers::{HypersyncNetwork, Network, NetworkWithExplorer},
         contract_import::converters::{self, ContractImportNetworkSelection, SelectedContract},
-        human_config::evm::EventConfig,
+        system_config::EvmAbi,
     },
     evm::address::Address,
     init_config::evm::{ContractImportSelection, InitFlow},
@@ -29,7 +29,7 @@ fn prompt_abi_events_selection(events: Vec<ethers::abi::Event>) -> Result<Vec<et
         events
             .into_iter()
             .map(|abi_event| SelectItem {
-                display: EventConfig::event_string_from_abi_event(&abi_event),
+                display: EvmAbi::event_signature_from_abi_event(&abi_event),
                 item: abi_event,
             })
             .collect(),

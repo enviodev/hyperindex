@@ -4,6 +4,7 @@ type contract = {
   abi: Ethers.abi,
   addresses: array<Address.t>,
   events: array<module(Types.Event)>,
+  sighashes: array<string>,
 }
 
 type syncConfig = {

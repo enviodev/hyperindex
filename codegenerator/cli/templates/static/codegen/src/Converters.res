@@ -1,4 +1,4 @@
-exception ParseError(Ethers.Interface.parseLogError)
+exception ParseError(Viem.decodeEventLogError)
 exception UnregisteredContract(Address.t)
 
 let makeEventLog = (
