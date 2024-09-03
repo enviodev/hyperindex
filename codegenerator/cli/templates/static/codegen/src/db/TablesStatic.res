@@ -55,6 +55,7 @@ module ChainMetadata = {
       mkField("is_hyper_sync", Boolean),
       mkField("num_batches_fetched", Integer),
       mkField("latest_fetched_block_number", Integer),
+      // Used to show how much time historical sync has taken, so we need a timezone here (TUI and Hosted Service)
       mkField("timestamp_caught_up_to_head_or_endblock", TimestampWithNullTimezone, ~isNullable),
     ],
   )
