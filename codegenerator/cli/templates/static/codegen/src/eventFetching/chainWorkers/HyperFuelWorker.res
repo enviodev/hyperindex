@@ -128,9 +128,9 @@ module Make = (
       | addresses =>
         Some({
           addresses,
-          logIds: contract.events->Js.Array2.map(eventMod => {
+          rb: contract.events->Js.Array2.map(eventMod => {
             let module(Event: Types.Event) = eventMod
-            Event.sighash
+            Event.sighash->BigInt.fromStringUnsafe
           }),
         })
       }

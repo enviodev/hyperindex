@@ -53,7 +53,7 @@ type logsQueryPage = hyperSyncPage<item>
 
 type contractReceiptQuery = {
   addresses: array<Address.t>,
-  logIds: array<string>,
+  rb: array<bigint>,
 }
 
 type missingParams = {
@@ -104,7 +104,7 @@ module LogsQuery = {
     ): HyperFuelClient.QueryTypes.receiptSelection => {
       rootContractId: q.addresses,
       receiptType: [LogData],
-      rb: q.logIds,
+      rb: q.rb,
       // only transactions with status 1 (success)
       txStatus: [1],
     })
@@ -197,17 +197,13 @@ module LogsQuery = {
     ~toBlock,
     ~contractsReceiptQuery,
   ): queryResponse<logsQueryPage> => {
-    Logging.debug({
-      "msg": "querying logs",
-      "fromBlock": fromBlock,
-      "toBlock": toBlock,
-      "contractsReceiptQuery": contractsReceiptQuery,
-    })
     let query: HyperFuelClient.QueryTypes.query = makeRequestBody(
       ~fromBlock,
       ~toBlockInclusive=toBlock,
       ~contractsReceiptQuery,
     )
+
+    Js.log(query)
 
     let hyperFuelClient = CachedClients.getClient(serverUrl)
 
