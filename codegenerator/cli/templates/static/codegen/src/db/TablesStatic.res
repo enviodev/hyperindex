@@ -55,7 +55,7 @@ module ChainMetadata = {
       mkField("is_hyper_sync", Boolean),
       mkField("num_batches_fetched", Integer),
       mkField("latest_fetched_block_number", Integer),
-      mkField("timestamp_caught_up_to_head_or_endblock", TimestampWithoutTimezone, ~isNullable),
+      mkField("timestamp_caught_up_to_head_or_endblock", TimestampWithNullTimezone, ~isNullable),
     ],
   )
 }
@@ -136,7 +136,7 @@ module RawEvents = {
       mkField("block_fields", Json),
       mkField("transaction_fields", Json),
       mkField("params", Json),
-      mkField("db_write_timestamp", Timestamp, ~default="CURRENT_TIMESTAMP"),
+      mkField("db_write_timestamp", TimestampWithoutTimezone, ~default="CURRENT_TIMESTAMP"),
     ],
   )
 }

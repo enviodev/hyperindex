@@ -12,6 +12,7 @@ type fieldType =
   | @as("JSON") Json
   | @as("TIMESTAMP WITH TIME ZONE") Timestamp
   | @as("TIMESTAMP") TimestampWithoutTimezone
+  | @as("TIMESTAMP WITH TIME ZONE NULL") TimestampWithNullTimezone
   | Enum(string)
 
 type field = {
