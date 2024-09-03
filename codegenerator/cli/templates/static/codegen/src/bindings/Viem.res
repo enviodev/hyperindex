@@ -9,17 +9,4 @@ type decodedEvent<'a> = {
   args: 'a,
 }
 
-@module("viem") external decodeEventLogUnsafe: eventLog => decodedEvent<'a> = "decodeEventLog"
-
-type decodeEventLogError = EventNotFound | ParseError(exn)
-
-let decodeEventLog: eventLog => result<
-  decodedEvent<'a>,
-  decodeEventLogError,
-> = eventLog =>
-  try {
-    let decoded = eventLog->decodeEventLogUnsafe
-    Ok(decoded)
-  } catch {
-  | exn => Error(ParseError(exn))
-  }
+@module("viem") external decodeEventLogOrThrow: eventLog => decodedEvent<'a> = "decodeEventLog"

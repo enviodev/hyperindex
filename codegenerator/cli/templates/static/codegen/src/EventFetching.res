@@ -122,26 +122,63 @@ let convertLogs = (
 
   logs->Belt.Array.map(async (log): Types.eventBatchQueueItem => {
     let block = (await blockLoader->LazyLoader.get(log.blockNumber))->blockFieldsFromBlock
-    let (event, eventMod) = switch Converters.parseEvent(
-      ~log=log->ethersLogToLog,
-      ~block,
-      ~eventModLookup,
-      ~contractInterfaceManager,
-      ~chain,
-      ~transaction=log->transactionFieldsFromLog(~logger),
+    let transaction = log->transactionFieldsFromLog(~logger)
+    let log = log->ethersLogToLog
+    let chainId = chain->ChainMap.Chain.toChainId
+
+    let topic0 = log.topics->Js.Array2.unsafe_get(0)
+    let eventMod = switch eventModLookup->EventModLookup.get(
+      ~sighash=topic0,
+      ~contractAddressMapping=contractInterfaceManager.contractAddressMapping,
+      ~contractAddress=log.address,
     ) {
-    | Error(exn) =>
-      logger->Logging.childErrorWithExn(exn, "Failed to parse event from RPC. Double c")
-      exn->raise
-    | Ok(res) => res
+    | None => {
+        let logger = Logging.createChildFrom(
+          ~logger,
+          ~params={
+            "chainId": chainId,
+            "blockNumber": block.number,
+            "logIndex": log.logIndex,
+            "contractAddress": log.address,
+            "topic0": topic0,
+          },
+        )
+        %raw(`null`)->ErrorHandling.mkLogAndRaise(~msg="Failed to lookup registered event", ~logger)
+      }
+    | Some(eventMod) => eventMod
+    }
+    let module(Event) = eventMod
+
+    let decodedEvent = try contractInterfaceManager->ContractInterfaceManager.parseLogViemOrThrow(
+      ~log,
+    ) catch {
+    | exn => {
+        let params = {
+          "chainId": chainId,
+          "blockNumber": block.number,
+          "logIndex": log.logIndex,
+        }
+        let logger = Logging.createChildFrom(~logger, ~params)
+        exn->ErrorHandling.mkLogAndRaise(
+          ~msg="Failed to parse event with viem, please double check your ABI.",
+          ~logger,
+        )
+      }
     }
 
     {
       timestamp: block.timestamp,
       chain,
-      blockNumber: log.blockNumber,
+      blockNumber: block.number,
       logIndex: log.logIndex,
-      event,
+      event: {
+        chainId,
+        params: decodedEvent.args,
+        transaction,
+        block,
+        srcAddress: log.address,
+        logIndex: log.logIndex,
+      },
       eventMod,
     }
   })

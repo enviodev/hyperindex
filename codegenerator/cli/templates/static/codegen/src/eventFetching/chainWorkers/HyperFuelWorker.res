@@ -162,7 +162,6 @@ module Make = (
     ~currentBlockHeight,
     ~setCurrentBlockHeight,
   ) => {
-    let mkLogAndRaise = ErrorHandling.mkLogAndRaise(~logger, ...)
     try {
       let {fetchStateRegisterId, partitionId, fromBlock, contractAddressMapping, toBlock} = query
       let startFetchingBatchTimeRef = Hrtime.makeTimer()
@@ -247,66 +246,78 @@ module Make = (
 
       let parsingTimeRef = Hrtime.makeTimer()
 
-      //Parse page items into queue items
-      let parsedQueueItems = {
-        let chainId = chain->ChainMap.Chain.toChainId
-        pageUnsafe.items->Array.map(item => {
-          let {contractId, receipt, block, receiptIndex} = item
-          try {
-            switch contractAddressMapping->ContractAddressingMap.getName(
-              contractId->Address.toString,
-            ) {
-            | None => raise(Converters.UnregisteredContract(contractId))
-            | Some(contractName) =>
-              let logId = switch receipt {
-              | LogData({rb}) => rb
-              }
-              let eventMod =
-                eventModLookup
-                ->EventModLookup.getByKey(~contractName, ~sighash=logId->Js.BigInt.toString)
-                ->Option.getExn
-              let module(Event) = eventMod
+      let parsedQueueItems = pageUnsafe.items->Array.map(item => {
+        let {contractId: contractAddress, receipt, block, receiptIndex} = item
 
-              (
-                {
-                  timestamp: block.timestamp,
-                  chain,
-                  blockNumber: block.blockNumber,
-                  logIndex: receiptIndex,
-                  event: {
-                    chainId,
-                    params: switch receipt {
-                    | LogData({data}) => data->Event.decodeHyperFuelData
-                    },
-                    transaction: %raw(`{}`), // TODO: %raw needed until the transaction fields are not configurable for Fuel separately from evm
-                    block: {
-                      "number": block.blockNumber,
-                      "timestamp": block.timestamp,
-                      "hash": block.hash,
-                    }->Obj.magic,
-                    srcAddress: contractId,
-                    logIndex: receiptIndex,
-                  }->Types.eventToInternal,
-                  eventMod,
-                }: Types.eventBatchQueueItem
-              )
-            }
-          } catch {
-          | exn => {
-              let params = {
+        let chainId = chain->ChainMap.Chain.toChainId
+        let sighash = switch receipt {
+        | LogData({rb}) => BigInt.toString(rb)
+        }
+
+        let eventMod = switch eventModLookup->EventModLookup.get(
+          ~sighash,
+          ~contractAddressMapping,
+          ~contractAddress,
+        ) {
+        | None => {
+            let logger = Logging.createChildFrom(
+              ~logger,
+              ~params={
                 "chainId": chainId,
                 "blockNumber": block.blockNumber,
                 "logIndex": receiptIndex,
-              }
-              let logger = Logging.createChildFrom(~logger, ~params)
-              logger.error({"msg": "error decoding event", "responsible event": item}->Utils.magic)
-              exn->mkLogAndRaise(
-                ~msg="Failed to parse event with Fuel, please double check your ABI.",
-              )
-            }
+                "contractAddress": contractAddress,
+                "sighash": sighash,
+              },
+            )
+            %raw(`null`)->ErrorHandling.mkLogAndRaise(
+              ~msg="Failed to lookup registered event",
+              ~logger,
+            )
           }
-        })
-      }
+        | Some(eventMod) => eventMod
+        }
+        let module(Event) = eventMod
+
+        let params = try switch receipt {
+        | LogData({data}) => data->Event.decodeHyperFuelData
+        } catch {
+        | exn => {
+            let params = {
+              "chainId": chainId,
+              "blockNumber": block.blockNumber,
+              "logIndex": receiptIndex,
+            }
+            let logger = Logging.createChildFrom(~logger, ~params)
+            exn->ErrorHandling.mkLogAndRaise(
+              ~msg="Failed to parse event with viem, please double check your ABI.",
+              ~logger,
+            )
+          }
+        }
+
+        (
+          {
+            timestamp: block.timestamp,
+            chain,
+            blockNumber: block.blockNumber,
+            logIndex: receiptIndex,
+            event: {
+              chainId,
+              params,
+              transaction: %raw(`{}`), // TODO: %raw needed until the transaction fields are not configurable for Fuel separately from evm
+              block: {
+                "number": block.blockNumber,
+                "timestamp": block.timestamp,
+                "hash": block.hash,
+              }->Obj.magic,
+              srcAddress: contractAddress,
+              logIndex: receiptIndex,
+            },
+            eventMod,
+          }: Types.eventBatchQueueItem
+        )
+      })
 
       let parsingTimeElapsed =
         parsingTimeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
