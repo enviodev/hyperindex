@@ -1,22 +1,6 @@
 exception ParseError(Viem.decodeEventLogError)
 exception UnregisteredContract(Address.t)
 
-let makeEventLog = (
-  params: 'args,
-  ~log: Types.Log.t,
-  ~transaction,
-  ~block,
-  ~chainId: int,
-): Types.eventLog<Types.internalEventArgs> =>
-  {
-    chainId,
-    params,
-    transaction,
-    block,
-    srcAddress: log.address,
-    logIndex: log.logIndex,
-  }->Types.eventToInternal
-
 type eventModLookup = {
   sighash: string,
   contractAddress: Address.t,
@@ -24,38 +8,6 @@ type eventModLookup = {
 }
 
 exception EventModuleNotFound(eventModLookup)
-
-let convertHyperSyncEvent = (
-  event: HyperSyncClient.Decoder.decodedEvent,
-  ~contractAddressMapping,
-  ~log: Types.Log.t,
-  ~block,
-  ~chain,
-  ~transaction,
-  ~eventModLookup: EventModLookup.t,
-): result<(Types.eventLog<Types.internalEventArgs>, module(Types.InternalEvent)), _> => {
-  switch eventModLookup->EventModLookup.get(
-    ~sighash=log.topics[0],
-    ~contractAddressMapping,
-    ~contractAddress=log.address,
-  ) {
-  | None =>
-    Error(
-      EventModuleNotFound({
-        sighash: log.topics[0],
-        contractAddress: log.address,
-        chainId: chain->ChainMap.Chain.toChainId,
-      }),
-    )
-  | Some(eventMod) =>
-    let module(Event) = eventMod
-    let event =
-      event
-      ->Event.convertHyperSyncEventArgs
-      ->makeEventLog(~log, ~transaction, ~block, ~chainId=chain->ChainMap.Chain.toChainId)
-    Ok((event, eventMod))
-  }
-}
 
 let parseEvent = (
   ~log: Types.Log.t,

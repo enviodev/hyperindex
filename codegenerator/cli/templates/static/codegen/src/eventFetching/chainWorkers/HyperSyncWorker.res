@@ -117,7 +117,8 @@ module Make = (
       ) {
       | [] => None
       | addresses =>
-        let topicSelection = LogSelection.makeTopicSelection(~topic0=contract.sighashes)->Utils.unwrapResultExn
+        let topicSelection =
+          LogSelection.makeTopicSelection(~topic0=contract.sighashes)->Utils.unwrapResultExn
 
         Some(LogSelection.make(~addresses, ~topicSelections=[topicSelection]))
       }
@@ -288,35 +289,52 @@ module Make = (
         | parsedEvents => parsedEvents
         }
 
-        pageUnsafe.items
-        ->Belt.Array.zip(parsedEvents)
-        ->Belt.Array.map(((item, event)): Types.eventBatchQueueItem => {
-          let {block, transaction, log: {logIndex}} = item
+        pageUnsafe.items->Belt.Array.mapWithIndex((index, item): Types.eventBatchQueueItem => {
+          let {block, transaction, log} = item
           let chainId = chain->ChainMap.Chain.toChainId
-          let (event, eventMod) = switch event
-          ->getNullableExn(~msg="Event was unexpectedly parsed as undefined", ~logger)
-          ->Converters.convertHyperSyncEvent(
-            ~eventModLookup,
+          let topic0 = log.topics->Js.Array2.unsafe_get(0)
+
+          let eventMod = switch eventModLookup->EventModLookup.get(
+            ~sighash=topic0,
             ~contractAddressMapping,
-            ~log=item.log,
-            ~block,
-            ~transaction,
-            ~chain,
+            ~contractAddress=log.address,
           ) {
-          | Ok(v) => v
-          | Error(exn) =>
-            let logger = Logging.createChildFrom(
-              ~logger,
-              ~params={"chainId": chainId, "blockNumber": block.number, "logIndex": logIndex},
-            )
-            exn->ErrorHandling.mkLogAndRaise(~msg="Failed to convert decoded event", ~logger)
+          | None => {
+              let logger = Logging.createChildFrom(
+                ~logger,
+                ~params={
+                  "chainId": chainId,
+                  "blockNumber": block.number,
+                  "logIndex": log.logIndex,
+                  "contractAddress": log.address,
+                  "topic0": topic0,
+                },
+              )
+              %raw(`null`)->ErrorHandling.mkLogAndRaise(
+                ~msg="Failed to lookup registered event",
+                ~logger,
+              )
+            }
+          | Some(eventMod) => eventMod
           }
+          let module(Event) = eventMod
+
           {
             timestamp: block.timestamp,
             chain,
             blockNumber: block.number,
-            logIndex,
-            event,
+            logIndex: log.logIndex,
+            event: {
+              chainId,
+              params: parsedEvents
+              ->Js.Array2.unsafe_get(index)
+              ->getNullableExn(~msg="Event was unexpectedly parsed as undefined", ~logger)
+              ->Event.convertHyperSyncEventArgs,
+              transaction,
+              block,
+              srcAddress: log.address,
+              logIndex: log.logIndex,
+            },
             eventMod,
           }
         })
