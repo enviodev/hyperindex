@@ -29,7 +29,7 @@ module MakeEventMock = (
   type eventFilter
   let eventArgsSchema = Utils.magic("Stub for eventArgsSchema")
   let handlerRegister = Types.HandlerTypes.Register.make(
-    ~topic0=sighash,
+    ~topic0=sighash->EvmTypes.Hex.fromStringUnsafe,
     ~contractName,
     ~eventName=name,
   )
@@ -40,7 +40,11 @@ module MakeEventMock = (
     },
     ~eventOptions=Some({
       wildcard: E.isWildcard,
-      topicSelections: [LogSelection.makeTopicSelection(~topic0=[sighash])->Utils.unwrapResultExn],
+      topicSelections: [
+        LogSelection.makeTopicSelection(
+          ~topic0=[sighash->EvmTypes.Hex.fromStringUnsafe],
+        )->Utils.unwrapResultExn,
+      ],
     }),
   )
   let decodeHyperFuelData = Utils.magic("Stub for decodeHyperFuelData")
