@@ -57,8 +57,7 @@
     "hardhat-abi-exporter": "^2.10.1",
     "helpers": "workspace:*",
     "rescript-nodejs": "16.0.0",
-    "typescript": "^5.0.4",
-    "viem": "2.21.0"
+    "typescript": "^5.0.4"
   },
   "optionalDependencies": {
     "generated": "./generated"

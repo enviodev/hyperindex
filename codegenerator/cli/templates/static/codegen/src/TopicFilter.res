@@ -4,6 +4,7 @@ type bytesHex = string
 let keccak256 = Viem.keccak256
 let bytesToHex = Viem.bytesToHex
 let concat = Viem.concat
+let castToHexUnsafe: 'a => hex = val => val->Utils.magic
 let fromBigInt: bigint => hex = val => val->Viem.bigintToHex(~options={size: 32})
 let fromDynamicString: string => hex = val => val->(Utils.magic: string => hex)->keccak256
 let fromString: string => hex = val => val->Viem.stringToHex(~options={size: 32})

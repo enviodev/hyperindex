@@ -57,10 +57,12 @@ networks:
           - event: "IndexedString"
           - event: "IndexedFixedBytes"
           - event: "IndexedStruct"
-          # - event: "IndexedArray"
-          # - event: "IndexedFixedArray"
-          # - event: "IndexedNestedArray"
-          # - event: "IndexedStructArray"
+          - event: "IndexedArray"
+          - event: "IndexedFixedArray"
+          - event: "IndexedNestedArray"
+          - event: "IndexedStructArray"
+          - event: "IndexedNestedStruct"
+          - event: "IndexedStructWithArray"
   - id: 1
     start_block: 1
     contracts: []
