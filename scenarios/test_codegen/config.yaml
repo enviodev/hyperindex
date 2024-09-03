@@ -45,6 +45,22 @@ networks:
         events:
           - event: "Erc20Transfer(address indexed from, address indexed to, uint256 amount)"
           - event: "Transfer"
+      - name: TestEvents
+        abi_file_path: ./contracts/artifacts/contracts/TestEvents.sol/TestEvents.json
+        handler: src/EventHandlers.ts
+        events:
+          - event: "IndexedUint"
+          - event: "IndexedInt"
+          - event: "IndexedAddress"
+          - event: "IndexedBool"
+          - event: "IndexedBytes"
+          - event: "IndexedString"
+          - event: "IndexedFixedBytes"
+          - event: "IndexedStruct"
+          # - event: "IndexedArray"
+          # - event: "IndexedFixedArray"
+          # - event: "IndexedNestedArray"
+          # - event: "IndexedStructArray"
   - id: 1
     start_block: 1
     contracts: []

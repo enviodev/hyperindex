@@ -17,18 +17,45 @@ impl<'a> From<&'a EthAbiEventParam> for EthereumEventParam<'a> {
 }
 
 pub fn eth_type_to_topic_filter(param: &EthereumEventParam) -> String {
-    match &param.abi_type {
-        EthAbiParamType::Address => "Viem.TopicFilter.fromAddress",
-        EthAbiParamType::Uint(_size) | EthAbiParamType::Int(_size) => "Viem.TopicFilter.fromBigInt",
-        EthAbiParamType::Bytes | EthAbiParamType::FixedBytes(_) => "Viem.TopicFilter.fromBytes",
-        EthAbiParamType::Bool => "Viem.TopicFilter.fromBool",
-        EthAbiParamType::String => "Viem.TopicFilter.fromString",
-        EthAbiParamType::Array(_) | EthAbiParamType::FixedArray(_, _) => {
-            todo!("Unhandled array as topic")
+    fn rec(param: &EthAbiParamType, is_tuple_param: bool) -> String {
+        match &param {
+            EthAbiParamType::Address => "TopicFilter.fromAddress".to_string(),
+            EthAbiParamType::Uint(_size) | EthAbiParamType::Int(_size) => {
+                "TopicFilter.fromBigInt".to_string()
+            }
+            EthAbiParamType::Bytes if !is_tuple_param => "TopicFilter.fromDynamicBytes".to_string(),
+            EthAbiParamType::Bytes | EthAbiParamType::FixedBytes(_) => {
+                "TopicFilter.fromBytes".to_string()
+            }
+            EthAbiParamType::Bool => "TopicFilter.fromBool".to_string(),
+            EthAbiParamType::String => if !is_tuple_param {
+                "TopicFilter.fromDynamicString"
+            } else {
+                "TopicFilter.fromString"
+            }
+            .to_string(),
+            EthAbiParamType::Tuple(params) => {
+                //TODO: test for nested tuples
+                let params_applied = params
+                    .iter()
+                    .enumerate()
+                    .map(|(i, p)| {
+                        let param_encoder = rec(p, true);
+                        format!(
+                            "tuple->Utils.Tuple.get({i})->Belt.Option.getUnsafe->{param_encoder}"
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ");
+
+                format!("(tuple) => TopicFilter.keccak256(TopicFilter.concat([{params_applied}]))")
+            }
+            EthAbiParamType::Array(_) | EthAbiParamType::FixedArray(_, _) => {
+                todo!("Unhandled array as topic")
+            }
         }
-        EthAbiParamType::Tuple(_) => todo!("Unhandled tuple as topic"),
     }
-    .to_string()
+    rec(param.abi_type, false)
 }
 
 pub fn abi_to_rescript_type(param: &EthereumEventParam) -> RescriptTypeIdent {

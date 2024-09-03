@@ -258,7 +258,7 @@ module HandlerTypes = {
 
   module Register: {
     type t<'eventArgs>
-    let make: (~topic0: string, ~contractName: string, ~eventName: string) => t<'eventArgs>
+    let make: (~topic0: EvmTypes.Hex.t, ~contractName: string, ~eventName: string) => t<'eventArgs>
     let setLoaderHandler: (
       t<'eventArgs>,
       loaderHandler<'eventArgs, 'loaderReturn>,
@@ -281,7 +281,7 @@ module HandlerTypes = {
     type t<'eventArgs> = {
       contractName: string,
       eventName: string,
-      topic0: string,
+      topic0: EvmTypes.Hex.t,
       mutable loaderHandler: option<loaderHandler<'eventArgs, loaderReturn>>,
       mutable contractRegister: option<contractRegister<'eventArgs>>,
       mutable eventOptions: option<eventOptions>,
@@ -414,7 +414,7 @@ let makeEventOptions = (
   eventConfig->Option.map(({?wildcard, ?eventFilters}) => {
     HandlerTypes.wildcard: wildcard->Option.getWithDefault(false),
     topicSelections: eventFilters->Option.mapWithDefault(
-      [LogSelection.makeTopicSelection(~topic0=[Event.sighash])->Utils.unwrapResultExn],
+      [LogSelection.makeTopicSelection(~topic0=[Event.sighash->EvmTypes.Hex.fromStringUnsafe])->Utils.unwrapResultExn],
       v => v->Belt.Array.map(Event.getTopicSelection),
     ),
   })
@@ -490,7 +490,7 @@ module {{contract.name.capitalized}} = {
     let decodeHyperFuelData = {{decode_hyper_fuel_data_code}}
 
     let handlerRegister: HandlerTypes.Register.t<eventArgs> = HandlerTypes.Register.make(
-      ~topic0=sighash,
+      ~topic0=sighash->EvmTypes.Hex.fromStringUnsafe,
       ~contractName,
       ~eventName=name,
     )

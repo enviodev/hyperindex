@@ -1,10 +1,10 @@
 open Belt
-type hexString = string
+type hex = EvmTypes.Hex.t
 type topicSelection = {
-  topic0: array<hexString>,
-  topic1: array<hexString>,
-  topic2: array<hexString>,
-  topic3: array<hexString>,
+  topic0: array<hex>,
+  topic1: array<hex>,
+  topic2: array<hex>,
+  topic3: array<hex>,
 }
 
 exception MissingRequiredTopic0
@@ -39,3 +39,15 @@ let topicSelectionsHaveFilters = (topicSelections: array<topicSelection>) =>
   topicSelections->Array.some(topicSelectionHasFilters)
 
 let hasTopicFilters = ({topicSelections}: t) => topicSelections->topicSelectionsHaveFilters
+
+type topicFilter = array<EvmTypes.Hex.t>
+type topicQuery = (topicFilter, topicFilter, topicFilter, topicFilter)
+let makeTopicQuery = (~topic0=[], ~topic1=[], ~topic2=[], ~topic3=[]) => (
+  topic0,
+  topic1,
+  topic2,
+  topic3,
+)
+
+let mapTopicQuery = ({topic0, topic1, topic2, topic3}: topicSelection): topicQuery =>
+  makeTopicQuery(~topic0, ~topic1, ~topic2, ~topic3)

@@ -118,7 +118,9 @@ module Make = (
       | [] => None
       | addresses =>
         let topicSelection =
-          LogSelection.makeTopicSelection(~topic0=contract.sighashes)->Utils.unwrapResultExn
+          LogSelection.makeTopicSelection(
+            ~topic0=contract.sighashes->EvmTypes.Hex.fromStringsUnsafe,
+          )->Utils.unwrapResultExn
 
         Some(LogSelection.make(~addresses, ~topicSelections=[topicSelection]))
       }

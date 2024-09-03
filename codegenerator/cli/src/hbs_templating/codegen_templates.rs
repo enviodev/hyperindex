@@ -351,8 +351,9 @@ impl EventTemplate {
     const DECODE_HYPER_FUEL_DATA_CODE: &'static str =
         "(_) => Js.Exn.raiseError(\"HyperFuel decoder not implemented\")";
 
-    const GET_TOPIC_SELECTION_CODE_STUB: &'static str =
-        "eventFilter => LogSelection.makeTopicSelection(~topic0=[sighash])->Utils.unwrapResultExn";
+    const GET_TOPIC_SELECTION_CODE_STUB: &'static str = "_eventFilter => \
+         LogSelection.makeTopicSelection(~topic0=[sighash->EvmTypes.Hex.fromStringUnsafe])->Utils.\
+         unwrapResultExn";
 
     const EVENT_FILTER_TYPE_STUB: &'static str = "{}";
 
@@ -384,14 +385,15 @@ impl EventTemplate {
                 let param_name = RescriptRecordField::to_valid_res_name(&param.name);
                 let topic_filter = eth_type_to_topic_filter(&param.into());
                 format!(
-                    "~topic{topic_number}=eventFilter.{param_name}->Belt.Array.\
+                    "~topic{topic_number}=_eventFilter.{param_name}->Belt.Array.\
                      map({topic_filter}), "
                 )
             })
             .collect::<String>();
 
         format!(
-            "(eventFilter) => LogSelection.makeTopicSelection(~topic0=[sighash], \
+            "(_eventFilter) => \
+             LogSelection.makeTopicSelection(~topic0=[sighash->EvmTypes.Hex.fromStringUnsafe], \
              {topic_filter_calls})->Utils.unwrapResultExn"
         )
     }
