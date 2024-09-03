@@ -1,8 +1,20 @@
-# Envio
+# HyperIndex
 
-Envio is a reliable real-time indexing solution that makes it easy to ingest events from EVM-compatible chains and process that data into to custom APIs. These APIs are perfect for unlocking slick user-experiences in blockchain application frontends.
+HyperIndex is a modern, multi-chain data indexing framework for easily querying real-time and historical data from any EVM blockchain, as well as Fuel.
 
-Aim of Envio is to optimize developer experience of using an indexer, whilst providing fast, secure and reliable indexing service.
+Designed with a core focus on delivering superior performance and seamless developer experience, HyperIndex optimizes the user experience. 
+
+Build a real-time API for your blockchain application in minutes.
+
+# Features 
+- Simplified Installation & Setup
+- Any EVM L1, L2, or L3 Blockchain
+- Blazing-Fast Indexing
+- Multi-chain support
+- Automatic Code Generation
+- Flexible Language Support
+- Promote to Production
+- Detailed Logging & Error Messaging
 
 # CLI tool
 
