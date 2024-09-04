@@ -1,3 +1,4 @@
+use crate::config_parsing::validation::{is_valid_npm_package_name, is_valid_postgres_db_name};
 use crate::constants::project_paths::DEFAULT_PROJECT_ROOT_PATH;
 use colored::Colorize;
 use inquire::validator::CustomTypeValidator;
@@ -77,9 +78,23 @@ impl<T> UniqueValueValidator<T> {
 
 pub fn is_not_empty_string_validator(s: &str) -> Result<Validation, CustomUserError> {
     if s.trim().is_empty() {
-        Ok(Validation::Invalid("Invalid empty string input".into()))
+        Ok(Validation::Invalid("Invalid input of empty string".into()))
     } else {
         Ok(Validation::Valid)
+    }
+}
+
+// must start with a letter
+// only contain lowercase letters, numbers or underscorse
+// must have a maximum length of 63 characters
+pub fn is_valid_project_name_validator(s: &str) -> Result<Validation, CustomUserError> {
+    if is_valid_postgres_db_name(s) && is_valid_npm_package_name(s) {
+        Ok(Validation::Valid)
+    } else {
+        Ok(Validation::Invalid(
+            "Invalid name: must start with a letter, only contain lowercase letters, numbers or underscores, and have a maximum length of 63 characters"
+                .into(),
+        ))
     }
 }
 

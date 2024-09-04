@@ -15,6 +15,19 @@ pub fn is_valid_postgres_db_name(name: &str) -> bool {
     re.is_match(name)
 }
 
+/// Validates a package name according to npm rules.
+///
+/// A valid package name must:
+/// - Be lowercase and start with a letter, number, or tilde (`~`).
+/// - Optionally include a scope in the format `@scope/package-name`.
+/// - Contain only lowercase letters, numbers, hyphens (`-`), underscores (`_`), dots (`.`), and tildes (`~`).
+/// - Avoid consecutive periods (`..`).
+/// - Not start or end with a period (`.`), hyphen (`-`), or underscore (`_`).
+pub fn is_valid_npm_package_name(name: &str) -> bool {
+    let re = Regex::new(r"^(?:@[a-z0-9-~][a-z0-9-._~]*\/)?[a-z0-9-~][a-z0-9-._~]*$").unwrap();
+    re.is_match(name)
+}
+
 pub fn is_valid_ethereum_address(address: &str) -> bool {
     let re = Regex::new(r"^0x[0-9a-fA-F]{40}$").unwrap();
     re.is_match(address)

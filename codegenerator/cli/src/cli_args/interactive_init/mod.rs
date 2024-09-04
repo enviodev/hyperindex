@@ -21,7 +21,7 @@ use strum;
 use strum::{Display, EnumIter, IntoEnumIterator};
 use validation::{
     contains_no_whitespace_validator, is_directory_new_validator, is_not_empty_string_validator,
-    is_valid_foldername_inquire_validator,
+    is_valid_foldername_inquire_validator, is_valid_project_name_validator,
 };
 
 #[derive(Clone, Debug, Display, PartialEq, EnumIter)]
@@ -118,8 +118,9 @@ pub async fn prompt_missing_init_args(
         None => {
             // TODO: input validation for name
             Text::new("Name your indexer:")
-                .with_default("My Envio Indexer")
+                .with_default("my_envio_indexer")
                 .with_validator(is_not_empty_string_validator)
+                .with_validator(is_valid_project_name_validator)
                 .prompt()?
         }
     };
