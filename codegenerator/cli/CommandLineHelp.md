@@ -119,7 +119,7 @@ Initialize by pulling the contract ABI from a block explorer
 
 * `-b`, `--blockchain <BLOCKCHAIN>` — Network from which contract address should be fetched for migration
 
-  Possible values: `ethereum-mainnet`, `goerli`, `optimism`, `base`, `base-sepolia`, `bsc`, `gnosis`, `fantom`, `polygon`, `optimism-goerli`, `optimism-sepolia`, `moonbeam`, `arbitrum-one`, `arbitrum-nova`, `arbitrum-goerli`, `arbitrum-sepolia`, `celo`, `fuji`, `avalanche`, `sepolia`, `linea`, `polygon-zkevm`, `scroll`, `kroma`, `holesky`, `blast`, `blast-sepolia`, `amoy`
+  Possible values: `amoy`, `arbitrum-goerli`, `arbitrum-nova`, `arbitrum-one`, `arbitrum-sepolia`, `avalanche`, `base`, `base-sepolia`, `blast`, `blast-sepolia`, `bsc`, `celo`, `ethereum-mainnet`, `fantom`, `fuji`, `gnosis`, `goerli`, `holesky`, `kroma`, `linea`, `moonbeam`, `optimism`, `optimism-goerli`, `optimism-sepolia`, `polygon`, `polygon-zkevm`, `scroll`, `sepolia`
 
 
 
