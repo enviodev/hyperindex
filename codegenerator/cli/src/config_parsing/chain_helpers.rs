@@ -47,15 +47,15 @@ pub enum Network {
     #[subenum(HypersyncNetwork, NetworkWithExplorer, GraphNetwork)]
     ArbitrumSepolia = 421614,
 
+    #[subenum(HypersyncNetwork, GraphNetwork)]
+    // Blockscout: https://explorer.aurora.dev/
+    Aurora = 1313161554,
+
     #[subenum(GraphNetwork)]
     AuroraTestnet = 1313161555,
 
     #[subenum(HypersyncNetwork, GraphNetwork, NetworkWithExplorer)]
     Avalanche = 43114,
-
-    #[subenum(HypersyncNetwork, GraphNetwork)]
-    // Blockscout: https://explorer.aurora.dev/
-    Aurora = 1313161554,
 
     #[subenum(HypersyncNetwork, NetworkWithExplorer, GraphNetwork)]
     Base = 8453,
@@ -89,6 +89,11 @@ pub enum Network {
     #[subenum(HypersyncNetwork, GraphNetwork(serde(rename = "chapel")))]
     BscTestnet = 97,
 
+    #[subenum(HypersyncNetwork)]
+    // Explorers:
+    // Blockscout: https://explorer-mainnet-cardano-evm.c1.milkomeda.com/
+    C1Milkomeda = 2001,
+
     #[subenum(HypersyncNetwork, GraphNetwork, NetworkWithExplorer)]
     Celo = 42220,
 
@@ -98,6 +103,10 @@ pub enum Network {
     #[subenum(HypersyncNetwork)]
     Chiliz = 8888,
 
+    #[subenum(HypersyncNetwork)]
+    // blocksout: https://explorer.devnet.citrea.xyz/
+    CitreaDevnet = 62298,
+
     #[subenum(GraphNetwork)]
     Clover = 1023,
 
@@ -105,15 +114,6 @@ pub enum Network {
     // Explorers:
     // https://crab.subscan.io/
     Crab = 44,
-
-    #[subenum(HypersyncNetwork)]
-    // Explorers:
-    // Blockscout: https://explorer-mainnet-cardano-evm.c1.milkomeda.com/
-    C1Milkomeda = 2001,
-
-    #[subenum(HypersyncNetwork)]
-    // blocksout: https://explorer.devnet.citrea.xyz/
-    CitreaDevnet = 62298,
 
     #[subenum(HypersyncNetwork)]
     // Explorers:
@@ -139,16 +139,16 @@ pub enum Network {
     )]
     EthereumMainnet = 1,
 
-    #[subenum(HypersyncNetwork)]
-    // Explorers:
-    // https://explorer.testnet.fhenix.zone/ (blockscout)
-    FhenixTestnet = 42069,
-
     #[subenum(HypersyncNetwork, NetworkWithExplorer, GraphNetwork)]
     Fantom = 250,
 
     #[subenum(GraphNetwork)]
     FantomTestnet = 4002,
+
+    #[subenum(HypersyncNetwork)]
+    // Explorers:
+    // https://explorer.testnet.fhenix.zone/ (blockscout)
+    FhenixTestnet = 42069,
 
     #[subenum(HypersyncNetwork)]
     // Explorers:
@@ -215,14 +215,14 @@ pub enum Network {
     // Routescan: https://mantlescan.info/
     Mantle = 5000,
 
-    #[subenum(HypersyncNetwork)]
-    MevCommit = 17864,
+    #[subenum(GraphNetwork)]
+    Mbase = 1287,
 
     #[subenum(HypersyncNetwork)]
     Metis = 1088,
 
-    #[subenum(GraphNetwork)]
-    Mbase = 1287,
+    #[subenum(HypersyncNetwork)]
+    MevCommit = 17864,
 
     #[subenum(HypersyncNetwork, NetworkWithExplorer, GraphNetwork)]
     Moonbeam = 1284,
@@ -567,7 +567,6 @@ pub fn get_confirmed_block_threshold_from_id(id: u64) -> i32 {
 
 #[cfg(test)]
 mod test {
-
     use super::{get_etherscan_client, GraphNetwork, HypersyncNetwork, NetworkWithExplorer};
     use crate::config_parsing::chain_helpers::Network;
     use itertools::Itertools;
