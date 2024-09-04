@@ -71,6 +71,10 @@ module type S = {
       }
     }
 
+    module SingleOrMultiple: {
+      type t<'a>
+    }
+
     module type Event = {
       let sighash: string
       let name: string
@@ -81,7 +85,7 @@ module type S = {
       let decodeHyperFuelData: string => eventArgs
       let handlerRegister: HandlerTypes.Register.t<eventArgs>
       type eventFilter
-      let getTopicSelection: eventFilter => LogSelection.topicSelection
+      let getTopicSelection: SingleOrMultiple.t<eventFilter> => array<LogSelection.topicSelection>
     }
     module type InternalEvent = Event with type eventArgs = internalEventArgs
 

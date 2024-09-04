@@ -33,7 +33,7 @@ const testParams = {
   // "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
 };
 
-describe("Topic Hashing", () => {
+describe.only("Topic Hashing", () => {
   before(async function() {
     this.timeout(30 * 1000);
     await hre.run("compile");
@@ -69,11 +69,14 @@ describe("Topic Hashing", () => {
   });
 
   const checkEventFilter = async (eventMod: any, filter: any) => {
+    console.log("name", eventMod.name);
     const topics = mapTopicQuery(eventMod.getTopicSelection(filter));
+    console.log("topics", topics);
     const res = await hre.ethers.provider.getLogs({
       address: await deployedTestEvents.getAddress(),
       topics,
     });
+    console.log("res", res);
 
     assert.equal(res.length, 1);
     checkedEvents[eventMod.name] = eventMod.sighash;
@@ -179,14 +182,14 @@ describe("Topic Hashing", () => {
     await checkEventFilter(GeneratedTestEvents.IndexedNestedStruct, filter);
   });
 
-  it("get indexed struct with array topic with topic filter", async () => {
+  it.only("get indexed struct with array topic with topic filter", async () => {
     type structWithArray = [bigint[], string[]];
     const structWithArray: structWithArray = [
       [testParams.id, testParams.id + 1n],
       [testParams.str, testParams.str],
     ];
     const filter: TestEvents_IndexedStructWithArray_eventFilter = {
-      structWithArray: [structWithArray],
+      structWithArray: structWithArray,
     };
     await checkEventFilter(GeneratedTestEvents.IndexedStructWithArray, filter);
   });

@@ -3,7 +3,7 @@ use ethers::abi::{EventParam as EthAbiEventParam, ParamType as EthAbiParamType};
 use crate::rescript_types::RescriptTypeIdent;
 
 pub struct EthereumEventParam<'a> {
-    name: &'a str,
+    pub name: &'a str,
     abi_type: &'a EthAbiParamType,
 }
 
@@ -16,65 +16,90 @@ impl<'a> From<&'a EthAbiEventParam> for EthereumEventParam<'a> {
     }
 }
 
-pub fn eth_type_to_topic_filter(param: &EthereumEventParam) -> String {
-    struct IsValueEncoder(bool);
-    struct IsNestedType(bool);
-    fn rec(param: &EthAbiParamType, is_nested_type: IsNestedType) -> (String, IsValueEncoder) {
-        fn value_encoder(encoder: &str) -> (String, IsValueEncoder) {
-            (encoder.to_string(), IsValueEncoder(true))
-        }
-        fn non_value_encoder(encoder: &str) -> (String, IsValueEncoder) {
-            (encoder.to_string(), IsValueEncoder(false))
-        }
-        match &param {
-            EthAbiParamType::Bytes | EthAbiParamType::String if !is_nested_type.0 => {
-                //In the case of a string or bytes param we simply create a keccak256 hash of the value
-                //unless it is a nested type inside a tuple or array
-                non_value_encoder("TopicFilter.castToHexUnsafe")
-            }
-            EthAbiParamType::Address => value_encoder("TopicFilter.fromAddress"),
-            EthAbiParamType::Uint(_size) | EthAbiParamType::Int(_size) => {
-                value_encoder("TopicFilter.fromBigInt")
-            }
-            EthAbiParamType::Bytes | EthAbiParamType::FixedBytes(_) => {
-                value_encoder("TopicFilter.fromBytes")
-            }
-            EthAbiParamType::Bool => value_encoder("TopicFilter.fromBool"),
-            EthAbiParamType::String => value_encoder("TopicFilter.fromString"),
-            EthAbiParamType::Tuple(params) => {
-                //TODO: test for nested tuples
-                let tuple_arg = "tuple";
-                let params_applied = params
+impl EthereumEventParam<'_> {
+    pub fn get_nesting_level(&self) -> usize {
+        fn rec(param: &EthAbiParamType, accum: usize) -> usize {
+            match param {
+                EthAbiParamType::Tuple(params) => params
                     .iter()
-                    .enumerate()
-                    .map(|(i, p)| {
-                        let (param_encoder, _) = rec(p, IsNestedType(true));
-                        format!(
-                            "{tuple_arg}->Utils.Tuple.get({i})->Belt.Option.\
-                             getUnsafe->{param_encoder}"
-                        )
-                    })
-                    .collect::<Vec<_>>()
-                    .join(", ");
+                    .fold(accum, |accum_inner, p| accum_inner + rec(p, 0)),
+                EthAbiParamType::Array(p) | EthAbiParamType::FixedArray(p, _) => rec(p, accum + 1),
+                _ => accum,
+            }
+        }
+        self.abi_type.get_nesting_level()
+    }
 
-                non_value_encoder(
-                    format!("({tuple_arg}) => TopicFilter.concat([{params_applied}])").as_str(),
-                )
-            }
-            EthAbiParamType::Array(p) | EthAbiParamType::FixedArray(p, _) => {
-                let (param_encoder, _) = rec(p, IsNestedType(true));
-                non_value_encoder(
-                    format!("(arr) => TopicFilter.concat(arr->Belt.Array.map({param_encoder}))")
-                        .as_str(),
-                )
-            }
+    pub fn is_nested_type(&self) -> bool {
+        match self.abi_type {
+            EthAbiParamType::Tuple(_) => true,
+            EthAbiParamType::Array(_) => true,
+            _ => false,
         }
     }
-    match rec(param.abi_type, IsNestedType(false)) {
-        (encoder, IsValueEncoder(false)) => {
-            format!("(value) => TopicFilter.keccak256(value->{encoder})")
+
+    pub fn get_topic_encoder(&self) -> String {
+        struct IsValueEncoder(bool);
+        struct IsNestedType(bool);
+        fn rec(param: &EthAbiParamType, is_nested_type: IsNestedType) -> (String, IsValueEncoder) {
+            fn value_encoder(encoder: &str) -> (String, IsValueEncoder) {
+                (encoder.to_string(), IsValueEncoder(true))
+            }
+            fn non_value_encoder(encoder: &str) -> (String, IsValueEncoder) {
+                (encoder.to_string(), IsValueEncoder(false))
+            }
+            match &param {
+                EthAbiParamType::Bytes | EthAbiParamType::String if !is_nested_type.0 => {
+                    //In the case of a string or bytes param we simply create a keccak256 hash of the value
+                    //unless it is a nested type inside a tuple or array
+                    non_value_encoder("TopicFilter.castToHexUnsafe")
+                }
+                EthAbiParamType::Address => value_encoder("TopicFilter.fromAddress"),
+                EthAbiParamType::Uint(_size) | EthAbiParamType::Int(_size) => {
+                    value_encoder("TopicFilter.fromBigInt")
+                }
+                EthAbiParamType::Bytes | EthAbiParamType::FixedBytes(_) => {
+                    value_encoder("TopicFilter.fromBytes")
+                }
+                EthAbiParamType::Bool => value_encoder("TopicFilter.fromBool"),
+                EthAbiParamType::String => value_encoder("TopicFilter.fromString"),
+                EthAbiParamType::Tuple(params) => {
+                    //TODO: test for nested tuples
+                    let tuple_arg = "tuple";
+                    let params_applied = params
+                        .iter()
+                        .enumerate()
+                        .map(|(i, p)| {
+                            let (param_encoder, _) = rec(p, IsNestedType(true));
+                            format!(
+                                "{tuple_arg}->Utils.Tuple.get({i})->Belt.Option.\
+                             getUnsafe->{param_encoder}"
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                        .join(", ");
+
+                    non_value_encoder(
+                        format!("({tuple_arg}) => TopicFilter.concat([{params_applied}])").as_str(),
+                    )
+                }
+                EthAbiParamType::Array(p) | EthAbiParamType::FixedArray(p, _) => {
+                    let (param_encoder, _) = rec(p, IsNestedType(true));
+                    non_value_encoder(
+                        format!(
+                            "(arr) => TopicFilter.concat(arr->Belt.Array.map({param_encoder}))"
+                        )
+                        .as_str(),
+                    )
+                }
+            }
         }
-        (encoder, IsValueEncoder(true)) => encoder,
+        match rec(self.abi_type, IsNestedType(false)) {
+            (encoder, IsValueEncoder(false)) => {
+                format!("(value) => TopicFilter.keccak256(value->{encoder})")
+            }
+            (encoder, IsValueEncoder(true)) => encoder,
+        }
     }
 }
 

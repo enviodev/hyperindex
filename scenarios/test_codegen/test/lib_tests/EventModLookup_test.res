@@ -38,7 +38,7 @@ module MakeEventMock = (
       loader: Utils.magic("Stub for loader"),
       handler: Utils.magic("Stub for handler"),
     },
-    ~eventOptions=Some({
+    ~getEventOptions=_ => Some({
       wildcard: E.isWildcard,
       topicSelections: [
         LogSelection.makeTopicSelection(

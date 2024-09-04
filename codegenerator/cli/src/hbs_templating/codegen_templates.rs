@@ -4,7 +4,7 @@ use super::hbs_dir_generator::HandleBarsDirGenerator;
 use crate::{
     config_parsing::{
         entity_parsing::{Entity, Field, GraphQLEnum, MultiFieldIndex, Schema},
-        event_parsing::{abi_to_rescript_type, eth_type_to_topic_filter},
+        event_parsing::{abi_to_rescript_type, EthereumEventParam},
         postgres_types,
         system_config::{
             self, Abi, Ecosystem, EventPayload, HyperfuelConfig, HypersyncConfig, RpcConfig,
@@ -351,9 +351,9 @@ impl EventTemplate {
     const DECODE_HYPER_FUEL_DATA_CODE: &'static str =
         "(_) => Js.Exn.raiseError(\"HyperFuel decoder not implemented\")";
 
-    const GET_TOPIC_SELECTION_CODE_STUB: &'static str = "_eventFilter => \
-         LogSelection.makeTopicSelection(~topic0=[sighash->EvmTypes.Hex.fromStringUnsafe])->Utils.\
-         unwrapResultExn";
+    const GET_TOPIC_SELECTION_CODE_STUB: &'static str =
+        "_ => [LogSelection.makeTopicSelection(~topic0=[sighash->EvmTypes.Hex.\
+         fromStringUnsafe])->Utils.unwrapResultExn]";
 
     const EVENT_FILTER_TYPE_STUB: &'static str = "{}";
 
@@ -363,7 +363,7 @@ impl EventTemplate {
             .filter(|param| param.indexed)
             .map(|param| {
                 format!(
-                    "@as(\"{}\") {}?: array<{}>",
+                    "@as(\"{}\") {}?: SingleOrMultiple.t<{}>",
                     param.name,
                     RescriptRecordField::to_valid_res_name(&param.name),
                     abi_to_rescript_type(&param.into())
@@ -384,20 +384,26 @@ impl EventTemplate {
         let topic_filter_calls = indexed_params
             .enumerate()
             .map(|(i, param)| {
+                let param = EthereumEventParam::from(param);
                 let topic_number = i + 1;
-                let param_name = RescriptRecordField::to_valid_res_name(&param.name);
-                let topic_filter = eth_type_to_topic_filter(&param.into());
+                let param_name = RescriptRecordField::to_valid_res_name(param.name);
+                let topic_encoder = param.get_topic_encoder();
+                let nested_type_flags = if param.is_nested_type(){
+                    "(~isNestedArray=true)"
+                } else {
+                    ""
+                };
                 format!(
-                    "~topic{topic_number}=?{event_filter_arg}.{param_name}->Belt.Option.map(Belt.\
-                     Array.map(_, {topic_filter})), "
+                    "~topic{topic_number}=?{event_filter_arg}.{param_name}->Belt.Option.map(topicFilters => topicFilters->SingleOrMultiple.normalizeOrThrow{nested_type_flags}->Belt.\
+                     Array.map({topic_encoder})), "
                 )
             })
             .collect::<String>();
 
         format!(
-            "({event_filter_arg}) => \
+            "(eventFilters) => eventFilters->SingleOrMultiple.normalizeOrThrow->Belt.Array.map({event_filter_arg} => \
              LogSelection.makeTopicSelection(~topic0=[sighash->EvmTypes.Hex.fromStringUnsafe], \
-             {topic_filter_calls})->Utils.unwrapResultExn"
+             {topic_filter_calls})->Utils.unwrapResultExn)"
         )
     }
 
