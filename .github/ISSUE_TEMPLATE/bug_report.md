@@ -12,6 +12,8 @@ A clear and concise description of what the bug is.
 
 **To Reproduce**
 Steps to reproduce the behavior:
+
+E.g.
 1. Go to '...'
 2. Click on '....'
 3. Scroll down to '....'
@@ -23,11 +25,16 @@ A clear and concise description of what you expected to happen.
 **Screenshots**
 If applicable, add screenshots to help explain your problem.
 
-**Desktop (please complete the following information):**
+**Local (please complete the following information):**
  - Envio version
  - Node version
  - pnpm version
  - Docker version (if running locally)
+
+**Hosted Service (please complete the following information):**
+ - Envio version
+ - Link to the deployed indexer
+
 
 **Additional context**
 Add any other context about the problem here.
