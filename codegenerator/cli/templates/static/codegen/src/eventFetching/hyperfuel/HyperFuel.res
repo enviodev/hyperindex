@@ -203,8 +203,6 @@ module LogsQuery = {
       ~contractsReceiptQuery,
     )
 
-    Js.log(query)
-
     let hyperFuelClient = CachedClients.getClient(serverUrl)
 
     let logger = Logging.createChild(
