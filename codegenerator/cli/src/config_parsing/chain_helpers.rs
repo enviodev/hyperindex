@@ -570,9 +570,23 @@ mod test {
 
     use super::{get_etherscan_client, GraphNetwork, HypersyncNetwork, NetworkWithExplorer};
     use crate::config_parsing::chain_helpers::Network;
+    use itertools::Itertools;
     use pretty_assertions::assert_eq;
     use serde::Deserialize;
     use strum::IntoEnumIterator;
+
+    #[test]
+    fn networks_are_defined_in_alphabetical_order() {
+        let networks_sorted = Network::iter()
+            .map(|n| n.to_string())
+            .sorted()
+            .collect::<Vec<_>>();
+        let networks = Network::iter().map(|n| n.to_string()).collect::<Vec<_>>();
+        assert_eq!(
+            networks_sorted, networks,
+            "Networks should be defined in alphabetical order (sorry to be picky)"
+        );
+    }
 
     #[test]
     fn all_networks_with_explorer_can_get_etherscan_client() {
