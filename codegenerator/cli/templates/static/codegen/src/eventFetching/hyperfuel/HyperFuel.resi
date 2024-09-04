@@ -35,7 +35,7 @@ type logsQueryPage = hyperSyncPage<item>
 
 type contractReceiptQuery = {
   addresses: array<Address.t>,
-  logIds: array<string>,
+  rb: array<bigint>,
 }
 
 type missingParams = {

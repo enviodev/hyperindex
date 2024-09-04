@@ -3,9 +3,12 @@ use fuel_abi_types::abi::unified_program::{UnifiedProgramABI, UnifiedTypeApplica
 use itertools::Itertools;
 use std::{collections::HashMap, fs, path::PathBuf};
 
-use crate::rescript_types::{
-    RescriptRecordField, RescriptTypeDecl, RescriptTypeDeclMulti, RescriptTypeExpr,
-    RescriptTypeIdent, RescriptVariantConstr,
+use crate::{
+    rescript_types::{
+        RescriptRecordField, RescriptTypeDecl, RescriptTypeDeclMulti, RescriptTypeExpr,
+        RescriptTypeIdent, RescriptVariantConstr,
+    },
+    utils::text::Capitalize,
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -89,7 +92,7 @@ impl FuelAbi {
         }
 
         fn mk_type_id_name(type_id: &usize) -> String {
-            format!("type_id_{}", type_id)
+            format!("type{}", type_id)
         }
 
         let generic_param_name_map = program
@@ -98,7 +101,7 @@ impl FuelAbi {
             .filter_map(|type_decl| {
                 let generic_param_name =
                     extract_value_after_keyword("generic", &type_decl.type_field)?;
-                Some((type_decl.type_id, generic_param_name))
+                Some((type_decl.type_id, generic_param_name.uncapitalize()))
             })
             .collect::<HashMap<usize, String>>();
 

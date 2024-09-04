@@ -6,7 +6,7 @@ use anyhow::{anyhow, Result};
 use core::fmt;
 use itertools::Itertools;
 use serde::Serialize;
-use std::fmt::Display;
+use std::{collections::HashSet, fmt::Display};
 
 pub struct RescriptTypeDeclMulti(Vec<RescriptTypeDecl>);
 
@@ -17,6 +17,40 @@ impl RescriptTypeDeclMulti {
         //all named types accounted for? (maybe don't want this)
         //at least 1 decl
         Self(type_declarations)
+    }
+
+    pub fn to_rescript_schema(&self) -> String {
+        let mut sorted: Vec<RescriptTypeDecl> = vec![];
+        let mut registered: HashSet<String> = HashSet::new();
+
+        let type_decls_with_deps: Vec<(RescriptTypeDecl, Vec<String>)> = self
+            .0
+            .iter()
+            .map(|decl| {
+                let deps = decl.type_expr.dependencies();
+                (decl.clone(), deps)
+            })
+            .collect();
+
+        // Not the most optimised algorithm, but it's simple and works:
+        // Iterate over the type declarations and add them to
+        // the sorted list if all their dependencies already added - repeat
+        while sorted.len() < type_decls_with_deps.len() {
+            for (decl, deps) in &type_decls_with_deps {
+                if !registered.contains(&decl.name)
+                    && deps.iter().all(|dep| registered.contains(dep))
+                {
+                    sorted.push(decl.clone());
+                    registered.insert(decl.name.clone());
+                }
+            }
+        }
+
+        sorted
+            .iter()
+            .map(|decl| format!("let {}Schema = {}", decl.name, decl.to_rescript_schema()))
+            .collect::<Vec<String>>()
+            .join("\n")
     }
 
     pub fn to_string(&self) -> String {
@@ -104,6 +138,20 @@ impl RescriptTypeDecl {
         )
     }
 
+    pub fn to_rescript_schema(&self) -> String {
+        if self.parameters.is_empty() {
+            self.type_expr.to_rescript_schema()
+        } else {
+            let params = self
+                .parameters
+                .iter()
+                .map(|param| format!("{}Schema", param))
+                .collect::<Vec<String>>()
+                .join(", ");
+            format!("({}) => {}", params, self.type_expr.to_rescript_schema())
+        }
+    }
+
     pub fn to_usage(&self, arguments: Vec<String>) -> Result<String> {
         if self.parameters.len() != arguments.len() {
             Err(anyhow!(
@@ -152,8 +200,24 @@ impl RescriptTypeExpr {
     pub fn to_rescript_schema(&self) -> String {
         match self {
             Self::Identifier(type_ident) => type_ident.to_rescript_schema(),
-            Self::Variant(_) => {
-                todo!("Generation of rescript-schema for variant types is not yet implemented")
+            Self::Variant(items) => {
+                let item_schemas = items
+                    .iter()
+                    .map(|item| {
+                        format!(
+                            r#"S.object(s =>
+{{
+  s.tag("case", "{}")
+  {}({{payload: s.field("payload", {})}})
+}})"#,
+                            item.name,
+                            item.name,
+                            item.payload.to_rescript_schema()
+                        )
+                    })
+                    .collect::<Vec<String>>()
+                    .join(", ");
+                format!("S.union([{}])", item_schemas)
             }
             Self::Record(fields) => {
                 if fields.is_empty() {
@@ -177,6 +241,20 @@ impl RescriptTypeExpr {
                     format!("S.object(s => {{{}}})", inner_str)
                 }
             }
+        }
+    }
+
+    pub fn dependencies(&self) -> Vec<String> {
+        match self {
+            Self::Identifier(type_ident) => type_ident.dependencies(),
+            Self::Variant(items) => items
+                .iter()
+                .flat_map(|item| item.payload.dependencies())
+                .collect(),
+            Self::Record(fields) => fields
+                .iter()
+                .flat_map(|field| field.type_ident.dependencies())
+                .collect(),
         }
     }
 }
@@ -396,6 +474,29 @@ impl RescriptTypeIdent {
                     format!("({generic_params}) => {schema_composed}")
                 }
             }
+        }
+    }
+
+    pub fn dependencies(&self) -> Vec<String> {
+        match self {
+            Self::Unit
+            | Self::Int
+            | Self::Float
+            | Self::BigInt
+            | Self::BigDecimal
+            | Self::Address
+            | Self::String
+            | Self::ID
+            | Self::Bool
+            | Self::Timestamp
+            | Self::SchemaEnum(_)
+            | Self::GenericParam(_) => vec![],
+            Self::TypeApplication { name, .. } => vec![name.clone()],
+            Self::Array(inner_type) | Self::Option(inner_type) => inner_type.dependencies(),
+            Self::Tuple(inner_types) => inner_types
+                .iter()
+                .flat_map(|inner_type| inner_type.dependencies())
+                .collect(),
         }
     }
 
@@ -621,14 +722,23 @@ mod tests {
             .to_rescript_schema(),
             "S.tuple(s => (s.item(0, S.int), s.item(1, S.bool)))".to_string()
         );
-        // assert_eq!(
-        //     RescriptTypeExpr::Variant(vec![
-        //         RescriptVariantConstr::new("ConstrA".to_string(), RescriptTypeIdent::Int),
-        //         RescriptVariantConstr::new("ConstrB".to_string(), RescriptTypeIdent::Bool),
-        //     ])
-        //     .to_rescript_schema(),
-        //     "S.variant([@as(\"ConstrA\") S.int, @as(\"ConstrB\") S.bool])".to_string()
-        // );
+        assert_eq!(
+            RescriptTypeExpr::Variant(vec![
+                RescriptVariantConstr::new("ConstrA".to_string(), RescriptTypeIdent::Int),
+                RescriptVariantConstr::new("ConstrB".to_string(), RescriptTypeIdent::Bool),
+            ])
+            .to_rescript_schema(),
+            r#"S.union([S.object(s =>
+{
+  s.tag("case", "ConstrA")
+  ConstrA({payload: s.field("payload", S.int)})
+}), S.object(s =>
+{
+  s.tag("case", "ConstrB")
+  ConstrB({payload: s.field("payload", S.bool)})
+})])"#
+                .to_string()
+        );
         assert_eq!(
             RescriptTypeExpr::Record(vec![
                 RescriptRecordField::new("fieldA".to_string(), RescriptTypeIdent::Int),
