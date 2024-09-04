@@ -2,11 +2,12 @@
 
 HyperIndex is a modern, multi-chain data indexing framework for easily querying real-time and historical data from any EVM blockchain, as well as Fuel.
 
-Designed with a core focus on delivering superior performance and seamless developer experience, HyperIndex optimizes the user experience. 
+Designed with a core focus on delivering superior performance and seamless developer experience, HyperIndex optimizes the user experience.
 
 Build a real-time API for your blockchain application in minutes.
 
-# Features 
+# Features
+
 - Simplified Installation & Setup
 - Any EVM L1, L2, or L3 Blockchain
 - Blazing-Fast Indexing
@@ -15,14 +16,6 @@ Build a real-time API for your blockchain application in minutes.
 - Flexible Language Support
 - Promote to Production
 - Detailed Logging & Error Messaging
-
-# CLI tool
-
-This repo uses `clap` CLI library.
-
-Help file for CLI commands can be found [here](codegenerator/cli/CommandLineHelp.md)
-
-You can use `cargo run --bin envio -- print-all-help > CommandLineHelp.md` to regenerate the file.
 
 # Getting Started
 
@@ -68,8 +61,8 @@ alias lenvio="cargo run --manifest-path <absolute repository path>/hyperindex/co
 
 > `lenvio` is like `local envio` 😁
 
-
 ## Update CLI Generated Docs
+
 Navigate to the cli directory
 `cd codegenerator/cli`
 

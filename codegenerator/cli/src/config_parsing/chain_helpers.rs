@@ -32,227 +32,304 @@ use crate::constants::DEFAULT_CONFIRMED_BLOCK_THRESHOLD;
 #[strum(serialize_all = "kebab-case")]
 #[repr(u64)]
 pub enum Network {
-    #[subenum(
-        HypersyncNetwork,
-        NetworkWithExplorer,
-        GraphNetwork(serde(rename = "mainnet"))
-    )]
-    EthereumMainnet = 1,
+    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
+    Amoy = 80002,
+
+    #[subenum(NetworkWithExplorer, GraphNetwork)]
+    ArbitrumGoerli = 421613,
+
+    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
+    ArbitrumNova = 42170,
+
     #[subenum(HypersyncNetwork, NetworkWithExplorer, GraphNetwork)]
-    Goerli = 5,
+    ArbitrumOne = 42161,
+
     #[subenum(HypersyncNetwork, NetworkWithExplorer, GraphNetwork)]
-    Optimism = 10,
+    ArbitrumSepolia = 421614,
+
+    #[subenum(HypersyncNetwork, GraphNetwork)]
+    // Blockscout: https://explorer.aurora.dev/
+    Aurora = 1313161554,
+
+    #[subenum(GraphNetwork)]
+    AuroraTestnet = 1313161555,
+
+    #[subenum(HypersyncNetwork, GraphNetwork, NetworkWithExplorer)]
+    Avalanche = 43114,
+
     #[subenum(HypersyncNetwork, NetworkWithExplorer, GraphNetwork)]
     Base = 8453,
+
+    #[subenum(GraphNetwork(serde(rename = "base-testnet")))]
+    BaseGoerli = 84531,
+
     #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     // explorers:
     // https://sepolia.basescan.org/
     // https://base-sepolia.blockscout.com/
     BaseSepolia = 84532,
-    #[subenum(HypersyncNetwork, NetworkWithExplorer, GraphNetwork)]
-    Bsc = 56,
-    #[subenum(GraphNetwork)]
-    PoaSokol = 77,
-    #[subenum(GraphNetwork)]
-    Mumbai = 80001,
-    #[subenum(HypersyncNetwork, GraphNetwork(serde(rename = "chapel")))]
-    BscTestnet = 97,
-    #[subenum(GraphNetwork)]
-    PoaCore = 99,
-    #[subenum(HypersyncNetwork, NetworkWithExplorer, GraphNetwork)]
-    Gnosis = 100,
-    #[subenum(GraphNetwork)]
-    Fuse = 122,
-    #[subenum(HypersyncNetwork, NetworkWithExplorer, GraphNetwork)]
-    Fantom = 250,
-    #[subenum(
-        HypersyncNetwork,
-        NetworkWithExplorer,
-        GraphNetwork(serde(rename = "matic"))
-    )]
-    Polygon = 137,
+
+    #[subenum(HypersyncNetwork)]
+    BerachainBartio = 80084,
+
+    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
+    Blast = 81457,
+
+    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
+    BlastSepolia = 168587773,
+
     #[subenum(HypersyncNetwork)]
     // explorers:
     // https://bobascan.com/ (not etherscan)
     Boba = 288,
-    #[subenum(NetworkWithExplorer, GraphNetwork)]
-    OptimismGoerli = 420,
-    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
-    // Alt-explorer:
-    // https://optimism-sepolia.blockscout.com/
-    OptimismSepolia = 11155420,
-    #[subenum(GraphNetwork)]
-    Clover = 1023,
+
     #[subenum(HypersyncNetwork, NetworkWithExplorer, GraphNetwork)]
-    Moonbeam = 1284,
-    #[subenum(GraphNetwork)]
-    Moonriver = 1285,
-    #[subenum(GraphNetwork)]
-    Mbase = 1287,
-    #[subenum(GraphNetwork)]
-    FantomTestnet = 4002,
-    #[subenum(HypersyncNetwork, NetworkWithExplorer, GraphNetwork)]
-    ArbitrumOne = 42161,
-    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
-    ArbitrumNova = 42170,
-    #[subenum(NetworkWithExplorer, GraphNetwork)]
-    ArbitrumGoerli = 421613,
-    #[subenum(HypersyncNetwork, NetworkWithExplorer, GraphNetwork)]
-    ArbitrumSepolia = 421614,
-    #[subenum(HypersyncNetwork, GraphNetwork, NetworkWithExplorer)]
-    Celo = 42220,
-    #[subenum(HypersyncNetwork, GraphNetwork, NetworkWithExplorer)]
-    Fuji = 43113,
-    #[subenum(HypersyncNetwork, GraphNetwork, NetworkWithExplorer)]
-    Avalanche = 43114,
-    #[subenum(GraphNetwork)]
-    CeloAlfajores = 44787,
-    #[subenum(HypersyncNetwork, GraphNetwork)]
-    // Blockscout: https://explorer.aurora.dev/
-    Aurora = 1313161554,
-    #[subenum(GraphNetwork)]
-    AuroraTestnet = 1313161555,
-    #[subenum(HypersyncNetwork)]
-    // Explorers:
-    // https://explorer.harmony.one/
-    // https://getblock.io/explorers/harmony/
-    Harmony = 1666600000, // shard 0
-    #[subenum(GraphNetwork(serde(rename = "base-testnet")))]
-    BaseGoerli = 84531,
-    #[subenum(HypersyncNetwork, GraphNetwork)]
-    ZksyncEra = 324,
-    #[subenum(HypersyncNetwork, NetworkWithExplorer, GraphNetwork)]
-    Sepolia = 11155111,
-    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
-    Linea = 59144,
-    #[subenum(GraphNetwork)]
-    Rinkeby = 4,
-    #[subenum(GraphNetwork)]
-    ZksyncEraTestnet = 280,
-    #[subenum(GraphNetwork)]
-    PolygonZkevmTestnet = 1422,
-    #[subenum(GraphNetwork, HypersyncNetwork, NetworkWithExplorer)]
-    PolygonZkevm = 1101,
-    #[subenum(GraphNetwork)]
-    ScrollSepolia = 534351,
-    #[subenum(GraphNetwork, HypersyncNetwork, NetworkWithExplorer)]
-    Scroll = 534352,
-    #[subenum(HypersyncNetwork)]
-    Metis = 1088,
-    #[subenum(HypersyncNetwork)]
-    // Explorers:
-    // blockscout: https://pacific-explorer.manta.network/
-    // w3w.ai: https://manta.socialscan.io/
-    Manta = 169,
-    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
-    Kroma = 255,
-    #[subenum(HypersyncNetwork)]
-    // Explorers:
-    // https://explorer.execution.mainnet.lukso.network/
-    // https://blockscout.com/lukso/l14
-    Lukso = 42,
-    #[subenum(HypersyncNetwork)]
-    // Explorers:
-    // https://www.oklink.com/x1-test
-    XLayerTestnet = 195,
-    #[subenum(HypersyncNetwork)]
-    // Explorers:
-    // https://www.oklink.com/xlayer
-    XLayer = 196,
-    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
-    Holesky = 17000,
-    #[subenum(HypersyncNetwork)]
-    // Explorers:
-    // https://gnosis-chiado.blockscout.com/
-    GnosisChiado = 10200,
-    #[subenum(HypersyncNetwork)]
-    // Explorers:
-    // https://explorer.zora.energy/
-    Zora = 7777777,
+    Bsc = 56,
+
+    #[subenum(HypersyncNetwork, GraphNetwork(serde(rename = "chapel")))]
+    BscTestnet = 97,
+
     #[subenum(HypersyncNetwork)]
     // Explorers:
     // Blockscout: https://explorer-mainnet-cardano-evm.c1.milkomeda.com/
     C1Milkomeda = 2001,
+
+    #[subenum(HypersyncNetwork, GraphNetwork, NetworkWithExplorer)]
+    Celo = 42220,
+
+    #[subenum(GraphNetwork)]
+    CeloAlfajores = 44787,
+
     #[subenum(HypersyncNetwork)]
-    // Explorers:
-    // Blockscout: https://flare-explorer.flare.network/
-    // Routescan: https://flarescan.com/
-    Flare = 14,
+    Chiliz = 8888,
+
     #[subenum(HypersyncNetwork)]
-    // Explorers:
-    // https://explorer.mantle.xyz/
-    // Routescan: https://mantlescan.info/
-    Mantle = 5000,
-    #[subenum(HypersyncNetwork)]
-    // Explorers:
-    // https://explorer.zetachain.com/
-    // https://zetachain.explorers.guru/
-    Zeta = 7000,
-    #[subenum(HypersyncNetwork)]
-    // Explorers:
-    // https://neonscan.org/
-    // https://neon.blockscout.com/
-    NeonEvm = 245022934,
-    #[subenum(HypersyncNetwork)]
-    // Explorers:
-    // https://explorer.rsk.co/
-    // https://rootstock.blockscout.com/
-    Rsk = 30,
-    #[subenum(HypersyncNetwork)]
-    // Explorers:
-    // https://explorer.evm.shimmer.network/
-    ShimmerEvm = 148,
-    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
-    Blast = 81457,
-    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
-    BlastSepolia = 168587773,
-    #[subenum(HypersyncNetwork)]
-    // Explorers:
-    // https://explorer.testnet.fhenix.zone/ (blockscout)
-    FhenixTestnet = 42069,
-    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
-    Amoy = 80002,
+    // blocksout: https://explorer.devnet.citrea.xyz/
+    CitreaDevnet = 62298,
+
+    #[subenum(GraphNetwork)]
+    Clover = 1023,
+
     #[subenum(HypersyncNetwork)]
     // Explorers:
     // https://crab.subscan.io/
     Crab = 44,
-    #[subenum(HypersyncNetwork)]
-    // Explorers:
-    // https://darwinia.subscan.io/
-    Darwinia = 46,
+
     #[subenum(HypersyncNetwork)]
     // Explorers:
     // NOTE: this does have contract verification and an api to get verified contracts, but this
     // breaks with the current setup. TODO: get non-etherscan contract verification working.
     // https://cyber.socialscan.io/
     Cyber = 7560,
+
+    #[subenum(HypersyncNetwork)]
+    // Explorers:
+    // https://darwinia.subscan.io/
+    Darwinia = 46,
+
+    // Still syncing
     // #[subenum(HypersyncNetwork)]
     // // Explorers:
     // // https://explorer.degen.tips/
     // Degen = 666666666,
+    #[subenum(
+        HypersyncNetwork,
+        NetworkWithExplorer,
+        GraphNetwork(serde(rename = "mainnet"))
+    )]
+    EthereumMainnet = 1,
+
+    #[subenum(HypersyncNetwork, NetworkWithExplorer, GraphNetwork)]
+    Fantom = 250,
+
+    #[subenum(GraphNetwork)]
+    FantomTestnet = 4002,
+
     #[subenum(HypersyncNetwork)]
-    Chiliz = 8888,
+    // Explorers:
+    // https://explorer.testnet.fhenix.zone/ (blockscout)
+    FhenixTestnet = 42069,
+
     #[subenum(HypersyncNetwork)]
-    IncoGentryTestnet = 9090,
-    #[subenum(HypersyncNetwork)]
-    Zircuit = 48900,
-    #[subenum(HypersyncNetwork)]
-    MevCommit = 17864,
+    // Explorers:
+    // Blockscout: https://flare-explorer.flare.network/
+    // Routescan: https://flarescan.com/
+    Flare = 14,
+
+    #[subenum(HypersyncNetwork, GraphNetwork, NetworkWithExplorer)]
+    Fuji = 43113,
+
+    #[subenum(GraphNetwork)]
+    Fuse = 122,
+
     #[subenum(HypersyncNetwork)]
     GaladrielDevnet = 696969,
+
+    #[subenum(HypersyncNetwork, NetworkWithExplorer, GraphNetwork)]
+    Gnosis = 100,
+
     #[subenum(HypersyncNetwork)]
-    SophonTestnet = 531050104,
+    // Explorers:
+    // https://gnosis-chiado.blockscout.com/
+    GnosisChiado = 10200,
+
+    #[subenum(HypersyncNetwork, NetworkWithExplorer, GraphNetwork)]
+    Goerli = 5,
+
     #[subenum(HypersyncNetwork)]
-    KakarotSepolia = 1802203764,
+    // Explorers:
+    // https://explorer.harmony.one/
+    // https://getblock.io/explorers/harmony/
+    Harmony = 1666600000, // shard 0
+
+    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
+    Holesky = 17000,
+
     #[subenum(HypersyncNetwork)]
-    BerachainBartio = 80084,
+    IncoGentryTestnet = 9090,
+
+    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
+    Kroma = 255,
+
+    // Still syncing
+    // #[subenum(HypersyncNetwork)]
+    // KakarotSepolia = 1802203764,
+    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
+    Linea = 59144,
+
+    #[subenum(HypersyncNetwork)]
+    // Explorers:
+    // https://explorer.execution.mainnet.lukso.network/
+    // https://blockscout.com/lukso/l14
+    Lukso = 42,
+
+    #[subenum(HypersyncNetwork)]
+    // Explorers:
+    // blockscout: https://pacific-explorer.manta.network/
+    // w3w.ai: https://manta.socialscan.io/
+    Manta = 169,
+
+    #[subenum(HypersyncNetwork)]
+    // Explorers:
+    // https://explorer.mantle.xyz/
+    // Routescan: https://mantlescan.info/
+    Mantle = 5000,
+
+    #[subenum(GraphNetwork)]
+    Mbase = 1287,
+
+    #[subenum(HypersyncNetwork)]
+    Metis = 1088,
+
+    #[subenum(HypersyncNetwork)]
+    MevCommit = 17864,
+
+    #[subenum(HypersyncNetwork, NetworkWithExplorer, GraphNetwork)]
+    Moonbeam = 1284,
+
+    #[subenum(GraphNetwork)]
+    Moonriver = 1285,
+
+    // Still syncing
+    // #[subenum(HypersyncNetwork)]
+    // MorphTestnet = 2810,
+    #[subenum(GraphNetwork)]
+    Mumbai = 80001,
+
+    #[subenum(HypersyncNetwork)]
+    // Explorers:
+    // https://neonscan.org/
+    // https://neon.blockscout.com/
+    NeonEvm = 245022934,
+
+    #[subenum(HypersyncNetwork, NetworkWithExplorer, GraphNetwork)]
+    Optimism = 10,
+
+    #[subenum(NetworkWithExplorer, GraphNetwork)]
+    OptimismGoerli = 420,
+
+    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
+    // Alt-explorer:
+    // https://optimism-sepolia.blockscout.com/
+    OptimismSepolia = 11155420,
+
+    #[subenum(GraphNetwork)]
+    PoaCore = 99,
+
+    #[subenum(GraphNetwork)]
+    PoaSokol = 77,
+
+    #[subenum(
+        HypersyncNetwork,
+        NetworkWithExplorer,
+        GraphNetwork(serde(rename = "matic"))
+    )]
+    Polygon = 137,
+
+    #[subenum(GraphNetwork, HypersyncNetwork, NetworkWithExplorer)]
+    PolygonZkevm = 1101,
+
+    #[subenum(GraphNetwork)]
+    PolygonZkevmTestnet = 1422,
+
+    #[subenum(GraphNetwork)]
+    Rinkeby = 4,
+
+    #[subenum(HypersyncNetwork)]
+    // Explorers:
+    // https://explorer.rsk.co/
+    // https://rootstock.blockscout.com/
+    Rsk = 30,
+
     // Still syncing
     // #[subenum(HypersyncNetwork)]
     // Saakuru = 7225878,
-    // #[subenum(HypersyncNetwork)]
-    // CitreaDevnet = 62298,
-    // #[subenum(HypersyncNetwork)]
-    // MorphTestnet = 2810,
+    #[subenum(GraphNetwork, HypersyncNetwork, NetworkWithExplorer)]
+    Scroll = 534352,
+
+    #[subenum(GraphNetwork)]
+    ScrollSepolia = 534351,
+
+    #[subenum(HypersyncNetwork, NetworkWithExplorer, GraphNetwork)]
+    Sepolia = 11155111,
+
+    #[subenum(HypersyncNetwork)]
+    // Explorers:
+    // https://explorer.evm.shimmer.network/
+    ShimmerEvm = 148,
+
+    #[subenum(HypersyncNetwork)]
+    SophonTestnet = 531050104,
+
+    #[subenum(HypersyncNetwork)]
+    // Explorers:
+    // https://www.oklink.com/xlayer
+    XLayer = 196,
+
+    #[subenum(HypersyncNetwork)]
+    // Explorers:
+    // https://www.oklink.com/x1-test
+    XLayerTestnet = 195,
+
+    #[subenum(HypersyncNetwork)]
+    // Explorers:
+    // https://explorer.zetachain.com/
+    // https://zetachain.explorers.guru/
+    Zeta = 7000,
+
+    #[subenum(HypersyncNetwork)]
+    Zircuit = 48900,
+
+    #[subenum(HypersyncNetwork, GraphNetwork)]
+    ZksyncEra = 324,
+
+    #[subenum(GraphNetwork)]
+    ZksyncEraTestnet = 280,
+
+    #[subenum(HypersyncNetwork)]
+    // Explorers:
+    // https://explorer.zora.energy/
+    Zora = 7777777,
 }
 
 impl Network {
@@ -269,81 +346,81 @@ impl Network {
     pub fn get_confirmed_block_threshold(&self) -> i32 {
         match self {
             //Reorgs do not happen on these networks
-            Network::OptimismGoerli
-            | Network::OptimismSepolia
-            | Network::Optimism
-            | Network::ArbitrumOne
+            Network::ArbitrumGoerli
             | Network::ArbitrumNova
-            | Network::ArbitrumGoerli
-            | Network::ArbitrumSepolia => 0,
+            | Network::ArbitrumOne
+            | Network::ArbitrumSepolia
+            | Network::CitreaDevnet
+            | Network::Optimism
+            | Network::OptimismGoerli
+            | Network::OptimismSepolia => 0,
             //TODO: research a sufficient threshold for all chains
-            Network::Base
-            | Network::Mumbai
-            | Network::BaseSepolia
-            | Network::Bsc
-            | Network::Goerli
-            | Network::Gnosis
-            | Network::Fantom
-            | Network::Polygon
-            | Network::Boba
-            | Network::Celo
+            Network::Amoy
+            | Network::Avalanche
             | Network::Aurora
             | Network::AuroraTestnet
-            | Network::Harmony
-            | Network::EthereumMainnet
-            | Network::PoaSokol
-            | Network::BscTestnet
-            | Network::PoaCore
-            | Network::Fuse
-            | Network::Clover
-            | Network::Moonbeam
-            | Network::Moonriver
-            | Network::Mbase
-            | Network::FantomTestnet
-            | Network::Fuji
-            | Network::Avalanche
-            | Network::CeloAlfajores
+            | Network::Base
             | Network::BaseGoerli
-            | Network::ZksyncEra
-            | Network::Sepolia
-            | Network::Linea
-            | Network::Rinkeby
-            | Network::ZksyncEraTestnet
-            | Network::PolygonZkevmTestnet
-            | Network::PolygonZkevm
-            | Network::ScrollSepolia
-            | Network::Scroll
-            | Network::Metis
-            | Network::Manta
-            | Network::Kroma
-            | Network::Lukso
-            | Network::XLayerTestnet
-            | Network::XLayer
-            | Network::Holesky
-            | Network::GnosisChiado
-            | Network::Zora
-            | Network::C1Milkomeda
-            | Network::Flare
-            | Network::Mantle
-            | Network::Zeta
-            | Network::NeonEvm
-            | Network::Rsk
-            | Network::ShimmerEvm
+            | Network::BaseSepolia
+            | Network::BerachainBartio
             | Network::Blast
             | Network::BlastSepolia
-            | Network::FhenixTestnet
-            | Network::Amoy
-            | Network::Crab
-            | Network::Darwinia
-            | Network::Cyber
+            | Network::Boba
+            | Network::Bsc
+            | Network::BscTestnet
+            | Network::C1Milkomeda
+            | Network::Celo
+            | Network::CeloAlfajores
             | Network::Chiliz
-            | Network::IncoGentryTestnet
-            | Network::Zircuit
-            | Network::MevCommit
+            | Network::Clover
+            | Network::Crab
+            | Network::Cyber
+            | Network::Darwinia
+            | Network::EthereumMainnet
+            | Network::Fantom
+            | Network::FantomTestnet
+            | Network::FhenixTestnet
+            | Network::Flare
+            | Network::Fuji
+            | Network::Fuse
             | Network::GaladrielDevnet
+            | Network::Gnosis
+            | Network::GnosisChiado
+            | Network::Goerli
+            | Network::Harmony
+            | Network::Holesky
+            | Network::IncoGentryTestnet
+            | Network::Kroma
+            | Network::Linea
+            | Network::Lukso
+            | Network::Manta
+            | Network::Mantle
+            | Network::MevCommit
+            | Network::Metis
+            | Network::Moonbeam
+            | Network::Moonriver
+            | Network::Mumbai
+            | Network::Mbase
+            | Network::NeonEvm
+            | Network::PoaCore
+            | Network::PoaSokol
+            | Network::Polygon
+            | Network::PolygonZkevm
+            | Network::PolygonZkevmTestnet
+            | Network::Rinkeby
+            | Network::Rsk
+            | Network::Scroll
+            | Network::ScrollSepolia
+            | Network::Sepolia
+            | Network::ShimmerEvm
             | Network::SophonTestnet
-            | Network::KakarotSepolia
-            | Network::BerachainBartio => DEFAULT_CONFIRMED_BLOCK_THRESHOLD,
+            | Network::XLayer
+            | Network::XLayerTestnet
+            | Network::Zeta
+            | Network::Zircuit
+            | Network::ZksyncEra
+            | Network::ZksyncEraTestnet
+            | Network::Zora => DEFAULT_CONFIRMED_BLOCK_THRESHOLD,
         }
     }
 }
@@ -490,12 +567,25 @@ pub fn get_confirmed_block_threshold_from_id(id: u64) -> i32 {
 
 #[cfg(test)]
 mod test {
-
     use super::{get_etherscan_client, GraphNetwork, HypersyncNetwork, NetworkWithExplorer};
     use crate::config_parsing::chain_helpers::Network;
+    use itertools::Itertools;
     use pretty_assertions::assert_eq;
     use serde::Deserialize;
     use strum::IntoEnumIterator;
+
+    #[test]
+    fn networks_are_defined_in_alphabetical_order() {
+        let networks_sorted = Network::iter()
+            .map(|n| n.to_string())
+            .sorted()
+            .collect::<Vec<_>>();
+        let networks = Network::iter().map(|n| n.to_string()).collect::<Vec<_>>();
+        assert_eq!(
+            networks_sorted, networks,
+            "Networks should be defined in alphabetical order (sorry to be picky)"
+        );
+    }
 
     #[test]
     fn all_networks_with_explorer_can_get_etherscan_client() {
