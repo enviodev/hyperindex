@@ -483,7 +483,8 @@ impl ContractTemplate {
                 let signatures = abi.get_event_signatures();
 
                 format!(
-                    "let abi = Ethers.makeAbi((%raw(`{}`): Js.Json.t))\nlet eventSignatures = [{}]",
+                    r#"let abi = Ethers.makeAbi((%raw(`{}`): Js.Json.t))
+let eventSignatures = [{}]"#,
                     abi.raw,
                     signatures
                         .iter()
@@ -493,15 +494,17 @@ impl ContractTemplate {
                 )
             }
             Abi::Fuel(abi) => {
-                let abi_res_type_declarations = abi
-                    .to_rescript_type_decl_multi()
-                    .context(format!(
+                let all_abi_type_declarations =
+                    abi.to_rescript_type_decl_multi().context(format!(
                         "Failed getting types from the '{}' contract ABI",
                         contract.name
-                    ))?
-                    .to_string();
+                    ))?;
 
-                format!("let abi = %raw(`null`)\n{}", abi_res_type_declarations)
+                format!(
+                    "let abi = %raw(`null`)\n{}\n{}",
+                    all_abi_type_declarations.to_string(),
+                    all_abi_type_declarations.to_rescript_schema()
+                )
             }
         };
 

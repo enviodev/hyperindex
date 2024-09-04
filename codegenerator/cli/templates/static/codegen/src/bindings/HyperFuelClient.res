@@ -111,7 +111,7 @@ module QueryTypes = {
     recipient?: array<string>,
     contractId?: array<Address.t>,
     ra?: array<bigint>,
-    rb?: array<string>,
+    rb?: array<bigint>,
     rc?: array<bigint>,
     rd?: array<bigint>,
     txStatus?: array<int>,
