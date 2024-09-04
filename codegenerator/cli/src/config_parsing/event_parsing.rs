@@ -50,7 +50,8 @@ pub fn eth_type_to_topic_filter(param: &EthereumEventParam) -> String {
                     .map(|(i, p)| {
                         let (param_encoder, _) = rec(p, IsNestedType(true));
                         format!(
-                            "{tuple_arg}->Utils.Tuple.get({i})->Belt.Option.getUnsafe->{param_encoder}"
+                            "{tuple_arg}->Utils.Tuple.get({i})->Belt.Option.\
+                             getUnsafe->{param_encoder}"
                         )
                     })
                     .collect::<Vec<_>>()

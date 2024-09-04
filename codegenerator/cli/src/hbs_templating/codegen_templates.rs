@@ -363,7 +363,7 @@ impl EventTemplate {
             .filter(|param| param.indexed)
             .map(|param| {
                 format!(
-                    "@as(\"{}\") {}: array<{}>",
+                    "@as(\"{}\") {}?: array<{}>",
                     param.name,
                     RescriptRecordField::to_valid_res_name(&param.name),
                     abi_to_rescript_type(&param.into())
@@ -378,6 +378,9 @@ impl EventTemplate {
     pub fn generate_get_topic_selection_code(params: &Vec<EventParam>) -> String {
         let indexed_params = params.iter().filter(|param| param.indexed);
 
+        //Prefixed with underscore for cases where it is not used to avoid compiler warnings
+        let event_filter_arg = "_eventFilter";
+
         let topic_filter_calls = indexed_params
             .enumerate()
             .map(|(i, param)| {
@@ -385,14 +388,14 @@ impl EventTemplate {
                 let param_name = RescriptRecordField::to_valid_res_name(&param.name);
                 let topic_filter = eth_type_to_topic_filter(&param.into());
                 format!(
-                    "~topic{topic_number}=_eventFilter.{param_name}->Belt.Array.\
-                     map({topic_filter}), "
+                    "~topic{topic_number}=?{event_filter_arg}.{param_name}->Belt.Option.map(Belt.\
+                     Array.map(_, {topic_filter})), "
                 )
             })
             .collect::<String>();
 
         format!(
-            "(_eventFilter) => \
+            "({event_filter_arg}) => \
              LogSelection.makeTopicSelection(~topic0=[sighash->EvmTypes.Hex.fromStringUnsafe], \
              {topic_filter_calls})->Utils.unwrapResultExn"
         )
