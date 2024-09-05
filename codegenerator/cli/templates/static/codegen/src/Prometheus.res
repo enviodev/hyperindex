@@ -31,7 +31,7 @@ let reorgsDetectedCounter = PromClient.Counter.makeCounter({
 let allChainsSyncedToHead = PromClient.Gauge.makeGauge({
   "name": "hyperindex_synced_to_head",
   "help": "All chains fully synced",
-  "labelNames": [""],
+  "labelNames": [],
 })
 
 let sourceChainHeight = PromClient.Gauge.makeGauge({
