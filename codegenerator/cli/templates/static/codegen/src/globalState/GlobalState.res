@@ -182,6 +182,7 @@ let checkAndSetSyncedChains = (~nextQueueItemIsKnownNone=false, chainManager: Ch
       //All chains are caught up to head chainManager queue returns None
       //Meaning we are busy synchronizing chains at the head
       if nextQueueItemIsNone && allChainsAtHead {
+        Prometheus.setAllChainsSyncedToHead()
         {
           ...cf,
           timestampCaughtUpToHeadOrEndblock: Js.Date.make()->Some,

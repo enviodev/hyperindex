@@ -101,7 +101,7 @@ pub mod codegen {
         let current_dir = &project_paths.project_root;
         check_and_install_pnpm(current_dir).await?;
 
-        let args = vec!["install", "--no-frozen-lockfile"];
+        let args = vec!["install", "--no-frozen-lockfile", "--prefer-offline"];
         execute_command("pnpm", args, current_dir).await
     }
 
