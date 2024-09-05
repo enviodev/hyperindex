@@ -566,7 +566,10 @@ let eventSignatures = [{}]"#,
                     ))?;
 
                 format!(
-                    "let abi = %raw(`null`)\n{}\n{}",
+                    "let abi = Fuel.transpileAbi(%raw(`require(\"../../{}\")`))\n{}\n{}",
+                    // If we decide to inline the abi, instead of using require
+                    // we need to remember that abi might contain ` and we should escape it
+                    abi.path_buf.to_string_lossy(),
                     all_abi_type_declarations.to_string(),
                     all_abi_type_declarations.to_rescript_schema()
                 )

@@ -1,16 +1,8 @@
 open ChainWorker
 open Belt
 
-/*
- Requires following dependencies to be installed:
-  "@fuel-ts/crypto": "0.89.1",
-  "@fuel-ts/errors": "0.89.1",
-  "@fuel-ts/hasher": "0.89.1",
-  "@fuel-ts/math": "0.89.1",
-  "@fuel-ts/utils": "0.89.1",
-  "@fuel-ts/address": "0.89.1",
-  "@envio-dev/hyperfuel-client": "1.1.0",
- */
+exception EventRoutingFailed
+
 module Make = (
   T: {
     let chain: ChainMap.Chain.t
@@ -270,7 +262,7 @@ module Make = (
                 "sighash": sighash,
               },
             )
-            %raw(`null`)->ErrorHandling.mkLogAndRaise(
+            EventRoutingFailed->ErrorHandling.mkLogAndRaise(
               ~msg="Failed to lookup registered event",
               ~logger,
             )

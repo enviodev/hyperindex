@@ -1,4 +1,5 @@
 exception QueryTimout(string)
+exception EventRoutingFailed
 
 let getUnwrappedBlock = (provider, blockNumber) =>
   provider
@@ -143,7 +144,10 @@ let convertLogs = (
             "topic0": topic0,
           },
         )
-        %raw(`null`)->ErrorHandling.mkLogAndRaise(~msg="Failed to lookup registered event", ~logger)
+        EventRoutingFailed->ErrorHandling.mkLogAndRaise(
+          ~msg="Failed to lookup registered event",
+          ~logger,
+        )
       }
     | Some(eventMod) => eventMod
     }

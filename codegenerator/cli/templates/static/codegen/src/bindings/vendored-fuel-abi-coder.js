@@ -12,10 +12,11 @@
 
 // Here's the list of the changes:
 // 1. Changed enum decoder to always return data in a format {case: <Variant name>, payload: <Payload data>}.
-//    Where Payload data shoudl be unit if it's not provided.
-// 1.1. Adjust OptionCoder
-// 2. Changed BigNumberCoder to return BigInt instead of BN.js 
+//    Where Payload data should be unit if it's not provided.
+// 1.1. Adjust OptionCoder to return T | undefined instead of variant
+// 2. Changed BigNumberCoder to return BigInt instead of BN.js
 // 3. Exposed AbiCoder and added getLogDecoder static method, to do all prep work once
+// 4. Added transpileAbi function to convert json abi to old fuel abi
 
 // Here's the generated diff from pnpm patch
 
@@ -28,6 +29,7 @@
 //  var src_exports = {};
 //  __export(src_exports, {
 // +  AbiCoder: () => AbiCoder,
+// +  transpileAbi: () => transpileAbi,
 //    ASSET_ID_LEN: () => ASSET_ID_LEN,
 //    ArrayCoder: () => ArrayCoder,
 //    B256Coder: () => B256Coder,
@@ -41,7 +43,7 @@
 //  };
 
 // @@ -408,7 +409,7 @@ var EnumCoder = class extends Coder {
-// -    if (isFullyNativeEnum(this.coders)) {
+// -    if (this.#isNativeEnum(this.coders[caseKey])) {
 // -      return this.#decodeNativeEnum(caseKey, newOffset);
 // -    }
 // -    return [{ [caseKey]: decoded }, newOffset];
@@ -77,42 +79,53 @@
 // +
 //  // Annotate the CommonJS export names for ESM import in node:
 //  0 && (module.exports = {
+// +  transpileAbi,
 // +  AbiCoder,
 //    ASSET_ID_LEN,
 //    ArrayCoder,
 //    B256Coder,
 
-
-"use strict";
 var __defProp = Object.defineProperty;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
 var __getOwnPropNames = Object.getOwnPropertyNames;
 var __hasOwnProp = Object.prototype.hasOwnProperty;
-var __defNormalProp = (obj, key, value) => key in obj ? __defProp(obj, key, { enumerable: true, configurable: true, writable: true, value }) : obj[key] = value;
+var __defNormalProp = (obj, key, value) =>
+  key in obj
+    ? __defProp(obj, key, {
+        enumerable: true,
+        configurable: true,
+        writable: true,
+        value,
+      })
+    : (obj[key] = value);
 var __export = (target, all) => {
   for (var name in all)
     __defProp(target, name, { get: all[name], enumerable: true });
 };
 var __copyProps = (to, from, except, desc) => {
-  if (from && typeof from === "object" || typeof from === "function") {
+  if ((from && typeof from === "object") || typeof from === "function") {
     for (let key of __getOwnPropNames(from))
       if (!__hasOwnProp.call(to, key) && key !== except)
-        __defProp(to, key, { get: () => from[key], enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable });
+        __defProp(to, key, {
+          get: () => from[key],
+          enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable,
+        });
   }
   return to;
 };
-var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
+var __toCommonJS = (mod) =>
+  __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 var __publicField = (obj, key, value) => {
   __defNormalProp(obj, typeof key !== "symbol" ? key + "" : key, value);
   return value;
 };
-
 
 // src/index.ts
 var src_exports = {};
 __export(src_exports, {
   ASSET_ID_LEN: () => ASSET_ID_LEN,
   AbiCoder: () => AbiCoder,
+  transpileAbi: () => transpileAbi,
   ArrayCoder: () => ArrayCoder,
   B256Coder: () => B256Coder,
   B512Coder: () => B512Coder,
@@ -138,7 +151,7 @@ __export(src_exports, {
   UTXO_ID_LEN: () => UTXO_ID_LEN,
   VecCoder: () => VecCoder,
   WORD_SIZE: () => WORD_SIZE,
-  calculateVmTxMemory: () => calculateVmTxMemory
+  calculateVmTxMemory: () => calculateVmTxMemory,
 });
 module.exports = __toCommonJS(src_exports);
 
@@ -168,18 +181,21 @@ var RAW_PTR_CODER_TYPE = "raw untyped ptr";
 var RAW_SLICE_CODER_TYPE = "raw untyped slice";
 var BOOL_CODER_TYPE = "bool";
 var B256_CODER_TYPE = "b256";
-var B512_CODER_TYPE = "struct B512";
-var OPTION_CODER_TYPE = "enum Option";
-var VEC_CODER_TYPE = "struct Vec";
-var BYTES_CODER_TYPE = "struct Bytes";
-var STD_STRING_CODER_TYPE = "struct String";
+var B512_CODER_TYPE = "struct std::b512::B512";
+var OPTION_CODER_TYPE = "enum std::option::Option";
+var VEC_CODER_TYPE = "struct std::vec::Vec";
+var BYTES_CODER_TYPE = "struct std::bytes::Bytes";
+var STD_STRING_CODER_TYPE = "struct std::string::String";
 var STR_SLICE_CODER_TYPE = "str";
+var VOID_TYPE = "()";
+var optionRegEx = /^enum (std::option::)?Option$/m;
 var stringRegEx = /str\[(?<length>[0-9]+)\]/;
 var arrayRegEx = /\[(?<item>[\w\s\\[\]]+);\s*(?<length>[0-9]+)\]/;
-var structRegEx = /^struct (?<name>\w+)$/;
-var enumRegEx = /^enum (?<name>\w+)$/;
+var structRegEx = /struct.+/;
+var enumRegEx = /^enum.+$/;
 var tupleRegEx = /^\((?<items>.*)\)$/;
-var genericRegEx = /^generic (?<name>\w+)$/;
+var genericRegEx = /^generic.+$/;
+var fullNameRegExMatch = /([^\s]+)$/m;
 var ENCODING_V1 = "1";
 var WORD_SIZE = 8;
 var BYTES_32 = 32;
@@ -191,11 +207,14 @@ var NONCE_LEN = BYTES_32;
 var TX_LEN = WORD_SIZE * 4;
 var TX_POINTER_LEN = WORD_SIZE * 2;
 var MAX_BYTES = 2 ** 32 - 1;
-var calculateVmTxMemory = ({ maxInputs }) => BYTES_32 + // Tx ID
+var calculateVmTxMemory = ({ maxInputs }) =>
+  BYTES_32 + // Tx ID
   ASSET_ID_LEN + // Base asset ID
   // Asset ID/Balance coin input pairs
-  maxInputs * (ASSET_ID_LEN + WORD_SIZE) + WORD_SIZE;
-var SCRIPT_FIXED_SIZE = WORD_SIZE + // Identifier
+  maxInputs * (ASSET_ID_LEN + WORD_SIZE) +
+  WORD_SIZE;
+var SCRIPT_FIXED_SIZE =
+  WORD_SIZE + // Identifier
   WORD_SIZE + // Gas limit
   WORD_SIZE + // Script size
   WORD_SIZE + // Script data size
@@ -204,7 +223,8 @@ var SCRIPT_FIXED_SIZE = WORD_SIZE + // Identifier
   WORD_SIZE + // Outputs size
   WORD_SIZE + // Witnesses size
   BYTES_32;
-var INPUT_COIN_FIXED_SIZE = WORD_SIZE + // Identifier
+var INPUT_COIN_FIXED_SIZE =
+  WORD_SIZE + // Identifier
   TX_LEN + // Utxo Length
   WORD_SIZE + // Output Index
   ADDRESS_LEN + // Owner
@@ -215,7 +235,8 @@ var INPUT_COIN_FIXED_SIZE = WORD_SIZE + // Identifier
   WORD_SIZE + // Predicate size
   WORD_SIZE + // Predicate data size
   WORD_SIZE;
-var INPUT_MESSAGE_FIXED_SIZE = WORD_SIZE + // Identifier
+var INPUT_MESSAGE_FIXED_SIZE =
+  WORD_SIZE + // Identifier
   ADDRESS_LEN + // Sender
   ADDRESS_LEN + // Recipient
   WORD_SIZE + // Amount
@@ -260,23 +281,39 @@ var ArrayCoder = class extends Coder {
   }
   encode(value) {
     if (!Array.isArray(value)) {
-      throw new import_errors.FuelError(import_errors.ErrorCode.ENCODE_ERROR, `Expected array value.`);
+      throw new import_errors.FuelError(
+        import_errors.ErrorCode.ENCODE_ERROR,
+        `Expected array value.`
+      );
     }
     if (this.length !== value.length) {
-      throw new import_errors.FuelError(import_errors.ErrorCode.ENCODE_ERROR, `Types/values length mismatch.`);
+      throw new import_errors.FuelError(
+        import_errors.ErrorCode.ENCODE_ERROR,
+        `Types/values length mismatch.`
+      );
     }
-    return (0, import_utils.concat)(Array.from(value).map((v) => this.coder.encode(v)));
+    return (0, import_utils.concat)(
+      Array.from(value).map((v) => this.coder.encode(v))
+    );
   }
   decode(data, offset) {
-    if (!this.#hasNestedOption && data.length < this.encodedLength || data.length > MAX_BYTES) {
-      throw new import_errors.FuelError(import_errors.ErrorCode.DECODE_ERROR, `Invalid array data size.`);
+    if (
+      (!this.#hasNestedOption && data.length < this.encodedLength) ||
+      data.length > MAX_BYTES
+    ) {
+      throw new import_errors.FuelError(
+        import_errors.ErrorCode.DECODE_ERROR,
+        `Invalid array data size.`
+      );
     }
     let newOffset = offset;
-    const decodedValue = Array(this.length).fill(0).map(() => {
-      let decoded;
-      [decoded, newOffset] = this.coder.decode(data, newOffset);
-      return decoded;
-    });
+    const decodedValue = Array(this.length)
+      .fill(0)
+      .map(() => {
+        let decoded;
+        [decoded, newOffset] = this.coder.decode(data, newOffset);
+        return decoded;
+      });
     return [decodedValue, newOffset];
   }
 };
@@ -294,16 +331,25 @@ var B256Coder = class extends Coder {
     try {
       encodedValue = (0, import_utils2.arrayify)(value);
     } catch (error) {
-      throw new import_errors2.FuelError(import_errors2.ErrorCode.ENCODE_ERROR, `Invalid ${this.type}.`);
+      throw new import_errors2.FuelError(
+        import_errors2.ErrorCode.ENCODE_ERROR,
+        `Invalid ${this.type}.`
+      );
     }
     if (encodedValue.length !== this.encodedLength) {
-      throw new import_errors2.FuelError(import_errors2.ErrorCode.ENCODE_ERROR, `Invalid ${this.type}.`);
+      throw new import_errors2.FuelError(
+        import_errors2.ErrorCode.ENCODE_ERROR,
+        `Invalid ${this.type}.`
+      );
     }
     return encodedValue;
   }
   decode(data, offset) {
     if (data.length < this.encodedLength) {
-      throw new import_errors2.FuelError(import_errors2.ErrorCode.DECODE_ERROR, `Invalid b256 data size.`);
+      throw new import_errors2.FuelError(
+        import_errors2.ErrorCode.DECODE_ERROR,
+        `Invalid b256 data size.`
+      );
     }
     let bytes = data.slice(offset, offset + this.encodedLength);
     const decoded = (0, import_math.bn)(bytes);
@@ -311,7 +357,10 @@ var B256Coder = class extends Coder {
       bytes = new Uint8Array(32);
     }
     if (bytes.length !== this.encodedLength) {
-      throw new import_errors2.FuelError(import_errors2.ErrorCode.DECODE_ERROR, `Invalid b256 byte data size.`);
+      throw new import_errors2.FuelError(
+        import_errors2.ErrorCode.DECODE_ERROR,
+        `Invalid b256 byte data size.`
+      );
     }
     return [(0, import_math.toHex)(bytes, 32), offset + 32];
   }
@@ -330,16 +379,25 @@ var B512Coder = class extends Coder {
     try {
       encodedValue = (0, import_utils3.arrayify)(value);
     } catch (error) {
-      throw new import_errors3.FuelError(import_errors3.ErrorCode.ENCODE_ERROR, `Invalid ${this.type}.`);
+      throw new import_errors3.FuelError(
+        import_errors3.ErrorCode.ENCODE_ERROR,
+        `Invalid ${this.type}.`
+      );
     }
     if (encodedValue.length !== this.encodedLength) {
-      throw new import_errors3.FuelError(import_errors3.ErrorCode.ENCODE_ERROR, `Invalid ${this.type}.`);
+      throw new import_errors3.FuelError(
+        import_errors3.ErrorCode.ENCODE_ERROR,
+        `Invalid ${this.type}.`
+      );
     }
     return encodedValue;
   }
   decode(data, offset) {
     if (data.length < this.encodedLength) {
-      throw new import_errors3.FuelError(import_errors3.ErrorCode.DECODE_ERROR, `Invalid b512 data size.`);
+      throw new import_errors3.FuelError(
+        import_errors3.ErrorCode.DECODE_ERROR,
+        `Invalid b512 data size.`
+      );
     }
     let bytes = data.slice(offset, offset + this.encodedLength);
     const decoded = (0, import_math2.bn)(bytes);
@@ -347,9 +405,15 @@ var B512Coder = class extends Coder {
       bytes = new Uint8Array(64);
     }
     if (bytes.length !== this.encodedLength) {
-      throw new import_errors3.FuelError(import_errors3.ErrorCode.DECODE_ERROR, `Invalid b512 byte data size.`);
+      throw new import_errors3.FuelError(
+        import_errors3.ErrorCode.DECODE_ERROR,
+        `Invalid b512 byte data size.`
+      );
     }
-    return [(0, import_math2.toHex)(bytes, this.encodedLength), offset + this.encodedLength];
+    return [
+      (0, import_math2.toHex)(bytes, this.encodedLength),
+      offset + this.encodedLength,
+    ];
   }
 };
 
@@ -358,7 +422,7 @@ var import_errors4 = require("@fuel-ts/errors");
 var import_math3 = require("@fuel-ts/math");
 var encodedLengths = {
   u64: WORD_SIZE,
-  u256: WORD_SIZE * 4
+  u256: WORD_SIZE * 4,
 };
 var BigNumberCoder = class extends Coder {
   constructor(baseType) {
@@ -369,18 +433,27 @@ var BigNumberCoder = class extends Coder {
     try {
       bytes = (0, import_math3.toBytes)(value, this.encodedLength);
     } catch (error) {
-      throw new import_errors4.FuelError(import_errors4.ErrorCode.ENCODE_ERROR, `Invalid ${this.type}.`);
+      throw new import_errors4.FuelError(
+        import_errors4.ErrorCode.ENCODE_ERROR,
+        `Invalid ${this.type}.`
+      );
     }
     return bytes;
   }
   decode(data, offset) {
     if (data.length < this.encodedLength) {
-      throw new import_errors4.FuelError(import_errors4.ErrorCode.DECODE_ERROR, `Invalid ${this.type} data size.`);
+      throw new import_errors4.FuelError(
+        import_errors4.ErrorCode.DECODE_ERROR,
+        `Invalid ${this.type} data size.`
+      );
     }
     let bytes = data.slice(offset, offset + this.encodedLength);
     bytes = bytes.slice(0, this.encodedLength);
     if (bytes.length !== this.encodedLength) {
-      throw new import_errors4.FuelError(import_errors4.ErrorCode.DECODE_ERROR, `Invalid ${this.type} byte data size.`);
+      throw new import_errors4.FuelError(
+        import_errors4.ErrorCode.DECODE_ERROR,
+        `Invalid ${this.type} byte data size.`
+      );
     }
     return [BigInt(import_math3.bn(bytes)), offset + this.encodedLength];
   }
@@ -391,9 +464,11 @@ var import_errors5 = require("@fuel-ts/errors");
 var import_math4 = require("@fuel-ts/math");
 var BooleanCoder = class extends Coder {
   options;
-  constructor(options = {
-    padToWordSize: false
-  }) {
+  constructor(
+    options = {
+      padToWordSize: false,
+    }
+  ) {
     const encodedLength = options.padToWordSize ? WORD_SIZE : 1;
     super("boolean", "boolean", encodedLength);
     this.options = options;
@@ -401,20 +476,31 @@ var BooleanCoder = class extends Coder {
   encode(value) {
     const isTrueBool = value === true || value === false;
     if (!isTrueBool) {
-      throw new import_errors5.FuelError(import_errors5.ErrorCode.ENCODE_ERROR, `Invalid boolean value.`);
+      throw new import_errors5.FuelError(
+        import_errors5.ErrorCode.ENCODE_ERROR,
+        `Invalid boolean value.`
+      );
     }
     return (0, import_math4.toBytes)(value ? 1 : 0, this.encodedLength);
   }
   decode(data, offset) {
     if (data.length < this.encodedLength) {
-      throw new import_errors5.FuelError(import_errors5.ErrorCode.DECODE_ERROR, `Invalid boolean data size.`);
+      throw new import_errors5.FuelError(
+        import_errors5.ErrorCode.DECODE_ERROR,
+        `Invalid boolean data size.`
+      );
     }
-    const bytes = (0, import_math4.bn)(data.slice(offset, offset + this.encodedLength));
+    const bytes = (0, import_math4.bn)(
+      data.slice(offset, offset + this.encodedLength)
+    );
     if (bytes.isZero()) {
       return [false, offset + this.encodedLength];
     }
     if (!bytes.eq((0, import_math4.bn)(1))) {
-      throw new import_errors5.FuelError(import_errors5.ErrorCode.DECODE_ERROR, `Invalid boolean value.`);
+      throw new import_errors5.FuelError(
+        import_errors5.ErrorCode.DECODE_ERROR,
+        `Invalid boolean value.`
+      );
     }
     return [true, offset + this.encodedLength];
   }
@@ -434,14 +520,22 @@ var ByteCoder = class extends Coder {
   }
   decode(data, offset) {
     if (data.length < WORD_SIZE) {
-      throw new import_errors6.FuelError(import_errors6.ErrorCode.DECODE_ERROR, `Invalid byte data size.`);
+      throw new import_errors6.FuelError(
+        import_errors6.ErrorCode.DECODE_ERROR,
+        `Invalid byte data size.`
+      );
     }
     const offsetAndLength = offset + WORD_SIZE;
     const lengthBytes = data.slice(offset, offsetAndLength);
-    const length = (0, import_math5.bn)(new BigNumberCoder("u64").decode(lengthBytes, 0)[0]).toNumber();
+    const length = (0, import_math5.bn)(
+      new BigNumberCoder("u64").decode(lengthBytes, 0)[0]
+    ).toNumber();
     const dataBytes = data.slice(offsetAndLength, offsetAndLength + length);
     if (dataBytes.length !== length) {
-      throw new import_errors6.FuelError(import_errors6.ErrorCode.DECODE_ERROR, `Invalid bytes byte data size.`);
+      throw new import_errors6.FuelError(
+        import_errors6.ErrorCode.DECODE_ERROR,
+        `Invalid bytes byte data size.`
+      );
     }
     return [dataBytes, offsetAndLength + length];
   }
@@ -452,10 +546,6 @@ __publicField(ByteCoder, "memorySize", 1);
 var import_errors7 = require("@fuel-ts/errors");
 var import_math6 = require("@fuel-ts/math");
 var import_utils4 = require("@fuel-ts/utils");
-var isFullyNativeEnum = (enumCoders) => Object.values(enumCoders).every(
-  // @ts-expect-error complicated types
-  ({ type, coders }) => type === "()" && JSON.stringify(coders) === JSON.stringify([])
-);
 var EnumCoder = class extends Coder {
   name;
   coders;
@@ -465,22 +555,38 @@ var EnumCoder = class extends Coder {
   constructor(name, coders) {
     const caseIndexCoder = new BigNumberCoder("u64");
     const encodedValueSize = Object.values(coders).reduce(
-      (max, coder) => Math.max(max, coder.encodedLength),
+      (min, coder) => Math.min(min, coder.encodedLength),
       0
     );
-    super(`enum ${name}`, `enum ${name}`, caseIndexCoder.encodedLength + encodedValueSize);
+    super(
+      `enum ${name}`,
+      `enum ${name}`,
+      caseIndexCoder.encodedLength + encodedValueSize
+    );
     this.name = name;
     this.coders = coders;
     this.#caseIndexCoder = caseIndexCoder;
     this.#encodedValueSize = encodedValueSize;
-    this.#shouldValidateLength = !(this.type === OPTION_CODER_TYPE || hasNestedOption(coders));
+    this.#shouldValidateLength = !(
+      optionRegEx.test(this.type) || hasNestedOption(coders)
+    );
+  }
+  // Checks that we're handling a native enum that is of type void.
+  #isNativeEnum(coder) {
+    return this.type !== OPTION_CODER_TYPE && coder.type === VOID_TYPE;
   }
   #encodeNativeEnum(value) {
     const valueCoder = this.coders[value];
     const encodedValue = valueCoder.encode([]);
     const caseIndex = Object.keys(this.coders).indexOf(value);
-    const padding = new Uint8Array(this.#encodedValueSize - valueCoder.encodedLength);
-    return (0, import_utils4.concat)([this.#caseIndexCoder.encode(caseIndex), padding, encodedValue]);
+    const padding = new Uint8Array(
+      this.#encodedValueSize - valueCoder.encodedLength
+    );
+    return (0, import_utils4.concat)([
+      this.#caseIndexCoder.encode(caseIndex),
+      padding,
+      encodedValue,
+    ]);
   }
   encode(value) {
     if (typeof value === "string" && this.coders[value]) {
@@ -488,23 +594,43 @@ var EnumCoder = class extends Coder {
     }
     const [caseKey, ...empty] = Object.keys(value);
     if (!caseKey) {
-      throw new import_errors7.FuelError(import_errors7.ErrorCode.INVALID_DECODE_VALUE, "A field for the case must be provided.");
+      throw new import_errors7.FuelError(
+        import_errors7.ErrorCode.INVALID_DECODE_VALUE,
+        "A field for the case must be provided."
+      );
     }
     if (empty.length !== 0) {
-      throw new import_errors7.FuelError(import_errors7.ErrorCode.INVALID_DECODE_VALUE, "Only one field must be provided.");
+      throw new import_errors7.FuelError(
+        import_errors7.ErrorCode.INVALID_DECODE_VALUE,
+        "Only one field must be provided."
+      );
     }
     const valueCoder = this.coders[caseKey];
     const caseIndex = Object.keys(this.coders).indexOf(caseKey);
+    if (caseIndex === -1) {
+      const validCases = Object.keys(this.coders)
+        .map((v) => `'${v}'`)
+        .join(", ");
+      throw new import_errors7.FuelError(
+        import_errors7.ErrorCode.INVALID_DECODE_VALUE,
+        `Invalid case '${caseKey}'. Valid cases: ${validCases}.`
+      );
+    }
     const encodedValue = valueCoder.encode(value[caseKey]);
-    return new Uint8Array([...this.#caseIndexCoder.encode(caseIndex), ...encodedValue]);
+    return new Uint8Array([
+      ...this.#caseIndexCoder.encode(caseIndex),
+      ...encodedValue,
+    ]);
   }
-
   #decodeNativeEnum(caseKey, newOffset) {
     return [caseKey, newOffset];
   }
   decode(data, offset) {
-    if (this.#shouldValidateLength && data.length < this.#encodedValueSize) {
-      throw new import_errors7.FuelError(import_errors7.ErrorCode.DECODE_ERROR, `Invalid enum data size.`);
+    if (this.#shouldValidateLength && data.length < this.encodedLength) {
+      throw new import_errors7.FuelError(
+        import_errors7.ErrorCode.DECODE_ERROR,
+        `Invalid enum data size.`
+      );
     }
     const caseBytes = new BigNumberCoder("u64").decode(data, offset)[0];
     const caseIndex = (0, import_math6.toNumber)(caseBytes);
@@ -512,11 +638,22 @@ var EnumCoder = class extends Coder {
     if (!caseKey) {
       throw new import_errors7.FuelError(
         import_errors7.ErrorCode.INVALID_DECODE_VALUE,
-        `Invalid caseIndex "${caseIndex}". Valid cases: ${Object.keys(this.coders)}.`
+        `Invalid caseIndex "${caseIndex}". Valid cases: ${Object.keys(
+          this.coders
+        )}.`
       );
     }
     const valueCoder = this.coders[caseKey];
-    const offsetAndCase = offset + WORD_SIZE;
+    const offsetAndCase = offset + this.#caseIndexCoder.encodedLength;
+    if (
+      this.#shouldValidateLength &&
+      data.length < offsetAndCase + valueCoder.encodedLength
+    ) {
+      throw new import_errors7.FuelError(
+        import_errors7.ErrorCode.DECODE_ERROR,
+        `Invalid enum data size.`
+      );
+    }
     const [decoded, newOffset] = valueCoder.decode(data, offsetAndCase);
     return [{ case: caseKey, payload: decoded }, newOffset];
   }
@@ -534,15 +671,21 @@ var getLength = (baseType) => {
     case "u32":
       return 4;
     default:
-      throw new import_errors8.FuelError(import_errors8.ErrorCode.TYPE_NOT_SUPPORTED, `Invalid number type: ${baseType}`);
+      throw new import_errors8.FuelError(
+        import_errors8.ErrorCode.TYPE_NOT_SUPPORTED,
+        `Invalid number type: ${baseType}`
+      );
   }
 };
 var NumberCoder = class extends Coder {
   baseType;
   options;
-  constructor(baseType, options = {
-    padToWordSize: false
-  }) {
+  constructor(
+    baseType,
+    options = {
+      padToWordSize: false,
+    }
+  ) {
     const length = options.padToWordSize ? WORD_SIZE : getLength(baseType);
     super("number", baseType, length);
     this.baseType = baseType;
@@ -553,20 +696,32 @@ var NumberCoder = class extends Coder {
     try {
       bytes = (0, import_math7.toBytes)(value);
     } catch (error) {
-      throw new import_errors8.FuelError(import_errors8.ErrorCode.ENCODE_ERROR, `Invalid ${this.baseType}.`);
+      throw new import_errors8.FuelError(
+        import_errors8.ErrorCode.ENCODE_ERROR,
+        `Invalid ${this.baseType}.`
+      );
     }
     if (bytes.length > this.encodedLength) {
-      throw new import_errors8.FuelError(import_errors8.ErrorCode.ENCODE_ERROR, `Invalid ${this.baseType}, too many bytes.`);
+      throw new import_errors8.FuelError(
+        import_errors8.ErrorCode.ENCODE_ERROR,
+        `Invalid ${this.baseType}, too many bytes.`
+      );
     }
     return (0, import_math7.toBytes)(bytes, this.encodedLength);
   }
   decode(data, offset) {
     if (data.length < this.encodedLength) {
-      throw new import_errors8.FuelError(import_errors8.ErrorCode.DECODE_ERROR, `Invalid number data size.`);
+      throw new import_errors8.FuelError(
+        import_errors8.ErrorCode.DECODE_ERROR,
+        `Invalid number data size.`
+      );
     }
     const bytes = data.slice(offset, offset + this.encodedLength);
     if (bytes.length !== this.encodedLength) {
-      throw new import_errors8.FuelError(import_errors8.ErrorCode.DECODE_ERROR, `Invalid number byte data size.`);
+      throw new import_errors8.FuelError(
+        import_errors8.ErrorCode.DECODE_ERROR,
+        `Invalid number byte data size.`
+      );
     }
     return [(0, import_math7.toNumber)(bytes), offset + this.encodedLength];
   }
@@ -605,7 +760,10 @@ var RawSliceCoder = class extends Coder {
   }
   encode(value) {
     if (!Array.isArray(value)) {
-      throw new import_errors9.FuelError(import_errors9.ErrorCode.ENCODE_ERROR, `Expected array value.`);
+      throw new import_errors9.FuelError(
+        import_errors9.ErrorCode.ENCODE_ERROR,
+        `Expected array value.`
+      );
     }
     const internalCoder = new ArrayCoder(new NumberCoder("u8"), value.length);
     const bytes = internalCoder.encode(value);
@@ -614,14 +772,22 @@ var RawSliceCoder = class extends Coder {
   }
   decode(data, offset) {
     if (data.length < this.encodedLength) {
-      throw new import_errors9.FuelError(import_errors9.ErrorCode.DECODE_ERROR, `Invalid raw slice data size.`);
+      throw new import_errors9.FuelError(
+        import_errors9.ErrorCode.DECODE_ERROR,
+        `Invalid raw slice data size.`
+      );
     }
     const offsetAndLength = offset + WORD_SIZE;
     const lengthBytes = data.slice(offset, offsetAndLength);
-    const length = (0, import_math8.bn)(new BigNumberCoder("u64").decode(lengthBytes, 0)[0]).toNumber();
+    const length = (0, import_math8.bn)(
+      new BigNumberCoder("u64").decode(lengthBytes, 0)[0]
+    ).toNumber();
     const dataBytes = data.slice(offsetAndLength, offsetAndLength + length);
     if (dataBytes.length !== length) {
-      throw new import_errors9.FuelError(import_errors9.ErrorCode.DECODE_ERROR, `Invalid raw slice byte data size.`);
+      throw new import_errors9.FuelError(
+        import_errors9.ErrorCode.DECODE_ERROR,
+        `Invalid raw slice byte data size.`
+      );
     }
     const internalCoder = new ArrayCoder(new NumberCoder("u8"), length);
     const [decodedValue] = internalCoder.decode(dataBytes, 0);
@@ -644,16 +810,27 @@ var StdStringCoder = class extends Coder {
   }
   decode(data, offset) {
     if (data.length < this.encodedLength) {
-      throw new import_errors10.FuelError(import_errors10.ErrorCode.DECODE_ERROR, `Invalid std string data size.`);
+      throw new import_errors10.FuelError(
+        import_errors10.ErrorCode.DECODE_ERROR,
+        `Invalid std string data size.`
+      );
     }
     const offsetAndLength = offset + WORD_SIZE;
     const lengthBytes = data.slice(offset, offsetAndLength);
-    const length = (0, import_math9.bn)(new BigNumberCoder("u64").decode(lengthBytes, 0)[0]).toNumber();
+    const length = (0, import_math9.bn)(
+      new BigNumberCoder("u64").decode(lengthBytes, 0)[0]
+    ).toNumber();
     const dataBytes = data.slice(offsetAndLength, offsetAndLength + length);
     if (dataBytes.length !== length) {
-      throw new import_errors10.FuelError(import_errors10.ErrorCode.DECODE_ERROR, `Invalid std string byte data size.`);
+      throw new import_errors10.FuelError(
+        import_errors10.ErrorCode.DECODE_ERROR,
+        `Invalid std string byte data size.`
+      );
     }
-    return [(0, import_utils5.toUtf8String)(dataBytes), offsetAndLength + length];
+    return [
+      (0, import_utils5.toUtf8String)(dataBytes),
+      offsetAndLength + length,
+    ];
   }
 };
 __publicField(StdStringCoder, "memorySize", 1);
@@ -673,14 +850,22 @@ var StrSliceCoder = class extends Coder {
   }
   decode(data, offset) {
     if (data.length < this.encodedLength) {
-      throw new import_errors11.FuelError(import_errors11.ErrorCode.DECODE_ERROR, `Invalid string slice data size.`);
+      throw new import_errors11.FuelError(
+        import_errors11.ErrorCode.DECODE_ERROR,
+        `Invalid string slice data size.`
+      );
     }
     const offsetAndLength = offset + WORD_SIZE;
     const lengthBytes = data.slice(offset, offsetAndLength);
-    const length = (0, import_math10.bn)(new BigNumberCoder("u64").decode(lengthBytes, 0)[0]).toNumber();
+    const length = (0, import_math10.bn)(
+      new BigNumberCoder("u64").decode(lengthBytes, 0)[0]
+    ).toNumber();
     const bytes = data.slice(offsetAndLength, offsetAndLength + length);
     if (bytes.length !== length) {
-      throw new import_errors11.FuelError(import_errors11.ErrorCode.DECODE_ERROR, `Invalid string slice byte data size.`);
+      throw new import_errors11.FuelError(
+        import_errors11.ErrorCode.DECODE_ERROR,
+        `Invalid string slice byte data size.`
+      );
     }
     return [(0, import_utils6.toUtf8String)(bytes), offsetAndLength + length];
   }
@@ -696,19 +881,31 @@ var StringCoder = class extends Coder {
   }
   encode(value) {
     if (value.length !== this.encodedLength) {
-      throw new import_errors12.FuelError(import_errors12.ErrorCode.ENCODE_ERROR, `Value length mismatch during encode.`);
+      throw new import_errors12.FuelError(
+        import_errors12.ErrorCode.ENCODE_ERROR,
+        `Value length mismatch during encode.`
+      );
     }
     return (0, import_utils7.toUtf8Bytes)(value);
   }
   decode(data, offset) {
     if (data.length < this.encodedLength) {
-      throw new import_errors12.FuelError(import_errors12.ErrorCode.DECODE_ERROR, `Invalid string data size.`);
+      throw new import_errors12.FuelError(
+        import_errors12.ErrorCode.DECODE_ERROR,
+        `Invalid string data size.`
+      );
     }
     const bytes = data.slice(offset, offset + this.encodedLength);
     if (bytes.length !== this.encodedLength) {
-      throw new import_errors12.FuelError(import_errors12.ErrorCode.DECODE_ERROR, `Invalid string byte data size.`);
+      throw new import_errors12.FuelError(
+        import_errors12.ErrorCode.DECODE_ERROR,
+        `Invalid string byte data size.`
+      );
     }
-    return [(0, import_utils7.toUtf8String)(bytes), offset + this.encodedLength];
+    return [
+      (0, import_utils7.toUtf8String)(bytes),
+      offset + this.encodedLength,
+    ];
   }
 };
 
@@ -746,7 +943,10 @@ var StructCoder = class extends Coder {
   }
   decode(data, offset) {
     if (!this.#hasNestedOption && data.length < this.encodedLength) {
-      throw new import_errors13.FuelError(import_errors13.ErrorCode.DECODE_ERROR, `Invalid struct data size.`);
+      throw new import_errors13.FuelError(
+        import_errors13.ErrorCode.DECODE_ERROR,
+        `Invalid struct data size.`
+      );
     }
     let newOffset = offset;
     const decodedValue = Object.keys(this.coders).reduce((obj, fieldName) => {
@@ -767,20 +967,35 @@ var TupleCoder = class extends Coder {
   coders;
   #hasNestedOption;
   constructor(coders) {
-    const encodedLength = coders.reduce((acc, coder) => acc + coder.encodedLength, 0);
-    super("tuple", `(${coders.map((coder) => coder.type).join(", ")})`, encodedLength);
+    const encodedLength = coders.reduce(
+      (acc, coder) => acc + coder.encodedLength,
+      0
+    );
+    super(
+      "tuple",
+      `(${coders.map((coder) => coder.type).join(", ")})`,
+      encodedLength
+    );
     this.coders = coders;
     this.#hasNestedOption = hasNestedOption(coders);
   }
   encode(value) {
     if (this.coders.length !== value.length) {
-      throw new import_errors14.FuelError(import_errors14.ErrorCode.ENCODE_ERROR, `Types/values length mismatch.`);
+      throw new import_errors14.FuelError(
+        import_errors14.ErrorCode.ENCODE_ERROR,
+        `Types/values length mismatch.`
+      );
     }
-    return (0, import_utils9.concatBytes)(this.coders.map((coder, i) => coder.encode(value[i])));
+    return (0, import_utils9.concatBytes)(
+      this.coders.map((coder, i) => coder.encode(value[i]))
+    );
   }
   decode(data, offset) {
     if (!this.#hasNestedOption && data.length < this.encodedLength) {
-      throw new import_errors14.FuelError(import_errors14.ErrorCode.DECODE_ERROR, `Invalid tuple data size.`);
+      throw new import_errors14.FuelError(
+        import_errors14.ErrorCode.DECODE_ERROR,
+        `Invalid tuple data size.`
+      );
     }
     let newOffset = offset;
     const decodedValue = this.coders.map((coder) => {
@@ -800,7 +1015,7 @@ var VecCoder = class extends Coder {
   coder;
   #hasNestedOption;
   constructor(coder) {
-    super("struct", `struct Vec`, coder.encodedLength + WORD_SIZE);
+    super("struct", `struct Vec`, WORD_SIZE);
     this.coder = coder;
     this.#hasNestedOption = hasNestedOption([coder]);
   }
@@ -817,19 +1032,33 @@ var VecCoder = class extends Coder {
     }
     const bytes = value.map((v) => this.coder.encode(v));
     const lengthBytes = lengthCoder.encode(value.length);
-    return new Uint8Array([...lengthBytes, ...(0, import_utils10.concatBytes)(bytes)]);
+    return new Uint8Array([
+      ...lengthBytes,
+      ...(0, import_utils10.concatBytes)(bytes),
+    ]);
   }
   decode(data, offset) {
-    if (!this.#hasNestedOption && data.length < this.encodedLength || data.length > MAX_BYTES) {
-      throw new import_errors15.FuelError(import_errors15.ErrorCode.DECODE_ERROR, `Invalid vec data size.`);
+    if (
+      (!this.#hasNestedOption && data.length < this.encodedLength) ||
+      data.length > MAX_BYTES
+    ) {
+      throw new import_errors15.FuelError(
+        import_errors15.ErrorCode.DECODE_ERROR,
+        `Invalid vec data size.`
+      );
     }
     const offsetAndLength = offset + WORD_SIZE;
     const lengthBytes = data.slice(offset, offsetAndLength);
-    const length = (0, import_math11.bn)(new BigNumberCoder("u64").decode(lengthBytes, 0)[0]).toNumber();
+    const length = (0, import_math11.bn)(
+      new BigNumberCoder("u64").decode(lengthBytes, 0)[0]
+    ).toNumber();
     const dataLength = length * this.coder.encodedLength;
     const dataBytes = data.slice(offsetAndLength, offsetAndLength + dataLength);
     if (!this.#hasNestedOption && dataBytes.length !== dataLength) {
-      throw new import_errors15.FuelError(import_errors15.ErrorCode.DECODE_ERROR, `Invalid vec byte data size.`);
+      throw new import_errors15.FuelError(
+        import_errors15.ErrorCode.DECODE_ERROR,
+        `Invalid vec byte data size.`
+      );
     }
     let newOffset = offsetAndLength;
     const chunks = [];
@@ -843,8 +1072,11 @@ var VecCoder = class extends Coder {
 };
 
 // src/Interface.ts
-var import_errors20 = require("@fuel-ts/errors");
+var import_errors21 = require("@fuel-ts/errors");
 var import_utils12 = require("@fuel-ts/utils");
+
+// src/ResolvedAbiType.ts
+var import_errors17 = require("@fuel-ts/errors");
 
 // src/utils/json-abi.ts
 var import_errors16 = require("@fuel-ts/errors");
@@ -860,16 +1092,6 @@ var getEncodingVersion = (encoding) => {
       );
   }
 };
-var findFunctionByName = (abi, name) => {
-  const fn = abi.functions.find((f) => f.name === name);
-  if (!fn) {
-    throw new import_errors16.FuelError(
-      import_errors16.ErrorCode.FUNCTION_NOT_FOUND,
-      `Function with name '${name}' doesn't exist in the ABI`
-    );
-  }
-  return fn;
-};
 var findTypeById = (abi, typeId) => {
   const type = abi.types.find((t) => t.typeId === typeId);
   if (!type) {
@@ -880,7 +1102,8 @@ var findTypeById = (abi, typeId) => {
   }
   return type;
 };
-var findNonEmptyInputs = (abi, inputs) => inputs.filter((input) => findTypeById(abi, input.type).type !== "()");
+var findNonVoidInputs = (abi, inputs) =>
+  inputs.filter((input) => findTypeById(abi, input.type).type !== VOID_TYPE);
 var findVectorBufferArgument = (components) => {
   const bufferComponent = components.find((c) => c.name === "buf");
   const bufferTypeArgument = bufferComponent?.originalTypeArguments?.[0];
@@ -903,14 +1126,24 @@ var ResolvedAbiType = class {
   constructor(abi, argument) {
     this.abi = abi;
     this.name = argument.name;
-    const type = findTypeById(abi, argument.type);
-    this.type = type.type;
+    const jsonABIType = findTypeById(abi, argument.type);
+    if (jsonABIType.type.length > 256) {
+      throw new import_errors17.FuelError(
+        import_errors17.ErrorCode.INVALID_COMPONENT,
+        `The provided ABI type is too long: ${jsonABIType.type}.`
+      );
+    }
+    this.type = jsonABIType.type;
     this.originalTypeArguments = argument.typeArguments;
     this.components = ResolvedAbiType.getResolvedGenericComponents(
       abi,
       argument,
-      type.components,
-      type.typeParameters ?? ResolvedAbiType.getImplicitGenericTypeParameters(abi, type.components)
+      jsonABIType.components,
+      jsonABIType.typeParameters ??
+        ResolvedAbiType.getImplicitGenericTypeParameters(
+          abi,
+          jsonABIType.components
+        )
     );
   }
   static getResolvedGenericComponents(abi, arg, components, typeParameters) {
@@ -942,7 +1175,7 @@ var ResolvedAbiType = class {
       if (typeParametersAndArgsMap[arg.type] !== void 0) {
         return {
           ...typeParametersAndArgsMap[arg.type],
-          name: arg.name
+          name: arg.name,
         };
       }
       if (arg.typeArguments) {
@@ -952,21 +1185,30 @@ var ResolvedAbiType = class {
             abi,
             arg.typeArguments,
             typeParametersAndArgsMap
-          )
+          ),
         };
       }
       const argType = findTypeById(abi, arg.type);
-      const implicitTypeParameters = this.getImplicitGenericTypeParameters(abi, argType.components);
+      const implicitTypeParameters = this.getImplicitGenericTypeParameters(
+        abi,
+        argType.components
+      );
       if (implicitTypeParameters && implicitTypeParameters.length > 0) {
         return {
           ...structuredClone(arg),
-          typeArguments: implicitTypeParameters.map((itp) => typeParametersAndArgsMap[itp])
+          typeArguments: implicitTypeParameters.map(
+            (itp) => typeParametersAndArgsMap[itp]
+          ),
         };
       }
       return arg;
     });
   }
-  static getImplicitGenericTypeParameters(abi, args, implicitGenericParametersParam) {
+  static getImplicitGenericTypeParameters(
+    abi,
+    args,
+    implicitGenericParametersParam
+  ) {
     if (!Array.isArray(args)) {
       return null;
     }
@@ -980,9 +1222,15 @@ var ResolvedAbiType = class {
       if (!Array.isArray(a.typeArguments)) {
         return;
       }
-      this.getImplicitGenericTypeParameters(abi, a.typeArguments, implicitGenericParameters);
+      this.getImplicitGenericTypeParameters(
+        abi,
+        a.typeArguments,
+        implicitGenericParameters
+      );
     });
-    return implicitGenericParameters.length > 0 ? implicitGenericParameters : null;
+    return implicitGenericParameters.length > 0
+      ? implicitGenericParameters
+      : null;
   }
   getSignature() {
     const prefix = this.getArgSignaturePrefix();
@@ -1022,17 +1270,37 @@ var ResolvedAbiType = class {
     if (arrayMatch) {
       return `[${this.components[0].getSignature()};${arrayMatch.length}]`;
     }
-    const typeArgumentsSignature = this.originalTypeArguments !== null ? `<${this.originalTypeArguments.map((a) => new ResolvedAbiType(this.abi, a).getSignature()).join(",")}>` : "";
-    const componentsSignature = `(${this.components.map((c) => c.getSignature()).join(",")})`;
+    const typeArgumentsSignature =
+      this.originalTypeArguments !== null
+        ? `<${this.originalTypeArguments
+            .map((a) => new ResolvedAbiType(this.abi, a).getSignature())
+            .join(",")}>`
+        : "";
+    const componentsSignature = `(${this.components
+      .map((c) => c.getSignature())
+      .join(",")})`;
     return `${typeArgumentsSignature}${componentsSignature}`;
   }
 };
 
 // src/encoding/strategies/getCoderForEncoding.ts
-var import_errors18 = require("@fuel-ts/errors");
+var import_errors19 = require("@fuel-ts/errors");
 
 // src/encoding/strategies/getCoderV1.ts
-var import_errors17 = require("@fuel-ts/errors");
+var import_errors18 = require("@fuel-ts/errors");
+
+// src/encoding/coders/VoidCoder.ts
+var VoidCoder = class extends Coder {
+  constructor() {
+    super("void", VOID_TYPE, 0);
+  }
+  encode(_value) {
+    return new Uint8Array([]);
+  }
+  decode(_data, offset) {
+    return [void 0, offset];
+  }
+};
 
 // src/encoding/strategies/getCoders.ts
 function getCoders(components, options) {
@@ -1070,6 +1338,8 @@ var getCoder = (resolvedAbiType, _options) => {
       return new StdStringCoder();
     case STR_SLICE_CODER_TYPE:
       return new StrSliceCoder();
+    case VOID_TYPE:
+      return new VoidCoder();
     default:
       break;
   }
@@ -1084,8 +1354,8 @@ var getCoder = (resolvedAbiType, _options) => {
     const length = parseInt(arrayMatch.length, 10);
     const arg = components[0];
     if (!arg) {
-      throw new import_errors17.FuelError(
-        import_errors17.ErrorCode.INVALID_COMPONENT,
+      throw new import_errors18.FuelError(
+        import_errors18.ErrorCode.INVALID_COMPONENT,
         `The provided Array type is missing an item of 'component'.`
       );
     }
@@ -1098,27 +1368,30 @@ var getCoder = (resolvedAbiType, _options) => {
     const itemCoder = getCoder(argType, { encoding: ENCODING_V1 });
     return new VecCoder(itemCoder);
   }
-  const structMatch = structRegEx.exec(resolvedAbiType.type)?.groups;
-  if (structMatch) {
+  const coderName = resolvedAbiType.type.match(fullNameRegExMatch)?.[0];
+  const structMatch = structRegEx.test(resolvedAbiType.type);
+  if (structMatch && coderName) {
     const coders = getCoders(components, { getCoder });
-    return new StructCoder(structMatch.name, coders);
+    return new StructCoder(coderName, coders);
   }
-  const enumMatch = enumRegEx.exec(resolvedAbiType.type)?.groups;
-  if (enumMatch) {
+  const enumMatch = enumRegEx.test(resolvedAbiType.type);
+  if (enumMatch && coderName) {
     const coders = getCoders(components, { getCoder });
     const isOptionEnum = resolvedAbiType.type === OPTION_CODER_TYPE;
     if (isOptionEnum) {
-      return new OptionCoder(enumMatch.name, coders);
+      return new OptionCoder(coderName, coders);
     }
-    return new EnumCoder(enumMatch.name, coders);
+    return new EnumCoder(coderName, coders);
   }
   const tupleMatch = tupleRegEx.exec(resolvedAbiType.type)?.groups;
   if (tupleMatch) {
-    const coders = components.map((component) => getCoder(component, { encoding: ENCODING_V1 }));
+    const coders = components.map((component) =>
+      getCoder(component, { encoding: ENCODING_V1 })
+    );
     return new TupleCoder(coders);
   }
-  throw new import_errors17.FuelError(
-    import_errors17.ErrorCode.CODER_NOT_FOUND,
+  throw new import_errors18.FuelError(
+    import_errors18.ErrorCode.CODER_NOT_FOUND,
     `Coder not found: ${JSON.stringify(resolvedAbiType)}.`
   );
 };
@@ -1129,8 +1402,8 @@ function getCoderForEncoding(encoding = ENCODING_V1) {
     case ENCODING_V1:
       return getCoder;
     default:
-      throw new import_errors18.FuelError(
-        import_errors18.ErrorCode.UNSUPPORTED_ENCODING_VERSION,
+      throw new import_errors19.FuelError(
+        import_errors19.ErrorCode.UNSUPPORTED_ENCODING_VERSION,
         `Encoding version ${encoding} is unsupported.`
       );
   }
@@ -1138,15 +1411,23 @@ function getCoderForEncoding(encoding = ENCODING_V1) {
 
 // src/AbiCoder.ts
 var AbiCoder = class {
-  static getCoder(abi, argument, options = {
-    padToWordSize: false
-  }) {
+  static getCoder(
+    abi,
+    argument,
+    options = {
+      padToWordSize: false,
+    }
+  ) {
     const resolvedAbiType = new ResolvedAbiType(abi, argument);
     return getCoderForEncoding(options.encoding)(resolvedAbiType, options);
   }
-  static getLogDecoder(abi, logId, options = {
-    padToWordSize: false
-  }) {
+  static getLogDecoder(
+    abi,
+    logId,
+    options = {
+      padToWordSize: false,
+    }
+  ) {
     const loggedType = abi.loggedTypes.find((type) => type.logId === logId);
     if (!loggedType) {
       throw new import_errors20.FuelError(
@@ -1155,7 +1436,10 @@ var AbiCoder = class {
       );
     }
     const resolvedAbiType = new ResolvedAbiType(abi, loggedType.loggedType);
-    const internalCoder = getCoderForEncoding(options.encoding)(resolvedAbiType, options);
+    const internalCoder = getCoderForEncoding(options.encoding)(
+      resolvedAbiType,
+      options
+    );
     return (data) => internalCoder.decode(import_utils12.arrayify(data), 0)[0];
   }
   static encode(abi, argument, value, options) {
@@ -1168,10 +1452,35 @@ var AbiCoder = class {
 
 // src/FunctionFragment.ts
 var import_crypto = require("@fuel-ts/crypto");
-var import_errors19 = require("@fuel-ts/errors");
+var import_errors20 = require("@fuel-ts/errors");
 var import_hasher = require("@fuel-ts/hasher");
 var import_math12 = require("@fuel-ts/math");
 var import_utils11 = require("@fuel-ts/utils");
+
+// src/utils/getFunctionInputs.ts
+var getFunctionInputs = (params) => {
+  const { jsonAbi, inputs } = params;
+  let isMandatory = false;
+  return inputs.reduceRight((result, input) => {
+    const type = findTypeById(jsonAbi, input.type);
+    isMandatory =
+      isMandatory || (type.type !== VOID_TYPE && !optionRegEx.test(type.type));
+    return [{ ...input, isOptional: !isMandatory }, ...result];
+  }, []);
+};
+
+// src/utils/padValuesWithUndefined.ts
+var padValuesWithUndefined = (values, inputs) => {
+  if (values.length >= inputs.length) {
+    return values;
+  }
+  const paddedValues = values.slice();
+  paddedValues.length = inputs.length;
+  paddedValues.fill(void 0, values.length);
+  return paddedValues;
+};
+
+// src/FunctionFragment.ts
 var FunctionFragment = class {
   signature;
   selector;
@@ -1180,89 +1489,92 @@ var FunctionFragment = class {
   name;
   jsonFn;
   attributes;
-  jsonAbi;
-  constructor(jsonAbi, name) {
-    this.jsonAbi = jsonAbi;
-    this.jsonFn = findFunctionByName(this.jsonAbi, name);
-    this.name = name;
-    this.signature = FunctionFragment.getSignature(this.jsonAbi, this.jsonFn);
+  jsonAbiOld;
+  jsonFnOld;
+  constructor(jsonAbi, fn) {
+    this.jsonFn = fn;
+    this.jsonAbiOld = jsonAbi;
+    this.jsonFnOld = jsonAbi.functions.find((f) => f.name === fn.name);
+    this.name = fn.name;
+    this.signature = FunctionFragment.getSignature(
+      this.jsonAbiOld,
+      this.jsonFnOld
+    );
     this.selector = FunctionFragment.getFunctionSelector(this.signature);
-    this.selectorBytes = new StdStringCoder().encode(name);
+    this.selectorBytes = new StdStringCoder().encode(this.name);
     this.encoding = getEncodingVersion(jsonAbi.encoding);
     this.attributes = this.jsonFn.attributes ?? [];
   }
   static getSignature(abi, fn) {
-    const inputsSignatures = fn.inputs.map(
-      (input) => new ResolvedAbiType(abi, input).getSignature()
+    const inputsSignatures = fn.inputs.map((input) =>
+      new ResolvedAbiType(abi, input).getSignature()
     );
     return `${fn.name}(${inputsSignatures.join(",")})`;
   }
   static getFunctionSelector(functionSignature) {
-    const hashedFunctionSignature = (0, import_hasher.sha256)((0, import_crypto.bufferFromString)(functionSignature, "utf-8"));
+    const hashedFunctionSignature = (0, import_hasher.sha256)(
+      (0, import_crypto.bufferFromString)(functionSignature, "utf-8")
+    );
     return (0, import_math12.bn)(hashedFunctionSignature.slice(0, 10)).toHex(8);
   }
   encodeArguments(values) {
-    FunctionFragment.verifyArgsAndInputsAlign(values, this.jsonFn.inputs, this.jsonAbi);
-    const shallowCopyValues = values.slice();
-    const nonEmptyInputs = findNonEmptyInputs(this.jsonAbi, this.jsonFn.inputs);
-    if (Array.isArray(values) && nonEmptyInputs.length !== values.length) {
-      shallowCopyValues.length = this.jsonFn.inputs.length;
-      shallowCopyValues.fill(void 0, values.length);
+    const inputs = getFunctionInputs({
+      jsonAbi: this.jsonAbiOld,
+      inputs: this.jsonFnOld.inputs,
+    });
+    const mandatoryInputLength = inputs.filter((i) => !i.isOptional).length;
+    if (values.length < mandatoryInputLength) {
+      throw new import_errors20.FuelError(
+        import_errors20.ErrorCode.ABI_TYPES_AND_VALUES_MISMATCH,
+        `Invalid number of arguments. Expected a minimum of ${mandatoryInputLength} arguments, received ${values.length}`
+      );
     }
-    const coders = nonEmptyInputs.map(
-      (t) => AbiCoder.getCoder(this.jsonAbi, t, {
-        encoding: this.encoding
+    const coders = this.jsonFnOld.inputs.map((t) =>
+      AbiCoder.getCoder(this.jsonAbiOld, t, {
+        encoding: this.encoding,
       })
     );
-    return new TupleCoder(coders).encode(shallowCopyValues);
-  }
-  static verifyArgsAndInputsAlign(args, inputs, abi) {
-    if (args.length === inputs.length) {
-      return;
-    }
-    const inputTypes = inputs.map((input) => findTypeById(abi, input.type));
-    const optionalInputs = inputTypes.filter(
-      (x) => x.type === OPTION_CODER_TYPE || x.type === "()"
-    );
-    if (optionalInputs.length === inputTypes.length) {
-      return;
-    }
-    if (inputTypes.length - optionalInputs.length === args.length) {
-      return;
-    }
-    const errorMsg = `Mismatch between provided arguments and expected ABI inputs. Provided ${args.length} arguments, but expected ${inputs.length - optionalInputs.length} (excluding ${optionalInputs.length} optional inputs).`;
-    throw new import_errors19.FuelError(import_errors19.ErrorCode.ABI_TYPES_AND_VALUES_MISMATCH, errorMsg);
+    const argumentValues = padValuesWithUndefined(values, this.jsonFn.inputs);
+    return new TupleCoder(coders).encode(argumentValues);
   }
   decodeArguments(data) {
     const bytes = (0, import_utils11.arrayify)(data);
-    const nonEmptyInputs = findNonEmptyInputs(this.jsonAbi, this.jsonFn.inputs);
-    if (nonEmptyInputs.length === 0) {
+    const nonVoidInputs = findNonVoidInputs(
+      this.jsonAbiOld,
+      this.jsonFnOld.inputs
+    );
+    if (nonVoidInputs.length === 0) {
       if (bytes.length === 0) {
         return void 0;
       }
-      throw new import_errors19.FuelError(
-        import_errors19.ErrorCode.DECODE_ERROR,
+      throw new import_errors20.FuelError(
+        import_errors20.ErrorCode.DECODE_ERROR,
         `Types/values length mismatch during decode. ${JSON.stringify({
           count: {
             types: this.jsonFn.inputs.length,
-            nonEmptyInputs: nonEmptyInputs.length,
-            values: bytes.length
+            nonVoidInputs: nonVoidInputs.length,
+            values: bytes.length,
           },
           value: {
             args: this.jsonFn.inputs,
-            nonEmptyInputs,
-            values: bytes
-          }
+            nonVoidInputs,
+            values: bytes,
+          },
         })}`
       );
     }
-    const result = nonEmptyInputs.reduce(
+    const result = this.jsonFnOld.inputs.reduce(
       (obj, input) => {
-        const coder = AbiCoder.getCoder(this.jsonAbi, input, { encoding: this.encoding });
-        const [decodedValue, decodedValueByteSize] = coder.decode(bytes, obj.offset);
+        const coder = AbiCoder.getCoder(this.jsonAbiOld, input, {
+          encoding: this.encoding,
+        });
+        const [decodedValue, decodedValueByteSize] = coder.decode(
+          bytes,
+          obj.offset
+        );
         return {
           decoded: [...obj.decoded, decodedValue],
-          offset: obj.offset + decodedValueByteSize
+          offset: obj.offset + decodedValueByteSize,
         };
       },
       { decoded: [], offset: 0 }
@@ -1270,13 +1582,9 @@ var FunctionFragment = class {
     return result.decoded;
   }
   decodeOutput(data) {
-    const outputAbiType = findTypeById(this.jsonAbi, this.jsonFn.output.type);
-    if (outputAbiType.type === "()") {
-      return [void 0, 0];
-    }
     const bytes = (0, import_utils11.arrayify)(data);
-    const coder = AbiCoder.getCoder(this.jsonAbi, this.jsonFn.output, {
-      encoding: this.encoding
+    const coder = AbiCoder.getCoder(this.jsonAbiOld, this.jsonFnOld.output, {
+      encoding: this.encoding,
     });
     return coder.decode(bytes, 0);
   }
@@ -1286,10 +1594,122 @@ var FunctionFragment = class {
    * @returns True if the function is read-only or pure, false otherwise.
    */
   isReadOnly() {
-    const storageAttribute = this.attributes.find((attr) => attr.name === "storage");
-    return !storageAttribute?.arguments.includes("write");
+    const storageAttribute = this.attributes.find(
+      (attr) => attr.name === "storage"
+    );
+    return !storageAttribute?.arguments?.includes("write");
   }
 };
+
+// src/utils/transpile-abi.ts
+var findTypeByConcreteId = (types, id) =>
+  types.find((x) => x.concreteTypeId === id);
+var findConcreteTypeById = (abi, id) =>
+  abi.concreteTypes.find((x) => x.concreteTypeId === id);
+function finsertTypeIdByConcreteTypeId(abi, types, id) {
+  const concreteType = findConcreteTypeById(abi, id);
+  if (concreteType.metadataTypeId !== void 0) {
+    return concreteType.metadataTypeId;
+  }
+  const type = findTypeByConcreteId(types, id);
+  if (type) {
+    return type.typeId;
+  }
+  types.push({
+    typeId: types.length,
+    type: concreteType.type,
+    components: parseComponents(concreteType.components),
+    concreteTypeId: id,
+    typeParameters: concreteType.typeParameters ?? null,
+    originalConcreteTypeId: concreteType?.concreteTypeId,
+  });
+  return types.length - 1;
+}
+function parseFunctionTypeArguments(abi, types, concreteType) {
+  return (
+    concreteType.typeArguments?.map((cTypeId) => {
+      const self = findConcreteTypeById(abi, cTypeId);
+      const type = !isNaN(cTypeId)
+        ? cTypeId
+        : finsertTypeIdByConcreteTypeId(abi, types, cTypeId);
+      return {
+        name: "",
+        type,
+        // originalTypeId: cTypeId,
+        typeArguments: parseFunctionTypeArguments(abi, types, self),
+      };
+    }) ?? null
+  );
+}
+function parseConcreteType(abi, types, concreteTypeId, name) {
+  const type = finsertTypeIdByConcreteTypeId(abi, types, concreteTypeId);
+  const concrete = findConcreteTypeById(abi, concreteTypeId);
+  return {
+    name: name ?? "",
+    type,
+    // concreteTypeId,
+    typeArguments: parseFunctionTypeArguments(abi, types, concrete),
+  };
+}
+function parseComponents(abi, types, components) {
+  return (
+    components?.map((component) => {
+      const { typeId, name, typeArguments } = component;
+      const type = !isNaN(typeId)
+        ? typeId
+        : finsertTypeIdByConcreteTypeId(abi, types, typeId);
+      return {
+        name,
+        type,
+        // originalTypeId: typeId,
+        typeArguments: parseComponents(abi, types, typeArguments),
+      };
+    }) ?? null
+  );
+}
+function transpileAbi(abi) {
+  if (!abi.specVersion) {
+    return abi;
+  }
+  const types = [];
+  abi.metadataTypes.forEach((m) => {
+    const t = {
+      typeId: m.metadataTypeId,
+      type: m.type,
+      components: m.components ?? (m.type === "()" ? [] : null),
+      typeParameters: m.typeParameters ?? null,
+    };
+    types.push(t);
+  });
+  types.forEach((t) => {
+    t.components = parseComponents(abi, types, t.components);
+  });
+  const functions = abi.functions.map((fn) => {
+    const inputs = fn.inputs.map(({ concreteTypeId, name }) =>
+      parseConcreteType(abi, types, concreteTypeId, name)
+    );
+    const output = parseConcreteType(abi, types, fn.output, "");
+    return { ...fn, inputs, output };
+  });
+  const configurables = abi.configurables.map((conf) => ({
+    name: conf.name,
+    configurableType: parseConcreteType(abi, types, conf.concreteTypeId),
+    offset: conf.offset,
+  }));
+  const loggedTypes = abi.loggedTypes.map((log) => ({
+    logId: log.logId,
+    loggedType: parseConcreteType(abi, types, log.concreteTypeId),
+  }));
+  const transpiled = {
+    encoding: abi.encodingVersion,
+    types,
+    functions,
+    loggedTypes,
+    messagesTypes: abi.messagesTypes,
+    configurables,
+  };
+  return transpiled;
+}
 
 // src/Interface.ts
 var Interface = class {
@@ -1297,13 +1717,20 @@ var Interface = class {
   configurables;
   jsonAbi;
   encoding;
+  jsonAbiOld;
   constructor(jsonAbi) {
     this.jsonAbi = jsonAbi;
-    this.encoding = getEncodingVersion(jsonAbi.encoding);
+    this.encoding = getEncodingVersion(jsonAbi.encodingVersion);
+    this.jsonAbiOld = transpileAbi(jsonAbi);
     this.functions = Object.fromEntries(
-      this.jsonAbi.functions.map((x) => [x.name, new FunctionFragment(this.jsonAbi, x.name)])
+      this.jsonAbi.functions.map((fn) => [
+        fn.name,
+        new FunctionFragment(this.jsonAbiOld, fn),
+      ])
     );
-    this.configurables = Object.fromEntries(this.jsonAbi.configurables.map((x) => [x.name, x]));
+    this.configurables = Object.fromEntries(
+      this.jsonAbi.configurables.map((x) => [x.name, x])
+    );
   }
   /**
    * Returns function fragment for a dynamic input.
@@ -1311,86 +1738,120 @@ var Interface = class {
    */
   getFunction(nameOrSignatureOrSelector) {
     const fn = Object.values(this.functions).find(
-      (f) => f.name === nameOrSignatureOrSelector || f.signature === nameOrSignatureOrSelector || f.selector === nameOrSignatureOrSelector
+      (f) =>
+        f.name === nameOrSignatureOrSelector ||
+        f.signature === nameOrSignatureOrSelector ||
+        f.selector === nameOrSignatureOrSelector
     );
     if (fn !== void 0) {
       return fn;
     }
-    throw new import_errors20.FuelError(
-      import_errors20.ErrorCode.FUNCTION_NOT_FOUND,
+    throw new import_errors21.FuelError(
+      import_errors21.ErrorCode.FUNCTION_NOT_FOUND,
       `function ${nameOrSignatureOrSelector} not found: ${JSON.stringify(fn)}.`
     );
   }
-  decodeFunctionData(functionFragment, data) {
-    const fragment = typeof functionFragment === "string" ? this.getFunction(functionFragment) : functionFragment;
-    return fragment.decodeArguments(data);
-  }
-  encodeFunctionData(functionFragment, values) {
-    const fragment = typeof functionFragment === "string" ? this.getFunction(functionFragment) : functionFragment;
-    return fragment.encodeArguments(values);
-  }
   // Decode the result of a function call
   decodeFunctionResult(functionFragment, data) {
-    const fragment = typeof functionFragment === "string" ? this.getFunction(functionFragment) : functionFragment;
+    const fragment =
+      typeof functionFragment === "string"
+        ? this.getFunction(functionFragment)
+        : functionFragment;
     return fragment.decodeOutput(data);
   }
   decodeLog(data, logId) {
-    const loggedType = this.jsonAbi.loggedTypes.find((type) => type.logId === logId);
+    const loggedType = this.jsonAbiOld.loggedTypes.find(
+      (type) => type.logId === logId
+    );
     if (!loggedType) {
-      throw new import_errors20.FuelError(
-        import_errors20.ErrorCode.LOG_TYPE_NOT_FOUND,
+      throw new import_errors21.FuelError(
+        import_errors21.ErrorCode.LOG_TYPE_NOT_FOUND,
         `Log type with logId '${logId}' doesn't exist in the ABI.`
       );
     }
-    return AbiCoder.decode(this.jsonAbi, loggedType.loggedType, (0, import_utils12.arrayify)(data), 0, {
-      encoding: this.encoding
-    });
+    return AbiCoder.decode(
+      this.jsonAbiOld,
+      loggedType.loggedType,
+      (0, import_utils12.arrayify)(data),
+      0,
+      {
+        encoding: this.encoding,
+      }
+    );
   }
   encodeConfigurable(name, value) {
-    const configurable = this.jsonAbi.configurables.find((c) => c.name === name);
+    const configurable = this.jsonAbiOld.configurables.find(
+      (c) => c.name === name
+    );
     if (!configurable) {
-      throw new import_errors20.FuelError(
-        import_errors20.ErrorCode.CONFIGURABLE_NOT_FOUND,
+      throw new import_errors21.FuelError(
+        import_errors21.ErrorCode.CONFIGURABLE_NOT_FOUND,
         `A configurable with the '${name}' was not found in the ABI.`
       );
     }
-    return AbiCoder.encode(this.jsonAbi, configurable.configurableType, value, {
-      encoding: this.encoding
+    return AbiCoder.encode(
+      this.jsonAbiOld,
+      configurable.configurableType,
+      value,
+      {
+        encoding: this.encoding,
+      }
+    );
+  }
+  encodeType(concreteTypeId, value) {
+    const typeArg = parseConcreteType(
+      this.jsonAbi,
+      this.jsonAbiOld.types,
+      concreteTypeId,
+      ""
+    );
+    return AbiCoder.encode(this.jsonAbiOld, typeArg, value, {
+      encoding: this.encoding,
     });
   }
-  getTypeById(typeId) {
-    return findTypeById(this.jsonAbi, typeId);
+  decodeType(concreteTypeId, data) {
+    const typeArg = parseConcreteType(
+      this.jsonAbi,
+      this.jsonAbiOld.types,
+      concreteTypeId,
+      ""
+    );
+    return AbiCoder.decode(this.jsonAbiOld, typeArg, data, 0, {
+      encoding: this.encoding,
+    });
   }
 };
 // Annotate the CommonJS export names for ESM import in node:
-0 && (module.exports = {
-  ASSET_ID_LEN,
-  ArrayCoder,
-  B256Coder,
-  B512Coder,
-  BYTES_32,
-  BigNumberCoder,
-  BooleanCoder,
-  ByteCoder,
-  CONTRACT_ID_LEN,
-  Coder,
-  ENCODING_V1,
-  EnumCoder,
-  INPUT_COIN_FIXED_SIZE,
-  Interface,
-  NumberCoder,
-  OptionCoder,
-  RawSliceCoder,
-  SCRIPT_FIXED_SIZE,
-  StdStringCoder,
-  StrSliceCoder,
-  StringCoder,
-  StructCoder,
-  TupleCoder,
-  UTXO_ID_LEN,
-  VecCoder,
-  WORD_SIZE,
-  AbiCoder,
-  calculateVmTxMemory
-});
+0 &&
+  (module.exports = {
+    AbiCoder,
+    transpileAbi,
+    ASSET_ID_LEN,
+    ArrayCoder,
+    B256Coder,
+    B512Coder,
+    BYTES_32,
+    BigNumberCoder,
+    BooleanCoder,
+    ByteCoder,
+    CONTRACT_ID_LEN,
+    Coder,
+    ENCODING_V1,
+    EnumCoder,
+    INPUT_COIN_FIXED_SIZE,
+    Interface,
+    NumberCoder,
+    OptionCoder,
+    RawSliceCoder,
+    SCRIPT_FIXED_SIZE,
+    StdStringCoder,
+    StrSliceCoder,
+    StringCoder,
+    StructCoder,
+    TupleCoder,
+    UTXO_ID_LEN,
+    VecCoder,
+    WORD_SIZE,
+    calculateVmTxMemory,
+  });
 //# sourceMappingURL=index.js.map

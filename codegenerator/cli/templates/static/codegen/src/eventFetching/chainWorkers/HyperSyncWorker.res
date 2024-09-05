@@ -1,6 +1,8 @@
 open ChainWorker
 open Belt
 
+exception EventRoutingFailed
+
 module Make = (
   T: {
     let contracts: array<Config.contract>
@@ -375,7 +377,7 @@ module Make = (
                   "topic0": topic0,
                 },
               )
-              %raw(`null`)->ErrorHandling.mkLogAndRaise(
+              EventRoutingFailed->ErrorHandling.mkLogAndRaise(
                 ~msg="Failed to lookup registered event",
                 ~logger,
               )
@@ -430,7 +432,7 @@ module Make = (
                   "topic0": topic0,
                 },
               )
-              %raw(`null`)->ErrorHandling.mkLogAndRaise(
+              EventRoutingFailed->ErrorHandling.mkLogAndRaise(
                 ~msg="Failed to lookup registered event",
                 ~logger,
               )
