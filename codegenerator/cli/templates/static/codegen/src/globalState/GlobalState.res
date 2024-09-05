@@ -194,8 +194,7 @@ let checkAndSetSyncedChains = (~nextQueueItemIsKnownNone=false, chainManager: Ch
           chainManager.arbitraryEventQueue
           ->ChainManager.getFirstArbitraryEventsItemForChain(~chain=cf.chainConfig.chain)
           ->Option.isSome //TODO this is more expensive than it needs to be
-        let queueSize = cf.fetchState->PartitionedFetchState.queueSize
-        let hasNoMoreEventsToProcess = !hasArbQueueEvents && queueSize == 0
+        let hasNoMoreEventsToProcess = cf->ChainFetcher.hasNoMoreEventsToProcess(~hasArbQueueEvents)
 
         if hasNoMoreEventsToProcess {
           {
@@ -233,9 +232,7 @@ let updateLatestProcessedBlocks = (
         state.chainManager.arbitraryEventQueue
         ->ChainManager.getFirstArbitraryEventsItemForChain(~chain)
         ->Option.isSome //TODO this is more expensive than it needs to be
-      let queueSize = fetchState->PartitionedFetchState.queueSize
-
-      let hasNoMoreEventsToProcess = !hasArbQueueEvents && queueSize == 0
+      let hasNoMoreEventsToProcess = cf->ChainFetcher.hasNoMoreEventsToProcess(~hasArbQueueEvents)
 
       let latestProcessedBlock = if hasNoMoreEventsToProcess {
         PartitionedFetchState.getLatestFullyFetchedBlock(fetchState).blockNumber->Some
@@ -310,8 +307,8 @@ let handleBlockRangeResponse = (state, ~chain, ~response: ChainWorker.blockRange
       state.chainManager.arbitraryEventQueue
       ->ChainManager.getFirstArbitraryEventsItemForChain(~chain)
       ->Option.isSome //TODO this is more expensive than it needs to be
-    let queueSize = chainFetcher.fetchState->PartitionedFetchState.queueSize
-    let hasNoMoreEventsToProcess = !hasArbQueueEvents && queueSize == 0
+    let hasNoMoreEventsToProcess =
+      chainFetcher->ChainFetcher.hasNoMoreEventsToProcess(~hasArbQueueEvents)
 
     let latestProcessedBlock = if hasNoMoreEventsToProcess {
       PartitionedFetchState.getLatestFullyFetchedBlock(chainFetcher.fetchState).blockNumber->Some

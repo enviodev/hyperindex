@@ -283,6 +283,12 @@ let hasProcessedToEndblock = (self: t) => {
   }
 }
 
+let hasNoMoreEventsToProcess = (self: t, ~hasArbQueueEvents) => {
+  !hasArbQueueEvents &&
+  !self.isFetchingBatch &&
+  self.fetchState->PartitionedFetchState.queueSize === 0
+}
+
 /**
 Finds the last known block where hashes are valid and returns
 the updated lastBlockScannedHashes rolled back where this occurs
