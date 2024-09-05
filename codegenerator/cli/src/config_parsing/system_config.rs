@@ -888,7 +888,7 @@ impl Event {
         let mut events_abi = ethers::abi::Abi::default();
 
         for event_config in events_config.iter() {
-            let event = Event::get_abi_event(&event_config.event, &abi_from_file)?;
+            let mut event = Event::get_abi_event(&event_config.event, &abi_from_file)?;
             let sighash = ethers::core::utils::hex::encode_prefixed(ethers::utils::keccak256(
                 event.abi_signature().as_bytes(),
             ));
@@ -910,6 +910,11 @@ impl Event {
                     EventParam { name, ..e }
                 })
                 .collect();
+
+            // All unnamed params in the ABI should be named,
+            // otherwise decoders will output parsed data as an array,
+            // instead of an object with named fields.
+            event.inputs = normalized_unnamed_params.clone();
 
             events_abi.events.entry(abi_name).or_default().push(event);
             events.push(Event {
