@@ -28,6 +28,12 @@ let reorgsDetectedCounter = PromClient.Counter.makeCounter({
   "labelNames": ["chainId"],
 })
 
+let allChainsSyncedToHead = PromClient.Gauge.makeGauge({
+  "name": "hyperindex_synced_to_head",
+  "help": "All chains fully synced",
+  "labelNames": [""],
+})
+
 let sourceChainHeight = PromClient.Gauge.makeGauge({
   "name": "chain_block_height",
   "help": "Chain Height of Source Chain",
@@ -72,6 +78,12 @@ let setSourceChainHeight = (~blockNumber, ~chain) => {
   ->PromClient.Gauge.labels({"chainId": chain->ChainMap.Chain.toString})
   ->PromClient.Gauge.set(blockNumber)
 }
+
+let setAllChainsSyncedToHead = () => {
+  allChainsSyncedToHead
+  ->PromClient.Gauge.set(1)
+}
+
 
 let setProcessedUntilHeight = (~blockNumber, ~chain) => {
   processedUntilHeight
