@@ -82,7 +82,7 @@ module type S = {
       type eventArgs
       let eventArgsSchema: RescriptSchema.S.schema<eventArgs>
       let convertHyperSyncEventArgs: HyperSyncClient.Decoder.decodedEvent => eventArgs
-      let decodeHyperFuelData: string => eventArgs
+      let decodeHyperFuelData: Fuel.Receipt.t => eventArgs
       let handlerRegister: HandlerTypes.Register.t<eventArgs>
       type eventFilter
       let getTopicSelection: SingleOrMultiple.t<eventFilter> => array<LogSelection.topicSelection>

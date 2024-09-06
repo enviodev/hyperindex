@@ -1,7 +1,4 @@
-@genType
 type receiptType = | @as(6) LogData
-type fuelBytes256 = string
-type fuelTxId = fuelBytes256
 
 @module("./vendored-fuel-abi-coder.js")
 external transpileAbi: Js.Json.t => Ethers.abi = "transpileAbi"
@@ -19,5 +16,5 @@ module Receipt = {
     (receipt: t) => (receipt->Utils.magic)["data"]->decode->Utils.magic
   }
 
-  let unitDecoder = {(_: t) => ()}
+  let unitDecoder = (_: t) => ()
 }

@@ -501,20 +501,36 @@ impl EventTemplate {
                     get_topic_selection_code: Self::generate_get_topic_selection_code(params),
                 })
             }
-            EventPayload::Data(type_indent) => Ok(EventTemplate {
-                name,
-                params: vec![],
-                data_type: type_indent.to_string(),
-                data_schema_code: type_indent.to_rescript_schema(),
-                sighash: config_event.sighash.to_string(),
-                convert_hyper_sync_event_args_code: "(Utils.magic: \
+            EventPayload::Data(type_indent) => {
+                // TODO: A special decoder for Unit type_indent
+                // let data_decoder = match config_event.log.logged_type.rescript_type_decl.type_expr {
+                //     rescript_types::RescriptTypeExpr::Identifier(
+                //         rescript_types::RescriptTypeIdent::Unit,
+                //     ) => "Fuel.Receipt.unitDecoder".to_string(),
+                //     _ => format!(
+                //         "Fuel.Receipt.getLogDataDecoder(~abi, ~logId=\"{}\")",
+                //         config_event.sighash
+                //     ),
+                // };
+                let decode_hyper_fuel_data_code = format!(
+                    "Fuel.Receipt.getLogDataDecoder(~abi, ~logId=\"{}\")",
+                    config_event.sighash
+                );
+                Ok(EventTemplate {
+                    name,
+                    params: vec![],
+                    data_type: type_indent.to_string(),
+                    data_schema_code: type_indent.to_rescript_schema(),
+                    sighash: config_event.sighash.to_string(),
+                    convert_hyper_sync_event_args_code: "(Utils.magic: \
                                                      HyperSyncClient.Decoder.decodedEvent => \
                                                      eventArgs)"
-                    .to_string(),
-                decode_hyper_fuel_data_code: Self::DECODE_HYPER_FUEL_DATA_CODE.to_string(),
-                event_filter_type: Self::EVENT_FILTER_TYPE_STUB.to_string(),
-                get_topic_selection_code: Self::GET_TOPIC_SELECTION_CODE_STUB.to_string(),
-            }),
+                        .to_string(),
+                    decode_hyper_fuel_data_code,
+                    event_filter_type: Self::EVENT_FILTER_TYPE_STUB.to_string(),
+                    get_topic_selection_code: Self::GET_TOPIC_SELECTION_CODE_STUB.to_string(),
+                })
+            }
         }
     }
 }
