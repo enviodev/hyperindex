@@ -48,7 +48,13 @@ impl RescriptTypeDeclMulti {
 
         sorted
             .iter()
-            .map(|decl| format!("let {}Schema = {}", decl.name, decl.to_rescript_schema()))
+            .map(|decl| {
+                format!(
+                    "let {}Schema = {}",
+                    decl.name,
+                    decl.to_rescript_schema(&decl.name)
+                )
+            })
             .collect::<Vec<String>>()
             .join("\n")
     }
@@ -138,17 +144,30 @@ impl RescriptTypeDecl {
         )
     }
 
-    pub fn to_rescript_schema(&self) -> String {
+    pub fn to_rescript_schema(&self, type_name: &String) -> String {
         if self.parameters.is_empty() {
-            self.type_expr.to_rescript_schema()
+            self.type_expr.to_rescript_schema(type_name)
         } else {
             let params = self
                 .parameters
                 .iter()
-                .map(|param| format!("{}Schema", param))
+                .map(|param| format!("_{}Schema", param))
                 .collect::<Vec<String>>()
                 .join(", ");
-            format!("({}) => {}", params, self.type_expr.to_rescript_schema())
+            let type_name = format!(
+                "{}<{}>",
+                type_name,
+                self.parameters
+                    .iter()
+                    .map(|param| format!("'{}", param))
+                    .collect::<Vec<String>>()
+                    .join(", ")
+            );
+            format!(
+                "({}) => {}",
+                params,
+                self.type_expr.to_rescript_schema(&type_name)
+            )
         }
     }
 
@@ -197,7 +216,7 @@ impl RescriptTypeExpr {
         }
     }
 
-    pub fn to_rescript_schema(&self) -> String {
+    pub fn to_rescript_schema(&self, type_name: &String) -> String {
         match self {
             Self::Identifier(type_ident) => type_ident.to_rescript_schema(),
             Self::Variant(items) => {
@@ -205,11 +224,12 @@ impl RescriptTypeExpr {
                     .iter()
                     .map(|item| {
                         format!(
-                            r#"S.object(s =>
+                            r#"S.object((s): {} =>
 {{
   s.tag("case", "{}")
   {}({{payload: s.field("payload", {})}})
 }})"#,
+                            type_name,
                             item.name,
                             item.name,
                             item.payload.to_rescript_schema()
@@ -221,7 +241,7 @@ impl RescriptTypeExpr {
             }
             Self::Record(fields) => {
                 if fields.is_empty() {
-                    "S.object(_ => {})".to_string()
+                    format!("S.object((_): {} => {{}})", type_name)
                 } else {
                     let inner_str = fields
                         .iter()
@@ -238,7 +258,7 @@ impl RescriptTypeExpr {
                         })
                         .collect::<Vec<String>>()
                         .join(", ");
-                    format!("S.object(s => {{{}}})", inner_str)
+                    format!("S.object((s): {} => {{{}}})", type_name, inner_str)
                 }
             }
         }
@@ -443,7 +463,7 @@ impl RescriptTypeIdent {
             }
             // TODO: ensure these are defined
             Self::GenericParam(name) => {
-                format!("{name}Schema")
+                format!("_{name}Schema")
             }
             Self::TypeApplication { name, type_params } if type_params.is_empty() => {
                 format!("{name}Schema")
@@ -452,27 +472,8 @@ impl RescriptTypeIdent {
                 name,
                 type_params: params,
             } => {
-                let generic_params = params
-                    .iter()
-                    .filter_map(|p| {
-                        if let Self::GenericParam(_) = p {
-                            Some(p.to_rescript_schema())
-                        } else {
-                            None
-                        }
-                    })
-                    .join(", ");
-
                 let param_schemas_joined = params.iter().map(|p| p.to_rescript_schema()).join(", ");
-
-                let schema_composed = format!("make{name}Schema({param_schemas_joined})");
-                if generic_params.is_empty() {
-                    schema_composed
-                } else {
-                    //if some parameters are generic return a function that takes schemas of those
-                    //parameters
-                    format!("({generic_params}) => {schema_composed}")
-                }
+                format!("{name}Schema({param_schemas_joined})")
             }
         }
     }
@@ -665,53 +666,62 @@ mod tests {
     #[test]
     fn test_to_rescript_schema() {
         assert_eq!(
-            RescriptTypeExpr::Identifier(RescriptTypeIdent::Bool).to_rescript_schema(),
+            RescriptTypeExpr::Identifier(RescriptTypeIdent::Bool)
+                .to_rescript_schema(&"eventArgs".to_string()),
             "S.bool".to_string()
         );
         assert_eq!(
-            RescriptTypeExpr::Identifier(RescriptTypeIdent::Int).to_rescript_schema(),
+            RescriptTypeExpr::Identifier(RescriptTypeIdent::Int)
+                .to_rescript_schema(&"eventArgs".to_string()),
             "S.int".to_string()
         );
         assert_eq!(
-            RescriptTypeExpr::Identifier(RescriptTypeIdent::Float).to_rescript_schema(),
+            RescriptTypeExpr::Identifier(RescriptTypeIdent::Float)
+                .to_rescript_schema(&"eventArgs".to_string()),
             "GqlDbCustomTypes.Float.schema".to_string()
         );
         assert_eq!(
-            RescriptTypeExpr::Identifier(RescriptTypeIdent::Unit).to_rescript_schema(),
+            RescriptTypeExpr::Identifier(RescriptTypeIdent::Unit)
+                .to_rescript_schema(&"eventArgs".to_string()),
             "S.literal(%raw(`null`))->S.variant(_ => ())".to_string()
         );
         assert_eq!(
-            RescriptTypeExpr::Identifier(RescriptTypeIdent::BigInt).to_rescript_schema(),
+            RescriptTypeExpr::Identifier(RescriptTypeIdent::BigInt)
+                .to_rescript_schema(&"eventArgs".to_string()),
             "BigInt.schema".to_string()
         );
         assert_eq!(
-            RescriptTypeExpr::Identifier(RescriptTypeIdent::BigDecimal).to_rescript_schema(),
+            RescriptTypeExpr::Identifier(RescriptTypeIdent::BigDecimal)
+                .to_rescript_schema(&"eventArgs".to_string()),
             "BigDecimal.schema".to_string()
         );
         assert_eq!(
-            RescriptTypeExpr::Identifier(RescriptTypeIdent::Address).to_rescript_schema(),
+            RescriptTypeExpr::Identifier(RescriptTypeIdent::Address)
+                .to_rescript_schema(&"eventArgs".to_string()),
             "Address.schema".to_string()
         );
         assert_eq!(
-            RescriptTypeExpr::Identifier(RescriptTypeIdent::String).to_rescript_schema(),
+            RescriptTypeExpr::Identifier(RescriptTypeIdent::String)
+                .to_rescript_schema(&"eventArgs".to_string()),
             "S.string".to_string()
         );
         assert_eq!(
-            RescriptTypeExpr::Identifier(RescriptTypeIdent::ID).to_rescript_schema(),
+            RescriptTypeExpr::Identifier(RescriptTypeIdent::ID)
+                .to_rescript_schema(&"eventArgs".to_string()),
             "S.string".to_string()
         );
         assert_eq!(
             RescriptTypeExpr::Identifier(RescriptTypeIdent::Array(Box::new(
                 RescriptTypeIdent::Int
             )))
-            .to_rescript_schema(),
+            .to_rescript_schema(&"eventArgs".to_string()),
             "S.array(S.int)".to_string()
         );
         assert_eq!(
             RescriptTypeExpr::Identifier(RescriptTypeIdent::Option(Box::new(
                 RescriptTypeIdent::Int
             )))
-            .to_rescript_schema(),
+            .to_rescript_schema(&"eventArgs".to_string()),
             "S.null(S.int)".to_string()
         );
         assert_eq!(
@@ -719,7 +729,7 @@ mod tests {
                 RescriptTypeIdent::Int,
                 RescriptTypeIdent::Bool
             ]))
-            .to_rescript_schema(),
+            .to_rescript_schema(&"eventArgs".to_string()),
             "S.tuple(s => (s.item(0, S.int), s.item(1, S.bool)))".to_string()
         );
         assert_eq!(
@@ -727,7 +737,7 @@ mod tests {
                 RescriptVariantConstr::new("ConstrA".to_string(), RescriptTypeIdent::Int),
                 RescriptVariantConstr::new("ConstrB".to_string(), RescriptTypeIdent::Bool),
             ])
-            .to_rescript_schema(),
+            .to_rescript_schema(&"eventArgs".to_string()),
             r#"S.union([S.object(s =>
 {
   s.tag("case", "ConstrA")
@@ -744,13 +754,13 @@ mod tests {
                 RescriptRecordField::new("fieldA".to_string(), RescriptTypeIdent::Int),
                 RescriptRecordField::new("fieldB".to_string(), RescriptTypeIdent::Bool),
             ])
-            .to_rescript_schema(),
+            .to_rescript_schema(&"eventArgs".to_string()),
             "S.object(s => {fieldA: s.field(\"fieldA\", S.int), fieldB: s.field(\"fieldB\", \
              S.bool)})"
                 .to_string()
         );
         assert_eq!(
-            RescriptTypeExpr::Record(vec![]).to_rescript_schema(),
+            RescriptTypeExpr::Record(vec![]).to_rescript_schema(&"eventArgs".to_string()),
             "S.object(_ => {})".to_string()
         );
     }

@@ -492,7 +492,7 @@ impl EventTemplate {
                     name,
                     params: template_params,
                     data_type: data_type_expr.to_string(),
-                    data_schema_code: data_type_expr.to_rescript_schema(),
+                    data_schema_code: data_type_expr.to_rescript_schema(&"eventArgs".to_string()),
                     sighash: config_event.sighash.to_string(),
                     convert_hyper_sync_event_args_code:
                         Self::generate_convert_hyper_sync_event_args_code(params),
