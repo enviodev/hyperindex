@@ -1,3 +1,5 @@
+open Belt
+
 //Manage clients in cache so we don't need to reinstantiate each time
 //Ideally client should be passed in as a param to the functions but
 //we are still sharing the same signature with eth archive query builder
@@ -38,17 +40,11 @@ type item = {
   txOrigin: option<Address.t>,
 }
 
-type blockNumberAndTimestamp = {
-  timestamp: int,
-  blockNumber: int,
-}
-
 type blockNumberAndHash = {
   blockNumber: int,
   hash: string,
 }
 
-type blockTimestampPage = hyperSyncPage<blockNumberAndTimestamp>
 type logsQueryPage = hyperSyncPage<item>
 
 type contractReceiptQuery = {
@@ -217,79 +213,62 @@ module LogsQuery = {
   }
 }
 
-module BlockTimestampQuery = {
-  let makeRequestBody = (
-    ~fromBlock,
-    ~toBlockInclusive,
-  ): HyperFuelJsonApi.QueryTypes.postQueryBody => {
-    fromBlock,
-    toBlockExclusive: toBlockInclusive + 1,
-    fieldSelection: {
-      receipt: [Ra],
-      // block: [Timestamp, Number],
-    },
-    // includeAllBlocks: true,
-  }
-
-  let convertResponse = (
-    res: result<HyperFuelJsonApi.ResponseTypes.queryResponse, HyperFuelJsonApi.Query.queryError>,
-  ): queryResponse<blockTimestampPage> => {
-    switch res {
-    | Error(e) => Error(QueryError(e))
-    | Ok(successRes) =>
-      let {nextBlock, archiveHeight, data} = successRes
-
-      data
-      ->Belt.Array.flatMap(item => {
-        item.blocks->Belt.Option.mapWithDefault([], blocks => {
-          blocks->Belt.Array.map(
-            block => {
-              switch (block.height, block.time) {
-              | (Some(blockNumber), Some(blockTimestamp)) =>
-                let timestamp = blockTimestamp
-                Ok(
-                  (
-                    {
-                      timestamp,
-                      blockNumber,
-                    }: blockNumberAndTimestamp
-                  ),
-                )
-              | _ =>
-                let missingParams =
-                  [
-                    block.height->Utils.Option.mapNone("block.height"),
-                    block.time->Utils.Option.mapNone("block.time"),
-                  ]->Belt.Array.keepMap(p => p)
-
-                Error(
-                  UnexpectedMissingParams({
-                    queryName: "queryBlockTimestampsPage HyperSync",
-                    missingParams,
-                  }),
-                )
-              }
-            },
-          )
-        })
-      })
-      ->Utils.Array.transposeResults
-      ->Belt.Result.map((items): blockTimestampPage => {
-        nextBlock,
-        archiveHeight,
-        items,
-      })
-    }
-  }
-
-  let queryBlockTimestampsPage = async (~serverUrl, ~fromBlock, ~toBlock): queryResponse<
-    blockTimestampPage,
+module BlockData = {
+  let convertResponse = (res: HyperFuelClient.queryResponseTyped): option<
+    ReorgDetection.blockData,
   > => {
-    let body = makeRequestBody(~fromBlock, ~toBlockInclusive=toBlock)
+    res.data.blocks->Option.flatMap(blocks => {
+      blocks
+      ->Array.get(0)
+      ->Option.map(block => {
+        switch block {
+        | {height: blockNumber, time: timestamp, id: blockHash} =>
+          (
+            {
+              blockTimestamp: timestamp,
+              blockNumber,
+              blockHash,
+            }: ReorgDetection.blockData
+          )
+        }
+      })
+    })
+  }
 
-    let res = await HyperFuelJsonApi.executeHyperSyncQuery(~postQueryBody=body, ~serverUrl)
+  let rec queryBlockData = async (~serverUrl, ~blockNumber, ~logger): option<
+    ReorgDetection.blockData,
+  > => {
+    let query: HyperFuelClient.QueryTypes.query = {
+      fromBlock: blockNumber,
+      toBlockExclusive: blockNumber + 1,
+      fieldSelection: {
+        block: [Height, Id, Time],
+      },
+      includeAllBlocks: true,
+    }
 
-    res->convertResponse
+    let hyperFuelClient = CachedClients.getClient(serverUrl)
+
+    let logger = Logging.createChildFrom(
+      ~logger,
+      ~params={"logType": "hypersync get blockhash query", "blockNumber": blockNumber},
+    )
+
+    let executeQuery = () => hyperFuelClient->HyperFuelClient.getSelectedData(query)
+
+    let res = await executeQuery->Time.retryAsyncWithExponentialBackOff(~logger=Some(logger))
+
+    // If the block is not found, retry the query. This can occur since replicas of hypersync might not hack caught up yet
+    if res.nextBlock <= blockNumber {
+      let logger = Logging.createChild(~params={"url": serverUrl})
+      logger->Logging.childWarn(
+        `Block #${blockNumber->Int.toString} not found in hypersync. HyperSync runs multiple instances of hypersync and it is possible that they drift independently slightly from the head. Retrying query in 100ms.`,
+      )
+      await Time.resolvePromiseAfterDelay(~delayMilliseconds=100)
+      await queryBlockData(~serverUrl, ~blockNumber, ~logger)
+    } else {
+      res->convertResponse
+    }
   }
 }
 
@@ -419,7 +398,7 @@ module BlockHashes = {
 }
 
 let queryLogsPage = LogsQuery.queryLogsPage
-let queryBlockTimestampsPage = BlockTimestampQuery.queryBlockTimestampsPage
+let queryBlockData = BlockData.queryBlockData
 let getHeightWithRetry = HeightQuery.getHeightWithRetry
 let pollForHeightGtOrEq = HeightQuery.pollForHeightGtOrEq
 let queryBlockHashes = BlockHashes.queryBlockHashes

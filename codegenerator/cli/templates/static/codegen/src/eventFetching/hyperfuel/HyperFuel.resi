@@ -20,17 +20,11 @@ type item = {
   txOrigin: option<Address.t>,
 }
 
-type blockNumberAndTimestamp = {
-  timestamp: int,
-  blockNumber: int,
-}
-
 type blockNumberAndHash = {
   blockNumber: int,
   hash: string,
 }
 
-type blockTimestampPage = hyperSyncPage<blockNumberAndTimestamp>
 type logsQueryPage = hyperSyncPage<item>
 
 type contractReceiptQuery = {
@@ -57,11 +51,11 @@ let queryLogsPage: (
   ~contractsReceiptQuery: array<contractReceiptQuery>,
 ) => promise<queryResponse<logsQueryPage>>
 
-let queryBlockTimestampsPage: (
+let queryBlockData: (
   ~serverUrl: string,
-  ~fromBlock: int,
-  ~toBlock: int,
-) => promise<queryResponse<blockTimestampPage>>
+  ~blockNumber: int,
+  ~logger: Pino.t,
+) => promise<option<ReorgDetection.blockData>>
 
 let getHeightWithRetry: (~serverUrl: string, ~logger: Pino.t) => promise<int>
 let pollForHeightGtOrEq: (~serverUrl: string, ~blockNumber: int, ~logger: Pino.t) => promise<int>
