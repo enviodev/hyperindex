@@ -388,20 +388,23 @@ impl EventTemplate {
                 let topic_number = i + 1;
                 let param_name = RescriptRecordField::to_valid_res_name(param.name);
                 let topic_encoder = param.get_topic_encoder();
-                let nested_type_flags = match param.get_nested_type_depth(){
+                let nested_type_flags = match param.get_nested_type_depth() {
                     depth if depth > 0 => format!("(~nestedArrayDepth={depth})"),
                     _ => "".to_string(),
                 };
                 format!(
-                    "~topic{topic_number}=?{event_filter_arg}.{param_name}->Belt.Option.map(topicFilters => topicFilters->SingleOrMultiple.normalizeOrThrow{nested_type_flags}->Belt.\
+                    "~topic{topic_number}=?{event_filter_arg}.{param_name}->Belt.Option.\
+                     map(topicFilters => \
+                     topicFilters->SingleOrMultiple.normalizeOrThrow{nested_type_flags}->Belt.\
                      Array.map({topic_encoder})), "
                 )
             })
             .collect::<String>();
 
         format!(
-            "(eventFilters) => eventFilters->SingleOrMultiple.normalizeOrThrow->Belt.Array.map({event_filter_arg} => \
-             LogSelection.makeTopicSelection(~topic0=[sighash->EvmTypes.Hex.fromStringUnsafe], \
+            "(eventFilters) => \
+             eventFilters->SingleOrMultiple.normalizeOrThrow->Belt.Array.map({event_filter_arg} \
+             => LogSelection.makeTopicSelection(~topic0=[sighash->EvmTypes.Hex.fromStringUnsafe], \
              {topic_filter_calls})->Utils.unwrapResultExn)"
         )
     }
@@ -1173,9 +1176,11 @@ mod test {
                                s.field(\"displayName\", S.string), imageUrl: \
                                s.field(\"imageUrl\", S.string)})"
                 .to_string(),
-            get_topic_selection_code: "(eventFilter) => \
-                                       LogSelection.makeTopicSelection(~topic0=[sighash], \
-                                       )->Utils.unwrapResultExn"
+            get_topic_selection_code: "(eventFilters) => \
+                                       eventFilters->SingleOrMultiple.normalizeOrThrow->Belt.\
+                                       Array.map(_eventFilter => \
+                                       LogSelection.makeTopicSelection(~topic0=[sighash->EvmTypes.\
+                                       Hex.fromStringUnsafe], )->Utils.unwrapResultExn)"
                 .to_string(),
             event_filter_type: "{  }".to_string(),
         }
@@ -1207,9 +1212,12 @@ mod test {
                                               implemented\")"
                     .to_string(),
                 data_schema_code: "S.literal(%raw(`null`))->S.variant(_ => ())".to_string(),
-                get_topic_selection_code: "(eventFilter) => \
-                                           LogSelection.makeTopicSelection(~topic0=[sighash], \
-                                           )->Utils.unwrapResultExn"
+                get_topic_selection_code: "(eventFilters) => \
+                                           eventFilters->SingleOrMultiple.normalizeOrThrow->Belt.\
+                                           Array.map(_eventFilter => \
+                                           LogSelection.\
+                                           makeTopicSelection(~topic0=[sighash->EvmTypes.Hex.\
+                                           fromStringUnsafe], )->Utils.unwrapResultExn)"
                     .to_string(),
                 event_filter_type: "{  }".to_string(),
             }

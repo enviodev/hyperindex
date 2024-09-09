@@ -70,7 +70,7 @@ impl EthereumEventParam<'_> {
                             let (param_encoder, _) = rec(p, IsNestedType(true));
                             format!(
                                 "{tuple_arg}->Utils.Tuple.get({i})->Belt.Option.\
-                             getUnsafe->{param_encoder}"
+                                 getUnsafe->{param_encoder}"
                             )
                         })
                         .collect::<Vec<_>>()
