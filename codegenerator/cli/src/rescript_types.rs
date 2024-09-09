@@ -738,11 +738,11 @@ mod tests {
                 RescriptVariantConstr::new("ConstrB".to_string(), RescriptTypeIdent::Bool),
             ])
             .to_rescript_schema(&"eventArgs".to_string()),
-            r#"S.union([S.object(s =>
+            r#"S.union([S.object((s): eventArgs =>
 {
   s.tag("case", "ConstrA")
   ConstrA({payload: s.field("payload", S.int)})
-}), S.object(s =>
+}), S.object((s): eventArgs =>
 {
   s.tag("case", "ConstrB")
   ConstrB({payload: s.field("payload", S.bool)})
@@ -755,13 +755,13 @@ mod tests {
                 RescriptRecordField::new("fieldB".to_string(), RescriptTypeIdent::Bool),
             ])
             .to_rescript_schema(&"eventArgs".to_string()),
-            "S.object(s => {fieldA: s.field(\"fieldA\", S.int), fieldB: s.field(\"fieldB\", \
+            "S.object((s): eventArgs => {fieldA: s.field(\"fieldA\", S.int), fieldB: s.field(\"fieldB\", \
              S.bool)})"
                 .to_string()
         );
         assert_eq!(
             RescriptTypeExpr::Record(vec![]).to_rescript_schema(&"eventArgs".to_string()),
-            "S.object(_ => {})".to_string()
+            "S.object((_): eventArgs => {})".to_string()
         );
     }
 
