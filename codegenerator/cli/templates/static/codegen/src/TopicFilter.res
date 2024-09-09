@@ -1,3 +1,15 @@
+let toTwosComplement = (num: bigint, ~bytesLen: int) => {
+  let maxValue = 1n->BigInt.Bitwise.shift_left(BigInt.fromInt(bytesLen * 8))
+  let mask = maxValue->BigInt.sub(1n)
+  num->BigInt.add(maxValue)->BigInt.Bitwise.logand(mask)
+}
+
+let fromSignedBigInt = val => {
+  let bytesLen = 32
+  let val = val >= 0n ? val : val->toTwosComplement(~bytesLen)
+  val->Viem.bigintToHex(~options={size: bytesLen})
+}
+
 type hex = EvmTypes.Hex.t
 //bytes currently does not work with genType and we also currently generate bytes as a string type
 type bytesHex = string

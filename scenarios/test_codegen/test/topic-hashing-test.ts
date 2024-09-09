@@ -34,7 +34,7 @@ const testParams = {
 };
 
 describe("Topic Hashing", () => {
-  before(async function() {
+  before(async function () {
     this.timeout(30 * 1000);
     await hre.run("compile");
 
@@ -69,14 +69,11 @@ describe("Topic Hashing", () => {
   });
 
   const checkEventFilter = async (eventMod: any, filter: any) => {
-    console.log("name", eventMod.name);
     const topics = mapTopicQuery(eventMod.getTopicSelection(filter)[0]);
-    console.log("topics", topics);
     const res = await hre.ethers.provider.getLogs({
       address: await deployedTestEvents.getAddress(),
       topics,
     });
-    console.log("res", res);
 
     assert.equal(res.length, 1);
     checkedEvents[eventMod.name] = eventMod.sighash;
@@ -89,9 +86,7 @@ describe("Topic Hashing", () => {
 
   it("get indexed int topic with topic filter", async () => {
     const filter: TestEvents_IndexedUint_eventFilter = {
-      //TODO: get negative numbers working
-      // num: [-testParams.id],
-      num: [],
+      num: [-testParams.id],
     };
     await checkEventFilter(GeneratedTestEvents.IndexedInt, filter);
   });

@@ -53,9 +53,8 @@ impl EthereumEventParam<'_> {
                     non_value_encoder("TopicFilter.castToHexUnsafe")
                 }
                 EthAbiParamType::Address => value_encoder("TopicFilter.fromAddress"),
-                EthAbiParamType::Uint(_size) | EthAbiParamType::Int(_size) => {
-                    value_encoder("TopicFilter.fromBigInt")
-                }
+                EthAbiParamType::Uint(_size) => value_encoder("TopicFilter.fromBigInt"),
+                EthAbiParamType::Int(_size) => value_encoder("TopicFilter.fromSignedBigInt"),
                 EthAbiParamType::Bytes | EthAbiParamType::FixedBytes(_) => {
                     value_encoder("TopicFilter.fromBytes")
                 }
