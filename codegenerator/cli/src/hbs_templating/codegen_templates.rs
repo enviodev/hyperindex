@@ -1190,11 +1190,12 @@ mod test {
             decode_hyper_fuel_data_code: "(_) => Js.Exn.raiseError(\"HyperFuel decoder not \
                                           implemented\")"
                 .to_string(),
-            data_schema_code: "S.object(s => {id: s.field(\"id\", BigInt.schema), owner: \
+            data_schema_code:
+                "S.object((s): eventArgs => {id: s.field(\"id\", BigInt.schema), owner: \
                                s.field(\"owner\", Address.schema), displayName: \
                                s.field(\"displayName\", S.string), imageUrl: \
                                s.field(\"imageUrl\", S.string)})"
-                .to_string(),
+                    .to_string(),
             get_topic_selection_code: "(eventFilters) => \
                                        eventFilters->SingleOrMultiple.normalizeOrThrow->Belt.\
                                        Array.map(_eventFilter => \
