@@ -75,14 +75,6 @@ impl<T> UniqueValueValidator<T> {
     }
 }
 
-pub fn is_not_empty_string_validator(s: &str) -> Result<Validation, CustomUserError> {
-    if s.trim().is_empty() {
-        Ok(Validation::Invalid("Invalid empty string input".into()))
-    } else {
-        Ok(Validation::Valid)
-    }
-}
-
 pub fn contains_no_whitespace_validator(s: &str) -> Result<Validation, CustomUserError> {
     if s.contains(char::is_whitespace) {
         Ok(Validation::Invalid(
