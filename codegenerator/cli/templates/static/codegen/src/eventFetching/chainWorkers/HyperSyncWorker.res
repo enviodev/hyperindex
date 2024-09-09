@@ -110,21 +110,36 @@ module Make = (
     }
   }
 
+  let wildcardTopicSelection = T.contracts->Belt.Array.flatMap(contract => {
+    contract.events->Belt.Array.keepMap(event => {
+      let module(Event) = event
+      let {isWildcard, topicSelections} =
+        Event.handlerRegister->Types.HandlerTypes.Register.getEventOptions
+      isWildcard ? Some(LogSelection.make(~addresses=[], ~topicSelections)) : None
+    })
+  })
+
   let getLogSelectionOrThrow = (~contractAddressMapping): array<LogSelection.t> => {
-    T.contracts->Belt.Array.keepMap((contract): option<LogSelection.t> => {
+    T.contracts
+    ->Belt.Array.keepMap((contract): option<LogSelection.t> => {
       switch contractAddressMapping->ContractAddressingMap.getAddressesFromContractName(
         ~contractName=contract.name,
       ) {
       | [] => None
       | addresses =>
-        let topicSelection =
-          LogSelection.makeTopicSelection(
-            ~topic0=contract.sighashes->EvmTypes.Hex.fromStringsUnsafe,
-          )->Utils.unwrapResultExn
+        switch contract.events->Belt.Array.flatMap(event => {
+          let module(Event) = event
+          let {isWildcard, topicSelections} =
+            Event.handlerRegister->Types.HandlerTypes.Register.getEventOptions
 
-        Some(LogSelection.make(~addresses, ~topicSelections=[topicSelection]))
+          isWildcard ? [] : topicSelections
+        }) {
+        | [] => None
+        | topicSelections => Some(LogSelection.make(~addresses, ~topicSelections))
+        }
       }
     })
+    ->Array.concat(wildcardTopicSelection)
   }
 
   let getNextPage = async (
@@ -183,7 +198,11 @@ module Make = (
     | Value(v) => v
     }
 
-  let makeEventBatchQueueItem = (item: HyperSync.logsQueryPageItem, ~params: Types.internalEventArgs, ~eventMod): Types.eventBatchQueueItem => {
+  let makeEventBatchQueueItem = (
+    item: HyperSync.logsQueryPageItem,
+    ~params: Types.internalEventArgs,
+    ~eventMod,
+  ): Types.eventBatchQueueItem => {
     let {block, log, transaction} = item
     let chainId = chain->ChainMap.Chain.toChainId
     {
@@ -344,9 +363,9 @@ module Make = (
           makeEventBatchQueueItem(
             item,
             ~params=parsedEvents
-              ->Js.Array2.unsafe_get(index)
-              ->getNullableExn(~msg="Event was unexpectedly parsed as undefined", ~logger)
-              ->Event.convertHyperSyncEventArgs,
+            ->Js.Array2.unsafe_get(index)
+            ->getNullableExn(~msg="Event was unexpectedly parsed as undefined", ~logger)
+            ->Event.convertHyperSyncEventArgs,
             ~eventMod,
           )
         })
@@ -382,8 +401,10 @@ module Make = (
           }
           let module(Event) = eventMod
 
-          let decodedEvent = try contractInterfaceManager->ContractInterfaceManager.parseLogViemOrThrow(~log) catch {
-            | exn => {
+          let decodedEvent = try contractInterfaceManager->ContractInterfaceManager.parseLogViemOrThrow(
+            ~log,
+          ) catch {
+          | exn => {
               let params = {
                 "chainId": chainId,
                 "blockNumber": block.number,

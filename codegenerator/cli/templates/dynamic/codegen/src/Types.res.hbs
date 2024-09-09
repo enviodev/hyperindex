@@ -280,20 +280,43 @@ module HandlerTypes = {
     eventFilters?: SingleOrMultiple.t<'eventFilter>,
   }
 
-  type eventOptions = {
-    wildcard: bool,
-    topicSelections: array<LogSelection.topicSelection>,
-  }
+  module EventOptions = {
+    type t = {
+      isWildcard: bool,
+      topicSelections: array<LogSelection.topicSelection>,
+    }
 
-  let getDefaultEventOptions = (~topic0) => {
-    wildcard: false,
-    topicSelections: [LogSelection.makeTopicSelection(~topic0=[topic0])->Utils.unwrapResultExn],
+    let getDefault = (~topic0) => {
+      isWildcard: false,
+      topicSelections: [LogSelection.makeTopicSelection(~topic0=[topic0])->Utils.unwrapResultExn],
+    }
+
+    let make = (~isWildcard, ~topicSelections: array<LogSelection.topicSelection>) => {
+      let topic0sGrouped = []
+      let topicSelectionWithFilters = []
+      topicSelections->Belt.Array.forEach(ts =>
+        if ts->LogSelection.hasFilters {
+          topicSelectionWithFilters->Js.Array2.push(ts)->ignore
+        } else {
+          ts.topic0->Belt.Array.forEach(topic0 => {
+            topic0sGrouped->Js.Array2.push(topic0)->ignore
+          })
+        }
+      )
+      let topicSelectionNoFilters =
+        LogSelection.makeTopicSelection(~topic0=topic0sGrouped)->Utils.unwrapResultExn
+
+      {
+        isWildcard,
+        topicSelections: Belt.Array.concat(topicSelectionWithFilters, [topicSelectionNoFilters]),
+      }
+    }
   }
 
   type registeredEvent<'eventArgs, 'loaderReturn, 'eventFilter> = {
     loaderHandler?: loaderHandler<'eventArgs, 'loaderReturn, 'eventFilter>,
     contractRegister?: contractRegister<'eventArgs>,
-    eventOptions: eventOptions,
+    eventOptions: EventOptions.t,
   }
 
   module Register: {
@@ -303,21 +326,21 @@ module HandlerTypes = {
       t<'eventArgs>,
       loaderHandler<'eventArgs, 'loaderReturn, 'eventFilter>,
       ~getEventOptions: loaderHandler<'eventArgs, 'loaderReturn, 'eventFilter> => option<
-        eventOptions,
+        EventOptions.t,
       >,
       ~logger: Pino.t=?,
     ) => unit
     let setContractRegister: (
       t<'eventArgs>,
       contractRegister<'eventArgs>,
-      ~eventOptions: option<eventOptions>,
+      ~eventOptions: option<EventOptions.t>,
       ~logger: Pino.t=?,
     ) => unit
     let getLoaderHandler: t<'eventArgs> => option<
       loaderHandler<'eventArgs, 'loaderReturn, 'eventFilter>,
     >
     let getContractRegister: t<'eventArgs> => option<contractRegister<'eventArgs>>
-    let getEventOptions: t<'eventArgs> => eventOptions
+    let getEventOptions: t<'eventArgs> => EventOptions.t
     let hasRegistration: t<'eventArgs> => bool
   } = {
     type loaderReturn
@@ -329,7 +352,7 @@ module HandlerTypes = {
       topic0: EvmTypes.Hex.t,
       mutable loaderHandler: option<loaderHandler<'eventArgs, loaderReturn, eventFilter>>,
       mutable contractRegister: option<contractRegister<'eventArgs>>,
-      mutable eventOptions: option<eventOptions>,
+      mutable eventOptions: option<EventOptions.t>,
     }
 
     let getLoaderHandler = (t: t<'eventArgs>): option<
@@ -344,10 +367,10 @@ module HandlerTypes = {
     let getContractRegister = (t: t<'eventArgs>): option<contractRegister<'eventArgs>> =>
       t.contractRegister
 
-    let getEventOptions = ({eventOptions, topic0}: t<'eventArgs>): eventOptions =>
+    let getEventOptions = ({eventOptions, topic0}: t<'eventArgs>): EventOptions.t =>
       switch eventOptions {
       | Some(eventOptions) => eventOptions
-      | None => getDefaultEventOptions(~topic0)
+      | None => EventOptions.getDefault(~topic0)
       }
 
     let hasRegistration = ({loaderHandler, contractRegister}) =>
@@ -365,7 +388,7 @@ module HandlerTypes = {
     type eventNamespace = {contractName: string, eventName: string}
     exception DuplicateEventRegistration(eventNamespace)
 
-    let setEventOptions = (t: t<'eventArgs>, value: eventOptions, ~logger=Logging.logger) => {
+    let setEventOptions = (t: t<'eventArgs>, value: EventOptions.t, ~logger=Logging.logger) => {
       switch t.eventOptions {
       | None => t.eventOptions = Some(value)
       | Some(_) =>
@@ -459,17 +482,19 @@ let makeEventOptions = (
 ) => {
   let module(Event) = eventMod
   open Belt
-  eventConfig->Option.map(({?wildcard, ?eventFilters}) => {
-    HandlerTypes.wildcard: wildcard->Option.getWithDefault(false),
-    topicSelections: eventFilters->Option.mapWithDefault(
-      [
-        LogSelection.makeTopicSelection(
-          ~topic0=[Event.sighash->EvmTypes.Hex.fromStringUnsafe],
-        )->Utils.unwrapResultExn,
-      ],
-      v => v->Event.getTopicSelection,
-    ),
-  })
+  eventConfig->Option.map(({?wildcard, ?eventFilters}) =>
+    HandlerTypes.EventOptions.make(
+      ~isWildcard=wildcard->Option.getWithDefault(false),
+      ~topicSelections=eventFilters->Option.mapWithDefault(
+        [
+          LogSelection.makeTopicSelection(
+            ~topic0=[Event.sighash->EvmTypes.Hex.fromStringUnsafe],
+          )->Utils.unwrapResultExn,
+        ],
+        v => v->Event.getTopicSelection,
+      ),
+    )
+  )
 }
 
 let makeGetEventOptions = (
@@ -482,17 +507,19 @@ let makeGetEventOptions = (
     switch loaderHandler {
     | {wildcard: ?None, eventFilters: ?None} => None
     | {?wildcard, ?eventFilters} =>
-      {
-        HandlerTypes.wildcard: wildcard->Option.getWithDefault(false),
-        topicSelections: eventFilters->Option.mapWithDefault(
+      let topicSelections =
+        eventFilters->Option.mapWithDefault(
           [
             LogSelection.makeTopicSelection(
               ~topic0=[Event.sighash->EvmTypes.Hex.fromStringUnsafe],
             )->Utils.unwrapResultExn,
           ],
           v => v->Event.getTopicSelection,
-        ),
-      }->Some
+        )
+      HandlerTypes.EventOptions.make(
+        ~isWildcard=wildcard->Option.getWithDefault(false),
+        ~topicSelections,
+      )->Some
     }
 }
 

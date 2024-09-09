@@ -39,7 +39,7 @@ module MakeEventMock = (
       handler: Utils.magic("Stub for handler"),
     },
     ~getEventOptions=_ => Some({
-      wildcard: E.isWildcard,
+      isWildcard: E.isWildcard,
       topicSelections: [
         LogSelection.makeTopicSelection(
           ~topic0=[sighash->EvmTypes.Hex.fromStringUnsafe],

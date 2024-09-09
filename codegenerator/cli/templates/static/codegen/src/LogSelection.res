@@ -20,6 +20,10 @@ let makeTopicSelection = (~topic0, ~topic1=[], ~topic2=[], ~topic3=[]) =>
     }->Ok
   }
 
+let hasFilters = ({topic1, topic2, topic3}: topicSelection) => {
+  [topic1, topic2, topic3]->Js.Array2.find(topic => !Utils.Array.isEmpty(topic))->Belt.Option.isSome
+}
+
 type t = {
   addresses: array<Address.t>,
   topicSelections: array<topicSelection>,
