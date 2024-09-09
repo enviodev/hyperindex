@@ -17,25 +17,23 @@ impl<'a> From<&'a EthAbiEventParam> for EthereumEventParam<'a> {
 }
 
 impl EthereumEventParam<'_> {
-    pub fn get_nesting_level(&self) -> usize {
+    /// Returns the depth of the nested type
+    /// A value type would return 0
+    /// An array or tuple type would have a nested type
+    /// Tuple depth is only calculated on the first element of the tuple
+    /// as this corrisponds with the check on SingleOrMultiple in the rescript code
+    pub fn get_nested_type_depth(&self) -> usize {
         fn rec(param: &EthAbiParamType, accum: usize) -> usize {
             match param {
-                EthAbiParamType::Tuple(params) => params
-                    .iter()
-                    .fold(accum, |accum_inner, p| accum_inner + rec(p, 0)),
+                EthAbiParamType::Tuple(params) => match params.get(0) {
+                    Some(p) => rec(p, accum + 1),
+                    None => accum,
+                },
                 EthAbiParamType::Array(p) | EthAbiParamType::FixedArray(p, _) => rec(p, accum + 1),
                 _ => accum,
             }
         }
-        self.abi_type.get_nesting_level()
-    }
-
-    pub fn is_nested_type(&self) -> bool {
-        match self.abi_type {
-            EthAbiParamType::Tuple(_) => true,
-            EthAbiParamType::Array(_) => true,
-            _ => false,
-        }
+        rec(self.abi_type, 0)
     }
 
     pub fn get_topic_encoder(&self) -> String {

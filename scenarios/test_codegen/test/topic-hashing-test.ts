@@ -33,7 +33,7 @@ const testParams = {
   // "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
 };
 
-describe.only("Topic Hashing", () => {
+describe("Topic Hashing", () => {
   before(async function() {
     this.timeout(30 * 1000);
     await hre.run("compile");
@@ -70,7 +70,7 @@ describe.only("Topic Hashing", () => {
 
   const checkEventFilter = async (eventMod: any, filter: any) => {
     console.log("name", eventMod.name);
-    const topics = mapTopicQuery(eventMod.getTopicSelection(filter));
+    const topics = mapTopicQuery(eventMod.getTopicSelection(filter)[0]);
     console.log("topics", topics);
     const res = await hre.ethers.provider.getLogs({
       address: await deployedTestEvents.getAddress(),
@@ -182,7 +182,7 @@ describe.only("Topic Hashing", () => {
     await checkEventFilter(GeneratedTestEvents.IndexedNestedStruct, filter);
   });
 
-  it.only("get indexed struct with array topic with topic filter", async () => {
+  it("get indexed struct with array topic with topic filter", async () => {
     type structWithArray = [bigint[], string[]];
     const structWithArray: structWithArray = [
       [testParams.id, testParams.id + 1n],

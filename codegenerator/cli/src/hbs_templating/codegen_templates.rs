@@ -388,10 +388,9 @@ impl EventTemplate {
                 let topic_number = i + 1;
                 let param_name = RescriptRecordField::to_valid_res_name(param.name);
                 let topic_encoder = param.get_topic_encoder();
-                let nested_type_flags = if param.is_nested_type(){
-                    "(~isNestedArray=true)"
-                } else {
-                    ""
+                let nested_type_flags = match param.get_nested_type_depth(){
+                    depth if depth > 0 => format!("(~nestedArrayDepth={depth})"),
+                    _ => "".to_string(),
                 };
                 format!(
                     "~topic{topic_number}=?{event_filter_arg}.{param_name}->Belt.Option.map(topicFilters => topicFilters->SingleOrMultiple.normalizeOrThrow{nested_type_flags}->Belt.\
