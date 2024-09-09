@@ -192,11 +192,6 @@ module Make = (
   }
 
   exception UndefinedValue
-  let getNullableExn = (opt: Js.Nullable.t<'a>, ~msg=?, ~logger=?) =>
-    switch opt {
-    | Null | Undefined => UndefinedValue->ErrorHandling.mkLogAndRaise(~msg?, ~logger?)
-    | Value(v) => v
-    }
 
   let makeEventBatchQueueItem = (
     item: HyperSync.logsQueryPageItem,
@@ -317,7 +312,36 @@ module Make = (
       let parsingTimeRef = Hrtime.makeTimer()
 
       //Parse page items into queue items
-      let parsedQueueItemsPreFilter = if T.shouldUseHypersyncClientDecoder {
+      let parsedQueueItemsPreFilter = []
+
+      let handleDecodeFailure = (
+        ~eventMod: module(Types.InternalEvent),
+        ~decoder,
+        ~logIndex,
+        ~blockNumber,
+        ~chainId,
+        ~exn,
+      ) => {
+        let module(Event) = eventMod
+        let {isWildcard} = Event.handlerRegister->Types.HandlerTypes.Register.getEventOptions
+        if !isWildcard {
+          //Wildcard events can be parsed as undefined if the number of topics
+          //don't match the event with the given topic0
+          //Non wildcard events should be expected to be parsed
+          let msg = `Event ${Event.name} was unexpectedly parsed as undefined`
+          let logger = Logging.createChildFrom(
+            ~logger,
+            ~params={
+              "chainId": chainId,
+              "blockNumber": blockNumber,
+              "logIndex": logIndex,
+              "decoder": decoder,
+            },
+          )
+          exn->ErrorHandling.mkLogAndRaise(~msg, ~logger)
+        }
+      }
+      if T.shouldUseHypersyncClientDecoder {
         //Currently there are still issues with decoder for some cases so
         //this can only be activated with a flag
 
@@ -330,7 +354,7 @@ module Make = (
         | parsedEvents => parsedEvents
         }
 
-        pageUnsafe.items->Belt.Array.mapWithIndex((index, item): Types.eventBatchQueueItem => {
+        pageUnsafe.items->Belt.Array.forEachWithIndex((index, item) => {
           let {block, log} = item
           let chainId = chain->ChainMap.Chain.toChainId
           let topic0 = log.topics->Js.Array2.unsafe_get(0)
@@ -358,20 +382,34 @@ module Make = (
             }
           | Some(eventMod) => eventMod
           }
+
           let module(Event) = eventMod
 
-          makeEventBatchQueueItem(
-            item,
-            ~params=parsedEvents
-            ->Js.Array2.unsafe_get(index)
-            ->getNullableExn(~msg="Event was unexpectedly parsed as undefined", ~logger)
-            ->Event.convertHyperSyncEventArgs,
-            ~eventMod,
-          )
+          switch parsedEvents->Js.Array2.unsafe_get(index) {
+          | Value(decoded) =>
+            parsedQueueItemsPreFilter
+            ->Js.Array2.push(
+              makeEventBatchQueueItem(
+                item,
+                ~params=decoded->Event.convertHyperSyncEventArgs,
+                ~eventMod,
+              ),
+            )
+            ->ignore
+          | Null | Undefined =>
+            handleDecodeFailure(
+              ~eventMod,
+              ~decoder="hypersync-client",
+              ~logIndex=log.logIndex,
+              ~blockNumber=block.number,
+              ~chainId,
+              ~exn=UndefinedValue,
+            )
+          }
         })
       } else {
         //Parse with viem -> slower than the HyperSyncClient
-        pageUnsafe.items->Array.map(item => {
+        pageUnsafe.items->Array.forEach(item => {
           let {block, log} = item
           let chainId = chain->ChainMap.Chain.toChainId
           let topic0 = log.topics->Js.Array2.unsafe_get(0)
@@ -401,24 +439,21 @@ module Make = (
           }
           let module(Event) = eventMod
 
-          let decodedEvent = try contractInterfaceManager->ContractInterfaceManager.parseLogViemOrThrow(
-            ~log,
-          ) catch {
-          | exn => {
-              let params = {
-                "chainId": chainId,
-                "blockNumber": block.number,
-                "logIndex": log.logIndex,
-              }
-              let logger = Logging.createChildFrom(~logger, ~params)
-              exn->ErrorHandling.mkLogAndRaise(
-                ~msg="Failed to parse event with viem, please double check your ABI.",
-                ~logger,
-              )
-            }
+          switch contractInterfaceManager->ContractInterfaceManager.parseLogViemOrThrow(~log) {
+          | exception exn =>
+            handleDecodeFailure(
+              ~eventMod,
+              ~decoder="viem",
+              ~logIndex=log.logIndex,
+              ~blockNumber=block.number,
+              ~chainId,
+              ~exn,
+            )
+          | decodedEvent =>
+            parsedQueueItemsPreFilter
+            ->Js.Array2.push(makeEventBatchQueueItem(item, ~params=decodedEvent.args, ~eventMod))
+            ->ignore
           }
-
-          makeEventBatchQueueItem(item, ~params=decodedEvent.args, ~eventMod)
         })
       }
 
