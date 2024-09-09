@@ -6,7 +6,8 @@ typechain
 
 #Hardhat files
 cache
-artifacts
+artifacts/@openzeppelin
+artifacts/build-info
 
 deployments/localhost
 deployments/ganache
