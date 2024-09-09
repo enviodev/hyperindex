@@ -118,7 +118,7 @@ pub async fn prompt_missing_init_args(
         None => {
             // TODO: input validation for name
             Text::new("Name your indexer:")
-                .with_default("My Envio Indexer")
+                .with_default("envio-indexer")
                 .with_validator(is_not_empty_string_validator)
                 .prompt()?
         }

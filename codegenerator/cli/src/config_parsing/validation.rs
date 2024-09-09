@@ -126,15 +126,6 @@ pub fn validate_names_valid_rescript(
 }
 
 pub fn validate_deserialized_config_yaml(evm_config: &HumanConfig) -> anyhow::Result<()> {
-    if !is_valid_postgres_db_name(&evm_config.name) {
-        return Err(anyhow!(
-            "EE108: The 'name' field in your config file must have the following pattern: It must \
-             start with a letter or underscore. It can contain letters, numbers, and underscores \
-             (no spaces). It must have a maximum length of 63 characters",
-        )
-        .into());
-    }
-
     let mut contract_names = Vec::new();
 
     if let Some(global_contracts) = &evm_config.contracts {
