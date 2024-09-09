@@ -241,6 +241,8 @@ module BlockData = {
     let query: HyperFuelClient.QueryTypes.query = {
       fromBlock: blockNumber,
       toBlockExclusive: blockNumber + 1,
+      // TODO: Theoretically it should work without the outputs filter, but it doesn't for some reason
+      outputs: [%raw(`{}`)],
       fieldSelection: {
         block: [Height, Id, Time],
       },
