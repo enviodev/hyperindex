@@ -39,16 +39,6 @@ type ContractMap = HashMap<ContractNameKey, Contract>;
 pub type EntityMap = HashMap<EntityKey, Entity>;
 pub type GraphQlEnumMap = HashMap<GraphqlEnumKey, GraphQLEnum>;
 
-fn strip_to_letters(string: &str) -> String {
-    let mut pg_friendly_name = String::new();
-    for c in string.chars() {
-        if c.is_alphabetic() {
-            pg_friendly_name.push(c);
-        }
-    }
-    pg_friendly_name
-}
-
 #[derive(Debug, PartialEq)]
 pub enum Ecosystem {
     Evm,
@@ -468,13 +458,12 @@ impl SystemConfig {
 
         match ecosystem {
             Ecosystem::Evm => {
-                let mut evm_config: EvmConfig = serde_yaml::from_str(&human_config_string)
-                    .context(format!(
+                let evm_config: EvmConfig =
+                    serde_yaml::from_str(&human_config_string).context(format!(
                         "EE105: Failed to deserialize config. Visit the docs for more information \
                          {}",
                         links::DOC_CONFIGURATION_FILE
                     ))?;
-                evm_config.name = strip_to_letters(&evm_config.name);
                 let schema = Schema::parse_from_file(&project_paths, &evm_config.schema)
                     .context("Parsing schema file for config")?;
                 Self::from_evm_config(evm_config, schema, project_paths)
@@ -484,12 +473,11 @@ impl SystemConfig {
                     "EE105: Failed to deserialize config. It's not supported with the main envio \
                      package yet, please install the envio@fuel version."
                 ));
-                // let mut fuel_config: FuelConfig = serde_yaml::from_str(&human_config_string)
+                // let fuel_config: FuelConfig = serde_yaml::from_str(&human_config_string)
                 //     .context(format!(
                 //     "EE105: Failed to deserialize config. Visit the docs for more information {}",
                 //     links::DOC_CONFIGURATION_FILE
                 // ))?;
-                // fuel_config.name = strip_to_letters(&fuel_config.name);
                 // let schema = Schema::parse_from_file(&project_paths, &fuel_config.schema)
                 //     .context("Parsing schema file for config")?;
                 // Self::from_fuel_config(fuel_config, schema, project_paths)
@@ -1308,19 +1296,6 @@ mod test {
             .unwrap_err();
 
         assert_eq!(error.to_string(), "EE106: Cannot define both rpc_config and hypersync_config for the same network, please choose only one of them, read more in our docs https://docs.envio.dev/docs/configuration-file");
-    }
-
-    #[test]
-    fn valid_name_conversion() {
-        let name_with_space = super::strip_to_letters("My too lit to quit indexer");
-        let expected_name_with_space = "Mytoolittoquitindexer";
-        let name_with_special_chars = super::strip_to_letters("Myto@littoq$itindexer");
-        let expected_name_with_special_chars = "Mytolittoqitindexer";
-        let name_with_numbers = super::strip_to_letters("yes0123456789okay");
-        let expected_name_with_numbers = "yesokay";
-        assert_eq!(name_with_space, expected_name_with_space);
-        assert_eq!(name_with_special_chars, expected_name_with_special_chars);
-        assert_eq!(name_with_numbers, expected_name_with_numbers);
     }
 
     #[test]
