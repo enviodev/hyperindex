@@ -20,7 +20,7 @@ use std::str::FromStr;
 use strum;
 use strum::{Display, EnumIter, IntoEnumIterator};
 use validation::{
-    contains_no_whitespace_validator, is_directory_new_validator, is_not_empty_string_validator,
+    contains_no_whitespace_validator, is_directory_new_validator,
     is_valid_foldername_inquire_validator,
 };
 
@@ -113,17 +113,6 @@ pub async fn prompt_missing_init_args(
     init_args: InitArgs,
     project_paths: &ProjectPaths,
 ) -> Result<InitConfig> {
-    let name: String = match init_args.name {
-        Some(args_name) => args_name,
-        None => {
-            // TODO: input validation for name
-            Text::new("Name your indexer:")
-                .with_default("My Envio Indexer")
-                .with_validator(is_not_empty_string_validator)
-                .prompt()?
-        }
-    };
-
     let directory: String = match &project_paths.directory {
         Some(args_directory) => args_directory.clone(),
         None => {
@@ -135,6 +124,17 @@ pub async fn prompt_missing_init_args(
                 .with_validator(is_directory_new_validator)
                 .with_validator(contains_no_whitespace_validator)
                 .prompt()?
+        }
+    };
+
+    let name: String = match init_args.name {
+        Some(args_name) => args_name,
+        None => {
+            if directory == DEFAULT_PROJECT_ROOT_PATH {
+                "envio-indexer".to_string()
+            } else {
+                directory.to_string()
+            }
         }
     };
 
