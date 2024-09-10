@@ -285,7 +285,6 @@ let hasProcessedToEndblock = (self: t) => {
 
 let hasNoMoreEventsToProcess = (self: t, ~hasArbQueueEvents) => {
   !hasArbQueueEvents &&
-  !self.isFetchingBatch &&
   self.fetchState->PartitionedFetchState.queueSize === 0
 }
 
