@@ -792,6 +792,7 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
             schema: None,
             ecosystem: fuel::EcosystemTag::Fuel,
             contracts: None,
+            raw_events: None,
             networks: vec![fuel::Network {
                 id: 0,
                 start_block: 0,
@@ -833,6 +834,7 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
             name: "Fuel indexer".to_string(),
             description: None,
             schema: None,
+            raw_events: None,
             ecosystem: fuel::EcosystemTag::Fuel,
             contracts: None,
             networks: vec![],
