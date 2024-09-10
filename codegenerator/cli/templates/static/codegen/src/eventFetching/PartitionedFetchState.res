@@ -231,7 +231,7 @@ let getLatestFullyFetchedBlock = ({partitions}: t) =>
     let partitionBlock = partition->FetchState.getLatestFullyFetchedBlock
     switch accum {
     | Some({FetchState.blockNumber: blockNumber})
-      if partitionBlock.blockNumber < blockNumber => accum
+      if partitionBlock.blockNumber >= blockNumber => accum
     | _ => Some(partitionBlock)
     }
   })
