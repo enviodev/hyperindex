@@ -241,6 +241,7 @@ pub mod fuel {
                     id: 0,
                     start_block: 0,
                     end_block: None,
+                    hyperfuel_config: None,
                     contracts: self
                         .contracts
                         .iter()

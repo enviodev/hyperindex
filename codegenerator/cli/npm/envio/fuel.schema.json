@@ -137,6 +137,17 @@
           ],
           "format": "int32"
         },
+        "hyperfuel_config": {
+          "description": "Optional HyperFuel Config for additional fine-tuning",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/HyperfuelConfig"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "contracts": {
           "description": "All the contracts that should be indexed on the given network",
           "type": "array",
@@ -150,6 +161,19 @@
         "id",
         "start_block",
         "contracts"
+      ]
+    },
+    "HyperfuelConfig": {
+      "type": "object",
+      "properties": {
+        "url": {
+          "description": "URL of the HyperFuel endpoint (default: The most stable HyperFuel endpoint for the network)",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "url"
       ]
     },
     "NetworkContract_for_ContractConfig": {

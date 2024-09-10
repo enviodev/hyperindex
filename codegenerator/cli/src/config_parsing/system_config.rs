@@ -385,7 +385,10 @@ impl SystemConfig {
             }
 
             let sync_source = SyncSource::HyperfuelConfig(HyperfuelConfig {
-                endpoint_url: "https://fuel-testnet.hypersync.xyz".to_string(),
+                endpoint_url: match &network.hyperfuel_config {
+                    Some(config) => config.url.clone(),
+                    None => "https://fuel-testnet.hypersync.xyz".to_string(),
+                },
             });
 
             let contracts: Vec<NetworkContract> = network

@@ -367,7 +367,7 @@ pub mod evm {
     #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
     #[serde(deny_unknown_fields)]
     pub struct HypersyncConfig {
-        #[serde(alias = "endpoint_url")]
+        #[serde(alias = "endpoint_url")] // TODO: Remove the alias in v3
         #[schemars(
             description = "URL of the HyperSync endpoint (default: The most performant HyperSync \
                            endpoint for the network)"
@@ -556,6 +556,16 @@ pub mod fuel {
 
     #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
     #[serde(deny_unknown_fields)]
+    pub struct HyperfuelConfig {
+        #[schemars(
+            description = "URL of the HyperFuel endpoint (default: The most stable HyperFuel \
+                           endpoint for the network)"
+        )]
+        pub url: String,
+    }
+
+    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
+    #[serde(deny_unknown_fields)]
     pub struct Network {
         #[schemars(description = "Public chain/network id")]
         pub id: NetworkId,
@@ -564,6 +574,9 @@ pub mod fuel {
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(description = "The block at which the indexer should terminate.")]
         pub end_block: Option<i32>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(description = "Optional HyperFuel Config for additional fine-tuning")]
+        pub hyperfuel_config: Option<HyperfuelConfig>,
         #[schemars(description = "All the contracts that should be indexed on the given network")]
         pub contracts: Vec<NetworkContract<ContractConfig>>,
     }
@@ -797,6 +810,7 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
                 id: 0,
                 start_block: 0,
                 end_block: None,
+                hyperfuel_config: None,
                 contracts: vec![NetworkContract {
                     name: "OrderBook".to_string(),
                     address: "0x4a2ce054e3e94155f7092f7365b212f7f45105b74819c623744ebcc5d065c6ac"
