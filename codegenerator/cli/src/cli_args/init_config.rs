@@ -236,6 +236,7 @@ pub mod fuel {
                 ecosystem: EcosystemTag::Fuel,
                 schema: None,
                 contracts: None,
+                raw_events: None,
                 networks: vec![Network {
                     id: 0,
                     start_block: 0,

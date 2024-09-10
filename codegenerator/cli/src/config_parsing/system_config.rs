@@ -426,7 +426,7 @@ impl SystemConfig {
             save_full_history: false,
             schema,
             field_selection: FieldSelection::fuel(),
-            enable_raw_events: false,
+            enable_raw_events: fuel_config.raw_events.unwrap_or(false),
         })
     }
 
@@ -473,8 +473,8 @@ impl SystemConfig {
                     "EE105: Failed to deserialize config. It's not supported with the main envio \
                      package yet, please install the envio@fuel version."
                 ));
-                // let fuel_config: FuelConfig = serde_yaml::from_str(&human_config_string)
-                //     .context(format!(
+                // let fuel_config: FuelConfig =
+                //     serde_yaml::from_str(&human_config_string).context(format!(
                 //     "EE105: Failed to deserialize config. Visit the docs for more information {}",
                 //     links::DOC_CONFIGURATION_FILE
                 // ))?;
