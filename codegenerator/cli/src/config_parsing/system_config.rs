@@ -425,7 +425,7 @@ impl SystemConfig {
             rollback_on_reorg: false,
             save_full_history: false,
             schema,
-            field_selection: FieldSelection::empty(),
+            field_selection: FieldSelection::fuel(),
             enable_raw_events: false,
         })
     }
@@ -987,6 +987,10 @@ impl FieldSelection {
 
     pub fn empty() -> Self {
         Self::new(vec![], vec![])
+    }
+
+    pub fn fuel() -> Self {
+        Self::new(vec![human_config::evm::TransactionField::Hash], vec![])
     }
 
     pub fn try_from_config_field_selection(

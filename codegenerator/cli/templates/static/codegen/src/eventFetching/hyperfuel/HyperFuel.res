@@ -36,8 +36,7 @@ type item = {
   receipt: Fuel.Receipt.t,
   receiptType: Fuel.receiptType,
   receiptIndex: int,
-  block: block,
-  txOrigin: option<Address.t>,
+  block: block
 }
 
 type blockNumberAndHash = {
@@ -166,8 +165,7 @@ module LogsQuery = {
         contractId: receipt.rootContractId->getParam("receipt.rootContractId"),
         receipt: receipt->(Utils.magic: HyperFuelClient.FuelTypes.receipt => Fuel.Receipt.t),
         receiptType: receipt.receiptType,
-        receiptIndex: receipt.receiptIndex,
-        txOrigin: None,
+        receiptIndex: receipt.receiptIndex
       }
     })
   }

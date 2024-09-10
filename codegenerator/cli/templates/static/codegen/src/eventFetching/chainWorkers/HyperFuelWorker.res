@@ -296,7 +296,9 @@ module Make = (
             event: {
               chainId,
               params,
-              transaction: %raw(`{}`), // TODO: %raw needed until the transaction fields are not configurable for Fuel separately from evm
+              transaction: {
+                "hash": item.transactionId,
+              }->Obj.magic, // TODO: Obj.magic needed until the field selection types are not configurable for Fuel and Evm separately
               block: {
                 "number": block.blockNumber,
                 "timestamp": block.timestamp,

@@ -17,7 +17,6 @@ type item = {
   receiptType: Fuel.receiptType,
   receiptIndex: int,
   block: block,
-  txOrigin: option<Address.t>,
 }
 
 type blockNumberAndHash = {
