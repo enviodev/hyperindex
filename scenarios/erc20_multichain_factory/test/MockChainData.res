@@ -13,6 +13,7 @@ module Indexer = {
   module ChainMap = ChainMap
   module Enums = Enums
   module ContractAddressingMap = ContractAddressingMap
+  module LogSelection = LogSelection
 }
 
 include Helpers.ChainMocking.Make(Indexer)
