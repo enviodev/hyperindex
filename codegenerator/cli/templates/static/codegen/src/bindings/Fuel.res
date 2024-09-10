@@ -13,7 +13,7 @@ module Receipt = {
 
   let getLogDataDecoder = (~abi: Ethers.abi, ~logId: string) => {
     let decode = getLogDecoder(~abi, ~logId)
-    (receipt: t) => (receipt->Utils.magic)["data"]->decode->Utils.magic
+    data => data->decode->Utils.magic
   }
 
   let unitDecoder = (_: t) => ()

@@ -270,7 +270,9 @@ module Make = (
         }
         let module(Event) = eventMod
 
-        let params = try receipt->Event.decodeHyperFuelData catch {
+        let params = try switch receipt {
+        | LogData({data}) => data
+        }->Event.decodeHyperFuelData catch {
         | exn => {
             let params = {
               "chainId": chainId,

@@ -463,7 +463,7 @@ module type Event = {
   type eventArgs
   let eventArgsSchema: S.schema<eventArgs>
   let convertHyperSyncEventArgs: HyperSyncClient.Decoder.decodedEvent => eventArgs
-  let decodeHyperFuelData: Fuel.Receipt.t => eventArgs
+  let decodeHyperFuelData: string => eventArgs
   let handlerRegister: HandlerTypes.Register.t<eventArgs>
 
   type eventFilter

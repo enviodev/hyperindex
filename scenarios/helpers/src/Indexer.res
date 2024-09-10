@@ -22,13 +22,6 @@ module type S = {
     }
   }
 
-  module Fuel: {
-    module Receipt: {
-      @tag("receiptType")
-      type t
-    }
-  }
-
   module HyperSyncClient: {
     module Decoder: {
       type decodedEvent
@@ -89,7 +82,7 @@ module type S = {
       type eventArgs
       let eventArgsSchema: RescriptSchema.S.schema<eventArgs>
       let convertHyperSyncEventArgs: HyperSyncClient.Decoder.decodedEvent => eventArgs
-      let decodeHyperFuelData: Fuel.Receipt.t => eventArgs
+      let decodeHyperFuelData: string => eventArgs
       let handlerRegister: HandlerTypes.Register.t<eventArgs>
       type eventFilter
       let getTopicSelection: SingleOrMultiple.t<eventFilter> => array<LogSelection.topicSelection>
