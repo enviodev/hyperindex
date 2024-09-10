@@ -22,6 +22,13 @@ module type S = {
     }
   }
 
+  module Fuel: {
+    module Receipt: {
+      @tag("receiptType")
+      type t
+    }
+  }
+
   module HyperSyncClient: {
     module Decoder: {
       type decodedEvent

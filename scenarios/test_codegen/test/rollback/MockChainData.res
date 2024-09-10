@@ -4,6 +4,7 @@ module Indexer = {
   module ErrorHandling = ErrorHandling
   module Enums = Enums
   module Types = Types
+  module Fuel = Fuel
   module Config = Config
   module Ethers = Ethers
   module Viem = Viem
