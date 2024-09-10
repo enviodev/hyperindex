@@ -59,10 +59,12 @@ let getAddedDynamicContractRegistrations = (contextEnv: t<'eventArgs>) =>
 let makeDynamicContractRegisterFn = (~contextEnv: t<'eventArgs>, ~contractName, ~inMemoryStore) => (
   contractAddress: Address.t,
 ) => {
-  // Even though it's the Address.t on ReScript side, for TS side it's a string.
+  {{#if is_evm_ecosystem}} {{!-- TODO: Add validation for Fuel --}}
+  // Even though it's the Address.t type on ReScript side, for TS side it's a string.
   // So we need to ensure that it's a valid checksummed address.
   let contractAddress = contractAddress->Address.Evm.fromAddressOrThrow
 
+  {{/if}}
   let {event, chain, addedDynamicContractRegistrations} = contextEnv
 
   let eventId = event->getEventId
