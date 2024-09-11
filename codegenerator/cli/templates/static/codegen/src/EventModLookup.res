@@ -18,9 +18,7 @@ module ContractEventMods = {
 
   let isWildcard = (eventMod: eventMod) => {
     let module(Event) = eventMod
-    Event.handlerRegister
-    ->Types.HandlerTypes.Register.getEventOptions
-    ->(v => v.Types.HandlerTypes.wildcard)
+    (Event.handlerRegister->Types.HandlerTypes.Register.getEventOptions).isWildcard
   }
 
   let set = (t: t, eventMod: eventMod) => {

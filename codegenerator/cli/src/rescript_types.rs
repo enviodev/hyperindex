@@ -267,7 +267,7 @@ pub struct RescriptRecordField {
 }
 
 impl RescriptRecordField {
-    pub fn to_valid_res_name(s: &String) -> String {
+    pub fn to_valid_res_name(s: &str) -> String {
         if s.is_empty() {
             return "_".to_string();
         }
@@ -278,7 +278,7 @@ impl RescriptRecordField {
             _ => (),
         }
 
-        let uncapitalized = s.uncapitalize();
+        let uncapitalized = s.to_string().uncapitalize();
         if RESCRIPT_RESERVED_WORDS.contains(&uncapitalized.as_str()) {
             format!("{}_", uncapitalized)
         } else {

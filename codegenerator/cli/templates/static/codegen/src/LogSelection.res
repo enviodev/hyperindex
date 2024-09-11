@@ -1,10 +1,8 @@
-open Belt
-type hexString = string
 type topicSelection = {
-  topic0: array<hexString>,
-  topic1: array<hexString>,
-  topic2: array<hexString>,
-  topic3: array<hexString>,
+  topic0: array<EvmTypes.Hex.t>,
+  topic1: array<EvmTypes.Hex.t>,
+  topic2: array<EvmTypes.Hex.t>,
+  topic3: array<EvmTypes.Hex.t>,
 }
 
 exception MissingRequiredTopic0
@@ -20,22 +18,13 @@ let makeTopicSelection = (~topic0, ~topic1=[], ~topic2=[], ~topic3=[]) =>
     }->Ok
   }
 
+let hasFilters = ({topic1, topic2, topic3}: topicSelection) => {
+  [topic1, topic2, topic3]->Js.Array2.find(topic => !Utils.Array.isEmpty(topic))->Belt.Option.isSome
+}
+
 type t = {
   addresses: array<Address.t>,
   topicSelections: array<topicSelection>,
 }
 
 let make = (~addresses, ~topicSelections) => {addresses, topicSelections}
-
-let isWildCard = ({addresses}: t) => addresses->Utils.Array.isEmpty
-
-let topicSelectionHasFilters = (topicSelection: topicSelection) =>
-  switch topicSelection {
-  | {topic1: [], topic2: [], topic3: []} => false
-  | _ => true
-  }
-
-let topicSelectionsHaveFilters = (topicSelections: array<topicSelection>) =>
-  topicSelections->Array.some(topicSelectionHasFilters)
-
-let hasTopicFilters = ({topicSelections}: t) => topicSelections->topicSelectionsHaveFilters

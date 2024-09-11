@@ -119,7 +119,7 @@ module QueryTypes = {
     log?: array<logField>,
     trace?: array<traceField>,
   }
-  type topicFilter = array<Ethers.EventFilter.topic>
+  type topicFilter = array<EvmTypes.Hex.t>
   type topic0 = topicFilter
   type topic1 = topicFilter
   type topic2 = topicFilter

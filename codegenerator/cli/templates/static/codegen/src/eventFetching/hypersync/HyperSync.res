@@ -122,7 +122,11 @@ module LogsQuery = {
       [
         getMissingFields(Types.Log.fieldNames, event.log, ~prefix="log"),
         getMissingFields(Types.Block.nonOptionalFieldNames, event.block, ~prefix="block"),
-        getMissingFields(Types.Transaction.nonOptionalFieldNames, event.transaction, ~prefix="transaction"),
+        getMissingFields(
+          Types.Transaction.nonOptionalFieldNames,
+          event.transaction,
+          ~prefix="transaction",
+        ),
       ]->Array.concatMany
 
     if missingParams->Array.length > 0 {

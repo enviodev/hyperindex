@@ -2,29 +2,18 @@
   "compilerOptions": {
     "target": "es2020",
     "module": "commonjs",
-    "lib": [
-      "es6"
-    ],
+    "lib": ["es6"],
     "allowJs": true,
     "checkJs": false,
     "outDir": "build",
-    "rootDirs": [
-      "src",
-      "generated",
-      "test",
-      "contracts/typechain-types"
-    ],
+    "rootDirs": ["src", "generated", "test", "contracts/typechain-types"],
     "strict": true,
     "noImplicitAny": true,
     "esModuleInterop": true,
     "resolveJsonModule": true,
     "skipLibCheck": true
   },
-  "include": [
-    "src",
-    "generated"
-  ],
-  "files": [
-    "./hardhat.config.ts"
-  ]
+  "include": ["src", "generated"],
+  "exclude": ["node_modules", "generated/node_modules"],
+  "files": ["./hardhat.config.ts"]
 }

@@ -24,12 +24,12 @@ module MakeEventMock = (
   let sighash = E.sighash
   let name = E.name
   let contractName = E.contractName
-  let chains = []
 
   type eventArgs = Types.internalEventArgs
+  type eventFilter
   let eventArgsSchema = Utils.magic("Stub for eventArgsSchema")
   let handlerRegister = Types.HandlerTypes.Register.make(
-    ~topic0=sighash,
+    ~topic0=sighash->EvmTypes.Hex.fromStringUnsafe,
     ~contractName,
     ~eventName=name,
   )
@@ -38,13 +38,18 @@ module MakeEventMock = (
       loader: Utils.magic("Stub for loader"),
       handler: Utils.magic("Stub for handler"),
     },
-    ~eventOptions=Some({
-      wildcard: E.isWildcard,
-      topicSelections: [LogSelection.makeTopicSelection(~topic0=[sighash])->Utils.unwrapResultExn],
+    ~getEventOptions=_ => Some({
+      isWildcard: E.isWildcard,
+      topicSelections: [
+        LogSelection.makeTopicSelection(
+          ~topic0=[sighash->EvmTypes.Hex.fromStringUnsafe],
+        )->Utils.unwrapResultExn,
+      ],
     }),
   )
   let decodeHyperFuelData = Utils.magic("Stub for decodeHyperFuelData")
   let convertHyperSyncEventArgs = Utils.magic("Stub for convertHyperSyncEventArgs")
+  let getTopicSelection = Utils.magic("Stub for getTopicSelection")
 }
 
 let makeMockEventMod = (~sighash, ~name, ~contractName, ~isWildcard): module(Types.Event) => {

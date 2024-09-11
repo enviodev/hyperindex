@@ -1,21 +1,22 @@
-use std::path::PathBuf;
-use std::{collections::HashMap, fmt::Display};
+use std::{collections::HashMap, fmt::Display, path::PathBuf};
 
 use super::hbs_dir_generator::HandleBarsDirGenerator;
-use crate::config_parsing::system_config::{Abi, Ecosystem, EventPayload, HyperfuelConfig};
-use crate::rescript_types::{RescriptRecordField, RescriptTypeExpr, RescriptTypeIdent};
 use crate::{
     config_parsing::{
         entity_parsing::{Entity, Field, GraphQLEnum, MultiFieldIndex, Schema},
-        event_parsing::abi_to_rescript_type,
+        event_parsing::{abi_to_rescript_type, EthereumEventParam},
         postgres_types,
-        system_config::{self, HypersyncConfig, RpcConfig, SystemConfig},
+        system_config::{
+            self, Abi, Ecosystem, EventPayload, HyperfuelConfig, HypersyncConfig, RpcConfig,
+            SystemConfig,
+        },
     },
     persisted_state::{PersistedState, PersistedStateJsonString},
     project_paths::{
         handler_paths::HandlerPathsTemplate, path_utils::add_trailing_relative_dot,
         ParsedProjectPaths,
     },
+    rescript_types::{RescriptRecordField, RescriptTypeExpr, RescriptTypeIdent},
     template_dirs::TemplateDirs,
     utils::text::{Capitalize, CapitalizedOptions, CaseOptions},
 };
@@ -342,11 +343,71 @@ pub struct EventTemplate {
     pub convert_hyper_sync_event_args_code: String,
     pub data_type: String,
     pub data_schema_code: String,
+    pub get_topic_selection_code: String,
+    pub event_filter_type: String,
 }
 
 impl EventTemplate {
     const DECODE_HYPER_FUEL_DATA_CODE: &'static str =
         "(_) => Js.Exn.raiseError(\"HyperFuel decoder not implemented\")";
+
+    const GET_TOPIC_SELECTION_CODE_STUB: &'static str =
+        "_ => [LogSelection.makeTopicSelection(~topic0=[sighash->EvmTypes.Hex.\
+         fromStringUnsafe])->Utils.unwrapResultExn]";
+
+    const EVENT_FILTER_TYPE_STUB: &'static str = "{}";
+
+    pub fn generate_event_filter_type(params: &Vec<EventParam>) -> String {
+        let field_rows = params
+            .iter()
+            .filter(|param| param.indexed)
+            .map(|param| {
+                format!(
+                    "@as(\"{}\") {}?: SingleOrMultiple.t<{}>",
+                    param.name,
+                    RescriptRecordField::to_valid_res_name(&param.name),
+                    abi_to_rescript_type(&param.into())
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+
+        format!("{{ {field_rows} }}")
+    }
+
+    pub fn generate_get_topic_selection_code(params: &Vec<EventParam>) -> String {
+        let indexed_params = params.iter().filter(|param| param.indexed);
+
+        //Prefixed with underscore for cases where it is not used to avoid compiler warnings
+        let event_filter_arg = "_eventFilter";
+
+        let topic_filter_calls = indexed_params
+            .enumerate()
+            .map(|(i, param)| {
+                let param = EthereumEventParam::from(param);
+                let topic_number = i + 1;
+                let param_name = RescriptRecordField::to_valid_res_name(param.name);
+                let topic_encoder = param.get_topic_encoder();
+                let nested_type_flags = match param.get_nested_type_depth() {
+                    depth if depth > 0 => format!("(~nestedArrayDepth={depth})"),
+                    _ => "".to_string(),
+                };
+                format!(
+                    "~topic{topic_number}=?{event_filter_arg}.{param_name}->Belt.Option.\
+                     map(topicFilters => \
+                     topicFilters->SingleOrMultiple.normalizeOrThrow{nested_type_flags}->Belt.\
+                     Array.map({topic_encoder})), "
+                )
+            })
+            .collect::<String>();
+
+        format!(
+            "(eventFilters) => \
+             eventFilters->SingleOrMultiple.normalizeOrThrow->Belt.Array.map({event_filter_arg} \
+             => LogSelection.makeTopicSelection(~topic0=[sighash->EvmTypes.Hex.fromStringUnsafe], \
+             {topic_filter_calls})->Utils.unwrapResultExn)"
+        )
+    }
 
     pub fn generate_convert_hyper_sync_event_args_code(params: &Vec<EventParam>) -> String {
         if params.is_empty() {
@@ -436,6 +497,8 @@ impl EventTemplate {
                     convert_hyper_sync_event_args_code:
                         Self::generate_convert_hyper_sync_event_args_code(params),
                     decode_hyper_fuel_data_code: Self::DECODE_HYPER_FUEL_DATA_CODE.to_string(),
+                    event_filter_type: Self::generate_event_filter_type(params),
+                    get_topic_selection_code: Self::generate_get_topic_selection_code(params),
                 })
             }
             EventPayload::Data(type_indent) => Ok(EventTemplate {
@@ -449,6 +512,8 @@ impl EventTemplate {
                                                      eventArgs)"
                     .to_string(),
                 decode_hyper_fuel_data_code: Self::DECODE_HYPER_FUEL_DATA_CODE.to_string(),
+                event_filter_type: Self::EVENT_FILTER_TYPE_STUB.to_string(),
+                get_topic_selection_code: Self::GET_TOPIC_SELECTION_CODE_STUB.to_string(),
             }),
         }
     }
@@ -1111,6 +1176,13 @@ mod test {
                                s.field(\"displayName\", S.string), imageUrl: \
                                s.field(\"imageUrl\", S.string)})"
                 .to_string(),
+            get_topic_selection_code: "(eventFilters) => \
+                                       eventFilters->SingleOrMultiple.normalizeOrThrow->Belt.\
+                                       Array.map(_eventFilter => \
+                                       LogSelection.makeTopicSelection(~topic0=[sighash->EvmTypes.\
+                                       Hex.fromStringUnsafe], )->Utils.unwrapResultExn)"
+                .to_string(),
+            event_filter_type: "{  }".to_string(),
         }
     }
 
@@ -1140,6 +1212,14 @@ mod test {
                                               implemented\")"
                     .to_string(),
                 data_schema_code: "S.literal(%raw(`null`))->S.variant(_ => ())".to_string(),
+                get_topic_selection_code: "(eventFilters) => \
+                                           eventFilters->SingleOrMultiple.normalizeOrThrow->Belt.\
+                                           Array.map(_eventFilter => \
+                                           LogSelection.\
+                                           makeTopicSelection(~topic0=[sighash->EvmTypes.Hex.\
+                                           fromStringUnsafe], )->Utils.unwrapResultExn)"
+                    .to_string(),
+                event_filter_type: "{  }".to_string(),
             }
         );
     }

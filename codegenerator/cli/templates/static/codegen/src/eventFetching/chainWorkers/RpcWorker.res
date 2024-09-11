@@ -9,6 +9,38 @@ module Make = (
     let eventModLookup: EventModLookup.t
   },
 ): S => {
+  T.contracts->Belt.Array.forEach(contract => {
+    contract.events->Belt.Array.forEach(event => {
+      let module(Event) = event
+      let {isWildcard, topicSelections} =
+        Event.handlerRegister->Types.HandlerTypes.Register.getEventOptions
+
+      let logger = Logging.createChild(
+        ~params={
+          "chainId": T.chain->ChainMap.Chain.toChainId,
+          "contractName": contract.name,
+          "eventName": Event.name,
+        },
+      )
+      if isWildcard {
+        %raw(`null`)->ErrorHandling.mkLogAndRaise(
+          ~msg="RPC worker does not yet support wildcard events",
+          ~logger,
+        )
+      }
+
+      topicSelections->Belt.Array.forEach(
+        topicSelection => {
+          if topicSelection->LogSelection.hasFilters {
+            %raw(`null`)->ErrorHandling.mkLogAndRaise(
+              ~msg="RPC worker does not yet support event filters",
+              ~logger,
+            )
+          }
+        },
+      )
+    })
+  })
   let name = "RPC"
   let chain = T.chain
   let eventModLookup = T.eventModLookup
