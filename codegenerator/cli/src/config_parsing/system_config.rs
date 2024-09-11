@@ -472,18 +472,14 @@ impl SystemConfig {
                 Self::from_evm_config(evm_config, schema, project_paths)
             }
             Ecosystem::Fuel => {
-                return Err(anyhow!(
-                    "EE105: Failed to deserialize config. It's not supported with the main envio \
-                     package yet, please install the envio@fuel version."
-                ));
-                // let fuel_config: FuelConfig =
-                //     serde_yaml::from_str(&human_config_string).context(format!(
-                //     "EE105: Failed to deserialize config. Visit the docs for more information {}",
-                //     links::DOC_CONFIGURATION_FILE
-                // ))?;
-                // let schema = Schema::parse_from_file(&project_paths, &fuel_config.schema)
-                //     .context("Parsing schema file for config")?;
-                // Self::from_fuel_config(fuel_config, schema, project_paths)
+                let fuel_config: FuelConfig =
+                    serde_yaml::from_str(&human_config_string).context(format!(
+                    "EE105: Failed to deserialize config. Visit the docs for more information {}",
+                    links::DOC_CONFIGURATION_FILE
+                ))?;
+                let schema = Schema::parse_from_file(&project_paths, &fuel_config.schema)
+                    .context("Parsing schema file for config")?;
+                Self::from_fuel_config(fuel_config, schema, project_paths)
             }
         }
     }
