@@ -111,19 +111,20 @@ module EventFunctions = {
       //The only purpose is to test the registerContract function and to
       //add the entity to the in memory store for asserting registrations
 
+      let eventBatchQueueItem: Types.eventBatchQueueItem = {
+        event,
+        eventMod,
+        chain,
+        logIndex: event.logIndex,
+        timestamp: event.block->Types.Block.getTimestamp,
+        blockNumber: event.block->Types.Block.getNumber,
+      }
+
       switch Event.handlerRegister->Types.HandlerTypes.Register.getContractRegister {
       | Some(contractRegister) =>
         switch contractRegister->EventProcessing.runEventContractRegister(
           ~logger,
-          ~event,
-          ~eventBatchQueueItem={
-            event,
-            eventMod,
-            chain,
-            logIndex: event.logIndex,
-            timestamp: event.block.timestamp,
-            blockNumber: event.block.number,
-          },
+          ~eventBatchQueueItem,
           ~checkContractIsRegistered=(~chain as _, ~contractAddress as _, ~contractName as _) =>
             false,
           ~dynamicContractRegistrations=None,
@@ -139,12 +140,10 @@ module EventFunctions = {
 
       switch Event.handlerRegister->Types.HandlerTypes.Register.getLoaderHandler {
       | Some(loaderHandler) =>
-        switch await event->EventProcessing.runEventHandler(
+        switch await eventBatchQueueItem->EventProcessing.runEventHandler(
           ~inMemoryStore,
           ~loadLayer,
           ~loaderHandler,
-          ~eventMod,
-          ~chain,
           ~logger,
           ~latestProcessedBlocks,
           ~config,
@@ -166,22 +165,12 @@ module EventFunctions = {
   module MockBlock = {
     open Belt
     type t = {
-      {{!-- Mandatory fields --}}
-      number?: int,
-      timestamp?: int,
-      hash?: string,
-      {{!-- Selectable fields --}}
       {{#each field_selection.block_fields as | field |}}
       {{field.name.camel}}?: {{field.res_type}},
       {{/each}}
     }
 
     let toBlock = (mock: t): Types.Block.t => {
-      {{!-- Mandatory fields --}}
-      number: mock.number->Option.getWithDefault(0),
-      timestamp: mock.timestamp->Option.getWithDefault(0),
-      hash: mock.hash->Option.getWithDefault("foo"),
-      {{!-- Selectable fields --}}
       {{#each field_selection.block_fields as | field |}}
       {{field.name.camel}}: mock.{{field.name.camel}}->Option.getWithDefault({{field.default_value_rescript}}),
       {{/each}}

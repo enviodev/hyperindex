@@ -31,6 +31,8 @@ let queryLogsPage: (
   ~fromBlock: int,
   ~toBlock: int,
   ~logSelections: array<LogSelection.t>,
+  ~blockFieldSelection: array<HyperSyncClient.QueryTypes.blockField>,
+  ~nonOptionalBlockFieldNames: array<string>,
 ) => promise<queryResponse<logsQueryPage>>
 
 let getHeightWithRetry: (~serverUrl: string, ~logger: Pino.t) => promise<int>

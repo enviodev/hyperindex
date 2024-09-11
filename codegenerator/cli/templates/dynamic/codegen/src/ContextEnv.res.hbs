@@ -3,11 +3,10 @@ open Types
 /**
 The context holds all the state for a given events loader and handler.
 */
-type t<'eventArgs> = {
+type t = {
   logger: Pino.t,
-  chain: ChainMap.Chain.t,
+  eventBatchQueueItem: Types.eventBatchQueueItem,
   addedDynamicContractRegistrations: array<TablesStatic.DynamicContractRegistry.t>,
-  event: Types.eventLog<'eventArgs>,
 }
 
 let getUserLogger = (logger): Logs.userLogger => {
@@ -19,19 +18,22 @@ let getUserLogger = (logger): Logs.userLogger => {
     logger->Logging.uerrorWithExn(exn, message),
 }
 
-let makeEventIdentifier = (event: Types.eventLog<'a>): Types.eventIdentifier => {
-  chainId: event.chainId,
-  blockTimestamp: event.block.timestamp,
-  blockNumber: event.block.number,
-  logIndex: event.logIndex,
+let makeEventIdentifier = (eventBatchQueueItem: Types.eventBatchQueueItem): Types.eventIdentifier => {
+  let {event, blockNumber, timestamp} = eventBatchQueueItem
+  {
+    chainId: event.chainId,
+    blockTimestamp: timestamp,
+    blockNumber,
+    logIndex: event.logIndex,
+  }
 }
 
-let getEventId = (event: Types.eventLog<'a>) => {
-  EventUtils.packEventIndex(~blockNumber=event.block.number, ~logIndex=event.logIndex)
+let getEventId = (eventBatchQueueItem: Types.eventBatchQueueItem) => {
+  EventUtils.packEventIndex(~blockNumber=eventBatchQueueItem.blockNumber, ~logIndex=eventBatchQueueItem.event.logIndex)
 }
 
-let make = (~chain, ~event: Types.eventLog<'eventArgs>, ~eventMod: module(Types.InternalEvent), ~logger) => {
-  let {block, logIndex} = event
+let make = (~eventBatchQueueItem: Types.eventBatchQueueItem, ~logger) => {
+  let {event, chain, eventMod, blockNumber} = eventBatchQueueItem
   let module(Event) = eventMod
   let logger = logger->(
     Logging.createChildFrom(
@@ -39,24 +41,23 @@ let make = (~chain, ~event: Types.eventLog<'eventArgs>, ~eventMod: module(Types.
       ~params={
         "context": `Event '${Event.name}' for contract '${Event.contractName}'`,
         "chainId": chain->ChainMap.Chain.toChainId,
-        "block": block.number,
-        "logIndex": logIndex,
+        "block": blockNumber,
+        "logIndex": event.logIndex,
       },
     )
   )
 
   {
-    event,
     logger,
-    chain,
+    eventBatchQueueItem,
     addedDynamicContractRegistrations: [],
   }
 }
 
-let getAddedDynamicContractRegistrations = (contextEnv: t<'eventArgs>) =>
+let getAddedDynamicContractRegistrations = (contextEnv: t) =>
   contextEnv.addedDynamicContractRegistrations
 
-let makeDynamicContractRegisterFn = (~contextEnv: t<'eventArgs>, ~contractName, ~inMemoryStore) => (
+let makeDynamicContractRegisterFn = (~contextEnv: t, ~contractName, ~inMemoryStore) => (
   contractAddress: Address.t,
 ) => {
   {{#if is_evm_ecosystem}} {{!-- TODO: Add validation for Fuel --}}
@@ -65,14 +66,15 @@ let makeDynamicContractRegisterFn = (~contextEnv: t<'eventArgs>, ~contractName, 
   let contractAddress = contractAddress->Address.Evm.fromAddressOrThrow
 
   {{/if}}
-  let {event, chain, addedDynamicContractRegistrations} = contextEnv
+  let {eventBatchQueueItem, addedDynamicContractRegistrations} = contextEnv
+  let {chain, timestamp} = eventBatchQueueItem
 
-  let eventId = event->getEventId
+  let eventId = eventBatchQueueItem->getEventId
   let chainId = chain->ChainMap.Chain.toChainId
   let dynamicContractRegistration: TablesStatic.DynamicContractRegistry.t = {
     chainId,
     eventId,
-    blockTimestamp: event.block.timestamp,
+    blockTimestamp: timestamp,
     contractAddress,
     contractType: contractName,
   }
@@ -124,7 +126,7 @@ let getContractRegisterContext = (contextEnv, ~inMemoryStore) => {
   {{/each}}
 }
 
-let getLoaderContext = (contextEnv: t<'eventArgs>, ~inMemoryStore: InMemoryStore.t, ~loadLayer: LoadLayer.t): loaderContext => {
+let getLoaderContext = (contextEnv: t, ~inMemoryStore: InMemoryStore.t, ~loadLayer: LoadLayer.t): loaderContext => {
   let {logger} = contextEnv
   {
     log: logger->getUserLogger,
@@ -152,9 +154,9 @@ let getLoaderContext = (contextEnv: t<'eventArgs>, ~inMemoryStore: InMemoryStore
 }
 
 let getHandlerContext = (context, ~inMemoryStore: InMemoryStore.t, ~loadLayer) => {
-  let {event, logger} = context
+  let {eventBatchQueueItem, logger} = context
 
-  let eventIdentifier = event->makeEventIdentifier
+  let eventIdentifier = eventBatchQueueItem->makeEventIdentifier
   {
     log: logger->getUserLogger,
     {{#each entities as | entity |}}
@@ -171,17 +173,17 @@ let getHandlerContext = (context, ~inMemoryStore: InMemoryStore.t, ~loadLayer) =
 }
 
 let getContractRegisterArgs = (contextEnv, ~inMemoryStore) => {
-  Types.HandlerTypes.event: contextEnv.event,
+  Types.HandlerTypes.event: contextEnv.eventBatchQueueItem.event,
   context: contextEnv->getContractRegisterContext(~inMemoryStore),
 }
 
 let getLoaderArgs = (contextEnv, ~inMemoryStore, ~loadLayer) => {
-  Types.HandlerTypes.event: contextEnv.event,
+  Types.HandlerTypes.event: contextEnv.eventBatchQueueItem.event,
   context: contextEnv->getLoaderContext(~inMemoryStore, ~loadLayer),
 }
 
 let getHandlerArgs = (contextEnv, ~inMemoryStore, ~loaderReturn, ~loadLayer) => {
-  Types.HandlerTypes.event: contextEnv.event,
+  Types.HandlerTypes.event: contextEnv.eventBatchQueueItem.event,
   context: contextEnv->getHandlerContext(~inMemoryStore, ~loadLayer),
   loaderReturn,
 }

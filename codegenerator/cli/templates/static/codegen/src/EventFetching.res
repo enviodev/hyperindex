@@ -122,7 +122,7 @@ let convertLogs = (
   })
 
   logs->Belt.Array.map(async (log): Types.eventBatchQueueItem => {
-    let block = (await blockLoader->LazyLoader.get(log.blockNumber))->blockFieldsFromBlock
+    let block = (await blockLoader->LazyLoader.get(log.blockNumber))
     let transaction = log->transactionFieldsFromLog(~logger)
     let log = log->ethersLogToLog
     let chainId = chain->ChainMap.Chain.toChainId
@@ -179,7 +179,7 @@ let convertLogs = (
         chainId,
         params: decodedEvent.args,
         transaction,
-        block,
+        block: block->blockFieldsFromBlock,
         srcAddress: log.address,
         logIndex: log.logIndex,
       },

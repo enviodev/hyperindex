@@ -12,21 +12,15 @@ describe("E2E Mock Event Batch", () => {
 
     let loadLayer = LoadLayer.makeWithDbConnection()
 
-    let runEventHandler = async (
-      event: Types.eventLog<'a>,
-      eventMod: module(Types.Event with type eventArgs = 'a),
-    ) => {
-      let eventMod = eventMod->Types.eventModToInternal
-      let module(Event) = eventMod
+    let runEventHandler = async (eventBatchQueueItem: Types.eventBatchQueueItem) => {
+      let module(Event) = eventBatchQueueItem.eventMod
       switch Event.handlerRegister->Types.HandlerTypes.Register.getLoaderHandler {
       | Some(loaderHandler) =>
-        await event->EventProcessing.runEventHandler(
+        await eventBatchQueueItem->EventProcessing.runEventHandler(
           ~loaderHandler,
           ~latestProcessedBlocks=EventProcessing.EventsProcessed.makeEmpty(~config),
           ~inMemoryStore,
           ~logger=Logging.logger,
-          ~chain=MockConfig.chain1,
-          ~eventMod,
           ~loadLayer,
           ~config,
         )
@@ -36,7 +30,7 @@ describe("E2E Mock Event Batch", () => {
 
     for i in 0 to MockEvents.eventBatchItems->Array.length - 1 {
       let batchItem = MockEvents.eventBatchItems->Js.Array2.unsafe_get(i)
-      let res = await batchItem.event->runEventHandler(batchItem.eventMod)
+      let res = await batchItem->runEventHandler
       switch res {
       | Error(e) => e->ErrorHandling.logAndRaise
       | Ok(_) => ()

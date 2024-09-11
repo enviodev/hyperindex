@@ -11,11 +11,29 @@ module Make = (
     let allEventSignatures: array<string>
     let shouldUseHypersyncClientDecoder: bool
     let eventModLookup: EventModLookup.t
+    let blockSchema: S.t<Types.Block.t>
   },
 ): S => {
   let name = "HyperSync"
   let chain = T.chain
   let eventModLookup = T.eventModLookup
+
+  let nonOptionalBlockFieldNames = []
+  let blockFieldSelection = switch T.blockSchema->S.classify {
+    | Object({items}) => {
+      items->Array.map(item => {
+        switch item.schema->S.classify {
+        // Check for null, since we generate S.null schema for db serializing
+        // In the future it should be changed to Option
+        | Null(_) => ()
+        | _ => nonOptionalBlockFieldNames->Array.push(item.location)->ignore
+        }
+
+        item.location->Utils.String.capitalize->(Utils.magic: string => HyperSyncClient.QueryTypes.blockField)
+      })
+    }
+    | _ => Js.Exn.raiseError("Block schema should be an object with block fields")
+  }
 
   let hscDecoder: ref<option<HyperSyncClient.Decoder.t>> = ref(None)
   let getHscDecoder = () => {
@@ -183,7 +201,7 @@ module Make = (
 
     //fetch batch
     let pageUnsafe = await Helpers.queryLogsPageWithBackoff(
-      () => HyperSync.queryLogsPage(~serverUrl=T.endpointUrl, ~fromBlock, ~toBlock, ~logSelections),
+      () => HyperSync.queryLogsPage(~serverUrl=T.endpointUrl, ~fromBlock, ~toBlock, ~logSelections, ~blockFieldSelection, ~nonOptionalBlockFieldNames),
       logger,
     )
 
@@ -203,9 +221,9 @@ module Make = (
     let {block, log, transaction} = item
     let chainId = chain->ChainMap.Chain.toChainId
     {
-      timestamp: block.timestamp,
+      timestamp: block->Types.Block.getTimestamp,
       chain,
-      blockNumber: block.number,
+      blockNumber: block->Types.Block.getNumber,
       logIndex: log.logIndex,
       event: {
         chainId,
@@ -275,14 +293,14 @@ module Make = (
         //The optional block and timestamp of the last item returned by the query
         //(Optional in the case that there are no logs returned in the query)
         switch pageUnsafe.items->Belt.Array.get(pageUnsafe.items->Belt.Array.length - 1) {
-        | Some({block}) if block.number == heighestBlockQueried =>
+        | Some({block}) if block->Types.Block.getNumber == heighestBlockQueried =>
           //If the last log item in the current page is equal to the
           //heighest block acounted for in the query. Simply return this
           //value without making an extra query
           {
-            ReorgDetection.blockNumber: block.number,
-            blockTimestamp: block.timestamp,
-            blockHash: block.hash,
+            ReorgDetection.blockNumber: block->Types.Block.getNumber,
+            blockTimestamp: block->Types.Block.getTimestamp,
+            blockHash: block->Types.Block.getId,
           }->Promise.resolve
         //If it does not match it means that there were no matching logs in the last
         //block so we should fetch the block data
@@ -371,7 +389,7 @@ module Make = (
                 ~logger,
                 ~params={
                   "chainId": chainId,
-                  "blockNumber": block.number,
+                  "blockNumber": block->Types.Block.getNumber,
                   "logIndex": log.logIndex,
                   "contractAddress": log.address,
                   "topic0": topic0,
@@ -403,7 +421,7 @@ module Make = (
               ~eventMod,
               ~decoder="hypersync-client",
               ~logIndex=log.logIndex,
-              ~blockNumber=block.number,
+              ~blockNumber=block->Types.Block.getNumber,
               ~chainId,
               ~exn=UndefinedValue,
             )
@@ -426,7 +444,7 @@ module Make = (
                 ~logger,
                 ~params={
                   "chainId": chainId,
-                  "blockNumber": block.number,
+                  "blockNumber": block->Types.Block.getNumber,
                   "logIndex": log.logIndex,
                   "contractAddress": log.address,
                   "topic0": topic0,
@@ -447,7 +465,7 @@ module Make = (
               ~eventMod,
               ~decoder="viem",
               ~logIndex=log.logIndex,
-              ~blockNumber=block.number,
+              ~blockNumber=block->Types.Block.getNumber,
               ~chainId,
               ~exn,
             )

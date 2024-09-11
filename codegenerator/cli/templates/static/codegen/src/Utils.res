@@ -167,6 +167,13 @@ Helper to check if a value exists in an array
   external spliceInPlace: (array<'a>, ~pos: int, ~remove: int) => array<'a> = "splice"
 }
 
+module String = {
+  let capitalize = str => {
+    str->Js.String2.slice(~from=0, ~to_=1)->Js.String.toUpperCase ++
+      str->Js.String2.sliceToEnd(~from=1)
+  }
+}
+
 /**
 Useful when an unsafe unwrap is needed on Result type
 and Error holds an exn. This is better than Result.getExn
