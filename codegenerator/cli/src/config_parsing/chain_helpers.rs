@@ -342,6 +342,15 @@ impl Network {
             .ok_or_else(|| anyhow!("Failed converting network_id {} to network name", id))
     }
 
+    /// Returns the end block for this network if it is finite
+    pub fn get_finite_end_block(&self) -> Option<i32> {
+        match self {
+            Self::Goerli => Some(10_387_962),
+            Self::Mumbai => Some(47_002_303),
+            _ => None,
+        }
+    }
+
     //TODO: research a sufficient threshold for all chain (some should be 0)
     pub fn get_confirmed_block_threshold(&self) -> i32 {
         match self {
