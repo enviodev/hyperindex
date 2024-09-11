@@ -8,6 +8,8 @@ typechain
 cache
 artifacts/@openzeppelin
 artifacts/build-info
+artifacts/contracts/**/*.dbg.json
+
 
 deployments/localhost
 deployments/ganache
