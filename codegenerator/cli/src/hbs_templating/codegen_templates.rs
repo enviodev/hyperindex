@@ -931,8 +931,6 @@ impl ProjectTemplate {
 
 #[cfg(test)]
 mod test {
-    use std::vec;
-
     use super::*;
     use crate::{
         config_parsing::system_config::{RpcConfig, SystemConfig},
@@ -940,6 +938,7 @@ mod test {
         utils::text::Capitalize,
     };
     use pretty_assertions::assert_eq;
+    use std::vec;
 
     fn get_per_contract_events_vec_helper(
         event_names: Vec<&str>,
@@ -969,6 +968,20 @@ mod test {
         project_template
     }
 
+    impl Default for NetworkTemplate {
+        fn default() -> Self {
+            Self {
+                id: 0,
+                rpc_config: None,
+                hypersync_config: None,
+                hyperfuel_config: None,
+                confirmed_block_threshold: 200,
+                start_block: 0,
+                end_block: None,
+            }
+        }
+    }
+
     #[test]
     fn chain_configs_parsed_case_1() {
         let address1 = String::from("0x2E645469f354BB4F5c8a05B3b30A929361cf77eC");
@@ -978,14 +991,10 @@ mod test {
             sync_config: system_config::SyncConfig::default(),
         };
 
-        let network1 = super::NetworkTemplate {
+        let network1 = NetworkTemplate {
             id: 1,
             rpc_config: Some(rpc_config1),
-            hypersync_config: None,
-            hyperfuel_config: None,
-            start_block: 0,
-            end_block: None,
-            confirmed_block_threshold: 200,
+            ..NetworkTemplate::default()
         };
 
         let events = get_per_contract_events_vec_helper(vec!["NewGravatar", "UpdatedGravatar"]);
@@ -1025,14 +1034,10 @@ mod test {
             urls: vec!["https://eth.com".to_string()],
             sync_config: system_config::SyncConfig::default(),
         };
-        let network1 = super::NetworkTemplate {
+        let network1 = NetworkTemplate {
             id: 1,
             rpc_config: Some(rpc_config1.clone()),
-            hypersync_config: None,
-            hyperfuel_config: None,
-            start_block: 0,
-            end_block: None,
-            confirmed_block_threshold: 200,
+            ..NetworkTemplate::default()
         };
 
         let rpc_config2 = RpcConfig {
@@ -1043,14 +1048,11 @@ mod test {
             ],
             sync_config: system_config::SyncConfig::default(),
         };
-        let network2 = super::NetworkTemplate {
+
+        let network2 = NetworkTemplate {
             id: 2,
             rpc_config: Some(rpc_config2),
-            hypersync_config: None,
-            hyperfuel_config: None,
-            start_block: 0,
-            end_block: None,
-            confirmed_block_threshold: 200,
+            ..NetworkTemplate::default()
         };
 
         let events = get_per_contract_events_vec_helper(vec!["NewGravatar", "UpdatedGravatar"]);
@@ -1087,17 +1089,13 @@ mod test {
     fn convert_to_chain_configs_case_3() {
         let address1 = String::from("0x2E645469f354BB4F5c8a05B3b30A929361cf77eC");
 
-        let network1 = super::NetworkTemplate {
+        let network1 = NetworkTemplate {
             id: 1,
-            rpc_config: None,
             hypersync_config: Some(HypersyncConfig {
                 endpoint_url: "https://1.hypersync.xyz".to_string(),
                 is_client_decoder: true,
             }),
-            hyperfuel_config: None,
-            start_block: 0,
-            end_block: None,
-            confirmed_block_threshold: 200,
+            ..NetworkTemplate::default()
         };
 
         let events = get_per_contract_events_vec_helper(vec!["NewGravatar", "UpdatedGravatar"]);
@@ -1122,30 +1120,22 @@ mod test {
 
     #[test]
     fn convert_to_chain_configs_case_4() {
-        let network1 = super::NetworkTemplate {
+        let network1 = NetworkTemplate {
             id: 1,
-            rpc_config: None,
             hypersync_config: Some(HypersyncConfig {
                 endpoint_url: "https://myskar.com".to_string(),
                 is_client_decoder: true,
             }),
-            hyperfuel_config: None,
-            start_block: 0,
-            end_block: None,
-            confirmed_block_threshold: 200,
+            ..NetworkTemplate::default()
         };
 
-        let network2 = super::NetworkTemplate {
+        let network2 = NetworkTemplate {
             id: 137,
-            rpc_config: None,
             hypersync_config: Some(HypersyncConfig {
                 endpoint_url: "https://137.hypersync.xyz".to_string(),
                 is_client_decoder: true,
             }),
-            hyperfuel_config: None,
-            start_block: 0,
-            end_block: None,
-            confirmed_block_threshold: 200,
+            ..NetworkTemplate::default()
         };
 
         let chain_config_1 = super::NetworkConfigTemplate {
