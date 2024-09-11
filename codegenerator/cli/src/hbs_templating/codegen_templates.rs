@@ -1136,10 +1136,10 @@ mod test {
         };
 
         let network2 = super::NetworkTemplate {
-            id: 5,
+            id: 137,
             rpc_config: None,
             hypersync_config: Some(HypersyncConfig {
-                endpoint_url: "https://5.hypersync.xyz".to_string(),
+                endpoint_url: "https://137.hypersync.xyz".to_string(),
                 is_client_decoder: true,
             }),
             hyperfuel_config: None,
