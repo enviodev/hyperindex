@@ -1,16 +1,8 @@
 open ChainWorker
 open Belt
 
-/*
- Requires following dependencies to be installed:
-  "@fuel-ts/crypto": "0.89.1",
-  "@fuel-ts/errors": "0.89.1",
-  "@fuel-ts/hasher": "0.89.1",
-  "@fuel-ts/math": "0.89.1",
-  "@fuel-ts/utils": "0.89.1",
-  "@fuel-ts/address": "0.89.1",
-  "@envio-dev/hyperfuel-client": "1.1.0",
- */
+exception EventRoutingFailed
+
 module Make = (
   T: {
     let chain: ChainMap.Chain.t
@@ -162,6 +154,7 @@ module Make = (
     ~currentBlockHeight,
     ~setCurrentBlockHeight,
   ) => {
+    let mkLogAndRaise = ErrorHandling.mkLogAndRaise(~logger, ...)
     try {
       let {fetchStateRegisterId, partitionId, fromBlock, contractAddressMapping, toBlock} = query
       let startFetchingBatchTimeRef = Hrtime.makeTimer()
@@ -217,30 +210,28 @@ module Make = (
       //block so we should fetch the block data
       | Some(_)
       | None =>
-        {
-          ReorgDetection.blockNumber: 0,
-          blockTimestamp: 0,
-          blockHash: "",
-        }->Promise.resolve
-      // //If there were no logs at all in the current page query then fetch the
-      // //timestamp of the heighest block accounted for
-      // HyperFuel.queryBlockData(
-      //   ~serverUrl=T.endpointUrl,
-      //   ~blockNumber=heighestBlockQueried,
-      // )->Promise.thenResolve(res =>
-      //   switch res {
-      //   | Ok(Some(blockData)) => blockData
-      //   | Ok(None) =>
-      //     mkLogAndRaise(
-      //       Not_found,
-      //       ~msg=`Failure, blockData for block ${heighestBlockQueried->Int.toString} unexpectedly returned None`,
-      //     )
-      //   | Error(e) =>
-      //     Helpers.ErrorMessage(HyperFuel.queryErrorToMsq(e))->mkLogAndRaise(
-      //       ~msg=`Failed to query blockData for block ${heighestBlockQueried->Int.toString}`,
-      //     )
-      //   }
-      // )
+        //If there were no logs at all in the current page query then fetch the
+        //timestamp of the heighest block accounted for
+        HyperFuel.queryBlockData(
+          ~serverUrl=T.endpointUrl,
+          ~blockNumber=heighestBlockQueried,
+          ~logger,
+        )
+        ->Promise.thenResolve(res => {
+          switch res {
+          | Some(blockData) => blockData
+          | None =>
+            mkLogAndRaise(
+              Not_found,
+              ~msg=`Failure, blockData for block ${heighestBlockQueried->Int.toString} unexpectedly returned None`,
+            )
+          }
+        })
+        ->Promise.catch(exn => {
+          exn->mkLogAndRaise(
+            ~msg=`Failed to query blockData for block ${heighestBlockQueried->Int.toString}`,
+          )
+        })
       }
       // }
 
@@ -270,7 +261,7 @@ module Make = (
                 "sighash": sighash,
               },
             )
-            %raw(`null`)->ErrorHandling.mkLogAndRaise(
+            EventRoutingFailed->ErrorHandling.mkLogAndRaise(
               ~msg="Failed to lookup registered event",
               ~logger,
             )
@@ -280,8 +271,8 @@ module Make = (
         let module(Event) = eventMod
 
         let params = try switch receipt {
-        | LogData({data}) => data->Event.decodeHyperFuelData
-        } catch {
+        | LogData({data}) => data
+        }->Event.decodeHyperFuelData catch {
         | exn => {
             let params = {
               "chainId": chainId,
@@ -305,7 +296,9 @@ module Make = (
             event: {
               chainId,
               params,
-              transaction: %raw(`{}`), // TODO: %raw needed until the transaction fields are not configurable for Fuel separately from evm
+              transaction: {
+                "hash": item.transactionId,
+              }->Obj.magic, // TODO: Obj.magic needed until the field selection types are not configurable for Fuel and Evm separately
               block: {
                 "number": block.blockNumber,
                 "timestamp": block.timestamp,

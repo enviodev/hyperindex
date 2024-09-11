@@ -50,8 +50,8 @@ importers:
         specifier: 1.4.0
         version: 1.4.0
       '@envio-dev/hyperfuel-client':
-        specifier: 1.1.0
-        version: 1.1.0
+        specifier: 1.2.2
+        version: 1.2.2
       '@fuel-ts/address':
         specifier: 0.94.1
         version: 0.94.1
@@ -163,38 +163,44 @@ packages:
     resolution: {integrity: sha512-eCSBUTgl8KbPyxky8cecDRLCYu2C1oFV4AZ72bEsI+TxXEvaljaL2kgttfzfu7gW+M89eCz55s49uF2t+YMTWA==}
     engines: {node: '>=10'}
 
-  '@envio-dev/hyperfuel-client-darwin-arm64@1.1.0':
-    resolution: {integrity: sha512-Zgu/aSokT8QbsVMWK345mowVCWVQFck++JQPGG9n0HxyKcck2nPdtre1sCcx580LxsX33nLK5re1dRvx9MLdNA==}
+  '@envio-dev/hyperfuel-client-darwin-arm64@1.2.2':
+    resolution: {integrity: sha512-eQyd9kJCIz/4WCTjkjpQg80DA3pdneHP7qhJIVQ2ZG+Jew9o5XDG+uI0Y16AgGzZ6KGmJSJF6wyUaaAjJfbO1Q==}
     engines: {node: '>= 10'}
     cpu: [arm64]
     os: [darwin]
 
-  '@envio-dev/hyperfuel-client-linux-arm64-gnu@1.1.0':
-    resolution: {integrity: sha512-W+bBWxhATpVihfRanLy1dbjgY3sWpipMDGOQMz7dNgdHWRPg/ly0U8OkQ+IFTSSQQuJSSCjMzerwqQff89cKAA==}
+  '@envio-dev/hyperfuel-client-darwin-x64@1.2.2':
+    resolution: {integrity: sha512-l7lRMSoyIiIvKZgQPfgqg7H1xnrQ37A8yUp4S2ys47R8f/wSCSrmMaY1u7n6CxVYCpR9fajwy0/356UgwwhVKw==}
+    engines: {node: '>= 10'}
+    cpu: [x64]
+    os: [darwin]
+
+  '@envio-dev/hyperfuel-client-linux-arm64-gnu@1.2.2':
+    resolution: {integrity: sha512-kNiC/1fKuXnoSxp8yEsloDw4Ot/mIcNoYYGLl2CipSIpBtSuiBH5nb6eBcxnRZdKOwf5dKZtZ7MVPL9qJocNJw==}
     engines: {node: '>= 10'}
     cpu: [arm64]
     os: [linux]
 
-  '@envio-dev/hyperfuel-client-linux-x64-gnu@1.1.0':
-    resolution: {integrity: sha512-L7vs+FSsYX/qgHqkQV3M5Sm9oHjV25V3DJ/Wvj5EbPT45f/DFMKYVNcstQbZwJ7ik94gYOtpvYnHzIyLvpeTmw==}
+  '@envio-dev/hyperfuel-client-linux-x64-gnu@1.2.2':
+    resolution: {integrity: sha512-XDkvkBG/frS+xiZkJdY4KqOaoAwyxPdi2MysDQgF8NmZdssi32SWch0r4LTqKWLLlCBg9/R55POeXL5UAjg2wQ==}
     engines: {node: '>= 10'}
     cpu: [x64]
     os: [linux]
 
-  '@envio-dev/hyperfuel-client-linux-x64-musl@1.1.0':
-    resolution: {integrity: sha512-6ya/UC5ll7BOnqCM+k1mZaok6Qf0KYN9EBotPcwH/X7y0tpi8N/o2c/Q0SxX5KWPA0wFX2n3qh+JQ6GeNkHSZA==}
+  '@envio-dev/hyperfuel-client-linux-x64-musl@1.2.2':
+    resolution: {integrity: sha512-DKnKJJSwsYtA7YT0EFGhFB5Eqoo42X0l0vZBv4lDuxngEXiiNjeLemXoKQVDzhcbILD7eyXNa5jWUc+2hpmkEg==}
     engines: {node: '>= 10'}
     cpu: [x64]
     os: [linux]
 
-  '@envio-dev/hyperfuel-client-win32-x64-msvc@1.1.0':
-    resolution: {integrity: sha512-HT+qoKuI68Rxf8K99eS87X+BQ5e5xiR0IaJ1Z3XuXc1ScLDw2hffXVPxVuCrFNQJobywKeiUplcG5ydWYtGZeA==}
+  '@envio-dev/hyperfuel-client-win32-x64-msvc@1.2.2':
+    resolution: {integrity: sha512-SwIgTAVM9QhCFPyHwL+e1yQ6o3paV6q25klESkXw+r/KW9QPhOOyA6Yr8nfnur3uqMTLJHAKHTLUnkyi/Nh7Aw==}
     engines: {node: '>= 10'}
     cpu: [x64]
     os: [win32]
 
-  '@envio-dev/hyperfuel-client@1.1.0':
-    resolution: {integrity: sha512-XyCpqGevwJAjP7jMUvAJT7qRoFZmJ6j0GAwt6aRcyxRbUO+3yULKWOP/5wFgRs6tjgdhLdtxbdA7x7mj5ZrmbQ==}
+  '@envio-dev/hyperfuel-client@1.2.2':
+    resolution: {integrity: sha512-raKA6DshYSle0sAOHBV1OkSRFMN+Mkz8sFiMmS3k+m5nP6pP56E17CRRePBL5qmR6ZgSEvGOz/44QUiKNkK9Pg==}
     engines: {node: '>= 10'}
 
   '@fuel-ts/address@0.94.1':
@@ -1556,28 +1562,32 @@ snapshots:
     dependencies:
       '@elastic/ecs-helpers': 1.1.0
 
-  '@envio-dev/hyperfuel-client-darwin-arm64@1.1.0':
+  '@envio-dev/hyperfuel-client-darwin-arm64@1.2.2':
     optional: true
 
-  '@envio-dev/hyperfuel-client-linux-arm64-gnu@1.1.0':
+  '@envio-dev/hyperfuel-client-darwin-x64@1.2.2':
     optional: true
 
-  '@envio-dev/hyperfuel-client-linux-x64-gnu@1.1.0':
+  '@envio-dev/hyperfuel-client-linux-arm64-gnu@1.2.2':
     optional: true
 
-  '@envio-dev/hyperfuel-client-linux-x64-musl@1.1.0':
+  '@envio-dev/hyperfuel-client-linux-x64-gnu@1.2.2':
     optional: true
 
-  '@envio-dev/hyperfuel-client-win32-x64-msvc@1.1.0':
+  '@envio-dev/hyperfuel-client-linux-x64-musl@1.2.2':
     optional: true
 
-  '@envio-dev/hyperfuel-client@1.1.0':
+  '@envio-dev/hyperfuel-client-win32-x64-msvc@1.2.2':
+    optional: true
+
+  '@envio-dev/hyperfuel-client@1.2.2':
     optionalDependencies:
-      '@envio-dev/hyperfuel-client-darwin-arm64': 1.1.0
-      '@envio-dev/hyperfuel-client-linux-arm64-gnu': 1.1.0
-      '@envio-dev/hyperfuel-client-linux-x64-gnu': 1.1.0
-      '@envio-dev/hyperfuel-client-linux-x64-musl': 1.1.0
-      '@envio-dev/hyperfuel-client-win32-x64-msvc': 1.1.0
+      '@envio-dev/hyperfuel-client-darwin-arm64': 1.2.2
+      '@envio-dev/hyperfuel-client-darwin-x64': 1.2.2
+      '@envio-dev/hyperfuel-client-linux-arm64-gnu': 1.2.2
+      '@envio-dev/hyperfuel-client-linux-x64-gnu': 1.2.2
+      '@envio-dev/hyperfuel-client-linux-x64-musl': 1.2.2
+      '@envio-dev/hyperfuel-client-win32-x64-msvc': 1.2.2
 
   '@fuel-ts/address@0.94.1':
     dependencies:

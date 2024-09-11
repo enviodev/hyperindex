@@ -14,7 +14,7 @@ use super::{
 };
 use crate::{
     config_parsing::human_config::evm::{RpcBlockField, RpcTransactionField},
-    constants::{links, project_paths::DEFAULT_SCHEMA_PATH, DEFAULT_CONFIRMED_BLOCK_THRESHOLD},
+    constants::{links, project_paths::DEFAULT_SCHEMA_PATH},
     fuel::abi::FuelAbi,
     project_paths::{path_utils, ParsedProjectPaths},
     rescript_types::RescriptTypeIdent,
@@ -385,7 +385,10 @@ impl SystemConfig {
             }
 
             let sync_source = SyncSource::HyperfuelConfig(HyperfuelConfig {
-                endpoint_url: "https://fuel-testnet.hypersync.xyz".to_string(),
+                endpoint_url: match &network.hyperfuel_config {
+                    Some(config) => config.url.clone(),
+                    None => "https://fuel-testnet.hypersync.xyz".to_string(),
+                },
             });
 
             let contracts: Vec<NetworkContract> = network
@@ -402,7 +405,7 @@ impl SystemConfig {
                 id: network.id as u64,
                 start_block: network.start_block,
                 end_block: network.end_block,
-                confirmed_block_threshold: DEFAULT_CONFIRMED_BLOCK_THRESHOLD,
+                confirmed_block_threshold: 0,
                 sync_source,
                 contracts,
             };
@@ -425,8 +428,8 @@ impl SystemConfig {
             rollback_on_reorg: false,
             save_full_history: false,
             schema,
-            field_selection: FieldSelection::empty(),
-            enable_raw_events: false,
+            field_selection: FieldSelection::fuel(),
+            enable_raw_events: fuel_config.raw_events.unwrap_or(false),
         })
     }
 
@@ -473,8 +476,8 @@ impl SystemConfig {
                     "EE105: Failed to deserialize config. It's not supported with the main envio \
                      package yet, please install the envio@fuel version."
                 ));
-                // let fuel_config: FuelConfig = serde_yaml::from_str(&human_config_string)
-                //     .context(format!(
+                // let fuel_config: FuelConfig =
+                //     serde_yaml::from_str(&human_config_string).context(format!(
                 //     "EE105: Failed to deserialize config. Visit the docs for more information {}",
                 //     links::DOC_CONFIGURATION_FILE
                 // ))?;
@@ -987,6 +990,10 @@ impl FieldSelection {
 
     pub fn empty() -> Self {
         Self::new(vec![], vec![])
+    }
+
+    pub fn fuel() -> Self {
+        Self::new(vec![human_config::evm::TransactionField::Hash], vec![])
     }
 
     pub fn try_from_config_field_selection(

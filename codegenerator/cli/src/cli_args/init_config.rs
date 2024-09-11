@@ -236,10 +236,12 @@ pub mod fuel {
                 ecosystem: EcosystemTag::Fuel,
                 schema: None,
                 contracts: None,
+                raw_events: None,
                 networks: vec![Network {
                     id: 0,
                     start_block: 0,
                     end_block: None,
+                    hyperfuel_config: None,
                     contracts: self
                         .contracts
                         .iter()
