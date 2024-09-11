@@ -155,12 +155,10 @@ impl RescriptTypeDecl {
                 .collect::<Vec<String>>()
                 .join(", ");
             let type_name = format!(
-                "{}<{}>",
-                type_name,
+                "{type_name}<{}>",
                 self.parameters
                     .iter()
                     .map(|param| format!("'{}", param))
-                    .collect::<Vec<String>>()
                     .join(", ")
             );
             format!(
@@ -224,12 +222,11 @@ impl RescriptTypeExpr {
                     .iter()
                     .map(|item| {
                         format!(
-                            r#"S.object((s): {} =>
+                            r#"S.object((s): {type_name} =>
 {{
   s.tag("case", "{}")
   {}({{payload: s.field("payload", {})}})
 }})"#,
-                            type_name,
                             item.name,
                             item.name,
                             item.payload.to_rescript_schema()
@@ -258,7 +255,7 @@ impl RescriptTypeExpr {
                         })
                         .collect::<Vec<String>>()
                         .join(", ");
-                    format!("S.object((s): {} => {{{}}})", type_name, inner_str)
+                    format!("S.object((s): {type_name} => {{{inner_str}}})")
                 }
             }
         }
