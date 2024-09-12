@@ -1,4 +1,4 @@
-use std::{collections::HashMap, fmt::Display, path::PathBuf, vec};
+use std::{collections::HashMap, path::PathBuf, vec};
 
 use super::hbs_dir_generator::HandleBarsDirGenerator;
 use crate::{
@@ -719,6 +719,8 @@ impl NetworkConfigTemplate {
 struct FieldSelection {
     transaction_fields: Vec<SelectedFieldTemplate>,
     block_fields: Vec<SelectedFieldTemplate>,
+    transaction_type: String,
+    transaction_schema: String,
     block_type: String,
     block_schema: String,
     block_raw_events_type: String,
@@ -726,24 +728,17 @@ struct FieldSelection {
 }
 
 impl FieldSelection {
-    fn new(
-        transaction_fields: Vec<SelectedFieldTemplate>,
-        block_fields: &Vec<SelectedField>,
-    ) -> Self {
+    fn new(transaction_fields: &Vec<SelectedField>, block_fields: &Vec<SelectedField>) -> Self {
         let mut block_field_templates = vec![];
         let mut all_block_fields = vec![];
         let mut raw_events_block_fields = vec![];
-
         for field in block_fields.iter().cloned() {
             let name: CaseOptions = field.name.into();
-            let is_optional = field.data_type.is_option();
 
             block_field_templates.push(SelectedFieldTemplate {
                 name: name.clone(),
-                res_schema_code: field.data_type.to_rescript_schema(),
                 default_value_rescript: field.data_type.get_default_value_rescript(),
-                res_type: field.data_type.clone(),
-                is_optional,
+                res_type: field.data_type.to_string(),
             });
 
             let record_field = RescriptRecordField::new(name.camel, field.data_type);
@@ -752,11 +747,31 @@ impl FieldSelection {
                 raw_events_block_fields.push(record_field);
             }
         }
+
+        let mut transaction_field_templates = vec![];
+        let mut all_transaction_fields = vec![];
+        for field in transaction_fields.iter().cloned() {
+            let name: CaseOptions = field.name.into();
+
+            transaction_field_templates.push(SelectedFieldTemplate {
+                name: name.clone(),
+                default_value_rescript: field.data_type.get_default_value_rescript(),
+                res_type: field.data_type.to_string(),
+            });
+
+            let record_field = RescriptRecordField::new(name.camel, field.data_type);
+            all_transaction_fields.push(record_field);
+        }
+
         let block_expr = RescriptTypeExpr::Record(all_block_fields);
         let block_raw_events_expr = RescriptTypeExpr::Record(raw_events_block_fields);
+        let transaction_expr = RescriptTypeExpr::Record(all_transaction_fields);
+
         Self {
-            transaction_fields,
+            transaction_fields: transaction_field_templates,
             block_fields: block_field_templates,
+            transaction_type: transaction_expr.to_string(),
+            transaction_schema: transaction_expr.to_rescript_schema(&"t".to_string()),
             block_type: block_expr.to_string(),
             block_schema: block_expr.to_rescript_schema(&"t".to_string()),
             block_raw_events_schema: block_raw_events_expr
@@ -766,42 +781,15 @@ impl FieldSelection {
     }
 
     fn from_config_field_selection(cfg: &system_config::FieldSelection) -> Self {
-        Self::new(
-            cfg.transaction_fields
-                .iter()
-                .cloned()
-                .map(|field| SelectedFieldTemplate::from(field))
-                .collect(),
-            &cfg.block_fields,
-        )
+        Self::new(&cfg.transaction_fields, &cfg.block_fields)
     }
 }
 
 #[derive(Serialize)]
 struct SelectedFieldTemplate {
     name: CaseOptions,
-    res_type: RescriptTypeIdent,
-    res_schema_code: String,
+    res_type: String,
     default_value_rescript: String,
-    is_optional: bool,
-}
-
-impl SelectedFieldTemplate {
-    fn from<T>(value: T) -> Self
-    where
-        T: Display + Into<RescriptTypeIdent>,
-    {
-        let name = value.to_string().into();
-        let res_type: RescriptTypeIdent = value.into();
-        let is_optional = res_type.is_option();
-        Self {
-            name,
-            res_schema_code: res_type.to_rescript_schema(),
-            default_value_rescript: res_type.get_default_value_rescript(),
-            res_type,
-            is_optional,
-        }
-    }
 }
 
 #[derive(Serialize)]

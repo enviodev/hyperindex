@@ -282,12 +282,15 @@ impl SystemConfig {
                 .context("Failed inserting network at networks map")?;
         }
 
-        let field_selection =
+        let field_selection = FieldSelection::try_from_config_field_selection(
             evm_config
                 .field_selection
-                .map_or(Ok(FieldSelection::empty()), |field_selection| {
-                    FieldSelection::try_from_config_field_selection(field_selection, &networks)
-                })?;
+                .unwrap_or(human_config::evm::FieldSelection {
+                    transaction_fields: None,
+                    block_fields: None,
+                }),
+            &networks,
+        )?;
 
         Ok(SystemConfig {
             name: evm_config.name.clone(),
@@ -976,15 +979,12 @@ pub struct SelectedField {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct FieldSelection {
-    pub transaction_fields: Vec<human_config::evm::TransactionField>,
+    pub transaction_fields: Vec<SelectedField>,
     pub block_fields: Vec<SelectedField>,
 }
 
 impl FieldSelection {
-    fn new(
-        transaction_fields: Vec<human_config::evm::TransactionField>,
-        block_fields: Vec<SelectedField>,
-    ) -> Self {
+    fn new(transaction_fields: Vec<SelectedField>, block_fields: Vec<SelectedField>) -> Self {
         Self {
             transaction_fields,
             block_fields,
@@ -997,7 +997,11 @@ impl FieldSelection {
 
     pub fn fuel() -> Self {
         Self::new(
-            vec![human_config::evm::TransactionField::Hash],
+            vec![SelectedField {
+                name: "id".to_string(),
+                data_type: RescriptTypeIdent::String,
+                skip_raw_events: false,
+            }],
             vec![
                 SelectedField {
                     name: "id".to_string(),
@@ -1023,6 +1027,7 @@ impl FieldSelection {
         network_map: &NetworkMap,
     ) -> Result<Self> {
         use human_config::evm::BlockField;
+        use human_config::evm::TransactionField;
 
         //validate transaction field selection with rpc
         let has_rpc_sync_src = network_map
@@ -1160,7 +1165,95 @@ impl FieldSelection {
             })
         }
 
-        Ok(Self::new(transaction_fields, selected_block_fields))
+        let mut selected_transaction_fields = vec![];
+        for transaction_field in transaction_fields {
+            let data_type = match transaction_field {
+                TransactionField::TransactionIndex => RescriptTypeIdent::Int,
+                TransactionField::Hash => RescriptTypeIdent::String,
+                TransactionField::From => {
+                    RescriptTypeIdent::Option(Box::new(RescriptTypeIdent::Address))
+                }
+                TransactionField::To => {
+                    RescriptTypeIdent::Option(Box::new(RescriptTypeIdent::Address))
+                }
+                TransactionField::Gas => RescriptTypeIdent::BigInt,
+                TransactionField::GasPrice => {
+                    RescriptTypeIdent::Option(Box::new(RescriptTypeIdent::BigInt))
+                }
+                TransactionField::MaxPriorityFeePerGas => {
+                    RescriptTypeIdent::Option(Box::new(RescriptTypeIdent::BigInt))
+                }
+                TransactionField::MaxFeePerGas => {
+                    RescriptTypeIdent::Option(Box::new(RescriptTypeIdent::BigInt))
+                }
+                TransactionField::CumulativeGasUsed => RescriptTypeIdent::BigInt,
+                TransactionField::EffectiveGasPrice => RescriptTypeIdent::BigInt,
+                TransactionField::GasUsed => RescriptTypeIdent::BigInt,
+                TransactionField::Input => RescriptTypeIdent::String,
+                TransactionField::Nonce => RescriptTypeIdent::BigInt,
+                TransactionField::Value => RescriptTypeIdent::BigInt,
+                TransactionField::V => {
+                    RescriptTypeIdent::Option(Box::new(RescriptTypeIdent::String))
+                }
+                TransactionField::R => {
+                    RescriptTypeIdent::Option(Box::new(RescriptTypeIdent::String))
+                }
+                TransactionField::S => {
+                    RescriptTypeIdent::Option(Box::new(RescriptTypeIdent::String))
+                }
+                TransactionField::ContractAddress => {
+                    RescriptTypeIdent::Option(Box::new(RescriptTypeIdent::Address))
+                }
+                TransactionField::LogsBloom => RescriptTypeIdent::String,
+                TransactionField::Root => {
+                    RescriptTypeIdent::Option(Box::new(RescriptTypeIdent::String))
+                }
+                TransactionField::Status => {
+                    RescriptTypeIdent::Option(Box::new(RescriptTypeIdent::Int))
+                }
+                TransactionField::YParity => {
+                    RescriptTypeIdent::Option(Box::new(RescriptTypeIdent::String))
+                }
+                TransactionField::ChainId => {
+                    RescriptTypeIdent::Option(Box::new(RescriptTypeIdent::Int))
+                }
+                // TransactionField::AccessList => todo!(),
+                TransactionField::MaxFeePerBlobGas => {
+                    RescriptTypeIdent::Option(Box::new(RescriptTypeIdent::BigInt))
+                }
+                TransactionField::BlobVersionedHashes => RescriptTypeIdent::Option(Box::new(
+                    RescriptTypeIdent::Array(Box::new(RescriptTypeIdent::String)),
+                )),
+                TransactionField::Kind => {
+                    RescriptTypeIdent::Option(Box::new(RescriptTypeIdent::Int))
+                }
+                TransactionField::L1Fee => {
+                    RescriptTypeIdent::Option(Box::new(RescriptTypeIdent::BigInt))
+                }
+                TransactionField::L1GasPrice => {
+                    RescriptTypeIdent::Option(Box::new(RescriptTypeIdent::BigInt))
+                }
+                TransactionField::L1GasUsed => {
+                    RescriptTypeIdent::Option(Box::new(RescriptTypeIdent::BigInt))
+                }
+                TransactionField::L1FeeScalar => {
+                    RescriptTypeIdent::Option(Box::new(RescriptTypeIdent::Float))
+                }
+                TransactionField::GasUsedForL1 => {
+                    RescriptTypeIdent::Option(Box::new(RescriptTypeIdent::BigInt))
+                }
+            };
+            selected_transaction_fields.push(SelectedField {
+                name: transaction_field.to_string(),
+                data_type,
+                skip_raw_events: false,
+            })
+        }
+
+        Ok(Self::new(
+            selected_transaction_fields,
+            selected_block_fields,
+        ))
     }
 }
 

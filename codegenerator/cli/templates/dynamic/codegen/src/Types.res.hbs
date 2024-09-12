@@ -110,32 +110,9 @@ module Log = {
 
 module Transaction = {
   @genType
-  type t = {
-    {{!-- Selectable fields --}}
-    {{#each field_selection.transaction_fields as | field |}}
-    {{field.name.camel}}: {{field.res_type}},
-    {{/each}}
-  }
+  type t = {{field_selection.transaction_type}}
 
-  let schema: S.schema<t> = S.object((_s): t => {
-    {{#each field_selection.transaction_fields as | field |}}
-    {{field.name.camel}}: _s.field("{{field.name.camel}}", {{field.res_schema_code}}),
-    {{/each}}
-  })
-
-  let querySelection: array<HyperSyncClient.QueryTypes.transactionField> = [
-    {{#each field_selection.transaction_fields as | field |}}
-    {{field.name.pascal}},
-    {{/each}}
-  ]
-
-  let nonOptionalFieldNames: array<string> = [
-    {{#each field_selection.transaction_fields as | field |}}
-    {{#unless field.is_optional}}
-    "{{field.name.camel}}",
-    {{/unless}}
-    {{/each}}
-  ]
+  let schema = {{field_selection.transaction_schema}}
 }
 
 module Block = {

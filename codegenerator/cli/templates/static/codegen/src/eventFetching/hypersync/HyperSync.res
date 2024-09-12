@@ -92,46 +92,39 @@ module CachedClients = {
 }
 
 module LogsQuery = {
-  let logFieldSelection: array<HyperSyncClient.QueryTypes.logField> = [Address, Data, LogIndex, Topic0, Topic1, Topic2, Topic3]
-
   let makeRequestBody = (
     ~fromBlock,
     ~toBlockInclusive,
     ~addressesWithTopics,
-    ~blockFieldSelection
+    ~fieldSelection,
   ): HyperSyncClient.QueryTypes.query => {
     fromBlock,
     toBlockExclusive: toBlockInclusive + 1,
     logs: addressesWithTopics,
-    fieldSelection: {
-      log: logFieldSelection,
-      block: blockFieldSelection,
-      transaction: Types.Transaction.querySelection,
-    },
+    fieldSelection,
   }
 
-  let getMissingFields = (fieldNames, returnedObj, ~prefix) => {
-    fieldNames->Array.keepMap(fieldName => {
-      returnedObj
+  let addMissingParams = (acc, fieldNames, returnedObj, ~prefix) => {
+    fieldNames->Array.forEach(fieldName => {
+      switch returnedObj
       ->(Utils.magic: 'a => Js.Dict.t<unknown>)
-      ->Utils.Dict.dangerouslyGetNonOption(fieldName)
-      ->Utils.Option.mapNone(prefix ++ "." ++ fieldName)
+      ->Utils.Dict.dangerouslyGetNonOption(fieldName) {
+        | Some(_) => ()
+        | None => acc->Array.push(prefix ++ "." ++ fieldName)->ignore
+      }
     })
   }
 
   //Note this function can throw an error
-  let convertEvent = (event: HyperSyncClient.ResponseTypes.event, ~nonOptionalBlockFieldNames): logsQueryPageItem => {
-    let missingParams =
-      [
-        getMissingFields(Types.Log.fieldNames, event.log, ~prefix="log"),
-        getMissingFields(nonOptionalBlockFieldNames, event.block, ~prefix="block"),
-        getMissingFields(
-          Types.Transaction.nonOptionalFieldNames,
-          event.transaction,
-          ~prefix="transaction",
-        ),
-      ]->Array.concatMany
-
+  let convertEvent = (event: HyperSyncClient.ResponseTypes.event, ~nonOptionalBlockFieldNames, ~nonOptionalTransactionFieldNames): logsQueryPageItem => {
+    let missingParams = []
+    missingParams->addMissingParams(Types.Log.fieldNames, event.log, ~prefix="log")
+    missingParams->addMissingParams(nonOptionalBlockFieldNames, event.block, ~prefix="block")
+    missingParams->addMissingParams(
+      nonOptionalTransactionFieldNames,
+      event.transaction,
+      ~prefix="transaction",
+    )
     if missingParams->Array.length > 0 {
       UnexpectedMissingParamsExn({
         queryName: "queryLogsPage HyperSync",
@@ -157,12 +150,12 @@ module LogsQuery = {
     }
   }
 
-  let convertResponse = (res: HyperSyncClient.ResponseTypes.eventResponse, ~nonOptionalBlockFieldNames): queryResponse<
+  let convertResponse = (res: HyperSyncClient.ResponseTypes.eventResponse, ~nonOptionalBlockFieldNames, ~nonOptionalTransactionFieldNames): queryResponse<
     logsQueryPage,
   > => {
     try {
       let {nextBlock, archiveHeight, rollbackGuard} = res
-      let items = res.data->Array.map(item => item->convertEvent(~nonOptionalBlockFieldNames))
+      let items = res.data->Array.map(item => item->convertEvent(~nonOptionalBlockFieldNames, ~nonOptionalTransactionFieldNames))
       let page: logsQueryPage = {
         items,
         nextBlock,
@@ -182,8 +175,9 @@ module LogsQuery = {
     ~fromBlock,
     ~toBlock,
     ~logSelections: array<LogSelection.t>,
-    ~blockFieldSelection,
+    ~fieldSelection,
     ~nonOptionalBlockFieldNames,
+    ~nonOptionalTransactionFieldNames,
   ): queryResponse<logsQueryPage> => {
     let addressesWithTopics = logSelections->Array.flatMap(({addresses, topicSelections}) =>
       topicSelections->Array.map(({topic0, topic1, topic2, topic3}) => {
@@ -197,7 +191,7 @@ module LogsQuery = {
       })
     )
 
-    let query = makeRequestBody(~fromBlock, ~toBlockInclusive=toBlock, ~addressesWithTopics, ~blockFieldSelection)
+    let query = makeRequestBody(~fromBlock, ~toBlockInclusive=toBlock, ~addressesWithTopics, ~fieldSelection)
 
     let hyperSyncClient = CachedClients.getClient(serverUrl)
 
@@ -209,7 +203,7 @@ module LogsQuery = {
 
     let res = await executeQuery->Time.retryAsyncWithExponentialBackOff(~logger=Some(logger))
 
-    res->convertResponse(~nonOptionalBlockFieldNames)
+    res->convertResponse(~nonOptionalBlockFieldNames, ~nonOptionalTransactionFieldNames)
   }
 }
 

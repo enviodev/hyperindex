@@ -187,3 +187,29 @@ let unwrapResultExn = res =>
   }
 
 external queueMicrotask: (unit => unit) => unit = "queueMicrotask"
+
+module Schema = {
+  let getNonOptionalFieldNames = schema => {
+    let acc = []
+    switch schema->S.classify {
+    | Object({items}) =>
+      items->Js.Array2.forEach(item => {
+        switch item.schema->S.classify {
+        // Check for null, since we generate S.null schema for db serializing
+        // In the future it should be changed to Option
+        | Null(_) => ()
+        | _ => acc->Js.Array2.push(item.location)->ignore
+        }
+      })
+    | _ => ()
+    }
+    acc
+  }
+
+  let getCapitalizedFieldNames = schema => {
+    switch schema->S.classify {
+    | Object({items}) => items->Js.Array2.map(item => item.location->String.capitalize)
+    | _ => []
+    }
+  }
+}

@@ -297,12 +297,12 @@ module Make = (
               chainId,
               params,
               transaction: {
-                "hash": item.transactionId,
+                "id": item.transactionId,
               }->Obj.magic, // TODO: Obj.magic needed until the field selection types are not configurable for Fuel and Evm separately
               block: {
-                "number": block.blockNumber,
-                "timestamp": block.timestamp,
-                "hash": block.hash,
+                "height": block.blockNumber,
+                "time": block.timestamp,
+                "id": block.hash,
               }->Obj.magic,
               srcAddress: contractAddress,
               logIndex: receiptIndex,
