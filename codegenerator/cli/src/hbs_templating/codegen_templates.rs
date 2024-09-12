@@ -502,16 +502,6 @@ impl EventTemplate {
                 })
             }
             EventPayload::Data(type_indent) => {
-                // TODO: A special decoder for Unit type_indent
-                // let data_decoder = match config_event.log.logged_type.rescript_type_decl.type_expr {
-                //     rescript_types::RescriptTypeExpr::Identifier(
-                //         rescript_types::RescriptTypeIdent::Unit,
-                //     ) => "Fuel.Receipt.unitDecoder".to_string(),
-                //     _ => format!(
-                //         "Fuel.Receipt.getLogDataDecoder(~abi, ~logId=\"{}\")",
-                //         config_event.sighash
-                //     ),
-                // };
                 let decode_hyper_fuel_data_code = format!(
                     "Fuel.Receipt.getLogDataDecoder(~abi, ~logId=\"{}\")",
                     config_event.sighash

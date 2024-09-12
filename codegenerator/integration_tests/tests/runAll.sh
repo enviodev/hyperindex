@@ -18,6 +18,11 @@ LANGUAGE="JavaScript" ./tests/runSingle.sh
 LANGUAGE="TypeScript" ./tests/runSingle.sh
 LANGUAGE="ReScript" ./tests/runSingle.sh
 
+export TEMPLATE="fuel_Greeter"
+LANGUAGE="JavaScript" ./tests/runSingle.sh
+LANGUAGE="TypeScript" ./tests/runSingle.sh
+LANGUAGE="ReScript" ./tests/runSingle.sh
+
 export TEMPLATE="test_indexers/test_exits"
 export TEST_FILE="EndblockSuccess"
 CONFIG_FILE="config.yaml" SHOULD_FAIL=false TEST_RESTART=false ./tests/testIndexerExits.sh

@@ -227,18 +227,15 @@ pub async fn run_init_args(init_args: InitArgs, project_paths: &ProjectPaths) ->
         }
     }
 
-    let envio_version = match init_config.ecosystem {
-        Ecosystem::Fuel { .. } => "2.2.3-fuel".to_string(),
-        Ecosystem::Evm { .. } => {
-            let crate_version = env!("CARGO_PKG_VERSION");
-            if is_valid_release_version_number(crate_version) {
-                // Check that crate version is not a dev release. In which case the
-                // version should be installable from npm
-                crate_version.to_string()
-            } else {
-                // Else install the latest version from npm so as not to break dev environments
-                "latest".to_string()
-            }
+    let envio_version = {
+        let crate_version = env!("CARGO_PKG_VERSION");
+        if is_valid_release_version_number(crate_version) {
+            // Check that crate version is not a dev release. In which case the
+            // version should be installable from npm
+            crate_version.to_string()
+        } else {
+            // Else install the latest version from npm so as not to break dev environments
+            "latest".to_string()
         }
     };
 

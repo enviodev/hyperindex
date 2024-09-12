@@ -1,0 +1,7 @@
+[project]
+authors = ["Dmitry Zakharov"]
+entry = "main.sw"
+license = "Apache-2.0"
+name = "all-events"
+
+[dependencies]

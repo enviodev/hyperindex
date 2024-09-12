@@ -7,18 +7,6 @@ const maxRetryFailureMessage =
   "Max retries reached - either increase the timeout (maxRetries) or check for other bugs.";
 
 const pollGraphQL = async () => {
-  const rawEventsQuery = `
-    query {
-      raw_events_by_pk(chain_id: 1, event_id: "712791818308") {
-        contract_name
-        event_name
-        log_index
-        src_address
-        block_number
-      }
-    }
-  `;
-
   const accountEntityQuery = `
     {
       Account_by_pk(id: "0x26921A182Cf9D6F33730D7F37E1a86fd430863Af") {
@@ -46,24 +34,24 @@ const pollGraphQL = async () => {
 
         assert(
           account.balance > 311465476000000000000,
-          "balance should be == 70",
+          "balance should be == 70"
         ); // NOTE the balance shouldn't change since we own this erc20 token.
         assert(
           account.approvals.length > 0,
-          "There should be at least one approval",
+          "There should be at least one approval"
         );
         assert(
           account.approvals[0].amount == 79228162514264337593543950335n,
-          "The first approval amount should be 50",
+          "The first approval amount should be 50"
         );
         assert(
           account.approvals[0].owner_id == account.id,
-          "The first approval owner should be the account id",
+          "The first approval owner should be the account id"
         );
         assert(
           account.approvals[0].spender_id ==
-          "0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D",
-          "The first approval spender should be correct (from uniswap)",
+            "0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D",
+          "The first approval spender should be correct (from uniswap)"
         );
       } catch (err) {
         //gotta love javascript
@@ -71,7 +59,7 @@ const pollGraphQL = async () => {
         throw err;
       }
       console.log("Second test passed.");
-    },
+    }
   );
 };
 
