@@ -106,7 +106,7 @@ let mockRawEventRow: TablesStatic.RawEvents.t = {
   srcAddress: "0x0123456789abcdef0123456789abcdef0123456"->Utils.magic,
   blockHash: "0x9876543210fedcba9876543210fedcba987654321",
   blockTimestamp: 1620720000,
-  blockFields: S.serializeOrRaiseWith(({}: Types.Block.selectableFields), Types.Block.schema),
+  blockFields: %raw(`{}`),
   params: {
     "foo": "bar",
     "baz": 42,

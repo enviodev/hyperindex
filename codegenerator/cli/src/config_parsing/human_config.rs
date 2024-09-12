@@ -318,38 +318,6 @@ pub mod evm {
         MixHash,
     }
 
-    impl From<BlockField> for RescriptTypeIdent {
-        fn from(value: BlockField) -> Self {
-            match value {
-                BlockField::ParentHash => Self::String,
-                BlockField::Nonce => Self::Option(Box::new(Self::BigInt)),
-                BlockField::Sha3Uncles => Self::String,
-                BlockField::LogsBloom => Self::String,
-                BlockField::TransactionsRoot => Self::String,
-                BlockField::StateRoot => Self::String,
-                BlockField::ReceiptsRoot => Self::String,
-                BlockField::Miner => Self::Address,
-                BlockField::Difficulty => Self::Option(Box::new(Self::BigInt)),
-                BlockField::TotalDifficulty => Self::Option(Box::new(Self::BigInt)),
-                BlockField::ExtraData => Self::String,
-                BlockField::Size => Self::BigInt,
-                BlockField::GasLimit => Self::BigInt,
-                BlockField::GasUsed => Self::BigInt,
-                BlockField::Uncles => Self::Option(Box::new(Self::Array(Box::new(Self::String)))),
-                BlockField::BaseFeePerGas => Self::Option(Box::new(Self::BigInt)),
-                BlockField::BlobGasUsed => Self::Option(Box::new(Self::BigInt)),
-                BlockField::ExcessBlobGas => Self::Option(Box::new(Self::BigInt)),
-                BlockField::ParentBeaconBlockRoot => Self::Option(Box::new(Self::String)),
-                BlockField::WithdrawalsRoot => Self::Option(Box::new(Self::String)),
-                // BlockField::Withdrawals => todo!(), //should be array of withdrawal record
-                BlockField::L1BlockNumber => Self::Option(Box::new(Self::Int)),
-                BlockField::SendCount => Self::Option(Box::new(Self::String)),
-                BlockField::SendRoot => Self::Option(Box::new(Self::String)),
-                BlockField::MixHash => Self::Option(Box::new(Self::String)),
-            }
-        }
-    }
-
     // Workaround for https://github.com/serde-rs/serde/issues/2231
     #[derive(Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
     #[serde(rename_all = "lowercase", deny_unknown_fields)]

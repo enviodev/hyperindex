@@ -472,18 +472,14 @@ impl SystemConfig {
                 Self::from_evm_config(evm_config, schema, project_paths)
             }
             Ecosystem::Fuel => {
-                return Err(anyhow!(
-                    "EE105: Failed to deserialize config. It's not supported with the main envio \
-                     package yet, please install the envio@fuel version."
-                ));
-                // let fuel_config: FuelConfig =
-                //     serde_yaml::from_str(&human_config_string).context(format!(
-                //     "EE105: Failed to deserialize config. Visit the docs for more information {}",
-                //     links::DOC_CONFIGURATION_FILE
-                // ))?;
-                // let schema = Schema::parse_from_file(&project_paths, &fuel_config.schema)
-                //     .context("Parsing schema file for config")?;
-                // Self::from_fuel_config(fuel_config, schema, project_paths)
+                let fuel_config: FuelConfig =
+                    serde_yaml::from_str(&human_config_string).context(format!(
+                    "EE105: Failed to deserialize config. Visit the docs for more information {}",
+                    links::DOC_CONFIGURATION_FILE
+                ))?;
+                let schema = Schema::parse_from_file(&project_paths, &fuel_config.schema)
+                    .context("Parsing schema file for config")?;
+                Self::from_fuel_config(fuel_config, schema, project_paths)
             }
         }
     }
@@ -972,15 +968,22 @@ impl Event {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct SelectedField {
+    pub name: String,
+    pub data_type: RescriptTypeIdent,
+    pub skip_raw_events: bool,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct FieldSelection {
     pub transaction_fields: Vec<human_config::evm::TransactionField>,
-    pub block_fields: Vec<human_config::evm::BlockField>,
+    pub block_fields: Vec<SelectedField>,
 }
 
 impl FieldSelection {
     fn new(
         transaction_fields: Vec<human_config::evm::TransactionField>,
-        block_fields: Vec<human_config::evm::BlockField>,
+        block_fields: Vec<SelectedField>,
     ) -> Self {
         Self {
             transaction_fields,
@@ -993,13 +996,34 @@ impl FieldSelection {
     }
 
     pub fn fuel() -> Self {
-        Self::new(vec![human_config::evm::TransactionField::Hash], vec![])
+        Self::new(
+            vec![human_config::evm::TransactionField::Hash],
+            vec![
+                SelectedField {
+                    name: "id".to_string(),
+                    data_type: RescriptTypeIdent::String,
+                    skip_raw_events: true,
+                },
+                SelectedField {
+                    name: "height".to_string(),
+                    data_type: RescriptTypeIdent::Int,
+                    skip_raw_events: true,
+                },
+                SelectedField {
+                    name: "time".to_string(),
+                    data_type: RescriptTypeIdent::Int,
+                    skip_raw_events: true,
+                },
+            ],
+        )
     }
 
     pub fn try_from_config_field_selection(
         field_selection_cfg: human_config::evm::FieldSelection,
         network_map: &NetworkMap,
     ) -> Result<Self> {
+        use human_config::evm::BlockField;
+
         //validate transaction field selection with rpc
         let has_rpc_sync_src = network_map
             .values()
@@ -1059,7 +1083,84 @@ impl FieldSelection {
             }
         }
 
-        Ok(Self::new(transaction_fields, block_fields))
+        let mut selected_block_fields = vec![
+            SelectedField {
+                name: "number".to_string(),
+                data_type: RescriptTypeIdent::Int,
+                skip_raw_events: true,
+            },
+            SelectedField {
+                name: "timestamp".to_string(),
+                data_type: RescriptTypeIdent::Int,
+                skip_raw_events: true,
+            },
+            SelectedField {
+                name: "hash".to_string(),
+                data_type: RescriptTypeIdent::String,
+                skip_raw_events: true,
+            },
+        ];
+
+        for block_field in block_fields {
+            let data_type = match block_field {
+                BlockField::ParentHash => RescriptTypeIdent::String,
+                BlockField::Nonce => RescriptTypeIdent::Option(Box::new(RescriptTypeIdent::BigInt)),
+                BlockField::Sha3Uncles => RescriptTypeIdent::String,
+                BlockField::LogsBloom => RescriptTypeIdent::String,
+                BlockField::TransactionsRoot => RescriptTypeIdent::String,
+                BlockField::StateRoot => RescriptTypeIdent::String,
+                BlockField::ReceiptsRoot => RescriptTypeIdent::String,
+                BlockField::Miner => RescriptTypeIdent::Address,
+                BlockField::Difficulty => {
+                    RescriptTypeIdent::Option(Box::new(RescriptTypeIdent::BigInt))
+                }
+                BlockField::TotalDifficulty => {
+                    RescriptTypeIdent::Option(Box::new(RescriptTypeIdent::BigInt))
+                }
+                BlockField::ExtraData => RescriptTypeIdent::String,
+                BlockField::Size => RescriptTypeIdent::BigInt,
+                BlockField::GasLimit => RescriptTypeIdent::BigInt,
+                BlockField::GasUsed => RescriptTypeIdent::BigInt,
+                BlockField::Uncles => RescriptTypeIdent::Option(Box::new(
+                    RescriptTypeIdent::Array(Box::new(RescriptTypeIdent::String)),
+                )),
+                BlockField::BaseFeePerGas => {
+                    RescriptTypeIdent::Option(Box::new(RescriptTypeIdent::BigInt))
+                }
+                BlockField::BlobGasUsed => {
+                    RescriptTypeIdent::Option(Box::new(RescriptTypeIdent::BigInt))
+                }
+                BlockField::ExcessBlobGas => {
+                    RescriptTypeIdent::Option(Box::new(RescriptTypeIdent::BigInt))
+                }
+                BlockField::ParentBeaconBlockRoot => {
+                    RescriptTypeIdent::Option(Box::new(RescriptTypeIdent::String))
+                }
+                BlockField::WithdrawalsRoot => {
+                    RescriptTypeIdent::Option(Box::new(RescriptTypeIdent::String))
+                }
+                // BlockField::Withdrawals => todo!(), //should be array of withdrawal record
+                BlockField::L1BlockNumber => {
+                    RescriptTypeIdent::Option(Box::new(RescriptTypeIdent::Int))
+                }
+                BlockField::SendCount => {
+                    RescriptTypeIdent::Option(Box::new(RescriptTypeIdent::String))
+                }
+                BlockField::SendRoot => {
+                    RescriptTypeIdent::Option(Box::new(RescriptTypeIdent::String))
+                }
+                BlockField::MixHash => {
+                    RescriptTypeIdent::Option(Box::new(RescriptTypeIdent::String))
+                }
+            };
+            selected_block_fields.push(SelectedField {
+                name: block_field.to_string(),
+                data_type,
+                skip_raw_events: false,
+            })
+        }
+
+        Ok(Self::new(transaction_fields, selected_block_fields))
     }
 }
 

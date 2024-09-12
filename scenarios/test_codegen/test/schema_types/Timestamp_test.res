@@ -28,9 +28,7 @@ describe("Load and save an entity with a Timestamp from DB", () => {
     let loadLayer = LoadLayer.makeWithDbConnection()
 
     let contextEnv = ContextEnv.make(
-      ~eventMod=module(Types.Gravatar.EmptyEvent)->Types.eventModToInternal,
-      ~event={"devMsg": "This is a placeholder event", "block": {"number": 456}}->Utils.magic,
-      ~chain=MockConfig.chain1,
+      ~eventBatchQueueItem=MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem,
       ~logger=Logging.logger,
     )
 

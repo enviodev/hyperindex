@@ -127,6 +127,7 @@ let registerContractHandlers = (
               let shouldUseHypersyncClientDecoder = Env.Configurable.shouldUseHypersyncClientDecoder->Belt.Option.getWithDefault(
                 {{hypersync_config.is_client_decoder}},
               )
+              let blockSchema = Types.Block.schema
             }))
             {{/with}}
             {{/if}}

@@ -1,4 +1,4 @@
-use std::{collections::HashMap, fmt::Display, path::PathBuf};
+use std::{collections::HashMap, fmt::Display, path::PathBuf, vec};
 
 use super::hbs_dir_generator::HandleBarsDirGenerator;
 use crate::{
@@ -8,7 +8,7 @@ use crate::{
         postgres_types,
         system_config::{
             self, Abi, Ecosystem, EventPayload, HyperfuelConfig, HypersyncConfig, RpcConfig,
-            SystemConfig,
+            SelectedField, SystemConfig,
         },
     },
     persisted_state::{PersistedState, PersistedStateJsonString},
@@ -717,15 +717,51 @@ impl NetworkConfigTemplate {
 
 #[derive(Serialize)]
 struct FieldSelection {
-    transaction_fields: Vec<SelectableField>,
-    block_fields: Vec<SelectableField>,
+    transaction_fields: Vec<SelectedFieldTemplate>,
+    block_fields: Vec<SelectedFieldTemplate>,
+    block_type: String,
+    block_schema: String,
+    block_raw_events_type: String,
+    block_raw_events_schema: String,
 }
 
 impl FieldSelection {
-    fn new(transaction_fields: Vec<SelectableField>, block_fields: Vec<SelectableField>) -> Self {
+    fn new(
+        transaction_fields: Vec<SelectedFieldTemplate>,
+        block_fields: &Vec<SelectedField>,
+    ) -> Self {
+        let mut block_field_templates = vec![];
+        let mut all_block_fields = vec![];
+        let mut raw_events_block_fields = vec![];
+
+        for field in block_fields.iter().cloned() {
+            let name: CaseOptions = field.name.into();
+            let is_optional = field.data_type.is_option();
+
+            block_field_templates.push(SelectedFieldTemplate {
+                name: name.clone(),
+                res_schema_code: field.data_type.to_rescript_schema(),
+                default_value_rescript: field.data_type.get_default_value_rescript(),
+                res_type: field.data_type.clone(),
+                is_optional,
+            });
+
+            let record_field = RescriptRecordField::new(name.camel, field.data_type);
+            all_block_fields.push(record_field.clone());
+            if field.skip_raw_events {
+                raw_events_block_fields.push(record_field);
+            }
+        }
+        let block_expr = RescriptTypeExpr::Record(all_block_fields);
+        let block_raw_events_expr = RescriptTypeExpr::Record(raw_events_block_fields);
         Self {
             transaction_fields,
-            block_fields,
+            block_fields: block_field_templates,
+            block_type: block_expr.to_string(),
+            block_schema: block_expr.to_rescript_schema(&"t".to_string()),
+            block_raw_events_schema: block_raw_events_expr
+                .to_rescript_schema(&"rawEventFields".to_string()),
+            block_raw_events_type: block_raw_events_expr.to_string(),
         }
     }
 
@@ -734,19 +770,15 @@ impl FieldSelection {
             cfg.transaction_fields
                 .iter()
                 .cloned()
-                .map(|field| SelectableField::from(field))
+                .map(|field| SelectedFieldTemplate::from(field))
                 .collect(),
-            cfg.block_fields
-                .iter()
-                .cloned()
-                .map(|field| SelectableField::from(field))
-                .collect(),
+            &cfg.block_fields,
         )
     }
 }
 
 #[derive(Serialize)]
-struct SelectableField {
+struct SelectedFieldTemplate {
     name: CaseOptions,
     res_type: RescriptTypeIdent,
     res_schema_code: String,
@@ -754,7 +786,7 @@ struct SelectableField {
     is_optional: bool,
 }
 
-impl SelectableField {
+impl SelectedFieldTemplate {
     fn from<T>(value: T) -> Self
     where
         T: Display + Into<RescriptTypeIdent>,

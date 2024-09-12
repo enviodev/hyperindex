@@ -139,57 +139,36 @@ module Transaction = {
 }
 
 module Block = {
-  type selectableFields = {
-    {{!-- Selectable fields --}}
-    {{#each field_selection.block_fields as | field |}}
-    {{field.name.camel}}: {{field.res_type}},
-    {{/each}}
-  }
-
-  let schema: S.schema<selectableFields> = S.object((_s): selectableFields => {
-    {{#each field_selection.block_fields as | field |}}
-    {{field.name.camel}}: _s.field("{{field.name.camel}}", {{field.res_schema_code}}),
-    {{/each}}
-  })
-
   @genType
-  type t = {
-    {{!-- Mandatory fields --}}
-    number: int,
-    timestamp: int,
-    hash: string,
-    ...selectableFields,
-  }
+  type t = {{field_selection.block_type}}
 
-  let getSelectableFields = ({
-    {{#each field_selection.block_fields as | field |}}
-    {{field.name.camel}},
-    {{/each}}
-    }: t): selectableFields => {
-    {{#each field_selection.block_fields as | field |}}
-    {{field.name.camel}}: {{field.name.camel}},
-    {{/each}}
-    }
+  type rawEventFields = {{field_selection.block_raw_events_type}}
 
-  let querySelection: array<HyperSyncClient.QueryTypes.blockField> = [
-    Number,
-    Timestamp,
-    Hash,
-    {{#each field_selection.block_fields as | field |}}
-    {{field.name.pascal}},
-    {{/each}}
-  ]
+  let schema = {{field_selection.block_schema}}
 
-  let nonOptionalFieldNames: array<string> = [
-    "number",
-    "timestamp",
-    "hash",
-    {{#each field_selection.block_fields as | field |}}
-    {{#unless field.is_optional}}
-    "{{field.name.camel}}",
-    {{/unless}}
-    {{/each}}
-  ]
+  let rawEventSchema = {{field_selection.block_raw_events_schema}}
+
+  {{#if is_evm_ecosystem}}
+  @get
+  external getNumber: t => int = "number"
+
+  @get
+  external getTimestamp: t => int = "timestamp"
+ 
+  @get
+  external getId: t => string = "hash"
+  {{/if}}
+
+  {{#if is_fuel_ecosystem}}
+  @get
+  external getNumber: t => int = "height"
+
+  @get
+  external getTimestamp: t => int = "time"
+ 
+  @get
+  external getId: t => string = "id"
+  {{/if}}
 }
 
 @genType.as("EventLog")

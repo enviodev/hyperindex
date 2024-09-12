@@ -92,17 +92,20 @@ module CachedClients = {
 }
 
 module LogsQuery = {
+  let logFieldSelection: array<HyperSyncClient.QueryTypes.logField> = [Address, Data, LogIndex, Topic0, Topic1, Topic2, Topic3]
+
   let makeRequestBody = (
     ~fromBlock,
     ~toBlockInclusive,
     ~addressesWithTopics,
+    ~blockFieldSelection
   ): HyperSyncClient.QueryTypes.query => {
     fromBlock,
     toBlockExclusive: toBlockInclusive + 1,
     logs: addressesWithTopics,
     fieldSelection: {
-      log: [Address, Data, LogIndex, Topic0, Topic1, Topic2, Topic3],
-      block: Types.Block.querySelection,
+      log: logFieldSelection,
+      block: blockFieldSelection,
       transaction: Types.Transaction.querySelection,
     },
   }
@@ -117,11 +120,11 @@ module LogsQuery = {
   }
 
   //Note this function can throw an error
-  let convertEvent = (event: HyperSyncClient.ResponseTypes.event): logsQueryPageItem => {
+  let convertEvent = (event: HyperSyncClient.ResponseTypes.event, ~nonOptionalBlockFieldNames): logsQueryPageItem => {
     let missingParams =
       [
         getMissingFields(Types.Log.fieldNames, event.log, ~prefix="log"),
-        getMissingFields(Types.Block.nonOptionalFieldNames, event.block, ~prefix="block"),
+        getMissingFields(nonOptionalBlockFieldNames, event.block, ~prefix="block"),
         getMissingFields(
           Types.Transaction.nonOptionalFieldNames,
           event.transaction,
@@ -154,12 +157,12 @@ module LogsQuery = {
     }
   }
 
-  let convertResponse = (res: HyperSyncClient.ResponseTypes.eventResponse): queryResponse<
+  let convertResponse = (res: HyperSyncClient.ResponseTypes.eventResponse, ~nonOptionalBlockFieldNames): queryResponse<
     logsQueryPage,
   > => {
     try {
       let {nextBlock, archiveHeight, rollbackGuard} = res
-      let items = res.data->Array.map(convertEvent)
+      let items = res.data->Array.map(item => item->convertEvent(~nonOptionalBlockFieldNames))
       let page: logsQueryPage = {
         items,
         nextBlock,
@@ -179,6 +182,8 @@ module LogsQuery = {
     ~fromBlock,
     ~toBlock,
     ~logSelections: array<LogSelection.t>,
+    ~blockFieldSelection,
+    ~nonOptionalBlockFieldNames,
   ): queryResponse<logsQueryPage> => {
     let addressesWithTopics = logSelections->Array.flatMap(({addresses, topicSelections}) =>
       topicSelections->Array.map(({topic0, topic1, topic2, topic3}) => {
@@ -192,7 +197,7 @@ module LogsQuery = {
       })
     )
 
-    let query = makeRequestBody(~fromBlock, ~toBlockInclusive=toBlock, ~addressesWithTopics)
+    let query = makeRequestBody(~fromBlock, ~toBlockInclusive=toBlock, ~addressesWithTopics, ~blockFieldSelection)
 
     let hyperSyncClient = CachedClients.getClient(serverUrl)
 
@@ -204,7 +209,7 @@ module LogsQuery = {
 
     let res = await executeQuery->Time.retryAsyncWithExponentialBackOff(~logger=Some(logger))
 
-    res->convertResponse
+    res->convertResponse(~nonOptionalBlockFieldNames)
   }
 }
 

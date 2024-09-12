@@ -146,3 +146,15 @@ jobs:
         working-directory: scenarios/erc20_multichain_factory
         run: |
           pnpm test
+
+      - name: fuel_test build
+        if: steps.changes.outputs.testChanges == 'true'
+        working-directory: scenarios/fuel_test
+        run: |
+          pnpm codegen
+
+      - name: fuel_test test
+        if: steps.changes.outputs.testChanges == 'true'
+        working-directory: scenarios/fuel_test
+        run: |
+          pnpm test

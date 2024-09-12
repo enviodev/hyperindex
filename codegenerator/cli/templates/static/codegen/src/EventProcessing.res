@@ -80,16 +80,15 @@ let addToDynamicContractRegistrations = (
 
 let runEventContractRegister = (
   contractRegister: Types.HandlerTypes.args<_> => unit,
-  ~event,
   ~eventBatchQueueItem: Types.eventBatchQueueItem,
   ~logger,
   ~checkContractIsRegistered,
   ~dynamicContractRegistrations: option<dynamicContractRegistrations>,
   ~inMemoryStore,
 ) => {
-  let {chain, eventMod} = eventBatchQueueItem
+  let {chain, event, blockNumber} = eventBatchQueueItem
 
-  let contextEnv = ContextEnv.make(~event, ~chain, ~logger, ~eventMod)
+  let contextEnv = ContextEnv.make(~eventBatchQueueItem, ~logger)
 
   switch contractRegister(contextEnv->ContextEnv.getContractRegisterArgs(~inMemoryStore)) {
   | exception exn =>
@@ -110,7 +109,7 @@ let runEventContractRegister = (
     let addToDynamicContractRegistrations =
       eventBatchQueueItem->(
         addToDynamicContractRegistrations(
-          ~registeringEventBlockNumber=event.block.number,
+          ~registeringEventBlockNumber=blockNumber,
           ~registeringEventLogIndex=event.logIndex,
           ...
         )
@@ -151,17 +150,16 @@ let runEventLoader = async (
 }
 
 let addEventToRawEvents = (
-  event: Types.eventLog<Types.internalEventArgs>,
-  ~eventMod: module(Types.InternalEvent),
+  eventBatchQueueItem: Types.eventBatchQueueItem,
   ~inMemoryStore: InMemoryStore.t,
-  ~chainId,
 ) => {
+  let {event, eventMod, chain, blockNumber, timestamp: blockTimestamp} = eventBatchQueueItem
   let {block, transaction, params, logIndex, srcAddress} = event
-  let {number: blockNumber, hash: blockHash, timestamp: blockTimestamp} = block
   let module(Event) = eventMod
+  let chainId = chain->ChainMap.Chain.toChainId
   let eventId = EventUtils.packEventIndex(~logIndex, ~blockNumber)
   let blockFields =
-    block->Types.Block.getSelectableFields->S.serializeOrRaiseWith(Types.Block.schema)
+    (block :> Types.Block.rawEventFields)->S.serializeOrRaiseWith(Types.Block.rawEventSchema)
   let transactionFields = transaction->S.serializeOrRaiseWith(Types.Transaction.schema)
   let params = params->S.serializeOrRaiseWith(Event.eventArgsSchema)
 
@@ -173,7 +171,7 @@ let addEventToRawEvents = (
     blockNumber,
     logIndex,
     srcAddress,
-    blockHash,
+    blockHash: block->Types.Block.getId,
     blockTimestamp,
     blockFields,
     transactionFields,
@@ -186,11 +184,12 @@ let addEventToRawEvents = (
 }
 
 let updateEventSyncState = (
-  event: Types.eventLog<'a>,
-  ~chainId,
+  eventBatchQueueItem: Types.eventBatchQueueItem,
   ~inMemoryStore: InMemoryStore.t,
 ) => {
-  let {logIndex, block: {number: blockNumber, timestamp: blockTimestamp}} = event
+  let {event, chain, blockNumber, timestamp: blockTimestamp} = eventBatchQueueItem
+  let {logIndex} = event
+  let chainId = chain->ChainMap.Chain.toChainId
   let _ = inMemoryStore.eventSyncState->InMemoryTable.set(
     chainId,
     {
@@ -203,19 +202,17 @@ let updateEventSyncState = (
 }
 
 let runEventHandler = (
-  event,
-  ~eventMod: module(Types.InternalEvent),
+  eventBatchQueueItem: Types.eventBatchQueueItem,
   ~loaderHandler: Types.HandlerTypes.loaderHandler<_>,
   ~inMemoryStore,
   ~logger,
-  ~chain,
   ~latestProcessedBlocks,
   ~loadLayer,
   ~config: Config.t,
 ) => {
   open ErrorHandling.ResultPropogateEnv
   runAsyncEnv(async () => {
-    let contextEnv = ContextEnv.make(~event, ~chain, ~logger, ~eventMod)
+    let contextEnv = ContextEnv.make(~eventBatchQueueItem, ~logger)
     let {loader, handler} = loaderHandler
 
     let loaderReturn =
@@ -233,14 +230,12 @@ let runEventHandler = (
       ->Error
       ->propogate
     | () =>
-      let {chainId} = event
-
-      event->updateEventSyncState(~chainId, ~inMemoryStore)
+      eventBatchQueueItem->updateEventSyncState(~inMemoryStore)
       if config.enableRawEvents {
-        event->addEventToRawEvents(~eventMod, ~inMemoryStore, ~chainId)
+        eventBatchQueueItem->addEventToRawEvents(~inMemoryStore)
       }
       latestProcessedBlocks
-      ->EventsProcessed.updateEventsProcessed(~chain, ~blockNumber=event.block.number)
+      ->EventsProcessed.updateEventsProcessed(~chain=eventBatchQueueItem.chain, ~blockNumber=eventBatchQueueItem.blockNumber)
       ->Ok
     }
   })
@@ -252,26 +247,22 @@ let getHandlerRegistration = (eventMod: module(Types.InternalEvent)) => {
 }
 
 let runHandler = (
-  event: Types.eventLog<'eventArgs>,
-  ~eventMod: module(Types.InternalEvent),
+  eventBatchQueueItem: Types.eventBatchQueueItem,
   ~latestProcessedBlocks,
   ~inMemoryStore,
   ~logger,
-  ~chain,
   ~loadLayer,
   ~config,
 ) => {
-  switch eventMod
+  switch eventBatchQueueItem.eventMod
   ->getHandlerRegistration
   ->Types.HandlerTypes.Register.getLoaderHandler {
   | Some(loaderHandler) =>
-    event->runEventHandler(
+    eventBatchQueueItem->runEventHandler(
       ~loaderHandler,
       ~latestProcessedBlocks,
       ~inMemoryStore,
       ~logger,
-      ~chain,
-      ~eventMod,
       ~loadLayer,
       ~config,
     )
@@ -312,12 +303,9 @@ let rec registerDynamicContracts = (
       )
       ->Ok
     } else {
-      let {eventMod, event} = eventBatchQueueItem
-
-      switch eventMod->getHandlerRegistration->Types.HandlerTypes.Register.getContractRegister {
+      switch eventBatchQueueItem.eventMod->getHandlerRegistration->Types.HandlerTypes.Register.getContractRegister {
       | Some(handler) =>
         handler->runEventContractRegister(
-          ~event,
           ~logger,
           ~checkContractIsRegistered,
           ~eventBatchQueueItem,
@@ -366,13 +354,13 @@ let runLoaders = (
     // Still need to propogate the errors.
     let _: array<unknown> =
       await eventBatch
-      ->Array.keepMap(({chain, eventMod, event}) => {
-        eventMod
+      ->Array.keepMap(eventBatchQueueItem => {
+        eventBatchQueueItem.eventMod
         ->getHandlerRegistration
         ->Types.HandlerTypes.Register.getLoaderHandler
         ->Option.map(
           ({loader}) => {
-            let contextEnv = ContextEnv.make(~chain, ~eventMod, ~event, ~logger)
+            let contextEnv = ContextEnv.make(~eventBatchQueueItem, ~logger)
             runEventLoader(~contextEnv, ~loader, ~inMemoryStore, ~loadLayer)->Promise.thenResolve(
               propogate,
             )
@@ -396,16 +384,14 @@ let runHandlers = (
   let latestProcessedBlocks = ref(latestProcessedBlocks)
   runAsyncEnv(async () => {
     for i in 0 to eventBatch->Array.length - 1 {
-      let {event, eventMod, chain} = eventBatch->Js.Array2.unsafe_get(i)
+      let eventBatchQueueItem = eventBatch->Js.Array2.unsafe_get(i)
 
       latestProcessedBlocks :=
         (
           await runHandler(
-            event,
-            ~eventMod,
+            eventBatchQueueItem,
             ~inMemoryStore,
             ~logger,
-            ~chain,
             ~latestProcessedBlocks=latestProcessedBlocks.contents,
             ~loadLayer,
             ~config,
