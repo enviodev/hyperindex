@@ -1,4 +1,7 @@
-use super::human_config::evm::HumanConfig;
+use super::{
+    chain_helpers,
+    human_config::{self, evm::HumanConfig},
+};
 use crate::constants::reserved_keywords::{
     ENVIO_INTERNAL_RESERVED_POSTGRES_TYPES, JAVASCRIPT_RESERVED_WORDS, RESCRIPT_RESERVED_WORDS,
     TYPESCRIPT_RESERVED_WORDS,
@@ -125,6 +128,52 @@ pub fn validate_names_valid_rescript(
     Ok(())
 }
 
+impl human_config::evm::Network {
+    pub fn validate_finite_endblock_networks(
+        &self,
+        human_config: &human_config::evm::HumanConfig,
+    ) -> anyhow::Result<()> {
+        let is_unordered_multichain_mode = human_config.unordered_multichain_mode.unwrap_or(false);
+        let is_multichain_indexer = human_config.networks.len() > 1;
+        if !is_unordered_multichain_mode && is_multichain_indexer {
+            let make_err = |finite_end_block: i32| {
+                Err(anyhow!(
+                    "Network {} has a finite end block of {}. Please set an end_block that is \
+                     less than or equal to the finite end block in your config or set \
+                     \"unordered_multichain_mode\" to true. Your multichain indexer will \
+                     otherwise be stuck when it reaches the end of this chain.",
+                    self.id,
+                    finite_end_block
+                ))
+            };
+            match chain_helpers::Network::from_network_id(self.id) {
+                Ok(network) => match (self.end_block, network.get_finite_end_block()) {
+                    (Some(end_block), Some(finite_end_block)) if end_block > finite_end_block => {
+                        return make_err(finite_end_block)
+                    }
+                    (None, Some(finite_end_block)) => return make_err(finite_end_block),
+                    _ => (),
+                },
+                Err(_) => (),
+            }
+        }
+        Ok(())
+    }
+
+    pub fn validate_endblock_lte_startblock(&self) -> anyhow::Result<()> {
+        if let Some(network_endblock) = self.end_block {
+            if network_endblock < self.start_block {
+                return Err(anyhow!(
+                    "EE110: The config file has an endBlock that is less than the startBlock for \
+                     network id: {}. The endBlock must be greater than the startBlock.",
+                    &self.id.to_string()
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
 pub fn validate_deserialized_config_yaml(evm_config: &HumanConfig) -> anyhow::Result<()> {
     let mut contract_names = Vec::new();
 
@@ -136,15 +185,8 @@ pub fn validate_deserialized_config_yaml(evm_config: &HumanConfig) -> anyhow::Re
 
     for network in &evm_config.networks {
         // validate endblock is a greater than the startblock
-        if let Some(&network_endblock) = network.end_block.as_ref() {
-            if network_endblock < network.start_block {
-                return Err(anyhow!(
-                    "EE110: The config file has an endBlock that is less than the startBlock for \
-                     network id: {}. The endBlock must be greater than the startBlock.",
-                    &network.id.to_string()
-                ));
-            }
-        }
+        network.validate_endblock_lte_startblock()?;
+        network.validate_finite_endblock_networks(evm_config)?;
 
         for contract in &network.contracts {
             if let Some(_) = contract.config.as_ref() {

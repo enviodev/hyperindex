@@ -13,6 +13,7 @@ pub mod evm {
 
     use crate::{
         config_parsing::{
+            chain_helpers,
             contract_import::converters::{NetworkKind, SelectedContract},
             human_config::{
                 evm::{ContractConfig, EventConfig, HumanConfig, Network, RpcConfig},
@@ -112,12 +113,24 @@ pub mod evm {
                                 }),
                             };
 
+                            let end_block = match selected_network.network {
+                                NetworkKind::Supported(network) => {
+                                    chain_helpers::Network::from(network).get_finite_end_block()
+                                }
+                                NetworkKind::Unsupported(network_id, _) => {
+                                    chain_helpers::Network::from_network_id(network_id)
+                                        .ok()
+                                        .map(|network| network.get_finite_end_block())
+                                        .flatten()
+                                }
+                            };
+
                             Network {
                                 id: selected_network.network.get_network_id(),
                                 hypersync_config: None,
                                 rpc_config,
                                 start_block: 0,
-                                end_block: None,
+                                end_block,
                                 confirmed_block_threshold: None,
                                 contracts: Vec::new(),
                             }
