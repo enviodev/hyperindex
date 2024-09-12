@@ -117,7 +117,12 @@ pub mod evm {
                                 NetworkKind::Supported(network) => {
                                     chain_helpers::Network::from(network).get_finite_end_block()
                                 }
-                                NetworkKind::Unsupported(_, _) => None,
+                                NetworkKind::Unsupported(network_id, _) => {
+                                    chain_helpers::Network::from_network_id(network_id)
+                                        .ok()
+                                        .map(|network| network.get_finite_end_block())
+                                        .flatten()
+                                }
                             };
 
                             Network {
