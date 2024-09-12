@@ -36,7 +36,7 @@ type item = {
   receipt: Fuel.Receipt.t,
   receiptType: Fuel.receiptType,
   receiptIndex: int,
-  block: block
+  block: block,
 }
 
 type blockNumberAndHash = {
@@ -47,7 +47,7 @@ type blockNumberAndHash = {
 type logsQueryPage = hyperSyncPage<item>
 
 type contractReceiptQuery = {
-  addresses: array<Address.t>,
+  addresses?: array<Address.t>,
   rb: array<bigint>,
 }
 
@@ -64,8 +64,8 @@ let queryErrorToMsq = (e: queryError): string => {
   let getMsgFromExn = (exn: exn) =>
     exn
     ->Js.Exn.asJsExn
-    ->Belt.Option.flatMap(exn => exn->Js.Exn.message)
-    ->Belt.Option.getWithDefault("No message on exception")
+    ->Option.flatMap(exn => exn->Js.Exn.message)
+    ->Option.getWithDefault("No message on exception")
   switch e {
   | UnexpectedMissingParams({queryName, missingParams}) =>
     `${queryName} query failed due to unexpected missing params on response:
@@ -89,6 +89,10 @@ let queryErrorToMsq = (e: queryError): string => {
 type queryResponse<'a> = result<'a, queryError>
 
 module LogsQuery = {
+  let receiptTypeSelection: array<Fuel.receiptType> = [LogData]
+  // only transactions with status 1 (success)
+  let txStatusSelection = [1]
+
   let makeRequestBody = (
     ~fromBlock,
     ~toBlockInclusive,
@@ -97,11 +101,10 @@ module LogsQuery = {
     let receipts = contractsReceiptQuery->Js.Array2.map((
       q
     ): HyperFuelClient.QueryTypes.receiptSelection => {
-      rootContractId: q.addresses,
-      receiptType: [LogData],
+      rootContractId: ?q.addresses,
+      receiptType: receiptTypeSelection,
       rb: q.rb,
-      // only transactions with status 1 (success)
-      txStatus: [1],
+      txStatus: txStatusSelection,
     })
     {
       fromBlock,
@@ -146,28 +149,38 @@ module LogsQuery = {
     let blocksDict = Js.Dict.empty()
     blocks
     ->(Utils.magic: option<'a> => 'a)
-    ->Belt.Array.forEach(block => {
+    ->Array.forEach(block => {
       blocksDict->Js.Dict.set(block.height->(Utils.magic: int => string), block)
     })
 
-    receipts->Belt.Array.map(receipt => {
-      let block =
-        blocksDict
-        ->Utils.Dict.dangerouslyGetNonOption(receipt.blockHeight->(Utils.magic: int => string))
-        ->getParam("Failed to find block associated to receipt")
-      {
-        transactionId: receipt.txId,
-        block: {
-          blockNumber: block.height,
-          hash: block.id,
-          timestamp: block.time,
-        },
-        contractId: receipt.rootContractId->getParam("receipt.rootContractId"),
-        receipt: receipt->(Utils.magic: HyperFuelClient.FuelTypes.receipt => Fuel.Receipt.t),
-        receiptType: receipt.receiptType,
-        receiptIndex: receipt.receiptIndex
+    let items = []
+
+    receipts->Array.forEach(receipt => {
+      switch receipt.rootContractId {
+      | None => ()
+      | Some(contractId) => {
+          let block =
+            blocksDict
+            ->Utils.Dict.dangerouslyGetNonOption(receipt.blockHeight->(Utils.magic: int => string))
+            ->getParam("Failed to find block associated to receipt")
+          items
+          ->Array.push({
+            transactionId: receipt.txId,
+            block: {
+              blockNumber: block.height,
+              hash: block.id,
+              timestamp: block.time,
+            },
+            contractId,
+            receipt: receipt->(Utils.magic: HyperFuelClient.FuelTypes.receipt => Fuel.Receipt.t),
+            receiptType: receipt.receiptType,
+            receiptIndex: receipt.receiptIndex,
+          })
+          ->ignore
+        }
       }
     })
+    items
   }
 
   let convertResponse = (res: HyperFuelClient.queryResponseTyped): queryResponse<logsQueryPage> => {
@@ -176,7 +189,7 @@ module LogsQuery = {
       let page: logsQueryPage = {
         items: res.data->decodeLogQueryPageItems,
         nextBlock,
-        archiveHeight: archiveHeight->Belt.Option.getWithDefault(0), // TODO: FIXME: Shouldn't have a default here
+        archiveHeight: archiveHeight->Option.getWithDefault(0), // TODO: FIXME: Shouldn't have a default here
       }
 
       Ok(page)
@@ -289,7 +302,7 @@ module HeightQuery = {
       | Ok({height: newHeight}) => height := newHeight
       | Error(e) =>
         logger->Logging.childWarn({
-          "message": `Failed to get height from endpoint. Retrying in ${retryIntervalMillis.contents->Belt.Int.toString}ms...`,
+          "message": `Failed to get height from endpoint. Retrying in ${retryIntervalMillis.contents->Int.toString}ms...`,
           "error": e,
         })
         await Time.resolvePromiseAfterDelay(~delayMilliseconds=retryIntervalMillis.contents)
@@ -334,9 +347,9 @@ module BlockHashes = {
     | Error(e) => Error(QueryError(e))
     | Ok(successRes) =>
       successRes.data
-      ->Belt.Array.flatMap(item => {
-        item.blocks->Belt.Option.mapWithDefault([], blocks => {
-          blocks->Belt.Array.map(
+      ->Array.flatMap(item => {
+        item.blocks->Option.mapWithDefault([], blocks => {
+          blocks->Array.map(
             block => {
               switch (block.height, block.id) {
               | (Some(blockNumber), Some(hash)) =>
@@ -353,7 +366,7 @@ module BlockHashes = {
                   [
                     block.height->Utils.Option.mapNone("block.height"),
                     block.id->Utils.Option.mapNone("block.id"),
-                  ]->Belt.Array.keepMap(p => p)
+                  ]->Array.keepMap(p => p)
 
                 Error(
                   UnexpectedMissingParams({
@@ -389,11 +402,11 @@ module BlockHashes = {
   let queryBlockHashes = async (~serverUrl, ~blockNumbers) => {
     let res =
       await blockNumbers
-      ->Belt.Array.map(blockNumber => queryBlockHash(~blockNumber, ~serverUrl))
+      ->Array.map(blockNumber => queryBlockHash(~blockNumber, ~serverUrl))
       ->Promise.all
     res
     ->Utils.Array.transposeResults
-    ->Belt.Result.map(blockHashesNested => blockHashesNested->Belt.Array.concatMany)
+    ->Result.map(blockHashesNested => blockHashesNested->Array.concatMany)
   }
 }
 

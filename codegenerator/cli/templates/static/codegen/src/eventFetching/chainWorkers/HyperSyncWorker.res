@@ -91,7 +91,7 @@ let makeGetNextPage = (~endpointUrl, ~contracts: array<Config.contract>, ~queryL
     }
   }
   
-  let wildcardTopicSelection = contracts->Belt.Array.flatMap(contract => {
+  let wildcardLogSelection = contracts->Belt.Array.flatMap(contract => {
     contract.events->Belt.Array.keepMap(event => {
       let module(Event) = event
       let {isWildcard, topicSelections} =
@@ -120,7 +120,7 @@ let makeGetNextPage = (~endpointUrl, ~contracts: array<Config.contract>, ~queryL
         }
       }
     })
-    ->Array.concat(wildcardTopicSelection)
+    ->Array.concat(wildcardLogSelection)
   }
 
   async (
