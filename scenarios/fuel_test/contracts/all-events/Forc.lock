@@ -1,0 +1,13 @@
+[[package]]
+name = "all-events"
+source = "member"
+dependencies = ["std"]
+
+[[package]]
+name = "core"
+source = "path+from-root-D19F39D92CA9923C"
+
+[[package]]
+name = "std"
+source = "git+https://github.com/fuellabs/sway?tag=v0.63.1#169f91ae0a6a698bd1cb459c4c203bab646a38ec"
+dependencies = ["core"]

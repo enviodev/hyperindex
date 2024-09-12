@@ -161,7 +161,7 @@ let addEventToRawEvents = (
   let blockFields =
     (block :> Types.Block.rawEventFields)->S.serializeOrRaiseWith(Types.Block.rawEventSchema)
   let transactionFields = transaction->S.serializeOrRaiseWith(Types.Transaction.schema)
-  let params = params->S.serializeOrRaiseWith(Event.eventArgsSchema)
+  let params = params->S.serializeToJsonStringOrRaiseWith(Event.eventArgsSchema)
 
   let rawEvent: TablesStatic.RawEvents.t = {
     chainId,

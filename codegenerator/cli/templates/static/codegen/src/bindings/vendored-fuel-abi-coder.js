@@ -13,7 +13,7 @@
 // Here's the list of the changes:
 // 1. Changed enum decoder to always return data in a format {case: <Variant name>, payload: <Payload data>}.
 //    Where Payload data should be unit if it's not provided.
-// 1.1. Adjust OptionCoder to return T | undefined instead of variant
+// 1.1. Adjust OptionCoder to return variant with payload instead of T | undefined
 // 2. Changed BigNumberCoder to return BigInt instead of BN.js
 // 3. Exposed AbiCoder and added getLogDecoder static method, to do all prep work once
 // 4. Added transpileAbi function to convert json abi to old fuel abi
@@ -738,16 +738,6 @@ var OptionCoder = class extends EnumCoder {
       return { Some: input };
     }
     return { None: [] };
-  }
-  decode(data, offset) {
-    const [decoded, newOffset] = super.decode(data, offset);
-    return [decoded.case === "Some" ? decoded.payload : void 0, newOffset];
-  }
-  toOption(output) {
-    if (output.case === "Some") {
-      return output.payload;
-    }
-    return void 0;
   }
 };
 

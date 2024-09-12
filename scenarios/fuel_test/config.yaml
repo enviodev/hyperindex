@@ -1,6 +1,7 @@
 # yaml-language-server: $schema=../../codegenerator/cli/npm/envio/fuel.schema.json
 name: Fuel Greeter Indexer
 ecosystem: fuel
+raw_events: true
 networks:
   - id: 0
     start_block: 0
@@ -8,7 +9,47 @@ networks:
       - name: Greeter
         address: 0xb9bc445e5696c966dcf7e5d1237bd03c04e3ba6929bdaedfeebc7aae784c3a0b
         abi_file_path: abis/greeter-abi.json
-        handler: ./src/EventHandlers.ts
+        handler: ./src/GreeterHandlers.ts
         events:
           - name: NewGreeting
           - name: ClearGreeting
+      - name: AllEvents
+        address:
+          - 0x6617412dde3c685bb7f78395d2e4f0458d83907d2cf0efa8f8fff4405470d206
+        abi_file_path: abis/all-events-abi.json
+        handler: src/AllEventsHandlers.ts
+        events:
+          - name: UnitLog
+            logId: "3330666440490685604"
+          - name: Option_
+            logId: "10927802446890217233"
+          - name: SimpleStructWithOptionalField
+            logId: "3525891009499019808"
+          - name: U8Log
+            logId: "14454674236531057292"
+          - name: ArrayLog
+            logId: "12456997331598520636"
+          - name: Result
+            logId: "499881700873475792"
+          - name: U64Log
+            logId: "1515152261580153489"
+          - name: B256Log
+            logId: "8961848586872524460"
+          - name: U32Log
+            logId: "15520703124961489725"
+          - name: Status
+            logId: "7417129983252335614"
+          - name: U16Log
+            logId: "2992671284987479467"
+          - name: TupleLog
+            logId: "6486780880364592010"
+          - name: SimpleStruct
+            logId: "8500535089865083573"
+          - name: UnknownLog
+            logId: "1970142151624111756"
+          - name: BoolLog
+            logId: "13213829929622723620"
+          - name: StrLog
+            logId: "10732353433239600734"
+          - name: Option2
+            logId: "8688528864679113840"
