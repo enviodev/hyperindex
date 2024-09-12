@@ -7,6 +7,6 @@ networks:
       url: https://myskar.com # RPC URL that will be used to subscribe to blockchain data on this network
     start_block: 0
     contracts: []
-  - id: 5 #Goerli will use skar
+  - id: 137 #Polygon will use skar
     start_block: 0
     contracts: []
