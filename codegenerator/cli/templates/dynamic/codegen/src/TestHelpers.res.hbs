@@ -163,16 +163,15 @@ module EventFunctions = {
   }
 
   module MockBlock = {
-    open Belt
     type t = {
       {{#each field_selection.block_fields as | field |}}
       {{field.name.camel}}?: {{field.res_type}},
       {{/each}}
     }
 
-    let toBlock = (mock: t): Types.Block.t => {
+    let toBlock = (_mock: t): Types.Block.t => {
       {{#each field_selection.block_fields as | field |}}
-      {{field.name.camel}}: mock.{{field.name.camel}}->Option.getWithDefault({{field.default_value_rescript}}),
+      {{field.name.camel}}: _mock.{{field.name.camel}}->Belt.Option.getWithDefault({{field.default_value_rescript}}),
       {{/each}}
     }
   }

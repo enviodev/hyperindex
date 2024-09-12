@@ -282,12 +282,15 @@ impl SystemConfig {
                 .context("Failed inserting network at networks map")?;
         }
 
-        let field_selection =
+        let field_selection = FieldSelection::try_from_config_field_selection(
             evm_config
                 .field_selection
-                .map_or(Ok(FieldSelection::empty()), |field_selection| {
-                    FieldSelection::try_from_config_field_selection(field_selection, &networks)
-                })?;
+                .unwrap_or(human_config::evm::FieldSelection {
+                    transaction_fields: None,
+                    block_fields: None,
+                }),
+            &networks,
+        )?;
 
         Ok(SystemConfig {
             name: evm_config.name.clone(),
