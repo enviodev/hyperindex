@@ -88,13 +88,16 @@ let getTxFieldFromEthersLog = (log: Ethers.log, txField: string, ~logger): txFie
     )
   }
 
+let nonOptionalTransactionFieldNames = Types.Transaction.schema->Utils.Schema.getNonOptionalFieldNames
+
 let transactionFieldsFromLog = (log, ~logger): Types.Transaction.t => {
+  let dict = Js.Dict.empty()
   //Note: if we implement all transaction fields, we will need all
   //field names not just non optional ones
-  Types.Transaction.nonOptionalFieldNames
-  ->Belt.Array.map(name => (name, getTxFieldFromEthersLog(log, name, ~logger)))
-  ->Js.Dict.fromArray
-  ->(Utils.magic: Js.Dict.t<txFieldVal> => Types.Transaction.t)
+  nonOptionalTransactionFieldNames->Belt.Array.forEach(name => {
+    dict->Js.Dict.set(name, getTxFieldFromEthersLog(log, name, ~logger))
+  })
+  dict->(Utils.magic: Js.Dict.t<txFieldVal> => Types.Transaction.t)  
 }
 
 //Types.blockFields is a subset of  Ethers.JsonRpcProvider.block so we can safely cast

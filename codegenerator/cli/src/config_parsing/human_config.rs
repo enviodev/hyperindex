@@ -95,7 +95,7 @@ pub struct ConfigDiscriminant {
 
 pub mod evm {
     use super::{GlobalContract, NetworkContract, NetworkId};
-    use crate::{rescript_types::RescriptTypeIdent, utils::normalized_list::SingleOrList};
+    use crate::utils::normalized_list::SingleOrList;
     use schemars::JsonSchema;
     use serde::{Deserialize, Serialize};
     use std::fmt::Display;
@@ -235,47 +235,6 @@ pub mod evm {
         //so no need to allow users to configure these values
         // BlockHash,
         // BlockNumber,
-    }
-
-    impl From<TransactionField> for RescriptTypeIdent {
-        fn from(value: TransactionField) -> Self {
-            match value {
-                TransactionField::TransactionIndex => Self::Int,
-                TransactionField::Hash => Self::String,
-                TransactionField::From => Self::Option(Box::new(Self::Address)),
-                TransactionField::To => Self::Option(Box::new(Self::Address)),
-                TransactionField::Gas => Self::BigInt,
-                TransactionField::GasPrice => Self::Option(Box::new(Self::BigInt)),
-                TransactionField::MaxPriorityFeePerGas => Self::Option(Box::new(Self::BigInt)),
-                TransactionField::MaxFeePerGas => Self::Option(Box::new(Self::BigInt)),
-                TransactionField::CumulativeGasUsed => Self::BigInt,
-                TransactionField::EffectiveGasPrice => Self::BigInt,
-                TransactionField::GasUsed => Self::BigInt,
-                TransactionField::Input => Self::String,
-                TransactionField::Nonce => Self::BigInt,
-                TransactionField::Value => Self::BigInt,
-                TransactionField::V => Self::Option(Box::new(Self::String)),
-                TransactionField::R => Self::Option(Box::new(Self::String)),
-                TransactionField::S => Self::Option(Box::new(Self::String)),
-                TransactionField::ContractAddress => Self::Option(Box::new(Self::Address)),
-                TransactionField::LogsBloom => Self::String,
-                TransactionField::Root => Self::Option(Box::new(Self::String)),
-                TransactionField::Status => Self::Option(Box::new(Self::Int)),
-                TransactionField::YParity => Self::Option(Box::new(Self::String)),
-                TransactionField::ChainId => Self::Option(Box::new(Self::Int)),
-                // TransactionField::AccessList => todo!(),
-                TransactionField::MaxFeePerBlobGas => Self::Option(Box::new(Self::BigInt)),
-                TransactionField::BlobVersionedHashes => {
-                    Self::Option(Box::new(Self::Array(Box::new(Self::String))))
-                }
-                TransactionField::Kind => Self::Option(Box::new(Self::Int)),
-                TransactionField::L1Fee => Self::Option(Box::new(Self::BigInt)),
-                TransactionField::L1GasPrice => Self::Option(Box::new(Self::BigInt)),
-                TransactionField::L1GasUsed => Self::Option(Box::new(Self::BigInt)),
-                TransactionField::L1FeeScalar => Self::Option(Box::new(Self::Float)),
-                TransactionField::GasUsedForL1 => Self::Option(Box::new(Self::BigInt)),
-            }
-        }
     }
 
     #[subenum(RpcBlockField)]

@@ -3,112 +3,73 @@ open Belt
 
 exception EventRoutingFailed
 
-module Make = (
-  T: {
-    let contracts: array<Config.contract>
-    let chain: ChainMap.Chain.t
-    let endpointUrl: string
-    let allEventSignatures: array<string>
-    let shouldUseHypersyncClientDecoder: bool
-    let eventModLookup: EventModLookup.t
-    let blockSchema: S.t<Types.Block.t>
-  },
-): S => {
-  let name = "HyperSync"
-  let chain = T.chain
-  let eventModLookup = T.eventModLookup
-
-  let nonOptionalBlockFieldNames = []
-  let blockFieldSelection = switch T.blockSchema->S.classify {
-    | Object({items}) => {
-      items->Array.map(item => {
-        switch item.schema->S.classify {
-        // Check for null, since we generate S.null schema for db serializing
-        // In the future it should be changed to Option
-        | Null(_) => ()
-        | _ => nonOptionalBlockFieldNames->Array.push(item.location)->ignore
-        }
-
-        item.location->Utils.String.capitalize->(Utils.magic: string => HyperSyncClient.QueryTypes.blockField)
-      })
-    }
-    | _ => Js.Exn.raiseError("Block schema should be an object with block fields")
-  }
-
-  let hscDecoder: ref<option<HyperSyncClient.Decoder.t>> = ref(None)
-  let getHscDecoder = () => {
-    switch hscDecoder.contents {
-    | Some(decoder) => decoder
-    | None =>
-      switch HyperSyncClient.Decoder.fromSignatures(T.allEventSignatures) {
-      | exception exn =>
-        exn->ErrorHandling.mkLogAndRaise(
-          ~msg="Failed to instantiate a decoder from hypersync client, please double check your ABI or try using 'event_decoder: viem' config option",
+module Helpers = {
+  let rec queryLogsPageWithBackoff = async (
+    ~backoffMsOnFailure=200,
+    ~callDepth=0,
+    ~maxCallDepth=15,
+    query: unit => promise<HyperSync.queryResponse<HyperSync.logsQueryPage>>,
+    logger: Pino.t,
+  ) =>
+    switch await query() {
+    | Error(e) =>
+      let msg = e->HyperSync.queryErrorToMsq
+      if callDepth < maxCallDepth {
+        logger->Logging.childWarn({
+          "err": msg,
+          "msg": `Issue while running fetching of events from Hypersync endpoint. Will wait ${backoffMsOnFailure->Belt.Int.toString}ms and try again.`,
+          "type": "EXPONENTIAL_BACKOFF",
+        })
+        await Time.resolvePromiseAfterDelay(~delayMilliseconds=backoffMsOnFailure)
+        await queryLogsPageWithBackoff(
+          ~callDepth=callDepth + 1,
+          ~backoffMsOnFailure=2 * backoffMsOnFailure,
+          query,
+          logger,
         )
-      | decoder =>
-        decoder.enableChecksummedAddresses()
-        decoder
+      } else {
+        logger->Logging.childError({
+          "err": msg,
+          "msg": `Issue while running fetching batch of events from Hypersync endpoint. Attempted query a maximum of ${maxCallDepth->string_of_int} times. Will NOT retry.`,
+          "type": "EXPONENTIAL_BACKOFF_MAX_DEPTH",
+        })
+        Js.Exn.raiseError(msg)
       }
+    | Ok(v) => v
     }
-  }
 
-  module Helpers = {
-    let rec queryLogsPageWithBackoff = async (
-      ~backoffMsOnFailure=200,
-      ~callDepth=0,
-      ~maxCallDepth=15,
-      query: unit => promise<HyperSync.queryResponse<HyperSync.logsQueryPage>>,
-      logger: Pino.t,
-    ) =>
-      switch await query() {
-      | Error(e) =>
-        let msg = e->HyperSync.queryErrorToMsq
-        if callDepth < maxCallDepth {
-          logger->Logging.childWarn({
-            "err": msg,
-            "msg": `Issue while running fetching of events from Hypersync endpoint. Will wait ${backoffMsOnFailure->Belt.Int.toString}ms and try again.`,
-            "type": "EXPONENTIAL_BACKOFF",
-          })
-          await Time.resolvePromiseAfterDelay(~delayMilliseconds=backoffMsOnFailure)
-          await queryLogsPageWithBackoff(
-            ~callDepth=callDepth + 1,
-            ~backoffMsOnFailure=2 * backoffMsOnFailure,
-            query,
-            logger,
-          )
-        } else {
-          logger->Logging.childError({
-            "err": msg,
-            "msg": `Issue while running fetching batch of events from Hypersync endpoint. Attempted query a maximum of ${maxCallDepth->string_of_int} times. Will NOT retry.`,
-            "type": "EXPONENTIAL_BACKOFF_MAX_DEPTH",
-          })
-          Js.Exn.raiseError(msg)
-        }
-      | Ok(v) => v
-      }
+  exception ErrorMessage(string)
+}
 
-    exception ErrorMessage(string)
-  }
+/**
+Holds the value of the next page fetch happening concurrently to current page processing
+*/
+type nextPageFetchRes = {
+  contractInterfaceManager: ContractInterfaceManager.t,
+  page: HyperSync.logsQueryPage,
+  pageFetchTime: int,
+}
 
-  /**
-  Holds the value of the next page fetch happening concurrently to current page processing
-  */
-  type nextPageFetchRes = {
-    contractInterfaceManager: ContractInterfaceManager.t,
-    page: HyperSync.logsQueryPage,
-    pageFetchTime: int,
-  }
+let makeGetNextPage = (~endpointUrl, ~contracts: array<Config.contract>, ~queryLogsPage, ~pollForHeightGtOrEq, ~blockSchema, ~transactionSchema) => {
+  let nonOptionalBlockFieldNames = blockSchema->Utils.Schema.getNonOptionalFieldNames
+  let blockFieldSelection =
+    blockSchema
+    ->Utils.Schema.getCapitalizedFieldNames
+    ->(Utils.magic: array<string> => array<HyperSyncClient.QueryTypes.blockField>)
 
-  let waitForBlockGreaterThanCurrentHeight = (~currentBlockHeight, ~logger) => {
-    HyperSync.pollForHeightGtOrEq(
-      ~serverUrl=T.endpointUrl,
-      ~blockNumber=currentBlockHeight,
-      ~logger,
-    )
+  let nonOptionalTransactionFieldNames = transactionSchema->Utils.Schema.getNonOptionalFieldNames
+  let transactionFieldSelection =
+    transactionSchema
+    ->Utils.Schema.getCapitalizedFieldNames
+    ->(Utils.magic: array<string> => array<HyperSyncClient.QueryTypes.transactionField>)
+
+  let fieldSelection: HyperSyncClient.QueryTypes.fieldSelection = {
+    log: [Address, Data, LogIndex, Topic0, Topic1, Topic2, Topic3],
+    block: blockFieldSelection,
+    transaction: transactionFieldSelection,
   }
 
   let waitForNextBlockBeforeQuery = async (
-    ~serverUrl,
     ~fromBlock,
     ~currentBlockHeight,
     ~logger,
@@ -120,8 +81,8 @@ module Make = (
       //If the block we want to query from is greater than the current height,
       //poll for until the archive height is greater than the from block and set
       //current height to the new height
-      let currentBlockHeight = await HyperSync.pollForHeightGtOrEq(
-        ~serverUrl,
+      let currentBlockHeight = await pollForHeightGtOrEq(
+        ~serverUrl=endpointUrl,
         ~blockNumber=fromBlock,
         ~logger,
       )
@@ -129,8 +90,8 @@ module Make = (
       setCurrentBlockHeight(currentBlockHeight)
     }
   }
-
-  let wildcardTopicSelection = T.contracts->Belt.Array.flatMap(contract => {
+  
+  let wildcardTopicSelection = contracts->Belt.Array.flatMap(contract => {
     contract.events->Belt.Array.keepMap(event => {
       let module(Event) = event
       let {isWildcard, topicSelections} =
@@ -140,7 +101,7 @@ module Make = (
   })
 
   let getLogSelectionOrThrow = (~contractAddressMapping): array<LogSelection.t> => {
-    T.contracts
+    contracts
     ->Belt.Array.keepMap((contract): option<LogSelection.t> => {
       switch contractAddressMapping->ContractAddressingMap.getAddressesFromContractName(
         ~contractName=contract.name,
@@ -162,7 +123,7 @@ module Make = (
     ->Array.concat(wildcardTopicSelection)
   }
 
-  let getNextPage = async (
+  async (
     ~fromBlock,
     ~toBlock,
     ~currentBlockHeight,
@@ -174,7 +135,6 @@ module Make = (
     //This should never have to wait since we check that the from block is below the toBlock
     //this in the GlobalState reducer
     await waitForNextBlockBeforeQuery(
-      ~serverUrl=T.endpointUrl,
       ~fromBlock,
       ~currentBlockHeight,
       ~setCurrentBlockHeight,
@@ -183,7 +143,7 @@ module Make = (
 
     //Instantiate each time to add new registered contract addresses
     let contractInterfaceManager = ContractInterfaceManager.make(
-      ~contracts=T.contracts,
+      ~contracts,
       ~contractAddressMapping,
     )
 
@@ -201,7 +161,16 @@ module Make = (
 
     //fetch batch
     let pageUnsafe = await Helpers.queryLogsPageWithBackoff(
-      () => HyperSync.queryLogsPage(~serverUrl=T.endpointUrl, ~fromBlock, ~toBlock, ~logSelections, ~blockFieldSelection, ~nonOptionalBlockFieldNames),
+      () =>
+        queryLogsPage(
+          ~serverUrl=endpointUrl,
+          ~fromBlock,
+          ~toBlock,
+          ~logSelections,
+          ~fieldSelection,
+          ~nonOptionalBlockFieldNames,
+          ~nonOptionalTransactionFieldNames,
+        ),
       logger,
     )
 
@@ -209,6 +178,48 @@ module Make = (
       startFetchingBatchTimeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
 
     {page: pageUnsafe, contractInterfaceManager, pageFetchTime}
+  }
+}
+
+module Make = (
+  T: {
+    let contracts: array<Config.contract>
+    let chain: ChainMap.Chain.t
+    let endpointUrl: string
+    let allEventSignatures: array<string>
+    let shouldUseHypersyncClientDecoder: bool
+    let eventModLookup: EventModLookup.t
+    let blockSchema: S.t<Types.Block.t>
+    let transactionSchema: S.t<Types.Transaction.t>
+  },
+): S => {
+  let name = "HyperSync"
+  let chain = T.chain
+  let eventModLookup = T.eventModLookup
+
+  let hscDecoder: ref<option<HyperSyncClient.Decoder.t>> = ref(None)
+  let getHscDecoder = () => {
+    switch hscDecoder.contents {
+    | Some(decoder) => decoder
+    | None =>
+      switch HyperSyncClient.Decoder.fromSignatures(T.allEventSignatures) {
+      | exception exn =>
+        exn->ErrorHandling.mkLogAndRaise(
+          ~msg="Failed to instantiate a decoder from hypersync client, please double check your ABI or try using 'event_decoder: viem' config option",
+        )
+      | decoder =>
+        decoder.enableChecksummedAddresses()
+        decoder
+      }
+    }
+  }
+
+  let waitForBlockGreaterThanCurrentHeight = (~currentBlockHeight, ~logger) => {
+    HyperSync.pollForHeightGtOrEq(
+      ~serverUrl=T.endpointUrl,
+      ~blockNumber=currentBlockHeight,
+      ~logger,
+    )
   }
 
   exception UndefinedValue
@@ -236,6 +247,8 @@ module Make = (
       eventMod,
     }
   }
+
+  let getNextPage = makeGetNextPage(~endpointUrl=T.endpointUrl, ~contracts=T.contracts, ~queryLogsPage=HyperSync.queryLogsPage, ~pollForHeightGtOrEq=HyperSync.pollForHeightGtOrEq, ~blockSchema=T.blockSchema, ~transactionSchema=T.transactionSchema)
 
   let fetchBlockRange = async (
     ~query: blockRangeFetchArgs,
