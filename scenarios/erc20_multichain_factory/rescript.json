@@ -34,7 +34,10 @@
     "generated",
     "@ryyppy/rescript-promise",
     "rescript-schema",
+    "@glennsl/rescript-fetch",
     "helpers"
   ],
-  "bsc-flags": ["-open RescriptSchema"]
+  "bsc-flags": [
+    "-open RescriptSchema"
+  ]
 }
