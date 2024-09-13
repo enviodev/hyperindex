@@ -27,7 +27,7 @@ type blockNumberAndHash = {
 type logsQueryPage = hyperSyncPage<item>
 
 type contractReceiptQuery = {
-  addresses: array<Address.t>,
+  addresses?: array<Address.t>,
   rb: array<bigint>,
 }
 

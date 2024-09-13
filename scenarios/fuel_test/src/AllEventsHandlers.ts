@@ -32,7 +32,7 @@ AllEvents.SimpleStruct.handler(async (_: any) => {});
 
 AllEvents.UnknownLog.handler(async (_: any) => {});
 
-AllEvents.BoolLog.handler(async (_: any) => {});
+AllEvents.BoolLog.handler(async (_: any) => {}, { wildcard: true });
 
 AllEvents.StrLog.handler(async (_: any) => {});
 
