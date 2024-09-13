@@ -653,11 +653,23 @@ impl Serialize for RescriptTypeIdent {
     }
 }
 
+pub mod helpers {
+    use super::*;
+    pub fn option(typ: RescriptTypeIdent) -> RescriptTypeIdent {
+        RescriptTypeIdent::Option(Box::new(typ))
+    }
+
+    pub fn array(typ: RescriptTypeIdent) -> RescriptTypeIdent {
+        RescriptTypeIdent::Array(Box::new(typ))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::vec;
 
     use super::*;
+    use helpers::*;
     use pretty_assertions::assert_eq;
 
     #[test]
@@ -708,17 +720,13 @@ mod tests {
             "S.string".to_string()
         );
         assert_eq!(
-            RescriptTypeExpr::Identifier(RescriptTypeIdent::Array(Box::new(
-                RescriptTypeIdent::Int
-            )))
-            .to_rescript_schema(&"eventArgs".to_string()),
+            RescriptTypeExpr::Identifier(array(RescriptTypeIdent::Int))
+                .to_rescript_schema(&"eventArgs".to_string()),
             "S.array(S.int)".to_string()
         );
         assert_eq!(
-            RescriptTypeExpr::Identifier(RescriptTypeIdent::Option(Box::new(
-                RescriptTypeIdent::Int
-            )))
-            .to_rescript_schema(&"eventArgs".to_string()),
+            RescriptTypeExpr::Identifier(option(RescriptTypeIdent::Int))
+                .to_rescript_schema(&"eventArgs".to_string()),
             "S.null(S.int)".to_string()
         );
         assert_eq!(
@@ -804,10 +812,7 @@ mod tests {
                         type_params: vec![],
                     },
                 },
-                RescriptRecordField::new(
-                    "myOptBool".to_string(),
-                    RescriptTypeIdent::Option(Box::new(RescriptTypeIdent::Bool)),
-                ),
+                RescriptRecordField::new("myOptBool".to_string(), option(RescriptTypeIdent::Bool)),
             ]),
             vec![],
         );
