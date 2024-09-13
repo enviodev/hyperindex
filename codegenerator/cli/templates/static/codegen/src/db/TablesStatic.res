@@ -119,7 +119,7 @@ module RawEvents = {
     @as("block_timestamp") blockTimestamp: int,
     @as("block_fields") blockFields: Js.Json.t,
     @as("transaction_fields") transactionFields: Js.Json.t,
-    params: string,
+    params: Js.Json.t,
   }
 
   let table = mkTable(

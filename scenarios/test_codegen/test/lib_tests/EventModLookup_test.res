@@ -27,7 +27,7 @@ module MakeEventMock = (
 
   type eventArgs = Types.internalEventArgs
   type eventFilter
-  let eventArgsSchema = Utils.magic("Stub for eventArgsSchema")
+  let paramsRawEventSchema = Utils.magic("Stub for paramsRawEventSchema")
   let handlerRegister = Types.HandlerTypes.Register.make(
     ~topic0=sighash->EvmTypes.Hex.fromStringUnsafe,
     ~contractName,

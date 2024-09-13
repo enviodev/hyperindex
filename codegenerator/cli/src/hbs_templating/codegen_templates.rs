@@ -342,7 +342,7 @@ pub struct EventTemplate {
     pub decode_hyper_fuel_data_code: String,
     pub convert_hyper_sync_event_args_code: String,
     pub data_type: String,
-    pub data_schema_code: String,
+    pub params_raw_event_schema: String,
     pub get_topic_selection_code: String,
     pub event_filter_type: String,
 }
@@ -492,7 +492,8 @@ impl EventTemplate {
                     name,
                     params: template_params,
                     data_type: data_type_expr.to_string(),
-                    data_schema_code: data_type_expr.to_rescript_schema(&"eventArgs".to_string()),
+                    params_raw_event_schema: data_type_expr
+                        .to_rescript_schema(&"eventArgs".to_string()),
                     sighash: config_event.sighash.to_string(),
                     convert_hyper_sync_event_args_code:
                         Self::generate_convert_hyper_sync_event_args_code(params),
@@ -510,7 +511,10 @@ impl EventTemplate {
                     name,
                     params: vec![],
                     data_type: type_indent.to_string(),
-                    data_schema_code: type_indent.to_rescript_schema(),
+                    params_raw_event_schema: format!(
+                        "{}->Utils.Schema.coerceToJsonPgType",
+                        type_indent.to_rescript_schema()
+                    ),
                     sighash: config_event.sighash.to_string(),
                     convert_hyper_sync_event_args_code: "(Utils.magic: \
                                                      HyperSyncClient.Decoder.decodedEvent => \
@@ -713,8 +717,8 @@ struct FieldSelection {
     transaction_schema: String,
     block_type: String,
     block_schema: String,
-    block_raw_events_type: String,
-    block_raw_events_schema: String,
+    block_raw_event_type: String,
+    block_raw_event_schema: String,
 }
 
 impl FieldSelection {
@@ -754,7 +758,7 @@ impl FieldSelection {
         }
 
         let block_expr = RescriptTypeExpr::Record(all_block_fields);
-        let block_raw_events_expr = RescriptTypeExpr::Record(raw_events_block_fields);
+        let block_raw_event_expr = RescriptTypeExpr::Record(raw_events_block_fields);
         let transaction_expr = RescriptTypeExpr::Record(all_transaction_fields);
 
         Self {
@@ -764,9 +768,9 @@ impl FieldSelection {
             transaction_schema: transaction_expr.to_rescript_schema(&"t".to_string()),
             block_type: block_expr.to_string(),
             block_schema: block_expr.to_rescript_schema(&"t".to_string()),
-            block_raw_events_schema: block_raw_events_expr
+            block_raw_event_schema: block_raw_event_expr
                 .to_rescript_schema(&"rawEventFields".to_string()),
-            block_raw_events_type: block_raw_events_expr.to_string(),
+            block_raw_event_type: block_raw_event_expr.to_string(),
         }
     }
 
@@ -1190,7 +1194,7 @@ mod test {
             decode_hyper_fuel_data_code: "(_) => Js.Exn.raiseError(\"HyperFuel decoder not \
                                           implemented\")"
                 .to_string(),
-            data_schema_code:
+            params_raw_event_schema:
                 "S.object((s): eventArgs => {id: s.field(\"id\", BigInt.schema), owner: \
                                s.field(\"owner\", Address.schema), displayName: \
                                s.field(\"displayName\", S.string), imageUrl: \
@@ -1231,7 +1235,7 @@ mod test {
                 decode_hyper_fuel_data_code: "(_) => Js.Exn.raiseError(\"HyperFuel decoder not \
                                               implemented\")"
                     .to_string(),
-                data_schema_code: "S.literal(%raw(`null`))->S.variant(_ => ())".to_string(),
+                params_raw_event_schema: "S.literal(%raw(`null`))->S.variant(_ => ())".to_string(),
                 get_topic_selection_code: "(eventFilters) => \
                                            eventFilters->SingleOrMultiple.normalizeOrThrow->Belt.\
                                            Array.map(_eventFilter => \
