@@ -12,7 +12,7 @@
   },
   "dependencies": {
     "@ryyppy/rescript-promise": "2.1.0",
-    "envio": "latest",
+    "envio": "../../codegenerator/cli/npm/envio",
     "ethers": "6.8.0",
     "helpers": "../helpers",
     "mocha": "10.2.0",
