@@ -19,7 +19,7 @@ use crate::{
 };
 use anyhow::{anyhow, Context, Result};
 use regex::Regex;
-use std::path::PathBuf;
+use std::{env, path::PathBuf};
 
 //Validates version name (3 digits separated by period ".")
 //Returns false if there are any additional chars as this should imply
@@ -234,8 +234,14 @@ pub async fn run_init_args(init_args: InitArgs, project_paths: &ProjectPaths) ->
             // version should be installable from npm
             crate_version.to_string()
         } else {
-            // Else install the latest version from npm so as not to break dev environments
-            "latest".to_string()
+            // Else install the local version for development and testing
+            match env::current_exe() {
+                // This should be something like "~/envio/hyperindex/codegenerator/target/debug/envio"
+                Ok(exe_path) => exe_path
+                    .to_string_lossy()
+                    .replace("/target/debug/envio", "/cli/npm/envio"),
+                Err(e) => return Err(anyhow!("failed to get current exe path: {e}")),
+            }
         }
     };
 
