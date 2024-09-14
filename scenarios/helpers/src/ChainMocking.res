@@ -84,7 +84,7 @@ module Make = (Indexer: Indexer.S) => {
     let module(Event) = eventMod
 
     let transactionHash =
-      Crypto.hashKeccak256Any(params->RescriptSchema.S.serializeOrRaiseWith(Event.eventArgsSchema))
+      Crypto.hashKeccak256Any(params->RescriptSchema.S.serializeOrRaiseWith(Event.paramsRawEventSchema))
       ->Crypto.hashKeccak256Compound(transactionIndex)
       ->Crypto.hashKeccak256Compound(blockNumber)
 

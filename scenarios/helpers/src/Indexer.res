@@ -80,7 +80,7 @@ module type S = {
       let name: string
       let contractName: string
       type eventArgs
-      let eventArgsSchema: RescriptSchema.S.schema<eventArgs>
+      let paramsRawEventSchema: RescriptSchema.S.schema<eventArgs>
       let convertHyperSyncEventArgs: HyperSyncClient.Decoder.decodedEvent => eventArgs
       let decodeHyperFuelData: string => eventArgs
       let handlerRegister: HandlerTypes.Register.t<eventArgs>

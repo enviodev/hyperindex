@@ -119,11 +119,11 @@ module Block = {
   @genType
   type t = {{field_selection.block_type}}
 
-  type rawEventFields = {{field_selection.block_raw_events_type}}
+  type rawEventFields = {{field_selection.block_raw_event_type}}
 
   let schema = {{field_selection.block_schema}}
 
-  let rawEventSchema = {{field_selection.block_raw_events_schema}}
+  let rawEventSchema = {{field_selection.block_raw_event_schema}}
 
   {{#if is_evm_ecosystem}}
   @get
@@ -417,7 +417,7 @@ module type Event = {
   let contractName: string
 
   type eventArgs
-  let eventArgsSchema: S.schema<eventArgs>
+  let paramsRawEventSchema: S.schema<eventArgs>
   let convertHyperSyncEventArgs: HyperSyncClient.Decoder.decodedEvent => eventArgs
   let decodeHyperFuelData: string => eventArgs
   let handlerRegister: HandlerTypes.Register.t<eventArgs>
@@ -538,7 +538,7 @@ module {{contract.name.capitalized}} = {
 
     @genType
     type eventArgs = {{data_type}}
-    let eventArgsSchema = {{data_schema_code}}
+    let paramsRawEventSchema = {{params_raw_event_schema}}
     let convertHyperSyncEventArgs = {{convert_hyper_sync_event_args_code}}
     let decodeHyperFuelData = {{decode_hyper_fuel_data_code}}
 

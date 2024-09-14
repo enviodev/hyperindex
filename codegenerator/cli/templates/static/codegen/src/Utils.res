@@ -212,4 +212,28 @@ module Schema = {
     | _ => []
     }
   }
+
+  // When trying to serialize data to Json pg type, it will fail with
+  // PostgresError: column "params" is of type json but expression is of type boolean
+  // If there's bool or null on the root level. It works fine as object field values.
+  let coerceToJsonPgType = schema => {
+    schema->S.preprocess(s => {
+      switch s.schema->S.classify {
+        | Literal(Null(_)) => {serializer: _ => %raw(`"null"`)}
+        | Null(_)
+        | Bool => {serializer: unknown => {
+          if unknown === %raw(`null`) {
+            %raw(`"null"`)
+          } else if unknown === %raw(`false`) {
+            %raw(`"false"`)
+          } else if unknown === %raw(`true`) {
+            %raw(`"true"`)
+          } else {
+            unknown
+          }
+        }}
+        | _ => {}
+      }
+    })
+  }
 }
