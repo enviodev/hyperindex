@@ -22,7 +22,7 @@
   },
   "dependencies": {
     "chai": "4.3.10",
-    "envio": "2.1.5-fuel",
+    "envio": "../../codegenerator/cli/npm/envio",
     "ethers": "6.8.0"
   },
   "optionalDependencies": {

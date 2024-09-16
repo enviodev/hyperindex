@@ -12,8 +12,8 @@ importers:
         specifier: 2.1.0
         version: 2.1.0
       envio:
-        specifier: latest
-        version: 1.3.1
+        specifier: ../../codegenerator/cli/npm/envio
+        version: link:../../codegenerator/cli/npm/envio
       ethers:
         specifier: 6.8.0
         version: 6.8.0
@@ -479,30 +479,6 @@ packages:
   end-of-stream@1.4.4:
     resolution: {integrity: sha512-+uw1inIHVPQoaVuHzRyXd21icM+cnt4CzD5rW+NC1wjOUSTOs+Te7FOv7AhN7vS9x/oIyhLP5PR1H+phQAHu5Q==}
 
-  envio-darwin-arm64@1.3.1:
-    resolution: {integrity: sha512-OpIT8mIU3Xhgxrow0GSscszk+002zl0MyO6cdggEFJHwMArZyX1Vm3GNJ0wMDjd0lTRbGzOLVtiKv6k2J8L8AQ==}
-    cpu: [arm64]
-    os: [darwin]
-
-  envio-darwin-x64@1.3.1:
-    resolution: {integrity: sha512-XeK0ChL7zHfr8uDpoQqel90InLzS7h1z9oxm9cK10OIVnN5SQK45xAslpKaHzNGoPnfnxS0iHrzhAty18kwTaQ==}
-    cpu: [x64]
-    os: [darwin]
-
-  envio-linux-arm64@1.3.1:
-    resolution: {integrity: sha512-NI8sPq9RISeRz+H7ACuxhmVHJjCpojcaAwYV1xdLMGbPzDz2cFdmUOnEu7gPW7SdCuqUw8QCXn2QeVzow5AyOg==}
-    cpu: [arm64]
-    os: [linux]
-
-  envio-linux-x64@1.3.1:
-    resolution: {integrity: sha512-tihgP7F7aWpnMuBkRl/MUyDp5vjoPN9qyxCamYX5ehCoAcHghdmqC93XNgzRzT9SKSkrTmFuE0/LnhUxv1MC2A==}
-    cpu: [x64]
-    os: [linux]
-
-  envio@1.3.1:
-    resolution: {integrity: sha512-qCluAHbUscYo+5A/IunEOkPB75TIrlHcOnuXP7RMix4JD6xzws6npagAXBalHIjsbncwaEYyutZZgLEX9V8E5Q==}
-    hasBin: true
-
   es-define-property@1.0.0:
     resolution: {integrity: sha512-jxayLKShrEqqzJ0eumQbVhTYQM27CfT1T35+gCgDFoL82JLsXqTJ76zv6A0YLOgEnLUMvLzsDsGIrl8NFpT2gQ==}
     engines: {node: '>= 0.4'}
@@ -871,8 +847,8 @@ packages:
     resolution: {integrity: sha512-6eZs5Ls3WtCisHWp9S2GUy8dqkpGi4BVSz3GaqiE6ezub0512ESztXUwUB6C6IKbQkY2Pnb/mD4WYojCRwcwLA==}
     engines: {node: '>=0.10.0'}
 
-  npm@10.8.2:
-    resolution: {integrity: sha512-x/AIjFIKRllrhcb48dqUNAAZl0ig9+qMuN91RpZo3Cb2+zuibfh+KISl6+kVVyktDz230JKc208UkQwwMqyB+w==}
+  npm@10.8.3:
+    resolution: {integrity: sha512-0IQlyAYvVtQ7uOhDFYZCGK8kkut2nh8cpAdA9E6FvRSJaTgtZRZgNjlC5ZCct//L73ygrpY93CxXpRJDtNqPVg==}
     engines: {node: ^18.17.0 || >=20.5.0}
     hasBin: true
     bundledDependencies:
@@ -1420,7 +1396,7 @@ snapshots:
 
   '@envio-dev/hypersync-client@0.6.2':
     dependencies:
-      npm: 10.8.2
+      npm: 10.8.3
       yarn: 1.22.22
     optionalDependencies:
       '@envio-dev/hypersync-client-darwin-arm64': 0.6.2
@@ -1696,25 +1672,6 @@ snapshots:
   end-of-stream@1.4.4:
     dependencies:
       once: 1.4.0
-
-  envio-darwin-arm64@1.3.1:
-    optional: true
-
-  envio-darwin-x64@1.3.1:
-    optional: true
-
-  envio-linux-arm64@1.3.1:
-    optional: true
-
-  envio-linux-x64@1.3.1:
-    optional: true
-
-  envio@1.3.1:
-    optionalDependencies:
-      envio-darwin-arm64: 1.3.1
-      envio-darwin-x64: 1.3.1
-      envio-linux-arm64: 1.3.1
-      envio-linux-x64: 1.3.1
 
   es-define-property@1.0.0:
     dependencies:
@@ -2106,7 +2063,7 @@ snapshots:
 
   normalize-path@3.0.0: {}
 
-  npm@10.8.2: {}
+  npm@10.8.3: {}
 
   object-assign@4.1.1: {}
 

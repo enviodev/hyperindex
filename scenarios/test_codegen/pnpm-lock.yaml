@@ -14,6 +14,9 @@ importers:
       bignumber.js:
         specifier: ^9.1.2
         version: 9.1.2
+      envio:
+        specifier: ../../codegenerator/cli/npm/envio
+        version: link:../../codegenerator/cli/npm/envio
       hardhat-abi-exporter:
         specifier: ^2.10.1
         version: 2.10.1(hardhat@2.22.5(ts-node@10.9.2(@types/node@18.19.34)(typescript@5.4.5))(typescript@5.4.5))

@@ -20,7 +20,6 @@
     "docker-up": "cargo run --manifest-path ../../codegenerator/cli/Cargo.toml -- local docker up",
     "docker-down": "cargo run --manifest-path ../../codegenerator/cli/Cargo.toml -- local docker down",
     "db-setup": "cargo run --manifest-path ../../codegenerator/cli/Cargo.toml -- local db-migrate setup",
-    "envio": "cargo run --manifest-path ../../codegenerator/cli/Cargo.toml --",
     "start": "ts-node ./generated/src/Index.bs.js"
   },
   "keywords": [
@@ -57,7 +56,8 @@
     "hardhat-abi-exporter": "^2.10.1",
     "helpers": "workspace:*",
     "rescript-nodejs": "16.0.0",
-    "typescript": "^5.0.4"
+    "typescript": "^5.0.4",
+    "envio": "../../codegenerator/cli/npm/envio"
   },
   "optionalDependencies": {
     "generated": "./generated"
