@@ -339,6 +339,7 @@ pub struct EventTemplate {
     pub name: CapitalizedOptions,
     pub params: Vec<EventParamTypeTemplate>,
     pub sighash: String,
+    pub topic_count: usize,
     pub decode_hyper_fuel_data_code: String,
     pub convert_hyper_sync_event_args_code: String,
     pub data_type: String,
@@ -488,6 +489,10 @@ impl EventTemplate {
                     )
                 };
 
+                let topic_count = params
+                    .iter()
+                    .fold(1, |acc, param| if param.indexed { acc + 1 } else { acc });
+
                 Ok(EventTemplate {
                     name,
                     params: template_params,
@@ -495,6 +500,7 @@ impl EventTemplate {
                     params_raw_event_schema: data_type_expr
                         .to_rescript_schema(&"eventArgs".to_string()),
                     sighash: config_event.sighash.to_string(),
+                    topic_count,
                     convert_hyper_sync_event_args_code:
                         Self::generate_convert_hyper_sync_event_args_code(params),
                     decode_hyper_fuel_data_code: Self::DECODE_HYPER_FUEL_DATA_CODE.to_string(),
@@ -507,6 +513,7 @@ impl EventTemplate {
                     "Fuel.Receipt.getLogDataDecoder(~abi, ~logId=\"{}\")",
                     config_event.sighash
                 );
+
                 Ok(EventTemplate {
                     name,
                     params: vec![],
@@ -516,6 +523,7 @@ impl EventTemplate {
                         type_indent.to_rescript_schema()
                     ),
                     sighash: config_event.sighash.to_string(),
+                    topic_count: 0, //Default to 0 for fuel
                     convert_hyper_sync_event_args_code: "(Utils.magic: \
                                                      HyperSyncClient.Decoder.decodedEvent => \
                                                      eventArgs)"
@@ -1172,6 +1180,7 @@ mod test {
         EventTemplate {
             name: "NewGravatar".to_string().to_capitalized_options(),
             sighash,
+            topic_count: 1,
             params,
             data_type: "{id: bigint, owner: Address.t, displayName: string, imageUrl: string}"
                 .to_string(),
@@ -1226,6 +1235,7 @@ mod test {
                 name: "NewGravatar".to_string().to_capitalized_options(),
                 sighash: "0x50f7d27e90d1a5a38aeed4ceced2e8ec1ff185737aca96d15791b470d3f17363"
                     .to_string(),
+                topic_count: 1,
                 params: vec![],
                 data_type: "unit".to_string(),
                 convert_hyper_sync_event_args_code: "(Utils.magic: \

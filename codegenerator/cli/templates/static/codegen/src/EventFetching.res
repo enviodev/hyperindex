@@ -88,7 +88,8 @@ let getTxFieldFromEthersLog = (log: Ethers.log, txField: string, ~logger): txFie
     )
   }
 
-let nonOptionalTransactionFieldNames = Types.Transaction.schema->Utils.Schema.getNonOptionalFieldNames
+let nonOptionalTransactionFieldNames =
+  Types.Transaction.schema->Utils.Schema.getNonOptionalFieldNames
 
 let transactionFieldsFromLog = (log, ~logger): Types.Transaction.t => {
   let dict = Js.Dict.empty()
@@ -97,7 +98,7 @@ let transactionFieldsFromLog = (log, ~logger): Types.Transaction.t => {
   nonOptionalTransactionFieldNames->Belt.Array.forEach(name => {
     dict->Js.Dict.set(name, getTxFieldFromEthersLog(log, name, ~logger))
   })
-  dict->(Utils.magic: Js.Dict.t<txFieldVal> => Types.Transaction.t)  
+  dict->(Utils.magic: Js.Dict.t<txFieldVal> => Types.Transaction.t)
 }
 
 //Types.blockFields is a subset of  Ethers.JsonRpcProvider.block so we can safely cast
@@ -125,7 +126,7 @@ let convertLogs = (
   })
 
   logs->Belt.Array.map(async (log): Types.eventBatchQueueItem => {
-    let block = (await blockLoader->LazyLoader.get(log.blockNumber))
+    let block = await blockLoader->LazyLoader.get(log.blockNumber)
     let transaction = log->transactionFieldsFromLog(~logger)
     let log = log->ethersLogToLog
     let chainId = chain->ChainMap.Chain.toChainId
@@ -133,6 +134,7 @@ let convertLogs = (
     let topic0 = log.topics->Js.Array2.unsafe_get(0)
     let eventMod = switch eventModLookup->EventModLookup.get(
       ~sighash=topic0,
+      ~topicCount=log.topics->Array.length,
       ~contractAddressMapping=contractInterfaceManager.contractAddressMapping,
       ~contractAddress=log.address,
     ) {

@@ -50,7 +50,14 @@ type nextPageFetchRes = {
   pageFetchTime: int,
 }
 
-let makeGetNextPage = (~endpointUrl, ~contracts: array<Config.contract>, ~queryLogsPage, ~pollForHeightGtOrEq, ~blockSchema, ~transactionSchema) => {
+let makeGetNextPage = (
+  ~endpointUrl,
+  ~contracts: array<Config.contract>,
+  ~queryLogsPage,
+  ~pollForHeightGtOrEq,
+  ~blockSchema,
+  ~transactionSchema,
+) => {
   let nonOptionalBlockFieldNames = blockSchema->Utils.Schema.getNonOptionalFieldNames
   let blockFieldSelection =
     blockSchema
@@ -90,7 +97,7 @@ let makeGetNextPage = (~endpointUrl, ~contracts: array<Config.contract>, ~queryL
       setCurrentBlockHeight(currentBlockHeight)
     }
   }
-  
+
   let wildcardLogSelection = contracts->Belt.Array.flatMap(contract => {
     contract.events->Belt.Array.keepMap(event => {
       let module(Event) = event
@@ -248,7 +255,14 @@ module Make = (
     }
   }
 
-  let getNextPage = makeGetNextPage(~endpointUrl=T.endpointUrl, ~contracts=T.contracts, ~queryLogsPage=HyperSync.queryLogsPage, ~pollForHeightGtOrEq=HyperSync.pollForHeightGtOrEq, ~blockSchema=T.blockSchema, ~transactionSchema=T.transactionSchema)
+  let getNextPage = makeGetNextPage(
+    ~endpointUrl=T.endpointUrl,
+    ~contracts=T.contracts,
+    ~queryLogsPage=HyperSync.queryLogsPage,
+    ~pollForHeightGtOrEq=HyperSync.pollForHeightGtOrEq,
+    ~blockSchema=T.blockSchema,
+    ~transactionSchema=T.transactionSchema,
+  )
 
   let fetchBlockRange = async (
     ~query: blockRangeFetchArgs,
@@ -394,6 +408,7 @@ module Make = (
 
           let eventMod = switch eventModLookup->EventModLookup.get(
             ~sighash=topic0,
+            ~topicCount=log.topics->Array.length,
             ~contractAddressMapping,
             ~contractAddress=log.address,
           ) {
@@ -449,6 +464,7 @@ module Make = (
 
           let eventMod = switch eventModLookup->EventModLookup.get(
             ~sighash=topic0,
+            ~topicCount=log.topics->Array.length,
             ~contractAddressMapping,
             ~contractAddress=log.address,
           ) {
