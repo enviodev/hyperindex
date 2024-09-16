@@ -1,0 +1,15 @@
+# yaml-language-server: $schema=./node_modules/envio/evm.schema.json
+name: wildcard-uni-factory
+field_selection:
+  transaction_fields:
+    - hash
+networks:
+  - id: 1
+    start_block: 0
+    end_block: 20741509
+    contracts:
+      - name: UniswapV3Factory
+        handler: ./src/EventHandlers.ts
+        events:
+          - event: event PoolCreated(address indexed token0, address indexed token1, uint24 indexed fee, int24 tickSpacing, address pool)
+rollback_on_reorg: false

@@ -1,0 +1,8 @@
+type PoolCreated {
+  id: ID!
+  token0: String!
+  token1: String!
+  fee: BigInt!
+  tickSpacing: BigInt!
+  pool: String!
+}
