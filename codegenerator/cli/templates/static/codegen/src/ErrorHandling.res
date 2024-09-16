@@ -3,11 +3,16 @@ type exnType = Js(Js.Exn.t) | Other(exn)
 type t = {logger: Pino.t, exn: exnType, msg: option<string>}
 
 let makeExnType = (exn): exnType => {
-  switch exn {
-  | Js.Exn.Error(e)
-  | Promise.JsError(e) =>
-    Js(e)
-  | exn => Other(exn)
+  // exn might be not an object which will break the pattern match by RE_EXN_ID
+  if exn->Obj.magic {
+    switch exn {
+    | Js.Exn.Error(e)
+    | Promise.JsError(e) =>
+      Js(e)
+    | exn => Other(exn)
+    }
+  } else {
+    Other(exn)
   }
 }
 
