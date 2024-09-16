@@ -53,23 +53,23 @@ importers:
         specifier: 1.2.2
         version: 1.2.2
       '@fuel-ts/address':
-        specifier: 0.94.1
-        version: 0.94.1
+        specifier: 0.94.6
+        version: 0.94.6
       '@fuel-ts/crypto':
-        specifier: 0.94.1
-        version: 0.94.1
+        specifier: 0.94.6
+        version: 0.94.6
       '@fuel-ts/errors':
-        specifier: 0.94.1
-        version: 0.94.1
+        specifier: 0.94.6
+        version: 0.94.6
       '@fuel-ts/hasher':
-        specifier: 0.94.1
-        version: 0.94.1
+        specifier: 0.94.6
+        version: 0.94.6
       '@fuel-ts/math':
-        specifier: 0.94.1
-        version: 0.94.1
+        specifier: 0.94.6
+        version: 0.94.6
       '@fuel-ts/utils':
-        specifier: 0.94.1
-        version: 0.94.1
+        specifier: 0.94.6
+        version: 0.94.6
       '@glennsl/rescript-fetch':
         specifier: 0.2.0
         version: 0.2.0
@@ -203,40 +203,36 @@ packages:
     resolution: {integrity: sha512-raKA6DshYSle0sAOHBV1OkSRFMN+Mkz8sFiMmS3k+m5nP6pP56E17CRRePBL5qmR6ZgSEvGOz/44QUiKNkK9Pg==}
     engines: {node: '>= 10'}
 
-  '@fuel-ts/address@0.94.1':
-    resolution: {integrity: sha512-8Z3pii3fHSslqXACd5EpBcaxOmdoEtdp3W7WasGrwgID+BqrIWk6yzH07Jghqc9WmCGVI+DZRedthVmnJurJiQ==}
+  '@fuel-ts/address@0.94.6':
+    resolution: {integrity: sha512-4P5vAHBX+aYbKdvKQtpI+irkA2OmZrSC4Kqu023KiEzMX1SwSEoXDVb97utDXVIGWOxZm4sSyCGMUhJkZYPLcg==}
     engines: {node: ^18.20.3 || ^20.0.0 || ^22.0.0}
 
-  '@fuel-ts/crypto@0.94.1':
-    resolution: {integrity: sha512-+Ga41iXUxulw6o6mI86/gj3iyXDC0MP03+X7O6XTnOL1WIX1qiOWUnxaupouKhZuNq52k5nVTfH8nTLd9ek/Gg==}
+  '@fuel-ts/crypto@0.94.6':
+    resolution: {integrity: sha512-QagAhB7O9gV6fDiEsJnvaURNA8OklE9uKuaCcrxNVpzzxgapreZU6b99oAV9zctiojNn3JcF3UYqVCE9SIgZEw==}
     engines: {node: ^18.20.3 || ^20.0.0 || ^22.0.0}
 
-  '@fuel-ts/errors@0.94.1':
-    resolution: {integrity: sha512-eKNBFIlB1xPc13899R0FdhGwiykbkBdBlgAinbjDLm8RSWHYMAFjgRpho6HELcYpLYFqf6uY9ms/J3BBosSFEA==}
+  '@fuel-ts/errors@0.94.6':
+    resolution: {integrity: sha512-qMYI9acCZm1ISDPgTLtW21UwypL6g+X8OGxOgmeQajM8SvT3Zj6cot3q6YM+ZCmo9ZB3IWOOtam7hXTK7MKawQ==}
     engines: {node: ^18.20.3 || ^20.0.0 || ^22.0.0}
 
-  '@fuel-ts/hasher@0.94.1':
-    resolution: {integrity: sha512-EiaLTk3TwiJOo78O47blhrntEMG4zx1HqjfNcwcOASq11Rd3IdzWjtxQqdnWqTm+bvvaVd2NkoUgd42EtMlR2A==}
-    engines: {node: ^18.20.3 || ^20.0.0 || ^22.0.0}
-
-  '@fuel-ts/interfaces@0.94.1':
-    resolution: {integrity: sha512-ygw6wZoXQr2/AU91VuJporo68ySgVsmSRkNiJ+lP9Rq5WLie2TXTR4REyD4UGgTGKvjkwMl5YOVfGNFP6hRX4g==}
+  '@fuel-ts/hasher@0.94.6':
+    resolution: {integrity: sha512-hg2judiu3Ci1wCbi5DMIMeWcf3jOZK1dmNiPEJu19BV32uw44QmlnV89uXIxDwLOSxlmiI+dxJOi4vF+domfeg==}
     engines: {node: ^18.20.3 || ^20.0.0 || ^22.0.0}
 
   '@fuel-ts/interfaces@0.94.6':
     resolution: {integrity: sha512-wR+ZGUT1Jjj7LifmvHfBIAIZRwjXUYddwT6SDptBglDQkJGlMwEHv8xh76FU0W764NwWGRqoX2TeZKIdu4fD/w==}
     engines: {node: ^18.20.3 || ^20.0.0 || ^22.0.0}
 
-  '@fuel-ts/math@0.94.1':
-    resolution: {integrity: sha512-FzNmIPBTV4KbLi4D+2G0YdIjfC5sC9HTGyd93WITd5DHcqRlHXqTUMENyIa5tenouBXl9g8mNGfc8AJ/6UQIuQ==}
+  '@fuel-ts/math@0.94.6':
+    resolution: {integrity: sha512-VIgVv3Qdy4wjuR7ehlvOz+fo6WZPuoWLnACBu4xeMEwUrSZRJrDGBSG3FKBcJOBwIX9olbWseCNTccRWcLinMQ==}
     engines: {node: ^18.20.3 || ^20.0.0 || ^22.0.0}
 
-  '@fuel-ts/utils@0.94.1':
-    resolution: {integrity: sha512-rRcg67TQGeaPyhzgmRL43E7+fwEibpcFy/YZTlXQ7wS3uRuUnJd6EjnVUtOjPJLV6w5tTJ50puSF24iLNc38FA==}
+  '@fuel-ts/utils@0.94.6':
+    resolution: {integrity: sha512-v/eHwuVZCeiSF4ywZ7mmrMMzOBWU9mcsG5Iu4F598UDWqL6CLSuf3DbATGAE8Dt23JNPzqtSSn7TT+LVdfT8tQ==}
     engines: {node: ^18.20.3 || ^20.0.0 || ^22.0.0}
 
-  '@fuel-ts/versions@0.94.1':
-    resolution: {integrity: sha512-Da0X6oTgeic7T6bTmHa0crK+ccFvHEkC8h2SxeE3ptWYqC7osoNRoJTk5O7JO2LD0NKFIYJU9BghooOomXFXNw==}
+  '@fuel-ts/versions@0.94.6':
+    resolution: {integrity: sha512-R/KcgrGe64IhFQkNDQmUnILrMKtKXhaxB+WoDtYho25a79wxq1M+D9Be7kcg+ku2hPjfvk89OaIzD1cZhUx7xg==}
     engines: {node: ^18.20.3 || ^20.0.0 || ^22.0.0}
     hasBin: true
 
@@ -1569,53 +1565,51 @@ snapshots:
       '@envio-dev/hyperfuel-client-linux-x64-musl': 1.2.2
       '@envio-dev/hyperfuel-client-win32-x64-msvc': 1.2.2
 
-  '@fuel-ts/address@0.94.1':
+  '@fuel-ts/address@0.94.6':
     dependencies:
-      '@fuel-ts/crypto': 0.94.1
-      '@fuel-ts/errors': 0.94.1
-      '@fuel-ts/interfaces': 0.94.1
-      '@fuel-ts/utils': 0.94.1
+      '@fuel-ts/crypto': 0.94.6
+      '@fuel-ts/errors': 0.94.6
+      '@fuel-ts/interfaces': 0.94.6
+      '@fuel-ts/utils': 0.94.6
       '@noble/hashes': 1.5.0
       bech32: 2.0.0
 
-  '@fuel-ts/crypto@0.94.1':
+  '@fuel-ts/crypto@0.94.6':
     dependencies:
-      '@fuel-ts/errors': 0.94.1
-      '@fuel-ts/interfaces': 0.94.1
-      '@fuel-ts/math': 0.94.1
-      '@fuel-ts/utils': 0.94.1
-      '@noble/hashes': 1.5.0
-
-  '@fuel-ts/errors@0.94.1':
-    dependencies:
-      '@fuel-ts/versions': 0.94.1
-
-  '@fuel-ts/hasher@0.94.1':
-    dependencies:
-      '@fuel-ts/crypto': 0.94.1
+      '@fuel-ts/errors': 0.94.6
       '@fuel-ts/interfaces': 0.94.6
-      '@fuel-ts/utils': 0.94.1
+      '@fuel-ts/math': 0.94.6
+      '@fuel-ts/utils': 0.94.6
       '@noble/hashes': 1.5.0
 
-  '@fuel-ts/interfaces@0.94.1': {}
+  '@fuel-ts/errors@0.94.6':
+    dependencies:
+      '@fuel-ts/versions': 0.94.6
+
+  '@fuel-ts/hasher@0.94.6':
+    dependencies:
+      '@fuel-ts/crypto': 0.94.6
+      '@fuel-ts/interfaces': 0.94.6
+      '@fuel-ts/utils': 0.94.6
+      '@noble/hashes': 1.5.0
 
   '@fuel-ts/interfaces@0.94.6': {}
 
-  '@fuel-ts/math@0.94.1':
+  '@fuel-ts/math@0.94.6':
     dependencies:
-      '@fuel-ts/errors': 0.94.1
+      '@fuel-ts/errors': 0.94.6
       '@types/bn.js': 5.1.5
       bn.js: 5.2.1
 
-  '@fuel-ts/utils@0.94.1':
+  '@fuel-ts/utils@0.94.6':
     dependencies:
-      '@fuel-ts/errors': 0.94.1
-      '@fuel-ts/interfaces': 0.94.1
-      '@fuel-ts/math': 0.94.1
-      '@fuel-ts/versions': 0.94.1
+      '@fuel-ts/errors': 0.94.6
+      '@fuel-ts/interfaces': 0.94.6
+      '@fuel-ts/math': 0.94.6
+      '@fuel-ts/versions': 0.94.6
       fflate: 0.8.2
 
-  '@fuel-ts/versions@0.94.1':
+  '@fuel-ts/versions@0.94.6':
     dependencies:
       chalk: 4.1.2
       cli-table: 0.3.11
