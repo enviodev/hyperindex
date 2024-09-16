@@ -259,12 +259,17 @@ module HandlerTypes = {
           })
         }
       )
-      let topicSelectionNoFilters =
-        LogSelection.makeTopicSelection(~topic0=topic0sGrouped)->Utils.unwrapResultExn
+      let topicSelections = switch topic0sGrouped {
+      | [] => topicSelectionWithFilters
+      | topic0sGrouped =>
+        [
+          LogSelection.makeTopicSelection(~topic0=topic0sGrouped)->Utils.unwrapResultExn,
+        ]->Belt.Array.concat(topicSelectionWithFilters)
+      }
 
       {
         isWildcard,
-        topicSelections: Belt.Array.concat(topicSelectionWithFilters, [topicSelectionNoFilters]),
+        topicSelections,
       }
     }
   }
