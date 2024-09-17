@@ -14,7 +14,7 @@ import {
   TestEvents_IndexedNestedStruct_eventFilter,
   TestEvents_IndexedStructWithArray_eventFilter,
 } from "generated/src/Types.gen";
-import { mapTopicQuery } from "generated/src/eventFetching/rpc/Rpc.bs.js";
+import { GetLogs } from "generated/src/eventFetching/rpc/Rpc.bs.js";
 import { TestHelpers } from "generated";
 import { TestEvents } from "../contracts/typechain-types";
 import assert from "assert";
@@ -34,7 +34,7 @@ const testParams = {
 };
 
 describe("Topic Hashing", () => {
-  before(async function () {
+  before(async function() {
     this.timeout(30 * 1000);
     await hre.run("compile");
 
@@ -69,7 +69,7 @@ describe("Topic Hashing", () => {
   });
 
   const checkEventFilter = async (eventMod: any, filter: any) => {
-    const topics = mapTopicQuery(eventMod.getTopicSelection(filter)[0]);
+    const topics = GetLogs.mapTopicQuery(eventMod.getTopicSelection(filter)[0]);
     const res = await hre.ethers.provider.getLogs({
       address: await deployedTestEvents.getAddress(),
       topics,
