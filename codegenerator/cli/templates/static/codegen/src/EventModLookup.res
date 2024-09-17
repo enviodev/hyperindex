@@ -57,16 +57,20 @@ module ContractEventMods = {
     byContractName->Utils.Dict.dangerouslyGetNonOption(contractName)
   }
 }
+let getEventId = (~sighash, ~topicCount) => {
+  sighash ++ "_" ++ topicCount->Belt.Int.toString
+}
 type t = dict<ContractEventMods.t>
 
 let empty = () => Js.Dict.empty()
 
 let set = (eventModLookup: t, eventMod: module(Types.Event)) => {
   let module(Event) = eventMod
-  let events = switch eventModLookup->Utils.Dict.dangerouslyGetNonOption(Event.sighash) {
+  let eventId = getEventId(~sighash=Event.sighash, ~topicCount=Event.topicCount)
+  let events = switch eventModLookup->Utils.Dict.dangerouslyGetNonOption(eventId) {
   | None =>
     let events = ContractEventMods.empty()
-    eventModLookup->Js.Dict.set(Event.sighash, events)
+    eventModLookup->Js.Dict.set(eventId, events)
     events
   | Some(events) => events
   }
@@ -75,14 +79,14 @@ let set = (eventModLookup: t, eventMod: module(Types.Event)) => {
   )
 }
 
-let get = (eventModLookup: t, ~sighash, ~contractAddress, ~contractAddressMapping) =>
+let get = (eventModLookup: t, ~sighash, ~topicCount, ~contractAddress, ~contractAddressMapping) =>
   eventModLookup
-  ->Utils.Dict.dangerouslyGetNonOption(sighash)
+  ->Utils.Dict.dangerouslyGetNonOption(getEventId(~sighash, ~topicCount))
   ->Option.flatMap(ContractEventMods.get(_, ~contractAddress, ~contractAddressMapping))
 
-let getByKey = (eventModLookup: t, ~sighash, ~contractName) =>
+let getByKey = (eventModLookup: t, ~sighash, ~topicCount, ~contractName) =>
   eventModLookup
-  ->Utils.Dict.dangerouslyGetNonOption(sighash)
+  ->Utils.Dict.dangerouslyGetNonOption(getEventId(~sighash, ~topicCount))
   ->Option.flatMap(eventsByContractName =>
     eventsByContractName->ContractEventMods.getByContractName(~contractName)
   )
