@@ -294,7 +294,7 @@ module HeightQuery = {
     //height to be set in loop
     let height = ref(0)
 
-    //Retry if the heigth is 0 (expect height to be greater)
+    //Retry if the height is 0 (expect height to be greater)
     while height.contents <= 0 {
       let res = await HyperFuelJsonApi.getArchiveHeight(~serverUrl)
       Logging.debug({"msg": "querying height", "response": res})
