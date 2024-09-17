@@ -1,8 +1,6 @@
 open ChainWorker
 open Belt
 
-exception EventRoutingFailed
-
 module Helpers = {
   let rec queryLogsPageWithBackoff = async (
     ~backoffMsOnFailure=200,
@@ -107,9 +105,12 @@ let makeGetNextPage = (
     })
   })
 
-  let getLogSelectionOrThrow = (~contractAddressMapping): array<LogSelection.t> => {
-    contracts
-    ->Belt.Array.keepMap((contract): option<LogSelection.t> => {
+  let getLogSelectionOrThrow = (~contractAddressMapping, ~shouldApplyWildcards): array<
+    LogSelection.t,
+  > => {
+    let nonWildcardLogSelection = contracts->Belt.Array.keepMap((contract): option<
+      LogSelection.t,
+    > => {
       switch contractAddressMapping->ContractAddressingMap.getAddressesFromContractName(
         ~contractName=contract.name,
       ) {
@@ -127,7 +128,10 @@ let makeGetNextPage = (
         }
       }
     })
-    ->Array.concat(wildcardLogSelection)
+
+    shouldApplyWildcards
+      ? nonWildcardLogSelection->Array.concat(wildcardLogSelection)
+      : nonWildcardLogSelection
   }
 
   async (
@@ -137,6 +141,7 @@ let makeGetNextPage = (
     ~logger,
     ~setCurrentBlockHeight,
     ~contractAddressMapping,
+    ~shouldApplyWildcards,
   ) => {
     //Wait for a valid range to query
     //This should never have to wait since we check that the from block is below the toBlock
@@ -155,7 +160,7 @@ let makeGetNextPage = (
     )
 
     let logSelections = try {
-      getLogSelectionOrThrow(~contractAddressMapping)
+      getLogSelectionOrThrow(~contractAddressMapping, ~shouldApplyWildcards)
     } catch {
     | exn =>
       exn->ErrorHandling.mkLogAndRaise(
@@ -289,6 +294,9 @@ module Make = (
         ~contractAddressMapping,
         ~logger,
         ~setCurrentBlockHeight,
+        //Only apply wildcards on the first partition and root register
+        //to avoid duplicate wildcard queries
+        ~shouldApplyWildcards=fetchStateRegisterId == Root && partitionId == 0, //only
       )
 
       //set height and next from block
@@ -530,3 +538,4 @@ module Make = (
       ~logger,
     )->Promise.thenResolve(HyperSync.mapExn)
 }
+
