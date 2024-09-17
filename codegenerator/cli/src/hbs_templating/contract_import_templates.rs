@@ -282,7 +282,7 @@ impl Event {
         .to_string();
 
         let block_number_field = match is_fuel {
-            true => "heigth",
+            true => "height",
             false => "humber",
         };
 

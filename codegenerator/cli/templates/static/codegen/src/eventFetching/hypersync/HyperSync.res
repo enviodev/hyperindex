@@ -109,14 +109,18 @@ module LogsQuery = {
       switch returnedObj
       ->(Utils.magic: 'a => Js.Dict.t<unknown>)
       ->Utils.Dict.dangerouslyGetNonOption(fieldName) {
-        | Some(_) => ()
-        | None => acc->Array.push(prefix ++ "." ++ fieldName)->ignore
+      | Some(_) => ()
+      | None => acc->Array.push(prefix ++ "." ++ fieldName)->ignore
       }
     })
   }
 
   //Note this function can throw an error
-  let convertEvent = (event: HyperSyncClient.ResponseTypes.event, ~nonOptionalBlockFieldNames, ~nonOptionalTransactionFieldNames): logsQueryPageItem => {
+  let convertEvent = (
+    event: HyperSyncClient.ResponseTypes.event,
+    ~nonOptionalBlockFieldNames,
+    ~nonOptionalTransactionFieldNames,
+  ): logsQueryPageItem => {
     let missingParams = []
     missingParams->addMissingParams(Types.Log.fieldNames, event.log, ~prefix="log")
     missingParams->addMissingParams(nonOptionalBlockFieldNames, event.block, ~prefix="block")
@@ -150,12 +154,17 @@ module LogsQuery = {
     }
   }
 
-  let convertResponse = (res: HyperSyncClient.ResponseTypes.eventResponse, ~nonOptionalBlockFieldNames, ~nonOptionalTransactionFieldNames): queryResponse<
-    logsQueryPage,
-  > => {
+  let convertResponse = (
+    res: HyperSyncClient.ResponseTypes.eventResponse,
+    ~nonOptionalBlockFieldNames,
+    ~nonOptionalTransactionFieldNames,
+  ): queryResponse<logsQueryPage> => {
     try {
       let {nextBlock, archiveHeight, rollbackGuard} = res
-      let items = res.data->Array.map(item => item->convertEvent(~nonOptionalBlockFieldNames, ~nonOptionalTransactionFieldNames))
+      let items =
+        res.data->Array.map(item =>
+          item->convertEvent(~nonOptionalBlockFieldNames, ~nonOptionalTransactionFieldNames)
+        )
       let page: logsQueryPage = {
         items,
         nextBlock,
@@ -191,7 +200,12 @@ module LogsQuery = {
       })
     )
 
-    let query = makeRequestBody(~fromBlock, ~toBlockInclusive=toBlock, ~addressesWithTopics, ~fieldSelection)
+    let query = makeRequestBody(
+      ~fromBlock,
+      ~toBlockInclusive=toBlock,
+      ~addressesWithTopics,
+      ~fieldSelection,
+    )
 
     let hyperSyncClient = CachedClients.getClient(serverUrl)
 
@@ -216,7 +230,7 @@ module HeightQuery = {
     //height to be set in loop
     let height = ref(0)
 
-    //Retry if the heigth is 0 (expect height to be greater)
+    //Retry if the height is 0 (expect height to be greater)
     while height.contents <= 0 {
       let res = await HyperSyncJsonApi.getArchiveHeight(~serverUrl)
       switch res {
