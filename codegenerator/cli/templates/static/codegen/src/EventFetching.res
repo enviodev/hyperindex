@@ -125,37 +125,24 @@ let convertLogs = (
     "numberLogs": logs->Belt.Array.length,
   })
 
-  logs->Belt.Array.map(async (log): Types.eventBatchQueueItem => {
+  logs
+  ->Belt.Array.keepMap(log => {
+    let topic0 = log.topics->Js.Array2.unsafe_get(0)
+    eventModLookup
+    ->EventModLookup.get(
+      ~sighash=topic0,
+      ~topicCount=log.topics->Array.length,
+      ~contractAddressMapping=contractInterfaceManager.contractAddressMapping,
+      ~contractAddress=log.address,
+    )
+    ->Belt.Option.map(eventMod => (log, eventMod)) //ignore events that aren't registered
+  })
+  ->Belt.Array.map(async ((log, eventMod)): Types.eventBatchQueueItem => {
     let block = await blockLoader->LazyLoader.get(log.blockNumber)
     let transaction = log->transactionFieldsFromLog(~logger)
     let log = log->ethersLogToLog
     let chainId = chain->ChainMap.Chain.toChainId
 
-    let topic0 = log.topics->Js.Array2.unsafe_get(0)
-    let eventMod = switch eventModLookup->EventModLookup.get(
-      ~sighash=topic0,
-      ~topicCount=log.topics->Array.length,
-      ~contractAddressMapping=contractInterfaceManager.contractAddressMapping,
-      ~contractAddress=log.address,
-    ) {
-    | None => {
-        let logger = Logging.createChildFrom(
-          ~logger,
-          ~params={
-            "chainId": chainId,
-            "blockNumber": block.number,
-            "logIndex": log.logIndex,
-            "contractAddress": log.address,
-            "topic0": topic0,
-          },
-        )
-        EventRoutingFailed->ErrorHandling.mkLogAndRaise(
-          ~msg="Failed to lookup registered event",
-          ~logger,
-        )
-      }
-    | Some(eventMod) => eventMod
-    }
     let module(Event) = eventMod
 
     let decodedEvent = try contractInterfaceManager->ContractInterfaceManager.parseLogViemOrThrow(
