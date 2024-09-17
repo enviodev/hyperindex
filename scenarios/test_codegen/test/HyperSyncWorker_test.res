@@ -76,6 +76,7 @@ describe("HyperSyncWorker - getNextPage", () => {
         ~logger=Logging.logger,
         ~setCurrentBlockHeight=_blockNumber => (),
         ~contractAddressMapping=ContractAddressingMap.make(),
+        ~shouldApplyWildcards=true,
       )
 
       Assert.deepEqual(
@@ -126,6 +127,7 @@ describe("HyperSyncWorker - getNextPage", () => {
         ~logger=Logging.logger,
         ~setCurrentBlockHeight=_blockNumber => (),
         ~contractAddressMapping=ContractAddressingMap.make(),
+        ~shouldApplyWildcards=true,
       )
 
       Assert.deepEqual(
