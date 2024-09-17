@@ -283,7 +283,7 @@ impl Event {
 
         let block_number_field = match is_fuel {
             true => "height",
-            false => "humber",
+            false => "number",
         };
 
         format!(
