@@ -281,13 +281,13 @@ impl Event {
         }
         .to_string();
 
-        let second_part = match is_fuel {
-            true => format!("${{{event_var_name}.transaction.id}}"),
-            false => format!("${{{event_var_name}.block.number}}"),
+        let block_number_field = match is_fuel {
+            true => "heigth",
+            false => "humber",
         };
 
         format!(
-            "`${{{event_var_name}.chainId}}_{second_part}_${{{event_var_name}.logIndex{}}}`",
+            "`${{{event_var_name}.chainId}}_${{{event_var_name}.block.{block_number_field}}}_${{{event_var_name}.logIndex{}}}`",
             to_string_code
         )
     }
