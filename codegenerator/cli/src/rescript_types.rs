@@ -151,7 +151,7 @@ impl RescriptTypeDecl {
             let params = self
                 .parameters
                 .iter()
-                .map(|param| format!("_{}Schema", param))
+                .map(|param| format!("_{param}Schema: S.t<'{param}>"))
                 .collect::<Vec<String>>()
                 .join(", ");
             let type_name = format!(

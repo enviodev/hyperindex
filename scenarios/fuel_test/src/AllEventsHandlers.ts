@@ -37,3 +37,5 @@ AllEvents.BoolLog.handler(async (_: any) => {}, { wildcard: true });
 AllEvents.StrLog.handler(async (_: any) => {});
 
 AllEvents.Option2.handler(async (_: any) => {});
+
+AllEvents.Vec.handler(async (_: any) => {});
