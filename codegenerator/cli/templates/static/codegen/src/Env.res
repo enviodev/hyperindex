@@ -5,18 +5,7 @@ Dotenv.initialize()
   let getLogLevelConfig = (name, ~default): Pino.logLevel =>
     envSafe->EnvSafe.get(
       name,
-      S.union([
-        S.literal(#trace),
-        S.literal(#debug),
-        S.literal(#info),
-        S.literal(#warn),
-        S.literal(#error),
-        S.literal(#fatal),
-        S.literal(#udebug),
-        S.literal(#uinfo),
-        S.literal(#uwarn),
-        S.literal(#uerror),
-      ]),
+      S.enum([#trace, #debug, #info, #warn, #error, #fatal, #udebug, #uinfo, #uwarn, #uerror]),
       ~fallback=default,
     )
 )
@@ -48,15 +37,7 @@ type logStrategyType =
 let logStrategy =
   envSafe->EnvSafe.get(
     "LOG_STRATEGY",
-    S.union([
-      S.literal(EcsFile),
-      S.literal(EcsConsole),
-      S.literal(EcsConsoleMultistream),
-      S.literal(FileOnly),
-      S.literal(ConsoleRaw),
-      S.literal(ConsolePretty),
-      S.literal(Both),
-    ]),
+    S.enum([EcsFile, EcsConsole, EcsConsoleMultistream, FileOnly, ConsoleRaw, ConsolePretty, Both]),
     ~fallback=ConsolePretty,
   )
 
@@ -112,8 +93,7 @@ module Configurable = {
       envSafe->EnvSafe.get("ENVIO_RPC_BACKOFF_MULTIPLICATIVE", S.option(S.float))
     let accelerationAdditive =
       envSafe->EnvSafe.get("ENVIO_RPC_ACCELERATION_ADDITIVE", S.option(S.int))
-    let intervalCeiling =
-      envSafe->EnvSafe.get("ENVIO_RPC_INTERVAL_CEILING", S.option(S.int))
+    let intervalCeiling = envSafe->EnvSafe.get("ENVIO_RPC_INTERVAL_CEILING", S.option(S.int))
   }
 }
 
