@@ -633,6 +633,14 @@ impl RescriptTypeIdent {
             _ => false,
         }
     }
+
+    pub fn option(inner_type: Self) -> Self {
+        Self::Option(Box::new(inner_type))
+    }
+
+    pub fn array(inner_type: Self) -> Self {
+        Self::Array(Box::new(inner_type))
+    }
 }
 
 impl Display for RescriptTypeIdent {
@@ -708,17 +716,13 @@ mod tests {
             "S.string".to_string()
         );
         assert_eq!(
-            RescriptTypeExpr::Identifier(RescriptTypeIdent::Array(Box::new(
-                RescriptTypeIdent::Int
-            )))
-            .to_rescript_schema(&"eventArgs".to_string()),
+            RescriptTypeExpr::Identifier(RescriptTypeIdent::array(RescriptTypeIdent::Int))
+                .to_rescript_schema(&"eventArgs".to_string()),
             "S.array(S.int)".to_string()
         );
         assert_eq!(
-            RescriptTypeExpr::Identifier(RescriptTypeIdent::Option(Box::new(
-                RescriptTypeIdent::Int
-            )))
-            .to_rescript_schema(&"eventArgs".to_string()),
+            RescriptTypeExpr::Identifier(RescriptTypeIdent::option(RescriptTypeIdent::Int))
+                .to_rescript_schema(&"eventArgs".to_string()),
             "S.null(S.int)".to_string()
         );
         assert_eq!(
@@ -806,7 +810,7 @@ mod tests {
                 },
                 RescriptRecordField::new(
                     "myOptBool".to_string(),
-                    RescriptTypeIdent::Option(Box::new(RescriptTypeIdent::Bool)),
+                    RescriptTypeIdent::option(RescriptTypeIdent::Bool),
                 ),
             ]),
             vec![],

@@ -1106,57 +1106,37 @@ impl FieldSelection {
             },
         ];
 
+        type Res = RescriptTypeIdent;
+        type Block = BlockField;
+        type Tx = TransactionField;
+
         for block_field in block_fields {
             let data_type = match block_field {
-                BlockField::ParentHash => RescriptTypeIdent::String,
-                BlockField::Nonce => RescriptTypeIdent::Option(Box::new(RescriptTypeIdent::BigInt)),
-                BlockField::Sha3Uncles => RescriptTypeIdent::String,
-                BlockField::LogsBloom => RescriptTypeIdent::String,
-                BlockField::TransactionsRoot => RescriptTypeIdent::String,
-                BlockField::StateRoot => RescriptTypeIdent::String,
-                BlockField::ReceiptsRoot => RescriptTypeIdent::String,
-                BlockField::Miner => RescriptTypeIdent::Address,
-                BlockField::Difficulty => {
-                    RescriptTypeIdent::Option(Box::new(RescriptTypeIdent::BigInt))
-                }
-                BlockField::TotalDifficulty => {
-                    RescriptTypeIdent::Option(Box::new(RescriptTypeIdent::BigInt))
-                }
-                BlockField::ExtraData => RescriptTypeIdent::String,
-                BlockField::Size => RescriptTypeIdent::BigInt,
-                BlockField::GasLimit => RescriptTypeIdent::BigInt,
-                BlockField::GasUsed => RescriptTypeIdent::BigInt,
-                BlockField::Uncles => RescriptTypeIdent::Option(Box::new(
-                    RescriptTypeIdent::Array(Box::new(RescriptTypeIdent::String)),
-                )),
-                BlockField::BaseFeePerGas => {
-                    RescriptTypeIdent::Option(Box::new(RescriptTypeIdent::BigInt))
-                }
-                BlockField::BlobGasUsed => {
-                    RescriptTypeIdent::Option(Box::new(RescriptTypeIdent::BigInt))
-                }
-                BlockField::ExcessBlobGas => {
-                    RescriptTypeIdent::Option(Box::new(RescriptTypeIdent::BigInt))
-                }
-                BlockField::ParentBeaconBlockRoot => {
-                    RescriptTypeIdent::Option(Box::new(RescriptTypeIdent::String))
-                }
-                BlockField::WithdrawalsRoot => {
-                    RescriptTypeIdent::Option(Box::new(RescriptTypeIdent::String))
-                }
-                // BlockField::Withdrawals => todo!(), //should be array of withdrawal record
-                BlockField::L1BlockNumber => {
-                    RescriptTypeIdent::Option(Box::new(RescriptTypeIdent::Int))
-                }
-                BlockField::SendCount => {
-                    RescriptTypeIdent::Option(Box::new(RescriptTypeIdent::String))
-                }
-                BlockField::SendRoot => {
-                    RescriptTypeIdent::Option(Box::new(RescriptTypeIdent::String))
-                }
-                BlockField::MixHash => {
-                    RescriptTypeIdent::Option(Box::new(RescriptTypeIdent::String))
-                }
+                Block::ParentHash => Res::String,
+                Block::Nonce => Res::option(Res::BigInt),
+                Block::Sha3Uncles => Res::String,
+                Block::LogsBloom => Res::String,
+                Block::TransactionsRoot => Res::String,
+                Block::StateRoot => Res::String,
+                Block::ReceiptsRoot => Res::String,
+                Block::Miner => Res::Address,
+                Block::Difficulty => Res::option(Res::BigInt),
+                Block::TotalDifficulty => Res::option(Res::BigInt),
+                Block::ExtraData => Res::String,
+                Block::Size => Res::BigInt,
+                Block::GasLimit => Res::BigInt,
+                Block::GasUsed => Res::BigInt,
+                Block::Uncles => Res::option(Res::array(Res::String)),
+                Block::BaseFeePerGas => Res::option(Res::BigInt),
+                Block::BlobGasUsed => Res::option(Res::BigInt),
+                Block::ExcessBlobGas => Res::option(Res::BigInt),
+                Block::ParentBeaconBlockRoot => Res::option(Res::String),
+                Block::WithdrawalsRoot => Res::option(Res::String),
+                // Block::Withdrawals => todo!(), //should be array of withdrawal record
+                Block::L1BlockNumber => Res::option(Res::Int),
+                Block::SendCount => Res::option(Res::String),
+                Block::SendRoot => Res::option(Res::String),
+                Block::MixHash => Res::option(Res::String),
             };
             selected_block_fields.push(SelectedField {
                 name: block_field.to_string(),
@@ -1166,82 +1146,41 @@ impl FieldSelection {
         }
 
         let mut selected_transaction_fields = vec![];
+
         for transaction_field in transaction_fields {
             let data_type = match transaction_field {
-                TransactionField::TransactionIndex => RescriptTypeIdent::Int,
-                TransactionField::Hash => RescriptTypeIdent::String,
-                TransactionField::From => {
-                    RescriptTypeIdent::Option(Box::new(RescriptTypeIdent::Address))
-                }
-                TransactionField::To => {
-                    RescriptTypeIdent::Option(Box::new(RescriptTypeIdent::Address))
-                }
-                TransactionField::Gas => RescriptTypeIdent::BigInt,
-                TransactionField::GasPrice => {
-                    RescriptTypeIdent::Option(Box::new(RescriptTypeIdent::BigInt))
-                }
-                TransactionField::MaxPriorityFeePerGas => {
-                    RescriptTypeIdent::Option(Box::new(RescriptTypeIdent::BigInt))
-                }
-                TransactionField::MaxFeePerGas => {
-                    RescriptTypeIdent::Option(Box::new(RescriptTypeIdent::BigInt))
-                }
-                TransactionField::CumulativeGasUsed => RescriptTypeIdent::BigInt,
-                TransactionField::EffectiveGasPrice => RescriptTypeIdent::BigInt,
-                TransactionField::GasUsed => RescriptTypeIdent::BigInt,
-                TransactionField::Input => RescriptTypeIdent::String,
-                TransactionField::Nonce => RescriptTypeIdent::BigInt,
-                TransactionField::Value => RescriptTypeIdent::BigInt,
-                TransactionField::V => {
-                    RescriptTypeIdent::Option(Box::new(RescriptTypeIdent::String))
-                }
-                TransactionField::R => {
-                    RescriptTypeIdent::Option(Box::new(RescriptTypeIdent::String))
-                }
-                TransactionField::S => {
-                    RescriptTypeIdent::Option(Box::new(RescriptTypeIdent::String))
-                }
-                TransactionField::ContractAddress => {
-                    RescriptTypeIdent::Option(Box::new(RescriptTypeIdent::Address))
-                }
-                TransactionField::LogsBloom => RescriptTypeIdent::String,
-                TransactionField::Root => {
-                    RescriptTypeIdent::Option(Box::new(RescriptTypeIdent::String))
-                }
-                TransactionField::Status => {
-                    RescriptTypeIdent::Option(Box::new(RescriptTypeIdent::Int))
-                }
-                TransactionField::YParity => {
-                    RescriptTypeIdent::Option(Box::new(RescriptTypeIdent::String))
-                }
-                TransactionField::ChainId => {
-                    RescriptTypeIdent::Option(Box::new(RescriptTypeIdent::Int))
-                }
-                // TransactionField::AccessList => todo!(),
-                TransactionField::MaxFeePerBlobGas => {
-                    RescriptTypeIdent::Option(Box::new(RescriptTypeIdent::BigInt))
-                }
-                TransactionField::BlobVersionedHashes => RescriptTypeIdent::Option(Box::new(
-                    RescriptTypeIdent::Array(Box::new(RescriptTypeIdent::String)),
-                )),
-                TransactionField::Kind => {
-                    RescriptTypeIdent::Option(Box::new(RescriptTypeIdent::Int))
-                }
-                TransactionField::L1Fee => {
-                    RescriptTypeIdent::Option(Box::new(RescriptTypeIdent::BigInt))
-                }
-                TransactionField::L1GasPrice => {
-                    RescriptTypeIdent::Option(Box::new(RescriptTypeIdent::BigInt))
-                }
-                TransactionField::L1GasUsed => {
-                    RescriptTypeIdent::Option(Box::new(RescriptTypeIdent::BigInt))
-                }
-                TransactionField::L1FeeScalar => {
-                    RescriptTypeIdent::Option(Box::new(RescriptTypeIdent::Float))
-                }
-                TransactionField::GasUsedForL1 => {
-                    RescriptTypeIdent::Option(Box::new(RescriptTypeIdent::BigInt))
-                }
+                Tx::TransactionIndex => Res::Int,
+                Tx::Hash => Res::String,
+                Tx::From => Res::option(Res::Address),
+                Tx::To => Res::option(Res::Address),
+                Tx::Gas => Res::BigInt,
+                Tx::GasPrice => Res::option(Res::BigInt),
+                Tx::MaxPriorityFeePerGas => Res::option(Res::BigInt),
+                Tx::MaxFeePerGas => Res::option(Res::BigInt),
+                Tx::CumulativeGasUsed => Res::BigInt,
+                Tx::EffectiveGasPrice => Res::BigInt,
+                Tx::GasUsed => Res::BigInt,
+                Tx::Input => Res::String,
+                Tx::Nonce => Res::BigInt,
+                Tx::Value => Res::BigInt,
+                Tx::V => Res::option(Res::String),
+                Tx::R => Res::option(Res::String),
+                Tx::S => Res::option(Res::String),
+                Tx::ContractAddress => Res::option(Res::Address),
+                Tx::LogsBloom => Res::String,
+                Tx::Root => Res::option(Res::String),
+                Tx::Status => Res::option(Res::Int),
+                Tx::YParity => Res::option(Res::String),
+                Tx::ChainId => Res::option(Res::Int),
+                // TxField::AccessList => todo!(),
+                Tx::MaxFeePerBlobGas => Res::option(Res::BigInt),
+                Tx::BlobVersionedHashes => Res::option(Res::array(Res::String)),
+                Tx::Kind => Res::option(Res::Int),
+                Tx::L1Fee => Res::option(Res::BigInt),
+                Tx::L1GasPrice => Res::option(Res::BigInt),
+                Tx::L1GasUsed => Res::option(Res::BigInt),
+                Tx::L1FeeScalar => Res::option(Res::Float),
+                Tx::GasUsedForL1 => Res::option(Res::BigInt),
             };
             selected_transaction_fields.push(SelectedField {
                 name: transaction_field.to_string(),

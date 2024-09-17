@@ -8,6 +8,9 @@ importers:
 
   .:
     dependencies:
+      '@glennsl/rescript-fetch':
+        specifier: 0.2.0
+        version: 0.2.0
       '@ryyppy/rescript-promise':
         specifier: 2.1.0
         version: 2.1.0
