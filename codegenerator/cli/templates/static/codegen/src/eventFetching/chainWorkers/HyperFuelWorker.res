@@ -114,6 +114,7 @@ module Make = (
     ~logger,
     ~setCurrentBlockHeight,
     ~contractAddressMapping,
+    ~shouldApplyWildcards,
   ) => {
     //Wait for a valid range to query
     //This should never have to wait since we check that the from block is below the toBlock
@@ -127,25 +128,28 @@ module Make = (
     )
 
     //Instantiate each time to add new registered contract addresses
-    let contractsReceiptQuery =
-      T.contracts
-      ->Belt.Array.keepMap((contract): option<HyperFuel.contractReceiptQuery> => {
-        switch contractAddressMapping->ContractAddressingMap.getAddressesFromContractName(
-          ~contractName=contract.name,
-        ) {
-        | [] => None
-        | addresses =>
-          Some({
-            addresses,
-            rb: contract.events->Array.keepMap(eventMod => {
-              let module(Event: Types.Event) = eventMod
-              let {isWildcard} = Event.handlerRegister->Types.HandlerTypes.Register.getEventOptions
-              isWildcard ? None : Some(Event.sighash->BigInt.fromStringUnsafe)
-            }),
-          })
-        }
-      })
-      ->Array.concat(wildcardLogSelection)
+    let contractsReceiptQuery = T.contracts->Belt.Array.keepMap((contract): option<
+      HyperFuel.contractReceiptQuery,
+    > => {
+      switch contractAddressMapping->ContractAddressingMap.getAddressesFromContractName(
+        ~contractName=contract.name,
+      ) {
+      | [] => None
+      | addresses =>
+        Some({
+          addresses,
+          rb: contract.events->Array.keepMap(eventMod => {
+            let module(Event: Types.Event) = eventMod
+            let {isWildcard} = Event.handlerRegister->Types.HandlerTypes.Register.getEventOptions
+            isWildcard ? None : Some(Event.sighash->BigInt.fromStringUnsafe)
+          }),
+        })
+      }
+    })
+
+    let contractsReceiptQuery = shouldApplyWildcards
+      ? contractsReceiptQuery->Array.concat(wildcardLogSelection)
+      : contractsReceiptQuery
 
     let startFetchingBatchTimeRef = Hrtime.makeTimer()
 
@@ -185,6 +189,9 @@ module Make = (
         ~contractAddressMapping,
         ~logger,
         ~setCurrentBlockHeight,
+        //Only apply wildcards on the first partition and root register
+        //to avoid duplicate wildcard queries
+        ~shouldApplyWildcards=fetchStateRegisterId == Root && partitionId == 0,
       )
 
       //set height and next from block
@@ -252,7 +259,6 @@ module Make = (
           )
         })
       }
-      // }
 
       let parsingTimeRef = Hrtime.makeTimer()
 
