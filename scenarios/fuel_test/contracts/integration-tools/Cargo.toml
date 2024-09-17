@@ -1,0 +1,9 @@
+[package]
+name = "interaction-tools"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+dotenv = "0.15.0"
+fuels = "0.66.1"
+tokio = "1.37.0"
