@@ -13,6 +13,8 @@ let toInternal: module(Types.Event) => module(Types.InternalEvent) = Utils.magic
 let mockAddress1 = TestHelpers.Addresses.mockAddresses[0]
 let mockAddress2 = TestHelpers.Addresses.mockAddresses[1]
 
+let mockTopicCount = 1
+
 module MakeEventMock = (
   E: {
     let sighash: string
@@ -22,6 +24,7 @@ module MakeEventMock = (
   },
 ): Types.Event => {
   let sighash = E.sighash
+  let topicCount = mockTopicCount
   let name = E.name
   let contractName = E.contractName
 
@@ -135,7 +138,11 @@ describe("EventModLookup", () => {
     ->EventModLookup.unwrapAddEventResponse(~chain=mockChain)
 
     Assert.deepEqual(
-      lookup->EventModLookup.getByKey(~sighash=mockSighash, ~contractName="TestContract"),
+      lookup->EventModLookup.getByKey(
+        ~sighash=mockSighash,
+        ~topicCount=mockTopicCount,
+        ~contractName="TestContract",
+      ),
       Some(mockEventMod->toInternal),
     )
   })
@@ -156,6 +163,7 @@ describe("EventModLookup", () => {
     Assert.deepEqual(
       lookup->EventModLookup.get(
         ~sighash=mockSighash,
+        ~topicCount=mockTopicCount,
         ~contractAddress=mockAddress1,
         ~contractAddressMapping=ContractAddressingMap.make(),
       ),
@@ -190,7 +198,6 @@ describe("EventModLookup", () => {
       lookup
       ->EventModLookup.set(mockNonWildcardEventMod)
       ->EventModLookup.unwrapAddEventResponse(~chain=mockChain)
-      Js.log(lookup)
 
       let contractAddressMapping = ContractAddressingMap.make()
       contractAddressMapping->ContractAddressingMap.addAddress(
@@ -201,6 +208,7 @@ describe("EventModLookup", () => {
       Assert.deepEqual(
         lookup->EventModLookup.get(
           ~sighash=mockSighash,
+          ~topicCount=mockTopicCount,
           ~contractAddress=nonWildcardContractAddress,
           ~contractAddressMapping,
         ),
@@ -211,6 +219,7 @@ describe("EventModLookup", () => {
       Assert.deepEqual(
         lookup->EventModLookup.get(
           ~sighash=mockSighash,
+          ~topicCount=mockTopicCount,
           ~contractAddress=wildcardContractAddress,
           ~contractAddressMapping,
         ),

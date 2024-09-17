@@ -77,6 +77,7 @@ module type S = {
 
     module type Event = {
       let sighash: string
+      let topicCount: int
       let name: string
       let contractName: string
       type eventArgs

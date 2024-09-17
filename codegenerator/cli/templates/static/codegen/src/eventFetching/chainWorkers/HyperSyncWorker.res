@@ -50,7 +50,14 @@ type nextPageFetchRes = {
   pageFetchTime: int,
 }
 
-let makeGetNextPage = (~endpointUrl, ~contracts: array<Config.contract>, ~queryLogsPage, ~pollForHeightGtOrEq, ~blockSchema, ~transactionSchema) => {
+let makeGetNextPage = (
+  ~endpointUrl,
+  ~contracts: array<Config.contract>,
+  ~queryLogsPage,
+  ~pollForHeightGtOrEq,
+  ~blockSchema,
+  ~transactionSchema,
+) => {
   let nonOptionalBlockFieldNames = blockSchema->Utils.Schema.getNonOptionalFieldNames
   let blockFieldSelection =
     blockSchema
@@ -90,7 +97,7 @@ let makeGetNextPage = (~endpointUrl, ~contracts: array<Config.contract>, ~queryL
       setCurrentBlockHeight(currentBlockHeight)
     }
   }
-  
+
   let wildcardLogSelection = contracts->Belt.Array.flatMap(contract => {
     contract.events->Belt.Array.keepMap(event => {
       let module(Event) = event
@@ -248,7 +255,14 @@ module Make = (
     }
   }
 
-  let getNextPage = makeGetNextPage(~endpointUrl=T.endpointUrl, ~contracts=T.contracts, ~queryLogsPage=HyperSync.queryLogsPage, ~pollForHeightGtOrEq=HyperSync.pollForHeightGtOrEq, ~blockSchema=T.blockSchema, ~transactionSchema=T.transactionSchema)
+  let getNextPage = makeGetNextPage(
+    ~endpointUrl=T.endpointUrl,
+    ~contracts=T.contracts,
+    ~queryLogsPage=HyperSync.queryLogsPage,
+    ~pollForHeightGtOrEq=HyperSync.pollForHeightGtOrEq,
+    ~blockSchema=T.blockSchema,
+    ~transactionSchema=T.transactionSchema,
+  )
 
   let fetchBlockRange = async (
     ~query: blockRangeFetchArgs,
@@ -391,35 +405,18 @@ module Make = (
           let {block, log} = item
           let chainId = chain->ChainMap.Chain.toChainId
           let topic0 = log.topics->Js.Array2.unsafe_get(0)
+          let maybeEventMod =
+            eventModLookup->EventModLookup.get(
+              ~sighash=topic0,
+              ~topicCount=log.topics->Array.length,
+              ~contractAddressMapping,
+              ~contractAddress=log.address,
+            )
+          let maybeDecodedEvent = parsedEvents->Js.Array2.unsafe_get(index)
 
-          let eventMod = switch eventModLookup->EventModLookup.get(
-            ~sighash=topic0,
-            ~contractAddressMapping,
-            ~contractAddress=log.address,
-          ) {
-          | None => {
-              let logger = Logging.createChildFrom(
-                ~logger,
-                ~params={
-                  "chainId": chainId,
-                  "blockNumber": block->Types.Block.getNumber,
-                  "logIndex": log.logIndex,
-                  "contractAddress": log.address,
-                  "topic0": topic0,
-                },
-              )
-              EventRoutingFailed->ErrorHandling.mkLogAndRaise(
-                ~msg="Failed to lookup registered event",
-                ~logger,
-              )
-            }
-          | Some(eventMod) => eventMod
-          }
-
-          let module(Event) = eventMod
-
-          switch parsedEvents->Js.Array2.unsafe_get(index) {
-          | Value(decoded) =>
+          switch (maybeEventMod, maybeDecodedEvent) {
+          | (Some(eventMod), Value(decoded)) =>
+            let module(Event) = eventMod
             parsedQueueItemsPreFilter
             ->Js.Array2.push(
               makeEventBatchQueueItem(
@@ -429,7 +426,7 @@ module Make = (
               ),
             )
             ->ignore
-          | Null | Undefined =>
+          | (Some(eventMod), Null | Undefined) =>
             handleDecodeFailure(
               ~eventMod,
               ~decoder="hypersync-client",
@@ -438,6 +435,7 @@ module Make = (
               ~chainId,
               ~exn=UndefinedValue,
             )
+          | (None, _) => () //ignore events that aren't registered
           }
         })
       } else {
@@ -447,45 +445,31 @@ module Make = (
           let chainId = chain->ChainMap.Chain.toChainId
           let topic0 = log.topics->Js.Array2.unsafe_get(0)
 
-          let eventMod = switch eventModLookup->EventModLookup.get(
+          switch eventModLookup->EventModLookup.get(
             ~sighash=topic0,
+            ~topicCount=log.topics->Array.length,
             ~contractAddressMapping,
             ~contractAddress=log.address,
           ) {
-          | None => {
-              let logger = Logging.createChildFrom(
-                ~logger,
-                ~params={
-                  "chainId": chainId,
-                  "blockNumber": block->Types.Block.getNumber,
-                  "logIndex": log.logIndex,
-                  "contractAddress": log.address,
-                  "topic0": topic0,
-                },
-              )
-              EventRoutingFailed->ErrorHandling.mkLogAndRaise(
-                ~msg="Failed to lookup registered event",
-                ~logger,
-              )
-            }
-          | Some(eventMod) => eventMod
-          }
-          let module(Event) = eventMod
+          | Some(eventMod) =>
+            let module(Event) = eventMod
 
-          switch contractInterfaceManager->ContractInterfaceManager.parseLogViemOrThrow(~log) {
-          | exception exn =>
-            handleDecodeFailure(
-              ~eventMod,
-              ~decoder="viem",
-              ~logIndex=log.logIndex,
-              ~blockNumber=block->Types.Block.getNumber,
-              ~chainId,
-              ~exn,
-            )
-          | decodedEvent =>
-            parsedQueueItemsPreFilter
-            ->Js.Array2.push(makeEventBatchQueueItem(item, ~params=decodedEvent.args, ~eventMod))
-            ->ignore
+            switch contractInterfaceManager->ContractInterfaceManager.parseLogViemOrThrow(~log) {
+            | exception exn =>
+              handleDecodeFailure(
+                ~eventMod,
+                ~decoder="viem",
+                ~logIndex=log.logIndex,
+                ~blockNumber=block->Types.Block.getNumber,
+                ~chainId,
+                ~exn,
+              )
+            | decodedEvent =>
+              parsedQueueItemsPreFilter
+              ->Js.Array2.push(makeEventBatchQueueItem(item, ~params=decodedEvent.args, ~eventMod))
+              ->ignore
+            }
+          | None => () //Ignore events that aren't registered
           }
         })
       }

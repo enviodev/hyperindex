@@ -418,6 +418,7 @@ type internalEventArgs
 
 module type Event = {
   let sighash: string // topic0 for Evm and rb for Fuel receipts
+  let topicCount: int // Number of topics for evm, always 0 for fuel
   let name: string
   let contractName: string
 
@@ -538,6 +539,7 @@ module {{contract.name.capitalized}} = {
 {{#each contract.codegen_events as | event |}}
   module {{event.name.capitalized}} = {
     let sighash = "{{event.sighash}}"
+    let topicCount = {{event.topic_count}}
     let name = "{{event.name.capitalized}}"
     let contractName = contractName
 
