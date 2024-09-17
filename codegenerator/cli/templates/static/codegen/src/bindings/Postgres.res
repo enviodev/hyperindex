@@ -52,13 +52,13 @@ type sslOptions =
   | @as("prefer") Prefer
   | @as("verify-full") VerifyFull
 
-let sslOptionsSchema: S.schema<sslOptions> = S.union([
-  S.literal(Bool(true)),
-  S.literal(Bool(false)),
-  S.literal(Require),
-  S.literal(Allow),
-  S.literal(Prefer),
-  S.literal(VerifyFull),
+let sslOptionsSchema: S.schema<sslOptions> = S.enum([
+  Bool(true),
+  Bool(false),
+  Require,
+  Allow,
+  Prefer,
+  VerifyFull,
   //No schema created for tlsConnectOptions obj
 ])
 

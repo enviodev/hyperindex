@@ -89,8 +89,8 @@ importers:
         specifier: 0.4.1
         version: 0.4.1(express@4.19.2)
       rescript-schema:
-        specifier: 8.0.0
-        version: 8.0.0(rescript@11.1.3)
+        specifier: 8.2.0
+        version: 8.2.0(rescript@11.1.3)
       sinon:
         specifier: ^15.0.4
         version: 15.2.0
@@ -104,8 +104,8 @@ importers:
         specifier: 11.1.3
         version: 11.1.3
       rescript-schema:
-        specifier: 8.0.0
-        version: 8.0.0(rescript@11.1.3)
+        specifier: 8.2.0
+        version: 8.2.0(rescript@11.1.3)
 
   contracts:
     dependencies:
@@ -195,13 +195,13 @@ importers:
         version: 11.1.3
       rescript-envsafe:
         specifier: 4.2.0
-        version: 4.2.0(rescript-schema@8.0.0(rescript@11.1.3))(rescript@11.1.3)
+        version: 4.2.0(rescript-schema@8.2.0(rescript@11.1.3))(rescript@11.1.3)
       rescript-express:
         specifier: 0.4.1
         version: 0.4.1(express@4.19.2)
       rescript-schema:
-        specifier: 8.0.0
-        version: 8.0.0(rescript@11.1.3)
+        specifier: 8.2.0
+        version: 8.2.0(rescript@11.1.3)
       root:
         specifier: ../.
         version: link:..
@@ -3042,8 +3042,8 @@ packages:
   rescript-nodejs@16.0.0:
     resolution: {integrity: sha512-1/SJmjH06xdeq1IFIIcKV6QKnidrav/gIc0Rw4GCUD0ceYPPZ5wDB51UFyk98in5N4gv8X/bTg6dVBMyRsC9tw==}
 
-  rescript-schema@8.0.0:
-    resolution: {integrity: sha512-+i/us90Q73HeRZ9Y6BXfogb0BXpfwDmmFhHI+dZkvnzGOLMQEx3kowXv78LfP2ujpedwpN85/aqEPXRb+eBtog==}
+  rescript-schema@8.2.0:
+    resolution: {integrity: sha512-pfRNB9kvafUYe+RgvsExiazJioi/iV8gmjK3xOw/jeSgPIIDoVhflnmpoz+vuiwlulYkNT/7u2+2EsCrph7QKA==}
     peerDependencies:
       rescript: 11.x
 
@@ -7383,10 +7383,10 @@ snapshots:
 
   requires-port@1.0.0: {}
 
-  rescript-envsafe@4.2.0(rescript-schema@8.0.0(rescript@11.1.3))(rescript@11.1.3):
+  rescript-envsafe@4.2.0(rescript-schema@8.2.0(rescript@11.1.3))(rescript@11.1.3):
     dependencies:
       rescript: 11.1.3
-      rescript-schema: 8.0.0(rescript@11.1.3)
+      rescript-schema: 8.2.0(rescript@11.1.3)
 
   rescript-express@0.4.1(express@4.19.2):
     dependencies:
@@ -7394,7 +7394,7 @@ snapshots:
 
   rescript-nodejs@16.0.0: {}
 
-  rescript-schema@8.0.0(rescript@11.1.3):
+  rescript-schema@8.2.0(rescript@11.1.3):
     dependencies:
       rescript: 11.1.3
 

@@ -14,6 +14,6 @@
   "license": "MIT",
   "dependencies": {
     "rescript": "11.1.3",
-    "rescript-schema": "8.0.0"
+    "rescript-schema": "8.2.0"
   }
 }

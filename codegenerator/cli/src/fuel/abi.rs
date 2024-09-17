@@ -211,7 +211,7 @@ impl FuelAbi {
                         "b256" | "address" => String.to_ok_expr(),
                         "str" => String.to_ok_expr(),
                         type_field if type_field.starts_with("str[") => String.to_ok_expr(),
-                        "struct Vec" => Array(Box::new(GenericParam(
+                        "struct std::vec::Vec" => Array(Box::new(GenericParam(
                             get_first_type_param()
                                 .context("Failed getting param for struct Vec")?,
                         )))

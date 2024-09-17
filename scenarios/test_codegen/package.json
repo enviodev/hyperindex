@@ -46,7 +46,7 @@
     "nyc": "^15.1.0",
     "rescript": "11.1.3",
     "rescript-express": "0.4.1",
-    "rescript-schema": "8.0.0",
+    "rescript-schema": "8.2.0",
     "sinon": "^15.0.4",
     "ts-node": "^10.9.1"
   },

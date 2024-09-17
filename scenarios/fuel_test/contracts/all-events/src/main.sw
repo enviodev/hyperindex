@@ -116,5 +116,10 @@ impl AllEvents for Contract {
 
         let data: Status = Status::Failed(StatusFailure { reason: 1 });
         log(data);
+
+        let mut vec: Vec<u64> = Vec::new();
+        vec.push(69);
+        vec.push(23);
+        log(vec);
     }
 }

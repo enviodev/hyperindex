@@ -21,18 +21,11 @@ module ContractType = {
     | @as("{{contract.name.capitalized}}") {{contract.name.capitalized}}
   {{/each}}
 
-  let schema = 
-    {{#if codegen_contracts.1}}
-    S.union([
+  let schema = S.enum([
     {{#each codegen_contracts as | contract |}}
-      S.literal({{contract.name.capitalized}}), 
+    {{contract.name.capitalized}}, 
     {{/each}}
-    ])
-    {{else}}
-    {{#each codegen_contracts as | contract |}}
-      S.literal({{contract.name.capitalized}})
-    {{/each}}
-    {{/if}}
+  ])
 
   let name = "CONTRACT_TYPE"
   let variants = [
@@ -50,10 +43,10 @@ module EntityType = {
     | @as("{{entity.name.capitalized}}") {{entity.name.capitalized}}
   {{/each}}
 
-  let schema = S.union([
-  {{#each entities as | entity |}}
-    S.literal({{entity.name.capitalized}}), 
-  {{/each}}
+  let schema = S.enum([
+    {{#each entities as | entity |}}
+    {{entity.name.capitalized}}, 
+    {{/each}}
   ])
 
   let name = "ENTITY_TYPE"
@@ -76,9 +69,9 @@ module {{enum.name.capitalized}} = {
 
 
   let default = {{enum.params.[0].capitalized}}
-  let schema: S.t<t> = S.union([
+  let schema: S.t<t> = S.enum([
     {{#each enum.params as | param | }}
-    S.literal({{param.capitalized}}), 
+    {{param.capitalized}}, 
     {{/each}}
   ])
 
