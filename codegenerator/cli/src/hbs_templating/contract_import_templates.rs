@@ -273,24 +273,19 @@ pub struct Event {
 }
 
 impl Event {
-    fn get_entity_id_code(event_var_name: String, is_fuel: bool, language: &Language) -> String {
+    fn get_entity_id_code(event_var_name: String, language: &Language) -> String {
         let to_string_code = match language {
             Language::ReScript => "->Belt.Int.toString",
             Language::TypeScript => "",
             Language::JavaScript => "",
         }
         .to_string();
-        match is_fuel {
-            true => format!(
-                "`${{{event_var_name}.transactionId}}_${{{event_var_name}.receiptIndex{}}}`",
-                to_string_code
-            ),
-            false => format!(
-                "`${{{event_var_name}.chainId}}_${{{event_var_name}.block.\
-                 number}}_${{{event_var_name}.logIndex{}}}`",
-                to_string_code
-            ),
-        }
+
+        format!(
+            "`${{{event_var_name}.chainId}}_${{{event_var_name}.block.\
+           number}}_${{{event_var_name}.logIndex{}}}`",
+            to_string_code
+        )
     }
 
     fn get_create_mock_code(
@@ -338,11 +333,7 @@ impl Event {
 
         Ok(Event {
             name: event.name.to_capitalized_options(),
-            entity_id_from_event_code: Event::get_entity_id_code(
-                "event".to_string(),
-                is_fuel,
-                &language,
-            ),
+            entity_id_from_event_code: Event::get_entity_id_code("event".to_string(), &language),
             create_mock_code: Event::get_create_mock_code(&event, &contract, is_fuel, &language),
             params,
         })

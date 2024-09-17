@@ -24,7 +24,7 @@ module Assert = {
   @module("assert")
   external doesNotThrow: (unit => 'a, ~error: 'error=?, ~message: string=?) => unit = "doesNotThrow"
 
-  @module("assert") external ok: string => unit = "ok"
+  @module("assert") external ok: (bool, ~message: string=?) => unit = "ok"
   @module("assert") external fail: string => unit = "fail"
 }
 
