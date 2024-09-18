@@ -99,11 +99,11 @@
       "type": "object",
       "properties": {
         "name": {
-          "description": "A reference to a struct in the ABI or a unique name for the provided log_id",
+          "description": "Name of the event in the HyperIndex generated code",
           "type": "string"
         },
         "logId": {
-          "description": "A reference to a log_id in the ABI",
+          "description": "An identifier of a logged type from ABI. Used for indexing LogData receipts. The option can be omitted when the event name matches the logged struct/enum name.",
           "type": [
             "string",
             "null"
