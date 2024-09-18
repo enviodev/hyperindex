@@ -49,14 +49,17 @@ async fn main() -> Result<()> {
 
     let all_events = AllEvents::new(all_events_contract_id, wallet.clone());
 
-    all_events.methods().log().call().await?;
+    let r = all_events.methods().log().call().await?;
+    println!("log in tx: {:?}", r.tx_id);
 
     // Documentation https://docs.fuel.network/docs/fuels-ts/contracts/minted-token-asset-id/#minted-token-asset-id
     let sub_id =
         Bits256::from_hex_str("0xc7fd1d987ada439fc085cfa3c49416cf2b504ac50151e3c2335d60595cb90745")
             .unwrap();
-    all_events.methods().mint_coins(sub_id, 1000).call().await?;
-    all_events.methods().burn_coins(sub_id, 500).call().await?;
+    let r = all_events.methods().mint_coins(sub_id, 1000).call().await?;
+    println!("mint_coins in tx: {:?}", r.tx_id);
+    let r = all_events.methods().burn_coins(sub_id, 500).call().await?;
+    println!("burn_coins in tx: {:?}", r.tx_id);
 
     println!(
         "Finished populating receipts on the contract: {}",
