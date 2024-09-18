@@ -50,12 +50,5 @@ module Fs = {
 
     @module("fs") @scope("promises")
     external readFile: (~filepath: Path.t, ~encoding: encoding) => promise<string> = "readFile"
-
-    let readFileIfExists = async (~filepath, ~encoding=Utf8) => {
-      switch await readFile(~filepath, ~encoding) {
-      | exception _exn => None
-      | content => Some(content)
-      }
-    }
   }
 }
