@@ -46,11 +46,6 @@ type blockNumberAndHash = {
 
 type logsQueryPage = hyperSyncPage<item>
 
-type contractReceiptQuery = {
-  addresses?: array<Address.t>,
-  rb: array<bigint>,
-}
-
 type missingParams = {
   queryName: string,
   missingParams: array<string>,
@@ -89,49 +84,15 @@ let queryErrorToMsq = (e: queryError): string => {
 type queryResponse<'a> = result<'a, queryError>
 
 module LogsQuery = {
-  let logDataReceiptTypeSelection: array<Fuel.receiptType> = [LogData]
-  // only transactions with status 1 (success)
-  let txStatusSelection = [1]
-
   let makeRequestBody = (
     ~fromBlock,
     ~toBlockInclusive,
-    ~contractsReceiptQuery: array<contractReceiptQuery>,
+    ~recieptsSelection,
   ): HyperFuelClient.QueryTypes.query => {
-    let receipts = []
-    contractsReceiptQuery->Js.Array2.forEach(q => {
-      receipts
-      ->Js.Array2.push({
-        (
-          {
-            rootContractId: ?q.addresses,
-            receiptType: logDataReceiptTypeSelection,
-            rb: q.rb,
-            txStatus: txStatusSelection,
-          }: HyperFuelClient.QueryTypes.receiptSelection
-        )
-      })
-      ->ignore
-      switch q.addresses {
-      | Some(addresses) =>
-        receipts
-        ->Js.Array2.push({
-          (
-            {
-              rootContractId: addresses,
-              receiptType: [Mint, Burn],
-              txStatus: txStatusSelection,
-            }: HyperFuelClient.QueryTypes.receiptSelection
-          )
-        })
-        ->ignore
-      | None => ()
-      }
-    })
     {
       fromBlock,
       toBlockExclusive: toBlockInclusive + 1,
-      receipts,
+      receipts: recieptsSelection,
       fieldSelection: {
         receipt: [
           TxId,
@@ -167,8 +128,6 @@ module LogsQuery = {
     item,
   > => {
     let {receipts, blocks} = response_data
-
-    Js.log(receipts)
 
     let blocksDict = Js.Dict.empty()
     blocks
@@ -222,16 +181,13 @@ module LogsQuery = {
     }
   }
 
-  let queryLogsPage = async (
-    ~serverUrl,
-    ~fromBlock,
-    ~toBlock,
-    ~contractsReceiptQuery,
-  ): queryResponse<logsQueryPage> => {
+  let queryLogsPage = async (~serverUrl, ~fromBlock, ~toBlock, ~recieptsSelection): queryResponse<
+    logsQueryPage,
+  > => {
     let query: HyperFuelClient.QueryTypes.query = makeRequestBody(
       ~fromBlock,
       ~toBlockInclusive=toBlock,
-      ~contractsReceiptQuery,
+      ~recieptsSelection,
     )
 
     let hyperFuelClient = CachedClients.getClient(serverUrl)

@@ -3,10 +3,129 @@ open Belt
 
 exception EventRoutingFailed
 
+type event = {
+  name: string,
+  logId?: string,
+  mint?: bool,
+  eventMod: module(Types.Event),
+}
+
+type contract = {
+  name: string,
+  addresses: array<Address.t>,
+  events: array<event>,
+}
+
+let makeGetRecieptsSelectionOrThrow = (~contracts: array<contract>) => {
+  let logDataReceiptTypeSelection: array<Fuel.receiptType> = [LogData]
+  let mintReceiptTypeSelection: array<Fuel.receiptType> = [Mint]
+
+  // only transactions with status 1 (success)
+  let txStatusSelection = [1]
+
+  let mint: ref<[#None | #Wildcard | #NonWildcard]> = ref(#None)
+  let nonWildcardRbsByContract = Js.Dict.empty()
+  let wildcardRbs = []
+
+  let wildcardMintSelection = (
+    {
+      receiptType: mintReceiptTypeSelection,
+      txStatus: txStatusSelection,
+    }: HyperFuelClient.QueryTypes.receiptSelection
+  )
+  let maybeWildcardLogSelection = switch wildcardRbs {
+  | [] => None
+  | wildcardRbs =>
+    Some(
+      (
+        {
+          receiptType: logDataReceiptTypeSelection,
+          txStatus: txStatusSelection,
+          rb: wildcardRbs,
+        }: HyperFuelClient.QueryTypes.receiptSelection
+      ),
+    )
+  }
+
+  contracts->Array.forEach(contract => {
+    let nonWildcardRbs = []
+    contract.events->Array.forEach(event => {
+      let module(Event) = event.eventMod
+      let {isWildcard} = Event.handlerRegister->Types.HandlerTypes.Register.getEventOptions
+      switch event {
+      | {mint: true} => mint := (isWildcard ? #Wildcard : #NonWildcard)
+      | {logId} => {
+          let rb = logId->BigInt.fromStringUnsafe
+          if isWildcard {
+            wildcardRbs->Array.push(rb)->ignore
+          } else {
+            nonWildcardRbs->Array.push(rb)->ignore
+          }
+        }
+      | _ => Js.Exn.raiseError(`Event ${Event.name} is not a mint or log`)
+      }
+    })
+    nonWildcardRbsByContract->Js.Dict.set(contract.name, nonWildcardRbs)
+  })
+
+  (~contractAddressMapping, ~shouldApplyWildcards) => {
+    let selection: array<HyperFuelClient.QueryTypes.receiptSelection> = []
+
+    //Instantiate each time to add new registered contract addresses
+    contracts->Array.forEach(contract => {
+      switch contractAddressMapping->ContractAddressingMap.getAddressesFromContractName(
+        ~contractName=contract.name,
+      ) {
+      | [] => ()
+      | addresses => {
+          if mint.contents == #NonWildcard {
+            selection
+            ->Js.Array2.push({
+              rootContractId: addresses,
+              receiptType: mintReceiptTypeSelection,
+              txStatus: txStatusSelection,
+            })
+            ->ignore
+          }
+          switch nonWildcardRbsByContract->Utils.Dict.dangerouslyGetNonOption(contract.name) {
+          | None => ()
+          | Some(nonWildcardRbs) =>
+            selection
+            ->Js.Array2.push({
+              rootContractId: addresses,
+              receiptType: logDataReceiptTypeSelection,
+              txStatus: txStatusSelection,
+              rb: nonWildcardRbs,
+            })
+            ->ignore
+          }
+        }
+      }
+    })
+
+    if shouldApplyWildcards {
+      if mint.contents == #Wildcard {
+        selection
+        ->Array.push(wildcardMintSelection)
+        ->ignore
+      }
+      switch maybeWildcardLogSelection {
+      | None => ()
+      | Some(wildcardLogSelection) =>
+        selection
+        ->Array.push(wildcardLogSelection)
+        ->ignore
+      }
+    }
+
+    selection
+  }
+}
+
 module Make = (
   T: {
     let chain: ChainMap.Chain.t
-    let contracts: array<Config.contract>
+    let contracts: array<contract>
     let endpointUrl: string
     let eventModLookup: EventModLookup.t
   },
@@ -90,22 +209,7 @@ module Make = (
     }
   }
 
-  let wildcardLogSelection = T.contracts->Belt.Array.keepMap((contract): option<
-    HyperFuel.contractReceiptQuery,
-  > => {
-    let wildcardRb = contract.events->Belt.Array.keepMap(event => {
-      let module(Event) = event
-      let {isWildcard} = Event.handlerRegister->Types.HandlerTypes.Register.getEventOptions
-      isWildcard ? Some(Event.sighash->BigInt.fromStringUnsafe) : None
-    })
-    switch wildcardRb {
-    | [] => None
-    | _ =>
-      Some({
-        rb: wildcardRb,
-      })
-    }
-  })
+  let getRecieptsSelectionOrThrow = makeGetRecieptsSelectionOrThrow(~contracts=T.contracts)
 
   let getNextPage = async (
     ~fromBlock,
@@ -128,40 +232,17 @@ module Make = (
     )
 
     //Instantiate each time to add new registered contract addresses
-    let contractsReceiptQuery = T.contracts->Belt.Array.keepMap((contract): option<
-      HyperFuel.contractReceiptQuery,
-    > => {
-      switch contractAddressMapping->ContractAddressingMap.getAddressesFromContractName(
-        ~contractName=contract.name,
-      ) {
-      | [] => None
-      | addresses =>
-        Some({
-          addresses,
-          rb: contract.events->Array.keepMap(eventMod => {
-            let module(Event: Types.Event) = eventMod
-            let {isWildcard} = Event.handlerRegister->Types.HandlerTypes.Register.getEventOptions
-            isWildcard ? None : Some(Event.sighash->BigInt.fromStringUnsafe)
-          }),
-        })
-      }
-    })
-
-    let contractsReceiptQuery = shouldApplyWildcards
-      ? contractsReceiptQuery->Array.concat(wildcardLogSelection)
-      : contractsReceiptQuery
+    let recieptsSelection = getRecieptsSelectionOrThrow(
+      ~contractAddressMapping,
+      ~shouldApplyWildcards,
+    )
 
     let startFetchingBatchTimeRef = Hrtime.makeTimer()
 
     //fetch batch
     let pageUnsafe = await Helpers.queryLogsPageWithBackoff(
       () =>
-        HyperFuel.queryLogsPage(
-          ~serverUrl=T.endpointUrl,
-          ~fromBlock,
-          ~toBlock,
-          ~contractsReceiptQuery,
-        ),
+        HyperFuel.queryLogsPage(~serverUrl=T.endpointUrl, ~fromBlock, ~toBlock, ~recieptsSelection),
       logger,
     )
 

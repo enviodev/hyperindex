@@ -136,12 +136,33 @@ let registerContractHandlers = (
             {{#with chain_config.network_config.hyperfuel_config as | hyperfuel_config |}}
             module(HyperFuelWorker.Make({
               let chain = chain
-              let contracts = contracts
               let endpointUrl = "{{hyperfuel_config.endpoint_url}}"
               let eventModLookup =
                 contracts
                 ->Belt.Array.flatMap(contract => contract.events)
                 ->EventModLookup.fromArrayOrThrow(~chain)
+              let contracts: array<HyperFuelWorker.contract> = [
+                {{#each chain_config.codegen_contracts as | contract |}}
+                {
+                  name: "{{contract.name.capitalized}}",
+                  addresses: [
+                    {{#each contract.addresses as | address |}}
+                    "{{address}}"->Address.unsafeFromString,
+                    {{/each}}
+                  ],
+                  events: [
+                    {{#each contract.events as | event |}}
+                    {
+                      name: "{{event.name.capitalized}}",
+                      logId: Types.{{contract.name.capitalized}}.{{event.name.capitalized}}.sighash,
+                      {{!-- mint: {{#if event.mint}}true{{else}}false{{/if}}, --}}
+                      eventMod: module(Types.{{contract.name.capitalized}}.{{event.name.capitalized}}),
+                    },
+                    {{/each}}
+                  ]
+                },
+                {{/each}}
+              ]
             }))
             {{/with}}
             {{/if}}
