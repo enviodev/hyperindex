@@ -428,6 +428,7 @@ let make = (~url) =>
     url,
     enableChecksumAddresses: true,
     bearerToken: Env.envioApiToken->Belt.Option.getWithDefault(defaultToken),
+    httpReqTimeoutMillis: Env.hyperSyncClientTimeoutMillis->Belt.Option.getWithDefault(120_000),
   })
 
 module Decoder = {
