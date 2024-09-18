@@ -1,4 +1,17 @@
-type receiptType = | @as(6) LogData
+// 0 = Call
+// 1 = Return,
+// 2 = ReturnData,
+// 3 = Panic,
+// 4 = Revert,
+// 5 = Log,
+// 6 = LogData,
+// 7 = Transfer,
+// 8 = Transferout,
+// 9 = ScriptResult,
+// 10 = MessageOut,
+// 11 = Mint,
+// 12 = Burn,
+type receiptType = | @as(6) LogData | @as(11) Mint | @as(12) Burn
 
 @module("./vendored-fuel-abi-coder.js")
 external transpileAbi: Js.Json.t => Ethers.abi = "transpileAbi"

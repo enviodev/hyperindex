@@ -89,7 +89,7 @@ let queryErrorToMsq = (e: queryError): string => {
 type queryResponse<'a> = result<'a, queryError>
 
 module LogsQuery = {
-  let receiptTypeSelection: array<Fuel.receiptType> = [LogData]
+  let logDataReceiptTypeSelection: array<Fuel.receiptType> = [LogData]
   // only transactions with status 1 (success)
   let txStatusSelection = [1]
 
@@ -98,13 +98,35 @@ module LogsQuery = {
     ~toBlockInclusive,
     ~contractsReceiptQuery: array<contractReceiptQuery>,
   ): HyperFuelClient.QueryTypes.query => {
-    let receipts = contractsReceiptQuery->Js.Array2.map((
-      q
-    ): HyperFuelClient.QueryTypes.receiptSelection => {
-      rootContractId: ?q.addresses,
-      receiptType: receiptTypeSelection,
-      rb: q.rb,
-      txStatus: txStatusSelection,
+    let receipts = []
+    contractsReceiptQuery->Js.Array2.forEach(q => {
+      receipts
+      ->Js.Array2.push({
+        (
+          {
+            rootContractId: ?q.addresses,
+            receiptType: logDataReceiptTypeSelection,
+            rb: q.rb,
+            txStatus: txStatusSelection,
+          }: HyperFuelClient.QueryTypes.receiptSelection
+        )
+      })
+      ->ignore
+      switch q.addresses {
+      | Some(addresses) =>
+        receipts
+        ->Js.Array2.push({
+          (
+            {
+              rootContractId: addresses,
+              receiptType: [Mint, Burn],
+              txStatus: txStatusSelection,
+            }: HyperFuelClient.QueryTypes.receiptSelection
+          )
+        })
+        ->ignore
+      | None => ()
+      }
     })
     {
       fromBlock,
@@ -145,6 +167,8 @@ module LogsQuery = {
     item,
   > => {
     let {receipts, blocks} = response_data
+
+    Js.log(receipts)
 
     let blocksDict = Js.Dict.empty()
     blocks
