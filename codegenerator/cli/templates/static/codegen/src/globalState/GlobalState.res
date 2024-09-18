@@ -268,6 +268,17 @@ let handleBlockRangeResponse = (state, ~chain, ~response: ChainWorker.blockRange
     latestFetchedBlockTimestamp,
   } = response
 
+  if Env.saveBenchmarkData {
+    Benchmark.addBlockRangeFetched(
+      ~stats,
+      ~chainId=chainFetcher.chainConfig.chain->ChainMap.Chain.toChainId,
+      ~fromBlock=fromBlockQueried,
+      ~toBlock=heighestQueriedBlockNumber,
+      ~fetchStateRegisterId,
+      ~partitionId,
+    )
+  }
+
   chainFetcher.logger->Logging.childTrace({
     "message": "Finished page range",
     "fromBlock": fromBlockQueried,
