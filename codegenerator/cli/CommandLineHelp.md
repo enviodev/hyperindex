@@ -321,7 +321,7 @@ Start the indexer without any automatic codegen
 ###### **Options:**
 
 * `-r`, `--restart` — Clear your database and restart indexing from scratch
-* `--bench` — Saves benchmark data to a file during indexing
+* `-b`, `--bench` — Saves benchmark data to a file during indexing
 
 
 
