@@ -302,3 +302,21 @@ pub mod db_migrate {
         Ok(())
     }
 }
+
+pub mod benchmark {
+    use super::execute_command;
+    use crate::project_paths::ParsedProjectPaths;
+    use anyhow::{anyhow, Result};
+
+    pub async fn print_summary(project_paths: &ParsedProjectPaths) -> Result<()> {
+        let args = vec!["print-benchmark-summary"];
+        let current_dir = &project_paths.generated;
+        let exit = execute_command("pnpm", args, current_dir).await?;
+
+        if !exit.success() {
+            return Err(anyhow!("Failed printing benchmark summary"));
+        }
+
+        Ok(())
+    }
+}
