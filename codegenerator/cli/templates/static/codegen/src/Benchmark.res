@@ -320,7 +320,7 @@ module Summary = {
     switch data {
     | None =>
       Logging.error(
-        "No benchmark cache file found, please use 'ENVIO_SAVE_BENCHMARK_DATA=true' and rerun the benchmark",
+        "No benchmark cache file found, please run `envio start --bench` or use 'ENVIO_SAVE_BENCHMARK_DATA=true' and rerun the indexer",
       )
     | Some(data) =>
       let config = RegisterHandlers.getConfig()
