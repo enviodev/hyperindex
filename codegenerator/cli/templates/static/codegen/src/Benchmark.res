@@ -1,4 +1,5 @@
 module Data = {
+  let dateTimeSchema = S.string->S.datetime
   module BlockRangeFetched = {
     type t = {
       stats: ChainWorker.blockRangeFetchStats,
@@ -39,15 +40,56 @@ module Data = {
     })
   }
 
-  type t = {requestStats: array<BlockRangeFetched.t>}
+  module EventProcessing = {
+    type t = {
+      batchSize: int,
+      contractRegisterDuration: int,
+      loadDuration: int,
+      handlerDuration: int,
+      dbWriteDuration: int,
+      totalTimeElapsed: int,
+      timeFinished: Js.Date.t,
+    }
+
+    let schema = S.object(s => {
+      batchSize: s.field("batchSize", S.int),
+      contractRegisterDuration: s.field("contractRegisterDuration", S.int),
+      loadDuration: s.field("loadDuration", S.int),
+      handlerDuration: s.field("handlerDuration", S.int),
+      dbWriteDuration: s.field("dbWriteDuration", S.int),
+      totalTimeElapsed: s.field("totalTimeElapsed", S.int),
+      timeFinished: s.field("timeFinished", dateTimeSchema),
+    })
+  }
+
+  type t = {
+    blockRangeFetched: array<BlockRangeFetched.t>,
+    eventProcessing: array<EventProcessing.t>,
+    startTime: Js.Date.t,
+    mutable latestTime: Js.Date.t,
+  }
   let schema = S.object(s => {
-    requestStats: s.field("requestStats", S.array(BlockRangeFetched.schema)),
+    blockRangeFetched: s.field("blockRangeFetched", S.array(BlockRangeFetched.schema)),
+    eventProcessing: s.field("eventProcessing", S.array(EventProcessing.schema)),
+    startTime: s.field("startTime", dateTimeSchema),
+    latestTime: s.field("latestTime", dateTimeSchema),
   })
 
-  let make = () => {requestStats: []}
+  let make = () => {
+    blockRangeFetched: [],
+    eventProcessing: [],
+    startTime: Js.Date.make(),
+    latestTime: Js.Date.make(),
+  }
 
   let addBlockRangeFetched = (self, blockRangeFetched: BlockRangeFetched.t) => {
-    self.requestStats->Js.Array2.push(blockRangeFetched)->ignore
+    self.blockRangeFetched->Js.Array2.push(blockRangeFetched)->ignore
+    self.latestTime = Js.Date.make()
+  }
+
+  let addEventProcessing = (self, eventProcessing: EventProcessing.t) => {
+    self.eventProcessing->Js.Array2.push(eventProcessing)->ignore
+    self.latestTime = Js.Date.make()
   }
 }
 
@@ -99,6 +141,28 @@ let addBlockRangeFetched = (
   data->saveToCacheFile
 }
 
+let addEventProcessing = (
+  ~batchSize,
+  ~contractRegisterDuration,
+  ~loadDuration,
+  ~handlerDuration,
+  ~dbWriteDuration,
+  ~totalTimeElapsed,
+  ~timeFinished,
+) => {
+  data->Data.addEventProcessing({
+    batchSize,
+    contractRegisterDuration,
+    loadDuration,
+    handlerDuration,
+    dbWriteDuration,
+    totalTimeElapsed,
+    timeFinished,
+  })
+
+  data->saveToCacheFile
+}
+
 module Summary = {
   open Belt
   type t = {
@@ -112,6 +176,9 @@ module Summary = {
   type summaryTable = dict<t>
 
   external logSummaryTable: summaryTable => unit = "console.table"
+  external logArrTable: array<'a> => unit = "console.table"
+  external logObjTable: {..} => unit = "console.table"
+  external logDictTable: dict<'a> => unit = "console.table"
 
   external arrayIntToFloat: array<int> => array<float> = "%identity"
 
@@ -173,16 +240,18 @@ module Summary = {
     let parsingTimeElapsedSamples = []
     let pageFetchTimeSamples = []
 
-    data.requestStats->Array.forEach(request =>
-      if request.chainId == chainId {
-        numBlocksFetchedSamples->Array.push(request.numEvents->Int.toFloat)
-        blockRangeSizeSamples->Array.push(Int.toFloat(request.toBlock - request.fromBlock))
-        totalTimeElapsedSamples->Array.push(request.stats.totalTimeElapsed->Int.toFloat)
+    data.blockRangeFetched->Array.forEach(blockRangeFetched =>
+      if blockRangeFetched.chainId == chainId {
+        numBlocksFetchedSamples->Array.push(blockRangeFetched.numEvents->Int.toFloat)
+        blockRangeSizeSamples->Array.push(
+          Int.toFloat(blockRangeFetched.toBlock - blockRangeFetched.fromBlock),
+        )
+        totalTimeElapsedSamples->Array.push(blockRangeFetched.stats.totalTimeElapsed->Int.toFloat)
         parsingTimeElapsedSamples->Array.push(
-          request.stats.parsingTimeElapsed->Option.mapWithDefault(0., Int.toFloat),
+          blockRangeFetched.stats.parsingTimeElapsed->Option.mapWithDefault(0., Int.toFloat),
         )
         pageFetchTimeSamples->Array.push(
-          request.stats.pageFetchTime->Option.mapWithDefault(0., Int.toFloat),
+          blockRangeFetched.stats.pageFetchTime->Option.mapWithDefault(0., Int.toFloat),
         )
       }
     )
@@ -194,6 +263,58 @@ module Summary = {
       ("Block Range Size", blockRangeSizeSamples->make),
     ]->Js.Dict.fromArray
   }
+  let getEventProcessingSummary = (data: Data.t): summaryTable => {
+    let batchSizeSamples = []
+    let contractRegisterDurationSamples = []
+    let loadDurationSamples = []
+    let handlerDurationSamples = []
+    let dbWriteDurationSamples = []
+    let totalTimeElapsedSamples = []
+
+    data.eventProcessing->Array.forEach(eventProcessing => {
+      batchSizeSamples->Array.push(eventProcessing.batchSize->Int.toFloat)
+      contractRegisterDurationSamples->Array.push(
+        eventProcessing.contractRegisterDuration->Int.toFloat,
+      )
+      loadDurationSamples->Array.push(eventProcessing.loadDuration->Int.toFloat)
+      handlerDurationSamples->Array.push(eventProcessing.handlerDuration->Int.toFloat)
+      dbWriteDurationSamples->Array.push(eventProcessing.dbWriteDuration->Int.toFloat)
+      totalTimeElapsedSamples->Array.push(eventProcessing.totalTimeElapsed->Int.toFloat)
+    })
+
+    [
+      ("Batch Size", batchSizeSamples->make),
+      ("Contract Register Duration (ms)", contractRegisterDurationSamples->make),
+      ("Load Duration (ms)", loadDurationSamples->make),
+      ("Handler Duration (ms)", handlerDurationSamples->make),
+      ("DB Write Duration (ms)", dbWriteDurationSamples->make),
+      ("Total Time Elapsed (ms)", totalTimeElapsedSamples->make),
+    ]->Js.Dict.fromArray
+  }
+
+  let getTotalRunTime = (data: Data.t) =>
+    DateFns.intervalToDuration({
+      start: data.startTime,
+      end: data.latestTime,
+    })
+
+  let getTotalEventProcessingTime = (data: Data.t) =>
+    data.eventProcessing
+    ->Array.reduce(0, (acc, eventProcessing) => acc + eventProcessing.totalTimeElapsed)
+    ->DateFns.durationFromMillis
+
+  let getTotalTimeFetchingChain = (data: Data.t, ~chainId) => {
+    data.blockRangeFetched
+    ->Array.reduce(0, (acc, blockRangeFetched) => {
+      if blockRangeFetched.chainId == chainId {
+        acc + blockRangeFetched.stats.totalTimeElapsed
+      } else {
+        acc
+      }
+    })
+    ->DateFns.durationFromMillis
+  }
+
   let printSummary = async () => {
     let data = await readFromCacheFile()
     switch data {
@@ -203,15 +324,34 @@ module Summary = {
       )
     | Some(data) =>
       let config = RegisterHandlers.getConfig()
-      config.chainMap
-      ->ChainMap.keys
-      ->Array.forEach(chain => {
-        Js.log2("BlockRangeFetched Summary for Chain", chain)
-        let chainBlockRangeFetchedSummary =
-          data->getChainBlockRangeFetchedSummary(~chainId=chain->ChainMap.Chain.toChainId)
+      let chainIds =
+        config.chainMap
+        ->ChainMap.keys
+        ->Array.map(chain => chain->ChainMap.Chain.toChainId)
+      Js.log("Time breakdown")
+      [
+        ("Total Runtime", data->getTotalRunTime),
+        ("Total Time Processing", data->getTotalEventProcessingTime),
+      ]
+      ->Array.concat(
+        chainIds->Array.map(chainId => {
+          (
+            "Total Time Fetching Chain " ++ chainId->Int.toString,
+            data->getTotalTimeFetchingChain(~chainId),
+          )
+        }),
+      )
+      ->Js.Dict.fromArray
+      ->logDictTable
+
+      chainIds->Array.forEach(chainId => {
+        Js.log2("BlockRangeFetched Summary for Chain", chainId)
+        let chainBlockRangeFetchedSummary = data->getChainBlockRangeFetchedSummary(~chainId)
         chainBlockRangeFetchedSummary->logSummaryTable
       })
+
+      Js.log("EventProcessing Summary")
+      data->getEventProcessingSummary->logSummaryTable
     }
   }
 }
-
