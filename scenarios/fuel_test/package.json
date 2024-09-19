@@ -2,13 +2,17 @@
   "name": "fuel_test",
   "version": "0.1.0",
   "scripts": {
-    "clean": "tsc --clean",
-    "build": "tsc --build",
-    "watch": "tsc --watch",
+    "ts:clean": "tsc --clean",
+    "ts:build": "tsc --build",
+    "ts:watch": "tsc --watch",
+    "ts:test": "tsc --noEmit",
+    "res:clean": "rescript clean",
+    "res:build": "rescript",
+    "res:watch": "rescript -w",
     "mocha": "ts-mocha test/**/*.ts",
     "codegen": "cargo run --manifest-path ../../codegenerator/cli/Cargo.toml -- codegen",
     "dev": "cargo run --manifest-path ../../codegenerator/cli/Cargo.toml -- dev",
-    "test": "pnpm mocha",
+    "test": "rescript && pnpm mocha",
     "start": "ts-node generated/src/Index.bs.js"
   },
   "devDependencies": {
@@ -24,7 +28,8 @@
     "chai": "4.3.10",
     "envio": "../../codegenerator/cli/npm/envio",
     "rescript-schema": "8.2.0",
-    "ts-expect": "1.3.0"
+    "ts-expect": "1.3.0",
+    "rescript": "11.1.3"
   },
   "optionalDependencies": {
     "generated": "./generated"

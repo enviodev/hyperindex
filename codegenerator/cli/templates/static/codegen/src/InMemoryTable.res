@@ -1,6 +1,3 @@
-module StdSet = Set
-
-external arrayFromSet: StdSet.t<'a> => array<'a> = "Array.from"
 open Belt
 
 type t<'key, 'val> = {
@@ -24,13 +21,13 @@ let clone = (self: t<'key, 'val>) => {
 
 module Entity = {
   type relatedEntityId = Types.id
-  type indexWithRelatedIds = (TableIndices.Index.t, StdSet.t<relatedEntityId>)
+  type indexWithRelatedIds = (TableIndices.Index.t, Utils.Set.t<relatedEntityId>)
   type indicesSerializedToValue = t<TableIndices.Index.t, indexWithRelatedIds>
   type indexFieldNameToIndices = t<TableIndices.Index.t, indicesSerializedToValue>
 
   type entityWithIndices<'entity> = {
     entityRow: Types.inMemoryStoreRowEntity<'entity>,
-    entityIndices: StdSet.t<TableIndices.Index.t>,
+    entityIndices: Utils.Set.t<TableIndices.Index.t>,
   }
   type t<'entity> = {
     table: t<Types.id, entityWithIndices<'entity>>,
@@ -39,7 +36,7 @@ module Entity = {
 
   let makeIndicesSerializedToValue = (
     ~index,
-    ~relatedEntityIds=StdSet.make(),
+    ~relatedEntityIds=Utils.Set.make(),
   ): indicesSerializedToValue => {
     let empty = make(~hash=TableIndices.Index.toString)
     empty->set(index, (index, relatedEntityIds))
@@ -55,10 +52,10 @@ module Entity = {
   let updateIndices = (
     self: t<'entity>,
     ~entity: 'entity,
-    ~entityIndices: StdSet.t<TableIndices.Index.t>,
+    ~entityIndices: Utils.Set.t<TableIndices.Index.t>,
   ) => {
     //Remove any invalid indices on entity
-    entityIndices->StdSet.forEach(index => {
+    entityIndices->Utils.Set.forEach(index => {
       let fieldName = index->TableIndices.Index.getFieldName
       let fieldValue =
         entity
@@ -66,7 +63,7 @@ module Entity = {
         ->Js.Dict.get(fieldName)
         ->Option.getUnsafe
       if !(index->TableIndices.Index.evaluate(~fieldName, ~fieldValue)) {
-        entityIndices->StdSet.delete(index)->ignore
+        entityIndices->Utils.Set.delete(index)->ignore
       }
     })
 
@@ -85,8 +82,8 @@ module Entity = {
         ->Array.forEach(((index, relatedEntityIds)) => {
           if index->TableIndices.Index.evaluate(~fieldName, ~fieldValue) {
             //Add entity id to indices and add index to entity indicies
-            relatedEntityIds->StdSet.add(Entities.getEntityIdUnsafe(entity))->ignore
-            entityIndices->StdSet.add(index)->ignore
+            relatedEntityIds->Utils.Set.add(Entities.getEntityIdUnsafe(entity))->ignore
+            entityIndices->Utils.Set.add(index)->ignore
           }
         })
       | _ =>
@@ -98,15 +95,15 @@ module Entity = {
   }
 
   let deleteEntityFromIndices = (self: t<'entity>, ~entityId: Entities.id, ~entityIndices) =>
-    entityIndices->StdSet.forEach(index => {
+    entityIndices->Utils.Set.forEach(index => {
       switch self.fieldNameIndices
       ->get(index)
       ->Option.flatMap(get(_, index)) {
       | Some((_index, relatedEntityIds)) =>
-        let _wasRemoved = relatedEntityIds->StdSet.delete(entityId)
+        let _wasRemoved = relatedEntityIds->Utils.Set.delete(entityId)
       | None => () //Unexpected index should exist if it is entityIndices
       }
-      let _wasRemoved = entityIndices->StdSet.delete(index)
+      let _wasRemoved = entityIndices->Utils.Set.delete(index)
     })
 
   let initValue = (
@@ -123,7 +120,7 @@ module Entity = {
     //Only initialize a row in the case where it is none
     //or if allowOverWriteEntity is true (used for mockDb in test helpers)
     if shouldWriteEntity {
-      let entityIndices = StdSet.make()
+      let entityIndices = Utils.Set.make()
       let initialStoreRow: Types.inMemoryStoreRowEntity<'entity> = switch entity {
       | Some(entity) =>
         //update table indices in the case where there
@@ -178,7 +175,7 @@ module Entity = {
         latest: entityUpdate,
         history: [],
       })
-      {entityRow, entityIndices: StdSet.make()}
+      {entityRow, entityIndices: Utils.Set.make()}
     }
     switch entityUpdate.entityUpdateAction {
     | Set(entity) => inMemTable->updateIndices(~entity, ~entityIndices)
@@ -215,7 +212,7 @@ module Entity = {
       ->Option.map(((_index, relatedEntityIds)) => {
         let res =
           relatedEntityIds
-          ->arrayFromSet
+          ->Utils.Set.toArray
           ->Array.keepMap(entityId => inMemTable->get(entityId)->Utils.Option.flatten)
         res
       })
@@ -229,7 +226,7 @@ module Entity = {
 
   let addEmptyIndex = (inMemTable: t<'entity>, ~index) => {
     let fieldName = index->TableIndices.Index.getFieldName
-    let relatedEntityIds = StdSet.make()
+    let relatedEntityIds = Utils.Set.make()
 
     inMemTable.table
     ->values
@@ -241,8 +238,8 @@ module Entity = {
           ->(Utils.magic: 'entity => dict<TableIndices.FieldValue.t>)
           ->Js.Dict.unsafeGet(fieldName)
         if index->TableIndices.Index.evaluate(~fieldName, ~fieldValue) {
-          let _ = row.entityIndices->StdSet.add(index)
-          let _ = relatedEntityIds->StdSet.add(entity->Entities.getEntityIdUnsafe)
+          let _ = row.entityIndices->Utils.Set.add(index)
+          let _ = relatedEntityIds->Utils.Set.add(entity->Entities.getEntityIdUnsafe)
         }
       | None => ()
       }
@@ -266,13 +263,16 @@ module Entity = {
     | None =>
       inMemTable.fieldNameIndices->setRow(
         index,
-        makeIndicesSerializedToValue(~index, ~relatedEntityIds=StdSet.make()->StdSet.add(entityId)),
+        makeIndicesSerializedToValue(
+          ~index,
+          ~relatedEntityIds=Utils.Set.make()->Utils.Set.add(entityId),
+        ),
       )
     | Some(indicesSerializedToValue) =>
       switch indicesSerializedToValue->getRow(index) {
       | None =>
-        indicesSerializedToValue->setRow(index, (index, StdSet.make()->StdSet.add(entityId)))
-      | Some((_index, relatedEntityIds)) => relatedEntityIds->StdSet.add(entityId)->ignore
+        indicesSerializedToValue->setRow(index, (index, Utils.Set.make()->Utils.Set.add(entityId)))
+      | Some((_index, relatedEntityIds)) => relatedEntityIds->Utils.Set.add(entityId)->ignore
       }
     }
 

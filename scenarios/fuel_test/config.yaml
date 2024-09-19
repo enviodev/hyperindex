@@ -15,7 +15,7 @@ networks:
           - name: ClearGreeting
       - name: AllEvents
         address:
-          - 0x9a719b1ff9db28f1493375b06ad0195370786e217473eacc4be973ecd6281420
+          - 0xbcad9115ac67d80538705c58f830c66c7ebdda8ee74a1bb2611f2f4e2eabf719
         abi_file_path: abis/all-events-abi.json
         handler: src/AllEventsHandlers.ts
         events:

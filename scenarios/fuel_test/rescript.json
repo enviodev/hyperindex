@@ -1,0 +1,22 @@
+{
+  "name": "fuel_test",
+  "sources": [
+    {
+      "dir": "src",
+      "subdirs": true
+    },
+    {
+      "dir": "test",
+      "subdirs": true
+    }
+  ],
+  "suffix": ".bs.js",
+  "jsx": {
+    "version": 4
+  },
+  "package-specs": {
+    "module": "commonjs",
+    "in-source": true
+  },
+  "bs-dependencies": ["generated"]
+}

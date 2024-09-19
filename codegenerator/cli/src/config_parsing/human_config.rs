@@ -525,13 +525,12 @@ pub mod fuel {
     #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
     #[serde(rename_all = "camelCase", deny_unknown_fields)]
     pub struct EventConfig {
-        #[schemars(
-            description = "A reference to a struct in the ABI or a unique name for the provided \
-                           log_id"
-        )]
+        #[schemars(description = "Name of the event in the HyperIndex generated code")]
         pub name: String,
         #[serde(skip_serializing_if = "Option::is_none")]
-        #[schemars(description = "A reference to a log_id in the ABI")]
+        #[schemars(
+            description = "An identifier of a logged type from ABI. Used for indexing LogData receipts. The option can be omitted when the event name matches the logged struct/enum name."
+        )]
         pub log_id: Option<String>,
     }
 }

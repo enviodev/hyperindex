@@ -26,11 +26,6 @@ type blockNumberAndHash = {
 
 type logsQueryPage = hyperSyncPage<item>
 
-type contractReceiptQuery = {
-  addresses?: array<Address.t>,
-  rb: array<bigint>,
-}
-
 type missingParams = {
   queryName: string,
   missingParams: array<string>,
@@ -47,7 +42,7 @@ let queryLogsPage: (
   ~serverUrl: string,
   ~fromBlock: int,
   ~toBlock: int,
-  ~contractsReceiptQuery: array<contractReceiptQuery>,
+  ~recieptsSelection: array<HyperFuelClient.QueryTypes.receiptSelection>,
 ) => promise<queryResponse<logsQueryPage>>
 
 let queryBlockData: (

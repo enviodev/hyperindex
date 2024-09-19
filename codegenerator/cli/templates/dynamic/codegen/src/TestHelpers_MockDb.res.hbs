@@ -107,7 +107,7 @@ let updateEntityIndicesMockDb = (
   ->Array.forEach(((fieldName, fieldValue)) => {
     let index = TableIndices.Index.makeSingleEq(~fieldName, ~fieldValue)
     mockDbTable->InMemoryTable.Entity.addIdToIndex(~index, ~entityId)
-    entityIndices->InMemoryTable.StdSet.add(index)->ignore
+    entityIndices->Utils.Set.add(index)->ignore
   })
 }
 
@@ -152,7 +152,7 @@ let makeStoreOperatorEntity = (
     let store = cloned->getStore
     let entityIndices = switch store.table->InMemoryTable.get(key) {
     | Some({entityIndices}) => entityIndices
-    | None => InMemoryTable.StdSet.make()
+    | None => Utils.Set.make()
     }
     store->InMemoryTable.Entity.deleteEntityFromIndices(~entityId=key, ~entityIndices)
     store.table.dict->deleteDictKey(key)
@@ -322,7 +322,7 @@ let executeRowsEntity = (
       mockDbTable.table.dict->deleteDictKey(entityId)
       mockDbTable->InMemoryTable.Entity.deleteEntityFromIndices(
         ~entityId,
-        ~entityIndices=InMemoryTable.StdSet.make(),
+        ~entityIndices=Utils.Set.make(),
       )
     | InitialReadFromDb(NotSet) => ()
     }

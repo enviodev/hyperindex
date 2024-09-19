@@ -46,11 +46,6 @@ type blockNumberAndHash = {
 
 type logsQueryPage = hyperSyncPage<item>
 
-type contractReceiptQuery = {
-  addresses?: array<Address.t>,
-  rb: array<bigint>,
-}
-
 type missingParams = {
   queryName: string,
   missingParams: array<string>,
@@ -89,27 +84,15 @@ let queryErrorToMsq = (e: queryError): string => {
 type queryResponse<'a> = result<'a, queryError>
 
 module LogsQuery = {
-  let receiptTypeSelection: array<Fuel.receiptType> = [LogData]
-  // only transactions with status 1 (success)
-  let txStatusSelection = [1]
-
   let makeRequestBody = (
     ~fromBlock,
     ~toBlockInclusive,
-    ~contractsReceiptQuery: array<contractReceiptQuery>,
+    ~recieptsSelection,
   ): HyperFuelClient.QueryTypes.query => {
-    let receipts = contractsReceiptQuery->Js.Array2.map((
-      q
-    ): HyperFuelClient.QueryTypes.receiptSelection => {
-      rootContractId: ?q.addresses,
-      receiptType: receiptTypeSelection,
-      rb: q.rb,
-      txStatus: txStatusSelection,
-    })
     {
       fromBlock,
       toBlockExclusive: toBlockInclusive + 1,
-      receipts,
+      receipts: recieptsSelection,
       fieldSelection: {
         receipt: [
           TxId,
@@ -198,16 +181,13 @@ module LogsQuery = {
     }
   }
 
-  let queryLogsPage = async (
-    ~serverUrl,
-    ~fromBlock,
-    ~toBlock,
-    ~contractsReceiptQuery,
-  ): queryResponse<logsQueryPage> => {
+  let queryLogsPage = async (~serverUrl, ~fromBlock, ~toBlock, ~recieptsSelection): queryResponse<
+    logsQueryPage,
+  > => {
     let query: HyperFuelClient.QueryTypes.query = makeRequestBody(
       ~fromBlock,
       ~toBlockInclusive=toBlock,
-      ~contractsReceiptQuery,
+      ~recieptsSelection,
     )
 
     let hyperFuelClient = CachedClients.getClient(serverUrl)
