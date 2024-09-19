@@ -143,6 +143,10 @@ let checkAndSetSyncedChains = (~nextQueueItemIsKnownNone=false, chainManager: Ch
     ->ChainMap.values
     ->Array.reduce(true, (accum, cf) => cf->ChainFetcher.isFetchingAtHead && accum)
 
+    if allChainsAtHead {
+      Prometheus.setAllChainsSyncedToHead()
+    }
+
   //Update the timestampCaughtUpToHeadOrEndblock values
   let chainFetchers = chainManager.chainFetchers->ChainMap.map(cf => {
     /* strategy for TUI synced status:
@@ -182,7 +186,6 @@ let checkAndSetSyncedChains = (~nextQueueItemIsKnownNone=false, chainManager: Ch
       //All chains are caught up to head chainManager queue returns None
       //Meaning we are busy synchronizing chains at the head
       if nextQueueItemIsNone && allChainsAtHead {
-        Prometheus.setAllChainsSyncedToHead()
         {
           ...cf,
           timestampCaughtUpToHeadOrEndblock: Js.Date.make()->Some,
