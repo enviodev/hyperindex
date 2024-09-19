@@ -14,6 +14,9 @@ importers:
       envio:
         specifier: ../../codegenerator/cli/npm/envio
         version: link:../../codegenerator/cli/npm/envio
+      rescript:
+        specifier: 11.1.3
+        version: 11.1.3
       rescript-schema:
         specifier: 8.2.0
         version: 8.2.0(rescript@11.1.3)
