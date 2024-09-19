@@ -22,22 +22,38 @@ let makeGetRecieptsSelectionOrThrow = (~contracts: array<contract>) => {
   // only transactions with status 1 (success)
   let txStatusSelection = [1]
 
-  let mint: ref<[#None | #Wildcard | #NonWildcard]> = ref(#None)
   let nonWildcardRbsByContract = Js.Dict.empty()
+  let contractsWithMint = Utils.Set.make()
+  let wildcardMint = ref(false)
   let wildcardRbs = []
 
   let wildcardMintSelection: HyperFuelClient.QueryTypes.receiptSelection = {
-      receiptType: mintReceiptTypeSelection,
-      txStatus: txStatusSelection,
-   }
- 
+    receiptType: mintReceiptTypeSelection,
+    txStatus: txStatusSelection,
+  }
 
   contracts->Array.forEach(contract => {
     let nonWildcardRbs = []
     contract.events->Array.forEach(event => {
       switch event {
-      | {mint: true, isWildcard: true} => mint := #Wildcard
-      | {mint: true} => mint := #NonWildcard
+      | {mint: true, logId} =>
+        Js.Exn.raiseError(`Mint event ${event.name} is not allowed to have a logId`)
+      | {mint: true, isWildcard: true} =>
+        if contractsWithMint->Utils.Set.size !== 0 {
+          Js.Exn.raiseError(`Wildcard Mint event is not allowed together with non-wildcard Mint events`)
+        }
+        wildcardMint := true
+      | {mint: true} => {
+          if wildcardMint.contents {
+            Js.Exn.raiseError(
+              `Failed to register ${event.name} for contract ${contract.name} because Mint is already registered in wildcard mode`,
+            )
+          }
+          if contractsWithMint->Utils.Set.has(contract.name) {
+            Js.Exn.raiseError(`Only one Mint event is allowed per contract`)
+          }
+          contractsWithMint->Utils.Set.add(contract.name)->ignore
+        }
       | {logId} => {
           let rb = logId->BigInt.fromStringUnsafe
           if event.isWildcard === Some(true) {
@@ -46,7 +62,7 @@ let makeGetRecieptsSelectionOrThrow = (~contracts: array<contract>) => {
             nonWildcardRbs->Array.push(rb)->ignore
           }
         }
-      | _ => Js.Exn.raiseError(`Event ${event.name} is not a mint or log`)
+      | _ => Js.Exn.raiseError(`Event ${event.name} is not a log or mint`)
       }
     })
     nonWildcardRbsByContract->Js.Dict.set(contract.name, nonWildcardRbs)
@@ -76,7 +92,7 @@ let makeGetRecieptsSelectionOrThrow = (~contracts: array<contract>) => {
       ) {
       | [] => ()
       | addresses => {
-          if mint.contents == #NonWildcard {
+          if contractsWithMint->Utils.Set.has(contract.name) {
             selection
             ->Js.Array2.push({
               rootContractId: addresses,
@@ -103,7 +119,7 @@ let makeGetRecieptsSelectionOrThrow = (~contracts: array<contract>) => {
     })
 
     if shouldApplyWildcards {
-      if mint.contents == #Wildcard {
+      if wildcardMint.contents {
         selection
         ->Array.push(wildcardMintSelection)
         ->ignore

@@ -82,8 +82,15 @@ describe_only("HyperFuelWorker - getRecieptsSelectionOrThrow", () => {
           events: [
             {
               name: "Mint",
-              // LogId is ignored for mint events
-              logId: "12345",
+              mint: true,
+            },
+          ],
+        },
+        {
+          name: "TestContract2",
+          events: [
+            {
+              name: "Mint",
               mint: true,
             },
           ],
@@ -101,6 +108,11 @@ describe_only("HyperFuelWorker - getRecieptsSelectionOrThrow", () => {
           rootContractId: [address1, address2],
           txStatus: [1],
         },
+        {
+          receiptType: [Mint],
+          rootContractId: [address3],
+          txStatus: [1],
+        },
       ],
     )
   })
@@ -113,8 +125,6 @@ describe_only("HyperFuelWorker - getRecieptsSelectionOrThrow", () => {
           events: [
             {
               name: "Mint",
-              // LogId is ignored for mint events
-              logId: "12345",
               mint: true,
               isWildcard: true,
             },
@@ -209,10 +219,6 @@ describe_only("HyperFuelWorker - getRecieptsSelectionOrThrow", () => {
               name: "UnitLog",
               logId: Types.AllEvents.UnitLog.sighash,
             },
-            {
-              name: "Mint",
-              mint: true,
-            },
           ],
         },
       ],
@@ -235,11 +241,6 @@ describe_only("HyperFuelWorker - getRecieptsSelectionOrThrow", () => {
           txStatus: [1],
         },
         {
-          receiptType: [Mint],
-          rootContractId: [address3],
-          txStatus: [1],
-        },
-        {
           rb: [3330666440490685604n],
           receiptType: [LogData],
           rootContractId: [address3],
@@ -254,7 +255,7 @@ describe_only("HyperFuelWorker - getRecieptsSelectionOrThrow", () => {
     )
   })
 
-  it("Fails with invalid event config", () => {
+  it("Fails when event doesn't have either mint: true or logId", () => {
     Assert.throws(
       () => {
         HyperFuelWorker.makeGetRecieptsSelectionOrThrow(
@@ -263,7 +264,7 @@ describe_only("HyperFuelWorker - getRecieptsSelectionOrThrow", () => {
               name: "TestContract",
               events: [
                 {
-                  name: "NoLogIdOrMintSpecified",
+                  name: "MyEvent",
                 },
               ],
             },
@@ -271,8 +272,188 @@ describe_only("HyperFuelWorker - getRecieptsSelectionOrThrow", () => {
         )
       },
       ~error={
-        "message": "Event NoLogIdOrMintSpecified is not a mint or log",
+        "message": "Event MyEvent is not a log or mint",
       },
+    )
+  })
+
+  it("Fails when event has both mint: true and logId", () => {
+    Assert.throws(
+      () => {
+        HyperFuelWorker.makeGetRecieptsSelectionOrThrow(
+          ~contracts=[
+            {
+              name: "TestContract",
+              events: [
+                {
+                  name: "MyEvent",
+                  mint: true,
+                  logId: "12345",
+                },
+              ],
+            },
+          ],
+        )
+      },
+      ~error={
+        "message": "Mint event MyEvent is not allowed to have a logId",
+      },
+    )
+  })
+
+  it("Fails when contract has multiple mint events", () => {
+    Assert.throws(
+      () => {
+        HyperFuelWorker.makeGetRecieptsSelectionOrThrow(
+          ~contracts=[
+            {
+              name: "TestContract",
+              events: [
+                {
+                  name: "MyEvent",
+                  mint: true,
+                },
+                {
+                  name: "MyEvent2",
+                  mint: true,
+                },
+              ],
+            },
+          ],
+        )
+      },
+      ~error={
+        "message": "Only one Mint event is allowed per contract",
+      },
+    )
+  })
+
+  it("Fails when contract has mint event, when wildcard mint already defined", () => {
+    Assert.throws(
+      () => {
+        HyperFuelWorker.makeGetRecieptsSelectionOrThrow(
+          ~contracts=[
+            {
+              name: "TestContract",
+              events: [
+                {
+                  name: "Mint",
+                  mint: true,
+                  isWildcard: true,
+                },
+              ],
+            },
+            {
+              name: "TestContract2",
+              events: [
+                {
+                  name: "Mint",
+                  mint: true,
+                },
+              ],
+            },
+          ],
+        )
+      },
+      ~error={
+        "message": "Failed to register Mint for contract TestContract2 because it is already registered as a wildcard",
+      },
+    )
+  })
+
+  it("Fails register wildcard with there's a non-wildcard mint", () => {
+    Assert.throws(
+      () => {
+        HyperFuelWorker.makeGetRecieptsSelectionOrThrow(
+          ~contracts=[
+            {
+              name: "TestContract2",
+              events: [
+                {
+                  name: "Mint",
+                  mint: true,
+                },
+              ],
+            },
+            {
+              name: "TestContract",
+              events: [
+                {
+                  name: "Mint",
+                  mint: true,
+                  isWildcard: true,
+                },
+              ],
+            },
+          ],
+        )
+      },
+      ~error={
+        "message": "Wildcard Mint event is not allowed together with non-wildcard Mint events",
+      },
+    )
+  })
+
+  it("Removes wildcard selection with shouldApplyWildcards (needed for partitioning)", () => {
+    let getRecieptsSelectionOrThrow = HyperFuelWorker.makeGetRecieptsSelectionOrThrow(
+      ~contracts=[
+        {
+          name: "TestContract",
+          events: [
+            {
+              name: "Mint",
+              mint: true,
+              isWildcard: true,
+            },
+            {
+              name: "WildcardLog",
+              logId: "123",
+              isWildcard: true,
+            },
+            {
+              name: "NonWildcardLog",
+              logId: "321",
+            },
+          ],
+        },
+      ],
+    )
+    Assert.deepEqual(
+      getRecieptsSelectionOrThrow(
+        ~contractAddressMapping=mockContractAddressMapping(),
+        ~shouldApplyWildcards=true,
+      ),
+      [
+        {
+          rb: [321n],
+          receiptType: [LogData],
+          rootContractId: [address1, address2],
+          txStatus: [1],
+        },
+        {
+          receiptType: [Mint],
+          txStatus: [1],
+        },
+        {
+          rb: [123n],
+          receiptType: [LogData],
+          txStatus: [1],
+        },
+      ],
+    )
+    Assert.deepEqual(
+      getRecieptsSelectionOrThrow(
+        ~contractAddressMapping=mockContractAddressMapping(),
+        ~shouldApplyWildcards=false,
+      ),
+      [
+        {
+          rb: [321n],
+          receiptType: [LogData],
+          rootContractId: [address1, address2],
+          txStatus: [1],
+        },
+      ],
     )
   })
 })
