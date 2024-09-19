@@ -415,8 +415,7 @@ module Make = (
           let topic0 = log.topics->Js.Array2.unsafe_get(0)
           let maybeEventMod =
             eventModLookup->EventModLookup.get(
-              ~sighash=topic0,
-              ~topicCount=log.topics->Array.length,
+              ~tag=EventModLookup.getEvmEventTag(~sighash=topic0, ~topicCount=log.topics->Array.length),
               ~contractAddressMapping,
               ~contractAddress=log.address,
             )
@@ -454,8 +453,7 @@ module Make = (
           let topic0 = log.topics->Js.Array2.unsafe_get(0)
 
           switch eventModLookup->EventModLookup.get(
-            ~sighash=topic0,
-            ~topicCount=log.topics->Array.length,
+            ~tag=EventModLookup.getEvmEventTag(~sighash=topic0, ~topicCount=log.topics->Array.length),
             ~contractAddressMapping,
             ~contractAddress=log.address,
           ) {

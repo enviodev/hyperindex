@@ -85,8 +85,8 @@ describe("EventModLookup", () => {
     )
     let lookup = EventModLookup.empty()
 
-    Assert.deepEqual(lookup->EventModLookup.set(mockEventMod1), Ok())
-    Assert.deepEqual(lookup->EventModLookup.set(mockEventMod2), Ok())
+    Assert.deepEqual(lookup->EventModLookup.set("test-event-tag", mockEventMod1), Ok())
+    Assert.deepEqual(lookup->EventModLookup.set("test-event-tag", mockEventMod2), Ok())
   })
 
   it("Fails on duplicate insertions", () => {
@@ -98,8 +98,11 @@ describe("EventModLookup", () => {
     )
     let lookup = EventModLookup.empty()
 
-    Assert.deepEqual(lookup->EventModLookup.set(mockEventMod), Ok())
-    Assert.deepEqual(lookup->EventModLookup.set(mockEventMod)->getErrorKind, Some(Duplicate))
+    Assert.deepEqual(lookup->EventModLookup.set("test-event-tag", mockEventMod), Ok())
+    Assert.deepEqual(
+      lookup->EventModLookup.set("test-event-tag", mockEventMod)->getErrorKind,
+      Some(Duplicate),
+    )
   })
 
   it("Fails on duplicate wildcard insertions", () => {
@@ -117,33 +120,10 @@ describe("EventModLookup", () => {
     )
     let lookup = EventModLookup.empty()
 
-    Assert.deepEqual(lookup->EventModLookup.set(mockEventMod1), Ok())
+    Assert.deepEqual(lookup->EventModLookup.set("test-event-tag", mockEventMod1), Ok())
     Assert.deepEqual(
-      lookup->EventModLookup.set(mockEventMod2)->getErrorKind,
+      lookup->EventModLookup.set("test-event-tag", mockEventMod2)->getErrorKind,
       Some(WildcardSighashCollision),
-    )
-  })
-
-  it("getByKey returns the correct eventMod ", () => {
-    let mockEventMod = makeMockEventMod(
-      ~sighash=mockSighash,
-      ~name=mockEventName,
-      ~contractName="TestContract",
-      ~isWildcard=false,
-    )
-    let lookup = EventModLookup.empty()
-
-    lookup
-    ->EventModLookup.set(mockEventMod)
-    ->EventModLookup.unwrapAddEventResponse(~chain=mockChain)
-
-    Assert.deepEqual(
-      lookup->EventModLookup.getByKey(
-        ~sighash=mockSighash,
-        ~topicCount=mockTopicCount,
-        ~contractName="TestContract",
-      ),
-      Some(mockEventMod->toInternal),
     )
   })
 
@@ -157,13 +137,12 @@ describe("EventModLookup", () => {
     let lookup = EventModLookup.empty()
 
     lookup
-    ->EventModLookup.set(mockEventMod)
+    ->EventModLookup.set("test-event-tag", mockEventMod)
     ->EventModLookup.unwrapAddEventResponse(~chain=mockChain)
 
     Assert.deepEqual(
       lookup->EventModLookup.get(
-        ~sighash=mockSighash,
-        ~topicCount=mockTopicCount,
+        ~tag="test-event-tag",
         ~contractAddress=mockAddress1,
         ~contractAddressMapping=ContractAddressingMap.make(),
       ),
@@ -193,10 +172,10 @@ describe("EventModLookup", () => {
       let lookup = EventModLookup.empty()
 
       lookup
-      ->EventModLookup.set(mockWildcardEventMod)
+      ->EventModLookup.set("test-event-tag", mockWildcardEventMod)
       ->EventModLookup.unwrapAddEventResponse(~chain=mockChain)
       lookup
-      ->EventModLookup.set(mockNonWildcardEventMod)
+      ->EventModLookup.set("test-event-tag", mockNonWildcardEventMod)
       ->EventModLookup.unwrapAddEventResponse(~chain=mockChain)
 
       let contractAddressMapping = ContractAddressingMap.make()
@@ -207,8 +186,7 @@ describe("EventModLookup", () => {
 
       Assert.deepEqual(
         lookup->EventModLookup.get(
-          ~sighash=mockSighash,
-          ~topicCount=mockTopicCount,
+          ~tag="test-event-tag",
           ~contractAddress=nonWildcardContractAddress,
           ~contractAddressMapping,
         ),
@@ -218,8 +196,7 @@ describe("EventModLookup", () => {
 
       Assert.deepEqual(
         lookup->EventModLookup.get(
-          ~sighash=mockSighash,
-          ~topicCount=mockTopicCount,
+          ~tag="test-event-tag",
           ~contractAddress=wildcardContractAddress,
           ~contractAddressMapping,
         ),

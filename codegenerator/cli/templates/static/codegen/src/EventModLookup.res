@@ -57,20 +57,18 @@ module ContractEventMods = {
     byContractName->Utils.Dict.dangerouslyGetNonOption(contractName)
   }
 }
-let getEventId = (~sighash, ~topicCount) => {
+let getEvmEventTag = (~sighash, ~topicCount) => {
   sighash ++ "_" ++ topicCount->Belt.Int.toString
 }
 type t = dict<ContractEventMods.t>
 
 let empty = () => Js.Dict.empty()
 
-let set = (eventModLookup: t, eventMod: module(Types.Event)) => {
-  let module(Event) = eventMod
-  let eventId = getEventId(~sighash=Event.sighash, ~topicCount=Event.topicCount)
-  let events = switch eventModLookup->Utils.Dict.dangerouslyGetNonOption(eventId) {
+let set = (eventModLookup: t, eventTag, eventMod: module(Types.Event)) => {
+  let events = switch eventModLookup->Utils.Dict.dangerouslyGetNonOption(eventTag) {
   | None =>
     let events = ContractEventMods.empty()
-    eventModLookup->Js.Dict.set(eventId, events)
+    eventModLookup->Js.Dict.set(eventTag, events)
     events
   | Some(events) => events
   }
@@ -79,17 +77,12 @@ let set = (eventModLookup: t, eventMod: module(Types.Event)) => {
   )
 }
 
-let get = (eventModLookup: t, ~sighash, ~topicCount, ~contractAddress, ~contractAddressMapping) =>
-  eventModLookup
-  ->Utils.Dict.dangerouslyGetNonOption(getEventId(~sighash, ~topicCount))
-  ->Option.flatMap(ContractEventMods.get(_, ~contractAddress, ~contractAddressMapping))
-
-let getByKey = (eventModLookup: t, ~sighash, ~topicCount, ~contractName) =>
-  eventModLookup
-  ->Utils.Dict.dangerouslyGetNonOption(getEventId(~sighash, ~topicCount))
-  ->Option.flatMap(eventsByContractName =>
-    eventsByContractName->ContractEventMods.getByContractName(~contractName)
-  )
+let get = (eventModLookup: t, ~tag, ~contractAddress, ~contractAddressMapping) => {
+  switch eventModLookup->Utils.Dict.dangerouslyGetNonOption(tag) {
+  | None => None
+  | Some(events) => events->ContractEventMods.get(~contractAddress, ~contractAddressMapping)
+  }
+}
 
 let unwrapAddEventResponse = (result: result<'a, eventError>, ~chain) => {
   switch result {
@@ -110,8 +103,9 @@ let unwrapAddEventResponse = (result: result<'a, eventError>, ~chain) => {
 let fromArrayOrThrow = (eventMods: array<module(Types.Event)>, ~chain): t => {
   let t = empty()
   eventMods->Belt.Array.forEach(eventMod => {
+    let module(Event) = eventMod
     t
-    ->set(eventMod)
+    ->set(getEvmEventTag(~sighash=Event.sighash, ~topicCount=Event.topicCount), eventMod)
     ->unwrapAddEventResponse(~chain)
   })
   t
