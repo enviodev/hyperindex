@@ -142,11 +142,6 @@ let checkAndSetSyncedChains = (~nextQueueItemIsKnownNone=false, chainManager: Ch
     chainManager.chainFetchers
     ->ChainMap.values
     ->Array.reduce(true, (accum, cf) => cf->ChainFetcher.isFetchingAtHead && accum)
-
-    if allChainsAtHead {
-      Prometheus.setAllChainsSyncedToHead()
-    }
-
   //Update the timestampCaughtUpToHeadOrEndblock values
   let chainFetchers = chainManager.chainFetchers->ChainMap.map(cf => {
     /* strategy for TUI synced status:
@@ -168,6 +163,7 @@ let checkAndSetSyncedChains = (~nextQueueItemIsKnownNone=false, chainManager: Ch
      * The given chain has processed all events on the queue
      * see https://github.com/Float-Capital/indexer/pull/1388 */
     if cf->ChainFetcher.hasProcessedToEndblock {
+      Prometheus.setAllChainsSyncedToHead()
       // in the case this is already set, don't reset and instead propagate the existing value
       let timestampCaughtUpToHeadOrEndblock =
         cf.timestampCaughtUpToHeadOrEndblock->Option.isSome
@@ -186,6 +182,7 @@ let checkAndSetSyncedChains = (~nextQueueItemIsKnownNone=false, chainManager: Ch
       //All chains are caught up to head chainManager queue returns None
       //Meaning we are busy synchronizing chains at the head
       if nextQueueItemIsNone && allChainsAtHead {
+        Prometheus.setAllChainsSyncedToHead()
         {
           ...cf,
           timestampCaughtUpToHeadOrEndblock: Js.Date.make()->Some,
@@ -201,6 +198,7 @@ let checkAndSetSyncedChains = (~nextQueueItemIsKnownNone=false, chainManager: Ch
         let hasNoMoreEventsToProcess = cf->ChainFetcher.hasNoMoreEventsToProcess(~hasArbQueueEvents)
 
         if hasNoMoreEventsToProcess {
+          Prometheus.setAllChainsSyncedToHead()
           {
             ...cf,
             timestampCaughtUpToHeadOrEndblock: Js.Date.make()->Some,
