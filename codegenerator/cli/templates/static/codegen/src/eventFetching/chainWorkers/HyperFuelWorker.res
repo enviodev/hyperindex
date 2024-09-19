@@ -367,8 +367,7 @@ module Make = (
         }
 
         let eventMod = switch eventModLookup->EventModLookup.get(
-          ~sighash,
-          ~topicCount=0,
+          ~tag=sighash,
           ~contractAddressMapping,
           ~contractAddress,
         ) {

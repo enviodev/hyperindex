@@ -130,8 +130,7 @@ let convertLogs = (
     let topic0 = log.topics->Js.Array2.unsafe_get(0)
     eventModLookup
     ->EventModLookup.get(
-      ~sighash=topic0,
-      ~topicCount=log.topics->Array.length,
+      ~tag=EventModLookup.getEvmEventTag(~sighash=topic0, ~topicCount=log.topics->Array.length),
       ~contractAddressMapping=contractInterfaceManager.contractAddressMapping,
       ~contractAddress=log.address,
     )

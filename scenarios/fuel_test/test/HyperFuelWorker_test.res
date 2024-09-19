@@ -356,7 +356,7 @@ describe("HyperFuelWorker - getRecieptsSelectionOrThrow", () => {
         )
       },
       ~error={
-        "message": "Failed to register Mint for contract TestContract2 because it is already registered as a wildcard",
+        "message": "Failed to register Mint for contract TestContract2 because Mint is already registered in wildcard mode",
       },
     )
   })
