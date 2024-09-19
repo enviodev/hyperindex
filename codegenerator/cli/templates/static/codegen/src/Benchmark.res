@@ -62,15 +62,32 @@ module Data = {
     })
   }
 
+  module UpdateEndOfBlockRangeScannedData = {
+    type t = {
+      chainId: int,
+      elapsedTimeMillis: int,
+    }
+
+    let schema = S.object(s => {
+      chainId: s.field("chainId", S.int),
+      elapsedTimeMillis: s.field("elapsedTimeMillis", S.int),
+    })
+  }
+
   type t = {
     blockRangeFetched: array<BlockRangeFetched.t>,
     eventProcessing: array<EventProcessing.t>,
+    updateEndOfBlockRangeScannedData: array<UpdateEndOfBlockRangeScannedData.t>,
     startTime: Js.Date.t,
     mutable latestTime: Js.Date.t,
   }
   let schema = S.object(s => {
     blockRangeFetched: s.field("blockRangeFetched", S.array(BlockRangeFetched.schema)),
     eventProcessing: s.field("eventProcessing", S.array(EventProcessing.schema)),
+    updateEndOfBlockRangeScannedData: s.field(
+      "updateEndOfBlockRangeScannedData",
+      S.array(UpdateEndOfBlockRangeScannedData.schema),
+    ),
     startTime: s.field("startTime", dateTimeSchema),
     latestTime: s.field("latestTime", dateTimeSchema),
   })
@@ -78,18 +95,29 @@ module Data = {
   let make = () => {
     blockRangeFetched: [],
     eventProcessing: [],
+    updateEndOfBlockRangeScannedData: [],
     startTime: Js.Date.make(),
     latestTime: Js.Date.make(),
   }
 
+  let updateLatestTime = self => self.latestTime = Js.Date.make()
+
   let addBlockRangeFetched = (self, blockRangeFetched: BlockRangeFetched.t) => {
     self.blockRangeFetched->Js.Array2.push(blockRangeFetched)->ignore
-    self.latestTime = Js.Date.make()
+    self->updateLatestTime
   }
 
   let addEventProcessing = (self, eventProcessing: EventProcessing.t) => {
     self.eventProcessing->Js.Array2.push(eventProcessing)->ignore
-    self.latestTime = Js.Date.make()
+    self->updateLatestTime
+  }
+
+  let addUpdateEndOfBlockRangeScannedData = (
+    self,
+    updateEndOfBlockRangeScannedData: UpdateEndOfBlockRangeScannedData.t,
+  ) => {
+    self.updateEndOfBlockRangeScannedData->Js.Array2.push(updateEndOfBlockRangeScannedData)->ignore
+    self->updateLatestTime
   }
 }
 
@@ -163,6 +191,14 @@ let addEventProcessing = (
   data->saveToCacheFile
 }
 
+let addUpdateEndOfBlockRangeScannedData = (~chainId, ~elapsedTimeMillis) => {
+  data->Data.addUpdateEndOfBlockRangeScannedData({
+    chainId,
+    elapsedTimeMillis,
+  })
+  data->saveToCacheFile
+}
+
 module Summary = {
   open Belt
   type t = {
@@ -233,7 +269,10 @@ module Summary = {
     }
   }
 
-  let getChainBlockRangeFetchedSummary = (data: Data.t, ~chainId): summaryTable => {
+  let getChainBlockRangeFetchedSummary = (
+    data: Data.t,
+    ~shouldInclude: Data.BlockRangeFetched.t => bool,
+  ): summaryTable => {
     let numBlocksFetchedSamples = []
     let blockRangeSizeSamples = []
     let totalTimeElapsedSamples = []
@@ -241,7 +280,7 @@ module Summary = {
     let pageFetchTimeSamples = []
 
     data.blockRangeFetched->Array.forEach(blockRangeFetched =>
-      if blockRangeFetched.chainId == chainId {
+      if shouldInclude(blockRangeFetched) {
         numBlocksFetchedSamples->Array.push(blockRangeFetched.numEvents->Int.toFloat)
         blockRangeSizeSamples->Array.push(
           Int.toFloat(blockRangeFetched.toBlock - blockRangeFetched.fromBlock),
@@ -292,6 +331,20 @@ module Summary = {
     ]->Js.Dict.fromArray
   }
 
+  let getUpdateEndOfBlockRangeScannedDataSummary = (data: Data.t, ~chainId): summaryTable => {
+    let elapsedTimeSamples = []
+
+    data.updateEndOfBlockRangeScannedData->Array.forEach(updateEndOfBlockRangeScannedData =>
+      if updateEndOfBlockRangeScannedData.chainId == chainId {
+        elapsedTimeSamples->Array.push(
+          updateEndOfBlockRangeScannedData.elapsedTimeMillis->Int.toFloat,
+        )
+      }
+    )
+
+    [("Elapsed Time (ms)", elapsedTimeSamples->make)]->Js.Dict.fromArray
+  }
+
   let getTotalRunTime = (data: Data.t) =>
     DateFns.intervalToDuration({
       start: data.startTime,
@@ -315,12 +368,24 @@ module Summary = {
     ->DateFns.durationFromMillis
   }
 
+  let getTotalUpdateEndOfBlockRangeScannedDataTime = (data: Data.t, ~chainId) => {
+    data.updateEndOfBlockRangeScannedData
+    ->Array.reduce(0, (acc, updateEndOfBlockRangeScannedData) => {
+      if updateEndOfBlockRangeScannedData.chainId == chainId {
+        acc + updateEndOfBlockRangeScannedData.elapsedTimeMillis
+      } else {
+        acc
+      }
+    })
+    ->DateFns.durationFromMillis
+  }
+
   let printSummary = async () => {
     let data = await readFromCacheFile()
     switch data {
     | None =>
       Logging.error(
-        "No benchmark cache file found, please run `envio start --bench` or use 'ENVIO_SAVE_BENCHMARK_DATA=true' and rerun the indexer",
+        "No benchmark cache file found, please use 'ENVIO_SAVE_BENCHMARK_DATA=true' and rerun the benchmark",
       )
     | Some(data) =>
       let config = RegisterHandlers.getConfig()
@@ -334,24 +399,58 @@ module Summary = {
         ("Total Time Processing", data->getTotalEventProcessingTime),
       ]
       ->Array.concat(
-        chainIds->Array.map(chainId => {
-          (
-            "Total Time Fetching Chain " ++ chainId->Int.toString,
-            data->getTotalTimeFetchingChain(~chainId),
-          )
+        chainIds->Array.flatMap(chainId => {
+          [
+            (
+              "Total Time Fetching Chain " ++ chainId->Int.toString,
+              data->getTotalTimeFetchingChain(~chainId),
+            ),
+            (
+              "Total UpdateEndOfBlockRangeScannedData Time Chain " ++ chainId->Int.toString,
+              data->getTotalUpdateEndOfBlockRangeScannedDataTime(~chainId),
+            ),
+          ]
         }),
       )
       ->Js.Dict.fromArray
       ->logDictTable
 
-      chainIds->Array.forEach(chainId => {
-        Js.log2("BlockRangeFetched Summary for Chain", chainId)
-        let chainBlockRangeFetchedSummary = data->getChainBlockRangeFetchedSummary(~chainId)
-        chainBlockRangeFetchedSummary->logSummaryTable
-      })
-
       Js.log("EventProcessing Summary")
       data->getEventProcessingSummary->logSummaryTable
+
+      chainIds->Array.forEach(chainId => {
+        Js.log(`Root Register BlockRangeFetched Summary for Chain ${chainId->Int.toString}`)
+        data
+        ->getChainBlockRangeFetchedSummary(~shouldInclude=blockRangeFetched =>
+          blockRangeFetched.chainId == chainId && blockRangeFetched.fetchStateRegisterId == Root
+        )
+        ->logSummaryTable
+
+        let hasDynamicContractRegisters = ref(false)
+        let dynamicContractRegisterSummary =
+          data->getChainBlockRangeFetchedSummary(~shouldInclude=blockRangeFetched =>
+            if (
+              blockRangeFetched.chainId == chainId && blockRangeFetched.fetchStateRegisterId != Root
+            ) {
+              hasDynamicContractRegisters := true
+              true
+            } else {
+              false
+            }
+          )
+
+        if hasDynamicContractRegisters.contents {
+          Js.log(
+            `Dynamic Contract Register BlockRangeFetched Summary for Chain ${chainId->Int.toString}`,
+          )
+          dynamicContractRegisterSummary->logSummaryTable
+        }
+
+        Js.log("Total UpdateEndOfBlockRangeScannedData Summary")
+        data
+        ->getUpdateEndOfBlockRangeScannedDataSummary(~chainId)
+        ->logSummaryTable
+      })
     }
   }
 }
