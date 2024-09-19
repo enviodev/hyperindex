@@ -104,7 +104,7 @@ module Summary = {
   type t = {
     n: int,
     mean: float,
-    stdDev: float,
+    @as("std-dev") stdDev: float,
     min: float,
     max: float,
   }
@@ -115,6 +115,11 @@ module Summary = {
 
   external arrayIntToFloat: array<int> => array<float> = "%identity"
 
+  let round = (float, ~precision=2) => {
+    let factor = Js.Math.pow_float(~base=10.0, ~exp=precision->Int.toFloat)
+    Js.Math.round(float *. factor) /. factor
+  }
+
   let make = (arr: array<float>) => {
     let div = (floatA, floatB) => floatA /. floatB
     let n = Array.length(arr)
@@ -122,7 +127,7 @@ module Summary = {
       {n, mean: 0., stdDev: 0., min: 0., max: 0.}
     } else {
       let nFloat = n->Int.toFloat
-      let mean = arr->Array.reduce(0., (acc, time) => acc +. time)->div(nFloat)
+      let mean = arr->Array.reduce(0., (acc, time) => acc +. time)->div(nFloat)->round(~precision=2)
       let stdDev = {
         let variance =
           arr
@@ -132,25 +137,29 @@ module Summary = {
           })
           ->div(nFloat)
 
-        variance->Js.Math.sqrt
+        variance->Js.Math.sqrt->round(~precision=2)
       }
 
       let min =
         arr
         ->Array.reduce(None, (acc, val) =>
           switch acc {
-          | None => Some(val)
-          | Some(acc) => Some(Pervasives.min(acc, val))
+          | None => val
+          | Some(acc) => Pervasives.min(acc, val)
           }
+          ->round(~precision=2)
+          ->Some
         )
         ->Option.getWithDefault(0.)
       let max =
         arr
         ->Array.reduce(None, (acc, val) =>
           switch acc {
-          | None => Some(val)
-          | Some(acc) => Some(Pervasives.max(acc, val))
+          | None => val
+          | Some(acc) => Pervasives.max(acc, val)
           }
+          ->round(~precision=2)
+          ->Some
         )
         ->Option.getWithDefault(0.)
       {n, mean, stdDev, min, max}
@@ -178,11 +187,11 @@ module Summary = {
       }
     )
     [
-      ("totalTimeElapsed (ms)", totalTimeElapsedSamples->make),
-      ("parsingTimeElapsed (ms)", parsingTimeElapsedSamples->make),
-      ("pageFetchTime (ms)", pageFetchTimeSamples->make),
-      ("numBlocksFetched", numBlocksFetchedSamples->make),
-      ("blockRangeSize", blockRangeSizeSamples->make),
+      ("Total Time Elapsed (ms)", totalTimeElapsedSamples->make),
+      ("Parsing Time Elapsed (ms)", parsingTimeElapsedSamples->make),
+      ("Page Fetch Time (ms)", pageFetchTimeSamples->make),
+      ("Num Blocks Fetched", numBlocksFetchedSamples->make),
+      ("Block Range Size", blockRangeSizeSamples->make),
     ]->Js.Dict.fromArray
   }
   let printSummary = async () => {
@@ -205,3 +214,4 @@ module Summary = {
     }
   }
 }
+
