@@ -145,18 +145,13 @@ let registerContractHandlers = (
                 {{#each chain_config.codegen_contracts as | contract |}}
                 {
                   name: "{{contract.name.capitalized}}",
-                  addresses: [
-                    {{#each contract.addresses as | address |}}
-                    "{{address}}"->Address.unsafeFromString,
-                    {{/each}}
-                  ],
                   events: [
                     {{#each contract.events as | event |}}
                     {
                       name: "{{event.name.capitalized}}",
                       logId: Types.{{contract.name.capitalized}}.{{event.name.capitalized}}.sighash,
                       {{!-- mint: {{#if event.mint}}true{{else}}false{{/if}}, --}}
-                      eventMod: module(Types.{{contract.name.capitalized}}.{{event.name.capitalized}}),
+                      isWildcard: (Types.{{contract.name.capitalized}}.{{event.name.capitalized}}.handlerRegister->Types.HandlerTypes.Register.getEventOptions).isWildcard,
                     },
                     {{/each}}
                   ]

@@ -7,12 +7,11 @@ type event = {
   name: string,
   logId?: string,
   mint?: bool,
-  eventMod: module(Types.Event),
+  isWildcard?: bool,
 }
 
 type contract = {
   name: string,
-  addresses: array<Address.t>,
   events: array<event>,
 }
 
@@ -33,6 +32,27 @@ let makeGetRecieptsSelectionOrThrow = (~contracts: array<contract>) => {
       txStatus: txStatusSelection,
     }: HyperFuelClient.QueryTypes.receiptSelection
   )
+
+  contracts->Array.forEach(contract => {
+    let nonWildcardRbs = []
+    contract.events->Array.forEach(event => {
+      switch event {
+      | {mint: true, isWildcard: true} => mint := #Wildcard
+      | {mint: true} => mint := #NonWildcard
+      | {logId} => {
+          let rb = logId->BigInt.fromStringUnsafe
+          if event.isWildcard === Some(true) {
+            wildcardRbs->Array.push(rb)->ignore
+          } else {
+            nonWildcardRbs->Array.push(rb)->ignore
+          }
+        }
+      | _ => Js.Exn.raiseError(`Event ${event.name} is not a mint or log`)
+      }
+    })
+    nonWildcardRbsByContract->Js.Dict.set(contract.name, nonWildcardRbs)
+  })
+
   let maybeWildcardLogSelection = switch wildcardRbs {
   | [] => None
   | wildcardRbs =>
@@ -46,27 +66,6 @@ let makeGetRecieptsSelectionOrThrow = (~contracts: array<contract>) => {
       ),
     )
   }
-
-  contracts->Array.forEach(contract => {
-    let nonWildcardRbs = []
-    contract.events->Array.forEach(event => {
-      let module(Event) = event.eventMod
-      let {isWildcard} = Event.handlerRegister->Types.HandlerTypes.Register.getEventOptions
-      switch event {
-      | {mint: true} => mint := (isWildcard ? #Wildcard : #NonWildcard)
-      | {logId} => {
-          let rb = logId->BigInt.fromStringUnsafe
-          if isWildcard {
-            wildcardRbs->Array.push(rb)->ignore
-          } else {
-            nonWildcardRbs->Array.push(rb)->ignore
-          }
-        }
-      | _ => Js.Exn.raiseError(`Event ${Event.name} is not a mint or log`)
-      }
-    })
-    nonWildcardRbsByContract->Js.Dict.set(contract.name, nonWildcardRbs)
-  })
 
   (~contractAddressMapping, ~shouldApplyWildcards) => {
     let selection: array<HyperFuelClient.QueryTypes.receiptSelection> = []
@@ -88,7 +87,8 @@ let makeGetRecieptsSelectionOrThrow = (~contracts: array<contract>) => {
             ->ignore
           }
           switch nonWildcardRbsByContract->Utils.Dict.dangerouslyGetNonOption(contract.name) {
-          | None => ()
+          | None
+          | Some([]) => ()
           | Some(nonWildcardRbs) =>
             selection
             ->Js.Array2.push({

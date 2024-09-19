@@ -177,10 +177,15 @@ AllEvents.BoolLog.handler(
 );
 
 const strLogSchema = S.string;
-AllEvents.StrLog.handler(async ({ event }) => {
-  strLogSchema.assert(event.params)!;
-  expectType<AssertSchemaType<typeof event.params, typeof strLogSchema>>(true);
-});
+AllEvents.StrLog.handler(
+  async ({ event }) => {
+    strLogSchema.assert(event.params)!;
+    expectType<AssertSchemaType<typeof event.params, typeof strLogSchema>>(
+      true
+    );
+  },
+  { wildcard: true }
+);
 
 const option2LogSchema = SExtra.swayOptional(SExtra.swayOptional(S.number));
 AllEvents.Option2.handler(async ({ event }) => {
