@@ -235,7 +235,10 @@ let runEventHandler = (
         eventBatchQueueItem->addEventToRawEvents(~inMemoryStore)
       }
       latestProcessedBlocks
-      ->EventsProcessed.updateEventsProcessed(~chain=eventBatchQueueItem.chain, ~blockNumber=eventBatchQueueItem.blockNumber)
+      ->EventsProcessed.updateEventsProcessed(
+        ~chain=eventBatchQueueItem.chain,
+        ~blockNumber=eventBatchQueueItem.blockNumber,
+      )
       ->Ok
     }
   })
@@ -303,7 +306,9 @@ let rec registerDynamicContracts = (
       )
       ->Ok
     } else {
-      switch eventBatchQueueItem.eventMod->getHandlerRegistration->Types.HandlerTypes.Register.getContractRegister {
+      switch eventBatchQueueItem.eventMod
+      ->getHandlerRegistration
+      ->Types.HandlerTypes.Register.getContractRegister {
       | Some(handler) =>
         handler->runEventContractRegister(
           ~logger,
@@ -457,6 +462,9 @@ let processEventBatch = (
       ->registerDynamicContracts(~checkContractIsRegistered, ~logger, ~inMemoryStore)
       ->propogate
 
+    let elapsedAfterContractRegister =
+      timeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
+
     (await eventsBeforeDynamicRegistrations
     ->runLoaders(~loadLayer, ~inMemoryStore, ~logger))
     ->propogate
@@ -477,13 +485,27 @@ let processEventBatch = (
     }
 
     let elapsedTimeAfterDbWrite = timeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
+    let batchSize = eventsBeforeDynamicRegistrations->Array.length
+    let handlerDuration = elapsedTimeAfterProcess - elapsedAfterLoad
+    let dbWriteDuration = elapsedTimeAfterDbWrite - elapsedTimeAfterProcess
     registerProcessEventBatchMetrics(
       ~logger,
-      ~batchSize=eventsBeforeDynamicRegistrations->Array.length,
+      ~batchSize,
       ~loadDuration=elapsedAfterLoad,
-      ~handlerDuration=elapsedTimeAfterProcess - elapsedAfterLoad,
-      ~dbWriteDuration=elapsedTimeAfterDbWrite - elapsedTimeAfterProcess,
+      ~handlerDuration,
+      ~dbWriteDuration,
     )
+    if Env.saveBenchmarkData {
+      Benchmark.addEventProcessing(
+        ~batchSize=eventsBeforeDynamicRegistrations->Array.length,
+        ~contractRegisterDuration=elapsedAfterContractRegister,
+        ~loadDuration=elapsedAfterLoad - elapsedAfterContractRegister,
+        ~handlerDuration,
+        ~dbWriteDuration,
+        ~totalTimeElapsed=elapsedTimeAfterDbWrite,
+        ~timeFinished=Js.Date.make(),
+      )
+    }
 
     Ok({latestProcessedBlocks, dynamicContractRegistrations})
   })
