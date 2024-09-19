@@ -26,12 +26,11 @@ let makeGetRecieptsSelectionOrThrow = (~contracts: array<contract>) => {
   let nonWildcardRbsByContract = Js.Dict.empty()
   let wildcardRbs = []
 
-  let wildcardMintSelection = (
-    {
+  let wildcardMintSelection: HyperFuelClient.QueryTypes.receiptSelection = {
       receiptType: mintReceiptTypeSelection,
       txStatus: txStatusSelection,
-    }: HyperFuelClient.QueryTypes.receiptSelection
-  )
+   }
+ 
 
   contracts->Array.forEach(contract => {
     let nonWildcardRbs = []
