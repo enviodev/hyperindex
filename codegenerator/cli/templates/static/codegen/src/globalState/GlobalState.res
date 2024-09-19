@@ -729,6 +729,7 @@ let injectedTaskReducer = (
       blockTimestampThreshold,
       nextEndOfBlockRangeScannedData,
     }) =>
+    let timeRef = Hrtime.makeTimer()
     await DbFunctions.sql->Postgres.beginSql(sql => {
       [
         DbFunctions.EndOfBlockRangeScannedData.setEndOfBlockRangeScannedData(
@@ -755,6 +756,13 @@ let injectedTaskReducer = (
           : [],
       )
     })
+    if Env.saveBenchmarkData {
+      let elapsedTimeMillis = Hrtime.timeSince(timeRef)->Hrtime.toMillis->Hrtime.intFromMillis
+      Benchmark.addUpdateEndOfBlockRangeScannedData(
+        ~chainId=chain->ChainMap.Chain.toChainId,
+        ~elapsedTimeMillis,
+      )
+    }
   | UpdateChainMetaDataAndCheckForExit(shouldExit) =>
     let {chainManager, asyncTaskQueue} = state
     switch shouldExit {
