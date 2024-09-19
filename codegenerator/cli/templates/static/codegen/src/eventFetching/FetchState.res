@@ -256,6 +256,11 @@ with a dynamicContractId
 */
 type id = Root | DynamicContract(dynamicContractId)
 
+let idSchema = S.union([
+  S.literal(Root),
+  S.schema(s => DynamicContract(s.matches(EventUtils.eventIndexSchema))),
+])
+
 /**
 Constructs id from a register
 */

@@ -34,3 +34,21 @@ module Util = {
 
   let inspectObj = a => inspect(a, {showHidden: false, depth: Null, colors: true})
 }
+
+module Path = {
+  type t
+  @module("path") external join: (t, string) => t = "join"
+  external toString: t => string = "%identity"
+  external __dirname: t = "__dirname"
+}
+module Fs = {
+  module Promises = {
+    @module("fs") @scope("promises")
+    external writeFile: (~filepath: Path.t, ~content: string) => promise<unit> = "writeFile"
+
+    type encoding = | @as("utf-8") Utf8
+
+    @module("fs") @scope("promises")
+    external readFile: (~filepath: Path.t, ~encoding: encoding) => promise<string> = "readFile"
+  }
+}

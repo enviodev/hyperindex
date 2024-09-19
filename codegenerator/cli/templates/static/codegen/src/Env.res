@@ -27,6 +27,7 @@ let defaultFileLogLevel = getLogLevelConfig("FILE_LOG_LEVEL", ~default=#trace)
 let envioApiToken = envSafe->EnvSafe.get("ENVIO_API_TOKEN", S.option(S.string))
 let hyperSyncClientTimeoutMillis =
   envSafe->EnvSafe.get("ENVIO_HYPERSYNC_CLIENT_TIMEOUT_MILLIS", S.option(S.int))
+let saveBenchmarkData = envSafe->EnvSafe.get("ENVIO_SAVE_BENCHMARK_DATA", S.bool, ~fallback=false)
 
 type logStrategyType =
   | @as("ecs-file") EcsFile
