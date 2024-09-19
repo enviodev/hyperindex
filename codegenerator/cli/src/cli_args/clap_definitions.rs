@@ -54,6 +54,10 @@ pub enum CommandType {
     ///Generate indexing code from user-defined configuration & schema files
     Codegen,
 
+    ///Prints a summary of the benchmark data after running the indexer
+    ///with envio start --bench flag or setting 'ENVIO_SAVE_BENCHMARK_DATA=true'
+    BenchmarkSummary,
+
     ///Prepare local environment for envio testing
     // #[clap(hide = true)]
     #[command(subcommand)]
@@ -89,6 +93,9 @@ pub struct StartArgs {
     ///Clear your database and restart indexing from scratch
     #[arg(short = 'r', long, action)]
     pub restart: bool,
+    ///Saves benchmark data to a file during indexing
+    #[arg(short = 'b', long, action)]
+    pub bench: bool,
 }
 
 #[derive(Debug, Subcommand)]

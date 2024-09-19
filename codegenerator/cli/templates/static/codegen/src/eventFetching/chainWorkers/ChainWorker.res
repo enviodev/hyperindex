@@ -1,4 +1,3 @@
-
 /**
 The args required for calling block range fetch
 */
@@ -13,6 +12,13 @@ type blockRangeFetchStats = {
   @as("page fetch time (ms)") pageFetchTime?: int,
   @as("average parse time per log (ms)") averageParseTimePerLog?: float,
 }
+
+let blockRangeFetchStatsSchema: S.t<blockRangeFetchStats> = S.object(s => {
+  totalTimeElapsed: s.field("totalTimeElapsed", S.int),
+  parsingTimeElapsed: ?s.field("parsingTimeElapsed", S.option(S.int)),
+  pageFetchTime: ?s.field("pageFetchTime", S.option(S.int)),
+  averageParseTimePerLog: ?s.field("averageParseTimePerLog", S.option(S.float)),
+})
 
 type reorgGuard = {
   lastBlockScannedData: ReorgDetection.blockData,
@@ -52,4 +58,3 @@ module type S = {
     ~setCurrentBlockHeight: int => unit,
   ) => promise<result<blockRangeFetchResponse, ErrorHandling.t>>
 }
-

@@ -61,6 +61,10 @@ pub async fn execute(command_line_args: CommandLineArgs) -> Result<()> {
                 PersistedStateExists::Exists(_) => (),
             };
 
+            if start_args.bench {
+                std::env::set_var("ENVIO_SAVE_BENCHMARK_DATA", "true");
+            }
+
             if start_args.restart {
                 let config = SystemConfig::parse_from_project_files(&parsed_project_paths)
                     .context("Failed parsing config")?;
@@ -89,6 +93,10 @@ pub async fn execute(command_line_args: CommandLineArgs) -> Result<()> {
 
         CommandType::Local(local_commands) => {
             local::run_local(&local_commands, &parsed_project_paths).await?;
+        }
+
+        CommandType::BenchmarkSummary => {
+            commands::benchmark::print_summary(&parsed_project_paths).await?
         }
 
         CommandType::Script(Script::PrintCliHelpMd) => {

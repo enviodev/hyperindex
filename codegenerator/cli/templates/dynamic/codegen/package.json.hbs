@@ -12,6 +12,7 @@
     "db-down": "node -e 'require(`./src/db/Migrations.bs.js`).runDownMigrations(true)'",
     "db-setup": "node -e 'require(`./src/db/Migrations.bs.js`).setupDb()'",
     "db-track-tables": "node -e 'require(`./db/src/Migrations.bs.js`).trackAllTables()'",
+    "print-benchmark-summary": "node -e 'require(`./src/Benchmark.bs.js`).Summary.printSummary()'",
     "start": "node src/Index.bs.js"
   },
   "keywords": [

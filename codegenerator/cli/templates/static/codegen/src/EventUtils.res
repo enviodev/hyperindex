@@ -28,6 +28,11 @@ type eventIndex = {
   logIndex: int,
 }
 
+let eventIndexSchema = S.object(s => {
+  blockNumber: s.field("blockNumber", S.int),
+  logIndex: s.field("logIndex", S.int),
+})
+
 // takes blockNumber, logIndex and packs them into a number with
 //32 bits, 16 bits and 16 bits respectively
 let packEventIndex = (~blockNumber, ~logIndex) => {
@@ -99,7 +104,7 @@ let waitForNextBlock = async (provider: Ethers.JsonRpcProvider.t) => {
   await Promise.make((resolve, _reject) => {
     provider->Ethers.JsonRpcProvider.onBlock(blockNumber => {
       provider->Ethers.JsonRpcProvider.removeOnBlockEventListener
-      resolve(. blockNumber)
+      resolve(blockNumber)
     })
   })
 }
