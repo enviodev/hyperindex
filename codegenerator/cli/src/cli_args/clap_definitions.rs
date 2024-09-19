@@ -94,7 +94,7 @@ pub struct StartArgs {
     #[arg(short = 'r', long, action)]
     pub restart: bool,
     ///Saves benchmark data to a file during indexing
-    #[arg(long, action)]
+    #[arg(short = 'b', long, action)]
     pub bench: bool,
 }
 
