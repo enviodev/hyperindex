@@ -36,7 +36,7 @@ let makeGetRecieptsSelectionOrThrow = (~contracts: array<contract>) => {
     let nonWildcardRbs = []
     contract.events->Array.forEach(event => {
       switch event {
-      | {mint: true, logId} =>
+      | {mint: true, logId: _} =>
         Js.Exn.raiseError(`Mint event ${event.name} is not allowed to have a logId`)
       | {mint: true, isWildcard: true} =>
         if contractsWithMint->Utils.Set.size !== 0 {

@@ -1,6 +1,6 @@
 open RescriptMocha
 
-describe_only("HyperFuelWorker - getRecieptsSelectionOrThrow", () => {
+describe("HyperFuelWorker - getRecieptsSelectionOrThrow", () => {
   let contractName1 = "TestContract"
   let contractName2 = "TestContract2"
   let address1 = Address.unsafeFromString("0x1234567890abcdef1234567890abcdef1234567890abcde1")

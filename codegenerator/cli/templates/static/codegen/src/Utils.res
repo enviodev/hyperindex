@@ -280,6 +280,8 @@ module Set = {
   @send
   external has: (t<'value>, 'value) => bool = "has"
 
+  external toArray: t<'a> => array<'a> = "Array.from"
+
   /*
    * Iteration methods
    */
