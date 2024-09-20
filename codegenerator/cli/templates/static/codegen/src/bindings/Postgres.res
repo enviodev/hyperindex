@@ -94,3 +94,5 @@ external makeSql: (~config: poolConfig) => sql = "postgres"
 // TODO: can explore this approach (https://forum.rescript-lang.org/t/rfc-support-for-tagged-template-literals/3744)
 // @send @variadic
 // external sql:  array<string>  => (sql, array<string>) => int = "sql"
+
+@send external unsafe: (sql, string) => promise<'a> = "unsafe"

@@ -12,6 +12,7 @@
 // constructors and methods
 @val external fromInt: int => bigint = "BigInt"
 @val external fromStringUnsafe: string => bigint = "BigInt"
+@val external fromUnknownUnsafe: unknown => bigint = "BigInt"
 let fromString = str => unsafeToOption(() => str->fromStringUnsafe)
 @send external toString: bigint => string = "toString"
 let toInt = (b: bigint): option<int> => b->toString->Belt.Int.fromString
@@ -43,14 +44,17 @@ module Bitwise = {
 
 let zero = fromInt(0)
 
-let schema =
-  S.string
-  ->S.setName("BigInt")
-  ->S.transform(s => {
-    parser: (. string) =>
-      switch string->fromString {
-      | Some(bigInt) => bigInt
-      | None => s.fail(. "The string is not valid BigInt")
-      },
-    serializer: (. bigint) => bigint->toString,
-  })
+//Note this schema needs to be able to parse unknowns since it's used in the rollback
+//function. Postgres encodes large numerics as numbers with exponents and we encode as strings
+//so we need to be able to parse both.
+let schema: S.t<bigint> = S.custom("BigInt", s => {
+  parser: unknown => {
+    switch fromUnknownUnsafe(unknown) {
+    | exception _ => s.fail("Not a valid BigInt")
+    | b => b
+    }
+  },
+  serializer: b => {
+    b->toString
+  },
+})
