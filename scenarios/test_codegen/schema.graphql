@@ -23,7 +23,7 @@ type Gravatar {
   owner: User!
   displayName: String!
   imageUrl: String!
-  updatesCount: BigInt!
+  updatesCount: BigInt! @numeric(precision: 76, scale: 0)
   size: GravatarSize!
 }
 
