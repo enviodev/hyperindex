@@ -196,7 +196,17 @@ AllEvents.Option2.handler(async ({ event }) => {
 });
 
 const vecLogSchema = S.array(SExtra.bigint);
-AllEvents.Vec.handler(async ({ event }) => {
+AllEvents.VecLog.handler(async ({ event }) => {
   vecLogSchema.assert(event.params)!;
+  console.log(event);
   expectType<AssertSchemaType<typeof event.params, typeof vecLogSchema>>(true);
+});
+
+const bytesLogSchema = S.array(S.number);
+AllEvents.BytesLog.handler(async ({ event }) => {
+  console.log(event);
+  bytesLogSchema.assert(event.params)!;
+  // expectType<AssertSchemaType<typeof event.params, typeof bytesLogSchema>>(
+  //   true
+  // );
 });

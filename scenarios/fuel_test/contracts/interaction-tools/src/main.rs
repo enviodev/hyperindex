@@ -12,7 +12,7 @@ abigen!(Contract(
 ),);
 
 const ALL_EVENTS_CONTRACT: &str =
-    "0xbcad9115ac67d80538705c58f830c66c7ebdda8ee74a1bb2611f2f4e2eabf719";
+    "0x54a4b027fca0f718d3cb0cbdddb1beec670100b70c6856824befac0440dc0b84";
 
 #[tokio::main]
 async fn main() -> Result<()> {
