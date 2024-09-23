@@ -532,7 +532,7 @@ pub struct Field {
 
 impl Field {
     fn from_obj_field(field: &ObjField<String>) -> anyhow::Result<Self> {
-        //Get all gql derictives labeled @derivedFrom and @index
+        // Get all gql directives labeled @derivedFrom and @index
         let derived_from_directives = field
             .directives
             .iter()
@@ -545,11 +545,17 @@ impl Field {
             .filter(|&directive| directive.name == "index")
             .collect::<Vec<&Directive<'_, String>>>();
 
+        let numeric_directives = field
+            .directives
+            .iter()
+            .filter(|&directive| directive.name == "numeric")
+            .collect::<Vec<&Directive<'_, String>>>();
+
         // Validate directive usage
 
-        //Do not allow for multiple @derivedFrom directives
-        //If this step is not important and we are fine with just taking the first one
-        //in the case of multiple we can just use a find rather than a filter method above
+        // Do not allow for multiple @derivedFrom directives
+        // If this step is not important and we are fine with just taking the first one
+        // in the case of multiple we can just use a find rather than a filter method above
 
         let derived_from_count = derived_from_directives.len();
         let indexed_count = indexed_directives.len();
@@ -603,9 +609,48 @@ impl Field {
         // TODO: should we dis-allow indexed fields that are either `id` or derived From fields?
         let is_indexed = indexed_count > 0;
 
-        let field_type =
+        let mut field_type =
             FieldType::from_obj_field_type(&field.field_type, derived_from_field, is_indexed)
                 .context(format!("Failed parsing field {}", field.name))?;
+
+        if numeric_directives.len() == 1 {
+            if let FieldType::RegularField {
+                field_type: UserDefinedFieldType::NonNullType(inner),
+                ..
+            } = &mut field_type
+            {
+                if let UserDefinedFieldType::Single(GqlScalar::BigInt(None)) = inner.as_mut() {
+                    if let Some(directive) = numeric_directives.get(0) {
+                        let precision = directive.arguments.iter().find_map(|(k, v)| {
+                            if k == "precision" {
+                                if let Value::Int(i) = v {
+                                    Some(i.as_i64().unwrap() as u32)
+                                } else {
+                                    None
+                                }
+                            } else {
+                                None
+                            }
+                        });
+                        let scale = directive.arguments.iter().find_map(|(k, v)| {
+                            if k == "scale" {
+                                if let Value::Int(i) = v {
+                                    Some(i.as_i64().unwrap() as u32)
+                                } else {
+                                    None
+                                }
+                            } else {
+                                None
+                            }
+                        });
+                        *inner = Box::new(UserDefinedFieldType::Single(GqlScalar::BigInt(Some((
+                            precision.unwrap_or(0),
+                            scale.unwrap_or(0),
+                        )))));
+                    }
+                }
+            }
+        }
 
         Ok(Field {
             name: field.name.clone(),
@@ -994,9 +1039,9 @@ impl UserDefinedFieldType {
 
     pub fn from_ethabi_type(abi_type: &EthAbiParamType) -> anyhow::Result<Self> {
         match abi_type {
-            EthAbiParamType::Uint(_size) | EthAbiParamType::Int(_size) => {
-                Ok(Self::NonNullType(Box::new(Self::Single(GqlScalar::BigInt))))
-            }
+            EthAbiParamType::Uint(_size) | EthAbiParamType::Int(_size) => Ok(Self::NonNullType(
+                Box::new(Self::Single(GqlScalar::BigInt(None))),
+            )),
             EthAbiParamType::Bool => Ok(Self::NonNullType(Box::new(Self::Single(
                 GqlScalar::Boolean,
             )))),
@@ -1198,7 +1243,7 @@ pub enum GqlScalar {
     #[subenum(BuiltInGqlScalar)]
     Boolean,
     #[subenum(AdditionalGqlScalar)]
-    BigInt,
+    BigInt(Option<(u32, u32)>),
     #[subenum(AdditionalGqlScalar)]
     BigDecimal,
     #[subenum(AdditionalGqlScalar)]
@@ -1206,6 +1251,12 @@ pub enum GqlScalar {
     #[subenum(AdditionalGqlScalar)]
     Bytes,
     Custom(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct BigIntPrecisionScale {
+    pub precision: Option<u32>,
+    pub scale: Option<u32>,
 }
 
 #[derive(Debug, Clone)]
@@ -1236,7 +1287,7 @@ impl GqlScalar {
             "Int" => GqlScalar::Int,
             "Float" => GqlScalar::Float, // Should we allow this type? Rounding issues will abound.
             "Boolean" => GqlScalar::Boolean,
-            "BigInt" => GqlScalar::BigInt, // NOTE: we aren't setting precision and scale - see (8.1.2) https://www.postgresql.org/docs/current/datatype-numeric.html
+            "BigInt" => GqlScalar::BigInt(None), // NOTE: we aren't setting precision and scale - see (8.1.2) https://www.postgresql.org/docs/current/datatype-numeric.html
             "BigDecimal" => GqlScalar::BigDecimal,
             "Timestamp" => GqlScalar::Timestamp,
             "Bytes" => GqlScalar::Bytes,
@@ -1249,11 +1300,14 @@ impl GqlScalar {
             GqlScalar::ID => PGPrimitive::Text,
             GqlScalar::String => PGPrimitive::Text,
             GqlScalar::Int => PGPrimitive::Integer,
-            GqlScalar::Float => PGPrimitive::Numeric, // Should we allow this type? Rounding issues will abound.
+            GqlScalar::Float => PGPrimitive::Numeric(None), // Should we allow this type? Rounding issues will abound.
             GqlScalar::Boolean => PGPrimitive::Boolean,
             GqlScalar::Bytes => PGPrimitive::Text,
-            GqlScalar::BigInt => PGPrimitive::Numeric, // NOTE: we aren't setting precision and scale - see (8.1.2) https://www.postgresql.org/docs/current/datatype-numeric.html
-            GqlScalar::BigDecimal => PGPrimitive::Numeric, //   also not setting precision here.
+            GqlScalar::BigInt(None) => PGPrimitive::Numeric(None),
+            GqlScalar::BigInt(Some((precision, scale))) => {
+                PGPrimitive::Numeric(Some((*precision, *scale)))
+            }
+            GqlScalar::BigDecimal => PGPrimitive::Numeric(None), //   also not setting precision here.
             GqlScalar::Timestamp => PGPrimitive::Timestamp,
             GqlScalar::Custom(name) => match schema.try_get_type_def(name)? {
                 TypeDef::Entity(_) => PGPrimitive::Text,
@@ -1268,7 +1322,7 @@ impl GqlScalar {
             GqlScalar::ID => RescriptTypeIdent::ID,
             GqlScalar::String => RescriptTypeIdent::String,
             GqlScalar::Int => RescriptTypeIdent::Int,
-            GqlScalar::BigInt => RescriptTypeIdent::BigInt,
+            GqlScalar::BigInt(_) => RescriptTypeIdent::BigInt,
             GqlScalar::BigDecimal => RescriptTypeIdent::BigDecimal,
             GqlScalar::Float => RescriptTypeIdent::Float,
             GqlScalar::Bytes => RescriptTypeIdent::String,
