@@ -1,17 +1,19 @@
 /*
  * Please refer to https://docs.envio.dev for a thorough guide on all Envio indexer features
  */
-import { AllEvents, eventLog } from "generated";
+import { AllEvents } from "generated";
 import { expectType, TypeEqual } from "ts-expect";
 import * as S from "rescript-schema";
 
-type RemoveReadonly<T> = {
-  -readonly [key in keyof T]: RemoveReadonly<T[key]>;
-};
+type RemoveReadonly<T> = T extends {}
+  ? {
+      -readonly [key in keyof T]: RemoveReadonly<T[key]>;
+    }
+  : T;
 
-type AssertSchemaType<Target, Value extends S.Schema<unknown>> = TypeEqual<
+type AssertSchemaType<Target, Schema> = TypeEqual<
   RemoveReadonly<Target>,
-  S.Output<Value>
+  S.Output<Schema>
 >;
 
 const SExtra = {
@@ -196,7 +198,15 @@ AllEvents.Option2.handler(async ({ event }) => {
 });
 
 const vecLogSchema = S.array(SExtra.bigint);
-AllEvents.Vec.handler(async ({ event }) => {
+AllEvents.VecLog.handler(async ({ event }) => {
   vecLogSchema.assert(event.params)!;
   expectType<AssertSchemaType<typeof event.params, typeof vecLogSchema>>(true);
+});
+
+const bytesLogSchema = S.unknown;
+AllEvents.BytesLog.handler(async ({ event }) => {
+  bytesLogSchema.assert(event.params)!;
+  expectType<AssertSchemaType<typeof event.params, typeof bytesLogSchema>>(
+    true
+  );
 });

@@ -107,10 +107,7 @@ impl FuelAbi {
 
         let get_unknown_res_type_ident = |type_field: &str| {
             println!("Unhandled type_field \"{}\" in abi", type_field);
-            RescriptTypeIdent::TypeApplication {
-                name: "unknown".to_string(),
-                type_params: vec![],
-            }
+            RescriptTypeIdent::Unknown
         };
 
         let get_unknown_res_type_expr =
@@ -216,6 +213,8 @@ impl FuelAbi {
                                 .context("Failed getting param for struct Vec")?,
                         )))
                         .to_ok_expr(),
+                        // It's decoded as Uint8Array, but we don't have a schema for it yet
+                        "struct std::bytes::Bytes" => Unknown.to_ok_expr(),
                         //TODO: handle nested option since this would need to be flattened to
                         //single level rescript option.
                         "enum Option" => Option(Box::new(GenericParam(
