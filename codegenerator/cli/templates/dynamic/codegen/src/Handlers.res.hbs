@@ -2,7 +2,7 @@
   @genType
 module {{contract.name.capitalized}} = {
   {{#each contract.codegen_events as | event |}}  
-  module {{event.name.capitalized}} = Types.MakeRegister(Types.{{contract.name.capitalized}}.{{event.name.capitalized}})
+  module {{event.name}} = Types.MakeRegister(Types.{{contract.name.capitalized}}.{{event.name}})
   {{/each}}  
 }
 

@@ -535,32 +535,13 @@ module MakeRegister = (Event: Event) => {
 {{#each codegen_contracts as | contract |}}
 module {{contract.name.capitalized}} = {
 {{contract.module_code}}
-  let contractName = "{{contract.name.capitalized}}"
+let contractName = "{{contract.name.capitalized}}"
 {{#each contract.codegen_events as | event |}}
-  module {{event.name.capitalized}} = {
-    let sighash = "{{event.sighash}}"
-    let topicCount = {{event.topic_count}}
-    let name = "{{event.name.capitalized}}"
-    let contractName = contractName
 
-    @genType
-    type eventArgs = {{data_type}}
-    let paramsRawEventSchema = {{params_raw_event_schema}}
-    let convertHyperSyncEventArgs = {{convert_hyper_sync_event_args_code}}
-    let decodeHyperFuelData = {{decode_hyper_fuel_data_code}}
-
-    let handlerRegister: HandlerTypes.Register.t<eventArgs> = HandlerTypes.Register.make(
-      ~topic0=sighash->EvmTypes.Hex.fromStringUnsafe,
-      ~contractName,
-      ~eventName=name,
-    )
-
-    @genType
-    type eventFilter = {{event_filter_type}}
-
-    let getTopicSelection = {{get_topic_selection_code}}
-  }
-  {{/each}}
+module {{event.name}} = {
+{{event.module_code}}
+}
+{{/each}}
 }
 
 {{/each}}

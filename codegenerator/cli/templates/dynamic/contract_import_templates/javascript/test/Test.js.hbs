@@ -7,27 +7,27 @@ const { MockDb, {{contract.name.capitalized}} } = TestHelpers;
 
 {{#with imported_contracts.[0] as | contract |}}
     {{#with contract.imported_events.[0] as | event |}}
-describe("{{contract.name.capitalized}} contract {{event.name.capitalized}} event tests", () => {
+describe("{{contract.name.capitalized}} contract {{event.name}} event tests", () => {
   // Create mock db
   const mockDb = MockDb.createMockDb();
 
-  // Creating mock for {{contract.name.capitalized}} contract {{event.name.capitalized}} event
+  // Creating mock for {{contract.name.capitalized}} contract {{event.name}} event
   const event = {{event.create_mock_code}};
 
-  it("{{contract.name.capitalized}}_{{event.name.capitalized}} is created correctly", async () => {
+  it("{{contract.name.capitalized}}_{{event.name}} is created correctly", async () => {
     // Processing the event
-    const mockDbUpdated = await {{contract.name.capitalized}}.{{event.name.capitalized}}.processEvent({
+    const mockDbUpdated = await {{contract.name.capitalized}}.{{event.name}}.processEvent({
       event,
       mockDb,
     });
 
     // Getting the actual entity from the mock database
-    let actual{{contract.name.capitalized}}{{event.name.capitalized}} = mockDbUpdated.entities.{{contract.name.capitalized}}_{{event.name.capitalized}}.get(
+    let actual{{contract.name.capitalized}}{{event.name}} = mockDbUpdated.entities.{{contract.name.capitalized}}_{{event.name}}.get(
       {{event.entity_id_from_event_code}}
     );
 
     // Creating the expected entity
-    const expected{{contract.name.capitalized}}{{event.name.capitalized}} = {
+    const expected{{contract.name.capitalized}}{{event.name}} = {
       id:{{event.entity_id_from_event_code}},
       {{#each event.params as |param|}}
       {{param.js_name}}: event.params.{{param.js_name}},
@@ -35,9 +35,9 @@ describe("{{contract.name.capitalized}} contract {{event.name.capitalized}} even
     };
     // Asserting that the entity in the mock database is the same as the expected entity
     assert.deepEqual(
-      actual{{contract.name.capitalized}}{{event.name.capitalized}},
-      expected{{contract.name.capitalized}}{{event.name.capitalized}},
-      "Actual {{contract.name.capitalized}}{{event.name.capitalized}} should be the same as the expected{{contract.name.capitalized}}{{event.name.capitalized}}"
+      actual{{contract.name.capitalized}}{{event.name}},
+      expected{{contract.name.capitalized}}{{event.name}},
+      "Actual {{contract.name.capitalized}}{{event.name}} should be the same as the expected{{contract.name.capitalized}}{{event.name}}"
     );
   });
 });
