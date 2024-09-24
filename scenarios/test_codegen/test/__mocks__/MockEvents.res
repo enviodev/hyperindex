@@ -142,7 +142,10 @@ let newGravatarEventToBatchItem = (event: Types.eventLog<Types.Gravatar.NewGrava
     chain: MockConfig.chain1337,
     blockNumber: event.block.number,
     logIndex: event.logIndex,
-    eventMod: module(Types.Gravatar.NewGravatar)->Types.eventModToInternal,
+    eventName: "NewGravatar",
+    contractName: "Gravatar",
+    handlerRegister: Types.Gravatar.NewGravatar.handlerRegister->(Utils.magic: Types.HandlerTypes.Register.t<Types.Gravatar.NewGravatar.eventArgs> => Types.HandlerTypes.Register.t<Types.internalEventArgs>),
+    paramsRawEventSchema: Types.Gravatar.NewGravatar.paramsRawEventSchema->(Utils.magic: S.t<Types.Gravatar.NewGravatar.eventArgs> => S.t<Types.internalEventArgs>),
     event: event->Types.eventToInternal,
   }
 }
@@ -154,7 +157,10 @@ let updatedGravatarEventToBatchItem = (event: Types.eventLog<Types.Gravatar.Upda
     chain: MockConfig.chain1337,
     blockNumber: event.block.number,
     logIndex: event.logIndex,
-    eventMod: module(Types.Gravatar.UpdatedGravatar)->Types.eventModToInternal,
+    eventName: "UpdatedGravatar",
+    contractName: "Gravatar",
+    handlerRegister: Types.Gravatar.UpdatedGravatar.handlerRegister->(Utils.magic: Types.HandlerTypes.Register.t<Types.Gravatar.UpdatedGravatar.eventArgs> => Types.HandlerTypes.Register.t<Types.internalEventArgs>),
+    paramsRawEventSchema: Types.Gravatar.UpdatedGravatar.paramsRawEventSchema->(Utils.magic: S.t<Types.Gravatar.UpdatedGravatar.eventArgs> => S.t<Types.internalEventArgs>),
     event: event->Types.eventToInternal,
   }
 }

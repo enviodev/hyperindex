@@ -239,11 +239,16 @@ module Make = (
   let makeEventBatchQueueItem = (
     item: HyperSync.logsQueryPageItem,
     ~params: Types.internalEventArgs,
-    ~eventMod,
+    ~eventMod: module(Types.InternalEvent),
   ): Types.eventBatchQueueItem => {
+    let module(Event) = eventMod
     let {block, log, transaction} = item
     let chainId = chain->ChainMap.Chain.toChainId
     {
+      eventName: Event.name,
+      contractName: Event.contractName,
+      handlerRegister: Event.handlerRegister,
+      paramsRawEventSchema: Event.paramsRawEventSchema,
       timestamp: block->Types.Block.getTimestamp,
       chain,
       blockNumber: block->Types.Block.getNumber,
@@ -256,7 +261,6 @@ module Make = (
         srcAddress: log.address,
         logIndex: log.logIndex,
       },
-      eventMod,
     }
   }
 
@@ -415,7 +419,10 @@ module Make = (
           let topic0 = log.topics->Js.Array2.unsafe_get(0)
           let maybeEventMod =
             eventModLookup->EventModLookup.get(
-              ~tag=EventModLookup.getEvmEventTag(~sighash=topic0, ~topicCount=log.topics->Array.length),
+              ~tag=EventModLookup.getEvmEventTag(
+                ~sighash=topic0,
+                ~topicCount=log.topics->Array.length,
+              ),
               ~contractAddressMapping,
               ~contractAddress=log.address,
             )
@@ -453,7 +460,10 @@ module Make = (
           let topic0 = log.topics->Js.Array2.unsafe_get(0)
 
           switch eventModLookup->EventModLookup.get(
-            ~tag=EventModLookup.getEvmEventTag(~sighash=topic0, ~topicCount=log.topics->Array.length),
+            ~tag=EventModLookup.getEvmEventTag(
+              ~sighash=topic0,
+              ~topicCount=log.topics->Array.length,
+            ),
             ~contractAddressMapping,
             ~contractAddress=log.address,
           ) {
@@ -536,4 +546,3 @@ module Make = (
       ~logger,
     )->Promise.thenResolve(HyperSync.mapExn)
 }
-

@@ -158,30 +158,14 @@ module Make = (
         ~eventModLookup,
       )
 
-      let eventBatches = await eventBatchPromises->Promise.all
-      let parsedQueueItemsPreFilter = eventBatches->Array.map(({
-        timestamp,
-        chain,
-        blockNumber,
-        logIndex,
-        event,
-        eventMod,
-      }): Types.eventBatchQueueItem => {
-        timestamp,
-        chain,
-        blockNumber,
-        logIndex,
-        event,
-        eventMod,
-      })
-
+      let eventBatchItems = await eventBatchPromises->Promise.all
       let parsedQueueItems = switch eventFilters {
       //Most cases there are no filters so this will be passed throug
-      | None => parsedQueueItemsPreFilter
+      | None => eventBatchItems
       | Some(eventFilters) =>
         //In the case where there are filters, apply them and keep the events that
         //are needed
-        parsedQueueItemsPreFilter->Array.keep(item => item->FetchState.applyFilters(~eventFilters))
+        eventBatchItems->Array.keep(item => item->FetchState.applyFilters(~eventFilters))
       }
 
       let sc = T.rpcConfig.syncConfig

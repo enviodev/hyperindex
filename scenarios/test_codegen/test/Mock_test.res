@@ -13,8 +13,7 @@ describe("E2E Mock Event Batch", () => {
     let loadLayer = LoadLayer.makeWithDbConnection()
 
     let runEventHandler = async (eventBatchQueueItem: Types.eventBatchQueueItem) => {
-      let module(Event) = eventBatchQueueItem.eventMod
-      switch Event.handlerRegister->Types.HandlerTypes.Register.getLoaderHandler {
+      switch eventBatchQueueItem.handlerRegister->Types.HandlerTypes.Register.getLoaderHandler {
       | Some(loaderHandler) =>
         await eventBatchQueueItem->EventProcessing.runEventHandler(
           ~loaderHandler,
