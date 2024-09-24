@@ -52,7 +52,11 @@ describe("HyperFuelWorker - getRecieptsSelectionOrThrow", () => {
           events: [
             {
               name: "StrLog",
-              logId: Types.AllEvents.StrLog.sighash,
+              kind: LogData({
+                logId: "1",
+                decode: _ => %raw(`null`),
+              }),
+              isWildcard: false,
             },
           ],
         },
@@ -65,7 +69,7 @@ describe("HyperFuelWorker - getRecieptsSelectionOrThrow", () => {
       ),
       [
         {
-          rb: [10732353433239600734n],
+          rb: [1n],
           receiptType: [LogData],
           rootContractId: [address1, address2],
           txStatus: [1],
@@ -82,7 +86,8 @@ describe("HyperFuelWorker - getRecieptsSelectionOrThrow", () => {
           events: [
             {
               name: "Mint",
-              mint: true,
+              kind: Mint,
+              isWildcard: false,
             },
           ],
         },
@@ -91,7 +96,8 @@ describe("HyperFuelWorker - getRecieptsSelectionOrThrow", () => {
           events: [
             {
               name: "Mint",
-              mint: true,
+              kind: Mint,
+              isWildcard: false,
             },
           ],
         },
@@ -125,7 +131,7 @@ describe("HyperFuelWorker - getRecieptsSelectionOrThrow", () => {
           events: [
             {
               name: "Mint",
-              mint: true,
+              kind: Mint,
               isWildcard: true,
             },
           ],
@@ -154,12 +160,18 @@ describe("HyperFuelWorker - getRecieptsSelectionOrThrow", () => {
           events: [
             {
               name: "StrLog",
-              logId: Types.AllEvents.StrLog.sighash,
+              kind: LogData({
+                logId: "1",
+                decode: _ => %raw(`null`),
+              }),
               isWildcard: true,
             },
             {
               name: "BoolLog",
-              logId: Types.AllEvents.BoolLog.sighash,
+              kind: LogData({
+                logId: "2",
+                decode: _ => %raw(`null`),
+              }),
               isWildcard: true,
             },
           ],
@@ -169,7 +181,10 @@ describe("HyperFuelWorker - getRecieptsSelectionOrThrow", () => {
           events: [
             {
               name: "UnitLog",
-              logId: Types.AllEvents.UnitLog.sighash,
+              kind: LogData({
+                logId: "3",
+                decode: _ => %raw(`null`),
+              }),
               isWildcard: true,
             },
           ],
@@ -183,7 +198,7 @@ describe("HyperFuelWorker - getRecieptsSelectionOrThrow", () => {
       ),
       [
         {
-          rb: [10732353433239600734n, 13213829929622723620n, 3330666440490685604n],
+          rb: [1n, 2n, 3n],
           receiptType: [LogData],
           txStatus: [1],
         },
@@ -199,16 +214,24 @@ describe("HyperFuelWorker - getRecieptsSelectionOrThrow", () => {
           events: [
             {
               name: "StrLog",
-              logId: Types.AllEvents.StrLog.sighash,
+              kind: LogData({
+                logId: "1",
+                decode: _ => %raw(`null`),
+              }),
+              isWildcard: false,
             },
             {
               name: "BoolLog",
-              logId: Types.AllEvents.BoolLog.sighash,
+              kind: LogData({
+                logId: "2",
+                decode: _ => %raw(`null`),
+              }),
               isWildcard: true,
             },
             {
               name: "Mint",
-              mint: true,
+              kind: Mint,
+              isWildcard: false,
             },
           ],
         },
@@ -217,7 +240,11 @@ describe("HyperFuelWorker - getRecieptsSelectionOrThrow", () => {
           events: [
             {
               name: "UnitLog",
-              logId: Types.AllEvents.UnitLog.sighash,
+              kind: LogData({
+                logId: "3",
+                decode: _ => %raw(`null`),
+              }),
+              isWildcard: false,
             },
           ],
         },
@@ -235,69 +262,23 @@ describe("HyperFuelWorker - getRecieptsSelectionOrThrow", () => {
           txStatus: [1],
         },
         {
-          rb: [10732353433239600734n],
+          rb: [1n],
           receiptType: [LogData],
           rootContractId: [address1, address2],
           txStatus: [1],
         },
         {
-          rb: [3330666440490685604n],
+          rb: [3n],
           receiptType: [LogData],
           rootContractId: [address3],
           txStatus: [1],
         },
         {
-          rb: [13213829929622723620n],
+          rb: [2n],
           receiptType: [LogData],
           txStatus: [1],
         },
       ],
-    )
-  })
-
-  it("Fails when event doesn't have either mint: true or logId", () => {
-    Assert.throws(
-      () => {
-        HyperFuelWorker.makeGetRecieptsSelectionOrThrow(
-          ~contracts=[
-            {
-              name: "TestContract",
-              events: [
-                {
-                  name: "MyEvent",
-                },
-              ],
-            },
-          ],
-        )
-      },
-      ~error={
-        "message": "Event MyEvent is not a log or mint",
-      },
-    )
-  })
-
-  it("Fails when event has both mint: true and logId", () => {
-    Assert.throws(
-      () => {
-        HyperFuelWorker.makeGetRecieptsSelectionOrThrow(
-          ~contracts=[
-            {
-              name: "TestContract",
-              events: [
-                {
-                  name: "MyEvent",
-                  mint: true,
-                  logId: "12345",
-                },
-              ],
-            },
-          ],
-        )
-      },
-      ~error={
-        "message": "Mint event MyEvent is not allowed to have a logId",
-      },
     )
   })
 
@@ -311,11 +292,13 @@ describe("HyperFuelWorker - getRecieptsSelectionOrThrow", () => {
               events: [
                 {
                   name: "MyEvent",
-                  mint: true,
+                  kind: Mint,
+                  isWildcard: false
                 },
                 {
                   name: "MyEvent2",
-                  mint: true,
+                  kind: Mint,
+                  isWildcard: false
                 },
               ],
             },
@@ -338,7 +321,7 @@ describe("HyperFuelWorker - getRecieptsSelectionOrThrow", () => {
               events: [
                 {
                   name: "Mint",
-                  mint: true,
+                  kind: Mint,
                   isWildcard: true,
                 },
               ],
@@ -348,7 +331,8 @@ describe("HyperFuelWorker - getRecieptsSelectionOrThrow", () => {
               events: [
                 {
                   name: "Mint",
-                  mint: true,
+                  kind: Mint,
+                  isWildcard: false,
                 },
               ],
             },
@@ -371,7 +355,8 @@ describe("HyperFuelWorker - getRecieptsSelectionOrThrow", () => {
               events: [
                 {
                   name: "Mint",
-                  mint: true,
+                  kind: Mint,
+                  isWildcard: false,
                 },
               ],
             },
@@ -380,7 +365,7 @@ describe("HyperFuelWorker - getRecieptsSelectionOrThrow", () => {
               events: [
                 {
                   name: "Mint",
-                  mint: true,
+                  kind: Mint,
                   isWildcard: true,
                 },
               ],
@@ -402,17 +387,24 @@ describe("HyperFuelWorker - getRecieptsSelectionOrThrow", () => {
           events: [
             {
               name: "Mint",
-              mint: true,
+              kind: Mint,
               isWildcard: true,
             },
             {
               name: "WildcardLog",
-              logId: "123",
+              kind: LogData({
+                logId: "1",
+                decode: _ => %raw(`null`),
+              }),
               isWildcard: true,
             },
             {
               name: "NonWildcardLog",
-              logId: "321",
+              kind: LogData({
+                logId: "2",
+                decode: _ => %raw(`null`),
+              }),
+              isWildcard: false,
             },
           ],
         },
@@ -425,7 +417,7 @@ describe("HyperFuelWorker - getRecieptsSelectionOrThrow", () => {
       ),
       [
         {
-          rb: [321n],
+          rb: [2n],
           receiptType: [LogData],
           rootContractId: [address1, address2],
           txStatus: [1],
@@ -435,7 +427,7 @@ describe("HyperFuelWorker - getRecieptsSelectionOrThrow", () => {
           txStatus: [1],
         },
         {
-          rb: [123n],
+          rb: [1n],
           receiptType: [LogData],
           txStatus: [1],
         },
@@ -448,7 +440,7 @@ describe("HyperFuelWorker - getRecieptsSelectionOrThrow", () => {
       ),
       [
         {
-          rb: [321n],
+          rb: [2n],
           receiptType: [LogData],
           rootContractId: [address1, address2],
           txStatus: [1],

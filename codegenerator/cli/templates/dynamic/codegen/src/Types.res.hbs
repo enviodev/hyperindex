@@ -532,6 +532,22 @@ module MakeRegister = (Event: Event) => {
     )
 }
 
+type fuelEventKind = | Mint | LogData({
+  logId: string,
+  decode: string => internalEventArgs,
+})
+
+type fuelEventConfig = {
+  name: string,
+  kind: fuelEventKind,
+  isWildcard: bool,
+}
+
+type fuelContractConfig = {
+  name: string,
+  events: array<fuelEventConfig>,
+}
+
 {{#each codegen_contracts as | contract |}}
 module {{contract.name.capitalized}} = {
 {{contract.module_code}}

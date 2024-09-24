@@ -141,18 +141,13 @@ let registerContractHandlers = (
                 contracts
                 ->Belt.Array.flatMap(contract => contract.events)
                 ->EventModLookup.fromArrayOrThrow(~chain)
-              let contracts: array<HyperFuelWorker.contract> = [
+              let contracts: array<Types.fuelContractConfig> = [
                 {{#each chain_config.codegen_contracts as | contract |}}
                 {
                   name: "{{contract.name.capitalized}}",
                   events: [
                     {{#each contract.events as | event |}}
-                    {
-                      name: "{{event.name}}",
-                      logId: Types.{{contract.name.capitalized}}.{{event.name}}.sighash,
-                      {{!-- mint: {{#if event.mint}}true{{else}}false{{/if}}, --}}
-                      isWildcard: (Types.{{contract.name.capitalized}}.{{event.name}}.handlerRegister->Types.HandlerTypes.Register.getEventOptions).isWildcard,
-                    },
+                    Types.{{contract.name.capitalized}}.{{event.name}}.config,
                     {{/each}}
                   ]
                 },
