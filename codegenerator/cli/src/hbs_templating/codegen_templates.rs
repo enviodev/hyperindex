@@ -335,9 +335,6 @@ pub struct EventTemplate {
 }
 
 impl EventTemplate {
-    const DECODE_HYPER_FUEL_DATA_CODE: &'static str =
-        "(_) => Js.Exn.raiseError(\"HyperFuel decoder not implemented\")";
-
     const GET_TOPIC_SELECTION_CODE_STUB: &'static str =
         "_ => [LogSelection.makeTopicSelection(~topic0=[sighash->EvmTypes.Hex.\
          fromStringUnsafe])->Utils.unwrapResultExn]";
@@ -484,7 +481,6 @@ impl EventTemplate {
                     data_type_expr.to_rescript_schema(&"eventArgs".to_string());
                 let convert_hyper_sync_event_args_code =
                     Self::generate_convert_hyper_sync_event_args_code(params);
-                let decode_hyper_fuel_data_code = Self::DECODE_HYPER_FUEL_DATA_CODE.to_string();
                 let event_filter_type = Self::generate_event_filter_type(params);
                 let get_topic_selection_code = Self::generate_get_topic_selection_code(params);
 
@@ -499,7 +495,6 @@ let contractName = contractName
 type eventArgs = {data_type}
 let paramsRawEventSchema = {params_raw_event_schema}
 let convertHyperSyncEventArgs = {convert_hyper_sync_event_args_code}
-let decodeHyperFuelData = {decode_hyper_fuel_data_code}
 
 let handlerRegister: HandlerTypes.Register.t<eventArgs> = HandlerTypes.Register.make(
   ~topic0=sighash->EvmTypes.Hex.fromStringUnsafe,
@@ -550,7 +545,6 @@ let contractName = contractName
 type eventArgs = {data_type}
 let paramsRawEventSchema = {params_raw_event_schema}
 let convertHyperSyncEventArgs = {convert_hyper_sync_event_args_code}
-let decodeHyperFuelData = {decode_hyper_fuel_data_code}
 
 let handlerRegister: HandlerTypes.Register.t<eventArgs> = HandlerTypes.Register.make(
 ~topic0=sighash->EvmTypes.Hex.fromStringUnsafe,
@@ -565,6 +559,8 @@ let config: fuelEventConfig = {{
     decode: {decode_hyper_fuel_data_code},
   }}),
   isWildcard: (handlerRegister->HandlerTypes.Register.getEventOptions).isWildcard,
+  handlerRegister: handlerRegister->(Utils.magic: HandlerTypes.Register.t<eventArgs> => HandlerTypes.Register.t<internalEventArgs>),
+  paramsRawEventSchema: paramsRawEventSchema->(Utils.magic: S.t<eventArgs> => S.t<internalEventArgs>),
 }}
 
 @genType
@@ -1244,7 +1240,6 @@ let convertHyperSyncEventArgs = (decodedEvent: HyperSyncClient.Decoder.decodedEv
         imageUrl: decodedEvent.body->Js.Array2.unsafe_get(3)->HyperSyncClient.Decoder.toUnderlying->Utils.magic,
       }}
     }}
-let decodeHyperFuelData = (_) => Js.Exn.raiseError("HyperFuel decoder not implemented")
 
 let handlerRegister: HandlerTypes.Register.t<eventArgs> = HandlerTypes.Register.make(
   ~topic0=sighash->EvmTypes.Hex.fromStringUnsafe,
@@ -1286,7 +1281,6 @@ let contractName = contractName
 type eventArgs = unit
 let paramsRawEventSchema = S.literal(%raw(`null`))->S.variant(_ => ())
 let convertHyperSyncEventArgs = (Utils.magic: HyperSyncClient.Decoder.decodedEvent => eventArgs)
-let decodeHyperFuelData = (_) => Js.Exn.raiseError("HyperFuel decoder not implemented")
 
 let handlerRegister: HandlerTypes.Register.t<eventArgs> = HandlerTypes.Register.make(
   ~topic0=sighash->EvmTypes.Hex.fromStringUnsafe,

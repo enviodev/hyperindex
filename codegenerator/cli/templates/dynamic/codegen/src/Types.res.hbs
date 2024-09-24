@@ -425,7 +425,6 @@ module type Event = {
   type eventArgs
   let paramsRawEventSchema: S.schema<eventArgs>
   let convertHyperSyncEventArgs: HyperSyncClient.Decoder.decodedEvent => eventArgs
-  let decodeHyperFuelData: string => eventArgs
   let handlerRegister: HandlerTypes.Register.t<eventArgs>
 
   type eventFilter
@@ -541,6 +540,8 @@ type fuelEventConfig = {
   name: string,
   kind: fuelEventKind,
   isWildcard: bool,
+  handlerRegister: HandlerTypes.Register.t<internalEventArgs>,
+  paramsRawEventSchema: S.schema<internalEventArgs>,
 }
 
 type fuelContractConfig = {
