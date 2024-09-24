@@ -7,7 +7,11 @@ let contracts = [
     Config.name: "Gravatar",
     abi: Types.Gravatar.abi,
     addresses: ["0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3"->Address.Evm.fromStringOrThrow],
-    events: [module(Types.Gravatar.TestEvent), module(Types.Gravatar.NewGravatar), module(Types.Gravatar.UpdatedGravatar)],
+    events: [
+      module(Types.Gravatar.TestEvent),
+      module(Types.Gravatar.NewGravatar),
+      module(Types.Gravatar.UpdatedGravatar),
+    ],
     sighashes: [
       Types.Gravatar.TestEvent.sighash,
       Types.Gravatar.NewGravatar.sighash,
@@ -69,7 +73,7 @@ let mockChainConfig: Config.chainConfig = {
       let eventRouter =
         contracts
         ->Belt.Array.flatMap(contract => contract.events)
-        ->EventRouter.fromArrayOrThrow(~chain)
+        ->EventRouter.fromEvmEventModsOrThrow(~chain)
     })
   ),
 }
