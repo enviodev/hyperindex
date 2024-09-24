@@ -64,11 +64,11 @@ type t = dict<ContractEventMods.t>
 
 let empty = () => Js.Dict.empty()
 
-let set = (eventModLookup: t, eventTag, eventMod: module(Types.Event)) => {
-  let events = switch eventModLookup->Utils.Dict.dangerouslyGetNonOption(eventTag) {
+let set = (eventRouter: t, eventTag, eventMod: module(Types.Event)) => {
+  let events = switch eventRouter->Utils.Dict.dangerouslyGetNonOption(eventTag) {
   | None =>
     let events = ContractEventMods.empty()
-    eventModLookup->Js.Dict.set(eventTag, events)
+    eventRouter->Js.Dict.set(eventTag, events)
     events
   | Some(events) => events
   }
@@ -77,8 +77,8 @@ let set = (eventModLookup: t, eventTag, eventMod: module(Types.Event)) => {
   )
 }
 
-let get = (eventModLookup: t, ~tag, ~contractAddress, ~contractAddressMapping) => {
-  switch eventModLookup->Utils.Dict.dangerouslyGetNonOption(tag) {
+let get = (eventRouter: t, ~tag, ~contractAddress, ~contractAddressMapping) => {
+  switch eventRouter->Utils.Dict.dangerouslyGetNonOption(tag) {
   | None => None
   | Some(events) => events->ContractEventMods.get(~contractAddress, ~contractAddressMapping)
   }

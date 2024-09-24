@@ -66,10 +66,10 @@ let mockChainConfig: Config.chainConfig = {
           queryTimeoutMillis: 10000,
         }),
       }
-      let eventModLookup =
+      let eventRouter =
         contracts
         ->Belt.Array.flatMap(contract => contract.events)
-        ->EventModLookup.fromArrayOrThrow(~chain)
+        ->EventRouter.fromArrayOrThrow(~chain)
     })
   ),
 }
