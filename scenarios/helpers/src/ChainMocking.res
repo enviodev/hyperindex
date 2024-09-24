@@ -172,13 +172,17 @@ module Make = (Indexer: Indexer.S) => {
       transactionHash,
       eventMod,
     }): log => {
+      let module(Event) = eventMod
       let log: Types.eventBatchQueueItem = {
+        eventName: Event.name,
+        contractName: Event.contractName,
+        handlerRegister: Event.handlerRegister,
+        paramsRawEventSchema: Event.paramsRawEventSchema,
         event: makeEvent(~blockHash),
         chain: self.chainConfig.chain,
         timestamp: blockTimestamp,
         blockNumber,
         logIndex,
-        eventMod,
       }
       {eventBatchQueueItem: log, srcAddress, transactionHash, eventMod}
     })

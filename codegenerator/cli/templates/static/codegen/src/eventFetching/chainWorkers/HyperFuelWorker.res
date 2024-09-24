@@ -410,6 +410,10 @@ module Make = (
 
         (
           {
+            eventName: Event.name,
+            contractName: Event.contractName,
+            handlerRegister: Event.handlerRegister,
+            paramsRawEventSchema: Event.paramsRawEventSchema,
             timestamp: block.timestamp,
             chain,
             blockNumber: block.blockNumber,
@@ -428,7 +432,6 @@ module Make = (
               srcAddress: contractAddress,
               logIndex: receiptIndex,
             },
-            eventMod,
           }: Types.eventBatchQueueItem
         )
       })

@@ -568,12 +568,15 @@ module {{contract.name.capitalized}} = {
 type chainId = int
 
 type eventBatchQueueItem = {
+  eventName: string,
+  contractName: string,
+  handlerRegister: HandlerTypes.Register.t<internalEventArgs>,
   timestamp: int,
   chain: ChainMap.Chain.t,
   blockNumber: int,
   logIndex: int,
   event: eventLog<internalEventArgs>,
-  eventMod: module(InternalEvent),
+  paramsRawEventSchema: S.schema<internalEventArgs>,
   //Default to false, if an event needs to
   //be reprocessed after it has loaded dynamic contracts
   //This gets set to true and does not try and reload events

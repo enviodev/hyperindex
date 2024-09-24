@@ -162,6 +162,10 @@ let convertLogs = (
     }
 
     {
+      eventName: Event.name,
+      contractName: Event.contractName,
+      handlerRegister: Event.handlerRegister,
+      paramsRawEventSchema: Event.paramsRawEventSchema,
       timestamp: block.timestamp,
       chain,
       blockNumber: block.number,
@@ -174,7 +178,6 @@ let convertLogs = (
         srcAddress: log.address,
         logIndex: log.logIndex,
       },
-      eventMod,
     }
   })
 }

@@ -181,7 +181,10 @@ describe("FetchState.fetchState", () => {
     chain: ChainMap.Chain.makeUnsafe(~chainId),
     blockNumber,
     logIndex,
-    eventMod: Utils.magic("Mock event mod in fetchstate test"),
+    eventName: "MockEvent",
+    contractName: "MockContract",
+    handlerRegister: Utils.magic("Mock event handlerRegister in fetchstate test"),
+    paramsRawEventSchema: Utils.magic("Mock event paramsRawEventSchema in fetchstate test"),
     event: Utils.magic("Mock event in fetchstate test"),
   }
 
