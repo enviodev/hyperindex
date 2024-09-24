@@ -200,7 +200,6 @@ AllEvents.Option2.handler(async ({ event }) => {
 const vecLogSchema = S.array(SExtra.bigint);
 AllEvents.VecLog.handler(async ({ event }) => {
   vecLogSchema.assert(event.params)!;
-  console.log(event);
   expectType<AssertSchemaType<typeof event.params, typeof vecLogSchema>>(true);
 });
 
