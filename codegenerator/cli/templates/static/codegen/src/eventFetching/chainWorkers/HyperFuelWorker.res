@@ -3,6 +3,43 @@ open Belt
 
 exception EventRoutingFailed
 
+type workerConfig = {
+  eventRouter: EventRouter.t<Types.fuelEventConfig>,
+  contractByEvent: Utils.WeakMap.t<Types.fuelEventConfig, Types.fuelContractConfig>,
+}
+
+let mintEventTag = "mint"
+let getEventTag = (eventConfig: Types.fuelEventConfig) => {
+  switch eventConfig.kind {
+  | Mint => mintEventTag
+  | LogData({logId}) => logId
+  }
+}
+
+let makeWorkerConfigOrThrow = (~contracts: array<Types.fuelContractConfig>, ~chain) => {
+  let eventRouter = EventRouter.empty()
+  let contractByEvent = Utils.WeakMap.make()
+
+  contracts->Belt.Array.forEach(contract => {
+    contract.events->Array.forEach(eventConfig => {
+      eventRouter->EventRouter.addOrThrow(
+        getEventTag(eventConfig),
+        eventConfig,
+        ~contractName=contract.name,
+        ~eventName=eventConfig.name,
+        ~chain,
+        ~isWildcard=eventConfig.isWildcard,
+      )
+      contractByEvent->Utils.WeakMap.set(eventConfig, contract)->ignore
+    })
+  })
+
+  {
+    eventRouter,
+    contractByEvent,
+  }
+}
+
 let makeGetRecieptsSelectionOrThrow = (~contracts: array<Types.fuelContractConfig>) => {
   let logDataReceiptTypeSelection: array<Fuel.receiptType> = [LogData]
   let mintReceiptTypeSelection: array<Fuel.receiptType> = [Mint]
@@ -127,12 +164,12 @@ module Make = (
     let chain: ChainMap.Chain.t
     let contracts: array<Types.fuelContractConfig>
     let endpointUrl: string
-    let eventRouter: EventRouter.t<module(Types.InternalEvent)>
   },
 ): S => {
   let name = "HyperFuel"
   let chain = T.chain
-  let eventRouter = T.eventRouter
+
+  let {eventRouter, contractByEvent} = makeWorkerConfigOrThrow(~contracts=T.contracts, ~chain)
 
   module Helpers = {
     let rec queryLogsPageWithBackoff = async (
@@ -347,12 +384,12 @@ module Make = (
         let {contractId: contractAddress, receipt, block, receiptIndex} = item
 
         let chainId = chain->ChainMap.Chain.toChainId
-        let sighash = switch receipt {
+        let eventTag = switch receipt {
         | LogData({rb}) => BigInt.toString(rb)
         }
 
-        let eventMod = switch eventRouter->EventRouter.get(
-          ~tag=sighash,
+        let eventConfig = switch eventRouter->EventRouter.get(
+          ~tag=eventTag,
           ~contractAddressMapping,
           ~contractAddress,
         ) {
@@ -364,41 +401,46 @@ module Make = (
                 "blockNumber": block.blockNumber,
                 "logIndex": receiptIndex,
                 "contractAddress": contractAddress,
-                "sighash": sighash,
+                "eventTag": eventTag,
               },
             )
             EventRoutingFailed->ErrorHandling.mkLogAndRaise(
-              ~msg="Failed to lookup registered event",
+              ~msg="Failed to route registered event",
               ~logger,
             )
           }
-        | Some(eventMod) => eventMod
+        | Some(eventConfig) => eventConfig
         }
-        let module(Event) = eventMod
 
-        let params = try switch receipt {
-        | LogData({data}) => data
-        }->Event.decodeHyperFuelData catch {
-        | exn => {
-            let params = {
-              "chainId": chainId,
-              "blockNumber": block.blockNumber,
-              "logIndex": receiptIndex,
+        // Using unsafeGet is fine here, since it's guaranteed that every event has a related contract config
+        let contractConfig = contractByEvent->Utils.WeakMap.unsafeGet(eventConfig)
+
+        let params = switch (eventConfig, receipt) {
+        | ({kind: LogData({decode})}, LogData({data})) =>
+          try decode(data) catch {
+          | exn => {
+              let params = {
+                "chainId": chainId,
+                "blockNumber": block.blockNumber,
+                "logIndex": receiptIndex,
+              }
+              let logger = Logging.createChildFrom(~logger, ~params)
+              exn->ErrorHandling.mkLogAndRaise(
+                ~msg="Failed to decode Fuel LogData receipt, please double check your ABI.",
+                ~logger,
+              )
             }
-            let logger = Logging.createChildFrom(~logger, ~params)
-            exn->ErrorHandling.mkLogAndRaise(
-              ~msg="Failed to parse event with viem, please double check your ABI.",
-              ~logger,
-            )
           }
+        // This should never happen unless there's a bug in the routing logic
+        | _ => Js.Exn.raiseError("Unexpected bug in the event routing logic")
         }
 
         (
           {
-            eventName: Event.name,
-            contractName: Event.contractName,
-            handlerRegister: Event.handlerRegister,
-            paramsRawEventSchema: Event.paramsRawEventSchema,
+            eventName: eventConfig.name,
+            contractName: contractConfig.name,
+            handlerRegister: eventConfig.handlerRegister,
+            paramsRawEventSchema: eventConfig.paramsRawEventSchema,
             timestamp: block.timestamp,
             chain,
             blockNumber: block.blockNumber,

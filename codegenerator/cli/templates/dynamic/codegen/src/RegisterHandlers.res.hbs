@@ -137,10 +137,6 @@ let registerContractHandlers = (
             module(HyperFuelWorker.Make({
               let chain = chain
               let endpointUrl = "{{hyperfuel_config.endpoint_url}}"
-              let eventRouter =
-                contracts
-                ->Belt.Array.flatMap(contract => contract.events)
-                ->EventRouter.fromEvmEventModsOrThrow(~chain)
               let contracts: array<Types.fuelContractConfig> = [
                 {{#each chain_config.codegen_contracts as | contract |}}
                 {
