@@ -1,13 +1,13 @@
 open Belt
-type eventMod = module(Types.InternalEvent)
 
-type errorKind = WildcardSighashCollision | Duplicate
-type eventError = {eventMod: eventMod, errorKind: errorKind}
-module ContractEventMods = {
-  type t = {
-    mutable wildcard: option<eventMod>,
-    all: array<eventMod>,
-    byContractName: dict<eventMod>,
+exception EventDuplicate
+exception WildcardCollision
+
+module Group = {
+  type t<'a> = {
+    mutable wildcard: option<'a>,
+    all: array<'a>,
+    byContractName: dict<'a>,
   }
 
   let empty = () => {
@@ -16,34 +16,26 @@ module ContractEventMods = {
     byContractName: Js.Dict.empty(),
   }
 
-  let isWildcard = (eventMod: eventMod) => {
-    let module(Event) = eventMod
-    (Event.handlerRegister->Types.HandlerTypes.Register.getEventOptions).isWildcard
-  }
-
-  let set = (t: t, eventMod: eventMod) => {
-    let {all, byContractName} = t
-    let module(Event) = eventMod
-    switch byContractName->Utils.Dict.dangerouslyGetNonOption(Event.contractName) {
-    | Some(_) => Error({eventMod, errorKind: Duplicate})
+  let addOrThrow = (group: t<'a>, event, ~contractName, ~isWildcard) => {
+    let {all, byContractName, wildcard} = group
+    switch byContractName->Utils.Dict.dangerouslyGetNonOption(contractName) {
+    | Some(_) => raise(EventDuplicate)
     | None =>
-      let isWildcard = eventMod->isWildcard
-      if isWildcard && t.wildcard->Option.isSome {
-        Error({eventMod, errorKind: WildcardSighashCollision})
+      if isWildcard && wildcard->Option.isSome {
+        raise(WildcardCollision)
       } else {
         if isWildcard {
-          t.wildcard = Some(eventMod)
+          group.wildcard = Some(event)
         }
-        all->Js.Array2.push(eventMod)->ignore
-        byContractName->Js.Dict.set(Event.contractName, eventMod)
-        Ok()
+        all->Js.Array2.push(event)->ignore
+        byContractName->Js.Dict.set(contractName, event)
       }
     }
   }
 
-  let get = (t: t, ~contractAddress, ~contractAddressMapping) =>
-    switch t {
-    | {all: [eventMod]} => Some(eventMod)
+  let get = (group: t<'a>, ~contractAddress, ~contractAddressMapping) =>
+    switch group {
+    | {all: [event]} => Some(event)
     | {wildcard, byContractName} =>
       switch contractAddressMapping->ContractAddressingMap.getContractNameFromAddress(
         ~contractAddress,
@@ -52,61 +44,66 @@ module ContractEventMods = {
       | None => wildcard
       }
     }
+}
 
-  let getByContractName = ({byContractName}, ~contractName) => {
-    byContractName->Utils.Dict.dangerouslyGetNonOption(contractName)
-  }
-}
-let getEvmEventTag = (~sighash, ~topicCount) => {
-  sighash ++ "_" ++ topicCount->Belt.Int.toString
-}
-type t = dict<ContractEventMods.t>
+type t<'a> = dict<Group.t<'a>>
 
 let empty = () => Js.Dict.empty()
 
-let set = (eventRouter: t, eventTag, eventMod: module(Types.Event)) => {
-  let events = switch eventRouter->Utils.Dict.dangerouslyGetNonOption(eventTag) {
+let addOrThrow = (
+  router: t<'a>,
+  eventTag,
+  event,
+  ~contractName,
+  ~isWildcard,
+  ~eventName,
+  ~chain,
+) => {
+  let group = switch router->Utils.Dict.dangerouslyGetNonOption(eventTag) {
   | None =>
-    let events = ContractEventMods.empty()
-    eventRouter->Js.Dict.set(eventTag, events)
-    events
-  | Some(events) => events
+    let group = Group.empty()
+    router->Js.Dict.set(eventTag, group)
+    group
+  | Some(group) => group
   }
-  events->ContractEventMods.set(
-    eventMod->(Utils.magic: module(Types.Event) => module(Types.InternalEvent)),
-  )
+  try group->Group.addOrThrow(event, ~contractName, ~isWildcard) catch {
+  | EventDuplicate =>
+    Js.Exn.raiseError(
+      `Duplicate event detected: ${eventName} for contract ${contractName} on chain ${chain->ChainMap.Chain.toString}`,
+    )
+  | WildcardCollision =>
+    Js.Exn.raiseError(
+      `Another event is already registered with the same signature that would interfer with wildcard filtering: ${eventName} for contract ${contractName} on chain ${chain->ChainMap.Chain.toString}`,
+    )
+  }
 }
 
-let get = (eventRouter: t, ~tag, ~contractAddress, ~contractAddressMapping) => {
-  switch eventRouter->Utils.Dict.dangerouslyGetNonOption(tag) {
+let get = (router: t<'a>, ~tag, ~contractAddress, ~contractAddressMapping) => {
+  switch router->Utils.Dict.dangerouslyGetNonOption(tag) {
   | None => None
-  | Some(events) => events->ContractEventMods.get(~contractAddress, ~contractAddressMapping)
+  | Some(group) => group->Group.get(~contractAddress, ~contractAddressMapping)
   }
 }
 
-let unwrapAddEventResponse = (result: result<'a, eventError>, ~chain) => {
-  switch result {
-  | Error({eventMod, errorKind: Duplicate}) =>
-    let module(Event) = eventMod
-    Js.Exn.raiseError(
-      `Duplicate event detected: ${Event.name} for contract ${Event.contractName} on chain ${chain->ChainMap.Chain.toString}`,
-    )
-  | Error({eventMod, errorKind: WildcardSighashCollision}) =>
-    let module(Event) = eventMod
-    Js.Exn.raiseError(
-      `Another event is already registered with the same signature that would interfer with wildcard filtering: ${Event.name} for contract ${Event.contractName} on chain ${chain->ChainMap.Chain.toString}`,
-    )
-  | Ok(v) => v
-  }
+let getEvmEventTag = (~sighash, ~topicCount) => {
+  sighash ++ "_" ++ topicCount->Belt.Int.toString
 }
 
-let fromArrayOrThrow = (eventMods: array<module(Types.Event)>, ~chain): t => {
-  let t = empty()
+let fromEvmEventModsOrThrow = (eventMods: array<module(Types.Event)>, ~chain): t<
+  module(Types.InternalEvent),
+> => {
+  let router = empty()
   eventMods->Belt.Array.forEach(eventMod => {
+    let eventMod = eventMod->(Utils.magic: module(Types.Event) => module(Types.InternalEvent))
     let module(Event) = eventMod
-    t
-    ->set(getEvmEventTag(~sighash=Event.sighash, ~topicCount=Event.topicCount), eventMod)
-    ->unwrapAddEventResponse(~chain)
+    router->addOrThrow(
+      getEvmEventTag(~sighash=Event.sighash, ~topicCount=Event.topicCount),
+      eventMod,
+      ~contractName=Event.contractName,
+      ~eventName=Event.name,
+      ~chain,
+      ~isWildcard=(Event.handlerRegister->Types.HandlerTypes.Register.getEventOptions).isWildcard,
+    )
   })
-  t
+  router
 }

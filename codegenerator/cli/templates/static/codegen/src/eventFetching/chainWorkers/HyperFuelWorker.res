@@ -127,7 +127,7 @@ module Make = (
     let chain: ChainMap.Chain.t
     let contracts: array<Types.fuelContractConfig>
     let endpointUrl: string
-    let eventRouter: EventRouter.t
+    let eventRouter: EventRouter.t<module(Types.InternalEvent)>
   },
 ): S => {
   let name = "HyperFuel"

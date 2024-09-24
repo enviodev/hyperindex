@@ -6,7 +6,7 @@ module Make = (
     let rpcConfig: Config.rpcConfig
     let chain: ChainMap.Chain.t
     let contracts: array<Config.contract>
-    let eventRouter: EventRouter.t
+    let eventRouter: EventRouter.t<module(Types.InternalEvent)>
   },
 ): S => {
   T.contracts->Belt.Array.forEach(contract => {

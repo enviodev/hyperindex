@@ -99,7 +99,7 @@ let registerContractHandlers = (
               let eventRouter =
                 contracts
                 ->Belt.Array.flatMap(contract => contract.events)
-                ->EventRouter.fromArrayOrThrow(~chain)
+                ->EventRouter.fromEvmEventModsOrThrow(~chain)
             }))
             {{/if}}
             {{#if chain_config.network_config.hypersync_config }}
@@ -116,7 +116,7 @@ let registerContractHandlers = (
               let eventRouter =
                 contracts
                 ->Belt.Array.flatMap(contract => contract.events)
-                ->EventRouter.fromArrayOrThrow(~chain)
+                ->EventRouter.fromEvmEventModsOrThrow(~chain)
               /*
                 Determines whether to use HypersyncClient Decoder or Viem for parsing events
                 Default is hypersync client decoder, configurable in config with:
@@ -140,7 +140,7 @@ let registerContractHandlers = (
               let eventRouter =
                 contracts
                 ->Belt.Array.flatMap(contract => contract.events)
-                ->EventRouter.fromArrayOrThrow(~chain)
+                ->EventRouter.fromEvmEventModsOrThrow(~chain)
               let contracts: array<Types.fuelContractConfig> = [
                 {{#each chain_config.codegen_contracts as | contract |}}
                 {

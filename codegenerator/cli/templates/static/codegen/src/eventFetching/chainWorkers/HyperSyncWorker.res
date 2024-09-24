@@ -200,7 +200,7 @@ module Make = (
     let endpointUrl: string
     let allEventSignatures: array<string>
     let shouldUseHypersyncClientDecoder: bool
-    let eventRouter: EventRouter.t
+    let eventRouter: EventRouter.t<module(Types.InternalEvent)>
     let blockSchema: S.t<Types.Block.t>
     let transactionSchema: S.t<Types.Transaction.t>
   },
