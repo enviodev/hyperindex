@@ -1,7 +1,7 @@
 open RescriptMocha
 
-let getErrorKind = (res: result<unit, EventModLookup.eventError>): option<
-  EventModLookup.errorKind,
+let getErrorKind = (res: result<unit, EventRouter.eventError>): option<
+  EventRouter.errorKind,
 > =>
   switch res {
   | Ok(_) => None
@@ -69,7 +69,7 @@ let makeMockEventMod = (~sighash, ~name, ~contractName, ~isWildcard): module(Typ
 let mockEventName = "TestEvent"
 let mockSighash = "0xtest"
 
-describe("EventModLookup", () => {
+describe("EventRouter", () => {
   it("Succeeds on unique insertions", () => {
     let mockEventMod1 = makeMockEventMod(
       ~sighash=mockSighash,
@@ -83,10 +83,10 @@ describe("EventModLookup", () => {
       ~contractName="TestContract2",
       ~isWildcard=false,
     )
-    let lookup = EventModLookup.empty()
+    let lookup = EventRouter.empty()
 
-    Assert.deepEqual(lookup->EventModLookup.set("test-event-tag", mockEventMod1), Ok())
-    Assert.deepEqual(lookup->EventModLookup.set("test-event-tag", mockEventMod2), Ok())
+    Assert.deepEqual(lookup->EventRouter.set("test-event-tag", mockEventMod1), Ok())
+    Assert.deepEqual(lookup->EventRouter.set("test-event-tag", mockEventMod2), Ok())
   })
 
   it("Fails on duplicate insertions", () => {
@@ -96,11 +96,11 @@ describe("EventModLookup", () => {
       ~contractName="TestContract",
       ~isWildcard=false,
     )
-    let lookup = EventModLookup.empty()
+    let lookup = EventRouter.empty()
 
-    Assert.deepEqual(lookup->EventModLookup.set("test-event-tag", mockEventMod), Ok())
+    Assert.deepEqual(lookup->EventRouter.set("test-event-tag", mockEventMod), Ok())
     Assert.deepEqual(
-      lookup->EventModLookup.set("test-event-tag", mockEventMod)->getErrorKind,
+      lookup->EventRouter.set("test-event-tag", mockEventMod)->getErrorKind,
       Some(Duplicate),
     )
   })
@@ -118,11 +118,11 @@ describe("EventModLookup", () => {
       ~contractName="TestContract2",
       ~isWildcard=true,
     )
-    let lookup = EventModLookup.empty()
+    let lookup = EventRouter.empty()
 
-    Assert.deepEqual(lookup->EventModLookup.set("test-event-tag", mockEventMod1), Ok())
+    Assert.deepEqual(lookup->EventRouter.set("test-event-tag", mockEventMod1), Ok())
     Assert.deepEqual(
-      lookup->EventModLookup.set("test-event-tag", mockEventMod2)->getErrorKind,
+      lookup->EventRouter.set("test-event-tag", mockEventMod2)->getErrorKind,
       Some(WildcardSighashCollision),
     )
   })
@@ -134,14 +134,14 @@ describe("EventModLookup", () => {
       ~contractName="TestContract",
       ~isWildcard=false,
     )
-    let lookup = EventModLookup.empty()
+    let lookup = EventRouter.empty()
 
     lookup
-    ->EventModLookup.set("test-event-tag", mockEventMod)
-    ->EventModLookup.unwrapAddEventResponse(~chain=mockChain)
+    ->EventRouter.set("test-event-tag", mockEventMod)
+    ->EventRouter.unwrapAddEventResponse(~chain=mockChain)
 
     Assert.deepEqual(
-      lookup->EventModLookup.get(
+      lookup->EventRouter.get(
         ~tag="test-event-tag",
         ~contractAddress=mockAddress1,
         ~contractAddressMapping=ContractAddressingMap.make(),
@@ -169,14 +169,14 @@ describe("EventModLookup", () => {
         ~isWildcard=false,
       )
 
-      let lookup = EventModLookup.empty()
+      let lookup = EventRouter.empty()
 
       lookup
-      ->EventModLookup.set("test-event-tag", mockWildcardEventMod)
-      ->EventModLookup.unwrapAddEventResponse(~chain=mockChain)
+      ->EventRouter.set("test-event-tag", mockWildcardEventMod)
+      ->EventRouter.unwrapAddEventResponse(~chain=mockChain)
       lookup
-      ->EventModLookup.set("test-event-tag", mockNonWildcardEventMod)
-      ->EventModLookup.unwrapAddEventResponse(~chain=mockChain)
+      ->EventRouter.set("test-event-tag", mockNonWildcardEventMod)
+      ->EventRouter.unwrapAddEventResponse(~chain=mockChain)
 
       let contractAddressMapping = ContractAddressingMap.make()
       contractAddressMapping->ContractAddressingMap.addAddress(
@@ -185,7 +185,7 @@ describe("EventModLookup", () => {
       )
 
       Assert.deepEqual(
-        lookup->EventModLookup.get(
+        lookup->EventRouter.get(
           ~tag="test-event-tag",
           ~contractAddress=nonWildcardContractAddress,
           ~contractAddressMapping,
@@ -195,7 +195,7 @@ describe("EventModLookup", () => {
       )
 
       Assert.deepEqual(
-        lookup->EventModLookup.get(
+        lookup->EventRouter.get(
           ~tag="test-event-tag",
           ~contractAddress=wildcardContractAddress,
           ~contractAddressMapping,
@@ -215,11 +215,11 @@ describe("EventModLookup", () => {
         ~isWildcard=false,
       )->toInternal
 
-    [EventModLookup.Duplicate, WildcardSighashCollision]->Belt.Array.forEach(
+    [EventRouter.Duplicate, WildcardSighashCollision]->Belt.Array.forEach(
       errorKind => {
         Assert.throws(
           () => {
-            Error({eventMod, errorKind})->EventModLookup.unwrapAddEventResponse(~chain=mockChain)
+            Error({eventMod, errorKind})->EventRouter.unwrapAddEventResponse(~chain=mockChain)
           },
         )
       },

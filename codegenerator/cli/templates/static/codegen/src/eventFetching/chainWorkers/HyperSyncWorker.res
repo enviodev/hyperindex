@@ -200,14 +200,14 @@ module Make = (
     let endpointUrl: string
     let allEventSignatures: array<string>
     let shouldUseHypersyncClientDecoder: bool
-    let eventModLookup: EventModLookup.t
+    let eventRouter: EventRouter.t
     let blockSchema: S.t<Types.Block.t>
     let transactionSchema: S.t<Types.Transaction.t>
   },
 ): S => {
   let name = "HyperSync"
   let chain = T.chain
-  let eventModLookup = T.eventModLookup
+  let eventRouter = T.eventRouter
 
   let hscDecoder: ref<option<HyperSyncClient.Decoder.t>> = ref(None)
   let getHscDecoder = () => {
@@ -418,8 +418,8 @@ module Make = (
           let chainId = chain->ChainMap.Chain.toChainId
           let topic0 = log.topics->Js.Array2.unsafe_get(0)
           let maybeEventMod =
-            eventModLookup->EventModLookup.get(
-              ~tag=EventModLookup.getEvmEventTag(
+            eventRouter->EventRouter.get(
+              ~tag=EventRouter.getEvmEventTag(
                 ~sighash=topic0,
                 ~topicCount=log.topics->Array.length,
               ),
@@ -459,8 +459,8 @@ module Make = (
           let chainId = chain->ChainMap.Chain.toChainId
           let topic0 = log.topics->Js.Array2.unsafe_get(0)
 
-          switch eventModLookup->EventModLookup.get(
-            ~tag=EventModLookup.getEvmEventTag(
+          switch eventRouter->EventRouter.get(
+            ~tag=EventRouter.getEvmEventTag(
               ~sighash=topic0,
               ~topicCount=log.topics->Array.length,
             ),

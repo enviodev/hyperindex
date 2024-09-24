@@ -55,10 +55,10 @@ describe("E2E Integration Test", () => {
             let chain = chain
             let contracts = contracts
             let rpcConfig = rpcConfig
-            let eventModLookup =
+            let eventRouter =
               contracts
               ->Belt.Array.flatMap(contract => contract.events)
-              ->EventModLookup.fromArrayOrThrow(~chain)
+              ->EventRouter.fromArrayOrThrow(~chain)
           })
         ),
       }

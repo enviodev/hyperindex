@@ -127,12 +127,12 @@ module Make = (
     let chain: ChainMap.Chain.t
     let contracts: array<Types.fuelContractConfig>
     let endpointUrl: string
-    let eventModLookup: EventModLookup.t
+    let eventRouter: EventRouter.t
   },
 ): S => {
   let name = "HyperFuel"
   let chain = T.chain
-  let eventModLookup = T.eventModLookup
+  let eventRouter = T.eventRouter
 
   module Helpers = {
     let rec queryLogsPageWithBackoff = async (
@@ -351,7 +351,7 @@ module Make = (
         | LogData({rb}) => BigInt.toString(rb)
         }
 
-        let eventMod = switch eventModLookup->EventModLookup.get(
+        let eventMod = switch eventRouter->EventRouter.get(
           ~tag=sighash,
           ~contractAddressMapping,
           ~contractAddress,
