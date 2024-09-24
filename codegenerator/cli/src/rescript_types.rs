@@ -346,6 +346,7 @@ pub enum RescriptTypeIdent {
     Address,
     String,
     Bool,
+    Unknown,
     Timestamp,
     //Enums defined in the user's schema
     SchemaEnum(CapitalizedOptions),
@@ -379,6 +380,7 @@ impl RescriptTypeIdent {
             Self::Int => "int".to_string(),
             Self::Float => "GqlDbCustomTypes.Float.t".to_string(),
             Self::BigInt => "bigint".to_string(),
+            Self::Unknown => "unknown".to_string(),
             Self::BigDecimal => "BigDecimal.t".to_string(),
             Self::Address => "Address.t".to_string(),
             Self::String => "string".to_string(),
@@ -425,6 +427,7 @@ impl RescriptTypeIdent {
         match self {
             Self::Unit => "S.literal(%raw(`null`))->S.variant(_ => ())".to_string(),
             Self::Int => "S.int".to_string(),
+            Self::Unknown => "S.unknown".to_string(),
             Self::Float => "GqlDbCustomTypes.Float.schema".to_string(),
             Self::BigInt => "BigInt.schema".to_string(),
             Self::BigDecimal => "BigDecimal.schema".to_string(),
@@ -484,6 +487,7 @@ impl RescriptTypeIdent {
             | Self::BigDecimal
             | Self::Address
             | Self::String
+            | Self::Unknown
             | Self::ID
             | Self::Bool
             | Self::Timestamp
@@ -502,6 +506,7 @@ impl RescriptTypeIdent {
         match self {
             Self::Unit => "()".to_string(),
             Self::Int => "0".to_string(),
+            Self::Unknown => "%raw(`undefined`)".to_string(),
             Self::Float => "0.0".to_string(),
             Self::BigInt => "0n".to_string(),
             Self::BigDecimal => "BigDecimal.zero".to_string(),
@@ -565,7 +570,7 @@ impl RescriptTypeIdent {
 
     pub fn get_default_value_non_rescript(&self) -> String {
         match self {
-            Self::Unit => "undefined".to_string(),
+            Self::Unit | Self::Unknown => "undefined".to_string(),
             Self::Int | Self::Float => "0".to_string(),
             Self::BigInt => "0n".to_string(),
             Self::BigDecimal => "// default value not required since BigDecimal doesn't exist on \
