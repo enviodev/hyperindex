@@ -6,15 +6,15 @@ import {
   {{contract.name.capitalized}},
   {{#each contract.imported_events as |event|}}
   {{!--These are the entity types--}}
-  {{contract.name.capitalized}}_{{event.name.capitalized}},
+  {{contract.name.capitalized}}_{{event.name}},
   {{/each}}
 {{/each}}
 } from "generated";
 {{#each imported_contracts as |contract|}}
   {{#each contract.imported_events as |event|}}
 
-{{contract.name.capitalized}}.{{event.name.capitalized}}.handler(async ({ event, context }) => {
-  const entity: {{contract.name.capitalized}}_{{event.name.capitalized}} = {
+{{contract.name.capitalized}}.{{event.name}}.handler(async ({ event, context }) => {
+  const entity: {{contract.name.capitalized}}_{{event.name}} = {
     id: {{event.entity_id_from_event_code}},
     {{#each event.params as |param|}}
     {{param.entity_key.uncapitalized}}: event.params.{{param.event_key.uncapitalized}}{{#if
@@ -27,7 +27,7 @@ import {
     {{/each}}
   };
 
-  context.{{contract.name.capitalized}}_{{event.name.capitalized}}.set(entity);
+  context.{{contract.name.capitalized}}_{{event.name}}.set(entity);
 });
 
   {{/each}}

@@ -10,11 +10,11 @@ const {
 
 {{#each imported_contracts as |contract|}}
   {{#each contract.imported_events as |event|}}
-{{contract.name.capitalized}}.{{event.name.capitalized}}.loader(({event, context}) => {
+{{contract.name.capitalized}}.{{event.name}}.loader(({event, context}) => {
     // Load requiredEntities here
 });
 
-{{contract.name.capitalized}}.{{event.name.capitalized}}.handler(({event, context}) => {
+{{contract.name.capitalized}}.{{event.name}}.handler(({event, context}) => {
     // Retrieve loaded requiredEntities and perform event handling logic here
 });
 

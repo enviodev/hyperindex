@@ -4,12 +4,12 @@
 
 {{#each imported_contracts as |contract|}}
   {{#each contract.imported_events as |event|}}
-Handlers.{{contract.name.capitalized}}.{{event.name.capitalized}}.loader(({event, context}) => {
+Handlers.{{contract.name.capitalized}}.{{event.name}}.loader(({event, context}) => {
     // Load requiredEntities here
     ()
 })
 
-Handlers.{{contract.name.capitalized}}.{{event.name.capitalized}}.handler(({event, context}) => {
+Handlers.{{contract.name.capitalized}}.{{event.name}}.handler(({event, context}) => {
     // Retrieve loaded requiredEntities and perform event handling logic here
     ()
 })

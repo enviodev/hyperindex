@@ -229,13 +229,13 @@ module EventFunctions = {
 
 module {{contract.name.capitalized}} = {
   {{#each contract.codegen_events as | event |}}
-  module {{event.name.capitalized}} = {
+  module {{event.name}} = {
     @genType
     let processEvent = EventFunctions.makeEventProcessor(
       ~contractName=Types.{{contract.name.capitalized}}.contractName,
-      ~eventName=Types.{{contract.name.capitalized}}.{{event.name.capitalized}}.name,
-      ~handlerRegister=Types.{{contract.name.capitalized}}.{{event.name.capitalized}}.handlerRegister,
-      ~paramsRawEventSchema=Types.{{contract.name.capitalized}}.{{event.name.capitalized}}.paramsRawEventSchema,
+      ~eventName=Types.{{contract.name.capitalized}}.{{event.name}}.name,
+      ~handlerRegister=Types.{{contract.name.capitalized}}.{{event.name}}.handlerRegister,
+      ~paramsRawEventSchema=Types.{{contract.name.capitalized}}.{{event.name}}.paramsRawEventSchema,
     )
 
     {{#if ../../is_evm_ecosystem}}
@@ -261,7 +261,7 @@ module {{contract.name.capitalized}} = {
         ?mockEventData,
       } = args
 
-      let params: Types.{{contract.name.capitalized}}.{{event.name.capitalized}}.eventArgs = 
+      let params: Types.{{contract.name.capitalized}}.{{event.name}}.eventArgs = 
       {{#if event.params}}
       {
       {{#each event.params as | param |}}
@@ -277,7 +277,7 @@ module {{contract.name.capitalized}} = {
     {{/if}}
     {{#if ../../is_fuel_ecosystem}}
     @genType
-    let mockData = (params): Types.eventLog<Types.{{contract.name.capitalized}}.{{event.name.capitalized}}.eventArgs> => {
+    let mockData = (params): Types.eventLog<Types.{{contract.name.capitalized}}.{{event.name}}.eventArgs> => {
       EventFunctions.makeEventMocker(~params, ~mockEventData=None)
     }
     {{/if}}
