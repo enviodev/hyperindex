@@ -3,19 +3,7 @@ open Belt
 
 exception EventRoutingFailed
 
-type event = {
-  name: string,
-  logId?: string,
-  mint?: bool,
-  isWildcard?: bool,
-}
-
-type contract = {
-  name: string,
-  events: array<event>,
-}
-
-let makeGetRecieptsSelectionOrThrow = (~contracts: array<contract>) => {
+let makeGetRecieptsSelectionOrThrow = (~contracts: array<Types.fuelContractConfig>) => {
   let logDataReceiptTypeSelection: array<Fuel.receiptType> = [LogData]
   let mintReceiptTypeSelection: array<Fuel.receiptType> = [Mint]
 
@@ -34,19 +22,17 @@ let makeGetRecieptsSelectionOrThrow = (~contracts: array<contract>) => {
 
   contracts->Array.forEach(contract => {
     let nonWildcardRbs = []
-    contract.events->Array.forEach(event => {
-      switch event {
-      | {mint: true, logId: _} =>
-        Js.Exn.raiseError(`Mint event ${event.name} is not allowed to have a logId`)
-      | {mint: true, isWildcard: true} =>
+    contract.events->Array.forEach(eventConfig => {
+      switch eventConfig {
+      | {kind: Mint, isWildcard: true} =>
         if contractsWithMint->Utils.Set.size !== 0 {
           Js.Exn.raiseError(`Wildcard Mint event is not allowed together with non-wildcard Mint events`)
         }
         wildcardMint := true
-      | {mint: true} => {
+      | {kind: Mint} => {
           if wildcardMint.contents {
             Js.Exn.raiseError(
-              `Failed to register ${event.name} for contract ${contract.name} because Mint is already registered in wildcard mode`,
+              `Failed to register ${eventConfig.name} for contract ${contract.name} because Mint is already registered in wildcard mode`,
             )
           }
           if contractsWithMint->Utils.Set.has(contract.name) {
@@ -54,15 +40,14 @@ let makeGetRecieptsSelectionOrThrow = (~contracts: array<contract>) => {
           }
           contractsWithMint->Utils.Set.add(contract.name)->ignore
         }
-      | {logId} => {
+      | {kind: LogData({logId}), isWildcard} => {
           let rb = logId->BigInt.fromStringUnsafe
-          if event.isWildcard === Some(true) {
+          if isWildcard === true {
             wildcardRbs->Array.push(rb)->ignore
           } else {
             nonWildcardRbs->Array.push(rb)->ignore
           }
         }
-      | _ => Js.Exn.raiseError(`Event ${event.name} is not a log or mint`)
       }
     })
     nonWildcardRbsByContract->Js.Dict.set(contract.name, nonWildcardRbs)
@@ -140,7 +125,7 @@ let makeGetRecieptsSelectionOrThrow = (~contracts: array<contract>) => {
 module Make = (
   T: {
     let chain: ChainMap.Chain.t
-    let contracts: array<contract>
+    let contracts: array<Types.fuelContractConfig>
     let endpointUrl: string
     let eventModLookup: EventModLookup.t
   },

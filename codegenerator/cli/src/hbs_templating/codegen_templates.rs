@@ -565,6 +565,15 @@ let handlerRegister: HandlerTypes.Register.t<eventArgs> = HandlerTypes.Register.
 ~eventName=name,
 )
 
+let config: fuelEventConfig = {{
+  name,
+  kind: LogData({{
+    logId: "{sighash}",
+    decode: {decode_hyper_fuel_data_code},
+  }}),
+  isWildcard: (handlerRegister->HandlerTypes.Register.getEventOptions).isWildcard,
+}}
+
 @genType
 type eventFilter = {event_filter_type}
 
