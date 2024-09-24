@@ -149,7 +149,6 @@ pub struct EntityParamTypeTemplate {
     pub field_name: CapitalizedOptions,
     pub res_type: RescriptTypeIdent,
     pub res_schema_code: String,
-    pub type_pg: String,
     pub is_entity_field: bool,
     ///Used in template to tell whether it is a field looked up from another table or a value in
     ///the table
@@ -178,11 +177,6 @@ impl EntityParamTypeTemplate {
 
         let is_derived_from = field.field_type.is_derived_from();
 
-        let type_pg = field
-            .field_type
-            .to_postgres_type(&config.schema)
-            .context("Failed getting postgres type")?;
-
         let is_entity_field = field.field_type.is_entity_field(schema)?;
         let is_indexed_field = field.is_indexed_field(entity);
         let is_derived_lookup_field = field.is_derived_lookup_field(entity, schema);
@@ -195,7 +189,6 @@ impl EntityParamTypeTemplate {
             res_schema_code: res_type.to_rescript_schema(),
             res_type,
             is_derived_from,
-            type_pg,
             is_entity_field,
             is_indexed_field,
             is_queryable_field,
