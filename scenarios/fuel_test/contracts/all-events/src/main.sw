@@ -1,6 +1,7 @@
 contract;
 
 use std::asset::{burn, mint, transfer};
+use std::bytes::Bytes;
 
 abi Token {
     fn transfer_to_address(target: Address, asset_id: AssetId, coins: u64);
@@ -148,5 +149,9 @@ impl AllEvents for Contract {
         vec.push(69);
         vec.push(23);
         log(vec);
+
+        let mut bytes = Bytes::new();
+        bytes.push(40u8);
+        log(bytes)
     }
 }
