@@ -1006,8 +1006,7 @@ impl Event {
                             let logged_type = fuel_abi
                             .get_type_by_struct_name(name.clone())
                             .context(
-                                "Failed to derive log ids from the event name. Use the lodId field to \
-                                 set it explicitely.",
+                                "Failed to derive the event configuration from the name. Use the logId, mint, or burn options to set it explicitly.",
                             )?;
                             fuel_abi.get_log_by_type(logged_type.id)?
                         }
