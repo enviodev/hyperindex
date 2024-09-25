@@ -200,14 +200,14 @@ module Make = (
     let endpointUrl: string
     let allEventSignatures: array<string>
     let shouldUseHypersyncClientDecoder: bool
-    let eventModLookup: EventModLookup.t
+    let eventRouter: EventRouter.t<module(Types.InternalEvent)>
     let blockSchema: S.t<Types.Block.t>
     let transactionSchema: S.t<Types.Transaction.t>
   },
 ): S => {
   let name = "HyperSync"
   let chain = T.chain
-  let eventModLookup = T.eventModLookup
+  let eventRouter = T.eventRouter
 
   let hscDecoder: ref<option<HyperSyncClient.Decoder.t>> = ref(None)
   let getHscDecoder = () => {
@@ -239,11 +239,16 @@ module Make = (
   let makeEventBatchQueueItem = (
     item: HyperSync.logsQueryPageItem,
     ~params: Types.internalEventArgs,
-    ~eventMod,
+    ~eventMod: module(Types.InternalEvent),
   ): Types.eventBatchQueueItem => {
+    let module(Event) = eventMod
     let {block, log, transaction} = item
     let chainId = chain->ChainMap.Chain.toChainId
     {
+      eventName: Event.name,
+      contractName: Event.contractName,
+      handlerRegister: Event.handlerRegister,
+      paramsRawEventSchema: Event.paramsRawEventSchema,
       timestamp: block->Types.Block.getTimestamp,
       chain,
       blockNumber: block->Types.Block.getNumber,
@@ -256,7 +261,6 @@ module Make = (
         srcAddress: log.address,
         logIndex: log.logIndex,
       },
-      eventMod,
     }
   }
 
@@ -414,9 +418,11 @@ module Make = (
           let chainId = chain->ChainMap.Chain.toChainId
           let topic0 = log.topics->Js.Array2.unsafe_get(0)
           let maybeEventMod =
-            eventModLookup->EventModLookup.get(
-              ~sighash=topic0,
-              ~topicCount=log.topics->Array.length,
+            eventRouter->EventRouter.get(
+              ~tag=EventRouter.getEvmEventTag(
+                ~sighash=topic0,
+                ~topicCount=log.topics->Array.length,
+              ),
               ~contractAddressMapping,
               ~contractAddress=log.address,
             )
@@ -453,9 +459,11 @@ module Make = (
           let chainId = chain->ChainMap.Chain.toChainId
           let topic0 = log.topics->Js.Array2.unsafe_get(0)
 
-          switch eventModLookup->EventModLookup.get(
-            ~sighash=topic0,
-            ~topicCount=log.topics->Array.length,
+          switch eventRouter->EventRouter.get(
+            ~tag=EventRouter.getEvmEventTag(
+              ~sighash=topic0,
+              ~topicCount=log.topics->Array.length,
+            ),
             ~contractAddressMapping,
             ~contractAddress=log.address,
           ) {
@@ -538,4 +546,3 @@ module Make = (
       ~logger,
     )->Promise.thenResolve(HyperSync.mapExn)
 }
-

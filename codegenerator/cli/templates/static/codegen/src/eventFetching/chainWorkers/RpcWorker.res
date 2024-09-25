@@ -6,7 +6,7 @@ module Make = (
     let rpcConfig: Config.rpcConfig
     let chain: ChainMap.Chain.t
     let contracts: array<Config.contract>
-    let eventModLookup: EventModLookup.t
+    let eventRouter: EventRouter.t<module(Types.InternalEvent)>
   },
 ): S => {
   T.contracts->Belt.Array.forEach(contract => {
@@ -43,7 +43,7 @@ module Make = (
   })
   let name = "RPC"
   let chain = T.chain
-  let eventModLookup = T.eventModLookup
+  let eventRouter = T.eventRouter
 
   let blockIntervals = Js.Dict.empty()
 
@@ -155,33 +155,17 @@ module Make = (
         ~chain,
         ~blockLoader,
         ~logger,
-        ~eventModLookup,
+        ~eventRouter,
       )
 
-      let eventBatches = await eventBatchPromises->Promise.all
-      let parsedQueueItemsPreFilter = eventBatches->Array.map(({
-        timestamp,
-        chain,
-        blockNumber,
-        logIndex,
-        event,
-        eventMod,
-      }): Types.eventBatchQueueItem => {
-        timestamp,
-        chain,
-        blockNumber,
-        logIndex,
-        event,
-        eventMod,
-      })
-
+      let eventBatchItems = await eventBatchPromises->Promise.all
       let parsedQueueItems = switch eventFilters {
       //Most cases there are no filters so this will be passed throug
-      | None => parsedQueueItemsPreFilter
+      | None => eventBatchItems
       | Some(eventFilters) =>
         //In the case where there are filters, apply them and keep the events that
         //are needed
-        parsedQueueItemsPreFilter->Array.keep(item => item->FetchState.applyFilters(~eventFilters))
+        eventBatchItems->Array.keep(item => item->FetchState.applyFilters(~eventFilters))
       }
 
       let sc = T.rpcConfig.syncConfig

@@ -9,7 +9,7 @@
     "res:clean": "rescript clean",
     "res:build": "rescript",
     "res:watch": "rescript -w",
-    "mocha": "ts-mocha test/**/*.ts",
+    "mocha": "ts-mocha test/**/*.[jt]s",
     "codegen": "cargo run --manifest-path ../../codegenerator/cli/Cargo.toml -- codegen",
     "dev": "cargo run --manifest-path ../../codegenerator/cli/Cargo.toml -- dev",
     "test": "rescript && pnpm mocha",

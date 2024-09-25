@@ -32,7 +32,10 @@ let qItemMock1: Types.eventBatchQueueItem = {
   blockNumber: 1,
   logIndex: 0,
   event: eventMock1,
-  eventMod: module(Types.Gravatar.NewGravatar)->Types.eventModToInternal,
+  eventName: "NewGravatar",
+  contractName: "Gravatar",
+  handlerRegister: Types.Gravatar.NewGravatar.handlerRegister->(Utils.magic: Types.HandlerTypes.Register.t<Types.Gravatar.NewGravatar.eventArgs> => Types.HandlerTypes.Register.t<Types.internalEventArgs>),
+  paramsRawEventSchema: Types.Gravatar.NewGravatar.paramsRawEventSchema->(Utils.magic: S.t<Types.Gravatar.NewGravatar.eventArgs> => S.t<Types.internalEventArgs>),
 }
 
 let eventMock2: Types.eventLog<Types.internalEventArgs> = {
@@ -57,7 +60,10 @@ let qItemMock2: Types.eventBatchQueueItem = {
   blockNumber: 2,
   logIndex: 1,
   event: eventMock1,
-  eventMod: module(Types.Gravatar.NewGravatar)->Types.eventModToInternal,
+  eventName: "NewGravatar",
+  contractName: "Gravatar",
+  handlerRegister: Types.Gravatar.NewGravatar.handlerRegister->(Utils.magic: Types.HandlerTypes.Register.t<Types.Gravatar.NewGravatar.eventArgs> => Types.HandlerTypes.Register.t<Types.internalEventArgs>),
+  paramsRawEventSchema: Types.Gravatar.NewGravatar.paramsRawEventSchema->(Utils.magic: S.t<Types.Gravatar.NewGravatar.eventArgs> => S.t<Types.internalEventArgs>),
 }
 
 describe("Chain Event Queue", () => {

@@ -33,13 +33,12 @@ let getEventId = (eventBatchQueueItem: Types.eventBatchQueueItem) => {
 }
 
 let make = (~eventBatchQueueItem: Types.eventBatchQueueItem, ~logger) => {
-  let {event, chain, eventMod, blockNumber} = eventBatchQueueItem
-  let module(Event) = eventMod
+  let {event, chain, eventName, contractName, blockNumber} = eventBatchQueueItem
   let logger = logger->(
     Logging.createChildFrom(
       ~logger=_,
       ~params={
-        "context": `Event '${Event.name}' for contract '${Event.contractName}'`,
+        "context": `Event '${eventName}' for contract '${contractName}'`,
         "chainId": chain->ChainMap.Chain.toChainId,
         "block": blockNumber,
         "logIndex": event.logIndex,

@@ -327,29 +327,104 @@ impl EntityRecordTypeTemplate {
     }
 }
 
-#[derive(Serialize, Debug, PartialEq, Clone)]
-pub struct EventTemplate {
-    pub name: CapitalizedOptions,
-    pub params: Vec<EventParamTypeTemplate>,
+#[derive(Debug, PartialEq, Clone)]
+pub enum FuelEventKind {
+    LogData,
+    Mint,
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct EventMod {
     pub sighash: String,
     pub topic_count: usize,
-    pub decode_hyper_fuel_data_code: String,
-    pub convert_hyper_sync_event_args_code: String,
+    pub event_name: String,
     pub data_type: String,
     pub params_raw_event_schema: String,
-    pub get_topic_selection_code: String,
+    pub convert_hyper_sync_event_args_code: String,
     pub event_filter_type: String,
+    pub get_topic_selection_code: String,
+    pub fuel_event_kind: Option<FuelEventKind>,
+}
+
+impl EventMod {
+    fn to_string(&self) -> String {
+        let sighash = &self.sighash;
+        let topic_count = &self.topic_count;
+        let event_name = &self.event_name;
+        let data_type = &self.data_type;
+        let params_raw_event_schema = &self.params_raw_event_schema;
+        let convert_hyper_sync_event_args_code = &self.convert_hyper_sync_event_args_code;
+        let event_filter_type = &self.event_filter_type;
+        let get_topic_selection_code = &self.get_topic_selection_code;
+
+        let fuel_event_kind_code = match &self.fuel_event_kind {
+            None => None,
+            Some(FuelEventKind::Mint) => Some("Mint".to_string()),
+            Some(FuelEventKind::LogData) => Some(format!(
+                r#"LogData({{
+logId: sighash,
+decode: Fuel.Receipt.getLogDataDecoder(~abi, ~logId=sighash),
+}})"#
+            )),
+        };
+
+        let non_event_mod_code = match fuel_event_kind_code {
+            None => "".to_string(),
+            Some(fuel_event_kind_code) => format!(
+                r#"
+let config: fuelEventConfig = {{
+  name,
+  kind: {fuel_event_kind_code},
+  isWildcard: (handlerRegister->HandlerTypes.Register.getEventOptions).isWildcard,
+  handlerRegister: handlerRegister->(Utils.magic: HandlerTypes.Register.t<eventArgs> => HandlerTypes.Register.t<internalEventArgs>),
+  paramsRawEventSchema: paramsRawEventSchema->(Utils.magic: S.t<eventArgs> => S.t<internalEventArgs>),
+}}"#
+            ),
+        };
+
+        format!(
+            r#"
+let sighash = "{sighash}"
+let topicCount = {topic_count}
+let name = "{event_name}"
+let contractName = contractName
+
+@genType
+type eventArgs = {data_type}
+let paramsRawEventSchema = {params_raw_event_schema}
+let convertHyperSyncEventArgs = {convert_hyper_sync_event_args_code}
+
+let handlerRegister: HandlerTypes.Register.t<eventArgs> = HandlerTypes.Register.make(
+  ~topic0=sighash->EvmTypes.Hex.fromStringUnsafe,
+  ~contractName,
+  ~eventName=name,
+)
+
+@genType
+type eventFilter = {event_filter_type}
+
+let getTopicSelection = {get_topic_selection_code}
+{non_event_mod_code}"#
+        )
+    }
+}
+
+#[derive(Serialize, Debug, PartialEq, Clone)]
+pub struct EventTemplate {
+    pub name: String,
+    pub module_code: String,
+    pub params: Vec<EventParamTypeTemplate>,
 }
 
 impl EventTemplate {
-    const DECODE_HYPER_FUEL_DATA_CODE: &'static str =
-        "(_) => Js.Exn.raiseError(\"HyperFuel decoder not implemented\")";
-
     const GET_TOPIC_SELECTION_CODE_STUB: &'static str =
         "_ => [LogSelection.makeTopicSelection(~topic0=[sighash->EvmTypes.Hex.\
          fromStringUnsafe])->Utils.unwrapResultExn]";
 
     const EVENT_FILTER_TYPE_STUB: &'static str = "{}";
+    const CONVERT_HYPER_SYNC_EVENT_ARGS_NOOP: &'static str = "(Utils.magic: \
+    HyperSyncClient.Decoder.decodedEvent => \
+    eventArgs)";
 
     pub fn generate_event_filter_type(params: &Vec<EventParam>) -> String {
         let field_rows = params
@@ -405,7 +480,7 @@ impl EventTemplate {
 
     pub fn generate_convert_hyper_sync_event_args_code(params: &Vec<EventParam>) -> String {
         if params.is_empty() {
-            return "(Utils.magic: HyperSyncClient.Decoder.decodedEvent => eventArgs)".to_string();
+            return Self::CONVERT_HYPER_SYNC_EVENT_ARGS_NOOP.to_string();
         }
         let indexed_params = params
             .iter()
@@ -447,7 +522,8 @@ impl EventTemplate {
     }
 
     pub fn from_config_event(config_event: &system_config::Event) -> Result<Self> {
-        let name = config_event.name.to_capitalized_options();
+        let event_name = config_event.name.capitalize();
+
         match &config_event.payload {
             EventPayload::Params(params) => {
                 let template_params = params
@@ -482,48 +558,75 @@ impl EventTemplate {
                     )
                 };
 
-                let topic_count = params
-                    .iter()
-                    .fold(1, |acc, param| if param.indexed { acc + 1 } else { acc });
-
-                Ok(EventTemplate {
-                    name,
-                    params: template_params,
+                let event_mod = EventMod {
+                    sighash: config_event.sighash.to_string(),
+                    topic_count: params
+                        .iter()
+                        .fold(1, |acc, param| if param.indexed { acc + 1 } else { acc }),
+                    event_name: event_name.clone(),
                     data_type: data_type_expr.to_string(),
                     params_raw_event_schema: data_type_expr
                         .to_rescript_schema(&"eventArgs".to_string()),
-                    sighash: config_event.sighash.to_string(),
-                    topic_count,
                     convert_hyper_sync_event_args_code:
                         Self::generate_convert_hyper_sync_event_args_code(params),
-                    decode_hyper_fuel_data_code: Self::DECODE_HYPER_FUEL_DATA_CODE.to_string(),
                     event_filter_type: Self::generate_event_filter_type(params),
                     get_topic_selection_code: Self::generate_get_topic_selection_code(params),
-                })
-            }
-            EventPayload::Data(type_indent) => {
-                let decode_hyper_fuel_data_code = format!(
-                    "Fuel.Receipt.getLogDataDecoder(~abi, ~logId=\"{}\")",
-                    config_event.sighash
-                );
+                    fuel_event_kind: None,
+                };
 
                 Ok(EventTemplate {
-                    name,
-                    params: vec![],
+                    name: event_name,
+                    module_code: event_mod.to_string(),
+                    params: template_params,
+                })
+            }
+            EventPayload::FuelLogData(type_indent) => {
+                let event_mod = EventMod {
+                    sighash: config_event.sighash.to_string(),
+                    topic_count: 0, //Default to 0 for fuel,
+                    event_name: event_name.clone(),
                     data_type: type_indent.to_string(),
                     params_raw_event_schema: format!(
                         "{}->Utils.Schema.coerceToJsonPgType",
                         type_indent.to_rescript_schema()
                     ),
-                    sighash: config_event.sighash.to_string(),
-                    topic_count: 0, //Default to 0 for fuel
-                    convert_hyper_sync_event_args_code: "(Utils.magic: \
-                                                     HyperSyncClient.Decoder.decodedEvent => \
-                                                     eventArgs)"
+                    convert_hyper_sync_event_args_code: Self::CONVERT_HYPER_SYNC_EVENT_ARGS_NOOP
                         .to_string(),
-                    decode_hyper_fuel_data_code,
                     event_filter_type: Self::EVENT_FILTER_TYPE_STUB.to_string(),
                     get_topic_selection_code: Self::GET_TOPIC_SELECTION_CODE_STUB.to_string(),
+                    fuel_event_kind: Some(FuelEventKind::LogData),
+                };
+
+                Ok(EventTemplate {
+                    name: event_name,
+                    module_code: event_mod.to_string(),
+                    params: vec![],
+                })
+            }
+            EventPayload::FuelMint => {
+                let data_type_expr = RescriptTypeExpr::Record(vec![
+                    RescriptRecordField::new("subId".to_string(), RescriptTypeIdent::String),
+                    RescriptRecordField::new("amount".to_string(), RescriptTypeIdent::BigInt),
+                ]);
+
+                let event_mod = EventMod {
+                    sighash: config_event.sighash.to_string(),
+                    topic_count: 0, //Default to 0 for fuel,
+                    event_name: event_name.clone(),
+                    data_type: data_type_expr.to_string(),
+                    params_raw_event_schema: data_type_expr
+                        .to_rescript_schema(&"eventArgs".to_string()),
+                    convert_hyper_sync_event_args_code: Self::CONVERT_HYPER_SYNC_EVENT_ARGS_NOOP
+                        .to_string(),
+                    event_filter_type: Self::EVENT_FILTER_TYPE_STUB.to_string(),
+                    get_topic_selection_code: Self::GET_TOPIC_SELECTION_CODE_STUB.to_string(),
+                    fuel_event_kind: Some(FuelEventKind::Mint),
+                };
+
+                Ok(EventTemplate {
+                    name: event_name,
+                    module_code: event_mod.to_string(),
+                    params: vec![],
                 })
             }
         }
@@ -601,13 +704,13 @@ let eventSignatures = [{}]"#,
 
 #[derive(Serialize, Debug, PartialEq, Clone)]
 pub struct PerNetworkContractEventTemplate {
-    pub name: CapitalizedOptions,
+    pub name: String,
 }
 
 impl PerNetworkContractEventTemplate {
     fn new(event_name: String) -> Self {
         PerNetworkContractEventTemplate {
-            name: event_name.to_capitalized_options(),
+            name: event_name.capitalize(),
         }
     }
 }
@@ -1171,44 +1274,39 @@ mod test {
         ];
 
         EventTemplate {
-            name: "NewGravatar".to_string().to_capitalized_options(),
-            sighash,
-            topic_count: 1,
+            name: "NewGravatar".to_string(),
             params,
-            data_type: "{id: bigint, owner: Address.t, displayName: string, imageUrl: string}"
-                .to_string(),
-            convert_hyper_sync_event_args_code: "(decodedEvent: \
-                                                 HyperSyncClient.Decoder.decodedEvent): eventArgs \
-                                                 => {\n      {\n        id: \
-                                                 decodedEvent.body->Js.Array2.\
-                                                 unsafe_get(0)->HyperSyncClient.Decoder.\
-                                                 toUnderlying->Utils.magic,\n        owner: \
-                                                 decodedEvent.body->Js.Array2.\
-                                                 unsafe_get(1)->HyperSyncClient.Decoder.\
-                                                 toUnderlying->Utils.magic,\n        displayName: \
-                                                 decodedEvent.body->Js.Array2.\
-                                                 unsafe_get(2)->HyperSyncClient.Decoder.\
-                                                 toUnderlying->Utils.magic,\n        imageUrl: \
-                                                 decodedEvent.body->Js.Array2.\
-                                                 unsafe_get(3)->HyperSyncClient.Decoder.\
-                                                 toUnderlying->Utils.magic,\n      }\n    }"
-                .to_string(),
-            decode_hyper_fuel_data_code: "(_) => Js.Exn.raiseError(\"HyperFuel decoder not \
-                                          implemented\")"
-                .to_string(),
-            params_raw_event_schema:
-                "S.object((s): eventArgs => {id: s.field(\"id\", BigInt.schema), owner: \
-                               s.field(\"owner\", Address.schema), displayName: \
-                               s.field(\"displayName\", S.string), imageUrl: \
-                               s.field(\"imageUrl\", S.string)})"
-                    .to_string(),
-            get_topic_selection_code: "(eventFilters) => \
-                                       eventFilters->SingleOrMultiple.normalizeOrThrow->Belt.\
-                                       Array.map(_eventFilter => \
-                                       LogSelection.makeTopicSelection(~topic0=[sighash->EvmTypes.\
-                                       Hex.fromStringUnsafe], )->Utils.unwrapResultExn)"
-                .to_string(),
-            event_filter_type: "{  }".to_string(),
+            module_code: format!(
+                r#"
+let sighash = "{sighash}"
+let topicCount = 1
+let name = "NewGravatar"
+let contractName = contractName
+
+@genType
+type eventArgs = {{id: bigint, owner: Address.t, displayName: string, imageUrl: string}}
+let paramsRawEventSchema = S.object((s): eventArgs => {{id: s.field("id", BigInt.schema), owner: s.field("owner", Address.schema), displayName: s.field("displayName", S.string), imageUrl: s.field("imageUrl", S.string)}})
+let convertHyperSyncEventArgs = (decodedEvent: HyperSyncClient.Decoder.decodedEvent): eventArgs => {{
+      {{
+        id: decodedEvent.body->Js.Array2.unsafe_get(0)->HyperSyncClient.Decoder.toUnderlying->Utils.magic,
+        owner: decodedEvent.body->Js.Array2.unsafe_get(1)->HyperSyncClient.Decoder.toUnderlying->Utils.magic,
+        displayName: decodedEvent.body->Js.Array2.unsafe_get(2)->HyperSyncClient.Decoder.toUnderlying->Utils.magic,
+        imageUrl: decodedEvent.body->Js.Array2.unsafe_get(3)->HyperSyncClient.Decoder.toUnderlying->Utils.magic,
+      }}
+    }}
+
+let handlerRegister: HandlerTypes.Register.t<eventArgs> = HandlerTypes.Register.make(
+  ~topic0=sighash->EvmTypes.Hex.fromStringUnsafe,
+  ~contractName,
+  ~eventName=name,
+)
+
+@genType
+type eventFilter = {{  }}
+
+let getTopicSelection = (eventFilters) => eventFilters->SingleOrMultiple.normalizeOrThrow->Belt.Array.map(_eventFilter => LogSelection.makeTopicSelection(~topic0=[sighash->EvmTypes.Hex.fromStringUnsafe], )->Utils.unwrapResultExn)
+"#
+            ),
         }
     }
 
@@ -1225,28 +1323,32 @@ mod test {
         assert_eq!(
             event_template,
             EventTemplate {
-                name: "NewGravatar".to_string().to_capitalized_options(),
-                sighash: "0x50f7d27e90d1a5a38aeed4ceced2e8ec1ff185737aca96d15791b470d3f17363"
-                    .to_string(),
-                topic_count: 1,
+                name: "NewGravatar".to_string(),
                 params: vec![],
-                data_type: "unit".to_string(),
-                convert_hyper_sync_event_args_code: "(Utils.magic: \
-                                                     HyperSyncClient.Decoder.decodedEvent => \
-                                                     eventArgs)"
-                    .to_string(),
-                decode_hyper_fuel_data_code: "(_) => Js.Exn.raiseError(\"HyperFuel decoder not \
-                                              implemented\")"
-                    .to_string(),
-                params_raw_event_schema: "S.literal(%raw(`null`))->S.variant(_ => ())".to_string(),
-                get_topic_selection_code: "(eventFilters) => \
-                                           eventFilters->SingleOrMultiple.normalizeOrThrow->Belt.\
-                                           Array.map(_eventFilter => \
-                                           LogSelection.\
-                                           makeTopicSelection(~topic0=[sighash->EvmTypes.Hex.\
-                                           fromStringUnsafe], )->Utils.unwrapResultExn)"
-                    .to_string(),
-                event_filter_type: "{  }".to_string(),
+                module_code: format!(
+                    r#"
+let sighash = "0x50f7d27e90d1a5a38aeed4ceced2e8ec1ff185737aca96d15791b470d3f17363"
+let topicCount = 1
+let name = "NewGravatar"
+let contractName = contractName
+
+@genType
+type eventArgs = unit
+let paramsRawEventSchema = S.literal(%raw(`null`))->S.variant(_ => ())
+let convertHyperSyncEventArgs = (Utils.magic: HyperSyncClient.Decoder.decodedEvent => eventArgs)
+
+let handlerRegister: HandlerTypes.Register.t<eventArgs> = HandlerTypes.Register.make(
+  ~topic0=sighash->EvmTypes.Hex.fromStringUnsafe,
+  ~contractName,
+  ~eventName=name,
+)
+
+@genType
+type eventFilter = {{  }}
+
+let getTopicSelection = (eventFilters) => eventFilters->SingleOrMultiple.normalizeOrThrow->Belt.Array.map(_eventFilter => LogSelection.makeTopicSelection(~topic0=[sighash->EvmTypes.Hex.fromStringUnsafe], )->Utils.unwrapResultExn)
+"#
+                ),
             }
         );
     }
@@ -1258,8 +1360,9 @@ mod test {
         let new_gavatar_event_template =
             project_template.codegen_contracts[0].codegen_events[0].clone();
 
-        let expected_event_template =
-            make_expected_event_template(new_gavatar_event_template.sighash.clone());
+        let expected_event_template = make_expected_event_template(
+            "0x9ab3aefb2ba6dc12910ac1bce4692cf5c3c0d06cff16327c64a3ef78228b130b".to_string(),
+        );
 
         assert_eq!(expected_event_template, new_gavatar_event_template);
     }
@@ -1269,8 +1372,9 @@ mod test {
         let project_template = get_project_template_helper("gravatar-with-required-entities.yaml");
 
         let new_gavatar_event_template = &project_template.codegen_contracts[0].codegen_events[0];
-        let expected_event_template =
-            make_expected_event_template(new_gavatar_event_template.sighash.clone());
+        let expected_event_template = make_expected_event_template(
+            "0x9ab3aefb2ba6dc12910ac1bce4692cf5c3c0d06cff16327c64a3ef78228b130b".to_string(),
+        );
 
         assert_eq!(&expected_event_template, new_gavatar_event_template);
     }

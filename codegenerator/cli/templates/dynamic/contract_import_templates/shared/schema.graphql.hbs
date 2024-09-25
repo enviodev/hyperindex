@@ -1,6 +1,6 @@
 {{#each imported_contracts as |contract|}}
   {{#each contract.imported_events as |event|}}
-type {{contract.name.capitalized}}_{{event.name.capitalized}} {
+type {{contract.name.capitalized}}_{{event.name}} {
   id: ID!
   {{#each event.params as |param|}}
   {{param.entity_key.uncapitalized}}: {{param.graphql_type}}

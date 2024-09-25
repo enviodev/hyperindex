@@ -43,12 +43,12 @@ let registerContractHandlers = (
             ],
             events: [
               {{#each contract.events as | event |}}
-              module(Types.{{contract.name.capitalized}}.{{event.name.capitalized}}),
+              module(Types.{{contract.name.capitalized}}.{{event.name}}),
               {{/each}}
             ],
             sighashes: [
               {{#each contract.events as | event |}}
-              Types.{{contract.name.capitalized}}.{{event.name.capitalized}}.sighash,
+              Types.{{contract.name.capitalized}}.{{event.name}}.sighash,
               {{/each}}
             ],
           },
@@ -96,10 +96,10 @@ let registerContractHandlers = (
               let chain = chain
               let contracts = contracts
               let rpcConfig = rpcConfig
-              let eventModLookup =
+              let eventRouter =
                 contracts
                 ->Belt.Array.flatMap(contract => contract.events)
-                ->EventModLookup.fromArrayOrThrow(~chain)
+                ->EventRouter.fromEvmEventModsOrThrow(~chain)
             }))
             {{/if}}
             {{#if chain_config.network_config.hypersync_config }}
@@ -113,10 +113,10 @@ let registerContractHandlers = (
                 Types.{{contract.name.capitalized}}.eventSignatures,
                 {{/each}}
               ]->Belt.Array.concatMany
-              let eventModLookup =
+              let eventRouter =
                 contracts
                 ->Belt.Array.flatMap(contract => contract.events)
-                ->EventModLookup.fromArrayOrThrow(~chain)
+                ->EventRouter.fromEvmEventModsOrThrow(~chain)
               /*
                 Determines whether to use HypersyncClient Decoder or Viem for parsing events
                 Default is hypersync client decoder, configurable in config with:
@@ -137,22 +137,13 @@ let registerContractHandlers = (
             module(HyperFuelWorker.Make({
               let chain = chain
               let endpointUrl = "{{hyperfuel_config.endpoint_url}}"
-              let eventModLookup =
-                contracts
-                ->Belt.Array.flatMap(contract => contract.events)
-                ->EventModLookup.fromArrayOrThrow(~chain)
-              let contracts: array<HyperFuelWorker.contract> = [
+              let contracts: array<Types.fuelContractConfig> = [
                 {{#each chain_config.codegen_contracts as | contract |}}
                 {
                   name: "{{contract.name.capitalized}}",
                   events: [
                     {{#each contract.events as | event |}}
-                    {
-                      name: "{{event.name.capitalized}}",
-                      logId: Types.{{contract.name.capitalized}}.{{event.name.capitalized}}.sighash,
-                      {{!-- mint: {{#if event.mint}}true{{else}}false{{/if}}, --}}
-                      isWildcard: (Types.{{contract.name.capitalized}}.{{event.name.capitalized}}.handlerRegister->Types.HandlerTypes.Register.getEventOptions).isWildcard,
-                    },
+                    Types.{{contract.name.capitalized}}.{{event.name}}.config,
                     {{/each}}
                   ]
                 },

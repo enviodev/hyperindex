@@ -153,21 +153,28 @@ let addEventToRawEvents = (
   eventBatchQueueItem: Types.eventBatchQueueItem,
   ~inMemoryStore: InMemoryStore.t,
 ) => {
-  let {event, eventMod, chain, blockNumber, timestamp: blockTimestamp} = eventBatchQueueItem
+  let {
+    event,
+    eventName,
+    contractName,
+    chain,
+    blockNumber,
+    paramsRawEventSchema,
+    timestamp: blockTimestamp,
+  } = eventBatchQueueItem
   let {block, transaction, params, logIndex, srcAddress} = event
-  let module(Event) = eventMod
   let chainId = chain->ChainMap.Chain.toChainId
   let eventId = EventUtils.packEventIndex(~logIndex, ~blockNumber)
   let blockFields =
     (block :> Types.Block.rawEventFields)->S.serializeOrRaiseWith(Types.Block.rawEventSchema)
   let transactionFields = transaction->S.serializeOrRaiseWith(Types.Transaction.schema)
-  let params = params->S.serializeOrRaiseWith(Event.paramsRawEventSchema)
+  let params = params->S.serializeOrRaiseWith(paramsRawEventSchema)
 
   let rawEvent: TablesStatic.RawEvents.t = {
     chainId,
     eventId: eventId->BigInt.toString,
-    eventName: Event.name,
-    contractName: Event.contractName,
+    eventName,
+    contractName,
     blockNumber,
     logIndex,
     srcAddress,
@@ -244,11 +251,6 @@ let runEventHandler = (
   })
 }
 
-let getHandlerRegistration = (eventMod: module(Types.InternalEvent)) => {
-  let module(Event) = eventMod
-  Event.handlerRegister
-}
-
 let runHandler = (
   eventBatchQueueItem: Types.eventBatchQueueItem,
   ~latestProcessedBlocks,
@@ -257,9 +259,7 @@ let runHandler = (
   ~loadLayer,
   ~config,
 ) => {
-  switch eventBatchQueueItem.eventMod
-  ->getHandlerRegistration
-  ->Types.HandlerTypes.Register.getLoaderHandler {
+  switch eventBatchQueueItem.handlerRegister->Types.HandlerTypes.Register.getLoaderHandler {
   | Some(loaderHandler) =>
     eventBatchQueueItem->runEventHandler(
       ~loaderHandler,
@@ -306,9 +306,7 @@ let rec registerDynamicContracts = (
       )
       ->Ok
     } else {
-      switch eventBatchQueueItem.eventMod
-      ->getHandlerRegistration
-      ->Types.HandlerTypes.Register.getContractRegister {
+      switch eventBatchQueueItem.handlerRegister->Types.HandlerTypes.Register.getContractRegister {
       | Some(handler) =>
         handler->runEventContractRegister(
           ~logger,
@@ -360,8 +358,7 @@ let runLoaders = (
     let _: array<unknown> =
       await eventBatch
       ->Array.keepMap(eventBatchQueueItem => {
-        eventBatchQueueItem.eventMod
-        ->getHandlerRegistration
+        eventBatchQueueItem.handlerRegister
         ->Types.HandlerTypes.Register.getLoaderHandler
         ->Option.map(
           ({loader}) => {

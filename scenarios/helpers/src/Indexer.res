@@ -83,7 +83,6 @@ module type S = {
       type eventArgs
       let paramsRawEventSchema: RescriptSchema.S.schema<eventArgs>
       let convertHyperSyncEventArgs: HyperSyncClient.Decoder.decodedEvent => eventArgs
-      let decodeHyperFuelData: string => eventArgs
       let handlerRegister: HandlerTypes.Register.t<eventArgs>
       type eventFilter
       let getTopicSelection: SingleOrMultiple.t<eventFilter> => array<LogSelection.topicSelection>
@@ -91,12 +90,15 @@ module type S = {
     module type InternalEvent = Event with type eventArgs = internalEventArgs
 
     type eventBatchQueueItem = {
+      eventName: string,
+      contractName: string,
+      handlerRegister: HandlerTypes.Register.t<internalEventArgs>,
       timestamp: int,
       chain: ChainMap.Chain.t,
       blockNumber: int,
       logIndex: int,
       event: eventLog<internalEventArgs>,
-      eventMod: module(Event with type eventArgs = internalEventArgs),
+      paramsRawEventSchema: RescriptSchema.S.schema<internalEventArgs>,
       //Default to false, if an event needs to
       //be reprocessed after it has loaded dynamic contracts
       //This gets set to true and does not try and reload events

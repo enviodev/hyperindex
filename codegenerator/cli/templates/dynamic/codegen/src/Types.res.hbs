@@ -425,7 +425,6 @@ module type Event = {
   type eventArgs
   let paramsRawEventSchema: S.schema<eventArgs>
   let convertHyperSyncEventArgs: HyperSyncClient.Decoder.decodedEvent => eventArgs
-  let decodeHyperFuelData: string => eventArgs
   let handlerRegister: HandlerTypes.Register.t<eventArgs>
 
   type eventFilter
@@ -532,35 +531,34 @@ module MakeRegister = (Event: Event) => {
     )
 }
 
+type fuelEventKind = | Mint | LogData({
+  logId: string,
+  decode: string => internalEventArgs,
+})
+
+type fuelEventConfig = {
+  name: string,
+  kind: fuelEventKind,
+  isWildcard: bool,
+  handlerRegister: HandlerTypes.Register.t<internalEventArgs>,
+  paramsRawEventSchema: S.schema<internalEventArgs>,
+}
+
+type fuelContractConfig = {
+  name: string,
+  events: array<fuelEventConfig>,
+}
+
 {{#each codegen_contracts as | contract |}}
 module {{contract.name.capitalized}} = {
 {{contract.module_code}}
-  let contractName = "{{contract.name.capitalized}}"
+let contractName = "{{contract.name.capitalized}}"
 {{#each contract.codegen_events as | event |}}
-  module {{event.name.capitalized}} = {
-    let sighash = "{{event.sighash}}"
-    let topicCount = {{event.topic_count}}
-    let name = "{{event.name.capitalized}}"
-    let contractName = contractName
 
-    @genType
-    type eventArgs = {{data_type}}
-    let paramsRawEventSchema = {{params_raw_event_schema}}
-    let convertHyperSyncEventArgs = {{convert_hyper_sync_event_args_code}}
-    let decodeHyperFuelData = {{decode_hyper_fuel_data_code}}
-
-    let handlerRegister: HandlerTypes.Register.t<eventArgs> = HandlerTypes.Register.make(
-      ~topic0=sighash->EvmTypes.Hex.fromStringUnsafe,
-      ~contractName,
-      ~eventName=name,
-    )
-
-    @genType
-    type eventFilter = {{event_filter_type}}
-
-    let getTopicSelection = {{get_topic_selection_code}}
-  }
-  {{/each}}
+module {{event.name}} = {
+{{event.module_code}}
+}
+{{/each}}
 }
 
 {{/each}}
@@ -568,12 +566,15 @@ module {{contract.name.capitalized}} = {
 type chainId = int
 
 type eventBatchQueueItem = {
+  eventName: string,
+  contractName: string,
+  handlerRegister: HandlerTypes.Register.t<internalEventArgs>,
   timestamp: int,
   chain: ChainMap.Chain.t,
   blockNumber: int,
   logIndex: int,
   event: eventLog<internalEventArgs>,
-  eventMod: module(InternalEvent),
+  paramsRawEventSchema: S.schema<internalEventArgs>,
   //Default to false, if an event needs to
   //be reprocessed after it has loaded dynamic contracts
   //This gets set to true and does not try and reload events

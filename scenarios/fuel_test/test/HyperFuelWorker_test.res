@@ -1,11 +1,23 @@
 open RescriptMocha
 
-describe("HyperFuelWorker - getRecieptsSelectionOrThrow", () => {
+describe("HyperFuelWorker - getRecieptsSelection", () => {
   let contractName1 = "TestContract"
   let contractName2 = "TestContract2"
+  let chain = ChainMap.Chain.makeUnsafe(~chainId=0)
   let address1 = Address.unsafeFromString("0x1234567890abcdef1234567890abcdef1234567890abcde1")
   let address2 = Address.unsafeFromString("0x1234567890abcdef1234567890abcdef1234567890abcde2")
   let address3 = Address.unsafeFromString("0x1234567890abcdef1234567890abcdef1234567890abcde3")
+
+  let mock = (~contracts) => {
+    let workerConfig = HyperFuelWorker.makeWorkerConfigOrThrow(~contracts, ~chain)
+    HyperFuelWorker.makeGetRecieptsSelection(
+      ~wildcardLogDataRbs=workerConfig.wildcardLogDataRbs,
+      ~nonWildcardLogDataRbsByContract=workerConfig.nonWildcardLogDataRbsByContract,
+      ~contractsWithMint=workerConfig.contractsWithMint,
+      ~hasWildcardMint=workerConfig.hasWildcardMint,
+      ~contracts,
+    )
+  }
 
   let mockContractAddressMapping = () => {
     ContractAddressingMap.fromArray([
@@ -16,9 +28,9 @@ describe("HyperFuelWorker - getRecieptsSelectionOrThrow", () => {
   }
 
   it("Receipts Selection with no contracts", () => {
-    let getRecieptsSelectionOrThrow = HyperFuelWorker.makeGetRecieptsSelectionOrThrow(~contracts=[])
+    let getRecieptsSelection = mock(~contracts=[])
     Assert.deepEqual(
-      getRecieptsSelectionOrThrow(
+      getRecieptsSelection(
         ~contractAddressMapping=mockContractAddressMapping(),
         ~shouldApplyWildcards=true,
       ),
@@ -27,7 +39,7 @@ describe("HyperFuelWorker - getRecieptsSelectionOrThrow", () => {
   })
 
   it("Receipts Selection with no events", () => {
-    let getRecieptsSelectionOrThrow = HyperFuelWorker.makeGetRecieptsSelectionOrThrow(
+    let getRecieptsSelection = mock(
       ~contracts=[
         {
           name: "TestContract",
@@ -36,7 +48,7 @@ describe("HyperFuelWorker - getRecieptsSelectionOrThrow", () => {
       ],
     )
     Assert.deepEqual(
-      getRecieptsSelectionOrThrow(
+      getRecieptsSelection(
         ~contractAddressMapping=mockContractAddressMapping(),
         ~shouldApplyWildcards=true,
       ),
@@ -45,27 +57,33 @@ describe("HyperFuelWorker - getRecieptsSelectionOrThrow", () => {
   })
 
   it("Receipts Selection with single non-wildcard log event", () => {
-    let getRecieptsSelectionOrThrow = HyperFuelWorker.makeGetRecieptsSelectionOrThrow(
+    let getRecieptsSelection = mock(
       ~contracts=[
         {
           name: "TestContract",
           events: [
             {
               name: "StrLog",
-              logId: Types.AllEvents.StrLog.sighash,
+              kind: LogData({
+                logId: "1",
+                decode: _ => %raw(`null`),
+              }),
+              isWildcard: false,
+              handlerRegister: %raw(`"Not relevat"`),
+              paramsRawEventSchema: %raw(`"Not relevat"`),
             },
           ],
         },
       ],
     )
     Assert.deepEqual(
-      getRecieptsSelectionOrThrow(
+      getRecieptsSelection(
         ~contractAddressMapping=mockContractAddressMapping(),
         ~shouldApplyWildcards=true,
       ),
       [
         {
-          rb: [10732353433239600734n],
+          rb: [1n],
           receiptType: [LogData],
           rootContractId: [address1, address2],
           txStatus: [1],
@@ -75,14 +93,17 @@ describe("HyperFuelWorker - getRecieptsSelectionOrThrow", () => {
   })
 
   it("Receipts Selection with non-wildcard mint event", () => {
-    let getRecieptsSelectionOrThrow = HyperFuelWorker.makeGetRecieptsSelectionOrThrow(
+    let getRecieptsSelection = mock(
       ~contracts=[
         {
           name: "TestContract",
           events: [
             {
               name: "Mint",
-              mint: true,
+              kind: Mint,
+              isWildcard: false,
+              handlerRegister: %raw(`"Not relevat"`),
+              paramsRawEventSchema: %raw(`"Not relevat"`),
             },
           ],
         },
@@ -91,14 +112,17 @@ describe("HyperFuelWorker - getRecieptsSelectionOrThrow", () => {
           events: [
             {
               name: "Mint",
-              mint: true,
+              kind: Mint,
+              isWildcard: false,
+              handlerRegister: %raw(`"Not relevat"`),
+              paramsRawEventSchema: %raw(`"Not relevat"`),
             },
           ],
         },
       ],
     )
     Assert.deepEqual(
-      getRecieptsSelectionOrThrow(
+      getRecieptsSelection(
         ~contractAddressMapping=mockContractAddressMapping(),
         ~shouldApplyWildcards=true,
       ),
@@ -118,22 +142,24 @@ describe("HyperFuelWorker - getRecieptsSelectionOrThrow", () => {
   })
 
   it("Receipts Selection with wildcard mint event", () => {
-    let getRecieptsSelectionOrThrow = HyperFuelWorker.makeGetRecieptsSelectionOrThrow(
+    let getRecieptsSelection = mock(
       ~contracts=[
         {
           name: "TestContract",
           events: [
             {
               name: "Mint",
-              mint: true,
+              kind: Mint,
               isWildcard: true,
+              handlerRegister: %raw(`"Not relevat"`),
+              paramsRawEventSchema: %raw(`"Not relevat"`),
             },
           ],
         },
       ],
     )
     Assert.deepEqual(
-      getRecieptsSelectionOrThrow(
+      getRecieptsSelection(
         ~contractAddressMapping=mockContractAddressMapping(),
         ~shouldApplyWildcards=true,
       ),
@@ -147,20 +173,30 @@ describe("HyperFuelWorker - getRecieptsSelectionOrThrow", () => {
   })
 
   it("Receipts Selection with multiple wildcard log event", () => {
-    let getRecieptsSelectionOrThrow = HyperFuelWorker.makeGetRecieptsSelectionOrThrow(
+    let getRecieptsSelection = mock(
       ~contracts=[
         {
           name: "TestContract",
           events: [
             {
               name: "StrLog",
-              logId: Types.AllEvents.StrLog.sighash,
+              kind: LogData({
+                logId: "1",
+                decode: _ => %raw(`null`),
+              }),
               isWildcard: true,
+              handlerRegister: %raw(`"Not relevat"`),
+              paramsRawEventSchema: %raw(`"Not relevat"`),
             },
             {
               name: "BoolLog",
-              logId: Types.AllEvents.BoolLog.sighash,
+              kind: LogData({
+                logId: "2",
+                decode: _ => %raw(`null`),
+              }),
               isWildcard: true,
+              handlerRegister: %raw(`"Not relevat"`),
+              paramsRawEventSchema: %raw(`"Not relevat"`),
             },
           ],
         },
@@ -169,21 +205,26 @@ describe("HyperFuelWorker - getRecieptsSelectionOrThrow", () => {
           events: [
             {
               name: "UnitLog",
-              logId: Types.AllEvents.UnitLog.sighash,
+              kind: LogData({
+                logId: "3",
+                decode: _ => %raw(`null`),
+              }),
               isWildcard: true,
+              handlerRegister: %raw(`"Not relevat"`),
+              paramsRawEventSchema: %raw(`"Not relevat"`),
             },
           ],
         },
       ],
     )
     Assert.deepEqual(
-      getRecieptsSelectionOrThrow(
+      getRecieptsSelection(
         ~contractAddressMapping=mockContractAddressMapping(),
         ~shouldApplyWildcards=true,
       ),
       [
         {
-          rb: [10732353433239600734n, 13213829929622723620n, 3330666440490685604n],
+          rb: [1n, 2n, 3n],
           receiptType: [LogData],
           txStatus: [1],
         },
@@ -192,23 +233,37 @@ describe("HyperFuelWorker - getRecieptsSelectionOrThrow", () => {
   })
 
   it("Receipts Selection with all possible events together", () => {
-    let getRecieptsSelectionOrThrow = HyperFuelWorker.makeGetRecieptsSelectionOrThrow(
+    let getRecieptsSelection = mock(
       ~contracts=[
         {
           name: "TestContract",
           events: [
             {
               name: "StrLog",
-              logId: Types.AllEvents.StrLog.sighash,
+              kind: LogData({
+                logId: "1",
+                decode: _ => %raw(`null`),
+              }),
+              isWildcard: false,
+              handlerRegister: %raw(`"Not relevat"`),
+              paramsRawEventSchema: %raw(`"Not relevat"`),
             },
             {
               name: "BoolLog",
-              logId: Types.AllEvents.BoolLog.sighash,
+              kind: LogData({
+                logId: "2",
+                decode: _ => %raw(`null`),
+              }),
               isWildcard: true,
+              handlerRegister: %raw(`"Not relevat"`),
+              paramsRawEventSchema: %raw(`"Not relevat"`),
             },
             {
               name: "Mint",
-              mint: true,
+              kind: Mint,
+              isWildcard: false,
+              handlerRegister: %raw(`"Not relevat"`),
+              paramsRawEventSchema: %raw(`"Not relevat"`),
             },
           ],
         },
@@ -217,14 +272,20 @@ describe("HyperFuelWorker - getRecieptsSelectionOrThrow", () => {
           events: [
             {
               name: "UnitLog",
-              logId: Types.AllEvents.UnitLog.sighash,
+              kind: LogData({
+                logId: "3",
+                decode: _ => %raw(`null`),
+              }),
+              isWildcard: false,
+              handlerRegister: %raw(`"Not relevat"`),
+              paramsRawEventSchema: %raw(`"Not relevat"`),
             },
           ],
         },
       ],
     )
     Assert.deepEqual(
-      getRecieptsSelectionOrThrow(
+      getRecieptsSelection(
         ~contractAddressMapping=mockContractAddressMapping(),
         ~shouldApplyWildcards=true,
       ),
@@ -235,87 +296,47 @@ describe("HyperFuelWorker - getRecieptsSelectionOrThrow", () => {
           txStatus: [1],
         },
         {
-          rb: [10732353433239600734n],
+          rb: [1n],
           receiptType: [LogData],
           rootContractId: [address1, address2],
           txStatus: [1],
         },
         {
-          rb: [3330666440490685604n],
+          rb: [3n],
           receiptType: [LogData],
           rootContractId: [address3],
           txStatus: [1],
         },
         {
-          rb: [13213829929622723620n],
+          rb: [2n],
           receiptType: [LogData],
           txStatus: [1],
         },
       ],
-    )
-  })
-
-  it("Fails when event doesn't have either mint: true or logId", () => {
-    Assert.throws(
-      () => {
-        HyperFuelWorker.makeGetRecieptsSelectionOrThrow(
-          ~contracts=[
-            {
-              name: "TestContract",
-              events: [
-                {
-                  name: "MyEvent",
-                },
-              ],
-            },
-          ],
-        )
-      },
-      ~error={
-        "message": "Event MyEvent is not a log or mint",
-      },
-    )
-  })
-
-  it("Fails when event has both mint: true and logId", () => {
-    Assert.throws(
-      () => {
-        HyperFuelWorker.makeGetRecieptsSelectionOrThrow(
-          ~contracts=[
-            {
-              name: "TestContract",
-              events: [
-                {
-                  name: "MyEvent",
-                  mint: true,
-                  logId: "12345",
-                },
-              ],
-            },
-          ],
-        )
-      },
-      ~error={
-        "message": "Mint event MyEvent is not allowed to have a logId",
-      },
     )
   })
 
   it("Fails when contract has multiple mint events", () => {
     Assert.throws(
       () => {
-        HyperFuelWorker.makeGetRecieptsSelectionOrThrow(
+        mock(
           ~contracts=[
             {
               name: "TestContract",
               events: [
                 {
                   name: "MyEvent",
-                  mint: true,
+                  kind: Mint,
+                  isWildcard: false,
+                  handlerRegister: %raw(`"Not relevat"`),
+                  paramsRawEventSchema: %raw(`"Not relevat"`),
                 },
                 {
                   name: "MyEvent2",
-                  mint: true,
+                  kind: Mint,
+                  isWildcard: false,
+                  handlerRegister: %raw(`"Not relevat"`),
+                  paramsRawEventSchema: %raw(`"Not relevat"`),
                 },
               ],
             },
@@ -323,32 +344,32 @@ describe("HyperFuelWorker - getRecieptsSelectionOrThrow", () => {
         )
       },
       ~error={
-        "message": "Only one Mint event is allowed per contract",
+        "message": "Duplicate event detected: MyEvent2 for contract TestContract on chain 0",
       },
     )
   })
 
-  it("Fails when contract has mint event, when wildcard mint already defined", () => {
+  it("Fails with wildcard mint and non-wildcard mint together in different contract", () => {
     Assert.throws(
       () => {
-        HyperFuelWorker.makeGetRecieptsSelectionOrThrow(
+        mock(
           ~contracts=[
             {
               name: "TestContract",
               events: [
                 {
-                  name: "Mint",
-                  mint: true,
+                  name: "WildcardMint",
+                  kind: Mint,
                   isWildcard: true,
+                  handlerRegister: %raw(`"Not relevat"`),
+                  paramsRawEventSchema: %raw(`"Not relevat"`),
                 },
-              ],
-            },
-            {
-              name: "TestContract2",
-              events: [
                 {
                   name: "Mint",
-                  mint: true,
+                  kind: Mint,
+                  isWildcard: false,
+                  handlerRegister: %raw(`"Not relevat"`),
+                  paramsRawEventSchema: %raw(`"Not relevat"`),
                 },
               ],
             },
@@ -356,76 +377,151 @@ describe("HyperFuelWorker - getRecieptsSelectionOrThrow", () => {
         )
       },
       ~error={
-        "message": "Failed to register Mint for contract TestContract2 because it is already registered as a wildcard",
+        "message": "Duplicate event detected: Mint for contract TestContract on chain 0",
       },
     )
   })
 
-  it("Fails register wildcard with there's a non-wildcard mint", () => {
-    Assert.throws(
-      () => {
-        HyperFuelWorker.makeGetRecieptsSelectionOrThrow(
-          ~contracts=[
-            {
-              name: "TestContract2",
-              events: [
-                {
-                  name: "Mint",
-                  mint: true,
-                },
-              ],
-            },
-            {
-              name: "TestContract",
-              events: [
-                {
-                  name: "Mint",
-                  mint: true,
-                  isWildcard: true,
-                },
-              ],
-            },
-          ],
-        )
-      },
-      ~error={
-        "message": "Wildcard Mint event is not allowed together with non-wildcard Mint events",
-      },
-    )
-  })
-
-  it("Removes wildcard selection with shouldApplyWildcards (needed for partitioning)", () => {
-    let getRecieptsSelectionOrThrow = HyperFuelWorker.makeGetRecieptsSelectionOrThrow(
+  it("Works with wildcard mint and non-wildcard mint together in different contract", () => {
+    let getRecieptsSelection = mock(
       ~contracts=[
+        {
+          name: "TestContract2",
+          events: [
+            {
+              name: "Mint",
+              kind: Mint,
+              isWildcard: false,
+              handlerRegister: %raw(`"Not relevat"`),
+              paramsRawEventSchema: %raw(`"Not relevat"`),
+            },
+          ],
+        },
         {
           name: "TestContract",
           events: [
             {
               name: "Mint",
-              mint: true,
+              kind: Mint,
               isWildcard: true,
-            },
-            {
-              name: "WildcardLog",
-              logId: "123",
-              isWildcard: true,
-            },
-            {
-              name: "NonWildcardLog",
-              logId: "321",
+              handlerRegister: %raw(`"Not relevat"`),
+              paramsRawEventSchema: %raw(`"Not relevat"`),
             },
           ],
         },
       ],
     )
     Assert.deepEqual(
-      getRecieptsSelectionOrThrow(
+      getRecieptsSelection(
         ~contractAddressMapping=mockContractAddressMapping(),
         ~shouldApplyWildcards=true,
       ),
       [
         {
-          rb: [321n],
+          receiptType: [Mint],
+          rootContractId: [address3],
+          txStatus: [1],
+        },
+        {
+          receiptType: [Mint],
+          txStatus: [1],
+        },
+      ],
+    )
+
+    // The same but with different event registration order
+    let getRecieptsSelection = mock(
+      ~contracts=[
+        {
+          name: "TestContract",
+          events: [
+            {
+              name: "Mint",
+              kind: Mint,
+              isWildcard: true,
+              handlerRegister: %raw(`"Not relevat"`),
+              paramsRawEventSchema: %raw(`"Not relevat"`),
+            },
+          ],
+        },
+        {
+          name: "TestContract2",
+          events: [
+            {
+              name: "Mint",
+              kind: Mint,
+              isWildcard: false,
+              handlerRegister: %raw(`"Not relevat"`),
+              paramsRawEventSchema: %raw(`"Not relevat"`),
+            },
+          ],
+        },
+      ],
+    )
+    Assert.deepEqual(
+      getRecieptsSelection(
+        ~contractAddressMapping=mockContractAddressMapping(),
+        ~shouldApplyWildcards=true,
+      ),
+      [
+        {
+          receiptType: [Mint],
+          rootContractId: [address3],
+          txStatus: [1],
+        },
+        {
+          receiptType: [Mint],
+          txStatus: [1],
+        },
+      ],
+    )
+  })
+
+  it("Removes wildcard selection with shouldApplyWildcards (needed for partitioning)", () => {
+    let getRecieptsSelection = mock(
+      ~contracts=[
+        {
+          name: "TestContract",
+          events: [
+            {
+              name: "Mint",
+              kind: Mint,
+              isWildcard: true,
+              handlerRegister: %raw(`"Not relevat"`),
+              paramsRawEventSchema: %raw(`"Not relevat"`),
+            },
+            {
+              name: "WildcardLog",
+              kind: LogData({
+                logId: "1",
+                decode: _ => %raw(`null`),
+              }),
+              isWildcard: true,
+              handlerRegister: %raw(`"Not relevat"`),
+              paramsRawEventSchema: %raw(`"Not relevat"`),
+            },
+            {
+              name: "NonWildcardLog",
+              kind: LogData({
+                logId: "2",
+                decode: _ => %raw(`null`),
+              }),
+              isWildcard: false,
+              handlerRegister: %raw(`"Not relevat"`),
+              paramsRawEventSchema: %raw(`"Not relevat"`),
+            },
+          ],
+        },
+      ],
+    )
+    Assert.deepEqual(
+      getRecieptsSelection(
+        ~contractAddressMapping=mockContractAddressMapping(),
+        ~shouldApplyWildcards=true,
+      ),
+      [
+        {
+          rb: [2n],
           receiptType: [LogData],
           rootContractId: [address1, address2],
           txStatus: [1],
@@ -435,20 +531,20 @@ describe("HyperFuelWorker - getRecieptsSelectionOrThrow", () => {
           txStatus: [1],
         },
         {
-          rb: [123n],
+          rb: [1n],
           receiptType: [LogData],
           txStatus: [1],
         },
       ],
     )
     Assert.deepEqual(
-      getRecieptsSelectionOrThrow(
+      getRecieptsSelection(
         ~contractAddressMapping=mockContractAddressMapping(),
         ~shouldApplyWildcards=false,
       ),
       [
         {
-          rb: [321n],
+          rb: [2n],
           receiptType: [LogData],
           rootContractId: [address1, address2],
           txStatus: [1],

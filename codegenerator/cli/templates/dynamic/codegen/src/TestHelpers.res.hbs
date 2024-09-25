@@ -55,14 +55,15 @@ module EventFunctions = {
   /**
   A function composer to help create individual processEvent functions
   */
-  let makeEventProcessor = (~eventMod: module(Types.Event with type eventArgs = 'eventArgs)) => {
+  let makeEventProcessor = (~contractName, ~eventName, ~handlerRegister, ~paramsRawEventSchema) => {
     async args => {
-      let eventMod = eventMod->Types.eventModToInternal
       let {event, mockDb, ?chainId} =
         args->(
           Utils.magic: eventProcessorArgs<'eventArgs> => eventProcessorArgs<Types.internalEventArgs>
         )
-      let module(Event) = eventMod
+      let handlerRegister = handlerRegister->(Utils.magic: Types.HandlerTypes.Register.t<'eventArgs> => Types.HandlerTypes.Register.t<Types.internalEventArgs>)
+      let paramsRawEventSchema = paramsRawEventSchema->(Utils.magic: S.t<'eventArgs> => S.t<Types.internalEventArgs>)
+
       let config = RegisterHandlers.getConfig()
 
       // The user can specify a chainId of an event or leave it off
@@ -82,7 +83,7 @@ module EventFunctions = {
       //Create an individual logging context for traceability
       let logger = Logging.createChild(
         ~params={
-          "Context": `Test Processor for "${Event.name}" event on contract "${Event.contractName}"`,
+          "Context": `Test Processor for "${eventName}" event on contract "${contractName}"`,
           "Chain ID": chain->ChainMap.Chain.toChainId,
           "event": event,
         },
@@ -93,10 +94,10 @@ module EventFunctions = {
       //steps
       let mockDbClone = mockDb->TestHelpers_MockDb.cloneMockDb
 
-      if !(Event.handlerRegister->Types.HandlerTypes.Register.hasRegistration) {
+      if !(handlerRegister->Types.HandlerTypes.Register.hasRegistration) {
         Not_found->ErrorHandling.mkLogAndRaise(
           ~logger,
-          ~msg=`No registered handler found for "${Event.name}" on contract "${Event.contractName}"`,
+          ~msg=`No registered handler found for "${eventName}" on contract "${contractName}"`,
         )
       }
       //Construct a new instance of an in memory store to run for the given event
@@ -113,14 +114,17 @@ module EventFunctions = {
 
       let eventBatchQueueItem: Types.eventBatchQueueItem = {
         event,
-        eventMod,
+        eventName,
+        contractName,
+        handlerRegister,
+        paramsRawEventSchema,
         chain,
         logIndex: event.logIndex,
         timestamp: event.block->Types.Block.getTimestamp,
         blockNumber: event.block->Types.Block.getNumber,
       }
 
-      switch Event.handlerRegister->Types.HandlerTypes.Register.getContractRegister {
+      switch handlerRegister->Types.HandlerTypes.Register.getContractRegister {
       | Some(contractRegister) =>
         switch contractRegister->EventProcessing.runEventContractRegister(
           ~logger,
@@ -138,7 +142,7 @@ module EventFunctions = {
 
       let latestProcessedBlocks = EventProcessing.EventsProcessed.makeEmpty(~config)
 
-      switch Event.handlerRegister->Types.HandlerTypes.Register.getLoaderHandler {
+      switch handlerRegister->Types.HandlerTypes.Register.getLoaderHandler {
       | Some(loaderHandler) =>
         switch await eventBatchQueueItem->EventProcessing.runEventHandler(
           ~inMemoryStore,
@@ -225,10 +229,13 @@ module EventFunctions = {
 
 module {{contract.name.capitalized}} = {
   {{#each contract.codegen_events as | event |}}
-  module {{event.name.capitalized}} = {
+  module {{event.name}} = {
     @genType
     let processEvent = EventFunctions.makeEventProcessor(
-      ~eventMod=module(Types.{{contract.name.capitalized}}.{{event.name.capitalized}}),
+      ~contractName=Types.{{contract.name.capitalized}}.contractName,
+      ~eventName=Types.{{contract.name.capitalized}}.{{event.name}}.name,
+      ~handlerRegister=Types.{{contract.name.capitalized}}.{{event.name}}.handlerRegister,
+      ~paramsRawEventSchema=Types.{{contract.name.capitalized}}.{{event.name}}.paramsRawEventSchema,
     )
 
     {{#if ../../is_evm_ecosystem}}
@@ -254,7 +261,7 @@ module {{contract.name.capitalized}} = {
         ?mockEventData,
       } = args
 
-      let params: Types.{{contract.name.capitalized}}.{{event.name.capitalized}}.eventArgs = 
+      let params: Types.{{contract.name.capitalized}}.{{event.name}}.eventArgs = 
       {{#if event.params}}
       {
       {{#each event.params as | param |}}
@@ -270,7 +277,7 @@ module {{contract.name.capitalized}} = {
     {{/if}}
     {{#if ../../is_fuel_ecosystem}}
     @genType
-    let mockData = (params): Types.eventLog<Types.{{contract.name.capitalized}}.{{event.name.capitalized}}.eventArgs> => {
+    let mockData = (params): Types.eventLog<Types.{{contract.name.capitalized}}.{{event.name}}.eventArgs> => {
       EventFunctions.makeEventMocker(~params, ~mockEventData=None)
     }
     {{/if}}

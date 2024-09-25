@@ -114,7 +114,7 @@ let ethersLogToLog: Ethers.log => Types.Log.t = ({address, data, topics, logInde
 
 let convertLogs = (
   logs: array<Ethers.log>,
-  ~eventModLookup,
+  ~eventRouter,
   ~blockLoader: LazyLoader.asyncMap<Ethers.JsonRpcProvider.block>,
   ~contractInterfaceManager: ContractInterfaceManager.t,
   ~chain,
@@ -125,57 +125,64 @@ let convertLogs = (
     "numberLogs": logs->Belt.Array.length,
   })
 
-  logs
-  ->Belt.Array.keepMap(log => {
+  logs->Belt.Array.keepMap(log => {
     let topic0 = log.topics->Js.Array2.unsafe_get(0)
-    eventModLookup
-    ->EventModLookup.get(
-      ~sighash=topic0,
-      ~topicCount=log.topics->Array.length,
+    switch eventRouter->EventRouter.get(
+      ~tag=EventRouter.getEvmEventTag(~sighash=topic0, ~topicCount=log.topics->Array.length),
       ~contractAddressMapping=contractInterfaceManager.contractAddressMapping,
       ~contractAddress=log.address,
-    )
-    ->Belt.Option.map(eventMod => (log, eventMod)) //ignore events that aren't registered
-  })
-  ->Belt.Array.map(async ((log, eventMod)): Types.eventBatchQueueItem => {
-    let block = await blockLoader->LazyLoader.get(log.blockNumber)
-    let transaction = log->transactionFieldsFromLog(~logger)
-    let log = log->ethersLogToLog
-    let chainId = chain->ChainMap.Chain.toChainId
+    ) {
+    | None => None //ignore events that aren't registered
+    | Some(eventMod: module(Types.InternalEvent)) =>
+      Some(
+        blockLoader
+        ->LazyLoader.get(log.blockNumber)
+        ->Promise.thenResolve(block => {
+          let transaction = log->transactionFieldsFromLog(~logger)
+          let log = log->ethersLogToLog
+          let chainId = chain->ChainMap.Chain.toChainId
 
-    let module(Event) = eventMod
+          let module(Event) = eventMod
 
-    let decodedEvent = try contractInterfaceManager->ContractInterfaceManager.parseLogViemOrThrow(
-      ~log,
-    ) catch {
-    | exn => {
-        let params = {
-          "chainId": chainId,
-          "blockNumber": block.number,
-          "logIndex": log.logIndex,
-        }
-        let logger = Logging.createChildFrom(~logger, ~params)
-        exn->ErrorHandling.mkLogAndRaise(
-          ~msg="Failed to parse event with viem, please double check your ABI.",
-          ~logger,
-        )
-      }
-    }
+          let decodedEvent = try contractInterfaceManager->ContractInterfaceManager.parseLogViemOrThrow(
+            ~log,
+          ) catch {
+          | exn => {
+              let params = {
+                "chainId": chainId,
+                "blockNumber": block.number,
+                "logIndex": log.logIndex,
+              }
+              let logger = Logging.createChildFrom(~logger, ~params)
+              exn->ErrorHandling.mkLogAndRaise(
+                ~msg="Failed to parse event with viem, please double check your ABI.",
+                ~logger,
+              )
+            }
+          }
 
-    {
-      timestamp: block.timestamp,
-      chain,
-      blockNumber: block.number,
-      logIndex: log.logIndex,
-      event: {
-        chainId,
-        params: decodedEvent.args,
-        transaction,
-        block: block->blockFieldsFromBlock,
-        srcAddress: log.address,
-        logIndex: log.logIndex,
-      },
-      eventMod,
+          (
+            {
+              eventName: Event.name,
+              contractName: Event.contractName,
+              handlerRegister: Event.handlerRegister,
+              paramsRawEventSchema: Event.paramsRawEventSchema,
+              timestamp: block.timestamp,
+              chain,
+              blockNumber: block.number,
+              logIndex: log.logIndex,
+              event: {
+                chainId,
+                params: decodedEvent.args,
+                transaction,
+                block: block->blockFieldsFromBlock,
+                srcAddress: log.address,
+                logIndex: log.logIndex,
+              },
+            }: Types.eventBatchQueueItem
+          )
+        }),
+      )
     }
   })
 }
@@ -193,7 +200,7 @@ let queryEventsWithCombinedFilter = async (
   ~provider,
   ~chain,
   ~logger: Pino.t,
-  ~eventModLookup,
+  ~eventRouter,
 ): array<eventBatchPromise> => {
   let combinedFilterRes = await makeCombinedEventFilterQuery(
     ~provider,
@@ -210,7 +217,7 @@ let queryEventsWithCombinedFilter = async (
     })
   })
 
-  logs->convertLogs(~eventModLookup, ~blockLoader, ~contractInterfaceManager, ~chain, ~logger)
+  logs->convertLogs(~eventRouter, ~blockLoader, ~contractInterfaceManager, ~chain, ~logger)
 }
 
 type eventBatchQuery = {
@@ -228,7 +235,7 @@ let getContractEventsOnFilters = async (
   ~rpcConfig: Config.rpcConfig,
   ~blockLoader,
   ~logger,
-  ~eventModLookup,
+  ~eventRouter,
 ): eventBatchQuery => {
   let sc = rpcConfig.syncConfig
 
@@ -262,7 +269,7 @@ let getContractEventsOnFilters = async (
           ~blockLoader,
           ~chain,
           ~logger,
-          ~eventModLookup,
+          ~eventRouter,
         )->Promise.thenResolve(events => (events, nextToBlock - fromBlockRef.contents + 1))
 
       [queryTimoutPromise, eventsPromise]

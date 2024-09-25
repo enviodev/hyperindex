@@ -275,6 +275,7 @@ pub mod fuel {
                                     .map(|selected_log| EventConfig {
                                         name: selected_log.event_name.clone(),
                                         log_id: selected_log.id.clone().into(),
+                                        mint: None,
                                     })
                                     .collect(),
                             }),
