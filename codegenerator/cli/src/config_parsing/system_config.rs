@@ -822,7 +822,8 @@ impl Contract {
 #[derive(Debug, Clone, PartialEq)]
 pub enum EventPayload {
     Params(Vec<EventParam>),
-    Data(RescriptTypeIdent),
+    FuelLogData(RescriptTypeIdent),
+    FuelMint,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -945,24 +946,52 @@ impl Event {
         let mut events = vec![];
 
         for event_config in events_config.iter() {
-            let log = match &event_config.log_id {
-                None => {
-                    let logged_type = fuel_abi
-                        .get_type_by_struct_name(event_config.name.clone())
-                        .context(
-                            "Failed to derive log ids from the event name. Use the lodId field to \
-                             set it explicitely.",
-                        )?;
-                    fuel_abi.get_log_by_type(logged_type.id)?
+            let mint_event = Event {
+                name: event_config.name.clone(),
+                payload: EventPayload::FuelMint,
+                sighash: "mint".to_string(),
+            };
+            let event = match event_config {
+                FuelEventConfig {
+                    mint: Some(true),
+                    log_id: Some(_),
+                    ..
+                } => return Err(anyhow!("Mint event is not allowed to have a logId")),
+                FuelEventConfig {
+                    mint: Some(true), ..
+                } => mint_event,
+                FuelEventConfig {
+                    mint: None,
+                    log_id: None,
+                    name,
+                } if name == "Mint" => mint_event,
+                FuelEventConfig {
+                    mint: None | Some(false),
+                    log_id,
+                    name,
+                } => {
+                    let log = match &log_id {
+                        None => {
+                            let logged_type = fuel_abi
+                            .get_type_by_struct_name(name.clone())
+                            .context(
+                                "Failed to derive log ids from the event name. Use the lodId field to \
+                                 set it explicitely.",
+                            )?;
+                            fuel_abi.get_log_by_type(logged_type.id)?
+                        }
+                        Some(log_id) => fuel_abi.get_log(&log_id)?,
+                    };
+
+                    Event {
+                        name: event_config.name.clone(),
+                        payload: EventPayload::FuelLogData(log.data_type),
+                        sighash: log.id,
+                    }
                 }
-                Some(log_id) => fuel_abi.get_log(&log_id)?,
             };
 
-            events.push(Event {
-                name: event_config.name.clone(),
-                payload: EventPayload::Data(log.data_type),
-                sighash: log.id,
-            })
+            events.push(event)
         }
 
         // TODO: Clean up fuel_abi to include only relevant events

@@ -327,6 +327,88 @@ impl EntityRecordTypeTemplate {
     }
 }
 
+#[derive(Debug, PartialEq, Clone)]
+pub enum FuelEventKind {
+    LogData,
+    Mint,
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct EventMod {
+    pub sighash: String,
+    pub topic_count: usize,
+    pub event_name: String,
+    pub data_type: String,
+    pub params_raw_event_schema: String,
+    pub convert_hyper_sync_event_args_code: String,
+    pub event_filter_type: String,
+    pub get_topic_selection_code: String,
+    pub fuel_event_kind: Option<FuelEventKind>,
+}
+
+impl EventMod {
+    fn to_string(&self) -> String {
+        let sighash = &self.sighash;
+        let topic_count = &self.topic_count;
+        let event_name = &self.event_name;
+        let data_type = &self.data_type;
+        let params_raw_event_schema = &self.params_raw_event_schema;
+        let convert_hyper_sync_event_args_code = &self.convert_hyper_sync_event_args_code;
+        let event_filter_type = &self.event_filter_type;
+        let get_topic_selection_code = &self.get_topic_selection_code;
+
+        let fuel_event_kind_code = match &self.fuel_event_kind {
+            None => None,
+            Some(FuelEventKind::Mint) => Some("Mint".to_string()),
+            Some(FuelEventKind::LogData) => Some(format!(
+                r#"LogData({{
+logId: sighash,
+decode: Fuel.Receipt.getLogDataDecoder(~abi, ~logId=sighash),
+}})"#
+            )),
+        };
+
+        let non_event_mod_code = match fuel_event_kind_code {
+            None => "".to_string(),
+            Some(fuel_event_kind_code) => format!(
+                r#"
+let config: fuelEventConfig = {{
+  name,
+  kind: {fuel_event_kind_code},
+  isWildcard: (handlerRegister->HandlerTypes.Register.getEventOptions).isWildcard,
+  handlerRegister: handlerRegister->(Utils.magic: HandlerTypes.Register.t<eventArgs> => HandlerTypes.Register.t<internalEventArgs>),
+  paramsRawEventSchema: paramsRawEventSchema->(Utils.magic: S.t<eventArgs> => S.t<internalEventArgs>),
+}}"#
+            ),
+        };
+
+        format!(
+            r#"
+let sighash = "{sighash}"
+let topicCount = {topic_count}
+let name = "{event_name}"
+let contractName = contractName
+
+@genType
+type eventArgs = {data_type}
+let paramsRawEventSchema = {params_raw_event_schema}
+let convertHyperSyncEventArgs = {convert_hyper_sync_event_args_code}
+
+let handlerRegister: HandlerTypes.Register.t<eventArgs> = HandlerTypes.Register.make(
+~topic0=sighash->EvmTypes.Hex.fromStringUnsafe,
+~contractName,
+~eventName=name,
+)
+
+@genType
+type eventFilter = {event_filter_type}
+
+let getTopicSelection = {get_topic_selection_code}
+{non_event_mod_code}"#
+        )
+    }
+}
+
 #[derive(Serialize, Debug, PartialEq, Clone)]
 pub struct EventTemplate {
     pub name: String,
@@ -340,6 +422,9 @@ impl EventTemplate {
          fromStringUnsafe])->Utils.unwrapResultExn]";
 
     const EVENT_FILTER_TYPE_STUB: &'static str = "{}";
+    const CONVERT_HYPER_SYNC_EVENT_ARGS_NOOP: &'static str = "(Utils.magic: \
+    HyperSyncClient.Decoder.decodedEvent => \
+    eventArgs)";
 
     pub fn generate_event_filter_type(params: &Vec<EventParam>) -> String {
         let field_rows = params
@@ -395,7 +480,7 @@ impl EventTemplate {
 
     pub fn generate_convert_hyper_sync_event_args_code(params: &Vec<EventParam>) -> String {
         if params.is_empty() {
-            return "(Utils.magic: HyperSyncClient.Decoder.decodedEvent => eventArgs)".to_string();
+            return Self::CONVERT_HYPER_SYNC_EVENT_ARGS_NOOP.to_string();
         }
         let indexed_params = params
             .iter()
@@ -437,6 +522,8 @@ impl EventTemplate {
     }
 
     pub fn from_config_event(config_event: &system_config::Event) -> Result<Self> {
+        let event_name = config_event.name.capitalize();
+
         match &config_event.payload {
             EventPayload::Params(params) => {
                 let template_params = params
@@ -471,107 +558,74 @@ impl EventTemplate {
                     )
                 };
 
-                let topic_count = params
-                    .iter()
-                    .fold(1, |acc, param| if param.indexed { acc + 1 } else { acc });
-                let sighash = config_event.sighash.to_string();
-                let event_name = config_event.name.capitalize();
-                let data_type = data_type_expr.to_string();
-                let params_raw_event_schema =
-                    data_type_expr.to_rescript_schema(&"eventArgs".to_string());
-                let convert_hyper_sync_event_args_code =
-                    Self::generate_convert_hyper_sync_event_args_code(params);
-                let event_filter_type = Self::generate_event_filter_type(params);
-                let get_topic_selection_code = Self::generate_get_topic_selection_code(params);
-
-                let module_code = format!(
-                    r#"
-let sighash = "{sighash}"
-let topicCount = {topic_count}
-let name = "{event_name}"
-let contractName = contractName
-
-@genType
-type eventArgs = {data_type}
-let paramsRawEventSchema = {params_raw_event_schema}
-let convertHyperSyncEventArgs = {convert_hyper_sync_event_args_code}
-
-let handlerRegister: HandlerTypes.Register.t<eventArgs> = HandlerTypes.Register.make(
-  ~topic0=sighash->EvmTypes.Hex.fromStringUnsafe,
-  ~contractName,
-  ~eventName=name,
-)
-
-@genType
-type eventFilter = {event_filter_type}
-
-let getTopicSelection = {get_topic_selection_code}"#
-                );
+                let event_mod = EventMod {
+                    sighash: config_event.sighash.to_string(),
+                    topic_count: params
+                        .iter()
+                        .fold(1, |acc, param| if param.indexed { acc + 1 } else { acc }),
+                    event_name: event_name.clone(),
+                    data_type: data_type_expr.to_string(),
+                    params_raw_event_schema: data_type_expr
+                        .to_rescript_schema(&"eventArgs".to_string()),
+                    convert_hyper_sync_event_args_code:
+                        Self::generate_convert_hyper_sync_event_args_code(params),
+                    event_filter_type: Self::generate_event_filter_type(params),
+                    get_topic_selection_code: Self::generate_get_topic_selection_code(params),
+                    fuel_event_kind: None,
+                };
 
                 Ok(EventTemplate {
                     name: event_name,
-                    module_code,
+                    module_code: event_mod.to_string(),
                     params: template_params,
                 })
             }
-            EventPayload::Data(type_indent) => {
-                let topic_count = 0; //Default to 0 for fuel
-                let sighash = config_event.sighash.to_string();
-                let event_name = config_event.name.capitalize();
-                let data_type = type_indent.to_string();
-                let params_raw_event_schema = format!(
-                    "{}->Utils.Schema.coerceToJsonPgType",
-                    type_indent.to_rescript_schema()
-                );
-                let convert_hyper_sync_event_args_code = "(Utils.magic: \
-                                                     HyperSyncClient.Decoder.decodedEvent => \
-                                                     eventArgs)"
-                    .to_string();
-                let decode_hyper_fuel_data_code = format!(
-                    "Fuel.Receipt.getLogDataDecoder(~abi, ~logId=\"{}\")",
-                    config_event.sighash
-                );
-                let event_filter_type = Self::EVENT_FILTER_TYPE_STUB.to_string();
-                let get_topic_selection_code = Self::GET_TOPIC_SELECTION_CODE_STUB.to_string();
-
-                let module_code = format!(
-                    r#"
-let sighash = "{sighash}"
-let topicCount = {topic_count}
-let name = "{event_name}"
-let contractName = contractName
-
-@genType
-type eventArgs = {data_type}
-let paramsRawEventSchema = {params_raw_event_schema}
-let convertHyperSyncEventArgs = {convert_hyper_sync_event_args_code}
-
-let handlerRegister: HandlerTypes.Register.t<eventArgs> = HandlerTypes.Register.make(
-~topic0=sighash->EvmTypes.Hex.fromStringUnsafe,
-~contractName,
-~eventName=name,
-)
-
-let config: fuelEventConfig = {{
-  name,
-  kind: LogData({{
-    logId: "{sighash}",
-    decode: {decode_hyper_fuel_data_code},
-  }}),
-  isWildcard: (handlerRegister->HandlerTypes.Register.getEventOptions).isWildcard,
-  handlerRegister: handlerRegister->(Utils.magic: HandlerTypes.Register.t<eventArgs> => HandlerTypes.Register.t<internalEventArgs>),
-  paramsRawEventSchema: paramsRawEventSchema->(Utils.magic: S.t<eventArgs> => S.t<internalEventArgs>),
-}}
-
-@genType
-type eventFilter = {event_filter_type}
-
-let getTopicSelection = {get_topic_selection_code}"#
-                );
+            EventPayload::FuelLogData(type_indent) => {
+                let event_mod = EventMod {
+                    sighash: config_event.sighash.to_string(),
+                    topic_count: 0, //Default to 0 for fuel,
+                    event_name: event_name.clone(),
+                    data_type: type_indent.to_string(),
+                    params_raw_event_schema: format!(
+                        "{}->Utils.Schema.coerceToJsonPgType",
+                        type_indent.to_rescript_schema()
+                    ),
+                    convert_hyper_sync_event_args_code: Self::CONVERT_HYPER_SYNC_EVENT_ARGS_NOOP
+                        .to_string(),
+                    event_filter_type: Self::EVENT_FILTER_TYPE_STUB.to_string(),
+                    get_topic_selection_code: Self::GET_TOPIC_SELECTION_CODE_STUB.to_string(),
+                    fuel_event_kind: Some(FuelEventKind::LogData),
+                };
 
                 Ok(EventTemplate {
                     name: event_name,
-                    module_code,
+                    module_code: event_mod.to_string(),
+                    params: vec![],
+                })
+            }
+            EventPayload::FuelMint => {
+                let data_type_expr = RescriptTypeExpr::Record(vec![
+                    RescriptRecordField::new("subId".to_string(), RescriptTypeIdent::Unit),
+                    RescriptRecordField::new("amount".to_string(), RescriptTypeIdent::Unit),
+                ]);
+
+                let event_mod = EventMod {
+                    sighash: config_event.sighash.to_string(),
+                    topic_count: 0, //Default to 0 for fuel,
+                    event_name: event_name.clone(),
+                    data_type: data_type_expr.to_string(),
+                    params_raw_event_schema: data_type_expr
+                        .to_rescript_schema(&"eventArgs".to_string()),
+                    convert_hyper_sync_event_args_code: Self::CONVERT_HYPER_SYNC_EVENT_ARGS_NOOP
+                        .to_string(),
+                    event_filter_type: Self::EVENT_FILTER_TYPE_STUB.to_string(),
+                    get_topic_selection_code: Self::GET_TOPIC_SELECTION_CODE_STUB.to_string(),
+                    fuel_event_kind: Some(FuelEventKind::Mint),
+                };
+
+                Ok(EventTemplate {
+                    name: event_name,
+                    module_code: event_mod.to_string(),
                     params: vec![],
                 })
             }
