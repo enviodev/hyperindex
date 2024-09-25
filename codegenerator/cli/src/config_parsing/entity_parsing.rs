@@ -902,25 +902,6 @@ impl UserDefinedFieldType {
         }
     }
 
-    pub fn to_postgres_type<'a>(&'a self, schema: &'a Schema) -> anyhow::Result<String> {
-        match self {
-            Self::Single(gql_scalar) => gql_scalar.to_postgres_type(schema),
-            Self::ListType(field_type) => match field_type.as_ref() {
-                Self::NonNullType(non_null) => {
-                    Ok(format!("{}[]", non_null.to_postgres_type(schema)?))
-                }
-
-                _ => Err(anyhow!(
-                    "Unexpected invalid case. Only Not Null List values can be valid valid."
-                )), //This case should be caught during validation. It is unexpected that we would
-                    //it it here
-            },
-            Self::NonNullType(field_type) => {
-                Ok(format!("{} NOT NULL", field_type.to_postgres_type(schema)?))
-            }
-        }
-    }
-
     pub fn to_underlying_postgres_primitive(&self, schema: &Schema) -> anyhow::Result<PGPrimitive> {
         match self {
             Self::Single(gql_scalar) => gql_scalar.to_underlying_postgres_primitive(schema),
@@ -1132,10 +1113,6 @@ impl FieldType {
         }
     }
 
-    pub fn to_postgres_type<'a>(&'a self, schema: &'a Schema) -> anyhow::Result<String> {
-        self.to_user_defined_field_type().to_postgres_type(schema)
-    }
-
     pub fn is_optional(&self) -> bool {
         self.to_user_defined_field_type().is_optional()
     }
@@ -1266,24 +1243,6 @@ impl GqlScalar {
             name => GqlScalar::Custom(name.to_string()),
         }
     }
-    fn to_postgres_type(&self, schema: &Schema) -> anyhow::Result<String> {
-        let converted = match self {
-            GqlScalar::ID => "text",
-            GqlScalar::String => "text",
-            GqlScalar::Int => "integer",
-            GqlScalar::Float => "numeric", // Should we allow this type? Rounding issues will abound.
-            GqlScalar::Boolean => "boolean",
-            GqlScalar::Bytes => "text",
-            GqlScalar::BigInt => "numeric", // NOTE: we aren't setting precision and scale - see (8.1.2) https://www.postgresql.org/docs/current/datatype-numeric.html
-            GqlScalar::BigDecimal => "numeric",
-            GqlScalar::Timestamp => "timestamp",
-            GqlScalar::Custom(name) => match schema.try_get_type_def(name)? {
-                TypeDef::Entity(_) => "text",
-                TypeDef::Enum => name.as_str(),
-            },
-        };
-        Ok(converted.to_string())
-    }
 
     pub fn to_underlying_postgres_primitive(&self, schema: &Schema) -> anyhow::Result<PGPrimitive> {
         let converted = match self {
@@ -1338,7 +1297,10 @@ impl GqlScalar {
 
 #[cfg(test)]
 mod tests {
-    use super::{anyhow, Entity, FieldType, GqlScalar, GraphQLEnum, Schema, UserDefinedFieldType};
+    use super::{
+        anyhow, Entity, Field, FieldType, GqlScalar, GraphQLEnum, Schema, UserDefinedFieldType,
+    };
+    use crate::config_parsing::postgres_types::{Field as PGField, Primitive as PGPrimitive};
     use graphql_parser::schema::{parse_schema, Definition, Document, ObjectType, TypeDefinition};
 
     fn setup_document(schema: &str) -> anyhow::Result<Document<String>> {
@@ -1467,6 +1429,7 @@ type TestEntity @index(fields: ["tokenId"]) {
              directive on the field, or the @index(fields: [\"tokenId\"]) directive on the entity"
         ));
     }
+
     #[test]
     fn more_than_one_derived_from_directive() {
         let schema_str = r#"
@@ -1643,7 +1606,7 @@ type TestEntity {
         let gql_array_non_null_type = UserDefinedFieldType::NonNullType(Box::new(test_list_type));
         assert!(
             !gql_array_non_null_type.is_optional(),
-            "non-null field should not be optioonal"
+            "non-null field should not be optional"
         );
     }
 
@@ -1657,7 +1620,6 @@ type TestEntity {
             .collect::<Vec<_>>()
             .join("\n");
 
-        println!("{enum_type_defs}");
         let schema_string = format!(
             r#"
         type TestEntity {{
@@ -1682,57 +1644,73 @@ type TestEntity {
 
         test_field.field_type
     }
+
     fn get_field_type_helper(gql_field_str: &str) -> FieldType {
         get_field_type_helper_with_additional(gql_field_str, vec![])
     }
 
-    fn gql_type_to_postgres_type_test_helper(gql_field_str: &str) -> String {
-        let field_type = get_field_type_helper(gql_field_str);
-        let empty_schema = Schema::empty();
-        field_type
-            .to_postgres_type(&empty_schema)
-            .expect("unable to get postgres type")
-    }
-
     #[test]
-    fn gql_enum_type_to_postgres_type() {
+    fn gql_enum_type_to_pgprimitive() {
         let name = String::from("TestEnum");
         let test_enum = GraphQLEnum::new(name.clone(), vec!["TEST_VALUE".to_string()]).unwrap();
         let field_type =
             get_field_type_helper_with_additional("TestEnum!", vec![test_enum.clone()]);
         let schema = Schema::new(vec![], vec![test_enum]).unwrap();
-        let pg_type = field_type
-            .to_postgres_type(&schema)
-            .expect("unable to get postgres type");
-        assert_eq!(pg_type, "TestEnum NOT NULL");
+        let pg_primitive = field_type
+            .to_user_defined_field_type()
+            .to_underlying_postgres_primitive(&schema)
+            .expect("unable to get postgres primitive");
+        assert_eq!(pg_primitive, PGPrimitive::Enum("TestEnum".to_string()));
     }
 
     #[test]
-    fn gql_single_not_null_array_to_pg_type() {
+    fn gql_single_not_null_array_to_pgprimitive() {
         let gql_type = "[String!]!";
-        let pg_type = gql_type_to_postgres_type_test_helper(gql_type);
-        assert_eq!(pg_type, "text[] NOT NULL");
+        let field_type = get_field_type_helper(gql_type);
+        let empty_schema = Schema::empty();
+        let pg_primitive = field_type
+            .to_user_defined_field_type()
+            .to_underlying_postgres_primitive(&empty_schema)
+            .expect("unable to get postgres primitive");
+        assert_eq!(pg_primitive, PGPrimitive::Text);
+        assert!(field_type.to_user_defined_field_type().is_array());
     }
 
     #[test]
-    fn gql_multi_not_null_array_to_pg_type() {
+    fn gql_multi_not_null_array_to_pgprimitive() {
         let gql_type = "[[Int!]!]!";
-        let pg_type = gql_type_to_postgres_type_test_helper(gql_type);
-        assert_eq!(pg_type, "integer[][] NOT NULL");
+        let field_type = get_field_type_helper(gql_type);
+        let empty_schema = Schema::empty();
+        let pg_primitive = field_type
+            .to_user_defined_field_type()
+            .to_underlying_postgres_primitive(&empty_schema)
+            .expect("unable to get postgres primitive");
+        assert_eq!(pg_primitive, PGPrimitive::Integer);
+        assert!(field_type.to_user_defined_field_type().is_array());
     }
 
     #[test]
     #[should_panic]
-    fn gql_single_nullable_array_to_pg_type_should_panic() {
-        let gql_type = "[Int]!"; //Nested lists need to be not nullable
-        gql_type_to_postgres_type_test_helper(gql_type);
+    fn gql_single_nullable_array_to_pgprimitive_should_panic() {
+        let gql_type = "[Int]!"; // Nested lists need to be not nullable
+        let field_type = get_field_type_helper(gql_type);
+        let empty_schema = Schema::empty();
+        let _pg_primitive = field_type
+            .to_user_defined_field_type()
+            .to_underlying_postgres_primitive(&empty_schema)
+            .expect("should panic due to validation error");
     }
 
     #[test]
     #[should_panic]
-    fn gql_multi_nullable_array_to_pg_type_should_panic() {
-        let gql_type = "[[Int!]]!"; //Nested lists need to be not nullable
-        gql_type_to_postgres_type_test_helper(gql_type);
+    fn gql_multi_nullable_array_to_pgprimitive_should_panic() {
+        let gql_type = "[[Int!]]!"; // Nested lists need to be not nullable
+        let field_type = get_field_type_helper(gql_type);
+        let empty_schema = Schema::empty();
+        let _pg_primitive = field_type
+            .to_user_defined_field_type()
+            .to_underlying_postgres_primitive(&empty_schema)
+            .expect("should panic due to validation error");
     }
 
     #[test]
@@ -1755,7 +1733,7 @@ type TestEntity {
     }
 
     #[test]
-    #[ignore = "We don't support list types with nullable scalars due to postgres so skipping this"]
+    #[ignore = "We don't support list types with nullable scalars due to postgres limitations"]
     fn gql_type_to_rescript_array_nullable_string() {
         let field_type = get_field_type_helper("[String]!");
 
@@ -1767,115 +1745,112 @@ type TestEntity {
         );
     }
 
-    //     use super::*;
-    //     use graphql_parser::schema::{parse_schema, Document};
+    #[test]
+    fn test_get_postgres_field_basic() {
+        let schema_str = r#"
+type TestEntity {
+  id: ID!
+  name: String! @index
+}
+        "#;
+        let gql_doc = setup_document(schema_str).unwrap();
+        let schema = Schema::from_document(gql_doc).unwrap();
+        let entity = schema.entities.get("TestEntity").unwrap();
+        let field = entity.fields.get("name").unwrap();
+        let pg_field = field
+            .get_postgres_field(&schema, entity)
+            .expect("Failed to get postgres field")
+            .unwrap();
 
-    //     fn setup_document(schema: &str) -> anyhow::Result<Document<String>> {
-    //         parse_schema::<String>(schema)
-    //             .map_err(|e| anyhow!("EE201: Failed to parse schema: {:?}", e))
-    //     }
+        assert_eq!(pg_field.field_name, "name");
+        assert_eq!(pg_field.field_type, PGPrimitive::Text);
+        assert!(pg_field.is_index);
+        assert!(!pg_field.is_array);
+        assert!(!pg_field.is_nullable);
+        assert_eq!(pg_field.linked_entity, None);
+    }
 
-    //     fn get_entities_from_document(gql_doc: Document<String>) -> Vec<ObjectType<String>> {
-    //         gql_doc
-    //             .definitions
-    //             .into_iter()
-    //             .filter_map(|d| {
-    //                 if let Definition::TypeDefinition(TypeDefinition::Object(obj)) = d {
-    //                     Some(obj)
-    //                 } else {
-    //                     None
-    //                 }
-    //             })
-    //             .collect()
-    //     }
+    #[test]
+    fn test_get_postgres_field_with_linked_entity() {
+        let schema_str = r#"
+type TestEntity {
+  id: ID!
+  relatedEntity: RelatedEntity!
+}
 
-    //     fn get_first_entity_from_string(schema_str: &str) -> ObjectType<String> {
-    //         let gql_doc = setup_document(schema_str).unwrap();
+type RelatedEntity {
+  id: ID!
+}
+        "#;
+        let gql_doc = setup_document(schema_str).unwrap();
+        let schema = Schema::from_document(gql_doc).unwrap();
+        let entity = schema.entities.get("TestEntity").unwrap();
+        let field = entity.fields.get("relatedEntity").unwrap();
+        let pg_field = field
+            .get_postgres_field(&schema, entity)
+            .expect("Failed to get postgres field")
+            .unwrap();
 
-    //         let entities = get_entities_from_document(gql_doc);
+        assert_eq!(pg_field.field_name, "relatedEntity");
+        assert_eq!(pg_field.field_type, PGPrimitive::Text);
+        assert!(!pg_field.is_index);
+        assert!(!pg_field.is_array);
+        assert!(!pg_field.is_nullable);
+        assert_eq!(pg_field.linked_entity, Some("RelatedEntity".to_string()));
+    }
 
-    //         entities.first().unwrap().clone()
-    //     }
+    #[test]
+    fn test_get_postgres_field_array_type() {
+        let schema_str = r#"
+type TestEntity {
+  id: ID!
+  tags: [String!]!
+}
+        "#;
+        let gql_doc = setup_document(schema_str).unwrap();
+        let schema = Schema::from_document(gql_doc).unwrap();
+        let entity = schema.entities.get("TestEntity").unwrap();
+        let field = entity.fields.get("tags").unwrap();
+        let pg_field = field
+            .get_postgres_field(&schema, entity)
+            .expect("Failed to get postgres field")
+            .unwrap();
 
-    //     #[test]
-    //     fn test_field_does_not_exist_in_entity() {
-    //         let schema_str = r#"
-    // type TestEntity
-    //   @index(fields: ["field_that_doesnt_exist", "id", "tokenId"]) {
-    //   id: ID!
-    //   tokenId: BigInt! @index
-    //   collection: String!
-    //   owner: String!
-    // }
-    //         "#;
-    //         let first_entity_schema = get_first_entity_from_string(schema_str);
+        assert_eq!(pg_field.field_name, "tags");
+        assert_eq!(pg_field.field_type, PGPrimitive::Text);
+        assert!(!pg_field.is_index);
+        assert!(pg_field.is_array);
+        assert!(!pg_field.is_nullable);
+        assert_eq!(pg_field.linked_entity, None);
+    }
 
-    //         let parsed_entity = Entity::from_object(&first_entity_schema);
+    #[test]
+    fn test_get_postgres_field_enum_type() {
+        let schema_str = r#"
+enum Status {
+  ACTIVE
+  INACTIVE
+}
 
-    //         assert!(parsed_entity.is_err());
-    //         assert_eq!(parsed_entity.unwrap_err().to_string(), "Index error: Field 'field_that_doesnt_exist' does not exist in entity 'TestEntity', please remove it from the `@index` directive.");
-    //     }
+type TestEntity {
+  id: ID!
+  status: Status!
+}
+        "#;
+        let gql_doc = setup_document(schema_str).unwrap();
+        let schema = Schema::from_document(gql_doc).unwrap();
+        let entity = schema.entities.get("TestEntity").unwrap();
+        let field = entity.fields.get("status").unwrap();
+        let pg_field = field
+            .get_postgres_field(&schema, entity)
+            .expect("Failed to get postgres field")
+            .unwrap();
 
-    //     //     #[test]
-    //     //     fn test_field_is_derived_from_cannot_be_indexed() {
-    //     //         let schema_str = r#"
-    //     // type Token
-    //     //   @index(fields: ["id", "tokenId"])
-    //     //   @index(fields: ["tokenId"])
-    //     //   # @index(fields: ["collection", "tokenId"])
-    //     //   @index(fields: ["tokenId", "collection"]) {
-    //     //   id: ID!
-    //     //   tokenId: BigInt! @index
-    //     //   collection: NftCollection!
-    //     //   owner: User!
-    //     // }
-    //     //         "#;
-    //     //         let doc = setup_document(schema_str).unwrap();
-    //     //         let schema = Schema::from_document(doc);
-
-    //     //         assert!(schema.is_err());
-    //     //         assert_eq!(schema.unwrap_err().to_string(), "Index error: Field 'derivedField' is a @derivedFrom field and cannot be indexed in entity 'TestEntity', please remove it from the `@index` directive.");
-    //     //     }
-
-    //     //     #[test]
-    //     //     fn test_duplicate_index_definitions() {
-    //     //         let schema_str = r#"
-    //     // type Token
-    //     //   @index(fields: ["id", "tokenId"])
-    //     //   @index(fields: ["tokenId"])
-    //     //   # @index(fields: ["collection", "tokenId"])
-    //     //   @index(fields: ["tokenId", "collection"]) {
-    //     //   id: ID!
-    //     //   tokenId: BigInt! @index
-    //     //   collection: NftCollection!
-    //     //   owner: User!
-    //     // }
-    //     //         "#;
-    //     //         let doc = setup_document(schema_str).unwrap();
-    //     //         let schema = Schema::from_document(doc);
-
-    //     //         assert!(schema.is_err());
-    //     //         assert_eq!(schema.unwrap_err().to_string(), "Index error: Duplicate index found on fields [\"field1\", \"field2\"] in entity 'TestEntity'");
-    //     //     }
-
-    //     //     #[test]
-    //     //     fn test_field_incorrectly_indexed_when_already_indexed() {
-    //     //         let schema_str = r#"
-    //     // type Token
-    //     //   @index(fields: ["id", "tokenId"])
-    //     //   @index(fields: ["tokenId"])
-    //     //   # @index(fields: ["collection", "tokenId"])
-    //     //   @index(fields: ["tokenId", "collection"]) {
-    //     //   id: ID!
-    //     //   tokenId: BigInt! @index
-    //     //   collection: NftCollection!
-    //     //   owner: User!
-    //     // }
-    //     //         "#;
-    //     //         let doc = setup_document(schema_str).unwrap();
-    //     //         let schema = Schema::from_document(doc);
-
-    //     //         assert!(schema.is_err());
-    //     //         assert_eq!(schema.unwrap_err().to_string(), "EE202: The field 'field1' is marked as indexed. Please either remove the @index directive on the field, or the @index(fields: [\"field1\"]) directive on the entity");
-    //     //     }
+        assert_eq!(pg_field.field_name, "status");
+        assert_eq!(pg_field.field_type, PGPrimitive::Enum("Status".to_string()));
+        assert!(!pg_field.is_index);
+        assert!(!pg_field.is_array);
+        assert!(!pg_field.is_nullable);
+        assert_eq!(pg_field.linked_entity, None);
+    }
 }
