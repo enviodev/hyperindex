@@ -57,3 +57,4 @@ networks:
             logId: "15402277555065905665"
           - name: BytesLog
             logId: "14832741149864513620"
+          - name: Mint

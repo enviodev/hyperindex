@@ -14,7 +14,6 @@ type item = {
   transactionId: string,
   contractId: Address.t,
   receipt: Fuel.Receipt.t,
-  receiptType: Fuel.receiptType,
   receiptIndex: int,
   block: block,
 }
@@ -53,7 +52,3 @@ let queryBlockData: (
 
 let getHeightWithRetry: (~serverUrl: string, ~logger: Pino.t) => promise<int>
 let pollForHeightGtOrEq: (~serverUrl: string, ~blockNumber: int, ~logger: Pino.t) => promise<int>
-let queryBlockHashes: (
-  ~serverUrl: string,
-  ~blockNumbers: array<int>,
-) => promise<queryResponse<array<blockNumberAndHash>>>

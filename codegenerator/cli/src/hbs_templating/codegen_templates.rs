@@ -605,8 +605,8 @@ impl EventTemplate {
             }
             EventPayload::FuelMint => {
                 let data_type_expr = RescriptTypeExpr::Record(vec![
-                    RescriptRecordField::new("subId".to_string(), RescriptTypeIdent::Unit),
-                    RescriptRecordField::new("amount".to_string(), RescriptTypeIdent::Unit),
+                    RescriptRecordField::new("subId".to_string(), RescriptTypeIdent::String),
+                    RescriptRecordField::new("amount".to_string(), RescriptTypeIdent::BigInt),
                 ]);
 
                 let event_mod = EventMod {

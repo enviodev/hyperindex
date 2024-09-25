@@ -210,3 +210,12 @@ AllEvents.BytesLog.handler(async ({ event }) => {
     true
   );
 });
+
+const mintSchema = S.object({
+  subId: S.string,
+  amount: SExtra.bigint,
+});
+AllEvents.Mint.handler(async ({ event }) => {
+  mintSchema.assert(event.params)!;
+  expectType<AssertSchemaType<typeof event.params, typeof mintSchema>>(true);
+});

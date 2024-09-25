@@ -386,6 +386,7 @@ module Make = (
         let chainId = chain->ChainMap.Chain.toChainId
         let eventTag = switch receipt {
         | LogData({rb}) => BigInt.toString(rb)
+        | Mint(_) => mintEventTag
         }
 
         let eventConfig = switch workerConfig.eventRouter->EventRouter.get(
@@ -431,6 +432,10 @@ module Make = (
               )
             }
           }
+        | ({kind: Mint}, Mint({val, subId})) => {
+          "subId": subId,
+          "amount": val,
+        }->Obj.magic
         // This should never happen unless there's a bug in the routing logic
         | _ => Js.Exn.raiseError("Unexpected bug in the event routing logic")
         }

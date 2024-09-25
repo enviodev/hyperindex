@@ -34,7 +34,6 @@ type item = {
   transactionId: string,
   contractId: Address.t,
   receipt: Fuel.Receipt.t,
-  receiptType: Fuel.receiptType,
   receiptIndex: int,
   block: block,
 }
@@ -102,8 +101,10 @@ module LogsQuery = {
           Data,
           ReceiptIndex,
           ReceiptType,
-          Ra,
           Rb,
+          // TODO: Include them only when there's a mint/burn receipt selection 
+          SubId,
+          Val
         ],
         block: [Id, Height, Time],
       },
@@ -156,7 +157,6 @@ module LogsQuery = {
             },
             contractId,
             receipt: receipt->(Utils.magic: HyperFuelClient.FuelTypes.receipt => Fuel.Receipt.t),
-            receiptType: receipt.receiptType,
             receiptIndex: receipt.receiptIndex,
           })
           ->ignore
@@ -308,90 +308,7 @@ module HeightQuery = {
   }
 }
 
-module BlockHashes = {
-  let makeRequestBody = (~blockNumber): HyperFuelJsonApi.QueryTypes.postQueryBody => {
-    fromBlock: blockNumber,
-    toBlockExclusive: blockNumber + 1,
-    fieldSelection: {
-      receipt: [Ra, Rb, BlockHeight, RootContractId, Data, ReceiptType],
-      // block: [Number, Hash],
-      transaction: [Id, Time],
-    },
-    // includeAllBlocks: true,
-  }
-
-  let convertResponse = (
-    res: result<HyperFuelJsonApi.ResponseTypes.queryResponse, HyperFuelJsonApi.Query.queryError>,
-  ): queryResponse<array<blockNumberAndHash>> => {
-    switch res {
-    | Error(e) => Error(QueryError(e))
-    | Ok(successRes) =>
-      successRes.data
-      ->Array.flatMap(item => {
-        item.blocks->Option.mapWithDefault([], blocks => {
-          blocks->Array.map(
-            block => {
-              switch (block.height, block.id) {
-              | (Some(blockNumber), Some(hash)) =>
-                Ok(
-                  (
-                    {
-                      blockNumber,
-                      hash,
-                    }: blockNumberAndHash
-                  ),
-                )
-              | _ =>
-                let missingParams =
-                  [
-                    block.height->Utils.Option.mapNone("block.height"),
-                    block.id->Utils.Option.mapNone("block.id"),
-                  ]->Array.keepMap(p => p)
-
-                Error(
-                  UnexpectedMissingParams({
-                    queryName: "query block hash HyperSync",
-                    missingParams,
-                  }),
-                )
-              }
-            },
-          )
-        })
-      })
-      ->Utils.Array.transposeResults
-    }
-  }
-
-  let queryBlockHash = async (~serverUrl, ~blockNumber): queryResponse<
-    array<blockNumberAndHash>,
-  > => {
-    let body = makeRequestBody(~blockNumber)
-
-    let executeQuery = () => HyperFuelJsonApi.executeHyperSyncQuery(~postQueryBody=body, ~serverUrl)
-
-    let logger = Logging.createChild(
-      ~params={"type": "hypersync get blockhash query", "blockNumber": blockNumber},
-    )
-
-    let res = await executeQuery->Time.retryAsyncWithExponentialBackOff(~logger=Some(logger))
-
-    res->convertResponse
-  }
-
-  let queryBlockHashes = async (~serverUrl, ~blockNumbers) => {
-    let res =
-      await blockNumbers
-      ->Array.map(blockNumber => queryBlockHash(~blockNumber, ~serverUrl))
-      ->Promise.all
-    res
-    ->Utils.Array.transposeResults
-    ->Result.map(blockHashesNested => blockHashesNested->Array.concatMany)
-  }
-}
-
 let queryLogsPage = LogsQuery.queryLogsPage
 let queryBlockData = BlockData.queryBlockData
 let getHeightWithRetry = HeightQuery.getHeightWithRetry
 let pollForHeightGtOrEq = HeightQuery.pollForHeightGtOrEq
-let queryBlockHashes = BlockHashes.queryBlockHashes

@@ -22,12 +22,13 @@ external getLogDecoder: (~abi: Ethers.abi, ~logId: string) => (. string) => unkn
 
 module Receipt = {
   @tag("receiptType")
-  type t = | @as(6) LogData({data: string, rb: bigint})
+  type t = | @as(6) LogData({data: string, rb: bigint}) | @as(11) Mint({
+    val: bigint,
+    subId: string,
+  })
 
   let getLogDataDecoder = (~abi: Ethers.abi, ~logId: string) => {
     let decode = getLogDecoder(~abi, ~logId)
     data => data->decode->Utils.magic
   }
-
-  let unitDecoder = (_: t) => ()
 }
