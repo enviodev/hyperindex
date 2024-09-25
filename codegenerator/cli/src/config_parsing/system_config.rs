@@ -824,6 +824,7 @@ pub enum EventPayload {
     Params(Vec<EventParam>),
     FuelLogData(RescriptTypeIdent),
     FuelMint,
+    FuelBurn,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -951,6 +952,11 @@ impl Event {
                 payload: EventPayload::FuelMint,
                 sighash: "mint".to_string(),
             };
+            let burn_event = Event {
+                name: event_config.name.clone(),
+                payload: EventPayload::FuelBurn,
+                sighash: "burn".to_string(),
+            };
             let event = match event_config {
                 FuelEventConfig {
                     mint: Some(true),
@@ -958,15 +964,40 @@ impl Event {
                     ..
                 } => return Err(anyhow!("Mint event is not allowed to have a logId")),
                 FuelEventConfig {
+                    burn: Some(true),
+                    log_id: Some(_),
+                    ..
+                } => return Err(anyhow!("Burn event is not allowed to have a logId")),
+                FuelEventConfig {
+                    mint: Some(true),
+                    burn: Some(true),
+                    ..
+                } => {
+                    return Err(anyhow!(
+                        "Mint event is not allowed to be Burn at the same time"
+                    ))
+                }
+                FuelEventConfig {
                     mint: Some(true), ..
                 } => mint_event,
                 FuelEventConfig {
                     mint: None,
                     log_id: None,
                     name,
+                    ..
                 } if name == "Mint" => mint_event,
                 FuelEventConfig {
+                    burn: Some(true), ..
+                } => burn_event,
+                FuelEventConfig {
+                    burn: None,
+                    log_id: None,
+                    name,
+                    ..
+                } if name == "Burn" => burn_event,
+                FuelEventConfig {
                     mint: None | Some(false),
+                    burn: None | Some(false),
                     log_id,
                     name,
                 } => {

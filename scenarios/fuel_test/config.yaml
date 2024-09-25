@@ -58,3 +58,4 @@ networks:
           - name: BytesLog
             logId: "14832741149864513620"
           - name: Mint
+          - name: Burn
