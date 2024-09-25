@@ -395,9 +395,9 @@ let paramsRawEventSchema = {params_raw_event_schema}
 let convertHyperSyncEventArgs = {convert_hyper_sync_event_args_code}
 
 let handlerRegister: HandlerTypes.Register.t<eventArgs> = HandlerTypes.Register.make(
-~topic0=sighash->EvmTypes.Hex.fromStringUnsafe,
-~contractName,
-~eventName=name,
+  ~topic0=sighash->EvmTypes.Hex.fromStringUnsafe,
+  ~contractName,
+  ~eventName=name,
 )
 
 @genType
@@ -1304,7 +1304,8 @@ let handlerRegister: HandlerTypes.Register.t<eventArgs> = HandlerTypes.Register.
 @genType
 type eventFilter = {{  }}
 
-let getTopicSelection = (eventFilters) => eventFilters->SingleOrMultiple.normalizeOrThrow->Belt.Array.map(_eventFilter => LogSelection.makeTopicSelection(~topic0=[sighash->EvmTypes.Hex.fromStringUnsafe], )->Utils.unwrapResultExn)"#
+let getTopicSelection = (eventFilters) => eventFilters->SingleOrMultiple.normalizeOrThrow->Belt.Array.map(_eventFilter => LogSelection.makeTopicSelection(~topic0=[sighash->EvmTypes.Hex.fromStringUnsafe], )->Utils.unwrapResultExn)
+"#
             ),
         }
     }
@@ -1345,7 +1346,8 @@ let handlerRegister: HandlerTypes.Register.t<eventArgs> = HandlerTypes.Register.
 @genType
 type eventFilter = {{  }}
 
-let getTopicSelection = (eventFilters) => eventFilters->SingleOrMultiple.normalizeOrThrow->Belt.Array.map(_eventFilter => LogSelection.makeTopicSelection(~topic0=[sighash->EvmTypes.Hex.fromStringUnsafe], )->Utils.unwrapResultExn)"#
+let getTopicSelection = (eventFilters) => eventFilters->SingleOrMultiple.normalizeOrThrow->Belt.Array.map(_eventFilter => LogSelection.makeTopicSelection(~topic0=[sighash->EvmTypes.Hex.fromStringUnsafe], )->Utils.unwrapResultExn)
+"#
                 ),
             }
         );
