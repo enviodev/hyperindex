@@ -1297,10 +1297,8 @@ impl GqlScalar {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        anyhow, Entity, Field, FieldType, GqlScalar, GraphQLEnum, Schema, UserDefinedFieldType,
-    };
-    use crate::config_parsing::postgres_types::{Field as PGField, Primitive as PGPrimitive};
+    use super::{anyhow, Entity, FieldType, GqlScalar, GraphQLEnum, Schema, UserDefinedFieldType};
+    use crate::config_parsing::postgres_types::Primitive as PGPrimitive;
     use graphql_parser::schema::{parse_schema, Definition, Document, ObjectType, TypeDefinition};
 
     fn setup_document(schema: &str) -> anyhow::Result<Document<String>> {
