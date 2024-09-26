@@ -73,7 +73,33 @@ type C {
   stringThatIsMirroredToA: String!
   d: [D!]! @derivedFrom(field: "c")
 }
+
 type D {
   id: ID!
   c: ID! @index
+}
+
+type EntityWithAllTypes {
+  id: ID!
+  string: String!
+  optString: String
+  arrayOfStrings: [String!]!
+  int_: Int!
+  optInt: Int
+  arrayOfInts: [Int!]!
+  float_: Float!
+  optFloat: Float
+  arrayOfFloats: [Float!]!
+  bool: Boolean!
+  optBool: Boolean
+  arrayOfBool: [Boolean!]!
+  bigInt: BigInt!
+  optBigInt: BigInt
+  arrayOfBigInts: [BigInt!]!
+  bigDecimal: BigDecimal!
+  optBigDecimal: BigDecimal
+  arrayOfBigDecimals: [BigDecimal!]!
+  # timestamp: Timestamp!
+  # optTimestamp: Timestamp
+  # arrayOfTimestamps: [Timestamp!]!
 }

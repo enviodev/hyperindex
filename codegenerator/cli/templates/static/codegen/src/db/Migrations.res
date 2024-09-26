@@ -93,6 +93,20 @@ module EntityHistory = {
           -- Convert the record into a JSONB object, iterate over each field
           SELECT jsonb_object_agg(d.key, 
                                   CASE 
+                                      WHEN jsonb_typeof(d.value) = 'array' THEN 
+                                          CASE 
+                                              WHEN jsonb_array_length(d.value) = 0 THEN '[]'::JSONB  -- Return empty array
+                                              ELSE 
+                                                  (
+                                                      SELECT jsonb_agg(
+                                                          CASE 
+                                                              WHEN jsonb_typeof(elem) = 'number' THEN to_jsonb(elem::TEXT)
+                                                              ELSE elem
+                                                          END
+                                                      )
+                                                      FROM jsonb_array_elements(d.value) AS elem
+                                                  )
+                                          END
                                       WHEN jsonb_typeof(d.value) = 'number' THEN to_jsonb(d.value::TEXT)
                                       ELSE d.value
                                   END)
