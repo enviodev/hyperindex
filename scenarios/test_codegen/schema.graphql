@@ -92,14 +92,18 @@ type EntityWithAllTypes {
   arrayOfFloats: [Float!]!
   bool: Boolean!
   optBool: Boolean
-  arrayOfBool: [Boolean!]!
+  # NOTE: array of boolean is currently broken since queries would require special type casting.
+  # see https://github.com/porsager/postgres/pull/392
+  # arrayOfBool: [Boolean!]!
   bigInt: BigInt!
   optBigInt: BigInt
   arrayOfBigInts: [BigInt!]!
   bigDecimal: BigDecimal!
   optBigDecimal: BigDecimal
   arrayOfBigDecimals: [BigDecimal!]!
+  # NOTE: Timestamp serialization is currently just a type cast and so testing is non deterministic
   # timestamp: Timestamp!
   # optTimestamp: Timestamp
+  # NOTE: array of timestamps has the same problem as array of booleans described above
   # arrayOfTimestamps: [Timestamp!]!
 }

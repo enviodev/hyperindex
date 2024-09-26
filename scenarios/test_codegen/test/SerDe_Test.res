@@ -28,7 +28,6 @@ describe("SerDe Test", () => {
       optBool: Some(false),
       //TODO: get array of bools working
       // arrayOfBool: [true, false],
-      arrayOfBool: [],
       bigInt: BigInt.fromInt(1),
       optBigInt: Some(BigInt.fromInt(2)),
       arrayOfBigInts: [BigInt.fromInt(3), BigInt.fromInt(4)],
