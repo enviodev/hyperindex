@@ -534,14 +534,14 @@ fn get_positive_integer(
         Value::Int(i) => {
             let val = i.as_i64().ok_or_else(|| {
                 anyhow!(
-                    "{} value must be a positive integer. Field '{}'",
+                    "EE217: {} value must be a positive integer. Field '{}'",
                     param_name,
                     field_name
                 )
             })?;
             if val < 0 {
                 return Err(anyhow!(
-                    "{} value must be a positive integer. Field '{}'",
+                    "EE217: {} value must be a positive integer. Field '{}'",
                     param_name,
                     field_name
                 ));
@@ -549,7 +549,7 @@ fn get_positive_integer(
             Ok(val as u32)
         }
         _ => Err(anyhow!(
-            "{} value must be an integer. Field '{}'",
+            "EE217: {} value must be an integer. Field '{}'",
             param_name,
             field_name
         )),
@@ -675,23 +675,23 @@ impl Field {
         if let Some(decimal_precision_directive) = decimal_precision_directives.first() {
             if !matches!(underlying_scalar, GqlScalar::BigInt(_)) {
                 return Err(anyhow!(
-                    "The precision directive on a field is only suitable for BigInt scalar type. \
-                     Field '{}'",
+                    "EE215: The precision directive on a field is only suitable for BigInt scalar \
+                     type. Field '{}'",
                     field.name
                 ));
             }
             if decimal_precision_directive.arguments.len() != 1 {
                 return Err(anyhow!(
-                    "The precision directive on a BigInt should only take a single integer \
-                     argument called 'precision'. Field '{}'",
+                    "EE216: The precision directive on a BigInt should only take a single integer \
+                     argument called 'digits'. Field '{}'",
                     field.name
                 ));
             }
             let (arg_name, arg_value) = decimal_precision_directive.arguments.first().unwrap();
             if arg_name != "digits" {
                 return Err(anyhow!(
-                    "The precision directive on a BigInt should only have a 'digits' parameter. \
-                     Unknown parameter '{}'. Field '{}'",
+                    "EE216: The precision directive on a BigInt should only have a 'digits' \
+                     parameter. Unknown parameter '{}'. Field '{}'",
                     arg_name,
                     field.name
                 ));
@@ -704,8 +704,8 @@ impl Field {
         if let Some(numeric_directive) = numeric_directives.first() {
             if !matches!(underlying_scalar, GqlScalar::BigDecimal(_)) {
                 return Err(anyhow!(
-                    "The numeric directive on a field is only suitable for BigDecimal scalar \
-                     type. Field '{}'",
+                    "EE215: The numeric directive on a field is only suitable for BigDecimal \
+                     scalar type. Field '{}'",
                     field.name
                 ));
             }
@@ -723,8 +723,9 @@ impl Field {
                     }
                     unknown_param => {
                         return Err(anyhow!(
-                            "The numeric directive on a BigDecimal should only have 'precision' \
-                             and 'scale' parameters. Unknown parameter '{}'. Field '{}'",
+                            "EE216: The numeric directive on a BigDecimal should only have \
+                             'precision' and 'scale' parameters. Unknown parameter '{}'. Field \
+                             '{}'",
                             unknown_param,
                             field.name
                         ));
@@ -733,8 +734,8 @@ impl Field {
             }
             if precision.is_none() || scale.is_none() {
                 return Err(anyhow!(
-                    "The numeric directive on a BigDecimal must have both 'precision' and 'scale' \
-                     parameters. Field '{}'",
+                    "EE216: The numeric directive on a BigDecimal must have both 'precision' and \
+                     'scale' parameters. Field '{}'",
                     field.name
                 ));
             }
@@ -1206,7 +1207,7 @@ impl Serialize for UserDefinedFieldType {
     }
 }
 
-#[derive(Default)] // Implementing Default trait
+#[derive(Default)]
 pub struct PgTypeModifications {
     pub big_int_precision: Option<u32>,
     pub big_decimal_precision_scale: Option<(u32, u32)>,
@@ -2129,15 +2130,16 @@ type TestEntity {
                                     (expected_precision, expected_scale)
                                 {
                                     assert_eq!(
-                                    (*precision, *scale),
-                                    (expected_precision, expected_scale),
-                                    "Field '{}' has precision {}, scale {}, expected precision {}, scale {}",
-                                    field.name,
-                                    precision,
-                                    scale,
-                                    expected_precision,
-                                    expected_scale
-                                );
+                                        (*precision, *scale),
+                                        (expected_precision, expected_scale),
+                                        "Field '{}' has precision {}, scale {}, expected \
+                                         precision {}, scale {}",
+                                        field.name,
+                                        precision,
+                                        scale,
+                                        expected_precision,
+                                        expected_scale
+                                    );
                                 } else {
                                     panic!(
                                         "Expected precision and scale for BigDecimal field '{}'",
