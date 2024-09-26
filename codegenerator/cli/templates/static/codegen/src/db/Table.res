@@ -13,7 +13,7 @@ type fieldType =
   | @as("TIMESTAMP WITH TIME ZONE") Timestamp
   | @as("TIMESTAMP") TimestampWithoutTimezone
   | @as("TIMESTAMP WITH TIME ZONE NULL") TimestampWithNullTimezone
-  | Enum(string)
+  | Custom(string)
 
 type field = {
   fieldName: string,
