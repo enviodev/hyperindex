@@ -82,16 +82,30 @@ let createEnumIfNotExists = (sql, enum: Enums.enumType<_>) => {
 
 module EntityHistory = {
   let createEntityHistoryTableFunctions: unit => promise<unit> = async () => {
-    // Creates a function for copying all entities in a table into the entity_history table
-    // when near the head of the chain
     let _ = await sql->unsafe(`
-      CREATE OR REPLACE FUNCTION copy_table_to_entity_history(
-          source_table_name TEXT,
-          block_timestamp INTEGER,
-          chain_id INTEGER,
-          block_number INTEGER,
-          log_index INTEGER
-      )
+      CREATE OR REPLACE FUNCTION safe_record_to_jsonb(input_record RECORD)
+      RETURNS JSONB
+      LANGUAGE plpgsql
+      AS $$
+      DECLARE
+          json_result JSONB;
+      BEGIN
+          -- Convert the record into a JSONB object, iterate over each field
+          SELECT jsonb_object_agg(d.key, 
+                                  CASE 
+                                      WHEN jsonb_typeof(d.value) = 'number' THEN to_jsonb(d.value::TEXT)
+                                      ELSE d.value
+                                  END)
+          INTO json_result
+          FROM jsonb_each(to_jsonb(input_record)) AS d;
+
+          RETURN json_result;
+      END;
+      $$;
+    `)
+
+    let _ = await sql->unsafe(`
+      CREATE OR REPLACE FUNCTION copy_table_to_entity_history(source_table_name TEXT)
       RETURNS VOID AS $$
       DECLARE
           row RECORD;
@@ -114,12 +128,12 @@ module EntityHistory = {
               )
               VALUES (
                 row.id,
-                block_timestamp,
-                chain_id,
-                block_number,
-                log_index,
+                0,
+                0,
+                0,
+                0,
                 source_table_name::entity_type,
-                row_to_json(row)
+                safe_record_to_jsonb(row)
               );
           END LOOP;
       END;
@@ -133,7 +147,7 @@ module EntityHistory = {
           p_chain_id INTEGER,
           p_block_number INTEGER,
           p_log_index INTEGER,
-          p_params JSON,
+          p_params JSONB,
           p_entity_type ENTITY_TYPE,
           p_entity_id TEXT,
           p_previous_block_timestamp INTEGER DEFAULT NULL,

@@ -134,9 +134,9 @@ module RawEvents = {
       mkField("src_address", Text),
       mkField("block_hash", Text),
       mkField("block_timestamp", Integer),
-      mkField("block_fields", Json),
-      mkField("transaction_fields", Json),
-      mkField("params", Json),
+      mkField("block_fields", JsonB),
+      mkField("transaction_fields", JsonB),
+      mkField("params", JsonB),
       mkField("db_write_timestamp", TimestampWithoutTimezone, ~default="CURRENT_TIMESTAMP"),
     ],
   )
@@ -152,7 +152,7 @@ module DynamicContractRegistry = {
     @as("contract_type") contractType: Enums.ContractType.t,
   }
 
-  let schema = S.object((. s) => {
+  let schema = S.object(s => {
     chainId: s.field("chain_id", S.int),
     eventId: s.field("event_id", BigInt.schema),
     blockTimestamp: s.field("block_timestamp", S.int),
@@ -197,7 +197,7 @@ module EntityHistory = {
       mkField("block_number", Integer, ~isPrimaryKey),
       mkField("log_index", Integer, ~isPrimaryKey),
       mkField("entity_type", Enum(EntityType.enum.name), ~isPrimaryKey),
-      mkField("params", Json, ~isNullable),
+      mkField("params", JsonB, ~isNullable),
       mkField("previous_block_timestamp", Integer, ~isNullable),
       mkField("previous_chain_id", Integer, ~isNullable),
       mkField("previous_block_number", Integer, ~isNullable),
@@ -229,8 +229,8 @@ module EntityHistoryFilter = {
       // NULL for an `entity_id` means that the entity was deleted.
       mkField("entity_id", Text, ~isPrimaryKey),
       mkField("chain_id", Integer, ~isPrimaryKey),
-      mkField("old_val", Json, ~isNullable),
-      mkField("new_val", Json, ~isNullable),
+      mkField("old_val", JsonB, ~isNullable),
+      mkField("new_val", JsonB, ~isNullable),
       mkField("block_number", Integer, ~isPrimaryKey),
       mkField("block_timestamp", Integer, ~isPrimaryKey),
       mkField("previous_block_number", Integer, ~isNullable),

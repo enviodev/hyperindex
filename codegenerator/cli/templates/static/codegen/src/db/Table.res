@@ -9,7 +9,7 @@ type fieldType =
   | @as("NUMERIC") Numeric
   | @as("TEXT") Text
   | @as("SERIAL") Serial
-  | @as("JSON") Json
+  | @as("JSONB") JsonB
   | @as("TIMESTAMP WITH TIME ZONE") Timestamp
   | @as("TIMESTAMP") TimestampWithoutTimezone
   | @as("TIMESTAMP WITH TIME ZONE NULL") TimestampWithNullTimezone
