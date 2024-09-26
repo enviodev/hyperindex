@@ -609,11 +609,20 @@ impl Field {
         // TODO: should we dis-allow indexed fields that are either `id` or derived From fields?
         let is_indexed = indexed_count > 0;
 
-        let mut field_type =
-            FieldType::from_obj_field_type(&field.field_type, derived_from_field, is_indexed)
-                .context(format!("Failed parsing field {}", field.name))?;
+        let mut field_type = FieldType::from_obj_field_type(
+            &field.field_type,
+            derived_from_field,
+            is_indexed,
+            Some(8),
+        )
+        .context(format!("Failed parsing field {}", field.name))?;
 
         if numeric_directives.len() == 1 {
+            // This only matches with `NonNullType(BigInt)`
+            //    But I want it to match with all of the below also:
+            //    `NonNullType(ListType(NonNullType(BigInt)))`
+            //    `ListType(NonNullType(BigInt)))`
+            //    `BigInt`
             if let FieldType::RegularField {
                 field_type: UserDefinedFieldType::NonNullType(inner),
                 ..
@@ -632,21 +641,8 @@ impl Field {
                                 None
                             }
                         });
-                        let scale = directive.arguments.iter().find_map(|(k, v)| {
-                            if k == "scale" {
-                                if let Value::Int(i) = v {
-                                    Some(i.as_i64().unwrap() as u32)
-                                } else {
-                                    None
-                                }
-                            } else {
-                                None
-                            }
-                        });
-                        *inner = Box::new(UserDefinedFieldType::Single(GqlScalar::BigInt(Some((
-                            precision.unwrap_or(0),
-                            scale.unwrap_or(0),
-                        )))));
+                        *inner =
+                            Box::new(UserDefinedFieldType::Single(GqlScalar::BigInt(precision)));
                     }
                 }
             }
@@ -896,15 +892,17 @@ pub enum UserDefinedFieldType {
 }
 
 impl UserDefinedFieldType {
-    fn from_obj_field_type(obj_field_type: &ObjType<'_, String>) -> Self {
+    fn from_obj_field_type(obj_field_type: &ObjType<'_, String>, precision: Option<u32>) -> Self {
         match obj_field_type {
-            ObjType::NamedType(name) => UserDefinedFieldType::Single(GqlScalar::from_str(name)),
-            ObjType::NonNullType(obj_field_type) => UserDefinedFieldType::NonNullType(Box::new(
-                Self::from_obj_field_type(obj_field_type),
-            )),
-            ObjType::ListType(obj_field_type) => {
-                UserDefinedFieldType::ListType(Box::new(Self::from_obj_field_type(obj_field_type)))
+            ObjType::NamedType(name) => {
+                UserDefinedFieldType::Single(GqlScalar::from_str(name, precision))
             }
+            ObjType::NonNullType(obj_field_type) => UserDefinedFieldType::NonNullType(Box::new(
+                Self::from_obj_field_type(obj_field_type, precision),
+            )),
+            ObjType::ListType(obj_field_type) => UserDefinedFieldType::ListType(Box::new(
+                Self::from_obj_field_type(obj_field_type, precision),
+            )),
         }
     }
 
@@ -1130,8 +1128,9 @@ impl FieldType {
         obj_field_type: &ObjType<'_, String>,
         derived_from_field: Option<String>,
         has_indexed_directive: bool,
+        precision: Option<u32>,
     ) -> anyhow::Result<Self> {
-        let field_type = UserDefinedFieldType::from_obj_field_type(obj_field_type);
+        let field_type = UserDefinedFieldType::from_obj_field_type(obj_field_type, precision);
 
         match derived_from_field {
             None => Ok(Self::RegularField {
@@ -1252,7 +1251,7 @@ pub enum GqlScalar {
     #[subenum(BuiltInGqlScalar)]
     Boolean,
     #[subenum(AdditionalGqlScalar)]
-    BigInt(Option<(u32, u32)>),
+    BigInt(Option<u32>),
     #[subenum(AdditionalGqlScalar)]
     BigDecimal,
     #[subenum(AdditionalGqlScalar)]
@@ -1289,14 +1288,14 @@ impl GqlScalar {
         }
     }
 
-    fn from_str(s: &str) -> Self {
+    fn from_str(s: &str, precision: Option<u32>) -> Self {
         match s {
             "ID" => GqlScalar::ID,
             "String" => GqlScalar::String,
             "Int" => GqlScalar::Int,
             "Float" => GqlScalar::Float, // Should we allow this type? Rounding issues will abound.
             "Boolean" => GqlScalar::Boolean,
-            "BigInt" => GqlScalar::BigInt(None), // NOTE: we aren't setting precision and scale - see (8.1.2) https://www.postgresql.org/docs/current/datatype-numeric.html
+            "BigInt" => GqlScalar::BigInt(precision.map(|p| (p))), // Set precision and scale
             "BigDecimal" => GqlScalar::BigDecimal,
             "Timestamp" => GqlScalar::Timestamp,
             "Bytes" => GqlScalar::Bytes,
@@ -1313,9 +1312,7 @@ impl GqlScalar {
             GqlScalar::Boolean => PGPrimitive::Boolean,
             GqlScalar::Bytes => PGPrimitive::Text,
             GqlScalar::BigInt(None) => PGPrimitive::Numeric(None),
-            GqlScalar::BigInt(Some((precision, scale))) => {
-                PGPrimitive::Numeric(Some((*precision, *scale)))
-            }
+            GqlScalar::BigInt(Some(precision)) => PGPrimitive::Numeric(Some((*precision, 0))),
             GqlScalar::BigDecimal => PGPrimitive::Numeric(None), //   also not setting precision here.
             GqlScalar::Timestamp => PGPrimitive::Timestamp,
             GqlScalar::Custom(name) => match schema.try_get_type_def(name)? {
