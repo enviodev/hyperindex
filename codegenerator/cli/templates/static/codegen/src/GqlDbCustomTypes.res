@@ -24,12 +24,11 @@ module Int = {
   @genType
   type t = int
 
-  external number: unknown => Js.Json.t = "Number"
+  external fromStringUnsafe: string => int = "Number"
 
-  let schema = S.custom("GqlDbCustomTypes.Int", _ => {
-    parser: unknown => {
-      unknown->number->S.parseOrRaiseWith(S.int)
-    },
-    serializer: int => int,
-  })
+  let schema =
+    S.union([
+      S.int,
+      S.string->S.transform(_s => {parser: string => string->fromStringUnsafe}),
+    ])->S.setName("GqlDbCustomTypes.Int")
 }
