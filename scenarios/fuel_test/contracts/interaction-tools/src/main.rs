@@ -2,7 +2,8 @@ extern crate dotenv;
 
 use dotenv::dotenv;
 use fuels::prelude::*;
-use fuels::types::{Bits256, ContractId};
+use fuels::types::{AssetId, Bits256};
+use rand::Rng;
 use std::env;
 use std::str::FromStr;
 
@@ -11,60 +12,72 @@ abigen!(Contract(
     abi = "../all-events/out/debug/all-events-abi.json"
 ),);
 
-const ALL_EVENTS_CONTRACT: &str =
-    "0x54a4b027fca0f718d3cb0cbdddb1beec670100b70c6856824befac0440dc0b84";
-
 #[tokio::main]
 async fn main() -> Result<()> {
     // Load .env file
     dotenv().ok();
-
     let phrase = env::var("MNEMONIC").expect("MNEMONIC must be set in .env");
-
     let provider = Provider::connect("testnet.fuel.network").await.unwrap();
-
-    let wallet = WalletUnlocked::new_from_mnemonic_phrase_with_path(
-        &phrase,
-        Some(provider.clone()),
-        "m/44'/1179993420'/0'/0/0",
-    )
-    .unwrap();
-
+    let wallet = WalletUnlocked::new_from_mnemonic_phrase(&phrase, Some(provider.clone())).unwrap();
     let base_asset_id =
         AssetId::from_str("0xf8f8b6283d7fa5b672b530cbb84fcccb4ff8dc40f8176ef4544ddb1f1952ad07")
             .unwrap();
-
     let balance = provider
         .get_asset_balance(wallet.address(), base_asset_id)
         .await?;
-    // let chain_id = provider.chain_id();
-
     if balance < 500000 {
         println!("Wallet address {}, with balance {}, can use the faucet here: https://faucet-testnet.fuel.network/?address={}", wallet.address(), balance, wallet.address());
         return Ok(());
     }
 
-    let all_events_contract_id =
-        ContractId::from_str(ALL_EVENTS_CONTRACT).expect("failed to create ContractId from string");
+    // Random Salt to deploy a new contract on every run
+    let mut salt = [0u8; 32];
+    rand::thread_rng().fill(&mut salt);
 
-    let all_events = AllEvents::new(all_events_contract_id, wallet.clone());
+    let contract_id = Contract::load_from(
+        "../all-events/out/debug/all-events.bin",
+        LoadConfiguration::default().with_salt(salt),
+    )?
+    .deploy(&wallet, TxPolicies::default())
+    .await?;
+    println!("Deployed AllEvents contract: 0x{}", contract_id.hash);
 
-    let r = all_events.methods().log().call().await?;
-    println!("log in tx: {:?}", r.tx_id);
+    let contract_methods = AllEvents::new(contract_id.clone(), wallet.clone()).methods();
 
-    // Documentation https://docs.fuel.network/docs/fuels-ts/contracts/minted-token-asset-id/#minted-token-asset-id
-    let sub_id =
-        Bits256::from_hex_str("0xc7fd1d987ada439fc085cfa3c49416cf2b504ac50151e3c2335d60595cb90745")
-            .unwrap();
-    let r = all_events.methods().mint_coins(sub_id, 1000).call().await?;
-    println!("mint_coins in tx: {:?}", r.tx_id);
-    let r = all_events.methods().burn_coins(sub_id, 500).call().await?;
-    println!("burn_coins in tx: {:?}", r.tx_id);
+    // Testing LogData receipts
+    let r = contract_methods.log().call().await?;
+    println!("Logs in tx: 0x{}", r.tx_id.unwrap());
 
+    // LiquidityPool - deposit and withdraw for testing Mint/Burn/Call/TransferOut receipts
+    let deposit_amount = 100;
+    let call_params = CallParameters::default()
+        .with_amount(deposit_amount)
+        .with_asset_id(base_asset_id);
+    let r = contract_methods
+        .deposit(wallet.address().into())
+        .call_params(call_params)?
+        .with_variable_output_policy(VariableOutputPolicy::Exactly(1))
+        .call()
+        .await?;
+    println!("Deposited 100 coins to LP in tx: 0x{}", r.tx_id.unwrap());
+    let lp_asset_id = contract_id.asset_id(&Bits256::zeroed());
+    let lp_token_balance = wallet.get_asset_balance(&lp_asset_id).await?;
+    let call_params = CallParameters::default()
+        .with_amount(lp_token_balance)
+        .with_asset_id(lp_asset_id);
+    let r = contract_methods
+        .withdraw(wallet.address().into())
+        .call_params(call_params)?
+        .with_variable_output_policy(VariableOutputPolicy::Exactly(1))
+        .call()
+        .await?;
     println!(
-        "Finished populating receipts on the contract: {}",
-        ALL_EVENTS_CONTRACT
+        "Withdrawn {} tokens from LP in tx: 0x{}",
+        lp_token_balance,
+        r.tx_id.unwrap()
     );
+
+    println!("Successfully finished mock interactions with the contract: 0x{contract_id}",);
 
     Ok(())
 }
