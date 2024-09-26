@@ -524,6 +524,38 @@ impl Entity {
     }
 }
 
+///  used to get the positive integers in the directives from the GraphQL schema.
+fn get_positive_integer(
+    arg_value: &Value<String>,
+    field_name: &str,
+    param_name: &str,
+) -> anyhow::Result<u32> {
+    match arg_value {
+        Value::Int(i) => {
+            let val = i.as_i64().ok_or_else(|| {
+                anyhow!(
+                    "{} value must be a positive integer. Field '{}'",
+                    param_name,
+                    field_name
+                )
+            })?;
+            if val < 0 {
+                return Err(anyhow!(
+                    "{} value must be a positive integer. Field '{}'",
+                    param_name,
+                    field_name
+                ));
+            }
+            Ok(val as u32)
+        }
+        _ => Err(anyhow!(
+            "{} value must be an integer. Field '{}'",
+            param_name,
+            field_name
+        )),
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Field {
     pub name: String,
@@ -543,12 +575,6 @@ impl Field {
             .directives
             .iter()
             .filter(|&directive| directive.name == "index")
-            .collect::<Vec<&Directive<'_, String>>>();
-
-        let numeric_directives = field
-            .directives
-            .iter()
-            .filter(|&directive| directive.name == "numeric")
             .collect::<Vec<&Directive<'_, String>>>();
 
         // Validate directive usage
@@ -609,44 +635,121 @@ impl Field {
         // TODO: should we dis-allow indexed fields that are either `id` or derived From fields?
         let is_indexed = indexed_count > 0;
 
-        let mut field_type = FieldType::from_obj_field_type(
-            &field.field_type,
-            derived_from_field,
-            is_indexed,
-            Some(8),
-        )
-        .context(format!("Failed parsing field {}", field.name))?;
+        // Collect directives
+        let decimal_precision_directives = field
+            .directives
+            .iter()
+            .filter(|&directive| directive.name == "precision")
+            .collect::<Vec<&Directive<'_, String>>>();
+        let numeric_directives = field
+            .directives
+            .iter()
+            .filter(|&directive| directive.name == "numeric")
+            .collect::<Vec<&Directive<'_, String>>>();
 
-        if numeric_directives.len() == 1 {
-            // This only matches with `NonNullType(BigInt)`
-            //    But I want it to match with all of the below also:
-            //    `NonNullType(ListType(NonNullType(BigInt)))`
-            //    `ListType(NonNullType(BigInt)))`
-            //    `BigInt`
-            if let FieldType::RegularField {
-                field_type: UserDefinedFieldType::NonNullType(inner),
-                ..
-            } = &mut field_type
-            {
-                if let UserDefinedFieldType::Single(GqlScalar::BigInt(None)) = inner.as_mut() {
-                    if let Some(directive) = numeric_directives.get(0) {
-                        let precision = directive.arguments.iter().find_map(|(k, v)| {
-                            if k == "precision" {
-                                if let Value::Int(i) = v {
-                                    Some(i.as_i64().unwrap() as u32)
-                                } else {
-                                    None
-                                }
-                            } else {
-                                None
-                            }
-                        });
-                        *inner =
-                            Box::new(UserDefinedFieldType::Single(GqlScalar::BigInt(precision)));
+        // Validate directive usage
+        if decimal_precision_directives.len() > 1 || numeric_directives.len() > 1 {
+            return Err(anyhow!(
+                "EE202: Cannot use more than one of the same directive on field {}",
+                field.name
+            ));
+        }
+        if decimal_precision_directives.len() > 0 && numeric_directives.len() > 0 {
+            return Err(anyhow!(
+                "EE202: A field cannot have both @precision and @numeric directives: {}",
+                field.name
+            ));
+        }
+
+        // Parse the field type into UserDefinedFieldType
+        let field_type = UserDefinedFieldType::from_obj_field_type(
+            &field.field_type,
+            &PgTypeModifications::default(),
+        );
+
+        let underlying_scalar = field_type.get_underlying_scalar();
+
+        let mut pg_type_modifications = PgTypeModifications::default();
+
+        // Process @precision
+        if let Some(decimal_precision_directive) = decimal_precision_directives.first() {
+            if !matches!(underlying_scalar, GqlScalar::BigInt(_)) {
+                return Err(anyhow!(
+                    "The precision directive on a field is only suitable for BigInt scalar type. \
+                     Field '{}'",
+                    field.name
+                ));
+            }
+            if decimal_precision_directive.arguments.len() != 1 {
+                return Err(anyhow!(
+                    "The precision directive on a BigInt should only take a single integer \
+                     argument called 'precision'. Field '{}'",
+                    field.name
+                ));
+            }
+            let (arg_name, arg_value) = decimal_precision_directive.arguments.first().unwrap();
+            if arg_name != "digits" {
+                return Err(anyhow!(
+                    "The precision directive on a BigInt should only have a 'digits' parameter. \
+                     Unknown parameter '{}'. Field '{}'",
+                    arg_name,
+                    field.name
+                ));
+            }
+            let precision = get_positive_integer(arg_value, &field.name, "digits")?;
+            pg_type_modifications.big_int_precision = Some(precision);
+        }
+
+        // Process @numeric
+        if let Some(numeric_directive) = numeric_directives.first() {
+            if !matches!(underlying_scalar, GqlScalar::BigDecimal(_)) {
+                return Err(anyhow!(
+                    "The numeric directive on a field is only suitable for BigDecimal scalar \
+                     type. Field '{}'",
+                    field.name
+                ));
+            }
+            let mut precision: Option<u32> = None;
+            let mut scale: Option<u32> = None;
+
+            for (arg_name, arg_value) in &numeric_directive.arguments {
+                match arg_name.as_str() {
+                    "precision" => {
+                        precision =
+                            Some(get_positive_integer(arg_value, &field.name, "Precision")?);
+                    }
+                    "scale" => {
+                        scale = Some(get_positive_integer(arg_value, &field.name, "Scale")?);
+                    }
+                    unknown_param => {
+                        return Err(anyhow!(
+                            "The numeric directive on a BigDecimal should only have 'precision' \
+                             and 'scale' parameters. Unknown parameter '{}'. Field '{}'",
+                            unknown_param,
+                            field.name
+                        ));
                     }
                 }
             }
+            if precision.is_none() || scale.is_none() {
+                return Err(anyhow!(
+                    "The numeric directive on a BigDecimal must have both 'precision' and 'scale' \
+                     parameters. Field '{}'",
+                    field.name
+                ));
+            }
+            pg_type_modifications.big_decimal_precision_scale =
+                Some((precision.unwrap(), scale.unwrap()));
         }
+
+        let params = FieldTypeParams {
+            derived_from_field,
+            has_indexed_directive: is_indexed,
+            pg_type_modifications,
+        };
+
+        let field_type = FieldType::from_obj_field_type(&field.field_type, params)
+            .context(format!("Failed parsing field {}", field.name))?;
 
         Ok(Field {
             name: field.name.clone(),
@@ -892,16 +995,19 @@ pub enum UserDefinedFieldType {
 }
 
 impl UserDefinedFieldType {
-    fn from_obj_field_type(obj_field_type: &ObjType<'_, String>, precision: Option<u32>) -> Self {
+    fn from_obj_field_type(
+        obj_field_type: &ObjType<'_, String>,
+        pg_type_modifications: &PgTypeModifications,
+    ) -> Self {
         match obj_field_type {
             ObjType::NamedType(name) => {
-                UserDefinedFieldType::Single(GqlScalar::from_str(name, precision))
+                UserDefinedFieldType::Single(GqlScalar::from_str(name, pg_type_modifications))
             }
             ObjType::NonNullType(obj_field_type) => UserDefinedFieldType::NonNullType(Box::new(
-                Self::from_obj_field_type(obj_field_type, precision),
+                Self::from_obj_field_type(obj_field_type, pg_type_modifications),
             )),
             ObjType::ListType(obj_field_type) => UserDefinedFieldType::ListType(Box::new(
-                Self::from_obj_field_type(obj_field_type, precision),
+                Self::from_obj_field_type(obj_field_type, pg_type_modifications),
             )),
         }
     }
@@ -1090,6 +1196,19 @@ impl Serialize for UserDefinedFieldType {
         serializer.serialize_str(self.to_string().as_str())
     }
 }
+
+#[derive(Default)] // Implementing Default trait
+pub struct PgTypeModifications {
+    pub big_int_precision: Option<u32>,
+    pub big_decimal_precision_scale: Option<(u32, u32)>,
+}
+
+pub struct FieldTypeParams {
+    pub derived_from_field: Option<String>,
+    pub has_indexed_directive: bool,
+    pub pg_type_modifications: PgTypeModifications,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum FieldType {
     DerivedFromField {
@@ -1117,16 +1236,17 @@ impl FieldType {
 
     fn from_obj_field_type(
         obj_field_type: &ObjType<'_, String>,
-        derived_from_field: Option<String>,
-        has_indexed_directive: bool,
-        precision: Option<u32>,
+        params: FieldTypeParams,
     ) -> anyhow::Result<Self> {
-        let field_type = UserDefinedFieldType::from_obj_field_type(obj_field_type, precision);
+        let field_type = UserDefinedFieldType::from_obj_field_type(
+            obj_field_type,
+            &params.pg_type_modifications,
+        );
 
-        match derived_from_field {
+        match params.derived_from_field {
             None => Ok(Self::RegularField {
                 field_type,
-                has_indexed_directive,
+                has_indexed_directive: params.has_indexed_directive,
             }),
             Some(derived_from_field) => match field_type.get_name_of_derived_from_entity() {
                 None => {
@@ -1244,7 +1364,7 @@ pub enum GqlScalar {
     #[subenum(AdditionalGqlScalar)]
     BigInt(Option<u32>),
     #[subenum(AdditionalGqlScalar)]
-    BigDecimal,
+    BigDecimal(Option<(u32, u32)>),
     #[subenum(AdditionalGqlScalar)]
     Timestamp,
     #[subenum(AdditionalGqlScalar)]
@@ -1279,18 +1399,20 @@ impl GqlScalar {
         }
     }
 
-    fn from_str(s: &str, precision: Option<u32>) -> Self {
-        match s {
+    fn from_str(name: &str, pg_type_modifications: &PgTypeModifications) -> Self {
+        match name {
             "ID" => GqlScalar::ID,
             "String" => GqlScalar::String,
             "Int" => GqlScalar::Int,
-            "Float" => GqlScalar::Float, // Should we allow this type? Rounding issues will abound.
+            "Float" => GqlScalar::Float,
             "Boolean" => GqlScalar::Boolean,
-            "BigInt" => GqlScalar::BigInt(precision.map(|p| (p))), // Set precision and scale
-            "BigDecimal" => GqlScalar::BigDecimal,
+            "BigInt" => GqlScalar::BigInt(pg_type_modifications.big_int_precision),
+            "BigDecimal" => {
+                GqlScalar::BigDecimal(pg_type_modifications.big_decimal_precision_scale)
+            }
             "Timestamp" => GqlScalar::Timestamp,
             "Bytes" => GqlScalar::Bytes,
-            name => GqlScalar::Custom(name.to_string()),
+            _name => GqlScalar::Custom(name.to_string()),
         }
     }
 
@@ -1303,8 +1425,11 @@ impl GqlScalar {
             GqlScalar::Boolean => PGPrimitive::Boolean,
             GqlScalar::Bytes => PGPrimitive::Text,
             GqlScalar::BigInt(None) => PGPrimitive::Numeric(None),
-            GqlScalar::BigInt(Some(precision)) => PGPrimitive::Numeric(Some((*precision, 0))),
-            GqlScalar::BigDecimal => PGPrimitive::Numeric(None), //   also not setting precision here.
+            GqlScalar::BigInt(Some(precision)) => PGPrimitive::Numeric(Some((*precision, 0))), //  We leave the scale as zero since it is not relevant for integers.
+            GqlScalar::BigDecimal(None) => PGPrimitive::Numeric(None),
+            GqlScalar::BigDecimal(Some((precision, scale))) => {
+                PGPrimitive::Numeric(Some((*precision, *scale)))
+            }
             GqlScalar::Timestamp => PGPrimitive::Timestamp,
             GqlScalar::Custom(name) => match schema.try_get_type_def(name)? {
                 TypeDef::Entity(_) => PGPrimitive::Text,
@@ -1320,7 +1445,7 @@ impl GqlScalar {
             GqlScalar::String => RescriptTypeIdent::String,
             GqlScalar::Int => RescriptTypeIdent::Int,
             GqlScalar::BigInt(_) => RescriptTypeIdent::BigInt,
-            GqlScalar::BigDecimal => RescriptTypeIdent::BigDecimal,
+            GqlScalar::BigDecimal(_) => RescriptTypeIdent::BigDecimal,
             GqlScalar::Float => RescriptTypeIdent::Float,
             GqlScalar::Bytes => RescriptTypeIdent::String,
             GqlScalar::Boolean => RescriptTypeIdent::Bool,
@@ -1901,5 +2026,184 @@ type TestEntity {
         assert!(!pg_field.is_array);
         assert!(!pg_field.is_nullable);
         assert_eq!(pg_field.linked_entity, None);
+    }
+
+    #[test]
+    fn test_decimal_precision_numeric_happy_path() {
+        let schema_str = r#"
+        type Entity {
+            id: ID!
+            exampleBigInt: BigInt @precision(digits: 76)
+            exampleBigIntRequired: BigInt! @precision(digits: 77)
+            exampleBigIntArray: [BigInt!] @precision(digits: 78)
+            exampleBigIntArrayRequired: [BigInt!]! @precision(digits: 79)
+            exampleBigDecimal: BigDecimal @numeric(precision: 80, scale: 5)
+            exampleBigDecimalRequired: BigDecimal! @numeric(precision: 81, scale: 5)
+            exampleBigDecimalArray: [BigDecimal!] @numeric(precision: 82, scale: 5)
+            exampleBigDecimalArrayRequired: [BigDecimal!]! @numeric(precision: 83, scale: 5)
+            exampleBigDecimalOtherOrder: BigDecimal! @numeric(scale: 6, precision: 84)
+        }
+        "#;
+
+        let gql_doc = setup_document(schema_str).expect("Failed to parse schema");
+        let schema = Schema::from_document(gql_doc).expect("Failed to create schema");
+
+        // Verify that the schema contains the entity and fields as expected
+        let entity = schema.entities.get("Entity").expect("Entity not found");
+
+        // Check BigInt fields
+        let field = entity.fields.get("exampleBigInt").expect("Field not found");
+        match &field.field_type {
+            FieldType::RegularField { field_type, .. } => match field_type {
+                UserDefinedFieldType::Single(GqlScalar::BigInt(Some(76))) => (),
+                _ => panic!("exampleBigInt does not have the expected precision"),
+            },
+            _ => panic!("exampleBigInt is not a regular field"),
+        }
+
+        let field = entity
+            .fields
+            .get("exampleBigIntRequired")
+            .expect("Field not found");
+        match &field.field_type {
+            FieldType::RegularField { field_type, .. } => match field_type {
+                UserDefinedFieldType::NonNullType(inner) => match inner.as_ref() {
+                    UserDefinedFieldType::Single(GqlScalar::BigInt(Some(77))) => (),
+                    _ => panic!("exampleBigIntRequired does not have the expected precision"),
+                },
+                _ => panic!("exampleBigIntRequired is not a non-null type"),
+            },
+            _ => panic!("exampleBigIntRequired is not a regular field"),
+        }
+
+        // Check BigDecimal fields
+        let field = entity
+            .fields
+            .get("exampleBigDecimal")
+            .expect("Field not found");
+        match &field.field_type {
+            FieldType::RegularField { field_type, .. } => match field_type {
+                UserDefinedFieldType::Single(GqlScalar::BigDecimal(Some((80, 5)))) => (),
+                _ => panic!("exampleBigDecimal does not have the expected precision and scale"),
+            },
+            _ => panic!("exampleBigDecimal is not a regular field"),
+        }
+
+        let field = entity
+            .fields
+            .get("exampleBigDecimalOtherOrder")
+            .expect("Field not found");
+        match &field.field_type {
+            FieldType::RegularField { field_type, .. } => match field_type {
+                UserDefinedFieldType::NonNullType(inner) => match inner.as_ref() {
+                    UserDefinedFieldType::Single(GqlScalar::BigDecimal(Some((84, 6)))) => (),
+                    _ => panic!(
+                        "exampleBigDecimalOtherOrder does not have the expected precision and \
+                         scale"
+                    ),
+                },
+                _ => panic!("exampleBigDecimalOtherOrder is not a non-null type"),
+            },
+            _ => panic!("exampleBigDecimalOtherOrder is not a regular field"),
+        }
+    }
+
+    #[test]
+    fn test_error_case_numeric_on_bigint() {
+        let schema_str = r#"
+        type Entity {
+            id: ID!
+            exampleBigIntWrongDirective: BigInt @numeric(precision: 76, scale: 5)
+        }
+        "#;
+
+        let gql_doc = setup_document(schema_str).expect("Failed to parse schema");
+        let result = Schema::from_document(gql_doc);
+
+        assert!(result.is_err());
+        let err_message = format!("{:?}", result.unwrap_err());
+        assert!(err_message.contains(
+            "The numeric directive on a field is only suitable for BigDecimal scalar type."
+        ));
+    }
+
+    #[test]
+    fn test_error_case_decimal_precision_on_bigdecimal() {
+        let schema_str = r#"
+        type Entity {
+            id: ID!
+            exampleBigIntWrongDirective: BigDecimal @precision(precision: 76)
+        }
+        "#;
+
+        let gql_doc = setup_document(schema_str).expect("Failed to parse schema");
+        let result = Schema::from_document(gql_doc);
+
+        assert!(result.is_err());
+        let err_message = format!("{:?}", result.unwrap_err());
+        assert!(err_message.contains(
+            "The precision directive on a field is only suitable for BigInt scalar type."
+        ));
+    }
+
+    #[test]
+    fn test_error_case_decimal_precision_wrong_name() {
+        let schema_str = r#"
+        type Entity {
+            id: ID!
+            exampleBigDecimalWrongDirective: BigInt @precision(wronglabel: 76)
+        }
+        "#;
+
+        let gql_doc = setup_document(schema_str).expect("Failed to parse schema");
+        let result = Schema::from_document(gql_doc);
+
+        assert!(result.is_err());
+        let err_message = format!("{:?}", result.unwrap_err());
+        assert!(err_message.contains(
+            "The precision directive on a BigInt should only have a 'digits' parameter. Unknown \
+             parameter 'wronglabel'. Field 'exampleBigDecimalWrongDirective'"
+        ));
+    }
+
+    #[test]
+    fn test_error_case_numeric_unknown_parameter() {
+        let schema_str = r#"
+        type Entity {
+            id: ID!
+            exampleBigIntWrongDirective: BigDecimal @numeric(wronglabel: 76, scale: 5)
+        }
+        "#;
+
+        let gql_doc = setup_document(schema_str).expect("Failed to parse schema");
+        let result = Schema::from_document(gql_doc);
+
+        assert!(result.is_err());
+        let err_message = format!("{:?}", result.unwrap_err());
+        assert!(err_message.contains(
+            "The numeric directive on a BigDecimal should only have 'precision' and 'scale' \
+             parameters. Unknown parameter 'wronglabel'."
+        ));
+    }
+
+    #[test]
+    fn test_error_case_numeric_unknown_parameter_with_precision() {
+        let schema_str = r#"
+        type Entity {
+            id: ID!
+            exampleBigIntWrongDirective: BigDecimal @numeric(precision: 76, wronglabel: 4, scale: 5)
+        }
+        "#;
+
+        let gql_doc = setup_document(schema_str).expect("Failed to parse schema");
+        let result = Schema::from_document(gql_doc);
+
+        assert!(result.is_err());
+        let err_message = format!("{:?}", result.unwrap_err());
+        println!("SEEE MEEE {}", err_message);
+        assert!(err_message.contains(
+            "The numeric directive on a BigDecimal should only have 'precision' and 'scale' \
+             parameters. Unknown parameter 'wronglabel'."
+        ));
     }
 }

@@ -22,12 +22,12 @@ impl Primitive {
             Self::Integer => "Integer".to_string(),
             Self::Numeric(None) => "Numeric".to_string(),
             Self::Numeric(Some((precision, scale))) => {
-                format!("Enum(\"NUMERIC({}, {})\")", precision, scale)
+                format!("Custom(\"NUMERIC({}, {})\")", precision, scale)
             }
             Self::Serial => "Serial".to_string(),
             Self::Json => "Json".to_string(),
             Self::Timestamp => "Timestamp".to_string(),
-            Self::Enum(enum_name) => format!("Enum(Enums.{enum_name}.enum.name)"),
+            Self::Enum(enum_name) => format!("Custom(Enums.{enum_name}.enum.name)"),
         }
     }
 }
