@@ -1473,7 +1473,9 @@ impl GqlScalar {
 
 #[cfg(test)]
 mod tests {
-    use super::{anyhow, Entity, FieldType, GqlScalar, GraphQLEnum, Schema, UserDefinedFieldType};
+    use super::{
+        anyhow, Entity, Field, FieldType, GqlScalar, GraphQLEnum, Schema, UserDefinedFieldType,
+    };
     use crate::config_parsing::postgres_types::Primitive as PGPrimitive;
     use graphql_parser::schema::{parse_schema, Definition, Document, ObjectType, TypeDefinition};
 
@@ -2031,19 +2033,19 @@ type TestEntity {
     #[test]
     fn test_decimal_precision_numeric_happy_path() {
         let schema_str = r#"
-        type Entity {
-            id: ID!
-            exampleBigInt: BigInt @precision(digits: 76)
-            exampleBigIntRequired: BigInt! @precision(digits: 77)
-            exampleBigIntArray: [BigInt!] @precision(digits: 78)
-            exampleBigIntArrayRequired: [BigInt!]! @precision(digits: 79)
-            exampleBigDecimal: BigDecimal @numeric(precision: 80, scale: 5)
-            exampleBigDecimalRequired: BigDecimal! @numeric(precision: 81, scale: 5)
-            exampleBigDecimalArray: [BigDecimal!] @numeric(precision: 82, scale: 5)
-            exampleBigDecimalArrayRequired: [BigDecimal!]! @numeric(precision: 83, scale: 5)
-            exampleBigDecimalOtherOrder: BigDecimal! @numeric(scale: 6, precision: 84)
-        }
-        "#;
+    type Entity {
+        id: ID!
+        exampleBigInt: BigInt @precision(digits: 76)
+        exampleBigIntRequired: BigInt! @precision(digits: 77)
+        exampleBigIntArray: [BigInt!] @precision(digits: 78)
+        exampleBigIntArrayRequired: [BigInt!]! @precision(digits: 79)
+        exampleBigDecimal: BigDecimal @numeric(precision: 80, scale: 5)
+        exampleBigDecimalRequired: BigDecimal! @numeric(precision: 81, scale: 5)
+        exampleBigDecimalArray: [BigDecimal!] @numeric(precision: 82, scale: 5)
+        exampleBigDecimalArrayRequired: [BigDecimal!]! @numeric(precision: 83, scale: 5)
+        exampleBigDecimalOtherOrder: BigDecimal! @numeric(scale: 6, precision: 84)
+    }
+    "#;
 
         let gql_doc = setup_document(schema_str).expect("Failed to parse schema");
         let schema = Schema::from_document(gql_doc).expect("Failed to create schema");
@@ -2051,61 +2053,210 @@ type TestEntity {
         // Verify that the schema contains the entity and fields as expected
         let entity = schema.entities.get("Entity").expect("Entity not found");
 
-        // Check BigInt fields
-        let field = entity.fields.get("exampleBigInt").expect("Field not found");
-        match &field.field_type {
-            FieldType::RegularField { field_type, .. } => match field_type {
-                UserDefinedFieldType::Single(GqlScalar::BigInt(Some(76))) => (),
-                _ => panic!("exampleBigInt does not have the expected precision"),
-            },
-            _ => panic!("exampleBigInt is not a regular field"),
+        // Helper function -  tests that the types of each field is what we expect
+        fn check_field_type(
+            field: &Field,
+            expected_scalar: &str, // "BigInt" or "BigDecimal"
+            expected_precision: Option<u32>,
+            expected_scale: Option<u32>,
+            is_required: bool,
+            is_array: bool,
+        ) {
+            match &field.field_type {
+                FieldType::RegularField { field_type, .. } => {
+                    //  In this test, we strip this type from the outside to the inside like an onion and check that each layer is correct.
+                    let mut current_type = field_type;
+
+                    // Handle non-null types
+                    if is_required {
+                        match current_type {
+                            UserDefinedFieldType::NonNullType(inner) => {
+                                current_type = inner.as_ref();
+                            }
+                            _ => panic!("Field '{}' is expected to be non-null", field.name),
+                        }
+                    } else if matches!(current_type, UserDefinedFieldType::NonNullType(_)) {
+                        panic!("Field '{}' should be nullable", field.name);
+                    }
+
+                    // Handle array types
+                    if is_array {
+                        match current_type {
+                            UserDefinedFieldType::ListType(inner) => {
+                                current_type = inner.as_ref();
+                            }
+                            _ => panic!("Field '{}' is expected to be an array", field.name),
+                        }
+                        // Array elements should be non-null (e.g., [Type!])
+                        match current_type {
+                            UserDefinedFieldType::NonNullType(inner) => {
+                                current_type = inner.as_ref();
+                            }
+                            _ => panic!(
+                                "Array elements of field '{}' are expected to be non-null",
+                                field.name
+                            ),
+                        }
+                    } else if matches!(current_type, UserDefinedFieldType::ListType(_)) {
+                        panic!("Field '{}' should not be an array", field.name);
+                    }
+
+                    // Check the scalar type and precision/scale
+                    match current_type {
+                        UserDefinedFieldType::Single(scalar) => match (scalar, expected_scalar) {
+                            (GqlScalar::BigInt(Some(precision)), "BigInt") => {
+                                if let Some(expected_precision) = expected_precision {
+                                    assert_eq!(
+                                        *precision, expected_precision,
+                                        "Field '{}' has precision {}, expected {}",
+                                        field.name, precision, expected_precision
+                                    );
+                                } else {
+                                    panic!("Expected precision for BigInt field '{}'", field.name);
+                                }
+                            }
+                            (GqlScalar::BigDecimal(Some((precision, scale))), "BigDecimal") => {
+                                if let (Some(expected_precision), Some(expected_scale)) =
+                                    (expected_precision, expected_scale)
+                                {
+                                    assert_eq!(
+                                    (*precision, *scale),
+                                    (expected_precision, expected_scale),
+                                    "Field '{}' has precision {}, scale {}, expected precision {}, scale {}",
+                                    field.name,
+                                    precision,
+                                    scale,
+                                    expected_precision,
+                                    expected_scale
+                                );
+                                } else {
+                                    panic!(
+                                        "Expected precision and scale for BigDecimal field '{}'",
+                                        field.name
+                                    );
+                                }
+                            }
+                            _ => panic!(
+                                "Field '{}' has unexpected scalar type or missing precision/scale",
+                                field.name
+                            ),
+                        },
+                        _ => panic!("Field '{}' has unexpected field type", field.name),
+                    }
+                }
+                _ => panic!("Field '{}' is not a regular field", field.name),
+            }
         }
 
-        let field = entity
-            .fields
-            .get("exampleBigIntRequired")
-            .expect("Field not found");
-        match &field.field_type {
-            FieldType::RegularField { field_type, .. } => match field_type {
-                UserDefinedFieldType::NonNullType(inner) => match inner.as_ref() {
-                    UserDefinedFieldType::Single(GqlScalar::BigInt(Some(77))) => (),
-                    _ => panic!("exampleBigIntRequired does not have the expected precision"),
-                },
-                _ => panic!("exampleBigIntRequired is not a non-null type"),
-            },
-            _ => panic!("exampleBigIntRequired is not a regular field"),
-        }
+        // Now use the helper function to test all fields
 
-        // Check BigDecimal fields
-        let field = entity
-            .fields
-            .get("exampleBigDecimal")
-            .expect("Field not found");
-        match &field.field_type {
-            FieldType::RegularField { field_type, .. } => match field_type {
-                UserDefinedFieldType::Single(GqlScalar::BigDecimal(Some((80, 5)))) => (),
-                _ => panic!("exampleBigDecimal does not have the expected precision and scale"),
-            },
-            _ => panic!("exampleBigDecimal is not a regular field"),
-        }
+        // BigInt fields
+        check_field_type(
+            entity.fields.get("exampleBigInt").expect("Field not found"),
+            "BigInt",
+            Some(76),
+            None,
+            false, // is_required
+            false, // is_array
+        );
 
-        let field = entity
-            .fields
-            .get("exampleBigDecimalOtherOrder")
-            .expect("Field not found");
-        match &field.field_type {
-            FieldType::RegularField { field_type, .. } => match field_type {
-                UserDefinedFieldType::NonNullType(inner) => match inner.as_ref() {
-                    UserDefinedFieldType::Single(GqlScalar::BigDecimal(Some((84, 6)))) => (),
-                    _ => panic!(
-                        "exampleBigDecimalOtherOrder does not have the expected precision and \
-                         scale"
-                    ),
-                },
-                _ => panic!("exampleBigDecimalOtherOrder is not a non-null type"),
-            },
-            _ => panic!("exampleBigDecimalOtherOrder is not a regular field"),
-        }
+        check_field_type(
+            entity
+                .fields
+                .get("exampleBigIntRequired")
+                .expect("Field not found"),
+            "BigInt",
+            Some(77),
+            None,
+            true,  // is_required
+            false, // is_array
+        );
+
+        check_field_type(
+            entity
+                .fields
+                .get("exampleBigIntArray")
+                .expect("Field not found"),
+            "BigInt",
+            Some(78),
+            None,
+            false, // is_required
+            true,  // is_array
+        );
+
+        check_field_type(
+            entity
+                .fields
+                .get("exampleBigIntArrayRequired")
+                .expect("Field not found"),
+            "BigInt",
+            Some(79),
+            None,
+            true, // is_required
+            true, // is_array
+        );
+
+        // BigDecimal fields
+        check_field_type(
+            entity
+                .fields
+                .get("exampleBigDecimal")
+                .expect("Field not found"),
+            "BigDecimal",
+            Some(80),
+            Some(5),
+            false, // is_required
+            false, // is_array
+        );
+
+        check_field_type(
+            entity
+                .fields
+                .get("exampleBigDecimalRequired")
+                .expect("Field not found"),
+            "BigDecimal",
+            Some(81),
+            Some(5),
+            true,  // is_required
+            false, // is_array
+        );
+
+        check_field_type(
+            entity
+                .fields
+                .get("exampleBigDecimalArray")
+                .expect("Field not found"),
+            "BigDecimal",
+            Some(82),
+            Some(5),
+            false, // is_required
+            true,  // is_array
+        );
+
+        check_field_type(
+            entity
+                .fields
+                .get("exampleBigDecimalArrayRequired")
+                .expect("Field not found"),
+            "BigDecimal",
+            Some(83),
+            Some(5),
+            true, // is_required
+            true, // is_array
+        );
+
+        // exampleBigDecimalOtherOrder
+        check_field_type(
+            entity
+                .fields
+                .get("exampleBigDecimalOtherOrder")
+                .expect("Field not found"),
+            "BigDecimal",
+            Some(84),
+            Some(6),
+            true,  // is_required
+            false, // is_array
+        );
     }
 
     #[test]
