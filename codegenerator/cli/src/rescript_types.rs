@@ -761,8 +761,8 @@ mod tests {
                 RescriptRecordField::new("fieldB".to_string(), RescriptTypeIdent::Bool),
             ])
             .to_rescript_schema(&"eventArgs".to_string()),
-            "S.object((s): eventArgs => {fieldA: s.field(\"fieldA\", GqlDbCustomTypes.Int.schema), fieldB: s.field(\"fieldB\", \
-             S.bool)})"
+            "S.object((s): eventArgs => {fieldA: s.field(\"fieldA\", \
+             GqlDbCustomTypes.Int.schema), fieldB: s.field(\"fieldB\", S.bool)})"
                 .to_string()
         );
         assert_eq!(

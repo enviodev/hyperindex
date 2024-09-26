@@ -424,9 +424,8 @@ impl EventTemplate {
          fromStringUnsafe])->Utils.unwrapResultExn]";
 
     const EVENT_FILTER_TYPE_STUB: &'static str = "{}";
-    const CONVERT_HYPER_SYNC_EVENT_ARGS_NOOP: &'static str = "(Utils.magic: \
-    HyperSyncClient.Decoder.decodedEvent => \
-    eventArgs)";
+    const CONVERT_HYPER_SYNC_EVENT_ARGS_NOOP: &'static str =
+        "(Utils.magic: HyperSyncClient.Decoder.decodedEvent => eventArgs)";
 
     pub fn generate_event_filter_type(params: &Vec<EventParam>) -> String {
         let field_rows = params
