@@ -167,7 +167,7 @@ module DynamicContractRegistry = {
       mkField("event_id", Numeric),
       mkField("block_timestamp", Integer),
       mkField("contract_address", Text, ~isPrimaryKey),
-      mkField("contract_type", Enum(ContractType.enum.name)),
+      mkField("contract_type", Custom(ContractType.enum.name)),
     ],
   )
 }
@@ -196,7 +196,7 @@ module EntityHistory = {
       mkField("chain_id", Integer, ~isPrimaryKey),
       mkField("block_number", Integer, ~isPrimaryKey),
       mkField("log_index", Integer, ~isPrimaryKey),
-      mkField("entity_type", Enum(EntityType.enum.name), ~isPrimaryKey),
+      mkField("entity_type", Custom(EntityType.enum.name), ~isPrimaryKey),
       mkField("params", Json, ~isNullable),
       mkField("previous_block_timestamp", Integer, ~isNullable),
       mkField("previous_chain_id", Integer, ~isNullable),
@@ -236,7 +236,7 @@ module EntityHistoryFilter = {
       mkField("previous_block_number", Integer, ~isNullable),
       mkField("log_index", Integer, ~isPrimaryKey),
       mkField("previous_log_index", Integer, ~isNullable, ~isPrimaryKey),
-      mkField("entity_type", Enum(EntityType.enum.name), ~isPrimaryKey),
+      mkField("entity_type", Custom(EntityType.enum.name), ~isPrimaryKey),
     ],
   )
 }
