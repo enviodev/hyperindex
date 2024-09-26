@@ -426,7 +426,7 @@ impl RescriptTypeIdent {
     pub fn to_rescript_schema(&self) -> String {
         match self {
             Self::Unit => "S.literal(%raw(`null`))->S.variant(_ => ())".to_string(),
-            Self::Int => "S.int".to_string(),
+            Self::Int => "GqlDbCustomTypes.Int.schema".to_string(),
             Self::Unknown => "S.unknown".to_string(),
             Self::Float => "GqlDbCustomTypes.Float.schema".to_string(),
             Self::BigInt => "BigInt.schema".to_string(),
