@@ -332,6 +332,7 @@ pub enum FuelEventKind {
     LogData,
     Mint,
     Burn,
+    TransferOut,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -362,6 +363,7 @@ impl EventMod {
             None => None,
             Some(FuelEventKind::Mint) => Some("Mint".to_string()),
             Some(FuelEventKind::Burn) => Some("Burn".to_string()),
+            Some(FuelEventKind::TransferOut) => Some("TransferOut".to_string()),
             Some(FuelEventKind::LogData) => Some(format!(
                 r#"LogData({{
   logId: sighash,
@@ -546,9 +548,32 @@ impl EventTemplate {
         }
     }
 
+    pub fn from_fuel_transfer_event(
+        config_event: &system_config::Event,
+        fuel_event_kind: FuelEventKind,
+    ) -> Self {
+        let event_name = config_event.name.capitalize();
+        let event_mod = EventMod {
+            sighash: config_event.sighash.to_string(),
+            topic_count: 0, //Default to 0 for fuel,
+            event_name: event_name.clone(),
+            data_type: "fuelTransferParams".to_string(),
+            params_raw_event_schema: "fuelTransferParamsSchema".to_string(),
+            convert_hyper_sync_event_args_code: Self::CONVERT_HYPER_SYNC_EVENT_ARGS_NOOP
+                .to_string(),
+            event_filter_type: Self::EVENT_FILTER_TYPE_STUB.to_string(),
+            get_topic_selection_code: Self::GET_TOPIC_SELECTION_CODE_STUB.to_string(),
+            fuel_event_kind: Some(fuel_event_kind),
+        };
+        EventTemplate {
+            name: event_name,
+            module_code: event_mod.to_string(),
+            params: vec![],
+        }
+    }
+
     pub fn from_config_event(config_event: &system_config::Event) -> Result<Self> {
         let event_name = config_event.name.capitalize();
-
         match &config_event.payload {
             EventPayload::Params(params) => {
                 let template_params = params
@@ -635,6 +660,10 @@ impl EventTemplate {
             EventPayload::FuelBurn => Ok(Self::from_fuel_supply_event(
                 config_event,
                 FuelEventKind::Burn,
+            )),
+            EventPayload::FuelTransferOut => Ok(Self::from_fuel_transfer_event(
+                config_event,
+                FuelEventKind::TransferOut,
             )),
         }
     }

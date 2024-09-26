@@ -228,3 +228,15 @@ AllEvents.Burn.handler(async ({ event }) => {
   burnSchema.assert(event.params)!;
   expectType<AssertSchemaType<typeof event.params, typeof burnSchema>>(true);
 });
+
+const transferOutSchema = S.object({
+  assetId: S.string,
+  to: S.string,
+  amount: SExtra.bigint,
+});
+AllEvents.TransferOut.handler(async ({ event }) => {
+  transferOutSchema.assert(event.params)!;
+  expectType<AssertSchemaType<typeof event.params, typeof transferOutSchema>>(
+    true
+  );
+});

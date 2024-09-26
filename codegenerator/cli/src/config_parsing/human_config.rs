@@ -545,6 +545,11 @@ pub mod fuel {
             description = "Index Burn receipts. The option can be omitted when the event name is Burn."
         )]
         pub burn: Option<bool>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(
+            description = "Index TransferOut receipts. The option can be omitted when the event name is TransferOut."
+        )]
+        pub transfer_out: Option<bool>,
     }
 }
 
@@ -764,18 +769,21 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
                                 log_id: None.into(),
                                 mint: None,
                                 burn: None,
+                                transfer_out: None,
                             },
                             fuel::EventConfig {
                                 name: "MarketCreateEvent".to_string(),
                                 log_id: None.into(),
                                 mint: None,
                                 burn: None,
+                                transfer_out: None,
                             },
                             fuel::EventConfig {
                                 name: "TradeEvent".to_string(),
                                 log_id: None.into(),
                                 mint: None,
                                 burn: None,
+                                transfer_out: None,
                             },
                         ],
                     }),

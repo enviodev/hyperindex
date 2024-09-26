@@ -122,6 +122,13 @@
             "boolean",
             "null"
           ]
+        },
+        "transferOut": {
+          "description": "Index TransferOut receipts. The option can be omitted when the event name is TransferOut.",
+          "type": [
+            "boolean",
+            "null"
+          ]
         }
       },
       "additionalProperties": false,

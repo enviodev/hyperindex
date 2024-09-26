@@ -14,10 +14,12 @@ type workerConfig = {
 
 let mintEventTag = "mint"
 let burnEventTag = "burn"
+let transferOutEventTag = "transferOut"
 let getEventTag = (eventConfig: Types.fuelEventConfig) => {
   switch eventConfig.kind {
   | Mint => mintEventTag
   | Burn => burnEventTag
+  | TransferOut => transferOutEventTag
   | LogData({logId}) => logId
   }
 }
@@ -60,6 +62,8 @@ let makeWorkerConfigOrThrow = (~contracts: array<Types.fuelContractConfig>, ~cha
       | {kind: Mint} => addNonLogDataReceiptType(contract.name, Mint)
       | {kind: Burn, isWildcard: true} => addNonLogDataWildcardReceiptTypes(Burn)
       | {kind: Burn} => addNonLogDataReceiptType(contract.name, Burn)
+      | {kind: TransferOut, isWildcard: true} => addNonLogDataWildcardReceiptTypes(TransferOut)
+      | {kind: TransferOut} => addNonLogDataReceiptType(contract.name, TransferOut)
       | {kind: LogData({logId}), isWildcard} => {
           let rb = logId->BigInt.fromStringUnsafe
           if isWildcard {
@@ -370,14 +374,14 @@ module Make = (
       //The optional block and timestamp of the last item returned by the query
       //(Optional in the case that there are no logs returned in the query)
       switch pageUnsafe.items->Belt.Array.get(pageUnsafe.items->Belt.Array.length - 1) {
-      | Some({block}) if block.blockNumber == heighestBlockQueried =>
+      | Some({block}) if block.height == heighestBlockQueried =>
         //If the last log item in the current page is equal to the
         //heighest block acounted for in the query. Simply return this
         //value without making an extra query
         {
-          ReorgDetection.blockNumber: block.blockNumber,
-          blockTimestamp: block.timestamp,
-          blockHash: block.hash,
+          ReorgDetection.blockNumber: block.height,
+          blockTimestamp: block.time,
+          blockHash: block.id,
         }->Promise.resolve
       //If it does not match it means that there were no matching logs in the last
       //block so we should fetch the block data
@@ -417,6 +421,7 @@ module Make = (
         | LogData({rb}) => BigInt.toString(rb)
         | Mint(_) => mintEventTag
         | Burn(_) => burnEventTag
+        | TransferOut(_) => transferOutEventTag
         }
 
         let eventConfig = switch workerConfig.eventRouter->EventRouter.get(
@@ -429,7 +434,7 @@ module Make = (
               ~logger,
               ~params={
                 "chainId": chainId,
-                "blockNumber": block.blockNumber,
+                "blockNumber": block.height,
                 "logIndex": receiptIndex,
                 "contractAddress": contractAddress,
                 "eventTag": eventTag,
@@ -452,7 +457,7 @@ module Make = (
           | exn => {
               let params = {
                 "chainId": chainId,
-                "blockNumber": block.blockNumber,
+                "blockNumber": block.height,
                 "logIndex": receiptIndex,
               }
               let logger = Logging.createChildFrom(~logger, ~params)
@@ -464,10 +469,20 @@ module Make = (
           }
         | (_, Mint({val, subId}))
         | (_, Burn({val, subId})) =>
-          {
-            "subId": subId,
-            "amount": val,
-          }->Obj.magic
+          (
+            {
+              subId,
+              amount: val,
+            }: Types.fuelSupplyParams
+          )->Obj.magic
+        | (_, TransferOut({amount, assetId, toAddress})) =>
+          (
+            {
+              to: toAddress,
+              assetId,
+              amount,
+            }: Types.fuelTransferParams
+          )->Obj.magic
         // This should never happen unless there's a bug in the routing logic
         | _ => Js.Exn.raiseError("Unexpected bug in the event routing logic")
         }
@@ -478,9 +493,9 @@ module Make = (
             contractName: contractConfig.name,
             handlerRegister: eventConfig.handlerRegister,
             paramsRawEventSchema: eventConfig.paramsRawEventSchema,
-            timestamp: block.timestamp,
+            timestamp: block.time,
             chain,
-            blockNumber: block.blockNumber,
+            blockNumber: block.height,
             logIndex: receiptIndex,
             event: {
               chainId,
@@ -488,11 +503,7 @@ module Make = (
               transaction: {
                 "id": item.transactionId,
               }->Obj.magic, // TODO: Obj.magic needed until the field selection types are not configurable for Fuel and Evm separately
-              block: {
-                "height": block.blockNumber,
-                "time": block.timestamp,
-                "id": block.hash,
-              }->Obj.magic,
+              block: block->Obj.magic,
               srcAddress: contractAddress,
               logIndex: receiptIndex,
             },

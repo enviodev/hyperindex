@@ -277,6 +277,7 @@ pub mod fuel {
                                         log_id: selected_log.id.clone().into(),
                                         mint: None,
                                         burn: None,
+                                        transfer_out: None,
                                     })
                                     .collect(),
                             }),

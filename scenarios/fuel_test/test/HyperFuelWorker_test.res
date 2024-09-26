@@ -352,6 +352,13 @@ describe("HyperFuelWorker - getRecieptsSelection", () => {
               handlerRegister: %raw(`"Not relevat"`),
               paramsRawEventSchema: %raw(`"Not relevat"`),
             },
+            {
+              name: "TransferOut",
+              kind: TransferOut,
+              isWildcard: false,
+              handlerRegister: %raw(`"Not relevat"`),
+              paramsRawEventSchema: %raw(`"Not relevat"`),
+            },
           ],
         },
         {
@@ -385,7 +392,7 @@ describe("HyperFuelWorker - getRecieptsSelection", () => {
       ),
       [
         {
-          receiptType: [Mint, Burn],
+          receiptType: [Mint, Burn, TransferOut],
           rootContractId: [address1, address2],
           txStatus: [1],
         },

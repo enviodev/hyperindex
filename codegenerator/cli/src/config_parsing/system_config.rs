@@ -826,6 +826,7 @@ pub enum EventPayload {
     FuelLogData(RescriptTypeIdent),
     FuelMint,
     FuelBurn,
+    FuelTransferOut,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -958,26 +959,33 @@ impl Event {
                 payload: EventPayload::FuelBurn,
                 sighash: "burn".to_string(),
             };
+            let transfer_out_event = Event {
+                name: event_config.name.clone(),
+                payload: EventPayload::FuelTransferOut,
+                sighash: "transferOut".to_string(),
+            };
+            let mut selectors = vec![];
+            if event_config.mint == Some(true) {
+                selectors.push("Mint");
+            }
+            if event_config.burn == Some(true) {
+                selectors.push("Burn");
+            }
+            if event_config.transfer_out == Some(true) {
+                selectors.push("TransferOut");
+            }
+            if event_config.log_id.is_some() {
+                selectors.push("LogData");
+            }
+            if selectors.len() > 1 {
+                return Err(anyhow!(
+                    "Failed parsing event '{}'. Having both {} and {} options is not allowed.",
+                    event_config.name,
+                    selectors[0],
+                    selectors[1]
+                ));
+            }
             let event = match event_config {
-                FuelEventConfig {
-                    mint: Some(true),
-                    log_id: Some(_),
-                    ..
-                } => return Err(anyhow!("Mint event is not allowed to have a logId")),
-                FuelEventConfig {
-                    burn: Some(true),
-                    log_id: Some(_),
-                    ..
-                } => return Err(anyhow!("Burn event is not allowed to have a logId")),
-                FuelEventConfig {
-                    mint: Some(true),
-                    burn: Some(true),
-                    ..
-                } => {
-                    return Err(anyhow!(
-                        "Mint event is not allowed to be Burn at the same time"
-                    ))
-                }
                 FuelEventConfig {
                     mint: Some(true), ..
                 } => mint_event,
@@ -997,8 +1005,19 @@ impl Event {
                     ..
                 } if name == "Burn" => burn_event,
                 FuelEventConfig {
+                    transfer_out: Some(true),
+                    ..
+                } => transfer_out_event,
+                FuelEventConfig {
+                    transfer_out: None,
+                    log_id: None,
+                    name,
+                    ..
+                } if name == "TransferOut" => transfer_out_event,
+                FuelEventConfig {
                     mint: None | Some(false),
                     burn: None | Some(false),
+                    transfer_out: None | Some(false),
                     log_id,
                     name,
                 } => {
