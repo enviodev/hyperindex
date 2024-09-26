@@ -278,6 +278,7 @@ pub mod fuel {
                                         mint: None,
                                         burn: None,
                                         transfer_out: None,
+                                        call: None,
                                     })
                                     .collect(),
                             }),

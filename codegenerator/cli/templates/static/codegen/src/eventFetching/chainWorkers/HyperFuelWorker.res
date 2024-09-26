@@ -15,11 +15,13 @@ type workerConfig = {
 let mintEventTag = "mint"
 let burnEventTag = "burn"
 let transferOutEventTag = "transferOut"
+let callEventTag = "call"
 let getEventTag = (eventConfig: Types.fuelEventConfig) => {
   switch eventConfig.kind {
   | Mint => mintEventTag
   | Burn => burnEventTag
   | TransferOut => transferOutEventTag
+  | Call => callEventTag
   | LogData({logId}) => logId
   }
 }
@@ -64,6 +66,8 @@ let makeWorkerConfigOrThrow = (~contracts: array<Types.fuelContractConfig>, ~cha
       | {kind: Burn} => addNonLogDataReceiptType(contract.name, Burn)
       | {kind: TransferOut, isWildcard: true} => addNonLogDataWildcardReceiptTypes(TransferOut)
       | {kind: TransferOut} => addNonLogDataReceiptType(contract.name, TransferOut)
+      | {kind: Call, isWildcard: true} => addNonLogDataWildcardReceiptTypes(Call)
+      | {kind: Call} => addNonLogDataReceiptType(contract.name, Call)
       | {kind: LogData({logId}), isWildcard} => {
           let rb = logId->BigInt.fromStringUnsafe
           if isWildcard {
@@ -422,6 +426,7 @@ module Make = (
         | Mint(_) => mintEventTag
         | Burn(_) => burnEventTag
         | TransferOut(_) => transferOutEventTag
+        | Call(_) => callEventTag
         }
 
         let eventConfig = switch workerConfig.eventRouter->EventRouter.get(
@@ -478,7 +483,15 @@ module Make = (
         | (_, TransferOut({amount, assetId, toAddress})) =>
           (
             {
-              to: toAddress,
+              to: toAddress->Address.unsafeFromString,
+              assetId,
+              amount,
+            }: Types.fuelTransferParams
+          )->Obj.magic
+        | (_, Call({amount, assetId})) =>
+          (
+            {
+              to: contractAddress,
               assetId,
               amount,
             }: Types.fuelTransferParams

@@ -123,6 +123,13 @@
             "null"
           ]
         },
+        "call": {
+          "description": "Index Call receipts. The option can be omitted when the event name is Call.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
         "transferOut": {
           "description": "Index TransferOut receipts. The option can be omitted when the event name is TransferOut.",
           "type": [

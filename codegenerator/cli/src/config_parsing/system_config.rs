@@ -820,18 +820,24 @@ impl Contract {
     }
 }
 
+#[derive(Debug, PartialEq, Clone)]
+pub enum FuelEventKind {
+    LogData(RescriptTypeIdent),
+    Mint,
+    Burn,
+    TransferOut,
+    Call,
+}
+
 #[derive(Debug, Clone, PartialEq)]
-pub enum EventPayload {
+pub enum EventKind {
     Params(Vec<EventParam>),
-    FuelLogData(RescriptTypeIdent),
-    FuelMint,
-    FuelBurn,
-    FuelTransferOut,
+    Fuel(FuelEventKind),
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Event {
-    pub payload: EventPayload,
+    pub kind: EventKind,
     pub name: String,
     pub sighash: String,
 }
@@ -913,7 +919,7 @@ impl Event {
             events_abi.events.entry(abi_name).or_default().push(event);
             events.push(Event {
                 name,
-                payload: EventPayload::Params(normalized_unnamed_params),
+                kind: EventKind::Params(normalized_unnamed_params),
                 sighash,
             })
         }
@@ -951,18 +957,23 @@ impl Event {
         for event_config in events_config.iter() {
             let mint_event = Event {
                 name: event_config.name.clone(),
-                payload: EventPayload::FuelMint,
+                kind: EventKind::Fuel(FuelEventKind::Mint),
                 sighash: "mint".to_string(),
             };
             let burn_event = Event {
                 name: event_config.name.clone(),
-                payload: EventPayload::FuelBurn,
+                kind: EventKind::Fuel(FuelEventKind::Burn),
                 sighash: "burn".to_string(),
             };
             let transfer_out_event = Event {
                 name: event_config.name.clone(),
-                payload: EventPayload::FuelTransferOut,
+                kind: EventKind::Fuel(FuelEventKind::TransferOut),
                 sighash: "transferOut".to_string(),
+            };
+            let call_event = Event {
+                name: event_config.name.clone(),
+                kind: EventKind::Fuel(FuelEventKind::Call),
+                sighash: "call".to_string(),
             };
             let mut selectors = vec![];
             if event_config.mint == Some(true) {
@@ -974,8 +985,11 @@ impl Event {
             if event_config.transfer_out == Some(true) {
                 selectors.push("TransferOut");
             }
+            if event_config.call == Some(true) {
+                selectors.push("Call");
+            }
             if event_config.log_id.is_some() {
-                selectors.push("LogData");
+                selectors.push("LogId");
             }
             if selectors.len() > 1 {
                 return Err(anyhow!(
@@ -990,34 +1004,34 @@ impl Event {
                     mint: Some(true), ..
                 } => mint_event,
                 FuelEventConfig {
-                    mint: None,
-                    log_id: None,
-                    name,
-                    ..
-                } if name == "Mint" => mint_event,
+                    mint: None, name, ..
+                } if selectors.len() == 0 && name == "Mint" => mint_event,
                 FuelEventConfig {
                     burn: Some(true), ..
                 } => burn_event,
                 FuelEventConfig {
-                    burn: None,
-                    log_id: None,
-                    name,
-                    ..
-                } if name == "Burn" => burn_event,
+                    burn: None, name, ..
+                } if selectors.len() == 0 && name == "Burn" => burn_event,
+                FuelEventConfig {
+                    call: Some(true), ..
+                } => call_event,
+                FuelEventConfig {
+                    call: None, name, ..
+                } if selectors.len() == 0 && name == "Call" => call_event,
                 FuelEventConfig {
                     transfer_out: Some(true),
                     ..
                 } => transfer_out_event,
                 FuelEventConfig {
                     transfer_out: None,
-                    log_id: None,
                     name,
                     ..
-                } if name == "TransferOut" => transfer_out_event,
+                } if selectors.len() == 0 && name == "TransferOut" => transfer_out_event,
                 FuelEventConfig {
                     mint: None | Some(false),
                     burn: None | Some(false),
                     transfer_out: None | Some(false),
+                    call: None | Some(false),
                     log_id,
                     name,
                 } => {
@@ -1035,7 +1049,7 @@ impl Event {
 
                     Event {
                         name: event_config.name.clone(),
-                        payload: EventPayload::FuelLogData(log.data_type),
+                        kind: EventKind::Fuel(FuelEventKind::LogData(log.data_type)),
                         sighash: log.id,
                     }
                 }

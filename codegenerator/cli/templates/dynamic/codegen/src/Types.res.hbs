@@ -539,6 +539,7 @@ type fuelEventKind =
   | Mint
   | Burn
   | TransferOut
+  | Call
 
 type fuelEventConfig = {
   name: string,
@@ -564,13 +565,13 @@ let fuelSupplyParamsSchema = S.object(s => {
 })
 
 type fuelTransferParams = {
-  to: string,
+  to: Address.t,
   assetId: string,
   amount: bigint,
 }
 
 let fuelTransferParamsSchema = S.object(s => {
-  to: s.field("to", S.string),
+  to: s.field("to", Address.schema),
   assetId: s.field("assetId", S.string),
   amount: s.field("amount", BigInt.schema),
 })

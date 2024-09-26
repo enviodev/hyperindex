@@ -233,8 +233,10 @@ module BlockData = {
     let query: HyperFuelClient.QueryTypes.query = {
       fromBlock: blockNumber,
       toBlockExclusive: blockNumber + 1,
-      // TODO: Theoretically it should work without the outputs filter, but it doesn't for some reason
+      // FIXME: Theoretically it should work without the outputs filter, but it doesn't for some reason
       outputs: [%raw(`{}`)],
+      // FIXME: Had to add inputs {} as well, since it failed on block 1211599 during wildcard Call indexing
+      inputs: [%raw(`{}`)],
       fieldSelection: {
         block: [Height, Id, Time],
       },

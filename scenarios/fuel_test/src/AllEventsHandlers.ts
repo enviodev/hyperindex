@@ -240,3 +240,13 @@ AllEvents.TransferOut.handler(async ({ event }) => {
     true
   );
 });
+
+const callSchema = S.object({
+  assetId: S.string,
+  to: S.string,
+  amount: SExtra.bigint,
+});
+AllEvents.Call.handler(async ({ event }) => {
+  callSchema.assert(event.params)!;
+  expectType<AssertSchemaType<typeof event.params, typeof callSchema>>(true);
+});

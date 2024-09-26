@@ -60,3 +60,4 @@ networks:
           - name: Mint
           - name: Burn
           - name: TransferOut
+          - name: Call

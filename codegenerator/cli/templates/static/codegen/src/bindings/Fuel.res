@@ -11,7 +11,7 @@
 // 10 = MessageOut,
 // 11 = Mint,
 // 12 = Burn,
-type receiptType = | @as(6) LogData | @as(8) TransferOut | @as(11) Mint | @as(12) Burn
+type receiptType = | @as(0) Call | @as(6) LogData | @as(8) TransferOut | @as(11) Mint | @as(12) Burn
 
 @module("./vendored-fuel-abi-coder.js")
 external transpileAbi: Js.Json.t => Ethers.abi = "transpileAbi"
@@ -23,6 +23,7 @@ external getLogDecoder: (~abi: Ethers.abi, ~logId: string) => (. string) => unkn
 module Receipt = {
   @tag("receiptType")
   type t =
+    | @as(0) Call({assetId: string, amount: bigint})
     | @as(6) LogData({data: string, rb: bigint})
     | @as(8) TransferOut({amount: bigint, assetId: string, toAddress: string})
     | @as(11) Mint({val: bigint, subId: string})
