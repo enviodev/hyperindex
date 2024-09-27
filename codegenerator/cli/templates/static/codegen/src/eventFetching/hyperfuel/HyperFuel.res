@@ -25,9 +25,9 @@ type hyperSyncPage<'item> = {
 }
 
 type block = {
-  hash: string,
-  timestamp: int,
-  blockNumber: int,
+  id: string,
+  time: int,
+  height: int,
 }
 
 type item = {
@@ -68,7 +68,6 @@ let queryErrorToMsq = (e: queryError): string => {
     switch e {
     | FailedToFetch(e) =>
       let msg = e->getMsgFromExn
-
       `Failed during fetch query: ${msg}`
     | FailedToParseJson(e) =>
       let msg = e->getMsgFromExn
@@ -97,14 +96,16 @@ module LogsQuery = {
           TxId,
           BlockHeight,
           RootContractId,
-          // ContractId,
           Data,
           ReceiptIndex,
           ReceiptType,
           Rb,
-          // TODO: Include them only when there's a mint/burn receipt selection 
+          // TODO: Include them only when there's a mint/burn/transferOut receipt selection
           SubId,
-          Val
+          Val,
+          Amount,
+          ToAddress,
+          AssetId,
         ],
         block: [Id, Height, Time],
       },
@@ -151,9 +152,9 @@ module LogsQuery = {
           ->Array.push({
             transactionId: receipt.txId,
             block: {
-              blockNumber: block.height,
-              hash: block.id,
-              timestamp: block.time,
+              height: block.height,
+              id: block.id,
+              time: block.time,
             },
             contractId,
             receipt: receipt->(Utils.magic: HyperFuelClient.FuelTypes.receipt => Fuel.Receipt.t),
@@ -232,8 +233,10 @@ module BlockData = {
     let query: HyperFuelClient.QueryTypes.query = {
       fromBlock: blockNumber,
       toBlockExclusive: blockNumber + 1,
-      // TODO: Theoretically it should work without the outputs filter, but it doesn't for some reason
+      // FIXME: Theoretically it should work without the outputs filter, but it doesn't for some reason
       outputs: [%raw(`{}`)],
+      // FIXME: Had to add inputs {} as well, since it failed on block 1211599 during wildcard Call indexing
+      inputs: [%raw(`{}`)],
       fieldSelection: {
         block: [Height, Id, Time],
       },

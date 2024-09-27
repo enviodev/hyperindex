@@ -352,6 +352,20 @@ describe("HyperFuelWorker - getRecieptsSelection", () => {
               handlerRegister: %raw(`"Not relevat"`),
               paramsRawEventSchema: %raw(`"Not relevat"`),
             },
+            {
+              name: "TransferOut",
+              kind: TransferOut,
+              isWildcard: false,
+              handlerRegister: %raw(`"Not relevat"`),
+              paramsRawEventSchema: %raw(`"Not relevat"`),
+            },
+            {
+              name: "Call",
+              kind: Call,
+              isWildcard: true,
+              handlerRegister: %raw(`"Not relevat"`),
+              paramsRawEventSchema: %raw(`"Not relevat"`),
+            },
           ],
         },
         {
@@ -385,7 +399,7 @@ describe("HyperFuelWorker - getRecieptsSelection", () => {
       ),
       [
         {
-          receiptType: [Mint, Burn],
+          receiptType: [Mint, Burn, TransferOut],
           rootContractId: [address1, address2],
           txStatus: [1],
         },
@@ -407,13 +421,47 @@ describe("HyperFuelWorker - getRecieptsSelection", () => {
           txStatus: [1],
         },
         {
+          receiptType: [Call],
+          txStatus: [1],
+        },
+        {
           rb: [2n],
           receiptType: [LogData],
           txStatus: [1],
         },
+        
       ],
     )
   })
+
+
+  it("Fails with non-wildcard Call event", () => {
+    Assert.throws(
+      () => {
+        mock(
+          ~contracts=[
+            {
+              name: "TestContract",
+              events: [
+                {
+                  name: "Call",
+                  kind: Call,
+                  isWildcard: false,
+                  handlerRegister: %raw(`"Not relevat"`),
+                  paramsRawEventSchema: %raw(`"Not relevat"`),
+                },
+               
+              ],
+            },
+          ],
+        )
+      },
+      ~error={
+        "message": "Call receipt indexing currently supported only in wildcard mode",
+      },
+    )
+  })
+
 
   it("Fails when contract has multiple mint events", () => {
     Assert.throws(
