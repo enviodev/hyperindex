@@ -219,3 +219,12 @@ AllEvents.Mint.handler(async ({ event }) => {
   mintSchema.assert(event.params)!;
   expectType<AssertSchemaType<typeof event.params, typeof mintSchema>>(true);
 });
+
+const burnSchema = S.object({
+  subId: S.string,
+  amount: SExtra.bigint,
+});
+AllEvents.Burn.handler(async ({ event }) => {
+  burnSchema.assert(event.params)!;
+  expectType<AssertSchemaType<typeof event.params, typeof burnSchema>>(true);
+});

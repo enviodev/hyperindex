@@ -531,10 +531,13 @@ module MakeRegister = (Event: Event) => {
     )
 }
 
-type fuelEventKind = | Mint | LogData({
-  logId: string,
-  decode: string => internalEventArgs,
-})
+type fuelEventKind = 
+  | LogData({
+    logId: string,
+    decode: string => internalEventArgs,
+  })
+  | Mint
+  | Burn
 
 type fuelEventConfig = {
   name: string,
@@ -548,6 +551,16 @@ type fuelContractConfig = {
   name: string,
   events: array<fuelEventConfig>,
 }
+
+type fuelSupplyParams = {
+  subId: string,
+  amount: bigint,
+}
+
+let fuelSupplyParamsSchema = S.object(s => {
+  subId: s.field("subId", S.string),
+  amount: s.field("amount", BigInt.schema),
+})
 
 {{#each codegen_contracts as | contract |}}
 module {{contract.name.capitalized}} = {

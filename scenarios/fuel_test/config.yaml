@@ -15,7 +15,7 @@ networks:
           - name: ClearGreeting
       - name: AllEvents
         address:
-          - 0x54a4b027fca0f718d3cb0cbdddb1beec670100b70c6856824befac0440dc0b84
+          - 0xff0fa821c2cb640e5400307ebe24b08af7b393728b075044edca9ba6937116c7
         abi_file_path: abis/all-events-abi.json
         handler: src/AllEventsHandlers.ts
         events:
@@ -58,3 +58,4 @@ networks:
           - name: BytesLog
             logId: "14832741149864513620"
           - name: Mint
+          - name: Burn

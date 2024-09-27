@@ -327,7 +327,9 @@ impl Event {
         let empty_params = vec![];
         let params = match &event.payload {
             EventPayload::Params(params) => params,
-            EventPayload::FuelLogData(_) | EventPayload::FuelMint => &empty_params,
+            EventPayload::FuelLogData(_) | EventPayload::FuelMint | EventPayload::FuelBurn => {
+                &empty_params
+            }
         };
         let params = flatten_event_inputs(params.clone())
             .into_iter()

@@ -115,6 +115,13 @@
             "boolean",
             "null"
           ]
+        },
+        "burn": {
+          "description": "Index Burn receipts. The option can be omitted when the event name is Burn.",
+          "type": [
+            "boolean",
+            "null"
+          ]
         }
       },
       "additionalProperties": false,

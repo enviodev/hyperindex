@@ -1,30 +1,55 @@
 contract;
 
-use std::asset::{burn, mint, transfer};
-use std::bytes::Bytes;
+use std::{
+    asset::{
+        burn,
+        mint,
+        mint_to,
+        transfer,
+    },
+    bytes::Bytes,
+    call_frames::{
+        msg_asset_id,
+    },
+    constants::ZERO_B256,
+    context::msg_amount,
+};
 
-abi Token {
-    fn transfer_to_address(target: Address, asset_id: AssetId, coins: u64);
-    fn transfer_to_contract(recipient: ContractId, asset_id: AssetId, coins: u64);
-    fn mint_coins(sub_id: b256, mint_amount: u64);
-    fn burn_coins(sub_id: b256, burn_amount: u64);
+abi LiquidityPool {
+    #[payable]
+    fn deposit(recipient: Identity);
+    #[payable]
+    fn withdraw(recipient: Identity);
 }
 
-impl Token for Contract {
-    fn transfer_to_address(recipient: Address, asset_id: AssetId, amount: u64) {
-        transfer(Identity::Address(recipient), asset_id, amount);
+const BASE_TOKEN: AssetId = AssetId::from(0xf8f8b6283d7fa5b672b530cbb84fcccb4ff8dc40f8176ef4544ddb1f1952ad07);
+
+// From https://rust.fuel.network/v0.66.5/cookbook/deposit-and-withdraw.html
+impl LiquidityPool for Contract {
+    #[payable]
+    fn deposit(recipient: Identity) {
+        assert(BASE_TOKEN == msg_asset_id());
+        assert(0 < msg_amount());
+
+        // Mint two times the amount.
+        let amount_to_mint = msg_amount() * 2;
+
+        // Mint some LP token based upon the amount of the base token.
+        mint_to(recipient, ZERO_B256, amount_to_mint);
     }
 
-    fn transfer_to_contract(target: ContractId, asset_id: AssetId, amount: u64) {
-        transfer(Identity::ContractId(target), asset_id, amount);
-    }
+    #[payable]
+    fn withdraw(recipient: Identity) {
+        let token_amount = msg_amount();
+        assert(0 < token_amount);
+        // Ideally should assert asset_id
 
-    fn mint_coins(sub_id: b256, mint_amount: u64) {
-        mint(sub_id, mint_amount);
-    }
+        // Amount to withdraw.
+        let amount_to_transfer = token_amount / 2;
 
-    fn burn_coins(sub_id: b256, burn_amount: u64) {
-        burn(sub_id, burn_amount);
+        // Transfer base token to recipient.
+        transfer(recipient, BASE_TOKEN, amount_to_transfer);
+        burn(ZERO_B256, token_amount);
     }
 }
 

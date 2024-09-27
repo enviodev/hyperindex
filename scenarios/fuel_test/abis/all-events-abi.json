@@ -31,9 +31,14 @@
       "metadataTypeId": 2
     },
     {
+      "type": "enum std::identity::Identity",
+      "concreteTypeId": "ab7cd04e05be58e3fc15d424c2c4a57f824a2a2d97d67252440a3925ebdc1335",
+      "metadataTypeId": 3
+    },
+    {
       "type": "enum std::option::Option<enum std::option::Option<u32>>",
       "concreteTypeId": "7893daf7f7ed3470aa6af59c3f31641288e2b1e56849e8520304e7e8258602e6",
-      "metadataTypeId": 3,
+      "metadataTypeId": 4,
       "typeArguments": [
         "97a75a6d6e892f11f5032fa516e39675b76377c3313d64f465a2c77c34a9e600"
       ]
@@ -41,7 +46,7 @@
     {
       "type": "enum std::option::Option<u32>",
       "concreteTypeId": "97a75a6d6e892f11f5032fa516e39675b76377c3313d64f465a2c77c34a9e600",
-      "metadataTypeId": 3,
+      "metadataTypeId": 4,
       "typeArguments": [
         "d7649d428b9ff33d188ecbf38a7e4d8fd167fa01b2e10fe9a8f9308e52f1d7cc"
       ]
@@ -49,7 +54,7 @@
     {
       "type": "enum std::result::Result<u32,bool>",
       "concreteTypeId": "06efefc22a4816d0d7b8f9653ed31112eef54439da76bcb2d915dc7cb967140e",
-      "metadataTypeId": 4,
+      "metadataTypeId": 5,
       "typeArguments": [
         "d7649d428b9ff33d188ecbf38a7e4d8fd167fa01b2e10fe9a8f9308e52f1d7cc",
         "b760f44fa5965c2474a3b471467a22c43185152129295af588b022ae50b50903"
@@ -62,32 +67,17 @@
     {
       "type": "struct SimpleStruct",
       "concreteTypeId": "75f7f7a06026cab5d7a70984d1fde56001e83505e3a091ff9722b92d7f56d8be",
-      "metadataTypeId": 8
+      "metadataTypeId": 9
     },
     {
       "type": "struct SimpleStructWithOptionalField",
       "concreteTypeId": "30ee7b3131eeba202c198f1e4ad16e1d1762cc0df35f35c95e7daacb49d633d1",
-      "metadataTypeId": 9
-    },
-    {
-      "type": "struct std::address::Address",
-      "concreteTypeId": "f597b637c3b0f588fb8d7086c6f4735caa3122b85f0423b82e489f9bb58e2308",
-      "metadataTypeId": 11
-    },
-    {
-      "type": "struct std::asset_id::AssetId",
-      "concreteTypeId": "c0710b6731b1dd59799cf6bef33eee3b3b04a2e40e80a0724090215bbf2ca974",
-      "metadataTypeId": 12
+      "metadataTypeId": 10
     },
     {
       "type": "struct std::bytes::Bytes",
       "concreteTypeId": "cdd87b7d12fe505416570c294c884bca819364863efe3bf539245fa18515fbbb",
       "metadataTypeId": 13
-    },
-    {
-      "type": "struct std::contract_id::ContractId",
-      "concreteTypeId": "29c10735d33b5159f0c71ee1dbd17b36a3e69e41f00fab0d42e1bd9f428d8a54",
-      "metadataTypeId": 15
     },
     {
       "type": "struct std::vec::Vec<u64>",
@@ -157,13 +147,27 @@
         },
         {
           "name": "Failed",
-          "typeId": 10
+          "typeId": 11
+        }
+      ]
+    },
+    {
+      "type": "enum std::identity::Identity",
+      "metadataTypeId": 3,
+      "components": [
+        {
+          "name": "Address",
+          "typeId": 12
+        },
+        {
+          "name": "ContractId",
+          "typeId": 15
         }
       ]
     },
     {
       "type": "enum std::option::Option",
-      "metadataTypeId": 3,
+      "metadataTypeId": 4,
       "components": [
         {
           "name": "None",
@@ -171,41 +175,41 @@
         },
         {
           "name": "Some",
-          "typeId": 6
+          "typeId": 7
         }
       ],
-      "typeParameters": [6]
+      "typeParameters": [7]
     },
     {
       "type": "enum std::result::Result",
-      "metadataTypeId": 4,
+      "metadataTypeId": 5,
       "components": [
         {
           "name": "Ok",
-          "typeId": 6
+          "typeId": 7
         },
         {
           "name": "Err",
-          "typeId": 5
+          "typeId": 6
         }
       ],
-      "typeParameters": [6, 5]
+      "typeParameters": [7, 6]
     },
     {
       "type": "generic E",
-      "metadataTypeId": 5
-    },
-    {
-      "type": "generic T",
       "metadataTypeId": 6
     },
     {
-      "type": "raw untyped ptr",
+      "type": "generic T",
       "metadataTypeId": 7
     },
     {
+      "type": "raw untyped ptr",
+      "metadataTypeId": 8
+    },
+    {
       "type": "struct SimpleStruct",
-      "metadataTypeId": 8,
+      "metadataTypeId": 9,
       "components": [
         {
           "name": "f1",
@@ -215,7 +219,7 @@
     },
     {
       "type": "struct SimpleStructWithOptionalField",
-      "metadataTypeId": 9,
+      "metadataTypeId": 10,
       "components": [
         {
           "name": "f1",
@@ -223,7 +227,7 @@
         },
         {
           "name": "f2",
-          "typeId": 3,
+          "typeId": 4,
           "typeArguments": [
             {
               "name": "",
@@ -235,7 +239,7 @@
     },
     {
       "type": "struct StatusFailure",
-      "metadataTypeId": 10,
+      "metadataTypeId": 11,
       "components": [
         {
           "name": "reason",
@@ -245,16 +249,6 @@
     },
     {
       "type": "struct std::address::Address",
-      "metadataTypeId": 11,
-      "components": [
-        {
-          "name": "bits",
-          "typeId": "7c5ee1cecf5f8eacd1284feb5f0bf2bdea533a51e2f0c9aabe9236d335989f3b"
-        }
-      ]
-    },
-    {
-      "type": "struct std::asset_id::AssetId",
       "metadataTypeId": 12,
       "components": [
         {
@@ -283,7 +277,7 @@
       "components": [
         {
           "name": "ptr",
-          "typeId": 7
+          "typeId": 8
         },
         {
           "name": "cap",
@@ -307,14 +301,14 @@
       "components": [
         {
           "name": "ptr",
-          "typeId": 7
+          "typeId": 8
         },
         {
           "name": "cap",
           "typeId": "1506e6f44c1d6291cdf46395a8e573276a4fa79e8ace3fc891e092ef32d1b0a0"
         }
       ],
-      "typeParameters": [6]
+      "typeParameters": [7]
     },
     {
       "type": "struct std::vec::Vec",
@@ -326,7 +320,7 @@
           "typeArguments": [
             {
               "name": "",
-              "typeId": 6
+              "typeId": 7
             }
           ]
         },
@@ -335,77 +329,41 @@
           "typeId": "1506e6f44c1d6291cdf46395a8e573276a4fa79e8ace3fc891e092ef32d1b0a0"
         }
       ],
-      "typeParameters": [6]
+      "typeParameters": [7]
     }
   ],
   "functions": [
     {
       "inputs": [
         {
-          "name": "sub_id",
-          "concreteTypeId": "7c5ee1cecf5f8eacd1284feb5f0bf2bdea533a51e2f0c9aabe9236d335989f3b"
-        },
-        {
-          "name": "burn_amount",
-          "concreteTypeId": "1506e6f44c1d6291cdf46395a8e573276a4fa79e8ace3fc891e092ef32d1b0a0"
+          "name": "recipient",
+          "concreteTypeId": "ab7cd04e05be58e3fc15d424c2c4a57f824a2a2d97d67252440a3925ebdc1335"
         }
       ],
-      "name": "burn_coins",
+      "name": "deposit",
       "output": "2e38e77b22c314a449e91fafed92a43826ac6aa403ae6a8acb6cf58239fbaf5d",
-      "attributes": null
-    },
-    {
-      "inputs": [
+      "attributes": [
         {
-          "name": "sub_id",
-          "concreteTypeId": "7c5ee1cecf5f8eacd1284feb5f0bf2bdea533a51e2f0c9aabe9236d335989f3b"
-        },
-        {
-          "name": "mint_amount",
-          "concreteTypeId": "1506e6f44c1d6291cdf46395a8e573276a4fa79e8ace3fc891e092ef32d1b0a0"
+          "name": "payable",
+          "arguments": []
         }
-      ],
-      "name": "mint_coins",
-      "output": "2e38e77b22c314a449e91fafed92a43826ac6aa403ae6a8acb6cf58239fbaf5d",
-      "attributes": null
+      ]
     },
     {
       "inputs": [
         {
           "name": "recipient",
-          "concreteTypeId": "f597b637c3b0f588fb8d7086c6f4735caa3122b85f0423b82e489f9bb58e2308"
-        },
-        {
-          "name": "asset_id",
-          "concreteTypeId": "c0710b6731b1dd59799cf6bef33eee3b3b04a2e40e80a0724090215bbf2ca974"
-        },
-        {
-          "name": "amount",
-          "concreteTypeId": "1506e6f44c1d6291cdf46395a8e573276a4fa79e8ace3fc891e092ef32d1b0a0"
+          "concreteTypeId": "ab7cd04e05be58e3fc15d424c2c4a57f824a2a2d97d67252440a3925ebdc1335"
         }
       ],
-      "name": "transfer_to_address",
+      "name": "withdraw",
       "output": "2e38e77b22c314a449e91fafed92a43826ac6aa403ae6a8acb6cf58239fbaf5d",
-      "attributes": null
-    },
-    {
-      "inputs": [
+      "attributes": [
         {
-          "name": "target",
-          "concreteTypeId": "29c10735d33b5159f0c71ee1dbd17b36a3e69e41f00fab0d42e1bd9f428d8a54"
-        },
-        {
-          "name": "asset_id",
-          "concreteTypeId": "c0710b6731b1dd59799cf6bef33eee3b3b04a2e40e80a0724090215bbf2ca974"
-        },
-        {
-          "name": "amount",
-          "concreteTypeId": "1506e6f44c1d6291cdf46395a8e573276a4fa79e8ace3fc891e092ef32d1b0a0"
+          "name": "payable",
+          "arguments": []
         }
-      ],
-      "name": "transfer_to_contract",
-      "output": "2e38e77b22c314a449e91fafed92a43826ac6aa403ae6a8acb6cf58239fbaf5d",
-      "attributes": null
+      ]
     },
     {
       "inputs": [],
