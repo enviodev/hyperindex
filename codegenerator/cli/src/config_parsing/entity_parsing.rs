@@ -38,6 +38,17 @@ enum TypeDef<'a> {
     Enum,
 }
 
+#[derive(thiserror::Error, Debug)]
+enum SchemaParseError {
+    #[error("Failed parsing entity '{entity_name}': {err}")]
+    EntityParseError {
+        err: EntityParseError,
+        entity_name: String,
+    },
+    #[error(transparent)]
+    Other(#[from] anyhow::Error),
+}
+
 impl Schema {
     pub fn empty() -> Self {
         Schema {
@@ -59,7 +70,7 @@ impl Schema {
         Self { entities, enums }.validate()
     }
 
-    fn from_document(document: Document<String>) -> anyhow::Result<Self> {
+    fn from_document(document: Document<String>) -> Result<Self, SchemaParseError> {
         let entities = document
             .definitions
             .iter()
@@ -71,9 +82,13 @@ impl Schema {
                 TypeDefinition::Object(obj) => Some(obj),
                 _ => None,
             })
-            .map(|obj| Entity::from_object(obj))
-            .collect::<anyhow::Result<Vec<Entity>>>()
-            .context("Failed constructing entities in schema from document")?;
+            .map(|obj| {
+                Entity::from_object(obj).map_err(|err| SchemaParseError::EntityParseError {
+                    err,
+                    entity_name: obj.name.clone(),
+                })
+            })
+            .collect::<Result<Vec<Entity>, _>>()?;
 
         let enums = document
             .definitions
@@ -90,7 +105,7 @@ impl Schema {
             .collect::<anyhow::Result<Vec<GraphQLEnum>>>()
             .context("Failed constructing enums in schema from document")?;
 
-        Self::new(entities, enums)
+        Ok(Self::new(entities, enums)?)
     }
 
     pub fn parse_from_file(
@@ -332,6 +347,17 @@ pub struct Entity {
     pub multi_field_indexes: Vec<MultiFieldIndex>,
 }
 
+#[derive(thiserror::Error, Debug)]
+enum EntityParseError {
+    #[error("Failed parsing field '{field_name}': {err}")]
+    FieldParseError {
+        err: FieldParseError,
+        field_name: String,
+    },
+    #[error(transparent)]
+    Other(#[from] anyhow::Error),
+}
+
 impl Entity {
     fn new(
         name: &str,
@@ -380,7 +406,7 @@ impl Entity {
         })
     }
 
-    fn from_object(obj: &ObjectType<String>) -> anyhow::Result<Self> {
+    fn from_object(obj: &ObjectType<String>) -> Result<Self, EntityParseError> {
         let name = &obj.name;
 
         let has_id = obj.fields.iter().any(|field| field.name == "id");
@@ -388,7 +414,7 @@ impl Entity {
             return Err(anyhow!(
                 "No 'id' field found on entity {}. Please add an 'id' field to your entity.",
                 name
-            ));
+            ))?;
         }
 
         let multi_field_indexes = obj
@@ -429,10 +455,16 @@ impl Entity {
             .fields
             .iter()
             .map(
-                Field::from_obj_field, // Pass the indexed status to the field constructor
+                |obj_field| {
+                    Field::from_obj_field(obj_field).map_err(|err| {
+                        EntityParseError::FieldParseError {
+                            err,
+                            field_name: obj_field.name.clone(),
+                        }
+                    })
+                }, // Pass the indexed status to the field constructor
             )
-            .collect::<anyhow::Result<Vec<Field>>>()
-            .context(format!("Failed parsing fields on entity {name}"))?;
+            .collect::<Result<Vec<Field>, _>>()?;
 
         let entity = Self::new(name, fields, multi_field_indexes)
             .context(format!("Failed constructing entity {name}",))?;
@@ -524,46 +556,113 @@ impl Entity {
     }
 }
 
-///  used to get the positive integers in the directives from the GraphQL schema.
-fn get_positive_integer(
-    arg_value: &Value<String>,
-    field_name: &str,
-    param_name: &str,
-) -> anyhow::Result<u32> {
-    match arg_value {
-        Value::Int(i) => {
-            let val = i.as_i64().ok_or_else(|| {
-                anyhow!(
-                    "EE217: {} value must be a positive integer. Field '{}'",
-                    param_name,
-                    field_name
-                )
-            })?;
-            if val < 0 {
-                return Err(anyhow!(
-                    "EE217: {} value must be a positive integer. Field '{}'",
-                    param_name,
-                    field_name
-                ));
-            }
-            Ok(val as u32)
-        }
-        _ => Err(anyhow!(
-            "EE217: {} value must be an integer. Field '{}'",
-            param_name,
-            field_name
-        )),
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Field {
     pub name: String,
     pub field_type: FieldType,
 }
 
+#[derive(thiserror::Error, Debug)]
+pub enum DirectiveParseError {
+    #[error("A field cannot have more than one {0} directive")]
+    Duplicate(String),
+    #[error("Derictives {} cannot be used together", .directive_names.join(", "))]
+    NonCompatibleDirectives { directive_names: Vec<String> },
+    #[error("An id field cannot have an @index or @derivedFrom directive")]
+    IndexOnId,
+
+    #[error(
+        "Directive {directive_name} is not compatible with field {field_name} of type {field_type}"
+    )]
+    NonCompatibleWithField {
+        directive_name: String,
+        field_name: String,
+        field_type: String,
+    },
+
+    #[error("Directive {directive_name} is missing argument of '{argument_name}'")]
+    MissingArgument {
+        directive_name: String,
+        argument_name: String,
+    },
+    #[error("Directive {directive_name} has expected a type of '{expected_type}' for argument '{argument_name}'")]
+    InvalidArgumentType {
+        directive_name: String,
+        argument_name: String,
+        expected_type: String,
+    },
+    #[error("Directive {directive_name} has an invalid argument '{argument_name}'")]
+    InvalidArgument {
+        directive_name: String,
+        argument_name: String,
+    },
+    #[error("Directive {directive_name} has too many arguments. Expected {} args of {}, got {args_count}", .expected_args.len(), .expected_args.join(", "))]
+    TooManyArguments {
+        directive_name: String,
+        expected_args: Vec<String>,
+        args_count: usize,
+    },
+    #[error(
+        "Directive {directive_name} expects a positive integer for argument '{argument_name}'"
+    )]
+    ExpectedPositiveIntArg {
+        directive_name: String,
+        argument_name: String,
+    },
+}
+
+#[derive(thiserror::Error, Debug)]
+pub enum FieldParseError {
+    #[error("Invalid Directive: {err}. {}", .additional_info.clone().unwrap_or("".to_string()))]
+    InvalidDirective {
+        err: DirectiveParseError,
+        additional_info: Option<String>,
+    },
+    #[error(transparent)]
+    ParseFailure(#[from] anyhow::Error),
+}
+
+impl FieldParseError {
+    fn invalid_directive(error: DirectiveParseError) -> Self {
+        Self::InvalidDirective {
+            err: error,
+            additional_info: None,
+        }
+    }
+
+    fn invalid_directive_with_info(error: DirectiveParseError, additional_info: &str) -> Self {
+        Self::InvalidDirective {
+            err: error,
+            additional_info: Some(additional_info.to_string()),
+        }
+    }
+}
+
 impl Field {
-    fn from_obj_field(field: &ObjField<String>) -> anyhow::Result<Self> {
+    fn from_obj_field(field: &ObjField<String>) -> Result<Self, FieldParseError> {
+        ///  used to get the positive integers in the directives from the GraphQL schema.
+        fn get_positive_integer(
+            arg_value: &Value<String>,
+            directive_name: &str,
+            argument_name: &str,
+        ) -> Result<u32, FieldParseError> {
+            let mk_err = || {
+                FieldParseError::invalid_directive(DirectiveParseError::ExpectedPositiveIntArg {
+                    directive_name: directive_name.to_string(),
+                    argument_name: argument_name.to_string(),
+                })
+            };
+            match arg_value {
+                Value::Int(i) => {
+                    let val = i.as_i64().ok_or(mk_err())?;
+                    if val < 0 {
+                        return Err(mk_err());
+                    }
+                    Ok(val as u32)
+                }
+                _ => Err(mk_err()),
+            }
+        }
         // Get all gql directives labeled @derivedFrom and @index
         let derived_from_directives = field
             .directives
@@ -586,28 +685,31 @@ impl Field {
         let derived_from_count = derived_from_directives.len();
         let indexed_count = indexed_directives.len();
 
-        if derived_from_count > 1 || indexed_count > 1 {
-            return Err(anyhow!(
-                "EE202: Cannot use more than one @derivedFrom or @index directive at field {}",
-                field.name
+        if derived_from_count > 1 {
+            return Err(FieldParseError::invalid_directive(
+                DirectiveParseError::Duplicate("@derivedFrom".to_string()),
+            ));
+        }
+
+        if indexed_count > 1 {
+            return Err(FieldParseError::invalid_directive(
+                DirectiveParseError::Duplicate("@index".to_string()),
             ));
         }
 
         if derived_from_count > 0 && indexed_count > 0 {
-            return Err(anyhow!(
-                // TODO: update the docs here:https://github.com/Float-Capital/envio-docs/blob/a20823ffa266d26d6e7beb461caa335de14fa263/docs/error-codes.md?plain=1#L108
-                "EE202: A field cannot be both @derivedFrom and @index: {}",
-                field.name
+            return Err(FieldParseError::invalid_directive(
+                DirectiveParseError::NonCompatibleDirectives {
+                    directive_names: vec!["@derivedFrom".to_string(), "@index".to_string()],
+                },
             ));
         }
 
         if (field.name == "id" || field.name == "ID")
             && (indexed_count > 0 || derived_from_count > 0)
         {
-            return Err(anyhow!(
-                "EE202: The field 'id' or 'ID' cannot be indexed or derivedFrom. Please remove \
-                 the @index or @derivedFrom directive from field {}",
-                field.name
+            return Err(FieldParseError::invalid_directive(
+                DirectiveParseError::IndexOnId,
             ));
         }
 
@@ -616,17 +718,19 @@ impl Field {
             None => None,
             Some(d) => {
                 let field_arg = d.arguments.iter().find(|a| a.0 == "field").ok_or_else(|| {
-                    anyhow!(
-                        "EE203: No 'field' argument supplied to @derivedFrom directive on field {}",
-                        field.name
-                    )
+                    FieldParseError::invalid_directive(DirectiveParseError::MissingArgument {
+                        directive_name: "@derivedFrom".to_string(),
+                        argument_name: "field".to_string(),
+                    })
                 })?;
                 match &field_arg.1 {
                     Value::String(val) => Some(val.clone()),
-                    _ => Err(anyhow!(
-                        "EE204: 'field' argument in @derivedFrom directive on field {} needs to \
-                         contain a string",
-                        field.name
+                    _ => Err(FieldParseError::invalid_directive(
+                        DirectiveParseError::InvalidArgumentType {
+                            directive_name: "@derivedFrom".to_string(),
+                            argument_name: "field".to_string(),
+                            expected_type: "string".to_string(),
+                        },
                     ))?,
                 }
             }
@@ -648,16 +752,23 @@ impl Field {
             .collect::<Vec<&Directive<'_, String>>>();
 
         // Validate directive usage
-        if decimal_precision_directives.len() > 1 || numeric_directives.len() > 1 {
-            return Err(anyhow!(
-                "EE202: Cannot use more than one of the same directive on field {}",
-                field.name
+        if decimal_precision_directives.len() > 1 {
+            return Err(FieldParseError::invalid_directive(
+                DirectiveParseError::Duplicate("@precision".to_string()),
             ));
         }
+
+        if numeric_directives.len() > 1 {
+            return Err(FieldParseError::invalid_directive(
+                DirectiveParseError::Duplicate("@numeric".to_string()),
+            ));
+        }
+
         if decimal_precision_directives.len() > 0 && numeric_directives.len() > 0 {
-            return Err(anyhow!(
-                "EE202: A field cannot have both @precision and @numeric directives: {}",
-                field.name
+            return Err(FieldParseError::invalid_directive(
+                DirectiveParseError::NonCompatibleDirectives {
+                    directive_names: vec!["@precision".to_string(), "@numeric".to_string()],
+                },
             ));
         }
 
@@ -674,39 +785,48 @@ impl Field {
         // Process @precision
         if let Some(decimal_precision_directive) = decimal_precision_directives.first() {
             if !matches!(underlying_scalar, GqlScalar::BigInt(_)) {
-                return Err(anyhow!(
-                    "EE215: The precision directive on a field is only suitable for BigInt scalar \
-                     type. Field '{}'",
-                    field.name
+                return Err(FieldParseError::invalid_directive_with_info(
+                    DirectiveParseError::NonCompatibleWithField {
+                        directive_name: "@precision".to_string(),
+                        field_name: field.name.clone(),
+                        field_type: underlying_scalar.to_string(),
+                    },
+                    "The precision directive on a field is only suitable for BigInt scalar type.",
                 ));
             }
             if decimal_precision_directive.arguments.len() != 1 {
-                return Err(anyhow!(
-                    "EE216: The precision directive on a BigInt should only take a single integer \
-                     argument called 'digits'. Field '{}'",
-                    field.name
+                return Err(FieldParseError::invalid_directive(
+                    DirectiveParseError::TooManyArguments {
+                        directive_name: "@precision".to_string(),
+                        expected_args: vec!["digits".to_string()],
+                        args_count: decimal_precision_directive.arguments.len(),
+                    },
                 ));
             }
             let (arg_name, arg_value) = decimal_precision_directive.arguments.first().unwrap();
             if arg_name != "digits" {
-                return Err(anyhow!(
-                    "EE216: The precision directive on a BigInt should only have a 'digits' \
-                     parameter. Unknown parameter '{}'. Field '{}'",
-                    arg_name,
-                    field.name
+                return Err(FieldParseError::invalid_directive_with_info(
+                    DirectiveParseError::InvalidArgument {
+                        directive_name: "@precision".to_string(),
+                        argument_name: arg_name.clone(),
+                    },
+                    "Expected only 'digits' argument",
                 ));
             }
-            let precision = get_positive_integer(arg_value, &field.name, "digits")?;
+            let precision = get_positive_integer(arg_value, "@precision", "digits")?;
             pg_type_modifications.big_int_precision = Some(precision);
         }
 
         // Process @numeric
         if let Some(numeric_directive) = numeric_directives.first() {
             if !matches!(underlying_scalar, GqlScalar::BigDecimal(_)) {
-                return Err(anyhow!(
-                    "EE215: The numeric directive on a field is only suitable for BigDecimal \
-                     scalar type. Field '{}'",
-                    field.name
+                return Err(FieldParseError::invalid_directive_with_info(
+                    DirectiveParseError::NonCompatibleWithField {
+                        directive_name: "@numeric".to_string(),
+                        field_name: field.name.clone(),
+                        field_type: underlying_scalar.to_string(),
+                    },
+                    "The numeric directive on a field is only suitable for BigDecimal scalar type.",
                 ));
             }
             let mut precision: Option<u32> = None;
@@ -715,28 +835,36 @@ impl Field {
             for (arg_name, arg_value) in &numeric_directive.arguments {
                 match arg_name.as_str() {
                     "precision" => {
-                        precision =
-                            Some(get_positive_integer(arg_value, &field.name, "Precision")?);
+                        precision = Some(get_positive_integer(arg_value, "@numeric", "precision")?);
                     }
                     "scale" => {
-                        scale = Some(get_positive_integer(arg_value, &field.name, "Scale")?);
+                        scale = Some(get_positive_integer(arg_value, "@numeric", "scale")?);
                     }
                     unknown_param => {
-                        return Err(anyhow!(
-                            "EE216: The numeric directive on a BigDecimal should only have \
-                             'precision' and 'scale' parameters. Unknown parameter '{}'. Field \
-                             '{}'",
-                            unknown_param,
-                            field.name
+                        return Err(FieldParseError::invalid_directive_with_info(
+                            DirectiveParseError::InvalidArgument {
+                                directive_name: "@numeric".to_string(),
+                                argument_name: unknown_param.to_string(),
+                            },
+                            "Expected only 'precision' and 'scale' arguments",
                         ));
                     }
                 }
             }
-            if precision.is_none() || scale.is_none() {
-                return Err(anyhow!(
-                    "EE216: The numeric directive on a BigDecimal must have both 'precision' and \
-                     'scale' parameters. Field '{}'",
-                    field.name
+            if precision.is_none() {
+                return Err(FieldParseError::invalid_directive(
+                    DirectiveParseError::MissingArgument {
+                        directive_name: "@numeric".to_string(),
+                        argument_name: "precision".to_string(),
+                    },
+                ));
+            }
+            if scale.is_none() {
+                return Err(FieldParseError::invalid_directive(
+                    DirectiveParseError::MissingArgument {
+                        directive_name: "@numeric".to_string(),
+                        argument_name: "scale".to_string(),
+                    },
                 ));
             }
             pg_type_modifications.big_decimal_precision_scale =
@@ -1475,10 +1603,12 @@ impl GqlScalar {
 #[cfg(test)]
 mod tests {
     use super::{
-        anyhow, Entity, Field, FieldType, GqlScalar, GraphQLEnum, Schema, UserDefinedFieldType,
+        anyhow, DirectiveParseError, Entity, EntityParseError, Field, FieldParseError, FieldType,
+        GqlScalar, GraphQLEnum, Schema, SchemaParseError, UserDefinedFieldType,
     };
     use crate::config_parsing::postgres_types::Primitive as PGPrimitive;
     use graphql_parser::schema::{parse_schema, Definition, Document, ObjectType, TypeDefinition};
+    use pretty_assertions::assert_eq;
 
     fn setup_document(schema: &str) -> anyhow::Result<Document<String>> {
         parse_schema::<String>(schema)
@@ -2311,12 +2441,23 @@ type TestEntity {
         let gql_doc = setup_document(schema_str).expect("Failed to parse schema");
         let result = Schema::from_document(gql_doc);
 
-        assert!(result.is_err());
-        let err_message = format!("{:?}", result.unwrap_err());
-        assert!(err_message.contains(
-            "The precision directive on a BigInt should only have a 'digits' parameter. Unknown \
-             parameter 'wronglabel'. Field 'exampleBigDecimalWrongDirective'"
+        assert!(matches!(
+            result,
+            Err(SchemaParseError::EntityParseError {
+                err: EntityParseError::FieldParseError {
+                    err: FieldParseError::InvalidDirective {
+                        err: DirectiveParseError::InvalidArgument { .. },
+                        ..
+                    },
+                    ..
+                },
+                ..
+            })
         ));
+        // assert!(err_message.contains(
+        //     "The precision directive on a BigInt should only have a 'digits' parameter. Unknown \
+        //      parameter 'wronglabel'. Field 'exampleBigDecimalWrongDirective'"
+        // ));
     }
 
     #[test]
