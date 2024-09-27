@@ -525,34 +525,16 @@ impl Entity {
 }
 
 ///  used to get the positive integers in the directives from the GraphQL schema.
-fn get_positive_integer(
-    arg_value: &Value<String>,
-    field_name: &str,
-    param_name: &str,
-) -> anyhow::Result<u32> {
+fn get_positive_integer(arg_value: &Value<String>) -> anyhow::Result<u32> {
     match arg_value {
         Value::Int(i) => {
-            let val = i.as_i64().ok_or_else(|| {
-                anyhow!(
-                    "EE217: {} value must be a positive integer. Field '{}'",
-                    param_name,
-                    field_name
-                )
-            })?;
+            let val = i.as_i64().context("Failed to convert value to i64")?;
             if val < 0 {
-                return Err(anyhow!(
-                    "EE217: {} value must be a positive integer. Field '{}'",
-                    param_name,
-                    field_name
-                ));
+                return Err(anyhow!("Value must be a positive integer"));
             }
             Ok(val as u32)
         }
-        _ => Err(anyhow!(
-            "EE217: {} value must be an integer. Field '{}'",
-            param_name,
-            field_name
-        )),
+        _ => Err(anyhow!("Value must be an integer")),
     }
 }
 
@@ -577,7 +559,19 @@ impl Field {
             .filter(|&directive| directive.name == "index")
             .collect::<Vec<&Directive<'_, String>>>();
 
-        // Validate directive usage
+        // Collect directives
+        let decimal_precision_directives = field
+            .directives
+            .iter()
+            .filter(|&directive| directive.name == "precision")
+            .collect::<Vec<&Directive<'_, String>>>();
+        let numeric_directives = field
+            .directives
+            .iter()
+            .filter(|&directive| directive.name == "numeric")
+            .collect::<Vec<&Directive<'_, String>>>();
+
+        // Basic validation of directive usage
 
         // Do not allow for multiple @derivedFrom directives
         // If this step is not important and we are fine with just taking the first one
@@ -586,9 +580,19 @@ impl Field {
         let derived_from_count = derived_from_directives.len();
         let indexed_count = indexed_directives.len();
 
-        if derived_from_count > 1 || indexed_count > 1 {
+        if decimal_precision_directives.len() > 1
+            || numeric_directives.len() > 1
+            || derived_from_count > 1
+            || indexed_count > 1
+        {
             return Err(anyhow!(
-                "EE202: Cannot use more than one @derivedFrom or @index directive at field {}",
+                "EE202: Cannot use more than one of the same directive on field {}",
+                field.name
+            ));
+        }
+        if decimal_precision_directives.len() > 0 && numeric_directives.len() > 0 {
+            return Err(anyhow!(
+                "EE202: A field cannot have both @precision and @numeric directives: {}",
                 field.name
             ));
         }
@@ -635,37 +639,12 @@ impl Field {
         // TODO: should we dis-allow indexed fields that are either `id` or derived From fields?
         let is_indexed = indexed_count > 0;
 
-        // Collect directives
-        let decimal_precision_directives = field
-            .directives
-            .iter()
-            .filter(|&directive| directive.name == "precision")
-            .collect::<Vec<&Directive<'_, String>>>();
-        let numeric_directives = field
-            .directives
-            .iter()
-            .filter(|&directive| directive.name == "numeric")
-            .collect::<Vec<&Directive<'_, String>>>();
-
-        // Validate directive usage
-        if decimal_precision_directives.len() > 1 || numeric_directives.len() > 1 {
-            return Err(anyhow!(
-                "EE202: Cannot use more than one of the same directive on field {}",
-                field.name
-            ));
-        }
-        if decimal_precision_directives.len() > 0 && numeric_directives.len() > 0 {
-            return Err(anyhow!(
-                "EE202: A field cannot have both @precision and @numeric directives: {}",
-                field.name
-            ));
-        }
-
         // Parse the field type into UserDefinedFieldType
         let underlying_scalar = UserDefinedFieldType::from_obj_field_type(
             &field.field_type,
             &PgTypeModifications::default(),
-        ).get_underlying_scalar();
+        )
+        .get_underlying_scalar();
 
         let mut pg_type_modifications = PgTypeModifications::default();
 
@@ -694,7 +673,10 @@ impl Field {
                     field.name
                 ));
             }
-            let precision = get_positive_integer(arg_value, &field.name, "digits")?;
+            let precision = get_positive_integer(arg_value).context(format!(
+                "Parsing precision.digits directive on BigInt field with field name {}",
+                &field.name
+            ))?;
             pg_type_modifications.big_int_precision = Some(precision);
         }
 
@@ -713,11 +695,16 @@ impl Field {
             for (arg_name, arg_value) in &numeric_directive.arguments {
                 match arg_name.as_str() {
                     "precision" => {
-                        precision =
-                            Some(get_positive_integer(arg_value, &field.name, "Precision")?);
+                        precision = Some(get_positive_integer(arg_value).context(format!(
+                            "Parsing numeric.precision directive on BigDecimal with field name {}",
+                            &field.name
+                        ))?);
                     }
                     "scale" => {
-                        scale = Some(get_positive_integer(arg_value, &field.name, "Scale")?);
+                        scale = Some(get_positive_integer(arg_value).context(format!(
+                            "Parsing numeric.scale directive on BigDecimal with field name {}",
+                            &field.name
+                        ))?);
                     }
                     unknown_param => {
                         return Err(anyhow!(
@@ -730,15 +717,18 @@ impl Field {
                     }
                 }
             }
-            if precision.is_none() || scale.is_none() {
-                return Err(anyhow!(
-                    "EE216: The numeric directive on a BigDecimal must have both 'precision' and \
-                     'scale' parameters. Field '{}'",
-                    field.name
-                ));
+            match (precision, scale) {
+                (Some(precision), Some(scale)) => {
+                    pg_type_modifications.big_decimal_precision_scale = Some((precision, scale));
+                }
+                _ => {
+                    return Err(anyhow!(
+                        "EE216: The numeric directive on a BigDecimal must have both 'precision' \
+                         and 'scale' parameters. Field '{}'",
+                        field.name
+                    ));
+                }
             }
-            pg_type_modifications.big_decimal_precision_scale =
-                Some((precision.unwrap(), scale.unwrap()));
         }
 
         let params = FieldTypeParams {
