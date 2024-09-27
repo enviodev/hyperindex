@@ -29,10 +29,10 @@ describe("Raw Events Table Migrations", () => {
       { column_name: "block_number", data_type: "integer" },
       { column_name: "log_index", data_type: "integer" },
       { column_name: "block_timestamp", data_type: "integer" },
-      { column_name: "params", data_type: "json" },
+      { column_name: "params", data_type: "jsonb" },
       { column_name: "block_hash", data_type: "text" },
-      { column_name: "block_fields", data_type: "json" },
-      { column_name: "transaction_fields", data_type: "json" },
+      { column_name: "block_fields", data_type: "jsonb" },
+      { column_name: "transaction_fields", data_type: "jsonb" },
       { column_name: "src_address", data_type: "text" },
     ];
 

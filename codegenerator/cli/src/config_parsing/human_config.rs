@@ -529,12 +529,15 @@ pub mod fuel {
         pub name: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
-            description = "An identifier of a logged type from ABI. Used for indexing LogData receipts. The option can be omitted when the event name matches the logged struct/enum name."
+            description = "An identifier of a logged type from ABI. Used for indexing LogData \
+                           receipts. The option can be omitted when the event name matches the \
+                           logged struct/enum name."
         )]
         pub log_id: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
-            description = "Index Mint receipts. The option can be omitted when the event name is Mint."
+            description = "Index Mint receipts. The option can be omitted when the event name is \
+                           Mint."
         )]
         pub mint: Option<bool>,
         #[serde(skip_serializing_if = "Option::is_none")]

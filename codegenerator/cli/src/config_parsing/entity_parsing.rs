@@ -878,7 +878,16 @@ impl UserDefinedFieldType {
                              methods for referencing entities outlined in the docs. The entity \
                              being referenced in the array is '{}'.",
                             name
-                        ))?
+                        ))
+                    }
+                    //TODO: add support for these types
+                    //currently we would need to use explicid casts in the queries to make these
+                    //work https://github.com/porsager/postgres/pull/392
+                    Self::Single(GqlScalar::Boolean) => {
+                        Err(anyhow!("Arrays of booleans are not yet supported."))
+                    }
+                    Self::Single(GqlScalar::Timestamp) => {
+                        Err(anyhow!("Arrays of timestamps are not yet supported."))
                     }
                     _ => field_type.validate_type(schema),
                 },
@@ -886,11 +895,11 @@ impl UserDefinedFieldType {
                     "EE208: Nullable scalars inside lists are unsupported. Please include a '!' \
                      after your '{}' scalar",
                     gql_scalar
-                ))?,
+                )),
                 Self::ListType(_) => Err(anyhow!(
                     "EE209: Nullable multidimensional lists types are unsupported,please include \
                      a '!' for your inner list type eg. [[Int!]!]"
-                ))?,
+                )),
             },
             Self::NonNullType(field_type) => match field_type.as_ref() {
                 Self::NonNullType(_) => Err(anyhow!(

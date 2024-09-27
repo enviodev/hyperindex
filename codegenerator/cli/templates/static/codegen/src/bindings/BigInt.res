@@ -12,6 +12,7 @@
 // constructors and methods
 @val external fromInt: int => bigint = "BigInt"
 @val external fromStringUnsafe: string => bigint = "BigInt"
+@val external fromUnknownUnsafe: unknown => bigint = "BigInt"
 let fromString = str => unsafeToOption(() => str->fromStringUnsafe)
 @send external toString: bigint => string = "toString"
 let toInt = (b: bigint): option<int> => b->toString->Belt.Int.fromString
