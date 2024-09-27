@@ -662,12 +662,10 @@ impl Field {
         }
 
         // Parse the field type into UserDefinedFieldType
-        let field_type = UserDefinedFieldType::from_obj_field_type(
+        let underlying_scalar = UserDefinedFieldType::from_obj_field_type(
             &field.field_type,
             &PgTypeModifications::default(),
-        );
-
-        let underlying_scalar = field_type.get_underlying_scalar();
+        ).get_underlying_scalar();
 
         let mut pg_type_modifications = PgTypeModifications::default();
 
@@ -1372,7 +1370,7 @@ pub enum GqlScalar {
     #[subenum(BuiltInGqlScalar)]
     Boolean,
     #[subenum(AdditionalGqlScalar)]
-    BigInt(Option<u32>),
+    BigInt(Option<u32>), // Optional argument, max digits (base 10) this number can have.
     #[subenum(AdditionalGqlScalar)]
     BigDecimal(Option<(u32, u32)>),
     #[subenum(AdditionalGqlScalar)]
@@ -2362,7 +2360,6 @@ type TestEntity {
 
         assert!(result.is_err());
         let err_message = format!("{:?}", result.unwrap_err());
-        println!("SEEE MEEE {}", err_message);
         assert!(err_message.contains(
             "The numeric directive on a BigDecimal should only have 'precision' and 'scale' \
              parameters. Unknown parameter 'wronglabel'."
