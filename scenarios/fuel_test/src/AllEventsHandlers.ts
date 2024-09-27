@@ -246,7 +246,10 @@ const callSchema = S.object({
   to: S.string,
   amount: SExtra.bigint,
 });
-AllEvents.Call.handler(async ({ event }) => {
-  callSchema.assert(event.params)!;
-  expectType<AssertSchemaType<typeof event.params, typeof callSchema>>(true);
-});
+AllEvents.Call.handler(
+  async ({ event }) => {
+    callSchema.assert(event.params)!;
+    expectType<AssertSchemaType<typeof event.params, typeof callSchema>>(true);
+  },
+  { wildcard: true }
+);

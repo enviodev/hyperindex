@@ -999,25 +999,26 @@ impl Event {
                     selectors[1]
                 ));
             }
+            let should_derive_from_name = selectors.len() == 0;
             let event = match event_config {
                 FuelEventConfig {
                     mint: Some(true), ..
                 } => mint_event,
                 FuelEventConfig {
                     mint: None, name, ..
-                } if selectors.len() == 0 && name == "Mint" => mint_event,
+                } if should_derive_from_name && name == "Mint" => mint_event,
                 FuelEventConfig {
                     burn: Some(true), ..
                 } => burn_event,
                 FuelEventConfig {
                     burn: None, name, ..
-                } if selectors.len() == 0 && name == "Burn" => burn_event,
+                } if should_derive_from_name && name == "Burn" => burn_event,
                 FuelEventConfig {
                     call: Some(true), ..
                 } => call_event,
                 FuelEventConfig {
                     call: None, name, ..
-                } if selectors.len() == 0 && name == "Call" => call_event,
+                } if should_derive_from_name && name == "Call" => call_event,
                 FuelEventConfig {
                     transfer_out: Some(true),
                     ..
@@ -1026,7 +1027,7 @@ impl Event {
                     transfer_out: None,
                     name,
                     ..
-                } if selectors.len() == 0 && name == "TransferOut" => transfer_out_event,
+                } if should_derive_from_name && name == "TransferOut" => transfer_out_event,
                 FuelEventConfig {
                     mint: None | Some(false),
                     burn: None | Some(false),

@@ -67,7 +67,7 @@ let makeWorkerConfigOrThrow = (~contracts: array<Types.fuelContractConfig>, ~cha
       | {kind: TransferOut, isWildcard: true} => addNonLogDataWildcardReceiptTypes(TransferOut)
       | {kind: TransferOut} => addNonLogDataReceiptType(contract.name, TransferOut)
       | {kind: Call, isWildcard: true} => addNonLogDataWildcardReceiptTypes(Call)
-      | {kind: Call} => addNonLogDataReceiptType(contract.name, Call)
+      | {kind: Call} => Js.Exn.raiseError("Call receipt indexing currently supported only in wildcard mode")
       | {kind: LogData({logId}), isWildcard} => {
           let rb = logId->BigInt.fromStringUnsafe
           if isWildcard {
