@@ -945,6 +945,8 @@ impl Event {
         abi_file_path: &String,
         project_paths: &ParsedProjectPaths,
     ) -> Result<(Vec<Self>, FuelAbi)> {
+        use human_config::fuel::EventType;
+
         let abi_path: PathBuf = path_utils::get_config_path_relative_to_root(
             project_paths,
             PathBuf::from(&abi_file_path),
@@ -955,105 +957,68 @@ impl Event {
         let mut events = vec![];
 
         for event_config in events_config.iter() {
-            let mint_event = Event {
-                name: event_config.name.clone(),
-                kind: EventKind::Fuel(FuelEventKind::Mint),
-                sighash: "mint".to_string(),
+            let event_type = match &event_config.type_ {
+                Some(event_type) => event_type.clone(),
+                None => {
+                    if event_config.log_id.is_some() {
+                        EventType::LogData
+                    } else {
+                        match event_config.name.as_str() {
+                            "Mint" => EventType::Mint,
+                            "Burn" => EventType::Burn,
+                            "TransferOut" => EventType::TransferOut,
+                            "Call" => EventType::Call,
+                            _ => EventType::LogData,
+                        }
+                    }
+                }
             };
-            let burn_event = Event {
-                name: event_config.name.clone(),
-                kind: EventKind::Fuel(FuelEventKind::Burn),
-                sighash: "burn".to_string(),
-            };
-            let transfer_out_event = Event {
-                name: event_config.name.clone(),
-                kind: EventKind::Fuel(FuelEventKind::TransferOut),
-                sighash: "transferOut".to_string(),
-            };
-            let call_event = Event {
-                name: event_config.name.clone(),
-                kind: EventKind::Fuel(FuelEventKind::Call),
-                sighash: "call".to_string(),
-            };
-            let mut selectors = vec![];
-            if event_config.mint == Some(true) {
-                selectors.push("Mint");
-            }
-            if event_config.burn == Some(true) {
-                selectors.push("Burn");
-            }
-            if event_config.transfer_out == Some(true) {
-                selectors.push("TransferOut");
-            }
-            if event_config.call == Some(true) {
-                selectors.push("Call");
-            }
-            if event_config.log_id.is_some() {
-                selectors.push("LogId");
-            }
-            if selectors.len() > 1 {
+            if event_config.log_id.is_some() && event_type != EventType::LogData {
                 return Err(anyhow!(
-                    "Failed parsing event '{}'. Having both {} and {} options is not allowed.",
+                    "Event '{}' has both 'logId' and '{}' type set. Only one of them can be used at once.",
                     event_config.name,
-                    selectors[0],
-                    selectors[1]
+                    event_type
                 ));
             }
-            let should_derive_from_name = selectors.len() == 0;
-            let event = match event_config {
-                FuelEventConfig {
-                    mint: Some(true), ..
-                } => mint_event,
-                FuelEventConfig {
-                    mint: None, name, ..
-                } if should_derive_from_name && name == "Mint" => mint_event,
-                FuelEventConfig {
-                    burn: Some(true), ..
-                } => burn_event,
-                FuelEventConfig {
-                    burn: None, name, ..
-                } if should_derive_from_name && name == "Burn" => burn_event,
-                FuelEventConfig {
-                    call: Some(true), ..
-                } => call_event,
-                FuelEventConfig {
-                    call: None, name, ..
-                } if should_derive_from_name && name == "Call" => call_event,
-                FuelEventConfig {
-                    transfer_out: Some(true),
-                    ..
-                } => transfer_out_event,
-                FuelEventConfig {
-                    transfer_out: None,
-                    name,
-                    ..
-                } if should_derive_from_name && name == "TransferOut" => transfer_out_event,
-                FuelEventConfig {
-                    mint: None | Some(false),
-                    burn: None | Some(false),
-                    transfer_out: None | Some(false),
-                    call: None | Some(false),
-                    log_id,
-                    name,
-                } => {
-                    let log = match &log_id {
+            let event = match event_type {
+                EventType::LogData => {
+                    let log = match &event_config.log_id {
                         None => {
                             let logged_type = fuel_abi
-                            .get_type_by_struct_name(name.clone())
-                            .context(
-                                "Failed to derive the event configuration from the name. Use the logId, mint, or burn options to set it explicitly.",
-                            )?;
+                        .get_type_by_struct_name(event_config.name.clone())
+                        .context(
+                            "Failed to derive the event configuration from the name. Use the logId, mint, or burn options to set it explicitly.",
+                        )?;
                             fuel_abi.get_log_by_type(logged_type.id)?
                         }
                         Some(log_id) => fuel_abi.get_log(&log_id)?,
                     };
-
                     Event {
                         name: event_config.name.clone(),
                         kind: EventKind::Fuel(FuelEventKind::LogData(log.data_type)),
                         sighash: log.id,
                     }
                 }
+                EventType::Mint => Event {
+                    name: event_config.name.clone(),
+                    kind: EventKind::Fuel(FuelEventKind::Mint),
+                    sighash: "mint".to_string(),
+                },
+                EventType::Burn => Event {
+                    name: event_config.name.clone(),
+                    kind: EventKind::Fuel(FuelEventKind::Burn),
+                    sighash: "burn".to_string(),
+                },
+                EventType::TransferOut => Event {
+                    name: event_config.name.clone(),
+                    kind: EventKind::Fuel(FuelEventKind::TransferOut),
+                    sighash: "transferOut".to_string(),
+                },
+                EventType::Call => Event {
+                    name: event_config.name.clone(),
+                    kind: EventKind::Fuel(FuelEventKind::Call),
+                    sighash: "call".to_string(),
+                },
             };
 
             events.push(event)

@@ -98,6 +98,17 @@
     "EventConfig": {
       "type": "object",
       "properties": {
+        "type": {
+          "description": "Explicitly set the event type you want to index. It's derived from the event name and fallbacks to LogData.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/EventType"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "name": {
           "description": "Name of the event in the HyperIndex generated code",
           "type": "string"
@@ -108,39 +119,21 @@
             "string",
             "null"
           ]
-        },
-        "mint": {
-          "description": "Index Mint receipts. The option can be omitted when the event name is Mint.",
-          "type": [
-            "boolean",
-            "null"
-          ]
-        },
-        "burn": {
-          "description": "Index Burn receipts. The option can be omitted when the event name is Burn.",
-          "type": [
-            "boolean",
-            "null"
-          ]
-        },
-        "call": {
-          "description": "Index Call receipts. The option can be omitted when the event name is Call.",
-          "type": [
-            "boolean",
-            "null"
-          ]
-        },
-        "transferOut": {
-          "description": "Index TransferOut receipts. The option can be omitted when the event name is TransferOut.",
-          "type": [
-            "boolean",
-            "null"
-          ]
         }
       },
       "additionalProperties": false,
       "required": [
         "name"
+      ]
+    },
+    "EventType": {
+      "type": "string",
+      "enum": [
+        "LOG_DATA",
+        "MINT",
+        "BURN",
+        "TRANSFER_OUT",
+        "CALL"
       ]
     },
     "Network": {

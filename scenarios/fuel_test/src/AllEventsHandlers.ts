@@ -234,7 +234,7 @@ const transferOutSchema = S.object({
   to: S.string,
   amount: SExtra.bigint,
 });
-AllEvents.TransferOut.handler(async ({ event }) => {
+AllEvents.Transfer.handler(async ({ event }) => {
   transferOutSchema.assert(event.params)!;
   expectType<AssertSchemaType<typeof event.params, typeof transferOutSchema>>(
     true
