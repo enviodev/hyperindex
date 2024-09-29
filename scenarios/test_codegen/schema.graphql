@@ -29,15 +29,15 @@ type Gravatar {
 
 type PostgresNumericPrecisionEntityTester {
   id: ID!
-  exampleBigInt: BigInt @precision(digits: 76)
-  exampleBigIntRequired: BigInt! @precision(digits: 77)
-  exampleBigIntArray: [BigInt!] @precision(digits: 78)
-  exampleBigIntArrayRequired: [BigInt!]! @precision(digits: 79)
-  exampleBigDecimal: BigDecimal @numeric(precision: 80, scale: 5)
-  exampleBigDecimalRequired: BigDecimal! @numeric(precision: 81, scale: 5)
-  exampleBigDecimalArray: [BigDecimal!] @numeric(precision: 82, scale: 5)
-  exampleBigDecimalArrayRequired: [BigDecimal!]! @numeric(precision: 83, scale: 5)
-  exampleBigDecimalOtherOrder: BigDecimal! @numeric(scale: 6, precision: 84)
+  exampleBigInt: BigInt @config(precision: 76)
+  exampleBigIntRequired: BigInt! @config(precision: 77)
+  exampleBigIntArray: [BigInt!] @config(precision: 78)
+  exampleBigIntArrayRequired: [BigInt!]! @config(precision: 79)
+  exampleBigDecimal: BigDecimal @config(precision: 80, scale: 5)
+  exampleBigDecimalRequired: BigDecimal! @config(precision: 81, scale: 5)
+  exampleBigDecimalArray: [BigDecimal!] @config(precision: 82, scale: 5)
+  exampleBigDecimalArrayRequired: [BigDecimal!]! @config(precision: 83, scale: 5)
+  exampleBigDecimalOtherOrder: BigDecimal! @config(scale: 6, precision: 84)
 }
 
 type NftCollection {
