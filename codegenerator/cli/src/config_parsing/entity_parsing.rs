@@ -528,13 +528,15 @@ impl Entity {
 fn get_positive_integer(arg_value: &Value<String>) -> anyhow::Result<u32> {
     match arg_value {
         Value::Int(i) => {
-            let val = i.as_i64().context("Failed to convert value to i64")?;
+            let val = i
+                .as_i64()
+                .context("EE217: Failed to convert value to i64")?;
             if val < 0 {
-                return Err(anyhow!("Value must be a positive integer"));
+                return Err(anyhow!("EE217: Value must be a positive integer"));
             }
             Ok(val as u32)
         }
-        _ => Err(anyhow!("Value must be an integer")),
+        _ => Err(anyhow!("EE217: Value must be an integer")),
     }
 }
 
@@ -546,7 +548,7 @@ pub struct Field {
 
 impl Field {
     fn from_obj_field(field: &ObjField<String>) -> anyhow::Result<Self> {
-        // Get all gql directives labeled @derivedFrom and @index
+        // Collect directives
         let derived_from_directives = field
             .directives
             .iter()
@@ -559,47 +561,26 @@ impl Field {
             .filter(|&directive| directive.name == "index")
             .collect::<Vec<&Directive<'_, String>>>();
 
-        // Collect directives
-        let decimal_precision_directives = field
+        let config_directives = field
             .directives
             .iter()
-            .filter(|&directive| directive.name == "precision")
-            .collect::<Vec<&Directive<'_, String>>>();
-        let numeric_directives = field
-            .directives
-            .iter()
-            .filter(|&directive| directive.name == "numeric")
+            .filter(|&directive| directive.name == "config")
             .collect::<Vec<&Directive<'_, String>>>();
 
-        // Basic validation of directive usage
-
-        // Do not allow for multiple @derivedFrom directives
-        // If this step is not important and we are fine with just taking the first one
-        // in the case of multiple we can just use a find rather than a filter method above
-
+        // Validate directive usage
         let derived_from_count = derived_from_directives.len();
         let indexed_count = indexed_directives.len();
+        let config_count = config_directives.len();
 
-        if decimal_precision_directives.len() > 1
-            || numeric_directives.len() > 1
-            || derived_from_count > 1
-            || indexed_count > 1
-        {
+        if derived_from_count > 1 || indexed_count > 1 || config_count > 1 {
             return Err(anyhow!(
                 "EE202: Cannot use more than one of the same directive on field {}",
-                field.name
-            ));
-        }
-        if decimal_precision_directives.len() > 0 && numeric_directives.len() > 0 {
-            return Err(anyhow!(
-                "EE202: A field cannot have both @precision and @numeric directives: {}",
                 field.name
             ));
         }
 
         if derived_from_count > 0 && indexed_count > 0 {
             return Err(anyhow!(
-                // TODO: update the docs here:https://github.com/Float-Capital/envio-docs/blob/a20823ffa266d26d6e7beb461caa335de14fa263/docs/error-codes.md?plain=1#L108
                 "EE202: A field cannot be both @derivedFrom and @index: {}",
                 field.name
             ));
@@ -636,11 +617,10 @@ impl Field {
             }
         };
 
-        // TODO: should we dis-allow indexed fields that are either `id` or derived From fields?
         let is_indexed = indexed_count > 0;
 
         // Parse the field type into UserDefinedFieldType
-        let underlying_scalar = UserDefinedFieldType::from_obj_field_type(
+        let field_type = UserDefinedFieldType::from_obj_field_type(
             &field.field_type,
             &PgTypeModifications::default(),
         )
@@ -648,83 +628,87 @@ impl Field {
 
         let mut pg_type_modifications = PgTypeModifications::default();
 
-        // Process @precision
-        if let Some(decimal_precision_directive) = decimal_precision_directives.first() {
-            if !matches!(underlying_scalar, GqlScalar::BigInt(_)) {
-                return Err(anyhow!(
-                    "EE215: The precision directive on a field is only suitable for BigInt scalar \
-                     type. Field '{}'",
-                    field.name
-                ));
-            }
-            if decimal_precision_directive.arguments.len() != 1 {
-                return Err(anyhow!(
-                    "EE216: The precision directive on a BigInt should only take a single integer \
-                     argument called 'digits'. Field '{}'",
-                    field.name
-                ));
-            }
-            let (arg_name, arg_value) = decimal_precision_directive.arguments.first().unwrap();
-            if arg_name != "digits" {
-                return Err(anyhow!(
-                    "EE216: The precision directive on a BigInt should only have a 'digits' \
-                     parameter. Unknown parameter '{}'. Field '{}'",
-                    arg_name,
-                    field.name
-                ));
-            }
-            let precision = get_positive_integer(arg_value).context(format!(
-                "Parsing precision.digits directive on BigInt field with field name {}",
-                &field.name
-            ))?;
-            pg_type_modifications.big_int_precision = Some(precision);
-        }
-
-        // Process @numeric
-        if let Some(numeric_directive) = numeric_directives.first() {
-            if !matches!(underlying_scalar, GqlScalar::BigDecimal(_)) {
-                return Err(anyhow!(
-                    "EE215: The numeric directive on a field is only suitable for BigDecimal \
-                     scalar type. Field '{}'",
-                    field.name
-                ));
-            }
-            let mut precision: Option<u32> = None;
-            let mut scale: Option<u32> = None;
-
-            for (arg_name, arg_value) in &numeric_directive.arguments {
-                match arg_name.as_str() {
-                    "precision" => {
-                        precision = Some(get_positive_integer(arg_value).context(format!(
-                            "Parsing numeric.precision directive on BigDecimal with field name {}",
-                            &field.name
-                        ))?);
-                    }
-                    "scale" => {
-                        scale = Some(get_positive_integer(arg_value).context(format!(
-                            "Parsing numeric.scale directive on BigDecimal with field name {}",
-                            &field.name
-                        ))?);
-                    }
-                    unknown_param => {
+        // Process @config
+        if let Some(config_directive) = config_directives.first() {
+            match underlying_scalar {
+                GqlScalar::BigInt(_) => {
+                    // Process precision for BigInt
+                    if config_directive.arguments.len() != 1 {
                         return Err(anyhow!(
-                            "EE216: The numeric directive on a BigDecimal should only have \
-                             'precision' and 'scale' parameters. Unknown parameter '{}'. Field \
-                             '{}'",
-                            unknown_param,
+                            "EE216: The config directive on a BigInt should only take a single \
+                             integer argument called 'precision'. Field '{}'",
                             field.name
                         ));
                     }
+                    let (arg_name, arg_value) = config_directive.arguments.first().unwrap();
+                    if arg_name != "precision" {
+                        return Err(anyhow!(
+                            "EE216: The config directive on a BigInt should only have a \
+                             'precision' parameter. Unknown parameter '{}'. Field '{}'",
+                            arg_name,
+                            field.name
+                        ));
+                    }
+                    let precision = get_positive_integer(arg_value).context(format!(
+                        "Parsing precision.digits directive on BigInt field with field name {}",
+                        &field.name
+                    ))?;
+                    pg_type_modifications.big_int_precision = Some(precision);
                 }
-            }
-            match (precision, scale) {
-                (Some(precision), Some(scale)) => {
-                    pg_type_modifications.big_decimal_precision_scale = Some((precision, scale));
+                GqlScalar::BigDecimal(_) => {
+                    // Process precision and scale for BigDecimal
+                    let mut precision: Option<u32> = None;
+                    let mut scale: Option<u32> = None;
+                    let mut unknown_params = Vec::new();
+
+                    for (arg_name, arg_value) in &config_directive.arguments {
+                        match arg_name.as_str() {
+                            "precision" => {
+                                precision =
+                                    Some(get_positive_integer(arg_value).context(format!(
+                                        "Parsing numeric.precision directive on BigDecimal with \
+                                         field name {}",
+                                        &field.name
+                                    ))?);
+                            }
+                            "scale" => {
+                                scale = Some(get_positive_integer(arg_value).context(format!(
+                                    "Parsing numeric.scale directive on BigDecimal with field \
+                                     name {}",
+                                    &field.name
+                                ))?);
+                            }
+                            unknown_param => {
+                                unknown_params.push(unknown_param);
+                            }
+                        }
+                    }
+
+                    if !unknown_params.is_empty() {
+                        return Err(anyhow!(
+                            "EE216: The config directive on a BigDecimal should only have \
+                             'precision' and 'scale' parameters. Unknown parameter(s) '{}'. Field \
+                             '{}'",
+                            unknown_params.join(", "),
+                            field.name
+                        ));
+                    }
+
+                    if precision.is_none() || scale.is_none() {
+                        return Err(anyhow!(
+                            "EE216: The config directive on a BigDecimal must have both \
+                             'precision' and 'scale' parameters. Field '{}'",
+                            field.name
+                        ));
+                    }
+
+                    pg_type_modifications.big_decimal_precision_scale =
+                        Some((precision.unwrap(), scale.unwrap()));
                 }
                 _ => {
                     return Err(anyhow!(
-                        "EE216: The numeric directive on a BigDecimal must have both 'precision' \
-                         and 'scale' parameters. Field '{}'",
+                        "EE215: The config directive is only applicable to BigInt and BigDecimal \
+                         scalar types. Field '{}'",
                         field.name
                     ));
                 }
@@ -2029,19 +2013,19 @@ type TestEntity {
     }
 
     #[test]
-    fn test_decimal_precision_numeric_happy_path() {
+    fn test_decimal_precision_config_happy_path() {
         let schema_str = r#"
     type Entity {
         id: ID!
-        exampleBigInt: BigInt @precision(digits: 76)
-        exampleBigIntRequired: BigInt! @precision(digits: 77)
-        exampleBigIntArray: [BigInt!] @precision(digits: 78)
-        exampleBigIntArrayRequired: [BigInt!]! @precision(digits: 79)
-        exampleBigDecimal: BigDecimal @numeric(precision: 80, scale: 5)
-        exampleBigDecimalRequired: BigDecimal! @numeric(precision: 81, scale: 5)
-        exampleBigDecimalArray: [BigDecimal!] @numeric(precision: 82, scale: 5)
-        exampleBigDecimalArrayRequired: [BigDecimal!]! @numeric(precision: 83, scale: 5)
-        exampleBigDecimalOtherOrder: BigDecimal! @numeric(scale: 6, precision: 84)
+        exampleBigInt: BigInt @config(precision: 76)
+        exampleBigIntRequired: BigInt! @config(precision: 77)
+        exampleBigIntArray: [BigInt!] @config(precision: 78)
+        exampleBigIntArrayRequired: [BigInt!]! @config(precision: 79)
+        exampleBigDecimal: BigDecimal @config(precision: 80, scale: 5)
+        exampleBigDecimalRequired: BigDecimal! @config(precision: 81, scale: 5)
+        exampleBigDecimalArray: [BigDecimal!] @config(precision: 82, scale: 5)
+        exampleBigDecimalArrayRequired: [BigDecimal!]! @config(precision: 83, scale: 5)
+        exampleBigDecimalOtherOrder: BigDecimal! @config(scale: 6, precision: 84)
     }
     "#;
 
@@ -2259,11 +2243,11 @@ type TestEntity {
     }
 
     #[test]
-    fn test_error_case_numeric_on_bigint() {
+    fn test_error_case_config_on_non_bigint_or_bigdecimal() {
         let schema_str = r#"
         type Entity {
             id: ID!
-            exampleBigIntWrongDirective: BigInt @numeric(precision: 76, scale: 5)
+        exampleString: String @config(precision: 76)
         }
         "#;
 
@@ -2272,17 +2256,15 @@ type TestEntity {
 
         assert!(result.is_err());
         let err_message = format!("{:?}", result.unwrap_err());
-        assert!(err_message.contains(
-            "The numeric directive on a field is only suitable for BigDecimal scalar type."
-        ));
+        assert!(err_message.contains("EE215"));
     }
 
     #[test]
-    fn test_error_case_decimal_precision_on_bigdecimal() {
+    fn test_error_case_config_unknown_parameter() {
         let schema_str = r#"
         type Entity {
             id: ID!
-            exampleBigIntWrongDirective: BigDecimal @precision(precision: 76)
+        exampleBigDecimalWrongDirective: BigDecimal @config(wronglabel: 76, scale: 5)
         }
         "#;
 
@@ -2291,17 +2273,15 @@ type TestEntity {
 
         assert!(result.is_err());
         let err_message = format!("{:?}", result.unwrap_err());
-        assert!(err_message.contains(
-            "The precision directive on a field is only suitable for BigInt scalar type."
-        ));
+        assert!(err_message.contains("EE216"));
     }
 
     #[test]
-    fn test_error_case_decimal_precision_wrong_name() {
+    fn test_error_case_config_missing_parameters() {
         let schema_str = r#"
         type Entity {
             id: ID!
-            exampleBigDecimalWrongDirective: BigInt @precision(wronglabel: 76)
+        exampleBigDecimalMissingParams: BigDecimal @config(precision: 76)
         }
         "#;
 
@@ -2310,10 +2290,7 @@ type TestEntity {
 
         assert!(result.is_err());
         let err_message = format!("{:?}", result.unwrap_err());
-        assert!(err_message.contains(
-            "The precision directive on a BigInt should only have a 'digits' parameter. Unknown \
-             parameter 'wronglabel'. Field 'exampleBigDecimalWrongDirective'"
-        ));
+        assert!(err_message.contains("EE216"));
     }
 
     #[test]
@@ -2321,7 +2298,7 @@ type TestEntity {
         let schema_str = r#"
         type Entity {
             id: ID!
-            exampleBigIntWrongDirective: BigDecimal @numeric(wronglabel: 76, scale: 5)
+            exampleBigIntWrongDirective: BigDecimal @config(wronglabel: 76, scale: 5)
         }
         "#;
 
@@ -2330,10 +2307,7 @@ type TestEntity {
 
         assert!(result.is_err());
         let err_message = format!("{:?}", result.unwrap_err());
-        assert!(err_message.contains(
-            "The numeric directive on a BigDecimal should only have 'precision' and 'scale' \
-             parameters. Unknown parameter 'wronglabel'."
-        ));
+        assert!(err_message.contains("EE216"));
     }
 
     #[test]
@@ -2341,7 +2315,7 @@ type TestEntity {
         let schema_str = r#"
         type Entity {
             id: ID!
-            exampleBigIntWrongDirective: BigDecimal @numeric(precision: 76, wronglabel: 4, scale: 5)
+            exampleBigIntWrongDirective: BigDecimal @config(precision: 76, wronglabel: 4, scale: 5)
         }
         "#;
 
@@ -2350,9 +2324,6 @@ type TestEntity {
 
         assert!(result.is_err());
         let err_message = format!("{:?}", result.unwrap_err());
-        assert!(err_message.contains(
-            "The numeric directive on a BigDecimal should only have 'precision' and 'scale' \
-             parameters. Unknown parameter 'wronglabel'."
-        ));
+        assert!(err_message.contains("EE216"));
     }
 }
