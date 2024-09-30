@@ -287,7 +287,8 @@ impl Event {
         };
 
         format!(
-            "`${{{event_var_name}.chainId}}_${{{event_var_name}.block.{block_number_field}}}_${{{event_var_name}.logIndex{}}}`",
+            "`${{{event_var_name}.chainId}}_${{{event_var_name}.block.\
+             {block_number_field}}}_${{{event_var_name}.logIndex{}}}`",
             to_string_code
         )
     }

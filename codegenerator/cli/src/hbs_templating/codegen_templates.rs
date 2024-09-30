@@ -525,8 +525,8 @@ impl EventTemplate {
                     sighash: config_event.sighash.to_string(),
                     topic_count: 0, //Default to 0 for fuel
                     convert_hyper_sync_event_args_code: "(Utils.magic: \
-                                                     HyperSyncClient.Decoder.decodedEvent => \
-                                                     eventArgs)"
+                                                         HyperSyncClient.Decoder.decodedEvent => \
+                                                         eventArgs)"
                         .to_string(),
                     decode_hyper_fuel_data_code,
                     event_filter_type: Self::EVENT_FILTER_TYPE_STUB.to_string(),
@@ -1203,12 +1203,11 @@ mod test {
             decode_hyper_fuel_data_code: "(_) => Js.Exn.raiseError(\"HyperFuel decoder not \
                                           implemented\")"
                 .to_string(),
-            params_raw_event_schema:
-                "S.object((s): eventArgs => {id: s.field(\"id\", BigInt.schema), owner: \
-                               s.field(\"owner\", Address.schema), displayName: \
-                               s.field(\"displayName\", S.string), imageUrl: \
-                               s.field(\"imageUrl\", S.string)})"
-                    .to_string(),
+            params_raw_event_schema: "S.object((s): eventArgs => {id: s.field(\"id\", \
+                                      BigInt.schema), owner: s.field(\"owner\", Address.schema), \
+                                      displayName: s.field(\"displayName\", S.string), imageUrl: \
+                                      s.field(\"imageUrl\", S.string)})"
+                .to_string(),
             get_topic_selection_code: "(eventFilters) => \
                                        eventFilters->SingleOrMultiple.normalizeOrThrow->Belt.\
                                        Array.map(_eventFilter => \
