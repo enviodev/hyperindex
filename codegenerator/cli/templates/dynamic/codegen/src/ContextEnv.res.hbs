@@ -18,7 +18,9 @@ let getUserLogger = (logger): Logs.userLogger => {
     logger->Logging.uerrorWithExn(exn, message),
 }
 
-let makeEventIdentifier = (eventBatchQueueItem: Types.eventBatchQueueItem): Types.eventIdentifier => {
+let makeEventIdentifier = (
+  eventBatchQueueItem: Types.eventBatchQueueItem,
+): Types.eventIdentifier => {
   let {event, blockNumber, timestamp} = eventBatchQueueItem
   {
     chainId: event.chainId,
@@ -29,7 +31,10 @@ let makeEventIdentifier = (eventBatchQueueItem: Types.eventBatchQueueItem): Type
 }
 
 let getEventId = (eventBatchQueueItem: Types.eventBatchQueueItem) => {
-  EventUtils.packEventIndex(~blockNumber=eventBatchQueueItem.blockNumber, ~logIndex=eventBatchQueueItem.event.logIndex)
+  EventUtils.packEventIndex(
+    ~blockNumber=eventBatchQueueItem.blockNumber,
+    ~logIndex=eventBatchQueueItem.event.logIndex,
+  )
 }
 
 let make = (~eventBatchQueueItem: Types.eventBatchQueueItem, ~logger) => {
@@ -86,8 +91,21 @@ let makeDynamicContractRegisterFn = (~contextEnv: t, ~contractName, ~inMemorySto
   )
 }
 
-let makeWhereLoader = (loadLayer, ~entityMod, ~inMemoryStore, ~fieldName, ~fieldValueSchema, ~logger) => {
-  Entities.eq: loadLayer->LoadLayer.makeWhereEqLoader(~entityMod, ~fieldName, ~fieldValueSchema, ~inMemoryStore, ~logger)
+let makeWhereLoader = (
+  loadLayer,
+  ~entityMod,
+  ~inMemoryStore,
+  ~fieldName,
+  ~fieldValueSchema,
+  ~logger,
+) => {
+  Entities.eq: loadLayer->LoadLayer.makeWhereEqLoader(
+    ~entityMod,
+    ~fieldName,
+    ~fieldValueSchema,
+    ~inMemoryStore,
+    ~logger,
+  ),
 }
 
 let makeEntityHandlerContext = (
@@ -98,20 +116,22 @@ let makeEntityHandlerContext = (
   ~logger,
   ~getKey,
   ~loadLayer,
+  ~isInReorgThreshold,
 ): entityHandlerContext<entity> => {
   let inMemTable = inMemoryStore->InMemoryStore.getInMemTable(~entityMod)
-  let shouldRollbackOnReorg = RegisterHandlers.getConfig()->Config.shouldRollbackOnReorg
+  let shouldSaveHistory =
+    RegisterHandlers.getConfig()->Config.shouldSaveHistory(~isInReorgThreshold)
   {
     set: entity => {
       inMemTable->InMemoryTable.Entity.set(
         Set(entity)->Types.mkEntityUpdate(~eventIdentifier, ~entityId=getKey(entity)),
-        ~shouldRollbackOnReorg,
+        ~shouldSaveHistory,
       )
     },
     deleteUnsafe: entityId => {
       inMemTable->InMemoryTable.Entity.set(
         Delete->Types.mkEntityUpdate(~eventIdentifier, ~entityId),
-        ~shouldRollbackOnReorg,
+        ~shouldSaveHistory,
       )
     },
     get: loadLayer->LoadLayer.makeLoader(~entityMod, ~logger, ~inMemoryStore),
@@ -152,7 +172,12 @@ let getLoaderContext = (contextEnv: t, ~inMemoryStore: InMemoryStore.t, ~loadLay
   }
 }
 
-let getHandlerContext = (context, ~inMemoryStore: InMemoryStore.t, ~loadLayer) => {
+let getHandlerContext = (
+  context,
+  ~inMemoryStore: InMemoryStore.t,
+  ~loadLayer,
+  ~isInReorgThreshold,
+) => {
   let {eventBatchQueueItem, logger} = context
 
   let eventIdentifier = eventBatchQueueItem->makeEventIdentifier
@@ -166,6 +191,7 @@ let getHandlerContext = (context, ~inMemoryStore: InMemoryStore.t, ~loadLayer) =
       ~getKey=entity => entity.id,
       ~logger,
       ~loadLayer,
+      ~isInReorgThreshold,
     ),
     {{/each}}
   }
@@ -181,8 +207,14 @@ let getLoaderArgs = (contextEnv, ~inMemoryStore, ~loadLayer) => {
   context: contextEnv->getLoaderContext(~inMemoryStore, ~loadLayer),
 }
 
-let getHandlerArgs = (contextEnv, ~inMemoryStore, ~loaderReturn, ~loadLayer) => {
+let getHandlerArgs = (
+  contextEnv,
+  ~inMemoryStore,
+  ~loaderReturn,
+  ~loadLayer,
+  ~isInReorgThreshold,
+) => {
   Types.HandlerTypes.event: contextEnv.eventBatchQueueItem.event,
-  context: contextEnv->getHandlerContext(~inMemoryStore, ~loadLayer),
+  context: contextEnv->getHandlerContext(~inMemoryStore, ~loadLayer, ~isInReorgThreshold),
   loaderReturn,
 }

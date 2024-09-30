@@ -169,7 +169,10 @@ let addEventToRawEvents = (
     (block :> Types.Block.rawEventFields)->S.serializeOrRaiseWith(Types.Block.rawEventSchema)
   let transactionFields = transaction->S.serializeOrRaiseWith(Types.Transaction.schema)
   // Serialize to unknown, because serializing to Js.Json.t fails for Bytes Fuel type, since it has unknown schema
-  let params = params->S.serializeToUnknownOrRaiseWith(paramsRawEventSchema)->(Utils.magic: unknown => Js.Json.t)
+  let params =
+    params
+    ->S.serializeToUnknownOrRaiseWith(paramsRawEventSchema)
+    ->(Utils.magic: unknown => Js.Json.t)
 
   let rawEvent: TablesStatic.RawEvents.t = {
     chainId,
@@ -217,6 +220,7 @@ let runEventHandler = (
   ~latestProcessedBlocks,
   ~loadLayer,
   ~config: Config.t,
+  ~isInReorgThreshold,
 ) => {
   open ErrorHandling.ResultPropogateEnv
   runAsyncEnv(async () => {
@@ -227,7 +231,12 @@ let runEventHandler = (
       (await runEventLoader(~contextEnv, ~loader, ~inMemoryStore, ~loadLayer))->propogate
 
     switch await handler(
-      contextEnv->ContextEnv.getHandlerArgs(~loaderReturn, ~inMemoryStore, ~loadLayer),
+      contextEnv->ContextEnv.getHandlerArgs(
+        ~loaderReturn,
+        ~inMemoryStore,
+        ~loadLayer,
+        ~isInReorgThreshold,
+      ),
     ) {
     | exception exn =>
       exn
@@ -259,6 +268,7 @@ let runHandler = (
   ~logger,
   ~loadLayer,
   ~config,
+  ~isInReorgThreshold,
 ) => {
   switch eventBatchQueueItem.handlerRegister->Types.HandlerTypes.Register.getLoaderHandler {
   | Some(loaderHandler) =>
@@ -269,6 +279,7 @@ let runHandler = (
       ~logger,
       ~loadLayer,
       ~config,
+      ~isInReorgThreshold,
     )
   | None => Ok(latestProcessedBlocks)->Promise.resolve
   }
@@ -382,6 +393,7 @@ let runHandlers = (
   ~logger,
   ~loadLayer,
   ~config,
+  ~isInReorgThreshold,
 ) => {
   open ErrorHandling.ResultPropogateEnv
   let latestProcessedBlocks = ref(latestProcessedBlocks)
@@ -398,6 +410,7 @@ let runHandlers = (
             ~latestProcessedBlocks=latestProcessedBlocks.contents,
             ~loadLayer,
             ~config,
+            ~isInReorgThreshold,
           )
         )->propogate
     }
@@ -433,6 +446,7 @@ type batchProcessed = {
 let processEventBatch = (
   ~eventBatch: array<Types.eventBatchQueueItem>,
   ~inMemoryStore: InMemoryStore.t,
+  ~isInReorgThreshold,
   ~latestProcessedBlocks: EventsProcessed.t,
   ~checkContractIsRegistered,
   ~loadLayer,
@@ -471,12 +485,19 @@ let processEventBatch = (
 
     let latestProcessedBlocks =
       (await eventsBeforeDynamicRegistrations
-      ->runHandlers(~inMemoryStore, ~latestProcessedBlocks, ~logger, ~loadLayer, ~config))
+      ->runHandlers(
+        ~inMemoryStore,
+        ~latestProcessedBlocks,
+        ~logger,
+        ~loadLayer,
+        ~config,
+        ~isInReorgThreshold,
+      ))
       ->propogate
 
     let elapsedTimeAfterProcess = timeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
 
-    switch await DbFunctions.sql->IO.executeBatch(~inMemoryStore) {
+    switch await DbFunctions.sql->IO.executeBatch(~inMemoryStore, ~isInReorgThreshold) {
     | exception exn =>
       exn->ErrorHandling.make(~msg="Failed writing batch to database", ~logger)->Error->propogate
     | () => ()

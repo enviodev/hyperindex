@@ -521,6 +521,10 @@ let getNextQuery = (~eventFilters=?, ~currentBlockHeight, ~partitionId, self: t)
 
 type itemWithPopFn = {item: Types.eventBatchQueueItem, popItemOffQueue: unit => unit}
 
+let itemIsInReorgThreshold = (item: itemWithPopFn, ~heighestBlockBelowThreshold) => {
+  item.item.blockNumber > heighestBlockBelowThreshold
+}
+
 /**
 Represents a fetchState registers head of the  fetchedEventQueue as either
 an existing item, or no item with latest fetched block data
@@ -528,6 +532,13 @@ an existing item, or no item with latest fetched block data
 type queueItem =
   | Item(itemWithPopFn)
   | NoItem(blockNumberAndTimestamp)
+
+let queueItemIsInReorgThreshold = (queueItem: queueItem, ~heighestBlockBelowThreshold) => {
+  switch queueItem {
+  | Item(itemWithPopFn) => itemWithPopFn->itemIsInReorgThreshold(~heighestBlockBelowThreshold)
+  | NoItem({blockNumber}) => blockNumber > heighestBlockBelowThreshold
+  }
+}
 
 /**
 Creates a compareable value for items and no items on register queues.

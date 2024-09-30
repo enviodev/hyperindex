@@ -13,6 +13,7 @@ type t = {
   indexerStartTime: Js.Date.t,
   asyncTaskQueue: AsyncTaskQueue.t,
   loadLayer: LoadLayer.t,
+  isInReorgThreshold: bool,
   //Initialized as 0, increments, when rollbacks occur to invalidate
   //responses based on the wrong stateId
   id: int,
@@ -31,6 +32,7 @@ let make = (~config, ~chainManager, ~loadLayer) => {
   rollbackState: NoRollback,
   asyncTaskQueue: AsyncTaskQueue.make(),
   loadLayer,
+  isInReorgThreshold: false,
   id: 0,
 }
 
@@ -48,6 +50,9 @@ let isRollingBack = state =>
   | _ => false
   }
 
+let getIsInReorgThreshold = (state: t, ~isInReorgThreshold) =>
+  state.isInReorgThreshold || isInReorgThreshold
+
 type arbitraryEventQueue = array<Types.eventBatchQueueItem>
 
 type shouldExit = ExitWithSuccess | NoExit
@@ -56,9 +61,10 @@ type action =
   | SetFetchStateCurrentBlockHeight(chain, int)
   | EventBatchProcessed(EventProcessing.batchProcessed)
   | SetCurrentlyProcessing(bool)
+  | SetIsInReorgThreshold(bool)
   | SetCurrentlyFetchingBatch(chain, bool)
   | SetFetchState(chain, PartitionedFetchState.t)
-  | UpdateQueues(ChainMap.t<PartitionedFetchState.t>, arbitraryEventQueue)
+  | UpdateQueues(ChainMap.t<ChainManager.fetchStateWithData>, arbitraryEventQueue)
   | SetSyncedChains
   | SuccessExit
   | ErrorExit(ErrorHandling.t)
@@ -191,9 +197,7 @@ let checkAndSetSyncedChains = (~nextQueueItemIsKnownNone=false, chainManager: Ch
         //All events have been processed on the chain fetchers queue
         //Other chains may be busy syncing
         let hasArbQueueEvents =
-          chainManager.arbitraryEventQueue
-          ->ChainManager.getFirstArbitraryEventsItemForChain(~chain=cf.chainConfig.chain)
-          ->Option.isSome //TODO this is more expensive than it needs to be
+          chainManager->ChainManager.hasChainItemsOnArbQueue(~chain=cf.chainConfig.chain)
         let hasNoMoreEventsToProcess = cf->ChainFetcher.hasNoMoreEventsToProcess(~hasArbQueueEvents)
 
         if hasNoMoreEventsToProcess {
@@ -228,10 +232,7 @@ let updateLatestProcessedBlocks = (
       let {chainConfig: {chain}, fetchState} = cf
       let {numEventsProcessed, latestProcessedBlock} = latestProcessedBlocks->ChainMap.get(chain)
 
-      let hasArbQueueEvents =
-        state.chainManager.arbitraryEventQueue
-        ->ChainManager.getFirstArbitraryEventsItemForChain(~chain)
-        ->Option.isSome //TODO this is more expensive than it needs to be
+      let hasArbQueueEvents = state.chainManager->ChainManager.hasChainItemsOnArbQueue(~chain)
       let hasNoMoreEventsToProcess = cf->ChainFetcher.hasNoMoreEventsToProcess(~hasArbQueueEvents)
 
       let latestProcessedBlock = if hasNoMoreEventsToProcess {
@@ -315,10 +316,7 @@ let handleBlockRangeResponse = (state, ~chain, ~response: ChainWorker.blockRange
       ->Utils.unwrapResultExn
       ->updateChainFetcherCurrentBlockHeight(~currentBlockHeight)
 
-    let hasArbQueueEvents =
-      state.chainManager.arbitraryEventQueue
-      ->ChainManager.getFirstArbitraryEventsItemForChain(~chain)
-      ->Option.isSome //TODO this is more expensive than it needs to be
+    let hasArbQueueEvents = state.chainManager->ChainManager.hasChainItemsOnArbQueue(~chain)
     let hasNoMoreEventsToProcess =
       chainFetcher->ChainFetcher.hasNoMoreEventsToProcess(~hasArbQueueEvents)
 
@@ -530,6 +528,7 @@ let actionReducer = (state: t, action: action) => {
       [UpdateChainMetaDataAndCheckForExit(NoExit), ProcessEventBatch],
     )
   | SetCurrentlyProcessing(currentlyProcessingBatch) => ({...state, currentlyProcessingBatch}, [])
+  | SetIsInReorgThreshold(isInReorgThreshold) => ({...state, isInReorgThreshold}, [])
   | SetCurrentlyFetchingBatch(chain, isFetchingBatch) =>
     updateChainFetcher(
       currentChainFetcher => {...currentChainFetcher, isFetchingBatch},
@@ -559,7 +558,7 @@ let actionReducer = (state: t, action: action) => {
     let chainFetchers = state.chainManager.chainFetchers->ChainMap.mapWithKey((chain, cf) => {
       {
         ...cf,
-        fetchState: fetchStatesMap->ChainMap.get(chain),
+        fetchState: ChainMap.get(fetchStatesMap, chain).partitionedFetchState,
       }
     })
 
@@ -794,9 +793,18 @@ let injectedTaskReducer = (
   | ProcessEventBatch =>
     if !state.currentlyProcessingBatch && !isRollingBack(state) {
       switch state.chainManager->ChainManager.createBatch(~maxBatchSize=state.maxBatchSize) {
-      | Some({batch, fetchStatesMap, arbitraryEventQueue}) =>
+      | {isInReorgThreshold, val: Some({batch, fetchStatesMap, arbitraryEventQueue})} =>
         dispatchAction(SetCurrentlyProcessing(true))
         dispatchAction(UpdateQueues(fetchStatesMap, arbitraryEventQueue))
+        if isInReorgThreshold && !state.isInReorgThreshold {
+          //On the first time we enter the reorg threshold, copy all entities to entity history
+          //And set the isInReorgThreshold isInReorgThreshold state to true
+          dispatchAction(SetIsInReorgThreshold(true))
+          //TODO: persist the isInReorgThreshold state to the db in a transaction with copy
+          await DbFunctions.sql->DbFunctions.EntityHistory.copyAllEntitiesToEntityHistory
+        }
+
+        let isInReorgThreshold = state.isInReorgThreshold || isInReorgThreshold
 
         // This function is used to ensure that registering an alreday existing contract as a dynamic contract can't cause issues.
         let checkContractIsRegistered = (
@@ -804,8 +812,8 @@ let injectedTaskReducer = (
           ~contractAddress,
           ~contractName: Enums.ContractType.t,
         ) => {
-          let fetchState = fetchStatesMap->ChainMap.get(chain)
-          fetchState->PartitionedFetchState.checkContainsRegisteredContractAddress(
+          let {partitionedFetchState} = fetchStatesMap->ChainMap.get(chain)
+          partitionedFetchState->PartitionedFetchState.checkContainsRegisteredContractAddress(
             ~contractAddress,
             ~contractName=(contractName :> string),
           )
@@ -830,6 +838,7 @@ let injectedTaskReducer = (
         switch await EventProcessing.processEventBatch(
           ~eventBatch=batch,
           ~inMemoryStore,
+          ~isInReorgThreshold,
           ~checkContractIsRegistered,
           ~latestProcessedBlocks,
           ~loadLayer=state.loadLayer,
@@ -852,7 +861,7 @@ let injectedTaskReducer = (
           | Error(errHandler) => dispatchAction(ErrorExit(errHandler))
           }
         }
-      | None => dispatchAction(SetSyncedChains) //Known that there are no items available on the queue so safely call this action
+      | {val: None} => dispatchAction(SetSyncedChains) //Known that there are no items available on the queue so safely call this action
       }
     }
   | Rollback =>

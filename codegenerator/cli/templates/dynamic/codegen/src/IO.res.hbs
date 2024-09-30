@@ -136,9 +136,9 @@ let executeDbFunctionsEntity = (
   promises->Promise.all->Promise.thenResolve(_ => ())
 }
 
-let executeBatch = async (sql, ~inMemoryStore: InMemoryStore.t) => {
+let executeBatch = async (sql, ~inMemoryStore: InMemoryStore.t, ~isInReorgThreshold) => {
   let entityDbExecutionComposer =
-    RegisterHandlers.getConfig()->Config.shouldRollbackOnReorg
+    RegisterHandlers.getConfig()->Config.shouldSaveHistory(~isInReorgThreshold)
       ? executeSetEntityWithHistory
       : executeDbFunctionsEntity
 
@@ -223,7 +223,8 @@ module RollBack = {
 
     let inMemStore = InMemoryStore.makeWithRollBackEventIdentifier(Some(rollBackEventIdentifier))
 
-    let shouldRollbackOnReorg = RegisterHandlers.getConfig()->Config.shouldRollbackOnReorg
+    //Don't save the rollback diffs to history table
+    let shouldSaveHistory = false
 
     reorgData->Belt.Array.forEach(e => {
       switch e {
@@ -232,8 +233,8 @@ module RollBack = {
       {{#each entities as | entity |}}
       | {previousEntity: Some({entity: {{entity.name.capitalized}}(entity), eventIdentifier}), entityId} =>
         inMemStore.{{entity.name.uncapitalized}}->InMemoryTable.Entity.set(
-          Set(entity)->Types.mkEntityUpdate(~eventIdentifier, ~entityId, ~shouldSaveHistory=false),
-          ~shouldRollbackOnReorg,
+          Set(entity)->Types.mkEntityUpdate(~eventIdentifier, ~entityId, ~shouldSaveHistory),
+          ~shouldSaveHistory,
         )
       {{/each}}
       //Where previousEntity is None, 
@@ -241,8 +242,8 @@ module RollBack = {
       {{#each entities as | entity |}}
       | {previousEntity: None, entityType: {{entity.name.capitalized}}, entityId} =>
         inMemStore.{{entity.name.uncapitalized}}->InMemoryTable.Entity.set(
-          Delete->Types.mkEntityUpdate(~eventIdentifier=rollBackEventIdentifier, ~entityId, ~shouldSaveHistory=false),
-          ~shouldRollbackOnReorg,
+          Delete->Types.mkEntityUpdate(~eventIdentifier=rollBackEventIdentifier, ~entityId, ~shouldSaveHistory),
+          ~shouldSaveHistory,
         )
       {{/each}}
       }

@@ -151,6 +151,7 @@ module EventFunctions = {
           ~logger,
           ~latestProcessedBlocks,
           ~config,
+          ~isInReorgThreshold=false,
         ) {
         | Ok(_) => ()
         | Error(e) => e->ErrorHandling.logAndRaise
