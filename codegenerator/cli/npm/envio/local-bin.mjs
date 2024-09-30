@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+//@ts-check
+"use strict";
 
 import { spawnSync } from "child_process";
 import path from "path";

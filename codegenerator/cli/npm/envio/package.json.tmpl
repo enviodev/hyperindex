@@ -2,14 +2,7 @@
   "name": "envio",
   "version": "${version}",
   "description": "A latency and sync speed optimized, developer friendly blockchain data indexer.",
-  "bin": "lib/index.js",
-  "scripts": {
-    "typecheck": "tsc --noEmit",
-    "lint": "eslint .",
-    "lint:fix": "eslint . --fix",
-    "build": "tsc",
-    "dev": "pnpm build && node lib/index.js"
-  },
+  "bin": "./bin.mjs",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/enviodev/hyperindex.git"
@@ -18,6 +11,7 @@
     "blockchain",
     "indexer",
     "ethereum",
+    "evm",
     "fuel",
     "data",
     "dapp"
@@ -28,35 +22,14 @@
     "url": "https://github.com/enviodev/hyperindex/issues"
   },
   "homepage": "https://envio.dev",
-  "devDependencies": {
-    "@types/node": "^18.11.18",
-    "@typescript-eslint/eslint-plugin": "^5.48.0",
-    "@typescript-eslint/parser": "^5.48.0",
-    "eslint": "^8.31.0",
-    "typescript": "^4.9.4"
-  },
   "optionalDependencies": {
     "envio-linux-x64": "${version}",
     "envio-linux-arm64": "${version}",
     "envio-darwin-x64": "${version}",
     "envio-darwin-arm64": "${version}"
   },
-  "eslintConfig": {
-    "extends": [
-      "eslint:recommended",
-      "plugin:@typescript-eslint/recommended"
-    ],
-    "parser": "@typescript-eslint/parser",
-    "plugins": [
-      "@typescript-eslint"
-    ],
-    "ignorePatterns": [
-      "lib/*"
-    ],
-    "root": true
-  },
   "files": [
-    "lib",
+    "bin.mjs",
     "evm.schema.json",
     "fuel.schema.json"
   ]

@@ -284,9 +284,6 @@ jobs:
         run: |
           envsubst < ./package.json.tmpl > "package.json"
           cat package.json # Leave this here for the sake of debugging bad builds.
-          pnpm install --no-frozen-lockfile
-          pnpm build
-          cat lib/index.js # Leave this here for the sake of debugging bad builds.
           cp ../../README.md .
           echo "Publishing with tag ${RELEASE_TYPE}"
           npm publish --access public --tag ${RELEASE_TYPE}
