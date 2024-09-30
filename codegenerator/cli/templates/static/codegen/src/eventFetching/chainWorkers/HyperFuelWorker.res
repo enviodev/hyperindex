@@ -14,13 +14,13 @@ type workerConfig = {
 
 let mintEventTag = "mint"
 let burnEventTag = "burn"
-let transferOutEventTag = "transferOut"
+let transferEventTag = "transfer"
 let callEventTag = "call"
 let getEventTag = (eventConfig: Types.fuelEventConfig) => {
   switch eventConfig.kind {
   | Mint => mintEventTag
   | Burn => burnEventTag
-  | TransferOut => transferOutEventTag
+  | Transfer => transferEventTag
   | Call => callEventTag
   | LogData({logId}) => logId
   }
@@ -64,10 +64,17 @@ let makeWorkerConfigOrThrow = (~contracts: array<Types.fuelContractConfig>, ~cha
       | {kind: Mint} => addNonLogDataReceiptType(contract.name, Mint)
       | {kind: Burn, isWildcard: true} => addNonLogDataWildcardReceiptTypes(Burn)
       | {kind: Burn} => addNonLogDataReceiptType(contract.name, Burn)
-      | {kind: TransferOut, isWildcard: true} => addNonLogDataWildcardReceiptTypes(TransferOut)
-      | {kind: TransferOut} => addNonLogDataReceiptType(contract.name, TransferOut)
+      | {kind: Transfer, isWildcard: true} => {
+          addNonLogDataWildcardReceiptTypes(Transfer)
+          addNonLogDataWildcardReceiptTypes(TransferOut)
+        }
+      | {kind: Transfer} => {
+          addNonLogDataReceiptType(contract.name, Transfer)
+          addNonLogDataReceiptType(contract.name, TransferOut)
+        }
       | {kind: Call, isWildcard: true} => addNonLogDataWildcardReceiptTypes(Call)
-      | {kind: Call} => Js.Exn.raiseError("Call receipt indexing currently supported only in wildcard mode")
+      | {kind: Call} =>
+        Js.Exn.raiseError("Call receipt indexing currently supported only in wildcard mode")
       | {kind: LogData({logId}), isWildcard} => {
           let rb = logId->BigInt.fromStringUnsafe
           if isWildcard {
@@ -425,7 +432,8 @@ module Make = (
         | LogData({rb}) => BigInt.toString(rb)
         | Mint(_) => mintEventTag
         | Burn(_) => burnEventTag
-        | TransferOut(_) => transferOutEventTag
+        | Transfer(_)
+        | TransferOut(_) => transferEventTag
         | Call(_) => callEventTag
         }
 
@@ -479,6 +487,14 @@ module Make = (
               subId,
               amount: val,
             }: Types.fuelSupplyParams
+          )->Obj.magic
+        | (_, Transfer({amount, assetId, to})) =>
+          (
+            {
+              to: to->Address.unsafeFromString,
+              assetId,
+              amount,
+            }: Types.fuelTransferParams
           )->Obj.magic
         | (_, TransferOut({amount, assetId, toAddress})) =>
           (

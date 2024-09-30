@@ -92,6 +92,57 @@ describe("HyperFuelWorker - getRecieptsSelection", () => {
     )
   })
 
+
+  it("Receipts Selection with non-wildcard transfer event - catches both TRANSFER and TRANSFER_OUT receipts", () => {
+    let getRecieptsSelection = mock(
+      ~contracts=[
+        {
+          name: "TestContract",
+          events: [
+            {
+              name: "Transfer",
+              kind: Transfer,
+              isWildcard: false,
+              handlerRegister: %raw(`"Not relevat"`),
+              paramsRawEventSchema: %raw(`"Not relevat"`),
+            },
+          ],
+        },
+        {
+          name: "TestContract2",
+          events: [
+            {
+              name: "Transfer",
+              kind: Transfer,
+              isWildcard: false,
+              handlerRegister: %raw(`"Not relevat"`),
+              paramsRawEventSchema: %raw(`"Not relevat"`),
+            },
+          ],
+        },
+      ],
+    )
+    Assert.deepEqual(
+      getRecieptsSelection(
+        ~contractAddressMapping=mockContractAddressMapping(),
+        ~shouldApplyWildcards=true,
+      ),
+      [
+        {
+          receiptType: [Transfer, TransferOut],
+          rootContractId: [address1, address2],
+          txStatus: [1],
+        },
+        {
+          receiptType: [Transfer, TransferOut],
+          rootContractId: [address3],
+          txStatus: [1],
+        },
+      ],
+    )
+  })
+
+
   it("Receipts Selection with non-wildcard mint event", () => {
     let getRecieptsSelection = mock(
       ~contracts=[
@@ -353,8 +404,8 @@ describe("HyperFuelWorker - getRecieptsSelection", () => {
               paramsRawEventSchema: %raw(`"Not relevat"`),
             },
             {
-              name: "TransferOut",
-              kind: TransferOut,
+              name: "Transfer",
+              kind: Transfer,
               isWildcard: false,
               handlerRegister: %raw(`"Not relevat"`),
               paramsRawEventSchema: %raw(`"Not relevat"`),
@@ -399,7 +450,7 @@ describe("HyperFuelWorker - getRecieptsSelection", () => {
       ),
       [
         {
-          receiptType: [Mint, Burn, TransferOut],
+          receiptType: [Mint, Burn, Transfer, TransferOut],
           rootContractId: [address1, address2],
           txStatus: [1],
         },

@@ -129,11 +129,11 @@
     "EventType": {
       "type": "string",
       "enum": [
-        "LOG_DATA",
-        "MINT",
-        "BURN",
-        "TRANSFER_OUT",
-        "CALL"
+        "logData",
+        "mint",
+        "burn",
+        "transfer",
+        "call"
       ]
     },
     "Network": {

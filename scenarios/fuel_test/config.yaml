@@ -60,5 +60,4 @@ networks:
           - name: Mint
           - name: Burn
           - name: Transfer
-            type: TRANSFER_OUT
-          - name: Call
+          # - name: Call
