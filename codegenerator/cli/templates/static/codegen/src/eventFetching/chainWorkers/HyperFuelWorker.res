@@ -488,10 +488,10 @@ module Make = (
               amount,
             }: Types.fuelTransferParams
           )->Obj.magic
-        | (_, Call({amount, assetId})) =>
+        | (_, Call({amount, assetId, to})) =>
           (
             {
-              to: contractAddress,
+              to: to->Address.unsafeFromString,
               assetId,
               amount,
             }: Types.fuelTransferParams

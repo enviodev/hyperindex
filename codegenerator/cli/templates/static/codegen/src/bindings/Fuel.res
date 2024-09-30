@@ -23,7 +23,7 @@ external getLogDecoder: (~abi: Ethers.abi, ~logId: string) => (. string) => unkn
 module Receipt = {
   @tag("receiptType")
   type t =
-    | @as(0) Call({assetId: string, amount: bigint})
+    | @as(0) Call({assetId: string, amount: bigint, to: string})
     | @as(6) LogData({data: string, rb: bigint})
     | @as(8) TransferOut({amount: bigint, assetId: string, toAddress: string})
     | @as(11) Mint({val: bigint, subId: string})
