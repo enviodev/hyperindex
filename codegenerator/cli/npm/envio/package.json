@@ -8,10 +8,16 @@
     "type": "git",
     "url": "git+https://github.com/enviodev/hyperindex.git"
   },
+  "scripts": {
+    "watch": "rescript -w"
+  },
   "author": "envio contributors <about@envio.dev>",
   "license": "GPL-3.0",
   "bugs": {
     "url": "https://github.com/enviodev/hyperindex/issues"
   },
-  "homepage": "https://envio.dev"
+  "homepage": "https://envio.dev",
+  "devDependencies": {
+    "rescript": "11.1.3"
+  }
 }

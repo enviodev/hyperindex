@@ -132,3 +132,6 @@ dist
 # For this repo ignore the lockfile as it is dynamic based on the version specified by the pipeline.
 pnpm-lock.yaml
 lib
+
+# ReScript artifacts
+*.bs.js
