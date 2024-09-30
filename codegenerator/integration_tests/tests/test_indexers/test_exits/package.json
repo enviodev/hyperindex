@@ -1,5 +1,5 @@
 {
-  "name": "uni indexer",
+  "name": "test-exits",
   "version": "0.1.0",
   "scripts": {
     "clean": "tsc --clean",
@@ -14,7 +14,7 @@
   },
   "dependencies": {
     "ts-node": "^10.9.1",
-    "envio": "latest"
+    "envio": "../../../cli/npm/envio"
   },
   "optionalDependencies": {
     "generated": "./generated"
