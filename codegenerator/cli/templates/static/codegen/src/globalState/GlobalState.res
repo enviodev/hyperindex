@@ -13,7 +13,6 @@ type t = {
   indexerStartTime: Js.Date.t,
   asyncTaskQueue: AsyncTaskQueue.t,
   loadLayer: LoadLayer.t,
-  isInReorgThreshold: bool,
   //Initialized as 0, increments, when rollbacks occur to invalidate
   //responses based on the wrong stateId
   id: int,
@@ -32,7 +31,6 @@ let make = (~config, ~chainManager, ~loadLayer) => {
   rollbackState: NoRollback,
   asyncTaskQueue: AsyncTaskQueue.make(),
   loadLayer,
-  isInReorgThreshold: false,
   id: 0,
 }
 
@@ -49,9 +47,6 @@ let isRollingBack = state =>
   | RollingBack(_) => true
   | _ => false
   }
-
-let getIsInReorgThreshold = (state: t, ~isInReorgThreshold) =>
-  state.isInReorgThreshold || isInReorgThreshold
 
 type arbitraryEventQueue = array<Types.eventBatchQueueItem>
 
@@ -528,7 +523,10 @@ let actionReducer = (state: t, action: action) => {
       [UpdateChainMetaDataAndCheckForExit(NoExit), ProcessEventBatch],
     )
   | SetCurrentlyProcessing(currentlyProcessingBatch) => ({...state, currentlyProcessingBatch}, [])
-  | SetIsInReorgThreshold(isInReorgThreshold) => ({...state, isInReorgThreshold}, [])
+  | SetIsInReorgThreshold(isInReorgThreshold) => (
+      {...state, chainManager: {...state.chainManager, isInReorgThreshold}},
+      [],
+    )
   | SetCurrentlyFetchingBatch(chain, isFetchingBatch) =>
     updateChainFetcher(
       currentChainFetcher => {...currentChainFetcher, isFetchingBatch},
@@ -796,7 +794,7 @@ let injectedTaskReducer = (
       | {isInReorgThreshold, val: Some({batch, fetchStatesMap, arbitraryEventQueue})} =>
         dispatchAction(SetCurrentlyProcessing(true))
         dispatchAction(UpdateQueues(fetchStatesMap, arbitraryEventQueue))
-        if isInReorgThreshold && !state.isInReorgThreshold {
+        if isInReorgThreshold && !state.chainManager.isInReorgThreshold {
           //On the first time we enter the reorg threshold, copy all entities to entity history
           //And set the isInReorgThreshold isInReorgThreshold state to true
           dispatchAction(SetIsInReorgThreshold(true))
@@ -804,7 +802,7 @@ let injectedTaskReducer = (
           await DbFunctions.sql->DbFunctions.EntityHistory.copyAllEntitiesToEntityHistory
         }
 
-        let isInReorgThreshold = state.isInReorgThreshold || isInReorgThreshold
+        let isInReorgThreshold = state.chainManager.isInReorgThreshold || isInReorgThreshold
 
         // This function is used to ensure that registering an alreday existing contract as a dynamic contract can't cause issues.
         let checkContractIsRegistered = (

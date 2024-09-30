@@ -5,6 +5,7 @@ type t = {
   //due to contract registration. Ordered from latest to earliest
   arbitraryEventQueue: array<Types.eventBatchQueueItem>,
   isUnorderedMultichainMode: bool,
+  isInReorgThreshold: bool,
 }
 
 let getComparitorFromItem = (queueItem: Types.eventBatchQueueItem) => {
@@ -126,6 +127,7 @@ let makeFromConfig = (~config: Config.t, ~maxAddrInPartition=Env.maxAddrInPartit
     chainFetchers,
     arbitraryEventQueue: [],
     isUnorderedMultichainMode: config.isUnorderedMultichainMode,
+    isInReorgThreshold: false,
   }
 }
 
@@ -140,10 +142,15 @@ let makeFromDbState = async (~config: Config.t, ~maxAddrInPartition=Env.maxAddrI
 
   let chainFetchers = ChainMap.fromArrayUnsafe(chainFetchersArr)
 
+  let hasStartedSavingHistory = await DbFunctions.EntityHistory.hasRows()
+
   {
     isUnorderedMultichainMode: config.isUnorderedMultichainMode,
     arbitraryEventQueue: [],
     chainFetchers,
+    //If we have started saving history, continue to save history
+    //as regardless of whether we are still in a reorg threshold
+    isInReorgThreshold: hasStartedSavingHistory,
   }
 }
 
