@@ -22,7 +22,7 @@
   },
   "dependencies": {
     "chai": "4.3.10",
-    "envio": "../../../cli/npm/envio"
+    "envio": "../../../../cli/npm/envio"
   },
   "optionalDependencies": {
     "generated": "./generated"

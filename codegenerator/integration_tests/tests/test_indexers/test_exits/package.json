@@ -14,7 +14,7 @@
   },
   "dependencies": {
     "ts-node": "^10.9.1",
-    "envio": "../../../cli/npm/envio"
+    "envio": "../../../../cli/npm/envio"
   },
   "optionalDependencies": {
     "generated": "./generated"

@@ -22,7 +22,7 @@
     "mocha": "10.2.0"
   },
   "dependencies": {
-    "envio": "../../../cli/npm/envio"
+    "envio": "../../../../cli/npm/envio"
   },
   "optionalDependencies": {
     "generated": "./generated"
