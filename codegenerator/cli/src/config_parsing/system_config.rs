@@ -389,7 +389,13 @@ impl SystemConfig {
             let sync_source = SyncSource::HyperfuelConfig(HyperfuelConfig {
                 endpoint_url: match &network.hyperfuel_config {
                     Some(config) => config.url.clone(),
-                    None => "https://fuel-testnet.hypersync.xyz".to_string(),
+                    None => match network.id {
+                        0 => "https://fuel-testnet.hypersync.xyz".to_string(),
+                        9889 => "https://fuel.hypersync.xyz".to_string(),
+                        _ => {
+                            return Err(anyhow!("Fuel network id {} is not supported", network.id))
+                        }
+                    },
                 },
             });
 
