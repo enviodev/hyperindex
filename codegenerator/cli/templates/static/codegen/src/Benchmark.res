@@ -388,11 +388,8 @@ module Summary = {
         "No benchmark cache file found, please use 'ENVIO_SAVE_BENCHMARK_DATA=true' and rerun the benchmark",
       )
     | Some(data) =>
-      let config = RegisterHandlers.getConfig()
-      let chainIds =
-        config.chainMap
-        ->ChainMap.keys
-        ->Array.map(chain => chain->ChainMap.Chain.toChainId)
+      let chainIds = RegisterHandlers.chainIds
+
       Js.log("Time breakdown")
       [
         ("Total Runtime", data->getTotalRunTime),

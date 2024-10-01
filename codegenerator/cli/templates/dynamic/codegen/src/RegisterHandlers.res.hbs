@@ -22,6 +22,14 @@ let registerContractHandlers = (
   }
 }
 
+//Used for Benchmark.res so that ts-node is not needed to
+//to get config with it's chains
+let chainIds = [
+  {{#each chain_configs as | chain_config |}}
+  {{chain_config.network_config.id}},
+  {{/each}}
+]
+
 %%private(
   let makeGeneratedConfig = () => {
     let chains = [
