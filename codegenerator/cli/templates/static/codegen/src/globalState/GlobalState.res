@@ -143,7 +143,6 @@ let checkAndSetSyncedChains = (~nextQueueItemIsKnownNone=false, chainManager: Ch
     chainManager.chainFetchers
     ->ChainMap.values
     ->Array.reduce(true, (accum, cf) => cf->ChainFetcher.isFetchingAtHead && accum)
-
   //Update the timestampCaughtUpToHeadOrEndblock values
   let chainFetchers = chainManager.chainFetchers->ChainMap.map(cf => {
     /* strategy for TUI synced status:
@@ -211,6 +210,15 @@ let checkAndSetSyncedChains = (~nextQueueItemIsKnownNone=false, chainManager: Ch
     }
   })
 
+  let allChainsSyncedAtHead =
+  chainFetchers
+  ->ChainMap.values
+  ->Array.reduce(true, (accum, cf) => cf.timestampCaughtUpToHeadOrEndblock->Option.isSome && accum)
+
+  if allChainsSyncedAtHead {
+   Prometheus.setAllChainsSyncedToHead()
+  }
+
   {
     ...chainManager,
     chainFetchers,
@@ -271,7 +279,6 @@ let handleBlockRangeResponse = (state, ~chain, ~response: ChainWorker.blockRange
       ~fromBlock=fromBlockQueried,
       ~toBlock=heighestQueriedBlockNumber,
       ~fetchStateRegisterId,
-      ~partitionId,
       ~numEvents=parsedQueueItems->Array.length,
     )
   }
@@ -755,9 +762,10 @@ let injectedTaskReducer = (
     })
     if Env.saveBenchmarkData {
       let elapsedTimeMillis = Hrtime.timeSince(timeRef)->Hrtime.toMillis->Hrtime.intFromMillis
-      Benchmark.addUpdateEndOfBlockRangeScannedData(
-        ~chainId=chain->ChainMap.Chain.toChainId,
-        ~elapsedTimeMillis,
+      Benchmark.addSummaryData(
+        ~group="Other",
+        ~label=`Chain ${chain->ChainMap.Chain.toString} UpdateEndOfBlockRangeScannedData (ms)`,
+        ~value=elapsedTimeMillis->Belt.Int.toFloat,
       )
     }
   | UpdateChainMetaDataAndCheckForExit(shouldExit) =>

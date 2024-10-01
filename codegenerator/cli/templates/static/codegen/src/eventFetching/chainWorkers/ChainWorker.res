@@ -15,9 +15,9 @@ type blockRangeFetchStats = {
 
 let blockRangeFetchStatsSchema: S.t<blockRangeFetchStats> = S.object(s => {
   totalTimeElapsed: s.field("totalTimeElapsed", S.int),
-  parsingTimeElapsed: ?s.field("parsingTimeElapsed", S.option(S.int)),
-  pageFetchTime: ?s.field("pageFetchTime", S.option(S.int)),
-  averageParseTimePerLog: ?s.field("averageParseTimePerLog", S.option(S.float)),
+  parsingTimeElapsed: ?s.field("parsingTimeElapsed", S.null(S.int)),
+  pageFetchTime: ?s.field("pageFetchTime", S.null(S.int)),
+  averageParseTimePerLog: ?s.field("averageParseTimePerLog", S.null(S.float)),
 })
 
 type reorgGuard = {

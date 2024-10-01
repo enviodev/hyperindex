@@ -47,8 +47,16 @@ impl LiquidityPool for Contract {
         // Amount to withdraw.
         let amount_to_transfer = token_amount / 2;
 
-        // Transfer base token to recipient.
-        transfer(recipient, BASE_TOKEN, amount_to_transfer);
+        // Transfer everything back to recipient address.
+        // Besides one token, which is sent to the greeter contract,
+        // to test transfer receipt sent to a contract.
+        transfer(recipient, BASE_TOKEN, amount_to_transfer - 1);
+        transfer(
+            Identity::ContractId(ContractId::from(0xb9bc445e5696c966dcf7e5d1237bd03c04e3ba6929bdaedfeebc7aae784c3a0b)),
+            BASE_TOKEN,
+            1,
+        );
+
         burn(ZERO_B256, token_amount);
     }
 }

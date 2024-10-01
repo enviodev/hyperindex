@@ -15,7 +15,7 @@ use super::{
 use crate::{
     config_parsing::human_config::evm::{RpcBlockField, RpcTransactionField},
     constants::{links, project_paths::DEFAULT_SCHEMA_PATH},
-    fuel::abi::FuelAbi,
+    fuel::abi::{FuelAbi, BURN_EVENT_NAME, CALL_EVENT_NAME, MINT_EVENT_NAME, TRANSFER_EVENT_NAME},
     project_paths::{path_utils, ParsedProjectPaths},
     rescript_types::RescriptTypeIdent,
     utils::unique_hashmap,
@@ -242,10 +242,8 @@ impl SystemConfig {
                         //there is no config
                         if !contracts.get(&contract.name).is_some() {
                             Err(anyhow!(
-                                "Failed to find contract '{}' in global contract config. If you \
-                                 don't use global contracts for multiple networks support, please \
-                                 specify events and handler for the contract.",
-                                contract.name
+                                "Failed to parse contract '{}' for the network '{}'. If you use a global contract definition, please verify that the name reference is correct.",
+                                contract.name, network.id
                             ))?;
                         }
                     }
@@ -380,7 +378,8 @@ impl SystemConfig {
                         //there is no local_contract_config
                         if !contracts.get(&contract.name).is_some() {
                             Err(anyhow!(
-                                "Expected a local network config definition or a global definition"
+                                "Failed to parse contract '{}' for the network '{}'. If you use a global contract definition, please verify that the name reference is correct.",
+                                contract.name, network.id
                             ))?;
                         }
                     }
@@ -390,7 +389,13 @@ impl SystemConfig {
             let sync_source = SyncSource::HyperfuelConfig(HyperfuelConfig {
                 endpoint_url: match &network.hyperfuel_config {
                     Some(config) => config.url.clone(),
-                    None => "https://fuel-testnet.hypersync.xyz".to_string(),
+                    None => match network.id {
+                        0 => "https://fuel-testnet.hypersync.xyz".to_string(),
+                        9889 => "https://fuel.hypersync.xyz".to_string(),
+                        _ => {
+                            return Err(anyhow!("Fuel network id {} is not supported", network.id))
+                        }
+                    },
                 },
             });
 
@@ -825,7 +830,7 @@ pub enum FuelEventKind {
     LogData(RescriptTypeIdent),
     Mint,
     Burn,
-    TransferOut,
+    Transfer,
     Call,
 }
 
@@ -964,10 +969,10 @@ impl Event {
                         EventType::LogData
                     } else {
                         match event_config.name.as_str() {
-                            "Mint" => EventType::Mint,
-                            "Burn" => EventType::Burn,
-                            "TransferOut" => EventType::TransferOut,
-                            "Call" => EventType::Call,
+                            MINT_EVENT_NAME => EventType::Mint,
+                            BURN_EVENT_NAME => EventType::Burn,
+                            TRANSFER_EVENT_NAME => EventType::Transfer,
+                            CALL_EVENT_NAME => EventType::Call,
                             _ => EventType::LogData,
                         }
                     }
@@ -1009,10 +1014,10 @@ impl Event {
                     kind: EventKind::Fuel(FuelEventKind::Burn),
                     sighash: "burn".to_string(),
                 },
-                EventType::TransferOut => Event {
+                EventType::Transfer => Event {
                     name: event_config.name.clone(),
-                    kind: EventKind::Fuel(FuelEventKind::TransferOut),
-                    sighash: "transferOut".to_string(),
+                    kind: EventKind::Fuel(FuelEventKind::Transfer),
+                    sighash: "transfer".to_string(),
                 },
                 EventType::Call => Event {
                     name: event_config.name.clone(),

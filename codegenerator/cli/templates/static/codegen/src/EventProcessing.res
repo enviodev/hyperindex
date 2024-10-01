@@ -522,7 +522,6 @@ let processEventBatch = (
         ~handlerDuration,
         ~dbWriteDuration,
         ~totalTimeElapsed=elapsedTimeAfterDbWrite,
-        ~timeFinished=Js.Date.make(),
       )
     }
 

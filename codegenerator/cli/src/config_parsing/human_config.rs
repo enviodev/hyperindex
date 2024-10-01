@@ -524,12 +524,12 @@ pub mod fuel {
     }
 
     #[derive(Debug, Serialize, Clone, Deserialize, PartialEq, JsonSchema, Display)]
-    #[serde(rename_all = "SCREAMING_SNAKE_CASE", deny_unknown_fields)]
+    #[serde(rename_all = "camelCase", deny_unknown_fields)]
     pub enum EventType {
         LogData,
         Mint,
         Burn,
-        TransferOut,
+        Transfer,
         Call,
     }
 
