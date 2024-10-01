@@ -2,7 +2,7 @@
 //@ts-check
 "use strict";
 
-import { spawnSync } from "child_process";
+const { spawnSync } = require("child_process");
 
 /**
  * Returns the executable path for envio located inside node_modules
