@@ -15,7 +15,7 @@ use super::{
 use crate::{
     config_parsing::human_config::evm::{RpcBlockField, RpcTransactionField},
     constants::{links, project_paths::DEFAULT_SCHEMA_PATH},
-    fuel::abi::FuelAbi,
+    fuel::abi::{FuelAbi, BURN_EVENT_NAME, CALL_EVENT_NAME, MINT_EVENT_NAME, TRANSFER_EVENT_NAME},
     project_paths::{path_utils, ParsedProjectPaths},
     rescript_types::RescriptTypeIdent,
     utils::unique_hashmap,
@@ -969,10 +969,10 @@ impl Event {
                         EventType::LogData
                     } else {
                         match event_config.name.as_str() {
-                            "Mint" => EventType::Mint,
-                            "Burn" => EventType::Burn,
-                            "Transfer" => EventType::Transfer,
-                            "Call" => EventType::Call,
+                            MINT_EVENT_NAME => EventType::Mint,
+                            BURN_EVENT_NAME => EventType::Burn,
+                            TRANSFER_EVENT_NAME => EventType::Transfer,
+                            CALL_EVENT_NAME => EventType::Call,
                             _ => EventType::LogData,
                         }
                     }
