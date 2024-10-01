@@ -25,7 +25,7 @@ root_dir=$(pwd)
 
 # By default this will use envio from pnpm, but you can override this with an the ENVIO_CMD env var.
 # If you know that the version of envio inside the projct is correct, then you can use `ENVIO="pnpm envio".
-envio_cmd=${ENVIO_CMD:-"cargo run --manifest-path $(dirname $(pwd))/cli/Cargo.toml --"}
+envio_cmd=${ENVIO_CMD:-"pnpm envio"}
 
 # change to the directory of the template
 cd ./integration_test_output/${TEMPLATE}/${LANGUAGE}/
