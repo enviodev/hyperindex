@@ -767,7 +767,7 @@ let injectedTaskReducer = (
       let elapsedTimeMillis = Hrtime.timeSince(timeRef)->Hrtime.toMillis->Hrtime.intFromMillis
       Benchmark.addSummaryData(
         ~group="Other",
-        ~label=`Chain ${chain->ChainMap.Chain.toString} UpdateEndOfBlockRangeScannedData Elapsed Time (ms)`,
+        ~label=`Chain ${chain->ChainMap.Chain.toString} UpdateEndOfBlockRangeScannedData (ms)`,
         ~value=elapsedTimeMillis->Belt.Int.toFloat,
       )
     }
