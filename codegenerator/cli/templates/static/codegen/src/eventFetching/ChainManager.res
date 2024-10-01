@@ -299,7 +299,7 @@ let createBatch = (self: t, ~maxBatchSize: int) => {
       ->Array.concat([("arbitrary", self.arbitraryEventQueue->Array.length)])
       ->Js.Dict.fromArray
 
-    let timeElapsed = refTime->Hrtime.timeSince->Hrtime.toMillis
+    let timeElapsed = refTime->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
 
     Logging.trace({
       "message": "New batch created for processing",
@@ -307,6 +307,16 @@ let createBatch = (self: t, ~maxBatchSize: int) => {
       "buffers": fetchedEventsBuffer,
       "time taken (ms)": timeElapsed,
     })
+
+    if Env.saveBenchmarkData {
+      let group = "Other"
+      Benchmark.addSummaryData(
+        ~group,
+        ~label=`Batch Creation Time (ms)`,
+        ~value=timeElapsed->Belt.Int.toFloat,
+      )
+      Benchmark.addSummaryData(~group, ~label=`Batch Size`, ~value=batchSize->Belt.Int.toFloat)
+    }
 
     Some({batch, fetchStatesMap, arbitraryEventQueue})
   } else {
