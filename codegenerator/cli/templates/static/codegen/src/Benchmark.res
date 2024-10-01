@@ -176,6 +176,7 @@ module Summary = {
     @as("std-dev") stdDev: float,
     min: float,
     max: float,
+    total: float,
   }
 
   type summaryTable = dict<t>
@@ -196,7 +197,7 @@ module Summary = {
     let div = (floatA, floatB) => floatA /. floatB
     let n = Array.length(arr)
     if n == 0 {
-      {n, mean: 0., stdDev: 0., min: 0., max: 0.}
+      {n, mean: 0., stdDev: 0., min: 0., max: 0., total: 0.}
     } else {
       let nFloat = n->Int.toFloat
       let mean = arr->Array.reduce(0., (acc, time) => acc +. time)->div(nFloat)->round(~precision=2)
@@ -234,7 +235,8 @@ module Summary = {
           ->Some
         )
         ->Option.getWithDefault(0.)
-      {n, mean, stdDev, min, max}
+      let total = arr->Array.reduce(0., (acc, val) => acc +. val)
+      {n, mean, stdDev, min, max, total}
     }
   }
 
