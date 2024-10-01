@@ -106,6 +106,7 @@ module LogsQuery = {
           Amount,
           ToAddress,
           AssetId,
+          To
         ],
         block: [Id, Height, Time],
       },

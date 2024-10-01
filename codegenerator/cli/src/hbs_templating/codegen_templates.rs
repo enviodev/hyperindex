@@ -356,7 +356,7 @@ impl EventMod {
             Some(FuelEventKind::Mint) => Some("Mint".to_string()),
             Some(FuelEventKind::Burn) => Some("Burn".to_string()),
             Some(FuelEventKind::Call) => Some("Call".to_string()),
-            Some(FuelEventKind::TransferOut) => Some("TransferOut".to_string()),
+            Some(FuelEventKind::Transfer) => Some("Transfer".to_string()),
             Some(FuelEventKind::LogData(_)) => Some(format!(
                 r#"LogData({{
   logId: sighash,
@@ -653,7 +653,7 @@ impl EventTemplate {
                     FuelEventKind::Mint | FuelEventKind::Burn => {
                         Ok(Self::from_fuel_supply_event(config_event, fuel_event_kind))
                     }
-                    FuelEventKind::Call | FuelEventKind::TransferOut => Ok(
+                    FuelEventKind::Call | FuelEventKind::Transfer => Ok(
                         Self::from_fuel_transfer_event(config_event, fuel_event_kind),
                     ),
                 }
