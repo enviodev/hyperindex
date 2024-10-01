@@ -34,6 +34,9 @@ async fn main() -> Result<()> {
     let mut salt = [0u8; 32];
     rand::thread_rng().fill(&mut salt);
 
+    let greeter_contract_id =
+        ContractId::from_str("0xb9bc445e5696c966dcf7e5d1237bd03c04e3ba6929bdaedfeebc7aae784c3a0b")?;
+
     let contract_id = Contract::load_from(
         "../all-events/out/debug/all-events.bin",
         LoadConfiguration::default().with_salt(salt),
@@ -69,6 +72,7 @@ async fn main() -> Result<()> {
         .withdraw(wallet.address().into())
         .call_params(call_params)?
         .with_variable_output_policy(VariableOutputPolicy::Exactly(1))
+        .with_contract_ids(&[greeter_contract_id.into()])
         .call()
         .await?;
     println!(

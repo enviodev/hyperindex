@@ -242,10 +242,8 @@ impl SystemConfig {
                         //there is no config
                         if !contracts.get(&contract.name).is_some() {
                             Err(anyhow!(
-                                "Failed to find contract '{}' in global contract config. If you \
-                                 don't use global contracts for multiple networks support, please \
-                                 specify events and handler for the contract.",
-                                contract.name
+                                "Failed to parse contract '{}' for the network '{}'. If you use a global contract definition, please verify that the name reference is correct.",
+                                contract.name, network.id
                             ))?;
                         }
                     }
@@ -380,7 +378,8 @@ impl SystemConfig {
                         //there is no local_contract_config
                         if !contracts.get(&contract.name).is_some() {
                             Err(anyhow!(
-                                "Expected a local network config definition or a global definition"
+                                "Failed to parse contract '{}' for the network '{}'. If you use a global contract definition, please verify that the name reference is correct.",
+                                contract.name, network.id
                             ))?;
                         }
                     }
@@ -831,7 +830,7 @@ pub enum FuelEventKind {
     LogData(RescriptTypeIdent),
     Mint,
     Burn,
-    TransferOut,
+    Transfer,
     Call,
 }
 
@@ -972,7 +971,7 @@ impl Event {
                         match event_config.name.as_str() {
                             "Mint" => EventType::Mint,
                             "Burn" => EventType::Burn,
-                            "TransferOut" => EventType::TransferOut,
+                            "Transfer" => EventType::Transfer,
                             "Call" => EventType::Call,
                             _ => EventType::LogData,
                         }
@@ -1015,10 +1014,10 @@ impl Event {
                     kind: EventKind::Fuel(FuelEventKind::Burn),
                     sighash: "burn".to_string(),
                 },
-                EventType::TransferOut => Event {
+                EventType::Transfer => Event {
                     name: event_config.name.clone(),
-                    kind: EventKind::Fuel(FuelEventKind::TransferOut),
-                    sighash: "transferOut".to_string(),
+                    kind: EventKind::Fuel(FuelEventKind::Transfer),
+                    sighash: "transfer".to_string(),
                 },
                 EventType::Call => Event {
                     name: event_config.name.clone(),

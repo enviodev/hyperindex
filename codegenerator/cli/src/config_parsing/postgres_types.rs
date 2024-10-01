@@ -7,7 +7,7 @@ pub enum Primitive {
     Boolean,
     Text,
     Integer,
-    Numeric,
+    Numeric(Option<(u32, u32)>), // (precision, scale)
     Serial,
     Json,
     Timestamp,
@@ -20,11 +20,14 @@ impl Primitive {
             Self::Boolean => "Boolean".to_string(),
             Self::Text => "Text".to_string(),
             Self::Integer => "Integer".to_string(),
-            Self::Numeric => "Numeric".to_string(),
+            Self::Numeric(None) => "Numeric".to_string(),
+            Self::Numeric(Some((precision, scale))) => {
+                format!("Custom(\"NUMERIC({}, {})\")", precision, scale)
+            }
             Self::Serial => "Serial".to_string(),
             Self::Json => "Json".to_string(),
             Self::Timestamp => "Timestamp".to_string(),
-            Self::Enum(enum_name) => format!("Enum(Enums.{enum_name}.enum.name)"),
+            Self::Enum(enum_name) => format!("Custom(Enums.{enum_name}.enum.name)"),
         }
     }
 }
