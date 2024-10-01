@@ -191,7 +191,7 @@ use super::hbs_dir_generator::HandleBarsDirGenerator;
 use crate::{
     cli_args::init_config::Language,
     config_parsing::{
-        entity_parsing::{Entity, Field, FieldType, Schema},
+        entity_parsing::{Field, FieldType},
         system_config::{self, Ecosystem, EventKind, SystemConfig},
     },
     rescript_types::RescriptRecordField,
@@ -210,21 +210,6 @@ use std::{path::PathBuf, vec};
 pub struct AutoSchemaHandlerTemplate {
     imported_contracts: Vec<Contract>,
     envio_api_token: Option<String>,
-}
-
-impl TryInto<Schema> for AutoSchemaHandlerTemplate {
-    type Error = anyhow::Error;
-    fn try_into(self) -> Result<Schema, Self::Error> {
-        let entities = self
-            .imported_contracts
-            .into_iter()
-            .map(|c| c.try_into())
-            .collect::<anyhow::Result<Vec<Schema>>>()?
-            .into_iter()
-            .flat_map(|s| s.entities.clone().into_values())
-            .collect::<Vec<_>>();
-        Schema::new(entities, vec![])
-    }
 }
 
 #[derive(Serialize)]
@@ -256,17 +241,9 @@ impl Contract {
     }
 }
 
-impl TryInto<Schema> for Contract {
-    type Error = anyhow::Error;
-    fn try_into(self) -> Result<Schema, Self::Error> {
-        let entities = self.imported_events.into_iter().map(|e| e.into()).collect();
-        Schema::new(entities, vec![])
-    }
-}
-
 #[derive(Serialize)]
 pub struct Event {
-    name: CapitalizedOptions,
+    name: String,
     entity_id_from_event_code: String,
     create_mock_code: String,
     params: Vec<Param>,
@@ -337,7 +314,7 @@ impl Event {
             .context(format!("Failed getting params for event {}", event.name))?;
 
         Ok(Event {
-            name: event.name.to_capitalized_options(),
+            name: event.name.to_string(),
             entity_id_from_event_code: Event::get_entity_id_code(
                 "event".to_string(),
                 is_fuel,
@@ -346,21 +323,6 @@ impl Event {
             create_mock_code: Event::get_create_mock_code(&event, &contract, is_fuel, &language),
             params,
         })
-    }
-}
-
-impl Into<Entity> for Event {
-    fn into(self) -> Entity {
-        let fields = self
-            .params
-            .into_iter()
-            .map(|p| (p.event_key.original.clone(), p.into()))
-            .collect();
-        Entity {
-            name: self.name.original,
-            fields,
-            multi_field_indexes: vec![], // when doing contract import - entities won't have indexes by default.
-        }
     }
 }
 

@@ -209,10 +209,7 @@ pub mod fuel {
             fuel::{ContractConfig, EcosystemTag, EventConfig, HumanConfig, Network},
             NetworkContract,
         },
-        fuel::{
-            abi::{FuelAbi, FuelLog},
-            address::Address,
-        },
+        fuel::{abi::FuelAbi, address::Address},
     };
 
     use super::InitConfig;
@@ -227,7 +224,7 @@ pub mod fuel {
         pub name: String,
         pub addresses: Vec<Address>,
         pub abi: FuelAbi,
-        pub selected_logs: Vec<FuelLog>,
+        pub selected_events: Vec<EventConfig>,
     }
 
     impl SelectedContract {
@@ -269,15 +266,7 @@ pub mod fuel {
                             config: Some(ContractConfig {
                                 abi_file_path: selected_contract.get_vendored_abi_file_path(),
                                 handler: init_config.language.get_event_handler_directory(),
-                                events: selected_contract
-                                    .selected_logs
-                                    .iter()
-                                    .map(|selected_log| EventConfig {
-                                        name: selected_log.event_name.clone(),
-                                        log_id: selected_log.id.clone().into(),
-                                        type_: None,
-                                    })
-                                    .collect(),
+                                events: selected_contract.selected_events.clone(),
                             }),
                         })
                         .collect(),

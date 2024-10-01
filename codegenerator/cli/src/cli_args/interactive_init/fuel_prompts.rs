@@ -5,7 +5,8 @@ use crate::{
         ContractImportArgs, InitFlow as ClapInitFlow, LocalImportArgs, LocalOrExplorerImport,
         TemplateArgs,
     },
-    fuel::abi::{FuelAbi, FuelLog},
+    config_parsing::human_config::fuel::EventConfig,
+    fuel::abi::{FuelAbi, BURN_EVENT_NAME, CALL_EVENT_NAME, MINT_EVENT_NAME, TRANSFER_EVENT_NAME},
     init_config::fuel::{ContractImportSelection, InitFlow, SelectedContract, Template},
 };
 use anyhow::{Context, Result};
@@ -76,12 +77,13 @@ fn get_contract_name(local_import_args: &LocalImportArgs) -> Result<String> {
     }
 }
 
-fn prompt_logs_selection(logs: Vec<FuelLog>) -> Result<Vec<FuelLog>> {
+fn prompt_event_selection(events: Vec<EventConfig>) -> Result<Vec<EventConfig>> {
     prompt_events_selection(
-        logs.into_iter()
-            .map(|log| SelectItem {
-                display: log.event_name.clone(),
-                item: log,
+        events
+            .into_iter()
+            .map(|event| SelectItem {
+                display: event.name.clone(),
+                item: event,
             })
             .collect(),
     )
@@ -120,9 +122,37 @@ async fn get_contract_import_selection(args: ContractImportArgs) -> Result<Selec
         get_abi_path_string(&local_import_args).context("Failed getting Fuel ABI path")?;
     let abi = FuelAbi::parse(PathBuf::from(&abi_path_string)).context("Failed parsing Fuel ABI")?;
 
-    let mut selected_logs = abi.get_logs();
+    let mut selected_events: Vec<EventConfig> = abi
+        .get_logs()
+        .iter()
+        .map(|log| EventConfig {
+            name: log.event_name.clone(),
+            log_id: Some(log.id.clone()),
+            type_: None,
+        })
+        .collect();
+    selected_events.push(EventConfig {
+        name: TRANSFER_EVENT_NAME.to_string(),
+        log_id: None,
+        type_: None,
+    });
+    selected_events.push(EventConfig {
+        name: MINT_EVENT_NAME.to_string(),
+        log_id: None,
+        type_: None,
+    });
+    selected_events.push(EventConfig {
+        name: BURN_EVENT_NAME.to_string(),
+        log_id: None,
+        type_: None,
+    });
+    selected_events.push(EventConfig {
+        name: CALL_EVENT_NAME.to_string(),
+        log_id: None,
+        type_: None,
+    });
     if !args.all_events {
-        selected_logs = prompt_logs_selection(selected_logs)?;
+        selected_events = prompt_event_selection(selected_events)?;
     }
 
     let name = get_contract_name(&local_import_args).context("Failed getting contract name")?;
@@ -133,7 +163,7 @@ async fn get_contract_import_selection(args: ContractImportArgs) -> Result<Selec
         name,
         addresses,
         abi,
-        selected_logs,
+        selected_events,
     })
 }
 
