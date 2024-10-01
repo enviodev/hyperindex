@@ -137,6 +137,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
       ChainManager.arbitraryEventQueue: arbitraryEventPriorityQueue.contents,
       chainFetchers,
       isUnorderedMultichainMode: false,
+      isInReorgThreshold: false,
     },
     numberOfMockEventsCreated.contents,
     allEvents,
@@ -173,7 +174,7 @@ describe("ChainManager", () => {
           let eventsInBlock = ChainManager.createBatch(chainManager, ~maxBatchSize=10000)
 
           // ensure that the events are ordered correctly
-          switch eventsInBlock {
+          switch eventsInBlock.val {
           | None => chainManager
           | Some({batch, fetchStatesMap, arbitraryEventQueue}) =>
             batch->Belt.Array.forEach(
@@ -231,7 +232,7 @@ describe("ChainManager", () => {
             //   )
             let nextChainFetchers = chainManager.chainFetchers->ChainMap.mapWithKey(
               (chain, fetcher) => {
-                let fetchState = fetchStatesMap->ChainMap.get(chain)
+                let {partitionedFetchState: fetchState} = fetchStatesMap->ChainMap.get(chain)
                 {
                   ...fetcher,
                   fetchState,
@@ -318,12 +319,15 @@ describe("determineNextEvent", () => {
     let makeMockPartitionedFetchState = (
       ~latestFetchedBlockTimestamp,
       ~item,
-    ): PartitionedFetchState.t => {
-      partitions: list{makeMockFetchState(~latestFetchedBlockTimestamp, ~item)},
-      maxAddrInPartition: Env.maxAddrInPartition,
-      startBlock: 0,
-      endBlock: None,
-      logger: Logging.logger,
+    ): ChainManager.fetchStateWithData => {
+      partitionedFetchState: {
+        partitions: list{makeMockFetchState(~latestFetchedBlockTimestamp, ~item)},
+        maxAddrInPartition: Env.maxAddrInPartition,
+        startBlock: 0,
+        endBlock: None,
+        logger: Logging.logger,
+      },
+      heighestBlockBelowThreshold: 500,
     }
 
     it(
@@ -347,7 +351,7 @@ describe("determineNextEvent", () => {
             },
         )
 
-        let {earliestEvent} = determineNextEvent_unordered(fetchStatesMap)->Result.getExn
+        let {val: {earliestEvent}} = determineNextEvent_unordered(fetchStatesMap)->Result.getExn
 
         Assert.deepEqual(
           earliestEvent->FetchState_test.getItem,
@@ -355,7 +359,7 @@ describe("determineNextEvent", () => {
           ~message="Should have taken the single item",
         )
 
-        let {earliestEvent} = determineNextEvent_ordered(fetchStatesMap)->Result.getExn
+        let {val: {earliestEvent}} = determineNextEvent_ordered(fetchStatesMap)->Result.getExn
 
         Assert.deepEqual(
           earliestEvent,
@@ -402,7 +406,7 @@ describe("determineNextEvent", () => {
         //   NoItem(655 /* later timestamp than the test event */, {id:1}),
         // ]
 
-        let {earliestEvent} = determineNextEvent_unordered(fetchStatesMap)->Result.getExn
+        let {val: {earliestEvent}} = determineNextEvent_unordered(fetchStatesMap)->Result.getExn
 
         Assert.deepEqual(
           earliestEvent->FetchState_test.getItem,
@@ -410,7 +414,7 @@ describe("determineNextEvent", () => {
           ~message="Should have taken the single item",
         )
 
-        let {earliestEvent} = determineNextEvent_ordered(fetchStatesMap)->Result.getExn
+        let {val: {earliestEvent}} = determineNextEvent_ordered(fetchStatesMap)->Result.getExn
 
         Assert.deepEqual(
           earliestEvent,

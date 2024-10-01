@@ -16,6 +16,18 @@ type chainId = int
 type eventId = string
 type blockNumberRow = {@as("block_number") blockNumber: int}
 
+module General = {
+  type existsRes = {exists: bool}
+
+  let hasRows = async (sql, ~table: Table.table) => {
+    let query = `SELECT EXISTS(SELECT 1 FROM public.${table.tableName});`
+    switch await sql->Postgres.unsafe(query) {
+    | [{exists}] => exists
+    | _ => Js.Exn.raiseError("Unexpected result from hasRows query: " ++ query)
+    }
+  }
+}
+
 module ChainMetadata = {
   type chainMetadata = {
     @as("chain_id") chainId: int,
@@ -370,4 +382,6 @@ module EntityHistory = {
       })
     })
   }
+
+  let hasRows = () => General.hasRows(sql, ~table=TablesStatic.EntityHistory.table)
 }

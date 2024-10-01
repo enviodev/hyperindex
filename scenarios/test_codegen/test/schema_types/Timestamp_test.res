@@ -36,7 +36,12 @@ describe("Load and save an entity with a Timestamp from DB", () => {
 
     let _ = loaderContext.entityWithTimestamp.get(testEntity.id)
 
-    let handlerContext = contextEnv->ContextEnv.getHandlerContext(~inMemoryStore, ~loadLayer)
+    let handlerContext =
+      contextEnv->ContextEnv.getHandlerContext(
+        ~inMemoryStore,
+        ~loadLayer,
+        ~isInReorgThreshold=false,
+      )
 
     switch await handlerContext.entityWithTimestamp.get(testEntity.id) {
     | Some(entity) =>

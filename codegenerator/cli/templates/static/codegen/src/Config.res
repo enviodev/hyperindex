@@ -120,6 +120,13 @@ let shouldRollbackOnReorg = config =>
   | _ => false
   }
 
+let shouldSaveHistory = (config, ~isInReorgThreshold) =>
+  switch config.historyConfig {
+  | {rollbackFlag: RollbackOnReorg} if isInReorgThreshold => true
+  | {historyFlag: FullHistory} => true
+  | _ => false
+  }
+
 let shouldPruneHistory = config =>
   switch config.historyConfig {
   | {historyFlag: MinHistory} => true
