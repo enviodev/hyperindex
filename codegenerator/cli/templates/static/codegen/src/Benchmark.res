@@ -1,123 +1,79 @@
+module MillisAccum = {
+  type millis = int
+  type t = {counters: dict<millis>, startTime: Js.Date.t, mutable endTime: Js.Date.t}
+  let schema: S.t<t> = S.schema(s => {
+    counters: s.matches(S.dict(S.int)),
+    startTime: s.matches(S.string->S.datetime),
+    endTime: s.matches(S.string->S.datetime),
+  })
+  let make: unit => t = () => {
+    counters: Js.Dict.empty(),
+    startTime: Js.Date.make(),
+    endTime: Js.Date.make(),
+  }
+
+  let increment = (self: t, label, amount) => {
+    switch self.counters->Utils.Dict.dangerouslyGetNonOption(label) {
+    | None => self.counters->Js.Dict.set(label, amount)
+    | Some(current) => self.counters->Js.Dict.set(label, current + amount)
+    }
+    self.endTime = Js.Date.make()
+  }
+}
+
+module SummaryData = {
+  module Group = {
+    type t = dict<array<float>>
+    let schema = S.dict(S.array(S.float))
+    let make = () => Js.Dict.empty()
+
+    let add = (self: t, key: string, value: float) => {
+      switch self->Utils.Dict.dangerouslyGetNonOption(key) {
+      | None => self->Js.Dict.set(key, [value])
+      | Some(arr) => arr->Js.Array2.push(value)->ignore
+      }
+    }
+  }
+
+  type t = dict<Group.t>
+  let schema = S.dict(Group.schema)
+  let make = () => Js.Dict.empty()
+
+  let add = (self: t, ~group, ~label, ~value) => {
+    let group = switch self->Utils.Dict.dangerouslyGetNonOption(group) {
+    | None =>
+      let newGroup = Group.make()
+      self->Js.Dict.set(group, newGroup)
+      newGroup
+    | Some(group) => group
+    }
+
+    group->Group.add(label, value)
+  }
+}
+
 module Data = {
-  let dateTimeSchema = S.string->S.datetime
-  module BlockRangeFetched = {
-    type t = {
-      stats: ChainWorker.blockRangeFetchStats,
-      chainId: int,
-      fromBlock: int,
-      toBlock: int,
-      fetchStateRegisterId: FetchState.id,
-      partitionId: int,
-      numEvents: int,
-    }
-
-    let make = (
-      ~stats,
-      ~chainId,
-      ~fromBlock,
-      ~toBlock,
-      ~fetchStateRegisterId,
-      ~partitionId,
-      ~numEvents,
-    ) => {
-      stats,
-      chainId,
-      fromBlock,
-      toBlock,
-      fetchStateRegisterId,
-      partitionId,
-      numEvents,
-    }
-
-    let schema = S.object(s => {
-      stats: s.field("stats", ChainWorker.blockRangeFetchStatsSchema),
-      chainId: s.field("chainId", S.int),
-      fromBlock: s.field("fromBlock", S.int),
-      toBlock: s.field("toBlock", S.int),
-      fetchStateRegisterId: s.field("fetchStateRegisterId", FetchState.idSchema),
-      partitionId: s.field("partitionId", S.int),
-      numEvents: s.field("numEvents", S.int),
-    })
-  }
-
-  module EventProcessing = {
-    type t = {
-      batchSize: int,
-      contractRegisterDuration: int,
-      loadDuration: int,
-      handlerDuration: int,
-      dbWriteDuration: int,
-      totalTimeElapsed: int,
-      timeFinished: Js.Date.t,
-    }
-
-    let schema = S.object(s => {
-      batchSize: s.field("batchSize", S.int),
-      contractRegisterDuration: s.field("contractRegisterDuration", S.int),
-      loadDuration: s.field("loadDuration", S.int),
-      handlerDuration: s.field("handlerDuration", S.int),
-      dbWriteDuration: s.field("dbWriteDuration", S.int),
-      totalTimeElapsed: s.field("totalTimeElapsed", S.int),
-      timeFinished: s.field("timeFinished", dateTimeSchema),
-    })
-  }
-
-  module UpdateEndOfBlockRangeScannedData = {
-    type t = {
-      chainId: int,
-      elapsedTimeMillis: int,
-    }
-
-    let schema = S.object(s => {
-      chainId: s.field("chainId", S.int),
-      elapsedTimeMillis: s.field("elapsedTimeMillis", S.int),
-    })
-  }
-
   type t = {
-    blockRangeFetched: array<BlockRangeFetched.t>,
-    eventProcessing: array<EventProcessing.t>,
-    updateEndOfBlockRangeScannedData: array<UpdateEndOfBlockRangeScannedData.t>,
-    startTime: Js.Date.t,
-    mutable latestTime: Js.Date.t,
+    millisAccum: MillisAccum.t,
+    summaryData: SummaryData.t,
   }
-  let schema = S.object(s => {
-    blockRangeFetched: s.field("blockRangeFetched", S.array(BlockRangeFetched.schema)),
-    eventProcessing: s.field("eventProcessing", S.array(EventProcessing.schema)),
-    updateEndOfBlockRangeScannedData: s.field(
-      "updateEndOfBlockRangeScannedData",
-      S.array(UpdateEndOfBlockRangeScannedData.schema),
-    ),
-    startTime: s.field("startTime", dateTimeSchema),
-    latestTime: s.field("latestTime", dateTimeSchema),
+
+  let schema = S.schema(s => {
+    millisAccum: s.matches(MillisAccum.schema),
+    summaryData: s.matches(SummaryData.schema),
   })
 
   let make = () => {
-    blockRangeFetched: [],
-    eventProcessing: [],
-    updateEndOfBlockRangeScannedData: [],
-    startTime: Js.Date.make(),
-    latestTime: Js.Date.make(),
+    millisAccum: MillisAccum.make(),
+    summaryData: SummaryData.make(),
   }
 
-  let updateLatestTime = self => self.latestTime = Js.Date.make()
-
-  let addBlockRangeFetched = (self, blockRangeFetched: BlockRangeFetched.t) => {
-    self.blockRangeFetched->Js.Array2.push(blockRangeFetched)->ignore
-    self->updateLatestTime
+  let incrementMillis = (self: t, ~label, ~amount) => {
+    self.millisAccum->MillisAccum.increment(label, amount)
   }
 
-  let addEventProcessing = (self, eventProcessing: EventProcessing.t) => {
-    self.eventProcessing->Js.Array2.push(eventProcessing)->ignore
-    self->updateLatestTime
-  }
-
-  let addUpdateEndOfBlockRangeScannedData = (
-    self,
-    updateEndOfBlockRangeScannedData: UpdateEndOfBlockRangeScannedData.t,
-  ) => {
-    self.updateEndOfBlockRangeScannedData->Js.Array2.push(updateEndOfBlockRangeScannedData)->ignore
-    self->updateLatestTime
+  let addSummaryData = (self: t, ~group, ~label, ~value) => {
+    self.summaryData->SummaryData.add(~group, ~label, ~value)
   }
 }
 
@@ -145,25 +101,41 @@ let readFromCacheFile = async () => {
   }
 }
 
+let addSummaryData = (~group, ~label, ~value) => {
+  data->Data.addSummaryData(~group, ~label, ~value)
+  data->saveToCacheFile
+}
+
+let incrementMillis = (~label, ~amount) => {
+  data->Data.incrementMillis(~label, ~amount)
+  data->saveToCacheFile
+}
+
 let addBlockRangeFetched = (
-  ~stats,
+  ~stats: ChainWorker.blockRangeFetchStats,
   ~chainId,
   ~fromBlock,
   ~toBlock,
-  ~fetchStateRegisterId,
-  ~partitionId,
+  ~fetchStateRegisterId: FetchState.id,
   ~numEvents,
 ) => {
-  data->Data.addBlockRangeFetched(
-    Data.BlockRangeFetched.make(
-      ~stats,
-      ~chainId,
-      ~fromBlock,
-      ~toBlock,
-      ~fetchStateRegisterId,
-      ~partitionId,
-      ~numEvents,
-    ),
+  let registerName = switch fetchStateRegisterId {
+  | Root => "Root"
+  | DynamicContract(_) => "Dynamic Contract"
+  }
+
+  let group = `BlockRangeFetched Summary for Chain ${chainId->Belt.Int.toString} ${registerName} Register`
+  let add = (label, value) => data->Data.addSummaryData(~group, ~label, ~value=Utils.magic(value))
+
+  add("Total Time Elapsed (ms)", stats.totalTimeElapsed)
+  add("Parsing Time Elapsed (ms)", stats.parsingTimeElapsed->Belt.Option.getWithDefault(0))
+  add("Page Fetch Time (ms)", stats.pageFetchTime->Belt.Option.getWithDefault(0))
+  add("Num Events", numEvents)
+  add("Block Range Size", toBlock - fromBlock)
+
+  data->Data.incrementMillis(
+    ~label=`Total Time Fetching Chain ${chainId->Belt.Int.toString}`,
+    ~amount=stats.totalTimeElapsed,
   )
 
   data->saveToCacheFile
@@ -176,26 +148,23 @@ let addEventProcessing = (
   ~handlerDuration,
   ~dbWriteDuration,
   ~totalTimeElapsed,
-  ~timeFinished,
 ) => {
-  data->Data.addEventProcessing({
-    batchSize,
-    contractRegisterDuration,
-    loadDuration,
-    handlerDuration,
-    dbWriteDuration,
-    totalTimeElapsed,
-    timeFinished,
-  })
+  let add = (label, value) =>
+    data->Data.addSummaryData(
+      ~group="EventProcessing Summary",
+      ~label,
+      ~value=value->Belt.Int.toFloat,
+    )
 
-  data->saveToCacheFile
-}
+  add("Batch Size", batchSize)
+  add("Contract Register Duration (ms)", contractRegisterDuration)
+  add("Load Duration (ms)", loadDuration)
+  add("Handler Duration (ms)", handlerDuration)
+  add("DB Write Duration (ms)", dbWriteDuration)
+  add("Total Time Elapsed (ms)", totalTimeElapsed)
 
-let addUpdateEndOfBlockRangeScannedData = (~chainId, ~elapsedTimeMillis) => {
-  data->Data.addUpdateEndOfBlockRangeScannedData({
-    chainId,
-    elapsedTimeMillis,
-  })
+  data->Data.incrementMillis(~label="Total Time Processing", ~amount=totalTimeElapsed)
+
   data->saveToCacheFile
 }
 
@@ -269,117 +238,6 @@ module Summary = {
     }
   }
 
-  let getChainBlockRangeFetchedSummary = (
-    data: Data.t,
-    ~shouldInclude: Data.BlockRangeFetched.t => bool,
-  ): summaryTable => {
-    let numBlocksFetchedSamples = []
-    let blockRangeSizeSamples = []
-    let totalTimeElapsedSamples = []
-    let parsingTimeElapsedSamples = []
-    let pageFetchTimeSamples = []
-
-    data.blockRangeFetched->Array.forEach(blockRangeFetched =>
-      if shouldInclude(blockRangeFetched) {
-        numBlocksFetchedSamples->Array.push(blockRangeFetched.numEvents->Int.toFloat)
-        blockRangeSizeSamples->Array.push(
-          Int.toFloat(blockRangeFetched.toBlock - blockRangeFetched.fromBlock),
-        )
-        totalTimeElapsedSamples->Array.push(blockRangeFetched.stats.totalTimeElapsed->Int.toFloat)
-        parsingTimeElapsedSamples->Array.push(
-          blockRangeFetched.stats.parsingTimeElapsed->Option.mapWithDefault(0., Int.toFloat),
-        )
-        pageFetchTimeSamples->Array.push(
-          blockRangeFetched.stats.pageFetchTime->Option.mapWithDefault(0., Int.toFloat),
-        )
-      }
-    )
-    [
-      ("Total Time Elapsed (ms)", totalTimeElapsedSamples->make),
-      ("Parsing Time Elapsed (ms)", parsingTimeElapsedSamples->make),
-      ("Page Fetch Time (ms)", pageFetchTimeSamples->make),
-      ("Num Blocks Fetched", numBlocksFetchedSamples->make),
-      ("Block Range Size", blockRangeSizeSamples->make),
-    ]->Js.Dict.fromArray
-  }
-  let getEventProcessingSummary = (data: Data.t): summaryTable => {
-    let batchSizeSamples = []
-    let contractRegisterDurationSamples = []
-    let loadDurationSamples = []
-    let handlerDurationSamples = []
-    let dbWriteDurationSamples = []
-    let totalTimeElapsedSamples = []
-
-    data.eventProcessing->Array.forEach(eventProcessing => {
-      batchSizeSamples->Array.push(eventProcessing.batchSize->Int.toFloat)
-      contractRegisterDurationSamples->Array.push(
-        eventProcessing.contractRegisterDuration->Int.toFloat,
-      )
-      loadDurationSamples->Array.push(eventProcessing.loadDuration->Int.toFloat)
-      handlerDurationSamples->Array.push(eventProcessing.handlerDuration->Int.toFloat)
-      dbWriteDurationSamples->Array.push(eventProcessing.dbWriteDuration->Int.toFloat)
-      totalTimeElapsedSamples->Array.push(eventProcessing.totalTimeElapsed->Int.toFloat)
-    })
-
-    [
-      ("Batch Size", batchSizeSamples->make),
-      ("Contract Register Duration (ms)", contractRegisterDurationSamples->make),
-      ("Load Duration (ms)", loadDurationSamples->make),
-      ("Handler Duration (ms)", handlerDurationSamples->make),
-      ("DB Write Duration (ms)", dbWriteDurationSamples->make),
-      ("Total Time Elapsed (ms)", totalTimeElapsedSamples->make),
-    ]->Js.Dict.fromArray
-  }
-
-  let getUpdateEndOfBlockRangeScannedDataSummary = (data: Data.t, ~chainId): summaryTable => {
-    let elapsedTimeSamples = []
-
-    data.updateEndOfBlockRangeScannedData->Array.forEach(updateEndOfBlockRangeScannedData =>
-      if updateEndOfBlockRangeScannedData.chainId == chainId {
-        elapsedTimeSamples->Array.push(
-          updateEndOfBlockRangeScannedData.elapsedTimeMillis->Int.toFloat,
-        )
-      }
-    )
-
-    [("Elapsed Time (ms)", elapsedTimeSamples->make)]->Js.Dict.fromArray
-  }
-
-  let getTotalRunTime = (data: Data.t) =>
-    DateFns.intervalToDuration({
-      start: data.startTime,
-      end: data.latestTime,
-    })
-
-  let getTotalEventProcessingTime = (data: Data.t) =>
-    data.eventProcessing
-    ->Array.reduce(0, (acc, eventProcessing) => acc + eventProcessing.totalTimeElapsed)
-    ->DateFns.durationFromMillis
-
-  let getTotalTimeFetchingChain = (data: Data.t, ~chainId) => {
-    data.blockRangeFetched
-    ->Array.reduce(0, (acc, blockRangeFetched) => {
-      if blockRangeFetched.chainId == chainId {
-        acc + blockRangeFetched.stats.totalTimeElapsed
-      } else {
-        acc
-      }
-    })
-    ->DateFns.durationFromMillis
-  }
-
-  let getTotalUpdateEndOfBlockRangeScannedDataTime = (data: Data.t, ~chainId) => {
-    data.updateEndOfBlockRangeScannedData
-    ->Array.reduce(0, (acc, updateEndOfBlockRangeScannedData) => {
-      if updateEndOfBlockRangeScannedData.chainId == chainId {
-        acc + updateEndOfBlockRangeScannedData.elapsedTimeMillis
-      } else {
-        acc
-      }
-    })
-    ->DateFns.durationFromMillis
-  }
-
   let printSummary = async () => {
     let data = await readFromCacheFile()
     switch data {
@@ -387,66 +245,38 @@ module Summary = {
       Logging.error(
         "No benchmark cache file found, please use 'ENVIO_SAVE_BENCHMARK_DATA=true' and rerun the benchmark",
       )
-    | Some(data) =>
-      let chainIds = RegisterHandlers.chainIds
-
+    | Some({summaryData, millisAccum}) =>
       Js.log("Time breakdown")
-      [
-        ("Total Runtime", data->getTotalRunTime),
-        ("Total Time Processing", data->getTotalEventProcessingTime),
+      let timeBreakdown = [
+        (
+          "Total Runtime",
+          DateFns.intervalToDuration({
+            start: millisAccum.startTime,
+            end: millisAccum.endTime,
+          }),
+        ),
       ]
-      ->Array.concat(
-        chainIds->Array.flatMap(chainId => {
-          [
-            (
-              "Total Time Fetching Chain " ++ chainId->Int.toString,
-              data->getTotalTimeFetchingChain(~chainId),
-            ),
-            (
-              "Total UpdateEndOfBlockRangeScannedData Time Chain " ++ chainId->Int.toString,
-              data->getTotalUpdateEndOfBlockRangeScannedDataTime(~chainId),
-            ),
-          ]
-        }),
+
+      millisAccum.counters
+      ->Js.Dict.entries
+      ->Array.forEach(((label, millis)) =>
+        timeBreakdown->Js.Array2.push((label, DateFns.durationFromMillis(millis)))->ignore
       )
+
+      timeBreakdown
       ->Js.Dict.fromArray
       ->logDictTable
 
-      Js.log("EventProcessing Summary")
-      data->getEventProcessingSummary->logSummaryTable
-
-      chainIds->Array.forEach(chainId => {
-        Js.log(`Root Register BlockRangeFetched Summary for Chain ${chainId->Int.toString}`)
-        data
-        ->getChainBlockRangeFetchedSummary(~shouldInclude=blockRangeFetched =>
-          blockRangeFetched.chainId == chainId && blockRangeFetched.fetchStateRegisterId == Root
-        )
-        ->logSummaryTable
-
-        let hasDynamicContractRegisters = ref(false)
-        let dynamicContractRegisterSummary =
-          data->getChainBlockRangeFetchedSummary(~shouldInclude=blockRangeFetched =>
-            if (
-              blockRangeFetched.chainId == chainId && blockRangeFetched.fetchStateRegisterId != Root
-            ) {
-              hasDynamicContractRegisters := true
-              true
-            } else {
-              false
-            }
-          )
-
-        if hasDynamicContractRegisters.contents {
-          Js.log(
-            `Dynamic Contract Register BlockRangeFetched Summary for Chain ${chainId->Int.toString}`,
-          )
-          dynamicContractRegisterSummary->logSummaryTable
-        }
-
-        Js.log("Total UpdateEndOfBlockRangeScannedData Summary")
-        data
-        ->getUpdateEndOfBlockRangeScannedDataSummary(~chainId)
-        ->logSummaryTable
+      summaryData
+      ->Js.Dict.entries
+      ->Js.Array2.sortInPlaceWith(((a, _), (b, _)) => a < b ? -1 : 1)
+      ->Array.forEach(((groupName, group)) => {
+        Js.log(groupName)
+        group
+        ->Js.Dict.entries
+        ->Array.map(((label, values)) => (label, values->make))
+        ->Js.Dict.fromArray
+        ->logDictTable
       })
     }
   }

@@ -283,7 +283,6 @@ let handleBlockRangeResponse = (state, ~chain, ~response: ChainWorker.blockRange
       ~fromBlock=fromBlockQueried,
       ~toBlock=heighestQueriedBlockNumber,
       ~fetchStateRegisterId,
-      ~partitionId,
       ~numEvents=parsedQueueItems->Array.length,
     )
   }
@@ -766,9 +765,10 @@ let injectedTaskReducer = (
     })
     if Env.saveBenchmarkData {
       let elapsedTimeMillis = Hrtime.timeSince(timeRef)->Hrtime.toMillis->Hrtime.intFromMillis
-      Benchmark.addUpdateEndOfBlockRangeScannedData(
-        ~chainId=chain->ChainMap.Chain.toChainId,
-        ~elapsedTimeMillis,
+      Benchmark.addSummaryData(
+        ~group="Other",
+        ~label=`Chain ${chain->ChainMap.Chain.toString} UpdateEndOfBlockRangeScannedData Elapsed Time (ms)`,
+        ~value=elapsedTimeMillis->Belt.Int.toFloat,
       )
     }
   | UpdateChainMetaDataAndCheckForExit(shouldExit) =>
