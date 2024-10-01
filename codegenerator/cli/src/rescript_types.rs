@@ -426,7 +426,7 @@ impl RescriptTypeIdent {
     pub fn to_rescript_schema(&self) -> String {
         match self {
             Self::Unit => "S.literal(%raw(`null`))->S.variant(_ => ())".to_string(),
-            Self::Int => "S.int".to_string(),
+            Self::Int => "GqlDbCustomTypes.Int.schema".to_string(),
             Self::Unknown => "S.unknown".to_string(),
             Self::Float => "GqlDbCustomTypes.Float.schema".to_string(),
             Self::BigInt => "BigInt.schema".to_string(),
@@ -683,7 +683,7 @@ mod tests {
         assert_eq!(
             RescriptTypeExpr::Identifier(RescriptTypeIdent::Int)
                 .to_rescript_schema(&"eventArgs".to_string()),
-            "S.int".to_string()
+            "GqlDbCustomTypes.Int.schema".to_string()
         );
         assert_eq!(
             RescriptTypeExpr::Identifier(RescriptTypeIdent::Float)
@@ -723,12 +723,12 @@ mod tests {
         assert_eq!(
             RescriptTypeExpr::Identifier(RescriptTypeIdent::array(RescriptTypeIdent::Int))
                 .to_rescript_schema(&"eventArgs".to_string()),
-            "S.array(S.int)".to_string()
+            "S.array(GqlDbCustomTypes.Int.schema)".to_string()
         );
         assert_eq!(
             RescriptTypeExpr::Identifier(RescriptTypeIdent::option(RescriptTypeIdent::Int))
                 .to_rescript_schema(&"eventArgs".to_string()),
-            "S.null(S.int)".to_string()
+            "S.null(GqlDbCustomTypes.Int.schema)".to_string()
         );
         assert_eq!(
             RescriptTypeExpr::Identifier(RescriptTypeIdent::Tuple(vec![
@@ -736,7 +736,7 @@ mod tests {
                 RescriptTypeIdent::Bool
             ]))
             .to_rescript_schema(&"eventArgs".to_string()),
-            "S.tuple(s => (s.item(0, S.int), s.item(1, S.bool)))".to_string()
+            "S.tuple(s => (s.item(0, GqlDbCustomTypes.Int.schema), s.item(1, S.bool)))".to_string()
         );
         assert_eq!(
             RescriptTypeExpr::Variant(vec![
@@ -747,7 +747,7 @@ mod tests {
             r#"S.union([S.object((s): eventArgs =>
 {
   s.tag("case", "ConstrA")
-  ConstrA({payload: s.field("payload", S.int)})
+  ConstrA({payload: s.field("payload", GqlDbCustomTypes.Int.schema)})
 }), S.object((s): eventArgs =>
 {
   s.tag("case", "ConstrB")
@@ -761,8 +761,8 @@ mod tests {
                 RescriptRecordField::new("fieldB".to_string(), RescriptTypeIdent::Bool),
             ])
             .to_rescript_schema(&"eventArgs".to_string()),
-            "S.object((s): eventArgs => {fieldA: s.field(\"fieldA\", S.int), fieldB: s.field(\"fieldB\", \
-             S.bool)})"
+            "S.object((s): eventArgs => {fieldA: s.field(\"fieldA\", \
+             GqlDbCustomTypes.Int.schema), fieldB: s.field(\"fieldB\", S.bool)})"
                 .to_string()
         );
         assert_eq!(

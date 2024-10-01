@@ -219,7 +219,9 @@ module Schema = {
   let coerceToJsonPgType = schema => {
     schema->S.preprocess(s => {
       switch s.schema->S.classify {
-      | Literal(Null(_)) => {serializer: _ => %raw(`"null"`)}
+      | Literal(Null(_))
+      // This is a workaround for Fuel Bytes type
+      | Unknown => {serializer: _ => %raw(`"null"`)}
       | Null(_)
       | Bool => {
           serializer: unknown => {

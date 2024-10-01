@@ -1,23 +1,21 @@
 # HyperIndex
 
-HyperIndex is a modern, multi-chain data indexing framework for easily querying real-time and historical data from any EVM blockchain, as well as Fuel.
+HyperIndex is a modern, multi-chain data indexing framework for efficiently querying real-time and historical data from any EVM blockchain and Fuel.
 
 Designed with a core focus on delivering superior performance and seamless developer experience, HyperIndex optimizes the user experience.
 
 Build a real-time API for your blockchain application in minutes.
 
-# Features
+## Key Features
 
-- Simplified Installation & Setup
-- Any EVM L1, L2, or L3 Blockchain
-- Blazing-Fast Indexing
+- Simple installation & Setup
+- Any EVM blockchain, as well as Fuel
+- The fastest historical sync
+- Real-time indexing with reorg handling
 - Multi-chain support
-- Automatic Code Generation
-- Flexible Language Support
-- Promote to Production
-- Detailed Logging & Error Messaging
-
-# Getting Started
+- Write JavaScript, TypeScript, or ReScript with automatically generated types
+- Detailed logging & Error messaging
+- [Hosted Service](https://docs.envio.dev/docs/HyperIndex/hosted-service) to take care of your infrastructure
 
 ## Installation
 

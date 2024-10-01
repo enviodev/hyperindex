@@ -5,9 +5,9 @@ type hyperSyncPage<'item> = {
 }
 
 type block = {
-  hash: string,
-  timestamp: int,
-  blockNumber: int,
+  id: string,
+  time: int,
+  height: int,
 }
 
 type item = {

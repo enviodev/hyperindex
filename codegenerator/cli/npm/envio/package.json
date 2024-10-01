@@ -4,25 +4,13 @@
   "private": true,
   "description": "A latency and sync speed optimized, developer friendly blockchain data indexer.",
   "bin": "./local-bin.mjs",
-  "scripts": {
-    "typecheck": "tsc --noEmit",
-    "lint": "eslint .",
-    "lint:fix": "eslint . --fix",
-    "build": "tsc",
-    "dev": "pnpm build && node lib/index.js"
-  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/enviodev/hyperindex.git"
   },
-  "keywords": [
-    "blockchain",
-    "indexer",
-    "ethereum",
-    "fuel",
-    "data",
-    "dapp"
-  ],
+  "scripts": {
+    "watch": "rescript -w"
+  },
   "author": "envio contributors <about@envio.dev>",
   "license": "GPL-3.0",
   "bugs": {
@@ -30,29 +18,6 @@
   },
   "homepage": "https://envio.dev",
   "devDependencies": {
-    "@types/node": "^18.11.18",
-    "@typescript-eslint/eslint-plugin": "^5.48.0",
-    "@typescript-eslint/parser": "^5.48.0",
-    "eslint": "^8.31.0",
-    "typescript": "^4.9.4"
-  },
-  "eslintConfig": {
-    "extends": [
-      "eslint:recommended",
-      "plugin:@typescript-eslint/recommended"
-    ],
-    "parser": "@typescript-eslint/parser",
-    "plugins": [
-      "@typescript-eslint"
-    ],
-    "ignorePatterns": [
-      "lib/*"
-    ],
-    "root": true
-  },
-  "files": [
-    "lib",
-    "evm.schema.json",
-    "fuel.schema.json"
-  ]
+    "rescript": "11.1.3"
+  }
 }

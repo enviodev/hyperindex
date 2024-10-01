@@ -358,4 +358,16 @@ module EntityHistory = {
     getRollbackDiffInternal(sql, ~blockTimestamp, ~chainId, ~blockNumber)->Promise.thenResolve(
       rollbackDiffResponseArr_decode,
     )
+
+  let copyTableToEntityHistory = (sql, ~sourceTableName: Enums.EntityType.t): promise<unit> => {
+    sql->Postgres.unsafe(`SELECT copy_table_to_entity_history('${(sourceTableName :> string)}');`)
+  }
+
+  let copyAllEntitiesToEntityHistory = sql => {
+    sql->Postgres.beginSql(sql => {
+      Enums.EntityType.variants->Belt.Array.map(entityType => {
+        sql->copyTableToEntityHistory(~sourceTableName=entityType)
+      })
+    })
+  }
 }

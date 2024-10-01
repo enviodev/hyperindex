@@ -168,7 +168,8 @@ let addEventToRawEvents = (
   let blockFields =
     (block :> Types.Block.rawEventFields)->S.serializeOrRaiseWith(Types.Block.rawEventSchema)
   let transactionFields = transaction->S.serializeOrRaiseWith(Types.Transaction.schema)
-  let params = params->S.serializeOrRaiseWith(paramsRawEventSchema)
+  // Serialize to unknown, because serializing to Js.Json.t fails for Bytes Fuel type, since it has unknown schema
+  let params = params->S.serializeToUnknownOrRaiseWith(paramsRawEventSchema)->(Utils.magic: unknown => Js.Json.t)
 
   let rawEvent: TablesStatic.RawEvents.t = {
     chainId,

@@ -15,7 +15,7 @@ use super::{
 use crate::{
     config_parsing::human_config::evm::{RpcBlockField, RpcTransactionField},
     constants::{links, project_paths::DEFAULT_SCHEMA_PATH},
-    fuel::abi::FuelAbi,
+    fuel::abi::{FuelAbi, BURN_EVENT_NAME, CALL_EVENT_NAME, MINT_EVENT_NAME, TRANSFER_EVENT_NAME},
     project_paths::{path_utils, ParsedProjectPaths},
     rescript_types::RescriptTypeIdent,
     utils::unique_hashmap,
@@ -242,10 +242,8 @@ impl SystemConfig {
                         //there is no config
                         if !contracts.get(&contract.name).is_some() {
                             Err(anyhow!(
-                                "Failed to find contract '{}' in global contract config. If you \
-                                 don't use global contracts for multiple networks support, please \
-                                 specify events and handler for the contract.",
-                                contract.name
+                                "Failed to parse contract '{}' for the network '{}'. If you use a global contract definition, please verify that the name reference is correct.",
+                                contract.name, network.id
                             ))?;
                         }
                     }
@@ -380,7 +378,8 @@ impl SystemConfig {
                         //there is no local_contract_config
                         if !contracts.get(&contract.name).is_some() {
                             Err(anyhow!(
-                                "Expected a local network config definition or a global definition"
+                                "Failed to parse contract '{}' for the network '{}'. If you use a global contract definition, please verify that the name reference is correct.",
+                                contract.name, network.id
                             ))?;
                         }
                     }
@@ -390,7 +389,13 @@ impl SystemConfig {
             let sync_source = SyncSource::HyperfuelConfig(HyperfuelConfig {
                 endpoint_url: match &network.hyperfuel_config {
                     Some(config) => config.url.clone(),
-                    None => "https://fuel-testnet.hypersync.xyz".to_string(),
+                    None => match network.id {
+                        0 => "https://fuel-testnet.hypersync.xyz".to_string(),
+                        9889 => "https://fuel.hypersync.xyz".to_string(),
+                        _ => {
+                            return Err(anyhow!("Fuel network id {} is not supported", network.id))
+                        }
+                    },
                 },
             });
 
@@ -477,9 +482,10 @@ impl SystemConfig {
             Ecosystem::Fuel => {
                 let fuel_config: FuelConfig =
                     serde_yaml::from_str(&human_config_string).context(format!(
-                    "EE105: Failed to deserialize config. Visit the docs for more information {}",
-                    links::DOC_CONFIGURATION_FILE
-                ))?;
+                        "EE105: Failed to deserialize config. Visit the docs for more information \
+                         {}",
+                        links::DOC_CONFIGURATION_FILE
+                    ))?;
                 let schema = Schema::parse_from_file(&project_paths, &fuel_config.schema)
                     .context("Parsing schema file for config")?;
                 Self::from_fuel_config(fuel_config, schema, project_paths)
@@ -819,16 +825,24 @@ impl Contract {
     }
 }
 
+#[derive(Debug, PartialEq, Clone)]
+pub enum FuelEventKind {
+    LogData(RescriptTypeIdent),
+    Mint,
+    Burn,
+    Transfer,
+    Call,
+}
+
 #[derive(Debug, Clone, PartialEq)]
-pub enum EventPayload {
+pub enum EventKind {
     Params(Vec<EventParam>),
-    FuelLogData(RescriptTypeIdent),
-    FuelMint,
+    Fuel(FuelEventKind),
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Event {
-    pub payload: EventPayload,
+    pub kind: EventKind,
     pub name: String,
     pub sighash: String,
 }
@@ -910,7 +924,7 @@ impl Event {
             events_abi.events.entry(abi_name).or_default().push(event);
             events.push(Event {
                 name,
-                payload: EventPayload::Params(normalized_unnamed_params),
+                kind: EventKind::Params(normalized_unnamed_params),
                 sighash,
             })
         }
@@ -936,6 +950,8 @@ impl Event {
         abi_file_path: &String,
         project_paths: &ParsedProjectPaths,
     ) -> Result<(Vec<Self>, FuelAbi)> {
+        use human_config::fuel::EventType;
+
         let abi_path: PathBuf = path_utils::get_config_path_relative_to_root(
             project_paths,
             PathBuf::from(&abi_file_path),
@@ -946,49 +962,68 @@ impl Event {
         let mut events = vec![];
 
         for event_config in events_config.iter() {
-            let mint_event = Event {
-                name: event_config.name.clone(),
-                payload: EventPayload::FuelMint,
-                sighash: "mint".to_string(),
+            let event_type = match &event_config.type_ {
+                Some(event_type) => event_type.clone(),
+                None => {
+                    if event_config.log_id.is_some() {
+                        EventType::LogData
+                    } else {
+                        match event_config.name.as_str() {
+                            MINT_EVENT_NAME => EventType::Mint,
+                            BURN_EVENT_NAME => EventType::Burn,
+                            TRANSFER_EVENT_NAME => EventType::Transfer,
+                            CALL_EVENT_NAME => EventType::Call,
+                            _ => EventType::LogData,
+                        }
+                    }
+                }
             };
-            let event = match event_config {
-                FuelEventConfig {
-                    mint: Some(true),
-                    log_id: Some(_),
-                    ..
-                } => return Err(anyhow!("Mint event is not allowed to have a logId")),
-                FuelEventConfig {
-                    mint: Some(true), ..
-                } => mint_event,
-                FuelEventConfig {
-                    mint: None,
-                    log_id: None,
-                    name,
-                } if name == "Mint" => mint_event,
-                FuelEventConfig {
-                    mint: None | Some(false),
-                    log_id,
-                    name,
-                } => {
-                    let log = match &log_id {
+            if event_config.log_id.is_some() && event_type != EventType::LogData {
+                return Err(anyhow!(
+                    "Event '{}' has both 'logId' and '{}' type set. Only one of them can be used at once.",
+                    event_config.name,
+                    event_type
+                ));
+            }
+            let event = match event_type {
+                EventType::LogData => {
+                    let log = match &event_config.log_id {
                         None => {
                             let logged_type = fuel_abi
-                            .get_type_by_struct_name(name.clone())
-                            .context(
-                                "Failed to derive log ids from the event name. Use the lodId field to \
-                                 set it explicitely.",
-                            )?;
+                        .get_type_by_struct_name(event_config.name.clone())
+                        .context(
+                            "Failed to derive the event configuration from the name. Use the logId, mint, or burn options to set it explicitly.",
+                        )?;
                             fuel_abi.get_log_by_type(logged_type.id)?
                         }
                         Some(log_id) => fuel_abi.get_log(&log_id)?,
                     };
-
                     Event {
                         name: event_config.name.clone(),
-                        payload: EventPayload::FuelLogData(log.data_type),
+                        kind: EventKind::Fuel(FuelEventKind::LogData(log.data_type)),
                         sighash: log.id,
                     }
                 }
+                EventType::Mint => Event {
+                    name: event_config.name.clone(),
+                    kind: EventKind::Fuel(FuelEventKind::Mint),
+                    sighash: "mint".to_string(),
+                },
+                EventType::Burn => Event {
+                    name: event_config.name.clone(),
+                    kind: EventKind::Fuel(FuelEventKind::Burn),
+                    sighash: "burn".to_string(),
+                },
+                EventType::Transfer => Event {
+                    name: event_config.name.clone(),
+                    kind: EventKind::Fuel(FuelEventKind::Transfer),
+                    sighash: "transfer".to_string(),
+                },
+                EventType::Call => Event {
+                    name: event_config.name.clone(),
+                    kind: EventKind::Fuel(FuelEventKind::Call),
+                    sighash: "call".to_string(),
+                },
             };
 
             events.push(event)

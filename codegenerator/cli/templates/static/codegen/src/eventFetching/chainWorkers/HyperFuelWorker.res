@@ -8,14 +8,20 @@ type workerConfig = {
   contractByEvent: Utils.WeakMap.t<Types.fuelEventConfig, Types.fuelContractConfig>,
   wildcardLogDataRbs: array<bigint>,
   nonWildcardLogDataRbsByContract: dict<array<bigint>>,
-  contractsWithMint: Utils.Set.t<string>,
-  hasWildcardMint: bool,
+  nonLogDataReceiptTypesByContract: dict<array<Fuel.receiptType>>,
+  nonLogDataWildcardReceiptTypes: array<Fuel.receiptType>,
 }
 
 let mintEventTag = "mint"
+let burnEventTag = "burn"
+let transferEventTag = "transfer"
+let callEventTag = "call"
 let getEventTag = (eventConfig: Types.fuelEventConfig) => {
   switch eventConfig.kind {
   | Mint => mintEventTag
+  | Burn => burnEventTag
+  | Transfer => transferEventTag
+  | Call => callEventTag
   | LogData({logId}) => logId
   }
 }
@@ -25,8 +31,20 @@ let makeWorkerConfigOrThrow = (~contracts: array<Types.fuelContractConfig>, ~cha
   let contractByEvent = Utils.WeakMap.make()
   let nonWildcardLogDataRbsByContract = Js.Dict.empty()
   let wildcardLogDataRbs = []
-  let contractsWithMint = Utils.Set.make()
-  let hasWildcardMint = ref(false)
+
+  // This is for non-LogData events, since they don't have rb filter and can be grouped
+  let nonLogDataReceiptTypesByContract = Js.Dict.empty()
+  let nonLogDataWildcardReceiptTypes = []
+
+  let addNonLogDataWildcardReceiptTypes = (receiptType: Fuel.receiptType) => {
+    nonLogDataWildcardReceiptTypes->Array.push(receiptType)->ignore
+  }
+  let addNonLogDataReceiptType = (contractName, receiptType: Fuel.receiptType) => {
+    switch nonLogDataReceiptTypesByContract->Utils.Dict.dangerouslyGetNonOption(contractName) {
+    | None => nonLogDataReceiptTypesByContract->Js.Dict.set(contractName, [receiptType])
+    | Some(receiptTypes) => receiptTypes->Array.push(receiptType)->ignore // Duplication prevented by EventRouter
+    }
+  }
 
   contracts->Belt.Array.forEach(contract => {
     let nonWildcardLogDataRbs = []
@@ -42,8 +60,21 @@ let makeWorkerConfigOrThrow = (~contracts: array<Types.fuelContractConfig>, ~cha
       contractByEvent->Utils.WeakMap.set(eventConfig, contract)->ignore
 
       switch eventConfig {
-      | {kind: Mint, isWildcard: true} => hasWildcardMint := true
-      | {kind: Mint} => contractsWithMint->Utils.Set.add(contract.name)->ignore
+      | {kind: Mint, isWildcard: true} => addNonLogDataWildcardReceiptTypes(Mint)
+      | {kind: Mint} => addNonLogDataReceiptType(contract.name, Mint)
+      | {kind: Burn, isWildcard: true} => addNonLogDataWildcardReceiptTypes(Burn)
+      | {kind: Burn} => addNonLogDataReceiptType(contract.name, Burn)
+      | {kind: Transfer, isWildcard: true} => {
+          addNonLogDataWildcardReceiptTypes(Transfer)
+          addNonLogDataWildcardReceiptTypes(TransferOut)
+        }
+      | {kind: Transfer} => {
+          addNonLogDataReceiptType(contract.name, Transfer)
+          addNonLogDataReceiptType(contract.name, TransferOut)
+        }
+      | {kind: Call, isWildcard: true} => addNonLogDataWildcardReceiptTypes(Call)
+      | {kind: Call} =>
+        Js.Exn.raiseError("Call receipt indexing currently supported only in wildcard mode")
       | {kind: LogData({logId}), isWildcard} => {
           let rb = logId->BigInt.fromStringUnsafe
           if isWildcard {
@@ -62,30 +93,37 @@ let makeWorkerConfigOrThrow = (~contracts: array<Types.fuelContractConfig>, ~cha
     contractByEvent,
     wildcardLogDataRbs,
     nonWildcardLogDataRbsByContract,
-    contractsWithMint,
-    hasWildcardMint: hasWildcardMint.contents,
+    nonLogDataReceiptTypesByContract,
+    nonLogDataWildcardReceiptTypes,
   }
 }
 
 let makeGetRecieptsSelection = (
   ~wildcardLogDataRbs,
   ~nonWildcardLogDataRbsByContract,
-  ~contractsWithMint,
-  ~hasWildcardMint,
+  ~nonLogDataReceiptTypesByContract,
+  ~nonLogDataWildcardReceiptTypes,
   ~contracts: array<Types.fuelContractConfig>,
 ) => {
   let logDataReceiptTypeSelection: array<Fuel.receiptType> = [LogData]
-  let mintReceiptTypeSelection: array<Fuel.receiptType> = [Mint]
 
   // only transactions with status 1 (success)
   let txStatusSelection = [1]
 
-  let wildcardMintSelection: HyperFuelClient.QueryTypes.receiptSelection = {
-    receiptType: mintReceiptTypeSelection,
-    txStatus: txStatusSelection,
+  let maybeWildcardNonLogDataSelection = switch nonLogDataWildcardReceiptTypes {
+  | [] => None
+  | nonLogDataWildcardReceiptTypes =>
+    Some(
+      (
+        {
+          receiptType: nonLogDataWildcardReceiptTypes,
+          txStatus: txStatusSelection,
+        }: HyperFuelClient.QueryTypes.receiptSelection
+      ),
+    )
   }
 
-  let maybeWildcardLogSelection = switch wildcardLogDataRbs {
+  let maybeWildcardLogDataSelection = switch wildcardLogDataRbs {
   | [] => None
   | wildcardLogDataRbs =>
     Some(
@@ -109,14 +147,18 @@ let makeGetRecieptsSelection = (
       ) {
       | [] => ()
       | addresses => {
-          if contractsWithMint->Utils.Set.has(contract.name) {
+          switch nonLogDataReceiptTypesByContract->Utils.Dict.dangerouslyGetNonOption(
+            contract.name,
+          ) {
+          | Some(receiptTypes) =>
             selection
             ->Js.Array2.push({
               rootContractId: addresses,
-              receiptType: mintReceiptTypeSelection,
+              receiptType: receiptTypes,
               txStatus: txStatusSelection,
             })
             ->ignore
+          | None => ()
           }
           switch nonWildcardLogDataRbsByContract->Utils.Dict.dangerouslyGetNonOption(
             contract.name,
@@ -138,12 +180,14 @@ let makeGetRecieptsSelection = (
     })
 
     if shouldApplyWildcards {
-      if hasWildcardMint {
+      switch maybeWildcardNonLogDataSelection {
+      | None => ()
+      | Some(wildcardNonLogDataSelection) =>
         selection
-        ->Array.push(wildcardMintSelection)
+        ->Array.push(wildcardNonLogDataSelection)
         ->ignore
       }
-      switch maybeWildcardLogSelection {
+      switch maybeWildcardLogDataSelection {
       | None => ()
       | Some(wildcardLogSelection) =>
         selection
@@ -246,8 +290,8 @@ module Make = (
   let getRecieptsSelection = makeGetRecieptsSelection(
     ~wildcardLogDataRbs=workerConfig.wildcardLogDataRbs,
     ~nonWildcardLogDataRbsByContract=workerConfig.nonWildcardLogDataRbsByContract,
-    ~contractsWithMint=workerConfig.contractsWithMint,
-    ~hasWildcardMint=workerConfig.hasWildcardMint,
+    ~nonLogDataReceiptTypesByContract=workerConfig.nonLogDataReceiptTypesByContract,
+    ~nonLogDataWildcardReceiptTypes=workerConfig.nonLogDataWildcardReceiptTypes,
     ~contracts=T.contracts,
   )
 
@@ -341,14 +385,14 @@ module Make = (
       //The optional block and timestamp of the last item returned by the query
       //(Optional in the case that there are no logs returned in the query)
       switch pageUnsafe.items->Belt.Array.get(pageUnsafe.items->Belt.Array.length - 1) {
-      | Some({block}) if block.blockNumber == heighestBlockQueried =>
+      | Some({block}) if block.height == heighestBlockQueried =>
         //If the last log item in the current page is equal to the
         //heighest block acounted for in the query. Simply return this
         //value without making an extra query
         {
-          ReorgDetection.blockNumber: block.blockNumber,
-          blockTimestamp: block.timestamp,
-          blockHash: block.hash,
+          ReorgDetection.blockNumber: block.height,
+          blockTimestamp: block.time,
+          blockHash: block.id,
         }->Promise.resolve
       //If it does not match it means that there were no matching logs in the last
       //block so we should fetch the block data
@@ -387,6 +431,10 @@ module Make = (
         let eventTag = switch receipt {
         | LogData({rb}) => BigInt.toString(rb)
         | Mint(_) => mintEventTag
+        | Burn(_) => burnEventTag
+        | Transfer(_)
+        | TransferOut(_) => transferEventTag
+        | Call(_) => callEventTag
         }
 
         let eventConfig = switch workerConfig.eventRouter->EventRouter.get(
@@ -399,7 +447,7 @@ module Make = (
               ~logger,
               ~params={
                 "chainId": chainId,
-                "blockNumber": block.blockNumber,
+                "blockNumber": block.height,
                 "logIndex": receiptIndex,
                 "contractAddress": contractAddress,
                 "eventTag": eventTag,
@@ -422,7 +470,7 @@ module Make = (
           | exn => {
               let params = {
                 "chainId": chainId,
-                "blockNumber": block.blockNumber,
+                "blockNumber": block.height,
                 "logIndex": receiptIndex,
               }
               let logger = Logging.createChildFrom(~logger, ~params)
@@ -432,10 +480,38 @@ module Make = (
               )
             }
           }
-        | ({kind: Mint}, Mint({val, subId})) => {
-          "subId": subId,
-          "amount": val,
-        }->Obj.magic
+        | (_, Mint({val, subId}))
+        | (_, Burn({val, subId})) =>
+          (
+            {
+              subId,
+              amount: val,
+            }: Types.fuelSupplyParams
+          )->Obj.magic
+        | (_, Transfer({amount, assetId, to})) =>
+          (
+            {
+              to: to->Address.unsafeFromString,
+              assetId,
+              amount,
+            }: Types.fuelTransferParams
+          )->Obj.magic
+        | (_, TransferOut({amount, assetId, toAddress})) =>
+          (
+            {
+              to: toAddress->Address.unsafeFromString,
+              assetId,
+              amount,
+            }: Types.fuelTransferParams
+          )->Obj.magic
+        | (_, Call({amount, assetId, to})) =>
+          (
+            {
+              to: to->Address.unsafeFromString,
+              assetId,
+              amount,
+            }: Types.fuelTransferParams
+          )->Obj.magic
         // This should never happen unless there's a bug in the routing logic
         | _ => Js.Exn.raiseError("Unexpected bug in the event routing logic")
         }
@@ -446,9 +522,9 @@ module Make = (
             contractName: contractConfig.name,
             handlerRegister: eventConfig.handlerRegister,
             paramsRawEventSchema: eventConfig.paramsRawEventSchema,
-            timestamp: block.timestamp,
+            timestamp: block.time,
             chain,
-            blockNumber: block.blockNumber,
+            blockNumber: block.height,
             logIndex: receiptIndex,
             event: {
               chainId,
@@ -456,11 +532,7 @@ module Make = (
               transaction: {
                 "id": item.transactionId,
               }->Obj.magic, // TODO: Obj.magic needed until the field selection types are not configurable for Fuel and Evm separately
-              block: {
-                "height": block.blockNumber,
-                "time": block.timestamp,
-                "id": block.hash,
-              }->Obj.magic,
+              block: block->Obj.magic,
               srcAddress: contractAddress,
               logIndex: receiptIndex,
             },

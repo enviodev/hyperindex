@@ -11,6 +11,11 @@ use crate::{
     utils::text::Capitalize,
 };
 
+pub const TRANSFER_EVENT_NAME: &str = "Transfer";
+pub const MINT_EVENT_NAME: &str = "Mint";
+pub const BURN_EVENT_NAME: &str = "Burn";
+pub const CALL_EVENT_NAME: &str = "Call";
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct FuelType {
     pub id: usize,

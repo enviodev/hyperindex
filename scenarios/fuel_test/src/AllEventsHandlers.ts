@@ -219,3 +219,37 @@ AllEvents.Mint.handler(async ({ event }) => {
   mintSchema.assert(event.params)!;
   expectType<AssertSchemaType<typeof event.params, typeof mintSchema>>(true);
 });
+
+const burnSchema = S.object({
+  subId: S.string,
+  amount: SExtra.bigint,
+});
+AllEvents.Burn.handler(async ({ event }) => {
+  burnSchema.assert(event.params)!;
+  expectType<AssertSchemaType<typeof event.params, typeof burnSchema>>(true);
+});
+
+const transferOutSchema = S.object({
+  assetId: S.string,
+  to: S.string,
+  amount: SExtra.bigint,
+});
+AllEvents.Transfer.handler(async ({ event }) => {
+  transferOutSchema.assert(event.params)!;
+  expectType<AssertSchemaType<typeof event.params, typeof transferOutSchema>>(
+    true
+  );
+});
+
+// const callSchema = S.object({
+//   assetId: S.string,
+//   to: S.string,
+//   amount: SExtra.bigint,
+// });
+// AllEvents.Call.handler(
+//   async ({ event }) => {
+//     callSchema.assert(event.params)!;
+//     expectType<AssertSchemaType<typeof event.params, typeof callSchema>>(true);
+//   }
+//   { wildcard: true }
+// );

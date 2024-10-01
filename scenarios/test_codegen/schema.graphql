@@ -27,6 +27,19 @@ type Gravatar {
   size: GravatarSize!
 }
 
+type PostgresNumericPrecisionEntityTester {
+  id: ID!
+  exampleBigInt: BigInt @config(precision: 76)
+  exampleBigIntRequired: BigInt! @config(precision: 77)
+  exampleBigIntArray: [BigInt!] @config(precision: 78)
+  exampleBigIntArrayRequired: [BigInt!]! @config(precision: 79)
+  exampleBigDecimal: BigDecimal @config(precision: 80, scale: 5)
+  exampleBigDecimalRequired: BigDecimal! @config(precision: 81, scale: 5)
+  exampleBigDecimalArray: [BigDecimal!] @config(precision: 82, scale: 5)
+  exampleBigDecimalArrayRequired: [BigDecimal!]! @config(precision: 83, scale: 5)
+  exampleBigDecimalOtherOrder: BigDecimal! @config(scale: 6, precision: 84)
+}
+
 type NftCollection {
   id: ID!
   contractAddress: Bytes!
@@ -73,7 +86,37 @@ type C {
   stringThatIsMirroredToA: String!
   d: [D!]! @derivedFrom(field: "c")
 }
+
 type D {
   id: ID!
   c: ID! @index
+}
+
+type EntityWithAllTypes {
+  id: ID!
+  string: String!
+  optString: String
+  arrayOfStrings: [String!]!
+  int_: Int!
+  optInt: Int
+  arrayOfInts: [Int!]!
+  float_: Float!
+  optFloat: Float
+  arrayOfFloats: [Float!]!
+  bool: Boolean!
+  optBool: Boolean
+  # NOTE: array of boolean is currently broken since queries would require special type casting.
+  # see https://github.com/porsager/postgres/pull/392
+  # arrayOfBool: [Boolean!]!
+  bigInt: BigInt!
+  optBigInt: BigInt
+  arrayOfBigInts: [BigInt!]!
+  bigDecimal: BigDecimal!
+  optBigDecimal: BigDecimal
+  arrayOfBigDecimals: [BigDecimal!]!
+  # NOTE: Timestamp serialization is currently just a type cast and so testing is non deterministic
+  # timestamp: Timestamp!
+  # optTimestamp: Timestamp
+  # NOTE: array of timestamps has the same problem as array of booleans described above
+  # arrayOfTimestamps: [Timestamp!]!
 }

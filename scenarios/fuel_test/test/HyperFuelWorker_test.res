@@ -13,8 +13,8 @@ describe("HyperFuelWorker - getRecieptsSelection", () => {
     HyperFuelWorker.makeGetRecieptsSelection(
       ~wildcardLogDataRbs=workerConfig.wildcardLogDataRbs,
       ~nonWildcardLogDataRbsByContract=workerConfig.nonWildcardLogDataRbsByContract,
-      ~contractsWithMint=workerConfig.contractsWithMint,
-      ~hasWildcardMint=workerConfig.hasWildcardMint,
+      ~nonLogDataReceiptTypesByContract=workerConfig.nonLogDataReceiptTypesByContract,
+      ~nonLogDataWildcardReceiptTypes=workerConfig.nonLogDataWildcardReceiptTypes,
       ~contracts,
     )
   }
@@ -92,6 +92,57 @@ describe("HyperFuelWorker - getRecieptsSelection", () => {
     )
   })
 
+
+  it("Receipts Selection with non-wildcard transfer event - catches both TRANSFER and TRANSFER_OUT receipts", () => {
+    let getRecieptsSelection = mock(
+      ~contracts=[
+        {
+          name: "TestContract",
+          events: [
+            {
+              name: "Transfer",
+              kind: Transfer,
+              isWildcard: false,
+              handlerRegister: %raw(`"Not relevat"`),
+              paramsRawEventSchema: %raw(`"Not relevat"`),
+            },
+          ],
+        },
+        {
+          name: "TestContract2",
+          events: [
+            {
+              name: "Transfer",
+              kind: Transfer,
+              isWildcard: false,
+              handlerRegister: %raw(`"Not relevat"`),
+              paramsRawEventSchema: %raw(`"Not relevat"`),
+            },
+          ],
+        },
+      ],
+    )
+    Assert.deepEqual(
+      getRecieptsSelection(
+        ~contractAddressMapping=mockContractAddressMapping(),
+        ~shouldApplyWildcards=true,
+      ),
+      [
+        {
+          receiptType: [Transfer, TransferOut],
+          rootContractId: [address1, address2],
+          txStatus: [1],
+        },
+        {
+          receiptType: [Transfer, TransferOut],
+          rootContractId: [address3],
+          txStatus: [1],
+        },
+      ],
+    )
+  })
+
+
   it("Receipts Selection with non-wildcard mint event", () => {
     let getRecieptsSelection = mock(
       ~contracts=[
@@ -141,6 +192,55 @@ describe("HyperFuelWorker - getRecieptsSelection", () => {
     )
   })
 
+  it("Receipts Selection with non-wildcard burn event", () => {
+    let getRecieptsSelection = mock(
+      ~contracts=[
+        {
+          name: "TestContract",
+          events: [
+            {
+              name: "Burn",
+              kind: Burn,
+              isWildcard: false,
+              handlerRegister: %raw(`"Not relevat"`),
+              paramsRawEventSchema: %raw(`"Not relevat"`),
+            },
+          ],
+        },
+        {
+          name: "TestContract2",
+          events: [
+            {
+              name: "Burn",
+              kind: Burn,
+              isWildcard: false,
+              handlerRegister: %raw(`"Not relevat"`),
+              paramsRawEventSchema: %raw(`"Not relevat"`),
+            },
+          ],
+        },
+      ],
+    )
+    Assert.deepEqual(
+      getRecieptsSelection(
+        ~contractAddressMapping=mockContractAddressMapping(),
+        ~shouldApplyWildcards=true,
+      ),
+      [
+        {
+          receiptType: [Burn],
+          rootContractId: [address1, address2],
+          txStatus: [1],
+        },
+        {
+          receiptType: [Burn],
+          rootContractId: [address3],
+          txStatus: [1],
+        },
+      ],
+    )
+  })
+
   it("Receipts Selection with wildcard mint event", () => {
     let getRecieptsSelection = mock(
       ~contracts=[
@@ -166,6 +266,37 @@ describe("HyperFuelWorker - getRecieptsSelection", () => {
       [
         {
           receiptType: [Mint],
+          txStatus: [1],
+        },
+      ],
+    )
+  })
+
+  it("Receipts Selection with wildcard burn event", () => {
+    let getRecieptsSelection = mock(
+      ~contracts=[
+        {
+          name: "TestContract",
+          events: [
+            {
+              name: "Burn",
+              kind: Burn,
+              isWildcard: true,
+              handlerRegister: %raw(`"Not relevat"`),
+              paramsRawEventSchema: %raw(`"Not relevat"`),
+            },
+          ],
+        },
+      ],
+    )
+    Assert.deepEqual(
+      getRecieptsSelection(
+        ~contractAddressMapping=mockContractAddressMapping(),
+        ~shouldApplyWildcards=true,
+      ),
+      [
+        {
+          receiptType: [Burn],
           txStatus: [1],
         },
       ],
@@ -265,6 +396,27 @@ describe("HyperFuelWorker - getRecieptsSelection", () => {
               handlerRegister: %raw(`"Not relevat"`),
               paramsRawEventSchema: %raw(`"Not relevat"`),
             },
+            {
+              name: "Burn",
+              kind: Burn,
+              isWildcard: false,
+              handlerRegister: %raw(`"Not relevat"`),
+              paramsRawEventSchema: %raw(`"Not relevat"`),
+            },
+            {
+              name: "Transfer",
+              kind: Transfer,
+              isWildcard: false,
+              handlerRegister: %raw(`"Not relevat"`),
+              paramsRawEventSchema: %raw(`"Not relevat"`),
+            },
+            {
+              name: "Call",
+              kind: Call,
+              isWildcard: true,
+              handlerRegister: %raw(`"Not relevat"`),
+              paramsRawEventSchema: %raw(`"Not relevat"`),
+            },
           ],
         },
         {
@@ -280,6 +432,13 @@ describe("HyperFuelWorker - getRecieptsSelection", () => {
               handlerRegister: %raw(`"Not relevat"`),
               paramsRawEventSchema: %raw(`"Not relevat"`),
             },
+            {
+              name: "Burn",
+              kind: Burn,
+              isWildcard: false,
+              handlerRegister: %raw(`"Not relevat"`),
+              paramsRawEventSchema: %raw(`"Not relevat"`),
+            },
           ],
         },
       ],
@@ -291,7 +450,7 @@ describe("HyperFuelWorker - getRecieptsSelection", () => {
       ),
       [
         {
-          receiptType: [Mint],
+          receiptType: [Mint, Burn, Transfer, TransferOut],
           rootContractId: [address1, address2],
           txStatus: [1],
         },
@@ -302,9 +461,18 @@ describe("HyperFuelWorker - getRecieptsSelection", () => {
           txStatus: [1],
         },
         {
+          receiptType: [Burn],
+          rootContractId: [address3],
+          txStatus: [1],
+        },
+        {
           rb: [3n],
           receiptType: [LogData],
           rootContractId: [address3],
+          txStatus: [1],
+        },
+        {
+          receiptType: [Call],
           txStatus: [1],
         },
         {
@@ -312,9 +480,39 @@ describe("HyperFuelWorker - getRecieptsSelection", () => {
           receiptType: [LogData],
           txStatus: [1],
         },
+        
       ],
     )
   })
+
+
+  it("Fails with non-wildcard Call event", () => {
+    Assert.throws(
+      () => {
+        mock(
+          ~contracts=[
+            {
+              name: "TestContract",
+              events: [
+                {
+                  name: "Call",
+                  kind: Call,
+                  isWildcard: false,
+                  handlerRegister: %raw(`"Not relevat"`),
+                  paramsRawEventSchema: %raw(`"Not relevat"`),
+                },
+               
+              ],
+            },
+          ],
+        )
+      },
+      ~error={
+        "message": "Call receipt indexing currently supported only in wildcard mode",
+      },
+    )
+  })
+
 
   it("Fails when contract has multiple mint events", () => {
     Assert.throws(
@@ -349,7 +547,40 @@ describe("HyperFuelWorker - getRecieptsSelection", () => {
     )
   })
 
-  it("Fails with wildcard mint and non-wildcard mint together in different contract", () => {
+  it("Fails when contract has multiple burn events", () => {
+    Assert.throws(
+      () => {
+        mock(
+          ~contracts=[
+            {
+              name: "TestContract",
+              events: [
+                {
+                  name: "MyEvent",
+                  kind: Burn,
+                  isWildcard: false,
+                  handlerRegister: %raw(`"Not relevat"`),
+                  paramsRawEventSchema: %raw(`"Not relevat"`),
+                },
+                {
+                  name: "MyEvent2",
+                  kind: Burn,
+                  isWildcard: false,
+                  handlerRegister: %raw(`"Not relevat"`),
+                  paramsRawEventSchema: %raw(`"Not relevat"`),
+                },
+              ],
+            },
+          ],
+        )
+      },
+      ~error={
+        "message": "Duplicate event detected: MyEvent2 for contract TestContract on chain 0",
+      },
+    )
+  })
+
+  it("Fails with wildcard mint and non-wildcard mint together in the same contract", () => {
     Assert.throws(
       () => {
         mock(
@@ -378,6 +609,39 @@ describe("HyperFuelWorker - getRecieptsSelection", () => {
       },
       ~error={
         "message": "Duplicate event detected: Mint for contract TestContract on chain 0",
+      },
+    )
+  })
+
+  it("Fails with wildcard burn and non-wildcard burn together in the same contract", () => {
+    Assert.throws(
+      () => {
+        mock(
+          ~contracts=[
+            {
+              name: "TestContract",
+              events: [
+                {
+                  name: "WildcardBurn",
+                  kind: Burn,
+                  isWildcard: true,
+                  handlerRegister: %raw(`"Not relevat"`),
+                  paramsRawEventSchema: %raw(`"Not relevat"`),
+                },
+                {
+                  name: "Burn",
+                  kind: Burn,
+                  isWildcard: false,
+                  handlerRegister: %raw(`"Not relevat"`),
+                  paramsRawEventSchema: %raw(`"Not relevat"`),
+                },
+              ],
+            },
+          ],
+        )
+      },
+      ~error={
+        "message": "Duplicate event detected: Burn for contract TestContract on chain 0",
       },
     )
   })
@@ -477,6 +741,101 @@ describe("HyperFuelWorker - getRecieptsSelection", () => {
     )
   })
 
+  it("Works with wildcard burn and non-wildcard burn together in different contract", () => {
+    let getRecieptsSelection = mock(
+      ~contracts=[
+        {
+          name: "TestContract2",
+          events: [
+            {
+              name: "Burn",
+              kind: Burn,
+              isWildcard: false,
+              handlerRegister: %raw(`"Not relevat"`),
+              paramsRawEventSchema: %raw(`"Not relevat"`),
+            },
+          ],
+        },
+        {
+          name: "TestContract",
+          events: [
+            {
+              name: "Burn",
+              kind: Burn,
+              isWildcard: true,
+              handlerRegister: %raw(`"Not relevat"`),
+              paramsRawEventSchema: %raw(`"Not relevat"`),
+            },
+          ],
+        },
+      ],
+    )
+    Assert.deepEqual(
+      getRecieptsSelection(
+        ~contractAddressMapping=mockContractAddressMapping(),
+        ~shouldApplyWildcards=true,
+      ),
+      [
+        {
+          receiptType: [Burn],
+          rootContractId: [address3],
+          txStatus: [1],
+        },
+        {
+          receiptType: [Burn],
+          txStatus: [1],
+        },
+      ],
+    )
+
+    // The same but with different event registration order
+    let getRecieptsSelection = mock(
+      ~contracts=[
+        {
+          name: "TestContract",
+          events: [
+            {
+              name: "Burn",
+              kind: Burn,
+              isWildcard: true,
+              handlerRegister: %raw(`"Not relevat"`),
+              paramsRawEventSchema: %raw(`"Not relevat"`),
+            },
+          ],
+        },
+        {
+          name: "TestContract2",
+          events: [
+            {
+              name: "Burn",
+              kind: Burn,
+              isWildcard: false,
+              handlerRegister: %raw(`"Not relevat"`),
+              paramsRawEventSchema: %raw(`"Not relevat"`),
+            },
+          ],
+        },
+      ],
+    )
+    Assert.deepEqual(
+      getRecieptsSelection(
+        ~contractAddressMapping=mockContractAddressMapping(),
+        ~shouldApplyWildcards=true,
+      ),
+      [
+        {
+          receiptType: [Burn],
+          rootContractId: [address3],
+          txStatus: [1],
+        },
+        {
+          receiptType: [Burn],
+          txStatus: [1],
+        },
+      ],
+    )
+  })
+
   it("Removes wildcard selection with shouldApplyWildcards (needed for partitioning)", () => {
     let getRecieptsSelection = mock(
       ~contracts=[
@@ -486,6 +845,13 @@ describe("HyperFuelWorker - getRecieptsSelection", () => {
             {
               name: "Mint",
               kind: Mint,
+              isWildcard: true,
+              handlerRegister: %raw(`"Not relevat"`),
+              paramsRawEventSchema: %raw(`"Not relevat"`),
+            },
+            {
+              name: "Burn",
+              kind: Burn,
               isWildcard: true,
               handlerRegister: %raw(`"Not relevat"`),
               paramsRawEventSchema: %raw(`"Not relevat"`),
@@ -527,7 +893,7 @@ describe("HyperFuelWorker - getRecieptsSelection", () => {
           txStatus: [1],
         },
         {
-          receiptType: [Mint],
+          receiptType: [Mint, Burn],
           txStatus: [1],
         },
         {

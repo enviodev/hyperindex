@@ -5,5 +5,6 @@ edition = "2021"
 
 [dependencies]
 dotenv = "0.15.0"
-fuels = "0.66.1"
+fuels = "0.66.5"
+rand = "0.8.5"
 tokio = "1.37.0"

@@ -424,6 +424,7 @@ pub mod fuel {
     use super::{GlobalContract, NetworkContract, NetworkId};
     use schemars::JsonSchema;
     use serde::{Deserialize, Serialize};
+    use strum::Display;
 
     #[derive(Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
     #[schemars(
@@ -522,21 +523,34 @@ pub mod fuel {
         pub events: Vec<EventConfig>,
     }
 
+    #[derive(Debug, Serialize, Clone, Deserialize, PartialEq, JsonSchema, Display)]
+    #[serde(rename_all = "camelCase", deny_unknown_fields)]
+    pub enum EventType {
+        LogData,
+        Mint,
+        Burn,
+        Transfer,
+        Call,
+    }
+
     #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
     #[serde(rename_all = "camelCase", deny_unknown_fields)]
     pub struct EventConfig {
         #[schemars(description = "Name of the event in the HyperIndex generated code")]
         pub name: String,
+        #[serde(rename = "type")]
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
-            description = "An identifier of a logged type from ABI. Used for indexing LogData receipts. The option can be omitted when the event name matches the logged struct/enum name."
+            description = "Explicitly set the event type you want to index. It's derived from the event name and fallbacks to LogData."
+        )]
+        pub type_: Option<EventType>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(
+            description = "An identifier of a logged type from ABI. Used for indexing LogData \
+                           receipts. The option can be omitted when the event name matches the \
+                           logged struct/enum name."
         )]
         pub log_id: Option<String>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        #[schemars(
-            description = "Index Mint receipts. The option can be omitted when the event name is Mint."
-        )]
-        pub mint: Option<bool>,
     }
 }
 
@@ -754,17 +768,17 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
                             fuel::EventConfig {
                                 name: "OrderChangeEvent".to_string(),
                                 log_id: None.into(),
-                                mint: None,
+                                type_: None,
                             },
                             fuel::EventConfig {
                                 name: "MarketCreateEvent".to_string(),
                                 log_id: None.into(),
-                                mint: None,
+                                type_: None,
                             },
                             fuel::EventConfig {
                                 name: "TradeEvent".to_string(),
                                 log_id: None.into(),
-                                mint: None,
+                                type_: None,
                             },
                         ],
                     }),
