@@ -211,12 +211,14 @@ let checkAndSetSyncedChains = (~nextQueueItemIsKnownNone=false, chainManager: Ch
   })
 
   let allChainsSyncedAtHead =
-  chainFetchers
-  ->ChainMap.values
-  ->Array.reduce(true, (accum, cf) => cf.timestampCaughtUpToHeadOrEndblock->Option.isSome && accum)
+    chainFetchers
+    ->ChainMap.values
+    ->Array.reduce(true, (accum, cf) =>
+      cf.timestampCaughtUpToHeadOrEndblock->Option.isSome && accum
+    )
 
   if allChainsSyncedAtHead {
-   Prometheus.setAllChainsSyncedToHead()
+    Prometheus.setAllChainsSyncedToHead()
   }
 
   {
@@ -274,7 +276,9 @@ let handleBlockRangeResponse = (state, ~chain, ~response: ChainWorker.blockRange
 
   if Env.saveBenchmarkData {
     Benchmark.addBlockRangeFetched(
-      ~stats,
+      ~totalTimeElapsed=stats.totalTimeElapsed,
+      ~parsingTimeElapsed=stats.parsingTimeElapsed->Belt.Option.getWithDefault(0),
+      ~pageFetchTime=stats.pageFetchTime->Belt.Option.getWithDefault(0),
       ~chainId=chainFetcher.chainConfig.chain->ChainMap.Chain.toChainId,
       ~fromBlock=fromBlockQueried,
       ~toBlock=heighestQueriedBlockNumber,

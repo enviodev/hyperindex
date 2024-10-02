@@ -112,7 +112,9 @@ let incrementMillis = (~label, ~amount) => {
 }
 
 let addBlockRangeFetched = (
-  ~stats: ChainWorker.blockRangeFetchStats,
+  ~totalTimeElapsed: int,
+  ~parsingTimeElapsed: int,
+  ~pageFetchTime: int,
   ~chainId,
   ~fromBlock,
   ~toBlock,
@@ -127,15 +129,15 @@ let addBlockRangeFetched = (
   let group = `BlockRangeFetched Summary for Chain ${chainId->Belt.Int.toString} ${registerName} Register`
   let add = (label, value) => data->Data.addSummaryData(~group, ~label, ~value=Utils.magic(value))
 
-  add("Total Time Elapsed (ms)", stats.totalTimeElapsed)
-  add("Parsing Time Elapsed (ms)", stats.parsingTimeElapsed->Belt.Option.getWithDefault(0))
-  add("Page Fetch Time (ms)", stats.pageFetchTime->Belt.Option.getWithDefault(0))
+  add("Total Time Elapsed (ms)", totalTimeElapsed)
+  add("Parsing Time Elapsed (ms)", parsingTimeElapsed)
+  add("Page Fetch Time (ms)", pageFetchTime)
   add("Num Events", numEvents)
   add("Block Range Size", toBlock - fromBlock)
 
   data->Data.incrementMillis(
     ~label=`Total Time Fetching Chain ${chainId->Belt.Int.toString}`,
-    ~amount=stats.totalTimeElapsed,
+    ~amount=totalTimeElapsed,
   )
 
   data->saveToCacheFile

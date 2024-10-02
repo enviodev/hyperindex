@@ -94,6 +94,14 @@ let make = (
     partitions.contents
   }
 
+  if Env.saveBenchmarkData {
+    Benchmark.addSummaryData(
+      ~group="Other",
+      ~label="Num partitions",
+      ~value=partitions->List.size->Int.toFloat,
+    )
+  }
+
   {maxAddrInPartition, partitions, endBlock, startBlock, logger}
 }
 
@@ -124,6 +132,13 @@ let registerDynamicContracts = (
     partitions->List.add(newPartition)
   }
 
+  if Env.saveBenchmarkData {
+    Benchmark.addSummaryData(
+      ~group="Other",
+      ~label="Num partitions",
+      ~value=partitions->List.size->Int.toFloat,
+    )
+  }
   {partitions, maxAddrInPartition, endBlock, startBlock, logger}
 }
 
