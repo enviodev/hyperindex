@@ -28,6 +28,8 @@ let envioApiToken = envSafe->EnvSafe.get("ENVIO_API_TOKEN", S.option(S.string))
 let hyperSyncClientTimeoutMillis =
   envSafe->EnvSafe.get("ENVIO_HYPERSYNC_CLIENT_TIMEOUT_MILLIS", S.option(S.int))
 let saveBenchmarkData = envSafe->EnvSafe.get("ENVIO_SAVE_BENCHMARK_DATA", S.bool, ~fallback=false)
+let maxPartitionConcurrency =
+  envSafe->EnvSafe.get("ENVIO_MAX_PARTITION_CONCURRENCY", S.int, ~fallback=10)
 
 type logStrategyType =
   | @as("ecs-file") EcsFile
