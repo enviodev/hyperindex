@@ -81,9 +81,18 @@ let data = Data.make()
 let cacheFileName = "BenchmarkCache.json"
 let cacheFilePath = NodeJsLocal.Path.join(NodeJsLocal.Path.__dirname, cacheFileName)
 
+let currentWrite = ref(Promise.resolve())
+let schedule = ref(() => Promise.resolve())
+
 let saveToCacheFile = data => {
-  let json = data->S.serializeToJsonStringOrRaiseWith(Data.schema)
-  NodeJsLocal.Fs.Promises.writeFile(~filepath=cacheFilePath, ~content=json)->ignore
+  let write = () => {
+    let json = data->S.serializeToJsonStringOrRaiseWith(Data.schema)
+    NodeJsLocal.Fs.Promises.writeFile(~filepath=cacheFilePath, ~content=json)
+  }
+  schedule := write
+  let _ = currentWrite.contents->Promise.thenResolve(_ => {
+    currentWrite := schedule.contents()
+  })
 }
 
 let readFromCacheFile = async () => {
