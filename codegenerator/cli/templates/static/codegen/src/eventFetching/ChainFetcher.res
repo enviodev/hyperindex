@@ -1,11 +1,12 @@
 open Belt
+
 type t = {
   logger: Pino.t,
   fetchState: PartitionedFetchState.t,
   chainConfig: Config.chainConfig,
   //The latest known block of the chain
   currentBlockHeight: int,
-  isFetchingBatch: bool,
+  partitionsCurrentlyFetching: PartitionedFetchState.partitionIndexSet,
   timestampCaughtUpToHeadOrEndblock: option<Js.Date.t>,
   dbFirstEventBlockNumber: option<int>,
   latestProcessedBlock: option<int>,
@@ -51,7 +52,6 @@ let make = (
     chainConfig,
     lastBlockScannedHashes,
     currentBlockHeight: 0,
-    isFetchingBatch: false,
     fetchState,
     dbFirstEventBlockNumber,
     latestProcessedBlock,
@@ -59,6 +59,7 @@ let make = (
     numEventsProcessed,
     numBatchesFetched,
     eventFilters,
+    partitionsCurrentlyFetching: Belt.Set.Int.empty,
   }
 }
 
@@ -261,14 +262,16 @@ Applies any event filters found in the chain fetcher
 Errors if nextRegistered dynamic contract has a lower latestFetchedBlock than the current as this would be
 an invalid state.
 */
-let getNextQuery = (self: t) => {
+let getNextQuery = (self: t, ~maxPerChainQueueSize) => {
   //Chain Fetcher should have already cleaned up stale event filters by the time this
   //is called but just ensure its cleaned before getting the next query
   let cleanedChainFetcher = self->cleanUpEventFilters
 
-  cleanedChainFetcher.fetchState->PartitionedFetchState.getNextQuery(
+  cleanedChainFetcher.fetchState->PartitionedFetchState.getNextQueriesOrThrow(
     ~eventFilters=?cleanedChainFetcher.eventFilters,
     ~currentBlockHeight=cleanedChainFetcher.currentBlockHeight,
+    ~maxPerChainQueueSize,
+    ~partitionsCurrentlyFetching=self.partitionsCurrentlyFetching,
   )
 }
 

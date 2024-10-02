@@ -57,7 +57,7 @@ type action =
   | EventBatchProcessed(EventProcessing.batchProcessed)
   | SetCurrentlyProcessing(bool)
   | SetIsInReorgThreshold(bool)
-  | SetCurrentlyFetchingBatch(chain, bool)
+  | SetCurrentlyFetchingBatch(chain, PartitionedFetchState.partitionIndexSet)
   | SetFetchState(chain, PartitionedFetchState.t)
   | UpdateQueues(ChainMap.t<ChainManager.fetchStateWithData>, arbitraryEventQueue)
   | SetSyncedChains
@@ -340,9 +340,12 @@ let handleBlockRangeResponse = (state, ~chain, ~response: ChainWorker.blockRange
       }
     }
 
+    let partitionsCurrentlyFetching =
+      chainFetcher.partitionsCurrentlyFetching->Set.Int.remove(partitionId)
+
     let updatedChainFetcher = {
       ...chainFetcher,
-      isFetchingBatch: false,
+      partitionsCurrentlyFetching,
       latestProcessedBlock,
       numBatchesFetched: chainFetcher.numBatchesFetched + 1,
     }
@@ -394,9 +397,11 @@ let handleBlockRangeResponse = (state, ~chain, ~response: ChainWorker.blockRange
   } else {
     chainFetcher.logger->Logging.childWarn("Reorg detected, rolling back")
     Prometheus.incrementReorgsDetected(~chain)
+    let partitionsCurrentlyFetching =
+      chainFetcher.partitionsCurrentlyFetching->Set.Int.remove(partitionId)
     let chainFetcher = {
       ...chainFetcher,
-      isFetchingBatch: false,
+      partitionsCurrentlyFetching,
     }
     let chainManager = state.chainManager->ChainManager.setChainFetcher(chainFetcher)
     (state->setChainManager(chainManager)->incrementId->setRollingBack(chain), [Rollback])
@@ -538,12 +543,14 @@ let actionReducer = (state: t, action: action) => {
       {...state, chainManager: {...state.chainManager, isInReorgThreshold}},
       [],
     )
-  | SetCurrentlyFetchingBatch(chain, isFetchingBatch) =>
-    updateChainFetcher(
-      currentChainFetcher => {...currentChainFetcher, isFetchingBatch},
-      ~chain,
-      ~state,
-    )
+  | SetCurrentlyFetchingBatch(chain, newPartitionsCurrentlyFetching) =>
+    updateChainFetcher(currentChainFetcher => {
+      ...currentChainFetcher,
+      partitionsCurrentlyFetching: Set.Int.union(
+        currentChainFetcher.partitionsCurrentlyFetching,
+        newPartitionsCurrentlyFetching,
+      ),
+    }, ~chain, ~state)
   | SetFetchState(chain, fetchState) =>
     updateChainFetcher(currentChainFetcher => {...currentChainFetcher, fetchState}, ~chain, ~state)
   | SetSyncedChains => {
@@ -672,25 +679,11 @@ let checkAndFetchForChain = (
   ~dispatchAction,
 ) => async chain => {
   let chainFetcher = state.chainManager.chainFetchers->ChainMap.get(chain)
-  let {
-    fetchState,
-    chainConfig: {chainWorker},
-    logger,
-    currentBlockHeight,
-    isFetchingBatch,
-  } = chainFetcher
+  let {chainConfig: {chainWorker}, logger, currentBlockHeight} = chainFetcher
 
-  if (
-    !isFetchingBatch &&
-    fetchState->PartitionedFetchState.isReadyForNextQuery(
-      ~maxQueueSize=state.maxPerChainQueueSize,
-    ) &&
-    !isRollingBack(state)
-  ) {
+  if !isRollingBack(state) {
     let (nextQuery, nextStateIfChangeRequired) =
-      chainFetcher
-      ->ChainFetcher.getNextQuery
-      ->Utils.unwrapResultExn
+      chainFetcher->ChainFetcher.getNextQuery(~maxPerChainQueueSize=state.maxPerChainQueueSize)
 
     switch nextStateIfChangeRequired {
     | Some(nextFetchState) => dispatchAction(SetFetchState(chain, nextFetchState))
@@ -703,18 +696,24 @@ let checkAndFetchForChain = (
     switch nextQuery {
     | WaitForNewBlock =>
       await waitForNewBlock(~logger, ~chainWorker, ~currentBlockHeight, ~setCurrentBlockHeight)
-    | NextQuery(query) =>
-      dispatchAction(SetCurrentlyFetchingBatch(chain, true))
-      await executeNextQuery(
-        ~logger,
-        ~chainWorker,
-        ~currentBlockHeight,
-        ~setCurrentBlockHeight,
-        ~chain,
-        ~query,
-        ~dispatchAction,
-      )
-    | Done => ()
+    | NextQuery(queries) =>
+      let newPartitionsCurrentlyFetching =
+        queries->Array.map(query => query.partitionId)->Set.Int.fromArray
+      dispatchAction(SetCurrentlyFetchingBatch(chain, newPartitionsCurrentlyFetching))
+      let _ =
+        await queries
+        ->Array.map(query =>
+          executeNextQuery(
+            ~logger,
+            ~chainWorker,
+            ~currentBlockHeight,
+            ~setCurrentBlockHeight,
+            ~chain,
+            ~query,
+            ~dispatchAction,
+          )
+        )
+        ->Promise.all
     }
   }
 }
