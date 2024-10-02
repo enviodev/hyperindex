@@ -86,7 +86,7 @@ jobs:
           ]'
           if [[ "${{ steps.release_info.outputs.is_tagged }}" == "false" ]]; then
             # Non-release builds are only for the team, so we don't need to build for windows, or old mac books, or unused arm linux.
-            matrix=$(echo "$matrix" | jq '[.[] | select(.platform != "win32" and .target != "aarch64-unknown-linux-gnu" and .name != "darwin-x64")]')
+            matrix=$(echo "$matrix" | jq '[.[] | select(.platform != "win32" and .name != "darwin-x64")]')
           fi
           matrix=$(echo "$matrix" | jq -c '.') # put it on a single line (compact)
           echo "::set-output name=matrix::${matrix}"
