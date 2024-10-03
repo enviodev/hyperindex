@@ -27,7 +27,7 @@ use std::{env, path::PathBuf};
 fn is_valid_release_version_number(version: &str) -> bool {
     let re_version_pattern = Regex::new(r"^\d+\.\d+\.\d+(-rc\.\d+)?$")
         .expect("version regex pattern should be valid regex");
-    re_version_pattern.is_match(version) || version.starts_with("0.0.0-main-")
+    re_version_pattern.is_match(version) || version.contains("-main-")
 }
 
 pub async fn run_init_args(init_args: InitArgs, project_paths: &ProjectPaths) -> Result<()> {
