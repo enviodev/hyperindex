@@ -284,6 +284,7 @@ let handleBlockRangeResponse = (state, ~chain, ~response: ChainWorker.blockRange
       ~toBlock=heighestQueriedBlockNumber,
       ~fetchStateRegisterId,
       ~numEvents=parsedQueueItems->Array.length,
+      ~partitionId,
     )
   }
 
