@@ -188,6 +188,7 @@ let getMostBehindPartitions = (
     maxNumQueries - partitionsCurrentlyFetching->Belt.Set.Int.size,
     0,
   )
+  let maxPartitionQueueSize = maxPerChainQueueSize / partitions->List.length
   let accum = []
   partitions->List.forEachWithIndex((partitionIndex, partition) => {
     let val = {fetchState: partition, partitionId: partitionIndex}
@@ -211,7 +212,7 @@ let getMostBehindPartitions = (
     }
     if (
       !(partitionsCurrentlyFetching->Set.Int.has(partitionIndex)) &&
-      partition->FetchState.isReadyForNextQuery(~maxQueueSize=maxPerChainQueueSize)
+      partition->FetchState.isReadyForNextQuery(~maxQueueSize=maxPartitionQueueSize)
     ) {
       loop(0)
     }
