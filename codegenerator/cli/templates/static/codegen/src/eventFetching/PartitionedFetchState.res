@@ -178,6 +178,13 @@ type singlePartition = {
   partitionId: partitionIndex,
 }
 
+/**
+Retrieves an array of partitions that are most behind with a max number based on
+the max number of queries with the context of the partitions currently fetching.
+
+The array could be shorter than the max number of queries if the partitions are
+at the max queue size.
+*/
 let getMostBehindPartitions = (
   {partitions}: t,
   ~maxNumQueries,
