@@ -101,7 +101,7 @@ let makeGetNextPage = (
       let module(Event) = event
       let {isWildcard, topicSelections} =
         Event.handlerRegister->Types.HandlerTypes.Register.getEventOptions
-      isWildcard ? Some(LogSelection.make(~addresses=[], ~topicSelections)) : None
+      isWildcard ? Some(LogSelection.makeOrThrow(~addresses=[], ~topicSelections)) : None
     })
   })
 
@@ -124,7 +124,7 @@ let makeGetNextPage = (
           isWildcard ? [] : topicSelections
         }) {
         | [] => None
-        | topicSelections => Some(LogSelection.make(~addresses, ~topicSelections))
+        | topicSelections => Some(LogSelection.makeOrThrow(~addresses, ~topicSelections))
         }
       }
     })
@@ -460,10 +460,7 @@ module Make = (
           let topic0 = log.topics->Js.Array2.unsafe_get(0)
 
           switch eventRouter->EventRouter.get(
-            ~tag=EventRouter.getEvmEventTag(
-              ~sighash=topic0,
-              ~topicCount=log.topics->Array.length,
-            ),
+            ~tag=EventRouter.getEvmEventTag(~sighash=topic0, ~topicCount=log.topics->Array.length),
             ~contractAddressMapping,
             ~contractAddress=log.address,
           ) {

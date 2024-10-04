@@ -22,9 +22,37 @@ let hasFilters = ({topic1, topic2, topic3}: topicSelection) => {
   [topic1, topic2, topic3]->Js.Array2.find(topic => !Utils.Array.isEmpty(topic))->Belt.Option.isSome
 }
 
+/**
+For a group of topic selections, if multiple only use topic0, then they can be compressed into one
+selection combining the topic0s
+*/
+let compressTopicSelectionsOrThrow = (topicSelections: array<topicSelection>) => {
+  let topic0sOfSelectionsWithoutFilters = []
+
+  let selectionsWithFilters = []
+
+  topicSelections->Belt.Array.forEach(selection => {
+    if selection->hasFilters {
+      selectionsWithFilters->Js.Array2.push(selection)->ignore
+    } else {
+      selection.topic0->Belt.Array.forEach(topic0 => {
+        topic0sOfSelectionsWithoutFilters->Js.Array2.push(topic0)->ignore
+      })
+    }
+  })
+
+  let selectionWithoutFilters =
+    makeTopicSelection(~topic0=topic0sOfSelectionsWithoutFilters)->Utils.unwrapResultExn
+
+  Belt.Array.concat([selectionWithoutFilters], selectionsWithFilters)
+}
+
 type t = {
   addresses: array<Address.t>,
   topicSelections: array<topicSelection>,
 }
 
-let make = (~addresses, ~topicSelections) => {addresses, topicSelections}
+let makeOrThrow = (~addresses, ~topicSelections) => {
+  let topicSelections = compressTopicSelectionsOrThrow(topicSelections)
+  {addresses, topicSelections}
+}
