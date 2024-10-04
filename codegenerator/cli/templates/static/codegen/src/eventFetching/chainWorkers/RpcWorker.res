@@ -103,6 +103,7 @@ module Make = (
     ~logger,
     ~currentBlockHeight,
     ~setCurrentBlockHeight,
+    ~isPreRegisteringDynamicContracts,
   ) => {
     try {
       let {

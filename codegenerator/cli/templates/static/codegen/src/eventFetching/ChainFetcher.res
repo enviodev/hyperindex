@@ -16,6 +16,10 @@ type t = {
   //An optional list of filters to apply on event queries
   //Used for reorgs and restarts
   eventFilters: option<FetchState.eventFilters>,
+  //Currently this state applies to all chains simultaneously but it may be possible to,
+  //in the future, have a per chain state and allow individual chains to start indexing as
+  //soon as the pre registration is done
+  isPreRegisteringDynamicContracts: bool,
 }
 
 //CONSTRUCTION
@@ -34,6 +38,7 @@ let make = (
   ~numBatchesFetched,
   ~eventFilters,
   ~maxAddrInPartition,
+  ~isPreRegisteringDynamicContracts,
 ): t => {
   let module(ChainWorker) = chainConfig.chainWorker
   logger->Logging.childInfo("Initializing ChainFetcher with " ++ ChainWorker.name ++ " worker")
@@ -60,6 +65,7 @@ let make = (
     numBatchesFetched,
     eventFilters,
     partitionsCurrentlyFetching: Belt.Set.Int.empty,
+    isPreRegisteringDynamicContracts,
   }
 }
 
@@ -69,6 +75,14 @@ let getStaticContracts = (chainConfig: Config.chainConfig) => {
       (contract.name, address)
     })
   })
+}
+
+module Stub = {
+  let getShouldPreRegisterDynamicContracts = (
+    handlerRegister: Types.HandlerTypes.Register.t<'eventArgs>,
+  ) => {
+    handlerRegister->Types.HandlerTypes.Register.getContractRegister->Option.isSome
+  }
 }
 
 let makeFromConfig = (chainConfig: Config.chainConfig, ~maxAddrInPartition) => {
@@ -93,6 +107,7 @@ let makeFromConfig = (chainConfig: Config.chainConfig, ~maxAddrInPartition) => {
     ~eventFilters=None,
     ~dynamicContractRegistrations=[],
     ~maxAddrInPartition,
+    ~isPreRegisteringDynamicContracts=chainConfig->Config.shouldPreRegisterDynamicContracts,
   )
 }
 
@@ -107,9 +122,10 @@ let makeFromDbState = async (chainConfig: Config.chainConfig, ~maxAddrInPartitio
 
   let chainMetadata = await DbFunctions.ChainMetadata.getLatestChainMetadataState(~chainId)
 
-  let startBlock = latestProcessedEvent->Option.mapWithDefault(chainConfig.startBlock, event =>
-    //start from the same block but filter out any events already processed
-    event.blockNumber
+  let (startBlock, isPreRegisteringDynamicContracts) = latestProcessedEvent->Option.mapWithDefault(
+    (chainConfig.startBlock, chainConfig->Config.shouldPreRegisterDynamicContracts),
+    event => //start from the same block but filter out any events already processed
+    (event.blockNumber, event.isPreRegisteringDynamicContracts),
   )
 
   let eventFilters: option<
@@ -186,6 +202,7 @@ let makeFromDbState = async (chainConfig: Config.chainConfig, ~maxAddrInPartitio
     ~logger,
     ~eventFilters,
     ~maxAddrInPartition,
+    ~isPreRegisteringDynamicContracts,
   )
 }
 

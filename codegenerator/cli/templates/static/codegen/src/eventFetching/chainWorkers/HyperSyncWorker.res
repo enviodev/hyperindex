@@ -96,6 +96,23 @@ let makeGetNextPage = (
     }
   }
 
+  let contractPreRegistrationLogSelection = contracts->Belt.Array.flatMap(contract => {
+    contract.events->Belt.Array.keepMap(event => {
+      let module(Event) = event
+      Event.handlerRegister
+      ->Types.HandlerTypes.Register.getContractRegister
+      ->Option.map(
+        _ => {
+          // TODO: allow for opt out with config
+          let {isWildcard, topicSelections} =
+            Event.handlerRegister->Types.HandlerTypes.Register.getEventOptions
+          let addresses = isWildcard ? [] : contract.addresses
+          LogSelection.makeOrThrow(~addresses, ~topicSelections)
+        },
+      )
+    })
+  })
+
   let wildcardLogSelection = contracts->Belt.Array.flatMap(contract => {
     contract.events->Belt.Array.keepMap(event => {
       let module(Event) = event
@@ -142,6 +159,7 @@ let makeGetNextPage = (
     ~setCurrentBlockHeight,
     ~contractAddressMapping,
     ~shouldApplyWildcards,
+    ~isPreRegisteringDynamicContracts,
   ) => {
     //Wait for a valid range to query
     //This should never have to wait since we check that the from block is below the toBlock
@@ -159,14 +177,19 @@ let makeGetNextPage = (
       ~contractAddressMapping,
     )
 
-    let logSelections = try {
-      getLogSelectionOrThrow(~contractAddressMapping, ~shouldApplyWildcards)
-    } catch {
-    | exn =>
-      exn->ErrorHandling.mkLogAndRaise(
-        ~logger,
-        ~msg="Failed getting log selection in contract interface manager",
-      )
+    let logSelections = if isPreRegisteringDynamicContracts {
+      Js.log("pre-registering dynamic contracts hs query")
+      contractPreRegistrationLogSelection
+    } else {
+      try {
+        getLogSelectionOrThrow(~contractAddressMapping, ~shouldApplyWildcards)
+      } catch {
+      | exn =>
+        exn->ErrorHandling.mkLogAndRaise(
+          ~logger,
+          ~msg="Failed getting log selection in contract interface manager",
+        )
+      }
     }
 
     let startFetchingBatchTimeRef = Hrtime.makeTimer()
@@ -278,6 +301,7 @@ module Make = (
     ~logger,
     ~currentBlockHeight,
     ~setCurrentBlockHeight,
+    ~isPreRegisteringDynamicContracts,
   ) => {
     let mkLogAndRaise = ErrorHandling.mkLogAndRaise(~logger, ...)
     try {
@@ -301,6 +325,7 @@ module Make = (
         //Only apply wildcards on the first partition and root register
         //to avoid duplicate wildcard queries
         ~shouldApplyWildcards=fetchStateRegisterId == Root && partitionId == 0, //only
+        ~isPreRegisteringDynamicContracts,
       )
 
       //set height and next from block

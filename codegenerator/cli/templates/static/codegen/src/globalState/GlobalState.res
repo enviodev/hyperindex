@@ -3,6 +3,8 @@ open Belt
 type chain = ChainMap.Chain.t
 type rollbackState = NoRollback | RollingBack(chain) | RollbackInMemStore(InMemoryStore.t)
 
+type addressToDynContractLookup = dict<DbFunctions.DynamicContractRegistry.contractTypeAndAddress>
+
 type t = {
   config: Config.t,
   chainManager: ChainManager.t,
@@ -16,8 +18,10 @@ type t = {
   //Initialized as 0, increments, when rollbacks occur to invalidate
   //responses based on the wrong stateId
   id: int,
+  preregisteredDynamicContracts: ChainMap.t<addressToDynContractLookup>,
 }
 
+//TODO: remove the optional bool
 let make = (~config, ~chainManager, ~loadLayer) => {
   config,
   currentlyProcessingBatch: false,
@@ -32,6 +36,7 @@ let make = (~config, ~chainManager, ~loadLayer) => {
   asyncTaskQueue: AsyncTaskQueue.make(),
   loadLayer,
   id: 0,
+  preregisteredDynamicContracts: chainManager.chainFetchers->ChainMap.map(_ => Js.Dict.empty()),
 }
 
 let getId = self => self.id
@@ -55,6 +60,8 @@ type action =
   | BlockRangeResponse(chain, ChainWorker.blockRangeFetchResponse)
   | SetFetchStateCurrentBlockHeight(chain, int)
   | EventBatchProcessed(EventProcessing.batchProcessed)
+  | DynamicContractPreRegisterProcessed(EventProcessing.batchProcessed)
+  | StartIndexingAfterPreRegister
   | SetCurrentlyProcessing(bool)
   | SetIsInReorgThreshold(bool)
   | SetCurrentlyFetchingBatch(chain, PartitionedFetchState.partitionIndexSet)
@@ -76,6 +83,7 @@ type task =
       nextEndOfBlockRangeScannedData: DbFunctions.EndOfBlockRangeScannedData.endOfBlockRangeScannedData,
     })
   | ProcessEventBatch
+  | PreRegisterDynamicContracts
   | UpdateChainMetaDataAndCheckForExit(shouldExit)
   | Rollback
 
@@ -139,10 +147,7 @@ when valid state lines up and returns an updated chain manager
 let checkAndSetSyncedChains = (~nextQueueItemIsKnownNone=false, chainManager: ChainManager.t) => {
   let nextQueueItemIsNone = nextQueueItemIsKnownNone || chainManager->ChainManager.nextItemIsNone
 
-  let allChainsAtHead =
-    chainManager.chainFetchers
-    ->ChainMap.values
-    ->Array.reduce(true, (accum, cf) => cf->ChainFetcher.isFetchingAtHead && accum)
+  let allChainsAtHead = chainManager->ChainManager.isFetchingAtHead
   //Update the timestampCaughtUpToHeadOrEndblock values
   let chainFetchers = chainManager.chainFetchers->ChainMap.map(cf => {
     /* strategy for TUI synced status:
@@ -388,11 +393,15 @@ let handleBlockRangeResponse = (state, ~chain, ~response: ChainWorker.blockRange
 
     Prometheus.setFetchedEventsUntilHeight(~blockNumber=response.heighestQueriedBlockNumber, ~chain)
 
+    let processAction = updatedChainFetcher.isPreRegisteringDynamicContracts
+      ? PreRegisterDynamicContracts
+      : ProcessEventBatch
+
     (
       nextState,
       Array.concat(
         updateEndOfBlockRangeScannedDataArr,
-        [UpdateChainMetaDataAndCheckForExit(NoExit), ProcessEventBatch, NextQuery(Chain(chain))],
+        [UpdateChainMetaDataAndCheckForExit(NoExit), processAction, NextQuery(Chain(chain))],
       ),
     )
   } else {
@@ -597,6 +606,85 @@ let actionReducer = (state: t, action: action) => {
       [NextQuery(CheckAllChains), ProcessEventBatch],
     )
   | ResetRollbackState => ({...state, rollbackState: NoRollback}, [])
+  | DynamicContractPreRegisterProcessed({latestProcessedBlocks, dynamicContractRegistrations}) =>
+    Js.log("dynamic contract pre-register processed")
+    Js.log2("latest", latestProcessedBlocks->ChainMap.values)
+    Js.log2("dyn", dynamicContractRegistrations->Option.map(v => v.registrations->Array.length))
+    let updatedLatestBlocks = updateLatestProcessedBlocks(~state, ~latestProcessedBlocks)
+
+    let updatedState = switch dynamicContractRegistrations {
+    | None => updatedLatestBlocks
+    | Some({registrations}) =>
+      //Create an empty map for mutating the contractAddress mapping
+      let chainMap: ChainMap.t<addressToDynContractLookup> =
+        state.preregisteredDynamicContracts->ChainMap.map(_ => Js.Dict.empty())
+      registrations->Array.forEach(({dynamicContracts}) =>
+        dynamicContracts->Array.forEach(dynamicContract => {
+          let chain = ChainMap.Chain.makeUnsafe(~chainId=dynamicContract.chainId)
+          let contractAddressMapping = chainMap->ChainMap.get(chain)
+          contractAddressMapping->Js.Dict.set(
+            dynamicContract.contractAddress->Address.toString,
+            dynamicContract,
+          )
+        })
+      )
+      let preregisteredDynamicContracts =
+        state.preregisteredDynamicContracts->ChainMap.mapWithKey((chain, currentMapping) => {
+          let newMapping = chainMap->ChainMap.get(chain)
+          Utils.Dict.merge(currentMapping, newMapping)
+        })
+      {
+        ...updatedLatestBlocks,
+        preregisteredDynamicContracts,
+      }
+    }
+
+    (
+      updatedState,
+      [
+        UpdateChainMetaDataAndCheckForExit(NoExit),
+        PreRegisterDynamicContracts,
+        NextQuery(CheckAllChains),
+      ],
+    )
+  | StartIndexingAfterPreRegister =>
+    Js.log("starting indexing after pre-register")
+    let {config, chainManager, loadLayer} = state
+    let chainFetchers = chainManager.chainFetchers->ChainMap.mapWithKey((chain, cf) => {
+      let {chainConfig, logger, fetchState: {startBlock, endBlock, maxAddrInPartition}} = cf
+
+      ChainFetcher.make(
+        ~dynamicContractRegistrations=state.preregisteredDynamicContracts
+        ->ChainMap.get(chain)
+        ->Js.Dict.values,
+        ~chainConfig,
+        ~lastBlockScannedHashes=ReorgDetection.LastBlockScannedHashes.empty(
+          ~confirmedBlockThreshold=chainConfig.confirmedBlockThreshold,
+        ),
+        ~staticContracts=chainConfig->ChainFetcher.getStaticContracts,
+        ~startBlock,
+        ~endBlock,
+        ~dbFirstEventBlockNumber=None,
+        ~latestProcessedBlock=None,
+        ~logger,
+        ~timestampCaughtUpToHeadOrEndblock=None,
+        ~numEventsProcessed=0,
+        ~numBatchesFetched=0,
+        ~eventFilters=None,
+        ~maxAddrInPartition,
+        ~isPreRegisteringDynamicContracts=false,
+      )
+    })
+    let chainManager: ChainManager.t = {
+      chainFetchers,
+      arbitraryEventQueue: [],
+      isInReorgThreshold: false,
+      isUnorderedMultichainMode: chainManager.isUnorderedMultichainMode,
+    }
+
+    let freshState = make(~config, ~chainManager, ~loadLayer)
+
+    (freshState, [NextQuery(CheckAllChains)])
   | SuccessExit => {
       Logging.info("exiting with success")
       NodeJsLocal.process->NodeJsLocal.exitWithCode(Success)
@@ -646,6 +734,7 @@ let executeNextQuery = (
   ~chain,
   ~query,
   ~dispatchAction,
+  ~isPreRegisteringDynamicContracts,
 ) => {
   let module(ChainWorker: ChainWorker.S) = chainWorker
 
@@ -663,6 +752,7 @@ let executeNextQuery = (
     ~logger,
     ~currentBlockHeight,
     ~setCurrentBlockHeight,
+    ~isPreRegisteringDynamicContracts,
   )->Promise.thenResolve(res =>
     switch res {
     | Ok(res) => dispatchAction(BlockRangeResponse(chain, res))
@@ -701,6 +791,8 @@ let checkAndFetchForChain = (
       let newPartitionsCurrentlyFetching =
         queries->Array.map(query => query.partitionId)->Set.Int.fromArray
       dispatchAction(SetCurrentlyFetchingBatch(chain, newPartitionsCurrentlyFetching))
+      let isPreRegisteringDynamicContracts =
+        state.chainManager->ChainManager.isPreRegisteringDynamicContracts
       let _ =
         await queries
         ->Array.map(query =>
@@ -712,6 +804,7 @@ let checkAndFetchForChain = (
             ~chain,
             ~query,
             ~dispatchAction,
+            ~isPreRegisteringDynamicContracts,
           )
         )
         ->Promise.all
@@ -799,6 +892,52 @@ let injectedTaskReducer = (
         ->ChainMap.keys
         ->Array.map(fetchForChain(_))
         ->Promise.all
+    }
+  | PreRegisterDynamicContracts =>
+    Js.log("PreRegisterDynamicContracts task")
+    if !state.currentlyProcessingBatch && !isRollingBack(state) {
+      Js.log("PreRegisterDynamicContracts task if check passed")
+      switch state.chainManager->ChainManager.createBatch(~maxBatchSize=state.maxBatchSize) {
+      | {isInReorgThreshold: false, val: Some({batch, fetchStatesMap, arbitraryEventQueue})} =>
+        dispatchAction(SetCurrentlyProcessing(true))
+        dispatchAction(UpdateQueues(fetchStatesMap, arbitraryEventQueue))
+        let latestProcessedBlocks = EventProcessing.EventsProcessed.makeFromChainManager(
+          state.chainManager,
+        )
+
+        let checkContractIsRegistered = (
+          ~chain,
+          ~contractAddress,
+          ~contractName: Enums.ContractType.t,
+        ) => {
+          state.preregisteredDynamicContracts
+          ->ChainMap.get(chain)
+          ->Js.Dict.get(contractAddress->Address.toString)
+          ->Option.mapWithDefault(false, ({contractType}) => contractType == contractName)
+        }
+
+        switch await EventProcessing.getDynamicContractRegistrations(
+          ~latestProcessedBlocks,
+          ~eventBatch=batch,
+          ~checkContractIsRegistered,
+        ) {
+        | Ok(batchProcessed) => dispatchAction(DynamicContractPreRegisterProcessed(batchProcessed))
+        | Error(errHandler) => dispatchAction(ErrorExit(errHandler))
+        | exception exn =>
+          //All casese should be handled/caught before this with better user messaging.
+          //This is just a safety in case something unexpected happens
+          let errHandler =
+            exn->ErrorHandling.make(
+              ~msg="A top level unexpected error occurred during pre registration of dynamic contracts",
+            )
+          dispatchAction(ErrorExit(errHandler))
+        }
+      | {isInReorgThreshold: true}
+      | {val: None} if state.chainManager->ChainManager.isFetchingAtHead =>
+        //pre registration is done, start indexing
+        dispatchAction(StartIndexingAfterPreRegister)
+      | _ => () //Nothing to process and pre registration is not done
+      }
     }
   | ProcessEventBatch =>
     if !state.currentlyProcessingBatch && !isRollingBack(state) {
