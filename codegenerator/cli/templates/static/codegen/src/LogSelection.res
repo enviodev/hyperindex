@@ -41,10 +41,12 @@ let compressTopicSelectionsOrThrow = (topicSelections: array<topicSelection>) =>
     }
   })
 
-  let selectionWithoutFilters =
-    makeTopicSelection(~topic0=topic0sOfSelectionsWithoutFilters)->Utils.unwrapResultExn
-
-  Belt.Array.concat([selectionWithoutFilters], selectionsWithFilters)
+  switch topic0sOfSelectionsWithoutFilters {
+  | [] => selectionsWithFilters
+  | topic0 =>
+    let selectionWithoutFilters = makeTopicSelection(~topic0)->Utils.unwrapResultExn
+    Belt.Array.concat([selectionWithoutFilters], selectionsWithFilters)
+  }
 }
 
 type t = {
