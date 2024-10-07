@@ -196,35 +196,18 @@ let getMostBehindPartitions = (
     0,
   )
   let maxPartitionQueueSize = maxPerChainQueueSize / partitions->List.length
-  let accum = []
-  partitions->List.forEachWithIndex((partitionIndex, partition) => {
-    let val = {fetchState: partition, partitionId: partitionIndex}
 
-    let rec loop = index => {
-      switch accum[index] {
-      | None =>
-        if accum->Array.length < maxNumQueries {
-          accum->Js.Array2.push(val)->ignore
-        }
-      | Some(v) =>
-        if v.fetchState.latestFetchedBlock.blockNumber > partition.latestFetchedBlock.blockNumber {
-          let _ = accum->Js.Array2.spliceInPlace(~pos=index, ~remove=0, ~add=[val])
-          if accum->Array.length > maxNumQueries {
-            accum->Js.Array2.pop->ignore
-          }
-        } else {
-          loop(index + 1)
-        }
-      }
-    }
-    if (
-      !(partitionsCurrentlyFetching->Set.Int.has(partitionIndex)) &&
-      partition->FetchState.isReadyForNextQuery(~maxQueueSize=maxPartitionQueueSize)
-    ) {
-      loop(0)
-    }
-  })
-  accum
+  partitions
+  ->List.mapWithIndex((index, partition) => {fetchState: partition, partitionId: index}) // create the indecies that are returned by the function as an array - done here for sake of testing
+  ->List.keep(({fetchState: partition, partitionId: index}) =>
+    !(partitionsCurrentlyFetching->Set.Int.has(index)) &&
+    partition->FetchState.isReadyForNextQuery(~maxQueueSize=maxPartitionQueueSize)
+  )
+  ->List.sort((a, b) =>
+    a.fetchState.latestFetchedBlock.blockNumber - b.fetchState.latestFetchedBlock.blockNumber
+  )
+  ->List.toArray
+  ->Js.Array.slice(~start=0, ~end_=maxNumQueries)
 }
 
 let updatePartition = (self: t, ~fetchState: FetchState.t, ~partitionId: partitionIndex) => {
