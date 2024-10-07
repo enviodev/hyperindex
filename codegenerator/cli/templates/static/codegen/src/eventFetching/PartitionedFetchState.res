@@ -13,6 +13,8 @@ type id = {
   fetchStateId: FetchState.id,
 }
 
+type partitionIndexSet = Belt.Set.Int.t
+
 let make = (
   ~maxAddrInPartition,
   ~endBlock,
@@ -94,6 +96,14 @@ let make = (
     partitions.contents
   }
 
+  if Env.saveBenchmarkData {
+    Benchmark.addSummaryData(
+      ~group="Other",
+      ~label="Num partitions",
+      ~value=partitions->List.size->Int.toFloat,
+    )
+  }
+
   {maxAddrInPartition, partitions, endBlock, startBlock, logger}
 }
 
@@ -124,6 +134,13 @@ let registerDynamicContracts = (
     partitions->List.add(newPartition)
   }
 
+  if Env.saveBenchmarkData {
+    Benchmark.addSummaryData(
+      ~group="Other",
+      ~label="Num partitions",
+      ~value=partitions->List.size->Int.toFloat,
+    )
+  }
   {partitions, maxAddrInPartition, endBlock, startBlock, logger}
 }
 
@@ -161,17 +178,54 @@ type singlePartition = {
   partitionId: partitionIndex,
 }
 
-let getMostBehindPartition = ({partitions}: t) =>
-  partitions
-  ->List.reduceWithIndex(None, (accum, partition, partitionIndex) => {
-    switch accum {
-    | Some({fetchState: accumPartition}: singlePartition)
-      if accumPartition.FetchState.latestFetchedBlock.blockNumber <
-      partition.latestFetchedBlock.blockNumber => accum
-    | _ => Some({fetchState: partition, partitionId: partitionIndex})
+/**
+Retrieves an array of partitions that are most behind with a max number based on
+the max number of queries with the context of the partitions currently fetching.
+
+The array could be shorter than the max number of queries if the partitions are
+at the max queue size.
+*/
+let getMostBehindPartitions = (
+  {partitions}: t,
+  ~maxNumQueries,
+  ~maxPerChainQueueSize,
+  ~partitionsCurrentlyFetching,
+) => {
+  let maxNumQueries = Pervasives.max(
+    maxNumQueries - partitionsCurrentlyFetching->Belt.Set.Int.size,
+    0,
+  )
+  let maxPartitionQueueSize = maxPerChainQueueSize / partitions->List.length
+  let accum = []
+  partitions->List.forEachWithIndex((partitionIndex, partition) => {
+    let val = {fetchState: partition, partitionId: partitionIndex}
+
+    let rec loop = index => {
+      switch accum[index] {
+      | None =>
+        if accum->Array.length < maxNumQueries {
+          accum->Js.Array2.push(val)->ignore
+        }
+      | Some(v) =>
+        if v.fetchState.latestFetchedBlock.blockNumber > partition.latestFetchedBlock.blockNumber {
+          let _ = accum->Js.Array2.spliceInPlace(~pos=index, ~remove=0, ~add=[val])
+          if accum->Array.length > maxNumQueries {
+            accum->Js.Array2.pop->ignore
+          }
+        } else {
+          loop(index + 1)
+        }
+      }
+    }
+    if (
+      !(partitionsCurrentlyFetching->Set.Int.has(partitionIndex)) &&
+      partition->FetchState.isReadyForNextQuery(~maxQueueSize=maxPartitionQueueSize)
+    ) {
+      loop(0)
     }
   })
-  ->Option.getUnsafe
+  accum
+}
 
 let updatePartition = (self: t, ~fetchState: FetchState.t, ~partitionId: partitionIndex) => {
   switch self.partitions->List.splitAt(partitionId) {
@@ -182,20 +236,55 @@ let updatePartition = (self: t, ~fetchState: FetchState.t, ~partitionId: partiti
   }
 }
 
+type nextQueries = WaitForNewBlock | NextQuery(array<FetchState.nextQuery>)
 /**
 Gets the next query from the fetchState with the lowest latestFetchedBlock number.
 */
-let getNextQuery = (self: t, ~eventFilters=?, ~currentBlockHeight) => {
-  let {fetchState, partitionId} = self->getMostBehindPartition
+let getNextQueriesOrThrow = (
+  self: t,
+  ~eventFilters=?,
+  ~currentBlockHeight,
+  ~maxPerChainQueueSize,
+  ~partitionsCurrentlyFetching,
+) => {
+  let optUpdatedPartition = ref(None)
+  let includesWaitForNewBlock = ref(false)
+  let nextQueries = []
+  self
+  ->getMostBehindPartitions(
+    ~maxNumQueries=Env.maxPartitionConcurrency,
+    ~maxPerChainQueueSize,
+    ~partitionsCurrentlyFetching,
+  )
+  ->Array.forEach(({fetchState, partitionId}) => {
+    switch fetchState->FetchState.getNextQuery(~eventFilters?, ~currentBlockHeight, ~partitionId) {
+    | Ok((nextQuery, optUpdatesFetchState)) =>
+      switch nextQuery {
+      | NextQuery(q) => nextQueries->Js.Array2.push(q)->ignore
+      | WaitForNewBlock => includesWaitForNewBlock := true
+      | Done => ()
+      }
+      switch optUpdatesFetchState {
+      | Some(fetchState) =>
+        optUpdatedPartition :=
+          optUpdatedPartition.contents
+          ->Option.getWithDefault(self)
+          ->updatePartition(~fetchState, ~partitionId)
+          ->Utils.unwrapResultExn
+          ->Some
+      | None => ()
+      }
+    | Error(e) =>
+      e->ErrorHandling.mkLogAndRaise(~msg="Unexpected error getting next query in partition")
+    }
+  })
 
-  fetchState
-  ->FetchState.getNextQuery(~eventFilters?, ~currentBlockHeight, ~partitionId)
-  ->Result.map(((nextQuery, optUpdatesFetchState)) => (
-    nextQuery,
-    optUpdatesFetchState->Option.map(fetchState =>
-      self->updatePartition(~fetchState, ~partitionId)->Utils.unwrapResultExn
-    ),
-  ))
+  let nextQueries = switch nextQueries {
+  | [] if includesWaitForNewBlock.contents => WaitForNewBlock
+  | queries => NextQuery(queries)
+  }
+
+  (nextQueries, optUpdatedPartition.contents)
 }
 
 /**
@@ -236,11 +325,6 @@ let getLatestFullyFetchedBlock = ({partitions}: t) =>
     }
   })
   ->Option.getUnsafe
-
-let isReadyForNextQuery = (self: t, ~maxQueueSize) => {
-  let {fetchState} = self->getMostBehindPartition
-  fetchState->FetchState.isReadyForNextQuery(~maxQueueSize)
-}
 
 let checkContainsRegisteredContractAddress = ({partitions}: t, ~contractAddress, ~contractName) => {
   partitions->List.reduce(false, (accum, partition) => {

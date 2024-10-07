@@ -81,9 +81,18 @@ let data = Data.make()
 let cacheFileName = "BenchmarkCache.json"
 let cacheFilePath = NodeJsLocal.Path.join(NodeJsLocal.Path.__dirname, cacheFileName)
 
+let currentWrite = ref(Promise.resolve())
+let schedule = ref(() => Promise.resolve())
+
 let saveToCacheFile = data => {
-  let json = data->S.serializeToJsonStringOrRaiseWith(Data.schema)
-  NodeJsLocal.Fs.Promises.writeFile(~filepath=cacheFilePath, ~content=json)->ignore
+  let write = () => {
+    let json = data->S.serializeToJsonStringOrRaiseWith(Data.schema)
+    NodeJsLocal.Fs.Promises.writeFile(~filepath=cacheFilePath, ~content=json)
+  }
+  schedule := write
+  let _ = currentWrite.contents->Promise.thenResolve(_ => {
+    currentWrite := schedule.contents()
+  })
 }
 
 let readFromCacheFile = async () => {
@@ -112,12 +121,15 @@ let incrementMillis = (~label, ~amount) => {
 }
 
 let addBlockRangeFetched = (
-  ~stats: ChainWorker.blockRangeFetchStats,
+  ~totalTimeElapsed: int,
+  ~parsingTimeElapsed: int,
+  ~pageFetchTime: int,
   ~chainId,
   ~fromBlock,
   ~toBlock,
   ~fetchStateRegisterId: FetchState.id,
   ~numEvents,
+  ~partitionId,
 ) => {
   let registerName = switch fetchStateRegisterId {
   | Root => "Root"
@@ -127,19 +139,22 @@ let addBlockRangeFetched = (
   let group = `BlockRangeFetched Summary for Chain ${chainId->Belt.Int.toString} ${registerName} Register`
   let add = (label, value) => data->Data.addSummaryData(~group, ~label, ~value=Utils.magic(value))
 
-  add("Total Time Elapsed (ms)", stats.totalTimeElapsed)
-  add("Parsing Time Elapsed (ms)", stats.parsingTimeElapsed->Belt.Option.getWithDefault(0))
-  add("Page Fetch Time (ms)", stats.pageFetchTime->Belt.Option.getWithDefault(0))
+  add("Total Time Elapsed (ms)", totalTimeElapsed)
+  add("Parsing Time Elapsed (ms)", parsingTimeElapsed)
+  add("Page Fetch Time (ms)", pageFetchTime)
   add("Num Events", numEvents)
   add("Block Range Size", toBlock - fromBlock)
 
   data->Data.incrementMillis(
-    ~label=`Total Time Fetching Chain ${chainId->Belt.Int.toString}`,
-    ~amount=stats.totalTimeElapsed,
+    ~label=`Total Time Fetching Chain ${chainId->Belt.Int.toString} Partition ${partitionId->Belt.Int.toString}`,
+    ~amount=totalTimeElapsed,
   )
 
   data->saveToCacheFile
 }
+
+let eventProcessingGroup = "EventProcessing Summary"
+let batchSizeLabel = "Batch Size"
 
 let addEventProcessing = (
   ~batchSize,
@@ -150,13 +165,9 @@ let addEventProcessing = (
   ~totalTimeElapsed,
 ) => {
   let add = (label, value) =>
-    data->Data.addSummaryData(
-      ~group="EventProcessing Summary",
-      ~label,
-      ~value=value->Belt.Int.toFloat,
-    )
+    data->Data.addSummaryData(~group=eventProcessingGroup, ~label, ~value=value->Belt.Int.toFloat)
 
-  add("Batch Size", batchSize)
+  add(batchSizeLabel, batchSize)
   add("Contract Register Duration (ms)", contractRegisterDuration)
   add("Load Duration (ms)", loadDuration)
   add("Handler Duration (ms)", handlerDuration)
@@ -176,6 +187,7 @@ module Summary = {
     @as("std-dev") stdDev: float,
     min: float,
     max: float,
+    last: float,
     total: float,
   }
 
@@ -197,7 +209,7 @@ module Summary = {
     let div = (floatA, floatB) => floatA /. floatB
     let n = Array.length(arr)
     if n == 0 {
-      {n, mean: 0., stdDev: 0., min: 0., max: 0., total: 0.}
+      {n, mean: 0., stdDev: 0., min: 0., max: 0., last: 0., total: 0.}
     } else {
       let nFloat = n->Int.toFloat
       let mean = arr->Array.reduce(0., (acc, time) => acc +. time)->div(nFloat)->round(~precision=2)
@@ -235,8 +247,12 @@ module Summary = {
           ->Some
         )
         ->Option.getWithDefault(0.)
+      let last =
+        arr
+        ->Utils.Array.last
+        ->Option.getWithDefault(0.)
       let total = arr->Array.reduce(0., (acc, val) => acc +. val)
-      {n, mean, stdDev, min, max, total}
+      {n, mean, stdDev, min, max, last, total}
     }
   }
 
@@ -268,6 +284,27 @@ module Summary = {
       timeBreakdown
       ->Js.Dict.fromArray
       ->logDictTable
+
+      Js.log("General")
+      let batchSizesSum =
+        summaryData
+        ->Js.Dict.get(eventProcessingGroup)
+        ->Option.flatMap(g => g->Js.Dict.get(batchSizeLabel))
+        ->Option.map(data => data->Array.reduce(0., (acc, d) => acc +. d))
+        ->Option.getWithDefault(0.)
+
+      let totalRuntimeMillis =
+        millisAccum.endTime->Js.Date.getTime -. millisAccum.startTime->Js.Date.getTime
+
+      let totalRuntimeSeconds = totalRuntimeMillis /. 1000.
+
+      let eventsPerSecond = (batchSizesSum /. totalRuntimeSeconds)->round(~precision=2)
+
+      logObjTable({
+        "batch sizes sum": batchSizesSum,
+        "total runtime (sec)": totalRuntimeSeconds,
+        "events per second": eventsPerSecond,
+      })
 
       summaryData
       ->Js.Dict.entries

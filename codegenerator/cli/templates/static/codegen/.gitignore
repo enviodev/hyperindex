@@ -30,4 +30,4 @@
 *.bs.mjs
 *.gen.ts
 logs/*
-*.BenchmarkCache.json
+*BenchmarkCache.json

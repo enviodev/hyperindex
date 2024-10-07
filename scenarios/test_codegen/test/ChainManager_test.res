@@ -124,7 +124,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
       lastBlockScannedHashes: ReorgDetection.LastBlockScannedHashes.empty(
         ~confirmedBlockThreshold=200,
       ),
-      isFetchingBatch: false,
+      partitionsCurrentlyFetching: Belt.Set.Int.empty,
       currentBlockHeight: 0,
       eventFilters: None,
     }

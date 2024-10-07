@@ -61,8 +61,8 @@ jobs:
           else
             timestamp=$(date +'%Y%m%d%H%M%S')
             short_commit=${{ steps.vars.outputs.hash_short }}
-            echo "::set-output name=tag_name::v0.0.0-${GITHUB_REF_NAME}-${timestamp}-${short_commit}"
-            echo "::set-output name=release_name::v0.0.0-${GITHUB_REF_NAME}-${timestamp}-${short_commit}"
+            echo "::set-output name=tag_name::v2.0.0-${GITHUB_REF_NAME}-${timestamp}-${short_commit}"
+            echo "::set-output name=release_name::v2.0.0-${GITHUB_REF_NAME}-${timestamp}-${short_commit}"
             echo "::set-output name=is_tagged::false"
             echo "::set-output name=release_type::dev"
           fi
@@ -86,7 +86,7 @@ jobs:
           ]'
           if [[ "${{ steps.release_info.outputs.is_tagged }}" == "false" ]]; then
             # Non-release builds are only for the team, so we don't need to build for windows, or old mac books, or unused arm linux.
-            matrix=$(echo "$matrix" | jq '[.[] | select(.platform != "win32" and .target != "aarch64-unknown-linux-gnu" and .name != "darwin-x64")]')
+            matrix=$(echo "$matrix" | jq '[.[] | select(.platform != "win32" and .name != "darwin-x64")]')
           fi
           matrix=$(echo "$matrix" | jq -c '.') # put it on a single line (compact)
           echo "::set-output name=matrix::${matrix}"
