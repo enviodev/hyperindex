@@ -196,6 +196,7 @@ let getMostBehindPartitions = (
     0,
   )
   let maxPartitionQueueSize = maxPerChainQueueSize / partitions->List.length
+  //An array of next partitions to query in order of most behind
   let accum = []
   partitions->List.forEachWithIndex((partitionIndex, partition) => {
     let val = {fetchState: partition, partitionId: partitionIndex}
@@ -203,16 +204,23 @@ let getMostBehindPartitions = (
     let rec loop = index => {
       switch accum[index] {
       | None =>
+        //At the end of iterating through accum, push the current partition
+        //if it is not already at the max number of queries
         if accum->Array.length < maxNumQueries {
           accum->Js.Array2.push(val)->ignore
         }
       | Some(v) =>
         if v.fetchState.latestFetchedBlock.blockNumber > partition.latestFetchedBlock.blockNumber {
+          //if the current partition is more behind the value at the index, splice it in at this position
           let _ = accum->Js.Array2.spliceInPlace(~pos=index, ~remove=0, ~add=[val])
+          //After splicing if the array is above its max length pop a value off of the end
+          //since that will be the least behind of the partitions
           if accum->Array.length > maxNumQueries {
             accum->Js.Array2.pop->ignore
           }
         } else {
+          //continue looping through the accum array to check if the current partition is more behind the
+          //other accumulated partitions
           loop(index + 1)
         }
       }
