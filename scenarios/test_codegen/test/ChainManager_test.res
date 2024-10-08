@@ -127,6 +127,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
       partitionsCurrentlyFetching: Belt.Set.Int.empty,
       currentBlockHeight: 0,
       eventFilters: None,
+      dynamicContractPreRegistration: None,
     }
 
     mockChainFetcher
