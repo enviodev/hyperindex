@@ -473,7 +473,6 @@ let getDynamicContractRegistrations = (
   ~latestProcessedBlocks: EventsProcessed.t,
   ~checkContractIsRegistered,
 ) => {
-  Js.log("pre-registering dynamic contracts")
   let logger = Logging.createChild(
     ~params={
       "context": "pre-registration",

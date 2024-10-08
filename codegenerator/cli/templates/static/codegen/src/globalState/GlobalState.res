@@ -603,9 +603,6 @@ let actionReducer = (state: t, action: action) => {
     )
   | ResetRollbackState => ({...state, rollbackState: NoRollback}, [])
   | DynamicContractPreRegisterProcessed({latestProcessedBlocks, dynamicContractRegistrations}) =>
-    Js.log("dynamic contract pre-register processed")
-    Js.log2("latest", latestProcessedBlocks->ChainMap.values)
-    Js.log2("dyn", dynamicContractRegistrations->Option.map(v => v.registrations->Array.length))
     let state = updateLatestProcessedBlocks(~state, ~latestProcessedBlocks)
 
     let state = switch dynamicContractRegistrations {
@@ -661,7 +658,7 @@ let actionReducer = (state: t, action: action) => {
       ],
     )
   | StartIndexingAfterPreRegister =>
-    Js.log("starting indexing after pre-register")
+    Logging.info("Starting indexing after pre-registration")
     let {config, chainManager, loadLayer} = state
     let chainFetchers = chainManager.chainFetchers->ChainMap.map(cf => {
       let {
@@ -914,9 +911,7 @@ let injectedTaskReducer = (
         ->Promise.all
     }
   | PreRegisterDynamicContracts =>
-    Js.log("PreRegisterDynamicContracts task")
     if !state.currentlyProcessingBatch && !isRollingBack(state) {
-      Js.log("PreRegisterDynamicContracts task if check passed")
       switch state.chainManager->ChainManager.createBatch(~maxBatchSize=state.maxBatchSize) {
       | {isInReorgThreshold: false, val: Some({batch, fetchStatesMap, arbitraryEventQueue})} =>
         dispatchAction(SetCurrentlyProcessing(true))
