@@ -144,33 +144,4 @@ describe("PartitionedFetchState getMostBehindPartitions", () => {
       ~message="Should have skipped partitions that are at max queue size and returned less than maxNumQueries",
     )
   })
-
-  it_only("benchmark fn", () => {
-    let maxNumQueries = 10
-    let numPartitions = 100
-
-    let partitions = Array.makeByAndShuffle(
-      numPartitions,
-      i => {
-        mockFetchState(~latestFetchedBlockNumber=i)
-      },
-    )->List.fromArray
-
-    let partitionedFetchState = mockPartitionedFetchState(~partitions)
-
-    let timeRef = Hrtime.makeTimer()
-    let _mostBehindPartitions =
-      partitionedFetchState->PartitionedFetchState.getMostBehindPartitions(
-        ~maxNumQueries,
-        ~maxPerChainQueueSize=10,
-        ~partitionsCurrentlyFetching=Set.Int.empty,
-      )
-
-    //144750
-    //169209
-    //236334
-    //257334
-    let elapsed = timeRef->Hrtime.timeSince
-    Js.log2("elapsed", elapsed)
-  })
 })
