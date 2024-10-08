@@ -41,21 +41,20 @@ type chainConfig = {
   chainWorker: module(ChainWorker.S),
 }
 
-// TODO: it should be possible to opt out of pre-registering dynamic contracts
 let shouldPreRegisterDynamicContracts = (chainConfig: chainConfig) => {
-  let shouldPreRegisterDynamicContracts = ref(false)
-
+  let accum = ref(false)
   chainConfig.contracts->Belt.Array.forEach(contract => {
     contract.events->Belt.Array.forEach(event => {
-      if !shouldPreRegisterDynamicContracts.contents {
+      if !accum.contents {
         let module(Event) = event
-        shouldPreRegisterDynamicContracts :=
-          Event.handlerRegister->Types.HandlerTypes.Register.getContractRegister->Option.isSome
+        let {shouldPreRegisterDynamicContracts} =
+          Event.handlerRegister->Types.HandlerTypes.Register.getEventOptions
+        accum := shouldPreRegisterDynamicContracts
       }
     })
   })
 
-  shouldPreRegisterDynamicContracts.contents
+  accum.contents
 }
 
 type historyFlag = FullHistory | MinHistory

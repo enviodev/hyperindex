@@ -99,12 +99,10 @@ let makeGetNextPage = (
   let contractPreregistrationEventOptions = contracts->Belt.Array.keepMap(contract => {
     let eventsOptions = contract.events->Belt.Array.keepMap(event => {
       let module(Event) = event
-      //TODO: This should be configurable via API
-      let isPreRegistration =
-        Event.handlerRegister->Types.HandlerTypes.Register.getContractRegister->Option.isSome
+      let eventOptions = Event.handlerRegister->Types.HandlerTypes.Register.getEventOptions
 
-      if isPreRegistration {
-        Event.handlerRegister->Types.HandlerTypes.Register.getEventOptions->Some
+      if eventOptions.shouldPreRegisterDynamicContracts {
+        Some(eventOptions)
       } else {
         None
       }

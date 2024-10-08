@@ -18,7 +18,6 @@ type t = {
   id: int,
 }
 
-//TODO: remove the optional bool
 let make = (~config, ~chainManager, ~loadLayer) => {
   config,
   currentlyProcessingBatch: false,
@@ -975,7 +974,6 @@ let injectedTaskReducer = (
           //On the first time we enter the reorg threshold, copy all entities to entity history
           //And set the isInReorgThreshold isInReorgThreshold state to true
           dispatchAction(SetIsInReorgThreshold(true))
-          //TODO: persist the isInReorgThreshold state to the db in a transaction with copy
           await DbFunctions.sql->DbFunctions.EntityHistory.copyAllEntitiesToEntityHistory
         }
 
