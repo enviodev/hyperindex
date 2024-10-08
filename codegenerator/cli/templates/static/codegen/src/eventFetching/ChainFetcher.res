@@ -78,14 +78,6 @@ let getStaticContracts = (chainConfig: Config.chainConfig) => {
   })
 }
 
-module Stub = {
-  let getShouldPreRegisterDynamicContracts = (
-    handlerRegister: Types.HandlerTypes.Register.t<'eventArgs>,
-  ) => {
-    handlerRegister->Types.HandlerTypes.Register.getContractRegister->Option.isSome
-  }
-}
-
 let makeFromConfig = (chainConfig: Config.chainConfig, ~maxAddrInPartition) => {
   let logger = Logging.createChild(~params={"chainId": chainConfig.chain->ChainMap.Chain.toChainId})
   let staticContracts = chainConfig->getStaticContracts
