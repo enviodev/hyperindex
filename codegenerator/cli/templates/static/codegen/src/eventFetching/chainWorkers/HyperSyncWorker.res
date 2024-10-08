@@ -96,23 +96,39 @@ let makeGetNextPage = (
     }
   }
 
-  let contractPreRegistrationLogSelection = contracts->Belt.Array.flatMap(contract => {
-    contract.events->Belt.Array.keepMap(event => {
+  let contractPreregistrationEventOptions = contracts->Belt.Array.keepMap(contract => {
+    let eventsOptions = contract.events->Belt.Array.keepMap(event => {
       let module(Event) = event
-      let contratRegisterFn = Event.handlerRegister->Types.HandlerTypes.Register.getContractRegister
+      //TODO: This should be configurable via API
+      let isPreRegistration =
+        Event.handlerRegister->Types.HandlerTypes.Register.getContractRegister->Option.isSome
 
-      let {isWildcard, topicSelections} =
-        Event.handlerRegister->Types.HandlerTypes.Register.getEventOptions
-      switch (contratRegisterFn, isWildcard, contract.addresses) {
-      | (None, _, _)
-      | (_, false, []) =>
+      if isPreRegistration {
+        Event.handlerRegister->Types.HandlerTypes.Register.getEventOptions->Some
+      } else {
         None
-      | (Some(_contractRegisterFn), isWildcard, staticAddresses) =>
-        let addresses = isWildcard ? [] : staticAddresses
-        LogSelection.makeOrThrow(~addresses, ~topicSelections)->Some
       }
     })
+
+    switch eventsOptions {
+    | [] => None
+    | _ => (contract.name, eventsOptions)->Some
+    }
   })
+
+  let getContractPreRegistrationLogSelection = (~contractAddressMapping): array<LogSelection.t> => {
+    contractPreregistrationEventOptions->Array.map(((contractName, eventsOptions)) => {
+      let addresses =
+        contractAddressMapping->ContractAddressingMap.getAddressesFromContractName(~contractName)
+      let topicSelections = eventsOptions->Belt.Array.flatMap(({isWildcard, topicSelections}) => {
+        switch (isWildcard, addresses) {
+        | (false, []) => [] //If it's not wildcard and there are no addresses. Skip the topic selections for this event
+        | _ => topicSelections
+        }
+      })
+      LogSelection.makeOrThrow(~addresses, ~topicSelections)
+    })
+  }
 
   let wildcardLogSelection = contracts->Belt.Array.flatMap(contract => {
     contract.events->Belt.Array.keepMap(event => {
@@ -178,19 +194,19 @@ let makeGetNextPage = (
       ~contractAddressMapping,
     )
 
-    let logSelections = if isPreRegisteringDynamicContracts {
-      Js.log("pre-registering dynamic contracts hs query")
-      contractPreRegistrationLogSelection
-    } else {
-      try {
+    let logSelections = try {
+      if isPreRegisteringDynamicContracts {
+        Js.log("pre-registering dynamic contracts hs query")
+        getContractPreRegistrationLogSelection(~contractAddressMapping)
+      } else {
         getLogSelectionOrThrow(~contractAddressMapping, ~shouldApplyWildcards)
-      } catch {
-      | exn =>
-        exn->ErrorHandling.mkLogAndRaise(
-          ~logger,
-          ~msg="Failed getting log selection in contract interface manager",
-        )
       }
+    } catch {
+    | exn =>
+      exn->ErrorHandling.mkLogAndRaise(
+        ~logger,
+        ~msg="Failed getting log selection in contract interface manager",
+      )
     }
 
     let startFetchingBatchTimeRef = Hrtime.makeTimer()
