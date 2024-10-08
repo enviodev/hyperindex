@@ -806,7 +806,11 @@ let injectedTaskReducer = (
       | {isInReorgThreshold, val: Some({batch, fetchStatesMap, arbitraryEventQueue})} =>
         dispatchAction(SetCurrentlyProcessing(true))
         dispatchAction(UpdateQueues(fetchStatesMap, arbitraryEventQueue))
-        if isInReorgThreshold && !state.chainManager.isInReorgThreshold {
+        if (
+          state.config->Config.shouldRollbackOnReorg &&
+          isInReorgThreshold &&
+          !state.chainManager.isInReorgThreshold
+        ) {
           //On the first time we enter the reorg threshold, copy all entities to entity history
           //And set the isInReorgThreshold isInReorgThreshold state to true
           dispatchAction(SetIsInReorgThreshold(true))
