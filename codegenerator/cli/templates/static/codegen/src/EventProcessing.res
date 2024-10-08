@@ -106,7 +106,7 @@ let runEventContractRegister = (
   ~checkContractIsRegistered,
   ~dynamicContractRegistrations: option<dynamicContractRegistrations>,
   ~inMemoryStore,
-  ~isPreRegisteringDynamicContracts,
+  ~preRegisterLatestProcessedBlocks=?,
 ) => {
   let {chain, event, blockNumber} = eventBatchQueueItem
 
@@ -149,8 +149,18 @@ let runEventContractRegister = (
       )->Some
     }
 
-    if isPreRegisteringDynamicContracts {
-      eventBatchQueueItem->updateEventSyncState(~inMemoryStore, ~isPreRegisteringDynamicContracts)
+    switch preRegisterLatestProcessedBlocks {
+    | Some(latestProcessedBlocks) =>
+      eventBatchQueueItem->updateEventSyncState(
+        ~inMemoryStore,
+        ~isPreRegisteringDynamicContracts=true,
+      )
+      latestProcessedBlocks :=
+        latestProcessedBlocks.contents->EventsProcessed.updateEventsProcessed(
+          ~chain=eventBatchQueueItem.chain,
+          ~blockNumber=eventBatchQueueItem.blockNumber,
+        )
+    | None => ()
     }
 
     val->Ok
@@ -314,7 +324,7 @@ let rec registerDynamicContracts = (
   ~eventsBeforeDynamicRegistrations=[],
   ~dynamicContractRegistrations: option<dynamicContractRegistrations>=None,
   ~inMemoryStore,
-  ~isPreRegisteringDynamicContracts,
+  ~preRegisterLatestProcessedBlocks=?,
 ) => {
   switch eventBatch[index] {
   | None => (eventsBeforeDynamicRegistrations, dynamicContractRegistrations)->Ok
@@ -338,7 +348,7 @@ let rec registerDynamicContracts = (
           ~eventBatchQueueItem,
           ~dynamicContractRegistrations,
           ~inMemoryStore,
-          ~isPreRegisteringDynamicContracts,
+          ~preRegisterLatestProcessedBlocks?,
         )
       | None =>
         dynamicContractRegistrations
@@ -362,7 +372,7 @@ let rec registerDynamicContracts = (
         ~eventsBeforeDynamicRegistrations,
         ~dynamicContractRegistrations,
         ~inMemoryStore,
-        ~isPreRegisteringDynamicContracts,
+        ~preRegisterLatestProcessedBlocks?,
       )
     | Error(e) => Error(e)
     }
@@ -472,6 +482,7 @@ let getDynamicContractRegistrations = (
     },
   )
   let inMemoryStore = InMemoryStore.make()
+  let preRegisterLatestProcessedBlocks = ref(latestProcessedBlocks)
   open ErrorHandling.ResultPropogateEnv
   runAsyncEnv(async () => {
     //Register all the dynamic contracts in this batch,
@@ -482,7 +493,7 @@ let getDynamicContractRegistrations = (
         ~checkContractIsRegistered,
         ~logger,
         ~inMemoryStore,
-        ~isPreRegisteringDynamicContracts=true,
+        ~preRegisterLatestProcessedBlocks,
       )
       ->propogate
 
@@ -493,7 +504,10 @@ let getDynamicContractRegistrations = (
     | () => ()
     }
 
-    Ok({latestProcessedBlocks, dynamicContractRegistrations})
+    Ok({
+      latestProcessedBlocks: preRegisterLatestProcessedBlocks.contents,
+      dynamicContractRegistrations,
+    })
   })
 }
 
@@ -525,12 +539,7 @@ let processEventBatch = (
       dynamicContractRegistrations,
     ) =
       eventBatch
-      ->registerDynamicContracts(
-        ~checkContractIsRegistered,
-        ~logger,
-        ~inMemoryStore,
-        ~isPreRegisteringDynamicContracts=false,
-      )
+      ->registerDynamicContracts(~checkContractIsRegistered, ~logger, ~inMemoryStore)
       ->propogate
 
     let elapsedAfterContractRegister =
