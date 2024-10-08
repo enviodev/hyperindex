@@ -99,17 +99,18 @@ let makeGetNextPage = (
   let contractPreRegistrationLogSelection = contracts->Belt.Array.flatMap(contract => {
     contract.events->Belt.Array.keepMap(event => {
       let module(Event) = event
-      Event.handlerRegister
-      ->Types.HandlerTypes.Register.getContractRegister
-      ->Option.map(
-        _ => {
-          // TODO: allow for opt out with config
-          let {isWildcard, topicSelections} =
-            Event.handlerRegister->Types.HandlerTypes.Register.getEventOptions
-          let addresses = isWildcard ? [] : contract.addresses
-          LogSelection.makeOrThrow(~addresses, ~topicSelections)
-        },
-      )
+      let contratRegisterFn = Event.handlerRegister->Types.HandlerTypes.Register.getContractRegister
+
+      let {isWildcard, topicSelections} =
+        Event.handlerRegister->Types.HandlerTypes.Register.getEventOptions
+      switch (contratRegisterFn, isWildcard, contract.addresses) {
+      | (None, _, _)
+      | (_, false, []) =>
+        None
+      | (Some(_contractRegisterFn), isWildcard, staticAddresses) =>
+        let addresses = isWildcard ? [] : staticAddresses
+        LogSelection.makeOrThrow(~addresses, ~topicSelections)->Some
+      }
     })
   })
 
