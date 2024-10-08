@@ -3,8 +3,6 @@ open Belt
 type chain = ChainMap.Chain.t
 type rollbackState = NoRollback | RollingBack(chain) | RollbackInMemStore(InMemoryStore.t)
 
-type addressToDynContractLookup = dict<DbFunctions.DynamicContractRegistry.contractTypeAndAddress>
-
 type t = {
   config: Config.t,
   chainManager: ChainManager.t,
@@ -18,7 +16,6 @@ type t = {
   //Initialized as 0, increments, when rollbacks occur to invalidate
   //responses based on the wrong stateId
   id: int,
-  preregisteredDynamicContracts: ChainMap.t<addressToDynContractLookup>,
 }
 
 //TODO: remove the optional bool
@@ -36,7 +33,6 @@ let make = (~config, ~chainManager, ~loadLayer) => {
   asyncTaskQueue: AsyncTaskQueue.make(),
   loadLayer,
   id: 0,
-  preregisteredDynamicContracts: chainManager.chainFetchers->ChainMap.map(_ => Js.Dict.empty()),
 }
 
 let getId = self => self.id
@@ -393,9 +389,10 @@ let handleBlockRangeResponse = (state, ~chain, ~response: ChainWorker.blockRange
 
     Prometheus.setFetchedEventsUntilHeight(~blockNumber=response.heighestQueriedBlockNumber, ~chain)
 
-    let processAction = updatedChainFetcher.isPreRegisteringDynamicContracts
-      ? PreRegisterDynamicContracts
-      : ProcessEventBatch
+    let processAction =
+      updatedChainFetcher->ChainFetcher.isPreRegisteringDynamicContracts
+        ? PreRegisterDynamicContracts
+        : ProcessEventBatch
 
     (
       nextState,
@@ -610,37 +607,54 @@ let actionReducer = (state: t, action: action) => {
     Js.log("dynamic contract pre-register processed")
     Js.log2("latest", latestProcessedBlocks->ChainMap.values)
     Js.log2("dyn", dynamicContractRegistrations->Option.map(v => v.registrations->Array.length))
-    let updatedLatestBlocks = updateLatestProcessedBlocks(~state, ~latestProcessedBlocks)
+    let state = updateLatestProcessedBlocks(~state, ~latestProcessedBlocks)
 
-    let updatedState = switch dynamicContractRegistrations {
-    | None => updatedLatestBlocks
+    let state = switch dynamicContractRegistrations {
+    | None => state
     | Some({registrations}) =>
       //Create an empty map for mutating the contractAddress mapping
-      let chainMap: ChainMap.t<addressToDynContractLookup> =
-        state.preregisteredDynamicContracts->ChainMap.map(_ => Js.Dict.empty())
+      let tempChainMap: ChainMap.t<ChainFetcher.addressToDynContractLookup> =
+        state.chainManager.chainFetchers->ChainMap.map(_ => Js.Dict.empty())
+
       registrations->Array.forEach(({dynamicContracts}) =>
         dynamicContracts->Array.forEach(dynamicContract => {
           let chain = ChainMap.Chain.makeUnsafe(~chainId=dynamicContract.chainId)
-          let contractAddressMapping = chainMap->ChainMap.get(chain)
+          let contractAddressMapping = tempChainMap->ChainMap.get(chain)
           contractAddressMapping->Js.Dict.set(
             dynamicContract.contractAddress->Address.toString,
             dynamicContract,
           )
         })
       )
-      let preregisteredDynamicContracts =
-        state.preregisteredDynamicContracts->ChainMap.mapWithKey((chain, currentMapping) => {
-          let newMapping = chainMap->ChainMap.get(chain)
-          Utils.Dict.merge(currentMapping, newMapping)
-        })
+
+      let updatedChainFetchers = state.chainManager.chainFetchers->ChainMap.mapWithKey((
+        chain,
+        cf,
+      ) => {
+        let dynamicContractPreRegistration = switch cf.dynamicContractPreRegistration {
+        | Some(current) => current->Utils.Dict.merge(tempChainMap->ChainMap.get(chain))
+        //Should never be the case while this task is being scheduled
+        | None => tempChainMap->ChainMap.get(chain)
+        }->Some
+
+        {
+          ...cf,
+          dynamicContractPreRegistration,
+        }
+      })
+
+      let updatedChainManager = {
+        ...state.chainManager,
+        chainFetchers: updatedChainFetchers,
+      }
       {
-        ...updatedLatestBlocks,
-        preregisteredDynamicContracts,
+        ...state,
+        chainManager: updatedChainManager,
       }
     }
 
     (
-      updatedState,
+      state,
       [
         UpdateChainMetaDataAndCheckForExit(NoExit),
         PreRegisterDynamicContracts,
@@ -650,13 +664,19 @@ let actionReducer = (state: t, action: action) => {
   | StartIndexingAfterPreRegister =>
     Js.log("starting indexing after pre-register")
     let {config, chainManager, loadLayer} = state
-    let chainFetchers = chainManager.chainFetchers->ChainMap.mapWithKey((chain, cf) => {
-      let {chainConfig, logger, fetchState: {startBlock, endBlock, maxAddrInPartition}} = cf
+    let chainFetchers = chainManager.chainFetchers->ChainMap.map(cf => {
+      let {
+        chainConfig,
+        logger,
+        fetchState: {startBlock, endBlock, maxAddrInPartition},
+        dynamicContractPreRegistration,
+      } = cf
 
       ChainFetcher.make(
-        ~dynamicContractRegistrations=state.preregisteredDynamicContracts
-        ->ChainMap.get(chain)
-        ->Js.Dict.values,
+        ~dynamicContractRegistrations=dynamicContractPreRegistration->Option.mapWithDefault(
+          [],
+          Js.Dict.values,
+        ),
         ~chainConfig,
         ~lastBlockScannedHashes=ReorgDetection.LastBlockScannedHashes.empty(
           ~confirmedBlockThreshold=chainConfig.confirmedBlockThreshold,
@@ -672,9 +692,10 @@ let actionReducer = (state: t, action: action) => {
         ~numBatchesFetched=0,
         ~eventFilters=None,
         ~maxAddrInPartition,
-        ~isPreRegisteringDynamicContracts=false,
+        ~dynamicContractPreRegistration=None,
       )
     })
+
     let chainManager: ChainManager.t = {
       chainFetchers,
       arbitraryEventQueue: [],
@@ -910,9 +931,10 @@ let injectedTaskReducer = (
           ~contractAddress,
           ~contractName: Enums.ContractType.t,
         ) => {
-          state.preregisteredDynamicContracts
-          ->ChainMap.get(chain)
-          ->Js.Dict.get(contractAddress->Address.toString)
+          let chainFetcher = state.chainManager.chainFetchers->ChainMap.get(chain)
+
+          chainFetcher.dynamicContractPreRegistration
+          ->Option.flatMap(Js.Dict.get(_, contractAddress->Address.toString))
           ->Option.mapWithDefault(false, ({contractType}) => contractType == contractName)
         }
 

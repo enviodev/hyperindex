@@ -419,7 +419,7 @@ let isFetchingAtHead = self =>
 let isPreRegisteringDynamicContracts = self =>
   self.chainFetchers
   ->ChainMap.values
-  ->Array.reduce(false, (accum, cf) => accum || cf.isPreRegisteringDynamicContracts)
+  ->Array.reduce(false, (accum, cf) => accum || cf->ChainFetcher.isPreRegisteringDynamicContracts)
 
 module ExposedForTesting_Hidden = {
   let priorityQueueComparitor = priorityQueueComparitor
