@@ -194,7 +194,6 @@ let makeGetNextPage = (
 
     let logSelections = try {
       if isPreRegisteringDynamicContracts {
-        Js.log("pre-registering dynamic contracts hs query")
         getContractPreRegistrationLogSelection(~contractAddressMapping)
       } else {
         getLogSelectionOrThrow(~contractAddressMapping, ~shouldApplyWildcards)
