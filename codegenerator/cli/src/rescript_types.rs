@@ -493,7 +493,15 @@ impl RescriptTypeIdent {
             | Self::Timestamp
             | Self::SchemaEnum(_)
             | Self::GenericParam(_) => vec![],
-            Self::TypeApplication { name, .. } => vec![name.clone()],
+            Self::TypeApplication {
+                name, type_params, ..
+            } => {
+                let mut deps = vec![name.clone()];
+                for param in type_params {
+                    deps.extend(param.dependencies());
+                }
+                deps
+            }
             Self::Array(inner_type) | Self::Option(inner_type) => inner_type.dependencies(),
             Self::Tuple(inner_types) => inner_types
                 .iter()
