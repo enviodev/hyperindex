@@ -998,4 +998,29 @@ mod tests {
 
         assert_eq!(type_decl_multi.to_string(), expected);
     }
+
+    #[test]
+    fn test_recursive_type_application_dependencies() {
+        let type19 = RescriptTypeIdent::TypeApplication {
+            name: "type19".to_string(),
+            type_params: vec![RescriptTypeIdent::TypeApplication {
+                name: "type18".to_string(),
+                type_params: vec![RescriptTypeIdent::TypeApplication {
+                    name: "type17".to_string(),
+                    type_params: vec![],
+                }],
+            }],
+        };
+
+        let deps = type19.dependencies();
+
+        assert_eq!(
+            deps,
+            vec![
+                "type19".to_string(),
+                "type18".to_string(),
+                "type17".to_string()
+            ]
+        );
+    }
 }
