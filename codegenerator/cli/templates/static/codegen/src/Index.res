@@ -66,10 +66,8 @@ type mainArgs = Yargs.parsedArgs<args>
 
 let makeAppState = (globalState: GlobalState.t): EnvioInkApp.appState => {
   open Belt
-  {
-    config: globalState.config,
-    indexerStartTime: globalState.indexerStartTime,
-    chains: globalState.chainManager.chainFetchers
+  let chains =
+    globalState.chainManager.chainFetchers
     ->ChainMap.values
     ->Array.map(cf => {
       let {numEventsProcessed, fetchState, numBatchesFetched} = cf
@@ -146,7 +144,12 @@ let makeAppState = (globalState: GlobalState.t): EnvioInkApp.appState => {
           },
         }: EnvioInkApp.chainData
       )
-    }),
+    })
+  {
+    config: globalState.config,
+    indexerStartTime: globalState.indexerStartTime,
+    chains,
+    isPreRegisteringDynamicContracts: globalState.chainManager->ChainManager.isPreRegisteringDynamicContracts,
   }
 }
 
