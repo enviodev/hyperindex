@@ -493,7 +493,15 @@ impl RescriptTypeIdent {
             | Self::Timestamp
             | Self::SchemaEnum(_)
             | Self::GenericParam(_) => vec![],
-            Self::TypeApplication { name, .. } => vec![name.clone()],
+            Self::TypeApplication {
+                name, type_params, ..
+            } => {
+                let mut deps = vec![name.clone()];
+                for param in type_params {
+                    deps.extend(param.dependencies());
+                }
+                deps
+            }
             Self::Array(inner_type) | Self::Option(inner_type) => inner_type.dependencies(),
             Self::Tuple(inner_types) => inner_types
                 .iter()
@@ -989,5 +997,30 @@ mod tests {
             .to_string();
 
         assert_eq!(type_decl_multi.to_string(), expected);
+    }
+
+    #[test]
+    fn test_recursive_type_application_dependencies() {
+        let type19 = RescriptTypeIdent::TypeApplication {
+            name: "type19".to_string(),
+            type_params: vec![RescriptTypeIdent::TypeApplication {
+                name: "type18".to_string(),
+                type_params: vec![RescriptTypeIdent::TypeApplication {
+                    name: "type17".to_string(),
+                    type_params: vec![],
+                }],
+            }],
+        };
+
+        let deps = type19.dependencies();
+
+        assert_eq!(
+            deps,
+            vec![
+                "type19".to_string(),
+                "type18".to_string(),
+                "type17".to_string()
+            ]
+        );
     }
 }
