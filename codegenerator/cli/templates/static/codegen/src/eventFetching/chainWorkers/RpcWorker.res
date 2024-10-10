@@ -103,8 +103,12 @@ module Make = (
     ~logger,
     ~currentBlockHeight,
     ~setCurrentBlockHeight,
+    ~isPreRegisteringDynamicContracts,
   ) => {
     try {
+      if isPreRegisteringDynamicContracts {
+        Js.Exn.raiseError("HyperIndex RPC does not support pre registering dynamic contracts yet")
+      }
       let {
         fromBlock,
         toBlock,

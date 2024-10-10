@@ -13,6 +13,7 @@ module EventSyncState = {
     @as("block_number") blockNumber: int,
     @as("log_index") logIndex: int,
     @as("block_timestamp") blockTimestamp: int,
+    @as("is_pre_registering_dynamic_contracts") isPreRegisteringDynamicContracts: bool,
   }
 
   let table = mkTable(
@@ -22,6 +23,7 @@ module EventSyncState = {
       mkField("block_number", Integer),
       mkField("log_index", Integer),
       mkField("block_timestamp", Integer),
+      mkField("is_pre_registering_dynamic_contracts", Boolean),
     ],
   )
 }

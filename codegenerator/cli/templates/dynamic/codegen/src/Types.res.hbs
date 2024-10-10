@@ -228,26 +228,34 @@ module HandlerTypes = {
     handler: handler<'eventArgs, 'loaderReturn>,
     wildcard?: bool,
     eventFilters?: SingleOrMultiple.t<'eventFilter>,
+    preRegister?: bool,
   }
 
   @genType
   type eventConfig<'eventFilter> = {
     wildcard?: bool,
     eventFilters?: SingleOrMultiple.t<'eventFilter>,
+    preRegister?: bool,
   }
 
   module EventOptions = {
     type t = {
       isWildcard: bool,
       topicSelections: array<LogSelection.topicSelection>,
+      shouldPreRegisterDynamicContracts: bool,
     }
 
     let getDefault = (~topic0) => {
       isWildcard: false,
       topicSelections: [LogSelection.makeTopicSelection(~topic0=[topic0])->Utils.unwrapResultExn],
+      shouldPreRegisterDynamicContracts: false,
     }
 
-    let make = (~isWildcard, ~topicSelections: array<LogSelection.topicSelection>) => {
+    let make = (
+      ~isWildcard,
+      ~topicSelections: array<LogSelection.topicSelection>,
+      ~shouldPreRegisterDynamicContracts,
+    ) => {
       let topic0sGrouped = []
       let topicSelectionWithFilters = []
       topicSelections->Belt.Array.forEach(ts =>
@@ -270,6 +278,7 @@ module HandlerTypes = {
       {
         isWildcard,
         topicSelections,
+        shouldPreRegisterDynamicContracts,
       }
     }
   }
@@ -443,7 +452,7 @@ let makeEventOptions = (
 ) => {
   let module(Event) = eventMod
   open Belt
-  eventConfig->Option.map(({?wildcard, ?eventFilters}) =>
+  eventConfig->Option.map(({?wildcard, ?eventFilters, ?preRegister}) =>
     HandlerTypes.EventOptions.make(
       ~isWildcard=wildcard->Option.getWithDefault(false),
       ~topicSelections=eventFilters->Option.mapWithDefault(
@@ -454,6 +463,7 @@ let makeEventOptions = (
         ],
         v => v->Event.getTopicSelection,
       ),
+      ~shouldPreRegisterDynamicContracts=preRegister->Option.getWithDefault(false),
     )
   )
 }
@@ -466,8 +476,8 @@ let makeGetEventOptions = (
   let module(Event) = eventMod
   (loaderHandler: HandlerTypes.loaderHandler<Event.eventArgs, 'loaderReturn, Event.eventFilter>) =>
     switch loaderHandler {
-    | {wildcard: ?None, eventFilters: ?None} => None
-    | {?wildcard, ?eventFilters} =>
+    | {wildcard: ?None, eventFilters: ?None, preRegister: ?None} => None
+    | {?wildcard, ?eventFilters, ?preRegister} =>
       let topicSelections =
         eventFilters->Option.mapWithDefault(
           [
@@ -480,6 +490,7 @@ let makeGetEventOptions = (
       HandlerTypes.EventOptions.make(
         ~isWildcard=wildcard->Option.getWithDefault(false),
         ~topicSelections,
+        ~shouldPreRegisterDynamicContracts=preRegister->Option.getWithDefault(false),
       )->Some
     }
 }

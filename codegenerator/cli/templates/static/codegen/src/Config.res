@@ -41,6 +41,22 @@ type chainConfig = {
   chainWorker: module(ChainWorker.S),
 }
 
+let shouldPreRegisterDynamicContracts = (chainConfig: chainConfig) => {
+  let accum = ref(false)
+  chainConfig.contracts->Belt.Array.forEach(contract => {
+    contract.events->Belt.Array.forEach(event => {
+      if !accum.contents {
+        let module(Event) = event
+        let {shouldPreRegisterDynamicContracts} =
+          Event.handlerRegister->Types.HandlerTypes.Register.getEventOptions
+        accum := shouldPreRegisterDynamicContracts
+      }
+    })
+  })
+
+  accum.contents
+}
+
 type historyFlag = FullHistory | MinHistory
 type rollbackFlag = RollbackOnReorg | NoRollback
 type historyConfig = {rollbackFlag: rollbackFlag, historyFlag: historyFlag}

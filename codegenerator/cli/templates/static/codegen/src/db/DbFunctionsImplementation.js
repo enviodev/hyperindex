@@ -16,8 +16,9 @@ const chunkBatchQuery = async (sql, entityDataArray, queryToExecute) => {
 const commaSeparateDynamicMapQuery = (sql, dynQueryConstructors) =>
   sql`${dynQueryConstructors.map(
     (constrQuery, i) =>
-      sql`${constrQuery(sql)}${i === dynQueryConstructors.length - 1 ? sql`` : sql`, `
-        }`,
+      sql`${constrQuery(sql)}${
+        i === dynQueryConstructors.length - 1 ? sql`` : sql`, `
+      }`,
   )}`;
 
 const batchSetItemsInTableCore = (table, sql, rowDataArray) => {
@@ -101,13 +102,15 @@ module.exports.batchSetEventSyncState = (sql, entityDataArray) => {
     "block_number",
     "log_index",
     "block_timestamp",
+    "is_pre_registering_dynamic_contracts",
   )}
     ON CONFLICT(chain_id) DO UPDATE
     SET
     "chain_id" = EXCLUDED."chain_id",
     "block_number" = EXCLUDED."block_number",
     "log_index" = EXCLUDED."log_index",
-    "block_timestamp" = EXCLUDED."block_timestamp";
+    "block_timestamp" = EXCLUDED."block_timestamp",
+    "is_pre_registering_dynamic_contracts" = EXCLUDED."is_pre_registering_dynamic_contracts";
     `;
 };
 
@@ -143,7 +146,7 @@ module.exports.batchSetChainMetadata = (sql, entityDataArray) => {
   "latest_fetched_block_number" = EXCLUDED."latest_fetched_block_number",
   "timestamp_caught_up_to_head_or_endblock" = EXCLUDED."timestamp_caught_up_to_head_or_endblock",
   "block_height" = EXCLUDED."block_height";`
-    .then((res) => { })
+    .then((res) => {})
     .catch((err) => {
       console.log("errored", err);
     });
@@ -163,7 +166,7 @@ module.exports.setChainMetadataBlockHeight = (sql, entityDataArray) => {
   SET
   "chain_id" = EXCLUDED."chain_id",
   "block_height" = EXCLUDED."block_height";`
-    .then((res) => { })
+    .then((res) => {})
     .catch((err) => {
       console.log("errored", err);
     });

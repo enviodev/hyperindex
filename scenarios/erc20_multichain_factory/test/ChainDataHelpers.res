@@ -90,8 +90,15 @@ module Stubs = {
     ~chain,
     ~query,
     ~dispatchAction,
+    ~isPreRegisteringDynamicContracts,
   ) => {
-    (logger, currentBlockHeight, setCurrentBlockHeight, chainWorker)->ignore
+    (
+      logger,
+      currentBlockHeight,
+      setCurrentBlockHeight,
+      chainWorker,
+      isPreRegisteringDynamicContracts,
+    )->ignore
 
     let response = stubData->getMockChainData(chain)->MockChainData.executeQuery(query)
     dispatchAction(GlobalState.BlockRangeResponse(chain, response))
