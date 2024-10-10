@@ -229,6 +229,10 @@ packages:
     resolution: {integrity: sha512-wR+ZGUT1Jjj7LifmvHfBIAIZRwjXUYddwT6SDptBglDQkJGlMwEHv8xh76FU0W764NwWGRqoX2TeZKIdu4fD/w==}
     engines: {node: ^18.20.3 || ^20.0.0 || ^22.0.0}
 
+  '@fuel-ts/interfaces@0.94.8':
+    resolution: {integrity: sha512-gSkp6cp0g+vYK7yzoBwvW7x43AzJL6EoPE7HTHoJWUMbLPWhgqOGJtWoNnobGRO1Pxl0etmBLaVyZmrhJdVQqQ==}
+    engines: {node: ^18.20.3 || ^20.0.0 || ^22.0.0}
+
   '@fuel-ts/math@0.94.6':
     resolution: {integrity: sha512-VIgVv3Qdy4wjuR7ehlvOz+fo6WZPuoWLnACBu4xeMEwUrSZRJrDGBSG3FKBcJOBwIX9olbWseCNTccRWcLinMQ==}
     engines: {node: ^18.20.3 || ^20.0.0 || ^22.0.0}
@@ -286,8 +290,8 @@ packages:
   '@ryyppy/rescript-promise@2.1.0':
     resolution: {integrity: sha512-+dW6msBrj2Lr2hbEMX+HoWCvN89qVjl94RwbYWJgHQuj8jm/izdPC0YzxgpGoEFdeAEW2sOozoLcYHxT6o5WXQ==}
 
-  '@scure/base@1.1.8':
-    resolution: {integrity: sha512-6CyAclxj3Nb0XT7GHK6K4zK6k2xJm6E4Ft0Ohjt4WgegiFUHEtFb2CGzmPmGBwoIhrLsqNLYfLr04Y1GePrzZg==}
+  '@scure/base@1.1.9':
+    resolution: {integrity: sha512-8YKhl8GHiNI/pU2VMaofa2Tor7PJRAjwQLBBuilkJ9L5+13yVbC7JO/wS7piioAvPSwR3JKM1IJ/u4xQzbcXKg==}
 
   '@scure/bip32@1.4.0':
     resolution: {integrity: sha512-sVUpc0Vq3tXCkDGYVWGIZTRfnvu8LoTDaev7vbwh0omSvVORONr960MQWdKqJDCReIEmTj3PAr73O3aoxz7OPg==}
@@ -1598,11 +1602,13 @@ snapshots:
   '@fuel-ts/hasher@0.94.6':
     dependencies:
       '@fuel-ts/crypto': 0.94.6
-      '@fuel-ts/interfaces': 0.94.6
+      '@fuel-ts/interfaces': 0.94.8
       '@fuel-ts/utils': 0.94.6
       '@noble/hashes': 1.5.0
 
   '@fuel-ts/interfaces@0.94.6': {}
+
+  '@fuel-ts/interfaces@0.94.8': {}
 
   '@fuel-ts/math@0.94.6':
     dependencies:
@@ -1657,18 +1663,18 @@ snapshots:
 
   '@ryyppy/rescript-promise@2.1.0': {}
 
-  '@scure/base@1.1.8': {}
+  '@scure/base@1.1.9': {}
 
   '@scure/bip32@1.4.0':
     dependencies:
       '@noble/curves': 1.4.0
       '@noble/hashes': 1.4.0
-      '@scure/base': 1.1.8
+      '@scure/base': 1.1.9
 
   '@scure/bip39@1.3.0':
     dependencies:
       '@noble/hashes': 1.4.0
-      '@scure/base': 1.1.8
+      '@scure/base': 1.1.9
 
   '@tsconfig/node10@1.0.11': {}
 
