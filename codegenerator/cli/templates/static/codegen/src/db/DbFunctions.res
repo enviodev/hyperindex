@@ -207,20 +207,22 @@ module DynamicContractRegistry = {
   let contractTypeAndAddressSchema = TablesStatic.DynamicContractRegistry.schema
   let contractTypeAndAddressArraySchema = S.array(contractTypeAndAddressSchema)
 
-  ///Returns an array with 1 block number (the highest processed on the given chainId)
   @module("./DbFunctionsImplementation.js")
-  external readDynamicContractsOnChainIdAtOrBeforeBlockRaw: (
+  external readDynamicContractsOnChainIdBeforeEventIdRaw: (
     Postgres.sql,
     ~chainId: chainId,
-    ~startBlock: int,
-  ) => promise<Js.Json.t> = "readDynamicContractsOnChainIdAtOrBeforeBlock"
+    ~eventId: bigint,
+  ) => promise<Js.Json.t> = "readDynamicContractsOnChainIdBeforeEventId"
 
-  let readDynamicContractsOnChainIdAtOrBeforeBlock = (sql, ~chainId, ~startBlock) =>
-    readDynamicContractsOnChainIdAtOrBeforeBlockRaw(
+  let readDynamicContractsOnChainIdAtOrBeforeBlock = async (sql, ~chainId, ~startBlock) => {
+    let nextBlockEventId = EventUtils.packEventIndex(~blockNumber=startBlock + 1, ~logIndex=0)
+    let json = await readDynamicContractsOnChainIdBeforeEventIdRaw(
       sql,
       ~chainId,
-      ~startBlock,
-    )->Promise.thenResolve(json => json->S.parseOrRaiseWith(contractTypeAndAddressArraySchema))
+      ~eventId=nextBlockEventId,
+    )
+    json->S.parseOrRaiseWith(contractTypeAndAddressArraySchema)
+  }
 
   @module("./DbFunctionsImplementation.js")
   external deleteAllDynamicContractRegistrationsAfterEventIdentifier: (

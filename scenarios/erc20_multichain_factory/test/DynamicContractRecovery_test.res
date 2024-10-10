@@ -1,0 +1,243 @@
+open Belt
+open RescriptMocha
+
+let config = RegisterHandlers.getConfig()
+
+module Mock = {
+  let makeTransferMock = (~from, ~to, ~value): Types.ERC20.Transfer.eventArgs => {
+    from,
+    to,
+    value: value->BigInt.fromInt,
+  }
+
+  let makeTokenCreatedMock = (~token): Types.ERC20Factory.TokenCreated.eventArgs => {
+    token: token,
+  }
+
+  let mintAddress = Ethers.Constants.zeroAddress
+  let userAddress1 = Ethers.Addresses.mockAddresses[1]->Option.getExn
+
+  let mockDyamicToken1 = Ethers.Addresses.mockAddresses[3]->Option.getExn
+  let mockDyamicToken2 = Ethers.Addresses.mockAddresses[4]->Option.getExn
+
+  let deployToken1 = makeTokenCreatedMock(~token=mockDyamicToken1)
+  let deployToken2 = makeTokenCreatedMock(~token=mockDyamicToken2)
+
+  let mint50ToUser1 = makeTransferMock(~from=mintAddress, ~to=userAddress1, ~value=50)
+
+  //mock transfers from user 2 to user 1
+  let addBlocksOfTransferEvents = (
+    blocksOfTransferEventParams,
+    ~mockChainData,
+    ~mkTransferEventConstr,
+  ) =>
+    blocksOfTransferEventParams->Array.reduce(mockChainData, (accum, next) => {
+      let makeLogConstructors = next->Array.map(mkTransferEventConstr)
+      accum->MockChainData.addBlock(~makeLogConstructors)
+    })
+
+  module Chain1 = {
+    include RollbackMultichain_test.Mock.Chain1
+
+    let factoryAddress = ChainDataHelpers.ERC20Factory.getDefaultAddress(chain)
+
+    open ChainDataHelpers.ERC20
+    open ChainDataHelpers.ERC20Factory
+    let mkTransferToken1EventConstr = Transfer.mkEventConstrWithParamsAndAddress(
+      ~srcAddress=mockDyamicToken1,
+      ~params=_,
+      ...
+    )
+    let mkTransferToken2EventConstr = Transfer.mkEventConstrWithParamsAndAddress(
+      ~srcAddress=mockDyamicToken2,
+      ~params=_,
+      ...
+    )
+    let mkTokenCreatedEventConstr = TokenCreated.mkEventConstrWithParamsAndAddress(
+      ~srcAddress=factoryAddress,
+      ~params=_,
+      ...
+    )
+
+    let b0 = [deployToken1->mkTokenCreatedEventConstr]
+    let b1 = [mint50ToUser1->mkTransferToken1EventConstr, deployToken2->mkTokenCreatedEventConstr]
+    let b2 = []
+    let b3 = []
+    let b4 = []
+    let b5 = []
+    let b6 = []
+
+    let blocks = [b0, b1, b2, b3, b4, b5, b6]
+
+    let mockChainData = blocks->Array.reduce(mockChainDataEmpty, (accum, makeLogConstructors) => {
+      accum->MockChainData.addBlock(~makeLogConstructors)
+    })
+  }
+  module Chain2 = RollbackMultichain_test.Mock.Chain2
+
+  let mockChainDataMap = config.chainMap->ChainMap.mapWithKey((chain, _) =>
+    switch chain->ChainMap.Chain.toChainId {
+    | 1 => Chain1.mockChainData
+    | 137 =>
+      let empty = MockChainData.make(
+        ~chainConfig=config.chainMap->ChainMap.get(chain),
+        ~maxBlocksReturned=2,
+        ~blockTimestampInterval=25,
+      )
+      empty
+    | _ => Js.Exn.raiseError("Unexpected chain")
+    }
+  )
+
+  let getUpdateEndofBlockRangeScannedData = (
+    mcdMap,
+    ~chain,
+    ~blockNumber,
+    ~blockNumberThreshold,
+    ~blockTimestampThreshold,
+  ) => {
+    let (blockNumber, blockTimestamp, blockHash) =
+      mcdMap
+      ->ChainMap.get(chain)
+      ->MockChainData.getBlock(~blockNumber)
+      ->Option.mapWithDefault((0, 0, "0xstub"), ({blockNumber, blockTimestamp, blockHash}) => (
+        blockNumber,
+        blockTimestamp,
+        blockHash,
+      ))
+
+    GlobalState.UpdateEndOfBlockRangeScannedData({
+      blockNumberThreshold,
+      blockTimestampThreshold,
+      chain,
+      nextEndOfBlockRangeScannedData: {
+        blockNumber,
+        blockHash,
+        blockTimestamp,
+        chainId: chain->ChainMap.Chain.toChainId,
+      },
+    })
+  }
+}
+
+module Sql = RollbackMultichain_test.Sql
+
+describe("Dynamic contract restart resistance test", () => {
+  Async.before(() => {
+    //Provision the db
+    DbHelpers.runUpDownMigration()
+  })
+
+  Async.it(
+    "Indexer should restart with only the dynamic contracts up to the block that was processed",
+    async () => {
+      //Setup a chainManager with unordered multichain mode to make processing happen
+      //without blocking for the purposes of this test
+      let chainManager = {
+        ...ChainManager.makeFromConfig(~config),
+        isUnorderedMultichainMode: true,
+      }
+      let loadLayer = LoadLayer.makeWithDbConnection()
+
+      //Setup initial state stub that will be used for both
+      //initial chain data and reorg chain data
+      let initState = GlobalState.make(~config, ~chainManager, ~loadLayer)
+      let gsManager = initState->GlobalStateManager.make
+      let tasks = ref([])
+      let makeStub = ChainDataHelpers.Stubs.make(~gsManager, ~tasks, ...)
+
+      open ChainDataHelpers
+      //Stub specifically for using data from then initial chain data and functions
+      let stubDataInitial = makeStub(~mockChainDataMap=Mock.mockChainDataMap)
+      let dispatchTask = Stubs.makeDispatchTask(stubDataInitial, _)
+      let dispatchAllTasks = () => stubDataInitial->Stubs.dispatchAllTasks
+
+      //Dispatch first task of next query all chains
+      //First query will just get the height
+      await dispatchTask(NextQuery(CheckAllChains))
+
+      Assert.deepEqual(
+        [GlobalState.NextQuery(Chain(Mock.Chain1.chain)), NextQuery(Chain(Mock.Chain2.chain))],
+        stubDataInitial->Stubs.getTasks,
+        ~message="Should have completed query to get height, next tasks would be to execute block range query",
+      )
+
+      //Make the first queries (A)
+      await dispatchAllTasks()
+      Assert.deepEqual(
+        [
+          Mock.getUpdateEndofBlockRangeScannedData(
+            Mock.mockChainDataMap,
+            ~chain=Mock.Chain1.chain,
+            ~blockNumberThreshold=-199,
+            ~blockTimestampThreshold=25,
+            ~blockNumber=1,
+          ),
+          UpdateChainMetaDataAndCheckForExit(NoExit),
+          ProcessEventBatch,
+          NextQuery(Chain(Mock.Chain1.chain)),
+          NextQuery(Chain(Mock.Chain2.chain)),
+        ],
+        stubDataInitial->Stubs.getTasks,
+        ~message="Should have received a response and next tasks will be to process batch and next query",
+      )
+
+      await dispatchAllTasks()
+
+      //After this step, the dynamic contracts should be in the database but on restart
+      //Only the the first dynamic contract should be registered since we haven't processed
+      //up to the second one yet
+
+      let dynamicContractsInTable =
+        await DbFunctions.sql->Postgres.unsafe(`SELECT * FROM public.dynamic_contract_registry;`)
+
+      Assert.equal(
+        dynamicContractsInTable->Array.length,
+        2,
+        ~message="Should have 2 dynamic contracts in table",
+      )
+
+      let chainConfig = config.chainMap->ChainMap.get(ChainMap.Chain.makeUnsafe(~chainId=1))
+
+      let restartedChainFetcher = await ChainFetcher.makeFromDbState(
+        chainConfig,
+        ~maxAddrInPartition=Env.maxAddrInPartition,
+      )
+
+      let restartedFetchState =
+        restartedChainFetcher.fetchState.partitions->List.head->Option.getExn
+
+      let dynamicContracts =
+        restartedFetchState.dynamicContracts
+        ->Belt.Map.valuesToArray
+        ->Array.flatMap(set => set->Belt.Set.String.toArray)
+
+      Assert.deepEqual(
+        [Mock.mockDyamicToken1->Address.toString],
+        dynamicContracts,
+        ~message="Should have registered only the dynamic contract up to the block that was processed",
+      )
+
+      await dispatchAllTasks()
+
+      let restartedChainFetcher = await ChainFetcher.makeFromDbState(
+        chainConfig,
+        ~maxAddrInPartition=Env.maxAddrInPartition,
+      )
+
+      let restartedFetchState =
+        restartedChainFetcher.fetchState.partitions->List.head->Option.getExn
+
+      let dynamicContracts =
+        restartedFetchState.dynamicContracts
+        ->Belt.Map.valuesToArray
+        ->Array.flatMap(set => set->Belt.Set.String.toArray)
+
+      Assert.deepEqual(
+        [Mock.mockDyamicToken1->Address.toString, Mock.mockDyamicToken2->Address.toString],
+        dynamicContracts,
+        ~message="Should have registered both dynamic contracts up to the block that was processed",
+      )
+    },
+  )
+})
