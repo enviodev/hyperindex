@@ -42,19 +42,16 @@ type chainConfig = {
 }
 
 let shouldPreRegisterDynamicContracts = (chainConfig: chainConfig) => {
-  let accum = ref(false)
-  chainConfig.contracts->Belt.Array.forEach(contract => {
-    contract.events->Belt.Array.forEach(event => {
-      if !accum.contents {
-        let module(Event) = event
-        let {shouldPreRegisterDynamicContracts} =
-          Event.handlerRegister->Types.HandlerTypes.Register.getEventOptions
-        accum := shouldPreRegisterDynamicContracts
-      }
+  chainConfig.contracts->Array.some(contract => {
+    contract.events->Array.some(event => {
+      let module(Event) = event
+
+      let {shouldPreRegisterDynamicContracts} =
+        Event.handlerRegister->Types.HandlerTypes.Register.getEventOptions
+
+      shouldPreRegisterDynamicContracts
     })
   })
-
-  accum.contents
 }
 
 type historyFlag = FullHistory | MinHistory
