@@ -176,6 +176,7 @@ module type S = {
         ~logger: Pino.t,
         ~currentBlockHeight: int,
         ~setCurrentBlockHeight: int => unit,
+        ~isPreRegisteringDynamicContracts: bool,
       ) => promise<result<blockRangeFetchResponse, ErrorHandling.t>>
     }
   }

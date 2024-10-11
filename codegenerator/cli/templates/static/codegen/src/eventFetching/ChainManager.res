@@ -411,6 +411,16 @@ let createBatch = (self: t, ~maxBatchSize: int) => {
   {val, isInReorgThreshold}
 }
 
+let isFetchingAtHead = self =>
+  self.chainFetchers
+  ->ChainMap.values
+  ->Array.reduce(true, (accum, cf) => accum && cf->ChainFetcher.isFetchingAtHead)
+
+let isPreRegisteringDynamicContracts = self =>
+  self.chainFetchers
+  ->ChainMap.values
+  ->Array.reduce(false, (accum, cf) => accum || cf->ChainFetcher.isPreRegisteringDynamicContracts)
+
 module ExposedForTesting_Hidden = {
   let priorityQueueComparitor = priorityQueueComparitor
   let getComparitorFromItem = getComparitorFromItem

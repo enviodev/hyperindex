@@ -96,6 +96,38 @@ let makeGetNextPage = (
     }
   }
 
+  let contractPreregistrationEventOptions = contracts->Belt.Array.keepMap(contract => {
+    let eventsOptions = contract.events->Belt.Array.keepMap(event => {
+      let module(Event) = event
+      let eventOptions = Event.handlerRegister->Types.HandlerTypes.Register.getEventOptions
+
+      if eventOptions.shouldPreRegisterDynamicContracts {
+        Some(eventOptions)
+      } else {
+        None
+      }
+    })
+
+    switch eventsOptions {
+    | [] => None
+    | _ => (contract.name, eventsOptions)->Some
+    }
+  })
+
+  let getContractPreRegistrationLogSelection = (~contractAddressMapping): array<LogSelection.t> => {
+    contractPreregistrationEventOptions->Array.map(((contractName, eventsOptions)) => {
+      let addresses =
+        contractAddressMapping->ContractAddressingMap.getAddressesFromContractName(~contractName)
+      let topicSelections = eventsOptions->Belt.Array.flatMap(({isWildcard, topicSelections}) => {
+        switch (isWildcard, addresses) {
+        | (false, []) => [] //If it's not wildcard and there are no addresses. Skip the topic selections for this event
+        | _ => topicSelections
+        }
+      })
+      LogSelection.makeOrThrow(~addresses, ~topicSelections)
+    })
+  }
+
   let wildcardLogSelection = contracts->Belt.Array.flatMap(contract => {
     contract.events->Belt.Array.keepMap(event => {
       let module(Event) = event
@@ -142,6 +174,7 @@ let makeGetNextPage = (
     ~setCurrentBlockHeight,
     ~contractAddressMapping,
     ~shouldApplyWildcards,
+    ~isPreRegisteringDynamicContracts,
   ) => {
     //Wait for a valid range to query
     //This should never have to wait since we check that the from block is below the toBlock
@@ -160,7 +193,11 @@ let makeGetNextPage = (
     )
 
     let logSelections = try {
-      getLogSelectionOrThrow(~contractAddressMapping, ~shouldApplyWildcards)
+      if isPreRegisteringDynamicContracts {
+        getContractPreRegistrationLogSelection(~contractAddressMapping)
+      } else {
+        getLogSelectionOrThrow(~contractAddressMapping, ~shouldApplyWildcards)
+      }
     } catch {
     | exn =>
       exn->ErrorHandling.mkLogAndRaise(
@@ -278,6 +315,7 @@ module Make = (
     ~logger,
     ~currentBlockHeight,
     ~setCurrentBlockHeight,
+    ~isPreRegisteringDynamicContracts,
   ) => {
     let mkLogAndRaise = ErrorHandling.mkLogAndRaise(~logger, ...)
     try {
@@ -301,6 +339,7 @@ module Make = (
         //Only apply wildcards on the first partition and root register
         //to avoid duplicate wildcard queries
         ~shouldApplyWildcards=fetchStateRegisterId == Root && partitionId == 0, //only
+        ~isPreRegisteringDynamicContracts,
       )
 
       //set height and next from block

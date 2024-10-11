@@ -1,5 +1,6 @@
 open Belt
 
+type addressToDynContractLookup = dict<TablesStatic.DynamicContractRegistry.t>
 type t = {
   logger: Pino.t,
   fetchState: PartitionedFetchState.t,
@@ -16,6 +17,10 @@ type t = {
   //An optional list of filters to apply on event queries
   //Used for reorgs and restarts
   eventFilters: option<FetchState.eventFilters>,
+  //Currently this state applies to all chains simultaneously but it may be possible to,
+  //in the future, have a per chain state and allow individual chains to start indexing as
+  //soon as the pre registration is done
+  dynamicContractPreRegistration: option<addressToDynContractLookup>,
 }
 
 //CONSTRUCTION
@@ -34,6 +39,7 @@ let make = (
   ~numBatchesFetched,
   ~eventFilters,
   ~maxAddrInPartition,
+  ~dynamicContractPreRegistration,
 ): t => {
   let module(ChainWorker) = chainConfig.chainWorker
   logger->Logging.childInfo("Initializing ChainFetcher with " ++ ChainWorker.name ++ " worker")
@@ -60,6 +66,7 @@ let make = (
     numBatchesFetched,
     eventFilters,
     partitionsCurrentlyFetching: Belt.Set.Int.empty,
+    dynamicContractPreRegistration,
   }
 }
 
@@ -78,6 +85,9 @@ let makeFromConfig = (chainConfig: Config.chainConfig, ~maxAddrInPartition) => {
     ~confirmedBlockThreshold=chainConfig.confirmedBlockThreshold,
   )
 
+  let dynamicContractPreRegistration =
+    chainConfig->Config.shouldPreRegisterDynamicContracts ? Some(Js.Dict.empty()) : None
+
   make(
     ~staticContracts,
     ~chainConfig,
@@ -93,6 +103,7 @@ let makeFromConfig = (chainConfig: Config.chainConfig, ~maxAddrInPartition) => {
     ~eventFilters=None,
     ~dynamicContractRegistrations=[],
     ~maxAddrInPartition,
+    ~dynamicContractPreRegistration,
   )
 }
 
@@ -107,33 +118,53 @@ let makeFromDbState = async (chainConfig: Config.chainConfig, ~maxAddrInPartitio
 
   let chainMetadata = await DbFunctions.ChainMetadata.getLatestChainMetadataState(~chainId)
 
-  let startBlock = latestProcessedEvent->Option.mapWithDefault(chainConfig.startBlock, event =>
+  let (
+    startBlock: int,
+    isPreRegisteringDynamicContracts: bool,
+    eventFilters: option<FetchState.eventFilters>,
+  ) = switch latestProcessedEvent {
+  | Some(event) =>
     //start from the same block but filter out any events already processed
-    event.blockNumber
-  )
-
-  let eventFilters: option<
-    FetchState.eventFilters,
-  > = latestProcessedEvent->Option.map(event => list{
-    {
-      FetchState.filter: qItem => {
-        //Only keep events greater than the last processed event
-        (qItem.chain->ChainMap.Chain.toChainId, qItem.blockNumber, qItem.logIndex) >
-        (event.chainId, event.blockNumber, event.logIndex)
+    let eventFilters = list{
+      {
+        FetchState.filter: qItem => {
+          //Only keep events greater than the last processed event
+          (qItem.chain->ChainMap.Chain.toChainId, qItem.blockNumber, qItem.logIndex) >
+          (event.chainId, event.blockNumber, event.logIndex)
+        },
+        isValid: (~fetchState, ~chain as _) => {
+          //the filter can be cleaned up as soon as the fetch state block is ahead of the latestProcessedEvent blockNumber
+          FetchState.getLatestFullyFetchedBlock(fetchState).blockNumber <= event.blockNumber
+        },
       },
-      isValid: (~fetchState, ~chain as _) => {
-        //the filter can be cleaned up as soon as the fetch state block is ahead of the latestProcessedEvent blockNumber
-        FetchState.getLatestFullyFetchedBlock(fetchState).blockNumber <= event.blockNumber
-      },
-    },
-  })
+    }
 
-  //Add all dynamic contracts from DB
-  let dynamicContractRegistrations =
+    (event.blockNumber, event.isPreRegisteringDynamicContracts, Some(eventFilters))
+  | None => (chainConfig.startBlock, chainConfig->Config.shouldPreRegisterDynamicContracts, None)
+  }
+
+  //Get all dynamic contracts already registered on the chain
+  let dbDynamicContractRegistrations =
     await DbFunctions.sql->DbFunctions.DynamicContractRegistry.readDynamicContractsOnChainIdAtOrBeforeBlock(
       ~chainId,
       ~startBlock,
     )
+
+  let (
+    dynamicContractPreRegistration: option<addressToDynContractLookup>,
+    dynamicContractRegistrations: array<TablesStatic.DynamicContractRegistry.t>,
+  ) = if isPreRegisteringDynamicContracts {
+    let dynamicContractPreRegistration: addressToDynContractLookup = Js.Dict.empty()
+    dbDynamicContractRegistrations->Array.forEach(contract => {
+      dynamicContractPreRegistration->Js.Dict.set(
+        contract.contractAddress->Address.toString,
+        contract,
+      )
+    })
+    (Some(dynamicContractPreRegistration), [])
+  } else {
+    (None, dbDynamicContractRegistrations)
+  }
 
   let (
     firstEventBlockNumber,
@@ -186,6 +217,7 @@ let makeFromDbState = async (chainConfig: Config.chainConfig, ~maxAddrInPartitio
     ~logger,
     ~eventFilters,
     ~maxAddrInPartition,
+    ~dynamicContractPreRegistration,
   )
 }
 
@@ -359,3 +391,6 @@ let getFirstEventBlockNumber = (chainFetcher: t) =>
     chainFetcher.dbFirstEventBlockNumber,
     chainFetcher.fetchState->PartitionedFetchState.getFirstEventBlockNumber,
   )
+
+let isPreRegisteringDynamicContracts = (chainFetcher: t) =>
+  chainFetcher.dynamicContractPreRegistration->Option.isSome

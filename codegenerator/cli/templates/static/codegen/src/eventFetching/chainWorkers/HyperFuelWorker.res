@@ -303,6 +303,7 @@ module Make = (
     ~setCurrentBlockHeight,
     ~contractAddressMapping,
     ~shouldApplyWildcards,
+    ~isPreRegisteringDynamicContracts,
   ) => {
     //Wait for a valid range to query
     //This should never have to wait since we check that the from block is below the toBlock
@@ -316,7 +317,12 @@ module Make = (
     )
 
     //Instantiate each time to add new registered contract addresses
-    let recieptsSelection = getRecieptsSelection(~contractAddressMapping, ~shouldApplyWildcards)
+    let recieptsSelection = if isPreRegisteringDynamicContracts {
+      //TODO: create receipt selections for dynamic contract preregistration
+      Js.Exn.raiseError("HyperFuel does not support pre registering dynamic contracts yet")
+    } else {
+      getRecieptsSelection(~contractAddressMapping, ~shouldApplyWildcards)
+    }
 
     let startFetchingBatchTimeRef = Hrtime.makeTimer()
 
@@ -338,6 +344,7 @@ module Make = (
     ~logger,
     ~currentBlockHeight,
     ~setCurrentBlockHeight,
+    ~isPreRegisteringDynamicContracts,
   ) => {
     let mkLogAndRaise = ErrorHandling.mkLogAndRaise(~logger, ...)
     try {
@@ -354,6 +361,7 @@ module Make = (
         //Only apply wildcards on the first partition and root register
         //to avoid duplicate wildcard queries
         ~shouldApplyWildcards=fetchStateRegisterId == Root && partitionId == 0,
+        ~isPreRegisteringDynamicContracts,
       )
 
       //set height and next from block

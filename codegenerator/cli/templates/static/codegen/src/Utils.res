@@ -42,6 +42,17 @@ module Dict = {
     It's the same as `Js.Dict.get` but it doesn't have runtime overhead to check if the key exists.
    */
   external dangerouslyGetNonOption: (dict<'a>, string) => option<'a> = ""
+
+  let merge = (a: dict<'a>, b: dict<'a>) => {
+    let result = Js.Dict.empty()
+    Js.Dict.entries(a)->Js.Array2.forEach(((key, value)) => {
+      result->Js.Dict.set(key, value)
+    })
+    Js.Dict.entries(b)->Js.Array2.forEach(((key, value)) => {
+      result->Js.Dict.set(key, value)
+    })
+    result
+  }
 }
 
 module Math = {
@@ -220,8 +231,8 @@ module Schema = {
     schema->S.preprocess(s => {
       switch s.schema->S.classify {
       | Literal(Null(_))
-      // This is a workaround for Fuel Bytes type
-      | Unknown => {serializer: _ => %raw(`"null"`)}
+      | // This is a workaround for Fuel Bytes type
+      Unknown => {serializer: _ => %raw(`"null"`)}
       | Null(_)
       | Bool => {
           serializer: unknown => {
