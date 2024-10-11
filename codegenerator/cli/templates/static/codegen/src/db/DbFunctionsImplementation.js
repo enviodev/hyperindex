@@ -419,12 +419,27 @@ module.exports.deleteStaleEndOfBlockRangeScannedDataForChain = (
 module.exports.readDynamicContractsOnChainIdAtOrBeforeBlockNumber = (
   sql,
   chainId,
-  block_number,
+  blockNumber,
 ) => sql`
   SELECT *
   FROM "public"."dynamic_contract_registry"
-  WHERE registering_event_block_number <= ${block_number} 
+  WHERE registering_event_block_number <= ${blockNumber} 
   AND chain_id = ${chainId};`;
+
+module.exports.readDynamicContractsOnChainIdMatchingEvents = (
+  sql,
+  chainId,
+  preRegisterEvents, // array<{registering_event_contract_name, registering_event_name, registering_event_src_address}>
+) => {
+  return sql`
+    SELECT *
+    FROM "public"."dynamic_contract_registry"
+    WHERE chain_id = ${chainId}
+    AND (registering_event_contract_name, registering_event_name, registering_event_src_address) IN ${sql(
+    preRegisterEvents.map((item) => sql(item)),
+  )};
+  `;
+};
 
 const batchSetDynamicContractRegistryCore = (sql, entityDataArray) => {
   return sql`

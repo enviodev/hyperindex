@@ -218,6 +218,48 @@ describe("Dynamic contract restart resistance test", () => {
         ~message="Should have registered only the dynamic contract up to the block that was processed",
       )
 
+      {
+        //Test the preRegistration restart function getting all the dynamic contracts
+        let setRegisterPreRegistration: (
+          Types.HandlerTypes.Register.t<'a>,
+          bool,
+        ) => unit = %raw(`(register, bool)=> {
+          if (!register.eventOptions) {
+            register.eventOptions = {};
+          } 
+          register.eventOptions.shouldPreRegisterDynamicContracts=bool;
+        }`)
+
+        Types.ERC20Factory.TokenCreated.handlerRegister->setRegisterPreRegistration(true)
+
+        let restartedChainFetcher = await ChainFetcher.makeFromDbState(
+          chainConfig,
+          ~maxAddrInPartition=Env.maxAddrInPartition,
+        )
+
+        let restartedFetchState =
+          restartedChainFetcher.fetchState.partitions->List.head->Option.getExn
+
+        let dynamicContracts =
+          restartedFetchState.dynamicContracts
+          ->Belt.Map.valuesToArray
+          ->Array.flatMap(set => set->Belt.Set.String.toArray)
+
+        Assert.deepEqual(
+          [Mock.mockDyamicToken1->Address.toString, Mock.mockDyamicToken2->Address.toString],
+          restartedChainFetcher.dynamicContractPreRegistration->Option.getExn->Js.Dict.keys,
+          ~message="Should return all the dynamic contracts related to handler that uses preRegistration",
+        )
+
+        Assert.deepEqual(
+          [],
+          dynamicContracts,
+          ~message="Should have no dynamic contracts yet since this tests the case starting in preregistration",
+        )
+
+        Types.ERC20Factory.TokenCreated.handlerRegister->setRegisterPreRegistration(false)
+      }
+
       await dispatchAllTasks()
 
       let restartedChainFetcher = await ChainFetcher.makeFromDbState(

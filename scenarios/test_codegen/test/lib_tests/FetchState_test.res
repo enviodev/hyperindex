@@ -27,6 +27,7 @@ let makeDynContractRegistration = (
   ~logIndex=0,
   ~chainId=1,
   ~contractType=Gravatar,
+  ~registeringEventContractName="MockGravatarFactory",
   ~registeringEventName="MockCreateGravatar",
   ~registeringEventSrcAddress=mockFactoryAddress,
 ): TablesStatic.DynamicContractRegistry.t => {
@@ -39,6 +40,7 @@ let makeDynContractRegistration = (
     registeringEventBlockTimestamp: getTimestamp(~blockNumber),
     contractAddress,
     contractType,
+    registeringEventContractName,
   }
 }
 

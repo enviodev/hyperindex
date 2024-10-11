@@ -3,7 +3,7 @@ open RescriptMocha
 
 let isPrimaryKey = true
 
-describe_only("Table functions postgres interop", () => {
+describe("Table functions postgres interop", () => {
   it("Makes batch set function for entity", () => {
     let table = mkTable(
       "test_table",

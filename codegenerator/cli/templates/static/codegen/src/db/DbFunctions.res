@@ -207,6 +207,37 @@ module DynamicContractRegistry = {
     Postgres.sql,
     ~eventIdentifier: Types.eventIdentifier,
   ) => promise<unit> = "deleteAllDynamicContractRegistrationsAfterEventIdentifier"
+
+  type preRegisteringEvent = {
+    @as("registering_event_contract_name") registeringEventContractName: string,
+    @as("registering_event_name") registeringEventName: string,
+    @as("registering_event_src_address") registeringEventSrcAddress: Address.t,
+  }
+
+  @module("./DbFunctionsImplementation.js")
+  external readDynamicContractsOnChainIdMatchingEventsRaw: (
+    Postgres.sql,
+    ~chainId: int,
+    ~preRegisteringEvents: array<preRegisteringEvent>,
+  ) => promise<Js.Json.t> = "readDynamicContractsOnChainIdMatchingEvents"
+
+  let readDynamicContractsOnChainIdMatchingEvents = async (
+    sql,
+    ~chainId,
+    ~preRegisteringEvents,
+  ) => {
+    switch await readDynamicContractsOnChainIdMatchingEventsRaw(
+      sql,
+      ~chainId,
+      ~preRegisteringEvents,
+    ) {
+    | exception exn =>
+      exn->ErrorHandling.mkLogAndRaise(
+        ~msg="Failed to read dynamic contracts on chain id matching events",
+      )
+    | json => json->S.parseOrRaiseWith(TablesStatic.DynamicContractRegistry.rowsSchema)
+    }
+  }
 }
 
 type entityHistoryItem = {
