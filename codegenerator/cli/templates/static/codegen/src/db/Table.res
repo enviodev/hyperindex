@@ -197,12 +197,12 @@ module PostgresInterop = {
     `(sql, rows) => {
       return sql\`
         INSERT INTO "public"."${table.tableName}"
-        \${sql(rows, ${fieldNamesInQuotes->Js.Array2.joinWith(", \n")})}
+        \${sql(rows, ${fieldNamesInQuotes->Js.Array2.joinWith(", ")})}
         ON CONFLICT(${table->getPrimaryKeyFieldNames->Js.Array2.joinWith(", ")}) DO UPDATE
         SET
         ${fieldNamesInQuotes
       ->Array.map(fieldNameInQuotes => `${fieldNameInQuotes} = EXCLUDED.${fieldNameInQuotes}`)
-      ->Js.Array2.joinWith(", \n")};\`
+      ->Js.Array2.joinWith(", ")};\`
     }`
   }
 
