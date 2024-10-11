@@ -94,4 +94,28 @@ describe_only("Table functions postgres interop", () => {
 
     Assert.equal(batchSetFnString, expected)
   })
+
+  it("Does not try to set defaults", () => {
+    let table = mkTable(
+      "test_table",
+      ~fields=[
+        mkField("id", Text, ~isPrimaryKey),
+        mkField("field_a", Numeric),
+        mkField("db_write_timestamp", TimestampWithoutTimezone, ~default="CURRENT_TIMESTAMP"),
+      ],
+    )
+
+    let batchSetFnString = table->PostgresInterop.makeBatchSetFnString
+
+    let expected = `(sql, rows) => {
+      return sql\`
+        INSERT INTO "public"."test_table"
+        \${sql(rows, "id", "field_a")}
+        ON CONFLICT(id) DO UPDATE
+        SET
+        "id" = EXCLUDED."id", "field_a" = EXCLUDED."field_a";\`
+    }`
+
+    Assert.equal(batchSetFnString, expected)
+  })
 })

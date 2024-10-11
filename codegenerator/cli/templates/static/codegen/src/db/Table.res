@@ -111,6 +111,14 @@ let getFields = table =>
     }
   )
 
+let getNonDefaultFields = table =>
+  table.fields->Array.keepMap(field =>
+    switch field {
+    | Field(field) if field.defaultValue->Option.isNone => Some(field)
+    | _ => None
+    }
+  )
+
 let getLinkedEntityFields = table =>
   table.fields->Array.keepMap(field =>
     switch field {
@@ -131,6 +139,10 @@ let getDerivedFromFields = table =>
 
 let getFieldNames = table => {
   table->getFields->Array.map(getDbFieldName)
+}
+
+let getNonDefaultFieldNames = table => {
+  table->getNonDefaultFields->Array.map(getDbFieldName)
 }
 
 let getFieldByName = (table, fieldNameSearch) =>
@@ -193,7 +205,8 @@ module PostgresInterop = {
   external eval: string => 'a = "eval"
 
   let makeBatchSetFnString = (table: table) => {
-    let fieldNamesInQuotes = table->getFieldNames->Array.map(fieldName => `"${fieldName}"`)
+    let fieldNamesInQuotes =
+      table->getNonDefaultFieldNames->Array.map(fieldName => `"${fieldName}"`)
     `(sql, rows) => {
       return sql\`
         INSERT INTO "public"."${table.tableName}"
