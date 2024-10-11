@@ -79,6 +79,7 @@ let makeDynamicContractRegisterFn = (~contextEnv: t, ~contractName, ~inMemorySto
     registeringEventBlockNumber: blockNumber,
     registeringEventLogIndex: logIndex,
     registeringEventName: eventBatchQueueItem.eventName,
+    registeringEventContractName: eventBatchQueueItem.contractName,
     registeringEventSrcAddress: eventBatchQueueItem.event.srcAddress,
     registeringEventBlockTimestamp: timestamp,
     contractAddress,
