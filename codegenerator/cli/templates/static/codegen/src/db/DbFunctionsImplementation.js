@@ -16,9 +16,8 @@ const chunkBatchQuery = async (sql, entityDataArray, queryToExecute) => {
 const commaSeparateDynamicMapQuery = (sql, dynQueryConstructors) =>
   sql`${dynQueryConstructors.map(
     (constrQuery, i) =>
-      sql`${constrQuery(sql)}${
-        i === dynQueryConstructors.length - 1 ? sql`` : sql`, `
-      }`,
+      sql`${constrQuery(sql)}${i === dynQueryConstructors.length - 1 ? sql`` : sql`, `
+        }`,
   )}`;
 
 const batchSetItemsInTableCore = (table, sql, rowDataArray) => {
@@ -146,7 +145,7 @@ module.exports.batchSetChainMetadata = (sql, entityDataArray) => {
   "latest_fetched_block_number" = EXCLUDED."latest_fetched_block_number",
   "timestamp_caught_up_to_head_or_endblock" = EXCLUDED."timestamp_caught_up_to_head_or_endblock",
   "block_height" = EXCLUDED."block_height";`
-    .then((res) => {})
+    .then((res) => { })
     .catch((err) => {
       console.log("errored", err);
     });
@@ -166,7 +165,7 @@ module.exports.setChainMetadataBlockHeight = (sql, entityDataArray) => {
   SET
   "chain_id" = EXCLUDED."chain_id",
   "block_height" = EXCLUDED."block_height";`
-    .then((res) => {})
+    .then((res) => { })
     .catch((err) => {
       console.log("errored", err);
     });
@@ -326,22 +325,19 @@ module.exports.deleteAllEntityHistoryAfterEventIdentifier = async (
 `;
 };
 
-const EventUtils = require("../EventUtils.bs.js");
 module.exports.deleteAllDynamicContractRegistrationsAfterEventIdentifier =
   async (sql, { blockTimestamp, chainId, blockNumber, logIndex }) => {
-    const eventId = EventUtils.packEventIndexFromRecord({
-      blockNumber,
-      logIndex,
-    });
-
     return await sql`
       DELETE FROM "public"."dynamic_contract_registry"
       WHERE 
-        block_timestamp > ${blockTimestamp} OR
-        (block_timestamp = ${blockTimestamp} AND chain_id > ${chainId}) OR
-        (block_timestamp = ${blockTimestamp} AND chain_id = ${chainId} AND event_id > ${eventId});
+        registering_event_block_timestamp > ${blockTimestamp} OR
+        (registering_event_block_timestamp = ${blockTimestamp} AND chain_id > ${chainId}) OR
+        (registering_event_block_timestamp = ${blockTimestamp} AND chain_id = ${chainId} AND registering_event_block_number > ${blockNumber}) OR
+        (registering_event_block_timestamp = ${blockTimestamp} AND chain_id = ${chainId} AND registering_event_block_number = ${blockNumber} AND registering_event_log_index > ${logIndex});
       `;
   };
+
+const EventUtils = require("../EventUtils.bs.js");
 
 module.exports.deleteAllRawEventsAfterEventIdentifier = async (
   sql,
@@ -420,23 +416,15 @@ module.exports.deleteStaleEndOfBlockRangeScannedDataForChain = (
     ;`;
 };
 
-module.exports.readDynamicContractsOnChainIdBeforeEventId = (
+module.exports.readDynamicContractsOnChainIdAtOrBeforeBlockNumber = (
   sql,
   chainId,
-  eventId,
+  block_number,
 ) => sql`
   SELECT *
   FROM "public"."dynamic_contract_registry"
-  WHERE event_id < ${eventId} AND chain_id = ${chainId};`;
-
-//Start db operations dynamic_contract_registry
-module.exports.readDynamicContractRegistryEntities = (
-  sql,
-  entityIdArray,
-) => sql`
-  SELECT *
-  FROM "public"."dynamic_contract_registry"
-  WHERE (chain_id, contract_address) IN ${sql(entityIdArray)}`;
+  WHERE registering_event_block_number <= ${block_number} 
+  AND chain_id = ${chainId};`;
 
 const batchSetDynamicContractRegistryCore = (sql, entityDataArray) => {
   return sql`
@@ -444,15 +432,22 @@ const batchSetDynamicContractRegistryCore = (sql, entityDataArray) => {
   ${sql(
     entityDataArray,
     "chain_id",
-    "event_id",
-    "block_timestamp",
+    "registering_event_block_number",
+    "registering_event_log_index",
+    "registering_event_block_timestamp",
+    "registering_event_src_address",
+    "registering_event_name",
     "contract_address",
     "contract_type",
   )}
     ON CONFLICT(chain_id, contract_address) DO UPDATE
     SET
     "chain_id" = EXCLUDED."chain_id",
-    "event_id" = EXCLUDED."event_id",
+    "registering_event_block_number" = EXCLUDED."registering_event_block_number",
+    "registering_event_log_index" = EXCLUDED."registering_event_log_index",
+    "registering_event_block_timestamp" = EXCLUDED."registering_event_block_timestamp",
+    "registering_event_src_address" = EXCLUDED."registering_event_src_address",
+    "registering_event_name" = EXCLUDED."registering_event_name",
     "contract_address" = EXCLUDED."contract_address",
     "contract_type" = EXCLUDED."contract_type";`;
 };
@@ -465,10 +460,6 @@ module.exports.batchSetDynamicContractRegistry = (sql, entityDataArray) => {
   );
 };
 
-module.exports.batchDeleteDynamicContractRegistry = (sql, entityIdArray) => sql`
-  DELETE
-  FROM "public"."dynamic_contract_registry"
-  WHERE (chain_id, contract_address) IN ${sql(entityIdArray)};`;
 // end db operations for dynamic_contract_registry
 
 module.exports.getRollbackDiff = (

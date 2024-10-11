@@ -184,44 +184,22 @@ module RawEvents = {
 }
 
 module DynamicContractRegistry = {
-  type contractAddress = Address.t
-  type dynamicContractRegistryRowId = (chainId, contractAddress)
-  @module("./DbFunctionsImplementation.js")
-  external batchSet: (
-    Postgres.sql,
-    array<TablesStatic.DynamicContractRegistry.t>,
-  ) => promise<unit> = "batchSetDynamicContractRegistry"
+  let batchSet = TablesStatic.DynamicContractRegistry.batchSet
 
   @module("./DbFunctionsImplementation.js")
-  external batchDelete: (Postgres.sql, array<dynamicContractRegistryRowId>) => promise<unit> =
-    "batchDeleteDynamicContractRegistry"
-
-  @module("./DbFunctionsImplementation.js")
-  external readEntities: (
-    Postgres.sql,
-    array<dynamicContractRegistryRowId>,
-  ) => promise<array<Js.Json.t>> = "readDynamicContractRegistryEntities"
-
-  type contractTypeAndAddress = TablesStatic.DynamicContractRegistry.t
-
-  let contractTypeAndAddressSchema = TablesStatic.DynamicContractRegistry.schema
-  let contractTypeAndAddressArraySchema = S.array(contractTypeAndAddressSchema)
-
-  @module("./DbFunctionsImplementation.js")
-  external readDynamicContractsOnChainIdBeforeEventIdRaw: (
+  external readDynamicContractsOnChainIdAtOrBeforeBlockNumberRaw: (
     Postgres.sql,
     ~chainId: chainId,
-    ~eventId: bigint,
-  ) => promise<Js.Json.t> = "readDynamicContractsOnChainIdBeforeEventId"
+    ~blockNumber: int,
+  ) => promise<Js.Json.t> = "readDynamicContractsOnChainIdAtOrBeforeBlockNumber"
 
   let readDynamicContractsOnChainIdAtOrBeforeBlock = async (sql, ~chainId, ~startBlock) => {
-    let nextBlockEventId = EventUtils.packEventIndex(~blockNumber=startBlock + 1, ~logIndex=0)
-    let json = await readDynamicContractsOnChainIdBeforeEventIdRaw(
+    let json = await readDynamicContractsOnChainIdAtOrBeforeBlockNumberRaw(
       sql,
       ~chainId,
-      ~eventId=nextBlockEventId,
+      ~blockNumber=startBlock,
     )
-    json->S.parseOrRaiseWith(contractTypeAndAddressArraySchema)
+    json->S.parseOrRaiseWith(TablesStatic.DynamicContractRegistry.rowsSchema)
   }
 
   @module("./DbFunctionsImplementation.js")

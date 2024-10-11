@@ -627,7 +627,7 @@ let getEarliestEvent = (self: t) => {
 let makeInternal = (
   ~registerType,
   ~staticContracts,
-  ~dynamicContractRegistrations: array<DbFunctions.DynamicContractRegistry.contractTypeAndAddress>,
+  ~dynamicContractRegistrations: array<TablesStatic.DynamicContractRegistry.t>,
   ~startBlock,
   ~isFetchingAtHead,
   ~logger,
@@ -649,7 +649,7 @@ let makeInternal = (
 
   let dynamicContracts = dynamicContractRegistrations->Array.reduce(DynamicContractsMap.empty, (
     accum,
-    {contractType, contractAddress, eventId},
+    {contractType, contractAddress, registeringEventBlockNumber, registeringEventLogIndex},
   ) => {
     //add address to contract address mapping
     contractAddressMapping->ContractAddressingMap.addAddress(
@@ -657,7 +657,10 @@ let makeInternal = (
       ~address=contractAddress,
     )
 
-    let dynamicContractId = EventUtils.unpackEventIndex(eventId)
+    let dynamicContractId: dynamicContractId = {
+      blockNumber: registeringEventBlockNumber,
+      logIndex: registeringEventLogIndex,
+    }
 
     accum->DynamicContractsMap.addAddress(dynamicContractId, contractAddress)
   })

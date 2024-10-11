@@ -186,3 +186,52 @@ let getCompositeIndices = (table): array<array<string>> => {
   ->getUnfilteredCompositeIndicesUnsafe
   ->Array.keep(ind => ind->Array.length > 1)
 }
+
+module PostgresInterop = {
+  type pgFn<'payload, 'return> = (Postgres.sql, 'payload) => promise<'return>
+  type batchSetFn<'a> = (Postgres.sql, array<'a>) => promise<unit>
+  external eval: string => 'a = "eval"
+
+  let makeBatchSetFnString = (table: table) => {
+    let fieldNamesInQuotes = table->getFieldNames->Array.map(fieldName => `"${fieldName}"`)
+    `(sql, rows) => {
+      return sql\`
+        INSERT INTO "public"."${table.tableName}"
+        \${sql(rows, ${fieldNamesInQuotes->Js.Array2.joinWith(", \n")})}
+        ON CONFLICT(${table->getPrimaryKeyFieldNames->Js.Array2.joinWith(", ")}) DO UPDATE
+        SET
+        ${fieldNamesInQuotes
+      ->Array.map(fieldNameInQuotes => `${fieldNameInQuotes} = EXCLUDED.${fieldNameInQuotes}`)
+      ->Js.Array2.joinWith(", \n")};\`
+    }`
+  }
+
+  let chunkBatchQuery = async (
+    sql,
+    entityDataArray: array<'entity>,
+    queryToExecute: pgFn<array<'entity>, 'return>,
+    ~maxItemsPerQuery=500,
+  ) => {
+    let responses = []
+    let i = ref(0)
+    let shouldContinue = () => i.contents < entityDataArray->Array.length
+    // Split entityDataArray into chunks of maxItemsPerQuery
+    while shouldContinue() {
+      let chunk =
+        entityDataArray->Js.Array2.slice(~start=i.contents, ~end_=i.contents + maxItemsPerQuery)
+      let response = await queryToExecute(sql, chunk)
+      responses->Js.Array2.push(response)->ignore
+      i := i.contents + maxItemsPerQuery
+    }
+    responses
+  }
+
+  let makeBatchSetFn = (~table, ~rowsSchema: S.t<array<'a>>): batchSetFn<'a> => {
+    let batchSetFn: pgFn<array<Js.Json.t>, unit> = table->makeBatchSetFnString->eval
+    async (sql, rows) => {
+      let rowsJson =
+        rows->S.serializeOrRaiseWith(rowsSchema)->(Utils.magic: Js.Json.t => array<Js.Json.t>)
+      let _res = await chunkBatchQuery(sql, rowsJson, batchSetFn)
+    }
+  }
+}

@@ -148,30 +148,43 @@ module DynamicContractRegistry = {
   @genType
   type t = {
     @as("chain_id") chainId: int,
-    @as("event_id") eventId: bigint,
-    @as("block_timestamp") blockTimestamp: int,
+    @as("registering_event_block_number") registeringEventBlockNumber: int,
+    @as("registering_event_log_index") registeringEventLogIndex: int,
+    @as("registering_event_name") registeringEventName: string,
+    @as("registering_event_src_address") registeringEventSrcAddress: Address.t,
+    @as("registering_event_block_timestamp") registeringEventBlockTimestamp: int,
     @as("contract_address") contractAddress: Address.t,
     @as("contract_type") contractType: Enums.ContractType.t,
   }
 
-  let schema = S.object(s => {
-    chainId: s.field("chain_id", S.int),
-    eventId: s.field("event_id", BigInt.schema),
-    blockTimestamp: s.field("block_timestamp", S.int),
-    contractAddress: s.field("contract_address", Address.schema),
-    contractType: s.field("contract_type", Enums.ContractType.schema),
+  let schema = S.schema(s => {
+    chainId: s.matches(S.int),
+    registeringEventBlockNumber: s.matches(S.int),
+    registeringEventLogIndex: s.matches(S.int),
+    registeringEventName: s.matches(S.string),
+    registeringEventSrcAddress: s.matches(Address.schema),
+    registeringEventBlockTimestamp: s.matches(S.int),
+    contractAddress: s.matches(Address.schema),
+    contractType: s.matches(Enums.ContractType.schema),
   })
+
+  let rowsSchema = S.array(schema)
 
   let table = mkTable(
     "dynamic_contract_registry",
     ~fields=[
       mkField("chain_id", Integer, ~isPrimaryKey),
-      mkField("event_id", Numeric),
-      mkField("block_timestamp", Integer),
+      mkField("registering_event_block_number", Integer),
+      mkField("registering_event_log_index", Integer),
+      mkField("registering_event_block_timestamp", Integer),
+      mkField("registering_event_name", Text),
+      mkField("registering_event_src_address", Text),
       mkField("contract_address", Text, ~isPrimaryKey),
-      mkField("contract_type", Custom(ContractType.enum.name)),
+      mkField("contract_type", Custom(Enums.ContractType.enum.name)),
     ],
   )
+
+  let batchSet = PostgresInterop.makeBatchSetFn(~table, ~rowsSchema)
 }
 
 module EntityHistory = {
