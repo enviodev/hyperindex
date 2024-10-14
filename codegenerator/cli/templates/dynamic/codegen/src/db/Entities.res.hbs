@@ -74,14 +74,14 @@ module EntityHistory = {
         mkField(fieldName, Integer, ~isNullable)
       )
 
-    let entity_id = "entity_id"
+    let id = "id"
 
     let dataFields = table.fields->Belt.Array.keepMap(field =>
       switch field {
       | Field(field) =>
         switch field.fieldName {
-        //entity_id is not nullable and should be part of the pk
-        | "id" => {...field, fieldName: entity_id, isPrimaryKey: true}->Field->Some
+        //id is not nullable and should be part of the pk
+        | "id" => {...field, fieldName: id, isPrimaryKey: true}->Field->Some
         //db_write_timestamp can be removed for this. TODO: remove this when we depracate
         //automatic db_write_timestamp creation
         | "db_write_timestamp" => None
@@ -110,8 +110,10 @@ module EntityHistory = {
     )
 
     let createInsertFnQuery = {
-      let insertFnName = `insert_${table.tableName}`
+      let insertFnName = `"insert_${table.tableName}"`
       let historRowArg = "history_row"
+      let historyTablePath = `"public"."${historyTableName}"`
+      let originTablePath = `"public"."${originTableName}"`
 
       let previousHistoryFieldsAreNullStr =
         previousChangeFieldNames
@@ -129,7 +131,7 @@ module EntityHistory = {
         dataFieldNamesDoubleQuoted,
       ])
 
-      `CREATE OR REPLACE FUNCTION ${insertFnName}(${historRowArg})
+      `CREATE OR REPLACE FUNCTION ${insertFnName}(${historRowArg} ${historyTablePath})
       RETURNS void AS $$
       DECLARE
         v_previous_record RECORD;
@@ -137,10 +139,10 @@ module EntityHistory = {
       BEGIN
         -- Check if previous values are not provided
         IF ${previousHistoryFieldsAreNullStr} THEN
-          -- Find the most recent record for the same entity_type and entity_id
+          -- Find the most recent record for the same id
           SELECT ${currentChangeFieldNamesCommaSeparated} INTO v_previous_record
-          FROM ${historyTableName}
-          WHERE ${entity_id} = ${historRowArg}.${entity_id} 
+          FROM ${historyTablePath}
+          WHERE ${id} = ${historRowArg}.${id}
           ORDER BY ${currentChangeFieldNames
         ->Belt.Array.map(fieldName => fieldName ++ " DESC")
         ->Js.Array2.joinWith(", ")}
@@ -154,10 +156,10 @@ module EntityHistory = {
         })
         ->Js.Array2.joinWith(" ")}
             ElSE
-            -- Check if a value for the entity_id exists in the origin table and if so, insert a history row for it.
-            SELECT ${dataFieldNamesCommaSeparated} FROM ${originTableName} WHERE id = ${historRowArg}.${entity_id} INTO v_origin_record;
+            -- Check if a value for the id exists in the origin table and if so, insert a history row for it.
+            SELECT ${dataFieldNamesCommaSeparated} FROM ${originTablePath} WHERE id = ${historRowArg}.${id} INTO v_origin_record;
             IF FOUND THEN
-              INSERT INTO ${historyTableName} (${currentChangeFieldNamesCommaSeparated}, ${dataFieldNamesCommaSeparated})
+              INSERT INTO ${historyTablePath} (${currentChangeFieldNamesCommaSeparated}, ${dataFieldNamesCommaSeparated})
               -- SET the current change data fields to 0 since we don't know what they were
               -- and it doesn't matter provided they are less than any new values
               VALUES (${currentChangeFieldNames
@@ -175,7 +177,7 @@ module EntityHistory = {
           END IF;
         END IF;
 
-        INSERT INTO ${historyTableName} (${allFieldNames->Js.Array2.joinWith(", ")})
+        INSERT INTO ${historyTablePath} (${allFieldNames->Js.Array2.joinWith(", ")})
         VALUES (${allFieldNames
         ->Belt.Array.map(fieldName => `${historRowArg}.${fieldName}`)
         ->Js.Array2.joinWith(", ")});
