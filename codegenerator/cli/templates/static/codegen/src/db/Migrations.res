@@ -446,8 +446,9 @@ let runUpMigrations = async (~shouldExit) => {
     )
   })
 
+  let allEntityHistoryTables = Entities.allEntityHistory->Belt.Array.map(table => table.table)
   //Create all tables with indices
-  await [TablesStatic.allTables, Entities.allTables]
+  await [TablesStatic.allTables, Entities.allTables, allEntityHistoryTables]
   ->Belt.Array.concatMany
   ->awaitEach(async table => {
     await creatTableIfNotExists(DbFunctions.sql, table)->handleFailure(
@@ -456,6 +457,12 @@ let runUpMigrations = async (~shouldExit) => {
     await createTableIndices(DbFunctions.sql, table)->handleFailure(
       ~msg=`EE800: Error creating ${table.tableName} indices`,
     )
+  })
+
+  await Entities.allEntityHistory->awaitEach(async entityHistory => {
+    await sql
+    ->Postgres.unsafe(entityHistory.createInsertFnQuery)
+    ->handleFailure(~msg=`EE800: Error creating ${entityHistory.table.tableName} insert function`)
   })
 
   //Create extra entity history tables
