@@ -118,7 +118,7 @@ let makeFromDbState = async (chainConfig: Config.chainConfig, ~maxAddrInPartitio
 
   let chainMetadata = await DbFunctions.ChainMetadata.getLatestChainMetadataState(~chainId)
 
-  let shouldPreRegisterDynamicContracts = chainConfig->Config.shouldPreRegisterDynamicContracts
+  let preRegisterDynamicContracts = chainConfig->Config.shouldPreRegisterDynamicContracts
 
   let (
     startBlock: int,
@@ -142,20 +142,20 @@ let makeFromDbState = async (chainConfig: Config.chainConfig, ~maxAddrInPartitio
     }
 
     (event.blockNumber, event.isPreRegisteringDynamicContracts, Some(eventFilters))
-  | None => (chainConfig.startBlock, shouldPreRegisterDynamicContracts, None)
+  | None => (chainConfig.startBlock, preRegisterDynamicContracts, None)
   }
 
   //Get all dynamic contracts already registered on the chain
-  let dbDynamicContractRegistrations = if shouldPreRegisterDynamicContracts {
+  let dbDynamicContractRegistrations = if preRegisterDynamicContracts {
     //An array of records containing srcAddress, eventName, contractName for each contract
     //address & event that should be pre registered
     let preRegisteringEvents = chainConfig.contracts->Array.flatMap(contract =>
       contract.events->Array.flatMap(eventMod => {
         let module(Event) = eventMod
-        let {shouldPreRegisterDynamicContracts} =
+        let {preRegisterDynamicContracts} =
           Event.handlerRegister->Types.HandlerTypes.Register.getEventOptions
 
-        if shouldPreRegisterDynamicContracts {
+        if preRegisterDynamicContracts {
           contract.addresses->Belt.Array.map(
             address => {
               {
