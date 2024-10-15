@@ -204,8 +204,10 @@ describe("Dynamic contract restart resistance test", () => {
         ~maxAddrInPartition=Env.maxAddrInPartition,
       )
 
-      let restartedFetchState =
-        restartedChainFetcher.fetchState.partitions->List.head->Option.getExn
+      let restartedFetchState = switch restartedChainFetcher.fetchState.partitions->List.head {
+      | Some(partition) => partition
+      | None => failwith("No partitions found in restarted chain fetcher")
+      }
 
       let dynamicContracts =
         restartedFetchState.dynamicContracts
@@ -223,22 +225,27 @@ describe("Dynamic contract restart resistance test", () => {
         let setRegisterPreRegistration: (
           Types.HandlerTypes.Register.t<'a>,
           bool,
-        ) => unit = %raw(`(register, bool)=> {
-          if (!register.eventOptions) {
+        ) => unit => unit = %raw(`(register, bool)=> {
+          const eventOptions = register.eventOptions;
+          if (!eventOptions) {
             register.eventOptions = {};
           } 
-          register.eventOptions.shouldPreRegisterDynamicContracts=bool;
+          register.eventOptions.preRegisterDynamicContracts=bool;
+          return () => register.eventOptions = eventOptions;
         }`)
 
-        Types.ERC20Factory.TokenCreated.handlerRegister->setRegisterPreRegistration(true)
+        let resetEventOptionsToOriginal =
+          Types.ERC20Factory.TokenCreated.handlerRegister->setRegisterPreRegistration(true)
 
         let restartedChainFetcher = await ChainFetcher.makeFromDbState(
           chainConfig,
           ~maxAddrInPartition=Env.maxAddrInPartition,
         )
 
-        let restartedFetchState =
-          restartedChainFetcher.fetchState.partitions->List.head->Option.getExn
+        let restartedFetchState = switch restartedChainFetcher.fetchState.partitions->List.head {
+        | Some(partition) => partition
+        | None => failwith("No partitions found in restarted chain fetcher with")
+        }
 
         let dynamicContracts =
           restartedFetchState.dynamicContracts
@@ -256,8 +263,7 @@ describe("Dynamic contract restart resistance test", () => {
           dynamicContracts,
           ~message="Should have no dynamic contracts yet since this tests the case starting in preregistration",
         )
-
-        Types.ERC20Factory.TokenCreated.handlerRegister->setRegisterPreRegistration(false)
+        resetEventOptionsToOriginal()
       }
 
       await dispatchAllTasks()
