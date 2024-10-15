@@ -71,14 +71,17 @@ let makeDynamicContractRegisterFn = (~contextEnv: t, ~contractName, ~inMemorySto
 
   {{/if}}
   let {eventBatchQueueItem, addedDynamicContractRegistrations} = contextEnv
-  let {chain, timestamp} = eventBatchQueueItem
+  let {chain, timestamp, blockNumber, logIndex} = eventBatchQueueItem
 
-  let eventId = eventBatchQueueItem->getEventId
   let chainId = chain->ChainMap.Chain.toChainId
   let dynamicContractRegistration: TablesStatic.DynamicContractRegistry.t = {
     chainId,
-    eventId,
-    blockTimestamp: timestamp,
+    registeringEventBlockNumber: blockNumber,
+    registeringEventLogIndex: logIndex,
+    registeringEventName: eventBatchQueueItem.eventName,
+    registeringEventContractName: eventBatchQueueItem.contractName,
+    registeringEventSrcAddress: eventBatchQueueItem.event.srcAddress,
+    registeringEventBlockTimestamp: timestamp,
     contractAddress,
     contractType: contractName,
   }

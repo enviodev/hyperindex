@@ -46,10 +46,10 @@ let shouldPreRegisterDynamicContracts = (chainConfig: chainConfig) => {
     contract.events->Array.some(event => {
       let module(Event) = event
 
-      let {shouldPreRegisterDynamicContracts} =
+      let {preRegisterDynamicContracts} =
         Event.handlerRegister->Types.HandlerTypes.Register.getEventOptions
 
-      shouldPreRegisterDynamicContracts
+      preRegisterDynamicContracts
     })
   })
 }

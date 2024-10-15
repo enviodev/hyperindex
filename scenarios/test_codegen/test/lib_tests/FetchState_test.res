@@ -13,6 +13,7 @@ let mockAddress1 = TestHelpers.Addresses.mockAddresses[0]->Option.getExn
 let mockAddress2 = TestHelpers.Addresses.mockAddresses[1]->Option.getExn
 let mockAddress3 = TestHelpers.Addresses.mockAddresses[2]->Option.getExn
 let mockAddress4 = TestHelpers.Addresses.mockAddresses[3]->Option.getExn
+let mockFactoryAddress = TestHelpers.Addresses.mockAddresses[4]->Option.getExn
 
 let getTimestamp = (~blockNumber) => blockNumber * 15
 let getBlockData = (~blockNumber) => {
@@ -26,20 +27,28 @@ let makeDynContractRegistration = (
   ~logIndex=0,
   ~chainId=1,
   ~contractType=Gravatar,
+  ~registeringEventContractName="MockGravatarFactory",
+  ~registeringEventName="MockCreateGravatar",
+  ~registeringEventSrcAddress=mockFactoryAddress,
 ): TablesStatic.DynamicContractRegistry.t => {
   {
     chainId,
-    eventId: EventUtils.packEventIndex(~blockNumber, ~logIndex),
-    blockTimestamp: getTimestamp(~blockNumber),
+    registeringEventBlockNumber: blockNumber,
+    registeringEventLogIndex: logIndex,
+    registeringEventName,
+    registeringEventSrcAddress,
+    registeringEventBlockTimestamp: getTimestamp(~blockNumber),
     contractAddress,
     contractType,
+    registeringEventContractName,
   }
 }
 
 let getDynContractId = (
-  d: TablesStatic.DynamicContractRegistry.t,
+  {registeringEventBlockNumber, registeringEventLogIndex}: TablesStatic.DynamicContractRegistry.t,
 ): FetchState.dynamicContractId => {
-  EventUtils.unpackEventIndex(d.eventId)
+  blockNumber: registeringEventBlockNumber,
+  logIndex: registeringEventLogIndex,
 }
 
 describe("FetchState.fetchState", () => {

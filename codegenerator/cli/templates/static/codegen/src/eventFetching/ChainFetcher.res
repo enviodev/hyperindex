@@ -118,6 +118,8 @@ let makeFromDbState = async (chainConfig: Config.chainConfig, ~maxAddrInPartitio
 
   let chainMetadata = await DbFunctions.ChainMetadata.getLatestChainMetadataState(~chainId)
 
+  let preRegisterDynamicContracts = chainConfig->Config.shouldPreRegisterDynamicContracts
+
   let (
     startBlock: int,
     isPreRegisteringDynamicContracts: bool,
@@ -140,15 +142,49 @@ let makeFromDbState = async (chainConfig: Config.chainConfig, ~maxAddrInPartitio
     }
 
     (event.blockNumber, event.isPreRegisteringDynamicContracts, Some(eventFilters))
-  | None => (chainConfig.startBlock, chainConfig->Config.shouldPreRegisterDynamicContracts, None)
+  | None => (chainConfig.startBlock, preRegisterDynamicContracts, None)
   }
 
   //Get all dynamic contracts already registered on the chain
-  let dbDynamicContractRegistrations =
+  let dbDynamicContractRegistrations = if preRegisterDynamicContracts {
+    //An array of records containing srcAddress, eventName, contractName for each contract
+    //address & event that should be pre registered
+    let preRegisteringEvents = chainConfig.contracts->Array.flatMap(contract =>
+      contract.events->Array.flatMap(eventMod => {
+        let module(Event) = eventMod
+        let {preRegisterDynamicContracts} =
+          Event.handlerRegister->Types.HandlerTypes.Register.getEventOptions
+
+        if preRegisterDynamicContracts {
+          contract.addresses->Belt.Array.map(
+            address => {
+              {
+                DbFunctions.DynamicContractRegistry.registeringEventContractName: contract.name,
+                registeringEventName: Event.name,
+                registeringEventSrcAddress: address,
+              }
+            },
+          )
+        } else {
+          []
+        }
+      })
+    )
+
+    //If preregistration is done, but the indexer stops and restarts during indexing. We still get all the dynamic
+    //contracts that were registered during preregistration. We need to match on registering event name, contract name and src address
+    //to ensure we only get the dynamic contracts that were registered during preregistration
+    await DbFunctions.sql->DbFunctions.DynamicContractRegistry.readDynamicContractsOnChainIdMatchingEvents(
+      ~chainId,
+      ~preRegisteringEvents,
+    )
+  } else {
+    //If no preregistration should be done, only get dynamic contracts up to the the block that the indexing starts from
     await DbFunctions.sql->DbFunctions.DynamicContractRegistry.readDynamicContractsOnChainIdAtOrBeforeBlock(
       ~chainId,
       ~startBlock,
     )
+  }
 
   let (
     dynamicContractPreRegistration: option<addressToDynContractLookup>,

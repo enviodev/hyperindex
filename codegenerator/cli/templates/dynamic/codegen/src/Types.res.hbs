@@ -242,19 +242,19 @@ module HandlerTypes = {
     type t = {
       isWildcard: bool,
       topicSelections: array<LogSelection.topicSelection>,
-      shouldPreRegisterDynamicContracts: bool,
+      preRegisterDynamicContracts: bool,
     }
 
     let getDefault = (~topic0) => {
       isWildcard: false,
       topicSelections: [LogSelection.makeTopicSelection(~topic0=[topic0])->Utils.unwrapResultExn],
-      shouldPreRegisterDynamicContracts: false,
+      preRegisterDynamicContracts: false,
     }
 
     let make = (
       ~isWildcard,
       ~topicSelections: array<LogSelection.topicSelection>,
-      ~shouldPreRegisterDynamicContracts,
+      ~preRegisterDynamicContracts,
     ) => {
       let topic0sGrouped = []
       let topicSelectionWithFilters = []
@@ -278,7 +278,7 @@ module HandlerTypes = {
       {
         isWildcard,
         topicSelections,
-        shouldPreRegisterDynamicContracts,
+        preRegisterDynamicContracts,
       }
     }
   }
@@ -463,7 +463,7 @@ let makeEventOptions = (
         ],
         v => v->Event.getTopicSelection,
       ),
-      ~shouldPreRegisterDynamicContracts=preRegisterDynamicContracts->Option.getWithDefault(false),
+      ~preRegisterDynamicContracts=preRegisterDynamicContracts->Option.getWithDefault(false),
     )
   )
 }
@@ -490,7 +490,7 @@ let makeGetEventOptions = (
       HandlerTypes.EventOptions.make(
         ~isWildcard=wildcard->Option.getWithDefault(false),
         ~topicSelections,
-        ~shouldPreRegisterDynamicContracts=preRegisterDynamicContracts->Option.getWithDefault(false),
+        ~preRegisterDynamicContracts=preRegisterDynamicContracts->Option.getWithDefault(false),
       )->Some
     }
 }

@@ -101,7 +101,7 @@ let makeGetNextPage = (
       let module(Event) = event
       let eventOptions = Event.handlerRegister->Types.HandlerTypes.Register.getEventOptions
 
-      if eventOptions.shouldPreRegisterDynamicContracts {
+      if eventOptions.preRegisterDynamicContracts {
         Some(eventOptions)
       } else {
         None

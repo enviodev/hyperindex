@@ -184,44 +184,22 @@ module RawEvents = {
 }
 
 module DynamicContractRegistry = {
-  type contractAddress = Address.t
-  type dynamicContractRegistryRowId = (chainId, contractAddress)
-  @module("./DbFunctionsImplementation.js")
-  external batchSet: (
-    Postgres.sql,
-    array<TablesStatic.DynamicContractRegistry.t>,
-  ) => promise<unit> = "batchSetDynamicContractRegistry"
+  let batchSet = TablesStatic.DynamicContractRegistry.batchSet
 
   @module("./DbFunctionsImplementation.js")
-  external batchDelete: (Postgres.sql, array<dynamicContractRegistryRowId>) => promise<unit> =
-    "batchDeleteDynamicContractRegistry"
-
-  @module("./DbFunctionsImplementation.js")
-  external readEntities: (
-    Postgres.sql,
-    array<dynamicContractRegistryRowId>,
-  ) => promise<array<Js.Json.t>> = "readDynamicContractRegistryEntities"
-
-  type contractTypeAndAddress = TablesStatic.DynamicContractRegistry.t
-
-  let contractTypeAndAddressSchema = TablesStatic.DynamicContractRegistry.schema
-  let contractTypeAndAddressArraySchema = S.array(contractTypeAndAddressSchema)
-
-  @module("./DbFunctionsImplementation.js")
-  external readDynamicContractsOnChainIdBeforeEventIdRaw: (
+  external readDynamicContractsOnChainIdAtOrBeforeBlockNumberRaw: (
     Postgres.sql,
     ~chainId: chainId,
-    ~eventId: bigint,
-  ) => promise<Js.Json.t> = "readDynamicContractsOnChainIdBeforeEventId"
+    ~blockNumber: int,
+  ) => promise<Js.Json.t> = "readDynamicContractsOnChainIdAtOrBeforeBlockNumber"
 
   let readDynamicContractsOnChainIdAtOrBeforeBlock = async (sql, ~chainId, ~startBlock) => {
-    let nextBlockEventId = EventUtils.packEventIndex(~blockNumber=startBlock + 1, ~logIndex=0)
-    let json = await readDynamicContractsOnChainIdBeforeEventIdRaw(
+    let json = await readDynamicContractsOnChainIdAtOrBeforeBlockNumberRaw(
       sql,
       ~chainId,
-      ~eventId=nextBlockEventId,
+      ~blockNumber=startBlock,
     )
-    json->S.parseOrRaiseWith(contractTypeAndAddressArraySchema)
+    json->S.parseOrRaiseWith(TablesStatic.DynamicContractRegistry.rowsSchema)
   }
 
   @module("./DbFunctionsImplementation.js")
@@ -229,6 +207,38 @@ module DynamicContractRegistry = {
     Postgres.sql,
     ~eventIdentifier: Types.eventIdentifier,
   ) => promise<unit> = "deleteAllDynamicContractRegistrationsAfterEventIdentifier"
+
+  type preRegisteringEvent = {
+    @as("registering_event_contract_name") registeringEventContractName: string,
+    @as("registering_event_name") registeringEventName: string,
+    @as("registering_event_src_address") registeringEventSrcAddress: Address.t,
+  }
+
+  @module("./DbFunctionsImplementation.js")
+  external readDynamicContractsOnChainIdMatchingEventsRaw: (
+    Postgres.sql,
+    ~chainId: int,
+    ~preRegisteringEvents: array<preRegisteringEvent>,
+  ) => promise<Js.Json.t> = "readDynamicContractsOnChainIdMatchingEvents"
+
+  let readDynamicContractsOnChainIdMatchingEvents = async (
+    sql,
+    ~chainId,
+    ~preRegisteringEvents,
+  ) => {
+    switch await readDynamicContractsOnChainIdMatchingEventsRaw(
+      sql,
+      ~chainId,
+      ~preRegisteringEvents,
+    ) {
+    | exception exn =>
+      exn->ErrorHandling.mkLogAndRaise(
+        ~logger=Logging.createChild(~params={"chainId": chainId}),
+        ~msg="Failed to read dynamic contracts on chain id matching events",
+      )
+    | json => json->S.parseOrRaiseWith(TablesStatic.DynamicContractRegistry.rowsSchema)
+    }
+  }
 }
 
 type entityHistoryItem = {

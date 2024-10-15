@@ -484,9 +484,10 @@ let actionReducer = (state: t, action: action) => {
         acc,
         contract,
       ) => {
-        let {blockNumber, _} = contract.eventId->EventUtils.unpackEventIndex
+        let {registeringEventBlockNumber} = contract
         let isContractWithinSyncedRanged =
-          (currentChainFetcher.currentBlockHeight->Int.toFloat -. blockNumber->Int.toFloat) /.
+          (currentChainFetcher.currentBlockHeight->Int.toFloat -.
+            registeringEventBlockNumber->Int.toFloat) /.
             currentChainFetcher.currentBlockHeight->Int.toFloat <= 0.001
         acc && isContractWithinSyncedRanged
       })
