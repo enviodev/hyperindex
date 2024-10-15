@@ -25,18 +25,85 @@ let isIndex = true
 type whereOperations<'entity, 'fieldType> = {eq: 'fieldType => promise<array<'entity>>}
 
 module EntityHistory = {
-  type historyFields = {
-    chain_id: int,
-    block_timestamp: int,
-    block_number: int,
-    log_index: int,
+  type historyFieldsGeneral<'a> = {
+    chain_id: 'a,
+    block_timestamp: 'a,
+    block_number: 'a,
+    log_index: 'a,
   }
 
-  type historyRow<'entiy> = {
+  type historyFields = historyFieldsGeneral<int>
+
+  type historyRow<'entity> = {
     current: historyFields,
     previous: option<historyFields>,
-    entityData: 'entiy,
+    entityData: 'entity,
   }
+
+  type previousHistoryFields = historyFieldsGeneral<option<int>>
+
+  let previousHistoryFieldsSchema = S.object(s => {
+    chain_id: s.field("previous_entity_history_chain_id", S.null(S.int)),
+    block_timestamp: s.field("previous_entity_history_block_timestamp", S.null(S.int)),
+    block_number: s.field("previous_entity_history_block_number", S.null(S.int)),
+    log_index: s.field("previous_entity_history_log_index", S.null(S.int)),
+  })
+
+  let currentHistoryFieldsSchema = S.object(s => {
+    chain_id: s.field("entity_history_chain_id", S.int),
+    block_timestamp: s.field("entity_history_block_timestamp", S.int),
+    block_number: s.field("entity_history_block_number", S.int),
+    log_index: s.field("entity_history_log_index", S.int),
+  })
+
+  let makeHistoryRowSchema: S.t<'entity> => S.t<historyRow<'entity>> = entitySchema =>
+    S.object(s => {
+      {
+        "current": s.flatten(currentHistoryFieldsSchema),
+        "previous": s.flatten(previousHistoryFieldsSchema),
+        "entityData": s.flatten(entitySchema),
+      }
+    })->S.transform(s => {
+      parser: v => {
+        current: v["current"],
+        previous: switch v["previous"] {
+        | {
+            chain_id: Some(chain_id),
+            block_timestamp: Some(block_timestamp),
+            block_number: Some(block_number),
+            log_index: Some(log_index),
+          } =>
+          Some({
+            chain_id,
+            block_timestamp,
+            block_number,
+            log_index,
+          })
+        | {chain_id: None, block_timestamp: None, block_number: None, log_index: None} => None
+        | _ => s.fail("Unexpected mix of null and non-null values in previous history fields")
+        },
+        entityData: v["entityData"],
+      },
+      serializer: v =>
+        {
+          "current": v.current,
+          "entityData": v.entityData,
+          "previous": switch v.previous {
+          | Some({chain_id, block_timestamp, block_number, log_index}) => {
+              chain_id: Some(chain_id),
+              block_timestamp: Some(block_timestamp),
+              block_number: Some(block_number),
+              log_index: Some(log_index),
+            }
+          | None => {
+              chain_id: None,
+              block_timestamp: None,
+              block_number: None,
+              log_index: None,
+            }
+          },
+        },
+    })
 
   type t<'entity> = {
     table: table,
