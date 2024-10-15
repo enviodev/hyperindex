@@ -14,6 +14,9 @@ let testEntitySchema: S.t<testEntity> = S.schema(s => {
 
 let testEntityRowsSchema = S.array(testEntitySchema)
 
+type testEntityHistory = Entities.EntityHistory.historyRow<testEntity>
+let testEntityHistorySchema = Entities.EntityHistory.makeHistoryRowSchema(testEntitySchema)
+
 let mockEntityTable = Table.mkTable(
   "TestEntity",
   ~fields=[
@@ -37,7 +40,77 @@ let getAllMockEntity = sql =>
 let getAllMockEntityHistory = sql =>
   sql->Postgres.unsafe(`SELECT * FROM "public"."${mockEntityHistory.table.tableName}"`)
 
-describe_only("Entity History Codegen", () => {
+describe("Entity history serde", () => {
+  it("serializes and deserializes correctly", () => {
+    let history: testEntityHistory = {
+      current: {
+        chain_id: 1,
+        block_number: 2,
+        block_timestamp: 3,
+        log_index: 4,
+      },
+      previous: None,
+      entityData: {id: "1", fieldA: 1, fieldB: Some("test")},
+    }
+
+    let serializedHistory = history->S.serializeOrRaiseWith(testEntityHistorySchema)
+    let expected = %raw(`{
+      "entity_history_block_timestamp": 3,
+      "entity_history_chain_id": 1,
+      "entity_history_block_number": 2,
+      "entity_history_log_index": 4,
+      "previous_entity_history_block_timestamp": null,
+      "previous_entity_history_chain_id": null,
+      "previous_entity_history_block_number": null,
+      "previous_entity_history_log_index": null,
+      "id": "1",
+      "fieldA": 1,
+      "fieldB": "test"
+    }`)
+
+    Assert.deepEqual(serializedHistory, expected)
+    let deserializedHistory = serializedHistory->S.parseOrRaiseWith(testEntityHistorySchema)
+    Assert.deepEqual(deserializedHistory, history)
+  })
+
+  it("serializes and deserializes correctly with previous history", () => {
+    let history: testEntityHistory = {
+      current: {
+        chain_id: 1,
+        block_number: 2,
+        block_timestamp: 3,
+        log_index: 4,
+      },
+      previous: Some({
+        chain_id: 5,
+        block_number: 6,
+        block_timestamp: 7,
+        log_index: 8,
+      }), //previous
+      entityData: {id: "1", fieldA: 1, fieldB: Some("test")},
+    }
+    let serializedHistory = history->S.serializeOrRaiseWith(testEntityHistorySchema)
+    let expected = %raw(`{
+      "entity_history_block_timestamp": 3,
+      "entity_history_chain_id": 1,
+      "entity_history_block_number": 2,
+      "entity_history_log_index": 4,
+      "previous_entity_history_block_timestamp": 7,
+      "previous_entity_history_chain_id": 5,
+      "previous_entity_history_block_number": 6,                            
+      "previous_entity_history_log_index": 8,
+      "id": "1",
+      "fieldA": 1,
+      "fieldB": "test"
+    }`)
+
+    Assert.deepEqual(serializedHistory, expected)
+    let deserializedHistory = serializedHistory->S.parseOrRaiseWith(testEntityHistorySchema)
+    Assert.deepEqual(deserializedHistory, history)
+  })
+})
+
+describe("Entity History Codegen", () => {
   it("Creates an insert function", () => {
     let expected = `CREATE OR REPLACE FUNCTION "insert_TestEntity_history"(history_row "public"."TestEntity_history")
       RETURNS void AS $$
