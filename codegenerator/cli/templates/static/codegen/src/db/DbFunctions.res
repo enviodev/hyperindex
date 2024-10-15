@@ -233,6 +233,7 @@ module DynamicContractRegistry = {
     ) {
     | exception exn =>
       exn->ErrorHandling.mkLogAndRaise(
+        ~logger=Logging.createChild(~params={"chainId": chainId}),
         ~msg="Failed to read dynamic contracts on chain id matching events",
       )
     | json => json->S.parseOrRaiseWith(TablesStatic.DynamicContractRegistry.rowsSchema)
