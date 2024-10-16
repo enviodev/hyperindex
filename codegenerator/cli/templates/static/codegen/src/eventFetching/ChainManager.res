@@ -49,7 +49,7 @@ let isQueueItemEarlier = (a: multiChainEventComparitor, b: multiChainEventCompar
 }
 
 // This is similar to `chainFetcherPeekComparitorEarliestEvent`, but it prioritizes events over `NoItem` no matter what the timestamp of `NoItem` is.
-let chainFetcherPeekComparitorEarliestEventPrioritizeEvents = (
+let isQueueItemEarlierUnorderedMultichain = (
   a: multiChainEventComparitor,
   b: multiChainEventComparitor,
 ): bool => {
@@ -72,12 +72,35 @@ type fetchStateWithData = {
   heighestBlockBelowThreshold: int,
 }
 
+let isQueueItemEarlierUnorderedBelowReorgThreshold = (
+  ~fetchStatesMap: ChainMap.t<fetchStateWithData>,
+) => (a: multiChainEventComparitor, b: multiChainEventComparitor) => {
+  let isItemBelowReorgThreshold = item => {
+    item.earliestEvent->FetchState.queueItemIsInReorgThreshold(
+      ~heighestBlockBelowThreshold=ChainMap.get(
+        fetchStatesMap,
+        a.chain,
+      ).heighestBlockBelowThreshold,
+    )
+  }
+  switch (a->isItemBelowReorgThreshold, b->isItemBelowReorgThreshold) {
+  | (false, true) => true
+  | (true, false) => false
+  | _ => isQueueItemEarlierUnorderedMultichain(a, b)
+  }
+}
+
 let determineNextEvent = (
   fetchStatesMap: ChainMap.t<fetchStateWithData>,
   ~isUnorderedMultichainMode: bool,
+  ~onlyBelowReorgThreshold: bool,
 ): result<isInReorgThresholdRes<multiChainEventComparitor>, noItemsInArray> => {
   let comparitorFunction = if isUnorderedMultichainMode {
-    chainFetcherPeekComparitorEarliestEventPrioritizeEvents
+    if onlyBelowReorgThreshold {
+      isQueueItemEarlierUnorderedBelowReorgThreshold(~fetchStatesMap)
+    } else {
+      isQueueItemEarlierUnorderedMultichain
+    }
   } else {
     isQueueItemEarlier
   }
@@ -92,22 +115,16 @@ let determineNextEvent = (
       // If the fetch state has reached the end block we don't need to consider it
       switch partitionedFetchState->PartitionedFetchState.getEarliestEvent {
       | Some(earliestEvent) =>
-        let {val, isInReorgThreshold} = accum
-        let mk = cmp => {
+        let current: multiChainEventComparitor = {chain, earliestEvent}
+        switch accum.val {
+        | Some(previous) if comparitorFunction(previous, current) => accum
+        | _ =>
+          let isInReorgThreshold =
+            earliestEvent->FetchState.queueItemIsInReorgThreshold(~heighestBlockBelowThreshold)
+
           {
-            val: Some(cmp),
-            isInReorgThreshold: isInReorgThreshold ||
-            cmp.earliestEvent->FetchState.queueItemIsInReorgThreshold(~heighestBlockBelowThreshold),
-          }
-        }
-        let cmpA: multiChainEventComparitor = {chain, earliestEvent}
-        switch val {
-        | None => mk(cmpA)
-        | Some(cmpB) =>
-          if comparitorFunction(cmpB, cmpA) {
-            mk(cmpB)
-          } else {
-            mk(cmpA)
+            val: Some(current),
+            isInReorgThreshold,
           }
         }
       | None => accum
@@ -254,9 +271,10 @@ let popBatchItem = (
   ~fetchStatesMap: ChainMap.t<fetchStateWithData>,
   ~arbitraryEventQueue: array<Types.eventBatchQueueItem>,
   ~isUnorderedMultichainMode,
+  ~onlyBelowReorgThreshold,
 ): isInReorgThresholdRes<option<FetchState.itemWithPopFn>> => {
   //Compare the peeked items and determine the next item
-  switch fetchStatesMap->determineNextEvent(~isUnorderedMultichainMode) {
+  switch fetchStatesMap->determineNextEvent(~isUnorderedMultichainMode, ~onlyBelowReorgThreshold) {
   | Ok({val: {chain, earliestEvent}, isInReorgThreshold}) =>
     let maybeArbItem = if isUnorderedMultichainMode {
       arbitraryEventQueue->getFirstArbitraryEventsItemForChain(~chain, ~fetchStatesMap)
@@ -296,10 +314,15 @@ let popBatchItem = (
 
 let getFetchStateWithData = (self: t, ~shouldDeepCopy=false): ChainMap.t<fetchStateWithData> => {
   self.chainFetchers->ChainMap.map(cf => {
-    partitionedFetchState: shouldDeepCopy
-      ? cf.fetchState->PartitionedFetchState.copy
-      : cf.fetchState,
-    heighestBlockBelowThreshold: cf.currentBlockHeight - cf.chainConfig.confirmedBlockThreshold,
+    {
+      partitionedFetchState: shouldDeepCopy
+        ? cf.fetchState->PartitionedFetchState.copy
+        : cf.fetchState,
+      heighestBlockBelowThreshold: Pervasives.max(
+        cf.currentBlockHeight - cf.chainConfig.confirmedBlockThreshold,
+        0,
+      ),
+    }
   })
 }
 
@@ -312,6 +335,7 @@ let nextItemIsNone = (self: t): bool => {
     ~fetchStatesMap=self->getFetchStateWithData,
     ~arbitraryEventQueue=self.arbitraryEventQueue,
     ~isUnorderedMultichainMode=self.isUnorderedMultichainMode,
+    ~onlyBelowReorgThreshold=false,
   ).val->Option.isNone
 }
 
@@ -324,6 +348,7 @@ let createBatchInternal = (
   ~fetchStatesMap: ChainMap.t<fetchStateWithData>,
   ~arbitraryEventQueue,
   ~isUnorderedMultichainMode,
+  ~onlyBelowReorgThreshold,
 ) => {
   let isInReorgThresholdRef = ref(false)
   let batch = []
@@ -333,6 +358,7 @@ let createBatchInternal = (
         ~fetchStatesMap,
         ~arbitraryEventQueue,
         ~isUnorderedMultichainMode,
+        ~onlyBelowReorgThreshold,
       )
 
       isInReorgThresholdRef := isInReorgThresholdRef.contents || isInReorgThreshold
@@ -340,9 +366,13 @@ let createBatchInternal = (
       switch val {
       | None => ()
       | Some({item, popItemOffQueue}) =>
-        popItemOffQueue()
-        batch->Js.Array2.push(item)->ignore
-        loop()
+        //For dynamic contract pre registration, allow creating a batch up to the reorg threshold
+        let shouldNotAddItem = isInReorgThreshold && onlyBelowReorgThreshold
+        if !shouldNotAddItem {
+          popItemOffQueue()
+          batch->Js.Array2.push(item)->ignore
+          loop()
+        }
       }
     }
   loop()
@@ -356,7 +386,7 @@ type batchRes = {
   arbitraryEventQueue: array<Types.eventBatchQueueItem>,
 }
 
-let createBatch = (self: t, ~maxBatchSize: int) => {
+let createBatch = (self: t, ~maxBatchSize: int, ~onlyBelowReorgThreshold: bool) => {
   let refTime = Hrtime.makeTimer()
 
   let {arbitraryEventQueue, chainFetchers} = self
@@ -369,6 +399,7 @@ let createBatch = (self: t, ~maxBatchSize: int) => {
     ~fetchStatesMap,
     ~arbitraryEventQueue,
     ~isUnorderedMultichainMode=self.isUnorderedMultichainMode,
+    ~onlyBelowReorgThreshold,
   )
 
   let batchSize = batch->Array.length

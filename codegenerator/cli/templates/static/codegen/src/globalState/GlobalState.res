@@ -913,8 +913,11 @@ let injectedTaskReducer = (
     }
   | PreRegisterDynamicContracts =>
     if !state.currentlyProcessingBatch && !isRollingBack(state) {
-      switch state.chainManager->ChainManager.createBatch(~maxBatchSize=state.maxBatchSize) {
-      | {isInReorgThreshold: false, val: Some({batch, fetchStatesMap, arbitraryEventQueue})} =>
+      switch state.chainManager->ChainManager.createBatch(
+        ~maxBatchSize=state.maxBatchSize,
+        ~onlyBelowReorgThreshold=true,
+      ) {
+      | {val: Some({batch, fetchStatesMap, arbitraryEventQueue})} =>
         dispatchAction(SetCurrentlyProcessing(true))
         dispatchAction(UpdateQueues(fetchStatesMap, arbitraryEventQueue))
         let latestProcessedBlocks = EventProcessing.EventsProcessed.makeFromChainManager(
@@ -949,16 +952,25 @@ let injectedTaskReducer = (
             )
           dispatchAction(ErrorExit(errHandler))
         }
-      | {isInReorgThreshold: true}
+      | {isInReorgThreshold: true, val: None} =>
+        //pre registration is done, we've hit the multichain reorg threshold
+        //on the last batch and there are no items on the queue
+        dispatchAction(StartIndexingAfterPreRegister)
       | {val: None} if state.chainManager->ChainManager.isFetchingAtHead =>
-        //pre registration is done, start indexing
+        //pre registration is done, there are no items on the queue and we are fetching at head
+        //this case is only hit if we are indexing chains with no reorg threshold
         dispatchAction(StartIndexingAfterPreRegister)
       | _ => () //Nothing to process and pre registration is not done
       }
     }
   | ProcessEventBatch =>
     if !state.currentlyProcessingBatch && !isRollingBack(state) {
-      switch state.chainManager->ChainManager.createBatch(~maxBatchSize=state.maxBatchSize) {
+      switch state.chainManager->ChainManager.createBatch(
+        ~maxBatchSize=state.maxBatchSize,
+        //Allows us to process events all the way up until we hit the reorg threshold
+        //across all chains before starting to capture entity history
+        ~onlyBelowReorgThreshold=state.chainManager.isInReorgThreshold ? false : true,
+      ) {
       | {isInReorgThreshold, val: Some({batch, fetchStatesMap, arbitraryEventQueue})} =>
         dispatchAction(SetCurrentlyProcessing(true))
         dispatchAction(UpdateQueues(fetchStatesMap, arbitraryEventQueue))
