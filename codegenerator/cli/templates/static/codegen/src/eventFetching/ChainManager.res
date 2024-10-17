@@ -83,6 +83,10 @@ let isQueueItemEarlierUnorderedBelowReorgThreshold = (
       ).heighestBlockBelowThreshold,
     )
   }
+  // The idea here is if we are in undordered multichain mode, always prioritize queue
+  // items that are below the reorg threshold. That way we can register contracts all
+  // the way up to the threshold on all chains before starting. 
+  // Similarly we wait till all chains are at their threshold before saving entity history.
   switch (a->isItemBelowReorgThreshold, b->isItemBelowReorgThreshold) {
   | (false, true) => true
   | (true, false) => false
