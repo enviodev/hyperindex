@@ -280,11 +280,19 @@ let addProcessingFilter = (self: t, ~filter, ~isValid) => {
   }
 }
 
+let applyProcessingFilters = (
+  items: array<Types.eventBatchQueueItem>,
+  ~processingFilters: array<processingFilter>,
+) =>
+  items->Array.keep(item => {
+    processingFilters->Js.Array2.every(processingFilter => processingFilter.filter(item))
+  })
+
 //Run the clean up condition "isNoLongerValid" against fetchState on each eventFilter and remove
 //any that meet the cleanup condition
 let cleanUpProcessingFilters = (
-  {partitions}: PartitionedFetchState.t,
-  ~processingFilters: array<processingFilter>,
+  processingFilters: array<processingFilter>,
+  ~fetchState as {partitions}: PartitionedFetchState.t,
 ) => {
   switch processingFilters->Array.keep(processingFilter =>
     partitions->List.reduce(false, (accum, partition) => {
@@ -310,14 +318,8 @@ let updateFetchState = (
   ~currentBlockHeight,
 ) => {
   let newItems = switch self.processingFilters {
-  //Most cases there are no filters so this will be passed throug
   | None => fetchedEvents
-  | Some(processingFilters) =>
-    //In the case where there are filters, apply them and keep the events that
-    //are needed
-    fetchedEvents->Array.keep(item => {
-      processingFilters->Js.Array2.every(processingFilter => processingFilter.filter(item))
-    })
+  | Some(processingFilters) => fetchedEvents->applyProcessingFilters(~processingFilters)
   }
 
   self.fetchState
@@ -335,7 +337,7 @@ let updateFetchState = (
       ...self,
       fetchState,
       processingFilters: switch self.processingFilters {
-      | Some(processingFilters) => fetchState->cleanUpProcessingFilters(~processingFilters)
+      | Some(processingFilters) => processingFilters->cleanUpProcessingFilters(~fetchState)
       | None => None
       },
     }
