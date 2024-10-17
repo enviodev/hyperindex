@@ -1,7 +1,7 @@
 open RescriptMocha
 open Belt
 
-describe_only("Test Processing Filters", () => {
+describe("Test Processing Filters", () => {
   // Assert.deepEqual doesn't work, because of deeply nested rescript-schema objects
   // Assert.equal doesn't work because the array is always recreated on filter
   // So I added the helper

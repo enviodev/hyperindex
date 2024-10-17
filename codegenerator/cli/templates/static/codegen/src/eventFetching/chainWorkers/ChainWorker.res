@@ -7,9 +7,9 @@ type blockRangeFetchArgs = FetchState.nextQuery
 A set of stats for logging about the block range fetch
 */
 type blockRangeFetchStats = {
-  totalTimeElapsed: int,
-  parsingTimeElapsed?: int,
-  pageFetchTime?: int,
+  @as("total time elapsed (ms)") totalTimeElapsed: int,
+  @as("parsing time (ms)") parsingTimeElapsed?: int,
+  @as("page fetch time (ms)") pageFetchTime?: int,
 }
 
 type reorgGuard = {
