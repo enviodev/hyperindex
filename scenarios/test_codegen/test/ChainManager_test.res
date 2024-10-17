@@ -172,7 +172,11 @@ describe("ChainManager", () => {
         let numberOfMockEventsReadFromQueues = ref(0)
         let allEventsRead = []
         let rec testThatCreatedEventsAreOrderedCorrectly = (chainManager, lastEvent) => {
-          let eventsInBlock = ChainManager.createBatch(chainManager, ~maxBatchSize=10000)
+          let eventsInBlock = ChainManager.createBatch(
+            chainManager,
+            ~maxBatchSize=10000,
+            ~onlyBelowReorgThreshold=false,
+          )
 
           // ensure that the events are ordered correctly
           switch eventsInBlock.val {
@@ -283,10 +287,12 @@ describe("determineNextEvent", () => {
     let determineNextEvent_unordered = ChainManager.ExposedForTesting_Hidden.createDetermineNextEventFunction(
       ~isUnorderedMultichainMode=true,
       _,
+      ~onlyBelowReorgThreshold=false,
     )
     let determineNextEvent_ordered = ChainManager.ExposedForTesting_Hidden.createDetermineNextEventFunction(
       ~isUnorderedMultichainMode=false,
       _,
+      ~onlyBelowReorgThreshold=false,
     )
 
     let makeNoItem = timestamp => FetchState.NoItem({blockTimestamp: timestamp, blockNumber: 0})

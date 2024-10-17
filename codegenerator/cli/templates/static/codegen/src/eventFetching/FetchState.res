@@ -522,7 +522,12 @@ let getNextQuery = (~eventFilters=?, ~currentBlockHeight, ~partitionId, self: t)
 type itemWithPopFn = {item: Types.eventBatchQueueItem, popItemOffQueue: unit => unit}
 
 let itemIsInReorgThreshold = (item: itemWithPopFn, ~heighestBlockBelowThreshold) => {
-  item.item.blockNumber > heighestBlockBelowThreshold
+  //Only consider it in reorg threshold when the current block number has advanced beyond 0
+  if heighestBlockBelowThreshold > 0 {
+    item.item.blockNumber > heighestBlockBelowThreshold
+  } else {
+    false
+  }
 }
 
 /**
