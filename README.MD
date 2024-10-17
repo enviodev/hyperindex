@@ -104,7 +104,9 @@ This will generate the config, schema and event handlers files according to the 
 
 ## Configure the files according to your project
 
-[Here](codegenerator/templates/static/greeter_template/typescript/README.md) is an example of how to configure the files for indexing.
+Our greeter template [config.yaml](./codegenerator/cli/templates/static/greeter_template/typescript/config.yaml) and [schema.graphql](./codegenerator/cli/templates/static/greeter_template/shared/schema.graphql) is an example of how to layout a configuration file for indexing.
+
+*Please refer to the [documentation website](https://docs.envio.dev) for a thorough guide on all Envio indexer features*
 
 ## Generate code according to configuration
 
@@ -164,7 +166,7 @@ NB: All the files must be configured as per guideline above.
 
    Note that this will delete the previous deployment of the smart contract and re-deploy to prevent `node synced status` errors.
 
-   More information on how to deploy contracts using Hardhat can be found [here](https://hardhat.org/hardhat-runner/docs/guides/deploying).
+   More information on how to deploy contracts using Hardhat can be found at [this deploying guide](https://hardhat.org/hardhat-runner/docs/guides/deploying).
 
 4. Generating code
    Once you are in your project directory, run:
@@ -185,7 +187,7 @@ NB: All the files must be configured as per guideline above.
    pnpm hardhat task:1 --parameter-1 value-1
    ```
 
-   More information on how to create and run tasks using Hardhat can be found [here](https://hardhat.org/hardhat-runner/docs/advanced/create-task).
+   More information on how to create and run tasks using Hardhat can be found [created-task doc](https://hardhat.org/hardhat-runner/docs/advanced/create-task).
 
 7. Checking the results on local Hasura
    ```
