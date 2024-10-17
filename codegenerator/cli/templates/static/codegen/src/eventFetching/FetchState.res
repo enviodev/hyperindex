@@ -280,20 +280,20 @@ events.
 let updateRegister = (
   self: t,
   ~latestFetchedBlock,
-  //Events ordered earliest to latest
-  ~newFetchedEvents: array<Types.eventBatchQueueItem>,
+  //Events ordered latest to earliest
+  ~reversedNewItems: array<Types.eventBatchQueueItem>,
   ~isFetchingAtHead,
 ) => {
   let firstEventBlockNumber = switch self.firstEventBlockNumber {
   | Some(n) => Some(n)
-  | None => newFetchedEvents[0]->Option.map(v => v.blockNumber)
+  | None => reversedNewItems->Utils.Array.last->Option.map(v => v.blockNumber)
   }
   {
     ...self,
     isFetchingAtHead,
     latestFetchedBlock,
     firstEventBlockNumber,
-    fetchedEventQueue: Array.concat(newFetchedEvents->Array.reverse, self.fetchedEventQueue),
+    fetchedEventQueue: Array.concat(reversedNewItems, self.fetchedEventQueue),
   }
 }
 
@@ -305,7 +305,7 @@ let rec updateInternal = (
   register: t,
   ~id,
   ~latestFetchedBlock,
-  ~newFetchedEvents,
+  ~reversedNewItems,
   ~isFetchingAtHead,
   ~parent: option<Parent.t>=?,
 ): result<t, exn> => {
@@ -319,17 +319,17 @@ let rec updateInternal = (
   switch (register.registerType, id) {
   | (RootRegister(_), Root) =>
     register
-    ->updateRegister(~newFetchedEvents, ~latestFetchedBlock, ~isFetchingAtHead)
+    ->updateRegister(~reversedNewItems, ~latestFetchedBlock, ~isFetchingAtHead)
     ->handleParent
   | (DynamicContractRegister(id, _nextRegistered), DynamicContract(targetId)) if id == targetId =>
     register
-    ->updateRegister(~newFetchedEvents, ~latestFetchedBlock, ~isFetchingAtHead)
+    ->updateRegister(~reversedNewItems, ~latestFetchedBlock, ~isFetchingAtHead)
     ->handleParent
   | (DynamicContractRegister(dynamicContractId, nextRegistered), id) =>
     nextRegistered->updateInternal(
       ~id,
       ~latestFetchedBlock,
-      ~newFetchedEvents,
+      ~reversedNewItems,
       ~isFetchingAtHead,
       ~parent=register->Parent.make(~dynamicContractId, ~parent),
     )
@@ -366,7 +366,12 @@ let update = (self: t, ~id, ~latestFetchedBlock, ~fetchedEvents, ~currentBlockHe
   let isFetchingAtHead =
     currentBlockHeight <= latestFetchedBlock.blockNumber ? true : self.isFetchingAtHead
   self
-  ->updateInternal(~id, ~latestFetchedBlock, ~newFetchedEvents=fetchedEvents, ~isFetchingAtHead)
+  ->updateInternal(
+    ~id,
+    ~latestFetchedBlock,
+    ~reversedNewItems=fetchedEvents->Array.reverse,
+    ~isFetchingAtHead,
+  )
   ->Result.map(result => pruneAndMergeNextRegistered(result)->Option.getWithDefault(result))
 }
 

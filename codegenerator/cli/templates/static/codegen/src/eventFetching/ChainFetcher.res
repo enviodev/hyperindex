@@ -280,9 +280,7 @@ let cleanUpEventFilters = (self: t) => {
   | Some(eventFilters) => {
       ...self,
       eventFilters: switch eventFilters->List.keep(eventFilter =>
-        self.fetchState->PartitionedFetchState.eventFilterIsValid(
-          ~eventFilter,
-        )
+        self.fetchState->PartitionedFetchState.eventFilterIsValid(~eventFilter)
       ) {
       | list{} => None
       | eventFilters => eventFilters->Some
@@ -315,6 +313,7 @@ let updateFetchState = (
     ~currentBlockHeight,
   )
   ->Result.map(fetchState => {
+    // FIXME:
     {...self, fetchState}->cleanUpEventFilters
   })
 }
