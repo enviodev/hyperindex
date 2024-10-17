@@ -114,15 +114,12 @@ module type S = {
 
   module FetchState: {
     type id
-    type eventFilters
-    let applyFilters: (Types.eventBatchQueueItem, ~eventFilters: eventFilters) => bool
     type nextQuery = {
       fetchStateRegisterId: id,
       partitionId: int,
       fromBlock: int,
       toBlock: int,
       contractAddressMapping: ContractAddressingMap.mapping,
-      eventFilters?: eventFilters,
     }
   }
 

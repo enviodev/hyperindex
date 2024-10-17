@@ -567,9 +567,7 @@ module Make = (
       let stats = {
         totalTimeElapsed,
         parsingTimeElapsed,
-        pageFetchTime,
-        averageParseTimePerLog: parsingTimeElapsed->Belt.Int.toFloat /.
-          parsedQueueItems->Array.length->Belt.Int.toFloat,
+        pageFetchTime
       }
 
       {

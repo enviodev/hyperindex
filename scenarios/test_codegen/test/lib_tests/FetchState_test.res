@@ -275,7 +275,7 @@ describe("FetchState.fetchState", () => {
       registerType: RootRegister({endBlock: None}),
     }
 
-    let newEvents = [
+    let newItems = [
       mockEvent(~blockNumber=5),
       mockEvent(~blockNumber=6, ~logIndex=1),
       mockEvent(~blockNumber=6, ~logIndex=2),
@@ -286,7 +286,7 @@ describe("FetchState.fetchState", () => {
         ~id=Root,
         ~latestFetchedBlock=getBlockData(~blockNumber=600),
         ~currentBlockHeight=600,
-        ~fetchedEvents=newEvents,
+        ~newItems,
       )
       ->Utils.unwrapResultExn
 
@@ -294,7 +294,7 @@ describe("FetchState.fetchState", () => {
       ...root,
       latestFetchedBlock: getBlockData(~blockNumber=600),
       isFetchingAtHead: true,
-      fetchedEventQueue: Array.concat(newEvents->Array.reverse, currentEvents),
+      fetchedEventQueue: Array.concat(newItems->Array.reverse, currentEvents),
     }
 
     Assert.deepEqual(expected1, updated1)
@@ -318,7 +318,7 @@ describe("FetchState.fetchState", () => {
         ~id=DynamicContract(dcId1),
         ~latestFetchedBlock=getBlockData(~blockNumber=500),
         ~currentBlockHeight=600,
-        ~fetchedEvents=newEvents,
+        ~newItems,
       )
       ->Utils.unwrapResultExn
 
@@ -353,7 +353,7 @@ describe("FetchState.fetchState", () => {
         ~id=DynamicContract(dcId1),
         ~latestFetchedBlock=getBlockData(~blockNumber=500),
         ~currentBlockHeight=600,
-        ~fetchedEvents=newEvents,
+        ~newItems,
       )
       ->Utils.unwrapResultExn
 
@@ -363,7 +363,7 @@ describe("FetchState.fetchState", () => {
         dcId2,
         {
           ...fetchState1,
-          fetchedEventQueue: Array.concat(newEvents->Array.reverse, fetchState1.fetchedEventQueue),
+          fetchedEventQueue: Array.concat(newItems->Array.reverse, fetchState1.fetchedEventQueue),
           firstEventBlockNumber: Some(5),
           registerType: DynamicContractRegister(dcId1, root),
         },
@@ -446,7 +446,6 @@ describe("FetchState.fetchState", () => {
         fromBlock: root.latestFetchedBlock.blockNumber + 1,
         toBlock: currentBlockHeight,
         contractAddressMapping: root.contractAddressMapping,
-        eventFilters: Utils.magic(%raw(`undefined`)), //assertions fail if this is not explicitly set to undefined
       }),
     )
     let (nextQuery, _optUpdatedRoot) =

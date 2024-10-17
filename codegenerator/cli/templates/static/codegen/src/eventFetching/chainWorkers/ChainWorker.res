@@ -10,15 +10,7 @@ type blockRangeFetchStats = {
   @as("total time elapsed (ms)") totalTimeElapsed: int,
   @as("parsing time (ms)") parsingTimeElapsed?: int,
   @as("page fetch time (ms)") pageFetchTime?: int,
-  @as("average parse time per log (ms)") averageParseTimePerLog?: float,
 }
-
-let blockRangeFetchStatsSchema: S.t<blockRangeFetchStats> = S.object(s => {
-  totalTimeElapsed: s.field("totalTimeElapsed", S.int),
-  parsingTimeElapsed: ?s.field("parsingTimeElapsed", S.null(S.int)),
-  pageFetchTime: ?s.field("pageFetchTime", S.null(S.int)),
-  averageParseTimePerLog: ?s.field("averageParseTimePerLog", S.null(S.float)),
-})
 
 type reorgGuard = {
   lastBlockScannedData: ReorgDetection.blockData,
