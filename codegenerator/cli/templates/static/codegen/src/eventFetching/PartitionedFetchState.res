@@ -144,9 +144,9 @@ let registerDynamicContracts = (
   {partitions, maxAddrInPartition, endBlock, startBlock, logger}
 }
 
-let eventFilterIsValid = ({partitions}: t, ~eventFilter: FetchState.eventFilter, ~chain) =>
+let eventFilterIsValid = ({partitions}: t, ~eventFilter: FetchState.eventFilter) =>
   partitions->List.reduce(false, (accum, partition) => {
-    accum || eventFilter.isValid(~fetchState=partition, ~chain)
+    accum || eventFilter.isValid(~fetchState=partition)
   })
 
 exception UnexpectedPartitionDoesNotExist(partitionIndex)

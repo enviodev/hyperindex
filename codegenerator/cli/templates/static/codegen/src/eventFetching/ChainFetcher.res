@@ -131,10 +131,9 @@ let makeFromDbState = async (chainConfig: Config.chainConfig, ~maxAddrInPartitio
       {
         FetchState.filter: qItem => {
           //Only keep events greater than the last processed event
-          (qItem.chain->ChainMap.Chain.toChainId, qItem.blockNumber, qItem.logIndex) >
-          (event.chainId, event.blockNumber, event.logIndex)
+          qItem.blockNumber > event.blockNumber || qItem.logIndex > event.logIndex
         },
-        isValid: (~fetchState, ~chain as _) => {
+        isValid: (~fetchState) => {
           //the filter can be cleaned up as soon as the fetch state block is ahead of the latestProcessedEvent blockNumber
           FetchState.getLatestFullyFetchedBlock(fetchState).blockNumber <= event.blockNumber
         },
@@ -283,7 +282,6 @@ let cleanUpEventFilters = (self: t) => {
       eventFilters: switch eventFilters->List.keep(eventFilter =>
         self.fetchState->PartitionedFetchState.eventFilterIsValid(
           ~eventFilter,
-          ~chain=self.chainConfig.chain,
         )
       ) {
       | list{} => None

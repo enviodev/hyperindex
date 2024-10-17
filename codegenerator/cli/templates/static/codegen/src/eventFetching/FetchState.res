@@ -374,7 +374,7 @@ let update = (self: t, ~id, ~latestFetchedBlock, ~fetchedEvents, ~currentBlockHe
 //false when the filter should be removed/cleaned up
 type eventFilter = {
   filter: Types.eventBatchQueueItem => bool,
-  isValid: (~fetchState: t, ~chain: ChainMap.Chain.t) => bool,
+  isValid: (~fetchState: t) => bool,
 }
 
 type eventFilters = list<eventFilter>
