@@ -86,8 +86,8 @@ let schedule = ref(() => Promise.resolve())
 
 let saveToCacheFile = data => {
   let write = () => {
-    let json = data->S.serializeToJsonStringOrRaiseWith(Data.schema)
-    NodeJsLocal.Fs.Promises.writeFile(~filepath=cacheFilePath, ~content=json)
+    let jsonString = data->S.reverseConvertToJsonStringWith(Data.schema)
+    NodeJsLocal.Fs.Promises.writeFile(~filepath=cacheFilePath, ~content=jsonString)
   }
   schedule := write
   let _ = currentWrite.contents->Promise.thenResolve(_ => {

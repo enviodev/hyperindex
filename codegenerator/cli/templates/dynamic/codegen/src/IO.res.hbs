@@ -21,8 +21,7 @@ let getEntityHistoryItems = (entityUpdates, ~entitySchema, ~entityType) => {
     let entityHistoryItems = if shouldSaveHistory {
       let mapPrev = Belt.Option.map(optPreviousEventIdentifier)
       let params = switch entityUpdateAction {
-      | Set(entity) => Some(entity->S.serializeOrRaiseWith(entitySchema))
-
+      | Set(entity) => Some(entity->S.reverseConvertToJsonWith(entitySchema))
       | Delete => None
       }
       let historyItem: DbFunctions.entityHistoryItem = {

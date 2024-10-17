@@ -142,7 +142,7 @@ module GetLogs = {
       toBlock,
       address,
       topics,
-    }->S.serializeOrRaiseWith(paramsSchema)
+    }->S.reverseConvertToJsonWith(paramsSchema)
     Query.make(~method=EthGetLogs, ~params=[params])
   }
 }
@@ -200,7 +200,7 @@ module GetBlockByNumber = {
 
   let make = (~blockNumber, ~includeTransactions=false) => {
     let blockNumber = blockNumber->Viem.toHex->Utils.magic
-    let transactionDetailFlag = includeTransactions->S.serializeOrRaiseWith(S.bool)
+    let transactionDetailFlag = includeTransactions->(Utils.magic: bool => Js.Json.t)
     Query.make(~method=EthGetBlockByNumber, ~params=[blockNumber, transactionDetailFlag])
   }
 }

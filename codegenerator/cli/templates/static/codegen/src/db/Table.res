@@ -243,7 +243,7 @@ module PostgresInterop = {
     let batchSetFn: pgFn<array<Js.Json.t>, unit> = table->makeBatchSetFnString->eval
     async (sql, rows) => {
       let rowsJson =
-        rows->S.serializeOrRaiseWith(rowsSchema)->(Utils.magic: Js.Json.t => array<Js.Json.t>)
+        rows->S.reverseConvertToJsonWith(rowsSchema)->(Utils.magic: Js.Json.t => array<Js.Json.t>)
       let _res = await chunkBatchQuery(sql, rowsJson, batchSetFn)
     }
   }

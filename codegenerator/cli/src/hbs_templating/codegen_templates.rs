@@ -1363,7 +1363,7 @@ let contractName = contractName
 
 @genType
 type eventArgs = unit
-let paramsRawEventSchema = S.literal(%raw(`null`))->S.variant(_ => ())
+let paramsRawEventSchema = S.literal(%raw(`null`))->S.to(_ => ())
 let convertHyperSyncEventArgs = (Utils.magic: HyperSyncClient.Decoder.decodedEvent => eventArgs)
 
 let handlerRegister: HandlerTypes.Register.t<eventArgs> = HandlerTypes.Register.make(

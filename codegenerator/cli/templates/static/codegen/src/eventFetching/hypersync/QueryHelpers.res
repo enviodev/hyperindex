@@ -17,10 +17,7 @@ let executeFetchRequest = async (
     open Fetch
 
     let body = bodyAndSchema->Belt.Option.map(((body, schema)) => {
-      switch body->S.serializeToJsonStringWith(schema) {
-      | Ok(jsonString) => jsonString->Body.string
-      | Error(error) => error->S.Error.raise
-      }
+      body->S.reverseConvertToJsonStringWith(schema)->Body.string
     })
 
     let res =

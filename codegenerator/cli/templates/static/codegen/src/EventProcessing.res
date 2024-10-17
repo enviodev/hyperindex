@@ -202,12 +202,12 @@ let addEventToRawEvents = (
   let chainId = chain->ChainMap.Chain.toChainId
   let eventId = EventUtils.packEventIndex(~logIndex, ~blockNumber)
   let blockFields =
-    (block :> Types.Block.rawEventFields)->S.serializeOrRaiseWith(Types.Block.rawEventSchema)
-  let transactionFields = transaction->S.serializeOrRaiseWith(Types.Transaction.schema)
-  // Serialize to unknown, because serializing to Js.Json.t fails for Bytes Fuel type, since it has unknown schema
+    (block :> Types.Block.rawEventFields)->S.reverseConvertToJsonWith(Types.Block.rawEventSchema)
+  let transactionFields = transaction->S.reverseConvertToJsonWith(Types.Transaction.schema)
+  // Reverse convert to unknown, because converting to Js.Json.t fails for Bytes Fuel type, since it has unknown schema
   let params =
     params
-    ->S.serializeToUnknownOrRaiseWith(paramsRawEventSchema)
+    ->S.reverseConvertWith(paramsRawEventSchema)
     ->(Utils.magic: unknown => Js.Json.t)
 
   let rawEvent: TablesStatic.RawEvents.t = {

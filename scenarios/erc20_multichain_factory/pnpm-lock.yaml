@@ -27,11 +27,11 @@ importers:
         specifier: 10.2.0
         version: 10.2.0
       rescript:
-        specifier: 11.1.3
-        version: 11.1.3
+        specifier: 11.1.4
+        version: 11.1.4
       rescript-schema:
-        specifier: 8.2.0
-        version: 8.2.0(rescript@11.1.3)
+        specifier: 8.4.0
+        version: 8.4.0(rescript@11.1.4)
     optionalDependencies:
       generated:
         specifier: ./generated
@@ -40,11 +40,11 @@ importers:
   ../helpers:
     dependencies:
       rescript:
-        specifier: 11.1.3
-        version: 11.1.3
+        specifier: 11.1.4
+        version: 11.1.4
       rescript-schema:
-        specifier: 8.2.0
-        version: 8.2.0(rescript@11.1.3)
+        specifier: 8.4.0
+        version: 8.4.0(rescript@11.1.4)
 
   generated:
     dependencies:
@@ -109,17 +109,17 @@ importers:
         specifier: 18.2.0
         version: 18.2.0
       rescript:
-        specifier: 11.1.3
-        version: 11.1.3
+        specifier: 11.1.4
+        version: 11.1.4
       rescript-envsafe:
         specifier: 4.2.0
-        version: 4.2.0(rescript-schema@8.2.0(rescript@11.1.3))(rescript@11.1.3)
+        version: 4.2.0(rescript-schema@8.4.0(rescript@11.1.4))(rescript@11.1.4)
       rescript-express:
         specifier: 0.4.1
         version: 0.4.1(express@4.19.2)
       rescript-schema:
-        specifier: 8.2.0
-        version: 8.2.0(rescript@11.1.3)
+        specifier: 8.4.0
+        version: 8.4.0(rescript@11.1.4)
       root:
         specifier: ../.
         version: link:..
@@ -1094,13 +1094,13 @@ packages:
     peerDependencies:
       express: ^4.17.1
 
-  rescript-schema@8.2.0:
-    resolution: {integrity: sha512-pfRNB9kvafUYe+RgvsExiazJioi/iV8gmjK3xOw/jeSgPIIDoVhflnmpoz+vuiwlulYkNT/7u2+2EsCrph7QKA==}
+  rescript-schema@8.4.0:
+    resolution: {integrity: sha512-X39lDpAXv0T5Jeux9GU6VCs6lpjVMn6kNKrm1lXqE4d1fmfhq+YYbf4emkIZSZxcEZOBFgNBdsFg14UuW1n4CA==}
     peerDependencies:
       rescript: 11.x
 
-  rescript@11.1.3:
-    resolution: {integrity: sha512-bI+yxDcwsv7qE34zLuXeO8Qkc2+1ng5ErlSjnUIZdrAWKoGzHXpJ6ZxiiRBUoYnoMsgRwhqvrugIFyNgWasmsw==}
+  rescript@11.1.4:
+    resolution: {integrity: sha512-0bGU0bocihjSC6MsE3TMjHjY0EUpchyrREquLS8VsZ3ohSMD+VHUEwimEfB3kpBI1vYkw3UFZ3WD8R28guz/Vw==}
     engines: {node: '>=10'}
     hasBin: true
 
@@ -2246,20 +2246,20 @@ snapshots:
 
   require-directory@2.1.1: {}
 
-  rescript-envsafe@4.2.0(rescript-schema@8.2.0(rescript@11.1.3))(rescript@11.1.3):
+  rescript-envsafe@4.2.0(rescript-schema@8.4.0(rescript@11.1.4))(rescript@11.1.4):
     dependencies:
-      rescript: 11.1.3
-      rescript-schema: 8.2.0(rescript@11.1.3)
+      rescript: 11.1.4
+      rescript-schema: 8.4.0(rescript@11.1.4)
 
   rescript-express@0.4.1(express@4.19.2):
     dependencies:
       express: 4.19.2
 
-  rescript-schema@8.2.0(rescript@11.1.3):
+  rescript-schema@8.4.0(rescript@11.1.4):
     dependencies:
-      rescript: 11.1.3
+      rescript: 11.1.4
 
-  rescript@11.1.3: {}
+  rescript@11.1.4: {}
 
   restore-cursor@3.1.0:
     dependencies:
