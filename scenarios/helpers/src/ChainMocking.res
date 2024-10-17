@@ -84,7 +84,9 @@ module Make = (Indexer: Indexer.S) => {
     let module(Event) = eventMod
 
     let transactionHash =
-      Crypto.hashKeccak256Any(params->RescriptSchema.S.serializeOrRaiseWith(Event.paramsRawEventSchema))
+      Crypto.hashKeccak256Any(
+        params->RescriptSchema.S.serializeOrRaiseWith(Event.paramsRawEventSchema),
+      )
       ->Crypto.hashKeccak256Compound(transactionIndex)
       ->Crypto.hashKeccak256Compound(blockNumber)
 
@@ -265,12 +267,7 @@ module Make = (Indexer: Indexer.S) => {
       }
     })
 
-    let parsedQueueItemsPreFilter = unfilteredBlocks->getLogsFromBlocks(~addressesAndEventNames)
-    let parsedQueueItems = switch query.eventFilters {
-    | None => parsedQueueItemsPreFilter
-    | Some(eventFilters) =>
-      parsedQueueItemsPreFilter->Array.keep(i => i->FetchState.applyFilters(~eventFilters))
-    }
+    let parsedQueueItems = unfilteredBlocks->getLogsFromBlocks(~addressesAndEventNames)
 
     {
       currentBlockHeight,

@@ -144,27 +144,17 @@ let registerDynamicContracts = (
   {partitions, maxAddrInPartition, endBlock, startBlock, logger}
 }
 
-let eventFilterIsValid = ({partitions}: t, ~eventFilter: FetchState.eventFilter) =>
-  partitions->List.reduce(false, (accum, partition) => {
-    accum || eventFilter.isValid(~fetchState=partition)
-  })
-
 exception UnexpectedPartitionDoesNotExist(partitionIndex)
 
 /**
 Updates partition at given id with given values and checks to see if it can be merged into its next register.
 Returns Error if the partition/node with given id cannot be found (unexpected)
 */
-let update = (self: t, ~id: id, ~latestFetchedBlock, ~fetchedEvents, ~currentBlockHeight) => {
+let update = (self: t, ~id: id, ~latestFetchedBlock, ~newItems, ~currentBlockHeight) => {
   switch self.partitions->List.splitAt(id.partitionId) {
   | Some((left, list{head, ...tail})) =>
     head
-    ->FetchState.update(
-      ~id=id.fetchStateId,
-      ~latestFetchedBlock,
-      ~fetchedEvents,
-      ~currentBlockHeight,
-    )
+    ->FetchState.update(~id=id.fetchStateId, ~latestFetchedBlock, ~newItems, ~currentBlockHeight)
     ->Result.map(updatedPartition => {
       ...self,
       partitions: list{...left, updatedPartition, ...tail},
@@ -225,7 +215,6 @@ Gets the next query from the fetchState with the lowest latestFetchedBlock numbe
 */
 let getNextQueriesOrThrow = (
   self: t,
-  ~eventFilters=?,
   ~currentBlockHeight,
   ~maxPerChainQueueSize,
   ~partitionsCurrentlyFetching,
@@ -240,7 +229,7 @@ let getNextQueriesOrThrow = (
     ~partitionsCurrentlyFetching,
   )
   ->Array.forEach(({fetchState, partitionId}) => {
-    switch fetchState->FetchState.getNextQuery(~eventFilters?, ~currentBlockHeight, ~partitionId) {
+    switch fetchState->FetchState.getNextQuery(~currentBlockHeight, ~partitionId) {
     | Ok((nextQuery, optUpdatesFetchState)) =>
       switch nextQuery {
       | NextQuery(q) => nextQueries->Js.Array2.push(q)->ignore

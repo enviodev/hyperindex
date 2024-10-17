@@ -319,14 +319,7 @@ module Make = (
   ) => {
     let mkLogAndRaise = ErrorHandling.mkLogAndRaise(~logger, ...)
     try {
-      let {
-        fetchStateRegisterId,
-        partitionId,
-        fromBlock,
-        contractAddressMapping,
-        toBlock,
-        ?eventFilters,
-      } = query
+      let {fetchStateRegisterId, partitionId, fromBlock, contractAddressMapping, toBlock} = query
       let startFetchingBatchTimeRef = Hrtime.makeTimer()
       //fetch batch
       let {page: pageUnsafe, contractInterfaceManager, pageFetchTime} = await getNextPage(
@@ -410,7 +403,7 @@ module Make = (
       let parsingTimeRef = Hrtime.makeTimer()
 
       //Parse page items into queue items
-      let parsedQueueItemsPreFilter = []
+      let parsedQueueItems = []
 
       let handleDecodeFailure = (
         ~eventMod: module(Types.InternalEvent),
@@ -470,7 +463,7 @@ module Make = (
           switch (maybeEventMod, maybeDecodedEvent) {
           | (Some(eventMod), Value(decoded)) =>
             let module(Event) = eventMod
-            parsedQueueItemsPreFilter
+            parsedQueueItems
             ->Js.Array2.push(
               makeEventBatchQueueItem(
                 item,
@@ -517,22 +510,13 @@ module Make = (
                 ~exn,
               )
             | decodedEvent =>
-              parsedQueueItemsPreFilter
+              parsedQueueItems
               ->Js.Array2.push(makeEventBatchQueueItem(item, ~params=decodedEvent.args, ~eventMod))
               ->ignore
             }
           | None => () //Ignore events that aren't registered
           }
         })
-      }
-
-      let parsedQueueItems = switch eventFilters {
-      //Most cases there are no filters so this will be passed throug
-      | None => parsedQueueItemsPreFilter
-      | Some(eventFilters) =>
-        //In the case where there are filters, apply them and keep the events that
-        //are needed
-        parsedQueueItemsPreFilter->Array.keep(FetchState.applyFilters(~eventFilters, ...))
       }
 
       let parsingTimeElapsed =
@@ -554,7 +538,7 @@ module Make = (
       let stats = {
         totalTimeElapsed,
         parsingTimeElapsed,
-        pageFetchTime
+        pageFetchTime,
       }
 
       {

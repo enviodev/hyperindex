@@ -1,5 +1,12 @@
 open Belt
 
+//A filter should return true if the event should be kept and isValid should return
+//false when the filter should be removed/cleaned up
+type processingFilter = {
+  filter: Types.eventBatchQueueItem => bool,
+  isValid: (~fetchState: FetchState.t) => bool,
+}
+
 type addressToDynContractLookup = dict<TablesStatic.DynamicContractRegistry.t>
 type t = {
   logger: Pino.t,
@@ -16,7 +23,7 @@ type t = {
   lastBlockScannedHashes: ReorgDetection.LastBlockScannedHashes.t,
   //An optional list of filters to apply on event queries
   //Used for reorgs and restarts
-  eventFilters: option<FetchState.eventFilters>,
+  processingFilters: option<array<processingFilter>>,
   //Currently this state applies to all chains simultaneously but it may be possible to,
   //in the future, have a per chain state and allow individual chains to start indexing as
   //soon as the pre registration is done
@@ -37,7 +44,7 @@ let make = (
   ~timestampCaughtUpToHeadOrEndblock,
   ~numEventsProcessed,
   ~numBatchesFetched,
-  ~eventFilters,
+  ~processingFilters,
   ~maxAddrInPartition,
   ~dynamicContractPreRegistration,
 ): t => {
@@ -64,7 +71,7 @@ let make = (
     timestampCaughtUpToHeadOrEndblock,
     numEventsProcessed,
     numBatchesFetched,
-    eventFilters,
+    processingFilters,
     partitionsCurrentlyFetching: Belt.Set.Int.empty,
     dynamicContractPreRegistration,
   }
@@ -100,7 +107,7 @@ let makeFromConfig = (chainConfig: Config.chainConfig, ~maxAddrInPartition) => {
     ~numEventsProcessed=0,
     ~numBatchesFetched=0,
     ~logger,
-    ~eventFilters=None,
+    ~processingFilters=None,
     ~dynamicContractRegistrations=[],
     ~maxAddrInPartition,
     ~dynamicContractPreRegistration,
@@ -123,24 +130,25 @@ let makeFromDbState = async (chainConfig: Config.chainConfig, ~maxAddrInPartitio
   let (
     startBlock: int,
     isPreRegisteringDynamicContracts: bool,
-    eventFilters: option<FetchState.eventFilters>,
+    processingFilters: option<array<processingFilter>>,
   ) = switch latestProcessedEvent {
   | Some(event) =>
-    //start from the same block but filter out any events already processed
-    let eventFilters = list{
+    // Start from the same block but filter out any events already processed
+    let processingFilters = [
       {
-        FetchState.filter: qItem => {
+        filter: qItem => {
           //Only keep events greater than the last processed event
-          qItem.blockNumber > event.blockNumber || qItem.logIndex > event.logIndex
+          (qItem.chain->ChainMap.Chain.toChainId, qItem.blockNumber, qItem.logIndex) >
+          (event.chainId, event.blockNumber, event.logIndex)
         },
         isValid: (~fetchState) => {
           //the filter can be cleaned up as soon as the fetch state block is ahead of the latestProcessedEvent blockNumber
           FetchState.getLatestFullyFetchedBlock(fetchState).blockNumber <= event.blockNumber
         },
       },
-    }
+    ]
 
-    (event.blockNumber, event.isPreRegisteringDynamicContracts, Some(eventFilters))
+    (event.blockNumber, event.isPreRegisteringDynamicContracts, Some(processingFilters))
   | None => (chainConfig.startBlock, preRegisterDynamicContracts, None)
   }
 
@@ -250,7 +258,7 @@ let makeFromDbState = async (chainConfig: Config.chainConfig, ~maxAddrInPartitio
     ~numEventsProcessed=numEventsProcessed->Option.getWithDefault(0),
     ~numBatchesFetched=0,
     ~logger,
-    ~eventFilters,
+    ~processingFilters,
     ~maxAddrInPartition,
     ~dynamicContractPreRegistration,
   )
@@ -261,37 +269,36 @@ Adds an event filter that will be passed to worker on query
 isValid is a function that determines when the filter
 should be cleaned up
 */
-let addEventFilter = (self: t, ~filter, ~isValid) => {
-  let eventFilters =
-    self.eventFilters
-    ->Option.getWithDefault(list{})
-    ->List.add({filter, isValid})
-    ->Some
-  {...self, eventFilters}
+let addProcessingFilter = (self: t, ~filter, ~isValid) => {
+  let processingFilter: processingFilter = {filter, isValid}
+  {
+    ...self,
+    processingFilters: switch self.processingFilters {
+    | Some(processingFilters) => Some(processingFilters->Array.concat([processingFilter]))
+    | None => Some([processingFilter])
+    },
+  }
 }
 
-let cleanUpEventFilters = (self: t) => {
-  switch self.eventFilters {
-  //Only spread if there are eventFilters
-  | None => self
-
-  //Run the clean up condition "isNoLongerValid" against fetchState on each eventFilter and remove
-  //any that meet the cleanup condition
-  | Some(eventFilters) => {
-      ...self,
-      eventFilters: switch eventFilters->List.keep(eventFilter =>
-        self.fetchState->PartitionedFetchState.eventFilterIsValid(~eventFilter)
-      ) {
-      | list{} => None
-      | eventFilters => eventFilters->Some
-      },
-    }
+//Run the clean up condition "isNoLongerValid" against fetchState on each eventFilter and remove
+//any that meet the cleanup condition
+let cleanUpProcessingFilters = (
+  {partitions}: PartitionedFetchState.t,
+  ~processingFilters: array<processingFilter>,
+) => {
+  switch processingFilters->Array.keep(processingFilter =>
+    partitions->List.reduce(false, (accum, partition) => {
+      accum || processingFilter.isValid(~fetchState=partition)
+    })
+  ) {
+  | [] => None
+  | filters => Some(filters)
   }
 }
 
 /**
 Updates of fetchState and cleans up event filters. Should be used whenever updating fetchState
-to ensure eventFilters are always valid.
+to ensure processingFilters are always valid.
 Returns Error if the node with given id cannot be found (unexpected)
 */
 let updateFetchState = (
@@ -302,6 +309,17 @@ let updateFetchState = (
   ~fetchedEvents,
   ~currentBlockHeight,
 ) => {
+  let newItems = switch self.processingFilters {
+  //Most cases there are no filters so this will be passed throug
+  | None => fetchedEvents
+  | Some(processingFilters) =>
+    //In the case where there are filters, apply them and keep the events that
+    //are needed
+    fetchedEvents->Array.keep(item => {
+      processingFilters->Js.Array2.every(processingFilter => processingFilter.filter(item))
+    })
+  }
+
   self.fetchState
   ->PartitionedFetchState.update(
     ~id,
@@ -309,12 +327,18 @@ let updateFetchState = (
       blockNumber: latestFetchedBlockNumber,
       blockTimestamp: latestFetchedBlockTimestamp,
     },
-    ~fetchedEvents,
+    ~newItems,
     ~currentBlockHeight,
   )
   ->Result.map(fetchState => {
-    // FIXME:
-    {...self, fetchState}->cleanUpEventFilters
+    {
+      ...self,
+      fetchState,
+      processingFilters: switch self.processingFilters {
+      | Some(processingFilters) => fetchState->cleanUpProcessingFilters(~processingFilters)
+      | None => None
+      },
+    }
   })
 }
 
@@ -328,13 +352,8 @@ Errors if nextRegistered dynamic contract has a lower latestFetchedBlock than th
 an invalid state.
 */
 let getNextQuery = (self: t, ~maxPerChainQueueSize) => {
-  //Chain Fetcher should have already cleaned up stale event filters by the time this
-  //is called but just ensure its cleaned before getting the next query
-  let cleanedChainFetcher = self->cleanUpEventFilters
-
-  cleanedChainFetcher.fetchState->PartitionedFetchState.getNextQueriesOrThrow(
-    ~eventFilters=?cleanedChainFetcher.eventFilters,
-    ~currentBlockHeight=cleanedChainFetcher.currentBlockHeight,
+  self.fetchState->PartitionedFetchState.getNextQueriesOrThrow(
+    ~currentBlockHeight=self.currentBlockHeight,
     ~maxPerChainQueueSize,
     ~partitionsCurrentlyFetching=self.partitionsCurrentlyFetching,
   )

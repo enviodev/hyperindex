@@ -80,7 +80,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
                 blockNumber: batchItem.blockNumber,
                 blockTimestamp: batchItem.timestamp,
               },
-              ~fetchedEvents=[batchItem],
+              ~newItems=[batchItem],
               ~currentBlockHeight=currentBlockNumber.contents,
             )
             ->Result.getExn
@@ -98,7 +98,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
                   blockNumber: batchItem.blockNumber,
                   blockTimestamp: batchItem.timestamp,
                 },
-                ~fetchedEvents=[batchItem],
+                ~newItems=[batchItem],
                 ~currentBlockHeight=currentBlockNumber.contents,
               )
               ->Result.getExn
@@ -126,7 +126,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
       ),
       partitionsCurrentlyFetching: Belt.Set.Int.empty,
       currentBlockHeight: 0,
-      eventFilters: None,
+      processingFilters: None,
       dynamicContractPreRegistration: None,
     }
 

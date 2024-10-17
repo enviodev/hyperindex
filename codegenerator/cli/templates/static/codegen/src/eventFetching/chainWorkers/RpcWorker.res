@@ -109,14 +109,7 @@ module Make = (
       if isPreRegisteringDynamicContracts {
         Js.Exn.raiseError("HyperIndex RPC does not support pre registering dynamic contracts yet")
       }
-      let {
-        fromBlock,
-        toBlock,
-        contractAddressMapping,
-        fetchStateRegisterId,
-        partitionId,
-        ?eventFilters,
-      } = query
+      let {fromBlock, toBlock, contractAddressMapping, fetchStateRegisterId, partitionId} = query
 
       let startFetchingBatchTimeRef = Hrtime.makeTimer()
       let currentBlockHeight = await waitForNewBlockBeforeQuery(
@@ -162,15 +155,7 @@ module Make = (
         ~eventRouter,
       )
 
-      let eventBatchItems = await eventBatchPromises->Promise.all
-      let parsedQueueItems = switch eventFilters {
-      //Most cases there are no filters so this will be passed throug
-      | None => eventBatchItems
-      | Some(eventFilters) =>
-        //In the case where there are filters, apply them and keep the events that
-        //are needed
-        eventBatchItems->Array.keep(item => item->FetchState.applyFilters(~eventFilters))
-      }
+      let parsedQueueItems = await eventBatchPromises->Promise.all
 
       let sc = T.rpcConfig.syncConfig
 
