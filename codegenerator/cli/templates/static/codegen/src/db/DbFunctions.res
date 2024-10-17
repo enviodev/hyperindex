@@ -268,6 +268,7 @@ let entityHistoryItemSchema = S.object(s => {
   entity_type: s.field("entity_type", S.string),
   entity_id: s.field("entity_id", S.string),
 })
+let entityHistoryItemsSchema = S.array(entityHistoryItemSchema)
 
 module EntityHistory = {
   //Given chainId, blockTimestamp, blockNumber
@@ -291,9 +292,9 @@ module EntityHistory = {
     //Encode null for for the with prev types so that it's not undefined
     batchSetInternal(
       sql,
-      ~entityHistoriesToSet=entityHistoriesToSet->Belt.Array.map(v =>
-        v->S.serializeOrRaiseWith(entityHistoryItemSchema)
-      ),
+      ~entityHistoriesToSet=entityHistoriesToSet
+      ->S.reverseConvertToJsonWith(entityHistoryItemsSchema)
+      ->(Utils.magic: Js.Json.t => array<Js.Json.t>),
     )
   }
 

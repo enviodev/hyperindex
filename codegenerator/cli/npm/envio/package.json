@@ -18,6 +18,6 @@
   },
   "homepage": "https://envio.dev",
   "devDependencies": {
-    "rescript": "11.1.3"
+    "rescript": "11.1.4"
   }
 }

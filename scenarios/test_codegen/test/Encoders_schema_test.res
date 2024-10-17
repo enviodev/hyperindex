@@ -17,11 +17,11 @@ describe("nullable encodes and decodes successfully", () => {
   let mock2raw = `{"optNumber":null}`
   let mock3raw = `{}`
   it("flat encodes some type", () => {
-    Assert.deepEqual(mock1->S.serializeToJsonStringWith(testRecordSchema), Ok(mock1raw))
+    Assert.deepEqual(mock1->S.reverseConvertToJsonStringWith(testRecordSchema), mock1raw)
   })
   it("encodes None as null", () => {
     // TODO: Test if it's a problem not to send null
-    Assert.deepEqual(mock2->S.serializeToJsonStringWith(testRecordSchema), Ok(mock3raw))
+    Assert.deepEqual(mock2->S.reverseConvertToJsonStringWith(testRecordSchema), mock3raw)
   })
   it("decodes null as None", () => {
     Assert.deepEqual(mock2raw->S.parseJsonStringWith(testRecordSchema), Ok(mock2))
