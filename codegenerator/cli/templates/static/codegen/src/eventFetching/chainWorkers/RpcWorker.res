@@ -4,7 +4,7 @@ open ChainWorker
 module Make = (
   T: {
     let rpcConfig: Config.rpcConfig
-    let chain: ChainMap.Chain.t
+    let chain: Chain.t
     let contracts: array<Config.contract>
     let eventRouter: EventRouter.t<module(Types.InternalEvent)>
   },
@@ -17,7 +17,7 @@ module Make = (
 
       let logger = Logging.createChild(
         ~params={
-          "chainId": T.chain->ChainMap.Chain.toChainId,
+          "chainId": T.chain->Chain.toChainId,
           "contractName": contract.name,
           "eventName": Event.name,
         },

@@ -22,7 +22,7 @@ module InitApi = {
     let hyperSyncNetworks = []
     let rpcNetworks = []
     config.chainMap
-    ->ChainMap.values
+    ->Chain.Map.values
     ->Array.forEach(({syncSource, chain}) => {
       switch syncSource {
       | HyperSync(_) => hyperSyncNetworks
@@ -31,7 +31,7 @@ module InitApi = {
         hyperSyncNetworks
       | Rpc(_) => rpcNetworks
       }
-      ->Js.Array2.push(chain->ChainMap.Chain.toChainId)
+      ->Js.Array2.push(chain->Chain.toChainId)
       ->ignore
     })
 

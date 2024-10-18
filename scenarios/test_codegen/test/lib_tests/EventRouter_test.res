@@ -1,6 +1,6 @@
 open RescriptMocha
 
-let mockChain = ChainMap.Chain.makeUnsafe(~chainId=1)
+let mockChain = Chain.makeUnsafe(~chainId=1)
 let mockAddress1 = TestHelpers.Addresses.mockAddresses[0]
 let mockAddress2 = TestHelpers.Addresses.mockAddresses[1]
 

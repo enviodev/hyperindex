@@ -65,9 +65,9 @@ module Mock = {
     })
 
   module Chain1 = {
-    let chain = ChainMap.Chain.makeUnsafe(~chainId=1)
+    let chain = Chain.makeUnsafe(~chainId=1)
     let mockChainDataEmpty = MockChainData.make(
-      ~chainConfig=config.chainMap->ChainMap.get(chain),
+      ~chainConfig=config.chainMap->Chain.Map.get(chain),
       ~maxBlocksReturned=2,
       ~blockTimestampInterval=25,
     )
@@ -109,13 +109,13 @@ module Mock = {
     let mockChainDataReorg = blocksReorg->applyBlocks
   }
   module Chain2 = {
-    let chain = ChainMap.Chain.makeUnsafe(~chainId=137)
+    let chain = Chain.makeUnsafe(~chainId=137)
     let defaultTokenAddress = ChainDataHelpers.getDefaultAddress(
       chain,
       ChainDataHelpers.ERC20.contractName,
     )
     let mockChainDataEmpty = MockChainData.make(
-      ~chainConfig=config.chainMap->ChainMap.get(chain),
+      ~chainConfig=config.chainMap->Chain.Map.get(chain),
       ~maxBlocksReturned=3,
       ~blockTimestampInterval=16,
     )
@@ -148,16 +148,16 @@ module Mock = {
     let mockChainData = blocks->applyBlocks
   }
 
-  let mockChainDataMapInitial = config.chainMap->ChainMap.mapWithKey((chain, _) =>
-    switch chain->ChainMap.Chain.toChainId {
+  let mockChainDataMapInitial = config.chainMap->Chain.Map.mapWithKey((chain, _) =>
+    switch chain->Chain.toChainId {
     | 1 => Chain1.mockChainDataInitial
     | 137 => Chain2.mockChainData
     | _ => Js.Exn.raiseError("Unexpected chain")
     }
   )
 
-  let mockChainDataMapReorg = config.chainMap->ChainMap.mapWithKey((chain, _) =>
-    switch chain->ChainMap.Chain.toChainId {
+  let mockChainDataMapReorg = config.chainMap->Chain.Map.mapWithKey((chain, _) =>
+    switch chain->Chain.toChainId {
     | 1 => Chain1.mockChainDataReorg
     | 137 => Chain2.mockChainData
     | _ => Js.Exn.raiseError("Unexpected chain")
@@ -172,7 +172,7 @@ module Mock = {
     ~blockTimestampThreshold,
   ) => {
     let {blockNumber, blockTimestamp, blockHash} =
-      mcdMap->ChainMap.get(chain)->MockChainData.getBlock(~blockNumber)->Option.getUnsafe
+      mcdMap->Chain.Map.get(chain)->MockChainData.getBlock(~blockNumber)->Option.getUnsafe
 
     GlobalState.UpdateEndOfBlockRangeScannedData({
       blockNumberThreshold,
@@ -182,7 +182,7 @@ module Mock = {
         blockNumber,
         blockHash,
         blockTimestamp,
-        chainId: chain->ChainMap.Chain.toChainId,
+        chainId: chain->Chain.toChainId,
       },
     })
   }
@@ -247,7 +247,7 @@ describe("Multichain rollback test", () => {
     }
     let getChainFetcher = chain => {
       let state = gsManager->GlobalStateManager.getState
-      state.chainManager.chainFetchers->ChainMap.get(chain)
+      state.chainManager.chainFetchers->Chain.Map.get(chain)
     }
 
     let getFetchState = chain => {
@@ -272,7 +272,7 @@ describe("Multichain rollback test", () => {
     let getTotalQueueSize = () => {
       let state = gsManager->GlobalStateManager.getState
       state.chainManager.chainFetchers
-      ->ChainMap.values
+      ->Chain.Map.values
       ->Array.reduce(
         0,
         (accum, chainFetcher) => accum + chainFetcher.fetchState->PartitionedFetchState.queueSize,
@@ -341,7 +341,7 @@ describe("Multichain rollback test", () => {
         Assert.deepEqual(
           expectedBalance->Option.map(toBigInt),
           balance,
-          ~message=`Chain ${chain->ChainMap.Chain.toString} after processing blocks in batch ${batchName}, User ${user->Int.toString} should have a balance of ${expectedBalance->optIntToString} but has ${balance
+          ~message=`Chain ${chain->Chain.toString} after processing blocks in batch ${batchName}, User ${user->Int.toString} should have a balance of ${expectedBalance->optIntToString} but has ${balance
             ->Option.flatMap(BigInt.toInt)
             ->optIntToString}`,
         )

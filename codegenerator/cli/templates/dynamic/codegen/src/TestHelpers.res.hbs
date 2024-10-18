@@ -84,7 +84,7 @@ module EventFunctions = {
       let logger = Logging.createChild(
         ~params={
           "Context": `Test Processor for "${eventName}" event on contract "${contractName}"`,
-          "Chain ID": chain->ChainMap.Chain.toChainId,
+          "Chain ID": chain->Chain.toChainId,
           "event": event,
         },
       )

@@ -202,7 +202,7 @@ let makeGetRecieptsSelection = (
 
 module Make = (
   T: {
-    let chain: ChainMap.Chain.t
+    let chain: Chain.t
     let contracts: array<Types.fuelContractConfig>
     let endpointUrl: string
   },
@@ -435,7 +435,7 @@ module Make = (
       let parsedQueueItems = pageUnsafe.items->Array.map(item => {
         let {contractId: contractAddress, receipt, block, receiptIndex} = item
 
-        let chainId = chain->ChainMap.Chain.toChainId
+        let chainId = chain->Chain.toChainId
         let eventTag = switch receipt {
         | LogData({rb}) => BigInt.toString(rb)
         | Mint(_) => mintEventTag
@@ -567,7 +567,7 @@ module Make = (
       let stats = {
         totalTimeElapsed,
         parsingTimeElapsed,
-        pageFetchTime
+        pageFetchTime,
       }
 
       {

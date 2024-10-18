@@ -8,7 +8,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
   let arbitraryEventPriorityQueue = ref([])
   let numberOfMockEventsCreated = ref(0)
 
-  let chainFetchers = config.chainMap->ChainMap.map(({chain}) => {
+  let chainFetchers = config.chainMap->Chain.Map.map(({chain}) => {
     let getCurrentTimestamp = () => {
       let timestampMillis = Js.Date.now()
 
@@ -62,7 +62,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
           contractName: "MockContract",
           handlerRegister: Utils.magic("Mock event handlerRegister in fetchstate test"),
           paramsRawEventSchema: Utils.magic("Mock event paramsRawEventSchema in fetchstate test"),
-          event: `mock event (chainId)${chain->ChainMap.Chain.toString} - (blockNumber)${currentBlockNumber.contents->string_of_int} - (logIndex)${logIndex->string_of_int} - (timestamp)${currentTime.contents->string_of_int}`->Utils.magic,
+          event: `mock event (chainId)${chain->Chain.toString} - (blockNumber)${currentBlockNumber.contents->string_of_int} - (logIndex)${logIndex->string_of_int} - (timestamp)${currentTime.contents->string_of_int}`->Utils.magic,
         }
 
         allEvents->Js.Array2.push(batchItem)->ignore
@@ -224,7 +224,7 @@ describe("ChainManager", () => {
             //       Assert.equal(
             //         previous.chain,
             //         current.chain,
-            //         ~message=`The chainId within a block should always be the same, here ${previous.chain->ChainMap.Chain.toString} (previous.chainId) != ${current.chain->ChainMap.Chain.toString}(current.chainId)`,
+            //         ~message=`The chainId within a block should always be the same, here ${previous.chain->Chain.toString} (previous.chainId) != ${current.chain->Chain.toString}(current.chainId)`,
             //       )
             //
             //       Assert.equal(
@@ -235,9 +235,9 @@ describe("ChainManager", () => {
             //       current
             //     },
             //   )
-            let nextChainFetchers = chainManager.chainFetchers->ChainMap.mapWithKey(
+            let nextChainFetchers = chainManager.chainFetchers->Chain.Map.mapWithKey(
               (chain, fetcher) => {
-                let {partitionedFetchState: fetchState} = fetchStatesMap->ChainMap.get(chain)
+                let {partitionedFetchState: fetchState} = fetchStatesMap->Chain.Map.get(chain)
                 {
                   ...fetcher,
                   fetchState,
@@ -263,7 +263,7 @@ describe("ChainManager", () => {
         let amountStillOnQueues =
           finalChainManager.arbitraryEventQueue->Array.length +
             finalChainManager.chainFetchers
-            ->ChainMap.values
+            ->Chain.Map.values
             ->Belt.Array.reduce(
               0,
               (accum, val) => {
@@ -343,9 +343,9 @@ describe("determineNextEvent", () => {
         let singleItem = makeMockQItem(654, MockConfig.chain137)
         let earliestItem = makeNoItem(5) /* earlier timestamp than the test event */
 
-        let fetchStatesMap = RegisterHandlers.registerAllHandlers().chainMap->ChainMap.mapWithKey(
+        let fetchStatesMap = RegisterHandlers.registerAllHandlers().chainMap->Chain.Map.mapWithKey(
           (chain, _) =>
-            switch chain->ChainMap.Chain.toChainId {
+            switch chain->Chain.toChainId {
             | 1 =>
               makeMockPartitionedFetchState(
                 ~latestFetchedBlockTimestamp=5,
@@ -382,9 +382,9 @@ describe("determineNextEvent", () => {
         let singleItemTimestamp = 654
         let singleItem = makeMockQItem(singleItemTimestamp, MockConfig.chain137)
 
-        let fetchStatesMap = RegisterHandlers.registerAllHandlers().chainMap->ChainMap.mapWithKey(
+        let fetchStatesMap = RegisterHandlers.registerAllHandlers().chainMap->Chain.Map.mapWithKey(
           (chain, _) =>
-            switch chain->ChainMap.Chain.toChainId {
+            switch chain->Chain.toChainId {
             | 1 =>
               makeMockPartitionedFetchState(
                 ~latestFetchedBlockTimestamp=earliestItemTimestamp,

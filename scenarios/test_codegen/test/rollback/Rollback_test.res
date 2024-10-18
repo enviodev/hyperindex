@@ -5,7 +5,7 @@ let config = RegisterHandlers.registerAllHandlers()
 
 module Mock = {
   let mockChainDataEmpty = MockChainData.make(
-    ~chainConfig=config.chainMap->ChainMap.get(MockConfig.chain1337),
+    ~chainConfig=config.chainMap->Chain.Map.get(MockConfig.chain1337),
     ~maxBlocksReturned=3,
     ~blockTimestampInterval=25,
   )
@@ -118,7 +118,7 @@ module Stubs = {
       ~rollbackLastBlockHashesToReorgLocation=chainFetcher =>
         chainFetcher->ChainFetcher.rollbackLastBlockHashesToReorgLocation(
           ~getBlockHashes=getBlockHashes(mockChainData),
-        ),
+        )
     )(
       ~dispatchAction=action => dispatchAction(gsManager, action),
       gsManager->GlobalStateManager.getState,
@@ -165,7 +165,7 @@ describe("Single Chain Simple Rollback", () => {
     let gsManager = initState->GlobalStateManager.make
     let chain = MockConfig.chain1337
     let getState = () => gsManager->GlobalStateManager.getState
-    let getChainFetcher = () => getState().chainManager.chainFetchers->ChainMap.get(chain)
+    let getChainFetcher = () => getState().chainManager.chainFetchers->Chain.Map.get(chain)
 
     open Stubs
     let dispatchTaskInitalChain = dispatchTask(gsManager, Mock.mockChainData, ...)
@@ -228,7 +228,7 @@ describe("Single Chain Simple Rollback", () => {
     let gsManager = initState->GlobalStateManager.make
     let chain = MockConfig.chain1337
     let getState = () => gsManager->GlobalStateManager.getState
-    let getChainFetcher = () => getState().chainManager.chainFetchers->ChainMap.get(chain)
+    let getChainFetcher = () => getState().chainManager.chainFetchers->Chain.Map.get(chain)
 
     open Stubs
     let dispatchTaskInitalChain = dispatchTask(gsManager, Mock.mockChainData, ...)

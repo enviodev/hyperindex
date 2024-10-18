@@ -20,7 +20,7 @@ let make = (
   let contractNameInterfaceMapping = Js.Dict.empty()
 
   contracts->Belt.Array.forEach(contract => {
-    contractNameInterfaceMapping->Js.Dict.set(contract.name, contract :> interfaceAndAbi)
+    contractNameInterfaceMapping->Js.Dict.set(contract.name, (contract :> interfaceAndAbi))
   })
 
   {contractAddressMapping, contractNameInterfaceMapping}
@@ -53,7 +53,7 @@ let makeFromSingleContract = (
     let exn = UndefinedContract(contractName)
     Logging.errorWithExn(
       exn,
-      `EE900: Unexpected undefined contract ${contractName} on chain ${chainConfig.chain->ChainMap.Chain.toString}. Please verify the contract name defined in the config.yaml file.`,
+      `EE900: Unexpected undefined contract ${contractName} on chain ${chainConfig.chain->Chain.toString}. Please verify the contract name defined in the config.yaml file.`,
     )
     exn->raise
   | Some(c) => c
@@ -62,11 +62,8 @@ let makeFromSingleContract = (
   let contractNameInterfaceMapping = Js.Dict.empty()
   let contractAddressMapping = ContractAddressingMap.make()
   let {name} = contract
-  contractNameInterfaceMapping->Js.Dict.set(name, contract :> interfaceAndAbi)
-  contractAddressMapping->ContractAddressingMap.addAddress(
-    ~name,
-    ~address=contractAddress,
-  )
+  contractNameInterfaceMapping->Js.Dict.set(name, (contract :> interfaceAndAbi))
+  contractAddressMapping->ContractAddressingMap.addAddress(~name, ~address=contractAddress)
 
   {contractNameInterfaceMapping, contractAddressMapping}
 }

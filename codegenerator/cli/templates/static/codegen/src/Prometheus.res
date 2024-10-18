@@ -70,29 +70,27 @@ let incrementEventsProcessedCounter = (~number) => {
 }
 
 let incrementReorgsDetected = (~chain) => {
-  eventsProcessedCounter->PromClient.Counter.incLabels({"chainId": chain->ChainMap.Chain.toString})
+  eventsProcessedCounter->PromClient.Counter.incLabels({"chainId": chain->Chain.toString})
 }
 
 let setSourceChainHeight = (~blockNumber, ~chain) => {
   sourceChainHeight
-  ->PromClient.Gauge.labels({"chainId": chain->ChainMap.Chain.toString})
+  ->PromClient.Gauge.labels({"chainId": chain->Chain.toString})
   ->PromClient.Gauge.set(blockNumber)
 }
 
 let setAllChainsSyncedToHead = () => {
-  allChainsSyncedToHead
-  ->PromClient.Gauge.set(1)
+  allChainsSyncedToHead->PromClient.Gauge.set(1)
 }
-
 
 let setProcessedUntilHeight = (~blockNumber, ~chain) => {
   processedUntilHeight
-  ->PromClient.Gauge.labels({"chainId": chain->ChainMap.Chain.toString})
+  ->PromClient.Gauge.labels({"chainId": chain->Chain.toString})
   ->PromClient.Gauge.set(blockNumber)
 }
 
 let setFetchedEventsUntilHeight = (~blockNumber, ~chain) => {
   processedUntilHeight
-  ->PromClient.Gauge.labels({"chainId": chain->ChainMap.Chain.toString})
+  ->PromClient.Gauge.labels({"chainId": chain->Chain.toString})
   ->PromClient.Gauge.set(blockNumber)
 }

@@ -69,11 +69,11 @@ let addOrThrow = (
   try group->Group.addOrThrow(event, ~contractName, ~isWildcard) catch {
   | EventDuplicate =>
     Js.Exn.raiseError(
-      `Duplicate event detected: ${eventName} for contract ${contractName} on chain ${chain->ChainMap.Chain.toString}`,
+      `Duplicate event detected: ${eventName} for contract ${contractName} on chain ${chain->Chain.toString}`,
     )
   | WildcardCollision =>
     Js.Exn.raiseError(
-      `Another event is already registered with the same signature that would interfer with wildcard filtering: ${eventName} for contract ${contractName} on chain ${chain->ChainMap.Chain.toString}`,
+      `Another event is already registered with the same signature that would interfer with wildcard filtering: ${eventName} for contract ${contractName} on chain ${chain->Chain.toString}`,
     )
   }
 }

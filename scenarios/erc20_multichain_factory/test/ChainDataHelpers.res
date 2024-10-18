@@ -1,7 +1,7 @@
 open Belt
 
 let getDefaultAddress = (chain, contractName) => {
-  let chainConfig = RegisterHandlers.getConfig().chainMap->ChainMap.get(chain)
+  let chainConfig = RegisterHandlers.getConfig().chainMap->Chain.Map.get(chain)
   let contract = chainConfig.contracts->Js.Array2.find(c => c.name == contractName)->Option.getExn
   let defaultAddress = contract.addresses[0]->Option.getExn
   defaultAddress
@@ -67,7 +67,7 @@ module ERC20Factory = {
 
 module Stubs = {
   type t = {
-    mockChainDataMap: ChainMap.t<MockChainData.t>,
+    mockChainDataMap: Chain.Map.t<MockChainData.t>,
     tasks: ref<array<GlobalState.task>>,
     gsManager: GlobalStateManager.t,
   }
@@ -78,7 +78,7 @@ module Stubs = {
     gsManager,
   }
   let getTasks = ({tasks}) => tasks.contents
-  let getMockChainData = ({mockChainDataMap}, chain) => mockChainDataMap->ChainMap.get(chain)
+  let getMockChainData = ({mockChainDataMap}, chain) => mockChainDataMap->Chain.Map.get(chain)
 
   //Stub executeNextQuery with mock data
   let makeExecuteNextQuery = async (
@@ -153,7 +153,7 @@ module Stubs = {
             ~stubData,
             ~chainWorker=chainFetcher.chainConfig.chainWorker,
           ),
-        ),
+        )
     )(
       ~dispatchAction=makeDispatchAction(stubData, _),
       stubData.gsManager->GlobalStateManager.getState,

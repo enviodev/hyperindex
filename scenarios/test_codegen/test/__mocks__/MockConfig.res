@@ -1,6 +1,6 @@
-let chain1 = ChainMap.Chain.makeUnsafe(~chainId=1)
-let chain137 = ChainMap.Chain.makeUnsafe(~chainId=137)
-let chain1337 = ChainMap.Chain.makeUnsafe(~chainId=1337)
+let chain1 = Chain.makeUnsafe(~chainId=1)
+let chain137 = Chain.makeUnsafe(~chainId=137)
+let chain1337 = Chain.makeUnsafe(~chainId=1337)
 
 let contracts = [
   {
