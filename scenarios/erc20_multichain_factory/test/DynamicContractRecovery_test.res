@@ -75,12 +75,12 @@ module Mock = {
   }
   module Chain2 = RollbackMultichain_test.Mock.Chain2
 
-  let mockChainDataMap = config.chainMap->ChainMap.mapWithKey((chain, _) =>
-    switch chain->ChainMap.Chain.toChainId {
+  let mockChainDataMap = config.chainMap->Chain.Map.mapWithKey((chain, _) =>
+    switch chain->Chain.toChainId {
     | 1 => Chain1.mockChainData
     | 137 =>
       let empty = MockChainData.make(
-        ~chainConfig=config.chainMap->ChainMap.get(chain),
+        ~chainConfig=config.chainMap->Chain.Map.get(chain),
         ~maxBlocksReturned=2,
         ~blockTimestampInterval=25,
       )
@@ -98,7 +98,7 @@ module Mock = {
   ) => {
     let (blockNumber, blockTimestamp, blockHash) =
       mcdMap
-      ->ChainMap.get(chain)
+      ->Chain.Map.get(chain)
       ->MockChainData.getBlock(~blockNumber)
       ->Option.mapWithDefault((0, 0, "0xstub"), ({blockNumber, blockTimestamp, blockHash}) => (
         blockNumber,
@@ -114,7 +114,7 @@ module Mock = {
         blockNumber,
         blockHash,
         blockTimestamp,
-        chainId: chain->ChainMap.Chain.toChainId,
+        chainId: chain->Chain.toChainId,
       },
     })
   }
@@ -197,7 +197,7 @@ describe("Dynamic contract restart resistance test", () => {
         ~message="Should have 2 dynamic contracts in table",
       )
 
-      let chainConfig = config.chainMap->ChainMap.get(ChainMap.Chain.makeUnsafe(~chainId=1))
+      let chainConfig = config.chainMap->Chain.Map.get(Chain.makeUnsafe(~chainId=1))
 
       let restartedChainFetcher = await ChainFetcher.makeFromDbState(
         chainConfig,

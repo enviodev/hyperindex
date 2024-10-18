@@ -34,7 +34,7 @@ type blockRangeFetchResponse = {
 
 module type S = {
   let name: string
-  let chain: ChainMap.Chain.t
+  let chain: Chain.t
   let getBlockHashes: (
     ~blockNumbers: array<int>,
     ~logger: Pino.t,

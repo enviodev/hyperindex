@@ -11,7 +11,7 @@ let makeTransaction = (~transactionIndex, ~transactionHash): Types.Transaction.t
 module Gravatar = {
   let contractName = "Gravatar"
   let chainConfig =
-    RegisterHandlers.registerAllHandlers().chainMap->ChainMap.get(MockConfig.chain1337)
+    RegisterHandlers.registerAllHandlers().chainMap->Chain.Map.get(MockConfig.chain1337)
   let contract = chainConfig.contracts->Js.Array2.find(c => c.name == contractName)->Option.getExn
   let defaultAddress = contract.addresses[0]->Option.getExn
 

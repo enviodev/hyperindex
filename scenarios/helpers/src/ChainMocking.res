@@ -159,7 +159,7 @@ module Make = (Indexer: Indexer.S) => {
         x(
           ~transactionIndex=i,
           ~logIndex=i,
-          ~chainId=self.chainConfig.chain->ChainMap.Chain.toChainId,
+          ~chainId=self.chainConfig.chain->Chain.toChainId,
           ~blockNumber,
           ~blockTimestamp,
         )

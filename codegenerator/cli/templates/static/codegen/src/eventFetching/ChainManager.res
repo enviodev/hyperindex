@@ -1,6 +1,6 @@
 open Belt
 type t = {
-  chainFetchers: ChainMap.t<ChainFetcher.t>,
+  chainFetchers: Chain.Map.t<ChainFetcher.t>,
   //Holds arbitrary events that were added when a batch ended processing early
   //due to contract registration. Ordered from latest to earliest
   arbitraryEventQueue: array<Types.eventBatchQueueItem>,
@@ -12,14 +12,14 @@ let getComparitorFromItem = (queueItem: Types.eventBatchQueueItem) => {
   let {timestamp, chain, blockNumber, logIndex} = queueItem
   EventUtils.getEventComparator({
     timestamp,
-    chainId: chain->ChainMap.Chain.toChainId,
+    chainId: chain->Chain.toChainId,
     blockNumber,
     logIndex,
   })
 }
 
 type multiChainEventComparitor = {
-  chain: ChainMap.Chain.t,
+  chain: Chain.t,
   earliestEvent: FetchState.queueItem,
 }
 
@@ -28,7 +28,7 @@ let getQueueItemComparitor = (earliestQueueItem: FetchState.queueItem, ~chain) =
   | Item({item}) => item->getComparitorFromItem
   | NoItem({blockTimestamp, blockNumber}) => (
       blockTimestamp,
-      chain->ChainMap.Chain.toChainId,
+      chain->Chain.toChainId,
       blockNumber,
       0,
     )
@@ -73,29 +73,31 @@ type fetchStateWithData = {
 }
 
 let isQueueItemEarlierUnorderedBelowReorgThreshold = (
-  ~fetchStatesMap: ChainMap.t<fetchStateWithData>,
-) => (a: multiChainEventComparitor, b: multiChainEventComparitor) => {
-  let isItemBelowReorgThreshold = item => {
-    item.earliestEvent->FetchState.queueItemIsInReorgThreshold(
-      ~heighestBlockBelowThreshold=ChainMap.get(
-        fetchStatesMap,
-        a.chain,
-      ).heighestBlockBelowThreshold,
-    )
-  }
-  // The idea here is if we are in undordered multichain mode, always prioritize queue
-  // items that are below the reorg threshold. That way we can register contracts all
-  // the way up to the threshold on all chains before starting. 
-  // Similarly we wait till all chains are at their threshold before saving entity history.
-  switch (a->isItemBelowReorgThreshold, b->isItemBelowReorgThreshold) {
-  | (false, true) => true
-  | (true, false) => false
-  | _ => isQueueItemEarlierUnorderedMultichain(a, b)
+  ~fetchStatesMap: Chain.Map.t<fetchStateWithData>,
+) => {
+  (a: multiChainEventComparitor, b: multiChainEventComparitor) => {
+    let isItemBelowReorgThreshold = item => {
+      item.earliestEvent->FetchState.queueItemIsInReorgThreshold(
+        ~heighestBlockBelowThreshold=Chain.Map.get(
+          fetchStatesMap,
+          a.chain,
+        ).heighestBlockBelowThreshold,
+      )
+    }
+    // The idea here is if we are in undordered multichain mode, always prioritize queue
+    // items that are below the reorg threshold. That way we can register contracts all
+    // the way up to the threshold on all chains before starting.
+    // Similarly we wait till all chains are at their threshold before saving entity history.
+    switch (a->isItemBelowReorgThreshold, b->isItemBelowReorgThreshold) {
+    | (false, true) => true
+    | (true, false) => false
+    | _ => isQueueItemEarlierUnorderedMultichain(a, b)
+    }
   }
 }
 
 let determineNextEvent = (
-  fetchStatesMap: ChainMap.t<fetchStateWithData>,
+  fetchStatesMap: Chain.Map.t<fetchStateWithData>,
   ~isUnorderedMultichainMode: bool,
   ~onlyBelowReorgThreshold: bool,
 ): result<isInReorgThresholdRes<multiChainEventComparitor>, noItemsInArray> => {
@@ -111,7 +113,7 @@ let determineNextEvent = (
 
   let nextItem =
     fetchStatesMap
-    ->ChainMap.entries
+    ->Chain.Map.entries
     ->Array.reduce({isInReorgThreshold: false, val: None}, (
       accum,
       (chain, {partitionedFetchState, heighestBlockBelowThreshold}),
@@ -143,7 +145,7 @@ let determineNextEvent = (
 
 let makeFromConfig = (~config: Config.t, ~maxAddrInPartition=Env.maxAddrInPartition): t => {
   let chainFetchers =
-    config.chainMap->ChainMap.map(ChainFetcher.makeFromConfig(_, ~maxAddrInPartition))
+    config.chainMap->Chain.Map.map(ChainFetcher.makeFromConfig(_, ~maxAddrInPartition))
   {
     chainFetchers,
     arbitraryEventQueue: [],
@@ -155,13 +157,13 @@ let makeFromConfig = (~config: Config.t, ~maxAddrInPartition=Env.maxAddrInPartit
 let makeFromDbState = async (~config: Config.t, ~maxAddrInPartition=Env.maxAddrInPartition): t => {
   let chainFetchersArr =
     await config.chainMap
-    ->ChainMap.entries
+    ->Chain.Map.entries
     ->Array.map(async ((chain, chainConfig)) => {
       (chain, await chainConfig->ChainFetcher.makeFromDbState(~maxAddrInPartition))
     })
     ->Promise.all
 
-  let chainFetchers = ChainMap.fromArrayUnsafe(chainFetchersArr)
+  let chainFetchers = Chain.Map.fromArrayUnsafe(chainFetchersArr)
 
   let hasStartedSavingHistory = await DbFunctions.EntityHistory.hasRows()
 
@@ -184,7 +186,7 @@ there is no need to consider other chains with prunining in this case
 */
 let getEarliestMultiChainTimestampInThreshold = (chainManager: t) => {
   chainManager.chainFetchers
-  ->ChainMap.values
+  ->Chain.Map.values
   ->Array.map((cf): ReorgDetection.LastBlockScannedHashes.currentHeightAndLastBlockHashes => {
     lastBlockScannedHashes: cf.lastBlockScannedHashes,
     currentHeight: cf.currentBlockHeight,
@@ -197,14 +199,14 @@ Adds latest "lastBlockScannedData" to LastBlockScannedHashes and prunes old unne
 */
 let addLastBlockScannedData = (
   chainManager: t,
-  ~chain: ChainMap.Chain.t,
+  ~chain: Chain.t,
   ~lastBlockScannedData: ReorgDetection.blockData,
   ~currentHeight,
 ) => {
   let earliestMultiChainTimestampInThreshold =
     chainManager->getEarliestMultiChainTimestampInThreshold
 
-  let chainFetchers = chainManager.chainFetchers->ChainMap.update(chain, cf => {
+  let chainFetchers = chainManager.chainFetchers->Chain.Map.update(chain, cf => {
     let lastBlockScannedHashes =
       cf.lastBlockScannedHashes
       ->ReorgDetection.LastBlockScannedHashes.pruneStaleBlockData(
@@ -224,28 +226,28 @@ let addLastBlockScannedData = (
   }
 }
 
-let getChainFetcher = (self: t, ~chain: ChainMap.Chain.t): ChainFetcher.t => {
-  self.chainFetchers->ChainMap.get(chain)
+let getChainFetcher = (self: t, ~chain: Chain.t): ChainFetcher.t => {
+  self.chainFetchers->Chain.Map.get(chain)
 }
 
 let setChainFetcher = (self: t, chainFetcher: ChainFetcher.t) => {
   {
     ...self,
-    chainFetchers: self.chainFetchers->ChainMap.set(chainFetcher.chainConfig.chain, chainFetcher),
+    chainFetchers: self.chainFetchers->Chain.Map.set(chainFetcher.chainConfig.chain, chainFetcher),
   }
 }
 
 let getFirstArbitraryEventsItemForChain = (
   queue: array<Types.eventBatchQueueItem>,
   ~chain,
-  ~fetchStatesMap: ChainMap.t<fetchStateWithData>,
+  ~fetchStatesMap: Chain.Map.t<fetchStateWithData>,
 ): option<isInReorgThresholdRes<FetchState.itemWithPopFn>> =>
   queue
   ->Utils.Array.findReverseWithIndex((item: Types.eventBatchQueueItem) => {
     item.chain == chain
   })
   ->Option.map(((item, index)) => {
-    let {heighestBlockBelowThreshold} = fetchStatesMap->ChainMap.get(item.chain)
+    let {heighestBlockBelowThreshold} = fetchStatesMap->Chain.Map.get(item.chain)
     let isInReorgThreshold = item.blockNumber > heighestBlockBelowThreshold
     {
       val: {
@@ -258,12 +260,12 @@ let getFirstArbitraryEventsItemForChain = (
 
 let getFirstArbitraryEventsItem = (
   queue: array<Types.eventBatchQueueItem>,
-  ~fetchStatesMap: ChainMap.t<fetchStateWithData>,
+  ~fetchStatesMap: Chain.Map.t<fetchStateWithData>,
 ): option<isInReorgThresholdRes<FetchState.itemWithPopFn>> =>
   queue
   ->Utils.Array.last
   ->Option.map(item => {
-    let {heighestBlockBelowThreshold} = fetchStatesMap->ChainMap.get(item.chain)
+    let {heighestBlockBelowThreshold} = fetchStatesMap->Chain.Map.get(item.chain)
     let isInReorgThreshold = item.blockNumber > heighestBlockBelowThreshold
     {
       val: {FetchState.item, popItemOffQueue: () => queue->Js.Array2.pop->ignore},
@@ -272,7 +274,7 @@ let getFirstArbitraryEventsItem = (
   })
 
 let popBatchItem = (
-  ~fetchStatesMap: ChainMap.t<fetchStateWithData>,
+  ~fetchStatesMap: Chain.Map.t<fetchStateWithData>,
   ~arbitraryEventQueue: array<Types.eventBatchQueueItem>,
   ~isUnorderedMultichainMode,
   ~onlyBelowReorgThreshold,
@@ -316,8 +318,8 @@ let popBatchItem = (
   }
 }
 
-let getFetchStateWithData = (self: t, ~shouldDeepCopy=false): ChainMap.t<fetchStateWithData> => {
-  self.chainFetchers->ChainMap.map(cf => {
+let getFetchStateWithData = (self: t, ~shouldDeepCopy=false): Chain.Map.t<fetchStateWithData> => {
+  self.chainFetchers->Chain.Map.map(cf => {
     {
       partitionedFetchState: shouldDeepCopy
         ? cf.fetchState->PartitionedFetchState.copy
@@ -349,7 +351,7 @@ let hasChainItemsOnArbQueue = (self: t, ~chain): bool => {
 
 let createBatchInternal = (
   ~maxBatchSize,
-  ~fetchStatesMap: ChainMap.t<fetchStateWithData>,
+  ~fetchStatesMap: Chain.Map.t<fetchStateWithData>,
   ~arbitraryEventQueue,
   ~isUnorderedMultichainMode,
   ~onlyBelowReorgThreshold,
@@ -386,7 +388,7 @@ let createBatchInternal = (
 
 type batchRes = {
   batch: array<Types.eventBatchQueueItem>,
-  fetchStatesMap: ChainMap.t<fetchStateWithData>,
+  fetchStatesMap: Chain.Map.t<fetchStateWithData>,
   arbitraryEventQueue: array<Types.eventBatchQueueItem>,
 }
 
@@ -411,9 +413,9 @@ let createBatch = (self: t, ~maxBatchSize: int, ~onlyBelowReorgThreshold: bool) 
   let val = if batchSize > 0 {
     let fetchedEventsBuffer =
       chainFetchers
-      ->ChainMap.values
+      ->Chain.Map.values
       ->Array.map(fetcher => (
-        fetcher.chainConfig.chain->ChainMap.Chain.toString,
+        fetcher.chainConfig.chain->Chain.toString,
         fetcher.fetchState->PartitionedFetchState.queueSize,
       ))
       ->Array.concat([("arbitrary", self.arbitraryEventQueue->Array.length)])
@@ -448,12 +450,12 @@ let createBatch = (self: t, ~maxBatchSize: int, ~onlyBelowReorgThreshold: bool) 
 
 let isFetchingAtHead = self =>
   self.chainFetchers
-  ->ChainMap.values
+  ->Chain.Map.values
   ->Array.reduce(true, (accum, cf) => accum && cf->ChainFetcher.isFetchingAtHead)
 
 let isPreRegisteringDynamicContracts = self =>
   self.chainFetchers
-  ->ChainMap.values
+  ->Chain.Map.values
   ->Array.reduce(false, (accum, cf) => accum || cf->ChainFetcher.isPreRegisteringDynamicContracts)
 
 module ExposedForTesting_Hidden = {

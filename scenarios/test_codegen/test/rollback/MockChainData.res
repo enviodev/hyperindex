@@ -11,7 +11,7 @@ module Indexer = {
   module ChainWorker = ChainWorker
   module ReorgDetection = ReorgDetection
   module FetchState = FetchState
-  module ChainMap = ChainMap
+  module Chain = Chain
   module ContractAddressingMap = ContractAddressingMap
   module LogSelection = LogSelection
 }

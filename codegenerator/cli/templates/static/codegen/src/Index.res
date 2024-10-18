@@ -68,7 +68,7 @@ let makeAppState = (globalState: GlobalState.t): EnvioInkApp.appState => {
   open Belt
   let chains =
     globalState.chainManager.chainFetchers
-    ->ChainMap.values
+    ->Chain.Map.values
     ->Array.map(cf => {
       let {numEventsProcessed, fetchState, numBatchesFetched} = cf
       let latestFetchedBlockNumber = PartitionedFetchState.getLatestFullyFetchedBlock(
@@ -135,7 +135,7 @@ let makeAppState = (globalState: GlobalState.t): EnvioInkApp.appState => {
           currentBlockHeight,
           latestFetchedBlockNumber,
           numBatchesFetched,
-          chainId: cf.chainConfig.chain->ChainMap.Chain.toChainId,
+          chainId: cf.chainConfig.chain->Chain.toChainId,
           endBlock: cf.chainConfig.endBlock,
           poweredByHyperSync: switch cf.chainConfig.syncSource {
           | HyperSync(_)

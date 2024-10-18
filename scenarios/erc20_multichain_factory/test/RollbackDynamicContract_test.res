@@ -89,8 +89,8 @@ ensure that this doesn't trigger a reorg
   }
   module Chain2 = RollbackMultichain_test.Mock.Chain2
 
-  let mockChainDataMap = config.chainMap->ChainMap.mapWithKey((chain, _) =>
-    switch chain->ChainMap.Chain.toChainId {
+  let mockChainDataMap = config.chainMap->Chain.Map.mapWithKey((chain, _) =>
+    switch chain->Chain.toChainId {
     | 1 => Chain1.mockChainData
     | 137 => Chain2.mockChainData
     | _ => Js.Exn.raiseError("Unexpected chain")
@@ -105,7 +105,7 @@ ensure that this doesn't trigger a reorg
     ~blockTimestampThreshold,
   ) => {
     let {blockNumber, blockTimestamp, blockHash} =
-      mcdMap->ChainMap.get(chain)->MockChainData.getBlock(~blockNumber)->Option.getUnsafe
+      mcdMap->Chain.Map.get(chain)->MockChainData.getBlock(~blockNumber)->Option.getUnsafe
 
     GlobalState.UpdateEndOfBlockRangeScannedData({
       blockNumberThreshold,
@@ -115,7 +115,7 @@ ensure that this doesn't trigger a reorg
         blockNumber,
         blockHash,
         blockTimestamp,
-        chainId: chain->ChainMap.Chain.toChainId,
+        chainId: chain->Chain.toChainId,
       },
     })
   }
@@ -149,7 +149,7 @@ describe("Dynamic contract rollback test", () => {
     //helpers
     let getChainFetcher = chain => {
       let state = gsManager->GlobalStateManager.getState
-      state.chainManager.chainFetchers->ChainMap.get(chain)
+      state.chainManager.chainFetchers->Chain.Map.get(chain)
     }
 
     let getFetchState = chain => {
@@ -174,7 +174,7 @@ describe("Dynamic contract rollback test", () => {
     let getTotalQueueSize = () => {
       let state = gsManager->GlobalStateManager.getState
       state.chainManager.chainFetchers
-      ->ChainMap.values
+      ->Chain.Map.values
       ->Array.reduce(
         0,
         (accum, chainFetcher) => accum + chainFetcher.fetchState->PartitionedFetchState.queueSize,
@@ -243,7 +243,7 @@ describe("Dynamic contract rollback test", () => {
         Assert.deepEqual(
           balance,
           expectedBalance->Option.map(toBigInt),
-          ~message=`Chain ${chain->ChainMap.Chain.toString} after processing blocks in batch ${batchName}, User ${user->Int.toString} should have a balance of ${expectedBalance->optIntToString} but has ${balance
+          ~message=`Chain ${chain->Chain.toString} after processing blocks in batch ${batchName}, User ${user->Int.toString} should have a balance of ${expectedBalance->optIntToString} but has ${balance
             ->Option.flatMap(BigInt.toInt)
             ->optIntToString}`,
         )

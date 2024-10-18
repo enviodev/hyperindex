@@ -28,12 +28,13 @@ module type S = {
     }
   }
 
-  module ChainMap: {
-    module Chain: {
-      type t
-      let toChainId: t => int
+  module Chain: {
+    type t
+    let toChainId: t => int
+
+    module Map: {
+      type t<'a>
     }
-    type t<'a>
   }
 
   module LogSelection: {
@@ -94,7 +95,7 @@ module type S = {
       contractName: string,
       handlerRegister: HandlerTypes.Register.t<internalEventArgs>,
       timestamp: int,
-      chain: ChainMap.Chain.t,
+      chain: Chain.t,
       blockNumber: int,
       logIndex: int,
       event: eventLog<internalEventArgs>,
@@ -159,7 +160,7 @@ module type S = {
 
     module type S = {
       let name: string
-      let chain: ChainMap.Chain.t
+      let chain: Chain.t
       let getBlockHashes: (
         ~blockNumbers: array<int>,
         ~logger: Pino.t,
@@ -212,7 +213,7 @@ module type S = {
       startBlock: int,
       endBlock: option<int>,
       confirmedBlockThreshold: int,
-      chain: ChainMap.Chain.t,
+      chain: Chain.t,
       contracts: array<contract>,
       chainWorker: module(ChainWorker.S),
     }

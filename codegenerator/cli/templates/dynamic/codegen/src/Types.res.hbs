@@ -611,7 +611,7 @@ type eventBatchQueueItem = {
   contractName: string,
   handlerRegister: HandlerTypes.Register.t<internalEventArgs>,
   timestamp: int,
-  chain: ChainMap.Chain.t,
+  chain: Chain.t,
   blockNumber: int,
   logIndex: int,
   event: eventLog<internalEventArgs>,

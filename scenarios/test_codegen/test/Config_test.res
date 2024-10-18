@@ -22,7 +22,7 @@ let configYaml: config = ConfigUtils.loadConfigYaml(~codegenConfigPath=configPat
 let firstNetworkConfig = configYaml.networks[0]
 
 let generatedChainConfig =
-  RegisterHandlers.registerAllHandlers().chainMap->ChainMap.get(MockConfig.chain1337)
+  RegisterHandlers.registerAllHandlers().chainMap->Chain.Map.get(MockConfig.chain1337)
 let generatedSyncConfig = switch generatedChainConfig.syncSource {
 | Rpc({syncConfig}) => syncConfig
 | _ => Js.Exn.raiseError("Expected an rpc config")

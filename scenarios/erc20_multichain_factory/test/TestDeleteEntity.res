@@ -66,8 +66,8 @@ module Mock = {
   }
   module Chain2 = RollbackMultichain_test.Mock.Chain2
 
-  let mockChainDataMap = config.chainMap->ChainMap.mapWithKey((chain, _) =>
-    switch chain->ChainMap.Chain.toChainId {
+  let mockChainDataMap = config.chainMap->Chain.Map.mapWithKey((chain, _) =>
+    switch chain->Chain.toChainId {
     | 1 => Chain1.mockChainData
     | 137 => Chain2.mockChainDataEmpty
     | _ => Js.Exn.raiseError("Unexpected chain")
@@ -82,7 +82,7 @@ module Mock = {
     ~blockTimestampThreshold,
   ) => {
     let {blockNumber, blockTimestamp, blockHash} =
-      mcdMap->ChainMap.get(chain)->MockChainData.getBlock(~blockNumber)->Option.getUnsafe
+      mcdMap->Chain.Map.get(chain)->MockChainData.getBlock(~blockNumber)->Option.getUnsafe
 
     GlobalState.UpdateEndOfBlockRangeScannedData({
       blockNumberThreshold,
@@ -92,7 +92,7 @@ module Mock = {
         blockNumber,
         blockHash,
         blockTimestamp,
-        chainId: chain->ChainMap.Chain.toChainId,
+        chainId: chain->Chain.toChainId,
       },
     })
   }

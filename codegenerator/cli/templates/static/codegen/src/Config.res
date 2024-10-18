@@ -36,7 +36,7 @@ type chainConfig = {
   startBlock: int,
   endBlock: option<int>,
   confirmedBlockThreshold: int,
-  chain: ChainMap.Chain.t,
+  chain: Chain.t,
   contracts: array<contract>,
   chainWorker: module(ChainWorker.S),
 }
@@ -90,7 +90,7 @@ let getSyncConfig = ({
 type t = {
   historyConfig: historyConfig,
   isUnorderedMultichainMode: bool,
-  chainMap: ChainMap.t<chainConfig>,
+  chainMap: Chain.Map.t<chainConfig>,
   defaultChain: option<chainConfig>,
   enableRawEvents: bool,
   entities: array<module(Entities.InternalEntity)>,
@@ -118,7 +118,7 @@ let make = (
     ->Js.Array2.map(n => {
       (n.chain, n)
     })
-    ->ChainMap.fromArrayUnsafe,
+    ->Chain.Map.fromArrayUnsafe,
     defaultChain: chains->Array.get(0),
     enableRawEvents,
     entities: entities->(
@@ -147,10 +147,8 @@ let shouldPruneHistory = config =>
   }
 
 let getChain = (config, ~chainId) => {
-  let chain = ChainMap.Chain.makeUnsafe(~chainId)
-  config.chainMap->ChainMap.has(chain)
+  let chain = Chain.makeUnsafe(~chainId)
+  config.chainMap->Chain.Map.has(chain)
     ? chain
-    : Js.Exn.raiseError(
-        "No chain with id " ++ chain->ChainMap.Chain.toString ++ " found in config.yaml",
-      )
+    : Js.Exn.raiseError("No chain with id " ++ chain->Chain.toString ++ " found in config.yaml")
 }

@@ -86,7 +86,7 @@ let getStaticContracts = (chainConfig: Config.chainConfig) => {
 }
 
 let makeFromConfig = (chainConfig: Config.chainConfig, ~maxAddrInPartition) => {
-  let logger = Logging.createChild(~params={"chainId": chainConfig.chain->ChainMap.Chain.toChainId})
+  let logger = Logging.createChild(~params={"chainId": chainConfig.chain->Chain.toChainId})
   let staticContracts = chainConfig->getStaticContracts
   let lastBlockScannedHashes = ReorgDetection.LastBlockScannedHashes.empty(
     ~confirmedBlockThreshold=chainConfig.confirmedBlockThreshold,
@@ -118,9 +118,9 @@ let makeFromConfig = (chainConfig: Config.chainConfig, ~maxAddrInPartition) => {
  * This function allows a chain fetcher to be created from metadata, in particular this is useful for restarting an indexer and making sure it fetches blocks from the same place.
  */
 let makeFromDbState = async (chainConfig: Config.chainConfig, ~maxAddrInPartition) => {
-  let logger = Logging.createChild(~params={"chainId": chainConfig.chain->ChainMap.Chain.toChainId})
+  let logger = Logging.createChild(~params={"chainId": chainConfig.chain->Chain.toChainId})
   let staticContracts = chainConfig->getStaticContracts
-  let chainId = chainConfig.chain->ChainMap.Chain.toChainId
+  let chainId = chainConfig.chain->Chain.toChainId
   let latestProcessedEvent = await DbFunctions.EventSyncState.getLatestProcessedEvent(~chainId)
 
   let chainMetadata = await DbFunctions.ChainMetadata.getLatestChainMetadataState(~chainId)
@@ -138,7 +138,7 @@ let makeFromDbState = async (chainConfig: Config.chainConfig, ~maxAddrInPartitio
       {
         filter: qItem => {
           //Only keep events greater than the last processed event
-          (qItem.chain->ChainMap.Chain.toChainId, qItem.blockNumber, qItem.logIndex) >
+          (qItem.chain->Chain.toChainId, qItem.blockNumber, qItem.logIndex) >
           (event.chainId, event.blockNumber, event.logIndex)
         },
         isValid: (~fetchState) => {
