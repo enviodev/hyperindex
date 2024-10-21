@@ -34,7 +34,8 @@
     "@ryyppy/rescript-promise",
     "rescript-nodejs",
     "rescript-schema",
-    "helpers"
+    "helpers",
+    "envio"
   ],
-  "bsc-flags": ["-open RescriptSchema"]
+  "bsc-flags": ["-open RescriptSchema", "-open Envio"]
 }
