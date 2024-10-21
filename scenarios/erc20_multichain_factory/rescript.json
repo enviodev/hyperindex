@@ -35,9 +35,8 @@
     "@ryyppy/rescript-promise",
     "rescript-schema",
     "@glennsl/rescript-fetch",
-    "helpers"
+    "helpers",
+    "envio"
   ],
-  "bsc-flags": [
-    "-open RescriptSchema"
-  ]
+  "bsc-flags": ["-open RescriptSchema", "-open Envio"]
 }
