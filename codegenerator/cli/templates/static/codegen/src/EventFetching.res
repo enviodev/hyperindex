@@ -258,7 +258,8 @@ let getContractEventsOnFilters = async (
         )
 
       let upperBoundToBlock = fromBlockRef.contents + blockInterval - 1
-      let nextToBlock = Pervasives.min(upperBoundToBlock, toBlock)
+      let nextToBlock =
+        Pervasives.min(upperBoundToBlock, toBlock)->Pervasives.max(fromBlockRef.contents) //Defensively ensure we never query a target block below fromBlock
       let eventsPromise =
         queryEventsWithCombinedFilter(
           ~contractInterfaceManager,
