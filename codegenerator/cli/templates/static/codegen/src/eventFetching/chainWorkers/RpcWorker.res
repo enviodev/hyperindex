@@ -79,7 +79,7 @@ module Make = (
     }
   }
 
-  let waitForNewBlockBeforeQuery = async (
+  let rec waitForNewBlockBeforeQuery = async (
     ~fromBlock,
     ~currentBlockHeight,
     ~setCurrentBlockHeight,
@@ -90,9 +90,19 @@ module Make = (
     if fromBlock > currentBlockHeight {
       let nextBlock = await waitForBlockGreaterThanCurrentHeight(~currentBlockHeight, ~logger)
 
-      setCurrentBlockHeight(nextBlock)
+      let currentBlockHeight = if nextBlock > currentBlockHeight {
+        setCurrentBlockHeight(nextBlock)
+        nextBlock
+      } else {
+        currentBlockHeight
+      }
 
-      nextBlock
+      await waitForNewBlockBeforeQuery(
+        ~fromBlock,
+        ~currentBlockHeight,
+        ~setCurrentBlockHeight,
+        ~logger,
+      )
     } else {
       currentBlockHeight
     }
@@ -119,12 +129,16 @@ module Make = (
         ~logger,
       )
 
+      //Shadow toBlock ensuring it's never higher than currentBlockHeight
+      let toBlock = Pervasives.min(toBlock, currentBlockHeight)
+
       let currentBlockInterval =
         blockIntervals
         ->Utils.Dict.dangerouslyGetNonOption(partitionId->Belt.Int.toString)
         ->Belt.Option.getWithDefault(T.rpcConfig.syncConfig.initialBlockInterval)
 
-      let targetBlock = Pervasives.min(toBlock, fromBlock + currentBlockInterval - 1)
+      let targetBlock =
+        Pervasives.min(toBlock, fromBlock + currentBlockInterval - 1)->Pervasives.max(fromBlock) //Defensively ensure we never query a target block below fromBlock
 
       let toBlockPromise = blockLoader->LazyLoader.get(targetBlock)
 
@@ -173,7 +187,7 @@ module Make = (
       let totalTimeElapsed =
         startFetchingBatchTimeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
 
-      let reorgGuardStub: reorgGuard = {
+      let reorgGuard: reorgGuard = {
         firstBlockParentNumberAndHash: optFirstBlockParent->Option.map(b => {
           ReorgDetection.blockNumber: b.number,
           blockHash: b.hash,
@@ -193,7 +207,7 @@ module Make = (
           totalTimeElapsed: totalTimeElapsed,
         },
         currentBlockHeight,
-        reorgGuard: reorgGuardStub,
+        reorgGuard,
         fromBlockQueried: fromBlock,
         fetchStateRegisterId,
         partitionId,
