@@ -343,7 +343,7 @@ impl Network {
     }
 
     /// Returns the end block for this network if it is finite
-    pub fn get_finite_end_block(&self) -> Option<i32> {
+    pub fn get_finite_end_block(&self) -> Option<u64> {
         match self {
             Self::Goerli => Some(10_387_962),
             Self::Mumbai => Some(47_002_303),

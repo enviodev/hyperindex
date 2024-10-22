@@ -374,10 +374,10 @@ pub mod evm {
         )]
         pub confirmed_block_threshold: Option<i32>,
         #[schemars(description = "The block at which the indexer should start ingesting data")]
-        pub start_block: i32,
+        pub start_block: u64,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(description = "The block at which the indexer should terminate.")]
-        pub end_block: Option<i32>,
+        pub end_block: Option<u64>,
         #[schemars(description = "All the contracts that should be indexed on the given network")]
         pub contracts: Vec<NetworkContract<ContractConfig>>,
     }
@@ -498,10 +498,10 @@ pub mod fuel {
         #[schemars(description = "Public chain/network id")]
         pub id: NetworkId,
         #[schemars(description = "The block at which the indexer should start ingesting data")]
-        pub start_block: i32,
+        pub start_block: u64,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(description = "The block at which the indexer should terminate.")]
-        pub end_block: Option<i32>,
+        pub end_block: Option<u64>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(description = "Optional HyperFuel Config for additional fine-tuning")]
         pub hyperfuel_config: Option<HyperfuelConfig>,

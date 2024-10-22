@@ -59,27 +59,33 @@ impl SelectedContract {
     }
 }
 
-type NetworkId = u64;
-type RpcUrl = String;
-
 #[derive(Clone, Debug)]
 pub enum NetworkKind {
     Supported(HypersyncNetwork),
-    Unsupported(NetworkId, RpcUrl),
+    Unsupported {
+        network_id: u64,
+        rpc_url: String,
+        start_block: u64,
+    },
 }
 
 impl NetworkKind {
-    pub fn get_network_id(&self) -> NetworkId {
+    pub fn get_network_id(&self) -> u64 {
         match self {
             Self::Supported(n) => n.clone() as u64,
-            Self::Unsupported(n, _) => *n,
+            Self::Unsupported { network_id, .. } => *network_id,
         }
     }
-
+    pub fn get_start_block(&self) -> u64 {
+        match self {
+            Self::Supported(_) => 0,
+            Self::Unsupported { start_block, .. } => *start_block,
+        }
+    }
     pub fn uses_hypersync(&self) -> bool {
         match self {
             Self::Supported(_) => true,
-            Self::Unsupported(_, _) => false,
+            Self::Unsupported { .. } => false,
         }
     }
 }
@@ -88,7 +94,7 @@ impl Display for NetworkKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self {
             Self::Supported(n) => write!(f, "{}", n),
-            Self::Unsupported(n, _) => write!(f, "{}", n),
+            Self::Unsupported { network_id, .. } => write!(f, "{}", network_id),
         }
     }
 }

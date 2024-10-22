@@ -278,6 +278,10 @@ pub mod evm {
         ///The rpc url to use if the network id used is unsupported by our hypersync
         #[arg(short, long)]
         pub rpc_url: Option<String>,
+
+        ///The start block to use on this network
+        #[arg(short, long)]
+        pub start_block: Option<u64>,
     }
 }
 

@@ -783,8 +783,8 @@ struct NetworkTemplate {
     hypersync_config: Option<HypersyncConfig>,
     hyperfuel_config: Option<HyperfuelConfig>,
     confirmed_block_threshold: i32,
-    start_block: i32,
-    end_block: Option<i32>,
+    start_block: u64,
+    end_block: Option<u64>,
 }
 
 impl NetworkTemplate {

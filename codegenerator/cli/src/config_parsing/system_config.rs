@@ -652,8 +652,8 @@ impl SyncSource {
 pub struct Network {
     pub id: u64,
     pub sync_source: SyncSource,
-    pub start_block: i32,
-    pub end_block: Option<i32>,
+    pub start_block: u64,
+    pub end_block: Option<u64>,
     pub confirmed_block_threshold: i32,
     pub contracts: Vec<NetworkContract>,
 }

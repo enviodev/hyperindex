@@ -136,7 +136,7 @@ impl human_config::evm::Network {
         let is_unordered_multichain_mode = human_config.unordered_multichain_mode.unwrap_or(false);
         let is_multichain_indexer = human_config.networks.len() > 1;
         if !is_unordered_multichain_mode && is_multichain_indexer {
-            let make_err = |finite_end_block: i32| {
+            let make_err = |finite_end_block: u64| {
                 Err(anyhow!(
                     "Network {} has a finite end block of {}. Please set an end_block that is \
                      less than or equal to the finite end block in your config or set \
