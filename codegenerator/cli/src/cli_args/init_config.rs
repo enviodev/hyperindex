@@ -107,8 +107,8 @@ pub mod evm {
                         .or_insert({
                             let rpc_config = match &selected_network.network {
                                 NetworkKind::Supported(_) => None,
-                                NetworkKind::Unsupported(_, url) => Some(RpcConfig {
-                                    url: url.clone().into(),
+                                NetworkKind::Unsupported { rpc_url, .. } => Some(RpcConfig {
+                                    url: rpc_url.clone().into(),
                                     sync_config: None,
                                 }),
                             };
@@ -117,7 +117,7 @@ pub mod evm {
                                 NetworkKind::Supported(network) => {
                                     chain_helpers::Network::from(network).get_finite_end_block()
                                 }
-                                NetworkKind::Unsupported(network_id, _) => {
+                                NetworkKind::Unsupported { network_id, .. } => {
                                     chain_helpers::Network::from_network_id(network_id)
                                         .ok()
                                         .map(|network| network.get_finite_end_block())
@@ -129,7 +129,7 @@ pub mod evm {
                                 id: selected_network.network.get_network_id(),
                                 hypersync_config: None,
                                 rpc_config,
-                                start_block: 0,
+                                start_block: selected_network.network.get_start_block(),
                                 end_block,
                                 confirmed_block_threshold: None,
                                 contracts: Vec::new(),

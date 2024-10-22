@@ -184,6 +184,7 @@ impl ContractImportArgs {
 ///To validate that a user is not double selecting a network id
 fn prompt_for_network_id(
     opt_rpc_url: &Option<String>,
+    opt_start_block: &Option<u64>,
     already_selected_ids: Vec<u64>,
 ) -> Result<converters::NetworkKind> {
     //The first option of the list, funnels the user to enter a u64
@@ -221,7 +222,7 @@ fn prompt_for_network_id(
             //Convert the id into a supported or unsupported network.
             //If unsupported, it will use the optional rpc url or prompt
             //for an rpc url
-            get_converter_network_u64(network_id, opt_rpc_url)?
+            get_converter_network_u64(network_id, opt_rpc_url, opt_start_block)?
         }
         //If a supported network choice was selected. We should be able to
         //parse it back to a supported network since it was serialized as a
@@ -241,6 +242,7 @@ fn prompt_for_network_id(
 fn get_converter_network_u64(
     network_id: u64,
     rpc_url: &Option<String>,
+    start_block: &Option<u64>,
 ) -> Result<converters::NetworkKind> {
     let maybe_supported_network =
         Network::from_network_id(network_id).and_then(|n| Ok(HypersyncNetwork::try_from(n)?));
@@ -252,11 +254,39 @@ fn get_converter_network_u64(
                 Some(r) => r.clone(),
                 None => prompt_for_rpc_url()?,
             };
-            converters::NetworkKind::Unsupported(network_id, rpc_url)
+            let start_block = match start_block {
+                Some(s) => s.clone(),
+                None => prompt_for_start_block()?,
+            };
+
+            converters::NetworkKind::Unsupported {
+                network_id,
+                rpc_url,
+                start_block,
+            }
         }
     };
 
     Ok(network)
+}
+
+///Prompt the user to enter a starting block
+///only prompt when used when using rpc as it could
+///be very slow to have the startblock at 0 with rpc 🦶🔫
+fn prompt_for_start_block() -> Result<u64> {
+    let prompt = Text::new(
+        "You have entered a network that is unsupported by HyperSync. Please provide a start block for this network \
+            (this can be edited later in config.yaml):",
+    )
+    .prompt();
+
+    let start_block: String = prompt.context("Failed during start block prompt")?;
+    let start_block: u64 = start_block
+        .trim()
+        .parse()
+        .context("Failed to parse start block, start block must be a number")?;
+
+    Ok(start_block)
 }
 
 ///Prompt the user to enter an rpc url
@@ -349,9 +379,9 @@ impl LocalImportArgs {
         match &self.blockchain {
             Some(b) => {
                 let network_id: u64 = (b.clone()).into();
-                get_converter_network_u64(network_id, &self.rpc_url)
+                get_converter_network_u64(network_id, &self.rpc_url, &self.start_block)
             }
-            None => prompt_for_network_id(&self.rpc_url, vec![]),
+            None => prompt_for_network_id(&self.rpc_url, &self.start_block, vec![]),
         }
     }
 
@@ -385,10 +415,12 @@ impl Contract for SelectedContract {
         //In a new network case, no RPC url could be
         //derived from CLI flags
         const NO_RPC_URL: Option<String> = None;
+        const NO_START_BLOCK: Option<u64> = None;
 
         //Select a new network (not from the list of existing network ids already added)
-        let selected_network = prompt_for_network_id(&NO_RPC_URL, self.get_network_ids())
-            .context("Failed selecting network")?;
+        let selected_network =
+            prompt_for_network_id(&NO_RPC_URL, &NO_START_BLOCK, self.get_network_ids())
+                .context("Failed selecting network")?;
 
         //Instantiate a network_selection without any  contract addresses
         let network_selection =
