@@ -149,13 +149,13 @@ pub struct InitArgs {
 #[subenum(EvmInitFlowInteractive)]
 #[derive(Subcommand, Debug, EnumIter, Display, EnumString, Clone)]
 pub enum InitFlow {
-    ///Initialize Evm indexer from an example template
-    #[subenum(EvmInitFlowInteractive)]
-    Template(evm::TemplateArgs),
     ///Initialize Evm indexer by importing config from a contract for a given chain
     #[subenum(EvmInitFlowInteractive)]
     #[strum(serialize = "Contract Import")]
     ContractImport(evm::ContractImportArgs),
+    ///Initialize Evm indexer from an example template
+    #[subenum(EvmInitFlowInteractive)]
+    Template(evm::TemplateArgs),
     ///Initialize Evm indexer by migrating config from an existing subgraph
     #[clap(hide = true)] //hiding for now until this is more stable
     #[strum(serialize = "Subgraph Migration (Experimental)")]

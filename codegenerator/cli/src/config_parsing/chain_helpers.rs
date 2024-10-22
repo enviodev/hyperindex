@@ -1,9 +1,6 @@
-use std::env;
-
 use anyhow::anyhow;
-use anyhow::Context;
+
 use clap::ValueEnum;
-use ethers::etherscan;
 use serde::{Deserialize, Serialize};
 use strum::FromRepr;
 use strum::IntoEnumIterator;
@@ -441,133 +438,6 @@ impl HypersyncNetwork {
     }
 }
 
-pub enum BlockExplorerApi {
-    DefaultEthers,
-    Custom {
-        //eg. "https://gnosisscan.io/"
-        base_url: String,
-        //eg. "https://api.gnosisscan.io/api/"
-        api_url: String,
-    },
-}
-
-impl BlockExplorerApi {
-    fn custom(base_url: &str, api_url: &str) -> Self {
-        let base_url = format!("https://{}/", base_url);
-        let api_url = format!("https://{}/api/", api_url);
-        Self::Custom { base_url, api_url }
-    }
-}
-
-impl NetworkWithExplorer {
-    pub fn get_block_explorer_api(&self) -> BlockExplorerApi {
-        match self {
-            NetworkWithExplorer::Celo => BlockExplorerApi::custom("celoscan.io", "api.celoscan.io"),
-            NetworkWithExplorer::Gnosis => {
-                BlockExplorerApi::custom("gnosisscan.io", "api.gnosisscan.io")
-            }
-            NetworkWithExplorer::Holesky => {
-                BlockExplorerApi::custom("holesky.etherscan.io", "api-holesky.etherscan.io")
-            }
-            NetworkWithExplorer::Scroll => {
-                BlockExplorerApi::custom("scrollscan.com", "api.scrollscan.com")
-            }
-            NetworkWithExplorer::ArbitrumSepolia => {
-                BlockExplorerApi::custom("sepolia.arbiscan.io", "api-sepolia.arbiscan.io")
-            }
-            NetworkWithExplorer::Kroma => {
-                BlockExplorerApi::custom("kromascan.com", "api.kromascan.com")
-            }
-            NetworkWithExplorer::BaseSepolia => {
-                BlockExplorerApi::custom("sepolia.basescan.org", "api-sepolia.basescan.org")
-            }
-            NetworkWithExplorer::OptimismSepolia => BlockExplorerApi::custom(
-                "sepolia-optimistic.etherscan.io",
-                "api-sepolia-optimistic.etherscan.io",
-            ),
-            NetworkWithExplorer::Blast => {
-                BlockExplorerApi::custom("blastscan.io", "api.blastscan.io")
-            }
-            NetworkWithExplorer::BlastSepolia => {
-                BlockExplorerApi::custom("blastscan.io", "api-testnet.blastscan.io")
-            }
-            NetworkWithExplorer::Avalanche => BlockExplorerApi::custom(
-                "avalanche.routescan.io",
-                "api.routescan.io/v2/network/mainnet/evm/43114/etherscan",
-            ),
-            NetworkWithExplorer::Fuji => BlockExplorerApi::custom(
-                "avalanche.testnet.routescan.io",
-                "api.routescan.io/v2/network/testnet/evm/43113/etherscan",
-            ),
-            NetworkWithExplorer::Amoy => {
-                BlockExplorerApi::custom("amoy.polygonscan.com", "api-amoy.polygonscan.com")
-            }
-            //// Having issues getting blockscout to work.
-            // NetworkWithExplorer::Aurora => BlockExplorerApi::custom(
-            //     "explorer.mainnet.aurora.dev",
-            //     "explorer.mainnet.aurora.dev/api",
-            //      /// also tried some variations: explorer.mainnet.aurora.dev/api/v2
-            // ),
-            // NetworkWithExplorer::Lukso => BlockExplorerApi::custom(
-            //     "explorer.execution.mainnet.lukso.network",
-            //     "explorer.execution.mainnet.lukso.network/api",
-            // /// Also tried some variations:
-            //   blockscout.com/lukso/l14
-            //
-            // ),
-            _ => BlockExplorerApi::DefaultEthers,
-        }
-    }
-
-    pub fn get_env_token_name(&self) -> String {
-        let name = format!("{:?}", self); // Converts enum variant to string
-        let name = name.replace("NetworkWithExplorer::", ""); // Remove the enum type prefix
-        let name = name.replace("-", "_"); // Replace hyphens with underscores
-        let name = name.to_uppercase(); // Convert to uppercase
-        format!("{}_VERIFIED_CONTRACT_API_TOKEN", name)
-    }
-}
-
-pub fn get_etherscan_client(network: &NetworkWithExplorer) -> anyhow::Result<etherscan::Client> {
-    // Try to get the API token from the environment variable
-    let maybe_api_key = env::var(network.get_env_token_name());
-
-    let client = match network.get_block_explorer_api() {
-        BlockExplorerApi::DefaultEthers => {
-            let chain_id = Network::from(*network).get_network_id();
-            let ethers_chain = ethers::types::Chain::try_from(chain_id)
-                .context("Failed converting network with explorer id to ethers chain")?;
-
-            // The api doesn't allow not passing in an api key, but a
-            // blank string is allowed
-            etherscan::Client::new(ethers_chain, maybe_api_key.unwrap_or("".to_string()))
-                .context("Failed creating client for network")?
-        }
-
-        BlockExplorerApi::Custom { base_url, api_url } => {
-            let mut builder = etherscan::Client::builder()
-                .with_url(&base_url)
-                .context(format!(
-                    "Failed building custom client at base url {}",
-                    base_url
-                ))?
-                .with_api_url(&api_url)
-                .context(format!(
-                    "Failed building custom client at api url {}",
-                    api_url
-                ))?;
-
-            if let Ok(key) = maybe_api_key {
-                builder = builder.with_api_key(&key);
-            }
-
-            builder.build().context("Failed build custom client")?
-        }
-    };
-
-    Ok(client)
-}
-
 pub fn get_confirmed_block_threshold_from_id(id: u64) -> i32 {
     Network::from_network_id(id).map_or(DEFAULT_CONFIRMED_BLOCK_THRESHOLD, |n| {
         n.get_confirmed_block_threshold()
@@ -576,7 +446,7 @@ pub fn get_confirmed_block_threshold_from_id(id: u64) -> i32 {
 
 #[cfg(test)]
 mod test {
-    use super::{get_etherscan_client, GraphNetwork, HypersyncNetwork, NetworkWithExplorer};
+    use super::{GraphNetwork, HypersyncNetwork};
     use crate::config_parsing::chain_helpers::Network;
     use itertools::Itertools;
     use pretty_assertions::assert_eq;
@@ -594,13 +464,6 @@ mod test {
             networks_sorted, networks,
             "Networks should be defined in alphabetical order (sorry to be picky)"
         );
-    }
-
-    #[test]
-    fn all_networks_with_explorer_can_get_etherscan_client() {
-        for network in NetworkWithExplorer::iter() {
-            get_etherscan_client(&network).unwrap();
-        }
     }
 
     #[test]
@@ -686,33 +549,5 @@ mod test {
                 n
             )
         }
-    }
-
-    #[test]
-    fn network_api_key_name() {
-        let env_token_name = NetworkWithExplorer::EthereumMainnet.get_env_token_name();
-        assert_eq!(
-            env_token_name,
-            "ETHEREUMMAINNET_VERIFIED_CONTRACT_API_TOKEN"
-        );
-    }
-
-    use tracing_subscriber;
-
-    #[tokio::test]
-    #[ignore = "Integration test that interacts with block explorer API"]
-    async fn check_gnosis_get_contract_source_code() {
-        tracing_subscriber::fmt::init();
-        let network: NetworkWithExplorer = NetworkWithExplorer::Gnosis;
-        let client = get_etherscan_client(&network).unwrap();
-
-        client
-            .contract_source_code(
-                "0x4ECaBa5870353805a9F068101A40E0f32ed605C6"
-                    .parse()
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
     }
 }
