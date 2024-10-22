@@ -274,17 +274,12 @@ fn get_converter_network_u64(
 ///only prompt when used when using rpc as it could
 ///be very slow to have the startblock at 0 with rpc 🦶🔫
 fn prompt_for_start_block() -> Result<u64> {
-    let prompt = Text::new(
-        "You have entered a network that is unsupported by HyperSync. Please provide a start block for this network \
+    let start_block = CustomType::<u64>::new(
+        "Please provide a start block for this network \
             (this can be edited later in config.yaml):",
     )
-    .prompt();
-
-    let start_block: String = prompt.context("Failed during start block prompt")?;
-    let start_block: u64 = start_block
-        .trim()
-        .parse()
-        .context("Failed to parse start block, start block must be a number")?;
+    .with_error_message("Invalid start block input, please enter a number 0 or greater")
+    .prompt()?;
 
     Ok(start_block)
 }
