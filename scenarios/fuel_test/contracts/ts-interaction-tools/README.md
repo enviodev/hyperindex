@@ -9,4 +9,5 @@ Deployed contract address:
 
 `pnpm fuels typegen -i <input-path>/all-events-abi.json -o <output-path> -c `
 
-* This only worked for me using the absolute path to the abi file, not the relative path.
+* Use <output-path> as src/contract dir
+* This cmd only worked for me using the absolute path to the abi file, not the relative path.
