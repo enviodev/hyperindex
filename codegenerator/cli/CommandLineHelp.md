@@ -138,6 +138,7 @@ Initialize from a local json ABI file
 * `--contract-name <CONTRACT_NAME>` — The name of the contract
 * `-b`, `--blockchain <BLOCKCHAIN>` — Network from which contract address should be fetched for migration
 * `-r`, `--rpc-url <RPC_URL>` — The rpc url to use if the network id used is unsupported by our hypersync
+* `-s`, `--start-block <START_BLOCK>` — The start block to use on this network
 
 
 

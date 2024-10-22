@@ -148,7 +148,8 @@
         "start_block": {
           "description": "The block at which the indexer should start ingesting data",
           "type": "integer",
-          "format": "int32"
+          "format": "uint64",
+          "minimum": 0
         },
         "end_block": {
           "description": "The block at which the indexer should terminate.",
@@ -156,7 +157,8 @@
             "integer",
             "null"
           ],
-          "format": "int32"
+          "format": "uint64",
+          "minimum": 0
         },
         "hyperfuel_config": {
           "description": "Optional HyperFuel Config for additional fine-tuning",
