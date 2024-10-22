@@ -447,12 +447,7 @@ let actionReducer = (state: t, action: action) => {
     ]
 
     let nextState = registrations->Array.reduce(state, (state, registration) => {
-      let {
-        registeringEventBlockNumber,
-        registeringEventLogIndex,
-        registeringEventChain,
-        dynamicContracts,
-      } = registration
+      let {registeringEventChain, dynamicContracts} = registration
 
       let currentChainFetcher =
         state.chainManager.chainFetchers->ChainMap.get(registeringEventChain)
@@ -501,9 +496,7 @@ let actionReducer = (state: t, action: action) => {
 
       let updatedFetchState =
         currentChainFetcher.fetchState->PartitionedFetchState.registerDynamicContracts(
-          ~registeringEventBlockNumber,
-          ~registeringEventLogIndex,
-          ~dynamicContractRegistrations=dynamicContracts,
+          registration,
           ~isFetchingAtHead,
         )
 

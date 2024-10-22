@@ -109,26 +109,19 @@ let make = (
 
 let registerDynamicContracts = (
   {partitions, maxAddrInPartition, endBlock, startBlock, logger}: t,
-  ~registeringEventBlockNumber,
-  ~registeringEventLogIndex,
-  ~dynamicContractRegistrations,
+  dynamicContractRegistration: FetchState.dynamicContractRegistration,
   ~isFetchingAtHead,
 ) => {
   let partitions = switch partitions {
   | list{head, ...tail} if head->FetchState.getNumContracts < maxAddrInPartition =>
-    let updated =
-      head->FetchState.registerDynamicContract(
-        ~registeringEventBlockNumber,
-        ~registeringEventLogIndex,
-        ~dynamicContractRegistrations,
-      )
+    let updated = head->FetchState.registerDynamicContract(dynamicContractRegistration)
     list{updated, ...tail}
   | partitions =>
     let newPartition = FetchState.makeRoot(~endBlock)(
       ~startBlock,
       ~logger,
       ~staticContracts=[],
-      ~dynamicContractRegistrations,
+      ~dynamicContractRegistrations=dynamicContractRegistration.dynamicContracts,
       ~isFetchingAtHead,
     )
     partitions->List.add(newPartition)
@@ -194,7 +187,8 @@ let getMostBehindPartitions = (
     partition->FetchState.isReadyForNextQuery(~maxQueueSize=maxPartitionQueueSize)
   )
   ->List.sort((a, b) =>
-    a.fetchState.latestFetchedBlock.blockNumber - b.fetchState.latestFetchedBlock.blockNumber
+    FetchState.getLatestFullyFetchedBlock(a.fetchState).blockNumber -
+    FetchState.getLatestFullyFetchedBlock(b.fetchState).blockNumber
   )
   ->List.toArray
   ->Js.Array.slice(~start=0, ~end_=maxNumQueries)
@@ -313,7 +307,7 @@ let isFetchingAtHead = ({partitions}: t) => {
 
 let getFirstEventBlockNumber = ({partitions}: t) => {
   partitions->List.reduce(None, (accum, partition) => {
-    Utils.Math.minOptInt(accum, partition.firstEventBlockNumber)
+    Utils.Math.minOptInt(accum, partition.baseRegister.firstEventBlockNumber)
   })
 }
 
