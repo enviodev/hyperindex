@@ -433,10 +433,14 @@ Adds a new dynamic contract registration. It appends the registration to the pen
 contract registrations. These pending registrations are applied to the base register when next
 query is called.
 */
-let registerDynamicContract = (self: t, registration: dynamicContractRegistration) => {
+let registerDynamicContract = (
+  self: t,
+  registration: dynamicContractRegistration,
+  ~isFetchingAtHead,
+) => {
   ...self,
   pendingDynamicContracts: self.pendingDynamicContracts->Array.concat([registration]),
-  isFetchingAtHead: false,
+  isFetchingAtHead,
 }
 
 let addDynamicContractRegisters = (baseRegister, pendingDynamicContracts) => {
@@ -469,17 +473,6 @@ let rec pruneAndMergeNextRegistered = (register: register, ~isMerged=false) => {
   }
 }
 
-let applyPendingDynamicContractRegistrations = (self: t) => {
-  switch self.pendingDynamicContracts {
-  | [] => None
-  | pendingDynamicContracts =>
-    Some({
-      ...self,
-      baseRegister: self.baseRegister->addDynamicContractRegisters(pendingDynamicContracts),
-      pendingDynamicContracts: [],
-    })
-  }
-}
 /**
 Updates node at given id with given values and checks to see if it can be merged into its next register.
 Returns Error if the node with given id cannot be found (unexpected)
@@ -783,6 +776,23 @@ let makeInternal = (
 Instantiates a fetch state with root register
 */
 let makeRoot = (~endBlock) => makeInternal(~registerType=RootRegister({endBlock: endBlock}), ...)
+
+/**
+Applies pending dynamic contract registrations to the base register
+Returns None if there are no pending dynamic contracts
+and Some with the updated fetch state if there are pending dynamic contracts
+*/
+let applyPendingDynamicContractRegistrations = (self: t) => {
+  switch self.pendingDynamicContracts {
+  | [] => None
+  | pendingDynamicContracts =>
+    Some({
+      ...self,
+      baseRegister: self.baseRegister->addDynamicContractRegisters(pendingDynamicContracts),
+      pendingDynamicContracts: [],
+    })
+  }
+}
 
 /**
 Gets the next query either with a to block of the current height if it is the root node.
