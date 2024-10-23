@@ -51,10 +51,10 @@ let getDynContractId = (
   logIndex: registeringEventLogIndex,
 }
 
-let makeMockFetchState = baseRegister => {
+let makeMockFetchState = (baseRegister, ~isFetchingAtHead=false) => {
   baseRegister,
   pendingDynamicContracts: [],
-  isFetchingAtHead: false,
+  isFetchingAtHead,
 }
 
 describe("FetchState.fetchState", () => {
@@ -297,9 +297,9 @@ describe("FetchState.fetchState", () => {
       fetchedEventQueue: Array.concat(newItems->Array.reverse, currentEvents),
     }
 
-    let expected1 = expectedRegister1->makeMockFetchState
+    let expected1 = expectedRegister1->makeMockFetchState(~isFetchingAtHead=true)
 
-    Assert.deepEqual(expected1, updated1)
+    Assert.deepEqual(expected1, updated1, ~message="1st register, should be fetching at head")
 
     let dcId1: dynamicContractId = {blockNumber: 100, logIndex: 0}
     let register1 = {
@@ -334,9 +334,9 @@ describe("FetchState.fetchState", () => {
       ),
     }
 
-    let expected2 = register2->makeMockFetchState
+    let expected2 = register2->makeMockFetchState(~isFetchingAtHead=false)
 
-    Assert.deepEqual(expected2, updated2)
+    Assert.deepEqual(expected2, updated2, ~message="2nd register not fetching at head")
 
     let dcId2: dynamicContractId = {blockNumber: 99, logIndex: 0}
     let register2 = {
@@ -374,9 +374,9 @@ describe("FetchState.fetchState", () => {
         },
       }),
     }
-    let expected3 = expectedRegister3->makeMockFetchState
+    let expected3 = expectedRegister3->makeMockFetchState(~isFetchingAtHead=false)
 
-    Assert.deepEqual(expected3, updated3)
+    Assert.deepEqual(expected3, updated3, ~message="3rd register not fetching at head")
   })
 
   it("getEarliest event", () => {
