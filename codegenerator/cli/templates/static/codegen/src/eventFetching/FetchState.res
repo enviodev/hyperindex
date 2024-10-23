@@ -1025,9 +1025,14 @@ let rec rollbackRegisterList = (
 
 let rollback = (self: t, ~lastKnownValidBlock) => {
   let baseRegister = rollbackRegisterList(self.baseRegister, ~lastKnownValidBlock)
-  //TODO rollback pending dynamic contract registrations
+
+  let pendingDynamicContracts =
+    self.pendingDynamicContracts->Array.keep(({registeringEventBlockNumber}) =>
+      registeringEventBlockNumber <= lastKnownValidBlock.blockNumber
+    )
   {
     ...self,
+    pendingDynamicContracts,
     baseRegister,
   }
 }
