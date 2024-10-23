@@ -32,7 +32,7 @@ pub enum Network {
     #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     Amoy = 80002,
 
-    #[subenum(NetworkWithExplorer, GraphNetwork)]
+    #[subenum(GraphNetwork)]
     ArbitrumGoerli = 421613,
 
     #[subenum(HypersyncNetwork, NetworkWithExplorer)]
@@ -40,6 +40,9 @@ pub enum Network {
 
     #[subenum(HypersyncNetwork, NetworkWithExplorer, GraphNetwork)]
     ArbitrumOne = 42161,
+
+    #[subenum(NetworkWithExplorer)]
+    ArbitrumTestnet = 421611,
 
     #[subenum(HypersyncNetwork, NetworkWithExplorer, GraphNetwork)]
     ArbitrumSepolia = 421614,
@@ -75,15 +78,17 @@ pub enum Network {
     #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     BlastSepolia = 168587773,
 
-    #[subenum(HypersyncNetwork)]
-    // explorers:
-    // https://bobascan.com/ (not etherscan)
+    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     Boba = 288,
 
     #[subenum(HypersyncNetwork, NetworkWithExplorer, GraphNetwork)]
     Bsc = 56,
 
-    #[subenum(HypersyncNetwork, GraphNetwork(serde(rename = "chapel")))]
+    #[subenum(
+        HypersyncNetwork,
+        NetworkWithExplorer,
+        GraphNetwork(serde(rename = "chapel"))
+    )]
     BscTestnet = 97,
 
     #[subenum(HypersyncNetwork)]
@@ -94,7 +99,7 @@ pub enum Network {
     #[subenum(HypersyncNetwork, GraphNetwork, NetworkWithExplorer)]
     Celo = 42220,
 
-    #[subenum(GraphNetwork)]
+    #[subenum(GraphNetwork, NetworkWithExplorer)]
     CeloAlfajores = 44787,
 
     #[subenum(HypersyncNetwork)]
@@ -139,7 +144,7 @@ pub enum Network {
     #[subenum(HypersyncNetwork, NetworkWithExplorer, GraphNetwork)]
     Fantom = 250,
 
-    #[subenum(GraphNetwork)]
+    #[subenum(GraphNetwork, NetworkWithExplorer)]
     FantomTestnet = 4002,
 
     #[subenum(HypersyncNetwork)]
@@ -185,7 +190,7 @@ pub enum Network {
     #[subenum(HypersyncNetwork)]
     IncoGentryTestnet = 9090,
 
-    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
+    #[subenum(HypersyncNetwork)]
     Kroma = 255,
 
     // Still syncing
@@ -193,6 +198,9 @@ pub enum Network {
     // KakarotSepolia = 1802203764,
     #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     Linea = 59144,
+
+    #[subenum(NetworkWithExplorer)]
+    LineaSepolia = 59141,
 
     #[subenum(HypersyncNetwork)]
     // Explorers:
@@ -212,10 +220,10 @@ pub enum Network {
     // Routescan: https://mantlescan.info/
     Mantle = 5000,
 
-    #[subenum(GraphNetwork)]
+    #[subenum(GraphNetwork, NetworkWithExplorer)]
     Mbase = 1287,
 
-    #[subenum(HypersyncNetwork)]
+    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     Metis = 1088,
 
     #[subenum(HypersyncNetwork)]
@@ -224,7 +232,7 @@ pub enum Network {
     #[subenum(HypersyncNetwork, NetworkWithExplorer, GraphNetwork)]
     Moonbeam = 1284,
 
-    #[subenum(GraphNetwork)]
+    #[subenum(GraphNetwork, NetworkWithExplorer)]
     Moonriver = 1285,
 
     // Still syncing
@@ -242,7 +250,7 @@ pub enum Network {
     #[subenum(HypersyncNetwork, NetworkWithExplorer, GraphNetwork)]
     Optimism = 10,
 
-    #[subenum(NetworkWithExplorer, GraphNetwork)]
+    #[subenum(GraphNetwork)]
     OptimismGoerli = 420,
 
     #[subenum(HypersyncNetwork, NetworkWithExplorer)]
@@ -266,8 +274,8 @@ pub enum Network {
     #[subenum(GraphNetwork, HypersyncNetwork, NetworkWithExplorer)]
     PolygonZkevm = 1101,
 
-    #[subenum(GraphNetwork)]
-    PolygonZkevmTestnet = 1422,
+    #[subenum(GraphNetwork, NetworkWithExplorer)]
+    PolygonZkevmTestnet = 1442,
 
     #[subenum(GraphNetwork)]
     Rinkeby = 4,
@@ -284,7 +292,7 @@ pub enum Network {
     #[subenum(GraphNetwork, HypersyncNetwork, NetworkWithExplorer)]
     Scroll = 534352,
 
-    #[subenum(GraphNetwork)]
+    #[subenum(GraphNetwork, NetworkWithExplorer)]
     ScrollSepolia = 534351,
 
     #[subenum(HypersyncNetwork, NetworkWithExplorer, GraphNetwork)]
@@ -352,7 +360,8 @@ impl Network {
     pub fn get_confirmed_block_threshold(&self) -> i32 {
         match self {
             //Reorgs do not happen on these networks
-            Network::ArbitrumGoerli
+            Network::ArbitrumTestnet
+            | Network::ArbitrumGoerli
             | Network::ArbitrumNova
             | Network::ArbitrumOne
             | Network::ArbitrumSepolia
@@ -398,6 +407,7 @@ impl Network {
             | Network::IncoGentryTestnet
             | Network::Kroma
             | Network::Linea
+            | Network::LineaSepolia
             | Network::Lukso
             | Network::Manta
             | Network::Mantle

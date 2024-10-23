@@ -11,10 +11,8 @@ use super::{
 use crate::{
     cli_args::interactive_init::validation::filter_duplicate_events,
     config_parsing::{
-        chain_helpers::{self, HypersyncNetwork, Network, NetworkWithExplorer},
-        contract_import::converters::{
-            self, ContractImportNetworkSelection, NetworkKind, SelectedContract,
-        },
+        chain_helpers::{HypersyncNetwork, Network, NetworkWithExplorer},
+        contract_import::converters::{self, ContractImportNetworkSelection, SelectedContract},
         contract_import::{contract_import, ContractImportResult},
         system_config::EvmAbi,
     },
@@ -103,18 +101,16 @@ impl ContractImportArgs {
             Ok(contract_data) => contract_data,
             Err(_) => {
                 println!("\nUse the Local ABI import option instead.");
-                return self
-                    .get_contract_import_selection_from_local_import_args(
-                        &LocalImportArgs::default(),
-                    )
-                    .await;
+                return (ContractImportArgs {
+                    contract_address: Some(contract_address),
+                    ..self.clone()
+                })
+                .get_contract_import_selection_from_local_import_args(&LocalImportArgs::default())
+                .await;
             }
         };
 
-        let network_kind = match chain_helpers::Network::from(network.clone()).try_into() {
-            Ok(network) => NetworkKind::Supported(network),
-            Err(_) => NetworkKind::Unsupported(network.clone() as u64, prompt_for_rpc_url()?),
-        };
+        let network_kind = get_converter_network_u64(network.clone() as u64, &None, &None)?;
 
         let network_selection = ContractImportNetworkSelection::new(network_kind, contract_address);
 
@@ -132,7 +128,7 @@ impl ContractImportArgs {
     ) -> Result<SelectedContract> {
         let network_with_explorer: NetworkWithExplorer = explorer_import_args
             .get_network_with_explorer()
-            .context("Failed getting NetworkWithExporer")?;
+            .context("Failed getting NetworkWithExplorer")?;
 
         let chosen_contract_address = self
             .get_contract_address()
