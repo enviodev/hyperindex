@@ -3,16 +3,19 @@ open RescriptMocha
 
 describe("PartitionedFetchState getMostBehindPartitions", () => {
   let mockFetchState = (~latestFetchedBlockNumber, ~fetchedEventQueue=[]): FetchState.t => {
-    registerType: RootRegister({endBlock: None}),
-    latestFetchedBlock: {
-      blockNumber: latestFetchedBlockNumber,
-      blockTimestamp: latestFetchedBlockNumber * 15,
+    baseRegister: {
+      registerType: RootRegister({endBlock: None}),
+      latestFetchedBlock: {
+        blockNumber: latestFetchedBlockNumber,
+        blockTimestamp: latestFetchedBlockNumber * 15,
+      },
+      contractAddressMapping: ContractAddressingMap.make(),
+      fetchedEventQueue,
+      dynamicContracts: FetchState.DynamicContractsMap.empty,
+      firstEventBlockNumber: None,
     },
-    contractAddressMapping: ContractAddressingMap.make(),
-    fetchedEventQueue,
-    dynamicContracts: FetchState.DynamicContractsMap.empty,
-    firstEventBlockNumber: None,
     isFetchingAtHead: false,
+    pendingDynamicContracts: [],
   }
 
   let mockPartitionedFetchState = (~partitions): PartitionedFetchState.t => {

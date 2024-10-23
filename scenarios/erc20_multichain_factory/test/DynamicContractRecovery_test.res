@@ -210,7 +210,7 @@ describe("Dynamic contract restart resistance test", () => {
       }
 
       let dynamicContracts =
-        restartedFetchState.dynamicContracts
+        restartedFetchState.baseRegister.dynamicContracts
         ->Belt.Map.valuesToArray
         ->Array.flatMap(set => set->Belt.Set.String.toArray)
 
@@ -248,7 +248,7 @@ describe("Dynamic contract restart resistance test", () => {
         }
 
         let dynamicContracts =
-          restartedFetchState.dynamicContracts
+          restartedFetchState.baseRegister.dynamicContracts
           ->Belt.Map.valuesToArray
           ->Array.flatMap(set => set->Belt.Set.String.toArray)
 
@@ -277,7 +277,7 @@ describe("Dynamic contract restart resistance test", () => {
         restartedChainFetcher.fetchState.partitions->List.head->Option.getExn
 
       let dynamicContracts =
-        restartedFetchState.dynamicContracts
+        restartedFetchState.baseRegister.dynamicContracts
         ->Belt.Map.valuesToArray
         ->Array.flatMap(set => set->Belt.Set.String.toArray)
 
