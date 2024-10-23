@@ -137,7 +137,7 @@ impl ContractImportArgs {
         let selected_contract = self
             .get_selected_contract(&network_with_explorer, chosen_contract_address)
             .await
-            .context("Failed getting SelectedContract from explorer")?; // FIXME: Don't throw here
+            .context("Failed getting SelectedContract from explorer")?;
 
         let SelectedContract {
             name,
