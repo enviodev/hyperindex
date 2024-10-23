@@ -6,10 +6,10 @@ This document contains the help content for the `envio` command-line program.
 
 * [`envio`↴](#envio)
 * [`envio init`↴](#envio-init)
-* [`envio init template`↴](#envio-init-template)
 * [`envio init contract-import`↴](#envio-init-contract-import)
 * [`envio init contract-import explorer`↴](#envio-init-contract-import-explorer)
 * [`envio init contract-import local`↴](#envio-init-contract-import-local)
+* [`envio init template`↴](#envio-init-template)
 * [`envio init fuel`↴](#envio-init-fuel)
 * [`envio init fuel template`↴](#envio-init-fuel-template)
 * [`envio init fuel contract-import`↴](#envio-init-fuel-contract-import)
@@ -62,8 +62,8 @@ Initialize an indexer with one of the initialization options
 
 ###### **Subcommands:**
 
-* `template` — Initialize Evm indexer from an example template
 * `contract-import` — Initialize Evm indexer by importing config from a contract for a given chain
+* `template` — Initialize Evm indexer from an example template
 * `fuel` — Initialization option for creating Fuel indexer
 
 ###### **Options:**
@@ -74,21 +74,6 @@ Initialize an indexer with one of the initialization options
   Possible values: `javascript`, `typescript`, `rescript`
 
 * `--api-token <API_TOKEN>` — The hypersync API key to be initialized in your templates .env file
-
-
-
-## `envio init template`
-
-Initialize Evm indexer from an example template
-
-**Usage:** `envio init template [OPTIONS]`
-
-###### **Options:**
-
-* `-t`, `--template <TEMPLATE>` — Name of the template to be used in initialization
-
-  Possible values: `greeter`, `erc20`
-
 
 
 
@@ -121,7 +106,7 @@ Initialize by pulling the contract ABI from a block explorer
 
 * `-b`, `--blockchain <BLOCKCHAIN>` — Network from which contract address should be fetched for migration
 
-  Possible values: `amoy`, `arbitrum-goerli`, `arbitrum-nova`, `arbitrum-one`, `arbitrum-sepolia`, `avalanche`, `base`, `base-sepolia`, `blast`, `blast-sepolia`, `bsc`, `celo`, `ethereum-mainnet`, `fantom`, `fuji`, `gnosis`, `goerli`, `holesky`, `kroma`, `linea`, `moonbeam`, `optimism`, `optimism-goerli`, `optimism-sepolia`, `polygon`, `polygon-zkevm`, `scroll`, `sepolia`
+  Possible values: `amoy`, `arbitrum-nova`, `arbitrum-one`, `arbitrum-sepolia`, `arbitrum-testnet`, `avalanche`, `base`, `base-sepolia`, `blast`, `blast-sepolia`, `boba`, `bsc`, `bsc-testnet`, `celo`, `celo-alfajores`, `ethereum-mainnet`, `fantom`, `fantom-testnet`, `fuji`, `gnosis`, `goerli`, `holesky`, `linea`, `linea-sepolia`, `mbase`, `metis`, `moonbeam`, `moonriver`, `optimism`, `optimism-sepolia`, `polygon`, `polygon-zkevm`, `polygon-zkevm-testnet`, `scroll`, `scroll-sepolia`, `sepolia`
 
 
 
@@ -139,6 +124,21 @@ Initialize from a local json ABI file
 * `-b`, `--blockchain <BLOCKCHAIN>` — Network from which contract address should be fetched for migration
 * `-r`, `--rpc-url <RPC_URL>` — The rpc url to use if the network id used is unsupported by our hypersync
 * `-s`, `--start-block <START_BLOCK>` — The start block to use on this network
+
+
+
+## `envio init template`
+
+Initialize Evm indexer from an example template
+
+**Usage:** `envio init template [OPTIONS]`
+
+###### **Options:**
+
+* `-t`, `--template <TEMPLATE>` — Name of the template to be used in initialization
+
+  Possible values: `greeter`, `erc20`
+
 
 
 

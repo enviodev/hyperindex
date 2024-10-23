@@ -41,11 +41,11 @@ pub enum Network {
     #[subenum(HypersyncNetwork, NetworkWithExplorer, GraphNetwork)]
     ArbitrumOne = 42161,
 
-    #[subenum(NetworkWithExplorer)]
-    ArbitrumTestnet = 421611,
-
     #[subenum(HypersyncNetwork, NetworkWithExplorer, GraphNetwork)]
     ArbitrumSepolia = 421614,
+
+    #[subenum(NetworkWithExplorer)]
+    ArbitrumTestnet = 421611,
 
     #[subenum(HypersyncNetwork, GraphNetwork)]
     // Blockscout: https://explorer.aurora.dev/
