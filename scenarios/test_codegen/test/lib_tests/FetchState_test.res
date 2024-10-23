@@ -681,4 +681,101 @@ describe("FetchState.fetchState", () => {
 
     baseRegister->makeMockFetchState->getNumContracts->Assert.equal(2)
   })
+
+  it(
+    "Adding dynamic between two registers while query is mid flight does no result in early merged registers",
+    () => {
+      let partitionId = 0
+      let currentBlockHeight = 600
+      let chain = ChainMap.Chain.makeUnsafe(~chainId=1)
+
+      let rootRegister = {
+        latestFetchedBlock: getBlockData(~blockNumber=500),
+        contractAddressMapping: ContractAddressingMap.fromArray([
+          (mockAddress1, (Gravatar :> string)),
+        ]),
+        firstEventBlockNumber: None,
+        dynamicContracts: DynamicContractsMap.empty,
+        fetchedEventQueue: [
+          mockEvent(~blockNumber=6, ~logIndex=2),
+          mockEvent(~blockNumber=4),
+          mockEvent(~blockNumber=1, ~logIndex=1),
+        ],
+        registerType: RootRegister({endBlock: None}),
+      }
+
+      let mockFetchState = rootRegister->makeMockFetchState
+
+      //Dynamic contract  A registered at block 100
+      let withRegisteredDynamicContractA = mockFetchState->registerDynamicContract({
+        registeringEventChain: chain,
+        registeringEventBlockNumber: 100,
+        registeringEventLogIndex: 0,
+        dynamicContracts: ["MockDynamicContractA"->Utils.magic],
+      })
+
+      //Received query
+      let (
+        queryA,
+        withAddedDynamicContractRegisterA,
+      ) = switch withRegisteredDynamicContractA->getNextQuery(~partitionId, ~currentBlockHeight) {
+      | Ok((NextQuery(queryA), Some(appliedWithDynamicContracts))) =>
+        switch queryA {
+        | {
+            fetchStateRegisterId: DynamicContract({blockNumber: 100, logIndex: 0}),
+            fromBlock: 100,
+            toBlock: 500,
+          } => ()
+        | query =>
+          Js.log2("unexpected queryA", query)
+          Assert.fail(
+            "Should have returned a query from new contract register from the registering block number to the next register latest block",
+          )
+        }
+        // switch query {}
+        (queryA, appliedWithDynamicContracts)
+      | nextQuery =>
+        Js.log2("nextQueryA res", nextQuery)
+        Js.Exn.raiseError(
+          "Should have returned a query with updated fetch state applying dynamic contracts",
+        )
+      }
+
+      //Next registration happens at block 200, between the first register and the upperbound of it's query
+      let withRegisteredDynamicContractB =
+        withAddedDynamicContractRegisterA->registerDynamicContract({
+          registeringEventChain: chain,
+          registeringEventBlockNumber: 200,
+          registeringEventLogIndex: 0,
+          dynamicContracts: ["MockDynamicContractB"->Utils.magic],
+        })
+
+      //Response with updated fetch state
+      let updatesWithResponseFromQueryA =
+        withRegisteredDynamicContractB
+        ->update(
+          ~id=queryA.fetchStateRegisterId,
+          ~latestFetchedBlock=getBlockData(~blockNumber=400),
+          ~currentBlockHeight,
+          ~newItems=[],
+        )
+        ->Utils.unwrapResultExn
+
+      switch updatesWithResponseFromQueryA->getNextQuery(~partitionId, ~currentBlockHeight) {
+      | Ok((
+          NextQuery({
+            fetchStateRegisterId: DynamicContract({blockNumber: 200, logIndex: 0}),
+            fromBlock: 200,
+            toBlock: 400,
+          }),
+          None,
+        )) => ()
+      | nextQuery =>
+        Js.log2("nextQueryB res", nextQuery)
+        Assert.fail(
+          "Should have returned query using registered contract B, from it's registering block to the last block fetched in query A",
+        )
+      }
+    },
+  )
 })

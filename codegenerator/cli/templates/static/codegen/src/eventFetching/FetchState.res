@@ -439,7 +439,7 @@ let registerDynamicContract = (self: t, registration: dynamicContractRegistratio
   isFetchingAtHead: false,
 }
 
-let registerDynamicContracts = (baseRegister, pendingDynamicContracts) => {
+let addDynamicContractRegisters = (baseRegister, pendingDynamicContracts) => {
   pendingDynamicContracts->Array.reduce(baseRegister, (
     baseRegister,
     {registeringEventBlockNumber, registeringEventLogIndex, dynamicContracts},
@@ -475,7 +475,7 @@ let applyPendingDynamicContractRegistrations = (self: t) => {
   | pendingDynamicContracts =>
     Some({
       ...self,
-      baseRegister: self.baseRegister->registerDynamicContracts(pendingDynamicContracts),
+      baseRegister: self.baseRegister->addDynamicContractRegisters(pendingDynamicContracts),
       pendingDynamicContracts: [],
     })
   }
@@ -498,7 +498,8 @@ let update = (
   baseRegister
   ->updateInternal(~id, ~latestFetchedBlock, ~reversedNewItems=newItems->Array.reverse)
   ->Result.map(updatedRegister => {
-    let withNewDynamicContracts = updatedRegister->registerDynamicContracts(pendingDynamicContracts)
+    let withNewDynamicContracts =
+      updatedRegister->addDynamicContractRegisters(pendingDynamicContracts)
     let maybeMerged = withNewDynamicContracts->pruneAndMergeNextRegistered
     {
       baseRegister: maybeMerged->Option.getWithDefault(withNewDynamicContracts),
