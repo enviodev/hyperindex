@@ -348,6 +348,111 @@ let rec updateInternal = (
 }
 
 /**
+Inserts a dynamic contract register to the head of a given
+register. It will then precede the given register in the chain
+*/
+let addNewRegisterToHead = (
+  self,
+  ~registeringEventBlockNumber,
+  ~registeringEventLogIndex,
+  ~contractAddressMapping,
+) => {
+  let id: dynamicContractId = {
+    blockNumber: registeringEventBlockNumber,
+    logIndex: registeringEventLogIndex,
+  }
+  let registerType = DynamicContractRegister({id, nextRegister: self})
+
+  let dynamicContracts =
+    DynamicContractsMap.empty->DynamicContractsMap.add(
+      id,
+      contractAddressMapping->ContractAddressingMap.getAllAddresses,
+    )
+
+  {
+    registerType,
+    latestFetchedBlock: {
+      blockNumber: registeringEventBlockNumber - 1,
+      blockTimestamp: 0,
+    },
+    contractAddressMapping,
+    dynamicContracts,
+    fetchedEventQueue: [],
+    firstEventBlockNumber: None,
+  }
+}
+
+/**
+Adds a new dynamic contract registration. It inserts the registration ordered in the
+chain from earliest registered contract to latest. So if this is being called on a batch
+of registrations its best to do this in order of latest to earliest to reduce recursions
+of this function.
+*/
+let rec addDynamicContractRegister = (
+  self: register,
+  ~registeringEventBlockNumber,
+  ~registeringEventLogIndex,
+  ~dynamicContractRegistrations: array<TablesStatic.DynamicContractRegistry.t>,
+  ~parent: option<Parent.t>=?,
+) => {
+  let handleParent = updated =>
+    switch parent {
+    | Some(parent) => parent->Parent.joinChild(updated)
+    | None => updated
+    }
+
+  let addToHead = updated =>
+    updated
+    ->addNewRegisterToHead(
+      ~contractAddressMapping=dynamicContractRegistrations
+      ->Array.map(d => (d.contractAddress, (d.contractType :> string)))
+      ->ContractAddressingMap.fromArray,
+      ~registeringEventLogIndex,
+      ~registeringEventBlockNumber,
+    )
+    ->handleParent
+
+  let latestFetchedBlockNumber = registeringEventBlockNumber - 1
+
+  switch self.registerType {
+  | RootRegister(_) => self->addToHead
+  | DynamicContractRegister(_) if latestFetchedBlockNumber <= self.latestFetchedBlock.blockNumber =>
+    self->addToHead
+  | DynamicContractRegister({id: dynamicContractId, nextRegister}) =>
+    nextRegister->addDynamicContractRegister(
+      ~registeringEventBlockNumber,
+      ~registeringEventLogIndex,
+      ~dynamicContractRegistrations,
+      ~parent=self->Parent.make(~dynamicContractId, ~parent),
+    )
+  }
+}
+
+/**
+Adds a new dynamic contract registration. It appends the registration to the pending dynamic
+contract registrations. These pending registrations are applied to the base register when next
+query is called.
+*/
+let registerDynamicContract = (self: t, registration: dynamicContractRegistration) => {
+  ...self,
+  pendingDynamicContracts: self.pendingDynamicContracts->Array.concat([registration]),
+  isFetchingAtHead: false,
+}
+
+let registerDynamicContracts = (baseRegister, pendingDynamicContracts) => {
+  pendingDynamicContracts->Array.reduce(baseRegister, (
+    baseRegister,
+    {registeringEventBlockNumber, registeringEventLogIndex, dynamicContracts},
+  ) => {
+    baseRegister->addDynamicContractRegister(
+      ~registeringEventBlockNumber,
+      ~registeringEventLogIndex,
+      ~dynamicContractRegistrations=dynamicContracts,
+    )
+  })
+}
+
+/**
 If a fetchState register has caught up to its next regisered node. Merge them and recurse.
 If no merging happens, None is returned
 */
@@ -364,6 +469,17 @@ let rec pruneAndMergeNextRegistered = (register: register, ~isMerged=false) => {
   }
 }
 
+let applyPendingDynamicContractRegistrations = (self: t) => {
+  switch self.pendingDynamicContracts {
+  | [] => None
+  | pendingDynamicContracts =>
+    Some({
+      ...self,
+      baseRegister: self.baseRegister->registerDynamicContracts(pendingDynamicContracts),
+      pendingDynamicContracts: [],
+    })
+  }
+}
 /**
 Updates node at given id with given values and checks to see if it can be merged into its next register.
 Returns Error if the node with given id cannot be found (unexpected)
@@ -381,10 +497,14 @@ let update = (
 
   baseRegister
   ->updateInternal(~id, ~latestFetchedBlock, ~reversedNewItems=newItems->Array.reverse)
-  ->Result.map(baseRegister => {
-    baseRegister,
-    pendingDynamicContracts,
-    isFetchingAtHead,
+  ->Result.map(updatedRegister => {
+    let withNewDynamicContracts = updatedRegister->registerDynamicContracts(pendingDynamicContracts)
+    let maybeMerged = withNewDynamicContracts->pruneAndMergeNextRegistered
+    {
+      baseRegister: maybeMerged->Option.getWithDefault(withNewDynamicContracts),
+      pendingDynamicContracts: [],
+      isFetchingAtHead,
+    }
   })
 }
 
@@ -664,117 +784,6 @@ Instantiates a fetch state with root register
 let makeRoot = (~endBlock) => makeInternal(~registerType=RootRegister({endBlock: endBlock}), ...)
 
 /**
-Inserts a dynamic contract register to the head of a given
-register. It will then precede the given register in the chain
-*/
-let addNewRegisterToHead = (
-  self,
-  ~registeringEventBlockNumber,
-  ~registeringEventLogIndex,
-  ~contractAddressMapping,
-) => {
-  let id: dynamicContractId = {
-    blockNumber: registeringEventBlockNumber,
-    logIndex: registeringEventLogIndex,
-  }
-  let registerType = DynamicContractRegister({id, nextRegister: self})
-
-  let dynamicContracts =
-    DynamicContractsMap.empty->DynamicContractsMap.add(
-      id,
-      contractAddressMapping->ContractAddressingMap.getAllAddresses,
-    )
-
-  {
-    registerType,
-    latestFetchedBlock: {
-      blockNumber: registeringEventBlockNumber - 1,
-      blockTimestamp: 0,
-    },
-    contractAddressMapping,
-    dynamicContracts,
-    fetchedEventQueue: [],
-    firstEventBlockNumber: None,
-  }
-}
-
-/**
-Adds a new dynamic contract registration. It inserts the registration ordered in the
-chain from earliest registered contract to latest. So if this is being called on a batch
-of registrations its best to do this in order of latest to earliest to reduce recursions
-of this function.
-*/
-let rec addDynamicContractRegister = (
-  self: register,
-  ~registeringEventBlockNumber,
-  ~registeringEventLogIndex,
-  ~dynamicContractRegistrations: array<TablesStatic.DynamicContractRegistry.t>,
-  ~parent: option<Parent.t>=?,
-) => {
-  let handleParent = updated =>
-    switch parent {
-    | Some(parent) => parent->Parent.joinChild(updated)
-    | None => updated
-    }
-
-  let addToHead = updated =>
-    updated
-    ->addNewRegisterToHead(
-      ~contractAddressMapping=dynamicContractRegistrations
-      ->Array.map(d => (d.contractAddress, (d.contractType :> string)))
-      ->ContractAddressingMap.fromArray,
-      ~registeringEventLogIndex,
-      ~registeringEventBlockNumber,
-    )
-    ->handleParent
-
-  let latestFetchedBlockNumber = registeringEventBlockNumber - 1
-
-  switch self.registerType {
-  | RootRegister(_) => self->addToHead
-  | DynamicContractRegister(_) if latestFetchedBlockNumber <= self.latestFetchedBlock.blockNumber =>
-    self->addToHead
-  | DynamicContractRegister({id: dynamicContractId, nextRegister}) =>
-    nextRegister->addDynamicContractRegister(
-      ~registeringEventBlockNumber,
-      ~registeringEventLogIndex,
-      ~dynamicContractRegistrations,
-      ~parent=self->Parent.make(~dynamicContractId, ~parent),
-    )
-  }
-}
-
-/**
-Adds a new dynamic contract registration. It appends the registration to the pending dynamic
-contract registrations. These pending registrations are applied to the base register when next
-query is called.
-*/
-let registerDynamicContract = (self: t, registration: dynamicContractRegistration) => {
-  ...self,
-  pendingDynamicContracts: self.pendingDynamicContracts->Array.concat([registration]),
-  isFetchingAtHead: false,
-}
-
-let applyPendingDynamicContractRegistrations = (self: t) => {
-  switch self.pendingDynamicContracts {
-  | [] => None
-  | pendingDynamicContracts =>
-    let baseRegister = pendingDynamicContracts->Array.reduce(self.baseRegister, (
-      baseRegister,
-      {registeringEventBlockNumber, registeringEventLogIndex, dynamicContracts},
-    ) => {
-      baseRegister->addDynamicContractRegister(
-        ~registeringEventBlockNumber,
-        ~registeringEventLogIndex,
-        ~dynamicContractRegistrations=dynamicContracts,
-      )
-    })
-
-    Some({...self, baseRegister, pendingDynamicContracts: []})
-  }
-}
-
-/**
 Gets the next query either with a to block of the current height if it is the root node.
 Or with a toBlock of the nextRegistered latestBlockNumber to catch up and merge with the next regisetered.
 
@@ -886,7 +895,27 @@ let checkContainsRegisteredContractAddress = (self: t, ~contractName, ~contractA
 /**
 * Returns the latest block number fetched for the lowest fetcher queue (ie the earliest un-fetched dynamic contract)
 */
-let getLatestFullyFetchedBlock = (self: t) => self.baseRegister.latestFetchedBlock
+let getLatestFullyFetchedBlock = (self: t) => {
+  //Consider pending dynamic contracts when calculating the latest fully fetched block
+  //Since they are now registered lazily on query or update of the fetchstate, not when
+  //the register function is called
+  let minPendingDynamicContracts = self.pendingDynamicContracts->Belt.Array.reduce(None, (
+    acc,
+    contract,
+  ) => {
+    let {registeringEventBlockNumber} = contract
+    minOfOption(registeringEventBlockNumber - 1, acc)->Some
+  })
+
+  switch (self.baseRegister.latestFetchedBlock, minPendingDynamicContracts) {
+  | ({blockNumber}, Some(pendingDynamicContractBlockNumber))
+    if pendingDynamicContractBlockNumber < blockNumber => {
+      blockNumber: pendingDynamicContractBlockNumber,
+      blockTimestamp: 0,
+    }
+  | (baseRegisterLatest, _) => baseRegisterLatest
+  }
+}
 
 let pruneQueuePastValidBlock = (queue: array<Types.eventBatchQueueItem>, ~lastKnownValidBlock) => {
   let prunedQueue = []
