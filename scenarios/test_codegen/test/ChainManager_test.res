@@ -330,14 +330,25 @@ describe("determineNextEvent", () => {
       ~latestFetchedBlockTimestamp,
       ~item,
     ): ChainManager.fetchStateWithData => {
-      partitionedFetchState: {
-        partitions: list{makeMockFetchState(~latestFetchedBlockTimestamp, ~item)},
-        maxAddrInPartition: Env.maxAddrInPartition,
-        startBlock: 0,
-        endBlock: None,
-        logger: Logging.logger,
-      },
-      heighestBlockBelowThreshold: 500,
+      let newestPartitionIndex = 0
+      let partitions =
+        [
+          (
+            newestPartitionIndex->Int.toString,
+            makeMockFetchState(~latestFetchedBlockTimestamp, ~item),
+          ),
+        ]->Js.Dict.fromArray
+      {
+        partitionedFetchState: {
+          newestPartitionIndex,
+          partitions,
+          maxAddrInPartition: Env.maxAddrInPartition,
+          startBlock: 0,
+          endBlock: None,
+          logger: Logging.logger,
+        },
+        heighestBlockBelowThreshold: 500,
+      }
     }
 
     it(
