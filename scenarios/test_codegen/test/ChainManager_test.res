@@ -311,16 +311,19 @@ describe("determineNextEvent", () => {
     }
 
     let makeMockFetchState = (~latestFetchedBlockTimestamp, ~item): FetchState.t => {
-      isFetchingAtHead: false,
-      registerType: RootRegister({endBlock: None}),
-      latestFetchedBlock: {
-        blockTimestamp: latestFetchedBlockTimestamp,
-        blockNumber: 0,
+      baseRegister: {
+        registerType: RootRegister({endBlock: None}),
+        latestFetchedBlock: {
+          blockTimestamp: latestFetchedBlockTimestamp,
+          blockNumber: 0,
+        },
+        contractAddressMapping: ContractAddressingMap.make(),
+        fetchedEventQueue: item->Option.mapWithDefault([], v => [v]),
+        dynamicContracts: FetchState.DynamicContractsMap.empty,
+        firstEventBlockNumber: item->Option.map(v => v.blockNumber),
       },
-      contractAddressMapping: ContractAddressingMap.make(),
-      fetchedEventQueue: item->Option.mapWithDefault([], v => [v]),
-      dynamicContracts: FetchState.DynamicContractsMap.empty,
-      firstEventBlockNumber: item->Option.map(v => v.blockNumber),
+      pendingDynamicContracts: [],
+      isFetchingAtHead: false,
     }
 
     let makeMockPartitionedFetchState = (
