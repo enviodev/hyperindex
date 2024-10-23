@@ -210,7 +210,7 @@ pub mod start {
 
         if !exit.success() {
             return Err(anyhow!(
-                "Indexer has failed to run. Please see error logs for more details"
+                "Indexer crashed. For more details see the error logs above the TUI. Can't find them? Restart the indexer with the 'TUI_OFF=true pnpm start' command."
             ));
         }
         println!(
