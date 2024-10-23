@@ -104,9 +104,9 @@ Initialize by pulling the contract ABI from a block explorer
 
 ###### **Options:**
 
-* `-b`, `--blockchain <BLOCKCHAIN>` — Network from which contract address should be fetched for migration
+* `-b`, `--blockchain <BLOCKCHAIN>` — Network to import the contract from
 
-  Possible values: `amoy`, `arbitrum-nova`, `arbitrum-one`, `arbitrum-sepolia`, `arbitrum-testnet`, `avalanche`, `base`, `base-sepolia`, `blast`, `blast-sepolia`, `boba`, `bsc`, `bsc-testnet`, `celo`, `celo-alfajores`, `ethereum-mainnet`, `fantom`, `fantom-testnet`, `fuji`, `gnosis`, `goerli`, `holesky`, `linea`, `linea-sepolia`, `mbase`, `metis`, `moonbeam`, `moonriver`, `optimism`, `optimism-sepolia`, `polygon`, `polygon-zkevm`, `polygon-zkevm-testnet`, `scroll`, `scroll-sepolia`, `sepolia`
+  Possible values: `amoy`, `arbitrum-nova`, `arbitrum-one`, `arbitrum-sepolia`, `arbitrum-testnet`, `avalanche`, `base`, `base-sepolia`, `blast`, `blast-sepolia`, `boba`, `bsc`, `bsc-testnet`, `celo`, `celo-alfajores`, `ethereum-mainnet`, `fantom`, `fantom-testnet`, `fuji`, `gnosis`, `goerli`, `holesky`, `kroma`, `linea`, `linea-sepolia`, `mbase`, `metis`, `moonbeam`, `moonriver`, `optimism`, `optimism-sepolia`, `polygon`, `polygon-zkevm`, `polygon-zkevm-testnet`, `scroll`, `scroll-sepolia`, `sepolia`
 
 
 
@@ -121,7 +121,7 @@ Initialize from a local json ABI file
 
 * `-a`, `--abi-file <ABI_FILE>` — The path to a json abi file
 * `--contract-name <CONTRACT_NAME>` — The name of the contract
-* `-b`, `--blockchain <BLOCKCHAIN>` — Network from which contract address should be fetched for migration
+* `-b`, `--blockchain <BLOCKCHAIN>` — Name or ID of the contract network
 * `-r`, `--rpc-url <RPC_URL>` — The rpc url to use if the network id used is unsupported by our hypersync
 * `-s`, `--start-block <START_BLOCK>` — The start block to use on this network
 
