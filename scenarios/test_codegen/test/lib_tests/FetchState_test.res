@@ -707,12 +707,15 @@ describe("FetchState.fetchState", () => {
       let mockFetchState = rootRegister->makeMockFetchState
 
       //Dynamic contract  A registered at block 100
-      let withRegisteredDynamicContractA = mockFetchState->registerDynamicContract({
-        registeringEventChain: chain,
-        registeringEventBlockNumber: 100,
-        registeringEventLogIndex: 0,
-        dynamicContracts: ["MockDynamicContractA"->Utils.magic],
-      })
+      let withRegisteredDynamicContractA = mockFetchState->registerDynamicContract(
+        {
+          registeringEventChain: chain,
+          registeringEventBlockNumber: 100,
+          registeringEventLogIndex: 0,
+          dynamicContracts: ["MockDynamicContractA"->Utils.magic],
+        },
+        ~isFetchingAtHead=false,
+      )
 
       //Received query
       let (
@@ -743,12 +746,15 @@ describe("FetchState.fetchState", () => {
 
       //Next registration happens at block 200, between the first register and the upperbound of it's query
       let withRegisteredDynamicContractB =
-        withAddedDynamicContractRegisterA->registerDynamicContract({
-          registeringEventChain: chain,
-          registeringEventBlockNumber: 200,
-          registeringEventLogIndex: 0,
-          dynamicContracts: ["MockDynamicContractB"->Utils.magic],
-        })
+        withAddedDynamicContractRegisterA->registerDynamicContract(
+          {
+            registeringEventChain: chain,
+            registeringEventBlockNumber: 200,
+            registeringEventLogIndex: 0,
+            dynamicContracts: ["MockDynamicContractB"->Utils.magic],
+          },
+          ~isFetchingAtHead=false,
+        )
 
       //Response with updated fetch state
       let updatesWithResponseFromQueryA =

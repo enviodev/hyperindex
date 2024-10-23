@@ -135,7 +135,11 @@ let registerDynamicContracts = (
   let (partitions, newestPartitionIndex) = if (
     newestPartition->FetchState.getNumContracts < maxAddrInPartition
   ) {
-    let updated = newestPartition->FetchState.registerDynamicContract(dynamicContractRegistration)
+    let updated =
+      newestPartition->FetchState.registerDynamicContract(
+        dynamicContractRegistration,
+        ~isFetchingAtHead,
+      )
     let partitions =
       partitions->Utils.Dict.updateImmutable(newestPartitionIndex->Int.toString, updated)
     (partitions, newestPartitionIndex)
