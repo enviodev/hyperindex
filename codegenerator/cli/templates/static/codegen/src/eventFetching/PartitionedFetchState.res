@@ -40,7 +40,7 @@ let make = (
   let getNewestPartitionIndex = () => {
     switch newestPartitionIndexRef.contents {
     | Some(newestPartitionIndex) => newestPartitionIndex
-    | None => Js.Exn.raiseError("Unexpected no part")
+    | None => Js.Exn.raiseError("Unexpected no partions added during construction")
     }
   }
 
