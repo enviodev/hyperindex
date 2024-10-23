@@ -190,7 +190,7 @@ pub enum Network {
     #[subenum(HypersyncNetwork)]
     IncoGentryTestnet = 9090,
 
-    #[subenum(HypersyncNetwork)]
+    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     Kroma = 255,
 
     // Still syncing

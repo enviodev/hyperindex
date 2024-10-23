@@ -1,5 +1,7 @@
 pub mod converters;
 
+use std::env;
+
 use crate::{
     cli_args::interactive_init::validation::filter_duplicate_events,
     config_parsing::chain_helpers::NetworkWithExplorer, evm::address::Address,
@@ -40,8 +42,9 @@ pub async fn contract_import(
     address: &Address,
     retry: u64,
 ) -> anyhow::Result<ContractImportResult> {
+    let api_url = env::var("ENVIO_API_URL").unwrap_or("https://envio.dev/api".to_string());
     let response: reqwest::Response = match reqwest::get(format!(
-        "http://localhost:3000/api/hyperindex/contract-import?chain={}&address={}",
+        "{api_url}/hyperindex/contract-import?chain={}&address={}",
         *network as u64,
         address.to_checksum_hex_string()
     ))
