@@ -170,7 +170,7 @@ describe("PartitionedFetchState getMostBehindPartitions", () => {
     )
   })
 
-  it_only("Partition id never changes when adding new partitions", () => {
+  it("Partition id never changes when adding new partitions", () => {
     let rootContractAddressMapping = ContractAddressingMap.make()
 
     for i in 0 to 3 {
