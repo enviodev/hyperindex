@@ -18,12 +18,18 @@ describe("PartitionedFetchState getMostBehindPartitions", () => {
     pendingDynamicContracts: [],
   }
 
-  let mockPartitionedFetchState = (~partitions): PartitionedFetchState.t => {
-    partitions,
-    maxAddrInPartition: 0,
-    startBlock: 0,
-    endBlock: None,
-    logger: Logging.logger,
+  let mockPartitionedFetchState = (~partitions: list<_>): PartitionedFetchState.t => {
+    let partitions = partitions->List.mapWithIndex((i, p) => (i->Int.toString, p))->Js.Dict.fromList
+    let newestPartitionIndex =
+      partitions->Js.Dict.keys->Array.keepMap(Int.fromString)->Js.Math.maxMany_int
+    {
+      newestPartitionIndex,
+      partitions,
+      maxAddrInPartition: 0,
+      startBlock: 0,
+      endBlock: None,
+      logger: Logging.logger,
+    }
   }
   let partitions = list{
     mockFetchState(~latestFetchedBlockNumber=4),
