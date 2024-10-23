@@ -600,6 +600,81 @@ let rec getEndBlock = (self: register) => {
   }
 }
 
+/**
+Applies pending dynamic contract registrations to the base register
+Returns None if there are no pending dynamic contracts
+and Some with the updated fetch state if there are pending dynamic contracts
+*/
+let applyPendingDynamicContractRegistrations = (self: t) => {
+  switch self.pendingDynamicContracts {
+  | [] => None
+  | pendingDynamicContracts =>
+    Some({
+      ...self,
+      baseRegister: self.baseRegister->addDynamicContractRegisters(pendingDynamicContracts),
+      pendingDynamicContracts: [],
+    })
+  }
+}
+
+/**
+Gets the next query either with a to block of the current height if it is the root node.
+Or with a toBlock of the nextRegistered latestBlockNumber to catch up and merge with the next regisetered.
+
+Errors if nextRegistered dynamic contract has a lower latestFetchedBlock than the current as this would be
+an invalid state.
+*/
+let getNextQuery = (self: t, ~currentBlockHeight, ~partitionId) => {
+  let mapMaybeMerge = (fetchState: t) =>
+    fetchState.baseRegister
+    ->pruneAndMergeNextRegistered
+    ->Option.map(merged => {
+      ...fetchState,
+      baseRegister: merged,
+    })
+
+  //First apply pending dynamic contracts, then try and merge
+  //These steps should only happen on getNextQuery, to avoid in between states where a
+  //query is in flight and the underlying registers are changing
+  let maybeUpdatedFetchState = switch self->applyPendingDynamicContractRegistrations {
+  | Some(updatedWithDynamicContracts) =>
+    //After adding the pending dynamic contracts, try and merge registers
+    switch updatedWithDynamicContracts->mapMaybeMerge {
+    //Pass through the merged value if it updated anything
+    | Some(merged) => Some(merged)
+    //Even if the merge returned none, the pending dynamic contracts should be applied
+    //as an updated
+    | None => Some(updatedWithDynamicContracts)
+    }
+  //If no dynamic contracts were added just try and merge
+  | None => self->mapMaybeMerge
+  }
+
+  let {baseRegister} = maybeUpdatedFetchState->Option.getWithDefault(self)
+
+  let nextQuery = switch baseRegister.registerType {
+  | RootRegister({endBlock}) =>
+    baseRegister->getNextQueryFromNode(
+      ~toBlock={minOfOption(currentBlockHeight, endBlock)},
+      ~partitionId,
+    )
+  | DynamicContractRegister({nextRegister: {latestFetchedBlock}}) =>
+    baseRegister->getNextQueryFromNode(~toBlock=latestFetchedBlock.blockNumber, ~partitionId)
+  }
+
+  switch nextQuery {
+  | {fromBlock} if fromBlock > currentBlockHeight || currentBlockHeight == 0 =>
+    (WaitForNewBlock, maybeUpdatedFetchState)->Ok
+  | {fromBlock, toBlock} if fromBlock <= toBlock =>
+    (NextQuery(nextQuery), maybeUpdatedFetchState)->Ok
+  | {fromBlock} if fromBlock->isGreaterThanOpt(getEndBlock(baseRegister)) =>
+    (Done, maybeUpdatedFetchState)->Ok
+  //This is an invalid case. We should never arrive at this match arm but it would be
+  //detrimental if it were the case.
+  | {fromBlock, toBlock} => Error(FromBlockIsHigherThanToBlock(fromBlock, toBlock))
+  }
+}
+
 type itemWithPopFn = {item: Types.eventBatchQueueItem, popItemOffQueue: unit => unit}
 
 let itemIsInReorgThreshold = (item: itemWithPopFn, ~heighestBlockBelowThreshold) => {
@@ -776,81 +851,6 @@ let makeInternal = (
 Instantiates a fetch state with root register
 */
 let makeRoot = (~endBlock) => makeInternal(~registerType=RootRegister({endBlock: endBlock}), ...)
-
-/**
-Applies pending dynamic contract registrations to the base register
-Returns None if there are no pending dynamic contracts
-and Some with the updated fetch state if there are pending dynamic contracts
-*/
-let applyPendingDynamicContractRegistrations = (self: t) => {
-  switch self.pendingDynamicContracts {
-  | [] => None
-  | pendingDynamicContracts =>
-    Some({
-      ...self,
-      baseRegister: self.baseRegister->addDynamicContractRegisters(pendingDynamicContracts),
-      pendingDynamicContracts: [],
-    })
-  }
-}
-
-/**
-Gets the next query either with a to block of the current height if it is the root node.
-Or with a toBlock of the nextRegistered latestBlockNumber to catch up and merge with the next regisetered.
-
-Errors if nextRegistered dynamic contract has a lower latestFetchedBlock than the current as this would be
-an invalid state.
-*/
-let getNextQuery = (self: t, ~currentBlockHeight, ~partitionId) => {
-  let mapMaybeMerge = (fetchState: t) =>
-    fetchState.baseRegister
-    ->pruneAndMergeNextRegistered
-    ->Option.map(merged => {
-      ...fetchState,
-      baseRegister: merged,
-    })
-
-  //First apply pending dynamic contracts, then try and merge
-  //These steps should only happen on getNextQuery, to avoid in between states where a
-  //query is in flight and the underlying registers are changing
-  let maybeUpdatedFetchState = switch self->applyPendingDynamicContractRegistrations {
-  | Some(updatedWithDynamicContracts) =>
-    //After adding the pending dynamic contracts, try and merge registers
-    switch updatedWithDynamicContracts->mapMaybeMerge {
-    //Pass through the merged value if it updated anything
-    | Some(merged) => Some(merged)
-    //Even if the merge returned none, the pending dynamic contracts should be applied
-    //as an updated
-    | None => Some(updatedWithDynamicContracts)
-    }
-  //If no dynamic contracts were added just try and merge
-  | None => self->mapMaybeMerge
-  }
-
-  let {baseRegister} = maybeUpdatedFetchState->Option.getWithDefault(self)
-
-  let nextQuery = switch baseRegister.registerType {
-  | RootRegister({endBlock}) =>
-    baseRegister->getNextQueryFromNode(
-      ~toBlock={minOfOption(currentBlockHeight, endBlock)},
-      ~partitionId,
-    )
-  | DynamicContractRegister({nextRegister: {latestFetchedBlock}}) =>
-    baseRegister->getNextQueryFromNode(~toBlock=latestFetchedBlock.blockNumber, ~partitionId)
-  }
-
-  switch nextQuery {
-  | {fromBlock} if fromBlock > currentBlockHeight || currentBlockHeight == 0 =>
-    (WaitForNewBlock, maybeUpdatedFetchState)->Ok
-  | {fromBlock, toBlock} if fromBlock <= toBlock =>
-    (NextQuery(nextQuery), maybeUpdatedFetchState)->Ok
-  | {fromBlock} if fromBlock->isGreaterThanOpt(getEndBlock(baseRegister)) =>
-    (Done, maybeUpdatedFetchState)->Ok
-  //This is an invalid case. We should never arrive at this match arm but it would be
-  //detrimental if it were the case.
-  | {fromBlock, toBlock} => Error(FromBlockIsHigherThanToBlock(fromBlock, toBlock))
-  }
-}
 
 /**
 Calculates the cummulative queue sizes in all registers
