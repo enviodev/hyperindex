@@ -76,8 +76,7 @@ module InitApi = {
 
   let responseSchema = S.object(s => s.field("messages", S.array(messageSchema)))
 
-  let serverUrl = "https://envio.dev/api"
-  let endpoint = serverUrl ++ "/hyperindex/init"
+  let endpoint = Env.envioApiUrl ++ "/hyperindex/init"
 
   let getMessages = (~config) => {
     let envioVersion =

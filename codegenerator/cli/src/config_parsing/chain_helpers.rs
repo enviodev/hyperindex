@@ -1,9 +1,6 @@
-use std::env;
-
 use anyhow::anyhow;
-use anyhow::Context;
+
 use clap::ValueEnum;
-use ethers::etherscan;
 use serde::{Deserialize, Serialize};
 use strum::FromRepr;
 use strum::IntoEnumIterator;
@@ -35,7 +32,7 @@ pub enum Network {
     #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     Amoy = 80002,
 
-    #[subenum(NetworkWithExplorer, GraphNetwork)]
+    #[subenum(GraphNetwork)]
     ArbitrumGoerli = 421613,
 
     #[subenum(HypersyncNetwork, NetworkWithExplorer)]
@@ -47,11 +44,13 @@ pub enum Network {
     #[subenum(HypersyncNetwork, NetworkWithExplorer, GraphNetwork)]
     ArbitrumSepolia = 421614,
 
-    #[subenum(HypersyncNetwork, GraphNetwork)]
-    // Blockscout: https://explorer.aurora.dev/
+    #[subenum(NetworkWithExplorer)]
+    ArbitrumTestnet = 421611,
+
+    #[subenum(HypersyncNetwork, GraphNetwork, NetworkWithExplorer)]
     Aurora = 1313161554,
 
-    #[subenum(GraphNetwork)]
+    #[subenum(GraphNetwork, NetworkWithExplorer)]
     AuroraTestnet = 1313161555,
 
     #[subenum(HypersyncNetwork, GraphNetwork, NetworkWithExplorer)]
@@ -64,9 +63,6 @@ pub enum Network {
     BaseGoerli = 84531,
 
     #[subenum(HypersyncNetwork, NetworkWithExplorer)]
-    // explorers:
-    // https://sepolia.basescan.org/
-    // https://base-sepolia.blockscout.com/
     BaseSepolia = 84532,
 
     #[subenum(HypersyncNetwork)]
@@ -78,53 +74,52 @@ pub enum Network {
     #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     BlastSepolia = 168587773,
 
-    #[subenum(HypersyncNetwork)]
-    // explorers:
-    // https://bobascan.com/ (not etherscan)
+    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     Boba = 288,
 
     #[subenum(HypersyncNetwork, NetworkWithExplorer, GraphNetwork)]
     Bsc = 56,
 
-    #[subenum(HypersyncNetwork, GraphNetwork(serde(rename = "chapel")))]
+    #[subenum(
+        HypersyncNetwork,
+        NetworkWithExplorer,
+        GraphNetwork(serde(rename = "chapel"))
+    )]
     BscTestnet = 97,
 
     #[subenum(HypersyncNetwork)]
-    // Explorers:
-    // Blockscout: https://explorer-mainnet-cardano-evm.c1.milkomeda.com/
     C1Milkomeda = 2001,
+
+    #[subenum(NetworkWithExplorer)]
+    Canto = 7700,
 
     #[subenum(HypersyncNetwork, GraphNetwork, NetworkWithExplorer)]
     Celo = 42220,
 
-    #[subenum(GraphNetwork)]
+    #[subenum(GraphNetwork, NetworkWithExplorer)]
     CeloAlfajores = 44787,
+
+    #[subenum(NetworkWithExplorer)]
+    CeloBaklava = 62320,
 
     #[subenum(HypersyncNetwork)]
     Chiliz = 8888,
 
-    #[subenum(HypersyncNetwork)]
-    // blocksout: https://explorer.devnet.citrea.xyz/
     CitreaDevnet = 62298,
+
+    #[subenum(NetworkWithExplorer)]
+    CitreaTestnet = 5115,
 
     #[subenum(GraphNetwork)]
     Clover = 1023,
 
-    #[subenum(HypersyncNetwork)]
-    // Explorers:
-    // https://crab.subscan.io/
+    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     Crab = 44,
 
     #[subenum(HypersyncNetwork)]
-    // Explorers:
-    // NOTE: this does have contract verification and an api to get verified contracts, but this
-    // breaks with the current setup. TODO: get non-etherscan contract verification working.
-    // https://cyber.socialscan.io/
     Cyber = 7560,
 
     #[subenum(HypersyncNetwork)]
-    // Explorers:
-    // https://darwinia.subscan.io/
     Darwinia = 46,
 
     // Still syncing
@@ -139,21 +134,21 @@ pub enum Network {
     )]
     EthereumMainnet = 1,
 
+    #[subenum(NetworkWithExplorer)]
+    Evmos = 9001,
+
     #[subenum(HypersyncNetwork, NetworkWithExplorer, GraphNetwork)]
     Fantom = 250,
 
-    #[subenum(GraphNetwork)]
+    #[subenum(GraphNetwork, NetworkWithExplorer)]
     FantomTestnet = 4002,
 
-    #[subenum(HypersyncNetwork)]
-    // Explorers:
-    // https://explorer.testnet.fhenix.zone/ (blockscout)
+    #[subenum(NetworkWithExplorer)]
+    FhenixHelium = 8008135,
+
     FhenixTestnet = 42069,
 
-    #[subenum(HypersyncNetwork)]
-    // Explorers:
-    // Blockscout: https://flare-explorer.flare.network/
-    // Routescan: https://flarescan.com/
+    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     Flare = 14,
 
     #[subenum(HypersyncNetwork, GraphNetwork, NetworkWithExplorer)]
@@ -162,25 +157,20 @@ pub enum Network {
     #[subenum(GraphNetwork)]
     Fuse = 122,
 
-    #[subenum(HypersyncNetwork)]
+    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     GaladrielDevnet = 696969,
 
     #[subenum(HypersyncNetwork, NetworkWithExplorer, GraphNetwork)]
     Gnosis = 100,
 
-    #[subenum(HypersyncNetwork)]
-    // Explorers:
-    // https://gnosis-chiado.blockscout.com/
+    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     GnosisChiado = 10200,
 
     #[subenum(HypersyncNetwork, NetworkWithExplorer, GraphNetwork)]
     Goerli = 5,
 
-    #[subenum(HypersyncNetwork)]
-    // Explorers:
-    // https://explorer.harmony.one/
-    // https://getblock.io/explorers/harmony/
-    Harmony = 1666600000, // shard 0
+    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
+    Harmony = 1666600000,
 
     #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     Holesky = 17000,
@@ -197,37 +187,40 @@ pub enum Network {
     #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     Linea = 59144,
 
-    #[subenum(HypersyncNetwork)]
-    // Explorers:
-    // https://explorer.execution.mainnet.lukso.network/
-    // https://blockscout.com/lukso/l14
+    #[subenum(NetworkWithExplorer)]
+    LineaSepolia = 59141,
+
+    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     Lukso = 42,
 
-    #[subenum(HypersyncNetwork)]
-    // Explorers:
-    // blockscout: https://pacific-explorer.manta.network/
-    // w3w.ai: https://manta.socialscan.io/
+    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     Manta = 169,
 
-    #[subenum(HypersyncNetwork)]
-    // Explorers:
-    // https://explorer.mantle.xyz/
-    // Routescan: https://mantlescan.info/
+    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     Mantle = 5000,
 
-    #[subenum(GraphNetwork)]
+    #[subenum(NetworkWithExplorer)]
+    MantleTestnet = 5001,
+
+    #[subenum(GraphNetwork, NetworkWithExplorer)]
     Mbase = 1287,
 
-    #[subenum(HypersyncNetwork)]
+    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     Metis = 1088,
 
     #[subenum(HypersyncNetwork)]
     MevCommit = 17864,
 
+    #[subenum(NetworkWithExplorer)]
+    Mode = 34443,
+
+    #[subenum(NetworkWithExplorer)]
+    ModeSepolia = 919,
+
     #[subenum(HypersyncNetwork, NetworkWithExplorer, GraphNetwork)]
     Moonbeam = 1284,
 
-    #[subenum(GraphNetwork)]
+    #[subenum(GraphNetwork, NetworkWithExplorer)]
     Moonriver = 1285,
 
     // Still syncing
@@ -236,27 +229,22 @@ pub enum Network {
     #[subenum(GraphNetwork)]
     Mumbai = 80001,
 
-    #[subenum(HypersyncNetwork)]
-    // Explorers:
-    // https://neonscan.org/
-    // https://neon.blockscout.com/
+    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     NeonEvm = 245022934,
 
     #[subenum(HypersyncNetwork, NetworkWithExplorer, GraphNetwork)]
     Optimism = 10,
 
-    #[subenum(NetworkWithExplorer, GraphNetwork)]
+    #[subenum(GraphNetwork)]
     OptimismGoerli = 420,
 
     #[subenum(HypersyncNetwork, NetworkWithExplorer)]
-    // Alt-explorer:
-    // https://optimism-sepolia.blockscout.com/
     OptimismSepolia = 11155420,
 
-    #[subenum(GraphNetwork)]
+    #[subenum(GraphNetwork, NetworkWithExplorer)]
     PoaCore = 99,
 
-    #[subenum(GraphNetwork)]
+    #[subenum(GraphNetwork, NetworkWithExplorer)]
     PoaSokol = 77,
 
     #[subenum(
@@ -269,16 +257,13 @@ pub enum Network {
     #[subenum(GraphNetwork, HypersyncNetwork, NetworkWithExplorer)]
     PolygonZkevm = 1101,
 
-    #[subenum(GraphNetwork)]
-    PolygonZkevmTestnet = 1422,
+    #[subenum(GraphNetwork, NetworkWithExplorer)]
+    PolygonZkevmTestnet = 1442,
 
     #[subenum(GraphNetwork)]
     Rinkeby = 4,
 
-    #[subenum(HypersyncNetwork)]
-    // Explorers:
-    // https://explorer.rsk.co/
-    // https://rootstock.blockscout.com/
+    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     Rsk = 30,
 
     // Still syncing
@@ -287,34 +272,25 @@ pub enum Network {
     #[subenum(GraphNetwork, HypersyncNetwork, NetworkWithExplorer)]
     Scroll = 534352,
 
-    #[subenum(GraphNetwork)]
+    #[subenum(GraphNetwork, NetworkWithExplorer)]
     ScrollSepolia = 534351,
 
     #[subenum(HypersyncNetwork, NetworkWithExplorer, GraphNetwork)]
     Sepolia = 11155111,
 
-    #[subenum(HypersyncNetwork)]
-    // Explorers:
-    // https://explorer.evm.shimmer.network/
+    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     ShimmerEvm = 148,
 
     #[subenum(HypersyncNetwork)]
     SophonTestnet = 531050104,
 
     #[subenum(HypersyncNetwork)]
-    // Explorers:
-    // https://www.oklink.com/xlayer
     XLayer = 196,
 
     #[subenum(HypersyncNetwork)]
-    // Explorers:
-    // https://www.oklink.com/x1-test
     XLayerTestnet = 195,
 
-    #[subenum(HypersyncNetwork)]
-    // Explorers:
-    // https://explorer.zetachain.com/
-    // https://zetachain.explorers.guru/
+    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     Zeta = 7000,
 
     #[subenum(HypersyncNetwork)]
@@ -326,10 +302,11 @@ pub enum Network {
     #[subenum(GraphNetwork)]
     ZksyncEraTestnet = 280,
 
-    #[subenum(HypersyncNetwork)]
-    // Explorers:
-    // https://explorer.zora.energy/
+    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     Zora = 7777777,
+
+    #[subenum(NetworkWithExplorer)]
+    ZoraSepolia = 999999999,
 }
 
 impl Network {
@@ -355,11 +332,13 @@ impl Network {
     pub fn get_confirmed_block_threshold(&self) -> i32 {
         match self {
             //Reorgs do not happen on these networks
-            Network::ArbitrumGoerli
+            Network::ArbitrumTestnet
+            | Network::ArbitrumGoerli
             | Network::ArbitrumNova
             | Network::ArbitrumOne
             | Network::ArbitrumSepolia
             | Network::CitreaDevnet
+            | Network::CitreaTestnet
             | Network::Optimism
             | Network::OptimismGoerli
             | Network::OptimismSepolia => 0,
@@ -378,16 +357,20 @@ impl Network {
             | Network::Bsc
             | Network::BscTestnet
             | Network::C1Milkomeda
+            | Network::Canto
             | Network::Celo
             | Network::CeloAlfajores
+            | Network::CeloBaklava
             | Network::Chiliz
             | Network::Clover
             | Network::Crab
             | Network::Cyber
             | Network::Darwinia
+            | Network::Evmos
             | Network::EthereumMainnet
             | Network::Fantom
             | Network::FantomTestnet
+            | Network::FhenixHelium
             | Network::FhenixTestnet
             | Network::Flare
             | Network::Fuji
@@ -401,10 +384,14 @@ impl Network {
             | Network::IncoGentryTestnet
             | Network::Kroma
             | Network::Linea
+            | Network::LineaSepolia
             | Network::Lukso
             | Network::Manta
             | Network::Mantle
+            | Network::MantleTestnet
             | Network::MevCommit
+            | Network::Mode
+            | Network::ModeSepolia
             | Network::Metis
             | Network::Moonbeam
             | Network::Moonriver
@@ -429,7 +416,8 @@ impl Network {
             | Network::Zircuit
             | Network::ZksyncEra
             | Network::ZksyncEraTestnet
-            | Network::Zora => DEFAULT_CONFIRMED_BLOCK_THRESHOLD,
+            | Network::Zora
+            | Network::ZoraSepolia => DEFAULT_CONFIRMED_BLOCK_THRESHOLD,
         }
     }
 }
@@ -441,133 +429,6 @@ impl HypersyncNetwork {
     }
 }
 
-pub enum BlockExplorerApi {
-    DefaultEthers,
-    Custom {
-        //eg. "https://gnosisscan.io/"
-        base_url: String,
-        //eg. "https://api.gnosisscan.io/api/"
-        api_url: String,
-    },
-}
-
-impl BlockExplorerApi {
-    fn custom(base_url: &str, api_url: &str) -> Self {
-        let base_url = format!("https://{}/", base_url);
-        let api_url = format!("https://{}/api/", api_url);
-        Self::Custom { base_url, api_url }
-    }
-}
-
-impl NetworkWithExplorer {
-    pub fn get_block_explorer_api(&self) -> BlockExplorerApi {
-        match self {
-            NetworkWithExplorer::Celo => BlockExplorerApi::custom("celoscan.io", "api.celoscan.io"),
-            NetworkWithExplorer::Gnosis => {
-                BlockExplorerApi::custom("gnosisscan.io", "api.gnosisscan.io")
-            }
-            NetworkWithExplorer::Holesky => {
-                BlockExplorerApi::custom("holesky.etherscan.io", "api-holesky.etherscan.io")
-            }
-            NetworkWithExplorer::Scroll => {
-                BlockExplorerApi::custom("scrollscan.com", "api.scrollscan.com")
-            }
-            NetworkWithExplorer::ArbitrumSepolia => {
-                BlockExplorerApi::custom("sepolia.arbiscan.io", "api-sepolia.arbiscan.io")
-            }
-            NetworkWithExplorer::Kroma => {
-                BlockExplorerApi::custom("kromascan.com", "api.kromascan.com")
-            }
-            NetworkWithExplorer::BaseSepolia => {
-                BlockExplorerApi::custom("sepolia.basescan.org", "api-sepolia.basescan.org")
-            }
-            NetworkWithExplorer::OptimismSepolia => BlockExplorerApi::custom(
-                "sepolia-optimistic.etherscan.io",
-                "api-sepolia-optimistic.etherscan.io",
-            ),
-            NetworkWithExplorer::Blast => {
-                BlockExplorerApi::custom("blastscan.io", "api.blastscan.io")
-            }
-            NetworkWithExplorer::BlastSepolia => {
-                BlockExplorerApi::custom("blastscan.io", "api-testnet.blastscan.io")
-            }
-            NetworkWithExplorer::Avalanche => BlockExplorerApi::custom(
-                "avalanche.routescan.io",
-                "api.routescan.io/v2/network/mainnet/evm/43114/etherscan",
-            ),
-            NetworkWithExplorer::Fuji => BlockExplorerApi::custom(
-                "avalanche.testnet.routescan.io",
-                "api.routescan.io/v2/network/testnet/evm/43113/etherscan",
-            ),
-            NetworkWithExplorer::Amoy => {
-                BlockExplorerApi::custom("amoy.polygonscan.com", "api-amoy.polygonscan.com")
-            }
-            //// Having issues getting blockscout to work.
-            // NetworkWithExplorer::Aurora => BlockExplorerApi::custom(
-            //     "explorer.mainnet.aurora.dev",
-            //     "explorer.mainnet.aurora.dev/api",
-            //      /// also tried some variations: explorer.mainnet.aurora.dev/api/v2
-            // ),
-            // NetworkWithExplorer::Lukso => BlockExplorerApi::custom(
-            //     "explorer.execution.mainnet.lukso.network",
-            //     "explorer.execution.mainnet.lukso.network/api",
-            // /// Also tried some variations:
-            //   blockscout.com/lukso/l14
-            //
-            // ),
-            _ => BlockExplorerApi::DefaultEthers,
-        }
-    }
-
-    pub fn get_env_token_name(&self) -> String {
-        let name = format!("{:?}", self); // Converts enum variant to string
-        let name = name.replace("NetworkWithExplorer::", ""); // Remove the enum type prefix
-        let name = name.replace("-", "_"); // Replace hyphens with underscores
-        let name = name.to_uppercase(); // Convert to uppercase
-        format!("{}_VERIFIED_CONTRACT_API_TOKEN", name)
-    }
-}
-
-pub fn get_etherscan_client(network: &NetworkWithExplorer) -> anyhow::Result<etherscan::Client> {
-    // Try to get the API token from the environment variable
-    let maybe_api_key = env::var(network.get_env_token_name());
-
-    let client = match network.get_block_explorer_api() {
-        BlockExplorerApi::DefaultEthers => {
-            let chain_id = Network::from(*network).get_network_id();
-            let ethers_chain = ethers::types::Chain::try_from(chain_id)
-                .context("Failed converting network with explorer id to ethers chain")?;
-
-            // The api doesn't allow not passing in an api key, but a
-            // blank string is allowed
-            etherscan::Client::new(ethers_chain, maybe_api_key.unwrap_or("".to_string()))
-                .context("Failed creating client for network")?
-        }
-
-        BlockExplorerApi::Custom { base_url, api_url } => {
-            let mut builder = etherscan::Client::builder()
-                .with_url(&base_url)
-                .context(format!(
-                    "Failed building custom client at base url {}",
-                    base_url
-                ))?
-                .with_api_url(&api_url)
-                .context(format!(
-                    "Failed building custom client at api url {}",
-                    api_url
-                ))?;
-
-            if let Ok(key) = maybe_api_key {
-                builder = builder.with_api_key(&key);
-            }
-
-            builder.build().context("Failed build custom client")?
-        }
-    };
-
-    Ok(client)
-}
-
 pub fn get_confirmed_block_threshold_from_id(id: u64) -> i32 {
     Network::from_network_id(id).map_or(DEFAULT_CONFIRMED_BLOCK_THRESHOLD, |n| {
         n.get_confirmed_block_threshold()
@@ -576,7 +437,7 @@ pub fn get_confirmed_block_threshold_from_id(id: u64) -> i32 {
 
 #[cfg(test)]
 mod test {
-    use super::{get_etherscan_client, GraphNetwork, HypersyncNetwork, NetworkWithExplorer};
+    use super::{GraphNetwork, HypersyncNetwork};
     use crate::config_parsing::chain_helpers::Network;
     use itertools::Itertools;
     use pretty_assertions::assert_eq;
@@ -594,13 +455,6 @@ mod test {
             networks_sorted, networks,
             "Networks should be defined in alphabetical order (sorry to be picky)"
         );
-    }
-
-    #[test]
-    fn all_networks_with_explorer_can_get_etherscan_client() {
-        for network in NetworkWithExplorer::iter() {
-            get_etherscan_client(&network).unwrap();
-        }
     }
 
     #[test]
@@ -686,33 +540,5 @@ mod test {
                 n
             )
         }
-    }
-
-    #[test]
-    fn network_api_key_name() {
-        let env_token_name = NetworkWithExplorer::EthereumMainnet.get_env_token_name();
-        assert_eq!(
-            env_token_name,
-            "ETHEREUMMAINNET_VERIFIED_CONTRACT_API_TOKEN"
-        );
-    }
-
-    use tracing_subscriber;
-
-    #[tokio::test]
-    #[ignore = "Integration test that interacts with block explorer API"]
-    async fn check_gnosis_get_contract_source_code() {
-        tracing_subscriber::fmt::init();
-        let network: NetworkWithExplorer = NetworkWithExplorer::Gnosis;
-        let client = get_etherscan_client(&network).unwrap();
-
-        client
-            .contract_source_code(
-                "0x4ECaBa5870353805a9F068101A40E0f32ed605C6"
-                    .parse()
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
     }
 }
