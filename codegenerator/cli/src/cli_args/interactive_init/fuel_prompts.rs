@@ -122,28 +122,28 @@ async fn get_contract_import_selection(args: ContractImportArgs) -> Result<Selec
         get_abi_path_string(&local_import_args).context("Failed getting Fuel ABI path")?;
     let abi = FuelAbi::parse(PathBuf::from(&abi_path_string)).context("Failed parsing Fuel ABI")?;
 
-  let mut selected_events: Vec<EventConfig> = abi
-      .get_logs()
-      .iter()
-      .map(|log| EventConfig {
-          name: log.event_name.clone(),
-          log_id: Some(log.id.clone()),
-          type_: None,
-      })
-      .collect();
-  
-  let event_names = [
-      TRANSFER_EVENT_NAME,
-      MINT_EVENT_NAME,
-      BURN_EVENT_NAME,
-      CALL_EVENT_NAME,
-  ];
-  
-  selected_events.extend(event_names.iter().map(|&name| EventConfig {
-      name: name.to_string(),
-      log_id: None,
-      type_: None,
-  }));
+    let mut selected_events: Vec<EventConfig> = abi
+        .get_logs()
+        .iter()
+        .map(|log| EventConfig {
+            name: log.event_name.clone(),
+            log_id: Some(log.id.clone()),
+            type_: None,
+        })
+        .collect();
+
+    let event_names = [
+        TRANSFER_EVENT_NAME,
+        MINT_EVENT_NAME,
+        BURN_EVENT_NAME,
+        CALL_EVENT_NAME,
+    ];
+
+    selected_events.extend(event_names.iter().map(|&name| EventConfig {
+        name: name.to_string(),
+        log_id: None,
+        type_: None,
+    }));
     if !args.all_events {
         selected_events = prompt_event_selection(selected_events)?;
     }

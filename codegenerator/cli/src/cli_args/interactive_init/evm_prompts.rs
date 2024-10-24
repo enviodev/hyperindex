@@ -86,25 +86,22 @@ impl ContractImportArgs {
         let result = match contract_import(network, &contract_address, 0).await {
             Ok(ContractImportResult::Contract(contract_data)) => Ok(contract_data),
             Ok(ContractImportResult::NotVerified) => {
-                println!("Failed to find the verified contract on a block explorer.");
-                Err(())
+                Err("Failed to find the verified contract on a block explorer.".to_string())
             }
             Ok(ContractImportResult::UnsupportedChain) => {
-                println!("The \"{network}\" chain doesn't support contract import yet. Let us know if you want it by opening an issue on Github.");
-                Err(())
+                Err(format!("The \"{network}\" chain doesn't support contract import yet. Let us know if you want it by opening an issue on Github."))
             }
             Err(e) => {
-                println!(
-                    "Failed getting the contract ABI with the following error:\n{}",
-                    e
-                );
-                Err(())
+                Err(format!(
+                  "Failed getting the contract ABI with the following error:\n{}",
+                  e
+                ))
             }
         };
         let contract_data = match result {
             Ok(contract_data) => contract_data,
-            Err(_) => {
-                println!("\nUse the Local ABI import option instead.");
+            Err(err) => {
+                println!("{err}\nUse the Local ABI import option instead.");
                 return (ContractImportArgs {
                     contract_address: Some(contract_address),
                     ..self.clone()
