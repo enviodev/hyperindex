@@ -220,12 +220,16 @@ let makeFromDbState = async (chainConfig: Config.chainConfig, ~maxAddrInPartitio
       latestProcessedBlock,
       numEventsProcessed,
       timestampCaughtUpToHeadOrEndblock,
-    }) => (
-      firstEventBlockNumber,
-      latestProcessedBlock,
-      numEventsProcessed,
-      Env.updateSyncTimeOnRestart ? None : timestampCaughtUpToHeadOrEndblock->Js.Nullable.toOption,
-    )
+    }) =>
+    { 
+        Prometheus.incrementEventsProcessedCounter(~number=numEventsProcessed)
+        (
+        firstEventBlockNumber,
+        latestProcessedBlock,
+        numEventsProcessed,
+        Env.updateSyncTimeOnRestart ? None : timestampCaughtUpToHeadOrEndblock->Js.Nullable.toOption,
+      )
+    }
   | None => (None, None, None, None)
   }
 

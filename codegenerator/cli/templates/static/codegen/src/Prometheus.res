@@ -70,7 +70,7 @@ let incrementEventsProcessedCounter = (~number) => {
 }
 
 let incrementReorgsDetected = (~chain) => {
-  eventsProcessedCounter->PromClient.Counter.incLabels({"chainId": chain->ChainMap.Chain.toString})
+  reorgsDetectedCounter->PromClient.Counter.incLabels({"chainId": chain->ChainMap.Chain.toString})
 }
 
 let setSourceChainHeight = (~blockNumber, ~chain) => {
