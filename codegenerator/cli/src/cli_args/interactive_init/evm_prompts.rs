@@ -23,7 +23,7 @@ use crate::{
     evm::address::Address,
     init_config::evm::{ContractImportSelection, InitFlow},
 };
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result};
 use inquire::{validator::Validation, CustomType, Select, Text};
 use std::{env, path::PathBuf, str::FromStr};
 use strum::IntoEnumIterator;
@@ -51,8 +51,8 @@ impl ContractImportArgs {
         let parsed_abi = local_import_args
             .get_abi()
             .context("Failed getting parsed abi")?;
-        let mut abi_events: Vec<ethers::abi::Event> = parsed_abi.events().cloned().collect();
 
+        let mut abi_events: Vec<ethers::abi::Event> = parsed_abi.events().cloned().collect();
         if !self.all_events {
             abi_events = prompt_abi_events_selection(abi_events)?;
         }
@@ -117,6 +117,11 @@ impl ContractImportArgs {
             }
         };
 
+        let mut abi_events: Vec<ethers::abi::Event> = contract_data.abi.events().cloned().collect();
+        if !self.all_events {
+            abi_events = prompt_abi_events_selection(abi_events)?;
+        }
+
         let network_kind = get_converter_network_u64(network.clone() as u64, &None, &None)?;
 
         let network_selection = ContractImportNetworkSelection::new(network_kind, contract_address);
@@ -129,7 +134,7 @@ impl ContractImportArgs {
         Ok(SelectedContract::new(
             contract_name,
             network_selection,
-            contract_data.abi.events().cloned().collect(),
+            abi_events,
         ))
     }
 
@@ -151,25 +156,7 @@ impl ContractImportArgs {
             .await
             .context("Failed getting SelectedContract from explorer")?;
 
-        let SelectedContract {
-            name,
-            networks,
-            events,
-        } = if !self.all_events {
-            let events = prompt_abi_events_selection(selected_contract.events)?;
-            SelectedContract {
-                events,
-                ..selected_contract
-            }
-        } else {
-            selected_contract
-        };
-
-        let network_selection = networks.last().cloned().ok_or_else(|| {
-            anyhow!("Expected a network seletion to be constructed with SelectedContract")
-        })?;
-
-        Ok(SelectedContract::new(name, network_selection, events))
+        Ok(selected_contract)
     }
 
     ///Takes either the address passed in by cli flag or prompts
