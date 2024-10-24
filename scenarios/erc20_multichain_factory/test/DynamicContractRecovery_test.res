@@ -204,7 +204,7 @@ describe("Dynamic contract restart resistance test", () => {
         ~maxAddrInPartition=Env.maxAddrInPartition,
       )
 
-      let restartedFetchState = switch restartedChainFetcher.fetchState.partitions->Js.Dict.values {
+      let restartedFetchState = switch restartedChainFetcher.fetchState.partitions {
       | [partition] => partition
       | _ => failwith("No partitions found in restarted chain fetcher")
       }
@@ -242,7 +242,7 @@ describe("Dynamic contract restart resistance test", () => {
           ~maxAddrInPartition=Env.maxAddrInPartition,
         )
 
-        let restartedFetchState = switch restartedChainFetcher.fetchState.partitions->Js.Dict.values {
+        let restartedFetchState = switch restartedChainFetcher.fetchState.partitions {
         | [partition] => partition
         | _ => failwith("No partitions found in restarted chain fetcher with")
         }
@@ -274,7 +274,7 @@ describe("Dynamic contract restart resistance test", () => {
       )
 
       let restartedFetchState =
-        restartedChainFetcher.fetchState.partitions->Js.Dict.values->Array.get(0)->Option.getExn
+        restartedChainFetcher.fetchState.partitions->Array.get(0)->Option.getExn
 
       let dynamicContracts =
         restartedFetchState.baseRegister.dynamicContracts
