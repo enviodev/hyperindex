@@ -35,11 +35,8 @@ describe("PartitionedFetchState getMostBehindPartitions", () => {
     ~partitions: list<_>,
     ~maxAddrInPartition=1,
   ): PartitionedFetchState.t => {
-    let partitions = partitions->List.mapWithIndex((i, p) => (i->Int.toString, p))->Js.Dict.fromList
-    let newestPartitionIndex =
-      partitions->Js.Dict.keys->Array.keepMap(Int.fromString)->Js.Math.maxMany_int
+    let partitions = partitions->List.toArray
     {
-      newestPartitionIndex,
       partitions,
       maxAddrInPartition,
       startBlock: 0,
@@ -242,7 +239,7 @@ describe("PartitionedFetchState getMostBehindPartitions", () => {
     }
 
     Assert.equal(
-      partitionedFetchState.partitions->Js.Dict.values->Array.length,
+      partitionedFetchState.partitions->Array.length,
       1,
       ~message="Should have only one partition",
     )
@@ -271,7 +268,7 @@ describe("PartitionedFetchState getMostBehindPartitions", () => {
       )
 
     Assert.equal(
-      updatedPartitionedFetchState.partitions->Js.Dict.values->Array.length,
+      updatedPartitionedFetchState.partitions->Array.length,
       2,
       ~message="Should have added a new partition since it's over the maxAddrInPartition threshold",
     )
