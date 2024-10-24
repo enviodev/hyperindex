@@ -9,17 +9,21 @@ use super::{
     validation::UniqueValueValidator,
 };
 use crate::{
+    clap_definitions::evm::NetworkOrChainId,
     cli_args::interactive_init::validation::filter_duplicate_events,
     config_parsing::{
         chain_helpers::{HypersyncNetwork, Network, NetworkWithExplorer},
-        contract_import::converters::{self, ContractImportNetworkSelection, SelectedContract},
+        contract_import::{
+            contract_import,
+            converters::{self, ContractImportNetworkSelection, SelectedContract},
+            ContractImportResult,
+        },
         system_config::EvmAbi,
     },
     evm::address::Address,
     init_config::evm::{ContractImportSelection, InitFlow},
 };
-use anyhow::{anyhow, Context, Result};
-use async_recursion::async_recursion;
+use anyhow::{Context, Result};
 use inquire::{validator::Validation, CustomType, Select, Text};
 use std::{env, path::PathBuf, str::FromStr};
 use strum::IntoEnumIterator;
@@ -47,8 +51,8 @@ impl ContractImportArgs {
         let parsed_abi = local_import_args
             .get_abi()
             .context("Failed getting parsed abi")?;
-        let mut abi_events: Vec<ethers::abi::Event> = parsed_abi.events().cloned().collect();
 
+        let mut abi_events: Vec<ethers::abi::Event> = parsed_abi.events().cloned().collect();
         if !self.all_events {
             abi_events = prompt_abi_events_selection(abi_events)?;
         }
@@ -74,38 +78,61 @@ impl ContractImportArgs {
         ))
     }
 
-    #[async_recursion]
-    async fn get_contract_import_selection_from_etherscan(
-        network_with_explorer: &NetworkWithExplorer,
+    async fn get_selected_contract(
+        &self,
+        network: &NetworkWithExplorer,
         contract_address: Address,
-    ) -> Result<SelectedContract> {
-        match SelectedContract::from_etherscan(network_with_explorer, contract_address.clone())
-            .await
-        {
-            Err(e) => {
-                //hacky way to detect invalid api key for now
-                if format!("{:?}", e)
-                    .to_lowercase()
-                    .contains("invalid api key")
-                {
-                    let env_token_name = network_with_explorer.get_env_token_name();
-                    let text_prompt = format!(
-                        "Please provide a valid api key for etherscan on network {}:",
-                        network_with_explorer
-                    );
-                    let val = Text::new(&text_prompt).prompt()?;
-                    std::env::set_var(env_token_name, val);
-                    Self::get_contract_import_selection_from_etherscan(
-                        network_with_explorer,
-                        contract_address,
-                    )
-                    .await
-                } else {
-                    Err(e)
-                }
+    ) -> anyhow::Result<SelectedContract> {
+        let result = match contract_import(network, &contract_address, 0).await {
+            Ok(ContractImportResult::Contract(contract_data)) => Ok(contract_data),
+            Ok(ContractImportResult::NotVerified) => {
+                Err("Failed to find the verified contract on a block explorer.".to_string())
             }
-            Ok(v) => Ok(v),
+            Ok(ContractImportResult::UnsupportedChain) => {
+                Err(format!("The \"{network}\" chain doesn't support contract import yet. Let us know if you want it by opening an issue on Github."))
+            }
+            Err(e) => {
+                Err(format!(
+                  "Failed getting the contract ABI with the following error:\n{}",
+                  e
+                ))
+            }
+        };
+        let contract_data = match result {
+            Ok(contract_data) => contract_data,
+            Err(err) => {
+                println!("{err}\nUse the Local ABI import option instead.");
+                return (ContractImportArgs {
+                    contract_address: Some(contract_address),
+                    ..self.clone()
+                })
+                .get_contract_import_selection_from_local_import_args(&LocalImportArgs {
+                    blockchain: Some(NetworkOrChainId::ChainId(network.clone() as u64)),
+                    ..LocalImportArgs::default()
+                })
+                .await;
+            }
+        };
+
+        let mut abi_events: Vec<ethers::abi::Event> = contract_data.abi.events().cloned().collect();
+        if !self.all_events {
+            abi_events = prompt_abi_events_selection(abi_events)?;
         }
+
+        let network_kind = get_converter_network_u64(network.clone() as u64, &None, &None)?;
+
+        let network_selection = ContractImportNetworkSelection::new(network_kind, contract_address);
+
+        let contract_name = match contract_data.name {
+            Some(name) => name,
+            None => prompt_contract_name()?,
+        };
+
+        Ok(SelectedContract::new(
+            contract_name,
+            network_selection,
+            abi_events,
+        ))
     }
 
     ///Constructs SelectedContract via block explorer requests.
@@ -115,38 +142,18 @@ impl ContractImportArgs {
     ) -> Result<SelectedContract> {
         let network_with_explorer: NetworkWithExplorer = explorer_import_args
             .get_network_with_explorer()
-            .context("Failed getting NetworkWithExporer")?;
+            .context("Failed getting NetworkWithExplorer")?;
 
         let chosen_contract_address = self
             .get_contract_address()
             .context("Failed getting contract address")?;
 
-        let contract_selection_from_etherscan = Self::get_contract_import_selection_from_etherscan(
-            &network_with_explorer,
-            chosen_contract_address,
-        )
-        .await
-        .context("Failed getting SelectedContract from explorer")?;
+        let selected_contract = self
+            .get_selected_contract(&network_with_explorer, chosen_contract_address)
+            .await
+            .context("Failed getting SelectedContract from explorer")?;
 
-        let SelectedContract {
-            name,
-            networks,
-            events,
-        } = if !self.all_events {
-            let events = prompt_abi_events_selection(contract_selection_from_etherscan.events)?;
-            SelectedContract {
-                events,
-                ..contract_selection_from_etherscan
-            }
-        } else {
-            contract_selection_from_etherscan
-        };
-
-        let network_selection = networks.last().cloned().ok_or_else(|| {
-            anyhow!("Expected a network seletion to be constructed with SelectedContract")
-        })?;
-
-        Ok(SelectedContract::new(name, network_selection, events))
+        Ok(selected_contract)
     }
 
     ///Takes either the address passed in by cli flag or prompts

@@ -149,13 +149,13 @@ pub struct InitArgs {
 #[subenum(EvmInitFlowInteractive)]
 #[derive(Subcommand, Debug, EnumIter, Display, EnumString, Clone)]
 pub enum InitFlow {
-    ///Initialize Evm indexer from an example template
-    #[subenum(EvmInitFlowInteractive)]
-    Template(evm::TemplateArgs),
     ///Initialize Evm indexer by importing config from a contract for a given chain
     #[subenum(EvmInitFlowInteractive)]
     #[strum(serialize = "Contract Import")]
     ContractImport(evm::ContractImportArgs),
+    ///Initialize Evm indexer from an example template
+    #[subenum(EvmInitFlowInteractive)]
+    Template(evm::TemplateArgs),
     ///Initialize Evm indexer by migrating config from an existing subgraph
     #[clap(hide = true)] //hiding for now until this is more stable
     #[strum(serialize = "Subgraph Migration (Experimental)")]
@@ -226,7 +226,7 @@ pub mod evm {
 
     #[derive(Args, Debug, Default, Clone)]
     pub struct ExplorerImportArgs {
-        ///Network from which contract address should be fetched for migration
+        ///Network to import the contract from
         #[arg(short, long)]
         pub blockchain: Option<NetworkWithExplorer>,
     }
@@ -271,7 +271,7 @@ pub mod evm {
         #[arg(long)]
         pub contract_name: Option<String>,
 
-        ///Network from which contract address should be fetched for migration
+        ///Name or ID of the contract network
         #[arg(short, long)]
         pub blockchain: Option<NetworkOrChainId>,
 

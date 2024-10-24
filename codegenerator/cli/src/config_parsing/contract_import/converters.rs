@@ -1,8 +1,4 @@
-use super::etherscan_helpers::fetch_contract_auto_selection_from_etherscan;
-use crate::{
-    config_parsing::chain_helpers::{HypersyncNetwork, NetworkWithExplorer},
-    evm::address::Address,
-};
+use crate::{config_parsing::chain_helpers::HypersyncNetwork, evm::address::Address};
 use anyhow::{Context, Result};
 use std::fmt::{self, Display};
 
@@ -42,13 +38,6 @@ impl SelectedContract {
             .last()
             .context("Failed to get the last select contract network")?;
         Ok(network_selection.network.to_string())
-    }
-
-    pub async fn from_etherscan(
-        network: &NetworkWithExplorer,
-        address: Address,
-    ) -> anyhow::Result<Self> {
-        fetch_contract_auto_selection_from_etherscan(address, network).await
     }
 
     pub fn get_network_ids(&self) -> Vec<u64> {
