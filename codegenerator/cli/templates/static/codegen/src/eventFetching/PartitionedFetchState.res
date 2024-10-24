@@ -2,8 +2,7 @@ open Belt
 type partitionIndex = int
 type t = {
   maxAddrInPartition: int,
-  newestPartitionIndex: partitionIndex,
-  partitions: dict<FetchState.t>,
+  partitions: array<FetchState.t>,
   endBlock: option<int>,
   startBlock: int,
   logger: Pino.t,
@@ -26,23 +25,7 @@ let make = (
 ) => {
   let numAddresses = staticContracts->Array.length + dynamicContractRegistrations->Array.length
 
-  let newestPartitionIndexRef = ref(None)
-  let partitions = Js.Dict.empty()
-  let setNextPartition = partition => {
-    let nextPartitionIndex = switch newestPartitionIndexRef.contents {
-    | Some(newestPartitionIndex) => newestPartitionIndex + 1
-    | None => 0
-    }
-    newestPartitionIndexRef := Some(nextPartitionIndex)
-    partitions->Js.Dict.set(nextPartitionIndex->Int.toString, partition)
-  }
-
-  let getNewestPartitionIndex = () => {
-    switch newestPartitionIndexRef.contents {
-    | Some(newestPartitionIndex) => newestPartitionIndex
-    | None => Js.Exn.raiseError("Unexpected no partions added during construction")
-    }
-  }
+  let partitions = []
 
   if numAddresses <= maxAddrInPartition {
     let partition = FetchState.makeRoot(~endBlock)(
@@ -52,7 +35,7 @@ let make = (
       ~logger,
       ~isFetchingAtHead=false,
     )
-    setNextPartition(partition)
+    partitions->Js.Array2.push(partition)->ignore
   } else {
     let staticContractsClone = staticContracts->Array.copy
 
@@ -68,7 +51,7 @@ let make = (
         ~logger,
         ~isFetchingAtHead=false,
       )
-      setNextPartition(staticContractPartition)
+      partitions->Js.Array2.push(staticContractPartition)->ignore
     }
 
     let dynamicContractRegistrationsClone = dynamicContractRegistrations->Array.copy
@@ -85,8 +68,7 @@ let make = (
       ~logger,
       ~isFetchingAtHead=false,
     )
-
-    setNextPartition(remainingStaticContractsWithDynamicPartition)
+    partitions->Js.Array2.push(remainingStaticContractsWithDynamicPartition)->ignore
 
     //Make partitions with all remaining dynamic contract registrations
     while dynamicContractRegistrationsClone->Array.length > 0 {
@@ -103,7 +85,7 @@ let make = (
         ~logger,
         ~isFetchingAtHead=false,
       )
-      setNextPartition(dynamicContractPartition)
+      partitions->Js.Array2.push(dynamicContractPartition)->ignore
     }
   }
 
@@ -111,13 +93,12 @@ let make = (
     Benchmark.addSummaryData(
       ~group="Other",
       ~label="Num partitions",
-      ~value=partitions->Js.Dict.keys->Array.length->Int.toFloat,
+      ~value=partitions->Array.length->Int.toFloat,
     )
   }
 
   {
     maxAddrInPartition,
-    newestPartitionIndex: getNewestPartitionIndex(),
     partitions,
     endBlock,
     startBlock,
@@ -126,23 +107,25 @@ let make = (
 }
 
 let registerDynamicContracts = (
-  {partitions, newestPartitionIndex, maxAddrInPartition, endBlock, startBlock, logger}: t,
+  {partitions, maxAddrInPartition, endBlock, startBlock, logger}: t,
   dynamicContractRegistration: FetchState.dynamicContractRegistration,
   ~isFetchingAtHead,
 ) => {
-  let newestPartition = partitions->Js.Dict.unsafeGet(newestPartitionIndex->Int.toString)
+  let newestPartitionIndex = partitions->Array.length - 1
+  let newestPartition = switch partitions[newestPartitionIndex] {
+  | Some(p) => p
+  | None => Js.Exn.raiseError("Unexpected: No partitions in PartitionedFetchState")
+  }
 
-  let (partitions, newestPartitionIndex) = if (
-    newestPartition->FetchState.getNumContracts < maxAddrInPartition
-  ) {
+  let copiedPartitions = partitions->Array.copy
+
+  if newestPartition->FetchState.getNumContracts < maxAddrInPartition {
     let updated =
       newestPartition->FetchState.registerDynamicContract(
         dynamicContractRegistration,
         ~isFetchingAtHead,
       )
-    let partitions =
-      partitions->Utils.Dict.updateImmutable(newestPartitionIndex->Int.toString, updated)
-    (partitions, newestPartitionIndex)
+    copiedPartitions->Js.Array2.unsafe_set(newestPartitionIndex, updated)
   } else {
     let newPartition = FetchState.makeRoot(~endBlock)(
       ~startBlock,
@@ -151,20 +134,17 @@ let registerDynamicContracts = (
       ~dynamicContractRegistrations=dynamicContractRegistration.dynamicContracts,
       ~isFetchingAtHead,
     )
-    let newestPartitionIndex = newestPartitionIndex + 1
-    let partitions =
-      partitions->Utils.Dict.updateImmutable(newestPartitionIndex->Int.toString, newPartition)
-    (partitions, newestPartitionIndex)
+    copiedPartitions->Js.Array2.push(newPartition)->ignore
   }
 
   if Env.saveBenchmarkData {
     Benchmark.addSummaryData(
       ~group="Other",
       ~label="Num partitions",
-      ~value=partitions->Js.Dict.keys->Array.length->Int.toFloat,
+      ~value=partitions->Array.length->Int.toFloat,
     )
   }
-  {partitions, newestPartitionIndex, maxAddrInPartition, endBlock, startBlock, logger}
+  {partitions: copiedPartitions, maxAddrInPartition, endBlock, startBlock, logger}
 }
 
 exception UnexpectedPartitionDoesNotExist(partitionIndex)
@@ -174,14 +154,18 @@ Updates partition at given id with given values and checks to see if it can be m
 Returns Error if the partition/node with given id cannot be found (unexpected)
 */
 let update = (self: t, ~id: id, ~latestFetchedBlock, ~newItems, ~currentBlockHeight) => {
-  let partitionKey = id.partitionId->Int.toString
-  switch self.partitions->Js.Dict.get(partitionKey) {
+  let copiedPartitions = self.partitions->Array.copy
+  switch copiedPartitions[id.partitionId] {
   | Some(partition) =>
     partition
     ->FetchState.update(~id=id.fetchStateId, ~latestFetchedBlock, ~newItems, ~currentBlockHeight)
     ->Result.map(updatedPartition => {
-      ...self,
-      partitions: self.partitions->Utils.Dict.updateImmutable(partitionKey, updatedPartition),
+      copiedPartitions->Js.Array2.unsafe_set(id.partitionId, updatedPartition)
+
+      {
+        ...self,
+        partitions: copiedPartitions,
+      }
     })
   | _ => Error(UnexpectedPartitionDoesNotExist(id.partitionId))
   }
@@ -200,7 +184,7 @@ The array could be shorter than the max number of queries if the partitions are
 at the max queue size.
 */
 let getMostBehindPartitions = (
-  {partitions, newestPartitionIndex}: t,
+  {partitions}: t,
   ~maxNumQueries,
   ~maxPerChainQueueSize,
   ~partitionsCurrentlyFetching,
@@ -209,21 +193,14 @@ let getMostBehindPartitions = (
     maxNumQueries - partitionsCurrentlyFetching->Belt.Set.Int.size,
     0,
   )
-  let numPartitions = newestPartitionIndex + 1
+  let numPartitions = partitions->Array.length
   let maxPartitionQueueSize = maxPerChainQueueSize / numPartitions
 
   partitions
-  ->Js.Dict.entries
-  ->Array.keepMap(((partitionKey, partition)) => {
-    let partitionId = partitionKey->Int.fromString->Option.getUnsafe
-    if (
-      !(partitionsCurrentlyFetching->Set.Int.has(partitionId)) &&
-      partition->FetchState.isReadyForNextQuery(~maxQueueSize=maxPartitionQueueSize)
-    ) {
-      Some({fetchState: partition, partitionId})
-    } else {
-      None
-    }
+  ->Array.mapWithIndex((partitionId, fetchState) => {fetchState, partitionId})
+  ->Array.keep(({partitionId, fetchState}) => {
+    !(partitionsCurrentlyFetching->Set.Int.has(partitionId)) &&
+    fetchState->FetchState.isReadyForNextQuery(~maxQueueSize=maxPartitionQueueSize)
   })
   ->Js.Array2.sortInPlaceWith((a, b) =>
     FetchState.getLatestFullyFetchedBlock(a.fetchState).blockNumber -
@@ -233,9 +210,9 @@ let getMostBehindPartitions = (
 }
 
 let updatePartition = (self: t, ~fetchState: FetchState.t, ~partitionId: partitionIndex) => {
-  let partitionKey = partitionId->Int.toString
-  let partitions = self.partitions->Utils.Dict.updateImmutable(partitionKey, fetchState)
-  {...self, partitions}
+  let copiedPartitions = self.partitions->Array.copy
+  copiedPartitions->Js.Array2.unsafe_set(partitionId, fetchState)
+  {...self, partitions: copiedPartitions}
 }
 
 type nextQueries = WaitForNewBlock | NextQuery(array<FetchState.nextQuery>)
@@ -291,21 +268,15 @@ let getNextQueriesOrThrow = (
 Rolls back all partitions to the given valid block
 */
 let rollback = (self: t, ~lastKnownValidBlock) => {
-  let partitions =
-    self.partitions
-    ->Js.Dict.entries
-    ->Array.map(((partitionKey, partition)) => {
-      (partitionKey, partition->FetchState.rollback(~lastKnownValidBlock))
-    })
-    ->Js.Dict.fromArray
+  let partitions = self.partitions->Array.map(partition => {
+    partition->FetchState.rollback(~lastKnownValidBlock)
+  })
 
   {...self, partitions}
 }
 
 let getEarliestEvent = (self: t) =>
-  self.partitions
-  ->Js.Dict.values
-  ->Array.reduce(None, (accum, fetchState) => {
+  self.partitions->Array.reduce(None, (accum, fetchState) => {
     // If the fetch state has reached the end block we don't need to consider it
     if fetchState->FetchState.isActivelyIndexing {
       let nextItem = fetchState->FetchState.getEarliestEvent
@@ -319,13 +290,10 @@ let getEarliestEvent = (self: t) =>
   })
 
 let queueSize = ({partitions}: t) =>
-  partitions
-  ->Js.Dict.values
-  ->Array.reduce(0, (accum, partition) => accum + partition->FetchState.queueSize)
+  partitions->Array.reduce(0, (accum, partition) => accum + partition->FetchState.queueSize)
 
 let getLatestFullyFetchedBlock = ({partitions}: t) =>
   partitions
-  ->Js.Dict.values
   ->Array.reduce(None, (accum, partition) => {
     let partitionBlock = partition->FetchState.getLatestFullyFetchedBlock
     switch accum {
@@ -337,34 +305,25 @@ let getLatestFullyFetchedBlock = ({partitions}: t) =>
   ->Option.getUnsafe
 
 let checkContainsRegisteredContractAddress = ({partitions}: t, ~contractAddress, ~contractName) => {
-  partitions
-  ->Js.Dict.values
-  ->Array.reduce(false, (accum, partition) => {
+  partitions->Array.reduce(false, (accum, partition) => {
     accum ||
     partition->FetchState.checkContainsRegisteredContractAddress(~contractAddress, ~contractName)
   })
 }
 
 let isFetchingAtHead = ({partitions}: t) => {
-  partitions
-  ->Js.Dict.values
-  ->Array.reduce(true, (accum, partition) => {
+  partitions->Array.reduce(true, (accum, partition) => {
     accum && partition.isFetchingAtHead
   })
 }
 
 let getFirstEventBlockNumber = ({partitions}: t) => {
-  partitions
-  ->Js.Dict.values
-  ->Array.reduce(None, (accum, partition) => {
+  partitions->Array.reduce(None, (accum, partition) => {
     Utils.Math.minOptInt(accum, partition.baseRegister.firstEventBlockNumber)
   })
 }
 
 let copy = (self: t) => {
   ...self,
-  partitions: self.partitions
-  ->Js.Dict.entries
-  ->Array.map(((partitionKey, partition)) => (partitionKey, partition->FetchState.copy))
-  ->Js.Dict.fromArray,
+  partitions: self.partitions->Array.map(partition => partition->FetchState.copy),
 }
