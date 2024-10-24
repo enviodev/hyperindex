@@ -295,7 +295,7 @@ let cleanUpProcessingFilters = (
   ~fetchState as {partitions}: PartitionedFetchState.t,
 ) => {
   switch processingFilters->Array.keep(processingFilter =>
-    partitions->List.reduce(false, (accum, partition) => {
+    partitions->Array.reduce(false, (accum, partition) => {
       accum || processingFilter.isValid(~fetchState=partition)
     })
   ) {

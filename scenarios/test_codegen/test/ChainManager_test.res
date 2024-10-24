@@ -311,30 +311,36 @@ describe("determineNextEvent", () => {
     }
 
     let makeMockFetchState = (~latestFetchedBlockTimestamp, ~item): FetchState.t => {
-      isFetchingAtHead: false,
-      registerType: RootRegister({endBlock: None}),
-      latestFetchedBlock: {
-        blockTimestamp: latestFetchedBlockTimestamp,
-        blockNumber: 0,
+      baseRegister: {
+        registerType: RootRegister({endBlock: None}),
+        latestFetchedBlock: {
+          blockTimestamp: latestFetchedBlockTimestamp,
+          blockNumber: 0,
+        },
+        contractAddressMapping: ContractAddressingMap.make(),
+        fetchedEventQueue: item->Option.mapWithDefault([], v => [v]),
+        dynamicContracts: FetchState.DynamicContractsMap.empty,
+        firstEventBlockNumber: item->Option.map(v => v.blockNumber),
       },
-      contractAddressMapping: ContractAddressingMap.make(),
-      fetchedEventQueue: item->Option.mapWithDefault([], v => [v]),
-      dynamicContracts: FetchState.DynamicContractsMap.empty,
-      firstEventBlockNumber: item->Option.map(v => v.blockNumber),
+      pendingDynamicContracts: [],
+      isFetchingAtHead: false,
     }
 
     let makeMockPartitionedFetchState = (
       ~latestFetchedBlockTimestamp,
       ~item,
     ): ChainManager.fetchStateWithData => {
-      partitionedFetchState: {
-        partitions: list{makeMockFetchState(~latestFetchedBlockTimestamp, ~item)},
-        maxAddrInPartition: Env.maxAddrInPartition,
-        startBlock: 0,
-        endBlock: None,
-        logger: Logging.logger,
-      },
-      heighestBlockBelowThreshold: 500,
+      let partitions = [makeMockFetchState(~latestFetchedBlockTimestamp, ~item)]
+      {
+        partitionedFetchState: {
+          partitions,
+          maxAddrInPartition: Env.maxAddrInPartition,
+          startBlock: 0,
+          endBlock: None,
+          logger: Logging.logger,
+        },
+        heighestBlockBelowThreshold: 500,
+      }
     }
 
     it(

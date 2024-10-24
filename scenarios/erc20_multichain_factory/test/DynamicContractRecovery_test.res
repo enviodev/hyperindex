@@ -204,13 +204,13 @@ describe("Dynamic contract restart resistance test", () => {
         ~maxAddrInPartition=Env.maxAddrInPartition,
       )
 
-      let restartedFetchState = switch restartedChainFetcher.fetchState.partitions->List.head {
-      | Some(partition) => partition
-      | None => failwith("No partitions found in restarted chain fetcher")
+      let restartedFetchState = switch restartedChainFetcher.fetchState.partitions {
+      | [partition] => partition
+      | _ => failwith("No partitions found in restarted chain fetcher")
       }
 
       let dynamicContracts =
-        restartedFetchState.dynamicContracts
+        restartedFetchState.baseRegister.dynamicContracts
         ->Belt.Map.valuesToArray
         ->Array.flatMap(set => set->Belt.Set.String.toArray)
 
@@ -242,13 +242,13 @@ describe("Dynamic contract restart resistance test", () => {
           ~maxAddrInPartition=Env.maxAddrInPartition,
         )
 
-        let restartedFetchState = switch restartedChainFetcher.fetchState.partitions->List.head {
-        | Some(partition) => partition
-        | None => failwith("No partitions found in restarted chain fetcher with")
+        let restartedFetchState = switch restartedChainFetcher.fetchState.partitions {
+        | [partition] => partition
+        | _ => failwith("No partitions found in restarted chain fetcher with")
         }
 
         let dynamicContracts =
-          restartedFetchState.dynamicContracts
+          restartedFetchState.baseRegister.dynamicContracts
           ->Belt.Map.valuesToArray
           ->Array.flatMap(set => set->Belt.Set.String.toArray)
 
@@ -274,10 +274,10 @@ describe("Dynamic contract restart resistance test", () => {
       )
 
       let restartedFetchState =
-        restartedChainFetcher.fetchState.partitions->List.head->Option.getExn
+        restartedChainFetcher.fetchState.partitions->Array.get(0)->Option.getExn
 
       let dynamicContracts =
-        restartedFetchState.dynamicContracts
+        restartedFetchState.baseRegister.dynamicContracts
         ->Belt.Map.valuesToArray
         ->Array.flatMap(set => set->Belt.Set.String.toArray)
 
