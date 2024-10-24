@@ -9,11 +9,15 @@ use super::{
     validation::UniqueValueValidator,
 };
 use crate::{
+    clap_definitions::evm::NetworkOrChainId,
     cli_args::interactive_init::validation::filter_duplicate_events,
     config_parsing::{
         chain_helpers::{HypersyncNetwork, Network, NetworkWithExplorer},
-        contract_import::converters::{self, ContractImportNetworkSelection, SelectedContract},
-        contract_import::{contract_import, ContractImportResult},
+        contract_import::{
+            contract_import,
+            converters::{self, ContractImportNetworkSelection, SelectedContract},
+            ContractImportResult,
+        },
         system_config::EvmAbi,
     },
     evm::address::Address,
@@ -105,7 +109,10 @@ impl ContractImportArgs {
                     contract_address: Some(contract_address),
                     ..self.clone()
                 })
-                .get_contract_import_selection_from_local_import_args(&LocalImportArgs::default())
+                .get_contract_import_selection_from_local_import_args(&LocalImportArgs {
+                    blockchain: Some(NetworkOrChainId::ChainId(network.clone() as u64)),
+                    ..LocalImportArgs::default()
+                })
                 .await;
             }
         };
@@ -114,8 +121,13 @@ impl ContractImportArgs {
 
         let network_selection = ContractImportNetworkSelection::new(network_kind, contract_address);
 
+        let contract_name = match contract_data.name {
+            Some(name) => name,
+            None => prompt_contract_name()?,
+        };
+
         Ok(SelectedContract::new(
-            contract_data.name,
+            contract_name,
             network_selection,
             contract_data.abi.events().cloned().collect(),
         ))

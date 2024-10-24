@@ -13,7 +13,7 @@ use tokio::time::Duration;
 
 pub struct ContractData {
     pub abi: ethers::abi::Abi,
-    pub name: String,
+    pub name: Option<String>,
 }
 
 pub enum ContractImportResult {
@@ -27,8 +27,10 @@ pub enum ContractImportResult {
 
 enum ContractImportResponse {
     Contract {
+        // Currently it always returns a name, but handle None for future,
+        // when we start supporting explorers which only have an API to get the contract ABI
         #[serde(rename = "contractName")]
-        name: String,
+        name: Option<String>,
         abi: String,
     },
     Error {
