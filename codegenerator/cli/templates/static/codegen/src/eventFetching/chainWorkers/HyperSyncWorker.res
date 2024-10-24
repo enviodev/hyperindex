@@ -233,7 +233,7 @@ let makeGetNextPage = (
 module Make = (
   T: {
     let contracts: array<Config.contract>
-    let chain: ChainMap.Chain.t
+    let chain: Chain.t
     let endpointUrl: string
     let allEventSignatures: array<string>
     let shouldUseHypersyncClientDecoder: bool
@@ -280,7 +280,7 @@ module Make = (
   ): Types.eventBatchQueueItem => {
     let module(Event) = eventMod
     let {block, log, transaction} = item
-    let chainId = chain->ChainMap.Chain.toChainId
+    let chainId = chain->Chain.toChainId
     {
       eventName: Event.name,
       contractName: Event.contractName,
@@ -447,7 +447,7 @@ module Make = (
 
         pageUnsafe.items->Belt.Array.forEachWithIndex((index, item) => {
           let {block, log} = item
-          let chainId = chain->ChainMap.Chain.toChainId
+          let chainId = chain->Chain.toChainId
           let topic0 = log.topics->Js.Array2.unsafe_get(0)
           let maybeEventMod =
             eventRouter->EventRouter.get(
@@ -488,7 +488,7 @@ module Make = (
         //Parse with viem -> slower than the HyperSyncClient
         pageUnsafe.items->Array.forEach(item => {
           let {block, log} = item
-          let chainId = chain->ChainMap.Chain.toChainId
+          let chainId = chain->Chain.toChainId
           let topic0 = log.topics->Js.Array2.unsafe_get(0)
 
           switch eventRouter->EventRouter.get(

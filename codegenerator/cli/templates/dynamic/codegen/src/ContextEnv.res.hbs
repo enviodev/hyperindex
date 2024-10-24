@@ -44,7 +44,7 @@ let make = (~eventBatchQueueItem: Types.eventBatchQueueItem, ~logger) => {
       ~logger=_,
       ~params={
         "context": `Event '${eventName}' for contract '${contractName}'`,
-        "chainId": chain->ChainMap.Chain.toChainId,
+        "chainId": chain->Chain.toChainId,
         "block": blockNumber,
         "logIndex": event.logIndex,
       },
@@ -73,7 +73,7 @@ let makeDynamicContractRegisterFn = (~contextEnv: t, ~contractName, ~inMemorySto
   let {eventBatchQueueItem, addedDynamicContractRegistrations} = contextEnv
   let {chain, timestamp, blockNumber, logIndex} = eventBatchQueueItem
 
-  let chainId = chain->ChainMap.Chain.toChainId
+  let chainId = chain->Chain.toChainId
   let dynamicContractRegistration: TablesStatic.DynamicContractRegistry.t = {
     chainId,
     registeringEventBlockNumber: blockNumber,

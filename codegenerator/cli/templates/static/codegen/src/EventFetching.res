@@ -140,7 +140,7 @@ let convertLogs = (
         ->Promise.thenResolve(block => {
           let transaction = log->transactionFieldsFromLog(~logger)
           let log = log->ethersLogToLog
-          let chainId = chain->ChainMap.Chain.toChainId
+          let chainId = chain->Chain.toChainId
 
           let module(Event) = eventMod
 

@@ -187,7 +187,7 @@ describe("FetchState.fetchState", () => {
 
   let mockEvent = (~blockNumber, ~logIndex=0, ~chainId=1): Types.eventBatchQueueItem => {
     timestamp: blockNumber * 15,
-    chain: ChainMap.Chain.makeUnsafe(~chainId),
+    chain: Chain.makeUnsafe(~chainId),
     blockNumber,
     logIndex,
     eventName: "MockEvent",

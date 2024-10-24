@@ -5,30 +5,30 @@ module EventsProcessed = {
     numEventsProcessed: int,
     latestProcessedBlock: option<int>,
   }
-  type t = ChainMap.t<eventsProcessed>
+  type t = Chain.Map.t<eventsProcessed>
 
   let makeEmpty = (~config: Config.t) => {
-    config.chainMap->ChainMap.map(_ => {
+    config.chainMap->Chain.Map.map(_ => {
       numEventsProcessed: 0,
       latestProcessedBlock: None,
     })
   }
 
-  let allChainsEventsProcessedToEndblock = (chainFetchers: ChainMap.t<ChainFetcher.t>) => {
+  let allChainsEventsProcessedToEndblock = (chainFetchers: Chain.Map.t<ChainFetcher.t>) => {
     chainFetchers
-    ->ChainMap.values
+    ->Chain.Map.values
     ->Array.reduce(true, (accum, cf) => cf->ChainFetcher.hasProcessedToEndblock && accum)
   }
 
   let makeFromChainManager = (cm: ChainManager.t): t => {
-    cm.chainFetchers->ChainMap.map(({numEventsProcessed, latestProcessedBlock}) => {
+    cm.chainFetchers->Chain.Map.map(({numEventsProcessed, latestProcessedBlock}) => {
       numEventsProcessed,
       latestProcessedBlock,
     })
   }
 
   let updateEventsProcessed = (self: t, ~chain, ~blockNumber) => {
-    self->ChainMap.update(chain, ({numEventsProcessed}) => {
+    self->Chain.Map.update(chain, ({numEventsProcessed}) => {
       numEventsProcessed: numEventsProcessed + 1,
       latestProcessedBlock: Some(blockNumber),
     })
@@ -42,7 +42,7 @@ let updateEventSyncState = (
 ) => {
   let {event, chain, blockNumber, timestamp: blockTimestamp} = eventBatchQueueItem
   let {logIndex} = event
-  let chainId = chain->ChainMap.Chain.toChainId
+  let chainId = chain->Chain.toChainId
   let _ = inMemoryStore.eventSyncState->InMemoryTable.set(
     chainId,
     {
@@ -58,7 +58,7 @@ let updateEventSyncState = (
 type dynamicContractRegistration = {
   registeringEventBlockNumber: int,
   registeringEventLogIndex: int,
-  registeringEventChain: ChainMap.Chain.t,
+  registeringEventChain: Chain.t,
   dynamicContracts: array<TablesStatic.DynamicContractRegistry.t>,
 }
 
@@ -199,7 +199,7 @@ let addEventToRawEvents = (
     timestamp: blockTimestamp,
   } = eventBatchQueueItem
   let {block, transaction, params, logIndex, srcAddress} = event
-  let chainId = chain->ChainMap.Chain.toChainId
+  let chainId = chain->Chain.toChainId
   let eventId = EventUtils.packEventIndex(~logIndex, ~blockNumber)
   let blockFields =
     (block :> Types.Block.rawEventFields)->S.serializeOrRaiseWith(Types.Block.rawEventSchema)
