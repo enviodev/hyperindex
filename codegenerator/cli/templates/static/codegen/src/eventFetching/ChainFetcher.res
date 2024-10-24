@@ -222,7 +222,11 @@ let makeFromDbState = async (chainConfig: Config.chainConfig, ~maxAddrInPartitio
       timestampCaughtUpToHeadOrEndblock,
     }) =>
     { 
-        Prometheus.incrementEventsProcessedCounter(~number=numEventsProcessed)
+        // on restart, reset the events_processed gauge to the previous state
+        switch numEventsProcessed {
+          | Some(numEventsProcessed) => Prometheus.incrementEventsProcessedCounter(~number=numEventsProcessed)
+          | None => () // do nothing if no events have been processed yet for this chain
+        }
         (
         firstEventBlockNumber,
         latestProcessedBlock,
