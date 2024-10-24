@@ -293,11 +293,11 @@ pub mod fuel {
 
     #[derive(Subcommand, Debug, EnumIter, Display, EnumString, Clone)]
     pub enum InitFlow {
-        ///Initialize Fuel indexer from an example template
-        Template(TemplateArgs),
         ///Initialize Fuel indexer by importing config from a contract for a given chain
         #[strum(serialize = "Contract Import")]
         ContractImport(ContractImportArgs),
+        ///Initialize Fuel indexer from an example template
+        Template(TemplateArgs),
     }
 
     #[derive(Args, Debug, Default, Clone)]

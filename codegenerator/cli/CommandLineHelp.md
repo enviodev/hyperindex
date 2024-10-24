@@ -11,9 +11,9 @@ This document contains the help content for the `envio` command-line program.
 * [`envio init contract-import local`↴](#envio-init-contract-import-local)
 * [`envio init template`↴](#envio-init-template)
 * [`envio init fuel`↴](#envio-init-fuel)
-* [`envio init fuel template`↴](#envio-init-fuel-template)
 * [`envio init fuel contract-import`↴](#envio-init-fuel-contract-import)
 * [`envio init fuel contract-import local`↴](#envio-init-fuel-contract-import-local)
+* [`envio init fuel template`↴](#envio-init-fuel-template)
 * [`envio dev`↴](#envio-dev)
 * [`envio stop`↴](#envio-stop)
 * [`envio codegen`↴](#envio-codegen)
@@ -150,23 +150,8 @@ Initialization option for creating Fuel indexer
 
 ###### **Subcommands:**
 
-* `template` — Initialize Fuel indexer from an example template
 * `contract-import` — Initialize Fuel indexer by importing config from a contract for a given chain
-
-
-
-## `envio init fuel template`
-
-Initialize Fuel indexer from an example template
-
-**Usage:** `envio init fuel template [OPTIONS]`
-
-###### **Options:**
-
-* `-t`, `--template <TEMPLATE>` — Name of the template to be used in initialization
-
-  Possible values: `greeter`
-
+* `template` — Initialize Fuel indexer from an example template
 
 
 
@@ -198,6 +183,21 @@ Initialize from a local json ABI file
 
 * `-a`, `--abi-file <ABI_FILE>` — The path to a json abi file
 * `--contract-name <CONTRACT_NAME>` — The name of the contract
+
+
+
+## `envio init fuel template`
+
+Initialize Fuel indexer from an example template
+
+**Usage:** `envio init fuel template [OPTIONS]`
+
+###### **Options:**
+
+* `-t`, `--template <TEMPLATE>` — Name of the template to be used in initialization
+
+  Possible values: `greeter`
+
 
 
 
