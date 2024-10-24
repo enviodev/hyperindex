@@ -47,11 +47,10 @@ pub enum Network {
     #[subenum(NetworkWithExplorer)]
     ArbitrumTestnet = 421611,
 
-    #[subenum(HypersyncNetwork, GraphNetwork)]
-    // Blockscout: https://explorer.aurora.dev/
+    #[subenum(HypersyncNetwork, GraphNetwork, NetworkWithExplorer)]
     Aurora = 1313161554,
 
-    #[subenum(GraphNetwork)]
+    #[subenum(GraphNetwork, NetworkWithExplorer)]
     AuroraTestnet = 1313161555,
 
     #[subenum(HypersyncNetwork, GraphNetwork, NetworkWithExplorer)]
@@ -64,9 +63,6 @@ pub enum Network {
     BaseGoerli = 84531,
 
     #[subenum(HypersyncNetwork, NetworkWithExplorer)]
-    // explorers:
-    // https://sepolia.basescan.org/
-    // https://base-sepolia.blockscout.com/
     BaseSepolia = 84532,
 
     #[subenum(HypersyncNetwork)]
@@ -92,9 +88,10 @@ pub enum Network {
     BscTestnet = 97,
 
     #[subenum(HypersyncNetwork)]
-    // Explorers:
-    // Blockscout: https://explorer-mainnet-cardano-evm.c1.milkomeda.com/
     C1Milkomeda = 2001,
+
+    #[subenum(NetworkWithExplorer)]
+    Canto = 7700,
 
     #[subenum(HypersyncNetwork, GraphNetwork, NetworkWithExplorer)]
     Celo = 42220,
@@ -102,31 +99,27 @@ pub enum Network {
     #[subenum(GraphNetwork, NetworkWithExplorer)]
     CeloAlfajores = 44787,
 
+    #[subenum(NetworkWithExplorer)]
+    CeloBaklava = 62320,
+
     #[subenum(HypersyncNetwork)]
     Chiliz = 8888,
 
-    #[subenum(HypersyncNetwork)]
-    // blocksout: https://explorer.devnet.citrea.xyz/
     CitreaDevnet = 62298,
+
+    #[subenum(NetworkWithExplorer)]
+    CitreaTestnet = 5115,
 
     #[subenum(GraphNetwork)]
     Clover = 1023,
 
-    #[subenum(HypersyncNetwork)]
-    // Explorers:
-    // https://crab.subscan.io/
+    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     Crab = 44,
 
     #[subenum(HypersyncNetwork)]
-    // Explorers:
-    // NOTE: this does have contract verification and an api to get verified contracts, but this
-    // breaks with the current setup. TODO: get non-etherscan contract verification working.
-    // https://cyber.socialscan.io/
     Cyber = 7560,
 
     #[subenum(HypersyncNetwork)]
-    // Explorers:
-    // https://darwinia.subscan.io/
     Darwinia = 46,
 
     // Still syncing
@@ -141,21 +134,21 @@ pub enum Network {
     )]
     EthereumMainnet = 1,
 
+    #[subenum(NetworkWithExplorer)]
+    Evmos = 9001,
+
     #[subenum(HypersyncNetwork, NetworkWithExplorer, GraphNetwork)]
     Fantom = 250,
 
     #[subenum(GraphNetwork, NetworkWithExplorer)]
     FantomTestnet = 4002,
 
-    #[subenum(HypersyncNetwork)]
-    // Explorers:
-    // https://explorer.testnet.fhenix.zone/ (blockscout)
+    #[subenum(NetworkWithExplorer)]
+    FhenixHelium = 8008135,
+
     FhenixTestnet = 42069,
 
-    #[subenum(HypersyncNetwork)]
-    // Explorers:
-    // Blockscout: https://flare-explorer.flare.network/
-    // Routescan: https://flarescan.com/
+    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     Flare = 14,
 
     #[subenum(HypersyncNetwork, GraphNetwork, NetworkWithExplorer)]
@@ -164,25 +157,20 @@ pub enum Network {
     #[subenum(GraphNetwork)]
     Fuse = 122,
 
-    #[subenum(HypersyncNetwork)]
+    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     GaladrielDevnet = 696969,
 
     #[subenum(HypersyncNetwork, NetworkWithExplorer, GraphNetwork)]
     Gnosis = 100,
 
-    #[subenum(HypersyncNetwork)]
-    // Explorers:
-    // https://gnosis-chiado.blockscout.com/
+    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     GnosisChiado = 10200,
 
     #[subenum(HypersyncNetwork, NetworkWithExplorer, GraphNetwork)]
     Goerli = 5,
 
-    #[subenum(HypersyncNetwork)]
-    // Explorers:
-    // https://explorer.harmony.one/
-    // https://getblock.io/explorers/harmony/
-    Harmony = 1666600000, // shard 0
+    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
+    Harmony = 1666600000,
 
     #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     Holesky = 17000,
@@ -202,23 +190,17 @@ pub enum Network {
     #[subenum(NetworkWithExplorer)]
     LineaSepolia = 59141,
 
-    #[subenum(HypersyncNetwork)]
-    // Explorers:
-    // https://explorer.execution.mainnet.lukso.network/
-    // https://blockscout.com/lukso/l14
+    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     Lukso = 42,
 
-    #[subenum(HypersyncNetwork)]
-    // Explorers:
-    // blockscout: https://pacific-explorer.manta.network/
-    // w3w.ai: https://manta.socialscan.io/
+    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     Manta = 169,
 
-    #[subenum(HypersyncNetwork)]
-    // Explorers:
-    // https://explorer.mantle.xyz/
-    // Routescan: https://mantlescan.info/
+    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     Mantle = 5000,
+
+    #[subenum(NetworkWithExplorer)]
+    MantleTestnet = 5001,
 
     #[subenum(GraphNetwork, NetworkWithExplorer)]
     Mbase = 1287,
@@ -228,6 +210,12 @@ pub enum Network {
 
     #[subenum(HypersyncNetwork)]
     MevCommit = 17864,
+
+    #[subenum(NetworkWithExplorer)]
+    Mode = 34443,
+
+    #[subenum(NetworkWithExplorer)]
+    ModeSepolia = 919,
 
     #[subenum(HypersyncNetwork, NetworkWithExplorer, GraphNetwork)]
     Moonbeam = 1284,
@@ -241,10 +229,7 @@ pub enum Network {
     #[subenum(GraphNetwork)]
     Mumbai = 80001,
 
-    #[subenum(HypersyncNetwork)]
-    // Explorers:
-    // https://neonscan.org/
-    // https://neon.blockscout.com/
+    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     NeonEvm = 245022934,
 
     #[subenum(HypersyncNetwork, NetworkWithExplorer, GraphNetwork)]
@@ -254,14 +239,12 @@ pub enum Network {
     OptimismGoerli = 420,
 
     #[subenum(HypersyncNetwork, NetworkWithExplorer)]
-    // Alt-explorer:
-    // https://optimism-sepolia.blockscout.com/
     OptimismSepolia = 11155420,
 
-    #[subenum(GraphNetwork)]
+    #[subenum(GraphNetwork, NetworkWithExplorer)]
     PoaCore = 99,
 
-    #[subenum(GraphNetwork)]
+    #[subenum(GraphNetwork, NetworkWithExplorer)]
     PoaSokol = 77,
 
     #[subenum(
@@ -280,10 +263,7 @@ pub enum Network {
     #[subenum(GraphNetwork)]
     Rinkeby = 4,
 
-    #[subenum(HypersyncNetwork)]
-    // Explorers:
-    // https://explorer.rsk.co/
-    // https://rootstock.blockscout.com/
+    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     Rsk = 30,
 
     // Still syncing
@@ -298,28 +278,19 @@ pub enum Network {
     #[subenum(HypersyncNetwork, NetworkWithExplorer, GraphNetwork)]
     Sepolia = 11155111,
 
-    #[subenum(HypersyncNetwork)]
-    // Explorers:
-    // https://explorer.evm.shimmer.network/
+    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     ShimmerEvm = 148,
 
     #[subenum(HypersyncNetwork)]
     SophonTestnet = 531050104,
 
     #[subenum(HypersyncNetwork)]
-    // Explorers:
-    // https://www.oklink.com/xlayer
     XLayer = 196,
 
     #[subenum(HypersyncNetwork)]
-    // Explorers:
-    // https://www.oklink.com/x1-test
     XLayerTestnet = 195,
 
-    #[subenum(HypersyncNetwork)]
-    // Explorers:
-    // https://explorer.zetachain.com/
-    // https://zetachain.explorers.guru/
+    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     Zeta = 7000,
 
     #[subenum(HypersyncNetwork)]
@@ -331,10 +302,11 @@ pub enum Network {
     #[subenum(GraphNetwork)]
     ZksyncEraTestnet = 280,
 
-    #[subenum(HypersyncNetwork)]
-    // Explorers:
-    // https://explorer.zora.energy/
+    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     Zora = 7777777,
+
+    #[subenum(NetworkWithExplorer)]
+    ZoraSepolia = 999999999,
 }
 
 impl Network {
@@ -366,6 +338,7 @@ impl Network {
             | Network::ArbitrumOne
             | Network::ArbitrumSepolia
             | Network::CitreaDevnet
+            | Network::CitreaTestnet
             | Network::Optimism
             | Network::OptimismGoerli
             | Network::OptimismSepolia => 0,
@@ -384,16 +357,20 @@ impl Network {
             | Network::Bsc
             | Network::BscTestnet
             | Network::C1Milkomeda
+            | Network::Canto
             | Network::Celo
             | Network::CeloAlfajores
+            | Network::CeloBaklava
             | Network::Chiliz
             | Network::Clover
             | Network::Crab
             | Network::Cyber
             | Network::Darwinia
+            | Network::Evmos
             | Network::EthereumMainnet
             | Network::Fantom
             | Network::FantomTestnet
+            | Network::FhenixHelium
             | Network::FhenixTestnet
             | Network::Flare
             | Network::Fuji
@@ -411,7 +388,10 @@ impl Network {
             | Network::Lukso
             | Network::Manta
             | Network::Mantle
+            | Network::MantleTestnet
             | Network::MevCommit
+            | Network::Mode
+            | Network::ModeSepolia
             | Network::Metis
             | Network::Moonbeam
             | Network::Moonriver
@@ -436,7 +416,8 @@ impl Network {
             | Network::Zircuit
             | Network::ZksyncEra
             | Network::ZksyncEraTestnet
-            | Network::Zora => DEFAULT_CONFIRMED_BLOCK_THRESHOLD,
+            | Network::Zora
+            | Network::ZoraSepolia => DEFAULT_CONFIRMED_BLOCK_THRESHOLD,
         }
     }
 }
