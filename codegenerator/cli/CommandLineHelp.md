@@ -106,7 +106,7 @@ Initialize by pulling the contract ABI from a block explorer
 
 * `-b`, `--blockchain <BLOCKCHAIN>` — Network to import the contract from
 
-  Possible values: `amoy`, `arbitrum-nova`, `arbitrum-one`, `arbitrum-sepolia`, `arbitrum-testnet`, `avalanche`, `base`, `base-sepolia`, `blast`, `blast-sepolia`, `boba`, `bsc`, `bsc-testnet`, `celo`, `celo-alfajores`, `ethereum-mainnet`, `fantom`, `fantom-testnet`, `fuji`, `gnosis`, `goerli`, `holesky`, `kroma`, `linea`, `linea-sepolia`, `mbase`, `metis`, `moonbeam`, `moonriver`, `optimism`, `optimism-sepolia`, `polygon`, `polygon-zkevm`, `polygon-zkevm-testnet`, `scroll`, `scroll-sepolia`, `sepolia`
+  Possible values: `amoy`, `arbitrum-nova`, `arbitrum-one`, `arbitrum-sepolia`, `arbitrum-testnet`, `aurora`, `aurora-testnet`, `avalanche`, `base`, `base-sepolia`, `blast`, `blast-sepolia`, `boba`, `bsc`, `bsc-testnet`, `canto`, `celo`, `celo-alfajores`, `celo-baklava`, `citrea-testnet`, `crab`, `ethereum-mainnet`, `evmos`, `fantom`, `fantom-testnet`, `fhenix-helium`, `flare`, `fuji`, `galadriel-devnet`, `gnosis`, `gnosis-chiado`, `goerli`, `harmony`, `holesky`, `kroma`, `linea`, `linea-sepolia`, `lukso`, `manta`, `mantle`, `mantle-testnet`, `mbase`, `metis`, `mode`, `mode-sepolia`, `moonbeam`, `moonriver`, `neon-evm`, `optimism`, `optimism-sepolia`, `poa-core`, `poa-sokol`, `polygon`, `polygon-zkevm`, `polygon-zkevm-testnet`, `rsk`, `scroll`, `scroll-sepolia`, `sepolia`, `shimmer-evm`, `zeta`, `zora`, `zora-sepolia`
 
 
 
