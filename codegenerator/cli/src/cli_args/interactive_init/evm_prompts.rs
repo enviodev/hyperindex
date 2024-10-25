@@ -88,15 +88,14 @@ impl ContractImportArgs {
             Ok(ContractImportResult::NotVerified) => {
                 Err("Failed to find the verified contract on a block explorer.".to_string())
             }
-            Ok(ContractImportResult::UnsupportedChain) => {
-                Err(format!("The \"{network}\" chain doesn't support contract import yet. Let us know if you want it by opening an issue on Github."))
-            }
-            Err(e) => {
-                Err(format!(
-                  "Failed getting the contract ABI with the following error:\n{}",
-                  e
-                ))
-            }
+            Ok(ContractImportResult::UnsupportedChain) => Err(format!(
+                "The \"{network}\" chain doesn't support contract import yet. Let us know if you \
+                 want it by opening an issue on Github."
+            )),
+            Err(e) => Err(format!(
+                "Failed getting the contract ABI with the following error:\n{}",
+                e
+            )),
         };
         let contract_data = match result {
             Ok(contract_data) => contract_data,
@@ -282,8 +281,7 @@ fn get_converter_network_u64(
 ///be very slow to have the startblock at 0 with rpc 🦶🔫
 fn prompt_for_start_block() -> Result<u64> {
     let start_block = CustomType::<u64>::new(
-        "Please provide a start block for this network \
-            (this can be edited later in config.yaml):",
+        "Please provide a start block for this network (this can be edited later in config.yaml):",
     )
     .with_error_message("Invalid start block input, please enter a number 0 or greater")
     .prompt()?;

@@ -541,7 +541,8 @@ pub mod fuel {
         #[serde(rename = "type")]
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
-            description = "Explicitly set the event type you want to index. It's derived from the event name and fallbacks to LogData."
+            description = "Explicitly set the event type you want to index. It's derived from the \
+                           event name and fallbacks to LogData."
         )]
         pub type_: Option<EventType>,
         #[serde(skip_serializing_if = "Option::is_none")]
