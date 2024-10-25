@@ -53,7 +53,7 @@ let makeBatchSet = (~table: Table.table, ~rowsSchema: S.schema<array<'entityRow>
     | exception exn =>
       exn->ErrorHandling.mkLogAndRaise(
         ~logger?,
-        ~msg=`Failed during batch read of entity ${table.tableName}`,
+        ~msg=`Failed during batch set of entity ${table.tableName}`,
       )
     | res => res
     }
