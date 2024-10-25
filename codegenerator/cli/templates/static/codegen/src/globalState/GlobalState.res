@@ -652,50 +652,57 @@ let actionReducer = (state: t, action: action) => {
       ],
     )
   | StartIndexingAfterPreRegister =>
-    Logging.info("Starting indexing after pre-registration")
     let {config, chainManager, loadLayer} = state
-    let chainFetchers = chainManager.chainFetchers->ChainMap.map(cf => {
-      let {
-        chainConfig,
-        logger,
-        fetchState: {startBlock, endBlock, maxAddrInPartition},
-        dynamicContractPreRegistration,
-      } = cf
 
-      ChainFetcher.make(
-        ~dynamicContractRegistrations=dynamicContractPreRegistration->Option.mapWithDefault(
-          [],
-          Js.Dict.values,
-        ),
-        ~chainConfig,
-        ~lastBlockScannedHashes=ReorgDetection.LastBlockScannedHashes.empty(
-          ~confirmedBlockThreshold=chainConfig.confirmedBlockThreshold,
-        ),
-        ~staticContracts=chainConfig->ChainFetcher.getStaticContracts,
-        ~startBlock,
-        ~endBlock,
-        ~dbFirstEventBlockNumber=None,
-        ~latestProcessedBlock=None,
-        ~logger,
-        ~timestampCaughtUpToHeadOrEndblock=None,
-        ~numEventsProcessed=0,
-        ~numBatchesFetched=0,
-        ~processingFilters=None,
-        ~maxAddrInPartition,
-        ~dynamicContractPreRegistration=None,
-      )
-    })
+    //Protect against handling this action twice. It should only be handled once
+    //when the pre registration is done
+    if ChainManager.isPreRegisteringDynamicContracts(chainManager) {
+      Logging.info("Starting indexing after pre-registration")
+      let chainFetchers = chainManager.chainFetchers->ChainMap.map(cf => {
+        let {
+          chainConfig,
+          logger,
+          fetchState: {startBlock, endBlock, maxAddrInPartition},
+          dynamicContractPreRegistration,
+        } = cf
 
-    let chainManager: ChainManager.t = {
-      chainFetchers,
-      arbitraryEventQueue: [],
-      isInReorgThreshold: false,
-      isUnorderedMultichainMode: chainManager.isUnorderedMultichainMode,
+        ChainFetcher.make(
+          ~dynamicContractRegistrations=dynamicContractPreRegistration->Option.mapWithDefault(
+            [],
+            Js.Dict.values,
+          ),
+          ~chainConfig,
+          ~lastBlockScannedHashes=ReorgDetection.LastBlockScannedHashes.empty(
+            ~confirmedBlockThreshold=chainConfig.confirmedBlockThreshold,
+          ),
+          ~staticContracts=chainConfig->ChainFetcher.getStaticContracts,
+          ~startBlock,
+          ~endBlock,
+          ~dbFirstEventBlockNumber=None,
+          ~latestProcessedBlock=None,
+          ~logger,
+          ~timestampCaughtUpToHeadOrEndblock=None,
+          ~numEventsProcessed=0,
+          ~numBatchesFetched=0,
+          ~processingFilters=None,
+          ~maxAddrInPartition,
+          ~dynamicContractPreRegistration=None,
+        )
+      })
+
+      let chainManager: ChainManager.t = {
+        chainFetchers,
+        arbitraryEventQueue: [],
+        isInReorgThreshold: false,
+        isUnorderedMultichainMode: chainManager.isUnorderedMultichainMode,
+      }
+
+      let freshState = make(~config, ~chainManager, ~loadLayer)
+
+      (freshState, [NextQuery(CheckAllChains)])
+    } else {
+      (state, [])
     }
-
-    let freshState = make(~config, ~chainManager, ~loadLayer)
-
-    (freshState, [NextQuery(CheckAllChains)])
   | SuccessExit => {
       Logging.info("exiting with success")
       NodeJsLocal.process->NodeJsLocal.exitWithCode(Success)
