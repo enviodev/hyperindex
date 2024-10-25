@@ -270,6 +270,7 @@ let runEventHandler = (
           ~group="Handlers Per Event",
           ~label=`${eventBatchQueueItem.contractName} ${eventBatchQueueItem.eventName} Handler (ms)`,
           ~value=timeEnd,
+          ~decimalPlaces=4,
         )
       }
       eventBatchQueueItem->updateEventSyncState(

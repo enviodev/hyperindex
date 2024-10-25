@@ -41,7 +41,7 @@ module SummaryData = {
       decimalPlaces: s.matches(S.int),
     })
 
-    let make = (val: float, ~decimalPlaces=2) => {
+    let make = (val: float, ~decimalPlaces) => {
       count: 1,
       min: val,
       max: val,
@@ -59,15 +59,14 @@ module SummaryData = {
       decimalPlaces: self.decimalPlaces,
     }
   }
-
   module Group = {
     type t = dict<DataSet.t>
     let schema: S.t<t> = S.dict(DataSet.schema)
     let make = () => Js.Dict.empty()
 
-    let add = (self: t, key: string, value: float) => {
+    let add = (self: t, key: string, value: float, ~decimalPlaces=2) => {
       switch self->Utils.Dict.dangerouslyGetNonOption(key) {
-      | None => self->Js.Dict.set(key, DataSet.make(value))
+      | None => self->Js.Dict.set(key, DataSet.make(value, ~decimalPlaces))
       | Some(dataSet) => self->Js.Dict.set(key, dataSet->DataSet.add(value))
       }
     }
@@ -77,7 +76,7 @@ module SummaryData = {
   let schema = S.dict(Group.schema)
   let make = () => Js.Dict.empty()
 
-  let add = (self: t, ~group, ~label, ~value) => {
+  let add = (self: t, ~group, ~label, ~value, ~decimalPlaces=2) => {
     let group = switch self->Utils.Dict.dangerouslyGetNonOption(group) {
     | None =>
       let newGroup = Group.make()
@@ -86,7 +85,7 @@ module SummaryData = {
     | Some(group) => group
     }
 
-    group->Group.add(label, value)
+    group->Group.add(label, value, ~decimalPlaces)
   }
 }
 
@@ -110,8 +109,8 @@ module Data = {
     self.millisAccum->MillisAccum.increment(label, amount)
   }
 
-  let addSummaryData = (self: t, ~group, ~label, ~value) => {
-    self.summaryData->SummaryData.add(~group, ~label, ~value)
+  let addSummaryData = (self: t, ~group, ~label, ~value, ~decimalPlaces=2) => {
+    self.summaryData->SummaryData.add(~group, ~label, ~value, ~decimalPlaces)
   }
 }
 
@@ -179,8 +178,8 @@ let readFromCacheFile = async () => {
   }
 }
 
-let addSummaryData = (~group, ~label, ~value) => {
-  data->Data.addSummaryData(~group, ~label, ~value)
+let addSummaryData = (~group, ~label, ~value, ~decimalPlaces=2) => {
+  data->Data.addSummaryData(~group, ~label, ~value, ~decimalPlaces)
   data->saveToCacheFile
 }
 
