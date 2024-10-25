@@ -250,24 +250,24 @@ pub struct Event {
 }
 
 impl Event {
-    fn get_entity_id_code(event_var_name: String, is_fuel: bool, language: &Language) -> String {
-        let to_string_code = match language {
-            Language::ReScript => "->Belt.Int.toString",
-            Language::TypeScript => "",
-            Language::JavaScript => "",
-        }
-        .to_string();
+    /// Returns the code to get the entity id from an event
+    pub fn get_entity_id_code(is_fuel: bool, language: &Language) -> String {
+        let int_as_string = |int_var_name| match language {
+            Language::ReScript => format!("{int_var_name}->Belt.Int.toString"),
+            Language::TypeScript | Language::JavaScript => int_var_name,
+        };
+        let int_event_prop_as_string = |event_prop: &str| int_as_string(format!("event.{event_prop}"));
+        let chain_id_str = int_event_prop_as_string("chainId");
 
         let block_number_field = match is_fuel {
-            true => "height",
-            false => "number",
+            true => "block.height",
+            false => "block.number",
         };
+        let block_number_str = int_event_prop_as_string(block_number_field);
 
-        format!(
-            "`${{{event_var_name}.chainId}}_${{{event_var_name}.block.\
-             {block_number_field}}}_${{{event_var_name}.logIndex{}}}`",
-            to_string_code
-        )
+        let log_index_str = int_event_prop_as_string("logIndex");
+
+        format!("`${{{chain_id_str}}}_${{{block_number_str}}}_${{{log_index_str}}}`",)
     }
 
     fn get_create_mock_code(
@@ -315,11 +315,7 @@ impl Event {
 
         Ok(Event {
             name: event.name.to_string(),
-            entity_id_from_event_code: Event::get_entity_id_code(
-                "event".to_string(),
-                is_fuel,
-                &language,
-            ),
+            entity_id_from_event_code: Event::get_entity_id_code(is_fuel, &language),
             create_mock_code: Event::get_create_mock_code(&event, &contract, is_fuel, &language),
             params,
         })
@@ -452,6 +448,7 @@ impl AutoSchemaHandlerTemplate {
 mod test {
     use super::*;
     use ethers::abi::EventParam;
+    use pretty_assertions::assert_eq;
 
     #[test]
     fn flatten_event_with_tuple() {
@@ -557,5 +554,21 @@ mod test {
             .collect();
 
         assert_eq!(expected_event_keys, actual_event_keys);
+    }
+
+    #[test]
+    fn test_get_entity_id_code() {
+        const IS_FUEL: bool = true;
+        assert_eq!(
+            Event::get_entity_id_code(!IS_FUEL, &Language::ReScript),
+            "`${event.chainId->Belt.Int.toString}_${event.block.number->Belt.Int.\
+             toString}_${event.logIndex->Belt.Int.toString}`"
+                .to_string()
+        );
+
+        assert_eq!(
+            Event::get_entity_id_code(IS_FUEL, &Language::TypeScript),
+            "`${event.chainId}_${event.block.height}_${event.logIndex}`".to_string()
+        );
     }
 }

@@ -242,8 +242,11 @@ impl SystemConfig {
                         //there is no config
                         if !contracts.get(&contract.name).is_some() {
                             Err(anyhow!(
-                                "Failed to parse contract '{}' for the network '{}'. If you use a global contract definition, please verify that the name reference is correct.",
-                                contract.name, network.id
+                                "Failed to parse contract '{}' for the network '{}'. If you use a \
+                                 global contract definition, please verify that the name \
+                                 reference is correct.",
+                                contract.name,
+                                network.id
                             ))?;
                         }
                     }
@@ -378,8 +381,11 @@ impl SystemConfig {
                         //there is no local_contract_config
                         if !contracts.get(&contract.name).is_some() {
                             Err(anyhow!(
-                                "Failed to parse contract '{}' for the network '{}'. If you use a global contract definition, please verify that the name reference is correct.",
-                                contract.name, network.id
+                                "Failed to parse contract '{}' for the network '{}'. If you use a \
+                                 global contract definition, please verify that the name \
+                                 reference is correct.",
+                                contract.name,
+                                network.id
                             ))?;
                         }
                     }
@@ -980,7 +986,8 @@ impl Event {
             };
             if event_config.log_id.is_some() && event_type != EventType::LogData {
                 return Err(anyhow!(
-                    "Event '{}' has both 'logId' and '{}' type set. Only one of them can be used at once.",
+                    "Event '{}' has both 'logId' and '{}' type set. Only one of them can be used \
+                     at once.",
                     event_config.name,
                     event_type
                 ));
@@ -990,10 +997,11 @@ impl Event {
                     let log = match &event_config.log_id {
                         None => {
                             let logged_type = fuel_abi
-                        .get_type_by_struct_name(event_config.name.clone())
-                        .context(
-                            "Failed to derive the event configuration from the name. Use the logId, mint, or burn options to set it explicitly.",
-                        )?;
+                                .get_type_by_struct_name(event_config.name.clone())
+                                .context(
+                                    "Failed to derive the event configuration from the name. Use \
+                                     the logId, mint, or burn options to set it explicitly.",
+                                )?;
                             fuel_abi.get_log_by_type(logged_type.id)?
                         }
                         Some(log_id) => fuel_abi.get_log(&log_id)?,
