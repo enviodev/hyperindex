@@ -200,13 +200,17 @@ pub mod evm {
 }
 
 pub mod fuel {
+    use std::collections::HashMap;
+
     use clap::ValueEnum;
     use serde::{Deserialize, Serialize};
-    use strum::{Display, EnumIter, EnumString};
+    use strum::{Display, EnumIter, EnumString, IntoEnumIterator};
 
     use crate::{
         config_parsing::human_config::{
-            fuel::{ContractConfig, EcosystemTag, EventConfig, HumanConfig, Network},
+            fuel::{
+                ContractConfig, EcosystemTag, EventConfig, HumanConfig, Network as NetworkConfig,
+            },
             NetworkContract,
         },
         fuel::{abi::FuelAbi, address::Address},
@@ -219,12 +223,19 @@ pub mod fuel {
         Greeter,
     }
 
+    #[derive(Clone, Debug, Display, Eq, Hash, PartialEq, EnumIter)]
+    pub enum Network {
+        Mainnet = 9889,
+        Testnet = 0,
+    }
+
     #[derive(Clone, Debug)]
     pub struct SelectedContract {
         pub name: String,
         pub addresses: Vec<Address>,
         pub abi: FuelAbi,
         pub selected_events: Vec<EventConfig>,
+        pub network: Network,
     }
 
     impl SelectedContract {
@@ -240,6 +251,47 @@ pub mod fuel {
 
     impl ContractImportSelection {
         pub fn to_human_config(self: &Self, init_config: &InitConfig) -> HumanConfig {
+            let mut contracts_by_network: HashMap<Network, Vec<SelectedContract>> = HashMap::new();
+
+            for contract in self.contracts.clone() {
+                match contracts_by_network.get_mut(&contract.network) {
+                    None => {
+                        contracts_by_network.insert(contract.network.clone(), vec![contract]);
+                    }
+                    Some(contracts) => contracts.push(contract),
+                }
+            }
+
+            let mut network_configs = vec![];
+            for network in Network::iter() {
+                match contracts_by_network.get(&network) {
+                    None => (),
+                    Some(contracts) => network_configs.push(NetworkConfig {
+                        id: network as u64,
+                        start_block: 0,
+                        end_block: None,
+                        hyperfuel_config: None,
+                        contracts: contracts
+                            .iter()
+                            .map(|selected_contract| NetworkContract {
+                                name: selected_contract.name.clone(),
+                                address: selected_contract
+                                    .addresses
+                                    .iter()
+                                    .map(|a| a.to_string())
+                                    .collect::<Vec<String>>()
+                                    .into(),
+                                config: Some(ContractConfig {
+                                    abi_file_path: selected_contract.get_vendored_abi_file_path(),
+                                    handler: init_config.language.get_event_handler_directory(),
+                                    events: selected_contract.selected_events.clone(),
+                                }),
+                            })
+                            .collect(),
+                    }),
+                }
+            }
+
             HumanConfig {
                 name: init_config.name.clone(),
                 description: None,
@@ -247,30 +299,7 @@ pub mod fuel {
                 schema: None,
                 contracts: None,
                 raw_events: None,
-                networks: vec![Network {
-                    id: 0,
-                    start_block: 0,
-                    end_block: None,
-                    hyperfuel_config: None,
-                    contracts: self
-                        .contracts
-                        .iter()
-                        .map(|selected_contract| NetworkContract {
-                            name: selected_contract.name.clone(),
-                            address: selected_contract
-                                .addresses
-                                .iter()
-                                .map(|a| a.to_string())
-                                .collect::<Vec<String>>()
-                                .into(),
-                            config: Some(ContractConfig {
-                                abi_file_path: selected_contract.get_vendored_abi_file_path(),
-                                handler: init_config.language.get_event_handler_directory(),
-                                events: selected_contract.selected_events.clone(),
-                            }),
-                        })
-                        .collect(),
-                }],
+                networks: network_configs,
             }
         }
     }

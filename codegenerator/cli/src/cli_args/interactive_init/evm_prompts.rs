@@ -214,7 +214,7 @@ fn prompt_for_network_id(
     //Action prompt
     let choose_from_networks = Select::new("Choose network:", options)
         .prompt()
-        .context("Failed during prompt for abi file path")?;
+        .context("Failed during prompt for network")?;
 
     let selected = match choose_from_networks.as_str() {
         //If the user's choice evaluates to the enter network id option, prompt them for

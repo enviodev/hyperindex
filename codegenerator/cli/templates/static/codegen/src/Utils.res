@@ -43,16 +43,13 @@ module Dict = {
    */
   external dangerouslyGetNonOption: (dict<'a>, string) => option<'a> = ""
 
-  let merge = (a: dict<'a>, b: dict<'a>) => {
-    let result = Js.Dict.empty()
-    Js.Dict.entries(a)->Js.Array2.forEach(((key, value)) => {
-      result->Js.Dict.set(key, value)
-    })
-    Js.Dict.entries(b)->Js.Array2.forEach(((key, value)) => {
-      result->Js.Dict.set(key, value)
-    })
-    result
-  }
+  let merge: (dict<'a>, dict<'a>) => dict<'a> = %raw(`(dictA, dictB) => ({...dictA, ...dictB})`)
+
+  let updateImmutable: (
+    dict<'a>,
+    string,
+    'a,
+  ) => dict<'a> = %raw(`(dict, key, value) => ({...dict, [key]: value})`)
 }
 
 module Math = {
@@ -98,6 +95,15 @@ module Array = {
       loop(0, 0, 0)
       result
     }
+  }
+
+  /**
+  Creates a shallow copy of the array and sets the value at the given index
+  */
+  let setIndexImmutable = (arr: array<'a>, index: int, value: 'a): array<'a> => {
+    let shallowCopy = arr->Belt.Array.copy
+    shallowCopy->Js.Array2.unsafe_set(index, value)
+    shallowCopy
   }
 
   let transposeResults = (results: array<result<'a, 'b>>): result<array<'a>, 'b> => {
