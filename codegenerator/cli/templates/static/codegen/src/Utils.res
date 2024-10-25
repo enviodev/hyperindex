@@ -97,6 +97,15 @@ module Array = {
     }
   }
 
+  /**
+  Creates a shallow copy of the array and sets the value at the given index
+  */
+  let setIndexImmutable = (arr: array<'a>, index: int, value: 'a): array<'a> => {
+    let shallowCopy = arr->Belt.Array.copy
+    shallowCopy->Js.Array2.unsafe_set(index, value)
+    shallowCopy
+  }
+
   let transposeResults = (results: array<result<'a, 'b>>): result<array<'a>, 'b> => {
     let rec loop = (index: int, output: array<'a>): result<array<'a>, 'b> => {
       if index >= Array.length(results) {

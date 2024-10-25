@@ -117,15 +117,13 @@ let registerDynamicContracts = (
   | None => Js.Exn.raiseError("Unexpected: No partitions in PartitionedFetchState")
   }
 
-  let copiedPartitions = partitions->Array.copy
-
-  if newestPartition->FetchState.getNumContracts < maxAddrInPartition {
+  let partitions = if newestPartition->FetchState.getNumContracts < maxAddrInPartition {
     let updated =
       newestPartition->FetchState.registerDynamicContract(
         dynamicContractRegistration,
         ~isFetchingAtHead,
       )
-    copiedPartitions->Js.Array2.unsafe_set(newestPartitionIndex, updated)
+    partitions->Utils.Array.setIndexImmutable(newestPartitionIndex, updated)
   } else {
     let newPartition = FetchState.makeRoot(~endBlock)(
       ~startBlock,
@@ -134,7 +132,7 @@ let registerDynamicContracts = (
       ~dynamicContractRegistrations=dynamicContractRegistration.dynamicContracts,
       ~isFetchingAtHead,
     )
-    copiedPartitions->Js.Array2.push(newPartition)->ignore
+    partitions->Array.concat([newPartition])
   }
 
   if Env.saveBenchmarkData {
@@ -144,7 +142,8 @@ let registerDynamicContracts = (
       ~value=partitions->Array.length->Int.toFloat,
     )
   }
-  {partitions: copiedPartitions, maxAddrInPartition, endBlock, startBlock, logger}
+
+  {partitions, maxAddrInPartition, endBlock, startBlock, logger}
 }
 
 exception UnexpectedPartitionDoesNotExist(partitionIndex)
@@ -154,17 +153,17 @@ Updates partition at given id with given values and checks to see if it can be m
 Returns Error if the partition/node with given id cannot be found (unexpected)
 */
 let update = (self: t, ~id: id, ~latestFetchedBlock, ~newItems, ~currentBlockHeight) => {
-  let copiedPartitions = self.partitions->Array.copy
-  switch copiedPartitions[id.partitionId] {
+  switch self.partitions[id.partitionId] {
   | Some(partition) =>
     partition
     ->FetchState.update(~id=id.fetchStateId, ~latestFetchedBlock, ~newItems, ~currentBlockHeight)
     ->Result.map(updatedPartition => {
-      copiedPartitions->Js.Array2.unsafe_set(id.partitionId, updatedPartition)
-
       {
         ...self,
-        partitions: copiedPartitions,
+        partitions: self.partitions->Utils.Array.setIndexImmutable(
+          id.partitionId,
+          updatedPartition,
+        ),
       }
     })
   | _ => Error(UnexpectedPartitionDoesNotExist(id.partitionId))
@@ -210,9 +209,7 @@ let getMostBehindPartitions = (
 }
 
 let updatePartition = (self: t, ~fetchState: FetchState.t, ~partitionId: partitionIndex) => {
-  let copiedPartitions = self.partitions->Array.copy
-  copiedPartitions->Js.Array2.unsafe_set(partitionId, fetchState)
-  {...self, partitions: copiedPartitions}
+  {...self, partitions: self.partitions->Utils.Array.setIndexImmutable(partitionId, fetchState)}
 }
 
 type nextQueries = WaitForNewBlock | NextQuery(array<FetchState.nextQuery>)
