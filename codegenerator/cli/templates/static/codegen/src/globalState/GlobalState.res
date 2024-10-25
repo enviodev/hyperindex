@@ -958,11 +958,16 @@ let injectedTaskReducer = (
     }
   | ProcessEventBatch =>
     if !state.currentlyProcessingBatch && !isRollingBack(state) {
+      //Allows us to process events all the way up until we hit the reorg threshold
+      //across all chains before starting to capture entity history
+      let onlyBelowReorgThreshold = if state.config->Config.shouldRollbackOnReorg {
+        state.chainManager.isInReorgThreshold ? false : true
+      } else {
+        false
+      }
       switch state.chainManager->ChainManager.createBatch(
         ~maxBatchSize=state.maxBatchSize,
-        //Allows us to process events all the way up until we hit the reorg threshold
-        //across all chains before starting to capture entity history
-        ~onlyBelowReorgThreshold=state.chainManager.isInReorgThreshold ? false : true,
+        ~onlyBelowReorgThreshold,
       ) {
       | {isInReorgThreshold, val: Some({batch, fetchStatesMap, arbitraryEventQueue})} =>
         dispatchAction(SetCurrentlyProcessing(true))
