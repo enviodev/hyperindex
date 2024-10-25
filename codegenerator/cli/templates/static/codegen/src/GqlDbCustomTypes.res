@@ -26,9 +26,11 @@ module Int = {
 
   external fromStringUnsafe: string => int = "Number"
 
-  let schema =
-    S.union([
-      S.int,
-      S.string->S.transform(_s => {parser: string => string->fromStringUnsafe}),
-    ])->S.setName("GqlDbCustomTypes.Int")
+  let schema = S.union([
+    S.int,
+    S.string->S.transform(_s => {
+      parser: string => string->fromStringUnsafe,
+      serializer: Utils.magic,
+    }),
+  ])->S.setName("GqlDbCustomTypes.Int")
 }
