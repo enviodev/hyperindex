@@ -55,12 +55,7 @@ let updateEventSyncState = (
   )
 }
 
-type dynamicContractRegistration = {
-  registeringEventBlockNumber: int,
-  registeringEventLogIndex: int,
-  registeringEventChain: ChainMap.Chain.t,
-  dynamicContracts: array<TablesStatic.DynamicContractRegistry.t>,
-}
+type dynamicContractRegistration = FetchState.dynamicContractRegistration
 
 type dynamicContractRegistrations = {
   registrations: array<dynamicContractRegistration>,
@@ -87,7 +82,7 @@ let addToDynamicContractRegistrations = (
   ]
 
   let dynamicContractRegistration = {
-    dynamicContracts,
+    FetchState.dynamicContracts,
     registeringEventBlockNumber,
     registeringEventLogIndex,
     registeringEventChain: eventBatchQueueItem.chain,
