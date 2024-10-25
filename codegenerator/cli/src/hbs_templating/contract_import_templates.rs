@@ -256,16 +256,16 @@ impl Event {
             Language::ReScript => format!("{int_var_name}->Belt.Int.toString"),
             Language::TypeScript | Language::JavaScript => int_var_name,
         };
-        let event_prop_as_string = |event_prop: &str| int_as_string(format!("event.{event_prop}"));
-        let chain_id_str = event_prop_as_string("chainId");
+        let int_event_prop_as_string = |event_prop: &str| int_as_string(format!("event.{event_prop}"));
+        let chain_id_str = int_event_prop_as_string("chainId");
 
         let block_number_field = match is_fuel {
             true => "block.height",
             false => "block.number",
         };
-        let block_number_str = event_prop_as_string(block_number_field);
+        let block_number_str = int_event_prop_as_string(block_number_field);
 
-        let log_index_str = event_prop_as_string("logIndex");
+        let log_index_str = int_event_prop_as_string("logIndex");
 
         format!("`${{{chain_id_str}}}_${{{block_number_str}}}_${{{log_index_str}}}`",)
     }
