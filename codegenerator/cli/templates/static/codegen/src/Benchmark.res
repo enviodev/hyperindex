@@ -22,15 +22,53 @@ module MillisAccum = {
 }
 
 module SummaryData = {
+  module DataSet = {
+    type t = {
+      count: int,
+      min: float,
+      max: float,
+      sum: float,
+      sumOfSquares: float,
+      decimalPlaces: int,
+    }
+
+    let schema = S.schema(s => {
+      count: s.matches(S.int),
+      min: s.matches(S.float),
+      max: s.matches(S.float),
+      sum: s.matches(S.float),
+      sumOfSquares: s.matches(S.float),
+      decimalPlaces: s.matches(S.int),
+    })
+
+    let make = (val: float, ~decimalPlaces=2) => {
+      count: 1,
+      min: val,
+      max: val,
+      sum: val,
+      sumOfSquares: val *. val,
+      decimalPlaces,
+    }
+
+    let add = (self: t, val: float) => {
+      count: self.count + 1,
+      min: Pervasives.min(self.min, val),
+      max: Pervasives.max(self.max, val),
+      sum: self.sum +. val,
+      sumOfSquares: self.sumOfSquares +. val *. val,
+      decimalPlaces: self.decimalPlaces,
+    }
+  }
+
   module Group = {
-    type t = dict<array<float>>
-    let schema = S.dict(S.array(S.float))
+    type t = dict<DataSet.t>
+    let schema: S.t<t> = S.dict(DataSet.schema)
     let make = () => Js.Dict.empty()
 
     let add = (self: t, key: string, value: float) => {
       switch self->Utils.Dict.dangerouslyGetNonOption(key) {
-      | None => self->Js.Dict.set(key, [value])
-      | Some(arr) => arr->Js.Array2.push(value)->ignore
+      | None => self->Js.Dict.set(key, DataSet.make(value))
+      | Some(dataSet) => self->Js.Dict.set(key, dataSet->DataSet.add(value))
       }
     }
   }
@@ -77,22 +115,53 @@ module Data = {
   }
 }
 
+module LazyWriter = {
+  let isWriting = ref(false)
+  let scheduledWriteFn: ref<option<unit => promise<unit>>> = ref(None)
+  let lastRunTimeMillis = ref(0.)
+
+  let rec start = async () => {
+    switch scheduledWriteFn.contents {
+    | Some(fn) =>
+      isWriting := true
+      scheduledWriteFn := None
+      lastRunTimeMillis := Js.Date.now()
+
+      switch await fn() {
+      | exception exn => Logging.errorWithExn(exn, "Failed to write benchmark cache file")
+      | _ => ()
+      }
+      isWriting := false
+      await start()
+    | None => ()
+    }
+  }
+
+  let schedule = (~intervalMillis=500, fn) => {
+    scheduledWriteFn := Some(fn)
+    if !isWriting.contents {
+      let timeSinceLastRun = Js.Date.now() -. lastRunTimeMillis.contents
+      if timeSinceLastRun >= intervalMillis->Belt.Int.toFloat {
+        start()->ignore
+      } else {
+        let _ = Js.Global.setTimeout(() => {
+          start()->ignore
+        }, intervalMillis - timeSinceLastRun->Belt.Float.toInt)
+      }
+    }
+  }
+}
+
 let data = Data.make()
 let cacheFileName = "BenchmarkCache.json"
 let cacheFilePath = NodeJsLocal.Path.join(NodeJsLocal.Path.__dirname, cacheFileName)
-
-let currentWrite = ref(Promise.resolve())
-let schedule = ref(() => Promise.resolve())
 
 let saveToCacheFile = data => {
   let write = () => {
     let json = data->S.serializeToJsonStringOrRaiseWith(Data.schema)
     NodeJsLocal.Fs.Promises.writeFile(~filepath=cacheFilePath, ~content=json)
   }
-  schedule := write
-  let _ = currentWrite.contents->Promise.thenResolve(_ => {
-    currentWrite := schedule.contents()
-  })
+  LazyWriter.schedule(write)
 }
 
 let readFromCacheFile = async () => {
@@ -187,8 +256,7 @@ module Summary = {
     @as("std-dev") stdDev: float,
     min: float,
     max: float,
-    last: float,
-    total: float,
+    sum: float,
   }
 
   type summaryTable = dict<t>
@@ -205,54 +273,19 @@ module Summary = {
     Js.Math.round(float *. factor) /. factor
   }
 
-  let make = (arr: array<float>) => {
-    let div = (floatA, floatB) => floatA /. floatB
-    let n = Array.length(arr)
-    if n == 0 {
-      {n, mean: 0., stdDev: 0., min: 0., max: 0., last: 0., total: 0.}
-    } else {
-      let nFloat = n->Int.toFloat
-      let mean = arr->Array.reduce(0., (acc, time) => acc +. time)->div(nFloat)->round(~precision=2)
-      let stdDev = {
-        let variance =
-          arr
-          ->Array.reduce(0., (acc, val) => {
-            let diff = val -. mean
-            acc +. Js.Math.pow_float(~base=diff, ~exp=2.)
-          })
-          ->div(nFloat)
-
-        variance->Js.Math.sqrt->round(~precision=2)
-      }
-
-      let min =
-        arr
-        ->Array.reduce(None, (acc, val) =>
-          switch acc {
-          | None => val
-          | Some(acc) => Pervasives.min(acc, val)
-          }
-          ->round(~precision=2)
-          ->Some
-        )
-        ->Option.getWithDefault(0.)
-      let max =
-        arr
-        ->Array.reduce(None, (acc, val) =>
-          switch acc {
-          | None => val
-          | Some(acc) => Pervasives.max(acc, val)
-          }
-          ->round(~precision=2)
-          ->Some
-        )
-        ->Option.getWithDefault(0.)
-      let last =
-        arr
-        ->Utils.Array.last
-        ->Option.getWithDefault(0.)
-      let total = arr->Array.reduce(0., (acc, val) => acc +. val)
-      {n, mean, stdDev, min, max, last, total}
+  let makeFromDataSet = (dataSet: SummaryData.DataSet.t) => {
+    let n = dataSet.count
+    let mean = dataSet.sum /. n->Int.toFloat
+    let variance = dataSet.sumOfSquares /. n->Int.toFloat -. mean *. mean
+    let stdDev = Js.Math.sqrt(variance)
+    let precision = dataSet.decimalPlaces
+    {
+      n,
+      mean: mean->round(~precision),
+      stdDev: stdDev->round(~precision),
+      min: dataSet.min->round(~precision),
+      max: dataSet.max->round(~precision),
+      sum: dataSet.sum->round(~precision),
     }
   }
 
@@ -290,7 +323,7 @@ module Summary = {
         summaryData
         ->Js.Dict.get(eventProcessingGroup)
         ->Option.flatMap(g => g->Js.Dict.get(batchSizeLabel))
-        ->Option.map(data => data->Array.reduce(0., (acc, d) => acc +. d))
+        ->Option.map(data => data.sum)
         ->Option.getWithDefault(0.)
 
       let totalRuntimeMillis =
@@ -313,7 +346,7 @@ module Summary = {
         Js.log(groupName)
         group
         ->Js.Dict.entries
-        ->Array.map(((label, values)) => (label, values->make))
+        ->Array.map(((label, values)) => (label, values->makeFromDataSet))
         ->Js.Dict.fromArray
         ->logDictTable
       })
