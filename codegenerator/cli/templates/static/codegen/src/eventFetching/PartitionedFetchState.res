@@ -195,12 +195,18 @@ let getMostBehindPartitions = (
   let numPartitions = partitions->Array.length
   let maxPartitionQueueSize = maxPerChainQueueSize / numPartitions
 
-  partitions
-  ->Array.mapWithIndex((partitionId, fetchState) => {fetchState, partitionId})
-  ->Array.keep(({partitionId, fetchState}) => {
-    !(partitionsCurrentlyFetching->Set.Int.has(partitionId)) &&
-    fetchState->FetchState.isReadyForNextQuery(~maxQueueSize=maxPartitionQueueSize)
+  let filteredPartitions = []
+
+  partitions->Array.forEachWithIndex((partitionId, fetchState) => {
+    if (
+      !(partitionsCurrentlyFetching->Set.Int.has(partitionId)) &&
+      fetchState->FetchState.isReadyForNextQuery(~maxQueueSize=maxPartitionQueueSize)
+    ) {
+      filteredPartitions->Js.Array2.push({fetchState, partitionId})->ignore
+    }
   })
+
+  filteredPartitions
   ->Js.Array2.sortInPlaceWith((a, b) =>
     FetchState.getLatestFullyFetchedBlock(a.fetchState).blockNumber -
     FetchState.getLatestFullyFetchedBlock(b.fetchState).blockNumber
