@@ -27,8 +27,8 @@ module SummaryData = {
       count: int,
       min: float,
       max: float,
-      sum: float,
-      sumOfSquares: float,
+      sum: BigDecimal.t,
+      sumOfSquares: BigDecimal.t,
       decimalPlaces: int,
     }
 
@@ -36,27 +36,33 @@ module SummaryData = {
       count: s.matches(S.int),
       min: s.matches(S.float),
       max: s.matches(S.float),
-      sum: s.matches(S.float),
-      sumOfSquares: s.matches(S.float),
+      sum: s.matches(BigDecimal.schema),
+      sumOfSquares: s.matches(BigDecimal.schema),
       decimalPlaces: s.matches(S.int),
     })
 
-    let make = (val: float, ~decimalPlaces) => {
-      count: 1,
-      min: val,
-      max: val,
-      sum: val,
-      sumOfSquares: val *. val,
-      decimalPlaces,
+    let make = (val: float, ~decimalPlaces=2) => {
+      let bigDecimal = val->BigDecimal.fromFloat
+      {
+        count: 1,
+        min: val,
+        max: val,
+        sum: bigDecimal,
+        sumOfSquares: bigDecimal->BigDecimal.times(bigDecimal),
+        decimalPlaces,
+      }
     }
 
     let add = (self: t, val: float) => {
-      count: self.count + 1,
-      min: Pervasives.min(self.min, val),
-      max: Pervasives.max(self.max, val),
-      sum: self.sum +. val,
-      sumOfSquares: self.sumOfSquares +. val *. val,
-      decimalPlaces: self.decimalPlaces,
+      let bigDecimal = val->BigDecimal.fromFloat
+      {
+        count: self.count + 1,
+        min: Pervasives.min(self.min, val),
+        max: Pervasives.max(self.max, val),
+        sum: self.sum->BigDecimal.plus(bigDecimal),
+        sumOfSquares: self.sumOfSquares->BigDecimal.plus(bigDecimal->BigDecimal.times(bigDecimal)),
+        decimalPlaces: self.decimalPlaces,
+      }
     }
   }
   module Group = {
@@ -274,17 +280,23 @@ module Summary = {
 
   let makeFromDataSet = (dataSet: SummaryData.DataSet.t) => {
     let n = dataSet.count
-    let mean = dataSet.sum /. n->Int.toFloat
-    let variance = dataSet.sumOfSquares /. n->Int.toFloat -. mean *. mean
-    let stdDev = Js.Math.sqrt(variance)
-    let precision = dataSet.decimalPlaces
+    let countBigDecimal = n->BigDecimal.fromInt
+    let mean = dataSet.sum->BigDecimal.div(countBigDecimal)
+    let variance =
+      dataSet.sumOfSquares
+      ->BigDecimal.div(countBigDecimal)
+      ->BigDecimal.minus(mean->BigDecimal.times(mean))
+    let stdDev = BigDecimal.sqrt(variance)
+    let roundBigDecimal = bd =>
+      bd->BigDecimal.decimalPlaces(dataSet.decimalPlaces)->BigDecimal.toNumber
+    let roundFloat = float => float->round(~precision=dataSet.decimalPlaces)
     {
       n,
-      mean: mean->round(~precision),
-      stdDev: stdDev->round(~precision),
-      min: dataSet.min->round(~precision),
-      max: dataSet.max->round(~precision),
-      sum: dataSet.sum->round(~precision),
+      mean: mean->roundBigDecimal,
+      stdDev: stdDev->roundBigDecimal,
+      min: dataSet.min->roundFloat,
+      max: dataSet.max->roundFloat,
+      sum: dataSet.sum->roundBigDecimal,
     }
   }
 
@@ -323,17 +335,21 @@ module Summary = {
         ->Js.Dict.get(eventProcessingGroup)
         ->Option.flatMap(g => g->Js.Dict.get(batchSizeLabel))
         ->Option.map(data => data.sum)
-        ->Option.getWithDefault(0.)
+        ->Option.getWithDefault(BigDecimal.zero)
 
       let totalRuntimeMillis =
         millisAccum.endTime->Js.Date.getTime -. millisAccum.startTime->Js.Date.getTime
 
       let totalRuntimeSeconds = totalRuntimeMillis /. 1000.
 
-      let eventsPerSecond = (batchSizesSum /. totalRuntimeSeconds)->round(~precision=2)
+      let eventsPerSecond =
+        batchSizesSum
+        ->BigDecimal.div(BigDecimal.fromFloat(totalRuntimeSeconds))
+        ->BigDecimal.decimalPlaces(2)
+        ->BigDecimal.toNumber
 
       logObjTable({
-        "batch sizes sum": batchSizesSum,
+        "batch sizes sum": batchSizesSum->BigDecimal.toNumber,
         "total runtime (sec)": totalRuntimeSeconds,
         "events per second": eventsPerSecond,
       })
