@@ -240,6 +240,9 @@ let runEventHandler = (
     let contextEnv = ContextEnv.make(~eventBatchQueueItem, ~logger)
     let {loader, handler} = loaderHandler
 
+    //Include the load just before handler
+    let timeBeforeHandler = Hrtime.makeTimer()
+
     let loaderReturn =
       (await runEventLoader(~contextEnv, ~loader, ~inMemoryStore, ~loadLayer))->propogate
 
@@ -260,6 +263,16 @@ let runEventHandler = (
       ->Error
       ->propogate
     | () =>
+      if Env.saveBenchmarkData {
+        let timeEnd = timeBeforeHandler->Hrtime.timeSince->Hrtime.toMillis->Hrtime.floatFromMillis
+
+        Benchmark.addSummaryData(
+          ~group="Handlers Per Event",
+          ~label=`${eventBatchQueueItem.contractName} ${eventBatchQueueItem.eventName} Handler (ms)`,
+          ~value=timeEnd,
+          ~decimalPlaces=4,
+        )
+      }
       eventBatchQueueItem->updateEventSyncState(
         ~inMemoryStore,
         ~isPreRegisteringDynamicContracts=false,

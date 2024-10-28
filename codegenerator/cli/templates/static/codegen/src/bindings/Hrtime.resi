@@ -21,3 +21,4 @@ let toMillis: timeElapsed => milliseconds
 let intFromMillis: milliseconds => int
 let intFromNanos: nanoseconds => int
 let intFromSeconds: seconds => int
+let floatFromMillis: milliseconds => float

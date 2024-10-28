@@ -22,15 +22,58 @@ module MillisAccum = {
 }
 
 module SummaryData = {
+  module DataSet = {
+    type t = {
+      count: int,
+      min: float,
+      max: float,
+      sum: BigDecimal.t,
+      sumOfSquares: BigDecimal.t,
+      decimalPlaces: int,
+    }
+
+    let schema = S.schema(s => {
+      count: s.matches(S.int),
+      min: s.matches(S.float),
+      max: s.matches(S.float),
+      sum: s.matches(BigDecimal.schema),
+      sumOfSquares: s.matches(BigDecimal.schema),
+      decimalPlaces: s.matches(S.int),
+    })
+
+    let make = (val: float, ~decimalPlaces=2) => {
+      let bigDecimal = val->BigDecimal.fromFloat
+      {
+        count: 1,
+        min: val,
+        max: val,
+        sum: bigDecimal,
+        sumOfSquares: bigDecimal->BigDecimal.times(bigDecimal),
+        decimalPlaces,
+      }
+    }
+
+    let add = (self: t, val: float) => {
+      let bigDecimal = val->BigDecimal.fromFloat
+      {
+        count: self.count + 1,
+        min: Pervasives.min(self.min, val),
+        max: Pervasives.max(self.max, val),
+        sum: self.sum->BigDecimal.plus(bigDecimal),
+        sumOfSquares: self.sumOfSquares->BigDecimal.plus(bigDecimal->BigDecimal.times(bigDecimal)),
+        decimalPlaces: self.decimalPlaces,
+      }
+    }
+  }
   module Group = {
-    type t = dict<array<float>>
-    let schema = S.dict(S.array(S.float))
+    type t = dict<DataSet.t>
+    let schema: S.t<t> = S.dict(DataSet.schema)
     let make = () => Js.Dict.empty()
 
-    let add = (self: t, key: string, value: float) => {
+    let add = (self: t, key: string, value: float, ~decimalPlaces=2) => {
       switch self->Utils.Dict.dangerouslyGetNonOption(key) {
-      | None => self->Js.Dict.set(key, [value])
-      | Some(arr) => arr->Js.Array2.push(value)->ignore
+      | None => self->Js.Dict.set(key, DataSet.make(value, ~decimalPlaces))
+      | Some(dataSet) => self->Js.Dict.set(key, dataSet->DataSet.add(value))
       }
     }
   }
@@ -39,7 +82,7 @@ module SummaryData = {
   let schema = S.dict(Group.schema)
   let make = () => Js.Dict.empty()
 
-  let add = (self: t, ~group, ~label, ~value) => {
+  let add = (self: t, ~group, ~label, ~value, ~decimalPlaces=2) => {
     let group = switch self->Utils.Dict.dangerouslyGetNonOption(group) {
     | None =>
       let newGroup = Group.make()
@@ -48,7 +91,7 @@ module SummaryData = {
     | Some(group) => group
     }
 
-    group->Group.add(label, value)
+    group->Group.add(label, value, ~decimalPlaces)
   }
 }
 
@@ -72,8 +115,45 @@ module Data = {
     self.millisAccum->MillisAccum.increment(label, amount)
   }
 
-  let addSummaryData = (self: t, ~group, ~label, ~value) => {
-    self.summaryData->SummaryData.add(~group, ~label, ~value)
+  let addSummaryData = (self: t, ~group, ~label, ~value, ~decimalPlaces=2) => {
+    self.summaryData->SummaryData.add(~group, ~label, ~value, ~decimalPlaces)
+  }
+}
+
+module LazyWriter = {
+  let isWriting = ref(false)
+  let scheduledWriteFn: ref<option<unit => promise<unit>>> = ref(None)
+  let lastRunTimeMillis = ref(0.)
+
+  let rec start = async () => {
+    switch (scheduledWriteFn.contents, isWriting.contents) {
+    | (Some(fn), false) =>
+      isWriting := true
+      scheduledWriteFn := None
+      lastRunTimeMillis := Js.Date.now()
+
+      switch await fn() {
+      | exception exn => Logging.errorWithExn(exn, "Failed to write benchmark cache file")
+      | _ => ()
+      }
+      isWriting := false
+      await start()
+    | _ => ()
+    }
+  }
+
+  let schedule = (~intervalMillis=500, fn) => {
+    scheduledWriteFn := Some(fn)
+    if !isWriting.contents {
+      let timeSinceLastRun = Js.Date.now() -. lastRunTimeMillis.contents
+      if timeSinceLastRun >= intervalMillis->Belt.Int.toFloat {
+        start()->ignore
+      } else {
+        let _ = Js.Global.setTimeout(() => {
+          start()->ignore
+        }, intervalMillis - timeSinceLastRun->Belt.Float.toInt)
+      }
+    }
   }
 }
 
@@ -81,18 +161,12 @@ let data = Data.make()
 let cacheFileName = "BenchmarkCache.json"
 let cacheFilePath = NodeJsLocal.Path.join(NodeJsLocal.Path.__dirname, cacheFileName)
 
-let currentWrite = ref(Promise.resolve())
-let schedule = ref(() => Promise.resolve())
-
 let saveToCacheFile = data => {
   let write = () => {
     let json = data->S.serializeToJsonStringOrRaiseWith(Data.schema)
     NodeJsLocal.Fs.Promises.writeFile(~filepath=cacheFilePath, ~content=json)
   }
-  schedule := write
-  let _ = currentWrite.contents->Promise.thenResolve(_ => {
-    currentWrite := schedule.contents()
-  })
+  LazyWriter.schedule(write)
 }
 
 let readFromCacheFile = async () => {
@@ -110,8 +184,8 @@ let readFromCacheFile = async () => {
   }
 }
 
-let addSummaryData = (~group, ~label, ~value) => {
-  data->Data.addSummaryData(~group, ~label, ~value)
+let addSummaryData = (~group, ~label, ~value, ~decimalPlaces=2) => {
+  data->Data.addSummaryData(~group, ~label, ~value, ~decimalPlaces)
   data->saveToCacheFile
 }
 
@@ -187,8 +261,7 @@ module Summary = {
     @as("std-dev") stdDev: float,
     min: float,
     max: float,
-    last: float,
-    total: float,
+    sum: float,
   }
 
   type summaryTable = dict<t>
@@ -205,54 +278,25 @@ module Summary = {
     Js.Math.round(float *. factor) /. factor
   }
 
-  let make = (arr: array<float>) => {
-    let div = (floatA, floatB) => floatA /. floatB
-    let n = Array.length(arr)
-    if n == 0 {
-      {n, mean: 0., stdDev: 0., min: 0., max: 0., last: 0., total: 0.}
-    } else {
-      let nFloat = n->Int.toFloat
-      let mean = arr->Array.reduce(0., (acc, time) => acc +. time)->div(nFloat)->round(~precision=2)
-      let stdDev = {
-        let variance =
-          arr
-          ->Array.reduce(0., (acc, val) => {
-            let diff = val -. mean
-            acc +. Js.Math.pow_float(~base=diff, ~exp=2.)
-          })
-          ->div(nFloat)
-
-        variance->Js.Math.sqrt->round(~precision=2)
-      }
-
-      let min =
-        arr
-        ->Array.reduce(None, (acc, val) =>
-          switch acc {
-          | None => val
-          | Some(acc) => Pervasives.min(acc, val)
-          }
-          ->round(~precision=2)
-          ->Some
-        )
-        ->Option.getWithDefault(0.)
-      let max =
-        arr
-        ->Array.reduce(None, (acc, val) =>
-          switch acc {
-          | None => val
-          | Some(acc) => Pervasives.max(acc, val)
-          }
-          ->round(~precision=2)
-          ->Some
-        )
-        ->Option.getWithDefault(0.)
-      let last =
-        arr
-        ->Utils.Array.last
-        ->Option.getWithDefault(0.)
-      let total = arr->Array.reduce(0., (acc, val) => acc +. val)
-      {n, mean, stdDev, min, max, last, total}
+  let makeFromDataSet = (dataSet: SummaryData.DataSet.t) => {
+    let n = dataSet.count
+    let countBigDecimal = n->BigDecimal.fromInt
+    let mean = dataSet.sum->BigDecimal.div(countBigDecimal)
+    let variance =
+      dataSet.sumOfSquares
+      ->BigDecimal.div(countBigDecimal)
+      ->BigDecimal.minus(mean->BigDecimal.times(mean))
+    let stdDev = BigDecimal.sqrt(variance)
+    let roundBigDecimal = bd =>
+      bd->BigDecimal.decimalPlaces(dataSet.decimalPlaces)->BigDecimal.toNumber
+    let roundFloat = float => float->round(~precision=dataSet.decimalPlaces)
+    {
+      n,
+      mean: mean->roundBigDecimal,
+      stdDev: stdDev->roundBigDecimal,
+      min: dataSet.min->roundFloat,
+      max: dataSet.max->roundFloat,
+      sum: dataSet.sum->roundBigDecimal,
     }
   }
 
@@ -290,18 +334,22 @@ module Summary = {
         summaryData
         ->Js.Dict.get(eventProcessingGroup)
         ->Option.flatMap(g => g->Js.Dict.get(batchSizeLabel))
-        ->Option.map(data => data->Array.reduce(0., (acc, d) => acc +. d))
-        ->Option.getWithDefault(0.)
+        ->Option.map(data => data.sum)
+        ->Option.getWithDefault(BigDecimal.zero)
 
       let totalRuntimeMillis =
         millisAccum.endTime->Js.Date.getTime -. millisAccum.startTime->Js.Date.getTime
 
       let totalRuntimeSeconds = totalRuntimeMillis /. 1000.
 
-      let eventsPerSecond = (batchSizesSum /. totalRuntimeSeconds)->round(~precision=2)
+      let eventsPerSecond =
+        batchSizesSum
+        ->BigDecimal.div(BigDecimal.fromFloat(totalRuntimeSeconds))
+        ->BigDecimal.decimalPlaces(2)
+        ->BigDecimal.toNumber
 
       logObjTable({
-        "batch sizes sum": batchSizesSum,
+        "batch sizes sum": batchSizesSum->BigDecimal.toNumber,
         "total runtime (sec)": totalRuntimeSeconds,
         "events per second": eventsPerSecond,
       })
@@ -313,7 +361,7 @@ module Summary = {
         Js.log(groupName)
         group
         ->Js.Dict.entries
-        ->Array.map(((label, values)) => (label, values->make))
+        ->Array.map(((label, values)) => (label, values->makeFromDataSet))
         ->Js.Dict.fromArray
         ->logDictTable
       })
