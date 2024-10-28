@@ -8,6 +8,7 @@ pub enum Primitive {
     Text,
     Integer,
     Numeric(Option<(u32, u32)>), // (precision, scale)
+    DoublePrecision,
     Serial,
     Json,
     Timestamp,
@@ -27,6 +28,7 @@ impl Primitive {
             Self::Serial => "Serial".to_string(),
             Self::Json => "Json".to_string(),
             Self::Timestamp => "Timestamp".to_string(),
+            Self::DoublePrecision => "DoublePrecision".to_string(),
             Self::Enum(enum_name) => format!("Custom(Enums.{enum_name}.enum.name)"),
         }
     }
