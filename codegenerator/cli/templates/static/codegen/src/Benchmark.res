@@ -126,8 +126,8 @@ module LazyWriter = {
   let lastRunTimeMillis = ref(0.)
 
   let rec start = async () => {
-    switch scheduledWriteFn.contents {
-    | Some(fn) =>
+    switch (scheduledWriteFn.contents, isWriting.contents) {
+    | (Some(fn), false) =>
       isWriting := true
       scheduledWriteFn := None
       lastRunTimeMillis := Js.Date.now()
@@ -138,7 +138,7 @@ module LazyWriter = {
       }
       isWriting := false
       await start()
-    | None => ()
+    | _ => ()
     }
   }
 
