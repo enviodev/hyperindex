@@ -1394,7 +1394,7 @@ impl GqlScalar {
             }
             "Timestamp" => GqlScalar::Timestamp,
             "Bytes" => GqlScalar::Bytes,
-            _name => GqlScalar::Custom(name.to_string()),
+            name => GqlScalar::Custom(name.to_string()),
         }
     }
 
@@ -1403,7 +1403,7 @@ impl GqlScalar {
             GqlScalar::ID => PGPrimitive::Text,
             GqlScalar::String => PGPrimitive::Text,
             GqlScalar::Int => PGPrimitive::Integer,
-            GqlScalar::Float => PGPrimitive::Numeric(None), // Should we allow this type? Rounding issues will abound.
+            GqlScalar::Float => PGPrimitive::DoublePrecision, // Should we allow this type? Rounding issues will abound.
             GqlScalar::Boolean => PGPrimitive::Boolean,
             GqlScalar::Bytes => PGPrimitive::Text,
             GqlScalar::BigInt(None) => PGPrimitive::Numeric(None),

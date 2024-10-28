@@ -7,6 +7,7 @@ type fieldType =
   | @as("INTEGER") Integer
   | @as("BOOLEAN") Boolean
   | @as("NUMERIC") Numeric
+  | @as("DOUBLE PRECISION") DoublePrecision
   | @as("TEXT") Text
   | @as("SERIAL") Serial
   | @as("JSONB") JsonB
