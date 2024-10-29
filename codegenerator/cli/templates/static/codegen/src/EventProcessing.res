@@ -133,7 +133,7 @@ let runEventContractRegister = (
       )
 
     let val = switch (dynamicContracts, dynamicContractRegistrations) {
-    | ([], dynamicContractRegistrations) => dynamicContractRegistrations
+    | ([], None) => None
     | (dynamicContracts, Some({registrations, unprocessedBatch})) =>
       addToDynamicContractRegistrations(~dynamicContracts, ~registrations, ~unprocessedBatch)->Some
     | (dynamicContracts, None) =>
