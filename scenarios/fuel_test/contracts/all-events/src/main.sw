@@ -13,6 +13,7 @@ use std::{
     },
     constants::ZERO_B256,
     context::msg_amount,
+    string::String,
 };
 
 abi LiquidityPool {
@@ -120,9 +121,8 @@ impl AllEvents for Contract {
         let data: str[4] = __to_str_array("abcd");
         log(data);
 
-        // Panics with: Function call failed. Error: String slices can not be decoded from logs. Convert the slice to `str[N]` with `__to_str_array`
-        // let data: str = "abcd";
-        // log("abcd");
+        let data: String = String::from_ascii_str("abcd");
+        log(data);
 
         let data: b256 = 0x0000000000000000000000000000000000000000000000000000000000000001;
         log(data);

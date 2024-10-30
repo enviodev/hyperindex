@@ -189,6 +189,14 @@ AllEvents.StrLog.handler(
   { wildcard: true }
 );
 
+const stringLogSchema = S.string;
+AllEvents.StringLog.handler(async ({ event }) => {
+  stringLogSchema.assert(event.params)!;
+  expectType<AssertSchemaType<typeof event.params, typeof stringLogSchema>>(
+    true
+  );
+});
+
 const option2LogSchema = SExtra.swayOptional(SExtra.swayOptional(S.number));
 AllEvents.Option2.handler(async ({ event }) => {
   option2LogSchema.assert(event.params)!;

@@ -56,7 +56,7 @@ async fn main() -> Result<()> {
     println!("Logs in tx: 0x{}", r.tx_id.unwrap());
 
     // LiquidityPool - deposit and withdraw for testing Mint/Burn/Call/TransferOut receipts
-    let deposit_amount = 1;
+    let deposit_amount = 100;
     let call_params = CallParameters::default()
         .with_amount(deposit_amount)
         .with_asset_id(base_asset_id);
@@ -66,7 +66,7 @@ async fn main() -> Result<()> {
         .with_variable_output_policy(VariableOutputPolicy::Exactly(1))
         .call()
         .await?;
-    println!("Deposited 100 coins to LP in tx: 0x{}", deposit_action.tx_id.unwrap());
+    println!("Deposited {deposit_amount} coin to LP in tx: 0x{}", deposit_action.tx_id.unwrap());
     
     let lp_asset_id = contract_id.asset_id(&Bits256::zeroed());
     let lp_token_balance = wallet.get_asset_balance(&lp_asset_id).await?;

@@ -211,7 +211,7 @@ impl FuelAbi {
                         "u8" | "u16" | "u32" => Int.to_ok_expr(),
                         "u64" | "u128" | "u256" | "raw untyped ptr" => BigInt.to_ok_expr(),
                         "b256" | "address" => String.to_ok_expr(),
-                        "str" => String.to_ok_expr(),
+                        "str" | "struct std::string::String" => String.to_ok_expr(),
                         type_field if type_field.starts_with("str[") => String.to_ok_expr(),
                         "struct std::vec::Vec" => Array(Box::new(GenericParam(
                             get_first_type_param()
