@@ -70,7 +70,7 @@ module Mock = {
   })
 }
 
-describe_only("dynamic contract event processing test", () => {
+describe("dynamic contract event processing test", () => {
   Async.it("One registration event + non registration event", async () => {
     let block0 = Mock.mockChainData.blocks->Js.Array2.unsafe_get(0)
     let block0Events = block0.logs->Array.map(l => l.eventBatchQueueItem)
