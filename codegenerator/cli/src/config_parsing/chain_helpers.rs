@@ -56,6 +56,9 @@ pub enum Network {
     #[subenum(HypersyncNetwork, GraphNetwork, NetworkWithExplorer)]
     Avalanche = 43114,
 
+    #[subenum(HypersyncNetwork)]
+    B2Testnet = 1123,
+
     #[subenum(HypersyncNetwork, NetworkWithExplorer, GraphNetwork)]
     Base = 8453,
 
@@ -107,7 +110,7 @@ pub enum Network {
 
     CitreaDevnet = 62298,
 
-    #[subenum(NetworkWithExplorer)]
+    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     CitreaTestnet = 5115,
 
     #[subenum(GraphNetwork)]
@@ -190,8 +193,17 @@ pub enum Network {
     #[subenum(NetworkWithExplorer)]
     LineaSepolia = 59141,
 
+    #[subenum(HypersyncNetwork)]
+    Lisk = 1135,
+
     #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     Lukso = 42,
+
+    #[subenum(HypersyncNetwork)]
+    LuksoTestnet = 4201,
+
+    #[subenum(HypersyncNetwork)]
+    UnichainSepolia = 1301,
 
     #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     Manta = 169,
@@ -205,17 +217,26 @@ pub enum Network {
     #[subenum(GraphNetwork, NetworkWithExplorer)]
     Mbase = 1287,
 
+    #[subenum(HypersyncNetwork)]
+    Merlin = 4200,
+
     #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     Metis = 1088,
 
     #[subenum(HypersyncNetwork)]
     MevCommit = 17864,
 
-    #[subenum(NetworkWithExplorer)]
+    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     Mode = 34443,
 
     #[subenum(NetworkWithExplorer)]
     ModeSepolia = 919,
+
+    #[subenum(HypersyncNetwork)]
+    Morph = 2818,
+
+    #[subenum(HypersyncNetwork)]
+    MorphTestnet = 2810,
 
     #[subenum(HypersyncNetwork, NetworkWithExplorer, GraphNetwork)]
     Moonbeam = 1284,
@@ -231,6 +252,9 @@ pub enum Network {
 
     #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     NeonEvm = 245022934,
+
+    #[subenum(HypersyncNetwork)]
+    Opbnb = 204,
 
     #[subenum(HypersyncNetwork, NetworkWithExplorer, GraphNetwork)]
     Optimism = 10,
@@ -266,6 +290,9 @@ pub enum Network {
     #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     Rsk = 30,
 
+    #[subenum(HypersyncNetwork)]
+    Saakuru = 7225878,
+
     // Still syncing
     // #[subenum(HypersyncNetwork)]
     // Saakuru = 7225878,
@@ -285,9 +312,14 @@ pub enum Network {
     SophonTestnet = 531050104,
 
     #[subenum(HypersyncNetwork)]
-    XLayer = 196,
+    Taiko = 167000,
 
     #[subenum(HypersyncNetwork)]
+    Tangle = 5845,
+
+    #[subenum(HypersyncNetwork)]
+    XLayer = 196,
+
     XLayerTestnet = 195,
 
     #[subenum(HypersyncNetwork, NetworkWithExplorer)]
@@ -417,7 +449,18 @@ impl Network {
             | Network::ZksyncEra
             | Network::ZksyncEraTestnet
             | Network::Zora
-            | Network::ZoraSepolia => DEFAULT_CONFIRMED_BLOCK_THRESHOLD,
+            | Network::ZoraSepolia
+            | Network::Lisk
+            | Network::Taiko
+            | Network::LuksoTestnet
+            | Network::Merlin
+            | Network::B2Testnet
+            | Network::UnichainSepolia
+            | Network::Opbnb
+            | Network::Saakuru
+            | Network::Morph
+            | Network::MorphTestnet
+            | Network::Tangle => DEFAULT_CONFIRMED_BLOCK_THRESHOLD,
         }
     }
 }
@@ -455,6 +498,19 @@ mod test {
             networks_sorted, networks,
             "Networks should be defined in alphabetical order (sorry to be picky)"
         );
+    }
+
+    #[tokio::test]
+    async fn all_hypersync_networks_are_included() {
+        let diff = crate::scripts::print_missing_networks::get_diff()
+            .await
+            .unwrap();
+
+        if diff.missing_chains.is_empty() || diff.extra_chains.is_empty() {
+            return;
+        }
+        crate::scripts::print_missing_networks::print_diff_message(diff);
+        assert!(false);
     }
 
     #[test]

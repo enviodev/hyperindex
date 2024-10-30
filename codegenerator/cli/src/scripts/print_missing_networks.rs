@@ -8,10 +8,15 @@ use std::collections::HashSet;
 #[derive(Deserialize, Debug)]
 struct Chain {
     name: String,
-    chain_id: u64,
+    chain_id: Option<u64>, // None for Fuel chains
 }
 
-pub async fn run() -> Result<()> {
+pub struct Diff {
+    pub missing_chains: Vec<String>,
+    pub extra_chains: Vec<String>,
+}
+
+pub async fn get_diff() -> Result<Diff> {
     let url = "https://chains.hyperquery.xyz/active_chains";
     let response = reqwest::get(url).await?;
     let chains: Vec<Chain> = response.json().await?;
@@ -20,9 +25,15 @@ pub async fn run() -> Result<()> {
     let mut api_chain_ids = HashSet::new();
 
     for chain in &chains {
-        api_chain_ids.insert(chain.chain_id);
-        if HypersyncNetwork::from_repr(chain.chain_id).is_none() {
-            let is_graph = GraphNetwork::from_repr(chain.chain_id).is_some();
+        let Some(chain_id) = chain.chain_id else {
+            continue;
+        };
+        if chain.name == "internal-test-chain" {
+            continue;
+        }
+        api_chain_ids.insert(chain_id);
+        if HypersyncNetwork::from_repr(chain_id).is_none() {
+            let is_graph = GraphNetwork::from_repr(chain_id).is_some();
 
             let subenums = match is_graph {
                 true => "HypersyncNetwork, GraphNetwork",
@@ -32,7 +43,7 @@ pub async fn run() -> Result<()> {
                 "    #[subenum({})]\n    {} = {},",
                 subenums,
                 chain.name.to_case(Case::Pascal),
-                chain.chain_id
+                chain_id
             ));
         }
     }
@@ -45,10 +56,21 @@ pub async fn run() -> Result<()> {
         }
     }
 
+    Ok(Diff {
+        missing_chains,
+        extra_chains,
+    })
+}
+
+pub fn print_diff_message(diff: Diff) {
+    let Diff {
+        missing_chains,
+        extra_chains,
+    } = diff;
     if missing_chains.is_empty() && extra_chains.is_empty() {
         println!(
             "All chains from the API are present in the HypersyncNetwork enum, and vice versa. \
-             Nothing to update."
+         Nothing to update."
         );
     } else {
         if !missing_chains.is_empty() {
@@ -61,13 +83,17 @@ pub async fn run() -> Result<()> {
         if !extra_chains.is_empty() {
             println!(
                 "\nThe following chains are in the HypersyncNetwork enum but not in the API \
-                 (remove the HypersyncNetwork enum from the chain_helpers.rs file):"
+             (remove the HypersyncNetwork subEnum from the chain_helpers.rs file):"
             );
             for chain in extra_chains {
                 println!("- {}", chain);
             }
         }
     }
+}
 
+pub async fn run() -> Result<()> {
+    let diff = get_diff().await?;
+    print_diff_message(diff);
     Ok(())
 }
