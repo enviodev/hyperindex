@@ -71,6 +71,10 @@ module Mock = {
 }
 
 describe("dynamic contract event processing test", () => {
+  Async.before(async () => {
+    //Provision the db
+    await DbHelpers.runUpDownMigration()
+  })
   Async.it("One registration event + non registration event", async () => {
     let block0 = Mock.mockChainData.blocks->Js.Array2.unsafe_get(0)
     let block0Events = block0.logs->Array.map(l => l.eventBatchQueueItem)
