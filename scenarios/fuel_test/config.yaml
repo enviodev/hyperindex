@@ -15,7 +15,7 @@ networks:
           - name: ClearGreeting
       - name: AllEvents
         address:
-          - 0xef3972d8fd06d06362bdefc919424bc793b0b8162fe71f39300a06b22d6d0c48
+          - 0xf627d99be4078f0731e5738b5b70089806f5d3b318e83ca41dceb331b39ab79f
         abi_file_path: abis/all-events-abi.json
         handler: src/AllEventsHandlers.ts
         events:
@@ -51,6 +51,8 @@ networks:
             logId: "13213829929622723620"
           - name: StrLog
             logId: "10732353433239600734"
+          - name: StringLog
+            logId: "11132648958528852192"
           - name: Option2
             logId: "8688528864679113840"
           - name: VecLog
