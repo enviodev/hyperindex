@@ -56,6 +56,9 @@ pub enum Network {
     #[subenum(HypersyncNetwork, GraphNetwork, NetworkWithExplorer)]
     Avalanche = 43114,
 
+    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
+    B2Testnet = 1123,
+
     #[subenum(HypersyncNetwork, NetworkWithExplorer, GraphNetwork)]
     Base = 8453,
 
@@ -90,7 +93,6 @@ pub enum Network {
     #[subenum(HypersyncNetwork)]
     C1Milkomeda = 2001,
 
-    #[subenum(NetworkWithExplorer)]
     Canto = 7700,
 
     #[subenum(HypersyncNetwork, GraphNetwork, NetworkWithExplorer)]
@@ -107,7 +109,7 @@ pub enum Network {
 
     CitreaDevnet = 62298,
 
-    #[subenum(NetworkWithExplorer)]
+    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     CitreaTestnet = 5115,
 
     #[subenum(GraphNetwork)]
@@ -122,11 +124,6 @@ pub enum Network {
     #[subenum(HypersyncNetwork)]
     Darwinia = 46,
 
-    // Still syncing
-    // #[subenum(HypersyncNetwork)]
-    // // Explorers:
-    // // https://explorer.degen.tips/
-    // Degen = 666666666,
     #[subenum(
         HypersyncNetwork,
         NetworkWithExplorer,
@@ -181,9 +178,6 @@ pub enum Network {
     #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     Kroma = 255,
 
-    // Still syncing
-    // #[subenum(HypersyncNetwork)]
-    // KakarotSepolia = 1802203764,
     #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     Linea = 59144,
 
@@ -191,7 +185,13 @@ pub enum Network {
     LineaSepolia = 59141,
 
     #[subenum(HypersyncNetwork, NetworkWithExplorer)]
+    Lisk = 1135,
+
+    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     Lukso = 42,
+
+    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
+    LuksoTestnet = 4201,
 
     #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     Manta = 169,
@@ -205,13 +205,16 @@ pub enum Network {
     #[subenum(GraphNetwork, NetworkWithExplorer)]
     Mbase = 1287,
 
+    #[subenum(HypersyncNetwork)]
+    Merlin = 4200,
+
     #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     Metis = 1088,
 
     #[subenum(HypersyncNetwork)]
     MevCommit = 17864,
 
-    #[subenum(NetworkWithExplorer)]
+    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     Mode = 34443,
 
     #[subenum(NetworkWithExplorer)]
@@ -223,14 +226,20 @@ pub enum Network {
     #[subenum(GraphNetwork, NetworkWithExplorer)]
     Moonriver = 1285,
 
-    // Still syncing
-    // #[subenum(HypersyncNetwork)]
-    // MorphTestnet = 2810,
+    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
+    Morph = 2818,
+
+    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
+    MorphTestnet = 2810,
+
     #[subenum(GraphNetwork)]
     Mumbai = 80001,
 
     #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     NeonEvm = 245022934,
+
+    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
+    Opbnb = 204,
 
     #[subenum(HypersyncNetwork, NetworkWithExplorer, GraphNetwork)]
     Optimism = 10,
@@ -266,9 +275,9 @@ pub enum Network {
     #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     Rsk = 30,
 
-    // Still syncing
-    // #[subenum(HypersyncNetwork)]
-    // Saakuru = 7225878,
+    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
+    Saakuru = 7225878,
+
     #[subenum(GraphNetwork, HypersyncNetwork, NetworkWithExplorer)]
     Scroll = 534352,
 
@@ -284,10 +293,18 @@ pub enum Network {
     #[subenum(HypersyncNetwork)]
     SophonTestnet = 531050104,
 
+    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
+    Taiko = 167000,
+
+    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
+    Tangle = 5845,
+
+    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
+    UnichainSepolia = 1301,
+
     #[subenum(HypersyncNetwork)]
     XLayer = 196,
 
-    #[subenum(HypersyncNetwork)]
     XLayerTestnet = 195,
 
     #[subenum(HypersyncNetwork, NetworkWithExplorer)]
@@ -417,7 +434,18 @@ impl Network {
             | Network::ZksyncEra
             | Network::ZksyncEraTestnet
             | Network::Zora
-            | Network::ZoraSepolia => DEFAULT_CONFIRMED_BLOCK_THRESHOLD,
+            | Network::ZoraSepolia
+            | Network::Lisk
+            | Network::Taiko
+            | Network::LuksoTestnet
+            | Network::Merlin
+            | Network::B2Testnet
+            | Network::UnichainSepolia
+            | Network::Opbnb
+            | Network::Saakuru
+            | Network::Morph
+            | Network::MorphTestnet
+            | Network::Tangle => DEFAULT_CONFIRMED_BLOCK_THRESHOLD,
         }
     }
 }
@@ -455,6 +483,19 @@ mod test {
             networks_sorted, networks,
             "Networks should be defined in alphabetical order (sorry to be picky)"
         );
+    }
+
+    #[tokio::test]
+    async fn all_hypersync_networks_are_included() {
+        let diff = crate::scripts::print_missing_networks::get_diff()
+            .await
+            .unwrap();
+
+        if diff.missing_chains.is_empty() || diff.extra_chains.is_empty() {
+            return;
+        }
+        crate::scripts::print_missing_networks::print_diff_message(diff);
+        assert!(false);
     }
 
     #[test]
