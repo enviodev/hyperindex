@@ -875,22 +875,19 @@ fetching registration
 let isReadyForNextQuery = (self: t, ~maxQueueSize) =>
   self.baseRegister.fetchedEventQueue->Array.length < maxQueueSize
 
-let rec getAllAddressesForContract = (
-  ~addresses=Set.String.empty,
+let rec checkBaseRegisterContainsRegisteredContract = (
+  register: register,
   ~contractName,
-  self: register,
+  ~contractAddress,
 ) => {
-  let addresses =
-    self.contractAddressMapping
-    ->ContractAddressingMap.getAddresses(contractName)
-    ->Option.mapWithDefault(addresses, newAddresses => {
-      addresses->Set.String.union(newAddresses)
-    })
-
-  switch self.registerType {
-  | RootRegister(_) => addresses
-  | DynamicContractRegister({nextRegister}) =>
-    nextRegister->getAllAddressesForContract(~addresses, ~contractName)
+  switch register.contractAddressMapping->ContractAddressingMap.getAddresses(contractName) {
+  | Some(addresses) if addresses->Belt.Set.String.has(contractAddress->Address.toString) => true
+  | _ =>
+    switch register.registerType {
+    | RootRegister(_) => false
+    | DynamicContractRegister({nextRegister}) =>
+      nextRegister->checkBaseRegisterContainsRegisteredContract(~contractName, ~contractAddress)
+    }
   }
 }
 
@@ -899,8 +896,12 @@ Recurses through registers and determines whether a contract has already been re
 the given name and address
 */
 let checkContainsRegisteredContractAddress = (self: t, ~contractName, ~contractAddress) => {
-  let allAddr = self.baseRegister->getAllAddressesForContract(~contractName)
-  allAddr->Set.String.has(contractAddress->Address.toString)
+  self.baseRegister->checkBaseRegisterContainsRegisteredContract(~contractName, ~contractAddress) ||
+    self.pendingDynamicContracts->Array.some(({dynamicContracts}) =>
+      dynamicContracts->Array.some(dcr =>
+        dcr.contractAddress == contractAddress && (dcr.contractType :> string) == contractName
+      )
+    )
 }
 
 /**

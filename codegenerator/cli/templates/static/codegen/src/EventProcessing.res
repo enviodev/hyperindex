@@ -94,6 +94,25 @@ let addToDynamicContractRegistrations = (
   }
 }
 
+let checkContractIsInCurrentRegistrations = (
+  ~dynamicContractRegistrations: option<dynamicContractRegistrations>,
+  ~chain,
+  ~contractAddress,
+  ~contractType,
+) => {
+  switch dynamicContractRegistrations {
+  | Some(dynamicContracts) =>
+    dynamicContracts.registrations->Array.some(d =>
+      d.dynamicContracts->Array.some(d =>
+        d.chainId == chain->ChainMap.Chain.toChainId &&
+        d.contractType == contractType &&
+        d.contractAddress == contractAddress
+      )
+    )
+  | None => false
+  }
+}
+
 let runEventContractRegister = (
   contractRegister: Types.HandlerTypes.args<_> => unit,
   ~eventBatchQueueItem: Types.eventBatchQueueItem,
@@ -120,7 +139,13 @@ let runEventContractRegister = (
       contextEnv
       ->ContextEnv.getAddedDynamicContractRegistrations
       ->Array.keep(({contractAddress, contractType}) =>
-        !checkContractIsRegistered(~chain, ~contractAddress, ~contractName=contractType)
+        !checkContractIsRegistered(~chain, ~contractAddress, ~contractName=contractType) &&
+        !checkContractIsInCurrentRegistrations(
+          ~dynamicContractRegistrations,
+          ~chain,
+          ~contractAddress,
+          ~contractType,
+        )
       )
 
     let addToDynamicContractRegistrations =
