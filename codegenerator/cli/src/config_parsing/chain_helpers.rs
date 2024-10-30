@@ -56,7 +56,7 @@ pub enum Network {
     #[subenum(HypersyncNetwork, GraphNetwork, NetworkWithExplorer)]
     Avalanche = 43114,
 
-    #[subenum(HypersyncNetwork)]
+    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     B2Testnet = 1123,
 
     #[subenum(HypersyncNetwork, NetworkWithExplorer, GraphNetwork)]
@@ -93,7 +93,6 @@ pub enum Network {
     #[subenum(HypersyncNetwork)]
     C1Milkomeda = 2001,
 
-    #[subenum(NetworkWithExplorer)]
     Canto = 7700,
 
     #[subenum(HypersyncNetwork, GraphNetwork, NetworkWithExplorer)]
@@ -125,11 +124,6 @@ pub enum Network {
     #[subenum(HypersyncNetwork)]
     Darwinia = 46,
 
-    // Still syncing
-    // #[subenum(HypersyncNetwork)]
-    // // Explorers:
-    // // https://explorer.degen.tips/
-    // Degen = 666666666,
     #[subenum(
         HypersyncNetwork,
         NetworkWithExplorer,
@@ -184,26 +178,20 @@ pub enum Network {
     #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     Kroma = 255,
 
-    // Still syncing
-    // #[subenum(HypersyncNetwork)]
-    // KakarotSepolia = 1802203764,
     #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     Linea = 59144,
 
     #[subenum(NetworkWithExplorer)]
     LineaSepolia = 59141,
 
-    #[subenum(HypersyncNetwork)]
+    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     Lisk = 1135,
 
     #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     Lukso = 42,
 
-    #[subenum(HypersyncNetwork)]
+    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     LuksoTestnet = 4201,
-
-    #[subenum(HypersyncNetwork)]
-    UnichainSepolia = 1301,
 
     #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     Manta = 169,
@@ -232,28 +220,25 @@ pub enum Network {
     #[subenum(NetworkWithExplorer)]
     ModeSepolia = 919,
 
-    #[subenum(HypersyncNetwork)]
-    Morph = 2818,
-
-    #[subenum(HypersyncNetwork)]
-    MorphTestnet = 2810,
-
     #[subenum(HypersyncNetwork, NetworkWithExplorer, GraphNetwork)]
     Moonbeam = 1284,
 
     #[subenum(GraphNetwork, NetworkWithExplorer)]
     Moonriver = 1285,
 
-    // Still syncing
-    // #[subenum(HypersyncNetwork)]
-    // MorphTestnet = 2810,
+    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
+    Morph = 2818,
+
+    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
+    MorphTestnet = 2810,
+
     #[subenum(GraphNetwork)]
     Mumbai = 80001,
 
     #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     NeonEvm = 245022934,
 
-    #[subenum(HypersyncNetwork)]
+    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     Opbnb = 204,
 
     #[subenum(HypersyncNetwork, NetworkWithExplorer, GraphNetwork)]
@@ -290,12 +275,9 @@ pub enum Network {
     #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     Rsk = 30,
 
-    #[subenum(HypersyncNetwork)]
+    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     Saakuru = 7225878,
 
-    // Still syncing
-    // #[subenum(HypersyncNetwork)]
-    // Saakuru = 7225878,
     #[subenum(GraphNetwork, HypersyncNetwork, NetworkWithExplorer)]
     Scroll = 534352,
 
@@ -311,11 +293,14 @@ pub enum Network {
     #[subenum(HypersyncNetwork)]
     SophonTestnet = 531050104,
 
-    #[subenum(HypersyncNetwork)]
+    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     Taiko = 167000,
 
-    #[subenum(HypersyncNetwork)]
+    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     Tangle = 5845,
+
+    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
+    UnichainSepolia = 1301,
 
     #[subenum(HypersyncNetwork)]
     XLayer = 196,
