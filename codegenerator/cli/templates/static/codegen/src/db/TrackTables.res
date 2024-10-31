@@ -34,7 +34,9 @@ let validateHasuraResponse = (~statusCode: int, ~responseJson: Js.Json.t): Belt.
         Error()
       }
     //If we couldn't decode just return it as an error
-    | Error(_e) => Error()
+    | Error(e) => {
+      Logging.errorWithExn(e, {"msg": "there was an error in the decoding"})
+      Error()}
     }
   }
 
@@ -438,8 +440,16 @@ let trackAllTables = async () => {
   await [TablesStatic.allTables, Entities.allTables]
   ->Belt.Array.concatMany
   ->Utils.Array.awaitEach(async ({tableName}) => {
+    Logging.debug({
+      "msg": "tracking table and select permissions",
+      "tableName": tableName,
+    })
     await trackTable(~tableName)
     await Time.resolvePromiseAfterDelay(~delayMilliseconds=1000) //wait before next
+    Logging.debug({
+      "msg": "select permissions",
+      "tableName": tableName,
+    })
     await createSelectPermissions(~tableName)
     await Time.resolvePromiseAfterDelay(~delayMilliseconds=1000)
   })

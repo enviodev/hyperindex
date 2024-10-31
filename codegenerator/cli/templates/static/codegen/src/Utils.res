@@ -138,6 +138,7 @@ Helper to check if a value exists in an array
 
   let awaitEach = async (arr: array<'a>, fn: 'a => promise<unit>) => {
     for i in 0 to arr->Array.length - 1 {
+      Js.log(`${i->Belt.Int.toString} element in array`)
       let item = arr[i]
       await item->fn
     }

@@ -485,6 +485,7 @@ let runUpMigrations = async (~shouldExit) => {
   })
 
   if shouldExit {
+    Logging.error({"msg": "should exit happening"})
     process->exit(exitCode.contents)
   }
   exitCode.contents
