@@ -19,7 +19,8 @@ type validHasuraResponse = QuerySucceeded | AlreadyDone
 let validateHasuraResponse = (~statusCode: int, ~responseJson: Js.Json.t): Belt.Result.t<
   validHasuraResponse,
   unit,
-> =>
+> =>{
+  Logging.debug({"msg": `status code: ${statusCode->Belt.Int.toString}`})
   if statusCode == 200 {
     Ok(QuerySucceeded)
   } else {
@@ -39,6 +40,7 @@ let validateHasuraResponse = (~statusCode: int, ~responseJson: Js.Json.t): Belt.
       Error()}
     }
   }
+}
 
 let clearHasuraMetadata = async () => {
   let body = {
@@ -186,6 +188,7 @@ let createSelectPermissions = async (~tableName: string) => {
     },
   }
   try {
+  Logging.debug({"msg": `attempting to select permissions for ${tableName}`})
   let response = await fetch(
     Env.Hasura.graphqlEndpoint,
     {
@@ -194,11 +197,11 @@ let createSelectPermissions = async (~tableName: string) => {
       headers: Headers.fromObject(headers),
     },
   )
-  
+  Logging.debug({"msg": `response to select permissions for ${tableName}`, "response": response})
 
   let responseJson = await response->Response.json
   let statusCode = response->Response.status
-
+  Logging.debug({"msg": `validating to select permissions for ${tableName}`, "responseJson": responseJson})
   switch validateHasuraResponse(~statusCode, ~responseJson) {
   | Error(_) =>
     Logging.error({
