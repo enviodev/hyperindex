@@ -439,7 +439,9 @@ let trackAllTables = async () => {
   ->Belt.Array.concatMany
   ->Utils.Array.awaitEach(async ({tableName}) => {
     await trackTable(~tableName)
+    await Time.resolvePromiseAfterDelay(~delayMilliseconds=1000)
     await createSelectPermissions(~tableName)
+    await Time.resolvePromiseAfterDelay(~delayMilliseconds=1000)
   })
 
   let _ = await trackGetEntityHistoryFilterFunction()
