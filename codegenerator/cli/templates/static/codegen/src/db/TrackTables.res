@@ -130,7 +130,7 @@ let trackTable = async (~tableName: string) => {
       "name": tableName,
     },
   }
-
+  try {
   let response = await fetch(
     Env.Hasura.graphqlEndpoint,
     {
@@ -163,6 +163,10 @@ let trackTable = async (~tableName: string) => {
       "requestResponseJson": responseJson,
     })
   }
+  } 
+  catch {
+    | err => Js.log2("there was a track err", err)
+  }
 }
 
 let createSelectPermissions = async (~tableName: string) => {
@@ -179,7 +183,7 @@ let createSelectPermissions = async (~tableName: string) => {
       },
     },
   }
-
+  try {
   let response = await fetch(
     Env.Hasura.graphqlEndpoint,
     {
@@ -188,6 +192,7 @@ let createSelectPermissions = async (~tableName: string) => {
       headers: Headers.fromObject(headers),
     },
   )
+  
 
   let responseJson = await response->Response.json
   let statusCode = response->Response.status
@@ -212,6 +217,10 @@ let createSelectPermissions = async (~tableName: string) => {
       "requestResponseJson": responseJson,
     })
   }
+  } catch {
+    | err => Js.log2("There was an error", err)
+  }
+
 }
 
 let createRawEventsArrayRelationship = async () => {
