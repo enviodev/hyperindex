@@ -236,11 +236,10 @@ pub async fn run_init_args(init_args: InitArgs, project_paths: &ProjectPaths) ->
         } else {
             // Else install the local version for development and testing
             match env::current_exe() {
-                // This should be something like "~/envio/hyperindex/codegenerator/target/debug/envio" or ".../target/debug/integration_tests"
-                Ok(exe_path) => exe_path
-                    .join("../../../cli/npm/envio")
-                    .to_string_lossy()
-                    .to_string(),
+                // This should be something like "file:~/envio/hyperindex/codegenerator/target/debug/envio" or "file:.../target/debug/integration_tests"
+                Ok(exe_path) => {
+                    format!("file:{}/../../../cli/npm/envio", exe_path.to_string_lossy())
+                }
                 Err(e) => return Err(anyhow!("failed to get current exe path: {e}")),
             }
         }
@@ -268,17 +267,10 @@ pub async fn run_init_args(init_args: InitArgs, project_paths: &ProjectPaths) ->
     println!("Project template ready");
     println!("Running codegen");
 
-    match init_config.ecosystem {
-        Ecosystem::Fuel { .. } => {
-            commands::codegen::npx_codegen(envio_version, &parsed_project_paths).await?
-        }
-        Ecosystem::Evm { .. } => {
-            let config = SystemConfig::parse_from_project_files(&parsed_project_paths)
-                .context("Failed parsing config")?;
+    let config = SystemConfig::parse_from_project_files(&parsed_project_paths)
+        .context("Failed parsing config")?;
 
-            commands::codegen::run_codegen(&config, &parsed_project_paths).await?;
-        }
-    };
+    commands::codegen::run_codegen(&config, &parsed_project_paths).await?;
 
     if init_config.language == Language::ReScript {
         let res_build_exit = commands::rescript::build(&parsed_project_paths.project_root).await?;

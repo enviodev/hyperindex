@@ -57,7 +57,7 @@
     "helpers": "workspace:*",
     "rescript-nodejs": "16.0.0",
     "typescript": "^5.0.4",
-    "envio": "../../codegenerator/cli/npm/envio"
+    "envio": "file:../../codegenerator/cli/npm/envio"
   },
   "optionalDependencies": {
     "generated": "./generated"

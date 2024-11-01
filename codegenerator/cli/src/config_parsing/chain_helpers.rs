@@ -172,7 +172,6 @@ pub enum Network {
     #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     Holesky = 17000,
 
-    #[subenum(HypersyncNetwork)]
     IncoGentryTestnet = 9090,
 
     #[subenum(HypersyncNetwork, NetworkWithExplorer)]
@@ -202,9 +201,6 @@ pub enum Network {
     #[subenum(NetworkWithExplorer)]
     MantleTestnet = 5001,
 
-    #[subenum(GraphNetwork, NetworkWithExplorer)]
-    Mbase = 1287,
-
     #[subenum(HypersyncNetwork)]
     Merlin = 4200,
 
@@ -219,6 +215,9 @@ pub enum Network {
 
     #[subenum(NetworkWithExplorer)]
     ModeSepolia = 919,
+
+    #[subenum(HypersyncNetwork, GraphNetwork, NetworkWithExplorer)]
+    MoonbaseAlpha = 1287,
 
     #[subenum(HypersyncNetwork, NetworkWithExplorer, GraphNetwork)]
     Moonbeam = 1284,
@@ -291,9 +290,12 @@ pub enum Network {
     ShimmerEvm = 148,
 
     #[subenum(HypersyncNetwork)]
+    Sophon = 50104,
+
+    #[subenum(HypersyncNetwork)]
     SophonTestnet = 531050104,
 
-    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
+    #[subenum(NetworkWithExplorer)]
     Taiko = 167000,
 
     #[subenum(HypersyncNetwork, NetworkWithExplorer)]
@@ -413,7 +415,7 @@ impl Network {
             | Network::Moonbeam
             | Network::Moonriver
             | Network::Mumbai
-            | Network::Mbase
+            | Network::MoonbaseAlpha
             | Network::NeonEvm
             | Network::PoaCore
             | Network::PoaSokol
@@ -426,6 +428,7 @@ impl Network {
             | Network::ScrollSepolia
             | Network::Sepolia
             | Network::ShimmerEvm
+            | Network::Sophon
             | Network::SophonTestnet
             | Network::XLayer
             | Network::XLayerTestnet
@@ -540,7 +543,7 @@ mod test {
         "fuse",
         "moonbeam",
         "moonriver",
-        "mbase",
+        "moonbase-alpha",
         "arbitrum-one",
         "arbitrum-goerli",
         "arbitrum-sepolia",
