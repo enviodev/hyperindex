@@ -11,7 +11,7 @@ mod hbs_templating;
 mod persisted_state;
 mod project_paths;
 mod rescript_types;
-mod scripts;
+pub mod scripts;
 mod service_health;
 mod template_dirs;
 mod utils;

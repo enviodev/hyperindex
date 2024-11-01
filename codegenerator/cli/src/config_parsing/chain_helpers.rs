@@ -216,7 +216,11 @@ pub enum Network {
     #[subenum(NetworkWithExplorer)]
     ModeSepolia = 919,
 
-    #[subenum(HypersyncNetwork, GraphNetwork, NetworkWithExplorer)]
+    #[subenum(
+        HypersyncNetwork,
+        NetworkWithExplorer,
+        GraphNetwork(serde(rename = "mbase"))
+    )]
     MoonbaseAlpha = 1287,
 
     #[subenum(HypersyncNetwork, NetworkWithExplorer, GraphNetwork)]
@@ -412,10 +416,10 @@ impl Network {
             | Network::Mode
             | Network::ModeSepolia
             | Network::Metis
+            | Network::MoonbaseAlpha
             | Network::Moonbeam
             | Network::Moonriver
             | Network::Mumbai
-            | Network::MoonbaseAlpha
             | Network::NeonEvm
             | Network::PoaCore
             | Network::PoaSokol
@@ -488,19 +492,6 @@ mod test {
         );
     }
 
-    #[tokio::test]
-    async fn all_hypersync_networks_are_included() {
-        let diff = crate::scripts::print_missing_networks::get_diff()
-            .await
-            .unwrap();
-
-        if diff.missing_chains.is_empty() || diff.extra_chains.is_empty() {
-            return;
-        }
-        crate::scripts::print_missing_networks::print_diff_message(diff);
-        assert!(false);
-    }
-
     #[test]
     fn network_deserialize() {
         let names = r#"["ethereum-mainnet", "polygon"]"#;
@@ -543,7 +534,7 @@ mod test {
         "fuse",
         "moonbeam",
         "moonriver",
-        "moonbase-alpha",
+        "mbase",
         "arbitrum-one",
         "arbitrum-goerli",
         "arbitrum-sepolia",
