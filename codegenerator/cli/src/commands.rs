@@ -133,21 +133,6 @@ pub mod codegen {
         Ok(exit3)
     }
 
-    pub async fn npx_codegen(
-        envio_version: String,
-        project_paths: &ParsedProjectPaths,
-    ) -> anyhow::Result<()> {
-        let package = format!("envio@{}", envio_version);
-        let args = vec!["--yes", package.as_str(), "codegen"];
-        execute_command("npx", args, &project_paths.project_root)
-            .await
-            .context(format!(
-                "Failed to run codegen for the envio version {}",
-                envio_version
-            ))?;
-        Ok(())
-    }
-
     pub async fn run_codegen(
         config: &SystemConfig,
         project_paths: &ParsedProjectPaths,
