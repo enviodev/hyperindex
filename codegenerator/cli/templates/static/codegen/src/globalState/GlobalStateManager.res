@@ -35,11 +35,14 @@ module MakeManager = (S: State) => {
       NodeJsLocal.process->NodeJsLocal.exitWithCode(Failure)
     }
   }
-  and dispatchTask = (self, task: S.task) => Js.Global.setTimeout(() => {
+  and dispatchTask = (self, task: S.task) => {
+    let stateId = self.state->S.getId
+    Js.Global.setTimeout(() => {
       S.taskReducer(self.state, task, ~dispatchAction=action =>
-        dispatchAction(~stateId=self.state->S.getId, self, action)
+        dispatchAction(~stateId, self, action)
       )->ignore
     }, 0)->ignore
+  }
 
   let getState = self => self.state
   let setState = (self: t, state: S.t) => self.state = state
