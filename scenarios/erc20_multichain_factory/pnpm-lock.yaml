@@ -15,8 +15,8 @@ importers:
         specifier: 2.1.0
         version: 2.1.0
       envio:
-        specifier: ../../codegenerator/cli/npm/envio
-        version: link:../../codegenerator/cli/npm/envio
+        specifier: file:../../codegenerator/cli/npm/envio
+        version: file:../../codegenerator/cli/npm/envio
       ethers:
         specifier: 6.8.0
         version: 6.8.0
@@ -36,12 +36,6 @@ importers:
       generated:
         specifier: ./generated
         version: link:generated
-
-  ../../codegenerator/cli/npm/envio:
-    dependencies:
-      rescript:
-        specifier: 11.1.3
-        version: 11.1.3
 
   ../helpers:
     dependencies:
@@ -487,6 +481,10 @@ packages:
 
   end-of-stream@1.4.4:
     resolution: {integrity: sha512-+uw1inIHVPQoaVuHzRyXd21icM+cnt4CzD5rW+NC1wjOUSTOs+Te7FOv7AhN7vS9x/oIyhLP5PR1H+phQAHu5Q==}
+
+  envio@file:../../codegenerator/cli/npm/envio:
+    resolution: {directory: ../../codegenerator/cli/npm/envio, type: directory}
+    hasBin: true
 
   es-define-property@1.0.0:
     resolution: {integrity: sha512-jxayLKShrEqqzJ0eumQbVhTYQM27CfT1T35+gCgDFoL82JLsXqTJ76zv6A0YLOgEnLUMvLzsDsGIrl8NFpT2gQ==}
@@ -1681,6 +1679,10 @@ snapshots:
   end-of-stream@1.4.4:
     dependencies:
       once: 1.4.0
+
+  envio@file:../../codegenerator/cli/npm/envio:
+    dependencies:
+      rescript: 11.1.3
 
   es-define-property@1.0.0:
     dependencies:

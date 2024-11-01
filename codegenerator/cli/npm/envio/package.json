@@ -1,6 +1,6 @@
 {
   "name": "envio",
-  "version": "local",
+  "version": "0.0.1-dev",
   "private": true,
   "description": "A latency and sync speed optimized, developer friendly blockchain data indexer.",
   "bin": "./local-bin.mjs",

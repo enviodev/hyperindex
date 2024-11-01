@@ -1,3 +1,2 @@
 packages:
   - ./*
-  - ../../codegenerator/cli/npm/envio

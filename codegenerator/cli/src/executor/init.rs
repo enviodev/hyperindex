@@ -236,11 +236,10 @@ pub async fn run_init_args(init_args: InitArgs, project_paths: &ProjectPaths) ->
         } else {
             // Else install the local version for development and testing
             match env::current_exe() {
-                // This should be something like "~/envio/hyperindex/codegenerator/target/debug/envio" or ".../target/debug/integration_tests"
-                Ok(exe_path) => exe_path
-                    .join("../../../cli/npm/envio")
-                    .to_string_lossy()
-                    .to_string(),
+                // This should be something like "file:~/envio/hyperindex/codegenerator/target/debug/envio" or "file:.../target/debug/integration_tests"
+                Ok(exe_path) => {
+                    format!("file:{}../../../cli/npm/envio", exe_path.to_string_lossy())
+                }
                 Err(e) => return Err(anyhow!("failed to get current exe path: {e}")),
             }
         }
