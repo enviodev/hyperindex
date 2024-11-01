@@ -543,7 +543,7 @@ mod test {
         "fuse",
         "moonbeam",
         "moonriver",
-        "mbase",
+        "moonbase-alpha",
         "arbitrum-one",
         "arbitrum-goerli",
         "arbitrum-sepolia",
