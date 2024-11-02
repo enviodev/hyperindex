@@ -1,20 +1,17 @@
-// In postgres floats are stored as numeric, which get returned to us as strtings. So the decoder / encoder need to do that for us.
 module Float = {
   @genType
   type t = float
 
-  let schema =
-    S.string
-    ->S.setName("GqlDbCustomTypes.Float")
-    ->S.transform(s => {
-      parser: string => {
-        switch string->Belt.Float.fromString {
-        | Some(db) => db
-        | None => s.fail("The string is not valid GqlDbCustomTypes.Float")
-        }
-      },
-      serializer: float => float->Js.Float.toString,
-    })
+  external fromStringUnsafe: string => float = "Number"
+
+  let schema = S.union([
+    S.float,
+    //This is needed to parse entity history json fields
+    S.string->S.transform(_s => {
+      parser: string => string->fromStringUnsafe,
+      serializer: Utils.magic,
+    }),
+  ])->S.setName("GqlDbCustomTypes.Float")
 }
 
 // Schema allows parsing strings or numbers to ints
@@ -28,6 +25,7 @@ module Int = {
 
   let schema = S.union([
     S.int,
+    //This is needed to parse entity history json fields
     S.string->S.transform(_s => {
       parser: string => string->fromStringUnsafe,
       serializer: Utils.magic,
