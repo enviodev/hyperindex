@@ -41,10 +41,25 @@ describe("SerDe Test", () => {
       // arrayOfTimestamps: [],
     }
 
+    //Fails if serialziation does not work
     let set = DbFunctionsEntities.batchSet(~entityMod=module(Entities.EntityWithAllTypes))
-
+    //Fails if parsing does not work
+    let read = DbFunctionsEntities.batchRead(~entityMod=module(Entities.EntityWithAllTypes))
     //set the entity
-    await DbFunctions.sql->set([entity])
+    switch await DbFunctions.sql->set([entity]) {
+    | exception exn =>
+      Js.log(exn)
+      Assert.fail("Failed to set entity in table")
+    | _ => ()
+    }
+
+    switch await DbFunctions.sql->read([entity.id]) {
+    | exception exn =>
+      Js.log(exn)
+      Assert.fail("Failed to read entity from table")
+    | [_entity] => ()
+    | _ => Assert.fail("Should have returned a row on batch read fn")
+    }
 
     //The copy function will do it's custom postgres serialization of the entity
     await DbFunctions.sql->DbFunctions.EntityHistory.copyAllEntitiesToEntityHistory
@@ -54,12 +69,16 @@ describe("SerDe Test", () => {
     switch res {
     | [row] =>
       let json = row["params"]
-      let parsed = json->S.parseOrRaiseWith(Entities.EntityWithAllTypes.schema)
-      Assert.deepEqual(
-        parsed,
-        entity,
-        ~message="Postgres json serialization should be compatable with our schema",
-      )
+      let parsed = json->S.parseWith(Entities.EntityWithAllTypes.schema)
+      switch parsed {
+      | Ok(parsed) =>
+        Assert.deepEqual(
+          parsed,
+          entity,
+          ~message="Postgres json serialization should be compatable with our schema",
+        )
+      | Error(e) => Assert.fail("Failed to parse entity history: " ++ e->S.Error.reason)
+      }
     | _ => Assert.fail("Should have returned a row")
     }
   })

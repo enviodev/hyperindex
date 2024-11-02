@@ -2,7 +2,16 @@ module Float = {
   @genType
   type t = float
 
-  let schema = S.float
+  external fromStringUnsafe: string => float = "Number"
+
+  let schema = S.union([
+    S.float,
+    //This is needed to parse entity history json fields
+    S.string->S.transform(_s => {
+      parser: string => string->fromStringUnsafe,
+      serializer: Utils.magic,
+    }),
+  ])->S.setName("GqlDbCustomTypes.Float")
 }
 
 // Schema allows parsing strings or numbers to ints
@@ -16,6 +25,7 @@ module Int = {
 
   let schema = S.union([
     S.int,
+    //This is needed to parse entity history json fields
     S.string->S.transform(_s => {
       parser: string => string->fromStringUnsafe,
       serializer: Utils.magic,
