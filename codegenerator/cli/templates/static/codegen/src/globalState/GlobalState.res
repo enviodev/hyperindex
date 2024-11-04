@@ -4,8 +4,8 @@ type chain = ChainMap.Chain.t
 type rollbackState = NoRollback | RollingBack(chain) | RollbackInMemStore(InMemoryStore.t)
 
 module WriteDebouncers = {
-  type t = {chainMetaData: Debouncer.t}
-  let make = (): t => {
+  type t = {chainMetaData: Debouncer.t, pruneStaleData: ChainMap.t<Debouncer.t>}
+  let make = (~config: Config.t): t => {
     let chainMetaData = {
       let intervalMillis = Env.DebounceWrites.chainMetadataIntervalMillis
       let logger = Logging.createChild(
@@ -16,7 +16,18 @@ module WriteDebouncers = {
       )
       Debouncer.make(~intervalMillis, ~logger)
     }
-    {chainMetaData: chainMetaData}
+    let pruneStaleData = config.chainMap->ChainMap.map(cfg => {
+      let intervalMillis = Env.DebounceWrites.pruneStaleDataIntervalMillis
+      let logger = Logging.createChild(
+        ~params={
+          "context": "Debouncer for pruning stale endblock and entity history data",
+          "intervalMillis": intervalMillis,
+          "chain": cfg.chain,
+        },
+      )
+      Debouncer.make(~intervalMillis, ~logger)
+    })
+    {chainMetaData, pruneStaleData}
   }
 }
 type t = {
@@ -45,7 +56,7 @@ let make = (~config, ~chainManager, ~loadLayer) => {
   },
   indexerStartTime: Js.Date.make(),
   rollbackState: NoRollback,
-  writeDebouncers: WriteDebouncers.make(),
+  writeDebouncers: WriteDebouncers.make(~config),
   loadLayer,
   id: 0,
 }
@@ -862,32 +873,10 @@ let injectedTaskReducer = (
       nextEndOfBlockRangeScannedData,
     }) =>
     let timeRef = Hrtime.makeTimer()
-    await DbFunctions.sql->Postgres.beginSql(sql => {
-      [
-        DbFunctions.EndOfBlockRangeScannedData.setEndOfBlockRangeScannedData(
-          sql,
-          nextEndOfBlockRangeScannedData,
-        ),
-        DbFunctions.EndOfBlockRangeScannedData.deleteStaleEndOfBlockRangeScannedDataForChain(
-          sql,
-          ~chainId=chain->ChainMap.Chain.toChainId,
-          ~blockTimestampThreshold,
-          ~blockNumberThreshold,
-        ),
-      ]->Array.concat(
-        //only prune history if we are not saving full history
-        state.config->Config.shouldPruneHistory
-          ? [
-              DbFunctions.EntityHistory.deleteAllEntityHistoryOnChainBeforeThreshold(
-                sql,
-                ~chainId=chain->ChainMap.Chain.toChainId,
-                ~blockNumberThreshold,
-                ~blockTimestampThreshold,
-              ),
-            ]
-          : [],
-      )
-    })
+    await DbFunctions.sql->DbFunctions.EndOfBlockRangeScannedData.setEndOfBlockRangeScannedData(
+      nextEndOfBlockRangeScannedData,
+    )
+
     if Env.saveBenchmarkData {
       let elapsedTimeMillis = Hrtime.timeSince(timeRef)->Hrtime.toMillis->Hrtime.intFromMillis
       Benchmark.addSummaryData(
@@ -896,6 +885,38 @@ let injectedTaskReducer = (
         ~value=elapsedTimeMillis->Belt.Int.toFloat,
       )
     }
+
+    //These prune functions can be scheduled and debounced if a more recent prune function gets called
+    //before the current one is executed
+    let runPruneFunctions = async () => {
+      let timeRef = Hrtime.makeTimer()
+      await DbFunctions.sql->DbFunctions.EndOfBlockRangeScannedData.deleteStaleEndOfBlockRangeScannedDataForChain(
+        ~chainId=chain->ChainMap.Chain.toChainId,
+        ~blockTimestampThreshold,
+        ~blockNumberThreshold,
+      )
+
+      if state.config->Config.shouldPruneHistory {
+        await DbFunctions.sql->DbFunctions.EntityHistory.deleteAllEntityHistoryOnChainBeforeThreshold(
+          ~chainId=chain->ChainMap.Chain.toChainId,
+          ~blockNumberThreshold,
+          ~blockTimestampThreshold,
+        )
+      }
+
+      if Env.saveBenchmarkData {
+        let elapsedTimeMillis = Hrtime.timeSince(timeRef)->Hrtime.toMillis->Hrtime.intFromMillis
+        Benchmark.addSummaryData(
+          ~group="Other",
+          ~label=`Chain ${chain->ChainMap.Chain.toString} PruneStaleData (ms)`,
+          ~value=elapsedTimeMillis->Belt.Int.toFloat,
+        )
+      }
+    }
+
+    let debouncer = state.writeDebouncers.pruneStaleData->ChainMap.get(chain)
+    debouncer->Debouncer.schedule(runPruneFunctions)
+
   | UpdateChainMetaDataAndCheckForExit(shouldExit) =>
     let {chainManager, writeDebouncers} = state
     switch shouldExit {
