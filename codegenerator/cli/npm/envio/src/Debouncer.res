@@ -1,6 +1,7 @@
 type t = {
   mutable lastRunTimeMillis: float,
   mutable isRunning: bool,
+  mutable isAwaitingInterval: bool,
   mutable scheduled: option<unit => promise<unit>>,
   intervalMillis: float,
   logger: Pino.t,
@@ -9,6 +10,7 @@ type t = {
 let make = (~intervalMillis: int, ~logger) => {
   lastRunTimeMillis: 0.,
   isRunning: false,
+  isAwaitingInterval: false,
   scheduled: None,
   intervalMillis: intervalMillis->Belt.Int.toFloat,
   logger,
@@ -20,20 +22,38 @@ let t = (logger, exn, message) =>
 %%private(
   let rec startInternal = async (debouncer: t) => {
     switch debouncer {
-    | {scheduled: Some(fn), isRunning: false} =>
-      debouncer.isRunning = true
-      debouncer.scheduled = None
-      debouncer.lastRunTimeMillis = Js.Date.now()
+    | {scheduled: Some(fn), isRunning: false, isAwaitingInterval: false} =>
+      let timeSinceLastRun = Js.Date.now() -. debouncer.lastRunTimeMillis
 
-      switch await fn() {
-      | exception exn =>
-        debouncer.logger->Pino.errorExn(
-          Pino.createPinoMessageWithError("Scheduled action failed in debouncer", exn),
-        )
-      | _ => ()
+      //Only execute if we are passed the interval
+      if timeSinceLastRun >= debouncer.intervalMillis {
+        debouncer.isRunning = true
+        debouncer.scheduled = None
+        debouncer.lastRunTimeMillis = Js.Date.now()
+
+        switch await fn() {
+        | exception exn =>
+          debouncer.logger->Pino.errorExn(
+            Pino.createPinoMessageWithError("Scheduled action failed in debouncer", exn),
+          )
+        | _ => ()
+        }
+        debouncer.isRunning = false
+
+        await debouncer->startInternal
+      } else {
+        //Store isAwaitingInterval in state so that timers don't continuously get created
+        debouncer.isAwaitingInterval = true
+        let timeOutInterval = debouncer.intervalMillis -. timeSinceLastRun
+        await Js.Promise2.make((~resolve, ~reject as _) => {
+          let _ = Js.Global.setTimeout(() => {
+            debouncer.isAwaitingInterval = false
+            resolve()
+          }, Belt.Int.fromFloat(timeOutInterval))
+        })
+
+        await debouncer->startInternal
       }
-      debouncer.isRunning = false
-      await startInternal(debouncer)
     | _ => ()
     }
   }
@@ -41,14 +61,5 @@ let t = (logger, exn, message) =>
 
 let schedule = (debouncer: t, fn) => {
   debouncer.scheduled = Some(fn)
-  if !debouncer.isRunning {
-    let timeSinceLastRun = Js.Date.now() -. debouncer.lastRunTimeMillis
-    if timeSinceLastRun >= debouncer.intervalMillis {
-      debouncer->startInternal->ignore
-    } else {
-      let _ = Js.Global.setTimeout(() => {
-        debouncer->startInternal->ignore
-      }, Belt.Int.fromFloat(debouncer.intervalMillis -. timeSinceLastRun))
-    }
-  }
+  debouncer->startInternal->ignore
 }
