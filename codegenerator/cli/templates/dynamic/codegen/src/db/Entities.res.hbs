@@ -108,14 +108,20 @@ module EntityHistory = {
   type t<'entity> = {
     table: table,
     createInsertFnQuery: string,
-    // insertFn: historyRow<'entity> => promise<unit>,
+    schema: S.t<historyRow<'entity>>,
+    insertFn: (Postgres.sql, Js.Json.t) => promise<unit>,
+  }
+
+  let insertRow = (self: t<'entity>, ~sql, ~historyRow: historyRow<'entity>) => {
+    let row = historyRow->S.serializeOrRaiseWith(self.schema)
+    self.insertFn(sql, row)
   }
 
   type entityInternal
 
   external castInternal: t<'entity> => t<entityInternal> = "%identity"
 
-  let fromTable = (table: table): t<'entity> => {
+  let fromTable = (table: table, ~schema: S.t<'entity>): t<'entity> => {
     let entity_history_block_timestamp = "entity_history_block_timestamp"
     let entity_history_chain_id = "entity_history_chain_id"
     let entity_history_block_number = "entity_history_block_number"
@@ -177,28 +183,29 @@ module EntityHistory = {
       ~fields=Belt.Array.concatMany([currentHistoryFields, previousHistoryFields, dataFields]),
     )
 
-    let createInsertFnQuery = {
-      let insertFnName = `"insert_${table.tableName}"`
-      let historRowArg = "history_row"
-      let historyTablePath = `"public"."${historyTableName}"`
-      let originTablePath = `"public"."${originTableName}"`
+    let insertFnName = `"insert_${table.tableName}"`
+    let historRowArg = "history_row"
+    let historyTablePath = `"public"."${historyTableName}"`
+    let originTablePath = `"public"."${originTableName}"`
 
-      let previousHistoryFieldsAreNullStr =
-        previousChangeFieldNames
-        ->Belt.Array.map(fieldName => `${historRowArg}.${fieldName} IS NULL`)
-        ->Js.Array2.joinWith(" OR ")
+    let previousHistoryFieldsAreNullStr =
+      previousChangeFieldNames
+      ->Belt.Array.map(fieldName => `${historRowArg}.${fieldName} IS NULL`)
+      ->Js.Array2.joinWith(" OR ")
 
-      let currentChangeFieldNamesCommaSeparated = currentChangeFieldNames->Js.Array2.joinWith(", ")
+    let currentChangeFieldNamesCommaSeparated = currentChangeFieldNames->Js.Array2.joinWith(", ")
 
-      let dataFieldNamesDoubleQuoted = dataFieldNames->Belt.Array.map(fieldName => `"${fieldName}"`)
-      let dataFieldNamesCommaSeparated = dataFieldNamesDoubleQuoted->Js.Array2.joinWith(", ")
+    let dataFieldNamesDoubleQuoted = dataFieldNames->Belt.Array.map(fieldName => `"${fieldName}"`)
+    let dataFieldNamesCommaSeparated = dataFieldNamesDoubleQuoted->Js.Array2.joinWith(", ")
 
-      let allFieldNames = Belt.Array.concatMany([
+    let allFieldNamesDoubleQuoted =
+      Belt.Array.concatMany([
         currentChangeFieldNames,
         previousChangeFieldNames,
-        dataFieldNamesDoubleQuoted,
-      ])
+        dataFieldNames,
+      ])->Belt.Array.map(fieldName => `"${fieldName}"`)
 
+    let createInsertFnQuery = {
       `CREATE OR REPLACE FUNCTION ${insertFnName}(${historRowArg} ${historyTablePath})
       RETURNS void AS $$
       DECLARE
@@ -245,8 +252,8 @@ module EntityHistory = {
           END IF;
         END IF;
 
-        INSERT INTO ${historyTablePath} (${allFieldNames->Js.Array2.joinWith(", ")})
-        VALUES (${allFieldNames
+        INSERT INTO ${historyTablePath} (${allFieldNamesDoubleQuoted->Js.Array2.joinWith(", ")})
+        VALUES (${allFieldNamesDoubleQuoted
         ->Belt.Array.map(fieldName => `${historRowArg}.${fieldName}`)
         ->Js.Array2.joinWith(", ")});
       END;
@@ -254,7 +261,17 @@ module EntityHistory = {
       `
     }
 
-    {table, createInsertFnQuery}
+    let insertFnString = `(sql, rowArgs) =>
+      sql\`select ${insertFnName}(ROW(${allFieldNamesDoubleQuoted
+      ->Belt.Array.map(fieldNameDoubleQuoted => `\${rowArgs[${fieldNameDoubleQuoted}]\}`)
+      ->Js.Array2.joinWith(", ")}));\``
+
+    let insertFn: (Postgres.sql, Js.Json.t) => promise<unit> =
+      insertFnString->Table.PostgresInterop.eval
+
+    let schema = makeHistoryRowSchema(schema)
+
+    {table, createInsertFnQuery, schema, insertFn}
   }
 }
 
