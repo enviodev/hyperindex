@@ -1,5 +1,8 @@
 open RescriptMocha
 
+//unsafe polymorphic toString binding for any type
+@send external toStringUnsafe: 'a => string = "toString"
+
 type testEntity = {
   id: string,
   fieldA: int,
@@ -25,7 +28,8 @@ let mockEntityTable = Table.mkTable(
     Table.mkField("fieldB", Text, ~isNullable=true),
   ],
 )
-let mockEntityHistory = Entities.EntityHistory.fromTable(mockEntityTable)
+
+let mockEntityHistory = mockEntityTable->Entities.EntityHistory.fromTable(~schema=testEntitySchema)
 
 let batchSetMockEntity = Table.PostgresInterop.makeBatchSetFn(
   ~table=mockEntityTable,
@@ -111,7 +115,7 @@ describe("Entity history serde", () => {
 })
 
 describe("Entity History Codegen", () => {
-  it("Creates an insert function", () => {
+  it("Creates a postgres insert function", () => {
     let expected = `CREATE OR REPLACE FUNCTION "insert_TestEntity_history"(history_row "public"."TestEntity_history")
       RETURNS void AS $$
       DECLARE
@@ -144,13 +148,22 @@ describe("Entity History Codegen", () => {
           END IF;
         END IF;
 
-        INSERT INTO "public"."TestEntity_history" (entity_history_block_timestamp, entity_history_chain_id, entity_history_block_number, entity_history_log_index, previous_entity_history_block_timestamp, previous_entity_history_chain_id, previous_entity_history_block_number, previous_entity_history_log_index, "id", "fieldA", "fieldB")
-        VALUES (history_row.entity_history_block_timestamp, history_row.entity_history_chain_id, history_row.entity_history_block_number, history_row.entity_history_log_index, history_row.previous_entity_history_block_timestamp, history_row.previous_entity_history_chain_id, history_row.previous_entity_history_block_number, history_row.previous_entity_history_log_index, history_row."id", history_row."fieldA", history_row."fieldB");
+        INSERT INTO "public"."TestEntity_history" ("entity_history_block_timestamp", "entity_history_chain_id", "entity_history_block_number", "entity_history_log_index", "previous_entity_history_block_timestamp", "previous_entity_history_chain_id", "previous_entity_history_block_number", "previous_entity_history_log_index", "id", "fieldA", "fieldB")
+        VALUES (history_row."entity_history_block_timestamp", history_row."entity_history_chain_id", history_row."entity_history_block_number", history_row."entity_history_log_index", history_row."previous_entity_history_block_timestamp", history_row."previous_entity_history_chain_id", history_row."previous_entity_history_block_number", history_row."previous_entity_history_log_index", history_row."id", history_row."fieldA", history_row."fieldB");
       END;
       $$ LANGUAGE plpgsql;
       `
 
     Assert.equal(expected, mockEntityHistory.createInsertFnQuery)
+  })
+
+  it("Creates a js insert function", () => {
+    let insertFnString = mockEntityHistory.insertFn->toStringUnsafe
+
+    let expected = `(sql, rowArgs) =>
+      sql\`select "insert_TestEntity_history"(ROW(\${rowArgs["entity_history_block_timestamp"]}, \${rowArgs["entity_history_chain_id"]}, \${rowArgs["entity_history_block_number"]}, \${rowArgs["entity_history_log_index"]}, \${rowArgs["previous_entity_history_block_timestamp"]}, \${rowArgs["previous_entity_history_chain_id"]}, \${rowArgs["previous_entity_history_block_number"]}, \${rowArgs["previous_entity_history_log_index"]}, \${rowArgs["id"]}, \${rowArgs["fieldA"]}, \${rowArgs["fieldB"]}));\``
+
+    Assert.equal(expected, insertFnString)
   })
 
   Async.it("Creating tables and functions works", async () => {
@@ -170,22 +183,28 @@ describe("Entity History Codegen", () => {
     let blockTimestamp = blockNumber * 15
     let logIndex = 1
 
-    let entityHistoryItem = {
-      "entity_id": "1",
-      "fieldA": 2,
-      "fieldB": Some("test2"),
-      "entity_history_chain_id": chainId,
-      "entity_history_block_number": blockNumber,
-      "entity_history_block_timestamp": blockTimestamp,
-      "entity_history_log_index": logIndex,
+    let entityHistoryItem: Entities.EntityHistory.historyRow<testEntity> = {
+      current: {
+        chain_id: chainId,
+        block_timestamp: blockTimestamp,
+        block_number: blockNumber,
+        log_index: logIndex,
+      },
+      previous: None,
+      entityData: {
+        id: "1",
+        fieldA: 2,
+        fieldB: Some("test2"),
+      },
     }
 
-    //TODO: this should be created in the entity history module
-    let query = `(sql, args) => sql\`select "insert_TestEntity_history"(ROW(\${args.entity_history_block_timestamp}, \${args.entity_history_chain_id}, \${args.entity_history_block_number}, \${args.entity_history_log_index}, \${args.previous_entity_history_block_timestamp}, \${args.previous_entity_history_chain_id}, \${args.previous_entity_history_block_number}, \${args.previous_entity_history_log_index}, \${args.entity_id}, \${args.fieldA}, \${args.fieldB}));\``
+    let _callRes =
+      await mockEntityHistory->Entities.EntityHistory.insertRow(
+        ~sql=DbFunctions.sql,
+        ~historyRow=entityHistoryItem,
+      )
 
-    let call: (Postgres.sql, 'a) => promise<unit> = Table.PostgresInterop.eval(query)
-
-    let _callRes = await DbFunctions.sql->call(entityHistoryItem)
+    // let _callRes = await DbFunctions.sql->call(entityHistoryItem)
 
     let expectedResult = [
       {
