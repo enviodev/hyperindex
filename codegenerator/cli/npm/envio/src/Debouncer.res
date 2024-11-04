@@ -48,7 +48,7 @@ let schedule = (debouncer: t, fn) => {
     } else {
       let _ = Js.Global.setTimeout(() => {
         debouncer->startInternal->ignore
-      }, Belt.Int.fromFloat(debouncer.intervalMillis -. debouncer.lastRunTimeMillis))
+      }, Belt.Int.fromFloat(debouncer.intervalMillis -. timeSinceLastRun))
     }
   }
 }
