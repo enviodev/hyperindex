@@ -120,44 +120,11 @@ module Data = {
   }
 }
 
-module LazyWriter = {
-  let isWriting = ref(false)
-  let scheduledWriteFn: ref<option<unit => promise<unit>>> = ref(None)
-  let lastRunTimeMillis = ref(0.)
-
-  let rec start = async () => {
-    switch (scheduledWriteFn.contents, isWriting.contents) {
-    | (Some(fn), false) =>
-      isWriting := true
-      scheduledWriteFn := None
-      lastRunTimeMillis := Js.Date.now()
-
-      switch await fn() {
-      | exception exn => Logging.errorWithExn(exn, "Failed to write benchmark cache file")
-      | _ => ()
-      }
-      isWriting := false
-      await start()
-    | _ => ()
-    }
-  }
-
-  let schedule = (~intervalMillis=500, fn) => {
-    scheduledWriteFn := Some(fn)
-    if !isWriting.contents {
-      let timeSinceLastRun = Js.Date.now() -. lastRunTimeMillis.contents
-      if timeSinceLastRun >= intervalMillis->Belt.Int.toFloat {
-        start()->ignore
-      } else {
-        let _ = Js.Global.setTimeout(() => {
-          start()->ignore
-        }, intervalMillis - timeSinceLastRun->Belt.Float.toInt)
-      }
-    }
-  }
-}
-
 let data = Data.make()
+let debouncer = Debouncer.make(
+  ~intervalMillis=500,
+  ~logger=Logging.createChild(~params={"context": "Benchmarking framework"}),
+)
 let cacheFileName = "BenchmarkCache.json"
 let cacheFilePath = NodeJsLocal.Path.join(NodeJsLocal.Path.__dirname, cacheFileName)
 
@@ -166,7 +133,7 @@ let saveToCacheFile = data => {
     let json = data->S.serializeToJsonStringOrRaiseWith(Data.schema)
     NodeJsLocal.Fs.Promises.writeFile(~filepath=cacheFilePath, ~content=json)
   }
-  LazyWriter.schedule(write)
+  debouncer->Debouncer.schedule(write)
 }
 
 let readFromCacheFile = async () => {
