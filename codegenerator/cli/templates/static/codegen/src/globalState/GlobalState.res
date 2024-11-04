@@ -3,6 +3,22 @@ open Belt
 type chain = ChainMap.Chain.t
 type rollbackState = NoRollback | RollingBack(chain) | RollbackInMemStore(InMemoryStore.t)
 
+module WriteDebouncers = {
+  type t = {chainMetaData: Debouncer.t}
+  let make = (): t => {
+    let chainMetaData = {
+      let intervalMillis = Env.DebounceWrites.chainMetadataIntervalMillis
+      let logger = Logging.createChild(
+        ~params={
+          "context": "Debouncer for chain metadata writes",
+          "intervalMillis": intervalMillis,
+        },
+      )
+      Debouncer.make(~intervalMillis, ~logger)
+    }
+    {chainMetaData: chainMetaData}
+  }
+}
 type t = {
   config: Config.t,
   chainManager: ChainManager.t,
@@ -11,7 +27,7 @@ type t = {
   maxBatchSize: int,
   maxPerChainQueueSize: int,
   indexerStartTime: Js.Date.t,
-  asyncTaskQueue: AsyncTaskQueue.t,
+  writeDebouncers: WriteDebouncers.t,
   loadLayer: LoadLayer.t,
   //Initialized as 0, increments, when rollbacks occur to invalidate
   //responses based on the wrong stateId
@@ -29,7 +45,7 @@ let make = (~config, ~chainManager, ~loadLayer) => {
   },
   indexerStartTime: Js.Date.make(),
   rollbackState: NoRollback,
-  asyncTaskQueue: AsyncTaskQueue.make(),
+  writeDebouncers: WriteDebouncers.make(),
   loadLayer,
   id: 0,
 }
@@ -94,7 +110,7 @@ let updateChainFetcherCurrentBlockHeight = (chainFetcher: ChainFetcher.t, ~curre
   }
 }
 
-let updateChainMetadataTable = async (cm: ChainManager.t, ~asyncTaskQueue: AsyncTaskQueue.t) => {
+let updateChainMetadataTable = async (cm: ChainManager.t, ~debouncer: Debouncer.t) => {
   let chainMetadataArray: array<DbFunctions.ChainMetadata.chainMetadata> =
     cm.chainFetchers
     ->ChainMap.values
@@ -121,7 +137,7 @@ let updateChainMetadataTable = async (cm: ChainManager.t, ~asyncTaskQueue: Async
       chainMetadata
     })
   //Don't await this set, it can happen in its own time
-  await asyncTaskQueue->AsyncTaskQueue.add(() =>
+  debouncer->Debouncer.schedule(() =>
     DbFunctions.ChainMetadata.batchSetChainMetadataRow(~chainMetadataArray)
   )
 }
@@ -881,13 +897,14 @@ let injectedTaskReducer = (
       )
     }
   | UpdateChainMetaDataAndCheckForExit(shouldExit) =>
-    let {chainManager, asyncTaskQueue} = state
+    let {chainManager, writeDebouncers} = state
     switch shouldExit {
     | ExitWithSuccess =>
-      updateChainMetadataTable(chainManager, ~asyncTaskQueue)
+      updateChainMetadataTable(chainManager, ~debouncer=writeDebouncers.chainMetaData)
       ->Promise.thenResolve(_ => dispatchAction(SuccessExit))
       ->ignore
-    | NoExit => updateChainMetadataTable(chainManager, ~asyncTaskQueue)->ignore
+    | NoExit =>
+      updateChainMetadataTable(chainManager, ~debouncer=writeDebouncers.chainMetaData)->ignore
     }
   | NextQuery(chainCheck) =>
     let fetchForChain = checkAndFetchForChain(

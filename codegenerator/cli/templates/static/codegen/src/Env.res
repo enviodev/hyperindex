@@ -103,5 +103,10 @@ module Configurable = {
   }
 }
 
+module DebounceWrites = {
+  let chainMetadataIntervalMillis =
+    envSafe->EnvSafe.get("ENVIO_DEBOUNCE_CHAIN_METADATA_INTERVAL_MILLIS", S.int, ~devFallback=500)
+}
+
 // You need to close the envSafe after you're done with it so that it immediately tells you about your  misconfigured environment on startup.
 envSafe->EnvSafe.close
