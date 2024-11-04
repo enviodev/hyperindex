@@ -3,17 +3,19 @@ type t = {
   mutable isRunning: bool,
   mutable scheduled: option<unit => promise<unit>>,
   delayMillis: float,
-  //TODO: move Logger into envio lib and store logger in Debouncer instead
-  logExn: (exn, string) => unit,
+  logger: Pino.t,
 }
 
-let make = (~delayMillis: int, ~logExn) => {
+let make = (~delayMillis: int, ~logger) => {
   lastRunTimeMillis: 0.,
   isRunning: false,
   scheduled: None,
   delayMillis: delayMillis->Belt.Int.toFloat,
-  logExn,
+  logger,
 }
+
+let t = (logger, exn, message) =>
+  logger->Pino.errorExn(message->Pino.createPinoMessageWithError(exn))
 
 %%private(
   let rec startInternal = async (debouncer: t) => {
@@ -25,9 +27,9 @@ let make = (~delayMillis: int, ~logExn) => {
 
       switch await fn() {
       | exception exn =>
-        //TODO: logging should happen like this after it's moved
-        // debouncer.logger->Logging.childErrorWithExn(exn, "Scheduled action failed in debouncer")
-        debouncer.logExn(exn, "Scheduled action failed in debouncer")
+        debouncer.logger->Pino.errorExn(
+          Pino.createPinoMessageWithError("Scheduled action failed in debouncer", exn),
+        )
       | _ => ()
       }
       debouncer.isRunning = false
