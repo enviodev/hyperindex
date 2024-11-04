@@ -2,7 +2,7 @@ open RescriptMocha
 
 describe_only("Debouncer", () => {
   Async.it("Schedules and debounces functions as expected", async () => {
-    let debouncer = Debouncer.make(~delayMillis=10, ~logger=Logging.logger)
+    let debouncer = Debouncer.make(~intervalMillis=10, ~logger=Logging.logger)
     let counter = ref(0)
 
     debouncer->Debouncer.schedule(async () => counter := 1)

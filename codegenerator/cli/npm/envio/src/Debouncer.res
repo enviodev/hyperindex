@@ -2,15 +2,15 @@ type t = {
   mutable lastRunTimeMillis: float,
   mutable isRunning: bool,
   mutable scheduled: option<unit => promise<unit>>,
-  delayMillis: float,
+  intervalMillis: float,
   logger: Pino.t,
 }
 
-let make = (~delayMillis: int, ~logger) => {
+let make = (~intervalMillis: int, ~logger) => {
   lastRunTimeMillis: 0.,
   isRunning: false,
   scheduled: None,
-  delayMillis: delayMillis->Belt.Int.toFloat,
+  intervalMillis: intervalMillis->Belt.Int.toFloat,
   logger,
 }
 
@@ -43,12 +43,12 @@ let schedule = (debouncer: t, fn) => {
   debouncer.scheduled = Some(fn)
   if !debouncer.isRunning {
     let timeSinceLastRun = Js.Date.now() -. debouncer.lastRunTimeMillis
-    if timeSinceLastRun >= debouncer.delayMillis {
+    if timeSinceLastRun >= debouncer.intervalMillis {
       debouncer->startInternal->ignore
     } else {
       let _ = Js.Global.setTimeout(() => {
         debouncer->startInternal->ignore
-      }, Belt.Int.fromFloat(debouncer.delayMillis -. debouncer.lastRunTimeMillis))
+      }, Belt.Int.fromFloat(debouncer.intervalMillis -. debouncer.lastRunTimeMillis))
     }
   }
 }
