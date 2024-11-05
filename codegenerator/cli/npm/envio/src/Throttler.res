@@ -40,15 +40,10 @@ let rec startInternal = async (throttler: t) => {
     } else {
       //Store isAwaitingInterval in state so that timers don't continuously get created
       throttler.isAwaitingInterval = true
-      let timeOutInterval = throttler.intervalMillis -. timeSinceLastRun
-      await Js.Promise2.make((~resolve, ~reject as _) => {
-        let _ = Js.Global.setTimeout(() => {
-          throttler.isAwaitingInterval = false
-          resolve()
-        }, Belt.Int.fromFloat(timeOutInterval))
-      })
-
-      await throttler->startInternal
+      let _ = Js.Global.setTimeout(() => {
+        throttler.isAwaitingInterval = false
+        throttler->startInternal->ignore
+      }, Belt.Int.fromFloat(throttler.intervalMillis -. timeSinceLastRun))
     }
   | _ => ()
   }
