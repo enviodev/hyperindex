@@ -16,9 +16,6 @@ let make = (~intervalMillis: int, ~logger) => {
   logger,
 }
 
-let t = (logger, exn, message) =>
-  logger->Pino.errorExn(message->Pino.createPinoMessageWithError(exn))
-
 %%private(
   let rec startInternal = async (debouncer: t) => {
     switch debouncer {
