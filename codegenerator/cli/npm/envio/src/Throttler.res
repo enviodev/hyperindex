@@ -16,45 +16,43 @@ let make = (~intervalMillis: int, ~logger) => {
   logger,
 }
 
-%%private(
-  let rec startInternal = async (throttler: t) => {
-    switch throttler {
-    | {scheduled: Some(fn), isRunning: false, isAwaitingInterval: false} =>
-      let timeSinceLastRun = Js.Date.now() -. throttler.lastRunTimeMillis
+let rec startInternal = async (throttler: t) => {
+  switch throttler {
+  | {scheduled: Some(fn), isRunning: false, isAwaitingInterval: false} =>
+    let timeSinceLastRun = Js.Date.now() -. throttler.lastRunTimeMillis
 
-      //Only execute if we are passed the interval
-      if timeSinceLastRun >= throttler.intervalMillis {
-        throttler.isRunning = true
-        throttler.scheduled = None
-        throttler.lastRunTimeMillis = Js.Date.now()
+    //Only execute if we are passed the interval
+    if timeSinceLastRun >= throttler.intervalMillis {
+      throttler.isRunning = true
+      throttler.scheduled = None
+      throttler.lastRunTimeMillis = Js.Date.now()
 
-        switch await fn() {
-        | exception exn =>
-          throttler.logger->Pino.errorExn(
-            Pino.createPinoMessageWithError("Scheduled action failed in throttler", exn),
-          )
-        | _ => ()
-        }
-        throttler.isRunning = false
-
-        await throttler->startInternal
-      } else {
-        //Store isAwaitingInterval in state so that timers don't continuously get created
-        throttler.isAwaitingInterval = true
-        let timeOutInterval = throttler.intervalMillis -. timeSinceLastRun
-        await Js.Promise2.make((~resolve, ~reject as _) => {
-          let _ = Js.Global.setTimeout(() => {
-            throttler.isAwaitingInterval = false
-            resolve()
-          }, Belt.Int.fromFloat(timeOutInterval))
-        })
-
-        await throttler->startInternal
+      switch await fn() {
+      | exception exn =>
+        throttler.logger->Pino.errorExn(
+          Pino.createPinoMessageWithError("Scheduled action failed in throttler", exn),
+        )
+      | _ => ()
       }
-    | _ => ()
+      throttler.isRunning = false
+
+      await throttler->startInternal
+    } else {
+      //Store isAwaitingInterval in state so that timers don't continuously get created
+      throttler.isAwaitingInterval = true
+      let timeOutInterval = throttler.intervalMillis -. timeSinceLastRun
+      await Js.Promise2.make((~resolve, ~reject as _) => {
+        let _ = Js.Global.setTimeout(() => {
+          throttler.isAwaitingInterval = false
+          resolve()
+        }, Belt.Int.fromFloat(timeOutInterval))
+      })
+
+      await throttler->startInternal
     }
+  | _ => ()
   }
-)
+}
 
 let schedule = (throttler: t, fn) => {
   throttler.scheduled = Some(fn)
