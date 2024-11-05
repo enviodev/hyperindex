@@ -140,8 +140,6 @@ module EventFunctions = {
       | None => () //No need to run contract registration
       }
 
-      let latestProcessedBlocks = EventProcessing.EventsProcessed.makeEmpty(~config)
-
       switch handlerRegister->Types.HandlerTypes.Register.getLoaderHandler {
       | Some(loaderHandler) =>
         switch await eventBatchQueueItem->EventProcessing.runEventHandler(
@@ -149,8 +147,6 @@ module EventFunctions = {
           ~loadLayer,
           ~loaderHandler,
           ~logger,
-          ~latestProcessedBlocks,
-          ~config,
           ~isInReorgThreshold=false,
         ) {
         | Ok(_) => ()

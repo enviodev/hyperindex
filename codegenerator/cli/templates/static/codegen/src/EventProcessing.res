@@ -255,9 +255,7 @@ let runEventHandler = (
   ~loaderHandler: Types.HandlerTypes.loaderHandler<_>,
   ~inMemoryStore,
   ~logger,
-  ~latestProcessedBlocks,
   ~loadLayer,
-  ~config: Config.t,
   ~isInReorgThreshold,
 ) => {
   open ErrorHandling.ResultPropogateEnv
@@ -265,7 +263,7 @@ let runEventHandler = (
     let contextEnv = ContextEnv.make(~eventBatchQueueItem, ~logger)
     let {loader, handler} = loaderHandler
 
-    //Include the load just before handler
+    //Include the load in time before handler
     let timeBeforeHandler = Hrtime.makeTimer()
 
     let loaderReturn =
@@ -298,45 +296,47 @@ let runEventHandler = (
           ~decimalPlaces=4,
         )
       }
-      eventBatchQueueItem->updateEventSyncState(
-        ~inMemoryStore,
-        ~isPreRegisteringDynamicContracts=false,
-      )
-      if config.enableRawEvents {
-        eventBatchQueueItem->addEventToRawEvents(~inMemoryStore)
-      }
-      latestProcessedBlocks
-      ->EventsProcessed.updateEventsProcessed(
-        ~chain=eventBatchQueueItem.chain,
-        ~blockNumber=eventBatchQueueItem.blockNumber,
-      )
-      ->Ok
+      Ok()
     }
   })
 }
 
-let runHandler = (
+let runHandler = async (
   eventBatchQueueItem: Types.eventBatchQueueItem,
   ~latestProcessedBlocks,
   ~inMemoryStore,
   ~logger,
   ~loadLayer,
-  ~config,
+  ~config: Config.t,
   ~isInReorgThreshold,
 ) => {
-  switch eventBatchQueueItem.handlerRegister->Types.HandlerTypes.Register.getLoaderHandler {
+  let result = switch eventBatchQueueItem.handlerRegister->Types.HandlerTypes.Register.getLoaderHandler {
   | Some(loaderHandler) =>
-    eventBatchQueueItem->runEventHandler(
+    await eventBatchQueueItem->runEventHandler(
       ~loaderHandler,
-      ~latestProcessedBlocks,
       ~inMemoryStore,
       ~logger,
       ~loadLayer,
-      ~config,
       ~isInReorgThreshold,
     )
-  | None => Ok(latestProcessedBlocks)->Promise.resolve
+  | None => Ok()
   }
+
+  result->Result.map(() => {
+    eventBatchQueueItem->updateEventSyncState(
+      ~inMemoryStore,
+      ~isPreRegisteringDynamicContracts=false,
+    )
+
+    if config.enableRawEvents {
+      eventBatchQueueItem->addEventToRawEvents(~inMemoryStore)
+    }
+
+    latestProcessedBlocks->EventsProcessed.updateEventsProcessed(
+      ~chain=eventBatchQueueItem.chain,
+      ~blockNumber=eventBatchQueueItem.blockNumber,
+    )
+  })
 }
 
 let addToUnprocessedBatch = (

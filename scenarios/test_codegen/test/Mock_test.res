@@ -5,7 +5,6 @@ let inMemoryStore = InMemoryStore.make()
 
 describe("E2E Mock Event Batch", () => {
   Async.before(async () => {
-    let config = RegisterHandlers.registerAllHandlers()
     DbStub.setGravatarDb(~gravatar=MockEntities.gravatarEntity1)
     DbStub.setGravatarDb(~gravatar=MockEntities.gravatarEntity2)
     // EventProcessing.processEventBatch(MockEvents.eventBatch)
@@ -17,14 +16,12 @@ describe("E2E Mock Event Batch", () => {
       | Some(loaderHandler) =>
         await eventBatchQueueItem->EventProcessing.runEventHandler(
           ~loaderHandler,
-          ~latestProcessedBlocks=EventProcessing.EventsProcessed.makeEmpty(~config),
           ~inMemoryStore,
           ~logger=Logging.logger,
           ~loadLayer,
-          ~config,
           ~isInReorgThreshold=false,
         )
-      | None => Ok(EventProcessing.EventsProcessed.makeEmpty(~config))
+      | None => Ok()
       }
     }
 
