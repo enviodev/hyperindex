@@ -17,46 +17,46 @@ let make = (~intervalMillis: int, ~logger) => {
 }
 
 %%private(
-  let rec startInternal = async (debouncer: t) => {
-    switch debouncer {
+  let rec startInternal = async (throttler: t) => {
+    switch throttler {
     | {scheduled: Some(fn), isRunning: false, isAwaitingInterval: false} =>
-      let timeSinceLastRun = Js.Date.now() -. debouncer.lastRunTimeMillis
+      let timeSinceLastRun = Js.Date.now() -. throttler.lastRunTimeMillis
 
       //Only execute if we are passed the interval
-      if timeSinceLastRun >= debouncer.intervalMillis {
-        debouncer.isRunning = true
-        debouncer.scheduled = None
-        debouncer.lastRunTimeMillis = Js.Date.now()
+      if timeSinceLastRun >= throttler.intervalMillis {
+        throttler.isRunning = true
+        throttler.scheduled = None
+        throttler.lastRunTimeMillis = Js.Date.now()
 
         switch await fn() {
         | exception exn =>
-          debouncer.logger->Pino.errorExn(
-            Pino.createPinoMessageWithError("Scheduled action failed in debouncer", exn),
+          throttler.logger->Pino.errorExn(
+            Pino.createPinoMessageWithError("Scheduled action failed in throttler", exn),
           )
         | _ => ()
         }
-        debouncer.isRunning = false
+        throttler.isRunning = false
 
-        await debouncer->startInternal
+        await throttler->startInternal
       } else {
         //Store isAwaitingInterval in state so that timers don't continuously get created
-        debouncer.isAwaitingInterval = true
-        let timeOutInterval = debouncer.intervalMillis -. timeSinceLastRun
+        throttler.isAwaitingInterval = true
+        let timeOutInterval = throttler.intervalMillis -. timeSinceLastRun
         await Js.Promise2.make((~resolve, ~reject as _) => {
           let _ = Js.Global.setTimeout(() => {
-            debouncer.isAwaitingInterval = false
+            throttler.isAwaitingInterval = false
             resolve()
           }, Belt.Int.fromFloat(timeOutInterval))
         })
 
-        await debouncer->startInternal
+        await throttler->startInternal
       }
     | _ => ()
     }
   }
 )
 
-let schedule = (debouncer: t, fn) => {
-  debouncer.scheduled = Some(fn)
-  debouncer->startInternal->ignore
+let schedule = (throttler: t, fn) => {
+  throttler.scheduled = Some(fn)
+  throttler->startInternal->ignore
 }

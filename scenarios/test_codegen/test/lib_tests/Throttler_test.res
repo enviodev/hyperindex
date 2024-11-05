@@ -1,18 +1,18 @@
 open RescriptMocha
 
-describe("Debouncer", () => {
-  Async.it("Schedules and debounces functions as expected", async () => {
-    let debouncer = Debouncer.make(~intervalMillis=10, ~logger=Logging.logger)
+describe("Throttler", () => {
+  Async.it("Schedules and throttles functions as expected", async () => {
+    let throttler = Throttler.make(~intervalMillis=10, ~logger=Logging.logger)
     let actionsCalled = []
 
-    debouncer->Debouncer.schedule(async () => actionsCalled->Js.Array2.push(1)->ignore)
-    debouncer->Debouncer.schedule(
+    throttler->Throttler.schedule(async () => actionsCalled->Js.Array2.push(1)->ignore)
+    throttler->Throttler.schedule(
       async () => {
         actionsCalled->Js.Array2.push(2)->ignore
-        Assert.fail("Should have debounced 2nd scheduled fn in favour of following")
+        Assert.fail("Should have throttled 2nd scheduled fn in favour of following")
       },
     )
-    debouncer->Debouncer.schedule(async () => actionsCalled->Js.Array2.push(3)->ignore)
+    throttler->Throttler.schedule(async () => actionsCalled->Js.Array2.push(3)->ignore)
 
     Assert.deepEqual(actionsCalled, [1], ~message="Should have immediately called scheduled fn")
     await Time.resolvePromiseAfterDelay(~delayMilliseconds=11)
@@ -24,11 +24,11 @@ describe("Debouncer", () => {
   })
 
   Async.it("Does not continuously increase schedule time", async () => {
-    let debouncer = Debouncer.make(~intervalMillis=20, ~logger=Logging.logger)
+    let throttler = Throttler.make(~intervalMillis=20, ~logger=Logging.logger)
     let actionsCalled = []
-    debouncer->Debouncer.schedule(async () => actionsCalled->Js.Array2.push(1)->ignore)
+    throttler->Throttler.schedule(async () => actionsCalled->Js.Array2.push(1)->ignore)
     await Time.resolvePromiseAfterDelay(~delayMilliseconds=10)
-    debouncer->Debouncer.schedule(async () => actionsCalled->Js.Array2.push(2)->ignore)
+    throttler->Throttler.schedule(async () => actionsCalled->Js.Array2.push(2)->ignore)
     Assert.deepEqual(actionsCalled, [1], ~message="Scheduler should still be waiting for interval")
     await Time.resolvePromiseAfterDelay(~delayMilliseconds=11)
     Assert.deepEqual(
@@ -39,16 +39,16 @@ describe("Debouncer", () => {
   })
 
   Async.it("Does not run until previous task is finished", async () => {
-    let debouncer = Debouncer.make(~intervalMillis=10, ~logger=Logging.logger)
+    let throttler = Throttler.make(~intervalMillis=10, ~logger=Logging.logger)
     let actionsCalled = []
-    debouncer->Debouncer.schedule(
+    throttler->Throttler.schedule(
       async () => {
         await Time.resolvePromiseAfterDelay(~delayMilliseconds=13)
         actionsCalled->Js.Array2.push(1)->ignore
       },
     )
 
-    debouncer->Debouncer.schedule(
+    throttler->Throttler.schedule(
       async () => {
         actionsCalled->Js.Array2.push(2)->ignore
       },
@@ -75,15 +75,15 @@ describe("Debouncer", () => {
   Async.it(
     "Does not immediately execute after a task has finished if below the interval",
     async () => {
-      let debouncer = Debouncer.make(~intervalMillis=10, ~logger=Logging.logger)
+      let throttler = Throttler.make(~intervalMillis=10, ~logger=Logging.logger)
       let actionsCalled = []
-      debouncer->Debouncer.schedule(
+      throttler->Throttler.schedule(
         async () => {
           await Time.resolvePromiseAfterDelay(~delayMilliseconds=5)
           actionsCalled->Js.Array2.push(1)->ignore
         },
       )
-      debouncer->Debouncer.schedule(
+      throttler->Throttler.schedule(
         async () => {
           actionsCalled->Js.Array2.push(2)->ignore
         },

@@ -121,7 +121,7 @@ module Data = {
 }
 
 let data = Data.make()
-let debouncer = Debouncer.make(
+let throttler = Throttler.make(
   ~intervalMillis=500,
   ~logger=Logging.createChild(~params={"context": "Benchmarking framework"}),
 )
@@ -133,7 +133,7 @@ let saveToCacheFile = data => {
     let json = data->S.serializeToJsonStringOrRaiseWith(Data.schema)
     NodeJsLocal.Fs.Promises.writeFile(~filepath=cacheFilePath, ~content=json)
   }
-  debouncer->Debouncer.schedule(write)
+  throttler->Throttler.schedule(write)
 }
 
 let readFromCacheFile = async () => {

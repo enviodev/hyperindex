@@ -3,29 +3,29 @@ open Belt
 type chain = ChainMap.Chain.t
 type rollbackState = NoRollback | RollingBack(chain) | RollbackInMemStore(InMemoryStore.t)
 
-module WriteDebouncers = {
-  type t = {chainMetaData: Debouncer.t, pruneStaleData: ChainMap.t<Debouncer.t>}
+module WriteThrottlers = {
+  type t = {chainMetaData: Throttler.t, pruneStaleData: ChainMap.t<Throttler.t>}
   let make = (~config: Config.t): t => {
     let chainMetaData = {
-      let intervalMillis = Env.DebounceWrites.chainMetadataIntervalMillis
+      let intervalMillis = Env.ThrottleWrites.chainMetadataIntervalMillis
       let logger = Logging.createChild(
         ~params={
-          "context": "Debouncer for chain metadata writes",
+          "context": "Throttler for chain metadata writes",
           "intervalMillis": intervalMillis,
         },
       )
-      Debouncer.make(~intervalMillis, ~logger)
+      Throttler.make(~intervalMillis, ~logger)
     }
     let pruneStaleData = config.chainMap->ChainMap.map(cfg => {
-      let intervalMillis = Env.DebounceWrites.pruneStaleDataIntervalMillis
+      let intervalMillis = Env.ThrottleWrites.pruneStaleDataIntervalMillis
       let logger = Logging.createChild(
         ~params={
-          "context": "Debouncer for pruning stale endblock and entity history data",
+          "context": "Throttler for pruning stale endblock and entity history data",
           "intervalMillis": intervalMillis,
           "chain": cfg.chain,
         },
       )
-      Debouncer.make(~intervalMillis, ~logger)
+      Throttler.make(~intervalMillis, ~logger)
     })
     {chainMetaData, pruneStaleData}
   }
@@ -38,7 +38,7 @@ type t = {
   maxBatchSize: int,
   maxPerChainQueueSize: int,
   indexerStartTime: Js.Date.t,
-  writeDebouncers: WriteDebouncers.t,
+  writeThrottlers: WriteThrottlers.t,
   loadLayer: LoadLayer.t,
   //Initialized as 0, increments, when rollbacks occur to invalidate
   //responses based on the wrong stateId
@@ -56,7 +56,7 @@ let make = (~config, ~chainManager, ~loadLayer) => {
   },
   indexerStartTime: Js.Date.make(),
   rollbackState: NoRollback,
-  writeDebouncers: WriteDebouncers.make(~config),
+  writeThrottlers: WriteThrottlers.make(~config),
   loadLayer,
   id: 0,
 }
@@ -121,7 +121,7 @@ let updateChainFetcherCurrentBlockHeight = (chainFetcher: ChainFetcher.t, ~curre
   }
 }
 
-let updateChainMetadataTable = async (cm: ChainManager.t, ~debouncer: Debouncer.t) => {
+let updateChainMetadataTable = async (cm: ChainManager.t, ~throttler: Throttler.t) => {
   let chainMetadataArray: array<DbFunctions.ChainMetadata.chainMetadata> =
     cm.chainFetchers
     ->ChainMap.values
@@ -148,7 +148,7 @@ let updateChainMetadataTable = async (cm: ChainManager.t, ~debouncer: Debouncer.
       chainMetadata
     })
   //Don't await this set, it can happen in its own time
-  debouncer->Debouncer.schedule(() =>
+  throttler->Throttler.schedule(() =>
     DbFunctions.ChainMetadata.batchSetChainMetadataRow(~chainMetadataArray)
   )
 }
@@ -886,7 +886,7 @@ let injectedTaskReducer = (
       )
     }
 
-    //These prune functions can be scheduled and debounced if a more recent prune function gets called
+    //These prune functions can be scheduled and throttled if a more recent prune function gets called
     //before the current one is executed
     let runPruneFunctions = async () => {
       let timeRef = Hrtime.makeTimer()
@@ -914,18 +914,18 @@ let injectedTaskReducer = (
       }
     }
 
-    let debouncer = state.writeDebouncers.pruneStaleData->ChainMap.get(chain)
-    debouncer->Debouncer.schedule(runPruneFunctions)
+    let throttler = state.writeThrottlers.pruneStaleData->ChainMap.get(chain)
+    throttler->Throttler.schedule(runPruneFunctions)
 
   | UpdateChainMetaDataAndCheckForExit(shouldExit) =>
-    let {chainManager, writeDebouncers} = state
+    let {chainManager, writeThrottlers} = state
     switch shouldExit {
     | ExitWithSuccess =>
-      updateChainMetadataTable(chainManager, ~debouncer=writeDebouncers.chainMetaData)
+      updateChainMetadataTable(chainManager, ~throttler=writeThrottlers.chainMetaData)
       ->Promise.thenResolve(_ => dispatchAction(SuccessExit))
       ->ignore
     | NoExit =>
-      updateChainMetadataTable(chainManager, ~debouncer=writeDebouncers.chainMetaData)->ignore
+      updateChainMetadataTable(chainManager, ~throttler=writeThrottlers.chainMetaData)->ignore
     }
   | NextQuery(chainCheck) =>
     let fetchForChain = checkAndFetchForChain(
