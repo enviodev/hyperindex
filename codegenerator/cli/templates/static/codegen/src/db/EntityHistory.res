@@ -9,14 +9,19 @@ type historyFieldsGeneral<'a> = {
 
 type historyFields = historyFieldsGeneral<int>
 
+type entityIdOnly = {id: string}
+let entityIdOnlySchema = S.schema(s => {id: s.matches(S.string)})
+type entityData<'entity> = Delete(entityIdOnly) | Set('entity)
+
 type historyRow<'entity> = {
   current: historyFields,
   previous: option<historyFields>,
-  entityData: 'entity,
+  entityData: entityData<'entity>,
 }
 
 type previousHistoryFields = historyFieldsGeneral<option<int>>
 
+//For flattening the optional previous fields into their own individual nullable fields
 let previousHistoryFieldsSchema = S.object(s => {
   chain_id: s.field("previous_entity_history_chain_id", S.null(S.int)),
   block_timestamp: s.field("previous_entity_history_block_timestamp", S.null(S.int)),
@@ -31,12 +36,60 @@ let currentHistoryFieldsSchema = S.object(s => {
   log_index: s.field("entity_history_log_index", S.int),
 })
 
-let makeHistoryRowSchema: S.t<'entity> => S.t<historyRow<'entity>> = entitySchema =>
+let makeHistoryRowSchema: S.t<'entity> => S.t<historyRow<'entity>> = entitySchema => {
+  //Instantiates an entity object with all fields set to null
+  let entityWithNullFields: Js.Dict.t<unknown> = switch entitySchema->S.classify {
+  | Object({items}) =>
+    let nulldict = Js.Dict.empty()
+    items->Belt.Array.forEach(({location}) => {
+      nulldict->Js.Dict.set(location, %raw(`null`))
+    })
+    nulldict
+  | _ =>
+    Js.Exn.raiseError("Failed creating entityWithNullFields. Expected an object schema for entity")
+  }
+
+  //Gets an entity object with all fields set to null except for the id field
+  let getEntityWithNullFields = (entityId: string) => {
+    entityWithNullFields->Utils.Dict.updateImmutable("id", entityId->Utils.magic)
+  }
+
+  //Maps a schema object for the given entity with all fields nullable except for the id field
+  //Keeps any original nullable fields
+  let nullableEntitySchema: S.t<Js.Dict.t<unknown>> = S.schema(s =>
+    switch entitySchema->S.classify {
+    | Object({items}) =>
+      let nulldict = Js.Dict.empty()
+      items->Belt.Array.forEach(({location, schema}) => {
+        let nullableFieldSchema = switch (location, schema->S.classify) {
+        | ("id", _)
+        | (_, Null(_)) => schema //TODO double check this works for array types
+        | _ => S.null(schema)->S.toUnknown
+        }
+
+        nulldict->Js.Dict.set(location, s.matches(nullableFieldSchema))
+      })
+      nulldict
+    | _ =>
+      Js.Exn.raiseError(
+        "Failed creating nullableEntitySchema. Expected an object schema for entity",
+      )
+    }
+  )
+
+  let previousWithNullFields = {
+    chain_id: None,
+    block_timestamp: None,
+    block_number: None,
+    log_index: None,
+  }
+
   S.object(s => {
     {
       "current": s.flatten(currentHistoryFieldsSchema),
       "previous": s.flatten(previousHistoryFieldsSchema),
-      "entityData": s.flatten(entitySchema),
+      "entityData": s.flatten(nullableEntitySchema),
+      "action": s.field("action", Enums.EntityHistoryRowAction.enum.schema),
     }
   })->S.transform(s => {
     parser: v => {
@@ -57,28 +110,33 @@ let makeHistoryRowSchema: S.t<'entity> => S.t<historyRow<'entity>> = entitySchem
       | {chain_id: None, block_timestamp: None, block_number: None, log_index: None} => None
       | _ => s.fail("Unexpected mix of null and non-null values in previous history fields")
       },
-      entityData: v["entityData"],
+      entityData: switch v["action"] {
+      | SET => v["entityData"]->S.parseAnyOrRaiseWith(entitySchema)->Set
+      | DELETE => v["entityData"]->S.parseAnyOrRaiseWith(entityIdOnlySchema)->Delete
+      },
     },
-    serializer: v =>
+    serializer: v => {
+      let (entityData, action) = switch v.entityData {
+      | Set(entityData) => (
+          entityData->(Utils.magic: 'entity => Js.Dict.t<unknown>),
+          Enums.EntityHistoryRowAction.SET,
+        )
+      | Delete({id}) => (getEntityWithNullFields(id), DELETE)
+      }
+
       {
         "current": v.current,
-        "entityData": v.entityData,
+        "entityData": entityData,
+        "action": action,
         "previous": switch v.previous {
-        | Some({chain_id, block_timestamp, block_number, log_index}) => {
-            chain_id: Some(chain_id),
-            block_timestamp: Some(block_timestamp),
-            block_number: Some(block_number),
-            log_index: Some(log_index),
-          }
-        | None => {
-            chain_id: None,
-            block_timestamp: None,
-            block_number: None,
-            log_index: None,
-          }
+        | Some(historyFields) =>
+          historyFields->(Utils.magic: historyFields => previousHistoryFields) //Cast to previousHistoryFields (with "Some" field values)
+        | None => previousWithNullFields
         },
-      },
+      }
+    },
   })
+}
 
 type t<'entity> = {
   table: table,
@@ -90,6 +148,13 @@ type t<'entity> = {
 let insertRow = (self: t<'entity>, ~sql, ~historyRow: historyRow<'entity>) => {
   let row = historyRow->S.serializeOrRaiseWith(self.schema)
   self.insertFn(sql, row)
+}
+
+let batchInsertRows = (self: t<'entity>, ~sql, ~rows: array<historyRow<'entity>>) => {
+  Utils.Array.awaitEach(rows, async row => {
+    let row = row->S.serializeOrRaiseWith(self.schema)
+    await self.insertFn(sql, row)
+  })
 }
 
 type entityInternal
@@ -148,6 +213,10 @@ let fromTable = (table: table, ~schema: S.t<'entity>): t<'entity> => {
     }
   )
 
+  let actionFieldName = "action"
+
+  let actionField = mkField(actionFieldName, Custom(Enums.EntityHistoryRowAction.enum.name))
+
   let dataFieldNames = dataFields->Belt.Array.map(field => field->getFieldName)
 
   let originTableName = table.tableName
@@ -155,7 +224,12 @@ let fromTable = (table: table, ~schema: S.t<'entity>): t<'entity> => {
   //ignore composite indices
   let table = mkTable(
     historyTableName,
-    ~fields=Belt.Array.concatMany([currentHistoryFields, previousHistoryFields, dataFields]),
+    ~fields=Belt.Array.concatMany([
+      currentHistoryFields,
+      previousHistoryFields,
+      dataFields,
+      [actionField],
+    ]),
   )
 
   let insertFnName = `"insert_${table.tableName}"`
@@ -178,6 +252,7 @@ let fromTable = (table: table, ~schema: S.t<'entity>): t<'entity> => {
       currentChangeFieldNames,
       previousChangeFieldNames,
       dataFieldNames,
+      [actionFieldName],
     ])->Belt.Array.map(fieldName => `"${fieldName}"`)
 
   let createInsertFnQuery = {
@@ -209,14 +284,14 @@ let fromTable = (table: table, ~schema: S.t<'entity>): t<'entity> => {
             -- Check if a value for the id exists in the origin table and if so, insert a history row for it.
             SELECT ${dataFieldNamesCommaSeparated} FROM ${originTablePath} WHERE id = ${historyRowArg}.${id} INTO v_origin_record;
             IF FOUND THEN
-              INSERT INTO ${historyTablePath} (${currentChangeFieldNamesCommaSeparated}, ${dataFieldNamesCommaSeparated})
+              INSERT INTO ${historyTablePath} (${currentChangeFieldNamesCommaSeparated}, ${dataFieldNamesCommaSeparated}, "${actionFieldName}")
               -- SET the current change data fields to 0 since we don't know what they were
               -- and it doesn't matter provided they are less than any new values
               VALUES (${currentChangeFieldNames
       ->Belt.Array.map(_ => "0")
       ->Js.Array2.joinWith(", ")}, ${dataFieldNames
       ->Belt.Array.map(fieldName => `v_origin_record."${fieldName}"`)
-      ->Js.Array2.joinWith(", ")});
+      ->Js.Array2.joinWith(", ")}, 'SET');
 
               ${previousChangeFieldNames
       ->Belt.Array.map(previousFieldName => {
