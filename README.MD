@@ -2,20 +2,22 @@
 
 HyperIndex is a modern, multi-chain data indexing framework for efficiently querying real-time and historical data from any EVM blockchain and Fuel.
 
-Designed with a core focus on delivering superior performance and seamless developer experience, HyperIndex optimizes the user experience.
+Designed with a core focus on delivering superior performance and a seamless developer experience, HyperIndex optimizes the user experience.
 
-Build a real-time API for your blockchain application in minutes.
+Build a real-time API for your blockchain application in minutes!
 
 ## Key Features
 
-- Simple installation & Setup
-- Any EVM blockchain, as well as Fuel
-- The fastest historical sync
-- Real-time indexing with reorg handling
-- Multi-chain support
-- Write JavaScript, TypeScript, or ReScript with automatically generated types
-- Detailed logging & Error messaging
-- [Hosted Service](https://docs.envio.dev/docs/HyperIndex/hosted-service) to take care of your infrastructure
+⚡ **Simplified Setup:** Start instantly with the quickstart, templates, and reference implementations.
+⚡ **Any EVM and Fuel:** Index smart contract data from any EVM-compatible network.
+⚡ **Fastest Historical Backfill:** Up to 1000x faster than RPC. Enhance your dev lifecycle. Reduce time-to-market.
+⚡ **Multichain:** Index multiple networks with a single deployment. Query with a unified API.
+⚡ **Real-time:** Sub-second latency and automatic handling of chain reorganizations.
+⚡ **Dynamic Sources / Factory Contracts:** Dynamically index all children contracts (e.g. new token pairs)
+⚡ **Wildcard Indexing:** Index events according to event signatures (e.g. all ERC20 transfers on Base).
+⚡ ** Flexible Language Support:** Write JavaScript, TypeScript, or ReScript with automatically generated types.
+⚡ **Hosted Service & Self Hosting:** Develop locally, and deploy effortlessly. Focus on your app and users, we take care of your infra.
+⚡ **Detailed Logging & Error Messaging:** Simplify troubleshooting with comprehensive insights.
 
 ## Installation
 
