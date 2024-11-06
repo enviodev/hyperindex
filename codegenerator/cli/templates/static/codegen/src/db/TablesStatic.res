@@ -167,7 +167,7 @@ module DynamicContractRegistry = {
     registeringEventSrcAddress: s.matches(Address.schema),
     registeringEventBlockTimestamp: s.matches(S.int),
     contractAddress: s.matches(Address.schema),
-    contractType: s.matches(Enums.ContractType.schema),
+    contractType: s.matches(Enums.ContractType.enum.schema),
   })
 
   let rowsSchema = S.array(schema)
