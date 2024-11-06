@@ -17,8 +17,8 @@ let testEntitySchema: S.t<testEntity> = S.schema(s => {
 
 let testEntityRowsSchema = S.array(testEntitySchema)
 
-type testEntityHistory = Entities.EntityHistory.historyRow<testEntity>
-let testEntityHistorySchema = Entities.EntityHistory.makeHistoryRowSchema(testEntitySchema)
+type testEntityHistory = EntityHistory.historyRow<testEntity>
+let testEntityHistorySchema = EntityHistory.makeHistoryRowSchema(testEntitySchema)
 
 let mockEntityTable = Table.mkTable(
   "TestEntity",
@@ -29,7 +29,7 @@ let mockEntityTable = Table.mkTable(
   ],
 )
 
-let mockEntityHistory = mockEntityTable->Entities.EntityHistory.fromTable(~schema=testEntitySchema)
+let mockEntityHistory = mockEntityTable->EntityHistory.fromTable(~schema=testEntitySchema)
 
 let batchSetMockEntity = Table.PostgresInterop.makeBatchSetFn(
   ~table=mockEntityTable,
@@ -183,7 +183,7 @@ describe("Entity History Codegen", () => {
     let blockTimestamp = blockNumber * 15
     let logIndex = 1
 
-    let entityHistoryItem: Entities.EntityHistory.historyRow<testEntity> = {
+    let entityHistoryItem: EntityHistory.historyRow<testEntity> = {
       current: {
         chain_id: chainId,
         block_timestamp: blockTimestamp,
@@ -199,7 +199,7 @@ describe("Entity History Codegen", () => {
     }
 
     let _callRes =
-      await mockEntityHistory->Entities.EntityHistory.insertRow(
+      await mockEntityHistory->EntityHistory.insertRow(
         ~sql=DbFunctions.sql,
         ~historyRow=entityHistoryItem,
       )
