@@ -10,33 +10,32 @@ let executeSet = (
   }
 }
 
-let getEntityHistoryItems = (entityUpdates, ~entitySchema, ~entityType) => {
+let getEntityHistoryItems = entityUpdates => {
   let (_, entityHistoryItems) = entityUpdates->Belt.Array.reduce((None, []), (
-    prev: (option<Types.eventIdentifier>, array<DbFunctions.entityHistoryItem>),
+    prev: (option<Types.eventIdentifier>, array<EntityHistory.historyRow<_>>),
     entityUpdate: Types.entityUpdate<'a>,
   ) => {
     let (optPreviousEventIdentifier, entityHistoryItems) = prev
 
     let {eventIdentifier, shouldSaveHistory, entityUpdateAction, entityId} = entityUpdate
     let entityHistoryItems = if shouldSaveHistory {
-      let mapPrev = Belt.Option.map(optPreviousEventIdentifier)
-      let params = switch entityUpdateAction {
-      | Set(entity) => Some(entity->S.serializeOrRaiseWith(entitySchema))
-
-      | Delete => None
-      }
-      let historyItem: DbFunctions.entityHistoryItem = {
-        chain_id: eventIdentifier.chainId,
-        block_number: eventIdentifier.blockNumber,
-        block_timestamp: eventIdentifier.blockTimestamp,
-        log_index: eventIdentifier.logIndex,
-        previous_chain_id: mapPrev(prev => prev.chainId),
-        previous_block_timestamp: mapPrev(prev => prev.blockTimestamp),
-        previous_block_number: mapPrev(prev => prev.blockNumber),
-        previous_log_index: mapPrev(prev => prev.logIndex),
-        entity_type: entityType,
-        entity_id: entityId,
-        params,
+      let historyItem: EntityHistory.historyRow<_> = {
+        current: {
+          chain_id: eventIdentifier.chainId,
+          block_timestamp: eventIdentifier.blockTimestamp,
+          block_number: eventIdentifier.blockNumber,
+          log_index: eventIdentifier.logIndex,
+        },
+        previous: optPreviousEventIdentifier->Belt.Option.map(prev => {
+          EntityHistory.chain_id: prev.chainId,
+          block_timestamp: prev.blockTimestamp,
+          block_number: prev.blockNumber,
+          log_index: prev.logIndex,
+        }),
+        entityData: switch entityUpdateAction {
+        | Set(entity) => Set(entity)
+        | Delete => Delete({id: entityId})
+        },
       }
       entityHistoryItems->Belt.Array.concat([historyItem])
     } else {
@@ -56,7 +55,6 @@ let executeSetEntityWithHistory = (
   ~entityMod: module(Entities.Entity with type t = entity),
 ): promise<unit> => {
   let module(EntityMod) = entityMod
-  let {schema, table} = module(EntityMod)
   let (entitiesToSet, idsToDelete, entityHistoryItemsToSet) = rows->Belt.Array.reduce(
     ([], [], []),
     ((entitiesToSet, idsToDelete, entityHistoryItemsToSet), row) => {
@@ -65,7 +63,7 @@ let executeSetEntityWithHistory = (
         let entityHistoryItems =
           history
           ->Belt.Array.concat([latest])
-          ->getEntityHistoryItems(~entitySchema=schema, ~entityType=table.tableName)
+          ->getEntityHistoryItems
 
         switch latest.entityUpdateAction {
         | Set(entity) => (
@@ -85,8 +83,9 @@ let executeSetEntityWithHistory = (
   )
 
   [
-    sql->DbFunctions.EntityHistory.batchSet(
-      ~entityHistoriesToSet=Belt.Array.concatMany(entityHistoryItemsToSet),
+    EntityMod.entityHistory->EntityHistory.batchInsertRows(
+      ~sql,
+      ~rows=Belt.Array.concatMany(entityHistoryItemsToSet),
     ),
     if entitiesToSet->Array.length > 0 {
       sql->DbFunctionsEntities.batchSet(~entityMod)(entitiesToSet)
@@ -128,9 +127,13 @@ let executeDbFunctionsEntity = (
 
   let promises =
     (
-      entitiesToSet->Array.length > 0 ? [sql->DbFunctionsEntities.batchSet(~entityMod)(entitiesToSet)] : []
+      entitiesToSet->Array.length > 0
+        ? [sql->DbFunctionsEntities.batchSet(~entityMod)(entitiesToSet)]
+        : []
     )->Belt.Array.concat(
-      idsToDelete->Array.length > 0 ? [sql->DbFunctionsEntities.batchDelete(~entityMod)(idsToDelete)] : [],
+      idsToDelete->Array.length > 0
+        ? [sql->DbFunctionsEntities.batchDelete(~entityMod)(idsToDelete)]
+        : [],
     )
 
   promises->Promise.all->Promise.thenResolve(_ => ())

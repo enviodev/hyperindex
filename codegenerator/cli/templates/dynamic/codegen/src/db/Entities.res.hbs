@@ -10,6 +10,7 @@ module type Entity = {
   let schema: S.schema<t>
   let rowsSchema: S.schema<array<t>>
   let table: Table.table
+  let entityHistory: EntityHistory.t<t>
 }
 module type InternalEntity = Entity with type t = internalEntity
 external entityModToInternal: module(Entity with type t = 'a) => module(InternalEntity) = "%identity"
