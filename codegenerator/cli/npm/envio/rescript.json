@@ -11,5 +11,7 @@
   "package-specs": {
     "module": "commonjs",
     "in-source": true
-  }
+  },
+  "bs-dependencies": ["rescript-schema"],
+  "bsc-flags": ["-open RescriptSchema"]
 }

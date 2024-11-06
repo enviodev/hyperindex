@@ -3,6 +3,33 @@ open Belt
 type chain = ChainMap.Chain.t
 type rollbackState = NoRollback | RollingBack(chain) | RollbackInMemStore(InMemoryStore.t)
 
+module WriteThrottlers = {
+  type t = {chainMetaData: Throttler.t, pruneStaleData: ChainMap.t<Throttler.t>}
+  let make = (~config: Config.t): t => {
+    let chainMetaData = {
+      let intervalMillis = Env.ThrottleWrites.chainMetadataIntervalMillis
+      let logger = Logging.createChild(
+        ~params={
+          "context": "Throttler for chain metadata writes",
+          "intervalMillis": intervalMillis,
+        },
+      )
+      Throttler.make(~intervalMillis, ~logger)
+    }
+    let pruneStaleData = config.chainMap->ChainMap.map(cfg => {
+      let intervalMillis = Env.ThrottleWrites.pruneStaleDataIntervalMillis
+      let logger = Logging.createChild(
+        ~params={
+          "context": "Throttler for pruning stale endblock and entity history data",
+          "intervalMillis": intervalMillis,
+          "chain": cfg.chain,
+        },
+      )
+      Throttler.make(~intervalMillis, ~logger)
+    })
+    {chainMetaData, pruneStaleData}
+  }
+}
 type t = {
   config: Config.t,
   chainManager: ChainManager.t,
@@ -11,7 +38,7 @@ type t = {
   maxBatchSize: int,
   maxPerChainQueueSize: int,
   indexerStartTime: Js.Date.t,
-  asyncTaskQueue: AsyncTaskQueue.t,
+  writeThrottlers: WriteThrottlers.t,
   loadLayer: LoadLayer.t,
   //Initialized as 0, increments, when rollbacks occur to invalidate
   //responses based on the wrong stateId
@@ -29,7 +56,7 @@ let make = (~config, ~chainManager, ~loadLayer) => {
   },
   indexerStartTime: Js.Date.make(),
   rollbackState: NoRollback,
-  asyncTaskQueue: AsyncTaskQueue.make(),
+  writeThrottlers: WriteThrottlers.make(~config),
   loadLayer,
   id: 0,
 }
@@ -94,7 +121,7 @@ let updateChainFetcherCurrentBlockHeight = (chainFetcher: ChainFetcher.t, ~curre
   }
 }
 
-let updateChainMetadataTable = async (cm: ChainManager.t, ~asyncTaskQueue: AsyncTaskQueue.t) => {
+let updateChainMetadataTable = async (cm: ChainManager.t, ~throttler: Throttler.t) => {
   let chainMetadataArray: array<DbFunctions.ChainMetadata.chainMetadata> =
     cm.chainFetchers
     ->ChainMap.values
@@ -121,7 +148,7 @@ let updateChainMetadataTable = async (cm: ChainManager.t, ~asyncTaskQueue: Async
       chainMetadata
     })
   //Don't await this set, it can happen in its own time
-  await asyncTaskQueue->AsyncTaskQueue.add(() =>
+  throttler->Throttler.schedule(() =>
     DbFunctions.ChainMetadata.batchSetChainMetadataRow(~chainMetadataArray)
   )
 }
@@ -846,32 +873,10 @@ let injectedTaskReducer = (
       nextEndOfBlockRangeScannedData,
     }) =>
     let timeRef = Hrtime.makeTimer()
-    await DbFunctions.sql->Postgres.beginSql(sql => {
-      [
-        DbFunctions.EndOfBlockRangeScannedData.setEndOfBlockRangeScannedData(
-          sql,
-          nextEndOfBlockRangeScannedData,
-        ),
-        DbFunctions.EndOfBlockRangeScannedData.deleteStaleEndOfBlockRangeScannedDataForChain(
-          sql,
-          ~chainId=chain->ChainMap.Chain.toChainId,
-          ~blockTimestampThreshold,
-          ~blockNumberThreshold,
-        ),
-      ]->Array.concat(
-        //only prune history if we are not saving full history
-        state.config->Config.shouldPruneHistory
-          ? [
-              DbFunctions.EntityHistory.deleteAllEntityHistoryOnChainBeforeThreshold(
-                sql,
-                ~chainId=chain->ChainMap.Chain.toChainId,
-                ~blockNumberThreshold,
-                ~blockTimestampThreshold,
-              ),
-            ]
-          : [],
-      )
-    })
+    await DbFunctions.sql->DbFunctions.EndOfBlockRangeScannedData.setEndOfBlockRangeScannedData(
+      nextEndOfBlockRangeScannedData,
+    )
+
     if Env.saveBenchmarkData {
       let elapsedTimeMillis = Hrtime.timeSince(timeRef)->Hrtime.toMillis->Hrtime.intFromMillis
       Benchmark.addSummaryData(
@@ -880,14 +885,47 @@ let injectedTaskReducer = (
         ~value=elapsedTimeMillis->Belt.Int.toFloat,
       )
     }
+
+    //These prune functions can be scheduled and throttled if a more recent prune function gets called
+    //before the current one is executed
+    let runPruneFunctions = async () => {
+      let timeRef = Hrtime.makeTimer()
+      await DbFunctions.sql->DbFunctions.EndOfBlockRangeScannedData.deleteStaleEndOfBlockRangeScannedDataForChain(
+        ~chainId=chain->ChainMap.Chain.toChainId,
+        ~blockTimestampThreshold,
+        ~blockNumberThreshold,
+      )
+
+      if state.config->Config.shouldPruneHistory {
+        await DbFunctions.sql->DbFunctions.EntityHistory.deleteAllEntityHistoryOnChainBeforeThreshold(
+          ~chainId=chain->ChainMap.Chain.toChainId,
+          ~blockNumberThreshold,
+          ~blockTimestampThreshold,
+        )
+      }
+
+      if Env.saveBenchmarkData {
+        let elapsedTimeMillis = Hrtime.timeSince(timeRef)->Hrtime.toMillis->Hrtime.intFromMillis
+        Benchmark.addSummaryData(
+          ~group="Other",
+          ~label=`Chain ${chain->ChainMap.Chain.toString} PruneStaleData (ms)`,
+          ~value=elapsedTimeMillis->Belt.Int.toFloat,
+        )
+      }
+    }
+
+    let throttler = state.writeThrottlers.pruneStaleData->ChainMap.get(chain)
+    throttler->Throttler.schedule(runPruneFunctions)
+
   | UpdateChainMetaDataAndCheckForExit(shouldExit) =>
-    let {chainManager, asyncTaskQueue} = state
+    let {chainManager, writeThrottlers} = state
     switch shouldExit {
     | ExitWithSuccess =>
-      updateChainMetadataTable(chainManager, ~asyncTaskQueue)
+      updateChainMetadataTable(chainManager, ~throttler=writeThrottlers.chainMetaData)
       ->Promise.thenResolve(_ => dispatchAction(SuccessExit))
       ->ignore
-    | NoExit => updateChainMetadataTable(chainManager, ~asyncTaskQueue)->ignore
+    | NoExit =>
+      updateChainMetadataTable(chainManager, ~throttler=writeThrottlers.chainMetaData)->ignore
     }
   | NextQuery(chainCheck) =>
     let fetchForChain = checkAndFetchForChain(
