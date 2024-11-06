@@ -22,8 +22,8 @@ module type Enum = {
 }
 
 module EntityHistoryRowAction = {
-  type t = Set | Delete
-  let variants = [Set, Delete]
+  type t = SET | DELETE
+  let variants = [SET, DELETE]
   let name = "ENTITY_HISTORY_ROW_ACTION"
   let enum = mkEnum(~name, ~variants)
 }
