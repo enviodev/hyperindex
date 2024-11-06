@@ -314,7 +314,7 @@ module EntityHistory = {
   }
 
   let rollbackDiffResponseRawSchema = S.object(s => {
-    entity_type: s.field("entity_type", Enums.EntityType.schema),
+    entity_type: s.field("entity_type", Enums.EntityType.enum.schema),
     entity_id: s.field("entity_id", S.string),
     chain_id: s.field("chain_id", S.null(S.int)),
     block_timestamp: s.field("block_timestamp", S.null(S.int)),
