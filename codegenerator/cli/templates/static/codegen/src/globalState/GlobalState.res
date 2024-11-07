@@ -338,7 +338,7 @@ let handleBlockRangeResponse = (state, ~chain, ~response: ChainWorker.blockRange
       Prometheus.incrementReorgsDetected(~chain)
     }
 
-    let chainFetcher =
+    let updatedChainFetcher =
       chainFetcher
       ->ChainFetcher.updateFetchState(
         ~currentBlockHeight,
@@ -352,30 +352,31 @@ let handleBlockRangeResponse = (state, ~chain, ~response: ChainWorker.blockRange
 
     let hasArbQueueEvents = state.chainManager->ChainManager.hasChainItemsOnArbQueue(~chain)
     let hasNoMoreEventsToProcess =
-      chainFetcher->ChainFetcher.hasNoMoreEventsToProcess(~hasArbQueueEvents)
+      updatedChainFetcher->ChainFetcher.hasNoMoreEventsToProcess(~hasArbQueueEvents)
 
     let latestProcessedBlock = if hasNoMoreEventsToProcess {
-      PartitionedFetchState.getLatestFullyFetchedBlock(chainFetcher.fetchState).blockNumber->Some
+      PartitionedFetchState.getLatestFullyFetchedBlock(
+        updatedChainFetcher.fetchState,
+      ).blockNumber->Some
     } else {
-      chainFetcher.latestProcessedBlock
-    }
-
-    if currentBlockHeight <= heighestQueriedBlockNumber {
-      if !ChainFetcher.isFetchingAtHead(chainFetcher) {
-        chainFetcher.logger->Logging.childInfo(
-          "All events have been fetched, they should finish processing the handlers soon.",
-        )
-      }
+      updatedChainFetcher.latestProcessedBlock
     }
 
     let partitionsCurrentlyFetching =
-      chainFetcher.partitionsCurrentlyFetching->Set.Int.remove(partitionId)
+      updatedChainFetcher.partitionsCurrentlyFetching->Set.Int.remove(partitionId)
 
     let updatedChainFetcher = {
-      ...chainFetcher,
+      ...updatedChainFetcher,
       partitionsCurrentlyFetching,
       latestProcessedBlock,
-      numBatchesFetched: chainFetcher.numBatchesFetched + 1,
+      numBatchesFetched: updatedChainFetcher.numBatchesFetched + 1,
+    }
+
+    let wasFetchingAtHead = ChainFetcher.isFetchingAtHead(chainFetcher)
+    let isCurrentlyFetchingAtHead = ChainFetcher.isFetchingAtHead(updatedChainFetcher)
+
+    if !wasFetchingAtHead && isCurrentlyFetchingAtHead {
+      updatedChainFetcher.logger->Logging.childInfo("All events have been fetched")
     }
 
     let chainManager = {
@@ -394,7 +395,7 @@ let handleBlockRangeResponse = (state, ~chain, ~response: ChainWorker.blockRange
             UpdateEndOfBlockRangeScannedData({
               chain,
               blockNumberThreshold: lastBlockScannedData.blockNumber -
-              chainFetcher.chainConfig.confirmedBlockThreshold,
+              updatedChainFetcher.chainConfig.confirmedBlockThreshold,
               blockTimestampThreshold: chainManager
               ->ChainManager.getEarliestMultiChainTimestampInThreshold
               ->Option.getWithDefault(0),
