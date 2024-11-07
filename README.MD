@@ -8,15 +8,15 @@ Build a real-time API for your blockchain application in minutes!
 
 ## Key Features
 
-⚡  **[Simplified Setup](/docs/HyperIndex/contract-import.md):** Start instantly with the quickstart, templates, and reference implementations.  
-⚡  **[Any EVM & Fuel](/docs/HyperIndex/supported-networks.md)**: Index smart contract data from any EVM-compatible network.  
-⚡  **[Fastest Historical Backfill](/docs/HyperIndex/Advanced/hypersync.md)**: Up to 1000x faster than RPC. Enhance your dev lifecycle. Reduce time-to-market.  
-⚡  **[Multichain](/docs/HyperIndex/Advanced/multichain-indexing.mdx)**: Index multiple networks with a single deployment. Query with a unified API.  
-⚡  **Real-time & [Reorg Aware](/docs/HyperIndex/Advanced/reorgs-support.md)**: Sub-second latency and automatic handling of chain reorganizations.   
+⚡  **[Simplified Setup](https://docs.envio.dev/docs/HyperIndex/contract-import):** Start instantly with the quickstart, templates, and reference implementations.  
+⚡  **[Any EVM & Fuel](https://docs.envio.dev/docs/HyperIndex/supported-networks)**: Index smart contract data from any EVM-compatible network.  
+⚡  **[Fastest Historical Backfill](https://docs.envio.dev/docs/HyperIndex/hypersync)**: Up to 1000x faster than RPC. Enhance your dev lifecycle. Reduce time-to-market.  
+⚡  **[Multichain](https://docs.envio.dev/docs/HyperIndex/multichain-indexing)**: Index multiple networks with a single deployment. Query with a unified API.  
+⚡  **Real-time & [Reorg Aware](https://docs.envio.dev/docs/HyperIndex/reorgs-support)**: Sub-second latency and automatic handling of chain reorganizations.   
 ⚡  **[Wildcard Indexing](/docs/HyperIndex/Advanced/wildcard-indexing.mdx)**: Index events according to event signatures (e.g. all ERC20 transfers on Base).  
-⚡  **[Dynamic Sources](/docs/HyperIndex/Advanced/dynamic-contracts.md) / Factory Contracts**: Dynamically index all future children contracts (e.g. new token pairs).    
+⚡  **[Dynamic Sources](https://docs.envio.dev/docs/HyperIndex/wildcard-indexing) / Factory Contracts**: Dynamically index all future children contracts (e.g. new token pairs).    
 ⚡  **Flexible Language Support**: Write JavaScript, TypeScript, or ReScript with automatically generated types.  
-⚡  **Join [Onchain & Offchain Data](/docs/HyperIndex/Guides/ipfs.md)**: Create a flexible API beyond what is available onchain (e.g. NFT metadata).  
+⚡  **Join [Onchain & Offchain Data](https://docs.envio.dev/docs/HyperIndex/ipfs)**: Create a flexible API beyond what is available onchain (e.g. NFT metadata).  
 ⚡  **[Hosted Service](https://v2.envio.dev/explorer) & Self Hosting**: Focus on your app and users, while we take care of your infrastructure.  
 ⚡  **Detailed Logging & Error Messaging**: Simplify troubleshooting with comprehensive insights.  
 
