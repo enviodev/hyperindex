@@ -15,7 +15,7 @@ describe("decodeEventLogOrThrow", () => {
           "0x00000000000000000000000027d2decb4bfc9c76f0309b8e88dec3a601fe25a8",
           "0x0000000000000000000000004200000000000000000000000000000000000006",
           "0x0000000000000000000000000000000000000000000000000000000000000bb8",
-        ],
+        ]->EvmTypes.Hex.fromStringsUnsafe,
       }
     }
     let decodedEvent = eventLog->Viem.decodeEventLogOrThrow
@@ -46,7 +46,7 @@ describe("decodeEventLogOrThrow", () => {
           "0x0d3648bd0f6ba80134a33ba9275ac585d9d315f0ad8355cddefde31afa28d0e9",
           "0x0000000000000000000000004200000000000000000000000000000000000006",
           "0x0000000000000000000000006d521550fc0e937cd3f4db0b17bbc256f5bfd140",
-        ],
+        ]->EvmTypes.Hex.fromStringsUnsafe,
       }
     }
     let decodedEvent = eventLog->Viem.decodeEventLogOrThrow
