@@ -271,6 +271,7 @@ pub mod fuel {
                         })
                         .collect(),
                 }],
+                field_selection: None,
             }
         }
     }

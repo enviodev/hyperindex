@@ -57,7 +57,7 @@ pub struct SystemConfig {
     pub rollback_on_reorg: bool,
     pub save_full_history: bool,
     pub schema: Schema,
-    pub field_selection: FieldSelection,
+    pub field_selection_evm: FieldSelectionEvm,
     pub enable_raw_events: bool,
 }
 
@@ -280,10 +280,10 @@ impl SystemConfig {
                 .context("Failed inserting network at networks map")?;
         }
 
-        let field_selection = FieldSelection::try_from_config_field_selection(
+        let field_selection = FieldSelectionEvm::try_from_config_field_selection(
             evm_config
                 .field_selection
-                .unwrap_or(human_config::evm::FieldSelection {
+                .unwrap_or(human_config::evm::FieldSelectionEvm {
                     transaction_fields: None,
                     block_fields: None,
                 }),
@@ -304,7 +304,7 @@ impl SystemConfig {
             rollback_on_reorg: evm_config.rollback_on_reorg.unwrap_or(true),
             save_full_history: evm_config.save_full_history.unwrap_or(false),
             schema,
-            field_selection,
+            field_selection_evm: field_selection,
             enable_raw_events: evm_config.raw_events.unwrap_or(false),
         })
     }
@@ -436,7 +436,7 @@ impl SystemConfig {
             rollback_on_reorg: false,
             save_full_history: false,
             schema,
-            field_selection: FieldSelection::fuel(),
+            field_selection_evm: FieldSelectionEvm::fuel(),
             enable_raw_events: fuel_config.raw_events.unwrap_or(false),
         })
     }
@@ -1042,12 +1042,12 @@ pub struct SelectedField {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct FieldSelection {
+pub struct FieldSelectionEvm {
     pub transaction_fields: Vec<SelectedField>,
     pub block_fields: Vec<SelectedField>,
 }
 
-impl FieldSelection {
+impl FieldSelectionEvm {
     fn new(transaction_fields: Vec<SelectedField>, block_fields: Vec<SelectedField>) -> Self {
         Self {
             transaction_fields,
@@ -1087,11 +1087,11 @@ impl FieldSelection {
     }
 
     pub fn try_from_config_field_selection(
-        field_selection_cfg: human_config::evm::FieldSelection,
+        field_selection_cfg: human_config::evm::FieldSelectionEvm,
         network_map: &NetworkMap,
     ) -> Result<Self> {
-        use human_config::evm::BlockField;
-        use human_config::evm::TransactionField;
+        use human_config::evm::BlockFieldEvm;
+        use human_config::evm::TransactionFieldEvm;
 
         //validate transaction field selection with rpc
         let has_rpc_sync_src = network_map
@@ -1171,8 +1171,8 @@ impl FieldSelection {
         ];
 
         type Res = RescriptTypeIdent;
-        type Block = BlockField;
-        type Tx = TransactionField;
+        type Block = BlockFieldEvm;
+        type Tx = TransactionFieldEvm;
 
         for block_field in block_fields {
             let data_type = match block_field {

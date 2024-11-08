@@ -110,20 +110,20 @@ module Log = {
 
 module Transaction = {
   @genType
-  type t = {{field_selection.transaction_type}}
+  type t = {{field_selection_evm.transaction_type}}
 
-  let schema = {{field_selection.transaction_schema}}
+  let schema = {{field_selection_evm.transaction_schema}}
 }
 
 module Block = {
   @genType
-  type t = {{field_selection.block_type}}
+  type t = {{field_selection_evm.block_type}}
 
-  type rawEventFields = {{field_selection.block_raw_event_type}}
+  type rawEventFields = {{field_selection_evm.block_raw_event_type}}
 
-  let schema = {{field_selection.block_schema}}
+  let schema = {{field_selection_evm.block_schema}}
 
-  let rawEventSchema = {{field_selection.block_raw_event_schema}}
+  let rawEventSchema = {{field_selection_evm.block_raw_event_schema}}
 
   {{#if is_evm_ecosystem}}
   @get

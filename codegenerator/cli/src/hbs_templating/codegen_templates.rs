@@ -843,7 +843,7 @@ impl NetworkConfigTemplate {
 }
 
 #[derive(Serialize)]
-struct FieldSelection {
+struct FieldSelectionEvm {
     transaction_fields: Vec<SelectedFieldTemplate>,
     block_fields: Vec<SelectedFieldTemplate>,
     transaction_type: String,
@@ -854,7 +854,7 @@ struct FieldSelection {
     block_raw_event_schema: String,
 }
 
-impl FieldSelection {
+impl FieldSelectionEvm {
     fn new(transaction_fields: &Vec<SelectedField>, block_fields: &Vec<SelectedField>) -> Self {
         let mut block_field_templates = vec![];
         let mut all_block_fields = vec![];
@@ -907,7 +907,7 @@ impl FieldSelection {
         }
     }
 
-    fn from_config_field_selection(cfg: &system_config::FieldSelection) -> Self {
+    fn from_config_field_selection(cfg: &system_config::FieldSelectionEvm) -> Self {
         Self::new(&cfg.transaction_fields, &cfg.block_fields)
     }
 }
@@ -933,7 +933,7 @@ pub struct ProjectTemplate {
     should_save_full_history: bool,
     enable_raw_events: bool,
     has_multiple_events: bool,
-    field_selection: FieldSelection,
+    field_selection_evm: FieldSelectionEvm,
     is_evm_ecosystem: bool,
     is_fuel_ecosystem: bool,
     //Used for the package.json reference to handlers in generated
@@ -1020,7 +1020,8 @@ impl ProjectTemplate {
             diff_from_current(&project_paths.project_root, &project_paths.generated)
                 .context("Failed to diff generated to root path")?;
 
-        let field_selection = FieldSelection::from_config_field_selection(&cfg.field_selection);
+        let field_selection_evm =
+            FieldSelectionEvm::from_config_field_selection(&cfg.field_selection_evm);
 
         Ok(ProjectTemplate {
             project_name: cfg.name.clone(),
@@ -1035,7 +1036,7 @@ impl ProjectTemplate {
             should_save_full_history: cfg.save_full_history,
             enable_raw_events: cfg.enable_raw_events,
             has_multiple_events,
-            field_selection,
+            field_selection_evm,
             is_evm_ecosystem: cfg.ecosystem == Ecosystem::Evm,
             is_fuel_ecosystem: cfg.ecosystem == Ecosystem::Fuel,
             //Used for the package.json reference to handlers in generated

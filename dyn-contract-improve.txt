@@ -1,0 +1,749 @@
+diff --git a/codegenerator/cli/templates/dynamic/codegen/src/ContextEnv.res.hbs b/codegenerator/cli/templates/dynamic/codegen/src/ContextEnv.res.hbs
+index 56878bc1..49dc2b27 100644
+--- a/codegenerator/cli/templates/dynamic/codegen/src/ContextEnv.res.hbs
++++ b/codegenerator/cli/templates/dynamic/codegen/src/ContextEnv.res.hbs
+@@ -71,14 +71,17 @@ let makeDynamicContractRegisterFn = (~contextEnv: t, ~contractName, ~inMemorySto
+ 
+   {{/if}}
+   let {eventBatchQueueItem, addedDynamicContractRegistrations} = contextEnv
+-  let {chain, timestamp} = eventBatchQueueItem
++  let {chain, timestamp, blockNumber, logIndex} = eventBatchQueueItem
+ 
+-  let eventId = eventBatchQueueItem->getEventId
+   let chainId = chain->ChainMap.Chain.toChainId
+   let dynamicContractRegistration: TablesStatic.DynamicContractRegistry.t = {
+     chainId,
+-    eventId,
+-    blockTimestamp: timestamp,
++    registeringEventBlockNumber: blockNumber,
++    registeringEventLogIndex: logIndex,
++    registeringEventName: eventBatchQueueItem.eventName,
++    registeringEventContractName: eventBatchQueueItem.contractName,
++    registeringEventSrcAddress: eventBatchQueueItem.event.srcAddress,
++    registeringEventBlockTimestamp: timestamp,
+     contractAddress,
+     contractType: contractName,
+   }
+diff --git a/codegenerator/cli/templates/static/codegen/src/db/DbFunctions.res b/codegenerator/cli/templates/static/codegen/src/db/DbFunctions.res
+index 259ba235..1c944bd3 100644
+--- a/codegenerator/cli/templates/static/codegen/src/db/DbFunctions.res
++++ b/codegenerator/cli/templates/static/codegen/src/db/DbFunctions.res
+@@ -184,44 +184,22 @@ module RawEvents = {
+ }
+ 
+ module DynamicContractRegistry = {
+-  type contractAddress = Address.t
+-  type dynamicContractRegistryRowId = (chainId, contractAddress)
+-  @module("./DbFunctionsImplementation.js")
+-  external batchSet: (
+-    Postgres.sql,
+-    array<TablesStatic.DynamicContractRegistry.t>,
+-  ) => promise<unit> = "batchSetDynamicContractRegistry"
+-
+-  @module("./DbFunctionsImplementation.js")
+-  external batchDelete: (Postgres.sql, array<dynamicContractRegistryRowId>) => promise<unit> =
+-    "batchDeleteDynamicContractRegistry"
+-
+-  @module("./DbFunctionsImplementation.js")
+-  external readEntities: (
+-    Postgres.sql,
+-    array<dynamicContractRegistryRowId>,
+-  ) => promise<array<Js.Json.t>> = "readDynamicContractRegistryEntities"
+-
+-  type contractTypeAndAddress = TablesStatic.DynamicContractRegistry.t
+-
+-  let contractTypeAndAddressSchema = TablesStatic.DynamicContractRegistry.schema
+-  let contractTypeAndAddressArraySchema = S.array(contractTypeAndAddressSchema)
++  let batchSet = TablesStatic.DynamicContractRegistry.batchSet
+ 
+   @module("./DbFunctionsImplementation.js")
+-  external readDynamicContractsOnChainIdBeforeEventIdRaw: (
++  external readDynamicContractsOnChainIdAtOrBeforeBlockNumberRaw: (
+     Postgres.sql,
+     ~chainId: chainId,
+-    ~eventId: bigint,
+-  ) => promise<Js.Json.t> = "readDynamicContractsOnChainIdBeforeEventId"
++    ~blockNumber: int,
++  ) => promise<Js.Json.t> = "readDynamicContractsOnChainIdAtOrBeforeBlockNumber"
+ 
+   let readDynamicContractsOnChainIdAtOrBeforeBlock = async (sql, ~chainId, ~startBlock) => {
+-    let nextBlockEventId = EventUtils.packEventIndex(~blockNumber=startBlock + 1, ~logIndex=0)
+-    let json = await readDynamicContractsOnChainIdBeforeEventIdRaw(
++    let json = await readDynamicContractsOnChainIdAtOrBeforeBlockNumberRaw(
+       sql,
+       ~chainId,
+-      ~eventId=nextBlockEventId,
++      ~blockNumber=startBlock,
+     )
+-    json->S.parseOrRaiseWith(contractTypeAndAddressArraySchema)
++    json->S.parseOrRaiseWith(TablesStatic.DynamicContractRegistry.rowsSchema)
+   }
+ 
+   @module("./DbFunctionsImplementation.js")
+@@ -229,6 +207,37 @@ module DynamicContractRegistry = {
+     Postgres.sql,
+     ~eventIdentifier: Types.eventIdentifier,
+   ) => promise<unit> = "deleteAllDynamicContractRegistrationsAfterEventIdentifier"
++
++  type preRegisteringEvent = {
++    @as("registering_event_contract_name") registeringEventContractName: string,
++    @as("registering_event_name") registeringEventName: string,
++    @as("registering_event_src_address") registeringEventSrcAddress: Address.t,
++  }
++
++  @module("./DbFunctionsImplementation.js")
++  external readDynamicContractsOnChainIdMatchingEventsRaw: (
++    Postgres.sql,
++    ~chainId: int,
++    ~preRegisteringEvents: array<preRegisteringEvent>,
++  ) => promise<Js.Json.t> = "readDynamicContractsOnChainIdMatchingEvents"
++
++  let readDynamicContractsOnChainIdMatchingEvents = async (
++    sql,
++    ~chainId,
++    ~preRegisteringEvents,
++  ) => {
++    switch await readDynamicContractsOnChainIdMatchingEventsRaw(
++      sql,
++      ~chainId,
++      ~preRegisteringEvents,
++    ) {
++    | exception exn =>
++      exn->ErrorHandling.mkLogAndRaise(
++        ~msg="Failed to read dynamic contracts on chain id matching events",
++      )
++    | json => json->S.parseOrRaiseWith(TablesStatic.DynamicContractRegistry.rowsSchema)
++    }
++  }
+ }
+ 
+ type entityHistoryItem = {
+diff --git a/codegenerator/cli/templates/static/codegen/src/db/DbFunctionsImplementation.js b/codegenerator/cli/templates/static/codegen/src/db/DbFunctionsImplementation.js
+index 7c3fae7f..5aa3de5f 100644
+--- a/codegenerator/cli/templates/static/codegen/src/db/DbFunctionsImplementation.js
++++ b/codegenerator/cli/templates/static/codegen/src/db/DbFunctionsImplementation.js
+@@ -16,9 +16,8 @@ const chunkBatchQuery = async (sql, entityDataArray, queryToExecute) => {
+ const commaSeparateDynamicMapQuery = (sql, dynQueryConstructors) =>
+   sql`${dynQueryConstructors.map(
+     (constrQuery, i) =>
+-      sql`${constrQuery(sql)}${
+-        i === dynQueryConstructors.length - 1 ? sql`` : sql`, `
+-      }`,
++      sql`${constrQuery(sql)}${i === dynQueryConstructors.length - 1 ? sql`` : sql`, `
++        }`,
+   )}`;
+ 
+ const batchSetItemsInTableCore = (table, sql, rowDataArray) => {
+@@ -146,7 +145,7 @@ module.exports.batchSetChainMetadata = (sql, entityDataArray) => {
+   "latest_fetched_block_number" = EXCLUDED."latest_fetched_block_number",
+   "timestamp_caught_up_to_head_or_endblock" = EXCLUDED."timestamp_caught_up_to_head_or_endblock",
+   "block_height" = EXCLUDED."block_height";`
+-    .then((res) => {})
++    .then((res) => { })
+     .catch((err) => {
+       console.log("errored", err);
+     });
+@@ -166,7 +165,7 @@ module.exports.setChainMetadataBlockHeight = (sql, entityDataArray) => {
+   SET
+   "chain_id" = EXCLUDED."chain_id",
+   "block_height" = EXCLUDED."block_height";`
+-    .then((res) => {})
++    .then((res) => { })
+     .catch((err) => {
+       console.log("errored", err);
+     });
+@@ -326,23 +325,20 @@ module.exports.deleteAllEntityHistoryAfterEventIdentifier = async (
+ `;
+ };
+ 
+-const EventUtils = require("../EventUtils.bs.js");
+ module.exports.deleteAllDynamicContractRegistrationsAfterEventIdentifier =
+   async (sql, { blockTimestamp, chainId, blockNumber, logIndex }) => {
+-    const eventId = EventUtils.packEventIndexFromRecord({
+-      blockNumber,
+-      logIndex,
+-    });
+-
+     return await sql`
+       DELETE FROM "public"."dynamic_contract_registry"
+       WHERE 
+-        block_timestamp > ${blockTimestamp} OR
+-        (block_timestamp = ${blockTimestamp} AND chain_id > ${chainId}) OR
+-        (block_timestamp = ${blockTimestamp} AND chain_id = ${chainId} AND event_id > ${eventId});
++        registering_event_block_timestamp > ${blockTimestamp} OR
++        (registering_event_block_timestamp = ${blockTimestamp} AND chain_id > ${chainId}) OR
++        (registering_event_block_timestamp = ${blockTimestamp} AND chain_id = ${chainId} AND registering_event_block_number > ${blockNumber}) OR
++        (registering_event_block_timestamp = ${blockTimestamp} AND chain_id = ${chainId} AND registering_event_block_number = ${blockNumber} AND registering_event_log_index > ${logIndex});
+       `;
+   };
+ 
++const EventUtils = require("../EventUtils.bs.js");
++
+ module.exports.deleteAllRawEventsAfterEventIdentifier = async (
+   sql,
+   { blockTimestamp, chainId, blockNumber, logIndex },
+@@ -420,23 +416,30 @@ module.exports.deleteStaleEndOfBlockRangeScannedDataForChain = (
+     ;`;
+ };
+ 
+-module.exports.readDynamicContractsOnChainIdBeforeEventId = (
++module.exports.readDynamicContractsOnChainIdAtOrBeforeBlockNumber = (
+   sql,
+   chainId,
+-  eventId,
++  blockNumber,
+ ) => sql`
+   SELECT *
+   FROM "public"."dynamic_contract_registry"
+-  WHERE event_id < ${eventId} AND chain_id = ${chainId};`;
++  WHERE registering_event_block_number <= ${blockNumber} 
++  AND chain_id = ${chainId};`;
+ 
+-//Start db operations dynamic_contract_registry
+-module.exports.readDynamicContractRegistryEntities = (
++module.exports.readDynamicContractsOnChainIdMatchingEvents = (
+   sql,
+-  entityIdArray,
+-) => sql`
+-  SELECT *
+-  FROM "public"."dynamic_contract_registry"
+-  WHERE (chain_id, contract_address) IN ${sql(entityIdArray)}`;
++  chainId,
++  preRegisterEvents, // array<{registering_event_contract_name, registering_event_name, registering_event_src_address}>
++) => {
++  return sql`
++    SELECT *
++    FROM "public"."dynamic_contract_registry"
++    WHERE chain_id = ${chainId}
++    AND (registering_event_contract_name, registering_event_name, registering_event_src_address) IN ${sql(
++    preRegisterEvents.map((item) => sql(item)),
++  )};
++  `;
++};
+ 
+ const batchSetDynamicContractRegistryCore = (sql, entityDataArray) => {
+   return sql`
+@@ -444,15 +447,22 @@ const batchSetDynamicContractRegistryCore = (sql, entityDataArray) => {
+   ${sql(
+     entityDataArray,
+     "chain_id",
+-    "event_id",
+-    "block_timestamp",
++    "registering_event_block_number",
++    "registering_event_log_index",
++    "registering_event_block_timestamp",
++    "registering_event_src_address",
++    "registering_event_name",
+     "contract_address",
+     "contract_type",
+   )}
+     ON CONFLICT(chain_id, contract_address) DO UPDATE
+     SET
+     "chain_id" = EXCLUDED."chain_id",
+-    "event_id" = EXCLUDED."event_id",
++    "registering_event_block_number" = EXCLUDED."registering_event_block_number",
++    "registering_event_log_index" = EXCLUDED."registering_event_log_index",
++    "registering_event_block_timestamp" = EXCLUDED."registering_event_block_timestamp",
++    "registering_event_src_address" = EXCLUDED."registering_event_src_address",
++    "registering_event_name" = EXCLUDED."registering_event_name",
+     "contract_address" = EXCLUDED."contract_address",
+     "contract_type" = EXCLUDED."contract_type";`;
+ };
+@@ -465,10 +475,6 @@ module.exports.batchSetDynamicContractRegistry = (sql, entityDataArray) => {
+   );
+ };
+ 
+-module.exports.batchDeleteDynamicContractRegistry = (sql, entityIdArray) => sql`
+-  DELETE
+-  FROM "public"."dynamic_contract_registry"
+-  WHERE (chain_id, contract_address) IN ${sql(entityIdArray)};`;
+ // end db operations for dynamic_contract_registry
+ 
+ module.exports.getRollbackDiff = (
+diff --git a/codegenerator/cli/templates/static/codegen/src/db/Table.res b/codegenerator/cli/templates/static/codegen/src/db/Table.res
+index 6529e877..925d7a27 100644
+--- a/codegenerator/cli/templates/static/codegen/src/db/Table.res
++++ b/codegenerator/cli/templates/static/codegen/src/db/Table.res
+@@ -111,6 +111,14 @@ let getFields = table =>
+     }
+   )
+ 
++let getNonDefaultFields = table =>
++  table.fields->Array.keepMap(field =>
++    switch field {
++    | Field(field) if field.defaultValue->Option.isNone => Some(field)
++    | _ => None
++    }
++  )
++
+ let getLinkedEntityFields = table =>
+   table.fields->Array.keepMap(field =>
+     switch field {
+@@ -133,6 +141,10 @@ let getFieldNames = table => {
+   table->getFields->Array.map(getDbFieldName)
+ }
+ 
++let getNonDefaultFieldNames = table => {
++  table->getNonDefaultFields->Array.map(getDbFieldName)
++}
++
+ let getFieldByName = (table, fieldNameSearch) =>
+   table.fields->Js.Array2.find(field => field->getUserDefinedFieldName == fieldNameSearch)
+ 
+@@ -186,3 +198,53 @@ let getCompositeIndices = (table): array<array<string>> => {
+   ->getUnfilteredCompositeIndicesUnsafe
+   ->Array.keep(ind => ind->Array.length > 1)
+ }
++
++module PostgresInterop = {
++  type pgFn<'payload, 'return> = (Postgres.sql, 'payload) => promise<'return>
++  type batchSetFn<'a> = (Postgres.sql, array<'a>) => promise<unit>
++  external eval: string => 'a = "eval"
++
++  let makeBatchSetFnString = (table: table) => {
++    let fieldNamesInQuotes =
++      table->getNonDefaultFieldNames->Array.map(fieldName => `"${fieldName}"`)
++    `(sql, rows) => {
++      return sql\`
++        INSERT INTO "public"."${table.tableName}"
++        \${sql(rows, ${fieldNamesInQuotes->Js.Array2.joinWith(", ")})}
++        ON CONFLICT(${table->getPrimaryKeyFieldNames->Js.Array2.joinWith(", ")}) DO UPDATE
++        SET
++        ${fieldNamesInQuotes
++      ->Array.map(fieldNameInQuotes => `${fieldNameInQuotes} = EXCLUDED.${fieldNameInQuotes}`)
++      ->Js.Array2.joinWith(", ")};\`
++    }`
++  }
++
++  let chunkBatchQuery = async (
++    sql,
++    entityDataArray: array<'entity>,
++    queryToExecute: pgFn<array<'entity>, 'return>,
++    ~maxItemsPerQuery=500,
++  ) => {
++    let responses = []
++    let i = ref(0)
++    let shouldContinue = () => i.contents < entityDataArray->Array.length
++    // Split entityDataArray into chunks of maxItemsPerQuery
++    while shouldContinue() {
++      let chunk =
++        entityDataArray->Js.Array2.slice(~start=i.contents, ~end_=i.contents + maxItemsPerQuery)
++      let response = await queryToExecute(sql, chunk)
++      responses->Js.Array2.push(response)->ignore
++      i := i.contents + maxItemsPerQuery
++    }
++    responses
++  }
++
++  let makeBatchSetFn = (~table, ~rowsSchema: S.t<array<'a>>): batchSetFn<'a> => {
++    let batchSetFn: pgFn<array<Js.Json.t>, unit> = table->makeBatchSetFnString->eval
++    async (sql, rows) => {
++      let rowsJson =
++        rows->S.serializeOrRaiseWith(rowsSchema)->(Utils.magic: Js.Json.t => array<Js.Json.t>)
++      let _res = await chunkBatchQuery(sql, rowsJson, batchSetFn)
++    }
++  }
++}
+diff --git a/codegenerator/cli/templates/static/codegen/src/db/TablesStatic.res b/codegenerator/cli/templates/static/codegen/src/db/TablesStatic.res
+index 2aa71212..a2e993f7 100644
+--- a/codegenerator/cli/templates/static/codegen/src/db/TablesStatic.res
++++ b/codegenerator/cli/templates/static/codegen/src/db/TablesStatic.res
+@@ -148,30 +148,46 @@ module DynamicContractRegistry = {
+   @genType
+   type t = {
+     @as("chain_id") chainId: int,
+-    @as("event_id") eventId: bigint,
+-    @as("block_timestamp") blockTimestamp: int,
++    @as("registering_event_block_number") registeringEventBlockNumber: int,
++    @as("registering_event_log_index") registeringEventLogIndex: int,
++    @as("registering_event_name") registeringEventName: string,
++    @as("registering_event_contract_name") registeringEventContractName: string,
++    @as("registering_event_src_address") registeringEventSrcAddress: Address.t,
++    @as("registering_event_block_timestamp") registeringEventBlockTimestamp: int,
+     @as("contract_address") contractAddress: Address.t,
+     @as("contract_type") contractType: Enums.ContractType.t,
+   }
+ 
+-  let schema = S.object(s => {
+-    chainId: s.field("chain_id", S.int),
+-    eventId: s.field("event_id", BigInt.schema),
+-    blockTimestamp: s.field("block_timestamp", S.int),
+-    contractAddress: s.field("contract_address", Address.schema),
+-    contractType: s.field("contract_type", Enums.ContractType.schema),
++  let schema = S.schema(s => {
++    chainId: s.matches(S.int),
++    registeringEventBlockNumber: s.matches(S.int),
++    registeringEventLogIndex: s.matches(S.int),
++    registeringEventContractName: s.matches(S.string),
++    registeringEventName: s.matches(S.string),
++    registeringEventSrcAddress: s.matches(Address.schema),
++    registeringEventBlockTimestamp: s.matches(S.int),
++    contractAddress: s.matches(Address.schema),
++    contractType: s.matches(Enums.ContractType.schema),
+   })
+ 
++  let rowsSchema = S.array(schema)
++
+   let table = mkTable(
+     "dynamic_contract_registry",
+     ~fields=[
+       mkField("chain_id", Integer, ~isPrimaryKey),
+-      mkField("event_id", Numeric),
+-      mkField("block_timestamp", Integer),
++      mkField("registering_event_block_number", Integer),
++      mkField("registering_event_log_index", Integer),
++      mkField("registering_event_block_timestamp", Integer),
++      mkField("registering_event_contract_name", Text),
++      mkField("registering_event_name", Text),
++      mkField("registering_event_src_address", Text),
+       mkField("contract_address", Text, ~isPrimaryKey),
+-      mkField("contract_type", Custom(ContractType.enum.name)),
++      mkField("contract_type", Custom(Enums.ContractType.enum.name)),
+     ],
+   )
++
++  let batchSet = PostgresInterop.makeBatchSetFn(~table, ~rowsSchema)
+ }
+ 
+ module EntityHistory = {
+diff --git a/codegenerator/cli/templates/static/codegen/src/eventFetching/ChainFetcher.res b/codegenerator/cli/templates/static/codegen/src/eventFetching/ChainFetcher.res
+index c2de50d2..260acd5c 100644
+--- a/codegenerator/cli/templates/static/codegen/src/eventFetching/ChainFetcher.res
++++ b/codegenerator/cli/templates/static/codegen/src/eventFetching/ChainFetcher.res
+@@ -118,6 +118,8 @@ let makeFromDbState = async (chainConfig: Config.chainConfig, ~maxAddrInPartitio
+ 
+   let chainMetadata = await DbFunctions.ChainMetadata.getLatestChainMetadataState(~chainId)
+ 
++  let shouldPreRegisterDynamicContracts = chainConfig->Config.shouldPreRegisterDynamicContracts
++
+   let (
+     startBlock: int,
+     isPreRegisteringDynamicContracts: bool,
+@@ -140,15 +142,49 @@ let makeFromDbState = async (chainConfig: Config.chainConfig, ~maxAddrInPartitio
+     }
+ 
+     (event.blockNumber, event.isPreRegisteringDynamicContracts, Some(eventFilters))
+-  | None => (chainConfig.startBlock, chainConfig->Config.shouldPreRegisterDynamicContracts, None)
++  | None => (chainConfig.startBlock, shouldPreRegisterDynamicContracts, None)
+   }
+ 
+   //Get all dynamic contracts already registered on the chain
+-  let dbDynamicContractRegistrations =
++  let dbDynamicContractRegistrations = if shouldPreRegisterDynamicContracts {
++    //An array of records containing srcAddress, eventName, contractName for each contract
++    //address & event that should be pre registered
++    let preRegisteringEvents = chainConfig.contracts->Array.flatMap(contract =>
++      contract.events->Array.flatMap(eventMod => {
++        let module(Event) = eventMod
++        let {shouldPreRegisterDynamicContracts} =
++          Event.handlerRegister->Types.HandlerTypes.Register.getEventOptions
++
++        if shouldPreRegisterDynamicContracts {
++          contract.addresses->Belt.Array.map(
++            address => {
++              {
++                DbFunctions.DynamicContractRegistry.registeringEventContractName: contract.name,
++                registeringEventName: Event.name,
++                registeringEventSrcAddress: address,
++              }
++            },
++          )
++        } else {
++          []
++        }
++      })
++    )
++
++    //If preregistration is done, but the indexer stops and restarts during indexing. We still get all the dynamic
++    //contracts that were registered during preregistration. We need to match on registering event name, contract name and src address
++    //to ensure we only get the dynamic contracts that were registered during preregistration
++    await DbFunctions.sql->DbFunctions.DynamicContractRegistry.readDynamicContractsOnChainIdMatchingEvents(
++      ~chainId,
++      ~preRegisteringEvents,
++    )
++  } else {
++    //If no preregistration should be done, only get dynamic contracts up to the the block that the indexing starts from
+     await DbFunctions.sql->DbFunctions.DynamicContractRegistry.readDynamicContractsOnChainIdAtOrBeforeBlock(
+       ~chainId,
+       ~startBlock,
+     )
++  }
+ 
+   let (
+     dynamicContractPreRegistration: option<addressToDynContractLookup>,
+diff --git a/codegenerator/cli/templates/static/codegen/src/eventFetching/FetchState.res b/codegenerator/cli/templates/static/codegen/src/eventFetching/FetchState.res
+index dae6443b..ef52f440 100644
+--- a/codegenerator/cli/templates/static/codegen/src/eventFetching/FetchState.res
++++ b/codegenerator/cli/templates/static/codegen/src/eventFetching/FetchState.res
+@@ -627,7 +627,7 @@ let getEarliestEvent = (self: t) => {
+ let makeInternal = (
+   ~registerType,
+   ~staticContracts,
+-  ~dynamicContractRegistrations: array<DbFunctions.DynamicContractRegistry.contractTypeAndAddress>,
++  ~dynamicContractRegistrations: array<TablesStatic.DynamicContractRegistry.t>,
+   ~startBlock,
+   ~isFetchingAtHead,
+   ~logger,
+@@ -649,7 +649,7 @@ let makeInternal = (
+ 
+   let dynamicContracts = dynamicContractRegistrations->Array.reduce(DynamicContractsMap.empty, (
+     accum,
+-    {contractType, contractAddress, eventId},
++    {contractType, contractAddress, registeringEventBlockNumber, registeringEventLogIndex},
+   ) => {
+     //add address to contract address mapping
+     contractAddressMapping->ContractAddressingMap.addAddress(
+@@ -657,7 +657,10 @@ let makeInternal = (
+       ~address=contractAddress,
+     )
+ 
+-    let dynamicContractId = EventUtils.unpackEventIndex(eventId)
++    let dynamicContractId: dynamicContractId = {
++      blockNumber: registeringEventBlockNumber,
++      logIndex: registeringEventLogIndex,
++    }
+ 
+     accum->DynamicContractsMap.addAddress(dynamicContractId, contractAddress)
+   })
+diff --git a/codegenerator/cli/templates/static/codegen/src/globalState/GlobalState.res b/codegenerator/cli/templates/static/codegen/src/globalState/GlobalState.res
+index 6d90271c..58bb2fe2 100644
+--- a/codegenerator/cli/templates/static/codegen/src/globalState/GlobalState.res
++++ b/codegenerator/cli/templates/static/codegen/src/globalState/GlobalState.res
+@@ -484,9 +484,10 @@ let actionReducer = (state: t, action: action) => {
+         acc,
+         contract,
+       ) => {
+-        let {blockNumber, _} = contract.eventId->EventUtils.unpackEventIndex
++        let {registeringEventBlockNumber} = contract
+         let isContractWithinSyncedRanged =
+-          (currentChainFetcher.currentBlockHeight->Int.toFloat -. blockNumber->Int.toFloat) /.
++          (currentChainFetcher.currentBlockHeight->Int.toFloat -.
++            registeringEventBlockNumber->Int.toFloat) /.
+             currentChainFetcher.currentBlockHeight->Int.toFloat <= 0.001
+         acc && isContractWithinSyncedRanged
+       })
+diff --git a/scenarios/erc20_multichain_factory/test/DynamicContractRecovery_test.res b/scenarios/erc20_multichain_factory/test/DynamicContractRecovery_test.res
+index b487bda4..11b36ce6 100644
+--- a/scenarios/erc20_multichain_factory/test/DynamicContractRecovery_test.res
++++ b/scenarios/erc20_multichain_factory/test/DynamicContractRecovery_test.res
+@@ -218,6 +218,48 @@ describe("Dynamic contract restart resistance test", () => {
+         ~message="Should have registered only the dynamic contract up to the block that was processed",
+       )
+ 
++      {
++        //Test the preRegistration restart function getting all the dynamic contracts
++        let setRegisterPreRegistration: (
++          Types.HandlerTypes.Register.t<'a>,
++          bool,
++        ) => unit = %raw(`(register, bool)=> {
++          if (!register.eventOptions) {
++            register.eventOptions = {};
++          } 
++          register.eventOptions.shouldPreRegisterDynamicContracts=bool;
++        }`)
++
++        Types.ERC20Factory.TokenCreated.handlerRegister->setRegisterPreRegistration(true)
++
++        let restartedChainFetcher = await ChainFetcher.makeFromDbState(
++          chainConfig,
++          ~maxAddrInPartition=Env.maxAddrInPartition,
++        )
++
++        let restartedFetchState =
++          restartedChainFetcher.fetchState.partitions->List.head->Option.getExn
++
++        let dynamicContracts =
++          restartedFetchState.dynamicContracts
++          ->Belt.Map.valuesToArray
++          ->Array.flatMap(set => set->Belt.Set.String.toArray)
++
++        Assert.deepEqual(
++          [Mock.mockDyamicToken1->Address.toString, Mock.mockDyamicToken2->Address.toString],
++          restartedChainFetcher.dynamicContractPreRegistration->Option.getExn->Js.Dict.keys,
++          ~message="Should return all the dynamic contracts related to handler that uses preRegistration",
++        )
++
++        Assert.deepEqual(
++          [],
++          dynamicContracts,
++          ~message="Should have no dynamic contracts yet since this tests the case starting in preregistration",
++        )
++
++        Types.ERC20Factory.TokenCreated.handlerRegister->setRegisterPreRegistration(false)
++      }
++
+       await dispatchAllTasks()
+ 
+       let restartedChainFetcher = await ChainFetcher.makeFromDbState(
+diff --git a/scenarios/test_codegen/test/lib_tests/FetchState_test.res b/scenarios/test_codegen/test/lib_tests/FetchState_test.res
+index 6b56e7e3..52e66887 100644
+--- a/scenarios/test_codegen/test/lib_tests/FetchState_test.res
++++ b/scenarios/test_codegen/test/lib_tests/FetchState_test.res
+@@ -13,6 +13,7 @@ let mockAddress1 = TestHelpers.Addresses.mockAddresses[0]->Option.getExn
+ let mockAddress2 = TestHelpers.Addresses.mockAddresses[1]->Option.getExn
+ let mockAddress3 = TestHelpers.Addresses.mockAddresses[2]->Option.getExn
+ let mockAddress4 = TestHelpers.Addresses.mockAddresses[3]->Option.getExn
++let mockFactoryAddress = TestHelpers.Addresses.mockAddresses[4]->Option.getExn
+ 
+ let getTimestamp = (~blockNumber) => blockNumber * 15
+ let getBlockData = (~blockNumber) => {
+@@ -26,20 +27,28 @@ let makeDynContractRegistration = (
+   ~logIndex=0,
+   ~chainId=1,
+   ~contractType=Gravatar,
++  ~registeringEventContractName="MockGravatarFactory",
++  ~registeringEventName="MockCreateGravatar",
++  ~registeringEventSrcAddress=mockFactoryAddress,
+ ): TablesStatic.DynamicContractRegistry.t => {
+   {
+     chainId,
+-    eventId: EventUtils.packEventIndex(~blockNumber, ~logIndex),
+-    blockTimestamp: getTimestamp(~blockNumber),
++    registeringEventBlockNumber: blockNumber,
++    registeringEventLogIndex: logIndex,
++    registeringEventName,
++    registeringEventSrcAddress,
++    registeringEventBlockTimestamp: getTimestamp(~blockNumber),
+     contractAddress,
+     contractType,
++    registeringEventContractName,
+   }
+ }
+ 
+ let getDynContractId = (
+-  d: TablesStatic.DynamicContractRegistry.t,
++  {registeringEventBlockNumber, registeringEventLogIndex}: TablesStatic.DynamicContractRegistry.t,
+ ): FetchState.dynamicContractId => {
+-  EventUtils.unpackEventIndex(d.eventId)
++  blockNumber: registeringEventBlockNumber,
++  logIndex: registeringEventLogIndex,
+ }
+ 
+ describe("FetchState.fetchState", () => {
+diff --git a/scenarios/test_codegen/test/lib_tests/Table_test.res b/scenarios/test_codegen/test/lib_tests/Table_test.res
+new file mode 100644
+index 00000000..85dec1bf
+--- /dev/null
++++ b/scenarios/test_codegen/test/lib_tests/Table_test.res
+@@ -0,0 +1,121 @@
++open Table
++open RescriptMocha
++
++let isPrimaryKey = true
++
++describe("Table functions postgres interop", () => {
++  it("Makes batch set function for entity", () => {
++    let table = mkTable(
++      "test_table",
++      ~fields=[mkField("id", Text, ~isPrimaryKey), mkField("field_a", Numeric)],
++    )
++
++    let batchSetFnString = table->PostgresInterop.makeBatchSetFnString
++
++    let expected = `(sql, rows) => {
++      return sql\`
++        INSERT INTO "public"."test_table"
++        \${sql(rows, "id", "field_a")}
++        ON CONFLICT(id) DO UPDATE
++        SET
++        "id" = EXCLUDED."id", "field_a" = EXCLUDED."field_a";\`
++    }`
++
++    Assert.equal(batchSetFnString, expected)
++  })
++
++  it("Makes batch set function for table with multiple primary keys", () => {
++    let table = mkTable(
++      "test_table",
++      ~fields=[
++        mkField("field_a", Integer, ~isPrimaryKey=true),
++        mkField("field_b", Integer, ~isPrimaryKey=true),
++        mkField("field_c", Text),
++      ],
++    )
++
++    let batchSetFnString = table->PostgresInterop.makeBatchSetFnString
++
++    let expected = `(sql, rows) => {
++      return sql\`
++        INSERT INTO "public"."test_table"
++        \${sql(rows, "field_a", "field_b", "field_c")}
++        ON CONFLICT(field_a, field_b) DO UPDATE
++        SET
++        "field_a" = EXCLUDED."field_a", "field_b" = EXCLUDED."field_b", "field_c" = EXCLUDED."field_c";\`
++    }`
++
++    Assert.equal(batchSetFnString, expected)
++  })
++
++  it("Makes batchSetFn with linked entity", () => {
++    let table = mkTable(
++      "test_table",
++      ~fields=[
++        mkField("id", Text, ~isPrimaryKey),
++        mkField("field_a", Numeric),
++        mkField("token", Text, ~linkedEntity="Token"),
++      ],
++    )
++
++    let batchSetFnString = table->PostgresInterop.makeBatchSetFnString
++
++    let expected = `(sql, rows) => {
++      return sql\`
++        INSERT INTO "public"."test_table"
++        \${sql(rows, "id", "field_a", "token_id")}
++        ON CONFLICT(id) DO UPDATE
++        SET
++        "id" = EXCLUDED."id", "field_a" = EXCLUDED."field_a", "token_id" = EXCLUDED."token_id";\`
++    }`
++
++    Assert.equal(batchSetFnString, expected)
++  })
++
++  it("Makes batchSetFn with derivedFrom field ", () => {
++    let table = mkTable(
++      "test_table",
++      ~fields=[
++        mkField("id", Text, ~isPrimaryKey),
++        mkField("field_a", Numeric),
++        mkDerivedFromField("tokens", ~derivedFromEntity="Token", ~derivedFromField="token"),
++      ],
++    )
++    let batchSetFnString = table->PostgresInterop.makeBatchSetFnString
++
++    let expected = `(sql, rows) => {
++      return sql\`
++        INSERT INTO "public"."test_table"
++        \${sql(rows, "id", "field_a")}
++        ON CONFLICT(id) DO UPDATE
++        SET
++        "id" = EXCLUDED."id", "field_a" = EXCLUDED."field_a";\`
++    }`
++
++    Assert.equal(batchSetFnString, expected)
++  })
++
++  it("Does not try to set defaults", () => {
++    let table = mkTable(
++      "test_table",
++      ~fields=[
++        mkField("id", Text, ~isPrimaryKey),
++        mkField("field_a", Numeric),
++        mkField("db_write_timestamp", TimestampWithoutTimezone, ~default="CURRENT_TIMESTAMP"),
++      ],
++    )
++
++    let batchSetFnString = table->PostgresInterop.makeBatchSetFnString
++
++    let expected = `(sql, rows) => {
++      return sql\`
++        INSERT INTO "public"."test_table"
++        \${sql(rows, "id", "field_a")}
++        ON CONFLICT(id) DO UPDATE
++        SET
++        "id" = EXCLUDED."id", "field_a" = EXCLUDED."field_a";\`
++    }`
++
++    Assert.equal(batchSetFnString, expected)
++  })
++})

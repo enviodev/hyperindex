@@ -163,7 +163,7 @@ pub mod evm {
             description = "An object representing additional fields to add to the event passed to \
                            handlers."
         )]
-        pub field_selection: Option<FieldSelection>,
+        pub field_selection: Option<FieldSelectionEvm>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
             description = "If true, the indexer will store the raw event data in the database. \
@@ -186,17 +186,17 @@ pub mod evm {
 
     #[derive(Debug, Serialize, Deserialize, PartialEq, Clone, JsonSchema)]
     #[serde(deny_unknown_fields)]
-    pub struct FieldSelection {
+    pub struct FieldSelectionEvm {
         #[schemars(description = "Fields of a transaction to add to the event passed to handlers")]
-        pub transaction_fields: Option<Vec<TransactionField>>,
+        pub transaction_fields: Option<Vec<TransactionFieldEvm>>,
         #[schemars(description = "Fields of a block to add to the event passed to handlers")]
-        pub block_fields: Option<Vec<BlockField>>,
+        pub block_fields: Option<Vec<BlockFieldEvm>>,
     }
 
     #[subenum(RpcTransactionField)]
     #[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Hash, Clone, Display, JsonSchema)]
     #[serde(rename_all = "camelCase", deny_unknown_fields)]
-    pub enum TransactionField {
+    pub enum TransactionFieldEvm {
         #[subenum(RpcTransactionField)]
         TransactionIndex,
         #[subenum(RpcTransactionField)]
@@ -240,7 +240,7 @@ pub mod evm {
     #[subenum(RpcBlockField)]
     #[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Hash, Clone, Display, JsonSchema)]
     #[serde(rename_all = "camelCase", deny_unknown_fields)]
-    pub enum BlockField {
+    pub enum BlockFieldEvm {
         #[subenum(RpcBlockField)]
         ParentHash,
         #[subenum(RpcBlockField)]
@@ -426,6 +426,8 @@ pub mod fuel {
     use serde::{Deserialize, Serialize};
     use strum::Display;
 
+    use subenum::subenum;
+
     #[derive(Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
     #[schemars(
         title = "Envio Config Schema",
@@ -462,6 +464,7 @@ pub mod fuel {
                            database and the amount of time it takes to process events (default: \
                            false)"
         )]
+        pub field_selection: Option<FieldSelectionFuel>,
         pub raw_events: Option<bool>,
     }
 
@@ -473,6 +476,209 @@ pub mod fuel {
                 serde_yaml::to_string(self).expect("Failed to serialize config")
             )
         }
+    }
+
+    #[derive(Debug, Serialize, Deserialize, PartialEq, Clone, JsonSchema)]
+    #[serde(deny_unknown_fields)]
+    pub struct FieldSelectionFuel {
+        #[schemars(description = "Fields of a receipt to add to the event passed to handlers")]
+        pub receipt_fields: Option<Vec<ReceiptFieldFuel>>,
+
+        #[schemars(description = "Fields of a transaction to add to the event passed to handlers")]
+        pub transaction_fields: Option<Vec<TransactionFieldFuel>>,
+
+        #[schemars(description = "Fields of a block to add to the event passed to handlers")]
+        pub block_fields: Option<Vec<BlockFieldFuel>>,
+    }
+
+    #[subenum(RpcTransactionFieldFuel)]
+    #[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Hash, Clone, Display, JsonSchema)]
+    #[serde(rename_all = "camelCase", deny_unknown_fields)]
+    pub enum TransactionFieldFuel {
+        #[subenum(RpcTransactionFieldFuel)]
+        BlockHeight,
+        #[subenum(RpcTransactionFieldFuel)]
+        Id,
+        #[subenum(RpcTransactionFieldFuel)]
+        InputAssetIds,
+        #[subenum(RpcTransactionFieldFuel)]
+        InputContracts,
+        #[subenum(RpcTransactionFieldFuel)]
+        InputContractUtxoId,
+        #[subenum(RpcTransactionFieldFuel)]
+        InputContractBalanceRoot,
+        #[subenum(RpcTransactionFieldFuel)]
+        InputContractStateRoot,
+        #[subenum(RpcTransactionFieldFuel)]
+        InputContractTxPointerTxIndex,
+        #[subenum(RpcTransactionFieldFuel)]
+        InputContract,
+        #[subenum(RpcTransactionFieldFuel)]
+        PoliciesTip,
+        #[subenum(RpcTransactionFieldFuel)]
+        PoliciesWitnessLimit,
+        #[subenum(RpcTransactionFieldFuel)]
+        PoliciesMaturity,
+        #[subenum(RpcTransactionFieldFuel)]
+        PoliciesMaxFee,
+        #[subenum(RpcTransactionFieldFuel)]
+        ScriptGasLimit,
+        #[subenum(RpcTransactionFieldFuel)]
+        Maturity,
+        #[subenum(RpcTransactionFieldFuel)]
+        MintAmount,
+        #[subenum(RpcTransactionFieldFuel)]
+        MintAssetId,
+        #[subenum(RpcTransactionFieldFuel)]
+        MintGasPrice,
+        #[subenum(RpcTransactionFieldFuel)]
+        TxPointerBlockHeight,
+        #[subenum(RpcTransactionFieldFuel)]
+        TxPointerTxIndex,
+        #[subenum(RpcTransactionFieldFuel)]
+        TxType,
+        #[subenum(RpcTransactionFieldFuel)]
+        OutputContractInputIndex,
+        #[subenum(RpcTransactionFieldFuel)]
+        OutputContractBalanceRoot,
+        #[subenum(RpcTransactionFieldFuel)]
+        OutputContractStateRoot,
+        #[subenum(RpcTransactionFieldFuel)]
+        Witnesses,
+        #[subenum(RpcTransactionFieldFuel)]
+        ReceiptsRoot,
+        #[subenum(RpcTransactionFieldFuel)]
+        Status,
+        #[subenum(RpcTransactionFieldFuel)]
+        Time,
+        #[subenum(RpcTransactionFieldFuel)]
+        Reason,
+        #[subenum(RpcTransactionFieldFuel)]
+        Script,
+        #[subenum(RpcTransactionFieldFuel)]
+        ScriptData,
+        #[subenum(RpcTransactionFieldFuel)]
+        BytecodeWitnessIndex,
+        #[subenum(RpcTransactionFieldFuel)]
+        BytecodeRoot,
+        #[subenum(RpcTransactionFieldFuel)]
+        SubsectionIndex,
+        #[subenum(RpcTransactionFieldFuel)]
+        SubsectionsNumber,
+        #[subenum(RpcTransactionFieldFuel)]
+        ProofSet,
+        #[subenum(RpcTransactionFieldFuel)]
+        ConsensusParametersUpgradePurposeWitnessIndex,
+        #[subenum(RpcTransactionFieldFuel)]
+        ConsensusParametersUpgradePurposeChecksum,
+        #[subenum(RpcTransactionFieldFuel)]
+        StateTransitionUpgradePurposeRoot,
+        #[subenum(RpcTransactionFieldFuel)]
+        Salt,
+    }
+
+    #[subenum(RpcReceiptFieldFuel)]
+    #[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Hash, Clone, Display, JsonSchema)]
+    #[serde(rename_all = "camelCase", deny_unknown_fields)]
+    pub enum ReceiptFieldFuel {
+        #[subenum(RpcReceiptFieldFuel)]
+        ReceiptIndex,
+        #[subenum(RpcReceiptFieldFuel)]
+        RootContractId,
+        #[subenum(RpcReceiptFieldFuel)]
+        TxId,
+        #[subenum(RpcReceiptFieldFuel)]
+        TxStatus,
+        #[subenum(RpcReceiptFieldFuel)]
+        TxType,
+        #[subenum(RpcReceiptFieldFuel)]
+        BlockHeight,
+        #[subenum(RpcReceiptFieldFuel)]
+        Pc,
+        #[subenum(RpcReceiptFieldFuel)]
+        Is,
+        #[subenum(RpcReceiptFieldFuel)]
+        To,
+        #[subenum(RpcReceiptFieldFuel)]
+        ToAddress,
+        #[subenum(RpcReceiptFieldFuel)]
+        Amount,
+        #[subenum(RpcReceiptFieldFuel)]
+        AssetId,
+        #[subenum(RpcReceiptFieldFuel)]
+        Gas,
+        #[subenum(RpcReceiptFieldFuel)]
+        Param1,
+        #[subenum(RpcReceiptFieldFuel)]
+        Param2,
+        #[subenum(RpcReceiptFieldFuel)]
+        Val,
+        #[subenum(RpcReceiptFieldFuel)]
+        Ptr,
+        #[subenum(RpcReceiptFieldFuel)]
+        Digest,
+        #[subenum(RpcReceiptFieldFuel)]
+        Reason,
+        #[subenum(RpcReceiptFieldFuel)]
+        Ra,
+        #[subenum(RpcReceiptFieldFuel)]
+        Rb,
+        #[subenum(RpcReceiptFieldFuel)]
+        Rc,
+        #[subenum(RpcReceiptFieldFuel)]
+        Rd,
+        #[subenum(RpcReceiptFieldFuel)]
+        Len,
+        #[subenum(RpcReceiptFieldFuel)]
+        ReceiptType,
+        #[subenum(RpcReceiptFieldFuel)]
+        Result,
+        #[subenum(RpcReceiptFieldFuel)]
+        GasUsed,
+        #[subenum(RpcReceiptFieldFuel)]
+        Data,
+        #[subenum(RpcReceiptFieldFuel)]
+        Sender,
+        #[subenum(RpcReceiptFieldFuel)]
+        Recipient,
+        #[subenum(RpcReceiptFieldFuel)]
+        Nonce,
+        #[subenum(RpcReceiptFieldFuel)]
+        ContractId,
+        #[subenum(RpcReceiptFieldFuel)]
+        SubId,
+    }
+
+    #[subenum(RpcBlockFieldFuel)]
+    #[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Hash, Clone, Display, JsonSchema)]
+    #[serde(rename_all = "camelCase", deny_unknown_fields)]
+    pub enum BlockFieldFuel {
+        #[subenum(RpcBlockFieldFuel)]
+        Id,
+        #[subenum(RpcBlockFieldFuel)]
+        DaHeight,
+        #[subenum(RpcBlockFieldFuel)]
+        ConsensusParametersVersion,
+        #[subenum(RpcBlockFieldFuel)]
+        StateTransitionBytecodeVersion,
+        #[subenum(RpcBlockFieldFuel)]
+        TransactionsCount,
+        #[subenum(RpcBlockFieldFuel)]
+        MessageReceiptCount,
+        #[subenum(RpcBlockFieldFuel)]
+        TransactionsRoot,
+        #[subenum(RpcBlockFieldFuel)]
+        MessageOutboxRoot,
+        #[subenum(RpcBlockFieldFuel)]
+        EventInboxRoot,
+        #[subenum(RpcBlockFieldFuel)]
+        Height,
+        #[subenum(RpcBlockFieldFuel)]
+        PrevRoot,
+        #[subenum(RpcBlockFieldFuel)]
+        Time,
+        #[subenum(RpcBlockFieldFuel)]
+        ApplicationHash,
     }
 
     // Workaround for https://github.com/serde-rs/serde/issues/2231

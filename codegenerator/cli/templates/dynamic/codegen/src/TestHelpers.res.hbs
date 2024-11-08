@@ -169,13 +169,13 @@ module EventFunctions = {
 
   module MockBlock = {
     type t = {
-      {{#each field_selection.block_fields as | field |}}
+      {{#each field_selection_evm.block_fields as | field |}}
       {{field.name.camel}}?: {{field.res_type}},
       {{/each}}
     }
 
     let toBlock = (_mock: t): Types.Block.t => {
-      {{#each field_selection.block_fields as | field |}}
+      {{#each field_selection_evm.block_fields as | field |}}
       {{field.name.camel}}: _mock.{{field.name.camel}}->Belt.Option.getWithDefault({{field.default_value_rescript}}),
       {{/each}}
     }
@@ -183,13 +183,13 @@ module EventFunctions = {
 
   module MockTransaction = {
     type t = {
-      {{#each field_selection.transaction_fields as | field |}}
+      {{#each field_selection_evm.transaction_fields as | field |}}
       {{field.name.camel}}?: {{field.res_type}},
       {{/each}}
     }
 
     let toTransaction = (_mock: t): Types.Transaction.t => {
-      {{#each field_selection.transaction_fields as | field |}}
+      {{#each field_selection_evm.transaction_fields as | field |}}
       {{field.name.camel}}: _mock.{{field.name.camel}}->Belt.Option.getWithDefault({{field.default_value_rescript}}),
       {{/each}}
     }

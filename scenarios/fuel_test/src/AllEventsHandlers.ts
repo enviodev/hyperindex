@@ -7,8 +7,8 @@ import * as S from "rescript-schema";
 
 type RemoveReadonly<T> = T extends {}
   ? {
-      -readonly [key in keyof T]: RemoveReadonly<T[key]>;
-    }
+    -readonly [key in keyof T]: RemoveReadonly<T[key]>;
+  }
   : T;
 
 type AssertSchemaType<Target, Schema> = TypeEqual<
