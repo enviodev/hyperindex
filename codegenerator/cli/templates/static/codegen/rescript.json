@@ -34,5 +34,5 @@
     "@rescript/react",
     "envio"
   ],
-  "bsc-flags": ["-open RescriptSchema", "-open Envio"]
+  "bsc-flags": ["-open RescriptSchema"]
 }

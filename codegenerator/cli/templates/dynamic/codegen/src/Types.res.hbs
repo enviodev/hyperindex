@@ -101,7 +101,7 @@ module Log = {
   type t = {
     address: Address.t,
     data: string,
-    topics: array<Ethers.EventFilter.topic>,
+    topics: array<EvmTypes.Hex.t>,
     logIndex: int,
   }
 
