@@ -166,7 +166,11 @@ let handleSetCurrentBlockHeight = (state, ~chain, ~currentBlockHeight) => {
 Takes in a chain manager and sets all chains timestamp caught up to head
 when valid state lines up and returns an updated chain manager
 */
-let checkAndSetSyncedChains = (~nextQueueItemIsKnownNone=false, chainManager: ChainManager.t) => {
+let checkAndSetSyncedChains = (
+  ~nextQueueItemIsKnownNone=false,
+  ~shouldSetPrometheusSynced=true,
+  chainManager: ChainManager.t,
+) => {
   let nextQueueItemIsNone = nextQueueItemIsKnownNone || chainManager->ChainManager.nextItemIsNone
 
   let allChainsAtHead = chainManager->ChainManager.isFetchingAtHead
@@ -244,7 +248,7 @@ let checkAndSetSyncedChains = (~nextQueueItemIsKnownNone=false, chainManager: Ch
       cf.timestampCaughtUpToHeadOrEndblock->Option.isSome && accum
     )
 
-  if allChainsSyncedAtHead {
+  if allChainsSyncedAtHead && shouldSetPrometheusSynced {
     Prometheus.setAllChainsSyncedToHead()
   }
 
@@ -257,6 +261,7 @@ let checkAndSetSyncedChains = (~nextQueueItemIsKnownNone=false, chainManager: Ch
 let updateLatestProcessedBlocks = (
   ~state: t,
   ~latestProcessedBlocks: EventProcessing.EventsProcessed.t,
+  ~shouldSetPrometheusSynced=true,
 ) => {
   let chainManager = {
     ...state.chainManager,
@@ -282,7 +287,7 @@ let updateLatestProcessedBlocks = (
   }
   {
     ...state,
-    chainManager: chainManager->checkAndSetSyncedChains,
+    chainManager: chainManager->checkAndSetSyncedChains(~shouldSetPrometheusSynced),
     currentlyProcessingBatch: false,
   }
 }
@@ -625,7 +630,11 @@ let actionReducer = (state: t, action: action) => {
     )
   | ResetRollbackState => ({...state, rollbackState: NoRollback}, [])
   | DynamicContractPreRegisterProcessed({latestProcessedBlocks, dynamicContractRegistrations}) =>
-    let state = updateLatestProcessedBlocks(~state, ~latestProcessedBlocks)
+    let state = updateLatestProcessedBlocks(
+      ~state,
+      ~latestProcessedBlocks,
+      ~shouldSetPrometheusSynced=false,
+    )
 
     let state = switch dynamicContractRegistrations {
     | None => state
