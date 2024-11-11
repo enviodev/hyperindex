@@ -107,17 +107,25 @@ let getEntityParamsDecoder = (entityName: Enums.EntityType.t) =>
 {{/each}}
   }
 
-let allTables: array<table> = [
-{{#each entities as |entity|}}
-  {{entity.name.capitalized}}.table,
-{{/each}}
-]
+let allEntities: array<module(InternalEntity)> =
+  [
 
-let allEntityHistory: array<EntityHistory.t<EntityHistory.entityInternal>> = [
 {{#each entities as |entity|}}
-  {{entity.name.capitalized}}.entityHistory->EntityHistory.castInternal,
+    module({{entity.name.capitalized}}),
 {{/each}}
-]
+  ]->(Utils.magic: array<module(Entity)> => array<module(InternalEntity)>)
+
+let allTables: array<table> = allEntities->Belt.Array.map(entityMod => {
+  let module(Entity) = entityMod
+  Entity.table
+})
+
+let allEntityHistory: array<
+  EntityHistory.t<EntityHistory.entityInternal>,
+> = allEntities->Belt.Array.map(entityMod => {
+  let module(Entity) = entityMod
+  Entity.entityHistory->EntityHistory.castInternal
+})
 
 let schema = Schema.make(allTables)
 
