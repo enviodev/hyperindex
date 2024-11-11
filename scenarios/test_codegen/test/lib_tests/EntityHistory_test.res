@@ -193,7 +193,7 @@ describe("Entity History Codegen", () => {
     let insertFnString = mockEntityHistory.insertFn->toStringUnsafe
 
     let expected = `(sql, rowArgs) =>
-      sql\`select "insert_TestEntity_history"(ROW(\${rowArgs["entity_history_block_timestamp"]}, \${rowArgs["entity_history_chain_id"]}, \${rowArgs["entity_history_block_number"]}, \${rowArgs["entity_history_log_index"]}, \${rowArgs["previous_entity_history_block_timestamp"]}, \${rowArgs["previous_entity_history_chain_id"]}, \${rowArgs["previous_entity_history_block_number"]}, \${rowArgs["previous_entity_history_log_index"]}, \${rowArgs["id"]}, \${rowArgs["fieldA"]}, \${rowArgs["fieldB"]}, \${rowArgs["action"]}));\``
+      sql\`select "insert_TestEntity_history"(ROW(\${rowArgs["entity_history_block_timestamp"]}, \${rowArgs["entity_history_chain_id"]}, \${rowArgs["entity_history_block_number"]}, \${rowArgs["entity_history_log_index"]}, \${rowArgs["previous_entity_history_block_timestamp"]}, \${rowArgs["previous_entity_history_chain_id"]}, \${rowArgs["previous_entity_history_block_number"]}, \${rowArgs["previous_entity_history_log_index"]}, \${rowArgs["id"]}, \${rowArgs["fieldA"]}, \${rowArgs["fieldB"]}, \${rowArgs["action"]}, NULL)); --NULL argument for SERIAL field\``
 
     Assert.equal(expected, insertFnString)
   })
@@ -280,6 +280,7 @@ describe("Entity History Codegen", () => {
         "fieldA": 1,
         "fieldB": "test",
         "action": "SET",
+        "serial": 1,
       },
       {
         "entity_history_block_timestamp": blockTimestamp,
@@ -294,6 +295,7 @@ describe("Entity History Codegen", () => {
         "fieldA": 2,
         "fieldB": "test2",
         "action": "SET",
+        "serial": 2,
       },
     ]
 
