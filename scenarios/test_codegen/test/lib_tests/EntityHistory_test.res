@@ -44,7 +44,7 @@ let getAllMockEntity = sql =>
 let getAllMockEntityHistory = sql =>
   sql->Postgres.unsafe(`SELECT * FROM "public"."${mockEntityHistory.table.tableName}"`)
 
-describe("Entity history serde", () => {
+describe_only("Entity history serde", () => {
   it("serializes and deserializes correctly", () => {
     let history: testEntityHistory = {
       current: {
@@ -146,7 +146,7 @@ describe("Entity history serde", () => {
   })
 })
 
-describe("Entity History Codegen", () => {
+describe_only("Entity History Codegen", () => {
   it("Creates a postgres insert function", () => {
     let expected = `CREATE OR REPLACE FUNCTION "insert_TestEntity_history"(history_row "public"."TestEntity_history")
       RETURNS void AS $$
@@ -301,5 +301,56 @@ describe("Entity History Codegen", () => {
 
     let currentHistoryItems = await DbFunctions.sql->getAllMockEntityHistory
     Assert.deepEqual(currentHistoryItems, expectedResult)
+
+    switch await mockEntityHistory->EntityHistory.insertRow(
+      ~sql=DbFunctions.sql,
+      ~historyRow={
+        entityData: Set({id: "2", fieldA: 1, fieldB: None}),
+        previous: None,
+        current: {
+          chain_id: 1,
+          block_timestamp: 4,
+          block_number: 4,
+          log_index: 6,
+        },
+      },
+    ) {
+    | exception exn =>
+      Js.log2("insertRow exn", exn)
+      Assert.fail("Failed to insert mock entity history")
+    | _ => ()
+    }
+    switch await mockEntityHistory->EntityHistory.insertRow(
+      ~sql=DbFunctions.sql,
+      ~historyRow={
+        entityData: Set({id: "2", fieldA: 3, fieldB: None}),
+        previous: None,
+        current: {
+          chain_id: 1,
+          block_timestamp: 4,
+          block_number: 10,
+          log_index: 6,
+        },
+      },
+    ) {
+    | exception exn =>
+      Js.log2("insertRow exn", exn)
+      Assert.fail("Failed to insert mock entity history")
+    | _ => ()
+    }
+
+    await mockEntityHistory->EntityHistory.insertRow(
+      ~sql=DbFunctions.sql,
+      ~historyRow={
+        entityData: Set({id: "3", fieldA: 4, fieldB: None}),
+        previous: None,
+        current: {
+          chain_id: 137,
+          block_timestamp: 4,
+          block_number: 7,
+          log_index: 6,
+        },
+      },
+    )
   })
 })

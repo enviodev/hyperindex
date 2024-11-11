@@ -142,6 +142,7 @@ type t<'entity> = {
   table: table,
   createInsertFnQuery: string,
   schema: S.t<historyRow<'entity>>,
+  schemaRows: S.t<array<historyRow<'entity>>>,
   insertFn: (Postgres.sql, Js.Json.t) => promise<unit>,
 }
 
@@ -151,8 +152,9 @@ let insertRow = (self: t<'entity>, ~sql, ~historyRow: historyRow<'entity>) => {
 }
 
 let batchInsertRows = (self: t<'entity>, ~sql, ~rows: array<historyRow<'entity>>) => {
+  let rows =
+    rows->S.serializeOrRaiseWith(self.schemaRows)->(Utils.magic: Js.Json.t => array<Js.Json.t>)
   Utils.Array.awaitEach(rows, async row => {
-    let row = row->S.serializeOrRaiseWith(self.schema)
     await self.insertFn(sql, row)
   })
 }
@@ -323,5 +325,5 @@ let fromTable = (table: table, ~schema: S.t<'entity>): t<'entity> => {
 
   let schema = makeHistoryRowSchema(schema)
 
-  {table, createInsertFnQuery, schema, insertFn}
+  {table, createInsertFnQuery, schema, schemaRows: S.array(schema), insertFn}
 }
