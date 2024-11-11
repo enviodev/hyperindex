@@ -51,9 +51,13 @@ let getEntityHistoryItems = entityUpdates => {
 let executeSetEntityWithHistory = (
   type entity,
   sql: Postgres.sql,
-  ~rows: array<Types.inMemoryStoreRowEntity<entity>>,
+  ~inMemoryStore: InMemoryStore.t,
   ~entityMod: module(Entities.Entity with type t = entity),
 ): promise<unit> => {
+  let rows =
+    inMemoryStore.entities
+    ->InMemoryStore.EntityTables.get(entityMod)
+    ->InMemoryTable.Entity.rows
   let module(EntityMod) = entityMod
   let (entitiesToSet, idsToDelete, entityHistoryItemsToSet) = rows->Belt.Array.reduce(
     ([], [], []),
@@ -105,9 +109,14 @@ let executeSetEntityWithHistory = (
 let executeDbFunctionsEntity = (
   type entity,
   sql: Postgres.sql,
-  ~rows: array<Types.inMemoryStoreRowEntity<entity>>,
+  ~inMemoryStore: InMemoryStore.t,
   ~entityMod: module(Entities.Entity with type t = entity),
 ): promise<unit> => {
+  let rows =
+    inMemoryStore.entities
+    ->InMemoryStore.EntityTables.get(entityMod)
+    ->InMemoryTable.Entity.rows
+
   let (entitiesToSet, idsToDelete) = rows->Belt.Array.reduce(([], []), (
     (accumulatedSets, accumulatedDeletes),
     row,
@@ -167,7 +176,7 @@ let executeBatch = async (sql, ~inMemoryStore: InMemoryStore.t, ~isInReorgThresh
   let set{{entity.name.capitalized}}s = entityDbExecutionComposer(
     _,
     ~entityMod=module(Entities.{{entity.name.capitalized}}),
-    ~rows=inMemoryStore.{{entity.name.uncapitalized}}->InMemoryTable.Entity.rows,
+    ~inMemoryStore,
   )
 
   {{/each}}
@@ -224,7 +233,7 @@ module RollBack = {
       logIndex,
     }
 
-    let inMemStore = InMemoryStore.makeWithRollBackEventIdentifier(Some(rollBackEventIdentifier))
+    let inMemStore = InMemoryStore.make(~rollBackEventIdentifier=Some(rollBackEventIdentifier))
 
     //Don't save the rollback diffs to history table
     let shouldSaveHistory = false
@@ -235,7 +244,7 @@ module RollBack = {
       //set the value with the eventIdentifier that set that value initially
       {{#each entities as | entity |}}
       | {previousEntity: Some({entity: {{entity.name.capitalized}}(entity), eventIdentifier}), entityId} =>
-        inMemStore.{{entity.name.uncapitalized}}->InMemoryTable.Entity.set(
+        inMemStore.entities->InMemoryStore.EntityTables.get(module(Entities.{{entity.name.capitalized}}))->InMemoryTable.Entity.set(
           Set(entity)->Types.mkEntityUpdate(~eventIdentifier, ~entityId, ~shouldSaveHistory),
           ~shouldSaveHistory,
         )
@@ -244,7 +253,7 @@ module RollBack = {
       //delete it with the eventIdentifier of the rollback event
       {{#each entities as | entity |}}
       | {previousEntity: None, entityType: {{entity.name.capitalized}}, entityId} =>
-        inMemStore.{{entity.name.uncapitalized}}->InMemoryTable.Entity.set(
+        inMemStore.entities->InMemoryStore.EntityTables.get(module(Entities.{{entity.name.capitalized}}))->InMemoryTable.Entity.set(
           Delete->Types.mkEntityUpdate(~eventIdentifier=rollBackEventIdentifier, ~entityId, ~shouldSaveHistory),
           ~shouldSaveHistory,
         )
