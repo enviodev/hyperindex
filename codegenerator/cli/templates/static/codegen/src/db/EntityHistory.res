@@ -217,6 +217,8 @@ let fromTable = (table: table, ~schema: S.t<'entity>): t<'entity> => {
 
   let actionField = mkField(actionFieldName, Custom(Enums.EntityHistoryRowAction.enum.name))
 
+  let serialField = mkField("serial", Serial, ~isNullable=true)
+
   let dataFieldNames = dataFields->Belt.Array.map(field => field->getFieldName)
 
   let originTableName = table.tableName
@@ -228,7 +230,7 @@ let fromTable = (table: table, ~schema: S.t<'entity>): t<'entity> => {
       currentHistoryFields,
       previousHistoryFields,
       dataFields,
-      [actionField],
+      [actionField, serialField],
     ]),
   )
 
@@ -314,7 +316,7 @@ let fromTable = (table: table, ~schema: S.t<'entity>): t<'entity> => {
   let insertFnString = `(sql, rowArgs) =>
       sql\`select ${insertFnName}(ROW(${allFieldNamesDoubleQuoted
     ->Belt.Array.map(fieldNameDoubleQuoted => `\${rowArgs[${fieldNameDoubleQuoted}]\}`)
-    ->Js.Array2.joinWith(", ")}));\``
+    ->Js.Array2.joinWith(", ")}, NULL)); --NULL argument for SERIAL field\``
 
   let insertFn: (Postgres.sql, Js.Json.t) => promise<unit> =
     insertFnString->Table.PostgresInterop.eval
