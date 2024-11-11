@@ -475,49 +475,60 @@ module.exports.batchSetDynamicContractRegistry = (sql, entityDataArray) => {
   );
 };
 
-// end db operations for dynamic_contract_registry
-
 module.exports.getRollbackDiff = (
   sql,
-  blockTimestamp,
-  chainId,
-  blockNumber,
+  reorgChainId,
+  safeBlockNumber,
+  entityName,
 ) => sql`
-SELECT DISTINCT
-    ON (
-      COALESCE(old.entity_id, new.entity_id)
-    ) COALESCE(old.entity_id, new.entity_id) AS entity_id,
-    COALESCE(old.params, NULL) AS val,
-    COALESCE(old.block_timestamp, NULL) AS block_timestamp,
-    COALESCE(old.chain_id, NULL) AS chain_id,
-    COALESCE(old.block_number, NULL) AS block_number,
-    COALESCE(old.log_index, NULL) AS log_index,
-    COALESCE(old.entity_type, new.entity_type) AS entity_type
-
-FROM entity_history old
-INNER JOIN
-    entity_history next
-    -- next should simply be a higher block multichain
-    ON (
-        next.block_timestamp > ${blockTimestamp}
-        OR (next.block_timestamp = ${blockTimestamp} AND next.chain_id > ${chainId})
-        OR (
-            next.block_timestamp = ${blockTimestamp} AND next.chain_id = ${chainId} AND next.block_number >= ${blockNumber}
+  WITH
+    first_change AS (
+      -- Step 1: Find the "first change" serial originating from the reorg chain above the safe block number 
+      -- (Using serial to account for unordered multi chain reorgs, where an earier event on another chain could be rolled back)
+      SELECT
+        MIN(serial) AS first_change_serial
+      FROM
+        public."${entityName}_history"
+      WHERE
+        entity_history_chain_id = ${reorgChainId}
+        AND entity_history_block_number > ${safeBlockNumber}
+    ),
+    rollback_ids AS (
+      -- Step 2: Get all unique entity ids of rows that require rollbacks where the row's serial is above the first change serial
+      SELECT DISTINCT
+        ON (id) after.*
+      FROM
+        public."${entityName}_history" after
+      WHERE
+        after.serial >= (
+          SELECT
+            first_change_serial
+          FROM
+            first_change
         )
+      ORDER BY
+        after.id,
+        after.serial ASC -- Select the row with the lowest serial per id
     )
-    -- old should be a lower block multichain
-    AND (
-        old.block_timestamp < ${blockTimestamp}
-        OR (old.block_timestamp = ${blockTimestamp} AND old.chain_id < ${chainId})
-        OR (old.block_timestamp = ${blockTimestamp} AND old.chain_id = ${chainId} AND old.block_number <= ${blockNumber})
-    )
-    -- old AND new ids AND entity types should match
-    AND old.entity_id = next.entity_id
-    AND old.entity_type = next.entity_type
-    AND old.block_number = next.previous_block_number
-FULL OUTER JOIN
-    entity_history new
-    ON old.entity_id = new.entity_id
-    AND new.previous_block_number >= old.block_number
-WHERE COALESCE(old.block_timestamp, 0) <= ${blockTimestamp} AND COALESCE(new.block_timestamp, ${blockTimestamp} + 1) >= ${blockTimestamp};
+    -- Step 3: For each relevant id, join to the row on the "previous_entity_history" fields
+  select
+    -- In the case where no previous row exists, coalesce the needed values since this new entity
+    -- will need to be deleted
+    COALESCE(before.id, after.id) AS id,
+    COALESCE(before.action, 'DELETE') AS action,
+    -- Deleting at 0 values will work fine for future rollbacks
+    COALESCE(before.entity_history_block_number, 0) AS entity_history_block_number,
+    COALESCE(before.entity_history_block_timestamp, 0) AS entity_history_block_timestamp,
+    COALESCE(before.entity_history_chain_id, 0) AS entity_history_chain_id,
+    COALESCE(before.entity_history_log_index, 0) AS entity_history_log_index,
+    -- Select the remaining before fields
+    before.*
+  FROM
+    -- Use a RIGHT JOIN, to ensure that nulls get returned if there is no "before" row
+    public."${entityName}_history" before
+    RIGHT JOIN rollback_ids after ON before.id = after.id
+    AND before.entity_history_block_timestamp = after.previous_entity_history_block_timestamp
+    AND before.entity_history_chain_id = after.previous_entity_history_chain_id
+    AND before.entity_history_block_number = after.previous_entity_history_block_number
+    AND before.entity_history_log_index = after.previous_entity_history_log_index;
 `;

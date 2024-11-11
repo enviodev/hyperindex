@@ -214,51 +214,58 @@ let executeBatch = async (sql, ~inMemoryStore: InMemoryStore.t, ~isInReorgThresh
 module RollBack = {
   exception DecodeError(S.error)
   let rollBack = async (~chainId, ~blockTimestamp, ~blockNumber, ~logIndex) => {
-    let reorgData = switch await DbFunctions.sql->DbFunctions.EntityHistory.getRollbackDiff(
-      ~chainId,
-      ~blockTimestamp,
-      ~blockNumber,
-    ) {
-    | Ok(v) => v
-    | Error(exn) =>
-      exn
-      ->DecodeError
-      ->ErrorHandling.mkLogAndRaise(~msg="Failed to get rollback diff from entity history")
-    }
-
     let rollBackEventIdentifier: Types.eventIdentifier = {
       chainId,
       blockTimestamp,
       blockNumber,
       logIndex,
     }
-
     let inMemStore = InMemoryStore.make(~rollBackEventIdentifier=Some(rollBackEventIdentifier))
-
     //Don't save the rollback diffs to history table
     let shouldSaveHistory = false
 
-    reorgData->Belt.Array.forEach(e => {
-      switch e {
-      //Where previousEntity is Some, 
-      //set the value with the eventIdentifier that set that value initially
-      {{#each entities as | entity |}}
-      | {previousEntity: Some({entity: {{entity.name.capitalized}}(entity), eventIdentifier}), entityId} =>
-        inMemStore.entities->InMemoryStore.EntityTables.get(module(Entities.{{entity.name.capitalized}}))->InMemoryTable.Entity.set(
-          Set(entity)->Types.mkEntityUpdate(~eventIdentifier, ~entityId, ~shouldSaveHistory),
-          ~shouldSaveHistory,
+    await Utils.Array.awaitEach(Entities.allEntities, async entityMod => {
+      let module(Entity) = entityMod
+      let entityMod =
+        entityMod->(
+          Utils.magic: module(Entities.InternalEntity) => module(Entities.Entity with
+            type t = 'entity
+          )
         )
-      {{/each}}
-      //Where previousEntity is None, 
-      //delete it with the eventIdentifier of the rollback event
-      {{#each entities as | entity |}}
-      | {previousEntity: None, entityType: {{entity.name.capitalized}}, entityId} =>
-        inMemStore.entities->InMemoryStore.EntityTables.get(module(Entities.{{entity.name.capitalized}}))->InMemoryTable.Entity.set(
-          Delete->Types.mkEntityUpdate(~eventIdentifier=rollBackEventIdentifier, ~entityId, ~shouldSaveHistory),
-          ~shouldSaveHistory,
+
+      let diff =
+        await DbFunctions.sql->DbFunctions.EntityHistory.getRollbackDiff(
+          ~reorgChainId=chainId,
+          ~safeBlockNumber=blockNumber,
+          ~entityMod,
         )
-      {{/each}}
-      }
+
+      let entityTable = inMemStore.entities->InMemoryStore.EntityTables.get(entityMod)
+
+      diff->Belt.Array.forEach(historyRow => {
+        let eventIdentifier: Types.eventIdentifier = {
+          chainId: historyRow.current.chain_id,
+          blockNumber: historyRow.current.block_number,
+          logIndex: historyRow.current.log_index,
+          blockTimestamp: historyRow.current.block_timestamp,
+        }
+        switch historyRow.entityData {
+        | Set(entity) =>
+          entityTable->InMemoryTable.Entity.set(
+            Set(entity)->Types.mkEntityUpdate(
+              ~eventIdentifier,
+              ~entityId=entity->Entities.getEntityId,
+              ~shouldSaveHistory,
+            ),
+            ~shouldSaveHistory,
+          )
+        | Delete({id}) =>
+          entityTable->InMemoryTable.Entity.set(
+            Delete->Types.mkEntityUpdate(~eventIdentifier, ~entityId=id, ~shouldSaveHistory),
+            ~shouldSaveHistory,
+          )
+        }
+      })
     })
 
     inMemStore

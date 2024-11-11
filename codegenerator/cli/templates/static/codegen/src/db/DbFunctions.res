@@ -373,15 +373,50 @@ module EntityHistory = {
   @module("./DbFunctionsImplementation.js")
   external getRollbackDiffInternal: (
     Postgres.sql,
-    ~blockTimestamp: int,
-    ~chainId: int,
-    ~blockNumber: int,
-  ) => promise<array<Js.Json.t>> = "getRollbackDiff"
+    ~reorgChainId: int,
+    ~safeBlockNumber: int,
+    ~entityName: Enums.EntityType.t,
+  ) => //Returns an array of entity history rows
+  promise<Js.Json.t> = "getRollbackDiff"
 
-  let getRollbackDiff = (sql, ~blockTimestamp: int, ~chainId: int, ~blockNumber: int) =>
-    getRollbackDiffInternal(sql, ~blockTimestamp, ~chainId, ~blockNumber)->Promise.thenResolve(
-      rollbackDiffResponseArr_decode,
+  let getRollbackDiff = async (
+    type entity,
+    sql,
+    ~reorgChainId,
+    ~safeBlockNumber,
+    ~entityMod: module(Entities.Entity with type t = entity),
+  ) => {
+    let module(Entity) = entityMod
+
+    let logger = Logging.createChild(
+      ~params={
+        "reorgChainId": reorgChainId,
+        "safeBlockNumber": safeBlockNumber,
+        "entityName": Entity.name,
+      },
     )
+    let diffRes = switch await getRollbackDiffInternal(
+      sql,
+      ~reorgChainId,
+      ~safeBlockNumber,
+      ~entityName=Entity.name,
+    ) {
+    | exception exn =>
+      exn->ErrorHandling.mkLogAndRaise(
+        ~msg="Failed to get rollback diff from entity history",
+        ~logger,
+      )
+    | res => res
+    }
+    switch diffRes->S.parseAnyOrRaiseWith(Entity.entityHistory.schemaRows) {
+    | exception exn =>
+      exn->ErrorHandling.mkLogAndRaise(
+        ~msg="Failed to parse rollback diff from entity history",
+        ~logger,
+      )
+    | diffRows => diffRows
+    }
+  }
 
   let copyTableToEntityHistory = (sql, ~sourceTableName: Enums.EntityType.t): promise<unit> => {
     sql->Postgres.unsafe(`SELECT copy_table_to_entity_history('${(sourceTableName :> string)}');`)
