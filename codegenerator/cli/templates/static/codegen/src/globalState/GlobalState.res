@@ -1090,6 +1090,7 @@ let injectedTaskReducer = (
     switch state {
     | {currentlyProcessingBatch: false, rollbackState: RollingBack(rollbackChain)} =>
       Logging.warn("Executing rollback")
+
       let chainFetcher = state.chainManager.chainFetchers->ChainMap.get(rollbackChain)
       let rollbackChainId = rollbackChain->ChainMap.Chain.toChainId
       //Get rollback block and timestamp
@@ -1099,10 +1100,20 @@ let injectedTaskReducer = (
       let {blockNumber: lastKnownValidBlockNumber, blockTimestamp: lastKnownValidBlockTimestamp} =
         reorgChainRolledBackLastBlockData->ChainFetcher.getLastScannedBlockData
 
+      let isUnorderedMultichainMode = state.config.isUnorderedMultichainMode
+
       let firstChangeEventIdentifierPerChain =
         await DbFunctions.sql->DbFunctions.EntityHistory.getFirstChangeEventIdentifierPerChain(
-          ~reorgChainId=rollbackChainId,
-          ~safeBlockNumber=lastKnownValidBlockNumber,
+          isUnorderedMultichainMode
+            ? UnorderedMultichain({
+                reorgChainId: rollbackChainId,
+                safeBlockNumber: lastKnownValidBlockNumber,
+              })
+            : OrderedMultichain({
+                safeBlockTimestamp: lastKnownValidBlockTimestamp,
+                reorgChainId: rollbackChainId,
+                safeBlockNumber: lastKnownValidBlockNumber,
+              }),
         )
 
       let chainFetchers = state.chainManager.chainFetchers->ChainMap.mapWithKey((chain, cf) => {
@@ -1128,26 +1139,46 @@ let injectedTaskReducer = (
             cf.lastBlockScannedHashes
           }
         }
-        let rolledBackCf = cf->ChainFetcher.rollbackToLastBlockHashes(~rolledBackLastBlockData)
+
+        let lastKnownValidBlock = rolledBackLastBlockData->ChainFetcher.getLastScannedBlockData
 
         //Roll back chain fetcher with the given rolledBackLastBlockData
         switch (isReorgChain, firstChangeEventIdentifier) {
+        //For the reorg chain, there is no need to filter out events, since it is rolled back exactly
+        //to the starting point of event fetching
         | (true, _) =>
-          //For the reorg chain, filter out events just based on the blockNumber that was rolled back to
-          rolledBackCf->ChainFetcher.addProcessingFilter(
-            ~filter=eventBatchQueueItem => {
-              //Filter out events that occur passed the block where the query starts but
-              //are lower than the blockNumber where we rolled back to
-              eventBatchQueueItem.blockNumber > lastKnownValidBlockNumber
-            },
-            ~isValid=(~fetchState) => {
-              //Remove the event filter once the fetchState has fetched passed the
-              //blockNumber of the valid rollback block's blockNumber
-              let {blockNumber} = FetchState.getLatestFullyFetchedBlock(fetchState)
-              blockNumber <= lastKnownValidBlockNumber
+          let fetchState = cf.fetchState->PartitionedFetchState.rollback(
+            ~lastKnownValidBlock,
+            ~firstChangeEvent={
+              blockNumber: lastKnownValidBlock.blockNumber + 1,
+              logIndex: 0,
             },
           )
+
+          {
+            ...cf,
+            lastBlockScannedHashes: rolledBackLastBlockData,
+            fetchState,
+          }
+        | (
+            false,
+            None,
+          ) => //On other chains, If no first change event was found on the chain after the reorg, no need to filter out events
+          {
+            ...cf,
+            lastBlockScannedHashes: rolledBackLastBlockData,
+          }
         | (false, Some(firstChangeEventIdentifier)) =>
+          let fetchState =
+            cf.fetchState->PartitionedFetchState.rollback(
+              ~lastKnownValidBlock,
+              ~firstChangeEvent=(firstChangeEventIdentifier :> FetchState.blockNumberAndLogIndex),
+            )
+          let rolledBackCf = {
+            ...cf,
+            lastBlockScannedHashes: rolledBackLastBlockData,
+            fetchState,
+          }
           //On other chains, filter out evennts based on the first change present on the chain after the reorg
           rolledBackCf->ChainFetcher.addProcessingFilter(
             ~filter=eventBatchQueueItem => {
@@ -1163,11 +1194,6 @@ let injectedTaskReducer = (
               blockNumber <= firstChangeEventIdentifier.blockNumber
             },
           )
-        | (
-            false,
-            None,
-          ) => //If no first change event was found on the chain after the reorg, no need to filter out events
-          rolledBackCf
         }
       })
 
@@ -1182,8 +1208,8 @@ let injectedTaskReducer = (
         ~blockTimestamp=lastKnownValidBlockTimestamp,
         ~blockNumber=lastKnownValidBlockNumber,
         ~logIndex=0,
+        ~isUnorderedMultichainMode,
       )
-
       dispatchAction(SetRollbackState(inMemoryStore, chainManager))
 
     | _ => Logging.warn("Waiting for batch to finish processing before executing rollback") //wait for batch to finish processing

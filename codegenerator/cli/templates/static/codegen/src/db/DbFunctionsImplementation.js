@@ -479,35 +479,62 @@ module.exports.batchSetDynamicContractRegistry = (sql, entityDataArray) => {
   Find the "first change" serial originating from the reorg chain above the safe block number 
   (Using serial to account for unordered multi chain reorgs, where an earier event on another chain could be rolled back)
 */
-const getFirstChangeSerial = (sql, reorgChainId, safeBlockNumber, entityName) =>
+module.exports.getFirstChangeSerial_UnorderedMultichain = (
+  sql,
+  reorgChainId,
+  safeBlockNumber,
+  entityName
+) =>
   sql`
     SELECT
       MIN(serial) AS first_change_serial
     FROM
-      public."${entityName}_history"
+      public."${sql(entityName + "_history")}"
     WHERE
       entity_history_chain_id = ${reorgChainId}
       AND entity_history_block_number > ${safeBlockNumber}
   `;
 
-module.exports.getFirstChangeEntityHistoryPerChain = (
+/**
+  Find the "first change" serial originating from any chain above the provided safe block
+*/
+module.exports.getFirstChangeSerial_OrderedMultichain = (
   sql,
+  safeBlockTimestamp,
   reorgChainId,
   safeBlockNumber,
   entityName
+) =>
+  sql`
+    SELECT
+      MIN(serial) AS first_change_serial
+    FROM
+      public."${sql(entityName + "_history")}"
+    WHERE
+      entity_history_block_timestamp > ${safeBlockTimestamp}
+      OR
+      (entity_history_block_timestamp = ${safeBlockTimestamp} AND entity_history_chain_id > ${reorgChainId})
+      OR
+      (entity_history_block_timestamp = ${safeBlockTimestamp} AND entity_history_chain_id = ${reorgChainId} AND entity_history_block_number > ${safeBlockNumber})
+  `;
+
+module.exports.getFirstChangeEntityHistoryPerChain = (
+  sql,
+  entityName,
+  getFirstChangeSerial
 ) => sql`
   WITH
     first_change AS (
       -- Step 1: Find the "first change" serial originating from the reorg chain above the safe block number 
       -- (Using serial to account for unordered multi chain reorgs, where an earier event on another chain could be rolled back)
-      ${getFirstChangeSerial(sql, reorgChainId, safeBlockNumber, entityName)}
+      ${getFirstChangeSerial(sql)}
     )
   -- Step 2: Distinct on entity_history_chain_id, get the entity_history_block_number of the row with the 
   -- lowest serial >= the first change serial
   SELECT DISTINCT
     ON (entity_history_chain_id) *
   FROM
-    public."${entityName}_history"
+    public."${sql(entityName + "_history")}"
   WHERE
     serial >= (
       SELECT
@@ -523,19 +550,18 @@ module.exports.getFirstChangeEntityHistoryPerChain = (
 
 module.exports.deleteRolledBackEntityHistory = (
   sql,
-  reorgChainId,
-  safeBlockNumber,
-  entityName
+  entityName,
+  getFirstChangeSerial
 ) => sql`
   WITH
     first_change AS (
       -- Step 1: Find the "first change" serial originating from the reorg chain above the safe block number 
       -- (Using serial to account for unordered multi chain reorgs, where an earier event on another chain could be rolled back)
-      ${getFirstChangeSerial(sql, reorgChainId, safeBlockNumber, entityName)}
+      ${getFirstChangeSerial(sql)}
     )
   -- Step 2: Delete all rows that have a serial >= the first change serial
   DELETE FROM
-    public."${entityName}_history"
+    public."${sql(entityName + "_history")}"
   WHERE
     serial >= (
       SELECT
@@ -545,24 +571,19 @@ module.exports.deleteRolledBackEntityHistory = (
     );
   `;
 
-module.exports.getRollbackDiff = (
-  sql,
-  reorgChainId,
-  safeBlockNumber,
-  entityName
-) => sql`
+module.exports.getRollbackDiff = (sql, entityName, getFirstChangeSerial) => sql`
   WITH
     first_change AS (
       -- Step 1: Find the "first change" serial originating from the reorg chain above the safe block number 
       -- (Using serial to account for unordered multi chain reorgs, where an earier event on another chain could be rolled back)
-      ${getFirstChangeSerial(sql, reorgChainId, safeBlockNumber, entityName)}
+      ${getFirstChangeSerial(sql)}
     ),
     rollback_ids AS (
       -- Step 2: Get all unique entity ids of rows that require rollbacks where the row's serial is above the first change serial
       SELECT DISTINCT
         ON (id) after.*
       FROM
-        public."${entityName}_history" after
+        public."${sql(entityName + "_history")}" after
       WHERE
         after.serial >= (
           SELECT
@@ -589,7 +610,7 @@ module.exports.getRollbackDiff = (
     before.*
   FROM
     -- Use a RIGHT JOIN, to ensure that nulls get returned if there is no "before" row
-    public."${entityName}_history" before
+    public."${sql(entityName + "_history")}" before
     RIGHT JOIN rollback_ids after ON before.id = after.id
     AND before.entity_history_block_timestamp = after.previous_entity_history_block_timestamp
     AND before.entity_history_chain_id = after.previous_entity_history_chain_id

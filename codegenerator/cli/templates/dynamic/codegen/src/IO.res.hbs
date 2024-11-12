@@ -213,7 +213,13 @@ let executeBatch = async (sql, ~inMemoryStore: InMemoryStore.t, ~isInReorgThresh
 
 module RollBack = {
   exception DecodeError(S.error)
-  let rollBack = async (~chainId, ~blockTimestamp, ~blockNumber, ~logIndex) => {
+  let rollBack = async (
+    ~chainId,
+    ~blockTimestamp,
+    ~blockNumber,
+    ~logIndex,
+    ~isUnorderedMultichainMode,
+  ) => {
     let rollBackEventIdentifier: Types.eventIdentifier = {
       chainId,
       blockTimestamp,
@@ -233,12 +239,19 @@ module RollBack = {
           )
         )
 
-      let diff =
-        await DbFunctions.sql->DbFunctions.EntityHistory.getRollbackDiff(
-          ~reorgChainId=chainId,
-          ~safeBlockNumber=blockNumber,
-          ~entityMod,
-        )
+      let diff = await DbFunctions.sql->DbFunctions.EntityHistory.getRollbackDiff(
+        isUnorderedMultichainMode
+          ? UnorderedMultichain({
+              reorgChainId: chainId,
+              safeBlockNumber: blockNumber,
+            })
+          : OrderedMultichain({
+              safeBlockTimestamp: blockTimestamp,
+              reorgChainId: chainId,
+              safeBlockNumber: blockNumber,
+            }),
+        ~entityMod,
+      )
 
       let entityTable = inMemStore.entities->InMemoryStore.EntityTables.get(entityMod)
 

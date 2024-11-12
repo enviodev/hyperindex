@@ -220,18 +220,20 @@ let makeFromDbState = async (chainConfig: Config.chainConfig, ~maxAddrInPartitio
       latestProcessedBlock,
       numEventsProcessed,
       timestampCaughtUpToHeadOrEndblock,
-    }) =>
-    { 
-        // on restart, reset the events_processed gauge to the previous state
-        switch numEventsProcessed {
-          | Some(numEventsProcessed) => Prometheus.incrementEventsProcessedCounter(~number=numEventsProcessed)
-          | None => () // do nothing if no events have been processed yet for this chain
-        }
-        (
+    }) => {
+      // on restart, reset the events_processed gauge to the previous state
+      switch numEventsProcessed {
+      | Some(numEventsProcessed) =>
+        Prometheus.incrementEventsProcessedCounter(~number=numEventsProcessed)
+      | None => () // do nothing if no events have been processed yet for this chain
+      }
+      (
         firstEventBlockNumber,
         latestProcessedBlock,
         numEventsProcessed,
-        Env.updateSyncTimeOnRestart ? None : timestampCaughtUpToHeadOrEndblock->Js.Nullable.toOption,
+        Env.updateSyncTimeOnRestart
+          ? None
+          : timestampCaughtUpToHeadOrEndblock->Js.Nullable.toOption,
       )
     }
   | None => (None, None, None, None)
@@ -434,15 +436,6 @@ let getLastScannedBlockData = lastBlockData => {
     blockNumber,
     blockTimestamp,
   })
-}
-
-let rollbackToLastBlockHashes = (chainFetcher: t, ~rolledBackLastBlockData) => {
-  let lastKnownValidBlock = rolledBackLastBlockData->getLastScannedBlockData
-  {
-    ...chainFetcher,
-    lastBlockScannedHashes: rolledBackLastBlockData,
-    fetchState: chainFetcher.fetchState->PartitionedFetchState.rollback(~lastKnownValidBlock),
-  }
 }
 
 let isFetchingAtHead = (chainFetcher: t) =>
