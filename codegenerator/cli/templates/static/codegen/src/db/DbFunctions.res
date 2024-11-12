@@ -298,10 +298,41 @@ module EntityHistory = {
   }
 
   @module("./DbFunctionsImplementation.js")
-  external deleteAllEntityHistoryAfterEventIdentifier: (
+  external deleteRolledBackEntityHistory: (
     Postgres.sql,
+    ~reorgChainId: int,
+    ~safeBlockNumber: int,
+    ~entityName: Enums.EntityType.t,
+  ) => promise<unit> = "deleteRolledBackEntityHistory"
+
+  let deleteAllEntityHistoryAfterEventIdentifier = (
+    sql,
     ~eventIdentifier: Types.eventIdentifier,
-  ) => promise<unit> = "deleteAllEntityHistoryAfterEventIdentifier"
+  ): promise<unit> => {
+    let {chainId, blockNumber} = eventIdentifier
+
+    Utils.Array.awaitEach(Entities.allEntities, async entityMod => {
+      let module(Entity) = entityMod
+      try await deleteRolledBackEntityHistory(
+        sql,
+        ~reorgChainId=chainId,
+        ~safeBlockNumber=blockNumber,
+        ~entityName=Entity.name,
+      ) catch {
+      | exn =>
+        exn->ErrorHandling.mkLogAndRaise(
+          ~msg=`Failed to delete rolled back entity history`,
+          ~logger=Logging.createChild(
+            ~params={
+              "reorgChainId": chainId,
+              "safeBlockNumber": blockNumber,
+              "entityName": Entity.name,
+            },
+          ),
+        )
+      }
+    })
+  }
 
   type rollbackDiffResponseRaw = {
     entity_type: Enums.EntityType.t,
