@@ -17,19 +17,19 @@ const commaSeparateDynamicMapQuery = (sql, dynQueryConstructors) =>
   sql`${dynQueryConstructors.map(
     (constrQuery, i) =>
       sql`${constrQuery(sql)}${i === dynQueryConstructors.length - 1 ? sql`` : sql`, `
-        }`,
+        }`
   )}`;
 
 const batchSetItemsInTableCore = (table, sql, rowDataArray) => {
   const fieldNames = TableModule.getFieldNames(table).filter(
-    (fieldName) => fieldName !== "db_write_timestamp",
+    (fieldName) => fieldName !== "db_write_timestamp"
   );
   const primaryKeyFieldNames = TableModule.getPrimaryKeyFieldNames(table);
   const fieldQueryConstructors = fieldNames.map(
-    (fieldName) => (sql) => sql`${sql(fieldName)} = EXCLUDED.${sql(fieldName)}`,
+    (fieldName) => (sql) => sql`${sql(fieldName)} = EXCLUDED.${sql(fieldName)}`
   );
   const pkQueryConstructors = primaryKeyFieldNames.map(
-    (pkField) => (sql) => sql(pkField),
+    (pkField) => (sql) => sql(pkField)
   );
 
   return sql`
@@ -37,7 +37,7 @@ INSERT INTO "public".${sql(table.tableName)}
 ${sql(rowDataArray, ...fieldNames)}
 ON CONFLICT(${sql`${commaSeparateDynamicMapQuery(
     sql,
-    pkQueryConstructors,
+    pkQueryConstructors
   )}`}) DO UPDATE
 SET
 ${sql`${commaSeparateDynamicMapQuery(sql, fieldQueryConstructors)}`};`;
@@ -101,7 +101,7 @@ module.exports.batchSetEventSyncState = (sql, entityDataArray) => {
     "block_number",
     "log_index",
     "block_timestamp",
-    "is_pre_registering_dynamic_contracts",
+    "is_pre_registering_dynamic_contracts"
   )}
     ON CONFLICT(chain_id) DO UPDATE
     SET
@@ -133,7 +133,7 @@ module.exports.batchSetChainMetadata = (sql, entityDataArray) => {
     "is_hyper_sync", // this is left out of the on conflict below as it only needs to be set once
     "num_batches_fetched",
     "latest_fetched_block_number",
-    "timestamp_caught_up_to_head_or_endblock",
+    "timestamp_caught_up_to_head_or_endblock"
   )}
   ON CONFLICT(chain_id) DO UPDATE
   SET
@@ -159,7 +159,7 @@ module.exports.setChainMetadataBlockHeight = (sql, entityDataArray) => {
     "chain_id",
     "start_block", // this is left out of the on conflict below as it only needs to be set once
     "end_block", // this is left out of the on conflict below as it only needs to be set once
-    "block_height",
+    "block_height"
   )}
   ON CONFLICT(chain_id) DO UPDATE
   SET
@@ -173,7 +173,7 @@ module.exports.setChainMetadataBlockHeight = (sql, entityDataArray) => {
 
 module.exports.readLatestRawEventsBlockNumberProcessedOnChainId = (
   sql,
-  chainId,
+  chainId
 ) => sql`
   SELECT block_number
   FROM "public"."raw_events"
@@ -191,7 +191,7 @@ module.exports.getRawEventsPageGtOrEqEventId = (
   chainId,
   eventId,
   limit,
-  contractAddresses,
+  contractAddresses
 ) => sql`
   SELECT *
   FROM "public"."raw_events"
@@ -208,7 +208,7 @@ module.exports.getRawEventsPageWithinEventIdRangeInclusive = (
   fromEventIdInclusive,
   toEventIdInclusive,
   limit,
-  contractAddresses,
+  contractAddresses
 ) => sql`
   SELECT *
   FROM public.raw_events
@@ -236,7 +236,7 @@ const batchSetRawEventsCore = (sql, entityDataArray) => {
     "src_address",
     "block_hash",
     "block_timestamp",
-    "params",
+    "params"
   )}
     ON CONFLICT(chain_id, event_id) DO UPDATE
     SET
@@ -294,7 +294,7 @@ module.exports.deleteAllEntityHistoryOnChainBeforeThreshold = async (
   sql,
   chainId,
   blockNumberThreshold,
-  blockTimestampThreshold,
+  blockTimestampThreshold
 ) => {
   await sql`
   DELETE FROM "public"."entity_history"
@@ -313,7 +313,7 @@ module.exports.deleteAllEntityHistoryOnChainBeforeThreshold = async (
 
 module.exports.deleteAllEntityHistoryAfterEventIdentifier = async (
   sql,
-  { blockTimestamp, chainId, blockNumber, logIndex },
+  { blockTimestamp, chainId, blockNumber, logIndex }
 ) => {
   await sql`
   DELETE FROM "public"."entity_history"
@@ -341,7 +341,7 @@ const EventUtils = require("../EventUtils.bs.js");
 
 module.exports.deleteAllRawEventsAfterEventIdentifier = async (
   sql,
-  { blockTimestamp, chainId, blockNumber, logIndex },
+  { blockTimestamp, chainId, blockNumber, logIndex }
 ) => {
   const eventId = EventUtils.packEventIndexFromRecord({
     blockNumber,
@@ -375,7 +375,7 @@ const batchSetEndOfBlockRangeScannedDataCore = (sql, rowDataArray) => {
     "chain_id",
     "block_timestamp",
     "block_number",
-    "block_hash",
+    "block_hash"
   )}
     ON CONFLICT(chain_id, block_number) DO UPDATE
     SET
@@ -389,7 +389,7 @@ module.exports.batchSetEndOfBlockRangeScannedData = (sql, rowDataArray) => {
   return chunkBatchQuery(
     sql,
     rowDataArray,
-    batchSetEndOfBlockRangeScannedDataCore,
+    batchSetEndOfBlockRangeScannedDataCore
   );
 };
 
@@ -405,7 +405,7 @@ module.exports.deleteStaleEndOfBlockRangeScannedDataForChain = (
   sql,
   chainId,
   blockNumberThreshold,
-  blockTimestampThreshold,
+  blockTimestampThreshold
 ) => {
   return sql`
     DELETE
@@ -419,7 +419,7 @@ module.exports.deleteStaleEndOfBlockRangeScannedDataForChain = (
 module.exports.readDynamicContractsOnChainIdAtOrBeforeBlockNumber = (
   sql,
   chainId,
-  blockNumber,
+  blockNumber
 ) => sql`
   SELECT *
   FROM "public"."dynamic_contract_registry"
@@ -429,14 +429,14 @@ module.exports.readDynamicContractsOnChainIdAtOrBeforeBlockNumber = (
 module.exports.readDynamicContractsOnChainIdMatchingEvents = (
   sql,
   chainId,
-  preRegisterEvents, // array<{registering_event_contract_name, registering_event_name, registering_event_src_address}>
+  preRegisterEvents // array<{registering_event_contract_name, registering_event_name, registering_event_src_address}>
 ) => {
   return sql`
     SELECT *
     FROM "public"."dynamic_contract_registry"
     WHERE chain_id = ${chainId}
     AND (registering_event_contract_name, registering_event_name, registering_event_src_address) IN ${sql(
-    preRegisterEvents.map((item) => sql(item)),
+    preRegisterEvents.map((item) => sql(item))
   )};
   `;
 };
@@ -453,7 +453,7 @@ const batchSetDynamicContractRegistryCore = (sql, entityDataArray) => {
     "registering_event_src_address",
     "registering_event_name",
     "contract_address",
-    "contract_type",
+    "contract_type"
   )}
     ON CONFLICT(chain_id, contract_address) DO UPDATE
     SET
@@ -471,27 +471,60 @@ module.exports.batchSetDynamicContractRegistry = (sql, entityDataArray) => {
   return chunkBatchQuery(
     sql,
     entityDataArray,
-    batchSetDynamicContractRegistryCore,
+    batchSetDynamicContractRegistryCore
   );
 };
 
-module.exports.getRollbackDiff = (
+/**
+  Find the "first change" serial originating from the reorg chain above the safe block number 
+  (Using serial to account for unordered multi chain reorgs, where an earier event on another chain could be rolled back)
+*/
+const getFirstChangeSerial = (sql, reorgChainId, safeBlockNumber, entityName) =>
+  sql`
+    SELECT
+      MIN(serial) AS first_change_serial
+    FROM
+      public."${entityName}_history"
+    WHERE
+      entity_history_chain_id = ${reorgChainId}
+      AND entity_history_block_number > ${safeBlockNumber}
+  `;
+
+module.exports.deleteRolledBackEntityHistory = (
   sql,
   reorgChainId,
   safeBlockNumber,
-  entityName,
+  entityName
 ) => sql`
   WITH
     first_change AS (
       -- Step 1: Find the "first change" serial originating from the reorg chain above the safe block number 
       -- (Using serial to account for unordered multi chain reorgs, where an earier event on another chain could be rolled back)
+      ${getFirstChangeSerial(sql, reorgChainId, safeBlockNumber, entityName)}
+    )
+  -- Step 2: Delete all rows that have a serial >= the first change serial
+  DELETE FROM
+    public."${entityName}_history"
+  WHERE
+    serial >= (
       SELECT
-        MIN(serial) AS first_change_serial
+        first_change_serial
       FROM
-        public."${entityName}_history"
-      WHERE
-        entity_history_chain_id = ${reorgChainId}
-        AND entity_history_block_number > ${safeBlockNumber}
+        first_change
+    );
+  `;
+
+module.exports.getRollbackDiff = (
+  sql,
+  reorgChainId,
+  safeBlockNumber,
+  entityName
+) => sql`
+  WITH
+    first_change AS (
+      -- Step 1: Find the "first change" serial originating from the reorg chain above the safe block number 
+      -- (Using serial to account for unordered multi chain reorgs, where an earier event on another chain could be rolled back)
+      ${getFirstChangeSerial(sql, reorgChainId, safeBlockNumber, entityName)}
     ),
     rollback_ids AS (
       -- Step 2: Get all unique entity ids of rows that require rollbacks where the row's serial is above the first change serial
@@ -510,8 +543,8 @@ module.exports.getRollbackDiff = (
         after.id,
         after.serial ASC -- Select the row with the lowest serial per id
     )
-    -- Step 3: For each relevant id, join to the row on the "previous_entity_history" fields
-  select
+  -- Step 3: For each relevant id, join to the row on the "previous_entity_history" fields
+  SELECT
     -- In the case where no previous row exists, coalesce the needed values since this new entity
     -- will need to be deleted
     COALESCE(before.id, after.id) AS id,
