@@ -76,8 +76,8 @@ describe("FetchState.fetchState", () => {
       ->addAddr(dcId4, mockAddress4)
 
     let (_updatedMap, removedAddresses) =
-      dcMap->DynamicContractsMap.removeContractAddressesPastValidBlock(
-        ~lastKnownValidBlock={blockNumber: 5, blockTimestamp: 5 * 15},
+      dcMap->DynamicContractsMap.removeContractAddressesBeforeFirstChangeEvent(
+        ~firstChangeEvent={blockNumber: 6, logIndex: 0},
       )
 
     Assert.deepEqual(removedAddresses, [mockAddress3, mockAddress4])
@@ -623,7 +623,11 @@ describe("FetchState.fetchState", () => {
 
     let fetchState = register3->makeMockFetchState
 
-    let updated = fetchState->rollback(~lastKnownValidBlock=getBlockData(~blockNumber=100))
+    let updated =
+      fetchState->rollback(
+        ~lastKnownValidBlock=getBlockData(~blockNumber=100),
+        ~firstChangeEvent={blockNumber: 101, logIndex: 0},
+      )
 
     let expected = {
       ...register3,

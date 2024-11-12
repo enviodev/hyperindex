@@ -44,7 +44,7 @@ let getAllMockEntity = sql =>
 let getAllMockEntityHistory = sql =>
   sql->Postgres.unsafe(`SELECT * FROM "public"."${mockEntityHistory.table.tableName}"`)
 
-describe_only("Entity history serde", () => {
+describe("Entity history serde", () => {
   it("serializes and deserializes correctly", () => {
     let history: testEntityHistory = {
       current: {
@@ -146,7 +146,7 @@ describe_only("Entity history serde", () => {
   })
 })
 
-describe_only("Entity History Codegen", () => {
+describe("Entity History Codegen", () => {
   it("Creates a postgres insert function", () => {
     let expected = `CREATE OR REPLACE FUNCTION "insert_TestEntity_history"(history_row "public"."TestEntity_history")
       RETURNS void AS $$
