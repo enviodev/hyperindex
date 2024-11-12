@@ -490,6 +490,37 @@ const getFirstChangeSerial = (sql, reorgChainId, safeBlockNumber, entityName) =>
       AND entity_history_block_number > ${safeBlockNumber}
   `;
 
+module.exports.getFirstChangeEntityHistoryPerChain = (
+  sql,
+  reorgChainId,
+  safeBlockNumber,
+  entityName
+) => sql`
+  WITH
+    first_change AS (
+      -- Step 1: Find the "first change" serial originating from the reorg chain above the safe block number 
+      -- (Using serial to account for unordered multi chain reorgs, where an earier event on another chain could be rolled back)
+      ${getFirstChangeSerial(sql, reorgChainId, safeBlockNumber, entityName)}
+    )
+  -- Step 2: Distinct on entity_history_chain_id, get the entity_history_block_number of the row with the 
+  -- lowest serial >= the first change serial
+  SELECT DISTINCT
+    ON (entity_history_chain_id) *
+  FROM
+    public."${entityName}_history"
+  WHERE
+    serial >= (
+      SELECT
+        first_change_serial
+      FROM
+        first_change
+    )
+  ORDER BY
+    entity_history_chain_id,
+    serial
+    ASC; -- Select the row with the lowest serial per id
+`;
+
 module.exports.deleteRolledBackEntityHistory = (
   sql,
   reorgChainId,

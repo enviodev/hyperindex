@@ -449,6 +449,90 @@ module EntityHistory = {
     }
   }
 
+  @module("./DbFunctionsImplementation.js")
+  external getFirstChangeEntityHistoryPerChain: (
+    Postgres.sql,
+    ~reorgChainId: int,
+    ~safeBlockNumber: int,
+    ~entityName: Enums.EntityType.t,
+  ) => promise<Js.Json.t> = "getFirstChangeEntityHistoryPerChain"
+
+  module FirstChangeEventIdentifierPerChain = {
+    type t = Js.Dict.t<Types.eventIdentifier>
+    let getKey = chainId => chainId->Belt.Int.toString
+    let make = () => Js.Dict.empty()
+    let get = (self: t, ~chainId) => self->Utils.Dict.dangerouslyGetNonOption(getKey(chainId))
+
+    let set = (self: t, ~eventIdentifier: Types.eventIdentifier) => {
+      let chainKey = eventIdentifier.chainId->Belt.Int.toString
+      switch self->Utils.Dict.dangerouslyGetNonOption(chainKey) {
+      | Some(existingEventIdentifier) =>
+        if (
+          (existingEventIdentifier.blockNumber, existingEventIdentifier.logIndex) >
+          (eventIdentifier.blockNumber, eventIdentifier.logIndex)
+        ) {
+          self->Js.Dict.set(chainKey, eventIdentifier)
+        }
+      | None => self->Js.Dict.set(chainKey, eventIdentifier)
+      }
+    }
+  }
+
+  let getFirstChangeEventIdentifierPerChain = async (sql, ~reorgChainId, ~safeBlockNumber) => {
+    let firstChangeEventIdentifierPerChain = FirstChangeEventIdentifierPerChain.make()
+
+    await Utils.Array.awaitEach(Entities.allEntities, async entityMod => {
+      let module(Entity) = entityMod
+      let logger = Logging.createChild(
+        ~params={
+          "context": "get first change event identifier per chain",
+          "reorgChainId": reorgChainId,
+          "safeBlockNumber": safeBlockNumber,
+          "entityName": Entity.name,
+        },
+      )
+      let res = try await getFirstChangeEntityHistoryPerChain(
+        sql,
+        ~reorgChainId,
+        ~safeBlockNumber,
+        ~entityName=Entity.name,
+      ) catch {
+      | exn =>
+        exn->ErrorHandling.mkLogAndRaise(
+          ~msg=`Failed to get first change entity history per chain for entity`,
+          ~logger,
+        )
+      }
+
+      let chainHistoryRows = try res->S.parseAnyOrRaiseWith(Entity.entityHistory.schemaRows) catch {
+      | exn =>
+        exn->ErrorHandling.mkLogAndRaise(
+          ~msg=`Failed to parse rows entity history rows from db`,
+          ~logger=Logging.createChild(
+            ~params={
+              "reorgChainId": reorgChainId,
+              "safeBlockNumber": safeBlockNumber,
+              "entityName": Entity.name,
+            },
+          ),
+        )
+      }
+
+      chainHistoryRows->Belt.Array.forEach(chainHistoryRow => {
+        let eventIdentifier: Types.eventIdentifier = {
+          chainId: chainHistoryRow.current.chain_id,
+          blockNumber: chainHistoryRow.current.block_number,
+          logIndex: chainHistoryRow.current.log_index,
+          blockTimestamp: chainHistoryRow.current.block_timestamp,
+        }
+
+        firstChangeEventIdentifierPerChain->FirstChangeEventIdentifierPerChain.set(~eventIdentifier)
+      })
+    })
+
+    firstChangeEventIdentifierPerChain
+  }
+
   let copyTableToEntityHistory = (sql, ~sourceTableName: Enums.EntityType.t): promise<unit> => {
     sql->Postgres.unsafe(`SELECT copy_table_to_entity_history('${(sourceTableName :> string)}');`)
   }

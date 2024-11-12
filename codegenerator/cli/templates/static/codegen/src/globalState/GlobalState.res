@@ -1109,38 +1109,76 @@ let injectedTaskReducer = (
       let {blockNumber: lastKnownValidBlockNumber, blockTimestamp: lastKnownValidBlockTimestamp} =
         reorgChainRolledBackLastBlockData->ChainFetcher.getLastScannedBlockData
 
+      let firstChangeEventIdentifierPerChain =
+        await DbFunctions.sql->DbFunctions.EntityHistory.getFirstChangeEventIdentifierPerChain(
+          ~reorgChainId=rollbackChainId,
+          ~safeBlockNumber=lastKnownValidBlockNumber,
+        )
+
       let chainFetchers = state.chainManager.chainFetchers->ChainMap.mapWithKey((chain, cf) => {
-        let rolledBackLastBlockData = if chain == rollbackChain {
+        let isReorgChain = chain == rollbackChain
+        let firstChangeEventIdentifier =
+          firstChangeEventIdentifierPerChain->DbFunctions.EntityHistory.FirstChangeEventIdentifierPerChain.get(
+            ~chainId=chain->ChainMap.Chain.toChainId,
+          )
+        let rolledBackLastBlockData = if isReorgChain {
           //For the chain fetcher of the chain where a  reorg occured, use the the
           //rolledBackLastBlockData already computed
           reorgChainRolledBackLastBlockData
         } else {
-          //For all other chains, rollback to where a blockTimestamp is less than or equal to the block timestamp
-          //where the reorg chain is rolling back to
-          cf.lastBlockScannedHashes->ReorgDetection.LastBlockScannedHashes.rollBackToBlockTimestampLte(
-            ~blockTimestamp=lastKnownValidBlockTimestamp,
-          )
+          switch firstChangeEventIdentifier {
+          | Some(eventIdentifier) =>
+            //For all other chains, if there was a change on the given chain after the reorged chain,
+            // rollback the lastBlockScannedHashes to before the first change produced by the given chain
+            cf.lastBlockScannedHashes->ReorgDetection.LastBlockScannedHashes.rollBackToBlockNumberLt(
+              ~blockNumber=eventIdentifier.blockNumber,
+            )
+          | None =>
+            //If no change was produced on the given chain after the reorged chain, no need to rollback anything
+            cf.lastBlockScannedHashes
+          }
         }
+        let rolledBackCf = cf->ChainFetcher.rollbackToLastBlockHashes(~rolledBackLastBlockData)
 
         //Roll back chain fetcher with the given rolledBackLastBlockData
-        cf
-        ->ChainFetcher.rollbackToLastBlockHashes(~rolledBackLastBlockData)
-        ->ChainFetcher.addProcessingFilter(
-          ~filter=eventBatchQueueItem => {
-            let {timestamp, blockNumber} = eventBatchQueueItem
-            //Filter out events that occur passed the block where the query starts but
-            //are lower than the timestamp where we rolled back to
-            (timestamp, chain->ChainMap.Chain.toChainId, blockNumber) >
-            (lastKnownValidBlockTimestamp, rollbackChainId, lastKnownValidBlockNumber)
-          },
-          ~isValid=(~fetchState) => {
-            //Remove the event filter once the fetchState has fetched passed the
-            //timestamp of the valid rollback block's timestamp
-            let {blockTimestamp, blockNumber} = FetchState.getLatestFullyFetchedBlock(fetchState)
-            (blockTimestamp, chain->ChainMap.Chain.toChainId, blockNumber) <=
-            (lastKnownValidBlockTimestamp, rollbackChainId, lastKnownValidBlockNumber)
-          },
-        )
+        switch (isReorgChain, firstChangeEventIdentifier) {
+        | (true, _) =>
+          //For the reorg chain, filter out events just based on the blockNumber that was rolled back to
+          rolledBackCf->ChainFetcher.addProcessingFilter(
+            ~filter=eventBatchQueueItem => {
+              //Filter out events that occur passed the block where the query starts but
+              //are lower than the blockNumber where we rolled back to
+              eventBatchQueueItem.blockNumber > lastKnownValidBlockNumber
+            },
+            ~isValid=(~fetchState) => {
+              //Remove the event filter once the fetchState has fetched passed the
+              //blockNumber of the valid rollback block's blockNumber
+              let {blockNumber} = FetchState.getLatestFullyFetchedBlock(fetchState)
+              blockNumber <= lastKnownValidBlockNumber
+            },
+          )
+        | (false, Some(firstChangeEventIdentifier)) =>
+          //On other chains, filter out evennts based on the first change present on the chain after the reorg
+          rolledBackCf->ChainFetcher.addProcessingFilter(
+            ~filter=eventBatchQueueItem => {
+              //Filter out events that occur passed the block where the query starts but
+              //are lower than the timestamp where we rolled back to
+              (eventBatchQueueItem.blockNumber, eventBatchQueueItem.logIndex) >=
+              (firstChangeEventIdentifier.blockNumber, firstChangeEventIdentifier.logIndex)
+            },
+            ~isValid=(~fetchState) => {
+              //Remove the event filter once the fetchState has fetched passed the
+              //blockNumber of the valid first change event
+              let {blockNumber} = FetchState.getLatestFullyFetchedBlock(fetchState)
+              blockNumber <= firstChangeEventIdentifier.blockNumber
+            },
+          )
+        | (
+            false,
+            None,
+          ) => //If no first change event was found on the chain after the reorg, no need to filter out events
+          rolledBackCf
+        }
       })
 
       let chainManager = {
