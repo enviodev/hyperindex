@@ -207,6 +207,7 @@ pub enum Network {
     #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     Metis = 1088,
 
+    #[subenum(HypersyncNetwork)]
     MevCommit = 17864,
 
     #[subenum(HypersyncNetwork, NetworkWithExplorer)]
