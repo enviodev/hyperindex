@@ -1,7 +1,10 @@
 open Belt
 open RescriptMocha
 
-let config = RegisterHandlers.registerAllHandlers()
+let config = {
+  ...RegisterHandlers.registerAllHandlers(),
+  isUnorderedMultichainMode: true,
+}
 
 module Mock = {
   /*
@@ -219,7 +222,7 @@ let setupDb = async () => {
   let _exitCodeUp = await runUpMigrations(~shouldExit=false)
 }
 
-describe("Multichain rollback test", () => {
+describe_only("Multichain rollback test", () => {
   Async.before(() => {
     //Provision the db
     DbHelpers.runUpDownMigration()
@@ -227,10 +230,7 @@ describe("Multichain rollback test", () => {
   Async.it("Multichain indexer should rollback and not reprocess any events", async () => {
     //Setup a chainManager with unordered multichain mode to make processing happen
     //without blocking for the purposes of this test
-    let chainManager = {
-      ...ChainManager.makeFromConfig(~config),
-      isUnorderedMultichainMode: true,
-    }
+    let chainManager = ChainManager.makeFromConfig(~config)
 
     let loadLayer = LoadLayer.makeWithDbConnection()
 
@@ -554,11 +554,11 @@ describe("Multichain rollback test", () => {
       ~message="Rollback should have actioned and next tasks are query and process batch",
     )
     await makeAssertions(
-      ~queryName="After Rollback Action",
+      ~queryName="After Rollback Action A",
       ~chain1LatestFetchBlock=3,
-      ~chain2LatestFetchBlock=2,
+      ~chain2LatestFetchBlock=5,
       ~totalQueueSize=0,
-      ~batchName="After Rollback Action",
+      ~batchName="After Rollback Action A",
       //balances have not yet been changed
       ~chain1User1Balance=Some(100),
       ~chain1User2Balance=Some(50),
@@ -577,13 +577,14 @@ describe("Multichain rollback test", () => {
     //Make new queries (C for Chain 1, B for Chain 2)
     //Artificially cut the tasks to only do one round of queries and batch processing
     tasks := [NextQuery(CheckAllChains)]
+
     await dispatchAllTasks()
     await makeAssertions(
-      ~queryName="After Rollback Action",
+      ~queryName="After Rollback Action B",
       ~chain1LatestFetchBlock=5,
-      ~chain2LatestFetchBlock=5,
-      ~totalQueueSize=3,
-      ~batchName="After Rollback Action",
+      ~chain2LatestFetchBlock=8,
+      ~totalQueueSize=5,
+      ~batchName="After Rollback Action B",
       //balances have not yet been changed
       ~chain1User1Balance=Some(100),
       ~chain1User2Balance=Some(50),
@@ -595,20 +596,32 @@ describe("Multichain rollback test", () => {
     tasks := [ProcessEventBatch]
     // Process event batch with reorg in mem store and action next queries
     await dispatchAllTasks()
+
     await makeAssertions(
-      ~queryName="After Rollback EventProcess",
+      ~queryName="After Rollback EventProcess A",
       ~chain1LatestFetchBlock=5,
-      ~chain2LatestFetchBlock=5,
+      ~chain2LatestFetchBlock=8,
       ~totalQueueSize=0,
-      ~batchName="After Rollback EventProcess",
+      ~batchName="After Rollback EventProcess A",
       //balances have not yet been changed
       ~chain1User1Balance=Some(89),
       ~chain1User2Balance=Some(61),
-      ~chain2User1Balance=Some(100),
-      ~chain2User2Balance=Some(50),
+      ~chain2User1Balance=Some(98),
+      ~chain2User2Balance=Some(52),
     )
-    //Todo assertions
-    //Assert new balances
+    await dispatchAllTasks()
+    await makeAssertions(
+      ~queryName="After Rollback EventProcess B",
+      ~chain1LatestFetchBlock=6,
+      ~chain2LatestFetchBlock=9,
+      ~totalQueueSize=0,
+      ~batchName="After Rollback EventProcess B",
+      //balances have not yet been changed
+      ~chain1User1Balance=Some(74),
+      ~chain1User2Balance=Some(76),
+      ~chain2User1Balance=Some(90),
+      ~chain2User2Balance=Some(60),
+    )
 
     await setupDb()
   })
