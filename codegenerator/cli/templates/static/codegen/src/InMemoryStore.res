@@ -88,6 +88,5 @@ let getInMemTable = (
   inMemoryStore: t,
   ~entityMod: module(Entities.Entity with type t = entity),
 ): InMemoryTable.Entity.t<entity> => {
-  let module(Entity) = entityMod->Entities.entityModToInternal
-  inMemoryStore->Utils.magic->Js.Dict.unsafeGet(Entity.key)
+  inMemoryStore.entities->EntityTables.get(entityMod)
 }
