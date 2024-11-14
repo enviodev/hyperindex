@@ -76,7 +76,7 @@ describe("FetchState.fetchState", () => {
       ->addAddr(dcId4, mockAddress4)
 
     let (_updatedMap, removedAddresses) =
-      dcMap->DynamicContractsMap.removeContractAddressesBeforeFirstChangeEvent(
+      dcMap->DynamicContractsMap.removeContractAddressesFromFirstChangeEvent(
         ~firstChangeEvent={blockNumber: 6, logIndex: 0},
       )
 
