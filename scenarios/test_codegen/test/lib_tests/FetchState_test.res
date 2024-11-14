@@ -625,7 +625,7 @@ describe("FetchState.fetchState", () => {
 
     let updated =
       fetchState->rollback(
-        ~lastKnownValidBlock=getBlockData(~blockNumber=100),
+        ~lastScannedBlock=getBlockData(~blockNumber=100),
         ~firstChangeEvent={blockNumber: 101, logIndex: 0},
       )
 

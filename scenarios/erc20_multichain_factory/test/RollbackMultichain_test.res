@@ -222,7 +222,7 @@ let setupDb = async () => {
   let _exitCodeUp = await runUpMigrations(~shouldExit=false)
 }
 
-describe_only("Multichain rollback test", () => {
+describe("Multichain rollback test", () => {
   Async.before(() => {
     //Provision the db
     DbHelpers.runUpDownMigration()

@@ -148,7 +148,7 @@ describe("Entity history serde", () => {
 
 describe("Entity History Codegen", () => {
   it("Creates a postgres insert function", () => {
-    let expected = `CREATE OR REPLACE FUNCTION "insert_TestEntity_history"(history_row "public"."TestEntity_history")
+    let expected = `CREATE OR REPLACE FUNCTION "insert_TestEntity_history"(history_row "public"."TestEntity_history", should_copy_current_entity BOOLEAN)
       RETURNS void AS $$
       DECLARE
         v_previous_record RECORD;
@@ -166,7 +166,7 @@ describe("Entity History Codegen", () => {
           -- If a previous record exists, use its values
           IF FOUND THEN
             history_row.previous_entity_history_block_timestamp := v_previous_record.entity_history_block_timestamp; history_row.previous_entity_history_chain_id := v_previous_record.entity_history_chain_id; history_row.previous_entity_history_block_number := v_previous_record.entity_history_block_number; history_row.previous_entity_history_log_index := v_previous_record.entity_history_log_index;
-            ElSE
+            ElSIF should_copy_current_entity THEN
             -- Check if a value for the id exists in the origin table and if so, insert a history row for it.
             SELECT "id", "fieldA", "fieldB" FROM "public"."TestEntity" WHERE id = history_row.id INTO v_origin_record;
             IF FOUND THEN
@@ -192,10 +192,11 @@ describe("Entity History Codegen", () => {
   it("Creates a js insert function", () => {
     let insertFnString = mockEntityHistory.insertFn->toStringUnsafe
 
-    let expected = `(sql, rowArgs) =>
-      sql\`select "insert_TestEntity_history"(ROW(\${rowArgs["entity_history_block_timestamp"]}, \${rowArgs["entity_history_chain_id"]}, \${rowArgs["entity_history_block_number"]}, \${rowArgs["entity_history_log_index"]}, \${rowArgs["previous_entity_history_block_timestamp"]}, \${rowArgs["previous_entity_history_chain_id"]}, \${rowArgs["previous_entity_history_block_number"]}, \${rowArgs["previous_entity_history_log_index"]}, \${rowArgs["id"]}, \${rowArgs["fieldA"]}, \${rowArgs["fieldB"]}, \${rowArgs["action"]}, NULL)); --NULL argument for SERIAL field\``
+    let expected = `(sql, rowArgs, shouldCopyCurrentEntity) =>
+      sql\`select "insert_TestEntity_history"(ROW(\${rowArgs["entity_history_block_timestamp"]}, \${rowArgs["entity_history_chain_id"]}, \${rowArgs["entity_history_block_number"]}, \${rowArgs["entity_history_log_index"]}, \${rowArgs["previous_entity_history_block_timestamp"]}, \${rowArgs["previous_entity_history_chain_id"]}, \${rowArgs["previous_entity_history_block_number"]}, \${rowArgs["previous_entity_history_log_index"]}, \${rowArgs["id"]}, \${rowArgs["fieldA"]}, \${rowArgs["fieldB"]}, \${rowArgs["action"]}, NULL),  --NULL argument for SERIAL field
+    \${shouldCopyCurrentEntity});\``
 
-    Assert.equal(expected, insertFnString)
+    Assert.equal(insertFnString, expected)
   })
 
   Async.it("Creating tables and functions works", async () => {
@@ -259,6 +260,7 @@ describe("Entity History Codegen", () => {
     switch await mockEntityHistory->EntityHistory.insertRow(
       ~sql=DbFunctions.sql,
       ~historyRow=entityHistoryItem,
+      ~shouldCopyCurrentEntity=true,
     ) {
     | exception exn =>
       Js.log2("insertRow exn", exn)
@@ -314,6 +316,7 @@ describe("Entity History Codegen", () => {
           log_index: 6,
         },
       },
+      ~shouldCopyCurrentEntity=true,
     ) {
     | exception exn =>
       Js.log2("insertRow exn", exn)
@@ -332,6 +335,7 @@ describe("Entity History Codegen", () => {
           log_index: 6,
         },
       },
+      ~shouldCopyCurrentEntity=true,
     ) {
     | exception exn =>
       Js.log2("insertRow exn", exn)
@@ -351,6 +355,7 @@ describe("Entity History Codegen", () => {
           log_index: 6,
         },
       },
+      ~shouldCopyCurrentEntity=true,
     )
   })
 })
