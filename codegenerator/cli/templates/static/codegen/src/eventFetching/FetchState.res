@@ -55,7 +55,7 @@ module DynamicContractsMap = {
       accum->Map.set(nextKey, nextValMerged)
     })
 
-  let removeContractAddressesBeforeFirstChangeEvent = (
+  let removeContractAddressesFromFirstChangeEvent = (
     self: t,
     ~firstChangeEvent: blockNumberAndLogIndex,
   ) => {
@@ -63,10 +63,10 @@ module DynamicContractsMap = {
     ->Map.toArray
     ->Array.reduce((empty, []), ((currentMap, currentRemovedAddresses), (nextKey, nextVal)) => {
       if (
-        (nextKey.blockNumber, nextKey.logIndex) <
+        (nextKey.blockNumber, nextKey.logIndex) >=
         (firstChangeEvent.blockNumber, firstChangeEvent.logIndex)
       ) {
-        //If the registration block is earlier than the first change event,
+        //If the registration block is later than the first change event,
         //Do not add it to the currentMap, but add the removed addresses
         let updatedRemovedAddresses =
           currentRemovedAddresses->Array.concat(
@@ -74,7 +74,7 @@ module DynamicContractsMap = {
           )
         (currentMap, updatedRemovedAddresses)
       } else {
-        //If it is not earlier than the first change event, updated the
+        //If it is earlier than the first change event, updated the
         //current map and keep the currentRemovedAddresses
         let updatedMap = currentMap->Map.set(nextKey, nextVal)
         (updatedMap, currentRemovedAddresses)
@@ -937,7 +937,7 @@ let getLatestFullyFetchedBlock = (self: t) => {
   }
 }
 
-let pruneQueueBeforeFirstChangeEvent = (
+let pruneQueueFromFirstChangeEvent = (
   queue: array<Types.eventBatchQueueItem>,
   ~firstChangeEvent: blockNumberAndLogIndex,
 ) => {
@@ -946,14 +946,14 @@ let pruneQueueBeforeFirstChangeEvent = (
   )
 }
 
-let pruneDynamicContractAddressesBeforeFirstChangeEvent = (
+let pruneDynamicContractAddressesFromFirstChangeEvent = (
   register: register,
   ~firstChangeEvent: blockNumberAndLogIndex,
 ) => {
   //get all dynamic contract addresses past valid blockNumber to remove along with
   //updated dynamicContracts map
   let (dynamicContracts, addressesToRemove) =
-    register.dynamicContracts->DynamicContractsMap.removeContractAddressesBeforeFirstChangeEvent(
+    register.dynamicContracts->DynamicContractsMap.removeContractAddressesFromFirstChangeEvent(
       ~firstChangeEvent,
     )
 
@@ -999,19 +999,17 @@ let rec rollbackRegister = (
   | RootRegister(_) =>
     {
       ...self,
-      fetchedEventQueue: self.fetchedEventQueue->pruneQueueBeforeFirstChangeEvent(
-        ~firstChangeEvent,
-      ),
+      fetchedEventQueue: self.fetchedEventQueue->pruneQueueFromFirstChangeEvent(~firstChangeEvent),
       latestFetchedBlock: lastScannedBlock,
     }
-    ->pruneDynamicContractAddressesBeforeFirstChangeEvent(~firstChangeEvent)
+    ->pruneDynamicContractAddressesFromFirstChangeEvent(~firstChangeEvent)
     ->handleParent
   //Case 4 DynamicContract register that has fetched further than the confirmed valid block number
   //Should prune its queue, set its latest fetched blockdata + pruned queue
   //And recursivle prune the nextRegister
   | DynamicContractRegister({id, nextRegister}) =>
     let updatedWithRemovedDynamicContracts =
-      self->pruneDynamicContractAddressesBeforeFirstChangeEvent(~firstChangeEvent)
+      self->pruneDynamicContractAddressesFromFirstChangeEvent(~firstChangeEvent)
 
     if updatedWithRemovedDynamicContracts.contractAddressMapping->ContractAddressingMap.isEmpty {
       //If the contractAddressMapping is empty after pruning dynamic contracts, then this
@@ -1022,7 +1020,7 @@ let rec rollbackRegister = (
       //prune queues and next register
       let updated = {
         ...updatedWithRemovedDynamicContracts,
-        fetchedEventQueue: self.fetchedEventQueue->pruneQueueBeforeFirstChangeEvent(
+        fetchedEventQueue: self.fetchedEventQueue->pruneQueueFromFirstChangeEvent(
           ~firstChangeEvent,
         ),
         latestFetchedBlock: lastScannedBlock,
