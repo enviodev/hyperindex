@@ -270,9 +270,9 @@ let getNextQueriesOrThrow = (
 /**
 Rolls back all partitions to the given valid block
 */
-let rollback = (self: t, ~lastKnownValidBlock, ~firstChangeEvent) => {
+let rollback = (self: t, ~lastScannedBlock, ~firstChangeEvent) => {
   let partitions = self.partitions->Array.map(partition => {
-    partition->FetchState.rollback(~lastKnownValidBlock, ~firstChangeEvent)
+    partition->FetchState.rollback(~lastScannedBlock, ~firstChangeEvent)
   })
 
   {...self, partitions}

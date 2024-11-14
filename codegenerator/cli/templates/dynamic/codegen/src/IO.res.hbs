@@ -143,9 +143,9 @@ let executeDbFunctionsEntity = (
   promises->Promise.all->Promise.thenResolve(_ => ())
 }
 
-let executeBatch = async (sql, ~inMemoryStore: InMemoryStore.t, ~isInReorgThreshold) => {
+let executeBatch = async (sql, ~inMemoryStore: InMemoryStore.t, ~isInReorgThreshold, ~config) => {
   let entityDbExecutionComposer =
-    RegisterHandlers.getConfig()->Config.shouldSaveHistory(~isInReorgThreshold)
+    config->Config.shouldSaveHistory(~isInReorgThreshold)
       ? executeSetEntityWithHistory
       : executeDbFunctionsEntity
 
@@ -181,7 +181,9 @@ let executeBatch = async (sql, ~inMemoryStore: InMemoryStore.t, ~isInReorgThresh
   let rollbackTables = switch inMemoryStore.rollBackEventIdentifier {
   | Some(eventIdentifier) =>
     [
-      DbFunctions.EntityHistory.deleteAllEntityHistoryAfterEventIdentifier,
+      DbFunctions.EntityHistory.deleteAllEntityHistoryAfterEventIdentifier(
+        ~isUnorderedMultichainMode=config.isUnorderedMultichainMode,
+      ),
       DbFunctions.RawEvents.deleteAllRawEventsAfterEventIdentifier,
       DbFunctions.DynamicContractRegistry.deleteAllDynamicContractRegistrationsAfterEventIdentifier,
     ]->Belt.Array.map(fn => fn(_, ~eventIdentifier))

@@ -66,7 +66,7 @@ type t = {
 
 let make = (
   ~entities: array<module(Entities.InternalEntity)>=Entities.allEntities,
-  ~rollBackEventIdentifier=None,
+  ~rollBackEventIdentifier=?,
 ): t => {
   eventSyncState: InMemoryTable.make(~hash=v => v->Belt.Int.toString),
   rawEvents: InMemoryTable.make(~hash=hashRawEventsKey),
@@ -90,3 +90,5 @@ let getInMemTable = (
 ): InMemoryTable.Entity.t<entity> => {
   inMemoryStore.entities->EntityTables.get(entityMod)
 }
+
+let isRollingBack = (inMemoryStore: t) => inMemoryStore.rollBackEventIdentifier->Belt.Option.isSome

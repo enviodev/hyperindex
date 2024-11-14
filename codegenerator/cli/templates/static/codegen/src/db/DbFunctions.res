@@ -259,43 +259,6 @@ module EntityHistory = {
     ~entityHistoriesToSet: array<Js.Json.t>,
   ) => promise<unit> = "batchInsertEntityHistory"
 
-  @module("./DbFunctionsImplementation.js")
-  external deleteRolledBackEntityHistory: (
-    Postgres.sql,
-    ~reorgChainId: int,
-    ~safeBlockNumber: int,
-    ~entityName: Enums.EntityType.t,
-  ) => promise<unit> = "deleteRolledBackEntityHistory"
-
-  let deleteAllEntityHistoryAfterEventIdentifier = (
-    sql,
-    ~eventIdentifier: Types.eventIdentifier,
-  ): promise<unit> => {
-    let {chainId, blockNumber} = eventIdentifier
-
-    Utils.Array.awaitEach(Entities.allEntities, async entityMod => {
-      let module(Entity) = entityMod
-      try await deleteRolledBackEntityHistory(
-        sql,
-        ~reorgChainId=chainId,
-        ~safeBlockNumber=blockNumber,
-        ~entityName=Entity.name,
-      ) catch {
-      | exn =>
-        exn->ErrorHandling.mkLogAndRaise(
-          ~msg=`Failed to delete rolled back entity history`,
-          ~logger=Logging.createChild(
-            ~params={
-              "reorgChainId": chainId,
-              "safeBlockNumber": blockNumber,
-              "entityName": Entity.name,
-            },
-          ),
-        )
-      }
-    })
-  }
-
   type dynamicSqlQuery
   module UnorderedMultichain = {
     @module("./DbFunctionsImplementation.js")
@@ -333,11 +296,30 @@ module EntityHistory = {
   ) => //Returns an array of entity history rows
   promise<Js.Json.t> = "getRollbackDiff"
 
+  @module("./DbFunctionsImplementation.js")
+  external deleteRolledBackEntityHistory: (
+    Postgres.sql,
+    ~entityName: Enums.EntityType.t,
+    ~getFirstChangeSerial: Postgres.sql => dynamicSqlQuery,
+  ) => promise<unit> = "deleteRolledBackEntityHistory"
+
   module Args = {
     type t =
       | OrderedMultichain({safeBlockTimestamp: int, reorgChainId: int, safeBlockNumber: int})
       | UnorderedMultichain({reorgChainId: int, safeBlockNumber: int})
 
+    /**
+    Uses two different methods for determining the first change event after rollback block
+
+    This is needed since unordered multichain mode only cares about any changes that 
+    occurred after the first change on the reorg chain. To prevent skipping or double processing events
+    on the other chains. If for instance there are no entity changes based on the reorg chain, the other
+    chains do not need to be rolled back, and if the reorg chain has new included events, it does not matter
+    that if those events are processed out of order from other chains since this is "unordered_multichain_mode"
+
+    Ordered multichain mode needs to ensure that all chains rollback to any event that occurred after the reorg chain
+    block number. Regardless of whether the reorg chain incurred any changes or not to entities.
+    */
     let makeGetFirstChangeSerial = (self: t, ~entityName) =>
       switch self {
       | OrderedMultichain({safeBlockTimestamp, reorgChainId, safeBlockNumber}) =>
@@ -384,6 +366,38 @@ module EntityHistory = {
     }
   }
 
+  let deleteAllEntityHistoryAfterEventIdentifier = (~isUnorderedMultichainMode) => (
+    sql,
+    ~eventIdentifier: Types.eventIdentifier,
+  ): promise<unit> => {
+    let {chainId, blockNumber, blockTimestamp} = eventIdentifier
+    let args: Args.t = isUnorderedMultichainMode
+      ? UnorderedMultichain({reorgChainId: chainId, safeBlockNumber: blockNumber})
+      : OrderedMultichain({
+          reorgChainId: chainId,
+          safeBlockNumber: blockNumber,
+          safeBlockTimestamp: blockTimestamp,
+        })
+
+    Entities.allEntities
+    ->Belt.Array.map(async entityMod => {
+      let module(Entity) = entityMod
+      try await deleteRolledBackEntityHistory(
+        sql,
+        ~entityName=Entity.name,
+        ~getFirstChangeSerial=args->Args.makeGetFirstChangeSerial(~entityName=Entity.name),
+      ) catch {
+      | exn =>
+        exn->ErrorHandling.mkLogAndRaise(
+          ~msg=`Failed to delete rolled back entity history`,
+          ~logger=args->Args.getLogger(~entityName=Entity.name),
+        )
+      }
+    })
+    ->Promise.all
+    ->Promise.thenResolve(_ => ())
+  }
+
   let getRollbackDiff = async (
     type entity,
     sql,
@@ -404,6 +418,7 @@ module EntityHistory = {
       )
     | res => res
     }
+
     switch diffRes->S.parseAnyOrRaiseWith(Entity.entityHistory.schemaRows) {
     | exception exn =>
       exn->ErrorHandling.mkLogAndRaise(
@@ -414,65 +429,68 @@ module EntityHistory = {
     }
   }
 
-  module FirstChangeEventIdentifierPerChain = {
-    type t = Js.Dict.t<Types.eventIdentifier>
+  module FirstChangeEventPerChain = {
+    type t = Js.Dict.t<FetchState.blockNumberAndLogIndex>
     let getKey = chainId => chainId->Belt.Int.toString
     let make = () => Js.Dict.empty()
     let get = (self: t, ~chainId) => self->Utils.Dict.dangerouslyGetNonOption(getKey(chainId))
 
-    let set = (self: t, ~eventIdentifier: Types.eventIdentifier) => {
-      let chainKey = eventIdentifier.chainId->Belt.Int.toString
+    let setIfEarlier = (self: t, ~chainId, ~event: FetchState.blockNumberAndLogIndex) => {
+      let chainKey = chainId->Belt.Int.toString
       switch self->Utils.Dict.dangerouslyGetNonOption(chainKey) {
-      | Some(existingEventIdentifier) =>
+      | Some(existingEvent) =>
         if (
-          (existingEventIdentifier.blockNumber, existingEventIdentifier.logIndex) >
-          (eventIdentifier.blockNumber, eventIdentifier.logIndex)
+          (event.blockNumber, event.logIndex) < (existingEvent.blockNumber, existingEvent.logIndex)
         ) {
-          self->Js.Dict.set(chainKey, eventIdentifier)
+          self->Js.Dict.set(chainKey, event)
         }
-      | None => self->Js.Dict.set(chainKey, eventIdentifier)
+      | None => self->Js.Dict.set(chainKey, event)
       }
     }
   }
 
-  let getFirstChangeEventIdentifierPerChain = async (sql, args: Args.t) => {
-    let firstChangeEventIdentifierPerChain = FirstChangeEventIdentifierPerChain.make()
+  let getFirstChangeEventPerChain = async (sql, args: Args.t) => {
+    let firstChangeEventPerChain = FirstChangeEventPerChain.make()
 
-    await Utils.Array.awaitEach(Entities.allEntities, async entityMod => {
-      let module(Entity) = entityMod
-      let res = try await getFirstChangeEntityHistoryPerChain(
-        sql,
-        ~entityName=Entity.name,
-        ~getFirstChangeSerial=args->Args.makeGetFirstChangeSerial(~entityName=Entity.name),
-      ) catch {
-      | exn =>
-        exn->ErrorHandling.mkLogAndRaise(
-          ~msg=`Failed to get first change entity history per chain for entity`,
-          ~logger=args->Args.getLogger(~entityName=Entity.name),
-        )
-      }
-
-      let chainHistoryRows = try res->S.parseAnyOrRaiseWith(Entity.entityHistory.schemaRows) catch {
-      | exn =>
-        exn->ErrorHandling.mkLogAndRaise(
-          ~msg=`Failed to parse entity history rows from db on getFirstChangeEntityHistoryPerChain`,
-          ~logger=args->Args.getLogger(~entityName=Entity.name),
-        )
-      }
-
-      chainHistoryRows->Belt.Array.forEach(chainHistoryRow => {
-        let eventIdentifier: Types.eventIdentifier = {
-          chainId: chainHistoryRow.current.chain_id,
-          blockNumber: chainHistoryRow.current.block_number,
-          logIndex: chainHistoryRow.current.log_index,
-          blockTimestamp: chainHistoryRow.current.block_timestamp,
+    let _ =
+      await Entities.allEntities
+      ->Belt.Array.map(async entityMod => {
+        let module(Entity) = entityMod
+        let res = try await getFirstChangeEntityHistoryPerChain(
+          sql,
+          ~entityName=Entity.name,
+          ~getFirstChangeSerial=args->Args.makeGetFirstChangeSerial(~entityName=Entity.name),
+        ) catch {
+        | exn =>
+          exn->ErrorHandling.mkLogAndRaise(
+            ~msg=`Failed to get first change entity history per chain for entity`,
+            ~logger=args->Args.getLogger(~entityName=Entity.name),
+          )
         }
 
-        firstChangeEventIdentifierPerChain->FirstChangeEventIdentifierPerChain.set(~eventIdentifier)
-      })
-    })
+        let chainHistoryRows = try res->S.parseAnyOrRaiseWith(
+          Entity.entityHistory.schemaRows,
+        ) catch {
+        | exn =>
+          exn->ErrorHandling.mkLogAndRaise(
+            ~msg=`Failed to parse entity history rows from db on getFirstChangeEntityHistoryPerChain`,
+            ~logger=args->Args.getLogger(~entityName=Entity.name),
+          )
+        }
 
-    firstChangeEventIdentifierPerChain
+        chainHistoryRows->Belt.Array.forEach(chainHistoryRow => {
+          firstChangeEventPerChain->FirstChangeEventPerChain.setIfEarlier(
+            ~chainId=chainHistoryRow.current.chain_id,
+            ~event={
+              blockNumber: chainHistoryRow.current.block_number,
+              logIndex: chainHistoryRow.current.log_index,
+            },
+          )
+        })
+      })
+      ->Promise.all
+
+    firstChangeEventPerChain
   }
 
   let copyTableToEntityHistory = (sql, ~sourceTableName: Enums.EntityType.t): promise<unit> => {
