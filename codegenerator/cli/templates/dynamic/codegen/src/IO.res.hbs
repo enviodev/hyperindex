@@ -17,8 +17,8 @@ let getEntityHistoryItems = entityUpdates => {
   ) => {
     let (optPreviousEventIdentifier, entityHistoryItems) = prev
 
-    let {eventIdentifier, shouldSaveHistory, entityUpdateAction, entityId} = entityUpdate
-    let entityHistoryItems = if shouldSaveHistory {
+    let {eventIdentifier, entityUpdateAction, entityId} = entityUpdate
+    let entityHistoryItems = {
       let historyItem: EntityHistory.historyRow<_> = {
         current: {
           chain_id: eventIdentifier.chainId,
@@ -38,10 +38,7 @@ let getEntityHistoryItems = entityUpdates => {
         },
       }
       entityHistoryItems->Belt.Array.concat([historyItem])
-    } else {
-      entityHistoryItems
     }
-
     (Some(eventIdentifier), entityHistoryItems)
   })
 
@@ -64,10 +61,7 @@ let executeSetEntityWithHistory = (
     ((entitiesToSet, idsToDelete, entityHistoryItemsToSet), row) => {
       switch row {
       | Updated({latest, history}) =>
-        let entityHistoryItems =
-          history
-          ->Belt.Array.concat([latest])
-          ->getEntityHistoryItems
+        let entityHistoryItems = history->getEntityHistoryItems
 
         switch latest.entityUpdateAction {
         | Set(entity) => (
@@ -90,6 +84,7 @@ let executeSetEntityWithHistory = (
     EntityMod.entityHistory->EntityHistory.batchInsertRows(
       ~sql,
       ~rows=Belt.Array.concatMany(entityHistoryItemsToSet),
+      ~shouldCopyCurrentEntity=!(inMemoryStore->InMemoryStore.isRollingBack),
     ),
     if entitiesToSet->Array.length > 0 {
       sql->DbFunctionsEntities.batchSet(~entityMod)(entitiesToSet)
@@ -226,9 +221,8 @@ module RollBack = {
       blockNumber,
       logIndex,
     }
-    let inMemStore = InMemoryStore.make(~rollBackEventIdentifier=Some(rollBackEventIdentifier))
-    //Don't save the rollback diffs to history table
-    let shouldSaveHistory = false
+
+    let inMemStore = InMemoryStore.make(~rollBackEventIdentifier)
 
     await Utils.Array.awaitEach(Entities.allEntities, async entityMod => {
       let module(Entity) = entityMod
@@ -268,14 +262,13 @@ module RollBack = {
             Set(entity)->Types.mkEntityUpdate(
               ~eventIdentifier,
               ~entityId=entity->Entities.getEntityId,
-              ~shouldSaveHistory,
             ),
-            ~shouldSaveHistory,
+            ~shouldSaveHistory=false,
           )
         | Delete({id}) =>
           entityTable->InMemoryTable.Entity.set(
-            Delete->Types.mkEntityUpdate(~eventIdentifier, ~entityId=id, ~shouldSaveHistory),
-            ~shouldSaveHistory,
+            Delete->Types.mkEntityUpdate(~eventIdentifier, ~entityId=id),
+            ~shouldSaveHistory=false,
           )
         }
       })
