@@ -505,6 +505,7 @@ let getDynamicContractRegistrations = (
   ~eventBatch: array<Types.eventBatchQueueItem>,
   ~latestProcessedBlocks: EventsProcessed.t,
   ~checkContractIsRegistered,
+  ~config,
 ) => {
   let logger = Logging.createChild(
     ~params={
@@ -530,7 +531,11 @@ let getDynamicContractRegistrations = (
       ->propogate
 
     //We only preregister below the reorg threshold so it can be hardcoded as false
-    switch await DbFunctions.sql->IO.executeBatch(~inMemoryStore, ~isInReorgThreshold=false) {
+    switch await DbFunctions.sql->IO.executeBatch(
+      ~inMemoryStore,
+      ~isInReorgThreshold=false,
+      ~config,
+    ) {
     | exception exn =>
       exn->ErrorHandling.make(~msg="Failed writing batch to database", ~logger)->Error->propogate
     | () => ()
@@ -597,7 +602,7 @@ let processEventBatch = (
 
     let elapsedTimeAfterProcess = timeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
 
-    switch await DbFunctions.sql->IO.executeBatch(~inMemoryStore, ~isInReorgThreshold) {
+    switch await DbFunctions.sql->IO.executeBatch(~inMemoryStore, ~isInReorgThreshold, ~config) {
     | exception exn =>
       exn->ErrorHandling.make(~msg="Failed writing batch to database", ~logger)->Error->propogate
     | () => ()

@@ -969,7 +969,7 @@ Rolls back registers to the given valid block
 */
 let rec rollbackRegister = (
   self: register,
-  ~lastKnownValidBlock,
+  ~lastScannedBlock,
   ~firstChangeEvent: blockNumberAndLogIndex,
   ~parent: option<Parent.t>=?,
 ) => {
@@ -989,7 +989,7 @@ let rec rollbackRegister = (
   | DynamicContractRegister({id, nextRegister})
     if self.latestFetchedBlock.blockNumber < firstChangeEvent.blockNumber =>
     nextRegister->rollbackRegister(
-      ~lastKnownValidBlock,
+      ~lastScannedBlock,
       ~firstChangeEvent,
       ~parent=self->Parent.make(~dynamicContractId=id, ~parent),
     )
@@ -1002,7 +1002,7 @@ let rec rollbackRegister = (
       fetchedEventQueue: self.fetchedEventQueue->pruneQueueBeforeFirstChangeEvent(
         ~firstChangeEvent,
       ),
-      latestFetchedBlock: lastKnownValidBlock,
+      latestFetchedBlock: lastScannedBlock,
     }
     ->pruneDynamicContractAddressesBeforeFirstChangeEvent(~firstChangeEvent)
     ->handleParent
@@ -1016,7 +1016,7 @@ let rec rollbackRegister = (
     if updatedWithRemovedDynamicContracts.contractAddressMapping->ContractAddressingMap.isEmpty {
       //If the contractAddressMapping is empty after pruning dynamic contracts, then this
       //is a dead register. Simly return its next register rolled back
-      nextRegister->rollbackRegister(~lastKnownValidBlock, ~firstChangeEvent, ~parent?)
+      nextRegister->rollbackRegister(~lastScannedBlock, ~firstChangeEvent, ~parent?)
     } else {
       //If there are still values in the contractAddressMapping, we should keep the register but
       //prune queues and next register
@@ -1025,10 +1025,10 @@ let rec rollbackRegister = (
         fetchedEventQueue: self.fetchedEventQueue->pruneQueueBeforeFirstChangeEvent(
           ~firstChangeEvent,
         ),
-        latestFetchedBlock: lastKnownValidBlock,
+        latestFetchedBlock: lastScannedBlock,
       }
       nextRegister->rollbackRegister(
-        ~lastKnownValidBlock,
+        ~lastScannedBlock,
         ~firstChangeEvent,
         ~parent=updated->Parent.make(~dynamicContractId=id, ~parent),
       )
@@ -1036,8 +1036,8 @@ let rec rollbackRegister = (
   }
 }
 
-let rollback = (self: t, ~lastKnownValidBlock, ~firstChangeEvent) => {
-  let baseRegister = self.baseRegister->rollbackRegister(~lastKnownValidBlock, ~firstChangeEvent)
+let rollback = (self: t, ~lastScannedBlock, ~firstChangeEvent) => {
+  let baseRegister = self.baseRegister->rollbackRegister(~lastScannedBlock, ~firstChangeEvent)
 
   let pendingDynamicContracts =
     self.pendingDynamicContracts->Array.keep(({

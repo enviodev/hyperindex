@@ -598,6 +598,8 @@ module.exports.getRollbackDiff = (sql, entityName, getFirstChangeSerial) => sql`
     )
   -- Step 3: For each relevant id, join to the row on the "previous_entity_history" fields
   SELECT
+    -- Select all before fields, overriding the needed values with defaults
+    before.*,
     -- In the case where no previous row exists, coalesce the needed values since this new entity
     -- will need to be deleted
     COALESCE(before.id, after.id) AS id,
@@ -606,9 +608,7 @@ module.exports.getRollbackDiff = (sql, entityName, getFirstChangeSerial) => sql`
     COALESCE(before.entity_history_block_number, 0) AS entity_history_block_number,
     COALESCE(before.entity_history_block_timestamp, 0) AS entity_history_block_timestamp,
     COALESCE(before.entity_history_chain_id, 0) AS entity_history_chain_id,
-    COALESCE(before.entity_history_log_index, 0) AS entity_history_log_index,
-    -- Select the remaining before fields
-    before.*
+    COALESCE(before.entity_history_log_index, 0) AS entity_history_log_index
   FROM
     -- Use a RIGHT JOIN, to ensure that nulls get returned if there is no "before" row
     public.${sql(entityName + "_history")} before
