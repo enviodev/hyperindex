@@ -297,7 +297,6 @@ module Query = {
 let executeHyperSyncQuery = (~serverUrl, ~postQueryBody: QueryTypes.postQueryBody): promise<
   result<ResponseTypes.queryResponse, Query.queryError>,
 > => {
-  Logging.debug({"msg": "Executing HyperSync query", "body": postQueryBody})
   Query.executeFetchRequest(
     ~endpoint=serverUrl ++ "/query",
     ~method=#POST,

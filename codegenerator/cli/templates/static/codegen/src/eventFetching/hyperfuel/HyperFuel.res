@@ -281,7 +281,6 @@ module HeightQuery = {
     //Retry if the height is 0 (expect height to be greater)
     while height.contents <= 0 {
       let res = await HyperFuelJsonApi.getArchiveHeight(~serverUrl)
-      Logging.debug({"msg": "querying height", "response": res})
       switch res {
       | Ok({height: newHeight}) => height := newHeight
       | Error(e) =>
