@@ -16,9 +16,8 @@ const chunkBatchQuery = async (sql, entityDataArray, queryToExecute) => {
 const commaSeparateDynamicMapQuery = (sql, dynQueryConstructors) =>
   sql`${dynQueryConstructors.map(
     (constrQuery, i) =>
-      sql`${constrQuery(sql)}${
-        i === dynQueryConstructors.length - 1 ? sql`` : sql`, `
-      }`,
+      sql`${constrQuery(sql)}${i === dynQueryConstructors.length - 1 ? sql`` : sql`, `
+        }`,
   )}`;
 
 const batchSetItemsInTableCore = (table, sql, rowDataArray) => {
@@ -146,7 +145,7 @@ module.exports.batchSetChainMetadata = (sql, entityDataArray) => {
   "latest_fetched_block_number" = EXCLUDED."latest_fetched_block_number",
   "timestamp_caught_up_to_head_or_endblock" = EXCLUDED."timestamp_caught_up_to_head_or_endblock",
   "block_height" = EXCLUDED."block_height";`
-    .then((res) => {})
+    .then((res) => { })
     .catch((err) => {
       console.log("errored", err);
     });
@@ -166,7 +165,7 @@ module.exports.setChainMetadataBlockHeight = (sql, entityDataArray) => {
   SET
   "chain_id" = EXCLUDED."chain_id",
   "block_height" = EXCLUDED."block_height";`
-    .then((res) => {})
+    .then((res) => { })
     .catch((err) => {
       console.log("errored", err);
     });
@@ -437,8 +436,8 @@ module.exports.readDynamicContractsOnChainIdMatchingEvents = (
     FROM "public"."dynamic_contract_registry"
     WHERE chain_id = ${chainId}
     AND (registering_event_contract_name, registering_event_name, registering_event_src_address) IN ${sql(
-      preRegisterEvents.map((item) => sql(item)),
-    )};
+    preRegisterEvents.map((item) => sql(item)),
+  )};
   `;
 };
 
@@ -476,6 +475,8 @@ module.exports.batchSetDynamicContractRegistry = (sql, entityDataArray) => {
   );
 };
 
+const makeHistoryTableName = (entityName) => entityName + "_history";
+
 /**
   Find the "first change" serial originating from the reorg chain above the safe block number 
   (Using serial to account for unordered multi chain reorgs, where an earier event on another chain could be rolled back)
@@ -490,7 +491,7 @@ module.exports.getFirstChangeSerial_UnorderedMultichain = (
     SELECT
       MIN(serial) AS first_change_serial
     FROM
-      public.${sql(entityName + "_history")}
+      public.${sql(makeHistoryTableName(entityName))}
     WHERE
       entity_history_chain_id = ${reorgChainId}
       AND entity_history_block_number > ${safeBlockNumber}
@@ -510,7 +511,7 @@ module.exports.getFirstChangeSerial_OrderedMultichain = (
     SELECT
       MIN(serial) AS first_change_serial
     FROM
-      public.${sql(entityName + "_history")}
+      public.${sql(makeHistoryTableName(entityName))}
     WHERE
       entity_history_block_timestamp > ${safeBlockTimestamp}
       OR
@@ -535,7 +536,7 @@ module.exports.getFirstChangeEntityHistoryPerChain = (
   SELECT DISTINCT
     ON (entity_history_chain_id) *
   FROM
-    public.${sql(entityName + "_history")}
+    public.${sql(makeHistoryTableName(entityName))}
   WHERE
     serial >= (
       SELECT
@@ -562,7 +563,7 @@ module.exports.deleteRolledBackEntityHistory = (
     )
   -- Step 2: Delete all rows that have a serial >= the first change serial
   DELETE FROM
-    public.${sql(entityName + "_history")}
+    public.${sql(makeHistoryTableName(entityName))}
   WHERE
     serial >= (
       SELECT
@@ -571,6 +572,69 @@ module.exports.deleteRolledBackEntityHistory = (
         first_change
     );
   `;
+
+const Utils = require("envio/src/Utils.bs.js");
+
+module.exports.pruneStaleEntityHistory = (
+  sql,
+  entityName,
+  safeChainIdAndBlockNumberArray,
+) => {
+  const tableName = makeHistoryTableName(entityName);
+  return sql`
+  WITH first_change AS (
+    SELECT
+      MIN(serial) AS first_change_serial
+    FROM
+      public.${sql(tableName)}
+    WHERE
+      ${Utils.$$Array.interleave(
+    safeChainIdAndBlockNumberArray.map(
+      ({ chainId, blockNumber }) =>
+        sql`(entity_history_chain_id = ${chainId} AND entity_history_block_number > ${blockNumber})`,
+    ),
+    sql` OR `,
+  )}
+  ),
+  items_in_reorg_threshold AS (
+    SELECT DISTINCT
+      ON (id) *
+    FROM
+      public.${sql(tableName)}
+    WHERE
+      serial >= (SELECT serial FROM first_change)
+    ORDER BY
+      id,
+      serial ASC -- Select the row with the lowest serial per id
+  ),
+  -- Select all the previous history items for each id in the reorg threshold
+  previous_items AS (
+    SELECT
+      prev.id,
+      prev.serial
+    FROM
+      public.${sql(tableName)} prev
+    INNER JOIN
+      items_in_reorg_threshold r
+    ON
+      r.id = prev.id
+      AND
+      r.previous_entity_history_chain_id = prev.entity_history_chain_id
+      AND
+      r.previous_entity_history_block_number = prev.entity_history_block_number
+      AND
+      r.previous_entity_history_log_index = prev.entity_history_log_index
+  )
+  DELETE FROM
+    public.${sql(tableName)} eh
+  WHERE
+    -- Delete all entity history of entities that are not in the reorg threshold
+    eh.id NOT IN (SELECT id FROM items_in_reorg_threshold)
+    -- Delete all rows where id matches a row in previous_items but has a lower serial
+    OR 
+    eh.serial < (SELECT serial FROM previous_items WHERE previous_items.id = eh.id);
+`;
+};
 
 module.exports.getRollbackDiff = (sql, entityName, getFirstChangeSerial) => sql`
   WITH
@@ -584,7 +648,7 @@ module.exports.getRollbackDiff = (sql, entityName, getFirstChangeSerial) => sql`
       SELECT DISTINCT
         ON (id) after.*
       FROM
-        public.${sql(entityName + "_history")} after
+        public.${sql(makeHistoryTableName(entityName))} after
       WHERE
         after.serial >= (
           SELECT
@@ -611,7 +675,7 @@ module.exports.getRollbackDiff = (sql, entityName, getFirstChangeSerial) => sql`
     COALESCE(before.entity_history_log_index, 0) AS entity_history_log_index
   FROM
     -- Use a RIGHT JOIN, to ensure that nulls get returned if there is no "before" row
-    public.${sql(entityName + "_history")} before
+    public.${sql(makeHistoryTableName(entityName))} before
     RIGHT JOIN rollback_ids after ON before.id = after.id
     AND before.entity_history_block_timestamp = after.previous_entity_history_block_timestamp
     AND before.entity_history_chain_id = after.previous_entity_history_chain_id

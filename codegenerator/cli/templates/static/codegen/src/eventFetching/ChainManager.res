@@ -85,7 +85,7 @@ let isQueueItemEarlierUnorderedBelowReorgThreshold = (
   }
   // The idea here is if we are in undordered multichain mode, always prioritize queue
   // items that are below the reorg threshold. That way we can register contracts all
-  // the way up to the threshold on all chains before starting. 
+  // the way up to the threshold on all chains before starting.
   // Similarly we wait till all chains are at their threshold before saving entity history.
   switch (a->isItemBelowReorgThreshold, b->isItemBelowReorgThreshold) {
   | (false, true) => true
@@ -322,10 +322,7 @@ let getFetchStateWithData = (self: t, ~shouldDeepCopy=false): ChainMap.t<fetchSt
       partitionedFetchState: shouldDeepCopy
         ? cf.fetchState->PartitionedFetchState.copy
         : cf.fetchState,
-      heighestBlockBelowThreshold: Pervasives.max(
-        cf.currentBlockHeight - cf.chainConfig.confirmedBlockThreshold,
-        0,
-      ),
+      heighestBlockBelowThreshold: cf->ChainFetcher.getHeighestBlockBelowThreshold,
     }
   })
 }
@@ -455,6 +452,17 @@ let isPreRegisteringDynamicContracts = self =>
   self.chainFetchers
   ->ChainMap.values
   ->Array.reduce(false, (accum, cf) => accum || cf->ChainFetcher.isPreRegisteringDynamicContracts)
+
+let getSafeChainIdAndBlockNumberArray = (self: t): array<
+  DbFunctions.EntityHistory.chainIdAndBlockNumber,
+> => {
+  self.chainFetchers
+  ->ChainMap.values
+  ->Array.map((cf): DbFunctions.EntityHistory.chainIdAndBlockNumber => {
+    chainId: cf.chainConfig.chain->ChainMap.Chain.toChainId,
+    blockNumber: cf->ChainFetcher.getHeighestBlockBelowThreshold,
+  })
+}
 
 module ExposedForTesting_Hidden = {
   let priorityQueueComparitor = priorityQueueComparitor

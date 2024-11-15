@@ -154,7 +154,7 @@ Helper to check if a value exists in an array
     } else {
       let head = array->Js.Array2.slice(~start=0, ~end_=index)
       let tail = array->Belt.Array.sliceToEnd(index + 1)
-      [...head, ...tail]
+      Belt.Array.concat(head, tail)
     }
   }
 
@@ -182,6 +182,22 @@ Helper to check if a value exists in an array
   */
   @send
   external spliceInPlace: (array<'a>, ~pos: int, ~remove: int) => array<'a> = "splice"
+
+  /**
+  Interleaves an array with a separator
+
+  interleave([1, 2, 3], 0) -> [1, 0, 2, 0, 3]
+  */
+  let interleave = (arr: array<'a>, separator: 'a) => {
+    let interleaved = []
+    arr->Js.Array2.forEachi((v, i) => {
+      interleaved->Js.Array2.push(v)->ignore
+      if i < arr->Array.length - 1 {
+        interleaved->Js.Array2.push(separator)->ignore
+      }
+    })
+    interleaved
+  }
 }
 
 module String = {

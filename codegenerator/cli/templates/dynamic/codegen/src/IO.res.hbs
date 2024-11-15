@@ -143,7 +143,13 @@ let executeDbFunctionsEntity = (
   promises->Promise.all->Promise.thenResolve(_ => ())
 }
 
-let executeBatch = async (sql, ~inMemoryStore: InMemoryStore.t, ~isInReorgThreshold, ~config) => {
+let executeBatch = async (
+  sql,
+  ~inMemoryStore: InMemoryStore.t,
+  ~isInReorgThreshold,
+  ~safeChainIdAndBlockNumberArray,
+  ~config,
+) => {
   let entityDbExecutionComposer =
     config->Config.shouldSaveHistory(~isInReorgThreshold)
       ? executeSetEntityWithHistory
@@ -190,8 +196,26 @@ let executeBatch = async (sql, ~inMemoryStore: InMemoryStore.t, ~isInReorgThresh
   | None => []
   }
 
+  let pruneEntityHistory = if (
+    isInReorgThreshold &&
+    config->Config.shouldPruneHistory &&
+    safeChainIdAndBlockNumberArray->Belt.Array.length > 0
+  ) {
+    Entities.allEntities->Belt.Array.map(entityMod => {
+      let module(Entity) = entityMod
+
+      DbFunctions.EntityHistory.pruneStaleEntityHistory(
+        _,
+        ~entityName=Entity.name,
+        ~safeChainIdAndBlockNumberArray,
+      )
+    })
+  } else {
+    []
+  }
+
   let res = await sql->Postgres.beginSql(sql => {
-    Belt.Array.concat(
+    Belt.Array.concatMany([
       //Rollback tables need to happen first in the traction
       rollbackTables,
       [
@@ -202,7 +226,10 @@ let executeBatch = async (sql, ~inMemoryStore: InMemoryStore.t, ~isInReorgThresh
         set{{entity.name.capitalized}}s,
         {{/each}}
       ],
-    )->Belt.Array.map(dbFunc => sql->dbFunc)
+      //History pruning needs to happen last in the transaction
+      //It deletes all unneeded history rows outside of the reorg threshold
+      pruneEntityHistory,
+    ])->Belt.Array.map(dbFunc => sql->dbFunc)
   })
 
   res

@@ -119,11 +119,9 @@ let makeEntityHandlerContext = (
   ~logger,
   ~getKey,
   ~loadLayer,
-  ~isInReorgThreshold,
+  ~shouldSaveHistory,
 ): entityHandlerContext<entity> => {
   let inMemTable = inMemoryStore->InMemoryStore.getInMemTable(~entityMod)
-  let shouldSaveHistory =
-    RegisterHandlers.getConfig()->Config.shouldSaveHistory(~isInReorgThreshold)
   {
     set: entity => {
       inMemTable->InMemoryTable.Entity.set(
@@ -179,7 +177,7 @@ let getHandlerContext = (
   context,
   ~inMemoryStore: InMemoryStore.t,
   ~loadLayer,
-  ~isInReorgThreshold,
+  ~shouldSaveHistory,
 ) => {
   let {eventBatchQueueItem, logger} = context
 
@@ -194,7 +192,7 @@ let getHandlerContext = (
       ~getKey=entity => entity.id,
       ~logger,
       ~loadLayer,
-      ~isInReorgThreshold,
+      ~shouldSaveHistory,
     ),
     {{/each}}
   }
@@ -215,9 +213,9 @@ let getHandlerArgs = (
   ~inMemoryStore,
   ~loaderReturn,
   ~loadLayer,
-  ~isInReorgThreshold,
+  ~shouldSaveHistory,
 ) => {
   Types.HandlerTypes.event: contextEnv.eventBatchQueueItem.event,
-  context: contextEnv->getHandlerContext(~inMemoryStore, ~loadLayer, ~isInReorgThreshold),
+  context: contextEnv->getHandlerContext(~inMemoryStore, ~loadLayer, ~shouldSaveHistory),
   loaderReturn,
 }

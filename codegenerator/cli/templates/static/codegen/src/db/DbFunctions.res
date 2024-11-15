@@ -303,6 +303,36 @@ module EntityHistory = {
     ~getFirstChangeSerial: Postgres.sql => dynamicSqlQuery,
   ) => promise<unit> = "deleteRolledBackEntityHistory"
 
+  type chainIdAndBlockNumber = {
+    chainId: int,
+    blockNumber: int,
+  }
+
+  @module("./DbFunctionsImplementation.js")
+  external pruneStaleEntityHistoryInternal: (
+    Postgres.sql,
+    ~entityName: Enums.EntityType.t,
+    ~safeChainIdAndBlockNumberArray: array<chainIdAndBlockNumber>,
+  ) => promise<unit> = "pruneStaleEntityHistory"
+
+  let pruneStaleEntityHistory = async (sql, ~entityName, ~safeChainIdAndBlockNumberArray) => {
+    try await sql->pruneStaleEntityHistoryInternal(
+      ~entityName,
+      ~safeChainIdAndBlockNumberArray,
+    ) catch {
+    | exn =>
+      exn->ErrorHandling.mkLogAndRaise(
+        ~msg=`Failed to prune stale entity history`,
+        ~logger=Logging.createChild(
+          ~params={
+            "entityName": entityName,
+            "safeChainIdAndBlockNumberArray": safeChainIdAndBlockNumberArray,
+          },
+        ),
+      )
+    }
+  }
+
   module Args = {
     type t =
       | OrderedMultichain({safeBlockTimestamp: int, reorgChainId: int, safeBlockNumber: int})

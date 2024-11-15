@@ -1058,6 +1058,7 @@ let injectedTaskReducer = (
         }
 
         let inMemoryStore = rollbackInMemStore->Option.getWithDefault(InMemoryStore.make())
+
         switch await EventProcessing.processEventBatch(
           ~eventBatch=batch,
           ~inMemoryStore,
@@ -1066,6 +1067,7 @@ let injectedTaskReducer = (
           ~latestProcessedBlocks,
           ~loadLayer=state.loadLayer,
           ~config=state.config,
+          ~safeChainIdAndBlockNumberArray=state.chainManager->ChainManager.getSafeChainIdAndBlockNumberArray,
         ) {
         | exception exn =>
           //All casese should be handled/caught before this with better user messaging.
