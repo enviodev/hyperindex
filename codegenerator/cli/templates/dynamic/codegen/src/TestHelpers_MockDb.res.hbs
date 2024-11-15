@@ -49,15 +49,18 @@ store
 type inMemoryStore = InMemoryStore.t
 
 @genType
+type dynamicContractRegistryKey = {
+  chainId: int,
+  contractAddress: Address.t,
+}
+
+@genType
 type rec t = {
   __dbInternal__: inMemoryStore,
   entities: entities,
   rawEvents: storeOperations<InMemoryStore.rawEventsKey, TablesStatic.RawEvents.t>,
   eventSyncState: storeOperations<Types.chainId, TablesStatic.EventSyncState.t>,
-  dynamicContractRegistry: storeOperations<
-    InMemoryStore.dynamicContractRegistryKey,
-    TablesStatic.DynamicContractRegistry.t,
-  >,
+  dynamicContractRegistry: entityStoreOperations<TablesStatic.DynamicContractRegistry.t>,
 }
 
 // Each user defined entity will be in this record with all the store or "mockdb" operators
@@ -224,11 +227,13 @@ let rec makeWithInMemoryStore: InMemoryStore.t => t = (inMemoryStore: InMemorySt
     ~getKey=({chainId}) => chainId,
   )
 
-  let dynamicContractRegistry = makeStoreOperatorMeta(
+  let dynamicContractRegistry = makeStoreOperatorEntity(
     ~inMemoryStore,
-    ~getStore=db => db.dynamicContractRegistry,
+    ~getStore=db =>
+      db.entities->InMemoryStore.EntityTables.get(module(TablesStatic.DynamicContractRegistry)),
     ~makeMockDb=makeWithInMemoryStore,
-    ~getKey=({chainId, contractAddress}) => {chainId, contractAddress},
+    ~getKey=({chainId, contractAddress}) =>
+      ContextEnv.makeDynamicContractId(~chainId, ~contractAddress),
   )
 
   let entities = {
@@ -273,7 +278,10 @@ let cloneMockDb = (self: t) => {
 
 let getEntityOperations = (mockDb: t, ~entityMod): entityStoreOperations<Entities.internalEntity> => {
   let module(Entity: Entities.InternalEntity) = entityMod
-  (mockDb.entities->Utils.magic)->Utils.Dict.dangerouslyGetNonOption(Entity.key)->Utils.Option.getExn("Mocked operations for entity " ++ Entity.key ++ " not found")
+  mockDb.entities
+  ->Utils.magic
+  ->Utils.Dict.dangerouslyGetNonOption((Entity.name :> string))
+  ->Utils.Option.getExn("Mocked operations for entity " ++ (Entity.name :> string) ++ " not found")
 }
 
 let makeLoadEntitiesByIds = (mockDb: t) => {
@@ -368,13 +376,10 @@ let writeFromMemoryStore = (mockDb: t, ~inMemoryStore: InMemoryStore.t) => {
     ~getKey=entity => entity.chainId,
   )
 
-  mockDb->executeRowsMeta(
+  mockDb->executeRowsEntity(
     ~inMemoryStore,
-    ~getInMemTable=inMemStore => {inMemStore.dynamicContractRegistry},
-    ~getKey=(entity): InMemoryStore.dynamicContractRegistryKey => {
-      chainId: entity.chainId,
-      contractAddress: entity.contractAddress,
-    },
+    ~entityMod=module(TablesStatic.DynamicContractRegistry),
+    ~getKey=entity => entity.id,
   )
 
 //ENTITY EXECUTION

@@ -7,30 +7,21 @@ type rawEventsKey = {
 let hashRawEventsKey = (key: rawEventsKey) =>
   EventUtils.getEventIdKeyString(~chainId=key.chainId, ~eventId=key.eventId)
 
-@genType
-type dynamicContractRegistryKey = {
-  chainId: int,
-  contractAddress: Address.t,
-}
-
-let hashDynamicContractRegistryKey = ({chainId, contractAddress}) =>
-  EventUtils.getContractAddressKeyString(~chainId, ~contractAddress)
-
 module EntityTables = {
   type t = dict<InMemoryTable.Entity.t<Entities.internalEntity>>
-  exception UndefinedEntity(string)
+  exception UndefinedEntity(Enums.EntityType.t)
   let make = (entities: array<module(Entities.InternalEntity)>): t => {
     let init = Js.Dict.empty()
     entities->Belt.Array.forEach(entity => {
       let module(Entity) = entity
-      init->Js.Dict.set(Entity.key, InMemoryTable.Entity.make())
+      init->Js.Dict.set((Entity.name :> string), InMemoryTable.Entity.make())
     })
     init
   }
 
   let get = (type entity, self: t, entityMod: module(Entities.Entity with type t = entity)) => {
     let module(Entity) = entityMod
-    switch self->Utils.Dict.dangerouslyGetNonOption(Entity.key) {
+    switch self->Utils.Dict.dangerouslyGetNonOption((Entity.name :> string)) {
     | Some(table) =>
       table->(
         Utils.magic: InMemoryTable.Entity.t<Entities.internalEntity> => InMemoryTable.Entity.t<
@@ -39,7 +30,7 @@ module EntityTables = {
       )
 
     | None =>
-      UndefinedEntity(Entity.key)->ErrorHandling.mkLogAndRaise(
+      UndefinedEntity(Entity.name)->ErrorHandling.mkLogAndRaise(
         ~msg="Unexpected, entity InMemoryTable is undefined",
       )
     }
@@ -56,10 +47,6 @@ module EntityTables = {
 type t = {
   eventSyncState: InMemoryTable.t<int, TablesStatic.EventSyncState.t>,
   rawEvents: InMemoryTable.t<rawEventsKey, TablesStatic.RawEvents.t>,
-  dynamicContractRegistry: InMemoryTable.t<
-    dynamicContractRegistryKey,
-    TablesStatic.DynamicContractRegistry.t,
-  >,
   entities: Js.Dict.t<InMemoryTable.Entity.t<Entities.internalEntity>>,
   rollBackEventIdentifier: option<Types.eventIdentifier>,
 }
@@ -70,7 +57,6 @@ let make = (
 ): t => {
   eventSyncState: InMemoryTable.make(~hash=v => v->Belt.Int.toString),
   rawEvents: InMemoryTable.make(~hash=hashRawEventsKey),
-  dynamicContractRegistry: InMemoryTable.make(~hash=hashDynamicContractRegistryKey),
   entities: EntityTables.make(entities),
   rollBackEventIdentifier,
 }
@@ -78,7 +64,6 @@ let make = (
 let clone = (self: t) => {
   eventSyncState: self.eventSyncState->InMemoryTable.clone,
   rawEvents: self.rawEvents->InMemoryTable.clone,
-  dynamicContractRegistry: self.dynamicContractRegistry->InMemoryTable.clone,
   entities: self.entities->EntityTables.clone,
   rollBackEventIdentifier: self.rollBackEventIdentifier->InMemoryTable.structuredClone,
 }

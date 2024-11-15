@@ -220,12 +220,12 @@ module PostgresInterop = {
     }`
   }
 
-  let chunkBatchQuery = async (
+  let chunkBatchQuery = (
     sql,
     entityDataArray: array<'entity>,
     queryToExecute: pgFn<array<'entity>, 'return>,
     ~maxItemsPerQuery=500,
-  ) => {
+  ): promise<array<'return>> => {
     let responses = []
     let i = ref(0)
     let shouldContinue = () => i.contents < entityDataArray->Array.length
@@ -233,11 +233,11 @@ module PostgresInterop = {
     while shouldContinue() {
       let chunk =
         entityDataArray->Js.Array2.slice(~start=i.contents, ~end_=i.contents + maxItemsPerQuery)
-      let response = await queryToExecute(sql, chunk)
+      let response = queryToExecute(sql, chunk)
       responses->Js.Array2.push(response)->ignore
       i := i.contents + maxItemsPerQuery
     }
-    responses
+    Promise.all(responses)
   }
 
   let makeBatchSetFn = (~table, ~rowsSchema: S.t<array<'a>>): batchSetFn<'a> => {

@@ -133,6 +133,7 @@ module EventFunctions = {
             false,
           ~dynamicContractRegistrations=None,
           ~inMemoryStore,
+          ~shouldSaveHistory=false,
         ) {
         | Ok(_) => ()
         | Error(e) => e->ErrorHandling.logAndRaise

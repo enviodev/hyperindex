@@ -218,7 +218,7 @@ let fromTable = (table: table, ~schema: S.t<'entity>): t<'entity> => {
 
   let actionField = mkField(actionFieldName, Custom(Enums.EntityHistoryRowAction.enum.name))
 
-  let serialField = mkField("serial", Serial, ~isNullable=true)
+  let serialField = mkField("serial", Serial, ~isNullable=true, ~isIndex=true)
 
   let dataFieldNames = dataFields->Belt.Array.map(field => field->getFieldName)
 
