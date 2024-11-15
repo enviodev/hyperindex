@@ -41,16 +41,40 @@ describe("SerDe Test", () => {
       // arrayOfTimestamps: [],
     }
 
+    let entityHistoryItem: EntityHistory.historyRow<_> = {
+      current: {
+        chain_id: 1,
+        block_timestamp: 1,
+        block_number: 1,
+        log_index: 1,
+      },
+      previous: None,
+      entityData: Set(entity),
+    }
+
     //Fails if serialziation does not work
     let set = DbFunctionsEntities.batchSet(~entityMod=module(Entities.EntityWithAllTypes))
     //Fails if parsing does not work
     let read = DbFunctionsEntities.batchRead(~entityMod=module(Entities.EntityWithAllTypes))
+
+    let setHistory = (sql, row) =>
+      Entities.EntityWithAllTypes.entityHistory->EntityHistory.batchInsertRows(
+        ~sql,
+        ~rows=[row],
+        ~shouldCopyCurrentEntity=true,
+      )
+
+    try await DbFunctions.sql->setHistory(entityHistoryItem) catch {
+    | exn =>
+      Js.log2("setHistory exn", exn)
+      Assert.fail("Failed to set entity history in table")
+    }
+
     //set the entity
-    switch await DbFunctions.sql->set([entity]) {
-    | exception exn =>
+    try await DbFunctions.sql->set([entity]) catch {
+    | exn =>
       Js.log(exn)
       Assert.fail("Failed to set entity in table")
-    | _ => ()
     }
 
     switch await DbFunctions.sql->read([entity.id]) {
@@ -62,19 +86,19 @@ describe("SerDe Test", () => {
     }
 
     //The copy function will do it's custom postgres serialization of the entity
-    await DbFunctions.sql->DbFunctions.EntityHistory.copyAllEntitiesToEntityHistory
+    // await DbFunctions.sql->DbFunctions.EntityHistory.copyAllEntitiesToEntityHistory
 
-    let res = await DbFunctions.sql->Postgres.unsafe(`SELECT * FROM public.entity_history;`)
+    let res =
+      await DbFunctions.sql->Postgres.unsafe(`SELECT * FROM public."EntityWithAllTypes_history";`)
 
     switch res {
     | [row] =>
-      let json = row["params"]
-      let parsed = json->S.parseWith(Entities.EntityWithAllTypes.schema)
+      let parsed = row->S.parseWith(Entities.EntityWithAllTypes.entityHistory.schema)
       switch parsed {
       | Ok(parsed) =>
         Assert.deepEqual(
-          parsed,
-          entity,
+          parsed.entityData,
+          Set(entity),
           ~message="Postgres json serialization should be compatable with our schema",
         )
       | Error(e) => Assert.fail("Failed to parse entity history: " ++ e->S.Error.reason)

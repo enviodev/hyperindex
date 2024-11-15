@@ -163,6 +163,10 @@ let makeFromDbState = async (~config: Config.t, ~maxAddrInPartition=Env.maxAddrI
 
   let chainFetchers = ChainMap.fromArrayUnsafe(chainFetchersArr)
 
+  //This is sufficient to check if it has started saving history event though
+  //it is now possible for there to be no rows in the table after it has started saving history
+  //In this case the indexer can calculate if it is in a reorg threshold as it starts since there
+  //was no history anyways
   let hasStartedSavingHistory = await DbFunctions.EntityHistory.hasRows()
 
   {
