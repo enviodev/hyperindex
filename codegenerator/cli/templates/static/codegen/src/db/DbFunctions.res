@@ -242,23 +242,6 @@ module DynamicContractRegistry = {
 }
 
 module EntityHistory = {
-  //Given chainId, blockTimestamp, blockNumber
-  //Delete all rows where chain_id = chainId and block_timestamp < blockTimestamp and block_number < blockNumber
-  //But keep 1 row that is satisfies this condition and has the most recent block_number
-  @module("./DbFunctionsImplementation.js")
-  external deleteAllEntityHistoryOnChainBeforeThreshold: (
-    Postgres.sql,
-    ~chainId: int,
-    ~blockNumberThreshold: int,
-    ~blockTimestampThreshold: int,
-  ) => promise<unit> = "deleteAllEntityHistoryOnChainBeforeThreshold"
-
-  @module("./DbFunctionsImplementation.js")
-  external batchSetInternal: (
-    Postgres.sql,
-    ~entityHistoriesToSet: array<Js.Json.t>,
-  ) => promise<unit> = "batchInsertEntityHistory"
-
   type dynamicSqlQuery
   module UnorderedMultichain = {
     @module("./DbFunctionsImplementation.js")
@@ -302,6 +285,36 @@ module EntityHistory = {
     ~entityName: Enums.EntityType.t,
     ~getFirstChangeSerial: Postgres.sql => dynamicSqlQuery,
   ) => promise<unit> = "deleteRolledBackEntityHistory"
+
+  type chainIdAndBlockNumber = {
+    chainId: int,
+    blockNumber: int,
+  }
+
+  @module("./DbFunctionsImplementation.js")
+  external pruneStaleEntityHistoryInternal: (
+    Postgres.sql,
+    ~entityName: Enums.EntityType.t,
+    ~safeChainIdAndBlockNumberArray: array<chainIdAndBlockNumber>,
+  ) => promise<unit> = "pruneStaleEntityHistory"
+
+  let pruneStaleEntityHistory = async (sql, ~entityName, ~safeChainIdAndBlockNumberArray) => {
+    try await sql->pruneStaleEntityHistoryInternal(
+      ~entityName,
+      ~safeChainIdAndBlockNumberArray,
+    ) catch {
+    | exn =>
+      exn->ErrorHandling.mkLogAndRaise(
+        ~msg=`Failed to prune stale entity history`,
+        ~logger=Logging.createChild(
+          ~params={
+            "entityName": entityName,
+            "safeChainIdAndBlockNumberArray": safeChainIdAndBlockNumberArray,
+          },
+        ),
+      )
+    }
+  }
 
   module Args = {
     type t =
@@ -493,17 +506,24 @@ module EntityHistory = {
     firstChangeEventPerChain
   }
 
-  let copyTableToEntityHistory = (sql, ~sourceTableName: Enums.EntityType.t): promise<unit> => {
-    sql->Postgres.unsafe(`SELECT copy_table_to_entity_history('${(sourceTableName :> string)}');`)
-  }
-
-  let copyAllEntitiesToEntityHistory = sql => {
-    sql->Postgres.beginSql(sql => {
-      Enums.EntityType.variants->Belt.Array.map(entityType => {
-        sql->copyTableToEntityHistory(~sourceTableName=entityType)
+  let hasRows = async () => {
+    let all =
+      await Entities.allEntities
+      ->Belt.Array.map(async entityMod => {
+        let module(Entity) = entityMod
+        try await General.hasRows(sql, ~table=Entity.entityHistory.table) catch {
+        | exn =>
+          exn->ErrorHandling.mkLogAndRaise(
+            ~msg=`Failed to check if entity history table has rows`,
+            ~logger=Logging.createChild(
+              ~params={
+                "entityName": Entity.name,
+              },
+            ),
+          )
+        }
       })
-    })
+      ->Promise.all
+    all->Belt.Array.some(v => v)
   }
-
-  let hasRows = () => General.hasRows(sql, ~table=TablesStatic.EntityHistory.table)
 }

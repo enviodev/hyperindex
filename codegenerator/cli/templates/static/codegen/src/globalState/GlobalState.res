@@ -572,10 +572,11 @@ let actionReducer = (state: t, action: action) => {
       [UpdateChainMetaDataAndCheckForExit(NoExit), ProcessEventBatch],
     )
   | SetCurrentlyProcessing(currentlyProcessingBatch) => ({...state, currentlyProcessingBatch}, [])
-  | SetIsInReorgThreshold(isInReorgThreshold) => (
-      {...state, chainManager: {...state.chainManager, isInReorgThreshold}},
-      [],
-    )
+  | SetIsInReorgThreshold(isInReorgThreshold) =>
+    if isInReorgThreshold {
+      Logging.info("Reorg threshold reached")
+    }
+    ({...state, chainManager: {...state.chainManager, isInReorgThreshold}}, [])
   | SetCurrentlyFetchingBatch(chain, newPartitionsCurrentlyFetching) =>
     updateChainFetcher(currentChainFetcher => {
       ...currentChainFetcher,
@@ -907,14 +908,6 @@ let injectedTaskReducer = (
         ~blockNumberThreshold,
       )
 
-      if state.config->Config.shouldPruneHistory {
-        await DbFunctions.sql->DbFunctions.EntityHistory.deleteAllEntityHistoryOnChainBeforeThreshold(
-          ~chainId=chain->ChainMap.Chain.toChainId,
-          ~blockNumberThreshold,
-          ~blockTimestampThreshold,
-        )
-      }
-
       if Env.saveBenchmarkData {
         let elapsedTimeMillis = Hrtime.timeSince(timeRef)->Hrtime.toMillis->Hrtime.intFromMillis
         Benchmark.addSummaryData(
@@ -1034,7 +1027,6 @@ let injectedTaskReducer = (
           //On the first time we enter the reorg threshold, copy all entities to entity history
           //And set the isInReorgThreshold isInReorgThreshold state to true
           dispatchAction(SetIsInReorgThreshold(true))
-          await DbFunctions.sql->DbFunctions.EntityHistory.copyAllEntitiesToEntityHistory
         }
 
         let isInReorgThreshold = state.chainManager.isInReorgThreshold || isInReorgThreshold
@@ -1068,6 +1060,7 @@ let injectedTaskReducer = (
         }
 
         let inMemoryStore = rollbackInMemStore->Option.getWithDefault(InMemoryStore.make())
+
         switch await EventProcessing.processEventBatch(
           ~eventBatch=batch,
           ~inMemoryStore,
@@ -1076,6 +1069,7 @@ let injectedTaskReducer = (
           ~latestProcessedBlocks,
           ~loadLayer=state.loadLayer,
           ~config=state.config,
+          ~safeChainIdAndBlockNumberArray=state.chainManager->ChainManager.getSafeChainIdAndBlockNumberArray,
         ) {
         | exception exn =>
           //All casese should be handled/caught before this with better user messaging.

@@ -147,7 +147,7 @@ module EventFunctions = {
           ~loadLayer,
           ~loaderHandler,
           ~logger,
-          ~isInReorgThreshold=false,
+          ~shouldSaveHistory=false,
         ) {
         | Ok(_) => ()
         | Error(e) => e->ErrorHandling.logAndRaise
