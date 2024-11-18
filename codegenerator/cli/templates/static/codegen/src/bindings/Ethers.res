@@ -1,4 +1,4 @@
-type abi
+type abi = EvmTypes.Abi.t
 
 let makeAbi = (abi: Js.Json.t): abi => abi->Utils.magic
 
@@ -72,7 +72,7 @@ module BlockTag = {
 }
 
 module EventFilter = {
-  type topic = string
+  type topic = EvmTypes.Hex.t
   type t = {
     address: Address.t,
     topics: array<topic>,

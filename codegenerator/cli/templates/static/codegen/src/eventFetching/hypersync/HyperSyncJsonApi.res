@@ -161,7 +161,7 @@ module QueryTypes = {
 
   let logParamsSchema = S.object(s => {
     address: ?s.field("address", S.option(S.array(Address.schema))),
-    topics: s.field("topics", S.array(S.array(S.string))),
+    topics: s.field("topics", S.array(S.array(EvmTypes.Hex.schema))),
   })
 
   type transactionParams = {
@@ -324,10 +324,10 @@ module ResponseTypes = {
     blockNumber: ?s.field("block_number", S.option(S.int)),
     address: ?s.field("address", S.option(S.string)),
     data: ?s.field("data", S.option(S.string)),
-    topic0: ?s.field("topic0", S.option(S.null(S.string))),
-    topic1: ?s.field("topic1", S.option(S.null(S.string))),
-    topic2: ?s.field("topic2", S.option(S.null(S.string))),
-    topic3: ?s.field("topic3", S.option(S.null(S.string))),
+    topic0: ?s.field("topic0", S.option(S.null(EvmTypes.Hex.schema))),
+    topic1: ?s.field("topic1", S.option(S.null(EvmTypes.Hex.schema))),
+    topic2: ?s.field("topic2", S.option(S.null(EvmTypes.Hex.schema))),
+    topic3: ?s.field("topic3", S.option(S.null(EvmTypes.Hex.schema))),
   })
 
   type data = {
