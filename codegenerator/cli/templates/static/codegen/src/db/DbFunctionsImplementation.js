@@ -7,10 +7,10 @@ const chunkBatchQuery = async (sql, entityDataArray, queryToExecute) => {
   // Split entityDataArray into chunks of MAX_ITEMS_PER_QUERY
   for (let i = 0; i < entityDataArray.length; i += MAX_ITEMS_PER_QUERY) {
     const chunk = entityDataArray.slice(i, i + MAX_ITEMS_PER_QUERY);
-    const response = await queryToExecute(sql, chunk);
-    responses.push(response);
+    const pendingRes = queryToExecute(sql, chunk);
+    responses.push(pendingRes);
   }
-  return responses;
+  return Promise.all(responses);
 };
 
 const commaSeparateDynamicMapQuery = (sql, dynQueryConstructors) =>
@@ -238,54 +238,10 @@ const batchSetRawEventsCore = (sql, entityDataArray) => {
     "block_hash",
     "block_timestamp",
     "params",
-  )}
-    ON CONFLICT(chain_id, event_id) DO UPDATE
-    SET
-    "chain_id" = EXCLUDED."chain_id",
-    "event_id" = EXCLUDED."event_id",
-    "event_name" = EXCLUDED."event_name",
-    "contract_name" = EXCLUDED."contract_name",
-    "block_number" = EXCLUDED."block_number",
-    "log_index" = EXCLUDED."log_index",
-    "transaction_fields" = EXCLUDED."transaction_fields",
-    "block_fields" = EXCLUDED."block_fields",
-    "src_address" = EXCLUDED."src_address",
-    "block_hash" = EXCLUDED."block_hash",
-    "block_timestamp" = EXCLUDED."block_timestamp",
-    "params" = EXCLUDED."params";`;
+  )};`;
 };
-
-module.exports.deleteAllDynamicContractRegistrationsAfterEventIdentifier =
-  async (sql, { blockTimestamp, chainId, blockNumber, logIndex }) => {
-    return await sql`
-      DELETE FROM "public"."dynamic_contract_registry"
-      WHERE 
-        registering_event_block_timestamp > ${blockTimestamp} OR
-        (registering_event_block_timestamp = ${blockTimestamp} AND chain_id > ${chainId}) OR
-        (registering_event_block_timestamp = ${blockTimestamp} AND chain_id = ${chainId} AND registering_event_block_number > ${blockNumber}) OR
-        (registering_event_block_timestamp = ${blockTimestamp} AND chain_id = ${chainId} AND registering_event_block_number = ${blockNumber} AND registering_event_log_index > ${logIndex});
-      `;
-  };
 
 const EventUtils = require("../EventUtils.bs.js");
-
-module.exports.deleteAllRawEventsAfterEventIdentifier = async (
-  sql,
-  { blockTimestamp, chainId, blockNumber, logIndex },
-) => {
-  const eventId = EventUtils.packEventIndexFromRecord({
-    blockNumber,
-    logIndex,
-  });
-
-  return await sql`
-      DELETE FROM "public"."raw_events"
-      WHERE 
-        block_timestamp > ${blockTimestamp} OR
-        (block_timestamp = ${blockTimestamp} AND chain_id > ${chainId}) OR
-        (block_timestamp = ${blockTimestamp} AND chain_id = ${chainId} AND event_id > ${eventId});
-      `;
-};
 
 module.exports.batchSetRawEvents = (sql, entityDataArray) => {
   return chunkBatchQuery(sql, entityDataArray, batchSetRawEventsCore);
@@ -369,40 +325,6 @@ module.exports.readDynamicContractsOnChainIdMatchingEvents = (
       preRegisterEvents.map((item) => sql(item)),
     )};
   `;
-};
-
-const batchSetDynamicContractRegistryCore = (sql, entityDataArray) => {
-  return sql`
-    INSERT INTO "public"."dynamic_contract_registry"
-  ${sql(
-    entityDataArray,
-    "chain_id",
-    "registering_event_block_number",
-    "registering_event_log_index",
-    "registering_event_block_timestamp",
-    "registering_event_src_address",
-    "registering_event_name",
-    "contract_address",
-    "contract_type",
-  )}
-    ON CONFLICT(chain_id, contract_address) DO UPDATE
-    SET
-    "chain_id" = EXCLUDED."chain_id",
-    "registering_event_block_number" = EXCLUDED."registering_event_block_number",
-    "registering_event_log_index" = EXCLUDED."registering_event_log_index",
-    "registering_event_block_timestamp" = EXCLUDED."registering_event_block_timestamp",
-    "registering_event_src_address" = EXCLUDED."registering_event_src_address",
-    "registering_event_name" = EXCLUDED."registering_event_name",
-    "contract_address" = EXCLUDED."contract_address",
-    "contract_type" = EXCLUDED."contract_type";`;
-};
-
-module.exports.batchSetDynamicContractRegistry = (sql, entityDataArray) => {
-  return chunkBatchQuery(
-    sql,
-    entityDataArray,
-    batchSetDynamicContractRegistryCore,
-  );
 };
 
 const makeHistoryTableName = (entityName) => entityName + "_history";

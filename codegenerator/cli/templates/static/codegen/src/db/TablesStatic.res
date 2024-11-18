@@ -127,8 +127,8 @@ module RawEvents = {
   let table = mkTable(
     "raw_events",
     ~fields=[
-      mkField("chain_id", Integer, ~isPrimaryKey),
-      mkField("event_id", Numeric, ~isPrimaryKey),
+      mkField("chain_id", Integer),
+      mkField("event_id", Numeric),
       mkField("event_name", Text),
       mkField("contract_name", Text),
       mkField("block_number", Integer),
@@ -140,13 +140,17 @@ module RawEvents = {
       mkField("transaction_fields", JsonB),
       mkField("params", JsonB),
       mkField("db_write_timestamp", TimestampWithoutTimezone, ~default="CURRENT_TIMESTAMP"),
+      mkField("serial", Serial, ~isNullable, ~isPrimaryKey),
     ],
   )
 }
 
 module DynamicContractRegistry = {
+  let name = Enums.EntityType.DynamicContractRegistry
+
   @genType
   type t = {
+    id: string,
     @as("chain_id") chainId: int,
     @as("registering_event_block_number") registeringEventBlockNumber: int,
     @as("registering_event_log_index") registeringEventLogIndex: int,
@@ -159,6 +163,7 @@ module DynamicContractRegistry = {
   }
 
   let schema = S.schema(s => {
+    id: s.matches(S.string),
     chainId: s.matches(S.int),
     registeringEventBlockNumber: s.matches(S.int),
     registeringEventLogIndex: s.matches(S.int),
@@ -175,19 +180,20 @@ module DynamicContractRegistry = {
   let table = mkTable(
     "dynamic_contract_registry",
     ~fields=[
-      mkField("chain_id", Integer, ~isPrimaryKey),
+      mkField("id", Text, ~isPrimaryKey),
+      mkField("chain_id", Integer),
       mkField("registering_event_block_number", Integer),
       mkField("registering_event_log_index", Integer),
       mkField("registering_event_block_timestamp", Integer),
       mkField("registering_event_contract_name", Text),
       mkField("registering_event_name", Text),
       mkField("registering_event_src_address", Text),
-      mkField("contract_address", Text, ~isPrimaryKey),
+      mkField("contract_address", Text),
       mkField("contract_type", Custom(Enums.ContractType.enum.name)),
     ],
   )
 
-  let batchSet = PostgresInterop.makeBatchSetFn(~table, ~rowsSchema)
+  let entityHistory = table->EntityHistory.fromTable(~schema)
 }
 
 let allTables: array<table> = [

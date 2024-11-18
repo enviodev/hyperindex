@@ -252,6 +252,10 @@ describe("PartitionedFetchState getMostBehindPartitions", () => {
           registeringEventLogIndex: 0,
           dynamicContracts: [
             {
+              id: ContextEnv.makeDynamicContractId(
+                ~chainId=1,
+                ~contractAddress=TestHelpers.Addresses.mockAddresses[5]->Option.getExn,
+              ),
               chainId: 1,
               registeringEventBlockTimestamp: 10 * 15,
               registeringEventBlockNumber: 10,

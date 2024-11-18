@@ -184,8 +184,6 @@ module RawEvents = {
 }
 
 module DynamicContractRegistry = {
-  let batchSet = TablesStatic.DynamicContractRegistry.batchSet
-
   @module("./DbFunctionsImplementation.js")
   external readDynamicContractsOnChainIdAtOrBeforeBlockNumberRaw: (
     Postgres.sql,
@@ -201,12 +199,6 @@ module DynamicContractRegistry = {
     )
     json->S.parseOrRaiseWith(TablesStatic.DynamicContractRegistry.rowsSchema)
   }
-
-  @module("./DbFunctionsImplementation.js")
-  external deleteAllDynamicContractRegistrationsAfterEventIdentifier: (
-    Postgres.sql,
-    ~eventIdentifier: Types.eventIdentifier,
-  ) => promise<unit> = "deleteAllDynamicContractRegistrationsAfterEventIdentifier"
 
   type preRegisteringEvent = {
     @as("registering_event_contract_name") registeringEventContractName: string,
@@ -379,8 +371,9 @@ module EntityHistory = {
     }
   }
 
-  let deleteAllEntityHistoryAfterEventIdentifier = (~isUnorderedMultichainMode) => (
+  let deleteAllEntityHistoryAfterEventIdentifier = (
     sql,
+    ~isUnorderedMultichainMode,
     ~eventIdentifier: Types.eventIdentifier,
   ): promise<unit> => {
     let {chainId, blockNumber, blockTimestamp} = eventIdentifier

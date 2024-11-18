@@ -48,14 +48,16 @@ module EntityType = {
   @genType
   type t = 
   {{#each entities as | entity |}}
-    | @as("{{entity.name.capitalized}}") {{entity.name.capitalized}}
+    | @as("{{entity.name.original}}") {{entity.name.capitalized}}
   {{/each}}
+    | @as("dynamic_contract_registry") DynamicContractRegistry
 
   let name = "ENTITY_TYPE"
   let variants = [
   {{#each entities as | entity |}}
     {{entity.name.capitalized}},
   {{/each}}
+    DynamicContractRegistry,
   ]
 
   let enum = mkEnum(~name, ~variants)

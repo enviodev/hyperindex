@@ -167,32 +167,21 @@ let executeBatch = async (
     ~items=inMemoryStore.rawEvents->InMemoryTable.values,
   )
 
-  let setDynamicContracts = executeSet(
-    _,
-    ~dbFunction=DbFunctions.DynamicContractRegistry.batchSet,
-    ~items=inMemoryStore.dynamicContractRegistry->InMemoryTable.values,
-  )
+  let setEntities = Entities.allEntities->Belt.Array.map(entityMod => {
+    entityDbExecutionComposer(_, ~entityMod, ~inMemoryStore)
+  })
 
-  {{#each entities as | entity |}}
-  let set{{entity.name.capitalized}}s = entityDbExecutionComposer(
-    _,
-    ~entityMod=module(Entities.{{entity.name.capitalized}}),
-    ~inMemoryStore,
-  )
-
-  {{/each}}
   //In the event of a rollback, rollback all meta tables based on the given
   //valid event identifier, where all rows created after this eventIdentifier should
   //be deleted
   let rollbackTables = switch inMemoryStore.rollBackEventIdentifier {
-  | Some(eventIdentifier) =>
-    [
+  | Some(eventIdentifier) => [
       DbFunctions.EntityHistory.deleteAllEntityHistoryAfterEventIdentifier(
+        _,
         ~isUnorderedMultichainMode=config.isUnorderedMultichainMode,
+        ~eventIdentifier,
       ),
-      DbFunctions.RawEvents.deleteAllRawEventsAfterEventIdentifier,
-      DbFunctions.DynamicContractRegistry.deleteAllDynamicContractRegistrationsAfterEventIdentifier,
-    ]->Belt.Array.map(fn => fn(_, ~eventIdentifier))
+    ]
   | None => []
   }
 
@@ -218,14 +207,8 @@ let executeBatch = async (
     Belt.Array.concatMany([
       //Rollback tables need to happen first in the traction
       rollbackTables,
-      [
-        setEventSyncState,
-        setRawEvents,
-        setDynamicContracts,
-        {{#each entities as | entity |}}
-        set{{entity.name.capitalized}}s,
-        {{/each}}
-      ],
+      [setEventSyncState, setRawEvents],
+      setEntities,
       //History pruning needs to happen last in the transaction
       //It deletes all unneeded history rows outside of the reorg threshold
       pruneEntityHistory,

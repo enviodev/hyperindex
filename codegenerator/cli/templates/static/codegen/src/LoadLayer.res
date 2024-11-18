@@ -288,11 +288,11 @@ let useBatchQueue = (
   ~logger,
 ) => {
   let module(Entity) = entityMod
-  switch loadLayer.entityBatchQueues->Utils.Dict.dangerouslyGetNonOption(Entity.key) {
+  switch loadLayer.entityBatchQueues->Utils.Dict.dangerouslyGetNonOption((Entity.name :> string)) {
   | Some(batchQueue) => batchQueue
   | None => {
       let batchQueue = BatchQueue.make(~entityMod, ~logger)
-      loadLayer.entityBatchQueues->Js.Dict.set(Entity.key, batchQueue)
+      loadLayer.entityBatchQueues->Js.Dict.set((Entity.name :> string), batchQueue)
       if !loadLayer.isScheduled {
         let _: promise<unit> = schedule(loadLayer, ~inMemoryStore)
       }

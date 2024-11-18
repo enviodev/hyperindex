@@ -121,12 +121,15 @@ let runEventContractRegister = (
   ~dynamicContractRegistrations: option<dynamicContractRegistrations>,
   ~inMemoryStore,
   ~preRegisterLatestProcessedBlocks=?,
+  ~shouldSaveHistory,
 ) => {
   let {chain, event, blockNumber} = eventBatchQueueItem
 
   let contextEnv = ContextEnv.make(~eventBatchQueueItem, ~logger)
 
-  switch contractRegister(contextEnv->ContextEnv.getContractRegisterArgs(~inMemoryStore)) {
+  switch contractRegister(
+    contextEnv->ContextEnv.getContractRegisterArgs(~inMemoryStore, ~shouldSaveHistory),
+  ) {
   | exception exn =>
     exn
     ->ErrorHandling.make(
@@ -358,6 +361,7 @@ let rec registerDynamicContracts = (
   ~dynamicContractRegistrations: option<dynamicContractRegistrations>=None,
   ~inMemoryStore,
   ~preRegisterLatestProcessedBlocks=?,
+  ~shouldSaveHistory,
 ) => {
   switch eventBatch[index] {
   | None => (eventsBeforeDynamicRegistrations, dynamicContractRegistrations)->Ok
@@ -382,6 +386,7 @@ let rec registerDynamicContracts = (
           ~dynamicContractRegistrations,
           ~inMemoryStore,
           ~preRegisterLatestProcessedBlocks?,
+          ~shouldSaveHistory,
         )
       | None =>
         dynamicContractRegistrations
@@ -406,6 +411,7 @@ let rec registerDynamicContracts = (
         ~dynamicContractRegistrations,
         ~inMemoryStore,
         ~preRegisterLatestProcessedBlocks?,
+        ~shouldSaveHistory,
       )
     | Error(e) => Error(e)
     }
@@ -527,6 +533,7 @@ let getDynamicContractRegistrations = (
         ~logger,
         ~inMemoryStore,
         ~preRegisterLatestProcessedBlocks,
+        ~shouldSaveHistory=false,
       )
       ->propogate
 
@@ -578,7 +585,12 @@ let processEventBatch = (
       dynamicContractRegistrations,
     ) =
       eventBatch
-      ->registerDynamicContracts(~checkContractIsRegistered, ~logger, ~inMemoryStore)
+      ->registerDynamicContracts(
+        ~checkContractIsRegistered,
+        ~logger,
+        ~inMemoryStore,
+        ~shouldSaveHistory=config->Config.shouldSaveHistory(~isInReorgThreshold),
+      )
       ->propogate
 
     let elapsedAfterContractRegister =

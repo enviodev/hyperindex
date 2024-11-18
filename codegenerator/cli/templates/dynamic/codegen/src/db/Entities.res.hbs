@@ -5,7 +5,6 @@ type id = string
 type internalEntity
 module type Entity = {
   type t
-  let key: string
   let name: Enums.EntityType.t
   let schema: S.schema<t>
   let rowsSchema: S.schema<array<t>>
@@ -26,7 +25,6 @@ type whereOperations<'entity, 'fieldType> = {eq: 'fieldType => promise<array<'en
 
 {{#each entities as |entity|}}
 module {{entity.name.capitalized}} = {
-  let key = "{{entity.name.original}}"
   let name = {{entity.name.capitalized}}
   @genType
   type t = {
@@ -93,26 +91,12 @@ module {{entity.name.capitalized}} = {
  
 {{/each}}
 
-type entity = 
-{{#each entities as | entity |}}
-  | {{entity.name.capitalized}}({{entity.name.capitalized}}.t)
-{{/each}}
-
-let makeGetter = (schema, accessor) => json => json->S.parseWith(schema)->Belt.Result.map(accessor)
-
-let getEntityParamsDecoder = (entityName: Enums.EntityType.t) =>
-  switch entityName {
-{{#each entities as | entity |}}
-  | {{entity.name.capitalized}} => makeGetter({{entity.name.capitalized}}.schema, e => {{entity.name.capitalized}}(e))
-{{/each}}
-  }
-
 let allEntities: array<module(InternalEntity)> =
   [
-
 {{#each entities as |entity|}}
     module({{entity.name.capitalized}}),
 {{/each}}
+    module(TablesStatic.DynamicContractRegistry),
   ]->(Utils.magic: array<module(Entity)> => array<module(InternalEntity)>)
 
 let allTables: array<table> = allEntities->Belt.Array.map(entityMod => {
