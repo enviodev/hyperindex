@@ -18,6 +18,5 @@
     "module": "commonjs",
     "in-source": true
   },
-  "bs-dependencies": ["generated", "envio"],
-  "bsc-flags": ["-open Envio"]
+  "bs-dependencies": ["generated", "envio"]
 }

@@ -452,7 +452,7 @@ module Make = (
           let maybeEventMod =
             eventRouter->EventRouter.get(
               ~tag=EventRouter.getEvmEventTag(
-                ~sighash=topic0,
+                ~sighash=topic0->EvmTypes.Hex.toString,
                 ~topicCount=log.topics->Array.length,
               ),
               ~contractAddressMapping,
@@ -492,7 +492,10 @@ module Make = (
           let topic0 = log.topics->Js.Array2.unsafe_get(0)
 
           switch eventRouter->EventRouter.get(
-            ~tag=EventRouter.getEvmEventTag(~sighash=topic0, ~topicCount=log.topics->Array.length),
+            ~tag=EventRouter.getEvmEventTag(
+              ~sighash=topic0->EvmTypes.Hex.toString,
+              ~topicCount=log.topics->Array.length,
+            ),
             ~contractAddressMapping,
             ~contractAddress=log.address,
           ) {
