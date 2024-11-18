@@ -497,7 +497,7 @@ module Mocks = {
   )
 }
 
-describe_only("Entity history rollbacks", () => {
+describe("Entity history rollbacks", () => {
   Async.beforeEach(async () => {
     try {
       let _ = DbHelpers.resetPostgresClient()
@@ -707,6 +707,48 @@ describe_only("Entity history rollbacks", () => {
       parsedHistoryItems,
       expectedHistoryItems,
       ~message="Should have deleted just the last item in history",
+    )
+  })
+
+  Async.it("Prunes history correctly with items in reorg threshold", async () => {
+    await DbFunctions.sql->DbFunctions.EntityHistory.pruneStaleEntityHistory(
+      ~entityName=TestEntity.name,
+      ~safeChainIdAndBlockNumberArray=[{chainId: 1, blockNumber: 3}, {chainId: 2, blockNumber: 2}],
+    )
+    let currentHistoryItems = await DbFunctions.sql->getAllMockEntityHistory
+
+    let parsedHistoryItems =
+      currentHistoryItems->S.parseOrRaiseWith(TestEntity.entityHistory.schemaRows)
+
+    let expectedHistoryItems = [
+      Mocks.Chain1.historyRow2,
+      Mocks.Chain1.historyRow3,
+      Mocks.Chain2.historyRow2,
+      Mocks.Chain2.historyRow3,
+    ]
+
+    let sort = arr =>
+      arr->Js.Array2.sortInPlaceWith(
+        (a, b) => a.EntityHistory.current.block_number - b.current.block_number,
+      )
+
+    Assert.deepEqual(
+      parsedHistoryItems->sort,
+      expectedHistoryItems->sort,
+      ~message="Should have deleted the unneeded first items in history",
+    )
+  })
+
+  Async.it("Prunes history correctly with no items in reorg threshold", async () => {
+    await DbFunctions.sql->DbFunctions.EntityHistory.pruneStaleEntityHistory(
+      ~entityName=TestEntity.name,
+      ~safeChainIdAndBlockNumberArray=[{chainId: 1, blockNumber: 4}, {chainId: 2, blockNumber: 3}],
+    )
+    let currentHistoryItems = await DbFunctions.sql->getAllMockEntityHistory
+
+    Assert.ok(
+      currentHistoryItems->Array.length == 0,
+      ~message="Should have deleted all items in history",
     )
   })
 })
