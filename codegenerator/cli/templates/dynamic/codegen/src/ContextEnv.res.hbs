@@ -70,9 +70,11 @@ let makeDynamicContractRegisterFn = (
   ~inMemoryStore,
   ~shouldSaveHistory,
 ) => (contractAddress: Address.t) => {
+  {{#if is_evm_ecosystem}} {{!-- TODO: Add validation for Fuel --}}
   // Even though it's the Address.t type on ReScript side, for TS side it's a string.
   // So we need to ensure that it's a valid checksummed address.
   let contractAddress = contractAddress->Address.Evm.fromAddressOrThrow
+  {{/if}}
 
   let {eventBatchQueueItem, addedDynamicContractRegistrations} = contextEnv
   let {chain, timestamp, blockNumber, logIndex} = eventBatchQueueItem
