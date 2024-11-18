@@ -107,14 +107,20 @@ module EntityHistory = {
   type t<'entity> = {
     table: table,
     createInsertFnQuery: string,
-    // insertFn: historyRow<'entity> => promise<unit>,
+    schema: S.t<historyRow<'entity>>,
+    insertFn: (Postgres.sql, Js.Json.t) => promise<unit>,
+  }
+
+  let insertRow = (self: t<'entity>, ~sql, ~historyRow: historyRow<'entity>) => {
+    let row = historyRow->S.serializeOrRaiseWith(self.schema)
+    self.insertFn(sql, row)
   }
 
   type entityInternal
 
   external castInternal: t<'entity> => t<entityInternal> = "%identity"
 
-  let fromTable = (table: table): t<'entity> => {
+  let fromTable = (table: table, ~schema: S.t<'entity>): t<'entity> => {
     let entity_history_block_timestamp = "entity_history_block_timestamp"
     let entity_history_chain_id = "entity_history_chain_id"
     let entity_history_block_number = "entity_history_block_number"
@@ -176,29 +182,30 @@ module EntityHistory = {
       ~fields=Belt.Array.concatMany([currentHistoryFields, previousHistoryFields, dataFields]),
     )
 
-    let createInsertFnQuery = {
-      let insertFnName = `"insert_${table.tableName}"`
-      let historRowArg = "history_row"
-      let historyTablePath = `"public"."${historyTableName}"`
-      let originTablePath = `"public"."${originTableName}"`
+    let insertFnName = `"insert_${table.tableName}"`
+    let historyRowArg = "history_row"
+    let historyTablePath = `"public"."${historyTableName}"`
+    let originTablePath = `"public"."${originTableName}"`
 
-      let previousHistoryFieldsAreNullStr =
-        previousChangeFieldNames
-        ->Belt.Array.map(fieldName => `${historRowArg}.${fieldName} IS NULL`)
-        ->Js.Array2.joinWith(" OR ")
+    let previousHistoryFieldsAreNullStr =
+      previousChangeFieldNames
+      ->Belt.Array.map(fieldName => `${historyRowArg}.${fieldName} IS NULL`)
+      ->Js.Array2.joinWith(" OR ")
 
-      let currentChangeFieldNamesCommaSeparated = currentChangeFieldNames->Js.Array2.joinWith(", ")
+    let currentChangeFieldNamesCommaSeparated = currentChangeFieldNames->Js.Array2.joinWith(", ")
 
-      let dataFieldNamesDoubleQuoted = dataFieldNames->Belt.Array.map(fieldName => `"${fieldName}"`)
-      let dataFieldNamesCommaSeparated = dataFieldNamesDoubleQuoted->Js.Array2.joinWith(", ")
+    let dataFieldNamesDoubleQuoted = dataFieldNames->Belt.Array.map(fieldName => `"${fieldName}"`)
+    let dataFieldNamesCommaSeparated = dataFieldNamesDoubleQuoted->Js.Array2.joinWith(", ")
 
-      let allFieldNames = Belt.Array.concatMany([
+    let allFieldNamesDoubleQuoted =
+      Belt.Array.concatMany([
         currentChangeFieldNames,
         previousChangeFieldNames,
-        dataFieldNamesDoubleQuoted,
-      ])
+        dataFieldNames,
+      ])->Belt.Array.map(fieldName => `"${fieldName}"`)
 
-      `CREATE OR REPLACE FUNCTION ${insertFnName}(${historRowArg} ${historyTablePath})
+    let createInsertFnQuery = {
+      `CREATE OR REPLACE FUNCTION ${insertFnName}(${historyRowArg} ${historyTablePath})
       RETURNS void AS $$
       DECLARE
         v_previous_record RECORD;
@@ -209,7 +216,7 @@ module EntityHistory = {
           -- Find the most recent record for the same id
           SELECT ${currentChangeFieldNamesCommaSeparated} INTO v_previous_record
           FROM ${historyTablePath}
-          WHERE ${id} = ${historRowArg}.${id}
+          WHERE ${id} = ${historyRowArg}.${id}
           ORDER BY ${currentChangeFieldNames
         ->Belt.Array.map(fieldName => fieldName ++ " DESC")
         ->Js.Array2.joinWith(", ")}
@@ -219,12 +226,12 @@ module EntityHistory = {
           IF FOUND THEN
             ${Belt.Array.zip(currentChangeFieldNames, previousChangeFieldNames)
         ->Belt.Array.map(((currentFieldName, previousFieldName)) => {
-          `${historRowArg}.${previousFieldName} := v_previous_record.${currentFieldName};`
+          `${historyRowArg}.${previousFieldName} := v_previous_record.${currentFieldName};`
         })
         ->Js.Array2.joinWith(" ")}
             ElSE
             -- Check if a value for the id exists in the origin table and if so, insert a history row for it.
-            SELECT ${dataFieldNamesCommaSeparated} FROM ${originTablePath} WHERE id = ${historRowArg}.${id} INTO v_origin_record;
+            SELECT ${dataFieldNamesCommaSeparated} FROM ${originTablePath} WHERE id = ${historyRowArg}.${id} INTO v_origin_record;
             IF FOUND THEN
               INSERT INTO ${historyTablePath} (${currentChangeFieldNamesCommaSeparated}, ${dataFieldNamesCommaSeparated})
               -- SET the current change data fields to 0 since we don't know what they were
@@ -237,23 +244,33 @@ module EntityHistory = {
 
               ${previousChangeFieldNames
         ->Belt.Array.map(previousFieldName => {
-          `${historRowArg}.${previousFieldName} := 0;`
+          `${historyRowArg}.${previousFieldName} := 0;`
         })
         ->Js.Array2.joinWith(" ")}
             END IF;
           END IF;
         END IF;
 
-        INSERT INTO ${historyTablePath} (${allFieldNames->Js.Array2.joinWith(", ")})
-        VALUES (${allFieldNames
-        ->Belt.Array.map(fieldName => `${historRowArg}.${fieldName}`)
+        INSERT INTO ${historyTablePath} (${allFieldNamesDoubleQuoted->Js.Array2.joinWith(", ")})
+        VALUES (${allFieldNamesDoubleQuoted
+        ->Belt.Array.map(fieldName => `${historyRowArg}.${fieldName}`)
         ->Js.Array2.joinWith(", ")});
       END;
       $$ LANGUAGE plpgsql;
       `
     }
 
-    {table, createInsertFnQuery}
+    let insertFnString = `(sql, rowArgs) =>
+      sql\`select ${insertFnName}(ROW(${allFieldNamesDoubleQuoted
+      ->Belt.Array.map(fieldNameDoubleQuoted => `\${rowArgs[${fieldNameDoubleQuoted}]\}`)
+      ->Js.Array2.joinWith(", ")}));\``
+
+    let insertFn: (Postgres.sql, Js.Json.t) => promise<unit> =
+      insertFnString->Table.PostgresInterop.eval
+
+    let schema = makeHistoryRowSchema(schema)
+
+    {table, createInsertFnQuery, schema, insertFn}
   }
 }
 
@@ -321,7 +338,7 @@ module {{entity.name.capitalized}} = {
   {{/if}}
   )
 
-  let entityHistory = table->EntityHistory.fromTable
+  let entityHistory = table->EntityHistory.fromTable(~schema)
 }
  
 {{/each}}
