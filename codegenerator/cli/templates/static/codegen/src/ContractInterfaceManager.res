@@ -20,7 +20,7 @@ let make = (
   let contractNameInterfaceMapping = Js.Dict.empty()
 
   contracts->Belt.Array.forEach(contract => {
-    contractNameInterfaceMapping->Js.Dict.set(contract.name, contract :> interfaceAndAbi)
+    contractNameInterfaceMapping->Js.Dict.set(contract.name, (contract :> interfaceAndAbi))
   })
 
   {contractAddressMapping, contractNameInterfaceMapping}
@@ -62,11 +62,8 @@ let makeFromSingleContract = (
   let contractNameInterfaceMapping = Js.Dict.empty()
   let contractAddressMapping = ContractAddressingMap.make()
   let {name} = contract
-  contractNameInterfaceMapping->Js.Dict.set(name, contract :> interfaceAndAbi)
-  contractAddressMapping->ContractAddressingMap.addAddress(
-    ~name,
-    ~address=contractAddress,
-  )
+  contractNameInterfaceMapping->Js.Dict.set(name, (contract :> interfaceAndAbi))
+  contractAddressMapping->ContractAddressingMap.addAddress(~name, ~address=contractAddress)
 
   {contractNameInterfaceMapping, contractAddressMapping}
 }
@@ -109,7 +106,7 @@ let combineInterfaceManagers = (managers: array<t>): t => {
 
 type addressesAndTopics = {
   addresses: array<Address.t>,
-  topics: array<Ethers.EventFilter.topic>,
+  topics: array<EvmTypes.Hex.t>,
 }
 
 //Returns a flattened unified mapping with all contract addresses
@@ -132,7 +129,7 @@ let getAllTopicsAndAddresses = (self: t): addressesAndTopics => {
     | Some(interface) => {
         //Add the topic hash from each event on the interface
         interface.sighashes->Js.Array2.forEach(topic0 => {
-          topics->Js.Array2.push(topic0)->ignore
+          topics->Js.Array2.push(topic0->EvmTypes.Hex.fromStringUnsafe)->ignore
         })
 
         //Add the addresses for each contract

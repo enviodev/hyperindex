@@ -27,7 +27,14 @@ let defaultFileLogLevel = getLogLevelConfig("FILE_LOG_LEVEL", ~default=#trace)
 let envioApiToken = envSafe->EnvSafe.get("ENVIO_API_TOKEN", S.option(S.string))
 let envioApiUrl = envSafe->EnvSafe.get("ENVIO_API_URL", S.string, ~fallback="https://envio.dev/api")
 let hyperSyncClientTimeoutMillis =
-  envSafe->EnvSafe.get("ENVIO_HYPERSYNC_CLIENT_TIMEOUT_MILLIS", S.option(S.int))
+  envSafe->EnvSafe.get("ENVIO_HYPERSYNC_CLIENT_TIMEOUT_MILLIS", S.int, ~fallback=120_000)
+
+/** 
+This is the number of retries that the binary client makes before rejecting the promise with an error 
+Default is 0 so that the indexer can handle retries internally
+*/
+let hyperSyncClientMaxRetries =
+  envSafe->EnvSafe.get("ENVIO_HYPERSYNC_CLIENT_MAX_RETRIES", S.int, ~fallback=0)
 let saveBenchmarkData = envSafe->EnvSafe.get("ENVIO_SAVE_BENCHMARK_DATA", S.bool, ~fallback=false)
 let maxPartitionConcurrency =
   envSafe->EnvSafe.get("ENVIO_MAX_PARTITION_CONCURRENCY", S.int, ~fallback=10)
