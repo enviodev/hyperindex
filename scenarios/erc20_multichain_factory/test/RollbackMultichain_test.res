@@ -227,7 +227,7 @@ describe("Multichain rollback test", () => {
     //Provision the db
     DbHelpers.runUpDownMigration()
   })
-  Async.it_skip("Multichain indexer should rollback and not reprocess any events", async () => {
+  Async.it("Multichain indexer should rollback and not reprocess any events", async () => {
     //Setup a chainManager with unordered multichain mode to make processing happen
     //without blocking for the purposes of this test
     let chainManager = ChainManager.makeFromConfig(~config)
