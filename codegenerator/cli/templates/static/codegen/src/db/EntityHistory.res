@@ -95,7 +95,9 @@ let makeHistoryRowSchema: S.t<'entity> => S.t<historyRow<'entity>> = entitySchem
       },
       entityData: switch v["action"] {
       | SET => v["entityData"]->(Utils.magic: Js.Dict.t<unknown> => 'entity)->Set
-      | DELETE => v["entityData"]->(Utils.magic: Js.Dict.t<unknown> => entityIdOnly)->Delete
+      | DELETE =>
+        let {id} = v["entityData"]->(Utils.magic: Js.Dict.t<unknown> => entityIdOnly)
+        Delete({id: id})
       },
     },
     serializer: v => {
