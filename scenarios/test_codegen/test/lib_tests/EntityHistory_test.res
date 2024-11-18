@@ -30,9 +30,6 @@ module TestEntity = {
   let entityHistory = table->EntityHistory.fromTable(~schema)
 }
 
-// let testEntityMod: module(Entities.Entity) = module(TestEntity)
-// let testEntityModInternal: module(Entities.InternalEntity) =
-
 type testEntityHistory = EntityHistory.historyRow<TestEntity.t>
 let testEntityHistorySchema = EntityHistory.makeHistoryRowSchema(TestEntity.schema)
 
