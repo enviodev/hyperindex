@@ -17,8 +17,8 @@ let testEntitySchema: S.t<testEntity> = S.schema(s => {
 
 let testEntityRowsSchema = S.array(testEntitySchema)
 
-type testEntityHistory = Entities.EntityHistory.historyRow<testEntity>
-let testEntityHistorySchema = Entities.EntityHistory.makeHistoryRowSchema(testEntitySchema)
+type testEntityHistory = EntityHistory.historyRow<testEntity>
+let testEntityHistorySchema = EntityHistory.makeHistoryRowSchema(testEntitySchema)
 
 let mockEntityTable = Table.mkTable(
   "TestEntity",
@@ -29,7 +29,7 @@ let mockEntityTable = Table.mkTable(
   ],
 )
 
-let mockEntityHistory = mockEntityTable->Entities.EntityHistory.fromTable(~schema=testEntitySchema)
+let mockEntityHistory = mockEntityTable->EntityHistory.fromTable(~schema=testEntitySchema)
 
 let batchSetMockEntity = Table.PostgresInterop.makeBatchSetFn(
   ~table=mockEntityTable,
@@ -54,7 +54,7 @@ describe("Entity history serde", () => {
         log_index: 4,
       },
       previous: None,
-      entityData: {id: "1", fieldA: 1, fieldB: Some("test")},
+      entityData: Set({id: "1", fieldA: 1, fieldB: Some("test")}),
     }
 
     let serializedHistory = history->S.serializeOrRaiseWith(testEntityHistorySchema)
@@ -69,7 +69,8 @@ describe("Entity history serde", () => {
       "previous_entity_history_log_index": null,
       "id": "1",
       "fieldA": 1,
-      "fieldB": "test"
+      "fieldB": "test",
+      "action": "SET"
     }`)
 
     Assert.deepEqual(serializedHistory, expected)
@@ -91,7 +92,7 @@ describe("Entity history serde", () => {
         block_timestamp: 7,
         log_index: 8,
       }), //previous
-      entityData: {id: "1", fieldA: 1, fieldB: Some("test")},
+      entityData: Set({id: "1", fieldA: 1, fieldB: Some("test")}),
     }
     let serializedHistory = history->S.serializeOrRaiseWith(testEntityHistorySchema)
     let expected = %raw(`{
@@ -105,12 +106,43 @@ describe("Entity history serde", () => {
       "previous_entity_history_log_index": 8,
       "id": "1",
       "fieldA": 1,
-      "fieldB": "test"
+      "fieldB": "test",
+      "action": "SET"
     }`)
 
     Assert.deepEqual(serializedHistory, expected)
     let deserializedHistory = serializedHistory->S.parseOrRaiseWith(testEntityHistorySchema)
     Assert.deepEqual(deserializedHistory, history)
+  })
+
+  it("serializes and deserializes correctly with deleted entity", () => {
+    let history: testEntityHistory = {
+      current: {
+        chain_id: 1,
+        block_number: 2,
+        block_timestamp: 3,
+        log_index: 4,
+      },
+      previous: None,
+      entityData: Delete({id: "1"}),
+    }
+    let serializedHistory = history->S.serializeOrRaiseWith(testEntityHistorySchema)
+    let expected = %raw(`{
+      "entity_history_block_timestamp": 3,
+      "entity_history_chain_id": 1,
+      "entity_history_block_number": 2,
+      "entity_history_log_index": 4,
+      "previous_entity_history_block_timestamp": null,
+      "previous_entity_history_chain_id": null,
+      "previous_entity_history_block_number": null,                            
+      "previous_entity_history_log_index": null,
+      "id": "1",
+      "fieldA": null,
+      "fieldB":null,
+      "action": "DELETE"
+    }`)
+
+    Assert.deepEqual(serializedHistory, expected)
   })
 })
 
@@ -138,18 +170,18 @@ describe("Entity History Codegen", () => {
             -- Check if a value for the id exists in the origin table and if so, insert a history row for it.
             SELECT "id", "fieldA", "fieldB" FROM "public"."TestEntity" WHERE id = history_row.id INTO v_origin_record;
             IF FOUND THEN
-              INSERT INTO "public"."TestEntity_history" (entity_history_block_timestamp, entity_history_chain_id, entity_history_block_number, entity_history_log_index, "id", "fieldA", "fieldB")
+              INSERT INTO "public"."TestEntity_history" (entity_history_block_timestamp, entity_history_chain_id, entity_history_block_number, entity_history_log_index, "id", "fieldA", "fieldB", "action")
               -- SET the current change data fields to 0 since we don't know what they were
               -- and it doesn't matter provided they are less than any new values
-              VALUES (0, 0, 0, 0, v_origin_record."id", v_origin_record."fieldA", v_origin_record."fieldB");
+              VALUES (0, 0, 0, 0, v_origin_record."id", v_origin_record."fieldA", v_origin_record."fieldB", 'SET');
 
               history_row.previous_entity_history_block_timestamp := 0; history_row.previous_entity_history_chain_id := 0; history_row.previous_entity_history_block_number := 0; history_row.previous_entity_history_log_index := 0;
             END IF;
           END IF;
         END IF;
 
-        INSERT INTO "public"."TestEntity_history" ("entity_history_block_timestamp", "entity_history_chain_id", "entity_history_block_number", "entity_history_log_index", "previous_entity_history_block_timestamp", "previous_entity_history_chain_id", "previous_entity_history_block_number", "previous_entity_history_log_index", "id", "fieldA", "fieldB")
-        VALUES (history_row."entity_history_block_timestamp", history_row."entity_history_chain_id", history_row."entity_history_block_number", history_row."entity_history_log_index", history_row."previous_entity_history_block_timestamp", history_row."previous_entity_history_chain_id", history_row."previous_entity_history_block_number", history_row."previous_entity_history_log_index", history_row."id", history_row."fieldA", history_row."fieldB");
+        INSERT INTO "public"."TestEntity_history" ("entity_history_block_timestamp", "entity_history_chain_id", "entity_history_block_number", "entity_history_log_index", "previous_entity_history_block_timestamp", "previous_entity_history_chain_id", "previous_entity_history_block_number", "previous_entity_history_log_index", "id", "fieldA", "fieldB", "action")
+        VALUES (history_row."entity_history_block_timestamp", history_row."entity_history_chain_id", history_row."entity_history_block_number", history_row."entity_history_log_index", history_row."previous_entity_history_block_timestamp", history_row."previous_entity_history_chain_id", history_row."previous_entity_history_block_number", history_row."previous_entity_history_log_index", history_row."id", history_row."fieldA", history_row."fieldB", history_row."action");
       END;
       $$ LANGUAGE plpgsql;
       `
@@ -161,29 +193,55 @@ describe("Entity History Codegen", () => {
     let insertFnString = mockEntityHistory.insertFn->toStringUnsafe
 
     let expected = `(sql, rowArgs) =>
-      sql\`select "insert_TestEntity_history"(ROW(\${rowArgs["entity_history_block_timestamp"]}, \${rowArgs["entity_history_chain_id"]}, \${rowArgs["entity_history_block_number"]}, \${rowArgs["entity_history_log_index"]}, \${rowArgs["previous_entity_history_block_timestamp"]}, \${rowArgs["previous_entity_history_chain_id"]}, \${rowArgs["previous_entity_history_block_number"]}, \${rowArgs["previous_entity_history_log_index"]}, \${rowArgs["id"]}, \${rowArgs["fieldA"]}, \${rowArgs["fieldB"]}));\``
+      sql\`select "insert_TestEntity_history"(ROW(\${rowArgs["entity_history_block_timestamp"]}, \${rowArgs["entity_history_chain_id"]}, \${rowArgs["entity_history_block_number"]}, \${rowArgs["entity_history_log_index"]}, \${rowArgs["previous_entity_history_block_timestamp"]}, \${rowArgs["previous_entity_history_chain_id"]}, \${rowArgs["previous_entity_history_block_number"]}, \${rowArgs["previous_entity_history_log_index"]}, \${rowArgs["id"]}, \${rowArgs["fieldA"]}, \${rowArgs["fieldB"]}, \${rowArgs["action"]}));\``
 
     Assert.equal(expected, insertFnString)
   })
 
   Async.it("Creating tables and functions works", async () => {
-    let _ = await Migrations.runDownMigrations(~shouldExit=false)
-    let _resA = await Migrations.creatTableIfNotExists(DbFunctions.sql, mockEntityTable)
-    let _resB = await Migrations.creatTableIfNotExists(DbFunctions.sql, mockEntityHistory.table)
-    let _createFn = await DbFunctions.sql->Postgres.unsafe(mockEntityHistory.createInsertFnQuery)
+    try {
+      let _ = await Migrations.runDownMigrations(~shouldExit=false)
+      let _ = await Migrations.createEnumIfNotExists(
+        DbFunctions.sql,
+        Enums.EntityHistoryRowAction.enum,
+      )
+      let _resA = await Migrations.creatTableIfNotExists(DbFunctions.sql, mockEntityTable)
+      let _resB = await Migrations.creatTableIfNotExists(DbFunctions.sql, mockEntityHistory.table)
+    } catch {
+    | exn =>
+      Js.log2("Setup exn", exn)
+      Assert.fail("Failed setting up tables")
+    }
 
-    // let res = await DbFunctions.sql->Postgres.unsafe(``)
+    switch await DbFunctions.sql->Postgres.unsafe(mockEntityHistory.createInsertFnQuery) {
+    | exception exn =>
+      Js.log2("createInsertFnQuery exn", exn)
+      Assert.fail("Failed creating insert function")
+    | _ => ()
+    }
+
     let mockEntity = {id: "1", fieldA: 1, fieldB: Some("test")}
-    await DbFunctions.sql->batchSetMockEntity([mockEntity])
-    let afterInsert = await DbFunctions.sql->getAllMockEntity
-    Assert.deepEqual(afterInsert, [mockEntity])
+    switch await DbFunctions.sql->batchSetMockEntity([mockEntity]) {
+    | exception exn =>
+      Js.log2("batchSetMockEntity exn", exn)
+      Assert.fail("Failed to set mock entity in table")
+    | _ => ()
+    }
+    let afterInsert = switch await DbFunctions.sql->getAllMockEntity {
+    | exception exn =>
+      Js.log2("getAllMockEntity exn", exn)
+      Assert.fail("Failed to get mock entity from table")->Utils.magic
+    | entities => entities
+    }
+
+    Assert.deepEqual(afterInsert, [mockEntity], ~message="Should have inserted mock entity")
 
     let chainId = 137
     let blockNumber = 123456
     let blockTimestamp = blockNumber * 15
     let logIndex = 1
 
-    let entityHistoryItem: Entities.EntityHistory.historyRow<testEntity> = {
+    let entityHistoryItem: EntityHistory.historyRow<testEntity> = {
       current: {
         chain_id: chainId,
         block_timestamp: blockTimestamp,
@@ -191,20 +249,22 @@ describe("Entity History Codegen", () => {
         log_index: logIndex,
       },
       previous: None,
-      entityData: {
+      entityData: Set({
         id: "1",
         fieldA: 2,
         fieldB: Some("test2"),
-      },
+      }),
     }
 
-    let _callRes =
-      await mockEntityHistory->Entities.EntityHistory.insertRow(
-        ~sql=DbFunctions.sql,
-        ~historyRow=entityHistoryItem,
-      )
-
-    // let _callRes = await DbFunctions.sql->call(entityHistoryItem)
+    switch await mockEntityHistory->EntityHistory.insertRow(
+      ~sql=DbFunctions.sql,
+      ~historyRow=entityHistoryItem,
+    ) {
+    | exception exn =>
+      Js.log2("insertRow exn", exn)
+      Assert.fail("Failed to insert mock entity history")
+    | _ => ()
+    }
 
     let expectedResult = [
       {
@@ -219,6 +279,7 @@ describe("Entity History Codegen", () => {
         "id": "1",
         "fieldA": 1,
         "fieldB": "test",
+        "action": "SET",
       },
       {
         "entity_history_block_timestamp": blockTimestamp,
@@ -232,6 +293,7 @@ describe("Entity History Codegen", () => {
         "id": "1",
         "fieldA": 2,
         "fieldB": "test2",
+        "action": "SET",
       },
     ]
 

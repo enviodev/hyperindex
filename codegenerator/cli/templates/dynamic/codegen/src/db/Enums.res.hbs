@@ -2,16 +2,30 @@
 type enumType<'a> = {
   name: string,
   variants: array<'a>,
+  schema: S.t<'a>,
+  default: 'a,
 }
 
 let mkEnum = (~name, ~variants) => {
   name,
   variants,
+  schema: S.enum(variants),
+  default: switch variants->Belt.Array.get(0) {
+  | Some(v) => v
+  | None => Js.Exn.raiseError("No variants defined for enum " ++ name)
+  },
 }
 
 module type Enum = {
   type t
   let enum: enumType<t>
+}
+
+module EntityHistoryRowAction = {
+  type t = SET | DELETE
+  let variants = [SET, DELETE]
+  let name = "ENTITY_HISTORY_ROW_ACTION"
+  let enum = mkEnum(~name, ~variants)
 }
 
 module ContractType = {
@@ -20,12 +34,6 @@ module ContractType = {
   {{#each codegen_contracts as | contract |}}
     | @as("{{contract.name.capitalized}}") {{contract.name.capitalized}}
   {{/each}}
-
-  let schema = S.enum([
-    {{#each codegen_contracts as | contract |}}
-    {{contract.name.capitalized}}, 
-    {{/each}}
-  ])
 
   let name = "CONTRACT_TYPE"
   let variants = [
@@ -42,12 +50,6 @@ module EntityType = {
   {{#each entities as | entity |}}
     | @as("{{entity.name.capitalized}}") {{entity.name.capitalized}}
   {{/each}}
-
-  let schema = S.enum([
-    {{#each entities as | entity |}}
-    {{entity.name.capitalized}}, 
-    {{/each}}
-  ])
 
   let name = "ENTITY_TYPE"
   let variants = [
@@ -67,14 +69,6 @@ module {{enum.name.capitalized}} = {
     | @as("{{param.original}}") {{param.capitalized}}
   {{/each}}
 
-
-  let default = {{enum.params.[0].capitalized}}
-  let schema: S.t<t> = S.enum([
-    {{#each enum.params as | param | }}
-    {{param.capitalized}}, 
-    {{/each}}
-  ])
-
   let name = "{{enum.name.capitalized}}"
   let variants = [
   {{#each enum.params as | param | }}
@@ -83,9 +77,10 @@ module {{enum.name.capitalized}} = {
   ]
   let enum = mkEnum(~name, ~variants)
   }
-{{/each}}
 
+{{/each}}
 let allEnums: array<module(Enum)> = [
+  module(EntityHistoryRowAction),
   module(ContractType), 
   module(EntityType),
 {{#each gql_enums as | enum |}} 
