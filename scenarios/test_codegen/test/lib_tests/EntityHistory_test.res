@@ -426,16 +426,23 @@ module Mocks = {
 
     let historyRows = [historyRow1, historyRow2, historyRow3]
 
-    //These shows a case where no event exists on this block
+    //Shows a case where no event exists on this block
+    let rollbackEventIdentifier: Types.eventIdentifier = {
+      blockTimestamp: 10,
+      chainId: chain_id,
+      blockNumber: 3,
+      logIndex: 0,
+    }
+
     let orderedMultichainArg = DbFunctions.EntityHistory.Args.OrderedMultichain({
-      safeBlockTimestamp: 10,
+      safeBlockTimestamp: rollbackEventIdentifier.blockTimestamp,
       reorgChainId: chain_id,
-      safeBlockNumber: 3,
+      safeBlockNumber: rollbackEventIdentifier.blockNumber,
     })
 
     let unorderedMultichainArg = DbFunctions.EntityHistory.Args.UnorderedMultichain({
       reorgChainId: chain_id,
-      safeBlockNumber: 3,
+      safeBlockNumber: rollbackEventIdentifier.blockNumber,
     })
   }
 
@@ -482,6 +489,12 @@ module Mocks = {
 
     let historyRows = [historyRow1, historyRow2, historyRow3]
   }
+
+  let historyRows = Utils.Array.mergeSorted(
+    (a, b) => a.EntityHistory.current.block_timestamp < b.current.block_timestamp,
+    Chain1.historyRows,
+    Chain2.historyRows,
+  )
 }
 
 describe_only("Entity history rollbacks", () => {
@@ -501,17 +514,11 @@ describe_only("Entity history rollbacks", () => {
 
       let _ = await DbFunctions.sql->Postgres.unsafe(TestEntity.entityHistory.createInsertFnQuery)
 
-      let historyRows = Utils.Array.mergeSorted(
-        (a, b) => a.EntityHistory.current.block_timestamp < b.current.block_timestamp,
-        Mocks.Chain1.historyRows,
-        Mocks.Chain2.historyRows,
-      )
-
       try await DbFunctions.sql->Postgres.beginSql(
         sql => [
           TestEntity.entityHistory->EntityHistory.batchInsertRows(
             ~sql,
-            ~rows=historyRows,
+            ~rows=Mocks.historyRows,
             ~shouldCopyCurrentEntity=true,
           ),
         ],
@@ -658,6 +665,48 @@ describe_only("Entity history rollbacks", () => {
       firstChangeEventPerChain,
       expected,
       ~message="Should only have chain 1 first change event",
+    )
+  })
+
+  Async.it("Deletes current history after rollback ordered", async () => {
+    let _ =
+      await DbFunctions.sql->DbFunctions.EntityHistory.deleteAllEntityHistoryAfterEventIdentifier(
+        ~isUnorderedMultichainMode=false,
+        ~eventIdentifier=Mocks.Chain1.rollbackEventIdentifier,
+        ~allEntities=[module(TestEntity)->Entities.entityModToInternal],
+      )
+
+    let currentHistoryItems = await DbFunctions.sql->getAllMockEntityHistory
+    let parsedHistoryItems =
+      currentHistoryItems->S.parseOrRaiseWith(TestEntity.entityHistory.schemaRows)
+
+    let expectedHistoryItems = Mocks.historyRows->Belt.Array.slice(~offset=0, ~len=4)
+
+    Assert.deepEqual(
+      parsedHistoryItems,
+      expectedHistoryItems,
+      ~message="Should have deleted last 2 items in history",
+    )
+  })
+
+  Async.it("Deletes current history after rollback unordered", async () => {
+    let _ =
+      await DbFunctions.sql->DbFunctions.EntityHistory.deleteAllEntityHistoryAfterEventIdentifier(
+        ~isUnorderedMultichainMode=true,
+        ~eventIdentifier=Mocks.Chain1.rollbackEventIdentifier,
+        ~allEntities=[module(TestEntity)->Entities.entityModToInternal],
+      )
+
+    let currentHistoryItems = await DbFunctions.sql->getAllMockEntityHistory
+    let parsedHistoryItems =
+      currentHistoryItems->S.parseOrRaiseWith(TestEntity.entityHistory.schemaRows)
+
+    let expectedHistoryItems = Mocks.historyRows->Belt.Array.slice(~offset=0, ~len=5)
+
+    Assert.deepEqual(
+      parsedHistoryItems,
+      expectedHistoryItems,
+      ~message="Should have deleted just the last item in history",
     )
   })
 })
