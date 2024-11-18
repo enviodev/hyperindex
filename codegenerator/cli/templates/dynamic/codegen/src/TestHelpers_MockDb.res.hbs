@@ -49,12 +49,6 @@ store
 type inMemoryStore = InMemoryStore.t
 
 @genType
-type dynamicContractRegistryKey = {
-  chainId: int,
-  contractAddress: Address.t,
-}
-
-@genType
 type rec t = {
   __dbInternal__: inMemoryStore,
   entities: entities,
