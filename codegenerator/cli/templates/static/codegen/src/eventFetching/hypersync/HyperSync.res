@@ -82,7 +82,12 @@ module CachedClients = {
     switch cache->Utils.Dict.dangerouslyGetNonOption(url) {
     | Some(client) => client
     | None =>
-      let newClient = HyperSyncClient.make(~url)
+      let newClient = HyperSyncClient.make(
+        ~url,
+        ~bearerToken=Env.envioApiToken,
+        ~maxNumRetries=Env.hyperSyncClientMaxRetries,
+        ~httpReqTimeoutMillis=Env.hyperSyncClientTimeoutMillis,
+      )
 
       cache->Js.Dict.set(url, newClient)
 

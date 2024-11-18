@@ -353,7 +353,7 @@ module ResponseTypes = {
     blockNumber?: int,
     address?: Address.t,
     data?: string,
-    topics?: array<Js.Nullable.t<Ethers.EventFilter.topic>>,
+    topics?: array<Js.Nullable.t<EvmTypes.Hex.t>>,
   }
 
   type event = {
@@ -423,12 +423,14 @@ type t = {
 @module("@envio-dev/hypersync-client") @scope("HypersyncClient") external new: cfg => t = "new"
 
 let defaultToken = "3dc856dd-b0ea-494f-b27e-017b8b6b7e07"
-let make = (~url) =>
+
+let make = (~url, ~bearerToken: option<string>, ~httpReqTimeoutMillis, ~maxNumRetries) =>
   new({
     url,
     enableChecksumAddresses: true,
-    bearerToken: Env.envioApiToken->Belt.Option.getWithDefault(defaultToken),
-    httpReqTimeoutMillis: Env.hyperSyncClientTimeoutMillis->Belt.Option.getWithDefault(120_000),
+    bearerToken: bearerToken->Belt.Option.getWithDefault(defaultToken),
+    httpReqTimeoutMillis,
+    maxNumRetries,
   })
 
 module Decoder = {

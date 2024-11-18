@@ -5,7 +5,7 @@
 
 const Integration_ts_helpersJS = require('./Integration_ts_helpers.bs.js');
 
-import type {t as Address_t} from 'generated/src/Address.gen';
+import type {t as Address_t} from 'envio/src/Address.gen';
 
 export abstract class chainConfig { protected opaque!: any }; /* simulate opaque types */
 

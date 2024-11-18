@@ -13,7 +13,7 @@ importers:
         version: 4.3.10
       envio:
         specifier: file:../../codegenerator/cli/npm/envio
-        version: file:../../codegenerator/cli/npm/envio
+        version: file:../../codegenerator/cli/npm/envio(typescript@5.2.2)
       rescript:
         specifier: 11.1.3
         version: 11.1.3
@@ -59,23 +59,23 @@ importers:
         specifier: 1.2.2
         version: 1.2.2
       '@fuel-ts/address':
-        specifier: 0.94.9
-        version: 0.94.9
+        specifier: 0.96.1
+        version: 0.96.1
       '@fuel-ts/crypto':
-        specifier: 0.94.9
-        version: 0.94.9
+        specifier: 0.96.1
+        version: 0.96.1
       '@fuel-ts/errors':
-        specifier: 0.94.9
-        version: 0.94.9
+        specifier: 0.96.1
+        version: 0.96.1
       '@fuel-ts/hasher':
-        specifier: 0.94.9
-        version: 0.94.9
+        specifier: 0.96.1
+        version: 0.96.1
       '@fuel-ts/math':
-        specifier: 0.94.9
-        version: 0.94.9
+        specifier: 0.96.1
+        version: 0.96.1
       '@fuel-ts/utils':
-        specifier: 0.94.9
-        version: 0.94.9
+        specifier: 0.96.1
+        version: 0.96.1
       '@glennsl/rescript-fetch':
         specifier: 0.2.0
         version: 0.2.0
@@ -209,36 +209,76 @@ packages:
     resolution: {integrity: sha512-raKA6DshYSle0sAOHBV1OkSRFMN+Mkz8sFiMmS3k+m5nP6pP56E17CRRePBL5qmR6ZgSEvGOz/44QUiKNkK9Pg==}
     engines: {node: '>= 10'}
 
-  '@fuel-ts/address@0.94.9':
-    resolution: {integrity: sha512-1CJlwNJdiccizIof7EFgFjpjKvmiuiOIuB0gN8lcddvwsDbU68UUnHXEYSIw5MnR/PuRFgHTKBCcYWgFC5nHvw==}
+  '@envio-dev/hypersync-client-darwin-arm64@0.6.2':
+    resolution: {integrity: sha512-dDIuQqEgARR1JYodbGkmck1i9qbYEidc4Kw4DOrRKQ0uZFwflI4o8wm3P+G/ofc1iXwp4pm7jqNUGzZDpK9pqA==}
+    engines: {node: '>= 10'}
+    cpu: [arm64]
+    os: [darwin]
+
+  '@envio-dev/hypersync-client-darwin-x64@0.6.2':
+    resolution: {integrity: sha512-NGlgkmosAzlZ1EuQ5/djkg6sQI/dgVX+XGOLI6Zden0ca2zr/ByBRA7yCKxpwZHYynFN2FoMsMGSRY8jj6XQWw==}
+    engines: {node: '>= 10'}
+    cpu: [x64]
+    os: [darwin]
+
+  '@envio-dev/hypersync-client-linux-arm64-gnu@0.6.2':
+    resolution: {integrity: sha512-p2LQSaOSgjVvvFHOGHnPHTnsDHCWNEG78J29guZyqWojmaxTaR4eGyFEknla7eO0w58EIUGEBTF0+EJ7duMimg==}
+    engines: {node: '>= 10'}
+    cpu: [arm64]
+    os: [linux]
+
+  '@envio-dev/hypersync-client-linux-x64-gnu@0.6.2':
+    resolution: {integrity: sha512-/kIL9Q0e5hM0g6cvdCHL93LMu+OCnwQAGKQHCj2TKKUjVpWFNb0Ki5PMgJhQ8mimEBFsJAnErVK+HrugLTlaVQ==}
+    engines: {node: '>= 10'}
+    cpu: [x64]
+    os: [linux]
+
+  '@envio-dev/hypersync-client-linux-x64-musl@0.6.2':
+    resolution: {integrity: sha512-4r5hA/zyxUjWBDYYeXLCl5pBfSI9njEIPuLMFXajjVcAvSXRtBhmgVwa3JrjjCxZ8aLfqk9vvPkb/KgYfrbXXw==}
+    engines: {node: '>= 10'}
+    cpu: [x64]
+    os: [linux]
+
+  '@envio-dev/hypersync-client-win32-x64-msvc@0.6.2':
+    resolution: {integrity: sha512-VgsSwmDAgvpgo9QsIiwIp9IN+h3g0U/7zrCrvNAMj+lsMHJPZ7L0cfN58dQUr84wL8domJGJrnMKUtu/Yf49ow==}
+    engines: {node: '>= 10'}
+    cpu: [x64]
+    os: [win32]
+
+  '@envio-dev/hypersync-client@0.6.2':
+    resolution: {integrity: sha512-wgp0UmblW8yn/q5NMkVYPFDvOmgHWPTibl/QJYyYK2KXqAMHssUjP07ayduiZCexQOZ94Agpv4SvmYxQNjGBIA==}
+    engines: {node: '>= 10'}
+
+  '@fuel-ts/address@0.96.1':
+    resolution: {integrity: sha512-PCuC8oojoWLhh0+boitaP90/Z3iSfEXZR8v1JCEfoLZIkvCq6EGKtiY0KvcNkPozHOHmmT34w/1CS6qHOoCBNA==}
     engines: {node: ^18.20.3 || ^20.0.0 || ^22.0.0}
 
-  '@fuel-ts/crypto@0.94.9':
-    resolution: {integrity: sha512-gWNJibmouDf4F/maf9MZ+E7ZE+/H5hrmlcOYzMfvM3zcnycC6xYBRIZyqBcOsUuoFq1ANDPSqyaNdr2KZdPmBg==}
+  '@fuel-ts/crypto@0.96.1':
+    resolution: {integrity: sha512-OrAZPZtm8HQouzip621/ci47PeTS06QegGdz7MeN6wK4yeCbJmlRQ1WE9S3iclb3p+VLF0RtbecEbHQfsNgsnA==}
     engines: {node: ^18.20.3 || ^20.0.0 || ^22.0.0}
 
-  '@fuel-ts/errors@0.94.9':
-    resolution: {integrity: sha512-ro1+SS5yaiAQ8ozv9fJMt7AgcVm/tFSzvj0gSQ3TN9IzZqM37VIXJAdyKNhdHF+OHWY/AM0BLSKYba9RXCKTfg==}
+  '@fuel-ts/errors@0.96.1':
+    resolution: {integrity: sha512-Xtso5v4a3UUvnMaOSDhMRlkb9LxLyCyC/1/RY7fZZ035ttscy6dNMuiD/iSptJ5pHklJ5R4rCPdOL5EKpgOaMA==}
     engines: {node: ^18.20.3 || ^20.0.0 || ^22.0.0}
 
-  '@fuel-ts/hasher@0.94.9':
-    resolution: {integrity: sha512-X9A8Vp4gs5zIdnHp5buz1WuQFsBFsvvHWNAOgiRKUvPiGG9P9R1pMjDw8d8wmYBahFNOFq3CGFXKh52dMVCcOg==}
+  '@fuel-ts/hasher@0.96.1':
+    resolution: {integrity: sha512-7z4cah+5TOcCBA2Wgvje1L7wVTahiFLb9IUpRXRMVGXwaqsbV/wUNcyuc1mhPh/JKLgcOe+OqsrpcYD2dg2rpg==}
     engines: {node: ^18.20.3 || ^20.0.0 || ^22.0.0}
 
-  '@fuel-ts/interfaces@0.94.9':
-    resolution: {integrity: sha512-Sgex+u4BCYQhQ7AjTjqIDXv7Lq9H64tZ/Vcr8SBrnMjA8zbBShxVRn4bJKLeAI85UIBef1DBOT2dJdSn6gQ86A==}
+  '@fuel-ts/interfaces@0.96.1':
+    resolution: {integrity: sha512-mZ3sDHJml5AtLRSmGWo5rbU9//3oKDhAeiFealajcPaVztAAnaKnA5a19dd4ITbjZb2q3e2lQ7zX8iAXgHUwYA==}
     engines: {node: ^18.20.3 || ^20.0.0 || ^22.0.0}
 
-  '@fuel-ts/math@0.94.9':
-    resolution: {integrity: sha512-UAMdvQqD6aVoxg+6XqL6WGsMGDz7hRGAj9xh7mZcVryhoH3mH4MtDLGEYvOvJ76Yy09IvRvl/a4Dx4ayUWvDoA==}
+  '@fuel-ts/math@0.96.1':
+    resolution: {integrity: sha512-AZUChguQmE1ILYbcc6SOTjFJIUkGzD3Z6yHgvO4tszn2QS/jVTSAZKVx653J5u9m/Xn/WthwR35l1GbwXMwB4g==}
     engines: {node: ^18.20.3 || ^20.0.0 || ^22.0.0}
 
-  '@fuel-ts/utils@0.94.9':
-    resolution: {integrity: sha512-dHc5Cn+m9kBYtDyAf+tvJibzFhUpjA17DxQhvT5nXU0dp/sdppQKAzLPOOuQ67oQUv5p8J2ngRe6BWS3HV7X9w==}
+  '@fuel-ts/utils@0.96.1':
+    resolution: {integrity: sha512-XXZNEUPf7qtKpVO3ak2CSroBYEKh1Gne1zlmVSNUoVPqQvglcu0I2pu/QmVnZBN4m3yVSyHUoWR2Kbo8/Dh7sA==}
     engines: {node: ^18.20.3 || ^20.0.0 || ^22.0.0}
 
-  '@fuel-ts/versions@0.94.9':
-    resolution: {integrity: sha512-KT2PkNh8hsgj2C69/W9+Q9029zDu9cfyhIUcPCXcBL1Ud+MKLlLP/PPmfTQZPupHeSYLUCcHI/pKE8/QX4k55A==}
+  '@fuel-ts/versions@0.96.1':
+    resolution: {integrity: sha512-C//ZT7U68Gksz9PzUJVzdzUARK7mfXf3MsF5ZqZaMegkE2tCy+twjy8PBdeVserY0uX6mEHRJyZJwcspk34ixg==}
     engines: {node: ^18.20.3 || ^20.0.0 || ^22.0.0}
     hasBin: true
 
@@ -1028,6 +1068,80 @@ packages:
     resolution: {integrity: sha512-6eZs5Ls3WtCisHWp9S2GUy8dqkpGi4BVSz3GaqiE6ezub0512ESztXUwUB6C6IKbQkY2Pnb/mD4WYojCRwcwLA==}
     engines: {node: '>=0.10.0'}
 
+  npm@10.9.0:
+    resolution: {integrity: sha512-ZanDioFylI9helNhl2LNd+ErmVD+H5I53ry41ixlLyCBgkuYb+58CvbAp99hW+zr5L9W4X7CchSoeqKdngOLSw==}
+    engines: {node: ^18.17.0 || >=20.5.0}
+    hasBin: true
+    bundledDependencies:
+      - '@isaacs/string-locale-compare'
+      - '@npmcli/arborist'
+      - '@npmcli/config'
+      - '@npmcli/fs'
+      - '@npmcli/map-workspaces'
+      - '@npmcli/package-json'
+      - '@npmcli/promise-spawn'
+      - '@npmcli/redact'
+      - '@npmcli/run-script'
+      - '@sigstore/tuf'
+      - abbrev
+      - archy
+      - cacache
+      - chalk
+      - ci-info
+      - cli-columns
+      - fastest-levenshtein
+      - fs-minipass
+      - glob
+      - graceful-fs
+      - hosted-git-info
+      - ini
+      - init-package-json
+      - is-cidr
+      - json-parse-even-better-errors
+      - libnpmaccess
+      - libnpmdiff
+      - libnpmexec
+      - libnpmfund
+      - libnpmhook
+      - libnpmorg
+      - libnpmpack
+      - libnpmpublish
+      - libnpmsearch
+      - libnpmteam
+      - libnpmversion
+      - make-fetch-happen
+      - minimatch
+      - minipass
+      - minipass-pipeline
+      - ms
+      - node-gyp
+      - nopt
+      - normalize-package-data
+      - npm-audit-report
+      - npm-install-checks
+      - npm-package-arg
+      - npm-pick-manifest
+      - npm-profile
+      - npm-registry-fetch
+      - npm-user-validate
+      - p-map
+      - pacote
+      - parse-conflict-json
+      - proc-log
+      - qrcode-terminal
+      - read
+      - semver
+      - spdx-expression-parse
+      - ssri
+      - supports-color
+      - tar
+      - text-table
+      - tiny-relative-date
+      - treeverse
+      - validate-npm-package-name
+      - which
+      - write-file-atomic
+
   object-assign@4.1.1:
     resolution: {integrity: sha512-rJgTQnkUnH1sFw8yT6VSU3zD3sWmu6sZhIseY8VX+GRu3P6F7Fu+JNDoXfklElbLJSnc3FUQHVe4cU5hj+BcUg==}
     engines: {node: '>=0.10.0'}
@@ -1519,6 +1633,11 @@ packages:
     resolution: {integrity: sha512-7dSzzRQ++CKnNI/krKnYRV7JKKPUXMEh61soaHKg9mrWEhzFWhFnxPxGl+69cD1Ou63C13NUPCnmIcrvqCuM6w==}
     engines: {node: '>=12'}
 
+  yarn@1.22.22:
+    resolution: {integrity: sha512-prL3kGtyG7o9Z9Sv8IPfBNrWTDmXB4Qbes8A9rEzt6wkJV8mUvoirjU0Mp3GGAU06Y0XQyA3/2/RQFVuK7MTfg==}
+    engines: {node: '>=4.0.0'}
+    hasBin: true
+
   yn@2.0.0:
     resolution: {integrity: sha512-uTv8J/wiWTgUTg+9vLTi//leUl5vDQS6uii/emeTb2ssY7vl6QWf2fFbIIGjnhjvbdKlU0ed7QPgY1htTC86jQ==}
     engines: {node: '>=4'}
@@ -1578,51 +1697,81 @@ snapshots:
       '@envio-dev/hyperfuel-client-linux-x64-musl': 1.2.2
       '@envio-dev/hyperfuel-client-win32-x64-msvc': 1.2.2
 
-  '@fuel-ts/address@0.94.9':
+  '@envio-dev/hypersync-client-darwin-arm64@0.6.2':
+    optional: true
+
+  '@envio-dev/hypersync-client-darwin-x64@0.6.2':
+    optional: true
+
+  '@envio-dev/hypersync-client-linux-arm64-gnu@0.6.2':
+    optional: true
+
+  '@envio-dev/hypersync-client-linux-x64-gnu@0.6.2':
+    optional: true
+
+  '@envio-dev/hypersync-client-linux-x64-musl@0.6.2':
+    optional: true
+
+  '@envio-dev/hypersync-client-win32-x64-msvc@0.6.2':
+    optional: true
+
+  '@envio-dev/hypersync-client@0.6.2':
     dependencies:
-      '@fuel-ts/crypto': 0.94.9
-      '@fuel-ts/errors': 0.94.9
-      '@fuel-ts/interfaces': 0.94.9
-      '@fuel-ts/utils': 0.94.9
+      npm: 10.9.0
+      yarn: 1.22.22
+    optionalDependencies:
+      '@envio-dev/hypersync-client-darwin-arm64': 0.6.2
+      '@envio-dev/hypersync-client-darwin-x64': 0.6.2
+      '@envio-dev/hypersync-client-linux-arm64-gnu': 0.6.2
+      '@envio-dev/hypersync-client-linux-x64-gnu': 0.6.2
+      '@envio-dev/hypersync-client-linux-x64-musl': 0.6.2
+      '@envio-dev/hypersync-client-win32-x64-msvc': 0.6.2
+
+  '@fuel-ts/address@0.96.1':
+    dependencies:
+      '@fuel-ts/crypto': 0.96.1
+      '@fuel-ts/errors': 0.96.1
+      '@fuel-ts/interfaces': 0.96.1
+      '@fuel-ts/utils': 0.96.1
       '@noble/hashes': 1.5.0
       bech32: 2.0.0
 
-  '@fuel-ts/crypto@0.94.9':
+  '@fuel-ts/crypto@0.96.1':
     dependencies:
-      '@fuel-ts/errors': 0.94.9
-      '@fuel-ts/interfaces': 0.94.9
-      '@fuel-ts/math': 0.94.9
-      '@fuel-ts/utils': 0.94.9
+      '@fuel-ts/errors': 0.96.1
+      '@fuel-ts/interfaces': 0.96.1
+      '@fuel-ts/math': 0.96.1
+      '@fuel-ts/utils': 0.96.1
       '@noble/hashes': 1.5.0
 
-  '@fuel-ts/errors@0.94.9':
+  '@fuel-ts/errors@0.96.1':
     dependencies:
-      '@fuel-ts/versions': 0.94.9
+      '@fuel-ts/versions': 0.96.1
 
-  '@fuel-ts/hasher@0.94.9':
+  '@fuel-ts/hasher@0.96.1':
     dependencies:
-      '@fuel-ts/crypto': 0.94.9
-      '@fuel-ts/interfaces': 0.94.9
-      '@fuel-ts/utils': 0.94.9
+      '@fuel-ts/crypto': 0.96.1
+      '@fuel-ts/interfaces': 0.96.1
+      '@fuel-ts/utils': 0.96.1
       '@noble/hashes': 1.5.0
 
-  '@fuel-ts/interfaces@0.94.9': {}
+  '@fuel-ts/interfaces@0.96.1': {}
 
-  '@fuel-ts/math@0.94.9':
+  '@fuel-ts/math@0.96.1':
     dependencies:
-      '@fuel-ts/errors': 0.94.9
+      '@fuel-ts/errors': 0.96.1
       '@types/bn.js': 5.1.6
       bn.js: 5.2.1
 
-  '@fuel-ts/utils@0.94.9':
+  '@fuel-ts/utils@0.96.1':
     dependencies:
-      '@fuel-ts/errors': 0.94.9
-      '@fuel-ts/interfaces': 0.94.9
-      '@fuel-ts/math': 0.94.9
-      '@fuel-ts/versions': 0.94.9
+      '@fuel-ts/errors': 0.96.1
+      '@fuel-ts/interfaces': 0.96.1
+      '@fuel-ts/math': 0.96.1
+      '@fuel-ts/versions': 0.96.1
       fflate: 0.8.2
 
-  '@fuel-ts/versions@0.94.9':
+  '@fuel-ts/versions@0.96.1':
     dependencies:
       chalk: 4.1.2
       cli-table: 0.3.11
@@ -1978,9 +2127,17 @@ snapshots:
     dependencies:
       once: 1.4.0
 
-  envio@file:../../codegenerator/cli/npm/envio:
+  envio@file:../../codegenerator/cli/npm/envio(typescript@5.2.2):
     dependencies:
+      '@envio-dev/hypersync-client': 0.6.2
       rescript: 11.1.3
+      rescript-schema: 8.2.0(rescript@11.1.3)
+      viem: 2.21.0(typescript@5.2.2)
+    transitivePeerDependencies:
+      - bufferutil
+      - typescript
+      - utf-8-validate
+      - zod
 
   es-define-property@1.0.0:
     dependencies:
@@ -2386,6 +2543,8 @@ snapshots:
       whatwg-url: 5.0.0
 
   normalize-path@3.0.0: {}
+
+  npm@10.9.0: {}
 
   object-assign@4.1.1: {}
 
@@ -2899,6 +3058,8 @@ snapshots:
       string-width: 4.2.3
       y18n: 5.0.8
       yargs-parser: 21.1.1
+
+  yarn@1.22.22: {}
 
   yn@2.0.0: {}
 

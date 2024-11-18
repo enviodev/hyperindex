@@ -1,7 +1,7 @@
 type eventLog = {
-  abi: Ethers.abi,
+  abi: EvmTypes.Abi.t,
   data: string,
-  topics: array<Ethers.EventFilter.topic>,
+  topics: array<EvmTypes.Hex.t>,
 }
 
 type decodedEvent<'a> = {
