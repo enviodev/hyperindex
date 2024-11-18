@@ -37,23 +37,6 @@ let currentHistoryFieldsSchema = S.object(s => {
 })
 
 let makeHistoryRowSchema: S.t<'entity> => S.t<historyRow<'entity>> = entitySchema => {
-  //Instantiates an entity object with all fields set to null
-  let entityWithNullFields: Js.Dict.t<unknown> = switch entitySchema->S.classify {
-  | Object({items}) =>
-    let nulldict = Js.Dict.empty()
-    items->Belt.Array.forEach(({location}) => {
-      nulldict->Js.Dict.set(location, %raw(`null`))
-    })
-    nulldict
-  | _ =>
-    Js.Exn.raiseError("Failed creating entityWithNullFields. Expected an object schema for entity")
-  }
-
-  //Gets an entity object with all fields set to null except for the id field
-  let getEntityWithNullFields = (entityId: string) => {
-    entityWithNullFields->Utils.Dict.updateImmutable("id", entityId->Utils.magic)
-  }
-
   //Maps a schema object for the given entity with all fields nullable except for the id field
   //Keeps any original nullable fields
   let nullableEntitySchema: S.t<Js.Dict.t<unknown>> = S.schema(s =>
@@ -111,8 +94,8 @@ let makeHistoryRowSchema: S.t<'entity> => S.t<historyRow<'entity>> = entitySchem
       | _ => s.fail("Unexpected mix of null and non-null values in previous history fields")
       },
       entityData: switch v["action"] {
-      | SET => v["entityData"]->S.parseAnyOrRaiseWith(entitySchema)->Set
-      | DELETE => v["entityData"]->S.parseAnyOrRaiseWith(entityIdOnlySchema)->Delete
+      | SET => v["entityData"]->(Utils.magic: Js.Dict.t<unknown> => 'entity)->Set
+      | DELETE => v["entityData"]->(Utils.magic: Js.Dict.t<unknown> => entityIdOnly)->Delete
       },
     },
     serializer: v => {
@@ -121,7 +104,10 @@ let makeHistoryRowSchema: S.t<'entity> => S.t<historyRow<'entity>> = entitySchem
           entityData->(Utils.magic: 'entity => Js.Dict.t<unknown>),
           Enums.EntityHistoryRowAction.SET,
         )
-      | Delete({id}) => (getEntityWithNullFields(id), DELETE)
+      | Delete(entityIdOnly) => (
+          entityIdOnly->(Utils.magic: entityIdOnly => Js.Dict.t<unknown>),
+          DELETE,
+        )
       }
 
       {
@@ -142,19 +128,34 @@ type t<'entity> = {
   table: table,
   createInsertFnQuery: string,
   schema: S.t<historyRow<'entity>>,
-  insertFn: (Postgres.sql, Js.Json.t) => promise<unit>,
+  schemaRows: S.t<array<historyRow<'entity>>>,
+  insertFn: (Postgres.sql, Js.Json.t, ~shouldCopyCurrentEntity: bool) => promise<unit>,
 }
 
-let insertRow = (self: t<'entity>, ~sql, ~historyRow: historyRow<'entity>) => {
+let insertRow = (
+  self: t<'entity>,
+  ~sql,
+  ~historyRow: historyRow<'entity>,
+  ~shouldCopyCurrentEntity,
+) => {
   let row = historyRow->S.serializeOrRaiseWith(self.schema)
-  self.insertFn(sql, row)
+  self.insertFn(sql, row, ~shouldCopyCurrentEntity)
 }
 
-let batchInsertRows = (self: t<'entity>, ~sql, ~rows: array<historyRow<'entity>>) => {
-  Utils.Array.awaitEach(rows, async row => {
-    let row = row->S.serializeOrRaiseWith(self.schema)
-    await self.insertFn(sql, row)
+let batchInsertRows = (
+  self: t<'entity>,
+  ~sql,
+  ~rows: array<historyRow<'entity>>,
+  ~shouldCopyCurrentEntity,
+) => {
+  let rows =
+    rows->S.serializeOrRaiseWith(self.schemaRows)->(Utils.magic: Js.Json.t => array<Js.Json.t>)
+  rows
+  ->Belt.Array.map(row => {
+    self.insertFn(sql, row, ~shouldCopyCurrentEntity)
   })
+  ->Promise.all
+  ->Promise.thenResolve(_ => ())
 }
 
 type entityInternal
@@ -217,6 +218,8 @@ let fromTable = (table: table, ~schema: S.t<'entity>): t<'entity> => {
 
   let actionField = mkField(actionFieldName, Custom(Enums.EntityHistoryRowAction.enum.name))
 
+  let serialField = mkField("serial", Serial, ~isNullable=true)
+
   let dataFieldNames = dataFields->Belt.Array.map(field => field->getFieldName)
 
   let originTableName = table.tableName
@@ -228,7 +231,7 @@ let fromTable = (table: table, ~schema: S.t<'entity>): t<'entity> => {
       currentHistoryFields,
       previousHistoryFields,
       dataFields,
-      [actionField],
+      [actionField, serialField],
     ]),
   )
 
@@ -256,7 +259,7 @@ let fromTable = (table: table, ~schema: S.t<'entity>): t<'entity> => {
     ])->Belt.Array.map(fieldName => `"${fieldName}"`)
 
   let createInsertFnQuery = {
-    `CREATE OR REPLACE FUNCTION ${insertFnName}(${historyRowArg} ${historyTablePath})
+    `CREATE OR REPLACE FUNCTION ${insertFnName}(${historyRowArg} ${historyTablePath}, should_copy_current_entity BOOLEAN)
       RETURNS void AS $$
       DECLARE
         v_previous_record RECORD;
@@ -280,7 +283,7 @@ let fromTable = (table: table, ~schema: S.t<'entity>): t<'entity> => {
         `${historyRowArg}.${previousFieldName} := v_previous_record.${currentFieldName};`
       })
       ->Js.Array2.joinWith(" ")}
-            ElSE
+            ElSIF should_copy_current_entity THEN
             -- Check if a value for the id exists in the origin table and if so, insert a history row for it.
             SELECT ${dataFieldNamesCommaSeparated} FROM ${originTablePath} WHERE id = ${historyRowArg}.${id} INTO v_origin_record;
             IF FOUND THEN
@@ -311,15 +314,16 @@ let fromTable = (table: table, ~schema: S.t<'entity>): t<'entity> => {
       `
   }
 
-  let insertFnString = `(sql, rowArgs) =>
+  let insertFnString = `(sql, rowArgs, shouldCopyCurrentEntity) =>
       sql\`select ${insertFnName}(ROW(${allFieldNamesDoubleQuoted
     ->Belt.Array.map(fieldNameDoubleQuoted => `\${rowArgs[${fieldNameDoubleQuoted}]\}`)
-    ->Js.Array2.joinWith(", ")}));\``
+    ->Js.Array2.joinWith(", ")}, NULL),  --NULL argument for SERIAL field
+    \${shouldCopyCurrentEntity});\``
 
-  let insertFn: (Postgres.sql, Js.Json.t) => promise<unit> =
+  let insertFn: (Postgres.sql, Js.Json.t, ~shouldCopyCurrentEntity: bool) => promise<unit> =
     insertFnString->Table.PostgresInterop.eval
 
   let schema = makeHistoryRowSchema(schema)
 
-  {table, createInsertFnQuery, schema, insertFn}
+  {table, createInsertFnQuery, schema, schemaRows: S.array(schema), insertFn}
 }

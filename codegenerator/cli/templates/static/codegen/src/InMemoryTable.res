@@ -143,40 +143,40 @@ module Entity = {
     entityUpdate: Types.entityUpdate<'entity>,
     ~shouldSaveHistory,
   ) => {
+    //New entity row with only the latest update
+    let newEntityRow = Types.Updated({
+      latest: entityUpdate,
+      history: shouldSaveHistory ? [entityUpdate] : [],
+    })
+
     let {entityRow, entityIndices} = switch inMemTable.table->get(entityUpdate.entityId) {
-    | Some({entityRow: InitialReadFromDb(entity_read), entityIndices}) =>
-      let entityRow = Types.Updated({
-        initial: Retrieved(entity_read),
-        latest: entityUpdate,
-        history: [],
-      })
-      {entityRow, entityIndices}
+    | None => {entityRow: newEntityRow, entityIndices: Utils.Set.make()}
+    | Some({entityRow: InitialReadFromDb(_), entityIndices}) => {
+        entityRow: newEntityRow,
+        entityIndices,
+      }
     | Some({entityRow: Updated(previous_values), entityIndices})
-      if !shouldSaveHistory ||
-      //Rollback initial state cases should not save history
-      !previous_values.latest.shouldSaveHistory ||
       // This prevents two db actions in the same event on the same entity from being recorded to the history table.
-      previous_values.latest.eventIdentifier == entityUpdate.eventIdentifier =>
+      if previous_values.latest.eventIdentifier == entityUpdate.eventIdentifier &&
+        shouldSaveHistory =>
       let entityRow = Types.Updated({
-        ...previous_values,
         latest: entityUpdate,
+        history: previous_values.history->Utils.Array.setIndexImmutable(
+          previous_values.history->Array.length - 1,
+          entityUpdate,
+        ),
       })
       {entityRow, entityIndices}
     | Some({entityRow: Updated(previous_values), entityIndices}) =>
       let entityRow = Types.Updated({
-        initial: previous_values.initial,
         latest: entityUpdate,
-        history: previous_values.history->Array.concat([previous_values.latest]),
+        history: shouldSaveHistory
+          ? [...previous_values.history, entityUpdate]
+          : previous_values.history,
       })
       {entityRow, entityIndices}
-    | None =>
-      let entityRow = Types.Updated({
-        initial: Unknown,
-        latest: entityUpdate,
-        history: [],
-      })
-      {entityRow, entityIndices: Utils.Set.make()}
     }
+
     switch entityUpdate.entityUpdateAction {
     | Set(entity) => inMemTable->updateIndices(~entity, ~entityIndices)
     | Delete => inMemTable->deleteEntityFromIndices(~entityId=entityUpdate.entityId, ~entityIndices)

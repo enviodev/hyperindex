@@ -748,11 +748,12 @@ let actionReducer = (state: t, action: action) => {
 
 let invalidatedActionReducer = (state: t, action: action) =>
   switch (state, action) {
-  | ({rollbackState: RollingBack(_)}, EventBatchProcessed(_)) => (
-      {...state, currentlyProcessingBatch: false},
-      [Rollback],
-    )
-  | _ => (state, [])
+  | ({rollbackState: RollingBack(_)}, EventBatchProcessed(_)) =>
+    Logging.warn("Finished processing batch before rollback, actioning rollback")
+    ({...state, currentlyProcessingBatch: false}, [Rollback])
+  | _ =>
+    Logging.warn("Invalidated action discarded")
+    (state, [])
   }
 
 let waitForNewBlock = async (
@@ -985,6 +986,7 @@ let injectedTaskReducer = (
           ~latestProcessedBlocks,
           ~eventBatch=batch,
           ~checkContractIsRegistered,
+          ~config=state.config,
         ) {
         | Ok(batchProcessed) => dispatchAction(DynamicContractPreRegisterProcessed(batchProcessed))
         | Error(errHandler) => dispatchAction(ErrorExit(errHandler))
@@ -1098,63 +1100,108 @@ let injectedTaskReducer = (
   | Rollback =>
     //If it isn't processing a batch currently continue with rollback otherwise wait for current batch to finish processing
     switch state {
-    | {currentlyProcessingBatch: false, rollbackState: RollingBack(rollbackChain)} =>
+    | {currentlyProcessingBatch: false, rollbackState: RollingBack(reorgChain)} =>
       Logging.warn("Executing rollback")
-      let chainFetcher = state.chainManager.chainFetchers->ChainMap.get(rollbackChain)
-      let rollbackChainId = rollbackChain->ChainMap.Chain.toChainId
-      //Get rollback block and timestamp
+
+      let chainFetcher = state.chainManager.chainFetchers->ChainMap.get(reorgChain)
+
+      //Rollback the lastBlockScannedHashes to a point before blockhashes diverged
       let reorgChainRolledBackLastBlockData =
         await chainFetcher->rollbackLastBlockHashesToReorgLocation
 
+      //Get the last known valid block that was scanned on the reorg chain
       let {blockNumber: lastKnownValidBlockNumber, blockTimestamp: lastKnownValidBlockTimestamp} =
         reorgChainRolledBackLastBlockData->ChainFetcher.getLastScannedBlockData
 
-      let chainFetchers = state.chainManager.chainFetchers->ChainMap.mapWithKey((chain, cf) => {
-        let rolledBackLastBlockData = if chain == rollbackChain {
-          //For the chain fetcher of the chain where a  reorg occured, use the the
-          //rolledBackLastBlockData already computed
-          reorgChainRolledBackLastBlockData
-        } else {
-          //For all other chains, rollback to where a blockTimestamp is less than or equal to the block timestamp
-          //where the reorg chain is rolling back to
-          cf.lastBlockScannedHashes->ReorgDetection.LastBlockScannedHashes.rollBackToBlockTimestampLte(
-            ~blockTimestamp=lastKnownValidBlockTimestamp,
-          )
-        }
+      let isUnorderedMultichainMode = state.config.isUnorderedMultichainMode
 
-        //Roll back chain fetcher with the given rolledBackLastBlockData
-        cf
-        ->ChainFetcher.rollbackToLastBlockHashes(~rolledBackLastBlockData)
-        ->ChainFetcher.addProcessingFilter(
-          ~filter=eventBatchQueueItem => {
-            let {timestamp, blockNumber} = eventBatchQueueItem
-            //Filter out events that occur passed the block where the query starts but
-            //are lower than the timestamp where we rolled back to
-            (timestamp, chain->ChainMap.Chain.toChainId, blockNumber) >
-            (lastKnownValidBlockTimestamp, rollbackChainId, lastKnownValidBlockNumber)
-          },
-          ~isValid=(~fetchState) => {
-            //Remove the event filter once the fetchState has fetched passed the
-            //timestamp of the valid rollback block's timestamp
-            let {blockTimestamp, blockNumber} = FetchState.getLatestFullyFetchedBlock(fetchState)
-            (blockTimestamp, chain->ChainMap.Chain.toChainId, blockNumber) <=
-            (lastKnownValidBlockTimestamp, rollbackChainId, lastKnownValidBlockNumber)
-          },
+      let reorgChainId = reorgChain->ChainMap.Chain.toChainId
+
+      //Get the first change event that occurred on each chain after the last known valid block
+      //Uses a different method depending on if the reorg chain is ordered or unordered
+      let firstChangeEventIdentifierPerChain =
+        await DbFunctions.sql->DbFunctions.EntityHistory.getFirstChangeEventPerChain(
+          isUnorderedMultichainMode
+            ? UnorderedMultichain({
+                reorgChainId,
+                safeBlockNumber: lastKnownValidBlockNumber,
+              })
+            : OrderedMultichain({
+                safeBlockTimestamp: lastKnownValidBlockTimestamp,
+                reorgChainId,
+                safeBlockNumber: lastKnownValidBlockNumber,
+              }),
         )
+
+      firstChangeEventIdentifierPerChain->DbFunctions.EntityHistory.FirstChangeEventPerChain.setIfEarlier(
+        ~chainId=reorgChainId,
+        ~event={
+          blockNumber: lastKnownValidBlockNumber + 1,
+          logIndex: 0,
+        },
+      )
+
+      let chainFetchers = state.chainManager.chainFetchers->ChainMap.mapWithKey((chain, cf) => {
+        switch firstChangeEventIdentifierPerChain->DbFunctions.EntityHistory.FirstChangeEventPerChain.get(
+          ~chainId=chain->ChainMap.Chain.toChainId,
+        ) {
+        | Some(firstChangeEvent) =>
+          //There was a change on the given chain after the reorged chain,
+          // rollback the lastBlockScannedHashes to before the first change produced by the given chain
+          let rolledBackLastBlockData =
+            cf.lastBlockScannedHashes->ReorgDetection.LastBlockScannedHashes.rollBackToBlockNumberLt(
+              ~blockNumber=firstChangeEvent.blockNumber,
+            )
+
+          let fetchState =
+            cf.fetchState->PartitionedFetchState.rollback(
+              ~lastScannedBlock=rolledBackLastBlockData->ChainFetcher.getLastScannedBlockData,
+              ~firstChangeEvent,
+            )
+
+          let rolledBackCf = {
+            ...cf,
+            lastBlockScannedHashes: rolledBackLastBlockData,
+            fetchState,
+          }
+          //On other chains, filter out evennts based on the first change present on the chain after the reorg
+          rolledBackCf->ChainFetcher.addProcessingFilter(
+            ~filter=eventBatchQueueItem => {
+              //Filter out events that occur passed the block where the query starts but
+              //are lower than the timestamp where we rolled back to
+              (eventBatchQueueItem.blockNumber, eventBatchQueueItem.logIndex) >=
+              (firstChangeEvent.blockNumber, firstChangeEvent.logIndex)
+            },
+            ~isValid=(~fetchState) => {
+              //Remove the event filter once the fetchState has fetched passed the
+              //blockNumber of the valid first change event
+              let {blockNumber} = FetchState.getLatestFullyFetchedBlock(fetchState)
+              blockNumber <= firstChangeEvent.blockNumber
+            },
+          )
+        | None => //If no change was produced on the given chain after the reorged chain, no need to rollback anything
+          cf
+        }
       })
+
+      let reorgChainLastBlockScannedData = {
+        let reorgChainFetcher = chainFetchers->ChainMap.get(reorgChain)
+        reorgChainFetcher.lastBlockScannedHashes->ChainFetcher.getLastScannedBlockData
+      }
+
+      //Construct a rolledback in Memory store
+      let inMemoryStore = await IO.RollBack.rollBack(
+        ~chainId=reorgChain->ChainMap.Chain.toChainId,
+        ~blockTimestamp=reorgChainLastBlockScannedData.blockTimestamp,
+        ~blockNumber=reorgChainLastBlockScannedData.blockNumber,
+        ~logIndex=0,
+        ~isUnorderedMultichainMode,
+      )
 
       let chainManager = {
         ...state.chainManager,
         chainFetchers,
       }
-
-      //Construct a rolledback in Memory store
-      let inMemoryStore = await IO.RollBack.rollBack(
-        ~chainId=rollbackChain->ChainMap.Chain.toChainId,
-        ~blockTimestamp=lastKnownValidBlockTimestamp,
-        ~blockNumber=lastKnownValidBlockNumber,
-        ~logIndex=0,
-      )
 
       dispatchAction(SetRollbackState(inMemoryStore, chainManager))
 

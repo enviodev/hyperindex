@@ -73,9 +73,9 @@ module LastBlockScannedHashes: {
 
   /**
   Return a BlockNumbersAndHashes.t rolled back to where blockData is less
-  than or equal to the provided blockTimestamp
+  than the provided blockNumber
   */
-  let rollBackToBlockTimestampLte: (~blockTimestamp: int, t) => t
+  let rollBackToBlockNumberLt: (~blockNumber: int, t) => t
 } = {
   type t = {
     // Number of blocks behind head, we want to keep track
@@ -330,31 +330,6 @@ module LastBlockScannedHashes: {
     ->Belt.Result.map(list => list->makeWithDataInternal(~confirmedBlockThreshold))
   }
 
-  let rec rollBackToBlockTimestampLteInternal = (
-    ~blockTimestamp: int,
-    latestBlockScannedData: list<blockData>,
-  ) => {
-    switch latestBlockScannedData {
-    | list{} => list{}
-    | list{head, ...tail} =>
-      if head.blockTimestamp <= blockTimestamp {
-        latestBlockScannedData
-      } else {
-        tail->rollBackToBlockTimestampLteInternal(~blockTimestamp)
-      }
-    }
-  }
-
-  /**
-  Return a BlockNumbersAndHashes.t rolled back to where blockData is less
-  than or equal to the provided blockTimestamp
-  */
-  let rollBackToBlockTimestampLte = (~blockTimestamp: int, self: t) => {
-    let {confirmedBlockThreshold, lastBlockScannedDataList} = self
-    lastBlockScannedDataList
-    ->rollBackToBlockTimestampLteInternal(~blockTimestamp)
-    ->makeWithDataInternal(~confirmedBlockThreshold)
-  }
   let min = (arrInt: array<int>) => {
     arrInt->Belt.Array.reduce(None, (current, val) => {
       switch current {
@@ -362,6 +337,32 @@ module LastBlockScannedHashes: {
       | Some(current) => Js.Math.min_int(current, val)->Some
       }
     })
+  }
+
+  let rec rollBackToBlockNumberLtInternal = (
+    ~blockNumber: int,
+    latestBlockScannedData: list<blockData>,
+  ) => {
+    switch latestBlockScannedData {
+    | list{} => list{}
+    | list{head, ...tail} =>
+      if head.blockNumber < blockNumber {
+        latestBlockScannedData
+      } else {
+        tail->rollBackToBlockNumberLtInternal(~blockNumber)
+      }
+    }
+  }
+
+  /**
+  Return a BlockNumbersAndHashes.t rolled back to where blockData is less
+  than the provided blockNumber
+  */
+  let rollBackToBlockNumberLt = (~blockNumber: int, self: t) => {
+    let {confirmedBlockThreshold, lastBlockScannedDataList} = self
+    lastBlockScannedDataList
+    ->rollBackToBlockNumberLtInternal(~blockNumber)
+    ->makeWithDataInternal(~confirmedBlockThreshold)
   }
 
   type currentHeightAndLastBlockHashes = {

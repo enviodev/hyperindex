@@ -72,7 +72,10 @@ describe_skip("E2E Db check", () => {
   })
 
   it("Validate inmemory store state", () => {
-    let gravatars = inMemoryStore.gravatar->InMemoryTable.Entity.values
+    let gravatars =
+      inMemoryStore.entities
+      ->InMemoryStore.EntityTables.get(module(Entities.Gravatar))
+      ->InMemoryTable.Entity.values
 
     Assert.deepEqual(
       gravatars,

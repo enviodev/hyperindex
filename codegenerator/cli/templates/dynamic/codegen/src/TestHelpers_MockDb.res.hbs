@@ -237,7 +237,7 @@ let rec makeWithInMemoryStore: InMemoryStore.t => t = (inMemoryStore: InMemorySt
         makeStoreOperatorEntity(
           ~inMemoryStore,
           ~makeMockDb=makeWithInMemoryStore,
-          ~getStore=db => db.{{entity.name.uncapitalized}},
+          ~getStore=db => db.entities->InMemoryStore.EntityTables.get(module(Entities.{{entity.name.capitalized}})),
           ~getKey=({id}) => id,
         )
       },
@@ -297,11 +297,15 @@ A function composer for simulating the writing of an inMemoryStore to the extern
 Runs all set and delete operations currently cached in an inMemory store against the mockDb
 */
 let executeRowsEntity = (
+  type entity,
   mockDb: t,
   ~inMemoryStore: InMemoryStore.t,
-  ~getInMemTable: InMemoryStore.t => InMemoryTable.Entity.t<'entity>,
-  ~getKey: 'entity => 'key,
+  ~entityMod: module(Entities.Entity with type t = entity),
+  ~getKey: entity => 'key,
 ) => {
+  let getInMemTable = (inMemoryStore: InMemoryStore.t) =>
+    inMemoryStore.entities->InMemoryStore.EntityTables.get(entityMod)
+
   let inMemTable = getInMemTable(inMemoryStore)
 
   inMemTable.table
@@ -377,7 +381,7 @@ let writeFromMemoryStore = (mockDb: t, ~inMemoryStore: InMemoryStore.t) => {
 {{#each entities as | entity |}}
   mockDb->executeRowsEntity(
     ~inMemoryStore,
-    ~getInMemTable=self => {self.{{entity.name.uncapitalized}}},
+    ~entityMod=module(Entities.{{entity.name.capitalized}}),
     ~getKey=entity => entity.id,
   )
 {{/each}}

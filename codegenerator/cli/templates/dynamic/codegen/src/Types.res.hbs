@@ -61,14 +61,12 @@ type entityUpdateAction<'entityType> =
 
 type entityUpdate<'entityType> = {
   eventIdentifier: eventIdentifier,
-  shouldSaveHistory: bool,
   entityId: id,
   entityUpdateAction: entityUpdateAction<'entityType>,
 }
 
-let mkEntityUpdate = (~shouldSaveHistory=true, ~eventIdentifier, ~entityId, entityUpdateAction) => {
+let mkEntityUpdate = (~eventIdentifier, ~entityId, entityUpdateAction) => {
   entityId,
-  shouldSaveHistory,
   eventIdentifier,
   entityUpdateAction,
 }
@@ -77,17 +75,11 @@ type entityValueAtStartOfBatch<'entityType> =
   | NotSet // The entity isn't in the DB yet
   | AlreadySet('entityType)
 
-type existingValueInDb<'entityType> =
-  | Retrieved(entityValueAtStartOfBatch<'entityType>)
-  // NOTE: We use an postgres function solve the issue of this entities previous value not being known.
-  | Unknown
-
 type updatedValue<'entityType> = {
-  // Initial value within a batch
-  initial: existingValueInDb<'entityType>,
   latest: entityUpdate<'entityType>,
   history: array<entityUpdate<'entityType>>,
 }
+
 @genType
 type inMemoryStoreRowEntity<'entityType> =
   | Updated(updatedValue<'entityType>)

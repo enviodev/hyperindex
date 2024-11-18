@@ -11,6 +11,8 @@ type blockNumberAndTimestamp = {
   blockTimestamp: int,
 }
 
+type blockNumberAndLogIndex = {blockNumber: int, logIndex: int}
+
 module DynamicContractsMap = {
   //mapping of address to dynamicContractId
   module IdCmp = Belt.Id.MakeComparableU({
@@ -53,12 +55,18 @@ module DynamicContractsMap = {
       accum->Map.set(nextKey, nextValMerged)
     })
 
-  let removeContractAddressesPastValidBlock = (self: t, ~lastKnownValidBlock) => {
+  let removeContractAddressesFromFirstChangeEvent = (
+    self: t,
+    ~firstChangeEvent: blockNumberAndLogIndex,
+  ) => {
     self
     ->Map.toArray
     ->Array.reduce((empty, []), ((currentMap, currentRemovedAddresses), (nextKey, nextVal)) => {
-      if nextKey.blockNumber > lastKnownValidBlock.blockNumber {
-        //If the registration block is greater than the last valid block,
+      if (
+        (nextKey.blockNumber, nextKey.logIndex) >=
+        (firstChangeEvent.blockNumber, firstChangeEvent.logIndex)
+      ) {
+        //If the registration block is later than the first change event,
         //Do not add it to the currentMap, but add the removed addresses
         let updatedRemovedAddresses =
           currentRemovedAddresses->Array.concat(
@@ -66,7 +74,7 @@ module DynamicContractsMap = {
           )
         (currentMap, updatedRemovedAddresses)
       } else {
-        //If it is not passed the lastKnownValidBlock, updated the
+        //If it is earlier than the first change event, updated the
         //current map and keep the currentRemovedAddresses
         let updatedMap = currentMap->Map.set(nextKey, nextVal)
         (updatedMap, currentRemovedAddresses)
@@ -482,7 +490,7 @@ newItems are ordered earliest to latest (as they are returned from the worker)
 let update = (
   {baseRegister, pendingDynamicContracts, isFetchingAtHead}: t,
   ~id,
-  ~latestFetchedBlock,
+  ~latestFetchedBlock: blockNumberAndTimestamp,
   ~newItems,
   ~currentBlockHeight,
 ): result<t, exn> => {
@@ -929,27 +937,24 @@ let getLatestFullyFetchedBlock = (self: t) => {
   }
 }
 
-let pruneQueuePastValidBlock = (queue: array<Types.eventBatchQueueItem>, ~lastKnownValidBlock) => {
-  let prunedQueue = []
-  let rec loop = index => {
-    switch queue[index] {
-    | Some(head) =>
-      if head.blockNumber <= lastKnownValidBlock.blockNumber {
-        prunedQueue->Js.Array2.push(head)->ignore
-      }
-      loop(index + 1)
-    | None => prunedQueue
-    }
-  }
-  loop(0)
+let pruneQueueFromFirstChangeEvent = (
+  queue: array<Types.eventBatchQueueItem>,
+  ~firstChangeEvent: blockNumberAndLogIndex,
+) => {
+  queue->Array.keep(item =>
+    (item.blockNumber, item.logIndex) < (firstChangeEvent.blockNumber, firstChangeEvent.logIndex)
+  )
 }
 
-let pruneDynamicContractAddressesPastValidBlock = (~lastKnownValidBlock, register: register) => {
+let pruneDynamicContractAddressesFromFirstChangeEvent = (
+  register: register,
+  ~firstChangeEvent: blockNumberAndLogIndex,
+) => {
   //get all dynamic contract addresses past valid blockNumber to remove along with
   //updated dynamicContracts map
   let (dynamicContracts, addressesToRemove) =
-    register.dynamicContracts->DynamicContractsMap.removeContractAddressesPastValidBlock(
-      ~lastKnownValidBlock,
+    register.dynamicContracts->DynamicContractsMap.removeContractAddressesFromFirstChangeEvent(
+      ~firstChangeEvent,
     )
 
   //remove them from the contract address mapping and dynamic contract addresses mapping
@@ -962,9 +967,10 @@ let pruneDynamicContractAddressesPastValidBlock = (~lastKnownValidBlock, registe
 /**
 Rolls back registers to the given valid block
 */
-let rec rollbackRegisterList = (
+let rec rollbackRegister = (
   self: register,
-  ~lastKnownValidBlock: blockNumberAndTimestamp,
+  ~lastScannedBlock,
+  ~firstChangeEvent: blockNumberAndLogIndex,
   ~parent: option<Parent.t>=?,
 ) => {
   let handleParent = updated =>
@@ -976,14 +982,15 @@ let rec rollbackRegisterList = (
   switch self.registerType {
   //Case 1 Root register that has only fetched up to a confirmed valid block number
   //Should just return itself unchanged
-  | RootRegister(_) if self.latestFetchedBlock.blockNumber <= lastKnownValidBlock.blockNumber =>
+  | RootRegister(_) if self.latestFetchedBlock.blockNumber < firstChangeEvent.blockNumber =>
     self->handleParent
   //Case 2 Dynamic register that has only fetched up to a confirmed valid block number
   //Should just return itself, with the next register rolled back recursively
   | DynamicContractRegister({id, nextRegister})
-    if self.latestFetchedBlock.blockNumber <= lastKnownValidBlock.blockNumber =>
-    nextRegister->rollbackRegisterList(
-      ~lastKnownValidBlock,
+    if self.latestFetchedBlock.blockNumber < firstChangeEvent.blockNumber =>
+    nextRegister->rollbackRegister(
+      ~lastScannedBlock,
+      ~firstChangeEvent,
       ~parent=self->Parent.make(~dynamicContractId=id, ~parent),
     )
 
@@ -992,44 +999,51 @@ let rec rollbackRegisterList = (
   | RootRegister(_) =>
     {
       ...self,
-      fetchedEventQueue: self.fetchedEventQueue->pruneQueuePastValidBlock(~lastKnownValidBlock),
-      latestFetchedBlock: lastKnownValidBlock,
+      fetchedEventQueue: self.fetchedEventQueue->pruneQueueFromFirstChangeEvent(~firstChangeEvent),
+      latestFetchedBlock: lastScannedBlock,
     }
-    ->pruneDynamicContractAddressesPastValidBlock(~lastKnownValidBlock)
+    ->pruneDynamicContractAddressesFromFirstChangeEvent(~firstChangeEvent)
     ->handleParent
   //Case 4 DynamicContract register that has fetched further than the confirmed valid block number
   //Should prune its queue, set its latest fetched blockdata + pruned queue
   //And recursivle prune the nextRegister
   | DynamicContractRegister({id, nextRegister}) =>
     let updatedWithRemovedDynamicContracts =
-      self->pruneDynamicContractAddressesPastValidBlock(~lastKnownValidBlock)
+      self->pruneDynamicContractAddressesFromFirstChangeEvent(~firstChangeEvent)
 
     if updatedWithRemovedDynamicContracts.contractAddressMapping->ContractAddressingMap.isEmpty {
       //If the contractAddressMapping is empty after pruning dynamic contracts, then this
       //is a dead register. Simly return its next register rolled back
-      nextRegister->rollbackRegisterList(~lastKnownValidBlock, ~parent?)
+      nextRegister->rollbackRegister(~lastScannedBlock, ~firstChangeEvent, ~parent?)
     } else {
       //If there are still values in the contractAddressMapping, we should keep the register but
       //prune queues and next register
       let updated = {
         ...updatedWithRemovedDynamicContracts,
-        fetchedEventQueue: self.fetchedEventQueue->pruneQueuePastValidBlock(~lastKnownValidBlock),
-        latestFetchedBlock: lastKnownValidBlock,
+        fetchedEventQueue: self.fetchedEventQueue->pruneQueueFromFirstChangeEvent(
+          ~firstChangeEvent,
+        ),
+        latestFetchedBlock: lastScannedBlock,
       }
-      nextRegister->rollbackRegisterList(
-        ~lastKnownValidBlock,
+      nextRegister->rollbackRegister(
+        ~lastScannedBlock,
+        ~firstChangeEvent,
         ~parent=updated->Parent.make(~dynamicContractId=id, ~parent),
       )
     }
   }
 }
 
-let rollback = (self: t, ~lastKnownValidBlock) => {
-  let baseRegister = rollbackRegisterList(self.baseRegister, ~lastKnownValidBlock)
+let rollback = (self: t, ~lastScannedBlock, ~firstChangeEvent) => {
+  let baseRegister = self.baseRegister->rollbackRegister(~lastScannedBlock, ~firstChangeEvent)
 
   let pendingDynamicContracts =
-    self.pendingDynamicContracts->Array.keep(({registeringEventBlockNumber}) =>
-      registeringEventBlockNumber <= lastKnownValidBlock.blockNumber
+    self.pendingDynamicContracts->Array.keep(({
+      registeringEventBlockNumber,
+      registeringEventLogIndex,
+    }) =>
+      (registeringEventBlockNumber, registeringEventLogIndex) <
+      (firstChangeEvent.blockNumber, firstChangeEvent.logIndex)
     )
   {
     ...self,

@@ -17,8 +17,8 @@ let getEntityHistoryItems = entityUpdates => {
   ) => {
     let (optPreviousEventIdentifier, entityHistoryItems) = prev
 
-    let {eventIdentifier, shouldSaveHistory, entityUpdateAction, entityId} = entityUpdate
-    let entityHistoryItems = if shouldSaveHistory {
+    let {eventIdentifier, entityUpdateAction, entityId} = entityUpdate
+    let entityHistoryItems = {
       let historyItem: EntityHistory.historyRow<_> = {
         current: {
           chain_id: eventIdentifier.chainId,
@@ -38,10 +38,7 @@ let getEntityHistoryItems = entityUpdates => {
         },
       }
       entityHistoryItems->Belt.Array.concat([historyItem])
-    } else {
-      entityHistoryItems
     }
-
     (Some(eventIdentifier), entityHistoryItems)
   })
 
@@ -51,19 +48,20 @@ let getEntityHistoryItems = entityUpdates => {
 let executeSetEntityWithHistory = (
   type entity,
   sql: Postgres.sql,
-  ~rows: array<Types.inMemoryStoreRowEntity<entity>>,
+  ~inMemoryStore: InMemoryStore.t,
   ~entityMod: module(Entities.Entity with type t = entity),
 ): promise<unit> => {
+  let rows =
+    inMemoryStore.entities
+    ->InMemoryStore.EntityTables.get(entityMod)
+    ->InMemoryTable.Entity.rows
   let module(EntityMod) = entityMod
   let (entitiesToSet, idsToDelete, entityHistoryItemsToSet) = rows->Belt.Array.reduce(
     ([], [], []),
     ((entitiesToSet, idsToDelete, entityHistoryItemsToSet), row) => {
       switch row {
       | Updated({latest, history}) =>
-        let entityHistoryItems =
-          history
-          ->Belt.Array.concat([latest])
-          ->getEntityHistoryItems
+        let entityHistoryItems = history->getEntityHistoryItems
 
         switch latest.entityUpdateAction {
         | Set(entity) => (
@@ -86,6 +84,7 @@ let executeSetEntityWithHistory = (
     EntityMod.entityHistory->EntityHistory.batchInsertRows(
       ~sql,
       ~rows=Belt.Array.concatMany(entityHistoryItemsToSet),
+      ~shouldCopyCurrentEntity=!(inMemoryStore->InMemoryStore.isRollingBack),
     ),
     if entitiesToSet->Array.length > 0 {
       sql->DbFunctionsEntities.batchSet(~entityMod)(entitiesToSet)
@@ -105,9 +104,14 @@ let executeSetEntityWithHistory = (
 let executeDbFunctionsEntity = (
   type entity,
   sql: Postgres.sql,
-  ~rows: array<Types.inMemoryStoreRowEntity<entity>>,
+  ~inMemoryStore: InMemoryStore.t,
   ~entityMod: module(Entities.Entity with type t = entity),
 ): promise<unit> => {
+  let rows =
+    inMemoryStore.entities
+    ->InMemoryStore.EntityTables.get(entityMod)
+    ->InMemoryTable.Entity.rows
+
   let (entitiesToSet, idsToDelete) = rows->Belt.Array.reduce(([], []), (
     (accumulatedSets, accumulatedDeletes),
     row,
@@ -139,9 +143,9 @@ let executeDbFunctionsEntity = (
   promises->Promise.all->Promise.thenResolve(_ => ())
 }
 
-let executeBatch = async (sql, ~inMemoryStore: InMemoryStore.t, ~isInReorgThreshold) => {
+let executeBatch = async (sql, ~inMemoryStore: InMemoryStore.t, ~isInReorgThreshold, ~config) => {
   let entityDbExecutionComposer =
-    RegisterHandlers.getConfig()->Config.shouldSaveHistory(~isInReorgThreshold)
+    config->Config.shouldSaveHistory(~isInReorgThreshold)
       ? executeSetEntityWithHistory
       : executeDbFunctionsEntity
 
@@ -167,7 +171,7 @@ let executeBatch = async (sql, ~inMemoryStore: InMemoryStore.t, ~isInReorgThresh
   let set{{entity.name.capitalized}}s = entityDbExecutionComposer(
     _,
     ~entityMod=module(Entities.{{entity.name.capitalized}}),
-    ~rows=inMemoryStore.{{entity.name.uncapitalized}}->InMemoryTable.Entity.rows,
+    ~inMemoryStore,
   )
 
   {{/each}}
@@ -177,7 +181,9 @@ let executeBatch = async (sql, ~inMemoryStore: InMemoryStore.t, ~isInReorgThresh
   let rollbackTables = switch inMemoryStore.rollBackEventIdentifier {
   | Some(eventIdentifier) =>
     [
-      DbFunctions.EntityHistory.deleteAllEntityHistoryAfterEventIdentifier,
+      DbFunctions.EntityHistory.deleteAllEntityHistoryAfterEventIdentifier(
+        ~isUnorderedMultichainMode=config.isUnorderedMultichainMode,
+      ),
       DbFunctions.RawEvents.deleteAllRawEventsAfterEventIdentifier,
       DbFunctions.DynamicContractRegistry.deleteAllDynamicContractRegistrationsAfterEventIdentifier,
     ]->Belt.Array.map(fn => fn(_, ~eventIdentifier))
@@ -204,19 +210,13 @@ let executeBatch = async (sql, ~inMemoryStore: InMemoryStore.t, ~isInReorgThresh
 
 module RollBack = {
   exception DecodeError(S.error)
-  let rollBack = async (~chainId, ~blockTimestamp, ~blockNumber, ~logIndex) => {
-    let reorgData = switch await DbFunctions.sql->DbFunctions.EntityHistory.getRollbackDiff(
-      ~chainId,
-      ~blockTimestamp,
-      ~blockNumber,
-    ) {
-    | Ok(v) => v
-    | Error(exn) =>
-      exn
-      ->DecodeError
-      ->ErrorHandling.mkLogAndRaise(~msg="Failed to get rollback diff from entity history")
-    }
-
+  let rollBack = async (
+    ~chainId,
+    ~blockTimestamp,
+    ~blockNumber,
+    ~logIndex,
+    ~isUnorderedMultichainMode,
+  ) => {
     let rollBackEventIdentifier: Types.eventIdentifier = {
       chainId,
       blockTimestamp,
@@ -224,32 +224,56 @@ module RollBack = {
       logIndex,
     }
 
-    let inMemStore = InMemoryStore.makeWithRollBackEventIdentifier(Some(rollBackEventIdentifier))
+    let inMemStore = InMemoryStore.make(~rollBackEventIdentifier)
 
-    //Don't save the rollback diffs to history table
-    let shouldSaveHistory = false
+    await Utils.Array.awaitEach(Entities.allEntities, async entityMod => {
+      let module(Entity) = entityMod
+      let entityMod =
+        entityMod->(
+          Utils.magic: module(Entities.InternalEntity) => module(Entities.Entity with
+            type t = 'entity
+          )
+        )
 
-    reorgData->Belt.Array.forEach(e => {
-      switch e {
-      //Where previousEntity is Some, 
-      //set the value with the eventIdentifier that set that value initially
-      {{#each entities as | entity |}}
-      | {previousEntity: Some({entity: {{entity.name.capitalized}}(entity), eventIdentifier}), entityId} =>
-        inMemStore.{{entity.name.uncapitalized}}->InMemoryTable.Entity.set(
-          Set(entity)->Types.mkEntityUpdate(~eventIdentifier, ~entityId, ~shouldSaveHistory),
-          ~shouldSaveHistory,
-        )
-      {{/each}}
-      //Where previousEntity is None, 
-      //delete it with the eventIdentifier of the rollback event
-      {{#each entities as | entity |}}
-      | {previousEntity: None, entityType: {{entity.name.capitalized}}, entityId} =>
-        inMemStore.{{entity.name.uncapitalized}}->InMemoryTable.Entity.set(
-          Delete->Types.mkEntityUpdate(~eventIdentifier=rollBackEventIdentifier, ~entityId, ~shouldSaveHistory),
-          ~shouldSaveHistory,
-        )
-      {{/each}}
-      }
+      let diff = await DbFunctions.sql->DbFunctions.EntityHistory.getRollbackDiff(
+        isUnorderedMultichainMode
+          ? UnorderedMultichain({
+              reorgChainId: chainId,
+              safeBlockNumber: blockNumber,
+            })
+          : OrderedMultichain({
+              safeBlockTimestamp: blockTimestamp,
+              reorgChainId: chainId,
+              safeBlockNumber: blockNumber,
+            }),
+        ~entityMod,
+      )
+
+      let entityTable = inMemStore.entities->InMemoryStore.EntityTables.get(entityMod)
+
+      diff->Belt.Array.forEach(historyRow => {
+        let eventIdentifier: Types.eventIdentifier = {
+          chainId: historyRow.current.chain_id,
+          blockNumber: historyRow.current.block_number,
+          logIndex: historyRow.current.log_index,
+          blockTimestamp: historyRow.current.block_timestamp,
+        }
+        switch historyRow.entityData {
+        | Set(entity) =>
+          entityTable->InMemoryTable.Entity.set(
+            Set(entity)->Types.mkEntityUpdate(
+              ~eventIdentifier,
+              ~entityId=entity->Entities.getEntityId,
+            ),
+            ~shouldSaveHistory=false,
+          )
+        | Delete({id}) =>
+          entityTable->InMemoryTable.Entity.set(
+            Delete->Types.mkEntityUpdate(~eventIdentifier, ~entityId=id),
+            ~shouldSaveHistory=false,
+          )
+        }
+      })
     })
 
     inMemStore

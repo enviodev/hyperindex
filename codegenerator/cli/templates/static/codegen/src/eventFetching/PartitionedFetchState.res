@@ -270,9 +270,9 @@ let getNextQueriesOrThrow = (
 /**
 Rolls back all partitions to the given valid block
 */
-let rollback = (self: t, ~lastKnownValidBlock) => {
+let rollback = (self: t, ~lastScannedBlock, ~firstChangeEvent) => {
   let partitions = self.partitions->Array.map(partition => {
-    partition->FetchState.rollback(~lastKnownValidBlock)
+    partition->FetchState.rollback(~lastScannedBlock, ~firstChangeEvent)
   })
 
   {...self, partitions}
@@ -297,11 +297,10 @@ let queueSize = ({partitions}: t) =>
 
 let getLatestFullyFetchedBlock = ({partitions}: t) =>
   partitions
-  ->Array.reduce(None, (accum, partition) => {
+  ->Array.reduce((None: option<FetchState.blockNumberAndTimestamp>), (accum, partition) => {
     let partitionBlock = partition->FetchState.getLatestFullyFetchedBlock
     switch accum {
-    | Some({FetchState.blockNumber: blockNumber})
-      if partitionBlock.blockNumber >= blockNumber => accum
+    | Some({blockNumber}) if partitionBlock.blockNumber >= blockNumber => accum
     | _ => Some(partitionBlock)
     }
   })
