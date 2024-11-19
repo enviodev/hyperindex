@@ -418,7 +418,6 @@ module EntityHistory = {
         }
       })
       ->Promise.all
-      ->Promise.thenResolve(_ => ())
 
     if Env.saveBenchmarkData {
       let elapsedTimeMillis = Hrtime.timeSince(startTime)->Hrtime.toMillis->Hrtime.floatFromMillis
