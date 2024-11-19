@@ -236,55 +236,58 @@ module RollBack = {
 
     let inMemStore = InMemoryStore.make(~rollBackEventIdentifier)
 
-    await Utils.Array.awaitEach(Entities.allEntities, async entityMod => {
-      let module(Entity) = entityMod
-      let entityMod =
-        entityMod->(
-          Utils.magic: module(Entities.InternalEntity) => module(Entities.Entity with
-            type t = 'entity
+    let _ =
+      await Entities.allEntities
+      ->Belt.Array.map(async entityMod => {
+        let module(Entity) = entityMod
+        let entityMod =
+          entityMod->(
+            Utils.magic: module(Entities.InternalEntity) => module(Entities.Entity with
+              type t = 'entity
+            )
           )
+
+        let diff = await DbFunctions.sql->DbFunctions.EntityHistory.getRollbackDiff(
+          isUnorderedMultichainMode
+            ? UnorderedMultichain({
+                reorgChainId: chainId,
+                safeBlockNumber: blockNumber,
+              })
+            : OrderedMultichain({
+                safeBlockTimestamp: blockTimestamp,
+                reorgChainId: chainId,
+                safeBlockNumber: blockNumber,
+              }),
+          ~entityMod,
         )
 
-      let diff = await DbFunctions.sql->DbFunctions.EntityHistory.getRollbackDiff(
-        isUnorderedMultichainMode
-          ? UnorderedMultichain({
-              reorgChainId: chainId,
-              safeBlockNumber: blockNumber,
-            })
-          : OrderedMultichain({
-              safeBlockTimestamp: blockTimestamp,
-              reorgChainId: chainId,
-              safeBlockNumber: blockNumber,
-            }),
-        ~entityMod,
-      )
+        let entityTable = inMemStore.entities->InMemoryStore.EntityTables.get(entityMod)
 
-      let entityTable = inMemStore.entities->InMemoryStore.EntityTables.get(entityMod)
-
-      diff->Belt.Array.forEach(historyRow => {
-        let eventIdentifier: Types.eventIdentifier = {
-          chainId: historyRow.current.chain_id,
-          blockNumber: historyRow.current.block_number,
-          logIndex: historyRow.current.log_index,
-          blockTimestamp: historyRow.current.block_timestamp,
-        }
-        switch historyRow.entityData {
-        | Set(entity) =>
-          entityTable->InMemoryTable.Entity.set(
-            Set(entity)->Types.mkEntityUpdate(
-              ~eventIdentifier,
-              ~entityId=entity->Entities.getEntityId,
-            ),
-            ~shouldSaveHistory=false,
-          )
-        | Delete({id}) =>
-          entityTable->InMemoryTable.Entity.set(
-            Delete->Types.mkEntityUpdate(~eventIdentifier, ~entityId=id),
-            ~shouldSaveHistory=false,
-          )
-        }
+        diff->Belt.Array.forEach(historyRow => {
+          let eventIdentifier: Types.eventIdentifier = {
+            chainId: historyRow.current.chain_id,
+            blockNumber: historyRow.current.block_number,
+            logIndex: historyRow.current.log_index,
+            blockTimestamp: historyRow.current.block_timestamp,
+          }
+          switch historyRow.entityData {
+          | Set(entity) =>
+            entityTable->InMemoryTable.Entity.set(
+              Set(entity)->Types.mkEntityUpdate(
+                ~eventIdentifier,
+                ~entityId=entity->Entities.getEntityId,
+              ),
+              ~shouldSaveHistory=false,
+            )
+          | Delete({id}) =>
+            entityTable->InMemoryTable.Entity.set(
+              Delete->Types.mkEntityUpdate(~eventIdentifier, ~entityId=id),
+              ~shouldSaveHistory=false,
+            )
+          }
+        })
       })
-    })
+      ->Promise.all
 
     inMemStore
   }
