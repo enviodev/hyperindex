@@ -290,7 +290,10 @@ module EntityHistory = {
     ~safeChainIdAndBlockNumberArray: array<chainIdAndBlockNumber>,
   ) => promise<unit> = "pruneStaleEntityHistory"
 
+  let rollbacksGroup = "Rollbacks"
+
   let pruneStaleEntityHistory = async (sql, ~entityName, ~safeChainIdAndBlockNumberArray) => {
+    let startTime = Hrtime.makeTimer()
     try await sql->pruneStaleEntityHistoryInternal(
       ~entityName,
       ~safeChainIdAndBlockNumberArray,
@@ -304,6 +307,16 @@ module EntityHistory = {
             "safeChainIdAndBlockNumberArray": safeChainIdAndBlockNumberArray,
           },
         ),
+      )
+    }
+
+    if Env.saveBenchmarkData {
+      let elapsedTimeMillis = Hrtime.timeSince(startTime)->Hrtime.toMillis->Hrtime.floatFromMillis
+
+      Benchmark.addSummaryData(
+        ~group=rollbacksGroup,
+        ~label=`Prune Stale History Time (ms)`,
+        ~value=elapsedTimeMillis,
       )
     }
   }
@@ -371,12 +384,14 @@ module EntityHistory = {
     }
   }
 
-  let deleteAllEntityHistoryAfterEventIdentifier = (
+  let deleteAllEntityHistoryAfterEventIdentifier = async (
     sql,
     ~isUnorderedMultichainMode,
     ~eventIdentifier: Types.eventIdentifier,
     ~allEntities=Entities.allEntities,
-  ): promise<unit> => {
+  ): unit => {
+    let startTime = Hrtime.makeTimer()
+
     let {chainId, blockNumber, blockTimestamp} = eventIdentifier
     let args: Args.t = isUnorderedMultichainMode
       ? UnorderedMultichain({reorgChainId: chainId, safeBlockNumber: blockNumber})
@@ -386,23 +401,34 @@ module EntityHistory = {
           safeBlockTimestamp: blockTimestamp,
         })
 
-    allEntities
-    ->Belt.Array.map(async entityMod => {
-      let module(Entity) = entityMod
-      try await deleteRolledBackEntityHistory(
-        sql,
-        ~entityName=Entity.name,
-        ~getFirstChangeSerial=args->Args.makeGetFirstChangeSerial(~entityName=Entity.name),
-      ) catch {
-      | exn =>
-        exn->ErrorHandling.mkLogAndRaise(
-          ~msg=`Failed to delete rolled back entity history`,
-          ~logger=args->Args.getLogger(~entityName=Entity.name),
-        )
-      }
-    })
-    ->Promise.all
-    ->Promise.thenResolve(_ => ())
+    let _ =
+      await allEntities
+      ->Belt.Array.map(async entityMod => {
+        let module(Entity) = entityMod
+        try await deleteRolledBackEntityHistory(
+          sql,
+          ~entityName=Entity.name,
+          ~getFirstChangeSerial=args->Args.makeGetFirstChangeSerial(~entityName=Entity.name),
+        ) catch {
+        | exn =>
+          exn->ErrorHandling.mkLogAndRaise(
+            ~msg=`Failed to delete rolled back entity history`,
+            ~logger=args->Args.getLogger(~entityName=Entity.name),
+          )
+        }
+      })
+      ->Promise.all
+      ->Promise.thenResolve(_ => ())
+
+    if Env.saveBenchmarkData {
+      let elapsedTimeMillis = Hrtime.timeSince(startTime)->Hrtime.toMillis->Hrtime.floatFromMillis
+
+      Benchmark.addSummaryData(
+        ~group=rollbacksGroup,
+        ~label=`Delete Rolled Back History Time (ms)`,
+        ~value=elapsedTimeMillis,
+      )
+    }
   }
 
   let getRollbackDiff = async (
@@ -412,6 +438,7 @@ module EntityHistory = {
     ~entityMod: module(Entities.Entity with type t = entity),
   ) => {
     let module(Entity) = entityMod
+    let startTime = Hrtime.makeTimer()
 
     let diffRes = switch await getRollbackDiffInternal(
       sql,
@@ -424,6 +451,16 @@ module EntityHistory = {
         ~logger=args->Args.getLogger(~entityName=Entity.name),
       )
     | res => res
+    }
+
+    if Env.saveBenchmarkData {
+      let elapsedTimeMillis = Hrtime.timeSince(startTime)->Hrtime.toMillis->Hrtime.floatFromMillis
+
+      Benchmark.addSummaryData(
+        ~group=rollbacksGroup,
+        ~label=`Diff Creation Time (ms)`,
+        ~value=elapsedTimeMillis,
+      )
     }
 
     switch diffRes->S.parseAnyOrRaiseWith(Entity.entityHistory.schemaRows) {
@@ -461,6 +498,7 @@ module EntityHistory = {
     args: Args.t,
     ~allEntities=Entities.allEntities,
   ) => {
+    let startTime = Hrtime.makeTimer()
     let firstChangeEventPerChain = FirstChangeEventPerChain.make()
 
     let _ =
@@ -500,6 +538,16 @@ module EntityHistory = {
         })
       })
       ->Promise.all
+
+    if Env.saveBenchmarkData {
+      let elapsedTimeMillis = Hrtime.timeSince(startTime)->Hrtime.toMillis->Hrtime.floatFromMillis
+
+      Benchmark.addSummaryData(
+        ~group=rollbacksGroup,
+        ~label=`Get First Change Event Per Chain Time (ms)`,
+        ~value=elapsedTimeMillis,
+      )
+    }
 
     firstChangeEventPerChain
   }
