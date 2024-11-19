@@ -51,7 +51,7 @@ let setBenchmarkSummaryData = (
   ~label: string,
   ~n: int,
   ~mean: float,
-  ~stdDev: float,
+  ~stdDev: option<float>,
   ~min: float,
   ~max: float,
   ~sum: float,
@@ -64,9 +64,13 @@ let setBenchmarkSummaryData = (
   ->PromClient.Gauge.labels({"group": group, "label": label, "stat": "mean"})
   ->PromClient.Gauge.setFloat(mean)
 
-  benchmarkSummaryData
-  ->PromClient.Gauge.labels({"group": group, "label": label, "stat": "stdDev"})
-  ->PromClient.Gauge.setFloat(stdDev)
+  switch stdDev {
+  | Some(stdDev) =>
+    benchmarkSummaryData
+    ->PromClient.Gauge.labels({"group": group, "label": label, "stat": "stdDev"})
+    ->PromClient.Gauge.setFloat(stdDev)
+  | None => ()
+  }
 
   benchmarkSummaryData
   ->PromClient.Gauge.labels({"group": group, "label": label, "stat": "min"})

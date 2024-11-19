@@ -28,7 +28,7 @@ module SummaryData = {
       min: float,
       max: float,
       sum: BigDecimal.t,
-      sumOfSquares: BigDecimal.t,
+      sumOfSquares: option<BigDecimal.t>,
       decimalPlaces: int,
     }
 
@@ -37,7 +37,7 @@ module SummaryData = {
       min: s.matches(S.float),
       max: s.matches(S.float),
       sum: s.matches(BigDecimal.schema),
-      sumOfSquares: s.matches(BigDecimal.schema),
+      sumOfSquares: s.matches(S.option(BigDecimal.schema)),
       decimalPlaces: s.matches(S.int),
     })
 
@@ -48,7 +48,9 @@ module SummaryData = {
         min: val,
         max: val,
         sum: bigDecimal,
-        sumOfSquares: bigDecimal->BigDecimal.times(bigDecimal),
+        sumOfSquares: Env.Benchmark.shouldSaveStdDev
+          ? Some(bigDecimal->BigDecimal.times(bigDecimal))
+          : None,
         decimalPlaces,
       }
     }
@@ -60,7 +62,9 @@ module SummaryData = {
         min: Pervasives.min(self.min, val),
         max: Pervasives.max(self.max, val),
         sum: self.sum->BigDecimal.plus(bigDecimal),
-        sumOfSquares: self.sumOfSquares->BigDecimal.plus(bigDecimal->BigDecimal.times(bigDecimal)),
+        sumOfSquares: self.sumOfSquares->Belt.Option.map(s =>
+          s->BigDecimal.plus(bigDecimal->BigDecimal.times(bigDecimal))
+        ),
         decimalPlaces: self.decimalPlaces,
       }
     }
@@ -111,7 +115,7 @@ module Stats = {
   type t = {
     n: int,
     mean: float,
-    @as("std-dev") stdDev: float,
+    @as("std-dev") stdDev: option<float>,
     min: float,
     max: float,
     sum: float,
@@ -126,18 +130,22 @@ module Stats = {
     let n = dataSet.count
     let countBigDecimal = n->BigDecimal.fromInt
     let mean = dataSet.sum->BigDecimal.div(countBigDecimal)
-    let variance =
-      dataSet.sumOfSquares
-      ->BigDecimal.div(countBigDecimal)
-      ->BigDecimal.minus(mean->BigDecimal.times(mean))
-    let stdDev = BigDecimal.sqrt(variance)
+
     let roundBigDecimal = bd =>
       bd->BigDecimal.decimalPlaces(dataSet.decimalPlaces)->BigDecimal.toNumber
     let roundFloat = float => float->round(~precision=dataSet.decimalPlaces)
+
+    let stdDev = dataSet.sumOfSquares->Option.map(sumOfSquares => {
+      let variance =
+        sumOfSquares
+        ->BigDecimal.div(countBigDecimal)
+        ->BigDecimal.minus(mean->BigDecimal.times(mean))
+      BigDecimal.sqrt(variance)->roundBigDecimal
+    })
     {
       n,
       mean: mean->roundBigDecimal,
-      stdDev: stdDev->roundBigDecimal,
+      stdDev,
       min: dataSet.min->roundFloat,
       max: dataSet.max->roundFloat,
       sum: dataSet.sum->roundBigDecimal,
@@ -166,64 +174,12 @@ module Data = {
   }
 
   module LiveMetrics = {
-    module ThrottlerMapping = {
-      module LabelToThrottlerMapping = {
-        type t = dict<Throttler.t>
-        let make = (): t => Js.Dict.empty()
-        let get = (self: t, ~group: string, ~label: string) =>
-          switch self->Utils.Dict.dangerouslyGetNonOption(label) {
-          | Some(throttler) => throttler
-          | None =>
-            let throttler = Throttler.make(
-              ~intervalMillis=Env.ThrottleWrites.liveMetricsBenchmarkIntervalMillis,
-              ~logger=Logging.createChild(
-                ~params={
-                  "context": "Throttler for live metrics benchmarking",
-                  "group": group,
-                  "label": label,
-                },
-              ),
-            )
-            self->Js.Dict.set(label, throttler)
-            throttler
-          }
-      }
-      type t = dict<LabelToThrottlerMapping.t>
-
-      let make = (): t => Js.Dict.empty()
-
-      let get = (self: t, ~group: string, ~label: string): Throttler.t => {
-        let labelToThrottlerMapping = switch self->Utils.Dict.dangerouslyGetNonOption(group) {
-        | Some(labelToThrottlerMapping) => labelToThrottlerMapping
-        | None =>
-          let labelToThrottlerMapping = LabelToThrottlerMapping.make()
-          self->Js.Dict.set(group, labelToThrottlerMapping)
-          labelToThrottlerMapping
-        }
-        labelToThrottlerMapping->LabelToThrottlerMapping.get(~group, ~label)
-      }
-    }
-
     let saveLiveMetrics = if (
       Env.Benchmark.saveDataStrategy->Env.Benchmark.SaveDataStrategy.shouldSavePrometheus
     ) {
-      let throttlerMapping = ThrottlerMapping.make()
-
       (dataSet: SummaryData.DataSet.t, ~group, ~label) => {
-        let throttler = throttlerMapping->ThrottlerMapping.get(~group, ~label)
-        throttler->Throttler.schedule(() => {
-          let {n, mean, stdDev, min, max, sum} = dataSet->Stats.makeFromDataSet
-          Prometheus.setBenchmarkSummaryData(
-            ~group,
-            ~label,
-            ~n,
-            ~mean,
-            ~stdDev,
-            ~min,
-            ~max,
-            ~sum,
-          )->Promise.resolve
-        })
+        let {n, mean, stdDev, min, max, sum} = dataSet->Stats.makeFromDataSet
+        Prometheus.setBenchmarkSummaryData(~group, ~label, ~n, ~mean, ~stdDev, ~min, ~max, ~sum)
       }
     } else {
       (_dataSet, ~group as _, ~label as _) => ()
