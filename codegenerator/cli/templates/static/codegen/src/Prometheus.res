@@ -49,7 +49,7 @@ let benchmarkSummaryData = PromClient.Gauge.makeGauge({
 let setBenchmarkSummaryData = (
   ~group: string,
   ~label: string,
-  ~n: int,
+  ~n: float,
   ~mean: float,
   ~stdDev: option<float>,
   ~min: float,
@@ -58,7 +58,7 @@ let setBenchmarkSummaryData = (
 ) => {
   benchmarkSummaryData
   ->PromClient.Gauge.labels({"group": group, "label": label, "stat": "n"})
-  ->PromClient.Gauge.set(n)
+  ->PromClient.Gauge.setFloat(n)
 
   benchmarkSummaryData
   ->PromClient.Gauge.labels({"group": group, "label": label, "stat": "mean"})

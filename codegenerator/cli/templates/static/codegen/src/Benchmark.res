@@ -24,7 +24,7 @@ module MillisAccum = {
 module SummaryData = {
   module DataSet = {
     type t = {
-      count: int,
+      count: float,
       min: float,
       max: float,
       sum: BigDecimal.t,
@@ -33,7 +33,7 @@ module SummaryData = {
     }
 
     let schema = S.schema(s => {
-      count: s.matches(S.int),
+      count: s.matches(S.float),
       min: s.matches(S.float),
       max: s.matches(S.float),
       sum: s.matches(BigDecimal.schema),
@@ -44,7 +44,7 @@ module SummaryData = {
     let make = (val: float, ~decimalPlaces=2) => {
       let bigDecimal = val->BigDecimal.fromFloat
       {
-        count: 1,
+        count: 1.,
         min: val,
         max: val,
         sum: bigDecimal,
@@ -58,7 +58,7 @@ module SummaryData = {
     let add = (self: t, val: float) => {
       let bigDecimal = val->BigDecimal.fromFloat
       {
-        count: self.count + 1,
+        count: self.count +. 1.,
         min: Pervasives.min(self.min, val),
         max: Pervasives.max(self.max, val),
         sum: self.sum->BigDecimal.plus(bigDecimal),
@@ -113,7 +113,7 @@ module SummaryData = {
 module Stats = {
   open Belt
   type t = {
-    n: int,
+    n: float,
     mean: float,
     @as("std-dev") stdDev: option<float>,
     min: float,
@@ -128,7 +128,7 @@ module Stats = {
 
   let makeFromDataSet = (dataSet: SummaryData.DataSet.t) => {
     let n = dataSet.count
-    let countBigDecimal = n->BigDecimal.fromInt
+    let countBigDecimal = n->BigDecimal.fromFloat
     let mean = dataSet.sum->BigDecimal.div(countBigDecimal)
 
     let roundBigDecimal = bd =>
