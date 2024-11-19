@@ -20,7 +20,7 @@ module General = {
   type existsRes = {exists: bool}
 
   let hasRows = async (sql, ~table: Table.table) => {
-    let query = `SELECT EXISTS(SELECT 1 FROM public.${table.tableName});`
+    let query = `SELECT EXISTS(SELECT 1 FROM public."${table.tableName}");`
     switch await sql->Postgres.unsafe(query) {
     | [{exists}] => exists
     | _ => Js.Exn.raiseError("Unexpected result from hasRows query: " ++ query)
