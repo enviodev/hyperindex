@@ -33,6 +33,8 @@ module Gauge = {
 
   @send external set: (gauge, int) => unit = "set"
 
+  @send external setFloat: (gauge, float) => unit = "set"
+
   @send external labels: (gauge, 'labelsObject) => gauge = "labels"
 }
 

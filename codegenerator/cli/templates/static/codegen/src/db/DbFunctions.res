@@ -310,7 +310,7 @@ module EntityHistory = {
       )
     }
 
-    if Env.saveBenchmarkData {
+    if Env.Benchmark.shouldSaveData {
       let elapsedTimeMillis = Hrtime.timeSince(startTime)->Hrtime.toMillis->Hrtime.floatFromMillis
 
       Benchmark.addSummaryData(
@@ -419,7 +419,7 @@ module EntityHistory = {
       })
       ->Promise.all
 
-    if Env.saveBenchmarkData {
+    if Env.Benchmark.shouldSaveData {
       let elapsedTimeMillis = Hrtime.timeSince(startTime)->Hrtime.toMillis->Hrtime.floatFromMillis
 
       Benchmark.addSummaryData(
@@ -452,7 +452,7 @@ module EntityHistory = {
     | res => res
     }
 
-    if Env.saveBenchmarkData {
+    if Env.Benchmark.shouldSaveData {
       let elapsedTimeMillis = Hrtime.timeSince(startTime)->Hrtime.toMillis->Hrtime.floatFromMillis
 
       Benchmark.addSummaryData(
@@ -538,7 +538,7 @@ module EntityHistory = {
       })
       ->Promise.all
 
-    if Env.saveBenchmarkData {
+    if Env.Benchmark.shouldSaveData {
       let elapsedTimeMillis = Hrtime.timeSince(startTime)->Hrtime.toMillis->Hrtime.floatFromMillis
 
       Benchmark.addSummaryData(

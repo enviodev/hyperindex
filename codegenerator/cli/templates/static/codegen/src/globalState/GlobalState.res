@@ -306,7 +306,7 @@ let handleBlockRangeResponse = (state, ~chain, ~response: ChainWorker.blockRange
     latestFetchedBlockTimestamp,
   } = response
 
-  if Env.saveBenchmarkData {
+  if Env.Benchmark.shouldSaveData {
     Benchmark.addBlockRangeFetched(
       ~totalTimeElapsed=stats.totalTimeElapsed,
       ~parsingTimeElapsed=stats.parsingTimeElapsed->Belt.Option.getWithDefault(0),
@@ -889,7 +889,7 @@ let injectedTaskReducer = (
       nextEndOfBlockRangeScannedData,
     )
 
-    if Env.saveBenchmarkData {
+    if Env.Benchmark.shouldSaveData {
       let elapsedTimeMillis = Hrtime.timeSince(timeRef)->Hrtime.toMillis->Hrtime.intFromMillis
       Benchmark.addSummaryData(
         ~group="Other",
@@ -908,7 +908,7 @@ let injectedTaskReducer = (
         ~blockNumberThreshold,
       )
 
-      if Env.saveBenchmarkData {
+      if Env.Benchmark.shouldSaveData {
         let elapsedTimeMillis = Hrtime.timeSince(timeRef)->Hrtime.toMillis->Hrtime.intFromMillis
         Benchmark.addSummaryData(
           ~group="Other",

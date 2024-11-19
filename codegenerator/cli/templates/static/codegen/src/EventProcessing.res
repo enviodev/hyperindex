@@ -289,7 +289,7 @@ let runEventHandler = (
       ->Error
       ->propogate
     | () =>
-      if Env.saveBenchmarkData {
+      if Env.Benchmark.shouldSaveData {
         let timeEnd = timeBeforeHandler->Hrtime.timeSince->Hrtime.toMillis->Hrtime.floatFromMillis
 
         Benchmark.addSummaryData(
@@ -638,7 +638,7 @@ let processEventBatch = (
       ~handlerDuration,
       ~dbWriteDuration,
     )
-    if Env.saveBenchmarkData {
+    if Env.Benchmark.shouldSaveData {
       Benchmark.addEventProcessing(
         ~batchSize=eventsBeforeDynamicRegistrations->Array.length,
         ~contractRegisterDuration=elapsedAfterContractRegister,

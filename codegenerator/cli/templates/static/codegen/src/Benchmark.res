@@ -70,10 +70,21 @@ module SummaryData = {
     let schema: S.t<t> = S.dict(DataSet.schema)
     let make = () => Js.Dict.empty()
 
+    /**
+    Adds a value to the data set for the given key. If the key does not exist, it will be created.
+
+    Returns the updated data set.
+    */
     let add = (self: t, key: string, value: float, ~decimalPlaces=2) => {
       switch self->Utils.Dict.dangerouslyGetNonOption(key) {
-      | None => self->Js.Dict.set(key, DataSet.make(value, ~decimalPlaces))
-      | Some(dataSet) => self->Js.Dict.set(key, dataSet->DataSet.add(value))
+      | None =>
+        let new = DataSet.make(value, ~decimalPlaces)
+        self->Js.Dict.set(key, new)
+        new
+      | Some(dataSet) =>
+        let updated = dataSet->DataSet.add(value)
+        self->Js.Dict.set(key, updated)
+        updated
       }
     }
   }
@@ -92,6 +103,45 @@ module SummaryData = {
     }
 
     group->Group.add(label, value, ~decimalPlaces)
+  }
+}
+
+module Stats = {
+  open Belt
+  type t = {
+    n: int,
+    mean: float,
+    @as("std-dev") stdDev: float,
+    min: float,
+    max: float,
+    sum: float,
+  }
+
+  let round = (float, ~precision=2) => {
+    let factor = Js.Math.pow_float(~base=10.0, ~exp=precision->Int.toFloat)
+    Js.Math.round(float *. factor) /. factor
+  }
+
+  let makeFromDataSet = (dataSet: SummaryData.DataSet.t) => {
+    let n = dataSet.count
+    let countBigDecimal = n->BigDecimal.fromInt
+    let mean = dataSet.sum->BigDecimal.div(countBigDecimal)
+    let variance =
+      dataSet.sumOfSquares
+      ->BigDecimal.div(countBigDecimal)
+      ->BigDecimal.minus(mean->BigDecimal.times(mean))
+    let stdDev = BigDecimal.sqrt(variance)
+    let roundBigDecimal = bd =>
+      bd->BigDecimal.decimalPlaces(dataSet.decimalPlaces)->BigDecimal.toNumber
+    let roundFloat = float => float->round(~precision=dataSet.decimalPlaces)
+    {
+      n,
+      mean: mean->roundBigDecimal,
+      stdDev: stdDev->roundBigDecimal,
+      min: dataSet.min->roundFloat,
+      max: dataSet.max->roundFloat,
+      sum: dataSet.sum->roundBigDecimal,
+    }
   }
 }
 
@@ -115,25 +165,98 @@ module Data = {
     self.millisAccum->MillisAccum.increment(label, amount)
   }
 
+  module LiveMetrics = {
+    module ThrottlerMapping = {
+      module LabelToThrottlerMapping = {
+        type t = dict<Throttler.t>
+        let make = (): t => Js.Dict.empty()
+        let get = (self: t, ~group: string, ~label: string) =>
+          switch self->Utils.Dict.dangerouslyGetNonOption(label) {
+          | Some(throttler) => throttler
+          | None =>
+            let throttler = Throttler.make(
+              ~intervalMillis=Env.ThrottleWrites.liveMetricsBenchmarkIntervalMillis,
+              ~logger=Logging.createChild(
+                ~params={
+                  "context": "Throttler for live metrics benchmarking",
+                  "group": group,
+                  "label": label,
+                },
+              ),
+            )
+            self->Js.Dict.set(label, throttler)
+            throttler
+          }
+      }
+      type t = dict<LabelToThrottlerMapping.t>
+
+      let make = (): t => Js.Dict.empty()
+
+      let get = (self: t, ~group: string, ~label: string): Throttler.t => {
+        let labelToThrottlerMapping = switch self->Utils.Dict.dangerouslyGetNonOption(group) {
+        | Some(labelToThrottlerMapping) => labelToThrottlerMapping
+        | None =>
+          let labelToThrottlerMapping = LabelToThrottlerMapping.make()
+          self->Js.Dict.set(group, labelToThrottlerMapping)
+          labelToThrottlerMapping
+        }
+        labelToThrottlerMapping->LabelToThrottlerMapping.get(~group, ~label)
+      }
+    }
+
+    let saveLiveMetrics = if (
+      Env.Benchmark.saveDataStrategy->Env.Benchmark.SaveDataStrategy.shouldSavePrometheus
+    ) {
+      let throttlerMapping = ThrottlerMapping.make()
+
+      (dataSet: SummaryData.DataSet.t, ~group, ~label) => {
+        let throttler = throttlerMapping->ThrottlerMapping.get(~group, ~label)
+        throttler->Throttler.schedule(() => {
+          let {n, mean, stdDev, min, max, sum} = dataSet->Stats.makeFromDataSet
+          Prometheus.setBenchmarkSummaryData(
+            ~group,
+            ~label,
+            ~n,
+            ~mean,
+            ~stdDev,
+            ~min,
+            ~max,
+            ~sum,
+          )->Promise.resolve
+        })
+      }
+    } else {
+      (_dataSet, ~group as _, ~label as _) => ()
+    }
+  }
+
   let addSummaryData = (self: t, ~group, ~label, ~value, ~decimalPlaces=2) => {
-    self.summaryData->SummaryData.add(~group, ~label, ~value, ~decimalPlaces)
+    let updatedDataSet = self.summaryData->SummaryData.add(~group, ~label, ~value, ~decimalPlaces)
+    updatedDataSet->LiveMetrics.saveLiveMetrics(~group, ~label)
   }
 }
 
 let data = Data.make()
 let throttler = Throttler.make(
-  ~intervalMillis=500,
+  ~intervalMillis=Env.ThrottleWrites.jsonFileBenchmarkIntervalMillis,
   ~logger=Logging.createChild(~params={"context": "Benchmarking framework"}),
 )
 let cacheFileName = "BenchmarkCache.json"
 let cacheFilePath = NodeJsLocal.Path.join(NodeJsLocal.Path.__dirname, cacheFileName)
 
-let saveToCacheFile = data => {
-  let write = () => {
-    let json = data->S.serializeToJsonStringOrRaiseWith(Data.schema)
-    NodeJsLocal.Fs.Promises.writeFile(~filepath=cacheFilePath, ~content=json)
+let saveToCacheFile = if (
+  Env.Benchmark.saveDataStrategy->Env.Benchmark.SaveDataStrategy.shouldSaveJsonFile
+) {
+  //Save to cache file only happens if the strategy is set to json-file
+  data => {
+    let write = () => {
+      let json = data->S.serializeToJsonStringOrRaiseWith(Data.schema)
+      NodeJsLocal.Fs.Promises.writeFile(~filepath=cacheFilePath, ~content=json)
+    }
+    throttler->Throttler.schedule(write)
   }
-  throttler->Throttler.schedule(write)
+} else {
+  _ => ()
 }
 
 let readFromCacheFile = async () => {
@@ -152,7 +275,7 @@ let readFromCacheFile = async () => {
 }
 
 let addSummaryData = (~group, ~label, ~value, ~decimalPlaces=2) => {
-  data->Data.addSummaryData(~group, ~label, ~value, ~decimalPlaces)
+  let _ = data->Data.addSummaryData(~group, ~label, ~value, ~decimalPlaces)
   data->saveToCacheFile
 }
 
@@ -222,16 +345,8 @@ let addEventProcessing = (
 
 module Summary = {
   open Belt
-  type t = {
-    n: int,
-    mean: float,
-    @as("std-dev") stdDev: float,
-    min: float,
-    max: float,
-    sum: float,
-  }
 
-  type summaryTable = dict<t>
+  type summaryTable = dict<Stats.t>
 
   external logSummaryTable: summaryTable => unit = "console.table"
   external logArrTable: array<'a> => unit = "console.table"
@@ -239,33 +354,6 @@ module Summary = {
   external logDictTable: dict<'a> => unit = "console.table"
 
   external arrayIntToFloat: array<int> => array<float> = "%identity"
-
-  let round = (float, ~precision=2) => {
-    let factor = Js.Math.pow_float(~base=10.0, ~exp=precision->Int.toFloat)
-    Js.Math.round(float *. factor) /. factor
-  }
-
-  let makeFromDataSet = (dataSet: SummaryData.DataSet.t) => {
-    let n = dataSet.count
-    let countBigDecimal = n->BigDecimal.fromInt
-    let mean = dataSet.sum->BigDecimal.div(countBigDecimal)
-    let variance =
-      dataSet.sumOfSquares
-      ->BigDecimal.div(countBigDecimal)
-      ->BigDecimal.minus(mean->BigDecimal.times(mean))
-    let stdDev = BigDecimal.sqrt(variance)
-    let roundBigDecimal = bd =>
-      bd->BigDecimal.decimalPlaces(dataSet.decimalPlaces)->BigDecimal.toNumber
-    let roundFloat = float => float->round(~precision=dataSet.decimalPlaces)
-    {
-      n,
-      mean: mean->roundBigDecimal,
-      stdDev: stdDev->roundBigDecimal,
-      min: dataSet.min->roundFloat,
-      max: dataSet.max->roundFloat,
-      sum: dataSet.sum->roundBigDecimal,
-    }
-  }
 
   let printSummary = async () => {
     let data = await readFromCacheFile()
@@ -328,7 +416,7 @@ module Summary = {
         Js.log(groupName)
         group
         ->Js.Dict.entries
-        ->Array.map(((label, values)) => (label, values->makeFromDataSet))
+        ->Array.map(((label, values)) => (label, values->Stats.makeFromDataSet))
         ->Js.Dict.fromArray
         ->logDictTable
       })

@@ -430,7 +430,7 @@ let createBatch = (self: t, ~maxBatchSize: int, ~onlyBelowReorgThreshold: bool) 
       "time taken (ms)": timeElapsed,
     })
 
-    if Env.saveBenchmarkData {
+    if Env.Benchmark.shouldSaveData {
       let group = "Other"
       Benchmark.addSummaryData(
         ~group,

@@ -35,7 +35,51 @@ Default is 0 so that the indexer can handle retries internally
 */
 let hyperSyncClientMaxRetries =
   envSafe->EnvSafe.get("ENVIO_HYPERSYNC_CLIENT_MAX_RETRIES", S.int, ~fallback=0)
-let saveBenchmarkData = envSafe->EnvSafe.get("ENVIO_SAVE_BENCHMARK_DATA", S.bool, ~fallback=false)
+
+module Benchmark = {
+  module SaveDataStrategy: {
+    type t
+    let schema: S.t<t>
+    let default: t
+    let shouldSaveJsonFile: t => bool
+    let shouldSavePrometheus: t => bool
+    let shouldSaveData: t => bool
+  } = {
+    @unboxed
+    type t = Bool(bool) | @as("json-file") JsonFile | @as("prometheus") Prometheus
+
+    let schema = S.enum([Bool(true), Bool(false), JsonFile, Prometheus])
+    let default = Bool(false)
+
+    let shouldSaveJsonFile = self =>
+      switch self {
+      | JsonFile | Bool(true) => true
+      | _ => false
+      }
+
+    let shouldSavePrometheus = self =>
+      switch self {
+      | Prometheus => true
+      | JsonFile | Bool(_) => false
+      }
+
+    let shouldSaveData = self =>
+      switch self {
+      | Bool(false) => false
+      | _ => true
+      }
+  }
+
+  let saveDataStrategy =
+    envSafe->EnvSafe.get(
+      "ENVIO_SAVE_BENCHMARK_DATA",
+      SaveDataStrategy.schema,
+      ~fallback=SaveDataStrategy.default,
+    )
+
+  let shouldSaveData = saveDataStrategy->SaveDataStrategy.shouldSaveData
+}
+
 let maxPartitionConcurrency =
   envSafe->EnvSafe.get("ENVIO_MAX_PARTITION_CONCURRENCY", S.int, ~fallback=10)
 
@@ -118,6 +162,20 @@ module ThrottleWrites = {
       "ENVIO_THROTTLE_PRUNE_STALE_DATA_INTERVAL_MILLIS",
       S.int,
       ~devFallback=10_000,
+    )
+
+  let liveMetricsBenchmarkIntervalMillis =
+    envSafe->EnvSafe.get(
+      "ENVIO_THROTTLE_LIVE_METRICS_BENCHMARK_INTERVAL_MILLIS",
+      S.int,
+      ~devFallback=1_000,
+    )
+
+  let jsonFileBenchmarkIntervalMillis =
+    envSafe->EnvSafe.get(
+      "ENVIO_THROTTLE_JSON_FILE_BENCHMARK_INTERVAL_MILLIS",
+      S.int,
+      ~devFallback=500,
     )
 }
 
