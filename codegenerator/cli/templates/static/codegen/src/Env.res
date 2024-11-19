@@ -37,7 +37,34 @@ let hyperSyncClientMaxRetries =
   envSafe->EnvSafe.get("ENVIO_HYPERSYNC_CLIENT_MAX_RETRIES", S.int, ~fallback=0)
 
 module Benchmark = {
+  module SaveDataStrategy: {
+    type t
+    let schema: S.t<t>
+    let default: t
+    let shouldSaveJsonFile: t => bool
+    let shouldSavePrometheus: t => bool
+  } = {
+    type t = | @as("json-file") JsonFile | @as("prometheus") Prometheus
+    let schema = S.enum([JsonFile, Prometheus])
+    let default = JsonFile
+    let shouldSaveJsonFile = self =>
+      switch self {
+      | JsonFile => true
+      | Prometheus => false
+      }
+    let shouldSavePrometheus = self =>
+      switch self {
+      | JsonFile => false
+      | Prometheus => true
+      }
+  }
   let shouldSaveData = envSafe->EnvSafe.get("ENVIO_SAVE_BENCHMARK_DATA", S.bool, ~fallback=false)
+  let saveDataStrategy =
+    envSafe->EnvSafe.get(
+      "ENVIO_SAVE_BENCHMARK_DATA_STRATEGY",
+      SaveDataStrategy.schema,
+      ~fallback=SaveDataStrategy.default,
+    )
 }
 
 let maxPartitionConcurrency =
@@ -122,6 +149,20 @@ module ThrottleWrites = {
       "ENVIO_THROTTLE_PRUNE_STALE_DATA_INTERVAL_MILLIS",
       S.int,
       ~devFallback=10_000,
+    )
+
+  let liveMetricsBenchmarkIntervalMillis =
+    envSafe->EnvSafe.get(
+      "ENVIO_THROTTLE_LIVE_METRICS_BENCHMARK_INTERVAL_MILLIS",
+      S.int,
+      ~devFallback=1_000,
+    )
+
+  let jsonFileBenchmarkIntervalMillis =
+    envSafe->EnvSafe.get(
+      "ENVIO_THROTTLE_JSON_FILE_BENCHMARK_INTERVAL_MILLIS",
+      S.int,
+      ~devFallback=500,
     )
 }
 

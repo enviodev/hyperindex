@@ -40,6 +40,47 @@ let sourceChainHeight = PromClient.Gauge.makeGauge({
   "labelNames": ["chainId"],
 })
 
+let benchmarkSummaryData = PromClient.Gauge.makeGauge({
+  "name": "benchmark_summary_data",
+  "help": "All data points collected during indexer benchmark",
+  "labelNames": ["group", "label", "stat"],
+})
+
+let setBenchmarkSummaryData = (
+  ~group: string,
+  ~label: string,
+  ~n: int,
+  ~mean: float,
+  ~stdDev: float,
+  ~min: float,
+  ~max: float,
+  ~sum: float,
+) => {
+  benchmarkSummaryData
+  ->PromClient.Gauge.labels({"group": group, "label": label, "stat": "n"})
+  ->PromClient.Gauge.set(n)
+
+  benchmarkSummaryData
+  ->PromClient.Gauge.labels({"group": group, "label": label, "stat": "mean"})
+  ->PromClient.Gauge.setFloat(mean)
+
+  benchmarkSummaryData
+  ->PromClient.Gauge.labels({"group": group, "label": label, "stat": "stdDev"})
+  ->PromClient.Gauge.setFloat(stdDev)
+
+  benchmarkSummaryData
+  ->PromClient.Gauge.labels({"group": group, "label": label, "stat": "min"})
+  ->PromClient.Gauge.setFloat(min)
+
+  benchmarkSummaryData
+  ->PromClient.Gauge.labels({"group": group, "label": label, "stat": "max"})
+  ->PromClient.Gauge.setFloat(max)
+
+  benchmarkSummaryData
+  ->PromClient.Gauge.labels({"group": group, "label": label, "stat": "sum"})
+  ->PromClient.Gauge.setFloat(sum)
+}
+
 // TODO: implement this metric that updates in batches, currently unused
 let processedUntilHeight = PromClient.Gauge.makeGauge({
   "name": "chain_block_height_processed",
@@ -80,10 +121,8 @@ let setSourceChainHeight = (~blockNumber, ~chain) => {
 }
 
 let setAllChainsSyncedToHead = () => {
-  allChainsSyncedToHead
-  ->PromClient.Gauge.set(1)
+  allChainsSyncedToHead->PromClient.Gauge.set(1)
 }
-
 
 let setProcessedUntilHeight = (~blockNumber, ~chain) => {
   processedUntilHeight
