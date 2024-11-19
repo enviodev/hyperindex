@@ -43,28 +43,41 @@ module Benchmark = {
     let default: t
     let shouldSaveJsonFile: t => bool
     let shouldSavePrometheus: t => bool
+    let shouldSaveData: t => bool
   } = {
-    type t = | @as("json-file") JsonFile | @as("prometheus") Prometheus
-    let schema = S.enum([JsonFile, Prometheus])
-    let default = JsonFile
+    @unboxed
+    type t = Bool(bool) | @as("json-file") JsonFile | @as("prometheus") Prometheus
+
+    let schema = S.enum([Bool(true), Bool(false), JsonFile, Prometheus])
+    let default = Bool(false)
+
     let shouldSaveJsonFile = self =>
       switch self {
-      | JsonFile => true
-      | Prometheus => false
+      | JsonFile | Bool(true) => true
+      | _ => false
       }
+
     let shouldSavePrometheus = self =>
       switch self {
-      | JsonFile => false
       | Prometheus => true
+      | JsonFile | Bool(_) => false
+      }
+
+    let shouldSaveData = self =>
+      switch self {
+      | Bool(false) => false
+      | _ => true
       }
   }
-  let shouldSaveData = envSafe->EnvSafe.get("ENVIO_SAVE_BENCHMARK_DATA", S.bool, ~fallback=false)
+
   let saveDataStrategy =
     envSafe->EnvSafe.get(
-      "ENVIO_SAVE_BENCHMARK_DATA_STRATEGY",
+      "ENVIO_SAVE_BENCHMARK_DATA",
       SaveDataStrategy.schema,
       ~fallback=SaveDataStrategy.default,
     )
+
+  let shouldSaveData = saveDataStrategy->SaveDataStrategy.shouldSaveData
 }
 
 let maxPartitionConcurrency =
