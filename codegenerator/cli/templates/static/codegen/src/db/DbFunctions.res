@@ -375,6 +375,7 @@ module EntityHistory = {
     sql,
     ~isUnorderedMultichainMode,
     ~eventIdentifier: Types.eventIdentifier,
+    ~allEntities=Entities.allEntities,
   ): promise<unit> => {
     let {chainId, blockNumber, blockTimestamp} = eventIdentifier
     let args: Args.t = isUnorderedMultichainMode
@@ -385,7 +386,7 @@ module EntityHistory = {
           safeBlockTimestamp: blockTimestamp,
         })
 
-    Entities.allEntities
+    allEntities
     ->Belt.Array.map(async entityMod => {
       let module(Entity) = entityMod
       try await deleteRolledBackEntityHistory(
@@ -455,11 +456,15 @@ module EntityHistory = {
     }
   }
 
-  let getFirstChangeEventPerChain = async (sql, args: Args.t) => {
+  let getFirstChangeEventPerChain = async (
+    sql,
+    args: Args.t,
+    ~allEntities=Entities.allEntities,
+  ) => {
     let firstChangeEventPerChain = FirstChangeEventPerChain.make()
 
     let _ =
-      await Entities.allEntities
+      await allEntities
       ->Belt.Array.map(async entityMod => {
         let module(Entity) = entityMod
         let res = try await getFirstChangeEntityHistoryPerChain(

@@ -3,46 +3,48 @@ open RescriptMocha
 //unsafe polymorphic toString binding for any type
 @send external toStringUnsafe: 'a => string = "toString"
 
-type testEntity = {
-  id: string,
-  fieldA: int,
-  fieldB: option<string>,
+module TestEntity = {
+  type t = {
+    id: string,
+    fieldA: int,
+    fieldB: option<string>,
+  }
+
+  let name = "TestEntity"->(Utils.magic: string => Enums.EntityType.t)
+  let schema = S.schema(s => {
+    id: s.matches(S.string),
+    fieldA: s.matches(S.int),
+    fieldB: s.matches(S.option(S.string)),
+  })
+
+  let rowsSchema = S.array(schema)
+  let table = Table.mkTable(
+    "TestEntity",
+    ~fields=[
+      Table.mkField("id", Text, ~isPrimaryKey=true),
+      Table.mkField("fieldA", Integer),
+      Table.mkField("fieldB", Text, ~isNullable=true),
+    ],
+  )
+
+  let entityHistory = table->EntityHistory.fromTable(~schema)
 }
 
-let testEntitySchema: S.t<testEntity> = S.schema(s => {
-  id: s.matches(S.string),
-  fieldA: s.matches(S.int),
-  fieldB: s.matches(S.option(S.string)),
-})
-
-let testEntityRowsSchema = S.array(testEntitySchema)
-
-type testEntityHistory = EntityHistory.historyRow<testEntity>
-let testEntityHistorySchema = EntityHistory.makeHistoryRowSchema(testEntitySchema)
-
-let mockEntityTable = Table.mkTable(
-  "TestEntity",
-  ~fields=[
-    Table.mkField("id", Text, ~isPrimaryKey=true),
-    Table.mkField("fieldA", Integer),
-    Table.mkField("fieldB", Text, ~isNullable=true),
-  ],
-)
-
-let mockEntityHistory = mockEntityTable->EntityHistory.fromTable(~schema=testEntitySchema)
+type testEntityHistory = EntityHistory.historyRow<TestEntity.t>
+let testEntityHistorySchema = EntityHistory.makeHistoryRowSchema(TestEntity.schema)
 
 let batchSetMockEntity = Table.PostgresInterop.makeBatchSetFn(
-  ~table=mockEntityTable,
-  ~rowsSchema=testEntityRowsSchema,
+  ~table=TestEntity.table,
+  ~rowsSchema=TestEntity.rowsSchema,
 )
 
 let getAllMockEntity = sql =>
   sql
-  ->Postgres.unsafe(`SELECT * FROM "public"."${mockEntityTable.tableName}"`)
-  ->Promise.thenResolve(json => json->S.parseOrRaiseWith(testEntityRowsSchema))
+  ->Postgres.unsafe(`SELECT * FROM "public"."${TestEntity.table.tableName}"`)
+  ->Promise.thenResolve(json => json->S.parseOrRaiseWith(TestEntity.rowsSchema))
 
 let getAllMockEntityHistory = sql =>
-  sql->Postgres.unsafe(`SELECT * FROM "public"."${mockEntityHistory.table.tableName}"`)
+  sql->Postgres.unsafe(`SELECT * FROM "public"."${TestEntity.entityHistory.table.tableName}"`)
 
 describe("Entity history serde", () => {
   it("serializes and deserializes correctly", () => {
@@ -186,11 +188,11 @@ describe("Entity History Codegen", () => {
       $$ LANGUAGE plpgsql;
       `
 
-    Assert.equal(expected, mockEntityHistory.createInsertFnQuery)
+    Assert.equal(expected, TestEntity.entityHistory.createInsertFnQuery)
   })
 
   it("Creates a js insert function", () => {
-    let insertFnString = mockEntityHistory.insertFn->toStringUnsafe
+    let insertFnString = TestEntity.entityHistory.insertFn->toStringUnsafe
 
     let expected = `(sql, rowArgs, shouldCopyCurrentEntity) =>
       sql\`select "insert_TestEntity_history"(ROW(\${rowArgs["entity_history_block_timestamp"]}, \${rowArgs["entity_history_chain_id"]}, \${rowArgs["entity_history_block_number"]}, \${rowArgs["entity_history_log_index"]}, \${rowArgs["previous_entity_history_block_timestamp"]}, \${rowArgs["previous_entity_history_chain_id"]}, \${rowArgs["previous_entity_history_block_number"]}, \${rowArgs["previous_entity_history_log_index"]}, \${rowArgs["id"]}, \${rowArgs["fieldA"]}, \${rowArgs["fieldB"]}, \${rowArgs["action"]}, NULL),  --NULL argument for SERIAL field
@@ -206,22 +208,25 @@ describe("Entity History Codegen", () => {
         DbFunctions.sql,
         Enums.EntityHistoryRowAction.enum,
       )
-      let _resA = await Migrations.creatTableIfNotExists(DbFunctions.sql, mockEntityTable)
-      let _resB = await Migrations.creatTableIfNotExists(DbFunctions.sql, mockEntityHistory.table)
+      let _resA = await Migrations.creatTableIfNotExists(DbFunctions.sql, TestEntity.table)
+      let _resB = await Migrations.creatTableIfNotExists(
+        DbFunctions.sql,
+        TestEntity.entityHistory.table,
+      )
     } catch {
     | exn =>
       Js.log2("Setup exn", exn)
       Assert.fail("Failed setting up tables")
     }
 
-    switch await DbFunctions.sql->Postgres.unsafe(mockEntityHistory.createInsertFnQuery) {
+    switch await DbFunctions.sql->Postgres.unsafe(TestEntity.entityHistory.createInsertFnQuery) {
     | exception exn =>
       Js.log2("createInsertFnQuery exn", exn)
       Assert.fail("Failed creating insert function")
     | _ => ()
     }
 
-    let mockEntity = {id: "1", fieldA: 1, fieldB: Some("test")}
+    let mockEntity: TestEntity.t = {id: "1", fieldA: 1, fieldB: Some("test")}
     switch await DbFunctions.sql->batchSetMockEntity([mockEntity]) {
     | exception exn =>
       Js.log2("batchSetMockEntity exn", exn)
@@ -242,7 +247,7 @@ describe("Entity History Codegen", () => {
     let blockTimestamp = blockNumber * 15
     let logIndex = 1
 
-    let entityHistoryItem: EntityHistory.historyRow<testEntity> = {
+    let entityHistoryItem: testEntityHistory = {
       current: {
         chain_id: chainId,
         block_timestamp: blockTimestamp,
@@ -257,7 +262,7 @@ describe("Entity History Codegen", () => {
       }),
     }
 
-    switch await mockEntityHistory->EntityHistory.insertRow(
+    switch await TestEntity.entityHistory->EntityHistory.insertRow(
       ~sql=DbFunctions.sql,
       ~historyRow=entityHistoryItem,
       ~shouldCopyCurrentEntity=true,
@@ -304,7 +309,7 @@ describe("Entity History Codegen", () => {
     let currentHistoryItems = await DbFunctions.sql->getAllMockEntityHistory
     Assert.deepEqual(currentHistoryItems, expectedResult)
 
-    switch await mockEntityHistory->EntityHistory.insertRow(
+    switch await TestEntity.entityHistory->EntityHistory.insertRow(
       ~sql=DbFunctions.sql,
       ~historyRow={
         entityData: Set({id: "2", fieldA: 1, fieldB: None}),
@@ -323,7 +328,7 @@ describe("Entity History Codegen", () => {
       Assert.fail("Failed to insert mock entity history")
     | _ => ()
     }
-    switch await mockEntityHistory->EntityHistory.insertRow(
+    switch await TestEntity.entityHistory->EntityHistory.insertRow(
       ~sql=DbFunctions.sql,
       ~historyRow={
         entityData: Set({id: "2", fieldA: 3, fieldB: None}),
@@ -343,7 +348,7 @@ describe("Entity History Codegen", () => {
     | _ => ()
     }
 
-    await mockEntityHistory->EntityHistory.insertRow(
+    await TestEntity.entityHistory->EntityHistory.insertRow(
       ~sql=DbFunctions.sql,
       ~historyRow={
         entityData: Set({id: "3", fieldA: 4, fieldB: None}),
@@ -356,6 +361,391 @@ describe("Entity History Codegen", () => {
         },
       },
       ~shouldCopyCurrentEntity=true,
+    )
+  })
+})
+
+module Mocks = {
+  module Entity = {
+    open TestEntity
+    let entityId1 = "1"
+    let mockEntity1 = {id: entityId1, fieldA: 1, fieldB: Some("test")}
+    let mockEntity2 = {id: entityId1, fieldA: 2, fieldB: Some("test2")}
+    let mockEntity3 = {id: entityId1, fieldA: 3, fieldB: Some("test3")}
+    let mockEntity4 = {id: entityId1, fieldA: 4, fieldB: Some("test4")}
+
+    let entityId2 = "2"
+    let mockEntity5 = {id: entityId2, fieldA: 5, fieldB: None}
+    let mockEntity6 = {id: entityId2, fieldA: 6, fieldB: None}
+  }
+
+  module Chain1 = {
+    let chain_id = 1
+
+    let event1: EntityHistory.historyFields = {
+      chain_id,
+      block_timestamp: 1,
+      block_number: 1,
+      log_index: 0,
+    }
+
+    let event2: EntityHistory.historyFields = {
+      chain_id,
+      block_timestamp: 5,
+      block_number: 2,
+      log_index: 1,
+    }
+
+    let event3: EntityHistory.historyFields = {
+      chain_id,
+      block_timestamp: 15,
+      block_number: 4,
+      log_index: 2,
+    }
+
+    let historyRow1: testEntityHistory = {
+      current: event1,
+      previous: None,
+      entityData: Set(Entity.mockEntity1),
+    }
+
+    let historyRow2: testEntityHistory = {
+      current: event2,
+      previous: Some(event1),
+      entityData: Set(Entity.mockEntity2),
+    }
+
+    let historyRow3: testEntityHistory = {
+      current: event3,
+      previous: Some(event2),
+      entityData: Set(Entity.mockEntity3),
+    }
+
+    let historyRows = [historyRow1, historyRow2, historyRow3]
+
+    //Shows a case where no event exists on this block
+    let rollbackEventIdentifier: Types.eventIdentifier = {
+      blockTimestamp: 10,
+      chainId: chain_id,
+      blockNumber: 3,
+      logIndex: 0,
+    }
+
+    let orderedMultichainArg = DbFunctions.EntityHistory.Args.OrderedMultichain({
+      safeBlockTimestamp: rollbackEventIdentifier.blockTimestamp,
+      reorgChainId: chain_id,
+      safeBlockNumber: rollbackEventIdentifier.blockNumber,
+    })
+
+    let unorderedMultichainArg = DbFunctions.EntityHistory.Args.UnorderedMultichain({
+      reorgChainId: chain_id,
+      safeBlockNumber: rollbackEventIdentifier.blockNumber,
+    })
+  }
+
+  module Chain2 = {
+    let chain_id = 2
+
+    let event1: EntityHistory.historyFields = {
+      chain_id,
+      block_timestamp: 3,
+      block_number: 1,
+      log_index: 0,
+    }
+
+    let event2: EntityHistory.historyFields = {
+      chain_id,
+      block_timestamp: 8,
+      block_number: 2,
+      log_index: 1,
+    }
+
+    let event3: EntityHistory.historyFields = {
+      chain_id,
+      block_timestamp: 13,
+      block_number: 3,
+      log_index: 2,
+    }
+
+    let historyRow1: testEntityHistory = {
+      current: event1,
+      previous: None,
+      entityData: Set(Entity.mockEntity5),
+    }
+
+    let historyRow2: testEntityHistory = {
+      current: event2,
+      previous: Some(event1),
+      entityData: Delete({id: Entity.entityId2}),
+    }
+    let historyRow3: testEntityHistory = {
+      current: event3,
+      previous: Some(event2),
+      entityData: Set(Entity.mockEntity6),
+    }
+
+    let historyRows = [historyRow1, historyRow2, historyRow3]
+  }
+
+  let historyRows = Utils.Array.mergeSorted(
+    (a, b) => a.EntityHistory.current.block_timestamp < b.current.block_timestamp,
+    Chain1.historyRows,
+    Chain2.historyRows,
+  )
+}
+
+describe("Entity history rollbacks", () => {
+  Async.beforeEach(async () => {
+    try {
+      let _ = DbHelpers.resetPostgresClient()
+      let _ = await Migrations.runDownMigrations(~shouldExit=false)
+      let _ = await Migrations.createEnumIfNotExists(
+        DbFunctions.sql,
+        Enums.EntityHistoryRowAction.enum,
+      )
+      let _ = await Migrations.creatTableIfNotExists(DbFunctions.sql, TestEntity.table)
+      let _ = await Migrations.creatTableIfNotExists(
+        DbFunctions.sql,
+        TestEntity.entityHistory.table,
+      )
+
+      let _ = await DbFunctions.sql->Postgres.unsafe(TestEntity.entityHistory.createInsertFnQuery)
+
+      try await DbFunctions.sql->Postgres.beginSql(
+        sql => [
+          TestEntity.entityHistory->EntityHistory.batchInsertRows(
+            ~sql,
+            ~rows=Mocks.historyRows,
+            ~shouldCopyCurrentEntity=true,
+          ),
+        ],
+      ) catch {
+      | exn =>
+        Js.log2("insert mock rows exn", exn)
+        Assert.fail("Failed to insert mock rows")
+      }
+
+      let historyItems = {
+        let items = await DbFunctions.sql->getAllMockEntityHistory
+        items->S.parseOrRaiseWith(TestEntity.entityHistory.schemaRows)
+      }
+      Assert.equal(historyItems->Js.Array2.length, 6, ~message="Should have 6 history items")
+      Assert.ok(
+        !(historyItems->Belt.Array.some(item => item.current.chain_id == 0)),
+        ~message="No defaulted/copied values should exist in history",
+      )
+    } catch {
+    | exn =>
+      Js.log2(" Entity history setup exn", exn)
+      Assert.fail("Failed setting up tables")
+    }
+  })
+
+  Async.it("Returns expected diff for ordered multichain mode", async () => {
+    let orderdMultichainRollbackDiff = try await DbFunctions.sql->DbFunctions.EntityHistory.getRollbackDiff(
+      Mocks.Chain1.orderedMultichainArg,
+      ~entityMod=module(TestEntity),
+    ) catch {
+    | exn =>
+      Js.log2("getRollbackDiff exn", exn)
+      Assert.fail("Failed to get rollback diff")
+    }
+
+    switch orderdMultichainRollbackDiff {
+    | [
+        {current: currentA, entityData: Set(entitySetA)},
+        {current: currentB, entityData: Delete({id: entityDeleteB})},
+      ] =>
+      Assert.deepEqual(
+        currentA,
+        Mocks.Chain1.event2,
+        ~message="First history item should haved diffed to event2",
+      )
+      Assert.deepEqual(
+        entitySetA,
+        Mocks.Entity.mockEntity2,
+        ~message="First history item should haved diffed to mockEntity2",
+      )
+      Assert.deepEqual(
+        currentB,
+        Mocks.Chain2.event2,
+        ~message="Second history item should haved diffed to event3",
+      )
+      Assert.deepEqual(
+        entityDeleteB,
+        Mocks.Entity.entityId2,
+        ~message="Second history item should haved diffed a delete of entityId2",
+      )
+    | _ => Assert.fail("Should have a set and delete history item in diff")
+    }
+  })
+
+  Async.it("Returns expected diff for unordered multichain mode", async () => {
+    let unorderedMultichainRollbackDiff = try await DbFunctions.sql->DbFunctions.EntityHistory.getRollbackDiff(
+      Mocks.Chain1.unorderedMultichainArg,
+      ~entityMod=module(TestEntity),
+    ) catch {
+    | exn =>
+      Js.log2("getRollbackDiff exn", exn)
+      Assert.fail("Failed to get rollback diff")
+    }
+
+    switch unorderedMultichainRollbackDiff {
+    | [{current: currentA, entityData: Set(entitySetA)}] =>
+      Assert.deepEqual(
+        currentA,
+        Mocks.Chain1.event2,
+        ~message="First history item should haved diffed to event2",
+      )
+      Assert.deepEqual(
+        entitySetA,
+        Mocks.Entity.mockEntity2,
+        ~message="First history item should haved diffed to mockEntity2",
+      )
+    | _ => Assert.fail("Should have only chain 1 item in diff")
+    }
+  })
+
+  Async.it("Gets first event change per chain ordered mode", async () => {
+    let firstChangeEventPerChain = try await DbFunctions.sql->DbFunctions.EntityHistory.getFirstChangeEventPerChain(
+      Mocks.Chain1.orderedMultichainArg,
+      ~allEntities=[module(TestEntity)->Entities.entityModToInternal],
+    ) catch {
+    | exn =>
+      Js.log2("getFirstChangeEventPerChain exn", exn)
+      Assert.fail("Failed to get rollback diff")
+    }
+
+    let expected = DbFunctions.EntityHistory.FirstChangeEventPerChain.make()
+    expected->DbFunctions.EntityHistory.FirstChangeEventPerChain.setIfEarlier(
+      ~chainId=Mocks.Chain1.chain_id,
+      ~event={
+        blockNumber: Mocks.Chain1.event3.block_number,
+        logIndex: Mocks.Chain1.event3.log_index,
+      },
+    )
+    expected->DbFunctions.EntityHistory.FirstChangeEventPerChain.setIfEarlier(
+      ~chainId=Mocks.Chain2.chain_id,
+      ~event={
+        blockNumber: Mocks.Chain2.event3.block_number,
+        logIndex: Mocks.Chain2.event3.log_index,
+      },
+    )
+
+    Assert.deepEqual(
+      firstChangeEventPerChain,
+      expected,
+      ~message="Should have chain 1 and 2 first change events",
+    )
+  })
+
+  Async.it("Gets first event change per chain unordered mode", async () => {
+    let firstChangeEventPerChain = try await DbFunctions.sql->DbFunctions.EntityHistory.getFirstChangeEventPerChain(
+      Mocks.Chain1.unorderedMultichainArg,
+      ~allEntities=[module(TestEntity)->Entities.entityModToInternal],
+    ) catch {
+    | exn =>
+      Js.log2("getFirstChangeEventPerChain exn", exn)
+      Assert.fail("Failed to get rollback diff")
+    }
+
+    let expected = DbFunctions.EntityHistory.FirstChangeEventPerChain.make()
+    expected->DbFunctions.EntityHistory.FirstChangeEventPerChain.setIfEarlier(
+      ~chainId=Mocks.Chain1.chain_id,
+      ~event={
+        blockNumber: Mocks.Chain1.event3.block_number,
+        logIndex: Mocks.Chain1.event3.log_index,
+      },
+    )
+
+    Assert.deepEqual(
+      firstChangeEventPerChain,
+      expected,
+      ~message="Should only have chain 1 first change event",
+    )
+  })
+
+  Async.it("Deletes current history after rollback ordered", async () => {
+    let _ =
+      await DbFunctions.sql->DbFunctions.EntityHistory.deleteAllEntityHistoryAfterEventIdentifier(
+        ~isUnorderedMultichainMode=false,
+        ~eventIdentifier=Mocks.Chain1.rollbackEventIdentifier,
+        ~allEntities=[module(TestEntity)->Entities.entityModToInternal],
+      )
+
+    let currentHistoryItems = await DbFunctions.sql->getAllMockEntityHistory
+    let parsedHistoryItems =
+      currentHistoryItems->S.parseOrRaiseWith(TestEntity.entityHistory.schemaRows)
+
+    let expectedHistoryItems = Mocks.historyRows->Belt.Array.slice(~offset=0, ~len=4)
+
+    Assert.deepEqual(
+      parsedHistoryItems,
+      expectedHistoryItems,
+      ~message="Should have deleted last 2 items in history",
+    )
+  })
+
+  Async.it("Deletes current history after rollback unordered", async () => {
+    let _ =
+      await DbFunctions.sql->DbFunctions.EntityHistory.deleteAllEntityHistoryAfterEventIdentifier(
+        ~isUnorderedMultichainMode=true,
+        ~eventIdentifier=Mocks.Chain1.rollbackEventIdentifier,
+        ~allEntities=[module(TestEntity)->Entities.entityModToInternal],
+      )
+
+    let currentHistoryItems = await DbFunctions.sql->getAllMockEntityHistory
+    let parsedHistoryItems =
+      currentHistoryItems->S.parseOrRaiseWith(TestEntity.entityHistory.schemaRows)
+
+    let expectedHistoryItems = Mocks.historyRows->Belt.Array.slice(~offset=0, ~len=5)
+
+    Assert.deepEqual(
+      parsedHistoryItems,
+      expectedHistoryItems,
+      ~message="Should have deleted just the last item in history",
+    )
+  })
+
+  Async.it("Prunes history correctly with items in reorg threshold", async () => {
+    await DbFunctions.sql->DbFunctions.EntityHistory.pruneStaleEntityHistory(
+      ~entityName=TestEntity.name,
+      ~safeChainIdAndBlockNumberArray=[{chainId: 1, blockNumber: 3}, {chainId: 2, blockNumber: 2}],
+    )
+    let currentHistoryItems = await DbFunctions.sql->getAllMockEntityHistory
+
+    let parsedHistoryItems =
+      currentHistoryItems->S.parseOrRaiseWith(TestEntity.entityHistory.schemaRows)
+
+    let expectedHistoryItems = [
+      Mocks.Chain1.historyRow2,
+      Mocks.Chain1.historyRow3,
+      Mocks.Chain2.historyRow2,
+      Mocks.Chain2.historyRow3,
+    ]
+
+    let sort = arr =>
+      arr->Js.Array2.sortInPlaceWith(
+        (a, b) => a.EntityHistory.current.block_number - b.current.block_number,
+      )
+
+    Assert.deepEqual(
+      parsedHistoryItems->sort,
+      expectedHistoryItems->sort,
+      ~message="Should have deleted the unneeded first items in history",
+    )
+  })
+
+  Async.it("Prunes history correctly with no items in reorg threshold", async () => {
+    await DbFunctions.sql->DbFunctions.EntityHistory.pruneStaleEntityHistory(
+      ~entityName=TestEntity.name,
+      ~safeChainIdAndBlockNumberArray=[{chainId: 1, blockNumber: 4}, {chainId: 2, blockNumber: 3}],
+    )
+    let currentHistoryItems = await DbFunctions.sql->getAllMockEntityHistory
+
+    Assert.ok(
+      currentHistoryItems->Array.length == 0,
+      ~message="Should have deleted all items in history",
     )
   })
 })

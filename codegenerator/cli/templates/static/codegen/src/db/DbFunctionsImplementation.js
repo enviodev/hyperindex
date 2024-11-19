@@ -454,7 +454,7 @@ module.exports.pruneStaleEntityHistory = (
     FROM
       public.${sql(tableName)}
     WHERE
-      serial >= (SELECT serial FROM first_change)
+      serial >= (SELECT first_change_serial FROM first_change)
     ORDER BY
       id,
       serial ASC -- Select the row with the lowest serial per id
