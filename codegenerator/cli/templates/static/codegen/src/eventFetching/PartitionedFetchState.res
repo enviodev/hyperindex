@@ -89,7 +89,7 @@ let make = (
     }
   }
 
-  if Env.saveBenchmarkData {
+  if Env.Benchmark.shouldSaveData {
     Benchmark.addSummaryData(
       ~group="Other",
       ~label="Num partitions",
@@ -135,7 +135,7 @@ let registerDynamicContracts = (
     partitions->Array.concat([newPartition])
   }
 
-  if Env.saveBenchmarkData {
+  if Env.Benchmark.shouldSaveData {
     Benchmark.addSummaryData(
       ~group="Other",
       ~label="Num partitions",

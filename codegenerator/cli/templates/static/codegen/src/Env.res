@@ -35,7 +35,11 @@ Default is 0 so that the indexer can handle retries internally
 */
 let hyperSyncClientMaxRetries =
   envSafe->EnvSafe.get("ENVIO_HYPERSYNC_CLIENT_MAX_RETRIES", S.int, ~fallback=0)
-let saveBenchmarkData = envSafe->EnvSafe.get("ENVIO_SAVE_BENCHMARK_DATA", S.bool, ~fallback=false)
+
+module Benchmark = {
+  let shouldSaveData = envSafe->EnvSafe.get("ENVIO_SAVE_BENCHMARK_DATA", S.bool, ~fallback=false)
+}
+
 let maxPartitionConcurrency =
   envSafe->EnvSafe.get("ENVIO_MAX_PARTITION_CONCURRENCY", S.int, ~fallback=10)
 
