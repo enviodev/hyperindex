@@ -449,29 +449,58 @@ impl SystemConfig {
         })
     }
 
-    fn load_env_vars(project_root: &PathBuf) -> Result<EnvMap> {
-        let env_map = match EnvLoader::with_path(project_root.join(".env"))
-            .sequence(EnvSequence::InputThenEnv)
-            .load()
-        {
-            Ok(env_map) => env_map,
-            // It'll fail if .env is missing, so we return a map with std::env only
-            Err(dotenvy::Error::Io(_, _)) => EnvLoader::new()
-                .sequence(EnvSequence::EnvOnly)
-                .load()
-                .context("Failed loading environment variables")?,
-            err => err.context("Failed loading .env file")?,
-        };
-        Ok(env_map)
-    }
-
     fn is_valid_env_var_name(name: &str) -> bool {
         // Regex to match environment variable names: starts with letter or underscore, followed by letters, digits or underscores
         let re = Regex::new(r"^[A-Za-z_][A-Za-z0-9_]*$").unwrap();
         re.is_match(name)
     }
 
-    fn interpolate_config_variables(config_string: String, env_map: EnvMap) -> Result<String> {
+    fn make_get_env_from_process_then_dotenv(
+        project_root: &PathBuf,
+    ) -> impl FnMut(&str) -> Option<String> + '_ {
+        // Load .dotenv on demand
+        let mut maybe_dotenv: Option<EnvMap> = None;
+
+        move |name| match std::env::var(name) {
+            Ok(val) => Some(val),
+            Err(_) => {
+                let result = match &maybe_dotenv {
+                    Some(env_map) => env_map.var(name),
+                    None => {
+                        match EnvLoader::with_path(project_root.join(".env"))
+                            .sequence(EnvSequence::InputOnly)
+                            .load()
+                        {
+                            Ok(env_map) => {
+                                maybe_dotenv = Some(env_map.clone());
+                                env_map.var(name)
+                            }
+                            Err(err) => {
+                                match err {
+                                // It'll fail if .env is missing
+                                // So simply return None in the case
+                                dotenvy::Error::Io(_, _) => (),
+                                // Print a warning for other errors
+                                _ => println!("Warning: Failed loading .env file with unexpected error: {err}"),
+                            };
+                                maybe_dotenv = Some(EnvMap::new());
+                                Err(err)
+                            }
+                        }
+                    }
+                };
+                match result {
+                    Ok(val) => Some(val),
+                    Err(_) => None,
+                }
+            }
+        }
+    }
+
+    fn interpolate_config_variables(
+        config_string: String,
+        mut get_env: impl FnMut(&str) -> Option<String>,
+    ) -> Result<String> {
         let mut missing_vars = Vec::new();
         let mut invalid_vars = Vec::new();
 
@@ -485,9 +514,9 @@ impl SystemConfig {
                 invalid_vars.push(format!("\"{name}\""));
                 return "".to_string();
             }
-            match env_map.var(&name) {
-                Ok(val) => val,
-                Err(_) => {
+            match get_env(&name) {
+                Some(val) => val,
+                None => {
                     missing_vars.push(name.to_string());
                     (&caps[0]).to_string()
                 }
@@ -519,8 +548,8 @@ impl SystemConfig {
                 &project_paths.config.to_str().unwrap_or("{unknown}"),
             ))?;
 
-        let env_map = Self::load_env_vars(&project_paths.project_root)?;
-        let human_config_string = Self::interpolate_config_variables(human_config_string, env_map)?;
+        let get_env = Self::make_get_env_from_process_then_dotenv(&project_paths.project_root);
+        let human_config_string = Self::interpolate_config_variables(human_config_string, get_env)?;
 
         let config_discriminant: human_config::ConfigDiscriminant =
             serde_yaml::from_str(&human_config_string).context(
@@ -1347,7 +1376,6 @@ mod test {
         },
         project_paths::ParsedProjectPaths,
     };
-    use dotenvy::EnvMap;
     use ethers::abi::{Event as EthAbiEvent, EventParam, ParamType};
     use handlebars::Handlebars;
     use pretty_assertions::assert_eq;
@@ -1393,9 +1421,14 @@ networks:
   - id: ${ENVIO_NETWORK_ID}
     start_block: 0
 "#;
-        let env_map = EnvMap::from_iter([("ENVIO_NETWORK_ID".to_string(), "0".to_string())]);
-        let interpolated_config_string =
-            SystemConfig::interpolate_config_variables(config_string.to_string(), env_map).unwrap();
+        let interpolated_config_string = SystemConfig::interpolate_config_variables(
+            config_string.to_string(),
+            |name| match name {
+                "ENVIO_NETWORK_ID" => Some("0".to_string()),
+                _ => None,
+            },
+        )
+        .unwrap();
         assert_eq!(
             interpolated_config_string,
             r#"
@@ -1414,16 +1447,16 @@ networks:
     rpc_config:
       url: ${ENVIO_ETH_RPC_URL}?api_key=${ENVIO_ETH_RPC_KEY}
 "#;
-        let env_map = EnvMap::from_iter([
-            ("ENVIO_NETWORK_ID".to_string(), "0".to_string()),
-            (
-                "ENVIO_ETH_RPC_URL".to_string(),
-                "https://eth.com".to_string(),
-            ),
-            ("ENVIO_ETH_RPC_KEY".to_string(), "foo".to_string()),
-        ]);
-        let interpolated_config_string =
-            SystemConfig::interpolate_config_variables(config_string.to_string(), env_map).unwrap();
+        let interpolated_config_string = SystemConfig::interpolate_config_variables(
+            config_string.to_string(),
+            |name| match name {
+                "ENVIO_NETWORK_ID" => Some("0".to_string()),
+                "ENVIO_ETH_RPC_URL" => Some("https://eth.com".to_string()),
+                "ENVIO_ETH_RPC_KEY" => Some("foo".to_string()),
+                _ => None,
+            },
+        )
+        .unwrap();
         assert_eq!(
             interpolated_config_string,
             r#"
@@ -1442,9 +1475,14 @@ networks:
   - id: 0
     start_block: 0
 "#;
-        let env_map = EnvMap::from_iter([("ENVIO_NETWORK_ID".to_string(), "0".to_string())]);
-        let interpolated_config_string =
-            SystemConfig::interpolate_config_variables(config_string.to_string(), env_map).unwrap();
+        let interpolated_config_string = SystemConfig::interpolate_config_variables(
+            config_string.to_string(),
+            |name| match name {
+                "ENVIO_NETWORK_ID" => Some("0".to_string()),
+                _ => None,
+            },
+        )
+        .unwrap();
         assert_eq!(
             interpolated_config_string,
             r#"
@@ -1463,10 +1501,14 @@ networks:
     rpc_config:
       url: https://eth.com?api_key=${ENVIO_ETH_API_KEY}
 "#;
-        let env_map = EnvMap::from_iter([("ENVIO_NETWORK_ID".to_string(), "0".to_string())]);
-        let interpolated_config_string =
-            SystemConfig::interpolate_config_variables(config_string.to_string(), env_map)
-                .unwrap_err();
+        let interpolated_config_string = SystemConfig::interpolate_config_variables(
+            config_string.to_string(),
+            |name| match name {
+                "ENVIO_NETWORK_ID" => Some("0".to_string()),
+                _ => None,
+            },
+        )
+        .unwrap_err();
         assert_eq!(
             interpolated_config_string.to_string(),
             r#"Failed to interpolate variables into your config file. Environment variables are not preset: ENVIO_ETH_API_KEY"#
@@ -1481,10 +1523,14 @@ networks:
     rpc_config:
       url: ${My RPC URL}?api_key=${}
 "#;
-        let env_map = EnvMap::from_iter([("ENVIO_NETWORK_ID".to_string(), "0".to_string())]);
-        let interpolated_config_string =
-            SystemConfig::interpolate_config_variables(config_string.to_string(), env_map)
-                .unwrap_err();
+        let interpolated_config_string = SystemConfig::interpolate_config_variables(
+            config_string.to_string(),
+            |name| match name {
+                "ENVIO_NETWORK_ID" => Some("0".to_string()),
+                _ => None,
+            },
+        )
+        .unwrap_err();
         assert_eq!(
             interpolated_config_string.to_string(),
             r#"Failed to interpolate variables into your config file. Invalid environment variables are preset: "My RPC URL", """#
