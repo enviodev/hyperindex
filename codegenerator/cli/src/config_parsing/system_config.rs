@@ -26,6 +26,7 @@ use ethers::abi::{ethabi::Event as EthAbiEvent, EventExt, EventParam, HumanReada
 use itertools::Itertools;
 use regex::{Captures, Regex};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::{
     collections::{HashMap, HashSet},
     fs,
@@ -47,6 +48,80 @@ pub enum Ecosystem {
     Fuel,
 }
 
+// Holds the state of the used env vars to create a hash for persistence
+// Also, allows to get an env var with a lazy loading of .env file
+#[derive(Debug)]
+pub struct EnvState {
+    // Needed for hash, also use for memo just because we can
+    loaded_envs: HashMap<String, Option<String>>,
+    // Lazy loading of .env file
+    maybe_dotenv: Option<EnvMap>,
+    project_root: PathBuf,
+}
+
+impl EnvState {
+    pub fn new(project_root: &PathBuf) -> Self {
+        EnvState {
+            loaded_envs: HashMap::new(),
+            maybe_dotenv: None,
+            project_root: project_root.clone(),
+        }
+    }
+
+    fn var(&mut self, name: &str) -> Option<String> {
+        match self.loaded_envs.get(name) {
+            Some(val) => val.clone(),
+            None => {
+                let env = match std::env::var(name) {
+                    Ok(val) => Some(val),
+                    Err(_) => {
+                        let result = match &self.maybe_dotenv {
+                            Some(env_map) => env_map.var(name),
+                            None => {
+                                match EnvLoader::with_path(self.project_root.join(".env"))
+                                    .sequence(EnvSequence::InputOnly)
+                                    .load()
+                                {
+                                    Ok(env_map) => {
+                                        self.maybe_dotenv = Some(env_map.clone());
+                                        env_map.var(name)
+                                    }
+                                    Err(err) => {
+                                        match err {
+                                          dotenvy::Error::Io(_, _) => (),
+                                          _ => println!("Warning: Failed loading .env file with unexpected error: {err}"),
+                                      };
+                                        self.maybe_dotenv = Some(EnvMap::new());
+                                        Err(err)
+                                    }
+                                }
+                            }
+                        };
+                        match result {
+                            Ok(val) => Some(val),
+                            Err(_) => None,
+                        }
+                    }
+                };
+                self.loaded_envs.insert(name.to_string(), env.clone());
+                env
+            }
+        }
+    }
+
+    pub fn get_hash(&self) -> String {
+        // Skip the Sha256 logic when no environments are loaded
+        if self.loaded_envs.is_empty() {
+            return "".to_string();
+        } else {
+            let mut hasher = Sha256::new();
+            hasher.update(format!("{:?}", self.loaded_envs));
+            let hash = hasher.finalize().to_vec();
+            format!("{:?}", hash)
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct SystemConfig {
     pub name: String,
@@ -61,6 +136,7 @@ pub struct SystemConfig {
     pub schema: Schema,
     pub field_selection: FieldSelection,
     pub enable_raw_events: bool,
+    pub env_state: EnvState,
 }
 
 //Getter methods for system config
@@ -170,6 +246,7 @@ impl SystemConfig {
     pub fn from_evm_config(
         evm_config: EvmConfig,
         schema: Schema,
+        env_state: EnvState,
         project_paths: &ParsedProjectPaths,
     ) -> Result<Self> {
         // TODO: Add similar validation for Fuel
@@ -311,12 +388,14 @@ impl SystemConfig {
             schema,
             field_selection,
             enable_raw_events: evm_config.raw_events.unwrap_or(false),
+            env_state,
         })
     }
 
     pub fn from_fuel_config(
         fuel_config: FuelConfig,
         schema: Schema,
+        env_state: EnvState,
         project_paths: &ParsedProjectPaths,
     ) -> Result<Self> {
         let mut networks: NetworkMap = HashMap::new();
@@ -446,6 +525,7 @@ impl SystemConfig {
             schema,
             field_selection: FieldSelection::fuel(),
             enable_raw_events: fuel_config.raw_events.unwrap_or(false),
+            env_state,
         })
     }
 
@@ -453,48 +533,6 @@ impl SystemConfig {
         // Regex to match environment variable names: starts with letter or underscore, followed by letters, digits or underscores
         let re = Regex::new(r"^[A-Za-z_][A-Za-z0-9_]*$").unwrap();
         re.is_match(name)
-    }
-
-    fn make_get_env_from_process_then_dotenv(
-        project_root: &PathBuf,
-    ) -> impl FnMut(&str) -> Option<String> + '_ {
-        // Load .dotenv on demand
-        let mut maybe_dotenv: Option<EnvMap> = None;
-
-        move |name| match std::env::var(name) {
-            Ok(val) => Some(val),
-            Err(_) => {
-                let result = match &maybe_dotenv {
-                    Some(env_map) => env_map.var(name),
-                    None => {
-                        match EnvLoader::with_path(project_root.join(".env"))
-                            .sequence(EnvSequence::InputOnly)
-                            .load()
-                        {
-                            Ok(env_map) => {
-                                maybe_dotenv = Some(env_map.clone());
-                                env_map.var(name)
-                            }
-                            Err(err) => {
-                                match err {
-                                // It'll fail if .env is missing
-                                // So simply return None in the case
-                                dotenvy::Error::Io(_, _) => (),
-                                // Print a warning for other errors
-                                _ => println!("Warning: Failed loading .env file with unexpected error: {err}"),
-                            };
-                                maybe_dotenv = Some(EnvMap::new());
-                                Err(err)
-                            }
-                        }
-                    }
-                };
-                match result {
-                    Ok(val) => Some(val),
-                    Err(_) => None,
-                }
-            }
-        }
     }
 
     fn interpolate_config_variables(
@@ -548,8 +586,10 @@ impl SystemConfig {
                 &project_paths.config.to_str().unwrap_or("{unknown}"),
             ))?;
 
-        let get_env = Self::make_get_env_from_process_then_dotenv(&project_paths.project_root);
-        let human_config_string = Self::interpolate_config_variables(human_config_string, get_env)?;
+        let mut env_state = EnvState::new(&project_paths.project_root);
+
+        let human_config_string =
+            Self::interpolate_config_variables(human_config_string, |name| env_state.var(name))?;
 
         let config_discriminant: human_config::ConfigDiscriminant =
             serde_yaml::from_str(&human_config_string).context(
@@ -579,7 +619,7 @@ impl SystemConfig {
                     ))?;
                 let schema = Schema::parse_from_file(&project_paths, &evm_config.schema)
                     .context("Parsing schema file for config")?;
-                Self::from_evm_config(evm_config, schema, project_paths)
+                Self::from_evm_config(evm_config, schema, env_state, project_paths)
             }
             Ecosystem::Fuel => {
                 let fuel_config: FuelConfig =
@@ -590,7 +630,7 @@ impl SystemConfig {
                     ))?;
                 let schema = Schema::parse_from_file(&project_paths, &fuel_config.schema)
                     .context("Parsing schema file for config")?;
-                Self::from_fuel_config(fuel_config, schema, project_paths)
+                Self::from_fuel_config(fuel_config, schema, env_state, project_paths)
             }
         }
     }

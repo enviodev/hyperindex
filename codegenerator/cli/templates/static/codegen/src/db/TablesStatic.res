@@ -72,6 +72,7 @@ module PersistedState = {
     schema_hash: string,
     handler_files_hash: string,
     abi_files_hash: string,
+    env_hash: string,
   }
 
   let table = mkTable(
@@ -83,6 +84,7 @@ module PersistedState = {
       mkField("schema_hash", Text),
       mkField("handler_files_hash", Text),
       mkField("abi_files_hash", Text),
+      mkField("env_hash", Text),
     ],
   )
 }

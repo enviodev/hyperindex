@@ -20,6 +20,7 @@ pub struct PersistedState {
     pub schema_hash: HashString,
     pub handler_files_hash: HashString,
     pub abi_files_hash: HashString,
+    pub env_hash: HashString,
 }
 const PERSISTED_STATE_FILE_NAME: &str = "persisted_state.envio.json";
 pub static CURRENT_CRATE_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -32,6 +33,7 @@ pub enum StateField {
     Schema,
     AbiFiles,
     HandlerFiles,
+    UsedEnv,
 }
 
 ///Gets the path to the persisted file in generated folder
@@ -49,6 +51,7 @@ impl PersistedState {
             StateField::Schema => self.schema_hash == other_state.schema_hash,
             StateField::AbiFiles => self.abi_files_hash == other_state.abi_files_hash,
             StateField::HandlerFiles => self.handler_files_hash == other_state.handler_files_hash,
+            StateField::UsedEnv => self.env_hash == other_state.env_hash,
         }
     }
 
@@ -97,6 +100,7 @@ impl PersistedState {
             .context("Failed hashing handler files")?,
             abi_files_hash: HashString::from_file_paths(all_abi_file_paths, ABI_FILES_MUST_EXIST)
                 .context("Failed hashing abi files")?,
+            env_hash: HashString::from_string(config.env_state.get_hash()),
         })
     }
 
@@ -106,6 +110,8 @@ impl PersistedState {
         let codegen_affecting_fields = vec![
             //If the config has changed, this could affect values in generated code
             StateField::Config,
+            //If the env has changed, this could affect config file and generated code
+            StateField::UsedEnv,
             //If abi files have changed it could affect event types
             StateField::AbiFiles,
             //If schema has changed this will affect generated entity types
@@ -170,7 +176,10 @@ impl PersistedStateExists {
                 //representation of PersistedState. In either of these cases we
                 //need to re-codegen so we can just treat it as an option type
                 match serde_json::from_str(&file_str) {
-                    Err(_) => Self::Corrupted,
+                    Err(e) => {
+                        println!("Warning: Failed to deserialize PersistedState file with unexpected error: {e}");
+                        Self::Corrupted
+                    }
                     Ok(state) => Self::Exists(state),
                 }
             }

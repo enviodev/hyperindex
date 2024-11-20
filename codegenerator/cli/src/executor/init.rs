@@ -6,8 +6,9 @@ use crate::{
     },
     commands,
     config_parsing::{
-        entity_parsing::Schema, graph_migration::generate_config_from_subgraph_id,
-        system_config::SystemConfig,
+        entity_parsing::Schema,
+        graph_migration::generate_config_from_subgraph_id,
+        system_config::{EnvState, SystemConfig},
     },
     hbs_templating::{
         contract_import_templates, hbs_dir_generator::HandleBarsDirGenerator,
@@ -94,9 +95,13 @@ pub async fn run_init_args(init_args: InitArgs, project_paths: &ProjectPaths) ->
             .await
             .context("Failed generating config from subgraph")?;
 
-            let system_config =
-                SystemConfig::from_evm_config(evm_config, Schema::empty(), &parsed_project_paths)
-                    .context("Failed parsing config")?;
+            let system_config = SystemConfig::from_evm_config(
+                evm_config,
+                Schema::empty(),
+                EnvState::new(&parsed_project_paths.project_root),
+                &parsed_project_paths,
+            )
+            .context("Failed parsing config")?;
 
             let auto_schema_handler_template =
                 contract_import_templates::AutoSchemaHandlerTemplate::try_from(
@@ -143,9 +148,13 @@ pub async fn run_init_args(init_args: InitArgs, project_paths: &ProjectPaths) ->
 
             //Use an empty schema config to generate auto_schema_handler_template
             //After it's been generated, the schema exists and codegen can parse it/use it
-            let system_config =
-                SystemConfig::from_fuel_config(fuel_config, Schema::empty(), &parsed_project_paths)
-                    .context("Failed parsing config")?;
+            let system_config = SystemConfig::from_fuel_config(
+                fuel_config,
+                Schema::empty(),
+                EnvState::new(&parsed_project_paths.project_root),
+                &parsed_project_paths,
+            )
+            .context("Failed parsing config")?;
 
             let auto_schema_handler_template =
                 contract_import_templates::AutoSchemaHandlerTemplate::try_from(
@@ -193,9 +202,13 @@ pub async fn run_init_args(init_args: InitArgs, project_paths: &ProjectPaths) ->
 
             //Use an empty schema config to generate auto_schema_handler_template
             //After it's been generated, the schema exists and codegen can parse it/use it
-            let system_config =
-                SystemConfig::from_evm_config(evm_config, Schema::empty(), &parsed_project_paths)
-                    .context("Failed parsing config")?;
+            let system_config = SystemConfig::from_evm_config(
+                evm_config,
+                Schema::empty(),
+                EnvState::new(&parsed_project_paths.project_root),
+                &parsed_project_paths,
+            )
+            .context("Failed parsing config")?;
 
             let auto_schema_handler_template =
                 contract_import_templates::AutoSchemaHandlerTemplate::try_from(
