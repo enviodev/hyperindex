@@ -1,8 +1,8 @@
 module MillisAccum = {
-  type millis = int
+  type millis = float
   type t = {counters: dict<millis>, startTime: Js.Date.t, mutable endTime: Js.Date.t}
   let schema: S.t<t> = S.schema(s => {
-    counters: s.matches(S.dict(S.int)),
+    counters: s.matches(S.dict(S.float)),
     startTime: s.matches(S.string->S.datetime),
     endTime: s.matches(S.string->S.datetime),
   })
@@ -13,11 +13,17 @@ module MillisAccum = {
   }
 
   let increment = (self: t, label, amount) => {
-    switch self.counters->Utils.Dict.dangerouslyGetNonOption(label) {
-    | None => self.counters->Js.Dict.set(label, amount)
-    | Some(current) => self.counters->Js.Dict.set(label, current + amount)
-    }
     self.endTime = Js.Date.make()
+    let amount = amount->Belt.Float.fromInt
+    switch self.counters->Utils.Dict.dangerouslyGetNonOption(label) {
+    | None =>
+      self.counters->Js.Dict.set(label, amount)
+      amount
+    | Some(current) =>
+      let newAmount = current +. amount
+      self.counters->Js.Dict.set(label, newAmount)
+      newAmount
+    }
   }
 }
 
@@ -72,22 +78,22 @@ module SummaryData = {
   module Group = {
     type t = dict<DataSet.t>
     let schema: S.t<t> = S.dict(DataSet.schema)
-    let make = () => Js.Dict.empty()
+    let make = (): t => Js.Dict.empty()
 
     /**
     Adds a value to the data set for the given key. If the key does not exist, it will be created.
 
     Returns the updated data set.
     */
-    let add = (self: t, key: string, value: float, ~decimalPlaces=2) => {
-      switch self->Utils.Dict.dangerouslyGetNonOption(key) {
+    let add = (self: t, label, value: float, ~decimalPlaces=2) => {
+      switch self->Utils.Dict.dangerouslyGetNonOption(label) {
       | None =>
         let new = DataSet.make(value, ~decimalPlaces)
-        self->Js.Dict.set(key, new)
+        self->Js.Dict.set(label, new)
         new
       | Some(dataSet) =>
         let updated = dataSet->DataSet.add(value)
-        self->Js.Dict.set(key, updated)
+        self->Js.Dict.set(label, updated)
         updated
       }
     }
@@ -95,7 +101,7 @@ module SummaryData = {
 
   type t = dict<Group.t>
   let schema = S.dict(Group.schema)
-  let make = () => Js.Dict.empty()
+  let make = (): t => Js.Dict.empty()
 
   let add = (self: t, ~group, ~label, ~value, ~decimalPlaces=2) => {
     let group = switch self->Utils.Dict.dangerouslyGetNonOption(group) {
@@ -169,26 +175,38 @@ module Data = {
     summaryData: SummaryData.make(),
   }
 
-  let incrementMillis = (self: t, ~label, ~amount) => {
-    self.millisAccum->MillisAccum.increment(label, amount)
-  }
-
   module LiveMetrics = {
-    let saveLiveMetrics = if (
+    let addDataSet = if (
       Env.Benchmark.saveDataStrategy->Env.Benchmark.SaveDataStrategy.shouldSavePrometheus
     ) {
       (dataSet: SummaryData.DataSet.t, ~group, ~label) => {
         let {n, mean, stdDev, min, max, sum} = dataSet->Stats.makeFromDataSet
-        Prometheus.setBenchmarkSummaryData(~group, ~label, ~n, ~mean, ~stdDev, ~min, ~max, ~sum)
+        Prometheus.BenchmarkSummaryData.set(~group, ~label, ~n, ~mean, ~stdDev, ~min, ~max, ~sum)
       }
     } else {
       (_dataSet, ~group as _, ~label as _) => ()
     }
+    let setCounterMillis = if (
+      Env.Benchmark.saveDataStrategy->Env.Benchmark.SaveDataStrategy.shouldSavePrometheus
+    ) {
+      (millisAccum: MillisAccum.t, ~label, ~millis) => {
+        let totalRuntimeMillis =
+          millisAccum.endTime->Js.Date.getTime -. millisAccum.startTime->Js.Date.getTime
+        Prometheus.BenchmarkCounters.set(~label, ~millis, ~totalRuntimeMillis)
+      }
+    } else {
+      (_, ~label as _, ~millis as _) => ()
+    }
+  }
+
+  let incrementMillis = (self: t, ~label, ~amount) => {
+    let nextMillis = self.millisAccum->MillisAccum.increment(label, amount)
+    self.millisAccum->LiveMetrics.setCounterMillis(~label, ~millis=nextMillis)
   }
 
   let addSummaryData = (self: t, ~group, ~label, ~value, ~decimalPlaces=2) => {
     let updatedDataSet = self.summaryData->SummaryData.add(~group, ~label, ~value, ~decimalPlaces)
-    updatedDataSet->LiveMetrics.saveLiveMetrics(~group, ~label)
+    updatedDataSet->LiveMetrics.addDataSet(~group, ~label)
   }
 }
 
@@ -236,7 +254,7 @@ let addSummaryData = (~group, ~label, ~value, ~decimalPlaces=2) => {
 }
 
 let incrementMillis = (~label, ~amount) => {
-  data->Data.incrementMillis(~label, ~amount)
+  let _ = data->Data.incrementMillis(~label, ~amount)
   data->saveToCacheFile
 }
 
@@ -333,7 +351,9 @@ module Summary = {
       millisAccum.counters
       ->Js.Dict.entries
       ->Array.forEach(((label, millis)) =>
-        timeBreakdown->Js.Array2.push((label, DateFns.durationFromMillis(millis)))->ignore
+        timeBreakdown
+        ->Js.Array2.push((label, DateFns.durationFromMillis(millis->Belt.Int.fromFloat)))
+        ->ignore
       )
 
       timeBreakdown
