@@ -78,6 +78,14 @@ module Benchmark = {
     )
 
   let shouldSaveData = saveDataStrategy->SaveDataStrategy.shouldSaveData
+
+  /**
+  StdDev involves saving sum of squares of data points, which could get very large.
+
+  Currently only do this for local runs on json-file and not prometheus.
+  */
+  let shouldSaveStdDev =
+    saveDataStrategy->SaveDataStrategy.shouldSaveJsonFile
 }
 
 let maxPartitionConcurrency =
