@@ -21,8 +21,10 @@ use crate::{
     utils::unique_hashmap,
 };
 use anyhow::{anyhow, Context, Result};
+use dotenvy::{EnvLoader, EnvMap, EnvSequence};
 use ethers::abi::{ethabi::Event as EthAbiEvent, EventExt, EventParam, HumanReadableParser};
 use itertools::Itertools;
+use regex::{Captures, Regex};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{HashMap, HashSet},
@@ -447,6 +449,46 @@ impl SystemConfig {
         })
     }
 
+    fn load_env_vars(project_root: &PathBuf) -> Result<EnvMap> {
+        let env_map = match EnvLoader::with_path(project_root.join(".env"))
+            .sequence(EnvSequence::InputThenEnv)
+            .load()
+        {
+            Ok(env_map) => env_map,
+            // It'll fail if .env is missing, so we return a map with std::env only
+            Err(dotenvy::Error::Io(_, _)) => EnvLoader::new()
+                .sequence(EnvSequence::EnvOnly)
+                .load()
+                .context("Failed loading environment variables")?,
+            err => err.context("Failed loading .env file")?,
+        };
+        Ok(env_map)
+    }
+
+    fn interpolation_config_variables(config_string: String, env_map: EnvMap) -> Result<String> {
+        let mut missing_vars = Vec::new();
+
+        let re = Regex::new(r"\$\{([a-zA-Z_][0-9a-zA-Z_]*)\}").unwrap();
+        let config_string = re.replace_all(&config_string, |caps: &Captures| {
+            match env_map.var(&caps[1]) {
+                Ok(val) => val,
+                Err(_) => {
+                    missing_vars.push(caps[1].to_string());
+                    (&caps[0]).to_string()
+                }
+            }
+        });
+
+        if !missing_vars.is_empty() {
+            return Err(anyhow!(
+                "Failed to interpolate variables into your config file. Environment variables are not preset: {}",
+                missing_vars.join(", ")
+            ));
+        }
+
+        Ok(config_string.to_string())
+    }
+
     pub fn parse_from_project_files(project_paths: &ParsedProjectPaths) -> Result<Self> {
         let human_config_string =
             std::fs::read_to_string(&project_paths.config).context(format!(
@@ -454,6 +496,10 @@ impl SystemConfig {
                  directory and that a config file with the name {0} exists",
                 &project_paths.config.to_str().unwrap_or("{unknown}"),
             ))?;
+
+        let env_map = Self::load_env_vars(&project_paths.project_root)?;
+        let human_config_string =
+            Self::interpolation_config_variables(human_config_string, env_map)?;
 
         let config_discriminant: human_config::ConfigDiscriminant =
             serde_yaml::from_str(&human_config_string).context(
@@ -1280,8 +1326,10 @@ mod test {
         },
         project_paths::ParsedProjectPaths,
     };
+    use dotenvy::EnvMap;
     use ethers::abi::{Event as EthAbiEvent, EventParam, ParamType};
     use handlebars::Handlebars;
+    use pretty_assertions::assert_eq;
     use serde_json::json;
 
     #[test]
@@ -1315,6 +1363,92 @@ mod test {
             )
             .unwrap();
         assert_eq!(&rendered_backoff_multiplicative, "0.8");
+    }
+
+    #[test]
+    fn test_interpolation_config_variables_with_single_capture() {
+        let config_string = r#"
+networks:
+  - id: ${ENVIO_NETWORK_ID}
+    start_block: 0
+"#;
+        let env_map = EnvMap::from_iter([("ENVIO_NETWORK_ID".to_string(), "0".to_string())]);
+        let interpolated_config_string =
+            SystemConfig::interpolation_config_variables(config_string.to_string(), env_map)
+                .unwrap();
+        assert_eq!(
+            interpolated_config_string,
+            r#"
+networks:
+  - id: 0
+    start_block: 0
+"#
+        );
+    }
+
+    #[test]
+    fn test_interpolation_config_variables_with_multiple_captures() {
+        let config_string = r#"
+networks:
+  - id: ${ENVIO_NETWORK_ID}
+    rpc_config:
+      url: https://eth.com?api_key=${ENVIO_ETH_API_KEY}
+"#;
+        let env_map = EnvMap::from_iter([
+            ("ENVIO_NETWORK_ID".to_string(), "0".to_string()),
+            ("ENVIO_ETH_API_KEY".to_string(), "foo".to_string()),
+        ]);
+        let interpolated_config_string =
+            SystemConfig::interpolation_config_variables(config_string.to_string(), env_map)
+                .unwrap();
+        assert_eq!(
+            interpolated_config_string,
+            r#"
+networks:
+  - id: 0
+    rpc_config:
+      url: https://eth.com?api_key=foo
+"#
+        );
+    }
+
+    #[test]
+    fn test_interpolation_config_variables_with_no_captures() {
+        let config_string = r#"
+networks:
+  - id: 0
+    start_block: 0
+"#;
+        let env_map = EnvMap::from_iter([("ENVIO_NETWORK_ID".to_string(), "0".to_string())]);
+        let interpolated_config_string =
+            SystemConfig::interpolation_config_variables(config_string.to_string(), env_map)
+                .unwrap();
+        assert_eq!(
+            interpolated_config_string,
+            r#"
+networks:
+  - id: 0
+    start_block: 0
+"#
+        );
+    }
+
+    #[test]
+    fn test_interpolation_config_variables_with_missing_env() {
+        let config_string = r#"
+networks:
+  - id: ${ENVIO_NETWORK_ID}
+    rpc_config:
+      url: https://eth.com?api_key=${ENVIO_ETH_API_KEY}
+"#;
+        let env_map = EnvMap::from_iter([("ENVIO_NETWORK_ID".to_string(), "0".to_string())]);
+        let interpolated_config_string =
+            SystemConfig::interpolation_config_variables(config_string.to_string(), env_map)
+                .unwrap_err();
+        assert_eq!(
+            interpolated_config_string.to_string(),
+            r#"Failed to interpolate variables into your config file. Environment variables are not preset: ENVIO_ETH_API_KEY"#
+        );
     }
 
     #[test]
