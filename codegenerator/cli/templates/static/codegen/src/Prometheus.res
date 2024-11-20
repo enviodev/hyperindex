@@ -40,49 +40,131 @@ let sourceChainHeight = PromClient.Gauge.makeGauge({
   "labelNames": ["chainId"],
 })
 
-let benchmarkSummaryData = PromClient.Gauge.makeGauge({
-  "name": "benchmark_summary_data",
-  "help": "All data points collected during indexer benchmark",
-  "labelNames": ["group", "label", "stat"],
-})
+module SafeGauge: {
+  type t<'a>
+  let makeOrThrow: (~name: string, ~help: string, ~labelSchema: S.t<'a>) => t<'a>
+  let setInt: (t<'a>, ~labels: 'a, ~value: int) => unit
+  let setFloat: (t<'a>, ~labels: 'a, ~value: float) => unit
+} = {
+  type t<'a> = PromClient.Gauge.gauge
 
-let setBenchmarkSummaryData = (
-  ~group: string,
-  ~label: string,
-  ~n: float,
-  ~mean: float,
-  ~stdDev: option<float>,
-  ~min: float,
-  ~max: float,
-  ~sum: float,
-) => {
-  benchmarkSummaryData
-  ->PromClient.Gauge.labels({"group": group, "label": label, "stat": "n"})
-  ->PromClient.Gauge.setFloat(n)
+  let rec schemaIsString = (schema: S.t<'a>) =>
+    switch schema->S.classify {
+    | String => true
+    | Null(s)
+    | Option(s) =>
+      s->schemaIsString
+    | _ => false
+    }
 
-  benchmarkSummaryData
-  ->PromClient.Gauge.labels({"group": group, "label": label, "stat": "mean"})
-  ->PromClient.Gauge.setFloat(mean)
+  let getLabelNames = (schema: S.t<'a>) =>
+    switch schema->S.classify {
+    | Object({items}) =>
+      let nonStringFields = items->Belt.Array.reduce([], (nonStringFields, item) => {
+        if item.schema->schemaIsString {
+          nonStringFields
+        } else {
+          nonStringFields->Belt.Array.concat([item.location])
+        }
+      })
 
-  switch stdDev {
-  | Some(stdDev) =>
-    benchmarkSummaryData
-    ->PromClient.Gauge.labels({"group": group, "label": label, "stat": "stdDev"})
-    ->PromClient.Gauge.setFloat(stdDev)
-  | None => ()
+      switch nonStringFields {
+      | [] => items->Belt.Array.map(item => item.location)->Ok
+      | nonStringItems =>
+        let nonStringItems = nonStringItems->Js.Array2.joinWith(", ")
+        Error(
+          `Label schema must be an object with string (or optional string) values. Non string values: ${nonStringItems}`,
+        )
+      }
+    | _ => Error("Label schema must be an object")
+    }
+
+  let makeOrThrow = (~name, ~help, ~labelSchema: S.t<'a>): t<'a> =>
+    switch labelSchema->getLabelNames {
+    | Ok(labelNames) =>
+      PromClient.Gauge.makeGauge({
+        "name": name,
+        "help": help,
+        "labelNames": labelNames,
+      })
+
+    | Error(error) => Js.Exn.raiseError(error)
+    }
+
+  let makeLabels = (self: t<'a>, ~labels: 'a): t<'a> => self->PromClient.Gauge.labels(labels)
+
+  let setFloat = (self: t<'a>, ~labels: 'a, ~value) =>
+    self
+    ->makeLabels(~labels)
+    ->PromClient.Gauge.setFloat(value)
+
+  let setInt = (self: t<'a>, ~labels: 'a, ~value) =>
+    self
+    ->makeLabels(~labels)
+    ->PromClient.Gauge.set(value)
+}
+
+module BenchmarkSummaryData = {
+  type labels = {
+    group: string,
+    stat: string,
+    label: string,
   }
+  let labelSchema = S.schema(s => {
+    group: s.matches(S.string),
+    stat: s.matches(S.string),
+    label: s.matches(S.string),
+  })
 
-  benchmarkSummaryData
-  ->PromClient.Gauge.labels({"group": group, "label": label, "stat": "min"})
-  ->PromClient.Gauge.setFloat(min)
+  let gauge = SafeGauge.makeOrThrow(
+    ~name="benchmark_summary_data",
+    ~help="All data points collected during indexer benchmark",
+    ~labelSchema,
+  )
 
-  benchmarkSummaryData
-  ->PromClient.Gauge.labels({"group": group, "label": label, "stat": "max"})
-  ->PromClient.Gauge.setFloat(max)
+  let set = (
+    ~group: string,
+    ~label: string,
+    ~n: float,
+    ~mean: float,
+    ~stdDev: option<float>,
+    ~min: float,
+    ~max: float,
+    ~sum: float,
+  ) => {
+    let mk = stat => {
+      group,
+      stat,
+      label,
+    }
+    gauge->SafeGauge.setFloat(~labels=mk("n"), ~value=n)
+    gauge->SafeGauge.setFloat(~labels=mk("mean"), ~value=mean)
+    gauge->SafeGauge.setFloat(~labels=mk("min"), ~value=min)
+    gauge->SafeGauge.setFloat(~labels=mk("max"), ~value=max)
+    gauge->SafeGauge.setFloat(~labels=mk("sum"), ~value=sum)
+    switch stdDev {
+    | Some(stdDev) => gauge->SafeGauge.setFloat(~labels=mk("stdDev"), ~value=stdDev)
+    | None => ()
+    }
+  }
+}
 
-  benchmarkSummaryData
-  ->PromClient.Gauge.labels({"group": group, "label": label, "stat": "sum"})
-  ->PromClient.Gauge.setFloat(sum)
+module BenchmarkCounters = {
+  type labels = {label: string}
+  let labelSchema = S.schema(s => {
+    label: s.matches(S.string),
+  })
+
+  let gauge = SafeGauge.makeOrThrow(
+    ~name="benchmark_counters",
+    ~help="All counters collected during indexer benchmark",
+    ~labelSchema,
+  )
+
+  let set = (~label, ~millis, ~totalRuntimeMillis) => {
+    gauge->SafeGauge.setFloat(~labels={label: label}, ~value=millis)
+    gauge->SafeGauge.setFloat(~labels={label: "Total Run Time (ms)"}, ~value=totalRuntimeMillis)
+  }
 }
 
 // TODO: implement this metric that updates in batches, currently unused
