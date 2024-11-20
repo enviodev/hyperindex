@@ -16,9 +16,8 @@ const chunkBatchQuery = async (sql, entityDataArray, queryToExecute) => {
 const commaSeparateDynamicMapQuery = (sql, dynQueryConstructors) =>
   sql`${dynQueryConstructors.map(
     (constrQuery, i) =>
-      sql`${constrQuery(sql)}${
-        i === dynQueryConstructors.length - 1 ? sql`` : sql`, `
-      }`,
+      sql`${constrQuery(sql)}${i === dynQueryConstructors.length - 1 ? sql`` : sql`, `
+        }`,
   )}`;
 
 const batchSetItemsInTableCore = (table, sql, rowDataArray) => {
@@ -146,7 +145,7 @@ module.exports.batchSetChainMetadata = (sql, entityDataArray) => {
   "latest_fetched_block_number" = EXCLUDED."latest_fetched_block_number",
   "timestamp_caught_up_to_head_or_endblock" = EXCLUDED."timestamp_caught_up_to_head_or_endblock",
   "block_height" = EXCLUDED."block_height";`
-    .then((res) => {})
+    .then((res) => { })
     .catch((err) => {
       console.log("errored", err);
     });
@@ -166,7 +165,7 @@ module.exports.setChainMetadataBlockHeight = (sql, entityDataArray) => {
   SET
   "chain_id" = EXCLUDED."chain_id",
   "block_height" = EXCLUDED."block_height";`
-    .then((res) => {})
+    .then((res) => { })
     .catch((err) => {
       console.log("errored", err);
     });
@@ -322,8 +321,8 @@ module.exports.readDynamicContractsOnChainIdMatchingEvents = (
     FROM "public"."dynamic_contract_registry"
     WHERE chain_id = ${chainId}
     AND (registering_event_contract_name, registering_event_name, registering_event_src_address) IN ${sql(
-      preRegisterEvents.map((item) => sql(item)),
-    )};
+    preRegisterEvents.map((item) => sql(item)),
+  )};
   `;
 };
 
@@ -431,6 +430,10 @@ module.exports.pruneStaleEntityHistory = (
   sql,
   entityName,
   safeChainIdAndBlockNumberArray,
+  // shouldDeepCleanHistory is a boolean that determines whether to delete stale history
+  // items of entities that are in the reorg threshold (expensive to calculate)
+  // or to do a shallow clean (only deletes history items of entities that are not in the reorg threshold)
+  shouldDeepClean,
 ) => {
   const tableName = makeHistoryTableName(entityName);
   return sql`
@@ -458,9 +461,10 @@ module.exports.pruneStaleEntityHistory = (
     ORDER BY
       id,
       serial ASC -- Select the row with the lowest serial per id
-  ),
+  )${shouldDeepClean
+      ? sql`
   -- Select all the previous history items for each id in the reorg threshold
-  previous_items AS (
+  ,previous_items AS (
     SELECT
       prev.id,
       prev.serial
@@ -476,15 +480,21 @@ module.exports.pruneStaleEntityHistory = (
       r.previous_entity_history_block_number = prev.entity_history_block_number
       AND
       r.previous_entity_history_log_index = prev.entity_history_log_index
-  )
+  )`
+      : sql``
+    }
   DELETE FROM
     public.${sql(tableName)} eh
   WHERE
     -- Delete all entity history of entities that are not in the reorg threshold
     eh.id NOT IN (SELECT id FROM items_in_reorg_threshold)
+  ${shouldDeepClean
+      ? sql`
     -- Delete all rows where id matches a row in previous_items but has a lower serial
     OR 
-    eh.serial < (SELECT serial FROM previous_items WHERE previous_items.id = eh.id);
+    eh.serial < (SELECT serial FROM previous_items WHERE previous_items.id = eh.id)`
+      : sql``
+    }
 `;
 };
 

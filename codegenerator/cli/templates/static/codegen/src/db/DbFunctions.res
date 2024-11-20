@@ -288,15 +288,25 @@ module EntityHistory = {
     Postgres.sql,
     ~entityName: Enums.EntityType.t,
     ~safeChainIdAndBlockNumberArray: array<chainIdAndBlockNumber>,
+    // shouldDeepClean is a boolean that determines whether to delete stale history
+    // items of entities that are in the reorg threshold (expensive to calculate)
+    // or to do a shallow clean (only deletes history items of entities that are not in the reorg threshold)
+    ~shouldDeepClean: bool,
   ) => promise<unit> = "pruneStaleEntityHistory"
 
   let rollbacksGroup = "Rollbacks"
 
-  let pruneStaleEntityHistory = async (sql, ~entityName, ~safeChainIdAndBlockNumberArray) => {
+  let pruneStaleEntityHistory = async (
+    sql,
+    ~entityName,
+    ~safeChainIdAndBlockNumberArray,
+    ~shouldDeepClean,
+  ) => {
     let startTime = Hrtime.makeTimer()
     try await sql->pruneStaleEntityHistoryInternal(
       ~entityName,
       ~safeChainIdAndBlockNumberArray,
+      ~shouldDeepClean,
     ) catch {
     | exn =>
       exn->ErrorHandling.mkLogAndRaise(

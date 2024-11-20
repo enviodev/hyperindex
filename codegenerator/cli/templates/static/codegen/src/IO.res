@@ -197,6 +197,7 @@ let executeBatch = async (
         _,
         ~entityName=Entity.name,
         ~safeChainIdAndBlockNumberArray,
+        ~shouldDeepClean=false,
       )
     })
   } else {
