@@ -24,10 +24,7 @@ impl PersistedState {
         self.upsert_to_db_with_pool(&pool).await
     }
 
-    pub async fn upsert_to_db_with_pool(
-        &self,
-        pool: &PgPool,
-    ) -> Result<PgQueryResult, sqlx::Error> {
+    async fn upsert_to_db_with_pool(&self, pool: &PgPool) -> Result<PgQueryResult, sqlx::Error> {
         sqlx::query(
             "INSERT INTO public.persisted_state (
             id, 
