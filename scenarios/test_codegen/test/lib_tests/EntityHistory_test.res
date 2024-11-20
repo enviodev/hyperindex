@@ -711,6 +711,7 @@ describe("Entity history rollbacks", () => {
     await DbFunctions.sql->DbFunctions.EntityHistory.pruneStaleEntityHistory(
       ~entityName=TestEntity.name,
       ~safeChainIdAndBlockNumberArray=[{chainId: 1, blockNumber: 3}, {chainId: 2, blockNumber: 2}],
+      ~shouldDeepClean=true,
     )
     let currentHistoryItems = await DbFunctions.sql->getAllMockEntityHistory
 
@@ -736,10 +737,39 @@ describe("Entity history rollbacks", () => {
     )
   })
 
+  Async.it(
+    "Deep clean prunes history correctly with items in reorg threshold without checking for stale history entities in threshold",
+    async () => {
+      await DbFunctions.sql->DbFunctions.EntityHistory.pruneStaleEntityHistory(
+        ~entityName=TestEntity.name,
+        ~safeChainIdAndBlockNumberArray=[
+          {chainId: 1, blockNumber: 3},
+          {chainId: 2, blockNumber: 2},
+        ],
+        ~shouldDeepClean=false,
+      )
+      let currentHistoryItems = await DbFunctions.sql->getAllMockEntityHistory
+
+      let parsedHistoryItems =
+        currentHistoryItems->S.parseOrRaiseWith(TestEntity.entityHistory.schemaRows)
+
+      let sort = arr =>
+        arr->Js.Array2.sortInPlaceWith(
+          (a, b) => a.EntityHistory.current.block_number - b.current.block_number,
+        )
+
+      Assert.deepEqual(
+        parsedHistoryItems->sort,
+        Mocks.historyRows,
+        ~message="Should have deleted the unneeded first items in history",
+      )
+    },
+  )
   Async.it("Prunes history correctly with no items in reorg threshold", async () => {
     await DbFunctions.sql->DbFunctions.EntityHistory.pruneStaleEntityHistory(
       ~entityName=TestEntity.name,
       ~safeChainIdAndBlockNumberArray=[{chainId: 1, blockNumber: 4}, {chainId: 2, blockNumber: 3}],
+      ~shouldDeepClean=true,
     )
     let currentHistoryItems = await DbFunctions.sql->getAllMockEntityHistory
 
@@ -747,5 +777,70 @@ describe("Entity history rollbacks", () => {
       currentHistoryItems->Array.length == 0,
       ~message="Should have deleted all items in history",
     )
+  })
+})
+
+describe_skip("Prune performance test", () => {
+  Async.it("Print benchmark of prune function", async () => {
+    let _ = DbHelpers.resetPostgresClient()
+    let _ = await Migrations.runDownMigrations(~shouldExit=false)
+    let _ = await Migrations.createEnumIfNotExists(
+      DbFunctions.sql,
+      Enums.EntityHistoryRowAction.enum,
+    )
+    let _ = await Migrations.creatTableIfNotExists(DbFunctions.sql, TestEntity.table)
+    let _ = await Migrations.creatTableIfNotExists(DbFunctions.sql, TestEntity.entityHistory.table)
+
+    let _ = await DbFunctions.sql->Postgres.unsafe(TestEntity.entityHistory.createInsertFnQuery)
+
+    let rows: array<testEntityHistory> = []
+    for i in 0 to 1000 {
+      let mockEntity: TestEntity.t = {
+        id: i->mod(10)->Belt.Int.toString,
+        fieldA: i,
+        fieldB: None,
+      }
+
+      let historyRow: testEntityHistory = {
+        current: {
+          chain_id: 1,
+          block_timestamp: i * 5,
+          block_number: i,
+          log_index: 0,
+        },
+        previous: None,
+        entityData: Set(mockEntity),
+      }
+      rows->Js.Array2.push(historyRow)->ignore
+    }
+
+    try await DbFunctions.sql->Postgres.beginSql(
+      sql => [
+        TestEntity.entityHistory->EntityHistory.batchInsertRows(
+          ~sql,
+          ~rows,
+          ~shouldCopyCurrentEntity=false,
+        ),
+      ],
+    ) catch {
+    | exn =>
+      Js.log2("insert mock rows exn", exn)
+      Assert.fail("Failed to insert mock rows")
+    }
+
+    let startTime = Hrtime.makeTimer()
+
+    try await DbFunctions.sql->DbFunctions.EntityHistory.pruneStaleEntityHistory(
+      ~entityName=TestEntity.name,
+      ~safeChainIdAndBlockNumberArray=[{chainId: 1, blockNumber: 500}],
+      ~shouldDeepClean=false,
+    ) catch {
+    | exn =>
+      Js.log2("prune stale entity history exn", exn)
+      Assert.fail("Failed to prune stale entity history")
+    }
+
+    let elapsedTime = Hrtime.timeSince(startTime)->Hrtime.toMillis->Hrtime.intFromMillis
+    Js.log2("Elapsed time", elapsedTime)
   })
 })
