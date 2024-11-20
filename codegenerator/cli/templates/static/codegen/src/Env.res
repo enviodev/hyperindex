@@ -172,6 +172,13 @@ module ThrottleWrites = {
       ~devFallback=10_000,
     )
 
+  let deepCleanEntityHistoryCycleCount =
+    envSafe->EnvSafe.get(
+      "ENVIO_THROTTLE_DEEP_CLEAN_ENTITY_HISTORY_CYCLE_COUNT",
+      S.int,
+      ~devFallback=20,
+    )
+
   let liveMetricsBenchmarkIntervalMillis =
     envSafe->EnvSafe.get(
       "ENVIO_THROTTLE_LIVE_METRICS_BENCHMARK_INTERVAL_MILLIS",

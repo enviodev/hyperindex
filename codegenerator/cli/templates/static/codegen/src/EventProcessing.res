@@ -542,7 +542,6 @@ let getDynamicContractRegistrations = (
       ~inMemoryStore,
       ~isInReorgThreshold=false,
       ~config,
-      ~safeChainIdAndBlockNumberArray=[], //No need to prune history for dynamic contract pre registration
     ) {
     | exception exn =>
       exn->ErrorHandling.make(~msg="Failed writing batch to database", ~logger)->Error->propogate
@@ -564,7 +563,6 @@ let processEventBatch = (
   ~checkContractIsRegistered,
   ~loadLayer,
   ~config,
-  ~safeChainIdAndBlockNumberArray,
 ) => {
   let logger = Logging.createChild(
     ~params={
@@ -616,12 +614,7 @@ let processEventBatch = (
 
     let elapsedTimeAfterProcess = timeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
 
-    switch await DbFunctions.sql->IO.executeBatch(
-      ~inMemoryStore,
-      ~isInReorgThreshold,
-      ~config,
-      ~safeChainIdAndBlockNumberArray,
-    ) {
+    switch await DbFunctions.sql->IO.executeBatch(~inMemoryStore, ~isInReorgThreshold, ~config) {
     | exception exn =>
       exn->ErrorHandling.make(~msg="Failed writing batch to database", ~logger)->Error->propogate
     | () => ()

@@ -302,7 +302,6 @@ module EntityHistory = {
     ~safeChainIdAndBlockNumberArray,
     ~shouldDeepClean,
   ) => {
-    let startTime = Hrtime.makeTimer()
     try await sql->pruneStaleEntityHistoryInternal(
       ~entityName,
       ~safeChainIdAndBlockNumberArray,
@@ -317,16 +316,6 @@ module EntityHistory = {
             "safeChainIdAndBlockNumberArray": safeChainIdAndBlockNumberArray,
           },
         ),
-      )
-    }
-
-    if Env.Benchmark.shouldSaveData {
-      let elapsedTimeMillis = Hrtime.timeSince(startTime)->Hrtime.toMillis->Hrtime.floatFromMillis
-
-      Benchmark.addSummaryData(
-        ~group=rollbacksGroup,
-        ~label=`Prune Stale History Time (ms)`,
-        ~value=elapsedTimeMillis,
       )
     }
   }
