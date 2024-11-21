@@ -168,7 +168,7 @@ let updateChainMetadataTable = async (cm: ChainManager.t, ~throttler: Throttler.
     })
   //Don't await this set, it can happen in its own time
   throttler->Throttler.schedule(() =>
-    DbFunctions.ChainMetadata.batchSetChainMetadataRow(~chainMetadataArray)
+    Db.sql->DbFunctions.ChainMetadata.batchSetChainMetadataRow(~chainMetadataArray)
   )
 }
 
@@ -923,7 +923,7 @@ let injectedTaskReducer = (
         nextEndOfBlockRangeScannedData,
       }) =>
       let timeRef = Hrtime.makeTimer()
-      await DbFunctions.sql->DbFunctions.EndOfBlockRangeScannedData.setEndOfBlockRangeScannedData(
+      await Db.sql->DbFunctions.EndOfBlockRangeScannedData.setEndOfBlockRangeScannedData(
         nextEndOfBlockRangeScannedData,
       )
 
@@ -940,7 +940,7 @@ let injectedTaskReducer = (
       //before the current one is executed
       let runPrune = async () => {
         let timeRef = Hrtime.makeTimer()
-        await DbFunctions.sql->DbFunctions.EndOfBlockRangeScannedData.deleteStaleEndOfBlockRangeScannedDataForChain(
+        await Db.sql->DbFunctions.EndOfBlockRangeScannedData.deleteStaleEndOfBlockRangeScannedDataForChain(
           ~chainId=chain->ChainMap.Chain.toChainId,
           ~blockTimestampThreshold,
           ~blockNumberThreshold,
@@ -975,7 +975,7 @@ let injectedTaskReducer = (
             false
           }
           let timeRef = Hrtime.makeTimer()
-          await DbFunctions.sql->Postgres.beginSql(sql => {
+          await Db.sql->Postgres.beginSql(sql => {
             Entities.allEntities->Belt.Array.map(entityMod => {
               let module(Entity) = entityMod
 
@@ -1196,7 +1196,7 @@ let injectedTaskReducer = (
         //Get the first change event that occurred on each chain after the last known valid block
         //Uses a different method depending on if the reorg chain is ordered or unordered
         let firstChangeEventIdentifierPerChain =
-          await DbFunctions.sql->DbFunctions.EntityHistory.getFirstChangeEventPerChain(
+          await Db.sql->DbFunctions.EntityHistory.getFirstChangeEventPerChain(
             isUnorderedMultichainMode
               ? UnorderedMultichain({
                   reorgChainId,

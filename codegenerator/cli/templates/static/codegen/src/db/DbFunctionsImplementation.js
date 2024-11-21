@@ -16,20 +16,21 @@ const chunkBatchQuery = async (sql, entityDataArray, queryToExecute) => {
 const commaSeparateDynamicMapQuery = (sql, dynQueryConstructors) =>
   sql`${dynQueryConstructors.map(
     (constrQuery, i) =>
-      sql`${constrQuery(sql)}${i === dynQueryConstructors.length - 1 ? sql`` : sql`, `
-        }`,
+      sql`${constrQuery(sql)}${
+        i === dynQueryConstructors.length - 1 ? sql`` : sql`, `
+      }`
   )}`;
 
 const batchSetItemsInTableCore = (table, sql, rowDataArray) => {
   const fieldNames = TableModule.getFieldNames(table).filter(
-    (fieldName) => fieldName !== "db_write_timestamp",
+    (fieldName) => fieldName !== "db_write_timestamp"
   );
   const primaryKeyFieldNames = TableModule.getPrimaryKeyFieldNames(table);
   const fieldQueryConstructors = fieldNames.map(
-    (fieldName) => (sql) => sql`${sql(fieldName)} = EXCLUDED.${sql(fieldName)}`,
+    (fieldName) => (sql) => sql`${sql(fieldName)} = EXCLUDED.${sql(fieldName)}`
   );
   const pkQueryConstructors = primaryKeyFieldNames.map(
-    (pkField) => (sql) => sql(pkField),
+    (pkField) => (sql) => sql(pkField)
   );
 
   return sql`
@@ -37,7 +38,7 @@ INSERT INTO "public".${sql(table.tableName)}
 ${sql(rowDataArray, ...fieldNames)}
 ON CONFLICT(${sql`${commaSeparateDynamicMapQuery(
     sql,
-    pkQueryConstructors,
+    pkQueryConstructors
   )}`}) DO UPDATE
 SET
 ${sql`${commaSeparateDynamicMapQuery(sql, fieldQueryConstructors)}`};`;
@@ -101,7 +102,7 @@ module.exports.batchSetEventSyncState = (sql, entityDataArray) => {
     "block_number",
     "log_index",
     "block_timestamp",
-    "is_pre_registering_dynamic_contracts",
+    "is_pre_registering_dynamic_contracts"
   )}
     ON CONFLICT(chain_id) DO UPDATE
     SET
@@ -133,7 +134,7 @@ module.exports.batchSetChainMetadata = (sql, entityDataArray) => {
     "is_hyper_sync", // this is left out of the on conflict below as it only needs to be set once
     "num_batches_fetched",
     "latest_fetched_block_number",
-    "timestamp_caught_up_to_head_or_endblock",
+    "timestamp_caught_up_to_head_or_endblock"
   )}
   ON CONFLICT(chain_id) DO UPDATE
   SET
@@ -145,80 +146,11 @@ module.exports.batchSetChainMetadata = (sql, entityDataArray) => {
   "latest_fetched_block_number" = EXCLUDED."latest_fetched_block_number",
   "timestamp_caught_up_to_head_or_endblock" = EXCLUDED."timestamp_caught_up_to_head_or_endblock",
   "block_height" = EXCLUDED."block_height";`
-    .then((res) => { })
+    .then((res) => {})
     .catch((err) => {
       console.log("errored", err);
     });
 };
-
-module.exports.setChainMetadataBlockHeight = (sql, entityDataArray) => {
-  return sql`
-    INSERT INTO public.chain_metadata
-  ${sql(
-    entityDataArray,
-    "chain_id",
-    "start_block", // this is left out of the on conflict below as it only needs to be set once
-    "end_block", // this is left out of the on conflict below as it only needs to be set once
-    "block_height",
-  )}
-  ON CONFLICT(chain_id) DO UPDATE
-  SET
-  "chain_id" = EXCLUDED."chain_id",
-  "block_height" = EXCLUDED."block_height";`
-    .then((res) => { })
-    .catch((err) => {
-      console.log("errored", err);
-    });
-};
-
-module.exports.readLatestRawEventsBlockNumberProcessedOnChainId = (
-  sql,
-  chainId,
-) => sql`
-  SELECT block_number
-  FROM "public"."raw_events"
-  WHERE chain_id = ${chainId}
-  ORDER BY event_id DESC
-  LIMIT 1;`;
-
-module.exports.readRawEventsEntities = (sql, entityIdArray) => sql`
-  SELECT *
-  FROM "public"."raw_events"
-  WHERE (chain_id, event_id) IN ${sql(entityIdArray)}`;
-
-module.exports.getRawEventsPageGtOrEqEventId = (
-  sql,
-  chainId,
-  eventId,
-  limit,
-  contractAddresses,
-) => sql`
-  SELECT *
-  FROM "public"."raw_events"
-  WHERE "chain_id" = ${chainId}
-  AND "event_id" >= ${eventId}
-  AND "src_address" IN ${sql(contractAddresses)}
-  ORDER BY "event_id" ASC
-  LIMIT ${limit}
-`;
-
-module.exports.getRawEventsPageWithinEventIdRangeInclusive = (
-  sql,
-  chainId,
-  fromEventIdInclusive,
-  toEventIdInclusive,
-  limit,
-  contractAddresses,
-) => sql`
-  SELECT *
-  FROM public.raw_events
-  WHERE "chain_id" = ${chainId}
-  AND "event_id" >= ${fromEventIdInclusive}
-  AND "event_id" <= ${toEventIdInclusive}
-  AND "src_address" IN ${sql(contractAddresses)}
-  ORDER BY "event_id" ASC
-  LIMIT ${limit}
-`;
 
 const batchSetRawEventsCore = (sql, entityDataArray) => {
   return sql`
@@ -236,11 +168,9 @@ const batchSetRawEventsCore = (sql, entityDataArray) => {
     "src_address",
     "block_hash",
     "block_timestamp",
-    "params",
+    "params"
   )};`;
 };
-
-const EventUtils = require("../EventUtils.bs.js");
 
 module.exports.batchSetRawEvents = (sql, entityDataArray) => {
   return chunkBatchQuery(sql, entityDataArray, batchSetRawEventsCore);
@@ -260,7 +190,7 @@ const batchSetEndOfBlockRangeScannedDataCore = (sql, rowDataArray) => {
     "chain_id",
     "block_timestamp",
     "block_number",
-    "block_hash",
+    "block_hash"
   )}
     ON CONFLICT(chain_id, block_number) DO UPDATE
     SET
@@ -274,7 +204,7 @@ module.exports.batchSetEndOfBlockRangeScannedData = (sql, rowDataArray) => {
   return chunkBatchQuery(
     sql,
     rowDataArray,
-    batchSetEndOfBlockRangeScannedDataCore,
+    batchSetEndOfBlockRangeScannedDataCore
   );
 };
 
@@ -290,7 +220,7 @@ module.exports.deleteStaleEndOfBlockRangeScannedDataForChain = (
   sql,
   chainId,
   blockNumberThreshold,
-  blockTimestampThreshold,
+  blockTimestampThreshold
 ) => {
   return sql`
     DELETE
@@ -304,7 +234,7 @@ module.exports.deleteStaleEndOfBlockRangeScannedDataForChain = (
 module.exports.readDynamicContractsOnChainIdAtOrBeforeBlockNumber = (
   sql,
   chainId,
-  blockNumber,
+  blockNumber
 ) => sql`
   SELECT *
   FROM "public"."dynamic_contract_registry"
@@ -314,15 +244,15 @@ module.exports.readDynamicContractsOnChainIdAtOrBeforeBlockNumber = (
 module.exports.readDynamicContractsOnChainIdMatchingEvents = (
   sql,
   chainId,
-  preRegisterEvents, // array<{registering_event_contract_name, registering_event_name, registering_event_src_address}>
+  preRegisterEvents // array<{registering_event_contract_name, registering_event_name, registering_event_src_address}>
 ) => {
   return sql`
     SELECT *
     FROM "public"."dynamic_contract_registry"
     WHERE chain_id = ${chainId}
     AND (registering_event_contract_name, registering_event_name, registering_event_src_address) IN ${sql(
-    preRegisterEvents.map((item) => sql(item)),
-  )};
+      preRegisterEvents.map((item) => sql(item))
+    )};
   `;
 };
 
@@ -336,7 +266,7 @@ module.exports.getFirstChangeSerial_UnorderedMultichain = (
   sql,
   reorgChainId,
   safeBlockNumber,
-  entityName,
+  entityName
 ) =>
   sql`
     SELECT
@@ -356,7 +286,7 @@ module.exports.getFirstChangeSerial_OrderedMultichain = (
   safeBlockTimestamp,
   reorgChainId,
   safeBlockNumber,
-  entityName,
+  entityName
 ) =>
   sql`
     SELECT
@@ -374,7 +304,7 @@ module.exports.getFirstChangeSerial_OrderedMultichain = (
 module.exports.getFirstChangeEntityHistoryPerChain = (
   sql,
   entityName,
-  getFirstChangeSerial,
+  getFirstChangeSerial
 ) => sql`
   WITH
     first_change AS (
@@ -404,7 +334,7 @@ module.exports.getFirstChangeEntityHistoryPerChain = (
 module.exports.deleteRolledBackEntityHistory = (
   sql,
   entityName,
-  getFirstChangeSerial,
+  getFirstChangeSerial
 ) => sql`
   WITH
     first_change AS (
@@ -433,7 +363,7 @@ module.exports.pruneStaleEntityHistory = (
   // shouldDeepCleanHistory is a boolean that determines whether to delete stale history
   // items of entities that are in the reorg threshold (expensive to calculate)
   // or to do a shallow clean (only deletes history items of entities that are not in the reorg threshold)
-  shouldDeepClean,
+  shouldDeepClean
 ) => {
   const tableName = makeHistoryTableName(entityName);
   return sql`
@@ -444,12 +374,12 @@ module.exports.pruneStaleEntityHistory = (
       public.${sql(tableName)}
     WHERE
       ${Utils.$$Array.interleave(
-    safeChainIdAndBlockNumberArray.map(
-      ({ chainId, blockNumber }) =>
-        sql`(entity_history_chain_id = ${chainId} AND entity_history_block_number > ${blockNumber})`,
-    ),
-    sql` OR `,
-  )}
+        safeChainIdAndBlockNumberArray.map(
+          ({ chainId, blockNumber }) =>
+            sql`(entity_history_chain_id = ${chainId} AND entity_history_block_number > ${blockNumber})`
+        ),
+        sql` OR `
+      )}
   ),
   items_in_reorg_threshold AS (
     SELECT DISTINCT
@@ -461,7 +391,8 @@ module.exports.pruneStaleEntityHistory = (
     ORDER BY
       id,
       serial ASC -- Select the row with the lowest serial per id
-  )${shouldDeepClean
+  )${
+    shouldDeepClean
       ? sql`
   -- Select all the previous history items for each id in the reorg threshold
   ,previous_items AS (
@@ -482,19 +413,20 @@ module.exports.pruneStaleEntityHistory = (
       r.previous_entity_history_log_index = prev.entity_history_log_index
   )`
       : sql``
-    }
+  }
   DELETE FROM
     public.${sql(tableName)} eh
   WHERE
     -- Delete all entity history of entities that are not in the reorg threshold
     eh.id NOT IN (SELECT id FROM items_in_reorg_threshold)
-  ${shouldDeepClean
+  ${
+    shouldDeepClean
       ? sql`
     -- Delete all rows where id matches a row in previous_items but has a lower serial
     OR 
     eh.serial < (SELECT serial FROM previous_items WHERE previous_items.id = eh.id)`
       : sql``
-    }
+  }
 `;
 };
 

@@ -6,13 +6,27 @@ type internalEntity
 module type Entity = {
   type t
   let name: Enums.EntityType.t
-  let schema: S.schema<t>
-  let rowsSchema: S.schema<array<t>>
+  let schema: S.t<t>
+  let rowsSchema: S.t<array<t>>
   let table: Table.table
   let entityHistory: EntityHistory.t<t>
 }
 module type InternalEntity = Entity with type t = internalEntity
 external entityModToInternal: module(Entity with type t = 'a) => module(InternalEntity) = "%identity"
+external entityModsToInternal: array<module(Entity)> => array<module(InternalEntity)> = "%identity"
+
+@get
+external getEntityId: internalEntity => string = "id"
+
+exception UnexpectedIdNotDefinedOnEntity
+let getEntityIdUnsafe = (entity: 'entity): id =>
+  switch Utils.magic(entity)["id"] {
+  | Some(id) => id
+  | None =>
+    UnexpectedIdNotDefinedOnEntity->ErrorHandling.mkLogAndRaise(
+      ~msg="Property 'id' does not exist on expected entity object",
+    )
+  }
 
 //shorthand for punning
 let isPrimaryKey = true
@@ -22,8 +36,8 @@ let isIndex = true
 
 @genType
 type whereOperations<'entity, 'fieldType> = {eq: 'fieldType => promise<array<'entity>>}
-
 {{#each entities as |entity|}}
+
 module {{entity.name.capitalized}} = {
   let name = {{entity.name.capitalized}}
   @genType
@@ -88,40 +102,11 @@ module {{entity.name.capitalized}} = {
 
   let entityHistory = table->EntityHistory.fromTable(~schema)
 }
- 
 {{/each}}
 
-let allEntities: array<module(InternalEntity)> =
-  [
+let allEntities = [
 {{#each entities as |entity|}}
-    module({{entity.name.capitalized}}),
+  module({{entity.name.capitalized}}),
 {{/each}}
-    module(TablesStatic.DynamicContractRegistry),
-  ]->(Utils.magic: array<module(Entity)> => array<module(InternalEntity)>)
-
-let allTables: array<table> = allEntities->Belt.Array.map(entityMod => {
-  let module(Entity) = entityMod
-  Entity.table
-})
-
-let allEntityHistory: array<
-  EntityHistory.t<EntityHistory.entityInternal>,
-> = allEntities->Belt.Array.map(entityMod => {
-  let module(Entity) = entityMod
-  Entity.entityHistory->EntityHistory.castInternal
-})
-
-let schema = Schema.make(allTables)
-
-@get
-external getEntityId: internalEntity => string = "id"
-
-exception UnexpectedIdNotDefinedOnEntity
-let getEntityIdUnsafe = (entity: 'entity): id =>
-  switch Utils.magic(entity)["id"] {
-  | Some(id) => id
-  | None =>
-    UnexpectedIdNotDefinedOnEntity->ErrorHandling.mkLogAndRaise(
-      ~msg="Property 'id' does not exist on expected entity object",
-    )
-  }
+  module(TablesStatic.DynamicContractRegistry),
+]->entityModsToInternal

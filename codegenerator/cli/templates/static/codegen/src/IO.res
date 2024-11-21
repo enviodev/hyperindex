@@ -220,7 +220,7 @@ module RollBack = {
             )
           )
 
-        let diff = await DbFunctions.sql->DbFunctions.EntityHistory.getRollbackDiff(
+        let diff = await Db.sql->DbFunctions.EntityHistory.getRollbackDiff(
           isUnorderedMultichainMode
             ? UnorderedMultichain({
                 reorgChainId: chainId,

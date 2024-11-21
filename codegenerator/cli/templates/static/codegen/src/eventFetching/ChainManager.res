@@ -168,7 +168,7 @@ let makeFromDbState = async (~config: Config.t, ~maxAddrInPartition=Env.maxAddrI
   // This rows check might incorrectly return false for recovering the isInReorgThreshold option.
   // But this is not a problem. There's no history anyways, and the indexer will be able to
   // correctly calculate isInReorgThreshold as it starts.
-  let hasStartedSavingHistory = await DbFunctions.EntityHistory.hasRows()
+  let hasStartedSavingHistory = await Db.sql->DbFunctions.EntityHistory.hasRows
 
   {
     isUnorderedMultichainMode: config.isUnorderedMultichainMode,

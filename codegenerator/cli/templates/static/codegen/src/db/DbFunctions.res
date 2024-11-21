@@ -1,17 +1,3 @@
-let config: Postgres.poolConfig = {
-  host: Env.Db.host,
-  port: Env.Db.port,
-  username: Env.Db.user,
-  password: Env.Db.password,
-  database: Env.Db.database,
-  ssl: Env.Db.ssl,
-  // TODO: think how we want to pipe these logs to pino.
-  onnotice: ?(Env.userLogLevel == #warn || Env.userLogLevel == #error ? None : Some(_str => ())),
-  transform: {undefined: Null},
-  max: 2,
-}
-let sql = Postgres.makeSql(~config)
-
 type chainId = int
 type eventId = string
 type blockNumberRow = {@as("block_number") blockNumber: int}
@@ -45,9 +31,6 @@ module ChainMetadata = {
   }
 
   @module("./DbFunctionsImplementation.js")
-  external setChainMetadataBlockHeight: (Postgres.sql, chainMetadata) => promise<unit> =
-    "setChainMetadataBlockHeight"
-  @module("./DbFunctionsImplementation.js")
   external batchSetChainMetadata: (Postgres.sql, array<chainMetadata>) => promise<unit> =
     "batchSetChainMetadata"
 
@@ -57,15 +40,11 @@ module ChainMetadata = {
     ~chainId: int,
   ) => promise<array<chainMetadata>> = "readLatestChainMetadataState"
 
-  let setChainMetadataBlockHeightRow = (~chainMetadata: chainMetadata) => {
-    sql->setChainMetadataBlockHeight(chainMetadata)
-  }
-
-  let batchSetChainMetadataRow = (~chainMetadataArray: array<chainMetadata>) => {
+  let batchSetChainMetadataRow = (sql, ~chainMetadataArray: array<chainMetadata>) => {
     sql->batchSetChainMetadata(chainMetadataArray)
   }
 
-  let getLatestChainMetadataState = async (~chainId) => {
+  let getLatestChainMetadataState = async (sql, ~chainId) => {
     let arr = await sql->readLatestChainMetadataState(~chainId)
     arr->Belt.Array.get(0)
   }
@@ -119,7 +98,7 @@ module EventSyncState = {
     arr->Belt.Array.get(0)
   }
 
-  let getLatestProcessedEvent = (~chainId) => {
+  let getLatestProcessedEvent = (sql, ~chainId) => {
     sql->readLatestSyncedEventOnChainId(~chainId)
   }
 
@@ -133,54 +112,6 @@ module RawEvents = {
   @module("./DbFunctionsImplementation.js")
   external batchSet: (Postgres.sql, array<TablesStatic.RawEvents.t>) => promise<unit> =
     "batchSetRawEvents"
-
-  @module("./DbFunctionsImplementation.js")
-  external batchDelete: (Postgres.sql, array<rawEventRowId>) => promise<unit> =
-    "batchDeleteRawEvents"
-
-  @module("./DbFunctionsImplementation.js")
-  external readEntities: (
-    Postgres.sql,
-    array<rawEventRowId>,
-  ) => promise<array<TablesStatic.RawEvents.t>> = "readRawEventsEntities"
-
-  @module("./DbFunctionsImplementation.js")
-  external getRawEventsPageGtOrEqEventId: (
-    Postgres.sql,
-    ~chainId: chainId,
-    ~eventId: bigint,
-    ~limit: int,
-    ~contractAddresses: array<Address.t>,
-  ) => promise<array<TablesStatic.RawEvents.t>> = "getRawEventsPageGtOrEqEventId"
-
-  @module("./DbFunctionsImplementation.js")
-  external getRawEventsPageWithinEventIdRangeInclusive: (
-    Postgres.sql,
-    ~chainId: chainId,
-    ~fromEventIdInclusive: bigint,
-    ~toEventIdInclusive: bigint,
-    ~limit: int,
-    ~contractAddresses: array<Address.t>,
-  ) => promise<array<TablesStatic.RawEvents.t>> = "getRawEventsPageWithinEventIdRangeInclusive"
-
-  ///Returns an array with 1 block number (the highest processed on the given chainId)
-  @module("./DbFunctionsImplementation.js")
-  external readLatestRawEventsBlockNumberProcessedOnChainId: (
-    Postgres.sql,
-    chainId,
-  ) => promise<array<blockNumberRow>> = "readLatestRawEventsBlockNumberProcessedOnChainId"
-
-  let getLatestProcessedBlockNumber = async (~chainId) => {
-    let row = await sql->readLatestRawEventsBlockNumberProcessedOnChainId(chainId)
-
-    row->Belt.Array.get(0)->Belt.Option.map(row => row.blockNumber)
-  }
-
-  @module("./DbFunctionsImplementation.js")
-  external deleteAllRawEventsAfterEventIdentifier: (
-    Postgres.sql,
-    ~eventIdentifier: Types.eventIdentifier,
-  ) => promise<unit> = "deleteAllRawEventsAfterEventIdentifier"
 }
 
 module DynamicContractRegistry = {
@@ -550,7 +481,7 @@ module EntityHistory = {
     firstChangeEventPerChain
   }
 
-  let hasRows = async () => {
+  let hasRows = async (sql) => {
     let all =
       await Entities.allEntities
       ->Belt.Array.map(async entityMod => {

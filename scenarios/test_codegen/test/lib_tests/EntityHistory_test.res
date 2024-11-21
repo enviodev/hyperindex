@@ -204,22 +204,16 @@ describe("Entity History Codegen", () => {
   Async.it("Creating tables and functions works", async () => {
     try {
       let _ = await Migrations.runDownMigrations(~shouldExit=false)
-      let _ = await Migrations.createEnumIfNotExists(
-        DbFunctions.sql,
-        Enums.EntityHistoryRowAction.enum,
-      )
-      let _resA = await Migrations.creatTableIfNotExists(DbFunctions.sql, TestEntity.table)
-      let _resB = await Migrations.creatTableIfNotExists(
-        DbFunctions.sql,
-        TestEntity.entityHistory.table,
-      )
+      let _ = await Migrations.createEnumIfNotExists(Db.sql, Enums.EntityHistoryRowAction.enum)
+      let _resA = await Migrations.creatTableIfNotExists(Db.sql, TestEntity.table)
+      let _resB = await Migrations.creatTableIfNotExists(Db.sql, TestEntity.entityHistory.table)
     } catch {
     | exn =>
       Js.log2("Setup exn", exn)
       Assert.fail("Failed setting up tables")
     }
 
-    switch await DbFunctions.sql->Postgres.unsafe(TestEntity.entityHistory.createInsertFnQuery) {
+    switch await Db.sql->Postgres.unsafe(TestEntity.entityHistory.createInsertFnQuery) {
     | exception exn =>
       Js.log2("createInsertFnQuery exn", exn)
       Assert.fail("Failed creating insert function")
@@ -227,13 +221,13 @@ describe("Entity History Codegen", () => {
     }
 
     let mockEntity: TestEntity.t = {id: "1", fieldA: 1, fieldB: Some("test")}
-    switch await DbFunctions.sql->batchSetMockEntity([mockEntity]) {
+    switch await Db.sql->batchSetMockEntity([mockEntity]) {
     | exception exn =>
       Js.log2("batchSetMockEntity exn", exn)
       Assert.fail("Failed to set mock entity in table")
     | _ => ()
     }
-    let afterInsert = switch await DbFunctions.sql->getAllMockEntity {
+    let afterInsert = switch await Db.sql->getAllMockEntity {
     | exception exn =>
       Js.log2("getAllMockEntity exn", exn)
       Assert.fail("Failed to get mock entity from table")->Utils.magic
@@ -263,7 +257,7 @@ describe("Entity History Codegen", () => {
     }
 
     switch await TestEntity.entityHistory->EntityHistory.insertRow(
-      ~sql=DbFunctions.sql,
+      ~sql=Db.sql,
       ~historyRow=entityHistoryItem,
       ~shouldCopyCurrentEntity=true,
     ) {
@@ -306,11 +300,11 @@ describe("Entity History Codegen", () => {
       },
     ]
 
-    let currentHistoryItems = await DbFunctions.sql->getAllMockEntityHistory
+    let currentHistoryItems = await Db.sql->getAllMockEntityHistory
     Assert.deepEqual(currentHistoryItems, expectedResult)
 
     switch await TestEntity.entityHistory->EntityHistory.insertRow(
-      ~sql=DbFunctions.sql,
+      ~sql=Db.sql,
       ~historyRow={
         entityData: Set({id: "2", fieldA: 1, fieldB: None}),
         previous: None,
@@ -329,7 +323,7 @@ describe("Entity History Codegen", () => {
     | _ => ()
     }
     switch await TestEntity.entityHistory->EntityHistory.insertRow(
-      ~sql=DbFunctions.sql,
+      ~sql=Db.sql,
       ~historyRow={
         entityData: Set({id: "2", fieldA: 3, fieldB: None}),
         previous: None,
@@ -349,7 +343,7 @@ describe("Entity History Codegen", () => {
     }
 
     await TestEntity.entityHistory->EntityHistory.insertRow(
-      ~sql=DbFunctions.sql,
+      ~sql=Db.sql,
       ~historyRow={
         entityData: Set({id: "3", fieldA: 4, fieldB: None}),
         previous: None,
@@ -499,19 +493,13 @@ describe("Entity history rollbacks", () => {
     try {
       let _ = DbHelpers.resetPostgresClient()
       let _ = await Migrations.runDownMigrations(~shouldExit=false)
-      let _ = await Migrations.createEnumIfNotExists(
-        DbFunctions.sql,
-        Enums.EntityHistoryRowAction.enum,
-      )
-      let _ = await Migrations.creatTableIfNotExists(DbFunctions.sql, TestEntity.table)
-      let _ = await Migrations.creatTableIfNotExists(
-        DbFunctions.sql,
-        TestEntity.entityHistory.table,
-      )
+      let _ = await Migrations.createEnumIfNotExists(Db.sql, Enums.EntityHistoryRowAction.enum)
+      let _ = await Migrations.creatTableIfNotExists(Db.sql, TestEntity.table)
+      let _ = await Migrations.creatTableIfNotExists(Db.sql, TestEntity.entityHistory.table)
 
-      let _ = await DbFunctions.sql->Postgres.unsafe(TestEntity.entityHistory.createInsertFnQuery)
+      let _ = await Db.sql->Postgres.unsafe(TestEntity.entityHistory.createInsertFnQuery)
 
-      try await DbFunctions.sql->Postgres.beginSql(
+      try await Db.sql->Postgres.beginSql(
         sql => [
           TestEntity.entityHistory->EntityHistory.batchInsertRows(
             ~sql,
@@ -526,7 +514,7 @@ describe("Entity history rollbacks", () => {
       }
 
       let historyItems = {
-        let items = await DbFunctions.sql->getAllMockEntityHistory
+        let items = await Db.sql->getAllMockEntityHistory
         items->S.parseOrRaiseWith(TestEntity.entityHistory.schemaRows)
       }
       Assert.equal(historyItems->Js.Array2.length, 6, ~message="Should have 6 history items")
@@ -542,7 +530,7 @@ describe("Entity history rollbacks", () => {
   })
 
   Async.it("Returns expected diff for ordered multichain mode", async () => {
-    let orderdMultichainRollbackDiff = try await DbFunctions.sql->DbFunctions.EntityHistory.getRollbackDiff(
+    let orderdMultichainRollbackDiff = try await Db.sql->DbFunctions.EntityHistory.getRollbackDiff(
       Mocks.Chain1.orderedMultichainArg,
       ~entityMod=module(TestEntity),
     ) catch {
@@ -581,7 +569,7 @@ describe("Entity history rollbacks", () => {
   })
 
   Async.it("Returns expected diff for unordered multichain mode", async () => {
-    let unorderedMultichainRollbackDiff = try await DbFunctions.sql->DbFunctions.EntityHistory.getRollbackDiff(
+    let unorderedMultichainRollbackDiff = try await Db.sql->DbFunctions.EntityHistory.getRollbackDiff(
       Mocks.Chain1.unorderedMultichainArg,
       ~entityMod=module(TestEntity),
     ) catch {
@@ -607,7 +595,7 @@ describe("Entity history rollbacks", () => {
   })
 
   Async.it("Gets first event change per chain ordered mode", async () => {
-    let firstChangeEventPerChain = try await DbFunctions.sql->DbFunctions.EntityHistory.getFirstChangeEventPerChain(
+    let firstChangeEventPerChain = try await Db.sql->DbFunctions.EntityHistory.getFirstChangeEventPerChain(
       Mocks.Chain1.orderedMultichainArg,
       ~allEntities=[module(TestEntity)->Entities.entityModToInternal],
     ) catch {
@@ -640,7 +628,7 @@ describe("Entity history rollbacks", () => {
   })
 
   Async.it("Gets first event change per chain unordered mode", async () => {
-    let firstChangeEventPerChain = try await DbFunctions.sql->DbFunctions.EntityHistory.getFirstChangeEventPerChain(
+    let firstChangeEventPerChain = try await Db.sql->DbFunctions.EntityHistory.getFirstChangeEventPerChain(
       Mocks.Chain1.unorderedMultichainArg,
       ~allEntities=[module(TestEntity)->Entities.entityModToInternal],
     ) catch {
@@ -667,13 +655,13 @@ describe("Entity history rollbacks", () => {
 
   Async.it("Deletes current history after rollback ordered", async () => {
     let _ =
-      await DbFunctions.sql->DbFunctions.EntityHistory.deleteAllEntityHistoryAfterEventIdentifier(
+      await Db.sql->DbFunctions.EntityHistory.deleteAllEntityHistoryAfterEventIdentifier(
         ~isUnorderedMultichainMode=false,
         ~eventIdentifier=Mocks.Chain1.rollbackEventIdentifier,
         ~allEntities=[module(TestEntity)->Entities.entityModToInternal],
       )
 
-    let currentHistoryItems = await DbFunctions.sql->getAllMockEntityHistory
+    let currentHistoryItems = await Db.sql->getAllMockEntityHistory
     let parsedHistoryItems =
       currentHistoryItems->S.parseOrRaiseWith(TestEntity.entityHistory.schemaRows)
 
@@ -688,13 +676,13 @@ describe("Entity history rollbacks", () => {
 
   Async.it("Deletes current history after rollback unordered", async () => {
     let _ =
-      await DbFunctions.sql->DbFunctions.EntityHistory.deleteAllEntityHistoryAfterEventIdentifier(
+      await Db.sql->DbFunctions.EntityHistory.deleteAllEntityHistoryAfterEventIdentifier(
         ~isUnorderedMultichainMode=true,
         ~eventIdentifier=Mocks.Chain1.rollbackEventIdentifier,
         ~allEntities=[module(TestEntity)->Entities.entityModToInternal],
       )
 
-    let currentHistoryItems = await DbFunctions.sql->getAllMockEntityHistory
+    let currentHistoryItems = await Db.sql->getAllMockEntityHistory
     let parsedHistoryItems =
       currentHistoryItems->S.parseOrRaiseWith(TestEntity.entityHistory.schemaRows)
 
@@ -708,12 +696,12 @@ describe("Entity history rollbacks", () => {
   })
 
   Async.it("Prunes history correctly with items in reorg threshold", async () => {
-    await DbFunctions.sql->DbFunctions.EntityHistory.pruneStaleEntityHistory(
+    await Db.sql->DbFunctions.EntityHistory.pruneStaleEntityHistory(
       ~entityName=TestEntity.name,
       ~safeChainIdAndBlockNumberArray=[{chainId: 1, blockNumber: 3}, {chainId: 2, blockNumber: 2}],
       ~shouldDeepClean=true,
     )
-    let currentHistoryItems = await DbFunctions.sql->getAllMockEntityHistory
+    let currentHistoryItems = await Db.sql->getAllMockEntityHistory
 
     let parsedHistoryItems =
       currentHistoryItems->S.parseOrRaiseWith(TestEntity.entityHistory.schemaRows)
@@ -740,7 +728,7 @@ describe("Entity history rollbacks", () => {
   Async.it(
     "Deep clean prunes history correctly with items in reorg threshold without checking for stale history entities in threshold",
     async () => {
-      await DbFunctions.sql->DbFunctions.EntityHistory.pruneStaleEntityHistory(
+      await Db.sql->DbFunctions.EntityHistory.pruneStaleEntityHistory(
         ~entityName=TestEntity.name,
         ~safeChainIdAndBlockNumberArray=[
           {chainId: 1, blockNumber: 3},
@@ -748,7 +736,7 @@ describe("Entity history rollbacks", () => {
         ],
         ~shouldDeepClean=false,
       )
-      let currentHistoryItems = await DbFunctions.sql->getAllMockEntityHistory
+      let currentHistoryItems = await Db.sql->getAllMockEntityHistory
 
       let parsedHistoryItems =
         currentHistoryItems->S.parseOrRaiseWith(TestEntity.entityHistory.schemaRows)
@@ -766,12 +754,12 @@ describe("Entity history rollbacks", () => {
     },
   )
   Async.it("Prunes history correctly with no items in reorg threshold", async () => {
-    await DbFunctions.sql->DbFunctions.EntityHistory.pruneStaleEntityHistory(
+    await Db.sql->DbFunctions.EntityHistory.pruneStaleEntityHistory(
       ~entityName=TestEntity.name,
       ~safeChainIdAndBlockNumberArray=[{chainId: 1, blockNumber: 4}, {chainId: 2, blockNumber: 3}],
       ~shouldDeepClean=true,
     )
-    let currentHistoryItems = await DbFunctions.sql->getAllMockEntityHistory
+    let currentHistoryItems = await Db.sql->getAllMockEntityHistory
 
     Assert.ok(
       currentHistoryItems->Array.length == 0,
@@ -784,14 +772,11 @@ describe_skip("Prune performance test", () => {
   Async.it("Print benchmark of prune function", async () => {
     let _ = DbHelpers.resetPostgresClient()
     let _ = await Migrations.runDownMigrations(~shouldExit=false)
-    let _ = await Migrations.createEnumIfNotExists(
-      DbFunctions.sql,
-      Enums.EntityHistoryRowAction.enum,
-    )
-    let _ = await Migrations.creatTableIfNotExists(DbFunctions.sql, TestEntity.table)
-    let _ = await Migrations.creatTableIfNotExists(DbFunctions.sql, TestEntity.entityHistory.table)
+    let _ = await Migrations.createEnumIfNotExists(Db.sql, Enums.EntityHistoryRowAction.enum)
+    let _ = await Migrations.creatTableIfNotExists(Db.sql, TestEntity.table)
+    let _ = await Migrations.creatTableIfNotExists(Db.sql, TestEntity.entityHistory.table)
 
-    let _ = await DbFunctions.sql->Postgres.unsafe(TestEntity.entityHistory.createInsertFnQuery)
+    let _ = await Db.sql->Postgres.unsafe(TestEntity.entityHistory.createInsertFnQuery)
 
     let rows: array<testEntityHistory> = []
     for i in 0 to 1000 {
@@ -814,7 +799,7 @@ describe_skip("Prune performance test", () => {
       rows->Js.Array2.push(historyRow)->ignore
     }
 
-    try await DbFunctions.sql->Postgres.beginSql(
+    try await Db.sql->Postgres.beginSql(
       sql => [
         TestEntity.entityHistory->EntityHistory.batchInsertRows(
           ~sql,
@@ -830,7 +815,7 @@ describe_skip("Prune performance test", () => {
 
     let startTime = Hrtime.makeTimer()
 
-    try await DbFunctions.sql->DbFunctions.EntityHistory.pruneStaleEntityHistory(
+    try await Db.sql->DbFunctions.EntityHistory.pruneStaleEntityHistory(
       ~entityName=TestEntity.name,
       ~safeChainIdAndBlockNumberArray=[{chainId: 1, blockNumber: 500}],
       ~shouldDeepClean=false,
