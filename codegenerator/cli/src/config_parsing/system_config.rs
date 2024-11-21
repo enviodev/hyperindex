@@ -102,7 +102,6 @@ impl EnvState {
 #[derive(Debug)]
 pub struct SystemConfig {
     pub name: String,
-    pub ecosystem: Ecosystem,
     pub schema_path: String,
     pub parsed_project_paths: ParsedProjectPaths,
     pub networks: NetworkMap,
@@ -122,6 +121,13 @@ impl SystemConfig {
         let mut contracts: Vec<&Contract> = self.contracts.values().collect();
         contracts.sort_by_key(|c| c.name.clone());
         contracts
+    }
+
+    pub fn get_ecosystem(&self) -> Ecosystem {
+        match &self.human_config {
+            HumanConfig::Evm(_) => Ecosystem::Evm,
+            HumanConfig::Fuel(_) => Ecosystem::Fuel,
+        }
     }
 
     pub fn get_contract(&self, name: &ContractNameKey) -> Option<&Contract> {
@@ -225,13 +231,13 @@ impl SystemConfig {
         schema: Schema,
         project_paths: &ParsedProjectPaths,
     ) -> Result<Self> {
+        let mut networks: NetworkMap = HashMap::new();
+        let mut contracts: ContractMap = HashMap::new();
+
         match human_config {
             HumanConfig::Evm(ref evm_config) => {
                 // TODO: Add similar validation for Fuel
                 validation::validate_deserialized_config_yaml(&evm_config)?;
-
-                let mut networks: NetworkMap = HashMap::new();
-                let mut contracts: ContractMap = HashMap::new();
 
                 //Add all global contracts
                 if let Some(global_contracts) = &evm_config.contracts {
@@ -356,7 +362,6 @@ impl SystemConfig {
 
                 Ok(SystemConfig {
                     name: evm_config.name.clone(),
-                    ecosystem: Ecosystem::Evm,
                     parsed_project_paths: project_paths.clone(),
                     schema_path: evm_config
                         .schema
@@ -376,9 +381,6 @@ impl SystemConfig {
                 })
             }
             HumanConfig::Fuel(ref fuel_config) => {
-                let mut networks: NetworkMap = HashMap::new();
-                let mut contracts: ContractMap = HashMap::new();
-
                 //Add all global contracts
                 if let Some(global_contracts) = &fuel_config.contracts {
                     for g_contract in global_contracts {
@@ -492,7 +494,6 @@ impl SystemConfig {
 
                 Ok(SystemConfig {
                     name: fuel_config.name.clone(),
-                    ecosystem: Ecosystem::Fuel,
                     parsed_project_paths: project_paths.clone(),
                     schema_path: fuel_config
                         .schema

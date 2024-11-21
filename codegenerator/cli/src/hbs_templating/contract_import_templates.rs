@@ -256,7 +256,8 @@ impl Event {
             Language::ReScript => format!("{int_var_name}->Belt.Int.toString"),
             Language::TypeScript | Language::JavaScript => int_var_name,
         };
-        let int_event_prop_as_string = |event_prop: &str| int_as_string(format!("event.{event_prop}"));
+        let int_event_prop_as_string =
+            |event_prop: &str| int_as_string(format!("event.{event_prop}"));
         let chain_id_str = int_event_prop_as_string("chainId");
 
         let block_number_field = match is_fuel {
@@ -380,7 +381,7 @@ impl AutoSchemaHandlerTemplate {
             .map(|contract| {
                 Contract::from_config_contract(
                     contract,
-                    config.ecosystem == Ecosystem::Fuel,
+                    config.get_ecosystem() == Ecosystem::Fuel,
                     &language,
                 )
             })

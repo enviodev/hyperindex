@@ -1036,8 +1036,8 @@ impl ProjectTemplate {
             enable_raw_events: cfg.enable_raw_events,
             has_multiple_events,
             field_selection,
-            is_evm_ecosystem: cfg.ecosystem == Ecosystem::Evm,
-            is_fuel_ecosystem: cfg.ecosystem == Ecosystem::Fuel,
+            is_evm_ecosystem: cfg.get_ecosystem() == Ecosystem::Evm,
+            is_fuel_ecosystem: cfg.get_ecosystem() == Ecosystem::Fuel,
             //Used for the package.json reference to handlers in generated
             relative_path_to_root_from_generated,
         })
