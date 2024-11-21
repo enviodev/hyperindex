@@ -66,7 +66,7 @@ let createDerivedFromDbIndex = (~derivedFromField: Table.derivedFromField, ~sche
   sql->unsafe(query)
 }
 
-let createEnumIfNotExists = (sql, enum: Enums.enumType<_>) => {
+let createEnumIfNotExists = (sql, enum: Enum.enum<_>) => {
   open Belt
   let {variants, name} = enum
   let mappedVariants = variants->Array.map(v => `'${v->Utils.magic}'`)->Js.Array2.joinWith(", ")

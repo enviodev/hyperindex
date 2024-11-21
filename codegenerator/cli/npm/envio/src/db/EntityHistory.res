@@ -1,5 +1,12 @@
 open Table
 
+module RowAction = {
+  type t = SET | DELETE
+  let variants = [SET, DELETE]
+  let name = "ENTITY_HISTORY_ROW_ACTION"
+  let enum = Enum.make(~name, ~variants)
+}
+
 type historyFieldsGeneral<'a> = {
   chain_id: 'a,
   block_timestamp: 'a,
@@ -72,7 +79,7 @@ let makeHistoryRowSchema: S.t<'entity> => S.t<historyRow<'entity>> = entitySchem
       "current": s.flatten(currentHistoryFieldsSchema),
       "previous": s.flatten(previousHistoryFieldsSchema),
       "entityData": s.flatten(nullableEntitySchema),
-      "action": s.field("action", Enums.EntityHistoryRowAction.enum.schema),
+      "action": s.field("action", RowAction.enum.schema),
     }
   })->S.transform(s => {
     parser: v => {
@@ -102,10 +109,7 @@ let makeHistoryRowSchema: S.t<'entity> => S.t<historyRow<'entity>> = entitySchem
     },
     serializer: v => {
       let (entityData, action) = switch v.entityData {
-      | Set(entityData) => (
-          entityData->(Utils.magic: 'entity => Js.Dict.t<unknown>),
-          Enums.EntityHistoryRowAction.SET,
-        )
+      | Set(entityData) => (entityData->(Utils.magic: 'entity => Js.Dict.t<unknown>), RowAction.SET)
       | Delete(entityIdOnly) => (
           entityIdOnly->(Utils.magic: entityIdOnly => Js.Dict.t<unknown>),
           DELETE,
@@ -218,7 +222,7 @@ let fromTable = (table: table, ~schema: S.t<'entity>): t<'entity> => {
 
   let actionFieldName = "action"
 
-  let actionField = mkField(actionFieldName, Custom(Enums.EntityHistoryRowAction.enum.name))
+  let actionField = mkField(actionFieldName, Custom(RowAction.enum.name))
 
   let serialField = mkField("serial", Serial, ~isNullable=true, ~isIndex=true)
 

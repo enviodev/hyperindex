@@ -1,5 +1,4 @@
 open Table
-open Enums
 
 //shorthand for punning
 let isPrimaryKey = true
