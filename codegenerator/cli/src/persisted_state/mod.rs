@@ -176,10 +176,7 @@ impl PersistedStateExists {
                 //representation of PersistedState. In either of these cases we
                 //need to re-codegen so we can just treat it as an option type
                 match serde_json::from_str(&file_str) {
-                    Err(e) => {
-                        println!("Warning: Failed to deserialize PersistedState file with unexpected error: {e}");
-                        Self::Corrupted
-                    }
+                    Err(_) => Self::Corrupted,
                     Ok(state) => Self::Exists(state),
                 }
             }
@@ -214,7 +211,8 @@ mod test {
             "config_hash": "<HASH_STRING>",
             "schema_hash": "<HASH_STRING>",
             "handler_files_hash": "<HASH_STRING>",
-            "abi_files_hash": "<HASH_STRING>"
+            "abi_files_hash": "<HASH_STRING>",
+            "env_hash": "<HASH_STRING>"
         }))
         .unwrap();
 
@@ -223,7 +221,8 @@ mod test {
             "config_hash": "<CHANGED_HASH_STRING>",
             "schema_hash": "<HASH_STRING>",
             "handler_files_hash": "<HASH_STRING>",
-            "abi_files_hash": "<HASH_STRING>"
+            "abi_files_hash": "<HASH_STRING>",
+            "env_hash": "<HASH_STRING>"
         }))
         .unwrap();
 
@@ -243,7 +242,8 @@ mod test {
             "config_hash": "<HASH_STRING>",
             "schema_hash": "<HASH_STRING>",
             "handler_files_hash": "<HASH_STRING>",
-            "abi_files_hash": "<HASH_STRING>"
+            "abi_files_hash": "<HASH_STRING>",
+            "env_hash": "<HASH_STRING>"
         }))
         .unwrap();
 
@@ -252,7 +252,8 @@ mod test {
             "config_hash": "<HASH_STRING>",
             "schema_hash": "<HASH_STRING>",
             "handler_files_hash": "<CHANGED_HASH_STRING>",
-            "abi_files_hash": "<HASH_STRING>"
+            "abi_files_hash": "<HASH_STRING>",
+            "env_hash": "<HASH_STRING>"
         }))
         .unwrap();
 
@@ -272,7 +273,8 @@ mod test {
             "config_hash": "<HASH_STRING>",
             "schema_hash": "<HASH_STRING>",
             "handler_files_hash": "<HASH_STRING>",
-            "abi_files_hash": "<HASH_STRING>"
+            "abi_files_hash": "<HASH_STRING>",
+            "env_hash": "<HASH_STRING>"
         }))
         .unwrap();
 
@@ -281,7 +283,8 @@ mod test {
             "config_hash": "<HASH_STRING>",
             "schema_hash": "<CHANGED_HASH_STRING>",
             "handler_files_hash": "<CHANGED_HASH_STRING>",
-            "abi_files_hash": "<HASH_STRING>"
+            "abi_files_hash": "<HASH_STRING>",
+            "env_hash": "<HASH_STRING>"
         }))
         .unwrap();
 
@@ -309,7 +312,8 @@ mod test {
             "config_hash": "<HASH_STRING>",
             "schema_hash": "<HASH_STRING>",
             "handler_files_hash": "<HASH_STRING>",
-            "abi_files_hash": "<HASH_STRING>"
+            "abi_files_hash": "<HASH_STRING>",
+            "env_hash": "<HASH_STRING>"
         }))
         .unwrap();
 
@@ -318,7 +322,8 @@ mod test {
             "config_hash": "<HASH_STRING>",
             "schema_hash": "<HASH_STRING>",
             "handler_files_hash": "<CHANGED_HASH_STRING>",
-            "abi_files_hash": "<HASH_STRING>"
+            "abi_files_hash": "<HASH_STRING>",
+            "env_hash": "<HASH_STRING>"
         }))
         .unwrap();
 
@@ -345,7 +350,8 @@ mod test {
             "config_hash": "<HASH_STRING>",
             "schema_hash": "<HASH_STRING>",
             "handler_files_hash": "<HASH_STRING>",
-            "abi_files_hash": "<HASH_STRING>"
+            "abi_files_hash": "<HASH_STRING>",
+            "env_hash": "<HASH_STRING>"
         }))
         .unwrap();
 
@@ -354,7 +360,8 @@ mod test {
             "config_hash": "<HASH_STRING>",
             "schema_hash": "<HASH_STRING>",
             "handler_files_hash": "<HASH_STRING>",
-            "abi_files_hash": "<HASH_STRING>"
+            "abi_files_hash": "<HASH_STRING>",
+            "env_hash": "<HASH_STRING>"
         }))
         .unwrap();
 
