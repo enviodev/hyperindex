@@ -31,7 +31,6 @@
     "@glennsl/rescript-fetch": "0.2.0",
     "@glennsl/rescript-jest": "^0.9.2",
     "@nomiclabs/hardhat-ethers": "^3.0.0-beta.0",
-    "@ryyppy/rescript-promise": "2.1.0",
     "@typechain/ethers-v6": "^0.3.2",
     "@typechain/hardhat": "^6.1.6",
     "@types/chai": "^4.3.5",

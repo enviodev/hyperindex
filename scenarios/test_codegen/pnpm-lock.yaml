@@ -43,9 +43,6 @@ importers:
       '@nomiclabs/hardhat-ethers':
         specifier: ^3.0.0-beta.0
         version: 3.0.0-beta.0(ethers@6.8.0)(hardhat@2.22.5(ts-node@10.9.2(@types/node@18.19.47)(typescript@5.5.4))(typescript@5.5.4))
-      '@ryyppy/rescript-promise':
-        specifier: 2.1.0
-        version: 2.1.0
       '@typechain/ethers-v6':
         specifier: ^0.3.2
         version: 0.3.3(ethers@6.8.0)(typechain@8.3.2(typescript@5.5.4))(typescript@5.5.4)

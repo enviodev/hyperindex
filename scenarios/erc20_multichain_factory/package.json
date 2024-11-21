@@ -12,7 +12,6 @@
   },
   "dependencies": {
     "@glennsl/rescript-fetch": "0.2.0",
-    "@ryyppy/rescript-promise": "2.1.0",
     "envio": "file:../../codegenerator/cli/npm/envio",
     "ethers": "6.8.0",
     "helpers": "../helpers",
