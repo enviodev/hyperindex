@@ -33,16 +33,14 @@ impl PersistedState {
                 config_hash,
                 schema_hash,
                 handler_files_hash,
-                abi_files_hash,
-                env_hash
+                abi_files_hash
             ) VALUES (
                 $1, 
                 $2, 
                 $3, 
                 $4, 
                 $5, 
-                $6,
-                $7
+                $6
             )
             ON CONFLICT (id) DO UPDATE
             SET 
@@ -50,8 +48,7 @@ impl PersistedState {
                 config_hash = EXCLUDED.config_hash,
                 schema_hash = EXCLUDED.schema_hash,
                 handler_files_hash = EXCLUDED.handler_files_hash,
-                abi_files_hash = EXCLUDED.abi_files_hash,
-                env_hash = EXCLUDED.env_hash
+                abi_files_hash = EXCLUDED.abi_files_hash
             "#,
         )
         .bind(1) //Always only 1 id to update
@@ -60,7 +57,6 @@ impl PersistedState {
         .bind(&self.schema_hash)
         .bind(&self.handler_files_hash)
         .bind(&self.abi_files_hash)
-        .bind(&self.env_hash)
         .execute(pool)
         .await
     }
@@ -80,8 +76,7 @@ impl PersistedStateExists {
             config_hash,
             schema_hash,
             handler_files_hash,
-            abi_files_hash,
-            env_hash
+            abi_files_hash
          from public.persisted_state WHERE id = 1",
         )
         .fetch_optional(pool)

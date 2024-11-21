@@ -8,6 +8,7 @@ use super::{
             Network as EvmNetwork,
         },
         fuel::{EventConfig as FuelEventConfig, HumanConfig as FuelConfig},
+        HumanConfig,
     },
     hypersync_endpoints,
     validation::{self, validate_names_valid_rescript},
@@ -26,7 +27,6 @@ use ethers::abi::{ethabi::Event as EthAbiEvent, EventExt, EventParam, HumanReada
 use itertools::Itertools;
 use regex::{Captures, Regex};
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use std::{
     collections::{HashMap, HashSet},
     fs,
@@ -48,75 +48,53 @@ pub enum Ecosystem {
     Fuel,
 }
 
-// Holds the state of the used env vars to create a hash for persistence
-// Also, allows to get an env var with a lazy loading of .env file
+// Allows to get an env var with a lazy loading of .env file
 #[derive(Debug)]
-pub struct EnvState {
-    // Needed for hash, also use for memo just because we can
-    loaded_envs: HashMap<String, Option<String>>,
+struct EnvState {
     // Lazy loading of .env file
     maybe_dotenv: Option<EnvMap>,
     project_root: PathBuf,
 }
 
 impl EnvState {
-    pub fn new(project_root: &PathBuf) -> Self {
+    fn new(project_root: &PathBuf) -> Self {
         EnvState {
-            loaded_envs: HashMap::new(),
             maybe_dotenv: None,
             project_root: project_root.clone(),
         }
     }
 
     fn var(&mut self, name: &str) -> Option<String> {
-        match self.loaded_envs.get(name) {
-            Some(val) => val.clone(),
-            None => {
-                let env = match std::env::var(name) {
-                    Ok(val) => Some(val),
-                    Err(_) => {
-                        let result = match &self.maybe_dotenv {
-                            Some(env_map) => env_map.var(name),
-                            None => {
-                                match EnvLoader::with_path(self.project_root.join(".env"))
-                                    .sequence(EnvSequence::InputOnly)
-                                    .load()
-                                {
-                                    Ok(env_map) => {
-                                        self.maybe_dotenv = Some(env_map.clone());
-                                        env_map.var(name)
-                                    }
-                                    Err(err) => {
-                                        match err {
-                                          dotenvy::Error::Io(_, _) => (),
-                                          _ => println!("Warning: Failed loading .env file with unexpected error: {err}"),
-                                      };
-                                        self.maybe_dotenv = Some(EnvMap::new());
-                                        Err(err)
-                                    }
-                                }
+        match std::env::var(name) {
+            Ok(val) => Some(val),
+            Err(_) => {
+                let result = match &self.maybe_dotenv {
+                    Some(env_map) => env_map.var(name),
+                    None => {
+                        match EnvLoader::with_path(self.project_root.join(".env"))
+                            .sequence(EnvSequence::InputOnly)
+                            .load()
+                        {
+                            Ok(env_map) => {
+                                self.maybe_dotenv = Some(env_map.clone());
+                                env_map.var(name)
                             }
-                        };
-                        match result {
-                            Ok(val) => Some(val),
-                            Err(_) => None,
+                            Err(err) => {
+                                match err {
+                              dotenvy::Error::Io(_, _) => (),
+                              _ => println!("Warning: Failed loading .env file with unexpected error: {err}"),
+                          };
+                                self.maybe_dotenv = Some(EnvMap::new());
+                                Err(err)
+                            }
                         }
                     }
                 };
-                self.loaded_envs.insert(name.to_string(), env.clone());
-                env
+                match result {
+                    Ok(val) => Some(val),
+                    Err(_) => None,
+                }
             }
-        }
-    }
-
-    pub fn get_used_env_hash(&self) -> String {
-        // Skip the Sha256 logic when no environments are loaded
-        if self.loaded_envs.is_empty() {
-            return "".to_string();
-        } else {
-            let mut hasher = Sha256::new();
-            hasher.update(format!("{:?}", self.loaded_envs));
-            format!("{:x}", hasher.finalize())
         }
     }
 }
@@ -135,7 +113,7 @@ pub struct SystemConfig {
     pub schema: Schema,
     pub field_selection: FieldSelection,
     pub enable_raw_events: bool,
-    pub env_state: EnvState,
+    pub human_config: HumanConfig,
 }
 
 //Getter methods for system config
@@ -242,290 +220,296 @@ impl SystemConfig {
 
 //Parse methods for system config
 impl SystemConfig {
-    pub fn from_evm_config(
-        evm_config: EvmConfig,
+    pub fn from_human_config(
+        human_config: HumanConfig,
         schema: Schema,
-        env_state: EnvState,
         project_paths: &ParsedProjectPaths,
     ) -> Result<Self> {
-        // TODO: Add similar validation for Fuel
-        validation::validate_deserialized_config_yaml(&evm_config)?;
+        match human_config {
+            HumanConfig::Evm(ref evm_config) => {
+                // TODO: Add similar validation for Fuel
+                validation::validate_deserialized_config_yaml(&evm_config)?;
 
-        let mut networks: NetworkMap = HashMap::new();
-        let mut contracts: ContractMap = HashMap::new();
+                let mut networks: NetworkMap = HashMap::new();
+                let mut contracts: ContractMap = HashMap::new();
 
-        //Add all global contracts
-        if let Some(global_contracts) = evm_config.contracts {
-            for g_contract in global_contracts {
-                let (events, evm_abi) = Event::from_evm_events_config(
-                    g_contract.config.events,
-                    &g_contract.config.abi_file_path,
-                    &project_paths,
-                )
-                .context(format!(
-                    "Failed parsing abi types for events in global contract {}",
-                    g_contract.name,
-                ))?;
-
-                let contract = Contract::new(
-                    g_contract.name.clone(),
-                    g_contract.config.handler.clone(),
-                    events,
-                    Abi::Evm(evm_abi),
-                )
-                .context("Failed parsing globally defined contract")?;
-
-                //Check if contract exists
-                unique_hashmap::try_insert(&mut contracts, contract.name.clone(), contract)
-                    .context("Failed inserting globally defined contract")?;
-            }
-        }
-
-        for network in evm_config.networks {
-            for contract in network.contracts.clone() {
-                //Add values for local contract
-                match contract.config {
-                    Some(l_contract) => {
+                //Add all global contracts
+                if let Some(global_contracts) = &evm_config.contracts {
+                    for g_contract in global_contracts {
                         let (events, evm_abi) = Event::from_evm_events_config(
-                            l_contract.events,
-                            &l_contract.abi_file_path,
+                            g_contract.config.events.clone(),
+                            &g_contract.config.abi_file_path,
                             &project_paths,
                         )
                         .context(format!(
+                            "Failed parsing abi types for events in global contract {}",
+                            g_contract.name,
+                        ))?;
+
+                        let contract = Contract::new(
+                            g_contract.name.clone(),
+                            g_contract.config.handler.clone(),
+                            events,
+                            Abi::Evm(evm_abi),
+                        )
+                        .context("Failed parsing globally defined contract")?;
+
+                        //Check if contract exists
+                        unique_hashmap::try_insert(&mut contracts, contract.name.clone(), contract)
+                            .context("Failed inserting globally defined contract")?;
+                    }
+                }
+
+                for network in &evm_config.networks {
+                    for contract in network.contracts.clone() {
+                        //Add values for local contract
+                        match contract.config {
+                            Some(l_contract) => {
+                                let (events, evm_abi) = Event::from_evm_events_config(
+                                    l_contract.events,
+                                    &l_contract.abi_file_path,
+                                    &project_paths,
+                                )
+                                .context(format!(
                             "Failed parsing abi types for events in contract {} on network {}",
                             contract.name, network.id,
                         ))?;
 
-                        let contract = Contract::new(
-                            contract.name,
-                            l_contract.handler,
-                            events,
-                            Abi::Evm(evm_abi),
-                        )
-                        .context(format!(
+                                let contract = Contract::new(
+                                    contract.name,
+                                    l_contract.handler,
+                                    events,
+                                    Abi::Evm(evm_abi),
+                                )
+                                .context(format!(
                             "Failed parsing locally defined network contract at network id {}",
                             network.id
                         ))?;
 
-                        //Check if contract exists
-                        unique_hashmap::try_insert(&mut contracts, contract.name.clone(), contract)
-                            .context(format!(
+                                //Check if contract exists
+                                unique_hashmap::try_insert(
+                                    &mut contracts,
+                                    contract.name.clone(),
+                                    contract,
+                                )
+                                .context(format!(
                                 "Failed inserting locally defined network contract at network id \
                                  {}",
                                 network.id,
                             ))?;
-                    }
-                    None => {
-                        //Validate that there is a global contract for the given contract if
-                        //there is no config
-                        if !contracts.get(&contract.name).is_some() {
-                            Err(anyhow!(
+                            }
+                            None => {
+                                //Validate that there is a global contract for the given contract if
+                                //there is no config
+                                if !contracts.get(&contract.name).is_some() {
+                                    Err(anyhow!(
                                 "Failed to parse contract '{}' for the network '{}'. If you use a \
                                  global contract definition, please verify that the name \
                                  reference is correct.",
                                 contract.name,
                                 network.id
                             ))?;
+                                }
+                            }
                         }
                     }
+
+                    let sync_source = SyncSource::from_evm_network_config(
+                        network.clone(),
+                        evm_config.event_decoder.clone(),
+                    )?;
+
+                    let contracts: Vec<NetworkContract> = network
+                        .contracts
+                        .iter()
+                        .cloned()
+                        .map(|c| NetworkContract {
+                            name: c.name,
+                            addresses: c.address.into(),
+                        })
+                        .collect();
+
+                    let network = Network {
+                        id: network.id,
+                        confirmed_block_threshold: network
+                            .confirmed_block_threshold
+                            .unwrap_or(get_confirmed_block_threshold_from_id(network.id)),
+                        start_block: network.start_block,
+                        end_block: network.end_block,
+                        sync_source,
+                        contracts,
+                    };
+
+                    unique_hashmap::try_insert(&mut networks, network.id.clone(), network)
+                        .context("Failed inserting network at networks map")?;
                 }
-            }
 
-            let sync_source = SyncSource::from_evm_network_config(
-                network.clone(),
-                evm_config.event_decoder.clone(),
-            )?;
-
-            let contracts: Vec<NetworkContract> = network
-                .contracts
-                .iter()
-                .cloned()
-                .map(|c| NetworkContract {
-                    name: c.name,
-                    addresses: c.address.into(),
-                })
-                .collect();
-
-            let network = Network {
-                id: network.id,
-                confirmed_block_threshold: network
-                    .confirmed_block_threshold
-                    .unwrap_or(get_confirmed_block_threshold_from_id(network.id)),
-                start_block: network.start_block,
-                end_block: network.end_block,
-                sync_source,
-                contracts,
-            };
-
-            unique_hashmap::try_insert(&mut networks, network.id.clone(), network)
-                .context("Failed inserting network at networks map")?;
-        }
-
-        let field_selection = FieldSelection::try_from_config_field_selection(
-            evm_config
-                .field_selection
-                .unwrap_or(human_config::evm::FieldSelection {
-                    transaction_fields: None,
-                    block_fields: None,
-                }),
-            &networks,
-        )?;
-
-        Ok(SystemConfig {
-            name: evm_config.name.clone(),
-            ecosystem: Ecosystem::Evm,
-            parsed_project_paths: project_paths.clone(),
-            schema_path: evm_config
-                .schema
-                .clone()
-                .unwrap_or_else(|| DEFAULT_SCHEMA_PATH.to_string()),
-            networks,
-            contracts,
-            unordered_multichain_mode: evm_config.unordered_multichain_mode.unwrap_or(false),
-            rollback_on_reorg: evm_config.rollback_on_reorg.unwrap_or(true),
-            save_full_history: evm_config.save_full_history.unwrap_or(false),
-            schema,
-            field_selection,
-            enable_raw_events: evm_config.raw_events.unwrap_or(false),
-            env_state,
-        })
-    }
-
-    pub fn from_fuel_config(
-        fuel_config: FuelConfig,
-        schema: Schema,
-        env_state: EnvState,
-        project_paths: &ParsedProjectPaths,
-    ) -> Result<Self> {
-        let mut networks: NetworkMap = HashMap::new();
-        let mut contracts: ContractMap = HashMap::new();
-
-        //Add all global contracts
-        if let Some(global_contracts) = &fuel_config.contracts {
-            for g_contract in global_contracts {
-                let (events, fuel_abi) = Event::from_fuel_events_config(
-                    &g_contract.config.events,
-                    &g_contract.config.abi_file_path,
-                    &project_paths,
-                )
-                .context(format!(
-                    "Failed parsing abi types for events in global contract {}",
-                    g_contract.name,
-                ))?;
-
-                let contract = Contract::new(
-                    g_contract.name.clone(),
-                    g_contract.config.handler.clone(),
-                    events,
-                    Abi::Fuel(fuel_abi),
+                let field_selection = FieldSelection::try_from_config_field_selection(
+                    evm_config.field_selection.clone().unwrap_or(
+                        human_config::evm::FieldSelection {
+                            transaction_fields: None,
+                            block_fields: None,
+                        },
+                    ),
+                    &networks,
                 )?;
 
-                //Check if contract exists
-                unique_hashmap::try_insert(&mut contracts, contract.name.clone(), contract)
-                    .context("Failed inserting globally defined contract")?;
+                Ok(SystemConfig {
+                    name: evm_config.name.clone(),
+                    ecosystem: Ecosystem::Evm,
+                    parsed_project_paths: project_paths.clone(),
+                    schema_path: evm_config
+                        .schema
+                        .clone()
+                        .unwrap_or_else(|| DEFAULT_SCHEMA_PATH.to_string()),
+                    networks,
+                    contracts,
+                    unordered_multichain_mode: evm_config
+                        .unordered_multichain_mode
+                        .unwrap_or(false),
+                    rollback_on_reorg: evm_config.rollback_on_reorg.unwrap_or(true),
+                    save_full_history: evm_config.save_full_history.unwrap_or(false),
+                    schema,
+                    field_selection,
+                    enable_raw_events: evm_config.raw_events.unwrap_or(false),
+                    human_config,
+                })
             }
-        }
+            HumanConfig::Fuel(ref fuel_config) => {
+                let mut networks: NetworkMap = HashMap::new();
+                let mut contracts: ContractMap = HashMap::new();
 
-        for network in &fuel_config.networks {
-            for contract in network.contracts.clone() {
-                //Add values for local contract
-                match contract.config {
-                    Some(l_contract) => {
+                //Add all global contracts
+                if let Some(global_contracts) = &fuel_config.contracts {
+                    for g_contract in global_contracts {
                         let (events, fuel_abi) = Event::from_fuel_events_config(
-                            &l_contract.events,
-                            &l_contract.abi_file_path,
+                            &g_contract.config.events,
+                            &g_contract.config.abi_file_path,
                             &project_paths,
                         )
                         .context(format!(
-                            "Failed parsing abi types for events in contract {} on network {}",
-                            contract.name, network.id,
+                            "Failed parsing abi types for events in global contract {}",
+                            g_contract.name,
                         ))?;
 
                         let contract = Contract::new(
-                            contract.name.clone(),
-                            l_contract.handler,
+                            g_contract.name.clone(),
+                            g_contract.config.handler.clone(),
                             events,
                             Abi::Fuel(fuel_abi),
                         )?;
 
                         //Check if contract exists
                         unique_hashmap::try_insert(&mut contracts, contract.name.clone(), contract)
-                            .context(format!(
-                                "Failed inserting locally defined network contract at network id \
-                                 {}",
-                                network.id,
-                            ))?;
-                    }
-                    None => {
-                        //Validate that there is a global contract for the given contract if
-                        //there is no local_contract_config
-                        if !contracts.get(&contract.name).is_some() {
-                            Err(anyhow!(
-                                "Failed to parse contract '{}' for the network '{}'. If you use a \
-                                 global contract definition, please verify that the name \
-                                 reference is correct.",
-                                contract.name,
-                                network.id
-                            ))?;
-                        }
+                            .context("Failed inserting globally defined contract")?;
                     }
                 }
-            }
 
-            let sync_source = SyncSource::HyperfuelConfig(HyperfuelConfig {
-                endpoint_url: match &network.hyperfuel_config {
-                    Some(config) => config.url.clone(),
-                    None => match network.id {
-                        0 => "https://fuel-testnet.hypersync.xyz".to_string(),
-                        9889 => "https://fuel.hypersync.xyz".to_string(),
-                        _ => {
-                            return Err(anyhow!("Fuel network id {} is not supported", network.id))
+                for network in &fuel_config.networks {
+                    for contract in network.contracts.clone() {
+                        //Add values for local contract
+                        match contract.config {
+                            Some(l_contract) => {
+                                let (events, fuel_abi) = Event::from_fuel_events_config(
+                                  &l_contract.events,
+                                  &l_contract.abi_file_path,
+                                  &project_paths,
+                              )
+                              .context(format!(
+                                  "Failed parsing abi types for events in contract {} on network {}",
+                                  contract.name, network.id,
+                              ))?;
+
+                                let contract = Contract::new(
+                                    contract.name.clone(),
+                                    l_contract.handler,
+                                    events,
+                                    Abi::Fuel(fuel_abi),
+                                )?;
+
+                                //Check if contract exists
+                                unique_hashmap::try_insert(&mut contracts, contract.name.clone(), contract)
+                                  .context(format!(
+                                      "Failed inserting locally defined network contract at network id \
+                                       {}",
+                                      network.id,
+                                  ))?;
+                            }
+                            None => {
+                                //Validate that there is a global contract for the given contract if
+                                //there is no local_contract_config
+                                if !contracts.get(&contract.name).is_some() {
+                                    Err(anyhow!(
+                                      "Failed to parse contract '{}' for the network '{}'. If you use a \
+                                       global contract definition, please verify that the name \
+                                       reference is correct.",
+                                      contract.name,
+                                      network.id
+                                  ))?;
+                                }
+                            }
                         }
-                    },
-                },
-            });
+                    }
 
-            let contracts: Vec<NetworkContract> = network
-                .contracts
-                .iter()
-                .cloned()
-                .map(|c| NetworkContract {
-                    name: c.name,
-                    addresses: c.address.into(),
+                    let sync_source = SyncSource::HyperfuelConfig(HyperfuelConfig {
+                        endpoint_url: match &network.hyperfuel_config {
+                            Some(config) => config.url.clone(),
+                            None => match network.id {
+                                0 => "https://fuel-testnet.hypersync.xyz".to_string(),
+                                9889 => "https://fuel.hypersync.xyz".to_string(),
+                                _ => {
+                                    return Err(anyhow!(
+                                        "Fuel network id {} is not supported",
+                                        network.id
+                                    ))
+                                }
+                            },
+                        },
+                    });
+
+                    let contracts: Vec<NetworkContract> = network
+                        .contracts
+                        .iter()
+                        .cloned()
+                        .map(|c| NetworkContract {
+                            name: c.name,
+                            addresses: c.address.into(),
+                        })
+                        .collect();
+
+                    let network = Network {
+                        id: network.id as u64,
+                        start_block: network.start_block,
+                        end_block: network.end_block,
+                        confirmed_block_threshold: 0,
+                        sync_source,
+                        contracts,
+                    };
+
+                    unique_hashmap::try_insert(&mut networks, network.id.clone(), network)
+                        .context("Failed inserting network at networks map")?;
+                }
+
+                Ok(SystemConfig {
+                    name: fuel_config.name.clone(),
+                    ecosystem: Ecosystem::Fuel,
+                    parsed_project_paths: project_paths.clone(),
+                    schema_path: fuel_config
+                        .schema
+                        .clone()
+                        .unwrap_or_else(|| DEFAULT_SCHEMA_PATH.to_string()),
+                    networks,
+                    contracts,
+                    unordered_multichain_mode: false,
+                    rollback_on_reorg: false,
+                    save_full_history: false,
+                    schema,
+                    field_selection: FieldSelection::fuel(),
+                    enable_raw_events: fuel_config.raw_events.unwrap_or(false),
+                    human_config,
                 })
-                .collect();
-
-            let network = Network {
-                id: network.id as u64,
-                start_block: network.start_block,
-                end_block: network.end_block,
-                confirmed_block_threshold: 0,
-                sync_source,
-                contracts,
-            };
-
-            unique_hashmap::try_insert(&mut networks, network.id.clone(), network)
-                .context("Failed inserting network at networks map")?;
+            }
         }
-
-        Ok(SystemConfig {
-            name: fuel_config.name.clone(),
-            ecosystem: Ecosystem::Fuel,
-            parsed_project_paths: project_paths.clone(),
-            schema_path: fuel_config
-                .schema
-                .clone()
-                .unwrap_or_else(|| DEFAULT_SCHEMA_PATH.to_string()),
-            networks,
-            contracts,
-            unordered_multichain_mode: false,
-            rollback_on_reorg: false,
-            save_full_history: false,
-            schema,
-            field_selection: FieldSelection::fuel(),
-            enable_raw_events: fuel_config.raw_events.unwrap_or(false),
-            env_state,
-        })
     }
 
     fn is_valid_env_var_name(name: &str) -> bool {
@@ -586,7 +570,6 @@ impl SystemConfig {
             ))?;
 
         let mut env_state = EnvState::new(&project_paths.project_root);
-
         let human_config_string =
             Self::interpolate_config_variables(human_config_string, |name| env_state.var(name))?;
 
@@ -618,7 +601,7 @@ impl SystemConfig {
                     ))?;
                 let schema = Schema::parse_from_file(&project_paths, &evm_config.schema)
                     .context("Parsing schema file for config")?;
-                Self::from_evm_config(evm_config, schema, env_state, project_paths)
+                Self::from_human_config(HumanConfig::Evm(evm_config), schema, project_paths)
             }
             Ecosystem::Fuel => {
                 let fuel_config: FuelConfig =
@@ -629,7 +612,7 @@ impl SystemConfig {
                     ))?;
                 let schema = Schema::parse_from_file(&project_paths, &fuel_config.schema)
                     .context("Parsing schema file for config")?;
-                Self::from_fuel_config(fuel_config, schema, env_state, project_paths)
+                Self::from_human_config(HumanConfig::Fuel(fuel_config), schema, project_paths)
             }
         }
     }
