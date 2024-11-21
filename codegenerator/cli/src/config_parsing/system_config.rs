@@ -109,15 +109,14 @@ impl EnvState {
         }
     }
 
-    pub fn get_hash(&self) -> String {
+    pub fn get_used_env_hash(&self) -> String {
         // Skip the Sha256 logic when no environments are loaded
         if self.loaded_envs.is_empty() {
             return "".to_string();
         } else {
             let mut hasher = Sha256::new();
             hasher.update(format!("{:?}", self.loaded_envs));
-            let hash = hasher.finalize().to_vec();
-            format!("{:?}", hash)
+            format!("{:x}", hasher.finalize())
         }
     }
 }

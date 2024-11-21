@@ -100,7 +100,7 @@ impl PersistedState {
             .context("Failed hashing handler files")?,
             abi_files_hash: HashString::from_file_paths(all_abi_file_paths, ABI_FILES_MUST_EXIST)
                 .context("Failed hashing abi files")?,
-            env_hash: HashString::from_string(config.env_state.get_hash()),
+            env_hash: HashString::from_string(config.env_state.get_used_env_hash()),
         })
     }
 
