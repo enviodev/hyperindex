@@ -1,46 +1,26 @@
-module Query = {
-  type method =
-    | @as("eth_getLogs") EthGetLogs
-    | @as("eth_getBlockByNumber") EthGetBlockByNumber
-    | @as("eth_blockNumber") EthBlockNumber
-  let methodSchema = S.union([
-    S.literal(EthGetLogs),
-    S.literal(EthGetBlockByNumber),
-    S.literal(EthBlockNumber),
-  ])
-  type jsonRpcVersion = | @as("2.0") TwoPointZero
-  let jsonRpcVersionSchema = S.literal(TwoPointZero)
-  //use json params to be ablet to mix query types in an array for batch queries
-  type t = {method: method, params: array<Js.Json.t>, mutable id: int, jsonrpc: jsonRpcVersion}
-  let schema: S.schema<t> = S.object(s => {
-    method: s.field("method", methodSchema),
-    params: s.field("params", S.array(S.json(~validate=false))),
-    id: s.field("id", S.int),
-    jsonrpc: s.field("jsonrpc", jsonRpcVersionSchema),
+let makeRpcRoute = (method: string, paramsSchema, resultSchema) => {
+  let idSchema = S.literal(1)
+  let versionSchema = S.literal("2.0")
+  Rest.route(() => {
+    method: Post,
+    path: "",
+    variables: s => {
+      let _ = s.field("method", S.literal(method))
+      let _ = s.field("id", idSchema)
+      let _ = s.field("jsonrpc", versionSchema)
+      s.field("params", paramsSchema)
+    },
+    responses: [
+      s => {
+        let _ = s.field("jsonrpc", versionSchema)
+        let _ = s.field("id", idSchema)
+        s.field("result", resultSchema)
+      },
+    ],
   })
-
-  type response<'a> = {
-    jsonrpc: jsonRpcVersion,
-    id: int,
-    result: 'a,
-  }
-
-  let makeResponseSchema = (resultSchema: S.schema<'a>) =>
-    S.object((s): response<'a> => {
-      jsonrpc: s.field("jsonrpc", jsonRpcVersionSchema),
-      id: s.field("id", S.int),
-      result: s.field("result", resultSchema),
-    })
-
-  let make = (~method, ~params, ~id=1) => {method, params, id, jsonrpc: TwoPointZero}
-}
-
-module BatchQuery = {
-  type t = array<Query.t>
 }
 
 type hex = string
-
 let makeHexSchema = fromStr =>
   S.string->S.transform(s => {
     parser: str =>
@@ -48,7 +28,7 @@ let makeHexSchema = fromStr =>
       | Some(v) => v
       | None => s.fail("The string is not valid hex")
       },
-    serializer: bigint => bigint->Viem.toHex->Utils.magic,
+    serializer: value => value->Viem.toHex->Utils.magic,
   })
 
 let hexBigintSchema: S.schema<bigint> = makeHexSchema(BigInt.fromString)
@@ -134,17 +114,7 @@ module GetLogs = {
     removed: s.field("removed", S.bool),
   })
 
-  let responseSchema = Query.makeResponseSchema(S.array(logSchema))
-
-  let make = (~fromBlock, ~toBlock, ~address, ~topics) => {
-    let params = {
-      fromBlock,
-      toBlock,
-      address,
-      topics,
-    }->S.serializeOrRaiseWith(paramsSchema)
-    Query.make(~method=EthGetLogs, ~params=[params])
-  }
+  let route = makeRpcRoute("eth_getLogs", S.tuple1(paramsSchema), S.array(logSchema))
 }
 
 module GetBlockByNumber = {
@@ -194,20 +164,18 @@ module GetBlockByNumber = {
     uncles: s.field("uncles", S.null(S.array(S.string))),
   })
 
-  let responseSchema: S.t<Query.response<option<block>>> = Query.makeResponseSchema(
+  let route = makeRpcRoute(
+    "eth_getBlockByNumber",
+    S.tuple(s =>
+      {
+        "blockNumber": s.item(0, hexIntSchema),
+        "includeTransactions": s.item(1, S.bool),
+      }
+    ),
     S.null(blockSchema),
   )
-
-  let make = (~blockNumber, ~includeTransactions=false) => {
-    let blockNumber = blockNumber->Viem.toHex->Utils.magic
-    let transactionDetailFlag = includeTransactions->S.serializeOrRaiseWith(S.bool)
-    Query.make(~method=EthGetBlockByNumber, ~params=[blockNumber, transactionDetailFlag])
-  }
 }
 
 module GetBlockHeight = {
-  type response = int
-  let responseSchema = Query.makeResponseSchema(hexIntSchema)
-
-  let make = () => Query.make(~method=EthBlockNumber, ~params=[])
+  let route = makeRpcRoute("eth_blockNumber", S.tuple(_ => ()), hexIntSchema)
 }
