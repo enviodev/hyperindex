@@ -1,4 +1,4 @@
-const TableModule = require("./Table.bs.js");
+const TableModule = require("envio/src/db/Table.bs.js");
 // db operations for raw_events:
 const MAX_ITEMS_PER_QUERY = 500;
 

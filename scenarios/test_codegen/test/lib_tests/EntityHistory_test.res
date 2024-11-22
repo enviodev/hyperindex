@@ -204,7 +204,7 @@ describe("Entity History Codegen", () => {
   Async.it("Creating tables and functions works", async () => {
     try {
       let _ = await Migrations.runDownMigrations(~shouldExit=false)
-      let _ = await Migrations.createEnumIfNotExists(Db.sql, Enums.EntityHistoryRowAction.enum)
+      let _ = await Migrations.createEnumIfNotExists(Db.sql, EntityHistory.RowAction.enum)
       let _resA = await Migrations.creatTableIfNotExists(Db.sql, TestEntity.table)
       let _resB = await Migrations.creatTableIfNotExists(Db.sql, TestEntity.entityHistory.table)
     } catch {
@@ -493,7 +493,7 @@ describe("Entity history rollbacks", () => {
     try {
       let _ = DbHelpers.resetPostgresClient()
       let _ = await Migrations.runDownMigrations(~shouldExit=false)
-      let _ = await Migrations.createEnumIfNotExists(Db.sql, Enums.EntityHistoryRowAction.enum)
+      let _ = await Migrations.createEnumIfNotExists(Db.sql, EntityHistory.RowAction.enum)
       let _ = await Migrations.creatTableIfNotExists(Db.sql, TestEntity.table)
       let _ = await Migrations.creatTableIfNotExists(Db.sql, TestEntity.entityHistory.table)
 
@@ -772,7 +772,7 @@ describe_skip("Prune performance test", () => {
   Async.it("Print benchmark of prune function", async () => {
     let _ = DbHelpers.resetPostgresClient()
     let _ = await Migrations.runDownMigrations(~shouldExit=false)
-    let _ = await Migrations.createEnumIfNotExists(Db.sql, Enums.EntityHistoryRowAction.enum)
+    let _ = await Migrations.createEnumIfNotExists(Db.sql, EntityHistory.RowAction.enum)
     let _ = await Migrations.creatTableIfNotExists(Db.sql, TestEntity.table)
     let _ = await Migrations.creatTableIfNotExists(Db.sql, TestEntity.entityHistory.table)
 
