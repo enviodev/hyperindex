@@ -64,20 +64,20 @@ describe("SerDe Test", () => {
         ~shouldCopyCurrentEntity=true,
       )
 
-    try await DbFunctions.sql->setHistory(entityHistoryItem) catch {
+    try await Db.sql->setHistory(entityHistoryItem) catch {
     | exn =>
       Js.log2("setHistory exn", exn)
       Assert.fail("Failed to set entity history in table")
     }
 
     //set the entity
-    try await DbFunctions.sql->set([entity]) catch {
+    try await Db.sql->set([entity]) catch {
     | exn =>
       Js.log(exn)
       Assert.fail("Failed to set entity in table")
     }
 
-    switch await DbFunctions.sql->read([entity.id]) {
+    switch await Db.sql->read([entity.id]) {
     | exception exn =>
       Js.log(exn)
       Assert.fail("Failed to read entity from table")
@@ -86,10 +86,9 @@ describe("SerDe Test", () => {
     }
 
     //The copy function will do it's custom postgres serialization of the entity
-    // await DbFunctions.sql->DbFunctions.EntityHistory.copyAllEntitiesToEntityHistory
+    // await Db.sql->DbFunctions.EntityHistory.copyAllEntitiesToEntityHistory
 
-    let res =
-      await DbFunctions.sql->Postgres.unsafe(`SELECT * FROM public."EntityWithAllTypes_history";`)
+    let res = await Db.sql->Postgres.unsafe(`SELECT * FROM public."EntityWithAllTypes_history";`)
 
     switch res {
     | [row] =>

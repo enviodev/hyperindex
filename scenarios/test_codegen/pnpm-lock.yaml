@@ -43,9 +43,6 @@ importers:
       '@nomiclabs/hardhat-ethers':
         specifier: ^3.0.0-beta.0
         version: 3.0.0-beta.0(ethers@6.8.0)(hardhat@2.22.5(ts-node@10.9.2(@types/node@18.19.47)(typescript@5.5.4))(typescript@5.5.4))
-      '@ryyppy/rescript-promise':
-        specifier: 2.1.0
-        version: 2.1.0
       '@typechain/ethers-v6':
         specifier: ^0.3.2
         version: 0.3.3(ethers@6.8.0)(typechain@8.3.2(typescript@5.5.4))(typescript@5.5.4)
@@ -142,9 +139,6 @@ importers:
       '@rescript/react':
         specifier: 0.12.1
         version: 0.12.1(react-dom@18.3.1(react@18.2.0))(react@18.2.0)
-      '@ryyppy/rescript-promise':
-        specifier: 2.1.0
-        version: 2.1.0
       bignumber.js:
         specifier: 9.1.2
         version: 9.1.2

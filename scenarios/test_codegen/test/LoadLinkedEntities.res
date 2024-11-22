@@ -15,7 +15,7 @@ describe_skip("Linked Entity Loader Integration Test", () => {
   // })
   //
   // Async.it_skip("Test Linked Entity Loader Scenario 1", ~timeout=5 * 1000, async () => {
-  //   let sql = DbFunctions.sql
+  //   let sql = Db.sql
   //   /// Setup DB
   //   let a1: Types.a = {optionalStringToTestLinkedEntities: None, id: "a1", b_id: "b1"}
   //   let a2: Types.a = {optionalStringToTestLinkedEntities: None, id: "a2", b_id: "b2"}
@@ -93,7 +93,7 @@ describe_skip("Linked Entity Loader Integration Test", () => {
   // })
   //
   // Async.it("Test Linked Entity Loader Scenario 2", ~timeout=5 * 1000, async () => {
-  //   let sql = DbFunctions.sql
+  //   let sql = Db.sql
   //
   //   /// Setup DB
   //   let a1: Types.a = {id: "a1", b_id: "b1", optionalStringToTestLinkedEntities: None}

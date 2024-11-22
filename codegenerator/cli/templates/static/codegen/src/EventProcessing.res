@@ -538,7 +538,7 @@ let getDynamicContractRegistrations = (
       ->propogate
 
     //We only preregister below the reorg threshold so it can be hardcoded as false
-    switch await DbFunctions.sql->IO.executeBatch(
+    switch await Db.sql->IO.executeBatch(
       ~inMemoryStore,
       ~isInReorgThreshold=false,
       ~config,
@@ -614,7 +614,7 @@ let processEventBatch = (
 
     let elapsedTimeAfterProcess = timeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
 
-    switch await DbFunctions.sql->IO.executeBatch(~inMemoryStore, ~isInReorgThreshold, ~config) {
+    switch await Db.sql->IO.executeBatch(~inMemoryStore, ~isInReorgThreshold, ~config) {
     | exception exn =>
       exn->ErrorHandling.make(~msg="Failed writing batch to database", ~logger)->Error->propogate
     | () => ()

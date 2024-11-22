@@ -13,7 +13,7 @@ describe("Load and save an entity with a Timestamp from DB", () => {
   Async.it("be able to set and read entities with Timestamp from DB", async () => {
     This.timeout(5 * 1000)
 
-    let sql = DbFunctions.sql
+    let sql = Db.sql
     /// Setup DB
     let testEntity: Entities.EntityWithTimestamp.t = {
       id: "testEntity",

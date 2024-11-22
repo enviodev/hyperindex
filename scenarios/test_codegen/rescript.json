@@ -31,7 +31,6 @@
   "bs-dependencies": [
     "@rescript/react",
     "generated",
-    "@ryyppy/rescript-promise",
     "rescript-nodejs",
     "rescript-schema",
     "helpers",

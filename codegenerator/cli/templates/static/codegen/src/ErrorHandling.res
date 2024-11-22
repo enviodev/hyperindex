@@ -6,8 +6,7 @@ let makeExnType = (exn): exnType => {
   // exn might be not an object which will break the pattern match by RE_EXN_ID
   if exn->Obj.magic {
     switch exn {
-    | Js.Exn.Error(e)
-    | Promise.JsError(e) =>
+    | Js.Exn.Error(e) =>
       Js(e)
     | exn => Other(exn)
     }

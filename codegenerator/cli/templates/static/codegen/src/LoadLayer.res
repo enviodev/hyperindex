@@ -275,9 +275,9 @@ let make = (~loadEntitiesByIds, ~makeLoadEntitiesByField) => {
 let makeWithDbConnection = () => {
   make(
     ~loadEntitiesByIds=(ids, ~entityMod, ~logger=?) =>
-      DbFunctionsEntities.batchRead(~entityMod)(DbFunctions.sql, ids, ~logger?),
+      DbFunctionsEntities.batchRead(~entityMod)(Db.sql, ids, ~logger?),
     ~makeLoadEntitiesByField=(~entityMod) =>
-      DbFunctionsEntities.makeWhereEq(DbFunctions.sql, ~entityMod),
+      DbFunctionsEntities.makeWhereEq(Db.sql, ~entityMod),
   )
 }
 
