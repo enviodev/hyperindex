@@ -9,7 +9,7 @@ use subenum::subenum;
 
 use crate::constants::DEFAULT_CONFIRMED_BLOCK_THRESHOLD;
 
-#[subenum(NetworkWithExplorer, HypersyncNetwork, GraphNetwork, IgnoreFromTests)]
+#[subenum(NetworkWithExplorer, HypersyncNetwork, GraphNetwork)]
 #[derive(
     Clone,
     Debug,
@@ -207,7 +207,7 @@ pub enum Network {
     #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     Metis = 1088,
 
-    #[subenum(IgnoreFromTests)]
+    #[subenum(HypersyncNetwork)]
     MevCommit = 17864,
 
     #[subenum(HypersyncNetwork, NetworkWithExplorer)]

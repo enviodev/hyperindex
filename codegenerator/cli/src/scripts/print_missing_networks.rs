@@ -1,15 +1,15 @@
-use crate::config_parsing::chain_helpers::{GraphNetwork, HypersyncNetwork, IgnoreFromTests, Network};
+use crate::config_parsing::chain_helpers::{GraphNetwork, HypersyncNetwork};
 use anyhow::Result;
 use convert_case::{Case, Casing};
 use reqwest;
 use serde::Deserialize;
 use std::collections::HashSet;
-use strum::IntoEnumIterator;
 
 #[derive(Deserialize, Debug)]
 struct Chain {
     name: String,
     chain_id: Option<u64>, // None for Fuel chains
+    tier: Option<String>,
 }
 
 pub struct Diff {
@@ -21,7 +21,6 @@ pub async fn get_diff() -> Result<Diff> {
     let url = "https://chains.hyperquery.xyz/active_chains";
     let response = reqwest::get(url).await?;
     let chains: Vec<Chain> = response.json().await?;
-    let ignored_chains = IgnoreFromTests::iter().map(|c|{Network::from(c).get_network_id()}).collect::<Vec<u64>>();
 
     let mut missing_chains = Vec::new();
     let mut api_chain_ids = HashSet::new();
@@ -30,12 +29,14 @@ pub async fn get_diff() -> Result<Diff> {
         let Some(chain_id) = chain.chain_id else {
             continue;
         };
-        if ignored_chains.contains(&chain_id) {
-            continue;
-        }
-        if chain.name == "internal-test-chain" {
-            continue;
-        }
+        match &chain.tier {
+            // We have unichain-sepolia and b2-testnet chains without a tier specified.
+            // They are quite stable, so include them in the enum.
+            None => (),
+            Some(tier) if tier == "HIDDEN" || tier == "INTERNAL" => continue,
+            _ => (),
+        };
+
         api_chain_ids.insert(chain_id);
         if HypersyncNetwork::from_repr(chain_id).is_none() {
             let is_graph = GraphNetwork::from_repr(chain_id).is_some();
@@ -56,9 +57,6 @@ pub async fn get_diff() -> Result<Diff> {
     let mut extra_chains = Vec::new();
     for network in HypersyncNetwork::iter_hypersync_networks() {
         let network_id = network as u64;
-        if !ignored_chains.contains(&network_id) {
-            continue;
-        }
         if !api_chain_ids.contains(&network_id) {
             extra_chains.push(format!("{:?} (ID: {})", network, network_id));
         }
