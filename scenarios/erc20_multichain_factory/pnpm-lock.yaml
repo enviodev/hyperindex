@@ -8,9 +8,6 @@ importers:
 
   .:
     dependencies:
-      '@glennsl/rescript-fetch':
-        specifier: 0.2.0
-        version: 0.2.0
       envio:
         specifier: file:../../codegenerator/cli/npm/envio
         version: file:../../codegenerator/cli/npm/envio
