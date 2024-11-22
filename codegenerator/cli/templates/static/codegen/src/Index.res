@@ -27,31 +27,32 @@ let overrideConsoleLog: Pino.t => unit = %raw(`function (logger) {
   }
 `)
 // overrideConsoleLog(Logging.logger)
-open Express
 
-let app = expressCjs()
+{
+  open Express
 
-app->use(jsonMiddleware())
+  let app = makeCjs()
 
-let port = Env.metricsPort
+  app->use(jsonMiddleware())
 
-app->get("/healthz", (_req, res) => {
-  // this is the machine readable port used in kubernetes to check the health of this service.
-  //   aditional health information could be added in the future (info about errors, back-offs, etc).
-  let _ = res->sendStatus(200)
-})
+  app->get("/healthz", (_req, res) => {
+    // this is the machine readable port used in kubernetes to check the health of this service.
+    //   aditional health information could be added in the future (info about errors, back-offs, etc).
+    let _ = res->sendStatus(200)
+  })
 
-let _ = app->listen(port)
+  PromClient.collectDefaultMetrics()
 
-PromClient.collectDefaultMetrics()
+  app->get("/metrics", (_req, res) => {
+    res->set("Content-Type", PromClient.defaultRegister->PromClient.getContentType)
+    let _ =
+      PromClient.defaultRegister
+      ->PromClient.metrics
+      ->Promise.thenResolve(metrics => res->endWithData(metrics))
+  })
 
-app->get("/metrics", (_req, res) => {
-  res->set("Content-Type", PromClient.defaultRegister->PromClient.getContentType)
-  let _ =
-    PromClient.defaultRegister
-    ->PromClient.metrics
-    ->Promise.thenResolve(metrics => res->endWithData(metrics))
-})
+  let _ = app->listen(Env.metricsPort)
+}
 
 type args = {
   @as("sync-from-raw-events") syncFromRawEvents?: bool,
