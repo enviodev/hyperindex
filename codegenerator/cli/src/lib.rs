@@ -9,7 +9,7 @@ pub mod executor;
 mod fuel;
 mod hbs_templating;
 mod persisted_state;
-mod project_paths;
+pub mod project_paths;
 mod rescript_types;
 pub mod scripts;
 mod service_health;
