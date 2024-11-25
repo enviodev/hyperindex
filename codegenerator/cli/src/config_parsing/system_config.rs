@@ -192,7 +192,7 @@ mod interpolation {
 
         if !missing_vars.is_empty() {
             return Err(anyhow!(
-              "Failed to interpolate variables into your config file. Environment variables are not preset: {}",
+              "Failed to interpolate variables into your config file. Environment variables are not present: {}",
               missing_vars.join(", ")
           ));
         }
