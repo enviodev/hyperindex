@@ -185,7 +185,7 @@ mod interpolation {
 
         if !invalid_vars.is_empty() {
             return Err(anyhow!(
-              "Failed to interpolate variables into your config file. Invalid environment variables are preset: {}",
+              "Failed to interpolate variables into your config file. Invalid environment variables are present: {}",
               invalid_vars.join(", ")
           ));
         }
