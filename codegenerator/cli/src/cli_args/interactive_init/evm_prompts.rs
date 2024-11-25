@@ -25,7 +25,8 @@ use crate::{
 };
 use anyhow::{Context, Result};
 use inquire::{validator::Validation, CustomType, Select, Text};
-use std::{env, path::PathBuf, str::FromStr};
+use serde::{Deserialize, Serialize};
+use std::{env, fmt, path::PathBuf};
 use strum::IntoEnumIterator;
 
 fn prompt_abi_events_selection(events: Vec<ethers::abi::Event>) -> Result<Vec<ethers::abi::Event>> {
@@ -183,6 +184,21 @@ impl ContractImportArgs {
     }
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone)]
+enum NetworkSelection {
+    EnterNetworkId,
+    Network(HypersyncNetwork),
+}
+
+impl fmt::Display for NetworkSelection {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::EnterNetworkId => write!(f, "<Enter Network Id>"),
+            Self::Network(network) => write!(f, "{}", network.get_pretty_name()),
+        }
+    }
+}
+
 ///Prompts for a Supported network or for the user to enter an
 ///id, if it is unsupported it requires an RPC url. If the rpc is already
 ///known it can be passed in as the first arg. Otherwise this will be prompted.
@@ -193,9 +209,6 @@ fn prompt_for_network_id(
     opt_start_block: &Option<u64>,
     already_selected_ids: Vec<u64>,
 ) -> Result<converters::NetworkKind> {
-    //The first option of the list, funnels the user to enter a u64
-    let enter_id = "<Enter Network Id>";
-
     //Select one of our supported networks
     let networks = HypersyncNetwork::iter()
         //Don't allow selection of networks that have been previously
@@ -204,21 +217,21 @@ fn prompt_for_network_id(
             let network_id = *n as u64;
             !already_selected_ids.contains(&network_id)
         })
-        .map(|n| n.to_string())
+        .map(|n| NetworkSelection::Network(n))
         .collect::<Vec<_>>();
 
     //User's options to either enter an id or select a supported network
-    let options = vec![vec![enter_id.to_string()], networks].concat();
+    let options = vec![vec![NetworkSelection::EnterNetworkId], networks].concat();
 
     //Action prompt
     let choose_from_networks = Select::new("Choose network:", options)
         .prompt()
         .context("Failed during prompt for network")?;
 
-    let selected = match choose_from_networks.as_str() {
+    let selected = match choose_from_networks {
         //If the user's choice evaluates to the enter network id option, prompt them for
         //a network id
-        choice if choice == enter_id => {
+        NetworkSelection::EnterNetworkId => {
             let network_id = CustomType::<u64>::new("Enter the network id:")
                 //Validate that this ID is not already selected
                 .with_validator(UniqueValueValidator::new(already_selected_ids))
@@ -233,10 +246,7 @@ fn prompt_for_network_id(
         //If a supported network choice was selected. We should be able to
         //parse it back to a supported network since it was serialized as a
         //string
-        choice => converters::NetworkKind::Supported(
-            HypersyncNetwork::from_str(&choice)
-                .context("Unexpected input, not a supported network.")?,
-        ),
+        NetworkSelection::Network(network) => converters::NetworkKind::Supported(network),
     };
 
     Ok(selected)
@@ -306,16 +316,7 @@ impl ExplorerImportArgs {
         let chosen_network = match &self.blockchain {
             Some(chain) => chain.clone(),
             None => {
-                let options = NetworkWithExplorer::iter()
-                    //Filter only our supported networks
-                    .filter(|&n| {
-                        HypersyncNetwork::iter()
-                            //able to cast as u64 because networks enum
-                            //uses repr(u64) attribute
-                            .find(|&sn| n as u64 == sn as u64)
-                            .is_some()
-                    })
-                    .collect();
+                let options = NetworkWithExplorer::iter().collect();
 
                 Select::new(
                     "Which blockchain would you like to import a contract from?",
