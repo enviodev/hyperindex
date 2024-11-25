@@ -122,9 +122,9 @@ impl Diff {
         } = self;
         if self.is_empty() {
             println!(
-            "All chains from the API are present in the HypersyncNetwork enum, and vice versa. \
-         Nothing to update."
-        );
+                "All chains from the API are present in the HypersyncNetwork enum, and vice \
+                 versa. Nothing to update."
+            );
         } else {
             if !missing_chains.is_empty() {
                 println!("\nThe following chains are missing from the Network enum:");
@@ -136,7 +136,7 @@ impl Diff {
             if !extra_chains.is_empty() {
                 println!(
                     "\nThe following chains are in the HypersyncNetwork enum but not in the API \
-             (remove the HypersyncNetwork subEnum from the chain_helpers.rs file):"
+                     (remove the HypersyncNetwork subEnum from the chain_helpers.rs file):"
                 );
                 for chain in extra_chains {
                     println!("- {}", chain);
