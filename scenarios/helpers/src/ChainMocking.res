@@ -201,7 +201,13 @@ module Make = (Indexer: Indexer.S) => {
 
   let getBlocks = (self: t, ~fromBlock, ~toBlock) => {
     self.blocks
-    ->Array.keep(b => b.blockNumber >= fromBlock && b.blockNumber <= toBlock)
+    ->Array.keep(b =>
+      b.blockNumber >= fromBlock &&
+        switch toBlock {
+        | Some(toBlock) => b.blockNumber <= toBlock
+        | None => true
+        }
+    )
     ->Array.keepWithIndex((_, i) => i < self.maxBlocksReturned)
   }
 

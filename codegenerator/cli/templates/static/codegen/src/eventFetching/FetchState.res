@@ -803,6 +803,7 @@ let makeInternal = (
     registerType,
     latestFetchedBlock: {
       blockTimestamp: 0,
+      // Here's a bug that startBlock: 1 won't work
       blockNumber: Pervasives.max(startBlock - 1, 0),
     },
     contractAddressMapping,

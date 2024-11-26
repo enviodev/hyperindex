@@ -446,9 +446,7 @@ describe("FetchState.fetchState", () => {
     }
 
     let partitionId = 0
-    let currentBlockHeight = 600
-    let (nextQuery, _optUpdatedRoot) =
-      fetchState->getNextQuery(~partitionId, ~currentBlockHeight)->Utils.unwrapResultExn
+    let nextQuery = fetchState->getNextQuery(~partitionId)
 
     Assert.deepEqual(
       nextQuery,
@@ -456,27 +454,25 @@ describe("FetchState.fetchState", () => {
         fetchStateRegisterId: Root,
         partitionId,
         fromBlock: root.latestFetchedBlock.blockNumber + 1,
-        toBlock: currentBlockHeight,
+        toBlock: None,
         contractAddressMapping: root.contractAddressMapping,
       }),
     )
-
-    let (nextQuery, _optUpdatedRoot) =
-      fetchState->getNextQuery(~partitionId, ~currentBlockHeight=500)->Utils.unwrapResultExn
-
-    Assert.deepEqual(nextQuery, WaitForNewBlock)
 
     let endblockCase = {
       ...fetchState,
       baseRegister: {
         ...root,
+        latestFetchedBlock: {
+          blockNumber: 500,
+          blockTimestamp: 0,
+        },
         fetchedEventQueue: [],
         registerType: RootRegister({endBlock: Some(500)}),
       },
     }
 
-    let (nextQuery, _optUpdatedRoot) =
-      endblockCase->getNextQuery(~partitionId, ~currentBlockHeight=600)->Utils.unwrapResultExn
+    let nextQuery = endblockCase->getNextQuery(~partitionId)
 
     Assert.deepEqual(Done, nextQuery)
   })
@@ -544,7 +540,6 @@ describe("FetchState.fetchState", () => {
     }
 
     case1->makeMockFetchState->isActivelyIndexing->Assert.equal(true)
-    case1->getEndBlock->Assert.equal(Some(150))
 
     let case2 = {
       ...case1,
@@ -562,7 +557,6 @@ describe("FetchState.fetchState", () => {
     }
 
     case3->makeMockFetchState->isActivelyIndexing->Assert.equal(true)
-    case3->getEndBlock->Assert.equal(Some(150))
 
     let case4 = {
       ...case1,
@@ -570,7 +564,6 @@ describe("FetchState.fetchState", () => {
     }
 
     case4->makeMockFetchState->isActivelyIndexing->Assert.equal(true)
-    case4->getEndBlock->Assert.equal(Some(151))
 
     let case5 = {
       ...case1,
@@ -578,7 +571,6 @@ describe("FetchState.fetchState", () => {
     }
 
     case5->makeMockFetchState->isActivelyIndexing->Assert.equal(true)
-    case5->getEndBlock->Assert.equal(None)
   })
 
   it("rolls back", () => {
@@ -722,26 +714,23 @@ describe("FetchState.fetchState", () => {
         ~isFetchingAtHead=false,
       )
 
+      // FIXME: MERGE?
+      let withAddedDynamicContractRegisterA = withRegisteredDynamicContractA
       //Received query
-      let (
-        queryA,
-        withAddedDynamicContractRegisterA,
-      ) = switch withRegisteredDynamicContractA->getNextQuery(~partitionId, ~currentBlockHeight) {
-      | Ok((NextQuery(queryA), Some(appliedWithDynamicContracts))) =>
+      let queryA = switch withRegisteredDynamicContractA->getNextQuery(~partitionId) {
+      | NextQuery(queryA) =>
         switch queryA {
         | {
             fetchStateRegisterId: DynamicContract({blockNumber: 100, logIndex: 0}),
             fromBlock: 100,
-            toBlock: 500,
-          } => ()
+            toBlock: Some(500),
+          } => queryA
         | query =>
           Js.log2("unexpected queryA", query)
           Assert.fail(
             "Should have returned a query from new contract register from the registering block number to the next register latest block",
           )
         }
-        // switch query {}
-        (queryA, appliedWithDynamicContracts)
       | nextQuery =>
         Js.log2("nextQueryA res", nextQuery)
         Js.Exn.raiseError(
@@ -772,15 +761,12 @@ describe("FetchState.fetchState", () => {
         )
         ->Utils.unwrapResultExn
 
-      switch updatesWithResponseFromQueryA->getNextQuery(~partitionId, ~currentBlockHeight) {
-      | Ok((
-          NextQuery({
-            fetchStateRegisterId: DynamicContract({blockNumber: 200, logIndex: 0}),
-            fromBlock: 200,
-            toBlock: 400,
-          }),
-          None,
-        )) => ()
+      switch updatesWithResponseFromQueryA->getNextQuery(~partitionId) {
+      | NextQuery({
+          fetchStateRegisterId: DynamicContract({blockNumber: 200, logIndex: 0}),
+          fromBlock: 200,
+          toBlock: Some(400),
+        }) => ()
       | nextQuery =>
         Js.log2("nextQueryB res", nextQuery)
         Assert.fail(

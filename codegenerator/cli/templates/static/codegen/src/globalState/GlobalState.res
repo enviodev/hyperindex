@@ -876,18 +876,19 @@ let checkAndFetchForChain = (
         }
       )
 
-      switch (readyQueries, nextQueries) {
-        | (_, []) => {
+      switch (readyQueries, nextQueries, currentBlockHeight) {
+        | (_, [], _) => {
           // This is an invalid case. Just do nothing as we did before.
           // Maybe we should log this?
           ()
         }
-        | ([], _) => {
+        | ([], _, _)
+        | (_, _, 0) => {
           dispatchAction(StartWaitingForNewBlock({chain: chain}))
           let currentBlockHeight = await chainWorker->waitForNewBlock(~currentBlockHeight, ~logger)
           dispatchAction(FinishWaitingForNewBlock({chain, currentBlockHeight}))
         }
-        | (queries, _) => {
+        | (queries, _, _) => {
           let newPartitionsCurrentlyFetching =
             queries->Array.map(query => query.partitionId)->Set.Int.fromArray
           dispatchAction(SetCurrentlyFetchingBatch(chain, newPartitionsCurrentlyFetching))

@@ -118,7 +118,7 @@ module type S = {
       fetchStateRegisterId: id,
       partitionId: int,
       fromBlock: int,
-      toBlock: int,
+      toBlock: option<int>,
       contractAddressMapping: ContractAddressingMap.mapping,
     }
   }
@@ -172,7 +172,6 @@ module type S = {
         ~query: blockRangeFetchArgs,
         ~logger: Pino.t,
         ~currentBlockHeight: int,
-        ~setCurrentBlockHeight: int => unit,
         ~isPreRegisteringDynamicContracts: bool,
       ) => promise<result<blockRangeFetchResponse, ErrorHandling.t>>
     }

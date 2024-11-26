@@ -49,18 +49,13 @@ module Mock = {
 
 module Stubs = {
   //Stub wait for new block
-  let waitForNewBlock = async (
-    ~logger,
-    ~chainWorker,
-    ~currentBlockHeight,
-    ~setCurrentBlockHeight,
-  ) => {
+  let waitForNewBlock = async (chainWorker, ~currentBlockHeight, ~logger) => {
     (logger, currentBlockHeight, chainWorker)->ignore
-    Mock.mockChainData->MockChainData.getHeight->setCurrentBlockHeight
+    Mock.mockChainData->MockChainData.getHeight
   }
 
   //Stub executePartitionQuery with mock data
-  let executePartitionQueryWithMockChainData = async mockChainData => (
+  let executePartitionQueryWithMockChainData = mockChainData => async (
     query,
     ~logger,
     ~chainWorker,
