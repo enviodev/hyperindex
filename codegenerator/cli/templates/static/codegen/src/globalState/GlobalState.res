@@ -98,6 +98,7 @@ type arbitraryEventQueue = array<Types.eventBatchQueueItem>
 type shouldExit = ExitWithSuccess | NoExit
 type action =
   | BlockRangeResponse(chain, ChainWorker.blockRangeFetchResponse)
+  | StartWaitingForNewBlock({chain: chain})
   | FinishWaitingForNewBlock({chain: chain, currentBlockHeight: int})
   | EventBatchProcessed(EventProcessing.batchProcessed)
   | DynamicContractPreRegisterProcessed(EventProcessing.batchProcessed)
@@ -472,13 +473,21 @@ let updateChainFetcher = (chainFetcherUpdate, ~state, ~chain) => {
 
 let actionReducer = (state: t, action: action) => {
   switch action {
+  | StartWaitingForNewBlock({chain}) =>
+    updateChainFetcher(currentChainFetcher => {
+      ...currentChainFetcher,
+      isWaitingForNewBlock: true,
+    }, ~chain, ~state)
   | FinishWaitingForNewBlock({chain, currentBlockHeight}) =>
     (
       {
         ...state,
         chainManager: {
           ...state.chainManager,
-          chainFetchers: state.chainManager.chainFetchers->ChainMap.update(chain, chainFetcher => chainFetcher->updateChainFetcherCurrentBlockHeight(~currentBlockHeight)),
+          chainFetchers: state.chainManager.chainFetchers->ChainMap.update(chain, chainFetcher => {
+            ...chainFetcher->updateChainFetcherCurrentBlockHeight(~currentBlockHeight),
+            isWaitingForNewBlock: false,
+          }),
         },
       },
       [NextQuery(Chain(chain))],
@@ -841,8 +850,8 @@ let checkAndFetchForChain = (
   ~dispatchAction,
 ) =>
   async chain => {
-    if !isRollingBack(state) {
-      let chainFetcher = state.chainManager.chainFetchers->ChainMap.get(chain)
+    let chainFetcher = state.chainManager.chainFetchers->ChainMap.get(chain)
+    if !isRollingBack(state) && !chainFetcher.isWaitingForNewBlock {
       let {chainConfig: {chainWorker}, logger, currentBlockHeight} = chainFetcher
 
       let (nextQueries, nextFetchState) =
@@ -874,6 +883,7 @@ let checkAndFetchForChain = (
           ()
         }
         | ([], _) => {
+          dispatchAction(StartWaitingForNewBlock({chain: chain}))
           let currentBlockHeight = await chainWorker->waitForNewBlock(~currentBlockHeight, ~logger)
           dispatchAction(FinishWaitingForNewBlock({chain, currentBlockHeight}))
         }

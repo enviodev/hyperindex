@@ -14,6 +14,7 @@ type t = {
   chainConfig: Config.chainConfig,
   //The latest known block of the chain
   currentBlockHeight: int,
+  isWaitingForNewBlock: bool,
   partitionsCurrentlyFetching: PartitionedFetchState.partitionIndexSet,
   timestampCaughtUpToHeadOrEndblock: option<Js.Date.t>,
   dbFirstEventBlockNumber: option<int>,
@@ -65,6 +66,7 @@ let make = (
     chainConfig,
     lastBlockScannedHashes,
     currentBlockHeight: 0,
+    isWaitingForNewBlock: false,
     fetchState,
     dbFirstEventBlockNumber,
     latestProcessedBlock,
@@ -361,7 +363,6 @@ Applies any event filters found in the chain fetcher
 */
 let getNextQueries = (self: t, ~maxPerChainQueueSize) => {
   self.fetchState->PartitionedFetchState.getNextQueries(
-   //  ~currentBlockHeight=self.currentBlockHeight, // FIXME: Is it needed in self?
     ~maxPerChainQueueSize,
     ~partitionsCurrentlyFetching=self.partitionsCurrentlyFetching,
   )
