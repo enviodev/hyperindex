@@ -29,7 +29,7 @@ type queryResponse<'a> = result<'a, queryError>
 let queryLogsPage: (
   ~serverUrl: string,
   ~fromBlock: int,
-  ~toBlock: int,
+  ~toBlock: option<int>,
   ~logSelections: array<LogSelection.t>,
   ~fieldSelection: HyperSyncClient.QueryTypes.fieldSelection,
   ~nonOptionalBlockFieldNames: array<string>,

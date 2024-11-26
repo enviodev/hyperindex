@@ -52,7 +52,6 @@ let makeGetNextPage = (
   ~endpointUrl,
   ~contracts: array<Config.contract>,
   ~queryLogsPage,
-  ~pollForHeightGtOrEq,
   ~blockSchema,
   ~transactionSchema,
 ) => {
@@ -72,28 +71,6 @@ let makeGetNextPage = (
     log: [Address, Data, LogIndex, Topic0, Topic1, Topic2, Topic3],
     block: blockFieldSelection,
     transaction: transactionFieldSelection,
-  }
-
-  let waitForNextBlockBeforeQuery = async (
-    ~fromBlock,
-    ~currentBlockHeight,
-    ~logger,
-    ~setCurrentBlockHeight,
-  ) => {
-    if fromBlock > currentBlockHeight {
-      logger->Logging.childTrace("Worker is caught up, awaiting new blocks")
-
-      //If the block we want to query from is greater than the current height,
-      //poll for until the archive height is greater than the from block and set
-      //current height to the new height
-      let currentBlockHeight = await pollForHeightGtOrEq(
-        ~serverUrl=endpointUrl,
-        ~blockNumber=fromBlock,
-        ~logger,
-      )
-
-      setCurrentBlockHeight(currentBlockHeight)
-    }
   }
 
   let contractPreregistrationEventOptions = contracts->Belt.Array.keepMap(contract => {
@@ -169,23 +146,11 @@ let makeGetNextPage = (
   async (
     ~fromBlock,
     ~toBlock,
-    ~currentBlockHeight,
     ~logger,
-    ~setCurrentBlockHeight,
     ~contractAddressMapping,
     ~shouldApplyWildcards,
     ~isPreRegisteringDynamicContracts,
   ) => {
-    //Wait for a valid range to query
-    //This should never have to wait since we check that the from block is below the toBlock
-    //this in the GlobalState reducer
-    await waitForNextBlockBeforeQuery(
-      ~fromBlock,
-      ~currentBlockHeight,
-      ~setCurrentBlockHeight,
-      ~logger,
-    )
-
     //Instantiate each time to add new registered contract addresses
     let contractInterfaceManager = ContractInterfaceManager.make(
       ~contracts,
@@ -305,7 +270,6 @@ module Make = (
     ~endpointUrl=T.endpointUrl,
     ~contracts=T.contracts,
     ~queryLogsPage=HyperSync.queryLogsPage,
-    ~pollForHeightGtOrEq=HyperSync.pollForHeightGtOrEq,
     ~blockSchema=T.blockSchema,
     ~transactionSchema=T.transactionSchema,
   )
@@ -313,8 +277,7 @@ module Make = (
   let fetchBlockRange = async (
     ~query: blockRangeFetchArgs,
     ~logger,
-    ~currentBlockHeight,
-    ~setCurrentBlockHeight,
+    ~currentBlockHeight as _,
     ~isPreRegisteringDynamicContracts,
   ) => {
     let mkLogAndRaise = ErrorHandling.mkLogAndRaise(~logger, ...)
@@ -325,10 +288,8 @@ module Make = (
       let {page: pageUnsafe, contractInterfaceManager, pageFetchTime} = await getNextPage(
         ~fromBlock,
         ~toBlock,
-        ~currentBlockHeight,
         ~contractAddressMapping,
         ~logger,
-        ~setCurrentBlockHeight,
         //Only apply wildcards on the first partition and root register
         //to avoid duplicate wildcard queries
         ~shouldApplyWildcards=fetchStateRegisterId == Root && partitionId == 0, //only

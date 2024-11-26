@@ -264,29 +264,6 @@ module Make = (
     )
   }
 
-  let waitForNextBlockBeforeQuery = async (
-    ~serverUrl,
-    ~fromBlock,
-    ~currentBlockHeight,
-    ~logger,
-    ~setCurrentBlockHeight,
-  ) => {
-    if fromBlock > currentBlockHeight {
-      logger->Logging.childTrace("Worker is caught up, awaiting new blocks")
-
-      //If the block we want to query from is greater than the current height,
-      //poll for until the archive height is greater than the from block and set
-      //current height to the new height
-      let currentBlockHeight = await HyperFuel.pollForHeightGtOrEq(
-        ~serverUrl,
-        ~blockNumber=fromBlock,
-        ~logger,
-      )
-
-      setCurrentBlockHeight(currentBlockHeight)
-    }
-  }
-
   let getRecieptsSelection = makeGetRecieptsSelection(
     ~wildcardLogDataRbs=workerConfig.wildcardLogDataRbs,
     ~nonWildcardLogDataRbsByContract=workerConfig.nonWildcardLogDataRbsByContract,
@@ -298,24 +275,11 @@ module Make = (
   let getNextPage = async (
     ~fromBlock,
     ~toBlock,
-    ~currentBlockHeight,
     ~logger,
-    ~setCurrentBlockHeight,
     ~contractAddressMapping,
     ~shouldApplyWildcards,
     ~isPreRegisteringDynamicContracts,
   ) => {
-    //Wait for a valid range to query
-    //This should never have to wait since we check that the from block is below the toBlock
-    //this in the GlobalState reducer
-    await waitForNextBlockBeforeQuery(
-      ~serverUrl=T.endpointUrl,
-      ~fromBlock,
-      ~currentBlockHeight,
-      ~setCurrentBlockHeight,
-      ~logger,
-    )
-
     //Instantiate each time to add new registered contract addresses
     let recieptsSelection = if isPreRegisteringDynamicContracts {
       //TODO: create receipt selections for dynamic contract preregistration
@@ -342,8 +306,7 @@ module Make = (
   let fetchBlockRange = async (
     ~query: blockRangeFetchArgs,
     ~logger,
-    ~currentBlockHeight,
-    ~setCurrentBlockHeight,
+    ~currentBlockHeight as _,
     ~isPreRegisteringDynamicContracts,
   ) => {
     let mkLogAndRaise = ErrorHandling.mkLogAndRaise(~logger, ...)
@@ -354,10 +317,8 @@ module Make = (
       let {page: pageUnsafe, pageFetchTime} = await getNextPage(
         ~fromBlock,
         ~toBlock,
-        ~currentBlockHeight,
         ~contractAddressMapping,
         ~logger,
-        ~setCurrentBlockHeight,
         //Only apply wildcards on the first partition and root register
         //to avoid duplicate wildcard queries
         ~shouldApplyWildcards=fetchStateRegisterId == Root && partitionId == 0,

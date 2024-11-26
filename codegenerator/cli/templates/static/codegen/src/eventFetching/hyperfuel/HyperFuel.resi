@@ -40,7 +40,7 @@ type queryResponse<'a> = result<'a, queryError>
 let queryLogsPage: (
   ~serverUrl: string,
   ~fromBlock: int,
-  ~toBlock: int,
+  ~toBlock: option<int>,
   ~recieptsSelection: array<HyperFuelClient.QueryTypes.receiptSelection>,
 ) => promise<queryResponse<logsQueryPage>>
 

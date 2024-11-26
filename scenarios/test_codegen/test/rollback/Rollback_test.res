@@ -59,25 +59,17 @@ module Stubs = {
     Mock.mockChainData->MockChainData.getHeight->setCurrentBlockHeight
   }
 
-  //Stub executeNextQuery with mock data
-  let executeNextQueryWithMockChainData = async (
-    mockChainData,
+  //Stub executePartitionQuery with mock data
+  let executePartitionQueryWithMockChainData = async mockChainData => (
+    query,
     ~logger,
     ~chainWorker,
     ~currentBlockHeight,
-    ~setCurrentBlockHeight,
     ~chain,
-    ~query,
     ~dispatchAction,
     ~isPreRegisteringDynamicContracts,
   ) => {
-    (
-      logger,
-      currentBlockHeight,
-      setCurrentBlockHeight,
-      chainWorker,
-      isPreRegisteringDynamicContracts,
-    )->ignore
+    (logger, currentBlockHeight, chainWorker, isPreRegisteringDynamicContracts)->ignore
 
     let response = mockChainData->MockChainData.executeQuery(query)
     dispatchAction(GlobalState.BlockRangeResponse(chain, response))
@@ -113,7 +105,7 @@ module Stubs = {
 
   let dispatchTask = (gsManager, mockChainData, task) => {
     GlobalState.injectedTaskReducer(
-      ~executeNextQuery=executeNextQueryWithMockChainData(mockChainData, ...),
+      ~executePartitionQuery=executePartitionQueryWithMockChainData(mockChainData),
       ~waitForNewBlock,
       ~rollbackLastBlockHashesToReorgLocation=chainFetcher =>
         chainFetcher->ChainFetcher.rollbackLastBlockHashesToReorgLocation(

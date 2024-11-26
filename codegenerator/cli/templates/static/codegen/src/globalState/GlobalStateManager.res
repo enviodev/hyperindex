@@ -23,11 +23,11 @@ module MakeManager = (S: State) => {
         S.invalidatedActionReducer
       }
       let (nextState, nextTasks) = reducer(self.state, action)
-      self.state = nextState
       switch self.stateUpdatedHook {
-      | Some(hook) => hook(nextState)
-      | None => ()
+      | Some(hook) if self.state !== nextState => hook(nextState)
+      | _ => ()
       }
+      self.state = nextState
       nextTasks->Array.forEach(task => dispatchTask(self, task))
     } catch {
     | e =>
