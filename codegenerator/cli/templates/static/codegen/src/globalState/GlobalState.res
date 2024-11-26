@@ -473,13 +473,11 @@ let updateChainFetcher = (chainFetcherUpdate, ~state, ~chain) => {
 
 let actionReducer = (state: t, action: action) => {
   switch action {
-  | StartWaitingForNewBlock({chain}) =>
-    updateChainFetcher(currentChainFetcher => {
+  | StartWaitingForNewBlock({chain}) => updateChainFetcher(currentChainFetcher => {
       ...currentChainFetcher,
       isWaitingForNewBlock: true,
     }, ~chain, ~state)
-  | FinishWaitingForNewBlock({chain, currentBlockHeight}) =>
-    (
+  | FinishWaitingForNewBlock({chain, currentBlockHeight}) => (
       {
         ...state,
         chainManager: {
@@ -835,11 +833,7 @@ let executePartitionQuery = (
   )
 }
 
-exception FromBlockIsHigherThanToBlock({
-  fromBlock: int, 
-  toBlock: int
-})
-exception UnexpectedEmptyNextQuery
+exception FromBlockIsHigherThanToBlock({fromBlock: int, toBlock: int})
 
 let checkAndFetchForChain = (
   //Used for dependency injection for tests
@@ -848,69 +842,68 @@ let checkAndFetchForChain = (
   //required args
   ~state,
   ~dispatchAction,
-) =>
-  async chain => {
-    let chainFetcher = state.chainManager.chainFetchers->ChainMap.get(chain)
-    if !isRollingBack(state) && !chainFetcher.isWaitingForNewBlock {
-      let {chainConfig: {chainWorker}, logger, currentBlockHeight} = chainFetcher
+) => async chain => {
+  let chainFetcher = state.chainManager.chainFetchers->ChainMap.get(chain)
+  if !isRollingBack(state) {
+    let {chainConfig: {chainWorker}, logger, currentBlockHeight} = chainFetcher
 
-      let (nextQueries, nextFetchState) =
-        chainFetcher->ChainFetcher.getNextQueries(~maxPerChainQueueSize=state.maxPerChainQueueSize)
-      dispatchAction(SetFetchState(chain, nextFetchState))
+    let (nextQueries, nextFetchState) =
+      chainFetcher->ChainFetcher.getNextQueries(~maxPerChainQueueSize=state.maxPerChainQueueSize)
+    dispatchAction(SetFetchState(chain, nextFetchState))
 
-      let readyQueries = nextQueries->Js.Array2.filter(({fromBlock, toBlock}) =>
-        if fromBlock > currentBlockHeight {
-          false // This query should wait
-        } else {
-          switch toBlock {
-          | Some(toBlock) if toBlock < fromBlock =>
-            //This is an invalid case. We should never arrive at this match arm but it would be
-            //detrimental if it were the case.
-            FromBlockIsHigherThanToBlock({fromBlock, toBlock})->ErrorHandling.mkLogAndRaise(
-              ~logger,
-              ~msg="Unexpected error getting next query in partition"
-            )
-          | _ => ()
-          }
-          true
+    let readyQueries = nextQueries->Js.Array2.filter(({fromBlock, toBlock}) =>
+      if fromBlock > currentBlockHeight {
+        false // This query should wait
+      } else {
+        switch toBlock {
+        | Some(toBlock) if toBlock < fromBlock =>
+          //This is an invalid case. We should never arrive at this match arm but it would be
+          //detrimental if it were the case.
+          FromBlockIsHigherThanToBlock({fromBlock, toBlock})->ErrorHandling.mkLogAndRaise(
+            ~logger,
+            ~msg="Unexpected error getting next query in partition",
+          )
+        | _ => ()
         }
-      )
-
-      switch (readyQueries, nextQueries, currentBlockHeight) {
-        | (_, [], _) => {
-          // This is an invalid case. Just do nothing as we did before.
-          // Maybe we should log this?
-          ()
-        }
-        | ([], _, _)
-        | (_, _, 0) => {
-          dispatchAction(StartWaitingForNewBlock({chain: chain}))
-          let currentBlockHeight = await chainWorker->waitForNewBlock(~currentBlockHeight, ~logger)
-          dispatchAction(FinishWaitingForNewBlock({chain, currentBlockHeight}))
-        }
-        | (queries, _, _) => {
-          let newPartitionsCurrentlyFetching =
-            queries->Array.map(query => query.partitionId)->Set.Int.fromArray
-          dispatchAction(SetCurrentlyFetchingBatch(chain, newPartitionsCurrentlyFetching))
-          let isPreRegisteringDynamicContracts =
-            state.chainManager->ChainManager.isPreRegisteringDynamicContracts
-          let _ =
-            await queries
-            ->Array.map(query =>
-              query->executePartitionQuery(
-                ~logger,
-                ~chainWorker,
-                ~currentBlockHeight,
-                ~chain,
-                ~dispatchAction,
-                ~isPreRegisteringDynamicContracts,
-              )
-            )
-            ->Promise.all
-        }
+        true
       }
+    )
+
+    switch (readyQueries, currentBlockHeight) {
+    | ([], _)
+    | // Even if we have ready queries, wait for the first currentBlockHeight
+    (_, 0) =>
+      if nextQueries->Utils.Array.isEmpty || chainFetcher.isWaitingForNewBlock {
+        // Do nothing if there are no queries which should wait,
+        // or we are already waiting. Explicitely with if/else, so it's not lost
+        ()
+      } else {
+        dispatchAction(StartWaitingForNewBlock({chain: chain}))
+        let currentBlockHeight = await chainWorker->waitForNewBlock(~currentBlockHeight, ~logger)
+        dispatchAction(FinishWaitingForNewBlock({chain, currentBlockHeight}))
+      }
+    | (queries, _) =>
+      let newPartitionsCurrentlyFetching =
+        queries->Array.map(query => query.partitionId)->Set.Int.fromArray
+      dispatchAction(SetCurrentlyFetchingBatch(chain, newPartitionsCurrentlyFetching))
+      let isPreRegisteringDynamicContracts =
+        state.chainManager->ChainManager.isPreRegisteringDynamicContracts
+      let _ =
+        await queries
+        ->Array.map(query =>
+          query->executePartitionQuery(
+            ~logger,
+            ~chainWorker,
+            ~currentBlockHeight,
+            ~chain,
+            ~dispatchAction,
+            ~isPreRegisteringDynamicContracts,
+          )
+        )
+        ->Promise.all
     }
   }
+}
 
 let injectedTaskReducer = (
   //Used for dependency injection for tests
@@ -997,8 +990,7 @@ let injectedTaskReducer = (
           })
 
           if Env.Benchmark.shouldSaveData {
-            let elapsedTimeMillis =
-              Hrtime.timeSince(timeRef)->Hrtime.toMillis->Hrtime.floatFromMillis
+            let elapsedTimeMillis = Hrtime.timeSince(timeRef)->Hrtime.toMillis->Hrtime.floatFromMillis
 
             Benchmark.addSummaryData(
               ~group="Other",
@@ -1070,8 +1062,7 @@ let injectedTaskReducer = (
             ~checkContractIsRegistered,
             ~config=state.config,
           ) {
-          | Ok(batchProcessed) =>
-            dispatchAction(DynamicContractPreRegisterProcessed(batchProcessed))
+          | Ok(batchProcessed) => dispatchAction(DynamicContractPreRegisterProcessed(batchProcessed))
           | Error(errHandler) => dispatchAction(ErrorExit(errHandler))
           | exception exn =>
             //All casese should be handled/caught before this with better user messaging.
@@ -1164,9 +1155,7 @@ let injectedTaskReducer = (
             //All casese should be handled/caught before this with better user messaging.
             //This is just a safety in case something unexpected happens
             let errHandler =
-              exn->ErrorHandling.make(
-                ~msg="A top level unexpected error occurred during processing",
-              )
+              exn->ErrorHandling.make(~msg="A top level unexpected error occurred during processing")
             dispatchAction(ErrorExit(errHandler))
           | res =>
             if rollbackInMemStore->Option.isSome {

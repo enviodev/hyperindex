@@ -714,10 +714,10 @@ describe("FetchState.fetchState", () => {
         ~isFetchingAtHead=false,
       )
 
-      // FIXME: MERGE?
-      let withAddedDynamicContractRegisterA = withRegisteredDynamicContractA
+      let withAddedDynamicContractRegisterA =
+        withRegisteredDynamicContractA->mergeRegistersBeforeNextQuery
       //Received query
-      let queryA = switch withRegisteredDynamicContractA->getNextQuery(~partitionId) {
+      let queryA = switch withAddedDynamicContractRegisterA->getNextQuery(~partitionId) {
       | NextQuery(queryA) =>
         switch queryA {
         | {
