@@ -289,6 +289,8 @@ let updateLatestProcessedBlocks = (
         latestProcessedBlock
       }
 
+      let (_, cf) = cf->ChainFetcher.getNextQueries(~maxPerChainQueueSize=state.maxPerChainQueueSize)
+
       {
         ...cf,
         latestProcessedBlock,
@@ -847,9 +849,9 @@ let checkAndFetchForChain = (
   if !isRollingBack(state) {
     let {chainConfig: {chainWorker}, logger, currentBlockHeight} = chainFetcher
 
-    let (nextQueries, nextFetchState) =
+    let (nextQueries, _nextFetchState) =
       chainFetcher->ChainFetcher.getNextQueries(~maxPerChainQueueSize=state.maxPerChainQueueSize)
-    dispatchAction(SetFetchState(chain, nextFetchState))
+    // dispatchAction(SetFetchState(chain, nextFetchState))
 
     let readyQueries = nextQueries->Js.Array2.filter(({fromBlock, toBlock}) =>
       if fromBlock > currentBlockHeight {
