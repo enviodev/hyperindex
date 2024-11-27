@@ -220,8 +220,8 @@ type nextQueries = WaitForNewBlock | NextQuery(array<FetchState.nextQuery>)
 Gets the next query from the fetchState with the lowest latestFetchedBlock number.
 */
 let getNextQueries = (self: t, ~maxPerChainQueueSize, ~partitionsCurrentlyFetching) => {
-  let partitionsCopy = self.partitions->Js.Array2.copy
   let nextQueries = []
+  let updatedPartitions = Js.Dict.empty()
 
   self
   ->getMostBehindPartitions(
@@ -231,21 +231,16 @@ let getNextQueries = (self: t, ~maxPerChainQueueSize, ~partitionsCurrentlyFetchi
   )
   ->Array.forEach(({fetchState, partitionId}) => {
     let mergedFetchState = fetchState->FetchState.mergeRegistersBeforeNextQuery
-    partitionsCopy->Js.Array2.unsafe_set(partitionId, mergedFetchState)
-
+    if mergedFetchState !== fetchState {
+      updatedPartitions->Js.Dict.set(partitionId->(Utils.magic: int => string), mergedFetchState)
+    }
     switch mergedFetchState->FetchState.getNextQuery(~partitionId) {
     | Done => ()
     | NextQuery(nextQuery) => nextQueries->Js.Array2.push(nextQuery)->ignore
     }
   })
 
-  (
-    nextQueries,
-    {
-      ...self,
-      partitions: partitionsCopy,
-    },
-  )
+  (nextQueries, updatedPartitions)
 }
 
 /**

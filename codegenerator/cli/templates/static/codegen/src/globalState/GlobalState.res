@@ -106,7 +106,7 @@ type action =
   | SetCurrentlyProcessing(bool)
   | SetIsInReorgThreshold(bool)
   | SetCurrentlyFetchingBatch(chain, PartitionedFetchState.partitionIndexSet)
-  | SetFetchState(chain, PartitionedFetchState.t)
+  | SetUpdatedPartitions(chain, dict<FetchState.t>)
   | UpdateQueues(ChainMap.t<ChainManager.fetchStateWithData>, arbitraryEventQueue)
   | SetSyncedChains
   | SuccessExit
@@ -289,11 +289,8 @@ let updateLatestProcessedBlocks = (
         latestProcessedBlock
       }
 
-      let (_, fetchState) = cf->ChainFetcher.getNextQueries(~maxPerChainQueueSize=state.maxPerChainQueueSize)
-
       {
         ...cf,
-        fetchState,
         latestProcessedBlock,
         numEventsProcessed,
       }
@@ -631,8 +628,20 @@ let actionReducer = (state: t, action: action) => {
         newPartitionsCurrentlyFetching,
       ),
     }, ~chain, ~state)
-  | SetFetchState(chain, fetchState) =>
-    updateChainFetcher(currentChainFetcher => {...currentChainFetcher, fetchState}, ~chain, ~state)
+  | SetUpdatedPartitions(chain, updatedPartitions) =>
+    let updatedPartitionIds = updatedPartitions->Js.Dict.keys
+    if updatedPartitionIds->Utils.Array.isEmpty {
+      (state, [])
+    } else {
+      updateChainFetcher(currentChainFetcher => {
+        let partitionsCopy = currentChainFetcher.fetchState.partitions->Js.Array2.copy
+        updatedPartitionIds->Js.Array2.forEach(partitionId => {
+          let partition = updatedPartitions->Js.Dict.unsafeGet(partitionId)
+          partitionsCopy->Js.Array2.unsafe_set(partitionId->(Utils.magic: string => int), partition)
+        })
+        {...currentChainFetcher, fetchState: {...currentChainFetcher.fetchState, partitions: partitionsCopy}}
+      }, ~chain, ~state)
+    }
   | SetSyncedChains => {
       let shouldExit = EventProcessing.EventsProcessed.allChainsEventsProcessedToEndblock(
         state.chainManager.chainFetchers,
@@ -850,9 +859,9 @@ let checkAndFetchForChain = (
   if !isRollingBack(state) {
     let {chainConfig: {chainWorker}, logger, currentBlockHeight} = chainFetcher
 
-    let (nextQueries, _nextFetchState) =
+    let (nextQueries, updatedPartitions) =
       chainFetcher->ChainFetcher.getNextQueries(~maxPerChainQueueSize=state.maxPerChainQueueSize)
-    // dispatchAction(SetFetchState(chain, nextFetchState))
+    dispatchAction(SetUpdatedPartitions(chain, updatedPartitions))
 
     let readyQueries = nextQueries->Js.Array2.filter(({fromBlock, toBlock}) =>
       if fromBlock > currentBlockHeight {
