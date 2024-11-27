@@ -81,7 +81,7 @@ module Stubs = {
   let getMockChainData = ({mockChainDataMap}, chain) => mockChainDataMap->ChainMap.get(chain)
 
   //Stub executePartitionQuery with mock data
-  let makeExecutePartitionQuery = async (stubData: t) => (
+  let makeExecutePartitionQuery = (stubData: t) => async (
     query,
     ~logger,
     ~chainWorker,
@@ -113,16 +113,10 @@ module Stubs = {
   }
 
   //Stub wait for new block
-  let makeWaitForNewBlock = async (
-    stubData: t,
-    ~logger,
-    ~chainWorker,
-    ~currentBlockHeight,
-    ~setCurrentBlockHeight,
-  ) => {
+  let makeWaitForNewBlock = (stubData: t) => async (chainWorker, ~currentBlockHeight, ~logger) => {
     (logger, currentBlockHeight)->ignore
     let module(ChainWorker: ChainWorker.S) = chainWorker
-    stubData->getMockChainData(ChainWorker.chain)->MockChainData.getHeight->setCurrentBlockHeight
+    stubData->getMockChainData(ChainWorker.chain)->MockChainData.getHeight
   }
   //Stub dispatch action to set state and not dispatch task but store in
   //the tasks ref
@@ -138,7 +132,7 @@ module Stubs = {
   let makeDispatchTask = (stubData: t, task) => {
     GlobalState.injectedTaskReducer(
       ~executePartitionQuery=makeExecutePartitionQuery(stubData),
-      ~waitForNewBlock=makeWaitForNewBlock(stubData, ...),
+      ~waitForNewBlock=makeWaitForNewBlock(stubData),
       ~rollbackLastBlockHashesToReorgLocation=chainFetcher =>
         chainFetcher->ChainFetcher.rollbackLastBlockHashesToReorgLocation(
           ~getBlockHashes=makeGetBlockHashes(
