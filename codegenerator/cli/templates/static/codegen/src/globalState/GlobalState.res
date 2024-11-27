@@ -289,10 +289,11 @@ let updateLatestProcessedBlocks = (
         latestProcessedBlock
       }
 
-      let (_, cf) = cf->ChainFetcher.getNextQueries(~maxPerChainQueueSize=state.maxPerChainQueueSize)
+      let (_, fetchState) = cf->ChainFetcher.getNextQueries(~maxPerChainQueueSize=state.maxPerChainQueueSize)
 
       {
         ...cf,
+        fetchState,
         latestProcessedBlock,
         numEventsProcessed,
       }
