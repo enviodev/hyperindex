@@ -2,26 +2,25 @@ use anyhow::anyhow;
 
 use clap::ValueEnum;
 use serde::{Deserialize, Serialize};
-use strum::FromRepr;
+use std::fmt;
 use strum::IntoEnumIterator;
-use strum_macros::{Display, EnumIter, EnumString};
 use subenum::subenum;
 
 use crate::constants::DEFAULT_CONFIRMED_BLOCK_THRESHOLD;
 
-#[subenum(NetworkWithExplorer, HypersyncNetwork, GraphNetwork, IgnoreFromTests)]
+#[derive(strum::Display)]
+#[subenum(NetworkWithExplorer, HypersyncNetwork, GraphNetwork)]
 #[derive(
     Clone,
     Debug,
     ValueEnum,
     Serialize,
     Deserialize,
-    EnumIter,
-    EnumString,
-    FromRepr,
+    strum::EnumIter,
+    strum::EnumString,
+    strum::FromRepr,
     PartialEq,
     Eq,
-    Display,
     Hash,
     Copy,
 )]
@@ -56,7 +55,7 @@ pub enum Network {
     #[subenum(HypersyncNetwork, GraphNetwork, NetworkWithExplorer)]
     Avalanche = 43114,
 
-    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
+    #[subenum(NetworkWithExplorer)]
     B2Testnet = 1123,
 
     #[subenum(HypersyncNetwork, NetworkWithExplorer, GraphNetwork)]
@@ -154,7 +153,10 @@ pub enum Network {
     #[subenum(GraphNetwork)]
     Fuse = 122,
 
-    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
+    #[subenum(
+        HypersyncNetwork(serde(rename = "galadriel-devnet (experimental)")),
+        NetworkWithExplorer
+    )]
     GaladrielDevnet = 696969,
 
     #[subenum(HypersyncNetwork, NetworkWithExplorer, GraphNetwork)]
@@ -207,7 +209,7 @@ pub enum Network {
     #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     Metis = 1088,
 
-    #[subenum(IgnoreFromTests)]
+    #[subenum(HypersyncNetwork)]
     MevCommit = 17864,
 
     #[subenum(HypersyncNetwork, NetworkWithExplorer)]
@@ -457,10 +459,95 @@ impl Network {
     }
 }
 
+#[derive(Deserialize, Debug, PartialEq, strum::Display)]
+#[serde(rename_all = "UPPERCASE")]
+pub enum ChainTier {
+    Gold,
+    Silver,
+    Bronze,
+    Experimental,
+    #[serde(alias = "HIDDEN")]
+    Internal,
+}
+
+impl ChainTier {
+    pub fn get_icon(&self) -> &str {
+        match self {
+            Self::Gold => "🥇",
+            Self::Silver => "🥈",
+            Self::Bronze => "🥉",
+            Self::Experimental => "🧪",
+            Self::Internal => "🔒",
+        }
+    }
+
+    pub fn is_public(&self) -> bool {
+        match self {
+            Self::Gold | Self::Silver | Self::Bronze | Self::Experimental => true,
+            Self::Internal => false,
+        }
+    }
+}
+
 impl HypersyncNetwork {
     // This is a custom iterator that returns all the HypersyncNetwork enums that is made public accross crates (for convenience)
     pub fn iter_hypersync_networks() -> impl Iterator<Item = HypersyncNetwork> {
         HypersyncNetwork::iter()
+    }
+    pub fn get_tier(&self) -> ChainTier {
+        use ChainTier::*;
+        use HypersyncNetwork::*;
+        match self {
+            EthereumMainnet | Fantom | Zeta | Sepolia | OptimismSepolia | Metis | ZksyncEra
+            | Optimism | ArbitrumSepolia | ArbitrumNova | Avalanche | Polygon | Bsc | Mantle
+            | Zircuit | BaseSepolia => Gold,
+
+            Manta | Base | BerachainBartio | Boba | Blast | Cyber | Aurora | Harmony | Scroll
+            | Darwinia | Mode | Rsk | ShimmerEvm | Linea | NeonEvm | Amoy | Saakuru | Moonbeam
+            | Opbnb | Lisk | BlastSepolia | Celo | Chiliz | Fuji | ArbitrumOne | Merlin
+            | Holesky => Silver,
+
+            Zora | MoonbaseAlpha | Morph | LuksoTestnet | Kroma | GnosisChiado | XLayer | Lukso
+            | Gnosis | C1Milkomeda | Crab | Tangle | Sophon | Flare | PolygonZkevm | MevCommit => {
+                Bronze
+            }
+
+            SophonTestnet | MorphTestnet | GaladrielDevnet | CitreaTestnet | Goerli
+            | BscTestnet | UnichainSepolia => Experimental,
+        }
+    }
+
+    pub fn get_plain_name(&self) -> String {
+        Network::from(*self).to_string()
+    }
+
+    pub fn get_pretty_name(&self) -> String {
+        let name = Network::from(*self).to_string();
+        let tier = self.get_tier();
+        let icon = tier.get_icon();
+        format!("{name} {icon}")
+    }
+}
+
+impl fmt::Display for HypersyncNetwork {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.get_pretty_name())
+    }
+}
+
+impl NetworkWithExplorer {
+    pub fn get_pretty_name(&self) -> String {
+        let network = Network::from(*self);
+        match HypersyncNetwork::try_from(network) {
+            Ok(hypersync_network) => hypersync_network.get_pretty_name(),
+            Err(_) => network.to_string(),
+        }
+    }
+}
+
+impl fmt::Display for NetworkWithExplorer {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.get_pretty_name())
     }
 }
 

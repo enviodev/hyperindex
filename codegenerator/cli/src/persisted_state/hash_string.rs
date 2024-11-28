@@ -50,6 +50,13 @@ impl HashString {
         Self::from_file_paths(vec![file_path], true)
     }
 
+    pub fn from_string(string: String) -> Self {
+        let mut hasher = Sha256::new();
+        hasher.update(string);
+        let hash = hasher.finalize().to_vec();
+        HashString(format!("{:?}", hash))
+    }
+
     #[cfg(test)]
     fn inner(&self) -> String {
         self.0.clone()
