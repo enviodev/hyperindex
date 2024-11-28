@@ -1,33 +1,3 @@
-// Graphql Enum Type Variants
-type enumType<'a> = {
-  name: string,
-  variants: array<'a>,
-  schema: S.t<'a>,
-  default: 'a,
-}
-
-let mkEnum = (~name, ~variants) => {
-  name,
-  variants,
-  schema: S.enum(variants),
-  default: switch variants->Belt.Array.get(0) {
-  | Some(v) => v
-  | None => Js.Exn.raiseError("No variants defined for enum " ++ name)
-  },
-}
-
-module type Enum = {
-  type t
-  let enum: enumType<t>
-}
-
-module EntityHistoryRowAction = {
-  type t = SET | DELETE
-  let variants = [SET, DELETE]
-  let name = "ENTITY_HISTORY_ROW_ACTION"
-  let enum = mkEnum(~name, ~variants)
-}
-
 module ContractType = {
   @genType
   type t = 
@@ -41,7 +11,7 @@ module ContractType = {
     {{contract.name.capitalized}},
   {{/each}}
   ]
-  let enum = mkEnum(~name, ~variants)
+  let enum = Enum.make(~name, ~variants)
 }
 
 module EntityType = {
@@ -60,10 +30,10 @@ module EntityType = {
     DynamicContractRegistry,
   ]
 
-  let enum = mkEnum(~name, ~variants)
+  let enum = Enum.make(~name, ~variants)
 }
-
 {{#each gql_enums as | enum |}} 
+
 module {{enum.name.capitalized}} = {
   @genType
   type t = 
@@ -77,12 +47,12 @@ module {{enum.name.capitalized}} = {
     {{param.capitalized}},
   {{/each}}
   ]
-  let enum = mkEnum(~name, ~variants)
-  }
-
+  let enum = Enum.make(~name, ~variants)
+}
 {{/each}}
-let allEnums: array<module(Enum)> = [
-  module(EntityHistoryRowAction),
+
+let allEnums: array<module(Enum.S)> = [
+  module(EntityHistory.RowAction),
   module(ContractType), 
   module(EntityType),
 {{#each gql_enums as | enum |}} 

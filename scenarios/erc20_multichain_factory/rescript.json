@@ -32,7 +32,6 @@
   "suffix": ".bs.js",
   "bs-dependencies": [
     "generated",
-    "@ryyppy/rescript-promise",
     "rescript-schema",
     "@glennsl/rescript-fetch",
     "helpers",

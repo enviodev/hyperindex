@@ -140,9 +140,9 @@ let shouldSaveHistory = (config, ~isInReorgThreshold) =>
   | _ => false
   }
 
-let shouldPruneHistory = config =>
+let shouldPruneHistory = (config, ~isInReorgThreshold) =>
   switch config.historyConfig {
-  | {historyFlag: MinHistory} => true
+  | {rollbackFlag: RollbackOnReorg, historyFlag: MinHistory} if isInReorgThreshold => true
   | _ => false
   }
 

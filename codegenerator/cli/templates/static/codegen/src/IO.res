@@ -143,13 +143,7 @@ let executeDbFunctionsEntity = (
   promises->Promise.all->Promise.thenResolve(_ => ())
 }
 
-let executeBatch = async (
-  sql,
-  ~inMemoryStore: InMemoryStore.t,
-  ~isInReorgThreshold,
-  ~safeChainIdAndBlockNumberArray,
-  ~config,
-) => {
+let executeBatch = async (sql, ~inMemoryStore: InMemoryStore.t, ~isInReorgThreshold, ~config) => {
   let entityDbExecutionComposer =
     config->Config.shouldSaveHistory(~isInReorgThreshold)
       ? executeSetEntityWithHistory
@@ -185,33 +179,12 @@ let executeBatch = async (
   | None => []
   }
 
-  let pruneEntityHistory = if (
-    isInReorgThreshold &&
-    config->Config.shouldPruneHistory &&
-    safeChainIdAndBlockNumberArray->Belt.Array.length > 0
-  ) {
-    Entities.allEntities->Belt.Array.map(entityMod => {
-      let module(Entity) = entityMod
-
-      DbFunctions.EntityHistory.pruneStaleEntityHistory(
-        _,
-        ~entityName=Entity.name,
-        ~safeChainIdAndBlockNumberArray,
-      )
-    })
-  } else {
-    []
-  }
-
   let res = await sql->Postgres.beginSql(sql => {
     Belt.Array.concatMany([
       //Rollback tables need to happen first in the traction
       rollbackTables,
       [setEventSyncState, setRawEvents],
       setEntities,
-      //History pruning needs to happen last in the transaction
-      //It deletes all unneeded history rows outside of the reorg threshold
-      pruneEntityHistory,
     ])->Belt.Array.map(dbFunc => sql->dbFunc)
   })
 
@@ -247,7 +220,7 @@ module RollBack = {
             )
           )
 
-        let diff = await DbFunctions.sql->DbFunctions.EntityHistory.getRollbackDiff(
+        let diff = await Db.sql->DbFunctions.EntityHistory.getRollbackDiff(
           isUnorderedMultichainMode
             ? UnorderedMultichain({
                 reorgChainId: chainId,

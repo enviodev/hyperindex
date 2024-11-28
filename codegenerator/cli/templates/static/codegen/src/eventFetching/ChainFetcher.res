@@ -121,9 +121,9 @@ let makeFromDbState = async (chainConfig: Config.chainConfig, ~maxAddrInPartitio
   let logger = Logging.createChild(~params={"chainId": chainConfig.chain->ChainMap.Chain.toChainId})
   let staticContracts = chainConfig->getStaticContracts
   let chainId = chainConfig.chain->ChainMap.Chain.toChainId
-  let latestProcessedEvent = await DbFunctions.EventSyncState.getLatestProcessedEvent(~chainId)
+  let latestProcessedEvent = await Db.sql->DbFunctions.EventSyncState.getLatestProcessedEvent(~chainId)
 
-  let chainMetadata = await DbFunctions.ChainMetadata.getLatestChainMetadataState(~chainId)
+  let chainMetadata = await Db.sql->DbFunctions.ChainMetadata.getLatestChainMetadataState(~chainId)
 
   let preRegisterDynamicContracts = chainConfig->Config.shouldPreRegisterDynamicContracts
 
@@ -181,13 +181,13 @@ let makeFromDbState = async (chainConfig: Config.chainConfig, ~maxAddrInPartitio
     //If preregistration is done, but the indexer stops and restarts during indexing. We still get all the dynamic
     //contracts that were registered during preregistration. We need to match on registering event name, contract name and src address
     //to ensure we only get the dynamic contracts that were registered during preregistration
-    await DbFunctions.sql->DbFunctions.DynamicContractRegistry.readDynamicContractsOnChainIdMatchingEvents(
+    await Db.sql->DbFunctions.DynamicContractRegistry.readDynamicContractsOnChainIdMatchingEvents(
       ~chainId,
       ~preRegisteringEvents,
     )
   } else {
     //If no preregistration should be done, only get dynamic contracts up to the the block that the indexing starts from
-    await DbFunctions.sql->DbFunctions.DynamicContractRegistry.readDynamicContractsOnChainIdAtOrBeforeBlock(
+    await Db.sql->DbFunctions.DynamicContractRegistry.readDynamicContractsOnChainIdAtOrBeforeBlock(
       ~chainId,
       ~startBlock,
     )
@@ -240,7 +240,7 @@ let makeFromDbState = async (chainConfig: Config.chainConfig, ~maxAddrInPartitio
   }
 
   let endOfBlockRangeScannedData =
-    await DbFunctions.sql->DbFunctions.EndOfBlockRangeScannedData.readEndOfBlockRangeScannedDataForChain(
+    await Db.sql->DbFunctions.EndOfBlockRangeScannedData.readEndOfBlockRangeScannedDataForChain(
       ~chainId,
     )
 

@@ -11,9 +11,6 @@ importers:
       '@glennsl/rescript-fetch':
         specifier: 0.2.0
         version: 0.2.0
-      '@ryyppy/rescript-promise':
-        specifier: 2.1.0
-        version: 2.1.0
       envio:
         specifier: file:../../codegenerator/cli/npm/envio
         version: file:../../codegenerator/cli/npm/envio
@@ -60,9 +57,6 @@ importers:
       '@rescript/react':
         specifier: 0.12.1
         version: 0.12.1(react-dom@18.3.1(react@18.2.0))(react@18.2.0)
-      '@ryyppy/rescript-promise':
-        specifier: 2.1.0
-        version: 2.1.0
       bignumber.js:
         specifier: 9.1.2
         version: 9.1.2
@@ -209,9 +203,6 @@ packages:
     peerDependencies:
       react: '>=18.0.0'
       react-dom: '>=18.0.0'
-
-  '@ryyppy/rescript-promise@2.1.0':
-    resolution: {integrity: sha512-+dW6msBrj2Lr2hbEMX+HoWCvN89qVjl94RwbYWJgHQuj8jm/izdPC0YzxgpGoEFdeAEW2sOozoLcYHxT6o5WXQ==}
 
   '@scure/base@1.1.6':
     resolution: {integrity: sha512-ok9AWwhcgYuGG3Zfhyqg+zwl+Wn5uE+dwC0NV/2qQkx4dABbb/bx96vWu8NSj+BNjjSjno+JRYRjle1jV08k3g==}
@@ -1433,8 +1424,6 @@ snapshots:
     dependencies:
       react: 18.2.0
       react-dom: 18.3.1(react@18.2.0)
-
-  '@ryyppy/rescript-promise@2.1.0': {}
 
   '@scure/base@1.1.6': {}
 

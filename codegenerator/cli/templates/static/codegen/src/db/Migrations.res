@@ -1,4 +1,4 @@
-let sql = DbFunctions.sql
+let sql = Db.sql
 let unsafe = Postgres.unsafe
 
 let creatTableIfNotExists = (sql, table) => {
@@ -66,7 +66,7 @@ let createDerivedFromDbIndex = (~derivedFromField: Table.derivedFromField, ~sche
   sql->unsafe(query)
 }
 
-let createEnumIfNotExists = (sql, enum: Enums.enumType<_>) => {
+let createEnumIfNotExists = (sql, enum: Enum.enum<_>) => {
   open Belt
   let {variants, name} = enum
   let mappedVariants = variants->Array.map(v => `'${v->Utils.magic}'`)->Js.Array2.joinWith(", ")
@@ -116,38 +116,36 @@ let runUpMigrations = async (~shouldExit) => {
   //Add all enums
   await Enums.allEnums->awaitEach(enum => {
     let module(EnumMod) = enum
-    createEnumIfNotExists(DbFunctions.sql, EnumMod.enum)->handleFailure(
+    createEnumIfNotExists(Db.sql, EnumMod.enum)->handleFailure(
       ~msg=`EE800: Error creating ${EnumMod.enum.name} enum`,
     )
   })
 
-  let allEntityHistoryTables = Entities.allEntityHistory->Belt.Array.map(table => table.table)
   //Create all tables with indices
-  await [TablesStatic.allTables, Entities.allTables, allEntityHistoryTables]
+  await [Db.allStaticTables, Db.allEntityTables, Db.allEntityHistoryTables]
   ->Belt.Array.concatMany
   ->awaitEach(async table => {
-    await creatTableIfNotExists(DbFunctions.sql, table)->handleFailure(
+    await creatTableIfNotExists(Db.sql, table)->handleFailure(
       ~msg=`EE800: Error creating ${table.tableName} table`,
     )
-    await createTableIndices(DbFunctions.sql, table)->handleFailure(
+    await createTableIndices(Db.sql, table)->handleFailure(
       ~msg=`EE800: Error creating ${table.tableName} indices`,
     )
   })
 
-  await Entities.allEntityHistory->awaitEach(async entityHistory => {
+  await Db.allEntityHistory->awaitEach(async entityHistory => {
     await sql
     ->Postgres.unsafe(entityHistory.createInsertFnQuery)
     ->handleFailure(~msg=`EE800: Error creating ${entityHistory.table.tableName} insert function`)
   })
 
   //Create all derivedFromField indices (must be done after all tables are created)
-  await [Entities.allTables]
-  ->Belt.Array.concatMany
+  await Db.allEntityTables
   ->awaitEach(async table => {
     await table
     ->Table.getDerivedFromFields
     ->awaitEach(derivedFromField => {
-      createDerivedFromDbIndex(~derivedFromField, ~schema=Entities.schema)->handleFailure(
+      createDerivedFromDbIndex(~derivedFromField, ~schema=Db.schema)->handleFailure(
         ~msg=`Error creating derivedFrom index of "${derivedFromField.fieldName}" in entity "${table.tableName}"`,
       )
     })

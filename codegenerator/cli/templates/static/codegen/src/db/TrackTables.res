@@ -219,14 +219,14 @@ let trackAllTables = async () => {
   Logging.info("Tracking tables in Hasura")
 
   let _ = await clearHasuraMetadata()
-  await [TablesStatic.allTables, Entities.allTables]
+  await [Db.allStaticTables, Db.allEntityTables]
   ->Belt.Array.concatMany
   ->Utils.Array.awaitEach(async ({tableName}) => {
     await trackTable(~tableName)
     await createSelectPermissions(~tableName)
   })
 
-  await Entities.allTables->Utils.Array.awaitEach(async table => {
+  await Db.allEntityTables->Utils.Array.awaitEach(async table => {
     let {tableName} = table
     //Set array relationships
     await table
@@ -234,7 +234,7 @@ let trackAllTables = async () => {
     ->Utils.Array.awaitEach(async derivedFromField => {
       //determines the actual name of the underlying relational field (if it's an entity mapping then suffixes _id for eg.)
       let relationalFieldName =
-        Entities.schema->Schema.getDerivedFromFieldName(derivedFromField)->Utils.unwrapResultExn
+        Db.schema->Schema.getDerivedFromFieldName(derivedFromField)->Utils.unwrapResultExn
 
       await createEntityRelationship(
         ~tableName,

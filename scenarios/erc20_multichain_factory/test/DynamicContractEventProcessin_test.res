@@ -86,7 +86,6 @@ describe("dynamic contract event processing test", () => {
       ~isInReorgThreshold=false,
       ~latestProcessedBlocks=EventProcessing.EventsProcessed.makeEmpty(~config),
       ~checkContractIsRegistered=(~chain as _, ~contractAddress as _, ~contractName as _) => false,
-      ~safeChainIdAndBlockNumberArray=[],
     )
     switch res {
     | Ok({dynamicContractRegistrations: Some({registrations, unprocessedBatch})}) =>
@@ -114,7 +113,6 @@ describe("dynamic contract event processing test", () => {
       ~loadLayer=Utils.magic("Mock load layer"),
       ~inMemoryStore=InMemoryStore.make(),
       ~isInReorgThreshold=false,
-      ~safeChainIdAndBlockNumberArray=[],
       ~latestProcessedBlocks=EventProcessing.EventsProcessed.makeEmpty(~config),
       //As if dynamic token 3 is already registered
       ~checkContractIsRegistered=(~chain as _, ~contractAddress, ~contractName as _) =>
@@ -145,7 +143,6 @@ describe("dynamic contract event processing test", () => {
       ~loadLayer=Utils.magic("Mock load layer"),
       ~inMemoryStore=InMemoryStore.make(),
       ~isInReorgThreshold=false,
-      ~safeChainIdAndBlockNumberArray=[],
       ~latestProcessedBlocks=EventProcessing.EventsProcessed.makeEmpty(~config),
       //As if dynamic token 3 is already registered
       ~checkContractIsRegistered=(~chain as _, ~contractAddress, ~contractName as _) =>

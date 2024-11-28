@@ -195,7 +195,7 @@ module Sql = {
   @send
   external unsafe: (Postgres.sql, string) => promise<'a> = "unsafe"
 
-  let query = unsafe(DbFunctions.sql, _)
+  let query = unsafe(Db.sql, _)
 
   let getAllRowsInTable = tableName => query(`SELECT * FROM public."${tableName}";`)
 
@@ -445,6 +445,7 @@ describe("Multichain rollback test", () => {
         NextQuery(Chain(Mock.Chain2.chain)),
         UpdateChainMetaDataAndCheckForExit(NoExit),
         ProcessEventBatch,
+        PruneStaleEntityHistory,
       ],
       stubDataInitial->Stubs.getTasks,
       ~message="Should have processed a batch and run next queries on all chains",
@@ -485,6 +486,7 @@ describe("Multichain rollback test", () => {
         NextQuery(Chain(Mock.Chain2.chain)),
         UpdateChainMetaDataAndCheckForExit(NoExit),
         ProcessEventBatch,
+        PruneStaleEntityHistory,
       ],
       stubDataInitial->Stubs.getTasks,
       ~message="Should have detected rollback on chain 1",
@@ -530,6 +532,7 @@ describe("Multichain rollback test", () => {
         NextQuery(Chain(Mock.Chain2.chain)),
         UpdateChainMetaDataAndCheckForExit(NoExit),
         ProcessEventBatch,
+        PruneStaleEntityHistory,
       ],
       stubDataReorg->Stubs.getTasks,
       ~message="Should have detected rollback on chain 1",

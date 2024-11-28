@@ -1,5 +1,4 @@
 open Table
-open Enums
 
 //shorthand for punning
 let isPrimaryKey = true
@@ -195,12 +194,3 @@ module DynamicContractRegistry = {
 
   let entityHistory = table->EntityHistory.fromTable(~schema)
 }
-
-let allTables: array<table> = [
-  EventSyncState.table,
-  ChainMetadata.table,
-  PersistedState.table,
-  EndOfBlockRangeScannedData.table,
-  RawEvents.table,
-  DynamicContractRegistry.table,
-]
