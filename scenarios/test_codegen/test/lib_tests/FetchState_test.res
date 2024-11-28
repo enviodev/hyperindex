@@ -434,9 +434,9 @@ describe("FetchState.fetchState", () => {
       firstEventBlockNumber: None,
       dynamicContracts: DynamicContractsMap.empty,
       fetchedEventQueue: [
-        mockEvent(~blockNumber=6, ~logIndex=1),
-        mockEvent(~blockNumber=5),
-        mockEvent(~blockNumber=1, ~logIndex=2),
+        mockEvent(~blockNumber=106, ~logIndex=1),
+        mockEvent(~blockNumber=105),
+        mockEvent(~blockNumber=101, ~logIndex=2),
       ],
       registerType: RootRegister({endBlock: None}),
     }
