@@ -57,7 +57,6 @@ let waitForNewBlock = (
   ~logger,
 ) => {
   let module(ChainWorker: S) = chainWorker
-  logger->Logging.childTrace("Waiting for new blocks")
   let logger = Logging.createChildFrom(
     ~logger,
     ~params={
@@ -65,6 +64,8 @@ let waitForNewBlock = (
       "currentBlockHeight": currentBlockHeight,
     },
   )
+  
+  logger->Logging.childTrace("Waiting for new blocks")
   ChainWorker.waitForBlockGreaterThanCurrentHeight(
     ~currentBlockHeight,
     ~logger,
