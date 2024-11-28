@@ -41,12 +41,10 @@ module GetNextPage = {
       ->ignore
       Ok(queryResponse)
     }
-    let pollForHeightGtOrEq = async (~serverUrl as _, ~blockNumber as _, ~logger as _) => 3
     let fn = HyperSyncWorker.makeGetNextPage(
       ~endpointUrl,
       ~contracts,
       ~queryLogsPage,
-      ~pollForHeightGtOrEq,
       ~blockSchema,
       ~transactionSchema,
     )
@@ -72,9 +70,7 @@ describe("HyperSyncWorker - getNextPage", () => {
       let _ = await getNextPage(
         ~fromBlock=1,
         ~toBlock=2,
-        ~currentBlockHeight=3,
         ~logger=Logging.logger,
-        ~setCurrentBlockHeight=_blockNumber => (),
         ~contractAddressMapping=ContractAddressingMap.make(),
         ~shouldApplyWildcards=true,
         ~isPreRegisteringDynamicContracts=false,
@@ -124,9 +120,7 @@ describe("HyperSyncWorker - getNextPage", () => {
       let _ = await getNextPage(
         ~fromBlock=1,
         ~toBlock=2,
-        ~currentBlockHeight=3,
         ~logger=Logging.logger,
-        ~setCurrentBlockHeight=_blockNumber => (),
         ~contractAddressMapping=ContractAddressingMap.make(),
         ~shouldApplyWildcards=true,
         ~isPreRegisteringDynamicContracts=false,

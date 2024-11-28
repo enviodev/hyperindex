@@ -1,7 +1,7 @@
 exception QueryTimout(string)
 exception EventRoutingFailed
 
-let getUnwrappedBlock = (provider, blockNumber) =>
+let getKnownBlock = (provider, blockNumber) =>
   provider
   ->Ethers.JsonRpcProvider.getBlock(blockNumber)
   ->Promise.then(blockNullable =>
@@ -14,8 +14,8 @@ let getUnwrappedBlock = (provider, blockNumber) =>
     }
   )
 
-let rec getUnwrappedBlockWithBackoff = async (~provider, ~blockNumber, ~backoffMsOnFailure) =>
-  switch await getUnwrappedBlock(provider, blockNumber) {
+let rec getKnownBlockWithBackoff = async (~provider, ~blockNumber, ~backoffMsOnFailure) =>
+  switch await getKnownBlock(provider, blockNumber) {
   | exception err =>
     Logging.warn({
       "err": err,
@@ -23,7 +23,7 @@ let rec getUnwrappedBlockWithBackoff = async (~provider, ~blockNumber, ~backoffM
       "type": "EXPONENTIAL_BACKOFF",
     })
     await Time.resolvePromiseAfterDelay(~delayMilliseconds=backoffMsOnFailure)
-    await getUnwrappedBlockWithBackoff(
+    await getKnownBlockWithBackoff(
       ~provider,
       ~blockNumber,
       ~backoffMsOnFailure=backoffMsOnFailure * 2,

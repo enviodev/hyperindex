@@ -104,7 +104,10 @@ module LogsQuery = {
     ~fieldSelection,
   ): HyperSyncClient.QueryTypes.query => {
     fromBlock,
-    toBlockExclusive: toBlockInclusive + 1,
+    toBlockExclusive: ?switch toBlockInclusive {
+      | Some(toBlockInclusive) => Some(toBlockInclusive + 1)
+      | None => None
+    },
     logs: addressesWithTopics,
     fieldSelection,
   }

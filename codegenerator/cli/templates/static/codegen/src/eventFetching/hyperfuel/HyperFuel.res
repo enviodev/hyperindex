@@ -89,7 +89,10 @@ module LogsQuery = {
   ): HyperFuelClient.QueryTypes.query => {
     {
       fromBlock,
-      toBlockExclusive: toBlockInclusive + 1,
+      toBlockExclusive: ?switch toBlockInclusive {
+        | Some(toBlockInclusive) => Some(toBlockInclusive + 1)
+        | None => None
+      },
       receipts: recieptsSelection,
       fieldSelection: {
         receipt: [

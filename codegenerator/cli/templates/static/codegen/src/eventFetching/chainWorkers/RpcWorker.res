@@ -49,7 +49,7 @@ module Make = (
 
   let blockLoader = LazyLoader.make(
     ~loaderFn=blockNumber =>
-      EventFetching.getUnwrappedBlockWithBackoff(
+      EventFetching.getKnownBlockWithBackoff(
         ~provider=T.rpcConfig.provider,
         ~backoffMsOnFailure=1000,
         ~blockNumber,
@@ -57,7 +57,7 @@ module Make = (
     ~metadata={
       asyncTaskName: "blockLoader: fetching block timestamp - `getBlock` rpc call",
       caller: "RPC ChainWorker",
-      suggestedFix: "This likely means the RPC url you are using is not respending correctly. Please try another RPC endipoint.",
+      suggestedFix: "This likely means the RPC url you are using is not responding correctly. Please try another RPC endipoint.",
     },
     (),
   )
@@ -79,40 +79,10 @@ module Make = (
     }
   }
 
-  let rec waitForNewBlockBeforeQuery = async (
-    ~fromBlock,
-    ~currentBlockHeight,
-    ~setCurrentBlockHeight,
-    ~logger,
-  ) => {
-    //If there are no new blocks to fetch, poll the provider for
-    //a new block until it arrives
-    if fromBlock > currentBlockHeight {
-      let nextBlock = await waitForBlockGreaterThanCurrentHeight(~currentBlockHeight, ~logger)
-
-      let currentBlockHeight = if nextBlock > currentBlockHeight {
-        setCurrentBlockHeight(nextBlock)
-        nextBlock
-      } else {
-        currentBlockHeight
-      }
-
-      await waitForNewBlockBeforeQuery(
-        ~fromBlock,
-        ~currentBlockHeight,
-        ~setCurrentBlockHeight,
-        ~logger,
-      )
-    } else {
-      currentBlockHeight
-    }
-  }
-
   let fetchBlockRange = async (
     ~query: blockRangeFetchArgs,
     ~logger,
     ~currentBlockHeight,
-    ~setCurrentBlockHeight,
     ~isPreRegisteringDynamicContracts,
   ) => {
     try {
@@ -122,15 +92,12 @@ module Make = (
       let {fromBlock, toBlock, contractAddressMapping, fetchStateRegisterId, partitionId} = query
 
       let startFetchingBatchTimeRef = Hrtime.makeTimer()
-      let currentBlockHeight = await waitForNewBlockBeforeQuery(
-        ~fromBlock,
-        ~currentBlockHeight,
-        ~setCurrentBlockHeight,
-        ~logger,
-      )
 
-      //Shadow toBlock ensuring it's never higher than currentBlockHeight
-      let toBlock = Pervasives.min(toBlock, currentBlockHeight)
+      // Always have a toBlock for an RPC worker
+      let toBlock = switch toBlock {
+        | Some(toBlock) => Pervasives.min(toBlock, currentBlockHeight)
+        | None => currentBlockHeight
+      }
 
       let currentBlockInterval =
         blockIntervals

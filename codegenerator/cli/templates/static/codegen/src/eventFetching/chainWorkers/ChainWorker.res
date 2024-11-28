@@ -47,7 +47,27 @@ module type S = {
     ~query: blockRangeFetchArgs,
     ~logger: Pino.t,
     ~currentBlockHeight: int,
-    ~setCurrentBlockHeight: int => unit,
     ~isPreRegisteringDynamicContracts: bool,
   ) => promise<result<blockRangeFetchResponse, ErrorHandling.t>>
+}
+
+let waitForNewBlock = (
+  chainWorker,
+  ~currentBlockHeight,
+  ~logger,
+) => {
+  let module(ChainWorker: S) = chainWorker
+  let logger = Logging.createChildFrom(
+    ~logger,
+    ~params={
+      "logType": "Poll for block greater than current height",
+      "currentBlockHeight": currentBlockHeight,
+    },
+  )
+  
+  logger->Logging.childTrace("Waiting for new blocks")
+  ChainWorker.waitForBlockGreaterThanCurrentHeight(
+    ~currentBlockHeight,
+    ~logger,
+  )
 }

@@ -214,23 +214,15 @@ let getMostBehindPartitions = (
   ->Js.Array.slice(~start=0, ~end_=maxNumQueries)
 }
 
-let updatePartition = (self: t, ~fetchState: FetchState.t, ~partitionId: partitionIndex) => {
-  {...self, partitions: self.partitions->Utils.Array.setIndexImmutable(partitionId, fetchState)}
-}
-
 type nextQueries = WaitForNewBlock | NextQuery(array<FetchState.nextQuery>)
+
 /**
 Gets the next query from the fetchState with the lowest latestFetchedBlock number.
 */
-let getNextQueriesOrThrow = (
-  self: t,
-  ~currentBlockHeight,
-  ~maxPerChainQueueSize,
-  ~partitionsCurrentlyFetching,
-) => {
-  let optUpdatedPartition = ref(None)
-  let includesWaitForNewBlock = ref(false)
+let getNextQueries = (self: t, ~maxPerChainQueueSize, ~partitionsCurrentlyFetching) => {
   let nextQueries = []
+  let updatedPartitions = Js.Dict.empty()
+
   self
   ->getMostBehindPartitions(
     ~maxNumQueries=Env.maxPartitionConcurrency,
@@ -238,33 +230,17 @@ let getNextQueriesOrThrow = (
     ~partitionsCurrentlyFetching,
   )
   ->Array.forEach(({fetchState, partitionId}) => {
-    switch fetchState->FetchState.getNextQuery(~currentBlockHeight, ~partitionId) {
-    | Ok((nextQuery, optUpdatesFetchState)) =>
-      switch nextQuery {
-      | NextQuery(q) => nextQueries->Js.Array2.push(q)->ignore
-      | WaitForNewBlock => includesWaitForNewBlock := true
-      | Done => ()
-      }
-      switch optUpdatesFetchState {
-      | Some(fetchState) =>
-        optUpdatedPartition :=
-          optUpdatedPartition.contents
-          ->Option.getWithDefault(self)
-          ->updatePartition(~fetchState, ~partitionId)
-          ->Some
-      | None => ()
-      }
-    | Error(e) =>
-      e->ErrorHandling.mkLogAndRaise(~msg="Unexpected error getting next query in partition")
+    let mergedFetchState = fetchState->FetchState.mergeRegistersBeforeNextQuery
+    if mergedFetchState !== fetchState {
+      updatedPartitions->Js.Dict.set(partitionId->(Utils.magic: int => string), mergedFetchState)
+    }
+    switch mergedFetchState->FetchState.getNextQuery(~partitionId) {
+    | Done => ()
+    | NextQuery(nextQuery) => nextQueries->Js.Array2.push(nextQuery)->ignore
     }
   })
 
-  let nextQueries = switch nextQueries {
-  | [] if includesWaitForNewBlock.contents => WaitForNewBlock
-  | queries => NextQuery(queries)
-  }
-
-  (nextQueries, optUpdatedPartition.contents)
+  (nextQueries, updatedPartitions)
 }
 
 /**

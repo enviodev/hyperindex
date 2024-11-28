@@ -515,7 +515,7 @@ type nextQuery = {
   //used to id the partition of the fetchstate
   partitionId: int,
   fromBlock: int,
-  toBlock: int,
+  toBlock: option<int>,
   contractAddressMapping: ContractAddressingMap.mapping,
 }
 
@@ -561,52 +561,16 @@ let minOfOption: (int, option<int>) => int = (a: int, b: option<int>) => {
   }
 }
 
-/**
-Constructs `nextQuery` from a given node
-*/
-let getNextQueryFromNode = (
-  {registerType, latestFetchedBlock, contractAddressMapping}: register,
-  ~toBlock,
-  ~partitionId,
-) => {
-  let (id, endBlock) = switch registerType {
-  | RootRegister({endBlock}) => (Root, endBlock)
-  | DynamicContractRegister({id}) => (DynamicContract(id), None)
-  }
-  let fromBlock = switch latestFetchedBlock.blockNumber {
+let getNextFromBlock = ({latestFetchedBlock}: register) => {
+  switch latestFetchedBlock.blockNumber {
   | 0 => 0
   | latestFetchedBlockNumber => latestFetchedBlockNumber + 1
   }
-  let toBlock = minOfOption(toBlock, endBlock)
-  {
-    partitionId,
-    fetchStateRegisterId: id,
-    fromBlock,
-    toBlock,
-    contractAddressMapping,
-  }
 }
 
-type nextQueryOrWaitForBlock =
+type nextQueryOrDone =
   | NextQuery(nextQuery)
-  | WaitForNewBlock
   | Done
-
-exception FromBlockIsHigherThanToBlock(int, int) //from and to block respectively
-
-let isGreaterThanOpt: (int, option<int>) => bool = (a: int, b: option<int>) => {
-  switch b {
-  | Some(b) => a > b
-  | None => false
-  }
-}
-
-let rec getEndBlock = (self: register) => {
-  switch self.registerType {
-  | RootRegister({endBlock}) => endBlock
-  | DynamicContractRegister({nextRegister}) => nextRegister->getEndBlock
-  }
-}
 
 /**
 Applies pending dynamic contract registrations to the base register
@@ -625,14 +589,7 @@ let applyPendingDynamicContractRegistrations = (self: t) => {
   }
 }
 
-/**
-Gets the next query either with a to block of the current height if it is the root node.
-Or with a toBlock of the nextRegistered latestBlockNumber to catch up and merge with the next regisetered.
-
-Errors if nextRegistered dynamic contract has a lower latestFetchedBlock than the current as this would be
-an invalid state.
-*/
-let getNextQuery = (self: t, ~currentBlockHeight, ~partitionId) => {
+let mergeRegistersBeforeNextQuery = (self: t) => {
   let mapMaybeMerge = (fetchState: t) =>
     fetchState.baseRegister
     ->pruneAndMergeNextRegistered
@@ -642,7 +599,7 @@ let getNextQuery = (self: t, ~currentBlockHeight, ~partitionId) => {
     })
 
   //First apply pending dynamic contracts, then try and merge
-  //These steps should only happen on getNextQuery, to avoid in between states where a
+  //These steps should only happen before getNextQuery, to avoid in between states where a
   //query is in flight and the underlying registers are changing
   let maybeUpdatedFetchState = switch self->applyPendingDynamicContractRegistrations {
   | Some(updatedWithDynamicContracts) =>
@@ -658,28 +615,34 @@ let getNextQuery = (self: t, ~currentBlockHeight, ~partitionId) => {
   | None => self->mapMaybeMerge
   }
 
-  let {baseRegister} = maybeUpdatedFetchState->Option.getWithDefault(self)
+  maybeUpdatedFetchState->Option.getWithDefault(self)
+}
 
-  let nextQuery = switch baseRegister.registerType {
+/**
+Gets the next query either with a to block
+of the nextRegistered latestBlockNumber to catch up and merge
+or None if we don't care about an end block of a query
+*/
+let getNextQuery = ({baseRegister}: t, ~partitionId) => {
+  let fromBlock = getNextFromBlock(baseRegister)
+  switch baseRegister.registerType {
+  | RootRegister({endBlock: Some(endBlock)}) if fromBlock > endBlock => Done
   | RootRegister({endBlock}) =>
-    baseRegister->getNextQueryFromNode(
-      ~toBlock={minOfOption(currentBlockHeight, endBlock)},
-      ~partitionId,
-    )
-  | DynamicContractRegister({nextRegister: {latestFetchedBlock}}) =>
-    baseRegister->getNextQueryFromNode(~toBlock=latestFetchedBlock.blockNumber, ~partitionId)
-  }
-
-  switch nextQuery {
-  | {fromBlock} if fromBlock > currentBlockHeight || currentBlockHeight == 0 =>
-    (WaitForNewBlock, maybeUpdatedFetchState)->Ok
-  | {fromBlock, toBlock} if fromBlock <= toBlock =>
-    (NextQuery(nextQuery), maybeUpdatedFetchState)->Ok
-  | {fromBlock} if fromBlock->isGreaterThanOpt(getEndBlock(baseRegister)) =>
-    (Done, maybeUpdatedFetchState)->Ok
-  //This is an invalid case. We should never arrive at this match arm but it would be
-  //detrimental if it were the case.
-  | {fromBlock, toBlock} => Error(FromBlockIsHigherThanToBlock(fromBlock, toBlock))
+    NextQuery({
+      partitionId,
+      fetchStateRegisterId: Root,
+      fromBlock,
+      toBlock: endBlock,
+      contractAddressMapping: baseRegister.contractAddressMapping,
+    })
+  | DynamicContractRegister({id, nextRegister: {latestFetchedBlock}}) =>
+    NextQuery({
+      partitionId,
+      fetchStateRegisterId: DynamicContract(id),
+      fromBlock,
+      toBlock: Some(latestFetchedBlock.blockNumber),
+      contractAddressMapping: baseRegister.contractAddressMapping,
+    })
   }
 }
 
@@ -840,6 +803,7 @@ let makeInternal = (
     registerType,
     latestFetchedBlock: {
       blockTimestamp: 0,
+      // Here's a bug that startBlock: 1 won't work
       blockNumber: Pervasives.max(startBlock - 1, 0),
     },
     contractAddressMapping,

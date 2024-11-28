@@ -14,6 +14,7 @@ type t = {
   chainConfig: Config.chainConfig,
   //The latest known block of the chain
   currentBlockHeight: int,
+  isWaitingForNewBlock: bool,
   partitionsCurrentlyFetching: PartitionedFetchState.partitionIndexSet,
   timestampCaughtUpToHeadOrEndblock: option<Js.Date.t>,
   dbFirstEventBlockNumber: option<int>,
@@ -65,6 +66,7 @@ let make = (
     chainConfig,
     lastBlockScannedHashes,
     currentBlockHeight: 0,
+    isWaitingForNewBlock: false,
     fetchState,
     dbFirstEventBlockNumber,
     latestProcessedBlock,
@@ -355,17 +357,12 @@ let updateFetchState = (
 }
 
 /**
-Gets the next query either with a to block of the current height if it is the root node.
-Or with a toBlock of the nextRegistered latestBlockNumber to catch up and merge with the next regisetered.
+Gets the next queries for all most behind partitions not exceeding queue size
 
 Applies any event filters found in the chain fetcher
-
-Errors if nextRegistered dynamic contract has a lower latestFetchedBlock than the current as this would be
-an invalid state.
 */
-let getNextQuery = (self: t, ~maxPerChainQueueSize) => {
-  self.fetchState->PartitionedFetchState.getNextQueriesOrThrow(
-    ~currentBlockHeight=self.currentBlockHeight,
+let getNextQueries = (self: t, ~maxPerChainQueueSize) => {
+  self.fetchState->PartitionedFetchState.getNextQueries(
     ~maxPerChainQueueSize,
     ~partitionsCurrentlyFetching=self.partitionsCurrentlyFetching,
   )

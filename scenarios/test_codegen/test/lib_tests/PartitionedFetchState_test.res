@@ -223,12 +223,11 @@ describe("PartitionedFetchState getMostBehindPartitions", () => {
     }
 
     //Check the expected query if requsted in this state
-    switch partitionedFetchState->PartitionedFetchState.getNextQueriesOrThrow(
-      ~currentBlockHeight=200,
+    switch partitionedFetchState->PartitionedFetchState.getNextQueries(
       ~maxPerChainQueueSize=10,
       ~partitionsCurrentlyFetching=Set.Int.empty,
     ) {
-    | (NextQuery([query]), _) =>
+    | ([query], _) =>
       Assert.deepEqual(
         query.fetchStateRegisterId,
         id.fetchStateId,
