@@ -753,9 +753,23 @@ Finds the earliest queue item across all registers and then returns that
 queue item with an update fetch state.
 */
 let getEarliestEvent = (self: t) => {
-  let registerWithEarliestQItem = self.baseRegister->findRegisterIdWithEarliestQueueItem
-  //Can safely unwrap here since the id is returned from self and so is guarenteed to exist
-  self.baseRegister->popQItemAtRegisterId(~id=registerWithEarliestQItem)->Utils.unwrapResultExn
+  if self.pendingDynamicContracts->Utils.Array.isEmpty {
+    let registerWithEarliestQItem = self.baseRegister->findRegisterIdWithEarliestQueueItem
+    //Can safely unwrap here since the id is returned from self and so is guarenteed to exist
+    self.baseRegister->popQItemAtRegisterId(~id=registerWithEarliestQItem)->Utils.unwrapResultExn
+  } else {
+    let earliestPendingDynamicContractBlockNumber =
+      self.pendingDynamicContracts
+      ->Array.reduce(None, (accum, dynamicContractRegistration) => {
+        switch accum {
+        | None => Some(dynamicContractRegistration.registeringEventBlockNumber)
+        | Some(accumBlockNumber) =>
+          min(accumBlockNumber, dynamicContractRegistration.registeringEventBlockNumber)->Some
+        }
+      })
+      ->Option.getExn
+    NoItem({blockTimestamp: 0, blockNumber: earliestPendingDynamicContractBlockNumber - 1})
+  }
 }
 
 let makeInternal = (
@@ -843,9 +857,13 @@ Check the max queue size of the tip of the tree.
 Don't use the cummulative queue sizes because otherwise there
 could be a deadlock. With a very small buffer size of the actively
 fetching registration
+ 
+If there are pending dynamic contracts, we always need to allow the next query
 */
-let isReadyForNextQuery = (self: t, ~maxQueueSize) =>
-  self.baseRegister.fetchedEventQueue->Array.length < maxQueueSize
+let isReadyForNextQuery = ({pendingDynamicContracts, baseRegister}: t, ~maxQueueSize) =>
+  pendingDynamicContracts->Utils.Array.isEmpty
+    ? baseRegister.fetchedEventQueue->Array.length < maxQueueSize
+    : true
 
 let rec checkBaseRegisterContainsRegisteredContract = (
   register: register,
