@@ -138,17 +138,17 @@ async fn run_all_init_combinations() {
 }
 
 async fn all_hypersync_networks_are_included() {
-    let diff = envio::scripts::print_missing_networks::get_diff()
+    let diff = envio::scripts::print_missing_networks::Diff::get()
         .await
         .unwrap();
 
-    if diff.missing_chains.is_empty() && diff.extra_chains.is_empty() {
+    if diff.is_empty() {
         return;
+    } else {
+        diff.print_message();
+
+        assert!(false);
     }
-
-    envio::scripts::print_missing_networks::print_diff_message(diff);
-
-    assert!(false);
 }
 
 #[tokio::main]

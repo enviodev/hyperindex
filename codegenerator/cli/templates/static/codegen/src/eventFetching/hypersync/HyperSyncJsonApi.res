@@ -22,7 +22,7 @@ module QueryTypes = {
     | @as("uncles") Uncles
     | @as("base_fee_per_gas") BaseFeePerGas
 
-  let blockFieldOptionsSchema = S.enum([
+  let blockFieldOptionsSchema = Utils.Schema.enum([
     Number,
     Hash,
     ParentHash,
@@ -76,7 +76,7 @@ module QueryTypes = {
     | @as("status") Status
     | @as("sighash") Sighash
 
-  let transactionFieldOptionsSchema = S.enum([
+  let transactionFieldOptionsSchema = Utils.Schema.enum([
     BlockHash,
     BlockNumber,
     From,
@@ -123,7 +123,7 @@ module QueryTypes = {
     | @as("topic2") Topic2
     | @as("topic3") Topic3
 
-  let logFieldOptionsSchema = S.enum([
+  let logFieldOptionsSchema = Utils.Schema.enum([
     Removed,
     LogIndex,
     TransactionIndex,

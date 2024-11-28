@@ -52,7 +52,7 @@ type sslOptions =
   | @as("prefer") Prefer
   | @as("verify-full") VerifyFull
 
-let sslOptionsSchema: S.schema<sslOptions> = S.enum([
+let sslOptionsSchema: S.schema<sslOptions> = Utils.Schema.enum([
   Bool(true),
   Bool(false),
   Require,

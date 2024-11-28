@@ -86,8 +86,7 @@ impl PersistedState {
 
         Ok(PersistedState {
             envio_version: CURRENT_CRATE_VERSION.to_string(),
-            config_hash: HashString::from_file_path(config.parsed_project_paths.config.clone())
-                .context("Failed hashing config file")?,
+            config_hash: HashString::from_string(config.human_config.to_string()),
             schema_hash: HashString::from_file_path(schema_path.clone())
                 .context("Failed hashing schema file")?,
             handler_files_hash: HashString::from_file_paths(
@@ -205,7 +204,7 @@ mod test {
             "config_hash": "<HASH_STRING>",
             "schema_hash": "<HASH_STRING>",
             "handler_files_hash": "<HASH_STRING>",
-            "abi_files_hash": "<HASH_STRING>"
+            "abi_files_hash": "<HASH_STRING>",
         }))
         .unwrap();
 
@@ -214,7 +213,7 @@ mod test {
             "config_hash": "<CHANGED_HASH_STRING>",
             "schema_hash": "<HASH_STRING>",
             "handler_files_hash": "<HASH_STRING>",
-            "abi_files_hash": "<HASH_STRING>"
+            "abi_files_hash": "<HASH_STRING>",
         }))
         .unwrap();
 
@@ -234,7 +233,7 @@ mod test {
             "config_hash": "<HASH_STRING>",
             "schema_hash": "<HASH_STRING>",
             "handler_files_hash": "<HASH_STRING>",
-            "abi_files_hash": "<HASH_STRING>"
+            "abi_files_hash": "<HASH_STRING>",
         }))
         .unwrap();
 
@@ -243,7 +242,7 @@ mod test {
             "config_hash": "<HASH_STRING>",
             "schema_hash": "<HASH_STRING>",
             "handler_files_hash": "<CHANGED_HASH_STRING>",
-            "abi_files_hash": "<HASH_STRING>"
+            "abi_files_hash": "<HASH_STRING>",
         }))
         .unwrap();
 
@@ -263,7 +262,7 @@ mod test {
             "config_hash": "<HASH_STRING>",
             "schema_hash": "<HASH_STRING>",
             "handler_files_hash": "<HASH_STRING>",
-            "abi_files_hash": "<HASH_STRING>"
+            "abi_files_hash": "<HASH_STRING>",
         }))
         .unwrap();
 
@@ -272,7 +271,7 @@ mod test {
             "config_hash": "<HASH_STRING>",
             "schema_hash": "<CHANGED_HASH_STRING>",
             "handler_files_hash": "<CHANGED_HASH_STRING>",
-            "abi_files_hash": "<HASH_STRING>"
+            "abi_files_hash": "<HASH_STRING>",
         }))
         .unwrap();
 
@@ -300,7 +299,7 @@ mod test {
             "config_hash": "<HASH_STRING>",
             "schema_hash": "<HASH_STRING>",
             "handler_files_hash": "<HASH_STRING>",
-            "abi_files_hash": "<HASH_STRING>"
+            "abi_files_hash": "<HASH_STRING>",
         }))
         .unwrap();
 
@@ -309,7 +308,7 @@ mod test {
             "config_hash": "<HASH_STRING>",
             "schema_hash": "<HASH_STRING>",
             "handler_files_hash": "<CHANGED_HASH_STRING>",
-            "abi_files_hash": "<HASH_STRING>"
+            "abi_files_hash": "<HASH_STRING>",
         }))
         .unwrap();
 
@@ -336,7 +335,7 @@ mod test {
             "config_hash": "<HASH_STRING>",
             "schema_hash": "<HASH_STRING>",
             "handler_files_hash": "<HASH_STRING>",
-            "abi_files_hash": "<HASH_STRING>"
+            "abi_files_hash": "<HASH_STRING>",
         }))
         .unwrap();
 
@@ -345,7 +344,7 @@ mod test {
             "config_hash": "<HASH_STRING>",
             "schema_hash": "<HASH_STRING>",
             "handler_files_hash": "<HASH_STRING>",
-            "abi_files_hash": "<HASH_STRING>"
+            "abi_files_hash": "<HASH_STRING>",
         }))
         .unwrap();
 

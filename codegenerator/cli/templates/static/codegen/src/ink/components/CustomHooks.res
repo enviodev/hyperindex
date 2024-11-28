@@ -12,7 +12,7 @@ module InitApi = {
   let bodySchema = S.object(s => {
     envioVersion: s.field("envioVersion", S.option(S.string)),
     envioApiToken: s.field("envioApiToken", S.option(S.string)),
-    ecosystem: s.field("ecosystem", S.enum([Evm, Fuel])),
+    ecosystem: s.field("ecosystem", Utils.Schema.enum([Evm, Fuel])),
     hyperSyncNetworks: s.field("hyperSyncNetworks", S.array(S.int)),
     rpcNetworks: s.field("rpcNetworks", S.array(S.int)),
   })
@@ -70,25 +70,28 @@ module InitApi = {
   }
 
   let messageSchema = S.object(s => {
-    color: s.field("color", S.enum([Primary, Secondary, Info, Danger, Success, White, Gray])),
+    color: s.field("color", Utils.Schema.enum([Primary, Secondary, Info, Danger, Success, White, Gray])),
     content: s.field("content", S.string),
   })
 
-  let responseSchema = S.object(s => s.field("messages", S.array(messageSchema)))
-
   let endpoint = Env.envioApiUrl ++ "/hyperindex/init"
 
-  let getMessages = (~config) => {
+  let route = Rest.route(() => {
+    method: Post,
+    path: "/hyperindex/init",
+    variables: s => s.body(bodySchema),
+    responses: [s => s.field("messages", S.array(messageSchema))]
+  })
+
+  let getMessages = async (~config) => {
     let envioVersion =
       PersistedState.getPersistedState()->Result.mapWithDefault(None, p => Some(p.envioVersion))
     let body = makeBody(~envioVersion, ~envioApiToken=Env.envioApiToken, ~config)
 
-    QueryHelpers.executeFetchRequest(
-      ~endpoint,
-      ~method=#POST,
-      ~bodyAndSchema=(body, bodySchema),
-      ~responseSchema,
-    )
+    switch await route->Rest.fetch(endpoint, body) {
+      | exception exn => Error(exn->Obj.magic)
+      | messages => Ok(messages)
+    }
   }
 }
 

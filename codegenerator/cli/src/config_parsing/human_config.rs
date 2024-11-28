@@ -1,7 +1,7 @@
 use crate::utils::normalized_list::{NormalizedList, SingleOrList};
 use schemars::{json_schema, JsonSchema, Schema, SchemaGenerator};
 use serde::{Deserialize, Serialize};
-use std::borrow::Cow;
+use std::{borrow::Cow, fmt::Display};
 
 impl<T: Clone + JsonSchema> JsonSchema for SingleOrList<T> {
     fn schema_name() -> Cow<'static, str> {
@@ -91,6 +91,25 @@ pub struct NetworkContract<T> {
 #[derive(Deserialize)]
 pub struct ConfigDiscriminant {
     pub ecosystem: Option<String>,
+}
+
+#[derive(Debug)]
+pub enum HumanConfig {
+    Evm(evm::HumanConfig),
+    Fuel(fuel::HumanConfig),
+}
+
+impl Display for HumanConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                HumanConfig::Evm(config) => config.to_string(),
+                HumanConfig::Fuel(config) => config.to_string(),
+            }
+        )
+    }
 }
 
 pub mod evm {
