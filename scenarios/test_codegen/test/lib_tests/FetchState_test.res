@@ -547,7 +547,7 @@ describe("FetchState.fetchState", () => {
     },
   )
 
-  it_only("isReadyForNextQuery when containing pending dynamic contracts", () => {
+  it("isReadyForNextQuery when containing pending dynamic contracts", () => {
     let baseRegister = {
       latestFetchedBlock: {
         blockNumber: 500,
