@@ -24,6 +24,8 @@ module MakeManager = (S: State) => {
       }
       let (nextState, nextTasks) = reducer(self.state, action)
       switch self.stateUpdatedHook {
+      // In ReScript `!==` is shallow equality check rather than `!=`
+      // This is just a check to see if a new object reference was returned
       | Some(hook) if self.state !== nextState => hook(nextState)
       | _ => ()
       }
