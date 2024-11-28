@@ -139,9 +139,9 @@ let makeAppState = (globalState: GlobalState.t): EnvioInkApp.appState => {
           chainId: cf.chainConfig.chain->ChainMap.Chain.toChainId,
           endBlock: cf.chainConfig.endBlock,
           poweredByHyperSync: switch cf.chainConfig.syncSource {
-          | HyperSync(_)
-          | HyperFuel(_) => true
-          | Rpc(_) => false
+          | HyperSync
+          | HyperFuel => true
+          | Rpc => false
           },
         }: EnvioInkApp.chainData
       )

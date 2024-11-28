@@ -36,17 +36,7 @@ let contracts = [
 
 let mockChainConfig: Config.chainConfig = {
   confirmedBlockThreshold: 200,
-  syncSource: Rpc({
-    provider: Hardhat.hardhatProvider,
-    syncConfig: {
-      initialBlockInterval: 10000,
-      backoffMultiplicative: 10000.0,
-      accelerationAdditive: 10000,
-      intervalCeiling: 10000,
-      backoffMillis: 10000,
-      queryTimeoutMillis: 10000,
-    },
-  }),
+  syncSource: Rpc,
   startBlock: 1,
   endBlock: None,
   chain: chain1337,
@@ -55,21 +45,19 @@ let mockChainConfig: Config.chainConfig = {
     RpcWorker.Make({
       let chain = chain1337
       let contracts = contracts
-      let rpcConfig: Config.rpcConfig = {
-        provider: Ethers.JsonRpcProvider.make(
-          ~rpcUrls=["http://localhost:8545"],
-          ~chainId=1337,
-          ~fallbackStallTimeout=3,
-        ),
-        syncConfig: Config.getSyncConfig({
-          initialBlockInterval: 10000,
-          backoffMultiplicative: 10000.0,
-          accelerationAdditive: 10000,
-          intervalCeiling: 10000,
-          backoffMillis: 10000,
-          queryTimeoutMillis: 10000,
-        }),
-      }
+      let syncConfig = Config.getSyncConfig({
+        initialBlockInterval: 10000,
+        backoffMultiplicative: 10000.0,
+        accelerationAdditive: 10000,
+        intervalCeiling: 10000,
+        backoffMillis: 10000,
+        queryTimeoutMillis: 10000,
+      })
+      let provider = Ethers.JsonRpcProvider.make(
+        ~rpcUrls=["http://localhost:8545"],
+        ~chainId=1337,
+        ~fallbackStallTimeout=3,
+      )
       let eventRouter =
         contracts
         ->Belt.Array.flatMap(contract => contract.events)

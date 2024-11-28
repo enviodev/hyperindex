@@ -26,21 +26,10 @@ describe("E2E Integration Test", () => {
           sighashes: [Types.Gravatar.NewGravatar.sighash, Types.Gravatar.UpdatedGravatar.sighash],
         },
       ]
-      let rpcConfig: Config.rpcConfig = {
-        provider,
-        syncConfig: {
-          initialBlockInterval: 10000,
-          backoffMultiplicative: 10000.0,
-          accelerationAdditive: 10000,
-          intervalCeiling: 10000,
-          backoffMillis: 10000,
-          queryTimeoutMillis: 10000,
-        },
-      }
       let chain = MockConfig.chain1337
       {
         confirmedBlockThreshold: 200,
-        syncSource: Rpc(rpcConfig),
+        syncSource: Rpc,
         startBlock: 0,
         endBlock: None,
         chain,
@@ -49,7 +38,15 @@ describe("E2E Integration Test", () => {
           RpcWorker.Make({
             let chain = chain
             let contracts = contracts
-            let rpcConfig = rpcConfig
+            let syncConfig: Config.syncConfig = {
+              initialBlockInterval: 10000,
+              backoffMultiplicative: 10000.0,
+              accelerationAdditive: 10000,
+              intervalCeiling: 10000,
+              backoffMillis: 10000,
+              queryTimeoutMillis: 10000,
+            }
+            let provider = provider
             let eventRouter =
               contracts
               ->Belt.Array.flatMap(contract => contract.events)

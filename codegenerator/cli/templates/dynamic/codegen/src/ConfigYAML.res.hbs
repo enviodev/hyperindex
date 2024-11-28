@@ -1,0 +1,102 @@
+
+type hyperSyncConfig = {endpointUrl: string}
+type hyperFuelConfig = {endpointUrl: string}
+
+@genType.opaque
+type rpcConfig = {
+  syncConfig: Config.syncConfig,
+}
+
+@genType
+type syncSource = HyperSync(hyperSyncConfig) | HyperFuel(hyperFuelConfig) | Rpc(rpcConfig)
+
+@genType.opaque
+type aliasAbi = Ethers.abi
+
+type eventName = string
+
+type contract = {
+  name: string,
+  abi: aliasAbi,
+  addresses: array<string>,
+  events: array<eventName>,
+}
+
+type configYaml = {
+  syncSource,
+  startBlock: int,
+  confirmedBlockThreshold: int,
+  contracts: dict<contract>,
+}
+
+let publicConfig = ChainMap.fromArrayUnsafe([
+  {{#each chain_configs as | chain_config |}}
+  {
+    let contracts = Js.Dict.fromArray([
+      {{#each chain_config.codegen_contracts as | contract |}}
+      (
+        "{{contract.name.capitalized}}",
+        {
+          name: "{{contract.name.capitalized}}",
+          abi: Types.{{contract.name.capitalized}}.abi,
+          addresses: [
+            {{#each contract.addresses as | address |}}
+            "{{address}}",
+            {{/each}}
+          ],
+          events: [
+            {{#each contract.events as | event |}}
+            Types.{{contract.name.capitalized}}.{{event.name}}.name,
+            {{/each}}
+          ],
+        }
+      ),
+      {{/each}}
+    ])
+    let chain = ChainMap.Chain.makeUnsafe(~chainId={{chain_config.network_config.id}})
+    {{#if chain_config.network_config.rpc_config }}
+    let rpcConfig = {
+      {{#with chain_config.network_config.rpc_config.sync_config as | sync_config |}}
+      syncConfig: Config.getSyncConfig({
+        initialBlockInterval: {{sync_config.initial_block_interval}},
+        backoffMultiplicative: {{sync_config.backoff_multiplicative}},
+        accelerationAdditive: {{sync_config.acceleration_additive}},
+        intervalCeiling: {{sync_config.interval_ceiling}},
+        backoffMillis: {{sync_config.backoff_millis}},
+        queryTimeoutMillis: {{sync_config.query_timeout_millis}},
+      }),
+      {{/with}}
+    }
+    {{/if}}
+    (
+      chain,
+      {
+        confirmedBlockThreshold: {{chain_config.network_config.confirmed_block_threshold}},
+        syncSource: 
+          {{#if chain_config.network_config.rpc_config}}
+          Rpc(rpcConfig)
+          {{/if}}
+          {{#if chain_config.network_config.hypersync_config}}
+          HyperSync({endpointUrl: "{{chain_config.network_config.hypersync_config.endpoint_url}}"})
+          {{/if}}
+          {{#if chain_config.network_config.hyperfuel_config}}
+          HyperFuel({endpointUrl: "{{chain_config.network_config.hyperfuel_config.endpoint_url}}"})
+          {{/if}},
+        startBlock: {{chain_config.network_config.start_block}},
+        contracts
+      }
+    )
+  },
+  {{/each}}
+])
+
+@genType
+let getGeneratedByChainId: int => configYaml = chainId => {
+  let chain = ChainMap.Chain.makeUnsafe(~chainId)
+  if !(publicConfig->ChainMap.has(chain)) {
+    Js.Exn.raiseError(
+      "No chain with id " ++ chain->ChainMap.Chain.toString ++ " found in config.yaml",
+    )
+  }
+  publicConfig->ChainMap.get(chain)
+}

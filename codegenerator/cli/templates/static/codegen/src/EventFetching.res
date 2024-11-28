@@ -235,20 +235,18 @@ let getContractEventsOnFilters = async (
   ~initialBlockInterval,
   ~minFromBlockLogIndex=0,
   ~chain,
-  ~rpcConfig: Config.rpcConfig,
+  ~syncConfig as sc: Config.syncConfig,
+  ~provider,
   ~blockLoader,
   ~logger,
   ~eventRouter,
 ): eventBatchQuery => {
-  let sc = rpcConfig.syncConfig
-
   let fromBlockRef = ref(fromBlock)
   let shouldContinueProcess = () => fromBlockRef.contents <= toBlock
 
   let currentBlockInterval = ref(initialBlockInterval)
   let events = ref([])
   while shouldContinueProcess() {
-    logger->Logging.childTrace("continuing to process...")
     let rec executeQuery = (~blockInterval): promise<(array<eventBatchPromise>, int)> => {
       //If the query hangs for longer than this, reject this promise to reduce the block interval
       let queryTimoutPromise =
@@ -269,7 +267,7 @@ let getContractEventsOnFilters = async (
           ~fromBlock=fromBlockRef.contents,
           ~toBlock=nextToBlock,
           ~minFromBlockLogIndex=fromBlockRef.contents == fromBlock ? minFromBlockLogIndex : 0,
-          ~provider=rpcConfig.provider,
+          ~provider,
           ~blockLoader,
           ~chain,
           ~logger,
@@ -311,7 +309,7 @@ let getContractEventsOnFilters = async (
 
     fromBlockRef := fromBlockRef.contents + executedBlockInterval
     logger->Logging.childTrace({
-      "msg": "Queried processAllEventsFromBlockNumber ",
+      "msg": "Finished executing query",
       "lastBlockProcessed": fromBlockRef.contents - 1,
       "toBlock": toBlock,
       "numEvents": intervalEvents->Array.length,
