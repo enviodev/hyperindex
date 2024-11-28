@@ -753,11 +753,19 @@ Finds the earliest queue item across all registers and then returns that
 queue item with an update fetch state.
 */
 let getEarliestEvent = (self: t) => {
-  if self.pendingDynamicContracts->Utils.Array.isEmpty {
+  let earliestItemInRegisters = {
     let registerWithEarliestQItem = self.baseRegister->findRegisterIdWithEarliestQueueItem
     //Can safely unwrap here since the id is returned from self and so is guarenteed to exist
     self.baseRegister->popQItemAtRegisterId(~id=registerWithEarliestQItem)->Utils.unwrapResultExn
+  }
+
+  if self.pendingDynamicContracts->Utils.Array.isEmpty {
+    //In the case where there are no pending dynamic contracts, return the earliest item
+    //from the registers
+    earliestItemInRegisters
   } else {
+    //In the case where there are pending dynamic contracts, construct the earliest queue item from
+    //the pending dynamic contracts
     let earliestPendingDynamicContractBlockNumber =
       self.pendingDynamicContracts
       ->Array.reduce(None, (accum, dynamicContractRegistration) => {
@@ -768,7 +776,16 @@ let getEarliestEvent = (self: t) => {
         }
       })
       ->Option.getExn
-    NoItem({blockTimestamp: 0, blockNumber: earliestPendingDynamicContractBlockNumber - 1})
+
+    let earliestItemInPendingDynamicContracts = NoItem({
+      blockTimestamp: 0,
+      blockNumber: earliestPendingDynamicContractBlockNumber - 1,
+    })
+
+    //Compare the earliest item in the pending dynamic contracts with the earliest item in the registers
+    earliestItemInPendingDynamicContracts->qItemLt(earliestItemInRegisters)
+      ? earliestItemInPendingDynamicContracts
+      : earliestItemInRegisters
   }
 }
 
