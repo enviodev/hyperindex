@@ -766,16 +766,12 @@ let getEarliestEvent = (self: t) => {
   } else {
     //In the case where there are pending dynamic contracts, construct the earliest queue item from
     //the pending dynamic contracts
-    let earliestPendingDynamicContractBlockNumber =
-      self.pendingDynamicContracts
-      ->Array.reduce(None, (accum, dynamicContractRegistration) => {
-        switch accum {
-        | None => Some(dynamicContractRegistration.registeringEventBlockNumber)
-        | Some(accumBlockNumber) =>
-          min(accumBlockNumber, dynamicContractRegistration.registeringEventBlockNumber)->Some
-        }
-      })
-      ->Option.getExn
+    let earliestPendingDynamicContractBlockNumber = self.pendingDynamicContracts->Array.reduce(
+      (self.pendingDynamicContracts->Js.Array2.unsafe_get(0)).registeringEventBlockNumber,
+      (accumBlockNumber, dynamicContractRegistration) => {
+        min(accumBlockNumber, dynamicContractRegistration.registeringEventBlockNumber)
+      },
+    )
 
     let earliestItemInPendingDynamicContracts = NoItem({
       blockTimestamp: 0,
