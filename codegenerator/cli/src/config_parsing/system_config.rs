@@ -293,7 +293,7 @@ networks:
                 .unwrap_err();
             assert_eq!(
                 interpolated_config_string.to_string(),
-                r#"Failed to interpolate variables into your config file. Environment variables are not preset: ENVIO_ETH_API_KEY"#
+                r#"Failed to interpolate variables into your config file. Environment variables are not present: ENVIO_ETH_API_KEY"#
             );
         }
 
@@ -313,7 +313,7 @@ networks:
                 .unwrap_err();
             assert_eq!(
                 interpolated_config_string.to_string(),
-                r#"Failed to interpolate variables into your config file. Invalid environment variables are preset: "My RPC URL", """#
+                r#"Failed to interpolate variables into your config file. Invalid environment variables are present: "My RPC URL", """#
             );
         }
 

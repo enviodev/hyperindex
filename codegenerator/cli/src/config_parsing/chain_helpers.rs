@@ -55,7 +55,7 @@ pub enum Network {
     #[subenum(HypersyncNetwork, GraphNetwork, NetworkWithExplorer)]
     Avalanche = 43114,
 
-    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
+    #[subenum(NetworkWithExplorer)]
     B2Testnet = 1123,
 
     #[subenum(HypersyncNetwork, NetworkWithExplorer, GraphNetwork)]
@@ -513,7 +513,7 @@ impl HypersyncNetwork {
             }
 
             SophonTestnet | MorphTestnet | GaladrielDevnet | CitreaTestnet | Goerli
-            | BscTestnet | B2Testnet | UnichainSepolia => Experimental,
+            | BscTestnet | UnichainSepolia => Experimental,
         }
     }
 
