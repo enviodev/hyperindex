@@ -753,9 +753,36 @@ Finds the earliest queue item across all registers and then returns that
 queue item with an update fetch state.
 */
 let getEarliestEvent = (self: t) => {
-  let registerWithEarliestQItem = self.baseRegister->findRegisterIdWithEarliestQueueItem
-  //Can safely unwrap here since the id is returned from self and so is guarenteed to exist
-  self.baseRegister->popQItemAtRegisterId(~id=registerWithEarliestQItem)->Utils.unwrapResultExn
+  let earliestItemInRegisters = {
+    let registerWithEarliestQItem = self.baseRegister->findRegisterIdWithEarliestQueueItem
+    //Can safely unwrap here since the id is returned from self and so is guarenteed to exist
+    self.baseRegister->popQItemAtRegisterId(~id=registerWithEarliestQItem)->Utils.unwrapResultExn
+  }
+
+  if self.pendingDynamicContracts->Utils.Array.isEmpty {
+    //In the case where there are no pending dynamic contracts, return the earliest item
+    //from the registers
+    earliestItemInRegisters
+  } else {
+    //In the case where there are pending dynamic contracts, construct the earliest queue item from
+    //the pending dynamic contracts
+    let earliestPendingDynamicContractBlockNumber = self.pendingDynamicContracts->Array.reduce(
+      (self.pendingDynamicContracts->Js.Array2.unsafe_get(0)).registeringEventBlockNumber,
+      (accumBlockNumber, dynamicContractRegistration) => {
+        min(accumBlockNumber, dynamicContractRegistration.registeringEventBlockNumber)
+      },
+    )
+
+    let earliestItemInPendingDynamicContracts = NoItem({
+      blockTimestamp: 0,
+      blockNumber: earliestPendingDynamicContractBlockNumber - 1,
+    })
+
+    //Compare the earliest item in the pending dynamic contracts with the earliest item in the registers
+    earliestItemInPendingDynamicContracts->qItemLt(earliestItemInRegisters)
+      ? earliestItemInPendingDynamicContracts
+      : earliestItemInRegisters
+  }
 }
 
 let makeInternal = (
@@ -843,9 +870,13 @@ Check the max queue size of the tip of the tree.
 Don't use the cummulative queue sizes because otherwise there
 could be a deadlock. With a very small buffer size of the actively
 fetching registration
+ 
+If there are pending dynamic contracts, we always need to allow the next query
 */
-let isReadyForNextQuery = (self: t, ~maxQueueSize) =>
-  self.baseRegister.fetchedEventQueue->Array.length < maxQueueSize
+let isReadyForNextQuery = ({pendingDynamicContracts, baseRegister}: t, ~maxQueueSize) =>
+  pendingDynamicContracts->Utils.Array.isEmpty
+    ? baseRegister.fetchedEventQueue->Array.length < maxQueueSize
+    : true
 
 let rec checkBaseRegisterContainsRegisteredContract = (
   register: register,
