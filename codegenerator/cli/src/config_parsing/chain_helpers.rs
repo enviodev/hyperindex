@@ -310,7 +310,6 @@ pub enum Network {
     #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     UnichainSepolia = 1301,
 
-    #[subenum(HypersyncNetwork)]
     XLayer = 196,
 
     XLayerTestnet = 195,
@@ -500,20 +499,18 @@ impl HypersyncNetwork {
         match self {
             EthereumMainnet | Fantom | Zeta | Sepolia | OptimismSepolia | Metis | ZksyncEra
             | Optimism | ArbitrumSepolia | ArbitrumNova | Avalanche | Polygon | Bsc | Mantle
-            | Zircuit | BaseSepolia => Gold,
+            | BaseSepolia => Gold,
 
             Manta | Base | BerachainBartio | Boba | Blast | Cyber | Aurora | Harmony | Scroll
             | Darwinia | Mode | Rsk | ShimmerEvm | Linea | NeonEvm | Amoy | Saakuru | Moonbeam
             | Opbnb | Lisk | BlastSepolia | Celo | Chiliz | Fuji | ArbitrumOne | Merlin
             | Holesky => Silver,
 
-            Zora | MoonbaseAlpha | Morph | LuksoTestnet | Kroma | GnosisChiado | XLayer | Lukso
-            | Gnosis | C1Milkomeda | Crab | Tangle | Sophon | Flare | PolygonZkevm | MevCommit => {
-                Bronze
-            }
+            Zora | MoonbaseAlpha | Morph | LuksoTestnet | Kroma | GnosisChiado | Lukso | Gnosis
+            | C1Milkomeda | Crab | Tangle | Sophon | Flare | PolygonZkevm | MevCommit => Bronze,
 
             SophonTestnet | MorphTestnet | GaladrielDevnet | CitreaTestnet | Goerli
-            | BscTestnet | UnichainSepolia => Experimental,
+            | BscTestnet | UnichainSepolia | Zircuit => Experimental,
         }
     }
 

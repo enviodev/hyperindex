@@ -9,7 +9,7 @@ type enum<'a> = {
 let make = (~name, ~variants) => {
   name,
   variants,
-  schema: S.enum(variants),
+  schema: Utils.Schema.enum(variants),
   default: switch variants->Belt.Array.get(0) {
   | Some(v) => v
   | None => Js.Exn.raiseError("No variants defined for enum " ++ name)

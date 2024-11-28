@@ -82,12 +82,9 @@ importers:
       rescript:
         specifier: 11.1.3
         version: 11.1.3
-      rescript-express:
-        specifier: 0.4.1
-        version: 0.4.1(express@4.19.2)
       rescript-schema:
-        specifier: 8.2.0
-        version: 8.2.0(rescript@11.1.3)
+        specifier: 8.1.0
+        version: 8.1.0(rescript@11.1.3)
       sinon:
         specifier: ^15.0.4
         version: 15.2.0
@@ -101,8 +98,8 @@ importers:
         specifier: 11.1.3
         version: 11.1.3
       rescript-schema:
-        specifier: 8.2.0
-        version: 8.2.0(rescript@11.1.3)
+        specifier: 8.1.0
+        version: 8.1.0(rescript@11.1.3)
 
   contracts:
     dependencies:
@@ -189,13 +186,10 @@ importers:
         version: 11.1.3
       rescript-envsafe:
         specifier: 4.2.0
-        version: 4.2.0(rescript-schema@8.2.0(rescript@11.1.3))(rescript@11.1.3)
-      rescript-express:
-        specifier: 0.4.1
-        version: 0.4.1(express@4.19.2)
+        version: 4.2.0(rescript-schema@8.1.0(rescript@11.1.3))(rescript@11.1.3)
       rescript-schema:
-        specifier: 8.2.0
-        version: 8.2.0(rescript@11.1.3)
+        specifier: 8.1.0
+        version: 8.1.0(rescript@11.1.3)
       root:
         specifier: ../.
         version: link:..
@@ -2876,16 +2870,11 @@ packages:
       rescript: 11.x
       rescript-schema: 6.x || 7.x || 8.x
 
-  rescript-express@0.4.1:
-    resolution: {integrity: sha512-R+xAQKANfIFAIcxhQrkLn58IZQwhMZuQpVCH6UtTRNLWqlVtaogG9z4Rt0MQZgqYOjvrOtt51P0hOmYGg/90Fw==}
-    peerDependencies:
-      express: ^4.17.1
-
   rescript-nodejs@16.0.0:
     resolution: {integrity: sha512-1/SJmjH06xdeq1IFIIcKV6QKnidrav/gIc0Rw4GCUD0ceYPPZ5wDB51UFyk98in5N4gv8X/bTg6dVBMyRsC9tw==}
 
-  rescript-schema@8.2.0:
-    resolution: {integrity: sha512-pfRNB9kvafUYe+RgvsExiazJioi/iV8gmjK3xOw/jeSgPIIDoVhflnmpoz+vuiwlulYkNT/7u2+2EsCrph7QKA==}
+  rescript-schema@8.1.0:
+    resolution: {integrity: sha512-syU4Wvy2tJzBKkqa8ad1yYSDIh8EoKGUsZv6Wa0YpERqb7H6Kemtc6zU+BxIghahzShb6L7RMfVNuKC48KluIg==}
     peerDependencies:
       rescript: 11.x
 
@@ -5204,7 +5193,7 @@ snapshots:
     dependencies:
       '@envio-dev/hypersync-client': 0.6.2
       rescript: 11.1.3
-      rescript-schema: 8.2.0(rescript@11.1.3)
+      rescript-schema: 8.1.0(rescript@11.1.3)
       viem: 2.21.0(typescript@5.5.4)
     transitivePeerDependencies:
       - bufferutil
@@ -6924,18 +6913,14 @@ snapshots:
 
   requires-port@1.0.0: {}
 
-  rescript-envsafe@4.2.0(rescript-schema@8.2.0(rescript@11.1.3))(rescript@11.1.3):
+  rescript-envsafe@4.2.0(rescript-schema@8.1.0(rescript@11.1.3))(rescript@11.1.3):
     dependencies:
       rescript: 11.1.3
-      rescript-schema: 8.2.0(rescript@11.1.3)
-
-  rescript-express@0.4.1(express@4.19.2):
-    dependencies:
-      express: 4.19.2
+      rescript-schema: 8.1.0(rescript@11.1.3)
 
   rescript-nodejs@16.0.0: {}
 
-  rescript-schema@8.2.0(rescript@11.1.3):
+  rescript-schema@8.1.0(rescript@11.1.3):
     dependencies:
       rescript: 11.1.3
 
