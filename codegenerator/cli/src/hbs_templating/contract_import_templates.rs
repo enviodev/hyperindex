@@ -381,7 +381,7 @@ impl AutoSchemaHandlerTemplate {
             .map(|contract| {
                 Contract::from_config_contract(
                     contract,
-                    config.ecosystem == Ecosystem::Fuel,
+                    config.get_ecosystem() == Ecosystem::Fuel,
                     &language,
                 )
             })
