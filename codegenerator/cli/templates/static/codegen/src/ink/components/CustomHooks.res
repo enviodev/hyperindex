@@ -74,7 +74,7 @@ module InitApi = {
     content: s.field("content", S.string),
   })
 
-  let endpoint = Env.envioApiUrl ++ "/hyperindex/init"
+  let endpoint = Env.envioApiUrl
 
   let route = Rest.route(() => {
     method: Post,

@@ -422,6 +422,174 @@ describe("FetchState.fetchState", () => {
     Assert.deepEqual(earliestQueueItem, mockEvent(~blockNumber=1, ~logIndex=1))
   })
 
+  it("getEarliestEvent accounts for pending dynamicContracts", () => {
+    let baseRegister = {
+      latestFetchedBlock: {
+        blockNumber: 500,
+        blockTimestamp: 500 * 15,
+      },
+      contractAddressMapping: ContractAddressingMap.fromArray([
+        (mockAddress1, (Gravatar :> string)),
+      ]),
+      firstEventBlockNumber: None,
+      dynamicContracts: DynamicContractsMap.empty,
+      fetchedEventQueue: [
+        mockEvent(~blockNumber=106, ~logIndex=1),
+        mockEvent(~blockNumber=105),
+        mockEvent(~blockNumber=101, ~logIndex=2),
+      ],
+      registerType: RootRegister({endBlock: None}),
+    }
+    let dynamicContractRegistration = {
+      registeringEventBlockNumber: 100,
+      registeringEventLogIndex: 0,
+      registeringEventChain: ChainMap.Chain.makeUnsafe(~chainId=1),
+      dynamicContracts: [],
+    }
+
+    let fetchState = {
+      ...baseRegister->makeMockFetchState,
+      pendingDynamicContracts: [dynamicContractRegistration],
+    }
+    let earliestQueueItem = fetchState->getEarliestEvent
+
+    Assert.deepEqual(
+      earliestQueueItem,
+      NoItem({
+        blockNumber: dynamicContractRegistration.registeringEventBlockNumber - 1,
+        blockTimestamp: 0,
+      }),
+      ~message="Should account for pending dynamicContracts earliest registering event",
+    )
+  })
+
+  it("isReadyForNextQuery standard", () => {
+    let baseRegister = {
+      latestFetchedBlock: {
+        blockNumber: 500,
+        blockTimestamp: 500 * 15,
+      },
+      contractAddressMapping: ContractAddressingMap.fromArray([
+        (mockAddress1, (Gravatar :> string)),
+      ]),
+      firstEventBlockNumber: None,
+      dynamicContracts: DynamicContractsMap.empty,
+      fetchedEventQueue: [
+        mockEvent(~blockNumber=6, ~logIndex=1),
+        mockEvent(~blockNumber=5),
+        mockEvent(~blockNumber=1, ~logIndex=2),
+      ],
+      registerType: RootRegister({endBlock: None}),
+    }
+    let fetchState = baseRegister->makeMockFetchState
+
+    Assert.ok(
+      fetchState->isReadyForNextQuery(~maxQueueSize=10),
+      ~message="Should be ready for next query when under max queue size",
+    )
+
+    Assert.ok(
+      !(fetchState->isReadyForNextQuery(~maxQueueSize=3)),
+      ~message="Should not be ready for next query when at max queue size",
+    )
+  })
+
+  it(
+    "isReadyForNextQuery when cummulatively over max queue size but dynamic contract is under",
+    () => {
+      let rootRegister = {
+        latestFetchedBlock: {
+          blockNumber: 500,
+          blockTimestamp: 500 * 15,
+        },
+        contractAddressMapping: ContractAddressingMap.fromArray([
+          (mockAddress1, (Gravatar :> string)),
+        ]),
+        firstEventBlockNumber: None,
+        dynamicContracts: DynamicContractsMap.empty,
+        fetchedEventQueue: [
+          mockEvent(~blockNumber=6, ~logIndex=1),
+          mockEvent(~blockNumber=5),
+          mockEvent(~blockNumber=4, ~logIndex=2),
+        ],
+        registerType: RootRegister({endBlock: None}),
+      }
+
+      let baseRegister = {
+        registerType: DynamicContractRegister({
+          id: {blockNumber: 100, logIndex: 0},
+          nextRegister: rootRegister,
+        }),
+        latestFetchedBlock: {
+          blockNumber: 500,
+          blockTimestamp: 500 * 15,
+        },
+        contractAddressMapping: ContractAddressingMap.fromArray([
+          (mockAddress2, (Gravatar :> string)),
+        ]),
+        firstEventBlockNumber: None,
+        dynamicContracts: DynamicContractsMap.empty,
+        fetchedEventQueue: [
+          mockEvent(~blockNumber=3, ~logIndex=2),
+          mockEvent(~blockNumber=2),
+          mockEvent(~blockNumber=1, ~logIndex=1),
+        ],
+      }
+
+      let fetchState = baseRegister->makeMockFetchState
+
+      Assert.equal(fetchState->queueSize, 6, ~message="Should have 6 items total in queue")
+
+      Assert.ok(
+        fetchState->isReadyForNextQuery(~maxQueueSize=5),
+        ~message="Should be ready for next query when base register is under max queue size",
+      )
+    },
+  )
+
+  it("isReadyForNextQuery when containing pending dynamic contracts", () => {
+    let baseRegister = {
+      latestFetchedBlock: {
+        blockNumber: 500,
+        blockTimestamp: 500 * 15,
+      },
+      contractAddressMapping: ContractAddressingMap.fromArray([
+        (mockAddress1, (Gravatar :> string)),
+      ]),
+      firstEventBlockNumber: None,
+      dynamicContracts: DynamicContractsMap.empty,
+      fetchedEventQueue: [
+        mockEvent(~blockNumber=6, ~logIndex=1),
+        mockEvent(~blockNumber=5),
+        mockEvent(~blockNumber=1, ~logIndex=2),
+      ],
+      registerType: RootRegister({endBlock: None}),
+    }
+    let dynamicContractRegistration = {
+      registeringEventBlockNumber: 100,
+      registeringEventLogIndex: 0,
+      registeringEventChain: ChainMap.Chain.makeUnsafe(~chainId=1),
+      dynamicContracts: [],
+    }
+
+    let fetchStateWithoutPendingDynamicContracts = baseRegister->makeMockFetchState
+
+    Assert.ok(
+      !(fetchStateWithoutPendingDynamicContracts->isReadyForNextQuery(~maxQueueSize=3)),
+      ~message="Should not be ready for next query when base register is at the max queue size",
+    )
+
+    let fetchStateWithPendingDynamicContracts = {
+      ...fetchStateWithoutPendingDynamicContracts,
+      pendingDynamicContracts: [dynamicContractRegistration],
+    }
+
+    Assert.ok(
+      fetchStateWithPendingDynamicContracts->isReadyForNextQuery(~maxQueueSize=3),
+      ~message="Should be ready for next query when base register is at the max queue size but contains pending dynamic contracts",
+    )
+  })
+
   it("getNextQuery", () => {
     let latestFetchedBlock = getBlockData(~blockNumber=500)
     let root = {
