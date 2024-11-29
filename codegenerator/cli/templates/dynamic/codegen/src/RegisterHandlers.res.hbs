@@ -94,6 +94,8 @@ let registerContractHandlers = (
                 contracts
                 ->Belt.Array.flatMap(contract => contract.events)
                 ->EventRouter.fromEvmEventModsOrThrow(~chain)
+              let blockSchema = Types.Block.schema
+              let transactionSchema = Types.Transaction.schema
             }))
             {{/with}}
             {{/if}}

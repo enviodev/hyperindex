@@ -1,6 +1,52 @@
 open Belt
 open ChainWorker
 
+exception InvalidTransactionField({message: string})
+
+let makeThrowingGetEventBlock = (~getBlock) => {
+  //Types.blockFields is a subset of  Ethers.JsonRpcProvider.block so we can safely cast
+  let blockFieldsFromBlock: Ethers.JsonRpcProvider.block => Types.Block.t = Utils.magic
+
+  async (log: Ethers.log): Types.Block.t => {
+    (await getBlock(log.blockNumber))->blockFieldsFromBlock
+  }
+}
+
+let makeThrowingGetEventTransaction = (~transactionSchema: S.t<'transaction>, ~getTransaction) => {
+  let transactionFieldItems = switch transactionSchema->S.classify {
+  | Object({items}) => items
+  | _ => Js.Exn.raiseError("Unexpected internal error: transactionSchema is not an object")
+  }
+
+  let parseOrThrowReadableError = data => {
+    try data->S.parseAnyOrRaiseWith(transactionSchema) catch {
+    | S.Raised(error) =>
+      raise(
+        InvalidTransactionField({
+          message: `Invalid transaction field "${error.path
+            ->S.Path.toArray
+            ->Js.Array2.joinWith(".")}" found in the RPC response. Error: ${error->S.Error.reason}`, // There should always be only one field, but just in case split them with a dot
+        }),
+      )
+    }
+  }
+
+  switch transactionFieldItems {
+  | [{location: "transactionIndex"}] => log => log->parseOrThrowReadableError->Promise.resolve
+  | [{location: "hash"}]
+  | [{location: "hash"}, {location: "transactionIndex"}]
+  | [{location: "transactionIndex"}, {location: "hash"}] =>
+    (log: Ethers.log) =>
+      {
+        "hash": log.transactionHash,
+        "transactionIndex": log.transactionIndex,
+      }
+      ->parseOrThrowReadableError
+      ->Promise.resolve
+  | _ => log => log->getTransaction->Promise.thenResolve(parseOrThrowReadableError)
+  }
+}
+
 module Make = (
   T: {
     let syncConfig: Config.syncConfig
@@ -8,8 +54,18 @@ module Make = (
     let chain: ChainMap.Chain.t
     let contracts: array<Config.contract>
     let eventRouter: EventRouter.t<module(Types.InternalEvent)>
+    let blockSchema: S.t<Types.Block.t>
+    let transactionSchema: S.t<Types.Transaction.t>
   },
 ): S => {
+  //Note ethers log is not a superset of log since logIndex is actually "index" with an @as alias
+  let ethersLogToLog: Ethers.log => Types.Log.t = ({address, data, topics, logIndex}) => {
+    address,
+    data,
+    topics,
+    logIndex,
+  }
+
   T.contracts->Belt.Array.forEach(contract => {
     contract.events->Belt.Array.forEach(event => {
       let module(Event) = event
@@ -42,6 +98,7 @@ module Make = (
       )
     })
   })
+
   let name = "RPC"
   let chain = T.chain
   let eventRouter = T.eventRouter
@@ -80,6 +137,14 @@ module Make = (
     }
   }
 
+  let getEventBlockOrThrow = makeThrowingGetEventBlock(~getBlock=blockNumber =>
+    blockLoader->LazyLoader.get(blockNumber)
+  )
+  let getEventTransactionOrThrow = makeThrowingGetEventTransaction(
+    ~transactionSchema=T.transactionSchema,
+    ~getTransaction=_log => Js.Exn.raiseError("Not implemented"),
+  )
+
   let fetchBlockRange = async (
     ~query: blockRangeFetchArgs,
     ~logger,
@@ -96,8 +161,8 @@ module Make = (
 
       // Always have a toBlock for an RPC worker
       let toBlock = switch toBlock {
-        | Some(toBlock) => Pervasives.min(toBlock, currentBlockHeight)
-        | None => currentBlockHeight
+      | Some(toBlock) => Pervasives.min(toBlock, currentBlockHeight)
+      | None => currentBlockHeight
       }
 
       let currentBlockInterval =
@@ -121,10 +186,7 @@ module Make = (
         ~contractAddressMapping,
       )
 
-      let {
-        eventBatchPromises,
-        finalExecutedBlockInterval,
-      } = await EventFetching.getContractEventsOnFilters(
+      let {logs, finalExecutedBlockInterval} = await EventFetching.getNextPage(
         ~contractInterfaceManager,
         ~fromBlock,
         ~toBlock=targetBlock,
@@ -132,18 +194,91 @@ module Make = (
         ~minFromBlockLogIndex=0,
         ~syncConfig=T.syncConfig,
         ~provider=T.provider,
-        ~chain,
-        ~blockLoader,
         ~logger,
-        ~eventRouter,
       )
+      blockIntervals->Js.Dict.set(partitionId->Belt.Int.toString, finalExecutedBlockInterval)
 
-      let parsedQueueItems = await eventBatchPromises->Promise.all
+      let parsedQueueItems =
+        await logs
+        ->Belt.Array.keepMap(log => {
+          let topic0 = log.topics->Js.Array2.unsafe_get(0)
+          switch eventRouter->EventRouter.get(
+            ~tag=EventRouter.getEvmEventTag(
+              ~sighash=topic0->EvmTypes.Hex.toString,
+              ~topicCount=log.topics->Array.length,
+            ),
+            ~contractAddressMapping=contractInterfaceManager.contractAddressMapping,
+            ~contractAddress=log.address,
+          ) {
+          | None => None //ignore events that aren't registered
+          | Some(eventMod: module(Types.InternalEvent)) =>
+            let chainId = chain->ChainMap.Chain.toChainId
+            let logger = Logging.createChildFrom(
+              ~logger,
+              ~params={
+                {
+                  "chainId": chainId,
+                  "blockNumber": log.blockNumber,
+                  "logIndex": log.logIndex,
+                }
+              },
+            )
+            Some(
+              (
+                async () => {
+                  let (block, transaction) = try await Promise.all2((
+                    log->getEventBlockOrThrow,
+                    log->getEventTransactionOrThrow,
+                  )) catch {
+                  // Promise.catch won't work here, because the error
+                  // might be thrown before a microtask is created
+                  | exn =>
+                    exn->ErrorHandling.mkLogAndRaise(
+                      ~msg="Failed getting selected fields. Please double-check your RPC provider returns correct data.",
+                      ~logger,
+                    )
+                  }
 
-      blockIntervals->Js.Dict.set(
-        partitionId->Belt.Int.toString,
-        finalExecutedBlockInterval,
-      )
+                  let log = log->ethersLogToLog
+
+                  let module(Event) = eventMod
+
+                  let decodedEvent = try contractInterfaceManager->ContractInterfaceManager.parseLogViemOrThrow(
+                    ~log,
+                  ) catch {
+                  | exn =>
+                    exn->ErrorHandling.mkLogAndRaise(
+                      ~msg="Failed to parse event with viem, please double-check your ABI.",
+                      ~logger,
+                    )
+                  }
+
+                  (
+                    {
+                      eventName: Event.name,
+                      contractName: Event.contractName,
+                      handlerRegister: Event.handlerRegister,
+                      paramsRawEventSchema: Event.paramsRawEventSchema,
+                      timestamp: block->Types.Block.getTimestamp,
+                      chain,
+                      blockNumber: block->Types.Block.getNumber,
+                      logIndex: log.logIndex,
+                      event: {
+                        chainId,
+                        params: decodedEvent.args,
+                        transaction,
+                        block,
+                        srcAddress: log.address,
+                        logIndex: log.logIndex,
+                      },
+                    }: Types.eventBatchQueueItem
+                  )
+                }
+              )(),
+            )
+          }
+        })
+        ->Promise.all
 
       let (optFirstBlockParent, toBlock) = (await firstBlockParentPromise, await toBlockPromise)
 
