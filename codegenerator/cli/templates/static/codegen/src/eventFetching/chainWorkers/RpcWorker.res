@@ -13,12 +13,15 @@ let makeThrowingGetEventBlock = (~getBlock) => {
 }
 
 let makeThrowingGetEventTransaction = (~transactionSchema: S.t<'transaction>, ~getTransaction) => {
+  transactionSchema->Utils.Schema.removeTypeValidationInPlace
+
   let transactionFieldItems = switch transactionSchema->S.classify {
   | Object({items}) => items
   | _ => Js.Exn.raiseError("Unexpected internal error: transactionSchema is not an object")
   }
 
   let parseOrThrowReadableError = data => {
+    Js.log(data)
     try data->S.parseAnyOrRaiseWith(transactionSchema) catch {
     | S.Raised(error) =>
       raise(
@@ -43,7 +46,16 @@ let makeThrowingGetEventTransaction = (~transactionSchema: S.t<'transaction>, ~g
       }
       ->parseOrThrowReadableError
       ->Promise.resolve
-  | _ => log => log->getTransaction->Promise.thenResolve(parseOrThrowReadableError)
+  | _ =>
+    log =>
+      log
+      ->getTransaction
+      ->Promise.thenResolve(rawTransaction => {
+        // The transactionIndex isn't returned from RPC, so unsafely mix it in
+        // Mutating should be fine, since the rawTransaction isn't used anywhere else outside
+        (rawTransaction->Obj.magic)["transactionIndex"] = log.transactionIndex
+        rawTransaction->parseOrThrowReadableError
+      })
   }
 }
 
