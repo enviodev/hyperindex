@@ -21,7 +21,6 @@ let makeThrowingGetEventTransaction = (~transactionSchema: S.t<'transaction>, ~g
   }
 
   let parseOrThrowReadableError = data => {
-    Js.log(data)
     try data->S.parseAnyOrRaiseWith(transactionSchema) catch {
     | S.Raised(error) =>
       raise(

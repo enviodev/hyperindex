@@ -565,9 +565,9 @@ type fuelSupplyParams = {
   amount: bigint,
 }
 
-let fuelSupplyParamsSchema = S.object(s => {
-  subId: s.field("subId", S.string),
-  amount: s.field("amount", BigInt.schema),
+let fuelSupplyParamsSchema = S.schema(s => {
+  subId: s.matches(S.string),
+  amount: s.matches(BigInt.schema),
 })
 
 type fuelTransferParams = {
@@ -576,10 +576,10 @@ type fuelTransferParams = {
   amount: bigint,
 }
 
-let fuelTransferParamsSchema = S.object(s => {
-  to: s.field("to", Address.schema),
-  assetId: s.field("assetId", S.string),
-  amount: s.field("amount", BigInt.schema),
+let fuelTransferParamsSchema = S.schema(s => {
+  to: s.matches(Address.schema),
+  assetId: s.matches(S.string),
+  amount: s.matches(BigInt.schema),
 })
 
 {{#each codegen_contracts as | contract |}}
