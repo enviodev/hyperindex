@@ -865,7 +865,7 @@ impl Default for SyncConfig {
         Self {
             initial_block_interval: 10_000,
             backoff_multiplicative: 0.8,
-            acceleration_additive: 2_000,
+            acceleration_additive: 500,
             interval_ceiling: 10_000,
             backoff_millis: 5000,
             query_timeout_millis: QUERY_TIMEOUT_MILLIS,
@@ -1635,7 +1635,7 @@ mod test {
         let sync_config = SyncConfig {
             initial_block_interval: 10_000,
             backoff_multiplicative: 0.8,
-            acceleration_additive: 2_000,
+            acceleration_additive: 500,
             interval_ceiling: 10_000,
             backoff_millis: 5000,
             query_timeout_millis: 20_000,
