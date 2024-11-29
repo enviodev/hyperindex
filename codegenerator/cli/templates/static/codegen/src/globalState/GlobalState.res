@@ -157,9 +157,9 @@ let updateChainMetadataTable = async (cm: ChainManager.t, ~throttler: Throttler.
         latestProcessedBlock: cf.latestProcessedBlock, // this is already optional
         numEventsProcessed: Some(cf.numEventsProcessed),
         poweredByHyperSync: switch cf.chainConfig.syncSource {
-        | HyperSync(_)
-        | HyperFuel(_) => true
-        | Rpc(_) => false
+        | HyperSync
+        | HyperFuel => true
+        | Rpc => false
         },
         numBatchesFetched: cf.numBatchesFetched,
         latestFetchedBlockNumber: latestFetchedBlock.blockNumber,

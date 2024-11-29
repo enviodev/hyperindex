@@ -25,11 +25,11 @@ module InitApi = {
     ->ChainMap.values
     ->Array.forEach(({syncSource, chain}) => {
       switch syncSource {
-      | HyperSync(_) => hyperSyncNetworks
-      | HyperFuel(_) =>
+      | HyperSync => hyperSyncNetworks
+      | HyperFuel =>
         ecosystem := Fuel
         hyperSyncNetworks
-      | Rpc(_) => rpcNetworks
+      | Rpc => rpcNetworks
       }
       ->Js.Array2.push(chain->ChainMap.Chain.toChainId)
       ->ignore

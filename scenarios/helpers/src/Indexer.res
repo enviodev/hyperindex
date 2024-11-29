@@ -186,25 +186,7 @@ module type S = {
       sighashes: array<string>,
     }
 
-    type syncConfig = {
-      initialBlockInterval: int,
-      backoffMultiplicative: float,
-      accelerationAdditive: int,
-      intervalCeiling: int,
-      backoffMillis: int,
-      queryTimeoutMillis: int,
-    }
-
-    type hyperSyncConfig = {endpointUrl: string}
-
-    type hyperFuelConfig = {endpointUrl: string}
-
-    type rpcConfig = {
-      provider: Ethers.JsonRpcProvider.t,
-      syncConfig: syncConfig,
-    }
-
-    type syncSource = HyperSync(hyperSyncConfig) | HyperFuel(hyperFuelConfig) | Rpc(rpcConfig)
+    type syncSource = HyperSync | HyperFuel | Rpc
 
     type chainConfig = {
       syncSource: syncSource,

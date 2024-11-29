@@ -1,4 +1,5 @@
 open Belt
+
 type contract = {
   name: string,
   abi: Ethers.abi,
@@ -16,19 +17,12 @@ type syncConfig = {
   queryTimeoutMillis: int,
 }
 
-type hyperSyncConfig = {endpointUrl: string}
-type hyperFuelConfig = {endpointUrl: string}
-type rpcConfig = {
-  provider: Ethers.JsonRpcProvider.t,
-  syncConfig: syncConfig,
-}
-
-type syncSource = HyperSync(hyperSyncConfig) | HyperFuel(hyperFuelConfig) | Rpc(rpcConfig)
+type syncSource = HyperSync | HyperFuel | Rpc
 
 let usesHyperSync = syncSource =>
   switch syncSource {
-  | HyperSync(_) | HyperFuel(_) => true
-  | Rpc(_) => false
+  | HyperSync | HyperFuel => true
+  | Rpc => false
   }
 
 type chainConfig = {

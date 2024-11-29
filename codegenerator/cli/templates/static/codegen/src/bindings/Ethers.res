@@ -101,29 +101,6 @@ module CombinedFilter = {
     fromBlock: BlockTag.t,
     toBlock: BlockTag.t,
   }
-  let combineEventFilters = (eventFilters: array<EventFilter.t>, ~fromBlock, ~toBlock) => {
-    let addresses = eventFilters->Belt.Array.reduce([], (currentAddresses, filter) => {
-      let isNewAddress = !(currentAddresses->Js.Array2.includes(filter.address))
-      isNewAddress ? Belt.Array.concat(currentAddresses, [filter.address]) : currentAddresses
-    })
-    //Only take the first topic from each filter which is the signature without indexed params
-    // This combined filter will not work to filter by indexed param
-
-    let topicsArr =
-      eventFilters
-      ->Belt.Array.keepMap(filter => filter.topics->Belt.Array.get(0))
-      ->Belt.Array.reduce([], (currentTopics, topic) => {
-        let isNewFilter = !(currentTopics->Js.Array2.includes(topic))
-        isNewFilter ? Belt.Array.concat(currentTopics, [topic]) : currentTopics
-      })
-
-    {
-      address: addresses,
-      topics: [topicsArr],
-      fromBlock,
-      toBlock,
-    }
-  }
 
   let combinedFilterToFilter = (combinedFilter: combinedFilterRecord): Filter.t =>
     combinedFilter->Utils.magic

@@ -3,7 +3,8 @@ open ChainWorker
 
 module Make = (
   T: {
-    let rpcConfig: Config.rpcConfig
+    let syncConfig: Config.syncConfig
+    let provider: Ethers.JsonRpcProvider.t
     let chain: ChainMap.Chain.t
     let contracts: array<Config.contract>
     let eventRouter: EventRouter.t<module(Types.InternalEvent)>
@@ -50,7 +51,7 @@ module Make = (
   let blockLoader = LazyLoader.make(
     ~loaderFn=blockNumber =>
       EventFetching.getKnownBlockWithBackoff(
-        ~provider=T.rpcConfig.provider,
+        ~provider=T.provider,
         ~backoffMsOnFailure=1000,
         ~blockNumber,
       ),
@@ -63,7 +64,7 @@ module Make = (
   )
 
   let waitForBlockGreaterThanCurrentHeight = async (~currentBlockHeight, ~logger) => {
-    let provider = T.rpcConfig.provider
+    let provider = T.provider
     let nextBlockWait = provider->EventUtils.waitForNextBlock
     let latestHeight =
       await provider
@@ -102,7 +103,7 @@ module Make = (
       let currentBlockInterval =
         blockIntervals
         ->Utils.Dict.dangerouslyGetNonOption(partitionId->Belt.Int.toString)
-        ->Belt.Option.getWithDefault(T.rpcConfig.syncConfig.initialBlockInterval)
+        ->Belt.Option.getWithDefault(T.syncConfig.initialBlockInterval)
 
       let targetBlock =
         Pervasives.min(toBlock, fromBlock + currentBlockInterval - 1)->Pervasives.max(fromBlock) //Defensively ensure we never query a target block below fromBlock
@@ -129,7 +130,8 @@ module Make = (
         ~toBlock=targetBlock,
         ~initialBlockInterval=currentBlockInterval,
         ~minFromBlockLogIndex=0,
-        ~rpcConfig=T.rpcConfig,
+        ~syncConfig=T.syncConfig,
+        ~provider=T.provider,
         ~chain,
         ~blockLoader,
         ~logger,
@@ -138,13 +140,9 @@ module Make = (
 
       let parsedQueueItems = await eventBatchPromises->Promise.all
 
-      let sc = T.rpcConfig.syncConfig
-
-      // Increase batch size going forward, but do not increase past a configured maximum
-      // See: https://en.wikipedia.org/wiki/Additive_increase/multiplicative_decrease
       blockIntervals->Js.Dict.set(
         partitionId->Belt.Int.toString,
-        Pervasives.min(finalExecutedBlockInterval + sc.accelerationAdditive, sc.intervalCeiling),
+        finalExecutedBlockInterval,
       )
 
       let (optFirstBlockParent, toBlock) = (await firstBlockParentPromise, await toBlockPromise)
