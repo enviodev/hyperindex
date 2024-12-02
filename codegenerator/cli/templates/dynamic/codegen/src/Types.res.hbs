@@ -105,6 +105,8 @@ module Transaction = {
   type t = {{field_selection.transaction_type}}
 
   let schema = {{field_selection.transaction_schema}}
+
+  let rawEventSchema = {{field_selection.transaction_raw_event_schema}}
 }
 
 module Block = {

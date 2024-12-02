@@ -22,14 +22,14 @@ let mockEthersLog = (
 }
 
 describe_only("RpcSyncWorker - getEventTransactionOrThrow", () => {
-  let neverGetTransaction = _ => Assert.fail("The getTransaction should not be called")
+  let neverGetTransactionFields = _ => Assert.fail("The getTransactionFields should not be called")
 
   it("Panics with invalid schema", () => {
     Assert.throws(
       () => {
         RpcWorker.makeThrowingGetEventTransaction(
           ~transactionSchema=S.string,
-          ~getTransaction=neverGetTransaction,
+          ~getTransactionFields=neverGetTransactionFields,
         )
       },
       ~error={
@@ -46,7 +46,7 @@ describe_only("RpcSyncWorker - getEventTransactionOrThrow", () => {
             "transactionIndex": s.matches(S.int),
           },
       ),
-      ~getTransaction=neverGetTransaction,
+      ~getTransactionFields=neverGetTransactionFields,
     )
     Assert.deepEqual(
       await mockEthersLog()->getEventTransactionOrThrow,
@@ -64,7 +64,7 @@ describe_only("RpcSyncWorker - getEventTransactionOrThrow", () => {
             "hash": s.matches(S.string),
           },
       ),
-      ~getTransaction=neverGetTransaction,
+      ~getTransactionFields=neverGetTransactionFields,
     )
     Assert.deepEqual(
       await mockEthersLog()->getEventTransactionOrThrow,
@@ -83,7 +83,7 @@ describe_only("RpcSyncWorker - getEventTransactionOrThrow", () => {
             "transactionIndex": s.matches(S.int),
           },
       ),
-      ~getTransaction=neverGetTransaction,
+      ~getTransactionFields=neverGetTransactionFields,
     )
     Assert.deepEqual(
       await mockEthersLog()->getEventTransactionOrThrow,
@@ -102,7 +102,7 @@ describe_only("RpcSyncWorker - getEventTransactionOrThrow", () => {
             "hash": s.matches(S.string),
           },
       ),
-      ~getTransaction=neverGetTransaction,
+      ~getTransactionFields=neverGetTransactionFields,
     )
     Assert.deepEqual(
       await mockEthersLog()->getEventTransactionOrThrow,
@@ -113,97 +113,83 @@ describe_only("RpcSyncWorker - getEventTransactionOrThrow", () => {
     )
   })
 
-  Async.it_only(
-    "Queries transaction with a non-log field (with real Ethers.provider)",
-    async () => {
-      let testTransactionHash = "0x3dce529e9661cfb65defa88ae5cd46866ddf39c9751d89774d89728703c2049f"
+  Async.it("Queries transaction with a non-log field (with real Ethers.provider)", async () => {
+    let testTransactionHash = "0x3dce529e9661cfb65defa88ae5cd46866ddf39c9751d89774d89728703c2049f"
 
-      let provider = Ethers.JsonRpcProvider.make(
-        ~rpcUrls=["https://eth.llamarpc.com"],
-        ~chainId=1,
-        ~fallbackStallTimeout=0,
-      )
-      let getEventTransactionOrThrow = RpcWorker.makeThrowingGetEventTransaction(
-        ~transactionSchema=S.schema(
-          s =>
-            {
-              "hash": s.matches(S.string),
-              "transactionIndex": s.matches(S.int),
-              "from": s.matches(S.null(Address.schema)),
-              "to": s.matches(S.null(Address.schema)),
-              // "gas": s.matches(BigInt.schema),
-              "gasPrice": s.matches(S.null(BigInt.schema)),
-              "maxPriorityFeePerGas": s.matches(S.null(BigInt.schema)),
-              "maxFeePerGas": s.matches(S.null(BigInt.schema)),
-              "cumulativeGasUsed": s.matches(BigInt.schema),
-              "effectiveGasPrice": s.matches(BigInt.schema),
-              "gasUsed": s.matches(BigInt.schema),
-              "input": s.matches(S.string),
-              "nonce": s.matches(BigInt.schema),
-              "value": s.matches(BigInt.schema),
-              "v": s.matches(S.null(S.string)),
-              "r": s.matches(S.null(S.string)),
-              "s": s.matches(S.null(S.string)),
-              "contractAddress": s.matches(S.null(Address.schema)),
-              "logsBloom": s.matches(S.string),
-              "root": s.matches(S.null(S.string)),
-              "status": s.matches(S.null(S.int)),
-              "yParity": s.matches(S.null(S.string)),
-              "chainId": s.matches(S.null(S.int)),
-              "maxFeePerBlobGas": s.matches(S.null(BigInt.schema)),
-              "blobVersionedHashes": s.matches(S.null(S.array(S.string))),
-              "kind": s.matches(S.null(S.int)),
-              "l1Fee": s.matches(S.null(BigInt.schema)),
-              "l1GasPrice": s.matches(S.null(BigInt.schema)),
-              "l1GasUsed": s.matches(S.null(BigInt.schema)),
-              "l1FeeScalar": s.matches(S.null(S.float)),
-              "gasUsedForL1": s.matches(S.null(BigInt.schema)),
-            },
-        ),
-        ~getTransaction=log => {
-          let transactionHash = log.transactionHash
-          Assert.deepEqual(transactionHash, testTransactionHash)
-          provider->Ethers.JsonRpcProvider.getTransaction(~transactionHash)
-        },
-      )
-      Assert.deepEqual(
-        await mockEthersLog(~transactionHash=testTransactionHash)->getEventTransactionOrThrow,
-        {
-          "hash": testTransactionHash,
-          "transactionIndex": 1,
-          "from": Some(""->Address.Evm.fromStringOrThrow),
-          "to": Some("0x4675C7e5BaAFBFFbca748158bEcBA61ef3b0a263"->Address.Evm.fromStringOrThrow),
-          // "gas": 0n,
-          "gasPrice": None,
-          "maxPriorityFeePerGas": None,
-          "maxFeePerGas": None,
-          "cumulativeGasUsed": 0n,
-          "effectiveGasPrice": 0n,
-          "gasUsed": 0n,
-          "input": "",
-          "nonce": 0n,
-          "value": 0n,
-          "v": None,
-          "r": None,
-          "s": None,
-          "contractAddress": None,
-          "logsBloom": "",
-          "root": None,
-          "status": None,
-          "yParity": None,
-          "chainId": None,
-          "maxFeePerBlobGas": None,
-          "blobVersionedHashes": None,
-          "kind": None,
-          "l1Fee": None,
-          "l1GasPrice": None,
-          "l1GasUsed": None,
-          "l1FeeScalar": None,
-          "gasUsedForL1": None,
-        },
-      )
-    },
-  )
+    let provider = Ethers.JsonRpcProvider.make(
+      ~rpcUrls=["https://eth.llamarpc.com"],
+      ~chainId=1,
+      ~fallbackStallTimeout=0,
+    )
+    let getEventTransactionOrThrow = RpcWorker.makeThrowingGetEventTransaction(
+      ~transactionSchema=S.schema(
+        s =>
+          {
+            "hash": s.matches(S.string),
+            "transactionIndex": s.matches(S.int),
+            "from": s.matches(S.option(Address.schema)),
+            "to": s.matches(S.option(Address.schema)),
+            // "gas": s.matches(BigInt.nativeSchema), --- Not exposed by Ethers
+            "gasPrice": s.matches(S.option(BigInt.nativeSchema)),
+            "maxPriorityFeePerGas": s.matches(S.option(BigInt.nativeSchema)),
+            "maxFeePerGas": s.matches(S.option(BigInt.nativeSchema)),
+            // "cumulativeGasUsed": s.matches(BigInt.nativeSchema), --- Invalid transaction field "cumulativeGasUsed" found in the RPC response. Error: Expected bigint
+            // "effectiveGasPrice": s.matches(BigInt.nativeSchema), --- Invalid transaction field "effectiveGasPrice" found in the RPC response. Error: Expected bigint
+            // "gasUsed": s.matches(BigInt.nativeSchema), --- Invalid transaction field "gasUsed" found in the RPC response. Error: Expected bigint
+            "input": s.matches(S.string),
+            // "nonce": s.matches(BigInt.nativeSchema), --- Returned as number by ethers
+            "value": s.matches(BigInt.nativeSchema),
+            // "v": s.matches(S.option(S.string)), --- Invalid transaction field "v" found in the RPC response. Error: Expected Option(String), received 28
+            // "r": s.matches(S.option(S.string)), --- Inside of signature
+            // "s": s.matches(S.option(S.string)),
+            // "yParity": s.matches(S.option(S.string)), --- Inside of signature and decoded to int
+            "contractAddress": s.matches(S.option(Address.schema)),
+            // "logsBloom": s.matches(S.string), --- Invalid transaction field "logsBloom" found in the RPC response. Error: Expected String, received undefined
+            "root": s.matches(S.option(S.string)),
+            "status": s.matches(S.option(S.int)),
+            // "chainId": s.matches(S.option(S.int)), --- Decoded to bigint by ethers
+            "maxFeePerBlobGas": s.matches(S.option(BigInt.nativeSchema)),
+            "blobVersionedHashes": s.matches(S.option(S.array(S.string))),
+            "kind": s.matches(S.option(S.int)),
+            "l1Fee": s.matches(S.option(BigInt.nativeSchema)),
+            "l1GasPrice": s.matches(S.option(BigInt.nativeSchema)),
+            "l1GasUsed": s.matches(S.option(BigInt.nativeSchema)),
+            "l1FeeScalar": s.matches(S.option(S.float)),
+            "gasUsedForL1": s.matches(S.option(BigInt.nativeSchema)),
+          },
+      ),
+      ~getTransactionFields=Ethers.JsonRpcProvider.makeGetTransactionFields(provider),
+    )
+    Assert.deepEqual(
+      await mockEthersLog(~transactionHash=testTransactionHash)->getEventTransactionOrThrow,
+      {
+        "hash": testTransactionHash,
+        "transactionIndex": 1,
+        "from": Some("0x95222290DD7278Aa3Ddd389Cc1E1d165CC4BAfe5"->Address.Evm.fromStringOrThrow),
+        "to": Some("0x4675C7e5BaAFBFFbca748158bEcBA61ef3b0a263"->Address.Evm.fromStringOrThrow),
+        "gasPrice": Some(17699339493n),
+        "maxPriorityFeePerGas": Some(0n),
+        "maxFeePerGas": Some(17699339493n),
+        "input": "0x",
+        "value": 34302998902926621n,
+        // "r": Some("0xb73e53731ff8484f3c30c2850328f0ad7ca5a8dd8681d201ba52777aaf972f87"),
+        // "s": Some("0x10c1bcf56abfb5dc6dae06e1c0e441b68068fc23064364eaf0ae3e76e07b553a"),
+        "contractAddress": None,
+        "root": None,
+        "status": None,
+        // "yParity": Some("0x1"),
+        // "chainId": Some(1),
+        "maxFeePerBlobGas": None,
+        "blobVersionedHashes": None,
+        "kind": None,
+        "l1Fee": None,
+        "l1GasPrice": None,
+        "l1GasUsed": None,
+        "l1FeeScalar": None,
+        "gasUsedForL1": None,
+      }->Obj.magic,
+    )
+  })
 
   Async.it("Error with a value not matching the schema", async () => {
     let getEventTransactionOrThrow = RpcWorker.makeThrowingGetEventTransaction(
@@ -213,7 +199,7 @@ describe_only("RpcSyncWorker - getEventTransactionOrThrow", () => {
             "hash": s.matches(S.int),
           },
       ),
-      ~getTransaction=neverGetTransaction,
+      ~getTransactionFields=neverGetTransactionFields,
     )
     Assert.throws(
       () => {

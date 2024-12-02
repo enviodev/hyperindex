@@ -12,7 +12,7 @@ let makeThrowingGetEventBlock = (~getBlock) => {
   }
 }
 
-let makeThrowingGetEventTransaction = (~transactionSchema: S.t<'transaction>, ~getTransaction) => {
+let makeThrowingGetEventTransaction = (~transactionSchema: S.t<'transaction>, ~getTransactionFields) => {
   transactionSchema->Utils.Schema.removeTypeValidationInPlace
 
   let transactionFieldItems = switch transactionSchema->S.classify {
@@ -48,13 +48,8 @@ let makeThrowingGetEventTransaction = (~transactionSchema: S.t<'transaction>, ~g
   | _ =>
     log =>
       log
-      ->getTransaction
-      ->Promise.thenResolve(rawTransaction => {
-        // The transactionIndex isn't returned from RPC, so unsafely mix it in
-        // Mutating should be fine, since the rawTransaction isn't used anywhere else outside
-        (rawTransaction->Obj.magic)["transactionIndex"] = log.transactionIndex
-        rawTransaction->parseOrThrowReadableError
-      })
+      ->getTransactionFields
+      ->Promise.thenResolve(parseOrThrowReadableError)
   }
 }
 
@@ -153,7 +148,7 @@ module Make = (
   )
   let getEventTransactionOrThrow = makeThrowingGetEventTransaction(
     ~transactionSchema=T.transactionSchema,
-    ~getTransaction=_log => Js.Exn.raiseError("Not implemented"),
+    ~getTransactionFields=_log => Js.Exn.raiseError("Not implemented"),
   )
 
   let fetchBlockRange = async (
