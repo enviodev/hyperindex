@@ -220,11 +220,16 @@ pub mod evm {
         TransactionIndex,
         #[subenum(RpcTransactionField)]
         Hash,
+        #[subenum(RpcTransactionField)]
         From,
+        #[subenum(RpcTransactionField)]
         To,
         Gas,
+        #[subenum(RpcTransactionField)]
         GasPrice,
+        #[subenum(RpcTransactionField)]
         MaxPriorityFeePerGas,
+        #[subenum(RpcTransactionField)]
         MaxFeePerGas,
         CumulativeGasUsed,
         EffectiveGasPrice,
@@ -235,6 +240,7 @@ pub mod evm {
         V,
         R,
         S,
+        #[subenum(RpcTransactionField)]
         ContractAddress,
         LogsBloom,
         Root,
