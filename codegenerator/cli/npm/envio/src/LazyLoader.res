@@ -1,6 +1,6 @@
 exception LoaderTimeout(string)
 
-type rec asyncMap<'a> = {
+type rec asyncMap<'key, 'value> = {
   // The number of loaded results to keep cached. (For block loading this should be our maximum block interval)
   _cacheSize: int,
   // The maximum number of results we can try to load simultaneously.
@@ -11,19 +11,19 @@ type rec asyncMap<'a> = {
   // How long to wait before cancelling a load request
   _timeoutMillis: int,
   // The promises we return to callers. We satisfy them asynchronously.
-  externalPromises: dict<promise<'a>>,
+  externalPromises: dict<promise<'value>>,
   // The handled used to populate the external promises once we have loaded their data.
-  resolvers: dict<'a => unit>,
+  resolvers: dict<'value => unit>,
   // The keys currently being loaded
-  inProgress: Belt.MutableSet.Int.t,
+  inProgress: Utils.Set.t<'key>,
   // Keys  for items that we have not started loading yet.
-  loaderQueue: SDSL.PriorityQueue.t<int>,
+  loaderQueue: SDSL.Queue.t<'key>,
   // Keys for items that have been loaded already. Used to evict the oldest keys from cache.
-  loadedKeys: SDSL.PriorityQueue.t<int>,
+  loadedKeys: SDSL.Queue.t<'key>,
   // The function used to load the result.
-  loaderFn: int => promise<'a>,
+  loaderFn: 'key => promise<'value>,
   // Callback on load error
-  onError: option<(asyncMap<'a>, ~exn: exn) => unit>,
+  onError: option<(asyncMap<'key, 'value>, ~exn: exn) => unit>,
 }
 
 let make = (
@@ -41,14 +41,14 @@ let make = (
   _timeoutMillis: timeoutMillis,
   externalPromises: Js.Dict.empty(),
   resolvers: Js.Dict.empty(),
-  inProgress: Belt.MutableSet.Int.make(),
-  loaderQueue: SDSL.PriorityQueue.makeAsc(),
-  loadedKeys: SDSL.PriorityQueue.makeAsc(),
+  inProgress: Utils.Set.make(),
+  loaderQueue: SDSL.Queue.make(),
+  loadedKeys: SDSL.Queue.make(),
   loaderFn,
   onError,
 }
 
-let deleteKey: (dict<'a>, string) => unit = (_obj, _k) => %raw(`delete _obj[_k]`)
+let deleteKey: (dict<'value>, string) => unit = (_obj, _k) => %raw(`delete _obj[_k]`)
 
 // If something takes longer than this to load, reject the promise and try again
 let timeoutAfter = timeoutMillis =>
@@ -58,32 +58,38 @@ let timeoutAfter = timeoutMillis =>
     )
   )
 
-let rec loadNext = async (am: asyncMap<'a>, k: int) => {
-  let key = k->Belt.Int.toString
+let rec loadNext = async (am: asyncMap<'key, 'value>, k: 'key) => {
+  // Assume that the key is either string or number.
+  // If it's not the case, then we need to start using Map
+  let stringKey = k->(Utils.magic: 'key => string)
+
   // Track that we are loading it now
-  am.inProgress->Belt.MutableSet.Int.add(k)
+  let _ = am.inProgress->Utils.Set.add(k)
 
   let awaitTaskPromiseAndLoadNextWithTimeout = async () => {
     let val = await Promise.race([am.loaderFn(k), timeoutAfter(am._timeoutMillis)])
     // Resolve the external promise
-    am.resolvers->Utils.Dict.dangerouslyGetNonOption(key)->Belt.Option.map(r => r(val))->ignore
+    am.resolvers
+    ->Utils.Dict.dangerouslyGetNonOption(stringKey)
+    ->Belt.Option.map(r => r(val))
+    ->ignore
 
     // Track that it is no longer in progress
-    am.inProgress->Belt.MutableSet.Int.remove(k)
+    let _ = am.inProgress->Utils.Set.delete(k)
 
     // Track that we've loaded this key
-    am.loadedKeys->SDSL.PriorityQueue.push(k)
+    let loadedKeysNumber = am.loadedKeys->SDSL.Queue.push(k)
 
     // Delete the oldest key if the cache is overly full
-    if am.loadedKeys->SDSL.PriorityQueue.length > am._cacheSize {
-      switch am.loadedKeys->SDSL.PriorityQueue.pop {
+    if loadedKeysNumber > am._cacheSize {
+      switch am.loadedKeys->SDSL.Queue.pop {
       | None => ()
-      | Some(old) => am.externalPromises->deleteKey(old->Belt.Int.toString)
+      | Some(old) => am.externalPromises->deleteKey(old->(Utils.magic: 'key => string))
       }
     }
 
     // Load the next one, if there is anything in the queue
-    switch am.loaderQueue->SDSL.PriorityQueue.pop {
+    switch am.loaderQueue->SDSL.Queue.pop {
     | None => ()
     | Some(next) => await loadNext(am, next)
     }
@@ -103,25 +109,27 @@ let rec loadNext = async (am: asyncMap<'a>, k: int) => {
   )
 }
 
-let get = (am: asyncMap<'a>, k: int): promise<'a> => {
-  let key = k->Belt.Int.toString
-  switch am.externalPromises->Utils.Dict.dangerouslyGetNonOption(key) {
+let get = (am: asyncMap<'key, 'value>, k: 'key): promise<'value> => {
+  // Assume that the key is either string or number.
+  // If it's not the case, then we need to start using Map
+  let stringKey = k->(Utils.magic: 'key => string)
+  switch am.externalPromises->Utils.Dict.dangerouslyGetNonOption(stringKey) {
   | Some(x) => x
   | None => {
       // Create a promise to deliver the eventual value asynchronously
       let promise = Promise.make((resolve, _) => {
         // Expose the resolver externally, so that we can run it from the loader.
-        am.resolvers->Js.Dict.set(key, resolve)
+        am.resolvers->Js.Dict.set(stringKey, resolve)
       })
       // Cache the promise to de-duplicate requests
-      am.externalPromises->Js.Dict.set(key, promise)
+      am.externalPromises->Js.Dict.set(stringKey, promise)
 
       //   Do we have a free loader in the pool?
-      if am.inProgress->Belt.MutableSet.Int.size < am._loaderPoolSize {
+      if am.inProgress->Utils.Set.size < am._loaderPoolSize {
         loadNext(am, k)->ignore
       } else {
         // Queue the loader
-        am.loaderQueue->SDSL.PriorityQueue.push(k)
+        let _ = am.loaderQueue->SDSL.Queue.push(k)
       }
 
       promise

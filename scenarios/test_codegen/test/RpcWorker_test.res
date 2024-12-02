@@ -121,6 +121,11 @@ describe_only("RpcSyncWorker - getEventTransactionOrThrow", () => {
       ~chainId=1,
       ~fallbackStallTimeout=0,
     )
+    let getTransactionFields = Ethers.JsonRpcProvider.makeGetTransactionFields(
+      ~getTransactionByHash=transactionHash =>
+        provider->Ethers.JsonRpcProvider.getTransaction(~transactionHash),
+    )
+
     let getEventTransactionOrThrow = RpcWorker.makeThrowingGetEventTransaction(
       ~transactionSchema=S.schema(
         s =>
@@ -158,7 +163,7 @@ describe_only("RpcSyncWorker - getEventTransactionOrThrow", () => {
             "gasUsedForL1": s.matches(S.option(BigInt.nativeSchema)),
           },
       ),
-      ~getTransactionFields=Ethers.JsonRpcProvider.makeGetTransactionFields(provider),
+      ~getTransactionFields,
     )
     Assert.deepEqual(
       await mockEthersLog(~transactionHash=testTransactionHash)->getEventTransactionOrThrow,

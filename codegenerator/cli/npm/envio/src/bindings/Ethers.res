@@ -215,8 +215,8 @@ module JsonRpcProvider = {
   @send
   external getTransaction: (t, ~transactionHash: string) => promise<transaction> = "getTransaction"
 
-  let makeGetTransactionFields = (provider: t) => async (log: log): promise<unknown> => {
-    let transaction = await provider->getTransaction(~transactionHash=log.transactionHash)
+  let makeGetTransactionFields = (~getTransactionByHash) => async (log: log): promise<unknown> => {
+    let transaction = await getTransactionByHash(log.transactionHash)
     // Mutating should be fine, since the transaction isn't used anywhere else outside the function
     let fields: {..} = transaction->Obj.magic
 
