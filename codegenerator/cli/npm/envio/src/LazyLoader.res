@@ -1,25 +1,19 @@
 exception LoaderTimeout(string)
 
-type blockNumber = int
-
-let s = Belt.MutableSet.Int.make()
-
-// NOTE: any additional metadata that would be useful for debugging issues or displaying to users can be added here
-type asyncMapMetadata = {suggestedFix: string, asyncTaskName: string, caller: string}
-type asyncMap<'a> = {
+type rec asyncMap<'a> = {
   // The number of loaded results to keep cached. (For block loading this should be our maximum block interval)
   _cacheSize: int,
   // The maximum number of results we can try to load simultaneously.
   _loaderPoolSize: int,
   // How long to wait before retrying failures
-  // TODO: Add randomized exponential back-off
+  // TODO: Add randomized exponential back-off (outdated)
   _retryDelayMillis: int,
   // How long to wait before cancelling a load request
   _timeoutMillis: int,
   // The promises we return to callers. We satisfy them asynchronously.
   externalPromises: dict<promise<'a>>,
   // The handled used to populate the external promises once we have loaded their data.
-  resolvers: dict<(. 'a) => unit>,
+  resolvers: dict<'a => unit>,
   // The keys currently being loaded
   inProgress: Belt.MutableSet.Int.t,
   // Keys  for items that we have not started loading yet.
@@ -28,19 +22,19 @@ type asyncMap<'a> = {
   loadedKeys: SDSL.PriorityQueue.t<int>,
   // The function used to load the result.
   loaderFn: int => promise<'a>,
-  // Details for debugging, tracing, and loging issues
-  metadata: asyncMapMetadata,
+  // Callback on load error
+  onError: option<(asyncMap<'a>, ~exn: exn) => unit>,
 }
 
 let make = (
   ~loaderFn,
+  ~onError=?,
   ~cacheSize: int=10_000,
   ~loaderPoolSize: int=10,
   ~retryDelayMillis=5_000,
-  ~timeoutMillis=300_000, // After 5 minutes (unclear what is best to do here - crash or just keep printing the error)
-  ~metadata,
-  (),
-) => {
+  ~timeoutMillis=300_000,
+) => // After 5 minutes (unclear what is best to do here - crash or just keep printing the error)
+{
   _cacheSize: cacheSize,
   _loaderPoolSize: loaderPoolSize,
   _retryDelayMillis: retryDelayMillis,
@@ -51,14 +45,14 @@ let make = (
   loaderQueue: SDSL.PriorityQueue.makeAsc(),
   loadedKeys: SDSL.PriorityQueue.makeAsc(),
   loaderFn,
-  metadata,
+  onError,
 }
 
 let deleteKey: (dict<'a>, string) => unit = (_obj, _k) => %raw(`delete _obj[_k]`)
 
 // If something takes longer than this to load, reject the promise and try again
 let timeoutAfter = timeoutMillis =>
-  Time.resolvePromiseAfterDelay(~delayMilliseconds=timeoutMillis)->Promise.then(() =>
+  Utils.delay(timeoutMillis)->Promise.then(() =>
     Promise.reject(
       LoaderTimeout(`Query took longer than ${Belt.Int.toString(timeoutMillis / 1000)} seconds`),
     )
@@ -72,7 +66,7 @@ let rec loadNext = async (am: asyncMap<'a>, k: int) => {
   let awaitTaskPromiseAndLoadNextWithTimeout = async () => {
     let val = await Promise.race([am.loaderFn(k), timeoutAfter(am._timeoutMillis)])
     // Resolve the external promise
-    am.resolvers->Utils.Dict.dangerouslyGetNonOption(key)->Belt.Option.map(r => r(. val))->ignore
+    am.resolvers->Utils.Dict.dangerouslyGetNonOption(key)->Belt.Option.map(r => r(val))->ignore
 
     // Track that it is no longer in progress
     am.inProgress->Belt.MutableSet.Int.remove(k)
@@ -99,13 +93,11 @@ let rec loadNext = async (am: asyncMap<'a>, k: int) => {
     switch await awaitTaskPromiseAndLoadNextWithTimeout() {
     | _ => Promise.resolve()
     | exception err =>
-      Logging.error({
-        "err": err,
-        "msg": `EE1100: Top level promise timeout reached. Please review other errors or warnings in the code. This function will retry in ${(am._retryDelayMillis / 1000)
-            ->Belt.Int.toString} seconds. It is highly likely that your indexer isn't syncing on one or more chains currently. Also take a look at the "suggestedFix" in the metadata of this command`,
-        "metadata": am.metadata,
-      })
-      await Time.resolvePromiseAfterDelay(~delayMilliseconds=am._retryDelayMillis)
+      switch am.onError {
+      | None => ()
+      | Some(onError) => onError(am, ~exn=err)
+      }
+      await Utils.delay(am._retryDelayMillis)
       awaitTaskPromiseAndLoadNextWithTimeout()
     }
   )

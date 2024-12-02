@@ -1,5 +1,12 @@
 external magic: 'a => 'b = "%identity"
 
+let delay = milliseconds =>
+  Js.Promise2.make((~resolve, ~reject as _) => {
+    let _interval = Js.Global.setTimeout(_ => {
+      resolve()
+    }, milliseconds)
+  })
+
 module Option = {
   let mapNone = (opt: option<'a>, val: 'b): option<'b> => {
     switch opt {

@@ -118,12 +118,20 @@ module Make = (
         ~backoffMsOnFailure=1000,
         ~blockNumber,
       ),
-    ~metadata={
-      asyncTaskName: "blockLoader: fetching block timestamp - `getBlock` rpc call",
-      caller: "RPC ChainWorker",
-      suggestedFix: "This likely means the RPC url you are using is not responding correctly. Please try another RPC endipoint.",
-    },
-    (),
+    ~onError=(am, ~exn) => {
+      Logging.error({
+        "err": exn,
+        "msg": `EE1100: Top level promise timeout reached. Please review other errors or warnings in the code. This function will retry in ${(am._retryDelayMillis / 1000)
+            ->Belt.Int.toString} seconds. It is highly likely that your indexer isn't syncing on one or more chains currently. Also take a look at the "suggestedFix" in the metadata of this command`,
+        "metadata": {
+          {
+            "asyncTaskName": "blockLoader: fetching block timestamp - `getBlock` rpc call",
+            "caller": "RPC ChainWorker",
+            "suggestedFix": "This likely means the RPC url you are using is not responding correctly. Please try another RPC endipoint.",
+          }
+        },
+      })
+    }
   )
 
   let waitForBlockGreaterThanCurrentHeight = async (~currentBlockHeight, ~logger) => {
