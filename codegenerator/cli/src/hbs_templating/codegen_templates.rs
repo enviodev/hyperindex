@@ -1106,7 +1106,10 @@ mod test {
 
         let rpc_config1 = RpcConfig {
             urls: vec!["https://eth.com".to_string()],
-            sync_config: system_config::SyncConfig::default(),
+            sync_config: system_config::SyncConfig {
+                acceleration_additive: 2_000,
+                ..system_config::SyncConfig::default()
+            },
         };
 
         let network1 = NetworkTemplate {
@@ -1150,7 +1153,10 @@ mod test {
 
         let rpc_config1 = RpcConfig {
             urls: vec!["https://eth.com".to_string()],
-            sync_config: system_config::SyncConfig::default(),
+            sync_config: system_config::SyncConfig {
+                acceleration_additive: 2_000,
+                ..system_config::SyncConfig::default()
+            },
         };
         let network1 = NetworkTemplate {
             id: 1,
@@ -1164,7 +1170,10 @@ mod test {
                 // Should support fallback urls
                 "https://eth.com/fallback".to_string(),
             ],
-            sync_config: system_config::SyncConfig::default(),
+            sync_config: system_config::SyncConfig {
+                acceleration_additive: 2_000,
+                ..system_config::SyncConfig::default()
+            },
         };
 
         let network2 = NetworkTemplate {

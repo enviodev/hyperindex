@@ -21,7 +21,7 @@ let mockEthersLog = (
   logIndex: 2,
 }
 
-describe_only("RpcSyncWorker - getEventTransactionOrThrow", () => {
+describe("RpcSyncWorker - getEventTransactionOrThrow", () => {
   let neverGetTransactionFields = _ => Assert.fail("The getTransactionFields should not be called")
 
   it("Panics with invalid schema", () => {
