@@ -136,7 +136,9 @@ let setGravatarLog4: Types.eventLog<Types.Gravatar.UpdatedGravatar.eventArgs> = 
   block: block1,
 }
 
-let newGravatarEventToBatchItem = (event: Types.eventLog<Types.Gravatar.NewGravatar.eventArgs>): Types.eventBatchQueueItem => {
+let newGravatarEventToBatchItem = (
+  event: Types.eventLog<Types.Gravatar.NewGravatar.eventArgs>,
+): Types.eventBatchQueueItem => {
   {
     timestamp: event.block.timestamp,
     chain: MockConfig.chain1337,
@@ -144,14 +146,21 @@ let newGravatarEventToBatchItem = (event: Types.eventLog<Types.Gravatar.NewGrava
     logIndex: event.logIndex,
     eventName: "NewGravatar",
     contractName: "Gravatar",
-    handlerRegister: Types.Gravatar.NewGravatar.handlerRegister->(Utils.magic: Types.HandlerTypes.Register.t<Types.Gravatar.NewGravatar.eventArgs> => Types.HandlerTypes.Register.t<Types.internalEventArgs>),
-    paramsRawEventSchema: Types.Gravatar.NewGravatar.paramsRawEventSchema->(Utils.magic: S.t<Types.Gravatar.NewGravatar.eventArgs> => S.t<Types.internalEventArgs>),
+    handlerRegister: Types.Gravatar.NewGravatar.handlerRegister->(
+      Utils.magic: Types.HandlerTypes.Register.t<
+        Types.Gravatar.NewGravatar.eventArgs,
+      > => Types.HandlerTypes.Register.t<Internal.eventParams>
+    ),
+    paramsRawEventSchema: Types.Gravatar.NewGravatar.paramsRawEventSchema->(
+      Utils.magic: S.t<Types.Gravatar.NewGravatar.eventArgs> => S.t<Internal.eventParams>
+    ),
     event: event->Types.eventToInternal,
   }
 }
 
-
-let updatedGravatarEventToBatchItem = (event: Types.eventLog<Types.Gravatar.UpdatedGravatar.eventArgs>): Types.eventBatchQueueItem => {
+let updatedGravatarEventToBatchItem = (
+  event: Types.eventLog<Types.Gravatar.UpdatedGravatar.eventArgs>,
+): Types.eventBatchQueueItem => {
   {
     timestamp: event.block.timestamp,
     chain: MockConfig.chain1337,
@@ -159,8 +168,14 @@ let updatedGravatarEventToBatchItem = (event: Types.eventLog<Types.Gravatar.Upda
     logIndex: event.logIndex,
     eventName: "UpdatedGravatar",
     contractName: "Gravatar",
-    handlerRegister: Types.Gravatar.UpdatedGravatar.handlerRegister->(Utils.magic: Types.HandlerTypes.Register.t<Types.Gravatar.UpdatedGravatar.eventArgs> => Types.HandlerTypes.Register.t<Types.internalEventArgs>),
-    paramsRawEventSchema: Types.Gravatar.UpdatedGravatar.paramsRawEventSchema->(Utils.magic: S.t<Types.Gravatar.UpdatedGravatar.eventArgs> => S.t<Types.internalEventArgs>),
+    handlerRegister: Types.Gravatar.UpdatedGravatar.handlerRegister->(
+      Utils.magic: Types.HandlerTypes.Register.t<
+        Types.Gravatar.UpdatedGravatar.eventArgs,
+      > => Types.HandlerTypes.Register.t<Internal.eventParams>
+    ),
+    paramsRawEventSchema: Types.Gravatar.UpdatedGravatar.paramsRawEventSchema->(
+      Utils.magic: S.t<Types.Gravatar.UpdatedGravatar.eventArgs> => S.t<Internal.eventParams>
+    ),
     event: event->Types.eventToInternal,
   }
 }

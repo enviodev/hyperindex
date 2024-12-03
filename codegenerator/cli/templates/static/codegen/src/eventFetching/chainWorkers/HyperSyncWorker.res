@@ -240,7 +240,7 @@ module Make = (
 
   let makeEventBatchQueueItem = (
     item: HyperSync.logsQueryPageItem,
-    ~params: Types.internalEventArgs,
+    ~params: Internal.eventParams,
     ~eventMod: module(Types.InternalEvent),
   ): Types.eventBatchQueueItem => {
     let module(Event) = eventMod

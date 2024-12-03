@@ -417,8 +417,6 @@ module HandlerTypes = {
   }
 }
 
-type internalEventArgs
-
 module type Event = {
   let sighash: string // topic0 for Evm and rb for Fuel receipts
   let topicCount: int // Number of topics for evm, always 0 for fuel
@@ -433,9 +431,9 @@ module type Event = {
   type eventFilter
   let getTopicSelection: SingleOrMultiple.t<eventFilter> => array<LogSelection.topicSelection>
 }
-module type InternalEvent = Event with type eventArgs = internalEventArgs
+module type InternalEvent = Event with type eventArgs = Internal.eventParams
 
-external eventToInternal: eventLog<'a> => eventLog<internalEventArgs> = "%identity"
+external eventToInternal: eventLog<'a> => eventLog<Internal.eventParams> = "%identity"
 external eventModToInternal: module(Event with type eventArgs = 'a) => module(InternalEvent) = "%identity"
 external eventModWithoutArgTypeToInternal: module(Event) => module(InternalEvent) = "%identity"
 
@@ -542,7 +540,7 @@ module MakeRegister = (Event: Event) => {
 type fuelEventKind = 
   | LogData({
     logId: string,
-    decode: string => internalEventArgs,
+    decode: string => Internal.eventParams,
   })
   | Mint
   | Burn
@@ -553,8 +551,8 @@ type fuelEventConfig = {
   name: string,
   kind: fuelEventKind,
   isWildcard: bool,
-  handlerRegister: HandlerTypes.Register.t<internalEventArgs>,
-  paramsRawEventSchema: S.schema<internalEventArgs>,
+  handlerRegister: HandlerTypes.Register.t<Internal.eventParams>,
+  paramsRawEventSchema: S.schema<Internal.eventParams>,
 }
 
 type fuelContractConfig = {
@@ -603,13 +601,13 @@ type chainId = int
 type eventBatchQueueItem = {
   eventName: string,
   contractName: string,
-  handlerRegister: HandlerTypes.Register.t<internalEventArgs>,
+  handlerRegister: HandlerTypes.Register.t<Internal.eventParams>,
   timestamp: int,
   chain: ChainMap.Chain.t,
   blockNumber: int,
   logIndex: int,
-  event: eventLog<internalEventArgs>,
-  paramsRawEventSchema: S.schema<internalEventArgs>,
+  event: eventLog<Internal.eventParams>,
+  paramsRawEventSchema: S.schema<Internal.eventParams>,
   //Default to false, if an event needs to
   //be reprocessed after it has loaded dynamic contracts
   //This gets set to true and does not try and reload events

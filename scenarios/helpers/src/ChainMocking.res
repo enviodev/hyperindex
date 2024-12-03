@@ -43,7 +43,7 @@ module Make = (Indexer: Indexer.S) => {
     eventMod: module(Types.InternalEvent),
   }
 
-  type makeEvent = (~blockHash: string) => Types.eventLog<Types.internalEventArgs>
+  type makeEvent = (~blockHash: string) => Types.eventLog<Internal.eventParams>
 
   type logConstructor = {
     transactionHash: string,
@@ -93,7 +93,7 @@ module Make = (Indexer: Indexer.S) => {
     let makeEvent: makeEvent = (~blockHash) => {
       let block = makeBlock(~blockHash, ~blockNumber, ~blockTimestamp)
       {
-        params: params->(Utils.magic: eventArgs => Types.internalEventArgs),
+        params: params->(Utils.magic: eventArgs => Internal.eventParams),
         srcAddress,
         chainId,
         block,
@@ -109,7 +109,7 @@ module Make = (Indexer: Indexer.S) => {
       srcAddress,
       eventMod: eventMod->(
         Utils.magic: module(Types.Event with type eventArgs = eventArgs) => module(Types.Event with
-          type eventArgs = Types.internalEventArgs
+          type eventArgs = Internal.eventParams
         )
       ),
     }

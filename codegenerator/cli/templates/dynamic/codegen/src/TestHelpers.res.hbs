@@ -59,10 +59,10 @@ module EventFunctions = {
     async args => {
       let {event, mockDb, ?chainId} =
         args->(
-          Utils.magic: eventProcessorArgs<'eventArgs> => eventProcessorArgs<Types.internalEventArgs>
+          Utils.magic: eventProcessorArgs<'eventArgs> => eventProcessorArgs<Internal.eventParams>
         )
-      let handlerRegister = handlerRegister->(Utils.magic: Types.HandlerTypes.Register.t<'eventArgs> => Types.HandlerTypes.Register.t<Types.internalEventArgs>)
-      let paramsRawEventSchema = paramsRawEventSchema->(Utils.magic: S.t<'eventArgs> => S.t<Types.internalEventArgs>)
+      let handlerRegister = handlerRegister->(Utils.magic: Types.HandlerTypes.Register.t<'eventArgs> => Types.HandlerTypes.Register.t<Internal.eventParams>)
+      let paramsRawEventSchema = paramsRawEventSchema->(Utils.magic: S.t<'eventArgs> => S.t<Internal.eventParams>)
 
       let config = RegisterHandlers.getConfig()
 

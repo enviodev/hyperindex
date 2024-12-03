@@ -42,8 +42,6 @@ module type S = {
   }
 
   module Types: {
-    type internalEventArgs
-
     module Transaction: {
       type t
     }
@@ -87,18 +85,18 @@ module type S = {
       type eventFilter
       let getTopicSelection: SingleOrMultiple.t<eventFilter> => array<LogSelection.topicSelection>
     }
-    module type InternalEvent = Event with type eventArgs = internalEventArgs
+    module type InternalEvent = Event with type eventArgs = Internal.eventParams
 
     type eventBatchQueueItem = {
       eventName: string,
       contractName: string,
-      handlerRegister: HandlerTypes.Register.t<internalEventArgs>,
+      handlerRegister: HandlerTypes.Register.t<Internal.eventParams>,
       timestamp: int,
       chain: ChainMap.Chain.t,
       blockNumber: int,
       logIndex: int,
-      event: eventLog<internalEventArgs>,
-      paramsRawEventSchema: RescriptSchema.S.schema<internalEventArgs>,
+      event: eventLog<Internal.eventParams>,
+      paramsRawEventSchema: RescriptSchema.S.schema<Internal.eventParams>,
       //Default to false, if an event needs to
       //be reprocessed after it has loaded dynamic contracts
       //This gets set to true and does not try and reload events

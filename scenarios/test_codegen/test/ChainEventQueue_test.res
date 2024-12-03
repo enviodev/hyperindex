@@ -10,7 +10,7 @@ let tx1: Types.Transaction.t = {
   hash: "0xaaa",
   transactionIndex: 1,
 }
-let eventMock1: Types.eventLog<Types.internalEventArgs> = {
+let eventMock1: Types.eventLog<Internal.eventParams> = {
   block: {
     number: 1,
     hash: "0xdef",
@@ -34,11 +34,17 @@ let qItemMock1: Types.eventBatchQueueItem = {
   event: eventMock1,
   eventName: "NewGravatar",
   contractName: "Gravatar",
-  handlerRegister: Types.Gravatar.NewGravatar.handlerRegister->(Utils.magic: Types.HandlerTypes.Register.t<Types.Gravatar.NewGravatar.eventArgs> => Types.HandlerTypes.Register.t<Types.internalEventArgs>),
-  paramsRawEventSchema: Types.Gravatar.NewGravatar.paramsRawEventSchema->(Utils.magic: S.t<Types.Gravatar.NewGravatar.eventArgs> => S.t<Types.internalEventArgs>),
+  handlerRegister: Types.Gravatar.NewGravatar.handlerRegister->(
+    Utils.magic: Types.HandlerTypes.Register.t<
+      Types.Gravatar.NewGravatar.eventArgs,
+    > => Types.HandlerTypes.Register.t<Internal.eventParams>
+  ),
+  paramsRawEventSchema: Types.Gravatar.NewGravatar.paramsRawEventSchema->(
+    Utils.magic: S.t<Types.Gravatar.NewGravatar.eventArgs> => S.t<Internal.eventParams>
+  ),
 }
 
-let eventMock2: Types.eventLog<Types.internalEventArgs> = {
+let eventMock2: Types.eventLog<Internal.eventParams> = {
   block: {
     number: 2,
     hash: "0xabc",
@@ -62,8 +68,14 @@ let qItemMock2: Types.eventBatchQueueItem = {
   event: eventMock1,
   eventName: "NewGravatar",
   contractName: "Gravatar",
-  handlerRegister: Types.Gravatar.NewGravatar.handlerRegister->(Utils.magic: Types.HandlerTypes.Register.t<Types.Gravatar.NewGravatar.eventArgs> => Types.HandlerTypes.Register.t<Types.internalEventArgs>),
-  paramsRawEventSchema: Types.Gravatar.NewGravatar.paramsRawEventSchema->(Utils.magic: S.t<Types.Gravatar.NewGravatar.eventArgs> => S.t<Types.internalEventArgs>),
+  handlerRegister: Types.Gravatar.NewGravatar.handlerRegister->(
+    Utils.magic: Types.HandlerTypes.Register.t<
+      Types.Gravatar.NewGravatar.eventArgs,
+    > => Types.HandlerTypes.Register.t<Internal.eventParams>
+  ),
+  paramsRawEventSchema: Types.Gravatar.NewGravatar.paramsRawEventSchema->(
+    Utils.magic: S.t<Types.Gravatar.NewGravatar.eventArgs> => S.t<Internal.eventParams>
+  ),
 }
 
 describe("Chain Event Queue", () => {
