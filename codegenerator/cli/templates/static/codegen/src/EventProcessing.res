@@ -225,8 +225,8 @@ let addEventToRawEvents = (
   let chainId = chain->ChainMap.Chain.toChainId
   let eventId = EventUtils.packEventIndex(~logIndex, ~blockNumber)
   let blockFields =
-    (block :> Types.Block.rawEventFields)->S.serializeOrRaiseWith(Types.Block.rawEventSchema)
-  let transactionFields = transaction->S.serializeOrRaiseWith(Types.Transaction.rawEventSchema)
+    block->(Utils.magic: Internal.eventBlock => Types.Block.rawEventFields)->S.serializeOrRaiseWith(Types.Block.rawEventSchema)
+  let transactionFields = transaction->(Utils.magic: Internal.eventTransaction => Types.Transaction.t)->S.serializeOrRaiseWith(Types.Transaction.rawEventSchema)
   // Serialize to unknown, because serializing to Js.Json.t fails for Bytes Fuel type, since it has unknown schema
   let params =
     params
@@ -241,7 +241,7 @@ let addEventToRawEvents = (
     blockNumber,
     logIndex,
     srcAddress,
-    blockHash: block->Types.Block.getId,
+    blockHash: block->Types.Block.getInternalId,
     blockTimestamp,
     blockFields,
     transactionFields,

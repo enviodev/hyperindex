@@ -218,12 +218,12 @@ let getHandlerContext = (
 }
 
 let getContractRegisterArgs = (contextEnv, ~inMemoryStore, ~shouldSaveHistory) => {
-  Types.HandlerTypes.event: contextEnv.eventBatchQueueItem.event,
+  Types.HandlerTypes.event: contextEnv.eventBatchQueueItem.event->Internal.toGenericEvent,
   context: contextEnv->getContractRegisterContext(~inMemoryStore, ~shouldSaveHistory),
 }
 
 let getLoaderArgs = (contextEnv, ~inMemoryStore, ~loadLayer) => {
-  Types.HandlerTypes.event: contextEnv.eventBatchQueueItem.event,
+  Types.HandlerTypes.event: contextEnv.eventBatchQueueItem.event->Internal.toGenericEvent,
   context: contextEnv->getLoaderContext(~inMemoryStore, ~loadLayer),
 }
 
@@ -234,7 +234,7 @@ let getHandlerArgs = (
   ~loadLayer,
   ~shouldSaveHistory,
 ) => {
-  Types.HandlerTypes.event: contextEnv.eventBatchQueueItem.event,
+  Types.HandlerTypes.event: contextEnv.eventBatchQueueItem.event->Internal.toGenericEvent,
   context: contextEnv->getHandlerContext(~inMemoryStore, ~loadLayer, ~shouldSaveHistory),
   loaderReturn,
 }

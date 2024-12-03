@@ -1,13 +1,17 @@
 open Belt
-let makeBlock = (~blockNumber, ~blockTimestamp, ~blockHash): Types.Block.t => {
-  number: blockNumber,
-  hash: blockHash,
-  timestamp: blockTimestamp,
-}
-let makeTransaction = (~transactionIndex, ~transactionHash): Types.Transaction.t => {
-  transactionIndex,
-  hash: transactionHash,
-}
+let makeBlock = (~blockNumber, ~blockTimestamp, ~blockHash) =>
+  {
+    number: blockNumber,
+    hash: blockHash,
+    timestamp: blockTimestamp,
+  }->(Utils.magic: Types.Block.t => Internal.eventBlock)
+
+let makeTransaction = (~transactionIndex, ~transactionHash) =>
+  {
+    transactionIndex,
+    hash: transactionHash,
+  }->(Utils.magic: Types.Transaction.t => Internal.eventTransaction)
+
 module Gravatar = {
   let contractName = "Gravatar"
   let chainConfig =

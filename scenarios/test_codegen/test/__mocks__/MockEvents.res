@@ -154,7 +154,7 @@ let newGravatarEventToBatchItem = (
     paramsRawEventSchema: Types.Gravatar.NewGravatar.paramsRawEventSchema->(
       Utils.magic: S.t<Types.Gravatar.NewGravatar.eventArgs> => S.t<Internal.eventParams>
     ),
-    event: event->Types.eventToInternal,
+    event: event->Internal.fromGenericEvent,
   }
 }
 
@@ -176,7 +176,7 @@ let updatedGravatarEventToBatchItem = (
     paramsRawEventSchema: Types.Gravatar.UpdatedGravatar.paramsRawEventSchema->(
       Utils.magic: S.t<Types.Gravatar.UpdatedGravatar.eventArgs> => S.t<Internal.eventParams>
     ),
-    event: event->Types.eventToInternal,
+    event: event->Internal.fromGenericEvent,
   }
 }
 

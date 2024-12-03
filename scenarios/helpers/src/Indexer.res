@@ -1,25 +1,6 @@
 module type S = {
-  module Pino: {
-    type t
-  }
-
   module ErrorHandling: {
     type t
-  }
-
-  module Address: {
-    type t
-  }
-
-  module Viem: {
-    type decodedEvent<'a>
-  }
-
-  module Ethers: {
-    type abi
-    module JsonRpcProvider: {
-      type t
-    }
   }
 
   module HyperSyncClient: {
@@ -28,39 +9,14 @@ module type S = {
     }
   }
 
-  module ChainMap: {
-    module Chain: {
-      type t
-      let toChainId: t => int
-    }
-    type t<'a>
-  }
-
   module LogSelection: {
     type t
     type topicSelection
   }
 
   module Types: {
-    module Transaction: {
-      type t
-    }
-
-    module Block: {
-      type t
-    }
-
     module Log: {
       type t
-    }
-
-    type eventLog<'a> = {
-      params: 'a,
-      chainId: int,
-      srcAddress: Address.t,
-      logIndex: int,
-      transaction: Transaction.t,
-      block: Block.t,
     }
 
     module HandlerTypes: {
@@ -95,7 +51,7 @@ module type S = {
       chain: ChainMap.Chain.t,
       blockNumber: int,
       logIndex: int,
-      event: eventLog<Internal.eventParams>,
+      event: Internal.event,
       paramsRawEventSchema: RescriptSchema.S.schema<Internal.eventParams>,
       //Default to false, if an event needs to
       //be reprocessed after it has loaded dynamic contracts

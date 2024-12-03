@@ -57,10 +57,8 @@ module EventFunctions = {
   */
   let makeEventProcessor = (~contractName, ~eventName, ~handlerRegister, ~paramsRawEventSchema) => {
     async args => {
-      let {event, mockDb, ?chainId} =
-        args->(
-          Utils.magic: eventProcessorArgs<'eventArgs> => eventProcessorArgs<Internal.eventParams>
-        )
+      let {event, mockDb, ?chainId} = args
+      let event = event->(Utils.magic: Types.eventLog<'eventArgs> => Internal.event)
       let handlerRegister = handlerRegister->(Utils.magic: Types.HandlerTypes.Register.t<'eventArgs> => Types.HandlerTypes.Register.t<Internal.eventParams>)
       let paramsRawEventSchema = paramsRawEventSchema->(Utils.magic: S.t<'eventArgs> => S.t<Internal.eventParams>)
 
@@ -120,8 +118,8 @@ module EventFunctions = {
         paramsRawEventSchema,
         chain,
         logIndex: event.logIndex,
-        timestamp: event.block->Types.Block.getTimestamp,
-        blockNumber: event.block->Types.Block.getNumber,
+        timestamp: event.block->Types.Block.getInternalTimestamp,
+        blockNumber: event.block->Types.Block.getInternalNumber,
       }
 
       switch handlerRegister->Types.HandlerTypes.Register.getContractRegister {

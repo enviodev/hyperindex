@@ -262,7 +262,7 @@ module Make = (
         block,
         srcAddress: log.address,
         logIndex: log.logIndex,
-      },
+      }->Internal.fromGenericEvent,
     }
   }
 

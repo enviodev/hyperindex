@@ -43,7 +43,7 @@ module Make = (Indexer: Indexer.S) => {
     eventMod: module(Types.InternalEvent),
   }
 
-  type makeEvent = (~blockHash: string) => Types.eventLog<Internal.eventParams>
+  type makeEvent = (~blockHash: string) => Internal.event
 
   type logConstructor = {
     transactionHash: string,
@@ -70,11 +70,11 @@ module Make = (Indexer: Indexer.S) => {
       ~blockNumber: int,
       ~blockTimestamp: int,
       ~blockHash: string,
-    ) => Indexer.Types.Block.t,
+    ) => Internal.eventBlock,
     ~makeTransaction: (
       ~transactionIndex: int,
       ~transactionHash: string,
-    ) => Indexer.Types.Transaction.t,
+    ) => Internal.eventTransaction,
     ~chainId,
     ~blockTimestamp: int,
     ~blockNumber: int,
