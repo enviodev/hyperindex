@@ -16,3 +16,5 @@ type event = genericEvent<eventParams, eventTransaction, eventBlock>
 
 external fromGenericEvent: genericEvent<'a, 'b, 'c> => event = "%identity"
 external toGenericEvent: event => genericEvent<'a, 'b, 'c> = "%identity"
+
+type loaderReturn

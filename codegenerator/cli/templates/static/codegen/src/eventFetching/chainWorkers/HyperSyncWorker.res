@@ -246,10 +246,16 @@ module Make = (
     let module(Event) = eventMod
     let {block, log, transaction} = item
     let chainId = chain->ChainMap.Chain.toChainId
+
+    let loaderHandler =
+      Event.handlerRegister->Types.HandlerTypes.Register.getLoaderHandler
+
     {
       eventName: Event.name,
       contractName: Event.contractName,
-      handlerRegister: Event.handlerRegister,
+      loader: loaderHandler->Option.map(lh => lh.loader),
+      handler: loaderHandler->Option.map(lh => lh.handler),
+      contractRegister: Event.handlerRegister->Types.HandlerTypes.Register.getContractRegister,
       paramsRawEventSchema: Event.paramsRawEventSchema,
       timestamp: block->Types.Block.getTimestamp,
       chain,

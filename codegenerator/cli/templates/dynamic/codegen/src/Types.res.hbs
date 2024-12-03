@@ -612,7 +612,9 @@ type chainId = int
 type eventItem = {
   eventName: string,
   contractName: string,
-  handlerRegister: HandlerTypes.Register.t<Internal.eventParams>,
+  loader: option<HandlerTypes.loader<Internal.eventParams, Internal.loaderReturn>>,
+  handler: option<HandlerTypes.handler<Internal.eventParams, Internal.loaderReturn>>,
+  contractRegister: option<HandlerTypes.contractRegister<Internal.eventParams>>,
   timestamp: int,
   chain: ChainMap.Chain.t,
   blockNumber: int,

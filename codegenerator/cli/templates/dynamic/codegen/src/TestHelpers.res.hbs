@@ -110,11 +110,17 @@ module EventFunctions = {
       //The only purpose is to test the registerContract function and to
       //add the entity to the in memory store for asserting registrations
 
+      let loaderHandler =
+        handlerRegister->Types.HandlerTypes.Register.getLoaderHandler
+      let loader = loaderHandler->Belt.Option.map(lh => lh.loader)
+      let handler = loaderHandler->Belt.Option.map(lh => lh.handler)
       let eventItem: Types.eventItem = {
         event,
         eventName,
         contractName,
-        handlerRegister,
+        loader,
+        handler,
+        contractRegister: handlerRegister->Types.HandlerTypes.Register.getContractRegister,
         paramsRawEventSchema,
         chain,
         logIndex: event.logIndex,
@@ -139,12 +145,13 @@ module EventFunctions = {
       | None => () //No need to run contract registration
       }
 
-      switch handlerRegister->Types.HandlerTypes.Register.getLoaderHandler {
-      | Some(loaderHandler) =>
+      switch handler {
+      | Some(handler) =>
         switch await eventItem->EventProcessing.runEventHandler(
           ~inMemoryStore,
+          ~loader,
+          ~handler,
           ~loadLayer,
-          ~loaderHandler,
           ~logger,
           ~shouldSaveHistory=false,
         ) {

@@ -255,7 +255,8 @@ let addEventToRawEvents = (
 
 let runEventHandler = (
   eventItem: Types.eventItem,
-  ~loaderHandler: Types.HandlerTypes.loaderHandler<_>,
+  ~loader,
+  ~handler,
   ~inMemoryStore,
   ~logger,
   ~loadLayer,
@@ -264,14 +265,16 @@ let runEventHandler = (
   open ErrorHandling.ResultPropogateEnv
   runAsyncEnv(async () => {
     let contextEnv = ContextEnv.make(~eventItem, ~logger)
-    let {loader, handler} = loaderHandler
 
     //Include the load in time before handler
     let timeBeforeHandler = Hrtime.makeTimer()
 
-    let loaderReturn =
-      (await runEventLoader(~contextEnv, ~loader, ~inMemoryStore, ~loadLayer))->propogate
-
+    let loaderReturn = switch loader {
+      | Some(loader) =>
+        (await runEventLoader(~contextEnv, ~loader, ~inMemoryStore, ~loadLayer))->propogate
+      | None => %raw(`undefined`)
+    }
+      
     switch await handler(
       contextEnv->ContextEnv.getHandlerArgs(
         ~loaderReturn,
@@ -313,16 +316,18 @@ let runHandler = async (
   ~config: Config.t,
   ~isInReorgThreshold,
 ) => {
-  let result = switch eventItem.handlerRegister->Types.HandlerTypes.Register.getLoaderHandler {
-  | Some(loaderHandler) =>
+  let result = switch eventItem {
+  | {loader: None, handler: None}
+  | {loader: Some(_), handler: None} => Ok()
+  | {loader, handler: Some(handler)} =>
     await eventItem->runEventHandler(
-      ~loaderHandler,
+      ~loader,
+      ~handler,
       ~inMemoryStore,
       ~logger,
       ~loadLayer,
       ~shouldSaveHistory=config->Config.shouldSaveHistory(~isInReorgThreshold),
     )
-  | None => Ok()
   }
 
   result->Result.map(() => {
@@ -377,8 +382,8 @@ let rec registerDynamicContracts = (
       )
       ->Ok
     } else {
-      switch eventItem.handlerRegister->Types.HandlerTypes.Register.getContractRegister {
-      | Some(handler) =>
+      switch eventItem {
+      | {contractRegister: Some(handler)} =>
         handler->runEventContractRegister(
           ~logger,
           ~checkContractIsRegistered,
@@ -388,7 +393,7 @@ let rec registerDynamicContracts = (
           ~preRegisterLatestProcessedBlocks?,
           ~shouldSaveHistory,
         )
-      | None =>
+      | _ =>
         dynamicContractRegistrations
         ->Option.map(dynamicContractRegistrations =>
           addToUnprocessedBatch(eventItem, dynamicContractRegistrations)
@@ -430,19 +435,18 @@ let runLoaders = (
     // since we'll need to rerun each loader separately
     // before the handler, to get the uptodate entities from the in memory store.
     // Still need to propogate the errors.
-    let _: array<unknown> =
+    let _: array<Internal.loaderReturn> =
       await eventBatch
       ->Array.keepMap(eventItem => {
-        eventItem.handlerRegister
-        ->Types.HandlerTypes.Register.getLoaderHandler
-        ->Option.map(
-          ({loader}) => {
+        switch eventItem {
+          | {loader: Some(loader)} => {
             let contextEnv = ContextEnv.make(~eventItem, ~logger)
             runEventLoader(~contextEnv, ~loader, ~inMemoryStore, ~loadLayer)->Promise.thenResolve(
               propogate,
-            )
-          },
-        )
+            )->Some
+          }
+          | _ => None
+        }
       })
       ->Promise.all
     Ok()
