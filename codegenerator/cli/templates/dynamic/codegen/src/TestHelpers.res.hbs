@@ -110,7 +110,7 @@ module EventFunctions = {
       //The only purpose is to test the registerContract function and to
       //add the entity to the in memory store for asserting registrations
 
-      let eventBatchQueueItem: Types.eventBatchQueueItem = {
+      let eventItem: Types.eventItem = {
         event,
         eventName,
         contractName,
@@ -126,7 +126,7 @@ module EventFunctions = {
       | Some(contractRegister) =>
         switch contractRegister->EventProcessing.runEventContractRegister(
           ~logger,
-          ~eventBatchQueueItem,
+          ~eventItem,
           ~checkContractIsRegistered=(~chain as _, ~contractAddress as _, ~contractName as _) =>
             false,
           ~dynamicContractRegistrations=None,
@@ -141,7 +141,7 @@ module EventFunctions = {
 
       switch handlerRegister->Types.HandlerTypes.Register.getLoaderHandler {
       | Some(loaderHandler) =>
-        switch await eventBatchQueueItem->EventProcessing.runEventHandler(
+        switch await eventItem->EventProcessing.runEventHandler(
           ~inMemoryStore,
           ~loadLayer,
           ~loaderHandler,

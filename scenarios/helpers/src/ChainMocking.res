@@ -37,7 +37,7 @@ module Crypto = {
 module Make = (Indexer: Indexer.S) => {
   open Indexer
   type log = {
-    eventBatchQueueItem: Types.eventBatchQueueItem,
+    eventItem: Types.eventItem,
     srcAddress: Address.t,
     transactionHash: string,
     eventMod: module(Types.InternalEvent),
@@ -175,7 +175,7 @@ module Make = (Indexer: Indexer.S) => {
       eventMod,
     }): log => {
       let module(Event) = eventMod
-      let log: Types.eventBatchQueueItem = {
+      let log: Types.eventItem = {
         eventName: Event.name,
         contractName: Event.contractName,
         handlerRegister: Event.handlerRegister,
@@ -186,7 +186,7 @@ module Make = (Indexer: Indexer.S) => {
         blockNumber,
         logIndex,
       }
-      {eventBatchQueueItem: log, srcAddress, transactionHash, eventMod}
+      {eventItem: log, srcAddress, transactionHash, eventMod}
     })
 
     let block = {blockNumber, blockTimestamp, blockHash, logs}
@@ -240,7 +240,7 @@ module Make = (Indexer: Indexer.S) => {
           },
         )
         if isLogInConfig {
-          Some(l.eventBatchQueueItem)
+          Some(l.eventItem)
         } else {
           None
         }

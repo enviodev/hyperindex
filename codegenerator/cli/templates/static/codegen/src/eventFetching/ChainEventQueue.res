@@ -2,7 +2,7 @@ type t = {
   pushBacklogCallbacks: SDSL.Queue.t<unit => unit>,
   popBacklogCallbacks: SDSL.Queue.t<unit => unit>,
   maxQueueSize: int,
-  queue: SDSL.Queue.t<Types.eventBatchQueueItem>,
+  queue: SDSL.Queue.t<Types.eventItem>,
 }
 
 let make = (~maxQueueSize): t => {
@@ -37,12 +37,12 @@ let isQueueAtMax = self => self.queue->SDSL.Queue.size >= self.maxQueueSize
 /**
 Pushes Item Regardless of max size and returns true if queue is over max size
 */
-let pushItem = (self: t, item: Types.eventBatchQueueItem) => {
+let pushItem = (self: t, item: Types.eventItem) => {
   self.queue->SDSL.Queue.push(item)->ignore
   self->isQueueAtMax
 }
 
-let awaitQueueSpaceAndPushItem = async (self: t, item: Types.eventBatchQueueItem) => {
+let awaitQueueSpaceAndPushItem = async (self: t, item: Types.eventItem) => {
   //Check if the queue is already full and wait for space before
   //pushing next batch
   let currentQueueSize = self.queue->SDSL.Queue.size
@@ -67,7 +67,7 @@ let handlePushBackLogCallbacks = (self: t) => {
   }
 }
 
-let popSingleAndAwaitItem = async (self: t): Types.eventBatchQueueItem => {
+let popSingleAndAwaitItem = async (self: t): Types.eventItem => {
   let optItem = self.queue->SDSL.Queue.pop
 
   let item = switch optItem {
@@ -86,7 +86,7 @@ let popSingleAndAwaitItem = async (self: t): Types.eventBatchQueueItem => {
   item
 }
 
-let popSingle = (self: t): option<Types.eventBatchQueueItem> => {
+let popSingle = (self: t): option<Types.eventItem> => {
   let optItem = self.queue->SDSL.Queue.pop
 
   self->handlePushBackLogCallbacks
@@ -94,6 +94,6 @@ let popSingle = (self: t): option<Types.eventBatchQueueItem> => {
   optItem
 }
 
-let peekFront = (self: t): option<Types.eventBatchQueueItem> => {
+let peekFront = (self: t): option<Types.eventItem> => {
   self.queue->SDSL.Queue.front
 }

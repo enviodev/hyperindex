@@ -93,7 +93,7 @@ let isRollingBack = state =>
   | _ => false
   }
 
-type arbitraryEventQueue = array<Types.eventBatchQueueItem>
+type arbitraryEventQueue = array<Types.eventItem>
 
 type shouldExit = ExitWithSuccess | NoExit
 type action =
@@ -1252,10 +1252,10 @@ let injectedTaskReducer = (
             }
             //On other chains, filter out evennts based on the first change present on the chain after the reorg
             rolledBackCf->ChainFetcher.addProcessingFilter(
-              ~filter=eventBatchQueueItem => {
+              ~filter=eventItem => {
                 //Filter out events that occur passed the block where the query starts but
                 //are lower than the timestamp where we rolled back to
-                (eventBatchQueueItem.blockNumber, eventBatchQueueItem.logIndex) >=
+                (eventItem.blockNumber, eventItem.logIndex) >=
                 (firstChangeEvent.blockNumber, firstChangeEvent.logIndex)
               },
               ~isValid=(~fetchState) => {

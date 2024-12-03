@@ -53,7 +53,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
       let numberOfEventsInBatch = getRandomInt(0, 2 * averageEventsPerBlock)
 
       for logIndex in 0 to numberOfEventsInBatch {
-        let batchItem: Types.eventBatchQueueItem = {
+        let batchItem: Types.eventItem = {
           timestamp: currentTime.contents,
           chain,
           blockNumber: currentBlockNumber.contents,
@@ -158,7 +158,7 @@ describe("ChainManager", () => {
           _allEvents,
         ) = populateChainQueuesWithRandomEvents()
 
-        let defaultFirstEvent: Types.eventBatchQueueItem = {
+        let defaultFirstEvent: Types.eventItem = {
           timestamp: 0,
           chain: MockConfig.chain1,
           blockNumber: 0,
@@ -297,7 +297,7 @@ describe("determineNextEvent", () => {
     )
 
     let makeNoItem = timestamp => FetchState.NoItem({blockTimestamp: timestamp, blockNumber: 0})
-    let makeMockQItem = (timestamp, chain): Types.eventBatchQueueItem => {
+    let makeMockQItem = (timestamp, chain): Types.eventItem => {
       {
         timestamp,
         chain,

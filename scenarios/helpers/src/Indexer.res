@@ -43,7 +43,7 @@ module type S = {
     }
     module type InternalEvent = Event with type eventArgs = Internal.eventParams
 
-    type eventBatchQueueItem = {
+    type eventItem = {
       eventName: string,
       contractName: string,
       handlerRegister: HandlerTypes.Register.t<Internal.eventParams>,
@@ -102,7 +102,7 @@ module type S = {
     type blockRangeFetchResponse = {
       currentBlockHeight: int,
       reorgGuard: reorgGuard,
-      parsedQueueItems: array<Types.eventBatchQueueItem>,
+      parsedQueueItems: array<Types.eventItem>,
       fromBlockQueried: int,
       heighestQueriedBlockNumber: int,
       latestFetchedBlockTimestamp: int,

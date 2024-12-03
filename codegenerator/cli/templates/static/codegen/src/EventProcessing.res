@@ -36,11 +36,11 @@ module EventsProcessed = {
 }
 
 let updateEventSyncState = (
-  eventBatchQueueItem: Types.eventBatchQueueItem,
+  eventItem: Types.eventItem,
   ~inMemoryStore: InMemoryStore.t,
   ~isPreRegisteringDynamicContracts,
 ) => {
-  let {event, chain, blockNumber, timestamp: blockTimestamp} = eventBatchQueueItem
+  let {event, chain, blockNumber, timestamp: blockTimestamp} = eventItem
   let {logIndex} = event
   let chainId = chain->ChainMap.Chain.toChainId
   let _ = inMemoryStore.eventSyncState->InMemoryTable.set(
@@ -59,11 +59,11 @@ type dynamicContractRegistration = FetchState.dynamicContractRegistration
 
 type dynamicContractRegistrations = {
   registrations: array<dynamicContractRegistration>,
-  unprocessedBatch: array<Types.eventBatchQueueItem>,
+  unprocessedBatch: array<Types.eventItem>,
 }
 
 let addToDynamicContractRegistrations = (
-  eventBatchQueueItem: Types.eventBatchQueueItem,
+  eventItem: Types.eventItem,
   ~dynamicContracts,
   ~registeringEventBlockNumber,
   ~registeringEventLogIndex,
@@ -76,7 +76,7 @@ let addToDynamicContractRegistrations = (
   let unprocessedBatch = [
     ...unprocessedBatch,
     {
-      ...eventBatchQueueItem,
+      ...eventItem,
       hasRegisteredDynamicContracts: true,
     },
   ]
@@ -85,7 +85,7 @@ let addToDynamicContractRegistrations = (
     FetchState.dynamicContracts,
     registeringEventBlockNumber,
     registeringEventLogIndex,
-    registeringEventChain: eventBatchQueueItem.chain,
+    registeringEventChain: eventItem.chain,
   }
 
   {
@@ -115,7 +115,7 @@ let checkContractIsInCurrentRegistrations = (
 
 let runEventContractRegister = (
   contractRegister: Types.HandlerTypes.args<_> => unit,
-  ~eventBatchQueueItem: Types.eventBatchQueueItem,
+  ~eventItem: Types.eventItem,
   ~logger,
   ~checkContractIsRegistered,
   ~dynamicContractRegistrations: option<dynamicContractRegistrations>,
@@ -123,9 +123,9 @@ let runEventContractRegister = (
   ~preRegisterLatestProcessedBlocks=?,
   ~shouldSaveHistory,
 ) => {
-  let {chain, event, blockNumber} = eventBatchQueueItem
+  let {chain, event, blockNumber} = eventItem
 
-  let contextEnv = ContextEnv.make(~eventBatchQueueItem, ~logger)
+  let contextEnv = ContextEnv.make(~eventItem, ~logger)
 
   switch contractRegister(
     contextEnv->ContextEnv.getContractRegisterArgs(~inMemoryStore, ~shouldSaveHistory),
@@ -152,7 +152,7 @@ let runEventContractRegister = (
       )
 
     let addToDynamicContractRegistrations =
-      eventBatchQueueItem->(
+      eventItem->(
         addToDynamicContractRegistrations(
           ~registeringEventBlockNumber=blockNumber,
           ~registeringEventLogIndex=event.logIndex,
@@ -174,14 +174,14 @@ let runEventContractRegister = (
 
     switch preRegisterLatestProcessedBlocks {
     | Some(latestProcessedBlocks) =>
-      eventBatchQueueItem->updateEventSyncState(
+      eventItem->updateEventSyncState(
         ~inMemoryStore,
         ~isPreRegisteringDynamicContracts=true,
       )
       latestProcessedBlocks :=
         latestProcessedBlocks.contents->EventsProcessed.updateEventsProcessed(
-          ~chain=eventBatchQueueItem.chain,
-          ~blockNumber=eventBatchQueueItem.blockNumber,
+          ~chain=eventItem.chain,
+          ~blockNumber=eventItem.blockNumber,
         )
     | None => ()
     }
@@ -209,7 +209,7 @@ let runEventLoader = async (
 }
 
 let addEventToRawEvents = (
-  eventBatchQueueItem: Types.eventBatchQueueItem,
+  eventItem: Types.eventItem,
   ~inMemoryStore: InMemoryStore.t,
 ) => {
   let {
@@ -220,7 +220,7 @@ let addEventToRawEvents = (
     blockNumber,
     paramsRawEventSchema,
     timestamp: blockTimestamp,
-  } = eventBatchQueueItem
+  } = eventItem
   let {block, transaction, params, logIndex, srcAddress} = event
   let chainId = chain->ChainMap.Chain.toChainId
   let eventId = EventUtils.packEventIndex(~logIndex, ~blockNumber)
@@ -254,7 +254,7 @@ let addEventToRawEvents = (
 }
 
 let runEventHandler = (
-  eventBatchQueueItem: Types.eventBatchQueueItem,
+  eventItem: Types.eventItem,
   ~loaderHandler: Types.HandlerTypes.loaderHandler<_>,
   ~inMemoryStore,
   ~logger,
@@ -263,7 +263,7 @@ let runEventHandler = (
 ) => {
   open ErrorHandling.ResultPropogateEnv
   runAsyncEnv(async () => {
-    let contextEnv = ContextEnv.make(~eventBatchQueueItem, ~logger)
+    let contextEnv = ContextEnv.make(~eventItem, ~logger)
     let {loader, handler} = loaderHandler
 
     //Include the load in time before handler
@@ -294,7 +294,7 @@ let runEventHandler = (
 
         Benchmark.addSummaryData(
           ~group="Handlers Per Event",
-          ~label=`${eventBatchQueueItem.contractName} ${eventBatchQueueItem.eventName} Handler (ms)`,
+          ~label=`${eventItem.contractName} ${eventItem.eventName} Handler (ms)`,
           ~value=timeEnd,
           ~decimalPlaces=4,
         )
@@ -305,7 +305,7 @@ let runEventHandler = (
 }
 
 let runHandler = async (
-  eventBatchQueueItem: Types.eventBatchQueueItem,
+  eventItem: Types.eventItem,
   ~latestProcessedBlocks,
   ~inMemoryStore,
   ~logger,
@@ -313,9 +313,9 @@ let runHandler = async (
   ~config: Config.t,
   ~isInReorgThreshold,
 ) => {
-  let result = switch eventBatchQueueItem.handlerRegister->Types.HandlerTypes.Register.getLoaderHandler {
+  let result = switch eventItem.handlerRegister->Types.HandlerTypes.Register.getLoaderHandler {
   | Some(loaderHandler) =>
-    await eventBatchQueueItem->runEventHandler(
+    await eventItem->runEventHandler(
       ~loaderHandler,
       ~inMemoryStore,
       ~logger,
@@ -326,34 +326,34 @@ let runHandler = async (
   }
 
   result->Result.map(() => {
-    eventBatchQueueItem->updateEventSyncState(
+    eventItem->updateEventSyncState(
       ~inMemoryStore,
       ~isPreRegisteringDynamicContracts=false,
     )
 
     if config.enableRawEvents {
-      eventBatchQueueItem->addEventToRawEvents(~inMemoryStore)
+      eventItem->addEventToRawEvents(~inMemoryStore)
     }
 
     latestProcessedBlocks->EventsProcessed.updateEventsProcessed(
-      ~chain=eventBatchQueueItem.chain,
-      ~blockNumber=eventBatchQueueItem.blockNumber,
+      ~chain=eventItem.chain,
+      ~blockNumber=eventItem.blockNumber,
     )
   })
 }
 
 let addToUnprocessedBatch = (
-  eventBatchQueueItem: Types.eventBatchQueueItem,
+  eventItem: Types.eventItem,
   dynamicContractRegistrations,
 ) => {
   {
     ...dynamicContractRegistrations,
-    unprocessedBatch: [...dynamicContractRegistrations.unprocessedBatch, eventBatchQueueItem],
+    unprocessedBatch: [...dynamicContractRegistrations.unprocessedBatch, eventItem],
   }
 }
 
 let rec registerDynamicContracts = (
-  eventBatch: array<Types.eventBatchQueueItem>,
+  eventBatch: array<Types.eventItem>,
   ~index=0,
   ~checkContractIsRegistered,
   ~logger,
@@ -365,24 +365,24 @@ let rec registerDynamicContracts = (
 ) => {
   switch eventBatch[index] {
   | None => (eventsBeforeDynamicRegistrations, dynamicContractRegistrations)->Ok
-  | Some(eventBatchQueueItem) =>
+  | Some(eventItem) =>
     let dynamicContractRegistrationsResult = if (
-      eventBatchQueueItem.hasRegisteredDynamicContracts->Option.getWithDefault(false)
+      eventItem.hasRegisteredDynamicContracts->Option.getWithDefault(false)
     ) {
       //If an item has already been registered, it would have been
       //put back on the arbitrary events queue and is now being reprocessed
       dynamicContractRegistrations
       ->Option.map(dynamicContractRegistrations =>
-        addToUnprocessedBatch(eventBatchQueueItem, dynamicContractRegistrations)
+        addToUnprocessedBatch(eventItem, dynamicContractRegistrations)
       )
       ->Ok
     } else {
-      switch eventBatchQueueItem.handlerRegister->Types.HandlerTypes.Register.getContractRegister {
+      switch eventItem.handlerRegister->Types.HandlerTypes.Register.getContractRegister {
       | Some(handler) =>
         handler->runEventContractRegister(
           ~logger,
           ~checkContractIsRegistered,
-          ~eventBatchQueueItem,
+          ~eventItem,
           ~dynamicContractRegistrations,
           ~inMemoryStore,
           ~preRegisterLatestProcessedBlocks?,
@@ -391,7 +391,7 @@ let rec registerDynamicContracts = (
       | None =>
         dynamicContractRegistrations
         ->Option.map(dynamicContractRegistrations =>
-          addToUnprocessedBatch(eventBatchQueueItem, dynamicContractRegistrations)
+          addToUnprocessedBatch(eventItem, dynamicContractRegistrations)
         )
         ->Ok
       }
@@ -401,7 +401,7 @@ let rec registerDynamicContracts = (
     | Ok(dynamicContractRegistrations) =>
       if dynamicContractRegistrations->Option.isNone {
         //Mutate for performance (could otherwise use concat?)
-        eventsBeforeDynamicRegistrations->Js.Array2.push(eventBatchQueueItem)->ignore
+        eventsBeforeDynamicRegistrations->Js.Array2.push(eventItem)->ignore
       }
       eventBatch->registerDynamicContracts(
         ~index=index + 1,
@@ -419,7 +419,7 @@ let rec registerDynamicContracts = (
 }
 
 let runLoaders = (
-  eventBatch: array<Types.eventBatchQueueItem>,
+  eventBatch: array<Types.eventItem>,
   ~loadLayer,
   ~inMemoryStore,
   ~logger,
@@ -432,12 +432,12 @@ let runLoaders = (
     // Still need to propogate the errors.
     let _: array<unknown> =
       await eventBatch
-      ->Array.keepMap(eventBatchQueueItem => {
-        eventBatchQueueItem.handlerRegister
+      ->Array.keepMap(eventItem => {
+        eventItem.handlerRegister
         ->Types.HandlerTypes.Register.getLoaderHandler
         ->Option.map(
           ({loader}) => {
-            let contextEnv = ContextEnv.make(~eventBatchQueueItem, ~logger)
+            let contextEnv = ContextEnv.make(~eventItem, ~logger)
             runEventLoader(~contextEnv, ~loader, ~inMemoryStore, ~loadLayer)->Promise.thenResolve(
               propogate,
             )
@@ -450,7 +450,7 @@ let runLoaders = (
 }
 
 let runHandlers = (
-  eventBatch: array<Types.eventBatchQueueItem>,
+  eventBatch: array<Types.eventItem>,
   ~inMemoryStore,
   ~latestProcessedBlocks,
   ~logger,
@@ -462,12 +462,12 @@ let runHandlers = (
   let latestProcessedBlocks = ref(latestProcessedBlocks)
   runAsyncEnv(async () => {
     for i in 0 to eventBatch->Array.length - 1 {
-      let eventBatchQueueItem = eventBatch->Js.Array2.unsafe_get(i)
+      let eventItem = eventBatch->Js.Array2.unsafe_get(i)
 
       latestProcessedBlocks :=
         (
           await runHandler(
-            eventBatchQueueItem,
+            eventItem,
             ~inMemoryStore,
             ~logger,
             ~latestProcessedBlocks=latestProcessedBlocks.contents,
@@ -508,7 +508,7 @@ type batchProcessed = {
 }
 
 let getDynamicContractRegistrations = (
-  ~eventBatch: array<Types.eventBatchQueueItem>,
+  ~eventBatch: array<Types.eventItem>,
   ~latestProcessedBlocks: EventsProcessed.t,
   ~checkContractIsRegistered,
   ~config,
@@ -556,7 +556,7 @@ let getDynamicContractRegistrations = (
 }
 
 let processEventBatch = (
-  ~eventBatch: array<Types.eventBatchQueueItem>,
+  ~eventBatch: array<Types.eventItem>,
   ~inMemoryStore: InMemoryStore.t,
   ~isInReorgThreshold,
   ~latestProcessedBlocks: EventsProcessed.t,
@@ -579,7 +579,7 @@ let processEventBatch = (
     //Register all the dynamic contracts in this batch,
     //only continue processing events before the first dynamic contract registration
     let (
-      eventsBeforeDynamicRegistrations: array<Types.eventBatchQueueItem>,
+      eventsBeforeDynamicRegistrations: array<Types.eventItem>,
       dynamicContractRegistrations,
     ) =
       eventBatch

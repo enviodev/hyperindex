@@ -309,7 +309,7 @@ module Make = (
                         srcAddress: log.address,
                         logIndex: log.logIndex,
                       }->Internal.fromGenericEvent,
-                    }: Types.eventBatchQueueItem
+                    }: Types.eventItem
                   )
                 }
               )(),

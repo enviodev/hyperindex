@@ -505,7 +505,7 @@ module Make = (
               srcAddress: contractAddress,
               logIndex: receiptIndex,
             },
-          }: Types.eventBatchQueueItem
+          }: Types.eventItem
         )
       })
 

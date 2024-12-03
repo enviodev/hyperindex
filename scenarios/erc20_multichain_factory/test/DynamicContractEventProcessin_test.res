@@ -77,7 +77,7 @@ describe("dynamic contract event processing test", () => {
   })
   Async.it("One registration event + non registration event", async () => {
     let block0 = Mock.mockChainData.blocks->Js.Array2.unsafe_get(0)
-    let block0Events = block0.logs->Array.map(l => l.eventBatchQueueItem)
+    let block0Events = block0.logs->Array.map(l => l.eventItem)
     let res = await EventProcessing.processEventBatch(
       ~eventBatch=block0Events,
       ~config,
@@ -106,7 +106,7 @@ describe("dynamic contract event processing test", () => {
 
   Async.it("One registration event with dynamicContracts, one without", async () => {
     let block1 = Mock.mockChainData.blocks->Js.Array2.unsafe_get(1)
-    let block1Events = block1.logs->Array.map(l => l.eventBatchQueueItem)
+    let block1Events = block1.logs->Array.map(l => l.eventItem)
     let res = await EventProcessing.processEventBatch(
       ~eventBatch=block1Events,
       ~config,
@@ -136,7 +136,7 @@ describe("dynamic contract event processing test", () => {
   })
   Async.it("One event without dynamicContracts, one with", async () => {
     let block2 = Mock.mockChainData.blocks->Js.Array2.unsafe_get(2)
-    let block2Events = block2.logs->Array.map(l => l.eventBatchQueueItem)
+    let block2Events = block2.logs->Array.map(l => l.eventItem)
     let res = await EventProcessing.processEventBatch(
       ~eventBatch=block2Events,
       ~config,

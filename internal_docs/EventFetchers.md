@@ -8,12 +8,12 @@ Here are [the original diagrams](https://www.figma.com/file/YC7rKkGC65Out0QlQ2jx
 classDiagram
   class ChainManager {
     chainFetchers: dictionary(ChainFetcher.t)
-    arbitraryEventPriorityQueue: PriorityQueue(eventBatchQueueItem)
+    arbitraryEventPriorityQueue: PriorityQueue(eventItem)
 
     startFetchers(): void
     getChainFetcher(chainId: int): ChainFetcher.t
     createBatch(minBatchSize: int, maxBatchSize: int): promise(eventType[])
-    addItemToArbitraryEvents(eventItem: EventFetching.eventBatchQueueItem): void
+    addItemToArbitraryEvents(eventItem: EventFetching.eventItem): void
   }
 ```
 
