@@ -4,10 +4,10 @@ open ChainWorker
 exception InvalidTransactionField({message: string})
 
 let makeThrowingGetEventBlock = (~getBlock) => {
-  //Types.blockFields is a subset of  Ethers.JsonRpcProvider.block so we can safely cast
-  let blockFieldsFromBlock: Ethers.JsonRpcProvider.block => Types.Block.t = Utils.magic
+  // The block fields type is a subset of Ethers.JsonRpcProvider.block so we can safely cast
+  let blockFieldsFromBlock: Ethers.JsonRpcProvider.block => Internal.eventBlock = Utils.magic
 
-  async (log: Ethers.log): Types.Block.t => {
+  async (log: Ethers.log): Internal.eventBlock => {
     (await getBlock(log.blockNumber))->blockFieldsFromBlock
   }
 }

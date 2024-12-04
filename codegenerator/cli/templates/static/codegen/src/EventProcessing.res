@@ -241,7 +241,7 @@ let addEventToRawEvents = (
     blockNumber,
     logIndex,
     srcAddress,
-    blockHash: block->Types.Block.getInternalId,
+    blockHash: block->Types.Block.getId,
     blockTimestamp,
     blockFields,
     transactionFields,

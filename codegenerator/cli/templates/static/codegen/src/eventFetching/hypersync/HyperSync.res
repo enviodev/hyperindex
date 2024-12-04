@@ -21,8 +21,8 @@ type hyperSyncPage<'item> = {
 
 type logsQueryPageItem = {
   log: Log.t,
-  block: Types.Block.t,
-  transaction: Types.Transaction.t,
+  block: Internal.eventBlock,
+  transaction: Internal.eventTransaction,
 }
 
 type logsQueryPage = hyperSyncPage<logsQueryPageItem>
@@ -135,7 +135,6 @@ module LogsQuery = {
     }
 
     //Topics can be nullable and still need to be filtered
-    //Address is not yet checksummed (TODO this should be done in the client)
     let logUnsanitized: Log.t = event.log->Utils.magic
     let topics = event.log.topics->Option.getUnsafe->Array.keepMap(Js.Nullable.toOption)
     let address = event.log.address->Option.getUnsafe
