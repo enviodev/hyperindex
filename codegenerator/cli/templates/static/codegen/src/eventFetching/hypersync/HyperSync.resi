@@ -36,13 +36,14 @@ let queryErrorToMsq: queryError => string
 
 type queryResponse<'a> = result<'a, queryError>
 let queryLogsPage: (
-  ~serverUrl: string,
+  ~client: HyperSyncClient.t,
   ~fromBlock: int,
   ~toBlock: option<int>,
   ~logSelections: array<LogSelection.t>,
   ~fieldSelection: HyperSyncClient.QueryTypes.fieldSelection,
   ~nonOptionalBlockFieldNames: array<string>,
   ~nonOptionalTransactionFieldNames: array<string>,
+  ~logger: Pino.t
 ) => promise<queryResponse<logsQueryPage>>
 
 let getHeightWithRetry: (~serverUrl: string, ~logger: Pino.t) => promise<int>

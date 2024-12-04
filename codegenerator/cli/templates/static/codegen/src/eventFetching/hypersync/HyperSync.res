@@ -62,30 +62,6 @@ let getExn = (queryResponse: queryResponse<'a>) =>
   | Error(err) => err->queryErrorToExn->raise
   }
 
-//Manage clients in cache so we don't need to reinstantiate each time
-//Ideally client should be passed in as a param to the functions but
-//we are still sharing the same signature with eth archive query builder
-module CachedClients = {
-  let cache: dict<HyperSyncClient.t> = Js.Dict.empty()
-
-  let getClient = url => {
-    switch cache->Utils.Dict.dangerouslyGetNonOption(url) {
-    | Some(client) => client
-    | None =>
-      let newClient = HyperSyncClient.make(
-        ~url,
-        ~bearerToken=Env.envioApiToken,
-        ~maxNumRetries=Env.hyperSyncClientMaxRetries,
-        ~httpReqTimeoutMillis=Env.hyperSyncClientTimeoutMillis,
-      )
-
-      cache->Js.Dict.set(url, newClient)
-
-      newClient
-    }
-  }
-}
-
 module LogsQuery = {
   let makeRequestBody = (
     ~fromBlock,
@@ -177,13 +153,14 @@ module LogsQuery = {
   }
 
   let queryLogsPage = async (
-    ~serverUrl,
+    ~client: HyperSyncClient.t,
     ~fromBlock,
     ~toBlock,
     ~logSelections: array<LogSelection.t>,
     ~fieldSelection,
     ~nonOptionalBlockFieldNames,
     ~nonOptionalTransactionFieldNames,
+    ~logger,
   ): queryResponse<logsQueryPage> => {
     let addressesWithTopics = logSelections->Array.flatMap(({addresses, topicSelections}) =>
       topicSelections->Array.map(({topic0, topic1, topic2, topic3}) => {
@@ -204,13 +181,7 @@ module LogsQuery = {
       ~fieldSelection,
     )
 
-    let hyperSyncClient = CachedClients.getClient(serverUrl)
-
-    let logger = Logging.createChild(
-      ~params={"type": "hypersync query", "fromBlock": fromBlock, "serverUrl": serverUrl},
-    )
-
-    let executeQuery = () => hyperSyncClient.getEvents(~query)
+    let executeQuery = () => client.getEvents(~query)
 
     let res = await executeQuery->Time.retryAsyncWithExponentialBackOff(~logger=Some(logger))
 

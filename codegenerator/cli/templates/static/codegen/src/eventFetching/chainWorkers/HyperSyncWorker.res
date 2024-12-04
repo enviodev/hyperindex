@@ -55,6 +55,13 @@ let makeGetNextPage = (
   ~blockSchema,
   ~transactionSchema,
 ) => {
+  let client = HyperSyncClient.make(
+    ~url=endpointUrl,
+    ~bearerToken=Env.envioApiToken,
+    ~maxNumRetries=Env.hyperSyncClientMaxRetries,
+    ~httpReqTimeoutMillis=Env.hyperSyncClientTimeoutMillis,
+  )
+
   let nonOptionalBlockFieldNames = blockSchema->Utils.Schema.getNonOptionalFieldNames
   let blockFieldSelection =
     blockSchema
@@ -177,13 +184,16 @@ let makeGetNextPage = (
     let pageUnsafe = await Helpers.queryLogsPageWithBackoff(
       () =>
         queryLogsPage(
-          ~serverUrl=endpointUrl,
+          ~client,
           ~fromBlock,
           ~toBlock,
           ~logSelections,
           ~fieldSelection,
           ~nonOptionalBlockFieldNames,
           ~nonOptionalTransactionFieldNames,
+          ~logger=Logging.createChild(
+            ~params={"type": "Hypersync Query", "fromBlock": fromBlock, "serverUrl": endpointUrl},
+          ),
         ),
       logger,
     )
