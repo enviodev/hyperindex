@@ -179,9 +179,9 @@ module HandlerTypes = {
   }
 
   @genType
-  type contractRegisterArgs<'eventArgs> = args<'eventArgs, contractRegistrations>
+  type contractRegisterArgs<'eventArgs> = Internal.genericContractRegisterArgs<eventLog<'eventArgs>, contractRegistrations>
   @genType
-  type contractRegister<'eventArgs> = contractRegisterArgs<'eventArgs> => unit
+  type contractRegister<'eventArgs> = Internal.genericContractRegister<contractRegisterArgs<'eventArgs>>
 
   @genType
   type loaderArgs<'eventArgs> = args<'eventArgs, loaderContext>
@@ -289,7 +289,7 @@ module HandlerTypes = {
     let getHandler: t<'eventArgs> => option<
       handler<Internal.eventParams, Internal.loaderReturn>,
     >
-    let getContractRegister: t<'eventArgs> => option<contractRegister<Internal.eventParams>>
+    let getContractRegister: t<'eventArgs> => option<Internal.contractRegister>
     let getEventOptions: t<'eventArgs> => EventOptions.t
     let hasRegistration: t<'eventArgs> => bool
   } = {
@@ -323,7 +323,7 @@ module HandlerTypes = {
 
     let getHandler = (t: t<'eventArgs>) => t->getLoaderHandler->Belt.Option.map(lh => lh.handler)
 
-    let getContractRegister = (t: t<'eventArgs>) => t.contractRegister->(Utils.magic: option<contractRegister<'eventArgs>> => option<contractRegister<Internal.eventParams>>)
+    let getContractRegister = (t: t<'eventArgs>) => t.contractRegister->(Utils.magic: option<contractRegister<'eventArgs>> => option<Internal.contractRegister>)
 
     let getEventOptions = ({eventOptions, topic0}: t<'eventArgs>): EventOptions.t =>
       switch eventOptions {
@@ -596,7 +596,7 @@ type eventItem = {
   contractName: string,
   loader: option<HandlerTypes.loader<Internal.eventParams, Internal.loaderReturn>>,
   handler: option<HandlerTypes.handler<Internal.eventParams, Internal.loaderReturn>>,
-  contractRegister: option<HandlerTypes.contractRegister<Internal.eventParams>>,
+  contractRegister: option<Internal.contractRegister>,
   timestamp: int,
   chain: ChainMap.Chain.t,
   blockNumber: int,

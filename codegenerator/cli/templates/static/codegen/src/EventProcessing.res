@@ -114,7 +114,7 @@ let checkContractIsInCurrentRegistrations = (
 }
 
 let runEventContractRegister = (
-  contractRegister: Types.HandlerTypes.args<_> => unit,
+  contractRegister: Internal.contractRegister,
   ~eventItem: Types.eventItem,
   ~logger,
   ~checkContractIsRegistered,
