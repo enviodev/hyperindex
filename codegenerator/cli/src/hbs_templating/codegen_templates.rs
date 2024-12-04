@@ -16,7 +16,9 @@ use crate::{
         handler_paths::HandlerPathsTemplate, path_utils::add_trailing_relative_dot,
         ParsedProjectPaths,
     },
-    rescript_types::{RescriptRecordField, RescriptTypeExpr, RescriptTypeIdent},
+    rescript_types::{
+        RescriptRecordField, RescriptSchemaMode, RescriptTypeExpr, RescriptTypeIdent,
+    },
     template_dirs::TemplateDirs,
     utils::text::{Capitalize, CapitalizedOptions, CaseOptions},
 };
@@ -186,7 +188,7 @@ impl EntityParamTypeTemplate {
 
         Ok(EntityParamTypeTemplate {
             field_name: field.name.to_capitalized_options(),
-            res_schema_code: res_type.to_rescript_schema(true),
+            res_schema_code: res_type.to_rescript_schema(&RescriptSchemaMode::ForDb),
             res_type,
             is_derived_from,
             is_entity_field,
@@ -609,7 +611,7 @@ impl EventTemplate {
                     event_name: event_name.clone(),
                     data_type: data_type_expr.to_string(),
                     params_raw_event_schema: data_type_expr
-                        .to_rescript_schema(&"eventArgs".to_string(), true),
+                        .to_rescript_schema(&"eventArgs".to_string(), &RescriptSchemaMode::ForDb),
                     convert_hyper_sync_event_args_code:
                         Self::generate_convert_hyper_sync_event_args_code(params),
                     event_filter_type: Self::generate_event_filter_type(params),
@@ -634,7 +636,7 @@ impl EventTemplate {
                             data_type: type_indent.to_string(),
                             params_raw_event_schema: format!(
                                 "{}->Utils.Schema.coerceToJsonPgType",
-                                type_indent.to_rescript_schema(true)
+                                type_indent.to_rescript_schema(&RescriptSchemaMode::ForDb)
                             ),
                             convert_hyper_sync_event_args_code:
                                 Self::CONVERT_HYPER_SYNC_EVENT_ARGS_NOOP.to_string(),
@@ -714,7 +716,7 @@ let eventSignatures = [{}]"#,
                     // we need to remember that abi might contain ` and we should escape it
                     abi.path_buf.to_string_lossy(),
                     all_abi_type_declarations.to_string(),
-                    all_abi_type_declarations.to_rescript_schema(true)
+                    all_abi_type_declarations.to_rescript_schema(&RescriptSchemaMode::ForDb)
                 )
             }
         };
@@ -899,13 +901,15 @@ impl FieldSelection {
             transaction_fields: transaction_field_templates,
             block_fields: block_field_templates,
             transaction_type: transaction_expr.to_string(),
-            transaction_schema: transaction_expr.to_rescript_schema(&"t".to_string(), false),
+            transaction_schema: transaction_expr
+                .to_rescript_schema(&"t".to_string(), &RescriptSchemaMode::ForFieldSelection),
             transaction_raw_event_schema: transaction_expr
-                .to_rescript_schema(&"t".to_string(), true),
+                .to_rescript_schema(&"t".to_string(), &RescriptSchemaMode::ForDb),
             block_type: block_expr.to_string(),
-            block_schema: block_expr.to_rescript_schema(&"t".to_string(), false),
+            block_schema: block_expr
+                .to_rescript_schema(&"t".to_string(), &RescriptSchemaMode::ForFieldSelection),
             block_raw_event_schema: block_raw_event_expr
-                .to_rescript_schema(&"rawEventFields".to_string(), true),
+                .to_rescript_schema(&"rawEventFields".to_string(), &RescriptSchemaMode::ForDb),
             block_raw_event_type: block_raw_event_expr.to_string(),
         }
     }

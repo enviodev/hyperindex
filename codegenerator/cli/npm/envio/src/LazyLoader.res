@@ -11,9 +11,9 @@ type rec asyncMap<'key, 'value> = {
   // How long to wait before cancelling a load request
   _timeoutMillis: int,
   // The promises we return to callers. We satisfy them asynchronously.
-  externalPromises: dict<promise<'value>>,
+  externalPromises: Utils.Map.t<'key, promise<'value>>,
   // The handled used to populate the external promises once we have loaded their data.
-  resolvers: dict<'value => unit>,
+  resolvers: Utils.Map.t<'key, 'value => unit>,
   // The keys currently being loaded
   inProgress: Utils.Set.t<'key>,
   // Keys  for items that we have not started loading yet.
@@ -39,8 +39,8 @@ let make = (
   _loaderPoolSize: loaderPoolSize,
   _retryDelayMillis: retryDelayMillis,
   _timeoutMillis: timeoutMillis,
-  externalPromises: Js.Dict.empty(),
-  resolvers: Js.Dict.empty(),
+  externalPromises: Utils.Map.make(),
+  resolvers: Utils.Map.make(),
   inProgress: Utils.Set.make(),
   loaderQueue: SDSL.Queue.make(),
   loadedKeys: SDSL.Queue.make(),
@@ -59,10 +59,6 @@ let timeoutAfter = timeoutMillis =>
   )
 
 let rec loadNext = async (am: asyncMap<'key, 'value>, k: 'key) => {
-  // Assume that the key is either string or number.
-  // If it's not the case, then we need to start using Map
-  let stringKey = k->(Utils.magic: 'key => string)
-
   // Track that we are loading it now
   let _ = am.inProgress->Utils.Set.add(k)
 
@@ -70,9 +66,10 @@ let rec loadNext = async (am: asyncMap<'key, 'value>, k: 'key) => {
     let val = await Promise.race([am.loaderFn(k), timeoutAfter(am._timeoutMillis)])
     // Resolve the external promise
     am.resolvers
-    ->Utils.Dict.dangerouslyGetNonOption(stringKey)
-    ->Belt.Option.map(r => r(val))
-    ->ignore
+    ->Utils.Map.get(k)
+    ->Belt.Option.forEach(r => {
+      r(val)
+    })
 
     // Track that it is no longer in progress
     let _ = am.inProgress->Utils.Set.delete(k)
@@ -84,7 +81,8 @@ let rec loadNext = async (am: asyncMap<'key, 'value>, k: 'key) => {
     if loadedKeysNumber > am._cacheSize {
       switch am.loadedKeys->SDSL.Queue.pop {
       | None => ()
-      | Some(old) => am.externalPromises->deleteKey(old->(Utils.magic: 'key => string))
+      | Some(old) =>
+        let _ = am.externalPromises->Utils.Map.delete(old)
       }
     }
 
@@ -110,19 +108,16 @@ let rec loadNext = async (am: asyncMap<'key, 'value>, k: 'key) => {
 }
 
 let get = (am: asyncMap<'key, 'value>, k: 'key): promise<'value> => {
-  // Assume that the key is either string or number.
-  // If it's not the case, then we need to start using Map
-  let stringKey = k->(Utils.magic: 'key => string)
-  switch am.externalPromises->Utils.Dict.dangerouslyGetNonOption(stringKey) {
+  switch am.externalPromises->Utils.Map.get(k) {
   | Some(x) => x
   | None => {
       // Create a promise to deliver the eventual value asynchronously
       let promise = Promise.make((resolve, _) => {
         // Expose the resolver externally, so that we can run it from the loader.
-        am.resolvers->Js.Dict.set(stringKey, resolve)
+        let _ = am.resolvers->Utils.Map.set(k, resolve)
       })
       // Cache the promise to de-duplicate requests
-      am.externalPromises->Js.Dict.set(stringKey, promise)
+      let _ = am.externalPromises->Utils.Map.set(k, promise)
 
       //   Do we have a free loader in the pool?
       if am.inProgress->Utils.Set.size < am._loaderPoolSize {
