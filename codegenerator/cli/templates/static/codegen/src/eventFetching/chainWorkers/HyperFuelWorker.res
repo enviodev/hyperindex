@@ -485,15 +485,12 @@ module Make = (
         | _ => Js.Exn.raiseError("Unexpected bug in the event routing logic")
         }
 
-        let loaderHandler =
-          eventConfig.handlerRegister->Types.HandlerTypes.Register.getLoaderHandler
-
         (
           {
             eventName: eventConfig.name,
             contractName: contractConfig.name,
-            loader: loaderHandler->Option.map(lh => lh.loader),
-            handler: loaderHandler->Option.map(lh => lh.handler),
+            loader: eventConfig.handlerRegister->Types.HandlerTypes.Register.getLoader,
+            handler: eventConfig.handlerRegister->Types.HandlerTypes.Register.getHandler,
             contractRegister: eventConfig.handlerRegister->Types.HandlerTypes.Register.getContractRegister,
             paramsRawEventSchema: eventConfig.paramsRawEventSchema,
             timestamp: block.time,

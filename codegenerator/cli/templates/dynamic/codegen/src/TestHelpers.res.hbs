@@ -110,10 +110,8 @@ module EventFunctions = {
       //The only purpose is to test the registerContract function and to
       //add the entity to the in memory store for asserting registrations
 
-      let loaderHandler =
-        handlerRegister->Types.HandlerTypes.Register.getLoaderHandler
-      let loader = loaderHandler->Belt.Option.map(lh => lh.loader)
-      let handler = loaderHandler->Belt.Option.map(lh => lh.handler)
+      let loader = handlerRegister->Types.HandlerTypes.Register.getLoader
+      let handler = handlerRegister->Types.HandlerTypes.Register.getHandler
       let eventItem: Types.eventItem = {
         event,
         eventName,

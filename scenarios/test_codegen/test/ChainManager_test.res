@@ -60,7 +60,9 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
           logIndex,
           eventName: "MockEvent",
           contractName: "MockContract",
-          handlerRegister: Utils.magic("Mock event handlerRegister in fetchstate test"),
+          handler: None,
+          loader: None,
+          contractRegister: None,
           paramsRawEventSchema: Utils.magic("Mock event paramsRawEventSchema in fetchstate test"),
           event: `mock event (chainId)${chain->ChainMap.Chain.toString} - (blockNumber)${currentBlockNumber.contents->string_of_int} - (logIndex)${logIndex->string_of_int} - (timestamp)${currentTime.contents->string_of_int}`->Utils.magic,
         }
@@ -165,7 +167,9 @@ describe("ChainManager", () => {
           logIndex: 0,
           eventName: "MockEvent",
           contractName: "MockContract",
-          handlerRegister: Utils.magic("Mock event handlerRegister in fetchstate test"),
+          handler: None,
+          loader: None,
+          contractRegister: None,
           paramsRawEventSchema: Utils.magic("Mock event paramsRawEventSchema in fetchstate test"),
           event: `mock initial event`->Utils.magic,
         }
@@ -305,7 +309,9 @@ describe("determineNextEvent", () => {
         logIndex: 123456,
         eventName: "MockEvent",
         contractName: "MockContract",
-        handlerRegister: Utils.magic("Mock event handlerRegister"),
+        handler: None,
+        loader: None,
+        contractRegister: None,
         paramsRawEventSchema: Utils.magic("Mock event paramsRawEventSchema"),
         event: "SINGLE TEST EVENT"->Utils.magic,
       }

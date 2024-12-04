@@ -146,11 +146,9 @@ let newGravatarEventToBatchItem = (
     logIndex: event.logIndex,
     eventName: "NewGravatar",
     contractName: "Gravatar",
-    handlerRegister: Types.Gravatar.NewGravatar.handlerRegister->(
-      Utils.magic: Types.HandlerTypes.Register.t<
-        Types.Gravatar.NewGravatar.eventArgs,
-      > => Types.HandlerTypes.Register.t<Internal.eventParams>
-    ),
+    handler: Types.Gravatar.NewGravatar.handlerRegister->Types.HandlerTypes.Register.getHandler,
+    loader: Types.Gravatar.NewGravatar.handlerRegister->Types.HandlerTypes.Register.getLoader,
+    contractRegister: Types.Gravatar.NewGravatar.handlerRegister->Types.HandlerTypes.Register.getContractRegister,
     paramsRawEventSchema: Types.Gravatar.NewGravatar.paramsRawEventSchema->(
       Utils.magic: S.t<Types.Gravatar.NewGravatar.eventArgs> => S.t<Internal.eventParams>
     ),
@@ -168,11 +166,9 @@ let updatedGravatarEventToBatchItem = (
     logIndex: event.logIndex,
     eventName: "UpdatedGravatar",
     contractName: "Gravatar",
-    handlerRegister: Types.Gravatar.UpdatedGravatar.handlerRegister->(
-      Utils.magic: Types.HandlerTypes.Register.t<
-        Types.Gravatar.UpdatedGravatar.eventArgs,
-      > => Types.HandlerTypes.Register.t<Internal.eventParams>
-    ),
+    handler: Types.Gravatar.UpdatedGravatar.handlerRegister->Types.HandlerTypes.Register.getHandler,
+    loader: Types.Gravatar.UpdatedGravatar.handlerRegister->Types.HandlerTypes.Register.getLoader,
+    contractRegister: Types.Gravatar.UpdatedGravatar.handlerRegister->Types.HandlerTypes.Register.getContractRegister,
     paramsRawEventSchema: Types.Gravatar.UpdatedGravatar.paramsRawEventSchema->(
       Utils.magic: S.t<Types.Gravatar.UpdatedGravatar.eventArgs> => S.t<Internal.eventParams>
     ),

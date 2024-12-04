@@ -20,8 +20,20 @@ module type S = {
     }
 
     module HandlerTypes: {
+      type contractRegister<'eventArgs>
+
+      type loader<'eventArgs, 'loaderReturn>
+
+      type handler<'eventArgs, 'loaderReturn>
+
       module Register: {
         type t<'eventArgs>
+
+        let getLoader: t<'eventArgs> => option<loader<Internal.eventParams, Internal.loaderReturn>>
+        let getHandler: t<'eventArgs> => option<
+          handler<Internal.eventParams, Internal.loaderReturn>,
+        >
+        let getContractRegister: t<'eventArgs> => option<contractRegister<Internal.eventParams>>
       }
     }
 
@@ -46,7 +58,9 @@ module type S = {
     type eventItem = {
       eventName: string,
       contractName: string,
-      handlerRegister: HandlerTypes.Register.t<Internal.eventParams>,
+      loader: option<HandlerTypes.loader<Internal.eventParams, Internal.loaderReturn>>,
+      handler: option<HandlerTypes.handler<Internal.eventParams, Internal.loaderReturn>>,
+      contractRegister: option<HandlerTypes.contractRegister<Internal.eventParams>>,
       timestamp: int,
       chain: ChainMap.Chain.t,
       blockNumber: int,

@@ -316,12 +316,11 @@ let runHandler = async (
   ~config: Config.t,
   ~isInReorgThreshold,
 ) => {
-  let result = switch eventItem {
-  | {loader: None, handler: None}
-  | {loader: Some(_), handler: None} => Ok()
-  | {loader, handler: Some(handler)} =>
+  let result = switch eventItem.handler {
+  | None => Ok()
+  | Some(handler) =>
     await eventItem->runEventHandler(
-      ~loader,
+      ~loader=eventItem.loader,
       ~handler,
       ~inMemoryStore,
       ~logger,

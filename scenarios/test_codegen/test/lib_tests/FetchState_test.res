@@ -196,7 +196,9 @@ describe("FetchState.fetchState", () => {
     logIndex,
     eventName: "MockEvent",
     contractName: "MockContract",
-    handlerRegister: Utils.magic("Mock event handlerRegister in fetchstate test"),
+    handler: None,
+    loader: None,
+    contractRegister: None,
     paramsRawEventSchema: Utils.magic("Mock event paramsRawEventSchema in fetchstate test"),
     event: Utils.magic("Mock event in fetchstate test"),
   }

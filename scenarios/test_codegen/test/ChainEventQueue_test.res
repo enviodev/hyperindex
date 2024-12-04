@@ -34,11 +34,9 @@ let qItemMock1: Types.eventItem = {
   event: eventMock1,
   eventName: "NewGravatar",
   contractName: "Gravatar",
-  handlerRegister: Types.Gravatar.NewGravatar.handlerRegister->(
-    Utils.magic: Types.HandlerTypes.Register.t<
-      Types.Gravatar.NewGravatar.eventArgs,
-    > => Types.HandlerTypes.Register.t<Internal.eventParams>
-  ),
+  handler: Types.Gravatar.NewGravatar.handlerRegister->Types.HandlerTypes.Register.getHandler,
+  loader: Types.Gravatar.NewGravatar.handlerRegister->Types.HandlerTypes.Register.getLoader,
+  contractRegister: Types.Gravatar.NewGravatar.handlerRegister->Types.HandlerTypes.Register.getContractRegister,
   paramsRawEventSchema: Types.Gravatar.NewGravatar.paramsRawEventSchema->(
     Utils.magic: S.t<Types.Gravatar.NewGravatar.eventArgs> => S.t<Internal.eventParams>
   ),
@@ -68,11 +66,9 @@ let qItemMock2: Types.eventItem = {
   event: eventMock1,
   eventName: "NewGravatar",
   contractName: "Gravatar",
-  handlerRegister: Types.Gravatar.NewGravatar.handlerRegister->(
-    Utils.magic: Types.HandlerTypes.Register.t<
-      Types.Gravatar.NewGravatar.eventArgs,
-    > => Types.HandlerTypes.Register.t<Internal.eventParams>
-  ),
+  handler: Types.Gravatar.NewGravatar.handlerRegister->Types.HandlerTypes.Register.getHandler,
+  loader: Types.Gravatar.NewGravatar.handlerRegister->Types.HandlerTypes.Register.getLoader,
+  contractRegister: Types.Gravatar.NewGravatar.handlerRegister->Types.HandlerTypes.Register.getContractRegister,
   paramsRawEventSchema: Types.Gravatar.NewGravatar.paramsRawEventSchema->(
     Utils.magic: S.t<Types.Gravatar.NewGravatar.eventArgs> => S.t<Internal.eventParams>
   ),

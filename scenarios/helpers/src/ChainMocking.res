@@ -178,7 +178,9 @@ module Make = (Indexer: Indexer.S) => {
       let log: Types.eventItem = {
         eventName: Event.name,
         contractName: Event.contractName,
-        handlerRegister: Event.handlerRegister,
+        handler: Event.handlerRegister->Types.HandlerTypes.Register.getHandler,
+        loader: Event.handlerRegister->Types.HandlerTypes.Register.getLoader,
+        contractRegister: Event.handlerRegister->Types.HandlerTypes.Register.getContractRegister,
         paramsRawEventSchema: Event.paramsRawEventSchema,
         event: makeEvent(~blockHash),
         chain: self.chainConfig.chain,

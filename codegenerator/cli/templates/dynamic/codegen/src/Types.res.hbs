@@ -312,36 +312,48 @@ module HandlerTypes = {
       ~eventOptions: option<EventOptions.t>,
       ~logger: Pino.t=?,
     ) => unit
-    let getLoaderHandler: t<'eventArgs> => option<
-      loaderHandler<'eventArgs, 'loaderReturn, 'eventFilter>,
+    let noopLoader: loader<'eventArgs, ()>
+    let getLoader: t<'eventArgs> => option<
+      loader<Internal.eventParams, Internal.loaderReturn>,
     >
-    let getContractRegister: t<'eventArgs> => option<contractRegister<'eventArgs>>
+    let getHandler: t<'eventArgs> => option<
+      handler<Internal.eventParams, Internal.loaderReturn>,
+    >
+    let getContractRegister: t<'eventArgs> => option<contractRegister<Internal.eventParams>>
     let getEventOptions: t<'eventArgs> => EventOptions.t
     let hasRegistration: t<'eventArgs> => bool
   } = {
-    type loaderReturn
     type eventFilter
 
     type t<'eventArgs> = {
       contractName: string,
       eventName: string,
       topic0: EvmTypes.Hex.t,
-      mutable loaderHandler: option<loaderHandler<'eventArgs, loaderReturn, eventFilter>>,
+      mutable loaderHandler: option<loaderHandler<'eventArgs, Internal.loaderReturn, eventFilter>>,
       mutable contractRegister: option<contractRegister<'eventArgs>>,
       mutable eventOptions: option<EventOptions.t>,
     }
 
-    let getLoaderHandler = (t: t<'eventArgs>): option<
-      loaderHandler<'eventArgs, 'loaderReturn, 'eventFilter>,
-    > =>
+    let noopLoader = _ => Promise.resolve()
+
+    let getLoaderHandler = (t: t<'eventArgs>) =>
       t.loaderHandler->(
-        Utils.magic: option<loaderHandler<'eventArgs, loaderReturn, eventFilter>> => option<
-          loaderHandler<'eventArgs, 'loaderReturn, 'eventFilter>,
+        Utils.magic: option<loaderHandler<'eventArgs, Internal.loaderReturn, eventFilter>> => option<
+          loaderHandler<Internal.eventParams, Internal.loaderReturn, 'eventFilter>,
         >
       )
 
-    let getContractRegister = (t: t<'eventArgs>): option<contractRegister<'eventArgs>> =>
-      t.contractRegister
+    let getLoader = (t: t<'eventArgs>) => t->getLoaderHandler->Belt.Option.flatMap(lh => 
+      if lh.loader === noopLoader->(Utils.magic: loader<'eventArgs, ()> => loader<Internal.eventParams, Internal.loaderReturn>) {
+        None
+      } else {
+        Some(lh.loader)
+      }
+    )
+
+    let getHandler = (t: t<'eventArgs>) => t->getLoaderHandler->Belt.Option.map(lh => lh.handler)
+
+    let getContractRegister = (t: t<'eventArgs>) => t.contractRegister->(Utils.magic: option<contractRegister<'eventArgs>> => option<contractRegister<Internal.eventParams>>)
 
     let getEventOptions = ({eventOptions, topic0}: t<'eventArgs>): EventOptions.t =>
       switch eventOptions {
@@ -388,7 +400,7 @@ module HandlerTypes = {
           value
           ->(Utils.magic: loaderHandler<'eventArgs, 'loaderReturn, 'eventFilter> => loaderHandler<
             'eventArgs,
-            loaderReturn,
+            Internal.loaderReturn,
             eventFilter,
           >)
           ->Some
@@ -520,7 +532,7 @@ module MakeRegister = (Event: Event) => {
   ) => {
     Event.handlerRegister->HandlerTypes.Register.setLoaderHandler(
       {
-        loader: _ => Promise.resolve(),
+        loader: HandlerTypes.Register.noopLoader,
         handler,
         wildcard: ?eventConfig->Belt.Option.flatMap(c => c.wildcard),
         eventFilters: ?eventConfig->Belt.Option.flatMap(c => c.eventFilters),

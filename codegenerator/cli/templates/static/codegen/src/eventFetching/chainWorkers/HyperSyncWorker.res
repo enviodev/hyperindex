@@ -247,14 +247,11 @@ module Make = (
     let {block, log, transaction} = item
     let chainId = chain->ChainMap.Chain.toChainId
 
-    let loaderHandler =
-      Event.handlerRegister->Types.HandlerTypes.Register.getLoaderHandler
-
     {
       eventName: Event.name,
       contractName: Event.contractName,
-      loader: loaderHandler->Option.map(lh => lh.loader),
-      handler: loaderHandler->Option.map(lh => lh.handler),
+      loader: Event.handlerRegister->Types.HandlerTypes.Register.getLoader,
+      handler: Event.handlerRegister->Types.HandlerTypes.Register.getHandler,
       contractRegister: Event.handlerRegister->Types.HandlerTypes.Register.getContractRegister,
       paramsRawEventSchema: Event.paramsRawEventSchema,
       timestamp: block->Types.Block.getTimestamp,
