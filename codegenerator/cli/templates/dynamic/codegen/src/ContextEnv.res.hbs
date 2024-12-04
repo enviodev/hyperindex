@@ -163,7 +163,7 @@ let getContractRegisterContext = (contextEnv, ~inMemoryStore, ~shouldSaveHistory
   {{#each codegen_contracts as |contract| }}
   add{{contract.name.capitalized}}:  makeDynamicContractRegisterFn(~contextEnv, ~inMemoryStore, ~contractName={{contract.name.capitalized}}, ~shouldSaveHistory),
   {{/each}}
-}
+}->(Utils.magic: Types.contractRegistrations => Internal.contractRegisterContext)
 
 let getLoaderContext = (contextEnv: t, ~inMemoryStore: InMemoryStore.t, ~loadLayer: LoadLayer.t): loaderContext => {
   let {logger} = contextEnv
@@ -217,8 +217,8 @@ let getHandlerContext = (
   }
 }
 
-let getContractRegisterArgs = (contextEnv, ~inMemoryStore, ~shouldSaveHistory) => {
-  Types.HandlerTypes.event: contextEnv.eventItem.event->Internal.toGenericEvent,
+let getContractRegisterArgs = (contextEnv, ~inMemoryStore, ~shouldSaveHistory): Internal.contractRegisterArgs => {
+  event: contextEnv.eventItem.event,
   context: contextEnv->getContractRegisterContext(~inMemoryStore, ~shouldSaveHistory),
 }
 
