@@ -17,8 +17,8 @@ module Log: {
 
 type logsQueryPageItem = {
   log: Log.t,
-  block: Types.Block.t,
-  transaction: Types.Transaction.t,
+  block: Internal.eventBlock,
+  transaction: Internal.eventTransaction,
 }
 
 type logsQueryPage = hyperSyncPage<logsQueryPageItem>

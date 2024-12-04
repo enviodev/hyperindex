@@ -107,46 +107,27 @@ module Block = {
   let schema = {{field_selection.block_schema}}
 
   let rawEventSchema = {{field_selection.block_raw_event_schema}}
-
   {{#if is_evm_ecosystem}}
-  @get
-  external getNumber: t => int = "number"
 
   @get
-  external getInternalNumber: Internal.eventBlock => int = "number"
+  external getNumber: Internal.eventBlock => int = "number"
 
   @get
-  external getTimestamp: t => int = "timestamp"
-
-  @get
-  external getInternalTimestamp: Internal.eventBlock => int = "timestamp"
+  external getTimestamp: Internal.eventBlock => int = "timestamp"
  
   @get
-  external getId: t => string = "hash"
-
-  {{!-- TODO: Remove this by moving block hash to eventItem --}}
-  @get
-  external getInternalId: Internal.eventBlock => string = "hash"
+  external getId: Internal.eventBlock => string = "hash"
   {{/if}}
-
   {{#if is_fuel_ecosystem}}
-  @get
-  external getNumber: t => int = "height"
 
   @get
-  external getInternalNumber: Internal.eventBlock => int = "height"
+  external getNumber: Internal.eventBlock => int = "height"
 
   @get
-  external getTimestamp: t => int = "time"
-
-  @get
-  external getInternalTimestamp: Internal.eventBlock => int = "time"
+  external getTimestamp: Internal.eventBlock => int = "time"
  
   @get
-  external getId: t => string = "id"
-
-  @get
-  external getInternalId: Internal.eventBlock => string = "id"
+  external getId: Internal.eventBlock => string = "id"
   {{/if}}
 }
 
