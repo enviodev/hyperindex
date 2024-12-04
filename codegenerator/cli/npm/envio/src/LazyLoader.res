@@ -68,6 +68,7 @@ let rec loadNext = async (am: asyncMap<'key, 'value>, k: 'key) => {
     am.resolvers
     ->Utils.Map.get(k)
     ->Belt.Option.forEach(r => {
+      let _ = am.resolvers->Utils.Map.delete(k)
       r(val)
     })
 
