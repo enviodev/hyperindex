@@ -48,10 +48,22 @@ let schema =
   S.string
   ->S.setName("BigInt")
   ->S.transform(s => {
-    parser: (. string) =>
+    parser: string =>
       switch string->fromString {
       | Some(bigInt) => bigInt
-      | None => s.fail(. "The string is not valid BigInt")
+      | None => s.fail("The string is not valid BigInt")
       },
-    serializer: (. bigint) => bigint->toString,
+    serializer: bigint => bigint->toString,
   })
+
+let nativeSchema: S.t<bigint> = S.custom("BigInt", s => {
+  {
+    parser: unknown => {
+      if Js.typeof(unknown) !== "bigint" {
+        s.fail("Expected bigint")
+      } else {
+        unknown->Obj.magic
+      }
+    },
+  }
+})

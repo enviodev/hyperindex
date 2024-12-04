@@ -28,6 +28,5 @@
 /benchmarks/
 *.bs.js
 *.bs.mjs
-*.gen.ts
 logs/*
 *BenchmarkCache.json

@@ -2,7 +2,6 @@ type abi = EvmTypes.Abi.t
 
 let makeAbi = (abi: Js.Json.t): abi => abi->Utils.magic
 
-@genType.import(("./OpaqueTypes.ts", "Address"))
 @deprecated("Use Address.t instead. The type will be removed in v3")
 type ethAddress = Address.t
 @deprecated("Use Address.Evm.fromStringOrThrow instead. The function will be removed in v3")
@@ -120,6 +119,8 @@ type log = {
   @as("index") logIndex: int,
 }
 
+type transaction
+
 type minimumParseableLogData = {topics: array<EventFilter.topic>, data: string}
 
 //Can safely convert from log to minimumParseableLogData since it contains
@@ -211,6 +212,21 @@ module JsonRpcProvider = {
   @send
   external getLogs: (t, ~filter: Filter.t) => promise<array<log>> = "getLogs"
 
+  @send
+  external getTransaction: (t, ~transactionHash: string) => promise<transaction> = "getTransaction"
+
+  let makeGetTransactionFields = (~getTransactionByHash) => async (log: log): promise<unknown> => {
+    let transaction = await getTransactionByHash(log.transactionHash)
+    // Mutating should be fine, since the transaction isn't used anywhere else outside the function
+    let fields: {..} = transaction->Obj.magic
+
+    // Make it compatible with HyperSync transaction fields
+    fields["transactionIndex"] = log.transactionIndex
+    fields["input"] = fields["data"]
+
+    fields->Obj.magic
+  }
+
   type listenerEvent = [#block]
   @send external onEventListener: (t, listenerEvent, int => unit) => unit = "on"
 
@@ -240,13 +256,4 @@ module JsonRpcProvider = {
 
   @send
   external getBlock: (t, int) => promise<Js.nullable<block>> = "getBlock"
-}
-
-module EventFragment = {
-  //Note there are more properties and methods to bind to
-  type t = {
-    name: string,
-    anonymous: bool,
-    topicHash: EventFilter.topic,
-  }
 }

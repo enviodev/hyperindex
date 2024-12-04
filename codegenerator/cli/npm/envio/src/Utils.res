@@ -1,5 +1,12 @@
 external magic: 'a => 'b = "%identity"
 
+let delay = milliseconds =>
+  Js.Promise2.make((~resolve, ~reject as _) => {
+    let _interval = Js.Global.setTimeout(_ => {
+      resolve()
+    }, milliseconds)
+  })
+
 module Option = {
   let mapNone = (opt: option<'a>, val: 'b): option<'b> => {
     switch opt {
@@ -224,6 +231,13 @@ external queueMicrotask: (unit => unit) => unit = "queueMicrotask"
 module Schema = {
   let enum = items => S.union(items->Belt.Array.mapU(S.literal))
 
+  // A hot fix after we use the version where it's supported
+  // https://github.com/DZakh/rescript-schema/blob/v8.4.0/docs/rescript-usage.md#removetypevalidation
+  let removeTypeValidationInPlace = schema => {
+    // The variables input is guaranteed to be an object, so we reset the rescript-schema type filter here
+    (schema->Obj.magic)["f"] = ()
+  }
+
   let getNonOptionalFieldNames = schema => {
     let acc = []
     switch schema->S.classify {
@@ -361,4 +375,16 @@ module WeakMap = {
   @send external unsafeGet: (t<'k, 'v>, 'k) => 'v = "get"
   @send external has: (t<'k, 'v>, 'k) => bool = "has"
   @send external set: (t<'k, 'v>, 'k, 'v) => t<'k, 'v> = "set"
+}
+
+module Map = {
+  type t<'k, 'v> = Js.Map.t<'k, 'v>
+
+  @new external make: unit => t<'k, 'v> = "Map"
+
+  @send external get: (t<'k, 'v>, 'k) => option<'v> = "get"
+  @send external unsafeGet: (t<'k, 'v>, 'k) => 'v = "get"
+  @send external has: (t<'k, 'v>, 'k) => bool = "has"
+  @send external set: (t<'k, 'v>, 'k, 'v) => t<'k, 'v> = "set"
+  @send external delete: (t<'k, 'v>, 'k) => bool = "delete"
 }

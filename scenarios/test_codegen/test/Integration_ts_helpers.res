@@ -52,6 +52,8 @@ let getLocalChainConfig = (nftFactoryContractAddress): chainConfig => {
           contracts
           ->Belt.Array.flatMap(contract => contract.events)
           ->EventRouter.fromEvmEventModsOrThrow(~chain)
+        let transactionSchema = Types.Transaction.schema
+        let blockSchema = Types.Block.schema
       })
     ),
   }
