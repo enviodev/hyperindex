@@ -169,18 +169,18 @@ let getCombinedEthersFilter = (
 exception ParseError(exn)
 exception UndefinedInterfaceAddress(Address.t)
 
-let parseLogViemOrThrow = (self: t, ~log: Types.Log.t) => {
+let parseLogViemOrThrow = (self: t, ~address, ~topics, ~data) => {
   let abiOpt =
     self
-    ->getInterfaceByAddress(~contractAddress=log.address)
+    ->getInterfaceByAddress(~contractAddress=address)
     ->Belt.Option.map(mapping => mapping.abi)
   switch abiOpt {
-  | None => raise(UndefinedInterfaceAddress(log.address))
+  | None => raise(UndefinedInterfaceAddress(address))
   | Some(abi) =>
     let viemLog: Viem.eventLog = {
       abi,
-      data: log.data,
-      topics: log.topics,
+      data,
+      topics,
     }
 
     try viemLog->Viem.decodeEventLogOrThrow catch {

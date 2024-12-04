@@ -6,8 +6,17 @@ type hyperSyncPage<'item> = {
   events: array<HyperSyncClient.ResponseTypes.event>,
 }
 
+module Log: {
+  type t = {
+    address: Address.t,
+    data: string,
+    topics: array<EvmTypes.Hex.t>,
+    logIndex: int,
+  }
+}
+
 type logsQueryPageItem = {
-  log: Types.Log.t,
+  log: Log.t,
   block: Types.Block.t,
   transaction: Types.Transaction.t,
 }

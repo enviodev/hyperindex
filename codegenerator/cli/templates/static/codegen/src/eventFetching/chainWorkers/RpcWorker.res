@@ -67,14 +67,6 @@ module Make = (
     let transactionSchema: S.t<Types.Transaction.t>
   },
 ): S => {
-  //Note ethers log is not a superset of log since logIndex is actually "index" with an @as alias
-  let ethersLogToLog: Ethers.log => Types.Log.t = ({address, data, topics, logIndex}) => {
-    address,
-    data,
-    topics,
-    logIndex,
-  }
-
   T.contracts->Belt.Array.forEach(contract => {
     contract.events->Belt.Array.forEach(event => {
       let module(Event) = event
@@ -277,13 +269,9 @@ module Make = (
                     )
                   }
 
-                  let log = log->ethersLogToLog
-
                   let module(Event) = eventMod
 
-                  let decodedEvent = try contractInterfaceManager->ContractInterfaceManager.parseLogViemOrThrow(
-                    ~log,
-                  ) catch {
+                  let decodedEvent = try contractInterfaceManager->ContractInterfaceManager.parseLogViemOrThrow(~address=log.address, ~topics=log.topics, ~data=log.data) catch {
                   | exn =>
                     exn->ErrorHandling.mkLogAndRaise(
                       ~msg="Failed to parse event with viem, please double-check your ABI.",

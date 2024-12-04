@@ -1,4 +1,16 @@
 open Belt
+
+module Log = {
+  type t = {
+    address: Address.t,
+    data: string,
+    topics: array<EvmTypes.Hex.t>,
+    logIndex: int,
+  }
+
+  let fieldNames = ["address", "data", "topics", "logIndex"]
+}
+
 type hyperSyncPage<'item> = {
   items: array<'item>,
   nextBlock: int,
@@ -8,7 +20,7 @@ type hyperSyncPage<'item> = {
 }
 
 type logsQueryPageItem = {
-  log: Types.Log.t,
+  log: Log.t,
   block: Types.Block.t,
   transaction: Types.Transaction.t,
 }
@@ -108,7 +120,7 @@ module LogsQuery = {
     ~nonOptionalTransactionFieldNames,
   ): logsQueryPageItem => {
     let missingParams = []
-    missingParams->addMissingParams(Types.Log.fieldNames, event.log, ~prefix="log")
+    missingParams->addMissingParams(Log.fieldNames, event.log, ~prefix="log")
     missingParams->addMissingParams(nonOptionalBlockFieldNames, event.block, ~prefix="block")
     missingParams->addMissingParams(
       nonOptionalTransactionFieldNames,
@@ -124,7 +136,7 @@ module LogsQuery = {
 
     //Topics can be nullable and still need to be filtered
     //Address is not yet checksummed (TODO this should be done in the client)
-    let logUnsanitized: Types.Log.t = event.log->Utils.magic
+    let logUnsanitized: Log.t = event.log->Utils.magic
     let topics = event.log.topics->Option.getUnsafe->Array.keepMap(Js.Nullable.toOption)
     let address = event.log.address->Option.getUnsafe
     let log = {

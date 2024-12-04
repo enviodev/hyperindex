@@ -466,7 +466,7 @@ module Make = (
           | Some(eventMod) =>
             let module(Event) = eventMod
 
-            switch contractInterfaceManager->ContractInterfaceManager.parseLogViemOrThrow(~log) {
+            switch contractInterfaceManager->ContractInterfaceManager.parseLogViemOrThrow(~address=log.address, ~topics=log.topics, ~data=log.data) {
             | exception exn =>
               handleDecodeFailure(
                 ~eventMod,

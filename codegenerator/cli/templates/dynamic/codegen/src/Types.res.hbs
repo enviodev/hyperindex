@@ -89,17 +89,6 @@ type inMemoryStoreRowEntity<'entityType> =
 //**CONTRACTS**
 //*************
 
-module Log = {
-  type t = {
-    address: Address.t,
-    data: string,
-    topics: array<EvmTypes.Hex.t>,
-    logIndex: int,
-  }
-
-  let fieldNames = ["address", "data", "topics", "logIndex"]
-}
-
 module Transaction = {
   @genType
   type t = {{field_selection.transaction_type}}
