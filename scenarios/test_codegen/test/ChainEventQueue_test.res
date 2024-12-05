@@ -26,7 +26,7 @@ let eventMock1: Internal.event = {
   },
 }->Internal.fromGenericEvent
 
-let qItemMock1: Types.eventItem = {
+let qItemMock1: Internal.eventItem = {
   timestamp: 0,
   chain: MockConfig.chain1337,
   blockNumber: 1,
@@ -58,7 +58,7 @@ let eventMock2: Internal.event = {
   },
 }->Internal.fromGenericEvent
 
-let qItemMock2: Types.eventItem = {
+let qItemMock2: Internal.eventItem = {
   timestamp: 1,
   chain: MockConfig.chain1337,
   blockNumber: 2,

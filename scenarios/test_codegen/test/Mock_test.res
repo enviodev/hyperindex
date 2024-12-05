@@ -11,7 +11,7 @@ describe("E2E Mock Event Batch", () => {
 
     let loadLayer = LoadLayer.makeWithDbConnection()
 
-    let runEventHandler = async (eventItem: Types.eventItem) => {
+    let runEventHandler = async (eventItem: Internal.eventItem) => {
       switch eventItem.handler {
       | None => Ok()
       | Some(handler) =>

@@ -93,7 +93,7 @@ let isRollingBack = state =>
   | _ => false
   }
 
-type arbitraryEventQueue = array<Types.eventItem>
+type arbitraryEventQueue = array<Internal.eventItem>
 
 type shouldExit = ExitWithSuccess | NoExit
 type action =

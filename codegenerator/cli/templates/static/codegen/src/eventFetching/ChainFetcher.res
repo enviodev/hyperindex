@@ -3,7 +3,7 @@ open Belt
 //A filter should return true if the event should be kept and isValid should return
 //false when the filter should be removed/cleaned up
 type processingFilter = {
-  filter: Types.eventItem => bool,
+  filter: Internal.eventItem => bool,
   isValid: (~fetchState: FetchState.t) => bool,
 }
 
@@ -293,7 +293,7 @@ let addProcessingFilter = (self: t, ~filter, ~isValid) => {
 }
 
 let applyProcessingFilters = (
-  items: array<Types.eventItem>,
+  items: array<Internal.eventItem>,
   ~processingFilters: array<processingFilter>,
 ) =>
   items->Array.keep(item => {

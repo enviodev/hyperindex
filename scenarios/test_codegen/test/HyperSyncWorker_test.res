@@ -2,7 +2,6 @@ open RescriptMocha
 
 module GetNextPage = {
   type queryLogsPageCall = {
-    serverUrl: string,
     fromBlock: int,
     toBlock: int,
     logSelections: array<LogSelection.t>,
@@ -20,17 +19,17 @@ module GetNextPage = {
     let queryResponse = %raw(`Symbol("queryResponse")`)
     let contracts = []
     let queryLogsPage = async (
-      ~serverUrl,
+      ~client as _,
       ~fromBlock,
       ~toBlock,
       ~logSelections,
       ~fieldSelection,
       ~nonOptionalBlockFieldNames,
       ~nonOptionalTransactionFieldNames,
+      ~logger as _,
     ) => {
       queryLogsPageCalls
       ->Js.Array2.push({
-        serverUrl,
         fromBlock,
         toBlock,
         logSelections,
@@ -80,7 +79,6 @@ describe("HyperSyncWorker - getNextPage", () => {
         mock.queryLogsPageCalls,
         [
           {
-            serverUrl: "https://hypersync.xyz",
             fromBlock: 1,
             toBlock: 2,
             logSelections: [],
@@ -130,7 +128,6 @@ describe("HyperSyncWorker - getNextPage", () => {
         mock.queryLogsPageCalls,
         [
           {
-            serverUrl: "https://hypersync.xyz",
             fromBlock: 1,
             toBlock: 2,
             logSelections: [],

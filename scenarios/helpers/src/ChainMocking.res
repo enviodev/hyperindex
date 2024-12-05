@@ -37,7 +37,7 @@ module Crypto = {
 module Make = (Indexer: Indexer.S) => {
   open Indexer
   type log = {
-    eventItem: Types.eventItem,
+    eventItem: Internal.eventItem,
     srcAddress: Address.t,
     transactionHash: string,
     eventMod: module(Types.InternalEvent),
@@ -175,7 +175,7 @@ module Make = (Indexer: Indexer.S) => {
       eventMod,
     }): log => {
       let module(Event) = eventMod
-      let log: Types.eventItem = {
+      let log: Internal.eventItem = {
         eventName: Event.name,
         contractName: Event.contractName,
         handler: Event.handlerRegister->Types.HandlerTypes.Register.getHandler,
