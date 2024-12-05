@@ -299,7 +299,7 @@ module Make = (
                         srcAddress: log.address,
                         logIndex: log.logIndex,
                       }->Internal.fromGenericEvent,
-                    }: Types.eventItem
+                    }: Internal.eventItem
                   )
                 }
               )(),

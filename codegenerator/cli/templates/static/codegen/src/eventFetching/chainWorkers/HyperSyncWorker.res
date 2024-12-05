@@ -252,7 +252,7 @@ module Make = (
     item: HyperSync.logsQueryPageItem,
     ~params: Internal.eventParams,
     ~eventMod: module(Types.InternalEvent),
-  ): Types.eventItem => {
+  ): Internal.eventItem => {
     let module(Event) = eventMod
     let {block, log, transaction} = item
     let chainId = chain->ChainMap.Chain.toChainId

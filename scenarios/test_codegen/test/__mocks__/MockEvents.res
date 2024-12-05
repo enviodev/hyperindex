@@ -138,7 +138,7 @@ let setGravatarLog4: Types.eventLog<Types.Gravatar.UpdatedGravatar.eventArgs> = 
 
 let newGravatarEventToBatchItem = (
   event: Types.eventLog<Types.Gravatar.NewGravatar.eventArgs>,
-): Types.eventItem => {
+): Internal.eventItem => {
   {
     timestamp: event.block.timestamp,
     chain: MockConfig.chain1337,
@@ -158,7 +158,7 @@ let newGravatarEventToBatchItem = (
 
 let updatedGravatarEventToBatchItem = (
   event: Types.eventLog<Types.Gravatar.UpdatedGravatar.eventArgs>,
-): Types.eventItem => {
+): Internal.eventItem => {
   {
     timestamp: event.block.timestamp,
     chain: MockConfig.chain1337,

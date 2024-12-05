@@ -184,19 +184,15 @@ module HandlerTypes = {
   type contractRegister<'eventArgs> = Internal.genericContractRegister<contractRegisterArgs<'eventArgs>>
 
   @genType
-  type loaderArgs<'eventArgs> = args<'eventArgs, loaderContext>
+  type loaderArgs<'eventArgs> = Internal.genericLoaderArgs<eventLog<'eventArgs>, loaderContext>
   @genType
-  type loader<'eventArgs, 'loaderReturn> = loaderArgs<'eventArgs> => promise<'loaderReturn>
+  type loader<'eventArgs, 'loaderReturn> = Internal.genericLoader<loaderArgs<'eventArgs>, 'loaderReturn>
 
   @genType
-  type handlerArgs<'eventArgs, 'loaderReturn> = {
-    event: eventLog<'eventArgs>,
-    context: handlerContext,
-    loaderReturn: 'loaderReturn,
-  }
+  type handlerArgs<'eventArgs, 'loaderReturn> = Internal.genericHandlerArgs<eventLog<'eventArgs>, handlerContext, 'loaderReturn>
 
   @genType
-  type handler<'eventArgs, 'loaderReturn> = handlerArgs<'eventArgs, 'loaderReturn> => promise<unit>
+  type handler<'eventArgs, 'loaderReturn> = Internal.genericHandler<handlerArgs<'eventArgs, 'loaderReturn>>
 
   @genType
   type loaderHandler<'eventArgs, 'loaderReturn, 'eventFilter> = {
@@ -283,12 +279,8 @@ module HandlerTypes = {
       ~logger: Pino.t=?,
     ) => unit
     let noopLoader: loader<'eventArgs, ()>
-    let getLoader: t<'eventArgs> => option<
-      loader<Internal.eventParams, Internal.loaderReturn>,
-    >
-    let getHandler: t<'eventArgs> => option<
-      handler<Internal.eventParams, Internal.loaderReturn>,
-    >
+    let getLoader: t<'eventArgs> => option<Internal.loader>
+    let getHandler: t<'eventArgs> => option<Internal.handler>
     let getContractRegister: t<'eventArgs> => option<Internal.contractRegister>
     let getEventOptions: t<'eventArgs> => EventOptions.t
     let hasRegistration: t<'eventArgs> => bool
@@ -306,22 +298,26 @@ module HandlerTypes = {
 
     let noopLoader = _ => Promise.resolve()
 
-    let getLoaderHandler = (t: t<'eventArgs>) =>
-      t.loaderHandler->(
-        Utils.magic: option<loaderHandler<'eventArgs, Internal.loaderReturn, eventFilter>> => option<
-          loaderHandler<Internal.eventParams, Internal.loaderReturn, 'eventFilter>,
-        >
-      )
-
-    let getLoader = (t: t<'eventArgs>) => t->getLoaderHandler->Belt.Option.flatMap(lh => 
-      if lh.loader === noopLoader->(Utils.magic: loader<'eventArgs, ()> => loader<Internal.eventParams, Internal.loaderReturn>) {
-        None
-      } else {
-        Some(lh.loader)
+    let getLoader = (t: t<'eventArgs>) => 
+      switch t.loaderHandler {
+        | Some({loader}) => {
+          let loader = loader->(Utils.magic: loader<'eventArgs, Internal.loaderReturn> => Internal.loader)
+          if loader === noopLoader->(Utils.magic: loader<'eventArgs, ()> => Internal.loader) {
+            None
+          } else {
+            Some(loader)
+          }
+        }
+        | None => None
       }
-    )
 
-    let getHandler = (t: t<'eventArgs>) => t->getLoaderHandler->Belt.Option.map(lh => lh.handler)
+    let getHandler = (t: t<'eventArgs>) => 
+      switch t.loaderHandler {
+        | Some({handler}) => {
+          Some(handler->(Utils.magic: handler<'eventArgs, Internal.loaderReturn> => Internal.handler))
+        }
+        | None => None
+      }
 
     let getContractRegister = (t: t<'eventArgs>) => t.contractRegister->(Utils.magic: option<contractRegister<'eventArgs>> => option<Internal.contractRegister>)
 
@@ -590,21 +586,3 @@ module {{event.name}} = {
 {{/each}}
 @genType
 type chainId = int
-
-type eventItem = {
-  eventName: string,
-  contractName: string,
-  loader: option<HandlerTypes.loader<Internal.eventParams, Internal.loaderReturn>>,
-  handler: option<HandlerTypes.handler<Internal.eventParams, Internal.loaderReturn>>,
-  contractRegister: option<Internal.contractRegister>,
-  timestamp: int,
-  chain: ChainMap.Chain.t,
-  blockNumber: int,
-  logIndex: int,
-  event: Internal.event,
-  paramsRawEventSchema: S.schema<Internal.eventParams>,
-  //Default to false, if an event needs to
-  //be reprocessed after it has loaded dynamic contracts
-  //This gets set to true and does not try and reload events
-  hasRegisteredDynamicContracts?: bool,
-}

@@ -507,7 +507,7 @@ module Make = (
               srcAddress: contractAddress,
               logIndex: receiptIndex,
             },
-          }: Types.eventItem
+          }: Internal.eventItem
         )
       })
 
