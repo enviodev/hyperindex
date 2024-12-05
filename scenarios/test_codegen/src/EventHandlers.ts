@@ -4,6 +4,9 @@ import {
   SimpleNft,
   NftCollection,
   User,
+  eventLog,
+  NftFactory_SimpleNftCreated_eventArgs,
+  NftFactory_SimpleNftCreated_event,
 } from "generated";
 
 const zeroAddress = "0x0000000000000000000000000000000000000000";
@@ -15,6 +18,9 @@ NftFactory.SimpleNftCreated.contractRegister(({ event, context }) => {
 NftFactory.SimpleNftCreated.handlerWithLoader({
   loader: async (_) => undefined,
   handler: async ({ event, context }) => {
+    const testType: NftFactory_SimpleNftCreated_event =
+      event satisfies eventLog<NftFactory_SimpleNftCreated_eventArgs>;
+
     let nftCollection: NftCollection = {
       id: event.params.contractAddress,
       contractAddress: event.params.contractAddress,

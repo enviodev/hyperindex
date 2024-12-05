@@ -392,10 +392,24 @@ let contractName = contractName
 
 @genType
 type eventArgs = {data_type}
+@genType
+type block = Block.t
+@genType
+type transaction = Transaction.t
+
+@genType
+type event = Internal.genericEvent<eventArgs, block, transaction>
+@genType
+type loader<'loaderReturn> = Internal.genericLoader<Internal.genericLoaderArgs<event, loaderContext>, 'loaderReturn>
+@genType
+type handler<'loaderReturn> = Internal.genericHandler<Internal.genericHandlerArgs<event, handlerContext, 'loaderReturn>>
+@genType
+type contractRegister = Internal.genericContractRegister<Internal.genericContractRegisterArgs<event, contractRegistrations>>
+
 let paramsRawEventSchema = {params_raw_event_schema}
 let convertHyperSyncEventArgs = {convert_hyper_sync_event_args_code}
 
-let handlerRegister: HandlerTypes.Register.t<eventArgs> = HandlerTypes.Register.make(
+let handlerRegister: HandlerTypes.Register.t = HandlerTypes.Register.make(
   ~topic0=sighash->EvmTypes.Hex.fromStringUnsafe,
   ~contractName,
   ~eventName=name,
@@ -1342,7 +1356,7 @@ let convertHyperSyncEventArgs = (decodedEvent: HyperSyncClient.Decoder.decodedEv
       }}
     }}
 
-let handlerRegister: HandlerTypes.Register.t<eventArgs> = HandlerTypes.Register.make(
+let handlerRegister: HandlerTypes.Register.t = HandlerTypes.Register.make(
   ~topic0=sighash->EvmTypes.Hex.fromStringUnsafe,
   ~contractName,
   ~eventName=name,
@@ -1384,7 +1398,7 @@ type eventArgs = unit
 let paramsRawEventSchema = S.literal(%raw(`null`))->S.variant(_ => ())
 let convertHyperSyncEventArgs = (Utils.magic: HyperSyncClient.Decoder.decodedEvent => eventArgs)
 
-let handlerRegister: HandlerTypes.Register.t<eventArgs> = HandlerTypes.Register.make(
+let handlerRegister: HandlerTypes.Register.t = HandlerTypes.Register.make(
   ~topic0=sighash->EvmTypes.Hex.fromStringUnsafe,
   ~contractName,
   ~eventName=name,

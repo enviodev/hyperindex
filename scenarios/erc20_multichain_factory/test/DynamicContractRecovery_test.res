@@ -223,7 +223,7 @@ describe("Dynamic contract restart resistance test", () => {
       {
         //Test the preRegistration restart function getting all the dynamic contracts
         let setRegisterPreRegistration: (
-          Types.HandlerTypes.Register.t<'a>,
+          Types.HandlerTypes.Register.t,
           bool,
         ) => unit => unit = %raw(`(register, bool)=> {
           const eventOptions = register.eventOptions;
