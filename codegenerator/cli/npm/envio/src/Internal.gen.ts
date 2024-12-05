@@ -29,3 +29,11 @@ export type genericHandlerArgs<event,context,loaderReturn> = {
 };
 
 export type genericHandler<args> = (_1:args) => Promise<void>;
+
+export type fuelSupplyParams = { readonly subId: string; readonly amount: bigint };
+
+export type fuelTransferParams = {
+  readonly to: Address_t; 
+  readonly assetId: string; 
+  readonly amount: bigint
+};
