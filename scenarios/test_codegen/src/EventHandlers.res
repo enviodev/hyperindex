@@ -13,8 +13,7 @@ Handlers.Gravatar.NewGravatar.handler(async ({event, context}) => {
 })
 
 Handlers.Gravatar.UpdatedGravatar.handlerWithLoader({
-  loader: ({event, context} as args) => {
-    Js.log(args)
+  loader: ({event, context}) => {
     context.gravatar.get(event.params.id->BigInt.toString)
   },
   handler: async ({event, context, loaderReturn}) => {
