@@ -33,7 +33,7 @@ describe("Load and save an entity with a BigDecimal from DB", () => {
     let loadLayer = LoadLayer.makeWithDbConnection()
 
     let contextEnv = ContextEnv.make(
-      ~eventBatchQueueItem=MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem,
+      ~eventItem=MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem,
       ~logger=Logging.logger,
     )
 

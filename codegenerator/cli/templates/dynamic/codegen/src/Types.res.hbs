@@ -124,10 +124,20 @@ module Block = {
   external getNumber: t => int = "number"
 
   @get
+  external getInternalNumber: Internal.eventBlock => int = "number"
+
+  @get
   external getTimestamp: t => int = "timestamp"
+
+  @get
+  external getInternalTimestamp: Internal.eventBlock => int = "timestamp"
  
   @get
   external getId: t => string = "hash"
+
+  {{!-- TODO: Remove this by moving block hash to eventItem --}}
+  @get
+  external getInternalId: Internal.eventBlock => string = "hash"
   {{/if}}
 
   {{#if is_fuel_ecosystem}}
@@ -135,22 +145,24 @@ module Block = {
   external getNumber: t => int = "height"
 
   @get
+  external getInternalNumber: Internal.eventBlock => int = "height"
+
+  @get
   external getTimestamp: t => int = "time"
+
+  @get
+  external getInternalTimestamp: Internal.eventBlock => int = "time"
  
   @get
   external getId: t => string = "id"
+
+  @get
+  external getInternalId: Internal.eventBlock => string = "id"
   {{/if}}
 }
 
 @genType.as("EventLog")
-type eventLog<'a> = {
-  params: 'a,
-  chainId: int,
-  srcAddress: Address.t,
-  logIndex: int,
-  transaction: Transaction.t,
-  block: Block.t,
-}
+type eventLog<'params> = Internal.genericEvent<'params, Transaction.t, Block.t>
 
 module SingleOrMultiple: {
   @genType.import(("./bindings/OpaqueTypes", "SingleOrMultiple"))
@@ -300,36 +312,48 @@ module HandlerTypes = {
       ~eventOptions: option<EventOptions.t>,
       ~logger: Pino.t=?,
     ) => unit
-    let getLoaderHandler: t<'eventArgs> => option<
-      loaderHandler<'eventArgs, 'loaderReturn, 'eventFilter>,
+    let noopLoader: loader<'eventArgs, ()>
+    let getLoader: t<'eventArgs> => option<
+      loader<Internal.eventParams, Internal.loaderReturn>,
     >
-    let getContractRegister: t<'eventArgs> => option<contractRegister<'eventArgs>>
+    let getHandler: t<'eventArgs> => option<
+      handler<Internal.eventParams, Internal.loaderReturn>,
+    >
+    let getContractRegister: t<'eventArgs> => option<contractRegister<Internal.eventParams>>
     let getEventOptions: t<'eventArgs> => EventOptions.t
     let hasRegistration: t<'eventArgs> => bool
   } = {
-    type loaderReturn
     type eventFilter
 
     type t<'eventArgs> = {
       contractName: string,
       eventName: string,
       topic0: EvmTypes.Hex.t,
-      mutable loaderHandler: option<loaderHandler<'eventArgs, loaderReturn, eventFilter>>,
+      mutable loaderHandler: option<loaderHandler<'eventArgs, Internal.loaderReturn, eventFilter>>,
       mutable contractRegister: option<contractRegister<'eventArgs>>,
       mutable eventOptions: option<EventOptions.t>,
     }
 
-    let getLoaderHandler = (t: t<'eventArgs>): option<
-      loaderHandler<'eventArgs, 'loaderReturn, 'eventFilter>,
-    > =>
+    let noopLoader = _ => Promise.resolve()
+
+    let getLoaderHandler = (t: t<'eventArgs>) =>
       t.loaderHandler->(
-        Utils.magic: option<loaderHandler<'eventArgs, loaderReturn, eventFilter>> => option<
-          loaderHandler<'eventArgs, 'loaderReturn, 'eventFilter>,
+        Utils.magic: option<loaderHandler<'eventArgs, Internal.loaderReturn, eventFilter>> => option<
+          loaderHandler<Internal.eventParams, Internal.loaderReturn, 'eventFilter>,
         >
       )
 
-    let getContractRegister = (t: t<'eventArgs>): option<contractRegister<'eventArgs>> =>
-      t.contractRegister
+    let getLoader = (t: t<'eventArgs>) => t->getLoaderHandler->Belt.Option.flatMap(lh => 
+      if lh.loader === noopLoader->(Utils.magic: loader<'eventArgs, ()> => loader<Internal.eventParams, Internal.loaderReturn>) {
+        None
+      } else {
+        Some(lh.loader)
+      }
+    )
+
+    let getHandler = (t: t<'eventArgs>) => t->getLoaderHandler->Belt.Option.map(lh => lh.handler)
+
+    let getContractRegister = (t: t<'eventArgs>) => t.contractRegister->(Utils.magic: option<contractRegister<'eventArgs>> => option<contractRegister<Internal.eventParams>>)
 
     let getEventOptions = ({eventOptions, topic0}: t<'eventArgs>): EventOptions.t =>
       switch eventOptions {
@@ -376,7 +400,7 @@ module HandlerTypes = {
           value
           ->(Utils.magic: loaderHandler<'eventArgs, 'loaderReturn, 'eventFilter> => loaderHandler<
             'eventArgs,
-            loaderReturn,
+            Internal.loaderReturn,
             eventFilter,
           >)
           ->Some
@@ -417,8 +441,6 @@ module HandlerTypes = {
   }
 }
 
-type internalEventArgs
-
 module type Event = {
   let sighash: string // topic0 for Evm and rb for Fuel receipts
   let topicCount: int // Number of topics for evm, always 0 for fuel
@@ -433,9 +455,8 @@ module type Event = {
   type eventFilter
   let getTopicSelection: SingleOrMultiple.t<eventFilter> => array<LogSelection.topicSelection>
 }
-module type InternalEvent = Event with type eventArgs = internalEventArgs
+module type InternalEvent = Event with type eventArgs = Internal.eventParams
 
-external eventToInternal: eventLog<'a> => eventLog<internalEventArgs> = "%identity"
 external eventModToInternal: module(Event with type eventArgs = 'a) => module(InternalEvent) = "%identity"
 external eventModWithoutArgTypeToInternal: module(Event) => module(InternalEvent) = "%identity"
 
@@ -511,7 +532,7 @@ module MakeRegister = (Event: Event) => {
   ) => {
     Event.handlerRegister->HandlerTypes.Register.setLoaderHandler(
       {
-        loader: _ => Promise.resolve(),
+        loader: HandlerTypes.Register.noopLoader,
         handler,
         wildcard: ?eventConfig->Belt.Option.flatMap(c => c.wildcard),
         eventFilters: ?eventConfig->Belt.Option.flatMap(c => c.eventFilters),
@@ -542,7 +563,7 @@ module MakeRegister = (Event: Event) => {
 type fuelEventKind = 
   | LogData({
     logId: string,
-    decode: string => internalEventArgs,
+    decode: string => Internal.eventParams,
   })
   | Mint
   | Burn
@@ -553,8 +574,8 @@ type fuelEventConfig = {
   name: string,
   kind: fuelEventKind,
   isWildcard: bool,
-  handlerRegister: HandlerTypes.Register.t<internalEventArgs>,
-  paramsRawEventSchema: S.schema<internalEventArgs>,
+  handlerRegister: HandlerTypes.Register.t<Internal.eventParams>,
+  paramsRawEventSchema: S.schema<Internal.eventParams>,
 }
 
 type fuelContractConfig = {
@@ -600,16 +621,18 @@ module {{event.name}} = {
 @genType
 type chainId = int
 
-type eventBatchQueueItem = {
+type eventItem = {
   eventName: string,
   contractName: string,
-  handlerRegister: HandlerTypes.Register.t<internalEventArgs>,
+  loader: option<HandlerTypes.loader<Internal.eventParams, Internal.loaderReturn>>,
+  handler: option<HandlerTypes.handler<Internal.eventParams, Internal.loaderReturn>>,
+  contractRegister: option<HandlerTypes.contractRegister<Internal.eventParams>>,
   timestamp: int,
   chain: ChainMap.Chain.t,
   blockNumber: int,
   logIndex: int,
-  event: eventLog<internalEventArgs>,
-  paramsRawEventSchema: S.schema<internalEventArgs>,
+  event: Internal.event,
+  paramsRawEventSchema: S.schema<Internal.eventParams>,
   //Default to false, if an event needs to
   //be reprocessed after it has loaded dynamic contracts
   //This gets set to true and does not try and reload events

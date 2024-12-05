@@ -57,12 +57,10 @@ module EventFunctions = {
   */
   let makeEventProcessor = (~contractName, ~eventName, ~handlerRegister, ~paramsRawEventSchema) => {
     async args => {
-      let {event, mockDb, ?chainId} =
-        args->(
-          Utils.magic: eventProcessorArgs<'eventArgs> => eventProcessorArgs<Types.internalEventArgs>
-        )
-      let handlerRegister = handlerRegister->(Utils.magic: Types.HandlerTypes.Register.t<'eventArgs> => Types.HandlerTypes.Register.t<Types.internalEventArgs>)
-      let paramsRawEventSchema = paramsRawEventSchema->(Utils.magic: S.t<'eventArgs> => S.t<Types.internalEventArgs>)
+      let {event, mockDb, ?chainId} = args
+      let event = event->(Utils.magic: Types.eventLog<'eventArgs> => Internal.event)
+      let handlerRegister = handlerRegister->(Utils.magic: Types.HandlerTypes.Register.t<'eventArgs> => Types.HandlerTypes.Register.t<Internal.eventParams>)
+      let paramsRawEventSchema = paramsRawEventSchema->(Utils.magic: S.t<'eventArgs> => S.t<Internal.eventParams>)
 
       let config = RegisterHandlers.getConfig()
 
@@ -112,23 +110,27 @@ module EventFunctions = {
       //The only purpose is to test the registerContract function and to
       //add the entity to the in memory store for asserting registrations
 
-      let eventBatchQueueItem: Types.eventBatchQueueItem = {
+      let loader = handlerRegister->Types.HandlerTypes.Register.getLoader
+      let handler = handlerRegister->Types.HandlerTypes.Register.getHandler
+      let eventItem: Types.eventItem = {
         event,
         eventName,
         contractName,
-        handlerRegister,
+        loader,
+        handler,
+        contractRegister: handlerRegister->Types.HandlerTypes.Register.getContractRegister,
         paramsRawEventSchema,
         chain,
         logIndex: event.logIndex,
-        timestamp: event.block->Types.Block.getTimestamp,
-        blockNumber: event.block->Types.Block.getNumber,
+        timestamp: event.block->Types.Block.getInternalTimestamp,
+        blockNumber: event.block->Types.Block.getInternalNumber,
       }
 
       switch handlerRegister->Types.HandlerTypes.Register.getContractRegister {
       | Some(contractRegister) =>
         switch contractRegister->EventProcessing.runEventContractRegister(
           ~logger,
-          ~eventBatchQueueItem,
+          ~eventItem,
           ~checkContractIsRegistered=(~chain as _, ~contractAddress as _, ~contractName as _) =>
             false,
           ~dynamicContractRegistrations=None,
@@ -141,12 +143,13 @@ module EventFunctions = {
       | None => () //No need to run contract registration
       }
 
-      switch handlerRegister->Types.HandlerTypes.Register.getLoaderHandler {
-      | Some(loaderHandler) =>
-        switch await eventBatchQueueItem->EventProcessing.runEventHandler(
+      switch handler {
+      | Some(handler) =>
+        switch await eventItem->EventProcessing.runEventHandler(
           ~inMemoryStore,
+          ~loader,
+          ~handler,
           ~loadLayer,
-          ~loaderHandler,
           ~logger,
           ~shouldSaveHistory=false,
         ) {

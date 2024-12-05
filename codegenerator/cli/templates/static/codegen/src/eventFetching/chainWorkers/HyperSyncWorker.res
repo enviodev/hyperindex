@@ -240,16 +240,19 @@ module Make = (
 
   let makeEventBatchQueueItem = (
     item: HyperSync.logsQueryPageItem,
-    ~params: Types.internalEventArgs,
+    ~params: Internal.eventParams,
     ~eventMod: module(Types.InternalEvent),
-  ): Types.eventBatchQueueItem => {
+  ): Types.eventItem => {
     let module(Event) = eventMod
     let {block, log, transaction} = item
     let chainId = chain->ChainMap.Chain.toChainId
+
     {
       eventName: Event.name,
       contractName: Event.contractName,
-      handlerRegister: Event.handlerRegister,
+      loader: Event.handlerRegister->Types.HandlerTypes.Register.getLoader,
+      handler: Event.handlerRegister->Types.HandlerTypes.Register.getHandler,
+      contractRegister: Event.handlerRegister->Types.HandlerTypes.Register.getContractRegister,
       paramsRawEventSchema: Event.paramsRawEventSchema,
       timestamp: block->Types.Block.getTimestamp,
       chain,
@@ -262,7 +265,7 @@ module Make = (
         block,
         srcAddress: log.address,
         logIndex: log.logIndex,
-      },
+      }->Internal.fromGenericEvent,
     }
   }
 

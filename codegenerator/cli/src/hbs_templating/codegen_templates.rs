@@ -375,8 +375,8 @@ let register = (): fuelEventConfig => {{
   name,
   kind: {fuel_event_kind_code},
   isWildcard: (handlerRegister->HandlerTypes.Register.getEventOptions).isWildcard,
-  handlerRegister: handlerRegister->(Utils.magic: HandlerTypes.Register.t<eventArgs> => HandlerTypes.Register.t<internalEventArgs>),
-  paramsRawEventSchema: paramsRawEventSchema->(Utils.magic: S.t<eventArgs> => S.t<internalEventArgs>),
+  handlerRegister: handlerRegister->(Utils.magic: HandlerTypes.Register.t<eventArgs> => HandlerTypes.Register.t<Internal.eventParams>),
+  paramsRawEventSchema: paramsRawEventSchema->(Utils.magic: S.t<eventArgs> => S.t<Internal.eventParams>),
 }}"#
             ),
         };

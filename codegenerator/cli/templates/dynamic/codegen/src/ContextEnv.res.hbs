@@ -5,7 +5,7 @@ The context holds all the state for a given events loader and handler.
 */
 type t = {
   logger: Pino.t,
-  eventBatchQueueItem: Types.eventBatchQueueItem,
+  eventItem: Types.eventItem,
   addedDynamicContractRegistrations: array<TablesStatic.DynamicContractRegistry.t>,
 }
 
@@ -19,9 +19,9 @@ let getUserLogger = (logger): Logs.userLogger => {
 }
 
 let makeEventIdentifier = (
-  eventBatchQueueItem: Types.eventBatchQueueItem,
+  eventItem: Types.eventItem,
 ): Types.eventIdentifier => {
-  let {event, blockNumber, timestamp} = eventBatchQueueItem
+  let {event, blockNumber, timestamp} = eventItem
   {
     chainId: event.chainId,
     blockTimestamp: timestamp,
@@ -30,15 +30,15 @@ let makeEventIdentifier = (
   }
 }
 
-let getEventId = (eventBatchQueueItem: Types.eventBatchQueueItem) => {
+let getEventId = (eventItem: Types.eventItem) => {
   EventUtils.packEventIndex(
-    ~blockNumber=eventBatchQueueItem.blockNumber,
-    ~logIndex=eventBatchQueueItem.event.logIndex,
+    ~blockNumber=eventItem.blockNumber,
+    ~logIndex=eventItem.event.logIndex,
   )
 }
 
-let make = (~eventBatchQueueItem: Types.eventBatchQueueItem, ~logger) => {
-  let {event, chain, eventName, contractName, blockNumber} = eventBatchQueueItem
+let make = (~eventItem: Types.eventItem, ~logger) => {
+  let {event, chain, eventName, contractName, blockNumber} = eventItem
   let logger = logger->(
     Logging.createChildFrom(
       ~logger=_,
@@ -53,7 +53,7 @@ let make = (~eventBatchQueueItem: Types.eventBatchQueueItem, ~logger) => {
 
   {
     logger,
-    eventBatchQueueItem,
+    eventItem,
     addedDynamicContractRegistrations: [],
   }
 }
@@ -76,8 +76,8 @@ let makeDynamicContractRegisterFn = (
   let contractAddress = contractAddress->Address.Evm.fromAddressOrThrow
   {{/if}}
 
-  let {eventBatchQueueItem, addedDynamicContractRegistrations} = contextEnv
-  let {chain, timestamp, blockNumber, logIndex} = eventBatchQueueItem
+  let {eventItem, addedDynamicContractRegistrations} = contextEnv
+  let {chain, timestamp, blockNumber, logIndex} = eventItem
 
   let chainId = chain->ChainMap.Chain.toChainId
   let dynamicContractRegistration: TablesStatic.DynamicContractRegistry.t = {
@@ -85,9 +85,9 @@ let makeDynamicContractRegisterFn = (
     chainId,
     registeringEventBlockNumber: blockNumber,
     registeringEventLogIndex: logIndex,
-    registeringEventName: eventBatchQueueItem.eventName,
-    registeringEventContractName: eventBatchQueueItem.contractName,
-    registeringEventSrcAddress: eventBatchQueueItem.event.srcAddress,
+    registeringEventName: eventItem.eventName,
+    registeringEventContractName: eventItem.contractName,
+    registeringEventSrcAddress: eventItem.event.srcAddress,
     registeringEventBlockTimestamp: timestamp,
     contractAddress,
     contractType: contractName,
@@ -198,9 +198,9 @@ let getHandlerContext = (
   ~loadLayer,
   ~shouldSaveHistory,
 ) => {
-  let {eventBatchQueueItem, logger} = context
+  let {eventItem, logger} = context
 
-  let eventIdentifier = eventBatchQueueItem->makeEventIdentifier
+  let eventIdentifier = eventItem->makeEventIdentifier
   {
     log: logger->getUserLogger,
     {{#each entities as | entity |}}
@@ -218,12 +218,12 @@ let getHandlerContext = (
 }
 
 let getContractRegisterArgs = (contextEnv, ~inMemoryStore, ~shouldSaveHistory) => {
-  Types.HandlerTypes.event: contextEnv.eventBatchQueueItem.event,
+  Types.HandlerTypes.event: contextEnv.eventItem.event->Internal.toGenericEvent,
   context: contextEnv->getContractRegisterContext(~inMemoryStore, ~shouldSaveHistory),
 }
 
 let getLoaderArgs = (contextEnv, ~inMemoryStore, ~loadLayer) => {
-  Types.HandlerTypes.event: contextEnv.eventBatchQueueItem.event,
+  Types.HandlerTypes.event: contextEnv.eventItem.event->Internal.toGenericEvent,
   context: contextEnv->getLoaderContext(~inMemoryStore, ~loadLayer),
 }
 
@@ -234,7 +234,7 @@ let getHandlerArgs = (
   ~loadLayer,
   ~shouldSaveHistory,
 ) => {
-  Types.HandlerTypes.event: contextEnv.eventBatchQueueItem.event,
+  Types.HandlerTypes.event: contextEnv.eventItem.event->Internal.toGenericEvent,
   context: contextEnv->getHandlerContext(~inMemoryStore, ~loadLayer, ~shouldSaveHistory),
   loaderReturn,
 }

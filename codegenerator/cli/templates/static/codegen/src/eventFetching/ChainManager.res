@@ -3,12 +3,12 @@ type t = {
   chainFetchers: ChainMap.t<ChainFetcher.t>,
   //Holds arbitrary events that were added when a batch ended processing early
   //due to contract registration. Ordered from latest to earliest
-  arbitraryEventQueue: array<Types.eventBatchQueueItem>,
+  arbitraryEventQueue: array<Types.eventItem>,
   isUnorderedMultichainMode: bool,
   isInReorgThreshold: bool,
 }
 
-let getComparitorFromItem = (queueItem: Types.eventBatchQueueItem) => {
+let getComparitorFromItem = (queueItem: Types.eventItem) => {
   let {timestamp, chain, blockNumber, logIndex} = queueItem
   EventUtils.getEventComparator({
     timestamp,
@@ -35,7 +35,7 @@ let getQueueItemComparitor = (earliestQueueItem: FetchState.queueItem, ~chain) =
   }
 }
 
-let priorityQueueComparitor = (a: Types.eventBatchQueueItem, b: Types.eventBatchQueueItem) => {
+let priorityQueueComparitor = (a: Types.eventItem, b: Types.eventItem) => {
   if a->getComparitorFromItem < b->getComparitorFromItem {
     -1
   } else {
@@ -241,12 +241,12 @@ let setChainFetcher = (self: t, chainFetcher: ChainFetcher.t) => {
 }
 
 let getFirstArbitraryEventsItemForChain = (
-  queue: array<Types.eventBatchQueueItem>,
+  queue: array<Types.eventItem>,
   ~chain,
   ~fetchStatesMap: ChainMap.t<fetchStateWithData>,
 ): option<isInReorgThresholdRes<FetchState.itemWithPopFn>> =>
   queue
-  ->Utils.Array.findReverseWithIndex((item: Types.eventBatchQueueItem) => {
+  ->Utils.Array.findReverseWithIndex((item: Types.eventItem) => {
     item.chain == chain
   })
   ->Option.map(((item, index)) => {
@@ -262,7 +262,7 @@ let getFirstArbitraryEventsItemForChain = (
   })
 
 let getFirstArbitraryEventsItem = (
-  queue: array<Types.eventBatchQueueItem>,
+  queue: array<Types.eventItem>,
   ~fetchStatesMap: ChainMap.t<fetchStateWithData>,
 ): option<isInReorgThresholdRes<FetchState.itemWithPopFn>> =>
   queue
@@ -278,7 +278,7 @@ let getFirstArbitraryEventsItem = (
 
 let popBatchItem = (
   ~fetchStatesMap: ChainMap.t<fetchStateWithData>,
-  ~arbitraryEventQueue: array<Types.eventBatchQueueItem>,
+  ~arbitraryEventQueue: array<Types.eventItem>,
   ~isUnorderedMultichainMode,
   ~onlyBelowReorgThreshold,
 ): isInReorgThresholdRes<option<FetchState.itemWithPopFn>> => {
@@ -387,9 +387,9 @@ let createBatchInternal = (
 }
 
 type batchRes = {
-  batch: array<Types.eventBatchQueueItem>,
+  batch: array<Types.eventItem>,
   fetchStatesMap: ChainMap.t<fetchStateWithData>,
-  arbitraryEventQueue: array<Types.eventBatchQueueItem>,
+  arbitraryEventQueue: array<Types.eventItem>,
 }
 
 let createBatch = (self: t, ~maxBatchSize: int, ~onlyBelowReorgThreshold: bool) => {

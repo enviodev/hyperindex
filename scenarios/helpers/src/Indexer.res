@@ -1,25 +1,6 @@
 module type S = {
-  module Pino: {
-    type t
-  }
-
   module ErrorHandling: {
     type t
-  }
-
-  module Address: {
-    type t
-  }
-
-  module Viem: {
-    type decodedEvent<'a>
-  }
-
-  module Ethers: {
-    type abi
-    module JsonRpcProvider: {
-      type t
-    }
   }
 
   module HyperSyncClient: {
@@ -28,46 +9,31 @@ module type S = {
     }
   }
 
-  module ChainMap: {
-    module Chain: {
-      type t
-      let toChainId: t => int
-    }
-    type t<'a>
-  }
-
   module LogSelection: {
     type t
     type topicSelection
   }
 
   module Types: {
-    type internalEventArgs
-
-    module Transaction: {
-      type t
-    }
-
-    module Block: {
-      type t
-    }
-
     module Log: {
       type t
     }
 
-    type eventLog<'a> = {
-      params: 'a,
-      chainId: int,
-      srcAddress: Address.t,
-      logIndex: int,
-      transaction: Transaction.t,
-      block: Block.t,
-    }
-
     module HandlerTypes: {
+      type contractRegister<'eventArgs>
+
+      type loader<'eventArgs, 'loaderReturn>
+
+      type handler<'eventArgs, 'loaderReturn>
+
       module Register: {
         type t<'eventArgs>
+
+        let getLoader: t<'eventArgs> => option<loader<Internal.eventParams, Internal.loaderReturn>>
+        let getHandler: t<'eventArgs> => option<
+          handler<Internal.eventParams, Internal.loaderReturn>,
+        >
+        let getContractRegister: t<'eventArgs> => option<contractRegister<Internal.eventParams>>
       }
     }
 
@@ -87,18 +53,20 @@ module type S = {
       type eventFilter
       let getTopicSelection: SingleOrMultiple.t<eventFilter> => array<LogSelection.topicSelection>
     }
-    module type InternalEvent = Event with type eventArgs = internalEventArgs
+    module type InternalEvent = Event with type eventArgs = Internal.eventParams
 
-    type eventBatchQueueItem = {
+    type eventItem = {
       eventName: string,
       contractName: string,
-      handlerRegister: HandlerTypes.Register.t<internalEventArgs>,
+      loader: option<HandlerTypes.loader<Internal.eventParams, Internal.loaderReturn>>,
+      handler: option<HandlerTypes.handler<Internal.eventParams, Internal.loaderReturn>>,
+      contractRegister: option<HandlerTypes.contractRegister<Internal.eventParams>>,
       timestamp: int,
       chain: ChainMap.Chain.t,
       blockNumber: int,
       logIndex: int,
-      event: eventLog<internalEventArgs>,
-      paramsRawEventSchema: RescriptSchema.S.schema<internalEventArgs>,
+      event: Internal.event,
+      paramsRawEventSchema: RescriptSchema.S.schema<Internal.eventParams>,
       //Default to false, if an event needs to
       //be reprocessed after it has loaded dynamic contracts
       //This gets set to true and does not try and reload events
@@ -148,7 +116,7 @@ module type S = {
     type blockRangeFetchResponse = {
       currentBlockHeight: int,
       reorgGuard: reorgGuard,
-      parsedQueueItems: array<Types.eventBatchQueueItem>,
+      parsedQueueItems: array<Types.eventItem>,
       fromBlockQueried: int,
       heighestQueriedBlockNumber: int,
       latestFetchedBlockTimestamp: int,

@@ -37,13 +37,13 @@ module Crypto = {
 module Make = (Indexer: Indexer.S) => {
   open Indexer
   type log = {
-    eventBatchQueueItem: Types.eventBatchQueueItem,
+    eventItem: Types.eventItem,
     srcAddress: Address.t,
     transactionHash: string,
     eventMod: module(Types.InternalEvent),
   }
 
-  type makeEvent = (~blockHash: string) => Types.eventLog<Types.internalEventArgs>
+  type makeEvent = (~blockHash: string) => Internal.event
 
   type logConstructor = {
     transactionHash: string,
@@ -70,11 +70,11 @@ module Make = (Indexer: Indexer.S) => {
       ~blockNumber: int,
       ~blockTimestamp: int,
       ~blockHash: string,
-    ) => Indexer.Types.Block.t,
+    ) => Internal.eventBlock,
     ~makeTransaction: (
       ~transactionIndex: int,
       ~transactionHash: string,
-    ) => Indexer.Types.Transaction.t,
+    ) => Internal.eventTransaction,
     ~chainId,
     ~blockTimestamp: int,
     ~blockNumber: int,
@@ -93,7 +93,7 @@ module Make = (Indexer: Indexer.S) => {
     let makeEvent: makeEvent = (~blockHash) => {
       let block = makeBlock(~blockHash, ~blockNumber, ~blockTimestamp)
       {
-        params: params->(Utils.magic: eventArgs => Types.internalEventArgs),
+        params: params->(Utils.magic: eventArgs => Internal.eventParams),
         srcAddress,
         chainId,
         block,
@@ -109,7 +109,7 @@ module Make = (Indexer: Indexer.S) => {
       srcAddress,
       eventMod: eventMod->(
         Utils.magic: module(Types.Event with type eventArgs = eventArgs) => module(Types.Event with
-          type eventArgs = Types.internalEventArgs
+          type eventArgs = Internal.eventParams
         )
       ),
     }
@@ -175,10 +175,12 @@ module Make = (Indexer: Indexer.S) => {
       eventMod,
     }): log => {
       let module(Event) = eventMod
-      let log: Types.eventBatchQueueItem = {
+      let log: Types.eventItem = {
         eventName: Event.name,
         contractName: Event.contractName,
-        handlerRegister: Event.handlerRegister,
+        handler: Event.handlerRegister->Types.HandlerTypes.Register.getHandler,
+        loader: Event.handlerRegister->Types.HandlerTypes.Register.getLoader,
+        contractRegister: Event.handlerRegister->Types.HandlerTypes.Register.getContractRegister,
         paramsRawEventSchema: Event.paramsRawEventSchema,
         event: makeEvent(~blockHash),
         chain: self.chainConfig.chain,
@@ -186,7 +188,7 @@ module Make = (Indexer: Indexer.S) => {
         blockNumber,
         logIndex,
       }
-      {eventBatchQueueItem: log, srcAddress, transactionHash, eventMod}
+      {eventItem: log, srcAddress, transactionHash, eventMod}
     })
 
     let block = {blockNumber, blockTimestamp, blockHash, logs}
@@ -240,7 +242,7 @@ module Make = (Indexer: Indexer.S) => {
           },
         )
         if isLogInConfig {
-          Some(l.eventBatchQueueItem)
+          Some(l.eventItem)
         } else {
           None
         }

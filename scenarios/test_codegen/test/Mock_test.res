@@ -11,17 +11,18 @@ describe("E2E Mock Event Batch", () => {
 
     let loadLayer = LoadLayer.makeWithDbConnection()
 
-    let runEventHandler = async (eventBatchQueueItem: Types.eventBatchQueueItem) => {
-      switch eventBatchQueueItem.handlerRegister->Types.HandlerTypes.Register.getLoaderHandler {
-      | Some(loaderHandler) =>
-        await eventBatchQueueItem->EventProcessing.runEventHandler(
-          ~loaderHandler,
+    let runEventHandler = async (eventItem: Types.eventItem) => {
+      switch eventItem.handler {
+      | None => Ok()
+      | Some(handler) =>
+        await eventItem->EventProcessing.runEventHandler(
+          ~loader=eventItem.loader,
+          ~handler,
           ~inMemoryStore,
           ~logger=Logging.logger,
           ~loadLayer,
           ~shouldSaveHistory=false,
         )
-      | None => Ok()
       }
     }
 

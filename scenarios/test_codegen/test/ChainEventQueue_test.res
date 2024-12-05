@@ -10,23 +10,23 @@ let tx1: Types.Transaction.t = {
   hash: "0xaaa",
   transactionIndex: 1,
 }
-let eventMock1: Types.eventLog<Types.internalEventArgs> = {
+let eventMock1: Internal.event = {
   block: {
-    number: 1,
-    hash: "0xdef",
-    timestamp: 1900000,
+    "number": 1,
+    "hash": "0xdef",
+    "timestamp": 1900000,
   },
   chainId: 54321,
   logIndex: 0,
   params: MockEvents.newGravatar1,
   srcAddress: "0x1234512345123451234512345123451234512345"->Address.Evm.fromStringOrThrow,
   transaction: {
-    hash: "0xabc",
-    transactionIndex: 987,
+    "hash": "0xabc",
+    "transactionIndex": 987,
   },
-}->Types.eventToInternal
+}->Internal.fromGenericEvent
 
-let qItemMock1: Types.eventBatchQueueItem = {
+let qItemMock1: Types.eventItem = {
   timestamp: 0,
   chain: MockConfig.chain1337,
   blockNumber: 1,
@@ -34,27 +34,31 @@ let qItemMock1: Types.eventBatchQueueItem = {
   event: eventMock1,
   eventName: "NewGravatar",
   contractName: "Gravatar",
-  handlerRegister: Types.Gravatar.NewGravatar.handlerRegister->(Utils.magic: Types.HandlerTypes.Register.t<Types.Gravatar.NewGravatar.eventArgs> => Types.HandlerTypes.Register.t<Types.internalEventArgs>),
-  paramsRawEventSchema: Types.Gravatar.NewGravatar.paramsRawEventSchema->(Utils.magic: S.t<Types.Gravatar.NewGravatar.eventArgs> => S.t<Types.internalEventArgs>),
+  handler: Types.Gravatar.NewGravatar.handlerRegister->Types.HandlerTypes.Register.getHandler,
+  loader: Types.Gravatar.NewGravatar.handlerRegister->Types.HandlerTypes.Register.getLoader,
+  contractRegister: Types.Gravatar.NewGravatar.handlerRegister->Types.HandlerTypes.Register.getContractRegister,
+  paramsRawEventSchema: Types.Gravatar.NewGravatar.paramsRawEventSchema->(
+    Utils.magic: S.t<Types.Gravatar.NewGravatar.eventArgs> => S.t<Internal.eventParams>
+  ),
 }
 
-let eventMock2: Types.eventLog<Types.internalEventArgs> = {
+let eventMock2: Internal.event = {
   block: {
-    number: 2,
-    hash: "0xabc",
-    timestamp: 1900001,
+    "number": 2,
+    "hash": "0xabc",
+    "timestamp": 1900001,
   },
   chainId: 54321,
   logIndex: 1,
   params: MockEvents.newGravatar2,
   srcAddress: "0x1234512345123451234512345123451234512346"->Address.Evm.fromStringOrThrow,
   transaction: {
-    hash: "0xdef",
-    transactionIndex: 988,
+    "hash": "0xdef",
+    "transactionIndex": 988,
   },
-}->Types.eventToInternal
+}->Internal.fromGenericEvent
 
-let qItemMock2: Types.eventBatchQueueItem = {
+let qItemMock2: Types.eventItem = {
   timestamp: 1,
   chain: MockConfig.chain1337,
   blockNumber: 2,
@@ -62,8 +66,12 @@ let qItemMock2: Types.eventBatchQueueItem = {
   event: eventMock1,
   eventName: "NewGravatar",
   contractName: "Gravatar",
-  handlerRegister: Types.Gravatar.NewGravatar.handlerRegister->(Utils.magic: Types.HandlerTypes.Register.t<Types.Gravatar.NewGravatar.eventArgs> => Types.HandlerTypes.Register.t<Types.internalEventArgs>),
-  paramsRawEventSchema: Types.Gravatar.NewGravatar.paramsRawEventSchema->(Utils.magic: S.t<Types.Gravatar.NewGravatar.eventArgs> => S.t<Types.internalEventArgs>),
+  handler: Types.Gravatar.NewGravatar.handlerRegister->Types.HandlerTypes.Register.getHandler,
+  loader: Types.Gravatar.NewGravatar.handlerRegister->Types.HandlerTypes.Register.getLoader,
+  contractRegister: Types.Gravatar.NewGravatar.handlerRegister->Types.HandlerTypes.Register.getContractRegister,
+  paramsRawEventSchema: Types.Gravatar.NewGravatar.paramsRawEventSchema->(
+    Utils.magic: S.t<Types.Gravatar.NewGravatar.eventArgs> => S.t<Internal.eventParams>
+  ),
 }
 
 describe("Chain Event Queue", () => {

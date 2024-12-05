@@ -8,16 +8,20 @@ let getDefaultAddress = (chain, contractName) => {
 }
 
 let gAS_USED_DEFAULT = BigInt.zero
-let makeBlock = (~blockNumber, ~blockTimestamp, ~blockHash): Types.Block.t => {
-  number: blockNumber,
-  hash: blockHash,
-  timestamp: blockTimestamp,
-  gasUsed: gAS_USED_DEFAULT,
-}
-let makeTransaction = (~transactionIndex, ~transactionHash): Types.Transaction.t => {
-  transactionIndex,
-  hash: transactionHash,
-}
+let makeBlock = (~blockNumber, ~blockTimestamp, ~blockHash) =>
+  {
+    number: blockNumber,
+    hash: blockHash,
+    timestamp: blockTimestamp,
+    gasUsed: gAS_USED_DEFAULT,
+  }->(Utils.magic: Types.Block.t => Internal.eventBlock)
+
+let makeTransaction = (~transactionIndex, ~transactionHash) =>
+  {
+    transactionIndex,
+    hash: transactionHash,
+  }->(Utils.magic: Types.Transaction.t => Internal.eventTransaction)
+
 module ERC20 = {
   let contractName = "ERC20"
   let getDefaultAddress = getDefaultAddress(_, contractName)

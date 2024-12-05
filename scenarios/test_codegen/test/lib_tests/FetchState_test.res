@@ -189,14 +189,16 @@ describe("FetchState.fetchState", () => {
     Assert.deepEqual(updatedState3, expected3, ~message="3rd registration")
   })
 
-  let mockEvent = (~blockNumber, ~logIndex=0, ~chainId=1): Types.eventBatchQueueItem => {
+  let mockEvent = (~blockNumber, ~logIndex=0, ~chainId=1): Types.eventItem => {
     timestamp: blockNumber * 15,
     chain: ChainMap.Chain.makeUnsafe(~chainId),
     blockNumber,
     logIndex,
     eventName: "MockEvent",
     contractName: "MockContract",
-    handlerRegister: Utils.magic("Mock event handlerRegister in fetchstate test"),
+    handler: None,
+    loader: None,
+    contractRegister: None,
     paramsRawEventSchema: Utils.magic("Mock event paramsRawEventSchema in fetchstate test"),
     event: Utils.magic("Mock event in fetchstate test"),
   }

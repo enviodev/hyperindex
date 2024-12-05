@@ -53,14 +53,16 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
       let numberOfEventsInBatch = getRandomInt(0, 2 * averageEventsPerBlock)
 
       for logIndex in 0 to numberOfEventsInBatch {
-        let batchItem: Types.eventBatchQueueItem = {
+        let batchItem: Types.eventItem = {
           timestamp: currentTime.contents,
           chain,
           blockNumber: currentBlockNumber.contents,
           logIndex,
           eventName: "MockEvent",
           contractName: "MockContract",
-          handlerRegister: Utils.magic("Mock event handlerRegister in fetchstate test"),
+          handler: None,
+          loader: None,
+          contractRegister: None,
           paramsRawEventSchema: Utils.magic("Mock event paramsRawEventSchema in fetchstate test"),
           event: `mock event (chainId)${chain->ChainMap.Chain.toString} - (blockNumber)${currentBlockNumber.contents->string_of_int} - (logIndex)${logIndex->string_of_int} - (timestamp)${currentTime.contents->string_of_int}`->Utils.magic,
         }
@@ -158,14 +160,16 @@ describe("ChainManager", () => {
           _allEvents,
         ) = populateChainQueuesWithRandomEvents()
 
-        let defaultFirstEvent: Types.eventBatchQueueItem = {
+        let defaultFirstEvent: Types.eventItem = {
           timestamp: 0,
           chain: MockConfig.chain1,
           blockNumber: 0,
           logIndex: 0,
           eventName: "MockEvent",
           contractName: "MockContract",
-          handlerRegister: Utils.magic("Mock event handlerRegister in fetchstate test"),
+          handler: None,
+          loader: None,
+          contractRegister: None,
           paramsRawEventSchema: Utils.magic("Mock event paramsRawEventSchema in fetchstate test"),
           event: `mock initial event`->Utils.magic,
         }
@@ -297,7 +301,7 @@ describe("determineNextEvent", () => {
     )
 
     let makeNoItem = timestamp => FetchState.NoItem({blockTimestamp: timestamp, blockNumber: 0})
-    let makeMockQItem = (timestamp, chain): Types.eventBatchQueueItem => {
+    let makeMockQItem = (timestamp, chain): Types.eventItem => {
       {
         timestamp,
         chain,
@@ -305,7 +309,9 @@ describe("determineNextEvent", () => {
         logIndex: 123456,
         eventName: "MockEvent",
         contractName: "MockContract",
-        handlerRegister: Utils.magic("Mock event handlerRegister"),
+        handler: None,
+        loader: None,
+        contractRegister: None,
         paramsRawEventSchema: Utils.magic("Mock event paramsRawEventSchema"),
         event: "SINGLE TEST EVENT"->Utils.magic,
       }
