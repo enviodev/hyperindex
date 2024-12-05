@@ -72,3 +72,44 @@ type eventItem = {
   //This gets set to true and does not try and reload events
   hasRegisteredDynamicContracts?: bool,
 }
+
+type fuelEventKind =
+  | LogData({logId: string, decode: string => eventParams})
+  | Mint
+  | Burn
+  | Transfer
+  | Call
+type fuelEventConfig = {
+  name: string,
+  kind: fuelEventKind,
+  isWildcard: bool,
+  loader: option<loader>,
+  handler: option<handler>,
+  contractRegister: option<contractRegister>,
+  paramsRawEventSchema: S.schema<eventParams>,
+}
+type fuelContractConfig = {
+  name: string,
+  events: array<fuelEventConfig>,
+}
+
+@genType
+type fuelSupplyParams = {
+  subId: string,
+  amount: bigint,
+}
+let fuelSupplyParamsSchema = S.schema(s => {
+  subId: s.matches(S.string),
+  amount: s.matches(BigInt.schema),
+})
+@genType
+type fuelTransferParams = {
+  to: Address.t,
+  assetId: string,
+  amount: bigint,
+}
+let fuelTransferParamsSchema = S.schema(s => {
+  to: s.matches(Address.schema),
+  assetId: s.matches(S.string),
+  amount: s.matches(BigInt.schema),
+})

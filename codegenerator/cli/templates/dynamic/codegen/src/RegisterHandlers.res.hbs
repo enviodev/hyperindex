@@ -134,7 +134,7 @@ let registerContractHandlers = (
             module(HyperFuelWorker.Make({
               let chain = chain
               let endpointUrl = "{{hyperfuel_config.endpoint_url}}"
-              let contracts: array<Types.fuelContractConfig> = [
+              let contracts: array<Internal.fuelContractConfig> = [
                 {{#each chain_config.codegen_contracts as | contract |}}
                 {
                   name: "{{contract.name.capitalized}}",

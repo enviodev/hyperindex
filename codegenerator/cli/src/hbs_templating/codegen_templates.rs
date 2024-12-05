@@ -371,11 +371,13 @@ impl EventMod {
             None => "".to_string(),
             Some(fuel_event_kind_code) => format!(
                 r#"
-let register = (): fuelEventConfig => {{
+let register = (): Internal.fuelEventConfig => {{
   name,
   kind: {fuel_event_kind_code},
   isWildcard: (handlerRegister->HandlerTypes.Register.getEventOptions).isWildcard,
-  handlerRegister: handlerRegister->(Utils.magic: HandlerTypes.Register.t<eventArgs> => HandlerTypes.Register.t<Internal.eventParams>),
+  loader: handlerRegister->HandlerTypes.Register.getLoader,
+  handler: handlerRegister->HandlerTypes.Register.getHandler,
+  contractRegister: handlerRegister->HandlerTypes.Register.getContractRegister,
   paramsRawEventSchema: paramsRawEventSchema->(Utils.magic: S.t<eventArgs> => S.t<Internal.eventParams>),
 }}"#
             ),
@@ -528,8 +530,8 @@ impl EventTemplate {
             sighash: config_event.sighash.to_string(),
             topic_count: 0, //Default to 0 for fuel,
             event_name: event_name.clone(),
-            data_type: "fuelSupplyParams".to_string(),
-            params_raw_event_schema: "fuelSupplyParamsSchema".to_string(),
+            data_type: "Internal.fuelSupplyParams".to_string(),
+            params_raw_event_schema: "Internal.fuelSupplyParamsSchema".to_string(),
             convert_hyper_sync_event_args_code: Self::CONVERT_HYPER_SYNC_EVENT_ARGS_NOOP
                 .to_string(),
             event_filter_type: Self::EVENT_FILTER_TYPE_STUB.to_string(),
@@ -552,8 +554,8 @@ impl EventTemplate {
             sighash: config_event.sighash.to_string(),
             topic_count: 0, //Default to 0 for fuel,
             event_name: event_name.clone(),
-            data_type: "fuelTransferParams".to_string(),
-            params_raw_event_schema: "fuelTransferParamsSchema".to_string(),
+            data_type: "Internal.fuelTransferParams".to_string(),
+            params_raw_event_schema: "Internal.fuelTransferParamsSchema".to_string(),
             convert_hyper_sync_event_args_code: Self::CONVERT_HYPER_SYNC_EVENT_ARGS_NOOP
                 .to_string(),
             event_filter_type: Self::EVENT_FILTER_TYPE_STUB.to_string(),

@@ -526,51 +526,6 @@ module MakeRegister = (Event: Event) => {
     )
 }
 
-type fuelEventKind = 
-  | LogData({
-    logId: string,
-    decode: string => Internal.eventParams,
-  })
-  | Mint
-  | Burn
-  | Transfer
-  | Call
-
-type fuelEventConfig = {
-  name: string,
-  kind: fuelEventKind,
-  isWildcard: bool,
-  handlerRegister: HandlerTypes.Register.t<Internal.eventParams>,
-  paramsRawEventSchema: S.schema<Internal.eventParams>,
-}
-
-type fuelContractConfig = {
-  name: string,
-  events: array<fuelEventConfig>,
-}
-
-type fuelSupplyParams = {
-  subId: string,
-  amount: bigint,
-}
-
-let fuelSupplyParamsSchema = S.schema(s => {
-  subId: s.matches(S.string),
-  amount: s.matches(BigInt.schema),
-})
-
-type fuelTransferParams = {
-  to: Address.t,
-  assetId: string,
-  amount: bigint,
-}
-
-let fuelTransferParamsSchema = S.schema(s => {
-  to: s.matches(Address.schema),
-  assetId: s.matches(S.string),
-  amount: s.matches(BigInt.schema),
-})
-
 {{#each codegen_contracts as | contract |}}
 module {{contract.name.capitalized}} = {
 {{contract.module_code}}
