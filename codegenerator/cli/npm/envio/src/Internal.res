@@ -3,7 +3,7 @@ type eventBlock
 type eventTransaction
 
 @genType
-type genericEvent<'params, 'transaction, 'block> = {
+type genericEvent<'params, 'block, 'transaction> = {
   params: 'params,
   chainId: int,
   srcAddress: Address.t,
@@ -12,7 +12,7 @@ type genericEvent<'params, 'transaction, 'block> = {
   block: 'block,
 }
 
-type event = genericEvent<eventParams, eventTransaction, eventBlock>
+type event = genericEvent<eventParams, eventBlock, eventTransaction>
 
 external fromGenericEvent: genericEvent<'a, 'b, 'c> => event = "%identity"
 
@@ -54,6 +54,15 @@ type genericHandler<'args> = 'args => promise<unit>
 type handlerContext
 type handlerArgs = genericHandlerArgs<event, handlerContext, loaderReturn>
 type handler = genericHandler<handlerArgs>
+
+@genType
+type genericHandlerWithLoader<'loader, 'handler, 'eventFilters> = {
+  loader: 'loader,
+  handler: 'handler,
+  wildcard?: bool,
+  eventFilters?: 'eventFilters,
+  preRegisterDynamicContracts?: bool,
+}
 
 type eventItem = {
   eventName: string,
