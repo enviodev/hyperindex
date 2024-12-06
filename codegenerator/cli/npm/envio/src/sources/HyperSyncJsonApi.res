@@ -357,25 +357,20 @@ module ResponseTypes = {
   })
 }
 
-let executeHyperSyncQuery = (~serverUrl, ~postQueryBody: QueryTypes.postQueryBody): promise<
-  result<ResponseTypes.queryResponse, QueryHelpers.queryError>,
-> => {
-  QueryHelpers.executeFetchRequest(
-    ~endpoint=serverUrl ++ "/query",
-    ~method=#POST,
-    ~bodyAndSchema=(postQueryBody, QueryTypes.postQueryBodySchema),
-    ~responseSchema=ResponseTypes.queryResponseSchema,
-  )
-}
+let queryRoute = Rest.route(() => {
+  path: "/query",
+  method: Post,
+  variables: s => s.body(QueryTypes.postQueryBodySchema),
+  responses: [
+    s => s.data(ResponseTypes.queryResponseSchema),
+  ]
+})
 
-let getArchiveHeight = {
-  let responseSchema = S.object(s => s.field("height", S.int))
-
-  async (~serverUrl): result<int, QueryHelpers.queryError> => {
-    await QueryHelpers.executeFetchRequest(
-      ~endpoint=serverUrl ++ "/height",
-      ~method=#GET,
-      ~responseSchema,
-    )
-  }
-}
+let heightRoute = Rest.route(() => {
+  path: "/height",
+  method: Get,
+  variables: _ => (),
+  responses: [
+    s => s.field("height", S.int),
+  ]
+})

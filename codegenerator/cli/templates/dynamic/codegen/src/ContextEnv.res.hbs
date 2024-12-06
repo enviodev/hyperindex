@@ -5,7 +5,7 @@ The context holds all the state for a given events loader and handler.
 */
 type t = {
   logger: Pino.t,
-  eventItem: Types.eventItem,
+  eventItem: Internal.eventItem,
   addedDynamicContractRegistrations: array<TablesStatic.DynamicContractRegistry.t>,
 }
 
@@ -19,7 +19,7 @@ let getUserLogger = (logger): Logs.userLogger => {
 }
 
 let makeEventIdentifier = (
-  eventItem: Types.eventItem,
+  eventItem: Internal.eventItem,
 ): Types.eventIdentifier => {
   let {event, blockNumber, timestamp} = eventItem
   {
@@ -30,14 +30,14 @@ let makeEventIdentifier = (
   }
 }
 
-let getEventId = (eventItem: Types.eventItem) => {
+let getEventId = (eventItem: Internal.eventItem) => {
   EventUtils.packEventIndex(
     ~blockNumber=eventItem.blockNumber,
     ~logIndex=eventItem.event.logIndex,
   )
 }
 
-let make = (~eventItem: Types.eventItem, ~logger) => {
+let make = (~eventItem: Internal.eventItem, ~logger) => {
   let {event, chain, eventName, contractName, blockNumber} = eventItem
   let logger = logger->(
     Logging.createChildFrom(
@@ -163,9 +163,9 @@ let getContractRegisterContext = (contextEnv, ~inMemoryStore, ~shouldSaveHistory
   {{#each codegen_contracts as |contract| }}
   add{{contract.name.capitalized}}:  makeDynamicContractRegisterFn(~contextEnv, ~inMemoryStore, ~contractName={{contract.name.capitalized}}, ~shouldSaveHistory),
   {{/each}}
-}
+}->(Utils.magic: Types.contractRegistrations => Internal.contractRegisterContext)
 
-let getLoaderContext = (contextEnv: t, ~inMemoryStore: InMemoryStore.t, ~loadLayer: LoadLayer.t): loaderContext => {
+let getLoaderContext = (contextEnv: t, ~inMemoryStore: InMemoryStore.t, ~loadLayer: LoadLayer.t) => {
   let {logger} = contextEnv
   {
     log: logger->getUserLogger,
@@ -189,7 +189,7 @@ let getLoaderContext = (contextEnv: t, ~inMemoryStore: InMemoryStore.t, ~loadLay
       },
     },
     {{/each}}
-  }
+  }->(Utils.magic: Types.loaderContext => Internal.loaderContext)
 }
 
 let getHandlerContext = (
@@ -214,16 +214,16 @@ let getHandlerContext = (
       ~shouldSaveHistory,
     ),
     {{/each}}
-  }
+  }->(Utils.magic: Types.handlerContext => Internal.handlerContext)
 }
 
-let getContractRegisterArgs = (contextEnv, ~inMemoryStore, ~shouldSaveHistory) => {
-  Types.HandlerTypes.event: contextEnv.eventItem.event->Internal.toGenericEvent,
+let getContractRegisterArgs = (contextEnv, ~inMemoryStore, ~shouldSaveHistory): Internal.contractRegisterArgs => {
+  event: contextEnv.eventItem.event,
   context: contextEnv->getContractRegisterContext(~inMemoryStore, ~shouldSaveHistory),
 }
 
-let getLoaderArgs = (contextEnv, ~inMemoryStore, ~loadLayer) => {
-  Types.HandlerTypes.event: contextEnv.eventItem.event->Internal.toGenericEvent,
+let getLoaderArgs = (contextEnv, ~inMemoryStore, ~loadLayer): Internal.loaderArgs => {
+  event: contextEnv.eventItem.event,
   context: contextEnv->getLoaderContext(~inMemoryStore, ~loadLayer),
 }
 
@@ -233,8 +233,8 @@ let getHandlerArgs = (
   ~loaderReturn,
   ~loadLayer,
   ~shouldSaveHistory,
-) => {
-  Types.HandlerTypes.event: contextEnv.eventItem.event->Internal.toGenericEvent,
+): Internal.handlerArgs => {
+  event: contextEnv.eventItem.event,
   context: contextEnv->getHandlerContext(~inMemoryStore, ~loadLayer, ~shouldSaveHistory),
   loaderReturn,
 }

@@ -1,4 +1,16 @@
 open Belt
+
+module Log = {
+  type t = {
+    address: Address.t,
+    data: string,
+    topics: array<EvmTypes.Hex.t>,
+    logIndex: int,
+  }
+
+  let fieldNames = ["address", "data", "topics", "logIndex"]
+}
+
 type hyperSyncPage<'item> = {
   items: array<'item>,
   nextBlock: int,
@@ -8,9 +20,9 @@ type hyperSyncPage<'item> = {
 }
 
 type logsQueryPageItem = {
-  log: Types.Log.t,
-  block: Types.Block.t,
-  transaction: Types.Transaction.t,
+  log: Log.t,
+  block: Internal.eventBlock,
+  transaction: Internal.eventTransaction,
 }
 
 type logsQueryPage = hyperSyncPage<logsQueryPageItem>
@@ -19,7 +31,7 @@ type missingParams = {
   queryName: string,
   missingParams: array<string>,
 }
-type queryError = UnexpectedMissingParams(missingParams) | QueryError(QueryHelpers.queryError)
+type queryError = UnexpectedMissingParams(missingParams)
 
 exception HyperSyncQueryError(queryError)
 
@@ -30,32 +42,10 @@ let queryErrorToExn = queryError => {
 exception UnexpectedMissingParamsExn(missingParams)
 
 let queryErrorToMsq = (e: queryError): string => {
-  let getMsgFromExn = (exn: exn) =>
-    exn
-    ->Js.Exn.asJsExn
-    ->Option.flatMap(exn => exn->Js.Exn.message)
-    ->Option.getWithDefault("No message on exception")
   switch e {
   | UnexpectedMissingParams({queryName, missingParams}) =>
     `${queryName} query failed due to unexpected missing params on response:
       ${missingParams->Js.Array2.joinWith(", ")}`
-  | QueryError(e) =>
-    switch e {
-    | Deserialize(data, e) =>
-      `Failed to deserialize response at ${e.path->S.Path.toString}: ${e->S.Error.reason}
-  JSON data:
-    ${data->Js.Json.stringify}`
-    | FailedToFetch(e) =>
-      let msg = e->getMsgFromExn
-
-      `Failed during fetch query: ${msg}`
-    | FailedToParseJson(e) =>
-      let msg = e->getMsgFromExn
-      `Failed during parse of json: ${msg}`
-    | Other(e) =>
-      let msg = e->getMsgFromExn
-      `Failed for unknown reason during query: ${msg}`
-    }
   }
 }
 
@@ -72,30 +62,6 @@ let getExn = (queryResponse: queryResponse<'a>) =>
   | Error(err) => err->queryErrorToExn->raise
   }
 
-//Manage clients in cache so we don't need to reinstantiate each time
-//Ideally client should be passed in as a param to the functions but
-//we are still sharing the same signature with eth archive query builder
-module CachedClients = {
-  let cache: dict<HyperSyncClient.t> = Js.Dict.empty()
-
-  let getClient = url => {
-    switch cache->Utils.Dict.dangerouslyGetNonOption(url) {
-    | Some(client) => client
-    | None =>
-      let newClient = HyperSyncClient.make(
-        ~url,
-        ~bearerToken=Env.envioApiToken,
-        ~maxNumRetries=Env.hyperSyncClientMaxRetries,
-        ~httpReqTimeoutMillis=Env.hyperSyncClientTimeoutMillis,
-      )
-
-      cache->Js.Dict.set(url, newClient)
-
-      newClient
-    }
-  }
-}
-
 module LogsQuery = {
   let makeRequestBody = (
     ~fromBlock,
@@ -105,8 +71,8 @@ module LogsQuery = {
   ): HyperSyncClient.QueryTypes.query => {
     fromBlock,
     toBlockExclusive: ?switch toBlockInclusive {
-      | Some(toBlockInclusive) => Some(toBlockInclusive + 1)
-      | None => None
+    | Some(toBlockInclusive) => Some(toBlockInclusive + 1)
+    | None => None
     },
     logs: addressesWithTopics,
     fieldSelection,
@@ -130,7 +96,7 @@ module LogsQuery = {
     ~nonOptionalTransactionFieldNames,
   ): logsQueryPageItem => {
     let missingParams = []
-    missingParams->addMissingParams(Types.Log.fieldNames, event.log, ~prefix="log")
+    missingParams->addMissingParams(Log.fieldNames, event.log, ~prefix="log")
     missingParams->addMissingParams(nonOptionalBlockFieldNames, event.block, ~prefix="block")
     missingParams->addMissingParams(
       nonOptionalTransactionFieldNames,
@@ -145,8 +111,7 @@ module LogsQuery = {
     }
 
     //Topics can be nullable and still need to be filtered
-    //Address is not yet checksummed (TODO this should be done in the client)
-    let logUnsanitized: Types.Log.t = event.log->Utils.magic
+    let logUnsanitized: Log.t = event.log->Utils.magic
     let topics = event.log.topics->Option.getUnsafe->Array.keepMap(Js.Nullable.toOption)
     let address = event.log.address->Option.getUnsafe
     let log = {
@@ -188,13 +153,14 @@ module LogsQuery = {
   }
 
   let queryLogsPage = async (
-    ~serverUrl,
+    ~client: HyperSyncClient.t,
     ~fromBlock,
     ~toBlock,
     ~logSelections: array<LogSelection.t>,
     ~fieldSelection,
     ~nonOptionalBlockFieldNames,
     ~nonOptionalTransactionFieldNames,
+    ~logger,
   ): queryResponse<logsQueryPage> => {
     let addressesWithTopics = logSelections->Array.flatMap(({addresses, topicSelections}) =>
       topicSelections->Array.map(({topic0, topic1, topic2, topic3}) => {
@@ -215,13 +181,7 @@ module LogsQuery = {
       ~fieldSelection,
     )
 
-    let hyperSyncClient = CachedClients.getClient(serverUrl)
-
-    let logger = Logging.createChild(
-      ~params={"type": "hypersync query", "fromBlock": fromBlock, "serverUrl": serverUrl},
-    )
-
-    let executeQuery = () => hyperSyncClient.getEvents(~query)
+    let executeQuery = () => client.getEvents(~query)
 
     let res = await executeQuery->Time.retryAsyncWithExponentialBackOff(~logger=Some(logger))
 
@@ -240,10 +200,9 @@ module HeightQuery = {
 
     //Retry if the height is 0 (expect height to be greater)
     while height.contents <= 0 {
-      let res = await HyperSyncJsonApi.getArchiveHeight(~serverUrl)
-      switch res {
-      | Ok(h) => height := h
-      | Error(e) =>
+      switch await HyperSyncJsonApi.heightRoute->Rest.fetch(serverUrl, ()) {
+      | h => height := h
+      | exception e =>
         logger->Logging.childWarn({
           "message": `Failed to get height from endpoint. Retrying in ${retryIntervalMillis.contents->Int.toString}ms...`,
           "error": e,
@@ -281,50 +240,46 @@ module BlockData = {
     includeAllBlocks: true,
   }
 
-  let convertResponse = (
-    res: result<HyperSyncJsonApi.ResponseTypes.queryResponse, QueryHelpers.queryError>,
-  ): queryResponse<array<ReorgDetection.blockData>> => {
-    switch res {
-    | Error(e) => Error(QueryError(e))
-    | Ok(successRes) =>
-      successRes.data
-      ->Array.flatMap(item => {
-        item.blocks->Option.mapWithDefault([], blocks => {
-          blocks->Array.map(
-            block => {
-              switch block {
-              | {number: blockNumber, timestamp, hash: blockHash} =>
-                let blockTimestamp = timestamp->BigInt.toInt->Option.getExn
-                Ok(
-                  (
-                    {
-                      blockTimestamp,
-                      blockNumber,
-                      blockHash,
-                    }: ReorgDetection.blockData
-                  ),
-                )
-              | _ =>
-                let missingParams =
-                  [
-                    block.number->Utils.Option.mapNone("block.number"),
-                    block.timestamp->Utils.Option.mapNone("block.timestamp"),
-                    block.hash->Utils.Option.mapNone("block.hash"),
-                  ]->Array.keepMap(p => p)
+  let convertResponse = (res: HyperSyncJsonApi.ResponseTypes.queryResponse): queryResponse<
+    array<ReorgDetection.blockData>,
+  > => {
+    res.data
+    ->Array.flatMap(item => {
+      item.blocks->Option.mapWithDefault([], blocks => {
+        blocks->Array.map(
+          block => {
+            switch block {
+            | {number: blockNumber, timestamp, hash: blockHash} =>
+              let blockTimestamp = timestamp->BigInt.toInt->Option.getExn
+              Ok(
+                (
+                  {
+                    blockTimestamp,
+                    blockNumber,
+                    blockHash,
+                  }: ReorgDetection.blockData
+                ),
+              )
+            | _ =>
+              let missingParams =
+                [
+                  block.number->Utils.Option.mapNone("block.number"),
+                  block.timestamp->Utils.Option.mapNone("block.timestamp"),
+                  block.hash->Utils.Option.mapNone("block.hash"),
+                ]->Array.keepMap(p => p)
 
-                Error(
-                  UnexpectedMissingParams({
-                    queryName: "query block data HyperSync",
-                    missingParams,
-                  }),
-                )
-              }
-            },
-          )
-        })
+              Error(
+                UnexpectedMissingParams({
+                  queryName: "query block data HyperSync",
+                  missingParams,
+                }),
+              )
+            }
+          },
+        )
       })
-      ->Utils.Array.transposeResults
-    }
+    })
+    ->Utils.Array.transposeResults
   }
 
   let rec queryBlockData = async (~serverUrl, ~blockNumber, ~logger): queryResponse<
@@ -332,25 +287,31 @@ module BlockData = {
   > => {
     let body = makeRequestBody(~blockNumber)
 
-    let executeQuery = () => HyperSyncJsonApi.executeHyperSyncQuery(~postQueryBody=body, ~serverUrl)
-
     let logger = Logging.createChildFrom(
       ~logger,
       ~params={"logType": "hypersync get blockhash query", "blockNumber": blockNumber},
     )
 
-    let res = await executeQuery->Time.retryAsyncWithExponentialBackOff(~logger=Some(logger))
+    let maybeSuccessfulRes = switch await Time.retryAsyncWithExponentialBackOff(
+      () => HyperSyncJsonApi.queryRoute->Rest.fetch(serverUrl, body),
+      ~logger=Some(logger),
+    ) {
+    | exception _ => None
+    | res if res.nextBlock <= blockNumber => None
+    | res => Some(res)
+    }
 
     // If the block is not found, retry the query. This can occur since replicas of hypersync might not hack caught up yet
-    if res->Result.mapWithDefault(0, res => res.nextBlock) <= blockNumber {
-      let logger = Logging.createChild(~params={"url": serverUrl})
-      logger->Logging.childWarn(
-        `Block #${blockNumber->Int.toString} not found in hypersync. HyperSync runs multiple instances of hypersync and it is possible that they drift independently slightly from the head. Retrying query in 100ms.`,
-      )
-      await Time.resolvePromiseAfterDelay(~delayMilliseconds=100)
-      await queryBlockData(~serverUrl, ~blockNumber, ~logger)
-    } else {
-      res->convertResponse->Result.map(res => res->Array.get(0))
+    switch maybeSuccessfulRes {
+    | None => {
+        let logger = Logging.createChild(~params={"url": serverUrl})
+        logger->Logging.childWarn(
+          `Block #${blockNumber->Int.toString} not found in hypersync. HyperSync runs multiple instances of hypersync and it is possible that they drift independently slightly from the head. Retrying query in 100ms.`,
+        )
+        await Time.resolvePromiseAfterDelay(~delayMilliseconds=100)
+        await queryBlockData(~serverUrl, ~blockNumber, ~logger)
+      }
+    | Some(res) => res->convertResponse->Result.map(res => res->Array.get(0))
     }
   }
 

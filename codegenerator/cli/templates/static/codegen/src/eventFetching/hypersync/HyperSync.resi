@@ -6,10 +6,19 @@ type hyperSyncPage<'item> = {
   events: array<HyperSyncClient.ResponseTypes.event>,
 }
 
+module Log: {
+  type t = {
+    address: Address.t,
+    data: string,
+    topics: array<EvmTypes.Hex.t>,
+    logIndex: int,
+  }
+}
+
 type logsQueryPageItem = {
-  log: Types.Log.t,
-  block: Types.Block.t,
-  transaction: Types.Transaction.t,
+  log: Log.t,
+  block: Internal.eventBlock,
+  transaction: Internal.eventTransaction,
 }
 
 type logsQueryPage = hyperSyncPage<logsQueryPageItem>
@@ -19,7 +28,7 @@ type missingParams = {
   missingParams: array<string>,
 }
 
-type queryError = UnexpectedMissingParams(missingParams) | QueryError(QueryHelpers.queryError)
+type queryError = UnexpectedMissingParams(missingParams)
 
 exception UnexpectedMissingParamsExn(missingParams)
 
@@ -27,13 +36,14 @@ let queryErrorToMsq: queryError => string
 
 type queryResponse<'a> = result<'a, queryError>
 let queryLogsPage: (
-  ~serverUrl: string,
+  ~client: HyperSyncClient.t,
   ~fromBlock: int,
   ~toBlock: option<int>,
   ~logSelections: array<LogSelection.t>,
   ~fieldSelection: HyperSyncClient.QueryTypes.fieldSelection,
   ~nonOptionalBlockFieldNames: array<string>,
   ~nonOptionalTransactionFieldNames: array<string>,
+  ~logger: Pino.t
 ) => promise<queryResponse<logsQueryPage>>
 
 let getHeightWithRetry: (~serverUrl: string, ~logger: Pino.t) => promise<int>

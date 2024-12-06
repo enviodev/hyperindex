@@ -4,10 +4,10 @@ open ChainWorker
 exception InvalidTransactionField({message: string})
 
 let makeThrowingGetEventBlock = (~getBlock) => {
-  //Types.blockFields is a subset of  Ethers.JsonRpcProvider.block so we can safely cast
-  let blockFieldsFromBlock: Ethers.JsonRpcProvider.block => Types.Block.t = Utils.magic
+  // The block fields type is a subset of Ethers.JsonRpcProvider.block so we can safely cast
+  let blockFieldsFromBlock: Ethers.JsonRpcProvider.block => Internal.eventBlock = Utils.magic
 
-  async (log: Ethers.log): Types.Block.t => {
+  async (log: Ethers.log): Internal.eventBlock => {
     (await getBlock(log.blockNumber))->blockFieldsFromBlock
   }
 }
@@ -67,14 +67,6 @@ module Make = (
     let transactionSchema: S.t<Types.Transaction.t>
   },
 ): S => {
-  //Note ethers log is not a superset of log since logIndex is actually "index" with an @as alias
-  let ethersLogToLog: Ethers.log => Types.Log.t = ({address, data, topics, logIndex}) => {
-    address,
-    data,
-    topics,
-    logIndex,
-  }
-
   T.contracts->Belt.Array.forEach(contract => {
     contract.events->Belt.Array.forEach(event => {
       let module(Event) = event
@@ -277,13 +269,9 @@ module Make = (
                     )
                   }
 
-                  let log = log->ethersLogToLog
-
                   let module(Event) = eventMod
 
-                  let decodedEvent = try contractInterfaceManager->ContractInterfaceManager.parseLogViemOrThrow(
-                    ~log,
-                  ) catch {
+                  let decodedEvent = try contractInterfaceManager->ContractInterfaceManager.parseLogViemOrThrow(~address=log.address, ~topics=log.topics, ~data=log.data) catch {
                   | exn =>
                     exn->ErrorHandling.mkLogAndRaise(
                       ~msg="Failed to parse event with viem, please double-check your ABI.",
@@ -311,7 +299,7 @@ module Make = (
                         srcAddress: log.address,
                         logIndex: log.logIndex,
                       }->Internal.fromGenericEvent,
-                    }: Types.eventItem
+                    }: Internal.eventItem
                   )
                 }
               )(),

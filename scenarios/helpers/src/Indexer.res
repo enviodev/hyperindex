@@ -3,37 +3,14 @@ module type S = {
     type t
   }
 
-  module HyperSyncClient: {
-    module Decoder: {
-      type decodedEvent
-    }
-  }
-
-  module LogSelection: {
-    type t
-    type topicSelection
-  }
-
   module Types: {
-    module Log: {
-      type t
-    }
-
     module HandlerTypes: {
-      type contractRegister<'eventArgs>
-
-      type loader<'eventArgs, 'loaderReturn>
-
-      type handler<'eventArgs, 'loaderReturn>
-
       module Register: {
         type t<'eventArgs>
 
-        let getLoader: t<'eventArgs> => option<loader<Internal.eventParams, Internal.loaderReturn>>
-        let getHandler: t<'eventArgs> => option<
-          handler<Internal.eventParams, Internal.loaderReturn>,
-        >
-        let getContractRegister: t<'eventArgs> => option<contractRegister<Internal.eventParams>>
+        let getLoader: t<'eventArgs> => option<Internal.loader>
+        let getHandler: t<'eventArgs> => option<Internal.handler>
+        let getContractRegister: t<'eventArgs> => option<Internal.contractRegister>
       }
     }
 
@@ -54,24 +31,6 @@ module type S = {
       let getTopicSelection: SingleOrMultiple.t<eventFilter> => array<LogSelection.topicSelection>
     }
     module type InternalEvent = Event with type eventArgs = Internal.eventParams
-
-    type eventItem = {
-      eventName: string,
-      contractName: string,
-      loader: option<HandlerTypes.loader<Internal.eventParams, Internal.loaderReturn>>,
-      handler: option<HandlerTypes.handler<Internal.eventParams, Internal.loaderReturn>>,
-      contractRegister: option<HandlerTypes.contractRegister<Internal.eventParams>>,
-      timestamp: int,
-      chain: ChainMap.Chain.t,
-      blockNumber: int,
-      logIndex: int,
-      event: Internal.event,
-      paramsRawEventSchema: RescriptSchema.S.schema<Internal.eventParams>,
-      //Default to false, if an event needs to
-      //be reprocessed after it has loaded dynamic contracts
-      //This gets set to true and does not try and reload events
-      hasRegisteredDynamicContracts?: bool,
-    }
   }
 
   module ContractAddressingMap: {
@@ -91,21 +50,6 @@ module type S = {
     }
   }
 
-  module ReorgDetection: {
-    type blockNumberAndHash = {
-      //Block hash is used for actual comparison to test for reorg
-      blockHash: string,
-      blockNumber: int,
-    }
-
-    type blockData = {
-      ...blockNumberAndHash,
-      //Timestamp is needed for multichain to action reorgs across chains from given blocks to
-      //ensure ordering is kept constant
-      blockTimestamp: int,
-    }
-  }
-
   module ChainWorker: {
     type reorgGuard = {
       lastBlockScannedData: ReorgDetection.blockData,
@@ -116,7 +60,7 @@ module type S = {
     type blockRangeFetchResponse = {
       currentBlockHeight: int,
       reorgGuard: reorgGuard,
-      parsedQueueItems: array<Types.eventItem>,
+      parsedQueueItems: array<Internal.eventItem>,
       fromBlockQueried: int,
       heighestQueriedBlockNumber: int,
       latestFetchedBlockTimestamp: int,

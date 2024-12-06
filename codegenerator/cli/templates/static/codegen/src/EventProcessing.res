@@ -36,7 +36,7 @@ module EventsProcessed = {
 }
 
 let updateEventSyncState = (
-  eventItem: Types.eventItem,
+  eventItem: Internal.eventItem,
   ~inMemoryStore: InMemoryStore.t,
   ~isPreRegisteringDynamicContracts,
 ) => {
@@ -59,11 +59,11 @@ type dynamicContractRegistration = FetchState.dynamicContractRegistration
 
 type dynamicContractRegistrations = {
   registrations: array<dynamicContractRegistration>,
-  unprocessedBatch: array<Types.eventItem>,
+  unprocessedBatch: array<Internal.eventItem>,
 }
 
 let addToDynamicContractRegistrations = (
-  eventItem: Types.eventItem,
+  eventItem: Internal.eventItem,
   ~dynamicContracts,
   ~registeringEventBlockNumber,
   ~registeringEventLogIndex,
@@ -114,8 +114,8 @@ let checkContractIsInCurrentRegistrations = (
 }
 
 let runEventContractRegister = (
-  contractRegister: Types.HandlerTypes.args<_> => unit,
-  ~eventItem: Types.eventItem,
+  contractRegister: Internal.contractRegister,
+  ~eventItem: Internal.eventItem,
   ~logger,
   ~checkContractIsRegistered,
   ~dynamicContractRegistrations: option<dynamicContractRegistrations>,
@@ -192,7 +192,7 @@ let runEventContractRegister = (
 
 let runEventLoader = async (
   ~contextEnv,
-  ~loader: Types.HandlerTypes.loader<_>,
+  ~loader: Internal.loader,
   ~inMemoryStore,
   ~loadLayer,
 ) => {
@@ -209,7 +209,7 @@ let runEventLoader = async (
 }
 
 let addEventToRawEvents = (
-  eventItem: Types.eventItem,
+  eventItem: Internal.eventItem,
   ~inMemoryStore: InMemoryStore.t,
 ) => {
   let {
@@ -241,7 +241,7 @@ let addEventToRawEvents = (
     blockNumber,
     logIndex,
     srcAddress,
-    blockHash: block->Types.Block.getInternalId,
+    blockHash: block->Types.Block.getId,
     blockTimestamp,
     blockFields,
     transactionFields,
@@ -254,7 +254,7 @@ let addEventToRawEvents = (
 }
 
 let runEventHandler = (
-  eventItem: Types.eventItem,
+  eventItem: Internal.eventItem,
   ~loader,
   ~handler,
   ~inMemoryStore,
@@ -272,7 +272,7 @@ let runEventHandler = (
     let loaderReturn = switch loader {
       | Some(loader) =>
         (await runEventLoader(~contextEnv, ~loader, ~inMemoryStore, ~loadLayer))->propogate
-      | None => %raw(`undefined`)
+      | None => (%raw(`undefined`): Internal.loaderReturn)
     }
       
     switch await handler(
@@ -308,7 +308,7 @@ let runEventHandler = (
 }
 
 let runHandler = async (
-  eventItem: Types.eventItem,
+  eventItem: Internal.eventItem,
   ~latestProcessedBlocks,
   ~inMemoryStore,
   ~logger,
@@ -347,7 +347,7 @@ let runHandler = async (
 }
 
 let addToUnprocessedBatch = (
-  eventItem: Types.eventItem,
+  eventItem: Internal.eventItem,
   dynamicContractRegistrations,
 ) => {
   {
@@ -357,7 +357,7 @@ let addToUnprocessedBatch = (
 }
 
 let rec registerDynamicContracts = (
-  eventBatch: array<Types.eventItem>,
+  eventBatch: array<Internal.eventItem>,
   ~index=0,
   ~checkContractIsRegistered,
   ~logger,
@@ -423,7 +423,7 @@ let rec registerDynamicContracts = (
 }
 
 let runLoaders = (
-  eventBatch: array<Types.eventItem>,
+  eventBatch: array<Internal.eventItem>,
   ~loadLayer,
   ~inMemoryStore,
   ~logger,
@@ -453,7 +453,7 @@ let runLoaders = (
 }
 
 let runHandlers = (
-  eventBatch: array<Types.eventItem>,
+  eventBatch: array<Internal.eventItem>,
   ~inMemoryStore,
   ~latestProcessedBlocks,
   ~logger,
@@ -511,7 +511,7 @@ type batchProcessed = {
 }
 
 let getDynamicContractRegistrations = (
-  ~eventBatch: array<Types.eventItem>,
+  ~eventBatch: array<Internal.eventItem>,
   ~latestProcessedBlocks: EventsProcessed.t,
   ~checkContractIsRegistered,
   ~config,
@@ -559,7 +559,7 @@ let getDynamicContractRegistrations = (
 }
 
 let processEventBatch = (
-  ~eventBatch: array<Types.eventItem>,
+  ~eventBatch: array<Internal.eventItem>,
   ~inMemoryStore: InMemoryStore.t,
   ~isInReorgThreshold,
   ~latestProcessedBlocks: EventsProcessed.t,
@@ -582,7 +582,7 @@ let processEventBatch = (
     //Register all the dynamic contracts in this batch,
     //only continue processing events before the first dynamic contract registration
     let (
-      eventsBeforeDynamicRegistrations: array<Types.eventItem>,
+      eventsBeforeDynamicRegistrations: array<Internal.eventItem>,
       dynamicContractRegistrations,
     ) =
       eventBatch

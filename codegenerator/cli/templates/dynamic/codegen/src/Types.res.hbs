@@ -89,17 +89,6 @@ type inMemoryStoreRowEntity<'entityType> =
 //**CONTRACTS**
 //*************
 
-module Log = {
-  type t = {
-    address: Address.t,
-    data: string,
-    topics: array<EvmTypes.Hex.t>,
-    logIndex: int,
-  }
-
-  let fieldNames = ["address", "data", "topics", "logIndex"]
-}
-
 module Transaction = {
   @genType
   type t = {{field_selection.transaction_type}}
@@ -118,46 +107,27 @@ module Block = {
   let schema = {{field_selection.block_schema}}
 
   let rawEventSchema = {{field_selection.block_raw_event_schema}}
-
   {{#if is_evm_ecosystem}}
-  @get
-  external getNumber: t => int = "number"
 
   @get
-  external getInternalNumber: Internal.eventBlock => int = "number"
+  external getNumber: Internal.eventBlock => int = "number"
 
   @get
-  external getTimestamp: t => int = "timestamp"
-
-  @get
-  external getInternalTimestamp: Internal.eventBlock => int = "timestamp"
+  external getTimestamp: Internal.eventBlock => int = "timestamp"
  
   @get
-  external getId: t => string = "hash"
-
-  {{!-- TODO: Remove this by moving block hash to eventItem --}}
-  @get
-  external getInternalId: Internal.eventBlock => string = "hash"
+  external getId: Internal.eventBlock => string = "hash"
   {{/if}}
-
   {{#if is_fuel_ecosystem}}
-  @get
-  external getNumber: t => int = "height"
 
   @get
-  external getInternalNumber: Internal.eventBlock => int = "height"
+  external getNumber: Internal.eventBlock => int = "height"
 
   @get
-  external getTimestamp: t => int = "time"
-
-  @get
-  external getInternalTimestamp: Internal.eventBlock => int = "time"
+  external getTimestamp: Internal.eventBlock => int = "time"
  
   @get
-  external getId: t => string = "id"
-
-  @get
-  external getInternalId: Internal.eventBlock => string = "id"
+  external getId: Internal.eventBlock => string = "id"
   {{/if}}
 }
 
@@ -209,24 +179,20 @@ module HandlerTypes = {
   }
 
   @genType
-  type contractRegisterArgs<'eventArgs> = args<'eventArgs, contractRegistrations>
+  type contractRegisterArgs<'eventArgs> = Internal.genericContractRegisterArgs<eventLog<'eventArgs>, contractRegistrations>
   @genType
-  type contractRegister<'eventArgs> = contractRegisterArgs<'eventArgs> => unit
+  type contractRegister<'eventArgs> = Internal.genericContractRegister<contractRegisterArgs<'eventArgs>>
 
   @genType
-  type loaderArgs<'eventArgs> = args<'eventArgs, loaderContext>
+  type loaderArgs<'eventArgs> = Internal.genericLoaderArgs<eventLog<'eventArgs>, loaderContext>
   @genType
-  type loader<'eventArgs, 'loaderReturn> = loaderArgs<'eventArgs> => promise<'loaderReturn>
+  type loader<'eventArgs, 'loaderReturn> = Internal.genericLoader<loaderArgs<'eventArgs>, 'loaderReturn>
 
   @genType
-  type handlerArgs<'eventArgs, 'loaderReturn> = {
-    event: eventLog<'eventArgs>,
-    context: handlerContext,
-    loaderReturn: 'loaderReturn,
-  }
+  type handlerArgs<'eventArgs, 'loaderReturn> = Internal.genericHandlerArgs<eventLog<'eventArgs>, handlerContext, 'loaderReturn>
 
   @genType
-  type handler<'eventArgs, 'loaderReturn> = handlerArgs<'eventArgs, 'loaderReturn> => promise<unit>
+  type handler<'eventArgs, 'loaderReturn> = Internal.genericHandler<handlerArgs<'eventArgs, 'loaderReturn>>
 
   @genType
   type loaderHandler<'eventArgs, 'loaderReturn, 'eventFilter> = {
@@ -313,13 +279,9 @@ module HandlerTypes = {
       ~logger: Pino.t=?,
     ) => unit
     let noopLoader: loader<'eventArgs, ()>
-    let getLoader: t<'eventArgs> => option<
-      loader<Internal.eventParams, Internal.loaderReturn>,
-    >
-    let getHandler: t<'eventArgs> => option<
-      handler<Internal.eventParams, Internal.loaderReturn>,
-    >
-    let getContractRegister: t<'eventArgs> => option<contractRegister<Internal.eventParams>>
+    let getLoader: t<'eventArgs> => option<Internal.loader>
+    let getHandler: t<'eventArgs> => option<Internal.handler>
+    let getContractRegister: t<'eventArgs> => option<Internal.contractRegister>
     let getEventOptions: t<'eventArgs> => EventOptions.t
     let hasRegistration: t<'eventArgs> => bool
   } = {
@@ -336,24 +298,28 @@ module HandlerTypes = {
 
     let noopLoader = _ => Promise.resolve()
 
-    let getLoaderHandler = (t: t<'eventArgs>) =>
-      t.loaderHandler->(
-        Utils.magic: option<loaderHandler<'eventArgs, Internal.loaderReturn, eventFilter>> => option<
-          loaderHandler<Internal.eventParams, Internal.loaderReturn, 'eventFilter>,
-        >
-      )
-
-    let getLoader = (t: t<'eventArgs>) => t->getLoaderHandler->Belt.Option.flatMap(lh => 
-      if lh.loader === noopLoader->(Utils.magic: loader<'eventArgs, ()> => loader<Internal.eventParams, Internal.loaderReturn>) {
-        None
-      } else {
-        Some(lh.loader)
+    let getLoader = (t: t<'eventArgs>) => 
+      switch t.loaderHandler {
+        | Some({loader}) => {
+          let loader = loader->(Utils.magic: loader<'eventArgs, Internal.loaderReturn> => Internal.loader)
+          if loader === noopLoader->(Utils.magic: loader<'eventArgs, ()> => Internal.loader) {
+            None
+          } else {
+            Some(loader)
+          }
+        }
+        | None => None
       }
-    )
 
-    let getHandler = (t: t<'eventArgs>) => t->getLoaderHandler->Belt.Option.map(lh => lh.handler)
+    let getHandler = (t: t<'eventArgs>) => 
+      switch t.loaderHandler {
+        | Some({handler}) => {
+          Some(handler->(Utils.magic: handler<'eventArgs, Internal.loaderReturn> => Internal.handler))
+        }
+        | None => None
+      }
 
-    let getContractRegister = (t: t<'eventArgs>) => t.contractRegister->(Utils.magic: option<contractRegister<'eventArgs>> => option<contractRegister<Internal.eventParams>>)
+    let getContractRegister = (t: t<'eventArgs>) => t.contractRegister->(Utils.magic: option<contractRegister<'eventArgs>> => option<Internal.contractRegister>)
 
     let getEventOptions = ({eventOptions, topic0}: t<'eventArgs>): EventOptions.t =>
       switch eventOptions {
@@ -620,21 +586,3 @@ module {{event.name}} = {
 {{/each}}
 @genType
 type chainId = int
-
-type eventItem = {
-  eventName: string,
-  contractName: string,
-  loader: option<HandlerTypes.loader<Internal.eventParams, Internal.loaderReturn>>,
-  handler: option<HandlerTypes.handler<Internal.eventParams, Internal.loaderReturn>>,
-  contractRegister: option<HandlerTypes.contractRegister<Internal.eventParams>>,
-  timestamp: int,
-  chain: ChainMap.Chain.t,
-  blockNumber: int,
-  logIndex: int,
-  event: Internal.event,
-  paramsRawEventSchema: S.schema<Internal.eventParams>,
-  //Default to false, if an event needs to
-  //be reprocessed after it has loaded dynamic contracts
-  //This gets set to true and does not try and reload events
-  hasRegisteredDynamicContracts?: bool,
-}

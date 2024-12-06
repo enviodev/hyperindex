@@ -112,7 +112,7 @@ module EventFunctions = {
 
       let loader = handlerRegister->Types.HandlerTypes.Register.getLoader
       let handler = handlerRegister->Types.HandlerTypes.Register.getHandler
-      let eventItem: Types.eventItem = {
+      let eventItem: Internal.eventItem = {
         event,
         eventName,
         contractName,
@@ -122,8 +122,8 @@ module EventFunctions = {
         paramsRawEventSchema,
         chain,
         logIndex: event.logIndex,
-        timestamp: event.block->Types.Block.getInternalTimestamp,
-        blockNumber: event.block->Types.Block.getInternalNumber,
+        timestamp: event.block->Types.Block.getTimestamp,
+        blockNumber: event.block->Types.Block.getNumber,
       }
 
       switch handlerRegister->Types.HandlerTypes.Register.getContractRegister {

@@ -70,8 +70,6 @@ let makeCombinedEventFilterQuery = (
   })
 }
 
-type eventBatchPromise = promise<Types.eventItem>
-
 let applyConditionalFunction = (value: 'a, condition: bool, callback: 'a => 'b) => {
   condition ? callback(value) : value
 }

@@ -37,13 +37,18 @@ describe("Load and save an entity with a BigDecimal from DB", () => {
       ~logger=Logging.logger,
     )
 
-    let loaderContext = contextEnv->ContextEnv.getLoaderContext(~loadLayer, ~inMemoryStore)
+    let loaderContext =
+      contextEnv
+      ->ContextEnv.getLoaderContext(~loadLayer, ~inMemoryStore)
+      ->(Utils.magic: Internal.loaderContext => Types.loaderContext)
 
     let _ = loaderContext.entityWithBigDecimal.get(testEntity1.id)
     let _ = loaderContext.entityWithBigDecimal.get(testEntity2.id)
 
     let handlerContext =
-      contextEnv->ContextEnv.getHandlerContext(~inMemoryStore, ~loadLayer, ~shouldSaveHistory=false)
+      contextEnv
+      ->ContextEnv.getHandlerContext(~inMemoryStore, ~loadLayer, ~shouldSaveHistory=false)
+      ->(Utils.magic: Internal.handlerContext => Types.handlerContext)
 
     switch await handlerContext.entityWithBigDecimal.get(testEntity1.id) {
     | Some(entity) => Assert.equal(entity.bigDecimal.toString(), "123.456")

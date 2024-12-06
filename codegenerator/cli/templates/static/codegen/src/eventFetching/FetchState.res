@@ -98,7 +98,7 @@ type registerData = {
   latestFetchedBlock: blockNumberAndTimestamp,
   contractAddressMapping: ContractAddressingMap.mapping,
   //Events ordered from latest to earliest
-  fetchedEventQueue: array<Types.eventItem>,
+  fetchedEventQueue: array<Internal.eventItem>,
   //Used to prune dynamic contract registrations in the event
   //of a rollback.
   dynamicContracts: DynamicContractsMap.t,
@@ -212,7 +212,7 @@ let copy = (self: t) => {
 /**
 Comapritor for two events from the same chain. No need for chain id or timestamp
 */
-let getEventCmp = (event: Types.eventItem) => {
+let getEventCmp = (event: Internal.eventItem) => {
   (event.blockNumber, event.logIndex)
 }
 
@@ -303,7 +303,7 @@ let updateRegister = (
   register: register,
   ~latestFetchedBlock,
   //Events ordered latest to earliest
-  ~reversedNewItems: array<Types.eventItem>,
+  ~reversedNewItems: array<Internal.eventItem>,
 ) => {
   let firstEventBlockNumber = switch register.firstEventBlockNumber {
   | Some(n) => Some(n)
@@ -646,7 +646,7 @@ let getNextQuery = ({baseRegister}: t, ~partitionId) => {
   }
 }
 
-type itemWithPopFn = {item: Types.eventItem, popItemOffQueue: unit => unit}
+type itemWithPopFn = {item: Internal.eventItem, popItemOffQueue: unit => unit}
 
 let itemIsInReorgThreshold = (item: itemWithPopFn, ~heighestBlockBelowThreshold) => {
   //Only consider it in reorg threshold when the current block number has advanced beyond 0
@@ -933,7 +933,7 @@ let getLatestFullyFetchedBlock = (self: t) => {
 }
 
 let pruneQueueFromFirstChangeEvent = (
-  queue: array<Types.eventItem>,
+  queue: array<Internal.eventItem>,
   ~firstChangeEvent: blockNumberAndLogIndex,
 ) => {
   queue->Array.keep(item =>
