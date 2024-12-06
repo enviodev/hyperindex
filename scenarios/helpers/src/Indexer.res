@@ -45,13 +45,19 @@ module type S = {
       >
 
       let paramsRawEventSchema: RescriptSchema.S.schema<eventArgs>
+      let blockSchema: RescriptSchema.S.schema<block>
+      let transactionSchema: RescriptSchema.S.schema<transaction>
+
       let convertHyperSyncEventArgs: HyperSyncClient.Decoder.decodedEvent => eventArgs
       let handlerRegister: HandlerTypes.Register.t
 
       type eventFilter
       let getTopicSelection: SingleOrMultiple.t<eventFilter> => array<LogSelection.topicSelection>
     }
-    module type InternalEvent = Event with type eventArgs = Internal.eventParams
+    module type InternalEvent = Event
+      with type eventArgs = Internal.eventParams
+      and type transaction = Internal.eventTransaction
+      and type block = Internal.eventBlock
   }
 
   module ContractAddressingMap: {
