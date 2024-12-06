@@ -1381,7 +1381,6 @@ impl Event {
 pub struct SelectedField {
     pub name: String,
     pub data_type: RescriptTypeIdent,
-    pub skip_raw_events: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1407,23 +1406,19 @@ impl FieldSelection {
             vec![SelectedField {
                 name: "id".to_string(),
                 data_type: RescriptTypeIdent::String,
-                skip_raw_events: false,
             }],
             vec![
                 SelectedField {
                     name: "id".to_string(),
                     data_type: RescriptTypeIdent::String,
-                    skip_raw_events: true,
                 },
                 SelectedField {
                     name: "height".to_string(),
                     data_type: RescriptTypeIdent::Int,
-                    skip_raw_events: true,
                 },
                 SelectedField {
                     name: "time".to_string(),
                     data_type: RescriptTypeIdent::Int,
-                    skip_raw_events: true,
                 },
             ],
         )
@@ -1499,17 +1494,14 @@ impl FieldSelection {
             SelectedField {
                 name: "number".to_string(),
                 data_type: RescriptTypeIdent::Int,
-                skip_raw_events: true,
             },
             SelectedField {
                 name: "timestamp".to_string(),
                 data_type: RescriptTypeIdent::Int,
-                skip_raw_events: true,
             },
             SelectedField {
                 name: "hash".to_string(),
                 data_type: RescriptTypeIdent::String,
-                skip_raw_events: true,
             },
         ];
 
@@ -1548,7 +1540,6 @@ impl FieldSelection {
             selected_block_fields.push(SelectedField {
                 name: block_field.to_string(),
                 data_type,
-                skip_raw_events: false,
             })
         }
 
@@ -1592,7 +1583,6 @@ impl FieldSelection {
             selected_transaction_fields.push(SelectedField {
                 name: transaction_field.to_string(),
                 data_type,
-                skip_raw_events: false,
             })
         }
 
