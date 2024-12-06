@@ -126,7 +126,7 @@ module Block = {
   @get
   external getId: Internal.eventBlock => string = "hash"
 
-  let cleanUpRawEventFieldsInPlace = %raw(`fields => {
+  let cleanUpRawEventFieldsInPlace: Js.Json.t => () = %raw(`fields => {
     delete fields.hash
     delete fields.number
     delete fields.timestamp
@@ -429,14 +429,19 @@ module type Event = {
   type contractRegister = Internal.genericContractRegister<Internal.genericContractRegisterArgs<event, contractRegistrations>>
 
   let paramsRawEventSchema: S.schema<eventArgs>
+  let blockSchema: S.schema<block>
+  let transactionSchema: S.schema<transaction>
+
   let convertHyperSyncEventArgs: HyperSyncClient.Decoder.decodedEvent => eventArgs
   let handlerRegister: HandlerTypes.Register.t
 
   type eventFilter
   let getTopicSelection: SingleOrMultiple.t<eventFilter> => array<LogSelection.topicSelection>
 }
-module type InternalEvent = Event with type eventArgs = Internal.eventParams
-
+module type InternalEvent = Event
+  with type eventArgs = Internal.eventParams
+  and type transaction = Internal.eventTransaction
+  and type block = Internal.eventBlock
 external eventModToInternal: module(Event with type eventArgs = 'a) => module(InternalEvent) = "%identity"
 external eventModWithoutArgTypeToInternal: module(Event) => module(InternalEvent) = "%identity"
 

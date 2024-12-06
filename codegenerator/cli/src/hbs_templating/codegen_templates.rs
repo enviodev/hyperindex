@@ -407,6 +407,9 @@ type handler<'loaderReturn> = Internal.genericHandler<Internal.genericHandlerArg
 type contractRegister = Internal.genericContractRegister<Internal.genericContractRegisterArgs<event, contractRegistrations>>
 
 let paramsRawEventSchema = {params_raw_event_schema}
+let blockSchema = Block.schema
+let transactionSchema = Transaction.schema
+
 let convertHyperSyncEventArgs = {convert_hyper_sync_event_args_code}
 
 let handlerRegister: HandlerTypes.Register.t = HandlerTypes.Register.make(
