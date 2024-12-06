@@ -101,8 +101,6 @@ module Transaction = {
   type t = {{field_selection.transaction_type}}
 
   let schema = {{field_selection.transaction_schema}}
-
-  let rawEventSchema = {{field_selection.transaction_raw_event_schema}}
 }
 
 module Block = {
@@ -117,10 +115,6 @@ module Block = {
   type t = {{field_selection.block_type}}
 
   let schema = {{field_selection.block_schema}}
-
-  type rawEventFields = {{field_selection.block_raw_event_type}}
-
-  let rawEventSchema = {{field_selection.block_raw_event_schema}}
   {{#if is_evm_ecosystem}}
 
   @get
@@ -131,6 +125,12 @@ module Block = {
  
   @get
   external getId: Internal.eventBlock => string = "hash"
+
+  let cleanUpRawEventFieldsInPlace = %raw(`fields => {
+    delete fields.hash
+    delete fields.number
+    delete fields.timestamp
+  }`)
   {{/if}}
   {{#if is_fuel_ecosystem}}
 
@@ -142,6 +142,12 @@ module Block = {
  
   @get
   external getId: Internal.eventBlock => string = "id"
+
+  let cleanUpRawEventFieldsInPlace: Js.Json.t => () = %raw(`fields => {
+    delete fields.id
+    delete fields.height
+    delete fields.time
+  }`)
   {{/if}}
 }
 

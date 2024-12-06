@@ -866,18 +866,14 @@ struct FieldSelection {
     block_fields: Vec<SelectedFieldTemplate>,
     transaction_type: String,
     transaction_schema: String,
-    transaction_raw_event_schema: String,
     block_type: String,
     block_schema: String,
-    block_raw_event_type: String,
-    block_raw_event_schema: String,
 }
 
 impl FieldSelection {
     fn new(transaction_fields: &Vec<SelectedField>, block_fields: &Vec<SelectedField>) -> Self {
         let mut block_field_templates = vec![];
         let mut all_block_fields = vec![];
-        let mut raw_events_block_fields = vec![];
         for field in block_fields.iter().cloned() {
             let name: CaseOptions = field.name.into();
 
@@ -889,9 +885,6 @@ impl FieldSelection {
 
             let record_field = RescriptRecordField::new(name.camel, field.data_type);
             all_block_fields.push(record_field.clone());
-            if field.skip_raw_events {
-                raw_events_block_fields.push(record_field);
-            }
         }
 
         let mut transaction_field_templates = vec![];
@@ -910,7 +903,6 @@ impl FieldSelection {
         }
 
         let block_expr = RescriptTypeExpr::Record(all_block_fields);
-        let block_raw_event_expr = RescriptTypeExpr::Record(raw_events_block_fields);
         let transaction_expr = RescriptTypeExpr::Record(all_transaction_fields);
 
         Self {
@@ -919,14 +911,9 @@ impl FieldSelection {
             transaction_type: transaction_expr.to_string(),
             transaction_schema: transaction_expr
                 .to_rescript_schema(&"t".to_string(), &RescriptSchemaMode::ForFieldSelection),
-            transaction_raw_event_schema: transaction_expr
-                .to_rescript_schema(&"t".to_string(), &RescriptSchemaMode::ForDb),
             block_type: block_expr.to_string(),
             block_schema: block_expr
                 .to_rescript_schema(&"t".to_string(), &RescriptSchemaMode::ForFieldSelection),
-            block_raw_event_schema: block_raw_event_expr
-                .to_rescript_schema(&"rawEventFields".to_string(), &RescriptSchemaMode::ForDb),
-            block_raw_event_type: block_raw_event_expr.to_string(),
         }
     }
 
