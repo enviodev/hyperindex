@@ -90,6 +90,9 @@ type inMemoryStoreRowEntity<'entityType> =
 //*************
 
 module Transaction = {
+  type allSelectedFields = {{field_selection.all_transaction_type}}
+  let allSelectedFieldsSchema = {{field_selection.all_transaction_schema}}->(Utils.magic: S.t<allSelectedFields> => S.t<Internal.eventTransaction>)
+
   @genType
   type partial = {
     {{#each field_selection.transaction_fields as | field |}}
@@ -104,6 +107,9 @@ module Transaction = {
 }
 
 module Block = {
+  type allSelectedFields = {{field_selection.all_block_type}}
+  let allSelectedFieldsSchema = {{field_selection.all_block_schema}}->(Utils.magic: S.t<allSelectedFields> => S.t<Internal.eventBlock>)
+
   @genType
   type partial = {
     {{#each field_selection.block_fields as | field |}}

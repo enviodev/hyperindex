@@ -213,8 +213,8 @@ module Make = (
     let allEventSignatures: array<string>
     let shouldUseHypersyncClientDecoder: bool
     let eventRouter: EventRouter.t<module(Types.InternalEvent)>
-    let blockSchema: S.t<Types.Block.t>
-    let transactionSchema: S.t<Types.Transaction.t>
+    let blockSchema: S.t<Internal.eventBlock>
+    let transactionSchema: S.t<Internal.eventTransaction>
   },
 ): S => {
   let name = "HyperSync"
