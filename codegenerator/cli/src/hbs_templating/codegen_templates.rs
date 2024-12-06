@@ -871,6 +871,10 @@ struct FieldSelection {
     transaction_schema: String,
     block_type: String,
     block_schema: String,
+    all_transaction_type: String,
+    all_transaction_schema: String,
+    all_block_type: String,
+    all_block_schema: String,
 }
 
 impl FieldSelection {
@@ -914,9 +918,19 @@ impl FieldSelection {
             transaction_type: transaction_expr.to_string(),
             transaction_schema: transaction_expr
                 .to_rescript_schema(&"t".to_string(), &RescriptSchemaMode::ForFieldSelection),
+            all_transaction_type: transaction_expr.to_string(),
+            all_transaction_schema: transaction_expr.to_rescript_schema(
+                &"allSelectedFields".to_string(),
+                &RescriptSchemaMode::ForFieldSelection,
+            ),
             block_type: block_expr.to_string(),
             block_schema: block_expr
                 .to_rescript_schema(&"t".to_string(), &RescriptSchemaMode::ForFieldSelection),
+            all_block_type: block_expr.to_string(),
+            all_block_schema: block_expr.to_rescript_schema(
+                &"allSelectedFields".to_string(),
+                &RescriptSchemaMode::ForFieldSelection,
+            ),
         }
     }
 
