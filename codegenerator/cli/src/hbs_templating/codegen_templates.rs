@@ -339,6 +339,7 @@ pub struct EventMod {
     pub convert_hyper_sync_event_args_code: String,
     pub event_filter_type: String,
     pub get_topic_selection_code: String,
+    pub custom_field_selection: Option<system_config::FieldSelection>,
     pub fuel_event_kind: Option<FuelEventKind>,
 }
 
@@ -367,6 +368,30 @@ impl EventMod {
             )),
         };
 
+        let (block_type, block_schema, transaction_type, transaction_schema) =
+            match self.custom_field_selection {
+                Some(ref field_selection) => {
+                    let field_selection = FieldSelection::new(FieldSelectionOptions {
+                        transaction_fields: field_selection.transaction_fields.clone(),
+                        block_fields: field_selection.block_fields.clone(),
+                        transaction_type_name: "transaction".to_string(),
+                        block_type_name: "block".to_string(),
+                    });
+                    (
+                        field_selection.block_type,
+                        field_selection.block_schema,
+                        field_selection.transaction_type,
+                        field_selection.transaction_schema,
+                    )
+                }
+                None => (
+                    "Block.t".to_string(),
+                    "Block.schema".to_string(),
+                    "Transaction.t".to_string(),
+                    "Transaction.schema".to_string(),
+                ),
+            };
+
         let non_event_mod_code = match fuel_event_kind_code {
             None => "".to_string(),
             Some(fuel_event_kind_code) => format!(
@@ -393,9 +418,9 @@ let contractName = contractName
 @genType
 type eventArgs = {data_type}
 @genType
-type block = Block.t
+type block = {block_type}
 @genType
-type transaction = Transaction.t
+type transaction = {transaction_type}
 
 @genType
 type event = Internal.genericEvent<eventArgs, block, transaction>
@@ -407,8 +432,8 @@ type handler<'loaderReturn> = Internal.genericHandler<Internal.genericHandlerArg
 type contractRegister = Internal.genericContractRegister<Internal.genericContractRegisterArgs<event, contractRegistrations>>
 
 let paramsRawEventSchema = {params_raw_event_schema}
-let blockSchema = Block.schema
-let transactionSchema = Transaction.schema
+let blockSchema = {block_schema}
+let transactionSchema = {transaction_schema}
 
 let convertHyperSyncEventArgs = {convert_hyper_sync_event_args_code}
 
@@ -553,6 +578,7 @@ impl EventTemplate {
                 .to_string(),
             event_filter_type: Self::EVENT_FILTER_TYPE_STUB.to_string(),
             get_topic_selection_code: Self::GET_TOPIC_SELECTION_CODE_STUB.to_string(),
+            custom_field_selection: config_event.field_selection.clone(),
             fuel_event_kind: Some(fuel_event_kind),
         };
         EventTemplate {
@@ -577,6 +603,7 @@ impl EventTemplate {
                 .to_string(),
             event_filter_type: Self::EVENT_FILTER_TYPE_STUB.to_string(),
             get_topic_selection_code: Self::GET_TOPIC_SELECTION_CODE_STUB.to_string(),
+            custom_field_selection: config_event.field_selection.clone(),
             fuel_event_kind: Some(fuel_event_kind),
         };
         EventTemplate {
@@ -635,6 +662,7 @@ impl EventTemplate {
                         Self::generate_convert_hyper_sync_event_args_code(params),
                     event_filter_type: Self::generate_event_filter_type(params),
                     get_topic_selection_code: Self::generate_get_topic_selection_code(params),
+                    custom_field_selection: config_event.field_selection.clone(),
                     fuel_event_kind: None,
                 };
 
@@ -662,6 +690,7 @@ impl EventTemplate {
                             event_filter_type: Self::EVENT_FILTER_TYPE_STUB.to_string(),
                             get_topic_selection_code: Self::GET_TOPIC_SELECTION_CODE_STUB
                                 .to_string(),
+                            custom_field_selection: config_event.field_selection.clone(),
                             fuel_event_kind: Some(fuel_event_kind),
                         };
 
@@ -873,11 +902,18 @@ struct FieldSelection {
     block_schema: String,
 }
 
+struct FieldSelectionOptions {
+    transaction_fields: Vec<SelectedField>,
+    block_fields: Vec<SelectedField>,
+    transaction_type_name: String,
+    block_type_name: String,
+}
+
 impl FieldSelection {
-    fn new(transaction_fields: &Vec<SelectedField>, block_fields: &Vec<SelectedField>) -> Self {
+    fn new(options: FieldSelectionOptions) -> Self {
         let mut block_field_templates = vec![];
         let mut all_block_fields = vec![];
-        for field in block_fields.iter().cloned() {
+        for field in options.block_fields.into_iter() {
             let name: CaseOptions = field.name.into();
 
             block_field_templates.push(SelectedFieldTemplate {
@@ -892,7 +928,7 @@ impl FieldSelection {
 
         let mut transaction_field_templates = vec![];
         let mut all_transaction_fields = vec![];
-        for field in transaction_fields.iter().cloned() {
+        for field in options.transaction_fields.into_iter() {
             let name: CaseOptions = field.name.into();
 
             transaction_field_templates.push(SelectedFieldTemplate {
@@ -912,16 +948,25 @@ impl FieldSelection {
             transaction_fields: transaction_field_templates,
             block_fields: block_field_templates,
             transaction_type: transaction_expr.to_string(),
-            transaction_schema: transaction_expr
-                .to_rescript_schema(&"t".to_string(), &RescriptSchemaMode::ForFieldSelection),
+            transaction_schema: transaction_expr.to_rescript_schema(
+                &options.transaction_type_name,
+                &RescriptSchemaMode::ForFieldSelection,
+            ),
             block_type: block_expr.to_string(),
-            block_schema: block_expr
-                .to_rescript_schema(&"t".to_string(), &RescriptSchemaMode::ForFieldSelection),
+            block_schema: block_expr.to_rescript_schema(
+                &options.block_type_name,
+                &RescriptSchemaMode::ForFieldSelection,
+            ),
         }
     }
 
     fn global_selection(cfg: &system_config::FieldSelection) -> Self {
-        Self::new(&cfg.transaction_fields, &cfg.block_fields)
+        Self::new(FieldSelectionOptions {
+            transaction_fields: cfg.transaction_fields.clone(),
+            block_fields: cfg.block_fields.clone(),
+            transaction_type_name: "t".to_string(),
+            block_type_name: "t".to_string(),
+        })
     }
 
     fn aggregated_selection(cfg: &system_config::SystemConfig) -> Self {
@@ -947,10 +992,12 @@ impl FieldSelection {
             });
         });
 
-        Self::new(
-            &transaction_fields.into_iter().collect::<Vec<_>>(),
-            &block_fields.into_iter().collect::<Vec<_>>(),
-        )
+        Self::new(FieldSelectionOptions {
+            transaction_fields: transaction_fields.into_iter().collect::<Vec<_>>(),
+            block_fields: block_fields.into_iter().collect::<Vec<_>>(),
+            transaction_type_name: "t".to_string(),
+            block_type_name: "t".to_string(),
+        })
     }
 }
 

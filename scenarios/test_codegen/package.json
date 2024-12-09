@@ -55,6 +55,7 @@
     "helpers": "workspace:*",
     "rescript-nodejs": "16.0.0",
     "typescript": "^5.0.4",
+    "ts-expect": "1.3.0",
     "envio": "file:../../codegenerator/cli/npm/envio"
   },
   "optionalDependencies": {
