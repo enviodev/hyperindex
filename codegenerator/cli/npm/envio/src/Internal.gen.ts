@@ -5,7 +5,7 @@
 
 import type {t as Address_t} from './Address.gen';
 
-export type genericEvent<params,transaction,block> = {
+export type genericEvent<params,block,transaction> = {
   readonly params: params; 
   readonly chainId: number; 
   readonly srcAddress: Address_t; 
@@ -29,3 +29,19 @@ export type genericHandlerArgs<event,context,loaderReturn> = {
 };
 
 export type genericHandler<args> = (_1:args) => Promise<void>;
+
+export type genericHandlerWithLoader<loader,handler,eventFilters> = {
+  readonly loader: loader; 
+  readonly handler: handler; 
+  readonly wildcard?: boolean; 
+  readonly eventFilters?: eventFilters; 
+  readonly preRegisterDynamicContracts?: boolean
+};
+
+export type fuelSupplyParams = { readonly subId: string; readonly amount: bigint };
+
+export type fuelTransferParams = {
+  readonly to: Address_t; 
+  readonly assetId: string; 
+  readonly amount: bigint
+};

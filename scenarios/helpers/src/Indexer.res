@@ -4,13 +4,17 @@ module type S = {
   }
 
   module Types: {
+    type loaderContext
+    type handlerContext
+    type contractRegistrations
+
     module HandlerTypes: {
       module Register: {
-        type t<'eventArgs>
+        type t
 
-        let getLoader: t<'eventArgs> => option<Internal.loader>
-        let getHandler: t<'eventArgs> => option<Internal.handler>
-        let getContractRegister: t<'eventArgs> => option<Internal.contractRegister>
+        let getLoader: t => option<Internal.loader>
+        let getHandler: t => option<Internal.handler>
+        let getContractRegister: t => option<Internal.contractRegister>
       }
     }
 
@@ -19,18 +23,41 @@ module type S = {
     }
 
     module type Event = {
-      let sighash: string
-      let topicCount: int
+      let sighash: string // topic0 for Evm and rb for Fuel receipts
+      let topicCount: int // Number of topics for evm, always 0 for fuel
       let name: string
       let contractName: string
+
       type eventArgs
+      type block
+      type transaction
+
+      type event = Internal.genericEvent<eventArgs, block, transaction>
+      type loader<'loaderReturn> = Internal.genericLoader<
+        Internal.genericLoaderArgs<event, loaderContext>,
+        'loaderReturn,
+      >
+      type handler<'loaderReturn> = Internal.genericHandler<
+        Internal.genericHandlerArgs<event, handlerContext, 'loaderReturn>,
+      >
+      type contractRegister = Internal.genericContractRegister<
+        Internal.genericContractRegisterArgs<event, contractRegistrations>,
+      >
+
       let paramsRawEventSchema: RescriptSchema.S.schema<eventArgs>
+      let blockSchema: RescriptSchema.S.schema<block>
+      let transactionSchema: RescriptSchema.S.schema<transaction>
+
       let convertHyperSyncEventArgs: HyperSyncClient.Decoder.decodedEvent => eventArgs
-      let handlerRegister: HandlerTypes.Register.t<eventArgs>
+      let handlerRegister: HandlerTypes.Register.t
+
       type eventFilter
       let getTopicSelection: SingleOrMultiple.t<eventFilter> => array<LogSelection.topicSelection>
     }
-    module type InternalEvent = Event with type eventArgs = Internal.eventParams
+    module type InternalEvent = Event
+      with type eventArgs = Internal.eventParams
+      and type transaction = Internal.eventTransaction
+      and type block = Internal.eventBlock
   }
 
   module ContractAddressingMap: {

@@ -12,47 +12,60 @@ let makeThrowingGetEventBlock = (~getBlock) => {
   }
 }
 
-let makeThrowingGetEventTransaction = (
-  ~transactionSchema: S.t<'transaction>,
-  ~getTransactionFields,
-) => {
-  transactionSchema->Utils.Schema.removeTypeValidationInPlace
+let makeThrowingGetEventTransaction = (~getTransactionFields) => {
+  let fnsCache = Utils.WeakMap.make()
+  (log, ~transactionSchema) => {
+    (
+      switch fnsCache->Utils.WeakMap.get(transactionSchema) {
+      | Some(fn) => fn
+      // This is not super expensive, but don't want to do it on every event
+      | None => {
+          transactionSchema->Utils.Schema.removeTypeValidationInPlace
 
-  let transactionFieldItems = switch transactionSchema->S.classify {
-  | Object({items}) => items
-  | _ => Js.Exn.raiseError("Unexpected internal error: transactionSchema is not an object")
-  }
+          let transactionFieldItems = switch transactionSchema->S.classify {
+          | Object({items}) => items
+          | _ => Js.Exn.raiseError("Unexpected internal error: transactionSchema is not an object")
+          }
 
-  let parseOrThrowReadableError = data => {
-    try data->S.parseAnyOrRaiseWith(transactionSchema) catch {
-    | S.Raised(error) =>
-      raise(
-        InvalidTransactionField({
-          message: `Invalid transaction field "${error.path
-            ->S.Path.toArray
-            ->Js.Array2.joinWith(".")}" found in the RPC response. Error: ${error->S.Error.reason}`, // There should always be only one field, but just in case split them with a dot
-        }),
-      )
-    }
-  }
+          let parseOrThrowReadableError = data => {
+            try data->S.parseAnyOrRaiseWith(transactionSchema) catch {
+            | S.Raised(error) =>
+              raise(
+                InvalidTransactionField({
+                  message: `Invalid transaction field "${error.path
+                    ->S.Path.toArray
+                    ->Js.Array2.joinWith(
+                      ".",
+                    )}" found in the RPC response. Error: ${error->S.Error.reason}`, // There should always be only one field, but just in case split them with a dot
+                }),
+              )
+            }
+          }
 
-  switch transactionFieldItems {
-  | [{location: "transactionIndex"}] => log => log->parseOrThrowReadableError->Promise.resolve
-  | [{location: "hash"}]
-  | [{location: "hash"}, {location: "transactionIndex"}]
-  | [{location: "transactionIndex"}, {location: "hash"}] =>
-    (log: Ethers.log) =>
-      {
-        "hash": log.transactionHash,
-        "transactionIndex": log.transactionIndex,
+          let fn = switch transactionFieldItems {
+          | [{location: "transactionIndex"}] =>
+            log => log->parseOrThrowReadableError->Promise.resolve
+          | [{location: "hash"}]
+          | [{location: "hash"}, {location: "transactionIndex"}]
+          | [{location: "transactionIndex"}, {location: "hash"}] =>
+            (log: Ethers.log) =>
+              {
+                "hash": log.transactionHash,
+                "transactionIndex": log.transactionIndex,
+              }
+              ->parseOrThrowReadableError
+              ->Promise.resolve
+          | _ =>
+            log =>
+              log
+              ->getTransactionFields
+              ->Promise.thenResolve(parseOrThrowReadableError)
+          }
+          let _ = fnsCache->Utils.WeakMap.set(transactionSchema, fn)
+          fn
+        }
       }
-      ->parseOrThrowReadableError
-      ->Promise.resolve
-  | _ =>
-    log =>
-      log
-      ->getTransactionFields
-      ->Promise.thenResolve(parseOrThrowReadableError)
+    )(log)
   }
 }
 
@@ -63,8 +76,6 @@ module Make = (
     let chain: ChainMap.Chain.t
     let contracts: array<Config.contract>
     let eventRouter: EventRouter.t<module(Types.InternalEvent)>
-    let blockSchema: S.t<Types.Block.t>
-    let transactionSchema: S.t<Types.Transaction.t>
   },
 ): S => {
   T.contracts->Belt.Array.forEach(contract => {
@@ -169,7 +180,6 @@ module Make = (
     blockLoader->LazyLoader.get(blockNumber)
   )
   let getEventTransactionOrThrow = makeThrowingGetEventTransaction(
-    ~transactionSchema=T.transactionSchema,
     ~getTransactionFields=Ethers.JsonRpcProvider.makeGetTransactionFields(
       ~getTransactionByHash=LazyLoader.get(transactionLoader, _),
     ),
@@ -242,6 +252,7 @@ module Make = (
           ) {
           | None => None //ignore events that aren't registered
           | Some(eventMod: module(Types.InternalEvent)) =>
+            let module(Event) = eventMod
             let chainId = chain->ChainMap.Chain.toChainId
             let logger = Logging.createChildFrom(
               ~logger,
@@ -258,7 +269,7 @@ module Make = (
                 async () => {
                   let (block, transaction) = try await Promise.all2((
                     log->getEventBlockOrThrow,
-                    log->getEventTransactionOrThrow,
+                    log->getEventTransactionOrThrow(~transactionSchema=Event.transactionSchema),
                   )) catch {
                   // Promise.catch won't work here, because the error
                   // might be thrown before a microtask is created
@@ -269,9 +280,11 @@ module Make = (
                     )
                   }
 
-                  let module(Event) = eventMod
-
-                  let decodedEvent = try contractInterfaceManager->ContractInterfaceManager.parseLogViemOrThrow(~address=log.address, ~topics=log.topics, ~data=log.data) catch {
+                  let decodedEvent = try contractInterfaceManager->ContractInterfaceManager.parseLogViemOrThrow(
+                    ~address=log.address,
+                    ~topics=log.topics,
+                    ~data=log.data,
+                  ) catch {
                   | exn =>
                     exn->ErrorHandling.mkLogAndRaise(
                       ~msg="Failed to parse event with viem, please double-check your ABI.",

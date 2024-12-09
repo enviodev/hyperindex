@@ -347,6 +347,7 @@ pub async fn generate_config_from_subgraph_id(
                             let event = EventConfig {
                                 event: event_name.to_string(),
                                 name: None,
+                                field_selection: None,
                             };
 
                             Ok(event)

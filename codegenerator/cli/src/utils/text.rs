@@ -1,7 +1,7 @@
 use convert_case::{Case, Casing};
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash)]
 pub struct CapitalizedOptions {
     pub capitalized: String,
     pub uncapitalized: String,

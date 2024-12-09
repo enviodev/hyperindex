@@ -108,9 +108,9 @@ module Make = (Indexer: Indexer.S) => {
       logIndex,
       srcAddress,
       eventMod: eventMod->(
-        Utils.magic: module(Types.Event with type eventArgs = eventArgs) => module(Types.Event with
-          type eventArgs = Internal.eventParams
-        )
+        Utils.magic: module(Types.Event with
+          type eventArgs = eventArgs
+        ) => module(Types.InternalEvent)
       ),
     }
   }

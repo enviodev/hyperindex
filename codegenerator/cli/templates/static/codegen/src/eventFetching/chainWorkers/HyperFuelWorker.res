@@ -4,8 +4,8 @@ open Belt
 exception EventRoutingFailed
 
 type workerConfig = {
-  eventRouter: EventRouter.t<Types.fuelEventConfig>,
-  contractByEvent: Utils.WeakMap.t<Types.fuelEventConfig, Types.fuelContractConfig>,
+  eventRouter: EventRouter.t<Internal.fuelEventConfig>,
+  contractByEvent: Utils.WeakMap.t<Internal.fuelEventConfig, Internal.fuelContractConfig>,
   wildcardLogDataRbs: array<bigint>,
   nonWildcardLogDataRbsByContract: dict<array<bigint>>,
   nonLogDataReceiptTypesByContract: dict<array<Fuel.receiptType>>,
@@ -16,7 +16,7 @@ let mintEventTag = "mint"
 let burnEventTag = "burn"
 let transferEventTag = "transfer"
 let callEventTag = "call"
-let getEventTag = (eventConfig: Types.fuelEventConfig) => {
+let getEventTag = (eventConfig: Internal.fuelEventConfig) => {
   switch eventConfig.kind {
   | Mint => mintEventTag
   | Burn => burnEventTag
@@ -26,7 +26,7 @@ let getEventTag = (eventConfig: Types.fuelEventConfig) => {
   }
 }
 
-let makeWorkerConfigOrThrow = (~contracts: array<Types.fuelContractConfig>, ~chain) => {
+let makeWorkerConfigOrThrow = (~contracts: array<Internal.fuelContractConfig>, ~chain) => {
   let eventRouter = EventRouter.empty()
   let contractByEvent = Utils.WeakMap.make()
   let nonWildcardLogDataRbsByContract = Js.Dict.empty()
@@ -103,7 +103,7 @@ let makeGetRecieptsSelection = (
   ~nonWildcardLogDataRbsByContract,
   ~nonLogDataReceiptTypesByContract,
   ~nonLogDataWildcardReceiptTypes,
-  ~contracts: array<Types.fuelContractConfig>,
+  ~contracts: array<Internal.fuelContractConfig>,
 ) => {
   let logDataReceiptTypeSelection: array<Fuel.receiptType> = [LogData]
 
@@ -203,7 +203,7 @@ let makeGetRecieptsSelection = (
 module Make = (
   T: {
     let chain: ChainMap.Chain.t
-    let contracts: array<Types.fuelContractConfig>
+    let contracts: array<Internal.fuelContractConfig>
     let endpointUrl: string
   },
 ): S => {
@@ -455,7 +455,7 @@ module Make = (
             {
               subId,
               amount: val,
-            }: Types.fuelSupplyParams
+            }: Internal.fuelSupplyParams
           )->Obj.magic
         | (_, Transfer({amount, assetId, to})) =>
           (
@@ -463,7 +463,7 @@ module Make = (
               to: to->Address.unsafeFromString,
               assetId,
               amount,
-            }: Types.fuelTransferParams
+            }: Internal.fuelTransferParams
           )->Obj.magic
         | (_, TransferOut({amount, assetId, toAddress})) =>
           (
@@ -471,7 +471,7 @@ module Make = (
               to: toAddress->Address.unsafeFromString,
               assetId,
               amount,
-            }: Types.fuelTransferParams
+            }: Internal.fuelTransferParams
           )->Obj.magic
         | (_, Call({amount, assetId, to})) =>
           (
@@ -479,7 +479,7 @@ module Make = (
               to: to->Address.unsafeFromString,
               assetId,
               amount,
-            }: Types.fuelTransferParams
+            }: Internal.fuelTransferParams
           )->Obj.magic
         // This should never happen unless there's a bug in the routing logic
         | _ => Js.Exn.raiseError("Unexpected bug in the event routing logic")
@@ -489,9 +489,9 @@ module Make = (
           {
             eventName: eventConfig.name,
             contractName: contractConfig.name,
-            loader: eventConfig.handlerRegister->Types.HandlerTypes.Register.getLoader,
-            handler: eventConfig.handlerRegister->Types.HandlerTypes.Register.getHandler,
-            contractRegister: eventConfig.handlerRegister->Types.HandlerTypes.Register.getContractRegister,
+            loader: eventConfig.loader,
+            handler: eventConfig.handler,
+            contractRegister: eventConfig.contractRegister,
             paramsRawEventSchema: eventConfig.paramsRawEventSchema,
             timestamp: block.time,
             chain,
