@@ -57,6 +57,7 @@ pub mod evm {
                     .map(|event| EventConfig {
                         event: EvmAbi::event_signature_from_abi_event(&event),
                         name: None,
+                        field_selection: None,
                     })
                     .collect();
 

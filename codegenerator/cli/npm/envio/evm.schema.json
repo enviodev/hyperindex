@@ -83,7 +83,7 @@
       ]
     },
     "field_selection": {
-      "description": "An object representing additional fields to add to the event passed to handlers.",
+      "description": "An object representing additional fields to add to all events passed to handlers.",
       "anyOf": [
         {
           "$ref": "#/$defs/FieldSelection"
@@ -159,11 +159,113 @@
             "string",
             "null"
           ]
+        },
+        "fieldSelection": {
+          "description": "An object representing additional fields to add to the event passed to handlers.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FieldSelection"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "additionalProperties": false,
       "required": [
         "event"
+      ]
+    },
+    "FieldSelection": {
+      "type": "object",
+      "properties": {
+        "transaction_fields": {
+          "description": "Fields of a transaction to add to the event passed to handlers",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "$ref": "#/$defs/TransactionField"
+          }
+        },
+        "block_fields": {
+          "description": "Fields of a block to add to the event passed to handlers",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "$ref": "#/$defs/BlockField"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "TransactionField": {
+      "type": "string",
+      "enum": [
+        "transactionIndex",
+        "hash",
+        "from",
+        "to",
+        "gas",
+        "gasPrice",
+        "maxPriorityFeePerGas",
+        "maxFeePerGas",
+        "cumulativeGasUsed",
+        "effectiveGasPrice",
+        "gasUsed",
+        "input",
+        "nonce",
+        "value",
+        "v",
+        "r",
+        "s",
+        "contractAddress",
+        "logsBloom",
+        "root",
+        "status",
+        "yParity",
+        "chainId",
+        "maxFeePerBlobGas",
+        "blobVersionedHashes",
+        "kind",
+        "l1Fee",
+        "l1GasPrice",
+        "l1GasUsed",
+        "l1FeeScalar",
+        "gasUsedForL1"
+      ]
+    },
+    "BlockField": {
+      "type": "string",
+      "enum": [
+        "parentHash",
+        "nonce",
+        "sha3Uncles",
+        "logsBloom",
+        "transactionsRoot",
+        "stateRoot",
+        "receiptsRoot",
+        "miner",
+        "difficulty",
+        "totalDifficulty",
+        "extraData",
+        "size",
+        "gasLimit",
+        "gasUsed",
+        "uncles",
+        "baseFeePerGas",
+        "blobGasUsed",
+        "excessBlobGas",
+        "parentBeaconBlockRoot",
+        "withdrawalsRoot",
+        "l1BlockNumber",
+        "sendCount",
+        "sendRoot",
+        "mixHash"
       ]
     },
     "Network": {
@@ -404,97 +506,6 @@
       "enum": [
         "viem",
         "hypersync-client"
-      ]
-    },
-    "FieldSelection": {
-      "type": "object",
-      "properties": {
-        "transaction_fields": {
-          "description": "Fields of a transaction to add to the event passed to handlers",
-          "type": [
-            "array",
-            "null"
-          ],
-          "items": {
-            "$ref": "#/$defs/TransactionField"
-          }
-        },
-        "block_fields": {
-          "description": "Fields of a block to add to the event passed to handlers",
-          "type": [
-            "array",
-            "null"
-          ],
-          "items": {
-            "$ref": "#/$defs/BlockField"
-          }
-        }
-      },
-      "additionalProperties": false
-    },
-    "TransactionField": {
-      "type": "string",
-      "enum": [
-        "transactionIndex",
-        "hash",
-        "from",
-        "to",
-        "gas",
-        "gasPrice",
-        "maxPriorityFeePerGas",
-        "maxFeePerGas",
-        "cumulativeGasUsed",
-        "effectiveGasPrice",
-        "gasUsed",
-        "input",
-        "nonce",
-        "value",
-        "v",
-        "r",
-        "s",
-        "contractAddress",
-        "logsBloom",
-        "root",
-        "status",
-        "yParity",
-        "chainId",
-        "maxFeePerBlobGas",
-        "blobVersionedHashes",
-        "kind",
-        "l1Fee",
-        "l1GasPrice",
-        "l1GasUsed",
-        "l1FeeScalar",
-        "gasUsedForL1"
-      ]
-    },
-    "BlockField": {
-      "type": "string",
-      "enum": [
-        "parentHash",
-        "nonce",
-        "sha3Uncles",
-        "logsBloom",
-        "transactionsRoot",
-        "stateRoot",
-        "receiptsRoot",
-        "miner",
-        "difficulty",
-        "totalDifficulty",
-        "extraData",
-        "size",
-        "gasLimit",
-        "gasUsed",
-        "uncles",
-        "baseFeePerGas",
-        "blobGasUsed",
-        "excessBlobGas",
-        "parentBeaconBlockRoot",
-        "withdrawalsRoot",
-        "l1BlockNumber",
-        "sendCount",
-        "sendRoot",
-        "mixHash"
       ]
     }
   }

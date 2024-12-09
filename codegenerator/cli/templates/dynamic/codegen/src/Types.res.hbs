@@ -90,16 +90,6 @@ type inMemoryStoreRowEntity<'entityType> =
 //*************
 
 module Transaction = {
-  type allSelectedFields = {{field_selection.all_transaction_type}}
-  let allSelectedFieldsSchema = {{field_selection.all_transaction_schema}}->(Utils.magic: S.t<allSelectedFields> => S.t<Internal.eventTransaction>)
-
-  @genType
-  type partial = {
-    {{#each field_selection.transaction_fields as | field |}}
-    {{field.name.camel}}?: {{field.res_type}},
-    {{/each}}
-  }
-
   @genType
   type t = {{field_selection.transaction_type}}
 
@@ -107,16 +97,6 @@ module Transaction = {
 }
 
 module Block = {
-  type allSelectedFields = {{field_selection.all_block_type}}
-  let allSelectedFieldsSchema = {{field_selection.all_block_schema}}->(Utils.magic: S.t<allSelectedFields> => S.t<Internal.eventBlock>)
-
-  @genType
-  type partial = {
-    {{#each field_selection.block_fields as | field |}}
-    {{field.name.camel}}?: {{field.res_type}},
-    {{/each}}
-  }
-
   @genType
   type t = {{field_selection.block_type}}
 
@@ -155,6 +135,21 @@ module Block = {
     delete fields.time
   }`)
   {{/if}}
+}
+
+{{!-- For internal usage. The type and schema which agreage
+  all possible event-specific and global field selection --}}
+module AggregatedBlock = {
+  @genType
+  type t = {{aggregated_field_selection.block_type}}
+  let schema = {{aggregated_field_selection.block_schema}}
+    ->(Utils.magic: S.t<t> => S.t<Internal.eventBlock>)
+}
+module AggregatedTransaction = {
+  @genType
+  type t = {{aggregated_field_selection.transaction_type}}
+  let schema = {{aggregated_field_selection.transaction_schema}}
+    ->(Utils.magic: S.t<t> => S.t<Internal.eventTransaction>)
 }
 
 @genType.as("EventLog")

@@ -1,4 +1,4 @@
-use std::{collections::HashMap, path::PathBuf, vec};
+use std::{collections::HashMap, collections::HashSet, path::PathBuf, vec};
 
 use super::hbs_dir_generator::HandleBarsDirGenerator;
 use crate::{
@@ -871,10 +871,6 @@ struct FieldSelection {
     transaction_schema: String,
     block_type: String,
     block_schema: String,
-    all_transaction_type: String,
-    all_transaction_schema: String,
-    all_block_type: String,
-    all_block_schema: String,
 }
 
 impl FieldSelection {
@@ -918,24 +914,43 @@ impl FieldSelection {
             transaction_type: transaction_expr.to_string(),
             transaction_schema: transaction_expr
                 .to_rescript_schema(&"t".to_string(), &RescriptSchemaMode::ForFieldSelection),
-            all_transaction_type: transaction_expr.to_string(),
-            all_transaction_schema: transaction_expr.to_rescript_schema(
-                &"allSelectedFields".to_string(),
-                &RescriptSchemaMode::ForFieldSelection,
-            ),
             block_type: block_expr.to_string(),
             block_schema: block_expr
                 .to_rescript_schema(&"t".to_string(), &RescriptSchemaMode::ForFieldSelection),
-            all_block_type: block_expr.to_string(),
-            all_block_schema: block_expr.to_rescript_schema(
-                &"allSelectedFields".to_string(),
-                &RescriptSchemaMode::ForFieldSelection,
-            ),
         }
     }
 
-    fn from_config_field_selection(cfg: &system_config::FieldSelection) -> Self {
+    fn global_selection(cfg: &system_config::FieldSelection) -> Self {
         Self::new(&cfg.transaction_fields, &cfg.block_fields)
+    }
+
+    fn aggregated_selection(cfg: &system_config::SystemConfig) -> Self {
+        let mut transaction_fields: HashSet<_> = cfg
+            .field_selection
+            .transaction_fields
+            .iter()
+            .cloned()
+            .collect();
+        let mut block_fields: HashSet<_> =
+            cfg.field_selection.block_fields.iter().cloned().collect();
+
+        cfg.contracts.iter().for_each(|(_name, contract)| {
+            contract.events.iter().for_each(|event| {
+                if let Some(field_selection) = &event.field_selection {
+                    field_selection.transaction_fields.iter().for_each(|field| {
+                        transaction_fields.insert(field.clone());
+                    });
+                    field_selection.block_fields.iter().for_each(|field| {
+                        block_fields.insert(field.clone());
+                    });
+                }
+            });
+        });
+
+        Self::new(
+            &transaction_fields.into_iter().collect::<Vec<_>>(),
+            &block_fields.into_iter().collect::<Vec<_>>(),
+        )
     }
 }
 
@@ -961,6 +976,7 @@ pub struct ProjectTemplate {
     enable_raw_events: bool,
     has_multiple_events: bool,
     field_selection: FieldSelection,
+    aggregated_field_selection: FieldSelection,
     is_evm_ecosystem: bool,
     is_fuel_ecosystem: bool,
     //Used for the package.json reference to handlers in generated
@@ -1047,7 +1063,8 @@ impl ProjectTemplate {
             diff_from_current(&project_paths.project_root, &project_paths.generated)
                 .context("Failed to diff generated to root path")?;
 
-        let field_selection = FieldSelection::from_config_field_selection(&cfg.field_selection);
+        let global_field_selection = FieldSelection::global_selection(&cfg.field_selection);
+        let aggregated_field_selection = FieldSelection::aggregated_selection(&cfg);
 
         Ok(ProjectTemplate {
             project_name: cfg.name.clone(),
@@ -1062,7 +1079,8 @@ impl ProjectTemplate {
             should_save_full_history: cfg.save_full_history,
             enable_raw_events: cfg.enable_raw_events,
             has_multiple_events,
-            field_selection,
+            field_selection: global_field_selection,
+            aggregated_field_selection,
             is_evm_ecosystem: cfg.get_ecosystem() == Ecosystem::Evm,
             is_fuel_ecosystem: cfg.get_ecosystem() == Ecosystem::Fuel,
             //Used for the package.json reference to handlers in generated
@@ -1382,6 +1400,7 @@ let getTopicSelection = (eventFilters) => eventFilters->SingleOrMultiple.normali
             kind: system_config::EventKind::Params(vec![]),
             sighash: "0x50f7d27e90d1a5a38aeed4ceced2e8ec1ff185737aca96d15791b470d3f17363"
                 .to_string(),
+            field_selection: None,
         })
         .unwrap();
 

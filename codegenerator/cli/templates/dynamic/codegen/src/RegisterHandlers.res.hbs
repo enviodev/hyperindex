@@ -122,8 +122,8 @@ let registerContractHandlers = (
               let shouldUseHypersyncClientDecoder = Env.Configurable.shouldUseHypersyncClientDecoder->Belt.Option.getWithDefault(
                 {{hypersync_config.is_client_decoder}},
               )
-              let blockSchema = Types.Block.allSelectedFieldsSchema
-              let transactionSchema = Types.Transaction.allSelectedFieldsSchema
+              let blockSchema = Types.AggregatedBlock.schema
+              let transactionSchema = Types.AggregatedTransaction.schema
             }))
             {{/with}}
             {{/if}}

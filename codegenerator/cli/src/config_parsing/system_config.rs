@@ -502,6 +502,8 @@ impl SystemConfig {
                 // TODO: Add similar validation for Fuel
                 validation::validate_deserialized_config_yaml(&evm_config)?;
 
+                let has_rpc_sync_src = evm_config.networks.iter().any(|n| n.rpc_config.is_some());
+
                 //Add all global contracts
                 if let Some(global_contracts) = &evm_config.contracts {
                     for g_contract in global_contracts {
@@ -509,6 +511,7 @@ impl SystemConfig {
                             g_contract.config.events.clone(),
                             &g_contract.config.abi_file_path,
                             &project_paths,
+                            has_rpc_sync_src,
                         )
                         .context(format!(
                             "Failed parsing abi types for events in global contract {}",
@@ -538,6 +541,7 @@ impl SystemConfig {
                                     l_contract.events,
                                     &l_contract.abi_file_path,
                                     &project_paths,
+                                    has_rpc_sync_src,
                                 )
                                 .context(format!(
                             "Failed parsing abi types for events in contract {} on network {}",
@@ -620,7 +624,7 @@ impl SystemConfig {
                             block_fields: None,
                         },
                     ),
-                    &networks,
+                    has_rpc_sync_src,
                 )?;
 
                 Ok(SystemConfig {
@@ -1186,6 +1190,7 @@ pub struct Event {
     pub kind: EventKind,
     pub name: String,
     pub sighash: String,
+    pub field_selection: Option<FieldSelection>,
 }
 
 impl Event {
@@ -1227,6 +1232,7 @@ impl Event {
         events_config: Vec<EvmEventConfig>,
         abi_file_path: &Option<String>,
         project_paths: &ParsedProjectPaths,
+        has_rpc_sync_src: bool,
     ) -> Result<(Vec<Self>, EvmAbi)> {
         let abi_from_file = EvmAbi::from_file(&abi_file_path, &project_paths)?;
 
@@ -1267,6 +1273,15 @@ impl Event {
                 name,
                 kind: EventKind::Params(normalized_unnamed_params),
                 sighash,
+                field_selection: match event_config.field_selection {
+                    Some(ref selection_config) => {
+                        Some(FieldSelection::try_from_config_field_selection(
+                            selection_config.clone(),
+                            has_rpc_sync_src,
+                        )?)
+                    }
+                    None => None,
+                },
             })
         }
 
@@ -1345,27 +1360,32 @@ impl Event {
                         name: event_config.name.clone(),
                         kind: EventKind::Fuel(FuelEventKind::LogData(log.data_type)),
                         sighash: log.id,
+                        field_selection: None,
                     }
                 }
                 EventType::Mint => Event {
                     name: event_config.name.clone(),
                     kind: EventKind::Fuel(FuelEventKind::Mint),
                     sighash: "mint".to_string(),
+                    field_selection: None,
                 },
                 EventType::Burn => Event {
                     name: event_config.name.clone(),
                     kind: EventKind::Fuel(FuelEventKind::Burn),
                     sighash: "burn".to_string(),
+                    field_selection: None,
                 },
                 EventType::Transfer => Event {
                     name: event_config.name.clone(),
                     kind: EventKind::Fuel(FuelEventKind::Transfer),
                     sighash: "transfer".to_string(),
+                    field_selection: None,
                 },
                 EventType::Call => Event {
                     name: event_config.name.clone(),
                     kind: EventKind::Fuel(FuelEventKind::Call),
                     sighash: "call".to_string(),
+                    field_selection: None,
                 },
             };
 
@@ -1377,7 +1397,7 @@ impl Event {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct SelectedField {
     pub name: String,
     pub data_type: RescriptTypeIdent,
@@ -1426,18 +1446,11 @@ impl FieldSelection {
 
     pub fn try_from_config_field_selection(
         field_selection_cfg: human_config::evm::FieldSelection,
-        network_map: &NetworkMap,
+        // For validating transaction field selection with rpc
+        has_rpc_sync_src: bool,
     ) -> Result<Self> {
         use human_config::evm::BlockField;
         use human_config::evm::TransactionField;
-
-        //validate transaction field selection with rpc
-        let has_rpc_sync_src = network_map
-            .values()
-            .sorted_by_key(|n| n.id)
-            .fold(false, |accum, n| {
-                accum || matches!(n.sync_source, SyncSource::RpcConfig(_))
-            });
 
         let transaction_fields = field_selection_cfg.transaction_fields.unwrap_or(vec![]);
         let block_fields = field_selection_cfg.block_fields.unwrap_or(vec![]);
