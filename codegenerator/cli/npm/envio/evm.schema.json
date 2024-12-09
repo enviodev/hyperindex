@@ -160,7 +160,7 @@
             "null"
           ]
         },
-        "fieldSelection": {
+        "field_selection": {
           "description": "An object representing additional fields to add to the event passed to handlers.",
           "anyOf": [
             {

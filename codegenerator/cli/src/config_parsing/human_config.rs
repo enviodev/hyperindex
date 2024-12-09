@@ -426,7 +426,7 @@ pub mod evm {
     }
 
     #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
-    #[serde(rename_all = "camelCase", deny_unknown_fields)]
+    #[serde(deny_unknown_fields)]
     pub struct EventConfig {
         #[schemars(description = "The human readable signature of an event 'eg. \
                                   Transfer(address indexed from, address indexed to, uint256 \
