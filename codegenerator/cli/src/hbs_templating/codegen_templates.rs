@@ -1146,6 +1146,7 @@ mod test {
     };
     use pretty_assertions::assert_eq;
     use std::vec;
+    use system_config::FieldSelection;
 
     fn get_per_contract_events_vec_helper(
         event_names: Vec<&str>,
@@ -1415,7 +1416,24 @@ let contractName = contractName
 
 @genType
 type eventArgs = {{id: bigint, owner: Address.t, displayName: string, imageUrl: string}}
+@genType
+type block = Block.t
+@genType
+type transaction = Transaction.t
+
+@genType
+type event = Internal.genericEvent<eventArgs, block, transaction>
+@genType
+type loader<'loaderReturn> = Internal.genericLoader<Internal.genericLoaderArgs<event, loaderContext>, 'loaderReturn>
+@genType
+type handler<'loaderReturn> = Internal.genericHandler<Internal.genericHandlerArgs<event, handlerContext, 'loaderReturn>>
+@genType
+type contractRegister = Internal.genericContractRegister<Internal.genericContractRegisterArgs<event, contractRegistrations>>
+
 let paramsRawEventSchema = S.object((s): eventArgs => {{id: s.field("id", BigInt.schema), owner: s.field("owner", Address.schema), displayName: s.field("displayName", S.string), imageUrl: s.field("imageUrl", S.string)}})
+let blockSchema = Block.schema
+let transactionSchema = Transaction.schema
+
 let convertHyperSyncEventArgs = (decodedEvent: HyperSyncClient.Decoder.decodedEvent): eventArgs => {{
       {{
         id: decodedEvent.body->Js.Array2.unsafe_get(0)->HyperSyncClient.Decoder.toUnderlying->Utils.magic,
@@ -1465,7 +1483,91 @@ let contractName = contractName
 
 @genType
 type eventArgs = unit
+@genType
+type block = Block.t
+@genType
+type transaction = Transaction.t
+
+@genType
+type event = Internal.genericEvent<eventArgs, block, transaction>
+@genType
+type loader<'loaderReturn> = Internal.genericLoader<Internal.genericLoaderArgs<event, loaderContext>, 'loaderReturn>
+@genType
+type handler<'loaderReturn> = Internal.genericHandler<Internal.genericHandlerArgs<event, handlerContext, 'loaderReturn>>
+@genType
+type contractRegister = Internal.genericContractRegister<Internal.genericContractRegisterArgs<event, contractRegistrations>>
+
 let paramsRawEventSchema = S.literal(%raw(`null`))->S.variant(_ => ())
+let blockSchema = Block.schema
+let transactionSchema = Transaction.schema
+
+let convertHyperSyncEventArgs = (Utils.magic: HyperSyncClient.Decoder.decodedEvent => eventArgs)
+
+let handlerRegister: HandlerTypes.Register.t = HandlerTypes.Register.make(
+  ~topic0=sighash->EvmTypes.Hex.fromStringUnsafe,
+  ~contractName,
+  ~eventName=name,
+)
+
+@genType
+type eventFilter = {{  }}
+
+let getTopicSelection = (eventFilters) => eventFilters->SingleOrMultiple.normalizeOrThrow->Belt.Array.map(_eventFilter => LogSelection.makeTopicSelection(~topic0=[sighash->EvmTypes.Hex.fromStringUnsafe], )->Utils.unwrapResultExn)
+"#
+                ),
+            }
+        );
+    }
+
+    #[test]
+    fn event_template_with_custom_field_selection() {
+        let event_template = EventTemplate::from_config_event(&system_config::Event {
+            name: "NewGravatar".to_string(),
+            kind: system_config::EventKind::Params(vec![]),
+            sighash: "0x50f7d27e90d1a5a38aeed4ceced2e8ec1ff185737aca96d15791b470d3f17363"
+                .to_string(),
+            field_selection: Some(FieldSelection {
+                block_fields: vec![],
+                transaction_fields: vec![SelectedField {
+                    name: "from".to_string(),
+                    data_type: RescriptTypeIdent::option(RescriptTypeIdent::Address),
+                }],
+            }),
+        })
+        .unwrap();
+
+        assert_eq!(
+            event_template,
+            EventTemplate {
+                name: "NewGravatar".to_string(),
+                params: vec![],
+                module_code: format!(
+                    r#"
+let sighash = "0x50f7d27e90d1a5a38aeed4ceced2e8ec1ff185737aca96d15791b470d3f17363"
+let topicCount = 1
+let name = "NewGravatar"
+let contractName = contractName
+
+@genType
+type eventArgs = unit
+@genType
+type block = {{}}
+@genType
+type transaction = {{from: option<Address.t>}}
+
+@genType
+type event = Internal.genericEvent<eventArgs, block, transaction>
+@genType
+type loader<'loaderReturn> = Internal.genericLoader<Internal.genericLoaderArgs<event, loaderContext>, 'loaderReturn>
+@genType
+type handler<'loaderReturn> = Internal.genericHandler<Internal.genericHandlerArgs<event, handlerContext, 'loaderReturn>>
+@genType
+type contractRegister = Internal.genericContractRegister<Internal.genericContractRegisterArgs<event, contractRegistrations>>
+
+let paramsRawEventSchema = S.literal(%raw(`null`))->S.variant(_ => ())
+let blockSchema = S.object((_): block => {{}})
+let transactionSchema = S.object((s): transaction => {{from: s.field("from", S.option(Address.schema))}})
+
 let convertHyperSyncEventArgs = (Utils.magic: HyperSyncClient.Decoder.decodedEvent => eventArgs)
 
 let handlerRegister: HandlerTypes.Register.t = HandlerTypes.Register.make(
