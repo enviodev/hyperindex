@@ -15,7 +15,12 @@ describe("Throttler", () => {
     throttler->Throttler.schedule(async () => actionsCalled->Js.Array2.push(3)->ignore)
 
     Assert.deepEqual(actionsCalled, [1], ~message="Should have immediately called scheduled fn")
-    await Time.resolvePromiseAfterDelay(~delayMilliseconds=11)
+
+    await Time.resolvePromiseAfterDelay(~delayMilliseconds=9)
+    Assert.deepEqual(actionsCalled, [1], ~message="Should still be called once after 9 ms")
+
+    // Should have a second call in 1 more millisecond. Wait 3 just in case
+    await Time.resolvePromiseAfterDelay(~delayMilliseconds=3)
     Assert.deepEqual(
       actionsCalled,
       [1, 3],

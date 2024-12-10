@@ -83,7 +83,7 @@
       ]
     },
     "field_selection": {
-      "description": "An object representing additional fields to add to all events passed to handlers.",
+      "description": "Select the block and transaction fields to include in all events globally",
       "anyOf": [
         {
           "$ref": "#/$defs/FieldSelection"
@@ -161,7 +161,7 @@
           ]
         },
         "field_selection": {
-          "description": "An object representing additional fields to add to the event passed to handlers.",
+          "description": "Select the block and transaction fields to include in the specific event",
           "anyOf": [
             {
               "$ref": "#/$defs/FieldSelection"
@@ -181,7 +181,7 @@
       "type": "object",
       "properties": {
         "transaction_fields": {
-          "description": "Fields of a transaction to add to the event passed to handlers",
+          "description": "The transaction fields to include in the event, or in all events if applied globally",
           "type": [
             "array",
             "null"
@@ -191,7 +191,7 @@
           }
         },
         "block_fields": {
-          "description": "Fields of a block to add to the event passed to handlers",
+          "description": "The block fields to include in the event, or in all events if applied globally",
           "type": [
             "array",
             "null"
