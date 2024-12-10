@@ -179,8 +179,7 @@ pub mod evm {
         pub save_full_history: Option<bool>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
-            description = "An object representing additional fields to add to all events passed to \
-                           handlers."
+            description = "Select the block and transaction fields to be included in all events globally"
         )]
         pub field_selection: Option<FieldSelection>,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -206,9 +205,13 @@ pub mod evm {
     #[derive(Debug, Serialize, Deserialize, PartialEq, Clone, JsonSchema)]
     #[serde(deny_unknown_fields)]
     pub struct FieldSelection {
-        #[schemars(description = "Fields of a transaction to add to the event passed to handlers")]
+        #[schemars(
+            description = "The transaction fields to include in the event, or in all events if applied globally"
+        )]
         pub transaction_fields: Option<Vec<TransactionField>>,
-        #[schemars(description = "Fields of a block to add to the event passed to handlers")]
+        #[schemars(
+            description = "The block fields to include in the event, or in all events if applied globally"
+        )]
         pub block_fields: Option<Vec<BlockField>>,
     }
 
@@ -442,8 +445,7 @@ pub mod evm {
         pub name: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
-            description = "An object representing additional fields to add to the event passed to \
-                           handlers."
+            description = "Select the block and transaction fields to be included in the specific event"
         )]
         pub field_selection: Option<FieldSelection>,
     }
