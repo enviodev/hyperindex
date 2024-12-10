@@ -179,7 +179,7 @@ pub mod evm {
         pub save_full_history: Option<bool>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
-            description = "An object representing additional fields to add to the event passed to \
+            description = "An object representing additional fields to add to all events passed to \
                            handlers."
         )]
         pub field_selection: Option<FieldSelection>,
@@ -426,7 +426,7 @@ pub mod evm {
     }
 
     #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
-    #[serde(rename_all = "camelCase", deny_unknown_fields)]
+    #[serde(deny_unknown_fields)]
     pub struct EventConfig {
         #[schemars(description = "The human readable signature of an event 'eg. \
                                   Transfer(address indexed from, address indexed to, uint256 \
@@ -440,6 +440,12 @@ pub mod evm {
         )]
         #[serde(skip_serializing_if = "Option::is_none")]
         pub name: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(
+            description = "An object representing additional fields to add to the event passed to \
+                           handlers."
+        )]
+        pub field_selection: Option<FieldSelection>,
     }
 }
 

@@ -46,20 +46,21 @@ module EventFunctions = {
   The arguements that get passed to a "processEvent" helper function
   */
   @genType
-  type eventProcessorArgs<'eventArgs> = {
-    event: Types.eventLog<'eventArgs>,
+  type eventProcessorArgs<'event> = {
+    event: 'event,
     mockDb: TestHelpers_MockDb.t,
     chainId?: int,
   }
+
+  @genType
+  type eventProcessor<'event> = eventProcessorArgs<'event> => promise<TestHelpers_MockDb.t>
 
   /**
   A function composer to help create individual processEvent functions
   */
   let makeEventProcessor = (~contractName, ~eventName, ~handlerRegister, ~paramsRawEventSchema) => {
     async args => {
-      let {event, mockDb, ?chainId} = args
-      let event = event->(Utils.magic: Types.eventLog<'eventArgs> => Internal.event)
-      let handlerRegister = handlerRegister->(Utils.magic: Types.HandlerTypes.Register.t<'eventArgs> => Types.HandlerTypes.Register.t<Internal.eventParams>)
+      let {event, mockDb, ?chainId} = args->(Utils.magic: eventProcessorArgs<'event> => eventProcessorArgs<Internal.event>)
       let paramsRawEventSchema = paramsRawEventSchema->(Utils.magic: S.t<'eventArgs> => S.t<Internal.eventParams>)
 
       let config = RegisterHandlers.getConfig()
@@ -168,31 +169,33 @@ module EventFunctions = {
   }
 
   module MockBlock = {
+    @genType
     type t = {
-      {{#each field_selection.block_fields as | field |}}
+      {{#each aggregated_field_selection.block_fields as | field |}}
       {{field.name.camel}}?: {{field.res_type}},
       {{/each}}
     }
 
-    let toBlock = (_mock: t): Types.Block.t => {
-      {{#each field_selection.block_fields as | field |}}
+    let toBlock = (_mock: t) => {
+      {{#each aggregated_field_selection.block_fields as | field |}}
       {{field.name.camel}}: _mock.{{field.name.camel}}->Belt.Option.getWithDefault({{field.default_value_rescript}}),
       {{/each}}
-    }
+    }->(Utils.magic: Types.AggregatedBlock.t => Internal.eventBlock)
   }
 
   module MockTransaction = {
+    @genType
     type t = {
-      {{#each field_selection.transaction_fields as | field |}}
+      {{#each aggregated_field_selection.transaction_fields as | field |}}
       {{field.name.camel}}?: {{field.res_type}},
       {{/each}}
     }
 
-    let toTransaction = (_mock: t): Types.Transaction.t => {
-      {{#each field_selection.transaction_fields as | field |}}
+    let toTransaction = (_mock: t) => {
+      {{#each aggregated_field_selection.transaction_fields as | field |}}
       {{field.name.camel}}: _mock.{{field.name.camel}}->Belt.Option.getWithDefault({{field.default_value_rescript}}),
       {{/each}}
-    }
+    }->(Utils.magic: Types.AggregatedTransaction.t => Internal.eventTransaction)
   }
 
   @genType
@@ -208,9 +211,9 @@ module EventFunctions = {
   Applies optional paramters with defaults for all common eventLog field
   */
   let makeEventMocker = (
-    ~params: 'eventParams,
+    ~params: Internal.eventParams,
     ~mockEventData: option<mockEventData>,
-  ): Types.eventLog<'eventParams> => {
+  ): Internal.event => {
     let {?block, ?transaction, ?srcAddress, ?chainId, ?logIndex} =
       mockEventData->Belt.Option.getWithDefault({})
     let block = block->Belt.Option.getWithDefault({})->MockBlock.toBlock
@@ -232,7 +235,7 @@ module {{contract.name.capitalized}} = {
   {{#each contract.codegen_events as | event |}}
   module {{event.name}} = {
     @genType
-    let processEvent = EventFunctions.makeEventProcessor(
+    let processEvent: EventFunctions.eventProcessor<Types.{{contract.name.capitalized}}.{{event.name}}.event> = EventFunctions.makeEventProcessor(
       ~contractName=Types.{{contract.name.capitalized}}.contractName,
       ~eventName=Types.{{contract.name.capitalized}}.{{event.name}}.name,
       ~handlerRegister=Types.{{contract.name.capitalized}}.{{event.name}}.handlerRegister,
@@ -262,7 +265,7 @@ module {{contract.name.capitalized}} = {
         ?mockEventData,
       } = args
 
-      let params: Types.{{contract.name.capitalized}}.{{event.name}}.eventArgs = 
+      let params = 
       {{#if event.params}}
       {
       {{#each event.params as | param |}}
@@ -271,15 +274,19 @@ module {{contract.name.capitalized}} = {
       }
       {{else}}
       ()
-      {{/if}}
+      {{/if}}->(Utils.magic: Types.{{contract.name.capitalized}}.{{event.name}}.eventArgs => Internal.eventParams)
 
       EventFunctions.makeEventMocker(~params, ~mockEventData)
+        ->(Utils.magic: Internal.event => Types.{{contract.name.capitalized}}.{{event.name}}.event)
     }
     {{/if}}
     {{#if ../../is_fuel_ecosystem}}
     @genType
-    let mockData = (params): Types.eventLog<Types.{{contract.name.capitalized}}.{{event.name}}.eventArgs> => {
-      EventFunctions.makeEventMocker(~params, ~mockEventData=None)
+    let mockData = (params) => {
+      EventFunctions.makeEventMocker(
+        ~params=params->(Utils.magic: Types.{{contract.name.capitalized}}.{{event.name}}.eventArgs => Internal.eventParams),
+        ~mockEventData=None
+      )->(Utils.magic: Internal.event => Types.{{contract.name.capitalized}}.{{event.name}}.event)
     }
     {{/if}}
   }

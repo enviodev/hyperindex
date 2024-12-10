@@ -208,6 +208,19 @@ let runEventLoader = async (
   }
 }
 
+let convertFieldsToJson = (fields: dict<unknown>) => {
+  let keys = fields->Js.Dict.keys
+  let new = Js.Dict.empty()
+  for i in 0 to keys->Js.Array2.length - 1 {
+    let key = keys->Js.Array2.unsafe_get(i)
+    let value = fields->Js.Dict.unsafeGet(key)
+    // Skip `undefined` values and convert bigint fields to string
+    // There are not fields with nested bigints, so this is safe
+    new->Js.Dict.set(key, Js.typeof(value) === "bigint" ? value->Utils.magic->BigInt.toString->Utils.magic : value)
+  }
+  new->(Utils.magic: dict<unknown> => Js.Json.t)
+}
+
 let addEventToRawEvents = (
   eventItem: Internal.eventItem,
   ~inMemoryStore: InMemoryStore.t,
@@ -224,9 +237,15 @@ let addEventToRawEvents = (
   let {block, transaction, params, logIndex, srcAddress} = event
   let chainId = chain->ChainMap.Chain.toChainId
   let eventId = EventUtils.packEventIndex(~logIndex, ~blockNumber)
-  let blockFields =
-    block->(Utils.magic: Internal.eventBlock => Types.Block.rawEventFields)->S.serializeOrRaiseWith(Types.Block.rawEventSchema)
-  let transactionFields = transaction->(Utils.magic: Internal.eventTransaction => Types.Transaction.t)->S.serializeOrRaiseWith(Types.Transaction.rawEventSchema)
+  let blockFields = block
+    ->(Utils.magic: Internal.eventBlock => dict<unknown>)
+    ->convertFieldsToJson
+  let transactionFields = transaction
+    ->(Utils.magic: Internal.eventTransaction => dict<unknown>)
+    ->convertFieldsToJson
+
+  blockFields->Types.Block.cleanUpRawEventFieldsInPlace
+
   // Serialize to unknown, because serializing to Js.Json.t fails for Bytes Fuel type, since it has unknown schema
   let params =
     params

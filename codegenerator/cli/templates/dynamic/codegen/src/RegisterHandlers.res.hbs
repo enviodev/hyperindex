@@ -94,8 +94,6 @@ let registerContractHandlers = (
                 contracts
                 ->Belt.Array.flatMap(contract => contract.events)
                 ->EventRouter.fromEvmEventModsOrThrow(~chain)
-              let blockSchema = Types.Block.schema
-              let transactionSchema = Types.Transaction.schema
             }))
             {{/with}}
             {{/if}}
@@ -124,8 +122,8 @@ let registerContractHandlers = (
               let shouldUseHypersyncClientDecoder = Env.Configurable.shouldUseHypersyncClientDecoder->Belt.Option.getWithDefault(
                 {{hypersync_config.is_client_decoder}},
               )
-              let blockSchema = Types.Block.schema
-              let transactionSchema = Types.Transaction.schema
+              let blockSchema = Types.AggregatedBlock.schema
+              let transactionSchema = Types.AggregatedTransaction.schema
             }))
             {{/with}}
             {{/if}}
@@ -134,7 +132,7 @@ let registerContractHandlers = (
             module(HyperFuelWorker.Make({
               let chain = chain
               let endpointUrl = "{{hyperfuel_config.endpoint_url}}"
-              let contracts: array<Types.fuelContractConfig> = [
+              let contracts: array<Internal.fuelContractConfig> = [
                 {{#each chain_config.codegen_contracts as | contract |}}
                 {
                   name: "{{contract.name.capitalized}}",
