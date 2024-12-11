@@ -857,7 +857,7 @@ let checkAndFetchForChain = (
 ) => async chain => {
   let chainFetcher = state.chainManager.chainFetchers->ChainMap.get(chain)
   if !isRollingBack(state) {
-    let {chainConfig: {chainWorker}, logger, currentBlockHeight} = chainFetcher
+    let {chainConfig: {chainWorker}, logger, currentBlockHeight, partitionsCurrentlyFetching} = chainFetcher
 
     let (nextQueries, updatedPartitions) =
       chainFetcher->ChainFetcher.getNextQueries(~maxPerChainQueueSize=state.maxPerChainQueueSize)
@@ -895,6 +895,11 @@ let checkAndFetchForChain = (
         dispatchAction(FinishWaitingForNewBlock({chain, currentBlockHeight}))
       }
     | (queries, _) =>
+      let maxNumQueries = Pervasives.max(
+        Env.maxPartitionConcurrency - partitionsCurrentlyFetching->Belt.Set.Int.size,
+        0,
+      )
+      let queries = queries->Js.Array2.slice(~start=0, ~end_=maxNumQueries) 
       let newPartitionsCurrentlyFetching =
         queries->Array.map(query => query.partitionId)->Set.Int.fromArray
       dispatchAction(SetCurrentlyFetchingBatch(chain, newPartitionsCurrentlyFetching))

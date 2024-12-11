@@ -52,56 +52,47 @@ describe("PartitionedFetchState getMostBehindPartitions", () => {
     mockFetchState(~latestFetchedBlockNumber=3),
   }
   let partitionedFetchState = mockPartitionedFetchState(~partitions)
-  it(
-    "With multiple partitions always returns the most behind partitions up to the max concurrency level",
-    () => {
-      let maxNumQueries = 3
-      let partitionsCurrentlyFetching = Set.Int.empty
+  it("With multiple partitions always returns the most behind partitions first", () => {
+    let partitionsCurrentlyFetching = Set.Int.empty
 
-      let mostBehindPartitions =
-        partitionedFetchState->PartitionedFetchState.getMostBehindPartitions(
-          ~maxNumQueries,
-          ~maxPerChainQueueSize=10,
-          ~partitionsCurrentlyFetching,
-        )
-
-      Assert.equal(mostBehindPartitions->Array.length, maxNumQueries)
-
-      let partitionIds = mostBehindPartitions->Array.map(p => p.partitionId)
-      Assert.deepEqual(
-        partitionIds,
-        [2, 3, 4],
-        ~message="Should have returned the partitions with the lowest latestFetchedBlock",
+    let mostBehindPartitions =
+      partitionedFetchState->PartitionedFetchState.getMostBehindPartitions(
+        ~maxPerChainQueueSize=10,
+        ~partitionsCurrentlyFetching,
       )
-    },
-  )
+
+    let partitionIds = mostBehindPartitions->Array.map(p => p.partitionId)
+    Assert.deepEqual(
+      partitionIds,
+      [2, 3, 4, 0, 1],
+      ~message="Should have returned the partitions with the lowest latestFetchedBlock first",
+    )
+  })
 
   it("Will not return partitions that are currently fetching", () => {
-    let maxNumQueries = 3
     let partitionsCurrentlyFetching = Set.Int.fromArray([2, 3])
 
     let mostBehindPartitions =
       partitionedFetchState->PartitionedFetchState.getMostBehindPartitions(
-        ~maxNumQueries,
         ~maxPerChainQueueSize=10,
         ~partitionsCurrentlyFetching,
       )
 
     Assert.equal(
       mostBehindPartitions->Array.length,
-      maxNumQueries - partitionsCurrentlyFetching->Set.Int.size,
+      partitionedFetchState.partitions->Js.Array2.length -
+        partitionsCurrentlyFetching->Set.Int.size,
     )
 
     let partitionIds = mostBehindPartitions->Array.map(p => p.partitionId)
     Assert.deepEqual(
       partitionIds,
-      [4],
+      [4, 0, 1],
       ~message="Should have returned the partitions with the lowest latestFetchedBlock that are not currently fetching",
     )
   })
 
-  it("Should not return partition that is at max partition size", () => {
-    let maxNumQueries = 3
+  it("Should not return partition that is at max queue size", () => {
     let partitions = list{
       mockFetchState(~latestFetchedBlockNumber=4),
       mockFetchState(~latestFetchedBlockNumber=5),
@@ -119,7 +110,6 @@ describe("PartitionedFetchState getMostBehindPartitions", () => {
 
     let mostBehindPartitions =
       partitionedFetchState->PartitionedFetchState.getMostBehindPartitions(
-        ~maxNumQueries,
         ~maxPerChainQueueSize=10, //each partition should therefore have a max of 2 events
         ~partitionsCurrentlyFetching=Set.Int.empty,
       )
@@ -133,7 +123,6 @@ describe("PartitionedFetchState getMostBehindPartitions", () => {
   })
 
   it("if need be should return less than maxNum queries if all partitions at their max", () => {
-    let maxNumQueries = 3
     let partitions = list{
       mockFetchState(~latestFetchedBlockNumber=4),
       mockFetchState(~latestFetchedBlockNumber=5),
@@ -154,7 +143,6 @@ describe("PartitionedFetchState getMostBehindPartitions", () => {
 
     let mostBehindPartitions =
       partitionedFetchState->PartitionedFetchState.getMostBehindPartitions(
-        ~maxNumQueries,
         ~maxPerChainQueueSize=10, //each partition should therefore have a max of 2 events
         ~partitionsCurrentlyFetching=Set.Int.empty,
       )

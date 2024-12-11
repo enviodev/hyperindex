@@ -184,14 +184,9 @@ at the max queue size.
 */
 let getMostBehindPartitions = (
   {partitions}: t,
-  ~maxNumQueries,
   ~maxPerChainQueueSize,
   ~partitionsCurrentlyFetching,
 ) => {
-  let maxNumQueries = Pervasives.max(
-    maxNumQueries - partitionsCurrentlyFetching->Belt.Set.Int.size,
-    0,
-  )
   let numPartitions = partitions->Array.length
   let maxPartitionQueueSize = maxPerChainQueueSize / numPartitions
 
@@ -211,7 +206,6 @@ let getMostBehindPartitions = (
     FetchState.getLatestFullyFetchedBlock(a.fetchState).blockNumber -
     FetchState.getLatestFullyFetchedBlock(b.fetchState).blockNumber
   )
-  ->Js.Array.slice(~start=0, ~end_=maxNumQueries)
 }
 
 type nextQueries = WaitForNewBlock | NextQuery(array<FetchState.nextQuery>)
@@ -225,7 +219,6 @@ let getNextQueries = (self: t, ~maxPerChainQueueSize, ~partitionsCurrentlyFetchi
 
   self
   ->getMostBehindPartitions(
-    ~maxNumQueries=Env.maxPartitionConcurrency,
     ~maxPerChainQueueSize,
     ~partitionsCurrentlyFetching,
   )

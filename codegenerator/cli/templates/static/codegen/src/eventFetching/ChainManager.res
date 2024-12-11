@@ -1,4 +1,5 @@
 open Belt
+
 type t = {
   chainFetchers: ChainMap.t<ChainFetcher.t>,
   //Holds arbitrary events that were added when a batch ended processing early
