@@ -528,22 +528,11 @@ let getQueryLogger = (
   | DynamicContract({blockNumber, logIndex}) =>
     `dynamic-${blockNumber->Int.toString}-${logIndex->Int.toString}`
   }
-  let addressesAll = contractAddressMapping->ContractAddressingMap.getAllAddresses
-  let (displayAddr, restCount) = addressesAll->Array.reduce(([], 0), (
-    (currentDisplay, restCount),
-    addr,
-  ) => {
-    if currentDisplay->Array.length < 3 {
-      (Array.concat(currentDisplay, [addr->Address.toString]), restCount)
-    } else {
-      (currentDisplay, restCount + 1)
-    }
-  })
-
-  let addresses = if restCount > 0 {
-    displayAddr->Array.concat([`... and ${restCount->Int.toString} more`])
-  } else {
-    displayAddr
+  let allAddresses = contractAddressMapping->ContractAddressingMap.getAllAddresses
+  let addresses = allAddresses->Js.Array2.slice(~start=0, ~end_=3)->Array.map(addr => addr->Address.toString)
+  let restCount = allAddresses->Array.length - addresses->Array.length
+   if restCount > 0 {
+    addresses->Js.Array2.push(`... and ${restCount->Int.toString} more`)->ignore
   }
   let params = {
     "fromBlock": fromBlock,
