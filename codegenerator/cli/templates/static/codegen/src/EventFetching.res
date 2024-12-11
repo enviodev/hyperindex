@@ -70,34 +70,6 @@ let makeCombinedEventFilterQuery = (
   })
 }
 
-let applyConditionalFunction = (value: 'a, condition: bool, callback: 'a => 'b) => {
-  condition ? callback(value) : value
-}
-
-let queryEventsWithCombinedFilter = async (
-  ~contractInterfaceManager,
-  ~fromBlock,
-  ~toBlock,
-  ~minFromBlockLogIndex=0,
-  ~provider,
-  ~logger: Pino.t,
-): array<Ethers.log> => {
-  let combinedFilterRes = await makeCombinedEventFilterQuery(
-    ~provider,
-    ~contractInterfaceManager,
-    ~fromBlock,
-    ~toBlock,
-    ~logger,
-  )
-
-  combinedFilterRes->applyConditionalFunction(minFromBlockLogIndex > 0, arrLogs => {
-    arrLogs->Belt.Array.keep(log => {
-      log.blockNumber > fromBlock ||
-        (log.blockNumber == fromBlock && log.logIndex >= minFromBlockLogIndex)
-    })
-  })
-}
-
 type eventBatchQuery = {
   logs: array<Ethers.log>,
   finalExecutedBlockInterval: int,
@@ -108,7 +80,6 @@ let getNextPage = async (
   ~fromBlock,
   ~toBlock,
   ~initialBlockInterval,
-  ~minFromBlockLogIndex=0,
   ~syncConfig as sc: Config.syncConfig,
   ~provider,
   ~logger,
@@ -134,11 +105,10 @@ let getNextPage = async (
       let nextToBlock =
         Pervasives.min(upperBoundToBlock, toBlock)->Pervasives.max(fromBlockRef.contents) //Defensively ensure we never query a target block below fromBlock
       let logsPromise =
-        queryEventsWithCombinedFilter(
+        makeCombinedEventFilterQuery(
           ~contractInterfaceManager,
           ~fromBlock=fromBlockRef.contents,
           ~toBlock=nextToBlock,
-          ~minFromBlockLogIndex=fromBlockRef.contents == fromBlock ? minFromBlockLogIndex : 0,
           ~provider,
           ~logger,
         )->Promise.thenResolve(logs => (logs, nextToBlock - fromBlockRef.contents + 1))

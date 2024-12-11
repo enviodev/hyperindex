@@ -231,7 +231,6 @@ module Make = (
         ~fromBlock,
         ~toBlock=targetBlock,
         ~initialBlockInterval=currentBlockInterval,
-        ~minFromBlockLogIndex=0,
         ~syncConfig=T.syncConfig,
         ~provider=T.provider,
         ~logger,
