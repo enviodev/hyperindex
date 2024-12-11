@@ -28,10 +28,11 @@ let make = (
   let partitions = []
 
   if numAddresses <= maxAddrInPartition {
-    let partition = FetchState.makeRoot(~endBlock)(
+    let partition = FetchState.make(
       ~staticContracts,
       ~dynamicContractRegistrations,
       ~startBlock,
+      ~endBlock,
       ~logger,
       ~isFetchingAtHead=false,
     )
@@ -44,10 +45,11 @@ let make = (
       let staticContractsChunk =
         staticContractsClone->Js.Array2.removeCountInPlace(~pos=0, ~count=maxAddrInPartition)
 
-      let staticContractPartition = FetchState.makeRoot(~endBlock)(
+      let staticContractPartition = FetchState.make(
         ~staticContracts=staticContractsChunk,
         ~dynamicContractRegistrations=[],
         ~startBlock,
+        ~endBlock,
         ~logger,
         ~isFetchingAtHead=false,
       )
@@ -58,13 +60,14 @@ let make = (
 
     //Add the rest of the static addresses filling the remainder of the partition with dynamic contract
     //registrations
-    let remainingStaticContractsWithDynamicPartition = FetchState.makeRoot(~endBlock)(
+    let remainingStaticContractsWithDynamicPartition = FetchState.make(
       ~staticContracts=staticContractsClone,
       ~dynamicContractRegistrations=dynamicContractRegistrationsClone->Js.Array2.removeCountInPlace(
         ~pos=0,
         ~count=maxAddrInPartition - staticContractsClone->Array.length,
       ),
       ~startBlock,
+      ~endBlock,
       ~logger,
       ~isFetchingAtHead=false,
     )
@@ -78,10 +81,11 @@ let make = (
           ~count=maxAddrInPartition,
         )
 
-      let dynamicContractPartition = FetchState.makeRoot(~endBlock)(
+      let dynamicContractPartition = FetchState.make(
         ~staticContracts=[],
         ~dynamicContractRegistrations=dynamicContractRegistrationsChunk,
         ~startBlock,
+        ~endBlock,
         ~logger,
         ~isFetchingAtHead=false,
       )
@@ -125,8 +129,9 @@ let registerDynamicContracts = (
       )
     partitions->Utils.Array.setIndexImmutable(newestPartitionIndex, updated)
   } else {
-    let newPartition = FetchState.makeRoot(~endBlock)(
+    let newPartition = FetchState.make(
       ~startBlock,
+      ~endBlock,
       ~logger,
       ~staticContracts=[],
       ~dynamicContractRegistrations=dynamicContractRegistration.dynamicContracts,

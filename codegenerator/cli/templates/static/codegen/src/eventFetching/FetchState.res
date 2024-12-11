@@ -278,11 +278,6 @@ with a dynamicContractId
 */
 type id = Root | DynamicContract(dynamicContractId)
 
-let idSchema = S.union([
-  S.literal(Root),
-  S.schema(s => DynamicContract(s.matches(EventUtils.eventIndexSchema))),
-])
-
 /**
 Constructs id from a register
 */
@@ -774,26 +769,20 @@ let getEarliestEvent = (self: t) => {
   }
 }
 
-let makeInternal = (
-  ~registerType,
+/**
+Instantiates a fetch state with root register
+*/
+let make = (
   ~staticContracts,
   ~dynamicContractRegistrations: array<TablesStatic.DynamicContractRegistry.t>,
   ~startBlock,
+  ~endBlock,
   ~isFetchingAtHead,
-  ~logger,
+  ~logger as _,
 ): t => {
   let contractAddressMapping = ContractAddressingMap.make()
 
   staticContracts->Belt.Array.forEach(((contractName, address)) => {
-    Logging.childTrace(
-      logger,
-      {
-        "msg": "adding contract address",
-        "contractName": contractName,
-        "address": address,
-      },
-    )
-
     contractAddressMapping->ContractAddressingMap.addAddress(~name=contractName, ~address)
   })
 
@@ -816,7 +805,7 @@ let makeInternal = (
   })
 
   let baseRegister = {
-    registerType,
+    registerType: RootRegister({endBlock: endBlock}),
     latestFetchedBlock: {
       blockTimestamp: 0,
       // Here's a bug that startBlock: 1 won't work
@@ -834,11 +823,6 @@ let makeInternal = (
     isFetchingAtHead,
   }
 }
-
-/**
-Instantiates a fetch state with root register
-*/
-let makeRoot = (~endBlock) => makeInternal(~registerType=RootRegister({endBlock: endBlock}), ...)
 
 /**
 Calculates the cummulative queue sizes in all registers
