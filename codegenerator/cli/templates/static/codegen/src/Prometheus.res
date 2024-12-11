@@ -40,14 +40,7 @@ let sourceChainHeight = PromClient.Gauge.makeGauge({
   "labelNames": ["chainId"],
 })
 
-module SafeGauge: {
-  type t<'a>
-  let makeOrThrow: (~name: string, ~help: string, ~labelSchema: S.t<'a>) => t<'a>
-  let setInt: (t<'a>, ~labels: 'a, ~value: int) => unit
-  let setFloat: (t<'a>, ~labels: 'a, ~value: float) => unit
-} = {
-  type t<'a> = PromClient.Gauge.gauge
-
+module Labels = {
   let rec schemaIsString = (schema: S.t<'a>) =>
     switch schema->S.classify {
     | String => true
@@ -78,31 +71,71 @@ module SafeGauge: {
       }
     | _ => Error("Label schema must be an object")
     }
+}
+
+let metricNames: Utils.Set.t<string> = Utils.Set.make()
+
+module MakeSafePromMetric = (
+  M: {
+    type t
+    let make: {"name": string, "help": string, "labelNames": array<string>} => t
+    let labels: (t, 'a) => t
+    let handleFloat: (t, float) => unit
+    let handleInt: (t, int) => unit
+  },
+): {
+  type t<'a>
+  let makeOrThrow: (~name: string, ~help: string, ~labelSchema: S.t<'a>) => t<'a>
+  let handleInt: (t<'a>, ~labels: 'a, ~value: int) => unit
+  let handleFloat: (t<'a>, ~labels: 'a, ~value: float) => unit
+} => {
+  type t<'a> = {metric: M.t, labelSchema: S.t<'a>}
 
   let makeOrThrow = (~name, ~help, ~labelSchema: S.t<'a>): t<'a> =>
-    switch labelSchema->getLabelNames {
+    switch labelSchema->Labels.getLabelNames {
     | Ok(labelNames) =>
-      PromClient.Gauge.makeGauge({
-        "name": name,
-        "help": help,
-        "labelNames": labelNames,
-      })
+      if metricNames->Utils.Set.has(name) {
+        Js.Exn.raiseError("Duplicate prometheus metric name: " ++ name)
+      } else {
+        metricNames->Utils.Set.add(name)->ignore
+        let metric = M.make({
+          "name": name,
+          "help": help,
+          "labelNames": labelNames,
+        })
+
+        {metric, labelSchema}
+      }
 
     | Error(error) => Js.Exn.raiseError(error)
     }
 
-  let makeLabels = (self: t<'a>, ~labels: 'a): t<'a> => self->PromClient.Gauge.labels(labels)
+  let handleFloat = ({metric, labelSchema}: t<'a>, ~labels: 'a, ~value) =>
+    metric
+    ->M.labels(labels->S.serializeOrRaiseWith(labelSchema))
+    ->M.handleFloat(value)
 
-  let setFloat = (self: t<'a>, ~labels: 'a, ~value) =>
-    self
-    ->makeLabels(~labels)
-    ->PromClient.Gauge.setFloat(value)
-
-  let setInt = (self: t<'a>, ~labels: 'a, ~value) =>
-    self
-    ->makeLabels(~labels)
-    ->PromClient.Gauge.set(value)
+  let handleInt = ({metric, labelSchema}: t<'a>, ~labels: 'a, ~value) =>
+    metric
+    ->M.labels(labels->S.serializeOrRaiseWith(labelSchema))
+    ->M.handleInt(value)
 }
+
+module SafeCounter = MakeSafePromMetric({
+  type t = PromClient.Counter.counter
+  let make = PromClient.Counter.makeCounter
+  let labels = PromClient.Counter.labels
+  let handleInt = PromClient.Counter.incMany
+  let handleFloat = PromClient.Counter.incMany->Utils.magic
+})
+
+module SafeGauge = MakeSafePromMetric({
+  type t = PromClient.Gauge.gauge
+  let make = PromClient.Gauge.makeGauge
+  let labels = PromClient.Gauge.labels
+  let handleInt = PromClient.Gauge.set
+  let handleFloat = PromClient.Gauge.setFloat
+})
 
 module BenchmarkSummaryData = {
   type labels = {
@@ -137,13 +170,13 @@ module BenchmarkSummaryData = {
       stat,
       label,
     }
-    gauge->SafeGauge.setFloat(~labels=mk("n"), ~value=n)
-    gauge->SafeGauge.setFloat(~labels=mk("mean"), ~value=mean)
-    gauge->SafeGauge.setFloat(~labels=mk("min"), ~value=min)
-    gauge->SafeGauge.setFloat(~labels=mk("max"), ~value=max)
-    gauge->SafeGauge.setFloat(~labels=mk("sum"), ~value=sum)
+    gauge->SafeGauge.handleFloat(~labels=mk("n"), ~value=n)
+    gauge->SafeGauge.handleFloat(~labels=mk("mean"), ~value=mean)
+    gauge->SafeGauge.handleFloat(~labels=mk("min"), ~value=min)
+    gauge->SafeGauge.handleFloat(~labels=mk("max"), ~value=max)
+    gauge->SafeGauge.handleFloat(~labels=mk("sum"), ~value=sum)
     switch stdDev {
-    | Some(stdDev) => gauge->SafeGauge.setFloat(~labels=mk("stdDev"), ~value=stdDev)
+    | Some(stdDev) => gauge->SafeGauge.handleFloat(~labels=mk("stdDev"), ~value=stdDev)
     | None => ()
     }
   }
@@ -162,8 +195,35 @@ module BenchmarkCounters = {
   )
 
   let set = (~label, ~millis, ~totalRuntimeMillis) => {
-    gauge->SafeGauge.setFloat(~labels={label: label}, ~value=millis)
-    gauge->SafeGauge.setFloat(~labels={label: "Total Run Time (ms)"}, ~value=totalRuntimeMillis)
+    gauge->SafeGauge.handleFloat(~labels={label: label}, ~value=millis)
+    gauge->SafeGauge.handleFloat(~labels={label: "Total Run Time (ms)"}, ~value=totalRuntimeMillis)
+  }
+}
+
+module PartitionBlockFetched = {
+  type labels = {chainId: int, partitionId: int}
+  let intAsString = S.string->S.transform(s => {
+    serializer: int => int->Belt.Int.toString,
+    parser: string =>
+      switch string->Belt.Int.fromString {
+      | Some(int) => int
+      | None => s.fail("The string is not valid int")
+      },
+  })
+
+  let labelSchema = S.schema(s => {
+    chainId: s.matches(intAsString),
+    partitionId: s.matches(intAsString),
+  })
+
+  let counter = SafeGauge.makeOrThrow(
+    ~name="partition_block_fetched",
+    ~help="The latest fetched block number for each partition",
+    ~labelSchema,
+  )
+
+  let set = (~blockNumber, ~partitionId, ~chainId) => {
+    counter->SafeGauge.handleInt(~labels={chainId, partitionId}, ~value=blockNumber)
   }
 }
 

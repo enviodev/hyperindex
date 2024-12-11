@@ -123,7 +123,8 @@ let makeFromDbState = async (chainConfig: Config.chainConfig, ~maxAddrInPartitio
   let logger = Logging.createChild(~params={"chainId": chainConfig.chain->ChainMap.Chain.toChainId})
   let staticContracts = chainConfig->getStaticContracts
   let chainId = chainConfig.chain->ChainMap.Chain.toChainId
-  let latestProcessedEvent = await Db.sql->DbFunctions.EventSyncState.getLatestProcessedEvent(~chainId)
+  let latestProcessedEvent =
+    await Db.sql->DbFunctions.EventSyncState.getLatestProcessedEvent(~chainId)
 
   let chainMetadata = await Db.sql->DbFunctions.ChainMetadata.getLatestChainMetadataState(~chainId)
 
@@ -343,6 +344,7 @@ let updateFetchState = (
     },
     ~newItems,
     ~currentBlockHeight,
+    ~chain=self.chainConfig.chain,
   )
   ->Result.map(fetchState => {
     {
