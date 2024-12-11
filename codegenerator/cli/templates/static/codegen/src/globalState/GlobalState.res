@@ -895,29 +895,28 @@ let checkAndFetchForChain = (
         dispatchAction(FinishWaitingForNewBlock({chain, currentBlockHeight}))
       }
     | (queries, _) =>
-      let maxNumQueries = Pervasives.max(
-        Env.maxPartitionConcurrency - partitionsCurrentlyFetching->Belt.Set.Int.size,
-        0,
-      )
-      let queries = queries->Js.Array2.slice(~start=0, ~end_=maxNumQueries) 
-      let newPartitionsCurrentlyFetching =
-        queries->Array.map(query => query.partitionId)->Set.Int.fromArray
-      dispatchAction(SetCurrentlyFetchingBatch(chain, newPartitionsCurrentlyFetching))
-      let isPreRegisteringDynamicContracts =
-        state.chainManager->ChainManager.isPreRegisteringDynamicContracts
-      let _ =
-        await queries
-        ->Array.map(query =>
-          query->executePartitionQuery(
-            ~logger,
-            ~chainWorker,
-            ~currentBlockHeight,
-            ~chain,
-            ~dispatchAction,
-            ~isPreRegisteringDynamicContracts,
+      let maxQueriesNumber = Env.maxPartitionConcurrency - partitionsCurrentlyFetching->Belt.Set.Int.size
+      if maxQueriesNumber > 0 {
+        let queries = queries->Js.Array2.slice(~start=0, ~end_=maxQueriesNumber) 
+        let newPartitionsCurrentlyFetching =
+          queries->Array.map(query => query.partitionId)->Set.Int.fromArray
+        dispatchAction(SetCurrentlyFetchingBatch(chain, newPartitionsCurrentlyFetching))
+        let isPreRegisteringDynamicContracts =
+          state.chainManager->ChainManager.isPreRegisteringDynamicContracts
+        let _ =
+          await queries
+          ->Array.map(query =>
+            query->executePartitionQuery(
+              ~logger,
+              ~chainWorker,
+              ~currentBlockHeight,
+              ~chain,
+              ~dispatchAction,
+              ~isPreRegisteringDynamicContracts,
+            )
           )
-        )
-        ->Promise.all
+          ->Promise.all
+      }
     }
   }
 }
