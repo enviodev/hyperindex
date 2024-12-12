@@ -464,6 +464,14 @@ let addDynamicContractRegisters = (baseRegister, pendingDynamicContracts) => {
   })
 }
 
+exception NextRegisterIsLessThanCurrent
+
+let isRootRegister = registerType =>
+  switch registerType {
+  | RootRegister(_) => true
+  | DynamicContractRegister(_) => false
+  }
+
 /**
 If a fetchState register has caught up to its next regisered node. Merge them and recurse.
 If no merging happens, None is returned
@@ -475,7 +483,31 @@ let rec pruneAndMergeNextRegistered = (register: register, ~isMerged=false) => {
   | DynamicContractRegister({nextRegister})
     if register.latestFetchedBlock.blockNumber <
     nextRegister.latestFetchedBlock.blockNumber => merged
-  | DynamicContractRegister(_) =>
+  | DynamicContractRegister({nextRegister}) =>
+    if register.latestFetchedBlock.blockNumber > nextRegister.latestFetchedBlock.blockNumber {
+      let logger = Logging.createChild(
+        ~params={
+          "context": "Merging Dynamic Contract Registers",
+          "currentRegister": {
+            "id": register->getRegisterId,
+            "latestFetchedBlock": register.latestFetchedBlock.blockNumber,
+            "dynamicContracts": register,
+            "addresses": register.contractAddressMapping->ContractAddressingMap.getAllAddresses,
+          },
+          "nextRegister": {
+            "id": nextRegister->getRegisterId,
+            "latestFetchedBlock": nextRegister.latestFetchedBlock.blockNumber,
+            "addresses": nextRegister.registerType->isRootRegister
+              ? "Root"->Utils.magic
+              : nextRegister.contractAddressMapping->ContractAddressingMap.getAllAddresses,
+          },
+        },
+      )
+      NextRegisterIsLessThanCurrent->ErrorHandling.mkLogAndRaise(
+        ~msg="Unexpected: Dynamic contract register latest fetched block is greater than next register when it should be equal",
+        ~logger,
+      )
+    }
     // Recursively look for other merges
     register->mergeIntoNextRegistered->pruneAndMergeNextRegistered(~isMerged=true)
   }
