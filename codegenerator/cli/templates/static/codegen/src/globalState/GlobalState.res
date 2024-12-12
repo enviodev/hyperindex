@@ -98,7 +98,6 @@ type arbitraryEventQueue = array<Internal.eventItem>
 type shouldExit = ExitWithSuccess | NoExit
 type action =
   | BlockRangeResponse(chain, ChainWorker.blockRangeFetchResponse)
-  | StartWaitingForNewBlock({chain: chain})
   | FinishWaitingForNewBlock({chain: chain, currentBlockHeight: int})
   | EventBatchProcessed(EventProcessing.batchProcessed)
   | DynamicContractPreRegisterProcessed(EventProcessing.batchProcessed)
@@ -473,18 +472,13 @@ let updateChainFetcher = (chainFetcherUpdate, ~state, ~chain) => {
 
 let actionReducer = (state: t, action: action) => {
   switch action {
-  | StartWaitingForNewBlock({chain}) => updateChainFetcher(currentChainFetcher => {
-      ...currentChainFetcher,
-      isWaitingForNewBlock: true,
-    }, ~chain, ~state)
   | FinishWaitingForNewBlock({chain, currentBlockHeight}) => (
       {
         ...state,
         chainManager: {
           ...state.chainManager,
           chainFetchers: state.chainManager.chainFetchers->ChainMap.update(chain, chainFetcher => {
-            ...chainFetcher->updateChainFetcherCurrentBlockHeight(~currentBlockHeight),
-            isWaitingForNewBlock: false,
+            chainFetcher->updateChainFetcherCurrentBlockHeight(~currentBlockHeight)
           }),
         },
       },
@@ -885,13 +879,14 @@ let checkAndFetchForChain = (
     | ([], _)
     | // Even if we have ready queries, wait for the first currentBlockHeight
     (_, 0) =>
-      if nextQueries->Utils.Array.isEmpty || chainFetcher.isWaitingForNewBlock {
+      if nextQueries->Utils.Array.isEmpty || chainFetcher.sourceManger.isWaitingForNewBlock {
         // Do nothing if there are no queries which should wait,
         // or we are already waiting. Explicitely with if/else, so it's not lost
         ()
       } else {
-        dispatchAction(StartWaitingForNewBlock({chain: chain}))
+        chainFetcher.sourceManger.isWaitingForNewBlock = true
         let currentBlockHeight = await chainWorker->waitForNewBlock(~currentBlockHeight, ~logger)
+        chainFetcher.sourceManger.isWaitingForNewBlock = false
         dispatchAction(FinishWaitingForNewBlock({chain, currentBlockHeight}))
       }
     | (queries, _) =>

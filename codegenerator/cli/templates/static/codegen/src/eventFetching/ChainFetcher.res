@@ -11,10 +11,10 @@ type addressToDynContractLookup = dict<TablesStatic.DynamicContractRegistry.t>
 type t = {
   logger: Pino.t,
   fetchState: PartitionedFetchState.t,
+  sourceManger: SourceManager.t,
   chainConfig: Config.chainConfig,
   //The latest known block of the chain
   currentBlockHeight: int,
-  isWaitingForNewBlock: bool,
   partitionsCurrentlyFetching: PartitionedFetchState.partitionIndexSet,
   timestampCaughtUpToHeadOrEndblock: option<Js.Date.t>,
   dbFirstEventBlockNumber: option<int>,
@@ -64,9 +64,9 @@ let make = (
   {
     logger,
     chainConfig,
+    sourceManger: SourceManager.make(~chainConfig),
     lastBlockScannedHashes,
     currentBlockHeight: 0,
-    isWaitingForNewBlock: false,
     fetchState,
     dbFirstEventBlockNumber,
     latestProcessedBlock,
