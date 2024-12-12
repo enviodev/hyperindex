@@ -29,7 +29,7 @@ type blockRangeFetchResponse = {
   latestFetchedBlockTimestamp: int,
   stats: blockRangeFetchStats,
   fetchStateRegisterId: FetchState.id,
-  partitionId: PartitionedFetchState.partitionIndex,
+  partitionId: PartitionedFetchState.partitionId,
 }
 
 module type S = {

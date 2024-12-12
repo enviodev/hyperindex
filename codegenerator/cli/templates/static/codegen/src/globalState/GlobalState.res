@@ -104,7 +104,6 @@ type action =
   | StartIndexingAfterPreRegister
   | SetCurrentlyProcessing(bool)
   | SetIsInReorgThreshold(bool)
-  | SetCurrentlyFetchingBatch(chain, PartitionedFetchState.partitionIndexSet)
   | SetUpdatedPartitions(chain, dict<FetchState.t>)
   | UpdateQueues(ChainMap.t<ChainManager.fetchStateWithData>, arbitraryEventQueue)
   | SetSyncedChains
@@ -377,12 +376,8 @@ let handleBlockRangeResponse = (state, ~chain, ~response: ChainWorker.blockRange
       updatedChainFetcher.latestProcessedBlock
     }
 
-    let partitionsCurrentlyFetching =
-      updatedChainFetcher.partitionsCurrentlyFetching->Set.Int.remove(partitionId)
-
     let updatedChainFetcher = {
       ...updatedChainFetcher,
-      partitionsCurrentlyFetching,
       latestProcessedBlock,
       numBatchesFetched: updatedChainFetcher.numBatchesFetched + 1,
     }
@@ -446,14 +441,7 @@ let handleBlockRangeResponse = (state, ~chain, ~response: ChainWorker.blockRange
   } else {
     chainFetcher.logger->Logging.childWarn("Reorg detected, rolling back")
     Prometheus.incrementReorgsDetected(~chain)
-    let partitionsCurrentlyFetching =
-      chainFetcher.partitionsCurrentlyFetching->Set.Int.remove(partitionId)
-    let chainFetcher = {
-      ...chainFetcher,
-      partitionsCurrentlyFetching,
-    }
-    let chainManager = state.chainManager->ChainManager.setChainFetcher(chainFetcher)
-    (state->setChainManager(chainManager)->incrementId->setRollingBack(chain), [Rollback])
+    (state->incrementId->setRollingBack(chain), [Rollback])
   }
 }
 
@@ -614,14 +602,6 @@ let actionReducer = (state: t, action: action) => {
       Logging.info("Reorg threshold reached")
     }
     ({...state, chainManager: {...state.chainManager, isInReorgThreshold}}, [])
-  | SetCurrentlyFetchingBatch(chain, newPartitionsCurrentlyFetching) =>
-    updateChainFetcher(currentChainFetcher => {
-      ...currentChainFetcher,
-      partitionsCurrentlyFetching: Set.Int.union(
-        currentChainFetcher.partitionsCurrentlyFetching,
-        newPartitionsCurrentlyFetching,
-      ),
-    }, ~chain, ~state)
   | SetUpdatedPartitions(chain, updatedPartitions) =>
     let updatedPartitionIds = updatedPartitions->Js.Dict.keys
     if updatedPartitionIds->Utils.Array.isEmpty {
@@ -839,8 +819,6 @@ let executePartitionQuery = (
   )
 }
 
-exception FromBlockIsHigherThanToBlock({fromBlock: int, toBlock: int})
-
 let checkAndFetchForChain = (
   //Used for dependency injection for tests
   ~waitForNewBlock,
@@ -851,68 +829,25 @@ let checkAndFetchForChain = (
 ) => async chain => {
   let chainFetcher = state.chainManager.chainFetchers->ChainMap.get(chain)
   if !isRollingBack(state) {
-    let {chainConfig: {chainWorker}, logger, currentBlockHeight, partitionsCurrentlyFetching} = chainFetcher
+    let {chainConfig: {chainWorker}, logger, currentBlockHeight, fetchState} = chainFetcher
 
-    let (nextQueries, updatedPartitions) =
-      chainFetcher->ChainFetcher.getNextQueries(~maxPerChainQueueSize=state.maxPerChainQueueSize)
-    dispatchAction(SetUpdatedPartitions(chain, updatedPartitions))
-
-    let readyQueries = nextQueries->Js.Array2.filter(({fromBlock, toBlock}) =>
-      if fromBlock > currentBlockHeight {
-        false // This query should wait
-      } else {
-        switch toBlock {
-        | Some(toBlock) if toBlock < fromBlock =>
-          //This is an invalid case. We should never arrive at this match arm but it would be
-          //detrimental if it were the case.
-          FromBlockIsHigherThanToBlock({fromBlock, toBlock})->ErrorHandling.mkLogAndRaise(
-            ~logger,
-            ~msg="Unexpected error getting next query in partition",
-          )
-        | _ => ()
-        }
-        true
-      }
+    await chainFetcher.sourceManger->SourceManager.fetchBatch(
+      ~allPartitions=fetchState.partitions,
+      ~waitForNewBlock=(~currentBlockHeight, ~logger) => chainWorker->waitForNewBlock(~currentBlockHeight, ~logger),
+      ~onNewBlock=(~currentBlockHeight) => dispatchAction(FinishWaitingForNewBlock({chain, currentBlockHeight})),
+      ~currentBlockHeight,
+      ~executePartitionQuery=query => query->executePartitionQuery(
+        ~logger,
+        ~chainWorker,
+        ~currentBlockHeight,
+        ~chain,
+        ~dispatchAction,
+        ~isPreRegisteringDynamicContracts=state.chainManager->ChainManager.isPreRegisteringDynamicContracts,
+      ),
+      ~maxPerChainQueueSize=state.maxPerChainQueueSize,
+      ~setMergedPartitions=partitions => dispatchAction(SetUpdatedPartitions(chain, partitions)),
+      ~stateId=state.id,
     )
-
-    switch (readyQueries, currentBlockHeight) {
-    | ([], _)
-    | // Even if we have ready queries, wait for the first currentBlockHeight
-    (_, 0) =>
-      if nextQueries->Utils.Array.isEmpty || chainFetcher.sourceManger.isWaitingForNewBlock {
-        // Do nothing if there are no queries which should wait,
-        // or we are already waiting. Explicitely with if/else, so it's not lost
-        ()
-      } else {
-        chainFetcher.sourceManger.isWaitingForNewBlock = true
-        let currentBlockHeight = await chainWorker->waitForNewBlock(~currentBlockHeight, ~logger)
-        chainFetcher.sourceManger.isWaitingForNewBlock = false
-        dispatchAction(FinishWaitingForNewBlock({chain, currentBlockHeight}))
-      }
-    | (queries, _) =>
-      let maxQueriesNumber = Env.maxPartitionConcurrency - partitionsCurrentlyFetching->Belt.Set.Int.size
-      if maxQueriesNumber > 0 {
-        let queries = queries->Js.Array2.slice(~start=0, ~end_=maxQueriesNumber) 
-        let newPartitionsCurrentlyFetching =
-          queries->Array.map(query => query.partitionId)->Set.Int.fromArray
-        dispatchAction(SetCurrentlyFetchingBatch(chain, newPartitionsCurrentlyFetching))
-        let isPreRegisteringDynamicContracts =
-          state.chainManager->ChainManager.isPreRegisteringDynamicContracts
-        let _ =
-          await queries
-          ->Array.map(query =>
-            query->executePartitionQuery(
-              ~logger,
-              ~chainWorker,
-              ~currentBlockHeight,
-              ~chain,
-              ~dispatchAction,
-              ~isPreRegisteringDynamicContracts,
-            )
-          )
-          ->Promise.all
-      }
-    }
   }
 }
 

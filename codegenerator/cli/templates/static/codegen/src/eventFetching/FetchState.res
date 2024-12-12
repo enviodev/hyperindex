@@ -278,6 +278,13 @@ with a dynamicContractId
 */
 type id = Root | DynamicContract(dynamicContractId)
 
+let registerIdToString = (id: id) =>
+  switch id {
+  | Root => "root"
+  | DynamicContract({blockNumber, logIndex}) =>
+    `dynamic-${blockNumber->Int.toString}-${logIndex->Int.toString}`
+  }
+
 /**
 Constructs id from a register
 */
@@ -518,11 +525,7 @@ let getQueryLogger = (
   {fetchStateRegisterId, fromBlock, toBlock, contractAddressMapping}: nextQuery,
   ~logger,
 ) => {
-  let fetchStateRegister = switch fetchStateRegisterId {
-  | Root => "root"
-  | DynamicContract({blockNumber, logIndex}) =>
-    `dynamic-${blockNumber->Int.toString}-${logIndex->Int.toString}`
-  }
+  let fetchStateRegister = fetchStateRegisterId->registerIdToString
   let allAddresses = contractAddressMapping->ContractAddressingMap.getAllAddresses
   let addresses = allAddresses->Js.Array2.slice(~start=0, ~end_=3)->Array.map(addr => addr->Address.toString)
   let restCount = allAddresses->Array.length - addresses->Array.length

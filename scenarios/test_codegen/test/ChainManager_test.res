@@ -121,13 +121,15 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
       numBatchesFetched: 0,
       fetchState: fetchState.contents,
       logger: Logging.logger,
-      sourceManger: SourceManager.make(~chainConfig),
+      sourceManger: SourceManager.make(
+        ~maxPartitionConcurrency=Env.maxPartitionConcurrency,
+        ~logger=Logging.logger,
+      ),
       chainConfig,
       // This is quite a hack - but it works!
       lastBlockScannedHashes: ReorgDetection.LastBlockScannedHashes.empty(
         ~confirmedBlockThreshold=200,
       ),
-      partitionsCurrentlyFetching: Belt.Set.Int.empty,
       currentBlockHeight: 0,
       processingFilters: None,
       dynamicContractPreRegistration: None,

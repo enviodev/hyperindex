@@ -1,19 +1,23 @@
 open Belt
-type partitionIndex = int
+type partitionId = int
+type allPartitions = array<FetchState.t>
 type t = {
   maxAddrInPartition: int,
-  partitions: array<FetchState.t>,
+  partitions: allPartitions,
   endBlock: option<int>,
   startBlock: int,
   logger: Pino.t,
 }
 
 type id = {
-  partitionId: partitionIndex,
+  partitionId: partitionId,
   fetchStateId: FetchState.id,
 }
 
-type partitionIndexSet = Belt.Set.Int.t
+type partition = {
+  fetchState: FetchState.t,
+  partitionId: partitionId,
+}
 
 let make = (
   ~maxAddrInPartition,
@@ -151,7 +155,7 @@ let registerDynamicContracts = (
   {partitions, maxAddrInPartition, endBlock, startBlock, logger}
 }
 
-exception UnexpectedPartitionDoesNotExist(partitionIndex)
+exception UnexpectedPartitionDoesNotExist(partitionId)
 
 /**
 Updates partition at given id with given values and checks to see if it can be merged into its next register.
@@ -175,70 +179,24 @@ let update = (self: t, ~id: id, ~latestFetchedBlock, ~newItems, ~currentBlockHei
   }
 }
 
-type singlePartition = {
-  fetchState: FetchState.t,
-  partitionId: partitionIndex,
-}
-
-/**
-Retrieves an array of partitions that are most behind with a max number based on
-the max number of queries with the context of the partitions currently fetching.
-
-The array could be shorter than the max number of queries if the partitions are
-at the max queue size.
-*/
-let getMostBehindPartitions = (
-  {partitions}: t,
+let getReadyPartitions = (
+  allPartitions: allPartitions,
   ~maxPerChainQueueSize,
-  ~partitionsCurrentlyFetching,
+  ~fetchingPartitions,
 ) => {
-  let numPartitions = partitions->Array.length
+  let numPartitions = allPartitions->Array.length
   let maxPartitionQueueSize = maxPerChainQueueSize / numPartitions
 
-  let filteredPartitions = []
-
-  partitions->Array.forEachWithIndex((partitionId, fetchState) => {
+  let readyPartitions = []
+  allPartitions->Belt.Array.forEachWithIndex((partitionId, fetchState) => {
     if (
-      !(partitionsCurrentlyFetching->Set.Int.has(partitionId)) &&
+      !(fetchingPartitions->Utils.Set.has(partitionId)) &&
       fetchState->FetchState.isReadyForNextQuery(~maxQueueSize=maxPartitionQueueSize)
     ) {
-      filteredPartitions->Js.Array2.push({fetchState, partitionId})->ignore
+      readyPartitions->Js.Array2.push({fetchState, partitionId})->ignore
     }
   })
-
-  filteredPartitions
-  ->Js.Array2.sortInPlaceWith((a, b) =>
-    FetchState.getLatestFullyFetchedBlock(a.fetchState).blockNumber -
-    FetchState.getLatestFullyFetchedBlock(b.fetchState).blockNumber
-  )
-}
-
-type nextQueries = WaitForNewBlock | NextQuery(array<FetchState.nextQuery>)
-
-/**
-Gets the next query from the fetchState with the lowest latestFetchedBlock number.
-*/
-let getNextQueries = (self: t, ~maxPerChainQueueSize, ~partitionsCurrentlyFetching) => {
-  let nextQueries = []
-  let updatedPartitions = Js.Dict.empty()
-
-  self
-  ->getMostBehindPartitions(
-    ~maxPerChainQueueSize,
-    ~partitionsCurrentlyFetching,
-  )
-  ->Array.forEach(({fetchState, partitionId}) => {
-    let mergedFetchState = fetchState->FetchState.mergeRegistersBeforeNextQuery
-    if mergedFetchState !== fetchState {
-      updatedPartitions->Js.Dict.set(partitionId->(Utils.magic: int => string), mergedFetchState)
-    }
-    switch mergedFetchState->FetchState.getNextQuery(~partitionId) {
-    | Done => ()
-    | NextQuery(nextQuery) => nextQueries->Js.Array2.push(nextQuery)->ignore
-    }
-  })
-
-  (nextQueries, updatedPartitions)
+  readyPartitions
 }
 
 /**

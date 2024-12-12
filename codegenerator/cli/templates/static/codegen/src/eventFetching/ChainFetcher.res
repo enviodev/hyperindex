@@ -15,7 +15,6 @@ type t = {
   chainConfig: Config.chainConfig,
   //The latest known block of the chain
   currentBlockHeight: int,
-  partitionsCurrentlyFetching: PartitionedFetchState.partitionIndexSet,
   timestampCaughtUpToHeadOrEndblock: option<Js.Date.t>,
   dbFirstEventBlockNumber: option<int>,
   latestProcessedBlock: option<int>,
@@ -64,7 +63,7 @@ let make = (
   {
     logger,
     chainConfig,
-    sourceManger: SourceManager.make(~chainConfig),
+    sourceManger: SourceManager.make(~maxPartitionConcurrency=Env.maxPartitionConcurrency, ~logger),
     lastBlockScannedHashes,
     currentBlockHeight: 0,
     fetchState,
@@ -74,7 +73,6 @@ let make = (
     numEventsProcessed,
     numBatchesFetched,
     processingFilters,
-    partitionsCurrentlyFetching: Belt.Set.Int.empty,
     dynamicContractPreRegistration,
   }
 }
@@ -123,7 +121,8 @@ let makeFromDbState = async (chainConfig: Config.chainConfig, ~maxAddrInPartitio
   let logger = Logging.createChild(~params={"chainId": chainConfig.chain->ChainMap.Chain.toChainId})
   let staticContracts = chainConfig->getStaticContracts
   let chainId = chainConfig.chain->ChainMap.Chain.toChainId
-  let latestProcessedEvent = await Db.sql->DbFunctions.EventSyncState.getLatestProcessedEvent(~chainId)
+  let latestProcessedEvent =
+    await Db.sql->DbFunctions.EventSyncState.getLatestProcessedEvent(~chainId)
 
   let chainMetadata = await Db.sql->DbFunctions.ChainMetadata.getLatestChainMetadataState(~chainId)
 
@@ -354,18 +353,6 @@ let updateFetchState = (
       },
     }
   })
-}
-
-/**
-Gets the next queries for all most behind partitions not exceeding queue size
-
-Applies any event filters found in the chain fetcher
-*/
-let getNextQueries = (self: t, ~maxPerChainQueueSize) => {
-  self.fetchState->PartitionedFetchState.getNextQueries(
-    ~maxPerChainQueueSize,
-    ~partitionsCurrentlyFetching=self.partitionsCurrentlyFetching,
-  )
 }
 
 /**
