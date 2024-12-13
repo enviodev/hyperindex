@@ -909,18 +909,55 @@ let isReadyForNextQuery = ({pendingDynamicContracts, baseRegister}: t, ~maxQueue
     ? baseRegister.fetchedEventQueue->Array.length < maxQueueSize
     : true
 
+let warnIfAttemptedAddressRegisterOnDifferentContracts = (
+  ~contractAddress,
+  ~contractName,
+  ~existingContractName,
+  ~chainId,
+) => {
+  if existingContractName != contractName {
+    let logger = Logging.createChild(
+      ~params={
+        "chainId": chainId,
+        "contractAddress": contractAddress->Address.toString,
+        "existingContractType": existingContractName,
+        "newContractType": contractName,
+      },
+    )
+    logger->Logging.childWarn(
+      `Contract address ${contractAddress->Address.toString} is already registered as contract ${existingContractName} and cannot also be registered as ${(contractName :> string)}`,
+    )
+  }
+}
+
 let rec checkBaseRegisterContainsRegisteredContract = (
   register: register,
   ~contractName,
   ~contractAddress,
+  ~chainId,
 ) => {
-  switch register.contractAddressMapping->ContractAddressingMap.getAddresses(contractName) {
-  | Some(addresses) if addresses->Belt.Set.String.has(contractAddress->Address.toString) => true
+  switch register.contractAddressMapping->ContractAddressingMap.getContractNameFromAddress(
+    ~contractAddress,
+  ) {
+  | Some(existingContractName) =>
+    if existingContractName != contractName {
+      warnIfAttemptedAddressRegisterOnDifferentContracts(
+        ~contractAddress,
+        ~contractName,
+        ~existingContractName,
+        ~chainId,
+      )
+    }
+    true
   | _ =>
     switch register.registerType {
     | RootRegister(_) => false
     | DynamicContractRegister({nextRegister}) =>
-      nextRegister->checkBaseRegisterContainsRegisteredContract(~contractName, ~contractAddress)
+      nextRegister->checkBaseRegisterContainsRegisteredContract(
+        ~contractName,
+        ~contractAddress,
+        ~chainId,
+      )
     }
   }
 }
@@ -929,12 +966,30 @@ let rec checkBaseRegisterContainsRegisteredContract = (
 Recurses through registers and determines whether a contract has already been registered with
 the given name and address
 */
-let checkContainsRegisteredContractAddress = (self: t, ~contractName, ~contractAddress) => {
-  self.baseRegister->checkBaseRegisterContainsRegisteredContract(~contractName, ~contractAddress) ||
+let checkContainsRegisteredContractAddress = (
+  self: t,
+  ~contractName,
+  ~contractAddress,
+  ~chainId,
+) => {
+  self.baseRegister->checkBaseRegisterContainsRegisteredContract(
+    ~contractName,
+    ~contractAddress,
+    ~chainId,
+  ) ||
     self.pendingDynamicContracts->Array.some(({dynamicContracts}) =>
-      dynamicContracts->Array.some(dcr =>
-        dcr.contractAddress == contractAddress && (dcr.contractType :> string) == contractName
-      )
+      dynamicContracts->Array.some(dcr => {
+        let exists = dcr.contractAddress == contractAddress
+        if exists {
+          warnIfAttemptedAddressRegisterOnDifferentContracts(
+            ~contractAddress,
+            ~contractName,
+            ~existingContractName=(dcr.contractType :> string),
+            ~chainId,
+          )
+        }
+        exists
+      })
     )
 }
 
