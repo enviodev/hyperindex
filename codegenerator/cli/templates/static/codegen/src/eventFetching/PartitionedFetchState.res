@@ -161,12 +161,17 @@ exception UnexpectedPartitionDoesNotExist(partitionId)
 Updates partition at given id with given values and checks to see if it can be merged into its next register.
 Returns Error if the partition/node with given id cannot be found (unexpected)
 */
-let update = (self: t, ~id: id, ~latestFetchedBlock, ~newItems, ~currentBlockHeight) => {
+let update = (self: t, ~id: id, ~latestFetchedBlock, ~newItems, ~currentBlockHeight, ~chain) => {
   switch self.partitions[id.partitionId] {
   | Some(partition) =>
     partition
     ->FetchState.update(~id=id.fetchStateId, ~latestFetchedBlock, ~newItems, ~currentBlockHeight)
     ->Result.map(updatedPartition => {
+      Prometheus.PartitionBlockFetched.set(
+        ~blockNumber=latestFetchedBlock.blockNumber,
+        ~chainId=chain->ChainMap.Chain.toChainId,
+        ~partitionId=id.partitionId,
+      )
       {
         ...self,
         partitions: self.partitions->Utils.Array.setIndexImmutable(

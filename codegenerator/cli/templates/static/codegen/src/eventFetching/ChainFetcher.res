@@ -342,6 +342,7 @@ let updateFetchState = (
     },
     ~newItems,
     ~currentBlockHeight,
+    ~chain=self.chainConfig.chain,
   )
   ->Result.map(fetchState => {
     {

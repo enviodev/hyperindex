@@ -84,10 +84,11 @@ describe("PartitionedFetchState getMostBehindPartitions", () => {
       ~message="Should have only one partition with id 0",
     )
 
+    let chain = ChainMap.Chain.makeUnsafe(~chainId=1)
     let updatedPartitionedFetchState =
       partitionedFetchState->PartitionedFetchState.registerDynamicContracts(
         {
-          registeringEventChain: ChainMap.Chain.makeUnsafe(~chainId=1),
+          registeringEventChain: chain,
           registeringEventBlockNumber: 10,
           registeringEventLogIndex: 0,
           dynamicContracts: [
@@ -161,6 +162,7 @@ describe("PartitionedFetchState getMostBehindPartitions", () => {
       ~currentBlockHeight=200,
       ~latestFetchedBlock={blockNumber: 20, blockTimestamp: 20 * 15},
       ~newItems=[],
+      ~chain,
     ) {
     | Ok(_) => ()
     | Error(PartitionedFetchState.UnexpectedPartitionDoesNotExist(_)) =>

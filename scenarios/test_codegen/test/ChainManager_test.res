@@ -84,6 +84,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
               },
               ~newItems=[batchItem],
               ~currentBlockHeight=currentBlockNumber.contents,
+              ~chain,
             )
             ->Result.getExn
         | 2
@@ -102,6 +103,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
                 },
                 ~newItems=[batchItem],
                 ~currentBlockHeight=currentBlockNumber.contents,
+                ~chain,
               )
               ->Result.getExn
           }
