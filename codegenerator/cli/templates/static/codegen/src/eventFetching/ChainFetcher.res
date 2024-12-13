@@ -11,7 +11,7 @@ type addressToDynContractLookup = dict<TablesStatic.DynamicContractRegistry.t>
 type t = {
   logger: Pino.t,
   fetchState: PartitionedFetchState.t,
-  sourceManger: SourceManager.t,
+  sourceManager: SourceManager.t,
   chainConfig: Config.chainConfig,
   //The latest known block of the chain
   currentBlockHeight: int,
@@ -63,7 +63,7 @@ let make = (
   {
     logger,
     chainConfig,
-    sourceManger: SourceManager.make(~maxPartitionConcurrency=Env.maxPartitionConcurrency, ~logger),
+    sourceManager: SourceManager.make(~maxPartitionConcurrency=Env.maxPartitionConcurrency, ~logger),
     lastBlockScannedHashes,
     currentBlockHeight: 0,
     fetchState,

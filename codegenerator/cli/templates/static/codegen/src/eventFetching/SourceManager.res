@@ -48,7 +48,7 @@ let make = (~maxPartitionConcurrency, ~logger) => {
 exception FromBlockIsHigherThanToBlock({fromBlock: int, toBlock: int})
 
 let fetchBatch = async (
-  sourceManger: t,
+  sourceManager: t,
   ~allPartitions: PartitionedFetchState.allPartitions,
   ~currentBlockHeight,
   ~executePartitionQuery,
@@ -58,16 +58,16 @@ let fetchBatch = async (
   ~setMergedPartitions,
   ~stateId,
 ) => {
-  if stateId < sourceManger.currentStateId {
+  if stateId < sourceManager.currentStateId {
     ()
   } else {
-    if stateId != sourceManger.currentStateId {
-      sourceManger.currentStateId = stateId
+    if stateId != sourceManager.currentStateId {
+      sourceManager.currentStateId = stateId
 
       // Reset instead of clear, so updating state from partitions from prev state doesn't corrupt data
-      sourceManger.allPartitionsFetchingState = []
+      sourceManager.allPartitionsFetchingState = []
     }
-    let {logger, allPartitionsFetchingState, maxPartitionConcurrency} = sourceManger
+    let {logger, allPartitionsFetchingState, maxPartitionConcurrency} = sourceManager
 
     let fetchingPartitions = Utils.Set.make()
     // Js.Array2.forEachi automatically skips empty items
@@ -126,20 +126,20 @@ let fetchBatch = async (
     // force getting the known chain block, even if there are no ready queries
     (_, 0) =>
       if (
-        sourceManger.isWaitingForNewBlock ||
+        sourceManager.isWaitingForNewBlock ||
         (!hasQueryWaitingForNewBlock.contents && currentBlockHeight !== 0)
       ) {
         // Do nothing if there are no queries which should wait,
         // or we are already waiting. Explicitely with if/else, so it's not lost
         ()
       } else {
-        sourceManger.isWaitingForNewBlock = true
+        sourceManager.isWaitingForNewBlock = true
         let currentBlockHeight = await waitForNewBlock(~currentBlockHeight, ~logger)
-        sourceManger.isWaitingForNewBlock = false
+        sourceManager.isWaitingForNewBlock = false
         onNewBlock(~currentBlockHeight)
       }
     | (queries, _) =>
-      let maxQueriesNumber = maxPartitionConcurrency - sourceManger.fetchingPartitionsCount
+      let maxQueriesNumber = maxPartitionConcurrency - sourceManager.fetchingPartitionsCount
       if maxQueriesNumber > 0 {
         let slicedQueries = if queries->Js.Array2.length > maxQueriesNumber {
           let _ = queries->Js.Array2.sortInPlaceWith((a, b) => a.fromBlock - b.fromBlock)
@@ -151,7 +151,7 @@ let fetchBatch = async (
           await slicedQueries
           ->Array.map(async query => {
             let partitionId = query.partitionId
-            sourceManger.fetchingPartitionsCount = sourceManger.fetchingPartitionsCount + 1
+            sourceManager.fetchingPartitionsCount = sourceManager.fetchingPartitionsCount + 1
             allPartitionsFetchingState->Js.Array2.unsafe_set(
               partitionId,
               {
@@ -159,7 +159,7 @@ let fetchBatch = async (
               },
             )
             let data = await query->executePartitionQuery
-            sourceManger.fetchingPartitionsCount = sourceManger.fetchingPartitionsCount - 1
+            sourceManager.fetchingPartitionsCount = sourceManager.fetchingPartitionsCount - 1
             allPartitionsFetchingState->Js.Array2.unsafe_set(
               partitionId,
               {
