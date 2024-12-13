@@ -11,11 +11,10 @@ type addressToDynContractLookup = dict<TablesStatic.DynamicContractRegistry.t>
 type t = {
   logger: Pino.t,
   fetchState: PartitionedFetchState.t,
+  sourceManager: SourceManager.t,
   chainConfig: Config.chainConfig,
   //The latest known block of the chain
   currentBlockHeight: int,
-  isWaitingForNewBlock: bool,
-  partitionsCurrentlyFetching: PartitionedFetchState.partitionIndexSet,
   timestampCaughtUpToHeadOrEndblock: option<Js.Date.t>,
   dbFirstEventBlockNumber: option<int>,
   latestProcessedBlock: option<int>,
@@ -64,9 +63,9 @@ let make = (
   {
     logger,
     chainConfig,
+    sourceManager: SourceManager.make(~maxPartitionConcurrency=Env.maxPartitionConcurrency, ~logger),
     lastBlockScannedHashes,
     currentBlockHeight: 0,
-    isWaitingForNewBlock: false,
     fetchState,
     dbFirstEventBlockNumber,
     latestProcessedBlock,
@@ -74,7 +73,6 @@ let make = (
     numEventsProcessed,
     numBatchesFetched,
     processingFilters,
-    partitionsCurrentlyFetching: Belt.Set.Int.empty,
     dynamicContractPreRegistration,
   }
 }
@@ -356,18 +354,6 @@ let updateFetchState = (
       },
     }
   })
-}
-
-/**
-Gets the next queries for all most behind partitions not exceeding queue size
-
-Applies any event filters found in the chain fetcher
-*/
-let getNextQueries = (self: t, ~maxPerChainQueueSize) => {
-  self.fetchState->PartitionedFetchState.getNextQueries(
-    ~maxPerChainQueueSize,
-    ~partitionsCurrentlyFetching=self.partitionsCurrentlyFetching,
-  )
 }
 
 /**

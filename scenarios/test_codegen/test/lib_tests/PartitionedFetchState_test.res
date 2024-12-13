@@ -2,40 +2,7 @@ open Belt
 open RescriptMocha
 
 describe("PartitionedFetchState getMostBehindPartitions", () => {
-  let mockFetchState = (
-    ~latestFetchedBlockNumber,
-    ~fetchedEventQueue=[],
-    ~numContracts=1,
-  ): FetchState.t => {
-    let contractAddressMapping = ContractAddressingMap.make()
-
-    for i in 0 to numContracts - 1 {
-      let address = TestHelpers.Addresses.mockAddresses[i]->Option.getExn
-      contractAddressMapping->ContractAddressingMap.addAddress(~address, ~name="MockContract")
-    }
-
-    {
-      baseRegister: {
-        registerType: RootRegister({endBlock: None}),
-        latestFetchedBlock: {
-          blockNumber: latestFetchedBlockNumber,
-          blockTimestamp: latestFetchedBlockNumber * 15,
-        },
-        contractAddressMapping,
-        fetchedEventQueue,
-        dynamicContracts: FetchState.DynamicContractsMap.empty,
-        firstEventBlockNumber: None,
-      },
-      isFetchingAtHead: false,
-      pendingDynamicContracts: [],
-    }
-  }
-
-  let mockPartitionedFetchState = (
-    ~partitions: list<_>,
-    ~maxAddrInPartition=1,
-  ): PartitionedFetchState.t => {
-    let partitions = partitions->List.toArray
+  let mockPartitionedFetchState = (~partitions, ~maxAddrInPartition=1): PartitionedFetchState.t => {
     {
       partitions,
       maxAddrInPartition,
@@ -44,128 +11,6 @@ describe("PartitionedFetchState getMostBehindPartitions", () => {
       logger: Logging.logger,
     }
   }
-  let partitions = list{
-    mockFetchState(~latestFetchedBlockNumber=4),
-    mockFetchState(~latestFetchedBlockNumber=5),
-    mockFetchState(~latestFetchedBlockNumber=1),
-    mockFetchState(~latestFetchedBlockNumber=2),
-    mockFetchState(~latestFetchedBlockNumber=3),
-  }
-  let partitionedFetchState = mockPartitionedFetchState(~partitions)
-  it(
-    "With multiple partitions always returns the most behind partitions up to the max concurrency level",
-    () => {
-      let maxNumQueries = 3
-      let partitionsCurrentlyFetching = Set.Int.empty
-
-      let mostBehindPartitions =
-        partitionedFetchState->PartitionedFetchState.getMostBehindPartitions(
-          ~maxNumQueries,
-          ~maxPerChainQueueSize=10,
-          ~partitionsCurrentlyFetching,
-        )
-
-      Assert.equal(mostBehindPartitions->Array.length, maxNumQueries)
-
-      let partitionIds = mostBehindPartitions->Array.map(p => p.partitionId)
-      Assert.deepEqual(
-        partitionIds,
-        [2, 3, 4],
-        ~message="Should have returned the partitions with the lowest latestFetchedBlock",
-      )
-    },
-  )
-
-  it("Will not return partitions that are currently fetching", () => {
-    let maxNumQueries = 3
-    let partitionsCurrentlyFetching = Set.Int.fromArray([2, 3])
-
-    let mostBehindPartitions =
-      partitionedFetchState->PartitionedFetchState.getMostBehindPartitions(
-        ~maxNumQueries,
-        ~maxPerChainQueueSize=10,
-        ~partitionsCurrentlyFetching,
-      )
-
-    Assert.equal(
-      mostBehindPartitions->Array.length,
-      maxNumQueries - partitionsCurrentlyFetching->Set.Int.size,
-    )
-
-    let partitionIds = mostBehindPartitions->Array.map(p => p.partitionId)
-    Assert.deepEqual(
-      partitionIds,
-      [4],
-      ~message="Should have returned the partitions with the lowest latestFetchedBlock that are not currently fetching",
-    )
-  })
-
-  it("Should not return partition that is at max partition size", () => {
-    let maxNumQueries = 3
-    let partitions = list{
-      mockFetchState(~latestFetchedBlockNumber=4),
-      mockFetchState(~latestFetchedBlockNumber=5),
-      mockFetchState(
-        ~latestFetchedBlockNumber=1,
-        ~fetchedEventQueue=["mockEvent1", "mockEvent2", "mockEvent3"]->Utils.magic,
-      ),
-      mockFetchState(
-        ~latestFetchedBlockNumber=2,
-        ~fetchedEventQueue=["mockEvent4", "mockEvent5"]->Utils.magic,
-      ),
-      mockFetchState(~latestFetchedBlockNumber=3),
-    }
-    let partitionedFetchState = mockPartitionedFetchState(~partitions)
-
-    let mostBehindPartitions =
-      partitionedFetchState->PartitionedFetchState.getMostBehindPartitions(
-        ~maxNumQueries,
-        ~maxPerChainQueueSize=10, //each partition should therefore have a max of 2 events
-        ~partitionsCurrentlyFetching=Set.Int.empty,
-      )
-
-    let partitionIds = mostBehindPartitions->Array.map(p => p.partitionId)
-    Assert.deepEqual(
-      partitionIds,
-      [4, 0, 1],
-      ~message="Should have skipped partitions that are at max queue size",
-    )
-  })
-
-  it("if need be should return less than maxNum queries if all partitions at their max", () => {
-    let maxNumQueries = 3
-    let partitions = list{
-      mockFetchState(~latestFetchedBlockNumber=4),
-      mockFetchState(~latestFetchedBlockNumber=5),
-      mockFetchState(
-        ~latestFetchedBlockNumber=1,
-        ~fetchedEventQueue=["mockEvent1", "mockEvent2", "mockEvent3"]->Utils.magic,
-      ),
-      mockFetchState(
-        ~latestFetchedBlockNumber=2,
-        ~fetchedEventQueue=["mockEvent4", "mockEvent5"]->Utils.magic,
-      ),
-      mockFetchState(
-        ~latestFetchedBlockNumber=3,
-        ~fetchedEventQueue=["mockEvent6", "mockEvent7"]->Utils.magic,
-      ),
-    }
-    let partitionedFetchState = mockPartitionedFetchState(~partitions)
-
-    let mostBehindPartitions =
-      partitionedFetchState->PartitionedFetchState.getMostBehindPartitions(
-        ~maxNumQueries,
-        ~maxPerChainQueueSize=10, //each partition should therefore have a max of 2 events
-        ~partitionsCurrentlyFetching=Set.Int.empty,
-      )
-
-    let partitionIds = mostBehindPartitions->Array.map(p => p.partitionId)
-    Assert.deepEqual(
-      partitionIds,
-      [0, 1],
-      ~message="Should have skipped partitions that are at max queue size and returned less than maxNumQueries",
-    )
-  })
 
   it("Partition id never changes when adding new partitions", () => {
     let rootContractAddressMapping = ContractAddressingMap.make()
@@ -207,40 +52,36 @@ describe("PartitionedFetchState getMostBehindPartitions", () => {
       firstEventBlockNumber: None,
     }
 
-    let partition0: FetchState.t = {
+    let fetchState0: FetchState.t = {
       baseRegister,
       isFetchingAtHead: false,
       pendingDynamicContracts: [],
     }
 
     let maxAddrInPartition = 4
-    let partitions = list{partition0}
 
-    let partitionedFetchState = mockPartitionedFetchState(~partitions, ~maxAddrInPartition)
+    let partitionedFetchState = mockPartitionedFetchState(
+      ~partitions=[fetchState0],
+      ~maxAddrInPartition,
+    )
     let id = {
       PartitionedFetchState.partitionId: 0,
       fetchStateId: DynamicContract(dynamicContractId),
     }
 
     //Check the expected query if requsted in this state
-    switch partitionedFetchState->PartitionedFetchState.getNextQueries(
-      ~maxPerChainQueueSize=10,
-      ~partitionsCurrentlyFetching=Set.Int.empty,
-    ) {
-    | ([query], _) =>
-      Assert.deepEqual(
-        query.fetchStateRegisterId,
-        id.fetchStateId,
-        ~message="Should have returned dynamic contract query",
-      )
-      Assert.equal(query.partitionId, id.partitionId, ~message="Should use first partition")
-    | _ => Assert.fail("Expected a single query from partitioned fetch state")
-    }
-
-    Assert.equal(
-      partitionedFetchState.partitions->Array.length,
-      1,
-      ~message="Should have only one partition",
+    Assert.deepEqual(
+      partitionedFetchState.partitions->PartitionedFetchState.getReadyPartitions(
+        ~maxPerChainQueueSize=10,
+        ~fetchingPartitions=Utils.Set.make(),
+      ),
+      [
+        {
+          partitionId: 0,
+          fetchState: fetchState0,
+        },
+      ],
+      ~message="Should have only one partition with id 0",
     )
 
     let chain = ChainMap.Chain.makeUnsafe(~chainId=1)
@@ -275,6 +116,43 @@ describe("PartitionedFetchState getMostBehindPartitions", () => {
       updatedPartitionedFetchState.partitions->Array.length,
       2,
       ~message="Should have added a new partition since it's over the maxAddrInPartition threshold",
+    )
+
+    Assert.deepEqual(
+      updatedPartitionedFetchState.partitions->PartitionedFetchState.getReadyPartitions(
+        ~maxPerChainQueueSize=1000,
+        ~fetchingPartitions=Utils.Set.make(),
+      ),
+      [
+        {
+          partitionId: 0,
+          fetchState: fetchState0,
+        },
+        {
+          partitionId: 1,
+          fetchState: {
+            baseRegister: {
+              registerType: RootRegister({endBlock: None}),
+              latestFetchedBlock: {blockNumber: 0, blockTimestamp: 0},
+              contractAddressMapping: ContractAddressingMap.fromArray([
+                (TestHelpers.Addresses.mockAddresses[5]->Option.getExn, "Gravatar"),
+              ]),
+              fetchedEventQueue: [],
+              dynamicContracts: FetchState.DynamicContractsMap.empty->FetchState.DynamicContractsMap.addAddress(
+                {
+                  blockNumber: 10,
+                  logIndex: 0,
+                },
+                TestHelpers.Addresses.mockAddresses[5]->Option.getExn,
+              ),
+              firstEventBlockNumber: None,
+            },
+            pendingDynamicContracts: [],
+            isFetchingAtHead: false,
+          },
+        },
+      ],
+      ~message="Should have a new partition with id 1",
     )
 
     //Check that the original partition is available at it's id

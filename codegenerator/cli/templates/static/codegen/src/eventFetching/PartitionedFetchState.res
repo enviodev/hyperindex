@@ -1,19 +1,23 @@
 open Belt
-type partitionIndex = int
+type partitionId = int
+type allPartitions = array<FetchState.t>
 type t = {
   maxAddrInPartition: int,
-  partitions: array<FetchState.t>,
+  partitions: allPartitions,
   endBlock: option<int>,
   startBlock: int,
   logger: Pino.t,
 }
 
 type id = {
-  partitionId: partitionIndex,
+  partitionId: partitionId,
   fetchStateId: FetchState.id,
 }
 
-type partitionIndexSet = Belt.Set.Int.t
+type partition = {
+  fetchState: FetchState.t,
+  partitionId: partitionId,
+}
 
 let make = (
   ~maxAddrInPartition,
@@ -28,10 +32,11 @@ let make = (
   let partitions = []
 
   if numAddresses <= maxAddrInPartition {
-    let partition = FetchState.makeRoot(~endBlock)(
+    let partition = FetchState.make(
       ~staticContracts,
       ~dynamicContractRegistrations,
       ~startBlock,
+      ~endBlock,
       ~logger,
       ~isFetchingAtHead=false,
     )
@@ -44,10 +49,11 @@ let make = (
       let staticContractsChunk =
         staticContractsClone->Js.Array2.removeCountInPlace(~pos=0, ~count=maxAddrInPartition)
 
-      let staticContractPartition = FetchState.makeRoot(~endBlock)(
+      let staticContractPartition = FetchState.make(
         ~staticContracts=staticContractsChunk,
         ~dynamicContractRegistrations=[],
         ~startBlock,
+        ~endBlock,
         ~logger,
         ~isFetchingAtHead=false,
       )
@@ -58,13 +64,14 @@ let make = (
 
     //Add the rest of the static addresses filling the remainder of the partition with dynamic contract
     //registrations
-    let remainingStaticContractsWithDynamicPartition = FetchState.makeRoot(~endBlock)(
+    let remainingStaticContractsWithDynamicPartition = FetchState.make(
       ~staticContracts=staticContractsClone,
       ~dynamicContractRegistrations=dynamicContractRegistrationsClone->Js.Array2.removeCountInPlace(
         ~pos=0,
         ~count=maxAddrInPartition - staticContractsClone->Array.length,
       ),
       ~startBlock,
+      ~endBlock,
       ~logger,
       ~isFetchingAtHead=false,
     )
@@ -78,10 +85,11 @@ let make = (
           ~count=maxAddrInPartition,
         )
 
-      let dynamicContractPartition = FetchState.makeRoot(~endBlock)(
+      let dynamicContractPartition = FetchState.make(
         ~staticContracts=[],
         ~dynamicContractRegistrations=dynamicContractRegistrationsChunk,
         ~startBlock,
+        ~endBlock,
         ~logger,
         ~isFetchingAtHead=false,
       )
@@ -125,8 +133,9 @@ let registerDynamicContracts = (
       )
     partitions->Utils.Array.setIndexImmutable(newestPartitionIndex, updated)
   } else {
-    let newPartition = FetchState.makeRoot(~endBlock)(
+    let newPartition = FetchState.make(
       ~startBlock,
+      ~endBlock,
       ~logger,
       ~staticContracts=[],
       ~dynamicContractRegistrations=dynamicContractRegistration.dynamicContracts,
@@ -146,7 +155,7 @@ let registerDynamicContracts = (
   {partitions, maxAddrInPartition, endBlock, startBlock, logger}
 }
 
-exception UnexpectedPartitionDoesNotExist(partitionIndex)
+exception UnexpectedPartitionDoesNotExist(partitionId)
 
 /**
 Updates partition at given id with given values and checks to see if it can be merged into its next register.
@@ -175,77 +184,24 @@ let update = (self: t, ~id: id, ~latestFetchedBlock, ~newItems, ~currentBlockHei
   }
 }
 
-type singlePartition = {
-  fetchState: FetchState.t,
-  partitionId: partitionIndex,
-}
-
-/**
-Retrieves an array of partitions that are most behind with a max number based on
-the max number of queries with the context of the partitions currently fetching.
-
-The array could be shorter than the max number of queries if the partitions are
-at the max queue size.
-*/
-let getMostBehindPartitions = (
-  {partitions}: t,
-  ~maxNumQueries,
+let getReadyPartitions = (
+  allPartitions: allPartitions,
   ~maxPerChainQueueSize,
-  ~partitionsCurrentlyFetching,
+  ~fetchingPartitions,
 ) => {
-  let maxNumQueries = Pervasives.max(
-    maxNumQueries - partitionsCurrentlyFetching->Belt.Set.Int.size,
-    0,
-  )
-  let numPartitions = partitions->Array.length
+  let numPartitions = allPartitions->Array.length
   let maxPartitionQueueSize = maxPerChainQueueSize / numPartitions
 
-  let filteredPartitions = []
-
-  partitions->Array.forEachWithIndex((partitionId, fetchState) => {
+  let readyPartitions = []
+  allPartitions->Belt.Array.forEachWithIndex((partitionId, fetchState) => {
     if (
-      !(partitionsCurrentlyFetching->Set.Int.has(partitionId)) &&
+      !(fetchingPartitions->Utils.Set.has(partitionId)) &&
       fetchState->FetchState.isReadyForNextQuery(~maxQueueSize=maxPartitionQueueSize)
     ) {
-      filteredPartitions->Js.Array2.push({fetchState, partitionId})->ignore
+      readyPartitions->Js.Array2.push({fetchState, partitionId})->ignore
     }
   })
-
-  filteredPartitions
-  ->Js.Array2.sortInPlaceWith((a, b) =>
-    FetchState.getLatestFullyFetchedBlock(a.fetchState).blockNumber -
-    FetchState.getLatestFullyFetchedBlock(b.fetchState).blockNumber
-  )
-  ->Js.Array.slice(~start=0, ~end_=maxNumQueries)
-}
-
-type nextQueries = WaitForNewBlock | NextQuery(array<FetchState.nextQuery>)
-
-/**
-Gets the next query from the fetchState with the lowest latestFetchedBlock number.
-*/
-let getNextQueries = (self: t, ~maxPerChainQueueSize, ~partitionsCurrentlyFetching) => {
-  let nextQueries = []
-  let updatedPartitions = Js.Dict.empty()
-
-  self
-  ->getMostBehindPartitions(
-    ~maxNumQueries=Env.maxPartitionConcurrency,
-    ~maxPerChainQueueSize,
-    ~partitionsCurrentlyFetching,
-  )
-  ->Array.forEach(({fetchState, partitionId}) => {
-    let mergedFetchState = fetchState->FetchState.mergeRegistersBeforeNextQuery
-    if mergedFetchState !== fetchState {
-      updatedPartitions->Js.Dict.set(partitionId->(Utils.magic: int => string), mergedFetchState)
-    }
-    switch mergedFetchState->FetchState.getNextQuery(~partitionId) {
-    | Done => ()
-    | NextQuery(nextQuery) => nextQueries->Js.Array2.push(nextQuery)->ignore
-    }
-  })
-
-  (nextQueries, updatedPartitions)
+  readyPartitions
 }
 
 /**

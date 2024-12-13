@@ -28,11 +28,6 @@ type eventIndex = {
   logIndex: int,
 }
 
-let eventIndexSchema = S.object(s => {
-  blockNumber: s.field("blockNumber", S.int),
-  logIndex: s.field("logIndex", S.int),
-})
-
 // takes blockNumber, logIndex and packs them into a number with
 //32 bits, 16 bits and 16 bits respectively
 let packEventIndex = (~blockNumber, ~logIndex) => {

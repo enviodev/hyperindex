@@ -278,10 +278,12 @@ with a dynamicContractId
 */
 type id = Root | DynamicContract(dynamicContractId)
 
-let idSchema = S.union([
-  S.literal(Root),
-  S.schema(s => DynamicContract(s.matches(EventUtils.eventIndexSchema))),
-])
+let registerIdToString = (id: id) =>
+  switch id {
+  | Root => "root"
+  | DynamicContract({blockNumber, logIndex}) =>
+    `dynamic-${blockNumber->Int.toString}-${logIndex->Int.toString}`
+  }
 
 /**
 Constructs id from a register
@@ -554,27 +556,12 @@ let getQueryLogger = (
   {fetchStateRegisterId, fromBlock, toBlock, contractAddressMapping}: nextQuery,
   ~logger,
 ) => {
-  let fetchStateRegister = switch fetchStateRegisterId {
-  | Root => "root"
-  | DynamicContract({blockNumber, logIndex}) =>
-    `dynamic-${blockNumber->Int.toString}-${logIndex->Int.toString}`
-  }
-  let addressesAll = contractAddressMapping->ContractAddressingMap.getAllAddresses
-  let (displayAddr, restCount) = addressesAll->Array.reduce(([], 0), (
-    (currentDisplay, restCount),
-    addr,
-  ) => {
-    if currentDisplay->Array.length < 3 {
-      (Array.concat(currentDisplay, [addr->Address.toString]), restCount)
-    } else {
-      (currentDisplay, restCount + 1)
-    }
-  })
-
-  let addresses = if restCount > 0 {
-    displayAddr->Array.concat([`... and ${restCount->Int.toString} more`])
-  } else {
-    displayAddr
+  let fetchStateRegister = fetchStateRegisterId->registerIdToString
+  let allAddresses = contractAddressMapping->ContractAddressingMap.getAllAddresses
+  let addresses = allAddresses->Js.Array2.slice(~start=0, ~end_=3)->Array.map(addr => addr->Address.toString)
+  let restCount = allAddresses->Array.length - addresses->Array.length
+   if restCount > 0 {
+    addresses->Js.Array2.push(`... and ${restCount->Int.toString} more`)->ignore
   }
   let params = {
     "fromBlock": fromBlock,
@@ -816,26 +803,20 @@ let getEarliestEvent = (self: t) => {
   }
 }
 
-let makeInternal = (
-  ~registerType,
+/**
+Instantiates a fetch state with root register
+*/
+let make = (
   ~staticContracts,
   ~dynamicContractRegistrations: array<TablesStatic.DynamicContractRegistry.t>,
   ~startBlock,
+  ~endBlock,
   ~isFetchingAtHead,
-  ~logger,
+  ~logger as _,
 ): t => {
   let contractAddressMapping = ContractAddressingMap.make()
 
   staticContracts->Belt.Array.forEach(((contractName, address)) => {
-    Logging.childTrace(
-      logger,
-      {
-        "msg": "adding contract address",
-        "contractName": contractName,
-        "address": address,
-      },
-    )
-
     contractAddressMapping->ContractAddressingMap.addAddress(~name=contractName, ~address)
   })
 
@@ -858,7 +839,7 @@ let makeInternal = (
   })
 
   let baseRegister = {
-    registerType,
+    registerType: RootRegister({endBlock: endBlock}),
     latestFetchedBlock: {
       blockTimestamp: 0,
       // Here's a bug that startBlock: 1 won't work
@@ -876,11 +857,6 @@ let makeInternal = (
     isFetchingAtHead,
   }
 }
-
-/**
-Instantiates a fetch state with root register
-*/
-let makeRoot = (~endBlock) => makeInternal(~registerType=RootRegister({endBlock: endBlock}), ...)
 
 /**
 Calculates the cummulative queue sizes in all registers

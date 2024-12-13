@@ -361,11 +361,8 @@ describe("Dynamic contract rollback test", () => {
       ]
 
     let getFetchStateRegisterId = () =>
-      switch getFetchState(Mock.Chain1.chain)->PartitionedFetchState.getNextQueries(
-        ~maxPerChainQueueSize=100_000,
-        ~partitionsCurrentlyFetching=Set.Int.empty,
-      ) {
-      | ([q], _) => q.fetchStateRegisterId
+      switch getFetchState(Mock.Chain1.chain).partitions {
+      | [p] => (p->FetchState.mergeRegistersBeforeNextQuery).baseRegister->FetchState.getRegisterId
       | _ => raise(Not_found)
       }
 

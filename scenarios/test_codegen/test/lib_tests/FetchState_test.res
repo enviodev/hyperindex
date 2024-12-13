@@ -85,8 +85,9 @@ describe("FetchState.fetchState", () => {
   })
 
   it("dynamic contract registration", () => {
-    let root = makeRoot(~endBlock=None)(
+    let root = make(
       ~startBlock=10_000,
+      ~endBlock=None,
       ~staticContracts=[((Gravatar :> string), mockAddress1)],
       ~dynamicContractRegistrations=[],
       ~isFetchingAtHead=false,
