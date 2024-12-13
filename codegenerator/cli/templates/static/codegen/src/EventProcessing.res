@@ -81,16 +81,21 @@ let addToDynamicContractRegistrations = (
     },
   ]
 
-  let dynamicContractRegistration = {
-    FetchState.dynamicContracts,
-    registeringEventBlockNumber,
-    registeringEventLogIndex,
-    registeringEventChain: eventItem.chain,
+  let registrations = switch dynamicContracts {
+  | [] => registrations
+  | dynamicContracts =>
+    let dynamicContractRegistration = {
+      FetchState.dynamicContracts,
+      registeringEventBlockNumber,
+      registeringEventLogIndex,
+      registeringEventChain: eventItem.chain,
+    }
+    [...registrations, dynamicContractRegistration]
   }
 
   {
     unprocessedBatch,
-    registrations: [...registrations, dynamicContractRegistration],
+    registrations,
   }
 }
 
@@ -174,10 +179,7 @@ let runEventContractRegister = (
 
     switch preRegisterLatestProcessedBlocks {
     | Some(latestProcessedBlocks) =>
-      eventItem->updateEventSyncState(
-        ~inMemoryStore,
-        ~isPreRegisteringDynamicContracts=true,
-      )
+      eventItem->updateEventSyncState(~inMemoryStore, ~isPreRegisteringDynamicContracts=true)
       latestProcessedBlocks :=
         latestProcessedBlocks.contents->EventsProcessed.updateEventsProcessed(
           ~chain=eventItem.chain,
@@ -190,12 +192,7 @@ let runEventContractRegister = (
   }
 }
 
-let runEventLoader = async (
-  ~contextEnv,
-  ~loader: Internal.loader,
-  ~inMemoryStore,
-  ~loadLayer,
-) => {
+let runEventLoader = async (~contextEnv, ~loader: Internal.loader, ~inMemoryStore, ~loadLayer) => {
   switch await loader(contextEnv->ContextEnv.getLoaderArgs(~inMemoryStore, ~loadLayer)) {
   | exception exn =>
     exn
@@ -216,15 +213,15 @@ let convertFieldsToJson = (fields: dict<unknown>) => {
     let value = fields->Js.Dict.unsafeGet(key)
     // Skip `undefined` values and convert bigint fields to string
     // There are not fields with nested bigints, so this is safe
-    new->Js.Dict.set(key, Js.typeof(value) === "bigint" ? value->Utils.magic->BigInt.toString->Utils.magic : value)
+    new->Js.Dict.set(
+      key,
+      Js.typeof(value) === "bigint" ? value->Utils.magic->BigInt.toString->Utils.magic : value,
+    )
   }
   new->(Utils.magic: dict<unknown> => Js.Json.t)
 }
 
-let addEventToRawEvents = (
-  eventItem: Internal.eventItem,
-  ~inMemoryStore: InMemoryStore.t,
-) => {
+let addEventToRawEvents = (eventItem: Internal.eventItem, ~inMemoryStore: InMemoryStore.t) => {
   let {
     event,
     eventName,
@@ -237,10 +234,12 @@ let addEventToRawEvents = (
   let {block, transaction, params, logIndex, srcAddress} = event
   let chainId = chain->ChainMap.Chain.toChainId
   let eventId = EventUtils.packEventIndex(~logIndex, ~blockNumber)
-  let blockFields = block
+  let blockFields =
+    block
     ->(Utils.magic: Internal.eventBlock => dict<unknown>)
     ->convertFieldsToJson
-  let transactionFields = transaction
+  let transactionFields =
+    transaction
     ->(Utils.magic: Internal.eventTransaction => dict<unknown>)
     ->convertFieldsToJson
 
@@ -289,11 +288,11 @@ let runEventHandler = (
     let timeBeforeHandler = Hrtime.makeTimer()
 
     let loaderReturn = switch loader {
-      | Some(loader) =>
-        (await runEventLoader(~contextEnv, ~loader, ~inMemoryStore, ~loadLayer))->propogate
-      | None => (%raw(`undefined`): Internal.loaderReturn)
+    | Some(loader) =>
+      (await runEventLoader(~contextEnv, ~loader, ~inMemoryStore, ~loadLayer))->propogate
+    | None => (%raw(`undefined`): Internal.loaderReturn)
     }
-      
+
     switch await handler(
       contextEnv->ContextEnv.getHandlerArgs(
         ~loaderReturn,
@@ -349,10 +348,7 @@ let runHandler = async (
   }
 
   result->Result.map(() => {
-    eventItem->updateEventSyncState(
-      ~inMemoryStore,
-      ~isPreRegisteringDynamicContracts=false,
-    )
+    eventItem->updateEventSyncState(~inMemoryStore, ~isPreRegisteringDynamicContracts=false)
 
     if config.enableRawEvents {
       eventItem->addEventToRawEvents(~inMemoryStore)
@@ -365,10 +361,7 @@ let runHandler = async (
   })
 }
 
-let addToUnprocessedBatch = (
-  eventItem: Internal.eventItem,
-  dynamicContractRegistrations,
-) => {
+let addToUnprocessedBatch = (eventItem: Internal.eventItem, dynamicContractRegistrations) => {
   {
     ...dynamicContractRegistrations,
     unprocessedBatch: [...dynamicContractRegistrations.unprocessedBatch, eventItem],
@@ -441,12 +434,7 @@ let rec registerDynamicContracts = (
   }
 }
 
-let runLoaders = (
-  eventBatch: array<Internal.eventItem>,
-  ~loadLayer,
-  ~inMemoryStore,
-  ~logger,
-) => {
+let runLoaders = (eventBatch: array<Internal.eventItem>, ~loadLayer, ~inMemoryStore, ~logger) => {
   open ErrorHandling.ResultPropogateEnv
   runAsyncEnv(async () => {
     // We don't actually need loader returns,
@@ -457,13 +445,13 @@ let runLoaders = (
       await eventBatch
       ->Array.keepMap(eventItem => {
         switch eventItem {
-          | {loader: Some(loader)} => {
+        | {loader: Some(loader)} => {
             let contextEnv = ContextEnv.make(~eventItem, ~logger)
-            runEventLoader(~contextEnv, ~loader, ~inMemoryStore, ~loadLayer)->Promise.thenResolve(
-              propogate,
-            )->Some
+            runEventLoader(~contextEnv, ~loader, ~inMemoryStore, ~loadLayer)
+            ->Promise.thenResolve(propogate)
+            ->Some
           }
-          | _ => None
+        | _ => None
         }
       })
       ->Promise.all
@@ -560,11 +548,7 @@ let getDynamicContractRegistrations = (
       ->propogate
 
     //We only preregister below the reorg threshold so it can be hardcoded as false
-    switch await Db.sql->IO.executeBatch(
-      ~inMemoryStore,
-      ~isInReorgThreshold=false,
-      ~config,
-    ) {
+    switch await Db.sql->IO.executeBatch(~inMemoryStore, ~isInReorgThreshold=false, ~config) {
     | exception exn =>
       exn->ErrorHandling.make(~msg="Failed writing batch to database", ~logger)->Error->propogate
     | () => ()

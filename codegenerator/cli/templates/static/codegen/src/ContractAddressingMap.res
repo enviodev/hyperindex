@@ -8,11 +8,30 @@ type mapping = {
   addressesByName: dict<Belt.Set.String.t>,
 }
 
+exception AddressRegisteredForMultipleContracts({address: Address.t, names: array<contractName>})
+
 let addAddress = (map: mapping, ~name: string, ~address: Address.t) => {
+  switch map.nameByAddress->Utils.Dict.dangerouslyGetNonOption(address->Address.toString) {
+  | Some(currentName) if currentName != name =>
+    let logger = Logging.createChild(
+      ~params={
+        "address": address->Address.toString,
+        "existingContract": currentName,
+        "newContract": name,
+      },
+    )
+    AddressRegisteredForMultipleContracts({
+      address,
+      names: [currentName, name],
+    })->ErrorHandling.mkLogAndRaise(~msg="Address registered for multiple contracts", ~logger)
+  | _ => ()
+  }
   map.nameByAddress->Js.Dict.set(address->Address.toString, name)
 
   let oldAddresses =
-    map.addressesByName->Utils.Dict.dangerouslyGetNonOption(name)->Belt.Option.getWithDefault(Belt.Set.String.empty)
+    map.addressesByName
+    ->Utils.Dict.dangerouslyGetNonOption(name)
+    ->Belt.Option.getWithDefault(Belt.Set.String.empty)
   let newAddresses = oldAddresses->Belt.Set.String.add(address->Address.toString)
   map.addressesByName->Js.Dict.set(name, newAddresses)
 }

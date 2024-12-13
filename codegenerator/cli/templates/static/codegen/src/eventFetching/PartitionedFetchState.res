@@ -243,10 +243,18 @@ let getLatestFullyFetchedBlock = ({partitions}: t) =>
   })
   ->Option.getUnsafe
 
-let checkContainsRegisteredContractAddress = ({partitions}: t, ~contractAddress, ~contractName) => {
-  partitions->Array.reduce(false, (accum, partition) => {
-    accum ||
-    partition->FetchState.checkContainsRegisteredContractAddress(~contractAddress, ~contractName)
+let checkContainsRegisteredContractAddress = (
+  {partitions}: t,
+  ~contractAddress,
+  ~contractName,
+  ~chainId,
+) => {
+  partitions->Array.some(partition => {
+    partition->FetchState.checkContainsRegisteredContractAddress(
+      ~contractAddress,
+      ~contractName,
+      ~chainId,
+    )
   })
 }
 
