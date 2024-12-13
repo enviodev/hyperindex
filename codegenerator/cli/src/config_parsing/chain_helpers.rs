@@ -503,14 +503,13 @@ impl HypersyncNetwork {
 
             Manta | Base | BerachainBartio | Boba | Blast | Cyber | Aurora | Harmony | Scroll
             | Darwinia | Mode | Rsk | ShimmerEvm | Linea | NeonEvm | Amoy | Saakuru | Moonbeam
-            | Opbnb | Lisk | BlastSepolia | Celo | Chiliz | Fuji | ArbitrumOne | Merlin
-            | Holesky => Silver,
+            | Lisk | BlastSepolia | Chiliz | Fuji | ArbitrumOne | Merlin | Holesky => Silver,
 
             Zora | MoonbaseAlpha | Morph | LuksoTestnet | Kroma | GnosisChiado | Lukso | Gnosis
             | C1Milkomeda | Crab | Sophon | Flare | PolygonZkevm | MevCommit | Tangle => Bronze,
 
             SophonTestnet | MorphTestnet | GaladrielDevnet | CitreaTestnet | Goerli
-            | BscTestnet | UnichainSepolia | Zircuit => Experimental,
+            | BscTestnet | UnichainSepolia | Zircuit | Celo | Opbnb => Experimental,
         }
     }
 

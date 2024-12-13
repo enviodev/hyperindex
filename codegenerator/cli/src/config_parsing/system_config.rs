@@ -80,9 +80,12 @@ impl EnvState {
                             }
                             Err(err) => {
                                 match err {
-                              dotenvy::Error::Io(_, _) => (),
-                              _ => println!("Warning: Failed loading .env file with unexpected error: {err}"),
-                          };
+                                    dotenvy::Error::Io(_, _) => (),
+                                    _ => println!(
+                                        "Warning: Failed loading .env file with unexpected error: \
+                                         {err}"
+                                    ),
+                                };
                                 self.maybe_dotenv = Some(EnvMap::new());
                                 Err(err)
                             }
@@ -185,16 +188,18 @@ mod interpolation {
 
         if !invalid_vars.is_empty() {
             return Err(anyhow!(
-              "Failed to interpolate variables into your config file. Invalid environment variables are present: {}",
-              invalid_vars.join(", ")
-          ));
+                "Failed to interpolate variables into your config file. Invalid environment \
+                 variables are present: {}",
+                invalid_vars.join(", ")
+            ));
         }
 
         if !missing_vars.is_empty() {
             return Err(anyhow!(
-              "Failed to interpolate variables into your config file. Environment variables are not present: {}",
-              missing_vars.join(", ")
-          ));
+                "Failed to interpolate variables into your config file. Environment variables are \
+                 not present: {}",
+                missing_vars.join(", ")
+            ));
         }
 
         Ok(config_string.to_string())
@@ -544,9 +549,10 @@ impl SystemConfig {
                                     has_rpc_sync_src,
                                 )
                                 .context(format!(
-                            "Failed parsing abi types for events in contract {} on network {}",
-                            contract.name, network.id,
-                        ))?;
+                                    "Failed parsing abi types for events in contract {} on \
+                                     network {}",
+                                    contract.name, network.id,
+                                ))?;
 
                                 let contract = Contract::new(
                                     contract.name,
@@ -555,9 +561,10 @@ impl SystemConfig {
                                     Abi::Evm(evm_abi),
                                 )
                                 .context(format!(
-                            "Failed parsing locally defined network contract at network id {}",
-                            network.id
-                        ))?;
+                                    "Failed parsing locally defined network contract at network \
+                                     id {}",
+                                    network.id
+                                ))?;
 
                                 //Check if contract exists
                                 unique_hashmap::try_insert(
@@ -566,22 +573,22 @@ impl SystemConfig {
                                     contract,
                                 )
                                 .context(format!(
-                                "Failed inserting locally defined network contract at network id \
-                                 {}",
-                                network.id,
-                            ))?;
+                                    "Failed inserting locally defined network contract at network \
+                                     id {}",
+                                    network.id,
+                                ))?;
                             }
                             None => {
                                 //Validate that there is a global contract for the given contract if
                                 //there is no config
                                 if !contracts.get(&contract.name).is_some() {
                                     Err(anyhow!(
-                                "Failed to parse contract '{}' for the network '{}'. If you use a \
-                                 global contract definition, please verify that the name \
-                                 reference is correct.",
-                                contract.name,
-                                network.id
-                            ))?;
+                                        "Failed to parse contract '{}' for the network '{}'. If \
+                                         you use a global contract definition, please verify that \
+                                         the name reference is correct.",
+                                        contract.name,
+                                        network.id
+                                    ))?;
                                 }
                             }
                         }
@@ -680,14 +687,15 @@ impl SystemConfig {
                         match contract.config {
                             Some(l_contract) => {
                                 let (events, fuel_abi) = Event::from_fuel_events_config(
-                                  &l_contract.events,
-                                  &l_contract.abi_file_path,
-                                  &project_paths,
-                              )
-                              .context(format!(
-                                  "Failed parsing abi types for events in contract {} on network {}",
-                                  contract.name, network.id,
-                              ))?;
+                                    &l_contract.events,
+                                    &l_contract.abi_file_path,
+                                    &project_paths,
+                                )
+                                .context(format!(
+                                    "Failed parsing abi types for events in contract {} on \
+                                     network {}",
+                                    contract.name, network.id,
+                                ))?;
 
                                 let contract = Contract::new(
                                     contract.name.clone(),
@@ -697,24 +705,28 @@ impl SystemConfig {
                                 )?;
 
                                 //Check if contract exists
-                                unique_hashmap::try_insert(&mut contracts, contract.name.clone(), contract)
-                                  .context(format!(
-                                      "Failed inserting locally defined network contract at network id \
-                                       {}",
-                                      network.id,
-                                  ))?;
+                                unique_hashmap::try_insert(
+                                    &mut contracts,
+                                    contract.name.clone(),
+                                    contract,
+                                )
+                                .context(format!(
+                                    "Failed inserting locally defined network contract at network \
+                                     id {}",
+                                    network.id,
+                                ))?;
                             }
                             None => {
                                 //Validate that there is a global contract for the given contract if
                                 //there is no local_contract_config
                                 if !contracts.get(&contract.name).is_some() {
                                     Err(anyhow!(
-                                      "Failed to parse contract '{}' for the network '{}'. If you use a \
-                                       global contract definition, please verify that the name \
-                                       reference is correct.",
-                                      contract.name,
-                                      network.id
-                                  ))?;
+                                        "Failed to parse contract '{}' for the network '{}'. If \
+                                         you use a global contract definition, please verify that \
+                                         the name reference is correct.",
+                                        contract.name,
+                                        network.id
+                                    ))?;
                                 }
                             }
                         }
