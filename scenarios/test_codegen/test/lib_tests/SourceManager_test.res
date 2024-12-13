@@ -243,21 +243,78 @@ describe("SourceManager fetchBatch", () => {
     await fetchBatchPromise
   })
 
-  Async.it(
-    "Does nothing when called with a single done partition even with the currentBlockHeight=0",
-    async () => {
-      let sourceManager = SourceManager.make(~maxPartitionConcurrency=10, ~logger=Logging.logger)
+  Async.it("Starts indexing from the initial state", async () => {
+    let sourceManager = SourceManager.make(~maxPartitionConcurrency=10, ~logger=Logging.logger)
 
-      await sourceManager->SourceManager.fetchBatch(
-        ~allPartitions=[mockFetchState(~latestFetchedBlockNumber=5, ~endBlock=5)],
+    let waitForNewBlockMock = waitForNewBlockMock()
+    let onNewBlockMock = onNewBlockMock()
+
+    let fetchBatchPromise1 =
+      sourceManager->SourceManager.fetchBatch(
+        ~allPartitions=[mockFetchState(~latestFetchedBlockNumber=0)],
         ~maxPerChainQueueSize=1000,
         ~currentBlockHeight=0,
         ~setMergedPartitions=noopSetMergedPartitions,
         ~executePartitionQuery=neverExecutePartitionQuery,
-        ~waitForNewBlock=neverWaitForNewBlock,
-        ~onNewBlock=neverOnNewBlock,
+        ~waitForNewBlock=waitForNewBlockMock.fn,
+        ~onNewBlock=onNewBlockMock.fn,
         ~stateId=0,
       )
+
+    waitForNewBlockMock.resolveAll(20)
+
+    await fetchBatchPromise1
+
+    Assert.deepEqual(waitForNewBlockMock.calls, [0])
+    Assert.deepEqual(onNewBlockMock.calls, [20])
+
+    // Can wait the second time
+    let fetchBatchPromise2 =
+      sourceManager->SourceManager.fetchBatch(
+        ~allPartitions=[mockFetchState(~latestFetchedBlockNumber=20)],
+        ~maxPerChainQueueSize=1000,
+        ~currentBlockHeight=20,
+        ~setMergedPartitions=noopSetMergedPartitions,
+        ~executePartitionQuery=neverExecutePartitionQuery,
+        ~waitForNewBlock=waitForNewBlockMock.fn,
+        ~onNewBlock=onNewBlockMock.fn,
+        ~stateId=0,
+      )
+
+    waitForNewBlockMock.resolveAll(40)
+
+    await fetchBatchPromise2
+
+    Assert.deepEqual(waitForNewBlockMock.calls, [0, 20])
+    Assert.deepEqual(onNewBlockMock.calls, [20, 40])
+  })
+
+  Async.it(
+    "Waits for new block with currentBlockHeight=0 even when all partitions are done",
+    async () => {
+      let sourceManager = SourceManager.make(~maxPartitionConcurrency=10, ~logger=Logging.logger)
+
+      let waitForNewBlockMock = waitForNewBlockMock()
+      let onNewBlockMock = onNewBlockMock()
+
+      let fetchBatchPromise1 =
+        sourceManager->SourceManager.fetchBatch(
+          ~allPartitions=[mockFetchState(~latestFetchedBlockNumber=5, ~endBlock=5)],
+          ~maxPerChainQueueSize=1000,
+          ~currentBlockHeight=0,
+          ~setMergedPartitions=noopSetMergedPartitions,
+          ~executePartitionQuery=neverExecutePartitionQuery,
+          ~waitForNewBlock=waitForNewBlockMock.fn,
+          ~onNewBlock=onNewBlockMock.fn,
+          ~stateId=0,
+        )
+
+      waitForNewBlockMock.resolveAll(20)
+
+      await fetchBatchPromise1
+
+      Assert.deepEqual(waitForNewBlockMock.calls, [0])
+      Assert.deepEqual(onNewBlockMock.calls, [20])
     },
   )
 

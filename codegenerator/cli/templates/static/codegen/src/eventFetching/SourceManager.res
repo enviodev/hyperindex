@@ -42,7 +42,7 @@ let make = (~maxPartitionConcurrency, ~logger) => {
   // So lazily create fetchingState, when we execute a new partition
   allPartitionsFetchingState: [],
   currentStateId: 0,
-  fetchingPartitionsCount: 0
+  fetchingPartitionsCount: 0,
 }
 
 exception FromBlockIsHigherThanToBlock({fromBlock: int, toBlock: int})
@@ -63,6 +63,7 @@ let fetchBatch = async (
   } else {
     if stateId != sourceManger.currentStateId {
       sourceManger.currentStateId = stateId
+
       // Reset instead of clear, so updating state from partitions from prev state doesn't corrupt data
       sourceManger.allPartitionsFetchingState = []
     }
@@ -75,30 +76,27 @@ let fetchBatch = async (
         let _ = fetchingPartitions->Utils.Set.add(partitionId)
       }
     })
-    let readyPartitions = allPartitions->PartitionedFetchState.getReadyPartitions(
-      ~maxPerChainQueueSize,
-      ~fetchingPartitions,
-    )
+    let readyPartitions =
+      allPartitions->PartitionedFetchState.getReadyPartitions(
+        ~maxPerChainQueueSize,
+        ~fetchingPartitions,
+      )
 
     let mergedPartitions = Js.Dict.empty()
     let hasQueryWaitingForNewBlock = ref(false)
-    let queries = readyPartitions
-    ->Array.keepMap(({fetchState, partitionId}) => {
+    let queries = readyPartitions->Array.keepMap(({fetchState, partitionId}) => {
       let mergedFetchState = fetchState->FetchState.mergeRegistersBeforeNextQuery
       if mergedFetchState !== fetchState {
         mergedPartitions->Js.Dict.set(partitionId->(Utils.magic: int => string), mergedFetchState)
       }
       switch mergedFetchState->FetchState.getNextQuery(~partitionId) {
       | Done => None
-      | NextQuery(nextQuery) => {
+      | NextQuery(nextQuery) =>
         switch allPartitionsFetchingState->Belt.Array.get(partitionId) {
-          // Deduplicate queries when fetchBatch is called after 
-          // isFetching was set to false, but state isn't updated with fetched data
-          | Some({lastFetchedQueryId}) if lastFetchedQueryId === toQueryId(
-              nextQuery,
-            ) =>
-            None
-          | _ => {
+        // Deduplicate queries when fetchBatch is called after
+        // isFetching was set to false, but state isn't updated with fetched data
+        | Some({lastFetchedQueryId}) if lastFetchedQueryId === toQueryId(nextQuery) => None
+        | _ => {
             let {fromBlock, toBlock} = nextQuery
             if fromBlock > currentBlockHeight {
               hasQueryWaitingForNewBlock := true
@@ -119,28 +117,29 @@ let fetchBatch = async (
           }
         }
       }
-      }
     })
     setMergedPartitions(mergedPartitions)
 
     switch (queries, currentBlockHeight) {
     | ([], _)
-    | // Even if we have ready queries, wait for the first currentBlockHeight
+    | // For the case with currentBlockHeight=0 we should
+    // force getting the known chain block, even if there are no ready queries
     (_, 0) =>
-      if hasQueryWaitingForNewBlock.contents === false || sourceManger.isWaitingForNewBlock {
+      if (
+        sourceManger.isWaitingForNewBlock ||
+        (!hasQueryWaitingForNewBlock.contents && currentBlockHeight !== 0)
+      ) {
         // Do nothing if there are no queries which should wait,
         // or we are already waiting. Explicitely with if/else, so it's not lost
         ()
       } else {
         sourceManger.isWaitingForNewBlock = true
-        let currentBlockHeight =
-          await waitForNewBlock(~currentBlockHeight, ~logger)
+        let currentBlockHeight = await waitForNewBlock(~currentBlockHeight, ~logger)
         sourceManger.isWaitingForNewBlock = false
         onNewBlock(~currentBlockHeight)
       }
     | (queries, _) =>
-      let maxQueriesNumber =
-        maxPartitionConcurrency - sourceManger.fetchingPartitionsCount
+      let maxQueriesNumber = maxPartitionConcurrency - sourceManger.fetchingPartitionsCount
       if maxQueriesNumber > 0 {
         let slicedQueries = if queries->Js.Array2.length > maxQueriesNumber {
           let _ = queries->Js.Array2.sortInPlaceWith((a, b) => a.fromBlock - b.fromBlock)
@@ -153,15 +152,21 @@ let fetchBatch = async (
           ->Array.map(async query => {
             let partitionId = query.partitionId
             sourceManger.fetchingPartitionsCount = sourceManger.fetchingPartitionsCount + 1
-            allPartitionsFetchingState->Js.Array2.unsafe_set(partitionId, {
-              isFetching: true,
-            })
+            allPartitionsFetchingState->Js.Array2.unsafe_set(
+              partitionId,
+              {
+                isFetching: true,
+              },
+            )
             let data = await query->executePartitionQuery
             sourceManger.fetchingPartitionsCount = sourceManger.fetchingPartitionsCount - 1
-            allPartitionsFetchingState->Js.Array2.unsafe_set(partitionId, {
-              isFetching: false,
-              lastFetchedQueryId: toQueryId(query),
-            })
+            allPartitionsFetchingState->Js.Array2.unsafe_set(
+              partitionId,
+              {
+                isFetching: false,
+                lastFetchedQueryId: toQueryId(query),
+              },
+            )
             data
           })
           ->Promise.all

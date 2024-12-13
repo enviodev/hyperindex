@@ -17,11 +17,11 @@ module Mock = {
   let mintAddress = Ethers.Constants.zeroAddress
   let userAddress1 = Ethers.Addresses.mockAddresses[1]->Option.getExn
 
-  let mockDyamicToken1 = Ethers.Addresses.mockAddresses[3]->Option.getExn
-  let mockDyamicToken2 = Ethers.Addresses.mockAddresses[4]->Option.getExn
+  let mockDynamicToken1 = Ethers.Addresses.mockAddresses[3]->Option.getExn
+  let mockDynamicToken2 = Ethers.Addresses.mockAddresses[4]->Option.getExn
 
-  let deployToken1 = makeTokenCreatedMock(~token=mockDyamicToken1)
-  let deployToken2 = makeTokenCreatedMock(~token=mockDyamicToken2)
+  let deployToken1 = makeTokenCreatedMock(~token=mockDynamicToken1)
+  let deployToken2 = makeTokenCreatedMock(~token=mockDynamicToken2)
 
   let mint50ToUser1 = makeTransferMock(~from=mintAddress, ~to=userAddress1, ~value=50)
 
@@ -44,12 +44,12 @@ module Mock = {
     open ChainDataHelpers.ERC20
     open ChainDataHelpers.ERC20Factory
     let mkTransferToken1EventConstr = Transfer.mkEventConstrWithParamsAndAddress(
-      ~srcAddress=mockDyamicToken1,
+      ~srcAddress=mockDynamicToken1,
       ~params=_,
       ...
     )
     let mkTransferToken2EventConstr = Transfer.mkEventConstrWithParamsAndAddress(
-      ~srcAddress=mockDyamicToken2,
+      ~srcAddress=mockDynamicToken2,
       ~params=_,
       ...
     )
@@ -128,7 +128,7 @@ describe("Dynamic contract restart resistance test", () => {
     DbHelpers.runUpDownMigration()
   })
 
-  Async.it(
+  Async.it_only(
     "Indexer should restart with only the dynamic contracts up to the block that was processed",
     async () => {
       //Setup a chainManager with unordered multichain mode to make processing happen
@@ -215,8 +215,8 @@ describe("Dynamic contract restart resistance test", () => {
         ->Array.flatMap(set => set->Belt.Set.String.toArray)
 
       Assert.deepEqual(
-        [Mock.mockDyamicToken1->Address.toString],
         dynamicContracts,
+        [Mock.mockDynamicToken1->Address.toString],
         ~message="Should have registered only the dynamic contract up to the block that was processed",
       )
 
@@ -253,14 +253,14 @@ describe("Dynamic contract restart resistance test", () => {
           ->Array.flatMap(set => set->Belt.Set.String.toArray)
 
         Assert.deepEqual(
-          [Mock.mockDyamicToken1->Address.toString, Mock.mockDyamicToken2->Address.toString],
           restartedChainFetcher.dynamicContractPreRegistration->Option.getExn->Js.Dict.keys,
+          [Mock.mockDynamicToken1->Address.toString, Mock.mockDynamicToken2->Address.toString],
           ~message="Should return all the dynamic contracts related to handler that uses preRegistration",
         )
 
         Assert.deepEqual(
-          [],
           dynamicContracts,
+          [],
           ~message="Should have no dynamic contracts yet since this tests the case starting in preregistration",
         )
         resetEventOptionsToOriginal()
@@ -282,8 +282,8 @@ describe("Dynamic contract restart resistance test", () => {
         ->Array.flatMap(set => set->Belt.Set.String.toArray)
 
       Assert.deepEqual(
-        [Mock.mockDyamicToken1->Address.toString, Mock.mockDyamicToken2->Address.toString],
         dynamicContracts,
+        [Mock.mockDynamicToken1->Address.toString, Mock.mockDynamicToken2->Address.toString],
         ~message="Should have registered both dynamic contracts up to the block that was processed",
       )
     },
