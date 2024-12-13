@@ -128,7 +128,7 @@ describe("Dynamic contract restart resistance test", () => {
     DbHelpers.runUpDownMigration()
   })
 
-  Async.it_only(
+  Async.it(
     "Indexer should restart with only the dynamic contracts up to the block that was processed",
     async () => {
       //Setup a chainManager with unordered multichain mode to make processing happen
@@ -165,6 +165,7 @@ describe("Dynamic contract restart resistance test", () => {
       //Make the first queries (A)
       await dispatchAllTasks()
       Assert.deepEqual(
+        stubDataInitial->Stubs.getTasks,
         [
           Mock.getUpdateEndofBlockRangeScannedData(
             Mock.mockChainDataMap,
@@ -178,7 +179,6 @@ describe("Dynamic contract restart resistance test", () => {
           NextQuery(Chain(Mock.Chain1.chain)),
           NextQuery(Chain(Mock.Chain2.chain)),
         ],
-        stubDataInitial->Stubs.getTasks,
         ~message="Should have received a response and next tasks will be to process batch and next query",
       )
 
@@ -266,6 +266,38 @@ describe("Dynamic contract restart resistance test", () => {
         resetEventOptionsToOriginal()
       }
 
+      Assert.deepEqual(
+        stubDataInitial->Stubs.getTasks,
+        [
+          NextQuery(CheckAllChains),
+          Mock.getUpdateEndofBlockRangeScannedData(
+            Mock.mockChainDataMap,
+            ~chain=Mock.Chain1.chain,
+            ~blockNumberThreshold=-197,
+            ~blockTimestampThreshold=25,
+            ~blockNumber=3,
+          ),
+          UpdateChainMetaDataAndCheckForExit(NoExit),
+          ProcessEventBatch,
+          NextQuery(Chain(Mock.Chain1.chain)),
+          NextQuery(Chain(Mock.Chain2.chain)),
+          UpdateChainMetaDataAndCheckForExit(NoExit),
+          ProcessEventBatch,
+          NextQuery(CheckAllChains),
+        ],
+        ~message="This looks wrong, but snapshot to track how it changes with time",
+      )
+      // DynamicContract
+      // fromBlock: 0
+      // toBlock: 0
+      await dispatchAllTasks()
+      // DynamicContract
+      // fromBlock: 0
+      // toBlock: 3
+      await dispatchAllTasks()
+      // DynamicContract
+      // fromBlock: 2
+      // toBlock: 3
       await dispatchAllTasks()
 
       let restartedChainFetcher = await ChainFetcher.makeFromDbState(

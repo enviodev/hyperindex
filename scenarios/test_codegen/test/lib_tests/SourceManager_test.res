@@ -497,8 +497,78 @@ describe("SourceManager fetchBatch", () => {
     )
   })
 
-  // TODO: Test:
-  // - maxPerChainQueueSize
-  // - FromBlockIsHigherThanToBlock
-  // - mergedPartitions
+  Async.it("Should not query partitions that are at max queue size", async () => {
+    let sourceManager = SourceManager.make(~maxPartitionConcurrency=10, ~logger=Logging.logger)
+
+    let executePartitionQueryMock = executePartitionQueryMock()
+
+    let fetchBatchPromise =
+      sourceManager->SourceManager.fetchBatch(
+        ~allPartitions=[
+          mockFetchState(~latestFetchedBlockNumber=4),
+          mockFetchState(~latestFetchedBlockNumber=5),
+          mockFetchState(
+            ~latestFetchedBlockNumber=1,
+            ~fetchedEventQueue=["mockEvent1", "mockEvent2", "mockEvent3"]->Utils.magic,
+          ),
+          mockFetchState(
+            ~latestFetchedBlockNumber=2,
+            ~fetchedEventQueue=["mockEvent4", "mockEvent5"]->Utils.magic,
+          ),
+          mockFetchState(~latestFetchedBlockNumber=3),
+        ],
+        ~maxPerChainQueueSize=10, //each partition should therefore have a max of 2 events
+        ~currentBlockHeight=10,
+        ~setMergedPartitions=noopSetMergedPartitions,
+        ~executePartitionQuery=executePartitionQueryMock.fn,
+        ~waitForNewBlock=neverWaitForNewBlock,
+        ~onNewBlock=neverOnNewBlock,
+        ~stateId=0,
+      )
+
+    executePartitionQueryMock.resolveAll()
+
+    await fetchBatchPromise
+
+    Assert.deepEqual(
+      executePartitionQueryMock.calls->Js.Array2.map(q => q.partitionId),
+      [0, 1, 4],
+      ~message="Should have skipped partitions that are at max queue size",
+    )
+  })
+
+  Async.it("Sorts after all the filtering is applied", async () => {
+    let sourceManager = SourceManager.make(~maxPartitionConcurrency=1, ~logger=Logging.logger)
+
+    let executePartitionQueryMock = executePartitionQueryMock()
+
+    let fetchBatchPromise = sourceManager->SourceManager.fetchBatch(
+      ~allPartitions=[
+        // Exceeds max queue size
+        mockFetchState(
+          ~latestFetchedBlockNumber=0,
+          ~fetchedEventQueue=["mockEvent1", "mockEvent2", "mockEvent3"]->Utils.magic,
+        ),
+        // Finished fetching to endBlock
+        mockFetchState(~latestFetchedBlockNumber=2, ~endBlock=2),
+        // Waiting for new block
+        mockFetchState(~latestFetchedBlockNumber=10),
+        mockFetchState(~latestFetchedBlockNumber=6),
+        mockFetchState(~latestFetchedBlockNumber=4),
+      ],
+      ~maxPerChainQueueSize=10, //each partition should therefore have a max of 2 events
+      ~currentBlockHeight=10,
+      ~setMergedPartitions=noopSetMergedPartitions,
+      ~executePartitionQuery=executePartitionQueryMock.fn,
+      ~waitForNewBlock=neverWaitForNewBlock,
+      ~onNewBlock=neverOnNewBlock,
+      ~stateId=0,
+    )
+
+    executePartitionQueryMock.resolveAll()
+
+    await fetchBatchPromise
+
+    Assert.deepEqual(executePartitionQueryMock.calls->Js.Array2.map(q => q.partitionId), [4])
+  })
 })
