@@ -692,6 +692,7 @@ describe("FetchState.fetchState", () => {
       fetchState->checkContainsRegisteredContractAddress(
         ~contractAddress=mockAddress1,
         ~contractName=(Gravatar :> string),
+        ~chainId=1,
       ),
       true,
     )
@@ -854,7 +855,8 @@ describe("FetchState.fetchState", () => {
     () => {
       let partitionId = 0
       let currentBlockHeight = 600
-      let chain = ChainMap.Chain.makeUnsafe(~chainId=1)
+      let chainId = 1
+      let chain = ChainMap.Chain.makeUnsafe(~chainId)
 
       let rootRegister = {
         latestFetchedBlock: getBlockData(~blockNumber=500),

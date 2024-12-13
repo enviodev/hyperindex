@@ -464,6 +464,14 @@ let addDynamicContractRegisters = (baseRegister, pendingDynamicContracts) => {
   })
 }
 
+exception NextRegisterIsLessThanCurrent
+
+let isRootRegister = registerType =>
+  switch registerType {
+  | RootRegister(_) => true
+  | DynamicContractRegister(_) => false
+  }
+
 /**
 If a fetchState register has caught up to its next regisered node. Merge them and recurse.
 If no merging happens, None is returned
@@ -475,7 +483,30 @@ let rec pruneAndMergeNextRegistered = (register: register, ~isMerged=false) => {
   | DynamicContractRegister({nextRegister})
     if register.latestFetchedBlock.blockNumber <
     nextRegister.latestFetchedBlock.blockNumber => merged
-  | DynamicContractRegister(_) =>
+  | DynamicContractRegister({nextRegister}) =>
+    if register.latestFetchedBlock.blockNumber > nextRegister.latestFetchedBlock.blockNumber {
+      let logger = Logging.createChild(
+        ~params={
+          "context": "Merging Dynamic Contract Registers",
+          "currentRegister": {
+            "id": register->getRegisterId,
+            "latestFetchedBlock": register.latestFetchedBlock.blockNumber,
+            "addresses": register.contractAddressMapping->ContractAddressingMap.getAllAddresses,
+          },
+          "nextRegister": {
+            "id": nextRegister->getRegisterId,
+            "latestFetchedBlock": nextRegister.latestFetchedBlock.blockNumber,
+            "addresses": nextRegister.registerType->isRootRegister
+              ? "Root"->Utils.magic
+              : nextRegister.contractAddressMapping->ContractAddressingMap.getAllAddresses,
+          },
+        },
+      )
+      NextRegisterIsLessThanCurrent->ErrorHandling.mkLogAndRaise(
+        ~msg="Unexpected: Dynamic contract register latest fetched block is greater than next register when it should be equal",
+        ~logger,
+      )
+    }
     // Recursively look for other merges
     register->mergeIntoNextRegistered->pruneAndMergeNextRegistered(~isMerged=true)
   }
@@ -878,18 +909,55 @@ let isReadyForNextQuery = ({pendingDynamicContracts, baseRegister}: t, ~maxQueue
     ? baseRegister.fetchedEventQueue->Array.length < maxQueueSize
     : true
 
+let warnIfAttemptedAddressRegisterOnDifferentContracts = (
+  ~contractAddress,
+  ~contractName,
+  ~existingContractName,
+  ~chainId,
+) => {
+  if existingContractName != contractName {
+    let logger = Logging.createChild(
+      ~params={
+        "chainId": chainId,
+        "contractAddress": contractAddress->Address.toString,
+        "existingContractType": existingContractName,
+        "newContractType": contractName,
+      },
+    )
+    logger->Logging.childWarn(
+      `Contract address ${contractAddress->Address.toString} is already registered as contract ${existingContractName} and cannot also be registered as ${(contractName :> string)}`,
+    )
+  }
+}
+
 let rec checkBaseRegisterContainsRegisteredContract = (
   register: register,
   ~contractName,
   ~contractAddress,
+  ~chainId,
 ) => {
-  switch register.contractAddressMapping->ContractAddressingMap.getAddresses(contractName) {
-  | Some(addresses) if addresses->Belt.Set.String.has(contractAddress->Address.toString) => true
+  switch register.contractAddressMapping->ContractAddressingMap.getContractNameFromAddress(
+    ~contractAddress,
+  ) {
+  | Some(existingContractName) =>
+    if existingContractName != contractName {
+      warnIfAttemptedAddressRegisterOnDifferentContracts(
+        ~contractAddress,
+        ~contractName,
+        ~existingContractName,
+        ~chainId,
+      )
+    }
+    true
   | _ =>
     switch register.registerType {
     | RootRegister(_) => false
     | DynamicContractRegister({nextRegister}) =>
-      nextRegister->checkBaseRegisterContainsRegisteredContract(~contractName, ~contractAddress)
+      nextRegister->checkBaseRegisterContainsRegisteredContract(
+        ~contractName,
+        ~contractAddress,
+        ~chainId,
+      )
     }
   }
 }
@@ -898,12 +966,30 @@ let rec checkBaseRegisterContainsRegisteredContract = (
 Recurses through registers and determines whether a contract has already been registered with
 the given name and address
 */
-let checkContainsRegisteredContractAddress = (self: t, ~contractName, ~contractAddress) => {
-  self.baseRegister->checkBaseRegisterContainsRegisteredContract(~contractName, ~contractAddress) ||
+let checkContainsRegisteredContractAddress = (
+  self: t,
+  ~contractName,
+  ~contractAddress,
+  ~chainId,
+) => {
+  self.baseRegister->checkBaseRegisterContainsRegisteredContract(
+    ~contractName,
+    ~contractAddress,
+    ~chainId,
+  ) ||
     self.pendingDynamicContracts->Array.some(({dynamicContracts}) =>
-      dynamicContracts->Array.some(dcr =>
-        dcr.contractAddress == contractAddress && (dcr.contractType :> string) == contractName
-      )
+      dynamicContracts->Array.some(dcr => {
+        let exists = dcr.contractAddress == contractAddress
+        if exists {
+          warnIfAttemptedAddressRegisterOnDifferentContracts(
+            ~contractAddress,
+            ~contractName,
+            ~existingContractName=(dcr.contractType :> string),
+            ~chainId,
+          )
+        }
+        exists
+      })
     )
 }
 
