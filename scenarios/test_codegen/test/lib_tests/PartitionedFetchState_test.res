@@ -57,7 +57,6 @@ describe("PartitionedFetchState getMostBehindPartitions", () => {
       baseRegister,
       isFetchingAtHead: false,
       pendingDynamicContracts: [],
-      endBlock: None,
     }
 
     let maxAddrInPartition = 4
@@ -142,7 +141,6 @@ describe("PartitionedFetchState getMostBehindPartitions", () => {
           },
           pendingDynamicContracts: [],
           isFetchingAtHead: false,
-          endBlock: None,
         },
       ],
       ~message="Should have a new partition with id 1",

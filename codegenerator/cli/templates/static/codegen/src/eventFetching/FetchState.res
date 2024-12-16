@@ -124,7 +124,6 @@ type t = {
   baseRegister: register,
   pendingDynamicContracts: array<dynamicContractRegistration>,
   isFetchingAtHead: bool,
-  endBlock: option<int>
 }
 
 module Parent = {
@@ -210,7 +209,6 @@ let copy = (self: t) => {
     baseRegister,
     pendingDynamicContracts,
     isFetchingAtHead: self.isFetchingAtHead,
-    endBlock: self.endBlock
   }
 }
 /**
@@ -525,7 +523,7 @@ Returns Error if the node with given id cannot be found (unexpected)
 newItems are ordered earliest to latest (as they are returned from the worker)
 */
 let update = (
-  {baseRegister, pendingDynamicContracts, isFetchingAtHead, endBlock, partitionId}: t,
+  {baseRegister, pendingDynamicContracts, isFetchingAtHead, partitionId}: t,
   ~id,
   ~latestFetchedBlock: blockNumberAndTimestamp,
   ~newItems,
@@ -544,7 +542,6 @@ let update = (
       baseRegister: maybeMerged->Option.getWithDefault(withNewDynamicContracts),
       pendingDynamicContracts: [],
       isFetchingAtHead,
-      endBlock,
     }
   })
 }
@@ -647,7 +644,7 @@ Gets the next query either with a to block
 of the nextRegistered latestBlockNumber to catch up and merge
 or None if we don't care about an end block of a query
 */
-let getNextQuery = ({baseRegister, endBlock, partitionId}: t) => {
+let getNextQuery = ({baseRegister, partitionId}: t, ~endBlock) => {
   let fromBlock = getNextFromBlock(baseRegister)
   switch (baseRegister.registerType, endBlock) {
   | (RootRegister, Some(endBlock)) if fromBlock > endBlock => Done
@@ -817,7 +814,6 @@ let make = (
   ~staticContracts,
   ~dynamicContractRegistrations: array<TablesStatic.DynamicContractRegistry.t>,
   ~startBlock,
-  ~endBlock,
   ~isFetchingAtHead,
   ~logger as _,
 ): t => {
@@ -863,7 +859,6 @@ let make = (
     baseRegister,
     pendingDynamicContracts: [],
     isFetchingAtHead,
-    endBlock,
   }
 }
 
@@ -1122,7 +1117,7 @@ let rollback = (self: t, ~lastScannedBlock, ~firstChangeEvent) => {
 * Returns a boolean indicating whether the fetch state is actively indexing
 * used for comparing event queues in the chain manager
 */
-let isActivelyIndexing = ({baseRegister, endBlock} as fetchState: t) => {
+let isActivelyIndexing = ({baseRegister} as fetchState: t, ~endBlock) => {
   // nesting to limit additional unnecessary computation
   switch (baseRegister.registerType, endBlock) {
   | (RootRegister, Some(endBlock)) =>
