@@ -67,6 +67,7 @@ let onNewBlockMock = () => {
 
 describe("SourceManager fetchBatch", () => {
   let mockFetchState = (
+    ~partitionId,
     ~latestFetchedBlockNumber,
     ~fetchedEventQueue=[],
     ~numContracts=1,
@@ -80,6 +81,7 @@ describe("SourceManager fetchBatch", () => {
     }
 
     {
+      partitionId,
       baseRegister: {
         registerType: RootRegister,
         latestFetchedBlock: {
@@ -116,9 +118,9 @@ describe("SourceManager fetchBatch", () => {
   Async.it("Executes partitions in any order when we didn't reach concurency limit", async () => {
     let sourceManager = SourceManager.make(~maxPartitionConcurrency=10, ~logger=Logging.logger)
 
-    let fetchState0 = mockFetchState(~latestFetchedBlockNumber=4)
-    let fetchState1 = mockFetchState(~latestFetchedBlockNumber=5)
-    let fetchState2 = mockFetchState(~latestFetchedBlockNumber=1)
+    let fetchState0 = mockFetchState(~partitionId=0, ~latestFetchedBlockNumber=4)
+    let fetchState1 = mockFetchState(~partitionId=1, ~latestFetchedBlockNumber=5)
+    let fetchState2 = mockFetchState(~partitionId=2, ~latestFetchedBlockNumber=1)
 
     let executePartitionQueryMock = executePartitionQueryMock()
 
@@ -177,9 +179,9 @@ describe("SourceManager fetchBatch", () => {
     async () => {
       let sourceManager = SourceManager.make(~maxPartitionConcurrency=2, ~logger=Logging.logger)
 
-      let fetchState0 = mockFetchState(~latestFetchedBlockNumber=4)
-      let fetchState1 = mockFetchState(~latestFetchedBlockNumber=5)
-      let fetchState2 = mockFetchState(~latestFetchedBlockNumber=1)
+      let fetchState0 = mockFetchState(~partitionId=0, ~latestFetchedBlockNumber=4)
+      let fetchState1 = mockFetchState(~partitionId=1, ~latestFetchedBlockNumber=5)
+      let fetchState2 = mockFetchState(~partitionId=2, ~latestFetchedBlockNumber=1)
 
       let executePartitionQueryMock = executePartitionQueryMock()
 
@@ -212,10 +214,10 @@ describe("SourceManager fetchBatch", () => {
   Async.it("Skips partitions at the chain last block and the ones at the endBlock", async () => {
     let sourceManager = SourceManager.make(~maxPartitionConcurrency=10, ~logger=Logging.logger)
 
-    let fetchState0 = mockFetchState(~latestFetchedBlockNumber=4)
-    let fetchState1 = mockFetchState(~latestFetchedBlockNumber=5)
-    let fetchState2 = mockFetchState(~latestFetchedBlockNumber=1)
-    let fetchState3 = mockFetchState(~latestFetchedBlockNumber=4, ~endBlock=4)
+    let fetchState0 = mockFetchState(~partitionId=0, ~latestFetchedBlockNumber=4)
+    let fetchState1 = mockFetchState(~partitionId=1, ~latestFetchedBlockNumber=5)
+    let fetchState2 = mockFetchState(~partitionId=2, ~latestFetchedBlockNumber=1)
+    let fetchState3 = mockFetchState(~partitionId=3, ~latestFetchedBlockNumber=4, ~endBlock=4)
 
     let executePartitionQueryMock = executePartitionQueryMock()
 
@@ -252,7 +254,7 @@ describe("SourceManager fetchBatch", () => {
 
     let fetchBatchPromise1 =
       sourceManager->SourceManager.fetchBatch(
-        ~allPartitions=[mockFetchState(~latestFetchedBlockNumber=0)],
+        ~allPartitions=[mockFetchState(~partitionId=0, ~latestFetchedBlockNumber=0)],
         ~maxPerChainQueueSize=1000,
         ~currentBlockHeight=0,
         ~setMergedPartitions=noopSetMergedPartitions,
@@ -272,7 +274,7 @@ describe("SourceManager fetchBatch", () => {
     // Can wait the second time
     let fetchBatchPromise2 =
       sourceManager->SourceManager.fetchBatch(
-        ~allPartitions=[mockFetchState(~latestFetchedBlockNumber=20)],
+        ~allPartitions=[mockFetchState(~partitionId=0, ~latestFetchedBlockNumber=20)],
         ~maxPerChainQueueSize=1000,
         ~currentBlockHeight=20,
         ~setMergedPartitions=noopSetMergedPartitions,
@@ -300,7 +302,7 @@ describe("SourceManager fetchBatch", () => {
 
       let fetchBatchPromise1 =
         sourceManager->SourceManager.fetchBatch(
-          ~allPartitions=[mockFetchState(~latestFetchedBlockNumber=5, ~endBlock=5)],
+          ~allPartitions=[mockFetchState(~partitionId=0, ~latestFetchedBlockNumber=5, ~endBlock=5)],
           ~maxPerChainQueueSize=1000,
           ~currentBlockHeight=0,
           ~setMergedPartitions=noopSetMergedPartitions,
@@ -322,8 +324,8 @@ describe("SourceManager fetchBatch", () => {
   Async.it("Waits for new block when all partitions are at the currentBlockHeight", async () => {
     let sourceManager = SourceManager.make(~maxPartitionConcurrency=10, ~logger=Logging.logger)
 
-    let fetchState0 = mockFetchState(~latestFetchedBlockNumber=5)
-    let fetchState1 = mockFetchState(~latestFetchedBlockNumber=5)
+    let fetchState0 = mockFetchState(~partitionId=0, ~latestFetchedBlockNumber=5)
+    let fetchState1 = mockFetchState(~partitionId=1, ~latestFetchedBlockNumber=5)
 
     let waitForNewBlockMock = waitForNewBlockMock()
     let onNewBlockMock = onNewBlockMock()
@@ -369,10 +371,10 @@ describe("SourceManager fetchBatch", () => {
   Async.it("Can add new partitions until the concurrency limit reached", async () => {
     let sourceManager = SourceManager.make(~maxPartitionConcurrency=3, ~logger=Logging.logger)
 
-    let fetchState0 = mockFetchState(~latestFetchedBlockNumber=4)
-    let fetchState1 = mockFetchState(~latestFetchedBlockNumber=5)
-    let fetchState2 = mockFetchState(~latestFetchedBlockNumber=2)
-    let fetchState3 = mockFetchState(~latestFetchedBlockNumber=1)
+    let fetchState0 = mockFetchState(~partitionId=0, ~latestFetchedBlockNumber=4)
+    let fetchState1 = mockFetchState(~partitionId=1, ~latestFetchedBlockNumber=5)
+    let fetchState2 = mockFetchState(~partitionId=2, ~latestFetchedBlockNumber=2)
+    let fetchState3 = mockFetchState(~partitionId=3, ~latestFetchedBlockNumber=1)
 
     let executePartitionQueryMock = executePartitionQueryMock()
 
@@ -473,8 +475,8 @@ describe("SourceManager fetchBatch", () => {
     // but we've alredy called them with the same query
     await sourceManager->SourceManager.fetchBatch(
       ~allPartitions=[
-        mockFetchState(~latestFetchedBlockNumber=10),
-        mockFetchState(~latestFetchedBlockNumber=10),
+        mockFetchState(~partitionId=0, ~latestFetchedBlockNumber=10),
+        mockFetchState(~partitionId=1, ~latestFetchedBlockNumber=10),
         fetchState2,
         fetchState3,
       ],
@@ -506,17 +508,19 @@ describe("SourceManager fetchBatch", () => {
     let fetchBatchPromise =
       sourceManager->SourceManager.fetchBatch(
         ~allPartitions=[
-          mockFetchState(~latestFetchedBlockNumber=4),
-          mockFetchState(~latestFetchedBlockNumber=5),
+          mockFetchState(~partitionId=0, ~latestFetchedBlockNumber=4),
+          mockFetchState(~partitionId=1, ~latestFetchedBlockNumber=5),
           mockFetchState(
+            ~partitionId=2,
             ~latestFetchedBlockNumber=1,
             ~fetchedEventQueue=["mockEvent1", "mockEvent2", "mockEvent3"]->Utils.magic,
           ),
           mockFetchState(
+            ~partitionId=3,
             ~latestFetchedBlockNumber=2,
             ~fetchedEventQueue=["mockEvent4", "mockEvent5"]->Utils.magic,
           ),
-          mockFetchState(~latestFetchedBlockNumber=3),
+          mockFetchState(~partitionId=4, ~latestFetchedBlockNumber=3),
         ],
         ~maxPerChainQueueSize=10, //each partition should therefore have a max of 2 events
         ~currentBlockHeight=10,
@@ -547,15 +551,16 @@ describe("SourceManager fetchBatch", () => {
       ~allPartitions=[
         // Exceeds max queue size
         mockFetchState(
+          ~partitionId=0,
           ~latestFetchedBlockNumber=0,
           ~fetchedEventQueue=["mockEvent1", "mockEvent2", "mockEvent3"]->Utils.magic,
         ),
         // Finished fetching to endBlock
-        mockFetchState(~latestFetchedBlockNumber=2, ~endBlock=2),
+        mockFetchState(~partitionId=1, ~latestFetchedBlockNumber=2, ~endBlock=2),
         // Waiting for new block
-        mockFetchState(~latestFetchedBlockNumber=10),
-        mockFetchState(~latestFetchedBlockNumber=6),
-        mockFetchState(~latestFetchedBlockNumber=4),
+        mockFetchState(~partitionId=2, ~latestFetchedBlockNumber=10),
+        mockFetchState(~partitionId=3, ~latestFetchedBlockNumber=6),
+        mockFetchState(~partitionId=4, ~latestFetchedBlockNumber=4),
       ],
       ~maxPerChainQueueSize=10, //each partition should therefore have a max of 2 events
       ~currentBlockHeight=10,

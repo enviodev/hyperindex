@@ -84,15 +84,15 @@ let fetchBatch = async (
 
     let mergedPartitions = Js.Dict.empty()
     let hasQueryWaitingForNewBlock = ref(false)
-    let queries = readyPartitions->Array.keepMap(({fetchState, partitionId}) => {
+    let queries = readyPartitions->Array.keepMap(fetchState => {
       let mergedFetchState = fetchState->FetchState.mergeRegistersBeforeNextQuery
       if mergedFetchState !== fetchState {
-        mergedPartitions->Js.Dict.set(partitionId->(Utils.magic: int => string), mergedFetchState)
+        mergedPartitions->Js.Dict.set(fetchState.partitionId->(Utils.magic: int => string), mergedFetchState)
       }
-      switch mergedFetchState->FetchState.getNextQuery(~partitionId) {
+      switch mergedFetchState->FetchState.getNextQuery {
       | Done => None
       | NextQuery(nextQuery) =>
-        switch allPartitionsFetchingState->Belt.Array.get(partitionId) {
+        switch allPartitionsFetchingState->Belt.Array.get(fetchState.partitionId) {
         // Deduplicate queries when fetchBatch is called after
         // isFetching was set to false, but state isn't updated with fetched data
         | Some({lastFetchedQueryId}) if lastFetchedQueryId === toQueryId(nextQuery) => None

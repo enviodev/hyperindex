@@ -322,6 +322,7 @@ describe("determineNextEvent", () => {
     }
 
     let makeMockFetchState = (~latestFetchedBlockTimestamp, ~item): FetchState.t => {
+      partitionId: 0,
       baseRegister: {
         registerType: RootRegister,
         latestFetchedBlock: {

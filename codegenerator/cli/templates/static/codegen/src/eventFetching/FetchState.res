@@ -120,6 +120,7 @@ type dynamicContractRegistration = {
   dynamicContracts: array<TablesStatic.DynamicContractRegistry.t>,
 }
 type t = {
+  partitionId: int,
   baseRegister: register,
   pendingDynamicContracts: array<dynamicContractRegistration>,
   isFetchingAtHead: bool,
@@ -205,6 +206,7 @@ let copy = (self: t) => {
   let baseRegister = loop(self.baseRegister)
   let pendingDynamicContracts = self.pendingDynamicContracts->Array.copy
   {
+    partitionId: self.partitionId,
     baseRegister,
     pendingDynamicContracts,
     isFetchingAtHead: self.isFetchingAtHead,
@@ -523,7 +525,7 @@ Returns Error if the node with given id cannot be found (unexpected)
 newItems are ordered earliest to latest (as they are returned from the worker)
 */
 let update = (
-  {baseRegister, pendingDynamicContracts, isFetchingAtHead, endBlock}: t,
+  {baseRegister, pendingDynamicContracts, isFetchingAtHead, endBlock, partitionId}: t,
   ~id,
   ~latestFetchedBlock: blockNumberAndTimestamp,
   ~newItems,
@@ -538,6 +540,7 @@ let update = (
       updatedRegister->addDynamicContractRegisters(pendingDynamicContracts)
     let maybeMerged = withNewDynamicContracts->pruneAndMergeNextRegistered
     {
+      partitionId,
       baseRegister: maybeMerged->Option.getWithDefault(withNewDynamicContracts),
       pendingDynamicContracts: [],
       isFetchingAtHead,
@@ -644,7 +647,7 @@ Gets the next query either with a to block
 of the nextRegistered latestBlockNumber to catch up and merge
 or None if we don't care about an end block of a query
 */
-let getNextQuery = ({baseRegister, endBlock}: t, ~partitionId) => {
+let getNextQuery = ({baseRegister, endBlock, partitionId}: t) => {
   let fromBlock = getNextFromBlock(baseRegister)
   switch (baseRegister.registerType, endBlock) {
   | (RootRegister, Some(endBlock)) if fromBlock > endBlock => Done
@@ -810,6 +813,7 @@ let getEarliestEvent = (self: t) => {
 Instantiates a fetch state with root register
 */
 let make = (
+  ~partitionId,
   ~staticContracts,
   ~dynamicContractRegistrations: array<TablesStatic.DynamicContractRegistry.t>,
   ~startBlock,
@@ -855,6 +859,7 @@ let make = (
   }
 
   {
+    partitionId,
     baseRegister,
     pendingDynamicContracts: [],
     isFetchingAtHead,
