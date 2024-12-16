@@ -110,7 +110,7 @@ type rec register = {
   ...registerData,
 }
 and registerType =
-  | RootRegister({endBlock: option<int>})
+  | RootRegister
   | DynamicContractRegister({id: EventUtils.eventIndex, nextRegister: register})
 
 type dynamicContractRegistration = {
@@ -123,6 +123,7 @@ type t = {
   baseRegister: register,
   pendingDynamicContracts: array<dynamicContractRegistration>,
   isFetchingAtHead: bool,
+  endBlock: option<int>
 }
 
 module Parent = {
@@ -189,7 +190,7 @@ let shallowCopyRegister = (register: register) => {
 let copy = (self: t) => {
   let rec loop = (register: register, ~parent=?) =>
     switch register.registerType {
-    | RootRegister(_) =>
+    | RootRegister =>
       let copied = register->shallowCopyRegister
       switch parent {
       | Some(parent) => parent->Parent.joinChild(copied)
@@ -207,6 +208,7 @@ let copy = (self: t) => {
     baseRegister,
     pendingDynamicContracts,
     isFetchingAtHead: self.isFetchingAtHead,
+    endBlock: self.endBlock
   }
 }
 /**
@@ -268,7 +270,7 @@ let mergeIntoNextRegistered = (self: register) => {
         ),
       },
     }
-  | RootRegister(_) => self //already merged
+  | RootRegister => self //already merged
   }
 }
 
@@ -290,7 +292,7 @@ Constructs id from a register
 */
 let getRegisterId = (self: register) => {
   switch self.registerType {
-  | RootRegister(_) => Root
+  | RootRegister => Root
   | DynamicContractRegister({id}) => DynamicContract(id)
   }
 }
@@ -338,7 +340,7 @@ let rec updateInternal = (
   }
 
   switch (register.registerType, id) {
-  | (RootRegister(_), Root) =>
+  | (RootRegister, Root) =>
     register
     ->updateRegister(~reversedNewItems, ~latestFetchedBlock)
     ->handleParent
@@ -353,7 +355,7 @@ let rec updateInternal = (
       ~reversedNewItems,
       ~parent=register->Parent.make(~dynamicContractId, ~parent),
     )
-  | (RootRegister(_), DynamicContract(_)) => Error(UnexpectedRegisterDoesNotExist(id))
+  | (RootRegister, DynamicContract(_)) => Error(UnexpectedRegisterDoesNotExist(id))
   }
 }
 
@@ -425,7 +427,7 @@ let rec addDynamicContractRegister = (
   let latestFetchedBlockNumber = registeringEventBlockNumber - 1
 
   switch self.registerType {
-  | RootRegister(_) => self->addToHead
+  | RootRegister => self->addToHead
   | DynamicContractRegister(_) if latestFetchedBlockNumber <= self.latestFetchedBlock.blockNumber =>
     self->addToHead
   | DynamicContractRegister({id: dynamicContractId, nextRegister}) =>
@@ -470,7 +472,7 @@ exception NextRegisterIsLessThanCurrent
 
 let isRootRegister = registerType =>
   switch registerType {
-  | RootRegister(_) => true
+  | RootRegister => true
   | DynamicContractRegister(_) => false
   }
 
@@ -481,7 +483,7 @@ If no merging happens, None is returned
 let rec pruneAndMergeNextRegistered = (register: register, ~isMerged=false) => {
   let merged = isMerged ? Some(register) : None
   switch register.registerType {
-  | RootRegister(_) => merged
+  | RootRegister => merged
   | DynamicContractRegister({nextRegister})
     if register.latestFetchedBlock.blockNumber <
     nextRegister.latestFetchedBlock.blockNumber => merged
@@ -521,7 +523,7 @@ Returns Error if the node with given id cannot be found (unexpected)
 newItems are ordered earliest to latest (as they are returned from the worker)
 */
 let update = (
-  {baseRegister, pendingDynamicContracts, isFetchingAtHead}: t,
+  {baseRegister, pendingDynamicContracts, isFetchingAtHead, endBlock}: t,
   ~id,
   ~latestFetchedBlock: blockNumberAndTimestamp,
   ~newItems,
@@ -539,6 +541,7 @@ let update = (
       baseRegister: maybeMerged->Option.getWithDefault(withNewDynamicContracts),
       pendingDynamicContracts: [],
       isFetchingAtHead,
+      endBlock,
     }
   })
 }
@@ -641,11 +644,11 @@ Gets the next query either with a to block
 of the nextRegistered latestBlockNumber to catch up and merge
 or None if we don't care about an end block of a query
 */
-let getNextQuery = ({baseRegister}: t, ~partitionId) => {
+let getNextQuery = ({baseRegister, endBlock}: t, ~partitionId) => {
   let fromBlock = getNextFromBlock(baseRegister)
-  switch baseRegister.registerType {
-  | RootRegister({endBlock: Some(endBlock)}) if fromBlock > endBlock => Done
-  | RootRegister({endBlock}) =>
+  switch (baseRegister.registerType, endBlock) {
+  | (RootRegister, Some(endBlock)) if fromBlock > endBlock => Done
+  | (RootRegister, _) =>
     NextQuery({
       partitionId,
       fetchStateRegisterId: Root,
@@ -653,7 +656,7 @@ let getNextQuery = ({baseRegister}: t, ~partitionId) => {
       toBlock: endBlock,
       contractAddressMapping: baseRegister.contractAddressMapping,
     })
-  | DynamicContractRegister({id, nextRegister: {latestFetchedBlock}}) =>
+  | (DynamicContractRegister({id, nextRegister: {latestFetchedBlock}}), _) =>
     NextQuery({
       partitionId,
       fetchStateRegisterId: DynamicContract(id),
@@ -742,7 +745,7 @@ let rec findRegisterIdWithEarliestQueueItem = (~currentEarliestRegister=?, regis
   }
 
   switch register.registerType {
-  | RootRegister(_) => currentEarliestRegister->getRegisterId
+  | RootRegister => currentEarliestRegister->getRegisterId
   | DynamicContractRegister({nextRegister}) =>
     nextRegister->findRegisterIdWithEarliestQueueItem(~currentEarliestRegister)
   }
@@ -756,11 +759,11 @@ Recurses through registers and Errors if ID does not exist
 */
 let rec popQItemAtRegisterId = (register: register, ~id) => {
   switch register.registerType {
-  | RootRegister(_)
+  | RootRegister
   | DynamicContractRegister(_) if id == register->getRegisterId =>
     register->getEarliestEventInRegister->Ok
   | DynamicContractRegister({nextRegister}) => nextRegister->popQItemAtRegisterId(~id)
-  | RootRegister(_) => Error(UnexpectedRegisterDoesNotExist(id))
+  | RootRegister => Error(UnexpectedRegisterDoesNotExist(id))
   }
 }
 
@@ -839,7 +842,7 @@ let make = (
   })
 
   let baseRegister = {
-    registerType: RootRegister({endBlock: endBlock}),
+    registerType: RootRegister,
     latestFetchedBlock: {
       blockTimestamp: 0,
       // Here's a bug that startBlock: 1 won't work
@@ -855,6 +858,7 @@ let make = (
     baseRegister,
     pendingDynamicContracts: [],
     isFetchingAtHead,
+    endBlock,
   }
 }
 
@@ -864,7 +868,7 @@ Calculates the cummulative queue sizes in all registers
 let rec registerQueueSize = (register: register, ~accum=0) => {
   let accum = register.fetchedEventQueue->Array.length + accum
   switch register.registerType {
-  | RootRegister(_) => accum
+  | RootRegister => accum
   | DynamicContractRegister({nextRegister}) => nextRegister->registerQueueSize(~accum)
   }
 }
@@ -927,7 +931,7 @@ let rec checkBaseRegisterContainsRegisteredContract = (
     true
   | _ =>
     switch register.registerType {
-    | RootRegister(_) => false
+    | RootRegister => false
     | DynamicContractRegister({nextRegister}) =>
       nextRegister->checkBaseRegisterContainsRegisteredContract(
         ~contractName,
@@ -1039,7 +1043,7 @@ let rec rollbackRegister = (
   switch self.registerType {
   //Case 1 Root register that has only fetched up to a confirmed valid block number
   //Should just return itself unchanged
-  | RootRegister(_) if self.latestFetchedBlock.blockNumber < firstChangeEvent.blockNumber =>
+  | RootRegister if self.latestFetchedBlock.blockNumber < firstChangeEvent.blockNumber =>
     self->handleParent
   //Case 2 Dynamic register that has only fetched up to a confirmed valid block number
   //Should just return itself, with the next register rolled back recursively
@@ -1053,7 +1057,7 @@ let rec rollbackRegister = (
 
   //Case 3 Root register that has fetched further than the confirmed valid block number
   //Should prune its queue and set its latest fetched block data to the latest known confirmed block
-  | RootRegister(_) =>
+  | RootRegister =>
     {
       ...self,
       fetchedEventQueue: self.fetchedEventQueue->pruneQueueFromFirstChangeEvent(~firstChangeEvent),
@@ -1113,10 +1117,10 @@ let rollback = (self: t, ~lastScannedBlock, ~firstChangeEvent) => {
 * Returns a boolean indicating whether the fetch state is actively indexing
 * used for comparing event queues in the chain manager
 */
-let isActivelyIndexing = ({baseRegister} as fetchState: t) => {
+let isActivelyIndexing = ({baseRegister, endBlock} as fetchState: t) => {
   // nesting to limit additional unnecessary computation
-  switch baseRegister.registerType {
-  | RootRegister({endBlock: Some(endBlock)}) =>
+  switch (baseRegister.registerType, endBlock) {
+  | (RootRegister, Some(endBlock)) =>
     let isPastEndblock = getLatestFullyFetchedBlock(fetchState).blockNumber >= endBlock
     if isPastEndblock {
       baseRegister->registerQueueSize > 0
@@ -1131,7 +1135,7 @@ let getNumContracts = (self: t) => {
   let rec loop = (register: register, ~accum=0) => {
     let accum = accum + register.contractAddressMapping->ContractAddressingMap.addressCount
     switch register.registerType {
-    | RootRegister(_) => accum
+    | RootRegister => accum
     | DynamicContractRegister({nextRegister}) => nextRegister->loop(~accum)
     }
   }
@@ -1144,7 +1148,7 @@ Helper functions for debugging and printing
 module DebugHelpers = {
   let registerToString = register =>
     switch register {
-    | RootRegister(_) => "root"
+    | RootRegister => "root"
     | DynamicContractRegister({id: {blockNumber, logIndex}}) =>
       `DC-${blockNumber->Int.toString}-${logIndex->Int.toString}`
     }
@@ -1153,7 +1157,7 @@ module DebugHelpers = {
     let next = (register.registerType->registerToString, register.fetchedEventQueue->Array.length)
     let accum = list{next, ...accum}
     switch register.registerType {
-    | RootRegister(_) => accum
+    | RootRegister => accum
     | DynamicContractRegister({nextRegister}) => nextRegister->getQueueSizesInternal(~accum)
     }
   }
@@ -1164,7 +1168,7 @@ module DebugHelpers = {
   let rec numberRegistered = (~accum=0, self: register) => {
     let accum = accum + 1
     switch self.registerType {
-    | RootRegister(_) => accum
+    | RootRegister => accum
     | DynamicContractRegister({nextRegister}) => nextRegister->numberRegistered(~accum)
     }
   }
@@ -1172,7 +1176,7 @@ module DebugHelpers = {
   let rec getRegisterAddressMaps = (self: register, ~accum=[]) => {
     accum->Js.Array2.push(self.contractAddressMapping.nameByAddress)->ignore
     switch self.registerType {
-    | RootRegister(_) => accum
+    | RootRegister => accum
     | DynamicContractRegister({nextRegister}) => nextRegister->getRegisterAddressMaps(~accum)
     }
   }

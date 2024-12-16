@@ -21,7 +21,7 @@ describe("PartitionedFetchState getMostBehindPartitions", () => {
     }
 
     let rootRegister: FetchState.register = {
-      registerType: RootRegister({endBlock: None}),
+      registerType: RootRegister,
       latestFetchedBlock: {
         blockNumber: 100,
         blockTimestamp: 100 * 15,
@@ -56,6 +56,7 @@ describe("PartitionedFetchState getMostBehindPartitions", () => {
       baseRegister,
       isFetchingAtHead: false,
       pendingDynamicContracts: [],
+      endBlock: None,
     }
 
     let maxAddrInPartition = 4
@@ -132,7 +133,7 @@ describe("PartitionedFetchState getMostBehindPartitions", () => {
           partitionId: 1,
           fetchState: {
             baseRegister: {
-              registerType: RootRegister({endBlock: None}),
+              registerType: RootRegister,
               latestFetchedBlock: {blockNumber: 0, blockTimestamp: 0},
               contractAddressMapping: ContractAddressingMap.fromArray([
                 (TestHelpers.Addresses.mockAddresses[5]->Option.getExn, "Gravatar"),
@@ -149,6 +150,7 @@ describe("PartitionedFetchState getMostBehindPartitions", () => {
             },
             pendingDynamicContracts: [],
             isFetchingAtHead: false,
+            endBlock: None,
           },
         },
       ],

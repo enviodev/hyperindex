@@ -81,7 +81,7 @@ describe("SourceManager fetchBatch", () => {
 
     {
       baseRegister: {
-        registerType: RootRegister({endBlock: endBlock}),
+        registerType: RootRegister,
         latestFetchedBlock: {
           blockNumber: latestFetchedBlockNumber,
           blockTimestamp: latestFetchedBlockNumber * 15,
@@ -93,6 +93,7 @@ describe("SourceManager fetchBatch", () => {
       },
       isFetchingAtHead: false,
       pendingDynamicContracts: [],
+      endBlock,
     }
   }
 
