@@ -53,6 +53,7 @@ let getDynContractId = (
 }
 
 let makeMockFetchState = (baseRegister, ~isFetchingAtHead=false, ~endBlock=?) => {
+  partitionId: 0,
   baseRegister,
   pendingDynamicContracts: [],
   isFetchingAtHead,
@@ -87,6 +88,7 @@ describe("FetchState.fetchState", () => {
 
   it("dynamic contract registration", () => {
     let root = make(
+      ~partitionId=0,
       ~startBlock=10_000,
       ~endBlock=None,
       ~staticContracts=[((Gravatar :> string), mockAddress1)],
@@ -612,20 +614,18 @@ describe("FetchState.fetchState", () => {
     }
 
     let fetchState = {
+      partitionId: 0,
       baseRegister: root,
       pendingDynamicContracts: [],
       isFetchingAtHead: false,
       endBlock: None,
     }
 
-    let partitionId = 0
-    let nextQuery = fetchState->getNextQuery(~partitionId)
-
     Assert.deepEqual(
-      nextQuery,
+      fetchState->getNextQuery,
       NextQuery({
         fetchStateRegisterId: Root,
-        partitionId,
+        partitionId: 0,
         fromBlock: root.latestFetchedBlock.blockNumber + 1,
         toBlock: None,
         contractAddressMapping: root.contractAddressMapping,
@@ -646,7 +646,7 @@ describe("FetchState.fetchState", () => {
       endBlock: Some(500),
     }
 
-    let nextQuery = endblockCase->getNextQuery(~partitionId)
+    let nextQuery = endblockCase->getNextQuery
 
     Assert.deepEqual(Done, nextQuery)
   })
@@ -687,6 +687,7 @@ describe("FetchState.fetchState", () => {
     }
 
     let fetchState = {
+      partitionId: 0,
       baseRegister,
       pendingDynamicContracts: [],
       isFetchingAtHead: false,
@@ -858,7 +859,6 @@ describe("FetchState.fetchState", () => {
   it(
     "Adding dynamic between two registers while query is mid flight does no result in early merged registers",
     () => {
-      let partitionId = 0
       let currentBlockHeight = 600
       let chainId = 1
       let chain = ChainMap.Chain.makeUnsafe(~chainId)
@@ -894,7 +894,7 @@ describe("FetchState.fetchState", () => {
       let withAddedDynamicContractRegisterA =
         withRegisteredDynamicContractA->mergeRegistersBeforeNextQuery
       //Received query
-      let queryA = switch withAddedDynamicContractRegisterA->getNextQuery(~partitionId) {
+      let queryA = switch withAddedDynamicContractRegisterA->getNextQuery {
       | NextQuery(queryA) =>
         switch queryA {
         | {
@@ -938,7 +938,7 @@ describe("FetchState.fetchState", () => {
         )
         ->Utils.unwrapResultExn
 
-      switch updatesWithResponseFromQueryA->getNextQuery(~partitionId) {
+      switch updatesWithResponseFromQueryA->getNextQuery {
       | NextQuery({
           fetchStateRegisterId: DynamicContract({blockNumber: 200, logIndex: 0}),
           fromBlock: 200,
