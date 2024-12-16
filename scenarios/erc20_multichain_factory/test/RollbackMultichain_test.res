@@ -252,7 +252,7 @@ describe("Multichain rollback test", () => {
 
     let getFetchState = chain => {
       let cf = chain->getChainFetcher
-      cf.fetchState
+      cf.partitionedFetchState
     }
 
     let getLatestFetchedBlock = chain => {
@@ -275,7 +275,8 @@ describe("Multichain rollback test", () => {
       ->ChainMap.values
       ->Array.reduce(
         0,
-        (accum, chainFetcher) => accum + chainFetcher.fetchState->PartitionedFetchState.queueSize,
+        (accum, chainFetcher) =>
+          accum + chainFetcher.partitionedFetchState->PartitionedFetchState.queueSize,
       )
     }
 

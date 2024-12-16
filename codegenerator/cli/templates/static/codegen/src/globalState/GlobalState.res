@@ -144,7 +144,7 @@ let updateChainMetadataTable = async (cm: ChainManager.t, ~throttler: Throttler.
     cm.chainFetchers
     ->ChainMap.values
     ->Belt.Array.map(cf => {
-      let latestFetchedBlock = cf.fetchState->PartitionedFetchState.getLatestFullyFetchedBlock
+      let latestFetchedBlock = cf.partitionedFetchState->PartitionedFetchState.getLatestFullyFetchedBlock
       let chainMetadata: DbFunctions.ChainMetadata.chainMetadata = {
         chainId: cf.chainConfig.chain->ChainMap.Chain.toChainId,
         startBlock: cf.chainConfig.startBlock,
@@ -275,14 +275,14 @@ let updateLatestProcessedBlocks = (
   let chainManager = {
     ...state.chainManager,
     chainFetchers: state.chainManager.chainFetchers->ChainMap.map(cf => {
-      let {chainConfig: {chain}, fetchState} = cf
+      let {chainConfig: {chain}, partitionedFetchState} = cf
       let {numEventsProcessed, latestProcessedBlock} = latestProcessedBlocks->ChainMap.get(chain)
 
       let hasArbQueueEvents = state.chainManager->ChainManager.hasChainItemsOnArbQueue(~chain)
       let hasNoMoreEventsToProcess = cf->ChainFetcher.hasNoMoreEventsToProcess(~hasArbQueueEvents)
 
       let latestProcessedBlock = if hasNoMoreEventsToProcess {
-        PartitionedFetchState.getLatestFullyFetchedBlock(fetchState).blockNumber->Some
+        PartitionedFetchState.getLatestFullyFetchedBlock(partitionedFetchState).blockNumber->Some
       } else {
         latestProcessedBlock
       }
@@ -370,7 +370,7 @@ let handleBlockRangeResponse = (state, ~chain, ~response: ChainWorker.blockRange
 
     let latestProcessedBlock = if hasNoMoreEventsToProcess {
       PartitionedFetchState.getLatestFullyFetchedBlock(
-        updatedChainFetcher.fetchState,
+        updatedChainFetcher.partitionedFetchState,
       ).blockNumber->Some
     } else {
       updatedChainFetcher.latestProcessedBlock
@@ -544,14 +544,14 @@ let actionReducer = (state: t, action: action) => {
         : (false, None)
 
       let updatedFetchState =
-        currentChainFetcher.fetchState->PartitionedFetchState.registerDynamicContracts(
+        currentChainFetcher.partitionedFetchState->PartitionedFetchState.registerDynamicContracts(
           registration,
           ~isFetchingAtHead,
         )
 
       let updatedChainFetcher = {
         ...currentChainFetcher,
-        fetchState: updatedFetchState,
+        partitionedFetchState: updatedFetchState,
         timestampCaughtUpToHeadOrEndblock,
       }
 
@@ -575,7 +575,7 @@ let actionReducer = (state: t, action: action) => {
     ->ChainMap.entries
     ->Array.forEach(((chain, chainFetcher)) => {
       let highestFetchedBlockOnChain = PartitionedFetchState.getLatestFullyFetchedBlock(
-        chainFetcher.fetchState,
+        chainFetcher.partitionedFetchState,
       ).blockNumber
 
       Prometheus.setFetchedEventsUntilHeight(~blockNumber=highestFetchedBlockOnChain, ~chain)
@@ -608,14 +608,14 @@ let actionReducer = (state: t, action: action) => {
       (state, [])
     } else {
       updateChainFetcher(currentChainFetcher => {
-        let partitionsCopy = currentChainFetcher.fetchState.partitions->Js.Array2.copy
+        let partitionsCopy = currentChainFetcher.partitionedFetchState.partitions->Js.Array2.copy
         updatedPartitionIds->Js.Array2.forEach(partitionId => {
           let partition = updatedPartitions->Js.Dict.unsafeGet(partitionId)
           partitionsCopy->Js.Array2.unsafe_set(partitionId->(Utils.magic: string => int), partition)
         })
         {
           ...currentChainFetcher,
-          fetchState: {...currentChainFetcher.fetchState, partitions: partitionsCopy},
+          partitionedFetchState: {...currentChainFetcher.partitionedFetchState, partitions: partitionsCopy},
         }
       }, ~chain, ~state)
     }
@@ -640,7 +640,7 @@ let actionReducer = (state: t, action: action) => {
     let chainFetchers = state.chainManager.chainFetchers->ChainMap.mapWithKey((chain, cf) => {
       {
         ...cf,
-        fetchState: ChainMap.get(fetchStatesMap, chain).partitionedFetchState,
+        partitionedFetchState: ChainMap.get(fetchStatesMap, chain).partitionedFetchState,
       }
     })
 
@@ -729,7 +729,7 @@ let actionReducer = (state: t, action: action) => {
       let {
         chainConfig,
         logger,
-        fetchState: {startBlock, endBlock, maxAddrInPartition},
+        partitionedFetchState: {startBlock, endBlock, maxAddrInPartition},
         dynamicContractPreRegistration,
       } = cf
 
@@ -832,10 +832,10 @@ let checkAndFetchForChain = (
 ) => async chain => {
   let chainFetcher = state.chainManager.chainFetchers->ChainMap.get(chain)
   if !isRollingBack(state) {
-    let {chainConfig: {chainWorker}, logger, currentBlockHeight, fetchState} = chainFetcher
+    let {chainConfig: {chainWorker}, logger, currentBlockHeight, partitionedFetchState} = chainFetcher
 
     await chainFetcher.sourceManager->SourceManager.fetchBatch(
-      ~allPartitions=fetchState.partitions,
+      ~allPartitions=partitionedFetchState.partitions,
       ~waitForNewBlock=(~currentBlockHeight, ~logger) => chainWorker->waitForNewBlock(~currentBlockHeight, ~logger),
       ~onNewBlock=(~currentBlockHeight) => dispatchAction(FinishWaitingForNewBlock({chain, currentBlockHeight})),
       ~currentBlockHeight,
@@ -1186,8 +1186,8 @@ let injectedTaskReducer = (
               ~blockNumber=firstChangeEvent.blockNumber,
             )
 
-          let fetchState =
-            cf.fetchState->PartitionedFetchState.rollback(
+          let partitionedFetchState =
+            cf.partitionedFetchState->PartitionedFetchState.rollback(
               ~lastScannedBlock=rolledBackLastBlockData->ChainFetcher.getLastScannedBlockData,
               ~firstChangeEvent,
             )
@@ -1195,7 +1195,7 @@ let injectedTaskReducer = (
           let rolledBackCf = {
             ...cf,
             lastBlockScannedHashes: rolledBackLastBlockData,
-            fetchState,
+            partitionedFetchState,
           }
           //On other chains, filter out evennts based on the first change present on the chain after the reorg
           rolledBackCf->ChainFetcher.addProcessingFilter(

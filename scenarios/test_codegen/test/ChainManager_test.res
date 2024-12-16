@@ -121,7 +121,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
       latestProcessedBlock: None,
       numEventsProcessed: 0,
       numBatchesFetched: 0,
-      fetchState: fetchState.contents,
+      partitionedFetchState: fetchState.contents,
       logger: Logging.logger,
       sourceManager: SourceManager.make(
         ~maxPartitionConcurrency=Env.maxPartitionConcurrency,
@@ -246,10 +246,10 @@ describe("ChainManager", () => {
             //   )
             let nextChainFetchers = chainManager.chainFetchers->ChainMap.mapWithKey(
               (chain, fetcher) => {
-                let {partitionedFetchState: fetchState} = fetchStatesMap->ChainMap.get(chain)
+                let {partitionedFetchState} = fetchStatesMap->ChainMap.get(chain)
                 {
                   ...fetcher,
-                  fetchState,
+                  partitionedFetchState,
                 }
               },
             )
@@ -276,7 +276,7 @@ describe("ChainManager", () => {
             ->Belt.Array.reduce(
               0,
               (accum, val) => {
-                accum + val.fetchState->PartitionedFetchState.queueSize
+                accum + val.partitionedFetchState->PartitionedFetchState.queueSize
               },
             )
 
