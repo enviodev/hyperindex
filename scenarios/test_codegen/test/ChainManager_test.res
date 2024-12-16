@@ -323,7 +323,7 @@ describe("determineNextEvent", () => {
 
     let makeMockFetchState = (~latestFetchedBlockTimestamp, ~item): FetchState.t => {
       baseRegister: {
-        registerType: RootRegister({endBlock: None}),
+        registerType: RootRegister,
         latestFetchedBlock: {
           blockTimestamp: latestFetchedBlockTimestamp,
           blockNumber: 0,
@@ -335,6 +335,7 @@ describe("determineNextEvent", () => {
       },
       pendingDynamicContracts: [],
       isFetchingAtHead: false,
+      endBlock: None,
     }
 
     let makeMockPartitionedFetchState = (

@@ -52,10 +52,11 @@ let getDynContractId = (
   logIndex: registeringEventLogIndex,
 }
 
-let makeMockFetchState = (baseRegister, ~isFetchingAtHead=false) => {
+let makeMockFetchState = (baseRegister, ~isFetchingAtHead=false, ~endBlock=?) => {
   baseRegister,
   pendingDynamicContracts: [],
   isFetchingAtHead,
+  endBlock,
 }
 
 describe("FetchState.fetchState", () => {
@@ -234,7 +235,7 @@ describe("FetchState.fetchState", () => {
             mockEvent(~blockNumber=4),
             mockEvent(~blockNumber=1, ~logIndex=1),
           ],
-          registerType: RootRegister({endBlock: None}),
+          registerType: RootRegister,
         },
       }),
     }
@@ -255,7 +256,7 @@ describe("FetchState.fetchState", () => {
         mockEvent(~blockNumber=1, ~logIndex=2),
         mockEvent(~blockNumber=1, ~logIndex=1),
       ],
-      registerType: RootRegister({endBlock: None}),
+      registerType: RootRegister,
     }
 
     Assert.deepEqual(fetchState->mergeIntoNextRegistered, expected)
@@ -275,7 +276,7 @@ describe("FetchState.fetchState", () => {
       firstEventBlockNumber: Some(1),
       dynamicContracts: DynamicContractsMap.empty,
       fetchedEventQueue: currentEvents,
-      registerType: RootRegister({endBlock: None}),
+      registerType: RootRegister,
     }
 
     let fetchState = makeMockFetchState(root)
@@ -413,7 +414,7 @@ describe("FetchState.fetchState", () => {
             mockEvent(~blockNumber=4),
             mockEvent(~blockNumber=1, ~logIndex=1),
           ],
-          registerType: RootRegister({endBlock: None}),
+          registerType: RootRegister,
         },
       }),
     }
@@ -441,7 +442,7 @@ describe("FetchState.fetchState", () => {
         mockEvent(~blockNumber=105),
         mockEvent(~blockNumber=101, ~logIndex=2),
       ],
-      registerType: RootRegister({endBlock: None}),
+      registerType: RootRegister,
     }
     let dynamicContractRegistration = {
       registeringEventBlockNumber: 100,
@@ -482,7 +483,7 @@ describe("FetchState.fetchState", () => {
         mockEvent(~blockNumber=5),
         mockEvent(~blockNumber=1, ~logIndex=2),
       ],
-      registerType: RootRegister({endBlock: None}),
+      registerType: RootRegister,
     }
     let fetchState = baseRegister->makeMockFetchState
 
@@ -515,7 +516,7 @@ describe("FetchState.fetchState", () => {
           mockEvent(~blockNumber=5),
           mockEvent(~blockNumber=4, ~logIndex=2),
         ],
-        registerType: RootRegister({endBlock: None}),
+        registerType: RootRegister,
       }
 
       let baseRegister = {
@@ -566,7 +567,7 @@ describe("FetchState.fetchState", () => {
         mockEvent(~blockNumber=5),
         mockEvent(~blockNumber=1, ~logIndex=2),
       ],
-      registerType: RootRegister({endBlock: None}),
+      registerType: RootRegister,
     }
     let dynamicContractRegistration = {
       registeringEventBlockNumber: 100,
@@ -607,13 +608,14 @@ describe("FetchState.fetchState", () => {
         mockEvent(~blockNumber=4),
         mockEvent(~blockNumber=1, ~logIndex=1),
       ],
-      registerType: RootRegister({endBlock: None}),
+      registerType: RootRegister,
     }
 
     let fetchState = {
       baseRegister: root,
       pendingDynamicContracts: [],
       isFetchingAtHead: false,
+      endBlock: None,
     }
 
     let partitionId = 0
@@ -639,8 +641,9 @@ describe("FetchState.fetchState", () => {
           blockTimestamp: 0,
         },
         fetchedEventQueue: [],
-        registerType: RootRegister({endBlock: Some(500)}),
+        registerType: RootRegister,
       },
+      endBlock: Some(500),
     }
 
     let nextQuery = endblockCase->getNextQuery(~partitionId)
@@ -678,7 +681,7 @@ describe("FetchState.fetchState", () => {
             mockEvent(~blockNumber=4),
             mockEvent(~blockNumber=1, ~logIndex=1),
           ],
-          registerType: RootRegister({endBlock: None}),
+          registerType: RootRegister,
         },
       }),
     }
@@ -687,6 +690,7 @@ describe("FetchState.fetchState", () => {
       baseRegister,
       pendingDynamicContracts: [],
       isFetchingAtHead: false,
+      endBlock: None,
     }
 
     Assert.equal(
@@ -708,17 +712,17 @@ describe("FetchState.fetchState", () => {
       firstEventBlockNumber: None,
       dynamicContracts: DynamicContractsMap.empty,
       fetchedEventQueue: [mockEvent(~blockNumber=140), mockEvent(~blockNumber=99)],
-      registerType: RootRegister({endBlock: Some(150)}),
+      registerType: RootRegister,
     }
 
-    case1->makeMockFetchState->isActivelyIndexing->Assert.equal(true)
+    case1->makeMockFetchState(~endBlock=150)->isActivelyIndexing->Assert.equal(true)
 
     let case2 = {
       ...case1,
       fetchedEventQueue: [],
     }
 
-    case2->makeMockFetchState->isActivelyIndexing->Assert.equal(false)
+    case2->makeMockFetchState(~endBlock=150)->isActivelyIndexing->Assert.equal(false)
 
     let case3 = {
       ...case2,
@@ -728,21 +732,21 @@ describe("FetchState.fetchState", () => {
       }),
     }
 
-    case3->makeMockFetchState->isActivelyIndexing->Assert.equal(true)
+    case3->makeMockFetchState(~endBlock=150)->isActivelyIndexing->Assert.equal(true)
 
     let case4 = {
       ...case1,
-      registerType: RootRegister({endBlock: Some(151)}),
+      registerType: RootRegister,
     }
 
-    case4->makeMockFetchState->isActivelyIndexing->Assert.equal(true)
+    case4->makeMockFetchState(~endBlock=151)->isActivelyIndexing->Assert.equal(true)
 
     let case5 = {
       ...case1,
-      registerType: RootRegister({endBlock: None}),
+      registerType: RootRegister,
     }
 
-    case5->makeMockFetchState->isActivelyIndexing->Assert.equal(true)
+    case5->makeMockFetchState(~endBlock=?None)->isActivelyIndexing->Assert.equal(true)
   })
 
   it("rolls back", () => {
@@ -757,7 +761,7 @@ describe("FetchState.fetchState", () => {
       firstEventBlockNumber: None,
       dynamicContracts: DynamicContractsMap.empty,
       fetchedEventQueue: [mockEvent(~blockNumber=140), mockEvent(~blockNumber=99)],
-      registerType: RootRegister({endBlock: None}),
+      registerType: RootRegister,
     }
 
     let register2 = {
@@ -843,7 +847,7 @@ describe("FetchState.fetchState", () => {
             mockEvent(~blockNumber=4),
             mockEvent(~blockNumber=1, ~logIndex=1),
           ],
-          registerType: RootRegister({endBlock: None}),
+          registerType: RootRegister,
         },
       }),
     }
@@ -871,7 +875,7 @@ describe("FetchState.fetchState", () => {
           mockEvent(~blockNumber=4),
           mockEvent(~blockNumber=1, ~logIndex=1),
         ],
-        registerType: RootRegister({endBlock: None}),
+        registerType: RootRegister,
       }
 
       let mockFetchState = rootRegister->makeMockFetchState
