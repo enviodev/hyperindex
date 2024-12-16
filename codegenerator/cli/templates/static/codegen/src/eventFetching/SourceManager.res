@@ -22,6 +22,7 @@ type partitionFetchingState = {
 // with a mutable state for easier reasoning and testing.
 type t = {
   logger: Pino.t,
+  endBlock: option<int>,
   maxPartitionConcurrency: int,
   mutable isWaitingForNewBlock: bool,
   mutable allPartitionsFetchingState: array<partitionFetchingState>,
@@ -33,8 +34,9 @@ type t = {
   mutable currentStateId: int,
 }
 
-let make = (~maxPartitionConcurrency, ~logger) => {
+let make = (~maxPartitionConcurrency, ~endBlock, ~logger) => {
   logger,
+  endBlock,
   maxPartitionConcurrency,
   isWaitingForNewBlock: false,
   // Don't prefill with empty partitionFetchingState,
@@ -67,7 +69,7 @@ let fetchBatch = async (
       // Reset instead of clear, so updating state from partitions from prev state doesn't corrupt data
       sourceManager.allPartitionsFetchingState = []
     }
-    let {logger, allPartitionsFetchingState, maxPartitionConcurrency} = sourceManager
+    let {logger, endBlock, allPartitionsFetchingState, maxPartitionConcurrency} = sourceManager
 
     let fetchingPartitions = Utils.Set.make()
     // Js.Array2.forEachi automatically skips empty items
@@ -89,7 +91,7 @@ let fetchBatch = async (
       if mergedFetchState !== fetchState {
         mergedPartitions->Js.Dict.set(fetchState.partitionId->(Utils.magic: int => string), mergedFetchState)
       }
-      switch mergedFetchState->FetchState.getNextQuery {
+      switch mergedFetchState->FetchState.getNextQuery(~endBlock) {
       | Done => None
       | NextQuery(nextQuery) =>
         switch allPartitionsFetchingState->Belt.Array.get(fetchState.partitionId) {

@@ -63,7 +63,7 @@ let make = (
   {
     logger,
     chainConfig,
-    sourceManager: SourceManager.make(~maxPartitionConcurrency=Env.maxPartitionConcurrency, ~logger),
+    sourceManager: SourceManager.make(~maxPartitionConcurrency=Env.maxPartitionConcurrency, ~endBlock, ~logger),
     lastBlockScannedHashes,
     currentBlockHeight: 0,
     partitionedFetchState,

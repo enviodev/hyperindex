@@ -32,7 +32,6 @@ let make = (
       ~staticContracts,
       ~dynamicContractRegistrations,
       ~startBlock,
-      ~endBlock,
       ~logger,
       ~isFetchingAtHead=false,
     )
@@ -50,7 +49,6 @@ let make = (
         ~staticContracts=staticContractsChunk,
         ~dynamicContractRegistrations=[],
         ~startBlock,
-        ~endBlock,
         ~logger,
         ~isFetchingAtHead=false,
       )
@@ -69,7 +67,6 @@ let make = (
         ~count=maxAddrInPartition - staticContractsClone->Array.length,
       ),
       ~startBlock,
-      ~endBlock,
       ~logger,
       ~isFetchingAtHead=false,
     )
@@ -88,7 +85,6 @@ let make = (
         ~staticContracts=[],
         ~dynamicContractRegistrations=dynamicContractRegistrationsChunk,
         ~startBlock,
-        ~endBlock,
         ~logger,
         ~isFetchingAtHead=false,
       )
@@ -135,7 +131,6 @@ let registerDynamicContracts = (
     let newPartition = FetchState.make(
       ~partitionId=partitions->Array.length,
       ~startBlock,
-      ~endBlock,
       ~logger,
       ~staticContracts=[],
       ~dynamicContractRegistrations=dynamicContractRegistration.dynamicContracts,
@@ -211,7 +206,7 @@ let rollback = (self: t, ~lastScannedBlock, ~firstChangeEvent) => {
 let getEarliestEvent = (self: t) =>
   self.partitions->Array.reduce(None, (accum, fetchState) => {
     // If the fetch state has reached the end block we don't need to consider it
-    if fetchState->FetchState.isActivelyIndexing {
+    if fetchState->FetchState.isActivelyIndexing(~endBlock=self.endBlock) {
       let nextItem = fetchState->FetchState.getEarliestEvent
       switch accum {
       | Some(accumItem) if FetchState.qItemLt(accumItem, nextItem) => accum

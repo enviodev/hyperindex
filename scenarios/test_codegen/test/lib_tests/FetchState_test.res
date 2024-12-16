@@ -52,12 +52,11 @@ let getDynContractId = (
   logIndex: registeringEventLogIndex,
 }
 
-let makeMockFetchState = (baseRegister, ~isFetchingAtHead=false, ~endBlock=?) => {
+let makeMockFetchState = (baseRegister, ~isFetchingAtHead=false) => {
   partitionId: 0,
   baseRegister,
   pendingDynamicContracts: [],
   isFetchingAtHead,
-  endBlock,
 }
 
 describe("FetchState.fetchState", () => {
@@ -90,7 +89,6 @@ describe("FetchState.fetchState", () => {
     let root = make(
       ~partitionId=0,
       ~startBlock=10_000,
-      ~endBlock=None,
       ~staticContracts=[((Gravatar :> string), mockAddress1)],
       ~dynamicContractRegistrations=[],
       ~isFetchingAtHead=false,
@@ -618,11 +616,10 @@ describe("FetchState.fetchState", () => {
       baseRegister: root,
       pendingDynamicContracts: [],
       isFetchingAtHead: false,
-      endBlock: None,
     }
 
     Assert.deepEqual(
-      fetchState->getNextQuery,
+      fetchState->getNextQuery(~endBlock=None),
       NextQuery({
         fetchStateRegisterId: Root,
         partitionId: 0,
@@ -643,10 +640,9 @@ describe("FetchState.fetchState", () => {
         fetchedEventQueue: [],
         registerType: RootRegister,
       },
-      endBlock: Some(500),
     }
 
-    let nextQuery = endblockCase->getNextQuery
+    let nextQuery = endblockCase->getNextQuery(~endBlock=Some(500))
 
     Assert.deepEqual(Done, nextQuery)
   })
@@ -691,7 +687,6 @@ describe("FetchState.fetchState", () => {
       baseRegister,
       pendingDynamicContracts: [],
       isFetchingAtHead: false,
-      endBlock: None,
     }
 
     Assert.equal(
@@ -716,14 +711,14 @@ describe("FetchState.fetchState", () => {
       registerType: RootRegister,
     }
 
-    case1->makeMockFetchState(~endBlock=150)->isActivelyIndexing->Assert.equal(true)
+    case1->makeMockFetchState->isActivelyIndexing(~endBlock=Some(150))->Assert.equal(true)
 
     let case2 = {
       ...case1,
       fetchedEventQueue: [],
     }
 
-    case2->makeMockFetchState(~endBlock=150)->isActivelyIndexing->Assert.equal(false)
+    case2->makeMockFetchState->isActivelyIndexing(~endBlock=Some(150))->Assert.equal(false)
 
     let case3 = {
       ...case2,
@@ -733,21 +728,21 @@ describe("FetchState.fetchState", () => {
       }),
     }
 
-    case3->makeMockFetchState(~endBlock=150)->isActivelyIndexing->Assert.equal(true)
+    case3->makeMockFetchState->isActivelyIndexing(~endBlock=Some(150))->Assert.equal(true)
 
     let case4 = {
       ...case1,
       registerType: RootRegister,
     }
 
-    case4->makeMockFetchState(~endBlock=151)->isActivelyIndexing->Assert.equal(true)
+    case4->makeMockFetchState->isActivelyIndexing(~endBlock=Some(151))->Assert.equal(true)
 
     let case5 = {
       ...case1,
       registerType: RootRegister,
     }
 
-    case5->makeMockFetchState(~endBlock=?None)->isActivelyIndexing->Assert.equal(true)
+    case5->makeMockFetchState->isActivelyIndexing(~endBlock=None)->Assert.equal(true)
   })
 
   it("rolls back", () => {
@@ -894,7 +889,7 @@ describe("FetchState.fetchState", () => {
       let withAddedDynamicContractRegisterA =
         withRegisteredDynamicContractA->mergeRegistersBeforeNextQuery
       //Received query
-      let queryA = switch withAddedDynamicContractRegisterA->getNextQuery {
+      let queryA = switch withAddedDynamicContractRegisterA->getNextQuery(~endBlock=None) {
       | NextQuery(queryA) =>
         switch queryA {
         | {
@@ -938,7 +933,7 @@ describe("FetchState.fetchState", () => {
         )
         ->Utils.unwrapResultExn
 
-      switch updatesWithResponseFromQueryA->getNextQuery {
+      switch updatesWithResponseFromQueryA->getNextQuery(~endBlock=None) {
       | NextQuery({
           fetchStateRegisterId: DynamicContract({blockNumber: 200, logIndex: 0}),
           fromBlock: 200,

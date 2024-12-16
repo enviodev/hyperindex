@@ -125,6 +125,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
       logger: Logging.logger,
       sourceManager: SourceManager.make(
         ~maxPartitionConcurrency=Env.maxPartitionConcurrency,
+        ~endBlock=None,
         ~logger=Logging.logger,
       ),
       chainConfig,
@@ -336,7 +337,6 @@ describe("determineNextEvent", () => {
       },
       pendingDynamicContracts: [],
       isFetchingAtHead: false,
-      endBlock: None,
     }
 
     let makeMockPartitionedFetchState = (
