@@ -20,6 +20,7 @@ let make = (
   ~staticContracts,
   ~dynamicContractRegistrations,
   ~startBlock,
+  ~isPreRegisteringDynamicContracts,
   ~hasWildcard,
   ~logger,
 ) => {
@@ -27,7 +28,7 @@ let make = (
 
   let totalAddressesNumber = staticContracts->Array.length + dynamicContractRegistrations->Array.length
 
-  if hasWildcard {
+  if hasWildcard && !isPreRegisteringDynamicContracts {
     let wildcardPartition = FetchState.make(
       ~partitionId=partitions->Array.length,
       ~staticContracts=[],

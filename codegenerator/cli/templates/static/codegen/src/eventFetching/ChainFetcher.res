@@ -51,12 +51,14 @@ let make = (
   let module(ChainWorker) = chainConfig.chainWorker
   logger->Logging.childInfo("Initializing ChainFetcher with " ++ ChainWorker.name ++ " worker")
 
+  let isPreRegisteringDynamicContracts = dynamicContractPreRegistration->Option.isSome
   let partitionedFetchState = PartitionedFetchState.make(
     ~maxAddrInPartition,
     ~staticContracts,
     ~dynamicContractRegistrations,
     ~startBlock,
     ~endBlock,
+    ~isPreRegisteringDynamicContracts,
     ~hasWildcard=Config.hasWildcard(chainConfig),
     ~logger,
   )

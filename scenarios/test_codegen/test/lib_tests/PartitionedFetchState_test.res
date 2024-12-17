@@ -20,6 +20,7 @@ describe("PartitionedFetchState", () => {
       ~endBlock=None,
       ~staticContracts=[],
       ~hasWildcard=false,
+      ~isPreRegisteringDynamicContracts=false,
       ~logger=Logging.logger,
     )
 
@@ -54,6 +55,7 @@ describe("PartitionedFetchState", () => {
       ~endBlock=None,
       ~staticContracts=[],
       ~hasWildcard=true,
+      ~isPreRegisteringDynamicContracts=false,
       ~logger=Logging.logger,
     )
 
@@ -129,6 +131,7 @@ describe("PartitionedFetchState", () => {
         ("Contract2", "0x5"->Address.unsafeFromString),
       ],
       ~hasWildcard=false,
+      ~isPreRegisteringDynamicContracts=false,
       ~logger=Logging.logger,
     )
 

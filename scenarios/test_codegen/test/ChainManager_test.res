@@ -27,6 +27,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
       ~dynamicContractRegistrations=[],
       ~startBlock=0,
       ~hasWildcard=false,
+      ~isPreRegisteringDynamicContracts=false,
       ~logger=Logging.logger,
     )
 
