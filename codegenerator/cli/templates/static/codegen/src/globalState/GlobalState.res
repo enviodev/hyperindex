@@ -784,6 +784,7 @@ let invalidatedActionReducer = (state: t, action: action) =>
   | ({rollbackState: RollingBack(_)}, EventBatchProcessed(_)) =>
     Logging.warn("Finished processing batch before rollback, actioning rollback")
     ({...state, currentlyProcessingBatch: false}, [Rollback])
+  | (_, ErrorExit(_)) => actionReducer(state, action)
   | _ =>
     Logging.warn("Invalidated action discarded")
     (state, [])
