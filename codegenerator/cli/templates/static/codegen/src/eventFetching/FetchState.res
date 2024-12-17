@@ -47,7 +47,6 @@ type t = {
   isFetchingAtHead: bool,
   endBlock: option<int>,
   maxAddrInPartition: int,
-  batchSize: int,
   firstEventBlockNumber: option<int>,
   // Fields computed by updateInternal
   latestFullyFetchedBlock: blockNumberAndTimestamp,
@@ -68,7 +67,6 @@ let copy = (fetchState: t) => {
     nextPartitionIndex: fetchState.nextPartitionIndex,
     isFetchingAtHead: fetchState.isFetchingAtHead,
     latestFullyFetchedBlock: fetchState.latestFullyFetchedBlock,
-    batchSize: fetchState.batchSize,
     queueSize: fetchState.queueSize,
     firstEventBlockNumber: fetchState.firstEventBlockNumber,
   }
@@ -245,7 +243,6 @@ let updateInternal = (
   fetchState: t,
   ~partitions=fetchState.partitions,
   ~nextPartitionIndex=fetchState.nextPartitionIndex,
-  ~batchSize=fetchState.batchSize,
   ~firstEventBlockNumber=fetchState.firstEventBlockNumber,
   ~currentBlockHeight=?,
 ): t => {
@@ -300,7 +297,6 @@ let updateInternal = (
     endBlock: fetchState.endBlock,
     nextPartitionIndex,
     firstEventBlockNumber,
-    batchSize,
     partitions,
     isFetchingAtHead,
     latestFullyFetchedBlock,
@@ -775,13 +771,12 @@ let getEarliestEvent = ({partitions}: t) => {
 Instantiates a fetch state with partitions for initial addresses
 */
 let make = (
-  ~staticContracts,
-  ~dynamicContracts,
   ~startBlock,
   ~endBlock,
+  ~staticContracts,
+  ~dynamicContracts,
+  ~hasWildcard,
   ~maxAddrInPartition,
-  ~isFetchingAtHead,
-  ~batchSize=Env.maxProcessBatchSize,
 ): t => {
   let latestFetchedBlock = {
     blockTimestamp: 0,
@@ -789,10 +784,21 @@ let make = (
     blockNumber: Pervasives.max(startBlock - 1, 0),
   }
 
-  let numAddresses = staticContracts->Array.length + dynamicContracts->Array.length
   let partitions = []
 
-  let addPartition = (~staticContracts=?, ~dynamicContracts=?, ~latestFetchedBlock) => {
+  if hasWildcard {
+    partitions->Array.push({
+      id: partitions->Array.length->Int.toString,
+      status: {
+        fetchingStateId: None,
+      },
+      latestFetchedBlock,
+      kind: Wildcard,
+      fetchedEventQueue: [],
+    })
+  }
+
+  let addNormalPartition = (~staticContracts=?, ~dynamicContracts=?) => {
     partitions->Array.push(
       makeNormalPartition(
         ~partitionIndex=partitions->Array.length,
@@ -803,8 +809,11 @@ let make = (
     )
   }
 
-  if numAddresses <= maxAddrInPartition {
-    addPartition(~staticContracts, ~dynamicContracts, ~latestFetchedBlock)
+  let numAddresses = staticContracts->Array.length + dynamicContracts->Array.length
+  if numAddresses === 0 {
+    ()
+  } else if numAddresses <= maxAddrInPartition {
+    addNormalPartition(~staticContracts, ~dynamicContracts)
   } else {
     let staticContractsClone = staticContracts->Array.copy
 
@@ -813,20 +822,19 @@ let make = (
       let staticContractsChunk =
         staticContractsClone->Js.Array2.removeCountInPlace(~pos=0, ~count=maxAddrInPartition)
 
-      addPartition(~staticContracts=staticContractsChunk, ~latestFetchedBlock)
+      addNormalPartition(~staticContracts=staticContractsChunk)
     }
 
     let dynamicContractsClone = dynamicContracts->Array.copy
 
     //Add the rest of the static addresses filling the remainder of the partition with dynamic contract
     //registrations
-    addPartition(
+    addNormalPartition(
       ~staticContracts=staticContractsClone,
       ~dynamicContracts=dynamicContractsClone->Js.Array2.removeCountInPlace(
         ~pos=0,
         ~count=maxAddrInPartition - staticContractsClone->Array.length,
       ),
-      ~latestFetchedBlock,
     )
 
     //Make partitions with all remaining dynamic contract registrations
@@ -834,8 +842,12 @@ let make = (
       let dynamicContractsChunk =
         dynamicContractsClone->Js.Array2.removeCountInPlace(~pos=0, ~count=maxAddrInPartition)
 
-      addPartition(~dynamicContracts=dynamicContractsChunk, ~latestFetchedBlock)
+      addNormalPartition(~dynamicContracts=dynamicContractsChunk)
     }
+  }
+
+  if partitions->Array.length === 0 {
+    Js.Exn.raiseError("Invalid configuration. Nothing to fetch")
   }
 
   if Env.Benchmark.shouldSaveData {
@@ -849,10 +861,9 @@ let make = (
   {
     partitions,
     nextPartitionIndex: partitions->Array.length,
-    isFetchingAtHead,
+    isFetchingAtHead: false,
     maxAddrInPartition,
     endBlock,
-    batchSize,
     latestFullyFetchedBlock: latestFetchedBlock,
     queueSize: 0,
     firstEventBlockNumber: None,

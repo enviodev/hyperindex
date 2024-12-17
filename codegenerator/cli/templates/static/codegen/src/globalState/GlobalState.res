@@ -703,7 +703,6 @@ let actionReducer = (state: t, action: action) => {
         ~lastBlockScannedHashes=ReorgDetection.LastBlockScannedHashes.empty(
           ~confirmedBlockThreshold=chainConfig.confirmedBlockThreshold,
         ),
-        ~staticContracts=chainConfig->ChainFetcher.getStaticContracts,
         ~startBlock,
         ~endBlock=chainConfig.endBlock,
         ~dbFirstEventBlockNumber=None,
