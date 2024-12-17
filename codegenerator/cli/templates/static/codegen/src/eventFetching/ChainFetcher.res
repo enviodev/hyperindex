@@ -57,6 +57,7 @@ let make = (
     ~dynamicContractRegistrations,
     ~startBlock,
     ~endBlock,
+    ~hasWildcard=Config.hasWildcard(chainConfig),
     ~logger,
   )
 

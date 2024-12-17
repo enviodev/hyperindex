@@ -26,6 +26,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
       ~staticContracts=[],
       ~dynamicContractRegistrations=[],
       ~startBlock=0,
+      ~hasWildcard=false,
       ~logger=Logging.logger,
     )
 
@@ -324,6 +325,7 @@ describe("determineNextEvent", () => {
 
     let makeMockFetchState = (~latestFetchedBlockTimestamp, ~item): FetchState.t => {
       partitionId: 0,
+      kind: Normal,
       baseRegister: {
         registerType: RootRegister,
         latestFetchedBlock: {

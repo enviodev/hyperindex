@@ -81,6 +81,7 @@ describe("SourceManager fetchBatch", () => {
 
     {
       partitionId,
+      kind: Normal,
       baseRegister: {
         registerType: RootRegister,
         latestFetchedBlock: {
@@ -143,6 +144,7 @@ describe("SourceManager fetchBatch", () => {
       [
         {
           partitionId: 0,
+          kind: Normal,
           fetchStateRegisterId: fetchState0.baseRegister->FetchState.getRegisterId,
           fromBlock: 5,
           toBlock: None,
@@ -150,6 +152,7 @@ describe("SourceManager fetchBatch", () => {
         },
         {
           partitionId: 1,
+          kind: Normal,
           fetchStateRegisterId: fetchState0.baseRegister->FetchState.getRegisterId,
           fromBlock: 6,
           toBlock: None,
@@ -157,6 +160,7 @@ describe("SourceManager fetchBatch", () => {
         },
         {
           partitionId: 2,
+          kind: Normal,
           fetchStateRegisterId: fetchState0.baseRegister->FetchState.getRegisterId,
           fromBlock: 2,
           toBlock: None,

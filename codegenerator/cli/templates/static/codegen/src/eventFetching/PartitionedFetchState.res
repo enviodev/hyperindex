@@ -20,13 +20,27 @@ let make = (
   ~staticContracts,
   ~dynamicContractRegistrations,
   ~startBlock,
+  ~hasWildcard,
   ~logger,
 ) => {
-  let numAddresses = staticContracts->Array.length + dynamicContractRegistrations->Array.length
-
   let partitions = []
 
-  if numAddresses <= maxAddrInPartition {
+  let totalAddressesNumber = staticContracts->Array.length + dynamicContractRegistrations->Array.length
+
+  if hasWildcard {
+    let wildcardPartition = FetchState.make(
+      ~partitionId=partitions->Array.length,
+      ~staticContracts=[],
+      ~dynamicContractRegistrations=[],
+      ~startBlock,
+      ~kind=Wildcard,
+      ~logger,
+      ~isFetchingAtHead=false,
+    )
+    partitions->Js.Array2.push(wildcardPartition)->ignore
+  }
+
+  if totalAddressesNumber <= maxAddrInPartition {
     let partition = FetchState.make(
       ~partitionId=partitions->Array.length,
       ~staticContracts,

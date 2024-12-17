@@ -68,8 +68,10 @@ module type S = {
 
   module FetchState: {
     type id
+    type kind
     type nextQuery = {
       fetchStateRegisterId: id,
+      kind: kind,
       partitionId: int,
       fromBlock: int,
       toBlock: option<int>,

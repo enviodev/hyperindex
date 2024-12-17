@@ -1,7 +1,7 @@
 open Belt
 open RescriptMocha
 
-describe("PartitionedFetchState getMostBehindPartitions", () => {
+describe("PartitionedFetchState", () => {
   let mockPartitionedFetchState = (~partitions, ~maxAddrInPartition=1): PartitionedFetchState.t => {
     {
       partitions,
@@ -11,6 +11,182 @@ describe("PartitionedFetchState getMostBehindPartitions", () => {
       logger: Logging.logger,
     }
   }
+
+  it("Create PartitionedFetchState without predefined contracts", () => {
+    let partitionedFetchState = PartitionedFetchState.make(
+      ~maxAddrInPartition=2,
+      ~dynamicContractRegistrations=[],
+      ~startBlock=0,
+      ~endBlock=None,
+      ~staticContracts=[],
+      ~hasWildcard=false,
+      ~logger=Logging.logger,
+    )
+
+    Assert.deepEqual(
+      partitionedFetchState,
+      {
+        partitions: [
+          FetchState.make(
+            ~partitionId=0,
+            ~staticContracts=[],
+            ~dynamicContractRegistrations=[],
+            ~isFetchingAtHead=false,
+            ~kind=Normal,
+            ~logger=Logging.logger,
+            ~startBlock=0,
+          ),
+        ],
+        maxAddrInPartition: 2,
+        startBlock: 0,
+        endBlock: None,
+        logger: Logging.logger,
+      },
+      ~message="Eventhough there are no predefined contract, must create a partition",
+    )
+  })
+
+  it("Create PartitionedFetchState without predefined contracts and wildcard events", () => {
+    let partitionedFetchState = PartitionedFetchState.make(
+      ~maxAddrInPartition=2,
+      ~dynamicContractRegistrations=[],
+      ~startBlock=0,
+      ~endBlock=None,
+      ~staticContracts=[],
+      ~hasWildcard=true,
+      ~logger=Logging.logger,
+    )
+
+    // FIXME: Test next query
+    Assert.deepEqual(
+      partitionedFetchState,
+      {
+        partitions: [
+          FetchState.make(
+            ~partitionId=0,
+            ~staticContracts=[],
+            ~dynamicContractRegistrations=[],
+            ~isFetchingAtHead=false,
+            ~kind=Wildcard,
+            ~logger=Logging.logger,
+            ~startBlock=0,
+          ),
+          FetchState.make(
+            ~partitionId=1,
+            ~staticContracts=[],
+            ~dynamicContractRegistrations=[],
+            ~isFetchingAtHead=false,
+            ~kind=Normal,
+            ~logger=Logging.logger,
+            ~startBlock=0,
+          ),
+        ],
+        maxAddrInPartition: 2,
+        startBlock: 0,
+        endBlock: None,
+        logger: Logging.logger,
+      },
+      ~message="Should still create a normal partition in case we are going to add dynamic contracts",
+    )
+  })
+
+  it("Create PartitionedFetchState with multiple partitions", () => {
+    let contractRegistration1: TablesStatic.DynamicContractRegistry.t = {
+      id: "dcr1",
+      chainId: 137,
+      registeringEventBlockNumber: 10,
+      registeringEventBlockTimestamp: 10 * 15,
+      registeringEventLogIndex: 0,
+      registeringEventContractName: "MockFactory",
+      registeringEventName: "MockCreateGravatar",
+      registeringEventSrcAddress: TestHelpers.Addresses.mockAddresses[0]->Option.getExn,
+      contractAddress: TestHelpers.Addresses.mockAddresses[5]->Option.getExn,
+      contractType: Enums.ContractType.Gravatar,
+    }
+    let contractRegistration2: TablesStatic.DynamicContractRegistry.t = {
+      id: "dcr2",
+      chainId: 137,
+      registeringEventBlockNumber: 10,
+      registeringEventBlockTimestamp: 10 * 15,
+      registeringEventLogIndex: 0,
+      registeringEventContractName: "MockFactory",
+      registeringEventName: "MockCreateGravatar",
+      registeringEventSrcAddress: TestHelpers.Addresses.mockAddresses[0]->Option.getExn,
+      contractAddress: TestHelpers.Addresses.mockAddresses[5]->Option.getExn,
+      contractType: Enums.ContractType.NftFactory,
+    }
+
+    let partitionedFetchState = PartitionedFetchState.make(
+      ~maxAddrInPartition=2,
+      ~dynamicContractRegistrations=[contractRegistration1, contractRegistration2],
+      ~startBlock=0,
+      ~endBlock=None,
+      ~staticContracts=[
+        ("Contract1", "0x1"->Address.unsafeFromString),
+        ("Contract2", "0x2"->Address.unsafeFromString),
+        ("Contract3", "0x3"->Address.unsafeFromString),
+        ("Contract1", "0x4"->Address.unsafeFromString),
+        ("Contract2", "0x5"->Address.unsafeFromString),
+      ],
+      ~hasWildcard=false,
+      ~logger=Logging.logger,
+    )
+
+    Assert.deepEqual(
+      partitionedFetchState,
+      {
+        partitions: [
+          FetchState.make(
+            ~partitionId=0,
+            ~staticContracts=[
+              ("Contract1", "0x1"->Address.unsafeFromString),
+              ("Contract2", "0x2"->Address.unsafeFromString),
+            ],
+            ~dynamicContractRegistrations=[],
+            ~isFetchingAtHead=false,
+            ~kind=Normal,
+            ~logger=Logging.logger,
+            ~startBlock=0,
+          ),
+          FetchState.make(
+            ~partitionId=1,
+            ~staticContracts=[
+              ("Contract3", "0x3"->Address.unsafeFromString),
+              ("Contract1", "0x4"->Address.unsafeFromString),
+            ],
+            ~dynamicContractRegistrations=[],
+            ~isFetchingAtHead=false,
+            ~kind=Normal,
+            ~logger=Logging.logger,
+            ~startBlock=0,
+          ),
+          FetchState.make(
+            ~partitionId=2,
+            ~staticContracts=[("Contract2", "0x5"->Address.unsafeFromString)],
+            ~dynamicContractRegistrations=[contractRegistration1],
+            ~isFetchingAtHead=false,
+            ~kind=Normal,
+            ~logger=Logging.logger,
+            ~startBlock=0,
+          ),
+          FetchState.make(
+            ~partitionId=3,
+            ~staticContracts=[],
+            ~dynamicContractRegistrations=[contractRegistration2],
+            ~isFetchingAtHead=false,
+            ~kind=Normal,
+            ~logger=Logging.logger,
+            ~startBlock=0,
+          ),
+        ],
+        maxAddrInPartition: 2,
+        startBlock: 0,
+        endBlock: None,
+        logger: Logging.logger,
+      },
+      ~message="Create partitions for static contracts first, and then add dynamic contracts",
+    )
+  })
 
   it("Partition id never changes when adding new partitions", () => {
     let rootContractAddressMapping = ContractAddressingMap.make()
@@ -54,6 +230,7 @@ describe("PartitionedFetchState getMostBehindPartitions", () => {
 
     let fetchState0: FetchState.t = {
       partitionId: 0,
+      kind: Normal,
       baseRegister,
       isFetchingAtHead: false,
       pendingDynamicContracts: [],
@@ -123,6 +300,7 @@ describe("PartitionedFetchState getMostBehindPartitions", () => {
         fetchState0,
         {
           partitionId: 1,
+          kind: Normal,
           baseRegister: {
             registerType: RootRegister,
             latestFetchedBlock: {blockNumber: 0, blockTimestamp: 0},

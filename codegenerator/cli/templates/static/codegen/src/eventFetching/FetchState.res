@@ -119,8 +119,10 @@ type dynamicContractRegistration = {
   registeringEventChain: ChainMap.Chain.t,
   dynamicContracts: array<TablesStatic.DynamicContractRegistry.t>,
 }
+type kind = Normal | Wildcard
 type t = {
   partitionId: int,
+  kind: kind,
   baseRegister: register,
   pendingDynamicContracts: array<dynamicContractRegistration>,
   isFetchingAtHead: bool,
@@ -206,6 +208,7 @@ let copy = (self: t) => {
   let pendingDynamicContracts = self.pendingDynamicContracts->Array.copy
   {
     partitionId: self.partitionId,
+    kind: self.kind,
     baseRegister,
     pendingDynamicContracts,
     isFetchingAtHead: self.isFetchingAtHead,
@@ -523,7 +526,7 @@ Returns Error if the node with given id cannot be found (unexpected)
 newItems are ordered earliest to latest (as they are returned from the worker)
 */
 let update = (
-  {baseRegister, pendingDynamicContracts, isFetchingAtHead, partitionId}: t,
+  {baseRegister, pendingDynamicContracts, isFetchingAtHead, partitionId, kind}: t,
   ~id,
   ~latestFetchedBlock: blockNumberAndTimestamp,
   ~newItems,
@@ -539,6 +542,7 @@ let update = (
     let maybeMerged = withNewDynamicContracts->pruneAndMergeNextRegistered
     {
       partitionId,
+      kind,
       baseRegister: maybeMerged->Option.getWithDefault(withNewDynamicContracts),
       pendingDynamicContracts: [],
       isFetchingAtHead,
@@ -548,6 +552,7 @@ let update = (
 
 type nextQuery = {
   fetchStateRegisterId: id,
+  kind: kind,
   //used to id the partition of the fetchstate
   partitionId: int,
   fromBlock: int,
@@ -561,9 +566,10 @@ let getQueryLogger = (
 ) => {
   let fetchStateRegister = fetchStateRegisterId->registerIdToString
   let allAddresses = contractAddressMapping->ContractAddressingMap.getAllAddresses
-  let addresses = allAddresses->Js.Array2.slice(~start=0, ~end_=3)->Array.map(addr => addr->Address.toString)
+  let addresses =
+    allAddresses->Js.Array2.slice(~start=0, ~end_=3)->Array.map(addr => addr->Address.toString)
   let restCount = allAddresses->Array.length - addresses->Array.length
-   if restCount > 0 {
+  if restCount > 0 {
     addresses->Js.Array2.push(`... and ${restCount->Int.toString} more`)->ignore
   }
   let params = {
@@ -644,13 +650,14 @@ Gets the next query either with a to block
 of the nextRegistered latestBlockNumber to catch up and merge
 or None if we don't care about an end block of a query
 */
-let getNextQuery = ({baseRegister, partitionId}: t, ~endBlock) => {
+let getNextQuery = ({baseRegister, partitionId, kind}: t, ~endBlock) => {
   let fromBlock = getNextFromBlock(baseRegister)
   switch (baseRegister.registerType, endBlock) {
   | (RootRegister, Some(endBlock)) if fromBlock > endBlock => Done
   | (RootRegister, _) =>
     NextQuery({
       partitionId,
+      kind,
       fetchStateRegisterId: Root,
       fromBlock,
       toBlock: endBlock,
@@ -659,6 +666,7 @@ let getNextQuery = ({baseRegister, partitionId}: t, ~endBlock) => {
   | (DynamicContractRegister({id, nextRegister: {latestFetchedBlock}}), _) =>
     NextQuery({
       partitionId,
+      kind,
       fetchStateRegisterId: DynamicContract(id),
       fromBlock,
       toBlock: Some(latestFetchedBlock.blockNumber),
@@ -815,6 +823,7 @@ let make = (
   ~dynamicContractRegistrations: array<TablesStatic.DynamicContractRegistry.t>,
   ~startBlock,
   ~isFetchingAtHead,
+  ~kind=Normal,
   ~logger as _,
 ): t => {
   let contractAddressMapping = ContractAddressingMap.make()
@@ -856,6 +865,7 @@ let make = (
 
   {
     partitionId,
+    kind,
     baseRegister,
     pendingDynamicContracts: [],
     isFetchingAtHead,

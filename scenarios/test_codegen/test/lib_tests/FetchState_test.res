@@ -54,6 +54,7 @@ let getDynContractId = (
 
 let makeMockFetchState = (baseRegister, ~isFetchingAtHead=false) => {
   partitionId: 0,
+  kind: Normal,
   baseRegister,
   pendingDynamicContracts: [],
   isFetchingAtHead,
@@ -613,6 +614,7 @@ describe("FetchState.fetchState", () => {
 
     let fetchState = {
       partitionId: 0,
+      kind: Normal,
       baseRegister: root,
       pendingDynamicContracts: [],
       isFetchingAtHead: false,
@@ -621,8 +623,9 @@ describe("FetchState.fetchState", () => {
     Assert.deepEqual(
       fetchState->getNextQuery(~endBlock=None),
       NextQuery({
-        fetchStateRegisterId: Root,
         partitionId: 0,
+        kind: Normal,
+        fetchStateRegisterId: Root,
         fromBlock: root.latestFetchedBlock.blockNumber + 1,
         toBlock: None,
         contractAddressMapping: root.contractAddressMapping,
@@ -684,6 +687,7 @@ describe("FetchState.fetchState", () => {
 
     let fetchState = {
       partitionId: 0,
+      kind: Normal,
       baseRegister,
       pendingDynamicContracts: [],
       isFetchingAtHead: false,
