@@ -1,8 +1,8 @@
 let resolvePromiseAfterDelay = (~delayMilliseconds) => Utils.delay(delayMilliseconds)
 
 let rec retryAsyncWithExponentialBackOff = async (
-  ~backOffMillis=1000,
-  ~multiplicative=2,
+  ~backOffMillis=100,
+  ~multiplicative=4,
   ~retryCount=0,
   ~maxRetries=5,
   ~logger: option<Pino.t>=None,

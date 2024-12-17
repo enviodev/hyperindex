@@ -90,8 +90,8 @@ module LogsQuery = {
     {
       fromBlock,
       toBlockExclusive: ?switch toBlockInclusive {
-        | Some(toBlockInclusive) => Some(toBlockInclusive + 1)
-        | None => None
+      | Some(toBlockInclusive) => Some(toBlockInclusive + 1)
+      | None => None
       },
       receipts: recieptsSelection,
       fieldSelection: {
@@ -109,7 +109,7 @@ module LogsQuery = {
           Amount,
           ToAddress,
           AssetId,
-          To
+          To,
         ],
         block: [Id, Height, Time],
       },
@@ -201,7 +201,16 @@ module LogsQuery = {
       ~params={"type": "hypersync query", "fromBlock": fromBlock, "serverUrl": serverUrl},
     )
 
-    let executeQuery = () => hyperFuelClient->HyperFuelClient.getSelectedData(query)
+    let executeQuery = async () => {
+      let res = await hyperFuelClient->HyperFuelClient.getSelectedData(query)
+      if res.nextBlock <= fromBlock {
+        // Might happen when /height response was from another instance of HyperSync
+        Js.Exn.raiseError(
+          "Received page response from another instance of HyperSync. Should work after a retry.",
+        )
+      }
+      res
+    }
 
     let res = await executeQuery->Time.retryAsyncWithExponentialBackOff(~logger=Some(logger))
 
@@ -261,10 +270,11 @@ module BlockData = {
     // If the block is not found, retry the query. This can occur since replicas of hypersync might not hack caught up yet
     if res.nextBlock <= blockNumber {
       let logger = Logging.createChild(~params={"url": serverUrl})
+      let delayMilliseconds = 100
       logger->Logging.childWarn(
-        `Block #${blockNumber->Int.toString} not found in hypersync. HyperSync runs multiple instances of hypersync and it is possible that they drift independently slightly from the head. Retrying query in 100ms.`,
+        `Block #${blockNumber->Int.toString} not found in HyperSync. HyperSync has multiple instances and it's possible that they drift independently slightly from the head. Indexing should continue correctly after retrying the query in ${delayMilliseconds->Int.toString}ms.`,
       )
-      await Time.resolvePromiseAfterDelay(~delayMilliseconds=100)
+      await Time.resolvePromiseAfterDelay(~delayMilliseconds)
       await queryBlockData(~serverUrl, ~blockNumber, ~logger)
     } else {
       res->convertResponse
