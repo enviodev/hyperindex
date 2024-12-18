@@ -452,7 +452,12 @@ let createBatch = (self: t, ~maxBatchSize: int, ~onlyBelowReorgThreshold: bool) 
 let isFetchingAtHead = self =>
   self.chainFetchers
   ->ChainMap.values
-  ->Array.reduce(true, (accum, cf) => accum && cf->ChainFetcher.isFetchingAtHead)
+  ->Js.Array2.every(ChainFetcher.isFetchingAtHead)
+
+let isActivelyIndexing = self =>
+  self.chainFetchers
+  ->ChainMap.values
+  ->Js.Array2.every(ChainFetcher.isActivelyIndexing)
 
 let isPreRegisteringDynamicContracts = self =>
   self.chainFetchers

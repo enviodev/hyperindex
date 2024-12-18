@@ -229,6 +229,9 @@ let getEarliestEvent = (self: t) =>
     }
   })
 
+let isActivelyIndexing = (self: t) =>
+  self.partitions->Js.Array2.every(FetchState.isActivelyIndexing)
+
 let queueSize = ({partitions}: t) =>
   partitions->Array.reduce(0, (accum, partition) => accum + partition->FetchState.queueSize)
 

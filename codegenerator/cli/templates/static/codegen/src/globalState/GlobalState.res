@@ -1036,8 +1036,8 @@ let injectedTaskReducer = (
         //pre registration is done, we've hit the multichain reorg threshold
         //on the last batch and there are no items on the queue
         dispatchAction(StartIndexingAfterPreRegister)
-      | {val: None} if state.chainManager->ChainManager.isFetchingAtHead =>
-        //pre registration is done, there are no items on the queue and we are fetching at head
+      | {val: None} if state.chainManager->ChainManager.isFetchingAtHead || !(state.chainManager->ChainManager.isActivelyIndexing) =>
+        //pre registration is done, there are no items on the queue and we are fetching at head or reached the endBlock
         //this case is only hit if we are indexing chains with no reorg threshold
         dispatchAction(StartIndexingAfterPreRegister)
       | _ => () //Nothing to process and pre registration is not done
