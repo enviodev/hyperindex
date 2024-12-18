@@ -426,6 +426,9 @@ let getLastScannedBlockData = lastBlockData => {
 let isFetchingAtHead = (chainFetcher: t) =>
   chainFetcher.fetchState->PartitionedFetchState.isFetchingAtHead
 
+let isActivelyIndexing = (chainFetcher: t) =>
+  chainFetcher.fetchState->PartitionedFetchState.isActivelyIndexing
+
 let getFirstEventBlockNumber = (chainFetcher: t) =>
   Utils.Math.minOptInt(
     chainFetcher.dbFirstEventBlockNumber,
