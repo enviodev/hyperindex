@@ -315,7 +315,7 @@ module BlockData = {
     | None => {
         let logger = Logging.createChild(~params={"url": serverUrl})
         let delayMilliseconds = 100
-        logger->Logging.childWarn(
+        logger->Logging.childInfo(
           `Block #${blockNumber->Int.toString} not found in HyperSync. HyperSync has multiple instances and it's possible that they drift independently slightly from the head. Indexing should continue correctly after retrying the query in ${delayMilliseconds->Int.toString}ms.`,
         )
         await Time.resolvePromiseAfterDelay(~delayMilliseconds)

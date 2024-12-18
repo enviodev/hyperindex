@@ -206,7 +206,7 @@ module LogsQuery = {
       if res.nextBlock <= fromBlock {
         // Might happen when /height response was from another instance of HyperSync
         Js.Exn.raiseError(
-          "Received page response from another instance of HyperSync. Should work after a retry.",
+          "Received page response from another instance of HyperFuel. Should work after a retry.",
         )
       }
       res
@@ -271,8 +271,8 @@ module BlockData = {
     if res.nextBlock <= blockNumber {
       let logger = Logging.createChild(~params={"url": serverUrl})
       let delayMilliseconds = 100
-      logger->Logging.childWarn(
-        `Block #${blockNumber->Int.toString} not found in HyperSync. HyperSync has multiple instances and it's possible that they drift independently slightly from the head. Indexing should continue correctly after retrying the query in ${delayMilliseconds->Int.toString}ms.`,
+      logger->Logging.childInfo(
+        `Block #${blockNumber->Int.toString} not found in HyperFuel. HyperFuel has multiple instances and it's possible that they drift independently slightly from the head. Indexing should continue correctly after retrying the query in ${delayMilliseconds->Int.toString}ms.`,
       )
       await Time.resolvePromiseAfterDelay(~delayMilliseconds)
       await queryBlockData(~serverUrl, ~blockNumber, ~logger)
