@@ -245,8 +245,9 @@ module Schema = {
       items->Js.Array2.forEach(item => {
         switch item.schema->S.classify {
         // Check for null, since we generate S.null schema for db serializing
-        // In the future it should be changed to Option
+        // In the future it should be changed to Option only
         | Null(_) => ()
+        | Option(_) => ()
         | _ => acc->Js.Array2.push(item.location)->ignore
         }
       })
