@@ -427,7 +427,7 @@ let isFetchingAtHead = (chainFetcher: t) =>
   chainFetcher.partitionedFetchState->PartitionedFetchState.isFetchingAtHead
 
 let isActivelyIndexing = (chainFetcher: t) =>
-  chainFetcher.fetchState->PartitionedFetchState.isActivelyIndexing
+  chainFetcher.partitionedFetchState->PartitionedFetchState.isActivelyIndexing
 
 let getFirstEventBlockNumber = (chainFetcher: t) =>
   Utils.Math.minOptInt(
