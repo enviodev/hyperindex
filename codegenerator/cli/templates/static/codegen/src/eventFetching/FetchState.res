@@ -1113,11 +1113,11 @@ let rollback = (self: t, ~lastScannedBlock, ~firstChangeEvent) => {
 * Returns a boolean indicating whether the fetch state is actively indexing
 * used for comparing event queues in the chain manager
 */
-let isActivelyIndexing = ({baseRegister}: t) => {
+let isActivelyIndexing = ({baseRegister} as fetchState: t) => {
   // nesting to limit additional unnecessary computation
   switch baseRegister.registerType {
   | RootRegister({endBlock: Some(endBlock)}) =>
-    let isPastEndblock = baseRegister.latestFetchedBlock.blockNumber >= endBlock
+    let isPastEndblock = getLatestFullyFetchedBlock(fetchState).blockNumber >= endBlock
     if isPastEndblock {
       baseRegister->registerQueueSize > 0
     } else {
