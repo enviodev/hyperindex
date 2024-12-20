@@ -14,11 +14,6 @@ type id = {
   fetchStateId: FetchState.id,
 }
 
-type partition = {
-  fetchState: FetchState.t,
-  partitionId: partitionId,
-}
-
 let make = (
   ~maxAddrInPartition,
   ~endBlock,
@@ -33,10 +28,10 @@ let make = (
 
   if numAddresses <= maxAddrInPartition {
     let partition = FetchState.make(
+      ~partitionId=partitions->Array.length,
       ~staticContracts,
       ~dynamicContractRegistrations,
       ~startBlock,
-      ~endBlock,
       ~logger,
       ~isFetchingAtHead=false,
     )
@@ -50,10 +45,10 @@ let make = (
         staticContractsClone->Js.Array2.removeCountInPlace(~pos=0, ~count=maxAddrInPartition)
 
       let staticContractPartition = FetchState.make(
+        ~partitionId=partitions->Array.length,
         ~staticContracts=staticContractsChunk,
         ~dynamicContractRegistrations=[],
         ~startBlock,
-        ~endBlock,
         ~logger,
         ~isFetchingAtHead=false,
       )
@@ -65,13 +60,13 @@ let make = (
     //Add the rest of the static addresses filling the remainder of the partition with dynamic contract
     //registrations
     let remainingStaticContractsWithDynamicPartition = FetchState.make(
+      ~partitionId=partitions->Array.length,
       ~staticContracts=staticContractsClone,
       ~dynamicContractRegistrations=dynamicContractRegistrationsClone->Js.Array2.removeCountInPlace(
         ~pos=0,
         ~count=maxAddrInPartition - staticContractsClone->Array.length,
       ),
       ~startBlock,
-      ~endBlock,
       ~logger,
       ~isFetchingAtHead=false,
     )
@@ -86,10 +81,10 @@ let make = (
         )
 
       let dynamicContractPartition = FetchState.make(
+        ~partitionId=partitions->Array.length,
         ~staticContracts=[],
         ~dynamicContractRegistrations=dynamicContractRegistrationsChunk,
         ~startBlock,
-        ~endBlock,
         ~logger,
         ~isFetchingAtHead=false,
       )
@@ -134,8 +129,8 @@ let registerDynamicContracts = (
     partitions->Utils.Array.setIndexImmutable(newestPartitionIndex, updated)
   } else {
     let newPartition = FetchState.make(
+      ~partitionId=partitions->Array.length,
       ~startBlock,
-      ~endBlock,
       ~logger,
       ~staticContracts=[],
       ~dynamicContractRegistrations=dynamicContractRegistration.dynamicContracts,
@@ -191,17 +186,10 @@ let getReadyPartitions = (
 ) => {
   let numPartitions = allPartitions->Array.length
   let maxPartitionQueueSize = maxPerChainQueueSize / numPartitions
-
-  let readyPartitions = []
-  allPartitions->Belt.Array.forEachWithIndex((partitionId, fetchState) => {
-    if (
-      !(fetchingPartitions->Utils.Set.has(partitionId)) &&
+  allPartitions->Js.Array2.filter(fetchState => {
+    !(fetchingPartitions->Utils.Set.has(fetchState.partitionId)) &&
       fetchState->FetchState.isReadyForNextQuery(~maxQueueSize=maxPartitionQueueSize)
-    ) {
-      readyPartitions->Js.Array2.push({fetchState, partitionId})->ignore
-    }
   })
-  readyPartitions
 }
 
 /**
@@ -218,7 +206,7 @@ let rollback = (self: t, ~lastScannedBlock, ~firstChangeEvent) => {
 let getEarliestEvent = (self: t) =>
   self.partitions->Array.reduce(None, (accum, fetchState) => {
     // If the fetch state has reached the end block we don't need to consider it
-    if fetchState->FetchState.isActivelyIndexing {
+    if fetchState->FetchState.isActivelyIndexing(~endBlock=self.endBlock) {
       let nextItem = fetchState->FetchState.getEarliestEvent
       switch accum {
       | Some(accumItem) if FetchState.qItemLt(accumItem, nextItem) => accum
@@ -230,7 +218,7 @@ let getEarliestEvent = (self: t) =>
   })
 
 let isActivelyIndexing = (self: t) =>
-  self.partitions->Js.Array2.every(FetchState.isActivelyIndexing)
+  self.partitions->Js.Array2.every(fs => fs->FetchState.isActivelyIndexing(~endBlock=self.endBlock))
 
 let queueSize = ({partitions}: t) =>
   partitions->Array.reduce(0, (accum, partition) => accum + partition->FetchState.queueSize)

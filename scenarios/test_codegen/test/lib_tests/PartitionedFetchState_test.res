@@ -21,7 +21,7 @@ describe("PartitionedFetchState getMostBehindPartitions", () => {
     }
 
     let rootRegister: FetchState.register = {
-      registerType: RootRegister({endBlock: None}),
+      registerType: RootRegister,
       latestFetchedBlock: {
         blockNumber: 100,
         blockTimestamp: 100 * 15,
@@ -53,6 +53,7 @@ describe("PartitionedFetchState getMostBehindPartitions", () => {
     }
 
     let fetchState0: FetchState.t = {
+      partitionId: 0,
       baseRegister,
       isFetchingAtHead: false,
       pendingDynamicContracts: [],
@@ -75,12 +76,7 @@ describe("PartitionedFetchState getMostBehindPartitions", () => {
         ~maxPerChainQueueSize=10,
         ~fetchingPartitions=Utils.Set.make(),
       ),
-      [
-        {
-          partitionId: 0,
-          fetchState: fetchState0,
-        },
-      ],
+      [fetchState0],
       ~message="Should have only one partition with id 0",
     )
 
@@ -124,32 +120,27 @@ describe("PartitionedFetchState getMostBehindPartitions", () => {
         ~fetchingPartitions=Utils.Set.make(),
       ),
       [
-        {
-          partitionId: 0,
-          fetchState: fetchState0,
-        },
+        fetchState0,
         {
           partitionId: 1,
-          fetchState: {
-            baseRegister: {
-              registerType: RootRegister({endBlock: None}),
-              latestFetchedBlock: {blockNumber: 0, blockTimestamp: 0},
-              contractAddressMapping: ContractAddressingMap.fromArray([
-                (TestHelpers.Addresses.mockAddresses[5]->Option.getExn, "Gravatar"),
-              ]),
-              fetchedEventQueue: [],
-              dynamicContracts: FetchState.DynamicContractsMap.empty->FetchState.DynamicContractsMap.addAddress(
-                {
-                  blockNumber: 10,
-                  logIndex: 0,
-                },
-                TestHelpers.Addresses.mockAddresses[5]->Option.getExn,
-              ),
-              firstEventBlockNumber: None,
-            },
-            pendingDynamicContracts: [],
-            isFetchingAtHead: false,
+          baseRegister: {
+            registerType: RootRegister,
+            latestFetchedBlock: {blockNumber: 0, blockTimestamp: 0},
+            contractAddressMapping: ContractAddressingMap.fromArray([
+              (TestHelpers.Addresses.mockAddresses[5]->Option.getExn, "Gravatar"),
+            ]),
+            fetchedEventQueue: [],
+            dynamicContracts: FetchState.DynamicContractsMap.empty->FetchState.DynamicContractsMap.addAddress(
+              {
+                blockNumber: 10,
+                logIndex: 0,
+              },
+              TestHelpers.Addresses.mockAddresses[5]->Option.getExn,
+            ),
+            firstEventBlockNumber: None,
           },
+          pendingDynamicContracts: [],
+          isFetchingAtHead: false,
         },
       ],
       ~message="Should have a new partition with id 1",
