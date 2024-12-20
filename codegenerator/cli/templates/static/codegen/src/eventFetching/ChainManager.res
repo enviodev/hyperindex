@@ -326,8 +326,8 @@ let getFetchStateWithData = (self: t, ~shouldDeepCopy=false): ChainMap.t<fetchSt
   self.chainFetchers->ChainMap.map(cf => {
     {
       partitionedFetchState: shouldDeepCopy
-        ? cf.fetchState->PartitionedFetchState.copy
-        : cf.fetchState,
+        ? cf.partitionedFetchState->PartitionedFetchState.copy
+        : cf.partitionedFetchState,
       heighestBlockBelowThreshold: cf->ChainFetcher.getHeighestBlockBelowThreshold,
     }
   })
@@ -417,7 +417,7 @@ let createBatch = (self: t, ~maxBatchSize: int, ~onlyBelowReorgThreshold: bool) 
       ->ChainMap.values
       ->Array.map(fetcher => (
         fetcher.chainConfig.chain->ChainMap.Chain.toString,
-        fetcher.fetchState->PartitionedFetchState.queueSize,
+        fetcher.partitionedFetchState->PartitionedFetchState.queueSize,
       ))
       ->Array.concat([("arbitrary", self.arbitraryEventQueue->Array.length)])
       ->Js.Dict.fromArray

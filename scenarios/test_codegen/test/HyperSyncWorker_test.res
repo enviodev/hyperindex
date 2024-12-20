@@ -71,7 +71,7 @@ describe("HyperSyncWorker - getNextPage", () => {
         ~toBlock=2,
         ~logger=Logging.logger,
         ~contractAddressMapping=ContractAddressingMap.make(),
-        ~shouldApplyWildcards=true,
+        ~kind=Normal,
         ~isPreRegisteringDynamicContracts=false,
       )
 
@@ -120,7 +120,7 @@ describe("HyperSyncWorker - getNextPage", () => {
         ~toBlock=2,
         ~logger=Logging.logger,
         ~contractAddressMapping=ContractAddressingMap.make(),
-        ~shouldApplyWildcards=true,
+        ~kind=Normal,
         ~isPreRegisteringDynamicContracts=false,
       )
 

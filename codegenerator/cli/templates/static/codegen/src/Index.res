@@ -71,9 +71,9 @@ let makeAppState = (globalState: GlobalState.t): EnvioInkApp.appState => {
     globalState.chainManager.chainFetchers
     ->ChainMap.values
     ->Array.map(cf => {
-      let {numEventsProcessed, fetchState, numBatchesFetched} = cf
+      let {numEventsProcessed, partitionedFetchState, numBatchesFetched} = cf
       let latestFetchedBlockNumber = PartitionedFetchState.getLatestFullyFetchedBlock(
-        fetchState,
+        partitionedFetchState,
       ).blockNumber
       let hasProcessedToEndblock = cf->ChainFetcher.hasProcessedToEndblock
       let currentBlockHeight =

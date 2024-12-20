@@ -48,6 +48,19 @@ let shouldPreRegisterDynamicContracts = (chainConfig: chainConfig) => {
   })
 }
 
+let hasWildcard = (chainConfig: chainConfig) => {
+  chainConfig.contracts->Array.some(contract => {
+    contract.events->Array.some(event => {
+      let module(Event) = event
+
+      let {isWildcard} =
+        Event.handlerRegister->Types.HandlerTypes.Register.getEventOptions
+
+      isWildcard
+    })
+  })
+}
+
 type historyFlag = FullHistory | MinHistory
 type rollbackFlag = RollbackOnReorg | NoRollback
 type historyConfig = {rollbackFlag: rollbackFlag, historyFlag: historyFlag}

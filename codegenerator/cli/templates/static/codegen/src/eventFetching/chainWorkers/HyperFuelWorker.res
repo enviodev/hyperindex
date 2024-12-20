@@ -98,46 +98,17 @@ let makeWorkerConfigOrThrow = (~contracts: array<Internal.fuelContractConfig>, ~
   }
 }
 
-let makeGetRecieptsSelection = (
-  ~wildcardLogDataRbs,
+let logDataReceiptTypeSelection: array<Fuel.receiptType> = [LogData]
+
+// only transactions with status 1 (success)
+let txStatusSelection = [1]
+
+let makeGetNormalRecieptsSelection = (
   ~nonWildcardLogDataRbsByContract,
   ~nonLogDataReceiptTypesByContract,
-  ~nonLogDataWildcardReceiptTypes,
   ~contracts: array<Internal.fuelContractConfig>,
 ) => {
-  let logDataReceiptTypeSelection: array<Fuel.receiptType> = [LogData]
-
-  // only transactions with status 1 (success)
-  let txStatusSelection = [1]
-
-  let maybeWildcardNonLogDataSelection = switch nonLogDataWildcardReceiptTypes {
-  | [] => None
-  | nonLogDataWildcardReceiptTypes =>
-    Some(
-      (
-        {
-          receiptType: nonLogDataWildcardReceiptTypes,
-          txStatus: txStatusSelection,
-        }: HyperFuelClient.QueryTypes.receiptSelection
-      ),
-    )
-  }
-
-  let maybeWildcardLogDataSelection = switch wildcardLogDataRbs {
-  | [] => None
-  | wildcardLogDataRbs =>
-    Some(
-      (
-        {
-          receiptType: logDataReceiptTypeSelection,
-          txStatus: txStatusSelection,
-          rb: wildcardLogDataRbs,
-        }: HyperFuelClient.QueryTypes.receiptSelection
-      ),
-    )
-  }
-
-  (~contractAddressMapping, ~shouldApplyWildcards) => {
+  (~contractAddressMapping) => {
     let selection: array<HyperFuelClient.QueryTypes.receiptSelection> = []
 
     //Instantiate each time to add new registered contract addresses
@@ -179,25 +150,45 @@ let makeGetRecieptsSelection = (
       }
     })
 
-    if shouldApplyWildcards {
-      switch maybeWildcardNonLogDataSelection {
-      | None => ()
-      | Some(wildcardNonLogDataSelection) =>
-        selection
-        ->Array.push(wildcardNonLogDataSelection)
-        ->ignore
-      }
-      switch maybeWildcardLogDataSelection {
-      | None => ()
-      | Some(wildcardLogSelection) =>
-        selection
-        ->Array.push(wildcardLogSelection)
-        ->ignore
-      }
-    }
-
     selection
   }
+}
+
+let makeWildcardRecieptsSelection = (~wildcardLogDataRbs, ~nonLogDataWildcardReceiptTypes) => {
+  let selection: array<HyperFuelClient.QueryTypes.receiptSelection> = []
+
+  switch nonLogDataWildcardReceiptTypes {
+  | [] => ()
+  | nonLogDataWildcardReceiptTypes =>
+    selection
+    ->Js.Array2.push(
+      (
+        {
+          receiptType: nonLogDataWildcardReceiptTypes,
+          txStatus: txStatusSelection,
+        }: HyperFuelClient.QueryTypes.receiptSelection
+      ),
+    )
+    ->ignore
+  }
+
+  switch wildcardLogDataRbs {
+  | [] => ()
+  | wildcardLogDataRbs =>
+    selection
+    ->Js.Array2.push(
+      (
+        {
+          receiptType: logDataReceiptTypeSelection,
+          txStatus: txStatusSelection,
+          rb: wildcardLogDataRbs,
+        }: HyperFuelClient.QueryTypes.receiptSelection
+      ),
+    )
+    ->ignore
+  }
+
+  selection
 }
 
 module Make = (
@@ -264,12 +255,15 @@ module Make = (
     )
   }
 
-  let getRecieptsSelection = makeGetRecieptsSelection(
-    ~wildcardLogDataRbs=workerConfig.wildcardLogDataRbs,
+  let getNormalRecieptsSelection = makeGetNormalRecieptsSelection(
     ~nonWildcardLogDataRbsByContract=workerConfig.nonWildcardLogDataRbsByContract,
     ~nonLogDataReceiptTypesByContract=workerConfig.nonLogDataReceiptTypesByContract,
-    ~nonLogDataWildcardReceiptTypes=workerConfig.nonLogDataWildcardReceiptTypes,
     ~contracts=T.contracts,
+  )
+
+  let wildcardReceiptsSelection = makeWildcardRecieptsSelection(
+    ~nonLogDataWildcardReceiptTypes=workerConfig.nonLogDataWildcardReceiptTypes,
+    ~wildcardLogDataRbs=workerConfig.wildcardLogDataRbs,
   )
 
   let getNextPage = async (
@@ -277,7 +271,7 @@ module Make = (
     ~toBlock,
     ~logger,
     ~contractAddressMapping,
-    ~shouldApplyWildcards,
+    ~kind: FetchState.kind,
     ~isPreRegisteringDynamicContracts,
   ) => {
     //Instantiate each time to add new registered contract addresses
@@ -285,7 +279,10 @@ module Make = (
       //TODO: create receipt selections for dynamic contract preregistration
       Js.Exn.raiseError("HyperFuel does not support pre registering dynamic contracts yet")
     } else {
-      getRecieptsSelection(~contractAddressMapping, ~shouldApplyWildcards)
+      switch kind {
+      | Normal => getNormalRecieptsSelection(~contractAddressMapping)
+      | Wildcard => wildcardReceiptsSelection
+      }
     }
 
     let startFetchingBatchTimeRef = Hrtime.makeTimer()
@@ -311,7 +308,14 @@ module Make = (
   ) => {
     let mkLogAndRaise = ErrorHandling.mkLogAndRaise(~logger, ...)
     try {
-      let {fetchStateRegisterId, partitionId, fromBlock, contractAddressMapping, toBlock} = query
+      let {
+        fetchStateRegisterId,
+        partitionId,
+        fromBlock,
+        contractAddressMapping,
+        toBlock,
+        kind,
+      } = query
       let startFetchingBatchTimeRef = Hrtime.makeTimer()
       //fetch batch
       let {page: pageUnsafe, pageFetchTime} = await getNextPage(
@@ -319,9 +323,7 @@ module Make = (
         ~toBlock,
         ~contractAddressMapping,
         ~logger,
-        //Only apply wildcards on the first partition and root register
-        //to avoid duplicate wildcard queries
-        ~shouldApplyWildcards=fetchStateRegisterId == Root && partitionId == 0,
+        ~kind,
         ~isPreRegisteringDynamicContracts,
       )
 
@@ -530,7 +532,7 @@ module Make = (
       let stats = {
         totalTimeElapsed,
         parsingTimeElapsed,
-        pageFetchTime
+        pageFetchTime,
       }
 
       {

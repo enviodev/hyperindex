@@ -121,12 +121,8 @@ let makeGetNextPage = (
     })
   })
 
-  let getLogSelectionOrThrow = (~contractAddressMapping, ~shouldApplyWildcards): array<
-    LogSelection.t,
-  > => {
-    let nonWildcardLogSelection = contracts->Belt.Array.keepMap((contract): option<
-      LogSelection.t,
-    > => {
+  let getNormalLogSelectionOrThrow = (~contractAddressMapping): array<LogSelection.t> => {
+    contracts->Belt.Array.keepMap((contract): option<LogSelection.t> => {
       switch contractAddressMapping->ContractAddressingMap.getAddressesFromContractName(
         ~contractName=contract.name,
       ) {
@@ -144,10 +140,6 @@ let makeGetNextPage = (
         }
       }
     })
-
-    shouldApplyWildcards
-      ? nonWildcardLogSelection->Array.concat(wildcardLogSelection)
-      : nonWildcardLogSelection
   }
 
   async (
@@ -155,7 +147,7 @@ let makeGetNextPage = (
     ~toBlock,
     ~logger,
     ~contractAddressMapping,
-    ~shouldApplyWildcards,
+    ~kind: FetchState.kind,
     ~isPreRegisteringDynamicContracts,
   ) => {
     //Instantiate each time to add new registered contract addresses
@@ -168,7 +160,10 @@ let makeGetNextPage = (
       if isPreRegisteringDynamicContracts {
         getContractPreRegistrationLogSelection(~contractAddressMapping)
       } else {
-        getLogSelectionOrThrow(~contractAddressMapping, ~shouldApplyWildcards)
+        switch kind {
+        | Normal => getNormalLogSelectionOrThrow(~contractAddressMapping)
+        | Wildcard => wildcardLogSelection
+        }
       }
     } catch {
     | exn =>
@@ -295,17 +290,22 @@ module Make = (
   ) => {
     let mkLogAndRaise = ErrorHandling.mkLogAndRaise(~logger, ...)
     try {
-      let {fetchStateRegisterId, partitionId, fromBlock, contractAddressMapping, toBlock} = query
+      let {
+        fetchStateRegisterId,
+        partitionId,
+        fromBlock,
+        contractAddressMapping,
+        toBlock,
+        kind,
+      } = query
       let startFetchingBatchTimeRef = Hrtime.makeTimer()
-      //fetch batch
+
       let {page: pageUnsafe, contractInterfaceManager, pageFetchTime} = await getNextPage(
         ~fromBlock,
         ~toBlock,
         ~contractAddressMapping,
         ~logger,
-        //Only apply wildcards on the first partition and root register
-        //to avoid duplicate wildcard queries
-        ~shouldApplyWildcards=fetchStateRegisterId == Root && partitionId == 0, //only
+        ~kind,
         ~isPreRegisteringDynamicContracts,
       )
 
@@ -476,7 +476,11 @@ module Make = (
           | Some(eventMod) =>
             let module(Event) = eventMod
 
-            switch contractInterfaceManager->ContractInterfaceManager.parseLogViemOrThrow(~address=log.address, ~topics=log.topics, ~data=log.data) {
+            switch contractInterfaceManager->ContractInterfaceManager.parseLogViemOrThrow(
+              ~address=log.address,
+              ~topics=log.topics,
+              ~data=log.data,
+            ) {
             | exception exn =>
               handleDecodeFailure(
                 ~eventMod,
