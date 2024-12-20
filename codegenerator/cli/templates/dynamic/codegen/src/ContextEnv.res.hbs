@@ -65,10 +65,8 @@ let makeDynamicContractId = (~chainId, ~contractAddress) => {
   chainId->Belt.Int.toString ++ "-" ++ contractAddress->Address.toString
 }
 let makeDynamicContractRegisterFn = (
-  ~contextEnv: t,
   ~contractName,
-  ~inMemoryStore,
-  ~shouldSaveHistory,
+  ~onRegister,
 ) => (contractAddress: Address.t) => {
   {{#if is_evm_ecosystem}} {{!-- TODO: Add validation for Fuel --}}
   // Even though it's the Address.t type on ReScript side, for TS side it's a string.
@@ -76,41 +74,7 @@ let makeDynamicContractRegisterFn = (
   let contractAddress = contractAddress->Address.Evm.fromAddressOrThrow
   {{/if}}
 
-  let {eventItem, addedDynamicContractRegistrations} = contextEnv
-  let {chain, timestamp, blockNumber, logIndex} = eventItem
-
-  let chainId = chain->ChainMap.Chain.toChainId
-  let dynamicContractRegistration: TablesStatic.DynamicContractRegistry.t = {
-    id: makeDynamicContractId(~chainId, ~contractAddress),
-    chainId,
-    registeringEventBlockNumber: blockNumber,
-    registeringEventLogIndex: logIndex,
-    registeringEventName: eventItem.eventName,
-    registeringEventContractName: eventItem.contractName,
-    registeringEventSrcAddress: eventItem.event.srcAddress,
-    registeringEventBlockTimestamp: timestamp,
-    contractAddress,
-    contractType: contractName,
-  }
-
-  addedDynamicContractRegistrations->Js.Array2.push(dynamicContractRegistration)->ignore
-
-  let eventIdentifier: Types.eventIdentifier = {
-    chainId,
-    blockTimestamp: timestamp,
-    blockNumber,
-    logIndex,
-  }
-
-  inMemoryStore.InMemoryStore.entities
-  ->InMemoryStore.EntityTables.get(module(TablesStatic.DynamicContractRegistry))
-  ->InMemoryTable.Entity.set(
-    Set(dynamicContractRegistration)->Types.mkEntityUpdate(
-      ~eventIdentifier,
-      ~entityId=dynamicContractRegistration.id,
-    ),
-    ~shouldSaveHistory,
-  )
+  onRegister(~contractName, ~contractAddress)
 }
 
 let makeWhereLoader = (
@@ -158,10 +122,10 @@ let makeEntityHandlerContext = (
   }
 }
 
-let getContractRegisterContext = (contextEnv, ~inMemoryStore, ~shouldSaveHistory) => {
-  //TODO only add contracts we've registered for the event in the config
+let getContractRegisterContext = (contextEnv: t, ~onRegister) => {
+  // TODO: only add contracts we've registered for the event in the config
   {{#each codegen_contracts as |contract| }}
-  add{{contract.name.capitalized}}:  makeDynamicContractRegisterFn(~contextEnv, ~inMemoryStore, ~contractName={{contract.name.capitalized}}, ~shouldSaveHistory),
+  add{{contract.name.capitalized}}:  makeDynamicContractRegisterFn(~contractName=({{contract.name.capitalized}}: Enums.ContractType.t), ~onRegister),
   {{/each}}
 }->(Utils.magic: Types.contractRegistrations => Internal.contractRegisterContext)
 
@@ -217,9 +181,9 @@ let getHandlerContext = (
   }->(Utils.magic: Types.handlerContext => Internal.handlerContext)
 }
 
-let getContractRegisterArgs = (contextEnv, ~inMemoryStore, ~shouldSaveHistory): Internal.contractRegisterArgs => {
+let getContractRegisterArgs = (contextEnv, ~onRegister): Internal.contractRegisterArgs => {
   event: contextEnv.eventItem.event,
-  context: contextEnv->getContractRegisterContext(~inMemoryStore, ~shouldSaveHistory),
+  context: contextEnv->getContractRegisterContext(~onRegister),
 }
 
 let getLoaderArgs = (contextEnv, ~inMemoryStore, ~loadLayer): Internal.loaderArgs => {

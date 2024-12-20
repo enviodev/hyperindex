@@ -352,10 +352,30 @@ let handleBlockRangeResponse = (state, ~chain, ~response: ChainWorker.blockRange
       Prometheus.incrementReorgsDetected(~chain)
     }
 
+    // This function is used to ensure that registering an alreday existing contract as a dynamic contract can't cause issues.
+    let checkContractIsRegistered = (
+      ~chain,
+      ~contractAddress,
+      ~contractName: Enums.ContractType.t,
+    ) => {
+      chainFetcher.fetchState->PartitionedFetchState.checkContainsRegisteredContractAddress(
+        ~contractAddress,
+        ~contractName=(contractName :> string),
+        ~chainId=chain->ChainMap.Chain.toChainId,
+      )
+    }
+
+    let dynamicContractRegistrations =
+      parsedQueueItems->EventProcessing.registerDynamicContracts2(
+        ~checkContractIsRegistered,
+        ~logger=chainFetcher.logger,
+      )
+
     let updatedChainFetcher =
       chainFetcher
       ->ChainFetcher.updateFetchState(
         ~currentBlockHeight,
+        ~dynamicContractRegistrations,
         ~latestFetchedBlockTimestamp,
         ~latestFetchedBlockNumber=heighestQueriedBlockNumber,
         ~fetchedEvents=parsedQueueItems,
@@ -536,18 +556,21 @@ let actionReducer = (state: t, action: action) => {
         acc && isContractWithinSyncedRanged
       })
 
-      let (isFetchingAtHead, timestampCaughtUpToHeadOrEndblock) = areDynamicContractsWithinSyncRange
+      let (
+        _isFetchingAtHead,
+        timestampCaughtUpToHeadOrEndblock,
+      ) = areDynamicContractsWithinSyncRange
         ? (
             currentChainFetcher->ChainFetcher.isFetchingAtHead,
             currentChainFetcher.timestampCaughtUpToHeadOrEndblock,
           )
         : (false, None)
 
-      let updatedFetchState =
-        currentChainFetcher.fetchState->PartitionedFetchState.registerDynamicContracts(
-          registration,
-          ~isFetchingAtHead,
-        )
+      let updatedFetchState = currentChainFetcher.fetchState
+      // currentChainFetcher.fetchState->PartitionedFetchState.registerDynamicContracts(
+      //   registration,
+      //   ~isFetchingAtHead,
+      // ) // FIXME: Remove
 
       let updatedChainFetcher = {
         ...currentChainFetcher,
@@ -837,17 +860,20 @@ let checkAndFetchForChain = (
 
     await chainFetcher.sourceManager->SourceManager.fetchBatch(
       ~allPartitions=fetchState.partitions,
-      ~waitForNewBlock=(~currentBlockHeight, ~logger) => chainWorker->waitForNewBlock(~currentBlockHeight, ~logger),
-      ~onNewBlock=(~currentBlockHeight) => dispatchAction(FinishWaitingForNewBlock({chain, currentBlockHeight})),
+      ~waitForNewBlock=(~currentBlockHeight, ~logger) =>
+        chainWorker->waitForNewBlock(~currentBlockHeight, ~logger),
+      ~onNewBlock=(~currentBlockHeight) =>
+        dispatchAction(FinishWaitingForNewBlock({chain, currentBlockHeight})),
       ~currentBlockHeight,
-      ~executePartitionQuery=query => query->executePartitionQuery(
-        ~logger,
-        ~chainWorker,
-        ~currentBlockHeight,
-        ~chain,
-        ~dispatchAction,
-        ~isPreRegisteringDynamicContracts=state.chainManager->ChainManager.isPreRegisteringDynamicContracts,
-      ),
+      ~executePartitionQuery=query =>
+        query->executePartitionQuery(
+          ~logger,
+          ~chainWorker,
+          ~currentBlockHeight,
+          ~chain,
+          ~dispatchAction,
+          ~isPreRegisteringDynamicContracts=state.chainManager->ChainManager.isPreRegisteringDynamicContracts,
+        ),
       ~maxPerChainQueueSize=state.maxPerChainQueueSize,
       ~setMergedPartitions=partitions => dispatchAction(SetUpdatedPartitions(chain, partitions)),
       ~stateId=state.id,

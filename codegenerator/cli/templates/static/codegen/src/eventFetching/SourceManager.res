@@ -95,7 +95,9 @@ let fetchBatch = async (
         switch allPartitionsFetchingState->Belt.Array.get(partitionId) {
         // Deduplicate queries when fetchBatch is called after
         // isFetching was set to false, but state isn't updated with fetched data
-        | Some({lastFetchedQueryId}) if lastFetchedQueryId === toQueryId(nextQuery) => None
+        | Some({lastFetchedQueryId}) if lastFetchedQueryId === toQueryId(nextQuery) => {
+          None
+        }
         | _ => {
             let {fromBlock, toBlock} = nextQuery
             if fromBlock > currentBlockHeight {
@@ -139,6 +141,7 @@ let fetchBatch = async (
         onNewBlock(~currentBlockHeight)
       }
     | (queries, _) =>
+      Js.log4("PARTITIONS", allPartitions->Js.Array2.map(fs => fs.baseRegister.latestFetchedBlock.blockNumber), sourceManager.fetchingPartitionsCount, queries->Js.Array2.length)
       let maxQueriesNumber = maxPartitionConcurrency - sourceManager.fetchingPartitionsCount
       if maxQueriesNumber > 0 {
         let slicedQueries = if queries->Js.Array2.length > maxQueriesNumber {

@@ -132,9 +132,45 @@ let runEventContractRegister = (
 
   let contextEnv = ContextEnv.make(~eventItem, ~logger)
 
-  switch contractRegister(
-    contextEnv->ContextEnv.getContractRegisterArgs(~inMemoryStore, ~shouldSaveHistory),
-  ) {
+  let onRegister = (~contractName, ~contractAddress) => {
+    let {eventItem, addedDynamicContractRegistrations} = contextEnv
+    let {chain, timestamp, blockNumber, logIndex} = eventItem
+
+    let chainId = chain->ChainMap.Chain.toChainId
+    let dynamicContractRegistration: TablesStatic.DynamicContractRegistry.t = {
+      id: ContextEnv.makeDynamicContractId(~chainId, ~contractAddress),
+      chainId,
+      registeringEventBlockNumber: blockNumber,
+      registeringEventLogIndex: logIndex,
+      registeringEventName: eventItem.eventName,
+      registeringEventContractName: eventItem.contractName,
+      registeringEventSrcAddress: eventItem.event.srcAddress,
+      registeringEventBlockTimestamp: timestamp,
+      contractAddress,
+      contractType: contractName,
+    }
+
+    addedDynamicContractRegistrations->Js.Array2.push(dynamicContractRegistration)->ignore
+
+    let eventIdentifier: Types.eventIdentifier = {
+      chainId,
+      blockTimestamp: timestamp,
+      blockNumber,
+      logIndex,
+    }
+
+    inMemoryStore.InMemoryStore.entities
+    ->InMemoryStore.EntityTables.get(module(TablesStatic.DynamicContractRegistry))
+    ->InMemoryTable.Entity.set(
+      Set(dynamicContractRegistration)->Types.mkEntityUpdate(
+        ~eventIdentifier,
+        ~entityId=dynamicContractRegistration.id,
+      ),
+      ~shouldSaveHistory,
+    )
+  }
+
+  switch contractRegister(contextEnv->ContextEnv.getContractRegisterArgs(~onRegister)) {
   | exception exn =>
     exn
     ->ErrorHandling.make(
@@ -177,6 +213,7 @@ let runEventContractRegister = (
       )->Some
     }
 
+    // FIXME: Make it work
     switch preRegisterLatestProcessedBlocks {
     | Some(latestProcessedBlocks) =>
       eventItem->updateEventSyncState(~inMemoryStore, ~isPreRegisteringDynamicContracts=true)
@@ -336,15 +373,16 @@ let runHandler = async (
 ) => {
   let result = switch eventItem.handler {
   | None => Ok()
-  | Some(handler) =>
-    await eventItem->runEventHandler(
-      ~loader=eventItem.loader,
-      ~handler,
-      ~inMemoryStore,
-      ~logger,
-      ~loadLayer,
-      ~shouldSaveHistory=config->Config.shouldSaveHistory(~isInReorgThreshold),
-    )
+  | Some(_handler) =>
+    // await eventItem->runEventHandler(
+    //   ~loader=eventItem.loader,
+    //   ~handler,
+    //   ~inMemoryStore,
+    //   ~logger,
+    //   ~loadLayer,
+    //   ~shouldSaveHistory=config->Config.shouldSaveHistory(~isInReorgThreshold),
+    // )
+    Ok()
   }
 
   result->Result.map(() => {
@@ -366,6 +404,89 @@ let addToUnprocessedBatch = (eventItem: Internal.eventItem, dynamicContractRegis
     ...dynamicContractRegistrations,
     unprocessedBatch: [...dynamicContractRegistrations.unprocessedBatch, eventItem],
   }
+}
+
+let rec registerDynamicContracts2 = (
+  eventBatch: array<Internal.eventItem>,
+  ~checkContractIsRegistered,
+  ~logger,
+) => {
+  let dynamicContractRegistrations = []
+
+  for idx in 0 to eventBatch->Js.Array2.length - 1 {
+    let eventItem = eventBatch->Js.Array2.unsafe_get(idx)
+    switch eventItem.contractRegister {
+    | Some(contractRegister) =>
+      let dynamicContracts = []
+      let contextEnv = ContextEnv.make(~eventItem, ~logger)
+      let onRegister = (~contractName, ~contractAddress) => {
+        let {chain, timestamp, blockNumber, logIndex} = eventItem
+        let chainId = chain->ChainMap.Chain.toChainId
+        let dynamicContract: TablesStatic.DynamicContractRegistry.t = {
+          id: ContextEnv.makeDynamicContractId(~chainId, ~contractAddress),
+          chainId,
+          registeringEventBlockNumber: blockNumber,
+          registeringEventLogIndex: logIndex,
+          registeringEventName: eventItem.eventName,
+          registeringEventContractName: eventItem.contractName,
+          registeringEventSrcAddress: eventItem.event.srcAddress,
+          registeringEventBlockTimestamp: timestamp,
+          contractAddress,
+          contractType: contractName,
+        }
+        if (
+          // !checkContractIsInCurrentRegistrations(
+          //   ~dynamicContractRegistrations,
+          //   ~chain,
+          //   ~contractAddress,
+          //   ~contractType,
+          // ) && // FIXME:
+          !checkContractIsRegistered(~chain, ~contractAddress, ~contractName)
+        ) {
+          dynamicContracts->Js.Array2.push(dynamicContract)->ignore
+        }
+      }
+      switch contractRegister(contextEnv->ContextEnv.getContractRegisterArgs(~onRegister)) {
+      | exception exn =>
+        raise(
+          // FIXME: Check that it's caught
+          ErrorHandling.ResultPropogateEnv.ErrorHandlingEarlyReturn(
+            exn->ErrorHandling.make(
+              ~msg="Event contractRegister failed, please fix the error to keep the indexer running smoothly",
+              ~logger=contextEnv.logger,
+            ),
+          ),
+        )
+      | () =>
+        switch dynamicContracts {
+        | [] => ()
+        | _ =>
+          dynamicContractRegistrations
+          ->Js.Array2.push({
+            FetchState.dynamicContracts,
+            registeringEventBlockNumber: eventItem.blockNumber,
+            registeringEventLogIndex: eventItem.logIndex,
+            registeringEventChain: eventItem.chain,
+          })
+          ->ignore
+        }
+
+      // switch preRegisterLatestProcessedBlocks {
+      // | Some(latestProcessedBlocks) =>
+      //   eventItem->updateEventSyncState(~inMemoryStore, ~isPreRegisteringDynamicContracts=true)
+      //   latestProcessedBlocks :=
+      //     latestProcessedBlocks.contents->EventsProcessed.updateEventsProcessed(
+      //       ~chain=eventItem.chain,
+      //       ~blockNumber=eventItem.blockNumber,
+      //     )
+      // | None => ()
+      // } FIXME: Figure out
+      }
+    | None => ()
+    }
+  }
+
+  dynamicContractRegistrations
 }
 
 let rec registerDynamicContracts = (
@@ -584,30 +705,30 @@ let processEventBatch = (
   runAsyncEnv(async () => {
     //Register all the dynamic contracts in this batch,
     //only continue processing events before the first dynamic contract registration
-    let (
-      eventsBeforeDynamicRegistrations: array<Internal.eventItem>,
-      dynamicContractRegistrations,
-    ) =
-      eventBatch
-      ->registerDynamicContracts(
-        ~checkContractIsRegistered,
-        ~logger,
-        ~inMemoryStore,
-        ~shouldSaveHistory=config->Config.shouldSaveHistory(~isInReorgThreshold),
-      )
-      ->propogate
+    // let (
+    //   eventsBeforeDynamicRegistrations: array<Internal.eventItem>,
+    //   dynamicContractRegistrations,
+    // ) =
+    //   eventBatch
+    //   ->registerDynamicContracts(
+    //     ~checkContractIsRegistered,
+    //     ~logger,
+    //     ~inMemoryStore,
+    //     ~shouldSaveHistory=config->Config.shouldSaveHistory(~isInReorgThreshold),
+    //   )
+    //   ->propogate
 
     let elapsedAfterContractRegister =
       timeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
 
-    (await eventsBeforeDynamicRegistrations
+    (await eventBatch
     ->runLoaders(~loadLayer, ~inMemoryStore, ~logger))
     ->propogate
 
     let elapsedAfterLoad = timeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
 
     let latestProcessedBlocks =
-      (await eventsBeforeDynamicRegistrations
+      (await eventBatch
       ->runHandlers(
         ~inMemoryStore,
         ~latestProcessedBlocks,
@@ -627,7 +748,7 @@ let processEventBatch = (
     }
 
     let elapsedTimeAfterDbWrite = timeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
-    let batchSize = eventsBeforeDynamicRegistrations->Array.length
+    let batchSize = eventBatch->Array.length
     let handlerDuration = elapsedTimeAfterProcess - elapsedAfterLoad
     let dbWriteDuration = elapsedTimeAfterDbWrite - elapsedTimeAfterProcess
     registerProcessEventBatchMetrics(
@@ -639,7 +760,7 @@ let processEventBatch = (
     )
     if Env.Benchmark.shouldSaveData {
       Benchmark.addEventProcessing(
-        ~batchSize=eventsBeforeDynamicRegistrations->Array.length,
+        ~batchSize=eventBatch->Array.length,
         ~contractRegisterDuration=elapsedAfterContractRegister,
         ~loadDuration=elapsedAfterLoad - elapsedAfterContractRegister,
         ~handlerDuration,
@@ -648,6 +769,6 @@ let processEventBatch = (
       )
     }
 
-    Ok({latestProcessedBlocks, dynamicContractRegistrations})
+    Ok({latestProcessedBlocks, dynamicContractRegistrations: None})
   })
 }

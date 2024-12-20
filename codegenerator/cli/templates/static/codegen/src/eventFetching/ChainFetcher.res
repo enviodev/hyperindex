@@ -315,6 +315,9 @@ let cleanUpProcessingFilters = (
   }
 }
 
+let isFetchingAtHead = (chainFetcher: t) =>
+  chainFetcher.fetchState->PartitionedFetchState.isFetchingAtHead
+
 /**
 Updates of fetchState and cleans up event filters. Should be used whenever updating fetchState
 to ensure processingFilters are always valid.
@@ -323,6 +326,7 @@ Returns Error if the node with given id cannot be found (unexpected)
 let updateFetchState = (
   self: t,
   ~id,
+  ~dynamicContractRegistrations,
   ~latestFetchedBlockTimestamp,
   ~latestFetchedBlockNumber,
   ~fetchedEvents,
@@ -330,7 +334,7 @@ let updateFetchState = (
 ) => {
   let newItems = switch self.processingFilters {
   | None => fetchedEvents
-  | Some(processingFilters) => fetchedEvents->applyProcessingFilters(~processingFilters)
+  | Some(processingFilters) => fetchedEvents->applyProcessingFilters(~processingFilters) // FIXME: Apply before contract registration
   }
 
   self.fetchState
@@ -342,6 +346,8 @@ let updateFetchState = (
     },
     ~newItems,
     ~currentBlockHeight,
+    ~dynamicContractRegistrations,
+    ~isFetchingAtHead=self->isFetchingAtHead,
     ~chain=self.chainConfig.chain,
   )
   ->Result.map(fetchState => {
@@ -422,9 +428,6 @@ let getLastScannedBlockData = lastBlockData => {
     blockTimestamp,
   })
 }
-
-let isFetchingAtHead = (chainFetcher: t) =>
-  chainFetcher.fetchState->PartitionedFetchState.isFetchingAtHead
 
 let isActivelyIndexing = (chainFetcher: t) =>
   chainFetcher.fetchState->PartitionedFetchState.isActivelyIndexing

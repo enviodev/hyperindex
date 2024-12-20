@@ -16,6 +16,7 @@ module MakeManager = (S: State) => {
   let make = (~stateUpdatedHook: option<S.t => unit>=?, state: S.t) => {state, stateUpdatedHook}
 
   let rec dispatchAction = (~stateId=0, self: t, action: S.action) => {
+    Js.log2("ACTION", action)
     try {
       let reducer = if stateId == self.state->S.getId {
         S.actionReducer
@@ -43,6 +44,7 @@ module MakeManager = (S: State) => {
       if stateId !== self.state->S.getId {
         Logging.warn("Invalidated task discarded")
       } else {
+        Js.log2("TASK", task)
         S.taskReducer(self.state, task, ~dispatchAction=action =>
           dispatchAction(~stateId, self, action)
         )->ignore

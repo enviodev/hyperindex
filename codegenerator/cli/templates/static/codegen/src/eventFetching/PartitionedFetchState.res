@@ -117,21 +117,25 @@ let make = (
 let registerDynamicContracts = (
   {partitions, maxAddrInPartition, endBlock, startBlock, logger}: t,
   dynamicContractRegistration: FetchState.dynamicContractRegistration,
+  ~partitionId,
   ~isFetchingAtHead,
 ) => {
-  let newestPartitionIndex = partitions->Array.length - 1
-  let newestPartition = switch partitions[newestPartitionIndex] {
+  let partition = switch partitions[partitionId] {
   | Some(p) => p
   | None => Js.Exn.raiseError("Unexpected: No partitions in PartitionedFetchState")
   }
 
-  let partitions = if newestPartition->FetchState.getNumContracts < maxAddrInPartition {
+  let partitions = if partition->FetchState.getNumContracts < maxAddrInPartition {
     let updated =
-      newestPartition->FetchState.registerDynamicContract(
+      partition->FetchState.registerDynamicContract(
         dynamicContractRegistration,
         ~isFetchingAtHead,
       )
-    partitions->Utils.Array.setIndexImmutable(newestPartitionIndex, updated)
+    let updated = switch updated->FetchState.applyPendingDynamicContractRegistrations {
+    | None => updated
+    | Some(updated) => updated
+    }
+    partitions->Utils.Array.setIndexImmutable(partitionId, updated)
   } else {
     let newPartition = FetchState.make(
       ~startBlock,
@@ -161,7 +165,16 @@ exception UnexpectedPartitionDoesNotExist(partitionId)
 Updates partition at given id with given values and checks to see if it can be merged into its next register.
 Returns Error if the partition/node with given id cannot be found (unexpected)
 */
-let update = (self: t, ~id: id, ~latestFetchedBlock, ~newItems, ~currentBlockHeight, ~chain) => {
+let update = (
+  self: t,
+  ~id: id,
+  ~latestFetchedBlock,
+  ~newItems,
+  ~currentBlockHeight,
+  ~isFetchingAtHead,
+  ~dynamicContractRegistrations,
+  ~chain,
+) => {
   switch self.partitions[id.partitionId] {
   | Some(partition) =>
     partition
@@ -172,13 +185,17 @@ let update = (self: t, ~id: id, ~latestFetchedBlock, ~newItems, ~currentBlockHei
         ~chainId=chain->ChainMap.Chain.toChainId,
         ~partitionId=id.partitionId,
       )
-      {
+      let self = {
         ...self,
         partitions: self.partitions->Utils.Array.setIndexImmutable(
           id.partitionId,
           updatedPartition,
         ),
       }
+      // FIXME: Verify that it should be called after ChainFetcher.updateFetchState
+      dynamicContractRegistrations->Array.reduce(self, (fetchState, registrations) => {
+        fetchState->registerDynamicContracts(registrations, ~partitionId=id.partitionId, ~isFetchingAtHead)
+      })
     })
   | _ => Error(UnexpectedPartitionDoesNotExist(id.partitionId))
   }
