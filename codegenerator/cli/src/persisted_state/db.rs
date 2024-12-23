@@ -12,8 +12,9 @@ async fn get_pg_pool() -> Result<PgPool, sqlx::Error> {
     let user = get_env_with_default("ENVIO_PG_USER", "postgres");
     let password = get_env_with_default("ENVIO_POSTGRES_PASSWORD", "testing");
     let database = get_env_with_default("ENVIO_PG_DATABASE", "envio-dev");
+    let schema = get_env_with_default("ENVIO_PG_SCHEMA", "public");
 
-    let connection_url = format!("postgres://{user}:{password}@{host}:{port}/{database}");
+    let connection_url = format!("postgres://{user}:{password}@{host}:{port}/{database}?currentSchema={schema}");
 
     PgPoolOptions::new().connect(&connection_url).await
 }
@@ -27,7 +28,7 @@ impl PersistedState {
     async fn upsert_to_db_with_pool(&self, pool: &PgPool) -> Result<PgQueryResult, sqlx::Error> {
         sqlx::query(
             r#"
-            INSERT INTO public.persisted_state (
+            INSERT INTO persisted_state (
                 id, 
                 envio_version,
                 config_hash,

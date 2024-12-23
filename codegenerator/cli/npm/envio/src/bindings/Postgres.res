@@ -69,6 +69,7 @@ type poolConfig = {
   database?: string, // Name of database to connect to (default: '')
   username?: string, // Username of database user (default: '')
   password?: string, // Password of database user (default: '')
+  schema?: string, // Name of schema to connect to (default: 'public')
   ssl?: sslOptions, // true, prefer, require, tls.connect options (default: false)
   max?: int, // Max number of connections (default: 10)
   maxLifetime?: option<int>, // Max lifetime in seconds (more info below) (default: null)
