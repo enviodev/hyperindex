@@ -425,11 +425,45 @@ let rec addDynamicContractRegister = (
     ->handleParent
 
   let latestFetchedBlockNumber = registeringEventBlockNumber - 1
+  let isRegisteringLower = latestFetchedBlockNumber <= self.latestFetchedBlock.blockNumber
 
   switch self.registerType {
-  | RootRegister => self->addToHead
-  | DynamicContractRegister(_) if latestFetchedBlockNumber <= self.latestFetchedBlock.blockNumber =>
-    self->addToHead
+  | RootRegister if isRegisteringLower => self->addToHead
+  | RootRegister =>
+    {
+      let contractAddressMapping =
+        dynamicContractRegistrations
+        ->Array.map(d => (d.contractAddress, (d.contractType :> string)))
+        ->ContractAddressingMap.fromArray
+      let dynamicContracts = DynamicContractsMap.empty->DynamicContractsMap.add(
+        {
+          blockNumber: registeringEventBlockNumber,
+          logIndex: registeringEventLogIndex,
+        },
+        contractAddressMapping->ContractAddressingMap.getAllAddresses,
+      )
+      {
+        ...self,
+        registerType: DynamicContractRegister({
+          id: {
+            blockNumber: self.latestFetchedBlock.blockNumber + 1,
+            logIndex: 0,
+          },
+          nextRegister: {
+            registerType: RootRegister,
+            latestFetchedBlock: {
+              blockNumber: registeringEventBlockNumber - 1,
+              blockTimestamp: 0,
+            },
+            contractAddressMapping,
+            dynamicContracts,
+            fetchedEventQueue: [],
+            firstEventBlockNumber: None,
+          },
+        }),
+      }
+    }->handleParent
+  | DynamicContractRegister(_) if isRegisteringLower => self->addToHead
   | DynamicContractRegister({id: dynamicContractId, nextRegister}) =>
     nextRegister->addDynamicContractRegister(
       ~registeringEventBlockNumber,
@@ -534,13 +568,10 @@ let update = (
   baseRegister
   ->updateInternal(~id, ~latestFetchedBlock, ~reversedNewItems=newItems->Array.reverse)
   ->Result.map(updatedRegister => {
-    let withNewDynamicContracts =
-      updatedRegister->addDynamicContractRegisters(pendingDynamicContracts)
-    let maybeMerged = withNewDynamicContracts->pruneAndMergeNextRegistered
     {
       partitionId,
-      baseRegister: maybeMerged->Option.getWithDefault(withNewDynamicContracts),
-      pendingDynamicContracts: [],
+      baseRegister: updatedRegister,
+      pendingDynamicContracts,
       isFetchingAtHead,
     }
   })
@@ -561,9 +592,10 @@ let getQueryLogger = (
 ) => {
   let fetchStateRegister = fetchStateRegisterId->registerIdToString
   let allAddresses = contractAddressMapping->ContractAddressingMap.getAllAddresses
-  let addresses = allAddresses->Js.Array2.slice(~start=0, ~end_=3)->Array.map(addr => addr->Address.toString)
+  let addresses =
+    allAddresses->Js.Array2.slice(~start=0, ~end_=3)->Array.map(addr => addr->Address.toString)
   let restCount = allAddresses->Array.length - addresses->Array.length
-   if restCount > 0 {
+  if restCount > 0 {
     addresses->Js.Array2.push(`... and ${restCount->Int.toString} more`)->ignore
   }
   let params = {
