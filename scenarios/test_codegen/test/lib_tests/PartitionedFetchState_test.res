@@ -163,4 +163,110 @@ describe("PartitionedFetchState getMostBehindPartitions", () => {
     | _ => Assert.fail("Unexpected error")
     }
   })
+
+  it("Can merge partitions when added an older dynamic contract", () => {
+    let rootContractAddressMapping = ContractAddressingMap.make()
+
+    for i in 0 to 2 {
+      let address = TestHelpers.Addresses.mockAddresses[i]->Option.getExn
+      rootContractAddressMapping->ContractAddressingMap.addAddress(~address, ~name="MockContract")
+    }
+
+    let rootRegisterBlockNumber = 100
+    let fetchState0: FetchState.t = {
+      partitionId: 0,
+      baseRegister: {
+        registerType: RootRegister,
+        latestFetchedBlock: {
+          blockNumber: rootRegisterBlockNumber,
+          blockTimestamp: rootRegisterBlockNumber * 15,
+        },
+        contractAddressMapping: rootContractAddressMapping,
+        fetchedEventQueue: [],
+        dynamicContracts: FetchState.DynamicContractsMap.empty,
+        firstEventBlockNumber: None,
+      },
+      isFetchingAtHead: false,
+      pendingDynamicContracts: [],
+    }
+
+    let partitionedFetchState = mockPartitionedFetchState(
+      ~partitions=[fetchState0],
+      ~maxAddrInPartition=4,
+    )
+
+    let chain = ChainMap.Chain.makeUnsafe(~chainId=1)
+    // This is possible when we just added a new partition
+    // and before it fetched the first event,
+    // we add another dynamic contract to the partition
+    let newBlockNumber = rootRegisterBlockNumber + 10
+    let updatedPartitionedFetchState =
+      partitionedFetchState->PartitionedFetchState.registerDynamicContracts(
+        {
+          registeringEventChain: chain,
+          registeringEventBlockNumber: newBlockNumber,
+          registeringEventLogIndex: 0,
+          dynamicContracts: [
+            {
+              id: ContextEnv.makeDynamicContractId(
+                ~chainId=1,
+                ~contractAddress=TestHelpers.Addresses.mockAddresses[5]->Option.getExn,
+              ),
+              chainId: 1,
+              registeringEventBlockTimestamp: newBlockNumber * 15,
+              registeringEventBlockNumber: newBlockNumber,
+              registeringEventLogIndex: 0,
+              registeringEventContractName: "MockFactory",
+              registeringEventName: "MockCreateGravatar",
+              registeringEventSrcAddress: TestHelpers.Addresses.mockAddresses[0]->Option.getExn,
+              contractAddress: TestHelpers.Addresses.mockAddresses[5]->Option.getExn,
+              contractType: Enums.ContractType.Gravatar,
+            },
+          ],
+        },
+        ~isFetchingAtHead=false,
+      )
+
+    let updatedFetchState = switch updatedPartitionedFetchState.partitions->PartitionedFetchState.getReadyPartitions(
+      ~maxPerChainQueueSize=1000,
+      ~fetchingPartitions=Utils.Set.make(),
+    ) {
+    | [p] => p
+    | _ => Assert.fail("Should have returned a single partition")
+    }
+
+    Assert.deepEqual(
+      updatedFetchState->FetchState.mergeRegistersBeforeNextQuery,
+      {
+        partitionId: 0,
+        baseRegister: {
+          ...fetchState0.baseRegister,
+          registerType: DynamicContractRegister({
+            id: {blockNumber: 101, logIndex: 0},
+            nextRegister: {
+              registerType: RootRegister,
+              latestFetchedBlock: {
+                blockNumber: 109,
+                blockTimestamp: 0,
+              },
+              contractAddressMapping: [
+                (TestHelpers.Addresses.mockAddresses[5]->Option.getExn, "Gravatar"),
+              ]->ContractAddressingMap.fromArray,
+              fetchedEventQueue: [],
+              dynamicContracts: FetchState.DynamicContractsMap.empty->FetchState.DynamicContractsMap.add(
+                {
+                  blockNumber: newBlockNumber,
+                  logIndex: 0,
+                },
+                [TestHelpers.Addresses.mockAddresses[5]->Option.getExn],
+              ),
+              firstEventBlockNumber: None,
+            },
+          }),
+        },
+        pendingDynamicContracts: [],
+        isFetchingAtHead: false,
+      },
+    )
+  })
 })
