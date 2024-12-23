@@ -197,7 +197,7 @@ module Sql = {
 
   let query = unsafe(Db.sql, _)
 
-  let getAllRowsInTable = tableName => query(`SELECT * FROM public."${tableName}";`)
+  let getAllRowsInTable = tableName => query(`SELECT * FROM "${tableName}";`)
 
   let getAccountTokenBalance = async (~tokenAddress, ~accountAddress) => {
     let tokenAddress = tokenAddress->Address.toString
@@ -205,7 +205,7 @@ module Sql = {
     let accountTokenId = EventHandlers.makeAccountTokenId(~tokenAddress, ~account_id)
     let res = await query(
       `
-    SELECT * FROM public."AccountToken"
+    SELECT * FROM "AccountToken"
     WHERE id = '${accountTokenId}';
     `,
     )

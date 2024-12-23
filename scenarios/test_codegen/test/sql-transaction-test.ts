@@ -36,7 +36,7 @@ describe("Sql transaction tests", () => {
 
     await expect(transaction).to.eventually.be.fulfilled;
 
-    let rawEventsRows = await sql`SELECT * FROM public.raw_events`;
+    let rawEventsRows = await sql`SELECT * FROM raw_events`;
     expect(rawEventsRows.count).to.be.eq(3);
   });
 
@@ -58,7 +58,7 @@ describe("Sql transaction tests", () => {
 
     await expect(transaction).to.eventually.be.rejected;
 
-    let rawEventsRows = await sql`SELECT * FROM public.raw_events`;
+    let rawEventsRows = await sql`SELECT * FROM raw_events`;
     expect(rawEventsRows.count).to.be.eq(0);
   });
 });

@@ -26,7 +26,7 @@ let creatTableIfNotExists = (sql, table) => {
     ->Js.Array2.joinWith(", ")
 
   let query = `
-    CREATE TABLE IF NOT EXISTS "public"."${table.tableName}"(${fieldsMapped}${primaryKeyFieldNames->Array.length > 0
+    CREATE TABLE IF NOT EXISTS "${table.tableName}"(${fieldsMapped}${primaryKeyFieldNames->Array.length > 0
       ? `, PRIMARY KEY(${primaryKey})`
       : ""});`
 
@@ -36,7 +36,7 @@ let creatTableIfNotExists = (sql, table) => {
 let makeCreateIndexQuery = (~tableName, ~indexFields) => {
   let indexName = tableName ++ "_" ++ indexFields->Js.Array2.joinWith("_")
   let index = indexFields->Belt.Array.map(idx => `"${idx}"`)->Js.Array2.joinWith(", ")
-  `CREATE INDEX IF NOT EXISTS "${indexName}" ON "public"."${tableName}"(${index}); `
+  `CREATE INDEX IF NOT EXISTS "${indexName}" ON "${tableName}"(${index}); `
 }
 
 let createTableIndices = (sql, table: Table.table) => {
@@ -87,7 +87,15 @@ let deleteAllTables: unit => promise<unit> = async () => {
   @warning("-21")
   await (
     %raw(
-      "sql.unsafe`DROP SCHEMA public CASCADE;CREATE SCHEMA public;GRANT ALL ON SCHEMA public TO postgres;GRANT ALL ON SCHEMA public TO public;`"
+      "sql.unsafe`DO $$
+DECLARE
+    schema_name TEXT := current_schema();
+BEGIN
+    EXECUTE format('DROP SCHEMA %I CASCADE', schema_name);
+    EXECUTE format('CREATE SCHEMA %I', schema_name);
+    EXECUTE format('GRANT ALL ON SCHEMA %I TO postgres', schema_name);
+    EXECUTE format('GRANT ALL ON SCHEMA %I TO public', schema_name);
+END $$;`"
     )
   )
 }

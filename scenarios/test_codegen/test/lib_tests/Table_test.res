@@ -14,7 +14,7 @@ describe("Table functions postgres interop", () => {
 
     let expected = `(sql, rows) => {
       return sql\`
-        INSERT INTO "public"."test_table"
+        INSERT INTO "test_table"
         \${sql(rows, "id", "field_a")}
         ON CONFLICT(id) DO UPDATE
         SET
@@ -38,7 +38,7 @@ describe("Table functions postgres interop", () => {
 
     let expected = `(sql, rows) => {
       return sql\`
-        INSERT INTO "public"."test_table"
+        INSERT INTO "test_table"
         \${sql(rows, "field_a", "field_b", "field_c")}
         ON CONFLICT(field_a, field_b) DO UPDATE
         SET
@@ -62,7 +62,7 @@ describe("Table functions postgres interop", () => {
 
     let expected = `(sql, rows) => {
       return sql\`
-        INSERT INTO "public"."test_table"
+        INSERT INTO "test_table"
         \${sql(rows, "id", "field_a", "token_id")}
         ON CONFLICT(id) DO UPDATE
         SET
@@ -85,7 +85,7 @@ describe("Table functions postgres interop", () => {
 
     let expected = `(sql, rows) => {
       return sql\`
-        INSERT INTO "public"."test_table"
+        INSERT INTO "test_table"
         \${sql(rows, "id", "field_a")}
         ON CONFLICT(id) DO UPDATE
         SET
@@ -109,7 +109,7 @@ describe("Table functions postgres interop", () => {
 
     let expected = `(sql, rows) => {
       return sql\`
-        INSERT INTO "public"."test_table"
+        INSERT INTO "test_table"
         \${sql(rows, "id", "field_a")}
         ON CONFLICT(id) DO UPDATE
         SET

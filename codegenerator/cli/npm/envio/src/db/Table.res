@@ -210,7 +210,7 @@ module PostgresInterop = {
       table->getNonDefaultFieldNames->Array.map(fieldName => `"${fieldName}"`)
     `(sql, rows) => {
       return sql\`
-        INSERT INTO "public"."${table.tableName}"
+        INSERT INTO "${table.tableName}"
         \${sql(rows, ${fieldNamesInQuotes->Js.Array2.joinWith(", ")})}
         ON CONFLICT(${table->getPrimaryKeyFieldNames->Js.Array2.joinWith(", ")}) DO UPDATE
         SET
