@@ -88,7 +88,7 @@ describe("SerDe Test", () => {
     //The copy function will do it's custom postgres serialization of the entity
     // await Db.sql->DbFunctions.EntityHistory.copyAllEntitiesToEntityHistory
 
-    let res = await Db.sql->Postgres.unsafe(`SELECT * FROM public."EntityWithAllTypes_history";`)
+    let res = await Db.sql->Postgres.unsafe(`SELECT * FROM "EntityWithAllTypes_history";`)
 
     switch res {
     | [row] =>

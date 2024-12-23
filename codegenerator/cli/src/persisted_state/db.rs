@@ -14,9 +14,31 @@ async fn get_pg_pool() -> Result<PgPool, sqlx::Error> {
     let database = get_env_with_default("ENVIO_PG_DATABASE", "envio-dev");
     let schema = get_env_with_default("ENVIO_PG_SCHEMA", "public");
 
-    let connection_url = format!("postgres://{user}:{password}@{host}:{port}/{database}?currentSchema={schema}");
+    let connection_url = format!(
+        "postgresql://{}:{}@{}:{}/{}",
+        user, password, host, port, database
+    );
 
-    PgPoolOptions::new().connect(&connection_url).await
+    let pool = PgPoolOptions::new()
+        .max_connections(5)
+        .after_connect({
+            let schema = schema.clone();
+            move |conn, _| {
+                Box::pin({
+                    let value = schema.clone();
+                    async move {
+                        sqlx::query(&format!("SET search_path TO {}", value))
+                            .execute(conn)
+                            .await?;
+                        Ok(())
+                    }
+                })
+            }
+        })
+        .connect(&connection_url)
+        .await?;
+
+    Ok(pool)
 }
 
 impl PersistedState {
@@ -78,7 +100,7 @@ impl PersistedStateExists {
             schema_hash,
             handler_files_hash,
             abi_files_hash
-         from public.persisted_state WHERE id = 1",
+         from persisted_state WHERE id = 1",
         )
         .fetch_optional(pool)
         .await;

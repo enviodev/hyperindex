@@ -93,28 +93,28 @@ describe("Raw Events Integration", () => {
   });
 
   it("RawEvents table contains rows after indexer runs", async function() {
-    let rawEventsRows = await sql`SELECT * FROM public.raw_events`;
+    let rawEventsRows = await sql`SELECT * FROM raw_events`;
     expect(rawEventsRows.count).to.be.gt(0);
   });
 
   it("should ensure Entites are created correctly", async function() {
-    let rowsNftCollection = await sql`SELECT * FROM public."NftCollection"`;
+    let rowsNftCollection = await sql`SELECT * FROM "NftCollection"`;
     expect(rowsNftCollection.count).to.be.gt(0);
-    let rowsUsers = await sql`SELECT * FROM public."User"`;
+    let rowsUsers = await sql`SELECT * FROM "User"`;
     expect(rowsUsers.count).to.be.gt(0);
-    let rowsToken = await sql`SELECT * FROM public."Token"`;
+    let rowsToken = await sql`SELECT * FROM "Token"`;
     expect(rowsToken.count).to.be.gt(0);
   });
 
   it("should have 1 row in the dynamic_contract_registry table", async function() {
-    let rowsDCR = await sql`SELECT * FROM public.dynamic_contract_registry`;
+    let rowsDCR = await sql`SELECT * FROM dynamic_contract_registry`;
     console.log(rowsDCR);
     expect(rowsDCR.count).to.be.eq(1);
   });
 
   // TODO: Fix this test. This test broke after rebasing the 'dev-mode' code on the lastest main with the restructiring and dynamic contracts code.
   it.skip("Tracks dynamic contract on restart", async () => {
-    let beforeRawEventsRows = await sql`SELECT * FROM public.raw_events`;
+    let beforeRawEventsRows = await sql`SELECT * FROM raw_events`;
     //TODO: fix this test, This indicates this test is ineffective but the structure is what we want to test
     // below show that the contract address store is still populated with the contract
     console.log("new contract");
@@ -131,7 +131,7 @@ describe("Raw Events Integration", () => {
       }, 500)
     );
 
-    let afterRawEventsRows = await sql`SELECT * FROM public.raw_events`;
+    let afterRawEventsRows = await sql`SELECT * FROM raw_events`;
     expect(afterRawEventsRows.count).to.be.gt(beforeRawEventsRows.count);
   });
 
@@ -140,7 +140,7 @@ describe("Raw Events Integration", () => {
     let rawEventsRows = await sql`
         SELECT EXISTS (
           SELECT FROM information_schema.tables
-          WHERE table_name = 'public.raw_events'
+          WHERE table_name = 'raw_events'
         );
       `;
     expect(rawEventsRows[0].exists).to.be.eq(false);
