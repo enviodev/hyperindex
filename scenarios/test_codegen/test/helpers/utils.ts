@@ -5,7 +5,11 @@ import {
 import Postgres from "postgres";
 import { config } from "../../generated/src/db/Db.bs";
 
-export const createSql = () => Postgres(config);
+export const createSql = () =>
+  Postgres(
+    `postgres://${config.username}:${config.password}@${config.host}:${config.port}/${config.database}?search_path=${config.schema}`,
+    config,
+  );
 
 const originalConsoleLog = console.log;
 
