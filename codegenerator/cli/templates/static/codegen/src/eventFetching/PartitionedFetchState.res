@@ -130,7 +130,7 @@ let registerDynamicContracts = (
   } else {
     let newPartition = FetchState.make(
       ~partitionId=partitions->Array.length,
-      ~startBlock,
+      ~startBlock=dynamicContractRegistration.registeringEventBlockNumber,
       ~logger,
       ~staticContracts=[],
       ~dynamicContractRegistrations=dynamicContractRegistration.dynamicContracts,
@@ -160,7 +160,12 @@ let update = (self: t, ~id: id, ~latestFetchedBlock, ~newItems, ~currentBlockHei
   switch self.partitions[id.partitionId] {
   | Some(partition) =>
     partition
-    ->FetchState.update(~id=id.fetchStateId, ~latestFetchedBlock, ~newItems, ~currentBlockHeight)
+    ->FetchState.setFetchedItems(
+      ~id=id.fetchStateId,
+      ~latestFetchedBlock,
+      ~newItems,
+      ~currentBlockHeight,
+    )
     ->Result.map(updatedPartition => {
       Prometheus.PartitionBlockFetched.set(
         ~blockNumber=latestFetchedBlock.blockNumber,
@@ -188,7 +193,7 @@ let getReadyPartitions = (
   let maxPartitionQueueSize = maxPerChainQueueSize / numPartitions
   allPartitions->Js.Array2.filter(fetchState => {
     !(fetchingPartitions->Utils.Set.has(fetchState.partitionId)) &&
-      fetchState->FetchState.isReadyForNextQuery(~maxQueueSize=maxPartitionQueueSize)
+    fetchState->FetchState.isReadyForNextQuery(~maxQueueSize=maxPartitionQueueSize)
   })
 }
 
@@ -257,7 +262,7 @@ let isFetchingAtHead = ({partitions}: t) => {
 
 let getFirstEventBlockNumber = ({partitions}: t) => {
   partitions->Array.reduce(None, (accum, partition) => {
-    Utils.Math.minOptInt(accum, partition.baseRegister.firstEventBlockNumber)
+    Utils.Math.minOptInt(accum, partition.mostBehindRegister.firstEventBlockNumber)
   })
 }
 

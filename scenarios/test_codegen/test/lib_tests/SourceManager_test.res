@@ -79,19 +79,23 @@ describe("SourceManager fetchBatch", () => {
       contractAddressMapping->ContractAddressingMap.addAddress(~address, ~name="MockContract")
     }
 
+    let register: FetchState.register = {
+      id: FetchState.rootRegisterId,
+      latestFetchedBlock: {
+        blockNumber: latestFetchedBlockNumber,
+        blockTimestamp: latestFetchedBlockNumber * 15,
+      },
+      contractAddressMapping,
+      fetchedEventQueue,
+      dynamicContracts: FetchState.DynamicContractsMap.empty,
+      firstEventBlockNumber: None,
+    }
+
     {
       partitionId,
-      baseRegister: {
-        registerType: RootRegister,
-        latestFetchedBlock: {
-          blockNumber: latestFetchedBlockNumber,
-          blockTimestamp: latestFetchedBlockNumber * 15,
-        },
-        contractAddressMapping,
-        fetchedEventQueue,
-        dynamicContracts: FetchState.DynamicContractsMap.empty,
-        firstEventBlockNumber: None,
-      },
+      registers: [register],
+      mostBehindRegister: register,
+      nextMostBehindRegister: None,
       isFetchingAtHead: false,
       pendingDynamicContracts: [],
     }
@@ -143,24 +147,24 @@ describe("SourceManager fetchBatch", () => {
       [
         {
           partitionId: 0,
-          fetchStateRegisterId: fetchState0.baseRegister->FetchState.getRegisterId,
+          fetchStateRegisterId: fetchState0.mostBehindRegister.id,
           fromBlock: 5,
           toBlock: None,
-          contractAddressMapping: fetchState0.baseRegister.contractAddressMapping,
+          contractAddressMapping: fetchState0.mostBehindRegister.contractAddressMapping,
         },
         {
           partitionId: 1,
-          fetchStateRegisterId: fetchState0.baseRegister->FetchState.getRegisterId,
+          fetchStateRegisterId: fetchState0.mostBehindRegister.id,
           fromBlock: 6,
           toBlock: None,
-          contractAddressMapping: fetchState0.baseRegister.contractAddressMapping,
+          contractAddressMapping: fetchState0.mostBehindRegister.contractAddressMapping,
         },
         {
           partitionId: 2,
-          fetchStateRegisterId: fetchState0.baseRegister->FetchState.getRegisterId,
+          fetchStateRegisterId: fetchState0.mostBehindRegister.id,
           fromBlock: 2,
           toBlock: None,
-          contractAddressMapping: fetchState0.baseRegister.contractAddressMapping,
+          contractAddressMapping: fetchState0.mostBehindRegister.contractAddressMapping,
         },
       ],
     )

@@ -269,10 +269,7 @@ let addBlockRangeFetched = (
   ~numEvents,
   ~partitionId,
 ) => {
-  let registerName = switch fetchStateRegisterId {
-  | Root => "Root"
-  | DynamicContract(_) => "Dynamic Contract"
-  }
+  let registerName = fetchStateRegisterId->FetchState.registerIdToName
 
   let group = `BlockRangeFetched Summary for Chain ${chainId->Belt.Int.toString} ${registerName} Register`
   let add = (label, value) => data->Data.addSummaryData(~group, ~label, ~value=Utils.magic(value))

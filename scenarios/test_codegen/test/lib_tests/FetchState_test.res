@@ -1,9 +1,8 @@
 open Belt
 open RescriptMocha
-open FetchState
 open Enums.ContractType
 
-let getItem = item =>
+let getItem = (item: FetchState.queueItem) =>
   switch item {
   | Item({item}) => item->Some
   | NoItem(_) => None
@@ -16,7 +15,7 @@ let mockAddress4 = TestHelpers.Addresses.mockAddresses[3]->Option.getExn
 let mockFactoryAddress = TestHelpers.Addresses.mockAddresses[4]->Option.getExn
 
 let getTimestamp = (~blockNumber) => blockNumber * 15
-let getBlockData = (~blockNumber) => {
+let getBlockData = (~blockNumber): FetchState.blockNumberAndTimestamp => {
   blockNumber,
   blockTimestamp: getTimestamp(~blockNumber),
 }
@@ -52,16 +51,22 @@ let getDynContractId = (
   logIndex: registeringEventLogIndex,
 }
 
-let makeMockFetchState = (baseRegister, ~isFetchingAtHead=false) => {
+let makeMockFetchState = (
+  registers,
+  ~isFetchingAtHead=false,
+  ~pendingDynamicContracts=[],
+): FetchState.t => {
   partitionId: 0,
-  baseRegister,
-  pendingDynamicContracts: [],
+  registers,
+  mostBehindRegister: registers->Js.Array2.unsafe_get(0),
+  nextMostBehindRegister: registers->Belt.Array.get(1),
+  pendingDynamicContracts,
   isFetchingAtHead,
 }
 
 describe("FetchState.fetchState", () => {
   it("dynamic contract map", () => {
-    let makeDcId = (blockNumber, logIndex): dynamicContractId => {
+    let makeDcId = (blockNumber, logIndex): FetchState.dynamicContractId => {
       blockNumber,
       logIndex,
     }
@@ -69,16 +74,16 @@ describe("FetchState.fetchState", () => {
     let dcId2 = makeDcId(5, 1)
     let dcId3 = makeDcId(6, 0)
     let dcId4 = makeDcId(7, 0)
-    let addAddr = DynamicContractsMap.addAddress
+    let addAddr = FetchState.DynamicContractsMap.addAddress
     let dcMap =
-      DynamicContractsMap.empty
+      FetchState.DynamicContractsMap.empty
       ->addAddr(dcId1, mockAddress1)
       ->addAddr(dcId2, mockAddress2)
       ->addAddr(dcId3, mockAddress3)
       ->addAddr(dcId4, mockAddress4)
 
     let (_updatedMap, removedAddresses) =
-      dcMap->DynamicContractsMap.removeContractAddressesFromFirstChangeEvent(
+      dcMap->FetchState.DynamicContractsMap.removeContractAddressesFromFirstChangeEvent(
         ~firstChangeEvent={blockNumber: 6, logIndex: 0},
       )
 
@@ -86,7 +91,7 @@ describe("FetchState.fetchState", () => {
   })
 
   it("dynamic contract registration", () => {
-    let root = make(
+    let root = FetchState.make(
       ~partitionId=0,
       ~startBlock=10_000,
       ~staticContracts=[((Gravatar :> string), mockAddress1)],
@@ -94,101 +99,117 @@ describe("FetchState.fetchState", () => {
       ~isFetchingAtHead=false,
       ~logger=Logging.logger,
     )
+    let rootRegister = root.mostBehindRegister
 
     let dc1 = makeDynContractRegistration(~contractAddress=mockAddress2, ~blockNumber=50)
     let dcId1 = getDynContractId(dc1)
 
-    let updatedState1 =
-      root.baseRegister->addDynamicContractRegister(
-        ~registeringEventBlockNumber=dcId1.blockNumber,
-        ~registeringEventLogIndex=dcId1.logIndex,
-        ~dynamicContractRegistrations=[dc1],
+    let root =
+      root
+      ->FetchState.registerDynamicContract(
+        {
+          {
+            registeringEventBlockNumber: dc1.registeringEventBlockNumber,
+            registeringEventLogIndex: dc1.registeringEventLogIndex,
+            registeringEventChain: ChainMap.Chain.makeUnsafe(~chainId=dc1.chainId),
+            dynamicContracts: [dc1],
+          }
+        },
+        ~isFetchingAtHead=false,
       )
+      ->FetchState.mergeBeforeNextQuery
 
-    let expected1 = {
+    let expected1: FetchState.register = {
       latestFetchedBlock: {blockNumber: dcId1.blockNumber - 1, blockTimestamp: 0},
       contractAddressMapping: ContractAddressingMap.fromArray([
         (dc1.contractAddress, (Gravatar :> string)),
       ]),
       firstEventBlockNumber: None,
-      dynamicContracts: DynamicContractsMap.empty->DynamicContractsMap.add(
+      dynamicContracts: FetchState.DynamicContractsMap.empty->FetchState.DynamicContractsMap.add(
         dcId1,
         [dc1.contractAddress],
       ),
       fetchedEventQueue: [],
-      registerType: DynamicContractRegister({id: dcId1, nextRegister: root.baseRegister}),
+      id: FetchState.makeDynamicContractRegisterId(dcId1),
     }
 
-    Assert.deepEqual(updatedState1, expected1, ~message="1st registration")
+    Assert.deepEqual(root.registers, [expected1, rootRegister], ~message="1st registration")
 
     let dc2 = makeDynContractRegistration(~contractAddress=mockAddress3, ~blockNumber=55)
     let dcId2 = getDynContractId(dc2)
 
-    let updatedState2 =
-      updatedState1->addDynamicContractRegister(
-        ~registeringEventBlockNumber=dcId2.blockNumber,
-        ~registeringEventLogIndex=dcId2.logIndex,
-        ~dynamicContractRegistrations=[dc2],
+    let root =
+      root
+      ->FetchState.registerDynamicContract(
+        {
+          {
+            registeringEventBlockNumber: dc2.registeringEventBlockNumber,
+            registeringEventLogIndex: dc2.registeringEventLogIndex,
+            registeringEventChain: ChainMap.Chain.makeUnsafe(~chainId=dc2.chainId),
+            dynamicContracts: [dc2],
+          }
+        },
+        ~isFetchingAtHead=false,
       )
+      ->FetchState.mergeBeforeNextQuery
 
-    let expected2ChildRegister = {
+    let expected2: FetchState.register = {
       latestFetchedBlock: {blockNumber: dcId2.blockNumber - 1, blockTimestamp: 0},
       contractAddressMapping: ContractAddressingMap.fromArray([
         (dc2.contractAddress, (Gravatar :> string)),
       ]),
       firstEventBlockNumber: None,
-      dynamicContracts: DynamicContractsMap.empty->DynamicContractsMap.add(
+      dynamicContracts: FetchState.DynamicContractsMap.empty->FetchState.DynamicContractsMap.add(
         dcId2,
         [dc2.contractAddress],
       ),
       fetchedEventQueue: [],
-      registerType: DynamicContractRegister({id: dcId2, nextRegister: root.baseRegister}),
+      id: FetchState.makeDynamicContractRegisterId(dcId2),
     }
 
-    let expected2 = {
-      ...expected1,
-      registerType: DynamicContractRegister({id: dcId1, nextRegister: expected2ChildRegister}),
-    }
-
-    Assert.deepEqual(updatedState2, expected2, ~message="2nd registration")
+    Assert.deepEqual(
+      root.registers,
+      [expected1, expected2, rootRegister],
+      ~message="2nd registration",
+    )
 
     let dc3 = makeDynContractRegistration(~contractAddress=mockAddress3, ~blockNumber=60)
     let dcId3 = getDynContractId(dc3)
 
-    let updatedState3 =
-      updatedState2->addDynamicContractRegister(
-        ~registeringEventBlockNumber=dcId3.blockNumber,
-        ~registeringEventLogIndex=dcId3.logIndex,
-        ~dynamicContractRegistrations=[dc3],
-      )
-
-    let expected3 = {
-      ...expected2,
-      registerType: DynamicContractRegister({
-        id: dcId1,
-        nextRegister: {
-          ...expected2ChildRegister,
-          registerType: DynamicContractRegister({
-            id: dcId2,
-            nextRegister: {
-              latestFetchedBlock: {blockNumber: dcId3.blockNumber - 1, blockTimestamp: 0},
-              contractAddressMapping: ContractAddressingMap.fromArray([
-                (dc3.contractAddress, (Gravatar :> string)),
-              ]),
-              firstEventBlockNumber: None,
-              dynamicContracts: DynamicContractsMap.empty->DynamicContractsMap.add(
-                dcId3,
-                [dc3.contractAddress],
-              ),
-              fetchedEventQueue: [],
-              registerType: DynamicContractRegister({id: dcId3, nextRegister: root.baseRegister}),
-            },
-          }),
+    let root =
+      root
+      ->FetchState.registerDynamicContract(
+        {
+          {
+            registeringEventBlockNumber: dc3.registeringEventBlockNumber,
+            registeringEventLogIndex: dc3.registeringEventLogIndex,
+            registeringEventChain: ChainMap.Chain.makeUnsafe(~chainId=dc3.chainId),
+            dynamicContracts: [dc3],
+          }
         },
-      }),
+        ~isFetchingAtHead=false,
+      )
+      ->FetchState.mergeBeforeNextQuery
+
+    let expected3: FetchState.register = {
+      latestFetchedBlock: {blockNumber: dcId3.blockNumber - 1, blockTimestamp: 0},
+      contractAddressMapping: ContractAddressingMap.fromArray([
+        (dc3.contractAddress, (Gravatar :> string)),
+      ]),
+      firstEventBlockNumber: None,
+      dynamicContracts: FetchState.DynamicContractsMap.empty->FetchState.DynamicContractsMap.add(
+        dcId3,
+        [dc3.contractAddress],
+      ),
+      fetchedEventQueue: [],
+      id: FetchState.makeDynamicContractRegisterId(dcId3),
     }
 
-    Assert.deepEqual(updatedState3, expected3, ~message="3rd registration")
+    Assert.deepEqual(
+      root.registers,
+      [expected1, expected2, expected3, rootRegister],
+      ~message="3rd registration",
+    )
   })
 
   let mockEvent = (~blockNumber, ~logIndex=0, ~chainId=1): Internal.eventItem => {
@@ -206,48 +227,61 @@ describe("FetchState.fetchState", () => {
   }
 
   it("merge next register", () => {
-    let dcId: dynamicContractId = {blockNumber: 100, logIndex: 0}
+    let dcId: FetchState.dynamicContractId = {blockNumber: 100, logIndex: 0}
     let latestFetchedBlock = getBlockData(~blockNumber=500)
 
-    let fetchState = {
+    let register0: FetchState.register = {
+      latestFetchedBlock,
+      contractAddressMapping: ContractAddressingMap.fromArray([
+        (mockAddress1, (Gravatar :> string)),
+      ]),
+      firstEventBlockNumber: None,
+      dynamicContracts: FetchState.DynamicContractsMap.empty,
+      fetchedEventQueue: [
+        mockEvent(~blockNumber=6, ~logIndex=2),
+        mockEvent(~blockNumber=4),
+        mockEvent(~blockNumber=1, ~logIndex=1),
+      ],
+      id: FetchState.rootRegisterId,
+    }
+    let register1: FetchState.register = {
       latestFetchedBlock,
       contractAddressMapping: ContractAddressingMap.fromArray([
         (mockAddress2, (Gravatar :> string)),
       ]),
       firstEventBlockNumber: None,
-      dynamicContracts: DynamicContractsMap.empty->DynamicContractsMap.add(dcId, [mockAddress2]),
+      dynamicContracts: FetchState.DynamicContractsMap.empty->FetchState.DynamicContractsMap.add(
+        dcId,
+        [mockAddress2],
+      ),
       fetchedEventQueue: [
         mockEvent(~blockNumber=6, ~logIndex=1),
         mockEvent(~blockNumber=5),
         mockEvent(~blockNumber=1, ~logIndex=2),
       ],
-      registerType: DynamicContractRegister({
-        id: dcId,
-        nextRegister: {
-          latestFetchedBlock,
-          contractAddressMapping: ContractAddressingMap.fromArray([
-            (mockAddress1, (Gravatar :> string)),
-          ]),
-          firstEventBlockNumber: None,
-          dynamicContracts: DynamicContractsMap.empty,
-          fetchedEventQueue: [
-            mockEvent(~blockNumber=6, ~logIndex=2),
-            mockEvent(~blockNumber=4),
-            mockEvent(~blockNumber=1, ~logIndex=1),
-          ],
-          registerType: RootRegister,
-        },
-      }),
+      id: FetchState.makeDynamicContractRegisterId(dcId),
     }
 
-    let expected = {
+    let fetchState: FetchState.t = {
+      partitionId: 0,
+      registers: [register0, register1],
+      mostBehindRegister: register0,
+      nextMostBehindRegister: Some(register1),
+      pendingDynamicContracts: [],
+      isFetchingAtHead: false,
+    }
+
+    let expected: FetchState.register = {
       latestFetchedBlock,
       contractAddressMapping: ContractAddressingMap.fromArray([
         (mockAddress2, (Gravatar :> string)),
         (mockAddress1, (Gravatar :> string)),
       ]),
       firstEventBlockNumber: None,
-      dynamicContracts: DynamicContractsMap.empty->DynamicContractsMap.add(dcId, [mockAddress2]),
+      dynamicContracts: FetchState.DynamicContractsMap.empty->FetchState.DynamicContractsMap.add(
+        dcId,
+        [mockAddress2],
+      ),
       fetchedEventQueue: [
         mockEvent(~blockNumber=6, ~logIndex=2),
         mockEvent(~blockNumber=6, ~logIndex=1),
@@ -256,178 +290,159 @@ describe("FetchState.fetchState", () => {
         mockEvent(~blockNumber=1, ~logIndex=2),
         mockEvent(~blockNumber=1, ~logIndex=1),
       ],
-      registerType: RootRegister,
+      id: FetchState.rootRegisterId,
     }
 
-    Assert.deepEqual(fetchState->mergeIntoNextRegistered, expected)
+    Assert.deepEqual(
+      fetchState->FetchState.updateInternal,
+      {
+        partitionId: 0,
+        registers: [expected],
+        mostBehindRegister: expected,
+        nextMostBehindRegister: None,
+        pendingDynamicContracts: [],
+        isFetchingAtHead: false,
+      },
+    )
   })
 
-  it("update register", () => {
+  it("Sets fetchState to fetching at head on setFetchedItems call", () => {
     let currentEvents = [
       mockEvent(~blockNumber=4),
       mockEvent(~blockNumber=1, ~logIndex=2),
       mockEvent(~blockNumber=1, ~logIndex=1),
     ]
-    let root = {
+    let register: FetchState.register = {
       latestFetchedBlock: getBlockData(~blockNumber=500),
       contractAddressMapping: ContractAddressingMap.fromArray([
         (mockAddress1, (Gravatar :> string)),
       ]),
       firstEventBlockNumber: Some(1),
-      dynamicContracts: DynamicContractsMap.empty,
+      dynamicContracts: FetchState.DynamicContractsMap.empty,
       fetchedEventQueue: currentEvents,
-      registerType: RootRegister,
+      id: FetchState.rootRegisterId,
     }
 
-    let fetchState = makeMockFetchState(root)
+    let fetchState = [register]->makeMockFetchState
 
     let newItems = [
       mockEvent(~blockNumber=5),
       mockEvent(~blockNumber=6, ~logIndex=1),
       mockEvent(~blockNumber=6, ~logIndex=2),
     ]
-    let updated1 =
+    let updatedFetchState =
       fetchState
-      ->update(
-        ~id=Root,
+      ->FetchState.setFetchedItems(
+        ~id=FetchState.rootRegisterId,
         ~latestFetchedBlock=getBlockData(~blockNumber=600),
         ~currentBlockHeight=600,
         ~newItems,
       )
       ->Utils.unwrapResultExn
 
-    let expectedRegister1 = {
-      ...root,
-      latestFetchedBlock: getBlockData(~blockNumber=600),
-      fetchedEventQueue: Array.concat(newItems->Array.reverse, currentEvents),
-    }
+    Assert.deepEqual(
+      updatedFetchState,
+      [
+        {
+          ...register,
+          latestFetchedBlock: getBlockData(~blockNumber=600),
+          fetchedEventQueue: Array.concat(newItems->Array.reverse, currentEvents),
+        },
+      ]->makeMockFetchState(~isFetchingAtHead=true),
+    )
+  })
 
-    let expected1 = expectedRegister1->makeMockFetchState(~isFetchingAtHead=true)
-
-    Assert.deepEqual(expected1, updated1, ~message="1st register, should be fetching at head")
-
-    let dcId1: dynamicContractId = {blockNumber: 100, logIndex: 0}
-    let register1 = {
+  it("Doesn't set fetchState to fetching at head on setFetchedItems call", () => {
+    let dcId: FetchState.dynamicContractId = {blockNumber: 100, logIndex: 0}
+    let register: FetchState.register = {
       latestFetchedBlock: getBlockData(~blockNumber=500),
       contractAddressMapping: ContractAddressingMap.fromArray([
         (mockAddress2, (Gravatar :> string)),
       ]),
       firstEventBlockNumber: None,
-      dynamicContracts: DynamicContractsMap.empty->DynamicContractsMap.add(dcId1, [mockAddress2]),
-      fetchedEventQueue: [],
-      registerType: DynamicContractRegister({id: dcId1, nextRegister: root}),
-    }
-
-    let fetchState1 = register1->makeMockFetchState
-
-    let updated2 =
-      fetchState1
-      ->update(
-        ~id=DynamicContract(dcId1),
-        ~latestFetchedBlock=getBlockData(~blockNumber=500),
-        ~currentBlockHeight=600,
-        ~newItems,
-      )
-      ->Utils.unwrapResultExn
-
-    let register2 = {
-      ...expectedRegister1,
-      latestFetchedBlock: getBlockData(~blockNumber=500),
-      dynamicContracts: register1.dynamicContracts,
-      contractAddressMapping: register1.contractAddressMapping->ContractAddressingMap.combine(
-        root.contractAddressMapping,
+      dynamicContracts: FetchState.DynamicContractsMap.empty->FetchState.DynamicContractsMap.add(
+        dcId,
+        [mockAddress2],
       ),
-    }
-
-    let expected2 = register2->makeMockFetchState(~isFetchingAtHead=false)
-
-    Assert.deepEqual(expected2, updated2, ~message="2nd register not fetching at head")
-
-    let dcId2: dynamicContractId = {blockNumber: 99, logIndex: 0}
-    let register2 = {
-      latestFetchedBlock: getBlockData(~blockNumber=300),
-      contractAddressMapping: ContractAddressingMap.fromArray([
-        (mockAddress3, (Gravatar :> string)),
-      ]),
-      firstEventBlockNumber: None,
-      dynamicContracts: DynamicContractsMap.empty->DynamicContractsMap.add(dcId2, [mockAddress3]),
       fetchedEventQueue: [],
-      registerType: DynamicContractRegister({id: dcId2, nextRegister: fetchState1.baseRegister}),
+      id: FetchState.makeDynamicContractRegisterId(dcId),
     }
 
-    let fetchState2 = register2->makeMockFetchState
+    let fetchState = [register]->makeMockFetchState(~isFetchingAtHead=false)
 
-    let updated3 =
-      fetchState2
-      ->update(
-        ~id=DynamicContract(dcId1),
+    let newItems = [
+      mockEvent(~blockNumber=5),
+      mockEvent(~blockNumber=6, ~logIndex=1),
+      mockEvent(~blockNumber=6, ~logIndex=2),
+    ]
+    let updatedFetchState =
+      fetchState
+      ->FetchState.setFetchedItems(
+        ~id=FetchState.makeDynamicContractRegisterId(dcId),
         ~latestFetchedBlock=getBlockData(~blockNumber=500),
         ~currentBlockHeight=600,
         ~newItems,
       )
       ->Utils.unwrapResultExn
 
-    let expectedRegister3 = {
-      ...register2,
-      registerType: DynamicContractRegister({
-        id: dcId2,
-        nextRegister: {
-          ...register1,
-          fetchedEventQueue: Array.concat(newItems->Array.reverse, register1.fetchedEventQueue),
+    Assert.deepEqual(
+      updatedFetchState,
+      [
+        {
+          ...register,
+          fetchedEventQueue: newItems->Array.reverse,
           firstEventBlockNumber: Some(5),
-          registerType: DynamicContractRegister({id: dcId1, nextRegister: root}),
         },
-      }),
-    }
-    let expected3 = expectedRegister3->makeMockFetchState(~isFetchingAtHead=false)
-
-    Assert.deepEqual(expected3, updated3, ~message="3rd register not fetching at head")
+      ]->makeMockFetchState(~isFetchingAtHead=false),
+      ~message="Should not set fetchState to fetching at head",
+    )
   })
 
   it("getEarliest event", () => {
-    let dcId: dynamicContractId = {blockNumber: 100, logIndex: 0}
+    let dcId: FetchState.dynamicContractId = {blockNumber: 100, logIndex: 0}
     let latestFetchedBlock = getBlockData(~blockNumber=500)
 
-    let baseRegister = {
+    let register1: FetchState.register = {
+      latestFetchedBlock,
+      contractAddressMapping: ContractAddressingMap.fromArray([
+        (mockAddress1, (Gravatar :> string)),
+      ]),
+      firstEventBlockNumber: None,
+      dynamicContracts: FetchState.DynamicContractsMap.empty,
+      fetchedEventQueue: [
+        mockEvent(~blockNumber=6, ~logIndex=2),
+        mockEvent(~blockNumber=4),
+        mockEvent(~blockNumber=1, ~logIndex=1),
+      ],
+      id: FetchState.rootRegisterId,
+    }
+    let register2: FetchState.register = {
       latestFetchedBlock,
       contractAddressMapping: ContractAddressingMap.fromArray([
         (mockAddress2, (Gravatar :> string)),
       ]),
       firstEventBlockNumber: None,
-      dynamicContracts: DynamicContractsMap.empty->DynamicContractsMap.add(dcId, [mockAddress2]),
+      dynamicContracts: FetchState.DynamicContractsMap.empty->FetchState.DynamicContractsMap.add(
+        dcId,
+        [mockAddress2],
+      ),
       fetchedEventQueue: [
         mockEvent(~blockNumber=6, ~logIndex=1),
         mockEvent(~blockNumber=5),
         mockEvent(~blockNumber=1, ~logIndex=2),
       ],
-      registerType: DynamicContractRegister({
-        id: dcId,
-        nextRegister: {
-          latestFetchedBlock,
-          contractAddressMapping: ContractAddressingMap.fromArray([
-            (mockAddress1, (Gravatar :> string)),
-          ]),
-          firstEventBlockNumber: None,
-          dynamicContracts: DynamicContractsMap.empty,
-          fetchedEventQueue: [
-            mockEvent(~blockNumber=6, ~logIndex=2),
-            mockEvent(~blockNumber=4),
-            mockEvent(~blockNumber=1, ~logIndex=1),
-          ],
-          registerType: RootRegister,
-        },
-      }),
+      id: FetchState.makeDynamicContractRegisterId(dcId),
     }
 
-    let fetchState = baseRegister->makeMockFetchState
+    let fetchState = [register1, register2]->makeMockFetchState
 
-    let earliestQueueItem = fetchState->getEarliestEvent->getItem->Option.getExn
+    let earliestQueueItem = fetchState->FetchState.getEarliestEvent->getItem->Option.getExn
 
     Assert.deepEqual(earliestQueueItem, mockEvent(~blockNumber=1, ~logIndex=1))
   })
 
   it("getEarliestEvent accounts for pending dynamicContracts", () => {
-    let baseRegister = {
+    let baseRegister: FetchState.register = {
       latestFetchedBlock: {
         blockNumber: 500,
         blockTimestamp: 500 * 15,
@@ -436,26 +451,26 @@ describe("FetchState.fetchState", () => {
         (mockAddress1, (Gravatar :> string)),
       ]),
       firstEventBlockNumber: None,
-      dynamicContracts: DynamicContractsMap.empty,
+      dynamicContracts: FetchState.DynamicContractsMap.empty,
       fetchedEventQueue: [
         mockEvent(~blockNumber=106, ~logIndex=1),
         mockEvent(~blockNumber=105),
         mockEvent(~blockNumber=101, ~logIndex=2),
       ],
-      registerType: RootRegister,
+      id: FetchState.rootRegisterId,
     }
-    let dynamicContractRegistration = {
+    let dynamicContractRegistration: FetchState.dynamicContractRegistration = {
       registeringEventBlockNumber: 100,
       registeringEventLogIndex: 0,
       registeringEventChain: ChainMap.Chain.makeUnsafe(~chainId=1),
       dynamicContracts: [],
     }
 
-    let fetchState = {
-      ...baseRegister->makeMockFetchState,
+    let fetchState: FetchState.t = {
+      ...[baseRegister]->makeMockFetchState,
       pendingDynamicContracts: [dynamicContractRegistration],
     }
-    let earliestQueueItem = fetchState->getEarliestEvent
+    let earliestQueueItem = fetchState->FetchState.getEarliestEvent
 
     Assert.deepEqual(
       earliestQueueItem,
@@ -468,7 +483,7 @@ describe("FetchState.fetchState", () => {
   })
 
   it("isReadyForNextQuery standard", () => {
-    let baseRegister = {
+    let baseRegister: FetchState.register = {
       latestFetchedBlock: {
         blockNumber: 500,
         blockTimestamp: 500 * 15,
@@ -477,23 +492,23 @@ describe("FetchState.fetchState", () => {
         (mockAddress1, (Gravatar :> string)),
       ]),
       firstEventBlockNumber: None,
-      dynamicContracts: DynamicContractsMap.empty,
+      dynamicContracts: FetchState.DynamicContractsMap.empty,
       fetchedEventQueue: [
         mockEvent(~blockNumber=6, ~logIndex=1),
         mockEvent(~blockNumber=5),
         mockEvent(~blockNumber=1, ~logIndex=2),
       ],
-      registerType: RootRegister,
+      id: FetchState.rootRegisterId,
     }
-    let fetchState = baseRegister->makeMockFetchState
+    let fetchState = [baseRegister]->makeMockFetchState
 
     Assert.ok(
-      fetchState->isReadyForNextQuery(~maxQueueSize=10),
+      fetchState->FetchState.isReadyForNextQuery(~maxQueueSize=10),
       ~message="Should be ready for next query when under max queue size",
     )
 
     Assert.ok(
-      !(fetchState->isReadyForNextQuery(~maxQueueSize=3)),
+      !(fetchState->FetchState.isReadyForNextQuery(~maxQueueSize=3)),
       ~message="Should not be ready for next query when at max queue size",
     )
   })
@@ -501,7 +516,7 @@ describe("FetchState.fetchState", () => {
   it(
     "isReadyForNextQuery when cummulatively over max queue size but dynamic contract is under",
     () => {
-      let rootRegister = {
+      let register1: FetchState.register = {
         latestFetchedBlock: {
           blockNumber: 500,
           blockTimestamp: 500 * 15,
@@ -510,20 +525,16 @@ describe("FetchState.fetchState", () => {
           (mockAddress1, (Gravatar :> string)),
         ]),
         firstEventBlockNumber: None,
-        dynamicContracts: DynamicContractsMap.empty,
+        dynamicContracts: FetchState.DynamicContractsMap.empty,
         fetchedEventQueue: [
           mockEvent(~blockNumber=6, ~logIndex=1),
           mockEvent(~blockNumber=5),
           mockEvent(~blockNumber=4, ~logIndex=2),
         ],
-        registerType: RootRegister,
+        id: FetchState.rootRegisterId,
       }
-
-      let baseRegister = {
-        registerType: DynamicContractRegister({
-          id: {blockNumber: 100, logIndex: 0},
-          nextRegister: rootRegister,
-        }),
+      let register2: FetchState.register = {
+        id: FetchState.makeDynamicContractRegisterId({blockNumber: 100, logIndex: 0}),
         latestFetchedBlock: {
           blockNumber: 500,
           blockTimestamp: 500 * 15,
@@ -532,7 +543,7 @@ describe("FetchState.fetchState", () => {
           (mockAddress2, (Gravatar :> string)),
         ]),
         firstEventBlockNumber: None,
-        dynamicContracts: DynamicContractsMap.empty,
+        dynamicContracts: FetchState.DynamicContractsMap.empty,
         fetchedEventQueue: [
           mockEvent(~blockNumber=3, ~logIndex=2),
           mockEvent(~blockNumber=2),
@@ -540,19 +551,23 @@ describe("FetchState.fetchState", () => {
         ],
       }
 
-      let fetchState = baseRegister->makeMockFetchState
+      let fetchState = [register1, register2]->makeMockFetchState
 
-      Assert.equal(fetchState->queueSize, 6, ~message="Should have 6 items total in queue")
+      Assert.equal(
+        fetchState->FetchState.queueSize,
+        6,
+        ~message="Should have 6 items total in queue",
+      )
 
       Assert.ok(
-        fetchState->isReadyForNextQuery(~maxQueueSize=5),
+        fetchState->FetchState.isReadyForNextQuery(~maxQueueSize=5),
         ~message="Should be ready for next query when base register is under max queue size",
       )
     },
   )
 
   it("isReadyForNextQuery when containing pending dynamic contracts", () => {
-    let baseRegister = {
+    let baseRegister: FetchState.register = {
       latestFetchedBlock: {
         blockNumber: 500,
         blockTimestamp: 500 * 15,
@@ -561,25 +576,25 @@ describe("FetchState.fetchState", () => {
         (mockAddress1, (Gravatar :> string)),
       ]),
       firstEventBlockNumber: None,
-      dynamicContracts: DynamicContractsMap.empty,
+      dynamicContracts: FetchState.DynamicContractsMap.empty,
       fetchedEventQueue: [
         mockEvent(~blockNumber=6, ~logIndex=1),
         mockEvent(~blockNumber=5),
         mockEvent(~blockNumber=1, ~logIndex=2),
       ],
-      registerType: RootRegister,
+      id: FetchState.rootRegisterId,
     }
-    let dynamicContractRegistration = {
+    let dynamicContractRegistration: FetchState.dynamicContractRegistration = {
       registeringEventBlockNumber: 100,
       registeringEventLogIndex: 0,
       registeringEventChain: ChainMap.Chain.makeUnsafe(~chainId=1),
       dynamicContracts: [],
     }
 
-    let fetchStateWithoutPendingDynamicContracts = baseRegister->makeMockFetchState
+    let fetchStateWithoutPendingDynamicContracts = [baseRegister]->makeMockFetchState
 
     Assert.ok(
-      !(fetchStateWithoutPendingDynamicContracts->isReadyForNextQuery(~maxQueueSize=3)),
+      !(fetchStateWithoutPendingDynamicContracts->FetchState.isReadyForNextQuery(~maxQueueSize=3)),
       ~message="Should not be ready for next query when base register is at the max queue size",
     )
 
@@ -589,39 +604,34 @@ describe("FetchState.fetchState", () => {
     }
 
     Assert.ok(
-      fetchStateWithPendingDynamicContracts->isReadyForNextQuery(~maxQueueSize=3),
+      fetchStateWithPendingDynamicContracts->FetchState.isReadyForNextQuery(~maxQueueSize=3),
       ~message="Should be ready for next query when base register is at the max queue size but contains pending dynamic contracts",
     )
   })
 
   it("getNextQuery", () => {
     let latestFetchedBlock = getBlockData(~blockNumber=500)
-    let root = {
+    let root: FetchState.register = {
       latestFetchedBlock,
       contractAddressMapping: ContractAddressingMap.fromArray([
         (mockAddress1, (Gravatar :> string)),
       ]),
       firstEventBlockNumber: None,
-      dynamicContracts: DynamicContractsMap.empty,
+      dynamicContracts: FetchState.DynamicContractsMap.empty,
       fetchedEventQueue: [
         mockEvent(~blockNumber=6, ~logIndex=2),
         mockEvent(~blockNumber=4),
         mockEvent(~blockNumber=1, ~logIndex=1),
       ],
-      registerType: RootRegister,
+      id: FetchState.rootRegisterId,
     }
 
-    let fetchState = {
-      partitionId: 0,
-      baseRegister: root,
-      pendingDynamicContracts: [],
-      isFetchingAtHead: false,
-    }
+    let fetchState = [root]->makeMockFetchState
 
     Assert.deepEqual(
-      fetchState->getNextQuery(~endBlock=None),
+      fetchState->FetchState.getNextQuery(~endBlock=None),
       NextQuery({
-        fetchStateRegisterId: Root,
+        fetchStateRegisterId: FetchState.rootRegisterId,
         partitionId: 0,
         fromBlock: root.latestFetchedBlock.blockNumber + 1,
         toBlock: None,
@@ -629,68 +639,63 @@ describe("FetchState.fetchState", () => {
       }),
     )
 
-    let endblockCase = {
-      ...fetchState,
-      baseRegister: {
+    let endblockCase = [
+      {
         ...root,
         latestFetchedBlock: {
           blockNumber: 500,
           blockTimestamp: 0,
         },
         fetchedEventQueue: [],
-        registerType: RootRegister,
+        id: FetchState.rootRegisterId,
       },
-    }
+    ]->makeMockFetchState
 
-    let nextQuery = endblockCase->getNextQuery(~endBlock=Some(500))
+    let nextQuery = endblockCase->FetchState.getNextQuery(~endBlock=Some(500))
 
-    Assert.deepEqual(Done, nextQuery)
+    Assert.deepEqual(nextQuery, Done)
   })
 
   it("check contains contract address", () => {
-    let dcId: dynamicContractId = {blockNumber: 100, logIndex: 0}
+    let dcId: FetchState.dynamicContractId = {blockNumber: 100, logIndex: 0}
     let latestFetchedBlock = getBlockData(~blockNumber=500)
 
-    let baseRegister = {
+    let register1: FetchState.register = {
+      latestFetchedBlock,
+      contractAddressMapping: ContractAddressingMap.fromArray([
+        (mockAddress1, (Gravatar :> string)),
+      ]),
+      firstEventBlockNumber: None,
+      dynamicContracts: FetchState.DynamicContractsMap.empty,
+      fetchedEventQueue: [
+        mockEvent(~blockNumber=6, ~logIndex=2),
+        mockEvent(~blockNumber=4),
+        mockEvent(~blockNumber=1, ~logIndex=1),
+      ],
+      id: FetchState.rootRegisterId,
+    }
+    let register2: FetchState.register = {
       latestFetchedBlock,
       contractAddressMapping: ContractAddressingMap.fromArray([
         (mockAddress2, (Gravatar :> string)),
       ]),
       firstEventBlockNumber: None,
-      dynamicContracts: DynamicContractsMap.empty->DynamicContractsMap.add(dcId, [mockAddress2]),
+      dynamicContracts: FetchState.DynamicContractsMap.empty->FetchState.DynamicContractsMap.add(
+        dcId,
+        [mockAddress2],
+      ),
       fetchedEventQueue: [
         mockEvent(~blockNumber=6, ~logIndex=1),
         mockEvent(~blockNumber=5),
         mockEvent(~blockNumber=1, ~logIndex=2),
       ],
-      registerType: DynamicContractRegister({
-        id: dcId,
-        nextRegister: {
-          latestFetchedBlock,
-          contractAddressMapping: ContractAddressingMap.fromArray([
-            (mockAddress1, (Gravatar :> string)),
-          ]),
-          firstEventBlockNumber: None,
-          dynamicContracts: DynamicContractsMap.empty,
-          fetchedEventQueue: [
-            mockEvent(~blockNumber=6, ~logIndex=2),
-            mockEvent(~blockNumber=4),
-            mockEvent(~blockNumber=1, ~logIndex=1),
-          ],
-          registerType: RootRegister,
-        },
-      }),
+      id: FetchState.makeDynamicContractRegisterId(dcId),
     }
 
-    let fetchState = {
-      partitionId: 0,
-      baseRegister,
-      pendingDynamicContracts: [],
-      isFetchingAtHead: false,
-    }
+    let fetchState = [register1, register2]->makeMockFetchState
 
     Assert.equal(
-      fetchState->checkContainsRegisteredContractAddress(
+      fetchState->FetchState.checkContainsRegisteredContractAddress(
         ~contractAddress=mockAddress1,
         ~contractName=(Gravatar :> string),
         ~chainId=1,
@@ -700,155 +705,182 @@ describe("FetchState.fetchState", () => {
   })
 
   it("isActively indexing", () => {
-    let case1 = {
+    let case1: FetchState.register = {
       latestFetchedBlock: getBlockData(~blockNumber=150),
       contractAddressMapping: ContractAddressingMap.fromArray([
         (mockAddress1, (Gravatar :> string)),
       ]),
       firstEventBlockNumber: None,
-      dynamicContracts: DynamicContractsMap.empty,
+      dynamicContracts: FetchState.DynamicContractsMap.empty,
       fetchedEventQueue: [mockEvent(~blockNumber=140), mockEvent(~blockNumber=99)],
-      registerType: RootRegister,
+      id: FetchState.rootRegisterId,
     }
 
-    case1->makeMockFetchState->isActivelyIndexing(~endBlock=Some(150))->Assert.equal(true)
+    [case1]
+    ->makeMockFetchState
+    ->FetchState.isActivelyIndexing(~endBlock=Some(150))
+    ->Assert.equal(true, ~message="Should be actively indexing with fetchedEventQueue")
 
-    let case2 = {
+    let registerWithoutQueue = {
       ...case1,
       fetchedEventQueue: [],
     }
 
-    case2->makeMockFetchState->isActivelyIndexing(~endBlock=Some(150))->Assert.equal(false)
+    [registerWithoutQueue]
+    ->makeMockFetchState
+    ->FetchState.isActivelyIndexing(~endBlock=Some(150))
+    ->Assert.equal(false, ~message="When there's an endBlock and no queue, it should return false")
 
-    let case3 = {
-      ...case2,
-      registerType: DynamicContractRegister({
-        id: {blockNumber: 100, logIndex: 0},
-        nextRegister: case2,
-      }),
-    }
+    let case3 = [
+      registerWithoutQueue,
+      {
+        ...registerWithoutQueue,
+        id: FetchState.makeDynamicContractRegisterId({blockNumber: 100, logIndex: 0}),
+      },
+    ]
 
-    case3->makeMockFetchState->isActivelyIndexing(~endBlock=Some(150))->Assert.equal(true)
+    case3
+    ->makeMockFetchState
+    ->FetchState.isActivelyIndexing(~endBlock=Some(150))
+    ->Assert.equal(
+      false,
+      ~message="It doesn't matter if there are multiple not merged registers, if they don't have a queue and caught up to the endBlock, treat them as not active",
+    )
 
-    let case4 = {
-      ...case1,
-      registerType: RootRegister,
-    }
+    case3
+    ->makeMockFetchState(
+      ~pendingDynamicContracts=[
+        {
+          registeringEventBlockNumber: 200,
+          registeringEventLogIndex: 0,
+          registeringEventChain: ChainMap.Chain.makeUnsafe(~chainId=1),
+          dynamicContracts: [],
+        },
+      ],
+    )
+    ->FetchState.isActivelyIndexing(~endBlock=Some(150))
+    ->Assert.equal(
+      true,
+      ~message="But should be true with a pending dynamic contract, even if the registeringEventBlockNumber more than the endBlock (no reason for this, just snapshot the current logic)",
+    )
 
-    case4->makeMockFetchState->isActivelyIndexing(~endBlock=Some(151))->Assert.equal(true)
+    [registerWithoutQueue]
+    ->makeMockFetchState
+    ->FetchState.isActivelyIndexing(~endBlock=Some(151))
+    ->Assert.equal(true)
 
-    let case5 = {
-      ...case1,
-      registerType: RootRegister,
-    }
-
-    case5->makeMockFetchState->isActivelyIndexing(~endBlock=None)->Assert.equal(true)
+    [registerWithoutQueue]
+    ->makeMockFetchState
+    ->FetchState.isActivelyIndexing(~endBlock=None)
+    ->Assert.equal(true)
   })
 
   it("rolls back", () => {
-    let dcId1: dynamicContractId = {blockNumber: 100, logIndex: 0}
-    let dcId2: dynamicContractId = {blockNumber: 101, logIndex: 0}
+    let dcId1: FetchState.dynamicContractId = {blockNumber: 100, logIndex: 0}
+    let dcId2: FetchState.dynamicContractId = {blockNumber: 101, logIndex: 0}
 
-    let root = {
+    let register1: FetchState.register = {
       latestFetchedBlock: getBlockData(~blockNumber=150),
       contractAddressMapping: ContractAddressingMap.fromArray([
         (mockAddress1, (Gravatar :> string)),
       ]),
       firstEventBlockNumber: None,
-      dynamicContracts: DynamicContractsMap.empty,
+      dynamicContracts: FetchState.DynamicContractsMap.empty,
       fetchedEventQueue: [mockEvent(~blockNumber=140), mockEvent(~blockNumber=99)],
-      registerType: RootRegister,
+      id: FetchState.rootRegisterId,
     }
 
-    let register2 = {
+    let register2: FetchState.register = {
       latestFetchedBlock: getBlockData(~blockNumber=120),
       contractAddressMapping: ContractAddressingMap.fromArray([
         (mockAddress3, (Gravatar :> string)),
       ]),
       firstEventBlockNumber: None,
-      dynamicContracts: DynamicContractsMap.empty->DynamicContractsMap.add(dcId2, [mockAddress3]),
+      dynamicContracts: FetchState.DynamicContractsMap.empty->FetchState.DynamicContractsMap.add(
+        dcId2,
+        [mockAddress3],
+      ),
       fetchedEventQueue: [mockEvent(~blockNumber=110)],
-      registerType: DynamicContractRegister({id: dcId2, nextRegister: root}),
+      id: FetchState.makeDynamicContractRegisterId(dcId2),
     }
 
-    let register3 = {
+    let register3: FetchState.register = {
       latestFetchedBlock: getBlockData(~blockNumber=99),
       contractAddressMapping: ContractAddressingMap.fromArray([
         (mockAddress2, (Gravatar :> string)),
       ]),
       firstEventBlockNumber: None,
-      dynamicContracts: DynamicContractsMap.empty->DynamicContractsMap.add(dcId1, [mockAddress2]),
+      dynamicContracts: FetchState.DynamicContractsMap.empty->FetchState.DynamicContractsMap.add(
+        dcId1,
+        [mockAddress2],
+      ),
       fetchedEventQueue: [
         mockEvent(~blockNumber=6, ~logIndex=1),
         mockEvent(~blockNumber=5),
         mockEvent(~blockNumber=1, ~logIndex=2),
       ],
-      registerType: DynamicContractRegister({id: dcId1, nextRegister: register2}),
+      id: FetchState.makeDynamicContractRegisterId(dcId1),
     }
 
-    let fetchState = register3->makeMockFetchState
+    let fetchState = [register3, register2, register1]->makeMockFetchState
 
     let updated =
-      fetchState->rollback(
+      fetchState->FetchState.rollback(
         ~lastScannedBlock=getBlockData(~blockNumber=100),
         ~firstChangeEvent={blockNumber: 101, logIndex: 0},
       )
 
-    let expected = {
-      ...register3,
-      registerType: DynamicContractRegister({
-        id: dcId1,
-        nextRegister: {
-          ...root,
+    Assert.deepEqual(
+      updated,
+      [
+        register3,
+        {
+          ...register1,
           latestFetchedBlock: getBlockData(~blockNumber=100),
           fetchedEventQueue: [mockEvent(~blockNumber=99)],
         },
-      }),
-    }->makeMockFetchState
-
-    Assert.deepEqual(
-      expected,
-      updated,
+      ]->makeMockFetchState,
       ~message="should have removed the second register and rolled back the others",
     )
   })
 
   it("counts number of contracts correctly", () => {
-    let dcId: dynamicContractId = {blockNumber: 100, logIndex: 0}
+    let dcId: FetchState.dynamicContractId = {blockNumber: 100, logIndex: 0}
     let latestFetchedBlock = getBlockData(~blockNumber=500)
 
-    let baseRegister = {
+    let register1: FetchState.register = {
+      latestFetchedBlock,
+      contractAddressMapping: ContractAddressingMap.fromArray([
+        (mockAddress1, (Gravatar :> string)),
+      ]),
+      firstEventBlockNumber: None,
+      dynamicContracts: FetchState.DynamicContractsMap.empty,
+      fetchedEventQueue: [
+        mockEvent(~blockNumber=6, ~logIndex=2),
+        mockEvent(~blockNumber=4),
+        mockEvent(~blockNumber=1, ~logIndex=1),
+      ],
+      id: FetchState.rootRegisterId,
+    }
+    let register2: FetchState.register = {
       latestFetchedBlock,
       contractAddressMapping: ContractAddressingMap.fromArray([
         (mockAddress2, (Gravatar :> string)),
       ]),
       firstEventBlockNumber: None,
-      dynamicContracts: DynamicContractsMap.empty->DynamicContractsMap.add(dcId, [mockAddress2]),
+      dynamicContracts: FetchState.DynamicContractsMap.empty->FetchState.DynamicContractsMap.add(
+        dcId,
+        [mockAddress2],
+      ),
       fetchedEventQueue: [
         mockEvent(~blockNumber=6, ~logIndex=1),
         mockEvent(~blockNumber=5),
         mockEvent(~blockNumber=1, ~logIndex=2),
       ],
-      registerType: DynamicContractRegister({
-        id: dcId,
-        nextRegister: {
-          latestFetchedBlock,
-          contractAddressMapping: ContractAddressingMap.fromArray([
-            (mockAddress1, (Gravatar :> string)),
-          ]),
-          firstEventBlockNumber: None,
-          dynamicContracts: DynamicContractsMap.empty,
-          fetchedEventQueue: [
-            mockEvent(~blockNumber=6, ~logIndex=2),
-            mockEvent(~blockNumber=4),
-            mockEvent(~blockNumber=1, ~logIndex=1),
-          ],
-          registerType: RootRegister,
-        },
-      }),
+      id: FetchState.makeDynamicContractRegisterId(dcId),
     }
 
-    baseRegister->makeMockFetchState->getNumContracts->Assert.equal(2)
+    [register1, register2]->makeMockFetchState->FetchState.getNumContracts->Assert.equal(2)
   })
 
   it(
@@ -858,25 +890,25 @@ describe("FetchState.fetchState", () => {
       let chainId = 1
       let chain = ChainMap.Chain.makeUnsafe(~chainId)
 
-      let rootRegister = {
+      let rootRegister: FetchState.register = {
         latestFetchedBlock: getBlockData(~blockNumber=500),
         contractAddressMapping: ContractAddressingMap.fromArray([
           (mockAddress1, (Gravatar :> string)),
         ]),
         firstEventBlockNumber: None,
-        dynamicContracts: DynamicContractsMap.empty,
+        dynamicContracts: FetchState.DynamicContractsMap.empty,
         fetchedEventQueue: [
           mockEvent(~blockNumber=6, ~logIndex=2),
           mockEvent(~blockNumber=4),
           mockEvent(~blockNumber=1, ~logIndex=1),
         ],
-        registerType: RootRegister,
+        id: FetchState.rootRegisterId,
       }
 
-      let mockFetchState = rootRegister->makeMockFetchState
+      let mockFetchState = [rootRegister]->makeMockFetchState
 
       //Dynamic contract  A registered at block 100
-      let withRegisteredDynamicContractA = mockFetchState->registerDynamicContract(
+      let withRegisteredDynamicContractA = mockFetchState->FetchState.registerDynamicContract(
         {
           registeringEventChain: chain,
           registeringEventBlockNumber: 100,
@@ -887,16 +919,16 @@ describe("FetchState.fetchState", () => {
       )
 
       let withAddedDynamicContractRegisterA =
-        withRegisteredDynamicContractA->mergeRegistersBeforeNextQuery
+        withRegisteredDynamicContractA->FetchState.mergeBeforeNextQuery
       //Received query
-      let queryA = switch withAddedDynamicContractRegisterA->getNextQuery(~endBlock=None) {
+      let queryA = switch withAddedDynamicContractRegisterA->FetchState.getNextQuery(
+        ~endBlock=None,
+      ) {
       | NextQuery(queryA) =>
         switch queryA {
-        | {
-            fetchStateRegisterId: DynamicContract({blockNumber: 100, logIndex: 0}),
-            fromBlock: 100,
-            toBlock: Some(500),
-          } => queryA
+        | {fetchStateRegisterId, fromBlock: 100, toBlock: Some(500)}
+          if fetchStateRegisterId ===
+            FetchState.makeDynamicContractRegisterId({blockNumber: 100, logIndex: 0}) => queryA
         | query =>
           Js.log2("unexpected queryA", query)
           Assert.fail(
@@ -912,7 +944,7 @@ describe("FetchState.fetchState", () => {
 
       //Next registration happens at block 200, between the first register and the upperbound of it's query
       let withRegisteredDynamicContractB =
-        withAddedDynamicContractRegisterA->registerDynamicContract(
+        withAddedDynamicContractRegisterA->FetchState.registerDynamicContract(
           {
             registeringEventChain: chain,
             registeringEventBlockNumber: 200,
@@ -925,7 +957,7 @@ describe("FetchState.fetchState", () => {
       //Response with updated fetch state
       let updatesWithResponseFromQueryA =
         withRegisteredDynamicContractB
-        ->update(
+        ->FetchState.setFetchedItems(
           ~id=queryA.fetchStateRegisterId,
           ~latestFetchedBlock=getBlockData(~blockNumber=400),
           ~currentBlockHeight,
@@ -933,12 +965,10 @@ describe("FetchState.fetchState", () => {
         )
         ->Utils.unwrapResultExn
 
-      switch updatesWithResponseFromQueryA->getNextQuery(~endBlock=None) {
-      | NextQuery({
-          fetchStateRegisterId: DynamicContract({blockNumber: 200, logIndex: 0}),
-          fromBlock: 200,
-          toBlock: Some(400),
-        }) => ()
+      switch updatesWithResponseFromQueryA->FetchState.getNextQuery(~endBlock=None) {
+      | NextQuery({fetchStateRegisterId, fromBlock: 200, toBlock: Some(400)})
+        if fetchStateRegisterId ===
+          FetchState.makeDynamicContractRegisterId({blockNumber: 200, logIndex: 0}) => ()
       | nextQuery =>
         Js.log2("nextQueryB res", nextQuery)
         Assert.fail(
