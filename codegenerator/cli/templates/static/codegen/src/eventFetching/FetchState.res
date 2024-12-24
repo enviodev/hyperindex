@@ -84,15 +84,36 @@ module DynamicContractsMap = {
 }
 
 /**
-An id for a given register. Either the root or a dynamic contract register
-with a dynamicContractId
+An id for a given register
 */
-type id = Root | DynamicContract(dynamicContractId)
+type id = string
+
+let rootRegisterId = "root"
+
+// Make it unique to prevent the case when there are two registers
+// for the same dynamic contract (even though it's super edge-case)
+let makeDynamicContractRegisterId = {
+  let counter = ref(-1)
+  (dynamicContractId: dynamicContractId) => {
+    counter := counter.contents + 1
+    `dynamic-${dynamicContractId.blockNumber->Int.toString}-${dynamicContractId.logIndex->Int.toString}-${counter.contents->Js.Int.toString}`
+  }
+}
+
+let isRootRegisterId = id => id === rootRegisterId
+
+let registerIdToName = (id) => {
+  if id->isRootRegisterId {
+    "Root"
+  } else {
+    "Dynamic Contract"
+  }
+}
 
 /**
 A state that holds a queue of events and data regarding what to fetch next.
-There's always a root register and dynamic contract registers,
-until they are not merged with each other when cought up to the fetched block number.
+There's always a root register and potentially additional registers for dynamic contracts.
+When the registers are caught up to each other they are getting merged
 */
 type register = {
   id: id,
@@ -134,7 +155,7 @@ let copy = (self: t) => {
   {
     partitionId: self.partitionId,
     registers,
-    // Should use the reference to copied value
+    // Must use the reference to copied value, so we use find
     mostBehindRegister: registers
     ->Js.Array2.find(r => r.id == self.mostBehindRegister.id)
     ->Option.getExn,
@@ -196,13 +217,6 @@ let mergeWithNextRegister = (register: register, ~next: register) => {
   }
 }
 
-let registerIdToString = (id: id) =>
-  switch id {
-  | Root => "root"
-  | DynamicContract({blockNumber, logIndex}) =>
-    `dynamic-${blockNumber->Int.toString}-${logIndex->Int.toString}`
-  }
-
 exception UnexpectedRegisterDoesNotExist(id)
 
 /**
@@ -249,7 +263,7 @@ let makeDynamicContractRegister = (
     )
 
   {
-    id: DynamicContract(id),
+    id: makeDynamicContractRegisterId(id),
     latestFetchedBlock: {
       blockNumber: registeringEventBlockNumber - 1,
       blockTimestamp: 0,
@@ -287,18 +301,11 @@ let updateInternal = (
     registeringEventLogIndex,
     dynamicContracts,
   }) => {
-    let register = makeDynamicContractRegister(
+    makeDynamicContractRegister(
       ~registeringEventBlockNumber,
       ~registeringEventLogIndex,
       ~dynamicContractRegistrations=dynamicContracts,
-    )
-    // FIXME: Make it work with the case
-    if registers->Js.Array2.some(r => r.id == register.id) {
-      Js.Exn.raiseError(
-        "Invalid state: Register with the same id already exists for dynamic contract",
-      )
-    }
-    register->add
+    )->add
   })
 
   let registers = registerByLatestBlock->Js.Dict.values
@@ -313,7 +320,16 @@ let updateInternal = (
   }
 }
 
-/**
+let mergeBeforeNextQuery = fetchState => {
+  switch fetchState.pendingDynamicContracts {
+  // If there are no pendingDynamicContracts,
+  // then the fetchState should already be merged
+  | [] => fetchState
+  | _ => fetchState->updateInternal
+  }
+}
+
+/*
 Adds a new dynamic contract registration. It appends the registration to the pending dynamic
 contract registrations. These pending registrations are applied to the base register when next
 query is called.
@@ -322,21 +338,11 @@ let registerDynamicContract = (
   fetchState: t,
   registration: dynamicContractRegistration,
   ~isFetchingAtHead,
-  ~endBlock,
 ) => {
-  let updatedFetchState = {
+  {
     ...fetchState,
     pendingDynamicContracts: fetchState.pendingDynamicContracts->Array.concat([registration]),
     isFetchingAtHead,
-  }
-  let isStoppedFetching = switch endBlock {
-  | Some(endBlock) => fetchState.mostBehindRegister.latestFetchedBlock.blockNumber >= endBlock
-  | None => false
-  }
-  if isStoppedFetching {
-    updatedFetchState->updateInternal
-  } else {
-    updatedFetchState
   }
 }
 
@@ -390,7 +396,6 @@ let getQueryLogger = (
   {fetchStateRegisterId, fromBlock, toBlock, contractAddressMapping}: nextQuery,
   ~logger,
 ) => {
-  let fetchStateRegister = fetchStateRegisterId->registerIdToString
   let allAddresses = contractAddressMapping->ContractAddressingMap.getAllAddresses
   let addresses =
     allAddresses->Js.Array2.slice(~start=0, ~end_=3)->Array.map(addr => addr->Address.toString)
@@ -402,7 +407,7 @@ let getQueryLogger = (
     "fromBlock": fromBlock,
     "toBlock": toBlock,
     "addresses": addresses,
-    "fetchStateRegister": fetchStateRegister,
+    "register": fetchStateRegisterId,
   }
   Logging.createChildFrom(~logger, ~params)
 }
@@ -587,7 +592,7 @@ let make = (
   })
 
   let rootRegister = {
-    id: Root,
+    id: rootRegisterId,
     latestFetchedBlock: {
       blockTimestamp: 0,
       // Here's a bug that startBlock: 1 won't work
@@ -631,7 +636,7 @@ fetching registration
 If there are pending dynamic contracts, we always need to allow the next query
 */
 let isReadyForNextQuery = ({pendingDynamicContracts} as fetchState: t, ~maxQueueSize) =>
-  pendingDynamicContracts->Utils.Array.isEmpty // FIXME: This is won't work anymore
+  pendingDynamicContracts->Utils.Array.isEmpty
     ? fetchState.mostBehindRegister.fetchedEventQueue->Array.length < maxQueueSize
     : true
 
@@ -821,7 +826,7 @@ let isActivelyIndexing = (
   }
 }
 
-// FIXME: Should include pending contracts
+// FIXME: Should include pending contracts?
 let getNumContracts = ({registers}: t) => {
   let sum = ref(0)
   for idx in 0 to registers->Js.Array2.length - 1 {
@@ -830,43 +835,3 @@ let getNumContracts = ({registers}: t) => {
   }
   sum.contents
 }
-
-/*
-Helper functions for debugging and printing
-*/
-// module DebugHelpers = {
-//   let registerToString = register =>
-//     switch register.id {
-//     | Root => "root"
-//     | DynamicContract({blockNumber, logIndex}) =>
-//       `DC-${blockNumber->Int.toString}-${logIndex->Int.toString}`
-//     }
-
-//   let rec getQueueSizesInternal = (register: register, ~accum) => {
-//     let next = (register->registerToString, register.fetchedEventQueue->Array.length)
-//     let accum = list{next, ...accum}
-//     switch register.registerType {
-//     | RootRegister => accum
-//     | DynamicContractRegister({nextRegister}) => nextRegister->getQueueSizesInternal(~accum)
-//     }
-//   }
-
-//   let getQueueSizes = (self: t) =>
-//     self.baseRegister->getQueueSizesInternal(~accum=list{})->List.toArray->Js.Dict.fromArray
-
-//   let rec numberRegistered = (~accum=0, self: register) => {
-//     let accum = accum + 1
-//     switch self.registerType {
-//     | RootRegister => accum
-//     | DynamicContractRegister({nextRegister}) => nextRegister->numberRegistered(~accum)
-//     }
-//   }
-
-//   let rec getRegisterAddressMaps = (self: register, ~accum=[]) => {
-//     accum->Js.Array2.push(self.contractAddressMapping.nameByAddress)->ignore
-//     switch self.registerType {
-//     | RootRegister => accum
-//     | DynamicContractRegister({nextRegister}) => nextRegister->getRegisterAddressMaps(~accum)
-//     }
-//   }
-// }

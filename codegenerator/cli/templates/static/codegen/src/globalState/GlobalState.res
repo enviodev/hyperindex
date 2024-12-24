@@ -104,6 +104,7 @@ type action =
   | StartIndexingAfterPreRegister
   | SetCurrentlyProcessing(bool)
   | SetIsInReorgThreshold(bool)
+  | SetUpdatedPartitions(chain, dict<FetchState.t>)
   | UpdateQueues(ChainMap.t<ChainManager.fetchStateWithData>, arbitraryEventQueue)
   | SetSyncedChains
   | SuccessExit
@@ -601,6 +602,23 @@ let actionReducer = (state: t, action: action) => {
       Logging.info("Reorg threshold reached")
     }
     ({...state, chainManager: {...state.chainManager, isInReorgThreshold}}, [])
+  | SetUpdatedPartitions(chain, updatedPartitions) =>
+    let updatedPartitionIds = updatedPartitions->Js.Dict.keys
+    if updatedPartitionIds->Utils.Array.isEmpty {
+      (state, [])
+    } else {
+      updateChainFetcher(currentChainFetcher => {
+        let partitionsCopy = currentChainFetcher.partitionedFetchState.partitions->Js.Array2.copy
+        updatedPartitionIds->Js.Array2.forEach(partitionId => {
+          let partition = updatedPartitions->Js.Dict.unsafeGet(partitionId)
+          partitionsCopy->Js.Array2.unsafe_set(partitionId->(Utils.magic: string => int), partition)
+        })
+        {
+          ...currentChainFetcher,
+          partitionedFetchState: {...currentChainFetcher.partitionedFetchState, partitions: partitionsCopy},
+        }
+      }, ~chain, ~state)
+    }
   | SetSyncedChains => {
       let shouldExit = EventProcessing.EventsProcessed.allChainsEventsProcessedToEndblock(
         state.chainManager.chainFetchers,
@@ -831,6 +849,7 @@ let checkAndFetchForChain = (
         ~isPreRegisteringDynamicContracts=state.chainManager->ChainManager.isPreRegisteringDynamicContracts,
       ),
       ~maxPerChainQueueSize=state.maxPerChainQueueSize,
+      ~setMergedPartitions=partitions => dispatchAction(SetUpdatedPartitions(chain, partitions)),
       ~stateId=state.id,
     )
   }

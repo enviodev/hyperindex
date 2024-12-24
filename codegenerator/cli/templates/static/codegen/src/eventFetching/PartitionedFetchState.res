@@ -125,13 +125,12 @@ let registerDynamicContracts = (
       newestPartition->FetchState.registerDynamicContract(
         dynamicContractRegistration,
         ~isFetchingAtHead,
-        ~endBlock,
       )
     partitions->Utils.Array.setIndexImmutable(newestPartitionIndex, updated)
   } else {
     let newPartition = FetchState.make(
       ~partitionId=partitions->Array.length,
-      ~startBlock,
+      ~startBlock=dynamicContractRegistration.registeringEventBlockNumber,
       ~logger,
       ~staticContracts=[],
       ~dynamicContractRegistrations=dynamicContractRegistration.dynamicContracts,
