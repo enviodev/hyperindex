@@ -90,19 +90,13 @@ type id = string
 
 let rootRegisterId = "root"
 
-// Make it unique to prevent the case when there are two registers
-// for the same dynamic contract (even though it's super edge-case)
-let makeDynamicContractRegisterId = {
-  let counter = ref(-1)
-  (dynamicContractId: dynamicContractId) => {
-    counter := counter.contents + 1
-    `dynamic-${dynamicContractId.blockNumber->Int.toString}-${dynamicContractId.logIndex->Int.toString}-${counter.contents->Js.Int.toString}`
-  }
+let makeDynamicContractRegisterId = (dynamicContractId: dynamicContractId) => {
+  `dynamic-${dynamicContractId.blockNumber->Int.toString}-${dynamicContractId.logIndex->Int.toString}`
 }
 
 let isRootRegisterId = id => id === rootRegisterId
 
-let registerIdToName = (id) => {
+let registerIdToName = id => {
   if id->isRootRegisterId {
     "Root"
   } else {

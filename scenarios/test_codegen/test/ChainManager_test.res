@@ -77,7 +77,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
           fetchState :=
             fetchState.contents
             ->PartitionedFetchState.update(
-              ~id={fetchStateId: FetchState.Root, partitionId: 0},
+              ~id={fetchStateId: FetchState.rootRegisterId, partitionId: 0},
               ~latestFetchedBlock={
                 blockNumber: batchItem.blockNumber,
                 blockTimestamp: batchItem.timestamp,
@@ -96,7 +96,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
             fetchState :=
               fetchState.contents
               ->PartitionedFetchState.update(
-                ~id={fetchStateId: FetchState.Root, partitionId: 0},
+                ~id={fetchStateId: FetchState.rootRegisterId, partitionId: 0},
                 ~latestFetchedBlock={
                   blockNumber: batchItem.blockNumber,
                   blockTimestamp: batchItem.timestamp,
@@ -323,9 +323,8 @@ describe("determineNextEvent", () => {
     }
 
     let makeMockFetchState = (~latestFetchedBlockTimestamp, ~item): FetchState.t => {
-      partitionId: 0,
-      baseRegister: {
-        registerType: RootRegister,
+      let register: FetchState.register = {
+        id: FetchState.rootRegisterId,
         latestFetchedBlock: {
           blockTimestamp: latestFetchedBlockTimestamp,
           blockNumber: 0,
@@ -334,9 +333,15 @@ describe("determineNextEvent", () => {
         fetchedEventQueue: item->Option.mapWithDefault([], v => [v]),
         dynamicContracts: FetchState.DynamicContractsMap.empty,
         firstEventBlockNumber: item->Option.map(v => v.blockNumber),
-      },
-      pendingDynamicContracts: [],
-      isFetchingAtHead: false,
+      }
+      {
+        partitionId: 0,
+        registers: [register],
+        mostBehindRegister: register,
+        nextMostBehindRegister: None,
+        pendingDynamicContracts: [],
+        isFetchingAtHead: false,
+      }
     }
 
     let makeMockPartitionedFetchState = (
