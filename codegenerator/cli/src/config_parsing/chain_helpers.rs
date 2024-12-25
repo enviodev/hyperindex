@@ -499,13 +499,13 @@ impl HypersyncNetwork {
         match self {
             EthereumMainnet | Fantom | Zeta | Sepolia | OptimismSepolia | Metis | ZksyncEra
             | Optimism | ArbitrumSepolia | ArbitrumNova | Avalanche | Polygon | Bsc | Mantle
-            | BaseSepolia => Gold,
+            | BaseSepolia | Gnosis => Gold,
 
             Manta | Base | BerachainBartio | Boba | Blast | Cyber | Aurora | Harmony | Scroll
             | Darwinia | Mode | Rsk | ShimmerEvm | Linea | NeonEvm | Amoy | Saakuru | Moonbeam
             | Lisk | BlastSepolia | Chiliz | Fuji | ArbitrumOne | Merlin | Holesky => Silver,
 
-            Zora | MoonbaseAlpha | Morph | LuksoTestnet | Kroma | GnosisChiado | Lukso | Gnosis
+            Zora | MoonbaseAlpha | Morph | LuksoTestnet | Kroma | GnosisChiado | Lukso
             | C1Milkomeda | Crab | Sophon | Flare | PolygonZkevm | MevCommit | Tangle => Bronze,
 
             SophonTestnet | MorphTestnet | GaladrielDevnet | CitreaTestnet | Goerli
