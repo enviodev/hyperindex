@@ -305,7 +305,7 @@ module Make = (
         ~logger,
         //Only apply wildcards on the first partition and root register
         //to avoid duplicate wildcard queries
-        ~shouldApplyWildcards=fetchStateRegisterId == Root && partitionId == 0, //only
+        ~shouldApplyWildcards=fetchStateRegisterId->FetchState.isRootRegisterId && partitionId == 0, //only
         ~isPreRegisteringDynamicContracts,
       )
 
