@@ -43,6 +43,7 @@ let makeThrowingGetEventTransaction = (~getTransactionFields) => {
           }
 
           let fn = switch transactionFieldItems {
+          | [] => _ => %raw(`{}`)->Promise.resolve
           | [{location: "transactionIndex"}] =>
             log => log->parseOrThrowReadableError->Promise.resolve
           | [{location: "hash"}]
