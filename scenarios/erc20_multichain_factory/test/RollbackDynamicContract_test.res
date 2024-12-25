@@ -193,8 +193,8 @@ describe("Dynamic contract rollback test", () => {
     await dispatchTask(NextQuery(CheckAllChains))
 
     Assert.deepEqual(
-      [GlobalState.NextQuery(Chain(Mock.Chain1.chain)), NextQuery(Chain(Mock.Chain2.chain))],
       stubDataInitial->Stubs.getTasks,
+      [GlobalState.NextQuery(Chain(Mock.Chain1.chain)), NextQuery(Chain(Mock.Chain2.chain))],
       ~message="Should have completed query to get height, next tasks would be to execute block range query",
     )
 
@@ -271,6 +271,7 @@ describe("Dynamic contract rollback test", () => {
     //Make the first queries (A)
     await dispatchAllTasks()
     Assert.deepEqual(
+      stubDataInitial->Stubs.getTasks,
       [
         Mock.getUpdateEndofBlockRangeScannedData(
           Mock.mockChainDataMap,
@@ -293,7 +294,6 @@ describe("Dynamic contract rollback test", () => {
         ProcessEventBatch,
         NextQuery(Chain(Mock.Chain2.chain)),
       ],
-      stubDataInitial->Stubs.getTasks,
       ~message="Should have received a response and next tasks will be to process batch and next query",
     )
 
@@ -324,6 +324,7 @@ describe("Dynamic contract rollback test", () => {
       ~chain2User2Balance=Some(100),
     )
     Assert.deepEqual(
+      stubDataInitial->Stubs.getTasks,
       [
         GlobalState.NextQuery(CheckAllChains),
         Mock.getUpdateEndofBlockRangeScannedData(
@@ -350,7 +351,6 @@ describe("Dynamic contract rollback test", () => {
         ProcessEventBatch,
         PruneStaleEntityHistory,
       ],
-      stubDataInitial->Stubs.getTasks,
       ~message="Should have processed a batch and run next queries on all chains",
     )
 
@@ -363,16 +363,17 @@ describe("Dynamic contract rollback test", () => {
 
     let getFetchStateRegisterId = () =>
       switch getFetchState(Mock.Chain1.chain).partitions {
-      | [p] => (p->FetchState.mergeRegistersBeforeNextQuery).baseRegister->FetchState.getRegisterId
+      | [p] => (p->FetchState.mergeBeforeNextQuery).mostBehindRegister.id
       | _ => raise(Not_found)
       }
 
-    Assert.deepEqual(FetchState.Root, getFetchStateRegisterId())
+    Assert.deepEqual(FetchState.rootRegisterId, getFetchStateRegisterId())
     //Process batch 2 of events
     //And make queries (C)
     await dispatchAllTasks()
 
     Assert.deepEqual(
+      stubDataInitial->Stubs.getTasks,
       [
         GlobalState.NextQuery(CheckAllChains),
         Mock.getUpdateEndofBlockRangeScannedData(
@@ -400,13 +401,12 @@ describe("Dynamic contract rollback test", () => {
         NextQuery(CheckAllChains),
         PruneStaleEntityHistory,
       ],
-      stubDataInitial->Stubs.getTasks,
       ~message="Next round of tasks after query C",
     )
 
     Assert.deepEqual(
-      FetchState.DynamicContract({blockNumber: 3, logIndex: 0}),
       getFetchStateRegisterId(),
+      FetchState.makeDynamicContractRegisterId({blockNumber: 3, logIndex: 0}),
     )
     await makeAssertions(
       ~queryName="C",

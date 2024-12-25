@@ -259,7 +259,7 @@ let makeDynamicContractRegister = (
   {
     id: makeDynamicContractRegisterId(id),
     latestFetchedBlock: {
-      blockNumber: registeringEventBlockNumber - 1,
+      blockNumber: Pervasives.max(registeringEventBlockNumber - 1, 0),
       blockTimestamp: 0,
     },
     contractAddressMapping,
@@ -540,7 +540,7 @@ let getEarliestEvent = (fetchState: t) => {
 
     let earliestItemInPendingDynamicContracts = NoItem({
       blockTimestamp: 0,
-      blockNumber: earliestPendingDynamicContractBlockNumber - 1,
+      blockNumber: Pervasives.max(earliestPendingDynamicContractBlockNumber - 1, 0),
     })
 
     //Compare the earliest item in the pending dynamic contracts with the earliest item in the registers
@@ -709,9 +709,10 @@ let getLatestFullyFetchedBlock = ({mostBehindRegister, pendingDynamicContracts}:
   //the register function is called
   pendingDynamicContracts->Js.Array2.forEach(contract => {
     let {registeringEventBlockNumber} = contract
-    if registeringEventBlockNumber < latestFullyFetchedBlock.contents.blockNumber {
+    let contractLatestFullyFetchedBlockNumber = Pervasives.max(registeringEventBlockNumber - 1, 0)
+    if contractLatestFullyFetchedBlockNumber < latestFullyFetchedBlock.contents.blockNumber {
       latestFullyFetchedBlock := {
-          blockNumber: registeringEventBlockNumber,
+          blockNumber: contractLatestFullyFetchedBlockNumber,
           blockTimestamp: 0,
         }
     }
