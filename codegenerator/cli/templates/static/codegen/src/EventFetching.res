@@ -72,91 +72,79 @@ let makeCombinedEventFilterQuery = (
 
 type eventBatchQuery = {
   logs: array<Ethers.log>,
-  finalExecutedBlockInterval: int,
+  latestFetchedBlock: Ethers.JsonRpcProvider.block,
+  nextSuggestedBlockInterval: int,
 }
 
-let getNextPage = async (
+let getNextPage = (
   ~contractInterfaceManager,
   ~fromBlock,
   ~toBlock,
-  ~initialBlockInterval,
+  ~loadBlock,
+  ~suggestedBlockInterval,
   ~syncConfig as sc: Config.syncConfig,
   ~provider,
   ~logger,
-): eventBatchQuery => {
-  let fromBlockRef = ref(fromBlock)
-  let shouldContinueProcess = () => fromBlockRef.contents <= toBlock
-
-  let currentBlockInterval = ref(initialBlockInterval)
-  let logs = ref([])
-  while shouldContinueProcess() {
-    let rec executeQuery = (~blockInterval): promise<(array<Ethers.log>, int)> => {
-      //If the query hangs for longer than this, reject this promise to reduce the block interval
-      let queryTimoutPromise =
-        Time.resolvePromiseAfterDelay(~delayMilliseconds=sc.queryTimeoutMillis)->Promise.then(() =>
-          Promise.reject(
-            QueryTimout(
-              `Query took longer than ${Belt.Int.toString(sc.queryTimeoutMillis / 1000)} seconds`,
-            ),
-          )
+): promise<eventBatchQuery> => {
+  let rec executeQuery = (~suggestedBlockInterval): promise<eventBatchQuery> => {
+    //If the query hangs for longer than this, reject this promise to reduce the block interval
+    let queryTimoutPromise =
+      Time.resolvePromiseAfterDelay(~delayMilliseconds=sc.queryTimeoutMillis)->Promise.then(() =>
+        Promise.reject(
+          QueryTimout(
+            `Query took longer than ${Belt.Int.toString(sc.queryTimeoutMillis / 1000)} seconds`,
+          ),
         )
+      )
 
-      let upperBoundToBlock = fromBlockRef.contents + blockInterval - 1
-      let nextToBlock =
-        Pervasives.min(upperBoundToBlock, toBlock)->Pervasives.max(fromBlockRef.contents) //Defensively ensure we never query a target block below fromBlock
-      let logsPromise =
-        makeCombinedEventFilterQuery(
-          ~contractInterfaceManager,
-          ~fromBlock=fromBlockRef.contents,
-          ~toBlock=nextToBlock,
-          ~provider,
-          ~logger,
-        )->Promise.thenResolve(logs => (logs, nextToBlock - fromBlockRef.contents + 1))
+    let suggestedToBlock = fromBlock + suggestedBlockInterval - 1
+    let queryToBlock = Pervasives.min(suggestedToBlock, toBlock)->Pervasives.max(fromBlock) //Defensively ensure we never query a target block below fromBlock
+    let latestFetchedBlockPromise = loadBlock(queryToBlock)
+    let logsPromise = makeCombinedEventFilterQuery(
+      ~contractInterfaceManager,
+      ~fromBlock,
+      ~toBlock=queryToBlock,
+      ~provider,
+      ~logger,
+    )->Promise.then(async logs => {
+      let executedBlockInterval = queryToBlock - fromBlock + 1
+      // Increase the suggested block interval only when it was actually applied
+      // and we didn't query to a hard toBlock
+      let nextSuggestedBlockInterval = if executedBlockInterval >= suggestedBlockInterval {
+        // Increase batch size going forward, but do not increase past a configured maximum
+        // See: https://en.wikipedia.org/wiki/Additive_increase/multiplicative_decrease
+        Pervasives.min(executedBlockInterval + sc.accelerationAdditive, sc.intervalCeiling)
+      } else {
+        suggestedBlockInterval
+      }
+      {
+        logs,
+        nextSuggestedBlockInterval,
+        latestFetchedBlock: await latestFetchedBlockPromise,
+      }
+    })
 
-      [queryTimoutPromise, logsPromise]
-      ->Promise.race
-      ->Promise.catch(err => {
-        logger->Logging.childWarn({
-          "msg": "Error getting events, will retry after backoff time",
-          "backOffMilliseconds": sc.backoffMillis,
-          "err": err,
-        })
-
-        Time.resolvePromiseAfterDelay(~delayMilliseconds=sc.backoffMillis)->Promise.then(_ => {
-          let nextBlockIntervalTry =
-            (blockInterval->Belt.Int.toFloat *. sc.backoffMultiplicative)->Belt.Int.fromFloat
-          logger->Logging.childTrace({
-            "msg": "Retrying query fromBlock and toBlock",
-            "fromBlock": fromBlock,
-            "toBlock": nextBlockIntervalTry,
-          })
-
-          executeQuery(~blockInterval={nextBlockIntervalTry})
-        })
+    [queryTimoutPromise, logsPromise]
+    ->Promise.race
+    ->Promise.catch(err => {
+      logger->Logging.childWarn({
+        "msg": "Error getting events. Will retry after backoff time",
+        "backOffMilliseconds": sc.backoffMillis,
+        "err": err,
       })
-    }
 
-    let (intervalLogs, executedBlockInterval) = await executeQuery(
-      ~blockInterval=currentBlockInterval.contents,
-    )
-    logs := logs.contents->Belt.Array.concat(intervalLogs)
-
-    // Increase batch size going forward, but do not increase past a configured maximum
-    // See: https://en.wikipedia.org/wiki/Additive_increase/multiplicative_decrease
-    currentBlockInterval :=
-      Pervasives.min(executedBlockInterval + sc.accelerationAdditive, sc.intervalCeiling)
-
-    fromBlockRef := fromBlockRef.contents + executedBlockInterval
-    logger->Logging.childTrace({
-      "msg": "Finished executing query",
-      "lastBlockProcessed": fromBlockRef.contents - 1,
-      "toBlock": toBlock,
-      "numEvents": intervalLogs->Array.length,
+      Time.resolvePromiseAfterDelay(~delayMilliseconds=sc.backoffMillis)->Promise.then(_ => {
+        let nextBlockIntervalTry =
+          (suggestedBlockInterval->Belt.Int.toFloat *. sc.backoffMultiplicative)->Belt.Int.fromFloat
+        logger->Logging.childTrace({
+          "msg": "Retrying query with a smaller block interval",
+          "fromBlock": fromBlock,
+          "toBlock": fromBlock + nextBlockIntervalTry - 1,
+        })
+        executeQuery(~suggestedBlockInterval={nextBlockIntervalTry})
+      })
     })
   }
 
-  {
-    logs: logs.contents,
-    finalExecutedBlockInterval: currentBlockInterval.contents,
-  }
+  executeQuery(~suggestedBlockInterval)
 }
