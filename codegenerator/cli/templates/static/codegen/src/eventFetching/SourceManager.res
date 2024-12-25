@@ -1,7 +1,7 @@
 open Belt
 
 let toQueryId = (query: FetchState.nextQuery) => {
-  query.fetchStateRegisterId->FetchState.registerIdToString ++ "-" ++ query.fromBlock->Int.toString
+  query.fetchStateRegisterId ++ "-" ++ query.fromBlock->Int.toString
 }
 
 // Can't simply store fetching partitions, since fetchBatch
@@ -87,7 +87,7 @@ let fetchBatch = async (
     let mergedPartitions = Js.Dict.empty()
     let hasQueryWaitingForNewBlock = ref(false)
     let queries = readyPartitions->Array.keepMap(fetchState => {
-      let mergedFetchState = fetchState->FetchState.mergeRegistersBeforeNextQuery
+      let mergedFetchState = fetchState->FetchState.mergeBeforeNextQuery
       if mergedFetchState !== fetchState {
         mergedPartitions->Js.Dict.set(fetchState.partitionId->(Utils.magic: int => string), mergedFetchState)
       }
