@@ -305,7 +305,7 @@ let handleBlockRangeResponse = (state, ~chain, ~response: ChainWorker.blockRange
   let chainFetcher = state.chainManager.chainFetchers->ChainMap.get(chain)
   let {
     parsedQueueItems,
-    heighestQueriedBlockNumber,
+    latestFetchedBlockNumber,
     stats,
     currentBlockHeight,
     reorgGuard,
@@ -322,7 +322,7 @@ let handleBlockRangeResponse = (state, ~chain, ~response: ChainWorker.blockRange
       ~pageFetchTime=stats.pageFetchTime->Belt.Option.getWithDefault(0),
       ~chainId=chainFetcher.chainConfig.chain->ChainMap.Chain.toChainId,
       ~fromBlock=fromBlockQueried,
-      ~toBlock=heighestQueriedBlockNumber,
+      ~toBlock=latestFetchedBlockNumber,
       ~fetchStateRegisterId,
       ~numEvents=parsedQueueItems->Array.length,
       ~partitionId,
@@ -332,7 +332,7 @@ let handleBlockRangeResponse = (state, ~chain, ~response: ChainWorker.blockRange
   chainFetcher.logger->Logging.childTrace({
     "message": "Finished page range",
     "fromBlock": fromBlockQueried,
-    "toBlock": heighestQueriedBlockNumber,
+    "toBlock": latestFetchedBlockNumber,
     "number of logs": parsedQueueItems->Array.length,
     "stats": stats,
   })
@@ -357,7 +357,7 @@ let handleBlockRangeResponse = (state, ~chain, ~response: ChainWorker.blockRange
       ->ChainFetcher.updateFetchState(
         ~currentBlockHeight,
         ~latestFetchedBlockTimestamp,
-        ~latestFetchedBlockNumber=heighestQueriedBlockNumber,
+        ~latestFetchedBlockNumber=latestFetchedBlockNumber,
         ~fetchedEvents=parsedQueueItems,
         ~id={fetchStateId: fetchStateRegisterId, partitionId},
       )
@@ -424,7 +424,7 @@ let handleBlockRangeResponse = (state, ~chain, ~response: ChainWorker.blockRange
       chainManager,
     }
 
-    Prometheus.setFetchedEventsUntilHeight(~blockNumber=response.heighestQueriedBlockNumber, ~chain)
+    Prometheus.setFetchedEventsUntilHeight(~blockNumber=response.latestFetchedBlockNumber, ~chain)
 
     let processAction =
       updatedChainFetcher->ChainFetcher.isPreRegisteringDynamicContracts

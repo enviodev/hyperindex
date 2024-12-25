@@ -339,7 +339,7 @@ module Make = (
 
       {
         latestFetchedBlockTimestamp: latestFetchedBlock.timestamp,
-        heighestQueriedBlockNumber: latestFetchedBlock.number,
+        latestFetchedBlockNumber: latestFetchedBlock.number,
         parsedQueueItems,
         stats: {
           totalTimeElapsed: totalTimeElapsed,

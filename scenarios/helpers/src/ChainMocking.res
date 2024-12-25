@@ -289,7 +289,7 @@ module Make = (Indexer: Indexer.S) => {
       },
       parsedQueueItems,
       fromBlockQueried: query.fromBlock,
-      heighestQueriedBlockNumber: heighstBlock.blockNumber,
+      latestFetchedBlockNumber: heighstBlock.blockNumber,
       latestFetchedBlockTimestamp: heighstBlock.blockTimestamp,
       stats: "NO_STATS"->Obj.magic,
       fetchStateRegisterId: query.fetchStateRegisterId,
