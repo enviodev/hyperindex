@@ -34,9 +34,15 @@ impl Diff {
         let mut missing_tiers = Vec::new();
         let mut incorrect_tiers = Vec::new();
 
-        let public_chains = chains.into_iter().filter(|c| match &c.tier {
-            Some(tier) => tier.is_public(),
-            None => true,
+        let public_chains = chains.into_iter().filter(|c| {
+            if c.name == "gnosis-traces".to_string() {
+                false
+            } else {
+                match &c.tier {
+                    Some(tier) => tier.is_public(),
+                    None => true,
+                }
+            }
         });
 
         for chain in public_chains {
