@@ -21,7 +21,7 @@ describe("PartitionedFetchState getMostBehindPartitions", () => {
     }
 
     let rootRegister: FetchState.register = {
-      registerType: RootRegister,
+      id: FetchState.rootRegisterId,
       latestFetchedBlock: {
         blockNumber: 100,
         blockTimestamp: 100 * 15,
@@ -37,11 +37,8 @@ describe("PartitionedFetchState getMostBehindPartitions", () => {
       logIndex: 0,
     }
 
-    let baseRegister: FetchState.register = {
-      registerType: DynamicContractRegister({
-        id: dynamicContractId,
-        nextRegister: rootRegister,
-      }),
+    let dcRegister: FetchState.register = {
+      id: FetchState.makeDynamicContractRegisterId(dynamicContractId),
       latestFetchedBlock: {
         blockNumber: dynamicContractId.blockNumber,
         blockTimestamp: dynamicContractId.blockNumber * 15,
@@ -54,7 +51,9 @@ describe("PartitionedFetchState getMostBehindPartitions", () => {
 
     let fetchState0: FetchState.t = {
       partitionId: 0,
-      baseRegister,
+      registers: [rootRegister, dcRegister],
+      mostBehindRegister: rootRegister,
+      nextMostBehindRegister: Some(dcRegister),
       isFetchingAtHead: false,
       pendingDynamicContracts: [],
     }
@@ -67,7 +66,7 @@ describe("PartitionedFetchState getMostBehindPartitions", () => {
     )
     let id = {
       PartitionedFetchState.partitionId: 0,
-      fetchStateId: DynamicContract(dynamicContractId),
+      fetchStateId: dcRegister.id,
     }
 
     //Check the expected query if requsted in this state
@@ -114,6 +113,23 @@ describe("PartitionedFetchState getMostBehindPartitions", () => {
       ~message="Should have added a new partition since it's over the maxAddrInPartition threshold",
     )
 
+    let newRootRegister: FetchState.register = {
+      id: FetchState.rootRegisterId,
+      latestFetchedBlock: {blockNumber: 9, blockTimestamp: 0},
+      contractAddressMapping: ContractAddressingMap.fromArray([
+        (TestHelpers.Addresses.mockAddresses[5]->Option.getExn, "Gravatar"),
+      ]),
+      fetchedEventQueue: [],
+      dynamicContracts: FetchState.DynamicContractsMap.empty->FetchState.DynamicContractsMap.addAddress(
+        {
+          blockNumber: 10,
+          logIndex: 0,
+        },
+        TestHelpers.Addresses.mockAddresses[5]->Option.getExn,
+      ),
+      firstEventBlockNumber: None,
+    }
+
     Assert.deepEqual(
       updatedPartitionedFetchState.partitions->PartitionedFetchState.getReadyPartitions(
         ~maxPerChainQueueSize=1000,
@@ -123,22 +139,9 @@ describe("PartitionedFetchState getMostBehindPartitions", () => {
         fetchState0,
         {
           partitionId: 1,
-          baseRegister: {
-            registerType: RootRegister,
-            latestFetchedBlock: {blockNumber: 0, blockTimestamp: 0},
-            contractAddressMapping: ContractAddressingMap.fromArray([
-              (TestHelpers.Addresses.mockAddresses[5]->Option.getExn, "Gravatar"),
-            ]),
-            fetchedEventQueue: [],
-            dynamicContracts: FetchState.DynamicContractsMap.empty->FetchState.DynamicContractsMap.addAddress(
-              {
-                blockNumber: 10,
-                logIndex: 0,
-              },
-              TestHelpers.Addresses.mockAddresses[5]->Option.getExn,
-            ),
-            firstEventBlockNumber: None,
-          },
+          registers: [newRootRegister],
+          mostBehindRegister: newRootRegister,
+          nextMostBehindRegister: None,
           pendingDynamicContracts: [],
           isFetchingAtHead: false,
         },

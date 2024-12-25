@@ -36,6 +36,7 @@ fn prompt_abi_events_selection(events: Vec<ethers::abi::Event>) -> Result<Vec<et
             .map(|abi_event| SelectItem {
                 display: EvmAbi::event_signature_from_abi_event(&abi_event),
                 item: abi_event,
+                preselect: true,
             })
             .collect(),
     )

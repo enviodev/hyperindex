@@ -83,6 +83,7 @@ fn prompt_event_selection(events: Vec<EventConfig>) -> Result<Vec<EventConfig>> 
             .into_iter()
             .map(|event| SelectItem {
                 display: event.name.clone(),
+                preselect: event.log_id.is_some(),
                 item: event,
             })
             .collect(),
