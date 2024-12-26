@@ -292,40 +292,17 @@ let updateInternal = (
     }
     registerByLatestBlock->Js.Dict.set(key, mergedRegister)
   }
-
   registers->Array.forEach(add)
-
-  pendingDynamicContracts->Array.forEach(({
-    registeringEventBlockNumber,
-    registeringEventLogIndex,
-    dynamicContracts,
-  }) => {
-    makeDynamicContractRegister(
-      ~registeringEventBlockNumber,
-      ~registeringEventLogIndex,
-      ~dynamicContractRegistrations=dynamicContracts,
-    )->add
-  })
-
   let registers = registerByLatestBlock->Js.Dict.values
   {
     partitionId: fetchState.partitionId,
     responseCount,
-    pendingDynamicContracts: [],
+    pendingDynamicContracts,
     // Js automatically sorts numeric dict keys
     mostBehindRegister: registers->Js.Array2.unsafe_get(0),
     nextMostBehindRegister: registers->Belt.Array.get(1),
     registers,
     isFetchingAtHead,
-  }
-}
-
-let mergeBeforeNextQuery = fetchState => {
-  switch fetchState.pendingDynamicContracts {
-  // If there are no pendingDynamicContracts,
-  // then the fetchState should already be merged
-  | [] => fetchState
-  | _ => fetchState->updateInternal
   }
 }
 
@@ -384,7 +361,7 @@ let setFetchedItems = (
   }
 }
 
-type nextQuery = {
+type partitionQuery = {
   fetchStateRegisterId: id,
   idempotencyKey: int,
   //used to id the partition of the fetchstate
@@ -394,29 +371,16 @@ type nextQuery = {
   contractAddressMapping: ContractAddressingMap.mapping,
 }
 
-let getQueryLogger = (
-  {fetchStateRegisterId, fromBlock, toBlock, contractAddressMapping}: nextQuery,
-  ~logger,
-) => {
-  let allAddresses = contractAddressMapping->ContractAddressingMap.getAllAddresses
-  let addresses =
-    allAddresses->Js.Array2.slice(~start=0, ~end_=3)->Array.map(addr => addr->Address.toString)
-  let restCount = allAddresses->Array.length - addresses->Array.length
-  if restCount > 0 {
-    addresses->Js.Array2.push(`... and ${restCount->Int.toString} more`)->ignore
-  }
-  let params = {
-    "fromBlock": fromBlock,
-    "toBlock": toBlock,
-    "addresses": addresses,
-    "register": fetchStateRegisterId,
-  }
-  Logging.createChildFrom(~logger, ~params)
+type mergeQuery = {
+  idempotencyKey: int,
+  partitionId: int,
+  toBlock: int,
+  pendingDynamicContracts: array<dynamicContractRegistration>,
 }
 
-type nextQueryOrDone =
-  | NextQuery(nextQuery)
-  | Done
+type query =
+  | PartitionQuery(partitionQuery)
+  | MergeQuery(mergeQuery)
 
 let makeRegisterQuery = (register, ~idempotencyKey, ~partitionId, ~endBlock, ~nextRegister) => {
   let fromBlock = switch register.latestFetchedBlock.blockNumber {
@@ -424,9 +388,9 @@ let makeRegisterQuery = (register, ~idempotencyKey, ~partitionId, ~endBlock, ~ne
   | latestFetchedBlockNumber => latestFetchedBlockNumber + 1
   }
   switch endBlock {
-  | Some(endBlock) if fromBlock > endBlock => Done
+  | Some(endBlock) if fromBlock > endBlock => None
   | _ =>
-    NextQuery({
+    Some(PartitionQuery({
       idempotencyKey,
       partitionId,
       fetchStateRegisterId: register.id,
@@ -436,7 +400,7 @@ let makeRegisterQuery = (register, ~idempotencyKey, ~partitionId, ~endBlock, ~ne
         endBlock,
       ),
       contractAddressMapping: register.contractAddressMapping,
-    })
+    }))
   }
 }
 
@@ -445,15 +409,31 @@ Gets the next query either with a to block
 to catch up to another registery or without endBlock if all registries are merged
 */
 let getNextQuery = (
-  {partitionId, mostBehindRegister, nextMostBehindRegister, responseCount}: t,
+  {
+    partitionId,
+    mostBehindRegister,
+    nextMostBehindRegister,
+    responseCount,
+    pendingDynamicContracts,
+  }: t,
   ~endBlock,
 ) => {
-  mostBehindRegister->makeRegisterQuery(
-    ~partitionId,
-    ~idempotencyKey=responseCount,
-    ~endBlock,
-    ~nextRegister=nextMostBehindRegister,
-  )
+  switch pendingDynamicContracts {
+  | [] =>
+    mostBehindRegister->makeRegisterQuery(
+      ~partitionId,
+      ~idempotencyKey=responseCount,
+      ~endBlock,
+      ~nextRegister=nextMostBehindRegister,
+    )
+  | _ =>
+    Some(MergeQuery({
+      partitionId,
+      idempotencyKey: responseCount,
+      toBlock: mostBehindRegister.latestFetchedBlock.blockNumber,
+      pendingDynamicContracts,
+    }))
+  }
 }
 
 type itemWithPopFn = {item: Internal.eventItem, popItemOffQueue: unit => unit}

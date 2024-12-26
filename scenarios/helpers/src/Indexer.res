@@ -68,7 +68,7 @@ module type S = {
 
   module FetchState: {
     type id
-    type nextQuery = {
+    type partitionQuery = {
       fetchStateRegisterId: id,
       idempotencyKey: int,
       partitionId: int,

@@ -97,14 +97,17 @@ type arbitraryEventQueue = array<Internal.eventItem>
 
 type shouldExit = ExitWithSuccess | NoExit
 type action =
-  | BlockRangeResponse(chain, ChainWorker.blockRangeFetchResponse)
+  | PartitionQueryResponse({
+      chain: chain,
+      response: ChainWorker.blockRangeFetchResponse,
+      query: FetchState.partitionQuery,
+    })
   | FinishWaitingForNewBlock({chain: chain, currentBlockHeight: int})
   | EventBatchProcessed(EventProcessing.batchProcessed)
   | DynamicContractPreRegisterProcessed(EventProcessing.batchProcessed)
   | StartIndexingAfterPreRegister
   | SetCurrentlyProcessing(bool)
   | SetIsInReorgThreshold(bool)
-  | SetUpdatedPartitions(chain, dict<FetchState.t>)
   | UpdateQueues(ChainMap.t<ChainManager.fetchStateWithData>, arbitraryEventQueue)
   | SetSyncedChains
   | SuccessExit
@@ -144,7 +147,8 @@ let updateChainMetadataTable = async (cm: ChainManager.t, ~throttler: Throttler.
     cm.chainFetchers
     ->ChainMap.values
     ->Belt.Array.map(cf => {
-      let latestFetchedBlock = cf.partitionedFetchState->PartitionedFetchState.getLatestFullyFetchedBlock
+      let latestFetchedBlock =
+        cf.partitionedFetchState->PartitionedFetchState.getLatestFullyFetchedBlock
       let chainMetadata: DbFunctions.ChainMetadata.chainMetadata = {
         chainId: cf.chainConfig.chain->ChainMap.Chain.toChainId,
         startBlock: cf.chainConfig.startBlock,
@@ -301,7 +305,12 @@ let updateLatestProcessedBlocks = (
   }
 }
 
-let handleBlockRangeResponse = (state, ~chain, ~response: ChainWorker.blockRangeFetchResponse) => {
+let handlePartitionQueryResponse = (
+  state,
+  ~chain,
+  ~response: ChainWorker.blockRangeFetchResponse,
+  ~query: FetchState.partitionQuery,
+) => {
   let chainFetcher = state.chainManager.chainFetchers->ChainMap.get(chain)
   let {
     parsedQueueItems,
@@ -310,10 +319,10 @@ let handleBlockRangeResponse = (state, ~chain, ~response: ChainWorker.blockRange
     currentBlockHeight,
     reorgGuard,
     fromBlockQueried,
-    fetchStateRegisterId,
-    partitionId,
     latestFetchedBlockTimestamp,
   } = response
+
+  let {fetchStateRegisterId, partitionId} = query
 
   if Env.Benchmark.shouldSaveData {
     Benchmark.addBlockRangeFetched(
@@ -357,7 +366,7 @@ let handleBlockRangeResponse = (state, ~chain, ~response: ChainWorker.blockRange
       ->ChainFetcher.updateFetchState(
         ~currentBlockHeight,
         ~latestFetchedBlockTimestamp,
-        ~latestFetchedBlockNumber=latestFetchedBlockNumber,
+        ~latestFetchedBlockNumber,
         ~fetchedEvents=parsedQueueItems,
         ~id={fetchStateId: fetchStateRegisterId, partitionId},
       )
@@ -472,7 +481,8 @@ let actionReducer = (state: t, action: action) => {
       },
       [NextQuery(Chain(chain))],
     )
-  | BlockRangeResponse(chain, response) => state->handleBlockRangeResponse(~chain, ~response)
+  | PartitionQueryResponse({chain, response, query}) =>
+    state->handlePartitionQueryResponse(~chain, ~response, ~query)
   | EventBatchProcessed({
       latestProcessedBlocks,
       dynamicContractRegistrations: Some({registrations, unprocessedBatch}),
@@ -602,23 +612,6 @@ let actionReducer = (state: t, action: action) => {
       Logging.info("Reorg threshold reached")
     }
     ({...state, chainManager: {...state.chainManager, isInReorgThreshold}}, [])
-  | SetUpdatedPartitions(chain, updatedPartitions) =>
-    let updatedPartitionIds = updatedPartitions->Js.Dict.keys
-    if updatedPartitionIds->Utils.Array.isEmpty {
-      (state, [])
-    } else {
-      updateChainFetcher(currentChainFetcher => {
-        let partitionsCopy = currentChainFetcher.partitionedFetchState.partitions->Js.Array2.copy
-        updatedPartitionIds->Js.Array2.forEach(partitionId => {
-          let partition = updatedPartitions->Js.Dict.unsafeGet(partitionId)
-          partitionsCopy->Js.Array2.unsafe_set(partitionId->(Utils.magic: string => int), partition)
-        })
-        {
-          ...currentChainFetcher,
-          partitionedFetchState: {...currentChainFetcher.partitionedFetchState, partitions: partitionsCopy},
-        }
-      }, ~chain, ~state)
-    }
   | SetSyncedChains => {
       let shouldExit = EventProcessing.EventsProcessed.allChainsEventsProcessedToEndblock(
         state.chainManager.chainFetchers,
@@ -791,36 +784,108 @@ let invalidatedActionReducer = (state: t, action: action) =>
   }
 
 let executePartitionQuery = (
-  query,
+  query: FetchState.partitionQuery,
   ~logger,
   ~chainWorker,
   ~currentBlockHeight,
   ~chain,
-  ~dispatchAction,
   ~isPreRegisteringDynamicContracts,
 ) => {
-  let module(ChainWorker: ChainWorker.S) = chainWorker
-
-  let logger = Logging.createChildFrom(
-    ~logger,
-    ~params={
-      "chainId": chain->ChainMap.Chain.toChainId,
-      "logType": "Block Range Query",
-      "workerType": ChainWorker.name,
-    },
-  )
-  let logger = query->FetchState.getQueryLogger(~logger)
-  ChainWorker.fetchBlockRange(
-    ~query,
-    ~logger,
+  chainWorker->ChainWorker.fetchBlockRange(
+    ~fromBlock=query.fromBlock,
+    ~toBlock=query.toBlock,
+    ~contractAddressMapping=query.contractAddressMapping,
+    ~partitionId=query.partitionId,
+    ~chain,
     ~currentBlockHeight,
     ~isPreRegisteringDynamicContracts,
-  )->Promise.thenResolve(res =>
-    switch res {
-    | Ok(res) => dispatchAction(BlockRangeResponse(chain, res))
-    | Error(e) => dispatchAction(ErrorExit(e))
-    }
+    ~logger,
+    //Only apply wildcards on the first partition and root register
+    //to avoid duplicate wildcard queries
+    ~shouldApplyWildcards=query.fetchStateRegisterId->FetchState.isRootRegisterId &&
+      query.partitionId === 0,
   )
+}
+
+let executeMergeQuery = (
+  {pendingDynamicContracts, toBlock, partitionId}: FetchState.mergeQuery,
+  ~logger,
+  ~chainWorker,
+  ~currentBlockHeight,
+  ~chain,
+  ~isPreRegisteringDynamicContracts,
+) => {
+  ErrorHandling.ResultPropogateEnv.runAsyncEnv(async () => {
+    // Merge registrations with the same registring block number
+    // And sort using the Js automatic sorting of int keys
+    let addressesByRegistringBlockNumber = Js.Dict.empty()
+
+    for idx in 0 to pendingDynamicContracts->Js.Array2.length - 1 {
+      let {registeringEventBlockNumber, dynamicContracts} =
+        pendingDynamicContracts->Js.Array2.unsafe_get(idx)
+
+      // This check is only relevant until we didn't get rid of PartitionedFetchState
+      // and merged partitions into registers.
+      // Currently when the response is handled, the pending dynamic contracts,
+      // which didn't pass the check will create a new root register
+      if registeringEventBlockNumber <= toBlock {
+        let key = registeringEventBlockNumber->Int.toString
+        let map = switch addressesByRegistringBlockNumber->Utils.Dict.dangerouslyGetNonOption(key) {
+        | Some(map) => map
+        | None => {
+            let map = ContractAddressingMap.make()
+            addressesByRegistringBlockNumber->Js.Dict.set(key, map)
+            map
+          }
+        }
+        dynamicContracts->Array.forEach(d =>
+          map->ContractAddressingMap.addAddress(
+            ~name=(d.contractType :> string),
+            ~address=d.contractAddress,
+          )
+        )
+      }
+    }
+
+    let keyToInt = key => key->Int.fromString->(Utils.magic: option<int> => int) // Must always be able to convert to int
+
+    let promises = []
+    let accAddresses = ref(ContractAddressingMap.make())
+    // Should be sorted in the ASC order according to Js spec
+    let registeringEventBlockNumbers = addressesByRegistringBlockNumber->Js.Dict.keys
+    for idx in 0 to registeringEventBlockNumbers->Js.Array2.length - 1 {
+      let fromBlockKey = registeringEventBlockNumbers->Js.Array2.unsafe_get(idx)
+      let fromBlock = fromBlockKey->keyToInt
+      let toBlock = switch registeringEventBlockNumbers->Array.get(idx + 1) {
+      | Some(key) => key->keyToInt
+      | None => toBlock
+      }
+      let contractAddressMapping =
+        accAddresses.contents->ContractAddressingMap.combine(
+          addressesByRegistringBlockNumber->Js.Dict.unsafeGet(fromBlockKey),
+        )
+      accAddresses := contractAddressMapping
+
+      promises->Array.push(
+        chainWorker
+        ->ChainWorker.fetchBlockRange(
+          ~fromBlock,
+          ~toBlock=Some(toBlock),
+          ~contractAddressMapping,
+          ~currentBlockHeight,
+          ~chain,
+          ~isPreRegisteringDynamicContracts,
+          ~shouldApplyWildcards=false,
+          ~logger,
+          ~partitionId,
+        )
+        ->Promise.thenResolve(ErrorHandling.ResultPropogateEnv.propogate),
+      )
+    }
+
+    let responses = await promises->Promise.all
+    responses->Ok
+  })
 }
 
 let checkAndFetchForChain = (
@@ -833,23 +898,49 @@ let checkAndFetchForChain = (
 ) => async chain => {
   let chainFetcher = state.chainManager.chainFetchers->ChainMap.get(chain)
   if !isRollingBack(state) {
-    let {chainConfig: {chainWorker}, logger, currentBlockHeight, partitionedFetchState} = chainFetcher
+    let {
+      chainConfig: {chainWorker},
+      logger,
+      currentBlockHeight,
+      partitionedFetchState,
+    } = chainFetcher
 
     await chainFetcher.sourceManager->SourceManager.fetchNext(
       ~allPartitions=partitionedFetchState.partitions,
-      ~waitForNewBlock=(~currentBlockHeight, ~logger) => chainWorker->waitForNewBlock(~currentBlockHeight, ~logger),
-      ~onNewBlock=(~currentBlockHeight) => dispatchAction(FinishWaitingForNewBlock({chain, currentBlockHeight})),
+      ~waitForNewBlock=(~currentBlockHeight, ~logger) =>
+        chainWorker->waitForNewBlock(~currentBlockHeight, ~logger),
+      ~onNewBlock=(~currentBlockHeight) =>
+        dispatchAction(FinishWaitingForNewBlock({chain, currentBlockHeight})),
       ~currentBlockHeight,
-      ~executePartitionQuery=query => query->executePartitionQuery(
-        ~logger,
-        ~chainWorker,
-        ~currentBlockHeight,
-        ~chain,
-        ~dispatchAction,
-        ~isPreRegisteringDynamicContracts=state.chainManager->ChainManager.isPreRegisteringDynamicContracts,
-      ),
+      ~executeQuery=async query => {
+        switch query {
+        | PartitionQuery(partitionQuery) =>
+          switch await partitionQuery->executePartitionQuery(
+            ~logger,
+            ~chainWorker,
+            ~currentBlockHeight,
+            ~chain,
+            ~isPreRegisteringDynamicContracts=state.chainManager->ChainManager.isPreRegisteringDynamicContracts,
+          ) {
+          | Ok(response) =>
+            dispatchAction(PartitionQueryResponse({chain, response, query: partitionQuery}))
+          | Error(e) => dispatchAction(ErrorExit(e))
+          }
+        | MergeQuery(mergeQuery) =>
+          switch await mergeQuery->executeMergeQuery(
+            ~logger,
+            ~chainWorker,
+            ~currentBlockHeight,
+            ~chain,
+            ~isPreRegisteringDynamicContracts=state.chainManager->ChainManager.isPreRegisteringDynamicContracts,
+          ) {
+          | Ok(response) => Js.log(response)
+          // dispatchAction(PartitionQueryResponse({chain, response, query: partitionQuery}))
+          | Error(e) => dispatchAction(ErrorExit(e))
+          }
+        }
+      },
       ~maxPerChainQueueSize=state.maxPerChainQueueSize,
-      ~setMergedPartitions=partitions => dispatchAction(SetUpdatedPartitions(chain, partitions)),
       ~stateId=state.id,
     )
   }

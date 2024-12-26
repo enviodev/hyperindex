@@ -252,7 +252,7 @@ module Make = (Indexer: Indexer.S) => {
 
   let executeQuery = (
     self: t,
-    query: FetchState.nextQuery,
+    query: FetchState.partitionQuery,
   ): ChainWorker.blockRangeFetchResponse => {
     let unfilteredBlocks = self->getBlocks(~fromBlock=query.fromBlock, ~toBlock=query.toBlock)
     let heighstBlock = unfilteredBlocks->getLast->Option.getExn

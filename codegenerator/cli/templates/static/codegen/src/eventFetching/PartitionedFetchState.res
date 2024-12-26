@@ -187,12 +187,10 @@ let update = (self: t, ~id: id, ~latestFetchedBlock, ~newItems, ~currentBlockHei
 let getReadyPartitions = (
   allPartitions: allPartitions,
   ~maxPerChainQueueSize,
-  ~fetchingPartitions,
 ) => {
   let numPartitions = allPartitions->Array.length
   let maxPartitionQueueSize = maxPerChainQueueSize / numPartitions
   allPartitions->Js.Array2.filter(fetchState => {
-    !(fetchingPartitions->Utils.Set.has(fetchState.partitionId)) &&
     fetchState->FetchState.isReadyForNextQuery(~maxQueueSize=maxPartitionQueueSize)
   })
 }

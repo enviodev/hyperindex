@@ -187,16 +187,19 @@ module Make = (
   )
 
   let fetchBlockRange = async (
-    ~query: blockRangeFetchArgs,
-    ~logger,
+    ~fromBlock,
+    ~toBlock,
+    ~contractAddressMapping,
     ~currentBlockHeight,
+    ~partitionId,
+    ~shouldApplyWildcards as _,
     ~isPreRegisteringDynamicContracts,
+    ~logger,
   ) => {
     try {
       if isPreRegisteringDynamicContracts {
         Js.Exn.raiseError("HyperIndex RPC does not support pre registering dynamic contracts yet")
       }
-      let {fromBlock, toBlock, contractAddressMapping, fetchStateRegisterId, partitionId} = query
 
       let startFetchingBatchTimeRef = Hrtime.makeTimer()
 
@@ -347,8 +350,6 @@ module Make = (
         currentBlockHeight,
         reorgGuard,
         fromBlockQueried: fromBlock,
-        fetchStateRegisterId,
-        partitionId,
       }->Ok
     } catch {
     | exn => exn->ErrorHandling.make(~logger, ~msg="Failed to fetch block Range")->Error

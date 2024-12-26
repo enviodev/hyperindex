@@ -1,7 +1,4 @@
-/**
-The args required for calling block range fetch
-*/
-type blockRangeFetchArgs = FetchState.nextQuery
+open Belt
 
 /**
 A set of stats for logging about the block range fetch
@@ -28,8 +25,6 @@ type blockRangeFetchResponse = {
   latestFetchedBlockNumber: int,
   latestFetchedBlockTimestamp: int,
   stats: blockRangeFetchStats,
-  fetchStateRegisterId: FetchState.id,
-  partitionId: PartitionedFetchState.partitionId,
 }
 
 module type S = {
@@ -44,18 +39,18 @@ module type S = {
     ~logger: Pino.t,
   ) => promise<int>
   let fetchBlockRange: (
-    ~query: blockRangeFetchArgs,
-    ~logger: Pino.t,
+    ~fromBlock: int,
+    ~toBlock: option<int>,
+    ~contractAddressMapping: ContractAddressingMap.mapping,
     ~currentBlockHeight: int,
+    ~partitionId: int,
+    ~shouldApplyWildcards: bool,
     ~isPreRegisteringDynamicContracts: bool,
+    ~logger: Pino.t,
   ) => promise<result<blockRangeFetchResponse, ErrorHandling.t>>
 }
 
-let waitForNewBlock = (
-  chainWorker,
-  ~currentBlockHeight,
-  ~logger,
-) => {
+let waitForNewBlock = (chainWorker, ~currentBlockHeight, ~logger) => {
   let module(ChainWorker: S) = chainWorker
   let logger = Logging.createChildFrom(
     ~logger,
@@ -65,8 +60,50 @@ let waitForNewBlock = (
     },
   )
   logger->Logging.childTrace("Waiting for new blocks")
-  ChainWorker.waitForBlockGreaterThanCurrentHeight(
-    ~currentBlockHeight,
+  ChainWorker.waitForBlockGreaterThanCurrentHeight(~currentBlockHeight, ~logger)
+}
+
+let fetchBlockRange = (
+  chainWorker,
+  ~fromBlock,
+  ~toBlock,
+  ~contractAddressMapping,
+  ~partitionId,
+  ~chain,
+  ~currentBlockHeight,
+  ~shouldApplyWildcards,
+  ~isPreRegisteringDynamicContracts,
+  ~logger,
+) => {
+  let module(ChainWorker: S) = chainWorker
+  let logger = {
+    let allAddresses = contractAddressMapping->ContractAddressingMap.getAllAddresses
+    let addresses =
+      allAddresses->Js.Array2.slice(~start=0, ~end_=3)->Array.map(addr => addr->Address.toString)
+    let restCount = allAddresses->Array.length - addresses->Array.length
+    if restCount > 0 {
+      addresses->Js.Array2.push(`... and ${restCount->Int.toString} more`)->ignore
+    }
+    Logging.createChildFrom(
+      ~logger,
+      ~params={
+        "chainId": chain->ChainMap.Chain.toChainId,
+        "logType": "Block Range Query",
+        "workerType": ChainWorker.name,
+        "fromBlock": fromBlock,
+        "toBlock": toBlock,
+        "addresses": addresses,
+      },
+    )
+  }
+  ChainWorker.fetchBlockRange(
+    ~fromBlock,
+    ~toBlock,
+    ~contractAddressMapping,
+    ~partitionId,
     ~logger,
+    ~shouldApplyWildcards,
+    ~currentBlockHeight,
+    ~isPreRegisteringDynamicContracts,
   )
 }

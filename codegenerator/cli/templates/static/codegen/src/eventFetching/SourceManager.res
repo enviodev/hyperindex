@@ -46,11 +46,10 @@ let fetchNext = async (
   sourceManager: t,
   ~allPartitions: PartitionedFetchState.allPartitions,
   ~currentBlockHeight,
-  ~executePartitionQuery,
+  ~executeQuery,
   ~waitForNewBlock,
   ~onNewBlock,
   ~maxPerChainQueueSize,
-  ~setMergedPartitions,
   ~stateId,
 ) => {
   if stateId < sourceManager.currentStateId {
@@ -64,61 +63,47 @@ let fetchNext = async (
     }
     let {logger, endBlock, allPartitionsFetchingState, maxPartitionConcurrency} = sourceManager
 
-    let fetchingPartitions = Utils.Set.make()
-    // Js.Array2.forEachi automatically skips empty items
-    allPartitionsFetchingState->Js.Array2.forEachi(({isFetching}, partitionId) => {
-      if isFetching {
-        let _ = fetchingPartitions->Utils.Set.add(partitionId)
-      }
-    })
     let readyPartitions =
-      allPartitions->PartitionedFetchState.getReadyPartitions(
-        ~maxPerChainQueueSize,
-        ~fetchingPartitions,
-      )
-
-    let mergedPartitions = Js.Dict.empty()
-    let hasQueryWaitingForNewBlock = ref(false)
-    let queries = readyPartitions->Array.keepMap(fetchState => {
-      let mergedFetchState = fetchState->FetchState.mergeBeforeNextQuery
-      if mergedFetchState !== fetchState {
-        mergedPartitions->Js.Dict.set(
-          fetchState.partitionId->(Utils.magic: int => string),
-          mergedFetchState,
-        )
-      }
-      switch mergedFetchState->FetchState.getNextQuery(~endBlock) {
-      | Done => None
-      | NextQuery(nextQuery) =>
+      allPartitions
+      ->Js.Array2.filter(fetchState => {
         switch allPartitionsFetchingState->Belt.Array.get(fetchState.partitionId) {
+        | Some({isFetching: true}) => false
         // Deduplicate queries when fetchNext is called after
         // isFetching was set to false, but state isn't updated with fetched data
-        | Some({prevFetchedIdempotencyKey})
-          if prevFetchedIdempotencyKey >= nextQuery.idempotencyKey =>
-          None
-        | _ => {
-            let {fromBlock, toBlock} = nextQuery
-            if fromBlock > currentBlockHeight {
-              hasQueryWaitingForNewBlock := true
-              None
-            } else {
-              switch toBlock {
-              | Some(toBlock) if toBlock < fromBlock =>
-                //This is an invalid case. We should never arrive at this match arm but it would be
-                //detrimental if it were the case.
-                FromBlockIsHigherThanToBlock({fromBlock, toBlock})->ErrorHandling.mkLogAndRaise(
-                  ~logger,
-                  ~msg="Unexpected error getting next query in partition",
-                )
-              | _ => ()
-              }
-              Some(nextQuery)
+        | Some({prevFetchedIdempotencyKey}) => prevFetchedIdempotencyKey < fetchState.responseCount
+        | _ => true
+        }
+      })
+      ->PartitionedFetchState.getReadyPartitions(~maxPerChainQueueSize)
+
+    let hasQueryWaitingForNewBlock = ref(false)
+    let queries = readyPartitions->Array.keepMap(fetchState => {
+      fetchState
+      ->FetchState.getNextQuery(~endBlock)
+      ->Option.flatMap(nextQuery => {
+        switch nextQuery {
+        | MergeQuery(_) => Some(nextQuery)
+        | PartitionQuery(query) =>
+          let {fromBlock, toBlock} = query
+          if fromBlock > currentBlockHeight {
+            hasQueryWaitingForNewBlock := true
+            None
+          } else {
+            switch toBlock {
+            | Some(toBlock) if toBlock < fromBlock =>
+              //This is an invalid case. We should never arrive at this match arm but it would be
+              //detrimental if it were the case.
+              FromBlockIsHigherThanToBlock({fromBlock, toBlock})->ErrorHandling.mkLogAndRaise(
+                ~logger,
+                ~msg="Unexpected error getting next query in partition",
+              )
+            | _ => ()
             }
+            Some(nextQuery)
           }
         }
-      }
+      })
     })
-    setMergedPartitions(mergedPartitions)
 
     switch (queries, currentBlockHeight) {
     | ([], _)
@@ -142,7 +127,14 @@ let fetchNext = async (
       let maxQueriesNumber = maxPartitionConcurrency - sourceManager.fetchingPartitionsCount
       if maxQueriesNumber > 0 {
         let slicedQueries = if queries->Js.Array2.length > maxQueriesNumber {
-          let _ = queries->Js.Array2.sortInPlaceWith((a, b) => a.fromBlock - b.fromBlock)
+          let _ = queries->Js.Array2.sortInPlaceWith((a, b) =>
+            switch (a, b) {
+            | (MergeQuery(_), MergeQuery(_)) => 0
+            | (MergeQuery(_), PartitionQuery(_)) => -1
+            | (PartitionQuery(_), MergeQuery(_)) => 1
+            | (PartitionQuery(a), PartitionQuery(b)) => a.fromBlock - b.fromBlock
+            }
+          )
           queries->Js.Array2.slice(~start=0, ~end_=maxQueriesNumber)
         } else {
           queries
@@ -150,24 +142,28 @@ let fetchNext = async (
         let _ =
           await slicedQueries
           ->Array.map(async query => {
-            let partitionId = query.partitionId
-            sourceManager.fetchingPartitionsCount = sourceManager.fetchingPartitionsCount + 1
-            allPartitionsFetchingState->Js.Array2.unsafe_set(
-              partitionId,
-              {
-                isFetching: true,
-              },
-            )
-            let data = await query->executePartitionQuery
-            sourceManager.fetchingPartitionsCount = sourceManager.fetchingPartitionsCount - 1
-            allPartitionsFetchingState->Js.Array2.unsafe_set(
-              partitionId,
-              {
-                isFetching: false,
-                prevFetchedIdempotencyKey: query.idempotencyKey,
-              },
-            )
-            data
+            switch query {
+            | PartitionQuery({partitionId, idempotencyKey})
+            | MergeQuery({partitionId, idempotencyKey}) => {
+                sourceManager.fetchingPartitionsCount = sourceManager.fetchingPartitionsCount + 1
+                allPartitionsFetchingState->Js.Array2.unsafe_set(
+                  partitionId,
+                  {
+                    isFetching: true,
+                  },
+                )
+                let data = await query->executeQuery
+                sourceManager.fetchingPartitionsCount = sourceManager.fetchingPartitionsCount - 1
+                allPartitionsFetchingState->Js.Array2.unsafe_set(
+                  partitionId,
+                  {
+                    isFetching: false,
+                    prevFetchedIdempotencyKey: idempotencyKey,
+                  },
+                )
+                data
+              }
+            }
           })
           ->Promise.all
       }

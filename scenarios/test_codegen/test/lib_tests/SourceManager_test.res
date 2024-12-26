@@ -2,8 +2,8 @@ open Belt
 open RescriptMocha
 
 type executePartitionQueryMock = {
-  fn: FetchState.nextQuery => Promise.t<unit>,
-  calls: array<FetchState.nextQuery>,
+  fn: FetchState.partitionQuery => Promise.t<unit>,
+  calls: array<FetchState.partitionQuery>,
   resolveAll: unit => unit,
   resolveFns: array<unit => unit>,
 }
