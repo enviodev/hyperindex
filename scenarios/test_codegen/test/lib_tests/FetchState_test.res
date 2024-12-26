@@ -55,8 +55,10 @@ let makeMockFetchState = (
   registers,
   ~isFetchingAtHead=false,
   ~pendingDynamicContracts=[],
+  ~responseCount=0,
 ): FetchState.t => {
   partitionId: 0,
+  responseCount,
   registers,
   mostBehindRegister: registers->Js.Array2.unsafe_get(0),
   nextMostBehindRegister: registers->Belt.Array.get(1),
@@ -264,6 +266,7 @@ describe("FetchState.fetchState", () => {
 
     let fetchState: FetchState.t = {
       partitionId: 0,
+      responseCount: 0,
       registers: [register0, register1],
       mostBehindRegister: register0,
       nextMostBehindRegister: Some(register1),
@@ -297,6 +300,7 @@ describe("FetchState.fetchState", () => {
       fetchState->FetchState.updateInternal,
       {
         partitionId: 0,
+        responseCount: 0,
         registers: [expected],
         mostBehindRegister: expected,
         nextMostBehindRegister: None,
@@ -348,7 +352,7 @@ describe("FetchState.fetchState", () => {
           latestFetchedBlock: getBlockData(~blockNumber=600),
           fetchedEventQueue: Array.concat(newItems->Array.reverse, currentEvents),
         },
-      ]->makeMockFetchState(~isFetchingAtHead=true),
+      ]->makeMockFetchState(~isFetchingAtHead=true, ~responseCount=1),
     )
   })
 
@@ -393,7 +397,7 @@ describe("FetchState.fetchState", () => {
           fetchedEventQueue: newItems->Array.reverse,
           firstEventBlockNumber: Some(5),
         },
-      ]->makeMockFetchState(~isFetchingAtHead=false),
+      ]->makeMockFetchState(~isFetchingAtHead=false, ~responseCount=1),
       ~message="Should not set fetchState to fetching at head",
     )
   })
@@ -632,6 +636,7 @@ describe("FetchState.fetchState", () => {
       fetchState->FetchState.getNextQuery(~endBlock=None),
       NextQuery({
         fetchStateRegisterId: FetchState.rootRegisterId,
+        idempotencyKey: 0,
         partitionId: 0,
         fromBlock: root.latestFetchedBlock.blockNumber + 1,
         toBlock: None,

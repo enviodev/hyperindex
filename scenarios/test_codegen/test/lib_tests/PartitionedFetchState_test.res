@@ -51,6 +51,7 @@ describe("PartitionedFetchState getMostBehindPartitions", () => {
 
     let fetchState0: FetchState.t = {
       partitionId: 0,
+      responseCount: 0,
       registers: [rootRegister, dcRegister],
       mostBehindRegister: rootRegister,
       nextMostBehindRegister: Some(dcRegister),
@@ -139,6 +140,7 @@ describe("PartitionedFetchState getMostBehindPartitions", () => {
         fetchState0,
         {
           partitionId: 1,
+          responseCount: 0,
           registers: [newRootRegister],
           mostBehindRegister: newRootRegister,
           nextMostBehindRegister: None,

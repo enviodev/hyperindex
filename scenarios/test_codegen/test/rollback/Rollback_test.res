@@ -157,7 +157,7 @@ describe("Single Chain Simple Rollback", () => {
     open Stubs
     let dispatchTaskInitalChain = dispatchTask(gsManager, Mock.mockChainData, ...)
     let dispatchTaskReorgChain = dispatchTask(gsManager, Mock.mockChainDataReorg, ...)
-    let dispatchAllTasksInitalChain = () => dispatchAllTasks(gsManager, Mock.mockChainData, ...)
+    let dispatchAllTasksInitalChain = () => dispatchAllTasks(gsManager, Mock.mockChainData)
     tasks := []
 
     await dispatchTaskInitalChain(NextQuery(Chain(chain)))

@@ -130,6 +130,9 @@ type dynamicContractRegistration = {
 
 type t = {
   partitionId: int,
+  // How many times the fetch has been executed with a response
+  // Needed as idempotency key to sync the immutable state with immutable SourceManager
+  responseCount: int,
   registers: array<register>,
   pendingDynamicContracts: array<dynamicContractRegistration>,
   isFetchingAtHead: bool,
@@ -148,6 +151,7 @@ let copy = (self: t) => {
   let registers = self.registers->Array.map(shallowCopyRegister)
   {
     partitionId: self.partitionId,
+    responseCount: self.responseCount,
     registers,
     // Must use the reference to copied value, so we use find
     mostBehindRegister: registers
@@ -277,6 +281,7 @@ let updateInternal = (
   ~registers=fetchState.registers,
   ~pendingDynamicContracts=fetchState.pendingDynamicContracts,
   ~isFetchingAtHead=fetchState.isFetchingAtHead,
+  ~responseCount=fetchState.responseCount,
 ): t => {
   let registerByLatestBlock = Js.Dict.empty()
   let add = register => {
@@ -305,6 +310,7 @@ let updateInternal = (
   let registers = registerByLatestBlock->Js.Dict.values
   {
     partitionId: fetchState.partitionId,
+    responseCount,
     pendingDynamicContracts: [],
     // Js automatically sorts numeric dict keys
     mostBehindRegister: registers->Js.Array2.unsafe_get(0),
@@ -370,6 +376,7 @@ let setFetchedItems = (
     fetchState
     ->updateInternal(
       ~registers,
+      ~responseCount=fetchState.responseCount + 1,
       ~isFetchingAtHead=fetchState.isFetchingAtHead ||
       currentBlockHeight <= latestFetchedBlock.blockNumber,
     )
@@ -379,6 +386,7 @@ let setFetchedItems = (
 
 type nextQuery = {
   fetchStateRegisterId: id,
+  idempotencyKey: int,
   //used to id the partition of the fetchstate
   partitionId: int,
   fromBlock: int,
@@ -410,7 +418,7 @@ type nextQueryOrDone =
   | NextQuery(nextQuery)
   | Done
 
-let makeRegisterQuery = (register, ~partitionId, ~endBlock, ~nextRegister) => {
+let makeRegisterQuery = (register, ~idempotencyKey, ~partitionId, ~endBlock, ~nextRegister) => {
   let fromBlock = switch register.latestFetchedBlock.blockNumber {
   | 0 => 0
   | latestFetchedBlockNumber => latestFetchedBlockNumber + 1
@@ -419,6 +427,7 @@ let makeRegisterQuery = (register, ~partitionId, ~endBlock, ~nextRegister) => {
   | Some(endBlock) if fromBlock > endBlock => Done
   | _ =>
     NextQuery({
+      idempotencyKey,
       partitionId,
       fetchStateRegisterId: register.id,
       fromBlock,
@@ -435,9 +444,13 @@ let makeRegisterQuery = (register, ~partitionId, ~endBlock, ~nextRegister) => {
 Gets the next query either with a to block
 to catch up to another registery or without endBlock if all registries are merged
 */
-let getNextQuery = ({partitionId, mostBehindRegister, nextMostBehindRegister}: t, ~endBlock) => {
+let getNextQuery = (
+  {partitionId, mostBehindRegister, nextMostBehindRegister, responseCount}: t,
+  ~endBlock,
+) => {
   mostBehindRegister->makeRegisterQuery(
     ~partitionId,
+    ~idempotencyKey=responseCount,
     ~endBlock,
     ~nextRegister=nextMostBehindRegister,
   )
@@ -600,6 +613,7 @@ let make = (
 
   {
     partitionId,
+    responseCount: 0,
     registers: [rootRegister],
     mostBehindRegister: rootRegister,
     nextMostBehindRegister: None,

@@ -70,6 +70,7 @@ module type S = {
     type id
     type nextQuery = {
       fetchStateRegisterId: id,
+      idempotencyKey: int,
       partitionId: int,
       fromBlock: int,
       toBlock: option<int>,

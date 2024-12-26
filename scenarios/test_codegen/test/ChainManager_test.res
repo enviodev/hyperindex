@@ -336,6 +336,7 @@ describe("determineNextEvent", () => {
       }
       {
         partitionId: 0,
+        responseCount: 0,
         registers: [register],
         mostBehindRegister: register,
         nextMostBehindRegister: None,

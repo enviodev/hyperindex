@@ -835,7 +835,7 @@ let checkAndFetchForChain = (
   if !isRollingBack(state) {
     let {chainConfig: {chainWorker}, logger, currentBlockHeight, partitionedFetchState} = chainFetcher
 
-    await chainFetcher.sourceManager->SourceManager.fetchBatch(
+    await chainFetcher.sourceManager->SourceManager.fetchNext(
       ~allPartitions=partitionedFetchState.partitions,
       ~waitForNewBlock=(~currentBlockHeight, ~logger) => chainWorker->waitForNewBlock(~currentBlockHeight, ~logger),
       ~onNewBlock=(~currentBlockHeight) => dispatchAction(FinishWaitingForNewBlock({chain, currentBlockHeight})),

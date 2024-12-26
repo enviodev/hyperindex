@@ -65,7 +65,7 @@ let onNewBlockMock = () => {
   }
 }
 
-describe("SourceManager fetchBatch", () => {
+describe("SourceManager fetchNext", () => {
   let mockFetchState = (
     ~partitionId,
     ~latestFetchedBlockNumber,
@@ -93,6 +93,7 @@ describe("SourceManager fetchBatch", () => {
 
     {
       partitionId,
+      responseCount: 0,
       registers: [register],
       mostBehindRegister: register,
       nextMostBehindRegister: None,
@@ -130,8 +131,8 @@ describe("SourceManager fetchBatch", () => {
 
     let executePartitionQueryMock = executePartitionQueryMock()
 
-    let fetchBatchPromise =
-      sourceManager->SourceManager.fetchBatch(
+    let fetchNextPromise =
+      sourceManager->SourceManager.fetchNext(
         ~allPartitions=[fetchState0, fetchState1, fetchState2],
         ~maxPerChainQueueSize=1000,
         ~setMergedPartitions=noopSetMergedPartitions,
@@ -147,6 +148,7 @@ describe("SourceManager fetchBatch", () => {
       [
         {
           partitionId: 0,
+          idempotencyKey: 0,
           fetchStateRegisterId: fetchState0.mostBehindRegister.id,
           fromBlock: 5,
           toBlock: None,
@@ -154,6 +156,7 @@ describe("SourceManager fetchBatch", () => {
         },
         {
           partitionId: 1,
+          idempotencyKey: 0,
           fetchStateRegisterId: fetchState0.mostBehindRegister.id,
           fromBlock: 6,
           toBlock: None,
@@ -161,6 +164,7 @@ describe("SourceManager fetchBatch", () => {
         },
         {
           partitionId: 2,
+          idempotencyKey: 0,
           fetchStateRegisterId: fetchState0.mostBehindRegister.id,
           fromBlock: 2,
           toBlock: None,
@@ -171,7 +175,7 @@ describe("SourceManager fetchBatch", () => {
 
     executePartitionQueryMock.resolveAll()
 
-    await fetchBatchPromise
+    await fetchNextPromise
 
     Assert.deepEqual(
       executePartitionQueryMock.calls->Js.Array2.length,
@@ -195,8 +199,8 @@ describe("SourceManager fetchBatch", () => {
 
       let executePartitionQueryMock = executePartitionQueryMock()
 
-      let fetchBatchPromise =
-        sourceManager->SourceManager.fetchBatch(
+      let fetchNextPromise =
+        sourceManager->SourceManager.fetchNext(
           ~allPartitions=[fetchState0, fetchState1, fetchState2],
           ~maxPerChainQueueSize=1000,
           ~currentBlockHeight=10,
@@ -211,7 +215,7 @@ describe("SourceManager fetchBatch", () => {
 
       executePartitionQueryMock.resolveAll()
 
-      await fetchBatchPromise
+      await fetchNextPromise
 
       Assert.deepEqual(
         executePartitionQueryMock.calls->Js.Array2.length,
@@ -235,8 +239,8 @@ describe("SourceManager fetchBatch", () => {
 
     let executePartitionQueryMock = executePartitionQueryMock()
 
-    let fetchBatchPromise =
-      sourceManager->SourceManager.fetchBatch(
+    let fetchNextPromise =
+      sourceManager->SourceManager.fetchNext(
         ~allPartitions=[fetchState0, fetchState1, fetchState2, fetchState3],
         ~maxPerChainQueueSize=1000,
         ~currentBlockHeight=4,
@@ -257,7 +261,7 @@ describe("SourceManager fetchBatch", () => {
       ~message="Shouldn't have called more after resolving prev promises",
     )
 
-    await fetchBatchPromise
+    await fetchNextPromise
   })
 
   Async.it("Starts indexing from the initial state", async () => {
@@ -270,8 +274,8 @@ describe("SourceManager fetchBatch", () => {
     let waitForNewBlockMock = waitForNewBlockMock()
     let onNewBlockMock = onNewBlockMock()
 
-    let fetchBatchPromise1 =
-      sourceManager->SourceManager.fetchBatch(
+    let fetchNextPromise1 =
+      sourceManager->SourceManager.fetchNext(
         ~allPartitions=[mockFetchState(~partitionId=0, ~latestFetchedBlockNumber=0)],
         ~maxPerChainQueueSize=1000,
         ~currentBlockHeight=0,
@@ -284,14 +288,14 @@ describe("SourceManager fetchBatch", () => {
 
     waitForNewBlockMock.resolveAll(20)
 
-    await fetchBatchPromise1
+    await fetchNextPromise1
 
     Assert.deepEqual(waitForNewBlockMock.calls, [0])
     Assert.deepEqual(onNewBlockMock.calls, [20])
 
     // Can wait the second time
-    let fetchBatchPromise2 =
-      sourceManager->SourceManager.fetchBatch(
+    let fetchNextPromise2 =
+      sourceManager->SourceManager.fetchNext(
         ~allPartitions=[mockFetchState(~partitionId=0, ~latestFetchedBlockNumber=20)],
         ~maxPerChainQueueSize=1000,
         ~currentBlockHeight=20,
@@ -304,7 +308,7 @@ describe("SourceManager fetchBatch", () => {
 
     waitForNewBlockMock.resolveAll(40)
 
-    await fetchBatchPromise2
+    await fetchNextPromise2
 
     Assert.deepEqual(waitForNewBlockMock.calls, [0, 20])
     Assert.deepEqual(onNewBlockMock.calls, [20, 40])
@@ -322,8 +326,8 @@ describe("SourceManager fetchBatch", () => {
       let waitForNewBlockMock = waitForNewBlockMock()
       let onNewBlockMock = onNewBlockMock()
 
-      let fetchBatchPromise1 =
-        sourceManager->SourceManager.fetchBatch(
+      let fetchNextPromise1 =
+        sourceManager->SourceManager.fetchNext(
           ~allPartitions=[mockFetchState(~partitionId=0, ~latestFetchedBlockNumber=5)],
           ~maxPerChainQueueSize=1000,
           ~currentBlockHeight=0,
@@ -336,7 +340,7 @@ describe("SourceManager fetchBatch", () => {
 
       waitForNewBlockMock.resolveAll(20)
 
-      await fetchBatchPromise1
+      await fetchNextPromise1
 
       Assert.deepEqual(waitForNewBlockMock.calls, [0])
       Assert.deepEqual(onNewBlockMock.calls, [20])
@@ -356,8 +360,8 @@ describe("SourceManager fetchBatch", () => {
     let waitForNewBlockMock = waitForNewBlockMock()
     let onNewBlockMock = onNewBlockMock()
 
-    let fetchBatchPromise =
-      sourceManager->SourceManager.fetchBatch(
+    let fetchNextPromise =
+      sourceManager->SourceManager.fetchNext(
         ~allPartitions=[fetchState0, fetchState1],
         ~maxPerChainQueueSize=1000,
         ~currentBlockHeight=5,
@@ -371,7 +375,7 @@ describe("SourceManager fetchBatch", () => {
     Assert.deepEqual(waitForNewBlockMock.calls, [5])
 
     // Should do nothing on the second call with the same data
-    await sourceManager->SourceManager.fetchBatch(
+    await sourceManager->SourceManager.fetchNext(
       ~allPartitions=[fetchState0, fetchState1],
       ~maxPerChainQueueSize=1000,
       ~currentBlockHeight=5,
@@ -388,7 +392,7 @@ describe("SourceManager fetchBatch", () => {
     await Promise.resolve()
     Assert.deepEqual(onNewBlockMock.calls, [6])
 
-    await fetchBatchPromise
+    await fetchNextPromise
 
     Assert.deepEqual(waitForNewBlockMock.calls->Js.Array2.length, 1)
     Assert.deepEqual(onNewBlockMock.calls->Js.Array2.length, 1)
@@ -408,8 +412,8 @@ describe("SourceManager fetchBatch", () => {
 
     let executePartitionQueryMock = executePartitionQueryMock()
 
-    let fetchBatchPromise1 =
-      sourceManager->SourceManager.fetchBatch(
+    let fetchNextPromise1 =
+      sourceManager->SourceManager.fetchNext(
         ~allPartitions=[fetchState0, fetchState1],
         ~maxPerChainQueueSize=1000,
         ~currentBlockHeight=10,
@@ -422,8 +426,8 @@ describe("SourceManager fetchBatch", () => {
 
     Assert.deepEqual(executePartitionQueryMock.calls->Js.Array2.map(q => q.partitionId), [0, 1])
 
-    let fetchBatchPromise2 =
-      sourceManager->SourceManager.fetchBatch(
+    let fetchNextPromise2 =
+      sourceManager->SourceManager.fetchNext(
         ~allPartitions=[fetchState0, fetchState1, fetchState2, fetchState3],
         ~maxPerChainQueueSize=1000,
         ~currentBlockHeight=10,
@@ -437,7 +441,7 @@ describe("SourceManager fetchBatch", () => {
     Assert.deepEqual(executePartitionQueryMock.calls->Js.Array2.map(q => q.partitionId), [0, 1, 3])
 
     // The third call won't do anything, because the concurrency is reached
-    await sourceManager->SourceManager.fetchBatch(
+    await sourceManager->SourceManager.fetchNext(
       ~allPartitions=[fetchState0, fetchState1, fetchState2, fetchState3],
       ~maxPerChainQueueSize=1000,
       ~currentBlockHeight=10,
@@ -450,7 +454,7 @@ describe("SourceManager fetchBatch", () => {
     // Even if we are in the next state,
     // can't do anything since we account
     // for running fetches from the prev state
-    await sourceManager->SourceManager.fetchBatch(
+    await sourceManager->SourceManager.fetchNext(
       ~allPartitions=[fetchState0, fetchState1, fetchState2, fetchState3],
       ~maxPerChainQueueSize=1000,
       ~currentBlockHeight=10,
@@ -465,7 +469,7 @@ describe("SourceManager fetchBatch", () => {
     (executePartitionQueryMock.resolveFns->Js.Array2.unsafe_get(1))()
 
     // After resolving one the call with prev stateId won't do anything
-    await sourceManager->SourceManager.fetchBatch(
+    await sourceManager->SourceManager.fetchNext(
       ~allPartitions=[fetchState0, fetchState1, fetchState2, fetchState3],
       ~maxPerChainQueueSize=1000,
       ~currentBlockHeight=10,
@@ -477,8 +481,8 @@ describe("SourceManager fetchBatch", () => {
     )
 
     // The same call with stateId=1 will trigger execution of two earliest queries
-    let fetchBatchPromise3 =
-      sourceManager->SourceManager.fetchBatch(
+    let fetchNextPromise3 =
+      sourceManager->SourceManager.fetchNext(
         ~allPartitions=[fetchState0, fetchState1, fetchState2, fetchState3],
         ~maxPerChainQueueSize=1000,
         ~currentBlockHeight=10,
@@ -503,7 +507,7 @@ describe("SourceManager fetchBatch", () => {
     // Partitions 2 and 3 should be ignored.
     // Eventhogh they are not fetching,
     // but we've alredy called them with the same query
-    await sourceManager->SourceManager.fetchBatch(
+    await sourceManager->SourceManager.fetchNext(
       ~allPartitions=[
         mockFetchState(~partitionId=0, ~latestFetchedBlockNumber=10),
         mockFetchState(~partitionId=1, ~latestFetchedBlockNumber=10),
@@ -519,9 +523,9 @@ describe("SourceManager fetchBatch", () => {
       ~stateId=0,
     )
 
-    await fetchBatchPromise1
-    await fetchBatchPromise2
-    await fetchBatchPromise3
+    await fetchNextPromise1
+    await fetchNextPromise2
+    await fetchNextPromise3
 
     Assert.deepEqual(
       executePartitionQueryMock.calls->Js.Array2.length,
@@ -539,8 +543,8 @@ describe("SourceManager fetchBatch", () => {
 
     let executePartitionQueryMock = executePartitionQueryMock()
 
-    let fetchBatchPromise =
-      sourceManager->SourceManager.fetchBatch(
+    let fetchNextPromise =
+      sourceManager->SourceManager.fetchNext(
         ~allPartitions=[
           mockFetchState(~partitionId=0, ~latestFetchedBlockNumber=4),
           mockFetchState(~partitionId=1, ~latestFetchedBlockNumber=5),
@@ -567,7 +571,7 @@ describe("SourceManager fetchBatch", () => {
 
     executePartitionQueryMock.resolveAll()
 
-    await fetchBatchPromise
+    await fetchNextPromise
 
     Assert.deepEqual(
       executePartitionQueryMock.calls->Js.Array2.map(q => q.partitionId),
@@ -585,7 +589,7 @@ describe("SourceManager fetchBatch", () => {
 
     let executePartitionQueryMock = executePartitionQueryMock()
 
-    let fetchBatchPromise = sourceManager->SourceManager.fetchBatch(
+    let fetchNextPromise = sourceManager->SourceManager.fetchNext(
       ~allPartitions=[
         // Exceeds max queue size
         mockFetchState(
@@ -611,7 +615,7 @@ describe("SourceManager fetchBatch", () => {
 
     executePartitionQueryMock.resolveAll()
 
-    await fetchBatchPromise
+    await fetchNextPromise
 
     Assert.deepEqual(executePartitionQueryMock.calls->Js.Array2.map(q => q.partitionId), [4])
   })

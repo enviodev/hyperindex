@@ -1,18 +1,11 @@
 open Belt
 
-let toQueryId = (query: FetchState.nextQuery) => {
-  query.fetchStateRegisterId ++ "-" ++ query.fromBlock->Int.toString
-}
-
-// Can't simply store fetching partitions, since fetchBatch
+// Can't simply store fetching partitions, since fetchNext
 // can be called with old chainFetchers after isFetching was set to false,
 // but state isn't still updated with fetched data.
-// This is temporary until all fetching logic moved to mutable state,
-// but for now prevent fetching the same partition twice with the same query,
-// using lastFetchedQueryId (aka idempotency key)
 type partitionFetchingState = {
   isFetching: bool,
-  lastFetchedQueryId?: string,
+  prevFetchedIdempotencyKey?: int,
 }
 
 // Ideally the ChainFetcher name suits this better
@@ -49,7 +42,7 @@ let make = (~maxPartitionConcurrency, ~endBlock, ~logger) => {
 
 exception FromBlockIsHigherThanToBlock({fromBlock: int, toBlock: int})
 
-let fetchBatch = async (
+let fetchNext = async (
   sourceManager: t,
   ~allPartitions: PartitionedFetchState.allPartitions,
   ~currentBlockHeight,
@@ -89,15 +82,20 @@ let fetchBatch = async (
     let queries = readyPartitions->Array.keepMap(fetchState => {
       let mergedFetchState = fetchState->FetchState.mergeBeforeNextQuery
       if mergedFetchState !== fetchState {
-        mergedPartitions->Js.Dict.set(fetchState.partitionId->(Utils.magic: int => string), mergedFetchState)
+        mergedPartitions->Js.Dict.set(
+          fetchState.partitionId->(Utils.magic: int => string),
+          mergedFetchState,
+        )
       }
       switch mergedFetchState->FetchState.getNextQuery(~endBlock) {
       | Done => None
       | NextQuery(nextQuery) =>
         switch allPartitionsFetchingState->Belt.Array.get(fetchState.partitionId) {
-        // Deduplicate queries when fetchBatch is called after
+        // Deduplicate queries when fetchNext is called after
         // isFetching was set to false, but state isn't updated with fetched data
-        | Some({lastFetchedQueryId}) if lastFetchedQueryId === toQueryId(nextQuery) => None
+        | Some({prevFetchedIdempotencyKey})
+          if prevFetchedIdempotencyKey >= nextQuery.idempotencyKey =>
+          None
         | _ => {
             let {fromBlock, toBlock} = nextQuery
             if fromBlock > currentBlockHeight {
@@ -166,7 +164,7 @@ let fetchBatch = async (
               partitionId,
               {
                 isFetching: false,
-                lastFetchedQueryId: toQueryId(query),
+                prevFetchedIdempotencyKey: query.idempotencyKey,
               },
             )
             data
