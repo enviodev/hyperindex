@@ -65,6 +65,7 @@ let fetchNext = async (
 
     let readyPartitions =
       allPartitions
+      ->PartitionedFetchState.getReadyPartitions(~maxPerChainQueueSize)
       ->Js.Array2.filter(fetchState => {
         switch allPartitionsFetchingState->Belt.Array.get(fetchState.partitionId) {
         | Some({isFetching: true}) => false
@@ -74,7 +75,6 @@ let fetchNext = async (
         | _ => true
         }
       })
-      ->PartitionedFetchState.getReadyPartitions(~maxPerChainQueueSize)
 
     let hasQueryWaitingForNewBlock = ref(false)
     let queries = readyPartitions->Array.keepMap(fetchState => {

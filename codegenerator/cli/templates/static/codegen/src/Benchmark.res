@@ -265,13 +265,11 @@ let addBlockRangeFetched = (
   ~chainId,
   ~fromBlock,
   ~toBlock,
-  ~fetchStateRegisterId: FetchState.id,
   ~numEvents,
+  ~partitionName,
   ~partitionId,
 ) => {
-  let registerName = fetchStateRegisterId->FetchState.registerIdToName
-
-  let group = `BlockRangeFetched Summary for Chain ${chainId->Belt.Int.toString} ${registerName} Register`
+  let group = `BlockRangeFetched Summary for Chain ${chainId->Belt.Int.toString} ${partitionName} Partition`
   let add = (label, value) => data->Data.addSummaryData(~group, ~label, ~value=Utils.magic(value))
 
   add("Total Time Elapsed (ms)", totalTimeElapsed)

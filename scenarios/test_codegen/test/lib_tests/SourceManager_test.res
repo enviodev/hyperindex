@@ -1,15 +1,17 @@
 open Belt
 open RescriptMocha
 
-type executePartitionQueryMock = {
-  fn: FetchState.partitionQuery => Promise.t<unit>,
-  calls: array<FetchState.partitionQuery>,
+type executeQueryMock = {
+  fn: FetchState.query => Promise.t<unit>,
+  calls: array<FetchState.query>,
+  callIds: array<string>,
   resolveAll: unit => unit,
   resolveFns: array<unit => unit>,
 }
 
-let executePartitionQueryMock = () => {
+let executeQueryMock = () => {
   let calls = []
+  let callIds = []
   let resolveFns = []
   {
     resolveFns,
@@ -18,10 +20,19 @@ let executePartitionQueryMock = () => {
     },
     fn: query => {
       calls->Js.Array2.push(query)->ignore
+      callIds
+      ->Js.Array2.push(
+        switch query {
+        | PartitionQuery(query) => "pq-" ++ query.partitionId->Int.toString
+        | MergeQuery(query) => "mq-" ++ query.partitionId->Int.toString
+        },
+      )
+      ->ignore
       Promise.make((resolve, _reject) => {
         resolveFns->Js.Array2.push(resolve)->ignore
       })
     },
+    callIds,
     calls,
   }
 }
@@ -109,14 +120,7 @@ describe("SourceManager fetchNext", () => {
     Assert.fail("The onNewBlock shouldn't be called for the test")
 
   let neverExecutePartitionQuery = _ =>
-    Assert.fail("The executePartitionQuery shouldn't be called for the test")
-
-  let noopSetMergedPartitions = mergedPartitions =>
-    Assert.deepEqual(
-      mergedPartitions,
-      Js.Dict.empty(),
-      ~message="Shouldn't have merged partitions when used with mocked fetch states",
-    )
+    Assert.fail("The executeQuery shouldn't be called for the test")
 
   Async.it("Executes partitions in any order when we didn't reach concurency limit", async () => {
     let sourceManager = SourceManager.make(
@@ -129,56 +133,55 @@ describe("SourceManager fetchNext", () => {
     let fetchState1 = mockFetchState(~partitionId=1, ~latestFetchedBlockNumber=5)
     let fetchState2 = mockFetchState(~partitionId=2, ~latestFetchedBlockNumber=1)
 
-    let executePartitionQueryMock = executePartitionQueryMock()
+    let executeQueryMock = executeQueryMock()
 
     let fetchNextPromise =
       sourceManager->SourceManager.fetchNext(
         ~allPartitions=[fetchState0, fetchState1, fetchState2],
         ~maxPerChainQueueSize=1000,
-        ~setMergedPartitions=noopSetMergedPartitions,
         ~currentBlockHeight=10,
-        ~executePartitionQuery=executePartitionQueryMock.fn,
+        ~executeQuery=executeQueryMock.fn,
         ~waitForNewBlock=neverWaitForNewBlock,
         ~onNewBlock=neverOnNewBlock,
         ~stateId=0,
       )
 
     Assert.deepEqual(
-      executePartitionQueryMock.calls,
+      executeQueryMock.calls,
       [
-        {
+        PartitionQuery({
           partitionId: 0,
           idempotencyKey: 0,
           fetchStateRegisterId: fetchState0.mostBehindRegister.id,
           fromBlock: 5,
           toBlock: None,
           contractAddressMapping: fetchState0.mostBehindRegister.contractAddressMapping,
-        },
-        {
+        }),
+        PartitionQuery({
           partitionId: 1,
           idempotencyKey: 0,
           fetchStateRegisterId: fetchState0.mostBehindRegister.id,
           fromBlock: 6,
           toBlock: None,
           contractAddressMapping: fetchState0.mostBehindRegister.contractAddressMapping,
-        },
-        {
+        }),
+        PartitionQuery({
           partitionId: 2,
           idempotencyKey: 0,
           fetchStateRegisterId: fetchState0.mostBehindRegister.id,
           fromBlock: 2,
           toBlock: None,
           contractAddressMapping: fetchState0.mostBehindRegister.contractAddressMapping,
-        },
+        }),
       ],
     )
 
-    executePartitionQueryMock.resolveAll()
+    executeQueryMock.resolveAll()
 
     await fetchNextPromise
 
     Assert.deepEqual(
-      executePartitionQueryMock.calls->Js.Array2.length,
+      executeQueryMock.calls->Js.Array2.length,
       3,
       ~message="Shouldn't have called more after resolving prev promises",
     )
@@ -197,28 +200,27 @@ describe("SourceManager fetchNext", () => {
       let fetchState1 = mockFetchState(~partitionId=1, ~latestFetchedBlockNumber=5)
       let fetchState2 = mockFetchState(~partitionId=2, ~latestFetchedBlockNumber=1)
 
-      let executePartitionQueryMock = executePartitionQueryMock()
+      let executeQueryMock = executeQueryMock()
 
       let fetchNextPromise =
         sourceManager->SourceManager.fetchNext(
           ~allPartitions=[fetchState0, fetchState1, fetchState2],
           ~maxPerChainQueueSize=1000,
           ~currentBlockHeight=10,
-          ~setMergedPartitions=noopSetMergedPartitions,
-          ~executePartitionQuery=executePartitionQueryMock.fn,
+          ~executeQuery=executeQueryMock.fn,
           ~waitForNewBlock=neverWaitForNewBlock,
           ~onNewBlock=neverOnNewBlock,
           ~stateId=0,
         )
 
-      Assert.deepEqual(executePartitionQueryMock.calls->Js.Array2.map(q => q.partitionId), [2, 0])
+      Assert.deepEqual(executeQueryMock.callIds, ["pq-2", "pq-0"])
 
-      executePartitionQueryMock.resolveAll()
+      executeQueryMock.resolveAll()
 
       await fetchNextPromise
 
       Assert.deepEqual(
-        executePartitionQueryMock.calls->Js.Array2.length,
+        executeQueryMock.calls->Js.Array2.length,
         2,
         ~message="Shouldn't have called more after resolving prev promises",
       )
@@ -237,26 +239,25 @@ describe("SourceManager fetchNext", () => {
     let fetchState2 = mockFetchState(~partitionId=2, ~latestFetchedBlockNumber=1)
     let fetchState3 = mockFetchState(~partitionId=3, ~latestFetchedBlockNumber=4)
 
-    let executePartitionQueryMock = executePartitionQueryMock()
+    let executeQueryMock = executeQueryMock()
 
     let fetchNextPromise =
       sourceManager->SourceManager.fetchNext(
         ~allPartitions=[fetchState0, fetchState1, fetchState2, fetchState3],
         ~maxPerChainQueueSize=1000,
         ~currentBlockHeight=4,
-        ~setMergedPartitions=noopSetMergedPartitions,
-        ~executePartitionQuery=executePartitionQueryMock.fn,
+        ~executeQuery=executeQueryMock.fn,
         ~waitForNewBlock=neverWaitForNewBlock,
         ~onNewBlock=neverOnNewBlock,
         ~stateId=0,
       )
 
-    Assert.deepEqual(executePartitionQueryMock.calls->Js.Array2.map(q => q.partitionId), [2])
+    Assert.deepEqual(executeQueryMock.callIds, ["pq-2"])
 
-    executePartitionQueryMock.resolveAll()
+    executeQueryMock.resolveAll()
 
     Assert.deepEqual(
-      executePartitionQueryMock.calls->Js.Array2.length,
+      executeQueryMock.calls->Js.Array2.length,
       1,
       ~message="Shouldn't have called more after resolving prev promises",
     )
@@ -279,8 +280,7 @@ describe("SourceManager fetchNext", () => {
         ~allPartitions=[mockFetchState(~partitionId=0, ~latestFetchedBlockNumber=0)],
         ~maxPerChainQueueSize=1000,
         ~currentBlockHeight=0,
-        ~setMergedPartitions=noopSetMergedPartitions,
-        ~executePartitionQuery=neverExecutePartitionQuery,
+        ~executeQuery=neverExecutePartitionQuery,
         ~waitForNewBlock=waitForNewBlockMock.fn,
         ~onNewBlock=onNewBlockMock.fn,
         ~stateId=0,
@@ -299,8 +299,7 @@ describe("SourceManager fetchNext", () => {
         ~allPartitions=[mockFetchState(~partitionId=0, ~latestFetchedBlockNumber=20)],
         ~maxPerChainQueueSize=1000,
         ~currentBlockHeight=20,
-        ~setMergedPartitions=noopSetMergedPartitions,
-        ~executePartitionQuery=neverExecutePartitionQuery,
+        ~executeQuery=neverExecutePartitionQuery,
         ~waitForNewBlock=waitForNewBlockMock.fn,
         ~onNewBlock=onNewBlockMock.fn,
         ~stateId=0,
@@ -331,8 +330,7 @@ describe("SourceManager fetchNext", () => {
           ~allPartitions=[mockFetchState(~partitionId=0, ~latestFetchedBlockNumber=5)],
           ~maxPerChainQueueSize=1000,
           ~currentBlockHeight=0,
-          ~setMergedPartitions=noopSetMergedPartitions,
-          ~executePartitionQuery=neverExecutePartitionQuery,
+          ~executeQuery=neverExecutePartitionQuery,
           ~waitForNewBlock=waitForNewBlockMock.fn,
           ~onNewBlock=onNewBlockMock.fn,
           ~stateId=0,
@@ -365,8 +363,7 @@ describe("SourceManager fetchNext", () => {
         ~allPartitions=[fetchState0, fetchState1],
         ~maxPerChainQueueSize=1000,
         ~currentBlockHeight=5,
-        ~setMergedPartitions=noopSetMergedPartitions,
-        ~executePartitionQuery=neverExecutePartitionQuery,
+        ~executeQuery=neverExecutePartitionQuery,
         ~waitForNewBlock=waitForNewBlockMock.fn,
         ~onNewBlock=onNewBlockMock.fn,
         ~stateId=0,
@@ -379,8 +376,7 @@ describe("SourceManager fetchNext", () => {
       ~allPartitions=[fetchState0, fetchState1],
       ~maxPerChainQueueSize=1000,
       ~currentBlockHeight=5,
-      ~setMergedPartitions=noopSetMergedPartitions,
-      ~executePartitionQuery=neverExecutePartitionQuery,
+      ~executeQuery=neverExecutePartitionQuery,
       ~waitForNewBlock=neverWaitForNewBlock,
       ~onNewBlock=neverOnNewBlock,
       ~stateId=0,
@@ -410,43 +406,40 @@ describe("SourceManager fetchNext", () => {
     let fetchState2 = mockFetchState(~partitionId=2, ~latestFetchedBlockNumber=2)
     let fetchState3 = mockFetchState(~partitionId=3, ~latestFetchedBlockNumber=1)
 
-    let executePartitionQueryMock = executePartitionQueryMock()
+    let executeQueryMock = executeQueryMock()
 
     let fetchNextPromise1 =
       sourceManager->SourceManager.fetchNext(
         ~allPartitions=[fetchState0, fetchState1],
         ~maxPerChainQueueSize=1000,
         ~currentBlockHeight=10,
-        ~setMergedPartitions=noopSetMergedPartitions,
-        ~executePartitionQuery=executePartitionQueryMock.fn,
+        ~executeQuery=executeQueryMock.fn,
         ~waitForNewBlock=neverWaitForNewBlock,
         ~onNewBlock=neverOnNewBlock,
         ~stateId=0,
       )
 
-    Assert.deepEqual(executePartitionQueryMock.calls->Js.Array2.map(q => q.partitionId), [0, 1])
+    Assert.deepEqual(executeQueryMock.callIds, ["pq-0", "pq-1"])
 
     let fetchNextPromise2 =
       sourceManager->SourceManager.fetchNext(
         ~allPartitions=[fetchState0, fetchState1, fetchState2, fetchState3],
         ~maxPerChainQueueSize=1000,
         ~currentBlockHeight=10,
-        ~setMergedPartitions=noopSetMergedPartitions,
-        ~executePartitionQuery=executePartitionQueryMock.fn,
+        ~executeQuery=executeQueryMock.fn,
         ~waitForNewBlock=neverWaitForNewBlock,
         ~onNewBlock=neverOnNewBlock,
         ~stateId=0,
       )
 
-    Assert.deepEqual(executePartitionQueryMock.calls->Js.Array2.map(q => q.partitionId), [0, 1, 3])
+    Assert.deepEqual(executeQueryMock.callIds, ["pq-0", "pq-1", "pq-3"])
 
     // The third call won't do anything, because the concurrency is reached
     await sourceManager->SourceManager.fetchNext(
       ~allPartitions=[fetchState0, fetchState1, fetchState2, fetchState3],
       ~maxPerChainQueueSize=1000,
       ~currentBlockHeight=10,
-      ~setMergedPartitions=noopSetMergedPartitions,
-      ~executePartitionQuery=neverExecutePartitionQuery,
+      ~executeQuery=neverExecutePartitionQuery,
       ~waitForNewBlock=neverWaitForNewBlock,
       ~onNewBlock=neverOnNewBlock,
       ~stateId=0,
@@ -458,23 +451,21 @@ describe("SourceManager fetchNext", () => {
       ~allPartitions=[fetchState0, fetchState1, fetchState2, fetchState3],
       ~maxPerChainQueueSize=1000,
       ~currentBlockHeight=10,
-      ~setMergedPartitions=noopSetMergedPartitions,
-      ~executePartitionQuery=neverExecutePartitionQuery,
+      ~executeQuery=neverExecutePartitionQuery,
       ~waitForNewBlock=neverWaitForNewBlock,
       ~onNewBlock=neverOnNewBlock,
       ~stateId=1,
     )
 
-    (executePartitionQueryMock.resolveFns->Js.Array2.unsafe_get(0))()
-    (executePartitionQueryMock.resolveFns->Js.Array2.unsafe_get(1))()
+    (executeQueryMock.resolveFns->Js.Array2.unsafe_get(0))()
+    (executeQueryMock.resolveFns->Js.Array2.unsafe_get(1))()
 
     // After resolving one the call with prev stateId won't do anything
     await sourceManager->SourceManager.fetchNext(
       ~allPartitions=[fetchState0, fetchState1, fetchState2, fetchState3],
       ~maxPerChainQueueSize=1000,
       ~currentBlockHeight=10,
-      ~setMergedPartitions=noopSetMergedPartitions,
-      ~executePartitionQuery=neverExecutePartitionQuery,
+      ~executeQuery=neverExecutePartitionQuery,
       ~waitForNewBlock=neverWaitForNewBlock,
       ~onNewBlock=neverOnNewBlock,
       ~stateId=0,
@@ -486,8 +477,7 @@ describe("SourceManager fetchNext", () => {
         ~allPartitions=[fetchState0, fetchState1, fetchState2, fetchState3],
         ~maxPerChainQueueSize=1000,
         ~currentBlockHeight=10,
-        ~setMergedPartitions=noopSetMergedPartitions,
-        ~executePartitionQuery=executePartitionQueryMock.fn,
+        ~executeQuery=executeQueryMock.fn,
         ~waitForNewBlock=neverWaitForNewBlock,
         ~onNewBlock=neverOnNewBlock,
         ~stateId=1,
@@ -495,14 +485,11 @@ describe("SourceManager fetchNext", () => {
 
     // Note how partitionId=3 was called again,
     // even though it's still fetching for the prev stateId
-    Assert.deepEqual(
-      executePartitionQueryMock.calls->Js.Array2.map(q => q.partitionId),
-      [0, 1, 3, 3, 2],
-    )
+    Assert.deepEqual(executeQueryMock.callIds, ["pq-0", "pq-1", "pq-3", "pq-3", "pq-2"])
 
     // But let's say partitions 0 and 1 were fetched to the known chain height
     // And all the fetching partitions are resolved
-    executePartitionQueryMock.resolveAll()
+    executeQueryMock.resolveAll()
 
     // Partitions 2 and 3 should be ignored.
     // Eventhogh they are not fetching,
@@ -516,8 +503,7 @@ describe("SourceManager fetchNext", () => {
       ],
       ~maxPerChainQueueSize=1000,
       ~currentBlockHeight=10,
-      ~setMergedPartitions=noopSetMergedPartitions,
-      ~executePartitionQuery=neverExecutePartitionQuery,
+      ~executeQuery=neverExecutePartitionQuery,
       ~waitForNewBlock=neverWaitForNewBlock,
       ~onNewBlock=neverOnNewBlock,
       ~stateId=0,
@@ -528,7 +514,7 @@ describe("SourceManager fetchNext", () => {
     await fetchNextPromise3
 
     Assert.deepEqual(
-      executePartitionQueryMock.calls->Js.Array2.length,
+      executeQueryMock.calls->Js.Array2.length,
       5,
       ~message="Shouldn't have called more after resolving prev promises",
     )
@@ -541,7 +527,7 @@ describe("SourceManager fetchNext", () => {
       ~logger=Logging.logger,
     )
 
-    let executePartitionQueryMock = executePartitionQueryMock()
+    let executeQueryMock = executeQueryMock()
 
     let fetchNextPromise =
       sourceManager->SourceManager.fetchNext(
@@ -562,20 +548,19 @@ describe("SourceManager fetchNext", () => {
         ],
         ~maxPerChainQueueSize=10, //each partition should therefore have a max of 2 events
         ~currentBlockHeight=10,
-        ~setMergedPartitions=noopSetMergedPartitions,
-        ~executePartitionQuery=executePartitionQueryMock.fn,
+        ~executeQuery=executeQueryMock.fn,
         ~waitForNewBlock=neverWaitForNewBlock,
         ~onNewBlock=neverOnNewBlock,
         ~stateId=0,
       )
 
-    executePartitionQueryMock.resolveAll()
+    executeQueryMock.resolveAll()
 
     await fetchNextPromise
 
     Assert.deepEqual(
-      executePartitionQueryMock.calls->Js.Array2.map(q => q.partitionId),
-      [0, 1, 4],
+      executeQueryMock.callIds,
+      ["pq-0", "pq-1", "pq-4"],
       ~message="Should have skipped partitions that are at max queue size",
     )
   })
@@ -587,7 +572,7 @@ describe("SourceManager fetchNext", () => {
       ~logger=Logging.logger,
     )
 
-    let executePartitionQueryMock = executePartitionQueryMock()
+    let executeQueryMock = executeQueryMock()
 
     let fetchNextPromise = sourceManager->SourceManager.fetchNext(
       ~allPartitions=[
@@ -606,17 +591,16 @@ describe("SourceManager fetchNext", () => {
       ],
       ~maxPerChainQueueSize=10, //each partition should therefore have a max of 2 events
       ~currentBlockHeight=10,
-      ~setMergedPartitions=noopSetMergedPartitions,
-      ~executePartitionQuery=executePartitionQueryMock.fn,
+      ~executeQuery=executeQueryMock.fn,
       ~waitForNewBlock=neverWaitForNewBlock,
       ~onNewBlock=neverOnNewBlock,
       ~stateId=0,
     )
 
-    executePartitionQueryMock.resolveAll()
+    executeQueryMock.resolveAll()
 
     await fetchNextPromise
 
-    Assert.deepEqual(executePartitionQueryMock.calls->Js.Array2.map(q => q.partitionId), [4])
+    Assert.deepEqual(executeQueryMock.callIds, ["pq-4"])
   })
 })

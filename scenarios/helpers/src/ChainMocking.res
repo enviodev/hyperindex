@@ -292,8 +292,6 @@ module Make = (Indexer: Indexer.S) => {
       latestFetchedBlockNumber: heighstBlock.blockNumber,
       latestFetchedBlockTimestamp: heighstBlock.blockTimestamp,
       stats: "NO_STATS"->Obj.magic,
-      fetchStateRegisterId: query.fetchStateRegisterId,
-      partitionId: query.partitionId,
     }
   }
 

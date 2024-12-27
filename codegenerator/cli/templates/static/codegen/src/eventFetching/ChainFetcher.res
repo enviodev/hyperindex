@@ -63,7 +63,11 @@ let make = (
   {
     logger,
     chainConfig,
-    sourceManager: SourceManager.make(~maxPartitionConcurrency=Env.maxPartitionConcurrency, ~endBlock, ~logger),
+    sourceManager: SourceManager.make(
+      ~maxPartitionConcurrency=Env.maxPartitionConcurrency,
+      ~endBlock,
+      ~logger,
+    ),
     lastBlockScannedHashes,
     currentBlockHeight: 0,
     partitionedFetchState,
@@ -320,9 +324,9 @@ Updates of fetchState and cleans up event filters. Should be used whenever updat
 to ensure processingFilters are always valid.
 Returns Error if the node with given id cannot be found (unexpected)
 */
-let updateFetchState = (
+let setQueryResponse = (
   self: t,
-  ~id,
+  ~query: FetchState.query,
   ~latestFetchedBlockTimestamp,
   ~latestFetchedBlockNumber,
   ~fetchedEvents,
@@ -334,8 +338,8 @@ let updateFetchState = (
   }
 
   self.partitionedFetchState
-  ->PartitionedFetchState.update(
-    ~id,
+  ->PartitionedFetchState.setQueryResponse(
+    ~query,
     ~latestFetchedBlock={
       blockNumber: latestFetchedBlockNumber,
       blockTimestamp: latestFetchedBlockTimestamp,
@@ -349,7 +353,8 @@ let updateFetchState = (
       ...self,
       partitionedFetchState,
       processingFilters: switch self.processingFilters {
-      | Some(processingFilters) => processingFilters->cleanUpProcessingFilters(~partitionedFetchState)
+      | Some(processingFilters) =>
+        processingFilters->cleanUpProcessingFilters(~partitionedFetchState)
       | None => None
       },
     }

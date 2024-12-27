@@ -83,7 +83,6 @@ module type S = {
       lastBlockScannedData: ReorgDetection.blockData,
       firstBlockParentNumberAndHash: option<ReorgDetection.blockNumberAndHash>,
     }
-    type blockRangeFetchArgs
     type blockRangeFetchStats
     type blockRangeFetchResponse = {
       currentBlockHeight: int,
@@ -93,8 +92,6 @@ module type S = {
       latestFetchedBlockNumber: int,
       latestFetchedBlockTimestamp: int,
       stats: blockRangeFetchStats,
-      fetchStateRegisterId: FetchState.id,
-      partitionId: int,
     }
 
     module type S = {
@@ -109,10 +106,14 @@ module type S = {
         ~logger: Pino.t,
       ) => promise<int>
       let fetchBlockRange: (
-        ~query: blockRangeFetchArgs,
-        ~logger: Pino.t,
+        ~fromBlock: int,
+        ~toBlock: option<int>,
+        ~contractAddressMapping: ContractAddressingMap.mapping,
         ~currentBlockHeight: int,
+        ~partitionId: int,
+        ~shouldApplyWildcards: bool,
         ~isPreRegisteringDynamicContracts: bool,
+        ~logger: Pino.t,
       ) => promise<result<blockRangeFetchResponse, ErrorHandling.t>>
     }
   }

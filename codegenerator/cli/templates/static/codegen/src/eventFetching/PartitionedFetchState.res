@@ -156,38 +156,39 @@ exception UnexpectedPartitionDoesNotExist(partitionId)
 Updates partition at given id with given values and checks to see if it can be merged into its next register.
 Returns Error if the partition/node with given id cannot be found (unexpected)
 */
-let update = (self: t, ~id: id, ~latestFetchedBlock, ~newItems, ~currentBlockHeight, ~chain) => {
-  switch self.partitions[id.partitionId] {
+let setQueryResponse = (
+  self: t,
+  ~query: FetchState.query,
+  ~latestFetchedBlock,
+  ~newItems,
+  ~currentBlockHeight,
+  ~chain,
+) => {
+  let partitionId = switch query {
+  | PartitionQuery({partitionId})
+  | MergeQuery({partitionId}) => partitionId
+  }
+
+  switch self.partitions[partitionId] {
   | Some(partition) =>
     partition
-    ->FetchState.setFetchedItems(
-      ~id=id.fetchStateId,
-      ~latestFetchedBlock,
-      ~newItems,
-      ~currentBlockHeight,
-    )
+    ->FetchState.setQueryResponse(~query, ~latestFetchedBlock, ~newItems, ~currentBlockHeight)
     ->Result.map(updatedPartition => {
       Prometheus.PartitionBlockFetched.set(
         ~blockNumber=latestFetchedBlock.blockNumber,
         ~chainId=chain->ChainMap.Chain.toChainId,
-        ~partitionId=id.partitionId,
+        ~partitionId,
       )
       {
         ...self,
-        partitions: self.partitions->Utils.Array.setIndexImmutable(
-          id.partitionId,
-          updatedPartition,
-        ),
+        partitions: self.partitions->Utils.Array.setIndexImmutable(partitionId, updatedPartition),
       }
     })
-  | _ => Error(UnexpectedPartitionDoesNotExist(id.partitionId))
+  | _ => Error(UnexpectedPartitionDoesNotExist(partitionId))
   }
 }
 
-let getReadyPartitions = (
-  allPartitions: allPartitions,
-  ~maxPerChainQueueSize,
-) => {
+let getReadyPartitions = (allPartitions: allPartitions, ~maxPerChainQueueSize) => {
   let numPartitions = allPartitions->Array.length
   let maxPartitionQueueSize = maxPerChainQueueSize / numPartitions
   allPartitions->Js.Array2.filter(fetchState => {

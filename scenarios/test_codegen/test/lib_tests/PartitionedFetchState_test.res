@@ -74,7 +74,6 @@ describe("PartitionedFetchState getMostBehindPartitions", () => {
     Assert.deepEqual(
       partitionedFetchState.partitions->PartitionedFetchState.getReadyPartitions(
         ~maxPerChainQueueSize=10,
-        ~fetchingPartitions=Utils.Set.make(),
       ),
       [fetchState0],
       ~message="Should have only one partition with id 0",
@@ -134,7 +133,6 @@ describe("PartitionedFetchState getMostBehindPartitions", () => {
     Assert.deepEqual(
       updatedPartitionedFetchState.partitions->PartitionedFetchState.getReadyPartitions(
         ~maxPerChainQueueSize=1000,
-        ~fetchingPartitions=Utils.Set.make(),
       ),
       [
         fetchState0,

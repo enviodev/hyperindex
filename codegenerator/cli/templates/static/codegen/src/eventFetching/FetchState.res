@@ -215,8 +215,6 @@ let mergeWithNextRegister = (register: register, ~next: register) => {
   }
 }
 
-exception UnexpectedRegisterDoesNotExist(id)
-
 /**
 Updates a given register with new latest block values and new fetched
 events.
@@ -323,44 +321,6 @@ let registerDynamicContract = (
   }
 }
 
-/*
-Updates node at given id with given values and checks to see if it can be merged into its next register.
-Returns Error if the node with given id cannot be found (unexpected)
-
-newItems are ordered earliest to latest (as they are returned from the worker)
-*/
-let setFetchedItems = (
-  fetchState: t,
-  ~id,
-  ~latestFetchedBlock: blockNumberAndTimestamp,
-  ~newItems,
-  ~currentBlockHeight,
-): result<t, exn> => {
-  let isMissing = ref(true)
-
-  let registers = fetchState.registers->Array.map(r => {
-    if r.id == id {
-      isMissing := false
-      r->updateRegister(~latestFetchedBlock, ~reversedNewItems=newItems->Array.reverse)
-    } else {
-      r
-    }
-  })
-
-  if isMissing.contents {
-    Error(UnexpectedRegisterDoesNotExist(id))
-  } else {
-    fetchState
-    ->updateInternal(
-      ~registers,
-      ~responseCount=fetchState.responseCount + 1,
-      ~isFetchingAtHead=fetchState.isFetchingAtHead ||
-      currentBlockHeight <= latestFetchedBlock.blockNumber,
-    )
-    ->Ok
-  }
-}
-
 type partitionQuery = {
   fetchStateRegisterId: id,
   idempotencyKey: int,
@@ -382,7 +342,94 @@ type query =
   | PartitionQuery(partitionQuery)
   | MergeQuery(mergeQuery)
 
-let makeRegisterQuery = (register, ~idempotencyKey, ~partitionId, ~endBlock, ~nextRegister) => {
+exception UnexpectedRegisterDoesNotExist(id)
+exception UnexpectedMergeQueryResponse({message: string})
+
+/*
+Updates node at given id with given values and checks to see if it can be merged into its next register.
+Returns Error if the node with given id cannot be found (unexpected)
+
+newItems are ordered earliest to latest (as they are returned from the worker)
+*/
+let setQueryResponse = (
+  fetchState: t,
+  ~query: query,
+  ~latestFetchedBlock: blockNumberAndTimestamp,
+  ~newItems,
+  ~currentBlockHeight,
+): result<t, exn> => {
+  switch query {
+  | PartitionQuery({fetchStateRegisterId}) =>
+    switch fetchState.registers->Array.getIndexBy(r => r.id == fetchStateRegisterId) {
+    | Some(registerIdx) =>
+      Ok(
+        fetchState.registers->Utils.Array.setIndexImmutable(
+          registerIdx,
+          fetchState.registers
+          ->Array.getUnsafe(registerIdx)
+          ->updateRegister(~latestFetchedBlock, ~reversedNewItems=newItems->Array.reverse),
+        ),
+      )
+    | None => Error(UnexpectedRegisterDoesNotExist(fetchStateRegisterId))
+    }
+
+  | MergeQuery({toBlock}) =>
+    if toBlock !== latestFetchedBlock.blockNumber {
+      Error(
+        UnexpectedMergeQueryResponse({
+          message: `The expected to block ${toBlock->Int.toString} of a Merge Query doesn't match the latest fetched block number ${latestFetchedBlock.blockNumber->Int.toString}.`,
+        }),
+      )
+    } else {
+      switch fetchState.registers->Array.getIndexBy(r =>
+        r.latestFetchedBlock.blockNumber === toBlock
+      ) {
+      | Some(registerIdx) =>
+        Ok(
+          fetchState.registers->Utils.Array.setIndexImmutable(
+            registerIdx,
+            fetchState.registers
+            ->Array.getUnsafe(registerIdx)
+            ->updateRegister(~latestFetchedBlock, ~reversedNewItems=newItems->Array.reverse),
+          ),
+        )
+      | None =>
+        Error(UnexpectedRegisterDoesNotExist(`For Merge Query to block ${toBlock->Int.toString}`))
+      }
+    }
+  }->Result.map(registers => {
+    let pendingDynamicContracts = switch query {
+    | PartitionQuery(_) => fetchState.pendingDynamicContracts
+    | MergeQuery({toBlock, pendingDynamicContracts: queryDynamicContracts}) => {
+        queryDynamicContracts->Array.forEach(dc => {
+          let wasFilteredOutFromExecution = dc.registeringEventBlockNumber > toBlock
+          if wasFilteredOutFromExecution {
+            // Fine to push, since registers were cloned at this point by setIndexImmutable
+            registers->Array.push(
+              makeDynamicContractRegister(
+                ~registeringEventBlockNumber=dc.registeringEventBlockNumber,
+                ~registeringEventLogIndex=dc.registeringEventLogIndex,
+                ~dynamicContractRegistrations=dc.dynamicContracts,
+              ),
+            )
+          }
+        })
+
+        fetchState.pendingDynamicContracts->Array.sliceToEnd(queryDynamicContracts->Array.length)
+      }
+    }
+
+    fetchState->updateInternal(
+      ~registers,
+      ~pendingDynamicContracts,
+      ~responseCount=fetchState.responseCount + 1,
+      ~isFetchingAtHead=fetchState.isFetchingAtHead ||
+      currentBlockHeight <= latestFetchedBlock.blockNumber,
+    )
+  })
+}
+
+let makePartitionQuery = (register, ~idempotencyKey, ~partitionId, ~endBlock, ~nextRegister) => {
   let fromBlock = switch register.latestFetchedBlock.blockNumber {
   | 0 => 0
   | latestFetchedBlockNumber => latestFetchedBlockNumber + 1
@@ -390,17 +437,19 @@ let makeRegisterQuery = (register, ~idempotencyKey, ~partitionId, ~endBlock, ~ne
   switch endBlock {
   | Some(endBlock) if fromBlock > endBlock => None
   | _ =>
-    Some(PartitionQuery({
-      idempotencyKey,
-      partitionId,
-      fetchStateRegisterId: register.id,
-      fromBlock,
-      toBlock: Utils.Math.minOptInt(
-        nextRegister->Option.map(r => r.latestFetchedBlock.blockNumber),
-        endBlock,
-      ),
-      contractAddressMapping: register.contractAddressMapping,
-    }))
+    Some(
+      PartitionQuery({
+        idempotencyKey,
+        partitionId,
+        fetchStateRegisterId: register.id,
+        fromBlock,
+        toBlock: Utils.Math.minOptInt(
+          nextRegister->Option.map(r => r.latestFetchedBlock.blockNumber),
+          endBlock,
+        ),
+        contractAddressMapping: register.contractAddressMapping,
+      }),
+    )
   }
 }
 
@@ -420,19 +469,21 @@ let getNextQuery = (
 ) => {
   switch pendingDynamicContracts {
   | [] =>
-    mostBehindRegister->makeRegisterQuery(
+    mostBehindRegister->makePartitionQuery(
       ~partitionId,
       ~idempotencyKey=responseCount,
       ~endBlock,
       ~nextRegister=nextMostBehindRegister,
     )
   | _ =>
-    Some(MergeQuery({
-      partitionId,
-      idempotencyKey: responseCount,
-      toBlock: mostBehindRegister.latestFetchedBlock.blockNumber,
-      pendingDynamicContracts,
-    }))
+    Some(
+      MergeQuery({
+        partitionId,
+        idempotencyKey: responseCount,
+        toBlock: mostBehindRegister.latestFetchedBlock.blockNumber,
+        pendingDynamicContracts,
+      }),
+    )
   }
 }
 

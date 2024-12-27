@@ -106,20 +106,17 @@ describe("FetchState.fetchState", () => {
     let dc1 = makeDynContractRegistration(~contractAddress=mockAddress2, ~blockNumber=50)
     let dcId1 = getDynContractId(dc1)
 
-    let root =
-      root
-      ->FetchState.registerDynamicContract(
+    let root = root->FetchState.registerDynamicContract(
+      {
         {
-          {
-            registeringEventBlockNumber: dc1.registeringEventBlockNumber,
-            registeringEventLogIndex: dc1.registeringEventLogIndex,
-            registeringEventChain: ChainMap.Chain.makeUnsafe(~chainId=dc1.chainId),
-            dynamicContracts: [dc1],
-          }
-        },
-        ~isFetchingAtHead=false,
-      )
-      ->FetchState.mergeBeforeNextQuery
+          registeringEventBlockNumber: dc1.registeringEventBlockNumber,
+          registeringEventLogIndex: dc1.registeringEventLogIndex,
+          registeringEventChain: ChainMap.Chain.makeUnsafe(~chainId=dc1.chainId),
+          dynamicContracts: [dc1],
+        }
+      },
+      ~isFetchingAtHead=false,
+    )
 
     let expected1: FetchState.register = {
       latestFetchedBlock: {blockNumber: dcId1.blockNumber - 1, blockTimestamp: 0},
@@ -140,20 +137,17 @@ describe("FetchState.fetchState", () => {
     let dc2 = makeDynContractRegistration(~contractAddress=mockAddress3, ~blockNumber=55)
     let dcId2 = getDynContractId(dc2)
 
-    let root =
-      root
-      ->FetchState.registerDynamicContract(
+    let root = root->FetchState.registerDynamicContract(
+      {
         {
-          {
-            registeringEventBlockNumber: dc2.registeringEventBlockNumber,
-            registeringEventLogIndex: dc2.registeringEventLogIndex,
-            registeringEventChain: ChainMap.Chain.makeUnsafe(~chainId=dc2.chainId),
-            dynamicContracts: [dc2],
-          }
-        },
-        ~isFetchingAtHead=false,
-      )
-      ->FetchState.mergeBeforeNextQuery
+          registeringEventBlockNumber: dc2.registeringEventBlockNumber,
+          registeringEventLogIndex: dc2.registeringEventLogIndex,
+          registeringEventChain: ChainMap.Chain.makeUnsafe(~chainId=dc2.chainId),
+          dynamicContracts: [dc2],
+        }
+      },
+      ~isFetchingAtHead=false,
+    )
 
     let expected2: FetchState.register = {
       latestFetchedBlock: {blockNumber: dcId2.blockNumber - 1, blockTimestamp: 0},
@@ -178,20 +172,17 @@ describe("FetchState.fetchState", () => {
     let dc3 = makeDynContractRegistration(~contractAddress=mockAddress3, ~blockNumber=60)
     let dcId3 = getDynContractId(dc3)
 
-    let root =
-      root
-      ->FetchState.registerDynamicContract(
+    let root = root->FetchState.registerDynamicContract(
+      {
         {
-          {
-            registeringEventBlockNumber: dc3.registeringEventBlockNumber,
-            registeringEventLogIndex: dc3.registeringEventLogIndex,
-            registeringEventChain: ChainMap.Chain.makeUnsafe(~chainId=dc3.chainId),
-            dynamicContracts: [dc3],
-          }
-        },
-        ~isFetchingAtHead=false,
-      )
-      ->FetchState.mergeBeforeNextQuery
+          registeringEventBlockNumber: dc3.registeringEventBlockNumber,
+          registeringEventLogIndex: dc3.registeringEventLogIndex,
+          registeringEventChain: ChainMap.Chain.makeUnsafe(~chainId=dc3.chainId),
+          dynamicContracts: [dc3],
+        }
+      },
+      ~isFetchingAtHead=false,
+    )
 
     let expected3: FetchState.register = {
       latestFetchedBlock: {blockNumber: dcId3.blockNumber - 1, blockTimestamp: 0},
@@ -634,14 +625,16 @@ describe("FetchState.fetchState", () => {
 
     Assert.deepEqual(
       fetchState->FetchState.getNextQuery(~endBlock=None),
-      NextQuery({
-        fetchStateRegisterId: FetchState.rootRegisterId,
-        idempotencyKey: 0,
-        partitionId: 0,
-        fromBlock: root.latestFetchedBlock.blockNumber + 1,
-        toBlock: None,
-        contractAddressMapping: root.contractAddressMapping,
-      }),
+      Some(
+        PartitionQuery({
+          fetchStateRegisterId: FetchState.rootRegisterId,
+          idempotencyKey: 0,
+          partitionId: 0,
+          fromBlock: root.latestFetchedBlock.blockNumber + 1,
+          toBlock: None,
+          contractAddressMapping: root.contractAddressMapping,
+        }),
+      ),
     )
 
     let endblockCase = [
@@ -658,7 +651,7 @@ describe("FetchState.fetchState", () => {
 
     let nextQuery = endblockCase->FetchState.getNextQuery(~endBlock=Some(500))
 
-    Assert.deepEqual(nextQuery, Done)
+    Assert.deepEqual(nextQuery, None)
   })
 
   it("check contains contract address", () => {
@@ -923,13 +916,12 @@ describe("FetchState.fetchState", () => {
         ~isFetchingAtHead=false,
       )
 
-      let withAddedDynamicContractRegisterA =
-        withRegisteredDynamicContractA->FetchState.mergeBeforeNextQuery
+      let withAddedDynamicContractRegisterA = withRegisteredDynamicContractA
       //Received query
       let queryA = switch withAddedDynamicContractRegisterA->FetchState.getNextQuery(
         ~endBlock=None,
       ) {
-      | NextQuery(queryA) =>
+      | Some(PartitionQuery(queryA)) =>
         switch queryA {
         | {fetchStateRegisterId, fromBlock: 100, toBlock: Some(500)}
           if fetchStateRegisterId ===
@@ -971,7 +963,7 @@ describe("FetchState.fetchState", () => {
         ->Utils.unwrapResultExn
 
       switch updatesWithResponseFromQueryA->FetchState.getNextQuery(~endBlock=None) {
-      | NextQuery({fetchStateRegisterId, fromBlock: 200, toBlock: Some(400)})
+      | Some(PartitionQuery({fetchStateRegisterId, fromBlock: 200, toBlock: Some(400)}))
         if fetchStateRegisterId ===
           FetchState.makeDynamicContractRegisterId({blockNumber: 200, logIndex: 0}) => ()
       | nextQuery =>

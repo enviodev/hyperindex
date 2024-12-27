@@ -61,13 +61,11 @@ module Stubs = {
     ~chainWorker,
     ~currentBlockHeight,
     ~chain,
-    ~dispatchAction,
     ~isPreRegisteringDynamicContracts,
   ) => {
-    (logger, currentBlockHeight, chainWorker, isPreRegisteringDynamicContracts)->ignore
+    (logger, chain, currentBlockHeight, chainWorker, isPreRegisteringDynamicContracts)->ignore
 
-    let response = mockChainData->MockChainData.executeQuery(query)
-    dispatchAction(GlobalState.BlockRangeResponse(chain, response))
+    Ok(mockChainData->MockChainData.executeQuery(query))
   }
 
   //Stub for getting block hashes instead of the worker
