@@ -43,6 +43,7 @@ let makeThrowingGetEventTransaction = (~getTransactionFields) => {
           }
 
           let fn = switch transactionFieldItems {
+          | [] => _ => %raw(`{}`)->Promise.resolve
           | [{location: "transactionIndex"}] =>
             log => log->parseOrThrowReadableError->Promise.resolve
           | [{location: "hash"}]
@@ -115,7 +116,7 @@ module Make = (
   let chain = T.chain
   let eventRouter = T.eventRouter
 
-  let blockIntervals = Js.Dict.empty()
+  let suggestedBlockIntervals = Js.Dict.empty()
 
   let transactionLoader = LazyLoader.make(
     ~loaderFn=transactionHash =>
@@ -205,15 +206,10 @@ module Make = (
       | None => currentBlockHeight
       }
 
-      let currentBlockInterval =
-        blockIntervals
+      let suggestedBlockInterval =
+        suggestedBlockIntervals
         ->Utils.Dict.dangerouslyGetNonOption(partitionId->Belt.Int.toString)
         ->Belt.Option.getWithDefault(T.syncConfig.initialBlockInterval)
-
-      let targetBlock =
-        Pervasives.min(toBlock, fromBlock + currentBlockInterval - 1)->Pervasives.max(fromBlock) //Defensively ensure we never query a target block below fromBlock
-
-      let toBlockPromise = blockLoader->LazyLoader.get(targetBlock)
 
       let firstBlockParentPromise =
         fromBlock > 0
@@ -226,16 +222,20 @@ module Make = (
         ~contractAddressMapping,
       )
 
-      let {logs, finalExecutedBlockInterval} = await EventFetching.getNextPage(
+      let {logs, nextSuggestedBlockInterval, latestFetchedBlock} = await EventFetching.getNextPage(
         ~contractInterfaceManager,
         ~fromBlock,
-        ~toBlock=targetBlock,
-        ~initialBlockInterval=currentBlockInterval,
+        ~toBlock,
+        ~loadBlock=blockNumber => blockLoader->LazyLoader.get(blockNumber),
+        ~suggestedBlockInterval,
         ~syncConfig=T.syncConfig,
         ~provider=T.provider,
         ~logger,
       )
-      blockIntervals->Js.Dict.set(partitionId->Belt.Int.toString, finalExecutedBlockInterval)
+      suggestedBlockIntervals->Js.Dict.set(
+        partitionId->Belt.Int.toString,
+        nextSuggestedBlockInterval,
+      )
 
       let parsedQueueItems =
         await logs
@@ -320,9 +320,7 @@ module Make = (
         })
         ->Promise.all
 
-      let (optFirstBlockParent, toBlock) = (await firstBlockParentPromise, await toBlockPromise)
-
-      let heighestQueriedBlockNumber = targetBlock
+      let optFirstBlockParent = await firstBlockParentPromise
 
       let totalTimeElapsed =
         startFetchingBatchTimeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
@@ -333,16 +331,16 @@ module Make = (
           blockHash: b.hash,
         }),
         lastBlockScannedData: {
-          blockNumber: toBlock.number,
-          blockTimestamp: toBlock.timestamp,
-          blockHash: toBlock.hash,
+          blockNumber: latestFetchedBlock.number,
+          blockTimestamp: latestFetchedBlock.timestamp,
+          blockHash: latestFetchedBlock.hash,
         },
       }
 
       {
-        latestFetchedBlockTimestamp: toBlock.timestamp,
+        latestFetchedBlockTimestamp: latestFetchedBlock.timestamp,
+        latestFetchedBlockNumber: latestFetchedBlock.number,
         parsedQueueItems,
-        heighestQueriedBlockNumber,
         stats: {
           totalTimeElapsed: totalTimeElapsed,
         },

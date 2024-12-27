@@ -521,7 +521,7 @@ module Make = (
       {
         latestFetchedBlockTimestamp: lastBlockScannedData.blockTimestamp,
         parsedQueueItems,
-        heighestQueriedBlockNumber: lastBlockScannedData.blockNumber,
+        latestFetchedBlockNumber: lastBlockScannedData.blockNumber,
         stats,
         currentBlockHeight,
         reorgGuard,

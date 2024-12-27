@@ -38,6 +38,19 @@ describe("RpcSyncWorker - getEventTransactionOrThrow", () => {
     )
   })
 
+  Async.it(
+    "Returns empty object when empty field selection. Doesn't make a transaction request",
+    async () => {
+      let getEventTransactionOrThrow = RpcWorker.makeThrowingGetEventTransaction(
+        ~getTransactionFields=neverGetTransactionFields,
+      )
+      Assert.deepEqual(
+        await mockEthersLog()->getEventTransactionOrThrow(~transactionSchema=S.object(_ => ())),
+        %raw(`{}`),
+      )
+    },
+  )
+
   Async.it("Works with a single transactionIndex field", async () => {
     let getEventTransactionOrThrow = RpcWorker.makeThrowingGetEventTransaction(
       ~getTransactionFields=neverGetTransactionFields,

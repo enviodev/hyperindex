@@ -89,7 +89,7 @@ module type S = {
       reorgGuard: reorgGuard,
       parsedQueueItems: array<Internal.eventItem>,
       fromBlockQueried: int,
-      heighestQueriedBlockNumber: int,
+      latestFetchedBlockNumber: int,
       latestFetchedBlockTimestamp: int,
       stats: blockRangeFetchStats,
       fetchStateRegisterId: FetchState.id,
