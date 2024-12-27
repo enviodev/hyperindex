@@ -134,7 +134,7 @@ Exposing
 
   let query = unsafe(Db.sql, _)
 
-  let getAllRowsInTable = tableName => query(`SELECT * FROM public."${tableName}";`)
+  let getAllRowsInTable = tableName => query(`SELECT * FROM "${tableName}";`)
 }
 
 let setupDb = async () => {
