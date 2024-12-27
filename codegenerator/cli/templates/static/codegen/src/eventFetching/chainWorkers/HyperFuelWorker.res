@@ -516,7 +516,7 @@ module Make = (
 
       let lastBlockScannedData = await lastBlockQueriedPromise
 
-      let reorgGuard = {
+      let reorgGuard: ReorgDetection.reorgGuard = {
         lastBlockScannedData,
         firstBlockParentNumberAndHash: Some({
           ReorgDetection.blockHash: lastBlockScannedData.blockHash,

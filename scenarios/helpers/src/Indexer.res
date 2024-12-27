@@ -78,15 +78,11 @@ module type S = {
   }
 
   module ChainWorker: {
-    type reorgGuard = {
-      lastBlockScannedData: ReorgDetection.blockData,
-      firstBlockParentNumberAndHash: option<ReorgDetection.blockNumberAndHash>,
-    }
     type blockRangeFetchArgs
     type blockRangeFetchStats
     type blockRangeFetchResponse = {
       currentBlockHeight: int,
-      reorgGuard: reorgGuard,
+      reorgGuard: ReorgDetection.reorgGuard,
       parsedQueueItems: array<Internal.eventItem>,
       fromBlockQueried: int,
       latestFetchedBlockNumber: int,

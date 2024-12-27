@@ -337,11 +337,11 @@ let handleBlockRangeResponse = (state, ~chain, ~response: ChainWorker.blockRange
     "stats": stats,
   })
 
-  let {firstBlockParentNumberAndHash, lastBlockScannedData} = reorgGuard
+  let {lastBlockScannedData} = reorgGuard
 
   let hasReorgOccurred =
     chainFetcher.lastBlockScannedHashes->ReorgDetection.LastBlockScannedHashes.hasReorgOccurred(
-      ~firstBlockParentNumberAndHash,
+      ~reorgGuard,
     )
 
   if !hasReorgOccurred || !(state.config->Config.shouldRollbackOnReorg) {
