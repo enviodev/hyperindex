@@ -328,7 +328,7 @@ module Make = (
       let totalTimeElapsed =
         startFetchingBatchTimeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
 
-      let reorgGuard: reorgGuard = {
+      let reorgGuard: ReorgDetection.reorgGuard = {
         firstBlockParentNumberAndHash: optFirstBlockParent->Option.map(b => {
           ReorgDetection.blockNumber: b.number,
           blockHash: b.hash,

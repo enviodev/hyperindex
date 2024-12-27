@@ -11,6 +11,11 @@ type blockData = {
   blockTimestamp: int,
 }
 
+type reorgGuard = {
+  lastBlockScannedData: blockData,
+  firstBlockParentNumberAndHash: option<blockNumberAndHash>,
+}
+
 module LastBlockScannedHashes: {
   type t
   /**Instantiat t with existing data*/
@@ -69,7 +74,7 @@ module LastBlockScannedHashes: {
 
   let getAllBlockNumbers: t => Belt.Array.t<int>
 
-  let hasReorgOccurred: (t, ~firstBlockParentNumberAndHash: option<blockNumberAndHash>) => bool
+  let hasReorgOccurred: (t, ~reorgGuard: reorgGuard) => bool
 
   /**
   Return a BlockNumbersAndHashes.t rolled back to where blockData is less
@@ -402,31 +407,34 @@ module LastBlockScannedHashes: {
   /**
   Checks whether reorg has occured by comparing the parent hash with the last saved block hash.
   */
-  let rec hasReorgOccurredInternal = (
-    lastBlockScannedDataList,
-    ~firstBlockParentNumberAndHash: option<blockNumberAndHash>,
-  ) => {
-    switch (firstBlockParentNumberAndHash, lastBlockScannedDataList) {
-    | (Some({blockHash: parentHash, blockNumber: parentBlockNumber}), list{head, ...tail}) =>
-      if parentBlockNumber == head.blockNumber {
-        parentHash != head.blockHash
-      } else {
-        //if block numbers do not match, this is a dynamic contract case and should recurse
-        //through the list to look for a matching block or nothing to validate
-        tail->hasReorgOccurredInternal(~firstBlockParentNumberAndHash)
-      }
-    | _ => //If parentHash is None, either it's the genesis block (no reorg)
+  let rec hasReorgOccurredInternal = (lastBlockScannedDataList, ~reorgGuard: reorgGuard) => {
+    switch lastBlockScannedDataList {
+    | list{head, ...tail} =>
+      switch reorgGuard {
+      | {lastBlockScannedData} if lastBlockScannedData.blockNumber == head.blockNumber =>
+        lastBlockScannedData.blockHash != head.blockHash
+      //If parentHash is None, either it's the genesis block (no reorg)
       //Or its already confirmed so no Reorg
-      //If recentLastBlockData is None, we have not yet saved blockData to compare against
-      false
+      | {firstBlockParentNumberAndHash: None} => false
+      | {
+          firstBlockParentNumberAndHash: Some({
+            blockHash: parentHash,
+            blockNumber: parentBlockNumber,
+          }),
+        } =>
+        if parentBlockNumber == head.blockNumber {
+          parentHash != head.blockHash
+        } else {
+          //if block numbers do not match, this is a dynamic contract case and should recurse
+          //through the list to look for a matching block or nothing to validate
+          tail->hasReorgOccurredInternal(~reorgGuard)
+        }
+      }
+    //If recentLastBlockData is None, we have not yet saved blockData to compare against
+    | _ => false
     }
   }
 
-  let hasReorgOccurred = (
-    lastBlockScannedHashes: t,
-    ~firstBlockParentNumberAndHash: option<blockNumberAndHash>,
-  ) =>
-    lastBlockScannedHashes.lastBlockScannedDataList->hasReorgOccurredInternal(
-      ~firstBlockParentNumberAndHash,
-    )
+  let hasReorgOccurred = (lastBlockScannedHashes: t, ~reorgGuard: reorgGuard) =>
+    lastBlockScannedHashes.lastBlockScannedDataList->hasReorgOccurredInternal(~reorgGuard)
 }

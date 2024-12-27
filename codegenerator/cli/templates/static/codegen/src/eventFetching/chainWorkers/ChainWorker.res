@@ -9,17 +9,12 @@ type blockRangeFetchStats = {
   @as("page fetch time (ms)") pageFetchTime?: int,
 }
 
-type reorgGuard = {
-  lastBlockScannedData: ReorgDetection.blockData,
-  firstBlockParentNumberAndHash: option<ReorgDetection.blockNumberAndHash>,
-}
-
 /**
 Thes response returned from a block range fetch
 */
 type blockRangeFetchResponse = {
   currentBlockHeight: int,
-  reorgGuard: reorgGuard,
+  reorgGuard: ReorgDetection.reorgGuard,
   parsedQueueItems: array<Internal.eventItem>,
   fromBlockQueried: int,
   latestFetchedBlockNumber: int,
@@ -106,4 +101,43 @@ let fetchBlockRange = (
     ~currentBlockHeight,
     ~isPreRegisteringDynamicContracts,
   )
+}
+
+let fetchBlockRangeUntilToBlock = (
+  chainWorker,
+  ~fromBlock,
+  ~toBlock,
+  ~contractAddressMapping,
+  ~partitionId,
+  ~chain,
+  ~currentBlockHeight,
+  ~shouldApplyWildcards,
+  ~isPreRegisteringDynamicContracts,
+  ~logger,
+) => {
+  ErrorHandling.ResultPropogateEnv.runAsyncEnv(async () => {
+    let responses = []
+    let fromBlock = ref(fromBlock)
+
+    while fromBlock.contents <= toBlock {
+      let response =
+        (await chainWorker
+        ->fetchBlockRange(
+          ~fromBlock=fromBlock.contents,
+          ~toBlock=Some(toBlock),
+          ~contractAddressMapping,
+          ~partitionId,
+          ~chain,
+          ~currentBlockHeight,
+          ~shouldApplyWildcards,
+          ~isPreRegisteringDynamicContracts,
+          ~logger,
+        ))
+        ->ErrorHandling.ResultPropogateEnv.propogate
+      fromBlock := response.latestFetchedBlockNumber + 1
+      responses->Array.push(response)
+    }
+
+    Ok(responses)
+  })
 }

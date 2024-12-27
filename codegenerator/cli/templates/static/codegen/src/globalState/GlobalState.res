@@ -310,6 +310,117 @@ let updateLatestProcessedBlocks = (
   }
 }
 
+let handleResponse = (
+  ~state,
+  ~query: FetchState.query,
+  ~parsedQueueItems,
+  ~currentBlockHeight,
+  ~latestFetchedBlockTimestamp,
+  ~latestFetchedBlockNumber,
+  ~lastBlockScannedData,
+  ~chainFetcher: ChainFetcher.t,
+  ~chain,
+  ~hasReorgOccurred,
+) => {
+  if !hasReorgOccurred || !(state.config->Config.shouldRollbackOnReorg) {
+    if hasReorgOccurred {
+      chainFetcher.logger->Logging.childWarn(
+        "Reorg detected, not rolling back due to configuration",
+      )
+      Prometheus.incrementReorgsDetected(~chain)
+    }
+
+    let updatedChainFetcher =
+      chainFetcher
+      ->ChainFetcher.setQueryResponse(
+        ~query,
+        ~currentBlockHeight,
+        ~latestFetchedBlockTimestamp,
+        ~latestFetchedBlockNumber,
+        ~fetchedEvents=parsedQueueItems,
+      )
+      ->Utils.unwrapResultExn
+      ->updateChainFetcherCurrentBlockHeight(~currentBlockHeight)
+
+    let hasArbQueueEvents = state.chainManager->ChainManager.hasChainItemsOnArbQueue(~chain)
+    let hasNoMoreEventsToProcess =
+      updatedChainFetcher->ChainFetcher.hasNoMoreEventsToProcess(~hasArbQueueEvents)
+
+    let latestProcessedBlock = if hasNoMoreEventsToProcess {
+      PartitionedFetchState.getLatestFullyFetchedBlock(
+        updatedChainFetcher.partitionedFetchState,
+      ).blockNumber->Some
+    } else {
+      updatedChainFetcher.latestProcessedBlock
+    }
+
+    let updatedChainFetcher = {
+      ...updatedChainFetcher,
+      latestProcessedBlock,
+      numBatchesFetched: updatedChainFetcher.numBatchesFetched + 1,
+    }
+
+    let wasFetchingAtHead = ChainFetcher.isFetchingAtHead(chainFetcher)
+    let isCurrentlyFetchingAtHead = ChainFetcher.isFetchingAtHead(updatedChainFetcher)
+
+    if !wasFetchingAtHead && isCurrentlyFetchingAtHead {
+      updatedChainFetcher.logger->Logging.childInfo("All events have been fetched")
+    }
+
+    let chainManager = {
+      ...state.chainManager,
+      chainFetchers: state.chainManager.chainFetchers->ChainMap.set(chain, updatedChainFetcher),
+    }->ChainManager.addLastBlockScannedData(
+      ~chain,
+      ~lastBlockScannedData,
+      ~currentHeight=currentBlockHeight,
+    )
+
+    let updateEndOfBlockRangeScannedDataArr =
+      //Only update endOfBlockRangeScannedData if rollbacks are enabled
+      state.config->Config.shouldRollbackOnReorg
+        ? [
+            UpdateEndOfBlockRangeScannedData({
+              chain,
+              blockNumberThreshold: lastBlockScannedData.blockNumber -
+              updatedChainFetcher.chainConfig.confirmedBlockThreshold,
+              blockTimestampThreshold: chainManager
+              ->ChainManager.getEarliestMultiChainTimestampInThreshold
+              ->Option.getWithDefault(0),
+              nextEndOfBlockRangeScannedData: {
+                chainId: chain->ChainMap.Chain.toChainId,
+                blockNumber: lastBlockScannedData.blockNumber,
+                blockTimestamp: lastBlockScannedData.blockTimestamp,
+                blockHash: lastBlockScannedData.blockHash,
+              },
+            }),
+          ]
+        : []
+
+    let nextState = {
+      ...state,
+      chainManager,
+    }
+
+    let processAction =
+      updatedChainFetcher->ChainFetcher.isPreRegisteringDynamicContracts
+        ? PreRegisterDynamicContracts
+        : ProcessEventBatch
+
+    (
+      nextState,
+      Array.concat(
+        updateEndOfBlockRangeScannedDataArr,
+        [UpdateChainMetaDataAndCheckForExit(NoExit), processAction, NextQuery(Chain(chain))],
+      ),
+    )
+  } else {
+    chainFetcher.logger->Logging.childWarn("Reorg detected, rolling back")
+    Prometheus.incrementReorgsDetected(~chain)
+    (state->incrementId->setRollingBack(chain), [Rollback])
+  }
+}
+
 let handlePartitionQueryResponse = (
   state,
   ~chain,
@@ -351,112 +462,23 @@ let handlePartitionQueryResponse = (
     "stats": stats,
   })
 
-  let {firstBlockParentNumberAndHash, lastBlockScannedData} = reorgGuard
-
   let hasReorgOccurred =
     chainFetcher.lastBlockScannedHashes->ReorgDetection.LastBlockScannedHashes.hasReorgOccurred(
-      ~firstBlockParentNumberAndHash,
+      ~reorgGuard,
     )
 
-  if !hasReorgOccurred || !(state.config->Config.shouldRollbackOnReorg) {
-    if hasReorgOccurred {
-      chainFetcher.logger->Logging.childWarn(
-        "Reorg detected, not rolling back due to configuration",
-      )
-      Prometheus.incrementReorgsDetected(~chain)
-    }
-
-    let updatedChainFetcher =
-      chainFetcher
-      ->ChainFetcher.setQueryResponse(
-        ~query=PartitionQuery(query),
-        ~currentBlockHeight,
-        ~latestFetchedBlockTimestamp,
-        ~latestFetchedBlockNumber,
-        ~fetchedEvents=parsedQueueItems,
-      )
-      ->Utils.unwrapResultExn
-      ->updateChainFetcherCurrentBlockHeight(~currentBlockHeight)
-
-    let hasArbQueueEvents = state.chainManager->ChainManager.hasChainItemsOnArbQueue(~chain)
-    let hasNoMoreEventsToProcess =
-      updatedChainFetcher->ChainFetcher.hasNoMoreEventsToProcess(~hasArbQueueEvents)
-
-    let latestProcessedBlock = if hasNoMoreEventsToProcess {
-      PartitionedFetchState.getLatestFullyFetchedBlock(
-        updatedChainFetcher.partitionedFetchState,
-      ).blockNumber->Some
-    } else {
-      updatedChainFetcher.latestProcessedBlock
-    }
-
-    let updatedChainFetcher = {
-      ...updatedChainFetcher,
-      latestProcessedBlock,
-      numBatchesFetched: updatedChainFetcher.numBatchesFetched + 1,
-    }
-
-    let wasFetchingAtHead = ChainFetcher.isFetchingAtHead(chainFetcher)
-    let isCurrentlyFetchingAtHead = ChainFetcher.isFetchingAtHead(updatedChainFetcher)
-
-    if !wasFetchingAtHead && isCurrentlyFetchingAtHead {
-      updatedChainFetcher.logger->Logging.childInfo("All events have been fetched")
-    }
-
-    let chainManager = {
-      ...state.chainManager,
-      chainFetchers: state.chainManager.chainFetchers->ChainMap.set(chain, updatedChainFetcher),
-    }->ChainManager.addLastBlockScannedData(
-      ~chain,
-      ~lastBlockScannedData,
-      ~currentHeight=currentBlockHeight,
-    )
-
-    let updateEndOfBlockRangeScannedDataArr =
-      //Only update endOfBlockRangeScannedData if rollbacks are enabled
-      state.config->Config.shouldRollbackOnReorg
-        ? [
-            UpdateEndOfBlockRangeScannedData({
-              chain,
-              blockNumberThreshold: lastBlockScannedData.blockNumber -
-              updatedChainFetcher.chainConfig.confirmedBlockThreshold,
-              blockTimestampThreshold: chainManager
-              ->ChainManager.getEarliestMultiChainTimestampInThreshold
-              ->Option.getWithDefault(0),
-              nextEndOfBlockRangeScannedData: {
-                chainId: chain->ChainMap.Chain.toChainId,
-                blockNumber: lastBlockScannedData.blockNumber,
-                blockTimestamp: lastBlockScannedData.blockTimestamp,
-                blockHash: lastBlockScannedData.blockHash,
-              },
-            }),
-          ]
-        : []
-
-    let nextState = {
-      ...state,
-      chainManager,
-    }
-
-    Prometheus.setFetchedEventsUntilHeight(~blockNumber=response.latestFetchedBlockNumber, ~chain)
-
-    let processAction =
-      updatedChainFetcher->ChainFetcher.isPreRegisteringDynamicContracts
-        ? PreRegisterDynamicContracts
-        : ProcessEventBatch
-
-    (
-      nextState,
-      Array.concat(
-        updateEndOfBlockRangeScannedDataArr,
-        [UpdateChainMetaDataAndCheckForExit(NoExit), processAction, NextQuery(Chain(chain))],
-      ),
-    )
-  } else {
-    chainFetcher.logger->Logging.childWarn("Reorg detected, rolling back")
-    Prometheus.incrementReorgsDetected(~chain)
-    (state->incrementId->setRollingBack(chain), [Rollback])
-  }
+  handleResponse(
+    ~state,
+    ~chain,
+    ~chainFetcher,
+    ~currentBlockHeight,
+    ~hasReorgOccurred,
+    ~lastBlockScannedData=reorgGuard.lastBlockScannedData,
+    ~latestFetchedBlockNumber,
+    ~latestFetchedBlockTimestamp,
+    ~parsedQueueItems,
+    ~query=PartitionQuery(query),
+  )
 }
 
 let handleMergeQueryResponse = (
@@ -471,14 +493,39 @@ let handleMergeQueryResponse = (
   let firstResponse = responses->Js.Array2.unsafe_get(0)
   let lastResponse = responses->Js.Array2.unsafe_get(responses->Array.length - 1)
 
+  let hasReorgOccurred = ref(false)
   let parsedQueueItemsRef = ref([])
   let currentBlockHeightRef = ref(0)
   for idx in 0 to responses->Array.length - 1 {
-    let {stats, parsedQueueItems, currentBlockHeight, fromBlockQueried, latestFetchedBlockNumber} =
+    let {
+      stats,
+      parsedQueueItems,
+      currentBlockHeight,
+      fromBlockQueried,
+      latestFetchedBlockNumber,
+      reorgGuard,
+    } =
       responses->Js.Array2.unsafe_get(idx)
 
     parsedQueueItemsRef := parsedQueueItemsRef.contents->Array.concat(parsedQueueItems)
     currentBlockHeightRef := Pervasives.max(currentBlockHeightRef.contents, currentBlockHeight)
+    hasReorgOccurred :=
+      hasReorgOccurred.contents ||
+      {
+        switch responses->Array.get(idx + 1) {
+        | None =>
+          chainFetcher.lastBlockScannedHashes->ReorgDetection.LastBlockScannedHashes.hasReorgOccurred(
+            ~reorgGuard,
+          )
+        | Some(nextResponse) =>
+          switch nextResponse.reorgGuard.firstBlockParentNumberAndHash {
+          | None => Js.Exn.raiseError("Unexpected, nextResponse reorgGuard is missing firstBlockParentNumberAndHash")
+          | Some(nextFirstBlockParentNumberAndHash) =>
+            reorgGuard.lastBlockScannedData.blockHash !==
+              nextFirstBlockParentNumberAndHash.blockHash
+          }
+        }
+      }
 
     if Env.Benchmark.shouldSaveData {
       Benchmark.addBlockRangeFetched(
@@ -498,8 +545,6 @@ let handleMergeQueryResponse = (
   let currentBlockHeight = currentBlockHeightRef.contents
   let fromBlockQueried = firstResponse.fromBlockQueried
   let latestFetchedBlockNumber = lastResponse.latestFetchedBlockNumber
-  let latestFetchedBlockTimestamp = lastResponse.latestFetchedBlockTimestamp
-  let {lastBlockScannedData} = lastResponse.reorgGuard
 
   chainFetcher.logger->Logging.childTrace({
     "message": "Finished Dynamic Contracts Merging",
@@ -508,110 +553,18 @@ let handleMergeQueryResponse = (
     "number of logs": parsedQueueItems->Array.length,
   })
 
-  // let hasReorgOccurred =
-  //   chainFetcher.lastBlockScannedHashes->ReorgDetection.LastBlockScannedHashes.hasReorgOccurred(
-  //     ~firstBlockParentNumberAndHash,
-  //   )
-
-  let hasReorgOccurred = false
-
-  if !hasReorgOccurred || !(state.config->Config.shouldRollbackOnReorg) {
-    if hasReorgOccurred {
-      chainFetcher.logger->Logging.childWarn(
-        "Reorg detected, not rolling back due to configuration",
-      )
-      Prometheus.incrementReorgsDetected(~chain)
-    }
-
-    let updatedChainFetcher =
-      chainFetcher
-      ->ChainFetcher.setQueryResponse(
-        ~query=MergeQuery(query),
-        ~currentBlockHeight,
-        ~latestFetchedBlockTimestamp,
-        ~latestFetchedBlockNumber,
-        ~fetchedEvents=parsedQueueItems,
-      )
-      ->Utils.unwrapResultExn
-      ->updateChainFetcherCurrentBlockHeight(~currentBlockHeight)
-
-    let hasArbQueueEvents = state.chainManager->ChainManager.hasChainItemsOnArbQueue(~chain)
-    let hasNoMoreEventsToProcess =
-      updatedChainFetcher->ChainFetcher.hasNoMoreEventsToProcess(~hasArbQueueEvents)
-
-    let latestProcessedBlock = if hasNoMoreEventsToProcess {
-      PartitionedFetchState.getLatestFullyFetchedBlock(
-        updatedChainFetcher.partitionedFetchState,
-      ).blockNumber->Some
-    } else {
-      updatedChainFetcher.latestProcessedBlock
-    }
-
-    let updatedChainFetcher = {
-      ...updatedChainFetcher,
-      latestProcessedBlock,
-      numBatchesFetched: updatedChainFetcher.numBatchesFetched + 1,
-    }
-
-    let wasFetchingAtHead = ChainFetcher.isFetchingAtHead(chainFetcher)
-    let isCurrentlyFetchingAtHead = ChainFetcher.isFetchingAtHead(updatedChainFetcher)
-
-    if !wasFetchingAtHead && isCurrentlyFetchingAtHead {
-      updatedChainFetcher.logger->Logging.childInfo("All events have been fetched")
-    }
-
-    let chainManager = {
-      ...state.chainManager,
-      chainFetchers: state.chainManager.chainFetchers->ChainMap.set(chain, updatedChainFetcher),
-    }->ChainManager.addLastBlockScannedData(
-      ~chain,
-      ~lastBlockScannedData,
-      ~currentHeight=currentBlockHeight,
-    )
-
-    let updateEndOfBlockRangeScannedDataArr =
-      //Only update endOfBlockRangeScannedData if rollbacks are enabled
-      state.config->Config.shouldRollbackOnReorg
-        ? [
-            UpdateEndOfBlockRangeScannedData({
-              chain,
-              blockNumberThreshold: lastBlockScannedData.blockNumber -
-              updatedChainFetcher.chainConfig.confirmedBlockThreshold,
-              blockTimestampThreshold: chainManager
-              ->ChainManager.getEarliestMultiChainTimestampInThreshold
-              ->Option.getWithDefault(0),
-              nextEndOfBlockRangeScannedData: {
-                chainId: chain->ChainMap.Chain.toChainId,
-                blockNumber: lastBlockScannedData.blockNumber,
-                blockTimestamp: lastBlockScannedData.blockTimestamp,
-                blockHash: lastBlockScannedData.blockHash,
-              },
-            }),
-          ]
-        : []
-
-    let nextState = {
-      ...state,
-      chainManager,
-    }
-
-    let processAction =
-      updatedChainFetcher->ChainFetcher.isPreRegisteringDynamicContracts
-        ? PreRegisterDynamicContracts
-        : ProcessEventBatch
-
-    (
-      nextState,
-      Array.concat(
-        updateEndOfBlockRangeScannedDataArr,
-        [UpdateChainMetaDataAndCheckForExit(NoExit), processAction, NextQuery(Chain(chain))],
-      ),
-    )
-  } else {
-    chainFetcher.logger->Logging.childWarn("Reorg detected, rolling back")
-    Prometheus.incrementReorgsDetected(~chain)
-    (state->incrementId->setRollingBack(chain), [Rollback])
-  }
+  handleResponse(
+    ~state,
+    ~chain,
+    ~chainFetcher,
+    ~currentBlockHeight,
+    ~hasReorgOccurred=hasReorgOccurred.contents,
+    ~lastBlockScannedData=lastResponse.reorgGuard.lastBlockScannedData,
+    ~latestFetchedBlockNumber,
+    ~latestFetchedBlockTimestamp=lastResponse.latestFetchedBlockTimestamp,
+    ~parsedQueueItems,
+    ~query=MergeQuery(query),
+  )
 }
 
 let updateChainFetcher = (chainFetcherUpdate, ~state, ~chain) => {
@@ -1030,10 +983,9 @@ let executeMergeQuery = (
 
       promises->Array.push(
         chainWorker
-        // FIXME: It might fetch not till the end
-        ->ChainWorker.fetchBlockRange(
+        ->ChainWorker.fetchBlockRangeUntilToBlock(
           ~fromBlock,
-          ~toBlock=Some(toBlock),
+          ~toBlock,
           ~contractAddressMapping,
           ~currentBlockHeight,
           ~chain,
@@ -1046,7 +998,7 @@ let executeMergeQuery = (
       )
     }
 
-    let responses = await promises->Promise.all
+    let responses = (await promises->Promise.all)->Utils.Array.flatten
     responses->Ok
   })
 }

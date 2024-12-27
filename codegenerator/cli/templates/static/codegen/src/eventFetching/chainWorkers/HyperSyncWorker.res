@@ -502,7 +502,7 @@ module Make = (
 
       let lastBlockScannedData = await lastBlockQueriedPromise
 
-      let reorgGuard = {
+      let reorgGuard: ReorgDetection.reorgGuard = {
         lastBlockScannedData,
         firstBlockParentNumberAndHash: pageUnsafe.rollbackGuard->Option.map(v => {
           ReorgDetection.blockHash: v.firstParentHash,
