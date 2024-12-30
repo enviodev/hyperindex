@@ -501,80 +501,79 @@ let actionReducer = (state: t, action: action) => {
         NextQuery(CheckAllChains),
       ]->Array.concat(maybePruneEntityHistory)
 
-    let nextState = registrations->Array.reduce(state, (state, registration) => {
-      let {registeringEventChain, dynamicContracts} = registration
+    let updatedChainFetchers = state.chainManager.chainFetchers->ChainMap.mapWithKey((
+      chain,
+      cf,
+    ) => {
+      switch registrations->Utils.Dict.dangerouslyGetNonOption(chain->ChainMap.Chain.toString) {
+      | None => cf
+      | Some(registrations) => {
+          /* strategy for TUI synced status:
+           * Firstly -> only update synced status after batch is processed (not on batch creation). But also set when a batch tries to be created and there is no batch
+           *
+           * Secondly -> reset timestampCaughtUpToHead and isFetching at head when dynamic contracts get registered to a chain if they are not within 0.001 percent of the current block height
+           *
+           * New conditions for valid synced:
+           *
+           * CASE 1 (chains are being synchronised at the head)
+           *
+           * All chain fetchers are fetching at the head AND
+           * No events that can be processed on the queue (even if events still exist on the individual queues)
+           * CASE 2 (chain finishes earlier than any other chain)
+           *
+           * CASE 3 endblock has been reached and latest processed block is greater than or equal to endblock (both fields must be Some)
+           *
+           * The given chain fetcher is fetching at the head or latest processed block >= endblock
+           * The given chain has processed all events on the queue
+           * see https://github.com/Float-Capital/indexer/pull/1388 */
 
-      let currentChainFetcher =
-        state.chainManager.chainFetchers->ChainMap.get(registeringEventChain)
-      /* strategy for TUI synced status:
-       * Firstly -> only update synced status after batch is processed (not on batch creation). But also set when a batch tries to be created and there is no batch
-       *
-       * Secondly -> reset timestampCaughtUpToHead and isFetching at head when dynamic contracts get registered to a chain if they are not within 0.001 percent of the current block height
-       *
-       * New conditions for valid synced:
-       *
-       * CASE 1 (chains are being synchronised at the head)
-       *
-       * All chain fetchers are fetching at the head AND
-       * No events that can be processed on the queue (even if events still exist on the individual queues)
-       * CASE 2 (chain finishes earlier than any other chain)
-       *
-       * CASE 3 endblock has been reached and latest processed block is greater than or equal to endblock (both fields must be Some)
-       *
-       * The given chain fetcher is fetching at the head or latest processed block >= endblock
-       * The given chain has processed all events on the queue
-       * see https://github.com/Float-Capital/indexer/pull/1388 */
+          /* Dynamic contracts pose a unique case when calculated whether a chain is synced or not.
+           * Specifically, in the initial syncing state from SearchingForEvents -> Synced, where although a chain has technically processed up to all blocks
+           * for a contract that emits events with dynamic contracts, it is possible that those dynamic contracts will need to be indexed from blocks way before
+           * the current block height. This is a toleration check where if there are dynamic contracts within a batch, check how far are they from the currentblock height.
+           * If it is less than 1 thousandth of a percent, then we deem that contract to be within the synced range, and therefore do not reset the synced status of the chain */
+          let areDynamicContractsWithinSyncRange = registrations->Array.every(registration => {
+            registration.dynamicContracts->Array.every(
+              contract => {
+                let {registeringEventBlockNumber} = contract
+                let isContractWithinSyncedRanged =
+                  (cf.currentBlockHeight->Int.toFloat -.
+                    registeringEventBlockNumber->Int.toFloat) /.
+                    cf.currentBlockHeight->Int.toFloat <= 0.001
+                isContractWithinSyncedRanged
+              },
+            )
+          })
 
-      /* Dynamic contracts pose a unique case when calculated whether a chain is synced or not.
-       * Specifically, in the initial syncing state from SearchingForEvents -> Synced, where although a chain has technically processed up to all blocks
-       * for a contract that emits events with dynamic contracts, it is possible that those dynamic contracts will need to be indexed from blocks way before
-       * the current block height. This is a toleration check where if there are dynamic contracts within a batch, check how far are they from the currentblock height.
-       * If it is less than 1 thousandth of a percent, then we deem that contract to be within the synced range, and therefore do not reset the synced status of the chain */
-      let areDynamicContractsWithinSyncRange = dynamicContracts->Array.reduce(true, (
-        acc,
-        contract,
-      ) => {
-        let {registeringEventBlockNumber} = contract
-        let isContractWithinSyncedRanged =
-          (currentChainFetcher.currentBlockHeight->Int.toFloat -.
-            registeringEventBlockNumber->Int.toFloat) /.
-            currentChainFetcher.currentBlockHeight->Int.toFloat <= 0.001
-        acc && isContractWithinSyncedRanged
-      })
+          let (
+            isFetchingAtHead,
+            timestampCaughtUpToHeadOrEndblock,
+          ) = areDynamicContractsWithinSyncRange
+            ? (cf->ChainFetcher.isFetchingAtHead, cf.timestampCaughtUpToHeadOrEndblock)
+            : (false, None)
 
-      let (isFetchingAtHead, timestampCaughtUpToHeadOrEndblock) = areDynamicContractsWithinSyncRange
-        ? (
-            currentChainFetcher->ChainFetcher.isFetchingAtHead,
-            currentChainFetcher.timestampCaughtUpToHeadOrEndblock,
-          )
-        : (false, None)
-
-      let updatedFetchState =
-        currentChainFetcher.partitionedFetchState->PartitionedFetchState.registerDynamicContracts(
-          registration,
-          ~isFetchingAtHead,
-        )
-
-      let updatedChainFetcher = {
-        ...currentChainFetcher,
-        partitionedFetchState: updatedFetchState,
-        timestampCaughtUpToHeadOrEndblock,
-      }
-
-      let updatedChainFetchers =
-        state.chainManager.chainFetchers->ChainMap.set(registeringEventChain, updatedChainFetcher)
-
-      let updatedChainManager: ChainManager.t = {
-        ...state.chainManager,
-        chainFetchers: updatedChainFetchers,
-        arbitraryEventQueue: updatedArbQueue,
-      }
-
-      {
-        ...state,
-        chainManager: updatedChainManager,
+          {
+            ...cf,
+            partitionedFetchState: cf.partitionedFetchState->PartitionedFetchState.registerDynamicContracts(
+              registrations,
+              ~isFetchingAtHead,
+            ),
+            timestampCaughtUpToHeadOrEndblock,
+          }
+        }
       }
     })
+
+    let updatedChainManager: ChainManager.t = {
+      ...state.chainManager,
+      chainFetchers: updatedChainFetchers,
+      arbitraryEventQueue: updatedArbQueue,
+    }
+
+    let nextState = {
+      ...state,
+      chainManager: updatedChainManager,
+    }
 
     // This ONLY updates the metrics - no logic is performed.
     nextState.chainManager.chainFetchers
@@ -663,34 +662,37 @@ let actionReducer = (state: t, action: action) => {
     let state = switch dynamicContractRegistrations {
     | None => state
     | Some({registrations}) =>
-      //Create an empty map for mutating the contractAddress mapping
-      let tempChainMap: ChainMap.t<ChainFetcher.addressToDynContractLookup> =
-        state.chainManager.chainFetchers->ChainMap.map(_ => Js.Dict.empty())
-
-      registrations->Array.forEach(({dynamicContracts}) =>
-        dynamicContracts->Array.forEach(dynamicContract => {
-          let chain = ChainMap.Chain.makeUnsafe(~chainId=dynamicContract.chainId)
-          let contractAddressMapping = tempChainMap->ChainMap.get(chain)
-          contractAddressMapping->Js.Dict.set(
-            dynamicContract.contractAddress->Address.toString,
-            dynamicContract,
-          )
-        })
-      )
-
       let updatedChainFetchers = state.chainManager.chainFetchers->ChainMap.mapWithKey((
         chain,
         cf,
       ) => {
-        let dynamicContractPreRegistration = switch cf.dynamicContractPreRegistration {
-        | Some(current) => current->Utils.Dict.merge(tempChainMap->ChainMap.get(chain))
-        //Should never be the case while this task is being scheduled
-        | None => tempChainMap->ChainMap.get(chain)
-        }->Some
+        switch registrations->Utils.Dict.dangerouslyGetNonOption(chain->ChainMap.Chain.toString) {
+        | None => cf
+        | Some(registrations) => {
+            let contractAddressMapping = Js.Dict.empty()
 
-        {
-          ...cf,
-          dynamicContractPreRegistration,
+            registrations->Array.forEach(({dynamicContracts}) =>
+              dynamicContracts->Array.forEach(
+                dynamicContract => {
+                  contractAddressMapping->Js.Dict.set(
+                    dynamicContract.contractAddress->Address.toString,
+                    dynamicContract,
+                  )
+                },
+              )
+            )
+
+            let dynamicContractPreRegistration = switch cf.dynamicContractPreRegistration {
+            | Some(current) => current->Utils.Dict.merge(contractAddressMapping)
+            //Should never be the case while this task is being scheduled
+            | None => contractAddressMapping
+            }->Some
+
+            {
+              ...cf,
+              dynamicContractPreRegistration,
+            }
+          }
         }
       })
 

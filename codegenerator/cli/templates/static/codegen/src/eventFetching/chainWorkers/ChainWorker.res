@@ -38,7 +38,7 @@ module type S = {
     ~toBlock: option<int>,
     ~contractAddressMapping: ContractAddressingMap.mapping,
     ~currentBlockHeight: int,
-    ~partitionId: int,
+    ~partitionId: string,
     ~shouldApplyWildcards: bool,
     ~isPreRegisteringDynamicContracts: bool,
     ~logger: Pino.t,
@@ -101,43 +101,4 @@ let fetchBlockRange = (
     ~currentBlockHeight,
     ~isPreRegisteringDynamicContracts,
   )
-}
-
-let fetchBlockRangeUntilToBlock = (
-  chainWorker,
-  ~fromBlock,
-  ~toBlock,
-  ~contractAddressMapping,
-  ~partitionId,
-  ~chain,
-  ~currentBlockHeight,
-  ~shouldApplyWildcards,
-  ~isPreRegisteringDynamicContracts,
-  ~logger,
-) => {
-  ErrorHandling.ResultPropogateEnv.runAsyncEnv(async () => {
-    let responses = []
-    let fromBlock = ref(fromBlock)
-
-    while fromBlock.contents <= toBlock {
-      let response =
-        (await chainWorker
-        ->fetchBlockRange(
-          ~fromBlock=fromBlock.contents,
-          ~toBlock=Some(toBlock),
-          ~contractAddressMapping,
-          ~partitionId,
-          ~chain,
-          ~currentBlockHeight,
-          ~shouldApplyWildcards,
-          ~isPreRegisteringDynamicContracts,
-          ~logger,
-        ))
-        ->ErrorHandling.ResultPropogateEnv.propogate
-      fromBlock := response.latestFetchedBlockNumber + 1
-      responses->Array.push(response)
-    }
-
-    Ok(responses)
-  })
 }

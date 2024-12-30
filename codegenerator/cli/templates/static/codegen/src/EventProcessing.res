@@ -58,7 +58,7 @@ let updateEventSyncState = (
 type dynamicContractRegistration = FetchState.dynamicContractRegistration
 
 type dynamicContractRegistrations = {
-  registrations: array<dynamicContractRegistration>,
+  registrations: dict<array<dynamicContractRegistration>>,
   unprocessedBatch: array<Internal.eventItem>,
 }
 
@@ -81,16 +81,22 @@ let addToDynamicContractRegistrations = (
     },
   ]
 
-  let registrations = switch dynamicContracts {
-  | [] => registrations
+  switch dynamicContracts {
+  | [] => ()
   | dynamicContracts =>
     let dynamicContractRegistration = {
       FetchState.dynamicContracts,
       registeringEventBlockNumber,
       registeringEventLogIndex,
-      registeringEventChain: eventItem.chain,
     }
-    [...registrations, dynamicContractRegistration]
+    let key = eventItem.chain->ChainMap.Chain.toString
+    registrations->Js.Dict.set(
+      key,
+      registrations
+      ->Utils.Dict.dangerouslyGetNonOption(key)
+      ->Option.getWithDefault([])
+      ->Array.concat([dynamicContractRegistration]),
+    )
   }
 
   {
@@ -107,13 +113,16 @@ let checkContractIsInCurrentRegistrations = (
 ) => {
   switch dynamicContractRegistrations {
   | Some(dynamicContracts) =>
-    dynamicContracts.registrations->Array.some(d =>
-      d.dynamicContracts->Array.some(d =>
-        d.chainId == chain->ChainMap.Chain.toChainId &&
-        d.contractType == contractType &&
-        d.contractAddress == contractAddress
+    dynamicContracts.registrations
+    ->Utils.Dict.dangerouslyGetNonOption(chain->ChainMap.Chain.toString)
+    ->Option.mapWithDefault(false, reg =>
+      reg->Array.some(d =>
+        d.dynamicContracts->Array.some(
+          d => d.contractType == contractType && d.contractAddress == contractAddress,
+        )
       )
     )
+
   | None => false
   }
 }
@@ -172,7 +181,7 @@ let runEventContractRegister = (
     | (dynamicContracts, None) =>
       addToDynamicContractRegistrations(
         ~dynamicContracts,
-        ~registrations=[],
+        ~registrations=Js.Dict.empty(),
         ~unprocessedBatch=[],
       )->Some
     }

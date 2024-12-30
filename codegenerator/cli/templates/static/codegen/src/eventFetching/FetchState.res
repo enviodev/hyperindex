@@ -108,7 +108,6 @@ type register = {
 type dynamicContractRegistration = {
   registeringEventBlockNumber: int,
   registeringEventLogIndex: int,
-  registeringEventChain: ChainMap.Chain.t,
   dynamicContracts: array<TablesStatic.DynamicContractRegistry.t>,
 }
 
@@ -238,6 +237,7 @@ let updateRegister = (
 let updateInternal = (
   fetchState: t,
   ~registers=fetchState.registers,
+  ~nextPartitionIndex=fetchState.nextPartitionIndex,
   ~isFetchingAtHead=fetchState.isFetchingAtHead,
   ~batchSize=fetchState.batchSize,
   ~firstEventBlockNumber=fetchState.firstEventBlockNumber,
@@ -247,9 +247,9 @@ let updateInternal = (
   let queueSize = ref(0)
   let latestFullyFetchedBlock = ref(firstRegister.latestFetchedBlock)
   let fetchMode = ref(InitialFill)
-  for idx in 0 to registers->Js.Array2.length - 1 {
+  for idx in 0 to registers->Array.length - 1 {
     let register = registers->Js.Array2.unsafe_get(idx)
-    let registerQueueSize = register.fetchedEventQueue->Js.Array2.length
+    let registerQueueSize = register.fetchedEventQueue->Array.length
 
     queueSize := queueSize.contents + registerQueueSize
 
@@ -271,9 +271,19 @@ let updateInternal = (
     }
   }
 
+  if (
+    Env.Benchmark.shouldSaveData && fetchState.registers->Array.length !== registers->Array.length
+  ) {
+    Benchmark.addSummaryData(
+      ~group="Other",
+      ~label="Num partitions",
+      ~value=registers->Array.length->Int.toFloat,
+    )
+  }
+
   {
     maxAddrInPartition: fetchState.maxAddrInPartition,
-    nextPartitionIndex: fetchState.nextPartitionIndex,
+    nextPartitionIndex,
     firstEventBlockNumber,
     batchSize,
     registers,
@@ -328,34 +338,31 @@ let makePartition = (
 
 let registerDynamicContract = (
   fetchState: t,
-  registration: dynamicContractRegistration,
+  registrations: array<dynamicContractRegistration>,
   ~isFetchingAtHead,
 ) => {
-  let newPartition = makePartition(
-    ~partitionIndex=fetchState.nextPartitionIndex,
-    ~dynamicContractRegistrations=registration.dynamicContracts,
-    ~latestFetchedBlock={
-      blockNumber: Pervasives.max(registration.registeringEventBlockNumber - 1, 0),
-      blockTimestamp: 0,
-    },
-  )
+  let nextPartitionIndex = ref(fetchState.nextPartitionIndex)
 
-  let newPartitions = fetchState.registers->Js.Array2.concat([newPartition])
-
-  if Env.Benchmark.shouldSaveData {
-    Benchmark.addSummaryData(
-      ~group="Other",
-      ~label="Num partitions",
-      ~value=newPartitions->Array.length->Int.toFloat,
+  let newPartitions = registrations->Array.map(registration => {
+    let p = makePartition(
+      ~partitionIndex=nextPartitionIndex.contents,
+      ~dynamicContractRegistrations=registration.dynamicContracts,
+      ~latestFetchedBlock={
+        blockNumber: Pervasives.max(registration.registeringEventBlockNumber - 1, 0),
+        blockTimestamp: 0,
+      },
     )
-  }
 
-  {
-    ...fetchState,
-    nextPartitionIndex: fetchState.nextPartitionIndex + 1,
-    registers: newPartitions,
-    isFetchingAtHead,
-  }
+    nextPartitionIndex := nextPartitionIndex.contents + 1
+
+    p
+  })
+
+  fetchState->updateInternal(
+    ~registers=fetchState.registers->Js.Array2.concat(newPartitions),
+    ~isFetchingAtHead,
+    ~nextPartitionIndex=nextPartitionIndex.contents,
+  )
 }
 
 type partitionQuery = {
@@ -433,11 +440,13 @@ let setQueryResponse = (
         | Some(catchedUpTargetIdx) => {
             let target = registers->Array.getUnsafe(catchedUpTargetIdx)
             let merged = updatedRegister->mergeIntoPartition(~target)
-            Ok(
+
+            let updatedRegisters =
               registers
               ->Utils.Array.setIndexImmutable(catchedUpTargetIdx, merged)
-              ->Utils.Array.deleteIndexImmutable(registerIdx),
-            )
+              ->Utils.Array.deleteIndexImmutable(registerIdx)
+
+            Ok(updatedRegisters)
           }
         | None => Ok(registers->Utils.Array.setIndexImmutable(registerIdx, updatedRegister))
         }
@@ -516,7 +525,7 @@ let getNextQuery = (
       }
     }
 
-    for idx in 0 to partitions->Js.Array2.length - 1 {
+    for idx in 0 to partitions->Array.length - 1 {
       let p = partitions->Js.Array2.unsafe_get(idx)
 
       let mustCatchUp = switch fetchMode {
@@ -692,7 +701,7 @@ let getEarliestEvent = (fetchState: t) => {
   | [r] => r->getEarliestEventInRegister
   | registers => {
       let item = ref(registers->Js.Array2.unsafe_get(0)->getEarliestEventInRegister)
-      for idx in 1 to registers->Js.Array2.length - 1 {
+      for idx in 1 to registers->Array.length - 1 {
         let register = registers->Js.Array2.unsafe_get(idx)
         let registerItem = register->getEarliestEventInRegister
         if registerItem->qItemLt(item.contents) {
@@ -791,7 +800,7 @@ let make = (
 
   {
     registers: partitions,
-    nextPartitionIndex: partitions->Js.Array2.length,
+    nextPartitionIndex: partitions->Array.length,
     isFetchingAtHead,
     maxAddrInPartition,
     batchSize,
@@ -946,7 +955,7 @@ let isActivelyIndexing = ({latestFullyFetchedBlock} as fetchState: t, ~endBlock)
 
 let getNumContracts = ({registers}: t) => {
   let sum = ref(0)
-  for idx in 0 to registers->Js.Array2.length - 1 {
+  for idx in 0 to registers->Array.length - 1 {
     let register = registers->Js.Array2.unsafe_get(idx)
     sum := sum.contents + register.contractAddressMapping->ContractAddressingMap.addressCount
   }
