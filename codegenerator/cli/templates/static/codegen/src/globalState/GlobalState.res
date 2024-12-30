@@ -100,12 +100,7 @@ type action =
   | PartitionQueryResponse({
       chain: chain,
       response: ChainWorker.blockRangeFetchResponse,
-      query: FetchState.partitionQuery,
-    })
-  | MergeQueryResponse({
-      chain: chain,
-      responses: array<ChainWorker.blockRangeFetchResponse>,
-      query: FetchState.mergeQuery,
+      query: FetchState.query,
     })
   | FinishWaitingForNewBlock({chain: chain, currentBlockHeight: int})
   | EventBatchProcessed(EventProcessing.batchProcessed)
@@ -310,18 +305,52 @@ let updateLatestProcessedBlocks = (
   }
 }
 
-let handleResponse = (
-  ~state,
-  ~query: FetchState.query,
-  ~parsedQueueItems,
-  ~currentBlockHeight,
-  ~latestFetchedBlockTimestamp,
-  ~latestFetchedBlockNumber,
-  ~lastBlockScannedData,
-  ~chainFetcher: ChainFetcher.t,
+let handlePartitionQueryResponse = (
+  state,
   ~chain,
-  ~hasReorgOccurred,
+  ~response: ChainWorker.blockRangeFetchResponse,
+  ~query: FetchState.query,
 ) => {
+  let chainFetcher = state.chainManager.chainFetchers->ChainMap.get(chain)
+  let {
+    parsedQueueItems,
+    latestFetchedBlockNumber,
+    stats,
+    currentBlockHeight,
+    reorgGuard,
+    fromBlockQueried,
+    latestFetchedBlockTimestamp,
+  } = response
+  let {lastBlockScannedData} = reorgGuard
+
+  let partitionId = query->FetchState.queryPartitionId
+
+  if Env.Benchmark.shouldSaveData {
+    Benchmark.addBlockRangeFetched(
+      ~totalTimeElapsed=stats.totalTimeElapsed,
+      ~parsingTimeElapsed=stats.parsingTimeElapsed->Belt.Option.getWithDefault(0),
+      ~pageFetchTime=stats.pageFetchTime->Belt.Option.getWithDefault(0),
+      ~chainId=chainFetcher.chainConfig.chain->ChainMap.Chain.toChainId,
+      ~fromBlock=fromBlockQueried,
+      ~toBlock=latestFetchedBlockNumber,
+      ~numEvents=parsedQueueItems->Array.length,
+      ~partitionId,
+    )
+  }
+
+  chainFetcher.logger->Logging.childTrace({
+    "message": "Finished page range",
+    "fromBlock": fromBlockQueried,
+    "toBlock": latestFetchedBlockNumber,
+    "number of logs": parsedQueueItems->Array.length,
+    "stats": stats,
+  })
+
+  let hasReorgOccurred =
+    chainFetcher.lastBlockScannedHashes->ReorgDetection.LastBlockScannedHashes.hasReorgOccurred(
+      ~reorgGuard,
+    )
+
   if !hasReorgOccurred || !(state.config->Config.shouldRollbackOnReorg) {
     if hasReorgOccurred {
       chainFetcher.logger->Logging.childWarn(
@@ -421,152 +450,6 @@ let handleResponse = (
   }
 }
 
-let handlePartitionQueryResponse = (
-  state,
-  ~chain,
-  ~response: ChainWorker.blockRangeFetchResponse,
-  ~query: FetchState.partitionQuery,
-) => {
-  let chainFetcher = state.chainManager.chainFetchers->ChainMap.get(chain)
-  let {
-    parsedQueueItems,
-    latestFetchedBlockNumber,
-    stats,
-    currentBlockHeight,
-    reorgGuard,
-    fromBlockQueried,
-    latestFetchedBlockTimestamp,
-  } = response
-
-  let {partitionId} = query
-
-  if Env.Benchmark.shouldSaveData {
-    Benchmark.addBlockRangeFetched(
-      ~totalTimeElapsed=stats.totalTimeElapsed,
-      ~parsingTimeElapsed=stats.parsingTimeElapsed->Belt.Option.getWithDefault(0),
-      ~pageFetchTime=stats.pageFetchTime->Belt.Option.getWithDefault(0),
-      ~chainId=chainFetcher.chainConfig.chain->ChainMap.Chain.toChainId,
-      ~fromBlock=fromBlockQueried,
-      ~toBlock=latestFetchedBlockNumber,
-      ~partitionName="Root",
-      ~numEvents=parsedQueueItems->Array.length,
-      ~partitionId,
-    )
-  }
-
-  chainFetcher.logger->Logging.childTrace({
-    "message": "Finished page range",
-    "fromBlock": fromBlockQueried,
-    "toBlock": latestFetchedBlockNumber,
-    "number of logs": parsedQueueItems->Array.length,
-    "stats": stats,
-  })
-
-  let hasReorgOccurred =
-    chainFetcher.lastBlockScannedHashes->ReorgDetection.LastBlockScannedHashes.hasReorgOccurred(
-      ~reorgGuard,
-    )
-
-  handleResponse(
-    ~state,
-    ~chain,
-    ~chainFetcher,
-    ~currentBlockHeight,
-    ~hasReorgOccurred,
-    ~lastBlockScannedData=reorgGuard.lastBlockScannedData,
-    ~latestFetchedBlockNumber,
-    ~latestFetchedBlockTimestamp,
-    ~parsedQueueItems,
-    ~query=PartitionQuery(query),
-  )
-}
-
-let handleMergeQueryResponse = (
-  state,
-  ~chain,
-  ~responses: array<ChainWorker.blockRangeFetchResponse>,
-  ~query: FetchState.mergeQuery,
-) => {
-  let chainFetcher = state.chainManager.chainFetchers->ChainMap.get(chain)
-  let {partitionId} = query
-
-  let firstResponse = responses->Js.Array2.unsafe_get(0)
-  let lastResponse = responses->Js.Array2.unsafe_get(responses->Array.length - 1)
-
-  let hasReorgOccurred = ref(false)
-  let parsedQueueItemsRef = ref([])
-  let currentBlockHeightRef = ref(0)
-  for idx in 0 to responses->Array.length - 1 {
-    let {
-      stats,
-      parsedQueueItems,
-      currentBlockHeight,
-      fromBlockQueried,
-      latestFetchedBlockNumber,
-      reorgGuard,
-    } =
-      responses->Js.Array2.unsafe_get(idx)
-
-    parsedQueueItemsRef := parsedQueueItemsRef.contents->Array.concat(parsedQueueItems)
-    currentBlockHeightRef := Pervasives.max(currentBlockHeightRef.contents, currentBlockHeight)
-    hasReorgOccurred :=
-      hasReorgOccurred.contents ||
-      {
-        switch responses->Array.get(idx + 1) {
-        | None =>
-          chainFetcher.lastBlockScannedHashes->ReorgDetection.LastBlockScannedHashes.hasReorgOccurred(
-            ~reorgGuard,
-          )
-        | Some(nextResponse) =>
-          switch nextResponse.reorgGuard.firstBlockParentNumberAndHash {
-          | None => Js.Exn.raiseError("Unexpected, nextResponse reorgGuard is missing firstBlockParentNumberAndHash")
-          | Some(nextFirstBlockParentNumberAndHash) =>
-            reorgGuard.lastBlockScannedData.blockHash !==
-              nextFirstBlockParentNumberAndHash.blockHash
-          }
-        }
-      }
-
-    if Env.Benchmark.shouldSaveData {
-      Benchmark.addBlockRangeFetched(
-        ~totalTimeElapsed=stats.totalTimeElapsed,
-        ~parsingTimeElapsed=stats.parsingTimeElapsed->Belt.Option.getWithDefault(0),
-        ~pageFetchTime=stats.pageFetchTime->Belt.Option.getWithDefault(0),
-        ~chainId=chainFetcher.chainConfig.chain->ChainMap.Chain.toChainId,
-        ~fromBlock=fromBlockQueried,
-        ~toBlock=latestFetchedBlockNumber,
-        ~partitionName="Dynamic Contracts Merging",
-        ~numEvents=parsedQueueItems->Array.length,
-        ~partitionId,
-      )
-    }
-  }
-  let parsedQueueItems = parsedQueueItemsRef.contents
-  let currentBlockHeight = currentBlockHeightRef.contents
-  let fromBlockQueried = firstResponse.fromBlockQueried
-  let latestFetchedBlockNumber = lastResponse.latestFetchedBlockNumber
-
-  chainFetcher.logger->Logging.childTrace({
-    "message": "Finished Dynamic Contracts Merging",
-    "fromBlock": fromBlockQueried,
-    "toBlock": latestFetchedBlockNumber,
-    "number of logs": parsedQueueItems->Array.length,
-  })
-
-  handleResponse(
-    ~state,
-    ~chain,
-    ~chainFetcher,
-    ~currentBlockHeight,
-    ~hasReorgOccurred=hasReorgOccurred.contents,
-    ~lastBlockScannedData=lastResponse.reorgGuard.lastBlockScannedData,
-    ~latestFetchedBlockNumber,
-    ~latestFetchedBlockTimestamp=lastResponse.latestFetchedBlockTimestamp,
-    ~parsedQueueItems,
-    ~query=MergeQuery(query),
-  )
-}
-
 let updateChainFetcher = (chainFetcherUpdate, ~state, ~chain) => {
   (
     {
@@ -596,8 +479,6 @@ let actionReducer = (state: t, action: action) => {
     )
   | PartitionQueryResponse({chain, response, query}) =>
     state->handlePartitionQueryResponse(~chain, ~response, ~query)
-  | MergeQueryResponse({chain, responses, query}) =>
-    state->handleMergeQueryResponse(~chain, ~responses, ~query)
   | EventBatchProcessed({
       latestProcessedBlocks,
       dynamicContractRegistrations: Some({registrations, unprocessedBatch}),
@@ -748,7 +629,9 @@ let actionReducer = (state: t, action: action) => {
     let chainFetchers = state.chainManager.chainFetchers->ChainMap.mapWithKey((chain, cf) => {
       {
         ...cf,
-        partitionedFetchState: ChainMap.get(fetchStatesMap, chain).partitionedFetchState,
+        partitionedFetchState: (
+          fetchStatesMap->ChainMap.get(chain)
+        ).partitionedFetchState->PartitionedFetchState.syncStateOnQueueUpdate,
       }
     })
 
@@ -898,115 +781,50 @@ let invalidatedActionReducer = (state: t, action: action) =>
     (state, [])
   }
 
-let executePartitionQuery = (
-  query: FetchState.partitionQuery,
+let executeQuery = (
+  query: FetchState.query,
   ~logger,
   ~chainWorker,
   ~currentBlockHeight,
   ~chain,
   ~isPreRegisteringDynamicContracts,
 ) => {
-  chainWorker->ChainWorker.fetchBlockRange(
-    ~fromBlock=query.fromBlock,
-    ~toBlock=query.toBlock,
-    ~contractAddressMapping=query.contractAddressMapping,
-    ~partitionId=query.partitionId,
-    ~chain,
-    ~currentBlockHeight,
-    ~isPreRegisteringDynamicContracts,
-    ~logger,
-    //Only apply wildcards on the first partition and root register
-    //to avoid duplicate wildcard queries
-    ~shouldApplyWildcards=query.fetchStateRegisterId->FetchState.isRootRegisterId &&
-      query.partitionId === 0,
-  )
-}
-
-let executeMergeQuery = (
-  {pendingDynamicContracts, toBlock, partitionId}: FetchState.mergeQuery,
-  ~logger,
-  ~chainWorker,
-  ~currentBlockHeight,
-  ~chain,
-  ~isPreRegisteringDynamicContracts,
-) => {
-  ErrorHandling.ResultPropogateEnv.runAsyncEnv(async () => {
-    // Merge registrations with the same registring block number
-    // And sort using the Js automatic sorting of int keys
-    let addressesByRegistringBlockNumber = Js.Dict.empty()
-
-    for idx in 0 to pendingDynamicContracts->Js.Array2.length - 1 {
-      let {registeringEventBlockNumber, dynamicContracts} =
-        pendingDynamicContracts->Js.Array2.unsafe_get(idx)
-
-      // This check is only relevant until we didn't get rid of PartitionedFetchState
-      // and merged partitions into registers.
-      // Currently when the response is handled, the pending dynamic contracts,
-      // which didn't pass the check will create a new root register
-      if registeringEventBlockNumber <= toBlock {
-        let key = registeringEventBlockNumber->Int.toString
-        let map = switch addressesByRegistringBlockNumber->Utils.Dict.dangerouslyGetNonOption(key) {
-        | Some(map) => map
-        | None => {
-            let map = ContractAddressingMap.make()
-            addressesByRegistringBlockNumber->Js.Dict.set(key, map)
-            map
-          }
-        }
-        dynamicContracts->Array.forEach(d =>
-          map->ContractAddressingMap.addAddress(
-            ~name=(d.contractType :> string),
-            ~address=d.contractAddress,
-          )
-        )
-      }
-    }
-
-    let keyToInt = key => key->Int.fromString->(Utils.magic: option<int> => int) // Must always be able to convert to int
-
-    let promises = []
-    let accAddresses = ref(ContractAddressingMap.make())
-    // Should be sorted in the ASC order according to Js spec
-    let registeringEventBlockNumbers = addressesByRegistringBlockNumber->Js.Dict.keys
-    for idx in 0 to registeringEventBlockNumbers->Js.Array2.length - 1 {
-      let fromBlockKey = registeringEventBlockNumbers->Js.Array2.unsafe_get(idx)
-      let fromBlock = fromBlockKey->keyToInt
-      let toBlock = switch registeringEventBlockNumbers->Array.get(idx + 1) {
-      | Some(key) => key->keyToInt - 1
-      | None => toBlock
-      }
-      let contractAddressMapping =
-        accAddresses.contents->ContractAddressingMap.combine(
-          addressesByRegistringBlockNumber->Js.Dict.unsafeGet(fromBlockKey),
-        )
-      accAddresses := contractAddressMapping
-
-      promises->Array.push(
-        chainWorker
-        ->ChainWorker.fetchBlockRangeUntilToBlock(
-          ~fromBlock,
-          ~toBlock,
-          ~contractAddressMapping,
-          ~currentBlockHeight,
-          ~chain,
-          ~isPreRegisteringDynamicContracts,
-          ~shouldApplyWildcards=false,
-          ~logger,
-          ~partitionId,
-        )
-        ->Promise.thenResolve(ErrorHandling.ResultPropogateEnv.propogate),
-      )
-    }
-
-    let responses = (await promises->Promise.all)->Utils.Array.flatten
-    responses->Ok
-  })
+  switch query {
+  | PartitionQuery({partitionId, fromBlock, toBlock, contractAddressMapping}) =>
+    chainWorker->ChainWorker.fetchBlockRange(
+      ~fromBlock,
+      ~toBlock,
+      ~contractAddressMapping,
+      ~partitionId,
+      ~chain,
+      ~currentBlockHeight,
+      ~isPreRegisteringDynamicContracts,
+      ~logger,
+      //Only apply wildcards on the first partition
+      //to avoid duplicate wildcard queries
+      ~shouldApplyWildcards=partitionId === "0",
+    )
+  | MergeQuery({partitionId, fromBlock, toBlock, contractAddressMapping}) =>
+    chainWorker->ChainWorker.fetchBlockRange(
+      ~fromBlock,
+      ~toBlock=Some(toBlock),
+      ~contractAddressMapping,
+      ~partitionId,
+      ~chain,
+      ~currentBlockHeight,
+      ~isPreRegisteringDynamicContracts,
+      ~logger,
+      //Only apply wildcards on the first partition
+      //to avoid duplicate wildcard queries
+      ~shouldApplyWildcards=partitionId === "0",
+    )
+  }
 }
 
 let checkAndFetchForChain = (
   //Used for dependency injection for tests
   ~waitForNewBlock,
-  ~executePartitionQuery,
+  ~executeQuery,
   //required args
   ~state,
   ~dispatchAction,
@@ -1021,38 +839,22 @@ let checkAndFetchForChain = (
     } = chainFetcher
 
     await chainFetcher.sourceManager->SourceManager.fetchNext(
-      ~allPartitions=partitionedFetchState.partitions,
+      ~fetchState=partitionedFetchState.partitions->Js.Array2.unsafe_get(0),
       ~waitForNewBlock=(~currentBlockHeight, ~logger) =>
         chainWorker->waitForNewBlock(~currentBlockHeight, ~logger),
       ~onNewBlock=(~currentBlockHeight) =>
         dispatchAction(FinishWaitingForNewBlock({chain, currentBlockHeight})),
       ~currentBlockHeight,
       ~executeQuery=async query => {
-        switch query {
-        | PartitionQuery(partitionQuery) =>
-          switch await partitionQuery->executePartitionQuery(
-            ~logger,
-            ~chainWorker,
-            ~currentBlockHeight,
-            ~chain,
-            ~isPreRegisteringDynamicContracts=state.chainManager->ChainManager.isPreRegisteringDynamicContracts,
-          ) {
-          | Ok(response) =>
-            dispatchAction(PartitionQueryResponse({chain, response, query: partitionQuery}))
-          | Error(e) => dispatchAction(ErrorExit(e))
-          }
-        | MergeQuery(mergeQuery) =>
-          switch await mergeQuery->executeMergeQuery(
-            ~logger,
-            ~chainWorker,
-            ~currentBlockHeight,
-            ~chain,
-            ~isPreRegisteringDynamicContracts=state.chainManager->ChainManager.isPreRegisteringDynamicContracts,
-          ) {
-          | Ok(responses) =>
-            dispatchAction(MergeQueryResponse({chain, responses, query: mergeQuery}))
-          | Error(e) => dispatchAction(ErrorExit(e))
-          }
+        switch await query->executeQuery(
+          ~logger,
+          ~chainWorker,
+          ~currentBlockHeight,
+          ~chain,
+          ~isPreRegisteringDynamicContracts=state.chainManager->ChainManager.isPreRegisteringDynamicContracts,
+        ) {
+        | Ok(response) => dispatchAction(PartitionQueryResponse({chain, response, query}))
+        | Error(e) => dispatchAction(ErrorExit(e))
         }
       },
       ~maxPerChainQueueSize=state.maxPerChainQueueSize,
@@ -1064,7 +866,7 @@ let checkAndFetchForChain = (
 let injectedTaskReducer = (
   //Used for dependency injection for tests
   ~waitForNewBlock,
-  ~executePartitionQuery,
+  ~executeQuery,
   ~rollbackLastBlockHashesToReorgLocation,
 ) => async (
   //required args
@@ -1170,7 +972,7 @@ let injectedTaskReducer = (
   | NextQuery(chainCheck) =>
     let fetchForChain = checkAndFetchForChain(
       ~waitForNewBlock,
-      ~executePartitionQuery,
+      ~executeQuery,
       ~state,
       ~dispatchAction,
     )
@@ -1456,6 +1258,6 @@ let injectedTaskReducer = (
 
 let taskReducer = injectedTaskReducer(
   ~waitForNewBlock=ChainWorker.waitForNewBlock,
-  ~executePartitionQuery,
+  ~executeQuery,
   ~rollbackLastBlockHashesToReorgLocation=ChainFetcher.rollbackLastBlockHashesToReorgLocation(_),
 )

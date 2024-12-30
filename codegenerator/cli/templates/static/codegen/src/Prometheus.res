@@ -201,7 +201,7 @@ module BenchmarkCounters = {
 }
 
 module PartitionBlockFetched = {
-  type labels = {chainId: int, partitionId: int}
+  type labels = {chainId: int, partitionId: string}
   let intAsString = S.string->S.transform(s => {
     serializer: int => int->Belt.Int.toString,
     parser: string =>
@@ -213,7 +213,7 @@ module PartitionBlockFetched = {
 
   let labelSchema = S.schema(s => {
     chainId: s.matches(intAsString),
-    partitionId: s.matches(intAsString),
+    partitionId: s.matches(S.string),
   })
 
   let counter = SafeGauge.makeOrThrow(

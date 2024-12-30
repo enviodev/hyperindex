@@ -211,7 +211,7 @@ module Make = (
 
       let suggestedBlockInterval =
         suggestedBlockIntervals
-        ->Utils.Dict.dangerouslyGetNonOption(partitionId->Belt.Int.toString)
+        ->Utils.Dict.dangerouslyGetNonOption(partitionId)
         ->Belt.Option.getWithDefault(T.syncConfig.initialBlockInterval)
 
       let firstBlockParentPromise =
@@ -235,10 +235,7 @@ module Make = (
         ~provider=T.provider,
         ~logger,
       )
-      suggestedBlockIntervals->Js.Dict.set(
-        partitionId->Belt.Int.toString,
-        nextSuggestedBlockInterval,
-      )
+      suggestedBlockIntervals->Js.Dict.set(partitionId, nextSuggestedBlockInterval)
 
       let parsedQueueItems =
         await logs

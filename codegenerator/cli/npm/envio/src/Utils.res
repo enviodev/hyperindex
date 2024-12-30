@@ -113,6 +113,12 @@ module Array = {
     shallowCopy
   }
 
+  let deleteIndexImmutable = (arr, index) => {
+    arr
+    ->Js.Array2.slice(~start=0, ~end_=index)
+    ->Js.Array2.concat(arr->Js.Array2.sliceFrom(index + 1))
+  }
+
   let transposeResults = (results: array<result<'a, 'b>>): result<array<'a>, 'b> => {
     let rec loop = (index: int, output: array<'a>): result<array<'a>, 'b> => {
       if index >= Array.length(results) {

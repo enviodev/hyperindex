@@ -1,5 +1,5 @@
 open Belt
-type partitionId = int
+
 type allPartitions = array<FetchState.t>
 type t = {
   maxAddrInPartition: int,
@@ -7,11 +7,6 @@ type t = {
   endBlock: option<int>,
   startBlock: int,
   logger: Pino.t,
-}
-
-type id = {
-  partitionId: partitionId,
-  fetchStateId: FetchState.id,
 }
 
 let make = (
@@ -22,135 +17,53 @@ let make = (
   ~startBlock,
   ~logger,
 ) => {
-  let numAddresses = staticContracts->Array.length + dynamicContractRegistrations->Array.length
-
-  let partitions = []
-
-  if numAddresses <= maxAddrInPartition {
-    let partition = FetchState.make(
-      ~partitionId=partitions->Array.length,
-      ~staticContracts,
-      ~dynamicContractRegistrations,
-      ~startBlock,
-      ~logger,
-      ~isFetchingAtHead=false,
-    )
-    partitions->Js.Array2.push(partition)->ignore
-  } else {
-    let staticContractsClone = staticContracts->Array.copy
-
-    //Chunk static contract addresses (clone) until it is under the size of 1 partition
-    while staticContractsClone->Array.length > maxAddrInPartition {
-      let staticContractsChunk =
-        staticContractsClone->Js.Array2.removeCountInPlace(~pos=0, ~count=maxAddrInPartition)
-
-      let staticContractPartition = FetchState.make(
-        ~partitionId=partitions->Array.length,
-        ~staticContracts=staticContractsChunk,
-        ~dynamicContractRegistrations=[],
-        ~startBlock,
-        ~logger,
-        ~isFetchingAtHead=false,
-      )
-      partitions->Js.Array2.push(staticContractPartition)->ignore
-    }
-
-    let dynamicContractRegistrationsClone = dynamicContractRegistrations->Array.copy
-
-    //Add the rest of the static addresses filling the remainder of the partition with dynamic contract
-    //registrations
-    let remainingStaticContractsWithDynamicPartition = FetchState.make(
-      ~partitionId=partitions->Array.length,
-      ~staticContracts=staticContractsClone,
-      ~dynamicContractRegistrations=dynamicContractRegistrationsClone->Js.Array2.removeCountInPlace(
-        ~pos=0,
-        ~count=maxAddrInPartition - staticContractsClone->Array.length,
-      ),
-      ~startBlock,
-      ~logger,
-      ~isFetchingAtHead=false,
-    )
-    partitions->Js.Array2.push(remainingStaticContractsWithDynamicPartition)->ignore
-
-    //Make partitions with all remaining dynamic contract registrations
-    while dynamicContractRegistrationsClone->Array.length > 0 {
-      let dynamicContractRegistrationsChunk =
-        dynamicContractRegistrationsClone->Js.Array2.removeCountInPlace(
-          ~pos=0,
-          ~count=maxAddrInPartition,
-        )
-
-      let dynamicContractPartition = FetchState.make(
-        ~partitionId=partitions->Array.length,
-        ~staticContracts=[],
-        ~dynamicContractRegistrations=dynamicContractRegistrationsChunk,
-        ~startBlock,
-        ~logger,
-        ~isFetchingAtHead=false,
-      )
-      partitions->Js.Array2.push(dynamicContractPartition)->ignore
-    }
-  }
-
-  if Env.Benchmark.shouldSaveData {
-    Benchmark.addSummaryData(
-      ~group="Other",
-      ~label="Num partitions",
-      ~value=partitions->Array.length->Int.toFloat,
-    )
-  }
+  let partition = FetchState.make(
+    ~staticContracts,
+    ~dynamicContractRegistrations,
+    ~startBlock,
+    ~maxAddrInPartition,
+    ~isFetchingAtHead=false,
+  )
 
   {
     maxAddrInPartition,
-    partitions,
+    partitions: [partition],
     endBlock,
     startBlock,
     logger,
   }
 }
 
+exception InvalidFetchState({message: string})
+
 let registerDynamicContracts = (
   {partitions, maxAddrInPartition, endBlock, startBlock, logger}: t,
   dynamicContractRegistration: FetchState.dynamicContractRegistration,
   ~isFetchingAtHead,
 ) => {
-  let newestPartitionIndex = partitions->Array.length - 1
-  let newestPartition = switch partitions[newestPartitionIndex] {
-  | Some(p) => p
-  | None => Js.Exn.raiseError("Unexpected: No partitions in PartitionedFetchState")
+  let fetchState = switch partitions {
+  | [fetchState] => fetchState
+  | _ =>
+    raise(
+      InvalidFetchState({
+        message: "Unexpected: Invalid fetchState in PartitionedFetchState",
+      }),
+    )
   }
 
-  let partitions = if newestPartition->FetchState.getNumContracts < maxAddrInPartition {
-    let updated =
-      newestPartition->FetchState.registerDynamicContract(
+  {
+    partitions: [
+      fetchState->FetchState.registerDynamicContract(
         dynamicContractRegistration,
         ~isFetchingAtHead,
-      )
-    partitions->Utils.Array.setIndexImmutable(newestPartitionIndex, updated)
-  } else {
-    let newPartition = FetchState.make(
-      ~partitionId=partitions->Array.length,
-      ~startBlock=dynamicContractRegistration.registeringEventBlockNumber,
-      ~logger,
-      ~staticContracts=[],
-      ~dynamicContractRegistrations=dynamicContractRegistration.dynamicContracts,
-      ~isFetchingAtHead,
-    )
-    partitions->Array.concat([newPartition])
+      ),
+    ],
+    maxAddrInPartition,
+    endBlock,
+    startBlock,
+    logger,
   }
-
-  if Env.Benchmark.shouldSaveData {
-    Benchmark.addSummaryData(
-      ~group="Other",
-      ~label="Num partitions",
-      ~value=partitions->Array.length->Int.toFloat,
-    )
-  }
-
-  {partitions, maxAddrInPartition, endBlock, startBlock, logger}
 }
-
-exception UnexpectedPartitionDoesNotExist(partitionId)
 
 /**
 Updates partition at given id with given values and checks to see if it can be merged into its next register.
@@ -169,11 +82,11 @@ let setQueryResponse = (
   | MergeQuery({partitionId}) => partitionId
   }
 
-  switch self.partitions[partitionId] {
-  | Some(partition) =>
-    partition
+  switch self.partitions {
+  | [fetchState] =>
+    fetchState
     ->FetchState.setQueryResponse(~query, ~latestFetchedBlock, ~newItems, ~currentBlockHeight)
-    ->Result.map(updatedPartition => {
+    ->Result.map(updatedFetchState => {
       Prometheus.PartitionBlockFetched.set(
         ~blockNumber=latestFetchedBlock.blockNumber,
         ~chainId=chain->ChainMap.Chain.toChainId,
@@ -181,19 +94,16 @@ let setQueryResponse = (
       )
       {
         ...self,
-        partitions: self.partitions->Utils.Array.setIndexImmutable(partitionId, updatedPartition),
+        partitions: [updatedFetchState],
       }
     })
-  | _ => Error(UnexpectedPartitionDoesNotExist(partitionId))
+  | _ =>
+    Error(
+      InvalidFetchState({
+        message: "Unexpected: Invalid fetchState in PartitionedFetchState",
+      }),
+    )
   }
-}
-
-let getReadyPartitions = (allPartitions: allPartitions, ~maxPerChainQueueSize) => {
-  let numPartitions = allPartitions->Array.length
-  let maxPartitionQueueSize = maxPerChainQueueSize / numPartitions
-  allPartitions->Js.Array2.filter(fetchState => {
-    fetchState->FetchState.isReadyForNextQuery(~maxQueueSize=maxPartitionQueueSize)
-  })
 }
 
 /**
@@ -261,11 +171,18 @@ let isFetchingAtHead = ({partitions}: t) => {
 
 let getFirstEventBlockNumber = ({partitions}: t) => {
   partitions->Array.reduce(None, (accum, partition) => {
-    Utils.Math.minOptInt(accum, partition.mostBehindRegister.firstEventBlockNumber)
+    Utils.Math.minOptInt(accum, partition.firstEventBlockNumber)
   })
 }
 
 let copy = (self: t) => {
   ...self,
   partitions: self.partitions->Array.map(partition => partition->FetchState.copy),
+}
+
+let syncStateOnQueueUpdate = (self: t) => {
+  {
+    ...self,
+    partitions: self.partitions->Array.map(partition => partition->FetchState.updateInternal),
+  }
 }

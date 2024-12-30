@@ -266,10 +266,9 @@ let addBlockRangeFetched = (
   ~fromBlock,
   ~toBlock,
   ~numEvents,
-  ~partitionName,
   ~partitionId,
 ) => {
-  let group = `BlockRangeFetched Summary for Chain ${chainId->Belt.Int.toString} ${partitionName} Partition`
+  let group = `BlockRangeFetched Summary for Chain ${chainId->Belt.Int.toString} Partition ${partitionId}`
   let add = (label, value) => data->Data.addSummaryData(~group, ~label, ~value=Utils.magic(value))
 
   add("Total Time Elapsed (ms)", totalTimeElapsed)
@@ -279,7 +278,7 @@ let addBlockRangeFetched = (
   add("Block Range Size", toBlock - fromBlock)
 
   data->Data.incrementMillis(
-    ~label=`Total Time Fetching Chain ${chainId->Belt.Int.toString} Partition ${partitionId->Belt.Int.toString}`,
+    ~label=`Total Time Fetching Chain ${chainId->Belt.Int.toString} Partition ${partitionId}`,
     ~amount=totalTimeElapsed,
   )
 
