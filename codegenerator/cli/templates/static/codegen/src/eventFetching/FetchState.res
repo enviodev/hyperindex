@@ -92,8 +92,6 @@ type register = {
   id: string,
   latestFetchedBlock: blockNumberAndTimestamp,
   contractAddressMapping: ContractAddressingMap.mapping,
-  // Partition-specific endBlock (fetch up until including)
-  endBlock: option<int>,
   //Events ordered from latest to earliest
   fetchedEventQueue: array<Internal.eventItem>,
   //Used to prune dynamic contract registrations in the event
@@ -103,12 +101,6 @@ type register = {
   // there might be cases when mutable and immutable states are not synced, so this is needed.
   // Increment on immutable state update.
   idempotencyKey: int,
-}
-
-type dynamicContractRegistration = {
-  registeringEventBlockNumber: int,
-  registeringEventLogIndex: int,
-  dynamicContracts: array<TablesStatic.DynamicContractRegistry.t>,
 }
 
 // There are currently three ways of choosing partitions to query:
@@ -198,14 +190,10 @@ let mergeIntoPartition = (register: register, ~target: register) => {
   if register.latestFetchedBlock.blockNumber !== target.latestFetchedBlock.blockNumber {
     Js.Exn.raiseError("Invalid state: Merged registers should belong to the same block")
   }
-  if register.endBlock !== None || target.endBlock !== None {
-    Js.Exn.raiseError("Invalid state: Partitions with endBlock shouldn't merge")
-  }
 
   {
     id: target.id,
     idempotencyKey: register.idempotencyKey + 1,
-    endBlock: None,
     fetchedEventQueue,
     contractAddressMapping,
     dynamicContracts,
@@ -299,7 +287,6 @@ let makePartition = (
   ~dynamicContractRegistrations: array<TablesStatic.DynamicContractRegistry.t>,
   ~latestFetchedBlock,
   ~staticContracts=[],
-  ~endBlock=?,
 ) => {
   let contractAddressMapping = ContractAddressingMap.make()
 
@@ -328,7 +315,6 @@ let makePartition = (
   {
     id: partitionIndex->Int.toString,
     idempotencyKey: 0,
-    endBlock,
     latestFetchedBlock,
     contractAddressMapping,
     dynamicContracts,
@@ -338,30 +324,42 @@ let makePartition = (
 
 let registerDynamicContract = (
   fetchState: t,
-  registrations: array<dynamicContractRegistration>,
+  dynamicContracts: array<TablesStatic.DynamicContractRegistry.t>,
   ~isFetchingAtHead,
 ) => {
-  let nextPartitionIndex = ref(fetchState.nextPartitionIndex)
-
-  let newPartitions = registrations->Array.map(registration => {
-    let p = makePartition(
-      ~partitionIndex=nextPartitionIndex.contents,
-      ~dynamicContractRegistrations=registration.dynamicContracts,
-      ~latestFetchedBlock={
-        blockNumber: Pervasives.max(registration.registeringEventBlockNumber - 1, 0),
-        blockTimestamp: 0,
-      },
-    )
-
-    nextPartitionIndex := nextPartitionIndex.contents + 1
-
-    p
+  let dcsByStartBlock = Js.Dict.empty()
+  dynamicContracts->Array.forEach(dc => {
+    let key = dc.registeringEventBlockNumber->Int.toString
+    let dcs = switch dcsByStartBlock->Utils.Dict.dangerouslyGetNonOption(key) {
+    | Some(dcs) => dcs
+    | None => {
+        let dcs = []
+        dcsByStartBlock->Js.Dict.set(key, dcs)
+        dcs
+      }
+    }
+    dcs->Array.push(dc)
   })
+
+  // Will be in the ASC order by Js spec
+  let newPartitions =
+    dcsByStartBlock
+    ->Js.Dict.entries
+    ->Array.mapWithIndex((index, (startBlockKey, dcs)) => {
+      makePartition(
+        ~partitionIndex=fetchState.nextPartitionIndex + index,
+        ~dynamicContractRegistrations=dcs,
+        ~latestFetchedBlock={
+          blockNumber: Pervasives.max(startBlockKey->Int.fromString->Option.getExn - 1, 0),
+          blockTimestamp: 0,
+        },
+      )
+    })
 
   fetchState->updateInternal(
     ~registers=fetchState.registers->Js.Array2.concat(newPartitions),
     ~isFetchingAtHead,
-    ~nextPartitionIndex=nextPartitionIndex.contents,
+    ~nextPartitionIndex=fetchState.nextPartitionIndex + newPartitions->Array.length,
   )
 }
 
@@ -444,7 +442,7 @@ let setQueryResponse = (
             let updatedRegisters =
               registers
               ->Utils.Array.setIndexImmutable(catchedUpTargetIdx, merged)
-              ->Utils.Array.deleteIndexImmutable(registerIdx)
+              ->Utils.Array.removeAtIndex(registerIdx)
 
             Ok(updatedRegisters)
           }
@@ -477,7 +475,6 @@ let makePartitionQuery = (register: register, ~endBlock) => {
   | 0 => 0
   | latestFetchedBlockNumber => latestFetchedBlockNumber + 1
   }
-  let endBlock = Utils.Math.minOptInt(register.endBlock, endBlock)
   switch endBlock {
   | Some(endBlock) if fromBlock > endBlock => None
   | _ =>
@@ -497,6 +494,7 @@ type nextQuery =
   | ReachedMaxBufferSize
   | WaitingForNewBlock
   | NothingToQuery
+  | PreparingNextBatch
   | Ready(array<query>)
 
 let getNextQuery = (
@@ -515,12 +513,10 @@ let getNextQuery = (
     let allPossibleQueries = []
     let hasQueryWaitingForNewBlock = ref(false)
     let hasFetchingQuery = ref(false)
+    let hasCatchingUpPartitions = ref(false)
 
     let addPartitionToMergeInto = (p: register) => {
-      if (
-        p.endBlock === None &&
-          p.contractAddressMapping->ContractAddressingMap.addressCount < maxAddrInPartition
-      ) {
+      if p.contractAddressMapping->ContractAddressingMap.addressCount < maxAddrInPartition {
         partitionsToMergeInto->Array.push(p)
       }
     }
@@ -532,6 +528,10 @@ let getNextQuery = (
       | InitialFill => true
       | CatchUpNextBatch({estimatedEndBlock}) =>
         p.latestFetchedBlock.blockNumber < estimatedEndBlock
+      }
+
+      if mustCatchUp {
+        hasCatchingUpPartitions := true
       }
 
       // Read more about this above the fetchMode type definition
@@ -574,6 +574,8 @@ let getNextQuery = (
       WaitingForNewBlock
     } else if allPossibleQueries->Utils.Array.isEmpty {
       NothingToQuery
+    } else if mustQueries->Utils.Array.isEmpty && hasCatchingUpPartitions.contents {
+      PreparingNextBatch
     } else if mustQueries->Utils.Array.isEmpty && !hasSpaceInBuffer {
       ReachedMaxBufferSize
     } else {
@@ -696,21 +698,16 @@ Gets the earliest queueItem from thgetNodeEarliestEventWithUpdatedQueue.
 Finds the earliest queue item across all registers and then returns that
 queue item with an update fetch state.
 */
-let getEarliestEvent = (fetchState: t) => {
-  switch fetchState.registers {
-  | [r] => r->getEarliestEventInRegister
-  | registers => {
-      let item = ref(registers->Js.Array2.unsafe_get(0)->getEarliestEventInRegister)
-      for idx in 1 to registers->Array.length - 1 {
-        let register = registers->Js.Array2.unsafe_get(idx)
-        let registerItem = register->getEarliestEventInRegister
-        if registerItem->qItemLt(item.contents) {
-          item := registerItem
-        }
-      }
-      item.contents
+let getEarliestEvent = ({registers}: t) => {
+  let item = ref(registers->Js.Array2.unsafe_get(0)->getEarliestEventInRegister)
+  for idx in 1 to registers->Array.length - 1 {
+    let register = registers->Js.Array2.unsafe_get(idx)
+    let registerItem = register->getEarliestEventInRegister
+    if registerItem->qItemLt(item.contents) {
+      item := registerItem
     }
   }
+  item.contents
 }
 
 /**

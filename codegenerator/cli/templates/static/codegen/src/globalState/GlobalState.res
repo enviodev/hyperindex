@@ -481,7 +481,7 @@ let actionReducer = (state: t, action: action) => {
     state->handlePartitionQueryResponse(~chain, ~response, ~query)
   | EventBatchProcessed({
       latestProcessedBlocks,
-      dynamicContractRegistrations: Some({registrations, unprocessedBatch}),
+      dynamicContractRegistrations: Some({dynamicContractsByChain, unprocessedBatch}),
     }) =>
     let updatedArbQueue = Utils.Array.mergeSorted((a, b) => {
       a->EventUtils.getEventComparatorFromQueueItem > b->EventUtils.getEventComparatorFromQueueItem
@@ -505,9 +505,11 @@ let actionReducer = (state: t, action: action) => {
       chain,
       cf,
     ) => {
-      switch registrations->Utils.Dict.dangerouslyGetNonOption(chain->ChainMap.Chain.toString) {
+      switch dynamicContractsByChain->Utils.Dict.dangerouslyGetNonOption(
+        chain->ChainMap.Chain.toString,
+      ) {
       | None => cf
-      | Some(registrations) => {
+      | Some(dcs) => {
           /* strategy for TUI synced status:
            * Firstly -> only update synced status after batch is processed (not on batch creation). But also set when a batch tries to be created and there is no batch
            *
@@ -532,17 +534,12 @@ let actionReducer = (state: t, action: action) => {
            * for a contract that emits events with dynamic contracts, it is possible that those dynamic contracts will need to be indexed from blocks way before
            * the current block height. This is a toleration check where if there are dynamic contracts within a batch, check how far are they from the currentblock height.
            * If it is less than 1 thousandth of a percent, then we deem that contract to be within the synced range, and therefore do not reset the synced status of the chain */
-          let areDynamicContractsWithinSyncRange = registrations->Array.every(registration => {
-            registration.dynamicContracts->Array.every(
-              contract => {
-                let {registeringEventBlockNumber} = contract
-                let isContractWithinSyncedRanged =
-                  (cf.currentBlockHeight->Int.toFloat -.
-                    registeringEventBlockNumber->Int.toFloat) /.
-                    cf.currentBlockHeight->Int.toFloat <= 0.001
-                isContractWithinSyncedRanged
-              },
-            )
+          let areDynamicContractsWithinSyncRange = dcs->Array.every(dc => {
+            let {registeringEventBlockNumber} = dc
+            let isContractWithinSyncedRanged =
+              (cf.currentBlockHeight->Int.toFloat -. registeringEventBlockNumber->Int.toFloat) /.
+                cf.currentBlockHeight->Int.toFloat <= 0.001
+            isContractWithinSyncedRanged
           })
 
           let (
@@ -555,7 +552,7 @@ let actionReducer = (state: t, action: action) => {
           {
             ...cf,
             partitionedFetchState: cf.partitionedFetchState->PartitionedFetchState.registerDynamicContracts(
-              registrations,
+              dcs,
               ~isFetchingAtHead,
             ),
             timestampCaughtUpToHeadOrEndblock,
@@ -661,25 +658,20 @@ let actionReducer = (state: t, action: action) => {
 
     let state = switch dynamicContractRegistrations {
     | None => state
-    | Some({registrations}) =>
+    | Some({dynamicContractsByChain}) =>
       let updatedChainFetchers = state.chainManager.chainFetchers->ChainMap.mapWithKey((
         chain,
         cf,
       ) => {
-        switch registrations->Utils.Dict.dangerouslyGetNonOption(chain->ChainMap.Chain.toString) {
+        switch dynamicContractsByChain->Utils.Dict.dangerouslyGetNonOption(
+          chain->ChainMap.Chain.toString,
+        ) {
         | None => cf
-        | Some(registrations) => {
+        | Some(dcs) => {
             let contractAddressMapping = Js.Dict.empty()
 
-            registrations->Array.forEach(({dynamicContracts}) =>
-              dynamicContracts->Array.forEach(
-                dynamicContract => {
-                  contractAddressMapping->Js.Dict.set(
-                    dynamicContract.contractAddress->Address.toString,
-                    dynamicContract,
-                  )
-                },
-              )
+            dcs->Array.forEach(dc =>
+              contractAddressMapping->Js.Dict.set(dc.contractAddress->Address.toString, dc)
             )
 
             let dynamicContractPreRegistration = switch cf.dynamicContractPreRegistration {

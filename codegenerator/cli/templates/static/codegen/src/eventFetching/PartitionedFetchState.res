@@ -38,7 +38,7 @@ exception InvalidFetchState({message: string})
 
 let registerDynamicContracts = (
   {partitions, maxAddrInPartition, endBlock, startBlock, logger}: t,
-  registrations: array<FetchState.dynamicContractRegistration>,
+  dynamicContracts: array<TablesStatic.DynamicContractRegistry.t>,
   ~isFetchingAtHead,
 ) => {
   let fetchState = switch partitions {
@@ -52,7 +52,9 @@ let registerDynamicContracts = (
   }
 
   {
-    partitions: [fetchState->FetchState.registerDynamicContract(registrations, ~isFetchingAtHead)],
+    partitions: [
+      fetchState->FetchState.registerDynamicContract(dynamicContracts, ~isFetchingAtHead),
+    ],
     maxAddrInPartition,
     endBlock,
     startBlock,

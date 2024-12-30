@@ -113,8 +113,10 @@ let fetchNext = async (
       ) {
       | ReachedMaxConcurrency
       | ReachedMaxBufferSize
-      | NothingToQuery => ()
-      | WaitingForNewBlock => await waitForNewBlock()
+      | NothingToQuery
+      | PreparingNextBatch => ()
+      | WaitingForNewBlock =>
+        await waitForNewBlock()
       | Ready(queries) => {
           let _ =
             await queries
