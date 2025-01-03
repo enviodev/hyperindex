@@ -69,16 +69,21 @@ let getAllAddresses = (mapping: mapping) => {
   mapping.nameByAddress->Js.Dict.keys->stringsToAddresses
 }
 
-let combine = (a, b) => {
-  let m = make()
-  [a, b]->Belt.Array.forEach(v =>
-    v.nameByAddress
-    ->Js.Dict.entries
-    ->Belt.Array.forEach(((addr, name)) => {
-      m->addAddress(~address=addr->Utils.magic, ~name)
-    })
-  )
-  m
+let copy = (mapping: mapping) => {
+  {
+    nameByAddress: mapping.nameByAddress->Utils.Dict.shallowCopy,
+    // Since Belt.Set.String.t is immutable, we can simply do shallow copy here
+    addressesByName: mapping.addressesByName->Utils.Dict.shallowCopy,
+  }
+}
+
+let mergeInPlace = (map, ~target) => {
+  map.nameByAddress
+  ->Js.Dict.keys
+  ->Belt.Array.forEach(addr => {
+    let name = map.nameByAddress->Js.Dict.unsafeGet(addr)
+    target->addAddress(~address=addr->Address.unsafeFromString, ~name)
+  })
 }
 
 let fromArray = (nameAddrTuples: array<(Address.t, string)>) => {

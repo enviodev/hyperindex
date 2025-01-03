@@ -79,6 +79,8 @@ module Dict = {
     string,
     'a,
   ) => dict<'a> = %raw(`(dict, key, value) => ({...dict, [key]: value})`)
+
+  let shallowCopy: dict<'a> => dict<'a> = %raw(`(dict) => ({...dict})`)
 }
 
 module Math = {

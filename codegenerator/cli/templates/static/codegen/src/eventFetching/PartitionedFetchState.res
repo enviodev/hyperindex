@@ -19,7 +19,7 @@ let make = (
 ) => {
   let partition = FetchState.make(
     ~staticContracts,
-    ~dynamicContractRegistrations,
+    ~dynamicContracts=dynamicContractRegistrations,
     ~startBlock,
     ~maxAddrInPartition,
     ~isFetchingAtHead=false,
