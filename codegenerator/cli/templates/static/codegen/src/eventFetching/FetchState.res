@@ -83,6 +83,8 @@ module DynamicContractsMap = {
   }
 }
 
+type status = {mutable isFetching: bool}
+
 /**
 A state that holds a queue of events and data regarding what to fetch next.
 There's always a root register and potentially additional registers for dynamic contracts.
@@ -90,6 +92,7 @@ When the registers are caught up to each other they are getting merged
 */
 type register = {
   id: string,
+  status: status,
   latestFetchedBlock: blockNumberAndTimestamp,
   contractAddressMapping: ContractAddressingMap.mapping,
   //Events ordered from latest to earliest
@@ -97,32 +100,10 @@ type register = {
   //Used to prune dynamic contract registrations in the event
   //of a rollback.
   dynamicContracts: DynamicContractsMap.t,
-  // Need to prevent duplicated query calls. Even though we have the isFetching flag,
-  // there might be cases when mutable and immutable states are not synced, so this is needed.
-  // Increment on immutable state update.
-  idempotencyKey: int,
 }
 
-// There are currently three ways of choosing partitions to query:
-// 1. Until there's at least one partition with queueSize of a full batch,
-//    we query all partitions in parallel, prioritizing the most behind ones.
-// 2.1 Once there's at least one partition having a queue of a full batch,
-//    we can do a wild assumption of a block range for the batch,
-//    with this we can start quering partitions specifically to cover the range.
-// 2.2 At this point there are some partitions which are not fetching,
-//    we can use this to sefely merge partitions.
-// 3. When we are confident there's a full batch of items for processing,
-//    we still want to continue query partitions until we reach the max queue size.
-//    To do it safely and not exceed it too much, the query will be done for one partition at a time
-//    also allowing us to merge everything that can be merged.
-//    It's not represented in the state, but chosen when all partitions
-//    exceeded the estimatedEndBlock of the next batch.
-type fetchMode =
-  | InitialFill
-  | CatchUpNextBatch({estimatedEndBlock: int})
-
 type t = {
-  registers: array<register>,
+  partitions: dict<register>,
   // Used for the incremental partition id. Can't use the partitions length,
   // since partitions might be deleted on merge or cleaned up
   nextPartitionIndex: int,
@@ -132,7 +113,6 @@ type t = {
   // Fields computed by updateInternal
   latestFullyFetchedBlock: blockNumberAndTimestamp,
   queueSize: int,
-  fetchMode: fetchMode,
   firstEventBlockNumber: option<int>,
 }
 
@@ -141,18 +121,17 @@ let shallowCopyRegister = (register: register) => {
   fetchedEventQueue: register.fetchedEventQueue->Array.copy,
 }
 
-let copy = (self: t) => {
-  let registers = self.registers->Array.map(shallowCopyRegister)
+let copy = (fetchState: t) => {
+  let partitions = fetchState.partitions->Utils.Dict.map(shallowCopyRegister)
   {
-    maxAddrInPartition: self.maxAddrInPartition,
-    registers,
-    nextPartitionIndex: self.nextPartitionIndex,
-    isFetchingAtHead: self.isFetchingAtHead,
-    latestFullyFetchedBlock: self.latestFullyFetchedBlock,
-    batchSize: self.batchSize,
-    queueSize: self.queueSize,
-    fetchMode: self.fetchMode,
-    firstEventBlockNumber: self.firstEventBlockNumber,
+    maxAddrInPartition: fetchState.maxAddrInPartition,
+    partitions,
+    nextPartitionIndex: fetchState.nextPartitionIndex,
+    isFetchingAtHead: fetchState.isFetchingAtHead,
+    latestFullyFetchedBlock: fetchState.latestFullyFetchedBlock,
+    batchSize: fetchState.batchSize,
+    queueSize: fetchState.queueSize,
+    firstEventBlockNumber: fetchState.firstEventBlockNumber,
   }
 }
 
@@ -193,7 +172,9 @@ let mergeIntoPartition = (register: register, ~target: register) => {
 
   {
     id: target.id,
-    idempotencyKey: register.idempotencyKey + 1,
+    status: {
+      isFetching: false,
+    },
     fetchedEventQueue,
     contractAddressMapping,
     dynamicContracts,
@@ -205,7 +186,7 @@ let mergeIntoPartition = (register: register, ~target: register) => {
 Updates a given register with new latest block values and new fetched
 events.
 */
-let updateRegister = (
+let addItemsToPartition = (
   register: register,
   ~latestFetchedBlock,
   //Events ordered latest to earliest
@@ -213,7 +194,9 @@ let updateRegister = (
 ) => {
   {
     ...register,
-    idempotencyKey: register.idempotencyKey + 1,
+    status: {
+      isFetching: false,
+    },
     latestFetchedBlock,
     fetchedEventQueue: Array.concat(reversedNewItems, register.fetchedEventQueue),
   }
@@ -224,48 +207,38 @@ let updateRegister = (
  */
 let updateInternal = (
   fetchState: t,
-  ~registers=fetchState.registers,
+  ~partitions=?,
   ~nextPartitionIndex=fetchState.nextPartitionIndex,
   ~isFetchingAtHead=fetchState.isFetchingAtHead,
   ~batchSize=fetchState.batchSize,
   ~firstEventBlockNumber=fetchState.firstEventBlockNumber,
 ): t => {
-  let firstRegister = registers->Js.Array2.unsafe_get(0)
+  let originalPartitions = fetchState.partitions->Js.Dict.values
+  let partitions = partitions->Option.getWithDefault(originalPartitions)
+  let firstPartition = partitions->Js.Array2.unsafe_get(0)
 
+  let partitionsMap = Js.Dict.empty()
   let queueSize = ref(0)
-  let latestFullyFetchedBlock = ref(firstRegister.latestFetchedBlock)
-  let fetchMode = ref(InitialFill)
-  for idx in 0 to registers->Array.length - 1 {
-    let register = registers->Js.Array2.unsafe_get(idx)
-    let registerQueueSize = register.fetchedEventQueue->Array.length
+  let latestFullyFetchedBlock = ref(firstPartition.latestFetchedBlock)
 
-    queueSize := queueSize.contents + registerQueueSize
+  for idx in 0 to partitions->Array.length - 1 {
+    let p = partitions->Js.Array2.unsafe_get(idx)
+    partitionsMap->Js.Dict.set(p.id, p)
 
-    if registerQueueSize >= batchSize {
-      let itemAtEstimatedBatchEnd =
-        register.fetchedEventQueue->Js.Array2.unsafe_get(registerQueueSize - batchSize)
+    let partitionQueueSize = p.fetchedEventQueue->Array.length
 
-      switch fetchMode.contents {
-      | CatchUpNextBatch({estimatedEndBlock})
-        if estimatedEndBlock <= itemAtEstimatedBatchEnd.blockNumber => ()
-      | InitialFill
-      | CatchUpNextBatch(_) =>
-        fetchMode := CatchUpNextBatch({estimatedEndBlock: itemAtEstimatedBatchEnd.blockNumber})
-      }
-    }
+    queueSize := queueSize.contents + partitionQueueSize
 
-    if latestFullyFetchedBlock.contents.blockNumber > register.latestFetchedBlock.blockNumber {
-      latestFullyFetchedBlock := register.latestFetchedBlock
+    if latestFullyFetchedBlock.contents.blockNumber > p.latestFetchedBlock.blockNumber {
+      latestFullyFetchedBlock := p.latestFetchedBlock
     }
   }
 
-  if (
-    Env.Benchmark.shouldSaveData && fetchState.registers->Array.length !== registers->Array.length
-  ) {
+  if Env.Benchmark.shouldSaveData && originalPartitions->Array.length !== partitions->Array.length {
     Benchmark.addSummaryData(
       ~group="Other",
       ~label="Num partitions",
-      ~value=registers->Array.length->Int.toFloat,
+      ~value=partitions->Array.length->Int.toFloat,
     )
   }
 
@@ -274,18 +247,17 @@ let updateInternal = (
     nextPartitionIndex,
     firstEventBlockNumber,
     batchSize,
-    registers,
+    partitions: partitionsMap,
     isFetchingAtHead,
     latestFullyFetchedBlock: latestFullyFetchedBlock.contents,
     queueSize: queueSize.contents,
-    fetchMode: fetchMode.contents,
   }
 }
 
 let makePartition = (
   ~partitionIndex,
-  ~dynamicContractRegistrations: array<TablesStatic.DynamicContractRegistry.t>,
   ~latestFetchedBlock,
+  ~dynamicContractRegistrations: array<TablesStatic.DynamicContractRegistry.t>=[],
   ~staticContracts=[],
 ) => {
   let contractAddressMapping = ContractAddressingMap.make()
@@ -314,7 +286,9 @@ let makePartition = (
 
   {
     id: partitionIndex->Int.toString,
-    idempotencyKey: 0,
+    status: {
+      isFetching: false,
+    },
     latestFetchedBlock,
     contractAddressMapping,
     dynamicContracts,
@@ -357,14 +331,13 @@ let registerDynamicContract = (
     })
 
   fetchState->updateInternal(
-    ~registers=fetchState.registers->Js.Array2.concat(newPartitions),
+    ~partitions=fetchState.partitions->Js.Dict.values->Js.Array2.concat(newPartitions),
     ~isFetchingAtHead,
     ~nextPartitionIndex=fetchState.nextPartitionIndex + newPartitions->Array.length,
   )
 }
 
 type partitionQuery = {
-  idempotencyKey: int,
   partitionId: string,
   fromBlock: int,
   toBlock: option<int>,
@@ -372,7 +345,6 @@ type partitionQuery = {
 }
 
 type mergeQuery = {
-  idempotencyKey: int,
   // The catching up partition
   partitionId: string,
   // The partition we are going to merge into
@@ -411,7 +383,7 @@ Returns Error if the node with given id cannot be found (unexpected)
 newItems are ordered earliest to latest (as they are returned from the worker)
 */
 let setQueryResponse = (
-  {registers} as fetchState: t,
+  {partitions} as fetchState: t,
   ~query: query,
   ~latestFetchedBlock: blockNumberAndTimestamp,
   ~newItems,
@@ -420,33 +392,26 @@ let setQueryResponse = (
   switch query {
   | PartitionQuery({partitionId})
   | MergeQuery({partitionId}) =>
-    switch registers->Array.getIndexBy(r => r.id === partitionId) {
-    | Some(registerIdx) =>
-      let updatedRegister =
-        registers
-        ->Array.getUnsafe(registerIdx)
-        ->updateRegister(~latestFetchedBlock, ~reversedNewItems=newItems->Array.reverse)
+    switch partitions->Utils.Dict.dangerouslyGetNonOption(partitionId) {
+    | Some(p) =>
+      let updatedPartition =
+        p->addItemsToPartition(~latestFetchedBlock, ~reversedNewItems=newItems->Array.reverse)
 
       switch query {
       | PartitionQuery(_) =>
-        Ok(registers->Utils.Array.setIndexImmutable(registerIdx, updatedRegister))
+        Ok(partitions->Utils.Dict.updateImmutable(partitionId, updatedPartition))
       | MergeQuery({intoPartitionId}) =>
-        switch registers->Array.getIndexBy(r =>
-          r.id === intoPartitionId &&
-            r.latestFetchedBlock.blockNumber === latestFetchedBlock.blockNumber
-        ) {
-        | Some(catchedUpTargetIdx) => {
-            let target = registers->Array.getUnsafe(catchedUpTargetIdx)
-            let merged = updatedRegister->mergeIntoPartition(~target)
+        switch partitions->Utils.Dict.dangerouslyGetNonOption(intoPartitionId) {
+        | Some(target)
+          if target.latestFetchedBlock.blockNumber === latestFetchedBlock.blockNumber => {
+            let merged = updatedPartition->mergeIntoPartition(~target)
 
-            let updatedRegisters =
-              registers
-              ->Utils.Array.setIndexImmutable(catchedUpTargetIdx, merged)
-              ->Utils.Array.removeAtIndex(registerIdx)
+            let updatedPartitions = partitions->Utils.Dict.updateImmutable(target.id, merged)
+            updatedPartitions->Utils.Dict.deleteInPlace(merged.id)
 
-            Ok(updatedRegisters)
+            Ok(updatedPartitions)
           }
-        | None => Ok(registers->Utils.Array.setIndexImmutable(registerIdx, updatedRegister))
+        | _ => Ok(partitions->Utils.Dict.updateImmutable(partitionId, updatedPartition))
         }
       }
     | None =>
@@ -456,9 +421,9 @@ let setQueryResponse = (
         }),
       )
     }
-  }->Result.map(registers => {
+  }->Result.map(partitions => {
     fetchState->updateInternal(
-      ~registers,
+      ~partitions=partitions->Js.Dict.values,
       ~isFetchingAtHead=fetchState.isFetchingAtHead ||
       currentBlockHeight <= latestFetchedBlock.blockNumber,
       ~firstEventBlockNumber=switch newItems->Array.get(0) {
@@ -479,7 +444,6 @@ let makePartitionQuery = (register: register, ~endBlock) => {
   | Some(endBlock) if fromBlock > endBlock => None
   | _ =>
     Some({
-      idempotencyKey: register.idempotencyKey,
       partitionId: register.id,
       fromBlock,
       toBlock: endBlock,
@@ -488,147 +452,163 @@ let makePartitionQuery = (register: register, ~endBlock) => {
   }
 }
 
-type partitionStatus = Available | Fetching | Locked
 type nextQuery =
   | ReachedMaxConcurrency
-  | ReachedMaxBufferSize
   | WaitingForNewBlock
   | NothingToQuery
-  | PreparingNextBatch
   | Ready(array<query>)
 
+let startFetchingQueries = ({partitions}: t, ~queries: array<query>) => {
+  queries->Array.forEach(q => {
+    switch partitions->Utils.Dict.dangerouslyGetNonOption(q->queryPartitionId) {
+    | Some(p) => p.status.isFetching = true
+    // Shouldn't be mutated to false anymore
+    // The status will be immutably set to the initial one when we handle response
+    | None => Js.Exn.raiseError("Unexpected case: Couldn't find partition for the fetching query")
+    }
+  })
+}
+
 let getNextQuery = (
-  {registers: partitions, queueSize, fetchMode, maxAddrInPartition}: t,
+  {partitions, maxAddrInPartition}: t,
   ~endBlock,
   ~concurrencyLimit,
   ~maxQueueSize,
   ~currentBlockHeight,
-  ~checkPartitionStatus,
 ) => {
   if concurrencyLimit === 0 {
     ReachedMaxConcurrency
   } else {
-    let partitionsToMergeInto = []
-    let mustQueries = []
-    let allPossibleQueries = []
-    let hasQueryWaitingForNewBlock = ref(false)
-    let hasFetchingQuery = ref(false)
-    let hasCatchingUpPartitions = ref(false)
+    let fullPartitions = []
+    let mergingPartitions = []
+    let hasFetchingPartition = ref(false)
+    let areMergingPartitionsFetching = ref(false)
+    let mostBehindMergingPartition = ref(None)
+    let mergingPartitionTarget = ref(None)
 
-    let addPartitionToMergeInto = (p: register) => {
-      if p.contractAddressMapping->ContractAddressingMap.addressCount < maxAddrInPartition {
-        partitionsToMergeInto->Array.push(p)
+    let partitionIds = partitions->Js.Dict.keys
+    for idx in 0 to partitionIds->Js.Array2.length - 1 {
+      let id = partitionIds->Js.Array2.unsafe_get(idx)
+      let p = partitions->Js.Dict.unsafeGet(id)
+      if p.contractAddressMapping->ContractAddressingMap.addressCount >= maxAddrInPartition {
+        fullPartitions->Array.push(p)
+        if p.status.isFetching {
+          hasFetchingPartition := true
+        }
+      } else {
+        mergingPartitions->Array.push(p)
+
+        mostBehindMergingPartition :=
+          switch mostBehindMergingPartition.contents {
+          | Some(mostBehindMergingPartition) =>
+            if (
+              // The = check is important here. We don't want to have a target
+              // with the same latestFetchedBlock. They should be merged in separate queries
+              mostBehindMergingPartition.latestFetchedBlock.blockNumber ===
+                p.latestFetchedBlock.blockNumber
+            ) {
+              mostBehindMergingPartition
+            } else if (
+              mostBehindMergingPartition.latestFetchedBlock.blockNumber <
+              p.latestFetchedBlock.blockNumber
+            ) {
+              mergingPartitionTarget :=
+                switch mergingPartitionTarget.contents {
+                | Some(mergingPartitionTarget)
+                  if mergingPartitionTarget.latestFetchedBlock.blockNumber <
+                  p.latestFetchedBlock.blockNumber => mergingPartitionTarget
+                | _ => p
+                }->Some
+              mostBehindMergingPartition
+            } else {
+              mergingPartitionTarget := Some(mostBehindMergingPartition)
+              p
+            }
+          | None => p
+          }->Some
+
+        if p.status.isFetching {
+          hasFetchingPartition := true
+          areMergingPartitionsFetching := true
+        }
       }
     }
 
-    for idx in 0 to partitions->Array.length - 1 {
-      let p = partitions->Js.Array2.unsafe_get(idx)
+    let maxPartitionQueueSize = maxQueueSize / (fullPartitions->Array.length + 1)
+    let hasQueryWaitingForNewBlock = ref(false)
+    let queries = []
 
-      let mustCatchUp = switch fetchMode {
-      | InitialFill => true
-      | CatchUpNextBatch({estimatedEndBlock}) =>
-        p.latestFetchedBlock.blockNumber < estimatedEndBlock
-      }
-
-      if mustCatchUp {
-        hasCatchingUpPartitions := true
-      }
-
-      // Read more about this above the fetchMode type definition
-      switch p->checkPartitionStatus {
-      // Partition is already fetching, so skip it
-      | Fetching => hasFetchingQuery := true
-      // Partition is not fetching, so another partition can merge into it
-      // Allow to continue mergin into it, if it's not a part of the initial catch up
-      | Locked =>
-        if !mustCatchUp {
-          addPartitionToMergeInto(p)
-        }
-      | Available =>
+    let registerPartitionQuery = (p, ~checkQueueSize, ~mergeTarget=?) => {
+      if (
+        p.status.isFetching->not && (
+            checkQueueSize ? p.fetchedEventQueue->Array.length <= maxPartitionQueueSize : true
+          )
+      ) {
         switch p->makePartitionQuery(~endBlock) {
-        // Reached the endBlock
-        | None => addPartitionToMergeInto(p)
-        | Some(query) =>
-          if query.fromBlock > currentBlockHeight {
+        | Some(q) =>
+          if q.fromBlock > currentBlockHeight {
             hasQueryWaitingForNewBlock := true
           } else {
-            allPossibleQueries->Array.push(query)
-            if mustCatchUp {
-              mustQueries->Array.push(query)
-            }
+            queries->Array.push(
+              switch mergeTarget {
+              | Some(mergeTarget) =>
+                MergeQuery({
+                  partitionId: q.partitionId,
+                  contractAddressMapping: q.contractAddressMapping,
+                  fromBlock: q.fromBlock,
+                  toBlock: mergeTarget.latestFetchedBlock.blockNumber - 1,
+                  intoPartitionId: mergeTarget.id,
+                })
+              | None => PartitionQuery(q)
+              },
+            )
           }
+        | None => ()
         }
       }
     }
 
-    let hasSpaceInBuffer = queueSize < maxQueueSize
+    fullPartitions->Array.forEach(p => p->registerPartitionQuery(~checkQueueSize=true))
 
-    // Even if there are queries waiting for the new block
-    // We still want to wait for the all fetching queries, because they might update
-    // the currentBlockHeight in their response
-    if (
-      hasQueryWaitingForNewBlock.contents &&
-      allPossibleQueries->Utils.Array.isEmpty &&
-      !hasFetchingQuery.contents
-    ) {
-      WaitingForNewBlock
-    } else if allPossibleQueries->Utils.Array.isEmpty {
-      NothingToQuery
-    } else if mustQueries->Utils.Array.isEmpty && hasCatchingUpPartitions.contents {
-      PreparingNextBatch
-    } else if mustQueries->Utils.Array.isEmpty && !hasSpaceInBuffer {
-      ReachedMaxBufferSize
-    } else {
-      let queries = switch mustQueries {
-      | [] => allPossibleQueries
-      | _ => mustQueries
+    if areMergingPartitionsFetching.contents->not {
+      switch mergingPartitions {
+      | [] => ()
+      | [p] =>
+        // If there's only one non-full partition without merge target,
+        // check that it didn't exceed queue size
+        p->registerPartitionQuery(~checkQueueSize=true)
+      | _ =>
+        switch (mostBehindMergingPartition.contents, mergingPartitionTarget.contents) {
+        | (Some(p), None) =>
+          // Even though there's no merge target for the query,
+          // we still have partitions to merge, so don't check for the queue size here
+          p->registerPartitionQuery(~checkQueueSize=false)
+        | (Some(p), Some(mergeTarget)) =>
+          p->registerPartitionQuery(~checkQueueSize=false, ~mergeTarget)
+        | (None, _) =>
+          Js.Exn.raiseError("Unexpected case, should always have a most behind partition.")
+        }
       }
-      // If there are no queries that must catch up,
-      // reduce the concurrency to 1
-      let concurrencyLimit = switch mustQueries {
-      | [] => 1
-      | _ => concurrencyLimit
-      }
+    }
 
-      let readyPartitionQueries = if queries->Array.length > concurrencyLimit {
-        queries
-        ->Js.Array2.sortInPlaceWith((a, b) => a.fromBlock - b.fromBlock)
-        ->Js.Array2.slice(~start=0, ~end_=concurrencyLimit)
+    if queries->Utils.Array.isEmpty {
+      // Even if there are queries waiting for the new block
+      // We still want to wait for the all fetching queries, because they might update
+      // the currentBlockHeight in their response
+      if hasQueryWaitingForNewBlock.contents && !hasFetchingPartition.contents {
+        WaitingForNewBlock
       } else {
-        queries
+        NothingToQuery
       }
-
+    } else {
       Ready(
-        readyPartitionQueries->Array.map(partitionQuery => {
-          // This is a case for dynamic contracts. We don't want to merge them,
-          // Because the partition addresses are already included in another partition after endBlock
-          let isQueryToPartitionEndBlock = partitionQuery.toBlock !== endBlock
-          let shouldMerge =
-            !(partitionsToMergeInto->Utils.Array.isEmpty) && !isQueryToPartitionEndBlock
-
-          if shouldMerge {
-            let mergeTarget = partitionsToMergeInto->Js.Array2.find(p => {
-              p.latestFetchedBlock.blockNumber >= partitionQuery.fromBlock &&
-                p.contractAddressMapping->ContractAddressingMap.addressCount +
-                  partitionQuery.contractAddressMapping->ContractAddressingMap.addressCount <
-                  maxAddrInPartition
-            })
-            switch mergeTarget {
-            | Some(intoPartition) =>
-              MergeQuery({
-                idempotencyKey: partitionQuery.idempotencyKey,
-                contractAddressMapping: partitionQuery.contractAddressMapping,
-                fromBlock: partitionQuery.fromBlock,
-                intoPartitionId: intoPartition.id,
-                partitionId: partitionQuery.partitionId,
-                toBlock: intoPartition.latestFetchedBlock.blockNumber,
-              })
-            | None => PartitionQuery(partitionQuery)
-            }
-          } else {
-            PartitionQuery(partitionQuery)
-          }
-        }),
+        if queries->Array.length > concurrencyLimit {
+          queries
+          ->Js.Array2.sortInPlaceWith((a, b) => a->queryFromBlock - b->queryFromBlock)
+          ->Js.Array2.slice(~start=0, ~end_=concurrencyLimit)
+        } else {
+          queries
+        },
       )
     }
   }
@@ -698,13 +678,14 @@ Gets the earliest queueItem from thgetNodeEarliestEventWithUpdatedQueue.
 Finds the earliest queue item across all registers and then returns that
 queue item with an update fetch state.
 */
-let getEarliestEvent = ({registers}: t) => {
-  let item = ref(registers->Js.Array2.unsafe_get(0)->getEarliestEventInRegister)
-  for idx in 1 to registers->Array.length - 1 {
-    let register = registers->Js.Array2.unsafe_get(idx)
-    let registerItem = register->getEarliestEventInRegister
-    if registerItem->qItemLt(item.contents) {
-      item := registerItem
+let getEarliestEvent = ({partitions}: t) => {
+  let partitions = partitions->Js.Dict.values
+  let item = ref(partitions->Js.Array2.unsafe_get(0)->getEarliestEventInRegister)
+  for idx in 1 to partitions->Array.length - 1 {
+    let p = partitions->Js.Array2.unsafe_get(idx)
+    let pItem = p->getEarliestEventInRegister
+    if pItem->qItemLt(item.contents) {
+      item := pItem
     }
   }
   item.contents
@@ -728,15 +709,22 @@ let make = (
   }
 
   let numAddresses = staticContracts->Array.length + dynamicContractRegistrations->Array.length
-  let partitions = []
-  if numAddresses <= maxAddrInPartition {
-    let partition = makePartition(
-      ~partitionIndex=partitions->Array.length,
-      ~staticContracts,
-      ~dynamicContractRegistrations,
+  let partitions = Js.Dict.empty()
+  let nextPartitionIndex = ref(0)
+
+  let addPartition = (~staticContracts=?, ~dynamicContractRegistrations=?, ~latestFetchedBlock) => {
+    let p = makePartition(
+      ~partitionIndex=nextPartitionIndex.contents,
+      ~staticContracts?,
+      ~dynamicContractRegistrations?,
       ~latestFetchedBlock,
     )
-    partitions->Js.Array2.push(partition)->ignore
+    nextPartitionIndex := nextPartitionIndex.contents + 1
+    partitions->Js.Dict.set(p.id, p)
+  }
+
+  if numAddresses <= maxAddrInPartition {
+    addPartition(~staticContracts, ~dynamicContractRegistrations, ~latestFetchedBlock)
   } else {
     let staticContractsClone = staticContracts->Array.copy
 
@@ -745,21 +733,14 @@ let make = (
       let staticContractsChunk =
         staticContractsClone->Js.Array2.removeCountInPlace(~pos=0, ~count=maxAddrInPartition)
 
-      let staticContractPartition = makePartition(
-        ~partitionIndex=partitions->Array.length,
-        ~staticContracts=staticContractsChunk,
-        ~dynamicContractRegistrations=[],
-        ~latestFetchedBlock,
-      )
-      partitions->Js.Array2.push(staticContractPartition)->ignore
+      addPartition(~staticContracts=staticContractsChunk, ~latestFetchedBlock)
     }
 
     let dynamicContractRegistrationsClone = dynamicContractRegistrations->Array.copy
 
     //Add the rest of the static addresses filling the remainder of the partition with dynamic contract
     //registrations
-    let remainingStaticContractsWithDynamicPartition = makePartition(
-      ~partitionIndex=partitions->Array.length,
+    addPartition(
       ~staticContracts=staticContractsClone,
       ~dynamicContractRegistrations=dynamicContractRegistrationsClone->Js.Array2.removeCountInPlace(
         ~pos=0,
@@ -767,7 +748,6 @@ let make = (
       ),
       ~latestFetchedBlock,
     )
-    partitions->Js.Array2.push(remainingStaticContractsWithDynamicPartition)->ignore
 
     //Make partitions with all remaining dynamic contract registrations
     while dynamicContractRegistrationsClone->Array.length > 0 {
@@ -777,13 +757,10 @@ let make = (
           ~count=maxAddrInPartition,
         )
 
-      let dynamicContractPartition = makePartition(
-        ~partitionIndex=partitions->Array.length,
-        ~staticContracts=[],
+      addPartition(
         ~dynamicContractRegistrations=dynamicContractRegistrationsChunk,
         ~latestFetchedBlock,
       )
-      partitions->Js.Array2.push(dynamicContractPartition)->ignore
     }
   }
 
@@ -791,19 +768,18 @@ let make = (
     Benchmark.addSummaryData(
       ~group="Other",
       ~label="Num partitions",
-      ~value=partitions->Array.length->Int.toFloat,
+      ~value=nextPartitionIndex.contents->Int.toFloat,
     )
   }
 
   {
-    registers: partitions,
-    nextPartitionIndex: partitions->Array.length,
+    partitions,
+    nextPartitionIndex: nextPartitionIndex.contents,
     isFetchingAtHead,
     maxAddrInPartition,
     batchSize,
     latestFullyFetchedBlock: latestFetchedBlock,
     queueSize: 0,
-    fetchMode: InitialFill,
     firstEventBlockNumber: None,
   }
 }
@@ -841,7 +817,9 @@ let checkContainsRegisteredContractAddress = (
   ~contractAddress,
   ~chainId,
 ) => {
-  self.registers->Array.some(r => {
+  self.partitions
+  ->Js.Dict.values
+  ->Array.some(r => {
     switch r.contractAddressMapping->ContractAddressingMap.getContractNameFromAddress(
       ~contractAddress,
     ) {
@@ -914,6 +892,9 @@ let rollbackRegister = (
       //we should keep the register but prune queues
       Some({
         ...updatedWithRemovedDynamicContracts,
+        status: {
+          isFetching: false,
+        },
         fetchedEventQueue: register.fetchedEventQueue->pruneQueueFromFirstChangeEvent(
           ~firstChangeEvent,
         ),
@@ -925,12 +906,12 @@ let rollbackRegister = (
 
 let rollback = (fetchState: t, ~lastScannedBlock, ~firstChangeEvent) => {
   // FIXME: Check that it's correct
-  let registers =
-    fetchState.registers->Array.keepMap(r =>
-      r->rollbackRegister(~lastScannedBlock, ~firstChangeEvent)
-    )
+  let partitions =
+    fetchState.partitions
+    ->Js.Dict.values
+    ->Array.keepMap(r => r->rollbackRegister(~lastScannedBlock, ~firstChangeEvent))
 
-  fetchState->updateInternal(~registers)
+  fetchState->updateInternal(~partitions)
 }
 
 /**
@@ -948,13 +929,4 @@ let isActivelyIndexing = ({latestFullyFetchedBlock} as fetchState: t, ~endBlock)
     }
   | None => true
   }
-}
-
-let getNumContracts = ({registers}: t) => {
-  let sum = ref(0)
-  for idx in 0 to registers->Array.length - 1 {
-    let register = registers->Js.Array2.unsafe_get(idx)
-    sum := sum.contents + register.contractAddressMapping->ContractAddressingMap.addressCount
-  }
-  sum.contents
 }

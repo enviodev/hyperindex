@@ -52,6 +52,28 @@ module Dict = {
 
   let merge: (dict<'a>, dict<'a>) => dict<'a> = %raw(`(dictA, dictB) => ({...dictA, ...dictB})`)
 
+  let map = (dict, fn) => {
+    let newDict = Js.Dict.empty()
+    let keys = dict->Js.Dict.keys
+    for idx in 0 to keys->Js.Array2.length - 1 {
+      let key = keys->Js.Array2.unsafe_get(idx)
+      newDict->Js.Dict.set(key, fn(dict->Js.Dict.unsafeGet(key)))
+    }
+    newDict
+  }
+
+  let forEach = (dict, fn) => {
+    let keys = dict->Js.Dict.keys
+    for idx in 0 to keys->Js.Array2.length - 1 {
+      fn(dict->Js.Dict.unsafeGet(keys->Js.Array2.unsafe_get(idx)))
+    }
+  }
+
+  let deleteInPlace: (dict<'a>, string) => unit = %raw(`(dict, key) => {
+      delete dict[key];
+    }
+  `)
+
   let updateImmutable: (
     dict<'a>,
     string,
