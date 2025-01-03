@@ -67,26 +67,33 @@ module type S = {
   }
 
   module FetchState: {
-    type id
     type partitionQuery = {
-      fetchStateRegisterId: id,
       idempotencyKey: int,
-      partitionId: int,
+      partitionId: string,
       fromBlock: int,
       toBlock: option<int>,
       contractAddressMapping: ContractAddressingMap.mapping,
     }
+
+    type mergeQuery = {
+      idempotencyKey: int,
+      partitionId: string,
+      intoPartitionId: string,
+      fromBlock: int,
+      toBlock: int,
+      contractAddressMapping: ContractAddressingMap.mapping,
+    }
+
+    type query =
+      | PartitionQuery(partitionQuery)
+      | MergeQuery(mergeQuery)
   }
 
   module ChainWorker: {
-    type reorgGuard = {
-      lastBlockScannedData: ReorgDetection.blockData,
-      firstBlockParentNumberAndHash: option<ReorgDetection.blockNumberAndHash>,
-    }
     type blockRangeFetchStats
     type blockRangeFetchResponse = {
       currentBlockHeight: int,
-      reorgGuard: reorgGuard,
+      reorgGuard: ReorgDetection.reorgGuard,
       parsedQueueItems: array<Internal.eventItem>,
       fromBlockQueried: int,
       latestFetchedBlockNumber: int,
@@ -110,7 +117,7 @@ module type S = {
         ~toBlock: option<int>,
         ~contractAddressMapping: ContractAddressingMap.mapping,
         ~currentBlockHeight: int,
-        ~partitionId: int,
+        ~partitionId: string,
         ~shouldApplyWildcards: bool,
         ~isPreRegisteringDynamicContracts: bool,
         ~logger: Pino.t,

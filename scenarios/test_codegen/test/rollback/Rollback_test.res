@@ -98,7 +98,7 @@ module Stubs = {
 
   let dispatchTask = (gsManager, mockChainData, task) => {
     GlobalState.injectedTaskReducer(
-      ~executePartitionQuery=executePartitionQueryWithMockChainData(mockChainData),
+      ~executeQuery=executePartitionQueryWithMockChainData(mockChainData),
       ~waitForNewBlock,
       ~rollbackLastBlockHashesToReorgLocation=chainFetcher =>
         chainFetcher->ChainFetcher.rollbackLastBlockHashesToReorgLocation(
