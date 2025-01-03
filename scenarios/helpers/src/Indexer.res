@@ -68,7 +68,6 @@ module type S = {
 
   module FetchState: {
     type partitionQuery = {
-      idempotencyKey: int,
       partitionId: string,
       fromBlock: int,
       toBlock: option<int>,
@@ -76,7 +75,6 @@ module type S = {
     }
 
     type mergeQuery = {
-      idempotencyKey: int,
       partitionId: string,
       intoPartitionId: string,
       fromBlock: int,

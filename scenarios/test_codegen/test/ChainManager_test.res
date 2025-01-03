@@ -79,7 +79,6 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
             ->PartitionedFetchState.setQueryResponse(
               ~query=PartitionQuery({
                 partitionId: "0",
-                idempotencyKey: 0,
                 fromBlock: 0,
                 toBlock: None,
                 contractAddressMapping: ContractAddressingMap.make(),
@@ -104,7 +103,6 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
               ->PartitionedFetchState.setQueryResponse(
                 ~query=PartitionQuery({
                   partitionId: "0",
-                  idempotencyKey: 0,
                   fromBlock: 0,
                   toBlock: None,
                   contractAddressMapping: ContractAddressingMap.make(),
@@ -337,17 +335,19 @@ describe("determineNextEvent", () => {
     let makeMockFetchState = (~latestFetchedBlockTimestamp, ~item): FetchState.t => {
       let register: FetchState.register = {
         id: "0",
-        idempotencyKey: 0,
         latestFetchedBlock: {
           blockTimestamp: latestFetchedBlockTimestamp,
           blockNumber: 0,
         },
+        status: {
+          isFetching: false,
+        },
         contractAddressMapping: ContractAddressingMap.make(),
         fetchedEventQueue: item->Option.mapWithDefault([], v => [v]),
-        dynamicContracts: FetchState.DynamicContractsMap.empty,
+        dynamicContracts: [],
       }
       {
-        registers: [register],
+        partitions: [register],
         batchSize: 5,
         maxAddrInPartition: 5,
         nextPartitionIndex: 1,
@@ -356,7 +356,6 @@ describe("determineNextEvent", () => {
           blockTimestamp: latestFetchedBlockTimestamp,
           blockNumber: 0,
         },
-        fetchMode: FetchState.InitialFill,
         isFetchingAtHead: false,
         firstEventBlockNumber: item->Option.map(v => v.blockNumber),
       }

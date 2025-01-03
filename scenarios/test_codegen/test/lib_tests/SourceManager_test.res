@@ -95,12 +95,7 @@ describe("SourceManager fetchNext", () => {
       blockTimestamp: latestFetchedBlockNumber * 15,
     }
 
-    let partition = FetchState.makePartition(
-      ~partitionIndex,
-      ~staticContracts,
-      ~latestFetchedBlock,
-      ~dynamicContractRegistrations=[],
-    )
+    let partition = FetchState.makePartition(~partitionIndex, ~staticContracts, ~latestFetchedBlock)
     {
       ...partition,
       fetchedEventQueue,
@@ -109,13 +104,12 @@ describe("SourceManager fetchNext", () => {
 
   let mockFetchState = (partitions): FetchState.t => {
     {
-      registers: partitions,
+      partitions,
       nextPartitionIndex: partitions->Array.length,
       batchSize: 5000,
       maxAddrInPartition: 5000,
       firstEventBlockNumber: None,
       queueSize: %raw(`null`),
-      fetchMode: FetchState.InitialFill,
       latestFullyFetchedBlock: %raw(`null`),
       isFetchingAtHead: false,
       // All the null values should be computed during updateInternal
@@ -131,72 +125,66 @@ describe("SourceManager fetchNext", () => {
   let neverExecutePartitionQuery = _ =>
     Assert.fail("The executeQuery shouldn't be called for the test")
 
-  Async.it_only(
-    "Executes partitions in any order when we didn't reach concurency limit",
-    async () => {
-      let sourceManager = SourceManager.make(
-        ~maxPartitionConcurrency=10,
-        ~endBlock=None,
-        ~logger=Logging.logger,
+  Async.it("Executes partitions in any order when we didn't reach concurency limit", async () => {
+    let sourceManager = SourceManager.make(
+      ~maxPartitionConcurrency=10,
+      ~endBlock=None,
+      ~logger=Logging.logger,
+    )
+
+    let partition0 = mockPartition(~partitionIndex=0, ~latestFetchedBlockNumber=4)
+    let partition1 = mockPartition(~partitionIndex=1, ~latestFetchedBlockNumber=5)
+    let partition2 = mockPartition(~partitionIndex=2, ~latestFetchedBlockNumber=1)
+
+    let fetchState = mockFetchState([partition0, partition1, partition2])
+
+    let executeQueryMock = executeQueryMock()
+
+    let fetchNextPromise =
+      sourceManager->SourceManager.fetchNext(
+        ~fetchState,
+        ~maxPerChainQueueSize=1000,
+        ~currentBlockHeight=10,
+        ~executeQuery=executeQueryMock.fn,
+        ~waitForNewBlock=neverWaitForNewBlock,
+        ~onNewBlock=neverOnNewBlock,
+        ~stateId=0,
       )
 
-      let partition0 = mockPartition(~partitionIndex=0, ~latestFetchedBlockNumber=4)
-      let partition1 = mockPartition(~partitionIndex=1, ~latestFetchedBlockNumber=5)
-      let partition2 = mockPartition(~partitionIndex=2, ~latestFetchedBlockNumber=1)
+    Assert.deepEqual(
+      executeQueryMock.calls,
+      [
+        PartitionQuery({
+          partitionId: "0",
+          fromBlock: 5,
+          toBlock: None,
+          contractAddressMapping: partition0.contractAddressMapping,
+        }),
+        PartitionQuery({
+          partitionId: "1",
+          fromBlock: 6,
+          toBlock: None,
+          contractAddressMapping: partition1.contractAddressMapping,
+        }),
+        PartitionQuery({
+          partitionId: "2",
+          fromBlock: 2,
+          toBlock: None,
+          contractAddressMapping: partition2.contractAddressMapping,
+        }),
+      ],
+    )
 
-      let fetchState = mockFetchState([partition0, partition1, partition2])
+    executeQueryMock.resolveAll()
 
-      let executeQueryMock = executeQueryMock()
+    await fetchNextPromise
 
-      let fetchNextPromise =
-        sourceManager->SourceManager.fetchNext(
-          ~fetchState,
-          ~maxPerChainQueueSize=1000,
-          ~currentBlockHeight=10,
-          ~executeQuery=executeQueryMock.fn,
-          ~waitForNewBlock=neverWaitForNewBlock,
-          ~onNewBlock=neverOnNewBlock,
-          ~stateId=0,
-        )
-
-      Assert.deepEqual(
-        executeQueryMock.calls,
-        [
-          PartitionQuery({
-            partitionId: "0",
-            idempotencyKey: 0,
-            fromBlock: 5,
-            toBlock: None,
-            contractAddressMapping: partition0.contractAddressMapping,
-          }),
-          PartitionQuery({
-            partitionId: "1",
-            idempotencyKey: 0,
-            fromBlock: 6,
-            toBlock: None,
-            contractAddressMapping: partition1.contractAddressMapping,
-          }),
-          PartitionQuery({
-            partitionId: "2",
-            idempotencyKey: 0,
-            fromBlock: 2,
-            toBlock: None,
-            contractAddressMapping: partition2.contractAddressMapping,
-          }),
-        ],
-      )
-
-      executeQueryMock.resolveAll()
-
-      await fetchNextPromise
-
-      Assert.deepEqual(
-        executeQueryMock.calls->Js.Array2.length,
-        3,
-        ~message="Shouldn't have called more after resolving prev promises",
-      )
-    },
-  )
+    Assert.deepEqual(
+      executeQueryMock.calls->Js.Array2.length,
+      3,
+      ~message="Shouldn't have called more after resolving prev promises",
+    )
+  })
 
   // Async.it(
   //   "Slices partitions to the concurrency limit, takes the earliest queries first",
