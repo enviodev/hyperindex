@@ -250,21 +250,23 @@ module Make = (Indexer: Indexer.S) => {
     )
   }
 
-  let executeQuery = (
-    self: t,
-    query: FetchState.nextQuery,
-  ): ChainWorker.blockRangeFetchResponse => {
-    let unfilteredBlocks = self->getBlocks(~fromBlock=query.fromBlock, ~toBlock=query.toBlock)
+  let executeQuery = (self: t, query: FetchState.query): ChainWorker.blockRangeFetchResponse => {
+    let (fromBlock, toBlock, contractAddressMapping) = switch query {
+    | PartitionQuery(query) => (query.fromBlock, query.toBlock, query.contractAddressMapping)
+    | MergeQuery(query) => (query.fromBlock, Some(query.toBlock), query.contractAddressMapping)
+    }
+
+    let unfilteredBlocks = self->getBlocks(~fromBlock, ~toBlock)
     let heighstBlock = unfilteredBlocks->getLast->Option.getExn
     let firstBlockParentNumberAndHash =
       self
-      ->getBlock(~blockNumber=query.fromBlock - 1)
+      ->getBlock(~blockNumber=fromBlock - 1)
       ->Option.map(b => {ReorgDetection.blockNumber: b.blockNumber, blockHash: b.blockHash})
     let currentBlockHeight = self->getHeight
 
     let addressesAndEventNames = self.chainConfig.contracts->Array.map(c => {
       let addresses =
-        query.contractAddressMapping->ContractAddressingMap.getAddressesFromContractName(
+        contractAddressMapping->ContractAddressingMap.getAddressesFromContractName(
           ~contractName=c.name,
         )
       {
@@ -288,12 +290,10 @@ module Make = (Indexer: Indexer.S) => {
         firstBlockParentNumberAndHash,
       },
       parsedQueueItems,
-      fromBlockQueried: query.fromBlock,
+      fromBlockQueried: fromBlock,
       latestFetchedBlockNumber: heighstBlock.blockNumber,
       latestFetchedBlockTimestamp: heighstBlock.blockTimestamp,
       stats: "NO_STATS"->Obj.magic,
-      fetchStateRegisterId: query.fetchStateRegisterId,
-      partitionId: query.partitionId,
     }
   }
 

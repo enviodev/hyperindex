@@ -67,33 +67,36 @@ module type S = {
   }
 
   module FetchState: {
-    type id
-    type nextQuery = {
-      fetchStateRegisterId: id,
-      partitionId: int,
+    type partitionQuery = {
+      partitionId: string,
       fromBlock: int,
       toBlock: option<int>,
       contractAddressMapping: ContractAddressingMap.mapping,
     }
+
+    type mergeQuery = {
+      partitionId: string,
+      intoPartitionId: string,
+      fromBlock: int,
+      toBlock: int,
+      contractAddressMapping: ContractAddressingMap.mapping,
+    }
+
+    type query =
+      | PartitionQuery(partitionQuery)
+      | MergeQuery(mergeQuery)
   }
 
   module ChainWorker: {
-    type reorgGuard = {
-      lastBlockScannedData: ReorgDetection.blockData,
-      firstBlockParentNumberAndHash: option<ReorgDetection.blockNumberAndHash>,
-    }
-    type blockRangeFetchArgs
     type blockRangeFetchStats
     type blockRangeFetchResponse = {
       currentBlockHeight: int,
-      reorgGuard: reorgGuard,
+      reorgGuard: ReorgDetection.reorgGuard,
       parsedQueueItems: array<Internal.eventItem>,
       fromBlockQueried: int,
       latestFetchedBlockNumber: int,
       latestFetchedBlockTimestamp: int,
       stats: blockRangeFetchStats,
-      fetchStateRegisterId: FetchState.id,
-      partitionId: int,
     }
 
     module type S = {
@@ -108,10 +111,14 @@ module type S = {
         ~logger: Pino.t,
       ) => promise<int>
       let fetchBlockRange: (
-        ~query: blockRangeFetchArgs,
-        ~logger: Pino.t,
+        ~fromBlock: int,
+        ~toBlock: option<int>,
+        ~contractAddressMapping: ContractAddressingMap.mapping,
         ~currentBlockHeight: int,
+        ~partitionId: string,
+        ~shouldApplyWildcards: bool,
         ~isPreRegisteringDynamicContracts: bool,
+        ~logger: Pino.t,
       ) => promise<result<blockRangeFetchResponse, ErrorHandling.t>>
     }
   }

@@ -135,7 +135,7 @@ module Stubs = {
 
   let makeDispatchTask = (stubData: t, task) => {
     GlobalState.injectedTaskReducer(
-      ~executePartitionQuery=makeExecutePartitionQuery(stubData),
+      ~executeQuery=makeExecutePartitionQuery(stubData),
       ~waitForNewBlock=makeWaitForNewBlock(stubData),
       ~rollbackLastBlockHashesToReorgLocation=chainFetcher =>
         chainFetcher->ChainFetcher.rollbackLastBlockHashesToReorgLocation(

@@ -76,8 +76,13 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
         | 1 =>
           fetchState :=
             fetchState.contents
-            ->PartitionedFetchState.update(
-              ~id={fetchStateId: FetchState.rootRegisterId, partitionId: 0},
+            ->PartitionedFetchState.setQueryResponse(
+              ~query=PartitionQuery({
+                partitionId: "0",
+                fromBlock: 0,
+                toBlock: None,
+                contractAddressMapping: ContractAddressingMap.make(),
+              }),
               ~latestFetchedBlock={
                 blockNumber: batchItem.blockNumber,
                 blockTimestamp: batchItem.timestamp,
@@ -95,8 +100,13 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
           } else {
             fetchState :=
               fetchState.contents
-              ->PartitionedFetchState.update(
-                ~id={fetchStateId: FetchState.rootRegisterId, partitionId: 0},
+              ->PartitionedFetchState.setQueryResponse(
+                ~query=PartitionQuery({
+                  partitionId: "0",
+                  fromBlock: 0,
+                  toBlock: None,
+                  contractAddressMapping: ContractAddressingMap.make(),
+                }),
                 ~latestFetchedBlock={
                   blockNumber: batchItem.blockNumber,
                   blockTimestamp: batchItem.timestamp,
@@ -324,23 +334,30 @@ describe("determineNextEvent", () => {
 
     let makeMockFetchState = (~latestFetchedBlockTimestamp, ~item): FetchState.t => {
       let register: FetchState.register = {
-        id: FetchState.rootRegisterId,
+        id: "0",
         latestFetchedBlock: {
           blockTimestamp: latestFetchedBlockTimestamp,
           blockNumber: 0,
         },
+        status: {
+          isFetching: false,
+        },
         contractAddressMapping: ContractAddressingMap.make(),
         fetchedEventQueue: item->Option.mapWithDefault([], v => [v]),
-        dynamicContracts: FetchState.DynamicContractsMap.empty,
-        firstEventBlockNumber: item->Option.map(v => v.blockNumber),
+        dynamicContracts: [],
       }
       {
-        partitionId: 0,
-        registers: [register],
-        mostBehindRegister: register,
-        nextMostBehindRegister: None,
-        pendingDynamicContracts: [],
+        partitions: [register],
+        batchSize: 5,
+        maxAddrInPartition: 5,
+        nextPartitionIndex: 1,
+        queueSize: 10,
+        latestFullyFetchedBlock: {
+          blockTimestamp: latestFetchedBlockTimestamp,
+          blockNumber: 0,
+        },
         isFetchingAtHead: false,
+        firstEventBlockNumber: item->Option.map(v => v.blockNumber),
       }
     }
 

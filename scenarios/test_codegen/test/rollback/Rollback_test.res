@@ -61,13 +61,11 @@ module Stubs = {
     ~chainWorker,
     ~currentBlockHeight,
     ~chain,
-    ~dispatchAction,
     ~isPreRegisteringDynamicContracts,
   ) => {
-    (logger, currentBlockHeight, chainWorker, isPreRegisteringDynamicContracts)->ignore
+    (logger, chain, currentBlockHeight, chainWorker, isPreRegisteringDynamicContracts)->ignore
 
-    let response = mockChainData->MockChainData.executeQuery(query)
-    dispatchAction(GlobalState.BlockRangeResponse(chain, response))
+    Ok(mockChainData->MockChainData.executeQuery(query))
   }
 
   //Stub for getting block hashes instead of the worker
@@ -100,7 +98,7 @@ module Stubs = {
 
   let dispatchTask = (gsManager, mockChainData, task) => {
     GlobalState.injectedTaskReducer(
-      ~executePartitionQuery=executePartitionQueryWithMockChainData(mockChainData),
+      ~executeQuery=executePartitionQueryWithMockChainData(mockChainData),
       ~waitForNewBlock,
       ~rollbackLastBlockHashesToReorgLocation=chainFetcher =>
         chainFetcher->ChainFetcher.rollbackLastBlockHashesToReorgLocation(
@@ -157,7 +155,7 @@ describe("Single Chain Simple Rollback", () => {
     open Stubs
     let dispatchTaskInitalChain = dispatchTask(gsManager, Mock.mockChainData, ...)
     let dispatchTaskReorgChain = dispatchTask(gsManager, Mock.mockChainDataReorg, ...)
-    let dispatchAllTasksInitalChain = () => dispatchAllTasks(gsManager, Mock.mockChainData, ...)
+    let dispatchAllTasksInitalChain = () => dispatchAllTasks(gsManager, Mock.mockChainData)
     tasks := []
 
     await dispatchTaskInitalChain(NextQuery(Chain(chain)))
