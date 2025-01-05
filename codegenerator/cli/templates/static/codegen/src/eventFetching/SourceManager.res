@@ -46,7 +46,17 @@ let fetchNext = async (
     }
     let {logger, endBlock, maxPartitionConcurrency} = sourceManager
 
-    let waitForNewBlock = async () => {
+    switch fetchState->FetchState.getNextQuery(
+      ~endBlock,
+      ~concurrencyLimit={
+        maxPartitionConcurrency - sourceManager.fetchingPartitionsCount
+      },
+      ~maxQueueSize=maxPerChainQueueSize,
+      ~currentBlockHeight,
+    ) {
+    | ReachedMaxConcurrency
+    | NothingToQuery => ()
+    | WaitingForNewBlock => {
       if !sourceManager.isWaitingForNewBlock {
         sourceManager.isWaitingForNewBlock = true
         let currentBlockHeight = await waitForNewBlock(~currentBlockHeight, ~logger)
@@ -54,30 +64,12 @@ let fetchNext = async (
         onNewBlock(~currentBlockHeight)
       }
     }
-
-    // For the case with currentBlockHeight=0 we should
-    // force getting the known chain block, even if there are no ready queries
-    if currentBlockHeight === 0 {
-      await waitForNewBlock()
-    } else {
-      switch fetchState->FetchState.getNextQuery(
-        ~endBlock,
-        ~concurrencyLimit={
-          maxPartitionConcurrency - sourceManager.fetchingPartitionsCount
-        },
-        ~maxQueueSize=maxPerChainQueueSize,
-        ~currentBlockHeight,
-      ) {
-      | ReachedMaxConcurrency
-      | NothingToQuery => ()
-      | WaitingForNewBlock => await waitForNewBlock()
-      | Ready(queries) => {
-          fetchState->FetchState.startFetchingQueries(~queries)
-          let _ =
-            await queries
-            ->Array.map(executeQuery)
-            ->Promise.all
-        }
+    | Ready(queries) => {
+        fetchState->FetchState.startFetchingQueries(~queries)
+        let _ =
+          await queries
+          ->Array.map(executeQuery)
+          ->Promise.all
       }
     }
   }

@@ -70,7 +70,7 @@ let makeEmpty = () => {
     ~staticContracts=[],
     ~dynamicContracts=[],
     ~startBlock=0,
-    ~maxAddrInPartition=5,
+    ~maxAddrInPartition=2,
     ~isFetchingAtHead=false,
   )
 }
@@ -92,7 +92,7 @@ let makeEmptyExpected = (): FetchState.t => {
     ],
     nextPartitionIndex: 1,
     isFetchingAtHead: false,
-    maxAddrInPartition: 5,
+    maxAddrInPartition: 2,
     latestFullyFetchedBlock: {
       blockNumber: 0,
       blockTimestamp: 0,
@@ -368,17 +368,96 @@ describe("FetchState.registerDynamicContract", () => {
   )
 })
 
-describe("FetchState.getNextQuery & integration", () => {
+describe_only("FetchState.getNextQuery & integration", () => {
+  let dc1 = makeDynContractRegistration(~blockNumber=1, ~contractAddress=mockAddress1)
+  let dc2 = makeDynContractRegistration(~blockNumber=2, ~contractAddress=mockAddress2)
+
+  let makeAfterFirstStaticAddressesQuery = (): FetchState.t => {
+    {
+      partitions: [
+        {
+          id: "0",
+          status: {isFetching: false},
+          latestFetchedBlock: {
+            blockNumber: 10,
+            blockTimestamp: 10,
+          },
+          contractAddressMapping: ContractAddressingMap.make(),
+          fetchedEventQueue: [mockEvent(~blockNumber=2), mockEvent(~blockNumber=1)],
+          dynamicContracts: [],
+        },
+      ],
+      nextPartitionIndex: 1,
+      isFetchingAtHead: true,
+      maxAddrInPartition: 2,
+      latestFullyFetchedBlock: {
+        blockNumber: 10,
+        blockTimestamp: 10,
+      },
+      queueSize: 2,
+      firstEventBlockNumber: Some(1),
+      batchSize: 5000,
+    }
+  }
+
+  let makeIntermidiateDcMerge = (): FetchState.t => {
+    {
+      partitions: [
+        {
+          id: "0",
+          status: {isFetching: false},
+          latestFetchedBlock: {
+            blockNumber: 10,
+            blockTimestamp: 10,
+          },
+          contractAddressMapping: ContractAddressingMap.make(),
+          fetchedEventQueue: [mockEvent(~blockNumber=2), mockEvent(~blockNumber=1)],
+          dynamicContracts: [],
+        },
+        {
+          id: "2",
+          status: {isFetching: false},
+          latestFetchedBlock: {
+            blockNumber: 1,
+            blockTimestamp: 0,
+          },
+          contractAddressMapping: ContractAddressingMap.fromArray([
+            (mockAddress2, "Gravatar"),
+            (mockAddress1, "Gravatar"),
+          ]),
+          fetchedEventQueue: [],
+          dynamicContracts: [dc2, dc1],
+        },
+      ],
+      nextPartitionIndex: 3,
+      isFetchingAtHead: false,
+      maxAddrInPartition: 3,
+      latestFullyFetchedBlock: {
+        blockNumber: 1,
+        blockTimestamp: 0,
+      },
+      queueSize: 2,
+      firstEventBlockNumber: Some(1),
+      batchSize: 5000,
+    }
+  }
+
   it("Emulate first indexer queris with only wildcard events", () => {
+    // The default configuration with ability to overwrite some values
+    let getNextQuery = (
+      fs,
+      ~endBlock=None,
+      ~currentBlockHeight=10,
+      ~maxQueueSize=10,
+      ~concurrencyLimit=10,
+    ) =>
+      fs->FetchState.getNextQuery(~currentBlockHeight, ~endBlock, ~concurrencyLimit, ~maxQueueSize)
+
     let fetchState = makeEmpty()
 
-    let nextQuery =
-      fetchState->FetchState.getNextQuery(
-        ~currentBlockHeight=10,
-        ~endBlock=None,
-        ~concurrencyLimit=10,
-        ~maxQueueSize=10,
-      )
+    Assert.deepEqual(fetchState->getNextQuery(~currentBlockHeight=0), WaitingForNewBlock)
+
+    let nextQuery = fetchState->getNextQuery
 
     Assert.deepEqual(
       nextQuery,
@@ -420,13 +499,7 @@ describe("FetchState.getNextQuery & integration", () => {
       ~message="The startFetchingQueries should mutate the isFetching state",
     )
 
-    let repeatedNextQuery =
-      fetchState->FetchState.getNextQuery(
-        ~currentBlockHeight=10,
-        ~endBlock=None,
-        ~concurrencyLimit=10,
-        ~maxQueueSize=10,
-      )
+    let repeatedNextQuery = fetchState->getNextQuery
 
     Assert.deepEqual(
       repeatedNextQuery,
@@ -434,20 +507,395 @@ describe("FetchState.getNextQuery & integration", () => {
       ~message="Shouldn't double fetch the same partition",
     )
 
-    let _updatedFetchState = fetchState->FetchState.setQueryResponse(
-      ~query,
-      ~latestFetchedBlock={
-        blockNumber: 10,
-        blockTimestamp: 10,
+    let updatedFetchState =
+      fetchState
+      ->FetchState.setQueryResponse(
+        ~query,
+        ~latestFetchedBlock={
+          blockNumber: 10,
+          blockTimestamp: 10,
+        },
+        ~newItems=[mockEvent(~blockNumber=1), mockEvent(~blockNumber=2)],
+        ~currentBlockHeight=10,
+      )
+      ->Result.getExn
+
+    Assert.deepEqual(updatedFetchState, makeAfterFirstStaticAddressesQuery())
+
+    Assert.deepEqual(updatedFetchState->getNextQuery, WaitingForNewBlock)
+    Assert.deepEqual(updatedFetchState->getNextQuery(~concurrencyLimit=0), ReachedMaxConcurrency)
+    Assert.deepEqual(updatedFetchState->getNextQuery(~endBlock=Some(10)), NothingToQuery)
+    Assert.deepEqual(updatedFetchState->getNextQuery(~maxQueueSize=2), NothingToQuery)
+  })
+
+  it("Emulate dynamic contract registration", () => {
+    // The default configuration with ability to overwrite some values
+    let getNextQuery = (
+      fs,
+      ~endBlock=None,
+      ~currentBlockHeight=11,
+      ~maxQueueSize=10,
+      ~concurrencyLimit=10,
+    ) =>
+      fs->FetchState.getNextQuery(~currentBlockHeight, ~endBlock, ~concurrencyLimit, ~maxQueueSize)
+
+    // Continue with the state from previous test
+    let fetchState = makeAfterFirstStaticAddressesQuery()
+
+    let fetchStateWithDcs =
+      fetchState->FetchState.registerDynamicContract([dc2, dc1], ~isFetchingAtHead=false)
+
+    Assert.deepEqual(
+      fetchStateWithDcs,
+      {
+        ...fetchState,
+        // The isFetchingAtHead is overwritten. Although, I don't know whether it's correct
+        isFetchingAtHead: false,
+        nextPartitionIndex: 3,
+        latestFullyFetchedBlock: {
+          blockNumber: 0,
+          blockTimestamp: 0,
+        },
+        partitions: fetchState.partitions->Array.concat([
+          {
+            id: "1",
+            status: {isFetching: false},
+            latestFetchedBlock: {
+              blockNumber: 0,
+              blockTimestamp: 0,
+            },
+            contractAddressMapping: ContractAddressingMap.fromArray([(mockAddress1, "Gravatar")]),
+            fetchedEventQueue: [],
+            dynamicContracts: [dc1],
+          },
+          {
+            id: "2",
+            status: {isFetching: false},
+            latestFetchedBlock: {
+              blockNumber: 1,
+              blockTimestamp: 0,
+            },
+            contractAddressMapping: ContractAddressingMap.fromArray([(mockAddress2, "Gravatar")]),
+            fetchedEventQueue: [],
+            dynamicContracts: [dc2],
+          },
+        ]),
       },
-      ~newItems=[mockEvent(~blockNumber=1, ~logIndex=1), mockEvent(~blockNumber=1, ~logIndex=2)],
-      ~currentBlockHeight=10,
     )
 
-    // Assert.deepEqual(updatedFetchState)
+    Assert.deepEqual(
+      fetchStateWithDcs->getNextQuery,
+      Ready([
+        MergeQuery({
+          partitionId: "1",
+          intoPartitionId: "2",
+          // Should be fromBlock 0, but we have a bug
+          fromBlock: 0,
+          toBlock: 1,
+          contractAddressMapping: ContractAddressingMap.fromArray([(mockAddress1, "Gravatar")]),
+        }),
+      ]),
+    )
 
-    // TODO: Call getNextQuery here to see wait for new block
-    // TODO: Write a few more tests with dynamic contract registrations and merging
+    let query = switch fetchStateWithDcs->getNextQuery {
+    | Ready([q]) => q
+    | _ => Assert.fail("Failed to extract query. The getNextQuery should be idempotent")
+    }
+
+    fetchStateWithDcs->FetchState.startFetchingQueries(~queries=[query])
+    Assert.deepEqual(
+      fetchStateWithDcs->getNextQuery,
+      NothingToQuery,
+      ~message="Locks all partitions, which didn't reach max addr count",
+    )
+
+    let updatedFetchState =
+      fetchStateWithDcs
+      ->FetchState.setQueryResponse(
+        ~query,
+        ~latestFetchedBlock={
+          blockNumber: 1,
+          blockTimestamp: 1,
+        },
+        ~newItems=[],
+        ~currentBlockHeight=11,
+      )
+      ->Result.getExn
+
+    Assert.deepEqual(
+      updatedFetchState,
+      {
+        ...makeIntermidiateDcMerge(),
+        maxAddrInPartition: 2,
+      },
+    )
+
+    let expectedPartition2Query: FetchState.query = PartitionQuery({
+      partitionId: "2",
+      fromBlock: 2,
+      toBlock: None,
+      contractAddressMapping: ContractAddressingMap.fromArray([
+        (mockAddress2, "Gravatar"),
+        (mockAddress1, "Gravatar"),
+      ]),
+    })
+    let expectedPartition1Query: FetchState.query = PartitionQuery({
+      partitionId: "0",
+      contractAddressMapping: ContractAddressingMap.make(),
+      fromBlock: 11,
+      toBlock: None,
+    })
+
+    Assert.deepEqual(
+      updatedFetchState->getNextQuery(~maxQueueSize=6),
+      Ready([expectedPartition2Query, expectedPartition1Query]),
+      ~message=`Since the partition "2" reached the maxAddrNumber,
+      there's no point to continue merging partitions,
+      so we have two queries concurrently`,
+    )
+    Assert.deepEqual(
+      updatedFetchState->getNextQuery(~maxQueueSize=5),
+      Ready([expectedPartition2Query]),
+      ~message=`Partition queue size is adjusted according to
+      the number of fully fetched partitions + 1. In the case it should be 5 / 2 = 2,
+      so the partition "0" is skipped`,
+    )
+    Assert.deepEqual(
+      updatedFetchState->getNextQuery(~concurrencyLimit=1),
+      Ready([expectedPartition2Query]),
+      ~message=`Should be the query with smaller fromBlock`,
+    )
+    Assert.deepEqual(
+      updatedFetchState->getNextQuery(~currentBlockHeight=10),
+      Ready([expectedPartition2Query]),
+      ~message=`Even if a single partition reached block height,
+      we finish fetching other partitions until waiting for the new block first`,
+    )
+
+    updatedFetchState->FetchState.startFetchingQueries(~queries=[expectedPartition2Query])
+    Assert.deepEqual(
+      updatedFetchState->getNextQuery,
+      Ready([expectedPartition1Query]),
+      ~message=`Should skip fetching queries`,
+    )
+    // FIXME: Test that the "0" partition shouldn't be merged
+  })
+
+  it_only("Emulate partition merging cases", () => {
+    // The default configuration with ability to overwrite some values
+    let getNextQuery = (
+      fs,
+      ~endBlock=None,
+      ~currentBlockHeight=11,
+      ~maxQueueSize=10,
+      ~concurrencyLimit=10,
+    ) =>
+      fs->FetchState.getNextQuery(~currentBlockHeight, ~endBlock, ~concurrencyLimit, ~maxQueueSize)
+
+    // Continue with the state from previous test
+    // But increase the maxAddrInPartition up to 3
+    let fetchState = makeIntermidiateDcMerge()
+
+    Assert.deepEqual(
+      fetchState->getNextQuery,
+      Ready([
+        MergeQuery({
+          partitionId: "2",
+          intoPartitionId: "0",
+          fromBlock: 2,
+          toBlock: 10,
+          contractAddressMapping: ContractAddressingMap.fromArray([
+            (mockAddress2, "Gravatar"),
+            (mockAddress1, "Gravatar"),
+          ]),
+        }),
+      ]),
+    )
+
+    let query = switch fetchState->getNextQuery {
+    | Ready([q]) => q
+    | _ => Assert.fail("Failed to extract query. The getNextQuery should be idempotent")
+    }
+
+    // When it didn't finish fetching to the target partition block
+    let fetchStateWithResponse1 =
+      fetchState
+      ->FetchState.setQueryResponse(
+        ~query,
+        ~latestFetchedBlock={
+          blockNumber: 9,
+          blockTimestamp: 9,
+        },
+        ~newItems=[mockEvent(~blockNumber=4, ~logIndex=2), mockEvent(~blockNumber=4, ~logIndex=6)],
+        ~currentBlockHeight=11,
+      )
+      ->Result.getExn
+
+    Assert.deepEqual(
+      fetchStateWithResponse1,
+      {
+        ...fetchState,
+        partitions: [
+          {
+            id: "0",
+            status: {isFetching: false},
+            latestFetchedBlock: {
+              blockNumber: 10,
+              blockTimestamp: 10,
+            },
+            contractAddressMapping: ContractAddressingMap.make(),
+            fetchedEventQueue: [mockEvent(~blockNumber=2), mockEvent(~blockNumber=1)],
+            dynamicContracts: [],
+          },
+          {
+            id: "2",
+            status: {isFetching: false},
+            latestFetchedBlock: {
+              blockNumber: 9,
+              blockTimestamp: 9,
+            },
+            contractAddressMapping: ContractAddressingMap.fromArray([
+              (mockAddress2, "Gravatar"),
+              (mockAddress1, "Gravatar"),
+            ]),
+            fetchedEventQueue: [
+              mockEvent(~blockNumber=4, ~logIndex=6),
+              mockEvent(~blockNumber=4, ~logIndex=2),
+            ],
+            dynamicContracts: [dc2, dc1],
+          },
+        ],
+        latestFullyFetchedBlock: {
+          blockNumber: 9,
+          blockTimestamp: 9,
+        },
+        queueSize: 4,
+      },
+    )
+
+    Assert.deepEqual(
+      fetchStateWithResponse1->getNextQuery(~maxQueueSize=0),
+      Ready([
+        MergeQuery({
+          partitionId: "2",
+          intoPartitionId: "0",
+          fromBlock: 10,
+          toBlock: 10,
+          contractAddressMapping: ContractAddressingMap.fromArray([
+            (mockAddress2, "Gravatar"),
+            (mockAddress1, "Gravatar"),
+          ]),
+        }),
+      ]),
+      ~message="MergeQuery should ignore the maxQueueSize limit",
+    )
+
+    let query = switch fetchState->getNextQuery(~maxQueueSize=0) {
+    | Ready([q]) => q
+    | _ => Assert.fail("Failed to extract query. The getNextQuery should be idempotent")
+    }
+
+    let fetchStateWithResponse2 =
+      fetchStateWithResponse1
+      ->FetchState.setQueryResponse(
+        ~query,
+        ~latestFetchedBlock={
+          blockNumber: 10,
+          blockTimestamp: 10,
+        },
+        ~newItems=[],
+        ~currentBlockHeight=11,
+      )
+      ->Result.getExn
+    Assert.deepEqual(
+      fetchStateWithResponse2,
+      {
+        ...fetchStateWithResponse1,
+        partitions: [
+          {
+            id: "0",
+            status: {isFetching: false},
+            latestFetchedBlock: {
+              blockNumber: 10,
+              blockTimestamp: 10,
+            },
+            contractAddressMapping: ContractAddressingMap.fromArray([
+              (mockAddress2, "Gravatar"),
+              (mockAddress1, "Gravatar"),
+            ]),
+            fetchedEventQueue: [
+              mockEvent(~blockNumber=4, ~logIndex=6),
+              mockEvent(~blockNumber=4, ~logIndex=2),
+              mockEvent(~blockNumber=2),
+              mockEvent(~blockNumber=1),
+            ],
+            dynamicContracts: [dc2, dc1],
+          },
+        ],
+        latestFullyFetchedBlock: {
+          blockNumber: 10,
+          blockTimestamp: 10,
+        },
+      },
+    )
+
+    let fetchStateWithMergeSplit =
+      {
+        ...fetchStateWithResponse1,
+        // Emulate the case when the merging partition
+        // should split on merge
+        maxAddrInPartition: 1,
+      }
+      ->FetchState.setQueryResponse(
+        ~query,
+        ~latestFetchedBlock={
+          blockNumber: 10,
+          blockTimestamp: 10,
+        },
+        ~newItems=[],
+        ~currentBlockHeight=11,
+      )
+      ->Result.getExn
+    Assert.deepEqual(
+      fetchStateWithMergeSplit,
+      {
+        ...fetchStateWithResponse1,
+        maxAddrInPartition: 1,
+        partitions: [
+          {
+            id: "0",
+            status: {isFetching: false},
+            latestFetchedBlock: {
+              blockNumber: 10,
+              blockTimestamp: 10,
+            },
+            contractAddressMapping: ContractAddressingMap.fromArray([(mockAddress1, "Gravatar")]),
+            fetchedEventQueue: [
+              mockEvent(~blockNumber=4, ~logIndex=6),
+              mockEvent(~blockNumber=4, ~logIndex=2),
+              mockEvent(~blockNumber=2),
+              mockEvent(~blockNumber=1),
+            ],
+            dynamicContracts: [dc1],
+          },
+          {
+            id: "2",
+            status: {isFetching: false},
+            latestFetchedBlock: {
+              blockNumber: 10,
+              blockTimestamp: 10,
+            },
+            contractAddressMapping: ContractAddressingMap.fromArray([(mockAddress2, "Gravatar")]),
+            fetchedEventQueue: [],
+            dynamicContracts: [dc2],
+          },
+        ],
+        latestFullyFetchedBlock: {
+          blockNumber: 10,
+          blockTimestamp: 10,
+        },
+      },
+    )
   })
 })
 

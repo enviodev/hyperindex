@@ -447,7 +447,9 @@ let getNextQuery = (
   ~maxQueueSize,
   ~currentBlockHeight,
 ) => {
-  if concurrencyLimit === 0 {
+  if currentBlockHeight === 0 {
+    WaitingForNewBlock
+  } else if concurrencyLimit === 0 {
     ReachedMaxConcurrency
   } else {
     let fullPartitions = []
@@ -510,7 +512,7 @@ let getNextQuery = (
     let registerPartitionQuery = (p, ~checkQueueSize, ~mergeTarget=?) => {
       if (
         p.status.isFetching->not && (
-            checkQueueSize ? p.fetchedEventQueue->Array.length <= maxPartitionQueueSize : true
+            checkQueueSize ? p.fetchedEventQueue->Array.length < maxPartitionQueueSize : true
           )
       ) {
         switch p->makePartitionQuery(~endBlock) {
@@ -520,15 +522,17 @@ let getNextQuery = (
           } else {
             queries->Array.push(
               switch mergeTarget {
-              | Some(mergeTarget) =>
+              | Some(mergeTarget)
+                if // This is to prevent breaking the current check for shouldApplyWildcards
+                q.partitionId !== "0" =>
                 MergeQuery({
                   partitionId: q.partitionId,
                   contractAddressMapping: q.contractAddressMapping,
                   fromBlock: q.fromBlock,
-                  toBlock: mergeTarget.latestFetchedBlock.blockNumber - 1,
+                  toBlock: mergeTarget.latestFetchedBlock.blockNumber,
                   intoPartitionId: mergeTarget.id,
                 })
-              | None => PartitionQuery(q)
+              | _ => PartitionQuery(q)
               },
             )
           }
