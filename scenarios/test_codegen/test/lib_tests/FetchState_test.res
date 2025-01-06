@@ -368,7 +368,7 @@ describe("FetchState.registerDynamicContract", () => {
   )
 })
 
-describe_only("FetchState.getNextQuery & integration", () => {
+describe("FetchState.getNextQuery & integration", () => {
   let dc1 = makeDynContractRegistration(~blockNumber=1, ~contractAddress=mockAddress1)
   let dc2 = makeDynContractRegistration(~blockNumber=2, ~contractAddress=mockAddress2)
 
@@ -678,10 +678,9 @@ describe_only("FetchState.getNextQuery & integration", () => {
       Ready([expectedPartition1Query]),
       ~message=`Should skip fetching queries`,
     )
-    // FIXME: Test that the "0" partition shouldn't be merged
   })
 
-  it_only("Emulate partition merging cases", () => {
+  it("Emulate partition merging cases", () => {
     // The default configuration with ability to overwrite some values
     let getNextQuery = (
       fs,
@@ -895,161 +894,130 @@ describe_only("FetchState.getNextQuery & integration", () => {
           blockTimestamp: 10,
         },
       },
+      ~message=`If on merge the target partition exceeds maxAddrsInPartition,
+      then it should keep the rest addresses in the merging partition`,
+    )
+  })
+
+  it("Root partition never merges to another one (because of shouldApplyWildcards check)", () => {
+    let fetchState =
+      FetchState.make(
+        ~staticContracts=[("ContractA", mockAddress1)],
+        ~dynamicContracts=[],
+        ~startBlock=0,
+        ~maxAddrInPartition=2,
+        ~isFetchingAtHead=false,
+      )->FetchState.registerDynamicContract(
+        [makeDynContractRegistration(~blockNumber=2, ~contractAddress=mockAddress2)],
+        ~isFetchingAtHead=false,
+      )
+
+    Assert.deepEqual(fetchState.partitions->Array.length, 2)
+
+    let nextQuery =
+      fetchState->FetchState.getNextQuery(
+        ~currentBlockHeight=10,
+        ~endBlock=None,
+        ~concurrencyLimit=10,
+        ~maxQueueSize=10,
+      )
+
+    Assert.deepEqual(
+      nextQuery,
+      Ready([
+        PartitionQuery({
+          partitionId: "0",
+          contractAddressMapping: ContractAddressingMap.fromArray([(mockAddress1, "ContractA")]),
+          fromBlock: 0,
+          toBlock: None,
+        }),
+      ]),
+      ~message=`Still locks the partition "1", but performs a PartitionQuery for "0" instead of MergeQuery`,
+    )
+  })
+
+  it("Correctly rollbacks partitions", () => {
+    let fetchState = makeIntermidiateDcMerge()
+
+    let fetchStateAfterRollback1 =
+      fetchState->FetchState.rollback(
+        ~lastScannedBlock={blockNumber: 2, blockTimestamp: 2},
+        ~firstChangeEvent={blockNumber: 2, logIndex: 0},
+      )
+
+    Assert.deepEqual(
+      fetchStateAfterRollback1,
+      {
+        ...fetchState,
+        partitions: [
+          {
+            id: "0",
+            status: {isFetching: false},
+            latestFetchedBlock: {
+              blockNumber: 2,
+              blockTimestamp: 2,
+            },
+            contractAddressMapping: ContractAddressingMap.make(),
+            // Removed an item here, but kept the partition.
+            // Even though there are no addresses
+            fetchedEventQueue: [mockEvent(~blockNumber=1)],
+            dynamicContracts: [],
+          },
+          {
+            id: "2",
+            status: {isFetching: false},
+            // Should keep it's own latestFetchedBlock
+            latestFetchedBlock: {
+              blockNumber: 1,
+              blockTimestamp: 0,
+            },
+            contractAddressMapping: ContractAddressingMap.fromArray([(mockAddress1, "Gravatar")]),
+            fetchedEventQueue: [],
+            // Removed dc2, even though the latestFetchedBlock is not exceeding the lastScannedBlock
+            dynamicContracts: [dc1],
+          },
+        ],
+        queueSize: 1,
+      },
+      ~message=`Should rollback the partition state, but keep them`,
+    )
+
+    // Rollback even more to see the removal of partition "2"
+    let fetchStateAfterRollback2 =
+      fetchStateAfterRollback1->FetchState.rollback(
+        ~lastScannedBlock={blockNumber: 0, blockTimestamp: 0},
+        ~firstChangeEvent={blockNumber: 0, logIndex: 0},
+      )
+
+    Assert.deepEqual(
+      fetchStateAfterRollback2,
+      {
+        ...fetchStateAfterRollback1,
+        partitions: [
+          {
+            id: "0",
+            status: {isFetching: false},
+            latestFetchedBlock: {
+              blockNumber: 0,
+              blockTimestamp: 0,
+            },
+            contractAddressMapping: ContractAddressingMap.make(),
+            fetchedEventQueue: [],
+            dynamicContracts: [],
+          },
+        ],
+        latestFullyFetchedBlock: {
+          blockNumber: 0,
+          blockTimestamp: 0,
+        },
+        queueSize: 0,
+      },
+      ~message=`Partition "2" should be removed, but the partition "0" should be kept`,
     )
   })
 })
 
 // describe("FetchState.fetchState", () => {
-//   it("dynamic contract map", () => {
-//     let makeDcId = (blockNumber, logIndex): FetchState.dynamicContractId => {
-//       blockNumber,
-//       logIndex,
-//     }
-//     let dcId1 = makeDcId(5, 0)
-//     let dcId2 = makeDcId(5, 1)
-//     let dcId3 = makeDcId(6, 0)
-//     let dcId4 = makeDcId(7, 0)
-//     let addAddr = FetchState.DynamicContractsMap.addAddress
-//     let dcMap =
-//       FetchState.DynamicContractsMap.empty
-//       ->addAddr(dcId1, mockAddress1)
-//       ->addAddr(dcId2, mockAddress2)
-//       ->addAddr(dcId3, mockAddress3)
-//       ->addAddr(dcId4, mockAddress4)
-
-//     let (_updatedMap, removedAddresses) =
-//       dcMap->FetchState.DynamicContractsMap.removeContractAddressesFromFirstChangeEvent(
-//         ~firstChangeEvent={blockNumber: 6, logIndex: 0},
-//       )
-
-//     Assert.deepEqual(removedAddresses, [mockAddress3, mockAddress4])
-//   })
-
-//   it("dynamic contract registration", () => {
-//     let root = FetchState.make(
-//       ~startBlock=10_000,
-//       ~staticContracts=[((Gravatar :> string), mockAddress1)],
-//       ~dynamicContractRegistrations=[],
-//       ~isFetchingAtHead=false,
-//       ~maxAddrInPartition=5000,
-//     )
-//     let rootRegister = root.mostBehindRegister
-
-//     let dc1 = makeDynContractRegistration(~contractAddress=mockAddress2, ~blockNumber=50)
-//     let dcId1 = getDynContractId(dc1)
-
-//     let root = root->FetchState.registerDynamicContract(
-//       {
-//         {
-//           registeringEventBlockNumber: dc1.registeringEventBlockNumber,
-//           registeringEventLogIndex: dc1.registeringEventLogIndex,
-//           registeringEventChain: ChainMap.Chain.makeUnsafe(~chainId=dc1.chainId),
-//           dynamicContracts: [dc1],
-//         }
-//       },
-//       ~isFetchingAtHead=false,
-//     )
-
-//     let expected1: FetchState.register = {
-//       latestFetchedBlock: {blockNumber: dcId1.blockNumber - 1, blockTimestamp: 0},
-//       contractAddressMapping: ContractAddressingMap.fromArray([
-//         (dc1.contractAddress, (Gravatar :> string)),
-//       ]),
-//       firstEventBlockNumber: None,
-//       dynamicContracts: FetchState.DynamicContractsMap.empty->FetchState.DynamicContractsMap.add(
-//         dcId1,
-//         [dc1.contractAddress],
-//       ),
-//       fetchedEventQueue: [],
-//       id: FetchState.makeDynamicContractRegisterId(dcId1),
-//     }
-
-//     Assert.deepEqual(root.registers, [expected1, rootRegister], ~message="1st registration")
-
-//     let dc2 = makeDynContractRegistration(~contractAddress=mockAddress3, ~blockNumber=55)
-//     let dcId2 = getDynContractId(dc2)
-
-//     let root = root->FetchState.registerDynamicContract(
-//       {
-//         {
-//           registeringEventBlockNumber: dc2.registeringEventBlockNumber,
-//           registeringEventLogIndex: dc2.registeringEventLogIndex,
-//           registeringEventChain: ChainMap.Chain.makeUnsafe(~chainId=dc2.chainId),
-//           dynamicContracts: [dc2],
-//         }
-//       },
-//       ~isFetchingAtHead=false,
-//     )
-
-//     let expected2: FetchState.register = {
-//       latestFetchedBlock: {blockNumber: dcId2.blockNumber - 1, blockTimestamp: 0},
-//       contractAddressMapping: ContractAddressingMap.fromArray([
-//         (dc2.contractAddress, (Gravatar :> string)),
-//       ]),
-//       firstEventBlockNumber: None,
-//       dynamicContracts: FetchState.DynamicContractsMap.empty->FetchState.DynamicContractsMap.add(
-//         dcId2,
-//         [dc2.contractAddress],
-//       ),
-//       fetchedEventQueue: [],
-//       id: FetchState.makeDynamicContractRegisterId(dcId2),
-//     }
-
-//     Assert.deepEqual(
-//       root.registers,
-//       [expected1, expected2, rootRegister],
-//       ~message="2nd registration",
-//     )
-
-//     let dc3 = makeDynContractRegistration(~contractAddress=mockAddress3, ~blockNumber=60)
-//     let dcId3 = getDynContractId(dc3)
-
-//     let root = root->FetchState.registerDynamicContract(
-//       {
-//         {
-//           registeringEventBlockNumber: dc3.registeringEventBlockNumber,
-//           registeringEventLogIndex: dc3.registeringEventLogIndex,
-//           registeringEventChain: ChainMap.Chain.makeUnsafe(~chainId=dc3.chainId),
-//           dynamicContracts: [dc3],
-//         }
-//       },
-//       ~isFetchingAtHead=false,
-//     )
-
-//     let expected3: FetchState.register = {
-//       latestFetchedBlock: {blockNumber: dcId3.blockNumber - 1, blockTimestamp: 0},
-//       contractAddressMapping: ContractAddressingMap.fromArray([
-//         (dc3.contractAddress, (Gravatar :> string)),
-//       ]),
-//       firstEventBlockNumber: None,
-//       dynamicContracts: FetchState.DynamicContractsMap.empty->FetchState.DynamicContractsMap.add(
-//         dcId3,
-//         [dc3.contractAddress],
-//       ),
-//       fetchedEventQueue: [],
-//       id: FetchState.makeDynamicContractRegisterId(dcId3),
-//     }
-
-//     Assert.deepEqual(
-//       root.registers,
-//       [expected1, expected2, expected3, rootRegister],
-//       ~message="3rd registration",
-//     )
-//   })
-
-// let mockEvent = (~blockNumber, ~logIndex=0, ~chainId=1): Internal.eventItem => {
-//   timestamp: blockNumber * 15,
-//   chain: ChainMap.Chain.makeUnsafe(~chainId),
-//   blockNumber,
-//   logIndex,
-//   eventName: "MockEvent",
-//   contractName: "MockContract",
-//   handler: None,
-//   loader: None,
-//   contractRegister: None,
-//   paramsRawEventSchema: Utils.magic("Mock event paramsRawEventSchema in fetchstate test"),
-//   event: Utils.magic("Mock event in fetchstate test"),
-// }
 
 //   it("merge next register", () => {
 //     let dcId: FetchState.dynamicContractId = {blockNumber: 100, logIndex: 0}

@@ -333,6 +333,8 @@ let queryPartitionId = query => {
   }
 }
 
+let shouldApplyWildcards = (~partitionId) => partitionId === "0"
+
 exception UnexpectedPartitionNotFound({partitionId: string})
 exception UnexpectedMergeQueryResponse({message: string})
 
@@ -524,7 +526,7 @@ let getNextQuery = (
               switch mergeTarget {
               | Some(mergeTarget)
                 if // This is to prevent breaking the current check for shouldApplyWildcards
-                q.partitionId !== "0" =>
+                !shouldApplyWildcards(~partitionId=q.partitionId) =>
                 MergeQuery({
                   partitionId: q.partitionId,
                   contractAddressMapping: q.contractAddressMapping,
@@ -815,14 +817,18 @@ let pruneQueueFromFirstChangeEvent = (
   )
 }
 
-let pruneDynamicContractAddressesFromFirstChangeEvent = (
-  register: register,
+/**
+Rolls back registers to the given valid block
+*/
+let rollbackPartition = (
+  partition: register,
+  ~lastScannedBlock,
   ~firstChangeEvent: blockNumberAndLogIndex,
 ) => {
   //get all dynamic contract addresses past valid blockNumber to remove along with
   //updated dynamicContracts map
   let addressesToRemove = []
-  let dynamicContracts = register.dynamicContracts->Array.keep(dc => {
+  let dynamicContracts = partition.dynamicContracts->Array.keep(dc => {
     if (
       (dc.registeringEventBlockNumber, dc.registeringEventLogIndex) >=
       (firstChangeEvent.blockNumber, firstChangeEvent.logIndex)
@@ -836,52 +842,43 @@ let pruneDynamicContractAddressesFromFirstChangeEvent = (
     }
   })
 
-  //remove them from the contract address mapping and dynamic contract addresses mapping
-  let contractAddressMapping =
-    register.contractAddressMapping->ContractAddressingMap.removeAddresses(~addressesToRemove)
-
-  {...register, contractAddressMapping, dynamicContracts}
-}
-
-/**
-Rolls back registers to the given valid block
-*/
-let rollbackRegister = (
-  register: register,
-  ~lastScannedBlock,
-  ~firstChangeEvent: blockNumberAndLogIndex,
-) => {
-  if register.latestFetchedBlock.blockNumber < firstChangeEvent.blockNumber {
-    Some(register)
+  if (
+    addressesToRemove->Array.length ===
+      partition.contractAddressMapping->ContractAddressingMap.addressCount &&
+      !shouldApplyWildcards(~partitionId=partition.id)
+  ) {
+    None
   } else {
-    let updatedWithRemovedDynamicContracts =
-      register->pruneDynamicContractAddressesFromFirstChangeEvent(~firstChangeEvent)
-    if updatedWithRemovedDynamicContracts.contractAddressMapping->ContractAddressingMap.isEmpty {
-      //If the contractAddressMapping is empty after pruning dynamic contracts,
-      // then this is a dead register.
-      None
+    //remove them from the contract address mapping and dynamic contract addresses mapping
+    let contractAddressMapping =
+      partition.contractAddressMapping->ContractAddressingMap.removeAddresses(~addressesToRemove)
+
+    let shouldRollbackFetched =
+      partition.latestFetchedBlock.blockNumber >= firstChangeEvent.blockNumber
+
+    let fetchedEventQueue = if shouldRollbackFetched {
+      partition.fetchedEventQueue->pruneQueueFromFirstChangeEvent(~firstChangeEvent)
     } else {
-      //If there are still values in the contractAddressMapping,
-      //we should keep the register but prune queues
-      Some({
-        ...updatedWithRemovedDynamicContracts,
-        status: {
-          isFetching: false,
-        },
-        fetchedEventQueue: register.fetchedEventQueue->pruneQueueFromFirstChangeEvent(
-          ~firstChangeEvent,
-        ),
-        latestFetchedBlock: lastScannedBlock,
-      })
+      partition.fetchedEventQueue
     }
+
+    Some({
+      id: partition.id,
+      dynamicContracts,
+      contractAddressMapping,
+      status: {
+        isFetching: false,
+      },
+      fetchedEventQueue,
+      latestFetchedBlock: shouldRollbackFetched ? lastScannedBlock : partition.latestFetchedBlock,
+    })
   }
 }
 
 let rollback = (fetchState: t, ~lastScannedBlock, ~firstChangeEvent) => {
-  // FIXME: Check that it's correct
   let partitions =
     fetchState.partitions->Array.keepMap(r =>
-      r->rollbackRegister(~lastScannedBlock, ~firstChangeEvent)
+      r->rollbackPartition(~lastScannedBlock, ~firstChangeEvent)
     )
 
   fetchState->updateInternal(~partitions)

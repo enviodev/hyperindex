@@ -96,14 +96,18 @@ let fromArray = (nameAddrTuples: array<(Address.t, string)>) => {
 Creates a new mapping from the previous without the addresses passed in as "addressesToRemove"
 */
 let removeAddresses = (mapping: mapping, ~addressesToRemove: array<Address.t>) => {
-  mapping.nameByAddress
-  ->Js.Dict.entries
-  ->Belt.Array.keep(((addr, _name)) => {
-    let shouldRemove = addressesToRemove->Utils.Array.includes(addr->Utils.magic)
-    !shouldRemove
-  })
-  ->keyValStringToAddress
-  ->fromArray
+  switch addressesToRemove {
+  | [] => mapping
+  | _ =>
+    mapping.nameByAddress
+    ->Js.Dict.entries
+    ->Belt.Array.keep(((addr, _name)) => {
+      let shouldRemove = addressesToRemove->Utils.Array.includes(addr->Utils.magic)
+      !shouldRemove
+    })
+    ->keyValStringToAddress
+    ->fromArray
+  }
 }
 
 let addressCount = (mapping: mapping) => mapping.nameByAddress->Js.Dict.keys->Belt.Array.length

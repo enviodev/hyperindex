@@ -227,7 +227,7 @@ Helper to check if a value exists in an array
   }
 
   @send
-  external flatten: (array<array<'a>>, @as(json`1`) _) => array<'a> = "flat"
+  external flatten: (array<array<'a>>, @as(1) _) => array<'a> = "flat"
 }
 
 module String = {
