@@ -12,17 +12,12 @@ type blockRangeFetchStats = {
   @as("page fetch time (ms)") pageFetchTime?: int,
 }
 
-type reorgGuard = {
-  lastBlockScannedData: ReorgDetection.blockData,
-  firstBlockParentNumberAndHash: option<ReorgDetection.blockNumberAndHash>,
-}
-
 /**
 Thes response returned from a block range fetch
 */
 type blockRangeFetchResponse = {
   currentBlockHeight: int,
-  reorgGuard: reorgGuard,
+  reorgGuard: ReorgDetection.reorgGuard,
   parsedQueueItems: array<Internal.eventItem>,
   fromBlockQueried: int,
   latestFetchedBlockNumber: int,
