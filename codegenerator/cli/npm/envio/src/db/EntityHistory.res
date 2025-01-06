@@ -243,8 +243,8 @@ let fromTable = (table: table, ~schema: S.t<'entity>): t<'entity> => {
 
   let insertFnName = `"insert_${table.tableName}"`
   let historyRowArg = "history_row"
-  let historyTablePath = `"public"."${historyTableName}"`
-  let originTablePath = `"public"."${originTableName}"`
+  let historyTablePath = `"${historyTableName}"`
+  let originTablePath = `"${originTableName}"`
 
   let previousHistoryFieldsAreNullStr =
     previousChangeFieldNames

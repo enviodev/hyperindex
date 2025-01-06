@@ -189,7 +189,7 @@ describe("Dynamic contract restart resistance test", () => {
       //up to the second one yet
 
       let dynamicContractsInTable =
-        await Db.sql->Postgres.unsafe(`SELECT * FROM public.dynamic_contract_registry;`)
+        await Db.sql->Postgres.unsafe(`SELECT * FROM dynamic_contract_registry;`)
 
       Assert.equal(
         dynamicContractsInTable->Array.length,

@@ -69,6 +69,7 @@ type poolConfig = {
   database?: string, // Name of database to connect to (default: '')
   username?: string, // Username of database user (default: '')
   password?: string, // Password of database user (default: '')
+  schema?: string, // Name of schema to connect to (default: 'public')
   ssl?: sslOptions, // true, prefer, require, tls.connect options (default: false)
   max?: int, // Max number of connections (default: 10)
   maxLifetime?: option<int>, // Max lifetime in seconds (more info below) (default: null)
@@ -86,8 +87,52 @@ type poolConfig = {
   fetchTypes?: bool, // Automatically fetches types on connect on initial connection. (default: true)
 }
 
+let makeConnectionString = (config: poolConfig) => {
+  let parts = ["postgres://"]
+  
+  switch (config.username, config.password) {
+  | (Some(username), Some(password)) => parts->Js.Array2.push(`${username}:${password}@`)->ignore
+  | (Some(username), None) => parts->Js.Array2.push(`${username}@`)->ignore
+  | _ => ()
+  }
+
+  switch config.host {
+  | Some(host) => parts->Js.Array2.push(host)->ignore
+  | None => ()
+  }
+
+  switch config.port {
+  | Some(port) => parts->Js.Array2.push(`:${port->Belt.Int.toString}`)->ignore
+  | None => ()
+  }
+
+  switch config.database {
+  | Some(database) => parts->Js.Array2.push(`/${database}`)->ignore
+  | None => ()
+  }
+
+  switch config.schema {
+  | Some(schema) => parts->Js.Array2.push(`?search_path=${schema}`)->ignore
+  | None => ()
+  }
+
+  let connectionString = parts->Js.Array2.joinWith("")
+  connectionString
+}
+
 @module
 external makeSql: (~config: poolConfig) => sql = "postgres"
+
+@module
+external makeSqlWithConnectionString: (string, poolConfig) => sql = "postgres"
+
+let makeSql = (~config: poolConfig) => {
+  let connectionString = makeConnectionString(config)
+
+  Js.Console.log(`Connection string: ${connectionString}`)
+
+  makeSqlWithConnectionString(connectionString, config)
+}
 
 @send external beginSql: (sql, sql => array<promise<unit>>) => promise<unit> = "begin"
 
