@@ -56,19 +56,26 @@ let fetchNext = async (
     ) {
     | ReachedMaxConcurrency
     | NothingToQuery => ()
-    | WaitingForNewBlock => {
+    | WaitingForNewBlock =>
       if !sourceManager.isWaitingForNewBlock {
         sourceManager.isWaitingForNewBlock = true
         let currentBlockHeight = await waitForNewBlock(~currentBlockHeight, ~logger)
         sourceManager.isWaitingForNewBlock = false
         onNewBlock(~currentBlockHeight)
       }
-    }
     | Ready(queries) => {
         fetchState->FetchState.startFetchingQueries(~queries)
+        sourceManager.fetchingPartitionsCount =
+          sourceManager.fetchingPartitionsCount + queries->Array.length
         let _ =
           await queries
-          ->Array.map(executeQuery)
+          ->Array.map(q => {
+            let promise = q->executeQuery
+            let _ = promise->Promise.thenResolve(_ => {
+              sourceManager.fetchingPartitionsCount = sourceManager.fetchingPartitionsCount - 1
+            })
+            promise
+          })
           ->Promise.all
       }
     }
