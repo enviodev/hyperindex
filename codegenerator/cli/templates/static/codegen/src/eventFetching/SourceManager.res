@@ -12,9 +12,6 @@ type t = {
   mutable isWaitingForNewBlock: bool,
   // Should take into consideration partitions fetching for previous states (before rollback)
   mutable fetchingPartitionsCount: int,
-  // Keep track on the current state id
-  // to work with correct state during rollbacks & preRegistration
-  mutable currentStateId: int,
 }
 
 let make = (~maxPartitionConcurrency, ~endBlock, ~logger) => {
@@ -22,7 +19,6 @@ let make = (~maxPartitionConcurrency, ~endBlock, ~logger) => {
   endBlock,
   maxPartitionConcurrency,
   isWaitingForNewBlock: false,
-  currentStateId: 0,
   fetchingPartitionsCount: 0,
 }
 
@@ -38,46 +34,40 @@ let fetchNext = async (
   ~maxPerChainQueueSize,
   ~stateId,
 ) => {
-  if stateId < sourceManager.currentStateId {
-    ()
-  } else {
-    if stateId != sourceManager.currentStateId {
-      sourceManager.currentStateId = stateId
-    }
-    let {logger, endBlock, maxPartitionConcurrency} = sourceManager
+  let {logger, endBlock, maxPartitionConcurrency} = sourceManager
 
-    switch fetchState->FetchState.getNextQuery(
-      ~endBlock,
-      ~concurrencyLimit={
-        maxPartitionConcurrency - sourceManager.fetchingPartitionsCount
-      },
-      ~maxQueueSize=maxPerChainQueueSize,
-      ~currentBlockHeight,
-    ) {
-    | ReachedMaxConcurrency
-    | NothingToQuery => ()
-    | WaitingForNewBlock =>
-      if !sourceManager.isWaitingForNewBlock {
-        sourceManager.isWaitingForNewBlock = true
-        let currentBlockHeight = await waitForNewBlock(~currentBlockHeight, ~logger)
-        sourceManager.isWaitingForNewBlock = false
-        onNewBlock(~currentBlockHeight)
-      }
-    | Ready(queries) => {
-        fetchState->FetchState.startFetchingQueries(~queries)
-        sourceManager.fetchingPartitionsCount =
-          sourceManager.fetchingPartitionsCount + queries->Array.length
-        let _ =
-          await queries
-          ->Array.map(q => {
-            let promise = q->executeQuery
-            let _ = promise->Promise.thenResolve(_ => {
-              sourceManager.fetchingPartitionsCount = sourceManager.fetchingPartitionsCount - 1
-            })
-            promise
+  switch fetchState->FetchState.getNextQuery(
+    ~endBlock,
+    ~concurrencyLimit={
+      maxPartitionConcurrency - sourceManager.fetchingPartitionsCount
+    },
+    ~maxQueueSize=maxPerChainQueueSize,
+    ~currentBlockHeight,
+    ~stateId,
+  ) {
+  | ReachedMaxConcurrency
+  | NothingToQuery => ()
+  | WaitingForNewBlock =>
+    if !sourceManager.isWaitingForNewBlock {
+      sourceManager.isWaitingForNewBlock = true
+      let currentBlockHeight = await waitForNewBlock(~currentBlockHeight, ~logger)
+      sourceManager.isWaitingForNewBlock = false
+      onNewBlock(~currentBlockHeight)
+    }
+  | Ready(queries) => {
+      fetchState->FetchState.startFetchingQueries(~queries, ~stateId)
+      sourceManager.fetchingPartitionsCount =
+        sourceManager.fetchingPartitionsCount + queries->Array.length
+      let _ =
+        await queries
+        ->Array.map(q => {
+          let promise = q->executeQuery
+          let _ = promise->Promise.thenResolve(_ => {
+            sourceManager.fetchingPartitionsCount = sourceManager.fetchingPartitionsCount - 1
           })
-          ->Promise.all
-      }
+          promise
+        })
+        ->Promise.all
     }
   }
 }

@@ -13,7 +13,7 @@ type blockNumberAndTimestamp = {
 
 type blockNumberAndLogIndex = {blockNumber: int, logIndex: int}
 
-type status = {mutable isFetching: bool}
+type status = {mutable fetchingStateId: option<int>}
 
 /**
 A state that holds a queue of events and data regarding what to fetch next.
@@ -125,7 +125,7 @@ let mergeIntoPartition = (register: register, ~target: register, ~maxAddrInParti
     Some({
       id: register.id,
       status: {
-        isFetching: false,
+        fetchingStateId: None,
       },
       fetchedEventQueue: [],
       contractAddressMapping: restContractAddressMapping,
@@ -144,7 +144,7 @@ let mergeIntoPartition = (register: register, ~target: register, ~maxAddrInParti
     {
       id: target.id,
       status: {
-        isFetching: false,
+        fetchingStateId: None,
       },
       fetchedEventQueue: mergeSortedEventList(register.fetchedEventQueue, target.fetchedEventQueue),
       contractAddressMapping: mergedContractAddressMapping,
@@ -168,7 +168,7 @@ let addItemsToPartition = (
   {
     ...register,
     status: {
-      isFetching: false,
+      fetchingStateId: None,
     },
     latestFetchedBlock,
     fetchedEventQueue: Array.concat(reversedNewItems, register.fetchedEventQueue),
@@ -247,7 +247,7 @@ let makePartition = (
   {
     id: partitionIndex->Int.toString,
     status: {
-      isFetching: false,
+      fetchingStateId: None,
     },
     latestFetchedBlock,
     contractAddressMapping,
@@ -431,12 +431,12 @@ type nextQuery =
   | NothingToQuery
   | Ready(array<query>)
 
-let startFetchingQueries = ({partitions}: t, ~queries: array<query>) => {
+let startFetchingQueries = ({partitions}: t, ~queries: array<query>, ~stateId) => {
   queries->Array.forEach(q => {
     switch partitions->Js.Array2.find(p => p.id === q->queryPartitionId) {
-    // Shouldn't be mutated to false anymore
+    // Shouldn't be mutated to None anymore
     // The status will be immutably set to the initial one when we handle response
-    | Some(p) => p.status.isFetching = true
+    | Some(p) => p.status.fetchingStateId = Some(stateId)
     | None => Js.Exn.raiseError("Unexpected case: Couldn't find partition for the fetching query")
     }
   })
@@ -448,6 +448,7 @@ let getNextQuery = (
   ~concurrencyLimit,
   ~maxQueueSize,
   ~currentBlockHeight,
+  ~stateId,
 ) => {
   if currentBlockHeight === 0 {
     WaitingForNewBlock
@@ -461,13 +462,24 @@ let getNextQuery = (
     let mostBehindMergingPartition = ref(None)
     let mergingPartitionTarget = ref(None)
 
+    let checkIsFetchingPartition = p => {
+      switch p.status.fetchingStateId {
+      | Some(fetchingStateId) => stateId <= fetchingStateId
+      | None => false
+      }
+    }
+
     for idx in 0 to partitions->Js.Array2.length - 1 {
       let p = partitions->Js.Array2.unsafe_get(idx)
+
+      let isFetching = checkIsFetchingPartition(p)
+
+      if isFetching {
+        hasFetchingPartition := true
+      }
+
       if p.contractAddressMapping->ContractAddressingMap.addressCount >= maxAddrInPartition {
         fullPartitions->Array.push(p)
-        if p.status.isFetching {
-          hasFetchingPartition := true
-        }
       } else {
         mergingPartitions->Array.push(p)
 
@@ -500,8 +512,7 @@ let getNextQuery = (
           | None => p
           }->Some
 
-        if p.status.isFetching {
-          hasFetchingPartition := true
+        if isFetching {
           areMergingPartitionsFetching := true
         }
       }
@@ -513,7 +524,7 @@ let getNextQuery = (
 
     let registerPartitionQuery = (p, ~checkQueueSize, ~mergeTarget=?) => {
       if (
-        p.status.isFetching->not && (
+        p->checkIsFetchingPartition->not && (
             checkQueueSize ? p.fetchedEventQueue->Array.length < maxPartitionQueueSize : true
           )
       ) {
@@ -867,7 +878,7 @@ let rollbackPartition = (
       dynamicContracts,
       contractAddressMapping,
       status: {
-        isFetching: false,
+        fetchingStateId: None,
       },
       fetchedEventQueue,
       latestFetchedBlock: shouldRollbackFetched ? lastScannedBlock : partition.latestFetchedBlock,

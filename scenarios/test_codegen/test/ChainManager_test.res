@@ -340,7 +340,7 @@ describe("determineNextEvent", () => {
           blockNumber: 0,
         },
         status: {
-          isFetching: false,
+          fetchingStateId: None,
         },
         contractAddressMapping: ContractAddressingMap.make(),
         fetchedEventQueue: item->Option.mapWithDefault([], v => [v]),
