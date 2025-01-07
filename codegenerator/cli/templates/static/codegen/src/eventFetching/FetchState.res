@@ -38,6 +38,7 @@ type t = {
   // since partitions might be deleted on merge or cleaned up
   nextPartitionIndex: int,
   isFetchingAtHead: bool,
+  endBlock: option<int>,
   maxAddrInPartition: int,
   batchSize: int,
   firstEventBlockNumber: option<int>,
@@ -56,6 +57,7 @@ let copy = (fetchState: t) => {
   {
     maxAddrInPartition: fetchState.maxAddrInPartition,
     partitions,
+    endBlock: fetchState.endBlock,
     nextPartitionIndex: fetchState.nextPartitionIndex,
     isFetchingAtHead: fetchState.isFetchingAtHead,
     latestFullyFetchedBlock: fetchState.latestFullyFetchedBlock,
@@ -215,6 +217,7 @@ let updateInternal = (
 
   {
     maxAddrInPartition: fetchState.maxAddrInPartition,
+    endBlock: fetchState.endBlock,
     nextPartitionIndex,
     firstEventBlockNumber,
     batchSize,
@@ -256,7 +259,7 @@ let makePartition = (
   }
 }
 
-let registerDynamicContract = (
+let registerDynamicContracts = (
   fetchState: t,
   dynamicContracts: array<TablesStatic.DynamicContractRegistry.t>,
   ~isFetchingAtHead,
@@ -443,8 +446,7 @@ let startFetchingQueries = ({partitions}: t, ~queries: array<query>, ~stateId) =
 }
 
 let getNextQuery = (
-  {partitions, maxAddrInPartition}: t,
-  ~endBlock,
+  {partitions, maxAddrInPartition, endBlock}: t,
   ~concurrencyLimit,
   ~maxQueueSize,
   ~currentBlockHeight,
@@ -683,6 +685,7 @@ let make = (
   ~staticContracts,
   ~dynamicContracts,
   ~startBlock,
+  ~endBlock,
   ~maxAddrInPartition,
   ~isFetchingAtHead,
   ~batchSize=Env.maxProcessBatchSize,
@@ -755,6 +758,7 @@ let make = (
     nextPartitionIndex: partitions->Array.length,
     isFetchingAtHead,
     maxAddrInPartition,
+    endBlock,
     batchSize,
     latestFullyFetchedBlock: latestFetchedBlock,
     queueSize: 0,
@@ -899,7 +903,7 @@ let rollback = (fetchState: t, ~lastScannedBlock, ~firstChangeEvent) => {
 * Returns a boolean indicating whether the fetch state is actively indexing
 * used for comparing event queues in the chain manager
 */
-let isActivelyIndexing = ({latestFullyFetchedBlock} as fetchState: t, ~endBlock) => {
+let isActivelyIndexing = ({latestFullyFetchedBlock, endBlock} as fetchState: t) => {
   switch endBlock {
   | Some(endBlock) =>
     let isPastEndblock = latestFullyFetchedBlock.blockNumber >= endBlock

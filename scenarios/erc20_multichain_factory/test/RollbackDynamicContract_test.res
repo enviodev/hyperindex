@@ -154,7 +154,7 @@ describe("Dynamic contract rollback test", () => {
 
     let getFetchState = chain => {
       let cf = chain->getChainFetcher
-      cf.partitionedFetchState.partitions->Js.Array2.unsafe_get(0)
+      cf.fetchState
     }
 
     let getLatestFetchedBlock = chain => {
@@ -177,8 +177,7 @@ describe("Dynamic contract rollback test", () => {
       ->ChainMap.values
       ->Array.reduce(
         0,
-        (accum, chainFetcher) =>
-          accum + chainFetcher.partitionedFetchState->PartitionedFetchState.queueSize,
+        (accum, chainFetcher) => accum + chainFetcher.fetchState->FetchState.queueSize,
       )
     }
 

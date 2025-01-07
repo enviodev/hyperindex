@@ -7,16 +7,14 @@ open Belt
 // with a mutable state for easier reasoning and testing.
 type t = {
   logger: Pino.t,
-  endBlock: option<int>,
   maxPartitionConcurrency: int,
   mutable isWaitingForNewBlock: bool,
   // Should take into consideration partitions fetching for previous states (before rollback)
   mutable fetchingPartitionsCount: int,
 }
 
-let make = (~maxPartitionConcurrency, ~endBlock, ~logger) => {
+let make = (~maxPartitionConcurrency, ~logger) => {
   logger,
-  endBlock,
   maxPartitionConcurrency,
   isWaitingForNewBlock: false,
   fetchingPartitionsCount: 0,
@@ -34,10 +32,9 @@ let fetchNext = async (
   ~maxPerChainQueueSize,
   ~stateId,
 ) => {
-  let {logger, endBlock, maxPartitionConcurrency} = sourceManager
+  let {logger, maxPartitionConcurrency} = sourceManager
 
   switch fetchState->FetchState.getNextQuery(
-    ~endBlock,
     ~concurrencyLimit={
       maxPartitionConcurrency - sourceManager.fetchingPartitionsCount
     },
