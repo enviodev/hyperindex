@@ -269,7 +269,6 @@ let setAllChainsSyncedToHead = () => {
   allChainsSyncedToHead->PromClient.Gauge.set(1)
 }
 
-// TODO: implement this metric that updates in batches, currently unused
 let setProcessedUntilHeight = (~blockNumber, ~chain) => {
   processedUntilHeight
   ->PromClient.Gauge.labels({"chainId": chain->ChainMap.Chain.toString})

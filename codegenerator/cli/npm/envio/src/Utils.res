@@ -181,7 +181,7 @@ Helper to check if a value exists in an array
   */
   let removeAtIndex = (array, index) => {
     if index < 0 {
-      array
+      array->Array.copy
     } else {
       array
       ->Js.Array2.slice(~start=0, ~end_=index)

@@ -323,8 +323,6 @@ let handlePartitionQueryResponse = (
   } = response
   let {lastBlockScannedData} = reorgGuard
 
-  let partitionId = query->FetchState.queryPartitionId
-
   if Env.Benchmark.shouldSaveData {
     Benchmark.addBlockRangeFetched(
       ~totalTimeElapsed=stats.totalTimeElapsed,
@@ -334,7 +332,15 @@ let handlePartitionQueryResponse = (
       ~fromBlock=fromBlockQueried,
       ~toBlock=latestFetchedBlockNumber,
       ~numEvents=parsedQueueItems->Array.length,
-      ~partitionId,
+      ~numAddresses=switch query {
+      | PartitionQuery({contractAddressMapping})
+      | MergeQuery({contractAddressMapping}) => contractAddressMapping
+      }->ContractAddressingMap.addressCount,
+      ~queryName=switch query {
+      | PartitionQuery({partitionId}) => `Partition ${partitionId}`
+      // Group all merge queries into a single summary
+      | MergeQuery(_) => `Merge Query`
+      },
     )
   }
 
@@ -571,7 +577,7 @@ let actionReducer = (state: t, action: action) => {
       ...state,
       chainManager: updatedChainManager,
     }
-
+    let nextState = updateLatestProcessedBlocks(~state=nextState, ~latestProcessedBlocks)
     // This ONLY updates the metrics - no logic is performed.
     nextState.chainManager.chainFetchers
     ->ChainMap.entries
@@ -581,8 +587,11 @@ let actionReducer = (state: t, action: action) => {
       ).blockNumber
 
       Prometheus.setFetchedEventsUntilHeight(~blockNumber=highestFetchedBlockOnChain, ~chain)
+      switch chainFetcher.latestProcessedBlock {
+      | Some(blockNumber) => Prometheus.setProcessedUntilHeight(~blockNumber, ~chain)
+      | None => ()
+      }
     })
-    let nextState = updateLatestProcessedBlocks(~state=nextState, ~latestProcessedBlocks)
     (nextState, nextTasks)
 
   | EventBatchProcessed({latestProcessedBlocks, dynamicContractRegistrations: None}) =>

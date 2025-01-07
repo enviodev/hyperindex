@@ -40,10 +40,10 @@ type t = {
   isFetchingAtHead: bool,
   maxAddrInPartition: int,
   batchSize: int,
+  firstEventBlockNumber: option<int>,
   // Fields computed by updateInternal
   latestFullyFetchedBlock: blockNumberAndTimestamp,
   queueSize: int,
-  firstEventBlockNumber: option<int>,
 }
 
 let shallowCopyRegister = (register: register) => {

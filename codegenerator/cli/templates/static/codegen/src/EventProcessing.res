@@ -100,16 +100,14 @@ let checkContractIsInCurrentRegistrations = (
   ~dynamicContractRegistrations: option<dynamicContractRegistrations>,
   ~chain,
   ~contractAddress,
-  ~contractType,
+  ~contractType as _,
 ) => {
   switch dynamicContractRegistrations {
   | Some(dynamicContracts) =>
     dynamicContracts.dynamicContractsByChain
     ->Utils.Dict.dangerouslyGetNonOption(chain->ChainMap.Chain.toString)
     ->Option.mapWithDefault(false, dcs =>
-      dcs->Array.some(dc =>
-        dc.contractType == contractType && dc.contractAddress == contractAddress
-      )
+      dcs->Array.some(dc => dc.contractAddress == contractAddress)
     )
 
   | None => false
