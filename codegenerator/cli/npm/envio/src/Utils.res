@@ -180,9 +180,13 @@ Helper to check if a value exists in an array
   Index > array length or < 0 results in a copy of the array
   */
   let removeAtIndex = (array, index) => {
-    array
-    ->Js.Array2.slice(~start=0, ~end_=index)
-    ->Js.Array2.concat(array->Js.Array2.sliceFrom(index + 1))
+    if index < 0 {
+      array
+    } else {
+      array
+      ->Js.Array2.slice(~start=0, ~end_=index)
+      ->Js.Array2.concat(array->Js.Array2.sliceFrom(index + 1))
+    }
   }
 
   let last = (arr: array<'a>): option<'a> => arr->Belt.Array.get(arr->Array.length - 1)

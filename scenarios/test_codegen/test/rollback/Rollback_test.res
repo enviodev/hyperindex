@@ -330,6 +330,7 @@ describe("Single Chain Simple Rollback", () => {
     Assert.deepEqual(
       tasks.contents,
       [
+        UpdateChainMetaDataAndCheckForExit(NoExit),
         GlobalState.UpdateEndOfBlockRangeScannedData({
           blockNumberThreshold: -198,
           blockTimestampThreshold: 50,
@@ -344,7 +345,34 @@ describe("Single Chain Simple Rollback", () => {
         UpdateChainMetaDataAndCheckForExit(NoExit),
         ProcessEventBatch,
         NextQuery(Chain(chain)),
+      ],
+      ~message="Query should have returned with batch to process",
+    )
+
+    await dispatchAllTasksReorgChain()
+
+    let block4 =
+      Mock.mockChainDataReorg
+      ->MockChainData.getBlock(~blockNumber=4)
+      ->Option.getUnsafe
+    Assert.deepEqual(
+      tasks.contents,
+      [
         NextQuery(CheckAllChains),
+        GlobalState.UpdateEndOfBlockRangeScannedData({
+          blockNumberThreshold: -196,
+          blockTimestampThreshold: 50,
+          chain: MockConfig.chain1337,
+          nextEndOfBlockRangeScannedData: {
+            blockHash: block4.blockHash,
+            blockNumber: block4.blockNumber,
+            blockTimestamp: block4.blockTimestamp,
+            chainId: 1337,
+          },
+        }),
+        UpdateChainMetaDataAndCheckForExit(NoExit),
+        ProcessEventBatch,
+        NextQuery(Chain(chain)),
         UpdateChainMetaDataAndCheckForExit(NoExit),
         ProcessEventBatch,
       ],
@@ -372,8 +400,8 @@ describe("Single Chain Simple Rollback", () => {
 
     let gravatars = await getAllGravatars()
     Assert.deepEqual(
-      expectedGravatars,
       gravatars,
+      expectedGravatars,
       ~message="First gravatar should roll back and change and second should have received an update",
     )
   })

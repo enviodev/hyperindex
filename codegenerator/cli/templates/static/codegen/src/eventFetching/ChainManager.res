@@ -396,7 +396,7 @@ type batchRes = {
 let createBatch = (self: t, ~maxBatchSize: int, ~onlyBelowReorgThreshold: bool) => {
   let refTime = Hrtime.makeTimer()
 
-  let {arbitraryEventQueue, chainFetchers} = self
+  let {arbitraryEventQueue} = self
   //Make a copy of the queues and fetch states since we are going to mutate them
   let arbitraryEventQueue = arbitraryEventQueue->Array.copy
   let fetchStatesMap = self->getFetchStateWithData(~shouldDeepCopy=true)
@@ -409,15 +409,23 @@ let createBatch = (self: t, ~maxBatchSize: int, ~onlyBelowReorgThreshold: bool) 
     ~onlyBelowReorgThreshold,
   )
 
+  // Needed to recalculate the computed queue sizes
+  let fetchStatesMap = fetchStatesMap->ChainMap.map(v => {
+    {
+      ...v,
+      partitionedFetchState: v.partitionedFetchState->PartitionedFetchState.syncStateOnQueueUpdate,
+    }
+  })
+
   let batchSize = batch->Array.length
 
   let val = if batchSize > 0 {
     let fetchedEventsBuffer =
-      chainFetchers
-      ->ChainMap.values
-      ->Array.map(fetcher => (
-        fetcher.chainConfig.chain->ChainMap.Chain.toString,
-        fetcher.partitionedFetchState->PartitionedFetchState.queueSize,
+      fetchStatesMap
+      ->ChainMap.entries
+      ->Array.map(((chain, v)) => (
+        chain->ChainMap.Chain.toString,
+        v.partitionedFetchState->PartitionedFetchState.queueSize,
       ))
       ->Array.concat([("arbitrary", self.arbitraryEventQueue->Array.length)])
       ->Js.Dict.fromArray

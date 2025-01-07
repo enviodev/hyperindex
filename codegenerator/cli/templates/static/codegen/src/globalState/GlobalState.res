@@ -625,9 +625,7 @@ let actionReducer = (state: t, action: action) => {
     let chainFetchers = state.chainManager.chainFetchers->ChainMap.mapWithKey((chain, cf) => {
       {
         ...cf,
-        partitionedFetchState: (
-          fetchStatesMap->ChainMap.get(chain)
-        ).partitionedFetchState->PartitionedFetchState.syncStateOnQueueUpdate,
+        partitionedFetchState: ChainMap.get(fetchStatesMap, chain).partitionedFetchState,
       }
     })
 

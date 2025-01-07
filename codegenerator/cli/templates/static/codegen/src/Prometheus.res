@@ -227,7 +227,6 @@ module PartitionBlockFetched = {
   }
 }
 
-// TODO: implement this metric that updates in batches, currently unused
 let processedUntilHeight = PromClient.Gauge.makeGauge({
   "name": "chain_block_height_processed",
   "help": "Block height processed by indexer",
@@ -270,6 +269,7 @@ let setAllChainsSyncedToHead = () => {
   allChainsSyncedToHead->PromClient.Gauge.set(1)
 }
 
+// TODO: implement this metric that updates in batches, currently unused
 let setProcessedUntilHeight = (~blockNumber, ~chain) => {
   processedUntilHeight
   ->PromClient.Gauge.labels({"chainId": chain->ChainMap.Chain.toString})
@@ -277,7 +277,7 @@ let setProcessedUntilHeight = (~blockNumber, ~chain) => {
 }
 
 let setFetchedEventsUntilHeight = (~blockNumber, ~chain) => {
-  processedUntilHeight
+  fetchedEventsUntilHeight
   ->PromClient.Gauge.labels({"chainId": chain->ChainMap.Chain.toString})
   ->PromClient.Gauge.set(blockNumber)
 }
