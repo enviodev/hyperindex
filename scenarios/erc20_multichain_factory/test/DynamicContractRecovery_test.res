@@ -128,6 +128,20 @@ describe("Dynamic contract restart resistance test", () => {
     DbHelpers.runUpDownMigration()
   })
 
+  let getFetchingDcAddressesFromDbState = async (~chainId=1) => {
+    let chainFetcher = await ChainFetcher.makeFromDbState(
+      config.chainMap->ChainMap.get(ChainMap.Chain.makeUnsafe(~chainId)),
+      ~maxAddrInPartition=Env.maxAddrInPartition,
+    )
+
+    let dcs =
+      chainFetcher.partitionedFetchState.partitions->Array.flatMap(p =>
+        p.partitions->Array.flatMap(p => p.dynamicContracts->Array.map(dc => dc.contractAddress))
+      )
+
+    dcs
+  }
+
   Async.it(
     "Indexer should restart with only the dynamic contracts up to the block that was processed",
     async () => {
@@ -199,24 +213,9 @@ describe("Dynamic contract restart resistance test", () => {
 
       let chainConfig = config.chainMap->ChainMap.get(ChainMap.Chain.makeUnsafe(~chainId=1))
 
-      let restartedChainFetcher = await ChainFetcher.makeFromDbState(
-        chainConfig,
-        ~maxAddrInPartition=Env.maxAddrInPartition,
-      )
-
-      let restartedFetchState = switch restartedChainFetcher.partitionedFetchState.partitions {
-      | [partition] => partition
-      | _ => failwith("No partitions found in restarted chain fetcher")
-      }
-
-      let dynamicContracts =
-        restartedFetchState.mostBehindRegister.dynamicContracts
-        ->Belt.Map.valuesToArray
-        ->Array.flatMap(set => set->Belt.Set.String.toArray)
-
       Assert.deepEqual(
-        dynamicContracts,
-        [Mock.mockDynamicToken1->Address.toString],
+        await getFetchingDcAddressesFromDbState(),
+        [Mock.mockDynamicToken1],
         ~message="Should have registered only the dynamic contract up to the block that was processed",
       )
 
@@ -242,16 +241,6 @@ describe("Dynamic contract restart resistance test", () => {
           ~maxAddrInPartition=Env.maxAddrInPartition,
         )
 
-        let restartedFetchState = switch restartedChainFetcher.partitionedFetchState.partitions {
-        | [partition] => partition
-        | _ => failwith("No partitions found in restarted chain fetcher with")
-        }
-
-        let dynamicContracts =
-          restartedFetchState.mostBehindRegister.dynamicContracts
-          ->Belt.Map.valuesToArray
-          ->Array.flatMap(set => set->Belt.Set.String.toArray)
-
         Assert.deepEqual(
           restartedChainFetcher.dynamicContractPreRegistration->Option.getExn->Js.Dict.keys,
           [Mock.mockDynamicToken1->Address.toString, Mock.mockDynamicToken2->Address.toString],
@@ -259,7 +248,7 @@ describe("Dynamic contract restart resistance test", () => {
         )
 
         Assert.deepEqual(
-          dynamicContracts,
+          await getFetchingDcAddressesFromDbState(),
           [],
           ~message="Should have no dynamic contracts yet since this tests the case starting in preregistration",
         )
@@ -300,22 +289,9 @@ describe("Dynamic contract restart resistance test", () => {
       // toBlock: 3
       await dispatchAllTasks()
 
-      let restartedChainFetcher = await ChainFetcher.makeFromDbState(
-        chainConfig,
-        ~maxAddrInPartition=Env.maxAddrInPartition,
-      )
-
-      let restartedFetchState =
-        restartedChainFetcher.partitionedFetchState.partitions->Array.get(0)->Option.getExn
-
-      let dynamicContracts =
-        restartedFetchState.mostBehindRegister.dynamicContracts
-        ->Belt.Map.valuesToArray
-        ->Array.flatMap(set => set->Belt.Set.String.toArray)
-
       Assert.deepEqual(
-        dynamicContracts,
-        [Mock.mockDynamicToken1->Address.toString, Mock.mockDynamicToken2->Address.toString],
+        await getFetchingDcAddressesFromDbState(),
+        [Mock.mockDynamicToken1, Mock.mockDynamicToken2],
         ~message="Should have registered both dynamic contracts up to the block that was processed",
       )
     },

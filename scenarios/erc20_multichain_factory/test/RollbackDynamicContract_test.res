@@ -154,11 +154,11 @@ describe("Dynamic contract rollback test", () => {
 
     let getFetchState = chain => {
       let cf = chain->getChainFetcher
-      cf.partitionedFetchState
+      cf.partitionedFetchState.partitions->Js.Array2.unsafe_get(0)
     }
 
     let getLatestFetchedBlock = chain => {
-      chain->getFetchState->PartitionedFetchState.getLatestFullyFetchedBlock
+      chain->getFetchState->FetchState.getLatestFullyFetchedBlock
     }
 
     let getTokenBalance = (~accountAddress) => chain => {
@@ -361,13 +361,12 @@ describe("Dynamic contract rollback test", () => {
         NextQuery(CheckAllChains),
       ]
 
-    let getFetchStateRegisterId = () =>
-      switch getFetchState(Mock.Chain1.chain).partitions {
-      | [p] => (p->FetchState.mergeBeforeNextQuery).mostBehindRegister.id
-      | _ => raise(Not_found)
-      }
+    Assert.deepEqual(
+      getFetchState(Mock.Chain1.chain).partitions->Array.map(p => p.id),
+      ["0"],
+      ~message=`Should have only one partition`,
+    )
 
-    Assert.deepEqual(FetchState.rootRegisterId, getFetchStateRegisterId())
     //Process batch 2 of events
     //And make queries (C)
     await dispatchAllTasks()
@@ -404,10 +403,26 @@ describe("Dynamic contract rollback test", () => {
       ~message="Next round of tasks after query C",
     )
 
+    let partitions = getFetchState(Mock.Chain1.chain).partitions
     Assert.deepEqual(
-      getFetchStateRegisterId(),
-      FetchState.makeDynamicContractRegisterId({blockNumber: 3, logIndex: 0}),
+      partitions->Array.map(p => p.id),
+      ["0", "1"],
+      ~message=`Should get a dc partition`,
     )
+    let dcPartition = partitions->Js.Array2.unsafe_get(1)
+    Assert.deepEqual(
+      dcPartition.latestFetchedBlock,
+      {
+        {blockNumber: 2, blockTimestamp: 0}
+      },
+      ~message=`Should get a root partition`,
+    )
+    Assert.deepEqual(
+      dcPartition.dynamicContracts->Js.Array2.length,
+      1,
+      ~message=`Should have a single dc`,
+    )
+
     await makeAssertions(
       ~queryName="C",
       ~chain1LatestFetchBlock=2, //dynamic contract registered and fetchState set to block before registration (dyn contract query not yet made)

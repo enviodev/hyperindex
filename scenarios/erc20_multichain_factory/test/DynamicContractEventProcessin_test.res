@@ -88,8 +88,8 @@ describe("dynamic contract event processing test", () => {
       ~checkContractIsRegistered=(~chain as _, ~contractAddress as _, ~contractName as _) => false,
     )
     switch res {
-    | Ok({dynamicContractRegistrations: Some({registrations, unprocessedBatch})}) =>
-      let individualRegistrations = registrations->Array.flatMap(r => r.dynamicContracts)
+    | Ok({dynamicContractRegistrations: Some({dynamicContractsByChain, unprocessedBatch})}) =>
+      let individualRegistrations = dynamicContractsByChain->Js.Dict.values->Utils.Array.flatten
       Assert.equal(
         individualRegistrations->Js.Array2.length,
         1,
@@ -119,8 +119,8 @@ describe("dynamic contract event processing test", () => {
         contractAddress == Mock.mockDyamicToken3,
     )
     switch res {
-    | Ok({dynamicContractRegistrations: Some({registrations, unprocessedBatch})}) =>
-      let individualRegistrations = registrations->Array.flatMap(r => r.dynamicContracts)
+    | Ok({dynamicContractRegistrations: Some({dynamicContractsByChain, unprocessedBatch})}) =>
+      let individualRegistrations = dynamicContractsByChain->Js.Dict.values->Utils.Array.flatten
       Assert.equal(
         individualRegistrations->Js.Array2.length,
         1,
@@ -149,8 +149,8 @@ describe("dynamic contract event processing test", () => {
         contractAddress == Mock.mockDyamicToken3,
     )
     switch res {
-    | Ok({dynamicContractRegistrations: Some({registrations, unprocessedBatch})}) =>
-      let individualRegistrations = registrations->Array.flatMap(r => r.dynamicContracts)
+    | Ok({dynamicContractRegistrations: Some({dynamicContractsByChain, unprocessedBatch})}) =>
+      let individualRegistrations = dynamicContractsByChain->Js.Dict.values->Utils.Array.flatten
       Assert.equal(
         individualRegistrations->Js.Array2.length,
         1,
