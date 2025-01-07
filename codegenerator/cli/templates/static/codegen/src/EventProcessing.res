@@ -99,8 +99,7 @@ let addToDynamicContractRegistrations = (
 let checkContractIsInCurrentRegistrations = (
   ~dynamicContractRegistrations: option<dynamicContractRegistrations>,
   ~chain,
-  ~contractAddress,
-  ~contractType as _,
+  ~contractAddress
 ) => {
   switch dynamicContractRegistrations {
   | Some(dynamicContracts) =>
@@ -147,8 +146,7 @@ let runEventContractRegister = (
         !checkContractIsInCurrentRegistrations(
           ~dynamicContractRegistrations,
           ~chain,
-          ~contractAddress,
-          ~contractType,
+          ~contractAddress
         )
       )
 

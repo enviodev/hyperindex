@@ -1136,6 +1136,62 @@ describe("FetchState unit tests for specific cases", () => {
     )
   })
 
+  it("Allows to get event before the dc registring item", () => {
+    let fetchState = makeEmpty()
+
+    Assert.deepEqual(
+      fetchState->FetchState.getEarliestEvent,
+      NoItem({
+        blockNumber: 0,
+        blockTimestamp: 0,
+      }),
+    )
+
+    let registeringBlockNumber = 3
+
+    let fetchStateWithEvents =
+      fetchState
+      ->FetchState.setQueryResponse(
+        ~query=PartitionQuery({
+          partitionId: "0",
+          contractAddressMapping: ContractAddressingMap.make(),
+          fromBlock: 0,
+          toBlock: None,
+        }),
+        ~newItems=[
+          mockEvent(~blockNumber=registeringBlockNumber - 1, ~logIndex=1),
+          mockEvent(~blockNumber=registeringBlockNumber),
+          mockEvent(~blockNumber=6, ~logIndex=2),
+        ],
+        ~currentBlockHeight=10,
+        ~latestFetchedBlock=getBlockData(~blockNumber=10),
+      )
+      ->Result.getExn
+
+    Assert.deepEqual(
+      fetchStateWithEvents->FetchState.getEarliestEvent->getItem,
+      Some(mockEvent(~blockNumber=2, ~logIndex=1)),
+    )
+
+    let fetchStateWithDc =
+      fetchStateWithEvents->FetchState.registerDynamicContract(
+        [
+          makeDynContractRegistration(
+            ~contractAddress=mockAddress1,
+            ~blockNumber=registeringBlockNumber,
+          ),
+        ],
+        ~isFetchingAtHead=false,
+      )
+
+    Assert.deepEqual(
+      fetchStateWithDc->FetchState.getEarliestEvent->getItem,
+      // Some(mockEvent(~blockNumber=2, ~logIndex=1)),
+      None,
+      ~message=`Should allow to get event before the dc registration`,
+    )
+  })
+
   it("Get earliest event", () => {
     let latestFetchedBlock = getBlockData(~blockNumber=500)
 
