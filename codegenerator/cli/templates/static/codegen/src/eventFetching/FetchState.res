@@ -68,21 +68,21 @@ let copy = (fetchState: t) => {
 /*
 Comapritor for two events from the same chain. No need for chain id or timestamp
 */
-/*
-Returns the latest of two events on the same chain
-*/
-let getEventCmp = (event: Internal.eventItem) => {
-  (event.blockNumber, event.logIndex)
-}
-
-let eventCmp = (a, b) => a->getEventCmp > b->getEventCmp
+let eventItemGt = (a: Internal.eventItem, b: Internal.eventItem) =>
+  if a.blockNumber > b.blockNumber {
+    true
+  } else if a.blockNumber === b.blockNumber {
+    a.logIndex > b.logIndex
+  } else {
+    false
+  }
 
 /*
 Merges two event queues on a single event fetcher
 
 Pass the shorter list into A for better performance
 */
-let mergeSortedEventList = (a, b) => Utils.Array.mergeSorted(eventCmp, a, b)
+let mergeSortedEventList = (a, b) => Utils.Array.mergeSorted(eventItemGt, a, b)
 
 let mergeIntoPartition = (register: register, ~target: register, ~maxAddrInPartition) => {
   let latestFetchedBlock = target.latestFetchedBlock
@@ -602,29 +602,34 @@ let getNextQuery = (
 
 type itemWithPopFn = {item: Internal.eventItem, popItemOffQueue: unit => unit}
 
-let itemIsInReorgThreshold = (item: itemWithPopFn, ~heighestBlockBelowThreshold) => {
-  //Only consider it in reorg threshold when the current block number has advanced beyond 0
-  if heighestBlockBelowThreshold > 0 {
-    item.item.blockNumber > heighestBlockBelowThreshold
-  } else {
-    false
-  }
-}
-
 /**
 Represents a fetchState registers head of the  fetchedEventQueue as either
 an existing item, or no item with latest fetched block data
 */
 type queueItem =
   | Item(itemWithPopFn)
-  | NoItem(blockNumberAndTimestamp)
+  | NoItem({latestFetchedBlock: blockNumberAndTimestamp})
 
-let queueItemIsInReorgThreshold = (queueItem: queueItem, ~heighestBlockBelowThreshold) => {
+let queueItemBlockNumber = (queueItem: queueItem) => {
   switch queueItem {
-  | Item(itemWithPopFn) => itemWithPopFn->itemIsInReorgThreshold(~heighestBlockBelowThreshold)
-  | NoItem({blockNumber}) => blockNumber > heighestBlockBelowThreshold
+  | Item({item}) => item.blockNumber
+  | NoItem({latestFetchedBlock: {blockNumber}}) => blockNumber === 0 ? 0 : blockNumber + 1
   }
 }
+
+let queueItemIsInReorgThreshold = (queueItem: queueItem, ~heighestBlockBelowThreshold) => {
+  //Only consider it in reorg threshold when the current block number has advanced beyond 0
+  if heighestBlockBelowThreshold > 0 {
+    queueItem->queueItemBlockNumber > heighestBlockBelowThreshold
+  } else {
+    false
+  }
+}
+
+/**
+Simple constructor for no item from register
+*/
+let makeNoItem = ({latestFetchedBlock}: register) => NoItem({latestFetchedBlock: latestFetchedBlock})
 
 /**
 Creates a compareable value for items and no items on register queues.
@@ -633,18 +638,22 @@ be zero from initialization of register but a higher latest fetched block number
 
 Note: on the chain manager, when comparing multi chain, the timestamp is the highest priority compare value
 */
-let getCmpVal = qItem =>
-  switch qItem {
-  | Item({item: {blockNumber, logIndex}}) => (blockNumber, logIndex)
-  | NoItem({blockNumber}) => (blockNumber, 0)
+let qItemLt = (a, b) => {
+  let aBlockNumber = a->queueItemBlockNumber
+  let bBlockNumber = b->queueItemBlockNumber
+  if aBlockNumber < bBlockNumber {
+    true
+  } else if aBlockNumber === bBlockNumber {
+    switch (a, b) {
+    | (Item(a), Item(b)) => a.item.logIndex < b.item.logIndex
+    | (NoItem(_), Item(_)) => true
+    | (Item(_), NoItem(_))
+    | (NoItem(_), NoItem(_)) => false
+    }
+  } else {
+    false
   }
-
-/**
-Simple constructor for no item from register
-*/
-let makeNoItem = ({latestFetchedBlock}: register) => NoItem(latestFetchedBlock)
-
-let qItemLt = (a, b) => a->getCmpVal < b->getCmpVal
+}
 
 /**
 Returns queue item WITHOUT the updated fetch state. Used for checking values

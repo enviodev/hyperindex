@@ -315,7 +315,9 @@ describe("determineNextEvent", () => {
       ~onlyBelowReorgThreshold=false,
     )
 
-    let makeNoItem = timestamp => FetchState.NoItem({blockTimestamp: timestamp, blockNumber: 0})
+    let makeNoItem = timestamp => FetchState.NoItem({
+      latestFetchedBlock: {blockTimestamp: timestamp, blockNumber: 0},
+    })
     let makeMockQItem = (timestamp, chain): Internal.eventItem => {
       {
         timestamp,

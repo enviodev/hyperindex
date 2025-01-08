@@ -1136,14 +1136,16 @@ describe("FetchState unit tests for specific cases", () => {
     )
   })
 
-  it("Allows to get event before the dc registring item", () => {
+  it("Allows to get event one block earlier than the dc registring event", () => {
     let fetchState = makeEmpty()
 
     Assert.deepEqual(
       fetchState->FetchState.getEarliestEvent,
       NoItem({
-        blockNumber: 0,
-        blockTimestamp: 0,
+        latestFetchedBlock: {
+          blockNumber: 0,
+          blockTimestamp: 0,
+        },
       }),
     )
 
@@ -1186,9 +1188,53 @@ describe("FetchState unit tests for specific cases", () => {
 
     Assert.deepEqual(
       fetchStateWithDc->FetchState.getEarliestEvent->getItem,
-      // Some(mockEvent(~blockNumber=2, ~logIndex=1)),
-      None,
+      Some(mockEvent(~blockNumber=2, ~logIndex=1)),
       ~message=`Should allow to get event before the dc registration`,
+    )
+  })
+
+  it("Returns NoItem when there is an empty partition at block 0", () => {
+    let fetchState = FetchState.make(
+      ~staticContracts=[("ContractA", mockAddress1), ("ContractB", mockAddress2)],
+      ~dynamicContracts=[],
+      ~startBlock=0,
+      ~maxAddrInPartition=1,
+      ~isFetchingAtHead=false,
+    )
+
+    Assert.deepEqual(
+      fetchState->FetchState.getEarliestEvent,
+      NoItem({
+        latestFetchedBlock: {
+          blockNumber: 0,
+          blockTimestamp: 0,
+        },
+      }),
+    )
+
+    let updatedFetchState =
+      fetchState
+      ->FetchState.setQueryResponse(
+        ~query=PartitionQuery({
+          partitionId: "0",
+          contractAddressMapping: ContractAddressingMap.make(),
+          fromBlock: 0,
+          toBlock: None,
+        }),
+        ~newItems=[mockEvent(~blockNumber=0, ~logIndex=1)],
+        ~currentBlockHeight=10,
+        ~latestFetchedBlock=getBlockData(~blockNumber=1),
+      )
+      ->Result.getExn
+
+    Assert.deepEqual(
+      updatedFetchState->FetchState.getEarliestEvent,
+      NoItem({
+        latestFetchedBlock: {
+          blockNumber: 0,
+          blockTimestamp: 0,
+        },
+      }),
     )
   })
 
@@ -1244,8 +1290,10 @@ describe("FetchState unit tests for specific cases", () => {
       )
       ->FetchState.getEarliestEvent,
       NoItem({
-        blockNumber: 1,
-        blockTimestamp: 0,
+        latestFetchedBlock: {
+          blockNumber: 1,
+          blockTimestamp: 0,
+        },
       }),
       ~message=`Accounts for registered dynamic contracts`,
     )

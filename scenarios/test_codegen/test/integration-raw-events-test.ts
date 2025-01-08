@@ -29,7 +29,7 @@ describe("Raw Events Integration", () => {
   let nftFactoryContractAddress: string;
   let config: unknown;
 
-  before(async function() {
+  before(async function () {
     this.timeout(30 * 1000);
     // setLogLevel("trace");
 
@@ -92,12 +92,12 @@ describe("Raw Events Integration", () => {
     await runMigrationsNoLogs();
   });
 
-  it("RawEvents table contains rows after indexer runs", async function() {
+  it("RawEvents table contains rows after indexer runs", async function () {
     let rawEventsRows = await sql`SELECT * FROM public.raw_events`;
     expect(rawEventsRows.count).to.be.gt(0);
   });
 
-  it("should ensure Entites are created correctly", async function() {
+  it("should ensure Entites are created correctly", async function () {
     let rowsNftCollection = await sql`SELECT * FROM public."NftCollection"`;
     expect(rowsNftCollection.count).to.be.gt(0);
     let rowsUsers = await sql`SELECT * FROM public."User"`;
@@ -106,7 +106,7 @@ describe("Raw Events Integration", () => {
     expect(rowsToken.count).to.be.gt(0);
   });
 
-  it("should have 1 row in the dynamic_contract_registry table", async function() {
+  it("should have 1 row in the dynamic_contract_registry table", async function () {
     let rowsDCR = await sql`SELECT * FROM public.dynamic_contract_registry`;
     console.log(rowsDCR);
     expect(rowsDCR.count).to.be.eq(1);
@@ -135,7 +135,7 @@ describe("Raw Events Integration", () => {
     expect(afterRawEventsRows.count).to.be.gt(beforeRawEventsRows.count);
   });
 
-  it("RawEvents table does not exist after migration dropping raw events table", async function() {
+  it("RawEvents table does not exist after migration dropping raw events table", async function () {
     await runDownMigrations(false);
     let rawEventsRows = await sql`
         SELECT EXISTS (
