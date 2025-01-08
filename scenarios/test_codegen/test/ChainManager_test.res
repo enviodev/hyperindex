@@ -20,13 +20,13 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
       Belt.Int.fromFloat(Js.Math.random() *. float_of_int(max - min + 1) +. float_of_int(min))
     }
 
-    let fetcherStateInit: PartitionedFetchState.t = PartitionedFetchState.make(
+    let fetcherStateInit: FetchState.t = FetchState.make(
       ~maxAddrInPartition=Env.maxAddrInPartition,
       ~endBlock=None,
       ~staticContracts=[],
-      ~dynamicContractRegistrations=[],
+      ~dynamicContracts=[],
       ~startBlock=0,
-      ~logger=Logging.logger,
+      ~isFetchingAtHead=false,
     )
 
     let fetchState = ref(fetcherStateInit)
@@ -76,7 +76,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
         | 1 =>
           fetchState :=
             fetchState.contents
-            ->PartitionedFetchState.setQueryResponse(
+            ->FetchState.setQueryResponse(
               ~query=PartitionQuery({
                 partitionId: "0",
                 fromBlock: 0,
@@ -89,7 +89,6 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
               },
               ~newItems=[batchItem],
               ~currentBlockHeight=currentBlockNumber.contents,
-              ~chain,
             )
             ->Result.getExn
         | 2
@@ -100,7 +99,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
           } else {
             fetchState :=
               fetchState.contents
-              ->PartitionedFetchState.setQueryResponse(
+              ->FetchState.setQueryResponse(
                 ~query=PartitionQuery({
                   partitionId: "0",
                   fromBlock: 0,
@@ -113,7 +112,6 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
                 },
                 ~newItems=[batchItem],
                 ~currentBlockHeight=currentBlockNumber.contents,
-                ~chain,
               )
               ->Result.getExn
           }
@@ -131,11 +129,11 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
       latestProcessedBlock: None,
       numEventsProcessed: 0,
       numBatchesFetched: 0,
-      partitionedFetchState: fetchState.contents,
+      startBlock: 0,
+      fetchState: fetchState.contents,
       logger: Logging.logger,
       sourceManager: SourceManager.make(
         ~maxPartitionConcurrency=Env.maxPartitionConcurrency,
-        ~endBlock=None,
         ~logger=Logging.logger,
       ),
       chainConfig,
@@ -257,10 +255,10 @@ describe("ChainManager", () => {
             //   )
             let nextChainFetchers = chainManager.chainFetchers->ChainMap.mapWithKey(
               (chain, fetcher) => {
-                let {partitionedFetchState} = fetchStatesMap->ChainMap.get(chain)
+                let {fetchState} = fetchStatesMap->ChainMap.get(chain)
                 {
                   ...fetcher,
-                  partitionedFetchState,
+                  fetchState,
                 }
               },
             )
@@ -287,7 +285,7 @@ describe("ChainManager", () => {
             ->Belt.Array.reduce(
               0,
               (accum, val) => {
-                accum + val.partitionedFetchState->PartitionedFetchState.queueSize
+                accum + val.fetchState->FetchState.queueSize
               },
             )
 
@@ -358,6 +356,7 @@ describe("determineNextEvent", () => {
           blockTimestamp: latestFetchedBlockTimestamp,
           blockNumber: 0,
         },
+        endBlock: None,
         isFetchingAtHead: false,
         firstEventBlockNumber: item->Option.map(v => v.blockNumber),
       }
@@ -367,15 +366,8 @@ describe("determineNextEvent", () => {
       ~latestFetchedBlockTimestamp,
       ~item,
     ): ChainManager.fetchStateWithData => {
-      let partitions = [makeMockFetchState(~latestFetchedBlockTimestamp, ~item)]
       {
-        partitionedFetchState: {
-          partitions,
-          maxAddrInPartition: Env.maxAddrInPartition,
-          startBlock: 0,
-          endBlock: None,
-          logger: Logging.logger,
-        },
+        fetchState: makeMockFetchState(~latestFetchedBlockTimestamp, ~item),
         heighestBlockBelowThreshold: 500,
       }
     }

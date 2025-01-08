@@ -102,9 +102,10 @@ describe("SourceManager fetchNext", () => {
     }
   }
 
-  let mockFetchState = (partitions): FetchState.t => {
+  let mockFetchState = (partitions, ~endBlock=None): FetchState.t => {
     {
       partitions,
+      endBlock,
       nextPartitionIndex: partitions->Array.length,
       batchSize: 5000,
       maxAddrInPartition: 2,
@@ -128,11 +129,7 @@ describe("SourceManager fetchNext", () => {
   Async.it(
     "Executes full partitions in any order when we didn't reach concurency limit",
     async () => {
-      let sourceManager = SourceManager.make(
-        ~maxPartitionConcurrency=10,
-        ~endBlock=None,
-        ~logger=Logging.logger,
-      )
+      let sourceManager = SourceManager.make(~maxPartitionConcurrency=10, ~logger=Logging.logger)
 
       let partition0 = mockFullPartition(~partitionIndex=0, ~latestFetchedBlockNumber=4)
       let partition1 = mockFullPartition(~partitionIndex=1, ~latestFetchedBlockNumber=5)
@@ -192,11 +189,7 @@ describe("SourceManager fetchNext", () => {
   Async.it(
     "Slices full partitions to the concurrency limit, takes the earliest queries first",
     async () => {
-      let sourceManager = SourceManager.make(
-        ~maxPartitionConcurrency=2,
-        ~endBlock=None,
-        ~logger=Logging.logger,
-      )
+      let sourceManager = SourceManager.make(~maxPartitionConcurrency=2, ~logger=Logging.logger)
 
       let partition0 = mockFullPartition(~partitionIndex=0, ~latestFetchedBlockNumber=4)
       let partition1 = mockFullPartition(~partitionIndex=1, ~latestFetchedBlockNumber=5)
@@ -250,11 +243,7 @@ describe("SourceManager fetchNext", () => {
   Async.it(
     "Skips full partitions at the chain last block and the ones at the endBlock",
     async () => {
-      let sourceManager = SourceManager.make(
-        ~maxPartitionConcurrency=10,
-        ~endBlock=Some(5),
-        ~logger=Logging.logger,
-      )
+      let sourceManager = SourceManager.make(~maxPartitionConcurrency=10, ~logger=Logging.logger)
 
       let p0 = mockFullPartition(~partitionIndex=0, ~latestFetchedBlockNumber=4)
       let p1 = mockFullPartition(~partitionIndex=1, ~latestFetchedBlockNumber=5)
@@ -265,7 +254,7 @@ describe("SourceManager fetchNext", () => {
 
       let fetchNextPromise =
         sourceManager->SourceManager.fetchNext(
-          ~fetchState=mockFetchState([p0, p1, p2, p3]),
+          ~fetchState=mockFetchState([p0, p1, p2, p3], ~endBlock=Some(5)),
           ~maxPerChainQueueSize=1000,
           ~currentBlockHeight=4,
           ~executeQuery=executeQueryMock.fn,
@@ -289,11 +278,7 @@ describe("SourceManager fetchNext", () => {
   )
 
   Async.it("Starts indexing from the initial state", async () => {
-    let sourceManager = SourceManager.make(
-      ~maxPartitionConcurrency=10,
-      ~endBlock=None,
-      ~logger=Logging.logger,
-    )
+    let sourceManager = SourceManager.make(~maxPartitionConcurrency=10, ~logger=Logging.logger)
 
     let waitForNewBlockMock = waitForNewBlockMock()
     let onNewBlockMock = onNewBlockMock()
@@ -343,20 +328,17 @@ describe("SourceManager fetchNext", () => {
   Async.it(
     "Waits for new block with currentBlockHeight=0 even when all partitions are done",
     async () => {
-      let sourceManager = SourceManager.make(
-        ~maxPartitionConcurrency=10,
-        ~endBlock=Some(5),
-        ~logger=Logging.logger,
-      )
+      let sourceManager = SourceManager.make(~maxPartitionConcurrency=10, ~logger=Logging.logger)
 
       let waitForNewBlockMock = waitForNewBlockMock()
       let onNewBlockMock = onNewBlockMock()
 
       let fetchNextPromise1 =
         sourceManager->SourceManager.fetchNext(
-          ~fetchState=mockFetchState([
-            mockFullPartition(~partitionIndex=0, ~latestFetchedBlockNumber=5),
-          ]),
+          ~fetchState=mockFetchState(
+            [mockFullPartition(~partitionIndex=0, ~latestFetchedBlockNumber=5)],
+            ~endBlock=Some(5),
+          ),
           ~maxPerChainQueueSize=1000,
           ~currentBlockHeight=0,
           ~executeQuery=neverExecutePartitionQuery,
@@ -375,11 +357,7 @@ describe("SourceManager fetchNext", () => {
   )
 
   Async.it("Waits for new block when all partitions are at the currentBlockHeight", async () => {
-    let sourceManager = SourceManager.make(
-      ~maxPartitionConcurrency=10,
-      ~endBlock=None,
-      ~logger=Logging.logger,
-    )
+    let sourceManager = SourceManager.make(~maxPartitionConcurrency=10, ~logger=Logging.logger)
 
     let p0 = mockFullPartition(~partitionIndex=0, ~latestFetchedBlockNumber=5)
     let p1 = mockFullPartition(~partitionIndex=1, ~latestFetchedBlockNumber=5)
@@ -424,11 +402,7 @@ describe("SourceManager fetchNext", () => {
   })
 
   Async.it("Can add new partitions until the concurrency limit reached", async () => {
-    let sourceManager = SourceManager.make(
-      ~maxPartitionConcurrency=3,
-      ~endBlock=None,
-      ~logger=Logging.logger,
-    )
+    let sourceManager = SourceManager.make(~maxPartitionConcurrency=3, ~logger=Logging.logger)
 
     let p0 = mockFullPartition(~partitionIndex=0, ~latestFetchedBlockNumber=4)
     let p1 = mockFullPartition(~partitionIndex=1, ~latestFetchedBlockNumber=5)
@@ -556,11 +530,7 @@ describe("SourceManager fetchNext", () => {
   })
 
   Async.it("Should not query partitions that are at max queue size", async () => {
-    let sourceManager = SourceManager.make(
-      ~maxPartitionConcurrency=10,
-      ~endBlock=None,
-      ~logger=Logging.logger,
-    )
+    let sourceManager = SourceManager.make(~maxPartitionConcurrency=10, ~logger=Logging.logger)
 
     let executeQueryMock = executeQueryMock()
 
@@ -601,29 +571,28 @@ describe("SourceManager fetchNext", () => {
   })
 
   Async.it("Sorts after all the filtering is applied", async () => {
-    let sourceManager = SourceManager.make(
-      ~maxPartitionConcurrency=1,
-      ~endBlock=Some(11),
-      ~logger=Logging.logger,
-    )
+    let sourceManager = SourceManager.make(~maxPartitionConcurrency=1, ~logger=Logging.logger)
 
     let executeQueryMock = executeQueryMock()
 
     let fetchNextPromise = sourceManager->SourceManager.fetchNext(
-      ~fetchState=mockFetchState([
-        // Exceeds max queue size
-        mockFullPartition(
-          ~partitionIndex=0,
-          ~latestFetchedBlockNumber=0,
-          ~fetchedEventQueue=["mockEvent1", "mockEvent2", "mockEvent3"]->Utils.magic,
-        ),
-        // Finished fetching to endBlock
-        mockFullPartition(~partitionIndex=1, ~latestFetchedBlockNumber=11),
-        // Waiting for new block
-        mockFullPartition(~partitionIndex=2, ~latestFetchedBlockNumber=10),
-        mockFullPartition(~partitionIndex=3, ~latestFetchedBlockNumber=6),
-        mockFullPartition(~partitionIndex=4, ~latestFetchedBlockNumber=4),
-      ]),
+      ~fetchState=mockFetchState(
+        [
+          // Exceeds max queue size
+          mockFullPartition(
+            ~partitionIndex=0,
+            ~latestFetchedBlockNumber=0,
+            ~fetchedEventQueue=["mockEvent1", "mockEvent2", "mockEvent3"]->Utils.magic,
+          ),
+          // Finished fetching to endBlock
+          mockFullPartition(~partitionIndex=1, ~latestFetchedBlockNumber=11),
+          // Waiting for new block
+          mockFullPartition(~partitionIndex=2, ~latestFetchedBlockNumber=10),
+          mockFullPartition(~partitionIndex=3, ~latestFetchedBlockNumber=6),
+          mockFullPartition(~partitionIndex=4, ~latestFetchedBlockNumber=4),
+        ],
+        ~endBlock=Some(11),
+      ),
       ~maxPerChainQueueSize=10, //each partition should therefore have a max of 2 events
       ~currentBlockHeight=10,
       ~executeQuery=executeQueryMock.fn,

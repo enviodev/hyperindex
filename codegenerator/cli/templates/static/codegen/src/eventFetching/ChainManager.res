@@ -69,7 +69,7 @@ type isInReorgThresholdRes<'payload> = {
 }
 
 type fetchStateWithData = {
-  partitionedFetchState: PartitionedFetchState.t,
+  fetchState: FetchState.t,
   heighestBlockBelowThreshold: int,
 }
 
@@ -115,11 +115,11 @@ let determineNextEvent = (
     ->ChainMap.entries
     ->Array.reduce({isInReorgThreshold: false, val: None}, (
       accum,
-      (chain, {partitionedFetchState, heighestBlockBelowThreshold}),
+      (chain, {fetchState, heighestBlockBelowThreshold}),
     ) => {
       // If the fetch state has reached the end block we don't need to consider it
-      switch partitionedFetchState->PartitionedFetchState.getEarliestEvent {
-      | Some(earliestEvent) =>
+      if fetchState->FetchState.isActivelyIndexing {
+        let earliestEvent = fetchState->FetchState.getEarliestEvent
         let current: multiChainEventComparitor = {chain, earliestEvent}
         switch accum.val {
         | Some(previous) if comparitorFunction(previous, current) => accum
@@ -132,7 +132,8 @@ let determineNextEvent = (
             isInReorgThreshold,
           }
         }
-      | None => accum
+      } else {
+        accum
       }
     })
 
@@ -325,9 +326,7 @@ let popBatchItem = (
 let getFetchStateWithData = (self: t, ~shouldDeepCopy=false): ChainMap.t<fetchStateWithData> => {
   self.chainFetchers->ChainMap.map(cf => {
     {
-      partitionedFetchState: shouldDeepCopy
-        ? cf.partitionedFetchState->PartitionedFetchState.copy
-        : cf.partitionedFetchState,
+      fetchState: shouldDeepCopy ? cf.fetchState->FetchState.copy : cf.fetchState,
       heighestBlockBelowThreshold: cf->ChainFetcher.getHeighestBlockBelowThreshold,
     }
   })
@@ -413,7 +412,7 @@ let createBatch = (self: t, ~maxBatchSize: int, ~onlyBelowReorgThreshold: bool) 
   let fetchStatesMap = fetchStatesMap->ChainMap.map(v => {
     {
       ...v,
-      partitionedFetchState: v.partitionedFetchState->PartitionedFetchState.syncStateOnQueueUpdate,
+      fetchState: v.fetchState->FetchState.updateInternal,
     }
   })
 
@@ -425,7 +424,7 @@ let createBatch = (self: t, ~maxBatchSize: int, ~onlyBelowReorgThreshold: bool) 
       ->ChainMap.entries
       ->Array.map(((chain, v)) => (
         chain->ChainMap.Chain.toString,
-        v.partitionedFetchState->PartitionedFetchState.queueSize,
+        v.fetchState->FetchState.queueSize,
       ))
       ->Array.concat([("arbitrary", self.arbitraryEventQueue->Array.length)])
       ->Js.Dict.fromArray

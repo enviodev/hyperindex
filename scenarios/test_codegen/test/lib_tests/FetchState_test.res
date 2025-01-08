@@ -70,6 +70,7 @@ let makeEmpty = () => {
     ~staticContracts=[],
     ~dynamicContracts=[],
     ~startBlock=0,
+    ~endBlock=None,
     ~maxAddrInPartition=2,
     ~isFetchingAtHead=false,
   )
@@ -90,6 +91,7 @@ let makeEmptyExpected = (): FetchState.t => {
         dynamicContracts: [],
       },
     ],
+    endBlock: None,
     nextPartitionIndex: 1,
     isFetchingAtHead: false,
     maxAddrInPartition: 2,
@@ -118,6 +120,7 @@ describe("FetchState.make", () => {
         ~staticContracts=[("ContractA", mockAddress1)],
         ~dynamicContracts=[dc],
         ~startBlock=0,
+        ~endBlock=None,
         ~maxAddrInPartition=2,
         ~isFetchingAtHead=false,
       )
@@ -149,6 +152,7 @@ describe("FetchState.make", () => {
             blockTimestamp: 0,
           },
           queueSize: 0,
+          endBlock: None,
           firstEventBlockNumber: None,
           batchSize: 5000,
         },
@@ -164,6 +168,7 @@ describe("FetchState.make", () => {
         ~staticContracts=[("ContractA", mockAddress1)],
         ~dynamicContracts=[dc],
         ~startBlock=0,
+        ~endBlock=None,
         ~maxAddrInPartition=1,
         ~isFetchingAtHead=false,
       )
@@ -205,6 +210,7 @@ describe("FetchState.make", () => {
             blockTimestamp: 0,
           },
           queueSize: 0,
+          endBlock: None,
           firstEventBlockNumber: None,
           batchSize: 5000,
         },
@@ -221,6 +227,7 @@ describe("FetchState.make", () => {
         ~staticContracts=[("ContractA", mockAddress1), ("ContractA", mockAddress2)],
         ~dynamicContracts=[dc1, dc2],
         ~startBlock=0,
+        ~endBlock=None,
         ~maxAddrInPartition=1,
         ~isFetchingAtHead=false,
       )
@@ -288,19 +295,20 @@ describe("FetchState.make", () => {
           queueSize: 0,
           firstEventBlockNumber: None,
           batchSize: 5000,
+          endBlock: None,
         },
       )
     },
   )
 })
 
-describe("FetchState.registerDynamicContract", () => {
+describe("FetchState.registerDynamicContracts", () => {
   // It shouldn't happen, but just in case
   it("Nothing breaks when provided an empty array", () => {
     let fetchState = makeEmpty()
 
     Assert.deepEqual(
-      fetchState->FetchState.registerDynamicContract([], ~isFetchingAtHead=true),
+      fetchState->FetchState.registerDynamicContracts([], ~isFetchingAtHead=true),
       {
         ...makeEmptyExpected(),
         // Should only update isFetchingAtHead
@@ -320,7 +328,7 @@ describe("FetchState.registerDynamicContract", () => {
 
       Assert.deepEqual(
         // Order of dcs doesn't matter
-        fetchState->FetchState.registerDynamicContract([dc1, dc3, dc2], ~isFetchingAtHead=false),
+        fetchState->FetchState.registerDynamicContracts([dc1, dc3, dc2], ~isFetchingAtHead=false),
         {
           ...makeEmptyExpected(),
           nextPartitionIndex: 3,
@@ -397,6 +405,7 @@ describe("FetchState.getNextQuery & integration", () => {
       queueSize: 2,
       firstEventBlockNumber: Some(1),
       batchSize: 5000,
+      endBlock: None,
     }
   }
 
@@ -439,6 +448,7 @@ describe("FetchState.getNextQuery & integration", () => {
       queueSize: 2,
       firstEventBlockNumber: Some(1),
       batchSize: 5000,
+      endBlock: None,
     }
   }
 
@@ -451,13 +461,10 @@ describe("FetchState.getNextQuery & integration", () => {
       ~maxQueueSize=10,
       ~concurrencyLimit=10,
     ) =>
-      fs->FetchState.getNextQuery(
-        ~currentBlockHeight,
-        ~endBlock,
-        ~concurrencyLimit,
-        ~maxQueueSize,
-        ~stateId=0,
-      )
+      switch endBlock {
+      | Some(_) => {...fs, endBlock}
+      | None => fs
+      }->FetchState.getNextQuery(~currentBlockHeight, ~concurrencyLimit, ~maxQueueSize, ~stateId=0)
 
     let fetchState = makeEmpty()
 
@@ -543,19 +550,16 @@ describe("FetchState.getNextQuery & integration", () => {
       ~maxQueueSize=10,
       ~concurrencyLimit=10,
     ) =>
-      fs->FetchState.getNextQuery(
-        ~currentBlockHeight,
-        ~endBlock,
-        ~concurrencyLimit,
-        ~maxQueueSize,
-        ~stateId=0,
-      )
+      switch endBlock {
+      | Some(_) => {...fs, endBlock}
+      | None => fs
+      }->FetchState.getNextQuery(~currentBlockHeight, ~concurrencyLimit, ~maxQueueSize, ~stateId=0)
 
     // Continue with the state from previous test
     let fetchState = makeAfterFirstStaticAddressesQuery()
 
     let fetchStateWithDcs =
-      fetchState->FetchState.registerDynamicContract([dc2, dc1], ~isFetchingAtHead=false)
+      fetchState->FetchState.registerDynamicContracts([dc2, dc1], ~isFetchingAtHead=false)
 
     Assert.deepEqual(
       fetchStateWithDcs,
@@ -704,13 +708,10 @@ describe("FetchState.getNextQuery & integration", () => {
       ~maxQueueSize=10,
       ~concurrencyLimit=10,
     ) =>
-      fs->FetchState.getNextQuery(
-        ~currentBlockHeight,
-        ~endBlock,
-        ~concurrencyLimit,
-        ~maxQueueSize,
-        ~stateId=0,
-      )
+      switch endBlock {
+      | Some(_) => {...fs, endBlock}
+      | None => fs
+      }->FetchState.getNextQuery(~currentBlockHeight, ~concurrencyLimit, ~maxQueueSize, ~stateId=0)
 
     // Continue with the state from previous test
     // But increase the maxAddrInPartition up to 3
@@ -926,9 +927,10 @@ describe("FetchState.getNextQuery & integration", () => {
         ~staticContracts=[("ContractA", mockAddress1)],
         ~dynamicContracts=[],
         ~startBlock=0,
+        ~endBlock=None,
         ~maxAddrInPartition=2,
         ~isFetchingAtHead=false,
-      )->FetchState.registerDynamicContract(
+      )->FetchState.registerDynamicContracts(
         [makeDynContractRegistration(~blockNumber=2, ~contractAddress=mockAddress2)],
         ~isFetchingAtHead=false,
       )
@@ -938,7 +940,6 @@ describe("FetchState.getNextQuery & integration", () => {
     let nextQuery =
       fetchState->FetchState.getNextQuery(
         ~currentBlockHeight=10,
-        ~endBlock=None,
         ~concurrencyLimit=10,
         ~maxQueueSize=10,
         ~stateId=0,
@@ -1080,6 +1081,7 @@ describe("FetchState unit tests for specific cases", () => {
       queueSize: 5,
       firstEventBlockNumber: Some(1),
       batchSize: 5000,
+      endBlock: None,
     }
 
     let updatedFetchState =
@@ -1275,6 +1277,7 @@ describe("FetchState unit tests for specific cases", () => {
       queueSize: 5,
       firstEventBlockNumber: Some(1),
       batchSize: 5000,
+      endBlock: None,
     }
 
     Assert.deepEqual(
@@ -1284,7 +1287,7 @@ describe("FetchState unit tests for specific cases", () => {
 
     Assert.deepEqual(
       fetchState
-      ->FetchState.registerDynamicContract(
+      ->FetchState.registerDynamicContracts(
         [makeDynContractRegistration(~contractAddress=mockAddress1, ~blockNumber=2)],
         ~isFetchingAtHead=false,
       )
@@ -1307,9 +1310,10 @@ describe("FetchState unit tests for specific cases", () => {
           makeDynContractRegistration(~contractAddress=mockAddress2, ~blockNumber=1),
         ],
         ~startBlock=0,
+        ~endBlock=None,
         ~maxAddrInPartition=2,
         ~isFetchingAtHead=false,
-      )->FetchState.registerDynamicContract(
+      )->FetchState.registerDynamicContracts(
         [makeDynContractRegistration(~contractAddress=mockAddress3, ~blockNumber=2)],
         ~isFetchingAtHead=false,
       )
@@ -1350,22 +1354,25 @@ describe("FetchState unit tests for specific cases", () => {
 
   it("isActively indexing", () => {
     Assert.deepEqual(
-      makeEmpty()->FetchState.isActivelyIndexing(~endBlock=None),
+      makeEmpty()->FetchState.isActivelyIndexing,
       true,
       ~message=`Should be actively indexing with initial state`,
     )
     Assert.deepEqual(
-      makeEmpty()->FetchState.isActivelyIndexing(~endBlock=Some(10)),
+      {...makeEmpty(), endBlock: Some(10)}->FetchState.isActivelyIndexing,
       true,
       ~message=`Should be actively indexing with initial state, even if there's an endBlock`,
     )
     Assert.deepEqual(
-      makeEmpty()->FetchState.isActivelyIndexing(~endBlock=Some(0)),
+      {...makeEmpty(), endBlock: Some(0)}->FetchState.isActivelyIndexing,
       false,
       ~message=`But if endBlock is equal to the startBlock, initial state shouldn't be active`,
     )
     Assert.deepEqual(
-      makeEmpty()
+      {
+        ...makeEmpty(),
+        endBlock: Some(0),
+      }
       ->FetchState.setQueryResponse(
         ~query=PartitionQuery({
           partitionId: "0",
@@ -1378,7 +1385,7 @@ describe("FetchState unit tests for specific cases", () => {
         ~currentBlockHeight=1,
       )
       ->Result.getExn
-      ->FetchState.isActivelyIndexing(~endBlock=Some(0)),
+      ->FetchState.isActivelyIndexing,
       true,
       ~message=`Although, with items in the queue it should be considered active`,
     )
@@ -1394,6 +1401,7 @@ describe("FetchState unit tests for specific cases", () => {
           ~staticContracts=[((Gravatar :> string), mockAddress1)],
           ~dynamicContracts=[],
           ~startBlock=0,
+          ~endBlock=None,
           ~maxAddrInPartition=2,
           ~isFetchingAtHead=false,
         )
@@ -1418,13 +1426,12 @@ describe("FetchState unit tests for specific cases", () => {
 
       //Dynamic contract A registered at block 100
       let fetchStateWithDcA =
-        fetchState->FetchState.registerDynamicContract(
+        fetchState->FetchState.registerDynamicContracts(
           [makeDynContractRegistration(~contractAddress=mockAddress2, ~blockNumber=100)],
           ~isFetchingAtHead=false,
         )
 
       let queryA = switch fetchStateWithDcA->FetchState.getNextQuery(
-        ~endBlock=None,
         ~concurrencyLimit=10,
         ~currentBlockHeight,
         ~maxQueueSize=10,
@@ -1457,14 +1464,13 @@ describe("FetchState unit tests for specific cases", () => {
 
       //Next registration happens at block 200, between the first register and the upperbound of it's query
       let fetchStateWithDcB =
-        fetchStateWithDcA->FetchState.registerDynamicContract(
+        fetchStateWithDcA->FetchState.registerDynamicContracts(
           [makeDynContractRegistration(~contractAddress=mockAddress3, ~blockNumber=200)],
           ~isFetchingAtHead=false,
         )
 
       Assert.deepEqual(
         fetchStateWithDcB->FetchState.getNextQuery(
-          ~endBlock=None,
           ~concurrencyLimit=10,
           ~currentBlockHeight,
           ~maxQueueSize=10,
@@ -1487,7 +1493,6 @@ describe("FetchState unit tests for specific cases", () => {
 
       Assert.deepEqual(
         fetchStateWithBothDcsAndQueryAResponse->FetchState.getNextQuery(
-          ~endBlock=None,
           ~concurrencyLimit=10,
           ~currentBlockHeight,
           ~maxQueueSize=10,

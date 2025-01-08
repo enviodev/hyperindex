@@ -191,7 +191,7 @@ describe("Single Chain Simple Rollback", () => {
     )
 
     Assert.equal(
-      getChainFetcher().partitionedFetchState->PartitionedFetchState.queueSize,
+      getChainFetcher().fetchState->FetchState.queueSize,
       3,
       ~message="should have 3 events on the queue from the first 3 blocks of inital chainData",
     )
@@ -254,7 +254,7 @@ describe("Single Chain Simple Rollback", () => {
     )
 
     Assert.equal(
-      getChainFetcher().partitionedFetchState->PartitionedFetchState.queueSize,
+      getChainFetcher().fetchState->FetchState.queueSize,
       3,
       ~message="should have 3 events on the queue from the first 3 blocks of inital chainData",
     )
