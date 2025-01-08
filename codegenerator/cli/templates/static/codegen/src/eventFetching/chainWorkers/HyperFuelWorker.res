@@ -137,7 +137,7 @@ let makeGetRecieptsSelection = (
     )
   }
 
-  (~contractAddressMapping, ~shouldApplyWildcards) => {
+  (~contractAddressMapping, ~forceWildcardEvents) => {
     let selection: array<HyperFuelClient.QueryTypes.receiptSelection> = []
 
     //Instantiate each time to add new registered contract addresses
@@ -179,7 +179,7 @@ let makeGetRecieptsSelection = (
       }
     })
 
-    if shouldApplyWildcards {
+    if forceWildcardEvents {
       switch maybeWildcardNonLogDataSelection {
       | None => ()
       | Some(wildcardNonLogDataSelection) =>
@@ -277,7 +277,7 @@ module Make = (
     ~toBlock,
     ~logger,
     ~contractAddressMapping,
-    ~shouldApplyWildcards,
+    ~forceWildcardEvents,
     ~isPreRegisteringDynamicContracts,
   ) => {
     //Instantiate each time to add new registered contract addresses
@@ -285,7 +285,7 @@ module Make = (
       //TODO: create receipt selections for dynamic contract preregistration
       Js.Exn.raiseError("HyperFuel does not support pre registering dynamic contracts yet")
     } else {
-      getRecieptsSelection(~contractAddressMapping, ~shouldApplyWildcards)
+      getRecieptsSelection(~contractAddressMapping, ~forceWildcardEvents)
     }
 
     let startFetchingBatchTimeRef = Hrtime.makeTimer()
@@ -309,7 +309,7 @@ module Make = (
     ~contractAddressMapping,
     ~currentBlockHeight as _,
     ~partitionId as _,
-    ~shouldApplyWildcards,
+    ~forceWildcardEvents,
     ~isPreRegisteringDynamicContracts,
     ~logger,
   ) => {
@@ -322,7 +322,7 @@ module Make = (
         ~toBlock,
         ~contractAddressMapping,
         ~logger,
-        ~shouldApplyWildcards,
+        ~forceWildcardEvents,
         ~isPreRegisteringDynamicContracts,
       )
 

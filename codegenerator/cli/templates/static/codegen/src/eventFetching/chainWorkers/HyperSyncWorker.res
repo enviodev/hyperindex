@@ -121,7 +121,7 @@ let makeGetNextPage = (
     })
   })
 
-  let getLogSelectionOrThrow = (~contractAddressMapping, ~shouldApplyWildcards): array<
+  let getLogSelectionOrThrow = (~contractAddressMapping, ~forceWildcardEvents): array<
     LogSelection.t,
   > => {
     let nonWildcardLogSelection = contracts->Belt.Array.keepMap((contract): option<
@@ -145,7 +145,7 @@ let makeGetNextPage = (
       }
     })
 
-    shouldApplyWildcards
+    forceWildcardEvents
       ? nonWildcardLogSelection->Array.concat(wildcardLogSelection)
       : nonWildcardLogSelection
   }
@@ -155,7 +155,7 @@ let makeGetNextPage = (
     ~toBlock,
     ~logger,
     ~contractAddressMapping,
-    ~shouldApplyWildcards,
+    ~forceWildcardEvents,
     ~isPreRegisteringDynamicContracts,
   ) => {
     //Instantiate each time to add new registered contract addresses
@@ -168,7 +168,7 @@ let makeGetNextPage = (
       if isPreRegisteringDynamicContracts {
         getContractPreRegistrationLogSelection(~contractAddressMapping)
       } else {
-        getLogSelectionOrThrow(~contractAddressMapping, ~shouldApplyWildcards)
+        getLogSelectionOrThrow(~contractAddressMapping, ~forceWildcardEvents)
       }
     } catch {
     | exn =>
@@ -293,7 +293,7 @@ module Make = (
     ~contractAddressMapping,
     ~currentBlockHeight as _,
     ~partitionId as _,
-    ~shouldApplyWildcards,
+    ~forceWildcardEvents,
     ~isPreRegisteringDynamicContracts,
     ~logger,
   ) => {
@@ -306,7 +306,7 @@ module Make = (
         ~toBlock,
         ~contractAddressMapping,
         ~logger,
-        ~shouldApplyWildcards,
+        ~forceWildcardEvents,
         ~isPreRegisteringDynamicContracts,
       )
 

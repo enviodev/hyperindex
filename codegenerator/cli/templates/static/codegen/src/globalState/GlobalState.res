@@ -336,14 +336,17 @@ let handlePartitionQueryResponse = (
       ~fromBlock=fromBlockQueried,
       ~toBlock=latestFetchedBlockNumber,
       ~numEvents=parsedQueueItems->Array.length,
-      ~numAddresses=switch query {
-      | PartitionQuery({contractAddressMapping})
-      | MergeQuery({contractAddressMapping}) => contractAddressMapping
-      }->ContractAddressingMap.addressCount,
-      ~queryName=switch query {
-      | PartitionQuery({partitionId}) => `Partition ${partitionId}`
+      ~numAddresses=switch query.selection {
+      | Normal({contractAddressMapping}) =>
+        contractAddressMapping->ContractAddressingMap.addressCount
+      | Wildcard => 0
+      },
+      ~queryName=switch query.target {
+      | Head
+      | EndBlock(_) =>
+        `Partition ${query.partitionId}`
       // Group all merge queries into a single summary
-      | MergeQuery(_) => `Merge Query`
+      | Merge(_) => `Merge Query`
       },
     )
   }
@@ -749,43 +752,35 @@ let invalidatedActionReducer = (state: t, action: action) =>
   }
 
 let executeQuery = (
-  query: FetchState.query,
+  q: FetchState.query,
   ~logger,
   ~chainWorker,
   ~currentBlockHeight,
   ~chain,
   ~isPreRegisteringDynamicContracts,
 ) => {
-  switch query {
-  | PartitionQuery({partitionId, fromBlock, toBlock, contractAddressMapping}) =>
-    chainWorker->ChainWorker.fetchBlockRange(
-      ~fromBlock,
-      ~toBlock,
-      ~contractAddressMapping,
-      ~partitionId,
-      ~chain,
-      ~currentBlockHeight,
-      ~isPreRegisteringDynamicContracts,
-      ~logger,
-      //Only apply wildcards on the first partition
-      //to avoid duplicate wildcard queries
-      ~shouldApplyWildcards=partitionId === "0",
-    )
-  | MergeQuery({partitionId, fromBlock, toBlock, contractAddressMapping}) =>
-    chainWorker->ChainWorker.fetchBlockRange(
-      ~fromBlock,
-      ~toBlock=Some(toBlock),
-      ~contractAddressMapping,
-      ~partitionId,
-      ~chain,
-      ~currentBlockHeight,
-      ~isPreRegisteringDynamicContracts,
-      ~logger,
-      //Only apply wildcards on the first partition
-      //to avoid duplicate wildcard queries
-      ~shouldApplyWildcards=partitionId === "0",
-    )
-  }
+  chainWorker->ChainWorker.fetchBlockRange(
+    ~fromBlock=q.fromBlock,
+    ~toBlock=switch q.target {
+    | Head => None
+    | EndBlock({toBlock})
+    | Merge({toBlock}) =>
+      Some(toBlock)
+    },
+    ~contractAddressMapping=switch q.selection {
+    | Normal({contractAddressMapping}) => contractAddressMapping
+    | Wildcard => ContractAddressingMap.make()
+    },
+    ~partitionId=q.partitionId,
+    ~chain,
+    ~currentBlockHeight,
+    ~isPreRegisteringDynamicContracts,
+    ~logger,
+    ~forceWildcardEvents=switch q.selection {
+    | Normal(_) => false
+    | Wildcard => true
+    },
+  )
 }
 
 let checkAndFetchForChain = (

@@ -116,7 +116,7 @@ module type S = {
         ~contractAddressMapping: ContractAddressingMap.mapping,
         ~currentBlockHeight: int,
         ~partitionId: string,
-        ~shouldApplyWildcards: bool,
+        ~forceWildcardEvents: bool,
         ~isPreRegisteringDynamicContracts: bool,
         ~logger: Pino.t,
       ) => promise<result<blockRangeFetchResponse, ErrorHandling.t>>

@@ -921,7 +921,7 @@ describe("FetchState.getNextQuery & integration", () => {
     )
   })
 
-  it("Root partition never merges to another one (because of shouldApplyWildcards check)", () => {
+  it("Root partition never merges to another one (because of forceWildcardEvents check)", () => {
     let fetchState =
       FetchState.make(
         ~staticContracts=[("ContractA", mockAddress1)],

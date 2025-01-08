@@ -32,7 +32,7 @@ describe("HyperFuelWorker - getRecieptsSelection", () => {
     Assert.deepEqual(
       getRecieptsSelection(
         ~contractAddressMapping=mockContractAddressMapping(),
-        ~shouldApplyWildcards=true,
+        ~forceWildcardEvents=true,
       ),
       [],
     )
@@ -50,7 +50,7 @@ describe("HyperFuelWorker - getRecieptsSelection", () => {
     Assert.deepEqual(
       getRecieptsSelection(
         ~contractAddressMapping=mockContractAddressMapping(),
-        ~shouldApplyWildcards=true,
+        ~forceWildcardEvents=true,
       ),
       [],
     )
@@ -81,7 +81,7 @@ describe("HyperFuelWorker - getRecieptsSelection", () => {
     Assert.deepEqual(
       getRecieptsSelection(
         ~contractAddressMapping=mockContractAddressMapping(),
-        ~shouldApplyWildcards=true,
+        ~forceWildcardEvents=true,
       ),
       [
         {
@@ -132,7 +132,7 @@ describe("HyperFuelWorker - getRecieptsSelection", () => {
       Assert.deepEqual(
         getRecieptsSelection(
           ~contractAddressMapping=mockContractAddressMapping(),
-          ~shouldApplyWildcards=true,
+          ~forceWildcardEvents=true,
         ),
         [
           {
@@ -186,7 +186,7 @@ describe("HyperFuelWorker - getRecieptsSelection", () => {
     Assert.deepEqual(
       getRecieptsSelection(
         ~contractAddressMapping=mockContractAddressMapping(),
-        ~shouldApplyWildcards=true,
+        ~forceWildcardEvents=true,
       ),
       [
         {
@@ -239,7 +239,7 @@ describe("HyperFuelWorker - getRecieptsSelection", () => {
     Assert.deepEqual(
       getRecieptsSelection(
         ~contractAddressMapping=mockContractAddressMapping(),
-        ~shouldApplyWildcards=true,
+        ~forceWildcardEvents=true,
       ),
       [
         {
@@ -278,7 +278,7 @@ describe("HyperFuelWorker - getRecieptsSelection", () => {
     Assert.deepEqual(
       getRecieptsSelection(
         ~contractAddressMapping=mockContractAddressMapping(),
-        ~shouldApplyWildcards=true,
+        ~forceWildcardEvents=true,
       ),
       [
         {
@@ -311,7 +311,7 @@ describe("HyperFuelWorker - getRecieptsSelection", () => {
     Assert.deepEqual(
       getRecieptsSelection(
         ~contractAddressMapping=mockContractAddressMapping(),
-        ~shouldApplyWildcards=true,
+        ~forceWildcardEvents=true,
       ),
       [
         {
@@ -376,7 +376,7 @@ describe("HyperFuelWorker - getRecieptsSelection", () => {
     Assert.deepEqual(
       getRecieptsSelection(
         ~contractAddressMapping=mockContractAddressMapping(),
-        ~shouldApplyWildcards=true,
+        ~forceWildcardEvents=true,
       ),
       [
         {
@@ -487,7 +487,7 @@ describe("HyperFuelWorker - getRecieptsSelection", () => {
     Assert.deepEqual(
       getRecieptsSelection(
         ~contractAddressMapping=mockContractAddressMapping(),
-        ~shouldApplyWildcards=true,
+        ~forceWildcardEvents=true,
       ),
       [
         {
@@ -737,7 +737,7 @@ describe("HyperFuelWorker - getRecieptsSelection", () => {
     Assert.deepEqual(
       getRecieptsSelection(
         ~contractAddressMapping=mockContractAddressMapping(),
-        ~shouldApplyWildcards=true,
+        ~forceWildcardEvents=true,
       ),
       [
         {
@@ -788,7 +788,7 @@ describe("HyperFuelWorker - getRecieptsSelection", () => {
     Assert.deepEqual(
       getRecieptsSelection(
         ~contractAddressMapping=mockContractAddressMapping(),
-        ~shouldApplyWildcards=true,
+        ~forceWildcardEvents=true,
       ),
       [
         {
@@ -840,7 +840,7 @@ describe("HyperFuelWorker - getRecieptsSelection", () => {
     Assert.deepEqual(
       getRecieptsSelection(
         ~contractAddressMapping=mockContractAddressMapping(),
-        ~shouldApplyWildcards=true,
+        ~forceWildcardEvents=true,
       ),
       [
         {
@@ -891,7 +891,7 @@ describe("HyperFuelWorker - getRecieptsSelection", () => {
     Assert.deepEqual(
       getRecieptsSelection(
         ~contractAddressMapping=mockContractAddressMapping(),
-        ~shouldApplyWildcards=true,
+        ~forceWildcardEvents=true,
       ),
       [
         {
@@ -907,7 +907,7 @@ describe("HyperFuelWorker - getRecieptsSelection", () => {
     )
   })
 
-  it("Removes wildcard selection with shouldApplyWildcards (needed for partitioning)", () => {
+  it("Removes wildcard selection with forceWildcardEvents (needed for partitioning)", () => {
     let getRecieptsSelection = mock(
       ~contracts=[
         {
@@ -962,7 +962,7 @@ describe("HyperFuelWorker - getRecieptsSelection", () => {
     Assert.deepEqual(
       getRecieptsSelection(
         ~contractAddressMapping=mockContractAddressMapping(),
-        ~shouldApplyWildcards=true,
+        ~forceWildcardEvents=true,
       ),
       [
         {
@@ -985,7 +985,7 @@ describe("HyperFuelWorker - getRecieptsSelection", () => {
     Assert.deepEqual(
       getRecieptsSelection(
         ~contractAddressMapping=mockContractAddressMapping(),
-        ~shouldApplyWildcards=false,
+        ~forceWildcardEvents=false,
       ),
       [
         {

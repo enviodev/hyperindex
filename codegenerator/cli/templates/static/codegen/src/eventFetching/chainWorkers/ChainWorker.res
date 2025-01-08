@@ -39,7 +39,7 @@ module type S = {
     ~contractAddressMapping: ContractAddressingMap.mapping,
     ~currentBlockHeight: int,
     ~partitionId: string,
-    ~shouldApplyWildcards: bool,
+    ~forceWildcardEvents: bool,
     ~isPreRegisteringDynamicContracts: bool,
     ~logger: Pino.t,
   ) => promise<result<blockRangeFetchResponse, ErrorHandling.t>>
@@ -66,7 +66,7 @@ let fetchBlockRange = async (
   ~partitionId,
   ~chain,
   ~currentBlockHeight,
-  ~shouldApplyWildcards,
+  ~forceWildcardEvents,
   ~isPreRegisteringDynamicContracts,
   ~logger,
 ) => {
@@ -98,7 +98,7 @@ let fetchBlockRange = async (
     ~contractAddressMapping,
     ~partitionId,
     ~logger,
-    ~shouldApplyWildcards,
+    ~forceWildcardEvents,
     ~currentBlockHeight,
     ~isPreRegisteringDynamicContracts,
   ))->Utils.Result.forEach(response => {

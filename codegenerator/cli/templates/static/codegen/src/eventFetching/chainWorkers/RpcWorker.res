@@ -192,7 +192,7 @@ module Make = (
     ~contractAddressMapping,
     ~currentBlockHeight,
     ~partitionId,
-    ~shouldApplyWildcards as _,
+    ~forceWildcardEvents as _,
     ~isPreRegisteringDynamicContracts,
     ~logger,
   ) => {
