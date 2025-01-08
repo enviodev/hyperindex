@@ -308,7 +308,7 @@ describe("FetchState.registerDynamicContracts", () => {
     let fetchState = makeEmpty()
 
     Assert.deepEqual(
-      fetchState->FetchState.registerDynamicContracts([], ~isFetchingAtHead=true),
+      fetchState->FetchState.registerDynamicContracts([], ~currentBlockHeight=0),
       {
         ...makeEmptyExpected(),
         // Should only update isFetchingAtHead
@@ -328,7 +328,7 @@ describe("FetchState.registerDynamicContracts", () => {
 
       Assert.deepEqual(
         // Order of dcs doesn't matter
-        fetchState->FetchState.registerDynamicContracts([dc1, dc3, dc2], ~isFetchingAtHead=false),
+        fetchState->FetchState.registerDynamicContracts([dc1, dc3, dc2], ~currentBlockHeight=10),
         {
           ...makeEmptyExpected(),
           nextPartitionIndex: 3,
@@ -559,13 +559,12 @@ describe("FetchState.getNextQuery & integration", () => {
     let fetchState = makeAfterFirstStaticAddressesQuery()
 
     let fetchStateWithDcs =
-      fetchState->FetchState.registerDynamicContracts([dc2, dc1], ~isFetchingAtHead=false)
+      fetchState->FetchState.registerDynamicContracts([dc2, dc1], ~currentBlockHeight=11)
 
     Assert.deepEqual(
       fetchStateWithDcs,
       {
         ...fetchState,
-        // The isFetchingAtHead is overwritten. Although, I don't know whether it's correct
         isFetchingAtHead: false,
         nextPartitionIndex: 3,
         latestFullyFetchedBlock: {
@@ -932,7 +931,7 @@ describe("FetchState.getNextQuery & integration", () => {
         ~isFetchingAtHead=false,
       )->FetchState.registerDynamicContracts(
         [makeDynContractRegistration(~blockNumber=2, ~contractAddress=mockAddress2)],
-        ~isFetchingAtHead=false,
+        ~currentBlockHeight=10,
       )
 
     Assert.deepEqual(fetchState.partitions->Array.length, 2)
@@ -1185,7 +1184,7 @@ describe("FetchState unit tests for specific cases", () => {
             ~blockNumber=registeringBlockNumber,
           ),
         ],
-        ~isFetchingAtHead=false,
+        ~currentBlockHeight=10,
       )
 
     Assert.deepEqual(
@@ -1290,7 +1289,7 @@ describe("FetchState unit tests for specific cases", () => {
       fetchState
       ->FetchState.registerDynamicContracts(
         [makeDynContractRegistration(~contractAddress=mockAddress1, ~blockNumber=2)],
-        ~isFetchingAtHead=false,
+        ~currentBlockHeight=10,
       )
       ->FetchState.getEarliestEvent,
       NoItem({
@@ -1316,7 +1315,7 @@ describe("FetchState unit tests for specific cases", () => {
         ~isFetchingAtHead=false,
       )->FetchState.registerDynamicContracts(
         [makeDynContractRegistration(~contractAddress=mockAddress3, ~blockNumber=2)],
-        ~isFetchingAtHead=false,
+        ~currentBlockHeight=10,
       )
 
     Assert.equal(
@@ -1350,6 +1349,163 @@ describe("FetchState unit tests for specific cases", () => {
         ~chainId=1,
       ),
       false,
+    )
+  })
+
+  it("Should be fetching at head only when all partitions are fetching at head", () => {
+    let fetchState = FetchState.make(
+      ~staticContracts=[("ContractA", mockAddress1), ("ContractB", mockAddress2)],
+      ~dynamicContracts=[],
+      ~startBlock=0,
+      ~endBlock=None,
+      ~maxAddrInPartition=1,
+      ~isFetchingAtHead=false,
+    )
+
+    let q0 = FetchState.PartitionQuery({
+      partitionId: "0",
+      contractAddressMapping: ContractAddressingMap.make(),
+      fromBlock: 0,
+      toBlock: None,
+    })
+    let q1 = FetchState.PartitionQuery({
+      partitionId: "1",
+      contractAddressMapping: ContractAddressingMap.make(),
+      fromBlock: 0,
+      toBlock: None,
+    })
+
+    Assert.equal(fetchState.isFetchingAtHead, false)
+
+    let fetchStateWithResponse1 =
+      fetchState
+      ->FetchState.setQueryResponse(
+        ~query=q0,
+        ~newItems=[],
+        ~currentBlockHeight=10,
+        ~latestFetchedBlock=getBlockData(~blockNumber=10),
+      )
+      ->Result.getExn
+
+    Assert.equal(
+      fetchStateWithResponse1.isFetchingAtHead,
+      false,
+      ~message=`Only partition "0" caught up to head,
+      should wait for partition "1" to catch up to head as well`,
+    )
+
+    let fetchStateWithResponse2 =
+      fetchStateWithResponse1
+      ->FetchState.setQueryResponse(
+        ~query=q1,
+        ~newItems=[],
+        ~currentBlockHeight=10,
+        ~latestFetchedBlock=getBlockData(~blockNumber=10),
+      )
+      ->Result.getExn
+
+    Assert.equal(
+      fetchStateWithResponse2.isFetchingAtHead,
+      true,
+      ~message=`Both partitions "0" and "1" caught up to head`,
+    )
+
+    let fetchStateWithResponse3 =
+      fetchStateWithResponse2
+      ->FetchState.setQueryResponse(
+        ~query=q0,
+        ~newItems=[],
+        ~currentBlockHeight=11,
+        ~latestFetchedBlock=getBlockData(~blockNumber=11),
+      )
+      ->Result.getExn
+
+    Assert.equal(
+      fetchStateWithResponse3.isFetchingAtHead,
+      false,
+      ~message=`After partition "0" next query it got updated currentBlockHeight,
+      and since both partitions are not in the sync range isFetchingAtHead should reset`,
+    )
+
+    let fetchStateAt999 =
+      fetchState
+      ->FetchState.setQueryResponse(
+        ~query=q0,
+        ~newItems=[],
+        ~currentBlockHeight=999,
+        ~latestFetchedBlock=getBlockData(~blockNumber=999),
+      )
+      ->Result.getExn
+      ->FetchState.setQueryResponse(
+        ~query=q1,
+        ~newItems=[],
+        ~currentBlockHeight=999,
+        ~latestFetchedBlock=getBlockData(~blockNumber=999),
+      )
+      ->Result.getExn
+
+    Assert.equal(
+      fetchStateAt999.isFetchingAtHead,
+      true,
+      ~message=`This is a preparation for the next test, confirm that it's fetching at head`,
+    )
+
+    let fetchStatePartiallyAt1000 =
+      fetchStateAt999
+      ->FetchState.setQueryResponse(
+        ~query=q0,
+        ~newItems=[],
+        ~currentBlockHeight=1000,
+        ~latestFetchedBlock=getBlockData(~blockNumber=1000),
+      )
+      ->Result.getExn
+
+    Assert.equal(
+      fetchStatePartiallyAt1000.isFetchingAtHead,
+      true,
+      ~message=`Even though partition "1" is 1 block behind than currentBlockHeight,
+      we still don't reset the isFetchingAtHead, since we consider it not leaving the sync range`,
+    )
+
+    let fetchStatePartiallyAt1001 =
+      fetchStateAt999
+      ->FetchState.setQueryResponse(
+        ~query=q0,
+        ~newItems=[],
+        ~currentBlockHeight=1001,
+        ~latestFetchedBlock=getBlockData(~blockNumber=1001),
+      )
+      ->Result.getExn
+
+    Assert.equal(
+      fetchStatePartiallyAt1001.isFetchingAtHead,
+      false,
+      ~message=`Sync range should be 1/1000 of the chain height, so having 2 blocks diff
+      is going to be considered as leaving the sync range`,
+    )
+
+    let fetchStatePartiallyAt1000WithDcInSyncRange =
+      fetchStatePartiallyAt1000->FetchState.registerDynamicContracts(
+        [makeDynContractRegistration(~contractAddress=mockAddress3, ~blockNumber=1000)],
+        ~currentBlockHeight=1000,
+      )
+
+    Assert.equal(
+      fetchStatePartiallyAt1000WithDcInSyncRange.isFetchingAtHead,
+      true,
+      ~message=`Dynamic contract registration inside of a sync range shouldn't reset the isFetchingAtHead`,
+    )
+
+    let fetchStatePartiallyAt1000WithDcOutsideOfSyncRange =
+      fetchStatePartiallyAt1000->FetchState.registerDynamicContracts(
+        [makeDynContractRegistration(~contractAddress=mockAddress3, ~blockNumber=999)],
+        ~currentBlockHeight=1000,
+      )
+
+    Assert.equal(
+      fetchStatePartiallyAt1000WithDcOutsideOfSyncRange.isFetchingAtHead,
+      false,
+      ~message=`Dynamic contract registration outside of a sync range should reset the isFetchingAtHead`,
     )
   })
 
@@ -1429,7 +1585,7 @@ describe("FetchState unit tests for specific cases", () => {
       let fetchStateWithDcA =
         fetchState->FetchState.registerDynamicContracts(
           [makeDynContractRegistration(~contractAddress=mockAddress2, ~blockNumber=100)],
-          ~isFetchingAtHead=false,
+          ~currentBlockHeight=10,
         )
 
       let queryA = switch fetchStateWithDcA->FetchState.getNextQuery(
@@ -1467,7 +1623,7 @@ describe("FetchState unit tests for specific cases", () => {
       let fetchStateWithDcB =
         fetchStateWithDcA->FetchState.registerDynamicContracts(
           [makeDynContractRegistration(~contractAddress=mockAddress3, ~blockNumber=200)],
-          ~isFetchingAtHead=false,
+          ~currentBlockHeight=10,
         )
 
       Assert.deepEqual(

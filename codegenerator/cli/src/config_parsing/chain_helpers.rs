@@ -147,6 +147,9 @@ pub enum Network {
     #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     Flare = 14,
 
+    #[subenum(HypersyncNetwork)]
+    Fraxtal = 252,
+
     #[subenum(HypersyncNetwork, GraphNetwork, NetworkWithExplorer)]
     Fuji = 43113,
 
@@ -453,7 +456,8 @@ impl Network {
             | Network::Saakuru
             | Network::Morph
             | Network::MorphTestnet
-            | Network::Tangle => DEFAULT_CONFIRMED_BLOCK_THRESHOLD,
+            | Network::Tangle
+            | Network::Fraxtal => DEFAULT_CONFIRMED_BLOCK_THRESHOLD,
         }
     }
 }
@@ -464,6 +468,7 @@ pub enum ChainTier {
     Gold,
     Silver,
     Bronze,
+    #[serde(alias = "TESTNET")]
     Experimental,
     #[serde(alias = "HIDDEN")]
     Internal,
@@ -497,19 +502,21 @@ impl HypersyncNetwork {
         use ChainTier::*;
         use HypersyncNetwork::*;
         match self {
-            EthereumMainnet | Fantom | Zeta | Sepolia | OptimismSepolia | Metis | ZksyncEra
-            | Optimism | ArbitrumSepolia | ArbitrumNova | Avalanche | Polygon | Bsc | Mantle
-            | BaseSepolia | Gnosis => Gold,
+            EthereumMainnet | Fantom | Zeta | Sepolia | Metis | ZksyncEra | Optimism
+            | ArbitrumSepolia | ArbitrumNova | Avalanche | Polygon | Bsc | Mantle | BaseSepolia
+            | Gnosis => Gold,
 
-            Manta | Base | BerachainBartio | Boba | Blast | Cyber | Aurora | Harmony | Scroll
-            | Darwinia | Mode | Rsk | ShimmerEvm | Linea | NeonEvm | Amoy | Saakuru | Moonbeam
-            | Lisk | BlastSepolia | Chiliz | Fuji | ArbitrumOne | Merlin | Holesky => Silver,
+            Manta | Base | Boba | Blast | Cyber | Aurora | Harmony | Scroll | Darwinia | Mode
+            | Rsk | ShimmerEvm | Linea | Amoy | Saakuru | Moonbeam | Lisk | Chiliz
+            | ArbitrumOne | Merlin => Silver,
 
-            Zora | MoonbaseAlpha | Morph | LuksoTestnet | Kroma | GnosisChiado | Lukso
-            | C1Milkomeda | Crab | Sophon | Flare | PolygonZkevm | MevCommit | Tangle => Bronze,
+            Zora | MoonbaseAlpha | Morph | Kroma | Lukso | C1Milkomeda | Crab | Sophon | Flare
+            | PolygonZkevm | MevCommit | Tangle => Bronze,
 
             SophonTestnet | MorphTestnet | GaladrielDevnet | CitreaTestnet | Goerli
-            | BscTestnet | UnichainSepolia | Zircuit | Celo | Opbnb => Experimental,
+            | BscTestnet | UnichainSepolia | Zircuit | Celo | Opbnb | GnosisChiado
+            | LuksoTestnet | BlastSepolia | Holesky | BerachainBartio | OptimismSepolia | Fuji
+            | NeonEvm | Fraxtal => Experimental,
         }
     }
 

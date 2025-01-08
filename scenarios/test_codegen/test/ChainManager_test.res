@@ -333,7 +333,7 @@ describe("determineNextEvent", () => {
     }
 
     let makeMockFetchState = (~latestFetchedBlockTimestamp, ~item): FetchState.t => {
-      let register: FetchState.register = {
+      let partition: FetchState.partition = {
         id: "0",
         latestFetchedBlock: {
           blockTimestamp: latestFetchedBlockTimestamp,
@@ -347,7 +347,7 @@ describe("determineNextEvent", () => {
         dynamicContracts: [],
       }
       {
-        partitions: [register],
+        partitions: [partition],
         batchSize: 5,
         maxAddrInPartition: 5,
         nextPartitionIndex: 1,
