@@ -513,49 +513,18 @@ let actionReducer = (state: t, action: action) => {
       ) {
       | None => cf
       | Some(dcs) => {
-          /* strategy for TUI synced status:
-           * Firstly -> only update synced status after batch is processed (not on batch creation). But also set when a batch tries to be created and there is no batch
-           *
-           * Secondly -> reset timestampCaughtUpToHead and isFetching at head when dynamic contracts get registered to a chain if they are not within 0.001 percent of the current block height
-           *
-           * New conditions for valid synced:
-           *
-           * CASE 1 (chains are being synchronised at the head)
-           *
-           * All chain fetchers are fetching at the head AND
-           * No events that can be processed on the queue (even if events still exist on the individual queues)
-           * CASE 2 (chain finishes earlier than any other chain)
-           *
-           * CASE 3 endblock has been reached and latest processed block is greater than or equal to endblock (both fields must be Some)
-           *
-           * The given chain fetcher is fetching at the head or latest processed block >= endblock
-           * The given chain has processed all events on the queue
-           * see https://github.com/Float-Capital/indexer/pull/1388 */
-
-          /* Dynamic contracts pose a unique case when calculated whether a chain is synced or not.
-           * Specifically, in the initial syncing state from SearchingForEvents -> Synced, where although a chain has technically processed up to all blocks
-           * for a contract that emits events with dynamic contracts, it is possible that those dynamic contracts will need to be indexed from blocks way before
-           * the current block height. This is a toleration check where if there are dynamic contracts within a batch, check how far are they from the currentblock height.
-           * If it is less than 1 thousandth of a percent, then we deem that contract to be within the synced range, and therefore do not reset the synced status of the chain */
-          let areDynamicContractsWithinSyncRange = dcs->Array.every(dc => {
-            let {registeringEventBlockNumber} = dc
-            let isContractWithinSyncedRanged =
-              (cf.currentBlockHeight->Int.toFloat -. registeringEventBlockNumber->Int.toFloat) /.
-                cf.currentBlockHeight->Int.toFloat <= 0.001
-            isContractWithinSyncedRanged
-          })
-
-          let (
-            isFetchingAtHead,
-            timestampCaughtUpToHeadOrEndblock,
-          ) = areDynamicContractsWithinSyncRange
-            ? (cf->ChainFetcher.isFetchingAtHead, cf.timestampCaughtUpToHeadOrEndblock)
-            : (false, None)
+          let fetchState =
+            cf.fetchState->FetchState.registerDynamicContracts(
+              dcs,
+              ~currentBlockHeight=cf.currentBlockHeight,
+            )
 
           {
             ...cf,
-            fetchState: cf.fetchState->FetchState.registerDynamicContracts(dcs, ~isFetchingAtHead),
-            timestampCaughtUpToHeadOrEndblock,
+            fetchState,
+            timestampCaughtUpToHeadOrEndblock: fetchState.isFetchingAtHead
+              ? cf.timestampCaughtUpToHeadOrEndblock
+              : None,
           }
         }
       }
