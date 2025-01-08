@@ -97,14 +97,17 @@ type arbitraryEventQueue = array<Internal.eventItem>
 
 type shouldExit = ExitWithSuccess | NoExit
 type action =
-  | BlockRangeResponse(chain, ChainWorker.blockRangeFetchResponse)
+  | PartitionQueryResponse({
+      chain: chain,
+      response: ChainWorker.blockRangeFetchResponse,
+      query: FetchState.query,
+    })
   | FinishWaitingForNewBlock({chain: chain, currentBlockHeight: int})
   | EventBatchProcessed(EventProcessing.batchProcessed)
   | DynamicContractPreRegisterProcessed(EventProcessing.batchProcessed)
   | StartIndexingAfterPreRegister
   | SetCurrentlyProcessing(bool)
   | SetIsInReorgThreshold(bool)
-  | SetUpdatedPartitions(chain, dict<FetchState.t>)
   | UpdateQueues(ChainMap.t<ChainManager.fetchStateWithData>, arbitraryEventQueue)
   | SetSyncedChains
   | SuccessExit
@@ -144,7 +147,7 @@ let updateChainMetadataTable = async (cm: ChainManager.t, ~throttler: Throttler.
     cm.chainFetchers
     ->ChainMap.values
     ->Belt.Array.map(cf => {
-      let latestFetchedBlock = cf.partitionedFetchState->PartitionedFetchState.getLatestFullyFetchedBlock
+      let latestFetchedBlock = cf.fetchState->FetchState.getLatestFullyFetchedBlock
       let chainMetadata: DbFunctions.ChainMetadata.chainMetadata = {
         chainId: cf.chainConfig.chain->ChainMap.Chain.toChainId,
         startBlock: cf.chainConfig.startBlock,
@@ -275,14 +278,14 @@ let updateLatestProcessedBlocks = (
   let chainManager = {
     ...state.chainManager,
     chainFetchers: state.chainManager.chainFetchers->ChainMap.map(cf => {
-      let {chainConfig: {chain}, partitionedFetchState} = cf
+      let {chainConfig: {chain}, fetchState} = cf
       let {numEventsProcessed, latestProcessedBlock} = latestProcessedBlocks->ChainMap.get(chain)
 
       let hasArbQueueEvents = state.chainManager->ChainManager.hasChainItemsOnArbQueue(~chain)
       let hasNoMoreEventsToProcess = cf->ChainFetcher.hasNoMoreEventsToProcess(~hasArbQueueEvents)
 
       let latestProcessedBlock = if hasNoMoreEventsToProcess {
-        PartitionedFetchState.getLatestFullyFetchedBlock(partitionedFetchState).blockNumber->Some
+        FetchState.getLatestFullyFetchedBlock(fetchState).blockNumber->Some
       } else {
         latestProcessedBlock
       }
@@ -301,7 +304,12 @@ let updateLatestProcessedBlocks = (
   }
 }
 
-let handleBlockRangeResponse = (state, ~chain, ~response: ChainWorker.blockRangeFetchResponse) => {
+let handlePartitionQueryResponse = (
+  state,
+  ~chain,
+  ~response: ChainWorker.blockRangeFetchResponse,
+  ~query: FetchState.query,
+) => {
   let chainFetcher = state.chainManager.chainFetchers->ChainMap.get(chain)
   let {
     parsedQueueItems,
@@ -310,10 +318,9 @@ let handleBlockRangeResponse = (state, ~chain, ~response: ChainWorker.blockRange
     currentBlockHeight,
     reorgGuard,
     fromBlockQueried,
-    fetchStateRegisterId,
-    partitionId,
     latestFetchedBlockTimestamp,
   } = response
+  let {lastBlockScannedData} = reorgGuard
 
   if Env.Benchmark.shouldSaveData {
     Benchmark.addBlockRangeFetched(
@@ -323,9 +330,16 @@ let handleBlockRangeResponse = (state, ~chain, ~response: ChainWorker.blockRange
       ~chainId=chainFetcher.chainConfig.chain->ChainMap.Chain.toChainId,
       ~fromBlock=fromBlockQueried,
       ~toBlock=latestFetchedBlockNumber,
-      ~fetchStateRegisterId,
       ~numEvents=parsedQueueItems->Array.length,
-      ~partitionId,
+      ~numAddresses=switch query {
+      | PartitionQuery({contractAddressMapping})
+      | MergeQuery({contractAddressMapping}) => contractAddressMapping
+      }->ContractAddressingMap.addressCount,
+      ~queryName=switch query {
+      | PartitionQuery({partitionId}) => `Partition ${partitionId}`
+      // Group all merge queries into a single summary
+      | MergeQuery(_) => `Merge Query`
+      },
     )
   }
 
@@ -336,8 +350,6 @@ let handleBlockRangeResponse = (state, ~chain, ~response: ChainWorker.blockRange
     "number of logs": parsedQueueItems->Array.length,
     "stats": stats,
   })
-
-  let {lastBlockScannedData} = reorgGuard
 
   let hasReorgOccurred =
     chainFetcher.lastBlockScannedHashes->ReorgDetection.LastBlockScannedHashes.hasReorgOccurred(
@@ -354,12 +366,12 @@ let handleBlockRangeResponse = (state, ~chain, ~response: ChainWorker.blockRange
 
     let updatedChainFetcher =
       chainFetcher
-      ->ChainFetcher.updateFetchState(
+      ->ChainFetcher.setQueryResponse(
+        ~query,
         ~currentBlockHeight,
         ~latestFetchedBlockTimestamp,
-        ~latestFetchedBlockNumber=latestFetchedBlockNumber,
+        ~latestFetchedBlockNumber,
         ~fetchedEvents=parsedQueueItems,
-        ~id={fetchStateId: fetchStateRegisterId, partitionId},
       )
       ->Utils.unwrapResultExn
       ->updateChainFetcherCurrentBlockHeight(~currentBlockHeight)
@@ -369,9 +381,7 @@ let handleBlockRangeResponse = (state, ~chain, ~response: ChainWorker.blockRange
       updatedChainFetcher->ChainFetcher.hasNoMoreEventsToProcess(~hasArbQueueEvents)
 
     let latestProcessedBlock = if hasNoMoreEventsToProcess {
-      PartitionedFetchState.getLatestFullyFetchedBlock(
-        updatedChainFetcher.partitionedFetchState,
-      ).blockNumber->Some
+      FetchState.getLatestFullyFetchedBlock(updatedChainFetcher.fetchState).blockNumber->Some
     } else {
       updatedChainFetcher.latestProcessedBlock
     }
@@ -424,8 +434,6 @@ let handleBlockRangeResponse = (state, ~chain, ~response: ChainWorker.blockRange
       chainManager,
     }
 
-    Prometheus.setFetchedEventsUntilHeight(~blockNumber=response.latestFetchedBlockNumber, ~chain)
-
     let processAction =
       updatedChainFetcher->ChainFetcher.isPreRegisteringDynamicContracts
         ? PreRegisterDynamicContracts
@@ -472,10 +480,11 @@ let actionReducer = (state: t, action: action) => {
       },
       [NextQuery(Chain(chain))],
     )
-  | BlockRangeResponse(chain, response) => state->handleBlockRangeResponse(~chain, ~response)
+  | PartitionQueryResponse({chain, response, query}) =>
+    state->handlePartitionQueryResponse(~chain, ~response, ~query)
   | EventBatchProcessed({
       latestProcessedBlocks,
-      dynamicContractRegistrations: Some({registrations, unprocessedBatch}),
+      dynamicContractRegistrations: Some({dynamicContractsByChain, unprocessedBatch}),
     }) =>
     let updatedArbQueue = Utils.Array.mergeSorted((a, b) => {
       a->EventUtils.getEventComparatorFromQueueItem > b->EventUtils.getEventComparatorFromQueueItem
@@ -495,92 +504,88 @@ let actionReducer = (state: t, action: action) => {
         NextQuery(CheckAllChains),
       ]->Array.concat(maybePruneEntityHistory)
 
-    let nextState = registrations->Array.reduce(state, (state, registration) => {
-      let {registeringEventChain, dynamicContracts} = registration
+    let updatedChainFetchers = state.chainManager.chainFetchers->ChainMap.mapWithKey((
+      chain,
+      cf,
+    ) => {
+      switch dynamicContractsByChain->Utils.Dict.dangerouslyGetNonOption(
+        chain->ChainMap.Chain.toString,
+      ) {
+      | None => cf
+      | Some(dcs) => {
+          /* strategy for TUI synced status:
+           * Firstly -> only update synced status after batch is processed (not on batch creation). But also set when a batch tries to be created and there is no batch
+           *
+           * Secondly -> reset timestampCaughtUpToHead and isFetching at head when dynamic contracts get registered to a chain if they are not within 0.001 percent of the current block height
+           *
+           * New conditions for valid synced:
+           *
+           * CASE 1 (chains are being synchronised at the head)
+           *
+           * All chain fetchers are fetching at the head AND
+           * No events that can be processed on the queue (even if events still exist on the individual queues)
+           * CASE 2 (chain finishes earlier than any other chain)
+           *
+           * CASE 3 endblock has been reached and latest processed block is greater than or equal to endblock (both fields must be Some)
+           *
+           * The given chain fetcher is fetching at the head or latest processed block >= endblock
+           * The given chain has processed all events on the queue
+           * see https://github.com/Float-Capital/indexer/pull/1388 */
 
-      let currentChainFetcher =
-        state.chainManager.chainFetchers->ChainMap.get(registeringEventChain)
-      /* strategy for TUI synced status:
-       * Firstly -> only update synced status after batch is processed (not on batch creation). But also set when a batch tries to be created and there is no batch
-       *
-       * Secondly -> reset timestampCaughtUpToHead and isFetching at head when dynamic contracts get registered to a chain if they are not within 0.001 percent of the current block height
-       *
-       * New conditions for valid synced:
-       *
-       * CASE 1 (chains are being synchronised at the head)
-       *
-       * All chain fetchers are fetching at the head AND
-       * No events that can be processed on the queue (even if events still exist on the individual queues)
-       * CASE 2 (chain finishes earlier than any other chain)
-       *
-       * CASE 3 endblock has been reached and latest processed block is greater than or equal to endblock (both fields must be Some)
-       *
-       * The given chain fetcher is fetching at the head or latest processed block >= endblock
-       * The given chain has processed all events on the queue
-       * see https://github.com/Float-Capital/indexer/pull/1388 */
+          /* Dynamic contracts pose a unique case when calculated whether a chain is synced or not.
+           * Specifically, in the initial syncing state from SearchingForEvents -> Synced, where although a chain has technically processed up to all blocks
+           * for a contract that emits events with dynamic contracts, it is possible that those dynamic contracts will need to be indexed from blocks way before
+           * the current block height. This is a toleration check where if there are dynamic contracts within a batch, check how far are they from the currentblock height.
+           * If it is less than 1 thousandth of a percent, then we deem that contract to be within the synced range, and therefore do not reset the synced status of the chain */
+          let areDynamicContractsWithinSyncRange = dcs->Array.every(dc => {
+            let {registeringEventBlockNumber} = dc
+            let isContractWithinSyncedRanged =
+              (cf.currentBlockHeight->Int.toFloat -. registeringEventBlockNumber->Int.toFloat) /.
+                cf.currentBlockHeight->Int.toFloat <= 0.001
+            isContractWithinSyncedRanged
+          })
 
-      /* Dynamic contracts pose a unique case when calculated whether a chain is synced or not.
-       * Specifically, in the initial syncing state from SearchingForEvents -> Synced, where although a chain has technically processed up to all blocks
-       * for a contract that emits events with dynamic contracts, it is possible that those dynamic contracts will need to be indexed from blocks way before
-       * the current block height. This is a toleration check where if there are dynamic contracts within a batch, check how far are they from the currentblock height.
-       * If it is less than 1 thousandth of a percent, then we deem that contract to be within the synced range, and therefore do not reset the synced status of the chain */
-      let areDynamicContractsWithinSyncRange = dynamicContracts->Array.reduce(true, (
-        acc,
-        contract,
-      ) => {
-        let {registeringEventBlockNumber} = contract
-        let isContractWithinSyncedRanged =
-          (currentChainFetcher.currentBlockHeight->Int.toFloat -.
-            registeringEventBlockNumber->Int.toFloat) /.
-            currentChainFetcher.currentBlockHeight->Int.toFloat <= 0.001
-        acc && isContractWithinSyncedRanged
-      })
+          let (
+            isFetchingAtHead,
+            timestampCaughtUpToHeadOrEndblock,
+          ) = areDynamicContractsWithinSyncRange
+            ? (cf->ChainFetcher.isFetchingAtHead, cf.timestampCaughtUpToHeadOrEndblock)
+            : (false, None)
 
-      let (isFetchingAtHead, timestampCaughtUpToHeadOrEndblock) = areDynamicContractsWithinSyncRange
-        ? (
-            currentChainFetcher->ChainFetcher.isFetchingAtHead,
-            currentChainFetcher.timestampCaughtUpToHeadOrEndblock,
-          )
-        : (false, None)
-
-      let updatedFetchState =
-        currentChainFetcher.partitionedFetchState->PartitionedFetchState.registerDynamicContracts(
-          registration,
-          ~isFetchingAtHead,
-        )
-
-      let updatedChainFetcher = {
-        ...currentChainFetcher,
-        partitionedFetchState: updatedFetchState,
-        timestampCaughtUpToHeadOrEndblock,
-      }
-
-      let updatedChainFetchers =
-        state.chainManager.chainFetchers->ChainMap.set(registeringEventChain, updatedChainFetcher)
-
-      let updatedChainManager: ChainManager.t = {
-        ...state.chainManager,
-        chainFetchers: updatedChainFetchers,
-        arbitraryEventQueue: updatedArbQueue,
-      }
-
-      {
-        ...state,
-        chainManager: updatedChainManager,
+          {
+            ...cf,
+            fetchState: cf.fetchState->FetchState.registerDynamicContracts(dcs, ~isFetchingAtHead),
+            timestampCaughtUpToHeadOrEndblock,
+          }
+        }
       }
     })
 
+    let updatedChainManager: ChainManager.t = {
+      ...state.chainManager,
+      chainFetchers: updatedChainFetchers,
+      arbitraryEventQueue: updatedArbQueue,
+    }
+
+    let nextState = {
+      ...state,
+      chainManager: updatedChainManager,
+    }
+    let nextState = updateLatestProcessedBlocks(~state=nextState, ~latestProcessedBlocks)
     // This ONLY updates the metrics - no logic is performed.
     nextState.chainManager.chainFetchers
     ->ChainMap.entries
     ->Array.forEach(((chain, chainFetcher)) => {
-      let highestFetchedBlockOnChain = PartitionedFetchState.getLatestFullyFetchedBlock(
-        chainFetcher.partitionedFetchState,
+      let highestFetchedBlockOnChain = FetchState.getLatestFullyFetchedBlock(
+        chainFetcher.fetchState,
       ).blockNumber
 
       Prometheus.setFetchedEventsUntilHeight(~blockNumber=highestFetchedBlockOnChain, ~chain)
+      switch chainFetcher.latestProcessedBlock {
+      | Some(blockNumber) => Prometheus.setProcessedUntilHeight(~blockNumber, ~chain)
+      | None => ()
+      }
     })
-    let nextState = updateLatestProcessedBlocks(~state=nextState, ~latestProcessedBlocks)
     (nextState, nextTasks)
 
   | EventBatchProcessed({latestProcessedBlocks, dynamicContractRegistrations: None}) =>
@@ -601,24 +606,7 @@ let actionReducer = (state: t, action: action) => {
     if isInReorgThreshold {
       Logging.info("Reorg threshold reached")
     }
-    ({...state, chainManager: {...state.chainManager, isInReorgThreshold}}, [])
-  | SetUpdatedPartitions(chain, updatedPartitions) =>
-    let updatedPartitionIds = updatedPartitions->Js.Dict.keys
-    if updatedPartitionIds->Utils.Array.isEmpty {
-      (state, [])
-    } else {
-      updateChainFetcher(currentChainFetcher => {
-        let partitionsCopy = currentChainFetcher.partitionedFetchState.partitions->Js.Array2.copy
-        updatedPartitionIds->Js.Array2.forEach(partitionId => {
-          let partition = updatedPartitions->Js.Dict.unsafeGet(partitionId)
-          partitionsCopy->Js.Array2.unsafe_set(partitionId->(Utils.magic: string => int), partition)
-        })
-        {
-          ...currentChainFetcher,
-          partitionedFetchState: {...currentChainFetcher.partitionedFetchState, partitions: partitionsCopy},
-        }
-      }, ~chain, ~state)
-    }
+    ({...state, chainManager: {...state.chainManager, isInReorgThreshold}}, [ProcessEventBatch])
   | SetSyncedChains => {
       let shouldExit = EventProcessing.EventsProcessed.allChainsEventsProcessedToEndblock(
         state.chainManager.chainFetchers,
@@ -640,7 +628,7 @@ let actionReducer = (state: t, action: action) => {
     let chainFetchers = state.chainManager.chainFetchers->ChainMap.mapWithKey((chain, cf) => {
       {
         ...cf,
-        partitionedFetchState: ChainMap.get(fetchStatesMap, chain).partitionedFetchState,
+        fetchState: ChainMap.get(fetchStatesMap, chain).fetchState,
       }
     })
 
@@ -671,35 +659,33 @@ let actionReducer = (state: t, action: action) => {
 
     let state = switch dynamicContractRegistrations {
     | None => state
-    | Some({registrations}) =>
-      //Create an empty map for mutating the contractAddress mapping
-      let tempChainMap: ChainMap.t<ChainFetcher.addressToDynContractLookup> =
-        state.chainManager.chainFetchers->ChainMap.map(_ => Js.Dict.empty())
-
-      registrations->Array.forEach(({dynamicContracts}) =>
-        dynamicContracts->Array.forEach(dynamicContract => {
-          let chain = ChainMap.Chain.makeUnsafe(~chainId=dynamicContract.chainId)
-          let contractAddressMapping = tempChainMap->ChainMap.get(chain)
-          contractAddressMapping->Js.Dict.set(
-            dynamicContract.contractAddress->Address.toString,
-            dynamicContract,
-          )
-        })
-      )
-
+    | Some({dynamicContractsByChain}) =>
       let updatedChainFetchers = state.chainManager.chainFetchers->ChainMap.mapWithKey((
         chain,
         cf,
       ) => {
-        let dynamicContractPreRegistration = switch cf.dynamicContractPreRegistration {
-        | Some(current) => current->Utils.Dict.merge(tempChainMap->ChainMap.get(chain))
-        //Should never be the case while this task is being scheduled
-        | None => tempChainMap->ChainMap.get(chain)
-        }->Some
+        switch dynamicContractsByChain->Utils.Dict.dangerouslyGetNonOption(
+          chain->ChainMap.Chain.toString,
+        ) {
+        | None => cf
+        | Some(dcs) => {
+            let contractAddressMapping = Js.Dict.empty()
 
-        {
-          ...cf,
-          dynamicContractPreRegistration,
+            dcs->Array.forEach(dc =>
+              contractAddressMapping->Js.Dict.set(dc.contractAddress->Address.toString, dc)
+            )
+
+            let dynamicContractPreRegistration = switch cf.dynamicContractPreRegistration {
+            | Some(current) => current->Utils.Dict.merge(contractAddressMapping)
+            //Should never be the case while this task is being scheduled
+            | None => contractAddressMapping
+            }->Some
+
+            {
+              ...cf,
+              dynamicContractPreRegistration,
+            }
+          }
         }
       })
 
@@ -729,7 +715,8 @@ let actionReducer = (state: t, action: action) => {
       let {
         chainConfig,
         logger,
-        partitionedFetchState: {startBlock, endBlock, maxAddrInPartition},
+        startBlock,
+        fetchState: {maxAddrInPartition},
         dynamicContractPreRegistration,
       } = cf
 
@@ -744,7 +731,7 @@ let actionReducer = (state: t, action: action) => {
         ),
         ~staticContracts=chainConfig->ChainFetcher.getStaticContracts,
         ~startBlock,
-        ~endBlock,
+        ~endBlock=chainConfig.endBlock,
         ~dbFirstEventBlockNumber=None,
         ~latestProcessedBlock=None,
         ~logger,
@@ -790,66 +777,78 @@ let invalidatedActionReducer = (state: t, action: action) =>
     (state, [])
   }
 
-let executePartitionQuery = (
-  query,
+let executeQuery = (
+  query: FetchState.query,
   ~logger,
   ~chainWorker,
   ~currentBlockHeight,
   ~chain,
-  ~dispatchAction,
   ~isPreRegisteringDynamicContracts,
 ) => {
-  let module(ChainWorker: ChainWorker.S) = chainWorker
-
-  let logger = Logging.createChildFrom(
-    ~logger,
-    ~params={
-      "chainId": chain->ChainMap.Chain.toChainId,
-      "logType": "Block Range Query",
-      "workerType": ChainWorker.name,
-    },
-  )
-  let logger = query->FetchState.getQueryLogger(~logger)
-  ChainWorker.fetchBlockRange(
-    ~query,
-    ~logger,
-    ~currentBlockHeight,
-    ~isPreRegisteringDynamicContracts,
-  )->Promise.thenResolve(res =>
-    switch res {
-    | Ok(res) => dispatchAction(BlockRangeResponse(chain, res))
-    | Error(e) => dispatchAction(ErrorExit(e))
-    }
-  )
+  switch query {
+  | PartitionQuery({partitionId, fromBlock, toBlock, contractAddressMapping}) =>
+    chainWorker->ChainWorker.fetchBlockRange(
+      ~fromBlock,
+      ~toBlock,
+      ~contractAddressMapping,
+      ~partitionId,
+      ~chain,
+      ~currentBlockHeight,
+      ~isPreRegisteringDynamicContracts,
+      ~logger,
+      //Only apply wildcards on the first partition
+      //to avoid duplicate wildcard queries
+      ~shouldApplyWildcards=partitionId === "0",
+    )
+  | MergeQuery({partitionId, fromBlock, toBlock, contractAddressMapping}) =>
+    chainWorker->ChainWorker.fetchBlockRange(
+      ~fromBlock,
+      ~toBlock=Some(toBlock),
+      ~contractAddressMapping,
+      ~partitionId,
+      ~chain,
+      ~currentBlockHeight,
+      ~isPreRegisteringDynamicContracts,
+      ~logger,
+      //Only apply wildcards on the first partition
+      //to avoid duplicate wildcard queries
+      ~shouldApplyWildcards=partitionId === "0",
+    )
+  }
 }
 
 let checkAndFetchForChain = (
   //Used for dependency injection for tests
   ~waitForNewBlock,
-  ~executePartitionQuery,
+  ~executeQuery,
   //required args
   ~state,
   ~dispatchAction,
 ) => async chain => {
   let chainFetcher = state.chainManager.chainFetchers->ChainMap.get(chain)
   if !isRollingBack(state) {
-    let {chainConfig: {chainWorker}, logger, currentBlockHeight, partitionedFetchState} = chainFetcher
+    let {chainConfig: {chainWorker}, logger, currentBlockHeight, fetchState} = chainFetcher
 
-    await chainFetcher.sourceManager->SourceManager.fetchBatch(
-      ~allPartitions=partitionedFetchState.partitions,
-      ~waitForNewBlock=(~currentBlockHeight, ~logger) => chainWorker->waitForNewBlock(~currentBlockHeight, ~logger),
-      ~onNewBlock=(~currentBlockHeight) => dispatchAction(FinishWaitingForNewBlock({chain, currentBlockHeight})),
+    await chainFetcher.sourceManager->SourceManager.fetchNext(
+      ~fetchState,
+      ~waitForNewBlock=(~currentBlockHeight, ~logger) =>
+        chainWorker->waitForNewBlock(~currentBlockHeight, ~logger),
+      ~onNewBlock=(~currentBlockHeight) =>
+        dispatchAction(FinishWaitingForNewBlock({chain, currentBlockHeight})),
       ~currentBlockHeight,
-      ~executePartitionQuery=query => query->executePartitionQuery(
-        ~logger,
-        ~chainWorker,
-        ~currentBlockHeight,
-        ~chain,
-        ~dispatchAction,
-        ~isPreRegisteringDynamicContracts=state.chainManager->ChainManager.isPreRegisteringDynamicContracts,
-      ),
+      ~executeQuery=async query => {
+        switch await query->executeQuery(
+          ~logger,
+          ~chainWorker,
+          ~currentBlockHeight,
+          ~chain,
+          ~isPreRegisteringDynamicContracts=state.chainManager->ChainManager.isPreRegisteringDynamicContracts,
+        ) {
+        | Ok(response) => dispatchAction(PartitionQueryResponse({chain, response, query}))
+        | Error(e) => dispatchAction(ErrorExit(e))
+        }
+      },
       ~maxPerChainQueueSize=state.maxPerChainQueueSize,
-      ~setMergedPartitions=partitions => dispatchAction(SetUpdatedPartitions(chain, partitions)),
       ~stateId=state.id,
     )
   }
@@ -858,7 +857,7 @@ let checkAndFetchForChain = (
 let injectedTaskReducer = (
   //Used for dependency injection for tests
   ~waitForNewBlock,
-  ~executePartitionQuery,
+  ~executeQuery,
   ~rollbackLastBlockHashesToReorgLocation,
 ) => async (
   //required args
@@ -964,7 +963,7 @@ let injectedTaskReducer = (
   | NextQuery(chainCheck) =>
     let fetchForChain = checkAndFetchForChain(
       ~waitForNewBlock,
-      ~executePartitionQuery,
+      ~executeQuery,
       ~state,
       ~dispatchAction,
     )
@@ -1056,10 +1055,13 @@ let injectedTaskReducer = (
       } else {
         false
       }
+
       switch state.chainManager->ChainManager.createBatch(
         ~maxBatchSize=state.maxBatchSize,
         ~onlyBelowReorgThreshold,
       ) {
+      | {isInReorgThreshold: true, val: None} if onlyBelowReorgThreshold =>
+        dispatchAction(SetIsInReorgThreshold(true))
       | {isInReorgThreshold, val: Some({batch, fetchStatesMap, arbitraryEventQueue})} =>
         dispatchAction(SetCurrentlyProcessing(true))
         dispatchAction(UpdateQueues(fetchStatesMap, arbitraryEventQueue))
@@ -1081,8 +1083,8 @@ let injectedTaskReducer = (
           ~contractAddress,
           ~contractName: Enums.ContractType.t,
         ) => {
-          let {partitionedFetchState} = fetchStatesMap->ChainMap.get(chain)
-          partitionedFetchState->PartitionedFetchState.checkContainsRegisteredContractAddress(
+          let {fetchState} = fetchStatesMap->ChainMap.get(chain)
+          fetchState->FetchState.checkContainsRegisteredContractAddress(
             ~contractAddress,
             ~contractName=(contractName :> string),
             ~chainId=chain->ChainMap.Chain.toChainId,
@@ -1191,8 +1193,8 @@ let injectedTaskReducer = (
               ~blockNumber=firstChangeEvent.blockNumber,
             )
 
-          let partitionedFetchState =
-            cf.partitionedFetchState->PartitionedFetchState.rollback(
+          let fetchState =
+            cf.fetchState->FetchState.rollback(
               ~lastScannedBlock=rolledBackLastBlockData->ChainFetcher.getLastScannedBlockData,
               ~firstChangeEvent,
             )
@@ -1200,7 +1202,7 @@ let injectedTaskReducer = (
           let rolledBackCf = {
             ...cf,
             lastBlockScannedHashes: rolledBackLastBlockData,
-            partitionedFetchState,
+            fetchState,
           }
           //On other chains, filter out evennts based on the first change present on the chain after the reorg
           rolledBackCf->ChainFetcher.addProcessingFilter(
@@ -1250,6 +1252,6 @@ let injectedTaskReducer = (
 
 let taskReducer = injectedTaskReducer(
   ~waitForNewBlock=ChainWorker.waitForNewBlock,
-  ~executePartitionQuery,
+  ~executeQuery,
   ~rollbackLastBlockHashesToReorgLocation=ChainFetcher.rollbackLastBlockHashesToReorgLocation(_),
 )

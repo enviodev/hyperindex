@@ -27,7 +27,7 @@ type multiChainEventComparitor = {
 let getQueueItemComparitor = (earliestQueueItem: FetchState.queueItem, ~chain) => {
   switch earliestQueueItem {
   | Item({item}) => item->getComparitorFromItem
-  | NoItem({blockTimestamp, blockNumber}) => (
+  | NoItem({latestFetchedBlock: {blockTimestamp, blockNumber}}) => (
       blockTimestamp,
       chain->ChainMap.Chain.toChainId,
       blockNumber,
@@ -69,7 +69,7 @@ type isInReorgThresholdRes<'payload> = {
 }
 
 type fetchStateWithData = {
-  partitionedFetchState: PartitionedFetchState.t,
+  fetchState: FetchState.t,
   heighestBlockBelowThreshold: int,
 }
 
@@ -115,11 +115,11 @@ let determineNextEvent = (
     ->ChainMap.entries
     ->Array.reduce({isInReorgThreshold: false, val: None}, (
       accum,
-      (chain, {partitionedFetchState, heighestBlockBelowThreshold}),
+      (chain, {fetchState, heighestBlockBelowThreshold}),
     ) => {
       // If the fetch state has reached the end block we don't need to consider it
-      switch partitionedFetchState->PartitionedFetchState.getEarliestEvent {
-      | Some(earliestEvent) =>
+      if fetchState->FetchState.isActivelyIndexing {
+        let earliestEvent = fetchState->FetchState.getEarliestEvent
         let current: multiChainEventComparitor = {chain, earliestEvent}
         switch accum.val {
         | Some(previous) if comparitorFunction(previous, current) => accum
@@ -132,7 +132,8 @@ let determineNextEvent = (
             isInReorgThreshold,
           }
         }
-      | None => accum
+      } else {
+        accum
       }
     })
 
@@ -325,9 +326,7 @@ let popBatchItem = (
 let getFetchStateWithData = (self: t, ~shouldDeepCopy=false): ChainMap.t<fetchStateWithData> => {
   self.chainFetchers->ChainMap.map(cf => {
     {
-      partitionedFetchState: shouldDeepCopy
-        ? cf.partitionedFetchState->PartitionedFetchState.copy
-        : cf.partitionedFetchState,
+      fetchState: shouldDeepCopy ? cf.fetchState->FetchState.copy : cf.fetchState,
       heighestBlockBelowThreshold: cf->ChainFetcher.getHeighestBlockBelowThreshold,
     }
   })
@@ -396,7 +395,7 @@ type batchRes = {
 let createBatch = (self: t, ~maxBatchSize: int, ~onlyBelowReorgThreshold: bool) => {
   let refTime = Hrtime.makeTimer()
 
-  let {arbitraryEventQueue, chainFetchers} = self
+  let {arbitraryEventQueue} = self
   //Make a copy of the queues and fetch states since we are going to mutate them
   let arbitraryEventQueue = arbitraryEventQueue->Array.copy
   let fetchStatesMap = self->getFetchStateWithData(~shouldDeepCopy=true)
@@ -409,15 +408,23 @@ let createBatch = (self: t, ~maxBatchSize: int, ~onlyBelowReorgThreshold: bool) 
     ~onlyBelowReorgThreshold,
   )
 
+  // Needed to recalculate the computed queue sizes
+  let fetchStatesMap = fetchStatesMap->ChainMap.map(v => {
+    {
+      ...v,
+      fetchState: v.fetchState->FetchState.updateInternal,
+    }
+  })
+
   let batchSize = batch->Array.length
 
   let val = if batchSize > 0 {
     let fetchedEventsBuffer =
-      chainFetchers
-      ->ChainMap.values
-      ->Array.map(fetcher => (
-        fetcher.chainConfig.chain->ChainMap.Chain.toString,
-        fetcher.partitionedFetchState->PartitionedFetchState.queueSize,
+      fetchStatesMap
+      ->ChainMap.entries
+      ->Array.map(((chain, v)) => (
+        chain->ChainMap.Chain.toString,
+        v.fetchState->FetchState.queueSize,
       ))
       ->Array.concat([("arbitrary", self.arbitraryEventQueue->Array.length)])
       ->Js.Dict.fromArray

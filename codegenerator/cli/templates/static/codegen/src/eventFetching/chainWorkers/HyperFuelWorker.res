@@ -304,14 +304,17 @@ module Make = (
   }
 
   let fetchBlockRange = async (
-    ~query: blockRangeFetchArgs,
-    ~logger,
+    ~fromBlock,
+    ~toBlock,
+    ~contractAddressMapping,
     ~currentBlockHeight as _,
+    ~partitionId as _,
+    ~shouldApplyWildcards,
     ~isPreRegisteringDynamicContracts,
+    ~logger,
   ) => {
     let mkLogAndRaise = ErrorHandling.mkLogAndRaise(~logger, ...)
     try {
-      let {fetchStateRegisterId, partitionId, fromBlock, contractAddressMapping, toBlock} = query
       let startFetchingBatchTimeRef = Hrtime.makeTimer()
       //fetch batch
       let {page: pageUnsafe, pageFetchTime} = await getNextPage(
@@ -319,9 +322,7 @@ module Make = (
         ~toBlock,
         ~contractAddressMapping,
         ~logger,
-        //Only apply wildcards on the first partition and root register
-        //to avoid duplicate wildcard queries
-        ~shouldApplyWildcards=fetchStateRegisterId->FetchState.isRootRegisterId && partitionId == 0,
+        ~shouldApplyWildcards,
         ~isPreRegisteringDynamicContracts,
       )
 
@@ -530,7 +531,7 @@ module Make = (
       let stats = {
         totalTimeElapsed,
         parsingTimeElapsed,
-        pageFetchTime
+        pageFetchTime,
       }
 
       {
@@ -541,8 +542,6 @@ module Make = (
         currentBlockHeight,
         reorgGuard,
         fromBlockQueried: fromBlock,
-        fetchStateRegisterId,
-        partitionId,
       }->Ok
     } catch {
     | exn => exn->ErrorHandling.make(~logger, ~msg="Failed to fetch block Range")->Error

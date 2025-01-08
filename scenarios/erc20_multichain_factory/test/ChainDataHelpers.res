@@ -91,13 +91,10 @@ module Stubs = {
     ~chainWorker,
     ~currentBlockHeight,
     ~chain,
-    ~dispatchAction,
     ~isPreRegisteringDynamicContracts,
   ) => {
     (logger, currentBlockHeight, chainWorker, isPreRegisteringDynamicContracts)->ignore
-
-    let response = stubData->getMockChainData(chain)->MockChainData.executeQuery(query)
-    dispatchAction(GlobalState.BlockRangeResponse(chain, response))
+    stubData->getMockChainData(chain)->MockChainData.executeQuery(query)->Ok
   }
 
   //Stub for getting block hashes instead of the worker
@@ -135,7 +132,7 @@ module Stubs = {
 
   let makeDispatchTask = (stubData: t, task) => {
     GlobalState.injectedTaskReducer(
-      ~executePartitionQuery=makeExecutePartitionQuery(stubData),
+      ~executeQuery=makeExecutePartitionQuery(stubData),
       ~waitForNewBlock=makeWaitForNewBlock(stubData),
       ~rollbackLastBlockHashesToReorgLocation=chainFetcher =>
         chainFetcher->ChainFetcher.rollbackLastBlockHashesToReorgLocation(

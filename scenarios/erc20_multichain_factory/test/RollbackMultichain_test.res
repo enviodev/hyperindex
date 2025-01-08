@@ -252,11 +252,11 @@ describe("Multichain rollback test", () => {
 
     let getFetchState = chain => {
       let cf = chain->getChainFetcher
-      cf.partitionedFetchState
+      cf.fetchState
     }
 
     let getLatestFetchedBlock = chain => {
-      chain->getFetchState->PartitionedFetchState.getLatestFullyFetchedBlock
+      chain->getFetchState->FetchState.getLatestFullyFetchedBlock
     }
 
     let getTokenBalance = (~accountAddress) => chain => {
@@ -275,8 +275,7 @@ describe("Multichain rollback test", () => {
       ->ChainMap.values
       ->Array.reduce(
         0,
-        (accum, chainFetcher) =>
-          accum + chainFetcher.partitionedFetchState->PartitionedFetchState.queueSize,
+        (accum, chainFetcher) => accum + chainFetcher.fetchState->FetchState.queueSize,
       )
     }
 
@@ -308,18 +307,18 @@ describe("Multichain rollback test", () => {
       ~chain2User2Balance,
     ) => {
       Assert.equal(
-        chain1LatestFetchBlock,
         getLatestFetchedBlock(Mock.Chain1.chain).blockNumber,
+        chain1LatestFetchBlock,
         ~message=`Chain 1 should have fetched up to block ${chain1LatestFetchBlock->Int.toString} on query ${queryName}`,
       )
       Assert.equal(
-        chain2LatestFetchBlock,
         getLatestFetchedBlock(Mock.Chain2.chain).blockNumber,
+        chain2LatestFetchBlock,
         ~message=`Chain 2 should have fetched up to block ${chain2LatestFetchBlock->Int.toString} on query ${queryName}`,
       )
       Assert.equal(
-        totalQueueSize,
         getTotalQueueSize(),
+        totalQueueSize,
         ~message=`Query ${queryName} should have returned ${totalQueueSize->Int.toString} events`,
       )
 
@@ -424,6 +423,7 @@ describe("Multichain rollback test", () => {
     Assert.deepEqual(
       [
         GlobalState.NextQuery(CheckAllChains),
+        ProcessEventBatch,
         Mock.getUpdateEndofBlockRangeScannedData(
           Mock.mockChainDataMapInitial,
           ~chain=Mock.Chain1.chain,
@@ -614,6 +614,8 @@ describe("Multichain rollback test", () => {
       ~chain2User2Balance=Some(52),
     )
     await dispatchAllTasks()
+    await dispatchAllTasks()
+
     await makeAssertions(
       ~queryName="After Rollback EventProcess B",
       ~chain1LatestFetchBlock=6,

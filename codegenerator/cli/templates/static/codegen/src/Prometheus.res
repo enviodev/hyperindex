@@ -201,7 +201,7 @@ module BenchmarkCounters = {
 }
 
 module PartitionBlockFetched = {
-  type labels = {chainId: int, partitionId: int}
+  type labels = {chainId: int, partitionId: string}
   let intAsString = S.string->S.transform(s => {
     serializer: int => int->Belt.Int.toString,
     parser: string =>
@@ -213,7 +213,7 @@ module PartitionBlockFetched = {
 
   let labelSchema = S.schema(s => {
     chainId: s.matches(intAsString),
-    partitionId: s.matches(intAsString),
+    partitionId: s.matches(S.string),
   })
 
   let counter = SafeGauge.makeOrThrow(
@@ -227,7 +227,6 @@ module PartitionBlockFetched = {
   }
 }
 
-// TODO: implement this metric that updates in batches, currently unused
 let processedUntilHeight = PromClient.Gauge.makeGauge({
   "name": "chain_block_height_processed",
   "help": "Block height processed by indexer",
@@ -277,7 +276,7 @@ let setProcessedUntilHeight = (~blockNumber, ~chain) => {
 }
 
 let setFetchedEventsUntilHeight = (~blockNumber, ~chain) => {
-  processedUntilHeight
+  fetchedEventsUntilHeight
   ->PromClient.Gauge.labels({"chainId": chain->ChainMap.Chain.toString})
   ->PromClient.Gauge.set(blockNumber)
 }

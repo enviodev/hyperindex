@@ -52,11 +52,35 @@ module Dict = {
 
   let merge: (dict<'a>, dict<'a>) => dict<'a> = %raw(`(dictA, dictB) => ({...dictA, ...dictB})`)
 
+  let map = (dict, fn) => {
+    let newDict = Js.Dict.empty()
+    let keys = dict->Js.Dict.keys
+    for idx in 0 to keys->Js.Array2.length - 1 {
+      let key = keys->Js.Array2.unsafe_get(idx)
+      newDict->Js.Dict.set(key, fn(dict->Js.Dict.unsafeGet(key)))
+    }
+    newDict
+  }
+
+  let forEach = (dict, fn) => {
+    let keys = dict->Js.Dict.keys
+    for idx in 0 to keys->Js.Array2.length - 1 {
+      fn(dict->Js.Dict.unsafeGet(keys->Js.Array2.unsafe_get(idx)))
+    }
+  }
+
+  let deleteInPlace: (dict<'a>, string) => unit = %raw(`(dict, key) => {
+      delete dict[key];
+    }
+  `)
+
   let updateImmutable: (
     dict<'a>,
     string,
     'a,
   ) => dict<'a> = %raw(`(dict, key, value) => ({...dict, [key]: value})`)
+
+  let shallowCopy: dict<'a> => dict<'a> = %raw(`(dict) => ({...dict})`)
 }
 
 module Math = {
@@ -156,12 +180,12 @@ Helper to check if a value exists in an array
   Index > array length or < 0 results in a copy of the array
   */
   let removeAtIndex = (array, index) => {
-    if index < 0 || index >= array->Array.length {
+    if index < 0 {
       array->Array.copy
     } else {
-      let head = array->Js.Array2.slice(~start=0, ~end_=index)
-      let tail = array->Belt.Array.sliceToEnd(index + 1)
-      Belt.Array.concat(head, tail)
+      array
+      ->Js.Array2.slice(~start=0, ~end_=index)
+      ->Js.Array2.concat(array->Js.Array2.sliceFrom(index + 1))
     }
   }
 
@@ -205,6 +229,9 @@ Helper to check if a value exists in an array
     })
     interleaved
   }
+
+  @send
+  external flatten: (array<array<'a>>, @as(1) _) => array<'a> = "flat"
 }
 
 module String = {

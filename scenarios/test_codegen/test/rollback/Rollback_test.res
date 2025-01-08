@@ -61,13 +61,11 @@ module Stubs = {
     ~chainWorker,
     ~currentBlockHeight,
     ~chain,
-    ~dispatchAction,
     ~isPreRegisteringDynamicContracts,
   ) => {
-    (logger, currentBlockHeight, chainWorker, isPreRegisteringDynamicContracts)->ignore
+    (logger, chain, currentBlockHeight, chainWorker, isPreRegisteringDynamicContracts)->ignore
 
-    let response = mockChainData->MockChainData.executeQuery(query)
-    dispatchAction(GlobalState.BlockRangeResponse(chain, response))
+    Ok(mockChainData->MockChainData.executeQuery(query))
   }
 
   //Stub for getting block hashes instead of the worker
@@ -100,7 +98,7 @@ module Stubs = {
 
   let dispatchTask = (gsManager, mockChainData, task) => {
     GlobalState.injectedTaskReducer(
-      ~executePartitionQuery=executePartitionQueryWithMockChainData(mockChainData),
+      ~executeQuery=executePartitionQueryWithMockChainData(mockChainData),
       ~waitForNewBlock,
       ~rollbackLastBlockHashesToReorgLocation=chainFetcher =>
         chainFetcher->ChainFetcher.rollbackLastBlockHashesToReorgLocation(
@@ -157,7 +155,7 @@ describe("Single Chain Simple Rollback", () => {
     open Stubs
     let dispatchTaskInitalChain = dispatchTask(gsManager, Mock.mockChainData, ...)
     let dispatchTaskReorgChain = dispatchTask(gsManager, Mock.mockChainDataReorg, ...)
-    let dispatchAllTasksInitalChain = () => dispatchAllTasks(gsManager, Mock.mockChainData, ...)
+    let dispatchAllTasksInitalChain = () => dispatchAllTasks(gsManager, Mock.mockChainData)
     tasks := []
 
     await dispatchTaskInitalChain(NextQuery(Chain(chain)))
@@ -193,7 +191,7 @@ describe("Single Chain Simple Rollback", () => {
     )
 
     Assert.equal(
-      getChainFetcher().partitionedFetchState->PartitionedFetchState.queueSize,
+      getChainFetcher().fetchState->FetchState.queueSize,
       3,
       ~message="should have 3 events on the queue from the first 3 blocks of inital chainData",
     )
@@ -256,7 +254,7 @@ describe("Single Chain Simple Rollback", () => {
     )
 
     Assert.equal(
-      getChainFetcher().partitionedFetchState->PartitionedFetchState.queueSize,
+      getChainFetcher().fetchState->FetchState.queueSize,
       3,
       ~message="should have 3 events on the queue from the first 3 blocks of inital chainData",
     )
@@ -332,6 +330,7 @@ describe("Single Chain Simple Rollback", () => {
     Assert.deepEqual(
       tasks.contents,
       [
+        UpdateChainMetaDataAndCheckForExit(NoExit),
         GlobalState.UpdateEndOfBlockRangeScannedData({
           blockNumberThreshold: -198,
           blockTimestampThreshold: 50,
@@ -346,7 +345,34 @@ describe("Single Chain Simple Rollback", () => {
         UpdateChainMetaDataAndCheckForExit(NoExit),
         ProcessEventBatch,
         NextQuery(Chain(chain)),
+      ],
+      ~message="Query should have returned with batch to process",
+    )
+
+    await dispatchAllTasksReorgChain()
+
+    let block4 =
+      Mock.mockChainDataReorg
+      ->MockChainData.getBlock(~blockNumber=4)
+      ->Option.getUnsafe
+    Assert.deepEqual(
+      tasks.contents,
+      [
         NextQuery(CheckAllChains),
+        GlobalState.UpdateEndOfBlockRangeScannedData({
+          blockNumberThreshold: -196,
+          blockTimestampThreshold: 50,
+          chain: MockConfig.chain1337,
+          nextEndOfBlockRangeScannedData: {
+            blockHash: block4.blockHash,
+            blockNumber: block4.blockNumber,
+            blockTimestamp: block4.blockTimestamp,
+            chainId: 1337,
+          },
+        }),
+        UpdateChainMetaDataAndCheckForExit(NoExit),
+        ProcessEventBatch,
+        NextQuery(Chain(chain)),
         UpdateChainMetaDataAndCheckForExit(NoExit),
         ProcessEventBatch,
       ],
@@ -374,8 +400,8 @@ describe("Single Chain Simple Rollback", () => {
 
     let gravatars = await getAllGravatars()
     Assert.deepEqual(
-      expectedGravatars,
       gravatars,
+      expectedGravatars,
       ~message="First gravatar should roll back and change and second should have received an update",
     )
   })

@@ -10,9 +10,10 @@ type processingFilter = {
 type addressToDynContractLookup = dict<TablesStatic.DynamicContractRegistry.t>
 type t = {
   logger: Pino.t,
-  partitionedFetchState: PartitionedFetchState.t,
+  fetchState: FetchState.t,
   sourceManager: SourceManager.t,
   chainConfig: Config.chainConfig,
+  startBlock: int,
   //The latest known block of the chain
   currentBlockHeight: int,
   timestampCaughtUpToHeadOrEndblock: option<Js.Date.t>,
@@ -51,22 +52,26 @@ let make = (
   let module(ChainWorker) = chainConfig.chainWorker
   logger->Logging.childInfo("Initializing ChainFetcher with " ++ ChainWorker.name ++ " worker")
 
-  let partitionedFetchState = PartitionedFetchState.make(
+  let fetchState = FetchState.make(
     ~maxAddrInPartition,
     ~staticContracts,
-    ~dynamicContractRegistrations,
+    ~dynamicContracts=dynamicContractRegistrations,
     ~startBlock,
     ~endBlock,
-    ~logger,
+    ~isFetchingAtHead=false,
   )
 
   {
     logger,
     chainConfig,
-    sourceManager: SourceManager.make(~maxPartitionConcurrency=Env.maxPartitionConcurrency, ~endBlock, ~logger),
+    startBlock,
+    sourceManager: SourceManager.make(
+      ~maxPartitionConcurrency=Env.maxPartitionConcurrency,
+      ~logger,
+    ),
     lastBlockScannedHashes,
     currentBlockHeight: 0,
-    partitionedFetchState,
+    fetchState,
     dbFirstEventBlockNumber,
     latestProcessedBlock,
     timestampCaughtUpToHeadOrEndblock,
@@ -303,13 +308,9 @@ let applyProcessingFilters = (
 //any that meet the cleanup condition
 let cleanUpProcessingFilters = (
   processingFilters: array<processingFilter>,
-  ~partitionedFetchState as {partitions}: PartitionedFetchState.t,
+  ~fetchState: FetchState.t,
 ) => {
-  switch processingFilters->Array.keep(processingFilter =>
-    partitions->Array.reduce(false, (accum, partition) => {
-      accum || processingFilter.isValid(~fetchState=partition)
-    })
-  ) {
+  switch processingFilters->Array.keep(processingFilter => processingFilter.isValid(~fetchState)) {
   | [] => None
   | filters => Some(filters)
   }
@@ -320,9 +321,9 @@ Updates of fetchState and cleans up event filters. Should be used whenever updat
 to ensure processingFilters are always valid.
 Returns Error if the node with given id cannot be found (unexpected)
 */
-let updateFetchState = (
+let setQueryResponse = (
   self: t,
-  ~id,
+  ~query: FetchState.query,
   ~latestFetchedBlockTimestamp,
   ~latestFetchedBlockNumber,
   ~fetchedEvents,
@@ -333,23 +334,22 @@ let updateFetchState = (
   | Some(processingFilters) => fetchedEvents->applyProcessingFilters(~processingFilters)
   }
 
-  self.partitionedFetchState
-  ->PartitionedFetchState.update(
-    ~id,
+  self.fetchState
+  ->FetchState.setQueryResponse(
+    ~query,
     ~latestFetchedBlock={
       blockNumber: latestFetchedBlockNumber,
       blockTimestamp: latestFetchedBlockTimestamp,
     },
     ~newItems,
     ~currentBlockHeight,
-    ~chain=self.chainConfig.chain,
   )
-  ->Result.map(partitionedFetchState => {
+  ->Result.map(fetchState => {
     {
       ...self,
-      partitionedFetchState,
+      fetchState,
       processingFilters: switch self.processingFilters {
-      | Some(processingFilters) => processingFilters->cleanUpProcessingFilters(~partitionedFetchState)
+      | Some(processingFilters) => processingFilters->cleanUpProcessingFilters(~fetchState)
       | None => None
       },
     }
@@ -368,7 +368,7 @@ let hasProcessedToEndblock = (self: t) => {
 }
 
 let hasNoMoreEventsToProcess = (self: t, ~hasArbQueueEvents) => {
-  !hasArbQueueEvents && self.partitionedFetchState->PartitionedFetchState.queueSize === 0
+  !hasArbQueueEvents && self.fetchState->FetchState.queueSize === 0
 }
 
 /**
@@ -423,21 +423,20 @@ let getLastScannedBlockData = lastBlockData => {
   })
 }
 
-let isFetchingAtHead = (chainFetcher: t) =>
-  chainFetcher.partitionedFetchState->PartitionedFetchState.isFetchingAtHead
+let isFetchingAtHead = (chainFetcher: t) => chainFetcher.fetchState.isFetchingAtHead
 
-let isActivelyIndexing = (chainFetcher: t) =>
-  chainFetcher.partitionedFetchState->PartitionedFetchState.isActivelyIndexing
+let isActivelyIndexing = (chainFetcher: t) => chainFetcher.fetchState->FetchState.isActivelyIndexing
 
 let getFirstEventBlockNumber = (chainFetcher: t) =>
   Utils.Math.minOptInt(
     chainFetcher.dbFirstEventBlockNumber,
-    chainFetcher.partitionedFetchState->PartitionedFetchState.getFirstEventBlockNumber,
+    chainFetcher.fetchState.firstEventBlockNumber,
   )
 
 let isPreRegisteringDynamicContracts = (chainFetcher: t) =>
   chainFetcher.dynamicContractPreRegistration->Option.isSome
 
 let getHeighestBlockBelowThreshold = (cf: t): int => {
-  Pervasives.max(cf.currentBlockHeight - cf.chainConfig.confirmedBlockThreshold, 0)
+  let highestBlockBelowThreshold = cf.currentBlockHeight - cf.chainConfig.confirmedBlockThreshold
+  highestBlockBelowThreshold < 0 ? 0 : highestBlockBelowThreshold
 }

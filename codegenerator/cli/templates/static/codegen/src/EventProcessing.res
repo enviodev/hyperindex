@@ -55,19 +55,15 @@ let updateEventSyncState = (
   )
 }
 
-type dynamicContractRegistration = FetchState.dynamicContractRegistration
-
 type dynamicContractRegistrations = {
-  registrations: array<dynamicContractRegistration>,
+  dynamicContractsByChain: dict<array<TablesStatic.DynamicContractRegistry.t>>,
   unprocessedBatch: array<Internal.eventItem>,
 }
 
 let addToDynamicContractRegistrations = (
   eventItem: Internal.eventItem,
   ~dynamicContracts,
-  ~registeringEventBlockNumber,
-  ~registeringEventLogIndex,
-  ~registrations,
+  ~dynamicContractsByChain,
   ~unprocessedBatch,
 ) => {
   //If there are any dynamic contract registrations, put this item in the unprocessedBatch flagged
@@ -81,39 +77,38 @@ let addToDynamicContractRegistrations = (
     },
   ]
 
-  let registrations = switch dynamicContracts {
-  | [] => registrations
+  switch dynamicContracts {
+  | [] => ()
   | dynamicContracts =>
-    let dynamicContractRegistration = {
-      FetchState.dynamicContracts,
-      registeringEventBlockNumber,
-      registeringEventLogIndex,
-      registeringEventChain: eventItem.chain,
-    }
-    [...registrations, dynamicContractRegistration]
+    let key = eventItem.chain->ChainMap.Chain.toString
+    dynamicContractsByChain->Js.Dict.set(
+      key,
+      dynamicContractsByChain
+      ->Utils.Dict.dangerouslyGetNonOption(key)
+      ->Option.getWithDefault([])
+      ->Array.concat(dynamicContracts),
+    )
   }
 
   {
     unprocessedBatch,
-    registrations,
+    dynamicContractsByChain,
   }
 }
 
 let checkContractIsInCurrentRegistrations = (
   ~dynamicContractRegistrations: option<dynamicContractRegistrations>,
   ~chain,
-  ~contractAddress,
-  ~contractType,
+  ~contractAddress
 ) => {
   switch dynamicContractRegistrations {
   | Some(dynamicContracts) =>
-    dynamicContracts.registrations->Array.some(d =>
-      d.dynamicContracts->Array.some(d =>
-        d.chainId == chain->ChainMap.Chain.toChainId &&
-        d.contractType == contractType &&
-        d.contractAddress == contractAddress
-      )
+    dynamicContracts.dynamicContractsByChain
+    ->Utils.Dict.dangerouslyGetNonOption(chain->ChainMap.Chain.toString)
+    ->Option.mapWithDefault(false, dcs =>
+      dcs->Array.some(dc => dc.contractAddress == contractAddress)
     )
+
   | None => false
   }
 }
@@ -128,7 +123,7 @@ let runEventContractRegister = (
   ~preRegisterLatestProcessedBlocks=?,
   ~shouldSaveHistory,
 ) => {
-  let {chain, event, blockNumber} = eventItem
+  let {chain} = eventItem
 
   let contextEnv = ContextEnv.make(~eventItem, ~logger)
 
@@ -151,28 +146,24 @@ let runEventContractRegister = (
         !checkContractIsInCurrentRegistrations(
           ~dynamicContractRegistrations,
           ~chain,
-          ~contractAddress,
-          ~contractType,
+          ~contractAddress
         )
       )
 
-    let addToDynamicContractRegistrations =
-      eventItem->(
-        addToDynamicContractRegistrations(
-          ~registeringEventBlockNumber=blockNumber,
-          ~registeringEventLogIndex=event.logIndex,
-          ...
-        )
-      )
+    let addToDynamicContractRegistrations = addToDynamicContractRegistrations(eventItem, ...)
 
     let val = switch (dynamicContracts, dynamicContractRegistrations) {
     | ([], None) => None
-    | (dynamicContracts, Some({registrations, unprocessedBatch})) =>
-      addToDynamicContractRegistrations(~dynamicContracts, ~registrations, ~unprocessedBatch)->Some
+    | (dynamicContracts, Some({dynamicContractsByChain, unprocessedBatch})) =>
+      addToDynamicContractRegistrations(
+        ~dynamicContracts,
+        ~dynamicContractsByChain,
+        ~unprocessedBatch,
+      )->Some
     | (dynamicContracts, None) =>
       addToDynamicContractRegistrations(
         ~dynamicContracts,
-        ~registrations=[],
+        ~dynamicContractsByChain=Js.Dict.empty(),
         ~unprocessedBatch=[],
       )->Some
     }
