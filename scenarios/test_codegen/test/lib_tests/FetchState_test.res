@@ -1178,7 +1178,7 @@ describe("FetchState unit tests for specific cases", () => {
     )
 
     let fetchStateWithDc =
-      fetchStateWithEvents->FetchState.registerDynamicContract(
+      fetchStateWithEvents->FetchState.registerDynamicContracts(
         [
           makeDynContractRegistration(
             ~contractAddress=mockAddress1,
@@ -1200,6 +1200,7 @@ describe("FetchState unit tests for specific cases", () => {
       ~staticContracts=[("ContractA", mockAddress1), ("ContractB", mockAddress2)],
       ~dynamicContracts=[],
       ~startBlock=0,
+      ~endBlock=None,
       ~maxAddrInPartition=1,
       ~isFetchingAtHead=false,
     )
@@ -1513,4 +1514,120 @@ describe("FetchState unit tests for specific cases", () => {
       )
     },
   )
+})
+
+describe("Test queue item", () => {
+  it("Correctly compares queue items", () => {
+    Assert.deepEqual(
+      FetchState.NoItem({
+        latestFetchedBlock: getBlockData(~blockNumber=0),
+      })->FetchState.qItemLt(
+        NoItem({
+          latestFetchedBlock: getBlockData(~blockNumber=0),
+        }),
+      ),
+      false,
+      ~message=`Both NoItem with the same block`,
+    )
+    Assert.deepEqual(
+      FetchState.NoItem({
+        latestFetchedBlock: getBlockData(~blockNumber=0),
+      })->FetchState.qItemLt(
+        NoItem({
+          latestFetchedBlock: getBlockData(~blockNumber=1),
+        }),
+      ),
+      true,
+      ~message=`NoItem with the earlier block, than NoItem`,
+    )
+
+    let mockQueueItem = (~blockNumber, ~logIndex=0) => {
+      FetchState.Item({
+        item: mockEvent(~blockNumber, ~logIndex),
+        popItemOffQueue: () => Assert.fail("Shouldn't be called"),
+      })
+    }
+
+    Assert.deepEqual(
+      FetchState.NoItem({
+        latestFetchedBlock: getBlockData(~blockNumber=0),
+      })->FetchState.qItemLt(mockQueueItem(~blockNumber=0)),
+      true,
+      ~message=`NoItem with 0 block should be lower than Item with 0 block`,
+    )
+    Assert.deepEqual(
+      mockQueueItem(~blockNumber=0)->FetchState.qItemLt(
+        FetchState.NoItem({
+          latestFetchedBlock: getBlockData(~blockNumber=0),
+        }),
+      ),
+      false,
+      ~message=`1. Above reversed`,
+    )
+
+    Assert.deepEqual(
+      mockQueueItem(~blockNumber=1)->FetchState.qItemLt(
+        FetchState.NoItem({
+          latestFetchedBlock: getBlockData(~blockNumber=1),
+        }),
+      ),
+      true,
+      ~message=`Item with 1 block should be lower than NoItem with 1 block`,
+    )
+    Assert.deepEqual(
+      FetchState.NoItem({
+        latestFetchedBlock: getBlockData(~blockNumber=1),
+      })->FetchState.qItemLt(mockQueueItem(~blockNumber=1)),
+      false,
+      ~message=`2. Above reversed`,
+    )
+
+    Assert.deepEqual(
+      mockQueueItem(~blockNumber=1)->FetchState.qItemLt(mockQueueItem(~blockNumber=2)),
+      true,
+      ~message=`Item with 1 block should be lower than Item with 2 block`,
+    )
+    Assert.deepEqual(
+      mockQueueItem(~blockNumber=2)->FetchState.qItemLt(mockQueueItem(~blockNumber=1)),
+      false,
+      ~message=`3. Above reversed`,
+    )
+
+    Assert.deepEqual(
+      mockQueueItem(~blockNumber=0)->FetchState.qItemLt(
+        FetchState.NoItem({
+          latestFetchedBlock: getBlockData(~blockNumber=1),
+        }),
+      ),
+      true,
+      ~message=`Item with 0 block should be lower than NoItem with 1 block`,
+    )
+    Assert.deepEqual(
+      FetchState.NoItem({
+        latestFetchedBlock: getBlockData(~blockNumber=1),
+      })->FetchState.qItemLt(mockQueueItem(~blockNumber=0)),
+      false,
+      ~message=`4. Above reversed`,
+    )
+
+    Assert.deepEqual(
+      mockQueueItem(~blockNumber=1)->FetchState.qItemLt(mockQueueItem(~blockNumber=1)),
+      false,
+      ~message=`Item shouldn't be lower than Item with the same`,
+    )
+    Assert.deepEqual(
+      mockQueueItem(~blockNumber=1, ~logIndex=0)->FetchState.qItemLt(
+        mockQueueItem(~blockNumber=1, ~logIndex=1),
+      ),
+      true,
+      ~message=`Item should be lower than Item with the same, when it has lower logIndex`,
+    )
+    Assert.deepEqual(
+      mockQueueItem(~blockNumber=1, ~logIndex=1)->FetchState.qItemLt(
+        mockQueueItem(~blockNumber=1, ~logIndex=0),
+      ),
+      false,
+      ~message=`5. Above reversed`,
+    )
+  })
 })

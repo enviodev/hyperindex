@@ -326,6 +326,7 @@ describe("Dynamic contract rollback test", () => {
       stubDataInitial->Stubs.getTasks,
       [
         GlobalState.NextQuery(CheckAllChains),
+        ProcessEventBatch,
         Mock.getUpdateEndofBlockRangeScannedData(
           Mock.mockChainDataMap,
           ~chain=Mock.Chain1.chain,

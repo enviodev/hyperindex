@@ -606,7 +606,7 @@ let actionReducer = (state: t, action: action) => {
     if isInReorgThreshold {
       Logging.info("Reorg threshold reached")
     }
-    ({...state, chainManager: {...state.chainManager, isInReorgThreshold}}, [])
+    ({...state, chainManager: {...state.chainManager, isInReorgThreshold}}, [ProcessEventBatch])
   | SetSyncedChains => {
       let shouldExit = EventProcessing.EventsProcessed.allChainsEventsProcessedToEndblock(
         state.chainManager.chainFetchers,
@@ -1055,10 +1055,13 @@ let injectedTaskReducer = (
       } else {
         false
       }
+
       switch state.chainManager->ChainManager.createBatch(
         ~maxBatchSize=state.maxBatchSize,
         ~onlyBelowReorgThreshold,
       ) {
+      | {isInReorgThreshold: true, val: None} if onlyBelowReorgThreshold =>
+        dispatchAction(SetIsInReorgThreshold(true))
       | {isInReorgThreshold, val: Some({batch, fetchStatesMap, arbitraryEventQueue})} =>
         dispatchAction(SetCurrentlyProcessing(true))
         dispatchAction(UpdateQueues(fetchStatesMap, arbitraryEventQueue))

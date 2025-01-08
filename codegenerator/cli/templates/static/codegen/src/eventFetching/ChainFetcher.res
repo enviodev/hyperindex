@@ -437,5 +437,6 @@ let isPreRegisteringDynamicContracts = (chainFetcher: t) =>
   chainFetcher.dynamicContractPreRegistration->Option.isSome
 
 let getHeighestBlockBelowThreshold = (cf: t): int => {
-  Pervasives.max(cf.currentBlockHeight - cf.chainConfig.confirmedBlockThreshold, 0)
+  let highestBlockBelowThreshold = cf.currentBlockHeight - cf.chainConfig.confirmedBlockThreshold
+  highestBlockBelowThreshold < 0 ? 0 : highestBlockBelowThreshold
 }

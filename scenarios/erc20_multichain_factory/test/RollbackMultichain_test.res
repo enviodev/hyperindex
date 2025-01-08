@@ -423,6 +423,7 @@ describe("Multichain rollback test", () => {
     Assert.deepEqual(
       [
         GlobalState.NextQuery(CheckAllChains),
+        ProcessEventBatch,
         Mock.getUpdateEndofBlockRangeScannedData(
           Mock.mockChainDataMapInitial,
           ~chain=Mock.Chain1.chain,
