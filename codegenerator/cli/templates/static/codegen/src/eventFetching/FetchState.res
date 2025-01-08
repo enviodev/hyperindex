@@ -16,11 +16,12 @@ type blockNumberAndLogIndex = {blockNumber: int, logIndex: int}
 type status = {mutable fetchingStateId: option<int>}
 
 /**
-A state that holds a queue of events and data regarding what to fetch next.
-There's always a root register and potentially additional registers for dynamic contracts.
-When the registers are caught up to each other they are getting merged
+A state that holds a queue of events and data regarding what to fetch next
+for specific contract events with a given contract address.
+When partitions for the same events are caught up to each other
+the are getting merged until the maxAddrInPartition is reached.
 */
-type register = {
+type partition = {
   id: string,
   status: status,
   latestFetchedBlock: blockNumberAndTimestamp,
@@ -33,7 +34,7 @@ type register = {
 }
 
 type t = {
-  partitions: array<register>,
+  partitions: array<partition>,
   // Used for the incremental partition id. Can't use the partitions length,
   // since partitions might be deleted on merge or cleaned up
   nextPartitionIndex: int,
@@ -47,13 +48,13 @@ type t = {
   queueSize: int,
 }
 
-let shallowCopyRegister = (register: register) => {
-  ...register,
-  fetchedEventQueue: register.fetchedEventQueue->Array.copy,
+let shallowCopyPartition = (p: partition) => {
+  ...p,
+  fetchedEventQueue: p.fetchedEventQueue->Array.copy,
 }
 
 let copy = (fetchState: t) => {
-  let partitions = fetchState.partitions->Js.Array2.map(shallowCopyRegister)
+  let partitions = fetchState.partitions->Js.Array2.map(shallowCopyPartition)
   {
     maxAddrInPartition: fetchState.maxAddrInPartition,
     partitions,
@@ -86,7 +87,7 @@ Pass the shorter list into A for better performance
 */
 let mergeSortedEventList = (a, b) => Utils.Array.mergeSorted(eventItemGt, a, b)
 
-let mergeIntoPartition = (register: register, ~target: register, ~maxAddrInPartition) => {
+let mergeIntoPartition = (p: partition, ~target: partition, ~maxAddrInPartition) => {
   let latestFetchedBlock = target.latestFetchedBlock
 
   let mergedContractAddressMapping = target.contractAddressMapping->ContractAddressingMap.copy
@@ -94,23 +95,23 @@ let mergeIntoPartition = (register: register, ~target: register, ~maxAddrInParti
 
   let restDcsCount =
     target.contractAddressMapping->ContractAddressingMap.addressCount +
-    register.contractAddressMapping->ContractAddressingMap.addressCount -
+    p.contractAddressMapping->ContractAddressingMap.addressCount -
     maxAddrInPartition
 
   let rest = if restDcsCount > 0 {
     let restAddresses = Utils.Set.make()
 
-    let restDcs = register.dynamicContracts->Js.Array2.slice(~start=0, ~end_=restDcsCount)
+    let restDcs = p.dynamicContracts->Js.Array2.slice(~start=0, ~end_=restDcsCount)
     restDcs->Array.forEach(dc => {
       let _ = restAddresses->Utils.Set.add(dc.contractAddress)
     })
 
     let restContractAddressMapping = ContractAddressingMap.make()
 
-    register.contractAddressMapping.nameByAddress
+    p.contractAddressMapping.nameByAddress
     ->Js.Dict.keys
     ->Belt.Array.forEach(key => {
-      let name = register.contractAddressMapping.nameByAddress->Js.Dict.unsafeGet(key)
+      let name = p.contractAddressMapping.nameByAddress->Js.Dict.unsafeGet(key)
       let address = key->Address.unsafeFromString
       let map =
         restAddresses->Utils.Set.has(address)
@@ -121,11 +122,11 @@ let mergeIntoPartition = (register: register, ~target: register, ~maxAddrInParti
 
     let _ =
       mergedDynamicContracts->Js.Array2.pushMany(
-        register.dynamicContracts->Js.Array2.sliceFrom(restDcsCount),
+        p.dynamicContracts->Js.Array2.sliceFrom(restDcsCount),
       )
 
     Some({
-      id: register.id,
+      id: p.id,
       status: {
         fetchingStateId: None,
       },
@@ -135,10 +136,10 @@ let mergeIntoPartition = (register: register, ~target: register, ~maxAddrInParti
       latestFetchedBlock,
     })
   } else {
-    register.contractAddressMapping->ContractAddressingMap.mergeInPlace(
+    p.contractAddressMapping->ContractAddressingMap.mergeInPlace(
       ~target=mergedContractAddressMapping,
     )
-    let _ = mergedDynamicContracts->Js.Array2.pushMany(register.dynamicContracts)
+    let _ = mergedDynamicContracts->Js.Array2.pushMany(p.dynamicContracts)
     None
   }
 
@@ -148,7 +149,7 @@ let mergeIntoPartition = (register: register, ~target: register, ~maxAddrInParti
       status: {
         fetchingStateId: None,
       },
-      fetchedEventQueue: mergeSortedEventList(register.fetchedEventQueue, target.fetchedEventQueue),
+      fetchedEventQueue: mergeSortedEventList(p.fetchedEventQueue, target.fetchedEventQueue),
       contractAddressMapping: mergedContractAddressMapping,
       dynamicContracts: mergedDynamicContracts,
       latestFetchedBlock,
@@ -158,22 +159,22 @@ let mergeIntoPartition = (register: register, ~target: register, ~maxAddrInParti
 }
 
 /**
-Updates a given register with new latest block values and new fetched
+Updates a given partition with new latest block values and new fetched
 events.
 */
 let addItemsToPartition = (
-  register: register,
+  p: partition,
   ~latestFetchedBlock,
   //Events ordered latest to earliest
   ~reversedNewItems: array<Internal.eventItem>,
 ) => {
   {
-    ...register,
+    ...p,
     status: {
       fetchingStateId: None,
     },
     latestFetchedBlock,
-    fetchedEventQueue: Array.concat(reversedNewItems, register.fetchedEventQueue),
+    fetchedEventQueue: Array.concat(reversedNewItems, p.fetchedEventQueue),
   }
 }
 
@@ -342,8 +343,9 @@ exception UnexpectedPartitionNotFound({partitionId: string})
 exception UnexpectedMergeQueryResponse({message: string})
 
 /*
-Updates node at given id with given values and checks to see if it can be merged into its next register.
-Returns Error if the node with given id cannot be found (unexpected)
+Updates fetchState with a response for a given query.
+Returns Error if the partition with given query cannot be found (unexpected)
+If MergeQuery caught up to the target partition, it triggers the merge of the partitions.
 
 newItems are ordered earliest to latest (as they are returned from the worker)
 */
@@ -411,8 +413,8 @@ let setQueryResponse = (
   })
 }
 
-let makePartitionQuery = (register: register, ~endBlock) => {
-  let fromBlock = switch register.latestFetchedBlock.blockNumber {
+let makePartitionQuery = (p: partition, ~endBlock) => {
+  let fromBlock = switch p.latestFetchedBlock.blockNumber {
   | 0 => 0
   | latestFetchedBlockNumber => latestFetchedBlockNumber + 1
   }
@@ -420,10 +422,10 @@ let makePartitionQuery = (register: register, ~endBlock) => {
   | Some(endBlock) if fromBlock > endBlock => None
   | _ =>
     Some({
-      partitionId: register.id,
+      partitionId: p.id,
       fromBlock,
       toBlock: endBlock,
-      contractAddressMapping: register.contractAddressMapping,
+      contractAddressMapping: p.contractAddressMapping,
     })
   }
 }
@@ -605,7 +607,7 @@ let getNextQuery = (
 type itemWithPopFn = {item: Internal.eventItem, popItemOffQueue: unit => unit}
 
 /**
-Represents a fetchState registers head of the  fetchedEventQueue as either
+Represents a fetchState partitions head of the  fetchedEventQueue as either
 an existing item, or no item with latest fetched block data
 */
 type queueItem =
@@ -633,14 +635,16 @@ let queueItemIsInReorgThreshold = (queueItem: queueItem, ~heighestBlockBelowThre
 }
 
 /**
-Simple constructor for no item from register
+Simple constructor for no item from partition
 */
-let makeNoItem = ({latestFetchedBlock}: register) => NoItem({latestFetchedBlock: latestFetchedBlock})
+let makeNoItem = ({latestFetchedBlock}: partition) => NoItem({
+  latestFetchedBlock: latestFetchedBlock,
+})
 
 /**
-Creates a compareable value for items and no items on register queues.
+Creates a compareable value for items and no items on partition queues.
 Block number takes priority here. Since a latest fetched timestamp could
-be zero from initialization of register but a higher latest fetched block number exists
+be zero from initialization of partition but a higher latest fetched block number exists
 
 Note: on the chain manager, when comparing multi chain, the timestamp is the highest priority compare value
 */
@@ -665,25 +669,25 @@ let qItemLt = (a, b) => {
 Returns queue item WITHOUT the updated fetch state. Used for checking values
 not updating state
 */
-let getEarliestEventInRegister = (register: register) => {
-  switch register.fetchedEventQueue->Utils.Array.last {
+let getEarliestEventInPartition = (p: partition) => {
+  switch p.fetchedEventQueue->Utils.Array.last {
   | Some(head) =>
-    Item({item: head, popItemOffQueue: () => register.fetchedEventQueue->Js.Array2.pop->ignore})
-  | None => makeNoItem(register)
+    Item({item: head, popItemOffQueue: () => p.fetchedEventQueue->Js.Array2.pop->ignore})
+  | None => makeNoItem(p)
   }
 }
 
 /**
 Gets the earliest queueItem from thgetNodeEarliestEventWithUpdatedQueue.
 
-Finds the earliest queue item across all registers and then returns that
+Finds the earliest queue item across all partitions and then returns that
 queue item with an update fetch state.
 */
 let getEarliestEvent = ({partitions}: t) => {
-  let item = ref(partitions->Js.Array2.unsafe_get(0)->getEarliestEventInRegister)
+  let item = ref(partitions->Js.Array2.unsafe_get(0)->getEarliestEventInPartition)
   for idx in 1 to partitions->Array.length - 1 {
     let p = partitions->Js.Array2.unsafe_get(idx)
-    let pItem = p->getEarliestEventInRegister
+    let pItem = p->getEarliestEventInPartition
     if pItem->qItemLt(item.contents) {
       item := pItem
     }
@@ -692,7 +696,7 @@ let getEarliestEvent = ({partitions}: t) => {
 }
 
 /**
-Instantiates a fetch state with root register
+Instantiates a fetch state with partitions for initial addresses
 */
 let make = (
   ~staticContracts,
@@ -803,7 +807,7 @@ let warnIfAttemptedAddressRegisterOnDifferentContracts = (
 }
 
 /**
-Recurses through registers and determines whether a contract has already been registered with
+Recurses through partitions and determines whether a contract has already been registered with
 the given name and address
 */
 let checkContainsRegisteredContractAddress = (
@@ -846,17 +850,17 @@ let pruneQueueFromFirstChangeEvent = (
 }
 
 /**
-Rolls back registers to the given valid block
+Rolls back partitions to the given valid block
 */
 let rollbackPartition = (
-  partition: register,
+  p: partition,
   ~lastScannedBlock,
   ~firstChangeEvent: blockNumberAndLogIndex,
 ) => {
   //get all dynamic contract addresses past valid blockNumber to remove along with
   //updated dynamicContracts map
   let addressesToRemove = []
-  let dynamicContracts = partition.dynamicContracts->Array.keep(dc => {
+  let dynamicContracts = p.dynamicContracts->Array.keep(dc => {
     if (
       (dc.registeringEventBlockNumber, dc.registeringEventLogIndex) >=
       (firstChangeEvent.blockNumber, firstChangeEvent.logIndex)
@@ -872,33 +876,32 @@ let rollbackPartition = (
 
   if (
     addressesToRemove->Array.length ===
-      partition.contractAddressMapping->ContractAddressingMap.addressCount &&
-      !shouldApplyWildcards(~partitionId=partition.id)
+      p.contractAddressMapping->ContractAddressingMap.addressCount &&
+      !shouldApplyWildcards(~partitionId=p.id)
   ) {
     None
   } else {
     //remove them from the contract address mapping and dynamic contract addresses mapping
     let contractAddressMapping =
-      partition.contractAddressMapping->ContractAddressingMap.removeAddresses(~addressesToRemove)
+      p.contractAddressMapping->ContractAddressingMap.removeAddresses(~addressesToRemove)
 
-    let shouldRollbackFetched =
-      partition.latestFetchedBlock.blockNumber >= firstChangeEvent.blockNumber
+    let shouldRollbackFetched = p.latestFetchedBlock.blockNumber >= firstChangeEvent.blockNumber
 
     let fetchedEventQueue = if shouldRollbackFetched {
-      partition.fetchedEventQueue->pruneQueueFromFirstChangeEvent(~firstChangeEvent)
+      p.fetchedEventQueue->pruneQueueFromFirstChangeEvent(~firstChangeEvent)
     } else {
-      partition.fetchedEventQueue
+      p.fetchedEventQueue
     }
 
     Some({
-      id: partition.id,
+      id: p.id,
       dynamicContracts,
       contractAddressMapping,
       status: {
         fetchingStateId: None,
       },
       fetchedEventQueue,
-      latestFetchedBlock: shouldRollbackFetched ? lastScannedBlock : partition.latestFetchedBlock,
+      latestFetchedBlock: shouldRollbackFetched ? lastScannedBlock : p.latestFetchedBlock,
     })
   }
 }
