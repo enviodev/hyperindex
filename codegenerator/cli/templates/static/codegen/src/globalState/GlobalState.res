@@ -341,12 +341,10 @@ let handlePartitionQueryResponse = (
         contractAddressMapping->ContractAddressingMap.addressCount
       | Wildcard => 0
       },
-      ~queryName=switch query.target {
-      | Head
-      | EndBlock(_) =>
-        `Partition ${query.partitionId}`
-      // Group all merge queries into a single summary
-      | Merge(_) => `Merge Query`
+      ~queryName=switch query {
+      | {target: Merge(_)} => `Merge Query`
+      | {selection: Wildcard} => `Wildcard Query`
+      | {selection: Normal(_)} => `Normal Query`
       },
     )
   }
