@@ -36,7 +36,7 @@ let make = (
   ~chainConfig: Config.chainConfig,
   ~lastBlockScannedHashes,
   ~staticContracts,
-  ~dynamicContractRegistrations,
+  ~dynamicContracts,
   ~startBlock,
   ~endBlock,
   ~dbFirstEventBlockNumber,
@@ -55,7 +55,7 @@ let make = (
   let fetchState = FetchState.make(
     ~maxAddrInPartition,
     ~staticContracts,
-    ~dynamicContracts=dynamicContractRegistrations,
+    ~dynamicContracts,
     ~startBlock,
     ~endBlock,
     ~isFetchingAtHead=false,
@@ -113,7 +113,7 @@ let makeFromConfig = (chainConfig: Config.chainConfig, ~maxAddrInPartition) => {
     ~numBatchesFetched=0,
     ~logger,
     ~processingFilters=None,
-    ~dynamicContractRegistrations=[],
+    ~dynamicContracts=[],
     ~maxAddrInPartition,
     ~dynamicContractPreRegistration,
   )
@@ -201,7 +201,7 @@ let makeFromDbState = async (chainConfig: Config.chainConfig, ~maxAddrInPartitio
 
   let (
     dynamicContractPreRegistration: option<addressToDynContractLookup>,
-    dynamicContractRegistrations: array<TablesStatic.DynamicContractRegistry.t>,
+    dynamicContracts: array<TablesStatic.DynamicContractRegistry.t>,
   ) = if isPreRegisteringDynamicContracts {
     let dynamicContractPreRegistration: addressToDynContractLookup = Js.Dict.empty()
     dbDynamicContractRegistrations->Array.forEach(contract => {
@@ -263,7 +263,7 @@ let makeFromDbState = async (chainConfig: Config.chainConfig, ~maxAddrInPartitio
 
   make(
     ~staticContracts,
-    ~dynamicContractRegistrations,
+    ~dynamicContracts,
     ~chainConfig,
     ~startBlock,
     ~endBlock=chainConfig.endBlock,
