@@ -41,6 +41,7 @@ let makeDynContractRegistration = (
     contractAddress,
     contractType,
     registeringEventContractName,
+    isPreRegistered: false,
   }
 }
 
