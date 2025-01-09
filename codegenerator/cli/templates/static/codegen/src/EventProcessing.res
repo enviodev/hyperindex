@@ -123,15 +123,16 @@ let runEventContractRegister = (
   ~preRegisterLatestProcessedBlocks=?,
   ~shouldSaveHistory,
 ) => {
-  let {chain} = eventItem
+  let isPreRegistered = preRegisterLatestProcessedBlocks->Option.isSome
 
-  let addedDynamicContractRegistrations = []
+  let addedDynamicContracts = []
+  let addedDynamicContractsAddresses = Utils.Set.make()
 
   let onRegister = (~contractAddress, ~contractName) => {
     let {chain, timestamp, blockNumber, logIndex} = eventItem
 
     let chainId = chain->ChainMap.Chain.toChainId
-    let dynamicContractRegistration: TablesStatic.DynamicContractRegistry.t = {
+    let dc: TablesStatic.DynamicContractRegistry.t = {
       id: ContextEnv.makeDynamicContractId(~chainId, ~contractAddress),
       chainId,
       registeringEventBlockNumber: blockNumber,
@@ -142,27 +143,36 @@ let runEventContractRegister = (
       registeringEventBlockTimestamp: timestamp,
       contractAddress,
       contractType: contractName,
-      isPreRegistered: false,
+      isPreRegistered,
     }
 
-    addedDynamicContractRegistrations->Js.Array2.push(dynamicContractRegistration)->ignore
+    if (
+      // Prevent duplications for storing and registering dynamic contracts
+      !(addedDynamicContractsAddresses->Utils.Set.has(contractAddress)) &&
+      !checkContractIsRegistered(~chain, ~contractAddress, ~contractName) &&
+      !checkContractIsInCurrentRegistrations(
+        ~dynamicContractRegistrations,
+        ~chain,
+        ~contractAddress,
+      )
+    ) {
+      addedDynamicContractsAddresses->Utils.Set.add(contractAddress)->ignore
+      addedDynamicContracts->Js.Array2.push(dc)->ignore
 
-    let eventIdentifier: Types.eventIdentifier = {
-      chainId,
-      blockTimestamp: timestamp,
-      blockNumber,
-      logIndex,
+      let eventIdentifier: Types.eventIdentifier = {
+        chainId,
+        blockTimestamp: timestamp,
+        blockNumber,
+        logIndex,
+      }
+
+      inMemoryStore.InMemoryStore.entities
+      ->InMemoryStore.EntityTables.get(module(TablesStatic.DynamicContractRegistry))
+      ->InMemoryTable.Entity.set(
+        Set(dc)->Types.mkEntityUpdate(~eventIdentifier, ~entityId=dc.id),
+        ~shouldSaveHistory,
+      )
     }
-
-    inMemoryStore.InMemoryStore.entities
-    ->InMemoryStore.EntityTables.get(module(TablesStatic.DynamicContractRegistry))
-    ->InMemoryTable.Entity.set(
-      Set(dynamicContractRegistration)->Types.mkEntityUpdate(
-        ~eventIdentifier,
-        ~entityId=dynamicContractRegistration.id,
-      ),
-      ~shouldSaveHistory,
-    )
   }
 
   let contextEnv = ContextEnv.make(~eventItem, ~logger)
@@ -175,33 +185,24 @@ let runEventContractRegister = (
     )
     ->Error
   | () =>
-    let dynamicContracts =
-      addedDynamicContractRegistrations
-      ->Array.keep(({contractAddress, contractType}) =>
-        !checkContractIsRegistered(~chain, ~contractAddress, ~contractName=contractType) &&
-        !checkContractIsInCurrentRegistrations(
-          ~dynamicContractRegistrations,
-          ~chain,
-          ~contractAddress,
-        )
-      )
-
-    let addToDynamicContractRegistrations = addToDynamicContractRegistrations(eventItem, ...)
-
-    let val = switch (dynamicContracts, dynamicContractRegistrations) {
+    let val = switch (addedDynamicContracts, dynamicContractRegistrations) {
     | ([], None) => None
     | (dynamicContracts, Some({dynamicContractsByChain, unprocessedBatch})) =>
-      addToDynamicContractRegistrations(
+      eventItem
+      ->addToDynamicContractRegistrations(
         ~dynamicContracts,
         ~dynamicContractsByChain,
         ~unprocessedBatch,
-      )->Some
+      )
+      ->Some
     | (dynamicContracts, None) =>
-      addToDynamicContractRegistrations(
+      eventItem
+      ->addToDynamicContractRegistrations(
         ~dynamicContracts,
         ~dynamicContractsByChain=Js.Dict.empty(),
         ~unprocessedBatch=[],
-      )->Some
+      )
+      ->Some
     }
 
     switch preRegisterLatestProcessedBlocks {
@@ -574,9 +575,12 @@ let getDynamicContractRegistrations = (
       )
       ->propogate
 
-    switch await Db.sql->IO.executeBatch(~inMemoryStore, 
-    //We only preregister below the reorg threshold so it can be hardcoded as false
-    ~isInReorgThreshold=false, ~config) {
+    switch await Db.sql->IO.executeBatch(
+      ~inMemoryStore,
+      //We only preregister below the reorg threshold so it can be hardcoded as false
+      ~isInReorgThreshold=false,
+      ~config,
+    ) {
     | exception exn =>
       exn->ErrorHandling.make(~msg="Failed writing batch to database", ~logger)->Error->propogate
     | () => ()
