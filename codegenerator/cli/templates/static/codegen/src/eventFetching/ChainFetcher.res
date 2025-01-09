@@ -81,7 +81,11 @@ let make = (
         Event.handlerRegister->Types.HandlerTypes.Register.getEventOptions
 
       if isWildcard {
-        hasWildcard := true
+        hasWildcard := (
+            isPreRegisteringDynamicContracts
+              ? hasWildcard.contents || preRegisterDynamicContracts
+              : true
+          )
       } else {
         let _ = contractNamesWithNonWildcard->Utils.Set.add(contractName)
       }
