@@ -125,10 +125,9 @@ let runEventContractRegister = (
 ) => {
   let {chain} = eventItem
 
-  let contextEnv = ContextEnv.make(~eventItem, ~logger)
+  let addedDynamicContractRegistrations = []
 
   let onRegister = (~contractAddress, ~contractName) => {
-    let {eventItem, addedDynamicContractRegistrations} = contextEnv
     let {chain, timestamp, blockNumber, logIndex} = eventItem
 
     let chainId = chain->ChainMap.Chain.toChainId
@@ -166,6 +165,7 @@ let runEventContractRegister = (
     )
   }
 
+  let contextEnv = ContextEnv.make(~eventItem, ~logger)
   switch contractRegister(contextEnv->ContextEnv.getContractRegisterArgs(~onRegister)) {
   | exception exn =>
     exn
@@ -176,8 +176,7 @@ let runEventContractRegister = (
     ->Error
   | () =>
     let dynamicContracts =
-      contextEnv
-      ->ContextEnv.getAddedDynamicContractRegistrations
+      addedDynamicContractRegistrations
       ->Array.keep(({contractAddress, contractType}) =>
         !checkContractIsRegistered(~chain, ~contractAddress, ~contractName=contractType) &&
         !checkContractIsInCurrentRegistrations(

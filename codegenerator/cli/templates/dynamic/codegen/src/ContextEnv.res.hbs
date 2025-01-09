@@ -6,7 +6,6 @@ The context holds all the state for a given events loader and handler.
 type t = {
   logger: Pino.t,
   eventItem: Internal.eventItem,
-  addedDynamicContractRegistrations: array<TablesStatic.DynamicContractRegistry.t>,
 }
 
 let getUserLogger = (logger): Logs.userLogger => {
@@ -54,12 +53,8 @@ let make = (~eventItem: Internal.eventItem, ~logger) => {
   {
     logger,
     eventItem,
-    addedDynamicContractRegistrations: [],
   }
 }
-
-let getAddedDynamicContractRegistrations = (contextEnv: t) =>
-  contextEnv.addedDynamicContractRegistrations
 
 let makeDynamicContractId = (~chainId, ~contractAddress) => {
   chainId->Belt.Int.toString ++ "-" ++ contractAddress->Address.toString
