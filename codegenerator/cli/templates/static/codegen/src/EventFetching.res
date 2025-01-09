@@ -58,12 +58,6 @@ let makeCombinedEventFilterQuery = (
   ->Ethers.JsonRpcProvider.getLogs(
     ~filter={combinedFilter->Ethers.CombinedFilter.combinedFilterToFilter},
   )
-  ->Promise.thenResolve(res => {
-    loggerWithContext->Logging.childTrace({
-      "Successful Combined Query Filter"
-    })
-    res
-  })
   ->Promise.catch(err => {
     loggerWithContext->Logging.childWarn("Failed Combined Query Filter from block")
     err->Promise.reject

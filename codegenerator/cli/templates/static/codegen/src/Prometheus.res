@@ -233,9 +233,9 @@ let processedUntilHeight = PromClient.Gauge.makeGauge({
   "labelNames": ["chainId"],
 })
 
-let fetchedEventsUntilHeight = PromClient.Gauge.makeGauge({
-  "name": "chain_fetcher_block_height_processed",
-  "help": "Block height processed by indexer",
+let fetchedUntilHeight = PromClient.Gauge.makeGauge({
+  "name": "chain_block_height_fully_fetched",
+  "help": "Block height fully fetched by indexer",
   "labelNames": ["chainId"],
 })
 
@@ -275,8 +275,8 @@ let setProcessedUntilHeight = (~blockNumber, ~chain) => {
   ->PromClient.Gauge.set(blockNumber)
 }
 
-let setFetchedEventsUntilHeight = (~blockNumber, ~chain) => {
-  fetchedEventsUntilHeight
+let setFetchedUntilHeight = (~blockNumber, ~chain) => {
+  fetchedUntilHeight
   ->PromClient.Gauge.labels({"chainId": chain->ChainMap.Chain.toString})
   ->PromClient.Gauge.set(blockNumber)
 }

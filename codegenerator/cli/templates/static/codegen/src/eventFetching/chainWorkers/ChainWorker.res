@@ -58,7 +58,7 @@ let waitForNewBlock = (chainWorker, ~currentBlockHeight, ~logger) => {
   ChainWorker.waitForBlockGreaterThanCurrentHeight(~currentBlockHeight, ~logger)
 }
 
-let fetchBlockRange = (
+let fetchBlockRange = async (
   chainWorker,
   ~fromBlock,
   ~toBlock,
@@ -84,6 +84,7 @@ let fetchBlockRange = (
       ~params={
         "chainId": chain->ChainMap.Chain.toChainId,
         "logType": "Block Range Query",
+        "partitionId": partitionId,
         "workerType": ChainWorker.name,
         "fromBlock": fromBlock,
         "toBlock": toBlock,
@@ -91,7 +92,7 @@ let fetchBlockRange = (
       },
     )
   }
-  ChainWorker.fetchBlockRange(
+  (await ChainWorker.fetchBlockRange(
     ~fromBlock,
     ~toBlock,
     ~contractAddressMapping,
@@ -100,5 +101,12 @@ let fetchBlockRange = (
     ~shouldApplyWildcards,
     ~currentBlockHeight,
     ~isPreRegisteringDynamicContracts,
-  )
+  ))->Utils.Result.forEach(response => {
+    logger->Logging.childTrace({
+      "message": "Fetched block range from server",
+      "latestFetchedBlockNumber": response.latestFetchedBlockNumber,
+      "numEvents": response.parsedQueueItems->Array.length,
+      "stats": response.stats,
+    })
+  })
 }
