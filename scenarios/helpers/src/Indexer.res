@@ -62,29 +62,33 @@ module type S = {
 
   module ContractAddressingMap: {
     type mapping
+    let make: unit => mapping
     let getAllAddresses: mapping => array<Address.t>
     let getAddressesFromContractName: (mapping, ~contractName: string) => array<Address.t>
   }
 
   module FetchState: {
-    type partitionQuery = {
+    type queryTarget =
+      | Head
+      | EndBlock({toBlock: int})
+      | Merge({
+          // The partition we are going to merge into
+          // It shouldn't be fetching during the query
+          intoPartitionId: string,
+          toBlock: int,
+        })
+
+    // Strip internal fields from partition kind like dynamicContracts
+    type querySelection =
+      | Wildcard
+      | Normal({contractAddressMapping: ContractAddressingMap.mapping})
+
+    type query = {
       partitionId: string,
       fromBlock: int,
-      toBlock: option<int>,
-      contractAddressMapping: ContractAddressingMap.mapping,
+      selection: querySelection,
+      target: queryTarget,
     }
-
-    type mergeQuery = {
-      partitionId: string,
-      intoPartitionId: string,
-      fromBlock: int,
-      toBlock: int,
-      contractAddressMapping: ContractAddressingMap.mapping,
-    }
-
-    type query =
-      | PartitionQuery(partitionQuery)
-      | MergeQuery(mergeQuery)
   }
 
   module ChainWorker: {

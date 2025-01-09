@@ -7,6 +7,11 @@ field_selection:
   transaction_fields:
     - transactionIndex
     - hash
+contracts:
+  - name: Noop
+    handler: ./src/EventHandlers.bs.js
+    events:
+      - event: "EmptyEvent()"
 networks:
   - id: 1337
     rpc_config:
@@ -73,8 +78,12 @@ networks:
           - event: "IndexedStructWithArray"
   - id: 1
     start_block: 1
-    contracts: []
+    contracts:
+      - name: Noop
+        address: "0x0B2f78c5BF6D9C12Ee1225D5F374aa91204580c3" # -> use this if you want to deploy to local ganache
   - id: 137
     start_block: 1
-    contracts: []
+    contracts:
+      - name: Noop
+        address: "0x0B2f78c5BF6D9C12Ee1225D5F374aa91204580c3" # -> use this if you want to deploy to local ganache
 raw_events: true

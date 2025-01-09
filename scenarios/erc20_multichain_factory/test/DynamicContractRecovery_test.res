@@ -134,10 +134,12 @@ describe("Dynamic contract restart resistance test", () => {
       ~maxAddrInPartition=Env.maxAddrInPartition,
     )
 
-    let dcs =
-      chainFetcher.fetchState.partitions->Array.flatMap(p =>
-        p.dynamicContracts->Array.map(dc => dc.contractAddress)
-      )
+    let dcs = chainFetcher.fetchState.partitions->Array.flatMap(p =>
+      switch p.kind {
+      | Normal({dynamicContracts}) => dynamicContracts->Array.map(dc => dc.contractAddress)
+      | Wildcard => []
+      }
+    )
 
     dcs
   }

@@ -251,9 +251,16 @@ module Make = (Indexer: Indexer.S) => {
   }
 
   let executeQuery = (self: t, query: FetchState.query): ChainWorker.blockRangeFetchResponse => {
-    let (fromBlock, toBlock, contractAddressMapping) = switch query {
-    | PartitionQuery(query) => (query.fromBlock, query.toBlock, query.contractAddressMapping)
-    | MergeQuery(query) => (query.fromBlock, Some(query.toBlock), query.contractAddressMapping)
+    let {fromBlock} = query
+    let toBlock = switch query.target {
+    | Head => None
+    | EndBlock({toBlock})
+    | Merge({toBlock}) =>
+      Some(toBlock)
+    }
+    let contractAddressMapping = switch query.selection {
+    | Normal({contractAddressMapping}) => contractAddressMapping
+    | Wildcard => ContractAddressingMap.make()
     }
 
     let unfilteredBlocks = self->getBlocks(~fromBlock, ~toBlock)

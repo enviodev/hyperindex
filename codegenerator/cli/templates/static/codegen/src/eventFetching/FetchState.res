@@ -847,7 +847,7 @@ let make = (
   }
 
   if partitions->Array.length === 0 {
-    Js.Exn.raiseError("Invalid configuration. Nothing to fetch")
+    Js.Exn.raiseError("Invalid configuration: Nothing to fetch. Make sure that you provided at least one contract address to index, or have events with Wildcard mode enabled.")
   }
 
   if Env.Benchmark.shouldSaveData {
