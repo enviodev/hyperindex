@@ -35,7 +35,10 @@ let isArray = true
 let isIndex = true
 
 @genType
-type whereOperations<'entity, 'fieldType> = {eq: 'fieldType => promise<array<'entity>>}
+type whereOperations<'entity, 'fieldType> = {
+  eq: 'fieldType => promise<array<'entity>>,
+  gt: 'fieldType => promise<array<'entity>>
+}
 {{#each entities as |entity|}}
 
 module {{entity.name.capitalized}} = {
