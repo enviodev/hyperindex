@@ -229,12 +229,9 @@ let addItemsToPartition = (
  * for a contract that emits events with dynamic contracts, it is possible that those dynamic contracts will need to be indexed from blocks way before
  * the current block height. This is a toleration check where if there are dynamic contracts within a batch, check how far are they from the currentblock height.
  * If it is less than 1 thousandth of a percent, then we deem that contract to be within the synced range, and therefore do not reset the synced status of the chain */
-let checkIsFetchStateWithinSyncRange = (
-  ~latestFullyFetchedBlock: blockNumberAndTimestamp,
-  ~headBlockNumber,
-) =>
-  (headBlockNumber->Int.toFloat -. latestFullyFetchedBlock.blockNumber->Int.toFloat) /.
-    headBlockNumber->Int.toFloat <= 0.001
+let checkIsWithinSyncRange = (~latestFetchedBlock: blockNumberAndTimestamp, ~currentBlockHeight) =>
+  (currentBlockHeight->Int.toFloat -. latestFetchedBlock.blockNumber->Int.toFloat) /.
+    currentBlockHeight->Int.toFloat <= 0.001
 
 /*
  Update fetchState, merge registers and recompute derived values
@@ -277,14 +274,14 @@ let updateInternal = (
 
   let isFetchingAtHead = switch currentBlockHeight {
   | None => fetchState.isFetchingAtHead
-  | Some(headBlockNumber) =>
+  | Some(currentBlockHeight) =>
     // Sync isFetchingAtHead when currentBlockHeight is provided
-    if latestFullyFetchedBlock.blockNumber >= headBlockNumber {
+    if latestFullyFetchedBlock.blockNumber >= currentBlockHeight {
       true
     } else if (
       // For dc registration reset the state only when dcs are not in the sync range
       fetchState.isFetchingAtHead &&
-      checkIsFetchStateWithinSyncRange(~latestFullyFetchedBlock, ~headBlockNumber)
+      checkIsWithinSyncRange(~latestFetchedBlock=latestFullyFetchedBlock, ~currentBlockHeight)
     ) {
       true
     } else {
@@ -474,15 +471,22 @@ let setQueryResponse = (
     )
   })
 
-let makePartitionQuery = (p: partition, ~endBlock) => {
+let makePartitionQuery = (p: partition, ~endBlock, ~mergeTarget) => {
   let fromBlock = switch p.latestFetchedBlock.blockNumber {
   | 0 => 0
   | latestFetchedBlockNumber => latestFetchedBlockNumber + 1
   }
-  switch endBlock {
-  | Some(endBlock) if fromBlock > endBlock => None
-  | Some(endBlock) => Some(EndBlock({toBlock: endBlock}))
-  | None => Some(Head)
+  switch (endBlock, mergeTarget) {
+  | (Some(endBlock), _) if fromBlock > endBlock => None
+  | (_, Some(mergeTarget)) =>
+    Some(
+      Merge({
+        toBlock: mergeTarget.latestFetchedBlock.blockNumber,
+        intoPartitionId: mergeTarget.id,
+      }),
+    )
+  | (Some(endBlock), None) => Some(EndBlock({toBlock: endBlock}))
+  | (None, None) => Some(Head)
   }->Option.map(target => {
     {
       partitionId: p.id,
@@ -523,7 +527,7 @@ let isFullPartition = (p, ~maxAddrInPartition) => {
 }
 
 let getNextQuery = (
-  {partitions, maxAddrInPartition, endBlock}: t,
+  {partitions, maxAddrInPartition, endBlock, latestFullyFetchedBlock}: t,
   ~concurrencyLimit,
   ~maxQueueSize,
   ~currentBlockHeight,
@@ -539,10 +543,12 @@ let getNextQuery = (
     let areMergingPartitionsFetching = ref(false)
     let mostBehindMergingPartition = ref(None)
     let mergingPartitionTarget = ref(None)
-    let shouldWaitForNewBlock = ref(switch endBlock {
+    let shouldWaitForNewBlock = ref(
+      switch endBlock {
       | Some(endBlock) => currentBlockHeight < endBlock
       | None => true
-    })
+      },
+    )
 
     let checkIsFetchingPartition = p => {
       switch p.status.fetchingStateId {
@@ -607,30 +613,24 @@ let getNextQuery = (
     }
 
     let maxPartitionQueueSize = maxQueueSize / (fullPartitions->Array.length + 1)
+    let isWithinSyncRange = checkIsWithinSyncRange(
+      ~latestFetchedBlock=latestFullyFetchedBlock,
+      ~currentBlockHeight,
+    )
     let queries = []
 
     let registerPartitionQuery = (p, ~checkQueueSize, ~mergeTarget=?) => {
       if (
-        p->checkIsFetchingPartition->not && (
-            checkQueueSize ? p.fetchedEventQueue->Array.length < maxPartitionQueueSize : true
-          )
+        p->checkIsFetchingPartition->not &&
+        p.latestFetchedBlock.blockNumber < currentBlockHeight &&
+        (checkQueueSize ? p.fetchedEventQueue->Array.length < maxPartitionQueueSize : true) && (
+          isWithinSyncRange
+            ? true
+            : !checkIsWithinSyncRange(~latestFetchedBlock=p.latestFetchedBlock, ~currentBlockHeight)
+        )
       ) {
-        switch p->makePartitionQuery(~endBlock) {
-        | Some(q) =>
-          if q.fromBlock <= currentBlockHeight {
-            queries->Array.push(
-              switch mergeTarget {
-              | Some(mergeTarget) => {
-                  ...q,
-                  target: Merge({
-                    toBlock: mergeTarget.latestFetchedBlock.blockNumber,
-                    intoPartitionId: mergeTarget.id,
-                  }),
-                }
-              | None => q
-              },
-            )
-          }
+        switch p->makePartitionQuery(~endBlock, ~mergeTarget) {
+        | Some(q) => queries->Array.push(q)
         | None => ()
         }
       }
