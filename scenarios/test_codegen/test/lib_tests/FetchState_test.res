@@ -1472,6 +1472,80 @@ describe("FetchState unit tests for specific cases", () => {
       ~message=`Should only query partition "1", since partition "0" already entered the sync range
         and it need to wait until all partitions reach it`,
     )
+
+    Assert.deepEqual(
+      fetchState->FetchState.getNextQuery(
+        ~concurrencyLimit=10,
+        ~currentBlockHeight=currentBlockHeight + 1,
+        ~maxQueueSize=10,
+        ~stateId=0,
+      ),
+      Ready([
+        {
+          partitionId: "0",
+          target: Head,
+          selection: Normal({
+            contractAddressMapping: ContractAddressingMap.fromArray([(mockAddress0, "ContractA")]),
+          }),
+          fromBlock: 999001,
+        },
+        {
+          partitionId: "1",
+          target: Head,
+          selection: Normal({
+            contractAddressMapping: ContractAddressingMap.fromArray([(mockAddress1, "ContractA")]),
+          }),
+          fromBlock: 0,
+        },
+      ]),
+      ~message=`After partition exists from the sync range, it should be included to the query again.
+        Not a perfect solution, but as a quick fix it's good to query every 1000+ blocks than every block`,
+    )
+
+    let fetchStateWithBothInSyncRange =
+      fetchState
+      ->FetchState.setQueryResponse(
+        ~query={
+          partitionId: "1",
+          target: Head,
+          selection: Normal({
+            contractAddressMapping: ContractAddressingMap.make(),
+          }),
+          fromBlock: 0,
+        },
+        ~latestFetchedBlock=getBlockData(~blockNumber=currentBlockHeight - syncRange),
+        ~newItems=[],
+        ~currentBlockHeight,
+      )
+      ->Result.getExn
+
+    Assert.deepEqual(
+      fetchStateWithBothInSyncRange->FetchState.getNextQuery(
+        ~concurrencyLimit=10,
+        ~currentBlockHeight,
+        ~maxQueueSize=10,
+        ~stateId=0,
+      ),
+      Ready([
+        {
+          partitionId: "0",
+          target: Head,
+          selection: Normal({
+            contractAddressMapping: ContractAddressingMap.fromArray([(mockAddress0, "ContractA")]),
+          }),
+          fromBlock: 999001,
+        },
+        {
+          partitionId: "1",
+          target: Head,
+          selection: Normal({
+            contractAddressMapping: ContractAddressingMap.fromArray([(mockAddress1, "ContractA")]),
+          }),
+          fromBlock: 999001,
+        },
+      ]),
+      ~message=`Should query both partitions when both are in the sync range`,
+    )
   })
 
   it("Allows to get event one block earlier than the dc registring event", () => {
