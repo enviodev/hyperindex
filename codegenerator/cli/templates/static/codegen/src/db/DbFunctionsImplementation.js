@@ -231,7 +231,7 @@ module.exports.deleteStaleEndOfBlockRangeScannedDataForChain = (
     ;`;
 };
 
-module.exports.readDynamicContractsOnChainIdAtOrBeforeBlockNumber = (
+module.exports.recoverRegisteredDynamicContracts = (
   sql,
   chainId,
   blockNumber
@@ -241,20 +241,16 @@ module.exports.readDynamicContractsOnChainIdAtOrBeforeBlockNumber = (
   WHERE registering_event_block_number <= ${blockNumber} 
   AND chain_id = ${chainId};`;
 
-module.exports.readDynamicContractsOnChainIdMatchingEvents = (
+module.exports.recoverPreRegisteredAndRegisteredDynamicContracts = (
   sql,
   chainId,
-  preRegisterEvents // array<{registering_event_contract_name, registering_event_name, registering_event_src_address}>
-) => {
-  return sql`
-    SELECT *
-    FROM "public"."dynamic_contract_registry"
-    WHERE chain_id = ${chainId}
-    AND (registering_event_contract_name, registering_event_name, registering_event_src_address) IN ${sql(
-      preRegisterEvents.map((item) => sql(item))
-    )};
-  `;
-};
+  blockNumber
+) => sql`
+  SELECT *
+  FROM "public"."dynamic_contract_registry"
+  WHERE registering_event_block_number <= ${blockNumber} 
+  OR is_pre_registered
+  AND chain_id = ${chainId};`;
 
 const makeHistoryTableName = (entityName) => entityName + "_history";
 

@@ -36,7 +36,7 @@ let make = (
   ~chainConfig: Config.chainConfig,
   ~lastBlockScannedHashes,
   ~staticContracts,
-  ~dynamicContractRegistrations,
+  ~dynamicContracts,
   ~startBlock,
   ~endBlock,
   ~dbFirstEventBlockNumber,
@@ -55,7 +55,7 @@ let make = (
   let fetchState = FetchState.make(
     ~maxAddrInPartition,
     ~staticContracts,
-    ~dynamicContracts=dynamicContractRegistrations,
+    ~dynamicContracts,
     ~startBlock,
     ~endBlock,
     ~isFetchingAtHead=false,
@@ -113,7 +113,7 @@ let makeFromConfig = (chainConfig: Config.chainConfig, ~maxAddrInPartition) => {
     ~numBatchesFetched=0,
     ~logger,
     ~processingFilters=None,
-    ~dynamicContractRegistrations=[],
+    ~dynamicContracts=[],
     ~maxAddrInPartition,
     ~dynamicContractPreRegistration,
   )
@@ -159,52 +159,22 @@ let makeFromDbState = async (chainConfig: Config.chainConfig, ~maxAddrInPartitio
   }
 
   //Get all dynamic contracts already registered on the chain
-  let dbDynamicContractRegistrations = if preRegisterDynamicContracts {
-    //An array of records containing srcAddress, eventName, contractName for each contract
-    //address & event that should be pre registered
-    let preRegisteringEvents = chainConfig.contracts->Array.flatMap(contract =>
-      contract.events->Array.flatMap(eventMod => {
-        let module(Event) = eventMod
-        let {preRegisterDynamicContracts} =
-          Event.handlerRegister->Types.HandlerTypes.Register.getEventOptions
-
-        if preRegisterDynamicContracts {
-          contract.addresses->Belt.Array.map(
-            address => {
-              {
-                DbFunctions.DynamicContractRegistry.registeringEventContractName: contract.name,
-                registeringEventName: Event.name,
-                registeringEventSrcAddress: address,
-              }
-            },
-          )
-        } else {
-          []
-        }
-      })
-    )
-
-    //If preregistration is done, but the indexer stops and restarts during indexing. We still get all the dynamic
-    //contracts that were registered during preregistration. We need to match on registering event name, contract name and src address
-    //to ensure we only get the dynamic contracts that were registered during preregistration
-    await Db.sql->DbFunctions.DynamicContractRegistry.readDynamicContractsOnChainIdMatchingEvents(
-      ~chainId,
-      ~preRegisteringEvents,
-    )
-  } else {
-    //If no preregistration should be done, only get dynamic contracts up to the the block that the indexing starts from
-    await Db.sql->DbFunctions.DynamicContractRegistry.readDynamicContractsOnChainIdAtOrBeforeBlock(
+  let dbRecoveredDynamicContracts =
+    //Get dynamic contracts up to the the block that the indexing starts from
+    //With preregistration also include all preregistered events.
+    //For preregistration need to do both, for the case of nested dynamic registrations
+    await Db.sql->DbFunctions.DynamicContractRegistry.recoverRegisteredDynamicContracts(
       ~chainId,
       ~startBlock,
+      ~hasPreRegistration=preRegisterDynamicContracts,
     )
-  }
 
   let (
     dynamicContractPreRegistration: option<addressToDynContractLookup>,
-    dynamicContractRegistrations: array<TablesStatic.DynamicContractRegistry.t>,
+    dynamicContracts: array<TablesStatic.DynamicContractRegistry.t>,
   ) = if isPreRegisteringDynamicContracts {
     let dynamicContractPreRegistration: addressToDynContractLookup = Js.Dict.empty()
-    dbDynamicContractRegistrations->Array.forEach(contract => {
+    dbRecoveredDynamicContracts->Array.forEach(contract => {
       dynamicContractPreRegistration->Js.Dict.set(
         contract.contractAddress->Address.toString,
         contract,
@@ -212,7 +182,7 @@ let makeFromDbState = async (chainConfig: Config.chainConfig, ~maxAddrInPartitio
     })
     (Some(dynamicContractPreRegistration), [])
   } else {
-    (None, dbDynamicContractRegistrations)
+    (None, dbRecoveredDynamicContracts)
   }
 
   let (
@@ -263,7 +233,7 @@ let makeFromDbState = async (chainConfig: Config.chainConfig, ~maxAddrInPartitio
 
   make(
     ~staticContracts,
-    ~dynamicContractRegistrations,
+    ~dynamicContracts,
     ~chainConfig,
     ~startBlock,
     ~endBlock=chainConfig.endBlock,

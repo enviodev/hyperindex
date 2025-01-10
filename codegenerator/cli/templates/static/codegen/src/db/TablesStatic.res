@@ -159,6 +159,7 @@ module DynamicContractRegistry = {
     @as("registering_event_block_timestamp") registeringEventBlockTimestamp: int,
     @as("contract_address") contractAddress: Address.t,
     @as("contract_type") contractType: Enums.ContractType.t,
+    @as("is_pre_registered") isPreRegistered: bool,
   }
 
   let schema = S.schema(s => {
@@ -172,6 +173,7 @@ module DynamicContractRegistry = {
     registeringEventBlockTimestamp: s.matches(S.int),
     contractAddress: s.matches(Address.schema),
     contractType: s.matches(Enums.ContractType.enum.schema),
+    isPreRegistered: s.matches(S.bool),
   })
 
   let rowsSchema = S.array(schema)
@@ -189,6 +191,7 @@ module DynamicContractRegistry = {
       mkField("registering_event_src_address", Text),
       mkField("contract_address", Text),
       mkField("contract_type", Custom(Enums.ContractType.enum.name)),
+      mkField("is_pre_registered", Boolean),
     ],
   )
 

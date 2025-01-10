@@ -243,8 +243,11 @@ describe("Dynamic contract restart resistance test", () => {
 
         Assert.deepEqual(
           restartedChainFetcher.dynamicContractPreRegistration->Option.getExn->Js.Dict.keys,
-          [Mock.mockDynamicToken1->Address.toString, Mock.mockDynamicToken2->Address.toString],
-          ~message="Should return all the dynamic contracts related to handler that uses preRegistration",
+          [Mock.mockDynamicToken1->Address.toString],
+          ~message=`Should recover with only dc1 since it was registered at the restart start block.
+          The dc2 wasn't registered during preRegistration phase, so it's not recovered
+          even though the eventOptions says that preRegistration enabled.
+          This might happen when a preRegistered contract, registers itself on the actual indexer run`,
         )
 
         Assert.deepEqual(
@@ -252,6 +255,30 @@ describe("Dynamic contract restart resistance test", () => {
           [],
           ~message="Should have no dynamic contracts yet since this tests the case starting in preregistration",
         )
+
+        // Manualy update the second dc in db to make it look as if it was pre registered
+        await Db.sql->Postgres.unsafe(`UPDATE public.dynamic_contract_registry
+          SET is_pre_registered = true
+          WHERE registering_event_block_number = 1;`)
+
+        let restartedChainFetcher = await ChainFetcher.makeFromDbState(
+          chainConfig,
+          ~maxAddrInPartition=Env.maxAddrInPartition,
+        )
+
+        Assert.deepEqual(
+          restartedChainFetcher.dynamicContractPreRegistration->Option.getExn->Js.Dict.keys,
+          [Mock.mockDynamicToken1->Address.toString, Mock.mockDynamicToken2->Address.toString],
+          ~message=`Should include both dc1 which is not pre registered, but registered at the restart start block
+          and dc2 which is after restart start block, but was pre registered`,
+        )
+
+        Assert.deepEqual(
+          await getFetchingDcAddressesFromDbState(),
+          [],
+          ~message="Should have no dynamic contracts yet since this tests the case starting in preregistration",
+        )
+
         resetEventOptionsToOriginal()
       }
 

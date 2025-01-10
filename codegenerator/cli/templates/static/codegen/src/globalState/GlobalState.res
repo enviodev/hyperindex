@@ -695,10 +695,7 @@ let actionReducer = (state: t, action: action) => {
       } = cf
 
       ChainFetcher.make(
-        ~dynamicContractRegistrations=dynamicContractPreRegistration->Option.mapWithDefault(
-          [],
-          Js.Dict.values,
-        ),
+        ~dynamicContracts=dynamicContractPreRegistration->Option.mapWithDefault([], Js.Dict.values),
         ~chainConfig,
         ~lastBlockScannedHashes=ReorgDetection.LastBlockScannedHashes.empty(
           ~confirmedBlockThreshold=chainConfig.confirmedBlockThreshold,

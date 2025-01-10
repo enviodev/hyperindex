@@ -116,51 +116,29 @@ module RawEvents = {
 
 module DynamicContractRegistry = {
   @module("./DbFunctionsImplementation.js")
-  external readDynamicContractsOnChainIdAtOrBeforeBlockNumberRaw: (
+  external recoverRegisteredDynamicContractsRaw: (
     Postgres.sql,
     ~chainId: chainId,
     ~blockNumber: int,
-  ) => promise<Js.Json.t> = "readDynamicContractsOnChainIdAtOrBeforeBlockNumber"
-
-  let readDynamicContractsOnChainIdAtOrBeforeBlock = async (sql, ~chainId, ~startBlock) => {
-    let json = await readDynamicContractsOnChainIdAtOrBeforeBlockNumberRaw(
-      sql,
-      ~chainId,
-      ~blockNumber=startBlock,
-    )
-    json->S.parseOrRaiseWith(TablesStatic.DynamicContractRegistry.rowsSchema)
-  }
-
-  type preRegisteringEvent = {
-    @as("registering_event_contract_name") registeringEventContractName: string,
-    @as("registering_event_name") registeringEventName: string,
-    @as("registering_event_src_address") registeringEventSrcAddress: Address.t,
-  }
+  ) => promise<Js.Json.t> = "recoverRegisteredDynamicContracts"
 
   @module("./DbFunctionsImplementation.js")
-  external readDynamicContractsOnChainIdMatchingEventsRaw: (
+  external recoverPreRegisteredAndRegisteredDynamicContractsRaw: (
     Postgres.sql,
-    ~chainId: int,
-    ~preRegisteringEvents: array<preRegisteringEvent>,
-  ) => promise<Js.Json.t> = "readDynamicContractsOnChainIdMatchingEvents"
+    ~chainId: chainId,
+    ~blockNumber: int,
+  ) => promise<Js.Json.t> = "recoverPreRegisteredAndRegisteredDynamicContracts"
 
-  let readDynamicContractsOnChainIdMatchingEvents = async (
-    sql,
-    ~chainId,
-    ~preRegisteringEvents,
+
+  let recoverRegisteredDynamicContracts = async (
+    sql: Postgres.sql,
+    ~chainId: chainId,
+    ~startBlock: int,
+    ~hasPreRegistration: bool,
   ) => {
-    switch await readDynamicContractsOnChainIdMatchingEventsRaw(
-      sql,
-      ~chainId,
-      ~preRegisteringEvents,
-    ) {
-    | exception exn =>
-      exn->ErrorHandling.mkLogAndRaise(
-        ~logger=Logging.createChild(~params={"chainId": chainId}),
-        ~msg="Failed to read dynamic contracts on chain id matching events",
-      )
-    | json => json->S.parseOrRaiseWith(TablesStatic.DynamicContractRegistry.rowsSchema)
-    }
+    let raw = hasPreRegistration ? recoverPreRegisteredAndRegisteredDynamicContractsRaw : recoverRegisteredDynamicContractsRaw
+    let json = await sql->raw(~chainId, ~blockNumber=startBlock)
+    json->S.parseOrRaiseWith(TablesStatic.DynamicContractRegistry.rowsSchema)
   }
 }
 
@@ -481,7 +459,7 @@ module EntityHistory = {
     firstChangeEventPerChain
   }
 
-  let hasRows = async (sql) => {
+  let hasRows = async sql => {
     let all =
       await Entities.allEntities
       ->Belt.Array.map(async entityMod => {
