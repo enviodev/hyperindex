@@ -329,12 +329,6 @@ module Make = (
       //set height and next from block
       let currentBlockHeight = pageUnsafe.archiveHeight
 
-      logger->Logging.childTrace({
-        "message": "Retrieved event page from server",
-        "fromBlock": fromBlock,
-        "toBlock": pageUnsafe.nextBlock - 1,
-      })
-
       //The heighest (biggest) blocknumber that was accounted for in
       //Our query. Not necessarily the blocknumber of the last log returned
       //In the query
