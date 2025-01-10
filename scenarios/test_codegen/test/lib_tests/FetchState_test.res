@@ -580,8 +580,43 @@ describe("FetchState.getNextQuery & integration", () => {
 
     Assert.deepEqual(updatedFetchState->getNextQuery, WaitingForNewBlock)
     Assert.deepEqual(updatedFetchState->getNextQuery(~concurrencyLimit=0), ReachedMaxConcurrency)
-    Assert.deepEqual(updatedFetchState->getNextQuery(~endBlock=Some(10)), NothingToQuery)
-    Assert.deepEqual(updatedFetchState->getNextQuery(~maxQueueSize=2), NothingToQuery)
+    Assert.deepEqual(
+      updatedFetchState->getNextQuery(~endBlock=Some(11)),
+      WaitingForNewBlock,
+      ~message=`Should wait for new block
+      when block height didn't reach the end block`,
+    )
+    Assert.deepEqual(
+      updatedFetchState->getNextQuery(~endBlock=Some(10)),
+      NothingToQuery,
+      ~message=`Shouldn't wait for new block
+      when block height reached the end block`,
+    )
+    Assert.deepEqual(
+      updatedFetchState->getNextQuery(~endBlock=Some(9)),
+      NothingToQuery,
+      ~message=`Shouldn't wait for new block
+      when block height exceeded the end block`,
+    )
+    Assert.deepEqual(
+      updatedFetchState->getNextQuery(~maxQueueSize=2),
+      WaitingForNewBlock,
+      ~message=`Should wait for new block even if partitions have nothing to query`,
+    )
+    Assert.deepEqual(
+      updatedFetchState->getNextQuery(~maxQueueSize=2, ~currentBlockHeight=11),
+      NothingToQuery,
+      ~message=`Should do nothing if the case above is not waiting for new block`,
+    )
+
+    updatedFetchState->FetchState.startFetchingQueries(~queries=[query], ~stateId=0)
+    Assert.deepEqual(
+      updatedFetchState->getNextQuery,
+      NothingToQuery,
+      ~message=`Test that even if all partitions reached the current block height,
+      we won't wait for new block while even one partition is fetching.
+      It might return an updated currentBlockHeight in response and we won't need to poll for new block`,
+    )
   })
 
   it("Emulate dynamic contract registration", () => {
@@ -1309,6 +1344,207 @@ describe("FetchState unit tests for specific cases", () => {
         queueSize: 7,
       },
       ~message="Should merge events in correct order",
+    )
+  })
+
+  it("Shouldn't wait for new block until all partitions reached the head", () => {
+    // FetchState with 2 partitions,
+    // one of them reached the head
+    // another reached max queue size
+    let fetchState =
+      FetchState.make(
+        ~staticContracts=[("ContractA", mockAddress0)],
+        ~dynamicContracts=[],
+        ~startBlock=0,
+        ~endBlock=None,
+        ~maxAddrInPartition=2,
+        ~hasWildcard=true,
+      )
+      ->FetchState.setQueryResponse(
+        ~query={
+          partitionId: "0",
+          target: Head,
+          selection: Wildcard,
+          fromBlock: 0,
+        },
+        ~latestFetchedBlock=getBlockData(~blockNumber=1),
+        ~newItems=[mockEvent(~blockNumber=0), mockEvent(~blockNumber=1)],
+        ~currentBlockHeight=2,
+      )
+      ->Result.getExn
+      ->FetchState.setQueryResponse(
+        ~query={
+          partitionId: "1",
+          target: Head,
+          selection: Normal({
+            contractAddressMapping: ContractAddressingMap.make(),
+          }),
+          fromBlock: 0,
+        },
+        ~latestFetchedBlock=getBlockData(~blockNumber=2),
+        ~newItems=[],
+        ~currentBlockHeight=2,
+      )
+      ->Result.getExn
+
+    Assert.deepEqual(
+      fetchState->FetchState.getNextQuery(
+        ~concurrencyLimit=10,
+        ~currentBlockHeight=2,
+        ~maxQueueSize=10,
+        ~stateId=0,
+      ),
+      Ready([
+        {
+          partitionId: "0",
+          target: Head,
+          selection: Wildcard,
+          fromBlock: 2,
+        },
+      ]),
+      ~message=`Should be possible to query wildcard partition,
+      if it didn't reach max queue size limit`,
+    )
+    Assert.deepEqual(
+      fetchState->FetchState.getNextQuery(
+        ~concurrencyLimit=10,
+        ~currentBlockHeight=2,
+        ~maxQueueSize=4,
+        ~stateId=0,
+      ),
+      NothingToQuery,
+      ~message=`Should wait until queue is processed, to continue fetching.
+      Don't wait for new block, until all partitions reached the head`,
+    )
+  })
+
+  it("Shouldn't query full partitions at the head until all partitions entered sync range", () => {
+    let currentBlockHeight = 1_000_000
+    let syncRange = 1_000 // Should be 1/1000 of block height
+
+    // FetchState with 2 full partitions,
+    // one of them reached the head
+    // For the test we have 1 address per partition,
+    // but in real life it's going to be 5000.
+    // And we don't want to query 5000 addresses every new block,
+    // until all partitions reached the head
+    let fetchState =
+      FetchState.make(
+        ~staticContracts=[("ContractA", mockAddress0), ("ContractA", mockAddress1)],
+        ~dynamicContracts=[],
+        ~startBlock=0,
+        ~endBlock=None,
+        ~maxAddrInPartition=1,
+        ~hasWildcard=false,
+      )
+      ->FetchState.setQueryResponse(
+        ~query={
+          partitionId: "0",
+          target: Head,
+          selection: Normal({
+            contractAddressMapping: ContractAddressingMap.make(),
+          }),
+          fromBlock: 0,
+        },
+        ~latestFetchedBlock=getBlockData(~blockNumber=currentBlockHeight - syncRange),
+        ~newItems=[],
+        ~currentBlockHeight,
+      )
+      ->Result.getExn
+
+    Assert.deepEqual(
+      fetchState->FetchState.getNextQuery(
+        ~concurrencyLimit=10,
+        ~currentBlockHeight,
+        ~maxQueueSize=10,
+        ~stateId=0,
+      ),
+      Ready([
+        {
+          partitionId: "1",
+          target: Head,
+          selection: Normal({
+            contractAddressMapping: ContractAddressingMap.fromArray([(mockAddress1, "ContractA")]),
+          }),
+          fromBlock: 0,
+        },
+      ]),
+      ~message=`Should only query partition "1", since partition "0" already entered the sync range
+        and it need to wait until all partitions reach it`,
+    )
+
+    Assert.deepEqual(
+      fetchState->FetchState.getNextQuery(
+        ~concurrencyLimit=10,
+        ~currentBlockHeight=currentBlockHeight + 1,
+        ~maxQueueSize=10,
+        ~stateId=0,
+      ),
+      Ready([
+        {
+          partitionId: "0",
+          target: Head,
+          selection: Normal({
+            contractAddressMapping: ContractAddressingMap.fromArray([(mockAddress0, "ContractA")]),
+          }),
+          fromBlock: 999001,
+        },
+        {
+          partitionId: "1",
+          target: Head,
+          selection: Normal({
+            contractAddressMapping: ContractAddressingMap.fromArray([(mockAddress1, "ContractA")]),
+          }),
+          fromBlock: 0,
+        },
+      ]),
+      ~message=`After partition exists from the sync range, it should be included to the query again.
+        Not a perfect solution, but as a quick fix it's good to query every 1000+ blocks than every block`,
+    )
+
+    let fetchStateWithBothInSyncRange =
+      fetchState
+      ->FetchState.setQueryResponse(
+        ~query={
+          partitionId: "1",
+          target: Head,
+          selection: Normal({
+            contractAddressMapping: ContractAddressingMap.make(),
+          }),
+          fromBlock: 0,
+        },
+        ~latestFetchedBlock=getBlockData(~blockNumber=currentBlockHeight - syncRange),
+        ~newItems=[],
+        ~currentBlockHeight,
+      )
+      ->Result.getExn
+
+    Assert.deepEqual(
+      fetchStateWithBothInSyncRange->FetchState.getNextQuery(
+        ~concurrencyLimit=10,
+        ~currentBlockHeight,
+        ~maxQueueSize=10,
+        ~stateId=0,
+      ),
+      Ready([
+        {
+          partitionId: "0",
+          target: Head,
+          selection: Normal({
+            contractAddressMapping: ContractAddressingMap.fromArray([(mockAddress0, "ContractA")]),
+          }),
+          fromBlock: 999001,
+        },
+        {
+          partitionId: "1",
+          target: Head,
+          selection: Normal({
+            contractAddressMapping: ContractAddressingMap.fromArray([(mockAddress1, "ContractA")]),
+          }),
+          fromBlock: 999001,
+        },
+      ]),
+      ~message=`Should query both partitions when both are in the sync range`,
     )
   })
 
