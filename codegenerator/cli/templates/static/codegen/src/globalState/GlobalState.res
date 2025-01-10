@@ -325,7 +325,7 @@ let handlePartitionQueryResponse = (
   if Env.Benchmark.shouldSaveData {
     Prometheus.PartitionBlockFetched.set(
       ~blockNumber=latestFetchedBlockNumber,
-      ~partitionId=query->FetchState.queryPartitionId,
+      ~partitionId=query.partitionId,
       ~chainId=chain->ChainMap.Chain.toChainId,
     )
     Benchmark.addBlockRangeFetched(
