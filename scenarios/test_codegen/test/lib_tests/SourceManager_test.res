@@ -21,12 +21,7 @@ let executeQueryMock = () => {
     fn: query => {
       calls->Js.Array2.push(query)->ignore
       callIds
-      ->Js.Array2.push(
-        switch query {
-        | PartitionQuery({partitionId})
-        | MergeQuery({partitionId}) => partitionId
-        },
-      )
+      ->Js.Array2.push(query.partitionId)
       ->ignore
       Promise.make((resolve, _reject) => {
         resolveFns->Js.Array2.push(resolve)->ignore
@@ -95,19 +90,28 @@ describe("SourceManager fetchNext", () => {
       blockTimestamp: latestFetchedBlockNumber * 15,
     }
 
-    let partition = FetchState.makePartition(~partitionIndex, ~staticContracts, ~latestFetchedBlock)
+    let partition = FetchState.makeNormalPartition(
+      ~partitionIndex,
+      ~staticContracts,
+      ~latestFetchedBlock,
+    )
     {
       ...partition,
       fetchedEventQueue,
     }
   }
 
+  let getPartitionContractAddressMapping = (partition: FetchState.partition) =>
+    switch partition.kind {
+    | Normal({contractAddressMapping}) => contractAddressMapping
+    | Wildcard => ContractAddressingMap.make()
+    }
+
   let mockFetchState = (partitions, ~endBlock=None): FetchState.t => {
     {
       partitions,
       endBlock,
       nextPartitionIndex: partitions->Array.length,
-      batchSize: 5000,
       maxAddrInPartition: 2,
       firstEventBlockNumber: None,
       queueSize: %raw(`null`),
@@ -153,24 +157,30 @@ describe("SourceManager fetchNext", () => {
       Assert.deepEqual(
         executeQueryMock.calls,
         [
-          PartitionQuery({
+          {
             partitionId: "0",
             fromBlock: 5,
-            toBlock: None,
-            contractAddressMapping: partition0.contractAddressMapping,
-          }),
-          PartitionQuery({
+            target: Head,
+            selection: Normal({
+              contractAddressMapping: partition0->getPartitionContractAddressMapping,
+            }),
+          },
+          {
             partitionId: "1",
             fromBlock: 6,
-            toBlock: None,
-            contractAddressMapping: partition1.contractAddressMapping,
-          }),
-          PartitionQuery({
+            target: Head,
+            selection: Normal({
+              contractAddressMapping: partition1->getPartitionContractAddressMapping,
+            }),
+          },
+          {
             partitionId: "2",
             fromBlock: 2,
-            toBlock: None,
-            contractAddressMapping: partition2.contractAddressMapping,
-          }),
+            target: Head,
+            selection: Normal({
+              contractAddressMapping: partition2->getPartitionContractAddressMapping,
+            }),
+          },
         ],
       )
 
@@ -213,18 +223,22 @@ describe("SourceManager fetchNext", () => {
       Assert.deepEqual(
         executeQueryMock.calls,
         [
-          PartitionQuery({
+          {
             partitionId: "2",
             fromBlock: 2,
-            toBlock: None,
-            contractAddressMapping: partition2.contractAddressMapping,
-          }),
-          PartitionQuery({
+            target: Head,
+            selection: Normal({
+              contractAddressMapping: partition2->getPartitionContractAddressMapping,
+            }),
+          },
+          {
             partitionId: "0",
             fromBlock: 5,
-            toBlock: None,
-            contractAddressMapping: partition0.contractAddressMapping,
-          }),
+            target: Head,
+            selection: Normal({
+              contractAddressMapping: partition0->getPartitionContractAddressMapping,
+            }),
+          },
         ],
       )
 

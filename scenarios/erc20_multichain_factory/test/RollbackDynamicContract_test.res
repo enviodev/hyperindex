@@ -418,7 +418,10 @@ describe("Dynamic contract rollback test", () => {
       ~message=`Should get a root partition`,
     )
     Assert.deepEqual(
-      dcPartition.dynamicContracts->Js.Array2.length,
+      switch dcPartition.kind {
+      | Normal({dynamicContracts}) => dynamicContracts->Array.length
+      | Wildcard => 0
+      },
       1,
       ~message=`Should have a single dc`,
     )

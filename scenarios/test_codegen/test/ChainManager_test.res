@@ -26,7 +26,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
       ~staticContracts=[],
       ~dynamicContracts=[],
       ~startBlock=0,
-      ~isFetchingAtHead=false,
+      ~hasWildcard=true,
     )
 
     let fetchState = ref(fetcherStateInit)
@@ -77,12 +77,12 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
           fetchState :=
             fetchState.contents
             ->FetchState.setQueryResponse(
-              ~query=PartitionQuery({
+              ~query={
                 partitionId: "0",
                 fromBlock: 0,
-                toBlock: None,
-                contractAddressMapping: ContractAddressingMap.make(),
-              }),
+                target: Head,
+                selection: Wildcard,
+              },
               ~latestFetchedBlock={
                 blockNumber: batchItem.blockNumber,
                 blockTimestamp: batchItem.timestamp,
@@ -100,12 +100,12 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
             fetchState :=
               fetchState.contents
               ->FetchState.setQueryResponse(
-                ~query=PartitionQuery({
+                ~query={
                   partitionId: "0",
                   fromBlock: 0,
-                  toBlock: None,
-                  contractAddressMapping: ContractAddressingMap.make(),
-                }),
+                  target: Head,
+                  selection: Wildcard,
+                },
                 ~latestFetchedBlock={
                   blockNumber: batchItem.blockNumber,
                   blockTimestamp: batchItem.timestamp,
@@ -342,13 +342,14 @@ describe("determineNextEvent", () => {
         status: {
           fetchingStateId: None,
         },
-        contractAddressMapping: ContractAddressingMap.make(),
+        kind: Normal({
+          contractAddressMapping: ContractAddressingMap.make(),
+          dynamicContracts: [],
+        }),
         fetchedEventQueue: item->Option.mapWithDefault([], v => [v]),
-        dynamicContracts: [],
       }
       {
         partitions: [partition],
-        batchSize: 5,
         maxAddrInPartition: 5,
         nextPartitionIndex: 1,
         queueSize: 10,

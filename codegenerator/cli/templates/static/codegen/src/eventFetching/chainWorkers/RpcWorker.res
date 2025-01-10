@@ -192,13 +192,16 @@ module Make = (
     ~contractAddressMapping,
     ~currentBlockHeight,
     ~partitionId,
-    ~shouldApplyWildcards as _,
+    ~forceWildcardEvents,
     ~isPreRegisteringDynamicContracts,
     ~logger,
   ) => {
     try {
       if isPreRegisteringDynamicContracts {
         Js.Exn.raiseError("HyperIndex RPC does not support pre registering dynamic contracts yet")
+      }
+      if forceWildcardEvents {
+        Js.Exn.raiseError("RPC worker does not yet support wildcard events")
       }
 
       let startFetchingBatchTimeRef = Hrtime.makeTimer()

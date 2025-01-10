@@ -35,8 +35,7 @@ type t = {
 let make = (
   ~chainConfig: Config.chainConfig,
   ~lastBlockScannedHashes,
-  ~staticContracts,
-  ~dynamicContracts,
+  ~dynamicContracts: array<TablesStatic.DynamicContractRegistry.t>,
   ~startBlock,
   ~endBlock,
   ~dbFirstEventBlockNumber,
@@ -52,13 +51,65 @@ let make = (
   let module(ChainWorker) = chainConfig.chainWorker
   logger->Logging.childInfo("Initializing ChainFetcher with " ++ ChainWorker.name ++ " worker")
 
+  let hasWildcard = ref(false)
+  let contractNamesWithNonWildcard = Utils.Set.make()
+  let contractNamesWithPreRegistration = Utils.Set.make()
+
+  let isPreRegisteringDynamicContracts = dynamicContractPreRegistration->Option.isSome
+  let shouldIncludeContractAddress = (~contractName) => {
+    // Check that there are events without wildcard
+    // Otherwise the events will be queried in the Wildcard partition
+    // and shouldn't be included in the Normal partition
+    contractNamesWithNonWildcard->Utils.Set.has(contractName) &&
+      // Include only addresses having preRegistration,
+      // so we don't end up with partition having an empty ContractAddressMapping
+      // for preregistration
+      isPreRegisteringDynamicContracts
+      ? contractNamesWithPreRegistration->Utils.Set.has(contractName)
+      : true
+  }
+
+  let staticContracts = []
+
+  chainConfig.contracts->Array.forEach(contract => {
+    let contractName = contract.name
+
+    contract.events->Array.forEach(event => {
+      let module(Event) = event
+
+      let {isWildcard, preRegisterDynamicContracts} =
+        Event.handlerRegister->Types.HandlerTypes.Register.getEventOptions
+
+      if isWildcard {
+        hasWildcard := (
+            isPreRegisteringDynamicContracts
+              ? hasWildcard.contents || preRegisterDynamicContracts
+              : true
+          )
+      } else {
+        let _ = contractNamesWithNonWildcard->Utils.Set.add(contractName)
+      }
+      if preRegisterDynamicContracts {
+        let _ = contractNamesWithPreRegistration->Utils.Set.add(contractName)
+      }
+    })
+
+    if shouldIncludeContractAddress(~contractName) {
+      contract.addresses->Array.forEach(a => {
+        staticContracts->Array.push((contractName, a))
+      })
+    }
+  })
+
   let fetchState = FetchState.make(
     ~maxAddrInPartition,
     ~staticContracts,
-    ~dynamicContracts,
+    ~dynamicContracts=dynamicContracts->Array.keep(dc =>
+      shouldIncludeContractAddress(~contractName=(dc.contractType :> string))
+    ),
     ~startBlock,
     ~endBlock,
-    ~isFetchingAtHead=false,
+    ~hasWildcard=hasWildcard.contents,
   )
 
   {
@@ -82,17 +133,8 @@ let make = (
   }
 }
 
-let getStaticContracts = (chainConfig: Config.chainConfig) => {
-  chainConfig.contracts->Belt.Array.flatMap(contract => {
-    contract.addresses->Belt.Array.map(address => {
-      (contract.name, address)
-    })
-  })
-}
-
 let makeFromConfig = (chainConfig: Config.chainConfig, ~maxAddrInPartition) => {
   let logger = Logging.createChild(~params={"chainId": chainConfig.chain->ChainMap.Chain.toChainId})
-  let staticContracts = chainConfig->getStaticContracts
   let lastBlockScannedHashes = ReorgDetection.LastBlockScannedHashes.empty(
     ~confirmedBlockThreshold=chainConfig.confirmedBlockThreshold,
   )
@@ -101,7 +143,6 @@ let makeFromConfig = (chainConfig: Config.chainConfig, ~maxAddrInPartition) => {
     chainConfig->Config.shouldPreRegisterDynamicContracts ? Some(Js.Dict.empty()) : None
 
   make(
-    ~staticContracts,
     ~chainConfig,
     ~startBlock=chainConfig.startBlock,
     ~endBlock=chainConfig.endBlock,
@@ -124,7 +165,6 @@ let makeFromConfig = (chainConfig: Config.chainConfig, ~maxAddrInPartition) => {
  */
 let makeFromDbState = async (chainConfig: Config.chainConfig, ~maxAddrInPartition) => {
   let logger = Logging.createChild(~params={"chainId": chainConfig.chain->ChainMap.Chain.toChainId})
-  let staticContracts = chainConfig->getStaticContracts
   let chainId = chainConfig.chain->ChainMap.Chain.toChainId
   let latestProcessedEvent =
     await Db.sql->DbFunctions.EventSyncState.getLatestProcessedEvent(~chainId)
@@ -232,7 +272,6 @@ let makeFromDbState = async (chainConfig: Config.chainConfig, ~maxAddrInPartitio
     )
 
   make(
-    ~staticContracts,
     ~dynamicContracts,
     ~chainConfig,
     ~startBlock,

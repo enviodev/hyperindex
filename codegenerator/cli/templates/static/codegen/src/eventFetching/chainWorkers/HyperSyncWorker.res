@@ -80,38 +80,6 @@ let makeGetNextPage = (
     transaction: transactionFieldSelection,
   }
 
-  let contractPreregistrationEventOptions = contracts->Belt.Array.keepMap(contract => {
-    let eventsOptions = contract.events->Belt.Array.keepMap(event => {
-      let module(Event) = event
-      let eventOptions = Event.handlerRegister->Types.HandlerTypes.Register.getEventOptions
-
-      if eventOptions.preRegisterDynamicContracts {
-        Some(eventOptions)
-      } else {
-        None
-      }
-    })
-
-    switch eventsOptions {
-    | [] => None
-    | _ => (contract.name, eventsOptions)->Some
-    }
-  })
-
-  let getContractPreRegistrationLogSelection = (~contractAddressMapping): array<LogSelection.t> => {
-    contractPreregistrationEventOptions->Array.map(((contractName, eventsOptions)) => {
-      let addresses =
-        contractAddressMapping->ContractAddressingMap.getAddressesFromContractName(~contractName)
-      let topicSelections = eventsOptions->Belt.Array.flatMap(({isWildcard, topicSelections}) => {
-        switch (isWildcard, addresses) {
-        | (false, []) => [] //If it's not wildcard and there are no addresses. Skip the topic selections for this event
-        | _ => topicSelections
-        }
-      })
-      LogSelection.makeOrThrow(~addresses, ~topicSelections)
-    })
-  }
-
   let wildcardLogSelection = contracts->Belt.Array.flatMap(contract => {
     contract.events->Belt.Array.keepMap(event => {
       let module(Event) = event
@@ -121,12 +89,22 @@ let makeGetNextPage = (
     })
   })
 
-  let getLogSelectionOrThrow = (~contractAddressMapping, ~shouldApplyWildcards): array<
-    LogSelection.t,
-  > => {
-    let nonWildcardLogSelection = contracts->Belt.Array.keepMap((contract): option<
-      LogSelection.t,
-    > => {
+  let preRegWildcardLogSelection = contracts->Belt.Array.flatMap(contract => {
+    contract.events->Belt.Array.keepMap(event => {
+      let module(Event) = event
+      let {isWildcard, preRegisterDynamicContracts, topicSelections} =
+        Event.handlerRegister->Types.HandlerTypes.Register.getEventOptions
+      isWildcard && preRegisterDynamicContracts
+        ? Some(LogSelection.makeOrThrow(~addresses=[], ~topicSelections))
+        : None
+    })
+  })
+
+  let getNormalLogSelectionOrThrow = (
+    ~contractAddressMapping,
+    ~isPreRegisteringDynamicContracts,
+  ): array<LogSelection.t> => {
+    contracts->Belt.Array.keepMap((contract): option<LogSelection.t> => {
       switch contractAddressMapping->ContractAddressingMap.getAddressesFromContractName(
         ~contractName=contract.name,
       ) {
@@ -134,20 +112,22 @@ let makeGetNextPage = (
       | addresses =>
         switch contract.events->Belt.Array.flatMap(event => {
           let module(Event) = event
-          let {isWildcard, topicSelections} =
+          let {isWildcard, preRegisterDynamicContracts, topicSelections} =
             Event.handlerRegister->Types.HandlerTypes.Register.getEventOptions
 
-          isWildcard ? [] : topicSelections
+          // All wildcard addresses should be queried in Wildcard partition
+          !isWildcard && (
+            // Skip events without preRegistration when it's need
+            isPreRegisteringDynamicContracts ? preRegisterDynamicContracts : true
+          )
+            ? topicSelections
+            : []
         }) {
         | [] => None
         | topicSelections => Some(LogSelection.makeOrThrow(~addresses, ~topicSelections))
         }
       }
     })
-
-    shouldApplyWildcards
-      ? nonWildcardLogSelection->Array.concat(wildcardLogSelection)
-      : nonWildcardLogSelection
   }
 
   async (
@@ -155,7 +135,7 @@ let makeGetNextPage = (
     ~toBlock,
     ~logger,
     ~contractAddressMapping,
-    ~shouldApplyWildcards,
+    ~forceWildcardEvents,
     ~isPreRegisteringDynamicContracts,
   ) => {
     //Instantiate each time to add new registered contract addresses
@@ -165,10 +145,11 @@ let makeGetNextPage = (
     )
 
     let logSelections = try {
-      if isPreRegisteringDynamicContracts {
-        getContractPreRegistrationLogSelection(~contractAddressMapping)
-      } else {
-        getLogSelectionOrThrow(~contractAddressMapping, ~shouldApplyWildcards)
+      switch (forceWildcardEvents, isPreRegisteringDynamicContracts) {
+      | (true, true) => preRegWildcardLogSelection
+      | (true, false) => wildcardLogSelection
+      | (false, _) =>
+        getNormalLogSelectionOrThrow(~contractAddressMapping, ~isPreRegisteringDynamicContracts)
       }
     } catch {
     | exn =>
@@ -293,20 +274,20 @@ module Make = (
     ~contractAddressMapping,
     ~currentBlockHeight as _,
     ~partitionId as _,
-    ~shouldApplyWildcards,
+    ~forceWildcardEvents,
     ~isPreRegisteringDynamicContracts,
     ~logger,
   ) => {
     let mkLogAndRaise = ErrorHandling.mkLogAndRaise(~logger, ...)
     try {
       let startFetchingBatchTimeRef = Hrtime.makeTimer()
-      //fetch batch
+
       let {page: pageUnsafe, contractInterfaceManager, pageFetchTime} = await getNextPage(
         ~fromBlock,
         ~toBlock,
         ~contractAddressMapping,
         ~logger,
-        ~shouldApplyWildcards,
+        ~forceWildcardEvents,
         ~isPreRegisteringDynamicContracts,
       )
 
@@ -471,7 +452,11 @@ module Make = (
           | Some(eventMod) =>
             let module(Event) = eventMod
 
-            switch contractInterfaceManager->ContractInterfaceManager.parseLogViemOrThrow(~address=log.address, ~topics=log.topics, ~data=log.data) {
+            switch contractInterfaceManager->ContractInterfaceManager.parseLogViemOrThrow(
+              ~address=log.address,
+              ~topics=log.topics,
+              ~data=log.data,
+            ) {
             | exception exn =>
               handleDecodeFailure(
                 ~eventMod,
