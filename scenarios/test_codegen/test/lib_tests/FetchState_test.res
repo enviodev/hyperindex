@@ -580,8 +580,34 @@ describe("FetchState.getNextQuery & integration", () => {
 
     Assert.deepEqual(updatedFetchState->getNextQuery, WaitingForNewBlock)
     Assert.deepEqual(updatedFetchState->getNextQuery(~concurrencyLimit=0), ReachedMaxConcurrency)
-    Assert.deepEqual(updatedFetchState->getNextQuery(~endBlock=Some(10)), NothingToQuery)
-    Assert.deepEqual(updatedFetchState->getNextQuery(~maxQueueSize=2), NothingToQuery)
+    Assert.deepEqual(
+      updatedFetchState->getNextQuery(~endBlock=Some(11)),
+      WaitingForNewBlock,
+      ~message=`Should wait for new block
+      when block height didn't reach the end block`,
+    )
+    Assert.deepEqual(
+      updatedFetchState->getNextQuery(~endBlock=Some(10)),
+      NothingToQuery,
+      ~message=`Shouldn't wait for new block
+      when block height reached the end block`,
+    )
+    Assert.deepEqual(
+      updatedFetchState->getNextQuery(~endBlock=Some(9)),
+      NothingToQuery,
+      ~message=`Shouldn't wait for new block
+      when block height exceeded the end block`,
+    )
+    Assert.deepEqual(
+      updatedFetchState->getNextQuery(~maxQueueSize=2),
+      WaitingForNewBlock,
+      ~message=`Should wait for new block even if partitions have nothing to query`,
+    )
+    Assert.deepEqual(
+      updatedFetchState->getNextQuery(~maxQueueSize=2, ~currentBlockHeight=11),
+      NothingToQuery,
+      ~message=`Should do nothing if the case above is not waiting for new block`,
+    )
 
     updatedFetchState->FetchState.startFetchingQueries(~queries=[query], ~stateId=0)
     Assert.deepEqual(

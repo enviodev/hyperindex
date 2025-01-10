@@ -536,10 +536,13 @@ let getNextQuery = (
   } else {
     let fullPartitions = []
     let mergingPartitions = []
-    let hasFetchingPartition = ref(false)
     let areMergingPartitionsFetching = ref(false)
     let mostBehindMergingPartition = ref(None)
     let mergingPartitionTarget = ref(None)
+    let shouldWaitForNewBlock = ref(switch endBlock {
+      | Some(endBlock) => currentBlockHeight < endBlock
+      | None => true
+    })
 
     let checkIsFetchingPartition = p => {
       switch p.status.fetchingStateId {
@@ -552,9 +555,15 @@ let getNextQuery = (
       let p = partitions->Js.Array2.unsafe_get(idx)
 
       let isFetching = checkIsFetchingPartition(p)
+      let isReachedTheHead = p.latestFetchedBlock.blockNumber >= currentBlockHeight
 
-      if isFetching {
-        hasFetchingPartition := true
+      if isFetching || !isReachedTheHead {
+        // Even if there are some partitions waiting for the new block
+        // We still want to wait for all partitions reaching the head
+        // because they might update currentBlockHeight in their response
+        // Also, there are cases when some partitions fetching at 50% of the chain
+        // and we don't want to poll the head for a few small partitions
+        shouldWaitForNewBlock := false
       }
 
       if p->isFullPartition(~maxAddrInPartition) {
@@ -598,7 +607,6 @@ let getNextQuery = (
     }
 
     let maxPartitionQueueSize = maxQueueSize / (fullPartitions->Array.length + 1)
-    let hasQueryWaitingForNewBlock = ref(false)
     let queries = []
 
     let registerPartitionQuery = (p, ~checkQueueSize, ~mergeTarget=?) => {
@@ -609,9 +617,7 @@ let getNextQuery = (
       ) {
         switch p->makePartitionQuery(~endBlock) {
         | Some(q) =>
-          if q.fromBlock > currentBlockHeight {
-            hasQueryWaitingForNewBlock := true
-          } else {
+          if q.fromBlock <= currentBlockHeight {
             queries->Array.push(
               switch mergeTarget {
               | Some(mergeTarget) => {
@@ -654,10 +660,7 @@ let getNextQuery = (
     }
 
     if queries->Utils.Array.isEmpty {
-      // Even if there are queries waiting for the new block
-      // We still want to wait for the all fetching queries, because they might update
-      // the currentBlockHeight in their response
-      if hasQueryWaitingForNewBlock.contents && !hasFetchingPartition.contents {
+      if shouldWaitForNewBlock.contents {
         WaitingForNewBlock
       } else {
         NothingToQuery
@@ -847,7 +850,9 @@ let make = (
   }
 
   if partitions->Array.length === 0 {
-    Js.Exn.raiseError("Invalid configuration: Nothing to fetch. Make sure that you provided at least one contract address to index, or have events with Wildcard mode enabled.")
+    Js.Exn.raiseError(
+      "Invalid configuration: Nothing to fetch. Make sure that you provided at least one contract address to index, or have events with Wildcard mode enabled.",
+    )
   }
 
   if Env.Benchmark.shouldSaveData {
