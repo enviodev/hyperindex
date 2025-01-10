@@ -582,6 +582,15 @@ describe("FetchState.getNextQuery & integration", () => {
     Assert.deepEqual(updatedFetchState->getNextQuery(~concurrencyLimit=0), ReachedMaxConcurrency)
     Assert.deepEqual(updatedFetchState->getNextQuery(~endBlock=Some(10)), NothingToQuery)
     Assert.deepEqual(updatedFetchState->getNextQuery(~maxQueueSize=2), NothingToQuery)
+
+    updatedFetchState->FetchState.startFetchingQueries(~queries=[query], ~stateId=0)
+    Assert.deepEqual(
+      updatedFetchState->getNextQuery,
+      NothingToQuery,
+      ~message=`Test that even if all partitions reached the current block height,
+      we won't wait for new block while even one partition is fetching.
+      It might return an updated currentBlockHeight in response and we won't need to poll for new block`,
+    )
   })
 
   it("Emulate dynamic contract registration", () => {
