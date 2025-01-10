@@ -1321,6 +1321,77 @@ describe("FetchState unit tests for specific cases", () => {
     )
   })
 
+  it("Shouldn't wait for new block until all partitions reached the head", () => {
+    // FetchState with 2 partitions,
+    // one of them reached the head
+    // another reached max queue size
+    let fetchState =
+      FetchState.make(
+        ~staticContracts=[("ContractA", mockAddress0)],
+        ~dynamicContracts=[],
+        ~startBlock=0,
+        ~endBlock=None,
+        ~maxAddrInPartition=2,
+        ~hasWildcard=true,
+      )
+      ->FetchState.setQueryResponse(
+        ~query={
+          partitionId: "0",
+          target: Head,
+          selection: Wildcard,
+          fromBlock: 0,
+        },
+        ~latestFetchedBlock=getBlockData(~blockNumber=1),
+        ~newItems=[mockEvent(~blockNumber=0), mockEvent(~blockNumber=1)],
+        ~currentBlockHeight=2,
+      )
+      ->Result.getExn
+      ->FetchState.setQueryResponse(
+        ~query={
+          partitionId: "1",
+          target: Head,
+          selection: Normal({
+            contractAddressMapping: ContractAddressingMap.make(),
+          }),
+          fromBlock: 0,
+        },
+        ~latestFetchedBlock=getBlockData(~blockNumber=2),
+        ~newItems=[],
+        ~currentBlockHeight=2,
+      )
+      ->Result.getExn
+
+    Assert.deepEqual(
+      fetchState->FetchState.getNextQuery(
+        ~concurrencyLimit=10,
+        ~currentBlockHeight=2,
+        ~maxQueueSize=10,
+        ~stateId=0,
+      ),
+      Ready([
+        {
+          partitionId: "0",
+          target: Head,
+          selection: Wildcard,
+          fromBlock: 2,
+        },
+      ]),
+      ~message=`Should be possible to query wildcard partition,
+      if it didn't reach max queue size limit`,
+    )
+    Assert.deepEqual(
+      fetchState->FetchState.getNextQuery(
+        ~concurrencyLimit=10,
+        ~currentBlockHeight=2,
+        ~maxQueueSize=4,
+        ~stateId=0,
+      ),
+      NothingToQuery,
+      ~message=`Should wait until queue is processed, to continue fetching.
+      Don't wait for new block, until all partitions reached the head`,
+    )
+  })
+
   it("Allows to get event one block earlier than the dc registring event", () => {
     let fetchState = makeInitial()
 
