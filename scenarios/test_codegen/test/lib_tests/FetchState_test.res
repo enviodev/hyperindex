@@ -1418,6 +1418,62 @@ describe("FetchState unit tests for specific cases", () => {
     )
   })
 
+  it("Shouldn't query full partitions at the head until all partitions entered sync range", () => {
+    let currentBlockHeight = 1_000_000
+    let syncRange = 1_000 // Should be 1/1000 of block height
+
+    // FetchState with 2 full partitions,
+    // one of them reached the head
+    // For the test we have 1 address per partition,
+    // but in real life it's going to be 5000.
+    // And we don't want to query 5000 addresses every new block,
+    // until all partitions reached the head
+    let fetchState =
+      FetchState.make(
+        ~staticContracts=[("ContractA", mockAddress0), ("ContractA", mockAddress1)],
+        ~dynamicContracts=[],
+        ~startBlock=0,
+        ~endBlock=None,
+        ~maxAddrInPartition=1,
+        ~hasWildcard=false,
+      )
+      ->FetchState.setQueryResponse(
+        ~query={
+          partitionId: "0",
+          target: Head,
+          selection: Normal({
+            contractAddressMapping: ContractAddressingMap.make(),
+          }),
+          fromBlock: 0,
+        },
+        ~latestFetchedBlock=getBlockData(~blockNumber=currentBlockHeight - syncRange),
+        ~newItems=[],
+        ~currentBlockHeight,
+      )
+      ->Result.getExn
+
+    Assert.deepEqual(
+      fetchState->FetchState.getNextQuery(
+        ~concurrencyLimit=10,
+        ~currentBlockHeight,
+        ~maxQueueSize=10,
+        ~stateId=0,
+      ),
+      Ready([
+        {
+          partitionId: "1",
+          target: Head,
+          selection: Normal({
+            contractAddressMapping: ContractAddressingMap.fromArray([(mockAddress1, "ContractA")]),
+          }),
+          fromBlock: 0,
+        },
+      ]),
+      ~message=`Should only query partition "1", since partition "0" already entered the sync range
+        and it need to wait until all partitions reach it`,
+    )
+  })
+
   it("Allows to get event one block earlier than the dc registring event", () => {
     let fetchState = makeInitial()
 
