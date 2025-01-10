@@ -323,11 +323,16 @@ let handlePartitionQueryResponse = (
   let {lastBlockScannedData} = reorgGuard
 
   if Env.Benchmark.shouldSaveData {
+    Prometheus.PartitionBlockFetched.set(
+      ~blockNumber=latestFetchedBlockNumber,
+      ~partitionId=query->FetchState.queryPartitionId,
+      ~chainId=chain->ChainMap.Chain.toChainId,
+    )
     Benchmark.addBlockRangeFetched(
       ~totalTimeElapsed=stats.totalTimeElapsed,
       ~parsingTimeElapsed=stats.parsingTimeElapsed->Belt.Option.getWithDefault(0),
       ~pageFetchTime=stats.pageFetchTime->Belt.Option.getWithDefault(0),
-      ~chainId=chainFetcher.chainConfig.chain->ChainMap.Chain.toChainId,
+      ~chainId=chain->ChainMap.Chain.toChainId,
       ~fromBlock=fromBlockQueried,
       ~toBlock=latestFetchedBlockNumber,
       ~numEvents=parsedQueueItems->Array.length,
@@ -549,7 +554,7 @@ let actionReducer = (state: t, action: action) => {
         chainFetcher.fetchState,
       ).blockNumber
 
-      Prometheus.setFetchedEventsUntilHeight(~blockNumber=highestFetchedBlockOnChain, ~chain)
+      Prometheus.setFetchedUntilHeight(~blockNumber=highestFetchedBlockOnChain, ~chain)
       switch chainFetcher.latestProcessedBlock {
       | Some(blockNumber) => Prometheus.setProcessedUntilHeight(~blockNumber, ~chain)
       | None => ()

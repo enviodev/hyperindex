@@ -241,6 +241,16 @@ module String = {
   }
 }
 
+module Result = {
+  let forEach = (result, fn) => {
+    switch result {
+    | Ok(v) => fn(v)
+    | Error(_) => ()
+    }
+    result
+  }
+}
+
 /**
 Useful when an unsafe unwrap is needed on Result type
 and Error holds an exn. This is better than Result.getExn
