@@ -231,26 +231,45 @@ module.exports.deleteStaleEndOfBlockRangeScannedDataForChain = (
     ;`;
 };
 
-module.exports.recoverRegisteredDynamicContracts = (
+module.exports.deleteInvalidDynamicContractsOnRestart = (
   sql,
   chainId,
-  blockNumber
-) => sql`
-  SELECT *
-  FROM "public"."dynamic_contract_registry"
-  WHERE registering_event_block_number <= ${blockNumber} 
-  AND chain_id = ${chainId};`;
+  restartBlockNumber,
+  restartLogIndex
+) => {
+  return sql`
+    DELETE
+    FROM "public"."dynamic_contract_registry"
+    WHERE chain_id = ${chainId}
+    AND is_pre_registered = false
+    AND (
+      registering_event_block_number > ${restartBlockNumber} 
+      OR registering_event_block_number = ${restartBlockNumber}
+      AND registering_event_log_index > ${restartLogIndex}
+    );`;
+};
 
-module.exports.recoverPreRegisteredAndRegisteredDynamicContracts = (
+module.exports.deleteInvalidDynamicContractsHistoryOnRestart = (
   sql,
   chainId,
-  blockNumber
-) => sql`
+  restartBlockNumber,
+  restartLogIndex
+) => {
+  return sql`
+    DELETE
+    FROM "public"."dynamic_contract_registry_history"
+    WHERE entity_history_chain_id = ${chainId}
+    AND (
+      entity_history_block_number > ${restartBlockNumber} 
+      OR entity_history_block_number = ${restartBlockNumber}
+      AND entity_history_log_index > ${restartLogIndex}
+    );`;
+};
+
+module.exports.readAllDynamicContracts = (sql, chainId) => sql`
   SELECT *
   FROM "public"."dynamic_contract_registry"
-  WHERE registering_event_block_number <= ${blockNumber} 
-  OR is_pre_registered
-  AND chain_id = ${chainId};`;
+  WHERE chain_id = ${chainId};`;
 
 const makeHistoryTableName = (entityName) => entityName + "_history";
 
