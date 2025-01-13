@@ -301,6 +301,22 @@ describe("Dynamic contract restart resistance test", () => {
                 ~message="Should have no dynamic contracts yet since this tests the case starting in preregistration",
               )
 
+              Assert.equal(
+                (await sql
+                ->Postgres.unsafe(`SELECT * FROM public.dynamic_contract_registry;`))
+                ->Array.length,
+                1,
+                ~message="Should clean up invalid dc from db on restart",
+              )
+              Assert.equal(
+                (await sql
+                ->Postgres.unsafe(`SELECT * FROM public.dynamic_contract_registry_history;`))
+                ->Array.length,
+                1,
+                ~message=`Should clean up invalid dc history from db on restart.
+            Note: Without it there's a case when the indexer might crash because of a conflict`,
+              )
+
               resetEventOptionsToOriginal()
 
               raise(RollbackTransaction)
@@ -344,6 +360,20 @@ describe("Dynamic contract restart resistance test", () => {
                 restartedChainFetcher->getChainFetcherDcs,
                 [],
                 ~message="Should have no dynamic contracts yet since this tests the case starting in preregistration",
+              )
+
+              Assert.deepEqual(
+                await sql->Postgres.unsafe(`SELECT * FROM public.dynamic_contract_registry;`),
+                dcsBeforeRestart,
+                ~message="Should keep both dcs after restart in db",
+              )
+              Assert.equal(
+                (await sql
+                ->Postgres.unsafe(`SELECT * FROM public.dynamic_contract_registry_history;`))
+                ->Array.length,
+                1,
+                ~message=`But it'll still remove the dc history for pre-registered one,
+                this case is not possible in real life, since pre-registration never happens in reorg threshold`,
               )
 
               resetEventOptionsToOriginal()
