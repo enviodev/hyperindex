@@ -36,32 +36,13 @@ let makeCombinedEventFilterQuery = (
   ~contractInterfaceManager: ContractInterfaceManager.t,
   ~fromBlock,
   ~toBlock,
-  ~logger: Pino.t,
 ) => {
   let combinedFilter =
     contractInterfaceManager->ContractInterfaceManager.getCombinedEthersFilter(~fromBlock, ~toBlock)
 
-  let numBlocks = toBlock - fromBlock + 1
-
-  let loggerWithContext = Logging.createChildFrom(
-    ~logger,
-    ~params={
-      "fromBlock": fromBlock,
-      "toBlock": toBlock,
-      "numBlocks": numBlocks,
-    },
+  provider->Ethers.JsonRpcProvider.getLogs(
+    ~filter={combinedFilter->Ethers.CombinedFilter.toFilter},
   )
-
-  loggerWithContext->Logging.childTrace("Initiating Combined Query Filter")
-
-  provider
-  ->Ethers.JsonRpcProvider.getLogs(
-    ~filter={combinedFilter->Ethers.CombinedFilter.combinedFilterToFilter},
-  )
-  ->Promise.catch(err => {
-    loggerWithContext->Logging.childWarn("Failed Combined Query Filter from block")
-    err->Promise.reject
-  })
 }
 
 type eventBatchQuery = {
@@ -99,7 +80,6 @@ let getNextPage = (
       ~fromBlock,
       ~toBlock=queryToBlock,
       ~provider,
-      ~logger,
     )->Promise.then(async logs => {
       let executedBlockInterval = queryToBlock - fromBlock + 1
       // Increase the suggested block interval only when it was actually applied
@@ -124,6 +104,7 @@ let getNextPage = (
       logger->Logging.childWarn({
         "msg": "Error getting events. Will retry after backoff time",
         "backOffMilliseconds": sc.backoffMillis,
+        "suggestedBlockInterval": suggestedBlockInterval,
         "err": err,
       })
 
