@@ -291,7 +291,7 @@ module Make = (
                     )
                   }
 
-                  let decodedEvent = try contractNameAbiMapping->ContractInterfaceManager.parseLogViemOrThrow(
+                  let decodedEvent = try contractNameAbiMapping->Viem.parseLogOrThrow(
                     ~contractName=Event.contractName,
                     ~topics=log.topics,
                     ~data=log.data,

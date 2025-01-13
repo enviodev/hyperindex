@@ -450,7 +450,7 @@ module Make = (
           | Some(eventMod) =>
             let module(Event) = eventMod
 
-            switch contractNameAbiMapping->ContractInterfaceManager.parseLogViemOrThrow(
+            switch contractNameAbiMapping->Viem.parseLogOrThrow(
               ~contractName=Event.contractName,
               ~topics=log.topics,
               ~data=log.data,
