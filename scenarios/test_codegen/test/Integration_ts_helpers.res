@@ -17,14 +17,12 @@ let getLocalChainConfig = (nftFactoryContractAddress): chainConfig => {
       abi: Types.NftFactory.abi,
       addresses: [nftFactoryContractAddress],
       events: [module(Types.NftFactory.SimpleNftCreated)],
-      sighashes: [Types.NftFactory.SimpleNftCreated.sighash],
     },
     {
       name: "SimpleNft",
       abi: Types.SimpleNft.abi,
       addresses: [],
       events: [module(Types.SimpleNft.Transfer)],
-      sighashes: [Types.SimpleNft.Transfer.sighash],
     },
   ]
   let chain = MockConfig.chain1337
