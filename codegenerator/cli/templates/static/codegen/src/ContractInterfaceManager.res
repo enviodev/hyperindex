@@ -161,8 +161,8 @@ let getCombinedEthersFilter = (
   {
     address: addresses,
     topics: topLevelTopics,
-    fromBlock: BlockNumber(fromBlock)->Ethers.BlockTag.blockTagFromVariant,
-    toBlock: BlockNumber(toBlock)->Ethers.BlockTag.blockTagFromVariant,
+    fromBlock,
+    toBlock,
   }
 }
 
