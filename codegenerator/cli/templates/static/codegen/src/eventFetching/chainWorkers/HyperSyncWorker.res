@@ -130,6 +130,11 @@ let makeGetNextPage = (
     })
   }
 
+  let contractNameInterfaceMapping = Js.Dict.empty()
+  contracts->Belt.Array.forEach(contract => {
+    contractNameInterfaceMapping->Js.Dict.set(contract.name, (contract :> ContractInterfaceManager.interfaceAndAbi))
+  })
+
   async (
     ~fromBlock,
     ~toBlock,
@@ -140,7 +145,7 @@ let makeGetNextPage = (
   ) => {
     //Instantiate each time to add new registered contract addresses
     let contractInterfaceManager = ContractInterfaceManager.make(
-      ~contracts,
+      ~contractNameInterfaceMapping,
       ~contractAddressMapping,
     )
 

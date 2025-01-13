@@ -31,20 +31,6 @@ let rec getKnownBlockWithBackoff = async (~provider, ~blockNumber, ~backoffMsOnF
   | result => result
   }
 
-let makeCombinedEventFilterQuery = (
-  ~provider,
-  ~contractInterfaceManager: ContractInterfaceManager.t,
-  ~fromBlock,
-  ~toBlock,
-) => {
-  let combinedFilter =
-    contractInterfaceManager->ContractInterfaceManager.getCombinedEthersFilter(~fromBlock, ~toBlock)
-
-  provider->Ethers.JsonRpcProvider.getLogs(
-    ~filter={combinedFilter->Ethers.CombinedFilter.toFilter},
-  )
-}
-
 type eventBatchQuery = {
   logs: array<Ethers.log>,
   latestFetchedBlock: Ethers.JsonRpcProvider.block,
@@ -52,9 +38,10 @@ type eventBatchQuery = {
 }
 
 let getNextPage = (
-  ~contractInterfaceManager,
   ~fromBlock,
   ~toBlock,
+  ~addresses,
+  ~topics,
   ~loadBlock,
   ~suggestedBlockInterval,
   ~syncConfig as sc: Config.syncConfig,
@@ -75,28 +62,33 @@ let getNextPage = (
     let suggestedToBlock = fromBlock + suggestedBlockInterval - 1
     let queryToBlock = Pervasives.min(suggestedToBlock, toBlock)->Pervasives.max(fromBlock) //Defensively ensure we never query a target block below fromBlock
     let latestFetchedBlockPromise = loadBlock(queryToBlock)
-    let logsPromise = makeCombinedEventFilterQuery(
-      ~contractInterfaceManager,
-      ~fromBlock,
-      ~toBlock=queryToBlock,
-      ~provider,
-    )->Promise.then(async logs => {
-      let executedBlockInterval = queryToBlock - fromBlock + 1
-      // Increase the suggested block interval only when it was actually applied
-      // and we didn't query to a hard toBlock
-      let nextSuggestedBlockInterval = if executedBlockInterval >= suggestedBlockInterval {
-        // Increase batch size going forward, but do not increase past a configured maximum
-        // See: https://en.wikipedia.org/wiki/Additive_increase/multiplicative_decrease
-        Pervasives.min(executedBlockInterval + sc.accelerationAdditive, sc.intervalCeiling)
-      } else {
-        suggestedBlockInterval
-      }
-      {
-        logs,
-        nextSuggestedBlockInterval,
-        latestFetchedBlock: await latestFetchedBlockPromise,
-      }
-    })
+    let logsPromise =
+      provider
+      ->Ethers.JsonRpcProvider.getLogs(
+        ~filter={
+          address: ?addresses,
+          topics: [topics],
+          fromBlock,
+          toBlock: queryToBlock,
+        }->Ethers.CombinedFilter.toFilter,
+      )
+      ->Promise.then(async logs => {
+        let executedBlockInterval = queryToBlock - fromBlock + 1
+        // Increase the suggested block interval only when it was actually applied
+        // and we didn't query to a hard toBlock
+        let nextSuggestedBlockInterval = if executedBlockInterval >= suggestedBlockInterval {
+          // Increase batch size going forward, but do not increase past a configured maximum
+          // See: https://en.wikipedia.org/wiki/Additive_increase/multiplicative_decrease
+          Pervasives.min(executedBlockInterval + sc.accelerationAdditive, sc.intervalCeiling)
+        } else {
+          suggestedBlockInterval
+        }
+        {
+          logs,
+          nextSuggestedBlockInterval,
+          latestFetchedBlock: await latestFetchedBlockPromise,
+        }
+      })
 
     [queryTimoutPromise, logsPromise]
     ->Promise.race

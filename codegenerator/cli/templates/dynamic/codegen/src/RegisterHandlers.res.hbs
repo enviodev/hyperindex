@@ -46,11 +46,6 @@ let registerContractHandlers = (
               module(Types.{{contract.name.capitalized}}.{{event.name}}),
               {{/each}}
             ],
-            sighashes: [
-              {{#each contract.events as | event |}}
-              Types.{{contract.name.capitalized}}.{{event.name}}.sighash,
-              {{/each}}
-            ],
           },
           {{/each}}
         ]

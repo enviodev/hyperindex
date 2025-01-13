@@ -49,18 +49,15 @@ module Addresses = {
 
 module EventFilter = {
   type topic = EvmTypes.Hex.t
-  type t = {
-    address: Address.t,
-    topics: array<topic>,
-  }
 }
+
 module Filter = {
   type t
 }
 
 module CombinedFilter = {
   type combinedFilterRecord = {
-    address: array<Address.t>,
+    address?: array<Address.t>,
     //The second element of the tuple is the
     topics: array<array<EventFilter.topic>>,
     fromBlock: int,
