@@ -79,15 +79,12 @@ module Make = (
     let eventRouter: EventRouter.t<module(Types.InternalEvent)>
   },
 ): S => {
-  let contractNameInterfaceMapping = Js.Dict.empty()
+  let contractNameAbiMapping = Js.Dict.empty()
   let wildcardTopics = []
   let nonWildcardTopics = []
 
   T.contracts->Belt.Array.forEach(contract => {
-    contractNameInterfaceMapping->Js.Dict.set(
-      contract.name,
-      (contract :> ContractInterfaceManager.interfaceAndAbi),
-    )
+    contractNameAbiMapping->Js.Dict.set(contract.name, contract.abi)
 
     contract.events->Belt.Array.forEach(event => {
       let module(Event) = event
@@ -228,12 +225,6 @@ module Make = (
           ? blockLoader->LazyLoader.get(fromBlock - 1)->Promise.thenResolve(res => res->Some)
           : Promise.resolve(None)
 
-      //Needs to be run on every loop in case of new registrations
-      let contractInterfaceManager = ContractInterfaceManager.make(
-        ~contractNameInterfaceMapping,
-        ~contractAddressMapping,
-      )
-
       let topics = if forceWildcardEvents {
         wildcardTopics
       } else {
@@ -300,8 +291,8 @@ module Make = (
                     )
                   }
 
-                  let decodedEvent = try contractInterfaceManager->ContractInterfaceManager.parseLogViemOrThrow(
-                    ~address=log.address,
+                  let decodedEvent = try contractNameAbiMapping->ContractInterfaceManager.parseLogViemOrThrow(
+                    ~contractName=Event.contractName,
                     ~topics=log.topics,
                     ~data=log.data,
                   ) catch {
