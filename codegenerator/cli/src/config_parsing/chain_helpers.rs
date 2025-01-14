@@ -503,8 +503,7 @@ impl HypersyncNetwork {
         use HypersyncNetwork::*;
         match self {
             EthereumMainnet | Fantom | Zeta | Sepolia | Metis | ZksyncEra | Optimism
-            | ArbitrumSepolia | ArbitrumNova | Avalanche | Polygon | Bsc | Mantle | BaseSepolia
-            | Gnosis => Gold,
+            | ArbitrumNova | Avalanche | Polygon | Bsc | Mantle | BaseSepolia | Gnosis => Gold,
 
             Manta | Base | Boba | Blast | Cyber | Aurora | Harmony | Scroll | Darwinia | Mode
             | Rsk | ShimmerEvm | Linea | Amoy | Saakuru | Moonbeam | Lisk | Chiliz
@@ -516,7 +515,7 @@ impl HypersyncNetwork {
             SophonTestnet | MorphTestnet | GaladrielDevnet | CitreaTestnet | Goerli
             | BscTestnet | UnichainSepolia | Zircuit | Celo | Opbnb | GnosisChiado
             | LuksoTestnet | BlastSepolia | Holesky | BerachainBartio | OptimismSepolia | Fuji
-            | NeonEvm | Fraxtal => Experimental,
+            | NeonEvm | Fraxtal | ArbitrumSepolia => Experimental,
         }
     }
 
