@@ -323,11 +323,15 @@ let handlePartitionQueryResponse = (
   let {lastBlockScannedData} = reorgGuard
 
   if Env.Benchmark.shouldSaveData {
-    Prometheus.PartitionBlockFetched.set(
-      ~blockNumber=latestFetchedBlockNumber,
-      ~partitionId=query.partitionId,
-      ~chainId=chain->ChainMap.Chain.toChainId,
-    )
+    switch query.target {
+      | Merge(_) => ()
+      | Head
+      | EndBlock(_) => Prometheus.PartitionBlockFetched.set(
+        ~blockNumber=latestFetchedBlockNumber,
+        ~partitionId=query.partitionId,
+        ~chainId=chain->ChainMap.Chain.toChainId,
+      )
+    }
     Benchmark.addBlockRangeFetched(
       ~totalTimeElapsed=stats.totalTimeElapsed,
       ~parsingTimeElapsed=stats.parsingTimeElapsed->Belt.Option.getWithDefault(0),
