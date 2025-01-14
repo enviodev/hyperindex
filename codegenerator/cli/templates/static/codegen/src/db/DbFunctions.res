@@ -116,28 +116,27 @@ module RawEvents = {
 
 module DynamicContractRegistry = {
   @module("./DbFunctionsImplementation.js")
-  external recoverRegisteredDynamicContractsRaw: (
+  external deleteInvalidDynamicContractsOnRestart: (
     Postgres.sql,
     ~chainId: chainId,
-    ~blockNumber: int,
-  ) => promise<Js.Json.t> = "recoverRegisteredDynamicContracts"
+    ~restartBlockNumber: int,
+    ~restartLogIndex: int,
+  ) => promise<unit> = "deleteInvalidDynamicContractsOnRestart"
 
   @module("./DbFunctionsImplementation.js")
-  external recoverPreRegisteredAndRegisteredDynamicContractsRaw: (
+  external deleteInvalidDynamicContractsHistoryOnRestart: (
     Postgres.sql,
     ~chainId: chainId,
-    ~blockNumber: int,
-  ) => promise<Js.Json.t> = "recoverPreRegisteredAndRegisteredDynamicContracts"
+    ~restartBlockNumber: int,
+    ~restartLogIndex: int,
+  ) => promise<unit> = "deleteInvalidDynamicContractsHistoryOnRestart"
 
+  @module("./DbFunctionsImplementation.js")
+  external readAllDynamicContractsRaw: (Postgres.sql, ~chainId: chainId) => promise<Js.Json.t> =
+    "readAllDynamicContracts"
 
-  let recoverRegisteredDynamicContracts = async (
-    sql: Postgres.sql,
-    ~chainId: chainId,
-    ~startBlock: int,
-    ~hasPreRegistration: bool,
-  ) => {
-    let raw = hasPreRegistration ? recoverPreRegisteredAndRegisteredDynamicContractsRaw : recoverRegisteredDynamicContractsRaw
-    let json = await sql->raw(~chainId, ~blockNumber=startBlock)
+  let readAllDynamicContracts = async (sql: Postgres.sql, ~chainId: chainId) => {
+    let json = await sql->readAllDynamicContractsRaw(~chainId)
     json->S.parseOrRaiseWith(TablesStatic.DynamicContractRegistry.rowsSchema)
   }
 }
