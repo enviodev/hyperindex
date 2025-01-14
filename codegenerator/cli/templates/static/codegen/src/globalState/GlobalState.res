@@ -771,10 +771,7 @@ let executeQuery = (
     ~currentBlockHeight,
     ~isPreRegisteringDynamicContracts,
     ~logger,
-    ~forceWildcardEvents=switch q.selection {
-    | Normal(_) => false
-    | Wildcard(_) => true
-    },
+    ~selection=q.selection,
   )
 }
 
