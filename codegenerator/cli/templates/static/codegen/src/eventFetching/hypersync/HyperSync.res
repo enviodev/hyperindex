@@ -192,7 +192,7 @@ module LogsQuery = {
       res
     }
 
-    let res = await executeQuery->Time.retryAsyncWithExponentialBackOff(~logger=Some(logger))
+    let res = await executeQuery->Time.retryAsyncWithExponentialBackOff(~logger)
 
     res->convertResponse(~nonOptionalBlockFieldNames, ~nonOptionalTransactionFieldNames)
   }
@@ -303,7 +303,7 @@ module BlockData = {
 
     let maybeSuccessfulRes = switch await Time.retryAsyncWithExponentialBackOff(
       () => HyperSyncJsonApi.queryRoute->Rest.fetch(serverUrl, body),
-      ~logger=Some(logger),
+      ~logger,
     ) {
     | exception _ => None
     | res if res.nextBlock <= blockNumber => None

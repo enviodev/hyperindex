@@ -1,3 +1,5 @@
+open Belt
+
 let executeSet = (
   sql: Postgres.sql,
   ~items: array<'a>,
@@ -112,22 +114,16 @@ let executeDbFunctionsEntity = (
     ->InMemoryStore.EntityTables.get(entityMod)
     ->InMemoryTable.Entity.rows
 
-  let (entitiesToSet, idsToDelete) = rows->Belt.Array.reduce(([], []), (
-    (accumulatedSets, accumulatedDeletes),
-    row,
-  ) =>
+  let entitiesToSet = []
+  let idsToDelete = []
+
+  rows->Array.forEach(row => {
     switch row {
-    | Updated({latest: {entityUpdateAction: Set(entity)}}) => (
-        Belt.Array.concat(accumulatedSets, [entity]),
-        accumulatedDeletes,
-      )
-    | Updated({latest: {entityUpdateAction: Delete, entityId}}) => (
-        accumulatedSets,
-        Belt.Array.concat(accumulatedDeletes, [entityId]),
-      )
-    | _ => (accumulatedSets, accumulatedDeletes)
+    | Updated({latest: {entityUpdateAction: Set(entity)}}) => entitiesToSet->Array.push(entity)
+    | Updated({latest: {entityUpdateAction: Delete, entityId}}) => idsToDelete->Array.push(entityId)
+    | _ => ()
     }
-  )
+  })
 
   let promises =
     (
