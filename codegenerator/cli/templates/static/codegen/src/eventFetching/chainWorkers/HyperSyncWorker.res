@@ -134,14 +134,14 @@ let makeGetNextPage = (
     ~toBlock,
     ~logger,
     ~contractAddressMapping,
-    ~forceWildcardEvents,
+    ~selection: FetchState.selection,
     ~isPreRegisteringDynamicContracts,
   ) => {
     let logSelections = try {
-      switch (forceWildcardEvents, isPreRegisteringDynamicContracts) {
-      | (true, true) => preRegWildcardLogSelection
-      | (true, false) => wildcardLogSelection
-      | (false, _) =>
+      switch (selection, isPreRegisteringDynamicContracts) {
+      | (Wildcard({}), true) => preRegWildcardLogSelection
+      | (Wildcard({}), false) => wildcardLogSelection
+      | (Normal({}), _) =>
         getNormalLogSelectionOrThrow(~contractAddressMapping, ~isPreRegisteringDynamicContracts)
       }
     } catch {
@@ -272,7 +272,7 @@ module Make = (
     ~contractAddressMapping,
     ~currentBlockHeight as _,
     ~partitionId as _,
-    ~forceWildcardEvents,
+    ~selection,
     ~isPreRegisteringDynamicContracts,
     ~logger,
   ) => {
@@ -285,7 +285,7 @@ module Make = (
         ~toBlock,
         ~contractAddressMapping,
         ~logger,
-        ~forceWildcardEvents,
+        ~selection,
         ~isPreRegisteringDynamicContracts,
       )
 

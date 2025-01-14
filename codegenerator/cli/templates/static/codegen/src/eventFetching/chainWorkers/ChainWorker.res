@@ -39,7 +39,7 @@ module type S = {
     ~contractAddressMapping: ContractAddressingMap.mapping,
     ~currentBlockHeight: int,
     ~partitionId: string,
-    ~forceWildcardEvents: bool,
+    ~selection: FetchState.selection,
     ~isPreRegisteringDynamicContracts: bool,
     ~logger: Pino.t,
   ) => promise<result<blockRangeFetchResponse, ErrorHandling.t>>
@@ -66,7 +66,7 @@ let fetchBlockRange = async (
   ~partitionId,
   ~chain,
   ~currentBlockHeight,
-  ~forceWildcardEvents,
+  ~selection,
   ~isPreRegisteringDynamicContracts,
   ~logger,
 ) => {
@@ -92,16 +92,18 @@ let fetchBlockRange = async (
       },
     )
   }
-  (await ChainWorker.fetchBlockRange(
-    ~fromBlock,
-    ~toBlock,
-    ~contractAddressMapping,
-    ~partitionId,
-    ~logger,
-    ~forceWildcardEvents,
-    ~currentBlockHeight,
-    ~isPreRegisteringDynamicContracts,
-  ))->Utils.Result.forEach(response => {
+  (
+    await ChainWorker.fetchBlockRange(
+      ~fromBlock,
+      ~toBlock,
+      ~contractAddressMapping,
+      ~partitionId,
+      ~logger,
+      ~selection,
+      ~currentBlockHeight,
+      ~isPreRegisteringDynamicContracts,
+    )
+  )->Utils.Result.forEach(response => {
     logger->Logging.childTrace({
       "message": "Fetched block range from server",
       "latestFetchedBlockNumber": response.latestFetchedBlockNumber,
