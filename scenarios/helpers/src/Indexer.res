@@ -68,6 +68,10 @@ module type S = {
   }
 
   module FetchState: {
+    type selection =
+      | Wildcard({})
+      | Normal({})
+
     type queryTarget =
       | Head
       | EndBlock({toBlock: int})
@@ -78,15 +82,11 @@ module type S = {
           toBlock: int,
         })
 
-    // Strip internal fields from partition kind like dynamicContracts
-    type querySelection =
-      | Wildcard
-      | Normal({contractAddressMapping: ContractAddressingMap.mapping})
-
     type query = {
       partitionId: string,
       fromBlock: int,
-      selection: querySelection,
+      selection: selection,
+      contractAddressMapping: ContractAddressingMap.mapping,
       target: queryTarget,
     }
   }
@@ -120,7 +120,7 @@ module type S = {
         ~contractAddressMapping: ContractAddressingMap.mapping,
         ~currentBlockHeight: int,
         ~partitionId: string,
-        ~forceWildcardEvents: bool,
+        ~selection: FetchState.selection,
         ~isPreRegisteringDynamicContracts: bool,
         ~logger: Pino.t,
       ) => promise<result<blockRangeFetchResponse, ErrorHandling.t>>

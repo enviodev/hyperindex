@@ -81,7 +81,8 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
                 partitionId: "0",
                 fromBlock: 0,
                 target: Head,
-                selection: Wildcard,
+                selection: Wildcard({}),
+                contractAddressMapping: ContractAddressingMap.make(),
               },
               ~latestFetchedBlock={
                 blockNumber: batchItem.blockNumber,
@@ -104,7 +105,8 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
                   partitionId: "0",
                   fromBlock: 0,
                   target: Head,
-                  selection: Wildcard,
+                  selection: Wildcard({}),
+                  contractAddressMapping: ContractAddressingMap.make(),
                 },
                 ~latestFetchedBlock={
                   blockNumber: batchItem.blockNumber,
@@ -342,10 +344,9 @@ describe("determineNextEvent", () => {
         status: {
           fetchingStateId: None,
         },
-        kind: Normal({
-          contractAddressMapping: ContractAddressingMap.make(),
-          dynamicContracts: [],
-        }),
+        selection: Normal({}),
+        contractAddressMapping: ContractAddressingMap.make(),
+        dynamicContracts: [],
         fetchedEventQueue: item->Option.mapWithDefault([], v => [v]),
       }
       {

@@ -39,65 +39,56 @@ module Helpers = {
   exception ErrorMessage(string)
 }
 
-/**
-Holds the value of the next page fetch happening concurrently to current page processing
-*/
-type nextPageFetchRes = {
-  page: HyperSync.logsQueryPage,
-  pageFetchTime: int,
+type selectionConfig = {
+  getLogSelectionOrThrow: (
+    ~contractAddressMapping: ContractAddressingMap.mapping,
+    ~isPreRegisteringDynamicContracts: bool,
+  ) => array<LogSelection.t>,
+  fieldSelection: HyperSyncClient.QueryTypes.fieldSelection,
+  nonOptionalBlockFieldNames: array<string>,
+  nonOptionalTransactionFieldNames: array<string>,
 }
 
-let makeGetNextPage = (
-  ~endpointUrl,
-  ~contracts: array<Config.contract>,
-  ~queryLogsPage,
-  ~blockSchema,
-  ~transactionSchema,
-) => {
-  let client = HyperSyncClient.make(
-    ~url=endpointUrl,
-    ~bearerToken=Env.envioApiToken,
-    ~maxNumRetries=Env.hyperSyncClientMaxRetries,
-    ~httpReqTimeoutMillis=Env.hyperSyncClientTimeoutMillis,
-  )
+let getSelectionConfig = (selection: FetchState.selection, ~contracts: array<Config.contract>) => {
+  let nonOptionalBlockFieldNames = Utils.Set.make()
+  let nonOptionalTransactionFieldNames = Utils.Set.make()
+  let capitalizedBlockFields = Utils.Set.make()
+  let capitalizedTransactionFields = Utils.Set.make()
 
-  let nonOptionalBlockFieldNames = blockSchema->Utils.Schema.getNonOptionalFieldNames
-  let blockFieldSelection =
-    blockSchema
-    ->Utils.Schema.getCapitalizedFieldNames
-    ->(Utils.magic: array<string> => array<HyperSyncClient.QueryTypes.blockField>)
-
-  let nonOptionalTransactionFieldNames = transactionSchema->Utils.Schema.getNonOptionalFieldNames
-  let transactionFieldSelection =
-    transactionSchema
-    ->Utils.Schema.getCapitalizedFieldNames
-    ->(Utils.magic: array<string> => array<HyperSyncClient.QueryTypes.transactionField>)
+  contracts->Array.forEach(contract => {
+    contract.events->Array.forEach(event => {
+      let module(Event) = event
+      let {isWildcard} = Event.handlerRegister->Types.HandlerTypes.Register.getEventOptions
+      let isIncluded = switch selection {
+      | Wildcard({}) => isWildcard
+      | Normal({}) => !isWildcard
+      }
+      if isIncluded {
+        nonOptionalBlockFieldNames->Utils.Set.addMany(
+          Event.blockSchema->Utils.Schema.getNonOptionalFieldNames,
+        )
+        nonOptionalTransactionFieldNames->Utils.Set.addMany(
+          Event.transactionSchema->Utils.Schema.getNonOptionalFieldNames,
+        )
+        capitalizedBlockFields->Utils.Set.addMany(
+          Event.blockSchema->Utils.Schema.getCapitalizedFieldNames,
+        )
+        capitalizedTransactionFields->Utils.Set.addMany(
+          Event.transactionSchema->Utils.Schema.getCapitalizedFieldNames,
+        )
+      }
+    })
+  })
 
   let fieldSelection: HyperSyncClient.QueryTypes.fieldSelection = {
     log: [Address, Data, LogIndex, Topic0, Topic1, Topic2, Topic3],
-    block: blockFieldSelection,
-    transaction: transactionFieldSelection,
+    block: capitalizedBlockFields
+    ->Utils.Set.toArray
+    ->(Utils.magic: array<string> => array<HyperSyncClient.QueryTypes.blockField>),
+    transaction: capitalizedTransactionFields
+    ->Utils.Set.toArray
+    ->(Utils.magic: array<string> => array<HyperSyncClient.QueryTypes.transactionField>),
   }
-
-  let wildcardLogSelection = contracts->Belt.Array.flatMap(contract => {
-    contract.events->Belt.Array.keepMap(event => {
-      let module(Event) = event
-      let {isWildcard, topicSelections} =
-        Event.handlerRegister->Types.HandlerTypes.Register.getEventOptions
-      isWildcard ? Some(LogSelection.makeOrThrow(~addresses=[], ~topicSelections)) : None
-    })
-  })
-
-  let preRegWildcardLogSelection = contracts->Belt.Array.flatMap(contract => {
-    contract.events->Belt.Array.keepMap(event => {
-      let module(Event) = event
-      let {isWildcard, preRegisterDynamicContracts, topicSelections} =
-        Event.handlerRegister->Types.HandlerTypes.Register.getEventOptions
-      isWildcard && preRegisterDynamicContracts
-        ? Some(LogSelection.makeOrThrow(~addresses=[], ~topicSelections))
-        : None
-    })
-  })
 
   let getNormalLogSelectionOrThrow = (
     ~contractAddressMapping,
@@ -129,54 +120,58 @@ let makeGetNextPage = (
     })
   }
 
-  async (
-    ~fromBlock,
-    ~toBlock,
-    ~logger,
-    ~contractAddressMapping,
-    ~selection: FetchState.selection,
-    ~isPreRegisteringDynamicContracts,
-  ) => {
-    let logSelections = try {
-      switch (selection, isPreRegisteringDynamicContracts) {
-      | (Wildcard({}), true) => preRegWildcardLogSelection
-      | (Wildcard({}), false) => wildcardLogSelection
-      | (Normal({}), _) =>
-        getNormalLogSelectionOrThrow(~contractAddressMapping, ~isPreRegisteringDynamicContracts)
+  let getLogSelectionOrThrow = switch selection {
+  | Wildcard({}) => {
+      let wildcardLogSelection = contracts->Belt.Array.flatMap(contract => {
+        contract.events->Belt.Array.keepMap(event => {
+          let module(Event) = event
+          let {isWildcard, topicSelections} =
+            Event.handlerRegister->Types.HandlerTypes.Register.getEventOptions
+          isWildcard ? Some(LogSelection.makeOrThrow(~addresses=[], ~topicSelections)) : None
+        })
+      })
+
+      let preRegWildcardLogSelection = contracts->Belt.Array.flatMap(contract => {
+        contract.events->Belt.Array.keepMap(event => {
+          let module(Event) = event
+          let {isWildcard, preRegisterDynamicContracts, topicSelections} =
+            Event.handlerRegister->Types.HandlerTypes.Register.getEventOptions
+          isWildcard && preRegisterDynamicContracts
+            ? Some(LogSelection.makeOrThrow(~addresses=[], ~topicSelections))
+            : None
+        })
+      })
+
+      (~contractAddressMapping as _, ~isPreRegisteringDynamicContracts) => {
+        if isPreRegisteringDynamicContracts {
+          preRegWildcardLogSelection
+        } else {
+          wildcardLogSelection
+        }
       }
-    } catch {
-    | exn =>
-      exn->ErrorHandling.mkLogAndRaise(
-        ~logger,
-        ~msg="Failed getting log selection in contract interface manager",
-      )
     }
-
-    let startFetchingBatchTimeRef = Hrtime.makeTimer()
-
-    //fetch batch
-    let pageUnsafe = await Helpers.queryLogsPageWithBackoff(
-      () =>
-        queryLogsPage(
-          ~client,
-          ~fromBlock,
-          ~toBlock,
-          ~logSelections,
-          ~fieldSelection,
-          ~nonOptionalBlockFieldNames,
-          ~nonOptionalTransactionFieldNames,
-          ~logger=Logging.createChild(
-            ~params={"type": "Hypersync Query", "fromBlock": fromBlock, "serverUrl": endpointUrl},
-          ),
-        ),
-      logger,
-    )
-
-    let pageFetchTime =
-      startFetchingBatchTimeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
-
-    {page: pageUnsafe, pageFetchTime}
+  | Normal({}) => getNormalLogSelectionOrThrow
   }
+
+  {
+    getLogSelectionOrThrow,
+    fieldSelection,
+    nonOptionalBlockFieldNames: nonOptionalBlockFieldNames->Utils.Set.toArray,
+    nonOptionalTransactionFieldNames: nonOptionalTransactionFieldNames->Utils.Set.toArray,
+  }
+}
+
+let memoGetSelectionConfig = (~contracts) => {
+  let cache = Utils.WeakMap.make()
+  selection =>
+    switch cache->Utils.WeakMap.get(selection) {
+    | Some(c) => c
+    | None => {
+        let c = selection->getSelectionConfig(~contracts)
+        let _ = cache->Utils.WeakMap.set(selection, c)
+        c
+      }
+    }
 }
 
 module Make = (
@@ -187,13 +182,20 @@ module Make = (
     let allEventSignatures: array<string>
     let shouldUseHypersyncClientDecoder: bool
     let eventRouter: EventRouter.t<module(Types.InternalEvent)>
-    let blockSchema: S.t<Internal.eventBlock>
-    let transactionSchema: S.t<Internal.eventTransaction>
   },
 ): S => {
   let name = "HyperSync"
   let chain = T.chain
   let eventRouter = T.eventRouter
+
+  let getSelectionConfig = memoGetSelectionConfig(~contracts=T.contracts)
+
+  let client = HyperSyncClient.make(
+    ~url=T.endpointUrl,
+    ~bearerToken=Env.envioApiToken,
+    ~maxNumRetries=Env.hyperSyncClientMaxRetries,
+    ~httpReqTimeoutMillis=Env.hyperSyncClientTimeoutMillis,
+  )
 
   let hscDecoder: ref<option<HyperSyncClient.Decoder.t>> = ref(None)
   let getHscDecoder = () => {
@@ -253,14 +255,6 @@ module Make = (
     }
   }
 
-  let getNextPage = makeGetNextPage(
-    ~endpointUrl=T.endpointUrl,
-    ~contracts=T.contracts,
-    ~queryLogsPage=HyperSync.queryLogsPage,
-    ~blockSchema=T.blockSchema,
-    ~transactionSchema=T.transactionSchema,
-  )
-
   let contractNameAbiMapping = Js.Dict.empty()
   T.contracts->Belt.Array.forEach(contract => {
     contractNameAbiMapping->Js.Dict.set(contract.name, contract.abi)
@@ -278,16 +272,45 @@ module Make = (
   ) => {
     let mkLogAndRaise = ErrorHandling.mkLogAndRaise(~logger, ...)
     try {
+      let totalTimeRef = Hrtime.makeTimer()
+
+      let selectionConfig = selection->getSelectionConfig
+
+      let logSelections = try selectionConfig.getLogSelectionOrThrow(
+        ~contractAddressMapping,
+        ~isPreRegisteringDynamicContracts,
+      ) catch {
+      | exn =>
+        exn->ErrorHandling.mkLogAndRaise(
+          ~logger,
+          ~msg="Failed getting log selection for the query",
+        )
+      }
+
       let startFetchingBatchTimeRef = Hrtime.makeTimer()
 
-      let {page: pageUnsafe, pageFetchTime} = await getNextPage(
-        ~fromBlock,
-        ~toBlock,
-        ~contractAddressMapping,
-        ~logger,
-        ~selection,
-        ~isPreRegisteringDynamicContracts,
-      )
+      //fetch batch
+      let pageUnsafe = await Helpers.queryLogsPageWithBackoff(() =>
+        HyperSync.queryLogsPage(
+          ~client,
+          ~fromBlock,
+          ~toBlock,
+          ~logSelections,
+          ~fieldSelection=selectionConfig.fieldSelection,
+          ~nonOptionalBlockFieldNames=selectionConfig.nonOptionalBlockFieldNames,
+          ~nonOptionalTransactionFieldNames=selectionConfig.nonOptionalTransactionFieldNames,
+          ~logger=Logging.createChild(
+            ~params={
+              "type": "Hypersync Query",
+              "fromBlock": fromBlock,
+              "serverUrl": T.endpointUrl,
+            },
+          ),
+        )
+      , logger)
+
+      let pageFetchTime =
+        startFetchingBatchTimeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
 
       //set height and next from block
       let currentBlockHeight = pageUnsafe.archiveHeight
@@ -487,8 +510,7 @@ module Make = (
         }),
       }
 
-      let totalTimeElapsed =
-        startFetchingBatchTimeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
+      let totalTimeElapsed = totalTimeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
 
       let stats = {
         totalTimeElapsed,
