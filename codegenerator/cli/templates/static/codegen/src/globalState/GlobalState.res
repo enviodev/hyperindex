@@ -324,9 +324,10 @@ let handlePartitionQueryResponse = (
 
   if Env.Benchmark.shouldSaveData {
     switch query.target {
-      | Merge(_) => ()
-      | Head
-      | EndBlock(_) => Prometheus.PartitionBlockFetched.set(
+    | Merge(_) => ()
+    | Head
+    | EndBlock(_) =>
+      Prometheus.PartitionBlockFetched.set(
         ~blockNumber=latestFetchedBlockNumber,
         ~partitionId=query.partitionId,
         ~chainId=chain->ChainMap.Chain.toChainId,
@@ -340,14 +341,10 @@ let handlePartitionQueryResponse = (
       ~fromBlock=fromBlockQueried,
       ~toBlock=latestFetchedBlockNumber,
       ~numEvents=parsedQueueItems->Array.length,
-      ~numAddresses=switch query.selection {
-      | Normal({contractAddressMapping}) =>
-        contractAddressMapping->ContractAddressingMap.addressCount
-      | Wildcard => 0
-      },
+      ~numAddresses=query.contractAddressMapping->ContractAddressingMap.addressCount,
       ~queryName=switch query {
       | {target: Merge(_)} => `Merge Query`
-      | {selection: Wildcard} => `Wildcard Query`
+      | {selection: Wildcard(_)} => `Wildcard Query`
       | {selection: Normal(_)} => `Normal Query`
       },
     )
@@ -768,10 +765,7 @@ let executeQuery = (
     | Merge({toBlock}) =>
       Some(toBlock)
     },
-    ~contractAddressMapping=switch q.selection {
-    | Normal({contractAddressMapping}) => contractAddressMapping
-    | Wildcard => ContractAddressingMap.make()
-    },
+    ~contractAddressMapping=q.contractAddressMapping,
     ~partitionId=q.partitionId,
     ~chain,
     ~currentBlockHeight,
@@ -779,7 +773,7 @@ let executeQuery = (
     ~logger,
     ~forceWildcardEvents=switch q.selection {
     | Normal(_) => false
-    | Wildcard => true
+    | Wildcard(_) => true
     },
   )
 }
