@@ -1111,6 +1111,7 @@ impl ProjectTemplate {
                 .context("Failed to diff generated to root path")?;
 
         let global_field_selection = FieldSelection::global_selection(&cfg.field_selection);
+        // TODO: Remove schemas for aggreaged, since they are not used in runtime
         let aggregated_field_selection = FieldSelection::aggregated_selection(&cfg);
 
         Ok(ProjectTemplate {

@@ -354,6 +354,8 @@ module Set = {
   @send
   external add: (t<'value>, 'value) => t<'value> = "add"
 
+  let addMany = (set, values) => values->Js.Array2.forEach(value => set->add(value)->ignore)
+
   @ocaml.doc("Removes all elements from the `Set` object.") @send
   external clear: t<'value> => unit = "clear"
 

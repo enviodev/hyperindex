@@ -101,12 +101,6 @@ describe("SourceManager fetchNext", () => {
     }
   }
 
-  let getPartitionContractAddressMapping = (partition: FetchState.partition) =>
-    switch partition.kind {
-    | Normal({contractAddressMapping}) => contractAddressMapping
-    | Wildcard => ContractAddressingMap.make()
-    }
-
   let mockFetchState = (partitions, ~endBlock=None): FetchState.t => {
     {
       partitions,
@@ -161,25 +155,22 @@ describe("SourceManager fetchNext", () => {
             partitionId: "0",
             fromBlock: 5,
             target: Head,
-            selection: Normal({
-              contractAddressMapping: partition0->getPartitionContractAddressMapping,
-            }),
+            selection: Normal({}),
+            contractAddressMapping: partition0.contractAddressMapping,
           },
           {
             partitionId: "1",
             fromBlock: 6,
             target: Head,
-            selection: Normal({
-              contractAddressMapping: partition1->getPartitionContractAddressMapping,
-            }),
+            selection: Normal({}),
+            contractAddressMapping: partition1.contractAddressMapping,
           },
           {
             partitionId: "2",
             fromBlock: 2,
             target: Head,
-            selection: Normal({
-              contractAddressMapping: partition2->getPartitionContractAddressMapping,
-            }),
+            selection: Normal({}),
+            contractAddressMapping: partition2.contractAddressMapping,
           },
         ],
       )
@@ -227,17 +218,15 @@ describe("SourceManager fetchNext", () => {
             partitionId: "2",
             fromBlock: 2,
             target: Head,
-            selection: Normal({
-              contractAddressMapping: partition2->getPartitionContractAddressMapping,
-            }),
+            selection: Normal({}),
+            contractAddressMapping: partition2.contractAddressMapping,
           },
           {
             partitionId: "0",
             fromBlock: 5,
             target: Head,
-            selection: Normal({
-              contractAddressMapping: partition0->getPartitionContractAddressMapping,
-            }),
+            selection: Normal({}),
+            contractAddressMapping: partition0.contractAddressMapping,
           },
         ],
       )

@@ -132,10 +132,7 @@ describe("Dynamic contract restart resistance test", () => {
 
   let getChainFetcherDcs = (chainFetcher: ChainFetcher.t) => {
     chainFetcher.fetchState.partitions->Array.flatMap(p =>
-      switch p.kind {
-      | Normal({dynamicContracts}) => dynamicContracts->Array.map(dc => dc.contractAddress)
-      | Wildcard => []
-      }
+      p.dynamicContracts->Array.map(dc => dc.contractAddress)
     )
   }
 
