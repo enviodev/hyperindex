@@ -364,7 +364,7 @@ let handlePartitionQueryResponse = (
 
   if !hasReorgOccurred || !(state.config->Config.shouldRollbackOnReorg) {
     if hasReorgOccurred {
-      chainFetcher.logger->Logging.childWarn(
+      chainFetcher.logger->Logging.childInfo(
         "Reorg detected, not rolling back due to configuration",
       )
       Prometheus.incrementReorgsDetected(~chain)
@@ -453,7 +453,7 @@ let handlePartitionQueryResponse = (
       ),
     )
   } else {
-    chainFetcher.logger->Logging.childWarn("Reorg detected, rolling back")
+    chainFetcher.logger->Logging.childInfo("Reorg detected, rolling back")
     Prometheus.incrementReorgsDetected(~chain)
     (state->incrementId->setRollingBack(chain), [Rollback])
   }
@@ -740,11 +740,11 @@ let actionReducer = (state: t, action: action) => {
 let invalidatedActionReducer = (state: t, action: action) =>
   switch (state, action) {
   | ({rollbackState: RollingBack(_)}, EventBatchProcessed(_)) =>
-    Logging.warn("Finished processing batch before rollback, actioning rollback")
+    Logging.info("Finished processing batch before rollback, actioning rollback")
     ({...state, currentlyProcessingBatch: false}, [Rollback])
   | (_, ErrorExit(_)) => actionReducer(state, action)
   | _ =>
-    Logging.warn("Invalidated action discarded")
+    Logging.info("Invalidated action discarded")
     (state, [])
   }
 
@@ -1104,7 +1104,7 @@ let injectedTaskReducer = (
     //If it isn't processing a batch currently continue with rollback otherwise wait for current batch to finish processing
     switch state {
     | {currentlyProcessingBatch: false, rollbackState: RollingBack(reorgChain)} =>
-      Logging.warn("Executing rollback")
+      Logging.info("Executing rollback")
 
       let chainFetcher = state.chainManager.chainFetchers->ChainMap.get(reorgChain)
 
@@ -1208,7 +1208,7 @@ let injectedTaskReducer = (
 
       dispatchAction(SetRollbackState(inMemoryStore, chainManager))
 
-    | _ => Logging.warn("Waiting for batch to finish processing before executing rollback") //wait for batch to finish processing
+    | _ => Logging.info("Waiting for batch to finish processing before executing rollback") //wait for batch to finish processing
     }
   }
 }
