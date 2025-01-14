@@ -163,18 +163,18 @@ let makeFromConfig = (chainConfig: Config.chainConfig, ~maxAddrInPartition) => {
 /**
  * This function allows a chain fetcher to be created from metadata, in particular this is useful for restarting an indexer and making sure it fetches blocks from the same place.
  */
-let makeFromDbState = async (chainConfig: Config.chainConfig, ~maxAddrInPartition) => {
+let makeFromDbState = async (chainConfig: Config.chainConfig, ~maxAddrInPartition, ~sql=Db.sql) => {
   let logger = Logging.createChild(~params={"chainId": chainConfig.chain->ChainMap.Chain.toChainId})
   let chainId = chainConfig.chain->ChainMap.Chain.toChainId
-  let latestProcessedEvent =
-    await Db.sql->DbFunctions.EventSyncState.getLatestProcessedEvent(~chainId)
+  let latestProcessedEvent = await sql->DbFunctions.EventSyncState.getLatestProcessedEvent(~chainId)
 
-  let chainMetadata = await Db.sql->DbFunctions.ChainMetadata.getLatestChainMetadataState(~chainId)
+  let chainMetadata = await sql->DbFunctions.ChainMetadata.getLatestChainMetadataState(~chainId)
 
   let preRegisterDynamicContracts = chainConfig->Config.shouldPreRegisterDynamicContracts
 
   let (
-    startBlock: int,
+    restartBlockNumber: int,
+    restartLogIndex: int,
     isPreRegisteringDynamicContracts: bool,
     processingFilters: option<array<processingFilter>>,
   ) = switch latestProcessedEvent {
@@ -194,20 +194,33 @@ let makeFromDbState = async (chainConfig: Config.chainConfig, ~maxAddrInPartitio
       },
     ]
 
-    (event.blockNumber, event.isPreRegisteringDynamicContracts, Some(processingFilters))
-  | None => (chainConfig.startBlock, preRegisterDynamicContracts, None)
+    (
+      event.blockNumber,
+      event.logIndex,
+      event.isPreRegisteringDynamicContracts,
+      Some(processingFilters),
+    )
+  | None => (chainConfig.startBlock, 0, preRegisterDynamicContracts, None)
   }
 
-  //Get all dynamic contracts already registered on the chain
-  let dbRecoveredDynamicContracts =
-    //Get dynamic contracts up to the the block that the indexing starts from
-    //With preregistration also include all preregistered events.
-    //For preregistration need to do both, for the case of nested dynamic registrations
-    await Db.sql->DbFunctions.DynamicContractRegistry.recoverRegisteredDynamicContracts(
+  let _ = await Promise.all([
+    sql->DbFunctions.DynamicContractRegistry.deleteInvalidDynamicContractsOnRestart(
       ~chainId,
-      ~startBlock,
-      ~hasPreRegistration=preRegisterDynamicContracts,
-    )
+      ~restartBlockNumber,
+      ~restartLogIndex,
+    ),
+    sql->DbFunctions.DynamicContractRegistry.deleteInvalidDynamicContractsHistoryOnRestart(
+      ~chainId,
+      ~restartBlockNumber,
+      ~restartLogIndex,
+    ),
+  ])
+
+  // Since we deleted all contracts after the restart point,
+  // besides the preRegistered ones,
+  // we can simply query all dcs we have in db
+  let dbRecoveredDynamicContracts =
+    await sql->DbFunctions.DynamicContractRegistry.readAllDynamicContracts(~chainId)
 
   let (
     dynamicContractPreRegistration: option<addressToDynContractLookup>,
@@ -256,7 +269,7 @@ let makeFromDbState = async (chainConfig: Config.chainConfig, ~maxAddrInPartitio
   }
 
   let endOfBlockRangeScannedData =
-    await Db.sql->DbFunctions.EndOfBlockRangeScannedData.readEndOfBlockRangeScannedDataForChain(
+    await sql->DbFunctions.EndOfBlockRangeScannedData.readEndOfBlockRangeScannedDataForChain(
       ~chainId,
     )
 
@@ -274,7 +287,7 @@ let makeFromDbState = async (chainConfig: Config.chainConfig, ~maxAddrInPartitio
   make(
     ~dynamicContracts,
     ~chainConfig,
-    ~startBlock,
+    ~startBlock=restartBlockNumber,
     ~endBlock=chainConfig.endBlock,
     ~lastBlockScannedHashes,
     ~dbFirstEventBlockNumber=firstEventBlockNumber,
