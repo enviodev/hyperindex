@@ -364,7 +364,18 @@ describe("Dynamic contract restart resistance test", () => {
 
               Assert.deepEqual(
                 await sql->Postgres.unsafe(`SELECT * FROM public.dynamic_contract_registry;`),
-                dcsBeforeRestart,
+                switch dcsBeforeRestart {
+                | [dc1, dc2] => [
+                    dc1,
+                    (
+                      {
+                        ...dc2,
+                        isPreRegistered: true,
+                      }: TablesStatic.DynamicContractRegistry.t
+                    ),
+                  ]
+                | _ => Assert.fail("Should have 2 dcs")
+                },
                 ~message="Should keep both dcs after restart in db",
               )
               Assert.equal(
