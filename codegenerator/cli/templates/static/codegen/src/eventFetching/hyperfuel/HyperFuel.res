@@ -212,7 +212,7 @@ module LogsQuery = {
       res
     }
 
-    let res = await executeQuery->Time.retryAsyncWithExponentialBackOff(~logger=Some(logger))
+    let res = await executeQuery->Time.retryAsyncWithExponentialBackOff(~logger)
 
     res->convertResponse
   }
@@ -265,7 +265,7 @@ module BlockData = {
 
     let executeQuery = () => hyperFuelClient->HyperFuelClient.getSelectedData(query)
 
-    let res = await executeQuery->Time.retryAsyncWithExponentialBackOff(~logger=Some(logger))
+    let res = await executeQuery->Time.retryAsyncWithExponentialBackOff(~logger)
 
     // If the block is not found, retry the query. This can occur since replicas of hypersync might not hack caught up yet
     if res.nextBlock <= blockNumber {
