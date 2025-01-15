@@ -389,7 +389,7 @@ module Make = (
         let {contractId: contractAddress, receipt, block, receiptIndex} = item
 
         let chainId = chain->ChainMap.Chain.toChainId
-        let eventTag = switch receipt {
+        let eventId = switch receipt {
         | LogData({rb}) => BigInt.toString(rb)
         | Mint(_) => mintEventTag
         | Burn(_) => burnEventTag
@@ -399,7 +399,7 @@ module Make = (
         }
 
         let eventConfig = switch workerConfig.eventRouter->EventRouter.get(
-          ~tag=eventTag,
+          ~tag=eventId,
           ~contractAddressMapping,
           ~contractAddress,
         ) {
@@ -411,7 +411,7 @@ module Make = (
                 "blockNumber": block.height,
                 "logIndex": receiptIndex,
                 "contractAddress": contractAddress,
-                "eventTag": eventTag,
+                "eventId": eventId,
               },
             )
             EventRoutingFailed->ErrorHandling.mkLogAndRaise(

@@ -69,8 +69,7 @@ let make = (
       if isPreRegisteringDynamicContracts ? preRegisterDynamicContracts : true {
         eventConfigs->Array.push({
           contractName,
-          // FIXME: For fuel it doesn't need topicCount
-          eventTag: Event.sighash ++ "_" ++ Event.topicCount->Int.toString,
+          eventId: Event.id,
           isWildcard,
         })
       }
