@@ -47,62 +47,24 @@ module Addresses = {
     mockAddresses[0]
 }
 
-module BlockTag = {
-  type t
-
-  type semanticTag = [#latest | #earliest | #pending]
-  type hexString = string
-  type blockNumber = int
-
-  type blockTagVariant = Latest | Earliest | Pending | HexString(string) | BlockNumber(int)
-
-  let blockTagFromSemantic = (semanticTag: semanticTag): t => semanticTag->Utils.magic
-  let blockTagFromBlockNumber = (blockNumber: blockNumber): t => blockNumber->Utils.magic
-  let blockTagFromHexString = (hexString: hexString): t => hexString->Utils.magic
-
-  let blockTagFromVariant = variant =>
-    switch variant {
-    | Latest => #latest->blockTagFromSemantic
-    | Earliest => #earliest->blockTagFromSemantic
-    | Pending => #pending->blockTagFromSemantic
-    | HexString(str) => str->blockTagFromHexString
-    | BlockNumber(num) => num->blockTagFromBlockNumber
-    }
-}
-
 module EventFilter = {
   type topic = EvmTypes.Hex.t
-  type t = {
-    address: Address.t,
-    topics: array<topic>,
-  }
 }
+
 module Filter = {
   type t
-
-  //This can be used as a filter but should not assume all filters  are the same type
-  //address could be an array of addresses like in combined filter
-  type filterRecord = {
-    address: Address.t,
-    topics: array<EventFilter.topic>,
-    fromBlock: BlockTag.t,
-    toBlock: BlockTag.t,
-  }
-
-  let filterFromRecord = (filterRecord: filterRecord): t => filterRecord->Utils.magic
 }
 
 module CombinedFilter = {
   type combinedFilterRecord = {
-    address: array<Address.t>,
+    address?: array<Address.t>,
     //The second element of the tuple is the
     topics: array<array<EventFilter.topic>>,
-    fromBlock: BlockTag.t,
-    toBlock: BlockTag.t,
+    fromBlock: int,
+    toBlock: int,
   }
 
-  let combinedFilterToFilter = (combinedFilter: combinedFilterRecord): Filter.t =>
-    combinedFilter->Utils.magic
+  let toFilter = (combinedFilter: combinedFilterRecord): Filter.t => combinedFilter->Utils.magic
 }
 
 type log = {

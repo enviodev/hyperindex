@@ -43,7 +43,6 @@ module Helpers = {
 Holds the value of the next page fetch happening concurrently to current page processing
 */
 type nextPageFetchRes = {
-  contractInterfaceManager: ContractInterfaceManager.t,
   page: HyperSync.logsQueryPage,
   pageFetchTime: int,
 }
@@ -138,12 +137,6 @@ let makeGetNextPage = (
     ~forceWildcardEvents,
     ~isPreRegisteringDynamicContracts,
   ) => {
-    //Instantiate each time to add new registered contract addresses
-    let contractInterfaceManager = ContractInterfaceManager.make(
-      ~contracts,
-      ~contractAddressMapping,
-    )
-
     let logSelections = try {
       switch (forceWildcardEvents, isPreRegisteringDynamicContracts) {
       | (true, true) => preRegWildcardLogSelection
@@ -182,7 +175,7 @@ let makeGetNextPage = (
     let pageFetchTime =
       startFetchingBatchTimeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
 
-    {page: pageUnsafe, contractInterfaceManager, pageFetchTime}
+    {page: pageUnsafe, pageFetchTime}
   }
 }
 
@@ -268,6 +261,11 @@ module Make = (
     ~transactionSchema=T.transactionSchema,
   )
 
+  let contractNameAbiMapping = Js.Dict.empty()
+  T.contracts->Belt.Array.forEach(contract => {
+    contractNameAbiMapping->Js.Dict.set(contract.name, contract.abi)
+  })
+
   let fetchBlockRange = async (
     ~fromBlock,
     ~toBlock,
@@ -282,7 +280,7 @@ module Make = (
     try {
       let startFetchingBatchTimeRef = Hrtime.makeTimer()
 
-      let {page: pageUnsafe, contractInterfaceManager, pageFetchTime} = await getNextPage(
+      let {page: pageUnsafe, pageFetchTime} = await getNextPage(
         ~fromBlock,
         ~toBlock,
         ~contractAddressMapping,
@@ -452,8 +450,8 @@ module Make = (
           | Some(eventMod) =>
             let module(Event) = eventMod
 
-            switch contractInterfaceManager->ContractInterfaceManager.parseLogViemOrThrow(
-              ~address=log.address,
+            switch contractNameAbiMapping->Viem.parseLogOrThrow(
+              ~contractName=Event.contractName,
               ~topics=log.topics,
               ~data=log.data,
             ) {

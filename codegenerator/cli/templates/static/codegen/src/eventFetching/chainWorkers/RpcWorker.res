@@ -79,7 +79,13 @@ module Make = (
     let eventRouter: EventRouter.t<module(Types.InternalEvent)>
   },
 ): S => {
+  let contractNameAbiMapping = Js.Dict.empty()
+  let wildcardTopics = []
+  let nonWildcardTopics = []
+
   T.contracts->Belt.Array.forEach(contract => {
+    contractNameAbiMapping->Js.Dict.set(contract.name, contract.abi)
+
     contract.events->Belt.Array.forEach(event => {
       let module(Event) = event
       let {isWildcard, topicSelections} =
@@ -92,12 +98,6 @@ module Make = (
           "eventName": Event.name,
         },
       )
-      if isWildcard {
-        %raw(`null`)->ErrorHandling.mkLogAndRaise(
-          ~msg="RPC worker does not yet support wildcard events",
-          ~logger,
-        )
-      }
 
       topicSelections->Belt.Array.forEach(
         topicSelection => {
@@ -106,6 +106,12 @@ module Make = (
               ~msg="RPC worker does not yet support event filters",
               ~logger,
             )
+          }
+
+          if isWildcard {
+            let _ = wildcardTopics->Js.Array2.pushMany(topicSelection.topic0)
+          } else {
+            let _ = nonWildcardTopics->Js.Array2.pushMany(topicSelection.topic0)
           }
         },
       )
@@ -200,9 +206,6 @@ module Make = (
       if isPreRegisteringDynamicContracts {
         Js.Exn.raiseError("HyperIndex RPC does not support pre registering dynamic contracts yet")
       }
-      if forceWildcardEvents {
-        Js.Exn.raiseError("RPC worker does not yet support wildcard events")
-      }
 
       let startFetchingBatchTimeRef = Hrtime.makeTimer()
 
@@ -222,16 +225,22 @@ module Make = (
           ? blockLoader->LazyLoader.get(fromBlock - 1)->Promise.thenResolve(res => res->Some)
           : Promise.resolve(None)
 
-      //Needs to be run on every loop in case of new registrations
-      let contractInterfaceManager = ContractInterfaceManager.make(
-        ~contracts=T.contracts,
-        ~contractAddressMapping,
-      )
+      let topics = if forceWildcardEvents {
+        wildcardTopics
+      } else {
+        nonWildcardTopics
+      }
+      let addresses = if forceWildcardEvents {
+        None
+      } else {
+        Some(contractAddressMapping->ContractAddressingMap.getAllAddresses)
+      }
 
       let {logs, nextSuggestedBlockInterval, latestFetchedBlock} = await EventFetching.getNextPage(
-        ~contractInterfaceManager,
         ~fromBlock,
         ~toBlock,
+        ~addresses,
+        ~topics,
         ~loadBlock=blockNumber => blockLoader->LazyLoader.get(blockNumber),
         ~suggestedBlockInterval,
         ~syncConfig=T.syncConfig,
@@ -249,7 +258,7 @@ module Make = (
               ~sighash=topic0->EvmTypes.Hex.toString,
               ~topicCount=log.topics->Array.length,
             ),
-            ~contractAddressMapping=contractInterfaceManager.contractAddressMapping,
+            ~contractAddressMapping,
             ~contractAddress=log.address,
           ) {
           | None => None //ignore events that aren't registered
@@ -282,8 +291,8 @@ module Make = (
                     )
                   }
 
-                  let decodedEvent = try contractInterfaceManager->ContractInterfaceManager.parseLogViemOrThrow(
-                    ~address=log.address,
+                  let decodedEvent = try contractNameAbiMapping->Viem.parseLogOrThrow(
+                    ~contractName=Event.contractName,
                     ~topics=log.topics,
                     ~data=log.data,
                   ) catch {
