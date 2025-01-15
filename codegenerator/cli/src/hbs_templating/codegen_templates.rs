@@ -368,6 +368,15 @@ impl EventMod {
             )),
         };
 
+        let event_id = match self.fuel_event_kind {
+            None => format!("{sighash}_{topic_count}"),
+            Some(FuelEventKind::Mint) => "mint".to_string(),
+            Some(FuelEventKind::Burn) => "burn".to_string(),
+            Some(FuelEventKind::Call) => "call".to_string(),
+            Some(FuelEventKind::Transfer) => "transfer".to_string(),
+            Some(FuelEventKind::LogData(_)) => sighash.to_string(),
+        };
+
         let (block_type, block_schema, transaction_type, transaction_schema) =
             match self.custom_field_selection {
                 Some(ref field_selection) => {
@@ -410,8 +419,8 @@ let register = (): Internal.fuelEventConfig => {{
 
         format!(
             r#"
+let id = "{event_id}"
 let sighash = "{sighash}"
-let topicCount = {topic_count}
 let name = "{event_name}"
 let contractName = contractName
 
@@ -1410,8 +1419,8 @@ mod test {
             params,
             module_code: format!(
                 r#"
+let id = "{sighash}_1"
 let sighash = "{sighash}"
-let topicCount = 1
 let name = "NewGravatar"
 let contractName = contractName
 
@@ -1477,8 +1486,8 @@ let getTopicSelection = (eventFilters) => eventFilters->SingleOrMultiple.normali
                 params: vec![],
                 module_code: format!(
                     r#"
+let id = "0x50f7d27e90d1a5a38aeed4ceced2e8ec1ff185737aca96d15791b470d3f17363_1"
 let sighash = "0x50f7d27e90d1a5a38aeed4ceced2e8ec1ff185737aca96d15791b470d3f17363"
-let topicCount = 1
 let name = "NewGravatar"
 let contractName = contractName
 
@@ -1544,8 +1553,8 @@ let getTopicSelection = (eventFilters) => eventFilters->SingleOrMultiple.normali
                 params: vec![],
                 module_code: format!(
                     r#"
+let id = "0x50f7d27e90d1a5a38aeed4ceced2e8ec1ff185737aca96d15791b470d3f17363_1"
 let sighash = "0x50f7d27e90d1a5a38aeed4ceced2e8ec1ff185737aca96d15791b470d3f17363"
-let topicCount = 1
 let name = "NewGravatar"
 let contractName = contractName
 

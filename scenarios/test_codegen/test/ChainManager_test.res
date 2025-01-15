@@ -23,7 +23,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
     let eventConfigs = [
       {
         FetchState.contractName: "Gravatar",
-        eventTag: "0",
+        eventId: "0",
         isWildcard: true,
       },
     ]

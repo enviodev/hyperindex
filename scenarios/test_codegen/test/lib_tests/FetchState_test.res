@@ -73,7 +73,7 @@ let makeInitial = () => {
     ~eventConfigs=[
       {
         contractName: "Gravatar",
-        eventTag: "0",
+        eventId: "0",
         isWildcard: false,
       },
     ],
@@ -127,7 +127,7 @@ describe("FetchState.make", () => {
           ~eventConfigs=[
             {
               contractName: "Gravatar",
-              eventTag: "0",
+              eventId: "0",
               isWildcard: false,
             },
           ],
@@ -153,7 +153,7 @@ describe("FetchState.make", () => {
         ~eventConfigs=[
           {
             contractName: "Gravatar",
-            eventTag: "0",
+            eventId: "0",
             isWildcard: false,
           },
         ],
@@ -208,12 +208,12 @@ describe("FetchState.make", () => {
         ~eventConfigs=[
           {
             contractName: "ContractA",
-            eventTag: "0",
+            eventId: "0",
             isWildcard: false,
           },
           {
             contractName: "Gravatar",
-            eventTag: "0",
+            eventId: "0",
             isWildcard: false,
           },
         ],
@@ -286,12 +286,12 @@ describe("FetchState.make", () => {
         ~eventConfigs=[
           {
             contractName: "ContractA",
-            eventTag: "0",
+            eventId: "0",
             isWildcard: false,
           },
           {
             contractName: "Gravatar",
-            eventTag: "0",
+            eventId: "0",
             isWildcard: false,
           },
         ],
@@ -445,17 +445,17 @@ describe("FetchState.registerDynamicContracts", () => {
       let fetchState = FetchState.make(
         ~eventConfigs=[
           {
-            eventTag: "wildcard1",
+            eventId: "wildcard1",
             contractName: "Gravatar",
             isWildcard: true,
           },
           {
-            eventTag: "wildcard2",
+            eventId: "wildcard2",
             contractName: "Gravatar",
             isWildcard: true,
           },
           {
-            eventTag: "normal1",
+            eventId: "normal1",
             contractName: "NftFactory",
             isWildcard: false,
           },
@@ -495,12 +495,12 @@ describe("FetchState.registerDynamicContracts", () => {
               selection: Wildcard({
                 eventConfigs: [
                   {
-                    eventTag: "wildcard1",
+                    eventId: "wildcard1",
                     contractName: "Gravatar",
                     isWildcard: true,
                   },
                   {
-                    eventTag: "wildcard2",
+                    eventId: "wildcard2",
                     contractName: "Gravatar",
                     isWildcard: true,
                   },
@@ -1173,12 +1173,12 @@ describe("FetchState.getNextQuery & integration", () => {
       ~eventConfigs=[
         {
           contractName: "ContractA",
-          eventTag: "0",
+          eventId: "0",
           isWildcard: false,
         },
         {
           contractName: "ContractA",
-          eventTag: "wildcard",
+          eventId: "wildcard",
           isWildcard: true,
         },
       ],
@@ -1212,7 +1212,7 @@ describe("FetchState.getNextQuery & integration", () => {
             eventConfigs: [
               {
                 contractName: "ContractA",
-                eventTag: "wildcard",
+                eventId: "wildcard",
                 isWildcard: true,
               },
             ],
@@ -1321,7 +1321,7 @@ describe("FetchState.getNextQuery & integration", () => {
     let eventConfigs = [
       {
         FetchState.contractName: "ContractA",
-        eventTag: "wildcard",
+        eventId: "wildcard",
         isWildcard: true,
       },
     ]
@@ -1503,12 +1503,12 @@ describe("FetchState unit tests for specific cases", () => {
         ~eventConfigs=[
           {
             contractName: "ContractA",
-            eventTag: "0",
+            eventId: "0",
             isWildcard: false,
           },
           {
             contractName: "ContractA",
-            eventTag: "wildcard",
+            eventId: "wildcard",
             isWildcard: true,
           },
         ],
@@ -1526,7 +1526,7 @@ describe("FetchState unit tests for specific cases", () => {
             eventConfigs: [
               {
                 contractName: "ContractA",
-                eventTag: "wildcard",
+                eventId: "wildcard",
                 isWildcard: true,
               },
             ],
@@ -1568,7 +1568,7 @@ describe("FetchState unit tests for specific cases", () => {
             eventConfigs: [
               {
                 contractName: "ContractA",
-                eventTag: "wildcard",
+                eventId: "wildcard",
                 isWildcard: true,
               },
             ],
@@ -1608,7 +1608,7 @@ describe("FetchState unit tests for specific cases", () => {
         ~eventConfigs=[
           {
             contractName: "ContractA",
-            eventTag: "0",
+            eventId: "0",
             isWildcard: false,
           },
         ],
@@ -1785,7 +1785,7 @@ describe("FetchState unit tests for specific cases", () => {
       ~eventConfigs=[
         {
           contractName: "ContractA",
-          eventTag: "0",
+          eventId: "0",
           isWildcard: false,
         },
       ],
@@ -1901,12 +1901,12 @@ describe("FetchState unit tests for specific cases", () => {
       ~eventConfigs=[
         {
           contractName: "ContractA",
-          eventTag: "0",
+          eventId: "0",
           isWildcard: false,
         },
         {
           contractName: "Gravatar",
-          eventTag: "0",
+          eventId: "0",
           isWildcard: false,
         },
       ],
@@ -1968,12 +1968,12 @@ describe("FetchState unit tests for specific cases", () => {
       ~eventConfigs=[
         {
           contractName: "ContractA",
-          eventTag: "0",
+          eventId: "0",
           isWildcard: false,
         },
         {
           contractName: "ContractB",
-          eventTag: "0",
+          eventId: "0",
           isWildcard: false,
         },
       ],
@@ -2186,7 +2186,7 @@ describe("FetchState unit tests for specific cases", () => {
           ~eventConfigs=[
             {
               contractName: "Gravatar",
-              eventTag: "0",
+              eventId: "0",
               isWildcard: false,
             },
           ],

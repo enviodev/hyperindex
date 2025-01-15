@@ -411,8 +411,8 @@ module HandlerTypes = {
 }
 
 module type Event = {
+  let id: string // The unique identifier for the event
   let sighash: string // topic0 for Evm and rb for Fuel receipts
-  let topicCount: int // Number of topics for evm, always 0 for fuel
   let name: string
   let contractName: string
 

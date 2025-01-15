@@ -252,7 +252,7 @@ module Make = (
         ->Belt.Array.keepMap(log => {
           let topic0 = log.topics->Js.Array2.unsafe_get(0)
           switch eventRouter->EventRouter.get(
-            ~tag=EventRouter.getEvmEventTag(
+            ~tag=EventRouter.getEvmEventId(
               ~sighash=topic0->EvmTypes.Hex.toString,
               ~topicCount=log.topics->Array.length,
             ),

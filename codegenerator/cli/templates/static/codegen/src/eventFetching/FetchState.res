@@ -15,7 +15,7 @@ type blockNumberAndLogIndex = {blockNumber: int, logIndex: int}
 
 type eventConfig = {
   contractName: string,
-  eventTag: string,
+  eventId: string,
   isWildcard: bool,
 }
 
@@ -79,6 +79,21 @@ let copy = (fetchState: t) => {
     firstEventBlockNumber: fetchState.firstEventBlockNumber,
   }
 }
+
+let checkIsInSelection = (~selection, ~contractName, ~eventId, ~isWildcard) => {
+  switch selection {
+  | Normal({}) => !isWildcard
+  | Wildcard({eventConfigs}) =>
+    if isWildcard {
+      eventConfigs->Array.some(c => {
+        c.contractName === contractName && c.eventId === eventId
+      })
+    } else {
+      false
+    }
+  }
+}
+
 
 /*
 Comapritor for two events from the same chain. No need for chain id or timestamp
