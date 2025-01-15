@@ -84,7 +84,7 @@ let getSelectionConfig = (selection: FetchState.selection, ~contracts: array<Con
         )
         if isWildcard {
           wildcardLogSelection->Array.push(
-            LogSelection.makeOrThrow(~addresses=[], ~topicSelections),
+            LogSelection.make(~addresses=[], ~topicSelections),
           )
         }
       }
@@ -125,7 +125,7 @@ let getSelectionConfig = (selection: FetchState.selection, ~contracts: array<Con
             : []
         }) {
         | [] => None
-        | topicSelections => Some(LogSelection.makeOrThrow(~addresses, ~topicSelections))
+        | topicSelections => Some(LogSelection.make(~addresses, ~topicSelections))
         }
       }
     })

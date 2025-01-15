@@ -64,6 +64,10 @@ module MockEvent = (
     )
 }
 
+// TODO: Add tests for RpcWorker
+// TODO: Split changes into smaller PRs
+// TODO: Handle rpc error to adjust suggested block range
+
 let withConfig = (
   eventMod: module(Types.Event),
   eventConfig: Types.HandlerTypes.eventConfig<'a>,

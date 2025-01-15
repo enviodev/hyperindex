@@ -67,7 +67,7 @@ let getNextPage = (
       ->Ethers.JsonRpcProvider.getLogs(
         ~filter={
           address: ?addresses,
-          topics: [topics],
+          topics,
           fromBlock,
           toBlock: queryToBlock,
         }->Ethers.CombinedFilter.toFilter,
@@ -93,6 +93,9 @@ let getNextPage = (
     [queryTimoutPromise, logsPromise]
     ->Promise.race
     ->Promise.catch(err => {
+      // Might fail with message "query exceeds max results 20000, retry with the range 6000438-6000934"
+      // Ideally to handle it and respect
+
       logger->Logging.childWarn({
         "msg": "Error getting events. Will retry after backoff time",
         "backOffMilliseconds": sc.backoffMillis,

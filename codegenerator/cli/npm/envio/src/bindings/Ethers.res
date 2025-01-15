@@ -47,10 +47,6 @@ module Addresses = {
     mockAddresses[0]
 }
 
-module EventFilter = {
-  type topic = EvmTypes.Hex.t
-}
-
 module Filter = {
   type t
 }
@@ -59,7 +55,7 @@ module CombinedFilter = {
   type combinedFilterRecord = {
     address?: array<Address.t>,
     //The second element of the tuple is the
-    topics: array<array<EventFilter.topic>>,
+    topics: array<array<EvmTypes.Hex.t>>,
     fromBlock: int,
     toBlock: int,
   }
@@ -74,7 +70,7 @@ type log = {
   //Note: this is the index of the log in the transaction and should be used whenever we use "logIndex"
   address: Address.t,
   data: string,
-  topics: array<EventFilter.topic>,
+  topics: array<EvmTypes.Hex.t>,
   transactionHash: txHash,
   transactionIndex: int,
   //Note: this logIndex is the index of the log in the block, not the transaction
@@ -83,7 +79,7 @@ type log = {
 
 type transaction
 
-type minimumParseableLogData = {topics: array<EventFilter.topic>, data: string}
+type minimumParseableLogData = {topics: array<EvmTypes.Hex.t>, data: string}
 
 //Can safely convert from log to minimumParseableLogData since it contains
 //both data points required
