@@ -1,6 +1,69 @@
 open Belt
 open ChainWorker
 
+type selectionConfig = {topics: array<array<EvmTypes.Hex.t>>}
+
+let getSelectionConfig = (selection: FetchState.selection, ~contracts: array<Config.contract>) => {
+  let includedTopicSelections = []
+
+  contracts->Belt.Array.forEach(contract => {
+    contract.events->Belt.Array.forEach(event => {
+      let module(Event) = event
+      let {isWildcard, topicSelections} =
+        Event.handlerRegister->Types.HandlerTypes.Register.getEventOptions
+
+      if (
+        FetchState.checkIsInSelection(
+          ~selection,
+          ~contractName=contract.name,
+          ~eventId=Event.id,
+          ~isWildcard,
+        )
+      ) {
+        includedTopicSelections->Js.Array2.pushMany(topicSelections)->ignore
+      }
+    })
+  })
+
+  let topicSelection = switch includedTopicSelections->LogSelection.compressTopicSelections {
+  | [] =>
+    Js.Exn.raiseError(
+      "Invalid events configuration for the partition. Nothing to fetch. Please, report to the Envio team.",
+    )
+  | [topicSelection] => topicSelection
+  | _ =>
+    Js.Exn.raiseError(
+      "RPC data-source currently supports event filters only when there's a single wildcard event. Join our Discord channel, to get updates on the new releases.",
+    )
+  }
+
+  // Our integration test with hardcat would fail
+  // if we don't strip trailing empty topics
+  let topics = switch topicSelection {
+  | {topic0, topic1: [], topic2: [], topic3: []} => [topic0]
+  | {topic0, topic1, topic2: [], topic3: []} => [topic0, topic1]
+  | {topic0, topic1, topic2, topic3: []} => [topic0, topic1, topic2]
+  | {topic0, topic1, topic2, topic3} => [topic0, topic1, topic2, topic3]
+  }
+
+  {
+    topics: topics,
+  }
+}
+
+let memoGetSelectionConfig = (~contracts) => {
+  let cache = Utils.WeakMap.make()
+  selection =>
+    switch cache->Utils.WeakMap.get(selection) {
+    | Some(c) => c
+    | None => {
+        let c = selection->getSelectionConfig(~contracts)
+        let _ = cache->Utils.WeakMap.set(selection, c)
+        c
+      }
+    }
+}
+
 exception InvalidTransactionField({message: string})
 
 let makeThrowingGetEventBlock = (~getBlock) => {
@@ -79,48 +142,11 @@ module Make = (
     let eventRouter: EventRouter.t<module(Types.InternalEvent)>
   },
 ): S => {
-  let contractNameAbiMapping = Js.Dict.empty()
-  let wildcardTopics = []
-  let nonWildcardTopics = []
-
-  T.contracts->Belt.Array.forEach(contract => {
-    contractNameAbiMapping->Js.Dict.set(contract.name, contract.abi)
-
-    contract.events->Belt.Array.forEach(event => {
-      let module(Event) = event
-      let {isWildcard, topicSelections} =
-        Event.handlerRegister->Types.HandlerTypes.Register.getEventOptions
-
-      let logger = Logging.createChild(
-        ~params={
-          "chainId": T.chain->ChainMap.Chain.toChainId,
-          "contractName": contract.name,
-          "eventName": Event.name,
-        },
-      )
-
-      topicSelections->Belt.Array.forEach(
-        topicSelection => {
-          if topicSelection->LogSelection.hasFilters {
-            %raw(`null`)->ErrorHandling.mkLogAndRaise(
-              ~msg="RPC worker does not yet support event filters",
-              ~logger,
-            )
-          }
-
-          if isWildcard {
-            let _ = wildcardTopics->Js.Array2.pushMany(topicSelection.topic0)
-          } else {
-            let _ = nonWildcardTopics->Js.Array2.pushMany(topicSelection.topic0)
-          }
-        },
-      )
-    })
-  })
-
   let name = "RPC"
   let chain = T.chain
   let eventRouter = T.eventRouter
+
+  let getSelectionConfig = memoGetSelectionConfig(~contracts=T.contracts)
 
   let suggestedBlockIntervals = Js.Dict.empty()
 
@@ -192,6 +218,11 @@ module Make = (
     ),
   )
 
+  let contractNameAbiMapping = Js.Dict.empty()
+  T.contracts->Belt.Array.forEach(contract => {
+    contractNameAbiMapping->Js.Dict.set(contract.name, contract.abi)
+  })
+
   let fetchBlockRange = async (
     ~fromBlock,
     ~toBlock,
@@ -225,13 +256,10 @@ module Make = (
           ? blockLoader->LazyLoader.get(fromBlock - 1)->Promise.thenResolve(res => res->Some)
           : Promise.resolve(None)
 
-      let topics = switch selection {
-        | Wildcard({}) => wildcardTopics
-        | Normal({}) => nonWildcardTopics
-      }
+      let {topics} = getSelectionConfig(selection)
       let addresses = switch contractAddressMapping->ContractAddressingMap.getAllAddresses {
-        | [] => None
-        | addresses => Some(addresses)
+      | [] => None
+      | addresses => Some(addresses)
       }
 
       let {logs, nextSuggestedBlockInterval, latestFetchedBlock} = await EventFetching.getNextPage(

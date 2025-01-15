@@ -13,7 +13,7 @@ import {
 } from "./helpers/node-and-contracts";
 import { deployContracts } from "./helpers/setupNodeAndContracts";
 
-import { runMigrationsNoLogs, createSql, EventVariants } from "./helpers/utils";
+import { runMigrationsNoLogs, createSql } from "./helpers/utils";
 
 import {
   getLocalChainConfig,
