@@ -13,7 +13,8 @@ let mockAddress1 = TestHelpers.Addresses.mockAddresses[1]->Option.getExn
 let mockAddress2 = TestHelpers.Addresses.mockAddresses[2]->Option.getExn
 let mockAddress3 = TestHelpers.Addresses.mockAddresses[3]->Option.getExn
 let mockAddress4 = TestHelpers.Addresses.mockAddresses[4]->Option.getExn
-let mockFactoryAddress = TestHelpers.Addresses.mockAddresses[5]->Option.getExn
+let mockAddress5 = TestHelpers.Addresses.mockAddresses[5]->Option.getExn
+let mockFactoryAddress = TestHelpers.Addresses.mockAddresses[6]->Option.getExn
 
 let getTimestamp = (~blockNumber) => blockNumber * 15
 let getBlockData = (~blockNumber): FetchState.blockNumberAndTimestamp => {
@@ -69,17 +70,23 @@ let mockEvent = (~blockNumber, ~logIndex=0, ~chainId=1): Internal.eventItem => {
 
 let makeInitial = () => {
   FetchState.make(
-    ~staticContracts=[("Gravatar", mockAddress0)],
+    ~eventConfigs=[
+      {
+        contractName: "Gravatar",
+        eventTag: "0",
+        isWildcard: false,
+      },
+    ],
+    ~staticContracts=Js.Dict.fromArray([("Gravatar", [mockAddress0])]),
     ~dynamicContracts=[],
     ~startBlock=0,
     ~endBlock=None,
     ~maxAddrInPartition=3,
-    ~hasWildcard=false,
   )
 }
 
 describe("FetchState.make", () => {
-  it("Creates FetchState with empty partition when no addresses provided (for wildcard)", () => {
+  it("Creates FetchState with a single static address", () => {
     let fetchState = makeInitial()
 
     Assert.deepEqual(
@@ -113,16 +120,22 @@ describe("FetchState.make", () => {
     )
   })
 
-  it("Panics without anything to fetch", () => {
+  it("Panics with nothing to fetch", () => {
     Assert.throws(
       () => {
         FetchState.make(
-          ~staticContracts=[],
+          ~eventConfigs=[
+            {
+              contractName: "Gravatar",
+              eventTag: "0",
+              isWildcard: false,
+            },
+          ],
+          ~staticContracts=Js.Dict.empty(),
           ~dynamicContracts=[],
           ~startBlock=0,
           ~endBlock=None,
           ~maxAddrInPartition=2,
-          ~hasWildcard=false,
         )
       },
       ~error={
@@ -137,12 +150,18 @@ describe("FetchState.make", () => {
     () => {
       let dc = makeDynContractRegistration(~blockNumber=0, ~contractAddress=mockAddress2)
       let fetchState = FetchState.make(
-        ~staticContracts=[("ContractA", mockAddress1)],
+        ~eventConfigs=[
+          {
+            contractName: "Gravatar",
+            eventTag: "0",
+            isWildcard: false,
+          },
+        ],
+        ~staticContracts=Js.Dict.fromArray([("Gravatar", [mockAddress1])]),
         ~dynamicContracts=[dc],
         ~startBlock=0,
         ~endBlock=None,
         ~maxAddrInPartition=2,
-        ~hasWildcard=false,
       )
 
       Assert.deepEqual(
@@ -158,7 +177,7 @@ describe("FetchState.make", () => {
               },
               selection: Normal({}),
               contractAddressMapping: ContractAddressingMap.fromArray([
-                (mockAddress1, "ContractA"),
+                (mockAddress1, "Gravatar"),
                 (mockAddress2, "Gravatar"),
               ]),
               dynamicContracts: [dc],
@@ -176,6 +195,7 @@ describe("FetchState.make", () => {
           endBlock: None,
           firstEventBlockNumber: None,
         },
+        ~message=`Should create only one partition`,
       )
     },
   )
@@ -185,12 +205,23 @@ describe("FetchState.make", () => {
     () => {
       let dc = makeDynContractRegistration(~blockNumber=0, ~contractAddress=mockAddress2)
       let fetchState = FetchState.make(
-        ~staticContracts=[("ContractA", mockAddress1)],
+        ~eventConfigs=[
+          {
+            contractName: "ContractA",
+            eventTag: "0",
+            isWildcard: false,
+          },
+          {
+            contractName: "Gravatar",
+            eventTag: "0",
+            isWildcard: false,
+          },
+        ],
+        ~staticContracts=Js.Dict.fromArray([("ContractA", [mockAddress1])]),
         ~dynamicContracts=[dc],
         ~startBlock=0,
         ~endBlock=None,
         ~maxAddrInPartition=1,
-        ~hasWildcard=false,
       )
 
       Assert.deepEqual(
@@ -252,12 +283,23 @@ describe("FetchState.make", () => {
       let dc1 = makeDynContractRegistration(~blockNumber=0, ~contractAddress=mockAddress3)
       let dc2 = makeDynContractRegistration(~blockNumber=0, ~contractAddress=mockAddress4)
       let fetchState = FetchState.make(
-        ~staticContracts=[("ContractA", mockAddress1), ("ContractA", mockAddress2)],
+        ~eventConfigs=[
+          {
+            contractName: "ContractA",
+            eventTag: "0",
+            isWildcard: false,
+          },
+          {
+            contractName: "Gravatar",
+            eventTag: "0",
+            isWildcard: false,
+          },
+        ],
+        ~staticContracts=Js.Dict.fromArray([("ContractA", [mockAddress1, mockAddress2])]),
         ~dynamicContracts=[dc1, dc2],
         ~startBlock=0,
         ~endBlock=None,
         ~maxAddrInPartition=1,
-        ~hasWildcard=false,
       )
 
       Assert.deepEqual(
@@ -393,6 +435,116 @@ describe("FetchState.registerDynamicContracts", () => {
             },
           ]),
         },
+      )
+    },
+  )
+
+  it(
+    "Creates FetchState with wildcard and normal events. Addresses not belonging to event configs should be skipped (pre-registration case)",
+    () => {
+      let fetchState = FetchState.make(
+        ~eventConfigs=[
+          {
+            eventTag: "wildcard1",
+            contractName: "Gravatar",
+            isWildcard: true,
+          },
+          {
+            eventTag: "wildcard2",
+            contractName: "Gravatar",
+            isWildcard: true,
+          },
+          {
+            eventTag: "normal1",
+            contractName: "NftFactory",
+            isWildcard: false,
+          },
+        ],
+        ~staticContracts=Js.Dict.fromArray([
+          ("NftFactory", [mockAddress0, mockAddress1]),
+          ("Gravatar", [mockAddress2, mockAddress3]),
+        ]),
+        ~dynamicContracts=[
+          makeDynContractRegistration(
+            ~contractType=Gravatar,
+            ~blockNumber=0,
+            ~contractAddress=mockAddress4,
+          ),
+          makeDynContractRegistration(
+            ~contractType=NftFactory,
+            ~blockNumber=0,
+            ~contractAddress=mockAddress5,
+          ),
+        ],
+        ~endBlock=None,
+        ~startBlock=0,
+        ~maxAddrInPartition=1000,
+      )
+
+      Assert.deepEqual(
+        fetchState,
+        {
+          partitions: [
+            {
+              id: "0",
+              status: {fetchingStateId: None},
+              latestFetchedBlock: {
+                blockNumber: 0,
+                blockTimestamp: 0,
+              },
+              selection: Wildcard({
+                eventConfigs: [
+                  {
+                    eventTag: "wildcard1",
+                    contractName: "Gravatar",
+                    isWildcard: true,
+                  },
+                  {
+                    eventTag: "wildcard2",
+                    contractName: "Gravatar",
+                    isWildcard: true,
+                  },
+                ],
+              }),
+              contractAddressMapping: ContractAddressingMap.make(),
+              dynamicContracts: [],
+              fetchedEventQueue: [],
+            },
+            {
+              id: "1",
+              status: {fetchingStateId: None},
+              latestFetchedBlock: {
+                blockNumber: 0,
+                blockTimestamp: 0,
+              },
+              selection: Normal({}),
+              contractAddressMapping: ContractAddressingMap.fromArray([
+                (mockAddress0, "NftFactory"),
+                (mockAddress1, "NftFactory"),
+                (mockAddress5, "NftFactory"),
+              ]),
+              dynamicContracts: [
+                makeDynContractRegistration(
+                  ~contractType=NftFactory,
+                  ~blockNumber=0,
+                  ~contractAddress=mockAddress5,
+                ),
+              ],
+              fetchedEventQueue: [],
+            },
+          ],
+          endBlock: None,
+          nextPartitionIndex: 2,
+          isFetchingAtHead: false,
+          maxAddrInPartition: 1000,
+          latestFullyFetchedBlock: {
+            blockNumber: 0,
+            blockTimestamp: 0,
+          },
+          queueSize: 0,
+          firstEventBlockNumber: None,
+        },
+        ~message=`The static addresses for the Gravatar contract should be skipped, since they don't have non-wildcard event configs`,
       )
     },
   )
@@ -1017,18 +1169,28 @@ describe("FetchState.getNextQuery & integration", () => {
   })
 
   it("Wildcard partition never merges to another one", () => {
-    let fetchState =
-      FetchState.make(
-        ~staticContracts=[("ContractA", mockAddress1)],
-        ~dynamicContracts=[],
-        ~startBlock=0,
-        ~endBlock=None,
-        ~maxAddrInPartition=2,
-        ~hasWildcard=true,
-      )->FetchState.registerDynamicContracts(
-        [makeDynContractRegistration(~blockNumber=2, ~contractAddress=mockAddress2)],
-        ~currentBlockHeight=10,
-      )
+    let fetchState = FetchState.make(
+      ~eventConfigs=[
+        {
+          contractName: "ContractA",
+          eventTag: "0",
+          isWildcard: false,
+        },
+        {
+          contractName: "ContractA",
+          eventTag: "wildcard",
+          isWildcard: true,
+        },
+      ],
+      ~staticContracts=Js.Dict.fromArray([("ContractA", [mockAddress1])]),
+      ~dynamicContracts=[],
+      ~startBlock=0,
+      ~endBlock=None,
+      ~maxAddrInPartition=2,
+    )->FetchState.registerDynamicContracts(
+      [makeDynContractRegistration(~blockNumber=2, ~contractAddress=mockAddress2)],
+      ~currentBlockHeight=10,
+    )
 
     Assert.deepEqual(fetchState.partitions->Array.length, 3)
 
@@ -1046,7 +1208,15 @@ describe("FetchState.getNextQuery & integration", () => {
         {
           partitionId: "0",
           target: Head,
-          selection: Wildcard({}),
+          selection: Wildcard({
+            eventConfigs: [
+              {
+                contractName: "ContractA",
+                eventTag: "wildcard",
+                isWildcard: true,
+              },
+            ],
+          }),
           contractAddressMapping: ContractAddressingMap.make(),
           fromBlock: 0,
         },
@@ -1148,14 +1318,21 @@ describe("FetchState.getNextQuery & integration", () => {
   })
 
   it("Keeps wildcard partition on rollback", () => {
+    let eventConfigs = [
+      {
+        FetchState.contractName: "ContractA",
+        eventTag: "wildcard",
+        isWildcard: true,
+      },
+    ]
     let fetchState =
       FetchState.make(
-        ~staticContracts=[],
+        ~eventConfigs,
+        ~staticContracts=Js.Dict.empty(),
         ~dynamicContracts=[],
         ~startBlock=0,
         ~endBlock=None,
         ~maxAddrInPartition=3,
-        ~hasWildcard=true,
       )->FetchState.registerDynamicContracts(
         [makeDynContractRegistration(~blockNumber=2, ~contractAddress=mockAddress2)],
         ~currentBlockHeight=10,
@@ -1167,7 +1344,9 @@ describe("FetchState.getNextQuery & integration", () => {
         {
           partitionId: "0",
           target: Head,
-          selection: Wildcard({}),
+          selection: Wildcard({
+            eventConfigs: eventConfigs,
+          }),
           contractAddressMapping: ContractAddressingMap.make(),
           fromBlock: 0,
         },
@@ -1199,7 +1378,7 @@ describe("FetchState.getNextQuery & integration", () => {
               blockNumber: 0,
               blockTimestamp: 0,
             },
-            selection: Wildcard({}),
+            selection: Wildcard({eventConfigs: eventConfigs}),
             contractAddressMapping: ContractAddressingMap.make(),
             dynamicContracts: [],
             fetchedEventQueue: [],
@@ -1321,18 +1500,37 @@ describe("FetchState unit tests for specific cases", () => {
     // another reached max queue size
     let fetchState =
       FetchState.make(
-        ~staticContracts=[("ContractA", mockAddress0)],
+        ~eventConfigs=[
+          {
+            contractName: "ContractA",
+            eventTag: "0",
+            isWildcard: false,
+          },
+          {
+            contractName: "ContractA",
+            eventTag: "wildcard",
+            isWildcard: true,
+          },
+        ],
+        ~staticContracts=Js.Dict.fromArray([("ContractA", [mockAddress0])]),
         ~dynamicContracts=[],
         ~startBlock=0,
         ~endBlock=None,
         ~maxAddrInPartition=2,
-        ~hasWildcard=true,
       )
       ->FetchState.setQueryResponse(
         ~query={
           partitionId: "0",
           target: Head,
-          selection: Wildcard({}),
+          selection: Wildcard({
+            eventConfigs: [
+              {
+                contractName: "ContractA",
+                eventTag: "wildcard",
+                isWildcard: true,
+              },
+            ],
+          }),
           contractAddressMapping: ContractAddressingMap.make(),
           fromBlock: 0,
         },
@@ -1366,7 +1564,15 @@ describe("FetchState unit tests for specific cases", () => {
         {
           partitionId: "0",
           target: Head,
-          selection: Wildcard({}),
+          selection: Wildcard({
+            eventConfigs: [
+              {
+                contractName: "ContractA",
+                eventTag: "wildcard",
+                isWildcard: true,
+              },
+            ],
+          }),
           contractAddressMapping: ContractAddressingMap.make(),
           fromBlock: 2,
         },
@@ -1399,12 +1605,18 @@ describe("FetchState unit tests for specific cases", () => {
     // until all partitions reached the head
     let fetchState =
       FetchState.make(
-        ~staticContracts=[("ContractA", mockAddress0), ("ContractA", mockAddress1)],
+        ~eventConfigs=[
+          {
+            contractName: "ContractA",
+            eventTag: "0",
+            isWildcard: false,
+          },
+        ],
+        ~staticContracts=Js.Dict.fromArray([("ContractA", [mockAddress0, mockAddress1])]),
         ~dynamicContracts=[],
         ~startBlock=0,
         ~endBlock=None,
         ~maxAddrInPartition=1,
-        ~hasWildcard=false,
       )
       ->FetchState.setQueryResponse(
         ~query={
@@ -1570,12 +1782,18 @@ describe("FetchState unit tests for specific cases", () => {
 
   it("Returns NoItem when there is an empty partition at block 0", () => {
     let fetchState = FetchState.make(
-      ~staticContracts=[("ContractA", mockAddress1), ("ContractB", mockAddress2)],
+      ~eventConfigs=[
+        {
+          contractName: "ContractA",
+          eventTag: "0",
+          isWildcard: false,
+        },
+      ],
+      ~staticContracts=Js.Dict.fromArray([("ContractA", [mockAddress1, mockAddress2])]),
       ~dynamicContracts=[],
       ~startBlock=0,
       ~endBlock=None,
       ~maxAddrInPartition=1,
-      ~hasWildcard=false,
     )
 
     Assert.deepEqual(
@@ -1679,20 +1897,36 @@ describe("FetchState unit tests for specific cases", () => {
   })
 
   it("Check contains contract address", () => {
-    let fetchState =
-      FetchState.make(
-        ~staticContracts=[("ContractA", mockAddress1)],
-        ~dynamicContracts=[
-          makeDynContractRegistration(~contractAddress=mockAddress2, ~blockNumber=1),
-        ],
-        ~startBlock=0,
-        ~endBlock=None,
-        ~maxAddrInPartition=2,
-        ~hasWildcard=false,
-      )->FetchState.registerDynamicContracts(
-        [makeDynContractRegistration(~contractAddress=mockAddress3, ~blockNumber=2)],
-        ~currentBlockHeight=10,
-      )
+    let fetchState = FetchState.make(
+      ~eventConfigs=[
+        {
+          contractName: "ContractA",
+          eventTag: "0",
+          isWildcard: false,
+        },
+        {
+          contractName: "Gravatar",
+          eventTag: "0",
+          isWildcard: false,
+        },
+      ],
+      ~staticContracts=Js.Dict.fromArray([("ContractA", [mockAddress1])]),
+      ~dynamicContracts=[
+        makeDynContractRegistration(~contractAddress=mockAddress2, ~blockNumber=1),
+      ],
+      ~startBlock=0,
+      ~endBlock=None,
+      ~maxAddrInPartition=2,
+    )->FetchState.registerDynamicContracts(
+      [
+        makeDynContractRegistration(
+          ~contractType=NftFactory,
+          ~contractAddress=mockAddress3,
+          ~blockNumber=2,
+        ),
+      ],
+      ~currentBlockHeight=10,
+    )
 
     Assert.equal(
       fetchState->FetchState.checkContainsRegisteredContractAddress(
@@ -1713,10 +1947,11 @@ describe("FetchState unit tests for specific cases", () => {
     Assert.equal(
       fetchState->FetchState.checkContainsRegisteredContractAddress(
         ~contractAddress=mockAddress3,
-        ~contractName=(Gravatar :> string),
+        ~contractName=(NftFactory :> string),
         ~chainId=1,
       ),
       true,
+      ~message=`Should be able to register an event for a new contract, not defined in the initial event configs`,
     )
     Assert.equal(
       fetchState->FetchState.checkContainsRegisteredContractAddress(
@@ -1730,12 +1965,26 @@ describe("FetchState unit tests for specific cases", () => {
 
   it("Should be fetching at head only when all partitions are fetching at head", () => {
     let fetchState = FetchState.make(
-      ~staticContracts=[("ContractA", mockAddress1), ("ContractB", mockAddress2)],
+      ~eventConfigs=[
+        {
+          contractName: "ContractA",
+          eventTag: "0",
+          isWildcard: false,
+        },
+        {
+          contractName: "ContractB",
+          eventTag: "0",
+          isWildcard: false,
+        },
+      ],
+      ~staticContracts=Js.Dict.fromArray([
+        ("ContractA", [mockAddress1]),
+        ("ContractB", [mockAddress2]),
+      ]),
       ~dynamicContracts=[],
       ~startBlock=0,
       ~endBlock=None,
       ~maxAddrInPartition=1,
-      ~hasWildcard=false,
     )
 
     let q0 = {
@@ -1934,12 +2183,18 @@ describe("FetchState unit tests for specific cases", () => {
 
       let fetchState =
         FetchState.make(
-          ~staticContracts=[((Gravatar :> string), mockAddress1)],
+          ~eventConfigs=[
+            {
+              contractName: "Gravatar",
+              eventTag: "0",
+              isWildcard: false,
+            },
+          ],
+          ~staticContracts=Js.Dict.fromArray([("Gravatar", [mockAddress1])]),
           ~dynamicContracts=[],
           ~startBlock=0,
           ~endBlock=None,
           ~maxAddrInPartition=2,
-          ~hasWildcard=false,
         )
         ->FetchState.setQueryResponse(
           ~query={

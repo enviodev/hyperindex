@@ -354,7 +354,15 @@ describe("HyperSyncWorker - getSelectionConfig", () => {
       ]
 
       let normalSelectionConfig = Normal({})->HyperSyncWorker.getSelectionConfig(~contracts)
-      let wildcardSelectionConfig = Wildcard({})->HyperSyncWorker.getSelectionConfig(~contracts)
+      let wildcardSelectionConfig = Wildcard({
+        eventConfigs: [
+          {
+            contractName: "Bar",
+            eventTag: "0", // FIXME: Should be failing
+            isWildcard: true,
+          },
+        ],
+      })->HyperSyncWorker.getSelectionConfig(~contracts)
 
       Assert.deepEqual(
         normalSelectionConfig,

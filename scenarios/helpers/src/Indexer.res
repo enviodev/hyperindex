@@ -68,8 +68,14 @@ module type S = {
   }
 
   module FetchState: {
+    type eventConfig = {
+      contractName: string,
+      eventTag: string,
+      isWildcard: bool,
+    }
+
     type selection =
-      | Wildcard({})
+      | Wildcard({eventConfigs: array<eventConfig>})
       | Normal({})
 
     type queryTarget =
