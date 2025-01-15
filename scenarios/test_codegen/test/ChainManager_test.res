@@ -20,13 +20,20 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
       Belt.Int.fromFloat(Js.Math.random() *. float_of_int(max - min + 1) +. float_of_int(min))
     }
 
+    let eventConfigs = [
+      {
+        FetchState.contractName: "Gravatar",
+        eventTag: "0",
+        isWildcard: true,
+      },
+    ]
     let fetcherStateInit: FetchState.t = FetchState.make(
       ~maxAddrInPartition=Env.maxAddrInPartition,
       ~endBlock=None,
-      ~staticContracts=[],
+      ~staticContracts=Js.Dict.empty(),
+      ~eventConfigs,
       ~dynamicContracts=[],
       ~startBlock=0,
-      ~hasWildcard=true,
     )
 
     let fetchState = ref(fetcherStateInit)
@@ -81,7 +88,9 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
                 partitionId: "0",
                 fromBlock: 0,
                 target: Head,
-                selection: Wildcard({}),
+                selection: Wildcard({
+                  eventConfigs: eventConfigs,
+                }),
                 contractAddressMapping: ContractAddressingMap.make(),
               },
               ~latestFetchedBlock={
@@ -105,7 +114,9 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
                   partitionId: "0",
                   fromBlock: 0,
                   target: Head,
-                  selection: Wildcard({}),
+                  selection: Wildcard({
+                    eventConfigs: eventConfigs,
+                  }),
                   contractAddressMapping: ContractAddressingMap.make(),
                 },
                 ~latestFetchedBlock={

@@ -13,11 +13,20 @@ type blockNumberAndTimestamp = {
 
 type blockNumberAndLogIndex = {blockNumber: int, logIndex: int}
 
-type status = {mutable fetchingStateId: option<int>}
+type eventConfig = {
+  contractName: string,
+  eventTag: string,
+  isWildcard: bool,
+}
 
+// The variant items must be objects, since they are used as WeakMap keys in workers
 type selection =
-  | Wildcard({})
+  | Wildcard({eventConfigs: array<eventConfig>})
+  // Doesn't support fine-tuned partition by set of events,
+  // so it should select all non-wildcard events
   | Normal({})
+
+type status = {mutable fetchingStateId: option<int>}
 
 /**
 A state that holds a queue of events and data regarding what to fetch next
@@ -291,17 +300,12 @@ let updateInternal = (
 
 let normalSelection = Normal({})
 
-let makeNormalPartition = (
+let makeDcPartition = (
   ~partitionIndex,
   ~latestFetchedBlock,
   ~dynamicContracts: array<TablesStatic.DynamicContractRegistry.t>=[],
-  ~staticContracts=[],
 ) => {
   let contractAddressMapping = ContractAddressingMap.make()
-
-  staticContracts->Array.forEach(((contractName, address)) => {
-    contractAddressMapping->ContractAddressingMap.addAddress(~name=contractName, ~address)
-  })
 
   dynamicContracts->Array.forEach(dc => {
     contractAddressMapping->ContractAddressingMap.addAddress(
@@ -347,7 +351,7 @@ let registerDynamicContracts = (
     dcsByStartBlock
     ->Js.Dict.entries
     ->Array.mapWithIndex((index, (startBlockKey, dcs)) => {
-      makeNormalPartition(
+      makeDcPartition(
         ~partitionIndex=fetchState.nextPartitionIndex + index,
         ~dynamicContracts=dcs,
         ~latestFetchedBlock={
@@ -759,9 +763,9 @@ Instantiates a fetch state with partitions for initial addresses
 let make = (
   ~startBlock,
   ~endBlock,
-  ~staticContracts,
-  ~dynamicContracts,
-  ~hasWildcard,
+  ~eventConfigs: array<eventConfig>,
+  ~staticContracts: dict<array<Address.t>>,
+  ~dynamicContracts: array<TablesStatic.DynamicContractRegistry.t>,
   ~maxAddrInPartition,
 ): t => {
   let latestFetchedBlock = {
@@ -770,68 +774,93 @@ let make = (
     blockNumber: Pervasives.max(startBlock - 1, 0),
   }
 
+  let wildcardEventConfigs = []
+  let normalEventConfigs = []
+  let contractNamesWithNormalEvents = Utils.Set.make()
+
+  eventConfigs->Array.forEach(ec => {
+    if ec.isWildcard {
+      wildcardEventConfigs->Array.push(ec)
+    } else {
+      normalEventConfigs->Array.push(ec)
+      contractNamesWithNormalEvents->Utils.Set.add(ec.contractName)->ignore
+    }
+  })
+
   let partitions = []
 
-  if hasWildcard {
+  if wildcardEventConfigs->Array.length > 0 {
     partitions->Array.push({
       id: partitions->Array.length->Int.toString,
       status: {
         fetchingStateId: None,
       },
       latestFetchedBlock,
-      selection: Wildcard({}),
+      selection: Wildcard({
+        eventConfigs: wildcardEventConfigs,
+      }),
       contractAddressMapping: ContractAddressingMap.make(),
       dynamicContracts: [],
       fetchedEventQueue: [],
     })
   }
 
-  let addNormalPartition = (~staticContracts=?, ~dynamicContracts=?) => {
-    partitions->Array.push(
-      makeNormalPartition(
-        ~partitionIndex=partitions->Array.length,
-        ~staticContracts?,
-        ~dynamicContracts?,
-        ~latestFetchedBlock,
-      ),
-    )
+  let makePendingNormalPartition = () => {
+    {
+      id: partitions->Array.length->Int.toString,
+      status: {
+        fetchingStateId: None,
+      },
+      latestFetchedBlock,
+      selection: normalSelection,
+      contractAddressMapping: ContractAddressingMap.make(),
+      dynamicContracts: [],
+      fetchedEventQueue: [],
+    }
   }
 
-  let numAddresses = staticContracts->Array.length + dynamicContracts->Array.length
-  if numAddresses === 0 {
-    ()
-  } else if numAddresses <= maxAddrInPartition {
-    addNormalPartition(~staticContracts, ~dynamicContracts)
-  } else {
-    let staticContractsClone = staticContracts->Array.copy
+  let pendingNormalPartition = ref(makePendingNormalPartition())
 
-    //Chunk static contract addresses (clone) until it is under the size of 1 partition
-    while staticContractsClone->Array.length > maxAddrInPartition {
-      let staticContractsChunk =
-        staticContractsClone->Js.Array2.removeCountInPlace(~pos=0, ~count=maxAddrInPartition)
-
-      addNormalPartition(~staticContracts=staticContractsChunk)
-    }
-
-    let dynamicContractsClone = dynamicContracts->Array.copy
-
-    //Add the rest of the static addresses filling the remainder of the partition with dynamic contract
-    //registrations
-    addNormalPartition(
-      ~staticContracts=staticContractsClone,
-      ~dynamicContracts=dynamicContractsClone->Js.Array2.removeCountInPlace(
-        ~pos=0,
-        ~count=maxAddrInPartition - staticContractsClone->Array.length,
-      ),
+  let registerAddress = (contractName, address, ~dc=?) => {
+    let pendingPartition = pendingNormalPartition.contents
+    pendingPartition.contractAddressMapping->ContractAddressingMap.addAddress(
+      ~name=contractName,
+      ~address,
     )
-
-    //Make partitions with all remaining dynamic contract registrations
-    while dynamicContractsClone->Array.length > 0 {
-      let dynamicContractsChunk =
-        dynamicContractsClone->Js.Array2.removeCountInPlace(~pos=0, ~count=maxAddrInPartition)
-
-      addNormalPartition(~dynamicContracts=dynamicContractsChunk)
+    switch dc {
+    | Some(dc) => pendingPartition.dynamicContracts->Array.push(dc)
+    | None => ()
     }
+    if (
+      pendingPartition.contractAddressMapping->ContractAddressingMap.addressCount ===
+        maxAddrInPartition
+    ) {
+      partitions->Array.push(pendingPartition)
+      pendingNormalPartition := makePendingNormalPartition()
+    }
+  }
+
+  staticContracts
+  ->Js.Dict.entries
+  ->Array.forEach(((contractName, addresses)) => {
+    if contractNamesWithNormalEvents->Utils.Set.has(contractName) {
+      addresses->Array.forEach(a => {
+        registerAddress(contractName, a)
+      })
+    }
+  })
+
+  dynamicContracts->Array.forEach(dc => {
+    let contractName = (dc.contractType :> string)
+    if contractNamesWithNormalEvents->Utils.Set.has(contractName) {
+      registerAddress(contractName, dc.contractAddress, ~dc)
+    }
+  })
+
+  if (
+    pendingNormalPartition.contents.contractAddressMapping->ContractAddressingMap.addressCount > 0
+  ) {
+    partitions->Array.push(pendingNormalPartition.contents)
   }
 
   if partitions->Array.length === 0 {
