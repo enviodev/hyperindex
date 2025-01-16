@@ -1347,11 +1347,19 @@ describe("FetchState.getNextQuery & integration", () => {
   })
 
   it("Keeps wildcard partition on rollback", () => {
-    let eventConfigs = [
+    let wildcardEventConfigs = [
       {
         FetchState.contractName: "ContractA",
         eventId: "wildcard",
         isWildcard: true,
+      },
+    ]
+    let eventConfigs = [
+      ...wildcardEventConfigs,
+      {
+        FetchState.contractName: "Greeter",
+        eventId: "0",
+        isWildcard: false,
       },
     ]
     let fetchState =
@@ -1375,7 +1383,7 @@ describe("FetchState.getNextQuery & integration", () => {
           target: Head,
           selection: {
             isWildcard: true,
-            eventConfigs,
+            eventConfigs: wildcardEventConfigs,
           },
           contractAddressMapping: ContractAddressingMap.make(),
           fromBlock: 0,
@@ -1410,7 +1418,7 @@ describe("FetchState.getNextQuery & integration", () => {
             },
             selection: {
               isWildcard: true,
-              eventConfigs,
+              eventConfigs: wildcardEventConfigs,
             },
             contractAddressMapping: ContractAddressingMap.make(),
             dynamicContracts: [],
@@ -1880,7 +1888,13 @@ describe("FetchState unit tests for specific cases", () => {
 
     let normalSelection: FetchState.selection = {
       isWildcard: false,
-      eventConfigs: [],
+      eventConfigs: [
+        {
+          eventId: "0",
+          contractName: "Greeter",
+          isWildcard: false,
+        },
+      ],
     }
 
     let fetchState: FetchState.t = {

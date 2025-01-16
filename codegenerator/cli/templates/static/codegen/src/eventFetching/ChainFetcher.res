@@ -53,8 +53,16 @@ let make = (
 
   let isPreRegisteringDynamicContracts = dynamicContractPreRegistration->Option.isSome
 
+  // We don't need the router itself, but only validation logic,
+  // since now event router is created for selection of events
+  // and validation doesn't work correctly in routers.
+  // Ideally to split it into two different parts.
+  let eventRouter = EventRouter.empty()
+
+  // Aggregate events we want to fetch
   let staticContracts = Js.Dict.empty()
   let eventConfigs: array<FetchState.eventConfig> = []
+
   chainConfig.contracts->Array.forEach(contract => {
     let contractName = contract.name
 
@@ -63,6 +71,16 @@ let make = (
 
       let {isWildcard, preRegisterDynamicContracts} =
         Event.handlerRegister->Types.HandlerTypes.Register.getEventOptions
+
+      // Should validate the events
+      eventRouter->EventRouter.addOrThrow(
+        Event.id,
+        (),
+        ~contractName,
+        ~chain=chainConfig.chain,
+        ~eventName=Event.name,
+        ~isWildcard,
+      )
 
       // Filter out non-preRegistration events on preRegistration phase
       // so we don't care about it in fetch state and workers anymore

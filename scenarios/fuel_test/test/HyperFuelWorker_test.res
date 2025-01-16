@@ -503,7 +503,7 @@ describe("HyperFuelWorker - getNormalRecieptsSelection", () => {
   })
 
   it(
-    "Shouldn't fail with contracts having the same wildcard and non-wildcard event. This should be handled by FetchState.make",
+    "Shouldn't fail with contracts having the same wildcard and non-wildcard event. This should be handled when we create FetchState",
     () => {
       let getNormalRecieptsSelection = mock(
         ~contracts=[
