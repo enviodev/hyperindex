@@ -50,6 +50,8 @@ module FieldValue = {
 
 module Operator = {
   type t = Eq | Gt
+
+  let values = [Eq, Gt]
 }
 
 module SingleIndex = {

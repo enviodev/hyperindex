@@ -102,7 +102,7 @@ let updateEntityIndicesMockDb = (
   ->Utils.magic
   ->Js.Dict.entries
   ->Array.forEach(((fieldName, fieldValue)) => {
-    [TableIndices.Operator.Eq, Gt]->Array.forEach(operator => {
+    TableIndices.Operator.values->Array.forEach(operator => {
       let index = TableIndices.Index.makeSingle(~fieldName, ~fieldValue, ~operator)
       mockDbTable->InMemoryTable.Entity.addIdToIndex(~index, ~entityId)
       entityIndices->Utils.Set.add(index)->ignore

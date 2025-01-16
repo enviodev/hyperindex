@@ -14,7 +14,6 @@ module BatchQueue = {
     fieldName: string,
     fieldValue: fieldValue,
     fieldValueSchema: S.t<fieldValue>,
-    operator: TableIndices.Operator.t,
     resolve: array<Entities.internalEntity> => unit,
     reject: exn => unit,
     mutable promise: promise<array<Entities.internalEntity>>,
@@ -78,9 +77,6 @@ module BatchQueue = {
                 Utils.magic: S.t<'fieldValue> => S.t<fieldValue>
               ),
               fieldValue: fieldValue->(Utils.magic: 'fieldValue => fieldValue),
-              operator: switch index {
-              | Single({operator}) => operator
-              },
               resolve,
               reject,
               promise: %raw(`null`),
@@ -182,11 +178,13 @@ let executeLoadEntitiesByIndex = async (
     await lookupIndexesNotInMemory->Utils.Array.awaitEach(async ({
       fieldName,
       fieldValue,
+      index,
       fieldValueSchema,
-      operator,
     }) => {
       let entities = await loadLayer.loadEntitiesByField(
-        ~operator,
+        ~operator=switch index {
+        | Single({operator}) => operator
+        },
         ~entityMod,
         ~fieldName,
         ~fieldValue,
