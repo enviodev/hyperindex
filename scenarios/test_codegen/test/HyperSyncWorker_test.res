@@ -64,10 +64,6 @@ module MockEvent = (
     )
 }
 
-// TODO: Add tests for RpcWorker
-// TODO: Split changes into smaller PRs
-// TODO: Handle rpc error to adjust suggested block range
-
 let withConfig = (
   eventMod: module(Types.Event),
   eventConfig: Types.HandlerTypes.eventConfig<'a>,
@@ -90,6 +86,14 @@ let withConfig = (
       ),
     ),
   )
+  eventMod
+}
+
+let withOverride = (eventMod: module(Types.Event), ~sighash=?) => {
+  switch sighash {
+  | Some(sighash) => (eventMod->Obj.magic)["sighash"] = sighash
+  | None => ()
+  }
   eventMod
 }
 
