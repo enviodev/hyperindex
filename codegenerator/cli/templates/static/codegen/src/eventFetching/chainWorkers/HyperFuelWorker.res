@@ -271,7 +271,7 @@ module Make = (
     ~toBlock,
     ~logger,
     ~contractAddressMapping,
-    ~forceWildcardEvents,
+    ~selection: FetchState.selection,
     ~isPreRegisteringDynamicContracts,
   ) => {
     //Instantiate each time to add new registered contract addresses
@@ -279,10 +279,9 @@ module Make = (
       //TODO: create receipt selections for dynamic contract preregistration
       Js.Exn.raiseError("HyperFuel does not support pre registering dynamic contracts yet")
     } else {
-      if forceWildcardEvents {
-        wildcardReceiptsSelection
-      } else {
-        getNormalRecieptsSelection(~contractAddressMapping)
+      switch selection {
+      | Wildcard({}) => wildcardReceiptsSelection
+      | Normal({}) => getNormalRecieptsSelection(~contractAddressMapping)
       }
     }
 
@@ -307,7 +306,7 @@ module Make = (
     ~contractAddressMapping,
     ~currentBlockHeight as _,
     ~partitionId as _,
-    ~forceWildcardEvents,
+    ~selection,
     ~isPreRegisteringDynamicContracts,
     ~logger,
   ) => {
@@ -320,7 +319,7 @@ module Make = (
         ~toBlock,
         ~contractAddressMapping,
         ~logger,
-        ~forceWildcardEvents,
+        ~selection,
         ~isPreRegisteringDynamicContracts,
       )
 

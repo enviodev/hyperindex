@@ -15,14 +15,9 @@ type blockNumberAndLogIndex = {blockNumber: int, logIndex: int}
 
 type status = {mutable fetchingStateId: option<int>}
 
-type partitionKind =
-  | Wildcard
-  | Normal({
-      contractAddressMapping: ContractAddressingMap.mapping,
-      //Used to prune dynamic contract registrations in the event
-      //of a rollback.
-      dynamicContracts: array<TablesStatic.DynamicContractRegistry.t>,
-    })
+type selection =
+  | Wildcard({})
+  | Normal({})
 
 /**
 A state that holds a queue of events and data regarding what to fetch next
@@ -34,7 +29,11 @@ type partition = {
   id: string,
   status: status,
   latestFetchedBlock: blockNumberAndTimestamp,
-  kind: partitionKind,
+  selection: selection,
+  contractAddressMapping: ContractAddressingMap.mapping,
+  //Used to prune dynamic contract registrations in the event
+  //of a rollback.
+  dynamicContracts: array<TablesStatic.DynamicContractRegistry.t>,
   //Events ordered from latest to earliest
   fetchedEventQueue: array<Internal.eventItem>,
 }
@@ -93,23 +92,12 @@ let mergeSortedEventList = (a, b) => Utils.Array.mergeSorted(eventItemGt, a, b)
 
 let mergeIntoPartition = (p: partition, ~target: partition, ~maxAddrInPartition) => {
   switch (p, target) {
-  | ({kind: Wildcard}, _)
-  | (_, {kind: Wildcard}) => (p, Some(target))
-  | (
-      {
-        kind: Normal({
-          contractAddressMapping: mergingContractAddressMapping,
-          dynamicContracts: mergingDynamicContracts,
-        }),
-      },
-      {
-        kind: Normal({
-          contractAddressMapping: targetContractAddressMapping,
-          dynamicContracts: targetDynamicContracts,
-        }),
-      },
-    ) => {
+  | ({selection: Normal(_)}, {selection: Normal(_)}) => {
       let latestFetchedBlock = target.latestFetchedBlock
+      let targetContractAddressMapping = target.contractAddressMapping
+      let targetDynamicContracts = target.dynamicContracts
+      let mergingContractAddressMapping = p.contractAddressMapping
+      let mergingDynamicContracts = p.dynamicContracts
 
       let mergedContractAddressMapping = targetContractAddressMapping->ContractAddressingMap.copy
       let mergedDynamicContracts = targetDynamicContracts->Js.Array2.copy
@@ -152,10 +140,9 @@ let mergeIntoPartition = (p: partition, ~target: partition, ~maxAddrInPartition)
             fetchingStateId: None,
           },
           fetchedEventQueue: [],
-          kind: Normal({
-            contractAddressMapping: restContractAddressMapping,
-            dynamicContracts: restDcs,
-          }),
+          selection: target.selection,
+          contractAddressMapping: restContractAddressMapping,
+          dynamicContracts: restDcs,
           latestFetchedBlock,
         })
       } else {
@@ -172,16 +159,17 @@ let mergeIntoPartition = (p: partition, ~target: partition, ~maxAddrInPartition)
           status: {
             fetchingStateId: None,
           },
-          kind: Normal({
-            contractAddressMapping: mergedContractAddressMapping,
-            dynamicContracts: mergedDynamicContracts,
-          }),
+          selection: target.selection,
+          contractAddressMapping: mergedContractAddressMapping,
+          dynamicContracts: mergedDynamicContracts,
           fetchedEventQueue: mergeSortedEventList(p.fetchedEventQueue, target.fetchedEventQueue),
           latestFetchedBlock,
         },
         rest,
       )
     }
+  | ({selection: Wildcard(_)}, _)
+  | (_, {selection: Wildcard(_)}) => (p, Some(target))
   }
 }
 
@@ -301,6 +289,8 @@ let updateInternal = (
   }
 }
 
+let normalSelection = Normal({})
+
 let makeNormalPartition = (
   ~partitionIndex,
   ~latestFetchedBlock,
@@ -326,10 +316,9 @@ let makeNormalPartition = (
       fetchingStateId: None,
     },
     latestFetchedBlock,
-    kind: Normal({
-      contractAddressMapping,
-      dynamicContracts,
-    }),
+    selection: normalSelection,
+    contractAddressMapping,
+    dynamicContracts,
     fetchedEventQueue: [],
   }
 }
@@ -385,15 +374,11 @@ type queryTarget =
       toBlock: int,
     })
 
-// Strip internal fields from partition kind like dynamicContracts
-type querySelection =
-  | Wildcard
-  | Normal({contractAddressMapping: ContractAddressingMap.mapping})
-
 type query = {
   partitionId: string,
   fromBlock: int,
-  selection: querySelection,
+  selection: selection,
+  contractAddressMapping: ContractAddressingMap.mapping,
   target: queryTarget,
 }
 
@@ -492,10 +477,8 @@ let makePartitionQuery = (p: partition, ~endBlock, ~mergeTarget) => {
       partitionId: p.id,
       fromBlock,
       target,
-      selection: switch p.kind {
-      | Wildcard => Wildcard
-      | Normal({contractAddressMapping}) => Normal({contractAddressMapping: contractAddressMapping})
-      },
+      selection: p.selection,
+      contractAddressMapping: p.contractAddressMapping,
     }
   })
 }
@@ -518,10 +501,10 @@ let startFetchingQueries = ({partitions}: t, ~queries: array<query>, ~stateId) =
 }
 
 @inline
-let isFullPartition = (p, ~maxAddrInPartition) => {
-  switch p.kind {
-  | Wildcard => true
-  | Normal({contractAddressMapping}) =>
+let isFullPartition = (p: partition, ~maxAddrInPartition) => {
+  switch p {
+  | {selection: Wildcard(_)} => true
+  | {selection: Normal(_), contractAddressMapping} =>
     contractAddressMapping->ContractAddressingMap.addressCount >= maxAddrInPartition
   }
 }
@@ -796,7 +779,9 @@ let make = (
         fetchingStateId: None,
       },
       latestFetchedBlock,
-      kind: Wildcard,
+      selection: Wildcard({}),
+      contractAddressMapping: ContractAddressingMap.make(),
+      dynamicContracts: [],
       fetchedEventQueue: [],
     })
   }
@@ -909,9 +894,9 @@ let checkContainsRegisteredContractAddress = (
   ~chainId,
 ) => {
   self.partitions->Array.some(p => {
-    switch p.kind {
-    | Wildcard => false
-    | Normal({contractAddressMapping}) =>
+    switch p {
+    | {selection: Wildcard(_)} => false
+    | {selection: Normal(_), contractAddressMapping} =>
       switch contractAddressMapping->ContractAddressingMap.getContractNameFromAddress(
         ~contractAddress,
       ) {
@@ -953,15 +938,15 @@ let rollbackPartition = (
   ~lastScannedBlock,
   ~firstChangeEvent: blockNumberAndLogIndex,
 ) => {
-  switch p.kind {
-  | Wildcard =>
+  switch p {
+  | {selection: Wildcard(_)} =>
     Some({
       ...p,
       status: {
         fetchingStateId: None,
       },
     })
-  | Normal({contractAddressMapping, dynamicContracts}) => {
+  | {selection: Normal(_), contractAddressMapping, dynamicContracts} => {
       //get all dynamic contract addresses past valid blockNumber to remove along with
       //updated dynamicContracts map
       let addressesToRemove = []
@@ -999,13 +984,12 @@ let rollbackPartition = (
 
         Some({
           id: p.id,
-          kind: Normal({
-            dynamicContracts,
-            contractAddressMapping,
-          }),
+          selection: p.selection,
           status: {
             fetchingStateId: None,
           },
+          dynamicContracts,
+          contractAddressMapping,
           fetchedEventQueue,
           latestFetchedBlock: shouldRollbackFetched ? lastScannedBlock : p.latestFetchedBlock,
         })

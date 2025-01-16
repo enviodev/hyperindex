@@ -258,10 +258,6 @@ module Make = (Indexer: Indexer.S) => {
     | Merge({toBlock}) =>
       Some(toBlock)
     }
-    let contractAddressMapping = switch query.selection {
-    | Normal({contractAddressMapping}) => contractAddressMapping
-    | Wildcard => ContractAddressingMap.make()
-    }
 
     let unfilteredBlocks = self->getBlocks(~fromBlock, ~toBlock)
     let heighstBlock = unfilteredBlocks->getLast->Option.getExn
@@ -273,7 +269,7 @@ module Make = (Indexer: Indexer.S) => {
 
     let addressesAndEventNames = self.chainConfig.contracts->Array.map(c => {
       let addresses =
-        contractAddressMapping->ContractAddressingMap.getAddressesFromContractName(
+        query.contractAddressMapping->ContractAddressingMap.getAddressesFromContractName(
           ~contractName=c.name,
         )
       {
