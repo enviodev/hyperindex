@@ -42,7 +42,6 @@ module Helpers = {
 type selectionConfig = {
   getLogSelectionOrThrow: (
     ~contractAddressMapping: ContractAddressingMap.mapping,
-    ~isPreRegisteringDynamicContracts: bool,
   ) => array<LogSelection.t>,
   fieldSelection: HyperSyncClient.QueryTypes.fieldSelection,
   nonOptionalBlockFieldNames: array<string>,
@@ -54,9 +53,13 @@ let getSelectionConfig = (selection: FetchState.selection, ~contracts: array<Con
   let nonOptionalTransactionFieldNames = Utils.Set.make()
   let capitalizedBlockFields = Utils.Set.make()
   let capitalizedTransactionFields = Utils.Set.make()
-  let wildcardLogSelection = []
+  let wildcardTopicSelections = []
+
+  let contractTopicSelections = []
 
   contracts->Array.forEach(contract => {
+    let normalTopicSelections = []
+
     contract.events->Array.forEach(event => {
       let module(Event) = event
       let {isWildcard, topicSelections} =
@@ -83,12 +86,21 @@ let getSelectionConfig = (selection: FetchState.selection, ~contracts: array<Con
           Event.transactionSchema->Utils.Schema.getCapitalizedFieldNames,
         )
         if isWildcard {
-          wildcardLogSelection->Array.push(
-            LogSelection.make(~addresses=[], ~topicSelections),
-          )
+          wildcardTopicSelections->Js.Array2.pushMany(topicSelections)->ignore
+        } else {
+          normalTopicSelections->Js.Array2.pushMany(topicSelections)->ignore
         }
       }
     })
+
+    switch normalTopicSelections {
+    | [] => ()
+    | _ =>
+      contractTopicSelections->Array.push({
+        "contractName": contract.name,
+        "topicSelections": normalTopicSelections,
+      })
+    }
   })
 
   let fieldSelection: HyperSyncClient.QueryTypes.fieldSelection = {
@@ -101,42 +113,26 @@ let getSelectionConfig = (selection: FetchState.selection, ~contracts: array<Con
     ->(Utils.magic: array<string> => array<HyperSyncClient.QueryTypes.transactionField>),
   }
 
-  let getNormalLogSelectionOrThrow = (
-    ~contractAddressMapping,
-    ~isPreRegisteringDynamicContracts,
-  ): array<LogSelection.t> => {
-    contracts->Belt.Array.keepMap((contract): option<LogSelection.t> => {
+  let getNormalLogSelectionOrThrow = (~contractAddressMapping): array<LogSelection.t> => {
+    contractTopicSelections->Belt.Array.keepMap((data): option<LogSelection.t> => {
+      let contractName = data["contractName"]
+      let topicSelections = data["topicSelections"]
       switch contractAddressMapping->ContractAddressingMap.getAddressesFromContractName(
-        ~contractName=contract.name,
+        ~contractName,
       ) {
       | [] => None
-      | addresses =>
-        switch contract.events->Belt.Array.flatMap(event => {
-          let module(Event) = event
-          let {isWildcard, preRegisterDynamicContracts, topicSelections} =
-            Event.handlerRegister->Types.HandlerTypes.Register.getEventOptions
-
-          // All wildcard addresses should be queried in Wildcard partition
-          !isWildcard && (
-            // Skip events without preRegistration when it's need
-            isPreRegisteringDynamicContracts ? preRegisterDynamicContracts : true
-          )
-            ? topicSelections
-            : []
-        }) {
-        | [] => None
-        | topicSelections => Some(LogSelection.make(~addresses, ~topicSelections))
-        }
+      | addresses => Some(LogSelection.make(~addresses, ~topicSelections))
       }
     })
   }
 
-  let getLogSelectionOrThrow = switch selection {
-  | Wildcard({}) =>
-    (~contractAddressMapping as _, ~isPreRegisteringDynamicContracts as _) => {
-      wildcardLogSelection
+  let getLogSelectionOrThrow = switch selection.isWildcard {
+  | true =>
+    let logSelections = [LogSelection.make(~addresses=[], ~topicSelections=wildcardTopicSelections)]
+    (~contractAddressMapping as _) => {
+      logSelections
     }
-  | Normal({}) => getNormalLogSelectionOrThrow
+  | false => getNormalLogSelectionOrThrow
   }
 
   {
@@ -253,7 +249,7 @@ module Make = (
     ~currentBlockHeight as _,
     ~partitionId as _,
     ~selection,
-    ~isPreRegisteringDynamicContracts,
+    ~isPreRegisteringDynamicContracts as _,
     ~logger,
   ) => {
     let mkLogAndRaise = ErrorHandling.mkLogAndRaise(~logger, ...)
@@ -264,7 +260,6 @@ module Make = (
 
       let logSelections = try selectionConfig.getLogSelectionOrThrow(
         ~contractAddressMapping,
-        ~isPreRegisteringDynamicContracts,
       ) catch {
       | exn =>
         exn->ErrorHandling.mkLogAndRaise(~logger, ~msg="Failed getting log selection for the query")

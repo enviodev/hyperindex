@@ -100,7 +100,7 @@ describe("FetchState.make", () => {
               blockNumber: 0,
               blockTimestamp: 0,
             },
-            selection: Normal({}),
+            selection: fetchState.normalSelection,
             contractAddressMapping: ContractAddressingMap.fromArray([(mockAddress0, "Gravatar")]),
             dynamicContracts: [],
             fetchedEventQueue: [],
@@ -116,6 +116,7 @@ describe("FetchState.make", () => {
         },
         queueSize: 0,
         firstEventBlockNumber: None,
+        normalSelection: fetchState.normalSelection,
       },
     )
   })
@@ -175,7 +176,7 @@ describe("FetchState.make", () => {
                 blockNumber: 0,
                 blockTimestamp: 0,
               },
-              selection: Normal({}),
+              selection: fetchState.normalSelection,
               contractAddressMapping: ContractAddressingMap.fromArray([
                 (mockAddress1, "Gravatar"),
                 (mockAddress2, "Gravatar"),
@@ -194,6 +195,7 @@ describe("FetchState.make", () => {
           queueSize: 0,
           endBlock: None,
           firstEventBlockNumber: None,
+          normalSelection: fetchState.normalSelection,
         },
         ~message=`Should create only one partition`,
       )
@@ -235,7 +237,7 @@ describe("FetchState.make", () => {
                 blockNumber: 0,
                 blockTimestamp: 0,
               },
-              selection: Normal({}),
+              selection: fetchState.normalSelection,
               contractAddressMapping: ContractAddressingMap.fromArray([
                 (mockAddress1, "ContractA"),
               ]),
@@ -249,7 +251,7 @@ describe("FetchState.make", () => {
                 blockNumber: 0,
                 blockTimestamp: 0,
               },
-              selection: Normal({}),
+              selection: fetchState.normalSelection,
               contractAddressMapping: ContractAddressingMap.fromArray([(mockAddress2, "Gravatar")]),
               dynamicContracts: [dc],
               fetchedEventQueue: [],
@@ -265,6 +267,7 @@ describe("FetchState.make", () => {
           queueSize: 0,
           endBlock: None,
           firstEventBlockNumber: None,
+          normalSelection: fetchState.normalSelection,
         },
       )
 
@@ -313,7 +316,7 @@ describe("FetchState.make", () => {
                 blockNumber: 0,
                 blockTimestamp: 0,
               },
-              selection: Normal({}),
+              selection: fetchState.normalSelection,
               contractAddressMapping: ContractAddressingMap.fromArray([
                 (mockAddress1, "ContractA"),
               ]),
@@ -327,7 +330,7 @@ describe("FetchState.make", () => {
                 blockNumber: 0,
                 blockTimestamp: 0,
               },
-              selection: Normal({}),
+              selection: fetchState.normalSelection,
               contractAddressMapping: ContractAddressingMap.fromArray([
                 (mockAddress2, "ContractA"),
               ]),
@@ -341,7 +344,7 @@ describe("FetchState.make", () => {
                 blockNumber: 0,
                 blockTimestamp: 0,
               },
-              selection: Normal({}),
+              selection: fetchState.normalSelection,
               contractAddressMapping: ContractAddressingMap.fromArray([(mockAddress3, "Gravatar")]),
               dynamicContracts: [dc1],
               fetchedEventQueue: [],
@@ -353,7 +356,7 @@ describe("FetchState.make", () => {
                 blockNumber: 0,
                 blockTimestamp: 0,
               },
-              selection: Normal({}),
+              selection: fetchState.normalSelection,
               contractAddressMapping: ContractAddressingMap.fromArray([(mockAddress4, "Gravatar")]),
               dynamicContracts: [dc2],
               fetchedEventQueue: [],
@@ -369,6 +372,7 @@ describe("FetchState.make", () => {
           queueSize: 0,
           firstEventBlockNumber: None,
           endBlock: None,
+          normalSelection: fetchState.normalSelection,
         },
       )
     },
@@ -413,7 +417,7 @@ describe("FetchState.registerDynamicContracts", () => {
                 blockNumber: 0,
                 blockTimestamp: 0,
               },
-              selection: Normal({}),
+              selection: fetchState.normalSelection,
               contractAddressMapping: ContractAddressingMap.fromArray([
                 (mockAddress1, "Gravatar"),
                 (mockAddress2, "Gravatar"),
@@ -428,7 +432,7 @@ describe("FetchState.registerDynamicContracts", () => {
                 blockNumber: 1,
                 blockTimestamp: 0,
               },
-              selection: Normal({}),
+              selection: fetchState.normalSelection,
               contractAddressMapping: ContractAddressingMap.fromArray([(mockAddress3, "Gravatar")]),
               dynamicContracts: [dc3],
               fetchedEventQueue: [],
@@ -492,7 +496,8 @@ describe("FetchState.registerDynamicContracts", () => {
                 blockNumber: 0,
                 blockTimestamp: 0,
               },
-              selection: Wildcard({
+              selection: {
+                isWildcard: true,
                 eventConfigs: [
                   {
                     eventId: "wildcard1",
@@ -505,7 +510,7 @@ describe("FetchState.registerDynamicContracts", () => {
                     isWildcard: true,
                   },
                 ],
-              }),
+              },
               contractAddressMapping: ContractAddressingMap.make(),
               dynamicContracts: [],
               fetchedEventQueue: [],
@@ -517,7 +522,7 @@ describe("FetchState.registerDynamicContracts", () => {
                 blockNumber: 0,
                 blockTimestamp: 0,
               },
-              selection: Normal({}),
+              selection: fetchState.normalSelection,
               contractAddressMapping: ContractAddressingMap.fromArray([
                 (mockAddress0, "NftFactory"),
                 (mockAddress1, "NftFactory"),
@@ -543,6 +548,7 @@ describe("FetchState.registerDynamicContracts", () => {
           },
           queueSize: 0,
           firstEventBlockNumber: None,
+          normalSelection: fetchState.normalSelection,
         },
         ~message=`The static addresses for the Gravatar contract should be skipped, since they don't have non-wildcard event configs`,
       )
@@ -556,6 +562,16 @@ describe("FetchState.getNextQuery & integration", () => {
   let dc3 = makeDynContractRegistration(~blockNumber=2, ~contractAddress=mockAddress3)
 
   let makeAfterFirstStaticAddressesQuery = (): FetchState.t => {
+    let normalSelection: FetchState.selection = {
+      isWildcard: false,
+      eventConfigs: [
+        {
+          contractName: "Gravatar",
+          eventId: "0",
+          isWildcard: false,
+        },
+      ],
+    }
     {
       partitions: [
         {
@@ -565,7 +581,7 @@ describe("FetchState.getNextQuery & integration", () => {
             blockNumber: 10,
             blockTimestamp: 10,
           },
-          selection: Normal({}),
+          selection: normalSelection,
           contractAddressMapping: ContractAddressingMap.fromArray([(mockAddress0, "Gravatar")]),
           dynamicContracts: [],
           fetchedEventQueue: [mockEvent(~blockNumber=2), mockEvent(~blockNumber=1)],
@@ -581,10 +597,21 @@ describe("FetchState.getNextQuery & integration", () => {
       queueSize: 2,
       firstEventBlockNumber: Some(1),
       endBlock: None,
+      normalSelection,
     }
   }
 
   let makeIntermidiateDcMerge = (): FetchState.t => {
+    let normalSelection: FetchState.selection = {
+      isWildcard: false,
+      eventConfigs: [
+        {
+          contractName: "Gravatar",
+          eventId: "0",
+          isWildcard: false,
+        },
+      ],
+    }
     {
       partitions: [
         {
@@ -594,7 +621,7 @@ describe("FetchState.getNextQuery & integration", () => {
             blockNumber: 10,
             blockTimestamp: 10,
           },
-          selection: Normal({}),
+          selection: normalSelection,
           contractAddressMapping: ContractAddressingMap.fromArray([(mockAddress0, "Gravatar")]),
           dynamicContracts: [],
           fetchedEventQueue: [mockEvent(~blockNumber=2), mockEvent(~blockNumber=1)],
@@ -606,7 +633,7 @@ describe("FetchState.getNextQuery & integration", () => {
             blockNumber: 1,
             blockTimestamp: 0,
           },
-          selection: Normal({}),
+          selection: normalSelection,
           contractAddressMapping: ContractAddressingMap.fromArray([
             (mockAddress2, "Gravatar"),
             (mockAddress3, "Gravatar"),
@@ -626,10 +653,11 @@ describe("FetchState.getNextQuery & integration", () => {
       queueSize: 2,
       firstEventBlockNumber: Some(1),
       endBlock: None,
+      normalSelection,
     }
   }
 
-  it("Emulate first indexer queris with only wildcard events", () => {
+  it("Emulate first indexer queris with a static event", () => {
     // The default configuration with ability to overwrite some values
     let getNextQuery = (
       fs,
@@ -655,7 +683,7 @@ describe("FetchState.getNextQuery & integration", () => {
         {
           partitionId: "0",
           target: Head,
-          selection: Normal({}),
+          selection: fetchState.normalSelection,
           contractAddressMapping: ContractAddressingMap.fromArray([(mockAddress0, "Gravatar")]),
           fromBlock: 0,
         },
@@ -681,7 +709,7 @@ describe("FetchState.getNextQuery & integration", () => {
               blockNumber: 0,
               blockTimestamp: 0,
             },
-            selection: Normal({}),
+            selection: fetchState.normalSelection,
             contractAddressMapping: ContractAddressingMap.fromArray([(mockAddress0, "Gravatar")]),
             dynamicContracts: [],
             fetchedEventQueue: [],
@@ -793,7 +821,7 @@ describe("FetchState.getNextQuery & integration", () => {
               blockNumber: 0,
               blockTimestamp: 0,
             },
-            selection: Normal({}),
+            selection: fetchState.normalSelection,
             contractAddressMapping: ContractAddressingMap.fromArray([(mockAddress1, "Gravatar")]),
             dynamicContracts: [dc1],
             fetchedEventQueue: [],
@@ -805,7 +833,7 @@ describe("FetchState.getNextQuery & integration", () => {
               blockNumber: 1,
               blockTimestamp: 0,
             },
-            selection: Normal({}),
+            selection: fetchState.normalSelection,
             contractAddressMapping: ContractAddressingMap.fromArray([
               (mockAddress2, "Gravatar"),
               (mockAddress3, "Gravatar"),
@@ -826,7 +854,7 @@ describe("FetchState.getNextQuery & integration", () => {
             intoPartitionId: "2",
             toBlock: 1,
           }),
-          selection: Normal({}),
+          selection: fetchState.normalSelection,
           contractAddressMapping: ContractAddressingMap.fromArray([(mockAddress1, "Gravatar")]),
           // Should be fromBlock 0, but we have a bug
           fromBlock: 0,
@@ -869,7 +897,7 @@ describe("FetchState.getNextQuery & integration", () => {
       partitionId: "2",
       fromBlock: 2,
       target: Head,
-      selection: Normal({}),
+      selection: fetchState.normalSelection,
       contractAddressMapping: ContractAddressingMap.fromArray([
         (mockAddress2, "Gravatar"),
         (mockAddress3, "Gravatar"),
@@ -879,7 +907,7 @@ describe("FetchState.getNextQuery & integration", () => {
     let expectedPartition1Query: FetchState.query = {
       partitionId: "0",
       target: Head,
-      selection: Normal({}),
+      selection: fetchState.normalSelection,
       contractAddressMapping: ContractAddressingMap.fromArray([(mockAddress0, "Gravatar")]),
       fromBlock: 11,
     }
@@ -951,7 +979,7 @@ describe("FetchState.getNextQuery & integration", () => {
             intoPartitionId: "0",
             toBlock: 10,
           }),
-          selection: Normal({}),
+          selection: fetchState.normalSelection,
           contractAddressMapping: ContractAddressingMap.fromArray([
             (mockAddress2, "Gravatar"),
             (mockAddress3, "Gravatar"),
@@ -993,7 +1021,7 @@ describe("FetchState.getNextQuery & integration", () => {
               blockNumber: 10,
               blockTimestamp: 10,
             },
-            selection: Normal({}),
+            selection: fetchState.normalSelection,
             contractAddressMapping: ContractAddressingMap.fromArray([(mockAddress0, "Gravatar")]),
             dynamicContracts: [],
             fetchedEventQueue: [mockEvent(~blockNumber=2), mockEvent(~blockNumber=1)],
@@ -1005,7 +1033,7 @@ describe("FetchState.getNextQuery & integration", () => {
               blockNumber: 9,
               blockTimestamp: 9,
             },
-            selection: Normal({}),
+            selection: fetchState.normalSelection,
             contractAddressMapping: ContractAddressingMap.fromArray([
               (mockAddress2, "Gravatar"),
               (mockAddress3, "Gravatar"),
@@ -1035,7 +1063,7 @@ describe("FetchState.getNextQuery & integration", () => {
             intoPartitionId: "0",
             toBlock: 10,
           }),
-          selection: Normal({}),
+          selection: fetchState.normalSelection,
           contractAddressMapping: ContractAddressingMap.fromArray([
             (mockAddress2, "Gravatar"),
             (mockAddress3, "Gravatar"),
@@ -1076,7 +1104,7 @@ describe("FetchState.getNextQuery & integration", () => {
               blockNumber: 10,
               blockTimestamp: 10,
             },
-            selection: Normal({}),
+            selection: fetchState.normalSelection,
             contractAddressMapping: ContractAddressingMap.fromArray([
               (mockAddress0, "Gravatar"),
               (mockAddress2, "Gravatar"),
@@ -1129,7 +1157,7 @@ describe("FetchState.getNextQuery & integration", () => {
               blockNumber: 10,
               blockTimestamp: 10,
             },
-            selection: Normal({}),
+            selection: fetchState.normalSelection,
             contractAddressMapping: ContractAddressingMap.fromArray([
               (mockAddress0, "Gravatar"),
               (mockAddress1, "Gravatar"),
@@ -1149,7 +1177,7 @@ describe("FetchState.getNextQuery & integration", () => {
               blockNumber: 10,
               blockTimestamp: 10,
             },
-            selection: Normal({}),
+            selection: fetchState.normalSelection,
             contractAddressMapping: ContractAddressingMap.fromArray([
               (mockAddress2, "Gravatar"),
               (mockAddress3, "Gravatar"),
@@ -1208,7 +1236,8 @@ describe("FetchState.getNextQuery & integration", () => {
         {
           partitionId: "0",
           target: Head,
-          selection: Wildcard({
+          selection: {
+            isWildcard: true,
             eventConfigs: [
               {
                 contractName: "ContractA",
@@ -1216,7 +1245,7 @@ describe("FetchState.getNextQuery & integration", () => {
                 isWildcard: true,
               },
             ],
-          }),
+          },
           contractAddressMapping: ContractAddressingMap.make(),
           fromBlock: 0,
         },
@@ -1226,7 +1255,7 @@ describe("FetchState.getNextQuery & integration", () => {
             intoPartitionId: "2",
             toBlock: 1,
           }),
-          selection: Normal({}),
+          selection: fetchState.normalSelection,
           contractAddressMapping: ContractAddressingMap.fromArray([(mockAddress1, "ContractA")]),
           fromBlock: 0,
         },
@@ -1256,7 +1285,7 @@ describe("FetchState.getNextQuery & integration", () => {
               blockNumber: 2,
               blockTimestamp: 2,
             },
-            selection: Normal({}),
+            selection: fetchState.normalSelection,
             contractAddressMapping: ContractAddressingMap.fromArray([(mockAddress0, "Gravatar")]),
             dynamicContracts: [],
             // Removed an item here, but kept the partition.
@@ -1270,7 +1299,7 @@ describe("FetchState.getNextQuery & integration", () => {
               blockNumber: 1,
               blockTimestamp: 0,
             },
-            selection: Normal({}),
+            selection: fetchState.normalSelection,
             contractAddressMapping: ContractAddressingMap.fromArray([(mockAddress1, "Gravatar")]),
             dynamicContracts: [dc1],
             fetchedEventQueue: [],
@@ -1301,7 +1330,7 @@ describe("FetchState.getNextQuery & integration", () => {
               blockNumber: 0,
               blockTimestamp: 0,
             },
-            selection: Normal({}),
+            selection: fetchState.normalSelection,
             contractAddressMapping: ContractAddressingMap.fromArray([(mockAddress0, "Gravatar")]),
             dynamicContracts: [],
             fetchedEventQueue: [],
@@ -1344,9 +1373,10 @@ describe("FetchState.getNextQuery & integration", () => {
         {
           partitionId: "0",
           target: Head,
-          selection: Wildcard({
-            eventConfigs: eventConfigs,
-          }),
+          selection: {
+            isWildcard: true,
+            eventConfigs,
+          },
           contractAddressMapping: ContractAddressingMap.make(),
           fromBlock: 0,
         },
@@ -1378,7 +1408,10 @@ describe("FetchState.getNextQuery & integration", () => {
               blockNumber: 0,
               blockTimestamp: 0,
             },
-            selection: Wildcard({eventConfigs: eventConfigs}),
+            selection: {
+              isWildcard: true,
+              eventConfigs,
+            },
             contractAddressMapping: ContractAddressingMap.make(),
             dynamicContracts: [],
             fetchedEventQueue: [],
@@ -1393,6 +1426,10 @@ describe("FetchState.getNextQuery & integration", () => {
 
 describe("FetchState unit tests for specific cases", () => {
   it("Should merge events in correct order on merging", () => {
+    let normalSelection: FetchState.selection = {
+      isWildcard: false,
+      eventConfigs: [],
+    }
     let fetchState: FetchState.t = {
       partitions: [
         {
@@ -1402,7 +1439,7 @@ describe("FetchState unit tests for specific cases", () => {
             blockNumber: 10,
             blockTimestamp: 10,
           },
-          selection: Normal({}),
+          selection: normalSelection,
           contractAddressMapping: ContractAddressingMap.make(),
           dynamicContracts: [],
           fetchedEventQueue: [
@@ -1418,7 +1455,7 @@ describe("FetchState unit tests for specific cases", () => {
             blockNumber: 1,
             blockTimestamp: 0,
           },
-          selection: Normal({}),
+          selection: normalSelection,
           contractAddressMapping: ContractAddressingMap.make(),
           dynamicContracts: [],
           fetchedEventQueue: [mockEvent(~blockNumber=3), mockEvent(~blockNumber=1)],
@@ -1434,6 +1471,7 @@ describe("FetchState unit tests for specific cases", () => {
       queueSize: 5,
       firstEventBlockNumber: Some(1),
       endBlock: None,
+      normalSelection,
     }
 
     let updatedFetchState =
@@ -1445,7 +1483,7 @@ describe("FetchState unit tests for specific cases", () => {
             intoPartitionId: "0",
             toBlock: 10,
           }),
-          selection: Normal({}),
+          selection: fetchState.normalSelection,
           contractAddressMapping: ContractAddressingMap.make(),
           fromBlock: 1,
         },
@@ -1470,7 +1508,7 @@ describe("FetchState unit tests for specific cases", () => {
               blockNumber: 10,
               blockTimestamp: 10,
             },
-            selection: Normal({}),
+            selection: fetchState.normalSelection,
             contractAddressMapping: ContractAddressingMap.make(),
             dynamicContracts: [],
             fetchedEventQueue: [
@@ -1498,31 +1536,33 @@ describe("FetchState unit tests for specific cases", () => {
     // FetchState with 2 partitions,
     // one of them reached the head
     // another reached max queue size
+    let fetchState = FetchState.make(
+      ~eventConfigs=[
+        {
+          contractName: "ContractA",
+          eventId: "0",
+          isWildcard: false,
+        },
+        {
+          contractName: "ContractA",
+          eventId: "wildcard",
+          isWildcard: true,
+        },
+      ],
+      ~staticContracts=Js.Dict.fromArray([("ContractA", [mockAddress0])]),
+      ~dynamicContracts=[],
+      ~startBlock=0,
+      ~endBlock=None,
+      ~maxAddrInPartition=2,
+    )
     let fetchState =
-      FetchState.make(
-        ~eventConfigs=[
-          {
-            contractName: "ContractA",
-            eventId: "0",
-            isWildcard: false,
-          },
-          {
-            contractName: "ContractA",
-            eventId: "wildcard",
-            isWildcard: true,
-          },
-        ],
-        ~staticContracts=Js.Dict.fromArray([("ContractA", [mockAddress0])]),
-        ~dynamicContracts=[],
-        ~startBlock=0,
-        ~endBlock=None,
-        ~maxAddrInPartition=2,
-      )
+      fetchState
       ->FetchState.setQueryResponse(
         ~query={
           partitionId: "0",
           target: Head,
-          selection: Wildcard({
+          selection: {
+            isWildcard: true,
             eventConfigs: [
               {
                 contractName: "ContractA",
@@ -1530,7 +1570,7 @@ describe("FetchState unit tests for specific cases", () => {
                 isWildcard: true,
               },
             ],
-          }),
+          },
           contractAddressMapping: ContractAddressingMap.make(),
           fromBlock: 0,
         },
@@ -1543,7 +1583,7 @@ describe("FetchState unit tests for specific cases", () => {
         ~query={
           partitionId: "1",
           target: Head,
-          selection: Normal({}),
+          selection: fetchState.normalSelection,
           contractAddressMapping: ContractAddressingMap.make(),
           fromBlock: 0,
         },
@@ -1564,7 +1604,8 @@ describe("FetchState unit tests for specific cases", () => {
         {
           partitionId: "0",
           target: Head,
-          selection: Wildcard({
+          selection: {
+            isWildcard: true,
             eventConfigs: [
               {
                 contractName: "ContractA",
@@ -1572,7 +1613,7 @@ describe("FetchState unit tests for specific cases", () => {
                 isWildcard: true,
               },
             ],
-          }),
+          },
           contractAddressMapping: ContractAddressingMap.make(),
           fromBlock: 2,
         },
@@ -1603,26 +1644,27 @@ describe("FetchState unit tests for specific cases", () => {
     // but in real life it's going to be 5000.
     // And we don't want to query 5000 addresses every new block,
     // until all partitions reached the head
+    let fetchState = FetchState.make(
+      ~eventConfigs=[
+        {
+          contractName: "ContractA",
+          eventId: "0",
+          isWildcard: false,
+        },
+      ],
+      ~staticContracts=Js.Dict.fromArray([("ContractA", [mockAddress0, mockAddress1])]),
+      ~dynamicContracts=[],
+      ~startBlock=0,
+      ~endBlock=None,
+      ~maxAddrInPartition=1,
+    )
     let fetchState =
-      FetchState.make(
-        ~eventConfigs=[
-          {
-            contractName: "ContractA",
-            eventId: "0",
-            isWildcard: false,
-          },
-        ],
-        ~staticContracts=Js.Dict.fromArray([("ContractA", [mockAddress0, mockAddress1])]),
-        ~dynamicContracts=[],
-        ~startBlock=0,
-        ~endBlock=None,
-        ~maxAddrInPartition=1,
-      )
+      fetchState
       ->FetchState.setQueryResponse(
         ~query={
           partitionId: "0",
           target: Head,
-          selection: Normal({}),
+          selection: fetchState.normalSelection,
           contractAddressMapping: ContractAddressingMap.make(),
           fromBlock: 0,
         },
@@ -1643,7 +1685,7 @@ describe("FetchState unit tests for specific cases", () => {
         {
           partitionId: "1",
           target: Head,
-          selection: Normal({}),
+          selection: fetchState.normalSelection,
           contractAddressMapping: ContractAddressingMap.fromArray([(mockAddress1, "ContractA")]),
           fromBlock: 0,
         },
@@ -1663,14 +1705,14 @@ describe("FetchState unit tests for specific cases", () => {
         {
           partitionId: "0",
           target: Head,
-          selection: Normal({}),
+          selection: fetchState.normalSelection,
           contractAddressMapping: ContractAddressingMap.fromArray([(mockAddress0, "ContractA")]),
           fromBlock: 999001,
         },
         {
           partitionId: "1",
           target: Head,
-          selection: Normal({}),
+          selection: fetchState.normalSelection,
           contractAddressMapping: ContractAddressingMap.fromArray([(mockAddress1, "ContractA")]),
           fromBlock: 0,
         },
@@ -1685,7 +1727,7 @@ describe("FetchState unit tests for specific cases", () => {
         ~query={
           partitionId: "1",
           target: Head,
-          selection: Normal({}),
+          selection: fetchState.normalSelection,
           contractAddressMapping: ContractAddressingMap.make(),
           fromBlock: 0,
         },
@@ -1706,14 +1748,14 @@ describe("FetchState unit tests for specific cases", () => {
         {
           partitionId: "0",
           target: Head,
-          selection: Normal({}),
+          selection: fetchState.normalSelection,
           contractAddressMapping: ContractAddressingMap.fromArray([(mockAddress0, "ContractA")]),
           fromBlock: 999001,
         },
         {
           partitionId: "1",
           target: Head,
-          selection: Normal({}),
+          selection: fetchState.normalSelection,
           contractAddressMapping: ContractAddressingMap.fromArray([(mockAddress1, "ContractA")]),
           fromBlock: 999001,
         },
@@ -1743,7 +1785,7 @@ describe("FetchState unit tests for specific cases", () => {
         ~query={
           partitionId: "0",
           target: Head,
-          selection: Normal({}),
+          selection: fetchState.normalSelection,
           contractAddressMapping: ContractAddressingMap.make(),
           fromBlock: 0,
         },
@@ -1812,7 +1854,7 @@ describe("FetchState unit tests for specific cases", () => {
         ~query={
           partitionId: "0",
           target: Head,
-          selection: Normal({}),
+          selection: fetchState.normalSelection,
           contractAddressMapping: ContractAddressingMap.make(),
           fromBlock: 0,
         },
@@ -1836,13 +1878,18 @@ describe("FetchState unit tests for specific cases", () => {
   it("Get earliest event", () => {
     let latestFetchedBlock = getBlockData(~blockNumber=500)
 
+    let normalSelection: FetchState.selection = {
+      isWildcard: false,
+      eventConfigs: [],
+    }
+
     let fetchState: FetchState.t = {
       partitions: [
         {
           id: "0",
           status: {fetchingStateId: None},
           latestFetchedBlock,
-          selection: Normal({}),
+          selection: normalSelection,
           contractAddressMapping: ContractAddressingMap.make(),
           dynamicContracts: [],
           fetchedEventQueue: [
@@ -1855,7 +1902,7 @@ describe("FetchState unit tests for specific cases", () => {
           id: "1",
           status: {fetchingStateId: None},
           latestFetchedBlock,
-          selection: Normal({}),
+          selection: normalSelection,
           contractAddressMapping: ContractAddressingMap.make(),
           dynamicContracts: [],
           fetchedEventQueue: [
@@ -1872,6 +1919,7 @@ describe("FetchState unit tests for specific cases", () => {
       queueSize: 5,
       firstEventBlockNumber: Some(1),
       endBlock: None,
+      normalSelection,
     }
 
     Assert.deepEqual(
@@ -1990,14 +2038,14 @@ describe("FetchState unit tests for specific cases", () => {
     let q0 = {
       FetchState.partitionId: "0",
       target: Head,
-      selection: Normal({}),
+      selection: fetchState.normalSelection,
       contractAddressMapping: ContractAddressingMap.make(),
       fromBlock: 0,
     }
     let q1 = {
       FetchState.partitionId: "1",
       target: Head,
-      selection: Normal({}),
+      selection: fetchState.normalSelection,
       contractAddressMapping: ContractAddressingMap.make(),
       fromBlock: 0,
     }
@@ -2162,7 +2210,7 @@ describe("FetchState unit tests for specific cases", () => {
           partitionId: "0",
           fromBlock: 0,
           target: EndBlock({toBlock: 0}),
-          selection: Normal({}),
+          selection: makeInitial().normalSelection,
           contractAddressMapping: ContractAddressingMap.make(),
         },
         ~newItems=[mockEvent(~blockNumber=0)],
@@ -2181,26 +2229,27 @@ describe("FetchState unit tests for specific cases", () => {
     () => {
       let currentBlockHeight = 600
 
+      let fetchState = FetchState.make(
+        ~eventConfigs=[
+          {
+            contractName: "Gravatar",
+            eventId: "0",
+            isWildcard: false,
+          },
+        ],
+        ~staticContracts=Js.Dict.fromArray([("Gravatar", [mockAddress1])]),
+        ~dynamicContracts=[],
+        ~startBlock=0,
+        ~endBlock=None,
+        ~maxAddrInPartition=2,
+      )
       let fetchState =
-        FetchState.make(
-          ~eventConfigs=[
-            {
-              contractName: "Gravatar",
-              eventId: "0",
-              isWildcard: false,
-            },
-          ],
-          ~staticContracts=Js.Dict.fromArray([("Gravatar", [mockAddress1])]),
-          ~dynamicContracts=[],
-          ~startBlock=0,
-          ~endBlock=None,
-          ~maxAddrInPartition=2,
-        )
+        fetchState
         ->FetchState.setQueryResponse(
           ~query={
             partitionId: "0",
             target: Head,
-            selection: Normal({}),
+            selection: fetchState.normalSelection,
             contractAddressMapping: ContractAddressingMap.fromArray([
               (mockAddress1, (Gravatar :> string)),
             ]),
@@ -2238,7 +2287,7 @@ describe("FetchState unit tests for specific cases", () => {
                 intoPartitionId: "0",
                 toBlock: 500,
               }),
-              selection: Normal({}),
+              selection: fetchState.normalSelection,
               contractAddressMapping: ContractAddressingMap.fromArray([
                 (mockAddress2, (Gravatar :> string)),
               ]),
@@ -2300,7 +2349,7 @@ describe("FetchState unit tests for specific cases", () => {
               intoPartitionId: "1",
               toBlock: 400,
             }),
-            selection: Normal({}),
+            selection: fetchState.normalSelection,
             contractAddressMapping: ContractAddressingMap.fromArray([
               (mockAddress3, (Gravatar :> string)),
             ]),

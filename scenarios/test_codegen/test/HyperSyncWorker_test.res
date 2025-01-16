@@ -3,6 +3,8 @@ open Belt
 
 let mockAddress0 = TestHelpers.Addresses.mockAddresses[0]->Option.getExn
 
+let eventId = "0xcf16a92280c1bbb43f72d31126b724d508df2877835849e8744017ab36a9b47f_1"
+
 module MockEvent = (
   T: {
     type block
@@ -11,7 +13,7 @@ module MockEvent = (
     let transactionSchema: S.t<transaction>
   },
 ): Types.Event => {
-  let id = "0xcf16a92280c1bbb43f72d31126b724d508df2877835849e8744017ab36a9b47f_1"
+  let id = eventId
   let sighash = "0xcf16a92280c1bbb43f72d31126b724d508df2877835849e8744017ab36a9b47f"
   let name = "EventWithoutFields"
   let contractName = "Foo"
@@ -101,7 +103,16 @@ describe("HyperSyncWorker - getSelectionConfig", () => {
   Async.it(
     "Correctly builds logs query field selection for empty block and transaction schemas",
     async () => {
-      let selectionConfig = Normal({})->HyperSyncWorker.getSelectionConfig(
+      let selectionConfig = {
+        isWildcard: false,
+        eventConfigs: [
+          {
+            contractName: "Foo",
+            eventId,
+            isWildcard: false,
+          },
+        ],
+      }->HyperSyncWorker.getSelectionConfig(
         ~contracts=[
           {
             name: "Foo",
@@ -137,7 +148,6 @@ describe("HyperSyncWorker - getSelectionConfig", () => {
       Assert.deepEqual(
         selectionConfig.getLogSelectionOrThrow(
           ~contractAddressMapping=ContractAddressingMap.make(),
-          ~isPreRegisteringDynamicContracts=false,
         ),
         [],
         ~message=`Shouldn't have a log selection without addresses.
@@ -147,7 +157,6 @@ describe("HyperSyncWorker - getSelectionConfig", () => {
       Assert.deepEqual(
         selectionConfig.getLogSelectionOrThrow(
           ~contractAddressMapping=ContractAddressingMap.fromArray([(mockAddress0, "Foo")]),
-          ~isPreRegisteringDynamicContracts=false,
         ),
         [
           {
@@ -169,7 +178,6 @@ describe("HyperSyncWorker - getSelectionConfig", () => {
       Assert.deepEqual(
         selectionConfig.getLogSelectionOrThrow(
           ~contractAddressMapping=ContractAddressingMap.fromArray([(mockAddress0, "Bar")]),
-          ~isPreRegisteringDynamicContracts=false,
         ),
         [],
         ~message=`Shouldn't have a log selection when contract name doesn't much the one in selection`,
@@ -180,7 +188,16 @@ describe("HyperSyncWorker - getSelectionConfig", () => {
   Async.it(
     "Correctly builds logs query field selection for complex block and transaction schemas",
     async () => {
-      let selectionConfig = Normal({})->HyperSyncWorker.getSelectionConfig(
+      let selectionConfig = {
+        isWildcard: false,
+        eventConfigs: [
+          {
+            contractName: "Foo",
+            eventId,
+            isWildcard: false,
+          },
+        ],
+      }->HyperSyncWorker.getSelectionConfig(
         ~contracts=[
           {
             name: "Foo",
@@ -231,7 +248,21 @@ describe("HyperSyncWorker - getSelectionConfig", () => {
   )
 
   Async.it("Combines field selection from multiple events", async () => {
-    let selectionConfig = Normal({})->HyperSyncWorker.getSelectionConfig(
+    let selectionConfig = {
+      isWildcard: false,
+      eventConfigs: [
+        {
+          contractName: "Foo",
+          eventId,
+          isWildcard: false,
+        },
+        {
+          contractName: "Bar",
+          eventId,
+          isWildcard: false,
+        },
+      ],
+    }->HyperSyncWorker.getSelectionConfig(
       ~contracts=[
         {
           name: "Foo",
@@ -389,16 +420,26 @@ describe("HyperSyncWorker - getSelectionConfig", () => {
         },
       ]
 
-      let normalSelectionConfig = Normal({})->HyperSyncWorker.getSelectionConfig(~contracts)
-      let wildcardSelectionConfig = Wildcard({
+      let normalSelectionConfig = {
+        isWildcard: false,
+        eventConfigs: [
+          {
+            contractName: "Foo",
+            eventId,
+            isWildcard: false,
+          },
+        ],
+      }->HyperSyncWorker.getSelectionConfig(~contracts)
+      let wildcardSelectionConfig = {
+        isWildcard: true,
         eventConfigs: [
           {
             contractName: "Bar",
-            eventId: "0xcf16a92280c1bbb43f72d31126b724d508df2877835849e8744017ab36a9b47f_1",
+            eventId,
             isWildcard: true,
           },
         ],
-      })->HyperSyncWorker.getSelectionConfig(~contracts)
+      }->HyperSyncWorker.getSelectionConfig(~contracts)
 
       Assert.deepEqual(
         normalSelectionConfig,
@@ -431,7 +472,6 @@ describe("HyperSyncWorker - getSelectionConfig", () => {
       Assert.deepEqual(
         normalSelectionConfig.getLogSelectionOrThrow(
           ~contractAddressMapping=ContractAddressingMap.fromArray([(mockAddress0, "Foo")]),
-          ~isPreRegisteringDynamicContracts=false,
         ),
         [
           {
@@ -453,7 +493,6 @@ describe("HyperSyncWorker - getSelectionConfig", () => {
       Assert.deepEqual(
         wildcardSelectionConfig.getLogSelectionOrThrow(
           ~contractAddressMapping=ContractAddressingMap.make(),
-          ~isPreRegisteringDynamicContracts=false,
         ),
         [
           {
@@ -474,4 +513,80 @@ describe("HyperSyncWorker - getSelectionConfig", () => {
       )
     },
   )
+
+  Async.it("Topic selection with two wildcard events", async () => {
+    let contracts: array<Config.contract> = [
+      {
+        name: "Bar",
+        abi: %raw(`[]`),
+        addresses: [],
+        events: [
+          module(
+            MockEvent({
+              type transaction = {}
+              type block = {}
+              let blockSchema = S.object((_): block => {})
+              let transactionSchema = S.object((_): transaction => {})
+            })
+          )
+          ->withOverride(~sighash="topic0 - wildcard event 1")
+          ->withConfig({wildcard: true}),
+        ],
+      },
+      {
+        name: "Baz",
+        abi: %raw(`[]`),
+        addresses: [],
+        events: [
+          module(
+            MockEvent({
+              type transaction = {}
+              type block = {}
+              let blockSchema = S.object((_): block => {})
+              let transactionSchema = S.object((_): transaction => {})
+            })
+          )
+          ->withOverride(~sighash="topic0 - wildcard event 2")
+          ->withConfig({wildcard: true}),
+        ],
+      },
+    ]
+
+    let selectionConfig = {
+      isWildcard: true,
+      eventConfigs: [
+        {
+          contractName: "Bar",
+          eventId,
+          isWildcard: true,
+        },
+        {
+          contractName: "Baz",
+          eventId,
+          isWildcard: true,
+        },
+      ],
+    }->HyperSyncWorker.getSelectionConfig(~contracts)
+
+    Assert.deepEqual(
+      selectionConfig.getLogSelectionOrThrow(~contractAddressMapping=ContractAddressingMap.make()),
+      [
+        {
+          addresses: [],
+          topicSelections: [
+            {
+              topic0: [
+                "topic0 - wildcard event 1"->EvmTypes.Hex.fromStringUnsafe,
+                "topic0 - wildcard event 2"->EvmTypes.Hex.fromStringUnsafe,
+              ],
+              topic1: [],
+              topic2: [],
+              topic3: [],
+            },
+          ],
+        },
+      ],
+      ~message=`Even though wildcard events belong to different contracts, they should be joined in to a single log selection`,
+    )
+  })
 })

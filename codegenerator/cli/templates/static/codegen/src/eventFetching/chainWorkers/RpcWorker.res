@@ -230,14 +230,10 @@ module Make = (
     ~currentBlockHeight,
     ~partitionId,
     ~selection: FetchState.selection,
-    ~isPreRegisteringDynamicContracts,
+    ~isPreRegisteringDynamicContracts as _,
     ~logger,
   ) => {
     try {
-      if isPreRegisteringDynamicContracts {
-        Js.Exn.raiseError("HyperIndex RPC does not support pre registering dynamic contracts yet")
-      }
-
       let startFetchingBatchTimeRef = Hrtime.makeTimer()
 
       // Always have a toBlock for an RPC worker

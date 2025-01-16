@@ -19,12 +19,10 @@ type eventConfig = {
   isWildcard: bool,
 }
 
-// The variant items must be objects, since they are used as WeakMap keys in workers
-type selection =
-  | Wildcard({eventConfigs: array<eventConfig>})
-  // Doesn't support fine-tuned partition by set of events,
-  // so it should select all non-wildcard events
-  | Normal({})
+type selection = {
+  eventConfigs: array<eventConfig>,
+  isWildcard: bool,
+}
 
 type status = {mutable fetchingStateId: option<int>}
 
@@ -56,6 +54,7 @@ type t = {
   endBlock: option<int>,
   maxAddrInPartition: int,
   firstEventBlockNumber: option<int>,
+  normalSelection: selection,
   // Fields computed by updateInternal
   latestFullyFetchedBlock: blockNumberAndTimestamp,
   queueSize: int,
@@ -76,24 +75,17 @@ let copy = (fetchState: t) => {
     isFetchingAtHead: fetchState.isFetchingAtHead,
     latestFullyFetchedBlock: fetchState.latestFullyFetchedBlock,
     queueSize: fetchState.queueSize,
+    normalSelection: fetchState.normalSelection,
     firstEventBlockNumber: fetchState.firstEventBlockNumber,
   }
 }
 
 let checkIsInSelection = (~selection, ~contractName, ~eventId, ~isWildcard) => {
-  switch selection {
-  | Normal({}) => !isWildcard
-  | Wildcard({eventConfigs}) =>
-    if isWildcard {
-      eventConfigs->Array.some(c => {
-        c.contractName === contractName && c.eventId === eventId
-      })
-    } else {
-      false
-    }
-  }
+  selection.isWildcard === isWildcard &&
+    selection.eventConfigs->Array.some(c => {
+      c.contractName === contractName && c.eventId === eventId
+    })
 }
-
 
 /*
 Comapritor for two events from the same chain. No need for chain id or timestamp
@@ -116,7 +108,7 @@ let mergeSortedEventList = (a, b) => Utils.Array.mergeSorted(eventItemGt, a, b)
 
 let mergeIntoPartition = (p: partition, ~target: partition, ~maxAddrInPartition) => {
   switch (p, target) {
-  | ({selection: Normal(_)}, {selection: Normal(_)}) => {
+  | ({selection: {isWildcard: false}}, {selection: {isWildcard: false}}) => {
       let latestFetchedBlock = target.latestFetchedBlock
       let targetContractAddressMapping = target.contractAddressMapping
       let targetDynamicContracts = target.dynamicContracts
@@ -192,8 +184,8 @@ let mergeIntoPartition = (p: partition, ~target: partition, ~maxAddrInPartition)
         rest,
       )
     }
-  | ({selection: Wildcard(_)}, _)
-  | (_, {selection: Wildcard(_)}) => (p, Some(target))
+  | ({selection: {isWildcard: true}}, _)
+  | (_, {selection: {isWildcard: true}}) => (p, Some(target))
   }
 }
 
@@ -304,6 +296,7 @@ let updateInternal = (
   {
     maxAddrInPartition: fetchState.maxAddrInPartition,
     endBlock: fetchState.endBlock,
+    normalSelection: fetchState.normalSelection,
     nextPartitionIndex,
     firstEventBlockNumber,
     partitions,
@@ -313,12 +306,11 @@ let updateInternal = (
   }
 }
 
-let normalSelection = Normal({})
-
 let makeDcPartition = (
   ~partitionIndex,
   ~latestFetchedBlock,
   ~dynamicContracts: array<TablesStatic.DynamicContractRegistry.t>=[],
+  ~selection,
 ) => {
   let contractAddressMapping = ContractAddressingMap.make()
 
@@ -335,7 +327,7 @@ let makeDcPartition = (
       fetchingStateId: None,
     },
     latestFetchedBlock,
-    selection: normalSelection,
+    selection,
     contractAddressMapping,
     dynamicContracts,
     fetchedEventQueue: [],
@@ -373,6 +365,10 @@ let registerDynamicContracts = (
           blockNumber: Pervasives.max(startBlockKey->Int.fromString->Option.getExn - 1, 0),
           blockTimestamp: 0,
         },
+        // FIXME: Can the normalSelection be empty?
+        // Probably only on pre-registration, but we don't
+        // register dynamic contracts during it
+        ~selection=fetchState.normalSelection,
       )
     })
 
@@ -522,8 +518,8 @@ let startFetchingQueries = ({partitions}: t, ~queries: array<query>, ~stateId) =
 @inline
 let isFullPartition = (p: partition, ~maxAddrInPartition) => {
   switch p {
-  | {selection: Wildcard(_)} => true
-  | {selection: Normal(_), contractAddressMapping} =>
+  | {selection: {isWildcard: true}} => true
+  | {contractAddressMapping} =>
     contractAddressMapping->ContractAddressingMap.addressCount >= maxAddrInPartition
   }
 }
@@ -811,71 +807,82 @@ let make = (
         fetchingStateId: None,
       },
       latestFetchedBlock,
-      selection: Wildcard({
+      selection: {
+        isWildcard: true,
         eventConfigs: wildcardEventConfigs,
-      }),
+      },
       contractAddressMapping: ContractAddressingMap.make(),
       dynamicContracts: [],
       fetchedEventQueue: [],
     })
   }
 
-  let makePendingNormalPartition = () => {
-    {
-      id: partitions->Array.length->Int.toString,
-      status: {
-        fetchingStateId: None,
-      },
-      latestFetchedBlock,
-      selection: normalSelection,
-      contractAddressMapping: ContractAddressingMap.make(),
-      dynamicContracts: [],
-      fetchedEventQueue: [],
-    }
+  let normalSelection = {
+    isWildcard: false,
+    eventConfigs: normalEventConfigs,
   }
 
-  let pendingNormalPartition = ref(makePendingNormalPartition())
+  switch normalEventConfigs {
+  | [] => ()
+  | _ => {
+      let makePendingNormalPartition = () => {
+        {
+          id: partitions->Array.length->Int.toString,
+          status: {
+            fetchingStateId: None,
+          },
+          latestFetchedBlock,
+          selection: normalSelection,
+          contractAddressMapping: ContractAddressingMap.make(),
+          dynamicContracts: [],
+          fetchedEventQueue: [],
+        }
+      }
 
-  let registerAddress = (contractName, address, ~dc=?) => {
-    let pendingPartition = pendingNormalPartition.contents
-    pendingPartition.contractAddressMapping->ContractAddressingMap.addAddress(
-      ~name=contractName,
-      ~address,
-    )
-    switch dc {
-    | Some(dc) => pendingPartition.dynamicContracts->Array.push(dc)
-    | None => ()
-    }
-    if (
-      pendingPartition.contractAddressMapping->ContractAddressingMap.addressCount ===
-        maxAddrInPartition
-    ) {
-      partitions->Array.push(pendingPartition)
-      pendingNormalPartition := makePendingNormalPartition()
-    }
-  }
+      let pendingNormalPartition = ref(makePendingNormalPartition())
 
-  staticContracts
-  ->Js.Dict.entries
-  ->Array.forEach(((contractName, addresses)) => {
-    if contractNamesWithNormalEvents->Utils.Set.has(contractName) {
-      addresses->Array.forEach(a => {
-        registerAddress(contractName, a)
+      let registerAddress = (contractName, address, ~dc=?) => {
+        let pendingPartition = pendingNormalPartition.contents
+        pendingPartition.contractAddressMapping->ContractAddressingMap.addAddress(
+          ~name=contractName,
+          ~address,
+        )
+        switch dc {
+        | Some(dc) => pendingPartition.dynamicContracts->Array.push(dc)
+        | None => ()
+        }
+        if (
+          pendingPartition.contractAddressMapping->ContractAddressingMap.addressCount ===
+            maxAddrInPartition
+        ) {
+          partitions->Array.push(pendingPartition)
+          pendingNormalPartition := makePendingNormalPartition()
+        }
+      }
+
+      staticContracts
+      ->Js.Dict.entries
+      ->Array.forEach(((contractName, addresses)) => {
+        if contractNamesWithNormalEvents->Utils.Set.has(contractName) {
+          addresses->Array.forEach(a => {
+            registerAddress(contractName, a)
+          })
+        }
       })
-    }
-  })
 
-  dynamicContracts->Array.forEach(dc => {
-    let contractName = (dc.contractType :> string)
-    if contractNamesWithNormalEvents->Utils.Set.has(contractName) {
-      registerAddress(contractName, dc.contractAddress, ~dc)
-    }
-  })
+      dynamicContracts->Array.forEach(dc => {
+        let contractName = (dc.contractType :> string)
+        if contractNamesWithNormalEvents->Utils.Set.has(contractName) {
+          registerAddress(contractName, dc.contractAddress, ~dc)
+        }
+      })
 
-  if (
-    pendingNormalPartition.contents.contractAddressMapping->ContractAddressingMap.addressCount > 0
-  ) {
-    partitions->Array.push(pendingNormalPartition.contents)
+      if (
+        pendingNormalPartition.contents.contractAddressMapping->ContractAddressingMap.addressCount > 0
+      ) {
+        partitions->Array.push(pendingNormalPartition.contents)
+      }
+    }
   }
 
   if partitions->Array.length === 0 {
@@ -901,6 +908,7 @@ let make = (
     latestFullyFetchedBlock: latestFetchedBlock,
     queueSize: 0,
     firstEventBlockNumber: None,
+    normalSelection,
   }
 }
 
@@ -939,8 +947,8 @@ let checkContainsRegisteredContractAddress = (
 ) => {
   self.partitions->Array.some(p => {
     switch p {
-    | {selection: Wildcard(_)} => false
-    | {selection: Normal(_), contractAddressMapping} =>
+    | {selection: {isWildcard: true}} => false
+    | {contractAddressMapping} =>
       switch contractAddressMapping->ContractAddressingMap.getContractNameFromAddress(
         ~contractAddress,
       ) {
@@ -983,14 +991,14 @@ let rollbackPartition = (
   ~firstChangeEvent: blockNumberAndLogIndex,
 ) => {
   switch p {
-  | {selection: Wildcard(_)} =>
+  | {selection: {isWildcard: true}} =>
     Some({
       ...p,
       status: {
         fetchingStateId: None,
       },
     })
-  | {selection: Normal(_), contractAddressMapping, dynamicContracts} => {
+  | {contractAddressMapping, dynamicContracts} => {
       //get all dynamic contract addresses past valid blockNumber to remove along with
       //updated dynamicContracts map
       let addressesToRemove = []

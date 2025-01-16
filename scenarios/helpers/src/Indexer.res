@@ -74,9 +74,10 @@ module type S = {
       isWildcard: bool,
     }
 
-    type selection =
-      | Wildcard({eventConfigs: array<eventConfig>})
-      | Normal({})
+    type selection = {
+      eventConfigs: array<eventConfig>,
+      isWildcard: bool,
+    }
 
     type queryTarget =
       | Head
