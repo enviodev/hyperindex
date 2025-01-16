@@ -179,6 +179,9 @@ pub enum Network {
 
     IncoGentryTestnet = 9090,
 
+    #[subenum(HypersyncNetwork)]
+    Ink = 57073,
+
     #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     Kroma = 255,
 
@@ -297,6 +300,9 @@ pub enum Network {
 
     #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     ShimmerEvm = 148,
+
+    #[subenum(HypersyncNetwork)]
+    Soneium = 1868,
 
     #[subenum(HypersyncNetwork)]
     Sophon = 50104,
@@ -457,7 +463,9 @@ impl Network {
             | Network::Morph
             | Network::MorphTestnet
             | Network::Tangle
-            | Network::Fraxtal => DEFAULT_CONFIRMED_BLOCK_THRESHOLD,
+            | Network::Fraxtal
+            | Network::Soneium
+            | Network::Ink => DEFAULT_CONFIRMED_BLOCK_THRESHOLD,
         }
     }
 }
@@ -515,7 +523,7 @@ impl HypersyncNetwork {
             SophonTestnet | MorphTestnet | GaladrielDevnet | CitreaTestnet | Goerli
             | BscTestnet | UnichainSepolia | Zircuit | Celo | Opbnb | GnosisChiado
             | LuksoTestnet | BlastSepolia | Holesky | BerachainBartio | OptimismSepolia | Fuji
-            | NeonEvm | Fraxtal | ArbitrumSepolia => Experimental,
+            | NeonEvm | ArbitrumSepolia | Fraxtal | Soneium | Ink => Experimental,
         }
     }
 
