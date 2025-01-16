@@ -8,9 +8,9 @@ let make: (
     ~entityMod: module(Entities.InternalEntity),
     ~logger: Pino.t=?,
   ) => promise<array<Entities.internalEntity>>,
-  ~makeLoadEntitiesByField: (
-    . ~entityMod: module(Entities.InternalEntity),
-  ) => (
+  ~loadEntitiesByField: (
+    ~operator: TableIndices.Operator.t,
+    ~entityMod: module(Entities.InternalEntity),
     ~fieldName: string,
     ~fieldValue: fieldValue,
     ~fieldValueSchema: S.t<fieldValue>,
@@ -25,13 +25,14 @@ let makeLoader: (
   ~entityMod: module(Entities.Entity with type t = 'entity),
   ~inMemoryStore: InMemoryStore.t,
   ~logger: Pino.t,
-) => (. string) => promise<option<'entity>>
+) => string => promise<option<'entity>>
 
-let makeWhereEqLoader: (
+let makeWhereLoader: (
   t,
+  ~operator: TableIndices.Operator.t,
   ~entityMod: module(Entities.Entity with type t = 'entity),
   ~inMemoryStore: InMemoryStore.t,
   ~logger: Pino.t,
   ~fieldName: string,
   ~fieldValueSchema: RescriptSchema.S.t<'fieldValue>,
-) => (. 'fieldValue) => promise<array<'entity>>
+) => 'fieldValue => promise<array<'entity>>

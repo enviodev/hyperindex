@@ -103,21 +103,38 @@ external whereEqQuery: (
   ~value: Js.Json.t,
 ) => promise<Js.Json.t> = "whereEqQuery"
 
-let makeWhereEq = (
-  type entity,
-  sql: Postgres.sql,
+@module("./DbFunctionsImplementation.js")
+external whereGtQuery: (
+  ~table: Table.table,
+  ~sql: Postgres.sql,
+  ~fieldName: string,
+  ~value: Js.Json.t,
+) => promise<Js.Json.t> = "whereGtQuery"
+
+let makeWhereQuery = (type entity, sql: Postgres.sql) => async (
+  ~operator: TableIndices.Operator.t,
   ~entityMod: module(Entities.Entity with type t = entity),
-) => async (
   ~fieldName: string,
   ~fieldValue: 'fieldValue,
   ~fieldValueSchema: S.t<'fieldValue>,
   ~logger=Logging.logger,
 ): array<entity> => {
   let module(Entity) = entityMod
+
+  let queryType = switch operator {
+  | Eq => "whereEq"
+  | Gt => "whereGt"
+  }
+
+  let query = switch operator {
+  | Eq => whereEqQuery
+  | Gt => whereGtQuery
+  }
+
   let logger = Logging.createChildFrom(
     ~logger,
     ~params={
-      "queryType": "whereEq",
+      "queryType": queryType,
       "tableName": Entity.table.tableName,
       "fieldName": fieldName,
       "fieldValue": fieldValue,
@@ -129,7 +146,7 @@ let makeWhereEq = (
   | value => value
   }
 
-  switch await whereEqQuery(~table=Entity.table, ~sql, ~fieldName, ~value) {
+  switch await query(~table=Entity.table, ~sql, ~fieldName, ~value) {
   | exception exn => exn->ErrorHandling.mkLogAndRaise(~logger, ~msg=`Failed to execute query`)
   | res =>
     switch res->S.parseAnyOrRaiseWith(Entity.rowsSchema) {

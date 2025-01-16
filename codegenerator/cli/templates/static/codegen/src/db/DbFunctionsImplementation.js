@@ -88,6 +88,14 @@ module.exports.whereEqQuery = (table, sql, fieldName, value) => {
     `;
 };
 
+module.exports.whereGtQuery = (table, sql, fieldName, value) => {
+  return sql`
+    SELECT *
+    FROM "public".${sql(table.tableName)}
+    WHERE ${sql(fieldName)} > ${value};
+    `;
+};
+
 module.exports.readLatestSyncedEventOnChainId = (sql, chainId) => sql`
   SELECT *
   FROM public.event_sync_state

@@ -81,7 +81,16 @@ let makeWhereLoader = (
   ~fieldValueSchema,
   ~logger,
 ) => {
-  Entities.eq: loadLayer->LoadLayer.makeWhereEqLoader(
+  Entities.eq: loadLayer->LoadLayer.makeWhereLoader(
+    ~operator=Eq,
+    ~entityMod,
+    ~fieldName,
+    ~fieldValueSchema,
+    ~inMemoryStore,
+    ~logger,
+  ),
+  gt: loadLayer->LoadLayer.makeWhereLoader(
+    ~operator=Gt,
     ~entityMod,
     ~fieldName,
     ~fieldValueSchema,

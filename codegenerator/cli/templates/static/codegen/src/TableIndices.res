@@ -39,10 +39,19 @@ module FieldValue = {
     | (Some(BigDecimal(bdA)), Some(BigDecimal(bdB))) => BigDecimal.equals(bdA, bdB)
     | (a, b) => a == b
     }
+
+  let gt = (a, b) =>
+    switch (a, b) {
+    //For big decimal use custom equals operator otherwise let Caml_obj.equal do its magic
+    | (Some(BigDecimal(bdA)), Some(BigDecimal(bdB))) => BigDecimal.gt(bdA, bdB)
+    | (a, b) => a > b
+    }
 }
 
 module Operator = {
-  type t = Eq
+  type t = Eq | Gt
+
+  let values = [Eq, Gt]
 }
 
 module SingleIndex = {
@@ -58,9 +67,11 @@ module SingleIndex = {
     `{fn:${fieldName},fv:${fieldValue->FieldValue.toString},o:${(operator :> string)}}`
 
   let evaluate = (self: t, ~fieldName, ~fieldValue) =>
-    switch self.operator {
-    | Eq => self.fieldName == fieldName && FieldValue.eq(self.fieldValue, fieldValue)
-    }
+    self.fieldName === fieldName &&
+      switch self.operator {
+      | Eq => fieldValue->FieldValue.eq(self.fieldValue)
+      | Gt => fieldValue->FieldValue.gt(self.fieldValue)
+      }
 }
 
 module Index = {
@@ -68,9 +79,10 @@ module Index = {
   @unboxed
   type t = Single(SingleIndex.t) //| Composite(array<SingleIndex.t>)
 
-  let makeSingleEq = (~fieldName, ~fieldValue) => Single(
-    SingleIndex.make(~fieldName, ~fieldValue, ~operator=Eq),
+  let makeSingle = (~fieldName, ~fieldValue, ~operator) => Single(
+    SingleIndex.make(~fieldName, ~fieldValue, ~operator),
   )
+
   let getFieldName = index =>
     switch index {
     | Single(index) => index.fieldName
