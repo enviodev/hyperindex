@@ -515,7 +515,7 @@ impl HypersyncNetwork {
 
             Manta | Base | Boba | Blast | Cyber | Aurora | Harmony | Scroll | Darwinia | Mode
             | Rsk | ShimmerEvm | Linea | Amoy | Saakuru | Moonbeam | Lisk | Chiliz
-            | ArbitrumOne | Merlin | Fraxtal | Soneium | Ink => Silver,
+            | ArbitrumOne | Merlin => Silver,
 
             Zora | MoonbaseAlpha | Morph | Kroma | Lukso | C1Milkomeda | Crab | Sophon | Flare
             | PolygonZkevm | MevCommit | Tangle => Bronze,
@@ -523,7 +523,7 @@ impl HypersyncNetwork {
             SophonTestnet | MorphTestnet | GaladrielDevnet | CitreaTestnet | Goerli
             | BscTestnet | UnichainSepolia | Zircuit | Celo | Opbnb | GnosisChiado
             | LuksoTestnet | BlastSepolia | Holesky | BerachainBartio | OptimismSepolia | Fuji
-            | NeonEvm | ArbitrumSepolia => Experimental,
+            | NeonEvm | ArbitrumSepolia | Fraxtal | Soneium | Ink => Experimental,
         }
     }
 
