@@ -142,14 +142,10 @@ module Block = {
 module AggregatedBlock = {
   @genType
   type t = {{aggregated_field_selection.block_type}}
-  let schema = {{aggregated_field_selection.block_schema}}
-    ->(Utils.magic: S.t<t> => S.t<Internal.eventBlock>)
 }
 module AggregatedTransaction = {
   @genType
   type t = {{aggregated_field_selection.transaction_type}}
-  let schema = {{aggregated_field_selection.transaction_schema}}
-    ->(Utils.magic: S.t<t> => S.t<Internal.eventTransaction>)
 }
 
 @genType.as("EventLog")

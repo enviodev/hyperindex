@@ -198,7 +198,7 @@ module Make = (
     ~contractAddressMapping,
     ~currentBlockHeight,
     ~partitionId,
-    ~forceWildcardEvents,
+    ~selection: FetchState.selection,
     ~isPreRegisteringDynamicContracts,
     ~logger,
   ) => {
@@ -225,15 +225,13 @@ module Make = (
           ? blockLoader->LazyLoader.get(fromBlock - 1)->Promise.thenResolve(res => res->Some)
           : Promise.resolve(None)
 
-      let topics = if forceWildcardEvents {
-        wildcardTopics
-      } else {
-        nonWildcardTopics
+      let topics = switch selection {
+        | Wildcard({}) => wildcardTopics
+        | Normal({}) => nonWildcardTopics
       }
-      let addresses = if forceWildcardEvents {
-        None
-      } else {
-        Some(contractAddressMapping->ContractAddressingMap.getAllAddresses)
+      let addresses = switch contractAddressMapping->ContractAddressingMap.getAllAddresses {
+        | [] => None
+        | addresses => Some(addresses)
       }
 
       let {logs, nextSuggestedBlockInterval, latestFetchedBlock} = await EventFetching.getNextPage(
