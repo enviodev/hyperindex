@@ -102,9 +102,11 @@ let updateEntityIndicesMockDb = (
   ->Utils.magic
   ->Js.Dict.entries
   ->Array.forEach(((fieldName, fieldValue)) => {
-    let index = TableIndices.Index.makeSingleEq(~fieldName, ~fieldValue)
-    mockDbTable->InMemoryTable.Entity.addIdToIndex(~index, ~entityId)
-    entityIndices->Utils.Set.add(index)->ignore
+    TableIndices.Operator.values->Array.forEach(operator => {
+      let index = TableIndices.Index.makeSingle(~fieldName, ~fieldValue, ~operator)
+      mockDbTable->InMemoryTable.Entity.addIdToIndex(~index, ~entityId)
+      entityIndices->Utils.Set.add(index)->ignore
+    })
   })
 }
 
@@ -285,11 +287,18 @@ let makeLoadEntitiesByIds = (mockDb: t) => {
   }
 }
 
-let makeLoadEntitiesByField = (mockDb: t, ~entityMod) => {
-  let mockDbTable = mockDb.__dbInternal__->InMemoryStore.getInMemTable(~entityMod)
-  async (~fieldName, ~fieldValue, ~fieldValueSchema as _, ~logger as _=?) => {
+let makeLoadEntitiesByField = (mockDb: t) => {
+  async (
+    ~operator,
+    ~entityMod,
+    ~fieldName,
+    ~fieldValue,
+    ~fieldValueSchema as _,
+    ~logger as _=?,
+  ) => {
+    let mockDbTable = mockDb.__dbInternal__->InMemoryStore.getInMemTable(~entityMod)
     mockDbTable->InMemoryTable.Entity.getOnIndex(
-      ~index=TableIndices.Index.makeSingleEq(~fieldName, ~fieldValue),
+      ~index=TableIndices.Index.makeSingle(~fieldName, ~fieldValue, ~operator),
     )
   }
 }

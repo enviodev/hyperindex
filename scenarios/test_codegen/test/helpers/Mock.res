@@ -41,6 +41,7 @@ module LoadLayer = {
     fieldName: string,
     fieldValue: LoadLayer.fieldValue,
     fieldValueSchema: S.t<LoadLayer.fieldValue>,
+    operator: TableIndices.Operator.t,
     logger?: Pino.t,
   }
   type t = {
@@ -63,7 +64,9 @@ module LoadLayer = {
         ->ignore
         []
       },
-      ~makeLoadEntitiesByField=(~entityMod) => async (
+      ~loadEntitiesByField=async (
+        ~operator,
+        ~entityMod,
         ~fieldName,
         ~fieldValue,
         ~fieldValueSchema,
@@ -71,6 +74,7 @@ module LoadLayer = {
       ) => {
         loadEntitiesByFieldCalls
         ->Js.Array2.push({
+          operator,
           entityMod,
           fieldName,
           fieldValue,
