@@ -230,7 +230,6 @@ module Make = (
     ~currentBlockHeight,
     ~partitionId,
     ~selection: FetchState.selection,
-    ~isPreRegisteringDynamicContracts as _,
     ~logger,
   ) => {
     try {

@@ -40,7 +40,6 @@ module type S = {
     ~currentBlockHeight: int,
     ~partitionId: string,
     ~selection: FetchState.selection,
-    ~isPreRegisteringDynamicContracts: bool,
     ~logger: Pino.t,
   ) => promise<result<blockRangeFetchResponse, ErrorHandling.t>>
 }
@@ -67,7 +66,6 @@ let fetchBlockRange = async (
   ~chain,
   ~currentBlockHeight,
   ~selection,
-  ~isPreRegisteringDynamicContracts,
   ~logger,
 ) => {
   let module(ChainWorker: S) = chainWorker
@@ -101,7 +99,6 @@ let fetchBlockRange = async (
       ~logger,
       ~selection,
       ~currentBlockHeight,
-      ~isPreRegisteringDynamicContracts,
     )
   )->Utils.Result.forEach(response => {
     logger->Logging.childTrace({

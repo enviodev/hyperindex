@@ -249,7 +249,6 @@ module Make = (
     ~currentBlockHeight as _,
     ~partitionId as _,
     ~selection,
-    ~isPreRegisteringDynamicContracts as _,
     ~logger,
   ) => {
     let mkLogAndRaise = ErrorHandling.mkLogAndRaise(~logger, ...)

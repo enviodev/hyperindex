@@ -755,7 +755,6 @@ let executeQuery = (
   ~chainWorker,
   ~currentBlockHeight,
   ~chain,
-  ~isPreRegisteringDynamicContracts,
 ) => {
   chainWorker->ChainWorker.fetchBlockRange(
     ~fromBlock=q.fromBlock,
@@ -769,7 +768,6 @@ let executeQuery = (
     ~partitionId=q.partitionId,
     ~chain,
     ~currentBlockHeight,
-    ~isPreRegisteringDynamicContracts,
     ~logger,
     ~selection=q.selection,
   )
@@ -800,7 +798,6 @@ let checkAndFetchForChain = (
           ~chainWorker,
           ~currentBlockHeight,
           ~chain,
-          ~isPreRegisteringDynamicContracts=state.chainManager->ChainManager.isPreRegisteringDynamicContracts,
         ) {
         | Ok(response) => dispatchAction(PartitionQueryResponse({chain, response, query}))
         | Error(e) => dispatchAction(ErrorExit(e))

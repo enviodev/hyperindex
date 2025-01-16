@@ -90,6 +90,7 @@ type fuelEventKind =
   | Call
 type fuelEventConfig = {
   name: string,
+  contractName: string,
   kind: fuelEventKind,
   isWildcard: bool,
   loader: option<loader>,

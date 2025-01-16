@@ -228,6 +228,12 @@ AllEvents.Mint.handler(async ({ event }) => {
   expectType<AssertSchemaType<typeof event.params, typeof mintSchema>>(true);
 });
 
+// Should throw with "Duplicate event detected: Mint2 for contract AllEvents on chain 0"
+// AllEvents.Mint2.handler(async ({ event }) => {
+//   mintSchema.assert(event.params)!;
+//   expectType<AssertSchemaType<typeof event.params, typeof mintSchema>>(true);
+// });
+
 const burnSchema = S.object({
   subId: S.string,
   amount: SExtra.bigint,
