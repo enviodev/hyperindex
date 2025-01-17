@@ -72,31 +72,33 @@ let onNewBlockMock = () => {
 }
 
 describe("SourceManager fetchNext", () => {
+  let normalSelection = FetchState.Normal({})
+
   let mockFullPartition = (
     ~partitionIndex,
     ~latestFetchedBlockNumber,
     ~numContracts=2,
     ~fetchedEventQueue=[],
-  ) => {
-    let staticContracts = []
+  ): FetchState.partition => {
+    let contractAddressMapping = ContractAddressingMap.make()
 
     for i in 0 to numContracts - 1 {
       let address = TestHelpers.Addresses.mockAddresses[i]->Option.getExn
-      staticContracts->Array.push(("MockContract", address))
+      contractAddressMapping->ContractAddressingMap.addAddress(~name="MockContract", ~address)
     }
 
-    let latestFetchedBlock: FetchState.blockNumberAndTimestamp = {
-      blockNumber: latestFetchedBlockNumber,
-      blockTimestamp: latestFetchedBlockNumber * 15,
-    }
-
-    let partition = FetchState.makeNormalPartition(
-      ~partitionIndex,
-      ~staticContracts,
-      ~latestFetchedBlock,
-    )
     {
-      ...partition,
+      id: partitionIndex->Int.toString,
+      status: {
+        fetchingStateId: None,
+      },
+      latestFetchedBlock: {
+        blockNumber: latestFetchedBlockNumber,
+        blockTimestamp: latestFetchedBlockNumber * 15,
+      },
+      selection: normalSelection,
+      contractAddressMapping,
+      dynamicContracts: [],
       fetchedEventQueue,
     }
   }

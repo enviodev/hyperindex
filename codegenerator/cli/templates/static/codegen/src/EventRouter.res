@@ -52,17 +52,17 @@ let empty = () => Js.Dict.empty()
 
 let addOrThrow = (
   router: t<'a>,
-  eventTag,
+  eventId,
   event,
   ~contractName,
   ~isWildcard,
   ~eventName,
   ~chain,
 ) => {
-  let group = switch router->Utils.Dict.dangerouslyGetNonOption(eventTag) {
+  let group = switch router->Utils.Dict.dangerouslyGetNonOption(eventId) {
   | None =>
     let group = Group.empty()
-    router->Js.Dict.set(eventTag, group)
+    router->Js.Dict.set(eventId, group)
     group
   | Some(group) => group
   }
@@ -85,7 +85,7 @@ let get = (router: t<'a>, ~tag, ~contractAddress, ~contractAddressMapping) => {
   }
 }
 
-let getEvmEventTag = (~sighash, ~topicCount) => {
+let getEvmEventId = (~sighash, ~topicCount) => {
   sighash ++ "_" ++ topicCount->Belt.Int.toString
 }
 
@@ -97,7 +97,7 @@ let fromEvmEventModsOrThrow = (eventMods: array<module(Types.Event)>, ~chain): t
     let eventMod = eventMod->(Utils.magic: module(Types.Event) => module(Types.InternalEvent))
     let module(Event) = eventMod
     router->addOrThrow(
-      getEvmEventTag(~sighash=Event.sighash, ~topicCount=Event.topicCount),
+      Event.id,
       eventMod,
       ~contractName=Event.contractName,
       ~eventName=Event.name,

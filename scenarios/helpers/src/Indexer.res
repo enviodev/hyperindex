@@ -23,8 +23,8 @@ module type S = {
     }
 
     module type Event = {
+      let id: string
       let sighash: string // topic0 for Evm and rb for Fuel receipts
-      let topicCount: int // Number of topics for evm, always 0 for fuel
       let name: string
       let contractName: string
 
@@ -68,8 +68,14 @@ module type S = {
   }
 
   module FetchState: {
+    type eventConfig = {
+      contractName: string,
+      eventId: string,
+      isWildcard: bool,
+    }
+
     type selection =
-      | Wildcard({})
+      | Wildcard({eventConfigs: array<eventConfig>})
       | Normal({})
 
     type queryTarget =

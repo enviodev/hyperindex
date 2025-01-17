@@ -26,7 +26,7 @@ let hasFilters = ({topic1, topic2, topic3}: topicSelection) => {
 For a group of topic selections, if multiple only use topic0, then they can be compressed into one
 selection combining the topic0s
 */
-let compressTopicSelectionsOrThrow = (topicSelections: array<topicSelection>) => {
+let compressTopicSelections = (topicSelections: array<topicSelection>) => {
   let topic0sOfSelectionsWithoutFilters = []
 
   let selectionsWithFilters = []
@@ -44,7 +44,12 @@ let compressTopicSelectionsOrThrow = (topicSelections: array<topicSelection>) =>
   switch topic0sOfSelectionsWithoutFilters {
   | [] => selectionsWithFilters
   | topic0 =>
-    let selectionWithoutFilters = makeTopicSelection(~topic0)->Utils.unwrapResultExn
+    let selectionWithoutFilters = {
+      topic0,
+      topic1: [],
+      topic2: [],
+      topic3: [],
+    }
     Belt.Array.concat([selectionWithoutFilters], selectionsWithFilters)
   }
 }
@@ -54,7 +59,7 @@ type t = {
   topicSelections: array<topicSelection>,
 }
 
-let makeOrThrow = (~addresses, ~topicSelections) => {
-  let topicSelections = compressTopicSelectionsOrThrow(topicSelections)
+let make = (~addresses, ~topicSelections) => {
+  let topicSelections = compressTopicSelections(topicSelections)
   {addresses, topicSelections}
 }

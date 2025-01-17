@@ -51,26 +51,10 @@ let make = (
   let module(ChainWorker) = chainConfig.chainWorker
   logger->Logging.childInfo("Initializing ChainFetcher with " ++ ChainWorker.name ++ " worker")
 
-  let hasWildcard = ref(false)
-  let contractNamesWithNonWildcard = Utils.Set.make()
-  let contractNamesWithPreRegistration = Utils.Set.make()
-
   let isPreRegisteringDynamicContracts = dynamicContractPreRegistration->Option.isSome
-  let shouldIncludeContractAddress = (~contractName) => {
-    // Check that there are events without wildcard
-    // Otherwise the events will be queried in the Wildcard partition
-    // and shouldn't be included in the Normal partition
-    contractNamesWithNonWildcard->Utils.Set.has(contractName) &&
-      // Include only addresses having preRegistration,
-      // so we don't end up with partition having an empty ContractAddressMapping
-      // for preregistration
-      isPreRegisteringDynamicContracts
-      ? contractNamesWithPreRegistration->Utils.Set.has(contractName)
-      : true
-  }
 
-  let staticContracts = []
-
+  let staticContracts = Js.Dict.empty()
+  let eventConfigs: array<FetchState.eventConfig> = []
   chainConfig.contracts->Array.forEach(contract => {
     let contractName = contract.name
 
@@ -80,36 +64,27 @@ let make = (
       let {isWildcard, preRegisterDynamicContracts} =
         Event.handlerRegister->Types.HandlerTypes.Register.getEventOptions
 
-      if isWildcard {
-        hasWildcard := (
-            isPreRegisteringDynamicContracts
-              ? hasWildcard.contents || preRegisterDynamicContracts
-              : true
-          )
-      } else {
-        let _ = contractNamesWithNonWildcard->Utils.Set.add(contractName)
-      }
-      if preRegisterDynamicContracts {
-        let _ = contractNamesWithPreRegistration->Utils.Set.add(contractName)
+      // Filter out non-preRegistration events on preRegistration phase
+      // so we don't care about it in fetch state and workers anymore
+      if isPreRegisteringDynamicContracts ? preRegisterDynamicContracts : true {
+        eventConfigs->Array.push({
+          contractName,
+          eventId: Event.id,
+          isWildcard,
+        })
       }
     })
 
-    if shouldIncludeContractAddress(~contractName) {
-      contract.addresses->Array.forEach(a => {
-        staticContracts->Array.push((contractName, a))
-      })
-    }
+    staticContracts->Js.Dict.set(contractName, contract.addresses)
   })
 
   let fetchState = FetchState.make(
     ~maxAddrInPartition,
     ~staticContracts,
-    ~dynamicContracts=dynamicContracts->Array.keep(dc =>
-      shouldIncludeContractAddress(~contractName=(dc.contractType :> string))
-    ),
+    ~dynamicContracts,
     ~startBlock,
     ~endBlock,
-    ~hasWildcard=hasWildcard.contents,
+    ~eventConfigs,
   )
 
   {

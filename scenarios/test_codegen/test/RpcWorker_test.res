@@ -21,7 +21,7 @@ let mockEthersLog = (
   logIndex: 2,
 }
 
-describe("RpcSyncWorker - getEventTransactionOrThrow", () => {
+describe("RpcWorker - getEventTransactionOrThrow", () => {
   let neverGetTransactionFields = _ => Assert.fail("The getTransactionFields should not be called")
 
   it("Panics with invalid schema", () => {
@@ -234,4 +234,180 @@ describe("RpcSyncWorker - getEventTransactionOrThrow", () => {
       },
     )
   })
+})
+
+module MockEvent = HyperSyncWorker_test.MockEvent
+describe("RpcWorker - getSelectionConfig", () => {
+  let withConfig = HyperSyncWorker_test.withConfig
+  let withOverride = HyperSyncWorker_test.withOverride
+
+  it("Selection config for the most basic case with no wildcards", () => {
+    let selectionConfig = Normal({})->RpcWorker.getSelectionConfig(
+      ~contracts=[
+        {
+          name: "Foo",
+          abi: %raw(`[]`),
+          addresses: [],
+          events: [
+            module(
+              MockEvent({
+                type transaction = {}
+                type block = {}
+                let blockSchema = S.object((_): block => {})
+                let transactionSchema = S.object((_): transaction => {})
+              })
+            ),
+          ],
+        },
+      ],
+    )
+
+    Assert.deepEqual(
+      selectionConfig,
+      {
+        topics: [
+          [
+            "0xcf16a92280c1bbb43f72d31126b724d508df2877835849e8744017ab36a9b47f"->EvmTypes.Hex.fromStringUnsafe,
+          ],
+        ],
+      },
+      ~message=`Should include only single topic0 address`,
+    )
+  })
+
+  it("Panics when can't find a selected event", () => {
+    Assert.throws(
+      () =>
+        Normal({})->RpcWorker.getSelectionConfig(
+          ~contracts=[
+            {
+              name: "Foo",
+              abi: %raw(`[]`),
+              addresses: [],
+              events: [
+                module(
+                  MockEvent({
+                    type transaction = {}
+                    type block = {}
+                    let blockSchema = S.object((_): block => {})
+                    let transactionSchema = S.object((_): transaction => {})
+                  })
+                )->withConfig({wildcard: true}),
+              ],
+            },
+          ],
+        ),
+      ~error={
+        "message": "Invalid events configuration for the partition. Nothing to fetch. Please, report to the Envio team.",
+      },
+    )
+  })
+
+  Async.it(
+    "Doesn't include events not specified in the selection to the selection config",
+    async () => {
+      let contracts: array<Config.contract> = [
+        {
+          name: "Foo",
+          abi: %raw(`[]`),
+          addresses: [],
+          events: [
+            module(
+              MockEvent({
+                type transaction = {}
+                type block = {}
+                let blockSchema = S.object(
+                  (s): block => {
+                    let _ = s.field("hash", S.string)
+                    let _ = s.field("number", S.int)
+                    let _ = s.field("timestamp", S.int)
+                    {}
+                  },
+                )
+                let transactionSchema = S.object(
+                  (s): transaction => {
+                    let _ = s.field("hash", S.string)
+                    {}
+                  },
+                )
+              })
+            ),
+          ],
+        },
+        {
+          name: "Bar",
+          abi: %raw(`[]`),
+          addresses: [],
+          events: [
+            module(
+              MockEvent({
+                type transaction = {}
+                type block = {}
+                let blockSchema = S.object(
+                  (s): block => {
+                    let _ = s.field("nonce", S.null(BigInt.schema))
+                    {}
+                  },
+                )
+                let transactionSchema = S.object(
+                  (s): transaction => {
+                    let _ = s.field("gasPrice", S.null(S.string))
+                    {}
+                  },
+                )
+              })
+            )
+            ->withOverride(~sighash="Should be the only topic0")
+            ->withConfig({wildcard: true}),
+          ],
+        },
+        {
+          name: "Baz",
+          abi: %raw(`[]`),
+          addresses: [],
+          events: [
+            module(
+              MockEvent({
+                type transaction = {}
+                type block = {}
+                let blockSchema = S.object(
+                  (s): block => {
+                    let _ = s.field("uncles", S.null(BigInt.schema))
+                    {}
+                  },
+                )
+                let transactionSchema = S.object(
+                  (s): transaction => {
+                    let _ = s.field("gasPrice", S.null(S.string))
+                    {}
+                  },
+                )
+              })
+              // Eventhough this is a second wildcard event
+              // it shouldn't be included in the field selection,
+              // since it's not specified in the FetchState.selection
+            )->withConfig({wildcard: true}),
+          ],
+        },
+      ]
+
+      let selectionConfig = Wildcard({
+        eventConfigs: [
+          {
+            contractName: "Bar",
+            eventId: "0xcf16a92280c1bbb43f72d31126b724d508df2877835849e8744017ab36a9b47f_1",
+            isWildcard: true,
+          },
+        ],
+      })->RpcWorker.getSelectionConfig(~contracts)
+
+      Assert.deepEqual(
+        selectionConfig,
+        {
+          topics: [["Should be the only topic0"->EvmTypes.Hex.fromStringUnsafe]],
+        },
+        ~message=`Should only include the topic of the single wildcard event`,
+      )
+    },
+  )
 })

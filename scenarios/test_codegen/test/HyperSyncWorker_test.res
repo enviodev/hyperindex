@@ -11,8 +11,8 @@ module MockEvent = (
     let transactionSchema: S.t<transaction>
   },
 ): Types.Event => {
+  let id = "0xcf16a92280c1bbb43f72d31126b724d508df2877835849e8744017ab36a9b47f_1"
   let sighash = "0xcf16a92280c1bbb43f72d31126b724d508df2877835849e8744017ab36a9b47f"
-  let topicCount = 1
   let name = "EventWithoutFields"
   let contractName = "Foo"
 
@@ -86,6 +86,14 @@ let withConfig = (
       ),
     ),
   )
+  eventMod
+}
+
+let withOverride = (eventMod: module(Types.Event), ~sighash=?) => {
+  switch sighash {
+  | Some(sighash) => (eventMod->Obj.magic)["sighash"] = sighash
+  | None => ()
+  }
   eventMod
 }
 
@@ -351,10 +359,46 @@ describe("HyperSyncWorker - getSelectionConfig", () => {
             )->withConfig({wildcard: true}),
           ],
         },
+        {
+          name: "Baz",
+          abi: %raw(`[]`),
+          addresses: [],
+          events: [
+            module(
+              MockEvent({
+                type transaction = {}
+                type block = {}
+                let blockSchema = S.object(
+                  (s): block => {
+                    let _ = s.field("uncles", S.null(BigInt.schema))
+                    {}
+                  },
+                )
+                let transactionSchema = S.object(
+                  (s): transaction => {
+                    let _ = s.field("gasPrice", S.null(S.string))
+                    {}
+                  },
+                )
+              })
+              // Eventhough this is a second wildcard event
+              // it shouldn't be included in the field selection,
+              // since it's not specified in the FetchState.selection
+            )->withConfig({wildcard: true}),
+          ],
+        },
       ]
 
       let normalSelectionConfig = Normal({})->HyperSyncWorker.getSelectionConfig(~contracts)
-      let wildcardSelectionConfig = Wildcard({})->HyperSyncWorker.getSelectionConfig(~contracts)
+      let wildcardSelectionConfig = Wildcard({
+        eventConfigs: [
+          {
+            contractName: "Bar",
+            eventId: "0xcf16a92280c1bbb43f72d31126b724d508df2877835849e8744017ab36a9b47f_1",
+            isWildcard: true,
+          },
+        ],
+      })->HyperSyncWorker.getSelectionConfig(~contracts)
 
       Assert.deepEqual(
         normalSelectionConfig,

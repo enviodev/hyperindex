@@ -156,7 +156,7 @@ module QueryTypes = {
 
   type logParams = {
     address?: array<Address.t>,
-    topics: array<array<Ethers.EventFilter.topic>>,
+    topics: array<array<EvmTypes.Hex.t>>,
   }
 
   let logParamsSchema = S.object(s => {
@@ -309,10 +309,10 @@ module ResponseTypes = {
     blockNumber?: int,
     address?: unchecksummedEthAddress,
     data?: string,
-    topic0?: option<Ethers.EventFilter.topic>,
-    topic1?: option<Ethers.EventFilter.topic>,
-    topic2?: option<Ethers.EventFilter.topic>,
-    topic3?: option<Ethers.EventFilter.topic>,
+    topic0?: option<EvmTypes.Hex.t>,
+    topic1?: option<EvmTypes.Hex.t>,
+    topic2?: option<EvmTypes.Hex.t>,
+    topic3?: option<EvmTypes.Hex.t>,
   }
 
   let logDataSchema = S.object(s => {
@@ -361,16 +361,12 @@ let queryRoute = Rest.route(() => {
   path: "/query",
   method: Post,
   variables: s => s.body(QueryTypes.postQueryBodySchema),
-  responses: [
-    s => s.data(ResponseTypes.queryResponseSchema),
-  ]
+  responses: [s => s.data(ResponseTypes.queryResponseSchema)],
 })
 
 let heightRoute = Rest.route(() => {
   path: "/height",
   method: Get,
   variables: _ => (),
-  responses: [
-    s => s.field("height", S.int),
-  ]
+  responses: [s => s.field("height", S.int)],
 })

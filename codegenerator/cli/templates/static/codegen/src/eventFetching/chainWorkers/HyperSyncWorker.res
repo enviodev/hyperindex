@@ -54,16 +54,22 @@ let getSelectionConfig = (selection: FetchState.selection, ~contracts: array<Con
   let nonOptionalTransactionFieldNames = Utils.Set.make()
   let capitalizedBlockFields = Utils.Set.make()
   let capitalizedTransactionFields = Utils.Set.make()
+  let wildcardLogSelection = []
 
   contracts->Array.forEach(contract => {
     contract.events->Array.forEach(event => {
       let module(Event) = event
-      let {isWildcard} = Event.handlerRegister->Types.HandlerTypes.Register.getEventOptions
-      let isIncluded = switch selection {
-      | Wildcard({}) => isWildcard
-      | Normal({}) => !isWildcard
-      }
-      if isIncluded {
+      let {isWildcard, topicSelections} =
+        Event.handlerRegister->Types.HandlerTypes.Register.getEventOptions
+
+      if (
+        FetchState.checkIsInSelection(
+          ~selection,
+          ~contractName=contract.name,
+          ~eventId=Event.id,
+          ~isWildcard,
+        )
+      ) {
         nonOptionalBlockFieldNames->Utils.Set.addMany(
           Event.blockSchema->Utils.Schema.getNonOptionalFieldNames,
         )
@@ -76,6 +82,11 @@ let getSelectionConfig = (selection: FetchState.selection, ~contracts: array<Con
         capitalizedTransactionFields->Utils.Set.addMany(
           Event.transactionSchema->Utils.Schema.getCapitalizedFieldNames,
         )
+        if isWildcard {
+          wildcardLogSelection->Array.push(
+            LogSelection.make(~addresses=[], ~topicSelections),
+          )
+        }
       }
     })
   })
@@ -114,41 +125,16 @@ let getSelectionConfig = (selection: FetchState.selection, ~contracts: array<Con
             : []
         }) {
         | [] => None
-        | topicSelections => Some(LogSelection.makeOrThrow(~addresses, ~topicSelections))
+        | topicSelections => Some(LogSelection.make(~addresses, ~topicSelections))
         }
       }
     })
   }
 
   let getLogSelectionOrThrow = switch selection {
-  | Wildcard({}) => {
-      let wildcardLogSelection = contracts->Belt.Array.flatMap(contract => {
-        contract.events->Belt.Array.keepMap(event => {
-          let module(Event) = event
-          let {isWildcard, topicSelections} =
-            Event.handlerRegister->Types.HandlerTypes.Register.getEventOptions
-          isWildcard ? Some(LogSelection.makeOrThrow(~addresses=[], ~topicSelections)) : None
-        })
-      })
-
-      let preRegWildcardLogSelection = contracts->Belt.Array.flatMap(contract => {
-        contract.events->Belt.Array.keepMap(event => {
-          let module(Event) = event
-          let {isWildcard, preRegisterDynamicContracts, topicSelections} =
-            Event.handlerRegister->Types.HandlerTypes.Register.getEventOptions
-          isWildcard && preRegisterDynamicContracts
-            ? Some(LogSelection.makeOrThrow(~addresses=[], ~topicSelections))
-            : None
-        })
-      })
-
-      (~contractAddressMapping as _, ~isPreRegisteringDynamicContracts) => {
-        if isPreRegisteringDynamicContracts {
-          preRegWildcardLogSelection
-        } else {
-          wildcardLogSelection
-        }
-      }
+  | Wildcard({}) =>
+    (~contractAddressMapping as _, ~isPreRegisteringDynamicContracts as _) => {
+      wildcardLogSelection
     }
   | Normal({}) => getNormalLogSelectionOrThrow
   }
@@ -281,10 +267,7 @@ module Make = (
         ~isPreRegisteringDynamicContracts,
       ) catch {
       | exn =>
-        exn->ErrorHandling.mkLogAndRaise(
-          ~logger,
-          ~msg="Failed getting log selection for the query",
-        )
+        exn->ErrorHandling.mkLogAndRaise(~logger, ~msg="Failed getting log selection for the query")
       }
 
       let startFetchingBatchTimeRef = Hrtime.makeTimer()
@@ -422,7 +405,7 @@ module Make = (
           let topic0 = log.topics->Js.Array2.unsafe_get(0)
           let maybeEventMod =
             eventRouter->EventRouter.get(
-              ~tag=EventRouter.getEvmEventTag(
+              ~tag=EventRouter.getEvmEventId(
                 ~sighash=topic0->EvmTypes.Hex.toString,
                 ~topicCount=log.topics->Array.length,
               ),
@@ -463,7 +446,7 @@ module Make = (
           let topic0 = log.topics->Js.Array2.unsafe_get(0)
 
           switch eventRouter->EventRouter.get(
-            ~tag=EventRouter.getEvmEventTag(
+            ~tag=EventRouter.getEvmEventId(
               ~sighash=topic0->EvmTypes.Hex.toString,
               ~topicCount=log.topics->Array.length,
             ),
