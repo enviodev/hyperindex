@@ -240,9 +240,19 @@ module MockEvent = HyperSyncWorker_test.MockEvent
 describe("RpcWorker - getSelectionConfig", () => {
   let withConfig = HyperSyncWorker_test.withConfig
   let withOverride = HyperSyncWorker_test.withOverride
+  let eventId = HyperSyncWorker_test.eventId
 
   it("Selection config for the most basic case with no wildcards", () => {
-    let selectionConfig = Normal({})->RpcWorker.getSelectionConfig(
+    let selectionConfig = {
+      isWildcard: false,
+      eventConfigs: [
+        {
+          contractName: "Foo",
+          eventId,
+          isWildcard: false,
+        },
+      ],
+    }->RpcWorker.getSelectionConfig(
       ~contracts=[
         {
           name: "Foo",
@@ -278,7 +288,16 @@ describe("RpcWorker - getSelectionConfig", () => {
   it("Panics when can't find a selected event", () => {
     Assert.throws(
       () =>
-        Normal({})->RpcWorker.getSelectionConfig(
+        {
+          isWildcard: false,
+          eventConfigs: [
+            {
+              contractName: "Foo",
+              eventId,
+              isWildcard: false,
+            },
+          ],
+        }->RpcWorker.getSelectionConfig(
           ~contracts=[
             {
               name: "Foo",
@@ -391,7 +410,8 @@ describe("RpcWorker - getSelectionConfig", () => {
         },
       ]
 
-      let selectionConfig = Wildcard({
+      let selectionConfig = {
+        isWildcard: true,
         eventConfigs: [
           {
             contractName: "Bar",
@@ -399,7 +419,7 @@ describe("RpcWorker - getSelectionConfig", () => {
             isWildcard: true,
           },
         ],
-      })->RpcWorker.getSelectionConfig(~contracts)
+      }->RpcWorker.getSelectionConfig(~contracts)
 
       Assert.deepEqual(
         selectionConfig,

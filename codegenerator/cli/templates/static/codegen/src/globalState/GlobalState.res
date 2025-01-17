@@ -344,8 +344,8 @@ let handlePartitionQueryResponse = (
       ~numAddresses=query.contractAddressMapping->ContractAddressingMap.addressCount,
       ~queryName=switch query {
       | {target: Merge(_)} => `Merge Query`
-      | {selection: Wildcard(_)} => `Wildcard Query`
-      | {selection: Normal(_)} => `Normal Query`
+      | {selection: {isWildcard: true}} => `Wildcard Query`
+      | {selection: {isWildcard: false}} => `Normal Query`
       },
     )
   }

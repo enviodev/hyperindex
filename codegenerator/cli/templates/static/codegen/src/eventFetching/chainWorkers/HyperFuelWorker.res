@@ -279,9 +279,9 @@ module Make = (
       //TODO: create receipt selections for dynamic contract preregistration
       Js.Exn.raiseError("HyperFuel does not support pre registering dynamic contracts yet")
     } else {
-      switch selection {
-      | Wildcard({}) => wildcardReceiptsSelection
-      | Normal({}) => getNormalRecieptsSelection(~contractAddressMapping)
+      switch selection.isWildcard {
+      | true => wildcardReceiptsSelection
+      | false => getNormalRecieptsSelection(~contractAddressMapping)
       }
     }
 

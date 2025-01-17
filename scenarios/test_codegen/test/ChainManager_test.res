@@ -88,9 +88,10 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
                 partitionId: "0",
                 fromBlock: 0,
                 target: Head,
-                selection: Wildcard({
-                  eventConfigs: eventConfigs,
-                }),
+                selection: {
+                  isWildcard: true,
+                  eventConfigs,
+                },
                 contractAddressMapping: ContractAddressingMap.make(),
               },
               ~latestFetchedBlock={
@@ -114,9 +115,10 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
                   partitionId: "0",
                   fromBlock: 0,
                   target: Head,
-                  selection: Wildcard({
-                    eventConfigs: eventConfigs,
-                  }),
+                  selection: {
+                    isWildcard: true,
+                    eventConfigs,
+                  },
                   contractAddressMapping: ContractAddressingMap.make(),
                 },
                 ~latestFetchedBlock={
@@ -346,6 +348,16 @@ describe("determineNextEvent", () => {
     }
 
     let makeMockFetchState = (~latestFetchedBlockTimestamp, ~item): FetchState.t => {
+      let normalSelection: FetchState.selection = {
+        isWildcard: false,
+        eventConfigs: [
+          {
+            FetchState.contractName: "MockContract",
+            eventId: "0",
+            isWildcard: false,
+          },
+        ],
+      }
       let partition: FetchState.partition = {
         id: "0",
         latestFetchedBlock: {
@@ -355,7 +367,7 @@ describe("determineNextEvent", () => {
         status: {
           fetchingStateId: None,
         },
-        selection: Normal({}),
+        selection: normalSelection,
         contractAddressMapping: ContractAddressingMap.make(),
         dynamicContracts: [],
         fetchedEventQueue: item->Option.mapWithDefault([], v => [v]),
@@ -372,6 +384,7 @@ describe("determineNextEvent", () => {
         endBlock: None,
         isFetchingAtHead: false,
         firstEventBlockNumber: item->Option.map(v => v.blockNumber),
+        normalSelection,
       }
     }
 

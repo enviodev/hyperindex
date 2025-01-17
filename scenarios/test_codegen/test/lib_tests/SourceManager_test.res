@@ -72,7 +72,7 @@ let onNewBlockMock = () => {
 }
 
 describe("SourceManager fetchNext", () => {
-  let normalSelection = FetchState.Normal({})
+  let normalSelection = {FetchState.isWildcard: true, eventConfigs: []}
 
   let mockFullPartition = (
     ~partitionIndex,
@@ -111,6 +111,7 @@ describe("SourceManager fetchNext", () => {
       maxAddrInPartition: 2,
       firstEventBlockNumber: None,
       queueSize: %raw(`null`),
+      normalSelection,
       latestFullyFetchedBlock: %raw(`null`),
       isFetchingAtHead: false,
       // All the null values should be computed during updateInternal
@@ -157,21 +158,21 @@ describe("SourceManager fetchNext", () => {
             partitionId: "0",
             fromBlock: 5,
             target: Head,
-            selection: Normal({}),
+            selection: normalSelection,
             contractAddressMapping: partition0.contractAddressMapping,
           },
           {
             partitionId: "1",
             fromBlock: 6,
             target: Head,
-            selection: Normal({}),
+            selection: normalSelection,
             contractAddressMapping: partition1.contractAddressMapping,
           },
           {
             partitionId: "2",
             fromBlock: 2,
             target: Head,
-            selection: Normal({}),
+            selection: normalSelection,
             contractAddressMapping: partition2.contractAddressMapping,
           },
         ],
@@ -220,14 +221,14 @@ describe("SourceManager fetchNext", () => {
             partitionId: "2",
             fromBlock: 2,
             target: Head,
-            selection: Normal({}),
+            selection: normalSelection,
             contractAddressMapping: partition2.contractAddressMapping,
           },
           {
             partitionId: "0",
             fromBlock: 5,
             target: Head,
-            selection: Normal({}),
+            selection: normalSelection,
             contractAddressMapping: partition0.contractAddressMapping,
           },
         ],
