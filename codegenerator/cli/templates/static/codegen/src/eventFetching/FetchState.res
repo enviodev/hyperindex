@@ -353,6 +353,15 @@ let registerDynamicContracts = (
     dcs->Array.push(dc)
   })
 
+  if fetchState.normalSelection.eventConfigs->Utils.Array.isEmpty {
+    // Can the normalSelection be empty?
+    // Probably only on pre-registration, but we don't
+    // register dynamic contracts during it
+    Js.Exn.raiseError(
+      "Invalid configuration. Nothing to events to fetch for the dynamic contract registration.",
+    )
+  }
+
   // Will be in the ASC order by Js spec
   let newPartitions =
     dcsByStartBlock
@@ -365,9 +374,6 @@ let registerDynamicContracts = (
           blockNumber: Pervasives.max(startBlockKey->Int.fromString->Option.getExn - 1, 0),
           blockTimestamp: 0,
         },
-        // FIXME: Can the normalSelection be empty?
-        // Probably only on pre-registration, but we don't
-        // register dynamic contracts during it
         ~selection=fetchState.normalSelection,
       )
     })

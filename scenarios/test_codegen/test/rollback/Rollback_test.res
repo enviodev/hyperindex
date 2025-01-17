@@ -61,9 +61,8 @@ module Stubs = {
     ~chainWorker,
     ~currentBlockHeight,
     ~chain,
-    ~isPreRegisteringDynamicContracts,
   ) => {
-    (logger, chain, currentBlockHeight, chainWorker, isPreRegisteringDynamicContracts)->ignore
+    (logger, chain, currentBlockHeight, chainWorker)->ignore
 
     Ok(mockChainData->MockChainData.executeQuery(query))
   }

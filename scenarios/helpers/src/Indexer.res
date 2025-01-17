@@ -128,7 +128,6 @@ module type S = {
         ~currentBlockHeight: int,
         ~partitionId: string,
         ~selection: FetchState.selection,
-        ~isPreRegisteringDynamicContracts: bool,
         ~logger: Pino.t,
       ) => promise<result<blockRangeFetchResponse, ErrorHandling.t>>
     }

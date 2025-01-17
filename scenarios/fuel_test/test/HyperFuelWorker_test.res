@@ -1,4 +1,5 @@
 open RescriptMocha
+open Belt
 
 describe("HyperFuelWorker - getNormalRecieptsSelection", () => {
   let contractName1 = "TestContract"
@@ -8,13 +9,30 @@ describe("HyperFuelWorker - getNormalRecieptsSelection", () => {
   let address2 = Address.unsafeFromString("0x1234567890abcdef1234567890abcdef1234567890abcde2")
   let address3 = Address.unsafeFromString("0x1234567890abcdef1234567890abcdef1234567890abcde3")
 
-  let mock = (~contracts) => {
-    let workerConfig = HyperFuelWorker.makeWorkerConfigOrThrow(~contracts, ~chain)
-    HyperFuelWorker.makeGetNormalRecieptsSelection(
-      ~nonWildcardLogDataRbsByContract=workerConfig.nonWildcardLogDataRbsByContract,
-      ~nonLogDataReceiptTypesByContract=workerConfig.nonLogDataReceiptTypesByContract,
-      ~contracts,
-    )
+  let mock = (~contracts: array<Internal.fuelContractConfig>) => {
+    let selectionConfig = {
+      isWildcard: false,
+      eventConfigs: contracts->Array.flatMap(c => {
+        c.events->Array.keepMap(
+          e => {
+            if e.isWildcard {
+              None
+            } else {
+              Some(
+                (
+                  {
+                    isWildcard: false,
+                    eventId: HyperFuelWorker.getEventId(e),
+                    contractName: e.contractName,
+                  }: FetchState.eventConfig
+                ),
+              )
+            }
+          },
+        )
+      }),
+    }->HyperFuelWorker.getSelectionConfig(~contracts, ~chain)
+    selectionConfig.getRecieptsSelection
   }
 
   let mockContractAddressMapping = () => {
@@ -56,6 +74,7 @@ describe("HyperFuelWorker - getNormalRecieptsSelection", () => {
           events: [
             {
               name: "StrLog",
+              contractName: "TestContract",
               kind: LogData({
                 logId: "1",
                 decode: _ => %raw(`null`),
@@ -93,6 +112,7 @@ describe("HyperFuelWorker - getNormalRecieptsSelection", () => {
             events: [
               {
                 name: "Transfer",
+                contractName: "TestContract",
                 kind: Transfer,
                 isWildcard: false,
                 handler: None,
@@ -107,6 +127,7 @@ describe("HyperFuelWorker - getNormalRecieptsSelection", () => {
             events: [
               {
                 name: "Transfer",
+                contractName: "TestContract2",
                 kind: Transfer,
                 isWildcard: false,
                 handler: None,
@@ -144,6 +165,7 @@ describe("HyperFuelWorker - getNormalRecieptsSelection", () => {
           events: [
             {
               name: "Mint",
+              contractName: "TestContract",
               kind: Mint,
               isWildcard: false,
               handler: None,
@@ -158,6 +180,7 @@ describe("HyperFuelWorker - getNormalRecieptsSelection", () => {
           events: [
             {
               name: "Mint",
+              contractName: "TestContract2",
               kind: Mint,
               isWildcard: false,
               handler: None,
@@ -194,6 +217,7 @@ describe("HyperFuelWorker - getNormalRecieptsSelection", () => {
           events: [
             {
               name: "Burn",
+              contractName: "TestContract",
               kind: Burn,
               isWildcard: false,
               handler: None,
@@ -208,6 +232,7 @@ describe("HyperFuelWorker - getNormalRecieptsSelection", () => {
           events: [
             {
               name: "Burn",
+              contractName: "TestContract2",
               kind: Burn,
               isWildcard: false,
               handler: None,
@@ -244,6 +269,7 @@ describe("HyperFuelWorker - getNormalRecieptsSelection", () => {
           events: [
             {
               name: "StrLog",
+              contractName: "TestContract",
               kind: LogData({
                 logId: "1",
                 decode: _ => %raw(`null`),
@@ -256,6 +282,7 @@ describe("HyperFuelWorker - getNormalRecieptsSelection", () => {
             },
             {
               name: "BoolLog",
+              contractName: "TestContract",
               kind: LogData({
                 logId: "2",
                 decode: _ => %raw(`null`),
@@ -268,6 +295,7 @@ describe("HyperFuelWorker - getNormalRecieptsSelection", () => {
             },
             {
               name: "Mint",
+              contractName: "TestContract",
               kind: Mint,
               isWildcard: false,
               handler: None,
@@ -277,6 +305,7 @@ describe("HyperFuelWorker - getNormalRecieptsSelection", () => {
             },
             {
               name: "Burn",
+              contractName: "TestContract",
               kind: Burn,
               isWildcard: false,
               handler: None,
@@ -286,6 +315,7 @@ describe("HyperFuelWorker - getNormalRecieptsSelection", () => {
             },
             {
               name: "Transfer",
+              contractName: "TestContract",
               kind: Transfer,
               isWildcard: false,
               handler: None,
@@ -295,6 +325,7 @@ describe("HyperFuelWorker - getNormalRecieptsSelection", () => {
             },
             {
               name: "Call",
+              contractName: "TestContract",
               kind: Call,
               isWildcard: true,
               handler: None,
@@ -309,6 +340,7 @@ describe("HyperFuelWorker - getNormalRecieptsSelection", () => {
           events: [
             {
               name: "UnitLog",
+              contractName: "TestContract2",
               kind: LogData({
                 logId: "3",
                 decode: _ => %raw(`null`),
@@ -321,6 +353,7 @@ describe("HyperFuelWorker - getNormalRecieptsSelection", () => {
             },
             {
               name: "Burn",
+              contractName: "TestContract2",
               kind: Burn,
               isWildcard: false,
               handler: None,
@@ -372,6 +405,7 @@ describe("HyperFuelWorker - getNormalRecieptsSelection", () => {
               events: [
                 {
                   name: "Call",
+                  contractName: "TestContract",
                   kind: Call,
                   isWildcard: false,
                   handler: None,
@@ -400,6 +434,7 @@ describe("HyperFuelWorker - getNormalRecieptsSelection", () => {
               events: [
                 {
                   name: "MyEvent",
+                  contractName: "TestContract",
                   kind: Mint,
                   isWildcard: false,
                   handler: None,
@@ -409,6 +444,7 @@ describe("HyperFuelWorker - getNormalRecieptsSelection", () => {
                 },
                 {
                   name: "MyEvent2",
+                  contractName: "TestContract",
                   kind: Mint,
                   isWildcard: false,
                   handler: None,
@@ -437,6 +473,7 @@ describe("HyperFuelWorker - getNormalRecieptsSelection", () => {
               events: [
                 {
                   name: "MyEvent",
+                  contractName: "TestContract",
                   kind: Burn,
                   isWildcard: false,
                   handler: None,
@@ -446,6 +483,7 @@ describe("HyperFuelWorker - getNormalRecieptsSelection", () => {
                 },
                 {
                   name: "MyEvent2",
+                  contractName: "TestContract",
                   kind: Burn,
                   isWildcard: false,
                   handler: None,
@@ -464,79 +502,50 @@ describe("HyperFuelWorker - getNormalRecieptsSelection", () => {
     )
   })
 
-  it("Fails with wildcard mint and non-wildcard mint together in the same contract", () => {
-    Assert.throws(
-      () => {
-        mock(
-          ~contracts=[
-            {
-              name: "TestContract",
-              events: [
-                {
-                  name: "WildcardMint",
-                  kind: Mint,
-                  isWildcard: true,
-                  handler: None,
-                  loader: None,
-                  contractRegister: None,
-                  paramsRawEventSchema: %raw(`"Not relevat"`),
-                },
-                {
-                  name: "Mint",
-                  kind: Mint,
-                  isWildcard: false,
-                  handler: None,
-                  loader: None,
-                  contractRegister: None,
-                  paramsRawEventSchema: %raw(`"Not relevat"`),
-                },
-              ],
-            },
-          ],
-        )
-      },
-      ~error={
-        "message": "Duplicate event detected: Mint for contract TestContract on chain 0",
-      },
-    )
-  })
-
-  it("Fails with wildcard burn and non-wildcard burn together in the same contract", () => {
-    Assert.throws(
-      () => {
-        mock(
-          ~contracts=[
-            {
-              name: "TestContract",
-              events: [
-                {
-                  name: "WildcardBurn",
-                  kind: Burn,
-                  isWildcard: true,
-                  handler: None,
-                  loader: None,
-                  contractRegister: None,
-                  paramsRawEventSchema: %raw(`"Not relevat"`),
-                },
-                {
-                  name: "Burn",
-                  kind: Burn,
-                  isWildcard: false,
-                  handler: None,
-                  loader: None,
-                  contractRegister: None,
-                  paramsRawEventSchema: %raw(`"Not relevat"`),
-                },
-              ],
-            },
-          ],
-        )
-      },
-      ~error={
-        "message": "Duplicate event detected: Burn for contract TestContract on chain 0",
-      },
-    )
-  })
+  it(
+    "Shouldn't fail with contracts having the same wildcard and non-wildcard event. This should be handled when we create FetchState",
+    () => {
+      let getNormalRecieptsSelection = mock(
+        ~contracts=[
+          {
+            name: "TestContract",
+            events: [
+              {
+                name: "WildcardMint",
+                contractName: "TestContract",
+                kind: Mint,
+                isWildcard: true,
+                handler: None,
+                loader: None,
+                contractRegister: None,
+                paramsRawEventSchema: %raw(`"Not relevat"`),
+              },
+              {
+                name: "Mint",
+                contractName: "TestContract",
+                kind: Mint,
+                isWildcard: false,
+                handler: None,
+                loader: None,
+                contractRegister: None,
+                paramsRawEventSchema: %raw(`"Not relevat"`),
+              },
+            ],
+          },
+        ],
+      )
+      Assert.deepEqual(
+        getNormalRecieptsSelection(~contractAddressMapping=mockContractAddressMapping()),
+        [
+          {
+            receiptType: [Mint],
+            rootContractId: [address1, address2],
+            txStatus: [1],
+          },
+        ],
+      )
+    },
+  )
 
   it("Works with wildcard mint and non-wildcard mint together in different contract", () => {
     let getNormalRecieptsSelection = mock(
@@ -546,6 +555,7 @@ describe("HyperFuelWorker - getNormalRecieptsSelection", () => {
           events: [
             {
               name: "Mint",
+              contractName: "TestContract2",
               kind: Mint,
               isWildcard: false,
               handler: None,
@@ -560,6 +570,7 @@ describe("HyperFuelWorker - getNormalRecieptsSelection", () => {
           events: [
             {
               name: "Mint",
+              contractName: "TestContract",
               kind: Mint,
               isWildcard: true,
               handler: None,
@@ -590,6 +601,7 @@ describe("HyperFuelWorker - getNormalRecieptsSelection", () => {
           events: [
             {
               name: "Mint",
+              contractName: "TestContract",
               kind: Mint,
               isWildcard: true,
               handler: None,
@@ -604,6 +616,7 @@ describe("HyperFuelWorker - getNormalRecieptsSelection", () => {
           events: [
             {
               name: "Mint",
+              contractName: "TestContract2",
               kind: Mint,
               isWildcard: false,
               handler: None,
@@ -635,6 +648,7 @@ describe("HyperFuelWorker - getNormalRecieptsSelection", () => {
           events: [
             {
               name: "Burn",
+              contractName: "TestContract2",
               kind: Burn,
               isWildcard: false,
               handler: None,
@@ -649,6 +663,7 @@ describe("HyperFuelWorker - getNormalRecieptsSelection", () => {
           events: [
             {
               name: "Burn",
+              contractName: "TestContract",
               kind: Burn,
               isWildcard: true,
               handler: None,
@@ -679,6 +694,7 @@ describe("HyperFuelWorker - getNormalRecieptsSelection", () => {
           events: [
             {
               name: "Burn",
+              contractName: "TestContract",
               kind: Burn,
               isWildcard: true,
               handler: None,
@@ -693,6 +709,7 @@ describe("HyperFuelWorker - getNormalRecieptsSelection", () => {
           events: [
             {
               name: "Burn",
+              contractName: "TestContract2",
               kind: Burn,
               isWildcard: false,
               handler: None,
@@ -720,12 +737,30 @@ describe("HyperFuelWorker - getNormalRecieptsSelection", () => {
 describe("HyperFuelWorker - makeWildcardRecieptsSelection", () => {
   let chain = ChainMap.Chain.makeUnsafe(~chainId=0)
 
-  let mock = (~contracts) => {
-    let workerConfig = HyperFuelWorker.makeWorkerConfigOrThrow(~contracts, ~chain)
-    HyperFuelWorker.makeWildcardRecieptsSelection(
-      ~wildcardLogDataRbs=workerConfig.wildcardLogDataRbs,
-      ~nonLogDataWildcardReceiptTypes=workerConfig.nonLogDataWildcardReceiptTypes,
-    )
+  let mock = (~contracts: array<Internal.fuelContractConfig>) => {
+    let selectionConfig = {
+      isWildcard: true,
+      eventConfigs: contracts->Array.flatMap(c => {
+        c.events->Array.keepMap(
+          e => {
+            if e.isWildcard {
+              Some(
+                (
+                  {
+                    isWildcard: true,
+                    eventId: HyperFuelWorker.getEventId(e),
+                    contractName: e.contractName,
+                  }: FetchState.eventConfig
+                ),
+              )
+            } else {
+              None
+            }
+          },
+        )
+      }),
+    }->HyperFuelWorker.getSelectionConfig(~contracts, ~chain)
+    selectionConfig.getRecieptsSelection(~contractAddressMapping=ContractAddressingMap.make())
   }
 
   it("Receipts Selection with no contracts", () => {
@@ -761,6 +796,7 @@ describe("HyperFuelWorker - makeWildcardRecieptsSelection", () => {
           events: [
             {
               name: "StrLog",
+              contractName: "TestContract",
               kind: LogData({
                 logId: "1",
                 decode: _ => %raw(`null`),
@@ -773,6 +809,7 @@ describe("HyperFuelWorker - makeWildcardRecieptsSelection", () => {
             },
             {
               name: "BoolLog",
+              contractName: "TestContract",
               kind: LogData({
                 logId: "2",
                 decode: _ => %raw(`null`),
@@ -785,6 +822,7 @@ describe("HyperFuelWorker - makeWildcardRecieptsSelection", () => {
             },
             {
               name: "Mint",
+              contractName: "TestContract",
               kind: Mint,
               isWildcard: false,
               handler: None,
@@ -794,6 +832,7 @@ describe("HyperFuelWorker - makeWildcardRecieptsSelection", () => {
             },
             {
               name: "Burn",
+              contractName: "TestContract",
               kind: Burn,
               isWildcard: false,
               handler: None,
@@ -803,6 +842,7 @@ describe("HyperFuelWorker - makeWildcardRecieptsSelection", () => {
             },
             {
               name: "Transfer",
+              contractName: "TestContract",
               kind: Transfer,
               isWildcard: false,
               handler: None,
@@ -812,6 +852,7 @@ describe("HyperFuelWorker - makeWildcardRecieptsSelection", () => {
             },
             {
               name: "Call",
+              contractName: "TestContract",
               kind: Call,
               isWildcard: true,
               handler: None,
@@ -826,6 +867,7 @@ describe("HyperFuelWorker - makeWildcardRecieptsSelection", () => {
           events: [
             {
               name: "UnitLog",
+              contractName: "TestContract2",
               kind: LogData({
                 logId: "3",
                 decode: _ => %raw(`null`),
@@ -838,6 +880,7 @@ describe("HyperFuelWorker - makeWildcardRecieptsSelection", () => {
             },
             {
               name: "Burn",
+              contractName: "TestContract2",
               kind: Burn,
               isWildcard: false,
               handler: None,
@@ -874,6 +917,7 @@ describe("HyperFuelWorker - makeWildcardRecieptsSelection", () => {
           events: [
             {
               name: "Mint",
+              contractName: "TestContract2",
               kind: Mint,
               isWildcard: false,
               handler: None,
@@ -888,6 +932,7 @@ describe("HyperFuelWorker - makeWildcardRecieptsSelection", () => {
           events: [
             {
               name: "Mint",
+              contractName: "TestContract",
               kind: Mint,
               isWildcard: true,
               handler: None,
@@ -918,6 +963,7 @@ describe("HyperFuelWorker - makeWildcardRecieptsSelection", () => {
           events: [
             {
               name: "Mint",
+              contractName: "TestContract",
               kind: Mint,
               isWildcard: true,
               handler: None,
@@ -948,6 +994,7 @@ describe("HyperFuelWorker - makeWildcardRecieptsSelection", () => {
           events: [
             {
               name: "Burn",
+              contractName: "TestContract",
               kind: Burn,
               isWildcard: true,
               handler: None,
@@ -978,6 +1025,7 @@ describe("HyperFuelWorker - makeWildcardRecieptsSelection", () => {
           events: [
             {
               name: "StrLog",
+              contractName: "TestContract",
               kind: LogData({
                 logId: "1",
                 decode: _ => %raw(`null`),
@@ -990,6 +1038,7 @@ describe("HyperFuelWorker - makeWildcardRecieptsSelection", () => {
             },
             {
               name: "BoolLog",
+              contractName: "TestContract",
               kind: LogData({
                 logId: "2",
                 decode: _ => %raw(`null`),
@@ -1007,6 +1056,7 @@ describe("HyperFuelWorker - makeWildcardRecieptsSelection", () => {
           events: [
             {
               name: "UnitLog",
+              contractName: "TestContract2",
               kind: LogData({
                 logId: "3",
                 decode: _ => %raw(`null`),

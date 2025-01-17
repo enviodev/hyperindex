@@ -407,6 +407,7 @@ impl EventMod {
                 r#"
 let register = (): Internal.fuelEventConfig => {{
   name,
+  contractName,
   kind: {fuel_event_kind_code},
   isWildcard: (handlerRegister->HandlerTypes.Register.getEventOptions).isWildcard,
   loader: handlerRegister->HandlerTypes.Register.getLoader,
