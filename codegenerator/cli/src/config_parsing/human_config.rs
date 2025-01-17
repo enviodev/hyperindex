@@ -240,8 +240,10 @@ pub mod evm {
         CumulativeGasUsed,
         EffectiveGasPrice,
         GasUsed,
+        #[subenum(RpcTransactionField)]
         Input,
         Nonce,
+        #[subenum(RpcTransactionField)]
         Value,
         V,
         R,
