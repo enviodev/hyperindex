@@ -109,7 +109,7 @@ This will generate the config, schema and event handlers files according to the 
 
 Our greeter template [config.yaml](./codegenerator/cli/templates/static/greeter_template/typescript/config.yaml) and [schema.graphql](./codegenerator/cli/templates/static/greeter_template/shared/schema.graphql) is an example of how to layout a configuration file for indexing.
 
-*Please refer to the [documentation website](https://docs.envio.dev) for a thorough guide on all Envio indexer features*
+*Please refer to the [documentation website](https://docs.envio.dev) for a thorough guide on all [Envio](https://envio.dev) indexer features*
 
 ## Generate code according to configuration
 
