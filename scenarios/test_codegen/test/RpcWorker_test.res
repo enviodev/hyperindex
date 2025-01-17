@@ -431,3 +431,105 @@ describe("RpcWorker - getSelectionConfig", () => {
     },
   )
 })
+
+describe("RpcWorker - getSuggestedBlockIntervalFromExn", () => {
+  let getSuggestedBlockIntervalFromExn = EventFetching.getSuggestedBlockIntervalFromExn
+
+  it("Should handle retry with the range", () => {
+    let error = JsError(
+      %raw(`{
+        "code": "UNKNOWN_ERROR",
+        "error": {
+          "code": -32602,
+          "message": "query exceeds max results 20000, retry with the range 6000000-6000509"
+        },
+        "payload": {
+          "method": "eth_getLogs",
+          "params": [
+            {
+              "topics": [
+                [
+                  "0x8c5be1e5ebec7d5bd14f71427d1e84f3dd0314c0f7b2291e5b200ac8c7c3b925",
+                  "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
+                ]
+              ],
+              "fromBlock": "0x5b8d80",
+              "toBlock": "0x5b9168"
+            }
+          ],
+          "id": 4,
+          "jsonrpc": "2.0"
+        },
+        "shortMessage": "could not coalesce error"
+    
+      }`),
+    )
+
+    Assert.deepEqual(getSuggestedBlockIntervalFromExn(error), Some(510))
+  })
+
+  it("Should ignore invalid range errors where toBlock is less than fromBlock", () => {
+    let error = JsError(
+      %raw(`{
+        "code": "UNKNOWN_ERROR",
+        "error": {
+          "code": -32602,
+          "message": "query exceeds max results 20000, retry with the range 6000509-6000000"
+        },
+        "payload": {
+          "method": "eth_getLogs",
+          "params": [
+            {
+              "topics": [
+                [
+                  "0x8c5be1e5ebec7d5bd14f71427d1e84f3dd0314c0f7b2291e5b200ac8c7c3b925",
+                  "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
+                ]
+              ],
+              "fromBlock": "0x5b8d80",
+              "toBlock": "0x5b9168"
+            }
+          ],
+          "id": 4,
+          "jsonrpc": "2.0"
+        },
+        "shortMessage": "could not coalesce error"
+    
+      }`),
+    )
+
+    Assert.deepEqual(getSuggestedBlockIntervalFromExn(error), None)
+  })
+
+  it("Should handle block range limit from https://1rpc.io/eth", () => {
+    let error = JsError(
+      %raw(`{
+        "code": "UNKNOWN_ERROR",
+        "error": {
+          "code": -32000,
+          "message": "eth_getLogs is limited to a 1000 blocks range"
+        },
+        "payload": {
+          "method": "eth_getLogs",
+          "params": [
+            {
+              "address": "0xdac17f958d2ee523a2206206994597c13d831ec7",
+              "topics": [
+                [
+                  "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
+                ]
+              ],
+              "fromBlock": "0x5b8d80",
+              "toBlock": "0x5ba17f"
+            }
+          ],
+          "id": 18,
+          "jsonrpc": "2.0"
+        },
+        "shortMessage": "could not coalesce error"
+      }`),
+    )
+
+    Assert.deepEqual(getSuggestedBlockIntervalFromExn(error), Some(1000))
+  })
+})

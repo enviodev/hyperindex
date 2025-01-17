@@ -1,3 +1,5 @@
+open Belt
+
 exception QueryTimout(string)
 exception EventRoutingFailed
 
@@ -30,6 +32,51 @@ let rec getKnownBlockWithBackoff = async (~provider, ~blockNumber, ~backoffMsOnF
     )
   | result => result
   }
+
+let getSuggestedBlockIntervalFromExn = {
+  let suggestedRangeRegExp = %re(`/retry with the range (\d+)-(\d+)/`)
+
+  let blockRangeLimitRegExp = %re(`/limited to a (\d+) blocks range/`)
+
+  exn =>
+    switch exn {
+    | Js.Exn.Error(error) =>
+      try {
+        // Didn't use parse here since it didn't work
+        // because the error is some sort of weird Ethers object
+        let message: string = (error->Obj.magic)["error"]["message"]
+        message->S.assertOrRaiseWith(S.string)
+        switch suggestedRangeRegExp->Js.Re.exec_(message) {
+        | Some(execResult) =>
+          switch execResult->Js.Re.captures {
+          | [_, Js.Nullable.Value(fromBlock), Js.Nullable.Value(toBlock)] =>
+            switch (fromBlock->Int.fromString, toBlock->Int.fromString) {
+            | (Some(fromBlock), Some(toBlock)) if toBlock >= fromBlock =>
+              Some(toBlock - fromBlock + 1)
+            | _ => None
+            }
+          | _ => None
+          }
+        | None =>
+          switch blockRangeLimitRegExp->Js.Re.exec_(message) {
+          | Some(execResult) =>
+            switch execResult->Js.Re.captures {
+            | [_, Js.Nullable.Value(blockRangeLimit)] =>
+              switch blockRangeLimit->Int.fromString {
+              | Some(blockRangeLimit) if blockRangeLimit > 0 => Some(blockRangeLimit)
+              | _ => None
+              }
+            | _ => None
+            }
+          | None => None
+          }
+        }
+      } catch {
+      | _ => None
+      }
+    | _ => None
+    }
+}
 
 type eventBatchQuery = {
   logs: array<Ethers.log>,
@@ -93,26 +140,37 @@ let getNextPage = (
     [queryTimoutPromise, logsPromise]
     ->Promise.race
     ->Promise.catch(err => {
-      // Might fail with message "query exceeds max results 20000, retry with the range 6000438-6000934"
-      // Ideally to handle it and respect
+      switch getSuggestedBlockIntervalFromExn(err) {
+      | Some(nextBlockIntervalTry) => {
+          logger->Logging.childTrace({
+            "msg": "Failed getting events for the block interval. Retrying with the block interval suggested by the RPC provider.",
+            "fromBlock": fromBlock,
+            "toBlock": fromBlock + nextBlockIntervalTry - 1,
+            "prevBlockInterval": suggestedBlockInterval,
+          })
+          executeQuery(~suggestedBlockInterval=nextBlockIntervalTry)
+        }
+      | None => {
+          logger->Logging.childWarn({
+            "msg": "Failed getting events for the block interval. Will retry after backoff time",
+            "backOffMilliseconds": sc.backoffMillis,
+            "prevBlockInterval": suggestedBlockInterval,
+            "err": err,
+          })
 
-      logger->Logging.childWarn({
-        "msg": "Error getting events. Will retry after backoff time",
-        "backOffMilliseconds": sc.backoffMillis,
-        "suggestedBlockInterval": suggestedBlockInterval,
-        "err": err,
-      })
-
-      Time.resolvePromiseAfterDelay(~delayMilliseconds=sc.backoffMillis)->Promise.then(_ => {
-        let nextBlockIntervalTry =
-          (suggestedBlockInterval->Belt.Int.toFloat *. sc.backoffMultiplicative)->Belt.Int.fromFloat
-        logger->Logging.childTrace({
-          "msg": "Retrying query with a smaller block interval",
-          "fromBlock": fromBlock,
-          "toBlock": fromBlock + nextBlockIntervalTry - 1,
-        })
-        executeQuery(~suggestedBlockInterval={nextBlockIntervalTry})
-      })
+          Time.resolvePromiseAfterDelay(~delayMilliseconds=sc.backoffMillis)->Promise.then(_ => {
+            let nextBlockIntervalTry =
+              (suggestedBlockInterval->Belt.Int.toFloat *. sc.backoffMultiplicative)
+                ->Belt.Int.fromFloat
+            logger->Logging.childTrace({
+              "msg": "Retrying query with a smaller block interval",
+              "fromBlock": fromBlock,
+              "toBlock": fromBlock + nextBlockIntervalTry - 1,
+            })
+            executeQuery(~suggestedBlockInterval={nextBlockIntervalTry})
+          })
+        }
+      }
     })
   }
 
