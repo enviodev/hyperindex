@@ -140,6 +140,7 @@ describe("Dynamic contract restart resistance test", () => {
     let chainFetcher = await ChainFetcher.makeFromDbState(
       config.chainMap->ChainMap.get(ChainMap.Chain.makeUnsafe(~chainId)),
       ~maxAddrInPartition=Env.maxAddrInPartition,
+      ~enableRawEvents=config.enableRawEvents,
       ~sql?,
     )
 
@@ -280,6 +281,7 @@ describe("Dynamic contract restart resistance test", () => {
               let restartedChainFetcher = await ChainFetcher.makeFromDbState(
                 chainConfig,
                 ~maxAddrInPartition=Env.maxAddrInPartition,
+                ~enableRawEvents=false,
                 ~sql,
               )
 
@@ -340,6 +342,7 @@ describe("Dynamic contract restart resistance test", () => {
               let restartedChainFetcher = await ChainFetcher.makeFromDbState(
                 chainConfig,
                 ~maxAddrInPartition=Env.maxAddrInPartition,
+                ~enableRawEvents=false,
                 ~sql,
               )
 

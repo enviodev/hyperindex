@@ -1,7 +1,7 @@
 # yaml-language-server: $schema=../../codegenerator/cli/npm/envio/fuel.schema.json
 name: Fuel Greeter Indexer
 ecosystem: fuel
-raw_events: true
+# raw_events: true
 networks:
   - id: 0
     start_block: 0
@@ -60,8 +60,6 @@ networks:
           - name: BytesLog
             logId: "14832741149864513620"
           - name: Mint
-          - name: Mint2
-            type: mint
           - name: Burn
           - name: Transfer
           # - name: Call
