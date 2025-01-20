@@ -214,7 +214,7 @@ module HeightQuery = {
       | exception e =>
         logger->Logging.childWarn({
           "message": `Failed to get height from endpoint. Retrying in ${retryIntervalMillis.contents->Int.toString}ms...`,
-          "error": e,
+          "error": e->ErrorHandling.prettifyExn,
         })
         await Time.resolvePromiseAfterDelay(~delayMilliseconds=retryIntervalMillis.contents)
         retryIntervalMillis := retryIntervalMillis.contents * backOffMultiplicative
