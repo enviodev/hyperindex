@@ -79,7 +79,7 @@ module EndOfBlockRangeScannedData = {
     ~blockNumberThreshold: int,
     //minimum blockTimestamp that should be kept in db
     //(timestamp could be lower/higher than blockTimestampThreshold depending on multichain configuration)
-    ~blockTimestampThreshold: int,
+    ~blockTimestampThreshold: option<int>,
   ) => promise<unit> = "deleteStaleEndOfBlockRangeScannedDataForChain"
 }
 

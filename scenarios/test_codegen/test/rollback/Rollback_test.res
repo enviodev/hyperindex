@@ -173,7 +173,7 @@ describe("Single Chain Simple Rollback", () => {
       [
         UpdateEndOfBlockRangeScannedData({
           blockNumberThreshold: -198,
-          blockTimestampThreshold: 50,
+          blockTimestampThreshold: Some(50),
           chain: MockConfig.chain1337,
           nextEndOfBlockRangeScannedData: {
             blockHash: block2.blockHash,
@@ -236,7 +236,7 @@ describe("Single Chain Simple Rollback", () => {
       [
         UpdateEndOfBlockRangeScannedData({
           blockNumberThreshold: -198,
-          blockTimestampThreshold: 50,
+          blockTimestampThreshold: Some(50),
           chain: MockConfig.chain1337,
           nextEndOfBlockRangeScannedData: {
             blockHash: block2.blockHash,
@@ -332,7 +332,7 @@ describe("Single Chain Simple Rollback", () => {
         UpdateChainMetaDataAndCheckForExit(NoExit),
         GlobalState.UpdateEndOfBlockRangeScannedData({
           blockNumberThreshold: -198,
-          blockTimestampThreshold: 50,
+          blockTimestampThreshold: Some(50),
           chain: MockConfig.chain1337,
           nextEndOfBlockRangeScannedData: {
             blockHash: block2.blockHash,
@@ -360,7 +360,7 @@ describe("Single Chain Simple Rollback", () => {
         NextQuery(CheckAllChains),
         GlobalState.UpdateEndOfBlockRangeScannedData({
           blockNumberThreshold: -196,
-          blockTimestampThreshold: 50,
+          blockTimestampThreshold: Some(50),
           chain: MockConfig.chain1337,
           nextEndOfBlockRangeScannedData: {
             blockHash: block4.blockHash,
