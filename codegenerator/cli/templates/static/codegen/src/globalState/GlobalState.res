@@ -713,6 +713,7 @@ let actionReducer = (state: t, action: action) => {
         ~processingFilters=None,
         ~maxAddrInPartition,
         ~dynamicContractPreRegistration=None,
+        ~enableRawEvents=config.enableRawEvents,
       )
     })
 
@@ -749,13 +750,7 @@ let invalidatedActionReducer = (state: t, action: action) =>
     (state, [])
   }
 
-let executeQuery = (
-  q: FetchState.query,
-  ~logger,
-  ~chainWorker,
-  ~currentBlockHeight,
-  ~chain,
-) => {
+let executeQuery = (q: FetchState.query, ~logger, ~chainWorker, ~currentBlockHeight, ~chain) => {
   chainWorker->ChainWorker.fetchBlockRange(
     ~fromBlock=q.fromBlock,
     ~toBlock=switch q.target {
@@ -793,12 +788,7 @@ let checkAndFetchForChain = (
         dispatchAction(FinishWaitingForNewBlock({chain, currentBlockHeight})),
       ~currentBlockHeight,
       ~executeQuery=async query => {
-        switch await query->executeQuery(
-          ~logger,
-          ~chainWorker,
-          ~currentBlockHeight,
-          ~chain,
-        ) {
+        switch await query->executeQuery(~logger, ~chainWorker, ~currentBlockHeight, ~chain) {
         | Ok(response) => dispatchAction(PartitionQueryResponse({chain, response, query}))
         | Error(e) => dispatchAction(ErrorExit(e))
         }

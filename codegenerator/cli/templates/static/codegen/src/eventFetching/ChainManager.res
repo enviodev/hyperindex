@@ -145,7 +145,7 @@ let determineNextEvent = (
 
 let makeFromConfig = (~config: Config.t, ~maxAddrInPartition=Env.maxAddrInPartition): t => {
   let chainFetchers =
-    config.chainMap->ChainMap.map(ChainFetcher.makeFromConfig(_, ~maxAddrInPartition))
+    config.chainMap->ChainMap.map(ChainFetcher.makeFromConfig(_, ~maxAddrInPartition, ~enableRawEvents=config.enableRawEvents))
   {
     chainFetchers,
     arbitraryEventQueue: [],
@@ -159,7 +159,7 @@ let makeFromDbState = async (~config: Config.t, ~maxAddrInPartition=Env.maxAddrI
     await config.chainMap
     ->ChainMap.entries
     ->Array.map(async ((chain, chainConfig)) => {
-      (chain, await chainConfig->ChainFetcher.makeFromDbState(~maxAddrInPartition))
+      (chain, await chainConfig->ChainFetcher.makeFromDbState(~maxAddrInPartition, ~enableRawEvents=config.enableRawEvents))
     })
     ->Promise.all
 
