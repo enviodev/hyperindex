@@ -224,7 +224,7 @@ let saveToCacheFile = if (
   //Save to cache file only happens if the strategy is set to json-file
   data => {
     let write = () => {
-      let json = data->S.serializeToJsonStringOrRaiseWith(Data.schema)
+      let json = data->S.reverseConvertToJsonStringOrThrow(Data.schema)
       NodeJsLocal.Fs.Promises.writeFile(~filepath=cacheFilePath, ~content=json)
     }
     throttler->Throttler.schedule(write)
@@ -237,9 +237,8 @@ let readFromCacheFile = async () => {
   switch await NodeJsLocal.Fs.Promises.readFile(~filepath=cacheFilePath, ~encoding=Utf8) {
   | exception _ => None
   | content =>
-    switch content->S.parseJsonStringWith(Data.schema) {
-    | Ok(data) => Some(data)
-    | Error(e) =>
+    try content->S.parseJsonStringOrThrow(Data.schema)->Some catch {
+    | S.Raised(e) =>
       Logging.error(
         "Failed to parse benchmark cache file, please delete it and rerun the benchmark",
       )
@@ -267,7 +266,7 @@ let addBlockRangeFetched = (
   ~toBlock,
   ~numEvents,
   ~numAddresses,
-  ~queryName
+  ~queryName,
 ) => {
   let group = `BlockRangeFetched Summary for Chain ${chainId->Belt.Int.toString} ${queryName}`
   let add = (label, value) => data->Data.addSummaryData(~group, ~label, ~value=Utils.magic(value))

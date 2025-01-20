@@ -46,7 +46,7 @@ let currentHistoryFieldsSchema = S.object(s => {
 let makeHistoryRowSchema: S.t<'entity> => S.t<historyRow<'entity>> = entitySchema => {
   //Maps a schema object for the given entity with all fields nullable except for the id field
   //Keeps any original nullable fields
-  let nullableEntitySchema: S.t<Js.Dict.t<unknown>> = S.schema(s =>
+  let nullableEntitySchema: S.t<Js.Dict.t<unknown>> = S.object(s =>
     switch entitySchema->S.classify {
     | Object({items}) =>
       let nulldict = Js.Dict.empty()
@@ -57,7 +57,7 @@ let makeHistoryRowSchema: S.t<'entity> => S.t<historyRow<'entity>> = entitySchem
         | _ => S.null(schema)->S.toUnknown
         }
 
-        nulldict->Js.Dict.set(location, s.matches(nullableFieldSchema))
+        nulldict->Js.Dict.set(location, s.field(location, nullableFieldSchema))
       })
       nulldict
     | _ =>
@@ -144,7 +144,7 @@ let insertRow = (
   ~historyRow: historyRow<'entity>,
   ~shouldCopyCurrentEntity,
 ) => {
-  let row = historyRow->S.serializeOrRaiseWith(self.schema)
+  let row = historyRow->S.reverseConvertToJsonOrThrow(self.schema)
   self.insertFn(sql, row, ~shouldCopyCurrentEntity)
 }
 
@@ -155,7 +155,9 @@ let batchInsertRows = (
   ~shouldCopyCurrentEntity,
 ) => {
   let rows =
-    rows->S.serializeOrRaiseWith(self.schemaRows)->(Utils.magic: Js.Json.t => array<Js.Json.t>)
+    rows
+    ->S.reverseConvertToJsonOrThrow(self.schemaRows)
+    ->(Utils.magic: Js.Json.t => array<Js.Json.t>)
   rows
   ->Belt.Array.map(row => {
     self.insertFn(sql, row, ~shouldCopyCurrentEntity)

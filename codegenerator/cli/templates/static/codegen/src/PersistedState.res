@@ -18,7 +18,7 @@ external requireJson: string => Js.Json.t = "require"
 let getPersistedState = () =>
   try {
     let json = requireJson("../persisted_state.envio.json")
-    let parsed = json->S.parseOrRaiseWith(schema)
+    let parsed = json->S.parseJsonOrThrow(schema)
     Ok(parsed)
   } catch {
   | exn => Error(exn)

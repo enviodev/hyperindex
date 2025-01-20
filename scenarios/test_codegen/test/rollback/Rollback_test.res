@@ -261,10 +261,9 @@ describe("Single Chain Simple Rollback", () => {
     await dispatchAllTasksReorgChain()
 
     let getAllGravatars = async () =>
-      (await Sql.getAllRowsInTable("Gravatar"))
-      ->Array.map(S.parseWith(_, Entities.Gravatar.schema))
-      ->Utils.Array.transposeResults
-      ->Result.getExn
+      (await Sql.getAllRowsInTable("Gravatar"))->Array.map(
+        S.parseJsonOrThrow(_, Entities.Gravatar.schema),
+      )
 
     let gravatars = await getAllGravatars()
 

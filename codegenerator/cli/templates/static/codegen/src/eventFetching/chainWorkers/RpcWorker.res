@@ -83,7 +83,7 @@ let makeThrowingGetEventTransaction = (~getTransactionFields) => {
       | Some(fn) => fn
       // This is not super expensive, but don't want to do it on every event
       | None => {
-          transactionSchema->Utils.Schema.removeTypeValidationInPlace
+          let transactionSchema = transactionSchema->S.removeTypeValidation
 
           let transactionFieldItems = switch transactionSchema->S.classify {
           | Object({items}) => items
@@ -91,7 +91,7 @@ let makeThrowingGetEventTransaction = (~getTransactionFields) => {
           }
 
           let parseOrThrowReadableError = data => {
-            try data->S.parseAnyOrRaiseWith(transactionSchema) catch {
+            try data->S.parseOrThrow(transactionSchema) catch {
             | S.Raised(error) =>
               raise(
                 InvalidTransactionField({

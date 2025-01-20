@@ -35,13 +35,13 @@ let testEntityHistorySchema = EntityHistory.makeHistoryRowSchema(TestEntity.sche
 
 let batchSetMockEntity = Table.PostgresInterop.makeBatchSetFn(
   ~table=TestEntity.table,
-  ~rowsSchema=TestEntity.rowsSchema,
+  ~schema=TestEntity.schema,
 )
 
 let getAllMockEntity = sql =>
   sql
   ->Postgres.unsafe(`SELECT * FROM "public"."${TestEntity.table.tableName}"`)
-  ->Promise.thenResolve(json => json->S.parseOrRaiseWith(TestEntity.rowsSchema))
+  ->Promise.thenResolve(json => json->S.parseJsonOrThrow(TestEntity.rowsSchema))
 
 let getAllMockEntityHistory = sql =>
   sql->Postgres.unsafe(`SELECT * FROM "public"."${TestEntity.entityHistory.table.tableName}"`)
@@ -59,7 +59,7 @@ describe("Entity history serde", () => {
       entityData: Set({id: "1", fieldA: 1, fieldB: Some("test")}),
     }
 
-    let serializedHistory = history->S.serializeOrRaiseWith(testEntityHistorySchema)
+    let serializedHistory = history->S.reverseConvertToJsonOrThrow(testEntityHistorySchema)
     let expected = %raw(`{
       "entity_history_block_timestamp": 3,
       "entity_history_chain_id": 1,
@@ -76,7 +76,7 @@ describe("Entity history serde", () => {
     }`)
 
     Assert.deepEqual(serializedHistory, expected)
-    let deserializedHistory = serializedHistory->S.parseOrRaiseWith(testEntityHistorySchema)
+    let deserializedHistory = serializedHistory->S.parseJsonOrThrow(testEntityHistorySchema)
     Assert.deepEqual(deserializedHistory, history)
   })
 
@@ -96,7 +96,7 @@ describe("Entity history serde", () => {
       }), //previous
       entityData: Set({id: "1", fieldA: 1, fieldB: Some("test")}),
     }
-    let serializedHistory = history->S.serializeOrRaiseWith(testEntityHistorySchema)
+    let serializedHistory = history->S.reverseConvertToJsonOrThrow(testEntityHistorySchema)
     let expected = %raw(`{
       "entity_history_block_timestamp": 3,
       "entity_history_chain_id": 1,
@@ -113,7 +113,7 @@ describe("Entity history serde", () => {
     }`)
 
     Assert.deepEqual(serializedHistory, expected)
-    let deserializedHistory = serializedHistory->S.parseOrRaiseWith(testEntityHistorySchema)
+    let deserializedHistory = serializedHistory->S.parseJsonOrThrow(testEntityHistorySchema)
     Assert.deepEqual(deserializedHistory, history)
   })
 
@@ -128,7 +128,7 @@ describe("Entity history serde", () => {
       previous: None,
       entityData: Delete({id: "1"}),
     }
-    let serializedHistory = history->S.serializeOrRaiseWith(testEntityHistorySchema)
+    let serializedHistory = history->S.reverseConvertToJsonOrThrow(testEntityHistorySchema)
     let expected = %raw(`{
       "entity_history_block_timestamp": 3,
       "entity_history_chain_id": 1,
@@ -515,7 +515,7 @@ describe("Entity history rollbacks", () => {
 
       let historyItems = {
         let items = await Db.sql->getAllMockEntityHistory
-        items->S.parseOrRaiseWith(TestEntity.entityHistory.schemaRows)
+        items->S.parseJsonOrThrow(TestEntity.entityHistory.schemaRows)
       }
       Assert.equal(historyItems->Js.Array2.length, 6, ~message="Should have 6 history items")
       Assert.ok(
@@ -663,7 +663,7 @@ describe("Entity history rollbacks", () => {
 
     let currentHistoryItems = await Db.sql->getAllMockEntityHistory
     let parsedHistoryItems =
-      currentHistoryItems->S.parseOrRaiseWith(TestEntity.entityHistory.schemaRows)
+      currentHistoryItems->S.parseJsonOrThrow(TestEntity.entityHistory.schemaRows)
 
     let expectedHistoryItems = Mocks.historyRows->Belt.Array.slice(~offset=0, ~len=4)
 
@@ -684,7 +684,7 @@ describe("Entity history rollbacks", () => {
 
     let currentHistoryItems = await Db.sql->getAllMockEntityHistory
     let parsedHistoryItems =
-      currentHistoryItems->S.parseOrRaiseWith(TestEntity.entityHistory.schemaRows)
+      currentHistoryItems->S.parseJsonOrThrow(TestEntity.entityHistory.schemaRows)
 
     let expectedHistoryItems = Mocks.historyRows->Belt.Array.slice(~offset=0, ~len=5)
 
@@ -704,7 +704,7 @@ describe("Entity history rollbacks", () => {
     let currentHistoryItems = await Db.sql->getAllMockEntityHistory
 
     let parsedHistoryItems =
-      currentHistoryItems->S.parseOrRaiseWith(TestEntity.entityHistory.schemaRows)
+      currentHistoryItems->S.parseJsonOrThrow(TestEntity.entityHistory.schemaRows)
 
     let expectedHistoryItems = [
       Mocks.Chain1.historyRow2,
@@ -739,7 +739,7 @@ describe("Entity history rollbacks", () => {
       let currentHistoryItems = await Db.sql->getAllMockEntityHistory
 
       let parsedHistoryItems =
-        currentHistoryItems->S.parseOrRaiseWith(TestEntity.entityHistory.schemaRows)
+        currentHistoryItems->S.parseJsonOrThrow(TestEntity.entityHistory.schemaRows)
 
       let sort = arr =>
         arr->Js.Array2.sortInPlaceWith(
