@@ -121,7 +121,7 @@ type task =
   | UpdateEndOfBlockRangeScannedData({
       chain: chain,
       blockNumberThreshold: int,
-      blockTimestampThreshold: int,
+      blockTimestampThreshold: option<int>,
       nextEndOfBlockRangeScannedData: DbFunctions.EndOfBlockRangeScannedData.endOfBlockRangeScannedData,
     })
   | ProcessEventBatch
@@ -424,8 +424,7 @@ let handlePartitionQueryResponse = (
               blockNumberThreshold: lastBlockScannedData.blockNumber -
               updatedChainFetcher.chainConfig.confirmedBlockThreshold,
               blockTimestampThreshold: chainManager
-              ->ChainManager.getEarliestMultiChainTimestampInThreshold
-              ->Option.getWithDefault(0),
+              ->ChainManager.getEarliestMultiChainTimestampInThreshold,
               nextEndOfBlockRangeScannedData: {
                 chainId: chain->ChainMap.Chain.toChainId,
                 blockNumber: lastBlockScannedData.blockNumber,

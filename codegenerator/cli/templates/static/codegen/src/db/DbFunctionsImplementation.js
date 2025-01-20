@@ -235,7 +235,11 @@ module.exports.deleteStaleEndOfBlockRangeScannedDataForChain = (
     FROM "public"."end_of_block_range_scanned_data"
     WHERE chain_id = ${chainId}
     AND block_number < ${blockNumberThreshold}
-    AND block_timestamp < ${blockTimestampThreshold}
+    ${
+      blockTimestampThreshold
+        ? sql`AND block_timestamp < ${blockTimestampThreshold}`
+        : sql``
+    }
     ;`;
 };
 
