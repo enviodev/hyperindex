@@ -313,7 +313,7 @@ pub enum Network {
     #[subenum(NetworkWithExplorer)]
     Taiko = 167000,
 
-    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
+    #[subenum(NetworkWithExplorer)]
     Tangle = 5845,
 
     #[subenum(HypersyncNetwork, NetworkWithExplorer)]
@@ -518,7 +518,7 @@ impl HypersyncNetwork {
             | ArbitrumOne | Merlin => Silver,
 
             Zora | MoonbaseAlpha | Morph | Kroma | Lukso | C1Milkomeda | Crab | Sophon | Flare
-            | PolygonZkevm | MevCommit | Tangle => Bronze,
+            | PolygonZkevm | MevCommit => Bronze,
 
             SophonTestnet | MorphTestnet | GaladrielDevnet | CitreaTestnet | Goerli
             | BscTestnet | UnichainSepolia | Zircuit | Celo | Opbnb | GnosisChiado
