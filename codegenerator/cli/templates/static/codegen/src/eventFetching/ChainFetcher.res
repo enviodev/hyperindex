@@ -47,9 +47,9 @@ let make = (
   ~processingFilters,
   ~maxAddrInPartition,
   ~dynamicContractPreRegistration,
+  ~enableRawEvents,
 ): t => {
   let module(ChainWorker) = chainConfig.chainWorker
-  logger->Logging.childInfo("Initializing ChainFetcher with " ++ ChainWorker.name ++ " worker")
 
   let isPreRegisteringDynamicContracts = dynamicContractPreRegistration->Option.isSome
 
@@ -71,6 +71,8 @@ let make = (
 
       let {isWildcard, preRegisterDynamicContracts} =
         Event.handlerRegister->Types.HandlerTypes.Register.getEventOptions
+      let hasContractRegister =
+        Event.handlerRegister->Types.HandlerTypes.Register.getContractRegister->Option.isSome
 
       // Should validate the events
       eventRouter->EventRouter.addOrThrow(
@@ -84,7 +86,20 @@ let make = (
 
       // Filter out non-preRegistration events on preRegistration phase
       // so we don't care about it in fetch state and workers anymore
-      if isPreRegisteringDynamicContracts ? preRegisterDynamicContracts : true {
+      let shouldBeIncluded = if isPreRegisteringDynamicContracts {
+        preRegisterDynamicContracts && hasContractRegister
+      } else if enableRawEvents {
+        true
+      } else {
+        let isRegistered = hasContractRegister ||
+        Event.handlerRegister->Types.HandlerTypes.Register.getHandler->Option.isSome
+        if !isRegistered {
+          logger->Logging.childInfo(`The event "${Event.name}" for contract "${contractName}" is not going to be indexed, because it doesn't have either a contract register or a handler.`)
+        }
+        isRegistered
+      }
+
+      if shouldBeIncluded {
         eventConfigs->Array.push({
           contractName,
           eventId: Event.id,
@@ -126,7 +141,7 @@ let make = (
   }
 }
 
-let makeFromConfig = (chainConfig: Config.chainConfig, ~maxAddrInPartition) => {
+let makeFromConfig = (chainConfig: Config.chainConfig, ~maxAddrInPartition, ~enableRawEvents) => {
   let logger = Logging.createChild(~params={"chainId": chainConfig.chain->ChainMap.Chain.toChainId})
   let lastBlockScannedHashes = ReorgDetection.LastBlockScannedHashes.empty(
     ~confirmedBlockThreshold=chainConfig.confirmedBlockThreshold,
@@ -150,13 +165,19 @@ let makeFromConfig = (chainConfig: Config.chainConfig, ~maxAddrInPartition) => {
     ~dynamicContracts=[],
     ~maxAddrInPartition,
     ~dynamicContractPreRegistration,
+    ~enableRawEvents,
   )
 }
 
 /**
  * This function allows a chain fetcher to be created from metadata, in particular this is useful for restarting an indexer and making sure it fetches blocks from the same place.
  */
-let makeFromDbState = async (chainConfig: Config.chainConfig, ~maxAddrInPartition, ~sql=Db.sql) => {
+let makeFromDbState = async (
+  chainConfig: Config.chainConfig,
+  ~maxAddrInPartition,
+  ~enableRawEvents,
+  ~sql=Db.sql,
+) => {
   let logger = Logging.createChild(~params={"chainId": chainConfig.chain->ChainMap.Chain.toChainId})
   let chainId = chainConfig.chain->ChainMap.Chain.toChainId
   let latestProcessedEvent = await sql->DbFunctions.EventSyncState.getLatestProcessedEvent(~chainId)
@@ -292,6 +313,7 @@ let makeFromDbState = async (chainConfig: Config.chainConfig, ~maxAddrInPartitio
     ~processingFilters,
     ~maxAddrInPartition,
     ~dynamicContractPreRegistration,
+    ~enableRawEvents,
   )
 }
 
