@@ -15,19 +15,19 @@ import { expectType, TypeEqual } from "ts-expect";
 const zeroAddress = "0x0000000000000000000000000000000000000000";
 
 Gravatar.CustomSelection.handler(async ({ event, context }) => {
-  const transactionSchema = S.object({
+  const transactionSchema = S.schema({
     to: S.undefined,
     from: "0xfoo",
     hash: S.string,
   });
-  transactionSchema.assert(event.transaction)!;
-  const blockSchema = S.object({
+  S.assertOrThrow(event.transaction, transactionSchema)!;
+  const blockSchema = S.schema({
     hash: S.string,
     number: S.number,
     timestamp: S.number,
     parentHash: "0xParentHash",
   });
-  blockSchema.assert(event.block)!;
+  S.assertOrThrow(event.block, blockSchema)!;
 
   // We already do type checking in the tests,
   // but double-check that we receive correct types

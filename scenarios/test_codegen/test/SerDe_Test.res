@@ -92,16 +92,12 @@ describe("SerDe Test", () => {
 
     switch res {
     | [row] =>
-      let parsed = row->S.parseWith(Entities.EntityWithAllTypes.entityHistory.schema)
-      switch parsed {
-      | Ok(parsed) =>
-        Assert.deepEqual(
-          parsed.entityData,
-          Set(entity),
-          ~message="Postgres json serialization should be compatable with our schema",
-        )
-      | Error(e) => Assert.fail("Failed to parse entity history: " ++ e->S.Error.reason)
-      }
+      let parsed = row->S.parseJsonOrThrow(Entities.EntityWithAllTypes.entityHistory.schema)
+      Assert.deepEqual(
+        parsed.entityData,
+        Set(entity),
+        ~message="Postgres json serialization should be compatable with our schema",
+      )
     | _ => Assert.fail("Should have returned a row")
     }
   })

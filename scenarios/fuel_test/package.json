@@ -27,7 +27,7 @@
   "dependencies": {
     "chai": "4.3.10",
     "envio": "file:../../codegenerator/cli/npm/envio",
-    "rescript-schema": "8.1.0",
+    "rescript-schema": "9.0.1",
     "ts-expect": "1.3.0",
     "rescript": "11.1.3"
   },

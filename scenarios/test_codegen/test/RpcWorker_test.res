@@ -230,7 +230,7 @@ describe("RpcWorker - getEventTransactionOrThrow", () => {
         )
       },
       ~error={
-        "message": `Invalid transaction field "hash" found in the RPC response. Error: Expected Int, received "0xabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdef"`,
+        "message": `Invalid transaction field "hash" found in the RPC response. Error: Expected int32, received "0xabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdef"`,
       },
     )
   })

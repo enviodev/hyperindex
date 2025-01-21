@@ -240,11 +240,17 @@ module PostgresInterop = {
     Promise.all(responses)
   }
 
-  let makeBatchSetFn = (~table, ~rowsSchema: S.t<array<'a>>): batchSetFn<'a> => {
+  let makeBatchSetFn = (~table, ~schema: S.t<'a>): batchSetFn<'a> => {
     let batchSetFn: pgFn<array<Js.Json.t>, unit> = table->makeBatchSetFnString->eval
+    let parseOrThrow = S.compile(
+      S.array(schema),
+      ~input=Value,
+      ~output=Json,
+      ~mode=Sync,
+      ~typeValidation=true,
+    )
     async (sql, rows) => {
-      let rowsJson =
-        rows->S.serializeOrRaiseWith(rowsSchema)->(Utils.magic: Js.Json.t => array<Js.Json.t>)
+      let rowsJson = rows->parseOrThrow->(Utils.magic: Js.Json.t => array<Js.Json.t>)
       let _res = await chunkBatchQuery(sql, rowsJson, batchSetFn)
     }
   }

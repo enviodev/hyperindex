@@ -276,7 +276,7 @@ let addEventToRawEvents = (eventItem: Internal.eventItem, ~inMemoryStore: InMemo
   // Serialize to unknown, because serializing to Js.Json.t fails for Bytes Fuel type, since it has unknown schema
   let params =
     params
-    ->S.serializeToUnknownOrRaiseWith(paramsRawEventSchema)
+    ->S.reverseConvertOrThrow(paramsRawEventSchema)
     ->(Utils.magic: unknown => Js.Json.t)
 
   let rawEvent: TablesStatic.RawEvents.t = {

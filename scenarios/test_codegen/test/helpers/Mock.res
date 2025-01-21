@@ -102,7 +102,7 @@ let mockRawEventRow: TablesStatic.RawEvents.t = {
   eventName: "SimpleNftCreated",
   blockNumber: 1000,
   logIndex: 10,
-  transactionFields: S.serializeOrRaiseWith(
+  transactionFields: S.reverseConvertToJsonOrThrow(
     {
       Types.Transaction.transactionIndex: 20,
       hash: "0x1234567890abcdef",

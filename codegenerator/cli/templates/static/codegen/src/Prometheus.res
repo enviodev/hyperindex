@@ -112,12 +112,12 @@ module MakeSafePromMetric = (
 
   let handleFloat = ({metric, labelSchema}: t<'a>, ~labels: 'a, ~value) =>
     metric
-    ->M.labels(labels->S.serializeOrRaiseWith(labelSchema))
+    ->M.labels(labels->S.reverseConvertToJsonOrThrow(labelSchema))
     ->M.handleFloat(value)
 
   let handleInt = ({metric, labelSchema}: t<'a>, ~labels: 'a, ~value) =>
     metric
-    ->M.labels(labels->S.serializeOrRaiseWith(labelSchema))
+    ->M.labels(labels->S.reverseConvertToJsonOrThrow(labelSchema))
     ->M.handleInt(value)
 }
 

@@ -41,7 +41,7 @@ module MockEvent = (
     Internal.genericContractRegisterArgs<event, Types.contractRegistrations>,
   >
 
-  let paramsRawEventSchema = S.literal(%raw(`null`))->S.variant(_ => ())
+  let paramsRawEventSchema = S.literal(%raw(`null`))->S.to(_ => ())
   let blockSchema = T.blockSchema
   let transactionSchema = T.transactionSchema
 
