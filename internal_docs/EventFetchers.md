@@ -57,13 +57,13 @@ classDiagram
     getLatestFetchedBlockTimestamp(source)
     addDynamicContractAndFetchMissingEvents(source, dynamicContracts, fromBlock, fromLogIndex, logger)
   }
-  Source <|.. SkarWorker : Implements
-  Source <|.. RpcWorker : Implements
+  Source <|.. SkarSource : Implements
+  Source <|.. RpcSource : Implements
 ```
 
 A `Source` is an abstraction over the actual implementation of retrieving the events and adding them to the `ChainFetcher` queue. It should only interact with and be interacted with within our code from the ChainFetcher. For example - the skar worker already has the blocktimestamps for all events - whereas the RPC worker needs to fetch the blocks to get the timestamps - the rest of the algoritm doesn't need to know about these details.
 
-Some values in the chain workers are accessed or used in different parts of the application even if those might be in the process of changing. To avoid this we turn accessing or using those into promises that resolve only once the processing that involves those values completes. This makes the code safe, eg look at `latestFetchedBlockNumber` in the Skar Worker.
+Some values in the chain workers are accessed or used in different parts of the application even if those might be in the process of changing. To avoid this we turn accessing or using those into promises that resolve only once the processing that involves those values completes. This makes the code safe, eg look at `latestFetchedBlockNumber` in the Skar Source.
 TODO: it is a good pattern, but potentially risky since you need to remember to 'resolve' that promise afterwards. An idea might be to encapsulate the logic that uses that value into a function so that it is easy to see the scope of code in which that variable is 'locked'.
 
 ### Skar Source

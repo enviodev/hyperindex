@@ -34,7 +34,7 @@ let getLocalChainConfig = (nftFactoryContractAddress): chainConfig => {
     chain,
     contracts,
     source: module(
-      RpcWorker.Make({
+      RpcSource.Make({
         let chain = chain
         let contracts = contracts
         let syncConfig: Config.syncConfig = {

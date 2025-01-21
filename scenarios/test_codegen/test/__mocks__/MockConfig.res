@@ -35,7 +35,7 @@ let mockChainConfig: Config.chainConfig = {
   chain: chain1337,
   contracts,
   source: module(
-    RpcWorker.Make({
+    RpcSource.Make({
       let chain = chain1337
       let contracts = contracts
       let syncConfig = Config.getSyncConfig({

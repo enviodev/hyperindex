@@ -31,7 +31,7 @@ type chainConfig = {
   confirmedBlockThreshold: int,
   chain: ChainMap.Chain.t,
   contracts: array<contract>,
-  source: module(Source.S),
+  source: Source.t,
 }
 
 let shouldPreRegisterDynamicContracts = (chainConfig: chainConfig) => {

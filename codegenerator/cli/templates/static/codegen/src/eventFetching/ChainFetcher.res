@@ -49,8 +49,6 @@ let make = (
   ~dynamicContractPreRegistration,
   ~enableRawEvents,
 ): t => {
-  let module(Source) = chainConfig.source
-
   let isPreRegisteringDynamicContracts = dynamicContractPreRegistration->Option.isSome
 
   // We don't need the router itself, but only validation logic,
@@ -417,17 +415,13 @@ let rollbackLastBlockHashesToReorgLocation = async (
   //Parameter used for dependency injecting in tests
   ~getBlockHashes as getBlockHashesMock=?,
 ) => {
-  // FIXME: Mock source instead
-
-  //get a list of block hashes via the chainworker
   let blockNumbers =
     chainFetcher.lastBlockScannedHashes->ReorgDetection.LastBlockScannedHashes.getAllBlockNumbers
 
-  let module(Source) = chainFetcher.chainConfig.source
-
+  // FIXME: Mock source instead
   let getBlockHashes = switch getBlockHashesMock {
   | Some(getBlockHashes) => getBlockHashes
-  | None => Source.getBlockHashes
+  | None => chainFetcher.chainConfig.source.getBlockHashes
   }
 
   let blockNumbersAndHashes = await getBlockHashes(

@@ -21,13 +21,13 @@ let mockEthersLog = (
   logIndex: 2,
 }
 
-describe("RpcWorker - getEventTransactionOrThrow", () => {
+describe("RpcSource - getEventTransactionOrThrow", () => {
   let neverGetTransactionFields = _ => Assert.fail("The getTransactionFields should not be called")
 
   it("Panics with invalid schema", () => {
     Assert.throws(
       () => {
-        RpcWorker.makeThrowingGetEventTransaction(~getTransactionFields=neverGetTransactionFields)(
+        RpcSource.makeThrowingGetEventTransaction(~getTransactionFields=neverGetTransactionFields)(
           mockEthersLog(),
           ~transactionSchema=S.string,
         )
@@ -41,7 +41,7 @@ describe("RpcWorker - getEventTransactionOrThrow", () => {
   Async.it(
     "Returns empty object when empty field selection. Doesn't make a transaction request",
     async () => {
-      let getEventTransactionOrThrow = RpcWorker.makeThrowingGetEventTransaction(
+      let getEventTransactionOrThrow = RpcSource.makeThrowingGetEventTransaction(
         ~getTransactionFields=neverGetTransactionFields,
       )
       Assert.deepEqual(
@@ -52,7 +52,7 @@ describe("RpcWorker - getEventTransactionOrThrow", () => {
   )
 
   Async.it("Works with a single transactionIndex field", async () => {
-    let getEventTransactionOrThrow = RpcWorker.makeThrowingGetEventTransaction(
+    let getEventTransactionOrThrow = RpcSource.makeThrowingGetEventTransaction(
       ~getTransactionFields=neverGetTransactionFields,
     )
     Assert.deepEqual(
@@ -71,7 +71,7 @@ describe("RpcWorker - getEventTransactionOrThrow", () => {
   })
 
   Async.it("Works with a single hash field", async () => {
-    let getEventTransactionOrThrow = RpcWorker.makeThrowingGetEventTransaction(
+    let getEventTransactionOrThrow = RpcSource.makeThrowingGetEventTransaction(
       ~getTransactionFields=neverGetTransactionFields,
     )
     Assert.deepEqual(
@@ -90,7 +90,7 @@ describe("RpcWorker - getEventTransactionOrThrow", () => {
   })
 
   Async.it("Works with a only transactionIndex & hash field", async () => {
-    let getEventTransactionOrThrow = RpcWorker.makeThrowingGetEventTransaction(
+    let getEventTransactionOrThrow = RpcSource.makeThrowingGetEventTransaction(
       ~getTransactionFields=neverGetTransactionFields,
     )
     Assert.deepEqual(
@@ -110,7 +110,7 @@ describe("RpcWorker - getEventTransactionOrThrow", () => {
     )
 
     // In different fields order in the schema
-    let getEventTransactionOrThrow = RpcWorker.makeThrowingGetEventTransaction(
+    let getEventTransactionOrThrow = RpcSource.makeThrowingGetEventTransaction(
       ~getTransactionFields=neverGetTransactionFields,
     )
     Assert.deepEqual(
@@ -143,7 +143,7 @@ describe("RpcWorker - getEventTransactionOrThrow", () => {
         provider->Ethers.JsonRpcProvider.getTransaction(~transactionHash),
     )
 
-    let getEventTransactionOrThrow = RpcWorker.makeThrowingGetEventTransaction(
+    let getEventTransactionOrThrow = RpcSource.makeThrowingGetEventTransaction(
       ~getTransactionFields,
     )
     Assert.deepEqual(
@@ -215,7 +215,7 @@ describe("RpcWorker - getEventTransactionOrThrow", () => {
   })
 
   Async.it("Error with a value not matching the schema", async () => {
-    let getEventTransactionOrThrow = RpcWorker.makeThrowingGetEventTransaction(
+    let getEventTransactionOrThrow = RpcSource.makeThrowingGetEventTransaction(
       ~getTransactionFields=neverGetTransactionFields,
     )
     Assert.throws(
@@ -236,11 +236,11 @@ describe("RpcWorker - getEventTransactionOrThrow", () => {
   })
 })
 
-module MockEvent = HyperSyncWorker_test.MockEvent
-describe("RpcWorker - getSelectionConfig", () => {
-  let withConfig = HyperSyncWorker_test.withConfig
-  let withOverride = HyperSyncWorker_test.withOverride
-  let eventId = HyperSyncWorker_test.eventId
+module MockEvent = HyperSyncSource_test.MockEvent
+describe("RpcSource - getSelectionConfig", () => {
+  let withConfig = HyperSyncSource_test.withConfig
+  let withOverride = HyperSyncSource_test.withOverride
+  let eventId = HyperSyncSource_test.eventId
 
   it("Selection config for the most basic case with no wildcards", () => {
     let selectionConfig = {
@@ -252,7 +252,7 @@ describe("RpcWorker - getSelectionConfig", () => {
           isWildcard: false,
         },
       ],
-    }->RpcWorker.getSelectionConfig(
+    }->RpcSource.getSelectionConfig(
       ~contracts=[
         {
           name: "Foo",
@@ -297,7 +297,7 @@ describe("RpcWorker - getSelectionConfig", () => {
               isWildcard: false,
             },
           ],
-        }->RpcWorker.getSelectionConfig(
+        }->RpcSource.getSelectionConfig(
           ~contracts=[
             {
               name: "Foo",
@@ -419,7 +419,7 @@ describe("RpcWorker - getSelectionConfig", () => {
             isWildcard: true,
           },
         ],
-      }->RpcWorker.getSelectionConfig(~contracts)
+      }->RpcSource.getSelectionConfig(~contracts)
 
       Assert.deepEqual(
         selectionConfig,
@@ -432,7 +432,7 @@ describe("RpcWorker - getSelectionConfig", () => {
   )
 })
 
-describe("RpcWorker - getSuggestedBlockIntervalFromExn", () => {
+describe("RpcSource - getSuggestedBlockIntervalFromExn", () => {
   let getSuggestedBlockIntervalFromExn = EventFetching.getSuggestedBlockIntervalFromExn
 
   it("Should handle retry with the range", () => {

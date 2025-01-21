@@ -98,8 +98,7 @@ module Stubs = {
 
   //Stub for getting block hashes instead of the worker
   let makeGetBlockHashes = (~stubData, ~source) => async (~blockNumbers, ~logger as _) => {
-    let module(Source: Source.S) = source
-    stubData->getMockChainData(Source.chain)->MockChainData.getBlockHashes(~blockNumbers)->Ok
+    stubData->getMockChainData(source.chain)->MockChainData.getBlockHashes(~blockNumbers)->Ok
   }
 
   let replaceNexQueryCheckAllChainsWithGivenChain = ({tasks}: t, chain) => {
@@ -115,8 +114,7 @@ module Stubs = {
   //Stub wait for new block
   let makeWaitForNewBlock = (stubData: t) => async (source, ~currentBlockHeight, ~logger) => {
     (logger, currentBlockHeight)->ignore
-    let module(Source: Source.S) = source
-    stubData->getMockChainData(Source.chain)->MockChainData.getHeight
+    stubData->getMockChainData(source.chain)->MockChainData.getHeight
   }
   //Stub dispatch action to set state and not dispatch task but store in
   //the tasks ref

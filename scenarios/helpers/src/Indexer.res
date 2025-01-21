@@ -150,7 +150,7 @@ module type S = {
       confirmedBlockThreshold: int,
       chain: ChainMap.Chain.t,
       contracts: array<contract>,
-      source: module(Source.S),
+      source: Source.t,
     }
   }
 }
