@@ -97,7 +97,10 @@ module Stubs = {
   }
 
   //Stub for getting block hashes instead of the worker
-  let makeGetBlockHashes = (~stubData, ~source) => async (~blockNumbers, ~logger as _) => {
+  let makeGetBlockHashes = (~stubData, ~source: Source.t) => async (
+    ~blockNumbers,
+    ~logger as _,
+  ) => {
     stubData->getMockChainData(source.chain)->MockChainData.getBlockHashes(~blockNumbers)->Ok
   }
 
@@ -112,7 +115,11 @@ module Stubs = {
   }
 
   //Stub wait for new block
-  let makeWaitForNewBlock = (stubData: t) => async (source, ~currentBlockHeight, ~logger) => {
+  let makeWaitForNewBlock = (stubData: t) => async (
+    source: Source.t,
+    ~currentBlockHeight,
+    ~logger,
+  ) => {
     (logger, currentBlockHeight)->ignore
     stubData->getMockChainData(source.chain)->MockChainData.getHeight
   }
