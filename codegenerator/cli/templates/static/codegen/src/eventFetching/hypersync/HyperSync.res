@@ -240,9 +240,9 @@ module HeightQuery = {
 }
 
 module BlockData = {
-  let makeRequestBody = (~blockNumber): HyperSyncJsonApi.QueryTypes.postQueryBody => {
-    fromBlock: blockNumber,
-    toBlockExclusive: blockNumber + 1,
+  let makeRequestBody = (~fromBlock, ~toBlock): HyperSyncJsonApi.QueryTypes.postQueryBody => {
+    fromBlock,
+    toBlockExclusive: toBlock + 1,
     fieldSelection: {
       block: [Number, Hash, Timestamp],
     },
@@ -291,14 +291,18 @@ module BlockData = {
     ->Utils.Array.transposeResults
   }
 
-  let rec queryBlockData = async (~serverUrl, ~blockNumber, ~logger): queryResponse<
-    option<ReorgDetection.blockData>,
+  let rec queryBlockData = async (~serverUrl, ~fromBlock, ~toBlock, ~logger): queryResponse<
+    array<ReorgDetection.blockData>,
   > => {
-    let body = makeRequestBody(~blockNumber)
+    let body = makeRequestBody(~fromBlock, ~toBlock)
 
     let logger = Logging.createChildFrom(
       ~logger,
-      ~params={"logType": "hypersync get blockhash query", "blockNumber": blockNumber},
+      ~params={
+        "logType": "HyperSync get block hash query",
+        "fromBlock": fromBlock,
+        "toBlock": toBlock,
+      },
     )
 
     let maybeSuccessfulRes = switch await Time.retryAsyncWithExponentialBackOff(
@@ -306,7 +310,7 @@ module BlockData = {
       ~logger,
     ) {
     | exception _ => None
-    | res if res.nextBlock <= blockNumber => None
+    | res if res.nextBlock <= fromBlock => None
     | res => Some(res)
     }
 
@@ -316,28 +320,67 @@ module BlockData = {
         let logger = Logging.createChild(~params={"url": serverUrl})
         let delayMilliseconds = 100
         logger->Logging.childInfo(
-          `Block #${blockNumber->Int.toString} not found in HyperSync. HyperSync has multiple instances and it's possible that they drift independently slightly from the head. Indexing should continue correctly after retrying the query in ${delayMilliseconds->Int.toString}ms.`,
+          `Block #${fromBlock->Int.toString} not found in HyperSync. HyperSync has multiple instances and it's possible that they drift independently slightly from the head. Indexing should continue correctly after retrying the query in ${delayMilliseconds->Int.toString}ms.`,
         )
         await Time.resolvePromiseAfterDelay(~delayMilliseconds)
-        await queryBlockData(~serverUrl, ~blockNumber, ~logger)
+        await queryBlockData(~serverUrl, ~fromBlock, ~toBlock, ~logger)
       }
-    | Some(res) => res->convertResponse->Result.map(res => res->Array.get(0))
+    | Some(res) =>
+      switch res->convertResponse {
+      | Error(_) as err => err
+      | Ok(datas) if res.nextBlock <= toBlock => {
+          let restRes = await queryBlockData(
+            ~serverUrl,
+            ~fromBlock=res.nextBlock,
+            ~toBlock,
+            ~logger,
+          )
+          restRes->Result.map(rest => datas->Array.concat(rest))
+        }
+      | Ok(_) as ok => ok
+      }
     }
   }
 
   let queryBlockDataMulti = async (~serverUrl, ~blockNumbers, ~logger) => {
-    let res =
-      await blockNumbers
-      ->Array.map(blockNumber => queryBlockData(~blockNumber, ~serverUrl, ~logger))
-      ->Promise.all
-    res
-    ->Utils.Array.transposeResults
-    ->Result.map(Array.keepMap(_, v => v))
+    switch blockNumbers->Array.get(0) {
+    | None => Ok([])
+    | Some(firstBlock) => {
+        let fromBlock = ref(firstBlock)
+        let toBlock = ref(firstBlock)
+        let set = Utils.Set.make()
+        for idx in 0 to blockNumbers->Array.length - 1 {
+          let blockNumber = blockNumbers->Array.getUnsafe(idx)
+          if blockNumber < fromBlock.contents {
+            fromBlock := blockNumber
+          }
+          if blockNumber > toBlock.contents {
+            toBlock := blockNumber
+          }
+          set->Utils.Set.add(blockNumber)->ignore
+        }
+        let res = await queryBlockData(
+          ~fromBlock=fromBlock.contents,
+          ~toBlock=toBlock.contents,
+          ~serverUrl,
+          ~logger,
+        )
+        res->Result.map(datas => {
+          datas->Array.keep(data => set->Utils.Set.has(data.blockNumber))
+        })
+      }
+    }
   }
 }
 
 let queryLogsPage = LogsQuery.queryLogsPage
 let getHeightWithRetry = HeightQuery.getHeightWithRetry
 let pollForHeightGtOrEq = HeightQuery.pollForHeightGtOrEq
-let queryBlockData = BlockData.queryBlockData
+let queryBlockData = (~serverUrl, ~blockNumber, ~logger) =>
+  BlockData.queryBlockData(
+    ~serverUrl,
+    ~fromBlock=blockNumber,
+    ~toBlock=blockNumber,
+    ~logger,
+  )->Promise.thenResolve(res => res->Result.map(res => res->Array.get(0)))
 let queryBlockDataMulti = BlockData.queryBlockDataMulti
