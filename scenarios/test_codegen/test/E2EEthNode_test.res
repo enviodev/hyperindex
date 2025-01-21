@@ -33,7 +33,7 @@ describe("E2E Integration Test", () => {
         endBlock: None,
         chain,
         contracts,
-        chainWorker: module(
+        source: module(
           RpcWorker.Make({
             let chain = chain
             let contracts = contracts

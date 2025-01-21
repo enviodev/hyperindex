@@ -2,7 +2,7 @@ module Indexer = {
   module ErrorHandling = ErrorHandling
   module Types = Types
   module Config = Config
-  module ChainWorker = ChainWorker
+  module Source = Source
   module FetchState = FetchState
   module ContractAddressingMap = ContractAddressingMap
 }

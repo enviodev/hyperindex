@@ -33,7 +33,7 @@ let getLocalChainConfig = (nftFactoryContractAddress): chainConfig => {
     endBlock: None,
     chain,
     contracts,
-    chainWorker: module(
+    source: module(
       RpcWorker.Make({
         let chain = chain
         let contracts = contracts

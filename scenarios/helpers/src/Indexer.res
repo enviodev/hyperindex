@@ -98,7 +98,7 @@ module type S = {
     }
   }
 
-  module ChainWorker: {
+  module Source: {
     type blockRangeFetchStats
     type blockRangeFetchResponse = {
       currentBlockHeight: int,
@@ -150,7 +150,7 @@ module type S = {
       confirmedBlockThreshold: int,
       chain: ChainMap.Chain.t,
       contracts: array<contract>,
-      chainWorker: module(ChainWorker.S),
+      source: module(Source.S),
     }
   }
 }

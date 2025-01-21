@@ -49,7 +49,7 @@ let make = (
   ~dynamicContractPreRegistration,
   ~enableRawEvents,
 ): t => {
-  let module(ChainWorker) = chainConfig.chainWorker
+  let module(Source) = chainConfig.source
 
   let isPreRegisteringDynamicContracts = dynamicContractPreRegistration->Option.isSome
 
@@ -417,17 +417,17 @@ let rollbackLastBlockHashesToReorgLocation = async (
   //Parameter used for dependency injecting in tests
   ~getBlockHashes as getBlockHashesMock=?,
 ) => {
-  // FIXME: Mock chainWorker instead
+  // FIXME: Mock source instead
 
   //get a list of block hashes via the chainworker
   let blockNumbers =
     chainFetcher.lastBlockScannedHashes->ReorgDetection.LastBlockScannedHashes.getAllBlockNumbers
 
-  let module(ChainWorker) = chainFetcher.chainConfig.chainWorker
+  let module(Source) = chainFetcher.chainConfig.source
 
   let getBlockHashes = switch getBlockHashesMock {
   | Some(getBlockHashes) => getBlockHashes
-  | None => ChainWorker.getBlockHashes
+  | None => Source.getBlockHashes
   }
 
   let blockNumbersAndHashes = await getBlockHashes(

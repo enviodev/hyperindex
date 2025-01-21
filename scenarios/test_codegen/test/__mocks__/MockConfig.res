@@ -34,7 +34,7 @@ let mockChainConfig: Config.chainConfig = {
   endBlock: None,
   chain: chain1337,
   contracts,
-  chainWorker: module(
+  source: module(
     RpcWorker.Make({
       let chain = chain1337
       let contracts = contracts

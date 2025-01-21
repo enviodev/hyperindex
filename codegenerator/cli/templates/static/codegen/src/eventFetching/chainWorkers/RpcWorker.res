@@ -1,5 +1,5 @@
 open Belt
-open ChainWorker
+open Source
 
 type selectionConfig = {topics: array<array<EvmTypes.Hex.t>>}
 
@@ -161,7 +161,7 @@ module Make = (
         "metadata": {
           {
             "asyncTaskName": "transactionLoader: fetching transaction data - `getTransaction` rpc call",
-            "caller": "RPC ChainWorker",
+            "caller": "RPC Source",
             "suggestedFix": "This likely means the RPC url you are using is not responding correctly. Please try another RPC endipoint.",
           }
         },
@@ -184,7 +184,7 @@ module Make = (
         "metadata": {
           {
             "asyncTaskName": "blockLoader: fetching block data - `getBlock` rpc call",
-            "caller": "RPC ChainWorker",
+            "caller": "RPC Source",
             "suggestedFix": "This likely means the RPC url you are using is not responding correctly. Please try another RPC endipoint.",
           }
         },
