@@ -91,10 +91,13 @@ let make = (
       } else if enableRawEvents {
         true
       } else {
-        let isRegistered = hasContractRegister ||
-        Event.handlerRegister->Types.HandlerTypes.Register.getHandler->Option.isSome
+        let isRegistered =
+          hasContractRegister ||
+          Event.handlerRegister->Types.HandlerTypes.Register.getHandler->Option.isSome
         if !isRegistered {
-          logger->Logging.childInfo(`The event "${Event.name}" for contract "${contractName}" is not going to be indexed, because it doesn't have either a contract register or a handler.`)
+          logger->Logging.childInfo(
+            `The event "${Event.name}" for contract "${contractName}" is not going to be indexed, because it doesn't have either a contract register or a handler.`,
+          )
         }
         isRegistered
       }
@@ -267,7 +270,7 @@ let makeFromDbState = async (
       // on restart, reset the events_processed gauge to the previous state
       switch numEventsProcessed {
       | Some(numEventsProcessed) =>
-        Prometheus.incrementEventsProcessedCounter(~number=numEventsProcessed)
+        Prometheus.incrementEventsProcessedCounter(~number=numEventsProcessed, ~chainId)
       | None => () // do nothing if no events have been processed yet for this chain
       }
       (
