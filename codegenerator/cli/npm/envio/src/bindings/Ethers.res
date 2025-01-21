@@ -185,15 +185,6 @@ module JsonRpcProvider = {
     fields->Obj.magic
   }
 
-  type listenerEvent = [#block]
-  @send external onEventListener: (t, listenerEvent, int => unit) => unit = "on"
-
-  @send external offAllEventListeners: (t, listenerEvent) => unit = "off"
-
-  let onBlock = (t, callback: int => unit) => t->onEventListener(#block, callback)
-
-  let removeOnBlockEventListener = t => t->offAllEventListeners(#block)
-
   @send
   external getBlockNumber: t => promise<int> = "getBlockNumber"
 

@@ -203,10 +203,6 @@ let make = (
     }
   }
 
-  let waitForBlockGreaterThanCurrentHeight = (~currentBlockHeight, ~logger) => {
-    HyperSync.pollForHeightGtOrEq(~serverUrl=endpointUrl, ~blockNumber=currentBlockHeight, ~logger)
-  }
-
   exception UndefinedValue
 
   let makeEventBatchQueueItem = (
@@ -523,7 +519,8 @@ let make = (
     name,
     chain,
     getBlockHashes,
-    waitForBlockGreaterThanCurrentHeight,
+    pollingInterval: 100,
+    getHeightOrThrow: () => HyperSyncJsonApi.heightRoute->Rest.fetch(endpointUrl, ()),
     fetchBlockRange,
   }
 }

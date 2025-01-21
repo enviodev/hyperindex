@@ -185,22 +185,6 @@ let make = ({syncConfig, provider, chain, contracts, eventRouter}: options): t =
     },
   )
 
-  let waitForBlockGreaterThanCurrentHeight = async (~currentBlockHeight, ~logger) => {
-    let nextBlockWait = provider->EventUtils.waitForNextBlock
-    let latestHeight =
-      await provider
-      ->Ethers.JsonRpcProvider.getBlockNumber
-      ->Promise.catch(_err => {
-        logger->Logging.childWarn("Error getting current block number")
-        0->Promise.resolve
-      })
-    if latestHeight > currentBlockHeight {
-      latestHeight
-    } else {
-      await nextBlockWait
-    }
-  }
-
   let getEventBlockOrThrow = makeThrowingGetEventBlock(~getBlock=blockNumber =>
     blockLoader->LazyLoader.get(blockNumber)
   )
@@ -397,8 +381,9 @@ let make = ({syncConfig, provider, chain, contracts, eventRouter}: options): t =
   {
     name,
     chain,
+    pollingInterval: 1000,
     getBlockHashes,
-    waitForBlockGreaterThanCurrentHeight,
+    getHeightOrThrow: () => provider->Ethers.JsonRpcProvider.getBlockNumber,
     fetchBlockRange,
   }
 }
