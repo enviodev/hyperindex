@@ -50,34 +50,17 @@ type missingParams = {
   missingParams: array<string>,
 }
 type queryError =
-  UnexpectedMissingParams(missingParams) | QueryError(HyperFuelJsonApi.Query.queryError)
-
-exception UnexpectedMissingParamsExn(missingParams)
+  UnexpectedMissingParams(missingParams)
 
 let queryErrorToMsq = (e: queryError): string => {
-  let getMsgFromExn = (exn: exn) =>
-    exn
-    ->Js.Exn.asJsExn
-    ->Option.flatMap(exn => exn->Js.Exn.message)
-    ->Option.getWithDefault("No message on exception")
   switch e {
   | UnexpectedMissingParams({queryName, missingParams}) =>
     `${queryName} query failed due to unexpected missing params on response:
       ${missingParams->Js.Array2.joinWith(", ")}`
-  | QueryError(e) =>
-    switch e {
-    | FailedToFetch(e) =>
-      let msg = e->getMsgFromExn
-      `Failed during fetch query: ${msg}`
-    | FailedToParseJson(e) =>
-      let msg = e->getMsgFromExn
-      `Failed during parse of json: ${msg}`
-    | Other(e) =>
-      let msg = e->getMsgFromExn
-      `Failed for unknown reason during query: ${msg}`
-    }
   }
 }
+
+exception UnexpectedMissingParamsExn(missingParams)
 
 type queryResponse<'a> = result<'a, queryError>
 
