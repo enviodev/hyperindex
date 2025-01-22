@@ -34,22 +34,22 @@ let makeReadEntities = (~table: Table.table, ~rowsSchema: S.t<array<'entityRow>>
 external batchSetItemsInTable: (
   ~table: Table.table,
   ~sql: Postgres.sql,
-  ~jsonRows: Js.Json.t,
+  ~unnestData: Js.Json.t,
 ) => promise<unit> = "batchSetItemsInTable"
 
-let makeBatchSet = (~table: Table.table, ~rowsSchema: S.schema<array<'entityRow>>) => async (
+let makeBatchSet = (~table: Table.table, ~schema: S.schema<'entityRow>) => async (
   sql: Postgres.sql,
   entities: array<'entityRow>,
   ~logger=?,
 ) => {
-  switch entities->S.reverseConvertToJsonOrThrow(rowsSchema) {
+  switch entities->S.reverseConvertToJsonOrThrow(S.unnest(schema)) {
   | exception exn =>
     exn->ErrorHandling.mkLogAndRaise(
       ~logger?,
       ~msg=`Failed during batch serialization of entity ${table.tableName}`,
     )
-  | jsonRows =>
-    switch await batchSetItemsInTable(~table, ~sql, ~jsonRows) {
+  | unnestData =>
+    switch await batchSetItemsInTable(~table, ~sql, ~unnestData) {
     | exception exn =>
       exn->ErrorHandling.mkLogAndRaise(
         ~logger?,
@@ -85,8 +85,8 @@ let batchRead = (type entity, ~entityMod: module(Entities.Entity with type t = e
 
 let batchSet = (type entity, ~entityMod: module(Entities.Entity with type t = entity)) => {
   let module(EntityMod) = entityMod
-  let {table, rowsSchema} = module(EntityMod)
-  makeBatchSet(~table, ~rowsSchema)
+  let {table, schema} = module(EntityMod)
+  makeBatchSet(~table, ~schema)
 }
 
 let batchDelete = (type entity, ~entityMod: module(Entities.Entity with type t = entity)) => {

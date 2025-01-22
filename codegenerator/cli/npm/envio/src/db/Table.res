@@ -80,6 +80,10 @@ let getFieldName = fieldOrDerived =>
   | DerivedFrom({fieldName}) => fieldName
   }
 
+let getFieldType = (field: field) => {
+  field.fieldType
+}
+
 type table = {
   tableName: string,
   fields: array<fieldOrDerived>,
@@ -138,16 +142,12 @@ let getDerivedFromFields = table =>
     }
   )
 
-let getFieldNames = table => {
-  table->getFields->Array.map(getDbFieldName)
-}
-
 let getNonDefaultFieldNames = table => {
   table->getNonDefaultFields->Array.map(getDbFieldName)
 }
 
 let getFieldByName = (table, fieldNameSearch) =>
-  table.fields->Js.Array2.find(field => field->getUserDefinedFieldName == fieldNameSearch)
+  table.fields->Js.Array2.find(field => field->getUserDefinedFieldName === fieldNameSearch)
 
 exception NonExistingTableField(string)
 
