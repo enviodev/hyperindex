@@ -18,6 +18,7 @@ module TestEntity = {
   })
 
   let rowsSchema = S.array(schema)
+  let unnestSchema = S.unnest(schema)
   let table = Table.mkTable(
     "TestEntity",
     ~fields=[

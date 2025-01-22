@@ -37,12 +37,12 @@ external batchSetItemsInTable: (
   ~unnestData: Js.Json.t,
 ) => promise<unit> = "batchSetItemsInTable"
 
-let makeBatchSet = (~table: Table.table, ~schema: S.schema<'entityRow>) => async (
+let makeBatchSet = (~table: Table.table, ~unnestSchema: S.schema<array<'entityRow>>) => async (
   sql: Postgres.sql,
   entities: array<'entityRow>,
   ~logger=?,
 ) => {
-  switch entities->S.reverseConvertToJsonOrThrow(S.unnest(schema)) {
+  switch entities->S.reverseConvertToJsonOrThrow(unnestSchema) {
   | exception exn =>
     exn->ErrorHandling.mkLogAndRaise(
       ~logger?,
@@ -85,8 +85,8 @@ let batchRead = (type entity, ~entityMod: module(Entities.Entity with type t = e
 
 let batchSet = (type entity, ~entityMod: module(Entities.Entity with type t = entity)) => {
   let module(EntityMod) = entityMod
-  let {table, schema} = module(EntityMod)
-  makeBatchSet(~table, ~schema)
+  let {table, unnestSchema} = module(EntityMod)
+  makeBatchSet(~table, ~unnestSchema)
 }
 
 let batchDelete = (type entity, ~entityMod: module(Entities.Entity with type t = entity)) => {

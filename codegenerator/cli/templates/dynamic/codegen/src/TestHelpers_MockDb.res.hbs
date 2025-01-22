@@ -212,7 +212,7 @@ let rec makeWithInMemoryStore: InMemoryStore.t => t = (inMemoryStore: InMemorySt
     ~getStore=db => db.rawEvents,
     ~getKey=({chainId, eventId}) => {
       chainId,
-      eventId,
+      eventId: eventId->BigInt.toString,
     },
   )
 
@@ -369,7 +369,7 @@ let writeFromMemoryStore = (mockDb: t, ~inMemoryStore: InMemoryStore.t) => {
     ~getInMemTable=inMemStore => {inMemStore.rawEvents},
     ~getKey=(entity): InMemoryStore.rawEventsKey => {
       chainId: entity.chainId,
-      eventId: entity.eventId,
+      eventId: entity.eventId->BigInt.toString,
     },
   )
 

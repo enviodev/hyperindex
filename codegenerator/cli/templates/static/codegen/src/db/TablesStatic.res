@@ -110,7 +110,7 @@ module RawEvents = {
   @genType
   type t = {
     @as("chain_id") chainId: int,
-    @as("event_id") eventId: string,
+    @as("event_id") eventId: bigint,
     @as("event_name") eventName: string,
     @as("contract_name") contractName: string,
     @as("block_number") blockNumber: int,
@@ -122,6 +122,21 @@ module RawEvents = {
     @as("transaction_fields") transactionFields: Js.Json.t,
     params: Js.Json.t,
   }
+
+  let schema = S.schema(s => {
+    chainId: s.matches(S.int),
+    eventId: s.matches(S.bigint),
+    eventName: s.matches(S.string),
+    contractName: s.matches(S.string),
+    blockNumber: s.matches(S.int),
+    logIndex: s.matches(S.int),
+    srcAddress: s.matches(Address.schema),
+    blockHash: s.matches(S.string),
+    blockTimestamp: s.matches(S.int),
+    blockFields: s.matches(S.json(~validate=false)),
+    transactionFields: s.matches(S.json(~validate=false)),
+    params: s.matches(S.json(~validate=false)),
+  })
 
   let table = mkTable(
     "raw_events",
@@ -177,6 +192,7 @@ module DynamicContractRegistry = {
   })
 
   let rowsSchema = S.array(schema)
+  let unnestSchema = S.unnest(schema)
 
   let table = mkTable(
     "dynamic_contract_registry",

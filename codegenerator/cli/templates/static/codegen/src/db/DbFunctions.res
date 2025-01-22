@@ -110,8 +110,10 @@ module EventSyncState = {
 module RawEvents = {
   type rawEventRowId = (chainId, eventId)
   @module("./DbFunctionsImplementation.js")
-  external batchSet: (Postgres.sql, array<TablesStatic.RawEvents.t>) => promise<unit> =
-    "batchSetRawEvents"
+  external makeBatchSetRawEvents: S.t<TablesStatic.RawEvents.t> => (Postgres.sql, array<TablesStatic.RawEvents.t>) => promise<unit> =
+    "makeBatchSetRawEvents"
+
+  let batchSet = makeBatchSetRawEvents(TablesStatic.RawEvents.schema)
 }
 
 module DynamicContractRegistry = {

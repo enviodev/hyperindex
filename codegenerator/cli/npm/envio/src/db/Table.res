@@ -166,6 +166,49 @@ let getUnfilteredCompositeIndicesUnsafe = (table): array<array<string>> => {
   )
 }
 
+let schemaToDb = (schema: S.t<'a>) => {
+  let quotedFieldNames = []
+  let fieldTypes = []
+
+  let dbSchema: S.t<Js.Dict.t<unknown>> = S.schema(s =>
+    switch schema->S.classify {
+    | Object({items}) =>
+      let dict = Js.Dict.empty()
+      items->Belt.Array.forEach(({location, inlinedLocation, schema}) => {
+        let transformedSchema = switch schema->S.classify {
+        | BigInt => BigInt.schema->S.toUnknown
+        | Option(child) => S.null(child)->S.toUnknown
+        | _ => schema
+        }
+
+        quotedFieldNames->Js.Array2.push(inlinedLocation)->ignore
+        fieldTypes
+        ->Js.Array2.push(
+          switch schema->S.classify {
+          | Int => Integer
+          | String => Text
+          | Bool => Boolean
+          | JSON(_) => JsonB
+          | BigInt => Numeric
+          // Currently used only for raw_events, so I added only the types that are used there
+          | _ => Js.Exn.raiseError("The schema is not supported as a db field type.")
+          },
+        )
+        ->ignore
+        dict->Js.Dict.set(location, s.matches(transformedSchema))
+      })
+      dict
+    | _ => Js.Exn.raiseError("Failed creating db schema. Expected an object schema for table")
+    }
+  )
+
+  {
+    "dbSchema": dbSchema,
+    "quotedFieldNames": quotedFieldNames,
+    "fieldTypes": fieldTypes,
+  }
+}
+
 /*
 Gets all single indicies
 And maps the fields defined to their actual db name (some have _id suffix)

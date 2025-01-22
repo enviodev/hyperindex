@@ -1,8 +1,11 @@
 const TableModule = require("envio/src/db/Table.bs.js");
+const Utils = require("envio/src/Utils.bs.js");
+const S = require("rescript-schema");
+
 // db operations for raw_events:
 const MAX_ITEMS_PER_QUERY = 500;
 
-const chunkBatchQuery = async (sql, entityDataArray, queryToExecute) => {
+const chunkBatchQuery = (queryToExecute) => async (sql, entityDataArray) => {
   const responses = [];
   // Split entityDataArray into chunks of MAX_ITEMS_PER_QUERY
   for (let i = 0; i < entityDataArray.length; i += MAX_ITEMS_PER_QUERY) {
@@ -168,28 +171,31 @@ module.exports.batchSetChainMetadata = (sql, entityDataArray) => {
     });
 };
 
-const batchSetRawEventsCore = (sql, entityDataArray) => {
-  return sql`
-    INSERT INTO "public"."raw_events"
-  ${sql(
-    entityDataArray,
-    "chain_id",
-    "event_id",
-    "event_name",
-    "contract_name",
-    "block_number",
-    "log_index",
-    "transaction_fields",
-    "block_fields",
-    "src_address",
-    "block_hash",
-    "block_timestamp",
-    "params"
-  )};`;
-};
+module.exports.makeBatchSetRawEvents = (schema) => {
+  const { dbSchema, quotedFieldNames, fieldTypes } =
+    TableModule.schemaToDb(schema);
 
-module.exports.batchSetRawEvents = (sql, entityDataArray) => {
-  return chunkBatchQuery(sql, entityDataArray, batchSetRawEventsCore);
+  let convertOrThrow = S.compile(
+    S.unnest(dbSchema),
+    "Output",
+    "Input",
+    "Sync",
+    false
+  );
+
+  return (sql, entityDataArray) => {
+    const unnestData = convertOrThrow(entityDataArray);
+
+    return sql.unsafe(
+      `
+INSERT INTO "public"."raw_events" (${quotedFieldNames.join(", ")})
+SELECT * 
+  FROM unnest(${fieldTypes.map((fieldType, idx) => {
+    return `$${idx + 1}::${fieldType}[]`;
+  })});`,
+      unnestData
+    );
+  };
 };
 
 module.exports.batchDeleteRawEvents = (sql, entityIdArray) => sql`
@@ -216,13 +222,9 @@ const batchSetEndOfBlockRangeScannedDataCore = (sql, rowDataArray) => {
     "block_hash" = EXCLUDED."block_hash";`;
 };
 
-module.exports.batchSetEndOfBlockRangeScannedData = (sql, rowDataArray) => {
-  return chunkBatchQuery(
-    sql,
-    rowDataArray,
-    batchSetEndOfBlockRangeScannedDataCore
-  );
-};
+module.exports.batchSetEndOfBlockRangeScannedData = chunkBatchQuery(
+  batchSetEndOfBlockRangeScannedDataCore
+);
 
 module.exports.readEndOfBlockRangeScannedDataForChain = (sql, chainId) => {
   return sql`
@@ -388,8 +390,6 @@ module.exports.deleteRolledBackEntityHistory = (
         first_change
     );
   `;
-
-const Utils = require("envio/src/Utils.bs.js");
 
 module.exports.pruneStaleEntityHistory = (
   sql,

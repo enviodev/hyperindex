@@ -8,6 +8,7 @@ module type Entity = {
   let name: Enums.EntityType.t
   let schema: S.t<t>
   let rowsSchema: S.t<array<t>>
+  let unnestSchema: S.t<array<t>>
   let table: Table.table
   let entityHistory: EntityHistory.t<t>
 }
@@ -57,6 +58,7 @@ module {{entity.name.capitalized}} = {
   })
 
   let rowsSchema = S.array(schema)
+  let unnestSchema = S.unnest(schema)
 
   @genType
   type indexedFieldOperations = {
