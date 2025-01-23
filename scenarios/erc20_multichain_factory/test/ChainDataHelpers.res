@@ -88,18 +88,20 @@ module Stubs = {
   let makeExecutePartitionQuery = (stubData: t) => async (
     query,
     ~logger,
-    ~chainWorker,
+    ~source,
     ~currentBlockHeight,
     ~chain,
   ) => {
-    (logger, currentBlockHeight, chainWorker)->ignore
+    (logger, currentBlockHeight, source)->ignore
     stubData->getMockChainData(chain)->MockChainData.executeQuery(query)->Ok
   }
 
   //Stub for getting block hashes instead of the worker
-  let makeGetBlockHashes = (~stubData, ~chainWorker) => async (~blockNumbers, ~logger as _) => {
-    let module(ChainWorker: ChainWorker.S) = chainWorker
-    stubData->getMockChainData(ChainWorker.chain)->MockChainData.getBlockHashes(~blockNumbers)->Ok
+  let makeGetBlockHashes = (~stubData, ~source: Source.t) => async (
+    ~blockNumbers,
+    ~logger as _,
+  ) => {
+    stubData->getMockChainData(source.chain)->MockChainData.getBlockHashes(~blockNumbers)->Ok
   }
 
   let replaceNexQueryCheckAllChainsWithGivenChain = ({tasks}: t, chain) => {
@@ -113,10 +115,13 @@ module Stubs = {
   }
 
   //Stub wait for new block
-  let makeWaitForNewBlock = (stubData: t) => async (chainWorker, ~currentBlockHeight, ~logger) => {
+  let makeWaitForNewBlock = (stubData: t) => async (
+    source: Source.t,
+    ~currentBlockHeight,
+    ~logger,
+  ) => {
     (logger, currentBlockHeight)->ignore
-    let module(ChainWorker: ChainWorker.S) = chainWorker
-    stubData->getMockChainData(ChainWorker.chain)->MockChainData.getHeight
+    stubData->getMockChainData(source.chain)->MockChainData.getHeight
   }
   //Stub dispatch action to set state and not dispatch task but store in
   //the tasks ref
@@ -135,10 +140,7 @@ module Stubs = {
       ~waitForNewBlock=makeWaitForNewBlock(stubData),
       ~rollbackLastBlockHashesToReorgLocation=chainFetcher =>
         chainFetcher->ChainFetcher.rollbackLastBlockHashesToReorgLocation(
-          ~getBlockHashes=makeGetBlockHashes(
-            ~stubData,
-            ~chainWorker=chainFetcher.chainConfig.chainWorker,
-          ),
+          ~getBlockHashes=makeGetBlockHashes(~stubData, ~source=chainFetcher.chainConfig.source),
         ),
     )(
       ~dispatchAction=makeDispatchAction(stubData, _),

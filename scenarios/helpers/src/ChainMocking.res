@@ -250,7 +250,7 @@ module Make = (Indexer: Indexer.S) => {
     )
   }
 
-  let executeQuery = (self: t, query: FetchState.query): ChainWorker.blockRangeFetchResponse => {
+  let executeQuery = (self: t, query: FetchState.query): Source.blockRangeFetchResponse => {
     let {fromBlock} = query
     let toBlock = switch query.target {
     | Head => None

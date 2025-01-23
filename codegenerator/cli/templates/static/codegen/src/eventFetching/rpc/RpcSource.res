@@ -1,5 +1,5 @@
 open Belt
-open ChainWorker
+open Source
 
 type selectionConfig = {topics: array<array<EvmTypes.Hex.t>>}
 
@@ -133,26 +133,23 @@ let makeThrowingGetEventTransaction = (~getTransactionFields) => {
   }
 }
 
-module Make = (
-  T: {
-    let syncConfig: Config.syncConfig
-    let provider: Ethers.JsonRpcProvider.t
-    let chain: ChainMap.Chain.t
-    let contracts: array<Config.contract>
-    let eventRouter: EventRouter.t<module(Types.InternalEvent)>
-  },
-): S => {
-  let name = "RPC"
-  let chain = T.chain
-  let eventRouter = T.eventRouter
+type options = {
+  syncConfig: Config.syncConfig,
+  provider: Ethers.JsonRpcProvider.t,
+  chain: ChainMap.Chain.t,
+  contracts: array<Config.contract>,
+  eventRouter: EventRouter.t<module(Types.InternalEvent)>,
+}
 
-  let getSelectionConfig = memoGetSelectionConfig(~contracts=T.contracts)
+let make = ({syncConfig, provider, chain, contracts, eventRouter}: options): t => {
+  let name = "RPC"
+
+  let getSelectionConfig = memoGetSelectionConfig(~contracts)
 
   let suggestedBlockIntervals = Js.Dict.empty()
 
   let transactionLoader = LazyLoader.make(
-    ~loaderFn=transactionHash =>
-      T.provider->Ethers.JsonRpcProvider.getTransaction(~transactionHash),
+    ~loaderFn=transactionHash => provider->Ethers.JsonRpcProvider.getTransaction(~transactionHash),
     ~onError=(am, ~exn) => {
       Logging.error({
         "err": exn,
@@ -161,7 +158,7 @@ module Make = (
         "metadata": {
           {
             "asyncTaskName": "transactionLoader: fetching transaction data - `getTransaction` rpc call",
-            "caller": "RPC ChainWorker",
+            "caller": "RPC Source",
             "suggestedFix": "This likely means the RPC url you are using is not responding correctly. Please try another RPC endipoint.",
           }
         },
@@ -171,11 +168,7 @@ module Make = (
 
   let blockLoader = LazyLoader.make(
     ~loaderFn=blockNumber =>
-      EventFetching.getKnownBlockWithBackoff(
-        ~provider=T.provider,
-        ~backoffMsOnFailure=1000,
-        ~blockNumber,
-      ),
+      EventFetching.getKnownBlockWithBackoff(~provider, ~backoffMsOnFailure=1000, ~blockNumber),
     ~onError=(am, ~exn) => {
       Logging.error({
         "err": exn,
@@ -184,7 +177,7 @@ module Make = (
         "metadata": {
           {
             "asyncTaskName": "blockLoader: fetching block data - `getBlock` rpc call",
-            "caller": "RPC ChainWorker",
+            "caller": "RPC Source",
             "suggestedFix": "This likely means the RPC url you are using is not responding correctly. Please try another RPC endipoint.",
           }
         },
@@ -193,7 +186,6 @@ module Make = (
   )
 
   let waitForBlockGreaterThanCurrentHeight = async (~currentBlockHeight, ~logger) => {
-    let provider = T.provider
     let nextBlockWait = provider->EventUtils.waitForNextBlock
     let latestHeight =
       await provider
@@ -219,7 +211,7 @@ module Make = (
   )
 
   let contractNameAbiMapping = Js.Dict.empty()
-  T.contracts->Belt.Array.forEach(contract => {
+  contracts->Belt.Array.forEach(contract => {
     contractNameAbiMapping->Js.Dict.set(contract.name, contract.abi)
   })
 
@@ -244,7 +236,7 @@ module Make = (
       let suggestedBlockInterval =
         suggestedBlockIntervals
         ->Utils.Dict.dangerouslyGetNonOption(partitionId)
-        ->Belt.Option.getWithDefault(T.syncConfig.initialBlockInterval)
+        ->Belt.Option.getWithDefault(syncConfig.initialBlockInterval)
 
       let firstBlockParentPromise =
         fromBlock > 0
@@ -264,8 +256,8 @@ module Make = (
         ~topics,
         ~loadBlock=blockNumber => blockLoader->LazyLoader.get(blockNumber),
         ~suggestedBlockInterval,
-        ~syncConfig=T.syncConfig,
-        ~provider=T.provider,
+        ~syncConfig,
+        ~provider,
         ~logger,
       )
       suggestedBlockIntervals->Js.Dict.set(partitionId, nextSuggestedBlockInterval)
@@ -400,5 +392,13 @@ module Make = (
       ->Ok
     })
     ->Promise.catch(exn => exn->Error->Promise.resolve)
+  }
+
+  {
+    name,
+    chain,
+    getBlockHashes,
+    waitForBlockGreaterThanCurrentHeight,
+    fetchBlockRange,
   }
 }

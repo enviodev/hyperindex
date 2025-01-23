@@ -22,18 +22,15 @@ type blockRangeFetchResponse = {
   stats: blockRangeFetchStats,
 }
 
-module type S = {
-  let name: string
-  let chain: ChainMap.Chain.t
-  let getBlockHashes: (
+type t = {
+  name: string,
+  chain: ChainMap.Chain.t,
+  getBlockHashes: (
     ~blockNumbers: array<int>,
     ~logger: Pino.t,
-  ) => promise<result<array<ReorgDetection.blockData>, exn>>
-  let waitForBlockGreaterThanCurrentHeight: (
-    ~currentBlockHeight: int,
-    ~logger: Pino.t,
-  ) => promise<int>
-  let fetchBlockRange: (
+  ) => promise<result<array<ReorgDetection.blockData>, exn>>,
+  waitForBlockGreaterThanCurrentHeight: (~currentBlockHeight: int, ~logger: Pino.t) => promise<int>,
+  fetchBlockRange: (
     ~fromBlock: int,
     ~toBlock: option<int>,
     ~contractAddressMapping: ContractAddressingMap.mapping,
@@ -41,11 +38,10 @@ module type S = {
     ~partitionId: string,
     ~selection: FetchState.selection,
     ~logger: Pino.t,
-  ) => promise<result<blockRangeFetchResponse, ErrorHandling.t>>
+  ) => promise<result<blockRangeFetchResponse, ErrorHandling.t>>,
 }
 
-let waitForNewBlock = (chainWorker, ~currentBlockHeight, ~logger) => {
-  let module(ChainWorker: S) = chainWorker
+let waitForNewBlock = (source, ~currentBlockHeight, ~logger) => {
   let logger = Logging.createChildFrom(
     ~logger,
     ~params={
@@ -54,11 +50,11 @@ let waitForNewBlock = (chainWorker, ~currentBlockHeight, ~logger) => {
     },
   )
   logger->Logging.childTrace("Waiting for new blocks")
-  ChainWorker.waitForBlockGreaterThanCurrentHeight(~currentBlockHeight, ~logger)
+  source.waitForBlockGreaterThanCurrentHeight(~currentBlockHeight, ~logger)
 }
 
 let fetchBlockRange = async (
-  chainWorker,
+  source,
   ~fromBlock,
   ~toBlock,
   ~contractAddressMapping,
@@ -68,7 +64,6 @@ let fetchBlockRange = async (
   ~selection,
   ~logger,
 ) => {
-  let module(ChainWorker: S) = chainWorker
   let logger = {
     let allAddresses = contractAddressMapping->ContractAddressingMap.getAllAddresses
     let addresses =
@@ -83,15 +78,16 @@ let fetchBlockRange = async (
         "chainId": chain->ChainMap.Chain.toChainId,
         "logType": "Block Range Query",
         "partitionId": partitionId,
-        "workerType": ChainWorker.name,
+        "source": source.name,
         "fromBlock": fromBlock,
         "toBlock": toBlock,
         "addresses": addresses,
       },
     )
   }
+
   (
-    await ChainWorker.fetchBlockRange(
+    await source.fetchBlockRange(
       ~fromBlock,
       ~toBlock,
       ~contractAddressMapping,

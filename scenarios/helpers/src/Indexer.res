@@ -98,7 +98,7 @@ module type S = {
     }
   }
 
-  module ChainWorker: {
+  module Source: {
     type blockRangeFetchStats
     type blockRangeFetchResponse = {
       currentBlockHeight: int,
@@ -110,18 +110,18 @@ module type S = {
       stats: blockRangeFetchStats,
     }
 
-    module type S = {
-      let name: string
-      let chain: ChainMap.Chain.t
-      let getBlockHashes: (
+    type t = {
+      name: string,
+      chain: ChainMap.Chain.t,
+      getBlockHashes: (
         ~blockNumbers: array<int>,
         ~logger: Pino.t,
-      ) => promise<result<array<ReorgDetection.blockData>, exn>>
-      let waitForBlockGreaterThanCurrentHeight: (
+      ) => promise<result<array<ReorgDetection.blockData>, exn>>,
+      waitForBlockGreaterThanCurrentHeight: (
         ~currentBlockHeight: int,
         ~logger: Pino.t,
-      ) => promise<int>
-      let fetchBlockRange: (
+      ) => promise<int>,
+      fetchBlockRange: (
         ~fromBlock: int,
         ~toBlock: option<int>,
         ~contractAddressMapping: ContractAddressingMap.mapping,
@@ -129,7 +129,7 @@ module type S = {
         ~partitionId: string,
         ~selection: FetchState.selection,
         ~logger: Pino.t,
-      ) => promise<result<blockRangeFetchResponse, ErrorHandling.t>>
+      ) => promise<result<blockRangeFetchResponse, ErrorHandling.t>>,
     }
   }
 
@@ -150,7 +150,7 @@ module type S = {
       confirmedBlockThreshold: int,
       chain: ChainMap.Chain.t,
       contracts: array<contract>,
-      chainWorker: module(ChainWorker.S),
+      source: Source.t,
     }
   }
 }

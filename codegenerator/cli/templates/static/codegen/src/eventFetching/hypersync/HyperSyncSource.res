@@ -1,4 +1,4 @@
-open ChainWorker
+open Source
 open Belt
 
 module Helpers = {
@@ -156,24 +156,31 @@ let memoGetSelectionConfig = (~contracts) => {
     }
 }
 
-module Make = (
-  T: {
-    let contracts: array<Config.contract>
-    let chain: ChainMap.Chain.t
-    let endpointUrl: string
-    let allEventSignatures: array<string>
-    let shouldUseHypersyncClientDecoder: bool
-    let eventRouter: EventRouter.t<module(Types.InternalEvent)>
-  },
-): S => {
-  let name = "HyperSync"
-  let chain = T.chain
-  let eventRouter = T.eventRouter
+type options = {
+  contracts: array<Config.contract>,
+  chain: ChainMap.Chain.t,
+  endpointUrl: string,
+  allEventSignatures: array<string>,
+  shouldUseHypersyncClientDecoder: bool,
+  eventRouter: EventRouter.t<module(Types.InternalEvent)>,
+}
 
-  let getSelectionConfig = memoGetSelectionConfig(~contracts=T.contracts)
+let make = (
+  {
+    contracts,
+    chain,
+    endpointUrl,
+    allEventSignatures,
+    shouldUseHypersyncClientDecoder,
+    eventRouter,
+  }: options,
+): t => {
+  let name = "HyperSync"
+
+  let getSelectionConfig = memoGetSelectionConfig(~contracts)
 
   let client = HyperSyncClient.make(
-    ~url=T.endpointUrl,
+    ~url=endpointUrl,
     ~bearerToken=Env.envioApiToken,
     ~maxNumRetries=Env.hyperSyncClientMaxRetries,
     ~httpReqTimeoutMillis=Env.hyperSyncClientTimeoutMillis,
@@ -184,7 +191,7 @@ module Make = (
     switch hscDecoder.contents {
     | Some(decoder) => decoder
     | None =>
-      switch HyperSyncClient.Decoder.fromSignatures(T.allEventSignatures) {
+      switch HyperSyncClient.Decoder.fromSignatures(allEventSignatures) {
       | exception exn =>
         exn->ErrorHandling.mkLogAndRaise(
           ~msg="Failed to instantiate a decoder from hypersync client, please double check your ABI or try using 'event_decoder: viem' config option",
@@ -197,11 +204,7 @@ module Make = (
   }
 
   let waitForBlockGreaterThanCurrentHeight = (~currentBlockHeight, ~logger) => {
-    HyperSync.pollForHeightGtOrEq(
-      ~serverUrl=T.endpointUrl,
-      ~blockNumber=currentBlockHeight,
-      ~logger,
-    )
+    HyperSync.pollForHeightGtOrEq(~serverUrl=endpointUrl, ~blockNumber=currentBlockHeight, ~logger)
   }
 
   exception UndefinedValue
@@ -238,7 +241,7 @@ module Make = (
   }
 
   let contractNameAbiMapping = Js.Dict.empty()
-  T.contracts->Belt.Array.forEach(contract => {
+  contracts->Belt.Array.forEach(contract => {
     contractNameAbiMapping->Js.Dict.set(contract.name, contract.abi)
   })
 
@@ -280,7 +283,7 @@ module Make = (
             ~params={
               "type": "Hypersync Query",
               "fromBlock": fromBlock,
-              "serverUrl": T.endpointUrl,
+              "serverUrl": endpointUrl,
             },
           ),
         )
@@ -328,7 +331,7 @@ module Make = (
           //If there were no logs at all in the current page query then fetch the
           //timestamp of the heighest block accounted for
           HyperSync.queryBlockData(
-            ~serverUrl=T.endpointUrl,
+            ~serverUrl=endpointUrl,
             ~blockNumber=heighestBlockQueried,
             ~logger,
           )->Promise.thenResolve(res =>
@@ -380,7 +383,7 @@ module Make = (
           exn->ErrorHandling.mkLogAndRaise(~msg, ~logger)
         }
       }
-      if T.shouldUseHypersyncClientDecoder {
+      if shouldUseHypersyncClientDecoder {
         //Currently there are still issues with decoder for some cases so
         //this can only be activated with a flag
 
@@ -511,8 +514,16 @@ module Make = (
 
   let getBlockHashes = (~blockNumbers, ~logger) =>
     HyperSync.queryBlockDataMulti(
-      ~serverUrl=T.endpointUrl,
+      ~serverUrl=endpointUrl,
       ~blockNumbers,
       ~logger,
     )->Promise.thenResolve(HyperSync.mapExn)
+
+  {
+    name,
+    chain,
+    getBlockHashes,
+    waitForBlockGreaterThanCurrentHeight,
+    fetchBlockRange,
+  }
 }
