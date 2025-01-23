@@ -370,7 +370,10 @@ describe("determineNextEvent", () => {
         selection: normalSelection,
         contractAddressMapping: ContractAddressingMap.make(),
         dynamicContracts: [],
-        fetchedEventQueue: item->Option.mapWithDefault([], v => [v]),
+        fetchedEventQueue: item->Option.mapWithDefault(
+          Cow.Array.make([]),
+          v => Cow.Array.make([v]),
+        ),
       }
       {
         partitions: [partition],

@@ -78,7 +78,7 @@ describe("SourceManager fetchNext", () => {
     ~partitionIndex,
     ~latestFetchedBlockNumber,
     ~numContracts=2,
-    ~fetchedEventQueue=[],
+    ~fetchedEventQueue=Cow.Array.make([]),
   ): FetchState.partition => {
     let contractAddressMapping = ContractAddressingMap.make()
 
@@ -548,12 +548,16 @@ describe("SourceManager fetchNext", () => {
           mockFullPartition(
             ~partitionIndex=2,
             ~latestFetchedBlockNumber=1,
-            ~fetchedEventQueue=["mockEvent1", "mockEvent2", "mockEvent3"]->Utils.magic,
+            ~fetchedEventQueue=Cow.Array.make([
+              "mockEvent1",
+              "mockEvent2",
+              "mockEvent3",
+            ])->Utils.magic,
           ),
           mockFullPartition(
             ~partitionIndex=3,
             ~latestFetchedBlockNumber=2,
-            ~fetchedEventQueue=["mockEvent4", "mockEvent5"]->Utils.magic,
+            ~fetchedEventQueue=Cow.Array.make(["mockEvent4", "mockEvent5"])->Utils.magic,
           ),
           mockFullPartition(~partitionIndex=4, ~latestFetchedBlockNumber=3),
         ]),
@@ -588,7 +592,11 @@ describe("SourceManager fetchNext", () => {
           mockFullPartition(
             ~partitionIndex=0,
             ~latestFetchedBlockNumber=0,
-            ~fetchedEventQueue=["mockEvent1", "mockEvent2", "mockEvent3"]->Utils.magic,
+            ~fetchedEventQueue=Cow.Array.make([
+              "mockEvent1",
+              "mockEvent2",
+              "mockEvent3",
+            ])->Utils.magic,
           ),
           // Finished fetching to endBlock
           mockFullPartition(~partitionIndex=1, ~latestFetchedBlockNumber=11),
