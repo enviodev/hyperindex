@@ -192,7 +192,6 @@ module DynamicContractRegistry = {
   })
 
   let rowsSchema = S.array(schema)
-  let unnestSchema = S.unnest(schema)
 
   let table = mkTable(
     "dynamic_contract_registry",

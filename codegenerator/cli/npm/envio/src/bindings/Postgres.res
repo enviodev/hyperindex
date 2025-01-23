@@ -52,7 +52,7 @@ type sslOptions =
   | @as("prefer") Prefer
   | @as("verify-full") VerifyFull
 
-let sslOptionsSchema: S.schema<sslOptions> = Utils.Schema.enum([
+let sslOptionsSchema: S.schema<sslOptions> = S.enum([
   Bool(true),
   Bool(false),
   Require,
@@ -96,3 +96,6 @@ external makeSql: (~config: poolConfig) => sql = "postgres"
 // external sql:  array<string>  => (sql, array<string>) => int = "sql"
 
 @send external unsafe: (sql, string) => promise<'a> = "unsafe"
+@send
+external preparedUnsafe: (sql, string, unknown, @as(json`{prepare: true}`) _) => promise<'a> =
+  "unsafe"

@@ -2,6 +2,82 @@ type chainId = int
 type eventId = string
 type blockNumberRow = {@as("block_number") blockNumber: int}
 
+// Copied from ReScript Schema to quote and escape "
+let quote = (string: string): string => {
+  let rec loop = idx => {
+    switch string->Js.String2.get(idx)->(Utils.magic: string => option<string>) {
+    | None => `"${string}"`
+    | Some("\"") => string->Js.Json.stringifyAny->Obj.magic
+    | Some(_) => loop(idx + 1)
+    }
+  }
+  loop(0)
+}
+
+@module("./DbFunctionsImplementation.js")
+external makeBatchSetEntityValues: Table.table => (Postgres.sql, unknown) => promise<unit> =
+  "makeBatchSetEntityValues"
+
+let makeTableBatchSet = (table, schema: S.t<'entity>) => {
+  let {dbSchema, quotedFieldNames, quotedNonPrimaryFieldNames, arrayFieldTypes, hasArrayField} =
+    table->Table.toSqlParams(~schema)
+  let isRawEvents = table.tableName === TablesStatic.RawEvents.table.tableName
+
+  let typeValidation = false
+
+  if isRawEvents || !hasArrayField {
+    let convertOrThrow = S.compile(
+      S.unnest(dbSchema),
+      ~input=Value,
+      ~output=Unknown,
+      ~mode=Sync,
+      ~typeValidation,
+    )
+
+    let primaryKeyFieldNames = Table.getPrimaryKeyFieldNames(table)
+
+    let unsafeSql =
+      `
+INSERT INTO "public".${table.tableName->quote} (${quotedFieldNames->Js.Array2.joinWith(", ")})
+SELECT * 
+  FROM unnest(${arrayFieldTypes
+        ->Js.Array2.mapi((arrayFieldType, idx) => {
+          `$${(idx + 1)->Js.Int.toString}::${arrayFieldType}`
+        })
+        ->Js.Array2.joinWith(",")})` ++ (
+        isRawEvents
+          ? `;`
+          : `ON CONFLICT(${primaryKeyFieldNames
+              ->Js.Array2.map(quote)
+              ->Js.Array2.joinWith(",")}) DO UPDATE
+SET
+${quotedNonPrimaryFieldNames
+              ->Js.Array2.map(fieldName => {
+                `${fieldName} = EXCLUDED.${fieldName}`
+              })
+              ->Js.Array2.joinWith(",")};`
+      )
+
+    (sql, entityDataArray: array<'entity>): promise<unit> => {
+      sql->Postgres.preparedUnsafe(unsafeSql, convertOrThrow(entityDataArray))
+    }
+  } else {
+    let convertOrThrow = S.compile(
+      S.array(dbSchema),
+      ~input=Value,
+      ~output=Unknown,
+      ~mode=Sync,
+      ~typeValidation,
+    )
+
+    let query = makeBatchSetEntityValues(table)
+
+    (sql, entityDataArray: array<'entity>): promise<unit> => {
+      query(sql, convertOrThrow(entityDataArray))
+    }
+  }
+}
+
 module General = {
   type existsRes = {exists: bool}
 
@@ -108,12 +184,7 @@ module EventSyncState = {
 }
 
 module RawEvents = {
-  type rawEventRowId = (chainId, eventId)
-  @module("./DbFunctionsImplementation.js")
-  external makeBatchSetRawEvents: S.t<TablesStatic.RawEvents.t> => (Postgres.sql, array<TablesStatic.RawEvents.t>) => promise<unit> =
-    "makeBatchSetRawEvents"
-
-  let batchSet = makeBatchSetRawEvents(TablesStatic.RawEvents.schema)
+  let batchSet = makeTableBatchSet(TablesStatic.RawEvents.table, TablesStatic.RawEvents.schema)
 }
 
 module DynamicContractRegistry = {
@@ -425,9 +496,7 @@ module EntityHistory = {
           )
         }
 
-        let chainHistoryRows = try res->S.parseOrThrow(
-          Entity.entityHistory.schemaRows,
-        ) catch {
+        let chainHistoryRows = try res->S.parseOrThrow(Entity.entityHistory.schemaRows) catch {
         | exn =>
           exn->ErrorHandling.mkLogAndRaise(
             ~msg=`Failed to parse entity history rows from db on getFirstChangeEntityHistoryPerChain`,

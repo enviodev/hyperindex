@@ -1,6 +1,5 @@
 const TableModule = require("envio/src/db/Table.bs.js");
 const Utils = require("envio/src/Utils.bs.js");
-const S = require("rescript-schema");
 
 // db operations for raw_events:
 const MAX_ITEMS_PER_QUERY = 500;
@@ -23,43 +22,6 @@ const commaSeparateDynamicMapQuery = (sql, dynQueryConstructors) =>
         i === dynQueryConstructors.length - 1 ? sql`` : sql`, `
       }`
   )}`;
-
-module.exports.batchSetItemsInTable = (table, sql, unnestData) => {
-  const dbFieldNames = [];
-  const normalFields = [];
-
-  TableModule.getFields(table).forEach((field) => {
-    const dbFieldName = TableModule.getDbFieldName(field);
-    if (dbFieldName === "db_write_timestamp") {
-      return;
-    }
-    dbFieldNames.push(dbFieldName);
-    normalFields.push(field);
-  });
-
-  const primaryKeyFieldNames = TableModule.getPrimaryKeyFieldNames(table);
-  const fieldQueryConstructors = dbFieldNames.map(
-    (fieldName) => (sql) => sql`${sql(fieldName)} = EXCLUDED.${sql(fieldName)}`
-  );
-  const pkQueryConstructors = primaryKeyFieldNames.map(
-    (pkField) => (sql) => sql(pkField)
-  );
-  const dataConstructors = normalFields.map((field, idx) => (sql) => {
-    const fieldType = TableModule.getFieldType(field);
-    return sql`${sql.array(unnestData[idx])}::${sql.unsafe(fieldType)}[]`;
-  });
-
-  return sql`
-INSERT INTO "public".${sql(table.tableName)} (${sql(dbFieldNames)})
-SELECT * 
-  FROM unnest(${sql`${commaSeparateDynamicMapQuery(sql, dataConstructors)}`})
-ON CONFLICT(${sql`${commaSeparateDynamicMapQuery(
-    sql,
-    pkQueryConstructors
-  )}`}) DO UPDATE
-SET
-${sql`${commaSeparateDynamicMapQuery(sql, fieldQueryConstructors)}`};`;
-};
 
 module.exports.batchDeleteItemsInTable = (table, sql, pkArray) => {
   const primaryKeyFieldNames = TableModule.getPrimaryKeyFieldNames(table);
@@ -171,38 +133,36 @@ module.exports.batchSetChainMetadata = (sql, entityDataArray) => {
     });
 };
 
-module.exports.makeBatchSetRawEvents = (schema) => {
-  const { dbSchema, quotedFieldNames, fieldTypes } =
-    TableModule.schemaToDb(schema);
-
-  let convertOrThrow = S.compile(
-    S.unnest(dbSchema),
-    "Output",
-    "Input",
-    "Sync",
-    false
-  );
-
-  return (sql, entityDataArray) => {
-    const unnestData = convertOrThrow(entityDataArray);
-
-    return sql.unsafe(
-      `
-INSERT INTO "public"."raw_events" (${quotedFieldNames.join(", ")})
-SELECT * 
-  FROM unnest(${fieldTypes.map((fieldType, idx) => {
-    return `$${idx + 1}::${fieldType}[]`;
-  })});`,
-      unnestData
-    );
-  };
-};
-
 module.exports.batchDeleteRawEvents = (sql, entityIdArray) => sql`
   DELETE
   FROM "public"."raw_events"
   WHERE (chain_id, event_id) IN ${sql(entityIdArray)};`;
 // end db operations for raw_events
+
+module.exports.makeBatchSetEntityValues = (table) => {
+  const fieldNames = TableModule.getFieldNames(table).filter(
+    (fieldName) => fieldName !== "db_write_timestamp"
+  );
+  const primaryKeyFieldNames = TableModule.getPrimaryKeyFieldNames(table);
+  const fieldQueryConstructors = fieldNames.map(
+    (fieldName) => (sql) => sql`${sql(fieldName)} = EXCLUDED.${sql(fieldName)}`
+  );
+  const pkQueryConstructors = primaryKeyFieldNames.map(
+    (pkField) => (sql) => sql(pkField)
+  );
+
+  return chunkBatchQuery((sql, rowDataArray) => {
+    return sql`
+INSERT INTO "public".${sql(table.tableName)}
+${sql(rowDataArray, ...fieldNames)}
+ON CONFLICT(${sql`${commaSeparateDynamicMapQuery(
+      sql,
+      pkQueryConstructors
+    )}`}) DO UPDATE
+SET
+${sql`${commaSeparateDynamicMapQuery(sql, fieldQueryConstructors)}`};`;
+  });
+};
 
 const batchSetEndOfBlockRangeScannedDataCore = (sql, rowDataArray) => {
   return sql`

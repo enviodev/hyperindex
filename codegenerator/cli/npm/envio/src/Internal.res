@@ -123,3 +123,5 @@ let fuelTransferParamsSchema = S.schema(s => {
   assetId: s.matches(S.string),
   amount: s.matches(BigInt.schema),
 })
+
+type entity = private {id: string}

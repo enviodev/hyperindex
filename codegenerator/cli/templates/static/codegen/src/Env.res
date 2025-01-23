@@ -5,7 +5,7 @@ Dotenv.initialize()
   let getLogLevelConfig = (name, ~default): Pino.logLevel =>
     envSafe->EnvSafe.get(
       name,
-      Utils.Schema.enum([#trace, #debug, #info, #warn, #error, #fatal, #udebug, #uinfo, #uwarn, #uerror]),
+      S.enum([#trace, #debug, #info, #warn, #error, #fatal, #udebug, #uinfo, #uwarn, #uerror]),
       ~fallback=default,
     )
 )
@@ -50,7 +50,7 @@ module Benchmark = {
     @unboxed
     type t = Bool(bool) | @as("json-file") JsonFile | @as("prometheus") Prometheus
 
-    let schema = Utils.Schema.enum([Bool(true), Bool(false), JsonFile, Prometheus])
+    let schema = S.enum([Bool(true), Bool(false), JsonFile, Prometheus])
     let default = Bool(false)
 
     let shouldSaveJsonFile = self =>
@@ -101,7 +101,7 @@ type logStrategyType =
 let logStrategy =
   envSafe->EnvSafe.get(
     "LOG_STRATEGY",
-    Utils.Schema.enum([EcsFile, EcsConsole, EcsConsoleMultistream, FileOnly, ConsoleRaw, ConsolePretty, Both]),
+    S.enum([EcsFile, EcsConsole, EcsConsoleMultistream, FileOnly, ConsoleRaw, ConsolePretty, Both]),
     ~fallback=ConsolePretty,
   )
 

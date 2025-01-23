@@ -101,4 +101,83 @@ describe("SerDe Test", () => {
     | _ => Assert.fail("Should have returned a row")
     }
   })
+
+  Async.it("All type entity without array types for unnest case", async () => {
+    let entity: Entities.EntityWithAllNonArrayTypes.t = {
+      id: "1",
+      string: "string",
+      optString: Some("optString"),
+      int_: 1,
+      optInt: Some(2),
+      float_: 1.1,
+      optFloat: Some(2.2),
+      bool: true,
+      optBool: Some(false),
+      bigInt: BigInt.fromInt(1),
+      optBigInt: Some(BigInt.fromInt(2)),
+      bigDecimal: BigDecimal.fromStringUnsafe("1.1"),
+      optBigDecimal: Some(BigDecimal.fromStringUnsafe("2.2")),
+    }
+
+    let entityHistoryItem: EntityHistory.historyRow<_> = {
+      current: {
+        chain_id: 1,
+        block_timestamp: 1,
+        block_number: 1,
+        log_index: 1,
+      },
+      previous: None,
+      entityData: Set(entity),
+    }
+
+    //Fails if serialziation does not work
+    let set = DbFunctionsEntities.batchSet(~entityMod=module(Entities.EntityWithAllNonArrayTypes))
+    //Fails if parsing does not work
+    let read = DbFunctionsEntities.batchRead(~entityMod=module(Entities.EntityWithAllNonArrayTypes))
+
+    let setHistory = (sql, row) =>
+      Entities.EntityWithAllNonArrayTypes.entityHistory->EntityHistory.batchInsertRows(
+        ~sql,
+        ~rows=[row],
+        ~shouldCopyCurrentEntity=true,
+      )
+
+    try await Db.sql->setHistory(entityHistoryItem) catch {
+    | exn =>
+      Js.log2("setHistory exn", exn)
+      Assert.fail("Failed to set entity history in table")
+    }
+
+    //set the entity
+    try await Db.sql->set([entity]) catch {
+    | exn =>
+      Js.log(exn)
+      Assert.fail("Failed to set entity in table")
+    }
+
+    switch await Db.sql->read([entity.id]) {
+    | exception exn =>
+      Js.log(exn)
+      Assert.fail("Failed to read entity from table")
+    | [_entity] => ()
+    | _ => Assert.fail("Should have returned a row on batch read fn")
+    }
+
+    //The copy function will do it's custom postgres serialization of the entity
+    // await Db.sql->DbFunctions.EntityHistory.copyAllEntitiesToEntityHistory
+
+    let res =
+      await Db.sql->Postgres.unsafe(`SELECT * FROM public."EntityWithAllNonArrayTypes_history";`)
+
+    switch res {
+    | [row] =>
+      let parsed = row->S.parseJsonOrThrow(Entities.EntityWithAllNonArrayTypes.entityHistory.schema)
+      Assert.deepEqual(
+        parsed.entityData,
+        Set(entity),
+        ~message="Postgres json serialization should be compatable with our schema",
+      )
+    | _ => Assert.fail("Should have returned a row")
+    }
+  })
 })

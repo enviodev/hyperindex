@@ -30,26 +30,15 @@ let makeReadEntities = (~table: Table.table, ~rowsSchema: S.t<array<'entityRow>>
   }
 }
 
-@module("./DbFunctionsImplementation.js")
-external batchSetItemsInTable: (
-  ~table: Table.table,
-  ~sql: Postgres.sql,
-  ~unnestData: Js.Json.t,
-) => promise<unit> = "batchSetItemsInTable"
-
-let makeBatchSet = (~table: Table.table, ~unnestSchema: S.schema<array<'entityRow>>) => async (
-  sql: Postgres.sql,
-  entities: array<'entityRow>,
-  ~logger=?,
-) => {
-  switch entities->S.reverseConvertToJsonOrThrow(unnestSchema) {
-  | exception exn =>
-    exn->ErrorHandling.mkLogAndRaise(
-      ~logger?,
-      ~msg=`Failed during batch serialization of entity ${table.tableName}`,
-    )
-  | unnestData =>
-    switch await batchSetItemsInTable(~table, ~sql, ~unnestData) {
+let makeBatchSet = (~table: Table.table, ~schema: S.t<'entity>) => {
+  let query = DbFunctions.makeTableBatchSet(table, schema)
+  async (sql: Postgres.sql, entities: array<'entity>, ~logger=?) => {
+    switch await query(sql, entities) {
+    | exception (S.Raised(_) as exn) =>
+      exn->ErrorHandling.mkLogAndRaise(
+        ~logger?,
+        ~msg=`Failed during batch serialization of entity ${table.tableName}`,
+      )
     | exception exn =>
       exn->ErrorHandling.mkLogAndRaise(
         ~logger?,
@@ -83,10 +72,27 @@ let batchRead = (type entity, ~entityMod: module(Entities.Entity with type t = e
   makeReadEntities(~table, ~rowsSchema)
 }
 
-let batchSet = (type entity, ~entityMod: module(Entities.Entity with type t = entity)) => {
+type batchSet<'entity> = (Postgres.sql, array<'entity>, ~logger: Pino.t=?) => promise<unit>
+let batchSetCache: Utils.WeakMap.t<
+  module(Entities.InternalEntity),
+  batchSet<Internal.entity>,
+> = Utils.WeakMap.make()
+let batchSet = (type entity, ~entityMod: module(Entities.Entity with type t = entity)): batchSet<
+  entity,
+> => {
   let module(EntityMod) = entityMod
-  let {table, unnestSchema} = module(EntityMod)
-  makeBatchSet(~table, ~unnestSchema)
+  let {table, schema} = module(EntityMod)
+  switch Utils.WeakMap.get(batchSetCache, entityMod->Entities.entityModToInternal) {
+  | None =>
+    let query = makeBatchSet(~table, ~schema)
+    Utils.WeakMap.set(
+      batchSetCache,
+      entityMod->Entities.entityModToInternal,
+      query->(Utils.magic: batchSet<entity> => batchSet<Internal.entity>),
+    )->ignore
+    query
+  | Some(query) => query->(Utils.magic: batchSet<Internal.entity> => batchSet<entity>)
+  }
 }
 
 let batchDelete = (type entity, ~entityMod: module(Entities.Entity with type t = entity)) => {
