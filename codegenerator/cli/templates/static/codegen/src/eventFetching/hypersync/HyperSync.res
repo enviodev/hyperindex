@@ -359,15 +359,28 @@ module BlockData = {
           }
           set->Utils.Set.add(blockNumber)->ignore
         }
+        if toBlock.contents - fromBlock.contents > 1000 {
+          Js.Exn.raiseError(
+            `Invalid block data request. Range of block numbers is too large. Max range is 1000. Requested range: ${fromBlock.contents->Int.toString}-${toBlock.contents->Int.toString}`,
+          )
+        }
         let res = await queryBlockData(
           ~fromBlock=fromBlock.contents,
           ~toBlock=toBlock.contents,
           ~serverUrl,
           ~logger,
         )
-        res->Result.map(datas => {
-          datas->Array.keep(data => set->Utils.Set.has(data.blockNumber))
+        let filtered = res->Result.map(datas => {
+          datas->Array.keep(data => set->Utils.Set.delete(data.blockNumber))
         })
+        if set->Utils.Set.size > 0 {
+          Js.Exn.raiseError(
+            `Invalid response. Failed to get block data for block numbers: ${set->Utils.Set.toArray->Js.Array2.joinWith(
+              ", ",
+            )}`,
+          )
+        }
+        filtered
       }
     }
   }
