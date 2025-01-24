@@ -16,6 +16,7 @@ type syncConfig = {
   intervalCeiling: int,
   backoffMillis: int,
   queryTimeoutMillis: int,
+  fallbackStallTimeout: int,
 }
 
 type chainConfig = {
@@ -51,6 +52,7 @@ let getSyncConfig = ({
   intervalCeiling,
   backoffMillis,
   queryTimeoutMillis,
+  fallbackStallTimeout,
 }) => {
   initialBlockInterval: Env.Configurable.SyncConfig.initialBlockInterval->Option.getWithDefault(
     initialBlockInterval,
@@ -71,6 +73,7 @@ let getSyncConfig = ({
   backoffMillis,
   // How long to wait before cancelling an RPC request
   queryTimeoutMillis,
+  fallbackStallTimeout,
 }
 
 type t = {

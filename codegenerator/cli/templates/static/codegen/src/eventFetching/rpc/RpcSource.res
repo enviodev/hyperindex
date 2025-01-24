@@ -135,13 +135,15 @@ let makeThrowingGetEventTransaction = (~getTransactionFields) => {
 
 type options = {
   syncConfig: Config.syncConfig,
-  provider: Ethers.JsonRpcProvider.t,
+  urls: array<string>,
   chain: ChainMap.Chain.t,
   contracts: array<Config.contract>,
   eventRouter: EventRouter.t<module(Types.InternalEvent)>,
 }
 
-let make = ({syncConfig, provider, chain, contracts, eventRouter}: options): t => {
+let make = ({syncConfig, urls, chain, contracts, eventRouter}: options): t => {
+  let provider = Ethers.JsonRpcProvider.make(~rpcUrls=urls, ~chainId=chain->ChainMap.Chain.toChainId, ~fallbackStallTimeout=syncConfig.fallbackStallTimeout)
+
   let name = "RPC"
 
   let getSelectionConfig = memoGetSelectionConfig(~contracts)

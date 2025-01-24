@@ -69,12 +69,9 @@ let registerContractHandlers = (
                 intervalCeiling: {{rpc_config.sync_config.interval_ceiling}},
                 backoffMillis: {{rpc_config.sync_config.backoff_millis}},
                 queryTimeoutMillis: {{rpc_config.sync_config.query_timeout_millis}},
+                fallbackStallTimeout: {{rpc_config.sync_config.fallback_stall_timeout}},
               }),
-              provider: Ethers.JsonRpcProvider.make(
-                ~rpcUrls={{vec_to_array rpc_config.urls}},
-                ~chainId={{chain_config.network_config.id}},
-                ~fallbackStallTimeout={{rpc_config.sync_config.fallback_stall_timeout}},
-              ),
+              urls: {{vec_to_array rpc_config.urls}},
               eventRouter:
                 contracts
                 ->Belt.Array.flatMap(contract => contract.events)

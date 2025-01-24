@@ -44,12 +44,9 @@ let mockChainConfig: Config.chainConfig = {
         intervalCeiling: 10000,
         backoffMillis: 10000,
         queryTimeoutMillis: 10000,
+        fallbackStallTimeout: 3,
       }),
-      provider: Ethers.JsonRpcProvider.make(
-        ~rpcUrls=["http://localhost:8545"],
-        ~chainId=1337,
-        ~fallbackStallTimeout=3,
-      ),
+      urls: ["http://127.0.0.1:8545"],
       eventRouter: contracts
       ->Belt.Array.flatMap(contract => contract.events)
       ->EventRouter.fromEvmEventModsOrThrow(~chain=chain1337),

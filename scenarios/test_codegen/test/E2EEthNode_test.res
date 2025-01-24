@@ -15,7 +15,6 @@ describe("E2E Integration Test", () => {
 
     let contracts = await SetupRpcNode.deployContracts()
     await SetupRpcNode.runBasicGravatarTransactions(contracts.gravatar)
-    let provider = Hardhat.hardhatProvider
     let localChainConfig: Config.chainConfig = {
       let contracts = [
         {
@@ -43,8 +42,9 @@ describe("E2E Integration Test", () => {
               intervalCeiling: 10000,
               backoffMillis: 10000,
               queryTimeoutMillis: 10000,
+              fallbackStallTimeout: 1000,
             },
-            provider,
+            urls: ["http://127.0.0.1:8545"],
             eventRouter: contracts
             ->Belt.Array.flatMap(contract => contract.events)
             ->EventRouter.fromEvmEventModsOrThrow(~chain),
