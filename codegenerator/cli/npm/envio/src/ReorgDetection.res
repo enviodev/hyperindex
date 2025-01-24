@@ -401,8 +401,9 @@ module LastBlockScannedHashes: {
 
   let getThresholdBlockNumbers = (self: t, ~currentBlockHeight) => {
     let blockNumbers = []
-    self.lastBlockScannedDataList->Belt.List.reduceReverseU((), ((), v) => {
-      if v.blockNumber >= currentBlockHeight - self.confirmedBlockThreshold {
+    let thresholdBlocknumber = currentBlockHeight - self.confirmedBlockThreshold
+    self.lastBlockScannedDataList->Belt.List.forEach(v => {
+      if v.blockNumber >= thresholdBlocknumber {
         blockNumbers->Belt.Array.push(v.blockNumber)
       }
     })
