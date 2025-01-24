@@ -72,7 +72,7 @@ module LastBlockScannedHashes: {
     int,
   >
 
-  let getAllBlockNumbers: t => Belt.Array.t<int>
+  let getThresholdBlockNumbers: (t, ~currentBlockHeight: int) => array<int>
 
   let hasReorgOccurred: (t, ~reorgGuard: reorgGuard) => bool
 
@@ -399,10 +399,16 @@ module LastBlockScannedHashes: {
     }
   }
 
-  let getAllBlockNumbers = (self: t) =>
-    self.lastBlockScannedDataList->Belt.List.reduceReverse([], (acc, v) => {
-      Belt.Array.concat(acc, [v.blockNumber])
+  let getThresholdBlockNumbers = (self: t, ~currentBlockHeight) => {
+    let blockNumbers = []
+    let thresholdBlocknumber = currentBlockHeight - self.confirmedBlockThreshold
+    self.lastBlockScannedDataList->Belt.List.forEach(v => {
+      if v.blockNumber >= thresholdBlocknumber {
+        blockNumbers->Belt.Array.push(v.blockNumber)
+      }
     })
+    blockNumbers
+  }
 
   /**
   Checks whether reorg has occured by comparing the parent hash with the last saved block hash.

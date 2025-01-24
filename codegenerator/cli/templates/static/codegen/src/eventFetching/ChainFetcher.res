@@ -419,30 +419,36 @@ let rollbackLastBlockHashesToReorgLocation = async (
   ~getBlockHashes as getBlockHashesMock=?,
 ) => {
   let blockNumbers =
-    chainFetcher.lastBlockScannedHashes->ReorgDetection.LastBlockScannedHashes.getAllBlockNumbers
+    chainFetcher.lastBlockScannedHashes->ReorgDetection.LastBlockScannedHashes.getThresholdBlockNumbers(
+      ~currentBlockHeight=chainFetcher.currentBlockHeight,
+    )
 
-  // FIXME: Mock source instead
-  let getBlockHashes = switch getBlockHashesMock {
-  | Some(getBlockHashes) => getBlockHashes
-  | None => chainFetcher.chainConfig.source.getBlockHashes
-  }
+  switch blockNumbers {
+  | [] => chainFetcher.lastBlockScannedHashes
+  | _ => {
+      let getBlockHashes = switch getBlockHashesMock {
+      | Some(getBlockHashes) => getBlockHashes
+      | None => chainFetcher.chainConfig.source.getBlockHashes
+      }
 
-  let blockNumbersAndHashes = await getBlockHashes(
-    ~blockNumbers,
-    ~logger=chainFetcher.logger,
-  )->Promise.thenResolve(res =>
-    switch res {
-    | Ok(v) => v
-    | Error(exn) =>
-      exn->ErrorHandling.mkLogAndRaise(
-        ~msg="Failed to fetch blockHashes for given blockNumbers during rollback",
+      let blockNumbersAndHashes = await getBlockHashes(
+        ~blockNumbers,
+        ~logger=chainFetcher.logger,
+      )->Promise.thenResolve(res =>
+        switch res {
+        | Ok(v) => v
+        | Error(exn) =>
+          exn->ErrorHandling.mkLogAndRaise(
+            ~msg="Failed to fetch blockHashes for given blockNumbers during rollback",
+          )
+        }
       )
-    }
-  )
 
-  chainFetcher.lastBlockScannedHashes
-  ->ReorgDetection.LastBlockScannedHashes.rollBackToValidHash(~blockNumbersAndHashes)
-  ->Utils.unwrapResultExn
+      chainFetcher.lastBlockScannedHashes
+      ->ReorgDetection.LastBlockScannedHashes.rollBackToValidHash(~blockNumbersAndHashes)
+      ->Utils.unwrapResultExn
+    }
+  }
 }
 
 let getLastScannedBlockData = lastBlockData => {
