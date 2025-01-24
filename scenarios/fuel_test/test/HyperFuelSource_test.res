@@ -1,7 +1,7 @@
 open RescriptMocha
 open Belt
 
-describe("HyperFuelWorker - getNormalRecieptsSelection", () => {
+describe("HyperFuelSource - getNormalRecieptsSelection", () => {
   let contractName1 = "TestContract"
   let contractName2 = "TestContract2"
   let chain = ChainMap.Chain.makeUnsafe(~chainId=0)
@@ -22,7 +22,7 @@ describe("HyperFuelWorker - getNormalRecieptsSelection", () => {
                 (
                   {
                     isWildcard: false,
-                    eventId: HyperFuelWorker.getEventId(e),
+                    eventId: HyperFuelSource.getEventId(e),
                     contractName: e.contractName,
                   }: FetchState.eventConfig
                 ),
@@ -31,7 +31,7 @@ describe("HyperFuelWorker - getNormalRecieptsSelection", () => {
           },
         )
       }),
-    }->HyperFuelWorker.getSelectionConfig(~contracts, ~chain)
+    }->HyperFuelSource.getSelectionConfig(~contracts, ~chain)
     selectionConfig.getRecieptsSelection
   }
 
@@ -734,7 +734,7 @@ describe("HyperFuelWorker - getNormalRecieptsSelection", () => {
   })
 })
 
-describe("HyperFuelWorker - makeWildcardRecieptsSelection", () => {
+describe("HyperFuelSource - makeWildcardRecieptsSelection", () => {
   let chain = ChainMap.Chain.makeUnsafe(~chainId=0)
 
   let mock = (~contracts: array<Internal.fuelContractConfig>) => {
@@ -748,7 +748,7 @@ describe("HyperFuelWorker - makeWildcardRecieptsSelection", () => {
                 (
                   {
                     isWildcard: true,
-                    eventId: HyperFuelWorker.getEventId(e),
+                    eventId: HyperFuelSource.getEventId(e),
                     contractName: e.contractName,
                   }: FetchState.eventConfig
                 ),
@@ -759,7 +759,7 @@ describe("HyperFuelWorker - makeWildcardRecieptsSelection", () => {
           },
         )
       }),
-    }->HyperFuelWorker.getSelectionConfig(~contracts, ~chain)
+    }->HyperFuelSource.getSelectionConfig(~contracts, ~chain)
     selectionConfig.getRecieptsSelection(~contractAddressMapping=ContractAddressingMap.make())
   }
 

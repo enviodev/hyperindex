@@ -198,47 +198,6 @@ module LogsQuery = {
   }
 }
 
-module HeightQuery = {
-  let getHeightWithRetry = async (~serverUrl, ~logger) => {
-    //Amount the retry interval is multiplied between each retry
-    let backOffMultiplicative = 2
-    //Interval after which to retry request (multiplied by backOffMultiplicative between each retry)
-    let retryIntervalMillis = ref(500)
-    //height to be set in loop
-    let height = ref(0)
-
-    //Retry if the height is 0 (expect height to be greater)
-    while height.contents <= 0 {
-      switch await HyperSyncJsonApi.heightRoute->Rest.fetch(serverUrl, ()) {
-      | h => height := h
-      | exception e =>
-        logger->Logging.childWarn({
-          "message": `Failed to get height from endpoint. Retrying in ${retryIntervalMillis.contents->Int.toString}ms...`,
-          "error": e->ErrorHandling.prettifyExn,
-        })
-        await Time.resolvePromiseAfterDelay(~delayMilliseconds=retryIntervalMillis.contents)
-        retryIntervalMillis := retryIntervalMillis.contents * backOffMultiplicative
-      }
-    }
-
-    height.contents
-  }
-
-  //Poll for a height greater or equal to the given blocknumber.
-  //Used for waiting until there is a new block to index
-  let pollForHeightGtOrEq = async (~serverUrl, ~blockNumber, ~logger) => {
-    let pollHeight = ref(await getHeightWithRetry(~serverUrl, ~logger))
-    let pollIntervalMillis = 100
-
-    while pollHeight.contents <= blockNumber {
-      await Time.resolvePromiseAfterDelay(~delayMilliseconds=pollIntervalMillis)
-      pollHeight := (await getHeightWithRetry(~serverUrl, ~logger))
-    }
-
-    pollHeight.contents
-  }
-}
-
 module BlockData = {
   let makeRequestBody = (~fromBlock, ~toBlock): HyperSyncJsonApi.QueryTypes.postQueryBody => {
     fromBlock,
@@ -387,8 +346,6 @@ module BlockData = {
 }
 
 let queryLogsPage = LogsQuery.queryLogsPage
-let getHeightWithRetry = HeightQuery.getHeightWithRetry
-let pollForHeightGtOrEq = HeightQuery.pollForHeightGtOrEq
 let queryBlockData = (~serverUrl, ~blockNumber, ~logger) =>
   BlockData.queryBlockData(
     ~serverUrl,

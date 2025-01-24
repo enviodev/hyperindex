@@ -19,7 +19,7 @@ let makeReadEntities = (~table: Table.table, ~rowsSchema: S.t<array<'entityRow>>
       ~msg=`Failed during batch read of entity ${table.tableName}`,
     )
   | res =>
-    switch res->S.parseAnyOrRaiseWith(rowsSchema) {
+    switch res->S.parseOrThrow(rowsSchema) {
     | exception exn =>
       exn->ErrorHandling.mkLogAndRaise(
         ~logger?,
@@ -42,7 +42,7 @@ let makeBatchSet = (~table: Table.table, ~rowsSchema: S.schema<array<'entityRow>
   entities: array<'entityRow>,
   ~logger=?,
 ) => {
-  switch entities->S.serializeOrRaiseWith(rowsSchema) {
+  switch entities->S.reverseConvertToJsonOrThrow(rowsSchema) {
   | exception exn =>
     exn->ErrorHandling.mkLogAndRaise(
       ~logger?,
@@ -141,7 +141,7 @@ let makeWhereQuery = (type entity, sql: Postgres.sql) => async (
     },
   )
 
-  let value = switch fieldValue->S.serializeOrRaiseWith(fieldValueSchema) {
+  let value = switch fieldValue->S.reverseConvertToJsonOrThrow(fieldValueSchema) {
   | exception exn => exn->ErrorHandling.mkLogAndRaise(~logger, ~msg=`Failed to serialize value`)
   | value => value
   }
@@ -149,7 +149,7 @@ let makeWhereQuery = (type entity, sql: Postgres.sql) => async (
   switch await query(~table=Entity.table, ~sql, ~fieldName, ~value) {
   | exception exn => exn->ErrorHandling.mkLogAndRaise(~logger, ~msg=`Failed to execute query`)
   | res =>
-    switch res->S.parseAnyOrRaiseWith(Entity.rowsSchema) {
+    switch res->S.parseOrThrow(Entity.rowsSchema) {
     | exception exn =>
       exn->ErrorHandling.mkLogAndRaise(
         ~logger,

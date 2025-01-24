@@ -19,7 +19,7 @@ let executeBatchDurationCounter = PromClient.Counter.makeCounter({
 let eventsProcessedCounter = PromClient.Counter.makeCounter({
   "name": "events_processed",
   "help": "Total number of events processed",
-  "labelNames": [],
+  "labelNames": ["chainId"],
 })
 
 let reorgsDetectedCounter = PromClient.Counter.makeCounter({
@@ -112,12 +112,12 @@ module MakeSafePromMetric = (
 
   let handleFloat = ({metric, labelSchema}: t<'a>, ~labels: 'a, ~value) =>
     metric
-    ->M.labels(labels->S.serializeOrRaiseWith(labelSchema))
+    ->M.labels(labels->S.reverseConvertToJsonOrThrow(labelSchema))
     ->M.handleFloat(value)
 
   let handleInt = ({metric, labelSchema}: t<'a>, ~labels: 'a, ~value) =>
     metric
-    ->M.labels(labels->S.serializeOrRaiseWith(labelSchema))
+    ->M.labels(labels->S.reverseConvertToJsonOrThrow(labelSchema))
     ->M.handleInt(value)
 }
 
@@ -251,8 +251,10 @@ let incrementExecuteBatchDurationCounter = (~duration) => {
   executeBatchDurationCounter->PromClient.Counter.incMany(duration)
 }
 
-let incrementEventsProcessedCounter = (~number) => {
-  eventsProcessedCounter->PromClient.Counter.incMany(number)
+let incrementEventsProcessedCounter = (~number, ~chainId) => {
+  eventsProcessedCounter
+  ->PromClient.Counter.labels({"chainId": chainId})
+  ->PromClient.Counter.incMany(number)
 }
 
 let incrementReorgsDetected = (~chain) => {

@@ -49,8 +49,6 @@ let make = (
   ~dynamicContractPreRegistration,
   ~enableRawEvents,
 ): t => {
-  let module(ChainWorker) = chainConfig.chainWorker
-
   let isPreRegisteringDynamicContracts = dynamicContractPreRegistration->Option.isSome
 
   // We don't need the router itself, but only validation logic,
@@ -270,7 +268,7 @@ let makeFromDbState = async (
       // on restart, reset the events_processed gauge to the previous state
       switch numEventsProcessed {
       | Some(numEventsProcessed) =>
-        Prometheus.incrementEventsProcessedCounter(~number=numEventsProcessed)
+        Prometheus.incrementEventsProcessedCounter(~number=numEventsProcessed, ~chainId)
       | None => () // do nothing if no events have been processed yet for this chain
       }
       (
@@ -420,9 +418,6 @@ let rollbackLastBlockHashesToReorgLocation = async (
   //Parameter used for dependency injecting in tests
   ~getBlockHashes as getBlockHashesMock=?,
 ) => {
-  // FIXME: Mock chainWorker instead
-
-  //get a list of block hashes via the chainworker
   let blockNumbers =
     chainFetcher.lastBlockScannedHashes->ReorgDetection.LastBlockScannedHashes.getThresholdBlockNumbers(
       ~currentBlockHeight=chainFetcher.currentBlockHeight,
@@ -431,11 +426,9 @@ let rollbackLastBlockHashesToReorgLocation = async (
   switch blockNumbers {
   | [] => chainFetcher.lastBlockScannedHashes
   | _ => {
-      let module(ChainWorker) = chainFetcher.chainConfig.chainWorker
-
       let getBlockHashes = switch getBlockHashesMock {
       | Some(getBlockHashes) => getBlockHashes
-      | None => ChainWorker.getBlockHashes
+      | None => chainFetcher.chainConfig.source.getBlockHashes
       }
 
       let blockNumbersAndHashes = await getBlockHashes(

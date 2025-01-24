@@ -99,7 +99,7 @@ type shouldExit = ExitWithSuccess | NoExit
 type action =
   | PartitionQueryResponse({
       chain: chain,
-      response: ChainWorker.blockRangeFetchResponse,
+      response: Source.blockRangeFetchResponse,
       query: FetchState.query,
     })
   | FinishWaitingForNewBlock({chain: chain, currentBlockHeight: int})
@@ -307,7 +307,7 @@ let updateLatestProcessedBlocks = (
 let handlePartitionQueryResponse = (
   state,
   ~chain,
-  ~response: ChainWorker.blockRangeFetchResponse,
+  ~response: Source.blockRangeFetchResponse,
   ~query: FetchState.query,
 ) => {
   let chainFetcher = state.chainManager.chainFetchers->ChainMap.get(chain)
@@ -749,8 +749,8 @@ let invalidatedActionReducer = (state: t, action: action) =>
     (state, [])
   }
 
-let executeQuery = (q: FetchState.query, ~logger, ~chainWorker, ~currentBlockHeight, ~chain) => {
-  chainWorker->ChainWorker.fetchBlockRange(
+let executeQuery = (q: FetchState.query, ~logger, ~source, ~currentBlockHeight, ~chain) => {
+  source->Source.fetchBlockRange(
     ~fromBlock=q.fromBlock,
     ~toBlock=switch q.target {
     | Head => None
@@ -777,17 +777,17 @@ let checkAndFetchForChain = (
 ) => async chain => {
   let chainFetcher = state.chainManager.chainFetchers->ChainMap.get(chain)
   if !isRollingBack(state) {
-    let {chainConfig: {chainWorker}, logger, currentBlockHeight, fetchState} = chainFetcher
+    let {chainConfig: {source}, logger, currentBlockHeight, fetchState} = chainFetcher
 
     await chainFetcher.sourceManager->SourceManager.fetchNext(
       ~fetchState,
       ~waitForNewBlock=(~currentBlockHeight, ~logger) =>
-        chainWorker->waitForNewBlock(~currentBlockHeight, ~logger),
+        source->waitForNewBlock(~currentBlockHeight, ~logger),
       ~onNewBlock=(~currentBlockHeight) =>
         dispatchAction(FinishWaitingForNewBlock({chain, currentBlockHeight})),
       ~currentBlockHeight,
       ~executeQuery=async query => {
-        switch await query->executeQuery(~logger, ~chainWorker, ~currentBlockHeight, ~chain) {
+        switch await query->executeQuery(~logger, ~source, ~currentBlockHeight, ~chain) {
         | Ok(response) => dispatchAction(PartitionQueryResponse({chain, response, query}))
         | Error(e) => dispatchAction(ErrorExit(e))
         }
@@ -1195,7 +1195,7 @@ let injectedTaskReducer = (
 }
 
 let taskReducer = injectedTaskReducer(
-  ~waitForNewBlock=ChainWorker.waitForNewBlock,
+  ~waitForNewBlock=Source.waitForNewBlock,
   ~executeQuery,
   ~rollbackLastBlockHashesToReorgLocation=ChainFetcher.rollbackLastBlockHashesToReorgLocation(_),
 )

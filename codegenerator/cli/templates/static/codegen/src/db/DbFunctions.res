@@ -137,7 +137,7 @@ module DynamicContractRegistry = {
 
   let readAllDynamicContracts = async (sql: Postgres.sql, ~chainId: chainId) => {
     let json = await sql->readAllDynamicContractsRaw(~chainId)
-    json->S.parseOrRaiseWith(TablesStatic.DynamicContractRegistry.rowsSchema)
+    json->S.parseJsonOrThrow(TablesStatic.DynamicContractRegistry.rowsSchema)
   }
 }
 
@@ -369,7 +369,7 @@ module EntityHistory = {
       )
     }
 
-    switch diffRes->S.parseAnyOrRaiseWith(Entity.entityHistory.schemaRows) {
+    switch diffRes->S.parseOrThrow(Entity.entityHistory.schemaRows) {
     | exception exn =>
       exn->ErrorHandling.mkLogAndRaise(
         ~msg="Failed to parse rollback diff from entity history",
@@ -423,7 +423,7 @@ module EntityHistory = {
           )
         }
 
-        let chainHistoryRows = try res->S.parseAnyOrRaiseWith(
+        let chainHistoryRows = try res->S.parseOrThrow(
           Entity.entityHistory.schemaRows,
         ) catch {
         | exn =>

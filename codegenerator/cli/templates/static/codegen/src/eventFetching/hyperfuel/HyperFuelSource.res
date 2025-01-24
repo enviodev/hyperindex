@@ -1,4 +1,4 @@
-open ChainWorker
+open Source
 open Belt
 
 exception EventRoutingFailed
@@ -229,17 +229,16 @@ let memoGetSelectionConfig = (~contracts, ~chain) => {
     }
 }
 
-module Make = (
-  T: {
-    let chain: ChainMap.Chain.t
-    let contracts: array<Internal.fuelContractConfig>
-    let endpointUrl: string
-  },
-): S => {
-  let name = "HyperFuel"
-  let chain = T.chain
+type options = {
+  chain: ChainMap.Chain.t,
+  contracts: array<Internal.fuelContractConfig>,
+  endpointUrl: string,
+}
 
-  let getSelectionConfig = memoGetSelectionConfig(~contracts=T.contracts, ~chain)
+let make = ({chain, contracts, endpointUrl}: options): t => {
+  let name = "HyperFuel"
+
+  let getSelectionConfig = memoGetSelectionConfig(~contracts, ~chain)
 
   module Helpers = {
     let rec queryLogsPageWithBackoff = async (
@@ -277,14 +276,6 @@ module Make = (
       }
   }
 
-  let waitForBlockGreaterThanCurrentHeight = (~currentBlockHeight, ~logger) => {
-    HyperFuel.pollForHeightGtOrEq(
-      ~serverUrl=T.endpointUrl,
-      ~blockNumber=currentBlockHeight,
-      ~logger,
-    )
-  }
-
   let fetchBlockRange = async (
     ~fromBlock,
     ~toBlock,
@@ -306,12 +297,7 @@ module Make = (
       //fetch batch
       let pageUnsafe = await Helpers.queryLogsPageWithBackoff(
         () =>
-          HyperFuel.queryLogsPage(
-            ~serverUrl=T.endpointUrl,
-            ~fromBlock,
-            ~toBlock,
-            ~recieptsSelection,
-          ),
+          HyperFuel.queryLogsPage(~serverUrl=endpointUrl, ~fromBlock, ~toBlock, ~recieptsSelection),
         logger,
       )
 
@@ -356,11 +342,7 @@ module Make = (
       | None =>
         //If there were no logs at all in the current page query then fetch the
         //timestamp of the heighest block accounted for
-        HyperFuel.queryBlockData(
-          ~serverUrl=T.endpointUrl,
-          ~blockNumber=heighestBlockQueried,
-          ~logger,
-        )
+        HyperFuel.queryBlockData(~serverUrl=endpointUrl, ~blockNumber=heighestBlockQueried, ~logger)
         ->Promise.thenResolve(res => {
           switch res {
           | Some(blockData) => blockData
@@ -532,4 +514,13 @@ module Make = (
 
   let getBlockHashes = (~blockNumbers as _, ~logger as _) =>
     Js.Exn.raiseError("HyperFuel does not support getting block hashes")
+
+  {
+    name,
+    chain,
+    getBlockHashes,
+    pollingInterval: 100,
+    getHeightOrThrow: () => HyperFuel.heightRoute->Rest.fetch(endpointUrl, ()),
+    fetchBlockRange,
+  }
 }

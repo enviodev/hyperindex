@@ -23,8 +23,8 @@ let validateHasuraResponse = (~statusCode: int, ~responseJson: Js.Json.t): Belt.
   if statusCode == 200 {
     Ok(QuerySucceeded)
   } else {
-    switch responseJson->S.parseWith(hasuraErrorResponseSchema) {
-    | Ok(decoded) =>
+    switch responseJson->S.parseJsonOrThrow(hasuraErrorResponseSchema) {
+    | decoded =>
       switch decoded.code {
       | "already-exists"
       | "already-tracked" =>
@@ -34,7 +34,7 @@ let validateHasuraResponse = (~statusCode: int, ~responseJson: Js.Json.t): Belt.
         Error()
       }
     //If we couldn't decode just return it as an error
-    | Error(_e) => Error()
+    | exception S.Raised(_e) => Error()
     }
   }
 

@@ -22,18 +22,17 @@ type blockRangeFetchResponse = {
   stats: blockRangeFetchStats,
 }
 
-module type S = {
-  let name: string
-  let chain: ChainMap.Chain.t
-  let getBlockHashes: (
+type t = {
+  name: string,
+  chain: ChainMap.Chain.t,
+  /* Frequency (in ms) used when polling for new events on this network. */
+  pollingInterval: int,
+  getBlockHashes: (
     ~blockNumbers: array<int>,
     ~logger: Pino.t,
-  ) => promise<result<array<ReorgDetection.blockData>, exn>>
-  let waitForBlockGreaterThanCurrentHeight: (
-    ~currentBlockHeight: int,
-    ~logger: Pino.t,
-  ) => promise<int>
-  let fetchBlockRange: (
+  ) => promise<result<array<ReorgDetection.blockData>, exn>>,
+  getHeightOrThrow: unit => promise<int>,
+  fetchBlockRange: (
     ~fromBlock: int,
     ~toBlock: option<int>,
     ~contractAddressMapping: ContractAddressingMap.mapping,
@@ -41,11 +40,37 @@ module type S = {
     ~partitionId: string,
     ~selection: FetchState.selection,
     ~logger: Pino.t,
-  ) => promise<result<blockRangeFetchResponse, ErrorHandling.t>>
+  ) => promise<result<blockRangeFetchResponse, ErrorHandling.t>>,
 }
 
-let waitForNewBlock = (chainWorker, ~currentBlockHeight, ~logger) => {
-  let module(ChainWorker: S) = chainWorker
+let getHeightWithRetry = async (~source, ~logger) => {
+  //Amount the retry interval is multiplied between each retry
+  let backOffMultiplicative = 2
+  //Interval after which to retry request (multiplied by backOffMultiplicative between each retry)
+  let retryIntervalMillis = ref(500)
+  //height to be set in loop
+  let height = ref(0)
+
+  //Retry if the height is 0 (expect height to be greater)
+  while height.contents <= 0 {
+    switch await source.getHeightOrThrow() {
+    | newHeight => height := newHeight
+    | exception exn =>
+      logger->Logging.childWarn({
+        "message": `Failed to get height from endpoint. Retrying in ${retryIntervalMillis.contents->Int.toString}ms...`,
+        "error": exn->ErrorHandling.prettifyExn,
+      })
+      await Time.resolvePromiseAfterDelay(~delayMilliseconds=retryIntervalMillis.contents)
+      retryIntervalMillis := retryIntervalMillis.contents * backOffMultiplicative
+    }
+  }
+
+  height.contents
+}
+
+//Poll for a height greater or equal to the given blocknumber.
+//Used for waiting until there is a new block to index
+let waitForNewBlock = async (source, ~currentBlockHeight, ~logger) => {
   let logger = Logging.createChildFrom(
     ~logger,
     ~params={
@@ -54,11 +79,19 @@ let waitForNewBlock = (chainWorker, ~currentBlockHeight, ~logger) => {
     },
   )
   logger->Logging.childTrace("Waiting for new blocks")
-  ChainWorker.waitForBlockGreaterThanCurrentHeight(~currentBlockHeight, ~logger)
+
+  let pollHeight = ref(await getHeightWithRetry(~source, ~logger))
+
+  while pollHeight.contents <= currentBlockHeight {
+    await Time.resolvePromiseAfterDelay(~delayMilliseconds=source.pollingInterval)
+    pollHeight := (await getHeightWithRetry(~source, ~logger))
+  }
+
+  pollHeight.contents
 }
 
 let fetchBlockRange = async (
-  chainWorker,
+  source,
   ~fromBlock,
   ~toBlock,
   ~contractAddressMapping,
@@ -68,7 +101,6 @@ let fetchBlockRange = async (
   ~selection,
   ~logger,
 ) => {
-  let module(ChainWorker: S) = chainWorker
   let logger = {
     let allAddresses = contractAddressMapping->ContractAddressingMap.getAllAddresses
     let addresses =
@@ -83,15 +115,16 @@ let fetchBlockRange = async (
         "chainId": chain->ChainMap.Chain.toChainId,
         "logType": "Block Range Query",
         "partitionId": partitionId,
-        "workerType": ChainWorker.name,
+        "source": source.name,
         "fromBlock": fromBlock,
         "toBlock": toBlock,
         "addresses": addresses,
       },
     )
   }
+
   (
-    await ChainWorker.fetchBlockRange(
+    await source.fetchBlockRange(
       ~fromBlock,
       ~toBlock,
       ~contractAddressMapping,

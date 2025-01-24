@@ -41,7 +41,7 @@ module MockEvent = (
     Internal.genericContractRegisterArgs<event, Types.contractRegistrations>,
   >
 
-  let paramsRawEventSchema = S.literal(%raw(`null`))->S.variant(_ => ())
+  let paramsRawEventSchema = S.literal(%raw(`null`))->S.to(_ => ())
   let blockSchema = T.blockSchema
   let transactionSchema = T.transactionSchema
 
@@ -99,7 +99,7 @@ let withOverride = (eventMod: module(Types.Event), ~sighash=?) => {
   eventMod
 }
 
-describe("HyperSyncWorker - getSelectionConfig", () => {
+describe("HyperSyncSource - getSelectionConfig", () => {
   Async.it(
     "Correctly builds logs query field selection for empty block and transaction schemas",
     async () => {
@@ -112,7 +112,7 @@ describe("HyperSyncWorker - getSelectionConfig", () => {
             isWildcard: false,
           },
         ],
-      }->HyperSyncWorker.getSelectionConfig(
+      }->HyperSyncSource.getSelectionConfig(
         ~contracts=[
           {
             name: "Foo",
@@ -197,7 +197,7 @@ describe("HyperSyncWorker - getSelectionConfig", () => {
             isWildcard: false,
           },
         ],
-      }->HyperSyncWorker.getSelectionConfig(
+      }->HyperSyncSource.getSelectionConfig(
         ~contracts=[
           {
             name: "Foo",
@@ -262,7 +262,7 @@ describe("HyperSyncWorker - getSelectionConfig", () => {
           isWildcard: false,
         },
       ],
-    }->HyperSyncWorker.getSelectionConfig(
+    }->HyperSyncSource.getSelectionConfig(
       ~contracts=[
         {
           name: "Foo",
@@ -429,7 +429,7 @@ describe("HyperSyncWorker - getSelectionConfig", () => {
             isWildcard: false,
           },
         ],
-      }->HyperSyncWorker.getSelectionConfig(~contracts)
+      }->HyperSyncSource.getSelectionConfig(~contracts)
       let wildcardSelectionConfig = {
         isWildcard: true,
         eventConfigs: [
@@ -439,7 +439,7 @@ describe("HyperSyncWorker - getSelectionConfig", () => {
             isWildcard: true,
           },
         ],
-      }->HyperSyncWorker.getSelectionConfig(~contracts)
+      }->HyperSyncSource.getSelectionConfig(~contracts)
 
       Assert.deepEqual(
         normalSelectionConfig,
@@ -566,7 +566,7 @@ describe("HyperSyncWorker - getSelectionConfig", () => {
           isWildcard: true,
         },
       ],
-    }->HyperSyncWorker.getSelectionConfig(~contracts)
+    }->HyperSyncSource.getSelectionConfig(~contracts)
 
     Assert.deepEqual(
       selectionConfig.getLogSelectionOrThrow(~contractAddressMapping=ContractAddressingMap.make()),

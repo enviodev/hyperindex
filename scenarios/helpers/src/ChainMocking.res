@@ -85,7 +85,7 @@ module Make = (Indexer: Indexer.S) => {
 
     let transactionHash =
       Crypto.hashKeccak256Any(
-        params->RescriptSchema.S.serializeOrRaiseWith(Event.paramsRawEventSchema),
+        params->RescriptSchema.S.reverseConvertToJsonOrThrow(Event.paramsRawEventSchema),
       )
       ->Crypto.hashKeccak256Compound(transactionIndex)
       ->Crypto.hashKeccak256Compound(blockNumber)
@@ -250,7 +250,7 @@ module Make = (Indexer: Indexer.S) => {
     )
   }
 
-  let executeQuery = (self: t, query: FetchState.query): ChainWorker.blockRangeFetchResponse => {
+  let executeQuery = (self: t, query: FetchState.query): Source.blockRangeFetchResponse => {
     let {fromBlock} = query
     let toBlock = switch query.target {
     | Head => None

@@ -276,7 +276,7 @@ let addEventToRawEvents = (eventItem: Internal.eventItem, ~inMemoryStore: InMemo
   // Serialize to unknown, because serializing to Js.Json.t fails for Bytes Fuel type, since it has unknown schema
   let params =
     params
-    ->S.serializeToUnknownOrRaiseWith(paramsRawEventSchema)
+    ->S.reverseConvertOrThrow(paramsRawEventSchema)
     ->(Utils.magic: unknown => Js.Json.t)
 
   let rawEvent: TablesStatic.RawEvents.t = {
@@ -525,6 +525,7 @@ let registerProcessEventBatchMetrics = (
   ~loadDuration,
   ~handlerDuration,
   ~dbWriteDuration,
+  ~latestProcessedBlocks: EventsProcessed.t,
 ) => {
   logger->Logging.childTrace({
     "message": "Finished processing batch",
@@ -537,7 +538,14 @@ let registerProcessEventBatchMetrics = (
   Prometheus.incrementLoadEntityDurationCounter(~duration=loadDuration)
   Prometheus.incrementEventRouterDurationCounter(~duration=handlerDuration)
   Prometheus.incrementExecuteBatchDurationCounter(~duration=dbWriteDuration)
-  Prometheus.incrementEventsProcessedCounter(~number=batchSize)
+  latestProcessedBlocks
+  ->ChainMap.entries
+  ->Array.forEach(((chain, {numEventsProcessed})) => {
+    Prometheus.incrementEventsProcessedCounter(
+      ~chainId=chain->ChainMap.Chain.toChainId,
+      ~number=numEventsProcessed,
+    )
+  })
 }
 
 type batchProcessed = {
@@ -668,6 +676,7 @@ let processEventBatch = (
       ~loadDuration=elapsedAfterLoad,
       ~handlerDuration,
       ~dbWriteDuration,
+      ~latestProcessedBlocks,
     )
     if Env.Benchmark.shouldSaveData {
       Benchmark.addEventProcessing(

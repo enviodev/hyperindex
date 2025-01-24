@@ -45,7 +45,7 @@ let getSuggestedBlockIntervalFromExn = {
         // Didn't use parse here since it didn't work
         // because the error is some sort of weird Ethers object
         let message: string = (error->Obj.magic)["error"]["message"]
-        message->S.assertOrRaiseWith(S.string)
+        message->S.assertOrThrow(S.string)
         switch suggestedRangeRegExp->Js.Re.exec_(message) {
         | Some(execResult) =>
           switch execResult->Js.Re.captures {

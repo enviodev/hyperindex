@@ -46,8 +46,6 @@ let queryLogsPage: (
   ~logger: Pino.t
 ) => promise<queryResponse<logsQueryPage>>
 
-let getHeightWithRetry: (~serverUrl: string, ~logger: Pino.t) => promise<int>
-let pollForHeightGtOrEq: (~serverUrl: string, ~blockNumber: int, ~logger: Pino.t) => promise<int>
 let queryBlockData: (
   ~serverUrl: string,
   ~blockNumber: int,

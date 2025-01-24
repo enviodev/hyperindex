@@ -34,6 +34,7 @@ module Promise = {
 
 module Option = {
   let unsafeSome: 'a => option<'a> = Obj.magic
+  let unsafeUnwrap: option<'a> => 'a = Obj.magic
 }
 
 module Dict = {
@@ -328,6 +329,28 @@ let coerceSchema = schema => {
   })
 }
 
+let stripInPlace = schema => (schema->S.classify->Obj.magic)["unknownKeys"] = S.Strip
+let getSchemaField = (schema, fieldName): option<S.item> =>
+  (schema->S.classify->Obj.magic)["fields"]->Js.Dict.unsafeGet(fieldName)
+
+type typeValidation = (unknown, ~inputVar: string) => string
+let removeTypeValidationInPlace = schema => (schema->Obj.magic)["f"] = ()
+let setTypeValidationInPlace = (schema, typeValidation: typeValidation) =>
+  (schema->Obj.magic)["f"] = typeValidation
+let unsafeGetTypeValidationInPlace = (schema): typeValidation => (schema->Obj.magic)["f"]
+
+let isNestedFlattenSupported = schema =>
+  switch schema->S.classify {
+  | Object({advanced: false}) =>
+    switch schema
+    ->S.reverse
+    ->S.classify {
+    | Object({advanced: false}) => true
+    | _ => false
+    }
+  | _ => false
+  }
+
 let bearerAuthSchema = S.string->S.transform(s => {
   serializer: token => {
     `Bearer ${token}`
@@ -372,10 +395,14 @@ let params = route => {
       let variablesSchema = S.object(s => {
         routeDefinition.variables({
           field: (fieldName, schema) => {
-            s.nestedField("body", fieldName, schema)
+            s.nested("body").field(fieldName, schema)
           },
           body: schema => {
-            s.field("body", schema)
+            if schema->isNestedFlattenSupported {
+              s.nested("body").flatten(schema)
+            } else {
+              s.field("body", schema)
+            }
           },
           rawBody: schema => {
             let isNonStringBased = switch schema->S.classify {
@@ -390,20 +417,19 @@ let params = route => {
             s.field("body", schema)
           },
           header: (fieldName, schema) => {
-            s.nestedField("headers", fieldName->Js.String2.toLowerCase, coerceSchema(schema))
+            s.nested("headers").field(fieldName->Js.String2.toLowerCase, coerceSchema(schema))
           },
           query: (fieldName, schema) => {
-            s.nestedField("query", fieldName, coerceSchema(schema))
+            s.nested("query").field(fieldName, coerceSchema(schema))
           },
           param: (fieldName, schema) => {
             if !Dict.has(pathParams, fieldName) {
               panic(`Path parameter "${fieldName}" is not defined in the path`)
             }
-            s.nestedField("params", fieldName, coerceSchema(schema))
+            s.nested("params").field(fieldName, coerceSchema(schema))
           },
           auth: auth => {
-            s.nestedField(
-              "headers",
+            s.nested("headers").field(
               "authorization",
               switch auth {
               | Bearer => bearerAuthSchema
@@ -416,14 +442,22 @@ let params = route => {
 
       {
         // The variables input is guaranteed to be an object, so we reset the rescript-schema type filter here
-        (variablesSchema->Obj.magic)["f"] = ()
-        (variablesSchema->S.classify->Obj.magic)["unknownKeys"] = S.Strip
-        let items: array<S.item> = (variablesSchema->S.classify->Obj.magic)["items"]
-        items->Js.Array2.forEach(item => {
-          let schema = item.schema
-          // Remove ${inputVar}.constructor!==Object check
-          (schema->Obj.magic)["f"] = (_b, ~inputVar) => `!${inputVar}`
-        })
+        variablesSchema->stripInPlace
+        variablesSchema->removeTypeValidationInPlace
+        switch variablesSchema->getSchemaField("headers") {
+        | Some({schema}) =>
+          schema->stripInPlace
+          schema->removeTypeValidationInPlace
+        | None => ()
+        }
+        switch variablesSchema->getSchemaField("params") {
+        | Some({schema}) => schema->removeTypeValidationInPlace
+        | None => ()
+        }
+        switch variablesSchema->getSchemaField("query") {
+        | Some({schema}) => schema->removeTypeValidationInPlace
+        | None => ()
+        }
       }
 
       let responsesMap = Js.Dict.empty()
@@ -443,14 +477,18 @@ let params = route => {
             description: d => builder.description = Some(d),
             field: (fieldName, schema) => {
               builder.emptyData = false
-              s.nestedField("data", fieldName, schema)
+              s.nested("data").field(fieldName, schema)
             },
             data: schema => {
               builder.emptyData = false
-              s.field("data", schema)
+              if schema->isNestedFlattenSupported {
+                s.nested("data").flatten(schema)
+              } else {
+                s.field("data", schema)
+              }
             },
             header: (fieldName, schema) => {
-              s.nestedField("headers", fieldName->Js.String2.toLowerCase, coerceSchema(schema))
+              s.nested("headers").field(fieldName->Js.String2.toLowerCase, coerceSchema(schema))
             },
           })
           if builder.emptyData {
@@ -461,8 +499,25 @@ let params = route => {
         if builder.status === None {
           responsesMap->Response.register(#default, builder)
         }
-        (schema->S.classify->Obj.magic)["unknownKeys"] = S.Strip
-        builder.dataSchema = (schema->S.classify->Obj.magic)["fields"]["data"]["t"]
+        schema->stripInPlace
+        schema->removeTypeValidationInPlace
+        let dataSchema = (schema->getSchemaField("data")->Option.unsafeUnwrap).schema
+        builder.dataSchema = dataSchema->Option.unsafeSome
+        switch dataSchema->S.classify {
+        | Literal(_) => {
+            let dataTypeValidation = dataSchema->unsafeGetTypeValidationInPlace
+            schema->setTypeValidationInPlace((b, ~inputVar) =>
+              dataTypeValidation(b, ~inputVar=`${inputVar}.data`)
+            )
+          }
+        | _ => ()
+        }
+        switch schema->getSchemaField("headers") {
+        | Some({schema}) =>
+          schema->stripInPlace
+          schema->removeTypeValidationInPlace
+        | None => ()
+        }
         builder.schema = Option.unsafeSome(schema)
         responses
         ->Js.Array2.push(builder->(Obj.magic: Response.builder<unknown> => Response.t<unknown>))
@@ -606,7 +661,7 @@ let fetch = (
 
   let {definition, variablesSchema, responsesMap, pathItems, isRawBody} = route->params
 
-  let data = variables->S.serializeToUnknownOrRaiseWith(variablesSchema)->Obj.magic
+  let data = variables->S.reverseConvertOrThrow(variablesSchema)->Obj.magic
 
   if data["body"] !== %raw(`void 0`) {
     if !isRawBody {
@@ -643,9 +698,20 @@ let fetch = (
 
       panic(error.contents)
     | Some(response) =>
-      fetcherResponse
-      ->S.parseAnyOrRaiseWith(response.schema)
-      ->(Obj.magic: unknown => response)
+      try fetcherResponse
+      ->S.parseOrThrow(response.schema)
+      ->(Obj.magic: unknown => response) catch {
+      | S.Raised({path, code: InvalidType({expected, received})}) if path === S.Path.empty =>
+        panic(
+          `Failed parsing response data. Reason: Expected ${(
+              expected->getSchemaField("data")->Option.unsafeUnwrap
+            ).schema->S.name}, received ${(received->Obj.magic)["data"]->Obj.magic}`,
+        )
+      | S.Raised(error) =>
+        panic(
+          `Failed parsing response at ${error.path->S.Path.toString}. Reason: ${error->S.Error.reason}`,
+        )
+      }
     }
   })
 }

@@ -266,14 +266,7 @@ let unwrapResultExn = res =>
 external queueMicrotask: (unit => unit) => unit = "queueMicrotask"
 
 module Schema = {
-  let enum = items => S.union(items->Belt.Array.mapU(S.literal))
-
-  // A hot fix after we use the version where it's supported
-  // https://github.com/DZakh/rescript-schema/blob/v8.4.0/docs/rescript-usage.md#removetypevalidation
-  let removeTypeValidationInPlace = schema => {
-    // The variables input is guaranteed to be an object, so we reset the rescript-schema type filter here
-    (schema->Obj.magic)["f"] = ()
-  }
+  let enum = S.enum
 
   let getNonOptionalFieldNames = schema => {
     let acc = []
