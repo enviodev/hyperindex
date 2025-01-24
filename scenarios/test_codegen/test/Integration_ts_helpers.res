@@ -28,27 +28,28 @@ let getLocalChainConfig = (nftFactoryContractAddress): chainConfig => {
   let chain = MockConfig.chain1337
   {
     confirmedBlockThreshold: 200,
-    syncSource: Rpc,
     startBlock: 1,
     endBlock: None,
     chain,
     contracts,
-    source: RpcSource.make({
-      chain,
-      contracts,
-      syncConfig: {
-        initialBlockInterval: 10000,
-        backoffMultiplicative: 10000.,
-        accelerationAdditive: 10000,
-        intervalCeiling: 10000,
-        backoffMillis: 10000,
-        queryTimeoutMillis: 10000,
-      },
-      provider,
-      eventRouter: contracts
-      ->Belt.Array.flatMap(contract => contract.events)
-      ->EventRouter.fromEvmEventModsOrThrow(~chain),
-    }),
+    sources: [
+      RpcSource.make({
+        chain,
+        contracts,
+        syncConfig: {
+          initialBlockInterval: 10000,
+          backoffMultiplicative: 10000.,
+          accelerationAdditive: 10000,
+          intervalCeiling: 10000,
+          backoffMillis: 10000,
+          queryTimeoutMillis: 10000,
+        },
+        provider,
+        eventRouter: contracts
+        ->Belt.Array.flatMap(contract => contract.events)
+        ->EventRouter.fromEvmEventModsOrThrow(~chain),
+      }),
+    ],
   }
 }
 

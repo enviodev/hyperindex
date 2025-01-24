@@ -380,6 +380,7 @@ let make = ({syncConfig, provider, chain, contracts, eventRouter}: options): t =
   {
     name,
     chain,
+    poweredByHyperSync: false,
     pollingInterval: 1000,
     getBlockHashes,
     getHeightOrThrow: () => provider->Ethers.JsonRpcProvider.getBlockNumber,

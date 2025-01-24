@@ -52,21 +52,11 @@ let registerContractHandlers = (
         let chain = ChainMap.Chain.makeUnsafe(~chainId={{chain_config.network_config.id}})
         {
           Config.confirmedBlockThreshold: {{chain_config.network_config.confirmed_block_threshold}},
-          syncSource: 
-            {{#if chain_config.network_config.rpc_config}}
-            Rpc
-            {{/if}}
-            {{#if chain_config.network_config.hypersync_config}}
-            HyperSync
-            {{/if}}
-            {{#if chain_config.network_config.hyperfuel_config}}
-            HyperFuel
-            {{/if}},
           startBlock: {{chain_config.network_config.start_block}},
           endBlock: {{#if chain_config.network_config.end_block}} Some({{chain_config.network_config.end_block}}) {{else}} None {{/if}},
           chain,
           contracts,
-          source:
+          sources: [
             {{#if chain_config.network_config.rpc_config }}
             {{#with chain_config.network_config.rpc_config as | rpc_config |}}
             RpcSource.make({
@@ -89,7 +79,7 @@ let registerContractHandlers = (
                 contracts
                 ->Belt.Array.flatMap(contract => contract.events)
                 ->EventRouter.fromEvmEventModsOrThrow(~chain)
-            })
+            }),
             {{/with}}
             {{/if}}
             {{#if chain_config.network_config.hypersync_config }}
@@ -117,7 +107,7 @@ let registerContractHandlers = (
               shouldUseHypersyncClientDecoder: Env.Configurable.shouldUseHypersyncClientDecoder->Belt.Option.getWithDefault(
                 {{hypersync_config.is_client_decoder}},
               )
-            })
+            }),
             {{/with}}
             {{/if}}
             {{#if chain_config.network_config.hyperfuel_config }}
@@ -137,9 +127,10 @@ let registerContractHandlers = (
                 },
                 {{/each}}
               ]
-            })
+            }),
             {{/with}}
             {{/if}}
+          ]
         }
       },
       {{/each}}
@@ -156,6 +147,9 @@ let registerContractHandlers = (
         module(Entities.{{entity.name.capitalized}}),
       {{/each}}
       ],
+      {{#if chain_config.network_config.hyperfuel_config}}
+      ~ecosystem=Fuel,
+      {{/if}}
     )
   }
 

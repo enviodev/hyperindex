@@ -7,17 +7,27 @@ open Belt
 // with a mutable state for easier reasoning and testing.
 type t = {
   logger: Pino.t,
+  sources: array<Source.t>,
   maxPartitionConcurrency: int,
+  mutable activeSource: Source.t,
   mutable waitingForNewBlockStateId: option<int>,
   // Should take into consideration partitions fetching for previous states (before rollback)
   mutable fetchingPartitionsCount: int,
 }
 
-let make = (~maxPartitionConcurrency, ~logger) => {
-  logger,
-  maxPartitionConcurrency,
-  waitingForNewBlockStateId: None,
-  fetchingPartitionsCount: 0,
+let make = (~sources, ~maxPartitionConcurrency, ~logger) => {
+  let activeSource = switch sources->Array.get(0) {
+  | Some(source) => source
+  | None => Js.Exn.raiseError("Invalid configuration, no sources provided")
+  }
+  {
+    logger,
+    maxPartitionConcurrency,
+    sources,
+    activeSource,
+    waitingForNewBlockStateId: None,
+    fetchingPartitionsCount: 0,
+  }
 }
 
 let fetchNext = async (
@@ -30,7 +40,7 @@ let fetchNext = async (
   ~maxPerChainQueueSize,
   ~stateId,
 ) => {
-  let {logger, maxPartitionConcurrency} = sourceManager
+  let {logger, maxPartitionConcurrency, activeSource} = sourceManager
 
   switch fetchState->FetchState.getNextQuery(
     ~concurrencyLimit={
@@ -48,7 +58,11 @@ let fetchNext = async (
     | Some(_) // Case for the prev state before a rollback
     | None =>
       sourceManager.waitingForNewBlockStateId = Some(stateId)
-      let currentBlockHeight = await waitForNewBlock(~currentBlockHeight, ~logger)
+      let currentBlockHeight = await waitForNewBlock(
+        ~source=activeSource,
+        ~currentBlockHeight,
+        ~logger,
+      )
       switch sourceManager.waitingForNewBlockStateId {
         | Some(waitingStateId) if waitingStateId === stateId => {
           sourceManager.waitingForNewBlockStateId = None
@@ -65,7 +79,7 @@ let fetchNext = async (
       let _ =
         await queries
         ->Array.map(q => {
-          let promise = q->executeQuery
+          let promise = q->executeQuery(~source=activeSource)
           let _ = promise->Promise.thenResolve(_ => {
             sourceManager.fetchingPartitionsCount = sourceManager.fetchingPartitionsCount - 1
           })

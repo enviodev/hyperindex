@@ -28,27 +28,28 @@ describe("E2E Integration Test", () => {
       let chain = MockConfig.chain1337
       {
         confirmedBlockThreshold: 200,
-        syncSource: Rpc,
         startBlock: 0,
         endBlock: None,
         chain,
         contracts,
-        source: RpcSource.make({
-          chain,
-          contracts,
-          syncConfig: {
-            initialBlockInterval: 10000,
-            backoffMultiplicative: 10000.0,
-            accelerationAdditive: 10000,
-            intervalCeiling: 10000,
-            backoffMillis: 10000,
-            queryTimeoutMillis: 10000,
-          },
-          provider,
-          eventRouter: contracts
-          ->Belt.Array.flatMap(contract => contract.events)
-          ->EventRouter.fromEvmEventModsOrThrow(~chain),
-        }),
+        sources: [
+          RpcSource.make({
+            chain,
+            contracts,
+            syncConfig: {
+              initialBlockInterval: 10000,
+              backoffMultiplicative: 10000.0,
+              accelerationAdditive: 10000,
+              intervalCeiling: 10000,
+              backoffMillis: 10000,
+              queryTimeoutMillis: 10000,
+            },
+            provider,
+            eventRouter: contracts
+            ->Belt.Array.flatMap(contract => contract.events)
+            ->EventRouter.fromEvmEventModsOrThrow(~chain),
+          }),
+        ],
       }
     }
 
