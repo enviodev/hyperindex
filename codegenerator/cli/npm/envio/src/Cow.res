@@ -13,11 +13,12 @@ let getData = (self: t<'a>): 'a =>
     self.data->self.copy
   }
 
-let copy = ({isImmutable, data, copy}: t<'a>): t<'a> =>
+let copy = ({isImmutable, data, copy} as self: t<'a>): t<'a> =>
   if isImmutable {
     data->make(~copy)
   } else {
-    data->copy->make(~copy)
+    self.isImmutable = true
+    data->make(~copy)
   }
 
 let mutate = (self: t<'a>, fn) =>
