@@ -39,24 +39,27 @@ let makeTableBatchSet = (table, schema: S.t<'entity>) => {
     let unsafeSql =
       `
 INSERT INTO "public".${table.tableName->quote} (${quotedFieldNames->Js.Array2.joinWith(", ")})
-SELECT * 
-  FROM unnest(${arrayFieldTypes
+SELECT * FROM unnest(${arrayFieldTypes
         ->Js.Array2.mapi((arrayFieldType, idx) => {
           `$${(idx + 1)->Js.Int.toString}::${arrayFieldType}`
         })
-        ->Js.Array2.joinWith(",")})` ++ (
-        isRawEvents
-          ? `;`
-          : `ON CONFLICT(${primaryKeyFieldNames
-              ->Js.Array2.map(quote)
-              ->Js.Array2.joinWith(",")}) DO UPDATE
-SET
-${quotedNonPrimaryFieldNames
-              ->Js.Array2.map(fieldName => {
-                `${fieldName} = EXCLUDED.${fieldName}`
-              })
-              ->Js.Array2.joinWith(",")};`
-      )
+        ->Js.Array2.joinWith(",")})` ++
+      switch (isRawEvents, primaryKeyFieldNames) {
+      | (true, _)
+      | (_, []) => ``
+      | (false, primaryKeyFieldNames) =>
+        `ON CONFLICT(${primaryKeyFieldNames
+          ->Js.Array2.map(quote)
+          ->Js.Array2.joinWith(",")}) DO ` ++ (
+          quotedNonPrimaryFieldNames->Utils.Array.isEmpty
+            ? `NOTHING`
+            : `UPDATE SET ${quotedNonPrimaryFieldNames
+                ->Js.Array2.map(fieldName => {
+                  `${fieldName} = EXCLUDED.${fieldName}`
+                })
+                ->Js.Array2.joinWith(",")}`
+        )
+      } ++ ";"
 
     (sql, entityDataArray: array<'entity>): promise<unit> => {
       sql->Postgres.preparedUnsafe(unsafeSql, convertOrThrow(entityDataArray))
