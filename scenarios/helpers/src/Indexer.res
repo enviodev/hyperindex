@@ -113,14 +113,13 @@ module type S = {
     type t = {
       name: string,
       chain: ChainMap.Chain.t,
+      /* Frequency (in ms) used when polling for new events on this network. */
+      pollingInterval: int,
       getBlockHashes: (
         ~blockNumbers: array<int>,
         ~logger: Pino.t,
       ) => promise<result<array<ReorgDetection.blockData>, exn>>,
-      waitForBlockGreaterThanCurrentHeight: (
-        ~currentBlockHeight: int,
-        ~logger: Pino.t,
-      ) => promise<int>,
+      getHeightOrThrow: unit => promise<int>,
       fetchBlockRange: (
         ~fromBlock: int,
         ~toBlock: option<int>,

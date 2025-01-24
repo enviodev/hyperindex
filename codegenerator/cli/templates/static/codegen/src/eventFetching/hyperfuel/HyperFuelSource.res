@@ -276,10 +276,6 @@ let make = ({chain, contracts, endpointUrl}: options): t => {
       }
   }
 
-  let waitForBlockGreaterThanCurrentHeight = (~currentBlockHeight, ~logger) => {
-    HyperFuel.pollForHeightGtOrEq(~serverUrl=endpointUrl, ~blockNumber=currentBlockHeight, ~logger)
-  }
-
   let fetchBlockRange = async (
     ~fromBlock,
     ~toBlock,
@@ -523,7 +519,8 @@ let make = ({chain, contracts, endpointUrl}: options): t => {
     name,
     chain,
     getBlockHashes,
-    waitForBlockGreaterThanCurrentHeight,
+    pollingInterval: 100,
+    getHeightOrThrow: () => HyperFuel.heightRoute->Rest.fetch(endpointUrl, ()),
     fetchBlockRange,
   }
 }

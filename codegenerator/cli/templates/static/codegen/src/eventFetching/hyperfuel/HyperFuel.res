@@ -50,34 +50,17 @@ type missingParams = {
   missingParams: array<string>,
 }
 type queryError =
-  UnexpectedMissingParams(missingParams) | QueryError(HyperFuelJsonApi.Query.queryError)
-
-exception UnexpectedMissingParamsExn(missingParams)
+  UnexpectedMissingParams(missingParams)
 
 let queryErrorToMsq = (e: queryError): string => {
-  let getMsgFromExn = (exn: exn) =>
-    exn
-    ->Js.Exn.asJsExn
-    ->Option.flatMap(exn => exn->Js.Exn.message)
-    ->Option.getWithDefault("No message on exception")
   switch e {
   | UnexpectedMissingParams({queryName, missingParams}) =>
     `${queryName} query failed due to unexpected missing params on response:
       ${missingParams->Js.Array2.joinWith(", ")}`
-  | QueryError(e) =>
-    switch e {
-    | FailedToFetch(e) =>
-      let msg = e->getMsgFromExn
-      `Failed during fetch query: ${msg}`
-    | FailedToParseJson(e) =>
-      let msg = e->getMsgFromExn
-      `Failed during parse of json: ${msg}`
-    | Other(e) =>
-      let msg = e->getMsgFromExn
-      `Failed for unknown reason during query: ${msg}`
-    }
   }
 }
+
+exception UnexpectedMissingParamsExn(missingParams)
 
 type queryResponse<'a> = result<'a, queryError>
 
@@ -282,49 +265,12 @@ module BlockData = {
   }
 }
 
-module HeightQuery = {
-  let getHeightWithRetry = async (~serverUrl, ~logger) => {
-    //Amount the retry interval is multiplied between each retry
-    let backOffMultiplicative = 2
-    //Interval after which to retry request (multiplied by backOffMultiplicative between each retry)
-    let retryIntervalMillis = ref(500)
-    //height to be set in loop
-    let height = ref(0)
-
-    //Retry if the height is 0 (expect height to be greater)
-    while height.contents <= 0 {
-      let res = await HyperFuelJsonApi.getArchiveHeight(~serverUrl)
-      switch res {
-      | Ok({height: newHeight}) => height := newHeight
-      | Error(e) =>
-        logger->Logging.childWarn({
-          "message": `Failed to get height from endpoint. Retrying in ${retryIntervalMillis.contents->Int.toString}ms...`,
-          "error": e,
-        })
-        await Time.resolvePromiseAfterDelay(~delayMilliseconds=retryIntervalMillis.contents)
-        retryIntervalMillis := retryIntervalMillis.contents * backOffMultiplicative
-      }
-    }
-
-    height.contents
-  }
-
-  //Poll for a height greater or equal to the given blocknumber.
-  //Used for waiting until there is a new block to index
-  let pollForHeightGtOrEq = async (~serverUrl, ~blockNumber, ~logger) => {
-    let pollHeight = ref(await getHeightWithRetry(~serverUrl, ~logger))
-    let pollIntervalMillis = 100
-
-    while pollHeight.contents <= blockNumber {
-      await Time.resolvePromiseAfterDelay(~delayMilliseconds=pollIntervalMillis)
-      pollHeight := (await getHeightWithRetry(~serverUrl, ~logger))
-    }
-
-    pollHeight.contents
-  }
-}
-
 let queryLogsPage = LogsQuery.queryLogsPage
 let queryBlockData = BlockData.queryBlockData
-let getHeightWithRetry = HeightQuery.getHeightWithRetry
-let pollForHeightGtOrEq = HeightQuery.pollForHeightGtOrEq
+
+let heightRoute = Rest.route(() => {
+  path: "/height",
+  method: Get,
+  variables: _ => (),
+  responses: [s => s.field("height", S.int)],
+})
