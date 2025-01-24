@@ -179,13 +179,12 @@ pub enum Network {
 
     IncoGentryTestnet = 9090,
 
-    #[subenum(HypersyncNetwork)]
     Ink = 57073,
 
     #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     Kroma = 255,
 
-    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
+    #[subenum(NetworkWithExplorer)]
     Linea = 59144,
 
     #[subenum(NetworkWithExplorer)]
@@ -200,7 +199,7 @@ pub enum Network {
     #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     LuksoTestnet = 4201,
 
-    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
+    #[subenum(NetworkWithExplorer)]
     Manta = 169,
 
     #[subenum(HypersyncNetwork, NetworkWithExplorer)]
@@ -511,11 +510,12 @@ impl HypersyncNetwork {
         use HypersyncNetwork::*;
         match self {
             EthereumMainnet | Fantom | Zeta | Sepolia | Metis | ZksyncEra | Optimism
-            | ArbitrumNova | Avalanche | Polygon | Bsc | Mantle | BaseSepolia | Gnosis => Gold,
+            | ArbitrumNova | Avalanche | Polygon | Bsc | Mantle | Gnosis => Gold,
 
-            Manta | Base | Boba | Blast | Cyber | Aurora | Harmony | Scroll | Darwinia | Mode
-            | Rsk | ShimmerEvm | Linea | Amoy | Saakuru | Moonbeam | Lisk | Chiliz
-            | ArbitrumOne | Merlin => Silver,
+            Base | Boba | Blast | Cyber | Aurora | Harmony | Scroll | Darwinia | Mode | Rsk
+            | ShimmerEvm | Amoy | Saakuru | Moonbeam | Lisk | Chiliz | ArbitrumOne | Merlin => {
+                Silver
+            }
 
             Zora | MoonbaseAlpha | Morph | Kroma | Lukso | C1Milkomeda | Crab | Sophon | Flare
             | PolygonZkevm | MevCommit => Bronze,
@@ -523,7 +523,7 @@ impl HypersyncNetwork {
             SophonTestnet | MorphTestnet | GaladrielDevnet | CitreaTestnet | Goerli
             | BscTestnet | UnichainSepolia | Zircuit | Celo | Opbnb | GnosisChiado
             | LuksoTestnet | BlastSepolia | Holesky | BerachainBartio | OptimismSepolia | Fuji
-            | NeonEvm | ArbitrumSepolia | Fraxtal | Soneium | Ink => Experimental,
+            | NeonEvm | ArbitrumSepolia | Fraxtal | Soneium | BaseSepolia => Experimental,
         }
     }
 

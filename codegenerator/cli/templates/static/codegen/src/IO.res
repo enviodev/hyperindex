@@ -53,6 +53,7 @@ let executeSetEntityWithHistory = (
   ~inMemoryStore: InMemoryStore.t,
   ~entityMod: module(Entities.Entity with type t = entity),
 ): promise<unit> => {
+  let entityMod = entityMod->Entities.entityModToInternal
   let rows =
     inMemoryStore.entities
     ->InMemoryStore.EntityTables.get(entityMod)
@@ -109,6 +110,7 @@ let executeDbFunctionsEntity = (
   ~inMemoryStore: InMemoryStore.t,
   ~entityMod: module(Entities.Entity with type t = entity),
 ): promise<unit> => {
+  let entityMod = entityMod->Entities.entityModToInternal
   let rows =
     inMemoryStore.entities
     ->InMemoryStore.EntityTables.get(entityMod)

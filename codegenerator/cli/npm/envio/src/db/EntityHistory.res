@@ -46,7 +46,7 @@ let currentHistoryFieldsSchema = S.object(s => {
 let makeHistoryRowSchema: S.t<'entity> => S.t<historyRow<'entity>> = entitySchema => {
   //Maps a schema object for the given entity with all fields nullable except for the id field
   //Keeps any original nullable fields
-  let nullableEntitySchema: S.t<Js.Dict.t<unknown>> = S.object(s =>
+  let nullableEntitySchema: S.t<Js.Dict.t<unknown>> = S.schema(s =>
     switch entitySchema->S.classify {
     | Object({items}) =>
       let nulldict = Js.Dict.empty()
@@ -57,7 +57,7 @@ let makeHistoryRowSchema: S.t<'entity> => S.t<historyRow<'entity>> = entitySchem
         | _ => S.null(schema)->S.toUnknown
         }
 
-        nulldict->Js.Dict.set(location, s.field(location, nullableFieldSchema))
+        nulldict->Js.Dict.set(location, s.matches(nullableFieldSchema))
       })
       nulldict
     | _ =>

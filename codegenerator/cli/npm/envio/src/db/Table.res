@@ -80,6 +80,10 @@ let getFieldName = fieldOrDerived =>
   | DerivedFrom({fieldName}) => fieldName
   }
 
+let getFieldType = (field: field) => {
+  (field.fieldType :> string) ++ (field.isArray ? "[]" : "")
+}
+
 type table = {
   tableName: string,
   fields: array<fieldOrDerived>,
@@ -112,6 +116,10 @@ let getFields = table =>
     }
   )
 
+let getFieldNames = table => {
+  table->getFields->Array.map(getDbFieldName)
+}
+
 let getNonDefaultFields = table =>
   table.fields->Array.keepMap(field =>
     switch field {
@@ -138,16 +146,20 @@ let getDerivedFromFields = table =>
     }
   )
 
-let getFieldNames = table => {
-  table->getFields->Array.map(getDbFieldName)
-}
-
 let getNonDefaultFieldNames = table => {
   table->getNonDefaultFields->Array.map(getDbFieldName)
 }
 
-let getFieldByName = (table, fieldNameSearch) =>
-  table.fields->Js.Array2.find(field => field->getUserDefinedFieldName == fieldNameSearch)
+let getFieldByName = (table, fieldName) =>
+  table.fields->Js.Array2.find(field => field->getUserDefinedFieldName === fieldName)
+
+let getFieldByDbName = (table, dbFieldName) =>
+  table.fields->Js.Array2.find(field =>
+    switch field {
+    | Field(f) => f->getDbFieldName
+    | DerivedFrom({fieldName}) => fieldName
+    } === dbFieldName
+  )
 
 exception NonExistingTableField(string)
 
@@ -164,6 +176,92 @@ let getUnfilteredCompositeIndicesUnsafe = (table): array<array<string>> => {
       }
     )
   )
+}
+
+type sqlParams<'entity> = {
+  dbSchema: S.t<'entity>,
+  quotedFieldNames: array<string>,
+  quotedNonPrimaryFieldNames: array<string>,
+  arrayFieldTypes: array<string>,
+  hasArrayField: bool,
+}
+
+let toSqlParams = (table: table, ~schema) => {
+  let quotedFieldNames = []
+  let quotedNonPrimaryFieldNames = []
+  let arrayFieldTypes = []
+  let hasArrayField = ref(false)
+
+  let dbSchema: S.t<Js.Dict.t<unknown>> = S.schema(s =>
+    switch schema->S.classify {
+    | Object({items}) =>
+      let dict = Js.Dict.empty()
+      items->Belt.Array.forEach(({location, inlinedLocation, schema}) => {
+        let rec coerceSchema = schema =>
+          switch schema->S.classify {
+          | BigInt => BigInt.schema->S.toUnknown
+          | Option(child)
+          | Null(child) =>
+            S.null(child->coerceSchema)->S.toUnknown
+          | Array(child) => {
+              hasArrayField := true
+              S.array(child->coerceSchema)->S.toUnknown
+            }
+          | JSON(_) => {
+              hasArrayField := true
+              schema
+            }
+          | Bool =>
+            // Workaround for https://github.com/porsager/postgres/issues/471
+            S.union([
+              S.literal("t")->S.to(_ => true),
+              S.literal("f")->S.to(_ => false),
+            ])->S.toUnknown
+          | _ => schema
+          }
+
+        let field = switch table->getFieldByDbName(location) {
+        | Some(field) => field
+        | None => raise(NonExistingTableField(location))
+        }
+
+        quotedFieldNames
+        ->Js.Array2.push(inlinedLocation)
+        ->ignore
+        switch field {
+        | Field({isPrimaryKey: false}) =>
+          quotedNonPrimaryFieldNames
+          ->Js.Array2.push(inlinedLocation)
+          ->ignore
+        | _ => ()
+        }
+
+        arrayFieldTypes
+        ->Js.Array2.push(
+          switch field {
+          | Field(f) =>
+            switch f.fieldType {
+            | Custom(fieldType) => `${(Text :> string)}[]::${(fieldType :> string)}`
+            | fieldType => (fieldType :> string)
+            }
+          | DerivedFrom(_) => (Text :> string)
+          } ++ "[]",
+        )
+        ->ignore
+        dict->Js.Dict.set(location, s.matches(schema->coerceSchema))
+      })
+      dict
+    | _ => Js.Exn.raiseError("Failed creating db schema. Expected an object schema for table")
+    }
+  )
+
+  {
+    dbSchema: dbSchema->(Utils.magic: S.t<dict<unknown>> => S.t<'entity>),
+    quotedFieldNames,
+    quotedNonPrimaryFieldNames,
+    arrayFieldTypes,
+    hasArrayField: hasArrayField.contents,
+  }
 }
 
 /*

@@ -18,11 +18,11 @@ describe("Sql transaction tests", () => {
   it("3 raw events set as transaction", async () => {
     const mockRawEventRow2 = {
       ...mockRawEventRow,
-      event_id: mockRawEventRow.event_id + 1,
+      event_id: mockRawEventRow.event_id + 1n,
     };
     const mockRawEventRow3 = {
       ...mockRawEventRow,
-      event_id: mockRawEventRow.event_id + 2,
+      event_id: mockRawEventRow.event_id + 2n,
       // We don't validate event name and contract name fields
       event_name: "INVALID_EVENT_NAME",
       contract_name: "INVALID_CONTRACT_NAME",
@@ -43,11 +43,11 @@ describe("Sql transaction tests", () => {
   it("3 raw events set with one invalid fails", async () => {
     const mockRawEventRow2 = {
       ...mockRawEventRow,
-      event_id: mockRawEventRow.event_id + 1,
+      event_id: mockRawEventRow.event_id + 1n,
     };
     const mockRawEventRow3 = {
       ...mockRawEventRow,
-      event_id: mockRawEventRow.event_id + 2,
+      event_id: mockRawEventRow.event_id + 2n,
       invalid_field: "INVALID_FIELD",
     };
     const transaction = sql.begin((sql) => [

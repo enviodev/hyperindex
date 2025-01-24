@@ -281,7 +281,7 @@ let addEventToRawEvents = (eventItem: Internal.eventItem, ~inMemoryStore: InMemo
 
   let rawEvent: TablesStatic.RawEvents.t = {
     chainId,
-    eventId: eventId->BigInt.toString,
+    eventId,
     eventName,
     contractName,
     blockNumber,

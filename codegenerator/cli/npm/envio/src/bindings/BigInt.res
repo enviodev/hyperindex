@@ -56,14 +56,4 @@ let schema =
     serializer: bigint => bigint->toString,
   })
 
-let nativeSchema: S.t<bigint> = S.custom("BigInt", s => {
-  {
-    parser: unknown => {
-      if Js.typeof(unknown) !== "bigint" {
-        s.fail("Expected bigint")
-      } else {
-        unknown->Obj.magic
-      }
-    },
-  }
-})
+let nativeSchema = S.bigint

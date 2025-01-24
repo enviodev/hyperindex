@@ -384,7 +384,7 @@ impl RescriptTypeIdent {
         match self {
             Self::Unit => "unit".to_string(),
             Self::Int => "int".to_string(),
-            Self::Float => "GqlDbCustomTypes.Float.t".to_string(),
+            Self::Float => "float".to_string(),
             Self::BigInt => "bigint".to_string(),
             Self::Unknown => "unknown".to_string(),
             Self::BigDecimal => "BigDecimal.t".to_string(),
@@ -432,9 +432,9 @@ impl RescriptTypeIdent {
     pub fn to_rescript_schema(&self, mode: &RescriptSchemaMode) -> String {
         match self {
             Self::Unit => "S.literal(%raw(`null`))->S.to(_ => ())".to_string(),
-            Self::Int => "GqlDbCustomTypes.Int.schema".to_string(),
+            Self::Int => "S.int".to_string(),
             Self::Unknown => "S.unknown".to_string(),
-            Self::Float => "GqlDbCustomTypes.Float.schema".to_string(),
+            Self::Float => "S.float".to_string(),
             Self::BigInt => match mode {
                 RescriptSchemaMode::ForDb => "BigInt.schema".to_string(),
                 RescriptSchemaMode::ForFieldSelection => "BigInt.nativeSchema".to_string(),
@@ -444,12 +444,7 @@ impl RescriptTypeIdent {
             Self::String => "S.string".to_string(),
             Self::ID => "S.string".to_string(),
             Self::Bool => "S.bool".to_string(),
-            Self::Timestamp => {
-                // Don't use S.unknown, since it's not serializable to json
-                // In a nutshell, this is completely unsafe.
-                "S.json(~validate=false)->(Utils.magic: S.t<Js.Json.t> => S.t<Js.Date.t>)"
-                    .to_string()
-            }
+            Self::Timestamp => "Utils.Schema.dbDate".to_string(),
             Self::Array(inner_type) => {
                 format!("S.array({})", inner_type.to_rescript_schema(mode))
             }
@@ -705,12 +700,12 @@ mod tests {
         assert_eq!(
             RescriptTypeExpr::Identifier(RescriptTypeIdent::Int)
                 .to_rescript_schema(&"eventArgs".to_string(), &RescriptSchemaMode::ForDb),
-            "GqlDbCustomTypes.Int.schema".to_string()
+            "S.int".to_string()
         );
         assert_eq!(
             RescriptTypeExpr::Identifier(RescriptTypeIdent::Float)
                 .to_rescript_schema(&"eventArgs".to_string(), &RescriptSchemaMode::ForDb),
-            "GqlDbCustomTypes.Float.schema".to_string()
+            "S.float".to_string()
         );
         assert_eq!(
             RescriptTypeExpr::Identifier(RescriptTypeIdent::Unit)
@@ -752,7 +747,7 @@ mod tests {
         assert_eq!(
             RescriptTypeExpr::Identifier(RescriptTypeIdent::array(RescriptTypeIdent::Int))
                 .to_rescript_schema(&"eventArgs".to_string(), &RescriptSchemaMode::ForDb),
-            "S.array(GqlDbCustomTypes.Int.schema)".to_string()
+            "S.array(S.int)".to_string()
         );
         assert_eq!(
             RescriptTypeExpr::Identifier(RescriptTypeIdent::option(RescriptTypeIdent::BigInt))
@@ -773,7 +768,7 @@ mod tests {
                 RescriptTypeIdent::Bool
             ]))
             .to_rescript_schema(&"eventArgs".to_string(), &RescriptSchemaMode::ForDb),
-            "S.tuple(s => (s.item(0, GqlDbCustomTypes.Int.schema), s.item(1, S.bool)))".to_string()
+            "S.tuple(s => (s.item(0, S.int), s.item(1, S.bool)))".to_string()
         );
         assert_eq!(
             RescriptTypeExpr::Variant(vec![
@@ -784,7 +779,7 @@ mod tests {
             r#"S.union([S.object((s): eventArgs =>
 {
   s.tag("case", "ConstrA")
-  ConstrA({payload: s.field("payload", GqlDbCustomTypes.Int.schema)})
+  ConstrA({payload: s.field("payload", S.int)})
 }), S.object((s): eventArgs =>
 {
   s.tag("case", "ConstrB")
@@ -799,7 +794,7 @@ mod tests {
             ])
             .to_rescript_schema(&"eventArgs".to_string(), &RescriptSchemaMode::ForDb),
             "S.object((s): eventArgs => {fieldA: s.field(\"fieldA\", \
-             GqlDbCustomTypes.Int.schema), fieldB: s.field(\"fieldB\", S.bool)})"
+             S.int), fieldB: s.field(\"fieldB\", S.bool)})"
                 .to_string()
         );
         assert_eq!(

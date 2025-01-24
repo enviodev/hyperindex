@@ -2,7 +2,7 @@ open Table
 open Enums.EntityType
 type id = string
 
-type internalEntity
+type internalEntity = Internal.entity
 module type Entity = {
   type t
   let name: Enums.EntityType.t

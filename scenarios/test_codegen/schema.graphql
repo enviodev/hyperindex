@@ -122,6 +122,24 @@ type EntityWithAllTypes {
   # arrayOfTimestamps: [Timestamp!]!
 }
 
+# We are using insert unnest for the case
+# So test it as well
+type EntityWithAllNonArrayTypes {
+  id: ID!
+  string: String!
+  optString: String
+  int_: Int!
+  optInt: Int
+  float_: Float!
+  optFloat: Float
+  bool: Boolean!
+  optBool: Boolean
+  bigInt: BigInt!
+  optBigInt: BigInt
+  bigDecimal: BigDecimal!
+  optBigDecimal: BigDecimal
+}
+
 type CustomSelectionTestPass {
   id: ID!
 }

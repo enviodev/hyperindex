@@ -97,7 +97,7 @@ module LoadLayer = {
 @genType
 let mockRawEventRow: TablesStatic.RawEvents.t = {
   chainId: 1,
-  eventId: 1234567890->Belt.Int.toString,
+  eventId: 1234567890n,
   contractName: "NftFactory",
   eventName: "SimpleNftCreated",
   blockNumber: 1000,

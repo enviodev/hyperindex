@@ -1,8 +1,10 @@
 const TableModule = require("envio/src/db/Table.bs.js");
+const Utils = require("envio/src/Utils.bs.js");
+
 // db operations for raw_events:
 const MAX_ITEMS_PER_QUERY = 500;
 
-const chunkBatchQuery = async (sql, entityDataArray, queryToExecute) => {
+const chunkBatchQuery = (queryToExecute) => async (sql, entityDataArray) => {
   const responses = [];
   // Split entityDataArray into chunks of MAX_ITEMS_PER_QUERY
   for (let i = 0; i < entityDataArray.length; i += MAX_ITEMS_PER_QUERY) {
@@ -20,35 +22,6 @@ const commaSeparateDynamicMapQuery = (sql, dynQueryConstructors) =>
         i === dynQueryConstructors.length - 1 ? sql`` : sql`, `
       }`
   )}`;
-
-const batchSetItemsInTableCore = (table, sql, rowDataArray) => {
-  const fieldNames = TableModule.getFieldNames(table).filter(
-    (fieldName) => fieldName !== "db_write_timestamp"
-  );
-  const primaryKeyFieldNames = TableModule.getPrimaryKeyFieldNames(table);
-  const fieldQueryConstructors = fieldNames.map(
-    (fieldName) => (sql) => sql`${sql(fieldName)} = EXCLUDED.${sql(fieldName)}`
-  );
-  const pkQueryConstructors = primaryKeyFieldNames.map(
-    (pkField) => (sql) => sql(pkField)
-  );
-
-  return sql`
-INSERT INTO "public".${sql(table.tableName)}
-${sql(rowDataArray, ...fieldNames)}
-ON CONFLICT(${sql`${commaSeparateDynamicMapQuery(
-    sql,
-    pkQueryConstructors
-  )}`}) DO UPDATE
-SET
-${sql`${commaSeparateDynamicMapQuery(sql, fieldQueryConstructors)}`};`;
-};
-
-module.exports.batchSetItemsInTable = (table, sql, rowDataArray) => {
-  const queryToExecute = (sql, chunk) =>
-    batchSetItemsInTableCore(table, sql, chunk);
-  return chunkBatchQuery(sql, rowDataArray, queryToExecute);
-};
 
 module.exports.batchDeleteItemsInTable = (table, sql, pkArray) => {
   const primaryKeyFieldNames = TableModule.getPrimaryKeyFieldNames(table);
@@ -160,35 +133,36 @@ module.exports.batchSetChainMetadata = (sql, entityDataArray) => {
     });
 };
 
-const batchSetRawEventsCore = (sql, entityDataArray) => {
-  return sql`
-    INSERT INTO "public"."raw_events"
-  ${sql(
-    entityDataArray,
-    "chain_id",
-    "event_id",
-    "event_name",
-    "contract_name",
-    "block_number",
-    "log_index",
-    "transaction_fields",
-    "block_fields",
-    "src_address",
-    "block_hash",
-    "block_timestamp",
-    "params"
-  )};`;
-};
-
-module.exports.batchSetRawEvents = (sql, entityDataArray) => {
-  return chunkBatchQuery(sql, entityDataArray, batchSetRawEventsCore);
-};
-
 module.exports.batchDeleteRawEvents = (sql, entityIdArray) => sql`
   DELETE
   FROM "public"."raw_events"
   WHERE (chain_id, event_id) IN ${sql(entityIdArray)};`;
 // end db operations for raw_events
+
+module.exports.makeBatchSetEntityValues = (table) => {
+  const fieldNames = TableModule.getFieldNames(table).filter(
+    (fieldName) => fieldName !== "db_write_timestamp"
+  );
+  const primaryKeyFieldNames = TableModule.getPrimaryKeyFieldNames(table);
+  const fieldQueryConstructors = fieldNames.map(
+    (fieldName) => (sql) => sql`${sql(fieldName)} = EXCLUDED.${sql(fieldName)}`
+  );
+  const pkQueryConstructors = primaryKeyFieldNames.map(
+    (pkField) => (sql) => sql(pkField)
+  );
+
+  return chunkBatchQuery((sql, rowDataArray) => {
+    return sql`
+INSERT INTO "public".${sql(table.tableName)}
+${sql(rowDataArray, ...fieldNames)}
+ON CONFLICT(${sql`${commaSeparateDynamicMapQuery(
+      sql,
+      pkQueryConstructors
+    )}`}) DO UPDATE
+SET
+${sql`${commaSeparateDynamicMapQuery(sql, fieldQueryConstructors)}`};`;
+  });
+};
 
 const batchSetEndOfBlockRangeScannedDataCore = (sql, rowDataArray) => {
   return sql`
@@ -208,13 +182,9 @@ const batchSetEndOfBlockRangeScannedDataCore = (sql, rowDataArray) => {
     "block_hash" = EXCLUDED."block_hash";`;
 };
 
-module.exports.batchSetEndOfBlockRangeScannedData = (sql, rowDataArray) => {
-  return chunkBatchQuery(
-    sql,
-    rowDataArray,
-    batchSetEndOfBlockRangeScannedDataCore
-  );
-};
+module.exports.batchSetEndOfBlockRangeScannedData = chunkBatchQuery(
+  batchSetEndOfBlockRangeScannedDataCore
+);
 
 module.exports.readEndOfBlockRangeScannedDataForChain = (sql, chainId) => {
   return sql`
@@ -380,8 +350,6 @@ module.exports.deleteRolledBackEntityHistory = (
         first_change
     );
   `;
-
-const Utils = require("envio/src/Utils.bs.js");
 
 module.exports.pruneStaleEntityHistory = (
   sql,

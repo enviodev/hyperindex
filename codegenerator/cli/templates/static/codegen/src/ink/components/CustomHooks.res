@@ -12,7 +12,7 @@ module InitApi = {
   let bodySchema = S.object(s => {
     envioVersion: s.field("envioVersion", S.option(S.string)),
     envioApiToken: s.field("envioApiToken", S.option(S.string)),
-    ecosystem: s.field("ecosystem", Utils.Schema.enum([Evm, Fuel])),
+    ecosystem: s.field("ecosystem", S.enum([Evm, Fuel])),
     hyperSyncNetworks: s.field("hyperSyncNetworks", S.array(S.int)),
     rpcNetworks: s.field("rpcNetworks", S.array(S.int)),
   })
@@ -70,7 +70,7 @@ module InitApi = {
   }
 
   let messageSchema = S.object(s => {
-    color: s.field("color", Utils.Schema.enum([Primary, Secondary, Info, Danger, Success, White, Gray])),
+    color: s.field("color", S.enum([Primary, Secondary, Info, Danger, Success, White, Gray])),
     content: s.field("content", S.string),
   })
 
