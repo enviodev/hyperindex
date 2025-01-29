@@ -29,29 +29,27 @@ let contracts = [
 
 let mockChainConfig: Config.chainConfig = {
   confirmedBlockThreshold: 200,
-  syncSource: Rpc,
   startBlock: 1,
   endBlock: None,
   chain: chain1337,
   contracts,
-  source: RpcSource.make({
-    chain: chain1337,
-    contracts,
-    syncConfig: Config.getSyncConfig({
-      initialBlockInterval: 10000,
-      backoffMultiplicative: 10000.0,
-      accelerationAdditive: 10000,
-      intervalCeiling: 10000,
-      backoffMillis: 10000,
-      queryTimeoutMillis: 10000,
+  sources: [
+    RpcSource.make({
+      chain: chain1337,
+      contracts,
+      syncConfig: Config.getSyncConfig({
+        initialBlockInterval: 10000,
+        backoffMultiplicative: 10000.0,
+        accelerationAdditive: 10000,
+        intervalCeiling: 10000,
+        backoffMillis: 10000,
+        queryTimeoutMillis: 10000,
+        fallbackStallTimeout: 3,
+      }),
+      urls: ["http://127.0.0.1:8545"],
+      eventRouter: contracts
+      ->Belt.Array.flatMap(contract => contract.events)
+      ->EventRouter.fromEvmEventModsOrThrow(~chain=chain1337),
     }),
-    provider: Ethers.JsonRpcProvider.make(
-      ~rpcUrls=["http://localhost:8545"],
-      ~chainId=1337,
-      ~fallbackStallTimeout=3,
-    ),
-    eventRouter: contracts
-    ->Belt.Array.flatMap(contract => contract.events)
-    ->EventRouter.fromEvmEventModsOrThrow(~chain=chain1337),
-  }),
+  ],
 }

@@ -40,26 +40,10 @@ const config: HardhatUserConfig = {
   abiExporter: abiExporter,
   networks: {
     hardhat: {
-      accounts: {
-        mnemonic: "test test test test test test test test test test test test",
-      },
-    },
-    ganache: {
-      url: "http://0.0.0.0:8545",
-      chainId: 1337,
-    },
-    localhost: {
-      url: "http://127.0.0.1:8545",
       chainId: 1337,
       accounts: {
         mnemonic: "test test test test test test test test test test test test",
       },
-    },
-    fuji: {
-      url: "https://api.avax-test.network/ext/bc/C/rpc",
-      gasPrice: 225000000000,
-      chainId: 43113,
-      accounts: { mnemonic },
     },
   },
 };

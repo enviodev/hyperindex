@@ -157,11 +157,7 @@ let updateChainMetadataTable = async (cm: ChainManager.t, ~throttler: Throttler.
         firstEventBlockNumber: cf->ChainFetcher.getFirstEventBlockNumber,
         latestProcessedBlock: cf.latestProcessedBlock, // this is already optional
         numEventsProcessed: Some(cf.numEventsProcessed),
-        poweredByHyperSync: switch cf.chainConfig.syncSource {
-        | HyperSync
-        | HyperFuel => true
-        | Rpc => false
-        },
+        poweredByHyperSync: cf.sourceManager.activeSource.poweredByHyperSync,
         numBatchesFetched: cf.numBatchesFetched,
         latestFetchedBlockNumber: latestFetchedBlock.blockNumber,
         timestampCaughtUpToHeadOrEndblock: cf.timestampCaughtUpToHeadOrEndblock->Js.Nullable.fromOption,
@@ -423,8 +419,7 @@ let handlePartitionQueryResponse = (
               chain,
               blockNumberThreshold: lastBlockScannedData.blockNumber -
               updatedChainFetcher.chainConfig.confirmedBlockThreshold,
-              blockTimestampThreshold: chainManager
-              ->ChainManager.getEarliestMultiChainTimestampInThreshold,
+              blockTimestampThreshold: chainManager->ChainManager.getEarliestMultiChainTimestampInThreshold,
               nextEndOfBlockRangeScannedData: {
                 chainId: chain->ChainMap.Chain.toChainId,
                 blockNumber: lastBlockScannedData.blockNumber,
@@ -777,16 +772,15 @@ let checkAndFetchForChain = (
 ) => async chain => {
   let chainFetcher = state.chainManager.chainFetchers->ChainMap.get(chain)
   if !isRollingBack(state) {
-    let {chainConfig: {source}, logger, currentBlockHeight, fetchState} = chainFetcher
+    let {logger, currentBlockHeight, fetchState} = chainFetcher
 
     await chainFetcher.sourceManager->SourceManager.fetchNext(
       ~fetchState,
-      ~waitForNewBlock=(~currentBlockHeight, ~logger) =>
-        source->waitForNewBlock(~currentBlockHeight, ~logger),
+      ~waitForNewBlock,
       ~onNewBlock=(~currentBlockHeight) =>
         dispatchAction(FinishWaitingForNewBlock({chain, currentBlockHeight})),
       ~currentBlockHeight,
-      ~executeQuery=async query => {
+      ~executeQuery=async (query, ~source) => {
         switch await query->executeQuery(~logger, ~source, ~currentBlockHeight, ~chain) {
         | Ok(response) => dispatchAction(PartitionQueryResponse({chain, response, query}))
         | Error(e) => dispatchAction(ErrorExit(e))

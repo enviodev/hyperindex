@@ -518,8 +518,9 @@ let make = (
   {
     name,
     chain,
-    getBlockHashes,
     pollingInterval: 100,
+    poweredByHyperSync: true,
+    getBlockHashes,
     getHeightOrThrow: () => HyperSyncJsonApi.heightRoute->Rest.fetch(endpointUrl, ()),
     fetchBlockRange,
   }

@@ -1,5 +1,7 @@
 open Belt
 
+type ecosystem = | @as("evm") Evm | @as("fuel") Fuel
+
 type contract = {
   name: string,
   abi: Ethers.abi,
@@ -14,24 +16,16 @@ type syncConfig = {
   intervalCeiling: int,
   backoffMillis: int,
   queryTimeoutMillis: int,
+  fallbackStallTimeout: int,
 }
 
-type syncSource = HyperSync | HyperFuel | Rpc
-
-let usesHyperSync = syncSource =>
-  switch syncSource {
-  | HyperSync | HyperFuel => true
-  | Rpc => false
-  }
-
 type chainConfig = {
-  syncSource: syncSource,
   startBlock: int,
   endBlock: option<int>,
   confirmedBlockThreshold: int,
   chain: ChainMap.Chain.t,
   contracts: array<contract>,
-  source: Source.t,
+  sources: array<Source.t>,
 }
 
 let shouldPreRegisterDynamicContracts = (chainConfig: chainConfig) => {
@@ -58,6 +52,7 @@ let getSyncConfig = ({
   intervalCeiling,
   backoffMillis,
   queryTimeoutMillis,
+  fallbackStallTimeout,
 }) => {
   initialBlockInterval: Env.Configurable.SyncConfig.initialBlockInterval->Option.getWithDefault(
     initialBlockInterval,
@@ -78,6 +73,7 @@ let getSyncConfig = ({
   backoffMillis,
   // How long to wait before cancelling an RPC request
   queryTimeoutMillis,
+  fallbackStallTimeout,
 }
 
 type t = {
@@ -85,6 +81,7 @@ type t = {
   isUnorderedMultichainMode: bool,
   chainMap: ChainMap.t<chainConfig>,
   defaultChain: option<chainConfig>,
+  ecosystem: ecosystem,
   enableRawEvents: bool,
   entities: array<module(Entities.InternalEntity)>,
 }
@@ -96,6 +93,7 @@ let make = (
   ~chains=[],
   ~enableRawEvents=false,
   ~entities=[],
+  ~ecosystem=Evm,
 ) => {
   {
     historyConfig: {
@@ -117,6 +115,7 @@ let make = (
     entities: entities->(
       Utils.magic: array<module(Entities.Entity)> => array<module(Entities.InternalEntity)>
     ),
+    ecosystem,
   }
 }
 

@@ -25,6 +25,7 @@ type blockRangeFetchResponse = {
 type t = {
   name: string,
   chain: ChainMap.Chain.t,
+  poweredByHyperSync: bool,
   /* Frequency (in ms) used when polling for new events on this network. */
   pollingInterval: int,
   getBlockHashes: (
@@ -70,7 +71,7 @@ let getHeightWithRetry = async (~source, ~logger) => {
 
 //Poll for a height greater or equal to the given blocknumber.
 //Used for waiting until there is a new block to index
-let waitForNewBlock = async (source, ~currentBlockHeight, ~logger) => {
+let waitForNewBlock = async (~source, ~currentBlockHeight, ~logger) => {
   let logger = Logging.createChildFrom(
     ~logger,
     ~params={

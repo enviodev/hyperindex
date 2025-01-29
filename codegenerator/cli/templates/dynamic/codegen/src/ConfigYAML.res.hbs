@@ -64,6 +64,7 @@ let publicConfig = ChainMap.fromArrayUnsafe([
         intervalCeiling: {{sync_config.interval_ceiling}},
         backoffMillis: {{sync_config.backoff_millis}},
         queryTimeoutMillis: {{sync_config.query_timeout_millis}},
+        fallbackStallTimeout: {{sync_config.fallback_stall_timeout}},
       }),
       {{/with}}
     }

@@ -100,7 +100,7 @@ pub struct StartArgs {
 
 #[derive(Debug, Subcommand)]
 pub enum LocalCommandTypes {
-    /// Local Envio and ganache environment commands
+    /// Local Envio environment commands
     #[command(subcommand)]
     Docker(LocalDockerSubcommands),
     /// Local Envio database commands

@@ -47,7 +47,6 @@ services:
       - my-proxy-net
 volumes:
   db_data:
-  ganache-data:
 networks:
   my-proxy-net:
     name: local_test_network

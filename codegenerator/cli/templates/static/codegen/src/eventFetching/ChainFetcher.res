@@ -126,6 +126,7 @@ let make = (
     chainConfig,
     startBlock,
     sourceManager: SourceManager.make(
+      ~sources=chainConfig.sources,
       ~maxPartitionConcurrency=Env.maxPartitionConcurrency,
       ~logger,
     ),
@@ -416,7 +417,7 @@ the updated lastBlockScannedHashes rolled back where this occurs
 let rollbackLastBlockHashesToReorgLocation = async (
   chainFetcher: t,
   //Parameter used for dependency injecting in tests
-  ~getBlockHashes as getBlockHashesMock=?,
+  ~getBlockHashes=chainFetcher.sourceManager.activeSource.getBlockHashes,
 ) => {
   let blockNumbers =
     chainFetcher.lastBlockScannedHashes->ReorgDetection.LastBlockScannedHashes.getThresholdBlockNumbers(
@@ -426,11 +427,6 @@ let rollbackLastBlockHashesToReorgLocation = async (
   switch blockNumbers {
   | [] => chainFetcher.lastBlockScannedHashes
   | _ => {
-      let getBlockHashes = switch getBlockHashesMock {
-      | Some(getBlockHashes) => getBlockHashes
-      | None => chainFetcher.chainConfig.source.getBlockHashes
-      }
-
       let blockNumbersAndHashes = await getBlockHashes(
         ~blockNumbers,
         ~logger=chainFetcher.logger,

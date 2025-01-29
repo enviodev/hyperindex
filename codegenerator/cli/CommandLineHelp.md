@@ -241,14 +241,14 @@ Prepare local environment for envio testing
 
 ###### **Subcommands:**
 
-* `docker` — Local Envio and ganache environment commands
+* `docker` — Local Envio environment commands
 * `db-migrate` — Local Envio database commands
 
 
 
 ## `envio local docker`
 
-Local Envio and ganache environment commands
+Local Envio environment commands
 
 **Usage:** `envio local docker <COMMAND>`
 
