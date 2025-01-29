@@ -268,7 +268,7 @@ let makeFromDbState = async (
       // on restart, reset the events_processed gauge to the previous state
       switch numEventsProcessed {
       | Some(numEventsProcessed) =>
-        Prometheus.incrementEventsProcessedCounter(~number=numEventsProcessed, ~chainId)
+        Prometheus.setEventsProcessedGuage(~number=numEventsProcessed, ~chainId)
       | None => () // do nothing if no events have been processed yet for this chain
       }
       (
