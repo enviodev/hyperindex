@@ -442,8 +442,6 @@ describe("LoadLayer", () => {
       {...user2, updatesCountOnUserForTesting: 0},
     )
 
-    Js.log("After here")
-
     Assert.deepEqual(
       await getUsersWithUpdates(0),
       [],
