@@ -233,20 +233,25 @@ let runEventLoader = async (~contextEnv, ~loader: Internal.loader, ~inMemoryStor
   }
 }
 
-let convertFieldsToJson = (fields: dict<unknown>) => {
-  let keys = fields->Js.Dict.keys
-  let new = Js.Dict.empty()
-  for i in 0 to keys->Js.Array2.length - 1 {
-    let key = keys->Js.Array2.unsafe_get(i)
-    let value = fields->Js.Dict.unsafeGet(key)
-    // Skip `undefined` values and convert bigint fields to string
-    // There are not fields with nested bigints, so this is safe
-    new->Js.Dict.set(
-      key,
-      Js.typeof(value) === "bigint" ? value->Utils.magic->BigInt.toString->Utils.magic : value,
-    )
+let convertFieldsToJson = (fields: option<dict<unknown>>) => {
+  switch fields {
+    | None => %raw(`{}`)
+    | Some(fields) => {
+      let keys = fields->Js.Dict.keys
+      let new = Js.Dict.empty()
+      for i in 0 to keys->Js.Array2.length - 1 {
+        let key = keys->Js.Array2.unsafe_get(i)
+        let value = fields->Js.Dict.unsafeGet(key)
+        // Skip `undefined` values and convert bigint fields to string
+        // There are not fields with nested bigints, so this is safe
+        new->Js.Dict.set(
+          key,
+          Js.typeof(value) === "bigint" ? value->Utils.magic->BigInt.toString->Utils.magic : value,
+        )
+      }
+      new->(Utils.magic: dict<unknown> => Js.Json.t)
+    }
   }
-  new->(Utils.magic: dict<unknown> => Js.Json.t)
 }
 
 let addEventToRawEvents = (eventItem: Internal.eventItem, ~inMemoryStore: InMemoryStore.t) => {
@@ -264,11 +269,11 @@ let addEventToRawEvents = (eventItem: Internal.eventItem, ~inMemoryStore: InMemo
   let eventId = EventUtils.packEventIndex(~logIndex, ~blockNumber)
   let blockFields =
     block
-    ->(Utils.magic: Internal.eventBlock => dict<unknown>)
+    ->(Utils.magic: Internal.eventBlock => option<dict<unknown>>)
     ->convertFieldsToJson
   let transactionFields =
     transaction
-    ->(Utils.magic: Internal.eventTransaction => dict<unknown>)
+    ->(Utils.magic: Internal.eventTransaction => option<dict<unknown>>)
     ->convertFieldsToJson
 
   blockFields->Types.Block.cleanUpRawEventFieldsInPlace
