@@ -426,6 +426,35 @@ describe("LoadLayer", () => {
         },
       ],
     )
+
+    // The second time gets from inMemoryStore
+    Assert.deepEqual(await getUsersWithId("1"), [user1])
+    Assert.deepEqual(await getUsersWithUpdates(0), [user2])
+    Assert.deepEqual(mock.loadEntitiesByIdsCalls, [])
+    Assert.deepEqual(
+      mock.loadEntitiesByFieldCalls->Array.length,
+      2,
+      ~message=`Shouldn't add more calls to the db`,
+    )
+
+    inMemoryStore->Mock.InMemoryStore.setEntity(
+      ~entityMod=module(Entities.User),
+      {...user2, updatesCountOnUserForTesting: 0},
+    )
+
+    Js.log("After here")
+
+    Assert.deepEqual(
+      await getUsersWithUpdates(0),
+      [],
+      ~message=`Doesn't get the user after the value is updated and not match the query`,
+    )
+    Assert.deepEqual(mock.loadEntitiesByIdsCalls, [])
+    Assert.deepEqual(
+      mock.loadEntitiesByFieldCalls->Array.length,
+      2,
+      ~message=`Shouldn't add more calls to the db`,
+    )
   })
 
   Async.it(
