@@ -243,6 +243,16 @@ AllEvents.Transfer.handler(async ({ event }) => {
   );
 });
 
+const tagsEventSchema = S.schema({
+  tags: SExtra.swayOptional(S.array(S.string)),
+});
+AllEvents.TagsEvent.handler(async ({ event }) => {
+  S.assertOrThrow(event.params, tagsEventSchema)!;
+  expectType<AssertSchemaType<typeof event.params, typeof tagsEventSchema>>(
+    true
+  );
+});
+
 // const callSchema = S.schema({
 //   assetId: S.string,
 //   to: S.string,

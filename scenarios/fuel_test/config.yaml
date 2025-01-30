@@ -15,7 +15,7 @@ networks:
           - name: ClearGreeting
       - name: AllEvents
         address:
-          - 0xf627d99be4078f0731e5738b5b70089806f5d3b318e83ca41dceb331b39ab79f
+          - 0xd298efffbf3cdf38b4b55ffe76a97a67b9146d7edd61b92cca730bd6e0eb415d
         abi_file_path: abis/all-events-abi.json
         handler: src/AllEventsHandlers.ts
         events:
@@ -57,6 +57,8 @@ networks:
             logId: "8688528864679113840"
           - name: VecLog
             logId: "15402277555065905665"
+          - name: TagsEvent
+            logId: "8843604259160078410"
           - name: BytesLog
             logId: "14832741149864513620"
           - name: Mint
