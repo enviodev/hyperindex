@@ -36,6 +36,7 @@ type waitForNewBlockMock = {
   fn: (~currentBlockHeight: int, ~logger: Pino.t) => Promise.t<int>,
   calls: array<int>,
   resolveAll: int => unit,
+  resolveFns: array<int => unit>,
 }
 
 let waitForNewBlockMock = () => {
@@ -52,6 +53,7 @@ let waitForNewBlockMock = () => {
       })
     },
     calls,
+    resolveFns,
   }
 }
 
@@ -405,6 +407,72 @@ describe("SourceManager fetchNext", () => {
 
     Assert.deepEqual(waitForNewBlockMock.calls->Js.Array2.length, 1)
     Assert.deepEqual(onNewBlockMock.calls->Js.Array2.length, 1)
+  })
+
+  Async.it("Restarts waiting for new block after a rollback", async () => {
+    let sourceManager = SourceManager.make(~maxPartitionConcurrency=10, ~logger=Logging.logger)
+
+    let p0 = mockFullPartition(~partitionIndex=0, ~latestFetchedBlockNumber=5)
+
+    let waitForNewBlockMock = waitForNewBlockMock()
+    let onNewBlockMock = onNewBlockMock()
+
+    let fetchNextPromise =
+      sourceManager->SourceManager.fetchNext(
+        ~fetchState=mockFetchState([p0]),
+        ~maxPerChainQueueSize=1000,
+        ~currentBlockHeight=5,
+        ~executeQuery=neverExecutePartitionQuery,
+        ~waitForNewBlock=waitForNewBlockMock.fn,
+        ~onNewBlock=neverOnNewBlock,
+        ~stateId=0,
+      )
+
+    Assert.deepEqual(waitForNewBlockMock.calls, [5], ~message=`Should wait for new block`)
+
+    // Should do nothing on the second call with the same data
+    await sourceManager->SourceManager.fetchNext(
+      ~fetchState=mockFetchState([p0]),
+      ~maxPerChainQueueSize=1000,
+      ~currentBlockHeight=5,
+      ~executeQuery=neverExecutePartitionQuery,
+      ~waitForNewBlock=neverWaitForNewBlock,
+      ~onNewBlock=neverOnNewBlock,
+      ~stateId=0,
+    )
+    Assert.deepEqual(
+      waitForNewBlockMock.calls,
+      [5],
+      ~message=`New call is not added with the same stateId`,
+    )
+
+    let fetchNextPromise2 =
+      sourceManager->SourceManager.fetchNext(
+        ~fetchState=mockFetchState([p0]),
+        ~maxPerChainQueueSize=1000,
+        ~currentBlockHeight=5,
+        ~executeQuery=neverExecutePartitionQuery,
+        ~waitForNewBlock=waitForNewBlockMock.fn,
+        ~onNewBlock=onNewBlockMock.fn,
+        ~stateId=1,
+      )
+    Assert.deepEqual(
+      waitForNewBlockMock.calls,
+      [5, 5],
+      ~message=`Should add a new call after a rollback`,
+    )
+
+    (waitForNewBlockMock.resolveFns->Js.Array2.unsafe_get(0))(7)
+    (waitForNewBlockMock.resolveFns->Js.Array2.unsafe_get(1))(6)
+
+    await fetchNextPromise
+    await fetchNextPromise2
+
+    Assert.deepEqual(
+      onNewBlockMock.calls,
+      [6],
+      ~message=`Should invalidate the waitForNewBlock result with block height 7, which responded after the reorg rollback`,
+    )
   })
 
   Async.it("Can add new partitions until the concurrency limit reached", async () => {

@@ -546,7 +546,7 @@ let registerProcessEventBatchMetrics = (
   latestProcessedBlocks
   ->ChainMap.entries
   ->Array.forEach(((chain, {numEventsProcessed})) => {
-    Prometheus.incrementEventsProcessedCounter(
+    Prometheus.setEventsProcessedGuage(
       ~chainId=chain->ChainMap.Chain.toChainId,
       ~number=numEventsProcessed,
     )
