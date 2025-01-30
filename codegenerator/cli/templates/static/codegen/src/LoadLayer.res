@@ -11,8 +11,6 @@ module BatchQueue = {
 
   type loadIndex = {
     index: TableIndices.Index.t,
-    fieldName: string,
-    fieldValue: fieldValue,
     fieldValueSchema: S.t<fieldValue>,
     resolve: array<Entities.internalEntity> => unit,
     reject: exn => unit,
@@ -56,13 +54,7 @@ module BatchQueue = {
     }
   }
 
-  let registerLoadByIndex = (
-    batchQueue: t,
-    ~index,
-    ~fieldName,
-    ~fieldValue: 'fieldValue,
-    ~fieldValueSchema: S.t<'fieldValue>,
-  ) => {
+  let registerLoadByIndex = (batchQueue: t, ~index, ~fieldValueSchema: S.t<'fieldValue>) => {
     let indexId = index->TableIndices.Index.toString
     switch batchQueue.byIndex->Utils.Dict.dangerouslyGetNonOption(indexId) {
     | Some(loadRecord) => loadRecord.promise
@@ -72,11 +64,9 @@ module BatchQueue = {
             indexId,
             {
               index,
-              fieldName,
               fieldValueSchema: fieldValueSchema->(
                 Utils.magic: S.t<'fieldValue> => S.t<fieldValue>
               ),
-              fieldValue: fieldValue->(Utils.magic: 'fieldValue => fieldValue),
               resolve,
               reject,
               promise: %raw(`null`),
@@ -175,19 +165,16 @@ let executeLoadEntitiesByIndex = async (
 
     //Do not do these queries concurrently. They are cpu expensive for
     //postgres
-    await lookupIndexesNotInMemory->Utils.Array.awaitEach(async ({
-      fieldName,
-      fieldValue,
-      index,
-      fieldValueSchema,
-    }) => {
+    await lookupIndexesNotInMemory->Utils.Array.awaitEach(async ({index, fieldValueSchema}) => {
       let entities = await loadLayer.loadEntitiesByField(
         ~operator=switch index {
         | Single({operator}) => operator
         },
         ~entityMod,
-        ~fieldName,
-        ~fieldValue,
+        ~fieldName=index->TableIndices.Index.getFieldName,
+        ~fieldValue=switch index {
+        | Single({fieldValue}) => fieldValue->(Utils.magic: TableIndices.FieldValue.t => fieldValue)
+        },
         ~fieldValueSchema,
         ~logger,
       )
@@ -350,8 +337,6 @@ let makeWhereLoader = (
         operator,
       }),
       ~fieldValueSchema,
-      ~fieldName,
-      ~fieldValue,
     )
     ->(Utils.magic: promise<array<Entities.internalEntity>> => promise<array<entity>>)
   }

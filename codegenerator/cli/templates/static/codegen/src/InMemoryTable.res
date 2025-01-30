@@ -9,7 +9,8 @@ let make = (~hash): t<'key, 'val> => {dict: Js.Dict.empty(), hash}
 
 let set = (self: t<'key, 'val>, key, value) => self.dict->Js.Dict.set(key->self.hash, value)
 
-let get = (self: t<'key, 'val>, key: 'key) => self.dict->Js.Dict.get(key->self.hash)
+let get = (self: t<'key, 'val>, key: 'key) =>
+  self.dict->Utils.Dict.dangerouslyGetNonOption(key->self.hash)
 
 let values = (self: t<'key, 'val>) => self.dict->Js.Dict.values
 
@@ -84,6 +85,8 @@ module Entity = {
             //Add entity id to indices and add index to entity indicies
             relatedEntityIds->Utils.Set.add(Entities.getEntityIdUnsafe(entity))->ignore
             entityIndices->Utils.Set.add(index)->ignore
+          } else {
+            relatedEntityIds->Utils.Set.delete(Entities.getEntityIdUnsafe(entity))->ignore
           }
         })
       | _ =>
@@ -157,8 +160,8 @@ module Entity = {
       }
     | Some({entityRow: Updated(previous_values), entityIndices})
       // This prevents two db actions in the same event on the same entity from being recorded to the history table.
-      if previous_values.latest.eventIdentifier == entityUpdate.eventIdentifier &&
-        shouldSaveHistory =>
+      if shouldSaveHistory &&
+      previous_values.latest.eventIdentifier == entityUpdate.eventIdentifier =>
       let entityRow = Types.Updated({
         latest: entityUpdate,
         history: previous_values.history->Utils.Array.setIndexImmutable(
