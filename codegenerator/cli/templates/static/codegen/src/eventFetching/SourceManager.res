@@ -50,7 +50,7 @@ let fetchNext = async (
       sourceManager.waitingForNewBlockStateId = Some(stateId)
       let currentBlockHeight = await waitForNewBlock(~currentBlockHeight, ~logger)
       switch sourceManager.waitingForNewBlockStateId {
-        | Some(waitingStateId) when waitingStateId === stateId => {
+        | Some(waitingStateId) if waitingStateId === stateId => {
           sourceManager.waitingForNewBlockStateId = None
           onNewBlock(~currentBlockHeight)
         }
