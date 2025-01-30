@@ -76,6 +76,10 @@ enum Status {
     Failed: StatusFailure,
 }
 
+pub struct TagsEvent {
+    pub tags: Option<Vec<String>>,
+}
+
 struct SimpleStruct {
     f1: u32,
 }
@@ -182,6 +186,13 @@ impl AllEvents for Contract {
         vec.push(69);
         vec.push(23);
         log(vec);
+
+        let mut tags: Vec<String> = Vec::new();
+        tags.push(String::from_ascii_str("abcd"));
+
+        log(TagsEvent {
+            tags: Some(tags),
+        });
 
         let mut bytes = Bytes::new();
         bytes.push(40u8);
