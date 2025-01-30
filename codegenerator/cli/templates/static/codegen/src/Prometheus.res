@@ -16,7 +16,7 @@ let executeBatchDurationCounter = PromClient.Counter.makeCounter({
   "labelNames": [],
 })
 
-let eventsProcessedCounter = PromClient.Counter.makeCounter({
+let eventsProcessedCounter = PromClient.Gauge.makeGauge({
   "name": "events_processed",
   "help": "Total number of events processed",
   "labelNames": ["chainId"],
@@ -251,10 +251,10 @@ let incrementExecuteBatchDurationCounter = (~duration) => {
   executeBatchDurationCounter->PromClient.Counter.incMany(duration)
 }
 
-let incrementEventsProcessedCounter = (~number, ~chainId) => {
+let setEventsProcessedGuage = (~number, ~chainId) => {
   eventsProcessedCounter
-  ->PromClient.Counter.labels({"chainId": chainId})
-  ->PromClient.Counter.incMany(number)
+  ->PromClient.Gauge.labels({"chainId": chainId})
+  ->PromClient.Gauge.set(number)
 }
 
 let incrementReorgsDetected = (~chain) => {
