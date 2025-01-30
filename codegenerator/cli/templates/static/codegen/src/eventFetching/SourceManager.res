@@ -8,7 +8,7 @@ open Belt
 type t = {
   logger: Pino.t,
   maxPartitionConcurrency: int,
-  mutable isWaitingForNewBlock: bool,
+  mutable waitingForNewBlockStateId: option<int>,
   // Should take into consideration partitions fetching for previous states (before rollback)
   mutable fetchingPartitionsCount: int,
 }
@@ -16,11 +16,9 @@ type t = {
 let make = (~maxPartitionConcurrency, ~logger) => {
   logger,
   maxPartitionConcurrency,
-  isWaitingForNewBlock: false,
+  waitingForNewBlockStateId: None,
   fetchingPartitionsCount: 0,
 }
-
-exception FromBlockIsHigherThanToBlock({fromBlock: int, toBlock: int})
 
 let fetchNext = async (
   sourceManager: t,
@@ -45,11 +43,20 @@ let fetchNext = async (
   | ReachedMaxConcurrency
   | NothingToQuery => ()
   | WaitingForNewBlock =>
-    if !sourceManager.isWaitingForNewBlock {
-      sourceManager.isWaitingForNewBlock = true
+    switch sourceManager.waitingForNewBlockStateId {
+    | Some(waitingStateId) if waitingStateId >= stateId => ()
+    | Some(_) // Case for the prev state before a rollback
+    | None =>
+      sourceManager.waitingForNewBlockStateId = Some(stateId)
       let currentBlockHeight = await waitForNewBlock(~currentBlockHeight, ~logger)
-      sourceManager.isWaitingForNewBlock = false
-      onNewBlock(~currentBlockHeight)
+      switch sourceManager.waitingForNewBlockStateId {
+        | Some(waitingStateId) if waitingStateId === stateId => {
+          sourceManager.waitingForNewBlockStateId = None
+          onNewBlock(~currentBlockHeight)
+        }
+        | Some(_) // Don't reset it if we are waiting for another state
+        | None => ()
+      }
     }
   | Ready(queries) => {
       fetchState->FetchState.startFetchingQueries(~queries, ~stateId)
