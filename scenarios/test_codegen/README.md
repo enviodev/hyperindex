@@ -9,6 +9,8 @@
 
     - `pnpm docker-up`
 
+- Make sure to gen ts types in contracts dir `(cd contracts && npx hardhat compile)`
+
 - Then run the tests and confirm all pass: 
     - `pnpm test`
 
