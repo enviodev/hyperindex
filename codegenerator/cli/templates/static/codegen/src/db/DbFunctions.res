@@ -66,7 +66,7 @@ SELECT * FROM unnest(${arrayFieldTypes
     }
   } else {
     let convertOrThrow = S.compile(
-      S.array(dbSchema),
+      S.array(schema),
       ~input=Value,
       ~output=Unknown,
       ~mode=Sync,

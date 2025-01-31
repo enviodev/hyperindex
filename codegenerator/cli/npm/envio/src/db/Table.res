@@ -214,8 +214,8 @@ let toSqlParams = (table: table, ~schema) => {
           | Bool =>
             // Workaround for https://github.com/porsager/postgres/issues/471
             S.union([
-              S.literal("t")->S.to(_ => true),
-              S.literal("f")->S.to(_ => false),
+              S.literal(1)->S.to(_ => true),
+              S.literal(0)->S.to(_ => false),
             ])->S.toUnknown
           | _ => schema
           }
@@ -242,6 +242,7 @@ let toSqlParams = (table: table, ~schema) => {
           | Field(f) =>
             switch f.fieldType {
             | Custom(fieldType) => `${(Text :> string)}[]::${(fieldType :> string)}`
+            | Boolean => `${(Integer :> string)}[]::${(f.fieldType :> string)}`
             | fieldType => (fieldType :> string)
             }
           | DerivedFrom(_) => (Text :> string)

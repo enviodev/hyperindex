@@ -81,7 +81,7 @@ describe("SerDe Test", () => {
     | exception exn =>
       Js.log(exn)
       Assert.fail("Failed to read entity from table")
-    | [_entity] => ()
+    | [_entity] => Assert.deepEqual(_entity, entity)      
     | _ => Assert.fail("Should have returned a row on batch read fn")
     }
 
@@ -159,7 +159,7 @@ describe("SerDe Test", () => {
     | exception exn =>
       Js.log(exn)
       Assert.fail("Failed to read entity from table")
-    | [_entity] => ()
+    | [_entity] => Assert.deepEqual(_entity, entity)      
     | _ => Assert.fail("Should have returned a row on batch read fn")
     }
 
