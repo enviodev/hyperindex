@@ -1,10 +1,10 @@
 open Belt
+
 type contract = {
   name: string,
   abi: Ethers.abi,
   addresses: array<Address.t>,
   events: array<module(Types.Event)>,
-  sighashes: array<string>,
 }
 
 type syncConfig = {
@@ -16,19 +16,12 @@ type syncConfig = {
   queryTimeoutMillis: int,
 }
 
-type hyperSyncConfig = {endpointUrl: string}
-type hyperFuelConfig = {endpointUrl: string}
-type rpcConfig = {
-  provider: Ethers.JsonRpcProvider.t,
-  syncConfig: syncConfig,
-}
-
-type syncSource = HyperSync(hyperSyncConfig) | HyperFuel(hyperFuelConfig) | Rpc(rpcConfig)
+type syncSource = HyperSync | HyperFuel | Rpc
 
 let usesHyperSync = syncSource =>
   switch syncSource {
-  | HyperSync(_) | HyperFuel(_) => true
-  | Rpc(_) => false
+  | HyperSync | HyperFuel => true
+  | Rpc => false
   }
 
 type chainConfig = {
@@ -38,7 +31,7 @@ type chainConfig = {
   confirmedBlockThreshold: int,
   chain: ChainMap.Chain.t,
   contracts: array<contract>,
-  chainWorker: module(ChainWorker.S),
+  source: Source.t,
 }
 
 let shouldPreRegisterDynamicContracts = (chainConfig: chainConfig) => {
@@ -140,9 +133,9 @@ let shouldSaveHistory = (config, ~isInReorgThreshold) =>
   | _ => false
   }
 
-let shouldPruneHistory = config =>
+let shouldPruneHistory = (config, ~isInReorgThreshold) =>
   switch config.historyConfig {
-  | {historyFlag: MinHistory} => true
+  | {rollbackFlag: RollbackOnReorg, historyFlag: MinHistory} if isInReorgThreshold => true
   | _ => false
   }
 

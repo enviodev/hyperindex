@@ -46,77 +46,67 @@ let registerContractHandlers = (
               module(Types.{{contract.name.capitalized}}.{{event.name}}),
               {{/each}}
             ],
-            sighashes: [
-              {{#each contract.events as | event |}}
-              Types.{{contract.name.capitalized}}.{{event.name}}.sighash,
-              {{/each}}
-            ],
           },
           {{/each}}
         ]
         let chain = ChainMap.Chain.makeUnsafe(~chainId={{chain_config.network_config.id}})
-        {{#if chain_config.network_config.rpc_config }}
-        let rpcConfig: Config.rpcConfig = {
-          provider: Ethers.JsonRpcProvider.make(
-            ~rpcUrls={{vec_to_array chain_config.network_config.rpc_config.urls}},
-            ~chainId={{chain_config.network_config.id}},
-            ~fallbackStallTimeout={{chain_config.network_config.rpc_config.sync_config.fallback_stall_timeout}},
-          ),
-          {{#with chain_config.network_config.rpc_config.sync_config as | sync_config |}}
-          syncConfig: Config.getSyncConfig({
-            initialBlockInterval: {{sync_config.initial_block_interval}},
-            backoffMultiplicative: {{sync_config.backoff_multiplicative}},
-            accelerationAdditive: {{sync_config.acceleration_additive}},
-            intervalCeiling: {{sync_config.interval_ceiling}},
-            backoffMillis: {{sync_config.backoff_millis}},
-            queryTimeoutMillis: {{sync_config.query_timeout_millis}},
-          }),
-          {{/with}}
-        }
-        {{/if}}
         {
           Config.confirmedBlockThreshold: {{chain_config.network_config.confirmed_block_threshold}},
           syncSource: 
             {{#if chain_config.network_config.rpc_config}}
-            Rpc(rpcConfig)
+            Rpc
             {{/if}}
             {{#if chain_config.network_config.hypersync_config}}
-            HyperSync({endpointUrl: "{{chain_config.network_config.hypersync_config.endpoint_url}}"})
+            HyperSync
             {{/if}}
             {{#if chain_config.network_config.hyperfuel_config}}
-            HyperFuel({endpointUrl: "{{chain_config.network_config.hyperfuel_config.endpoint_url}}"})
+            HyperFuel
             {{/if}},
           startBlock: {{chain_config.network_config.start_block}},
           endBlock: {{#if chain_config.network_config.end_block}} Some({{chain_config.network_config.end_block}}) {{else}} None {{/if}},
           chain,
           contracts,
-          chainWorker:
+          source:
             {{#if chain_config.network_config.rpc_config }}
-            module(RpcWorker.Make({
-              let chain = chain
-              let contracts = contracts
-              let rpcConfig = rpcConfig
-              let eventRouter =
+            {{#with chain_config.network_config.rpc_config as | rpc_config |}}
+            RpcSource.make({
+              chain,
+              contracts,
+              syncConfig: Config.getSyncConfig({
+                initialBlockInterval: {{rpc_config.sync_config.initial_block_interval}},
+                backoffMultiplicative: {{rpc_config.sync_config.backoff_multiplicative}},
+                accelerationAdditive: {{rpc_config.sync_config.acceleration_additive}},
+                intervalCeiling: {{rpc_config.sync_config.interval_ceiling}},
+                backoffMillis: {{rpc_config.sync_config.backoff_millis}},
+                queryTimeoutMillis: {{rpc_config.sync_config.query_timeout_millis}},
+              }),
+              provider: Ethers.JsonRpcProvider.make(
+                ~rpcUrls={{vec_to_array rpc_config.urls}},
+                ~chainId={{chain_config.network_config.id}},
+                ~fallbackStallTimeout={{rpc_config.sync_config.fallback_stall_timeout}},
+              ),
+              eventRouter:
                 contracts
                 ->Belt.Array.flatMap(contract => contract.events)
                 ->EventRouter.fromEvmEventModsOrThrow(~chain)
-            }))
+            })
+            {{/with}}
             {{/if}}
             {{#if chain_config.network_config.hypersync_config }}
             {{#with chain_config.network_config.hypersync_config as | hypersync_config |}}
-            module(HyperSyncWorker.Make({
-              let chain = chain
-              let contracts = contracts
-              let endpointUrl = "{{hypersync_config.endpoint_url}}"
-              let allEventSignatures = [
+            HyperSyncSource.make({
+              chain,
+              contracts,
+              endpointUrl: "{{hypersync_config.endpoint_url}}",
+              allEventSignatures: [
                 {{#each ../codegen_contracts as |contract|}}
                 Types.{{contract.name.capitalized}}.eventSignatures,
                 {{/each}}
-              ]->Belt.Array.concatMany
-              let eventRouter =
+              ]->Belt.Array.concatMany,
+              eventRouter:
                 contracts
                 ->Belt.Array.flatMap(contract => contract.events)
-                ->EventRouter.fromEvmEventModsOrThrow(~chain)
+                ->EventRouter.fromEvmEventModsOrThrow(~chain),
               /*
                 Determines whether to use HypersyncClient Decoder or Viem for parsing events
                 Default is hypersync client decoder, configurable in config with:
@@ -124,20 +114,18 @@ let registerContractHandlers = (
                 event_decoder: "viem" || "hypersync-client"
                 ```
               */
-              let shouldUseHypersyncClientDecoder = Env.Configurable.shouldUseHypersyncClientDecoder->Belt.Option.getWithDefault(
+              shouldUseHypersyncClientDecoder: Env.Configurable.shouldUseHypersyncClientDecoder->Belt.Option.getWithDefault(
                 {{hypersync_config.is_client_decoder}},
               )
-              let blockSchema = Types.Block.schema
-              let transactionSchema = Types.Transaction.schema
-            }))
+            })
             {{/with}}
             {{/if}}
             {{#if chain_config.network_config.hyperfuel_config }}
             {{#with chain_config.network_config.hyperfuel_config as | hyperfuel_config |}}
-            module(HyperFuelWorker.Make({
-              let chain = chain
-              let endpointUrl = "{{hyperfuel_config.endpoint_url}}"
-              let contracts: array<Types.fuelContractConfig> = [
+            HyperFuelSource.make({
+              chain,
+              endpointUrl: "{{hyperfuel_config.endpoint_url}}",
+              contracts: [
                 {{#each chain_config.codegen_contracts as | contract |}}
                 {
                   name: "{{contract.name.capitalized}}",
@@ -149,7 +137,7 @@ let registerContractHandlers = (
                 },
                 {{/each}}
               ]
-            }))
+            })
             {{/with}}
             {{/if}}
         }

@@ -37,13 +37,13 @@ module Crypto = {
 module Make = (Indexer: Indexer.S) => {
   open Indexer
   type log = {
-    eventBatchQueueItem: Types.eventBatchQueueItem,
+    eventItem: Internal.eventItem,
     srcAddress: Address.t,
     transactionHash: string,
     eventMod: module(Types.InternalEvent),
   }
 
-  type makeEvent = (~blockHash: string) => Types.eventLog<Types.internalEventArgs>
+  type makeEvent = (~blockHash: string) => Internal.event
 
   type logConstructor = {
     transactionHash: string,
@@ -70,11 +70,11 @@ module Make = (Indexer: Indexer.S) => {
       ~blockNumber: int,
       ~blockTimestamp: int,
       ~blockHash: string,
-    ) => Indexer.Types.Block.t,
+    ) => Internal.eventBlock,
     ~makeTransaction: (
       ~transactionIndex: int,
       ~transactionHash: string,
-    ) => Indexer.Types.Transaction.t,
+    ) => Internal.eventTransaction,
     ~chainId,
     ~blockTimestamp: int,
     ~blockNumber: int,
@@ -85,7 +85,7 @@ module Make = (Indexer: Indexer.S) => {
 
     let transactionHash =
       Crypto.hashKeccak256Any(
-        params->RescriptSchema.S.serializeOrRaiseWith(Event.paramsRawEventSchema),
+        params->RescriptSchema.S.reverseConvertToJsonOrThrow(Event.paramsRawEventSchema),
       )
       ->Crypto.hashKeccak256Compound(transactionIndex)
       ->Crypto.hashKeccak256Compound(blockNumber)
@@ -93,7 +93,7 @@ module Make = (Indexer: Indexer.S) => {
     let makeEvent: makeEvent = (~blockHash) => {
       let block = makeBlock(~blockHash, ~blockNumber, ~blockTimestamp)
       {
-        params: params->(Utils.magic: eventArgs => Types.internalEventArgs),
+        params: params->(Utils.magic: eventArgs => Internal.eventParams),
         srcAddress,
         chainId,
         block,
@@ -108,9 +108,9 @@ module Make = (Indexer: Indexer.S) => {
       logIndex,
       srcAddress,
       eventMod: eventMod->(
-        Utils.magic: module(Types.Event with type eventArgs = eventArgs) => module(Types.Event with
-          type eventArgs = Types.internalEventArgs
-        )
+        Utils.magic: module(Types.Event with
+          type eventArgs = eventArgs
+        ) => module(Types.InternalEvent)
       ),
     }
   }
@@ -175,10 +175,12 @@ module Make = (Indexer: Indexer.S) => {
       eventMod,
     }): log => {
       let module(Event) = eventMod
-      let log: Types.eventBatchQueueItem = {
+      let log: Internal.eventItem = {
         eventName: Event.name,
         contractName: Event.contractName,
-        handlerRegister: Event.handlerRegister,
+        handler: Event.handlerRegister->Types.HandlerTypes.Register.getHandler,
+        loader: Event.handlerRegister->Types.HandlerTypes.Register.getLoader,
+        contractRegister: Event.handlerRegister->Types.HandlerTypes.Register.getContractRegister,
         paramsRawEventSchema: Event.paramsRawEventSchema,
         event: makeEvent(~blockHash),
         chain: self.chainConfig.chain,
@@ -186,7 +188,7 @@ module Make = (Indexer: Indexer.S) => {
         blockNumber,
         logIndex,
       }
-      {eventBatchQueueItem: log, srcAddress, transactionHash, eventMod}
+      {eventItem: log, srcAddress, transactionHash, eventMod}
     })
 
     let block = {blockNumber, blockTimestamp, blockHash, logs}
@@ -201,7 +203,13 @@ module Make = (Indexer: Indexer.S) => {
 
   let getBlocks = (self: t, ~fromBlock, ~toBlock) => {
     self.blocks
-    ->Array.keep(b => b.blockNumber >= fromBlock && b.blockNumber <= toBlock)
+    ->Array.keep(b =>
+      b.blockNumber >= fromBlock &&
+        switch toBlock {
+        | Some(toBlock) => b.blockNumber <= toBlock
+        | None => true
+        }
+    )
     ->Array.keepWithIndex((_, i) => i < self.maxBlocksReturned)
   }
 
@@ -234,7 +242,7 @@ module Make = (Indexer: Indexer.S) => {
           },
         )
         if isLogInConfig {
-          Some(l.eventBatchQueueItem)
+          Some(l.eventItem)
         } else {
           None
         }
@@ -242,15 +250,20 @@ module Make = (Indexer: Indexer.S) => {
     )
   }
 
-  let executeQuery = (
-    self: t,
-    query: FetchState.nextQuery,
-  ): ChainWorker.blockRangeFetchResponse => {
-    let unfilteredBlocks = self->getBlocks(~fromBlock=query.fromBlock, ~toBlock=query.toBlock)
+  let executeQuery = (self: t, query: FetchState.query): Source.blockRangeFetchResponse => {
+    let {fromBlock} = query
+    let toBlock = switch query.target {
+    | Head => None
+    | EndBlock({toBlock})
+    | Merge({toBlock}) =>
+      Some(toBlock)
+    }
+
+    let unfilteredBlocks = self->getBlocks(~fromBlock, ~toBlock)
     let heighstBlock = unfilteredBlocks->getLast->Option.getExn
     let firstBlockParentNumberAndHash =
       self
-      ->getBlock(~blockNumber=query.fromBlock - 1)
+      ->getBlock(~blockNumber=fromBlock - 1)
       ->Option.map(b => {ReorgDetection.blockNumber: b.blockNumber, blockHash: b.blockHash})
     let currentBlockHeight = self->getHeight
 
@@ -280,12 +293,10 @@ module Make = (Indexer: Indexer.S) => {
         firstBlockParentNumberAndHash,
       },
       parsedQueueItems,
-      fromBlockQueried: query.fromBlock,
-      heighestQueriedBlockNumber: heighstBlock.blockNumber,
+      fromBlockQueried: fromBlock,
+      latestFetchedBlockNumber: heighstBlock.blockNumber,
       latestFetchedBlockTimestamp: heighstBlock.blockTimestamp,
       stats: "NO_STATS"->Obj.magic,
-      fetchStateRegisterId: query.fetchStateRegisterId,
-      partitionId: query.partitionId,
     }
   }
 

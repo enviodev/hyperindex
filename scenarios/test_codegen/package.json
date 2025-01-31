@@ -31,7 +31,6 @@
     "@glennsl/rescript-fetch": "0.2.0",
     "@glennsl/rescript-jest": "^0.9.2",
     "@nomiclabs/hardhat-ethers": "^3.0.0-beta.0",
-    "@ryyppy/rescript-promise": "2.1.0",
     "@typechain/ethers-v6": "^0.3.2",
     "@typechain/hardhat": "^6.1.6",
     "@types/chai": "^4.3.5",
@@ -45,8 +44,7 @@
     "mocha": "^10.2.0",
     "nyc": "^15.1.0",
     "rescript": "11.1.3",
-    "rescript-express": "0.4.1",
-    "rescript-schema": "8.2.0",
+    "rescript-schema": "9.1.0",
     "sinon": "^15.0.4",
     "ts-node": "^10.9.1"
   },
@@ -57,7 +55,8 @@
     "helpers": "workspace:*",
     "rescript-nodejs": "16.0.0",
     "typescript": "^5.0.4",
-    "envio": "../../codegenerator/cli/npm/envio"
+    "ts-expect": "1.3.0",
+    "envio": "file:../../codegenerator/cli/npm/envio"
   },
   "optionalDependencies": {
     "generated": "./generated"

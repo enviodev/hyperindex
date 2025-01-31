@@ -2,13 +2,13 @@ use anyhow::anyhow;
 
 use clap::ValueEnum;
 use serde::{Deserialize, Serialize};
-use strum::FromRepr;
+use std::fmt;
 use strum::IntoEnumIterator;
-use strum_macros::{Display, EnumIter, EnumString};
 use subenum::subenum;
 
 use crate::constants::DEFAULT_CONFIRMED_BLOCK_THRESHOLD;
 
+#[derive(strum::Display)]
 #[subenum(NetworkWithExplorer, HypersyncNetwork, GraphNetwork)]
 #[derive(
     Clone,
@@ -16,12 +16,11 @@ use crate::constants::DEFAULT_CONFIRMED_BLOCK_THRESHOLD;
     ValueEnum,
     Serialize,
     Deserialize,
-    EnumIter,
-    EnumString,
-    FromRepr,
+    strum::EnumIter,
+    strum::EnumString,
+    strum::FromRepr,
     PartialEq,
     Eq,
-    Display,
     Hash,
     Copy,
 )]
@@ -55,6 +54,9 @@ pub enum Network {
 
     #[subenum(HypersyncNetwork, GraphNetwork, NetworkWithExplorer)]
     Avalanche = 43114,
+
+    #[subenum(NetworkWithExplorer)]
+    B2Testnet = 1123,
 
     #[subenum(HypersyncNetwork, NetworkWithExplorer, GraphNetwork)]
     Base = 8453,
@@ -90,7 +92,6 @@ pub enum Network {
     #[subenum(HypersyncNetwork)]
     C1Milkomeda = 2001,
 
-    #[subenum(NetworkWithExplorer)]
     Canto = 7700,
 
     #[subenum(HypersyncNetwork, GraphNetwork, NetworkWithExplorer)]
@@ -107,7 +108,7 @@ pub enum Network {
 
     CitreaDevnet = 62298,
 
-    #[subenum(NetworkWithExplorer)]
+    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     CitreaTestnet = 5115,
 
     #[subenum(GraphNetwork)]
@@ -122,11 +123,6 @@ pub enum Network {
     #[subenum(HypersyncNetwork)]
     Darwinia = 46,
 
-    // Still syncing
-    // #[subenum(HypersyncNetwork)]
-    // // Explorers:
-    // // https://explorer.degen.tips/
-    // Degen = 666666666,
     #[subenum(
         HypersyncNetwork,
         NetworkWithExplorer,
@@ -151,13 +147,19 @@ pub enum Network {
     #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     Flare = 14,
 
+    #[subenum(HypersyncNetwork)]
+    Fraxtal = 252,
+
     #[subenum(HypersyncNetwork, GraphNetwork, NetworkWithExplorer)]
     Fuji = 43113,
 
     #[subenum(GraphNetwork)]
     Fuse = 122,
 
-    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
+    #[subenum(
+        HypersyncNetwork(serde(rename = "galadriel-devnet (experimental)")),
+        NetworkWithExplorer
+    )]
     GaladrielDevnet = 696969,
 
     #[subenum(HypersyncNetwork, NetworkWithExplorer, GraphNetwork)]
@@ -175,15 +177,14 @@ pub enum Network {
     #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     Holesky = 17000,
 
-    #[subenum(HypersyncNetwork)]
     IncoGentryTestnet = 9090,
+
+    #[subenum(HypersyncNetwork)]
+    Ink = 57073,
 
     #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     Kroma = 255,
 
-    // Still syncing
-    // #[subenum(HypersyncNetwork)]
-    // KakarotSepolia = 1802203764,
     #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     Linea = 59144,
 
@@ -191,7 +192,13 @@ pub enum Network {
     LineaSepolia = 59141,
 
     #[subenum(HypersyncNetwork, NetworkWithExplorer)]
+    Lisk = 1135,
+
+    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     Lukso = 42,
+
+    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
+    LuksoTestnet = 4201,
 
     #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     Manta = 169,
@@ -202,8 +209,11 @@ pub enum Network {
     #[subenum(NetworkWithExplorer)]
     MantleTestnet = 5001,
 
-    #[subenum(GraphNetwork, NetworkWithExplorer)]
-    Mbase = 1287,
+    #[subenum(HypersyncNetwork)]
+    Merlin = 4200,
+
+    #[subenum(HypersyncNetwork)]
+    Metall2 = 1750,
 
     #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     Metis = 1088,
@@ -211,11 +221,18 @@ pub enum Network {
     #[subenum(HypersyncNetwork)]
     MevCommit = 17864,
 
-    #[subenum(NetworkWithExplorer)]
+    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     Mode = 34443,
 
     #[subenum(NetworkWithExplorer)]
     ModeSepolia = 919,
+
+    #[subenum(
+        HypersyncNetwork,
+        NetworkWithExplorer,
+        GraphNetwork(serde(rename = "mbase"))
+    )]
+    MoonbaseAlpha = 1287,
 
     #[subenum(HypersyncNetwork, NetworkWithExplorer, GraphNetwork)]
     Moonbeam = 1284,
@@ -223,14 +240,20 @@ pub enum Network {
     #[subenum(GraphNetwork, NetworkWithExplorer)]
     Moonriver = 1285,
 
-    // Still syncing
-    // #[subenum(HypersyncNetwork)]
-    // MorphTestnet = 2810,
+    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
+    Morph = 2818,
+
+    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
+    MorphTestnet = 2810,
+
     #[subenum(GraphNetwork)]
     Mumbai = 80001,
 
     #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     NeonEvm = 245022934,
+
+    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
+    Opbnb = 204,
 
     #[subenum(HypersyncNetwork, NetworkWithExplorer, GraphNetwork)]
     Optimism = 10,
@@ -266,9 +289,9 @@ pub enum Network {
     #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     Rsk = 30,
 
-    // Still syncing
-    // #[subenum(HypersyncNetwork)]
-    // Saakuru = 7225878,
+    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
+    Saakuru = 7225878,
+
     #[subenum(GraphNetwork, HypersyncNetwork, NetworkWithExplorer)]
     Scroll = 534352,
 
@@ -282,12 +305,25 @@ pub enum Network {
     ShimmerEvm = 148,
 
     #[subenum(HypersyncNetwork)]
+    Soneium = 1868,
+
+    #[subenum(HypersyncNetwork)]
+    Sophon = 50104,
+
+    #[subenum(HypersyncNetwork)]
     SophonTestnet = 531050104,
 
-    #[subenum(HypersyncNetwork)]
+    #[subenum(NetworkWithExplorer)]
+    Taiko = 167000,
+
+    #[subenum(NetworkWithExplorer)]
+    Tangle = 5845,
+
+    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
+    UnichainSepolia = 1301,
+
     XLayer = 196,
 
-    #[subenum(HypersyncNetwork)]
     XLayerTestnet = 195,
 
     #[subenum(HypersyncNetwork, NetworkWithExplorer)]
@@ -393,10 +429,10 @@ impl Network {
             | Network::Mode
             | Network::ModeSepolia
             | Network::Metis
+            | Network::MoonbaseAlpha
             | Network::Moonbeam
             | Network::Moonriver
             | Network::Mumbai
-            | Network::Mbase
             | Network::NeonEvm
             | Network::PoaCore
             | Network::PoaSokol
@@ -409,6 +445,7 @@ impl Network {
             | Network::ScrollSepolia
             | Network::Sepolia
             | Network::ShimmerEvm
+            | Network::Sophon
             | Network::SophonTestnet
             | Network::XLayer
             | Network::XLayerTestnet
@@ -417,7 +454,53 @@ impl Network {
             | Network::ZksyncEra
             | Network::ZksyncEraTestnet
             | Network::Zora
-            | Network::ZoraSepolia => DEFAULT_CONFIRMED_BLOCK_THRESHOLD,
+            | Network::ZoraSepolia
+            | Network::Lisk
+            | Network::Taiko
+            | Network::LuksoTestnet
+            | Network::Merlin
+            | Network::B2Testnet
+            | Network::UnichainSepolia
+            | Network::Opbnb
+            | Network::Saakuru
+            | Network::Morph
+            | Network::MorphTestnet
+            | Network::Tangle
+            | Network::Fraxtal
+            | Network::Soneium
+            | Network::Ink
+            | Network::Metall2 => DEFAULT_CONFIRMED_BLOCK_THRESHOLD,
+        }
+    }
+}
+
+#[derive(Deserialize, Debug, PartialEq, strum::Display)]
+#[serde(rename_all = "UPPERCASE")]
+pub enum ChainTier {
+    Gold,
+    Silver,
+    Bronze,
+    #[serde(alias = "TESTNET")]
+    Experimental,
+    #[serde(alias = "HIDDEN")]
+    Internal,
+}
+
+impl ChainTier {
+    pub fn get_icon(&self) -> &str {
+        match self {
+            Self::Gold => "🥇",
+            Self::Silver => "🥈",
+            Self::Bronze => "🥉",
+            Self::Experimental => "🧪",
+            Self::Internal => "🔒",
+        }
+    }
+
+    pub fn is_public(&self) -> bool {
+        match self {
+            Self::Gold | Self::Silver | Self::Bronze | Self::Experimental => true,
+            Self::Internal => false,
         }
     }
 }
@@ -426,6 +509,60 @@ impl HypersyncNetwork {
     // This is a custom iterator that returns all the HypersyncNetwork enums that is made public accross crates (for convenience)
     pub fn iter_hypersync_networks() -> impl Iterator<Item = HypersyncNetwork> {
         HypersyncNetwork::iter()
+    }
+    pub fn get_tier(&self) -> ChainTier {
+        use ChainTier::*;
+        use HypersyncNetwork::*;
+        match self {
+            EthereumMainnet | Fantom | Zeta | Sepolia | Metis | ZksyncEra | Optimism
+            | ArbitrumNova | Avalanche | Polygon | Bsc | Mantle | Gnosis => Gold,
+
+            Linea | Manta | Base | Boba | Blast | Cyber | Aurora | Harmony | Scroll | Darwinia
+            | Rsk | ShimmerEvm | Amoy | Saakuru | Moonbeam | Lisk | Chiliz | ArbitrumOne => Silver,
+
+            Zora | Morph | Kroma | Lukso | C1Milkomeda | Crab | Sophon | Flare | PolygonZkevm => {
+                Bronze
+            }
+
+            Ink | Metall2 | SophonTestnet | MorphTestnet | GaladrielDevnet | CitreaTestnet
+            | Goerli | BscTestnet | UnichainSepolia | Zircuit | Celo | Opbnb | GnosisChiado
+            | LuksoTestnet | BlastSepolia | Holesky | BerachainBartio | OptimismSepolia | Fuji
+            | NeonEvm | ArbitrumSepolia | Fraxtal | Soneium | BaseSepolia | MevCommit | Merlin
+            | Mode | MoonbaseAlpha => Experimental,
+        }
+    }
+
+    pub fn get_plain_name(&self) -> String {
+        Network::from(*self).to_string()
+    }
+
+    pub fn get_pretty_name(&self) -> String {
+        let name = Network::from(*self).to_string();
+        let tier = self.get_tier();
+        let icon = tier.get_icon();
+        format!("{name} {icon}")
+    }
+}
+
+impl fmt::Display for HypersyncNetwork {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.get_pretty_name())
+    }
+}
+
+impl NetworkWithExplorer {
+    pub fn get_pretty_name(&self) -> String {
+        let network = Network::from(*self);
+        match HypersyncNetwork::try_from(network) {
+            Ok(hypersync_network) => hypersync_network.get_pretty_name(),
+            Err(_) => network.to_string(),
+        }
+    }
+}
+
+impl fmt::Display for NetworkWithExplorer {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.get_pretty_name())
     }
 }
 

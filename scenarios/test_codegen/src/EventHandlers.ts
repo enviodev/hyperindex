@@ -1,12 +1,63 @@
 import {
+  Gravatar,
   BigDecimal,
   NftFactory,
   SimpleNft,
   NftCollection,
   User,
+  eventLog,
+  NftFactory_SimpleNftCreated_eventArgs,
+  NftFactory_SimpleNftCreated_event,
 } from "generated";
+import * as S from "rescript-schema";
+import { expectType, TypeEqual } from "ts-expect";
 
 const zeroAddress = "0x0000000000000000000000000000000000000000";
+
+Gravatar.CustomSelection.handler(async ({ event, context }) => {
+  const transactionSchema = S.schema({
+    to: S.undefined,
+    from: "0xfoo",
+    hash: S.string,
+  });
+  S.assertOrThrow(event.transaction, transactionSchema)!;
+  const blockSchema = S.schema({
+    hash: S.string,
+    number: S.number,
+    timestamp: S.number,
+    parentHash: "0xParentHash",
+  });
+  S.assertOrThrow(event.block, blockSchema)!;
+
+  // We already do type checking in the tests,
+  // but double-check that we receive correct types
+  // in the handler args as well
+  expectType<
+    TypeEqual<
+      typeof event.transaction,
+      {
+        readonly to: string | undefined;
+        readonly from: string | undefined;
+        readonly hash: string;
+      }
+    >
+  >(true);
+  expectType<
+    TypeEqual<
+      typeof event.block,
+      {
+        readonly number: number;
+        readonly timestamp: number;
+        readonly hash: string;
+        readonly parentHash: string;
+      }
+    >
+  >(true);
+
+  context.CustomSelectionTestPass.set({
+    id: event.transaction.hash,
+  });
+});
 
 NftFactory.SimpleNftCreated.contractRegister(({ event, context }) => {
   context.addSimpleNft(event.params.contractAddress);
@@ -15,6 +66,9 @@ NftFactory.SimpleNftCreated.contractRegister(({ event, context }) => {
 NftFactory.SimpleNftCreated.handlerWithLoader({
   loader: async (_) => undefined,
   handler: async ({ event, context }) => {
+    const testType: NftFactory_SimpleNftCreated_event =
+      event satisfies eventLog<NftFactory_SimpleNftCreated_eventArgs>;
+
     let nftCollection: NftCollection = {
       id: event.params.contractAddress,
       contractAddress: event.params.contractAddress,

@@ -1,7 +1,9 @@
+open Belt
+
 exception QueryTimout(string)
 exception EventRoutingFailed
 
-let getUnwrappedBlock = (provider, blockNumber) =>
+let getKnownBlock = (provider, blockNumber) =>
   provider
   ->Ethers.JsonRpcProvider.getBlock(blockNumber)
   ->Promise.then(blockNullable =>
@@ -14,8 +16,8 @@ let getUnwrappedBlock = (provider, blockNumber) =>
     }
   )
 
-let rec getUnwrappedBlockWithBackoff = async (~provider, ~blockNumber, ~backoffMsOnFailure) =>
-  switch await getUnwrappedBlock(provider, blockNumber) {
+let rec getKnownBlockWithBackoff = async (~provider, ~blockNumber, ~backoffMsOnFailure) =>
+  switch await getKnownBlock(provider, blockNumber) {
   | exception err =>
     Logging.warn({
       "err": err,
@@ -23,7 +25,7 @@ let rec getUnwrappedBlockWithBackoff = async (~provider, ~blockNumber, ~backoffM
       "type": "EXPONENTIAL_BACKOFF",
     })
     await Time.resolvePromiseAfterDelay(~delayMilliseconds=backoffMsOnFailure)
-    await getUnwrappedBlockWithBackoff(
+    await getKnownBlockWithBackoff(
       ~provider,
       ~blockNumber,
       ~backoffMsOnFailure=backoffMsOnFailure * 2,
@@ -31,292 +33,146 @@ let rec getUnwrappedBlockWithBackoff = async (~provider, ~blockNumber, ~backoffM
   | result => result
   }
 
-let makeCombinedEventFilterQuery = (
-  ~provider,
-  ~contractInterfaceManager: ContractInterfaceManager.t,
-  ~fromBlock,
-  ~toBlock,
-  ~logger: Pino.t,
-) => {
-  let combinedFilter =
-    contractInterfaceManager->ContractInterfaceManager.getCombinedEthersFilter(~fromBlock, ~toBlock)
+let getSuggestedBlockIntervalFromExn = {
+  let suggestedRangeRegExp = %re(`/retry with the range (\d+)-(\d+)/`)
 
-  let numBlocks = toBlock - fromBlock + 1
+  let blockRangeLimitRegExp = %re(`/limited to a (\d+) blocks range/`)
 
-  let loggerWithContext = Logging.createChildFrom(
-    ~logger,
-    ~params={
-      "fromBlock": fromBlock,
-      "toBlock": toBlock,
-      "numBlocks": numBlocks,
-    },
-  )
-
-  loggerWithContext->Logging.childTrace("Initiating Combined Query Filter")
-
-  provider
-  ->Ethers.JsonRpcProvider.getLogs(
-    ~filter={combinedFilter->Ethers.CombinedFilter.combinedFilterToFilter},
-  )
-  ->Promise.thenResolve(res => {
-    loggerWithContext->Logging.childTrace({
-      "Successful Combined Query Filter"
-    })
-    res
-  })
-  ->Promise.catch(err => {
-    loggerWithContext->Logging.childWarn("Failed Combined Query Filter from block")
-    err->Promise.reject
-  })
-}
-
-type eventBatchPromise = promise<Types.eventBatchQueueItem>
-
-//We aren't fetching transaction and field names don't line up with
-//the two available fields on a log. So create this function with runtime
-//exception that should be validated away in codegen
-type txFieldVal
-exception InvalidRpcTransactionField(string)
-let getTxFieldFromEthersLog = (log: Ethers.log, txField: string, ~logger): txFieldVal =>
-  switch txField {
-  | "hash" => log.transactionHash->Utils.magic
-  | "transactionIndex" => log.transactionIndex->Utils.magic
-  | field =>
-    InvalidRpcTransactionField(field)->ErrorHandling.mkLogAndRaise(
-      ~logger,
-      ~msg="An invalid transaction field was requested for RPC response",
-    )
-  }
-
-let nonOptionalTransactionFieldNames =
-  Types.Transaction.schema->Utils.Schema.getNonOptionalFieldNames
-
-let transactionFieldsFromLog = (log, ~logger): Types.Transaction.t => {
-  let dict = Js.Dict.empty()
-  //Note: if we implement all transaction fields, we will need all
-  //field names not just non optional ones
-  nonOptionalTransactionFieldNames->Belt.Array.forEach(name => {
-    dict->Js.Dict.set(name, getTxFieldFromEthersLog(log, name, ~logger))
-  })
-  dict->(Utils.magic: Js.Dict.t<txFieldVal> => Types.Transaction.t)
-}
-
-//Types.blockFields is a subset of  Ethers.JsonRpcProvider.block so we can safely cast
-let blockFieldsFromBlock: Ethers.JsonRpcProvider.block => Types.Block.t = Utils.magic
-
-//Note ethers log is not a superset of log since logIndex is actually "index" with an @as alias
-let ethersLogToLog: Ethers.log => Types.Log.t = ({address, data, topics, logIndex}) => {
-  address,
-  data,
-  topics,
-  logIndex,
-}
-
-let convertLogs = (
-  logs: array<Ethers.log>,
-  ~eventRouter,
-  ~blockLoader: LazyLoader.asyncMap<Ethers.JsonRpcProvider.block>,
-  ~contractInterfaceManager: ContractInterfaceManager.t,
-  ~chain,
-  ~logger,
-): array<eventBatchPromise> => {
-  logger->Logging.childTrace({
-    "msg": "Handling of logs",
-    "numberLogs": logs->Belt.Array.length,
-  })
-
-  logs->Belt.Array.keepMap(log => {
-    let topic0 = log.topics->Js.Array2.unsafe_get(0)
-    switch eventRouter->EventRouter.get(
-      ~tag=EventRouter.getEvmEventTag(~sighash=topic0, ~topicCount=log.topics->Array.length),
-      ~contractAddressMapping=contractInterfaceManager.contractAddressMapping,
-      ~contractAddress=log.address,
-    ) {
-    | None => None //ignore events that aren't registered
-    | Some(eventMod: module(Types.InternalEvent)) =>
-      Some(
-        blockLoader
-        ->LazyLoader.get(log.blockNumber)
-        ->Promise.thenResolve(block => {
-          let transaction = log->transactionFieldsFromLog(~logger)
-          let log = log->ethersLogToLog
-          let chainId = chain->ChainMap.Chain.toChainId
-
-          let module(Event) = eventMod
-
-          let decodedEvent = try contractInterfaceManager->ContractInterfaceManager.parseLogViemOrThrow(
-            ~log,
-          ) catch {
-          | exn => {
-              let params = {
-                "chainId": chainId,
-                "blockNumber": block.number,
-                "logIndex": log.logIndex,
-              }
-              let logger = Logging.createChildFrom(~logger, ~params)
-              exn->ErrorHandling.mkLogAndRaise(
-                ~msg="Failed to parse event with viem, please double check your ABI.",
-                ~logger,
-              )
+  exn =>
+    switch exn {
+    | Js.Exn.Error(error) =>
+      try {
+        // Didn't use parse here since it didn't work
+        // because the error is some sort of weird Ethers object
+        let message: string = (error->Obj.magic)["error"]["message"]
+        message->S.assertOrThrow(S.string)
+        switch suggestedRangeRegExp->Js.Re.exec_(message) {
+        | Some(execResult) =>
+          switch execResult->Js.Re.captures {
+          | [_, Js.Nullable.Value(fromBlock), Js.Nullable.Value(toBlock)] =>
+            switch (fromBlock->Int.fromString, toBlock->Int.fromString) {
+            | (Some(fromBlock), Some(toBlock)) if toBlock >= fromBlock =>
+              Some(toBlock - fromBlock + 1)
+            | _ => None
             }
+          | _ => None
           }
-
-          (
-            {
-              eventName: Event.name,
-              contractName: Event.contractName,
-              handlerRegister: Event.handlerRegister,
-              paramsRawEventSchema: Event.paramsRawEventSchema,
-              timestamp: block.timestamp,
-              chain,
-              blockNumber: block.number,
-              logIndex: log.logIndex,
-              event: {
-                chainId,
-                params: decodedEvent.args,
-                transaction,
-                block: block->blockFieldsFromBlock,
-                srcAddress: log.address,
-                logIndex: log.logIndex,
-              },
-            }: Types.eventBatchQueueItem
-          )
-        }),
-      )
+        | None =>
+          switch blockRangeLimitRegExp->Js.Re.exec_(message) {
+          | Some(execResult) =>
+            switch execResult->Js.Re.captures {
+            | [_, Js.Nullable.Value(blockRangeLimit)] =>
+              switch blockRangeLimit->Int.fromString {
+              | Some(blockRangeLimit) if blockRangeLimit > 0 => Some(blockRangeLimit)
+              | _ => None
+              }
+            | _ => None
+            }
+          | None => None
+          }
+        }
+      } catch {
+      | _ => None
+      }
+    | _ => None
     }
-  })
-}
-
-let applyConditionalFunction = (value: 'a, condition: bool, callback: 'a => 'b) => {
-  condition ? callback(value) : value
-}
-
-let queryEventsWithCombinedFilter = async (
-  ~contractInterfaceManager,
-  ~fromBlock,
-  ~toBlock,
-  ~minFromBlockLogIndex=0,
-  ~blockLoader,
-  ~provider,
-  ~chain,
-  ~logger: Pino.t,
-  ~eventRouter,
-): array<eventBatchPromise> => {
-  let combinedFilterRes = await makeCombinedEventFilterQuery(
-    ~provider,
-    ~contractInterfaceManager,
-    ~fromBlock,
-    ~toBlock,
-    ~logger,
-  )
-
-  let logs = combinedFilterRes->applyConditionalFunction(minFromBlockLogIndex > 0, arrLogs => {
-    arrLogs->Belt.Array.keep(log => {
-      log.blockNumber > fromBlock ||
-        (log.blockNumber == fromBlock && log.logIndex >= minFromBlockLogIndex)
-    })
-  })
-
-  logs->convertLogs(~eventRouter, ~blockLoader, ~contractInterfaceManager, ~chain, ~logger)
 }
 
 type eventBatchQuery = {
-  eventBatchPromises: array<eventBatchPromise>,
-  finalExecutedBlockInterval: int,
+  logs: array<Ethers.log>,
+  latestFetchedBlock: Ethers.JsonRpcProvider.block,
+  nextSuggestedBlockInterval: int,
 }
 
-let getContractEventsOnFilters = async (
-  ~contractInterfaceManager,
+let getNextPage = (
   ~fromBlock,
   ~toBlock,
-  ~initialBlockInterval,
-  ~minFromBlockLogIndex=0,
-  ~chain,
-  ~rpcConfig: Config.rpcConfig,
-  ~blockLoader,
+  ~addresses,
+  ~topics,
+  ~loadBlock,
+  ~suggestedBlockInterval,
+  ~syncConfig as sc: Config.syncConfig,
+  ~provider,
   ~logger,
-  ~eventRouter,
-): eventBatchQuery => {
-  let sc = rpcConfig.syncConfig
-
-  let fromBlockRef = ref(fromBlock)
-  let shouldContinueProcess = () => fromBlockRef.contents <= toBlock
-
-  let currentBlockInterval = ref(initialBlockInterval)
-  let events = ref([])
-  while shouldContinueProcess() {
-    logger->Logging.childTrace("continuing to process...")
-    let rec executeQuery = (~blockInterval): promise<(array<eventBatchPromise>, int)> => {
-      //If the query hangs for longer than this, reject this promise to reduce the block interval
-      let queryTimoutPromise =
-        Time.resolvePromiseAfterDelay(~delayMilliseconds=sc.queryTimeoutMillis)->Promise.then(() =>
-          Promise.reject(
-            QueryTimout(
-              `Query took longer than ${Belt.Int.toString(sc.queryTimeoutMillis / 1000)} seconds`,
-            ),
-          )
+): promise<eventBatchQuery> => {
+  let rec executeQuery = (~suggestedBlockInterval): promise<eventBatchQuery> => {
+    //If the query hangs for longer than this, reject this promise to reduce the block interval
+    let queryTimoutPromise =
+      Time.resolvePromiseAfterDelay(~delayMilliseconds=sc.queryTimeoutMillis)->Promise.then(() =>
+        Promise.reject(
+          QueryTimout(
+            `Query took longer than ${Belt.Int.toString(sc.queryTimeoutMillis / 1000)} seconds`,
+          ),
         )
+      )
 
-      let upperBoundToBlock = fromBlockRef.contents + blockInterval - 1
-      let nextToBlock =
-        Pervasives.min(upperBoundToBlock, toBlock)->Pervasives.max(fromBlockRef.contents) //Defensively ensure we never query a target block below fromBlock
-      let eventsPromise =
-        queryEventsWithCombinedFilter(
-          ~contractInterfaceManager,
-          ~fromBlock=fromBlockRef.contents,
-          ~toBlock=nextToBlock,
-          ~minFromBlockLogIndex=fromBlockRef.contents == fromBlock ? minFromBlockLogIndex : 0,
-          ~provider=rpcConfig.provider,
-          ~blockLoader,
-          ~chain,
-          ~logger,
-          ~eventRouter,
-        )->Promise.thenResolve(events => (events, nextToBlock - fromBlockRef.contents + 1))
+    let suggestedToBlock = fromBlock + suggestedBlockInterval - 1
+    let queryToBlock = Pervasives.min(suggestedToBlock, toBlock)->Pervasives.max(fromBlock) //Defensively ensure we never query a target block below fromBlock
+    let latestFetchedBlockPromise = loadBlock(queryToBlock)
+    let logsPromise =
+      provider
+      ->Ethers.JsonRpcProvider.getLogs(
+        ~filter={
+          address: ?addresses,
+          topics,
+          fromBlock,
+          toBlock: queryToBlock,
+        }->Ethers.CombinedFilter.toFilter,
+      )
+      ->Promise.then(async logs => {
+        let executedBlockInterval = queryToBlock - fromBlock + 1
+        // Increase the suggested block interval only when it was actually applied
+        // and we didn't query to a hard toBlock
+        let nextSuggestedBlockInterval = if executedBlockInterval >= suggestedBlockInterval {
+          // Increase batch size going forward, but do not increase past a configured maximum
+          // See: https://en.wikipedia.org/wiki/Additive_increase/multiplicative_decrease
+          Pervasives.min(executedBlockInterval + sc.accelerationAdditive, sc.intervalCeiling)
+        } else {
+          suggestedBlockInterval
+        }
+        {
+          logs,
+          nextSuggestedBlockInterval,
+          latestFetchedBlock: await latestFetchedBlockPromise,
+        }
+      })
 
-      [queryTimoutPromise, eventsPromise]
-      ->Promise.race
-      ->Promise.catch(err => {
-        logger->Logging.childWarn({
-          "msg": "Error getting events, will retry after backoff time",
-          "backOffMilliseconds": sc.backoffMillis,
-          "err": err,
-        })
-
-        Time.resolvePromiseAfterDelay(~delayMilliseconds=sc.backoffMillis)->Promise.then(_ => {
-          let nextBlockIntervalTry =
-            (blockInterval->Belt.Int.toFloat *. sc.backoffMultiplicative)->Belt.Int.fromFloat
+    [queryTimoutPromise, logsPromise]
+    ->Promise.race
+    ->Promise.catch(err => {
+      switch getSuggestedBlockIntervalFromExn(err) {
+      | Some(nextBlockIntervalTry) => {
           logger->Logging.childTrace({
-            "msg": "Retrying query fromBlock and toBlock",
+            "msg": "Failed getting events for the block interval. Retrying with the block interval suggested by the RPC provider.",
             "fromBlock": fromBlock,
-            "toBlock": nextBlockIntervalTry,
+            "toBlock": fromBlock + nextBlockIntervalTry - 1,
+            "prevBlockInterval": suggestedBlockInterval,
+          })
+          executeQuery(~suggestedBlockInterval=nextBlockIntervalTry)
+        }
+      | None => {
+          logger->Logging.childWarn({
+            "msg": "Failed getting events for the block interval. Will retry after backoff time",
+            "backOffMilliseconds": sc.backoffMillis,
+            "prevBlockInterval": suggestedBlockInterval,
+            "err": err,
           })
 
-          executeQuery(~blockInterval={nextBlockIntervalTry})
-        })
-      })
-    }
-
-    let (intervalEvents, executedBlockInterval) = await executeQuery(
-      ~blockInterval=currentBlockInterval.contents,
-    )
-    events := events.contents->Belt.Array.concat(intervalEvents)
-
-    // Increase batch size going forward, but do not increase past a configured maximum
-    // See: https://en.wikipedia.org/wiki/Additive_increase/multiplicative_decrease
-    currentBlockInterval :=
-      Pervasives.min(executedBlockInterval + sc.accelerationAdditive, sc.intervalCeiling)
-
-    fromBlockRef := fromBlockRef.contents + executedBlockInterval
-    logger->Logging.childTrace({
-      "msg": "Queried processAllEventsFromBlockNumber ",
-      "lastBlockProcessed": fromBlockRef.contents - 1,
-      "toBlock": toBlock,
-      "numEvents": intervalEvents->Array.length,
+          Time.resolvePromiseAfterDelay(~delayMilliseconds=sc.backoffMillis)->Promise.then(_ => {
+            let nextBlockIntervalTry =
+              (suggestedBlockInterval->Belt.Int.toFloat *. sc.backoffMultiplicative)
+                ->Belt.Int.fromFloat
+            logger->Logging.childTrace({
+              "msg": "Retrying query with a smaller block interval",
+              "fromBlock": fromBlock,
+              "toBlock": fromBlock + nextBlockIntervalTry - 1,
+            })
+            executeQuery(~suggestedBlockInterval={nextBlockIntervalTry})
+          })
+        }
+      }
     })
   }
 
-  {
-    eventBatchPromises: events.contents,
-    finalExecutedBlockInterval: currentBlockInterval.contents,
-  }
+  executeQuery(~suggestedBlockInterval)
 }

@@ -36,7 +36,8 @@ type PostgresNumericPrecisionEntityTester {
   exampleBigDecimal: BigDecimal @config(precision: 80, scale: 5)
   exampleBigDecimalRequired: BigDecimal! @config(precision: 81, scale: 5)
   exampleBigDecimalArray: [BigDecimal!] @config(precision: 82, scale: 5)
-  exampleBigDecimalArrayRequired: [BigDecimal!]! @config(precision: 83, scale: 5)
+  exampleBigDecimalArrayRequired: [BigDecimal!]!
+    @config(precision: 83, scale: 5)
   exampleBigDecimalOtherOrder: BigDecimal! @config(scale: 6, precision: 84)
 }
 
@@ -119,4 +120,26 @@ type EntityWithAllTypes {
   # optTimestamp: Timestamp
   # NOTE: array of timestamps has the same problem as array of booleans described above
   # arrayOfTimestamps: [Timestamp!]!
+}
+
+# We are using insert unnest for the case
+# So test it as well
+type EntityWithAllNonArrayTypes {
+  id: ID!
+  string: String!
+  optString: String
+  int_: Int!
+  optInt: Int
+  float_: Float!
+  optFloat: Float
+  bool: Boolean!
+  optBool: Boolean
+  bigInt: BigInt!
+  optBigInt: BigInt
+  bigDecimal: BigDecimal!
+  optBigDecimal: BigDecimal
+}
+
+type CustomSelectionTestPass {
+  id: ID!
 }

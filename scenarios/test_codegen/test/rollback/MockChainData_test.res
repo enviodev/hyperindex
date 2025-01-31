@@ -77,11 +77,11 @@ describe("Check that MockChainData works as expected", () => {
           -1,
           (accum, next) => {
             Assert.equal(
-              next.eventBatchQueueItem.logIndex,
+              next.eventItem.logIndex,
               accum + 1,
               ~message="Log indexes should increment in each block",
             )
-            next.eventBatchQueueItem.logIndex
+            next.eventItem.logIndex
           },
         )
         ->ignore

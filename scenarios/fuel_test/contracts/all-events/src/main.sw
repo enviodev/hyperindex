@@ -13,6 +13,7 @@ use std::{
     },
     constants::ZERO_B256,
     context::msg_amount,
+    string::String,
 };
 
 abi LiquidityPool {
@@ -75,6 +76,10 @@ enum Status {
     Failed: StatusFailure,
 }
 
+pub struct TagsEvent {
+    pub tags: Option<Vec<String>>,
+}
+
 struct SimpleStruct {
     f1: u32,
 }
@@ -120,9 +125,8 @@ impl AllEvents for Contract {
         let data: str[4] = __to_str_array("abcd");
         log(data);
 
-        // Panics with: Function call failed. Error: String slices can not be decoded from logs. Convert the slice to `str[N]` with `__to_str_array`
-        // let data: str = "abcd";
-        // log("abcd");
+        let data: String = String::from_ascii_str("abcd");
+        log(data);
 
         let data: b256 = 0x0000000000000000000000000000000000000000000000000000000000000001;
         log(data);
@@ -182,6 +186,13 @@ impl AllEvents for Contract {
         vec.push(69);
         vec.push(23);
         log(vec);
+
+        let mut tags: Vec<String> = Vec::new();
+        tags.push(String::from_ascii_str("abcd"));
+
+        log(TagsEvent {
+            tags: Some(tags),
+        });
 
         let mut bytes = Bytes::new();
         bytes.push(40u8);

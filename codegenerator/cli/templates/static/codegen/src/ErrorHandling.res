@@ -1,44 +1,25 @@
-type exnType = Js(Js.Exn.t) | Other(exn)
+type t = {logger: Pino.t, exn: exn, msg: option<string>}
 
-type t = {logger: Pino.t, exn: exnType, msg: option<string>}
-
-let makeExnType = (exn): exnType => {
-  // exn might be not an object which will break the pattern match by RE_EXN_ID
-  if exn->Obj.magic {
-    switch exn {
-    | Js.Exn.Error(e)
-    | Promise.JsError(e) =>
-      Js(e)
-    | exn => Other(exn)
-    }
-  } else {
-    Other(exn)
+let prettifyExn = exn => {
+  switch exn {
+  | Js.Exn.Error(e) => e->(Utils.magic: Js.Exn.t => exn)
+  | exn => exn
   }
 }
 
 let make = (exn, ~logger=Logging.logger, ~msg=?) => {
-  {logger, msg, exn: exn->makeExnType}
+  {logger, msg, exn}
 }
 
 let log = (self: t) => {
   switch self {
-  | {exn: Js(e), msg: Some(msg), logger} => logger->Logging.childErrorWithExn(e, msg)
-  | {exn: Js(e), msg: None, logger} => logger->Logging.childError(e)
-  | {exn: Other(e), msg: Some(msg), logger} => logger->Logging.childErrorWithExn(e, msg)
-  | {exn: Other(e), msg: None, logger} => logger->Logging.childError(e)
-  }
-}
-
-exception JsExnError(Js.Exn.t)
-let getExn = (self: t) => {
-  switch self.exn {
-  | Other(exn) => exn
-  | Js(e) => JsExnError(e)
+  | {exn, msg: Some(msg), logger} => logger->Logging.childErrorWithExn(exn->prettifyExn, msg)
+  | {exn, msg: None, logger} => logger->Logging.childError(exn->prettifyExn)
   }
 }
 
 let raiseExn = (self: t) => {
-  self->getExn->raise
+  self.exn->raise
 }
 
 let mkLogAndRaise = (~logger=?, ~msg=?, exn) => {

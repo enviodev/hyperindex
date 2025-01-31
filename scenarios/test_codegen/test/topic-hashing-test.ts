@@ -14,7 +14,8 @@ import {
   TestEvents_IndexedNestedStruct_eventFilter,
   TestEvents_IndexedStructWithArray_eventFilter,
 } from "generated/src/Types.gen";
-import { GetLogs } from "generated/src/eventFetching/rpc/Rpc.bs.js";
+// @ts-ignore
+import { GetLogs } from "envio/src/sources/Rpc.bs.js";
 import { TestHelpers } from "generated";
 import { TestEvents } from "../contracts/typechain-types";
 import assert from "assert";
@@ -34,7 +35,7 @@ const testParams = {
 };
 
 describe("Topic Hashing", () => {
-  before(async function() {
+  before(async function () {
     this.timeout(30 * 1000);
     await hre.run("compile");
 

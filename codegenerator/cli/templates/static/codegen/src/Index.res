@@ -27,31 +27,32 @@ let overrideConsoleLog: Pino.t => unit = %raw(`function (logger) {
   }
 `)
 // overrideConsoleLog(Logging.logger)
-open Express
 
-let app = expressCjs()
+{
+  open Express
 
-app->use(jsonMiddleware())
+  let app = makeCjs()
 
-let port = Env.metricsPort
+  app->use(jsonMiddleware())
 
-app->get("/healthz", (_req, res) => {
-  // this is the machine readable port used in kubernetes to check the health of this service.
-  //   aditional health information could be added in the future (info about errors, back-offs, etc).
-  let _ = res->sendStatus(200)
-})
+  app->get("/healthz", (_req, res) => {
+    // this is the machine readable port used in kubernetes to check the health of this service.
+    //   aditional health information could be added in the future (info about errors, back-offs, etc).
+    let _ = res->sendStatus(200)
+  })
 
-let _ = app->listen(port)
+  PromClient.collectDefaultMetrics()
 
-PromClient.collectDefaultMetrics()
+  app->get("/metrics", (_req, res) => {
+    res->set("Content-Type", PromClient.defaultRegister->PromClient.getContentType)
+    let _ =
+      PromClient.defaultRegister
+      ->PromClient.metrics
+      ->Promise.thenResolve(metrics => res->endWithData(metrics))
+  })
 
-app->get("/metrics", (_req, res) => {
-  res->set("Content-Type", PromClient.defaultRegister->PromClient.getContentType)
-  let _ =
-    PromClient.defaultRegister
-    ->PromClient.metrics
-    ->Promise.thenResolve(metrics => res->endWithData(metrics))
-})
+  let _ = app->listen(Env.metricsPort)
+}
 
 type args = {
   @as("sync-from-raw-events") syncFromRawEvents?: bool,
@@ -71,9 +72,7 @@ let makeAppState = (globalState: GlobalState.t): EnvioInkApp.appState => {
     ->ChainMap.values
     ->Array.map(cf => {
       let {numEventsProcessed, fetchState, numBatchesFetched} = cf
-      let latestFetchedBlockNumber = PartitionedFetchState.getLatestFullyFetchedBlock(
-        fetchState,
-      ).blockNumber
+      let latestFetchedBlockNumber = FetchState.getLatestFullyFetchedBlock(fetchState).blockNumber
       let hasProcessedToEndblock = cf->ChainFetcher.hasProcessedToEndblock
       let currentBlockHeight =
         cf->ChainFetcher.hasProcessedToEndblock
@@ -138,9 +137,9 @@ let makeAppState = (globalState: GlobalState.t): EnvioInkApp.appState => {
           chainId: cf.chainConfig.chain->ChainMap.Chain.toChainId,
           endBlock: cf.chainConfig.endBlock,
           poweredByHyperSync: switch cf.chainConfig.syncSource {
-          | HyperSync(_)
-          | HyperFuel(_) => true
-          | Rpc(_) => false
+          | HyperSync
+          | HyperFuel => true
+          | Rpc => false
           },
         }: EnvioInkApp.chainData
       )

@@ -1,26 +1,91 @@
-let config: Postgres.poolConfig = {
-  host: Env.Db.host,
-  port: Env.Db.port,
-  username: Env.Db.user,
-  password: Env.Db.password,
-  database: Env.Db.database,
-  ssl: Env.Db.ssl,
-  // TODO: think how we want to pipe these logs to pino.
-  onnotice: ?(Env.userLogLevel == #warn || Env.userLogLevel == #error ? None : Some(_str => ())),
-  transform: {undefined: Null},
-  max: 2,
-}
-let sql = Postgres.makeSql(~config)
-
 type chainId = int
 type eventId = string
 type blockNumberRow = {@as("block_number") blockNumber: int}
+
+// Copied from ReScript Schema to quote and escape "
+let quote = (string: string): string => {
+  let rec loop = idx => {
+    switch string->Js.String2.get(idx)->(Utils.magic: string => option<string>) {
+    | None => `"${string}"`
+    | Some("\"") => string->Js.Json.stringifyAny->Obj.magic
+    | Some(_) => loop(idx + 1)
+    }
+  }
+  loop(0)
+}
+
+@module("./DbFunctionsImplementation.js")
+external makeBatchSetEntityValues: Table.table => (Postgres.sql, unknown) => promise<unit> =
+  "makeBatchSetEntityValues"
+
+let makeTableBatchSet = (table, schema: S.t<'entity>) => {
+  let {dbSchema, quotedFieldNames, quotedNonPrimaryFieldNames, arrayFieldTypes, hasArrayField} =
+    table->Table.toSqlParams(~schema)
+  let isRawEvents = table.tableName === TablesStatic.RawEvents.table.tableName
+
+  let typeValidation = false
+
+  if isRawEvents || !hasArrayField {
+    let convertOrThrow = S.compile(
+      S.unnest(dbSchema),
+      ~input=Value,
+      ~output=Unknown,
+      ~mode=Sync,
+      ~typeValidation,
+    )
+
+    let primaryKeyFieldNames = Table.getPrimaryKeyFieldNames(table)
+
+    let unsafeSql =
+      `
+INSERT INTO "public".${table.tableName->quote} (${quotedFieldNames->Js.Array2.joinWith(", ")})
+SELECT * FROM unnest(${arrayFieldTypes
+        ->Js.Array2.mapi((arrayFieldType, idx) => {
+          `$${(idx + 1)->Js.Int.toString}::${arrayFieldType}`
+        })
+        ->Js.Array2.joinWith(",")})` ++
+      switch (isRawEvents, primaryKeyFieldNames) {
+      | (true, _)
+      | (_, []) => ``
+      | (false, primaryKeyFieldNames) =>
+        `ON CONFLICT(${primaryKeyFieldNames
+          ->Js.Array2.map(quote)
+          ->Js.Array2.joinWith(",")}) DO ` ++ (
+          quotedNonPrimaryFieldNames->Utils.Array.isEmpty
+            ? `NOTHING`
+            : `UPDATE SET ${quotedNonPrimaryFieldNames
+                ->Js.Array2.map(fieldName => {
+                  `${fieldName} = EXCLUDED.${fieldName}`
+                })
+                ->Js.Array2.joinWith(",")}`
+        )
+      } ++ ";"
+
+    (sql, entityDataArray: array<'entity>): promise<unit> => {
+      sql->Postgres.preparedUnsafe(unsafeSql, convertOrThrow(entityDataArray))
+    }
+  } else {
+    let convertOrThrow = S.compile(
+      S.array(schema),
+      ~input=Value,
+      ~output=Unknown,
+      ~mode=Sync,
+      ~typeValidation,
+    )
+
+    let query = makeBatchSetEntityValues(table)
+
+    (sql, entityDataArray: array<'entity>): promise<unit> => {
+      query(sql, convertOrThrow(entityDataArray))
+    }
+  }
+}
 
 module General = {
   type existsRes = {exists: bool}
 
   let hasRows = async (sql, ~table: Table.table) => {
-    let query = `SELECT EXISTS(SELECT 1 FROM public.${table.tableName});`
+    let query = `SELECT EXISTS(SELECT 1 FROM public."${table.tableName}");`
     switch await sql->Postgres.unsafe(query) {
     | [{exists}] => exists
     | _ => Js.Exn.raiseError("Unexpected result from hasRows query: " ++ query)
@@ -45,9 +110,6 @@ module ChainMetadata = {
   }
 
   @module("./DbFunctionsImplementation.js")
-  external setChainMetadataBlockHeight: (Postgres.sql, chainMetadata) => promise<unit> =
-    "setChainMetadataBlockHeight"
-  @module("./DbFunctionsImplementation.js")
   external batchSetChainMetadata: (Postgres.sql, array<chainMetadata>) => promise<unit> =
     "batchSetChainMetadata"
 
@@ -57,15 +119,11 @@ module ChainMetadata = {
     ~chainId: int,
   ) => promise<array<chainMetadata>> = "readLatestChainMetadataState"
 
-  let setChainMetadataBlockHeightRow = (~chainMetadata: chainMetadata) => {
-    sql->setChainMetadataBlockHeight(chainMetadata)
-  }
-
-  let batchSetChainMetadataRow = (~chainMetadataArray: array<chainMetadata>) => {
+  let batchSetChainMetadataRow = (sql, ~chainMetadataArray: array<chainMetadata>) => {
     sql->batchSetChainMetadata(chainMetadataArray)
   }
 
-  let getLatestChainMetadataState = async (~chainId) => {
+  let getLatestChainMetadataState = async (sql, ~chainId) => {
     let arr = await sql->readLatestChainMetadataState(~chainId)
     arr->Belt.Array.get(0)
   }
@@ -100,7 +158,7 @@ module EndOfBlockRangeScannedData = {
     ~blockNumberThreshold: int,
     //minimum blockTimestamp that should be kept in db
     //(timestamp could be lower/higher than blockTimestampThreshold depending on multichain configuration)
-    ~blockTimestampThreshold: int,
+    ~blockTimestampThreshold: option<int>,
   ) => promise<unit> = "deleteStaleEndOfBlockRangeScannedDataForChain"
 }
 
@@ -119,7 +177,7 @@ module EventSyncState = {
     arr->Belt.Array.get(0)
   }
 
-  let getLatestProcessedEvent = (~chainId) => {
+  let getLatestProcessedEvent = (sql, ~chainId) => {
     sql->readLatestSyncedEventOnChainId(~chainId)
   }
 
@@ -129,271 +187,369 @@ module EventSyncState = {
 }
 
 module RawEvents = {
-  type rawEventRowId = (chainId, eventId)
-  @module("./DbFunctionsImplementation.js")
-  external batchSet: (Postgres.sql, array<TablesStatic.RawEvents.t>) => promise<unit> =
-    "batchSetRawEvents"
-
-  @module("./DbFunctionsImplementation.js")
-  external batchDelete: (Postgres.sql, array<rawEventRowId>) => promise<unit> =
-    "batchDeleteRawEvents"
-
-  @module("./DbFunctionsImplementation.js")
-  external readEntities: (
-    Postgres.sql,
-    array<rawEventRowId>,
-  ) => promise<array<TablesStatic.RawEvents.t>> = "readRawEventsEntities"
-
-  @module("./DbFunctionsImplementation.js")
-  external getRawEventsPageGtOrEqEventId: (
-    Postgres.sql,
-    ~chainId: chainId,
-    ~eventId: bigint,
-    ~limit: int,
-    ~contractAddresses: array<Address.t>,
-  ) => promise<array<TablesStatic.RawEvents.t>> = "getRawEventsPageGtOrEqEventId"
-
-  @module("./DbFunctionsImplementation.js")
-  external getRawEventsPageWithinEventIdRangeInclusive: (
-    Postgres.sql,
-    ~chainId: chainId,
-    ~fromEventIdInclusive: bigint,
-    ~toEventIdInclusive: bigint,
-    ~limit: int,
-    ~contractAddresses: array<Address.t>,
-  ) => promise<array<TablesStatic.RawEvents.t>> = "getRawEventsPageWithinEventIdRangeInclusive"
-
-  ///Returns an array with 1 block number (the highest processed on the given chainId)
-  @module("./DbFunctionsImplementation.js")
-  external readLatestRawEventsBlockNumberProcessedOnChainId: (
-    Postgres.sql,
-    chainId,
-  ) => promise<array<blockNumberRow>> = "readLatestRawEventsBlockNumberProcessedOnChainId"
-
-  let getLatestProcessedBlockNumber = async (~chainId) => {
-    let row = await sql->readLatestRawEventsBlockNumberProcessedOnChainId(chainId)
-
-    row->Belt.Array.get(0)->Belt.Option.map(row => row.blockNumber)
-  }
-
-  @module("./DbFunctionsImplementation.js")
-  external deleteAllRawEventsAfterEventIdentifier: (
-    Postgres.sql,
-    ~eventIdentifier: Types.eventIdentifier,
-  ) => promise<unit> = "deleteAllRawEventsAfterEventIdentifier"
+  let batchSet = makeTableBatchSet(TablesStatic.RawEvents.table, TablesStatic.RawEvents.schema)
 }
 
 module DynamicContractRegistry = {
-  let batchSet = TablesStatic.DynamicContractRegistry.batchSet
-
   @module("./DbFunctionsImplementation.js")
-  external readDynamicContractsOnChainIdAtOrBeforeBlockNumberRaw: (
+  external deleteInvalidDynamicContractsOnRestart: (
     Postgres.sql,
     ~chainId: chainId,
-    ~blockNumber: int,
-  ) => promise<Js.Json.t> = "readDynamicContractsOnChainIdAtOrBeforeBlockNumber"
-
-  let readDynamicContractsOnChainIdAtOrBeforeBlock = async (sql, ~chainId, ~startBlock) => {
-    let json = await readDynamicContractsOnChainIdAtOrBeforeBlockNumberRaw(
-      sql,
-      ~chainId,
-      ~blockNumber=startBlock,
-    )
-    json->S.parseOrRaiseWith(TablesStatic.DynamicContractRegistry.rowsSchema)
-  }
+    ~restartBlockNumber: int,
+    ~restartLogIndex: int,
+  ) => promise<unit> = "deleteInvalidDynamicContractsOnRestart"
 
   @module("./DbFunctionsImplementation.js")
-  external deleteAllDynamicContractRegistrationsAfterEventIdentifier: (
+  external deleteInvalidDynamicContractsHistoryOnRestart: (
     Postgres.sql,
-    ~eventIdentifier: Types.eventIdentifier,
-  ) => promise<unit> = "deleteAllDynamicContractRegistrationsAfterEventIdentifier"
-
-  type preRegisteringEvent = {
-    @as("registering_event_contract_name") registeringEventContractName: string,
-    @as("registering_event_name") registeringEventName: string,
-    @as("registering_event_src_address") registeringEventSrcAddress: Address.t,
-  }
+    ~chainId: chainId,
+    ~restartBlockNumber: int,
+    ~restartLogIndex: int,
+  ) => promise<unit> = "deleteInvalidDynamicContractsHistoryOnRestart"
 
   @module("./DbFunctionsImplementation.js")
-  external readDynamicContractsOnChainIdMatchingEventsRaw: (
-    Postgres.sql,
-    ~chainId: int,
-    ~preRegisteringEvents: array<preRegisteringEvent>,
-  ) => promise<Js.Json.t> = "readDynamicContractsOnChainIdMatchingEvents"
+  external readAllDynamicContractsRaw: (Postgres.sql, ~chainId: chainId) => promise<Js.Json.t> =
+    "readAllDynamicContracts"
 
-  let readDynamicContractsOnChainIdMatchingEvents = async (
-    sql,
-    ~chainId,
-    ~preRegisteringEvents,
-  ) => {
-    switch await readDynamicContractsOnChainIdMatchingEventsRaw(
-      sql,
-      ~chainId,
-      ~preRegisteringEvents,
-    ) {
-    | exception exn =>
-      exn->ErrorHandling.mkLogAndRaise(
-        ~logger=Logging.createChild(~params={"chainId": chainId}),
-        ~msg="Failed to read dynamic contracts on chain id matching events",
-      )
-    | json => json->S.parseOrRaiseWith(TablesStatic.DynamicContractRegistry.rowsSchema)
-    }
+  let readAllDynamicContracts = async (sql: Postgres.sql, ~chainId: chainId) => {
+    let json = await sql->readAllDynamicContractsRaw(~chainId)
+    json->S.parseJsonOrThrow(TablesStatic.DynamicContractRegistry.rowsSchema)
   }
 }
-
-type entityHistoryItem = {
-  block_timestamp: int,
-  chain_id: int,
-  block_number: int,
-  log_index: int,
-  previous_block_timestamp: option<int>,
-  previous_chain_id: option<int>,
-  previous_block_number: option<int>,
-  previous_log_index: option<int>,
-  params: option<Js.Json.t>,
-  entity_type: string,
-  entity_id: string,
-}
-
-let entityHistoryItemSchema = S.object(s => {
-  block_timestamp: s.field("block_timestamp", S.int),
-  chain_id: s.field("chain_id", S.int),
-  block_number: s.field("block_number", S.int),
-  log_index: s.field("log_index", S.int),
-  previous_block_timestamp: s.field("previous_block_timestamp", S.null(S.int)),
-  previous_chain_id: s.field("previous_chain_id", S.null(S.int)),
-  previous_block_number: s.field("previous_block_number", S.null(S.int)),
-  previous_log_index: s.field("previous_log_index", S.null(S.int)),
-  params: s.field("params", S.null(S.json(~validate=false))),
-  entity_type: s.field("entity_type", S.string),
-  entity_id: s.field("entity_id", S.string),
-})
 
 module EntityHistory = {
-  //Given chainId, blockTimestamp, blockNumber
-  //Delete all rows where chain_id = chainId and block_timestamp < blockTimestamp and block_number < blockNumber
-  //But keep 1 row that is satisfies this condition and has the most recent block_number
-  @module("./DbFunctionsImplementation.js")
-  external deleteAllEntityHistoryOnChainBeforeThreshold: (
-    Postgres.sql,
-    ~chainId: int,
-    ~blockNumberThreshold: int,
-    ~blockTimestampThreshold: int,
-  ) => promise<unit> = "deleteAllEntityHistoryOnChainBeforeThreshold"
+  type dynamicSqlQuery
+  module UnorderedMultichain = {
+    @module("./DbFunctionsImplementation.js")
+    external getFirstChangeSerial: (
+      Postgres.sql,
+      ~reorgChainId: int,
+      ~safeBlockNumber: int,
+      ~entityName: Enums.EntityType.t,
+    ) => dynamicSqlQuery = "getFirstChangeSerial_UnorderedMultichain"
+  }
 
-  @module("./DbFunctionsImplementation.js")
-  external batchSetInternal: (
-    Postgres.sql,
-    ~entityHistoriesToSet: array<Js.Json.t>,
-  ) => promise<unit> = "batchInsertEntityHistory"
-
-  let batchSet = (sql, ~entityHistoriesToSet) => {
-    //Encode null for for the with prev types so that it's not undefined
-    batchSetInternal(
-      sql,
-      ~entityHistoriesToSet=entityHistoriesToSet->Belt.Array.map(v =>
-        v->S.serializeOrRaiseWith(entityHistoryItemSchema)
-      ),
-    )
+  module OrderedMultichain = {
+    @module("./DbFunctionsImplementation.js")
+    external getFirstChangeSerial: (
+      Postgres.sql,
+      ~safeBlockTimestamp: int,
+      ~reorgChainId: int,
+      ~safeBlockNumber: int,
+      ~entityName: Enums.EntityType.t,
+    ) => dynamicSqlQuery = "getFirstChangeSerial_OrderedMultichain"
   }
 
   @module("./DbFunctionsImplementation.js")
-  external deleteAllEntityHistoryAfterEventIdentifier: (
+  external getFirstChangeEntityHistoryPerChain: (
     Postgres.sql,
-    ~eventIdentifier: Types.eventIdentifier,
-  ) => promise<unit> = "deleteAllEntityHistoryAfterEventIdentifier"
-
-  type rollbackDiffResponseRaw = {
-    entity_type: Enums.EntityType.t,
-    entity_id: string,
-    chain_id: option<int>,
-    block_timestamp: option<int>,
-    block_number: option<int>,
-    log_index: option<int>,
-    val: option<Js.Json.t>,
-  }
-
-  let rollbackDiffResponseRawSchema = S.object(s => {
-    entity_type: s.field("entity_type", Enums.EntityType.schema),
-    entity_id: s.field("entity_id", S.string),
-    chain_id: s.field("chain_id", S.null(S.int)),
-    block_timestamp: s.field("block_timestamp", S.null(S.int)),
-    block_number: s.field("block_number", S.null(S.int)),
-    log_index: s.field("log_index", S.null(S.int)),
-    val: s.field("val", S.null(S.json(~validate=false))),
-  })
-
-  type previousEntity = {
-    eventIdentifier: Types.eventIdentifier,
-    entity: Entities.entity,
-  }
-
-  type rollbackDiffResponse = {
-    entityType: Enums.EntityType.t,
-    entityId: string,
-    previousEntity: option<previousEntity>,
-  }
-
-  let rollbackDiffResponse_decode = (json: Js.Json.t) => {
-    json
-    ->S.parseWith(rollbackDiffResponseRawSchema)
-    ->Belt.Result.flatMap(raw => {
-      switch raw {
-      | {
-          val: Some(val),
-          chain_id: Some(chainId),
-          block_number: Some(blockNumber),
-          block_timestamp: Some(blockTimestamp),
-          log_index: Some(logIndex),
-          entity_type,
-        } =>
-        Entities.getEntityParamsDecoder(entity_type)(val)->Belt.Result.map(entity => {
-          let eventIdentifier: Types.eventIdentifier = {
-            chainId,
-            blockTimestamp,
-            blockNumber,
-            logIndex,
-          }
-
-          Some({entity, eventIdentifier})
-        })
-      | _ => Ok(None)
-      }->Belt.Result.map(previousEntity => {
-        entityType: raw.entity_type,
-        entityId: raw.entity_id,
-        previousEntity,
-      })
-    })
-  }
-
-  let rollbackDiffResponseArr_decode = (jsonArr: array<Js.Json.t>) => {
-    jsonArr->Belt.Array.map(rollbackDiffResponse_decode)->Utils.Array.transposeResults
-  }
+    ~entityName: Enums.EntityType.t,
+    ~getFirstChangeSerial: Postgres.sql => dynamicSqlQuery,
+  ) => promise<Js.Json.t> = "getFirstChangeEntityHistoryPerChain"
 
   @module("./DbFunctionsImplementation.js")
   external getRollbackDiffInternal: (
     Postgres.sql,
-    ~blockTimestamp: int,
-    ~chainId: int,
-    ~blockNumber: int,
-  ) => promise<array<Js.Json.t>> = "getRollbackDiff"
+    ~entityName: Enums.EntityType.t,
+    ~getFirstChangeSerial: Postgres.sql => dynamicSqlQuery,
+  ) => //Returns an array of entity history rows
+  promise<Js.Json.t> = "getRollbackDiff"
 
-  let getRollbackDiff = (sql, ~blockTimestamp: int, ~chainId: int, ~blockNumber: int) =>
-    getRollbackDiffInternal(sql, ~blockTimestamp, ~chainId, ~blockNumber)->Promise.thenResolve(
-      rollbackDiffResponseArr_decode,
-    )
+  @module("./DbFunctionsImplementation.js")
+  external deleteRolledBackEntityHistory: (
+    Postgres.sql,
+    ~entityName: Enums.EntityType.t,
+    ~getFirstChangeSerial: Postgres.sql => dynamicSqlQuery,
+  ) => promise<unit> = "deleteRolledBackEntityHistory"
 
-  let copyTableToEntityHistory = (sql, ~sourceTableName: Enums.EntityType.t): promise<unit> => {
-    sql->Postgres.unsafe(`SELECT copy_table_to_entity_history('${(sourceTableName :> string)}');`)
+  type chainIdAndBlockNumber = {
+    chainId: int,
+    blockNumber: int,
   }
 
-  let copyAllEntitiesToEntityHistory = sql => {
-    sql->Postgres.beginSql(sql => {
-      Enums.EntityType.variants->Belt.Array.map(entityType => {
-        sql->copyTableToEntityHistory(~sourceTableName=entityType)
+  @module("./DbFunctionsImplementation.js")
+  external pruneStaleEntityHistoryInternal: (
+    Postgres.sql,
+    ~entityName: Enums.EntityType.t,
+    ~safeChainIdAndBlockNumberArray: array<chainIdAndBlockNumber>,
+    // shouldDeepClean is a boolean that determines whether to delete stale history
+    // items of entities that are in the reorg threshold (expensive to calculate)
+    // or to do a shallow clean (only deletes history items of entities that are not in the reorg threshold)
+    ~shouldDeepClean: bool,
+  ) => promise<unit> = "pruneStaleEntityHistory"
+
+  let rollbacksGroup = "Rollbacks"
+
+  let pruneStaleEntityHistory = async (
+    sql,
+    ~entityName,
+    ~safeChainIdAndBlockNumberArray,
+    ~shouldDeepClean,
+  ) => {
+    try await sql->pruneStaleEntityHistoryInternal(
+      ~entityName,
+      ~safeChainIdAndBlockNumberArray,
+      ~shouldDeepClean,
+    ) catch {
+    | exn =>
+      exn->ErrorHandling.mkLogAndRaise(
+        ~msg=`Failed to prune stale entity history`,
+        ~logger=Logging.createChild(
+          ~params={
+            "entityName": entityName,
+            "safeChainIdAndBlockNumberArray": safeChainIdAndBlockNumberArray,
+          },
+        ),
+      )
+    }
+  }
+
+  module Args = {
+    type t =
+      | OrderedMultichain({safeBlockTimestamp: int, reorgChainId: int, safeBlockNumber: int})
+      | UnorderedMultichain({reorgChainId: int, safeBlockNumber: int})
+
+    /**
+    Uses two different methods for determining the first change event after rollback block
+
+    This is needed since unordered multichain mode only cares about any changes that 
+    occurred after the first change on the reorg chain. To prevent skipping or double processing events
+    on the other chains. If for instance there are no entity changes based on the reorg chain, the other
+    chains do not need to be rolled back, and if the reorg chain has new included events, it does not matter
+    that if those events are processed out of order from other chains since this is "unordered_multichain_mode"
+
+    Ordered multichain mode needs to ensure that all chains rollback to any event that occurred after the reorg chain
+    block number. Regardless of whether the reorg chain incurred any changes or not to entities.
+    */
+    let makeGetFirstChangeSerial = (self: t, ~entityName) =>
+      switch self {
+      | OrderedMultichain({safeBlockTimestamp, reorgChainId, safeBlockNumber}) =>
+        sql =>
+          OrderedMultichain.getFirstChangeSerial(
+            sql,
+            ~safeBlockTimestamp,
+            ~reorgChainId,
+            ~safeBlockNumber,
+            ~entityName,
+          )
+      | UnorderedMultichain({reorgChainId, safeBlockNumber}) =>
+        sql =>
+          UnorderedMultichain.getFirstChangeSerial(
+            sql,
+            ~reorgChainId,
+            ~safeBlockNumber,
+            ~entityName,
+          )
+      }
+
+    let getLogger = (self: t, ~entityName) => {
+      switch self {
+      | OrderedMultichain({safeBlockTimestamp, reorgChainId, safeBlockNumber}) =>
+        Logging.createChild(
+          ~params={
+            "type": "OrderedMultichain",
+            "safeBlockTimestamp": safeBlockTimestamp,
+            "reorgChainId": reorgChainId,
+            "safeBlockNumber": safeBlockNumber,
+            "entityName": entityName,
+          },
+        )
+      | UnorderedMultichain({reorgChainId, safeBlockNumber}) =>
+        Logging.createChild(
+          ~params={
+            "type": "UnorderedMultichain",
+            "reorgChainId": reorgChainId,
+            "safeBlockNumber": safeBlockNumber,
+            "entityName": entityName,
+          },
+        )
+      }
+    }
+  }
+
+  let deleteAllEntityHistoryAfterEventIdentifier = async (
+    sql,
+    ~isUnorderedMultichainMode,
+    ~eventIdentifier: Types.eventIdentifier,
+    ~allEntities=Entities.allEntities,
+  ): unit => {
+    let startTime = Hrtime.makeTimer()
+
+    let {chainId, blockNumber, blockTimestamp} = eventIdentifier
+    let args: Args.t = isUnorderedMultichainMode
+      ? UnorderedMultichain({reorgChainId: chainId, safeBlockNumber: blockNumber})
+      : OrderedMultichain({
+          reorgChainId: chainId,
+          safeBlockNumber: blockNumber,
+          safeBlockTimestamp: blockTimestamp,
+        })
+
+    let _ =
+      await allEntities
+      ->Belt.Array.map(async entityMod => {
+        let module(Entity) = entityMod
+        try await deleteRolledBackEntityHistory(
+          sql,
+          ~entityName=Entity.name,
+          ~getFirstChangeSerial=args->Args.makeGetFirstChangeSerial(~entityName=Entity.name),
+        ) catch {
+        | exn =>
+          exn->ErrorHandling.mkLogAndRaise(
+            ~msg=`Failed to delete rolled back entity history`,
+            ~logger=args->Args.getLogger(~entityName=Entity.name),
+          )
+        }
       })
-    })
+      ->Promise.all
+
+    if Env.Benchmark.shouldSaveData {
+      let elapsedTimeMillis = Hrtime.timeSince(startTime)->Hrtime.toMillis->Hrtime.floatFromMillis
+
+      Benchmark.addSummaryData(
+        ~group=rollbacksGroup,
+        ~label=`Delete Rolled Back History Time (ms)`,
+        ~value=elapsedTimeMillis,
+      )
+    }
   }
 
-  let hasRows = () => General.hasRows(sql, ~table=TablesStatic.EntityHistory.table)
+  let getRollbackDiff = async (
+    type entity,
+    sql,
+    args: Args.t,
+    ~entityMod: module(Entities.Entity with type t = entity),
+  ) => {
+    let module(Entity) = entityMod
+    let startTime = Hrtime.makeTimer()
+
+    let diffRes = switch await getRollbackDiffInternal(
+      sql,
+      ~getFirstChangeSerial=args->Args.makeGetFirstChangeSerial(~entityName=Entity.name),
+      ~entityName=Entity.name,
+    ) {
+    | exception exn =>
+      exn->ErrorHandling.mkLogAndRaise(
+        ~msg="Failed to get rollback diff from entity history",
+        ~logger=args->Args.getLogger(~entityName=Entity.name),
+      )
+    | res => res
+    }
+
+    if Env.Benchmark.shouldSaveData {
+      let elapsedTimeMillis = Hrtime.timeSince(startTime)->Hrtime.toMillis->Hrtime.floatFromMillis
+
+      Benchmark.addSummaryData(
+        ~group=rollbacksGroup,
+        ~label=`Diff Creation Time (ms)`,
+        ~value=elapsedTimeMillis,
+      )
+    }
+
+    switch diffRes->S.parseOrThrow(Entity.entityHistory.schemaRows) {
+    | exception exn =>
+      exn->ErrorHandling.mkLogAndRaise(
+        ~msg="Failed to parse rollback diff from entity history",
+        ~logger=args->Args.getLogger(~entityName=Entity.name),
+      )
+    | diffRows => diffRows
+    }
+  }
+
+  module FirstChangeEventPerChain = {
+    type t = Js.Dict.t<FetchState.blockNumberAndLogIndex>
+    let getKey = chainId => chainId->Belt.Int.toString
+    let make = () => Js.Dict.empty()
+    let get = (self: t, ~chainId) => self->Utils.Dict.dangerouslyGetNonOption(getKey(chainId))
+
+    let setIfEarlier = (self: t, ~chainId, ~event: FetchState.blockNumberAndLogIndex) => {
+      let chainKey = chainId->Belt.Int.toString
+      switch self->Utils.Dict.dangerouslyGetNonOption(chainKey) {
+      | Some(existingEvent) =>
+        if (
+          (event.blockNumber, event.logIndex) < (existingEvent.blockNumber, existingEvent.logIndex)
+        ) {
+          self->Js.Dict.set(chainKey, event)
+        }
+      | None => self->Js.Dict.set(chainKey, event)
+      }
+    }
+  }
+
+  let getFirstChangeEventPerChain = async (
+    sql,
+    args: Args.t,
+    ~allEntities=Entities.allEntities,
+  ) => {
+    let startTime = Hrtime.makeTimer()
+    let firstChangeEventPerChain = FirstChangeEventPerChain.make()
+
+    let _ =
+      await allEntities
+      ->Belt.Array.map(async entityMod => {
+        let module(Entity) = entityMod
+        let res = try await getFirstChangeEntityHistoryPerChain(
+          sql,
+          ~entityName=Entity.name,
+          ~getFirstChangeSerial=args->Args.makeGetFirstChangeSerial(~entityName=Entity.name),
+        ) catch {
+        | exn =>
+          exn->ErrorHandling.mkLogAndRaise(
+            ~msg=`Failed to get first change entity history per chain for entity`,
+            ~logger=args->Args.getLogger(~entityName=Entity.name),
+          )
+        }
+
+        let chainHistoryRows = try res->S.parseOrThrow(Entity.entityHistory.schemaRows) catch {
+        | exn =>
+          exn->ErrorHandling.mkLogAndRaise(
+            ~msg=`Failed to parse entity history rows from db on getFirstChangeEntityHistoryPerChain`,
+            ~logger=args->Args.getLogger(~entityName=Entity.name),
+          )
+        }
+
+        chainHistoryRows->Belt.Array.forEach(chainHistoryRow => {
+          firstChangeEventPerChain->FirstChangeEventPerChain.setIfEarlier(
+            ~chainId=chainHistoryRow.current.chain_id,
+            ~event={
+              blockNumber: chainHistoryRow.current.block_number,
+              logIndex: chainHistoryRow.current.log_index,
+            },
+          )
+        })
+      })
+      ->Promise.all
+
+    if Env.Benchmark.shouldSaveData {
+      let elapsedTimeMillis = Hrtime.timeSince(startTime)->Hrtime.toMillis->Hrtime.floatFromMillis
+
+      Benchmark.addSummaryData(
+        ~group=rollbacksGroup,
+        ~label=`Get First Change Event Per Chain Time (ms)`,
+        ~value=elapsedTimeMillis,
+      )
+    }
+
+    firstChangeEventPerChain
+  }
+
+  let hasRows = async sql => {
+    let all =
+      await Entities.allEntities
+      ->Belt.Array.map(async entityMod => {
+        let module(Entity) = entityMod
+        try await General.hasRows(sql, ~table=Entity.entityHistory.table) catch {
+        | exn =>
+          exn->ErrorHandling.mkLogAndRaise(
+            ~msg=`Failed to check if entity history table has rows`,
+            ~logger=Logging.createChild(
+              ~params={
+                "entityName": Entity.name,
+              },
+            ),
+          )
+        }
+      })
+      ->Promise.all
+    all->Belt.Array.some(v => v)
+  }
 }

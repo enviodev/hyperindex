@@ -49,38 +49,22 @@ module Mock = {
 
 module Stubs = {
   //Stub wait for new block
-  let waitForNewBlock = async (
-    ~logger,
-    ~chainWorker,
-    ~currentBlockHeight,
-    ~setCurrentBlockHeight,
-  ) => {
-    (logger, currentBlockHeight, chainWorker)->ignore
-    Mock.mockChainData->MockChainData.getHeight->setCurrentBlockHeight
+  let waitForNewBlock = async (source, ~currentBlockHeight, ~logger) => {
+    (logger, currentBlockHeight, source)->ignore
+    Mock.mockChainData->MockChainData.getHeight
   }
 
-  //Stub executeNextQuery with mock data
-  let executeNextQueryWithMockChainData = async (
-    mockChainData,
+  //Stub executePartitionQuery with mock data
+  let executePartitionQueryWithMockChainData = mockChainData => async (
+    query,
     ~logger,
-    ~chainWorker,
+    ~source,
     ~currentBlockHeight,
-    ~setCurrentBlockHeight,
     ~chain,
-    ~query,
-    ~dispatchAction,
-    ~isPreRegisteringDynamicContracts,
   ) => {
-    (
-      logger,
-      currentBlockHeight,
-      setCurrentBlockHeight,
-      chainWorker,
-      isPreRegisteringDynamicContracts,
-    )->ignore
+    (logger, chain, currentBlockHeight, source)->ignore
 
-    let response = mockChainData->MockChainData.executeQuery(query)
-    dispatchAction(GlobalState.BlockRangeResponse(chain, response))
+    Ok(mockChainData->MockChainData.executeQuery(query))
   }
 
   //Stub for getting block hashes instead of the worker
@@ -113,7 +97,7 @@ module Stubs = {
 
   let dispatchTask = (gsManager, mockChainData, task) => {
     GlobalState.injectedTaskReducer(
-      ~executeNextQuery=executeNextQueryWithMockChainData(mockChainData, ...),
+      ~executeQuery=executePartitionQueryWithMockChainData(mockChainData),
       ~waitForNewBlock,
       ~rollbackLastBlockHashesToReorgLocation=chainFetcher =>
         chainFetcher->ChainFetcher.rollbackLastBlockHashesToReorgLocation(
@@ -145,7 +129,7 @@ Exposing
   @send
   external unsafe: (Postgres.sql, string) => promise<'a> = "unsafe"
 
-  let query = unsafe(DbFunctions.sql, _)
+  let query = unsafe(Db.sql, _)
 
   let getAllRowsInTable = tableName => query(`SELECT * FROM public."${tableName}";`)
 }
@@ -170,7 +154,7 @@ describe("Single Chain Simple Rollback", () => {
     open Stubs
     let dispatchTaskInitalChain = dispatchTask(gsManager, Mock.mockChainData, ...)
     let dispatchTaskReorgChain = dispatchTask(gsManager, Mock.mockChainDataReorg, ...)
-    let dispatchAllTasksInitalChain = () => dispatchAllTasks(gsManager, Mock.mockChainData, ...)
+    let dispatchAllTasksInitalChain = () => dispatchAllTasks(gsManager, Mock.mockChainData)
     tasks := []
 
     await dispatchTaskInitalChain(NextQuery(Chain(chain)))
@@ -189,7 +173,7 @@ describe("Single Chain Simple Rollback", () => {
       [
         UpdateEndOfBlockRangeScannedData({
           blockNumberThreshold: -198,
-          blockTimestampThreshold: 50,
+          blockTimestampThreshold: Some(50),
           chain: MockConfig.chain1337,
           nextEndOfBlockRangeScannedData: {
             blockHash: block2.blockHash,
@@ -206,7 +190,7 @@ describe("Single Chain Simple Rollback", () => {
     )
 
     Assert.equal(
-      getChainFetcher().fetchState->PartitionedFetchState.queueSize,
+      getChainFetcher().fetchState->FetchState.queueSize,
       3,
       ~message="should have 3 events on the queue from the first 3 blocks of inital chainData",
     )
@@ -252,7 +236,7 @@ describe("Single Chain Simple Rollback", () => {
       [
         UpdateEndOfBlockRangeScannedData({
           blockNumberThreshold: -198,
-          blockTimestampThreshold: 50,
+          blockTimestampThreshold: Some(50),
           chain: MockConfig.chain1337,
           nextEndOfBlockRangeScannedData: {
             blockHash: block2.blockHash,
@@ -269,7 +253,7 @@ describe("Single Chain Simple Rollback", () => {
     )
 
     Assert.equal(
-      getChainFetcher().fetchState->PartitionedFetchState.queueSize,
+      getChainFetcher().fetchState->FetchState.queueSize,
       3,
       ~message="should have 3 events on the queue from the first 3 blocks of inital chainData",
     )
@@ -277,10 +261,9 @@ describe("Single Chain Simple Rollback", () => {
     await dispatchAllTasksReorgChain()
 
     let getAllGravatars = async () =>
-      (await Sql.getAllRowsInTable("Gravatar"))
-      ->Array.map(S.parseWith(_, Entities.Gravatar.schema))
-      ->Utils.Array.transposeResults
-      ->Result.getExn
+      (await Sql.getAllRowsInTable("Gravatar"))->Array.map(
+        S.parseJsonOrThrow(_, Entities.Gravatar.schema),
+      )
 
     let gravatars = await getAllGravatars()
 
@@ -345,9 +328,10 @@ describe("Single Chain Simple Rollback", () => {
     Assert.deepEqual(
       tasks.contents,
       [
+        UpdateChainMetaDataAndCheckForExit(NoExit),
         GlobalState.UpdateEndOfBlockRangeScannedData({
           blockNumberThreshold: -198,
-          blockTimestampThreshold: 50,
+          blockTimestampThreshold: Some(50),
           chain: MockConfig.chain1337,
           nextEndOfBlockRangeScannedData: {
             blockHash: block2.blockHash,
@@ -359,7 +343,34 @@ describe("Single Chain Simple Rollback", () => {
         UpdateChainMetaDataAndCheckForExit(NoExit),
         ProcessEventBatch,
         NextQuery(Chain(chain)),
+      ],
+      ~message="Query should have returned with batch to process",
+    )
+
+    await dispatchAllTasksReorgChain()
+
+    let block4 =
+      Mock.mockChainDataReorg
+      ->MockChainData.getBlock(~blockNumber=4)
+      ->Option.getUnsafe
+    Assert.deepEqual(
+      tasks.contents,
+      [
         NextQuery(CheckAllChains),
+        GlobalState.UpdateEndOfBlockRangeScannedData({
+          blockNumberThreshold: -196,
+          blockTimestampThreshold: Some(50),
+          chain: MockConfig.chain1337,
+          nextEndOfBlockRangeScannedData: {
+            blockHash: block4.blockHash,
+            blockNumber: block4.blockNumber,
+            blockTimestamp: block4.blockTimestamp,
+            chainId: 1337,
+          },
+        }),
+        UpdateChainMetaDataAndCheckForExit(NoExit),
+        ProcessEventBatch,
+        NextQuery(Chain(chain)),
         UpdateChainMetaDataAndCheckForExit(NoExit),
         ProcessEventBatch,
       ],
@@ -387,8 +398,8 @@ describe("Single Chain Simple Rollback", () => {
 
     let gravatars = await getAllGravatars()
     Assert.deepEqual(
-      expectedGravatars,
       gravatars,
+      expectedGravatars,
       ~message="First gravatar should roll back and change and second should have received an update",
     )
   })

@@ -11,8 +11,6 @@ module BatchQueue = {
 
   type loadIndex = {
     index: TableIndices.Index.t,
-    fieldName: string,
-    fieldValue: fieldValue,
     fieldValueSchema: S.t<fieldValue>,
     resolve: array<Entities.internalEntity> => unit,
     reject: exn => unit,
@@ -56,13 +54,7 @@ module BatchQueue = {
     }
   }
 
-  let registerLoadByIndex = (
-    batchQueue: t,
-    ~index,
-    ~fieldName,
-    ~fieldValue: 'fieldValue,
-    ~fieldValueSchema: S.t<'fieldValue>,
-  ) => {
+  let registerLoadByIndex = (batchQueue: t, ~index, ~fieldValueSchema: S.t<'fieldValue>) => {
     let indexId = index->TableIndices.Index.toString
     switch batchQueue.byIndex->Utils.Dict.dangerouslyGetNonOption(indexId) {
     | Some(loadRecord) => loadRecord.promise
@@ -72,11 +64,9 @@ module BatchQueue = {
             indexId,
             {
               index,
-              fieldName,
               fieldValueSchema: fieldValueSchema->(
                 Utils.magic: S.t<'fieldValue> => S.t<fieldValue>
               ),
-              fieldValue: fieldValue->(Utils.magic: 'fieldValue => fieldValue),
               resolve,
               reject,
               promise: %raw(`null`),
@@ -100,9 +90,9 @@ type rec t = {
     ~entityMod: module(Entities.InternalEntity),
     ~logger: Pino.t=?,
   ) => promise<array<Entities.internalEntity>>,
-  makeLoadEntitiesByField: (
+  loadEntitiesByField: (
+    ~operator: TableIndices.Operator.t,
     ~entityMod: module(Entities.InternalEntity),
-  ) => (
     ~fieldName: string,
     ~fieldValue: fieldValue,
     ~fieldValueSchema: S.t<fieldValue>,
@@ -173,15 +163,21 @@ let executeLoadEntitiesByIndex = async (
       notInMemory
     })
 
-    let loadEntitiesByField = loadLayer.makeLoadEntitiesByField(~entityMod)
     //Do not do these queries concurrently. They are cpu expensive for
     //postgres
-    await lookupIndexesNotInMemory->Utils.Array.awaitEach(async ({
-      fieldName,
-      fieldValue,
-      fieldValueSchema,
-    }) => {
-      let entities = await loadEntitiesByField(~fieldName, ~fieldValue, ~fieldValueSchema, ~logger)
+    await lookupIndexesNotInMemory->Utils.Array.awaitEach(async ({index, fieldValueSchema}) => {
+      let entities = await loadLayer.loadEntitiesByField(
+        ~operator=switch index {
+        | Single({operator}) => operator
+        },
+        ~entityMod,
+        ~fieldName=index->TableIndices.Index.getFieldName,
+        ~fieldValue=switch index {
+        | Single({fieldValue}) => fieldValue->(Utils.magic: TableIndices.FieldValue.t => fieldValue)
+        },
+        ~fieldValueSchema,
+        ~logger,
+      )
 
       entities->Array.forEach(entity => {
         //Set the entity in the in memory store
@@ -261,12 +257,12 @@ let schedule = async (loadLayer, ~inMemoryStore) => {
   }
 }
 
-let make = (~loadEntitiesByIds, ~makeLoadEntitiesByField) => {
+let make = (~loadEntitiesByIds, ~loadEntitiesByField) => {
   {
     entityBatchQueues: Js.Dict.empty(),
     isScheduled: false,
     loadEntitiesByIds,
-    makeLoadEntitiesByField,
+    loadEntitiesByField,
   }
 }
 
@@ -275,9 +271,8 @@ let make = (~loadEntitiesByIds, ~makeLoadEntitiesByField) => {
 let makeWithDbConnection = () => {
   make(
     ~loadEntitiesByIds=(ids, ~entityMod, ~logger=?) =>
-      DbFunctionsEntities.batchRead(~entityMod)(DbFunctions.sql, ids, ~logger?),
-    ~makeLoadEntitiesByField=(~entityMod) =>
-      DbFunctionsEntities.makeWhereEq(DbFunctions.sql, ~entityMod),
+      DbFunctionsEntities.batchRead(~entityMod)(Db.sql, ids, ~logger?),
+    ~loadEntitiesByField=DbFunctionsEntities.makeWhereQuery(Db.sql),
   )
 }
 
@@ -288,11 +283,11 @@ let useBatchQueue = (
   ~logger,
 ) => {
   let module(Entity) = entityMod
-  switch loadLayer.entityBatchQueues->Utils.Dict.dangerouslyGetNonOption(Entity.key) {
+  switch loadLayer.entityBatchQueues->Utils.Dict.dangerouslyGetNonOption((Entity.name :> string)) {
   | Some(batchQueue) => batchQueue
   | None => {
       let batchQueue = BatchQueue.make(~entityMod, ~logger)
-      loadLayer.entityBatchQueues->Js.Dict.set(Entity.key, batchQueue)
+      loadLayer.entityBatchQueues->Js.Dict.set((Entity.name :> string), batchQueue)
       if !loadLayer.isScheduled {
         let _: promise<unit> = schedule(loadLayer, ~inMemoryStore)
       }
@@ -322,9 +317,10 @@ let makeLoader = (
   }
 }
 
-let makeWhereEqLoader = (
+let makeWhereLoader = (
   type entity,
   loadLayer,
+  ~operator,
   ~entityMod: module(Entities.Entity with type t = entity),
   ~inMemoryStore,
   ~logger,
@@ -338,11 +334,9 @@ let makeWhereEqLoader = (
       ~index=Single({
         fieldName,
         fieldValue: TableIndices.FieldValue.castFrom(fieldValue),
-        operator: Eq,
+        operator,
       }),
       ~fieldValueSchema,
-      ~fieldName,
-      ~fieldValue,
     )
     ->(Utils.magic: promise<array<Entities.internalEntity>> => promise<array<entity>>)
   }

@@ -1,8 +1,8 @@
 module MillisAccum = {
-  type millis = int
+  type millis = float
   type t = {counters: dict<millis>, startTime: Js.Date.t, mutable endTime: Js.Date.t}
   let schema: S.t<t> = S.schema(s => {
-    counters: s.matches(S.dict(S.int)),
+    counters: s.matches(S.dict(S.float)),
     startTime: s.matches(S.string->S.datetime),
     endTime: s.matches(S.string->S.datetime),
   })
@@ -13,33 +13,97 @@ module MillisAccum = {
   }
 
   let increment = (self: t, label, amount) => {
-    switch self.counters->Utils.Dict.dangerouslyGetNonOption(label) {
-    | None => self.counters->Js.Dict.set(label, amount)
-    | Some(current) => self.counters->Js.Dict.set(label, current + amount)
-    }
     self.endTime = Js.Date.make()
+    let amount = amount->Belt.Float.fromInt
+    switch self.counters->Utils.Dict.dangerouslyGetNonOption(label) {
+    | None =>
+      self.counters->Js.Dict.set(label, amount)
+      amount
+    | Some(current) =>
+      let newAmount = current +. amount
+      self.counters->Js.Dict.set(label, newAmount)
+      newAmount
+    }
   }
 }
 
 module SummaryData = {
-  module Group = {
-    type t = dict<array<float>>
-    let schema = S.dict(S.array(S.float))
-    let make = () => Js.Dict.empty()
+  module DataSet = {
+    type t = {
+      count: float,
+      min: float,
+      max: float,
+      sum: BigDecimal.t,
+      sumOfSquares: option<BigDecimal.t>,
+      decimalPlaces: int,
+    }
 
-    let add = (self: t, key: string, value: float) => {
-      switch self->Utils.Dict.dangerouslyGetNonOption(key) {
-      | None => self->Js.Dict.set(key, [value])
-      | Some(arr) => arr->Js.Array2.push(value)->ignore
+    let schema = S.schema(s => {
+      count: s.matches(S.float),
+      min: s.matches(S.float),
+      max: s.matches(S.float),
+      sum: s.matches(BigDecimal.schema),
+      sumOfSquares: s.matches(S.option(BigDecimal.schema)),
+      decimalPlaces: s.matches(S.int),
+    })
+
+    let make = (val: float, ~decimalPlaces=2) => {
+      let bigDecimal = val->BigDecimal.fromFloat
+      {
+        count: 1.,
+        min: val,
+        max: val,
+        sum: bigDecimal,
+        sumOfSquares: Env.Benchmark.shouldSaveStdDev
+          ? Some(bigDecimal->BigDecimal.times(bigDecimal))
+          : None,
+        decimalPlaces,
+      }
+    }
+
+    let add = (self: t, val: float) => {
+      let bigDecimal = val->BigDecimal.fromFloat
+      {
+        count: self.count +. 1.,
+        min: Pervasives.min(self.min, val),
+        max: Pervasives.max(self.max, val),
+        sum: self.sum->BigDecimal.plus(bigDecimal),
+        sumOfSquares: self.sumOfSquares->Belt.Option.map(s =>
+          s->BigDecimal.plus(bigDecimal->BigDecimal.times(bigDecimal))
+        ),
+        decimalPlaces: self.decimalPlaces,
+      }
+    }
+  }
+  module Group = {
+    type t = dict<DataSet.t>
+    let schema: S.t<t> = S.dict(DataSet.schema)
+    let make = (): t => Js.Dict.empty()
+
+    /**
+    Adds a value to the data set for the given key. If the key does not exist, it will be created.
+
+    Returns the updated data set.
+    */
+    let add = (self: t, label, value: float, ~decimalPlaces=2) => {
+      switch self->Utils.Dict.dangerouslyGetNonOption(label) {
+      | None =>
+        let new = DataSet.make(value, ~decimalPlaces)
+        self->Js.Dict.set(label, new)
+        new
+      | Some(dataSet) =>
+        let updated = dataSet->DataSet.add(value)
+        self->Js.Dict.set(label, updated)
+        updated
       }
     }
   }
 
   type t = dict<Group.t>
   let schema = S.dict(Group.schema)
-  let make = () => Js.Dict.empty()
+  let make = (): t => Js.Dict.empty()
 
-  let add = (self: t, ~group, ~label, ~value) => {
+  let add = (self: t, ~group, ~label, ~value, ~decimalPlaces=2) => {
     let group = switch self->Utils.Dict.dangerouslyGetNonOption(group) {
     | None =>
       let newGroup = Group.make()
@@ -48,7 +112,50 @@ module SummaryData = {
     | Some(group) => group
     }
 
-    group->Group.add(label, value)
+    group->Group.add(label, value, ~decimalPlaces)
+  }
+}
+
+module Stats = {
+  open Belt
+  type t = {
+    n: float,
+    mean: float,
+    @as("std-dev") stdDev: option<float>,
+    min: float,
+    max: float,
+    sum: float,
+  }
+
+  let round = (float, ~precision=2) => {
+    let factor = Js.Math.pow_float(~base=10.0, ~exp=precision->Int.toFloat)
+    Js.Math.round(float *. factor) /. factor
+  }
+
+  let makeFromDataSet = (dataSet: SummaryData.DataSet.t) => {
+    let n = dataSet.count
+    let countBigDecimal = n->BigDecimal.fromFloat
+    let mean = dataSet.sum->BigDecimal.div(countBigDecimal)
+
+    let roundBigDecimal = bd =>
+      bd->BigDecimal.decimalPlaces(dataSet.decimalPlaces)->BigDecimal.toNumber
+    let roundFloat = float => float->round(~precision=dataSet.decimalPlaces)
+
+    let stdDev = dataSet.sumOfSquares->Option.map(sumOfSquares => {
+      let variance =
+        sumOfSquares
+        ->BigDecimal.div(countBigDecimal)
+        ->BigDecimal.minus(mean->BigDecimal.times(mean))
+      BigDecimal.sqrt(variance)->roundBigDecimal
+    })
+    {
+      n,
+      mean: mean->roundBigDecimal,
+      stdDev,
+      min: dataSet.min->roundFloat,
+      max: dataSet.max->roundFloat,
+      sum: dataSet.sum->roundBigDecimal,
+    }
   }
 }
 
@@ -68,40 +175,70 @@ module Data = {
     summaryData: SummaryData.make(),
   }
 
-  let incrementMillis = (self: t, ~label, ~amount) => {
-    self.millisAccum->MillisAccum.increment(label, amount)
+  module LiveMetrics = {
+    let addDataSet = if (
+      Env.Benchmark.saveDataStrategy->Env.Benchmark.SaveDataStrategy.shouldSavePrometheus
+    ) {
+      (dataSet: SummaryData.DataSet.t, ~group, ~label) => {
+        let {n, mean, stdDev, min, max, sum} = dataSet->Stats.makeFromDataSet
+        Prometheus.BenchmarkSummaryData.set(~group, ~label, ~n, ~mean, ~stdDev, ~min, ~max, ~sum)
+      }
+    } else {
+      (_dataSet, ~group as _, ~label as _) => ()
+    }
+    let setCounterMillis = if (
+      Env.Benchmark.saveDataStrategy->Env.Benchmark.SaveDataStrategy.shouldSavePrometheus
+    ) {
+      (millisAccum: MillisAccum.t, ~label, ~millis) => {
+        let totalRuntimeMillis =
+          millisAccum.endTime->Js.Date.getTime -. millisAccum.startTime->Js.Date.getTime
+        Prometheus.BenchmarkCounters.set(~label, ~millis, ~totalRuntimeMillis)
+      }
+    } else {
+      (_, ~label as _, ~millis as _) => ()
+    }
   }
 
-  let addSummaryData = (self: t, ~group, ~label, ~value) => {
-    self.summaryData->SummaryData.add(~group, ~label, ~value)
+  let incrementMillis = (self: t, ~label, ~amount) => {
+    let nextMillis = self.millisAccum->MillisAccum.increment(label, amount)
+    self.millisAccum->LiveMetrics.setCounterMillis(~label, ~millis=nextMillis)
+  }
+
+  let addSummaryData = (self: t, ~group, ~label, ~value, ~decimalPlaces=2) => {
+    let updatedDataSet = self.summaryData->SummaryData.add(~group, ~label, ~value, ~decimalPlaces)
+    updatedDataSet->LiveMetrics.addDataSet(~group, ~label)
   }
 }
 
 let data = Data.make()
+let throttler = Throttler.make(
+  ~intervalMillis=Env.ThrottleWrites.jsonFileBenchmarkIntervalMillis,
+  ~logger=Logging.createChild(~params={"context": "Benchmarking framework"}),
+)
 let cacheFileName = "BenchmarkCache.json"
 let cacheFilePath = NodeJsLocal.Path.join(NodeJsLocal.Path.__dirname, cacheFileName)
 
-let currentWrite = ref(Promise.resolve())
-let schedule = ref(() => Promise.resolve())
-
-let saveToCacheFile = data => {
-  let write = () => {
-    let json = data->S.serializeToJsonStringOrRaiseWith(Data.schema)
-    NodeJsLocal.Fs.Promises.writeFile(~filepath=cacheFilePath, ~content=json)
+let saveToCacheFile = if (
+  Env.Benchmark.saveDataStrategy->Env.Benchmark.SaveDataStrategy.shouldSaveJsonFile
+) {
+  //Save to cache file only happens if the strategy is set to json-file
+  data => {
+    let write = () => {
+      let json = data->S.reverseConvertToJsonStringOrThrow(Data.schema)
+      NodeJsLocal.Fs.Promises.writeFile(~filepath=cacheFilePath, ~content=json)
+    }
+    throttler->Throttler.schedule(write)
   }
-  schedule := write
-  let _ = currentWrite.contents->Promise.thenResolve(_ => {
-    currentWrite := schedule.contents()
-  })
+} else {
+  _ => ()
 }
 
 let readFromCacheFile = async () => {
   switch await NodeJsLocal.Fs.Promises.readFile(~filepath=cacheFilePath, ~encoding=Utf8) {
   | exception _ => None
   | content =>
-    switch content->S.parseJsonStringWith(Data.schema) {
-    | Ok(data) => Some(data)
-    | Error(e) =>
+    try content->S.parseJsonStringOrThrow(Data.schema)->Some catch {
+    | S.Raised(e) =>
       Logging.error(
         "Failed to parse benchmark cache file, please delete it and rerun the benchmark",
       )
@@ -110,13 +247,13 @@ let readFromCacheFile = async () => {
   }
 }
 
-let addSummaryData = (~group, ~label, ~value) => {
-  data->Data.addSummaryData(~group, ~label, ~value)
+let addSummaryData = (~group, ~label, ~value, ~decimalPlaces=2) => {
+  let _ = data->Data.addSummaryData(~group, ~label, ~value, ~decimalPlaces)
   data->saveToCacheFile
 }
 
 let incrementMillis = (~label, ~amount) => {
-  data->Data.incrementMillis(~label, ~amount)
+  let _ = data->Data.incrementMillis(~label, ~amount)
   data->saveToCacheFile
 }
 
@@ -127,26 +264,22 @@ let addBlockRangeFetched = (
   ~chainId,
   ~fromBlock,
   ~toBlock,
-  ~fetchStateRegisterId: FetchState.id,
   ~numEvents,
-  ~partitionId,
+  ~numAddresses,
+  ~queryName,
 ) => {
-  let registerName = switch fetchStateRegisterId {
-  | Root => "Root"
-  | DynamicContract(_) => "Dynamic Contract"
-  }
-
-  let group = `BlockRangeFetched Summary for Chain ${chainId->Belt.Int.toString} ${registerName} Register`
+  let group = `BlockRangeFetched Summary for Chain ${chainId->Belt.Int.toString} ${queryName}`
   let add = (label, value) => data->Data.addSummaryData(~group, ~label, ~value=Utils.magic(value))
 
   add("Total Time Elapsed (ms)", totalTimeElapsed)
   add("Parsing Time Elapsed (ms)", parsingTimeElapsed)
   add("Page Fetch Time (ms)", pageFetchTime)
   add("Num Events", numEvents)
+  add("Num Addresses", numAddresses)
   add("Block Range Size", toBlock - fromBlock)
 
   data->Data.incrementMillis(
-    ~label=`Total Time Fetching Chain ${chainId->Belt.Int.toString} Partition ${partitionId->Belt.Int.toString}`,
+    ~label=`Total Time Fetching Chain ${chainId->Belt.Int.toString} ${queryName}`,
     ~amount=totalTimeElapsed,
   )
 
@@ -181,17 +314,8 @@ let addEventProcessing = (
 
 module Summary = {
   open Belt
-  type t = {
-    n: int,
-    mean: float,
-    @as("std-dev") stdDev: float,
-    min: float,
-    max: float,
-    last: float,
-    total: float,
-  }
 
-  type summaryTable = dict<t>
+  type summaryTable = dict<Stats.t>
 
   external logSummaryTable: summaryTable => unit = "console.table"
   external logArrTable: array<'a> => unit = "console.table"
@@ -199,62 +323,6 @@ module Summary = {
   external logDictTable: dict<'a> => unit = "console.table"
 
   external arrayIntToFloat: array<int> => array<float> = "%identity"
-
-  let round = (float, ~precision=2) => {
-    let factor = Js.Math.pow_float(~base=10.0, ~exp=precision->Int.toFloat)
-    Js.Math.round(float *. factor) /. factor
-  }
-
-  let make = (arr: array<float>) => {
-    let div = (floatA, floatB) => floatA /. floatB
-    let n = Array.length(arr)
-    if n == 0 {
-      {n, mean: 0., stdDev: 0., min: 0., max: 0., last: 0., total: 0.}
-    } else {
-      let nFloat = n->Int.toFloat
-      let mean = arr->Array.reduce(0., (acc, time) => acc +. time)->div(nFloat)->round(~precision=2)
-      let stdDev = {
-        let variance =
-          arr
-          ->Array.reduce(0., (acc, val) => {
-            let diff = val -. mean
-            acc +. Js.Math.pow_float(~base=diff, ~exp=2.)
-          })
-          ->div(nFloat)
-
-        variance->Js.Math.sqrt->round(~precision=2)
-      }
-
-      let min =
-        arr
-        ->Array.reduce(None, (acc, val) =>
-          switch acc {
-          | None => val
-          | Some(acc) => Pervasives.min(acc, val)
-          }
-          ->round(~precision=2)
-          ->Some
-        )
-        ->Option.getWithDefault(0.)
-      let max =
-        arr
-        ->Array.reduce(None, (acc, val) =>
-          switch acc {
-          | None => val
-          | Some(acc) => Pervasives.max(acc, val)
-          }
-          ->round(~precision=2)
-          ->Some
-        )
-        ->Option.getWithDefault(0.)
-      let last =
-        arr
-        ->Utils.Array.last
-        ->Option.getWithDefault(0.)
-      let total = arr->Array.reduce(0., (acc, val) => acc +. val)
-      {n, mean, stdDev, min, max, last, total}
-    }
-  }
 
   let printSummary = async () => {
     let data = await readFromCacheFile()
@@ -278,7 +346,9 @@ module Summary = {
       millisAccum.counters
       ->Js.Dict.entries
       ->Array.forEach(((label, millis)) =>
-        timeBreakdown->Js.Array2.push((label, DateFns.durationFromMillis(millis)))->ignore
+        timeBreakdown
+        ->Js.Array2.push((label, DateFns.durationFromMillis(millis->Belt.Int.fromFloat)))
+        ->ignore
       )
 
       timeBreakdown
@@ -290,18 +360,22 @@ module Summary = {
         summaryData
         ->Js.Dict.get(eventProcessingGroup)
         ->Option.flatMap(g => g->Js.Dict.get(batchSizeLabel))
-        ->Option.map(data => data->Array.reduce(0., (acc, d) => acc +. d))
-        ->Option.getWithDefault(0.)
+        ->Option.map(data => data.sum)
+        ->Option.getWithDefault(BigDecimal.zero)
 
       let totalRuntimeMillis =
         millisAccum.endTime->Js.Date.getTime -. millisAccum.startTime->Js.Date.getTime
 
       let totalRuntimeSeconds = totalRuntimeMillis /. 1000.
 
-      let eventsPerSecond = (batchSizesSum /. totalRuntimeSeconds)->round(~precision=2)
+      let eventsPerSecond =
+        batchSizesSum
+        ->BigDecimal.div(BigDecimal.fromFloat(totalRuntimeSeconds))
+        ->BigDecimal.decimalPlaces(2)
+        ->BigDecimal.toNumber
 
       logObjTable({
-        "batch sizes sum": batchSizesSum,
+        "batch sizes sum": batchSizesSum->BigDecimal.toNumber,
         "total runtime (sec)": totalRuntimeSeconds,
         "events per second": eventsPerSecond,
       })
@@ -313,7 +387,7 @@ module Summary = {
         Js.log(groupName)
         group
         ->Js.Dict.entries
-        ->Array.map(((label, values)) => (label, values->make))
+        ->Array.map(((label, values)) => (label, values->Stats.makeFromDataSet))
         ->Js.Dict.fromArray
         ->logDictTable
       })

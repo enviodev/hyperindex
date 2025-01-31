@@ -133,21 +133,6 @@ pub mod codegen {
         Ok(exit3)
     }
 
-    pub async fn npx_codegen(
-        envio_version: String,
-        project_paths: &ParsedProjectPaths,
-    ) -> anyhow::Result<()> {
-        let package = format!("envio@{}", envio_version);
-        let args = vec!["--yes", package.as_str(), "codegen"];
-        execute_command("npx", args, &project_paths.project_root)
-            .await
-            .context(format!(
-                "Failed to run codegen for the envio version {}",
-                envio_version
-            ))?;
-        Ok(())
-    }
-
     pub async fn run_codegen(
         config: &SystemConfig,
         project_paths: &ParsedProjectPaths,
@@ -210,7 +195,8 @@ pub mod start {
 
         if !exit.success() {
             return Err(anyhow!(
-                "Indexer crashed. For more details see the error logs above the TUI. Can't find them? Restart the indexer with the 'TUI_OFF=true pnpm start' command."
+                "Indexer crashed. For more details see the error logs above the TUI. Can't find \
+                 them? Restart the indexer with the 'TUI_OFF=true pnpm start' command."
             ));
         }
         println!(

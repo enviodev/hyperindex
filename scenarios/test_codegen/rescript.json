@@ -31,10 +31,11 @@
   "bs-dependencies": [
     "@rescript/react",
     "generated",
-    "@ryyppy/rescript-promise",
     "rescript-nodejs",
     "rescript-schema",
-    "helpers"
+    "helpers",
+    "envio",
+    "@glennsl/rescript-fetch"
   ],
   "bsc-flags": ["-open RescriptSchema"]
 }

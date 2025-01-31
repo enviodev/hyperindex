@@ -23,11 +23,13 @@ module MakeManager = (S: State) => {
         S.invalidatedActionReducer
       }
       let (nextState, nextTasks) = reducer(self.state, action)
-      self.state = nextState
       switch self.stateUpdatedHook {
-      | Some(hook) => hook(nextState)
-      | None => ()
+      // In ReScript `!==` is shallow equality check rather than `!=`
+      // This is just a check to see if a new object reference was returned
+      | Some(hook) if self.state !== nextState => hook(nextState)
+      | _ => ()
       }
+      self.state = nextState
       nextTasks->Array.forEach(task => dispatchTask(self, task))
     } catch {
     | e =>
@@ -35,11 +37,18 @@ module MakeManager = (S: State) => {
       NodeJsLocal.process->NodeJsLocal.exitWithCode(Failure)
     }
   }
-  and dispatchTask = (self, task: S.task) => Js.Global.setTimeout(() => {
-      S.taskReducer(self.state, task, ~dispatchAction=action =>
-        dispatchAction(~stateId=self.state->S.getId, self, action)
-      )->ignore
+  and dispatchTask = (self, task: S.task) => {
+    let stateId = self.state->S.getId
+    Js.Global.setTimeout(() => {
+      if stateId !== self.state->S.getId {
+        Logging.info("Invalidated task discarded")
+      } else {
+        S.taskReducer(self.state, task, ~dispatchAction=action =>
+          dispatchAction(~stateId, self, action)
+        )->ignore
+      }
     }, 0)->ignore
+  }
 
   let getState = self => self.state
   let setState = (self: t, state: S.t) => self.state = state

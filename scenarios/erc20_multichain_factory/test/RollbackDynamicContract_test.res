@@ -158,7 +158,7 @@ describe("Dynamic contract rollback test", () => {
     }
 
     let getLatestFetchedBlock = chain => {
-      chain->getFetchState->PartitionedFetchState.getLatestFullyFetchedBlock
+      chain->getFetchState->FetchState.getLatestFullyFetchedBlock
     }
 
     let getTokenBalance = (~accountAddress) => chain => {
@@ -177,7 +177,7 @@ describe("Dynamic contract rollback test", () => {
       ->ChainMap.values
       ->Array.reduce(
         0,
-        (accum, chainFetcher) => accum + chainFetcher.fetchState->PartitionedFetchState.queueSize,
+        (accum, chainFetcher) => accum + chainFetcher.fetchState->FetchState.queueSize,
       )
     }
 
@@ -192,8 +192,8 @@ describe("Dynamic contract rollback test", () => {
     await dispatchTask(NextQuery(CheckAllChains))
 
     Assert.deepEqual(
-      [GlobalState.NextQuery(Chain(Mock.Chain1.chain)), NextQuery(Chain(Mock.Chain2.chain))],
       stubDataInitial->Stubs.getTasks,
+      [GlobalState.NextQuery(Chain(Mock.Chain1.chain)), NextQuery(Chain(Mock.Chain2.chain))],
       ~message="Should have completed query to get height, next tasks would be to execute block range query",
     )
 
@@ -270,12 +270,13 @@ describe("Dynamic contract rollback test", () => {
     //Make the first queries (A)
     await dispatchAllTasks()
     Assert.deepEqual(
+      stubDataInitial->Stubs.getTasks,
       [
         Mock.getUpdateEndofBlockRangeScannedData(
           Mock.mockChainDataMap,
           ~chain=Mock.Chain1.chain,
           ~blockNumberThreshold=-199,
-          ~blockTimestampThreshold=25,
+          ~blockTimestampThreshold=Some(25),
           ~blockNumber=1,
         ),
         UpdateChainMetaDataAndCheckForExit(NoExit),
@@ -285,14 +286,13 @@ describe("Dynamic contract rollback test", () => {
           Mock.mockChainDataMap,
           ~chain=Mock.Chain2.chain,
           ~blockNumberThreshold=-198,
-          ~blockTimestampThreshold=25,
+          ~blockTimestampThreshold=Some(25),
           ~blockNumber=2,
         ),
         UpdateChainMetaDataAndCheckForExit(NoExit),
         ProcessEventBatch,
         NextQuery(Chain(Mock.Chain2.chain)),
       ],
-      stubDataInitial->Stubs.getTasks,
       ~message="Should have received a response and next tasks will be to process batch and next query",
     )
 
@@ -323,13 +323,15 @@ describe("Dynamic contract rollback test", () => {
       ~chain2User2Balance=Some(100),
     )
     Assert.deepEqual(
+      stubDataInitial->Stubs.getTasks,
       [
         GlobalState.NextQuery(CheckAllChains),
+        ProcessEventBatch,
         Mock.getUpdateEndofBlockRangeScannedData(
           Mock.mockChainDataMap,
           ~chain=Mock.Chain1.chain,
           ~blockNumberThreshold=-197,
-          ~blockTimestampThreshold=25,
+          ~blockTimestampThreshold=Some(25),
           ~blockNumber=3,
         ),
         UpdateChainMetaDataAndCheckForExit(NoExit),
@@ -339,7 +341,7 @@ describe("Dynamic contract rollback test", () => {
           Mock.mockChainDataMap,
           ~chain=Mock.Chain2.chain,
           ~blockNumberThreshold=-195,
-          ~blockTimestampThreshold=25,
+          ~blockTimestampThreshold=Some(25),
           ~blockNumber=5,
         ),
         UpdateChainMetaDataAndCheckForExit(NoExit),
@@ -347,8 +349,8 @@ describe("Dynamic contract rollback test", () => {
         NextQuery(Chain(Mock.Chain2.chain)),
         UpdateChainMetaDataAndCheckForExit(NoExit),
         ProcessEventBatch,
+        PruneStaleEntityHistory,
       ],
-      stubDataInitial->Stubs.getTasks,
       ~message="Should have processed a batch and run next queries on all chains",
     )
 
@@ -359,29 +361,25 @@ describe("Dynamic contract rollback test", () => {
         NextQuery(CheckAllChains),
       ]
 
-    let getFetchStateRegisterId = () =>
-      switch getFetchState(Mock.Chain1.chain)->PartitionedFetchState.getNextQueriesOrThrow(
-        ~currentBlockHeight=6,
-        ~maxPerChainQueueSize=100_000,
-        ~partitionsCurrentlyFetching=Set.Int.empty,
-      ) {
-      | (NextQuery([q]), _) => q.fetchStateRegisterId
-      | _ => raise(Not_found)
-      }
+    Assert.deepEqual(
+      getFetchState(Mock.Chain1.chain).partitions->Array.map(p => p.id),
+      ["0"],
+      ~message=`Should have only one partition`,
+    )
 
-    Assert.deepEqual(FetchState.Root, getFetchStateRegisterId())
     //Process batch 2 of events
     //And make queries (C)
     await dispatchAllTasks()
 
     Assert.deepEqual(
+      stubDataInitial->Stubs.getTasks,
       [
         GlobalState.NextQuery(CheckAllChains),
         Mock.getUpdateEndofBlockRangeScannedData(
           Mock.mockChainDataMap,
           ~chain=Mock.Chain1.chain,
           ~blockNumberThreshold=-195,
-          ~blockTimestampThreshold=25,
+          ~blockTimestampThreshold=Some(25),
           ~blockNumber=5,
         ),
         UpdateChainMetaDataAndCheckForExit(NoExit),
@@ -391,7 +389,7 @@ describe("Dynamic contract rollback test", () => {
           Mock.mockChainDataMap,
           ~chain=Mock.Chain2.chain,
           ~blockNumberThreshold=-192,
-          ~blockTimestampThreshold=25,
+          ~blockTimestampThreshold=Some(25),
           ~blockNumber=8,
         ),
         UpdateChainMetaDataAndCheckForExit(NoExit),
@@ -400,15 +398,31 @@ describe("Dynamic contract rollback test", () => {
         UpdateChainMetaDataAndCheckForExit(NoExit),
         ProcessEventBatch,
         NextQuery(CheckAllChains),
+        PruneStaleEntityHistory,
       ],
-      stubDataInitial->Stubs.getTasks,
       ~message="Next round of tasks after query C",
     )
 
+    let partitions = getFetchState(Mock.Chain1.chain).partitions
     Assert.deepEqual(
-      FetchState.DynamicContract({blockNumber: 3, logIndex: 0}),
-      getFetchStateRegisterId(),
+      partitions->Array.map(p => p.id),
+      ["0", "1"],
+      ~message=`Should get a dc partition`,
     )
+    let dcPartition = partitions->Js.Array2.unsafe_get(1)
+    Assert.deepEqual(
+      dcPartition.latestFetchedBlock,
+      {
+        {blockNumber: 2, blockTimestamp: 0}
+      },
+      ~message=`Should get a root partition`,
+    )
+    Assert.deepEqual(
+      dcPartition.dynamicContracts->Array.length,
+      1,
+      ~message=`Should have a single dc`,
+    )
+
     await makeAssertions(
       ~queryName="C",
       ~chain1LatestFetchBlock=2, //dynamic contract registered and fetchState set to block before registration (dyn contract query not yet made)
@@ -437,7 +451,7 @@ describe("Dynamic contract rollback test", () => {
           Mock.mockChainDataMap,
           ~chain=Mock.Chain1.chain,
           ~blockNumberThreshold=-196,
-          ~blockTimestampThreshold=25,
+          ~blockTimestampThreshold=Some(25),
           ~blockNumber=4,
         ),
         UpdateChainMetaDataAndCheckForExit(NoExit),
@@ -447,7 +461,7 @@ describe("Dynamic contract rollback test", () => {
           Mock.mockChainDataMap,
           ~chain=Mock.Chain2.chain,
           ~blockNumberThreshold=-191,
-          ~blockTimestampThreshold=25,
+          ~blockTimestampThreshold=Some(25),
           ~blockNumber=9,
         ),
         UpdateChainMetaDataAndCheckForExit(NoExit),
@@ -455,6 +469,7 @@ describe("Dynamic contract rollback test", () => {
         NextQuery(Chain(Mock.Chain2.chain)),
         UpdateChainMetaDataAndCheckForExit(NoExit),
         ProcessEventBatch,
+        PruneStaleEntityHistory,
       ],
       stubDataInitial->Stubs.getTasks,
       ~message="Next round of tasks after query D",

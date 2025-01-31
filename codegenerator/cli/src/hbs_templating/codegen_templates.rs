@@ -1,4 +1,4 @@
-use std::{collections::HashMap, path::PathBuf, vec};
+use std::{collections::HashMap, collections::HashSet, path::PathBuf, vec};
 
 use super::hbs_dir_generator::HandleBarsDirGenerator;
 use crate::{
@@ -16,7 +16,9 @@ use crate::{
         handler_paths::HandlerPathsTemplate, path_utils::add_trailing_relative_dot,
         ParsedProjectPaths,
     },
-    rescript_types::{RescriptRecordField, RescriptTypeExpr, RescriptTypeIdent},
+    rescript_types::{
+        RescriptRecordField, RescriptSchemaMode, RescriptTypeExpr, RescriptTypeIdent,
+    },
     template_dirs::TemplateDirs,
     utils::text::{Capitalize, CapitalizedOptions, CaseOptions},
 };
@@ -186,7 +188,7 @@ impl EntityParamTypeTemplate {
 
         Ok(EntityParamTypeTemplate {
             field_name: field.name.to_capitalized_options(),
-            res_schema_code: res_type.to_rescript_schema(),
+            res_schema_code: res_type.to_rescript_schema(&RescriptSchemaMode::ForDb),
             res_type,
             is_derived_from,
             is_entity_field,
@@ -337,6 +339,7 @@ pub struct EventMod {
     pub convert_hyper_sync_event_args_code: String,
     pub event_filter_type: String,
     pub get_topic_selection_code: String,
+    pub custom_field_selection: Option<system_config::FieldSelection>,
     pub fuel_event_kind: Option<FuelEventKind>,
 }
 
@@ -365,33 +368,86 @@ impl EventMod {
             )),
         };
 
+        let event_id = match self.fuel_event_kind {
+            None => format!("{sighash}_{topic_count}"),
+            Some(FuelEventKind::Mint) => "mint".to_string(),
+            Some(FuelEventKind::Burn) => "burn".to_string(),
+            Some(FuelEventKind::Call) => "call".to_string(),
+            Some(FuelEventKind::Transfer) => "transfer".to_string(),
+            Some(FuelEventKind::LogData(_)) => sighash.to_string(),
+        };
+
+        let (block_type, block_schema, transaction_type, transaction_schema) =
+            match self.custom_field_selection {
+                Some(ref field_selection) => {
+                    let field_selection = FieldSelection::new(FieldSelectionOptions {
+                        transaction_fields: field_selection.transaction_fields.clone(),
+                        block_fields: field_selection.block_fields.clone(),
+                        transaction_type_name: "transaction".to_string(),
+                        block_type_name: "block".to_string(),
+                    });
+                    (
+                        field_selection.block_type,
+                        field_selection.block_schema,
+                        field_selection.transaction_type,
+                        field_selection.transaction_schema,
+                    )
+                }
+                None => (
+                    "Block.t".to_string(),
+                    "Block.schema".to_string(),
+                    "Transaction.t".to_string(),
+                    "Transaction.schema".to_string(),
+                ),
+            };
+
         let non_event_mod_code = match fuel_event_kind_code {
             None => "".to_string(),
             Some(fuel_event_kind_code) => format!(
                 r#"
-let register = (): fuelEventConfig => {{
+let register = (): Internal.fuelEventConfig => {{
   name,
+  contractName,
   kind: {fuel_event_kind_code},
   isWildcard: (handlerRegister->HandlerTypes.Register.getEventOptions).isWildcard,
-  handlerRegister: handlerRegister->(Utils.magic: HandlerTypes.Register.t<eventArgs> => HandlerTypes.Register.t<internalEventArgs>),
-  paramsRawEventSchema: paramsRawEventSchema->(Utils.magic: S.t<eventArgs> => S.t<internalEventArgs>),
+  loader: handlerRegister->HandlerTypes.Register.getLoader,
+  handler: handlerRegister->HandlerTypes.Register.getHandler,
+  contractRegister: handlerRegister->HandlerTypes.Register.getContractRegister,
+  paramsRawEventSchema: paramsRawEventSchema->(Utils.magic: S.t<eventArgs> => S.t<Internal.eventParams>),
 }}"#
             ),
         };
 
         format!(
             r#"
+let id = "{event_id}"
 let sighash = "{sighash}"
-let topicCount = {topic_count}
 let name = "{event_name}"
 let contractName = contractName
 
 @genType
 type eventArgs = {data_type}
+@genType
+type block = {block_type}
+@genType
+type transaction = {transaction_type}
+
+@genType
+type event = Internal.genericEvent<eventArgs, block, transaction>
+@genType
+type loader<'loaderReturn> = Internal.genericLoader<Internal.genericLoaderArgs<event, loaderContext>, 'loaderReturn>
+@genType
+type handler<'loaderReturn> = Internal.genericHandler<Internal.genericHandlerArgs<event, handlerContext, 'loaderReturn>>
+@genType
+type contractRegister = Internal.genericContractRegister<Internal.genericContractRegisterArgs<event, contractRegistrations>>
+
 let paramsRawEventSchema = {params_raw_event_schema}
+let blockSchema = {block_schema}
+let transactionSchema = {transaction_schema}
+
 let convertHyperSyncEventArgs = {convert_hyper_sync_event_args_code}
 
-let handlerRegister: HandlerTypes.Register.t<eventArgs> = HandlerTypes.Register.make(
+let handlerRegister: HandlerTypes.Register.t = HandlerTypes.Register.make(
   ~topic0=sighash->EvmTypes.Hex.fromStringUnsafe,
   ~contractName,
   ~eventName=name,
@@ -526,12 +582,13 @@ impl EventTemplate {
             sighash: config_event.sighash.to_string(),
             topic_count: 0, //Default to 0 for fuel,
             event_name: event_name.clone(),
-            data_type: "fuelSupplyParams".to_string(),
-            params_raw_event_schema: "fuelSupplyParamsSchema".to_string(),
+            data_type: "Internal.fuelSupplyParams".to_string(),
+            params_raw_event_schema: "Internal.fuelSupplyParamsSchema".to_string(),
             convert_hyper_sync_event_args_code: Self::CONVERT_HYPER_SYNC_EVENT_ARGS_NOOP
                 .to_string(),
             event_filter_type: Self::EVENT_FILTER_TYPE_STUB.to_string(),
             get_topic_selection_code: Self::GET_TOPIC_SELECTION_CODE_STUB.to_string(),
+            custom_field_selection: config_event.field_selection.clone(),
             fuel_event_kind: Some(fuel_event_kind),
         };
         EventTemplate {
@@ -550,12 +607,13 @@ impl EventTemplate {
             sighash: config_event.sighash.to_string(),
             topic_count: 0, //Default to 0 for fuel,
             event_name: event_name.clone(),
-            data_type: "fuelTransferParams".to_string(),
-            params_raw_event_schema: "fuelTransferParamsSchema".to_string(),
+            data_type: "Internal.fuelTransferParams".to_string(),
+            params_raw_event_schema: "Internal.fuelTransferParamsSchema".to_string(),
             convert_hyper_sync_event_args_code: Self::CONVERT_HYPER_SYNC_EVENT_ARGS_NOOP
                 .to_string(),
             event_filter_type: Self::EVENT_FILTER_TYPE_STUB.to_string(),
             get_topic_selection_code: Self::GET_TOPIC_SELECTION_CODE_STUB.to_string(),
+            custom_field_selection: config_event.field_selection.clone(),
             fuel_event_kind: Some(fuel_event_kind),
         };
         EventTemplate {
@@ -609,11 +667,12 @@ impl EventTemplate {
                     event_name: event_name.clone(),
                     data_type: data_type_expr.to_string(),
                     params_raw_event_schema: data_type_expr
-                        .to_rescript_schema(&"eventArgs".to_string()),
+                        .to_rescript_schema(&"eventArgs".to_string(), &RescriptSchemaMode::ForDb),
                     convert_hyper_sync_event_args_code:
                         Self::generate_convert_hyper_sync_event_args_code(params),
                     event_filter_type: Self::generate_event_filter_type(params),
                     get_topic_selection_code: Self::generate_get_topic_selection_code(params),
+                    custom_field_selection: config_event.field_selection.clone(),
                     fuel_event_kind: None,
                 };
 
@@ -634,13 +693,14 @@ impl EventTemplate {
                             data_type: type_indent.to_string(),
                             params_raw_event_schema: format!(
                                 "{}->Utils.Schema.coerceToJsonPgType",
-                                type_indent.to_rescript_schema()
+                                type_indent.to_rescript_schema(&RescriptSchemaMode::ForDb)
                             ),
                             convert_hyper_sync_event_args_code:
                                 Self::CONVERT_HYPER_SYNC_EVENT_ARGS_NOOP.to_string(),
                             event_filter_type: Self::EVENT_FILTER_TYPE_STUB.to_string(),
                             get_topic_selection_code: Self::GET_TOPIC_SELECTION_CODE_STUB
                                 .to_string(),
+                            custom_field_selection: config_event.field_selection.clone(),
                             fuel_event_kind: Some(fuel_event_kind),
                         };
 
@@ -714,7 +774,7 @@ let eventSignatures = [{}]"#,
                     // we need to remember that abi might contain ` and we should escape it
                     abi.path_buf.to_string_lossy(),
                     all_abi_type_declarations.to_string(),
-                    all_abi_type_declarations.to_rescript_schema()
+                    all_abi_type_declarations.to_rescript_schema(&RescriptSchemaMode::ForDb)
                 )
             }
         };
@@ -850,16 +910,20 @@ struct FieldSelection {
     transaction_schema: String,
     block_type: String,
     block_schema: String,
-    block_raw_event_type: String,
-    block_raw_event_schema: String,
+}
+
+struct FieldSelectionOptions {
+    transaction_fields: Vec<SelectedField>,
+    block_fields: Vec<SelectedField>,
+    transaction_type_name: String,
+    block_type_name: String,
 }
 
 impl FieldSelection {
-    fn new(transaction_fields: &Vec<SelectedField>, block_fields: &Vec<SelectedField>) -> Self {
+    fn new(options: FieldSelectionOptions) -> Self {
         let mut block_field_templates = vec![];
         let mut all_block_fields = vec![];
-        let mut raw_events_block_fields = vec![];
-        for field in block_fields.iter().cloned() {
+        for field in options.block_fields.into_iter() {
             let name: CaseOptions = field.name.into();
 
             block_field_templates.push(SelectedFieldTemplate {
@@ -870,14 +934,11 @@ impl FieldSelection {
 
             let record_field = RescriptRecordField::new(name.camel, field.data_type);
             all_block_fields.push(record_field.clone());
-            if field.skip_raw_events {
-                raw_events_block_fields.push(record_field);
-            }
         }
 
         let mut transaction_field_templates = vec![];
         let mut all_transaction_fields = vec![];
-        for field in transaction_fields.iter().cloned() {
+        for field in options.transaction_fields.into_iter() {
             let name: CaseOptions = field.name.into();
 
             transaction_field_templates.push(SelectedFieldTemplate {
@@ -891,24 +952,62 @@ impl FieldSelection {
         }
 
         let block_expr = RescriptTypeExpr::Record(all_block_fields);
-        let block_raw_event_expr = RescriptTypeExpr::Record(raw_events_block_fields);
         let transaction_expr = RescriptTypeExpr::Record(all_transaction_fields);
 
         Self {
             transaction_fields: transaction_field_templates,
             block_fields: block_field_templates,
             transaction_type: transaction_expr.to_string(),
-            transaction_schema: transaction_expr.to_rescript_schema(&"t".to_string()),
+            transaction_schema: transaction_expr.to_rescript_schema(
+                &options.transaction_type_name,
+                &RescriptSchemaMode::ForFieldSelection,
+            ),
             block_type: block_expr.to_string(),
-            block_schema: block_expr.to_rescript_schema(&"t".to_string()),
-            block_raw_event_schema: block_raw_event_expr
-                .to_rescript_schema(&"rawEventFields".to_string()),
-            block_raw_event_type: block_raw_event_expr.to_string(),
+            block_schema: block_expr.to_rescript_schema(
+                &options.block_type_name,
+                &RescriptSchemaMode::ForFieldSelection,
+            ),
         }
     }
 
-    fn from_config_field_selection(cfg: &system_config::FieldSelection) -> Self {
-        Self::new(&cfg.transaction_fields, &cfg.block_fields)
+    fn global_selection(cfg: &system_config::FieldSelection) -> Self {
+        Self::new(FieldSelectionOptions {
+            transaction_fields: cfg.transaction_fields.clone(),
+            block_fields: cfg.block_fields.clone(),
+            transaction_type_name: "t".to_string(),
+            block_type_name: "t".to_string(),
+        })
+    }
+
+    fn aggregated_selection(cfg: &system_config::SystemConfig) -> Self {
+        let mut transaction_fields: HashSet<_> = cfg
+            .field_selection
+            .transaction_fields
+            .iter()
+            .cloned()
+            .collect();
+        let mut block_fields: HashSet<_> =
+            cfg.field_selection.block_fields.iter().cloned().collect();
+
+        cfg.contracts.iter().for_each(|(_name, contract)| {
+            contract.events.iter().for_each(|event| {
+                if let Some(field_selection) = &event.field_selection {
+                    field_selection.transaction_fields.iter().for_each(|field| {
+                        transaction_fields.insert(field.clone());
+                    });
+                    field_selection.block_fields.iter().for_each(|field| {
+                        block_fields.insert(field.clone());
+                    });
+                }
+            });
+        });
+
+        Self::new(FieldSelectionOptions {
+            transaction_fields: transaction_fields.into_iter().collect::<Vec<_>>(),
+            block_fields: block_fields.into_iter().collect::<Vec<_>>(),
+            transaction_type_name: "t".to_string(),
+            block_type_name: "t".to_string(),
+        })
     }
 }
 
@@ -934,6 +1033,7 @@ pub struct ProjectTemplate {
     enable_raw_events: bool,
     has_multiple_events: bool,
     field_selection: FieldSelection,
+    aggregated_field_selection: FieldSelection,
     is_evm_ecosystem: bool,
     is_fuel_ecosystem: bool,
     //Used for the package.json reference to handlers in generated
@@ -1020,7 +1120,9 @@ impl ProjectTemplate {
             diff_from_current(&project_paths.project_root, &project_paths.generated)
                 .context("Failed to diff generated to root path")?;
 
-        let field_selection = FieldSelection::from_config_field_selection(&cfg.field_selection);
+        let global_field_selection = FieldSelection::global_selection(&cfg.field_selection);
+        // TODO: Remove schemas for aggreaged, since they are not used in runtime
+        let aggregated_field_selection = FieldSelection::aggregated_selection(&cfg);
 
         Ok(ProjectTemplate {
             project_name: cfg.name.clone(),
@@ -1035,9 +1137,10 @@ impl ProjectTemplate {
             should_save_full_history: cfg.save_full_history,
             enable_raw_events: cfg.enable_raw_events,
             has_multiple_events,
-            field_selection,
-            is_evm_ecosystem: cfg.ecosystem == Ecosystem::Evm,
-            is_fuel_ecosystem: cfg.ecosystem == Ecosystem::Fuel,
+            field_selection: global_field_selection,
+            aggregated_field_selection,
+            is_evm_ecosystem: cfg.get_ecosystem() == Ecosystem::Evm,
+            is_fuel_ecosystem: cfg.get_ecosystem() == Ecosystem::Fuel,
             //Used for the package.json reference to handlers in generated
             relative_path_to_root_from_generated,
         })
@@ -1054,6 +1157,7 @@ mod test {
     };
     use pretty_assertions::assert_eq;
     use std::vec;
+    use system_config::FieldSelection;
 
     fn get_per_contract_events_vec_helper(
         event_names: Vec<&str>,
@@ -1103,7 +1207,10 @@ mod test {
 
         let rpc_config1 = RpcConfig {
             urls: vec!["https://eth.com".to_string()],
-            sync_config: system_config::SyncConfig::default(),
+            sync_config: system_config::SyncConfig {
+                acceleration_additive: 2_000,
+                ..system_config::SyncConfig::default()
+            },
         };
 
         let network1 = NetworkTemplate {
@@ -1147,7 +1254,10 @@ mod test {
 
         let rpc_config1 = RpcConfig {
             urls: vec!["https://eth.com".to_string()],
-            sync_config: system_config::SyncConfig::default(),
+            sync_config: system_config::SyncConfig {
+                acceleration_additive: 2_000,
+                ..system_config::SyncConfig::default()
+            },
         };
         let network1 = NetworkTemplate {
             id: 1,
@@ -1161,7 +1271,10 @@ mod test {
                 // Should support fallback urls
                 "https://eth.com/fallback".to_string(),
             ],
-            sync_config: system_config::SyncConfig::default(),
+            sync_config: system_config::SyncConfig {
+                acceleration_additive: 2_000,
+                ..system_config::SyncConfig::default()
+            },
         };
 
         let network2 = NetworkTemplate {
@@ -1307,14 +1420,31 @@ mod test {
             params,
             module_code: format!(
                 r#"
+let id = "{sighash}_1"
 let sighash = "{sighash}"
-let topicCount = 1
 let name = "NewGravatar"
 let contractName = contractName
 
 @genType
 type eventArgs = {{id: bigint, owner: Address.t, displayName: string, imageUrl: string}}
+@genType
+type block = Block.t
+@genType
+type transaction = Transaction.t
+
+@genType
+type event = Internal.genericEvent<eventArgs, block, transaction>
+@genType
+type loader<'loaderReturn> = Internal.genericLoader<Internal.genericLoaderArgs<event, loaderContext>, 'loaderReturn>
+@genType
+type handler<'loaderReturn> = Internal.genericHandler<Internal.genericHandlerArgs<event, handlerContext, 'loaderReturn>>
+@genType
+type contractRegister = Internal.genericContractRegister<Internal.genericContractRegisterArgs<event, contractRegistrations>>
+
 let paramsRawEventSchema = S.object((s): eventArgs => {{id: s.field("id", BigInt.schema), owner: s.field("owner", Address.schema), displayName: s.field("displayName", S.string), imageUrl: s.field("imageUrl", S.string)}})
+let blockSchema = Block.schema
+let transactionSchema = Transaction.schema
+
 let convertHyperSyncEventArgs = (decodedEvent: HyperSyncClient.Decoder.decodedEvent): eventArgs => {{
       {{
         id: decodedEvent.body->Js.Array2.unsafe_get(0)->HyperSyncClient.Decoder.toUnderlying->Utils.magic,
@@ -1324,7 +1454,7 @@ let convertHyperSyncEventArgs = (decodedEvent: HyperSyncClient.Decoder.decodedEv
       }}
     }}
 
-let handlerRegister: HandlerTypes.Register.t<eventArgs> = HandlerTypes.Register.make(
+let handlerRegister: HandlerTypes.Register.t = HandlerTypes.Register.make(
   ~topic0=sighash->EvmTypes.Hex.fromStringUnsafe,
   ~contractName,
   ~eventName=name,
@@ -1346,6 +1476,7 @@ let getTopicSelection = (eventFilters) => eventFilters->SingleOrMultiple.normali
             kind: system_config::EventKind::Params(vec![]),
             sighash: "0x50f7d27e90d1a5a38aeed4ceced2e8ec1ff185737aca96d15791b470d3f17363"
                 .to_string(),
+            field_selection: None,
         })
         .unwrap();
 
@@ -1356,17 +1487,101 @@ let getTopicSelection = (eventFilters) => eventFilters->SingleOrMultiple.normali
                 params: vec![],
                 module_code: format!(
                     r#"
+let id = "0x50f7d27e90d1a5a38aeed4ceced2e8ec1ff185737aca96d15791b470d3f17363_1"
 let sighash = "0x50f7d27e90d1a5a38aeed4ceced2e8ec1ff185737aca96d15791b470d3f17363"
-let topicCount = 1
 let name = "NewGravatar"
 let contractName = contractName
 
 @genType
 type eventArgs = unit
-let paramsRawEventSchema = S.literal(%raw(`null`))->S.variant(_ => ())
+@genType
+type block = Block.t
+@genType
+type transaction = Transaction.t
+
+@genType
+type event = Internal.genericEvent<eventArgs, block, transaction>
+@genType
+type loader<'loaderReturn> = Internal.genericLoader<Internal.genericLoaderArgs<event, loaderContext>, 'loaderReturn>
+@genType
+type handler<'loaderReturn> = Internal.genericHandler<Internal.genericHandlerArgs<event, handlerContext, 'loaderReturn>>
+@genType
+type contractRegister = Internal.genericContractRegister<Internal.genericContractRegisterArgs<event, contractRegistrations>>
+
+let paramsRawEventSchema = S.literal(%raw(`null`))->S.to(_ => ())
+let blockSchema = Block.schema
+let transactionSchema = Transaction.schema
+
 let convertHyperSyncEventArgs = (Utils.magic: HyperSyncClient.Decoder.decodedEvent => eventArgs)
 
-let handlerRegister: HandlerTypes.Register.t<eventArgs> = HandlerTypes.Register.make(
+let handlerRegister: HandlerTypes.Register.t = HandlerTypes.Register.make(
+  ~topic0=sighash->EvmTypes.Hex.fromStringUnsafe,
+  ~contractName,
+  ~eventName=name,
+)
+
+@genType
+type eventFilter = {{  }}
+
+let getTopicSelection = (eventFilters) => eventFilters->SingleOrMultiple.normalizeOrThrow->Belt.Array.map(_eventFilter => LogSelection.makeTopicSelection(~topic0=[sighash->EvmTypes.Hex.fromStringUnsafe], )->Utils.unwrapResultExn)
+"#
+                ),
+            }
+        );
+    }
+
+    #[test]
+    fn event_template_with_custom_field_selection() {
+        let event_template = EventTemplate::from_config_event(&system_config::Event {
+            name: "NewGravatar".to_string(),
+            kind: system_config::EventKind::Params(vec![]),
+            sighash: "0x50f7d27e90d1a5a38aeed4ceced2e8ec1ff185737aca96d15791b470d3f17363"
+                .to_string(),
+            field_selection: Some(FieldSelection {
+                block_fields: vec![],
+                transaction_fields: vec![SelectedField {
+                    name: "from".to_string(),
+                    data_type: RescriptTypeIdent::option(RescriptTypeIdent::Address),
+                }],
+            }),
+        })
+        .unwrap();
+
+        assert_eq!(
+            event_template,
+            EventTemplate {
+                name: "NewGravatar".to_string(),
+                params: vec![],
+                module_code: format!(
+                    r#"
+let id = "0x50f7d27e90d1a5a38aeed4ceced2e8ec1ff185737aca96d15791b470d3f17363_1"
+let sighash = "0x50f7d27e90d1a5a38aeed4ceced2e8ec1ff185737aca96d15791b470d3f17363"
+let name = "NewGravatar"
+let contractName = contractName
+
+@genType
+type eventArgs = unit
+@genType
+type block = {{}}
+@genType
+type transaction = {{from: option<Address.t>}}
+
+@genType
+type event = Internal.genericEvent<eventArgs, block, transaction>
+@genType
+type loader<'loaderReturn> = Internal.genericLoader<Internal.genericLoaderArgs<event, loaderContext>, 'loaderReturn>
+@genType
+type handler<'loaderReturn> = Internal.genericHandler<Internal.genericHandlerArgs<event, handlerContext, 'loaderReturn>>
+@genType
+type contractRegister = Internal.genericContractRegister<Internal.genericContractRegisterArgs<event, contractRegistrations>>
+
+let paramsRawEventSchema = S.literal(%raw(`null`))->S.to(_ => ())
+let blockSchema = S.object((_): block => {{}})
+let transactionSchema = S.object((s): transaction => {{from: s.field("from", S.option(Address.schema))}})
+
+let convertHyperSyncEventArgs = (Utils.magic: HyperSyncClient.Decoder.decodedEvent => eventArgs)
+
+let handlerRegister: HandlerTypes.Register.t = HandlerTypes.Register.make(
   ~topic0=sighash->EvmTypes.Hex.fromStringUnsafe,
   ~contractName,
   ~eventName=name,

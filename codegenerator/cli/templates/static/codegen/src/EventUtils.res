@@ -12,7 +12,7 @@ let getEventComparator = (multiChainEventIndex: multiChainEventIndex) => {
 }
 
 let getEventComparatorFromQueueItem = (
-  {chain, timestamp, blockNumber, logIndex}: Types.eventBatchQueueItem,
+  {chain, timestamp, blockNumber, logIndex}: Internal.eventItem,
 ) => {
   let chainId = chain->ChainMap.Chain.toChainId
   (timestamp, chainId, blockNumber, logIndex)
@@ -27,11 +27,6 @@ type eventIndex = {
   blockNumber: int,
   logIndex: int,
 }
-
-let eventIndexSchema = S.object(s => {
-  blockNumber: s.field("blockNumber", S.int),
-  logIndex: s.field("logIndex", S.int),
-})
 
 // takes blockNumber, logIndex and packs them into a number with
 //32 bits, 16 bits and 16 bits respectively
@@ -89,22 +84,4 @@ let getEventIdKeyString = (~chainId: int, ~eventId: string) => {
   let key = chainIdStr ++ "_" ++ eventId
 
   key
-}
-
-let getContractAddressKeyString = (~chainId: int, ~contractAddress: Address.t) => {
-  let chainIdStr = chainId->Belt.Int.toString
-  let key = chainIdStr ++ "_" ++ contractAddress->Address.toString
-
-  key
-}
-// TODO: utilities like this should be moved to the particular chain worker.
-let waitForNextBlock = async (provider: Ethers.JsonRpcProvider.t) => {
-  // TODO: think how to handle the case where this fails? The way this is written now there is no `_reject`, nor any timeout
-  //       (maybe for each chain there should be a max wait time, 2 minutes for ethereum, 30 seconds for arbitrum etc, and then it retries?)
-  await Promise.make((resolve, _reject) => {
-    provider->Ethers.JsonRpcProvider.onBlock(blockNumber => {
-      provider->Ethers.JsonRpcProvider.removeOnBlockEventListener
-      resolve(blockNumber)
-    })
-  })
 }

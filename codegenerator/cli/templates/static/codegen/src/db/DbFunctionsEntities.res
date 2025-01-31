@@ -19,7 +19,7 @@ let makeReadEntities = (~table: Table.table, ~rowsSchema: S.t<array<'entityRow>>
       ~msg=`Failed during batch read of entity ${table.tableName}`,
     )
   | res =>
-    switch res->S.parseAnyOrRaiseWith(rowsSchema) {
+    switch res->S.parseOrThrow(rowsSchema) {
     | exception exn =>
       exn->ErrorHandling.mkLogAndRaise(
         ~logger?,
@@ -30,30 +30,19 @@ let makeReadEntities = (~table: Table.table, ~rowsSchema: S.t<array<'entityRow>>
   }
 }
 
-@module("./DbFunctionsImplementation.js")
-external batchSetItemsInTable: (
-  ~table: Table.table,
-  ~sql: Postgres.sql,
-  ~jsonRows: Js.Json.t,
-) => promise<unit> = "batchSetItemsInTable"
-
-let makeBatchSet = (~table: Table.table, ~rowsSchema: S.schema<array<'entityRow>>) => async (
-  sql: Postgres.sql,
-  entities: array<'entityRow>,
-  ~logger=?,
-) => {
-  switch entities->S.serializeOrRaiseWith(rowsSchema) {
-  | exception exn =>
-    exn->ErrorHandling.mkLogAndRaise(
-      ~logger?,
-      ~msg=`Failed during batch serialization of entity ${table.tableName}`,
-    )
-  | jsonRows =>
-    switch await batchSetItemsInTable(~table, ~sql, ~jsonRows) {
+let makeBatchSet = (~table: Table.table, ~schema: S.t<'entity>) => {
+  let query = DbFunctions.makeTableBatchSet(table, schema)
+  async (sql: Postgres.sql, entities: array<'entity>, ~logger=?) => {
+    switch await query(sql, entities) {
+    | exception (S.Raised(_) as exn) =>
+      exn->ErrorHandling.mkLogAndRaise(
+        ~logger?,
+        ~msg=`Failed during batch serialization of entity ${table.tableName}`,
+      )
     | exception exn =>
       exn->ErrorHandling.mkLogAndRaise(
         ~logger?,
-        ~msg=`Failed during batch read of entity ${table.tableName}`,
+        ~msg=`Failed during batch set of entity ${table.tableName}`,
       )
     | res => res
     }
@@ -83,10 +72,27 @@ let batchRead = (type entity, ~entityMod: module(Entities.Entity with type t = e
   makeReadEntities(~table, ~rowsSchema)
 }
 
-let batchSet = (type entity, ~entityMod: module(Entities.Entity with type t = entity)) => {
+type batchSet<'entity> = (Postgres.sql, array<'entity>, ~logger: Pino.t=?) => promise<unit>
+let batchSetCache: Utils.WeakMap.t<
+  module(Entities.InternalEntity),
+  batchSet<Internal.entity>,
+> = Utils.WeakMap.make()
+let batchSet = (type entity, ~entityMod: module(Entities.Entity with type t = entity)): batchSet<
+  entity,
+> => {
   let module(EntityMod) = entityMod
-  let {table, rowsSchema} = module(EntityMod)
-  makeBatchSet(~table, ~rowsSchema)
+  let {table, schema} = module(EntityMod)
+  switch Utils.WeakMap.get(batchSetCache, entityMod->Entities.entityModToInternal) {
+  | None =>
+    let query = makeBatchSet(~table, ~schema)
+    Utils.WeakMap.set(
+      batchSetCache,
+      entityMod->Entities.entityModToInternal,
+      query->(Utils.magic: batchSet<entity> => batchSet<Internal.entity>),
+    )->ignore
+    query
+  | Some(query) => query->(Utils.magic: batchSet<Internal.entity> => batchSet<entity>)
+  }
 }
 
 let batchDelete = (type entity, ~entityMod: module(Entities.Entity with type t = entity)) => {
@@ -103,36 +109,53 @@ external whereEqQuery: (
   ~value: Js.Json.t,
 ) => promise<Js.Json.t> = "whereEqQuery"
 
-let makeWhereEq = (
-  type entity,
-  sql: Postgres.sql,
+@module("./DbFunctionsImplementation.js")
+external whereGtQuery: (
+  ~table: Table.table,
+  ~sql: Postgres.sql,
+  ~fieldName: string,
+  ~value: Js.Json.t,
+) => promise<Js.Json.t> = "whereGtQuery"
+
+let makeWhereQuery = (type entity, sql: Postgres.sql) => async (
+  ~operator: TableIndices.Operator.t,
   ~entityMod: module(Entities.Entity with type t = entity),
-) => async (
   ~fieldName: string,
   ~fieldValue: 'fieldValue,
   ~fieldValueSchema: S.t<'fieldValue>,
   ~logger=Logging.logger,
 ): array<entity> => {
   let module(Entity) = entityMod
+
+  let queryType = switch operator {
+  | Eq => "whereEq"
+  | Gt => "whereGt"
+  }
+
+  let query = switch operator {
+  | Eq => whereEqQuery
+  | Gt => whereGtQuery
+  }
+
   let logger = Logging.createChildFrom(
     ~logger,
     ~params={
-      "queryType": "whereEq",
+      "queryType": queryType,
       "tableName": Entity.table.tableName,
       "fieldName": fieldName,
       "fieldValue": fieldValue,
     },
   )
 
-  let value = switch fieldValue->S.serializeOrRaiseWith(fieldValueSchema) {
+  let value = switch fieldValue->S.reverseConvertToJsonOrThrow(fieldValueSchema) {
   | exception exn => exn->ErrorHandling.mkLogAndRaise(~logger, ~msg=`Failed to serialize value`)
   | value => value
   }
 
-  switch await whereEqQuery(~table=Entity.table, ~sql, ~fieldName, ~value) {
+  switch await query(~table=Entity.table, ~sql, ~fieldName, ~value) {
   | exception exn => exn->ErrorHandling.mkLogAndRaise(~logger, ~msg=`Failed to execute query`)
   | res =>
-    switch res->S.parseAnyOrRaiseWith(Entity.rowsSchema) {
+    switch res->S.parseOrThrow(Entity.rowsSchema) {
     | exception exn =>
       exn->ErrorHandling.mkLogAndRaise(
         ~logger,

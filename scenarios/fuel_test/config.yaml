@@ -1,7 +1,7 @@
 # yaml-language-server: $schema=../../codegenerator/cli/npm/envio/fuel.schema.json
 name: Fuel Greeter Indexer
 ecosystem: fuel
-raw_events: true
+# raw_events: true
 networks:
   - id: 0
     start_block: 0
@@ -15,7 +15,7 @@ networks:
           - name: ClearGreeting
       - name: AllEvents
         address:
-          - 0xef3972d8fd06d06362bdefc919424bc793b0b8162fe71f39300a06b22d6d0c48
+          - 0xd298efffbf3cdf38b4b55ffe76a97a67b9146d7edd61b92cca730bd6e0eb415d
         abi_file_path: abis/all-events-abi.json
         handler: src/AllEventsHandlers.ts
         events:
@@ -51,10 +51,14 @@ networks:
             logId: "13213829929622723620"
           - name: StrLog
             logId: "10732353433239600734"
+          - name: StringLog
+            logId: "11132648958528852192"
           - name: Option2
             logId: "8688528864679113840"
           - name: VecLog
             logId: "15402277555065905665"
+          - name: TagsEvent
+            logId: "8843604259160078410"
           - name: BytesLog
             logId: "14832741149864513620"
           - name: Mint

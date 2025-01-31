@@ -5,26 +5,24 @@ let inMemoryStore = InMemoryStore.make()
 
 describe("E2E Mock Event Batch", () => {
   Async.before(async () => {
-    let config = RegisterHandlers.registerAllHandlers()
     DbStub.setGravatarDb(~gravatar=MockEntities.gravatarEntity1)
     DbStub.setGravatarDb(~gravatar=MockEntities.gravatarEntity2)
     // EventProcessing.processEventBatch(MockEvents.eventBatch)
 
     let loadLayer = LoadLayer.makeWithDbConnection()
 
-    let runEventHandler = async (eventBatchQueueItem: Types.eventBatchQueueItem) => {
-      switch eventBatchQueueItem.handlerRegister->Types.HandlerTypes.Register.getLoaderHandler {
-      | Some(loaderHandler) =>
-        await eventBatchQueueItem->EventProcessing.runEventHandler(
-          ~loaderHandler,
-          ~latestProcessedBlocks=EventProcessing.EventsProcessed.makeEmpty(~config),
+    let runEventHandler = async (eventItem: Internal.eventItem) => {
+      switch eventItem.handler {
+      | None => Ok()
+      | Some(handler) =>
+        await eventItem->EventProcessing.runEventHandler(
+          ~loader=eventItem.loader,
+          ~handler,
           ~inMemoryStore,
           ~logger=Logging.logger,
           ~loadLayer,
-          ~config,
-          ~isInReorgThreshold=false,
+          ~shouldSaveHistory=false,
         )
-      | None => Ok(EventProcessing.EventsProcessed.makeEmpty(~config))
       }
     }
 
@@ -75,7 +73,10 @@ describe_skip("E2E Db check", () => {
   })
 
   it("Validate inmemory store state", () => {
-    let gravatars = inMemoryStore.gravatar->InMemoryTable.Entity.values
+    let gravatars =
+      inMemoryStore.entities
+      ->InMemoryStore.EntityTables.get(module(Entities.Gravatar))
+      ->InMemoryTable.Entity.values
 
     Assert.deepEqual(
       gravatars,

@@ -105,6 +105,8 @@ let manipulateAccountBalance = (
 
 let whereEqFromAccountTest = ref([])
 let whereEqBigNumTest = ref([])
+let whereBallanceGt49Test = ref([])
+let whereBallanceGt50Test = ref([])
 
 Handlers.ERC20.Transfer.handlerWithLoader({
   loader: async ({event, context}) => {
@@ -116,6 +118,8 @@ Handlers.ERC20.Transfer.handlerWithLoader({
 
     whereEqFromAccountTest := (await context.accountToken.getWhere.account_id.eq(fromAccount_id))
     whereEqBigNumTest := (await context.accountToken.getWhere.balance.eq(50n))
+    whereBallanceGt50Test := (await context.accountToken.getWhere.balance.gt(50n))
+    whereBallanceGt49Test := (await context.accountToken.getWhere.balance.gt(49n))
 
     await (
       context.accountToken.get(fromAccountToken_id),

@@ -1,5 +1,4 @@
 open Table
-open Enums
 
 //shorthand for punning
 let isPrimaryKey = true
@@ -111,7 +110,7 @@ module RawEvents = {
   @genType
   type t = {
     @as("chain_id") chainId: int,
-    @as("event_id") eventId: string,
+    @as("event_id") eventId: bigint,
     @as("event_name") eventName: string,
     @as("contract_name") contractName: string,
     @as("block_number") blockNumber: int,
@@ -124,11 +123,26 @@ module RawEvents = {
     params: Js.Json.t,
   }
 
+  let schema = S.schema(s => {
+    chainId: s.matches(S.int),
+    eventId: s.matches(S.bigint),
+    eventName: s.matches(S.string),
+    contractName: s.matches(S.string),
+    blockNumber: s.matches(S.int),
+    logIndex: s.matches(S.int),
+    srcAddress: s.matches(Address.schema),
+    blockHash: s.matches(S.string),
+    blockTimestamp: s.matches(S.int),
+    blockFields: s.matches(S.json(~validate=false)),
+    transactionFields: s.matches(S.json(~validate=false)),
+    params: s.matches(S.json(~validate=false)),
+  })
+
   let table = mkTable(
     "raw_events",
     ~fields=[
-      mkField("chain_id", Integer, ~isPrimaryKey),
-      mkField("event_id", Numeric, ~isPrimaryKey),
+      mkField("chain_id", Integer),
+      mkField("event_id", Numeric),
       mkField("event_name", Text),
       mkField("contract_name", Text),
       mkField("block_number", Integer),
@@ -140,25 +154,31 @@ module RawEvents = {
       mkField("transaction_fields", JsonB),
       mkField("params", JsonB),
       mkField("db_write_timestamp", TimestampWithoutTimezone, ~default="CURRENT_TIMESTAMP"),
+      mkField("serial", Serial, ~isNullable, ~isPrimaryKey),
     ],
   )
 }
 
 module DynamicContractRegistry = {
+  let name = Enums.EntityType.DynamicContractRegistry
+
   @genType
   type t = {
+    id: string,
     @as("chain_id") chainId: int,
     @as("registering_event_block_number") registeringEventBlockNumber: int,
     @as("registering_event_log_index") registeringEventLogIndex: int,
-    @as("registering_event_name") registeringEventName: string,
-    @as("registering_event_contract_name") registeringEventContractName: string,
-    @as("registering_event_src_address") registeringEventSrcAddress: Address.t,
     @as("registering_event_block_timestamp") registeringEventBlockTimestamp: int,
+    @as("registering_event_contract_name") registeringEventContractName: string,
+    @as("registering_event_name") registeringEventName: string,
+    @as("registering_event_src_address") registeringEventSrcAddress: Address.t,
     @as("contract_address") contractAddress: Address.t,
     @as("contract_type") contractType: Enums.ContractType.t,
+    @as("is_pre_registered") isPreRegistered: bool,
   }
 
   let schema = S.schema(s => {
+    id: s.matches(S.string),
     chainId: s.matches(S.int),
     registeringEventBlockNumber: s.matches(S.int),
     registeringEventLogIndex: s.matches(S.int),
@@ -167,7 +187,8 @@ module DynamicContractRegistry = {
     registeringEventSrcAddress: s.matches(Address.schema),
     registeringEventBlockTimestamp: s.matches(S.int),
     contractAddress: s.matches(Address.schema),
-    contractType: s.matches(Enums.ContractType.schema),
+    contractType: s.matches(Enums.ContractType.enum.schema),
+    isPreRegistered: s.matches(S.bool),
   })
 
   let rowsSchema = S.array(schema)
@@ -175,97 +196,19 @@ module DynamicContractRegistry = {
   let table = mkTable(
     "dynamic_contract_registry",
     ~fields=[
-      mkField("chain_id", Integer, ~isPrimaryKey),
+      mkField("id", Text, ~isPrimaryKey),
+      mkField("chain_id", Integer),
       mkField("registering_event_block_number", Integer),
       mkField("registering_event_log_index", Integer),
       mkField("registering_event_block_timestamp", Integer),
       mkField("registering_event_contract_name", Text),
       mkField("registering_event_name", Text),
       mkField("registering_event_src_address", Text),
-      mkField("contract_address", Text, ~isPrimaryKey),
+      mkField("contract_address", Text),
       mkField("contract_type", Custom(Enums.ContractType.enum.name)),
+      mkField("is_pre_registered", Boolean),
     ],
   )
 
-  let batchSet = PostgresInterop.makeBatchSetFn(~table, ~rowsSchema)
+  let entityHistory = table->EntityHistory.fromTable(~schema)
 }
-
-module EntityHistory = {
-  @genType
-  type t = {
-    entity_id: string,
-    block_timestamp: int,
-    chain_id: int,
-    block_number: int,
-    log_index: int,
-    entity_type: EntityType.t,
-    params: option<Js.Json.t>,
-    previous_block_timestamp: option<int>,
-    previous_chain_id: option<int>,
-    previous_block_number: option<int>,
-    previous_log_index: option<int>,
-  }
-
-  let table = mkTable(
-    "entity_history",
-    ~fields=[
-      mkField("entity_id", Text, ~isPrimaryKey),
-      mkField("block_timestamp", Integer, ~isPrimaryKey),
-      mkField("chain_id", Integer, ~isPrimaryKey),
-      mkField("block_number", Integer, ~isPrimaryKey),
-      mkField("log_index", Integer, ~isPrimaryKey),
-      mkField("entity_type", Custom(EntityType.enum.name), ~isPrimaryKey),
-      mkField("params", JsonB, ~isNullable),
-      mkField("previous_block_timestamp", Integer, ~isNullable),
-      mkField("previous_chain_id", Integer, ~isNullable),
-      mkField("previous_block_number", Integer, ~isNullable),
-      mkField("previous_log_index", Integer, ~isNullable),
-    ],
-    ~compositeIndices=[["entity_type", "entity_id", "block_timestamp"]],
-  )
-}
-
-module EntityHistoryFilter = {
-  @genType
-  type t = {
-    entity_id: option<string>,
-    chain_id: int,
-    old_val: option<Js.Json.t>,
-    new_val: option<Js.Json.t>,
-    block_number: int,
-    block_timestamp: int,
-    previous_block_number: option<int>,
-    log_index: int,
-    previous_log_index: option<int>,
-    entity_type: EntityType.t,
-  }
-
-  // This table is purely for the sake of viewing the diffs generated by the postgres function. It will never be written to during the application.
-  let table = mkTable(
-    "entity_history_filter",
-    ~fields=[
-      // NULL for an `entity_id` means that the entity was deleted.
-      mkField("entity_id", Text, ~isPrimaryKey),
-      mkField("chain_id", Integer, ~isPrimaryKey),
-      mkField("old_val", JsonB, ~isNullable),
-      mkField("new_val", JsonB, ~isNullable),
-      mkField("block_number", Integer, ~isPrimaryKey),
-      mkField("block_timestamp", Integer, ~isPrimaryKey),
-      mkField("previous_block_number", Integer, ~isNullable),
-      mkField("log_index", Integer, ~isPrimaryKey),
-      mkField("previous_log_index", Integer, ~isNullable, ~isPrimaryKey),
-      mkField("entity_type", Custom(EntityType.enum.name), ~isPrimaryKey),
-    ],
-  )
-}
-
-let allTables: array<table> = [
-  EventSyncState.table,
-  ChainMetadata.table,
-  PersistedState.table,
-  EndOfBlockRangeScannedData.table,
-  RawEvents.table,
-  DynamicContractRegistry.table,
-  EntityHistory.table,
-  EntityHistoryFilter.table,
-]

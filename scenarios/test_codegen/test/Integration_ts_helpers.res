@@ -17,46 +17,38 @@ let getLocalChainConfig = (nftFactoryContractAddress): chainConfig => {
       abi: Types.NftFactory.abi,
       addresses: [nftFactoryContractAddress],
       events: [module(Types.NftFactory.SimpleNftCreated)],
-      sighashes: [Types.NftFactory.SimpleNftCreated.sighash],
     },
     {
       name: "SimpleNft",
       abi: Types.SimpleNft.abi,
       addresses: [],
       events: [module(Types.SimpleNft.Transfer)],
-      sighashes: [Types.SimpleNft.Transfer.sighash],
     },
   ]
-  let rpcConfig: Config.rpcConfig = {
-    provider,
-    syncConfig: {
-      initialBlockInterval: 10000,
-      backoffMultiplicative: 10000.,
-      accelerationAdditive: 10000,
-      intervalCeiling: 10000,
-      backoffMillis: 10000,
-      queryTimeoutMillis: 10000,
-    },
-  }
   let chain = MockConfig.chain1337
   {
     confirmedBlockThreshold: 200,
-    syncSource: Rpc(rpcConfig),
+    syncSource: Rpc,
     startBlock: 1,
     endBlock: None,
     chain,
     contracts,
-    chainWorker: module(
-      RpcWorker.Make({
-        let chain = chain
-        let contracts = contracts
-        let rpcConfig = rpcConfig
-        let eventRouter =
-          contracts
-          ->Belt.Array.flatMap(contract => contract.events)
-          ->EventRouter.fromEvmEventModsOrThrow(~chain)
-      })
-    ),
+    source: RpcSource.make({
+      chain,
+      contracts,
+      syncConfig: {
+        initialBlockInterval: 10000,
+        backoffMultiplicative: 10000.,
+        accelerationAdditive: 10000,
+        intervalCeiling: 10000,
+        backoffMillis: 10000,
+        queryTimeoutMillis: 10000,
+      },
+      provider,
+      eventRouter: contracts
+      ->Belt.Array.flatMap(contract => contract.events)
+      ->EventRouter.fromEvmEventModsOrThrow(~chain),
+    }),
   }
 }
 

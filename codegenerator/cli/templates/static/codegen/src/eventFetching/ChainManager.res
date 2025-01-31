@@ -1,14 +1,15 @@
 open Belt
+
 type t = {
   chainFetchers: ChainMap.t<ChainFetcher.t>,
   //Holds arbitrary events that were added when a batch ended processing early
   //due to contract registration. Ordered from latest to earliest
-  arbitraryEventQueue: array<Types.eventBatchQueueItem>,
+  arbitraryEventQueue: array<Internal.eventItem>,
   isUnorderedMultichainMode: bool,
   isInReorgThreshold: bool,
 }
 
-let getComparitorFromItem = (queueItem: Types.eventBatchQueueItem) => {
+let getComparitorFromItem = (queueItem: Internal.eventItem) => {
   let {timestamp, chain, blockNumber, logIndex} = queueItem
   EventUtils.getEventComparator({
     timestamp,
@@ -26,7 +27,7 @@ type multiChainEventComparitor = {
 let getQueueItemComparitor = (earliestQueueItem: FetchState.queueItem, ~chain) => {
   switch earliestQueueItem {
   | Item({item}) => item->getComparitorFromItem
-  | NoItem({blockTimestamp, blockNumber}) => (
+  | NoItem({latestFetchedBlock: {blockTimestamp, blockNumber}}) => (
       blockTimestamp,
       chain->ChainMap.Chain.toChainId,
       blockNumber,
@@ -35,7 +36,7 @@ let getQueueItemComparitor = (earliestQueueItem: FetchState.queueItem, ~chain) =
   }
 }
 
-let priorityQueueComparitor = (a: Types.eventBatchQueueItem, b: Types.eventBatchQueueItem) => {
+let priorityQueueComparitor = (a: Internal.eventItem, b: Internal.eventItem) => {
   if a->getComparitorFromItem < b->getComparitorFromItem {
     -1
   } else {
@@ -68,7 +69,7 @@ type isInReorgThresholdRes<'payload> = {
 }
 
 type fetchStateWithData = {
-  partitionedFetchState: PartitionedFetchState.t,
+  fetchState: FetchState.t,
   heighestBlockBelowThreshold: int,
 }
 
@@ -85,7 +86,7 @@ let isQueueItemEarlierUnorderedBelowReorgThreshold = (
   }
   // The idea here is if we are in undordered multichain mode, always prioritize queue
   // items that are below the reorg threshold. That way we can register contracts all
-  // the way up to the threshold on all chains before starting. 
+  // the way up to the threshold on all chains before starting.
   // Similarly we wait till all chains are at their threshold before saving entity history.
   switch (a->isItemBelowReorgThreshold, b->isItemBelowReorgThreshold) {
   | (false, true) => true
@@ -114,11 +115,11 @@ let determineNextEvent = (
     ->ChainMap.entries
     ->Array.reduce({isInReorgThreshold: false, val: None}, (
       accum,
-      (chain, {partitionedFetchState, heighestBlockBelowThreshold}),
+      (chain, {fetchState, heighestBlockBelowThreshold}),
     ) => {
       // If the fetch state has reached the end block we don't need to consider it
-      switch partitionedFetchState->PartitionedFetchState.getEarliestEvent {
-      | Some(earliestEvent) =>
+      if fetchState->FetchState.isActivelyIndexing {
+        let earliestEvent = fetchState->FetchState.getEarliestEvent
         let current: multiChainEventComparitor = {chain, earliestEvent}
         switch accum.val {
         | Some(previous) if comparitorFunction(previous, current) => accum
@@ -131,7 +132,8 @@ let determineNextEvent = (
             isInReorgThreshold,
           }
         }
-      | None => accum
+      } else {
+        accum
       }
     })
 
@@ -143,7 +145,7 @@ let determineNextEvent = (
 
 let makeFromConfig = (~config: Config.t, ~maxAddrInPartition=Env.maxAddrInPartition): t => {
   let chainFetchers =
-    config.chainMap->ChainMap.map(ChainFetcher.makeFromConfig(_, ~maxAddrInPartition))
+    config.chainMap->ChainMap.map(ChainFetcher.makeFromConfig(_, ~maxAddrInPartition, ~enableRawEvents=config.enableRawEvents))
   {
     chainFetchers,
     arbitraryEventQueue: [],
@@ -157,13 +159,18 @@ let makeFromDbState = async (~config: Config.t, ~maxAddrInPartition=Env.maxAddrI
     await config.chainMap
     ->ChainMap.entries
     ->Array.map(async ((chain, chainConfig)) => {
-      (chain, await chainConfig->ChainFetcher.makeFromDbState(~maxAddrInPartition))
+      (chain, await chainConfig->ChainFetcher.makeFromDbState(~maxAddrInPartition, ~enableRawEvents=config.enableRawEvents))
     })
     ->Promise.all
 
   let chainFetchers = ChainMap.fromArrayUnsafe(chainFetchersArr)
 
-  let hasStartedSavingHistory = await DbFunctions.EntityHistory.hasRows()
+  // Since now it's possible not to have rows in the history table
+  // even after the indexer started saving history (entered reorg threshold),
+  // This rows check might incorrectly return false for recovering the isInReorgThreshold option.
+  // But this is not a problem. There's no history anyways, and the indexer will be able to
+  // correctly calculate isInReorgThreshold as it starts.
+  let hasStartedSavingHistory = await Db.sql->DbFunctions.EntityHistory.hasRows
 
   {
     isUnorderedMultichainMode: config.isUnorderedMultichainMode,
@@ -236,12 +243,12 @@ let setChainFetcher = (self: t, chainFetcher: ChainFetcher.t) => {
 }
 
 let getFirstArbitraryEventsItemForChain = (
-  queue: array<Types.eventBatchQueueItem>,
+  queue: array<Internal.eventItem>,
   ~chain,
   ~fetchStatesMap: ChainMap.t<fetchStateWithData>,
 ): option<isInReorgThresholdRes<FetchState.itemWithPopFn>> =>
   queue
-  ->Utils.Array.findReverseWithIndex((item: Types.eventBatchQueueItem) => {
+  ->Utils.Array.findReverseWithIndex((item: Internal.eventItem) => {
     item.chain == chain
   })
   ->Option.map(((item, index)) => {
@@ -257,7 +264,7 @@ let getFirstArbitraryEventsItemForChain = (
   })
 
 let getFirstArbitraryEventsItem = (
-  queue: array<Types.eventBatchQueueItem>,
+  queue: array<Internal.eventItem>,
   ~fetchStatesMap: ChainMap.t<fetchStateWithData>,
 ): option<isInReorgThresholdRes<FetchState.itemWithPopFn>> =>
   queue
@@ -273,7 +280,7 @@ let getFirstArbitraryEventsItem = (
 
 let popBatchItem = (
   ~fetchStatesMap: ChainMap.t<fetchStateWithData>,
-  ~arbitraryEventQueue: array<Types.eventBatchQueueItem>,
+  ~arbitraryEventQueue: array<Internal.eventItem>,
   ~isUnorderedMultichainMode,
   ~onlyBelowReorgThreshold,
 ): isInReorgThresholdRes<option<FetchState.itemWithPopFn>> => {
@@ -319,13 +326,8 @@ let popBatchItem = (
 let getFetchStateWithData = (self: t, ~shouldDeepCopy=false): ChainMap.t<fetchStateWithData> => {
   self.chainFetchers->ChainMap.map(cf => {
     {
-      partitionedFetchState: shouldDeepCopy
-        ? cf.fetchState->PartitionedFetchState.copy
-        : cf.fetchState,
-      heighestBlockBelowThreshold: Pervasives.max(
-        cf.currentBlockHeight - cf.chainConfig.confirmedBlockThreshold,
-        0,
-      ),
+      fetchState: shouldDeepCopy ? cf.fetchState->FetchState.copy : cf.fetchState,
+      heighestBlockBelowThreshold: cf->ChainFetcher.getHeighestBlockBelowThreshold,
     }
   })
 }
@@ -385,15 +387,15 @@ let createBatchInternal = (
 }
 
 type batchRes = {
-  batch: array<Types.eventBatchQueueItem>,
+  batch: array<Internal.eventItem>,
   fetchStatesMap: ChainMap.t<fetchStateWithData>,
-  arbitraryEventQueue: array<Types.eventBatchQueueItem>,
+  arbitraryEventQueue: array<Internal.eventItem>,
 }
 
 let createBatch = (self: t, ~maxBatchSize: int, ~onlyBelowReorgThreshold: bool) => {
   let refTime = Hrtime.makeTimer()
 
-  let {arbitraryEventQueue, chainFetchers} = self
+  let {arbitraryEventQueue} = self
   //Make a copy of the queues and fetch states since we are going to mutate them
   let arbitraryEventQueue = arbitraryEventQueue->Array.copy
   let fetchStatesMap = self->getFetchStateWithData(~shouldDeepCopy=true)
@@ -406,15 +408,23 @@ let createBatch = (self: t, ~maxBatchSize: int, ~onlyBelowReorgThreshold: bool) 
     ~onlyBelowReorgThreshold,
   )
 
+  // Needed to recalculate the computed queue sizes
+  let fetchStatesMap = fetchStatesMap->ChainMap.map(v => {
+    {
+      ...v,
+      fetchState: v.fetchState->FetchState.updateInternal,
+    }
+  })
+
   let batchSize = batch->Array.length
 
   let val = if batchSize > 0 {
     let fetchedEventsBuffer =
-      chainFetchers
-      ->ChainMap.values
-      ->Array.map(fetcher => (
-        fetcher.chainConfig.chain->ChainMap.Chain.toString,
-        fetcher.fetchState->PartitionedFetchState.queueSize,
+      fetchStatesMap
+      ->ChainMap.entries
+      ->Array.map(((chain, v)) => (
+        chain->ChainMap.Chain.toString,
+        v.fetchState->FetchState.queueSize,
       ))
       ->Array.concat([("arbitrary", self.arbitraryEventQueue->Array.length)])
       ->Js.Dict.fromArray
@@ -428,7 +438,7 @@ let createBatch = (self: t, ~maxBatchSize: int, ~onlyBelowReorgThreshold: bool) 
       "time taken (ms)": timeElapsed,
     })
 
-    if Env.saveBenchmarkData {
+    if Env.Benchmark.shouldSaveData {
       let group = "Other"
       Benchmark.addSummaryData(
         ~group,
@@ -449,12 +459,28 @@ let createBatch = (self: t, ~maxBatchSize: int, ~onlyBelowReorgThreshold: bool) 
 let isFetchingAtHead = self =>
   self.chainFetchers
   ->ChainMap.values
-  ->Array.reduce(true, (accum, cf) => accum && cf->ChainFetcher.isFetchingAtHead)
+  ->Js.Array2.every(ChainFetcher.isFetchingAtHead)
+
+let isActivelyIndexing = self =>
+  self.chainFetchers
+  ->ChainMap.values
+  ->Js.Array2.every(ChainFetcher.isActivelyIndexing)
 
 let isPreRegisteringDynamicContracts = self =>
   self.chainFetchers
   ->ChainMap.values
   ->Array.reduce(false, (accum, cf) => accum || cf->ChainFetcher.isPreRegisteringDynamicContracts)
+
+let getSafeChainIdAndBlockNumberArray = (self: t): array<
+  DbFunctions.EntityHistory.chainIdAndBlockNumber,
+> => {
+  self.chainFetchers
+  ->ChainMap.values
+  ->Array.map((cf): DbFunctions.EntityHistory.chainIdAndBlockNumber => {
+    chainId: cf.chainConfig.chain->ChainMap.Chain.toChainId,
+    blockNumber: cf->ChainFetcher.getHeighestBlockBelowThreshold,
+  })
+}
 
 module ExposedForTesting_Hidden = {
   let priorityQueueComparitor = priorityQueueComparitor

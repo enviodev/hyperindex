@@ -10,22 +10,25 @@ importers:
     dependencies:
       '@rescript/react':
         specifier: 0.12.1
-        version: 0.12.1(react-dom@18.3.1)(react@18.2.0)
+        version: 0.12.1(react-dom@18.3.1(react@18.2.0))(react@18.2.0)
       bignumber.js:
         specifier: ^9.1.2
         version: 9.1.2
       envio:
-        specifier: ../../codegenerator/cli/npm/envio
-        version: link:../../codegenerator/cli/npm/envio
+        specifier: file:../../codegenerator/cli/npm/envio
+        version: file:../../codegenerator/cli/npm/envio(typescript@5.5.4)
       hardhat-abi-exporter:
         specifier: ^2.10.1
-        version: 2.10.1(hardhat@2.22.5)
+        version: 2.10.1(hardhat@2.22.5(ts-node@10.9.2(@types/node@18.19.47)(typescript@5.5.4))(typescript@5.5.4))
       helpers:
         specifier: workspace:*
         version: link:../helpers
       rescript-nodejs:
         specifier: 16.0.0
         version: 16.0.0
+      ts-expect:
+        specifier: 1.3.0
+        version: 1.3.0
       typescript:
         specifier: ^5.0.4
         version: 5.5.4
@@ -39,19 +42,16 @@ importers:
         version: 0.2.0
       '@glennsl/rescript-jest':
         specifier: ^0.9.2
-        version: 0.9.2(ts-node@10.9.2)
+        version: 0.9.2(ts-node@10.9.2(@types/node@18.19.47)(typescript@5.5.4))
       '@nomiclabs/hardhat-ethers':
         specifier: ^3.0.0-beta.0
-        version: 3.0.0-beta.0(ethers@6.8.0)(hardhat@2.22.5)
-      '@ryyppy/rescript-promise':
-        specifier: 2.1.0
-        version: 2.1.0
+        version: 3.0.0-beta.0(ethers@6.8.0)(hardhat@2.22.5(ts-node@10.9.2(@types/node@18.19.47)(typescript@5.5.4))(typescript@5.5.4))
       '@typechain/ethers-v6':
         specifier: ^0.3.2
-        version: 0.3.3(ethers@6.8.0)(typechain@8.3.2)(typescript@5.5.4)
+        version: 0.3.3(ethers@6.8.0)(typechain@8.3.2(typescript@5.5.4))(typescript@5.5.4)
       '@typechain/hardhat':
         specifier: ^6.1.6
-        version: 6.1.6(@ethersproject/abi@5.7.0)(@ethersproject/providers@5.7.2)(@typechain/ethers-v5@10.2.1)(ethers@6.8.0)(hardhat@2.22.5)(typechain@8.3.2)
+        version: 6.1.6(@ethersproject/abi@5.7.0)(@ethersproject/providers@5.7.2)(@typechain/ethers-v5@10.2.1(@ethersproject/abi@5.7.0)(@ethersproject/providers@5.7.2)(ethers@6.8.0)(typechain@8.3.2(typescript@5.5.4))(typescript@5.5.4))(ethers@6.8.0)(hardhat@2.22.5(ts-node@10.9.2(@types/node@18.19.47)(typescript@5.5.4))(typescript@5.5.4))(typechain@8.3.2(typescript@5.5.4))
       '@types/chai':
         specifier: ^4.3.5
         version: 4.3.19
@@ -75,7 +75,7 @@ importers:
         version: 6.8.0
       hardhat:
         specifier: 2.22.5
-        version: 2.22.5(ts-node@10.9.2)(typescript@5.5.4)
+        version: 2.22.5(ts-node@10.9.2(@types/node@18.19.47)(typescript@5.5.4))(typescript@5.5.4)
       mocha:
         specifier: ^10.2.0
         version: 10.7.3
@@ -85,12 +85,9 @@ importers:
       rescript:
         specifier: 11.1.3
         version: 11.1.3
-      rescript-express:
-        specifier: 0.4.1
-        version: 0.4.1(express@4.19.2)
       rescript-schema:
-        specifier: 8.2.0
-        version: 8.2.0(rescript@11.1.3)
+        specifier: 9.1.0
+        version: 9.1.0(rescript@11.1.3)
       sinon:
         specifier: ^15.0.4
         version: 15.2.0
@@ -100,18 +97,21 @@ importers:
 
   ../helpers:
     dependencies:
+      envio:
+        specifier: file:../../codegenerator/cli/npm/envio
+        version: file:../../codegenerator/cli/npm/envio(typescript@5.5.4)
       rescript:
         specifier: 11.1.3
         version: 11.1.3
       rescript-schema:
-        specifier: 8.2.0
-        version: 8.2.0(rescript@11.1.3)
+        specifier: 9.1.0
+        version: 9.1.0(rescript@11.1.3)
 
   contracts:
     dependencies:
       '@nomiclabs/hardhat-ethers':
         specifier: ^3.0.0-beta.0
-        version: 3.0.0-beta.0(ethers@6.8.0)(hardhat@2.22.5)
+        version: 3.0.0-beta.0(ethers@6.8.0)(hardhat@2.22.5(ts-node@10.9.2(@types/node@18.19.47)(typescript@5.5.4))(typescript@5.5.4))
       '@openzeppelin/contracts':
         specifier: ^4.5.0
         version: 4.9.6
@@ -120,10 +120,10 @@ importers:
         version: 6.8.0
       hardhat:
         specifier: ^2.14.0
-        version: 2.22.5(ts-node@10.9.2)(typescript@5.5.4)
+        version: 2.22.5(ts-node@10.9.2(@types/node@18.19.47)(typescript@5.5.4))(typescript@5.5.4)
       hardhat-abi-exporter:
         specifier: ^2.10.1
-        version: 2.10.1(hardhat@2.22.5)
+        version: 2.10.1(hardhat@2.22.5(ts-node@10.9.2(@types/node@18.19.47)(typescript@5.5.4))(typescript@5.5.4))
       hardhat-deploy:
         specifier: ^0.11.26
         version: 0.11.45
@@ -134,17 +134,14 @@ importers:
         specifier: 1.4.0
         version: 1.4.0
       '@envio-dev/hypersync-client':
-        specifier: 0.6.2
-        version: 0.6.2
+        specifier: 0.6.3
+        version: 0.6.3
       '@glennsl/rescript-fetch':
         specifier: 0.2.0
         version: 0.2.0
       '@rescript/react':
         specifier: 0.12.1
-        version: 0.12.1(react-dom@18.3.1)(react@18.2.0)
-      '@ryyppy/rescript-promise':
-        specifier: 2.1.0
-        version: 2.1.0
+        version: 0.12.1(react-dom@18.3.1(react@18.2.0))(react@18.2.0)
       bignumber.js:
         specifier: 9.1.2
         version: 9.1.2
@@ -165,10 +162,10 @@ importers:
         version: 3.2.0(react@18.2.0)
       ink-big-text:
         specifier: 1.2.0
-        version: 1.2.0(ink@3.2.0)(react@18.2.0)
+        version: 1.2.0(ink@3.2.0(react@18.2.0))(react@18.2.0)
       ink-spinner:
         specifier: 4.0.3
-        version: 4.0.3(ink@3.2.0)(react@18.2.0)
+        version: 4.0.3(ink@3.2.0(react@18.2.0))(react@18.2.0)
       js-sdsl:
         specifier: 4.4.2
         version: 4.4.2
@@ -194,14 +191,11 @@ importers:
         specifier: 11.1.3
         version: 11.1.3
       rescript-envsafe:
-        specifier: 4.2.0
-        version: 4.2.0(rescript-schema@8.2.0)(rescript@11.1.3)
-      rescript-express:
-        specifier: 0.4.1
-        version: 0.4.1(express@4.19.2)
+        specifier: 5.0.0
+        version: 5.0.0(rescript-schema@9.1.0(rescript@11.1.3))(rescript@11.1.3)
       rescript-schema:
-        specifier: 8.2.0
-        version: 8.2.0(rescript@11.1.3)
+        specifier: 9.1.0
+        version: 9.1.0(rescript@11.1.3)
       root:
         specifier: ../.
         version: link:..
@@ -396,44 +390,44 @@ packages:
     resolution: {integrity: sha512-eCSBUTgl8KbPyxky8cecDRLCYu2C1oFV4AZ72bEsI+TxXEvaljaL2kgttfzfu7gW+M89eCz55s49uF2t+YMTWA==}
     engines: {node: '>=10'}
 
-  '@envio-dev/hypersync-client-darwin-arm64@0.6.2':
-    resolution: {integrity: sha512-dDIuQqEgARR1JYodbGkmck1i9qbYEidc4Kw4DOrRKQ0uZFwflI4o8wm3P+G/ofc1iXwp4pm7jqNUGzZDpK9pqA==}
+  '@envio-dev/hypersync-client-darwin-arm64@0.6.3':
+    resolution: {integrity: sha512-w4OLJaq3lD03iXPJxLnPpoxOduvzCfEe2nYtamvIRLPB2SlbxnB5EF5dSyFs6WKh1x4PMsksQOUKeCcOtQPZow==}
     engines: {node: '>= 10'}
     cpu: [arm64]
     os: [darwin]
 
-  '@envio-dev/hypersync-client-darwin-x64@0.6.2':
-    resolution: {integrity: sha512-NGlgkmosAzlZ1EuQ5/djkg6sQI/dgVX+XGOLI6Zden0ca2zr/ByBRA7yCKxpwZHYynFN2FoMsMGSRY8jj6XQWw==}
+  '@envio-dev/hypersync-client-darwin-x64@0.6.3':
+    resolution: {integrity: sha512-zh98zCbm2cse/iIzyMs1YCcA1iI1U/j4Yex1xBVaEa1ogzQSK9peS6M+NygzdmlwPqr7K9rUQ/U56ICRl67fWw==}
     engines: {node: '>= 10'}
     cpu: [x64]
     os: [darwin]
 
-  '@envio-dev/hypersync-client-linux-arm64-gnu@0.6.2':
-    resolution: {integrity: sha512-p2LQSaOSgjVvvFHOGHnPHTnsDHCWNEG78J29guZyqWojmaxTaR4eGyFEknla7eO0w58EIUGEBTF0+EJ7duMimg==}
+  '@envio-dev/hypersync-client-linux-arm64-gnu@0.6.3':
+    resolution: {integrity: sha512-5pI0N6W7W0L7LpgN76BAWRsC+NPOvrlvBEq8IjlBUS47vqZALvcJj3gYNkm466tUBQ4q4tF1x48k7MFKtoO8aw==}
     engines: {node: '>= 10'}
     cpu: [arm64]
     os: [linux]
 
-  '@envio-dev/hypersync-client-linux-x64-gnu@0.6.2':
-    resolution: {integrity: sha512-/kIL9Q0e5hM0g6cvdCHL93LMu+OCnwQAGKQHCj2TKKUjVpWFNb0Ki5PMgJhQ8mimEBFsJAnErVK+HrugLTlaVQ==}
+  '@envio-dev/hypersync-client-linux-x64-gnu@0.6.3':
+    resolution: {integrity: sha512-jL3sxWVyTJuKdO5y/0tu1EtWSox+nJdpmr7rdVW1w0gLk4ewzWORp9cl5pXkpqM4MUsjJz+NkcQKsUquGYBkKg==}
     engines: {node: '>= 10'}
     cpu: [x64]
     os: [linux]
 
-  '@envio-dev/hypersync-client-linux-x64-musl@0.6.2':
-    resolution: {integrity: sha512-4r5hA/zyxUjWBDYYeXLCl5pBfSI9njEIPuLMFXajjVcAvSXRtBhmgVwa3JrjjCxZ8aLfqk9vvPkb/KgYfrbXXw==}
+  '@envio-dev/hypersync-client-linux-x64-musl@0.6.3':
+    resolution: {integrity: sha512-4rAh9x3PEWIweih731lWVEUGm+qrIHouElqZgXfTcZS6KkPeDnSYKVw10K5EyDuDtZla/NccEr0pJmcvpui5Ew==}
     engines: {node: '>= 10'}
     cpu: [x64]
     os: [linux]
 
-  '@envio-dev/hypersync-client-win32-x64-msvc@0.6.2':
-    resolution: {integrity: sha512-VgsSwmDAgvpgo9QsIiwIp9IN+h3g0U/7zrCrvNAMj+lsMHJPZ7L0cfN58dQUr84wL8domJGJrnMKUtu/Yf49ow==}
+  '@envio-dev/hypersync-client-win32-x64-msvc@0.6.3':
+    resolution: {integrity: sha512-AINzLdjqU+y6ZiHnxorjFlrGNIw/AAJ80YXABYzokvGhDTF9qupjR1gdZo4sQEumgrRyg7fiG8QnsZVEm6V/zA==}
     engines: {node: '>= 10'}
     cpu: [x64]
     os: [win32]
 
-  '@envio-dev/hypersync-client@0.6.2':
-    resolution: {integrity: sha512-wgp0UmblW8yn/q5NMkVYPFDvOmgHWPTibl/QJYyYK2KXqAMHssUjP07ayduiZCexQOZ94Agpv4SvmYxQNjGBIA==}
+  '@envio-dev/hypersync-client@0.6.3':
+    resolution: {integrity: sha512-Lr5WyMZBK1cI++kAQLM/zd62NfUM60A3KWTKgeNew4NOghfoY5YZr99C7vo+CMYePXskYBR+ul+5iNPoHqkFrw==}
     engines: {node: '>= 10'}
 
   '@ethersproject/abi@5.7.0':
@@ -1543,6 +1537,10 @@ packages:
     resolution: {integrity: sha512-+h1lkLKhZMTYjog1VEpJNG7NZJWcuc2DDk/qsqSTRRCOXiLjeQ1d1/udrUGhqMxUgAlwKNZ0cf2uqan5GLuS2A==}
     engines: {node: '>=6'}
 
+  envio@file:../../codegenerator/cli/npm/envio:
+    resolution: {directory: ../../codegenerator/cli/npm/envio, type: directory}
+    hasBin: true
+
   error-ex@1.3.2:
     resolution: {integrity: sha512-7dFHNmqeFSEt2ZBsCriorKnn3Z2pj+fd9kmI6QoWw4//DL+icEBfc0U7qJCisqrTsKTjw4fNFy2pW9OqStD84g==}
 
@@ -2497,80 +2495,6 @@ packages:
     resolution: {integrity: sha512-S48WzZW777zhNIrn7gxOlISNAqi9ZC/uQFnRdbeIHhZhCA6UqpkOT8T1G7BvfdgP4Er8gF4sUbaS0i7QvIfCWw==}
     engines: {node: '>=8'}
 
-  npm@10.8.3:
-    resolution: {integrity: sha512-0IQlyAYvVtQ7uOhDFYZCGK8kkut2nh8cpAdA9E6FvRSJaTgtZRZgNjlC5ZCct//L73ygrpY93CxXpRJDtNqPVg==}
-    engines: {node: ^18.17.0 || >=20.5.0}
-    hasBin: true
-    bundledDependencies:
-      - '@isaacs/string-locale-compare'
-      - '@npmcli/arborist'
-      - '@npmcli/config'
-      - '@npmcli/fs'
-      - '@npmcli/map-workspaces'
-      - '@npmcli/package-json'
-      - '@npmcli/promise-spawn'
-      - '@npmcli/redact'
-      - '@npmcli/run-script'
-      - '@sigstore/tuf'
-      - abbrev
-      - archy
-      - cacache
-      - chalk
-      - ci-info
-      - cli-columns
-      - fastest-levenshtein
-      - fs-minipass
-      - glob
-      - graceful-fs
-      - hosted-git-info
-      - ini
-      - init-package-json
-      - is-cidr
-      - json-parse-even-better-errors
-      - libnpmaccess
-      - libnpmdiff
-      - libnpmexec
-      - libnpmfund
-      - libnpmhook
-      - libnpmorg
-      - libnpmpack
-      - libnpmpublish
-      - libnpmsearch
-      - libnpmteam
-      - libnpmversion
-      - make-fetch-happen
-      - minimatch
-      - minipass
-      - minipass-pipeline
-      - ms
-      - node-gyp
-      - nopt
-      - normalize-package-data
-      - npm-audit-report
-      - npm-install-checks
-      - npm-package-arg
-      - npm-pick-manifest
-      - npm-profile
-      - npm-registry-fetch
-      - npm-user-validate
-      - p-map
-      - pacote
-      - parse-conflict-json
-      - proc-log
-      - qrcode-terminal
-      - read
-      - semver
-      - spdx-expression-parse
-      - ssri
-      - supports-color
-      - tar
-      - text-table
-      - tiny-relative-date
-      - treeverse
-      - validate-npm-package-name
-      - which
-      - write-file-atomic
-
   nwsapi@2.2.12:
     resolution: {integrity: sha512-qXDmcVlZV4XRtKFzddidpfVP4oMSGhga+xdMc25mv8kaLUHtgzCDhUxkrN8exkGdTlLNaXj7CV3GtON7zuGZ+w==}
 
@@ -2778,8 +2702,8 @@ packages:
   psl@1.9.0:
     resolution: {integrity: sha512-E/ZsdU4HLs/68gYzgGTkMicWTLPdAftJLfJFlLUAAKZGkStNU72sZjT66SnMDVOfOWY/YAoiD7Jxa9iHvngcag==}
 
-  pump@3.0.0:
-    resolution: {integrity: sha512-LwZy+p3SFs1Pytd/jYct4wpv49HiYCqd9Rlc5ZVdk0V+8Yzv6jR5Blk3TRmPL1ft69TxP0IMZGJ+WPFU2BFhww==}
+  pump@3.0.2:
+    resolution: {integrity: sha512-tUPXtzlGM8FE3P0ZL6DVs/3P58k9nk8/jZeQCurTJylQA8qFYzHFfhBJkuqyE0FifOsQ0uKWekiZ5g8wtr28cw==}
 
   punycode@2.3.1:
     resolution: {integrity: sha512-vYt7UD1U9Wg6138shLtLOvdAu+8DsC/ilFtEVHcH+wydcSpNE20AfSOduf6MkRFahL5FY7X1oU7nKVZFtfq8Fg==}
@@ -2872,22 +2796,17 @@ packages:
   requires-port@1.0.0:
     resolution: {integrity: sha512-KigOCHcocU3XODJxsu8i/j8T9tzT4adHiecwORRQ0ZZFcp7ahwXuRU1m+yuO90C5ZUyGeGfocHDI14M3L3yDAQ==}
 
-  rescript-envsafe@4.2.0:
-    resolution: {integrity: sha512-EpoEkyFzYZa2xzvOwHMAeW/dagqN0WXTL03IBJuZlE+33baKSTQEQ60L20472fPTJRxYaDv14A0UXglPvhSDsA==}
+  rescript-envsafe@5.0.0:
+    resolution: {integrity: sha512-xSQbNsFSSQEynvLWUYtI7GJJhzicACLTq5aO1tjgK0N2Vcm9qlrkcLSmnU8tTohebEu9zgm1V/xYY+oGeQgLvA==}
     peerDependencies:
       rescript: 11.x
-      rescript-schema: 6.x || 7.x || 8.x
-
-  rescript-express@0.4.1:
-    resolution: {integrity: sha512-R+xAQKANfIFAIcxhQrkLn58IZQwhMZuQpVCH6UtTRNLWqlVtaogG9z4Rt0MQZgqYOjvrOtt51P0hOmYGg/90Fw==}
-    peerDependencies:
-      express: ^4.17.1
+      rescript-schema: 9.x
 
   rescript-nodejs@16.0.0:
     resolution: {integrity: sha512-1/SJmjH06xdeq1IFIIcKV6QKnidrav/gIc0Rw4GCUD0ceYPPZ5wDB51UFyk98in5N4gv8X/bTg6dVBMyRsC9tw==}
 
-  rescript-schema@8.2.0:
-    resolution: {integrity: sha512-pfRNB9kvafUYe+RgvsExiazJioi/iV8gmjK3xOw/jeSgPIIDoVhflnmpoz+vuiwlulYkNT/7u2+2EsCrph7QKA==}
+  rescript-schema@9.1.0:
+    resolution: {integrity: sha512-zD6hpg59HF6QJ3rnmhFV6mYtbfUd6ZTu20osL93aR9fdc3GTIX6N8Fy/6btgZ9a35A2NAzTvCgh/dz3EK7qfAw==}
     peerDependencies:
       rescript: 11.x
 
@@ -3206,6 +3125,9 @@ packages:
     peerDependencies:
       typescript: '>=3.7.0'
 
+  ts-expect@1.3.0:
+    resolution: {integrity: sha512-e4g0EJtAjk64xgnFPD6kTBUtpnMVzDrMb12N1YZV0VvSlhnVT3SGxiYTLdGy8Q5cYHOIC/FAHmZ10eGrAguicQ==}
+
   ts-node@10.9.2:
     resolution: {integrity: sha512-f0FFpIdcHgn8zcPSbf1dRevwt047YMnaiJM3u2w2RewrB+fob/zePZcrOyQoLMMO7aBIddLcQIEK5dYjkLnGrQ==}
     hasBin: true
@@ -3522,11 +3444,6 @@ packages:
     resolution: {integrity: sha512-7dSzzRQ++CKnNI/krKnYRV7JKKPUXMEh61soaHKg9mrWEhzFWhFnxPxGl+69cD1Ou63C13NUPCnmIcrvqCuM6w==}
     engines: {node: '>=12'}
 
-  yarn@1.22.22:
-    resolution: {integrity: sha512-prL3kGtyG7o9Z9Sv8IPfBNrWTDmXB4Qbes8A9rEzt6wkJV8mUvoirjU0Mp3GGAU06Y0XQyA3/2/RQFVuK7MTfg==}
-    engines: {node: '>=4.0.0'}
-    hasBin: true
-
   yn@3.1.1:
     resolution: {integrity: sha512-Ux4ygGWsu2c7isFWe8Yu1YluJmqVhxqK2cLXNQA5AcC3QfbGNpM7fu0Y8b/z16pXLnFxZYvWhd3fhBY9DLmC6Q==}
     engines: {node: '>=6'}
@@ -3762,35 +3679,32 @@ snapshots:
     dependencies:
       '@elastic/ecs-helpers': 1.1.0
 
-  '@envio-dev/hypersync-client-darwin-arm64@0.6.2':
+  '@envio-dev/hypersync-client-darwin-arm64@0.6.3':
     optional: true
 
-  '@envio-dev/hypersync-client-darwin-x64@0.6.2':
+  '@envio-dev/hypersync-client-darwin-x64@0.6.3':
     optional: true
 
-  '@envio-dev/hypersync-client-linux-arm64-gnu@0.6.2':
+  '@envio-dev/hypersync-client-linux-arm64-gnu@0.6.3':
     optional: true
 
-  '@envio-dev/hypersync-client-linux-x64-gnu@0.6.2':
+  '@envio-dev/hypersync-client-linux-x64-gnu@0.6.3':
     optional: true
 
-  '@envio-dev/hypersync-client-linux-x64-musl@0.6.2':
+  '@envio-dev/hypersync-client-linux-x64-musl@0.6.3':
     optional: true
 
-  '@envio-dev/hypersync-client-win32-x64-msvc@0.6.2':
+  '@envio-dev/hypersync-client-win32-x64-msvc@0.6.3':
     optional: true
 
-  '@envio-dev/hypersync-client@0.6.2':
-    dependencies:
-      npm: 10.8.3
-      yarn: 1.22.22
+  '@envio-dev/hypersync-client@0.6.3':
     optionalDependencies:
-      '@envio-dev/hypersync-client-darwin-arm64': 0.6.2
-      '@envio-dev/hypersync-client-darwin-x64': 0.6.2
-      '@envio-dev/hypersync-client-linux-arm64-gnu': 0.6.2
-      '@envio-dev/hypersync-client-linux-x64-gnu': 0.6.2
-      '@envio-dev/hypersync-client-linux-x64-musl': 0.6.2
-      '@envio-dev/hypersync-client-win32-x64-msvc': 0.6.2
+      '@envio-dev/hypersync-client-darwin-arm64': 0.6.3
+      '@envio-dev/hypersync-client-darwin-x64': 0.6.3
+      '@envio-dev/hypersync-client-linux-arm64-gnu': 0.6.3
+      '@envio-dev/hypersync-client-linux-x64-gnu': 0.6.3
+      '@envio-dev/hypersync-client-linux-x64-musl': 0.6.3
+      '@envio-dev/hypersync-client-win32-x64-msvc': 0.6.3
 
   '@ethersproject/abi@5.7.0':
     dependencies:
@@ -4051,10 +3965,10 @@ snapshots:
 
   '@glennsl/rescript-fetch@0.2.0': {}
 
-  '@glennsl/rescript-jest@0.9.2(ts-node@10.9.2)':
+  '@glennsl/rescript-jest@0.9.2(ts-node@10.9.2(@types/node@18.19.47)(typescript@5.5.4))':
     dependencies:
       '@ryyppy/rescript-promise': 2.1.0
-      jest: 27.5.1(ts-node@10.9.2)
+      jest: 27.5.1(ts-node@10.9.2(@types/node@18.19.47)(typescript@5.5.4))
     transitivePeerDependencies:
       - bufferutil
       - canvas
@@ -4082,7 +3996,7 @@ snapshots:
       jest-util: 27.5.1
       slash: 3.0.0
 
-  '@jest/core@27.5.1(ts-node@10.9.2)':
+  '@jest/core@27.5.1(ts-node@10.9.2(@types/node@18.19.47)(typescript@5.5.4))':
     dependencies:
       '@jest/console': 27.5.1
       '@jest/reporters': 27.5.1
@@ -4096,7 +4010,7 @@ snapshots:
       exit: 0.1.2
       graceful-fs: 4.2.11
       jest-changed-files: 27.5.1
-      jest-config: 27.5.1(ts-node@10.9.2)
+      jest-config: 27.5.1(ts-node@10.9.2(@types/node@18.19.47)(typescript@5.5.4))
       jest-haste-map: 27.5.1
       jest-message-util: 27.5.1
       jest-regex-util: 27.5.1
@@ -4342,16 +4256,16 @@ snapshots:
       '@nomicfoundation/solidity-analyzer-linux-x64-musl': 0.1.2
       '@nomicfoundation/solidity-analyzer-win32-x64-msvc': 0.1.2
 
-  '@nomiclabs/hardhat-ethers@3.0.0-beta.0(ethers@6.8.0)(hardhat@2.22.5)':
+  '@nomiclabs/hardhat-ethers@3.0.0-beta.0(ethers@6.8.0)(hardhat@2.22.5(ts-node@10.9.2(@types/node@18.19.47)(typescript@5.5.4))(typescript@5.5.4))':
     dependencies:
       ethers: 6.8.0
-      hardhat: 2.22.5(ts-node@10.9.2)(typescript@5.5.4)
+      hardhat: 2.22.5(ts-node@10.9.2(@types/node@18.19.47)(typescript@5.5.4))(typescript@5.5.4)
 
   '@opentelemetry/api@1.9.0': {}
 
   '@openzeppelin/contracts@4.9.6': {}
 
-  '@rescript/react@0.12.1(react-dom@18.3.1)(react@18.2.0)':
+  '@rescript/react@0.12.1(react-dom@18.3.1(react@18.2.0))(react@18.2.0)':
     dependencies:
       react: 18.2.0
       react-dom: 18.3.1(react@18.2.0)
@@ -4473,7 +4387,7 @@ snapshots:
 
   '@tsconfig/node16@1.0.4': {}
 
-  '@typechain/ethers-v5@10.2.1(@ethersproject/abi@5.7.0)(@ethersproject/providers@5.7.2)(ethers@6.8.0)(typechain@8.3.2)(typescript@5.5.4)':
+  '@typechain/ethers-v5@10.2.1(@ethersproject/abi@5.7.0)(@ethersproject/providers@5.7.2)(ethers@6.8.0)(typechain@8.3.2(typescript@5.5.4))(typescript@5.5.4)':
     dependencies:
       '@ethersproject/abi': 5.7.0
       '@ethersproject/providers': 5.7.2
@@ -4483,7 +4397,7 @@ snapshots:
       typechain: 8.3.2(typescript@5.5.4)
       typescript: 5.5.4
 
-  '@typechain/ethers-v6@0.3.3(ethers@6.8.0)(typechain@8.3.2)(typescript@5.5.4)':
+  '@typechain/ethers-v6@0.3.3(ethers@6.8.0)(typechain@8.3.2(typescript@5.5.4))(typescript@5.5.4)':
     dependencies:
       ethers: 6.8.0
       lodash: 4.17.21
@@ -4491,14 +4405,14 @@ snapshots:
       typechain: 8.3.2(typescript@5.5.4)
       typescript: 5.5.4
 
-  '@typechain/hardhat@6.1.6(@ethersproject/abi@5.7.0)(@ethersproject/providers@5.7.2)(@typechain/ethers-v5@10.2.1)(ethers@6.8.0)(hardhat@2.22.5)(typechain@8.3.2)':
+  '@typechain/hardhat@6.1.6(@ethersproject/abi@5.7.0)(@ethersproject/providers@5.7.2)(@typechain/ethers-v5@10.2.1(@ethersproject/abi@5.7.0)(@ethersproject/providers@5.7.2)(ethers@6.8.0)(typechain@8.3.2(typescript@5.5.4))(typescript@5.5.4))(ethers@6.8.0)(hardhat@2.22.5(ts-node@10.9.2(@types/node@18.19.47)(typescript@5.5.4))(typescript@5.5.4))(typechain@8.3.2(typescript@5.5.4))':
     dependencies:
       '@ethersproject/abi': 5.7.0
       '@ethersproject/providers': 5.7.2
-      '@typechain/ethers-v5': 10.2.1(@ethersproject/abi@5.7.0)(@ethersproject/providers@5.7.2)(ethers@6.8.0)(typechain@8.3.2)(typescript@5.5.4)
+      '@typechain/ethers-v5': 10.2.1(@ethersproject/abi@5.7.0)(@ethersproject/providers@5.7.2)(ethers@6.8.0)(typechain@8.3.2(typescript@5.5.4))(typescript@5.5.4)
       ethers: 6.8.0
       fs-extra: 9.1.0
-      hardhat: 2.22.5(ts-node@10.9.2)(typescript@5.5.4)
+      hardhat: 2.22.5(ts-node@10.9.2(@types/node@18.19.47)(typescript@5.5.4))(typescript@5.5.4)
       typechain: 8.3.2(typescript@5.5.4)
 
   '@types/babel__core@7.20.5':
@@ -4585,7 +4499,7 @@ snapshots:
   abab@2.0.6: {}
 
   abitype@1.0.5(typescript@5.5.4):
-    dependencies:
+    optionalDependencies:
       typescript: 5.5.4
 
   abort-controller@3.0.0:
@@ -5099,6 +5013,7 @@ snapshots:
   debug@4.3.6(supports-color@8.1.1):
     dependencies:
       ms: 2.1.2
+    optionalDependencies:
       supports-color: 8.1.1
 
   decamelize@1.2.0: {}
@@ -5200,6 +5115,18 @@ snapshots:
       strip-ansi: 6.0.1
 
   env-paths@2.2.1: {}
+
+  envio@file:../../codegenerator/cli/npm/envio(typescript@5.5.4):
+    dependencies:
+      '@envio-dev/hypersync-client': 0.6.3
+      rescript: 11.1.3
+      rescript-schema: 9.1.0(rescript@11.1.3)
+      viem: 2.21.0(typescript@5.5.4)
+    transitivePeerDependencies:
+      - bufferutil
+      - typescript
+      - utf-8-validate
+      - zod
 
   error-ex@1.3.2:
     dependencies:
@@ -5467,7 +5394,7 @@ snapshots:
       imul: 1.0.1
 
   follow-redirects@1.15.6(debug@4.3.6):
-    dependencies:
+    optionalDependencies:
       debug: 4.3.6(supports-color@8.1.1)
 
   foreground-child@2.0.0:
@@ -5594,11 +5521,11 @@ snapshots:
 
   graceful-fs@4.2.11: {}
 
-  hardhat-abi-exporter@2.10.1(hardhat@2.22.5):
+  hardhat-abi-exporter@2.10.1(hardhat@2.22.5(ts-node@10.9.2(@types/node@18.19.47)(typescript@5.5.4))(typescript@5.5.4)):
     dependencies:
       '@ethersproject/abi': 5.7.0
       delete-empty: 3.0.0
-      hardhat: 2.22.5(ts-node@10.9.2)(typescript@5.5.4)
+      hardhat: 2.22.5(ts-node@10.9.2(@types/node@18.19.47)(typescript@5.5.4))(typescript@5.5.4)
 
   hardhat-deploy@0.11.45:
     dependencies:
@@ -5631,7 +5558,7 @@ snapshots:
       - supports-color
       - utf-8-validate
 
-  hardhat@2.22.5(ts-node@10.9.2)(typescript@5.5.4):
+  hardhat@2.22.5(ts-node@10.9.2(@types/node@18.19.47)(typescript@5.5.4))(typescript@5.5.4):
     dependencies:
       '@ethersproject/abi': 5.7.0
       '@metamask/eth-sig-util': 4.0.1
@@ -5672,12 +5599,13 @@ snapshots:
       solc: 0.7.3(debug@4.3.6)
       source-map-support: 0.5.21
       stacktrace-parser: 0.1.10
-      ts-node: 10.9.2(@types/node@18.19.47)(typescript@5.5.4)
       tsort: 0.0.1
-      typescript: 5.5.4
       undici: 5.28.4
       uuid: 8.3.2
       ws: 7.5.10
+    optionalDependencies:
+      ts-node: 10.9.2(@types/node@18.19.47)(typescript@5.5.4)
+      typescript: 5.5.4
     transitivePeerDependencies:
       - bufferutil
       - c-kzg
@@ -5786,14 +5714,14 @@ snapshots:
 
   inherits@2.0.4: {}
 
-  ink-big-text@1.2.0(ink@3.2.0)(react@18.2.0):
+  ink-big-text@1.2.0(ink@3.2.0(react@18.2.0))(react@18.2.0):
     dependencies:
       cfonts: 2.10.1
       ink: 3.2.0(react@18.2.0)
       prop-types: 15.8.1
       react: 18.2.0
 
-  ink-spinner@4.0.3(ink@3.2.0)(react@18.2.0):
+  ink-spinner@4.0.3(ink@3.2.0(react@18.2.0))(react@18.2.0):
     dependencies:
       cli-spinners: 2.9.2
       ink: 3.2.0(react@18.2.0)
@@ -5983,16 +5911,16 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  jest-cli@27.5.1(ts-node@10.9.2):
+  jest-cli@27.5.1(ts-node@10.9.2(@types/node@18.19.47)(typescript@5.5.4)):
     dependencies:
-      '@jest/core': 27.5.1(ts-node@10.9.2)
+      '@jest/core': 27.5.1(ts-node@10.9.2(@types/node@18.19.47)(typescript@5.5.4))
       '@jest/test-result': 27.5.1
       '@jest/types': 27.5.1
       chalk: 4.1.2
       exit: 0.1.2
       graceful-fs: 4.2.11
       import-local: 3.2.0
-      jest-config: 27.5.1(ts-node@10.9.2)
+      jest-config: 27.5.1(ts-node@10.9.2(@types/node@18.19.47)(typescript@5.5.4))
       jest-util: 27.5.1
       jest-validate: 27.5.1
       prompts: 2.4.2
@@ -6004,7 +5932,7 @@ snapshots:
       - ts-node
       - utf-8-validate
 
-  jest-config@27.5.1(ts-node@10.9.2):
+  jest-config@27.5.1(ts-node@10.9.2(@types/node@18.19.47)(typescript@5.5.4)):
     dependencies:
       '@babel/core': 7.25.2
       '@jest/test-sequencer': 27.5.1
@@ -6030,6 +5958,7 @@ snapshots:
       pretty-format: 27.5.1
       slash: 3.0.0
       strip-json-comments: 3.1.1
+    optionalDependencies:
       ts-node: 10.9.2(@types/node@18.19.47)(typescript@5.5.4)
     transitivePeerDependencies:
       - bufferutil
@@ -6151,7 +6080,7 @@ snapshots:
       '@types/node': 18.19.47
 
   jest-pnp-resolver@1.2.3(jest-resolve@27.5.1):
-    dependencies:
+    optionalDependencies:
       jest-resolve: 27.5.1
 
   jest-regex-util@27.5.1: {}
@@ -6299,11 +6228,11 @@ snapshots:
       merge-stream: 2.0.0
       supports-color: 8.1.1
 
-  jest@27.5.1(ts-node@10.9.2):
+  jest@27.5.1(ts-node@10.9.2(@types/node@18.19.47)(typescript@5.5.4)):
     dependencies:
-      '@jest/core': 27.5.1(ts-node@10.9.2)
+      '@jest/core': 27.5.1(ts-node@10.9.2(@types/node@18.19.47)(typescript@5.5.4))
       import-local: 3.2.0
-      jest-cli: 27.5.1(ts-node@10.9.2)
+      jest-cli: 27.5.1(ts-node@10.9.2(@types/node@18.19.47)(typescript@5.5.4))
     transitivePeerDependencies:
       - bufferutil
       - canvas
@@ -6582,8 +6511,6 @@ snapshots:
     dependencies:
       path-key: 3.1.1
 
-  npm@10.8.3: {}
-
   nwsapi@2.2.12: {}
 
   nyc@15.1.0:
@@ -6747,7 +6674,7 @@ snapshots:
       minimist: 1.2.8
       on-exit-leak-free: 2.1.2
       pino-abstract-transport: 1.2.0
-      pump: 3.0.0
+      pump: 3.0.2
       readable-stream: 4.5.2
       secure-json-parse: 2.7.0
       sonic-boom: 3.8.1
@@ -6816,7 +6743,7 @@ snapshots:
 
   psl@1.9.0: {}
 
-  pump@3.0.0:
+  pump@3.0.2:
     dependencies:
       end-of-stream: 1.4.4
       once: 1.4.0
@@ -6911,18 +6838,14 @@ snapshots:
 
   requires-port@1.0.0: {}
 
-  rescript-envsafe@4.2.0(rescript-schema@8.2.0)(rescript@11.1.3):
+  rescript-envsafe@5.0.0(rescript-schema@9.1.0(rescript@11.1.3))(rescript@11.1.3):
     dependencies:
       rescript: 11.1.3
-      rescript-schema: 8.2.0(rescript@11.1.3)
-
-  rescript-express@0.4.1(express@4.19.2):
-    dependencies:
-      express: 4.19.2
+      rescript-schema: 9.1.0(rescript@11.1.3)
 
   rescript-nodejs@16.0.0: {}
 
-  rescript-schema@8.2.0(rescript@11.1.3):
+  rescript-schema@9.1.0(rescript@11.1.3):
     dependencies:
       rescript: 11.1.3
 
@@ -7262,6 +7185,8 @@ snapshots:
     dependencies:
       typescript: 5.5.4
 
+  ts-expect@1.3.0: {}
+
   ts-node@10.9.2(@types/node@18.19.47)(typescript@5.5.4):
     dependencies:
       '@cspotcode/source-map-support': 0.8.1
@@ -7389,9 +7314,10 @@ snapshots:
       '@scure/bip39': 1.3.0
       abitype: 1.0.5(typescript@5.5.4)
       isows: 1.0.4(ws@8.17.1)
-      typescript: 5.5.4
       webauthn-p256: 0.0.5
       ws: 8.17.1
+    optionalDependencies:
+      typescript: 5.5.4
     transitivePeerDependencies:
       - bufferutil
       - utf-8-validate
@@ -7547,8 +7473,6 @@ snapshots:
       string-width: 4.2.3
       y18n: 5.0.8
       yargs-parser: 21.1.1
-
-  yarn@1.22.22: {}
 
   yn@3.1.1: {}
 

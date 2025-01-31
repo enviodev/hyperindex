@@ -20,13 +20,20 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
       Belt.Int.fromFloat(Js.Math.random() *. float_of_int(max - min + 1) +. float_of_int(min))
     }
 
-    let fetcherStateInit: PartitionedFetchState.t = PartitionedFetchState.make(
+    let eventConfigs = [
+      {
+        FetchState.contractName: "Gravatar",
+        eventId: "0",
+        isWildcard: true,
+      },
+    ]
+    let fetcherStateInit: FetchState.t = FetchState.make(
       ~maxAddrInPartition=Env.maxAddrInPartition,
       ~endBlock=None,
-      ~staticContracts=[],
-      ~dynamicContractRegistrations=[],
+      ~staticContracts=Js.Dict.empty(),
+      ~eventConfigs,
+      ~dynamicContracts=[],
       ~startBlock=0,
-      ~logger=Logging.logger,
     )
 
     let fetchState = ref(fetcherStateInit)
@@ -53,14 +60,16 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
       let numberOfEventsInBatch = getRandomInt(0, 2 * averageEventsPerBlock)
 
       for logIndex in 0 to numberOfEventsInBatch {
-        let batchItem: Types.eventBatchQueueItem = {
+        let batchItem: Internal.eventItem = {
           timestamp: currentTime.contents,
           chain,
           blockNumber: currentBlockNumber.contents,
           logIndex,
           eventName: "MockEvent",
           contractName: "MockContract",
-          handlerRegister: Utils.magic("Mock event handlerRegister in fetchstate test"),
+          handler: None,
+          loader: None,
+          contractRegister: None,
           paramsRawEventSchema: Utils.magic("Mock event paramsRawEventSchema in fetchstate test"),
           event: `mock event (chainId)${chain->ChainMap.Chain.toString} - (blockNumber)${currentBlockNumber.contents->string_of_int} - (logIndex)${logIndex->string_of_int} - (timestamp)${currentTime.contents->string_of_int}`->Utils.magic,
         }
@@ -74,8 +83,17 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
         | 1 =>
           fetchState :=
             fetchState.contents
-            ->PartitionedFetchState.update(
-              ~id={fetchStateId: FetchState.Root, partitionId: 0},
+            ->FetchState.setQueryResponse(
+              ~query={
+                partitionId: "0",
+                fromBlock: 0,
+                target: Head,
+                selection: {
+                  isWildcard: true,
+                  eventConfigs,
+                },
+                contractAddressMapping: ContractAddressingMap.make(),
+              },
               ~latestFetchedBlock={
                 blockNumber: batchItem.blockNumber,
                 blockTimestamp: batchItem.timestamp,
@@ -92,8 +110,17 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
           } else {
             fetchState :=
               fetchState.contents
-              ->PartitionedFetchState.update(
-                ~id={fetchStateId: FetchState.Root, partitionId: 0},
+              ->FetchState.setQueryResponse(
+                ~query={
+                  partitionId: "0",
+                  fromBlock: 0,
+                  target: Head,
+                  selection: {
+                    isWildcard: true,
+                    eventConfigs,
+                  },
+                  contractAddressMapping: ContractAddressingMap.make(),
+                },
                 ~latestFetchedBlock={
                   blockNumber: batchItem.blockNumber,
                   blockTimestamp: batchItem.timestamp,
@@ -117,14 +144,18 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
       latestProcessedBlock: None,
       numEventsProcessed: 0,
       numBatchesFetched: 0,
+      startBlock: 0,
       fetchState: fetchState.contents,
       logger: Logging.logger,
+      sourceManager: SourceManager.make(
+        ~maxPartitionConcurrency=Env.maxPartitionConcurrency,
+        ~logger=Logging.logger,
+      ),
       chainConfig,
       // This is quite a hack - but it works!
       lastBlockScannedHashes: ReorgDetection.LastBlockScannedHashes.empty(
         ~confirmedBlockThreshold=200,
       ),
-      partitionsCurrentlyFetching: Belt.Set.Int.empty,
       currentBlockHeight: 0,
       processingFilters: None,
       dynamicContractPreRegistration: None,
@@ -157,14 +188,16 @@ describe("ChainManager", () => {
           _allEvents,
         ) = populateChainQueuesWithRandomEvents()
 
-        let defaultFirstEvent: Types.eventBatchQueueItem = {
+        let defaultFirstEvent: Internal.eventItem = {
           timestamp: 0,
           chain: MockConfig.chain1,
           blockNumber: 0,
           logIndex: 0,
           eventName: "MockEvent",
           contractName: "MockContract",
-          handlerRegister: Utils.magic("Mock event handlerRegister in fetchstate test"),
+          handler: None,
+          loader: None,
+          contractRegister: None,
           paramsRawEventSchema: Utils.magic("Mock event paramsRawEventSchema in fetchstate test"),
           event: `mock initial event`->Utils.magic,
         }
@@ -237,7 +270,7 @@ describe("ChainManager", () => {
             //   )
             let nextChainFetchers = chainManager.chainFetchers->ChainMap.mapWithKey(
               (chain, fetcher) => {
-                let {partitionedFetchState: fetchState} = fetchStatesMap->ChainMap.get(chain)
+                let {fetchState} = fetchStatesMap->ChainMap.get(chain)
                 {
                   ...fetcher,
                   fetchState,
@@ -267,7 +300,7 @@ describe("ChainManager", () => {
             ->Belt.Array.reduce(
               0,
               (accum, val) => {
-                accum + val.fetchState->PartitionedFetchState.queueSize
+                accum + val.fetchState->FetchState.queueSize
               },
             )
 
@@ -295,8 +328,10 @@ describe("determineNextEvent", () => {
       ~onlyBelowReorgThreshold=false,
     )
 
-    let makeNoItem = timestamp => FetchState.NoItem({blockTimestamp: timestamp, blockNumber: 0})
-    let makeMockQItem = (timestamp, chain): Types.eventBatchQueueItem => {
+    let makeNoItem = timestamp => FetchState.NoItem({
+      latestFetchedBlock: {blockTimestamp: timestamp, blockNumber: 0},
+    })
+    let makeMockQItem = (timestamp, chain): Internal.eventItem => {
       {
         timestamp,
         chain,
@@ -304,37 +339,63 @@ describe("determineNextEvent", () => {
         logIndex: 123456,
         eventName: "MockEvent",
         contractName: "MockContract",
-        handlerRegister: Utils.magic("Mock event handlerRegister"),
+        handler: None,
+        loader: None,
+        contractRegister: None,
         paramsRawEventSchema: Utils.magic("Mock event paramsRawEventSchema"),
         event: "SINGLE TEST EVENT"->Utils.magic,
       }
     }
 
     let makeMockFetchState = (~latestFetchedBlockTimestamp, ~item): FetchState.t => {
-      isFetchingAtHead: false,
-      registerType: RootRegister({endBlock: None}),
-      latestFetchedBlock: {
-        blockTimestamp: latestFetchedBlockTimestamp,
-        blockNumber: 0,
-      },
-      contractAddressMapping: ContractAddressingMap.make(),
-      fetchedEventQueue: item->Option.mapWithDefault([], v => [v]),
-      dynamicContracts: FetchState.DynamicContractsMap.empty,
-      firstEventBlockNumber: item->Option.map(v => v.blockNumber),
+      let normalSelection: FetchState.selection = {
+        isWildcard: false,
+        eventConfigs: [
+          {
+            FetchState.contractName: "MockContract",
+            eventId: "0",
+            isWildcard: false,
+          },
+        ],
+      }
+      let partition: FetchState.partition = {
+        id: "0",
+        latestFetchedBlock: {
+          blockTimestamp: latestFetchedBlockTimestamp,
+          blockNumber: 0,
+        },
+        status: {
+          fetchingStateId: None,
+        },
+        selection: normalSelection,
+        contractAddressMapping: ContractAddressingMap.make(),
+        dynamicContracts: [],
+        fetchedEventQueue: item->Option.mapWithDefault([], v => [v]),
+      }
+      {
+        partitions: [partition],
+        maxAddrInPartition: 5,
+        nextPartitionIndex: 1,
+        queueSize: 10,
+        latestFullyFetchedBlock: {
+          blockTimestamp: latestFetchedBlockTimestamp,
+          blockNumber: 0,
+        },
+        endBlock: None,
+        isFetchingAtHead: false,
+        firstEventBlockNumber: item->Option.map(v => v.blockNumber),
+        normalSelection,
+      }
     }
 
     let makeMockPartitionedFetchState = (
       ~latestFetchedBlockTimestamp,
       ~item,
     ): ChainManager.fetchStateWithData => {
-      partitionedFetchState: {
-        partitions: list{makeMockFetchState(~latestFetchedBlockTimestamp, ~item)},
-        maxAddrInPartition: Env.maxAddrInPartition,
-        startBlock: 0,
-        endBlock: None,
-        logger: Logging.logger,
-      },
-      heighestBlockBelowThreshold: 500,
+      {
+        fetchState: makeMockFetchState(~latestFetchedBlockTimestamp, ~item),
+        heighestBlockBelowThreshold: 500,
+      }
     }
 
     it(

@@ -18,5 +18,5 @@
     "module": "commonjs",
     "in-source": true
   },
-  "bs-dependencies": ["generated"]
+  "bs-dependencies": ["generated", "envio"]
 }

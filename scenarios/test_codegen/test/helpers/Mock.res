@@ -41,6 +41,7 @@ module LoadLayer = {
     fieldName: string,
     fieldValue: LoadLayer.fieldValue,
     fieldValueSchema: S.t<LoadLayer.fieldValue>,
+    operator: TableIndices.Operator.t,
     logger?: Pino.t,
   }
   type t = {
@@ -63,7 +64,9 @@ module LoadLayer = {
         ->ignore
         []
       },
-      ~makeLoadEntitiesByField=(~entityMod) => async (
+      ~loadEntitiesByField=async (
+        ~operator,
+        ~entityMod,
         ~fieldName,
         ~fieldValue,
         ~fieldValueSchema,
@@ -71,6 +74,7 @@ module LoadLayer = {
       ) => {
         loadEntitiesByFieldCalls
         ->Js.Array2.push({
+          operator,
           entityMod,
           fieldName,
           fieldValue,
@@ -93,12 +97,12 @@ module LoadLayer = {
 @genType
 let mockRawEventRow: TablesStatic.RawEvents.t = {
   chainId: 1,
-  eventId: 1234567890->Belt.Int.toString,
+  eventId: 1234567890n,
   contractName: "NftFactory",
   eventName: "SimpleNftCreated",
   blockNumber: 1000,
   logIndex: 10,
-  transactionFields: S.serializeOrRaiseWith(
+  transactionFields: S.reverseConvertToJsonOrThrow(
     {
       Types.Transaction.transactionIndex: 20,
       hash: "0x1234567890abcdef",

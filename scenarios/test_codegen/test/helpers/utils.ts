@@ -3,7 +3,7 @@ import {
   runUpMigrations,
 } from "../../generated/src/db/Migrations.bs";
 import Postgres from "postgres";
-import { config } from "../../generated/src/db/DbFunctions.bs";
+import { config } from "../../generated/src/db/Db.bs";
 
 export const createSql = () => Postgres(config);
 

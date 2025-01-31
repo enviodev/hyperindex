@@ -8,16 +8,20 @@ let getDefaultAddress = (chain, contractName) => {
 }
 
 let gAS_USED_DEFAULT = BigInt.zero
-let makeBlock = (~blockNumber, ~blockTimestamp, ~blockHash): Types.Block.t => {
-  number: blockNumber,
-  hash: blockHash,
-  timestamp: blockTimestamp,
-  gasUsed: gAS_USED_DEFAULT,
-}
-let makeTransaction = (~transactionIndex, ~transactionHash): Types.Transaction.t => {
-  transactionIndex,
-  hash: transactionHash,
-}
+let makeBlock = (~blockNumber, ~blockTimestamp, ~blockHash) =>
+  {
+    number: blockNumber,
+    hash: blockHash,
+    timestamp: blockTimestamp,
+    gasUsed: gAS_USED_DEFAULT,
+  }->(Utils.magic: Types.Block.t => Internal.eventBlock)
+
+let makeTransaction = (~transactionIndex, ~transactionHash) =>
+  {
+    transactionIndex,
+    hash: transactionHash,
+  }->(Utils.magic: Types.Transaction.t => Internal.eventTransaction)
+
 module ERC20 = {
   let contractName = "ERC20"
   let getDefaultAddress = getDefaultAddress(_, contractName)
@@ -80,34 +84,24 @@ module Stubs = {
   let getTasks = ({tasks}) => tasks.contents
   let getMockChainData = ({mockChainDataMap}, chain) => mockChainDataMap->ChainMap.get(chain)
 
-  //Stub executeNextQuery with mock data
-  let makeExecuteNextQuery = async (
-    stubData: t,
+  //Stub executePartitionQuery with mock data
+  let makeExecutePartitionQuery = (stubData: t) => async (
+    query,
     ~logger,
-    ~chainWorker,
+    ~source,
     ~currentBlockHeight,
-    ~setCurrentBlockHeight,
     ~chain,
-    ~query,
-    ~dispatchAction,
-    ~isPreRegisteringDynamicContracts,
   ) => {
-    (
-      logger,
-      currentBlockHeight,
-      setCurrentBlockHeight,
-      chainWorker,
-      isPreRegisteringDynamicContracts,
-    )->ignore
-
-    let response = stubData->getMockChainData(chain)->MockChainData.executeQuery(query)
-    dispatchAction(GlobalState.BlockRangeResponse(chain, response))
+    (logger, currentBlockHeight, source)->ignore
+    stubData->getMockChainData(chain)->MockChainData.executeQuery(query)->Ok
   }
 
   //Stub for getting block hashes instead of the worker
-  let makeGetBlockHashes = (~stubData, ~chainWorker) => async (~blockNumbers, ~logger as _) => {
-    let module(ChainWorker: ChainWorker.S) = chainWorker
-    stubData->getMockChainData(ChainWorker.chain)->MockChainData.getBlockHashes(~blockNumbers)->Ok
+  let makeGetBlockHashes = (~stubData, ~source: Source.t) => async (
+    ~blockNumbers,
+    ~logger as _,
+  ) => {
+    stubData->getMockChainData(source.chain)->MockChainData.getBlockHashes(~blockNumbers)->Ok
   }
 
   let replaceNexQueryCheckAllChainsWithGivenChain = ({tasks}: t, chain) => {
@@ -121,16 +115,13 @@ module Stubs = {
   }
 
   //Stub wait for new block
-  let makeWaitForNewBlock = async (
-    stubData: t,
-    ~logger,
-    ~chainWorker,
+  let makeWaitForNewBlock = (stubData: t) => async (
+    source: Source.t,
     ~currentBlockHeight,
-    ~setCurrentBlockHeight,
+    ~logger,
   ) => {
     (logger, currentBlockHeight)->ignore
-    let module(ChainWorker: ChainWorker.S) = chainWorker
-    stubData->getMockChainData(ChainWorker.chain)->MockChainData.getHeight->setCurrentBlockHeight
+    stubData->getMockChainData(source.chain)->MockChainData.getHeight
   }
   //Stub dispatch action to set state and not dispatch task but store in
   //the tasks ref
@@ -145,14 +136,11 @@ module Stubs = {
 
   let makeDispatchTask = (stubData: t, task) => {
     GlobalState.injectedTaskReducer(
-      ~executeNextQuery=makeExecuteNextQuery(stubData, ...),
-      ~waitForNewBlock=makeWaitForNewBlock(stubData, ...),
+      ~executeQuery=makeExecutePartitionQuery(stubData),
+      ~waitForNewBlock=makeWaitForNewBlock(stubData),
       ~rollbackLastBlockHashesToReorgLocation=chainFetcher =>
         chainFetcher->ChainFetcher.rollbackLastBlockHashesToReorgLocation(
-          ~getBlockHashes=makeGetBlockHashes(
-            ~stubData,
-            ~chainWorker=chainFetcher.chainConfig.chainWorker,
-          ),
+          ~getBlockHashes=makeGetBlockHashes(~stubData, ~source=chainFetcher.chainConfig.source),
         ),
     )(
       ~dispatchAction=makeDispatchAction(stubData, _),

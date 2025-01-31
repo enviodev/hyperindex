@@ -54,10 +54,7 @@ type rec t = {
   entities: entities,
   rawEvents: storeOperations<InMemoryStore.rawEventsKey, TablesStatic.RawEvents.t>,
   eventSyncState: storeOperations<Types.chainId, TablesStatic.EventSyncState.t>,
-  dynamicContractRegistry: storeOperations<
-    InMemoryStore.dynamicContractRegistryKey,
-    TablesStatic.DynamicContractRegistry.t,
-  >,
+  dynamicContractRegistry: entityStoreOperations<TablesStatic.DynamicContractRegistry.t>,
 }
 
 // Each user defined entity will be in this record with all the store or "mockdb" operators
@@ -105,9 +102,11 @@ let updateEntityIndicesMockDb = (
   ->Utils.magic
   ->Js.Dict.entries
   ->Array.forEach(((fieldName, fieldValue)) => {
-    let index = TableIndices.Index.makeSingleEq(~fieldName, ~fieldValue)
-    mockDbTable->InMemoryTable.Entity.addIdToIndex(~index, ~entityId)
-    entityIndices->Utils.Set.add(index)->ignore
+    TableIndices.Operator.values->Array.forEach(operator => {
+      let index = TableIndices.Index.makeSingle(~fieldName, ~fieldValue, ~operator)
+      mockDbTable->InMemoryTable.Entity.addIdToIndex(~index, ~entityId)
+      entityIndices->Utils.Set.add(index)->ignore
+    })
   })
 }
 
@@ -213,7 +212,7 @@ let rec makeWithInMemoryStore: InMemoryStore.t => t = (inMemoryStore: InMemorySt
     ~getStore=db => db.rawEvents,
     ~getKey=({chainId, eventId}) => {
       chainId,
-      eventId,
+      eventId: eventId->BigInt.toString,
     },
   )
 
@@ -224,11 +223,13 @@ let rec makeWithInMemoryStore: InMemoryStore.t => t = (inMemoryStore: InMemorySt
     ~getKey=({chainId}) => chainId,
   )
 
-  let dynamicContractRegistry = makeStoreOperatorMeta(
+  let dynamicContractRegistry = makeStoreOperatorEntity(
     ~inMemoryStore,
-    ~getStore=db => db.dynamicContractRegistry,
+    ~getStore=db =>
+      db.entities->InMemoryStore.EntityTables.get(module(TablesStatic.DynamicContractRegistry)),
     ~makeMockDb=makeWithInMemoryStore,
-    ~getKey=({chainId, contractAddress}) => {chainId, contractAddress},
+    ~getKey=({chainId, contractAddress}) =>
+      ContextEnv.makeDynamicContractId(~chainId, ~contractAddress),
   )
 
   let entities = {
@@ -237,7 +238,7 @@ let rec makeWithInMemoryStore: InMemoryStore.t => t = (inMemoryStore: InMemorySt
         makeStoreOperatorEntity(
           ~inMemoryStore,
           ~makeMockDb=makeWithInMemoryStore,
-          ~getStore=db => db.{{entity.name.uncapitalized}},
+          ~getStore=db => db.entities->InMemoryStore.EntityTables.get(module(Entities.{{entity.name.capitalized}})),
           ~getKey=({id}) => id,
         )
       },
@@ -273,7 +274,10 @@ let cloneMockDb = (self: t) => {
 
 let getEntityOperations = (mockDb: t, ~entityMod): entityStoreOperations<Entities.internalEntity> => {
   let module(Entity: Entities.InternalEntity) = entityMod
-  (mockDb.entities->Utils.magic)->Utils.Dict.dangerouslyGetNonOption(Entity.key)->Utils.Option.getExn("Mocked operations for entity " ++ Entity.key ++ " not found")
+  mockDb.entities
+  ->Utils.magic
+  ->Utils.Dict.dangerouslyGetNonOption((Entity.name :> string))
+  ->Utils.Option.getExn("Mocked operations for entity " ++ (Entity.name :> string) ++ " not found")
 }
 
 let makeLoadEntitiesByIds = (mockDb: t) => {
@@ -283,11 +287,18 @@ let makeLoadEntitiesByIds = (mockDb: t) => {
   }
 }
 
-let makeLoadEntitiesByField = (mockDb: t, ~entityMod) => {
-  let mockDbTable = mockDb.__dbInternal__->InMemoryStore.getInMemTable(~entityMod)
-  async (~fieldName, ~fieldValue, ~fieldValueSchema as _, ~logger as _=?) => {
+let makeLoadEntitiesByField = (mockDb: t) => {
+  async (
+    ~operator,
+    ~entityMod,
+    ~fieldName,
+    ~fieldValue,
+    ~fieldValueSchema as _,
+    ~logger as _=?,
+  ) => {
+    let mockDbTable = mockDb.__dbInternal__->InMemoryStore.getInMemTable(~entityMod)
     mockDbTable->InMemoryTable.Entity.getOnIndex(
-      ~index=TableIndices.Index.makeSingleEq(~fieldName, ~fieldValue),
+      ~index=TableIndices.Index.makeSingle(~fieldName, ~fieldValue, ~operator),
     )
   }
 }
@@ -297,11 +308,15 @@ A function composer for simulating the writing of an inMemoryStore to the extern
 Runs all set and delete operations currently cached in an inMemory store against the mockDb
 */
 let executeRowsEntity = (
+  type entity,
   mockDb: t,
   ~inMemoryStore: InMemoryStore.t,
-  ~getInMemTable: InMemoryStore.t => InMemoryTable.Entity.t<'entity>,
-  ~getKey: 'entity => 'key,
+  ~entityMod: module(Entities.Entity with type t = entity),
+  ~getKey: entity => 'key,
 ) => {
+  let getInMemTable = (inMemoryStore: InMemoryStore.t) =>
+    inMemoryStore.entities->InMemoryStore.EntityTables.get(entityMod)
+
   let inMemTable = getInMemTable(inMemoryStore)
 
   inMemTable.table
@@ -354,7 +369,7 @@ let writeFromMemoryStore = (mockDb: t, ~inMemoryStore: InMemoryStore.t) => {
     ~getInMemTable=inMemStore => {inMemStore.rawEvents},
     ~getKey=(entity): InMemoryStore.rawEventsKey => {
       chainId: entity.chainId,
-      eventId: entity.eventId,
+      eventId: entity.eventId->BigInt.toString,
     },
   )
 
@@ -364,20 +379,17 @@ let writeFromMemoryStore = (mockDb: t, ~inMemoryStore: InMemoryStore.t) => {
     ~getKey=entity => entity.chainId,
   )
 
-  mockDb->executeRowsMeta(
+  mockDb->executeRowsEntity(
     ~inMemoryStore,
-    ~getInMemTable=inMemStore => {inMemStore.dynamicContractRegistry},
-    ~getKey=(entity): InMemoryStore.dynamicContractRegistryKey => {
-      chainId: entity.chainId,
-      contractAddress: entity.contractAddress,
-    },
+    ~entityMod=module(TablesStatic.DynamicContractRegistry),
+    ~getKey=entity => entity.id,
   )
 
 //ENTITY EXECUTION
 {{#each entities as | entity |}}
   mockDb->executeRowsEntity(
     ~inMemoryStore,
-    ~getInMemTable=self => {self.{{entity.name.uncapitalized}}},
+    ~entityMod=module(Entities.{{entity.name.capitalized}}),
     ~getKey=entity => entity.id,
   )
 {{/each}}

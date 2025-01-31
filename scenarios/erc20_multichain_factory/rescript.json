@@ -30,14 +30,6 @@
     "version": 4
   },
   "suffix": ".bs.js",
-  "bs-dependencies": [
-    "generated",
-    "@ryyppy/rescript-promise",
-    "rescript-schema",
-    "@glennsl/rescript-fetch",
-    "helpers"
-  ],
-  "bsc-flags": [
-    "-open RescriptSchema"
-  ]
+  "bs-dependencies": ["generated", "rescript-schema", "helpers", "envio"],
+  "bsc-flags": ["-open RescriptSchema"]
 }

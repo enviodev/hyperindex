@@ -1,7 +1,10 @@
 open Belt
 open RescriptMocha
 
-let config = RegisterHandlers.registerAllHandlers()
+let config = {
+  ...RegisterHandlers.registerAllHandlers(),
+  isUnorderedMultichainMode: true,
+}
 
 module Mock = {
   /*
@@ -192,7 +195,7 @@ module Sql = {
   @send
   external unsafe: (Postgres.sql, string) => promise<'a> = "unsafe"
 
-  let query = unsafe(DbFunctions.sql, _)
+  let query = unsafe(Db.sql, _)
 
   let getAllRowsInTable = tableName => query(`SELECT * FROM public."${tableName}";`)
 
@@ -208,7 +211,7 @@ module Sql = {
     )
 
     res[0]
-    ->Option.map(v => v->S.parseWith(Entities.AccountToken.schema)->Result.getExn)
+    ->Option.map(v => v->S.parseJsonOrThrow(Entities.AccountToken.schema))
     ->Option.map(a => a.balance)
   }
 }
@@ -227,10 +230,7 @@ describe("Multichain rollback test", () => {
   Async.it("Multichain indexer should rollback and not reprocess any events", async () => {
     //Setup a chainManager with unordered multichain mode to make processing happen
     //without blocking for the purposes of this test
-    let chainManager = {
-      ...ChainManager.makeFromConfig(~config),
-      isUnorderedMultichainMode: true,
-    }
+    let chainManager = ChainManager.makeFromConfig(~config)
 
     let loadLayer = LoadLayer.makeWithDbConnection()
 
@@ -256,7 +256,7 @@ describe("Multichain rollback test", () => {
     }
 
     let getLatestFetchedBlock = chain => {
-      chain->getFetchState->PartitionedFetchState.getLatestFullyFetchedBlock
+      chain->getFetchState->FetchState.getLatestFullyFetchedBlock
     }
 
     let getTokenBalance = (~accountAddress) => chain => {
@@ -275,7 +275,7 @@ describe("Multichain rollback test", () => {
       ->ChainMap.values
       ->Array.reduce(
         0,
-        (accum, chainFetcher) => accum + chainFetcher.fetchState->PartitionedFetchState.queueSize,
+        (accum, chainFetcher) => accum + chainFetcher.fetchState->FetchState.queueSize,
       )
     }
 
@@ -307,18 +307,18 @@ describe("Multichain rollback test", () => {
       ~chain2User2Balance,
     ) => {
       Assert.equal(
-        chain1LatestFetchBlock,
         getLatestFetchedBlock(Mock.Chain1.chain).blockNumber,
+        chain1LatestFetchBlock,
         ~message=`Chain 1 should have fetched up to block ${chain1LatestFetchBlock->Int.toString} on query ${queryName}`,
       )
       Assert.equal(
-        chain2LatestFetchBlock,
         getLatestFetchedBlock(Mock.Chain2.chain).blockNumber,
+        chain2LatestFetchBlock,
         ~message=`Chain 2 should have fetched up to block ${chain2LatestFetchBlock->Int.toString} on query ${queryName}`,
       )
       Assert.equal(
-        totalQueueSize,
         getTotalQueueSize(),
+        totalQueueSize,
         ~message=`Query ${queryName} should have returned ${totalQueueSize->Int.toString} events`,
       )
 
@@ -373,7 +373,7 @@ describe("Multichain rollback test", () => {
           Mock.mockChainDataMapInitial,
           ~chain=Mock.Chain1.chain,
           ~blockNumberThreshold=-199,
-          ~blockTimestampThreshold=25,
+          ~blockTimestampThreshold=Some(25),
           ~blockNumber=1,
         ),
         UpdateChainMetaDataAndCheckForExit(NoExit),
@@ -383,7 +383,7 @@ describe("Multichain rollback test", () => {
           Mock.mockChainDataMapInitial,
           ~chain=Mock.Chain2.chain,
           ~blockNumberThreshold=-198,
-          ~blockTimestampThreshold=25,
+          ~blockTimestampThreshold=Some(25),
           ~blockNumber=2,
         ),
         UpdateChainMetaDataAndCheckForExit(NoExit),
@@ -423,11 +423,12 @@ describe("Multichain rollback test", () => {
     Assert.deepEqual(
       [
         GlobalState.NextQuery(CheckAllChains),
+        ProcessEventBatch,
         Mock.getUpdateEndofBlockRangeScannedData(
           Mock.mockChainDataMapInitial,
           ~chain=Mock.Chain1.chain,
           ~blockNumberThreshold=-197,
-          ~blockTimestampThreshold=25,
+          ~blockTimestampThreshold=Some(25),
           ~blockNumber=3,
         ),
         UpdateChainMetaDataAndCheckForExit(NoExit),
@@ -437,7 +438,7 @@ describe("Multichain rollback test", () => {
           Mock.mockChainDataMapInitial,
           ~chain=Mock.Chain2.chain,
           ~blockNumberThreshold=-195,
-          ~blockTimestampThreshold=25,
+          ~blockTimestampThreshold=Some(25),
           ~blockNumber=5,
         ),
         UpdateChainMetaDataAndCheckForExit(NoExit),
@@ -445,6 +446,7 @@ describe("Multichain rollback test", () => {
         NextQuery(Chain(Mock.Chain2.chain)),
         UpdateChainMetaDataAndCheckForExit(NoExit),
         ProcessEventBatch,
+        PruneStaleEntityHistory,
       ],
       stubDataInitial->Stubs.getTasks,
       ~message="Should have processed a batch and run next queries on all chains",
@@ -467,7 +469,7 @@ describe("Multichain rollback test", () => {
           Mock.mockChainDataMapInitial,
           ~chain=Mock.Chain1.chain,
           ~blockNumberThreshold=-195,
-          ~blockTimestampThreshold=25,
+          ~blockTimestampThreshold=Some(25),
           ~blockNumber=5,
         ),
         UpdateChainMetaDataAndCheckForExit(NoExit),
@@ -477,7 +479,7 @@ describe("Multichain rollback test", () => {
           Mock.mockChainDataMapInitial,
           ~chain=Mock.Chain2.chain,
           ~blockNumberThreshold=-192,
-          ~blockTimestampThreshold=25,
+          ~blockTimestampThreshold=Some(25),
           ~blockNumber=8,
         ),
         UpdateChainMetaDataAndCheckForExit(NoExit),
@@ -485,6 +487,7 @@ describe("Multichain rollback test", () => {
         NextQuery(Chain(Mock.Chain2.chain)),
         UpdateChainMetaDataAndCheckForExit(NoExit),
         ProcessEventBatch,
+        PruneStaleEntityHistory,
       ],
       stubDataInitial->Stubs.getTasks,
       ~message="Should have detected rollback on chain 1",
@@ -522,7 +525,7 @@ describe("Multichain rollback test", () => {
           Mock.mockChainDataMapInitial,
           ~chain=Mock.Chain2.chain,
           ~blockNumberThreshold=-191,
-          ~blockTimestampThreshold=25,
+          ~blockTimestampThreshold=Some(25),
           ~blockNumber=9,
         ),
         UpdateChainMetaDataAndCheckForExit(NoExit),
@@ -530,6 +533,7 @@ describe("Multichain rollback test", () => {
         NextQuery(Chain(Mock.Chain2.chain)),
         UpdateChainMetaDataAndCheckForExit(NoExit),
         ProcessEventBatch,
+        PruneStaleEntityHistory,
       ],
       stubDataReorg->Stubs.getTasks,
       ~message="Should have detected rollback on chain 1",
@@ -554,11 +558,11 @@ describe("Multichain rollback test", () => {
       ~message="Rollback should have actioned and next tasks are query and process batch",
     )
     await makeAssertions(
-      ~queryName="After Rollback Action",
+      ~queryName="After Rollback Action A",
       ~chain1LatestFetchBlock=3,
-      ~chain2LatestFetchBlock=2,
+      ~chain2LatestFetchBlock=5,
       ~totalQueueSize=0,
-      ~batchName="After Rollback Action",
+      ~batchName="After Rollback Action A",
       //balances have not yet been changed
       ~chain1User1Balance=Some(100),
       ~chain1User2Balance=Some(50),
@@ -577,13 +581,14 @@ describe("Multichain rollback test", () => {
     //Make new queries (C for Chain 1, B for Chain 2)
     //Artificially cut the tasks to only do one round of queries and batch processing
     tasks := [NextQuery(CheckAllChains)]
+
     await dispatchAllTasks()
     await makeAssertions(
-      ~queryName="After Rollback Action",
+      ~queryName="After Rollback Action B",
       ~chain1LatestFetchBlock=5,
-      ~chain2LatestFetchBlock=5,
-      ~totalQueueSize=3,
-      ~batchName="After Rollback Action",
+      ~chain2LatestFetchBlock=8,
+      ~totalQueueSize=5,
+      ~batchName="After Rollback Action B",
       //balances have not yet been changed
       ~chain1User1Balance=Some(100),
       ~chain1User2Balance=Some(50),
@@ -595,20 +600,34 @@ describe("Multichain rollback test", () => {
     tasks := [ProcessEventBatch]
     // Process event batch with reorg in mem store and action next queries
     await dispatchAllTasks()
+
     await makeAssertions(
-      ~queryName="After Rollback EventProcess",
+      ~queryName="After Rollback EventProcess A",
       ~chain1LatestFetchBlock=5,
-      ~chain2LatestFetchBlock=5,
+      ~chain2LatestFetchBlock=8,
       ~totalQueueSize=0,
-      ~batchName="After Rollback EventProcess",
+      ~batchName="After Rollback EventProcess A",
       //balances have not yet been changed
       ~chain1User1Balance=Some(89),
       ~chain1User2Balance=Some(61),
-      ~chain2User1Balance=Some(100),
-      ~chain2User2Balance=Some(50),
+      ~chain2User1Balance=Some(98),
+      ~chain2User2Balance=Some(52),
     )
-    //Todo assertions
-    //Assert new balances
+    await dispatchAllTasks()
+    await dispatchAllTasks()
+
+    await makeAssertions(
+      ~queryName="After Rollback EventProcess B",
+      ~chain1LatestFetchBlock=6,
+      ~chain2LatestFetchBlock=9,
+      ~totalQueueSize=0,
+      ~batchName="After Rollback EventProcess B",
+      //balances have not yet been changed
+      ~chain1User1Balance=Some(74),
+      ~chain1User2Balance=Some(76),
+      ~chain2User1Balance=Some(90),
+      ~chain2User2Balance=Some(60),
+    )
 
     await setupDb()
   })

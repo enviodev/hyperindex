@@ -3,18 +3,19 @@ open Belt
 //A filter should return true if the event should be kept and isValid should return
 //false when the filter should be removed/cleaned up
 type processingFilter = {
-  filter: Types.eventBatchQueueItem => bool,
+  filter: Internal.eventItem => bool,
   isValid: (~fetchState: FetchState.t) => bool,
 }
 
 type addressToDynContractLookup = dict<TablesStatic.DynamicContractRegistry.t>
 type t = {
   logger: Pino.t,
-  fetchState: PartitionedFetchState.t,
+  fetchState: FetchState.t,
+  sourceManager: SourceManager.t,
   chainConfig: Config.chainConfig,
+  startBlock: int,
   //The latest known block of the chain
   currentBlockHeight: int,
-  partitionsCurrentlyFetching: PartitionedFetchState.partitionIndexSet,
   timestampCaughtUpToHeadOrEndblock: option<Js.Date.t>,
   dbFirstEventBlockNumber: option<int>,
   latestProcessedBlock: option<int>,
@@ -34,8 +35,7 @@ type t = {
 let make = (
   ~chainConfig: Config.chainConfig,
   ~lastBlockScannedHashes,
-  ~staticContracts,
-  ~dynamicContractRegistrations,
+  ~dynamicContracts: array<TablesStatic.DynamicContractRegistry.t>,
   ~startBlock,
   ~endBlock,
   ~dbFirstEventBlockNumber,
@@ -47,22 +47,88 @@ let make = (
   ~processingFilters,
   ~maxAddrInPartition,
   ~dynamicContractPreRegistration,
+  ~enableRawEvents,
 ): t => {
-  let module(ChainWorker) = chainConfig.chainWorker
-  logger->Logging.childInfo("Initializing ChainFetcher with " ++ ChainWorker.name ++ " worker")
+  let isPreRegisteringDynamicContracts = dynamicContractPreRegistration->Option.isSome
 
-  let fetchState = PartitionedFetchState.make(
+  // We don't need the router itself, but only validation logic,
+  // since now event router is created for selection of events
+  // and validation doesn't work correctly in routers.
+  // Ideally to split it into two different parts.
+  let eventRouter = EventRouter.empty()
+
+  // Aggregate events we want to fetch
+  let staticContracts = Js.Dict.empty()
+  let eventConfigs: array<FetchState.eventConfig> = []
+
+  chainConfig.contracts->Array.forEach(contract => {
+    let contractName = contract.name
+
+    contract.events->Array.forEach(event => {
+      let module(Event) = event
+
+      let {isWildcard, preRegisterDynamicContracts} =
+        Event.handlerRegister->Types.HandlerTypes.Register.getEventOptions
+      let hasContractRegister =
+        Event.handlerRegister->Types.HandlerTypes.Register.getContractRegister->Option.isSome
+
+      // Should validate the events
+      eventRouter->EventRouter.addOrThrow(
+        Event.id,
+        (),
+        ~contractName,
+        ~chain=chainConfig.chain,
+        ~eventName=Event.name,
+        ~isWildcard,
+      )
+
+      // Filter out non-preRegistration events on preRegistration phase
+      // so we don't care about it in fetch state and workers anymore
+      let shouldBeIncluded = if isPreRegisteringDynamicContracts {
+        preRegisterDynamicContracts && hasContractRegister
+      } else if enableRawEvents {
+        true
+      } else {
+        let isRegistered =
+          hasContractRegister ||
+          Event.handlerRegister->Types.HandlerTypes.Register.getHandler->Option.isSome
+        if !isRegistered {
+          logger->Logging.childInfo(
+            `The event "${Event.name}" for contract "${contractName}" is not going to be indexed, because it doesn't have either a contract register or a handler.`,
+          )
+        }
+        isRegistered
+      }
+
+      if shouldBeIncluded {
+        eventConfigs->Array.push({
+          contractName,
+          eventId: Event.id,
+          isWildcard,
+        })
+      }
+    })
+
+    staticContracts->Js.Dict.set(contractName, contract.addresses)
+  })
+
+  let fetchState = FetchState.make(
     ~maxAddrInPartition,
     ~staticContracts,
-    ~dynamicContractRegistrations,
+    ~dynamicContracts,
     ~startBlock,
     ~endBlock,
-    ~logger,
+    ~eventConfigs,
   )
 
   {
     logger,
     chainConfig,
+    startBlock,
+    sourceManager: SourceManager.make(
+      ~maxPartitionConcurrency=Env.maxPartitionConcurrency,
+      ~logger,
+    ),
     lastBlockScannedHashes,
     currentBlockHeight: 0,
     fetchState,
@@ -72,22 +138,12 @@ let make = (
     numEventsProcessed,
     numBatchesFetched,
     processingFilters,
-    partitionsCurrentlyFetching: Belt.Set.Int.empty,
     dynamicContractPreRegistration,
   }
 }
 
-let getStaticContracts = (chainConfig: Config.chainConfig) => {
-  chainConfig.contracts->Belt.Array.flatMap(contract => {
-    contract.addresses->Belt.Array.map(address => {
-      (contract.name, address)
-    })
-  })
-}
-
-let makeFromConfig = (chainConfig: Config.chainConfig, ~maxAddrInPartition) => {
+let makeFromConfig = (chainConfig: Config.chainConfig, ~maxAddrInPartition, ~enableRawEvents) => {
   let logger = Logging.createChild(~params={"chainId": chainConfig.chain->ChainMap.Chain.toChainId})
-  let staticContracts = chainConfig->getStaticContracts
   let lastBlockScannedHashes = ReorgDetection.LastBlockScannedHashes.empty(
     ~confirmedBlockThreshold=chainConfig.confirmedBlockThreshold,
   )
@@ -96,7 +152,6 @@ let makeFromConfig = (chainConfig: Config.chainConfig, ~maxAddrInPartition) => {
     chainConfig->Config.shouldPreRegisterDynamicContracts ? Some(Js.Dict.empty()) : None
 
   make(
-    ~staticContracts,
     ~chainConfig,
     ~startBlock=chainConfig.startBlock,
     ~endBlock=chainConfig.endBlock,
@@ -108,27 +163,33 @@ let makeFromConfig = (chainConfig: Config.chainConfig, ~maxAddrInPartition) => {
     ~numBatchesFetched=0,
     ~logger,
     ~processingFilters=None,
-    ~dynamicContractRegistrations=[],
+    ~dynamicContracts=[],
     ~maxAddrInPartition,
     ~dynamicContractPreRegistration,
+    ~enableRawEvents,
   )
 }
 
 /**
  * This function allows a chain fetcher to be created from metadata, in particular this is useful for restarting an indexer and making sure it fetches blocks from the same place.
  */
-let makeFromDbState = async (chainConfig: Config.chainConfig, ~maxAddrInPartition) => {
+let makeFromDbState = async (
+  chainConfig: Config.chainConfig,
+  ~maxAddrInPartition,
+  ~enableRawEvents,
+  ~sql=Db.sql,
+) => {
   let logger = Logging.createChild(~params={"chainId": chainConfig.chain->ChainMap.Chain.toChainId})
-  let staticContracts = chainConfig->getStaticContracts
   let chainId = chainConfig.chain->ChainMap.Chain.toChainId
-  let latestProcessedEvent = await DbFunctions.EventSyncState.getLatestProcessedEvent(~chainId)
+  let latestProcessedEvent = await sql->DbFunctions.EventSyncState.getLatestProcessedEvent(~chainId)
 
-  let chainMetadata = await DbFunctions.ChainMetadata.getLatestChainMetadataState(~chainId)
+  let chainMetadata = await sql->DbFunctions.ChainMetadata.getLatestChainMetadataState(~chainId)
 
   let preRegisterDynamicContracts = chainConfig->Config.shouldPreRegisterDynamicContracts
 
   let (
-    startBlock: int,
+    restartBlockNumber: int,
+    restartLogIndex: int,
     isPreRegisteringDynamicContracts: bool,
     processingFilters: option<array<processingFilter>>,
   ) = switch latestProcessedEvent {
@@ -148,57 +209,40 @@ let makeFromDbState = async (chainConfig: Config.chainConfig, ~maxAddrInPartitio
       },
     ]
 
-    (event.blockNumber, event.isPreRegisteringDynamicContracts, Some(processingFilters))
-  | None => (chainConfig.startBlock, preRegisterDynamicContracts, None)
+    (
+      event.blockNumber,
+      event.logIndex,
+      event.isPreRegisteringDynamicContracts,
+      Some(processingFilters),
+    )
+  | None => (chainConfig.startBlock, 0, preRegisterDynamicContracts, None)
   }
 
-  //Get all dynamic contracts already registered on the chain
-  let dbDynamicContractRegistrations = if preRegisterDynamicContracts {
-    //An array of records containing srcAddress, eventName, contractName for each contract
-    //address & event that should be pre registered
-    let preRegisteringEvents = chainConfig.contracts->Array.flatMap(contract =>
-      contract.events->Array.flatMap(eventMod => {
-        let module(Event) = eventMod
-        let {preRegisterDynamicContracts} =
-          Event.handlerRegister->Types.HandlerTypes.Register.getEventOptions
-
-        if preRegisterDynamicContracts {
-          contract.addresses->Belt.Array.map(
-            address => {
-              {
-                DbFunctions.DynamicContractRegistry.registeringEventContractName: contract.name,
-                registeringEventName: Event.name,
-                registeringEventSrcAddress: address,
-              }
-            },
-          )
-        } else {
-          []
-        }
-      })
-    )
-
-    //If preregistration is done, but the indexer stops and restarts during indexing. We still get all the dynamic
-    //contracts that were registered during preregistration. We need to match on registering event name, contract name and src address
-    //to ensure we only get the dynamic contracts that were registered during preregistration
-    await DbFunctions.sql->DbFunctions.DynamicContractRegistry.readDynamicContractsOnChainIdMatchingEvents(
+  let _ = await Promise.all([
+    sql->DbFunctions.DynamicContractRegistry.deleteInvalidDynamicContractsOnRestart(
       ~chainId,
-      ~preRegisteringEvents,
-    )
-  } else {
-    //If no preregistration should be done, only get dynamic contracts up to the the block that the indexing starts from
-    await DbFunctions.sql->DbFunctions.DynamicContractRegistry.readDynamicContractsOnChainIdAtOrBeforeBlock(
+      ~restartBlockNumber,
+      ~restartLogIndex,
+    ),
+    sql->DbFunctions.DynamicContractRegistry.deleteInvalidDynamicContractsHistoryOnRestart(
       ~chainId,
-      ~startBlock,
-    )
-  }
+      ~restartBlockNumber,
+      ~restartLogIndex,
+    ),
+  ])
+
+  // Since we deleted all contracts after the restart point,
+  // besides the preRegistered ones,
+  // we can simply query all dcs we have in db
+  let dbRecoveredDynamicContracts =
+    await sql->DbFunctions.DynamicContractRegistry.readAllDynamicContracts(~chainId)
 
   let (
     dynamicContractPreRegistration: option<addressToDynContractLookup>,
-    dynamicContractRegistrations: array<TablesStatic.DynamicContractRegistry.t>,
+    dynamicContracts: array<TablesStatic.DynamicContractRegistry.t>,
   ) = if isPreRegisteringDynamicContracts {
     let dynamicContractPreRegistration: addressToDynContractLookup = Js.Dict.empty()
-    dbDynamicContractRegistrations->Array.forEach(contract => {
+    dbRecoveredDynamicContracts->Array.forEach(contract => {
       dynamicContractPreRegistration->Js.Dict.set(
         contract.contractAddress->Address.toString,
         contract,
@@ -206,7 +250,7 @@ let makeFromDbState = async (chainConfig: Config.chainConfig, ~maxAddrInPartitio
     })
     (Some(dynamicContractPreRegistration), [])
   } else {
-    (None, dbDynamicContractRegistrations)
+    (None, dbRecoveredDynamicContracts)
   }
 
   let (
@@ -220,17 +264,27 @@ let makeFromDbState = async (chainConfig: Config.chainConfig, ~maxAddrInPartitio
       latestProcessedBlock,
       numEventsProcessed,
       timestampCaughtUpToHeadOrEndblock,
-    }) => (
-      firstEventBlockNumber,
-      latestProcessedBlock,
-      numEventsProcessed,
-      Env.updateSyncTimeOnRestart ? None : timestampCaughtUpToHeadOrEndblock->Js.Nullable.toOption,
-    )
+    }) => {
+      // on restart, reset the events_processed gauge to the previous state
+      switch numEventsProcessed {
+      | Some(numEventsProcessed) =>
+        Prometheus.setEventsProcessedGuage(~number=numEventsProcessed, ~chainId)
+      | None => () // do nothing if no events have been processed yet for this chain
+      }
+      (
+        firstEventBlockNumber,
+        latestProcessedBlock,
+        numEventsProcessed,
+        Env.updateSyncTimeOnRestart
+          ? None
+          : timestampCaughtUpToHeadOrEndblock->Js.Nullable.toOption,
+      )
+    }
   | None => (None, None, None, None)
   }
 
   let endOfBlockRangeScannedData =
-    await DbFunctions.sql->DbFunctions.EndOfBlockRangeScannedData.readEndOfBlockRangeScannedDataForChain(
+    await sql->DbFunctions.EndOfBlockRangeScannedData.readEndOfBlockRangeScannedDataForChain(
       ~chainId,
     )
 
@@ -246,10 +300,9 @@ let makeFromDbState = async (chainConfig: Config.chainConfig, ~maxAddrInPartitio
     )
 
   make(
-    ~staticContracts,
-    ~dynamicContractRegistrations,
+    ~dynamicContracts,
     ~chainConfig,
-    ~startBlock,
+    ~startBlock=restartBlockNumber,
     ~endBlock=chainConfig.endBlock,
     ~lastBlockScannedHashes,
     ~dbFirstEventBlockNumber=firstEventBlockNumber,
@@ -261,6 +314,7 @@ let makeFromDbState = async (chainConfig: Config.chainConfig, ~maxAddrInPartitio
     ~processingFilters,
     ~maxAddrInPartition,
     ~dynamicContractPreRegistration,
+    ~enableRawEvents,
   )
 }
 
@@ -281,7 +335,7 @@ let addProcessingFilter = (self: t, ~filter, ~isValid) => {
 }
 
 let applyProcessingFilters = (
-  items: array<Types.eventBatchQueueItem>,
+  items: array<Internal.eventItem>,
   ~processingFilters: array<processingFilter>,
 ) =>
   items->Array.keep(item => {
@@ -292,13 +346,9 @@ let applyProcessingFilters = (
 //any that meet the cleanup condition
 let cleanUpProcessingFilters = (
   processingFilters: array<processingFilter>,
-  ~fetchState as {partitions}: PartitionedFetchState.t,
+  ~fetchState: FetchState.t,
 ) => {
-  switch processingFilters->Array.keep(processingFilter =>
-    partitions->List.reduce(false, (accum, partition) => {
-      accum || processingFilter.isValid(~fetchState=partition)
-    })
-  ) {
+  switch processingFilters->Array.keep(processingFilter => processingFilter.isValid(~fetchState)) {
   | [] => None
   | filters => Some(filters)
   }
@@ -309,9 +359,9 @@ Updates of fetchState and cleans up event filters. Should be used whenever updat
 to ensure processingFilters are always valid.
 Returns Error if the node with given id cannot be found (unexpected)
 */
-let updateFetchState = (
+let setQueryResponse = (
   self: t,
-  ~id,
+  ~query: FetchState.query,
   ~latestFetchedBlockTimestamp,
   ~latestFetchedBlockNumber,
   ~fetchedEvents,
@@ -323,8 +373,8 @@ let updateFetchState = (
   }
 
   self.fetchState
-  ->PartitionedFetchState.update(
-    ~id,
+  ->FetchState.setQueryResponse(
+    ~query,
     ~latestFetchedBlock={
       blockNumber: latestFetchedBlockNumber,
       blockTimestamp: latestFetchedBlockTimestamp,
@@ -345,23 +395,6 @@ let updateFetchState = (
 }
 
 /**
-Gets the next query either with a to block of the current height if it is the root node.
-Or with a toBlock of the nextRegistered latestBlockNumber to catch up and merge with the next regisetered.
-
-Applies any event filters found in the chain fetcher
-
-Errors if nextRegistered dynamic contract has a lower latestFetchedBlock than the current as this would be
-an invalid state.
-*/
-let getNextQuery = (self: t, ~maxPerChainQueueSize) => {
-  self.fetchState->PartitionedFetchState.getNextQueriesOrThrow(
-    ~currentBlockHeight=self.currentBlockHeight,
-    ~maxPerChainQueueSize,
-    ~partitionsCurrentlyFetching=self.partitionsCurrentlyFetching,
-  )
-}
-
-/**
 Gets the latest item on the front of the queue and returns updated fetcher
 */
 let hasProcessedToEndblock = (self: t) => {
@@ -373,7 +406,7 @@ let hasProcessedToEndblock = (self: t) => {
 }
 
 let hasNoMoreEventsToProcess = (self: t, ~hasArbQueueEvents) => {
-  !hasArbQueueEvents && self.fetchState->PartitionedFetchState.queueSize === 0
+  !hasArbQueueEvents && self.fetchState->FetchState.queueSize === 0
 }
 
 /**
@@ -385,35 +418,37 @@ let rollbackLastBlockHashesToReorgLocation = async (
   //Parameter used for dependency injecting in tests
   ~getBlockHashes as getBlockHashesMock=?,
 ) => {
-  // FIXME: Mock chainWorker instead
-
-  //get a list of block hashes via the chainworker
   let blockNumbers =
-    chainFetcher.lastBlockScannedHashes->ReorgDetection.LastBlockScannedHashes.getAllBlockNumbers
+    chainFetcher.lastBlockScannedHashes->ReorgDetection.LastBlockScannedHashes.getThresholdBlockNumbers(
+      ~currentBlockHeight=chainFetcher.currentBlockHeight,
+    )
 
-  let module(ChainWorker) = chainFetcher.chainConfig.chainWorker
+  switch blockNumbers {
+  | [] => chainFetcher.lastBlockScannedHashes
+  | _ => {
+      let getBlockHashes = switch getBlockHashesMock {
+      | Some(getBlockHashes) => getBlockHashes
+      | None => chainFetcher.chainConfig.source.getBlockHashes
+      }
 
-  let getBlockHashes = switch getBlockHashesMock {
-  | Some(getBlockHashes) => getBlockHashes
-  | None => ChainWorker.getBlockHashes
-  }
-
-  let blockNumbersAndHashes = await getBlockHashes(
-    ~blockNumbers,
-    ~logger=chainFetcher.logger,
-  )->Promise.thenResolve(res =>
-    switch res {
-    | Ok(v) => v
-    | Error(exn) =>
-      exn->ErrorHandling.mkLogAndRaise(
-        ~msg="Failed to fetch blockHashes for given blockNumbers during rollback",
+      let blockNumbersAndHashes = await getBlockHashes(
+        ~blockNumbers,
+        ~logger=chainFetcher.logger,
+      )->Promise.thenResolve(res =>
+        switch res {
+        | Ok(v) => v
+        | Error(exn) =>
+          exn->ErrorHandling.mkLogAndRaise(
+            ~msg="Failed to fetch blockHashes for given blockNumbers during rollback",
+          )
+        }
       )
-    }
-  )
 
-  chainFetcher.lastBlockScannedHashes
-  ->ReorgDetection.LastBlockScannedHashes.rollBackToValidHash(~blockNumbersAndHashes)
-  ->Utils.unwrapResultExn
+      chainFetcher.lastBlockScannedHashes
+      ->ReorgDetection.LastBlockScannedHashes.rollBackToValidHash(~blockNumbersAndHashes)
+      ->Utils.unwrapResultExn
+    }
+  }
 }
 
 let getLastScannedBlockData = lastBlockData => {
@@ -428,23 +463,20 @@ let getLastScannedBlockData = lastBlockData => {
   })
 }
 
-let rollbackToLastBlockHashes = (chainFetcher: t, ~rolledBackLastBlockData) => {
-  let lastKnownValidBlock = rolledBackLastBlockData->getLastScannedBlockData
-  {
-    ...chainFetcher,
-    lastBlockScannedHashes: rolledBackLastBlockData,
-    fetchState: chainFetcher.fetchState->PartitionedFetchState.rollback(~lastKnownValidBlock),
-  }
-}
+let isFetchingAtHead = (chainFetcher: t) => chainFetcher.fetchState.isFetchingAtHead
 
-let isFetchingAtHead = (chainFetcher: t) =>
-  chainFetcher.fetchState->PartitionedFetchState.isFetchingAtHead
+let isActivelyIndexing = (chainFetcher: t) => chainFetcher.fetchState->FetchState.isActivelyIndexing
 
 let getFirstEventBlockNumber = (chainFetcher: t) =>
   Utils.Math.minOptInt(
     chainFetcher.dbFirstEventBlockNumber,
-    chainFetcher.fetchState->PartitionedFetchState.getFirstEventBlockNumber,
+    chainFetcher.fetchState.firstEventBlockNumber,
   )
 
 let isPreRegisteringDynamicContracts = (chainFetcher: t) =>
   chainFetcher.dynamicContractPreRegistration->Option.isSome
+
+let getHeighestBlockBelowThreshold = (cf: t): int => {
+  let highestBlockBelowThreshold = cf.currentBlockHeight - cf.chainConfig.confirmedBlockThreshold
+  highestBlockBelowThreshold < 0 ? 0 : highestBlockBelowThreshold
+}

@@ -1,7 +1,7 @@
 use crate::utils::normalized_list::{NormalizedList, SingleOrList};
 use schemars::{json_schema, JsonSchema, Schema, SchemaGenerator};
 use serde::{Deserialize, Serialize};
-use std::borrow::Cow;
+use std::{borrow::Cow, fmt::Display};
 
 impl<T: Clone + JsonSchema> JsonSchema for SingleOrList<T> {
     fn schema_name() -> Cow<'static, str> {
@@ -93,6 +93,25 @@ pub struct ConfigDiscriminant {
     pub ecosystem: Option<String>,
 }
 
+#[derive(Debug)]
+pub enum HumanConfig {
+    Evm(evm::HumanConfig),
+    Fuel(fuel::HumanConfig),
+}
+
+impl Display for HumanConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                HumanConfig::Evm(config) => config.to_string(),
+                HumanConfig::Fuel(config) => config.to_string(),
+            }
+        )
+    }
+}
+
 pub mod evm {
     use super::{GlobalContract, NetworkContract, NetworkId};
     use crate::utils::normalized_list::SingleOrList;
@@ -160,8 +179,8 @@ pub mod evm {
         pub save_full_history: Option<bool>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
-            description = "An object representing additional fields to add to the event passed to \
-                           handlers."
+            description = "Select the block and transaction fields to include in all events \
+                           globally"
         )]
         pub field_selection: Option<FieldSelection>,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -187,9 +206,15 @@ pub mod evm {
     #[derive(Debug, Serialize, Deserialize, PartialEq, Clone, JsonSchema)]
     #[serde(deny_unknown_fields)]
     pub struct FieldSelection {
-        #[schemars(description = "Fields of a transaction to add to the event passed to handlers")]
+        #[schemars(
+            description = "The transaction fields to include in the event, or in all events if \
+                           applied globally"
+        )]
         pub transaction_fields: Option<Vec<TransactionField>>,
-        #[schemars(description = "Fields of a block to add to the event passed to handlers")]
+        #[schemars(
+            description = "The block fields to include in the event, or in all events if applied \
+                           globally"
+        )]
         pub block_fields: Option<Vec<BlockField>>,
     }
 
@@ -201,21 +226,29 @@ pub mod evm {
         TransactionIndex,
         #[subenum(RpcTransactionField)]
         Hash,
+        #[subenum(RpcTransactionField)]
         From,
+        #[subenum(RpcTransactionField)]
         To,
         Gas,
+        #[subenum(RpcTransactionField)]
         GasPrice,
+        #[subenum(RpcTransactionField)]
         MaxPriorityFeePerGas,
+        #[subenum(RpcTransactionField)]
         MaxFeePerGas,
         CumulativeGasUsed,
         EffectiveGasPrice,
         GasUsed,
+        #[subenum(RpcTransactionField)]
         Input,
         Nonce,
+        #[subenum(RpcTransactionField)]
         Value,
         V,
         R,
         S,
+        #[subenum(RpcTransactionField)]
         ContractAddress,
         LogsBloom,
         Root,
@@ -401,7 +434,7 @@ pub mod evm {
     }
 
     #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
-    #[serde(rename_all = "camelCase", deny_unknown_fields)]
+    #[serde(deny_unknown_fields)]
     pub struct EventConfig {
         #[schemars(description = "The human readable signature of an event 'eg. \
                                   Transfer(address indexed from, address indexed to, uint256 \
@@ -415,6 +448,12 @@ pub mod evm {
         )]
         #[serde(skip_serializing_if = "Option::is_none")]
         pub name: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(
+            description = "Select the block and transaction fields to include in the specific \
+                           event"
+        )]
+        pub field_selection: Option<FieldSelection>,
     }
 }
 
@@ -541,7 +580,8 @@ pub mod fuel {
         #[serde(rename = "type")]
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
-            description = "Explicitly set the event type you want to index. It's derived from the event name and fallbacks to LogData."
+            description = "Explicitly set the event type you want to index. It's derived from the \
+                           event name and fallbacks to LogData."
         )]
         pub type_: Option<EventType>,
         #[serde(skip_serializing_if = "Option::is_none")]

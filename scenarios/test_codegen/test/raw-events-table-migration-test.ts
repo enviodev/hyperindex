@@ -39,7 +39,11 @@ describe("Raw Events Table Migrations", () => {
     expect(rawEventsColumnsRes).to.deep.include.members(expectedColumns);
   });
 
-  it("Inserting 2 rows with the the same pk should fail", async () => {
+  //Since the rework of rollbacks in v2.8, rollbacks are not supported for raw events
+  //Duplicates are allowed to stop inserts breaking on rollbacks. If these need to be handled
+  //in the future, raw events can be converted into an entity (with managed history) like dynamic
+  //contracts.
+  it("Inserting 2 rows with the the same pk should pass", async () => {
     let first_valid_row_query = sql`INSERT INTO raw_events ${sql(
       mockRawEventRow as any
     )}`;
@@ -50,6 +54,6 @@ describe("Raw Events Table Migrations", () => {
       mockRawEventRow as any
     )}`;
 
-    await expect(second_valid_row_query).to.eventually.be.rejected;
+    await expect(second_valid_row_query).to.eventually.be.fulfilled;
   });
 });

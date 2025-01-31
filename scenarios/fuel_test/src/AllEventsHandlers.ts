@@ -20,55 +20,49 @@ const SExtra = {
   void: S.undefined as S.Schema<void>,
   swayOptional: <T>(schema: S.Schema<T>) =>
     S.union([
-      S.object({
+      {
         case: "None" as const,
         payload: SExtra.void,
-      }),
-      S.object({
+      },
+      {
         case: "Some" as const,
         payload: schema,
-      }),
+      },
     ]),
   swayResult: <T, E>(ok: S.Schema<T>, err: S.Schema<E>) =>
     S.union([
-      S.object({
+      {
         case: "Ok" as const,
         payload: ok,
-      }),
-      S.object({
+      },
+      {
         case: "Err" as const,
         payload: err,
-      }),
+      },
     ]),
-  bigint: S.custom("BigInt", (unknown, s) => {
-    if (typeof unknown === "bigint") {
-      return unknown;
-    }
-    throw s.fail("Expected bigint");
-  }),
 };
 
 const unitLogSchema = SExtra.void;
 AllEvents.UnitLog.handler(async ({ event }) => {
-  unitLogSchema.assert(event.params)!;
+  S.assertOrThrow(event.params, unitLogSchema)!;
   expectType<AssertSchemaType<typeof event.params, typeof unitLogSchema>>(true);
 });
 
 const optionLogSchema = SExtra.swayOptional(S.number);
 // Add underscore here, because otherwise ReScript adds $$ which breaks runtime
 AllEvents.Option_.handler(async ({ event }) => {
-  optionLogSchema.assert(event.params)!;
+  S.assertOrThrow(event.params, optionLogSchema)!;
   expectType<AssertSchemaType<typeof event.params, typeof optionLogSchema>>(
     true
   );
 });
 
-const simpleStructWithOptionalSchema = S.object({
+const simpleStructWithOptionalSchema = S.schema({
   f1: S.number,
   f2: SExtra.swayOptional(S.number),
 });
 AllEvents.SimpleStructWithOptionalField.handler(async ({ event }) => {
-  simpleStructWithOptionalSchema.assert(event.params)!;
+  S.assertOrThrow(event.params, simpleStructWithOptionalSchema)!;
   expectType<
     AssertSchemaType<typeof event.params, typeof simpleStructWithOptionalSchema>
   >(true);
@@ -76,37 +70,37 @@ AllEvents.SimpleStructWithOptionalField.handler(async ({ event }) => {
 
 const u8LogSchema = S.number;
 AllEvents.U8Log.handler(async ({ event }) => {
-  u8LogSchema.assert(event.params)!;
+  S.assertOrThrow(event.params, u8LogSchema)!;
   expectType<AssertSchemaType<typeof event.params, typeof u8LogSchema>>(true);
 });
 
 const u16LogSchema = S.number;
 AllEvents.U16Log.handler(async ({ event }) => {
-  u16LogSchema.assert(event.params)!;
+  S.assertOrThrow(event.params, u16LogSchema)!;
   expectType<AssertSchemaType<typeof event.params, typeof u16LogSchema>>(true);
 });
 
 const u32LogSchema = S.number;
 AllEvents.U32Log.handler(async ({ event }) => {
-  u32LogSchema.assert(event.params)!;
+  S.assertOrThrow(event.params, u32LogSchema)!;
   expectType<AssertSchemaType<typeof event.params, typeof u32LogSchema>>(true);
 });
 
-const u64LogSchema = SExtra.bigint;
+const u64LogSchema = S.bigint;
 AllEvents.U64Log.handler(async ({ event }) => {
-  u64LogSchema.assert(event.params)!;
+  S.assertOrThrow(event.params, u64LogSchema)!;
   expectType<AssertSchemaType<typeof event.params, typeof u64LogSchema>>(true);
 });
 
 const b256LogSchema = S.string;
 AllEvents.B256Log.handler(async ({ event }) => {
-  b256LogSchema.assert(event.params)!;
+  S.assertOrThrow(event.params, b256LogSchema)!;
   expectType<AssertSchemaType<typeof event.params, typeof b256LogSchema>>(true);
 });
 
 const arrayLogSchema = S.array(S.number);
 AllEvents.ArrayLog.handler(async ({ event }) => {
-  arrayLogSchema.assert(event.params)!;
+  S.assertOrThrow(event.params, arrayLogSchema)!;
   expectType<AssertSchemaType<typeof event.params, typeof arrayLogSchema>>(
     true
   );
@@ -114,54 +108,54 @@ AllEvents.ArrayLog.handler(async ({ event }) => {
 
 const resultLogSchema = SExtra.swayResult(S.number, S.boolean);
 AllEvents.Result.handler(async ({ event }) => {
-  resultLogSchema.assert(event.params)!;
+  S.assertOrThrow(event.params, resultLogSchema)!;
   expectType<AssertSchemaType<typeof event.params, typeof resultLogSchema>>(
     true
   );
 });
 
 const statusSchema = S.union([
-  S.object({
+  {
     case: "Pending" as const,
     payload: SExtra.void,
-  }),
-  S.object({
+  },
+  {
     case: "Completed" as const,
     payload: S.number,
-  }),
-  S.object({
+  },
+  {
     case: "Failed" as const,
-    payload: S.object({
+    payload: {
       reason: S.number,
-    }),
-  }),
+    },
+  },
 ]);
 AllEvents.Status.handler(async ({ event }) => {
-  statusSchema.assert(event.params)!;
+  S.assertOrThrow(event.params, statusSchema)!;
   expectType<AssertSchemaType<typeof event.params, typeof statusSchema>>(true);
 });
 
-const tupleLogSchema = S.tuple([SExtra.bigint, S.boolean]);
+const tupleLogSchema = S.schema([S.bigint, S.boolean]);
 AllEvents.TupleLog.handler(async ({ event }) => {
-  tupleLogSchema.assert(event.params)!;
+  S.assertOrThrow(event.params, tupleLogSchema)!;
   expectType<AssertSchemaType<typeof event.params, typeof tupleLogSchema>>(
     true
   );
 });
 
-const simpleStructSchema = S.object({
+const simpleStructSchema = S.schema({
   f1: S.number,
 });
 AllEvents.SimpleStruct.handler(async ({ event }) => {
-  simpleStructSchema.assert(event.params)!;
+  S.assertOrThrow(event.params, simpleStructSchema)!;
   expectType<AssertSchemaType<typeof event.params, typeof simpleStructSchema>>(
     true
   );
 });
 
-const unknownLogSchema = SExtra.bigint;
+const unknownLogSchema = S.bigint;
 AllEvents.UnknownLog.handler(async ({ event }) => {
-  unknownLogSchema.assert(event.params)!;
+  S.assertOrThrow(event.params, unknownLogSchema)!;
   expectType<AssertSchemaType<typeof event.params, typeof unknownLogSchema>>(
     true
   );
@@ -170,7 +164,7 @@ AllEvents.UnknownLog.handler(async ({ event }) => {
 const boolLogSchema = S.boolean;
 AllEvents.BoolLog.handler(
   async ({ event }) => {
-    boolLogSchema.assert(event.params)!;
+    S.assertOrThrow(event.params, boolLogSchema)!;
     expectType<AssertSchemaType<typeof event.params, typeof boolLogSchema>>(
       true
     );
@@ -181,7 +175,7 @@ AllEvents.BoolLog.handler(
 const strLogSchema = S.string;
 AllEvents.StrLog.handler(
   async ({ event }) => {
-    strLogSchema.assert(event.params)!;
+    S.assertOrThrow(event.params, strLogSchema)!;
     expectType<AssertSchemaType<typeof event.params, typeof strLogSchema>>(
       true
     );
@@ -189,66 +183,84 @@ AllEvents.StrLog.handler(
   { wildcard: true }
 );
 
+const stringLogSchema = S.string;
+AllEvents.StringLog.handler(async ({ event }) => {
+  S.assertOrThrow(event.params, stringLogSchema)!;
+  expectType<AssertSchemaType<typeof event.params, typeof stringLogSchema>>(
+    true
+  );
+});
+
 const option2LogSchema = SExtra.swayOptional(SExtra.swayOptional(S.number));
 AllEvents.Option2.handler(async ({ event }) => {
-  option2LogSchema.assert(event.params)!;
+  S.assertOrThrow(event.params, option2LogSchema)!;
   expectType<AssertSchemaType<typeof event.params, typeof option2LogSchema>>(
     true
   );
 });
 
-const vecLogSchema = S.array(SExtra.bigint);
+const vecLogSchema = S.array(S.bigint);
 AllEvents.VecLog.handler(async ({ event }) => {
-  vecLogSchema.assert(event.params)!;
+  S.assertOrThrow(event.params, vecLogSchema)!;
   expectType<AssertSchemaType<typeof event.params, typeof vecLogSchema>>(true);
 });
 
 const bytesLogSchema = S.unknown;
 AllEvents.BytesLog.handler(async ({ event }) => {
-  bytesLogSchema.assert(event.params)!;
+  S.assertOrThrow(event.params, bytesLogSchema)!;
   expectType<AssertSchemaType<typeof event.params, typeof bytesLogSchema>>(
     true
   );
 });
 
-const mintSchema = S.object({
+const mintSchema = S.schema({
   subId: S.string,
-  amount: SExtra.bigint,
+  amount: S.bigint,
 });
 AllEvents.Mint.handler(async ({ event }) => {
-  mintSchema.assert(event.params)!;
+  S.assertOrThrow(event.params, mintSchema)!;
   expectType<AssertSchemaType<typeof event.params, typeof mintSchema>>(true);
 });
 
-const burnSchema = S.object({
+const burnSchema = S.schema({
   subId: S.string,
-  amount: SExtra.bigint,
+  amount: S.bigint,
 });
 AllEvents.Burn.handler(async ({ event }) => {
-  burnSchema.assert(event.params)!;
+  S.assertOrThrow(event.params, burnSchema)!;
   expectType<AssertSchemaType<typeof event.params, typeof burnSchema>>(true);
 });
 
-const transferOutSchema = S.object({
+const transferOutSchema = S.schema({
   assetId: S.string,
   to: S.string,
-  amount: SExtra.bigint,
+  amount: S.bigint,
 });
 AllEvents.Transfer.handler(async ({ event }) => {
-  transferOutSchema.assert(event.params)!;
+  S.assertOrThrow(event.params, transferOutSchema)!;
   expectType<AssertSchemaType<typeof event.params, typeof transferOutSchema>>(
     true
   );
 });
 
-// const callSchema = S.object({
+const tagsEventSchema = S.schema({
+  tags: SExtra.swayOptional(S.array(S.string)),
+});
+AllEvents.TagsEvent.handler(async ({ event }) => {
+  S.assertOrThrow(event.params, tagsEventSchema)!;
+  expectType<AssertSchemaType<typeof event.params, typeof tagsEventSchema>>(
+    true
+  );
+});
+
+// const callSchema = S.schema({
 //   assetId: S.string,
 //   to: S.string,
-//   amount: SExtra.bigint,
+//   amount: S.bigint,
 // });
 // AllEvents.Call.handler(
 //   async ({ event }) => {
-//     callSchema.assert(event.params)!;
+//     S.assertOrThrow(event.params,callSchema)!;
 //     expectType<AssertSchemaType<typeof event.params, typeof callSchema>>(true);
 //   }
 //   { wildcard: true }

@@ -2,20 +2,23 @@
 
 HyperIndex is a modern, multi-chain data indexing framework for efficiently querying real-time and historical data from any EVM blockchain and Fuel.
 
-Designed with a core focus on delivering superior performance and seamless developer experience, HyperIndex optimizes the user experience.
+Designed with a core focus on delivering superior performance and a seamless developer experience, HyperIndex optimizes the user experience.
 
-Build a real-time API for your blockchain application in minutes.
+Build a real-time API for your blockchain application in minutes!
 
 ## Key Features
 
-- Simple installation & Setup
-- Any EVM blockchain, as well as Fuel
-- The fastest historical sync
-- Real-time indexing with reorg handling
-- Multi-chain support
-- Write JavaScript, TypeScript, or ReScript with automatically generated types
-- Detailed logging & Error messaging
-- [Hosted Service](https://docs.envio.dev/docs/HyperIndex/hosted-service) to take care of your infrastructure
+⚡  **[Simplified Setup](https://docs.envio.dev/docs/HyperIndex/contract-import):** Start instantly with the quickstart, templates, and reference implementations.  
+⚡  **[Any EVM & Fuel](https://docs.envio.dev/docs/HyperIndex/supported-networks)**: Index smart contract data from any EVM-compatible network.  
+⚡  **[Fastest Historical Backfill](https://docs.envio.dev/docs/HyperIndex/hypersync)**: Up to 1000x faster than RPC. Enhance your dev lifecycle. Reduce time-to-market.  
+⚡  **[Multichain](https://docs.envio.dev/docs/HyperIndex/multichain-indexing)**: Index multiple networks with a single deployment. Query with a unified API.  
+⚡  **Real-time & [Reorg Aware](https://docs.envio.dev/docs/HyperIndex/reorgs-support)**: Sub-second latency and automatic handling of chain reorganizations.   
+⚡  **[Wildcard Indexing](/docs/HyperIndex/Advanced/wildcard-indexing.mdx)**: Index events according to event signatures (e.g. all ERC20 transfers on Base).  
+⚡  **[Dynamic Sources](https://docs.envio.dev/docs/HyperIndex/wildcard-indexing) / Factory Contracts**: Dynamically index all future children contracts (e.g. new token pairs).    
+⚡  **Flexible Language Support**: Write JavaScript, TypeScript, or ReScript with automatically generated types.  
+⚡  **Join [Onchain & Offchain Data](https://docs.envio.dev/docs/HyperIndex/ipfs)**: Create a flexible API beyond what is available onchain (e.g. NFT metadata).  
+⚡  **[Hosted Service](https://v2.envio.dev/explorer) & Self Hosting**: Focus on your app and users, while we take care of your infrastructure.  
+⚡  **Detailed Logging & Error Messaging**: Simplify troubleshooting with comprehensive insights.  
 
 ## Installation
 
@@ -106,7 +109,7 @@ This will generate the config, schema and event handlers files according to the 
 
 Our greeter template [config.yaml](./codegenerator/cli/templates/static/greeter_template/typescript/config.yaml) and [schema.graphql](./codegenerator/cli/templates/static/greeter_template/shared/schema.graphql) is an example of how to layout a configuration file for indexing.
 
-*Please refer to the [documentation website](https://docs.envio.dev) for a thorough guide on all Envio indexer features*
+*Please refer to the [documentation website](https://docs.envio.dev) for a thorough guide on all [Envio](https://envio.dev) indexer features*
 
 ## Generate code according to configuration
 

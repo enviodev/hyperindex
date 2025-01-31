@@ -1,33 +1,5 @@
 open RescriptMocha
 
-let configPathString = "./config.yaml"
-
-type sync_config = {
-  initial_block_interval: int,
-  backoff_multiplicative: float,
-  acceleration_additive: int,
-  interval_ceiling: int,
-  backoff_millis: int,
-  query_timeout_millis: int,
-}
-
-type rpc_config = {
-  url: string,
-  ...sync_config,
-}
-type network_conf = {id: int, rpc_config: rpc_config}
-type config = {networks: array<network_conf>}
-
-let configYaml: config = ConfigUtils.loadConfigYaml(~codegenConfigPath=configPathString)
-let firstNetworkConfig = configYaml.networks[0]
-
-let generatedChainConfig =
-  RegisterHandlers.registerAllHandlers().chainMap->ChainMap.get(MockConfig.chain1337)
-let generatedSyncConfig = switch generatedChainConfig.syncSource {
-| Rpc({syncConfig}) => syncConfig
-| _ => Js.Exn.raiseError("Expected an rpc config")
-}
-
 describe("getGeneratedByChainId Test", () => {
   it("getGeneratedByChainId should return the correct config", () => {
     let configYaml = ConfigYAML.getGeneratedByChainId(1)
@@ -37,52 +9,23 @@ describe("getGeneratedByChainId Test", () => {
         syncSource: HyperSync({endpointUrl: "https://1.hypersync.xyz"}),
         startBlock: 1,
         confirmedBlockThreshold: 200,
-        contracts: Js.Dict.empty(),
+        contracts: Js.Dict.fromArray([
+          (
+            "Noop",
+            {
+              ConfigYAML.name: "Noop",
+              abi: %raw(`[{
+                anonymous: false,
+                inputs: [],
+                name: "EmptyEvent",
+                type: "event"
+              }]`),
+              addresses: ["0x0B2f78c5BF6D9C12Ee1225D5F374aa91204580c3"],
+              events: ["EmptyEvent"],
+            },
+          ),
+        ]),
       },
-    )
-  })
-})
-
-describe("Sync Config Test", () => {
-  it("initial_block_interval", () => {
-    Assert.deepEqual(
-      firstNetworkConfig.rpc_config.initial_block_interval,
-      generatedSyncConfig.initialBlockInterval,
-    )
-  })
-  it("backoff_multiplicative", () => {
-    let firstNetworkConfig = configYaml.networks[0]
-    Assert.deepEqual(
-      firstNetworkConfig.rpc_config.backoff_multiplicative,
-      generatedSyncConfig.backoffMultiplicative,
-    )
-  })
-  it("acceleration_additive", () => {
-    let firstNetworkConfig = configYaml.networks[0]
-    Assert.deepEqual(
-      firstNetworkConfig.rpc_config.acceleration_additive,
-      generatedSyncConfig.accelerationAdditive,
-    )
-  })
-  it("interval_ceiling", () => {
-    let firstNetworkConfig = configYaml.networks[0]
-    Assert.deepEqual(
-      firstNetworkConfig.rpc_config.interval_ceiling,
-      generatedSyncConfig.intervalCeiling,
-    )
-  })
-  it("backoff_millis", () => {
-    let firstNetworkConfig = configYaml.networks[0]
-    Assert.deepEqual(
-      firstNetworkConfig.rpc_config.backoff_millis,
-      generatedSyncConfig.backoffMillis,
-    )
-  })
-  it("query_timeout_millis", () => {
-    let firstNetworkConfig = configYaml.networks[0]
-    Assert.deepEqual(
-      firstNetworkConfig.rpc_config.query_timeout_millis,
-      generatedSyncConfig.queryTimeoutMillis,
     )
   })
 })

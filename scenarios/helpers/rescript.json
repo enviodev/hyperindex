@@ -10,6 +10,6 @@
     "in-source": true
   },
   "suffix": ".res.js",
-  "bs-dependencies": ["rescript-schema"],
+  "bs-dependencies": ["rescript-schema", "envio"],
   "bsc-flags": ["-open Belt"]
 }

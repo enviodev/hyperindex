@@ -9,8 +9,8 @@ importers:
   .:
     dependencies:
       envio:
-        specifier: ../../../../cli/npm/envio
-        version: link:../../../../cli/npm/envio
+        specifier: file:../../../../cli/npm/envio
+        version: file:../../../../cli/npm/envio
     optionalDependencies:
       generated:
         specifier: ./generated
@@ -558,6 +558,10 @@ packages:
 
   end-of-stream@1.4.4:
     resolution: {integrity: sha512-+uw1inIHVPQoaVuHzRyXd21icM+cnt4CzD5rW+NC1wjOUSTOs+Te7FOv7AhN7vS9x/oIyhLP5PR1H+phQAHu5Q==}
+
+  envio@file:../../../../cli/npm/envio:
+    resolution: {directory: ../../../../cli/npm/envio, type: directory}
+    hasBin: true
 
   es-define-property@1.0.0:
     resolution: {integrity: sha512-jxayLKShrEqqzJ0eumQbVhTYQM27CfT1T35+gCgDFoL82JLsXqTJ76zv6A0YLOgEnLUMvLzsDsGIrl8NFpT2gQ==}
@@ -1903,6 +1907,10 @@ snapshots:
   end-of-stream@1.4.4:
     dependencies:
       once: 1.4.0
+
+  envio@file:../../../../cli/npm/envio:
+    dependencies:
+      rescript: 11.1.3
 
   es-define-property@1.0.0:
     dependencies:

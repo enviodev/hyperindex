@@ -28,11 +28,18 @@
     "envio-darwin-x64": "${version}",
     "envio-darwin-arm64": "${version}"
   },
+  "dependencies": {
+    "@envio-dev/hypersync-client": "0.6.3",
+    "rescript": "11.1.3",
+    "rescript-schema": "9.1.0",
+    "viem": "2.21.0"
+  },
   "files": [
     "bin.js",
     "evm.schema.json",
     "fuel.schema.json",
     "rescript.json",
-    "src/**/*.res"
+    "src",
+    "!src/**/*.bs.js"
   ]
 }

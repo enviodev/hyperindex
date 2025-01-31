@@ -7,7 +7,7 @@ use crate::{
     },
     config_parsing::human_config::fuel::EventConfig,
     fuel::abi::{FuelAbi, BURN_EVENT_NAME, CALL_EVENT_NAME, MINT_EVENT_NAME, TRANSFER_EVENT_NAME},
-    init_config::fuel::{ContractImportSelection, InitFlow, SelectedContract, Template},
+    init_config::fuel::{ContractImportSelection, InitFlow, Network, SelectedContract, Template},
 };
 use anyhow::{Context, Result};
 use inquire::{validator::Validation, Select};
@@ -83,6 +83,7 @@ fn prompt_event_selection(events: Vec<EventConfig>) -> Result<Vec<EventConfig>> 
             .into_iter()
             .map(|event| SelectItem {
                 display: event.name.clone(),
+                preselect: event.log_id.is_some(),
                 item: event,
             })
             .collect(),
@@ -92,7 +93,13 @@ fn prompt_event_selection(events: Vec<EventConfig>) -> Result<Vec<EventConfig>> 
 
 impl Contract for SelectedContract {
     fn get_network_name(&self) -> Result<String> {
-        Ok("Fuel".to_string())
+        Ok(format!(
+            "Fuel {}",
+            match self.network {
+                Network::Mainnet => "Mainnet",
+                Network::Testnet => "Testnet",
+            }
+        ))
     }
 
     fn get_name(&self) -> String {
@@ -150,6 +157,11 @@ async fn get_contract_import_selection(args: ContractImportArgs) -> Result<Selec
 
     let name = get_contract_name(&local_import_args).context("Failed getting contract name")?;
 
+    let choose_from_networks =
+        Select::new("Choose network:", vec![Network::Mainnet, Network::Testnet])
+            .prompt()
+            .context("Failed during prompt for network")?;
+
     let addresses = vec![prompt_contract_address(None)?];
 
     Ok(SelectedContract {
@@ -157,6 +169,7 @@ async fn get_contract_import_selection(args: ContractImportArgs) -> Result<Selec
         addresses,
         abi,
         selected_events,
+        network: choose_from_networks,
     })
 }
 

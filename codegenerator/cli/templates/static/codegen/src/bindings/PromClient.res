@@ -19,6 +19,7 @@ module Counter = {
   @send external incMany: (counter, int) => unit = "inc"
 
   @send external incLabels: (counter, 'labelsObject) => unit = "labels"
+  @send external labels: (counter, 'labelsObject) => counter = "labels"
 }
 
 module Gauge = {
@@ -32,6 +33,8 @@ module Gauge = {
   @send external decMany: (gauge, int) => unit = "dec"
 
   @send external set: (gauge, int) => unit = "set"
+
+  @send external setFloat: (gauge, float) => unit = "set"
 
   @send external labels: (gauge, 'labelsObject) => gauge = "labels"
 }

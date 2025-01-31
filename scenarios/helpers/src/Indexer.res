@@ -1,73 +1,20 @@
 module type S = {
-  module Pino: {
-    type t
-  }
-
   module ErrorHandling: {
     type t
   }
 
-  module Address: {
-    type t
-  }
-
-  module Viem: {
-    type decodedEvent<'a>
-  }
-
-  module Ethers: {
-    type abi
-    module JsonRpcProvider: {
-      type t
-    }
-  }
-
-  module HyperSyncClient: {
-    module Decoder: {
-      type decodedEvent
-    }
-  }
-
-  module ChainMap: {
-    module Chain: {
-      type t
-      let toChainId: t => int
-    }
-    type t<'a>
-  }
-
-  module LogSelection: {
-    type t
-    type topicSelection
-  }
-
   module Types: {
-    type internalEventArgs
-
-    module Transaction: {
-      type t
-    }
-
-    module Block: {
-      type t
-    }
-
-    module Log: {
-      type t
-    }
-
-    type eventLog<'a> = {
-      params: 'a,
-      chainId: int,
-      srcAddress: Address.t,
-      logIndex: int,
-      transaction: Transaction.t,
-      block: Block.t,
-    }
+    type loaderContext
+    type handlerContext
+    type contractRegistrations
 
     module HandlerTypes: {
       module Register: {
-        type t<'eventArgs>
+        type t
+
+        let getLoader: t => option<Internal.loader>
+        let getHandler: t => option<Internal.handler>
+        let getContractRegister: t => option<Internal.contractRegister>
       }
     }
 
@@ -76,105 +23,112 @@ module type S = {
     }
 
     module type Event = {
-      let sighash: string
-      let topicCount: int
+      let id: string
+      let sighash: string // topic0 for Evm and rb for Fuel receipts
       let name: string
       let contractName: string
+
       type eventArgs
+      type block
+      type transaction
+
+      type event = Internal.genericEvent<eventArgs, block, transaction>
+      type loader<'loaderReturn> = Internal.genericLoader<
+        Internal.genericLoaderArgs<event, loaderContext>,
+        'loaderReturn,
+      >
+      type handler<'loaderReturn> = Internal.genericHandler<
+        Internal.genericHandlerArgs<event, handlerContext, 'loaderReturn>,
+      >
+      type contractRegister = Internal.genericContractRegister<
+        Internal.genericContractRegisterArgs<event, contractRegistrations>,
+      >
+
       let paramsRawEventSchema: RescriptSchema.S.schema<eventArgs>
+      let blockSchema: RescriptSchema.S.schema<block>
+      let transactionSchema: RescriptSchema.S.schema<transaction>
+
       let convertHyperSyncEventArgs: HyperSyncClient.Decoder.decodedEvent => eventArgs
-      let handlerRegister: HandlerTypes.Register.t<eventArgs>
+      let handlerRegister: HandlerTypes.Register.t
+
       type eventFilter
       let getTopicSelection: SingleOrMultiple.t<eventFilter> => array<LogSelection.topicSelection>
     }
-    module type InternalEvent = Event with type eventArgs = internalEventArgs
-
-    type eventBatchQueueItem = {
-      eventName: string,
-      contractName: string,
-      handlerRegister: HandlerTypes.Register.t<internalEventArgs>,
-      timestamp: int,
-      chain: ChainMap.Chain.t,
-      blockNumber: int,
-      logIndex: int,
-      event: eventLog<internalEventArgs>,
-      paramsRawEventSchema: RescriptSchema.S.schema<internalEventArgs>,
-      //Default to false, if an event needs to
-      //be reprocessed after it has loaded dynamic contracts
-      //This gets set to true and does not try and reload events
-      hasRegisteredDynamicContracts?: bool,
-    }
+    module type InternalEvent = Event
+      with type eventArgs = Internal.eventParams
+      and type transaction = Internal.eventTransaction
+      and type block = Internal.eventBlock
   }
 
   module ContractAddressingMap: {
     type mapping
+    let make: unit => mapping
     let getAllAddresses: mapping => array<Address.t>
     let getAddressesFromContractName: (mapping, ~contractName: string) => array<Address.t>
   }
 
   module FetchState: {
-    type id
-    type nextQuery = {
-      fetchStateRegisterId: id,
-      partitionId: int,
+    type eventConfig = {
+      contractName: string,
+      eventId: string,
+      isWildcard: bool,
+    }
+
+    type selection = {
+      eventConfigs: array<eventConfig>,
+      isWildcard: bool,
+    }
+
+    type queryTarget =
+      | Head
+      | EndBlock({toBlock: int})
+      | Merge({
+          // The partition we are going to merge into
+          // It shouldn't be fetching during the query
+          intoPartitionId: string,
+          toBlock: int,
+        })
+
+    type query = {
+      partitionId: string,
       fromBlock: int,
-      toBlock: int,
+      selection: selection,
       contractAddressMapping: ContractAddressingMap.mapping,
+      target: queryTarget,
     }
   }
 
-  module ReorgDetection: {
-    type blockNumberAndHash = {
-      //Block hash is used for actual comparison to test for reorg
-      blockHash: string,
-      blockNumber: int,
-    }
-
-    type blockData = {
-      ...blockNumberAndHash,
-      //Timestamp is needed for multichain to action reorgs across chains from given blocks to
-      //ensure ordering is kept constant
-      blockTimestamp: int,
-    }
-  }
-
-  module ChainWorker: {
-    type reorgGuard = {
-      lastBlockScannedData: ReorgDetection.blockData,
-      firstBlockParentNumberAndHash: option<ReorgDetection.blockNumberAndHash>,
-    }
-    type blockRangeFetchArgs
+  module Source: {
     type blockRangeFetchStats
     type blockRangeFetchResponse = {
       currentBlockHeight: int,
-      reorgGuard: reorgGuard,
-      parsedQueueItems: array<Types.eventBatchQueueItem>,
+      reorgGuard: ReorgDetection.reorgGuard,
+      parsedQueueItems: array<Internal.eventItem>,
       fromBlockQueried: int,
-      heighestQueriedBlockNumber: int,
+      latestFetchedBlockNumber: int,
       latestFetchedBlockTimestamp: int,
       stats: blockRangeFetchStats,
-      fetchStateRegisterId: FetchState.id,
-      partitionId: int,
     }
 
-    module type S = {
-      let name: string
-      let chain: ChainMap.Chain.t
-      let getBlockHashes: (
+    type t = {
+      name: string,
+      chain: ChainMap.Chain.t,
+      /* Frequency (in ms) used when polling for new events on this network. */
+      pollingInterval: int,
+      getBlockHashes: (
         ~blockNumbers: array<int>,
         ~logger: Pino.t,
-      ) => promise<result<array<ReorgDetection.blockData>, exn>>
-      let waitForBlockGreaterThanCurrentHeight: (
+      ) => promise<result<array<ReorgDetection.blockData>, exn>>,
+      getHeightOrThrow: unit => promise<int>,
+      fetchBlockRange: (
+        ~fromBlock: int,
+        ~toBlock: option<int>,
+        ~contractAddressMapping: ContractAddressingMap.mapping,
         ~currentBlockHeight: int,
+        ~partitionId: string,
+        ~selection: FetchState.selection,
         ~logger: Pino.t,
-      ) => promise<int>
-      let fetchBlockRange: (
-        ~query: blockRangeFetchArgs,
-        ~logger: Pino.t,
-        ~currentBlockHeight: int,
-        ~setCurrentBlockHeight: int => unit,
-        ~isPreRegisteringDynamicContracts: bool,
-      ) => promise<result<blockRangeFetchResponse, ErrorHandling.t>>
+      ) => promise<result<blockRangeFetchResponse, ErrorHandling.t>>,
     }
   }
 
@@ -184,28 +138,9 @@ module type S = {
       abi: Ethers.abi,
       addresses: array<Address.t>,
       events: array<module(Types.Event)>,
-      sighashes: array<string>,
     }
 
-    type syncConfig = {
-      initialBlockInterval: int,
-      backoffMultiplicative: float,
-      accelerationAdditive: int,
-      intervalCeiling: int,
-      backoffMillis: int,
-      queryTimeoutMillis: int,
-    }
-
-    type hyperSyncConfig = {endpointUrl: string}
-
-    type hyperFuelConfig = {endpointUrl: string}
-
-    type rpcConfig = {
-      provider: Ethers.JsonRpcProvider.t,
-      syncConfig: syncConfig,
-    }
-
-    type syncSource = HyperSync(hyperSyncConfig) | HyperFuel(hyperFuelConfig) | Rpc(rpcConfig)
+    type syncSource = HyperSync | HyperFuel | Rpc
 
     type chainConfig = {
       syncSource: syncSource,
@@ -214,7 +149,7 @@ module type S = {
       confirmedBlockThreshold: int,
       chain: ChainMap.Chain.t,
       contracts: array<contract>,
-      chainWorker: module(ChainWorker.S),
+      source: Source.t,
     }
   }
 }

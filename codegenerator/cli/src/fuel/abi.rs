@@ -144,6 +144,56 @@ impl FuelAbi {
                     )),
                 };
 
+                fn unified_type_application_to_type_ident(
+                    unified_type_application: &UnifiedTypeApplication,
+                    generic_param_name_map: &HashMap<usize, String>,
+                ) -> RescriptTypeIdent {
+                    let type_ident_name = mk_type_id_name(&unified_type_application.type_id);
+
+                    match &unified_type_application.type_arguments {
+                        //When there are no type arguments it is a named type or a generic param
+                        None => generic_param_name_map
+                            .get(&unified_type_application.type_id)
+                            .cloned()
+                            .map_or(
+                                //If the type_id is not a defined generic type it is
+                                //a named type
+                                RescriptTypeIdent::TypeApplication {
+                                    name: type_ident_name,
+                                    type_params: vec![],
+                                },
+                                //if the type_id is in the generic_param_name_map
+                                //it is a generic param
+                                |generic_name| RescriptTypeIdent::GenericParam(generic_name),
+                            ),
+                        //When there are type arguments it is a generic type
+                        Some(typ_args) => {
+                            let type_params = typ_args
+                                .iter()
+                                .map(|ta| {
+                                    generic_param_name_map.get(&ta.type_id).cloned().map_or(
+                                        //If the type_id is not a defined generic type it is
+                                        //a named type
+                                        unified_type_application_to_type_ident(
+                                            &ta,
+                                            &generic_param_name_map,
+                                        ),
+                                        //if the type_id is in the generic_param_name_map
+                                        //it is a generic param
+                                        |generic_name| {
+                                            RescriptTypeIdent::GenericParam(generic_name)
+                                        },
+                                    )
+                                })
+                                .collect();
+                            RescriptTypeIdent::TypeApplication {
+                                name: type_ident_name,
+                                type_params,
+                            }
+                        }
+                    }
+                }
+
                 let get_components_name_and_type_ident = || {
                     abi_type_decl
                         .components
@@ -153,49 +203,15 @@ impl FuelAbi {
                             abi_type_decl.type_id
                         ))?
                         .iter()
-                        .map(|comp| {
+                        .map(|comp: &UnifiedTypeApplication| {
                             let name = comp.name.clone();
-                            let type_ident_name = mk_type_id_name(&comp.type_id);
-                            let type_ident = match &comp.type_arguments {
-                                //When there are no type arguments it is a named type or a generic param
-                                None => generic_param_name_map.get(&comp.type_id).cloned().map_or(
-                                    //If the type_id is not a defined generic type it is
-                                    //a named type
-                                    RescriptTypeIdent::TypeApplication {
-                                        name: type_ident_name,
-                                        type_params: vec![],
-                                    },
-                                    //if the type_id is in the generic_param_name_map
-                                    //it is a generic param
-                                    |generic_name| RescriptTypeIdent::GenericParam(generic_name),
+                            Ok((
+                                name,
+                                unified_type_application_to_type_ident(
+                                    &comp,
+                                    &generic_param_name_map,
                                 ),
-                                //When there are type arguments it is a generic type
-                                Some(typ_args) => {
-                                    let type_params = typ_args
-                                        .iter()
-                                        .map(|ta| {
-                                            generic_param_name_map.get(&ta.type_id).cloned().map_or(
-                                                //If the type_id is not a defined generic type it is
-                                                //a named type
-                                                RescriptTypeIdent::TypeApplication {
-                                                    name: mk_type_id_name(&ta.type_id),
-                                                    type_params: vec![],
-                                                },
-                                                //if the type_id is in the generic_param_name_map
-                                                //it is a generic param
-                                                |generic_name| {
-                                                    RescriptTypeIdent::GenericParam(generic_name)
-                                                },
-                                            )
-                                        })
-                                        .collect();
-                                    RescriptTypeIdent::TypeApplication {
-                                        name: type_ident_name,
-                                        type_params,
-                                    }
-                                }
-                            };
-                            Ok((name, type_ident))
+                            ))
                         })
                         .collect::<Result<Vec<_>>>()
                 };
@@ -211,7 +227,7 @@ impl FuelAbi {
                         "u8" | "u16" | "u32" => Int.to_ok_expr(),
                         "u64" | "u128" | "u256" | "raw untyped ptr" => BigInt.to_ok_expr(),
                         "b256" | "address" => String.to_ok_expr(),
-                        "str" => String.to_ok_expr(),
+                        "str" | "struct std::string::String" => String.to_ok_expr(),
                         type_field if type_field.starts_with("str[") => String.to_ok_expr(),
                         "struct std::vec::Vec" => Array(Box::new(GenericParam(
                             get_first_type_param()

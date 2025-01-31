@@ -137,9 +137,24 @@ async fn run_all_init_combinations() {
     }
 }
 
+async fn all_hypersync_networks_are_included() {
+    let diff = envio::scripts::print_missing_networks::Diff::get()
+        .await
+        .unwrap();
+
+    if diff.is_empty() {
+        return;
+    } else {
+        diff.print_message();
+
+        assert!(false);
+    }
+}
+
 #[tokio::main]
 async fn main() {
     run_all_init_combinations().await;
+    all_hypersync_networks_are_included().await;
 }
 
 // This slows down all the integration tests, so we don't run it by default.

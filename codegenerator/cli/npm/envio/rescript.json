@@ -1,6 +1,6 @@
 {
   "name": "envio",
-  "namespace": true,
+  "namespace": false,
   "sources": [
     {
       "dir": "src",
@@ -11,5 +11,10 @@
   "package-specs": {
     "module": "commonjs",
     "in-source": true
-  }
+  },
+  "gentypeconfig": {
+    "generatedFileExtension": ".gen.ts"
+  },
+  "bs-dependencies": ["rescript-schema"],
+  "bsc-flags": ["-open RescriptSchema"]
 }

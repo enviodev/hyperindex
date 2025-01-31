@@ -13,7 +13,7 @@ describe("Load and save an entity with a BigDecimal from DB", () => {
   Async.it("be able to set and read entities with BigDecimal from DB", async () => {
     This.timeout(5 * 1000)
 
-    let sql = DbFunctions.sql
+    let sql = Db.sql
     /// Setup DB
     let testEntity1: Entities.EntityWithBigDecimal.t = {
       id: "testEntity",
@@ -33,21 +33,22 @@ describe("Load and save an entity with a BigDecimal from DB", () => {
     let loadLayer = LoadLayer.makeWithDbConnection()
 
     let contextEnv = ContextEnv.make(
-      ~eventBatchQueueItem=MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem,
+      ~eventItem=MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem,
       ~logger=Logging.logger,
     )
 
-    let loaderContext = contextEnv->ContextEnv.getLoaderContext(~loadLayer, ~inMemoryStore)
+    let loaderContext =
+      contextEnv
+      ->ContextEnv.getLoaderContext(~loadLayer, ~inMemoryStore)
+      ->(Utils.magic: Internal.loaderContext => Types.loaderContext)
 
     let _ = loaderContext.entityWithBigDecimal.get(testEntity1.id)
     let _ = loaderContext.entityWithBigDecimal.get(testEntity2.id)
 
     let handlerContext =
-      contextEnv->ContextEnv.getHandlerContext(
-        ~inMemoryStore,
-        ~loadLayer,
-        ~isInReorgThreshold=false,
-      )
+      contextEnv
+      ->ContextEnv.getHandlerContext(~inMemoryStore, ~loadLayer, ~shouldSaveHistory=false)
+      ->(Utils.magic: Internal.handlerContext => Types.handlerContext)
 
     switch await handlerContext.entityWithBigDecimal.get(testEntity1.id) {
     | Some(entity) => Assert.equal(entity.bigDecimal.toString(), "123.456")

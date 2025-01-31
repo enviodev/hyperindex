@@ -315,17 +315,29 @@ describe("LoadLayer", () => {
     let mock = Mock.LoadLayer.make()
 
     let getUsersWithId =
-      mock.loadLayer->LoadLayer.makeWhereEqLoader(
+      mock.loadLayer->LoadLayer.makeWhereLoader(
         ~entityMod=module(Entities.User),
+        ~operator=Eq,
         ~inMemoryStore=InMemoryStore.make(),
         ~logger=Logging.logger,
         ~fieldName="id",
         ~fieldValueSchema=S.string,
       )
+    let getUsersWithUpdates =
+      mock.loadLayer->LoadLayer.makeWhereLoader(
+        ~entityMod=module(Entities.User),
+        ~operator=Gt,
+        ~inMemoryStore=InMemoryStore.make(),
+        ~logger=Logging.logger,
+        ~fieldName="updatesCountOnUserForTesting",
+        ~fieldValueSchema=S.int,
+      )
 
-    let users = await getUsersWithId("123")
+    let users1 = await getUsersWithId("123")
+    let users2 = await getUsersWithUpdates(0)
 
-    Assert.deepEqual(users, [])
+    Assert.deepEqual(users1, [])
+    Assert.deepEqual(users2, [])
     Assert.deepEqual(mock.loadEntitiesByIdsCalls, [])
     Assert.deepEqual(
       mock.loadEntitiesByFieldCalls,
@@ -336,6 +348,15 @@ describe("LoadLayer", () => {
           fieldValueSchema: S.string->Utils.magic,
           entityMod: module(Entities.User)->Entities.entityModToInternal,
           logger: Logging.logger,
+          operator: Eq,
+        },
+        {
+          fieldName: "updatesCountOnUserForTesting",
+          fieldValue: 0->Utils.magic,
+          fieldValueSchema: S.int->Utils.magic,
+          entityMod: module(Entities.User)->Entities.entityModToInternal,
+          logger: Logging.logger,
+          operator: Gt,
         },
       ],
     )
@@ -344,20 +365,26 @@ describe("LoadLayer", () => {
   Async.it("Gets entity from inMemoryStore by index if it exists", async () => {
     let mock = Mock.LoadLayer.make()
 
-    let user1 = (
-      {
-        id: "1",
-        accountType: USER,
-        address: "",
-        gravatar_id: None,
-        updatesCountOnUserForTesting: 0,
-      }: Entities.User.t
-    )
+    let user1: Entities.User.t = {
+      id: "1",
+      accountType: USER,
+      address: "",
+      gravatar_id: None,
+      updatesCountOnUserForTesting: 0,
+    }
+    let user2: Entities.User.t = {
+      id: "2",
+      accountType: USER,
+      address: "",
+      gravatar_id: None,
+      updatesCountOnUserForTesting: 1,
+    }
 
-    let inMemoryStore = Mock.InMemoryStore.make(~entities=[(module(Entities.User), [user1])])
+    let inMemoryStore = Mock.InMemoryStore.make(~entities=[(module(Entities.User), [user1, user2])])
 
     let getUsersWithId =
-      mock.loadLayer->LoadLayer.makeWhereEqLoader(
+      mock.loadLayer->LoadLayer.makeWhereLoader(
+        ~operator=Eq,
         ~entityMod=module(Entities.User),
         ~inMemoryStore,
         ~logger=Logging.logger,
@@ -365,9 +392,18 @@ describe("LoadLayer", () => {
         ~fieldValueSchema=S.string,
       )
 
-    let users = await getUsersWithId("1")
+    let getUsersWithUpdates =
+      mock.loadLayer->LoadLayer.makeWhereLoader(
+        ~entityMod=module(Entities.User),
+        ~operator=Gt,
+        ~inMemoryStore=InMemoryStore.make(),
+        ~logger=Logging.logger,
+        ~fieldName="updatesCountOnUserForTesting",
+        ~fieldValueSchema=S.int,
+      )
 
-    Assert.deepEqual(users, [user1])
+    Assert.deepEqual(await getUsersWithId("1"), [user1])
+    Assert.deepEqual(await getUsersWithUpdates(0), [user2])
     Assert.deepEqual(mock.loadEntitiesByIdsCalls, [])
     Assert.deepEqual(
       mock.loadEntitiesByFieldCalls,
@@ -378,8 +414,44 @@ describe("LoadLayer", () => {
           fieldValueSchema: S.string->Utils.magic,
           entityMod: module(Entities.User)->Entities.entityModToInternal,
           logger: Logging.logger,
+          operator: Eq,
+        },
+        {
+          fieldName: "updatesCountOnUserForTesting",
+          fieldValue: 0->Utils.magic,
+          fieldValueSchema: S.int->Utils.magic,
+          entityMod: module(Entities.User)->Entities.entityModToInternal,
+          logger: Logging.logger,
+          operator: Gt,
         },
       ],
+    )
+
+    // The second time gets from inMemoryStore
+    Assert.deepEqual(await getUsersWithId("1"), [user1])
+    Assert.deepEqual(await getUsersWithUpdates(0), [user2])
+    Assert.deepEqual(mock.loadEntitiesByIdsCalls, [])
+    Assert.deepEqual(
+      mock.loadEntitiesByFieldCalls->Array.length,
+      2,
+      ~message=`Shouldn't add more calls to the db`,
+    )
+
+    inMemoryStore->Mock.InMemoryStore.setEntity(
+      ~entityMod=module(Entities.User),
+      {...user2, updatesCountOnUserForTesting: 0},
+    )
+
+    Assert.deepEqual(
+      await getUsersWithUpdates(0),
+      [],
+      ~message=`Doesn't get the user after the value is updated and not match the query`,
+    )
+    Assert.deepEqual(mock.loadEntitiesByIdsCalls, [])
+    Assert.deepEqual(
+      mock.loadEntitiesByFieldCalls->Array.length,
+      2,
+      ~message=`Shouldn't add more calls to the db`,
     )
   })
 
@@ -401,7 +473,8 @@ describe("LoadLayer", () => {
       let inMemoryStore = InMemoryStore.make()
 
       let getUsersWithId =
-        mock.loadLayer->LoadLayer.makeWhereEqLoader(
+        mock.loadLayer->LoadLayer.makeWhereLoader(
+          ~operator=Eq,
           ~entityMod=module(Entities.User),
           ~inMemoryStore,
           ~logger=Logging.logger,
@@ -419,6 +492,7 @@ describe("LoadLayer", () => {
             fieldValueSchema: S.string->Utils.magic,
             entityMod: module(Entities.User)->Entities.entityModToInternal,
             logger: Logging.logger,
+            operator: Eq,
           }: Mock.LoadLayer.loadEntitiesByFieldCall
         ),
       ]

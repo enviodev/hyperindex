@@ -860,7 +860,7 @@ pub struct MultiFieldIndex(Vec<String>);
 
 impl MultiFieldIndex {
     fn new(field_names: Vec<String>) -> Self {
-        Self(field_names.into_iter().sorted().collect())
+        Self(field_names.into_iter().collect())
     }
 
     pub fn get_field_names(&self) -> &Vec<String> {
@@ -1394,7 +1394,7 @@ impl GqlScalar {
             }
             "Timestamp" => GqlScalar::Timestamp,
             "Bytes" => GqlScalar::Bytes,
-            _name => GqlScalar::Custom(name.to_string()),
+            name => GqlScalar::Custom(name.to_string()),
         }
     }
 
@@ -1403,7 +1403,7 @@ impl GqlScalar {
             GqlScalar::ID => PGPrimitive::Text,
             GqlScalar::String => PGPrimitive::Text,
             GqlScalar::Int => PGPrimitive::Integer,
-            GqlScalar::Float => PGPrimitive::Numeric(None), // Should we allow this type? Rounding issues will abound.
+            GqlScalar::Float => PGPrimitive::DoublePrecision, // Should we allow this type? Rounding issues will abound.
             GqlScalar::Boolean => PGPrimitive::Boolean,
             GqlScalar::Bytes => PGPrimitive::Text,
             GqlScalar::BigInt(None) => PGPrimitive::Numeric(None),
@@ -2325,5 +2325,33 @@ type TestEntity {
         assert!(result.is_err());
         let err_message = format!("{:?}", result.unwrap_err());
         assert!(err_message.contains("EE216"));
+    }
+
+    #[test]
+    fn multifield_index_should_retain_original_order() {
+        let schema_str = r#"
+        type Entity 
+        @index(fields: ["a", "b"])
+        @index(fields: ["b", "a"])
+        {
+            id: ID!
+            a: String!
+            b: String!
+        }
+        "#;
+
+        let gql_doc = setup_document(schema_str).expect("Failed to parse schema string");
+        let schema = Schema::from_document(gql_doc).expect("Failed to parse schema from doc");
+        let entity = schema.entities.get("Entity").expect("Entity not found");
+
+        assert_eq!(entity.multi_field_indexes.len(), 2);
+        assert_eq!(
+            entity.multi_field_indexes[0].0,
+            vec!["a".to_string(), "b".to_string()]
+        );
+        assert_eq!(
+            entity.multi_field_indexes[1].0,
+            vec!["b".to_string(), "a".to_string()]
+        );
     }
 }

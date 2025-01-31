@@ -19,6 +19,6 @@
     "version": 4
   },
   "suffix": ".bs.js",
-  "bs-dependencies": ["generated", "@ryyppy/rescript-promise"],
+  "bs-dependencies": ["generated", "envio"],
   "pinned-dependencies": ["generated"]
 }

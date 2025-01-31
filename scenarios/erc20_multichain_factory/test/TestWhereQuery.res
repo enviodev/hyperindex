@@ -153,6 +153,16 @@ describe("Tests where eq queries", () => {
       1,
       ~message="should have successfully loaded values on where eq bigint query",
     )
+    Assert.equal(
+      EventHandlers.whereBallanceGt50Test.contents->Array.length,
+      0,
+      ~message="Shouldn't have any value with more than 50 balance",
+    )
+    Assert.deepEqual(
+      EventHandlers.whereEqBigNumTest.contents,
+      EventHandlers.whereBallanceGt49Test.contents,
+      ~message="Where gt 49 and eq 50 should return the same result",
+    )
     let users = await Sql.getAllRowsInTable("Account")
     Assert.equal(users->Array.length, 3, ~message="Should contain user1, user2 and minter address")
     await dispatchAllTasks()

@@ -23,39 +23,32 @@ describe("E2E Integration Test", () => {
           abi: Types.Gravatar.abi,
           addresses: ["0x5FbDB2315678afecb367f032d93F642f64180aa3"->Address.Evm.fromStringOrThrow],
           events: [module(Types.Gravatar.NewGravatar), module(Types.Gravatar.UpdatedGravatar)],
-          sighashes: [Types.Gravatar.NewGravatar.sighash, Types.Gravatar.UpdatedGravatar.sighash],
         },
       ]
-      let rpcConfig: Config.rpcConfig = {
-        provider,
-        syncConfig: {
-          initialBlockInterval: 10000,
-          backoffMultiplicative: 10000.0,
-          accelerationAdditive: 10000,
-          intervalCeiling: 10000,
-          backoffMillis: 10000,
-          queryTimeoutMillis: 10000,
-        },
-      }
       let chain = MockConfig.chain1337
       {
         confirmedBlockThreshold: 200,
-        syncSource: Rpc(rpcConfig),
+        syncSource: Rpc,
         startBlock: 0,
         endBlock: None,
         chain,
         contracts,
-        chainWorker: module(
-          RpcWorker.Make({
-            let chain = chain
-            let contracts = contracts
-            let rpcConfig = rpcConfig
-            let eventRouter =
-              contracts
-              ->Belt.Array.flatMap(contract => contract.events)
-              ->EventRouter.fromEvmEventModsOrThrow(~chain)
-          })
-        ),
+        source: RpcSource.make({
+          chain,
+          contracts,
+          syncConfig: {
+            initialBlockInterval: 10000,
+            backoffMultiplicative: 10000.0,
+            accelerationAdditive: 10000,
+            intervalCeiling: 10000,
+            backoffMillis: 10000,
+            queryTimeoutMillis: 10000,
+          },
+          provider,
+          eventRouter: contracts
+          ->Belt.Array.flatMap(contract => contract.events)
+          ->EventRouter.fromEvmEventModsOrThrow(~chain),
+        }),
       }
     }
 

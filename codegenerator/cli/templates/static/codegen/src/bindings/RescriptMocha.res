@@ -24,8 +24,12 @@ module Assert = {
   @module("assert")
   external doesNotThrow: (unit => 'a, ~error: 'error=?, ~message: string=?) => unit = "doesNotThrow"
 
+  @module("assert")
+  external rejects: (unit => promise<'a>, ~error: 'error=?, ~message: string=?) => promise<unit> =
+    "rejects"
+
   @module("assert") external ok: (bool, ~message: string=?) => unit = "ok"
-  @module("assert") external fail: string => unit = "fail"
+  @module("assert") external fail: string => 'a = "fail"
 }
 
 /* Mocha bindings on `this` for `describe` and `it` functions */

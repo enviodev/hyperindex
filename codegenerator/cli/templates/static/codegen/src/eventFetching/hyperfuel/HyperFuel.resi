@@ -30,7 +30,7 @@ type missingParams = {
   missingParams: array<string>,
 }
 type queryError =
-  UnexpectedMissingParams(missingParams) | QueryError(HyperFuelJsonApi.Query.queryError)
+  UnexpectedMissingParams(missingParams)
 
 exception UnexpectedMissingParamsExn(missingParams)
 
@@ -40,7 +40,7 @@ type queryResponse<'a> = result<'a, queryError>
 let queryLogsPage: (
   ~serverUrl: string,
   ~fromBlock: int,
-  ~toBlock: int,
+  ~toBlock: option<int>,
   ~recieptsSelection: array<HyperFuelClient.QueryTypes.receiptSelection>,
 ) => promise<queryResponse<logsQueryPage>>
 
@@ -50,5 +50,4 @@ let queryBlockData: (
   ~logger: Pino.t,
 ) => promise<option<ReorgDetection.blockData>>
 
-let getHeightWithRetry: (~serverUrl: string, ~logger: Pino.t) => promise<int>
-let pollForHeightGtOrEq: (~serverUrl: string, ~blockNumber: int, ~logger: Pino.t) => promise<int>
+let heightRoute: Rest.route<(), int>

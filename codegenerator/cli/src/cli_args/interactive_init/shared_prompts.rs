@@ -24,6 +24,7 @@ pub fn prompt_template<T: Display>(options: Vec<T>) -> Result<T> {
 pub struct SelectItem<T> {
     pub item: T,
     pub display: String,
+    pub preselect: bool,
 }
 
 impl<T> Display for SelectItem<T> {
@@ -41,7 +42,7 @@ pub fn prompt_events_selection<T>(events: Vec<SelectItem<T>>) -> Result<Vec<T>> 
     let all_indexes_of_events = events
         .iter()
         .enumerate()
-        .map(|(i, _)| i)
+        .filter_map(|(i, event)| if event.preselect { Some(i) } else { None })
         .collect::<Vec<usize>>();
 
     //Prompt for selection with all events selected by default

@@ -25,11 +25,11 @@ module InitApi = {
     ->ChainMap.values
     ->Array.forEach(({syncSource, chain}) => {
       switch syncSource {
-      | HyperSync(_) => hyperSyncNetworks
-      | HyperFuel(_) =>
+      | HyperSync => hyperSyncNetworks
+      | HyperFuel =>
         ecosystem := Fuel
         hyperSyncNetworks
-      | Rpc(_) => rpcNetworks
+      | Rpc => rpcNetworks
       }
       ->Js.Array2.push(chain->ChainMap.Chain.toChainId)
       ->ignore
@@ -74,21 +74,24 @@ module InitApi = {
     content: s.field("content", S.string),
   })
 
-  let responseSchema = S.object(s => s.field("messages", S.array(messageSchema)))
+  let endpoint = Env.envioApiUrl
 
-  let endpoint = Env.envioApiUrl ++ "/hyperindex/init"
+  let route = Rest.route(() => {
+    method: Post,
+    path: "/hyperindex/init",
+    variables: s => s.body(bodySchema),
+    responses: [s => s.field("messages", S.array(messageSchema))]
+  })
 
-  let getMessages = (~config) => {
+  let getMessages = async (~config) => {
     let envioVersion =
       PersistedState.getPersistedState()->Result.mapWithDefault(None, p => Some(p.envioVersion))
     let body = makeBody(~envioVersion, ~envioApiToken=Env.envioApiToken, ~config)
 
-    QueryHelpers.executeFetchRequest(
-      ~endpoint,
-      ~method=#POST,
-      ~bodyAndSchema=(body, bodySchema),
-      ~responseSchema,
-    )
+    switch await route->Rest.fetch(endpoint, body) {
+      | exception exn => Error(exn->Obj.magic)
+      | messages => Ok(messages)
+    }
   }
 }
 
