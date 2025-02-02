@@ -14,6 +14,7 @@ let config: Postgres.poolConfig = {
   max: 2,
 }
 let sql = Postgres.makeSql(~config)
+let publicSchema = Env.Db.publicSchema
 
 let allEntityTables: array<Table.table> = Entities.allEntities->Belt.Array.map(entityMod => {
   let module(Entity) = entityMod

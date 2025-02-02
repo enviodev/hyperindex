@@ -1,5 +1,6 @@
 const TableModule = require("envio/src/db/Table.bs.js");
 const Utils = require("envio/src/Utils.bs.js");
+const { publicSchema } = require("./Db.bs.js");
 
 // db operations for raw_events:
 const MAX_ITEMS_PER_QUERY = 500;
@@ -29,7 +30,7 @@ module.exports.batchDeleteItemsInTable = (table, sql, pkArray) => {
   if (primaryKeyFieldNames.length === 1) {
     return sql`
       DELETE
-      FROM "public".${sql(table.tableName)}
+      FROM ${sql(publicSchema)}.${sql(table.tableName)}
       WHERE ${sql(primaryKeyFieldNames[0])} IN ${sql(pkArray)};
       `;
   } else {
@@ -44,7 +45,7 @@ module.exports.batchReadItemsInTable = (table, sql, pkArray) => {
   if (primaryKeyFieldNames.length === 1) {
     return sql`
       SELECT *
-      FROM "public".${sql(table.tableName)}
+      FROM ${sql(publicSchema)}.${sql(table.tableName)}
       WHERE ${sql(primaryKeyFieldNames[0])} IN ${sql(pkArray)};
       `;
   } else {
@@ -56,7 +57,7 @@ module.exports.batchReadItemsInTable = (table, sql, pkArray) => {
 module.exports.whereEqQuery = (table, sql, fieldName, value) => {
   return sql`
     SELECT *
-    FROM "public".${sql(table.tableName)}
+    FROM ${sql(publicSchema)}.${sql(table.tableName)}
     WHERE ${sql(fieldName)} = ${value};
     `;
 };
@@ -64,7 +65,7 @@ module.exports.whereEqQuery = (table, sql, fieldName, value) => {
 module.exports.whereGtQuery = (table, sql, fieldName, value) => {
   return sql`
     SELECT *
-    FROM "public".${sql(table.tableName)}
+    FROM ${sql(publicSchema)}.${sql(table.tableName)}
     WHERE ${sql(fieldName)} > ${value};
     `;
 };
@@ -135,7 +136,7 @@ module.exports.batchSetChainMetadata = (sql, entityDataArray) => {
 
 module.exports.batchDeleteRawEvents = (sql, entityIdArray) => sql`
   DELETE
-  FROM "public"."raw_events"
+  FROM ${sql(publicSchema)}."raw_events"
   WHERE (chain_id, event_id) IN ${sql(entityIdArray)};`;
 // end db operations for raw_events
 
@@ -153,7 +154,7 @@ module.exports.makeBatchSetEntityValues = (table) => {
 
   return chunkBatchQuery((sql, rowDataArray) => {
     return sql`
-INSERT INTO "public".${sql(table.tableName)}
+INSERT INTO ${sql(publicSchema)}.${sql(table.tableName)}
 ${sql(rowDataArray, ...fieldNames)}
 ON CONFLICT(${sql`${commaSeparateDynamicMapQuery(
       sql,
@@ -166,8 +167,14 @@ ${sql`${commaSeparateDynamicMapQuery(sql, fieldQueryConstructors)}`};`;
 
 const batchSetEndOfBlockRangeScannedDataCore = (sql, rowDataArray) => {
   return sql`
-    INSERT INTO "public"."end_of_block_range_scanned_data"
-  ${sql(rowDataArray, "chain_id", "block_number", "block_hash")}
+    INSERT INTO ${sql(publicSchema)}."end_of_block_range_scanned_data"
+  ${sql(
+    rowDataArray,
+    "chain_id",
+    "block_timestamp",
+    "block_number",
+    "block_hash"
+  )}
     ON CONFLICT(chain_id, block_number) DO UPDATE
     SET
     "chain_id" = EXCLUDED."chain_id",
@@ -181,7 +188,7 @@ module.exports.batchSetEndOfBlockRangeScannedData = chunkBatchQuery(
 
 module.exports.readEndOfBlockRangeScannedDataForChain = (sql, chainId) => {
   return sql`
-    SELECT * FROM "public"."end_of_block_range_scanned_data"
+    SELECT * FROM ${sql(publicSchema)}."end_of_block_range_scanned_data"
     WHERE
       chain_id = ${chainId}
       ORDER BY block_number ASC;`;
@@ -194,7 +201,7 @@ module.exports.deleteStaleEndOfBlockRangeScannedDataForChain = (
 ) => {
   return sql`
     DELETE
-    FROM "public"."end_of_block_range_scanned_data"
+    FROM ${sql(publicSchema)}."end_of_block_range_scanned_data"
     WHERE chain_id = ${chainId}
     AND block_number < ${blockNumberThreshold};`;
 };
@@ -219,7 +226,7 @@ module.exports.deleteInvalidDynamicContractsOnRestart = (
 ) => {
   return sql`
     DELETE
-    FROM "public"."dynamic_contract_registry"
+    FROM ${sql(publicSchema)}."dynamic_contract_registry"
     WHERE chain_id = ${chainId}
     AND is_pre_registered = false
     AND (
@@ -237,7 +244,7 @@ module.exports.deleteInvalidDynamicContractsHistoryOnRestart = (
 ) => {
   return sql`
     DELETE
-    FROM "public"."dynamic_contract_registry_history"
+    FROM ${sql(publicSchema)}."dynamic_contract_registry_history"
     WHERE entity_history_chain_id = ${chainId}
     AND (
       entity_history_block_number > ${restartBlockNumber} 
@@ -248,7 +255,7 @@ module.exports.deleteInvalidDynamicContractsHistoryOnRestart = (
 
 module.exports.readAllDynamicContracts = (sql, chainId) => sql`
   SELECT *
-  FROM "public"."dynamic_contract_registry"
+  FROM ${sql(publicSchema)}."dynamic_contract_registry"
   WHERE chain_id = ${chainId};`;
 
 const makeHistoryTableName = (entityName) => entityName + "_history";
