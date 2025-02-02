@@ -26,7 +26,7 @@ let creatTableIfNotExists = (sql, table) => {
     ->Js.Array2.joinWith(", ")
 
   let query = `
-    CREATE TABLE IF NOT EXISTS "public"."${table.tableName}"(${fieldsMapped}${primaryKeyFieldNames->Array.length > 0
+    CREATE TABLE IF NOT EXISTS ${Env.Db.publicSchema}."${table.tableName}"(${fieldsMapped}${primaryKeyFieldNames->Array.length > 0
       ? `, PRIMARY KEY(${primaryKey})`
       : ""});`
 
@@ -36,7 +36,7 @@ let creatTableIfNotExists = (sql, table) => {
 let makeCreateIndexQuery = (~tableName, ~indexFields) => {
   let indexName = tableName ++ "_" ++ indexFields->Js.Array2.joinWith("_")
   let index = indexFields->Belt.Array.map(idx => `"${idx}"`)->Js.Array2.joinWith(", ")
-  `CREATE INDEX IF NOT EXISTS "${indexName}" ON "public"."${tableName}"(${index}); `
+  `CREATE INDEX IF NOT EXISTS "${indexName}" ON ${Env.Db.publicSchema}."${tableName}"(${index}); `
 }
 
 let createTableIndices = (sql, table: Table.table) => {
