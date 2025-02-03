@@ -1,3 +1,5 @@
+open Belt
+
 type blockNumberAndHash = {
   //Block hash is used for actual comparison to test for reorg
   blockHash: string,
@@ -16,6 +18,11 @@ type reorgGuard = {
   firstBlockParentNumberAndHash: option<blockNumberAndHash>,
 }
 
+type reorgDetected = {
+  scannedBlock: blockData,
+  reorgGuard: reorgGuard,
+}
+
 module LastBlockScannedHashes: {
   type t
   /**Instantiat t with existing data*/
@@ -25,14 +32,12 @@ module LastBlockScannedHashes: {
   let empty: (~confirmedBlockThreshold: int) => t
 
   /**Add the latest scanned block data to t*/
-  let addLatestLastBlockData: (t, ~lastBlockScannedData: blockData) => t
+  let registerReorgGuard: (t, ~reorgGuard: reorgGuard) => result<t, reorgDetected>
 
-  /**Read the latest last block scanned data at the from the front of the queue*/
-  let getLatestLastBlockData: t => option<blockData>
   /** Given the head block number, find the earliest timestamp from the data where the data
       is still within the given block threshold from the head
   */
-  let getEarlistTimestampInThreshold: (~currentHeight: int, t) => option<int>
+  let getEarlistTimestampInThreshold: (t, ~currentHeight: int) => option<int>
 
   /**
   Prunes the back of the unneeded data on the queue.
@@ -42,16 +47,20 @@ module LastBlockScannedHashes: {
   as this is that could be the target range block for a reorg
   */
   let pruneStaleBlockData: (
-    ~currentHeight: int,
-    ~earliestMultiChainTimestampInThreshold: int=?,
     t,
+    ~currentHeight: int,
+    ~earliestMultiChainTimestampInThreshold: option<int>,
   ) => t
 
   /**
-  Return a BlockNumbersAndHashes.t rolled back to where hashes
-  match the provided blockNumberAndHashes
+  Returns the latest block data which matches block number and hashes in the provided array
+  If it doesn't exist in the reorg threshold it returns None or the latest scanned block outside of the reorg threshold
   */
-  let rollBackToValidHash: (t, ~blockNumbersAndHashes: array<blockData>) => result<t, exn>
+  let getLatestValidScannedBlock: (
+    t,
+    ~blockNumbersAndHashes: array<blockData>,
+    ~currentHeight: int,
+  ) => option<blockData>
 
   /**
   A record that holds the current height of a chain and the lastBlockScannedHashes,
@@ -59,8 +68,8 @@ module LastBlockScannedHashes: {
   need to be zipped
   */
   type currentHeightAndLastBlockHashes = {
-    currentHeight: int,
     lastBlockScannedHashes: t,
+    currentHeight: int,
   }
 
   /**
@@ -74,13 +83,11 @@ module LastBlockScannedHashes: {
 
   let getThresholdBlockNumbers: (t, ~currentBlockHeight: int) => array<int>
 
-  let hasReorgOccurred: (t, ~reorgGuard: reorgGuard) => bool
-
   /**
   Return a BlockNumbersAndHashes.t rolled back to where blockData is less
   than the provided blockNumber
   */
-  let rollBackToBlockNumberLt: (~blockNumber: int, t) => t
+  let rollBackToBlockNumberLt: (t, ~blockNumber: int) => t
 } = {
   type t = {
     // Number of blocks behind head, we want to keep track
@@ -88,251 +95,236 @@ module LastBlockScannedHashes: {
     // it means we are accounting for reorgs up to 200 blocks
     // behind the head
     confirmedBlockThreshold: int,
-    // A cached list of recent blockdata to make comparison checks
-    // for reorgs. Should be quite short data set
-    // so using built in array for data structure.
-    lastBlockScannedDataList: list<blockData>,
+    // A hash map of recent blockdata by block number to make comparison checks
+    // for reorgs.
+    dataByBlockNumber: dict<blockData>,
   }
 
-  //Instantiates LastBlockHashes.t
-  let makeWithDataInternal = (lastBlockScannedDataList, ~confirmedBlockThreshold) => {
-    confirmedBlockThreshold,
-    lastBlockScannedDataList,
-  }
+  let makeWithData = (blocks, ~confirmedBlockThreshold) => {
+    let dataByBlockNumber = Js.Dict.empty()
 
-  let makeWithData = (lastBlockScannedDataListArr, ~confirmedBlockThreshold) =>
-    lastBlockScannedDataListArr
-    ->Belt.List.fromArray
-    ->Belt.List.reverse
-    ->makeWithDataInternal(~confirmedBlockThreshold)
+    blocks->Belt.Array.forEach(block => {
+      dataByBlockNumber->Js.Dict.set(block.blockNumber->Js.Int.toString, block)
+    })
+
+    {
+      confirmedBlockThreshold,
+      dataByBlockNumber,
+    }
+  }
   //Instantiates empty LastBlockHashes
-  let empty = (~confirmedBlockThreshold) => makeWithDataInternal(list{}, ~confirmedBlockThreshold)
+  let empty = (~confirmedBlockThreshold) => {
+    confirmedBlockThreshold,
+    dataByBlockNumber: Js.Dict.empty(),
+  }
+
+  let getEarliestBlockDataInThreshold = (
+    {dataByBlockNumber, confirmedBlockThreshold}: t,
+    ~currentHeight,
+  ) => {
+    // Js engine automatically orders numeric object keys
+    let ascBlockNumberKeys = dataByBlockNumber->Js.Dict.keys
+    let thresholdBlockNumber = currentHeight - confirmedBlockThreshold
+    let rec loop = idx => {
+      switch ascBlockNumberKeys->Belt.Array.get(idx) {
+      | Some(blockNumberKey) =>
+        let scannedBlock = dataByBlockNumber->Js.Dict.unsafeGet(blockNumberKey)
+        if scannedBlock.blockNumber >= thresholdBlockNumber {
+          scannedBlock->Some
+        } else {
+          loop(idx + 1)
+        }
+      | None => None
+      }
+    }
+    loop(0)
+  }
 
   /** Given the head block number, find the earliest timestamp from the data where the data
       is still within the given block threshold from the head
   */
-  let rec getEarlistTimestampInThresholdInternal = (
-    // The current block number at the head of the chain
-    ~currentHeight,
-    ~confirmedBlockThreshold,
-    //reversed so that head to tail is earlist to latest
-    reversedLastBlockDataList: list<blockData>,
-  ): option<int> => {
-    switch reversedLastBlockDataList {
-    | list{lastBlockScannedData, ...tail} =>
-      // If the blocknumber is not in the threshold recurse with given blockdata's
-      // timestamp , incrementing the from index
-      if lastBlockScannedData.blockNumber >= currentHeight - confirmedBlockThreshold {
-        // If it's in the threshold return the last earliest timestamp
-        Some(lastBlockScannedData.blockTimestamp)
-      } else {
-        tail->getEarlistTimestampInThresholdInternal(~currentHeight, ~confirmedBlockThreshold)
-      }
-    | list{} => None
-    }
-  }
-
-  let getEarlistTimestampInThreshold = (
-    ~currentHeight,
-    {lastBlockScannedDataList, confirmedBlockThreshold}: t,
-  ) =>
-    lastBlockScannedDataList
-    ->Belt.List.reverse
-    ->getEarlistTimestampInThresholdInternal(~currentHeight, ~confirmedBlockThreshold)
-
-  /**
-  Inserts last scanned blockData in its positional order of blockNumber. Adds would usually
-  be always appending to the head with a new last scanned blockData but could be earlier in the
-  case of a dynamic contract.
-  */
-  let rec addLatestLastBlockDataInternal = (
-    ~lastBlockScannedData,
-    //Default empty, accumRev would be each item part of lastBlockScannedDataList that has
-    //a higher blockNumber than lastBlockScannedData
-    ~accumRev=list{},
-    lastBlockScannedDataList,
-  ) => {
-    switch lastBlockScannedDataList {
-    | list{head, ...tail} =>
-      if head.blockNumber <= lastBlockScannedData.blockNumber {
-        Belt.List.reverseConcat(accumRev, list{lastBlockScannedData, ...lastBlockScannedDataList})
-      } else {
-        tail->addLatestLastBlockDataInternal(
-          ~lastBlockScannedData,
-          ~accumRev=list{head, ...accumRev},
-        )
-      }
-    | list{} => Belt.List.reverseConcat(accumRev, list{lastBlockScannedData})
-    }
-  }
+  let getEarlistTimestampInThreshold = (self: t, ~currentHeight) =>
+    self->getEarliestBlockDataInThreshold(~currentHeight)->Option.map(d => d.blockTimestamp)
 
   // Adds the latest blockData to the head of the list
-  let addLatestLastBlockData = (
-    {confirmedBlockThreshold, lastBlockScannedDataList}: t,
-    ~lastBlockScannedData,
-  ) =>
-    lastBlockScannedDataList
-    ->addLatestLastBlockDataInternal(~lastBlockScannedData)
-    ->makeWithDataInternal(~confirmedBlockThreshold)
-
-  let getLatestLastBlockData = (self: t) => self.lastBlockScannedDataList->Belt.List.head
-
-  let blockDataIsPastThreshold = (
-    lastBlockScannedData: blockData,
-    ~currentHeight: int,
-    ~confirmedBlockThreshold: int,
-  ) => lastBlockScannedData.blockNumber < currentHeight - confirmedBlockThreshold
-
-  type rec trampoline<'a> = Data('a) | Callback(unit => trampoline<'a>)
-
-  /**
-    Trampolines are a method of handling mutual recursions without the risk of hitting stack limits
-
-    Tail Call Optimization is not possible on mutually recursive functions and so this is a manual optizimation
-
-    (note: this implementation of "trampoline" uses a tail call and so TCO tranfsorms it to a while loop in JS)
-  */
-  let rec trampoline = value =>
-    switch value {
-    | Data(v) => v
-    | Callback(fn) => fn()->trampoline
-    }
-
-  //Prunes the back of the unneeded data on the queue
-  let rec pruneStaleBlockDataInternal = (
-    ~currentHeight,
-    ~earliestMultiChainTimestampInThreshold,
-    ~confirmedBlockThreshold,
-    lastBlockScannedDataListReversed: list<blockData>,
+  let registerReorgGuard = (
+    {confirmedBlockThreshold, dataByBlockNumber} as self: t,
+    ~reorgGuard: reorgGuard,
   ) => {
-    switch earliestMultiChainTimestampInThreshold {
-    // If there is no "earlist multichain timestamp in threshold"
-    // simply prune the earliest block in the case that the block is
-    // outside of the confirmedBlockThreshold
-    | None =>
-      Callback(
-        () =>
-          lastBlockScannedDataListReversed->pruneEarliestBlockData(
-            ~currentHeight,
-            ~earliestMultiChainTimestampInThreshold,
-            ~confirmedBlockThreshold,
+    let {lastBlockScannedData, firstBlockParentNumberAndHash} = reorgGuard
+
+    switch dataByBlockNumber->Utils.Dict.dangerouslyGetNonOption(
+      lastBlockScannedData.blockNumber->Int.toString,
+    ) {
+    | Some(scannedBlock) if scannedBlock.blockHash !== lastBlockScannedData.blockHash =>
+      Error({
+        reorgGuard,
+        scannedBlock,
+      })
+    | _ as maybeScannedData =>
+      let updatedSelf = if maybeScannedData === None {
+        {
+          confirmedBlockThreshold,
+          dataByBlockNumber: dataByBlockNumber->Utils.Dict.updateImmutable(
+            lastBlockScannedData.blockNumber->Int.toString,
+            lastBlockScannedData,
           ),
-      )
-    | Some(timestampThresholdNeeded) =>
-      switch lastBlockScannedDataListReversed {
-      | list{_head, second, ..._tail} =>
-        // Ony prune in the case where the second lastBlockScannedData from the back
-        // Has an earlier timestamp than the timestampThresholdNeeded (this is
-        // the earliest timestamp across all chains where the lastBlockScannedData is
-        // still within the confirmedBlockThreshold)
-        if second.blockTimestamp < timestampThresholdNeeded {
-          Callback(
-            () =>
-              lastBlockScannedDataListReversed->pruneEarliestBlockData(
-                ~currentHeight,
-                ~earliestMultiChainTimestampInThreshold,
-                ~confirmedBlockThreshold,
-              ),
-          )
-        } else {
-          Data(lastBlockScannedDataListReversed)
         }
-      | list{_} | list{} => Data(lastBlockScannedDataListReversed)
-      }
-    }
-  }
-  and pruneEarliestBlockData = (
-    lastBlockScannedDataListReversed: list<blockData>,
-    ~currentHeight,
-    ~earliestMultiChainTimestampInThreshold,
-    ~confirmedBlockThreshold,
-  ) => {
-    switch lastBlockScannedDataListReversed {
-    | list{earliestLastBlockData, ...tail} =>
-      // In the case that back is past the threshold, remove it and
-      // recurse
-      if earliestLastBlockData->blockDataIsPastThreshold(~currentHeight, ~confirmedBlockThreshold) {
-        // Recurse to check the next item
-        Callback(
-          () =>
-            tail->pruneStaleBlockDataInternal(
-              ~currentHeight,
-              ~earliestMultiChainTimestampInThreshold,
-              ~confirmedBlockThreshold,
-            ),
-        )
       } else {
-        Data(lastBlockScannedDataListReversed)
+        self
       }
-    | list{} => Data(list{})
+
+      switch firstBlockParentNumberAndHash {
+      //If parentHash is None, either it's the genesis block (no reorg)
+      //Or its already confirmed so no Reorg
+      | None => Ok(updatedSelf)
+      | Some(firstBlockParentNumberAndHash) =>
+        switch dataByBlockNumber->Utils.Dict.dangerouslyGetNonOption(
+          firstBlockParentNumberAndHash.blockNumber->Int.toString,
+        ) {
+        | Some(scannedBlock)
+          if scannedBlock.blockHash !== firstBlockParentNumberAndHash.blockHash =>
+          Error({
+            reorgGuard,
+            scannedBlock,
+          })
+        | _ => Ok(updatedSelf)
+        }
+      }
     }
   }
 
   //Prunes the back of the unneeded data on the queue
   let pruneStaleBlockData = (
+    {confirmedBlockThreshold, dataByBlockNumber}: t,
     ~currentHeight,
-    ~earliestMultiChainTimestampInThreshold=?,
-    {confirmedBlockThreshold, lastBlockScannedDataList}: t,
+    ~earliestMultiChainTimestampInThreshold,
   ) => {
-    trampoline(
-      lastBlockScannedDataList
-      ->Belt.List.reverse
-      ->pruneStaleBlockDataInternal(
-        ~confirmedBlockThreshold,
-        ~currentHeight,
-        ~earliestMultiChainTimestampInThreshold,
-      ),
-    )
-    ->Belt.List.reverse
-    ->makeWithDataInternal(~confirmedBlockThreshold)
-  }
+    // Js engine automatically orders numeric object keys
+    let ascBlockNumberKeys = dataByBlockNumber->Js.Dict.keys
+    let thresholdBlockNumber = currentHeight - confirmedBlockThreshold
 
-  type blockNumberToHashMap = Belt.Map.Int.t<string>
-  exception BlockNotIncludedInMap(int)
+    let dataByBlockNumberCopy = dataByBlockNumber->Utils.Dict.shallowCopy
 
-  let doBlockHashesMatch = (lastBlockScannedData, ~latestBlockHashes: blockNumberToHashMap) => {
-    let {blockNumber, blockHash} = lastBlockScannedData
-    let matchingBlock = latestBlockHashes->Belt.Map.Int.get(blockNumber)
-
-    switch matchingBlock {
-    | None => Error(BlockNotIncludedInMap(blockNumber))
-    | Some(latestBlockHash) => Ok(blockHash == latestBlockHash)
-    }
-  }
-
-  let rec rollBackToValidHashInternal = (
-    latestBlockScannedData: list<blockData>,
-    ~latestBlockHashes: blockNumberToHashMap,
-  ) => {
-    switch latestBlockScannedData {
-    | list{} => Ok(list{}) //Nothing on the front to rollback to
-    | list{lastBlockScannedData, ...tail} =>
-      lastBlockScannedData
-      ->doBlockHashesMatch(~latestBlockHashes)
-      ->Belt.Result.flatMap(blockHashesDoMatch => {
-        if blockHashesDoMatch {
-          Ok(list{lastBlockScannedData, ...tail})
-        } else {
-          tail->rollBackToValidHashInternal(~latestBlockHashes)
+    let rec loop = idx => {
+      switch ascBlockNumberKeys->Belt.Array.get(idx) {
+      | Some(blockNumberKey) => {
+          let scannedBlock = dataByBlockNumber->Js.Dict.unsafeGet(blockNumberKey)
+          let isInReorgThreshold = scannedBlock.blockNumber >= thresholdBlockNumber
+          let shouldPrune = switch earliestMultiChainTimestampInThreshold {
+          | None => !isInReorgThreshold
+          | Some(timestampThresholdNeeded) =>
+            switch ascBlockNumberKeys
+            ->Belt.Array.get(idx + 1)
+            ->Option.map(blockNumberKey => dataByBlockNumber->Js.Dict.unsafeGet(blockNumberKey)) {
+            // Ony prune in the case where the second lastBlockScannedData from the back
+            // Has an earlier timestamp than the timestampThresholdNeeded (this is
+            // the earliest timestamp across all chains where the lastBlockScannedData is
+            // still within the confirmedBlockThreshold)
+            | Some(nextScannedBlock) => nextScannedBlock.blockTimestamp < timestampThresholdNeeded
+            | None => false
+            }
+          }
+          if shouldPrune {
+            dataByBlockNumberCopy->Utils.Dict.deleteInPlace(blockNumberKey)
+            loop(idx + 1)
+          } else {
+            ()
+          }
         }
-      })
+      | None => ()
+      }
     }
+    loop(0)
+
+    {
+      confirmedBlockThreshold,
+      dataByBlockNumber: dataByBlockNumberCopy,
+    }
+  }
+
+  let getLatestValidScannedBlock = (
+    {confirmedBlockThreshold, dataByBlockNumber}: t,
+    ~blockNumbersAndHashes: array<blockData>,
+    ~currentHeight,
+  ) => {
+    let verifiedDataByBlockNumber = Js.Dict.empty()
+    blockNumbersAndHashes->Array.forEach(blockData => {
+      verifiedDataByBlockNumber->Js.Dict.set(blockData.blockNumber->Int.toString, blockData)
+    })
+
+    // Js engine automatically orders numeric object keys
+    let ascBlockNumberKeys = dataByBlockNumber->Js.Dict.keys
+    let thresholdBlockNumber = currentHeight - confirmedBlockThreshold
+
+    let getPrevScannedBlock = idx =>
+      ascBlockNumberKeys
+      ->Belt.Array.get(idx - 1)
+      ->Option.flatMap(key => dataByBlockNumber->Utils.Dict.dangerouslyGetNonOption(key))
+
+    let rec loop = idx => {
+      switch ascBlockNumberKeys->Belt.Array.get(idx) {
+      | Some(blockNumberKey) =>
+        let scannedBlock = dataByBlockNumber->Js.Dict.unsafeGet(blockNumberKey)
+        let isInReorgThreshold = scannedBlock.blockNumber >= thresholdBlockNumber
+        if isInReorgThreshold {
+          switch verifiedDataByBlockNumber->Utils.Dict.dangerouslyGetNonOption(blockNumberKey) {
+          | None =>
+            Js.Exn.raiseError(
+              `Unexpected case. Couldn't find verified hash for block number ${blockNumberKey}`,
+            )
+          | Some(verifiedBlockData) if verifiedBlockData.blockHash === scannedBlock.blockHash =>
+            loop(idx + 1)
+          | Some(_) => getPrevScannedBlock(idx)
+          }
+        } else {
+          loop(idx + 1)
+        }
+      | None => getPrevScannedBlock(idx)
+      }
+    }
+    loop(0)
   }
 
   /**
-  Return a BlockNumbersAndHashes.t rolled back to where hashes
-  match the provided blockNumberAndHashes
+  Return a BlockNumbersAndHashes.t rolled back to where blockData is less
+  than the provided blockNumber
   */
-  let rollBackToValidHash = (self: t, ~blockNumbersAndHashes: array<blockData>) => {
-    let {confirmedBlockThreshold, lastBlockScannedDataList} = self
-    let latestBlockHashes =
-      blockNumbersAndHashes
-      ->Belt.Array.map(({blockNumber, blockHash}) => (blockNumber, blockHash))
-      ->Belt.Map.Int.fromArray
+  let rollBackToBlockNumberLt = (
+    {dataByBlockNumber, confirmedBlockThreshold}: t,
+    ~blockNumber: int,
+  ) => {
+    // Js engine automatically orders numeric object keys
+    let ascBlockNumberKeys = dataByBlockNumber->Js.Dict.keys
 
-    lastBlockScannedDataList
-    ->rollBackToValidHashInternal(~latestBlockHashes)
-    ->Belt.Result.map(list => list->makeWithDataInternal(~confirmedBlockThreshold))
+    let newDataByBlockNumber = dataByBlockNumber->Utils.Dict.shallowCopy
+
+    let rec loop = idx => {
+      switch ascBlockNumberKeys->Belt.Array.get(idx) {
+      | Some(blockNumberKey) => {
+          let scannedBlock = dataByBlockNumber->Js.Dict.unsafeGet(blockNumberKey)
+          let shouldKeep = scannedBlock.blockNumber < blockNumber
+          if shouldKeep {
+            newDataByBlockNumber->Js.Dict.set(blockNumberKey, scannedBlock)
+            loop(idx + 1)
+          } else {
+            ()
+          }
+        }
+      | None => ()
+      }
+    }
+    loop(0)
+
+    {
+      confirmedBlockThreshold,
+      dataByBlockNumber: newDataByBlockNumber,
+    }
+  }
+
+  type currentHeightAndLastBlockHashes = {
+    lastBlockScannedHashes: t,
+    currentHeight: int,
   }
 
   let min = (arrInt: array<int>) => {
@@ -342,37 +334,6 @@ module LastBlockScannedHashes: {
       | Some(current) => Js.Math.min_int(current, val)->Some
       }
     })
-  }
-
-  let rec rollBackToBlockNumberLtInternal = (
-    ~blockNumber: int,
-    latestBlockScannedData: list<blockData>,
-  ) => {
-    switch latestBlockScannedData {
-    | list{} => list{}
-    | list{head, ...tail} =>
-      if head.blockNumber < blockNumber {
-        latestBlockScannedData
-      } else {
-        tail->rollBackToBlockNumberLtInternal(~blockNumber)
-      }
-    }
-  }
-
-  /**
-  Return a BlockNumbersAndHashes.t rolled back to where blockData is less
-  than the provided blockNumber
-  */
-  let rollBackToBlockNumberLt = (~blockNumber: int, self: t) => {
-    let {confirmedBlockThreshold, lastBlockScannedDataList} = self
-    lastBlockScannedDataList
-    ->rollBackToBlockNumberLtInternal(~blockNumber)
-    ->makeWithDataInternal(~confirmedBlockThreshold)
-  }
-
-  type currentHeightAndLastBlockHashes = {
-    currentHeight: int,
-    lastBlockScannedHashes: t,
   }
 
   /**
@@ -399,48 +360,30 @@ module LastBlockScannedHashes: {
     }
   }
 
-  let getThresholdBlockNumbers = (self: t, ~currentBlockHeight) => {
+  let getThresholdBlockNumbers = (
+    {dataByBlockNumber, confirmedBlockThreshold}: t,
+    ~currentBlockHeight,
+  ) => {
     let blockNumbers = []
-    let thresholdBlocknumber = currentBlockHeight - self.confirmedBlockThreshold
-    self.lastBlockScannedDataList->Belt.List.forEach(v => {
-      if v.blockNumber >= thresholdBlocknumber {
-        blockNumbers->Belt.Array.push(v.blockNumber)
+
+    // Js engine automatically orders numeric object keys
+    let ascBlockNumberKeys = dataByBlockNumber->Js.Dict.keys
+    let thresholdBlockNumber = currentBlockHeight - confirmedBlockThreshold
+
+    let rec loop = idx => {
+      switch ascBlockNumberKeys->Belt.Array.get(idx) {
+      | Some(blockNumberKey) => {
+          let scannedBlock = dataByBlockNumber->Js.Dict.unsafeGet(blockNumberKey)
+          if scannedBlock.blockNumber >= thresholdBlockNumber {
+            blockNumbers->Array.push(scannedBlock.blockNumber)
+          }
+          loop(idx + 1)
+        }
+      | None => ()
       }
-    })
+    }
+    loop(0)
+
     blockNumbers
   }
-
-  /**
-  Checks whether reorg has occured by comparing the parent hash with the last saved block hash.
-  */
-  let rec hasReorgOccurredInternal = (lastBlockScannedDataList, ~reorgGuard: reorgGuard) => {
-    switch lastBlockScannedDataList {
-    | list{head, ...tail} =>
-      switch reorgGuard {
-      | {lastBlockScannedData} if lastBlockScannedData.blockNumber == head.blockNumber =>
-        lastBlockScannedData.blockHash != head.blockHash
-      //If parentHash is None, either it's the genesis block (no reorg)
-      //Or its already confirmed so no Reorg
-      | {firstBlockParentNumberAndHash: None} => false
-      | {
-          firstBlockParentNumberAndHash: Some({
-            blockHash: parentHash,
-            blockNumber: parentBlockNumber,
-          }),
-        } =>
-        if parentBlockNumber == head.blockNumber {
-          parentHash != head.blockHash
-        } else {
-          //if block numbers do not match, this is a dynamic contract case and should recurse
-          //through the list to look for a matching block or nothing to validate
-          tail->hasReorgOccurredInternal(~reorgGuard)
-        }
-      }
-    //If recentLastBlockData is None, we have not yet saved blockData to compare against
-    | _ => false
-    }
-  }
-
-  let hasReorgOccurred = (lastBlockScannedHashes: t, ~reorgGuard: reorgGuard) =>
-    lastBlockScannedHashes.lastBlockScannedDataList->hasReorgOccurredInternal(~reorgGuard)
 }

@@ -99,8 +99,8 @@ module Stubs = {
     GlobalState.injectedTaskReducer(
       ~executeQuery=executePartitionQueryWithMockChainData(mockChainData),
       ~waitForNewBlock,
-      ~rollbackLastBlockHashesToReorgLocation=chainFetcher =>
-        chainFetcher->ChainFetcher.rollbackLastBlockHashesToReorgLocation(
+      ~getLastKnownValidBlock=chainFetcher =>
+        chainFetcher->ChainFetcher.getLastKnownValidBlock(
           ~getBlockHashes=getBlockHashes(mockChainData),
         ),
     )(

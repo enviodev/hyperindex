@@ -1268,10 +1268,7 @@ describe("FetchState.getNextQuery & integration", () => {
     let fetchState = makeIntermidiateDcMerge()
 
     let fetchStateAfterRollback1 =
-      fetchState->FetchState.rollback(
-        ~lastScannedBlock={blockNumber: 2, blockTimestamp: 2},
-        ~firstChangeEvent={blockNumber: 2, logIndex: 0},
-      )
+      fetchState->FetchState.rollback(~firstChangeEvent={blockNumber: 2, logIndex: 0})
 
     Assert.deepEqual(
       fetchStateAfterRollback1,
@@ -1313,10 +1310,7 @@ describe("FetchState.getNextQuery & integration", () => {
 
     // Rollback even more to see the removal of partition "2"
     let fetchStateAfterRollback2 =
-      fetchStateAfterRollback1->FetchState.rollback(
-        ~lastScannedBlock={blockNumber: 0, blockTimestamp: 0},
-        ~firstChangeEvent={blockNumber: 0, logIndex: 0},
-      )
+      fetchStateAfterRollback1->FetchState.rollback(~firstChangeEvent={blockNumber: 0, logIndex: 0})
 
     Assert.deepEqual(
       fetchStateAfterRollback2,
@@ -1399,10 +1393,7 @@ describe("FetchState.getNextQuery & integration", () => {
     )
 
     let fetchStateAfterRollback =
-      fetchState->FetchState.rollback(
-        ~lastScannedBlock={blockNumber: 2, blockTimestamp: 2},
-        ~firstChangeEvent={blockNumber: 2, logIndex: 0},
-      )
+      fetchState->FetchState.rollback(~firstChangeEvent={blockNumber: 2, logIndex: 0})
 
     Assert.deepEqual(
       fetchStateAfterRollback,

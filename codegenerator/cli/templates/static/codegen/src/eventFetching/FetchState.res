@@ -991,11 +991,7 @@ let pruneQueueFromFirstChangeEvent = (
 /**
 Rolls back partitions to the given valid block
 */
-let rollbackPartition = (
-  p: partition,
-  ~lastScannedBlock,
-  ~firstChangeEvent: blockNumberAndLogIndex,
-) => {
+let rollbackPartition = (p: partition, ~firstChangeEvent: blockNumberAndLogIndex) => {
   switch p {
   | {selection: {isWildcard: true}} =>
     Some({
@@ -1049,18 +1045,21 @@ let rollbackPartition = (
           dynamicContracts,
           contractAddressMapping,
           fetchedEventQueue,
-          latestFetchedBlock: shouldRollbackFetched ? lastScannedBlock : p.latestFetchedBlock,
+          latestFetchedBlock: shouldRollbackFetched
+            ? {
+                blockNumber: firstChangeEvent.blockNumber - 1,
+                blockTimestamp: 0,
+              }
+            : p.latestFetchedBlock,
         })
       }
     }
   }
 }
 
-let rollback = (fetchState: t, ~lastScannedBlock, ~firstChangeEvent) => {
+let rollback = (fetchState: t, ~firstChangeEvent) => {
   let partitions =
-    fetchState.partitions->Array.keepMap(p =>
-      p->rollbackPartition(~lastScannedBlock, ~firstChangeEvent)
-    )
+    fetchState.partitions->Array.keepMap(p => p->rollbackPartition(~firstChangeEvent))
 
   fetchState->updateInternal(~partitions)
 }

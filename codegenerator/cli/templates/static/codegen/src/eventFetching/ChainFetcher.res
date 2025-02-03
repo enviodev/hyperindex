@@ -409,58 +409,61 @@ let hasNoMoreEventsToProcess = (self: t, ~hasArbQueueEvents) => {
   !hasArbQueueEvents && self.fetchState->FetchState.queueSize === 0
 }
 
+let getHeighestBlockBelowThreshold = (cf: t): int => {
+  let highestBlockBelowThreshold = cf.currentBlockHeight - cf.chainConfig.confirmedBlockThreshold
+  highestBlockBelowThreshold < 0 ? 0 : highestBlockBelowThreshold
+}
+
 /**
-Finds the last known block where hashes are valid and returns
-the updated lastBlockScannedHashes rolled back where this occurs
+Finds the last known block where hashes are valid
+If not found, returns the higehest block below threshold
 */
-let rollbackLastBlockHashesToReorgLocation = async (
+let getLastKnownValidBlock = async (
   chainFetcher: t,
   //Parameter used for dependency injecting in tests
-  ~getBlockHashes as getBlockHashesMock=?,
+  ~getBlockHashes=chainFetcher.chainConfig.source.getBlockHashes,
 ) => {
-  let blockNumbers =
+  let scannedBlockNumbers =
     chainFetcher.lastBlockScannedHashes->ReorgDetection.LastBlockScannedHashes.getThresholdBlockNumbers(
       ~currentBlockHeight=chainFetcher.currentBlockHeight,
     )
 
-  switch blockNumbers {
-  | [] => chainFetcher.lastBlockScannedHashes
-  | _ => {
-      let getBlockHashes = switch getBlockHashesMock {
-      | Some(getBlockHashes) => getBlockHashes
-      | None => chainFetcher.chainConfig.source.getBlockHashes
+  let getBlockHashes = blockNumbers => {
+    getBlockHashes(~blockNumbers, ~logger=chainFetcher.logger)->Promise.thenResolve(res =>
+      switch res {
+      | Ok(v) => v
+      | Error(exn) =>
+        exn->ErrorHandling.mkLogAndRaise(
+          ~msg="Failed to fetch blockHashes for given blockNumbers during rollback",
+        )
       }
+    )
+  }
 
-      let blockNumbersAndHashes = await getBlockHashes(
-        ~blockNumbers,
-        ~logger=chainFetcher.logger,
-      )->Promise.thenResolve(res =>
-        switch res {
-        | Ok(v) => v
-        | Error(exn) =>
-          exn->ErrorHandling.mkLogAndRaise(
-            ~msg="Failed to fetch blockHashes for given blockNumbers during rollback",
-          )
-        }
+  let fallback = async () => {
+    switch await getBlockHashes([chainFetcher->getHeighestBlockBelowThreshold]) {
+    | [block] => block
+    | _ =>
+      Js.Exn.raiseError(
+        "Unexpected case. Failed to fetch block data for the last block outside of reorg threshold during reorg rollback",
       )
-
-      chainFetcher.lastBlockScannedHashes
-      ->ReorgDetection.LastBlockScannedHashes.rollBackToValidHash(~blockNumbersAndHashes)
-      ->Utils.unwrapResultExn
     }
   }
-}
 
-let getLastScannedBlockData = lastBlockData => {
-  lastBlockData
-  ->ReorgDetection.LastBlockScannedHashes.getLatestLastBlockData
-  ->Option.mapWithDefault({FetchState.blockNumber: 0, blockTimestamp: 0}, ({
-    blockNumber,
-    blockTimestamp,
-  }) => {
-    blockNumber,
-    blockTimestamp,
-  })
+  switch scannedBlockNumbers {
+  | [] => await fallback()
+  | _ => {
+      let blockNumbersAndHashes = await getBlockHashes(scannedBlockNumbers)
+
+      switch chainFetcher.lastBlockScannedHashes->ReorgDetection.LastBlockScannedHashes.getLatestValidScannedBlock(
+        ~blockNumbersAndHashes,
+        ~currentHeight=chainFetcher.currentBlockHeight,
+      ) {
+      | Some(block) => block
+      | None => await fallback()
+      }
+    }
+  }
 }
 
 let isFetchingAtHead = (chainFetcher: t) => chainFetcher.fetchState.isFetchingAtHead
@@ -475,8 +478,3 @@ let getFirstEventBlockNumber = (chainFetcher: t) =>
 
 let isPreRegisteringDynamicContracts = (chainFetcher: t) =>
   chainFetcher.dynamicContractPreRegistration->Option.isSome
-
-let getHeighestBlockBelowThreshold = (cf: t): int => {
-  let highestBlockBelowThreshold = cf.currentBlockHeight - cf.chainConfig.confirmedBlockThreshold
-  highestBlockBelowThreshold < 0 ? 0 : highestBlockBelowThreshold
-}
