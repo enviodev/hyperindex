@@ -209,7 +209,7 @@ module BlockData = {
   }
 
   let convertResponse = (res: HyperSyncJsonApi.ResponseTypes.queryResponse): queryResponse<
-    array<ReorgDetection.blockData>,
+    array<ReorgDetection.blockDataWithTimestamp>,
   > => {
     res.data
     ->Array.flatMap(item => {
@@ -225,7 +225,7 @@ module BlockData = {
                     blockTimestamp,
                     blockNumber,
                     blockHash,
-                  }: ReorgDetection.blockData
+                  }: ReorgDetection.blockDataWithTimestamp
                 ),
               )
             | _ =>
@@ -251,7 +251,7 @@ module BlockData = {
   }
 
   let rec queryBlockData = async (~serverUrl, ~fromBlock, ~toBlock, ~logger): queryResponse<
-    array<ReorgDetection.blockData>,
+    array<ReorgDetection.blockDataWithTimestamp>,
   > => {
     let body = makeRequestBody(~fromBlock, ~toBlock)
 
@@ -334,9 +334,9 @@ module BlockData = {
         })
         if set->Utils.Set.size > 0 {
           Js.Exn.raiseError(
-            `Invalid response. Failed to get block data for block numbers: ${set->Utils.Set.toArray->Js.Array2.joinWith(
-              ", ",
-            )}`,
+            `Invalid response. Failed to get block data for block numbers: ${set
+              ->Utils.Set.toArray
+              ->Js.Array2.joinWith(", ")}`,
           )
         }
         filtered

@@ -190,51 +190,6 @@ let makeFromDbState = async (~config: Config.t, ~maxAddrInPartition=Env.maxAddrI
   }
 }
 
-/**
-For each chain with a confirmed block threshold, find the earliest block ranged scanned that exists
-in that threshold
-
-Returns None in the case of no block range entries and in the case that there is only 1 chain since
-there is no need to consider other chains with prunining in this case
-*/
-let getEarliestMultiChainTimestampInThreshold = (chainManager: t) => {
-  chainManager.chainFetchers
-  ->ChainMap.values
-  ->Array.map((cf): ReorgDetection.LastBlockScannedHashes.currentHeightAndLastBlockHashes => {
-    lastBlockScannedHashes: cf.lastBlockScannedHashes,
-    currentHeight: cf.currentBlockHeight,
-  })
-  ->ReorgDetection.LastBlockScannedHashes.getEarliestMultiChainTimestampInThreshold
-}
-
-/**
-Sets updated lastBlockScannedHashes and prunes old unneeded data
-*/
-let updateLastBlockScannedHashes = (
-  chainManager: t,
-  ~chain: ChainMap.Chain.t,
-  ~lastBlockScannedHashes: ReorgDetection.LastBlockScannedHashes.t,
-  ~currentHeight,
-) => {
-  let earliestMultiChainTimestampInThreshold =
-    chainManager->getEarliestMultiChainTimestampInThreshold
-
-  let chainFetchers = chainManager.chainFetchers->ChainMap.update(chain, cf => {
-    {
-      ...cf,
-      lastBlockScannedHashes: lastBlockScannedHashes->ReorgDetection.LastBlockScannedHashes.pruneStaleBlockData(
-        ~currentHeight,
-        ~earliestMultiChainTimestampInThreshold,
-      ),
-    }
-  })
-
-  {
-    ...chainManager,
-    chainFetchers,
-  }
-}
-
 let getChainFetcher = (self: t, ~chain: ChainMap.Chain.t): ChainFetcher.t => {
   self.chainFetchers->ChainMap.get(chain)
 }

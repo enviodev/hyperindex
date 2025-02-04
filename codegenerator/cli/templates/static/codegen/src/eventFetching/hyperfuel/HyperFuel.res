@@ -203,7 +203,7 @@ module LogsQuery = {
 
 module BlockData = {
   let convertResponse = (res: HyperFuelClient.queryResponseTyped): option<
-    ReorgDetection.blockData,
+    ReorgDetection.blockDataWithTimestamp,
   > => {
     res.data.blocks->Option.flatMap(blocks => {
       blocks
@@ -216,7 +216,7 @@ module BlockData = {
               blockTimestamp: timestamp,
               blockNumber,
               blockHash,
-            }: ReorgDetection.blockData
+            }: ReorgDetection.blockDataWithTimestamp
           )
         }
       })
@@ -224,7 +224,7 @@ module BlockData = {
   }
 
   let rec queryBlockData = async (~serverUrl, ~blockNumber, ~logger): option<
-    ReorgDetection.blockData,
+    ReorgDetection.blockDataWithTimestamp,
   > => {
     let query: HyperFuelClient.QueryTypes.query = {
       fromBlock: blockNumber,

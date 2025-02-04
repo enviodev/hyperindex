@@ -173,12 +173,10 @@ describe("Single Chain Simple Rollback", () => {
       [
         UpdateEndOfBlockRangeScannedData({
           blockNumberThreshold: -198,
-          blockTimestampThreshold: Some(50),
           chain: MockConfig.chain1337,
           nextEndOfBlockRangeScannedData: {
             blockHash: block2.blockHash,
             blockNumber: block2.blockNumber,
-            blockTimestamp: block2.blockTimestamp,
             chainId: 1337,
           },
         }),
@@ -236,12 +234,10 @@ describe("Single Chain Simple Rollback", () => {
       [
         UpdateEndOfBlockRangeScannedData({
           blockNumberThreshold: -198,
-          blockTimestampThreshold: Some(50),
           chain: MockConfig.chain1337,
           nextEndOfBlockRangeScannedData: {
             blockHash: block2.blockHash,
             blockNumber: block2.blockNumber,
-            blockTimestamp: block2.blockTimestamp,
             chainId: 1337,
           },
         }),
@@ -331,12 +327,10 @@ describe("Single Chain Simple Rollback", () => {
         UpdateChainMetaDataAndCheckForExit(NoExit),
         GlobalState.UpdateEndOfBlockRangeScannedData({
           blockNumberThreshold: -198,
-          blockTimestampThreshold: Some(50),
           chain: MockConfig.chain1337,
           nextEndOfBlockRangeScannedData: {
             blockHash: block2.blockHash,
             blockNumber: block2.blockNumber,
-            blockTimestamp: block2.blockTimestamp,
             chainId: 1337,
           },
         }),
@@ -359,12 +353,10 @@ describe("Single Chain Simple Rollback", () => {
         NextQuery(CheckAllChains),
         GlobalState.UpdateEndOfBlockRangeScannedData({
           blockNumberThreshold: -196,
-          blockTimestampThreshold: Some(50),
           chain: MockConfig.chain1337,
           nextEndOfBlockRangeScannedData: {
             blockHash: block4.blockHash,
             blockNumber: block4.blockNumber,
-            blockTimestamp: block4.blockTimestamp,
             chainId: 1337,
           },
         }),

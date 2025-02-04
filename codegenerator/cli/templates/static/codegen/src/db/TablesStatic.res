@@ -90,7 +90,6 @@ module EndOfBlockRangeScannedData = {
   @genType
   type t = {
     chain_id: int,
-    block_timestamp: int,
     block_number: int,
     block_hash: string,
   }
@@ -99,7 +98,6 @@ module EndOfBlockRangeScannedData = {
     "end_of_block_range_scanned_data",
     ~fields=[
       mkField("chain_id", Integer, ~isPrimaryKey),
-      mkField("block_timestamp", Integer),
       mkField("block_number", Integer, ~isPrimaryKey),
       mkField("block_hash", Text),
     ],

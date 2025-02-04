@@ -341,7 +341,6 @@ let make = ({syncConfig, provider, chain, contracts, eventRouter}: options): t =
         }),
         lastBlockScannedData: {
           blockNumber: latestFetchedBlock.number,
-          blockTimestamp: latestFetchedBlock.timestamp,
           blockHash: latestFetchedBlock.hash,
         },
       }
@@ -368,8 +367,8 @@ let make = ({syncConfig, provider, chain, contracts, eventRouter}: options): t =
     ->Promise.all
     ->Promise.thenResolve(blocks => {
       blocks
-      ->Array.map(b => {
-        ReorgDetection.blockNumber: b.number,
+      ->Array.map((b): ReorgDetection.blockDataWithTimestamp => {
+        blockNumber: b.number,
         blockHash: b.hash,
         blockTimestamp: b.timestamp,
       })

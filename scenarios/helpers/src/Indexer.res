@@ -118,7 +118,7 @@ module type S = {
       getBlockHashes: (
         ~blockNumbers: array<int>,
         ~logger: Pino.t,
-      ) => promise<result<array<ReorgDetection.blockData>, exn>>,
+      ) => promise<result<array<ReorgDetection.blockDataWithTimestamp>, exn>>,
       getHeightOrThrow: unit => promise<int>,
       fetchBlockRange: (
         ~fromBlock: int,

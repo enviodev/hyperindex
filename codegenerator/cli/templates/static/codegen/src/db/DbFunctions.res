@@ -132,7 +132,6 @@ module ChainMetadata = {
 module EndOfBlockRangeScannedData = {
   type endOfBlockRangeScannedData = {
     @as("chain_id") chainId: int,
-    @as("block_timestamp") blockTimestamp: int,
     @as("block_number") blockNumber: int,
     @as("block_hash") blockHash: string,
   }
@@ -156,9 +155,6 @@ module EndOfBlockRangeScannedData = {
     ~chainId: int,
     //minimum blockNumber that should be kept in db
     ~blockNumberThreshold: int,
-    //minimum blockTimestamp that should be kept in db
-    //(timestamp could be lower/higher than blockTimestampThreshold depending on multichain configuration)
-    ~blockTimestampThreshold: option<int>,
   ) => promise<unit> = "deleteStaleEndOfBlockRangeScannedDataForChain"
 }
 

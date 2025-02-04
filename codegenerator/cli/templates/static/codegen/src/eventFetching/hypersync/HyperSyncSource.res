@@ -296,17 +296,17 @@ let make = (
       //In the query
       let heighestBlockQueried = pageUnsafe.nextBlock - 1
 
-      let lastBlockQueriedPromise: promise<
-        ReorgDetection.blockData,
-      > = switch pageUnsafe.rollbackGuard {
+      let lastBlockQueriedPromise = switch pageUnsafe.rollbackGuard {
       //In the case a rollbackGuard is returned (this only happens at the head for unconfirmed blocks)
       //use these values
       | Some({blockNumber, timestamp, hash}) =>
-        {
-          ReorgDetection.blockNumber,
-          blockTimestamp: timestamp,
-          blockHash: hash,
-        }->Promise.resolve
+        (
+          {
+            blockNumber,
+            blockTimestamp: timestamp,
+            blockHash: hash,
+          }: ReorgDetection.blockDataWithTimestamp
+        )->Promise.resolve
       | None =>
         //The optional block and timestamp of the last item returned by the query
         //(Optional in the case that there are no logs returned in the query)
@@ -315,11 +315,14 @@ let make = (
           //If the last log item in the current page is equal to the
           //heighest block acounted for in the query. Simply return this
           //value without making an extra query
-          {
-            ReorgDetection.blockNumber: block->Types.Block.getNumber,
-            blockTimestamp: block->Types.Block.getTimestamp,
-            blockHash: block->Types.Block.getId,
-          }->Promise.resolve
+
+          (
+            {
+              blockNumber: block->Types.Block.getNumber,
+              blockTimestamp: block->Types.Block.getTimestamp,
+              blockHash: block->Types.Block.getId,
+            }: ReorgDetection.blockDataWithTimestamp
+          )->Promise.resolve
         //If it does not match it means that there were no matching logs in the last
         //block so we should fetch the block data
         | Some(_)
@@ -479,7 +482,7 @@ let make = (
       let lastBlockScannedData = await lastBlockQueriedPromise
 
       let reorgGuard: ReorgDetection.reorgGuard = {
-        lastBlockScannedData,
+        lastBlockScannedData: lastBlockScannedData->ReorgDetection.generalizeBlockDataWithTimestamp,
         firstBlockParentNumberAndHash: pageUnsafe.rollbackGuard->Option.map(v => {
           ReorgDetection.blockHash: v.firstParentHash,
           blockNumber: v.firstBlockNumber - 1,

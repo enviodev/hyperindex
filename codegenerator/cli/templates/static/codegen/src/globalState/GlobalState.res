@@ -121,7 +121,6 @@ type task =
   | UpdateEndOfBlockRangeScannedData({
       chain: chain,
       blockNumberThreshold: int,
-      blockTimestampThreshold: option<int>,
       nextEndOfBlockRangeScannedData: DbFunctions.EndOfBlockRangeScannedData.endOfBlockRangeScannedData,
     })
   | ProcessEventBatch
@@ -360,6 +359,7 @@ let handlePartitionQueryResponse = (
 
   switch chainFetcher.lastBlockScannedHashes->ReorgDetection.LastBlockScannedHashes.registerReorgGuard(
     ~reorgGuard,
+    ~currentBlockHeight,
   ) {
   | Error(_) if state.config->Config.shouldRollbackOnReorg => {
       chainFetcher.logger->Logging.childInfo("Reorg detected, rolling back")
@@ -402,6 +402,7 @@ let handlePartitionQueryResponse = (
       let updatedChainFetcher = {
         ...updatedChainFetcher,
         latestProcessedBlock,
+        lastBlockScannedHashes,
         numBatchesFetched: updatedChainFetcher.numBatchesFetched + 1,
       }
 
@@ -412,15 +413,6 @@ let handlePartitionQueryResponse = (
         updatedChainFetcher.logger->Logging.childInfo("All events have been fetched")
       }
 
-      let chainManager = {
-        ...state.chainManager,
-        chainFetchers: state.chainManager.chainFetchers->ChainMap.set(chain, updatedChainFetcher),
-      }->ChainManager.updateLastBlockScannedHashes(
-        ~chain,
-        ~lastBlockScannedHashes,
-        ~currentHeight=currentBlockHeight,
-      )
-
       let updateEndOfBlockRangeScannedDataArr =
         //Only update endOfBlockRangeScannedData if rollbacks are enabled
         state.config->Config.shouldRollbackOnReorg
@@ -429,11 +421,9 @@ let handlePartitionQueryResponse = (
                 chain,
                 blockNumberThreshold: lastBlockScannedData.blockNumber -
                 updatedChainFetcher.chainConfig.confirmedBlockThreshold,
-                blockTimestampThreshold: chainManager->ChainManager.getEarliestMultiChainTimestampInThreshold,
                 nextEndOfBlockRangeScannedData: {
                   chainId: chain->ChainMap.Chain.toChainId,
                   blockNumber: lastBlockScannedData.blockNumber,
-                  blockTimestamp: lastBlockScannedData.blockTimestamp,
                   blockHash: lastBlockScannedData.blockHash,
                 },
               }),
@@ -442,7 +432,10 @@ let handlePartitionQueryResponse = (
 
       let nextState = {
         ...state,
-        chainManager,
+        chainManager: {
+          ...state.chainManager,
+          chainFetchers: state.chainManager.chainFetchers->ChainMap.set(chain, updatedChainFetcher),
+        },
       }
 
       let processAction =
@@ -815,7 +808,6 @@ let injectedTaskReducer = (
   | UpdateEndOfBlockRangeScannedData({
       chain,
       blockNumberThreshold,
-      blockTimestampThreshold,
       nextEndOfBlockRangeScannedData,
     }) =>
     let timeRef = Hrtime.makeTimer()
@@ -838,7 +830,6 @@ let injectedTaskReducer = (
       let timeRef = Hrtime.makeTimer()
       await Db.sql->DbFunctions.EndOfBlockRangeScannedData.deleteStaleEndOfBlockRangeScannedDataForChain(
         ~chainId=chain->ChainMap.Chain.toChainId,
-        ~blockTimestampThreshold,
         ~blockNumberThreshold,
       )
 
@@ -1094,7 +1085,7 @@ let injectedTaskReducer = (
       let {
         blockNumber: lastKnownValidBlockNumber,
         blockTimestamp: lastKnownValidBlockTimestamp,
-      }: ReorgDetection.blockData =
+      }: ReorgDetection.blockDataWithTimestamp =
         await chainFetcher->getLastKnownValidBlock
 
       let isUnorderedMultichainMode = state.config.isUnorderedMultichainMode

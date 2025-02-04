@@ -290,10 +290,9 @@ let makeFromDbState = async (
 
   let lastBlockScannedHashes =
     endOfBlockRangeScannedData
-    ->Array.map(({blockNumber, blockHash, blockTimestamp}) => {
+    ->Array.map(({blockNumber, blockHash}) => {
       ReorgDetection.blockNumber,
       blockHash,
-      blockTimestamp,
     })
     ->ReorgDetection.LastBlockScannedHashes.makeWithData(
       ~confirmedBlockThreshold=chainConfig.confirmedBlockThreshold,
@@ -457,7 +456,7 @@ let getLastKnownValidBlock = async (
 
       switch chainFetcher.lastBlockScannedHashes->ReorgDetection.LastBlockScannedHashes.getLatestValidScannedBlock(
         ~blockNumbersAndHashes,
-        ~currentHeight=chainFetcher.currentBlockHeight,
+        ~currentBlockHeight=chainFetcher.currentBlockHeight,
       ) {
       | Some(block) => block
       | None => await fallback()

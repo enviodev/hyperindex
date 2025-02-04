@@ -304,8 +304,12 @@ module Make = (Indexer: Indexer.S) => {
     blockNumbers->Array.keepMap(blockNumber =>
       self
       ->getBlock(~blockNumber)
-      ->Option.map(({blockTimestamp, blockHash, blockNumber}) => {
-        ReorgDetection.blockTimestamp,
+      ->Option.map(({
+        blockTimestamp,
+        blockHash,
+        blockNumber,
+      }): ReorgDetection.blockDataWithTimestamp => {
+        blockTimestamp,
         blockHash,
         blockNumber,
       })
