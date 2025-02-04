@@ -53,11 +53,7 @@ module LastBlockScannedHashes: {
 
   let getThresholdBlockNumbers: (t, ~currentBlockHeight: int) => array<int>
 
-  /**
-  Return a BlockNumbersAndHashes.t rolled back to where blockData is less
-  than the provided blockNumber
-  */
-  let rollBackToBlockNumberLt: (t, ~blockNumber: int) => t
+  let rollbackToValidBlockNumber: (t, ~blockNumber: int) => t
 } = {
   type t = {
     // Number of blocks behind head, we want to keep track
@@ -209,20 +205,20 @@ module LastBlockScannedHashes: {
   Return a BlockNumbersAndHashes.t rolled back to where blockData is less
   than the provided blockNumber
   */
-  let rollBackToBlockNumberLt = (
+  let rollbackToValidBlockNumber = (
     {dataByBlockNumber, confirmedBlockThreshold}: t,
     ~blockNumber: int,
   ) => {
     // Js engine automatically orders numeric object keys
     let ascBlockNumberKeys = dataByBlockNumber->Js.Dict.keys
 
-    let newDataByBlockNumber = dataByBlockNumber->Utils.Dict.shallowCopy
+    let newDataByBlockNumber = Js.Dict.empty()
 
     let rec loop = idx => {
       switch ascBlockNumberKeys->Belt.Array.get(idx) {
       | Some(blockNumberKey) => {
           let scannedBlock = dataByBlockNumber->Js.Dict.unsafeGet(blockNumberKey)
-          let shouldKeep = scannedBlock.blockNumber < blockNumber
+          let shouldKeep = scannedBlock.blockNumber <= blockNumber
           if shouldKeep {
             newDataByBlockNumber->Js.Dict.set(blockNumberKey, scannedBlock)
             loop(idx + 1)

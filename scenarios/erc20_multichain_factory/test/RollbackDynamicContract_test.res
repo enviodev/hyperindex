@@ -103,7 +103,7 @@ ensure that this doesn't trigger a reorg
     ~blockNumber,
     ~blockNumberThreshold,
   ) => {
-    let {blockNumber, blockTimestamp, blockHash} =
+    let {blockNumber, blockHash} =
       mcdMap->ChainMap.get(chain)->MockChainData.getBlock(~blockNumber)->Option.getUnsafe
 
     GlobalState.UpdateEndOfBlockRangeScannedData({
@@ -112,7 +112,6 @@ ensure that this doesn't trigger a reorg
       nextEndOfBlockRangeScannedData: {
         blockNumber,
         blockHash,
-        blockTimestamp,
         chainId: chain->ChainMap.Chain.toChainId,
       },
     })

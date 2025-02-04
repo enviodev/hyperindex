@@ -1279,8 +1279,8 @@ describe("FetchState.getNextQuery & integration", () => {
             id: "0",
             status: {fetchingStateId: None},
             latestFetchedBlock: {
-              blockNumber: 2,
-              blockTimestamp: 2,
+              blockNumber: 1,
+              blockTimestamp: 0,
             },
             selection: fetchState.normalSelection,
             contractAddressMapping: ContractAddressingMap.fromArray([(mockAddress0, "Gravatar")]),

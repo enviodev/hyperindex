@@ -288,7 +288,6 @@ module Make = (Indexer: Indexer.S) => {
         lastBlockScannedData: {
           blockHash: heighstBlock.blockHash,
           blockNumber: heighstBlock.blockNumber,
-          blockTimestamp: heighstBlock.blockTimestamp,
         },
         firstBlockParentNumberAndHash,
       },

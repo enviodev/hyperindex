@@ -1047,7 +1047,7 @@ let rollbackPartition = (p: partition, ~firstChangeEvent: blockNumberAndLogIndex
           fetchedEventQueue,
           latestFetchedBlock: shouldRollbackFetched
             ? {
-                blockNumber: firstChangeEvent.blockNumber - 1,
+                blockNumber: Pervasives.max(firstChangeEvent.blockNumber - 1, 0),
                 blockTimestamp: 0,
               }
             : p.latestFetchedBlock,

@@ -4,19 +4,13 @@ open Belt
 open ReorgDetection
 
 describe("Validate reorg detection functions", () => {
-  let lastBlockScannedHashesArr = [
-    (1, "0x123", 123),
-    (50, "0x456", 456),
-    (300, "0x789", 789),
-    (500, "0x5432", 5432),
-  ]
+  let lastBlockScannedHashesArr = [(1, "0x123"), (50, "0x456"), (300, "0x789"), (500, "0x5432")]
 
   let intoLastBlockScannedHashesHelper = arr =>
     arr
-    ->Array.map(((blockNumber, blockHash, blockTimestamp)) => {
+    ->Array.map(((blockNumber, blockHash)) => {
       blockNumber,
       blockHash,
-      blockTimestamp,
     })
     ->LastBlockScannedHashes.makeWithData(~confirmedBlockThreshold=200)
 

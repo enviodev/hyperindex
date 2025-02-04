@@ -1121,18 +1121,15 @@ let injectedTaskReducer = (
           ~chainId=chain->ChainMap.Chain.toChainId,
         ) {
         | Some(firstChangeEvent) =>
-          //There was a change on the given chain after the reorged chain,
-          // rollback the lastBlockScannedHashes to before the first change produced by the given chain
-          let rolledBackLastBlockData =
-            cf.lastBlockScannedHashes->ReorgDetection.LastBlockScannedHashes.rollBackToBlockNumberLt(
-              ~blockNumber=firstChangeEvent.blockNumber,
-            )
-
           let fetchState = cf.fetchState->FetchState.rollback(~firstChangeEvent)
 
           let rolledBackCf = {
             ...cf,
-            lastBlockScannedHashes: rolledBackLastBlockData,
+            lastBlockScannedHashes: chain == reorgChain
+              ? cf.lastBlockScannedHashes->ReorgDetection.LastBlockScannedHashes.rollbackToValidBlockNumber(
+                  ~blockNumber=lastKnownValidBlockNumber,
+                )
+              : cf.lastBlockScannedHashes,
             fetchState,
           }
           //On other chains, filter out evennts based on the first change present on the chain after the reorg
