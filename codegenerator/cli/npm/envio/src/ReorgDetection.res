@@ -151,6 +151,14 @@ module LastBlockScannedHashes: {
           lastBlockScannedData.blockNumber->Int.toString,
           lastBlockScannedData,
         )
+        switch firstBlockParentNumberAndHash {
+        | None => ()
+        | Some(firstBlockParentNumberAndHash) =>
+          dataByBlockNumberCopyInThreshold->Js.Dict.set(
+            firstBlockParentNumberAndHash.blockNumber->Int.toString,
+            firstBlockParentNumberAndHash,
+          )
+        }
 
         Ok({
           confirmedBlockThreshold,
