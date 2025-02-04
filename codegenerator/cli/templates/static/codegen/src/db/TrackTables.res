@@ -81,10 +81,15 @@ let trackTable = async (~tableName: string) => {
     "type": "pg_track_table",
     "args": {
       "source": "public",
-      "schema": "public",
+      "schema": Env.Db.publicSchema,
       "name": tableName,
     },
   }
+
+  Logging.trace({
+    "msg": `Tracking table ${tableName} in schema ${Env.Db.publicSchema}`,
+    "body": body,
+  })
 
   let response = await fetch(
     Env.Hasura.graphqlEndpoint,

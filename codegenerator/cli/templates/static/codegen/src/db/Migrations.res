@@ -82,14 +82,19 @@ let createEnumIfNotExists = (sql, enum: Enum.enum<_>) => {
 
 let deleteAllTables: unit => promise<unit> = async () => {
   Logging.trace("Dropping all tables")
-  // NOTE: we can refine the `IF EXISTS` part because this now prints to the terminal if the table doesn't exist (which isn't nice for the developer).
+  let query = `
+    DO $$ 
+    BEGIN
+      IF EXISTS(SELECT 1 FROM information_schema.schemata WHERE schema_name = '${Env.Db.publicSchema}') THEN
+        DROP SCHEMA ${Env.Db.publicSchema} CASCADE;
+      END IF;
+      CREATE SCHEMA ${Env.Db.publicSchema};
+      GRANT ALL ON SCHEMA ${Env.Db.publicSchema} TO postgres;
+      GRANT ALL ON SCHEMA ${Env.Db.publicSchema} TO public;
+    END $$;`
 
   @warning("-21")
-  await (
-    %raw(
-      "sql.unsafe`DROP SCHEMA public CASCADE;CREATE SCHEMA public;GRANT ALL ON SCHEMA public TO postgres;GRANT ALL ON SCHEMA public TO public;`"
-    )
-  )
+  await sql->unsafe(query)
 }
 
 type t
