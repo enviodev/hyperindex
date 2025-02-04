@@ -25,9 +25,10 @@ impl PersistedState {
     }
 
     async fn upsert_to_db_with_pool(&self, pool: &PgPool) -> Result<PgQueryResult, sqlx::Error> {
-        sqlx::query(
+        let public_schema = get_env_with_default("ENVIO_PG_PUBLIC_SCHEMA", "public");
+        sqlx::query(&format!(
             r#"
-            INSERT INTO public.persisted_state (
+            INSERT INTO {}.persisted_state (
                 id, 
                 envio_version,
                 config_hash,
@@ -50,7 +51,8 @@ impl PersistedState {
                 handler_files_hash = EXCLUDED.handler_files_hash,
                 abi_files_hash = EXCLUDED.abi_files_hash
             "#,
-        )
+            public_schema
+        ))
         .bind(1) //Always only 1 id to update
         .bind(&self.envio_version)
         .bind(&self.config_hash)
@@ -70,15 +72,17 @@ impl PersistedStateExists {
     pub async fn read_from_db_with_pool(
         pool: &PgPool,
     ) -> Result<PersistedStateExists, sqlx::Error> {
-        let val = sqlx::query_as::<_, PersistedState>(
+        let public_schema = get_env_with_default("ENVIO_PG_PUBLIC_SCHEMA", "public");
+        let val = sqlx::query_as::<_, PersistedState>(&format!(
             "SELECT 
             envio_version,
             config_hash,
             schema_hash,
             handler_files_hash,
             abi_files_hash
-         from public.persisted_state WHERE id = 1",
-        )
+         from {}.persisted_state WHERE id = 1",
+            public_schema
+        ))
         .fetch_optional(pool)
         .await;
 
