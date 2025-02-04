@@ -374,7 +374,7 @@ let handlePartitionQueryResponse = (
             "Reorg detected, not rolling back due to configuration",
           )
           Prometheus.incrementReorgsDetected(~chain)
-          chainFetcher.lastBlockScannedHashes
+          ReorgDetection.LastBlockScannedHashes.empty(~confirmedBlockThreshold=chainFetcher.chainConfig.confirmedBlockThreshold)
         }
       }
       let updatedChainFetcher =
