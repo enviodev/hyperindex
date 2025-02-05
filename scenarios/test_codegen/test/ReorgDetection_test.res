@@ -239,7 +239,7 @@ describe("Validate reorg detection functions", () => {
           blockNumber: 10,
           blockHash: "0x10",
         },
-        reorgGuard,
+        receivedBlock: reorgGuard.lastBlockScannedData,
       }),
     )
   })
@@ -274,7 +274,10 @@ describe("Validate reorg detection functions", () => {
             blockNumber: 10,
             blockHash: "0x10",
           },
-          reorgGuard,
+          receivedBlock: {
+            blockNumber: 10,
+            blockHash: "0x10-invalid",
+          },
         }),
       )
     },

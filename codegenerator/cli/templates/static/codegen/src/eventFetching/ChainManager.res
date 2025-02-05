@@ -391,7 +391,7 @@ let createBatch = (self: t, ~maxBatchSize: int, ~onlyBelowReorgThreshold: bool) 
     let timeElapsed = refTime->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
 
     Logging.trace({
-      "message": "New batch created for processing",
+      "msg": "New batch created for processing",
       "batch size": batchSize,
       "buffers": fetchedEventsBuffer,
       "time taken (ms)": timeElapsed,

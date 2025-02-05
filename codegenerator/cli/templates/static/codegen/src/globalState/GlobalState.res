@@ -350,7 +350,7 @@ let handlePartitionQueryResponse = (
   }
 
   chainFetcher.logger->Logging.childTrace({
-    "message": "Finished page range",
+    "msg": "Finished page range",
     "fromBlock": fromBlockQueried,
     "toBlock": latestFetchedBlockNumber,
     "number of logs": parsedQueueItems->Array.length,
@@ -361,17 +361,19 @@ let handlePartitionQueryResponse = (
     ~reorgGuard,
     ~currentBlockHeight,
   ) {
-  | Error(_) if state.config->Config.shouldRollbackOnReorg => {
-      chainFetcher.logger->Logging.childInfo("Reorg detected, rolling back")
+  | Error(reorgDetected) if state.config->Config.shouldRollbackOnReorg => {
+      chainFetcher.logger->Logging.childInfo(
+        reorgDetected->ReorgDetection.reorgDetectedToLogParams(~shouldRollbackOnReorg=true),
+      )
       Prometheus.incrementReorgsDetected(~chain)
       (state->incrementId->setRollingBack(chain), [Rollback])
     }
   | reorgResult => {
       let lastBlockScannedHashes = switch reorgResult {
       | Ok(lastBlockScannedHashes) => lastBlockScannedHashes
-      | Error(_) => {
+      | Error(reorgDetected) => {
           chainFetcher.logger->Logging.childInfo(
-            "Reorg detected, not rolling back due to configuration",
+            reorgDetected->ReorgDetection.reorgDetectedToLogParams(~shouldRollbackOnReorg=false)
           )
           Prometheus.incrementReorgsDetected(~chain)
           ReorgDetection.LastBlockScannedHashes.empty(~confirmedBlockThreshold=chainFetcher.chainConfig.confirmedBlockThreshold)
@@ -1078,8 +1080,6 @@ let injectedTaskReducer = (
     //If it isn't processing a batch currently continue with rollback otherwise wait for current batch to finish processing
     switch state {
     | {currentlyProcessingBatch: false, rollbackState: RollingBack(reorgChain)} =>
-      Logging.info("Executing rollback")
-
       let chainFetcher = state.chainManager.chainFetchers->ChainMap.get(reorgChain)
 
       let {
@@ -1087,6 +1087,12 @@ let injectedTaskReducer = (
         blockTimestamp: lastKnownValidBlockTimestamp,
       }: ReorgDetection.blockDataWithTimestamp =
         await chainFetcher->getLastKnownValidBlock
+
+      chainFetcher.logger->Logging.childInfo({
+        "msg": "Executing indexer rollback",
+        "targetBlockNumber": lastKnownValidBlockNumber,
+        "targetBlockTimestamp": lastKnownValidBlockTimestamp,
+      })
 
       let isUnorderedMultichainMode = state.config.isUnorderedMultichainMode
 
