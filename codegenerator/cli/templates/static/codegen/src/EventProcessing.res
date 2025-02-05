@@ -533,7 +533,7 @@ let registerProcessEventBatchMetrics = (
   ~latestProcessedBlocks: EventsProcessed.t,
 ) => {
   logger->Logging.childTrace({
-    "message": "Finished processing batch",
+    "msg": "Finished processing batch",
     "batch_size": batchSize,
     "loader_time_elapsed": loadDuration,
     "handlers_time_elapsed": handlerDuration,

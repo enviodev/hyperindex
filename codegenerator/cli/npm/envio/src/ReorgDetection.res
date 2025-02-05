@@ -21,7 +21,19 @@ type reorgGuard = {
 
 type reorgDetected = {
   scannedBlock: blockData,
-  reorgGuard: reorgGuard,
+  registeredBlock: blockData,
+}
+
+let reorgDetectedToLogParams = (reorgDetected: reorgDetected, ~shouldRollbackOnReorg) => {
+  let {scannedBlock, registeredBlock} = reorgDetected
+  {
+    "msg": `Blockchain reorg detected. ${shouldRollbackOnReorg
+        ? "Initiating indexer rollback"
+        : "NOT initiating indexer rollback due to configuration"}.`,
+    "blockNumber": scannedBlock.blockNumber,
+    "indexedBlockHash": scannedBlock.blockHash,
+    "receivedBlockHash": registeredBlock.blockHash,
+  }
 }
 
 module LastBlockScannedHashes: {
@@ -121,13 +133,13 @@ module LastBlockScannedHashes: {
     ) {
     | Some(scannedBlock) if scannedBlock.blockHash !== lastBlockScannedData.blockHash =>
       Some({
-        reorgGuard,
+        registeredBlock: lastBlockScannedData,
         scannedBlock,
       })
     | _ =>
       switch firstBlockParentNumberAndHash {
-      //If parentHash is None, either it's the genesis block (no reorg)
-      //Or its already confirmed so no Reorg
+      //If parentHash is None, then it's the genesis block (no reorg)
+      //Need to check that parentHash matches because of the dynamic contracts
       | None => None
       | Some(firstBlockParentNumberAndHash) =>
         switch dataByBlockNumberCopyInThreshold->Utils.Dict.dangerouslyGetNonOption(
@@ -136,7 +148,7 @@ module LastBlockScannedHashes: {
         | Some(scannedBlock)
           if scannedBlock.blockHash !== firstBlockParentNumberAndHash.blockHash =>
           Some({
-            reorgGuard,
+            registeredBlock: firstBlockParentNumberAndHash,
             scannedBlock,
           })
         | _ => None
