@@ -156,6 +156,14 @@ module EndOfBlockRangeScannedData = {
     //minimum blockNumber that should be kept in db
     ~blockNumberThreshold: int,
   ) => promise<unit> = "deleteStaleEndOfBlockRangeScannedDataForChain"
+
+  @module("./DbFunctionsImplementation.js")
+  external rollbackEndOfBlockRangeScannedDataForChain: (
+    Postgres.sql,
+    ~chainId: int,
+    //The known block number we are rollbacking to
+    ~knownBlockNumber: int,
+  ) => promise<unit> = "rollbackEndOfBlockRangeScannedDataForChain"
 }
 
 module EventSyncState = {
