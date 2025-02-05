@@ -20,6 +20,7 @@ module TestEntity = {
   let rowsSchema = S.array(schema)
   let table = Table.mkTable(
     "TestEntity",
+    ~schemaName="public",
     ~fields=[
       Table.mkField("id", Text, ~isPrimaryKey=true),
       Table.mkField("fieldA", Integer),

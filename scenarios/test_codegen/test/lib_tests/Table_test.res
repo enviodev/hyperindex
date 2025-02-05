@@ -7,6 +7,7 @@ describe("Table functions postgres interop", () => {
   it("Makes batch set function for entity", () => {
     let table = mkTable(
       "test_table",
+      ~schemaName="public",
       ~fields=[mkField("id", Text, ~isPrimaryKey), mkField("field_a", Numeric)],
     )
 
@@ -24,9 +25,31 @@ describe("Table functions postgres interop", () => {
     Assert.equal(batchSetFnString, expected)
   })
 
+  it("Makes batch set function for entity with custom schema", () => {
+    let table = mkTable(
+      "test_table",
+      ~schemaName="custom",
+      ~fields=[mkField("id", Text, ~isPrimaryKey), mkField("field_a", Numeric)],
+    )
+
+    let batchSetFnString = table->PostgresInterop.makeBatchSetFnString
+
+    let expected = `(sql, rows) => {
+      return sql\`
+        INSERT INTO "custom"."test_table"
+        \${sql(rows, "id", "field_a")}
+        ON CONFLICT(id) DO UPDATE
+        SET
+        "id" = EXCLUDED."id", "field_a" = EXCLUDED."field_a";\`
+    }`
+
+    Assert.equal(batchSetFnString, expected)
+  })
+
   it("Makes batch set function for table with multiple primary keys", () => {
     let table = mkTable(
       "test_table",
+      ~schemaName="public",
       ~fields=[
         mkField("field_a", Integer, ~isPrimaryKey=true),
         mkField("field_b", Integer, ~isPrimaryKey=true),
@@ -51,6 +74,7 @@ describe("Table functions postgres interop", () => {
   it("Makes batchSetFn with linked entity", () => {
     let table = mkTable(
       "test_table",
+      ~schemaName="public",
       ~fields=[
         mkField("id", Text, ~isPrimaryKey),
         mkField("field_a", Numeric),
@@ -75,6 +99,7 @@ describe("Table functions postgres interop", () => {
   it("Makes batchSetFn with derivedFrom field ", () => {
     let table = mkTable(
       "test_table",
+      ~schemaName="public",
       ~fields=[
         mkField("id", Text, ~isPrimaryKey),
         mkField("field_a", Numeric),
@@ -98,6 +123,7 @@ describe("Table functions postgres interop", () => {
   it("Does not try to set defaults", () => {
     let table = mkTable(
       "test_table",
+      ~schemaName="public",
       ~fields=[
         mkField("id", Text, ~isPrimaryKey),
         mkField("field_a", Numeric),

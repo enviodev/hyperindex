@@ -86,16 +86,14 @@ let getFieldType = (field: field) => {
 
 type table = {
   tableName: string,
+  schemaName: string,
   fields: array<fieldOrDerived>,
   compositeIndices: array<array<string>>,
 }
 
-let mkTable: 'b. (
-  ~compositeIndices: array<array<string>>=?,
-  ~fields: array<fieldOrDerived>,
-  string,
-) => 'c = (~compositeIndices=[], ~fields, tableName) => {
+let mkTable = (tableName, ~schemaName, ~compositeIndices=[], ~fields) => {
   tableName,
+  schemaName,
   fields,
   compositeIndices,
 }
@@ -213,10 +211,7 @@ let toSqlParams = (table: table, ~schema) => {
             }
           | Bool =>
             // Workaround for https://github.com/porsager/postgres/issues/471
-            S.union([
-              S.literal(1)->S.to(_ => true),
-              S.literal(0)->S.to(_ => false),
-            ])->S.toUnknown
+            S.union([S.literal(1)->S.to(_ => true), S.literal(0)->S.to(_ => false)])->S.toUnknown
           | _ => schema
           }
 
@@ -309,7 +304,7 @@ module PostgresInterop = {
       table->getNonDefaultFieldNames->Array.map(fieldName => `"${fieldName}"`)
     `(sql, rows) => {
       return sql\`
-        INSERT INTO "public"."${table.tableName}"
+        INSERT INTO "${table.schemaName}"."${table.tableName}"
         \${sql(rows, ${fieldNamesInQuotes->Js.Array2.joinWith(", ")})}
         ON CONFLICT(${table->getPrimaryKeyFieldNames->Js.Array2.joinWith(", ")}) DO UPDATE
         SET

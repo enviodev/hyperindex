@@ -3,7 +3,7 @@ open RescriptMocha
 open Belt
 open ReorgDetection
 
-describe_only("Validate reorg detection functions", () => {
+describe("Validate reorg detection functions", () => {
   let scannedHashesFixture = [(1, "0x123"), (50, "0x456"), (300, "0x789"), (500, "0x5432")]
 
   let mock = (arr, ~confirmedBlockThreshold=200) => {
