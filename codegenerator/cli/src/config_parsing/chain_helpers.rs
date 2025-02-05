@@ -89,7 +89,6 @@ pub enum Network {
     )]
     BscTestnet = 97,
 
-    #[subenum(HypersyncNetwork)]
     C1Milkomeda = 2001,
 
     Canto = 7700,
@@ -520,9 +519,7 @@ impl HypersyncNetwork {
             Linea | Manta | Base | Boba | Blast | Cyber | Aurora | Harmony | Scroll | Darwinia
             | Rsk | ShimmerEvm | Amoy | Saakuru | Moonbeam | Lisk | Chiliz | ArbitrumOne => Silver,
 
-            Zora | Morph | Kroma | Lukso | C1Milkomeda | Crab | Sophon | Flare | PolygonZkevm => {
-                Bronze
-            }
+            Zora | Morph | Kroma | Lukso | Crab | Sophon | Flare | PolygonZkevm => Bronze,
 
             Ink | Metall2 | SophonTestnet | MorphTestnet | GaladrielDevnet | CitreaTestnet
             | Goerli | BscTestnet | UnichainSepolia | Zircuit | Celo | Opbnb | GnosisChiado
