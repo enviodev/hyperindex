@@ -21,18 +21,18 @@ type reorgGuard = {
 
 type reorgDetected = {
   scannedBlock: blockData,
-  registeredBlock: blockData,
+  receivedBlock: blockData,
 }
 
 let reorgDetectedToLogParams = (reorgDetected: reorgDetected, ~shouldRollbackOnReorg) => {
-  let {scannedBlock, registeredBlock} = reorgDetected
+  let {scannedBlock, receivedBlock} = reorgDetected
   {
     "msg": `Blockchain reorg detected. ${shouldRollbackOnReorg
         ? "Initiating indexer rollback"
         : "NOT initiating indexer rollback due to configuration"}.`,
     "blockNumber": scannedBlock.blockNumber,
     "indexedBlockHash": scannedBlock.blockHash,
-    "receivedBlockHash": registeredBlock.blockHash,
+    "receivedBlockHash": receivedBlock.blockHash,
   }
 }
 
@@ -133,7 +133,7 @@ module LastBlockScannedHashes: {
     ) {
     | Some(scannedBlock) if scannedBlock.blockHash !== lastBlockScannedData.blockHash =>
       Some({
-        registeredBlock: lastBlockScannedData,
+        receivedBlock: lastBlockScannedData,
         scannedBlock,
       })
     | _ =>
@@ -148,7 +148,7 @@ module LastBlockScannedHashes: {
         | Some(scannedBlock)
           if scannedBlock.blockHash !== firstBlockParentNumberAndHash.blockHash =>
           Some({
-            registeredBlock: firstBlockParentNumberAndHash,
+            receivedBlock: firstBlockParentNumberAndHash,
             scannedBlock,
           })
         | _ => None
