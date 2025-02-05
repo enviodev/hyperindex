@@ -17,6 +17,7 @@ module EventSyncState = {
 
   let table = mkTable(
     "event_sync_state",
+    ~schemaName="public",
     ~fields=[
       mkField("chain_id", Integer, ~isPrimaryKey),
       mkField("block_number", Integer),
@@ -45,6 +46,7 @@ module ChainMetadata = {
 
   let table = mkTable(
     "chain_metadata",
+    ~schemaName="public",
     ~fields=[
       mkField("chain_id", Integer, ~isPrimaryKey),
       mkField("start_block", Integer),
@@ -75,6 +77,7 @@ module PersistedState = {
 
   let table = mkTable(
     "persisted_state",
+    ~schemaName="public",
     ~fields=[
       mkField("id", Serial, ~isPrimaryKey),
       mkField("envio_version", Text),
@@ -96,6 +99,7 @@ module EndOfBlockRangeScannedData = {
 
   let table = mkTable(
     "end_of_block_range_scanned_data",
+    ~schemaName="public",
     ~fields=[
       mkField("chain_id", Integer, ~isPrimaryKey),
       mkField("block_number", Integer, ~isPrimaryKey),
@@ -138,6 +142,7 @@ module RawEvents = {
 
   let table = mkTable(
     "raw_events",
+    ~schemaName="public",
     ~fields=[
       mkField("chain_id", Integer),
       mkField("event_id", Numeric),
@@ -193,6 +198,7 @@ module DynamicContractRegistry = {
 
   let table = mkTable(
     "dynamic_contract_registry",
+    ~schemaName="public",
     ~fields=[
       mkField("id", Text, ~isPrimaryKey),
       mkField("chain_id", Integer),
