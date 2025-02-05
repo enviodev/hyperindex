@@ -231,10 +231,12 @@ let fromTable = (table: table, ~schema: S.t<'entity>): t<'entity> => {
   let dataFieldNames = dataFields->Belt.Array.map(field => field->getFieldName)
 
   let originTableName = table.tableName
+  let originSchemaName = table.schemaName
   let historyTableName = originTableName ++ "_history"
   //ignore composite indices
   let table = mkTable(
     historyTableName,
+    ~schemaName=originSchemaName,
     ~fields=Belt.Array.concatMany([
       currentHistoryFields,
       previousHistoryFields,
@@ -245,8 +247,8 @@ let fromTable = (table: table, ~schema: S.t<'entity>): t<'entity> => {
 
   let insertFnName = `"insert_${table.tableName}"`
   let historyRowArg = "history_row"
-  let historyTablePath = `"public"."${historyTableName}"`
-  let originTablePath = `"public"."${originTableName}"`
+  let historyTablePath = `"${originSchemaName}"."${historyTableName}"`
+  let originTablePath = `"${originSchemaName}"."${originTableName}"`
 
   let previousHistoryFieldsAreNullStr =
     previousChangeFieldNames
