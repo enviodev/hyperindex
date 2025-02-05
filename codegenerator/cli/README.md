@@ -29,4 +29,6 @@ For support and updates, follow Envio on [Twitter](https://twitter.com/envio_ind
 
 Please create an [issue](https://github.com/enviodev/hyperindex/issues/new/choose) in our GitHub repository if you have specific suggestions or requirements. And a star is always appreciated 💫
 
+By submitting a Pull Request or making any contribution to this project, you automatically agree to our [Contributor License Agreement (CLA)](./licenses/CLA.md).
+
 Our [common issues](https://docs.envio.dev/docs/common-issues) page may also help you.
