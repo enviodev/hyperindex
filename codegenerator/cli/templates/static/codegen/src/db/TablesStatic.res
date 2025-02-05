@@ -7,19 +7,10 @@ let isIndex = true
 
 module EventSyncState = {
   //Used unsafely in DbFunctions.res so just enforcing the naming here
-  let tableName = "event_sync_state"
   let blockTimestampFieldName = "block_timestamp"
   let blockNumberFieldName = "block_number"
   let logIndexFieldName = "log_index"
   let isPreRegisteringDynamicContractsFieldName = "is_pre_registering_dynamic_contracts"
-
-  //We need to update values here not delet the rows, since restarting without a row
-  //has a different behaviour to restarting with an initialised row with zero values
-  let resetCurrentCurrentSyncStateQuery = `UPDATE public.${tableName}
-    SET ${blockNumberFieldName} = 0, 
-        ${logIndexFieldName} = 0, 
-        ${blockTimestampFieldName} = 0, 
-        ${isPreRegisteringDynamicContractsFieldName} = false;`
 
   @genType
   type t = {
@@ -31,7 +22,7 @@ module EventSyncState = {
   }
 
   let table = mkTable(
-    tableName,
+    "event_sync_state",
     ~schemaName="public",
     ~fields=[
       mkField("chain_id", Integer, ~isPrimaryKey),
@@ -41,6 +32,14 @@ module EventSyncState = {
       mkField(isPreRegisteringDynamicContractsFieldName, Boolean),
     ],
   )
+
+  //We need to update values here not delet the rows, since restarting without a row
+  //has a different behaviour to restarting with an initialised row with zero values
+  let resetCurrentCurrentSyncStateQuery = `UPDATE ${table.schemaName}.${table.tableName}
+    SET ${blockNumberFieldName} = 0, 
+        ${logIndexFieldName} = 0, 
+        ${blockTimestampFieldName} = 0, 
+        ${isPreRegisteringDynamicContractsFieldName} = false;`
 }
 
 module ChainMetadata = {
