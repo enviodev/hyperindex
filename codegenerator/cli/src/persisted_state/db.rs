@@ -2,7 +2,7 @@ use super::{PersistedState, PersistedStateExists};
 use sqlx::postgres::{PgPool, PgPoolOptions, PgQueryResult};
 use std::env;
 
-pub fn get_env_with_default(var: &str, default: &str) -> String {
+fn get_env_with_default(var: &str, default: &str) -> String {
     env::var(var).unwrap_or_else(|_| default.to_string())
 }
 

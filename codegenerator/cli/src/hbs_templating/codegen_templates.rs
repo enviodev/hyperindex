@@ -226,7 +226,6 @@ pub struct EntityRecordTypeTemplate {
     pub index_groups: Vec<EntityIndexParamGroup>,
     pub relational_params: FilteredTemplateLists<EntityRelationalTypesTemplate>,
     pub filtered_params: FilteredTemplateLists<EntityParamTypeTemplate>,
-    pub schema: String,
 }
 
 impl EntityRecordTypeTemplate {
@@ -317,11 +316,6 @@ impl EntityRecordTypeTemplate {
 
         let composite_indices = entity.get_composite_indices();
 
-        let schema = super::super::persisted_state::get_env_with_default(
-            "ENVIO_PG_PUBLIC_SCHEMA", 
-            "public"
-        );
-
         Ok(EntityRecordTypeTemplate {
             name: entity.name.to_capitalized_options(),
             postgres_fields,
@@ -331,7 +325,6 @@ impl EntityRecordTypeTemplate {
             index_groups,
             relational_params,
             filtered_params,
-            schema,
         })
     }
 }

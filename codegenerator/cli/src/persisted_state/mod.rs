@@ -13,8 +13,6 @@ use std::{
 use strum::IntoEnumIterator;
 use strum_macros::EnumIter;
 
-pub use db::get_env_with_default;
-
 #[derive(Serialize, Deserialize, Debug, FromRow)]
 pub struct PersistedState {
     pub envio_version: String,
