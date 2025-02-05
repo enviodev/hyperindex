@@ -67,7 +67,7 @@ module {{entity.name.capitalized}} = {
 
   let table = mkTable(
     (name :> string),
-    ~schemaName="public",
+    ~schemaName="{{schema}}",
     ~fields=[
   {{#each entity.postgres_fields as | pg_field |}}
       mkField(
