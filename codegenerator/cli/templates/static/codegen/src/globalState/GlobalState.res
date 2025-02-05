@@ -862,17 +862,15 @@ let injectedTaskReducer = (
           false
         }
         let timeRef = Hrtime.makeTimer()
-        await Db.sql->Postgres.beginSql(sql => {
-          Entities.allEntities->Belt.Array.map(entityMod => {
-            let module(Entity) = entityMod
-
-            sql->DbFunctions.EntityHistory.pruneStaleEntityHistory(
-              ~entityName=Entity.name,
-              ~safeChainIdAndBlockNumberArray,
-              ~shouldDeepClean,
-            )
-          })
-        })
+        let _ = await Promise.all(Entities.allEntities->Belt.Array.map(entityMod => {
+          let module(Entity) = entityMod
+          Db.sql->DbFunctions.EntityHistory.pruneStaleEntityHistory(
+            ~entityName=Entity.name,
+            ~safeChainIdAndBlockNumberArray,
+            ~shouldDeepClean,
+          )
+        }))
+        
 
         if Env.Benchmark.shouldSaveData {
           let elapsedTimeMillis = Hrtime.timeSince(timeRef)->Hrtime.toMillis->Hrtime.floatFromMillis

@@ -199,6 +199,18 @@ module.exports.deleteStaleEndOfBlockRangeScannedDataForChain = (
     AND block_number < ${blockNumberThreshold};`;
 };
 
+module.exports.rollbackEndOfBlockRangeScannedDataForChain = (
+  sql,
+  chainId,
+  knownBlockNumber
+) => {
+  return sql`
+    DELETE
+    FROM "public"."end_of_block_range_scanned_data"
+    WHERE chain_id = ${chainId}
+    AND block_number > ${knownBlockNumber};`;
+};
+
 module.exports.deleteInvalidDynamicContractsOnRestart = (
   sql,
   chainId,

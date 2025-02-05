@@ -173,6 +173,11 @@ let executeBatch = async (sql, ~inMemoryStore: InMemoryStore.t, ~isInReorgThresh
         ~isUnorderedMultichainMode=config.isUnorderedMultichainMode,
         ~eventIdentifier,
       ),
+      DbFunctions.EndOfBlockRangeScannedData.rollbackEndOfBlockRangeScannedDataForChain(
+        _,
+        ~chainId=eventIdentifier.chainId,
+        ~knownBlockNumber=eventIdentifier.blockNumber,
+      ),
     ]
   | None => []
   }
