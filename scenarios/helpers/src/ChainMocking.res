@@ -288,7 +288,6 @@ module Make = (Indexer: Indexer.S) => {
         lastBlockScannedData: {
           blockHash: heighstBlock.blockHash,
           blockNumber: heighstBlock.blockNumber,
-          blockTimestamp: heighstBlock.blockTimestamp,
         },
         firstBlockParentNumberAndHash,
       },
@@ -304,8 +303,12 @@ module Make = (Indexer: Indexer.S) => {
     blockNumbers->Array.keepMap(blockNumber =>
       self
       ->getBlock(~blockNumber)
-      ->Option.map(({blockTimestamp, blockHash, blockNumber}) => {
-        ReorgDetection.blockTimestamp,
+      ->Option.map(({
+        blockTimestamp,
+        blockHash,
+        blockNumber,
+      }): ReorgDetection.blockDataWithTimestamp => {
+        blockTimestamp,
         blockHash,
         blockNumber,
       })

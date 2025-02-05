@@ -43,20 +43,20 @@ let queryLogsPage: (
   ~fieldSelection: HyperSyncClient.QueryTypes.fieldSelection,
   ~nonOptionalBlockFieldNames: array<string>,
   ~nonOptionalTransactionFieldNames: array<string>,
-  ~logger: Pino.t
+  ~logger: Pino.t,
 ) => promise<queryResponse<logsQueryPage>>
 
 let queryBlockData: (
   ~serverUrl: string,
   ~blockNumber: int,
   ~logger: Pino.t,
-) => promise<queryResponse<option<ReorgDetection.blockData>>>
+) => promise<queryResponse<option<ReorgDetection.blockDataWithTimestamp>>>
 
 let queryBlockDataMulti: (
   ~serverUrl: string,
   ~blockNumbers: array<int>,
   ~logger: Pino.t,
-) => promise<queryResponse<array<ReorgDetection.blockData>>>
+) => promise<queryResponse<array<ReorgDetection.blockDataWithTimestamp>>>
 
 let mapExn: queryResponse<'a> => result<'a, exn>
 let getExn: queryResponse<'a> => 'a

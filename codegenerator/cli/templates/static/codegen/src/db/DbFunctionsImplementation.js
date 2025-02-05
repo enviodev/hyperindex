@@ -167,17 +167,10 @@ ${sql`${commaSeparateDynamicMapQuery(sql, fieldQueryConstructors)}`};`;
 const batchSetEndOfBlockRangeScannedDataCore = (sql, rowDataArray) => {
   return sql`
     INSERT INTO "public"."end_of_block_range_scanned_data"
-  ${sql(
-    rowDataArray,
-    "chain_id",
-    "block_timestamp",
-    "block_number",
-    "block_hash"
-  )}
+  ${sql(rowDataArray, "chain_id", "block_number", "block_hash")}
     ON CONFLICT(chain_id, block_number) DO UPDATE
     SET
     "chain_id" = EXCLUDED."chain_id",
-    "block_timestamp" = EXCLUDED."block_timestamp",
     "block_number" = EXCLUDED."block_number",
     "block_hash" = EXCLUDED."block_hash";`;
 };
@@ -197,20 +190,13 @@ module.exports.readEndOfBlockRangeScannedDataForChain = (sql, chainId) => {
 module.exports.deleteStaleEndOfBlockRangeScannedDataForChain = (
   sql,
   chainId,
-  blockNumberThreshold,
-  blockTimestampThreshold
+  blockNumberThreshold
 ) => {
   return sql`
     DELETE
     FROM "public"."end_of_block_range_scanned_data"
     WHERE chain_id = ${chainId}
-    AND block_number < ${blockNumberThreshold}
-    ${
-      blockTimestampThreshold
-        ? sql`AND block_timestamp < ${blockTimestampThreshold}`
-        : sql``
-    }
-    ;`;
+    AND block_number < ${blockNumberThreshold};`;
 };
 
 module.exports.deleteInvalidDynamicContractsOnRestart = (

@@ -81,19 +81,16 @@ module Mock = {
     ~chain,
     ~blockNumber,
     ~blockNumberThreshold,
-    ~blockTimestampThreshold,
   ) => {
-    let {blockNumber, blockTimestamp, blockHash} =
+    let {blockNumber, blockHash} =
       mcdMap->ChainMap.get(chain)->MockChainData.getBlock(~blockNumber)->Option.getUnsafe
 
     GlobalState.UpdateEndOfBlockRangeScannedData({
       blockNumberThreshold,
-      blockTimestampThreshold,
       chain,
       nextEndOfBlockRangeScannedData: {
         blockNumber,
         blockHash,
-        blockTimestamp,
         chainId: chain->ChainMap.Chain.toChainId,
       },
     })

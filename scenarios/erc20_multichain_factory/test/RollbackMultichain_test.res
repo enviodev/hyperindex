@@ -172,19 +172,16 @@ module Mock = {
     ~chain,
     ~blockNumber,
     ~blockNumberThreshold,
-    ~blockTimestampThreshold,
   ) => {
-    let {blockNumber, blockTimestamp, blockHash} =
+    let {blockNumber, blockHash} =
       mcdMap->ChainMap.get(chain)->MockChainData.getBlock(~blockNumber)->Option.getUnsafe
 
     GlobalState.UpdateEndOfBlockRangeScannedData({
       blockNumberThreshold,
-      blockTimestampThreshold,
       chain,
       nextEndOfBlockRangeScannedData: {
         blockNumber,
         blockHash,
-        blockTimestamp,
         chainId: chain->ChainMap.Chain.toChainId,
       },
     })
@@ -373,7 +370,6 @@ describe("Multichain rollback test", () => {
           Mock.mockChainDataMapInitial,
           ~chain=Mock.Chain1.chain,
           ~blockNumberThreshold=-199,
-          ~blockTimestampThreshold=Some(25),
           ~blockNumber=1,
         ),
         UpdateChainMetaDataAndCheckForExit(NoExit),
@@ -383,7 +379,6 @@ describe("Multichain rollback test", () => {
           Mock.mockChainDataMapInitial,
           ~chain=Mock.Chain2.chain,
           ~blockNumberThreshold=-198,
-          ~blockTimestampThreshold=Some(25),
           ~blockNumber=2,
         ),
         UpdateChainMetaDataAndCheckForExit(NoExit),
@@ -428,7 +423,6 @@ describe("Multichain rollback test", () => {
           Mock.mockChainDataMapInitial,
           ~chain=Mock.Chain1.chain,
           ~blockNumberThreshold=-197,
-          ~blockTimestampThreshold=Some(25),
           ~blockNumber=3,
         ),
         UpdateChainMetaDataAndCheckForExit(NoExit),
@@ -438,7 +432,6 @@ describe("Multichain rollback test", () => {
           Mock.mockChainDataMapInitial,
           ~chain=Mock.Chain2.chain,
           ~blockNumberThreshold=-195,
-          ~blockTimestampThreshold=Some(25),
           ~blockNumber=5,
         ),
         UpdateChainMetaDataAndCheckForExit(NoExit),
@@ -469,7 +462,6 @@ describe("Multichain rollback test", () => {
           Mock.mockChainDataMapInitial,
           ~chain=Mock.Chain1.chain,
           ~blockNumberThreshold=-195,
-          ~blockTimestampThreshold=Some(25),
           ~blockNumber=5,
         ),
         UpdateChainMetaDataAndCheckForExit(NoExit),
@@ -479,7 +471,6 @@ describe("Multichain rollback test", () => {
           Mock.mockChainDataMapInitial,
           ~chain=Mock.Chain2.chain,
           ~blockNumberThreshold=-192,
-          ~blockTimestampThreshold=Some(25),
           ~blockNumber=8,
         ),
         UpdateChainMetaDataAndCheckForExit(NoExit),
@@ -525,7 +516,6 @@ describe("Multichain rollback test", () => {
           Mock.mockChainDataMapInitial,
           ~chain=Mock.Chain2.chain,
           ~blockNumberThreshold=-191,
-          ~blockTimestampThreshold=Some(25),
           ~blockNumber=9,
         ),
         UpdateChainMetaDataAndCheckForExit(NoExit),

@@ -102,19 +102,16 @@ ensure that this doesn't trigger a reorg
     ~chain,
     ~blockNumber,
     ~blockNumberThreshold,
-    ~blockTimestampThreshold,
   ) => {
-    let {blockNumber, blockTimestamp, blockHash} =
+    let {blockNumber, blockHash} =
       mcdMap->ChainMap.get(chain)->MockChainData.getBlock(~blockNumber)->Option.getUnsafe
 
     GlobalState.UpdateEndOfBlockRangeScannedData({
       blockNumberThreshold,
-      blockTimestampThreshold,
       chain,
       nextEndOfBlockRangeScannedData: {
         blockNumber,
         blockHash,
-        blockTimestamp,
         chainId: chain->ChainMap.Chain.toChainId,
       },
     })
@@ -276,7 +273,6 @@ describe("Dynamic contract rollback test", () => {
           Mock.mockChainDataMap,
           ~chain=Mock.Chain1.chain,
           ~blockNumberThreshold=-199,
-          ~blockTimestampThreshold=Some(25),
           ~blockNumber=1,
         ),
         UpdateChainMetaDataAndCheckForExit(NoExit),
@@ -286,7 +282,6 @@ describe("Dynamic contract rollback test", () => {
           Mock.mockChainDataMap,
           ~chain=Mock.Chain2.chain,
           ~blockNumberThreshold=-198,
-          ~blockTimestampThreshold=Some(25),
           ~blockNumber=2,
         ),
         UpdateChainMetaDataAndCheckForExit(NoExit),
@@ -331,7 +326,6 @@ describe("Dynamic contract rollback test", () => {
           Mock.mockChainDataMap,
           ~chain=Mock.Chain1.chain,
           ~blockNumberThreshold=-197,
-          ~blockTimestampThreshold=Some(25),
           ~blockNumber=3,
         ),
         UpdateChainMetaDataAndCheckForExit(NoExit),
@@ -341,7 +335,6 @@ describe("Dynamic contract rollback test", () => {
           Mock.mockChainDataMap,
           ~chain=Mock.Chain2.chain,
           ~blockNumberThreshold=-195,
-          ~blockTimestampThreshold=Some(25),
           ~blockNumber=5,
         ),
         UpdateChainMetaDataAndCheckForExit(NoExit),
@@ -379,7 +372,6 @@ describe("Dynamic contract rollback test", () => {
           Mock.mockChainDataMap,
           ~chain=Mock.Chain1.chain,
           ~blockNumberThreshold=-195,
-          ~blockTimestampThreshold=Some(25),
           ~blockNumber=5,
         ),
         UpdateChainMetaDataAndCheckForExit(NoExit),
@@ -389,7 +381,6 @@ describe("Dynamic contract rollback test", () => {
           Mock.mockChainDataMap,
           ~chain=Mock.Chain2.chain,
           ~blockNumberThreshold=-192,
-          ~blockTimestampThreshold=Some(25),
           ~blockNumber=8,
         ),
         UpdateChainMetaDataAndCheckForExit(NoExit),
@@ -451,7 +442,6 @@ describe("Dynamic contract rollback test", () => {
           Mock.mockChainDataMap,
           ~chain=Mock.Chain1.chain,
           ~blockNumberThreshold=-196,
-          ~blockTimestampThreshold=Some(25),
           ~blockNumber=4,
         ),
         UpdateChainMetaDataAndCheckForExit(NoExit),
@@ -461,7 +451,6 @@ describe("Dynamic contract rollback test", () => {
           Mock.mockChainDataMap,
           ~chain=Mock.Chain2.chain,
           ~blockNumberThreshold=-191,
-          ~blockTimestampThreshold=Some(25),
           ~blockNumber=9,
         ),
         UpdateChainMetaDataAndCheckForExit(NoExit),

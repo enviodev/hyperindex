@@ -145,7 +145,9 @@ let determineNextEvent = (
 
 let makeFromConfig = (~config: Config.t, ~maxAddrInPartition=Env.maxAddrInPartition): t => {
   let chainFetchers =
-    config.chainMap->ChainMap.map(ChainFetcher.makeFromConfig(_, ~maxAddrInPartition, ~enableRawEvents=config.enableRawEvents))
+    config.chainMap->ChainMap.map(
+      ChainFetcher.makeFromConfig(_, ~maxAddrInPartition, ~enableRawEvents=config.enableRawEvents),
+    )
   {
     chainFetchers,
     arbitraryEventQueue: [],
@@ -159,7 +161,13 @@ let makeFromDbState = async (~config: Config.t, ~maxAddrInPartition=Env.maxAddrI
     await config.chainMap
     ->ChainMap.entries
     ->Array.map(async ((chain, chainConfig)) => {
-      (chain, await chainConfig->ChainFetcher.makeFromDbState(~maxAddrInPartition, ~enableRawEvents=config.enableRawEvents))
+      (
+        chain,
+        await chainConfig->ChainFetcher.makeFromDbState(
+          ~maxAddrInPartition,
+          ~enableRawEvents=config.enableRawEvents,
+        ),
+      )
     })
     ->Promise.all
 
@@ -179,55 +187,6 @@ let makeFromDbState = async (~config: Config.t, ~maxAddrInPartition=Env.maxAddrI
     //If we have started saving history, continue to save history
     //as regardless of whether we are still in a reorg threshold
     isInReorgThreshold: hasStartedSavingHistory,
-  }
-}
-
-/**
-For each chain with a confirmed block threshold, find the earliest block ranged scanned that exists
-in that threshold
-
-Returns None in the case of no block range entries and in the case that there is only 1 chain since
-there is no need to consider other chains with prunining in this case
-*/
-let getEarliestMultiChainTimestampInThreshold = (chainManager: t) => {
-  chainManager.chainFetchers
-  ->ChainMap.values
-  ->Array.map((cf): ReorgDetection.LastBlockScannedHashes.currentHeightAndLastBlockHashes => {
-    lastBlockScannedHashes: cf.lastBlockScannedHashes,
-    currentHeight: cf.currentBlockHeight,
-  })
-  ->ReorgDetection.LastBlockScannedHashes.getEarliestMultiChainTimestampInThreshold
-}
-
-/**
-Adds latest "lastBlockScannedData" to LastBlockScannedHashes and prunes old unneeded data
-*/
-let addLastBlockScannedData = (
-  chainManager: t,
-  ~chain: ChainMap.Chain.t,
-  ~lastBlockScannedData: ReorgDetection.blockData,
-  ~currentHeight,
-) => {
-  let earliestMultiChainTimestampInThreshold =
-    chainManager->getEarliestMultiChainTimestampInThreshold
-
-  let chainFetchers = chainManager.chainFetchers->ChainMap.update(chain, cf => {
-    let lastBlockScannedHashes =
-      cf.lastBlockScannedHashes
-      ->ReorgDetection.LastBlockScannedHashes.pruneStaleBlockData(
-        ~currentHeight,
-        ~earliestMultiChainTimestampInThreshold?,
-      )
-      ->ReorgDetection.LastBlockScannedHashes.addLatestLastBlockData(~lastBlockScannedData)
-    {
-      ...cf,
-      lastBlockScannedHashes,
-    }
-  })
-
-  {
-    ...chainManager,
-    chainFetchers,
   }
 }
 

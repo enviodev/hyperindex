@@ -48,6 +48,6 @@ let queryBlockData: (
   ~serverUrl: string,
   ~blockNumber: int,
   ~logger: Pino.t,
-) => promise<option<ReorgDetection.blockData>>
+) => promise<option<ReorgDetection.blockDataWithTimestamp>>
 
 let heightRoute: Rest.route<(), int>

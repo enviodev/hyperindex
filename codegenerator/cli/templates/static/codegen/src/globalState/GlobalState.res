@@ -121,7 +121,6 @@ type task =
   | UpdateEndOfBlockRangeScannedData({
       chain: chain,
       blockNumberThreshold: int,
-      blockTimestampThreshold: option<int>,
       nextEndOfBlockRangeScannedData: DbFunctions.EndOfBlockRangeScannedData.endOfBlockRangeScannedData,
     })
   | ProcessEventBatch
@@ -358,104 +357,100 @@ let handlePartitionQueryResponse = (
     "stats": stats,
   })
 
-  let hasReorgOccurred =
-    chainFetcher.lastBlockScannedHashes->ReorgDetection.LastBlockScannedHashes.hasReorgOccurred(
-      ~reorgGuard,
-    )
-
-  if !hasReorgOccurred || !(state.config->Config.shouldRollbackOnReorg) {
-    if hasReorgOccurred {
-      chainFetcher.logger->Logging.childInfo(
-        "Reorg detected, not rolling back due to configuration",
-      )
+  switch chainFetcher.lastBlockScannedHashes->ReorgDetection.LastBlockScannedHashes.registerReorgGuard(
+    ~reorgGuard,
+    ~currentBlockHeight,
+  ) {
+  | Error(_) if state.config->Config.shouldRollbackOnReorg => {
+      chainFetcher.logger->Logging.childInfo("Reorg detected, rolling back")
       Prometheus.incrementReorgsDetected(~chain)
+      (state->incrementId->setRollingBack(chain), [Rollback])
     }
+  | reorgResult => {
+      let lastBlockScannedHashes = switch reorgResult {
+      | Ok(lastBlockScannedHashes) => lastBlockScannedHashes
+      | Error(_) => {
+          chainFetcher.logger->Logging.childInfo(
+            "Reorg detected, not rolling back due to configuration",
+          )
+          Prometheus.incrementReorgsDetected(~chain)
+          ReorgDetection.LastBlockScannedHashes.empty(~confirmedBlockThreshold=chainFetcher.chainConfig.confirmedBlockThreshold)
+        }
+      }
+      let updatedChainFetcher =
+        chainFetcher
+        ->ChainFetcher.setQueryResponse(
+          ~query,
+          ~currentBlockHeight,
+          ~latestFetchedBlockTimestamp,
+          ~latestFetchedBlockNumber,
+          ~fetchedEvents=parsedQueueItems,
+        )
+        ->Utils.unwrapResultExn
+        ->updateChainFetcherCurrentBlockHeight(~currentBlockHeight)
 
-    let updatedChainFetcher =
-      chainFetcher
-      ->ChainFetcher.setQueryResponse(
-        ~query,
-        ~currentBlockHeight,
-        ~latestFetchedBlockTimestamp,
-        ~latestFetchedBlockNumber,
-        ~fetchedEvents=parsedQueueItems,
+      let hasArbQueueEvents = state.chainManager->ChainManager.hasChainItemsOnArbQueue(~chain)
+      let hasNoMoreEventsToProcess =
+        updatedChainFetcher->ChainFetcher.hasNoMoreEventsToProcess(~hasArbQueueEvents)
+
+      let latestProcessedBlock = if hasNoMoreEventsToProcess {
+        FetchState.getLatestFullyFetchedBlock(updatedChainFetcher.fetchState).blockNumber->Some
+      } else {
+        updatedChainFetcher.latestProcessedBlock
+      }
+
+      let updatedChainFetcher = {
+        ...updatedChainFetcher,
+        latestProcessedBlock,
+        lastBlockScannedHashes,
+        numBatchesFetched: updatedChainFetcher.numBatchesFetched + 1,
+      }
+
+      let wasFetchingAtHead = ChainFetcher.isFetchingAtHead(chainFetcher)
+      let isCurrentlyFetchingAtHead = ChainFetcher.isFetchingAtHead(updatedChainFetcher)
+
+      if !wasFetchingAtHead && isCurrentlyFetchingAtHead {
+        updatedChainFetcher.logger->Logging.childInfo("All events have been fetched")
+      }
+
+      let updateEndOfBlockRangeScannedDataArr =
+        //Only update endOfBlockRangeScannedData if rollbacks are enabled
+        state.config->Config.shouldRollbackOnReorg
+          ? [
+              UpdateEndOfBlockRangeScannedData({
+                chain,
+                blockNumberThreshold: lastBlockScannedData.blockNumber -
+                updatedChainFetcher.chainConfig.confirmedBlockThreshold,
+                nextEndOfBlockRangeScannedData: {
+                  chainId: chain->ChainMap.Chain.toChainId,
+                  blockNumber: lastBlockScannedData.blockNumber,
+                  blockHash: lastBlockScannedData.blockHash,
+                },
+              }),
+            ]
+          : []
+
+      let nextState = {
+        ...state,
+        chainManager: {
+          ...state.chainManager,
+          chainFetchers: state.chainManager.chainFetchers->ChainMap.set(chain, updatedChainFetcher),
+        },
+      }
+
+      let processAction =
+        updatedChainFetcher->ChainFetcher.isPreRegisteringDynamicContracts
+          ? PreRegisterDynamicContracts
+          : ProcessEventBatch
+
+      (
+        nextState,
+        Array.concat(
+          updateEndOfBlockRangeScannedDataArr,
+          [UpdateChainMetaDataAndCheckForExit(NoExit), processAction, NextQuery(Chain(chain))],
+        ),
       )
-      ->Utils.unwrapResultExn
-      ->updateChainFetcherCurrentBlockHeight(~currentBlockHeight)
-
-    let hasArbQueueEvents = state.chainManager->ChainManager.hasChainItemsOnArbQueue(~chain)
-    let hasNoMoreEventsToProcess =
-      updatedChainFetcher->ChainFetcher.hasNoMoreEventsToProcess(~hasArbQueueEvents)
-
-    let latestProcessedBlock = if hasNoMoreEventsToProcess {
-      FetchState.getLatestFullyFetchedBlock(updatedChainFetcher.fetchState).blockNumber->Some
-    } else {
-      updatedChainFetcher.latestProcessedBlock
     }
-
-    let updatedChainFetcher = {
-      ...updatedChainFetcher,
-      latestProcessedBlock,
-      numBatchesFetched: updatedChainFetcher.numBatchesFetched + 1,
-    }
-
-    let wasFetchingAtHead = ChainFetcher.isFetchingAtHead(chainFetcher)
-    let isCurrentlyFetchingAtHead = ChainFetcher.isFetchingAtHead(updatedChainFetcher)
-
-    if !wasFetchingAtHead && isCurrentlyFetchingAtHead {
-      updatedChainFetcher.logger->Logging.childInfo("All events have been fetched")
-    }
-
-    let chainManager = {
-      ...state.chainManager,
-      chainFetchers: state.chainManager.chainFetchers->ChainMap.set(chain, updatedChainFetcher),
-    }->ChainManager.addLastBlockScannedData(
-      ~chain,
-      ~lastBlockScannedData,
-      ~currentHeight=currentBlockHeight,
-    )
-
-    let updateEndOfBlockRangeScannedDataArr =
-      //Only update endOfBlockRangeScannedData if rollbacks are enabled
-      state.config->Config.shouldRollbackOnReorg
-        ? [
-            UpdateEndOfBlockRangeScannedData({
-              chain,
-              blockNumberThreshold: lastBlockScannedData.blockNumber -
-              updatedChainFetcher.chainConfig.confirmedBlockThreshold,
-              blockTimestampThreshold: chainManager
-              ->ChainManager.getEarliestMultiChainTimestampInThreshold,
-              nextEndOfBlockRangeScannedData: {
-                chainId: chain->ChainMap.Chain.toChainId,
-                blockNumber: lastBlockScannedData.blockNumber,
-                blockTimestamp: lastBlockScannedData.blockTimestamp,
-                blockHash: lastBlockScannedData.blockHash,
-              },
-            }),
-          ]
-        : []
-
-    let nextState = {
-      ...state,
-      chainManager,
-    }
-
-    let processAction =
-      updatedChainFetcher->ChainFetcher.isPreRegisteringDynamicContracts
-        ? PreRegisterDynamicContracts
-        : ProcessEventBatch
-
-    (
-      nextState,
-      Array.concat(
-        updateEndOfBlockRangeScannedDataArr,
-        [UpdateChainMetaDataAndCheckForExit(NoExit), processAction, NextQuery(Chain(chain))],
-      ),
-    )
-  } else {
-    chainFetcher.logger->Logging.childInfo("Reorg detected, rolling back")
-    Prometheus.incrementReorgsDetected(~chain)
-    (state->incrementId->setRollingBack(chain), [Rollback])
   }
 }
 
@@ -802,7 +797,7 @@ let injectedTaskReducer = (
   //Used for dependency injection for tests
   ~waitForNewBlock,
   ~executeQuery,
-  ~rollbackLastBlockHashesToReorgLocation,
+  ~getLastKnownValidBlock,
 ) => async (
   //required args
   state: t,
@@ -813,7 +808,6 @@ let injectedTaskReducer = (
   | UpdateEndOfBlockRangeScannedData({
       chain,
       blockNumberThreshold,
-      blockTimestampThreshold,
       nextEndOfBlockRangeScannedData,
     }) =>
     let timeRef = Hrtime.makeTimer()
@@ -836,7 +830,6 @@ let injectedTaskReducer = (
       let timeRef = Hrtime.makeTimer()
       await Db.sql->DbFunctions.EndOfBlockRangeScannedData.deleteStaleEndOfBlockRangeScannedDataForChain(
         ~chainId=chain->ChainMap.Chain.toChainId,
-        ~blockTimestampThreshold,
         ~blockNumberThreshold,
       )
 
@@ -1089,13 +1082,11 @@ let injectedTaskReducer = (
 
       let chainFetcher = state.chainManager.chainFetchers->ChainMap.get(reorgChain)
 
-      //Rollback the lastBlockScannedHashes to a point before blockhashes diverged
-      let reorgChainRolledBackLastBlockData =
-        await chainFetcher->rollbackLastBlockHashesToReorgLocation
-
-      //Get the last known valid block that was scanned on the reorg chain
-      let {blockNumber: lastKnownValidBlockNumber, blockTimestamp: lastKnownValidBlockTimestamp} =
-        reorgChainRolledBackLastBlockData->ChainFetcher.getLastScannedBlockData
+      let {
+        blockNumber: lastKnownValidBlockNumber,
+        blockTimestamp: lastKnownValidBlockTimestamp,
+      }: ReorgDetection.blockDataWithTimestamp =
+        await chainFetcher->getLastKnownValidBlock
 
       let isUnorderedMultichainMode = state.config.isUnorderedMultichainMode
 
@@ -1130,22 +1121,15 @@ let injectedTaskReducer = (
           ~chainId=chain->ChainMap.Chain.toChainId,
         ) {
         | Some(firstChangeEvent) =>
-          //There was a change on the given chain after the reorged chain,
-          // rollback the lastBlockScannedHashes to before the first change produced by the given chain
-          let rolledBackLastBlockData =
-            cf.lastBlockScannedHashes->ReorgDetection.LastBlockScannedHashes.rollBackToBlockNumberLt(
-              ~blockNumber=firstChangeEvent.blockNumber,
-            )
-
-          let fetchState =
-            cf.fetchState->FetchState.rollback(
-              ~lastScannedBlock=rolledBackLastBlockData->ChainFetcher.getLastScannedBlockData,
-              ~firstChangeEvent,
-            )
+          let fetchState = cf.fetchState->FetchState.rollback(~firstChangeEvent)
 
           let rolledBackCf = {
             ...cf,
-            lastBlockScannedHashes: rolledBackLastBlockData,
+            lastBlockScannedHashes: chain == reorgChain
+              ? cf.lastBlockScannedHashes->ReorgDetection.LastBlockScannedHashes.rollbackToValidBlockNumber(
+                  ~blockNumber=lastKnownValidBlockNumber,
+                )
+              : cf.lastBlockScannedHashes,
             fetchState,
           }
           //On other chains, filter out evennts based on the first change present on the chain after the reorg
@@ -1168,16 +1152,11 @@ let injectedTaskReducer = (
         }
       })
 
-      let reorgChainLastBlockScannedData = {
-        let reorgChainFetcher = chainFetchers->ChainMap.get(reorgChain)
-        reorgChainFetcher.lastBlockScannedHashes->ChainFetcher.getLastScannedBlockData
-      }
-
       //Construct a rolledback in Memory store
       let inMemoryStore = await IO.RollBack.rollBack(
         ~chainId=reorgChain->ChainMap.Chain.toChainId,
-        ~blockTimestamp=reorgChainLastBlockScannedData.blockTimestamp,
-        ~blockNumber=reorgChainLastBlockScannedData.blockNumber,
+        ~blockTimestamp=lastKnownValidBlockTimestamp,
+        ~blockNumber=lastKnownValidBlockNumber,
         ~logIndex=0,
         ~isUnorderedMultichainMode,
       )
@@ -1197,5 +1176,5 @@ let injectedTaskReducer = (
 let taskReducer = injectedTaskReducer(
   ~waitForNewBlock=Source.waitForNewBlock,
   ~executeQuery,
-  ~rollbackLastBlockHashesToReorgLocation=ChainFetcher.rollbackLastBlockHashesToReorgLocation(_),
+  ~getLastKnownValidBlock=ChainFetcher.getLastKnownValidBlock(_),
 )

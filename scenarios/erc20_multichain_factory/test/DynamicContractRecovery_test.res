@@ -94,26 +94,19 @@ module Mock = {
     ~chain,
     ~blockNumber,
     ~blockNumberThreshold,
-    ~blockTimestampThreshold,
   ) => {
-    let (blockNumber, blockTimestamp, blockHash) =
+    let (blockNumber, blockHash) =
       mcdMap
       ->ChainMap.get(chain)
       ->MockChainData.getBlock(~blockNumber)
-      ->Option.mapWithDefault((0, 0, "0xstub"), ({blockNumber, blockTimestamp, blockHash}) => (
-        blockNumber,
-        blockTimestamp,
-        blockHash,
-      ))
+      ->Option.mapWithDefault((0, "0xstub"), ({blockNumber, blockHash}) => (blockNumber, blockHash))
 
     GlobalState.UpdateEndOfBlockRangeScannedData({
       blockNumberThreshold,
-      blockTimestampThreshold,
       chain,
       nextEndOfBlockRangeScannedData: {
         blockNumber,
         blockHash,
-        blockTimestamp,
         chainId: chain->ChainMap.Chain.toChainId,
       },
     })
@@ -205,7 +198,6 @@ describe("Dynamic contract restart resistance test", () => {
             Mock.mockChainDataMap,
             ~chain=Mock.Chain1.chain,
             ~blockNumberThreshold=-199,
-            ~blockTimestampThreshold=Some(25),
             ~blockNumber=1,
           ),
           UpdateChainMetaDataAndCheckForExit(NoExit),
@@ -417,7 +409,6 @@ describe("Dynamic contract restart resistance test", () => {
             Mock.mockChainDataMap,
             ~chain=Mock.Chain1.chain,
             ~blockNumberThreshold=-197,
-            ~blockTimestampThreshold=Some(25),
             ~blockNumber=3,
           ),
           UpdateChainMetaDataAndCheckForExit(NoExit),

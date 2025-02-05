@@ -312,9 +312,7 @@ let make = ({chain, contracts, endpointUrl}: options): t => {
       //In the query
       let heighestBlockQueried = pageUnsafe.nextBlock - 1
 
-      let lastBlockQueriedPromise: promise<
-        ReorgDetection.blockData,
-      > = // switch pageUnsafe.rollbackGuard {
+      let lastBlockQueriedPromise = // switch pageUnsafe.rollbackGuard {
       // //In the case a rollbackGuard is returned (this only happens at the head for unconfirmed blocks)
       // //use these values
       // | Some({blockNumber, timestamp, hash}) =>
@@ -331,11 +329,14 @@ let make = ({chain, contracts, endpointUrl}: options): t => {
         //If the last log item in the current page is equal to the
         //heighest block acounted for in the query. Simply return this
         //value without making an extra query
-        {
-          ReorgDetection.blockNumber: block.height,
-          blockTimestamp: block.time,
-          blockHash: block.id,
-        }->Promise.resolve
+
+        (
+          {
+            blockNumber: block.height,
+            blockTimestamp: block.time,
+            blockHash: block.id,
+          }: ReorgDetection.blockDataWithTimestamp
+        )->Promise.resolve
       //If it does not match it means that there were no matching logs in the last
       //block so we should fetch the block data
       | Some(_)
@@ -483,11 +484,8 @@ let make = ({chain, contracts, endpointUrl}: options): t => {
       let lastBlockScannedData = await lastBlockQueriedPromise
 
       let reorgGuard: ReorgDetection.reorgGuard = {
-        lastBlockScannedData,
-        firstBlockParentNumberAndHash: Some({
-          ReorgDetection.blockHash: lastBlockScannedData.blockHash,
-          blockNumber: lastBlockScannedData.blockNumber,
-        }),
+        lastBlockScannedData: lastBlockScannedData->ReorgDetection.generalizeBlockDataWithTimestamp,
+        firstBlockParentNumberAndHash: None,
       }
 
       let totalTimeElapsed = totalTimeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis

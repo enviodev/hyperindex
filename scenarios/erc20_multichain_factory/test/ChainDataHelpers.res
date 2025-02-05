@@ -138,8 +138,8 @@ module Stubs = {
     GlobalState.injectedTaskReducer(
       ~executeQuery=makeExecutePartitionQuery(stubData),
       ~waitForNewBlock=makeWaitForNewBlock(stubData),
-      ~rollbackLastBlockHashesToReorgLocation=chainFetcher =>
-        chainFetcher->ChainFetcher.rollbackLastBlockHashesToReorgLocation(
+      ~getLastKnownValidBlock=chainFetcher =>
+        chainFetcher->ChainFetcher.getLastKnownValidBlock(
           ~getBlockHashes=makeGetBlockHashes(~stubData, ~source=chainFetcher.chainConfig.source),
         ),
     )(
