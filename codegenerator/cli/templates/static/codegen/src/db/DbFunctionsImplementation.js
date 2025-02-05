@@ -213,7 +213,7 @@ module.exports.rollbackEndOfBlockRangeScannedDataForChain = (
 ) => {
   return sql`
     DELETE
-    FROM "public"."end_of_block_range_scanned_data"
+    FROM ${sql(publicSchema)}."end_of_block_range_scanned_data"
     WHERE chain_id = ${chainId}
     AND block_number > ${knownBlockNumber};`;
 };
