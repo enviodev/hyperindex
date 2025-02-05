@@ -57,7 +57,7 @@ let getHeightWithRetry = async (~source, ~logger) => {
     | newHeight => height := newHeight
     | exception exn =>
       logger->Logging.childWarn({
-        "message": `Failed to get height from endpoint. Retrying in ${retryIntervalMillis.contents->Int.toString}ms...`,
+        "msg": `Failed to get height from endpoint. Retrying in ${retryIntervalMillis.contents->Int.toString}ms...`,
         "error": exn->ErrorHandling.prettifyExn,
       })
       await Time.resolvePromiseAfterDelay(~delayMilliseconds=retryIntervalMillis.contents)
@@ -135,7 +135,7 @@ let fetchBlockRange = async (
     )
   )->Utils.Result.forEach(response => {
     logger->Logging.childTrace({
-      "message": "Fetched block range from server",
+      "msg": "Fetched block range from server",
       "latestFetchedBlockNumber": response.latestFetchedBlockNumber,
       "numEvents": response.parsedQueueItems->Array.length,
       "stats": response.stats,
