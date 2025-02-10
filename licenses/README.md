@@ -18,6 +18,7 @@ Our licenses allows self-hosting but restricts third-party hosting with Envio's 
   - **non-comercial use** is allowed.
   - **forking and modifying code** is not allowed. However, if you have specific needs or use cases, please contact us to discuss potential exceptions.
 - **Future considerations** for open-sourcing are dependent on market traction and stakeholder interests.
+- **Contributors** must agree to our Contributor License Agreement (CLA).
 
 ## Our Position
 
@@ -31,3 +32,4 @@ Envio is in its formative stages. Although we may consider open-sourcing the sof
 
 - [EULA](./EULA.md) - The license in your indexer pertaining to the generated code
 - [LICENSE](./LICENSE.md) - The non-commercial use license pertaining to this code base which is used to template & generate the indexing code
+- [CLA](./CLA.md) - The Contributor License Agreement for those who wish to contribute to the project
