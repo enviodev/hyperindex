@@ -1,4 +1,5 @@
 use super::{PersistedState, PersistedStateExists};
+use crate::config_parsing::system_config::EnvState;
 use sqlx::postgres::{PgPool, PgPoolOptions, PgQueryResult};
 use std::env;
 
@@ -25,7 +26,11 @@ impl PersistedState {
     }
 
     async fn upsert_to_db_with_pool(&self, pool: &PgPool) -> Result<PgQueryResult, sqlx::Error> {
-        let public_schema = get_env_with_default("ENVIO_PG_PUBLIC_SCHEMA", "public");
+        let mut env_state = EnvState::new(&std::env::current_dir().unwrap_or_default());
+        let public_schema = env_state
+            .var("ENVIO_PG_PUBLIC_SCHEMA")
+            .unwrap_or_else(|| "public".to_string());
+
         sqlx::query(&format!(
             r#"
             INSERT INTO {}.persisted_state (

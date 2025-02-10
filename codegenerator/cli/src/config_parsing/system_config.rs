@@ -49,21 +49,21 @@ pub enum Ecosystem {
 
 // Allows to get an env var with a lazy loading of .env file
 #[derive(Debug)]
-struct EnvState {
+pub struct EnvState {
     // Lazy loading of .env file
     maybe_dotenv: Option<EnvMap>,
     project_root: PathBuf,
 }
 
 impl EnvState {
-    fn new(project_root: &PathBuf) -> Self {
+    pub fn new(project_root: &PathBuf) -> Self {
         EnvState {
             maybe_dotenv: None,
             project_root: project_root.clone(),
         }
     }
 
-    fn var(&mut self, name: &str) -> Option<String> {
+    pub fn var(&mut self, name: &str) -> Option<String> {
         match std::env::var(name) {
             Ok(val) => Some(val),
             Err(_) => {
