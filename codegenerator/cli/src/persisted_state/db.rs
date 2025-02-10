@@ -77,8 +77,12 @@ impl PersistedStateExists {
     pub async fn read_from_db_with_pool(
         pool: &PgPool,
     ) -> Result<PersistedStateExists, sqlx::Error> {
-        let public_schema = get_env_with_default("ENVIO_PG_PUBLIC_SCHEMA", "public");
-        let val = sqlx::query_as::<_, PersistedState>(&format!(
+        let mut env_state = EnvState::new(&std::env::current_dir().unwrap_or_default());
+        let public_schema = env_state
+            .var("ENVIO_PG_PUBLIC_SCHEMA")
+            .unwrap_or_else(|| "public".to_string());
+
+            let val = sqlx::query_as::<_, PersistedState>(&format!(
             "SELECT 
             envio_version,
             config_hash,
