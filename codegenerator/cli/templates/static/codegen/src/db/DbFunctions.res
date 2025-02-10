@@ -188,6 +188,13 @@ module EventSyncState = {
   @module("./DbFunctionsImplementation.js")
   external batchSet: (Postgres.sql, array<TablesStatic.EventSyncState.t>) => promise<unit> =
     "batchSetEventSyncState"
+
+  let resetEventSyncState = async (): unit => {
+    let query = TablesStatic.EventSyncState.resetCurrentCurrentSyncStateQuery
+    try await Db.sql->Postgres.unsafe(query) catch {
+    | exn => exn->ErrorHandling.mkLogAndRaise(~msg="Failed reset query: " ++ query)
+    }
+  }
 }
 
 module RawEvents = {

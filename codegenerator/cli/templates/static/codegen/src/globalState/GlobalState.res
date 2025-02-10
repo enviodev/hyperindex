@@ -917,6 +917,12 @@ let injectedTaskReducer = (
         ->Promise.all
     }
   | PreRegisterDynamicContracts =>
+    let startIndexingAfterPreRegister = async () => {
+      //Persisted event sync state needs to reset before starting indexing
+      //otherwise crash and restart will have stale sync state from pre-registration
+      await DbFunctions.EventSyncState.resetEventSyncState()
+      dispatchAction(StartIndexingAfterPreRegister)
+    }
     if !state.currentlyProcessingBatch && !isRollingBack(state) {
       switch state.chainManager->ChainManager.createBatch(
         ~maxBatchSize=state.maxBatchSize,
@@ -971,15 +977,15 @@ let injectedTaskReducer = (
       | {isInReorgThreshold: true, val: None} =>
         //pre registration is done, we've hit the multichain reorg threshold
         //on the last batch and there are no items on the queue
-        dispatchAction(StartIndexingAfterPreRegister)
+        await startIndexingAfterPreRegister()
       | {val: None} if state.chainManager->ChainManager.isFetchingAtHead =>
         //pre registration is done, there are no items on the queue and we are fetching at head
         //this case is only hit if we are indexing chains with no reorg threshold
-        dispatchAction(StartIndexingAfterPreRegister)
+        await startIndexingAfterPreRegister()
       | {val: None} if !(state.chainManager->ChainManager.isActivelyIndexing) =>
         //pre registration is done, there are no items on the queue
         //this case is hit when there's a chain with an endBlock
-        dispatchAction(StartIndexingAfterPreRegister)
+        await startIndexingAfterPreRegister()
       | _ => () //Nothing to process and pre registration is not done
       }
     }
