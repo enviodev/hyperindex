@@ -38,7 +38,7 @@ let makeTableBatchSet = (table, schema: S.t<'entity>) => {
 
     let unsafeSql =
       `
-INSERT INTO ${Env.Db.publicSchema}.${table.tableName->quote} (${quotedFieldNames->Js.Array2.joinWith(", ")})
+INSERT INTO ${Env.Db.publicSchema->quote}.${table.tableName->quote} (${quotedFieldNames->Js.Array2.joinWith(", ")})
 SELECT * FROM unnest(${arrayFieldTypes
         ->Js.Array2.mapi((arrayFieldType, idx) => {
           `$${(idx + 1)->Js.Int.toString}::${arrayFieldType}`
@@ -85,7 +85,7 @@ module General = {
   type existsRes = {exists: bool}
 
   let hasRows = async (sql, ~table: Table.table) => {
-    let query = `SELECT EXISTS(SELECT 1 FROM ${Env.Db.publicSchema}."${table.tableName}");`
+    let query = `SELECT EXISTS(SELECT 1 FROM "${Env.Db.publicSchema}"."${table.tableName}");`
     switch await sql->Postgres.unsafe(query) {
     | [{exists}] => exists
     | _ => Js.Exn.raiseError("Unexpected result from hasRows query: " ++ query)

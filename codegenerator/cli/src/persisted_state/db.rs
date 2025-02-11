@@ -33,7 +33,7 @@ impl PersistedState {
 
         sqlx::query(&format!(
             r#"
-            INSERT INTO {}.persisted_state (
+            INSERT INTO "{}".persisted_state (
                 id, 
                 envio_version,
                 config_hash,
@@ -89,7 +89,7 @@ impl PersistedStateExists {
             schema_hash,
             handler_files_hash,
             abi_files_hash
-         from {}.persisted_state WHERE id = 1",
+         from "{}".persisted_state WHERE id = 1",
             public_schema
         ))
         .fetch_optional(pool)
