@@ -41,11 +41,11 @@ let batchSetMockEntity = Table.PostgresInterop.makeBatchSetFn(
 
 let getAllMockEntity = sql =>
   sql
-  ->Postgres.unsafe(`SELECT * FROM "${Env.Db.publicSchema}"."${TestEntity.table.tableName}"`)
+  ->Postgres.unsafe(`SELECT * FROM "public"."${TestEntity.table.tableName}"`)
   ->Promise.thenResolve(json => json->S.parseJsonOrThrow(TestEntity.rowsSchema))
 
 let getAllMockEntityHistory = sql =>
-  sql->Postgres.unsafe(`SELECT * FROM "${Env.Db.publicSchema}"."${TestEntity.entityHistory.table.tableName}"`)
+  sql->Postgres.unsafe(`SELECT * FROM "public"."${TestEntity.entityHistory.table.tableName}"`)
 
 describe("Entity history serde", () => {
   it("serializes and deserializes correctly", () => {
@@ -151,7 +151,7 @@ describe("Entity history serde", () => {
 
 describe("Entity History Codegen", () => {
   it("Creates a postgres insert function", () => {
-    let expected = `CREATE OR REPLACE FUNCTION "insert_TestEntity_history"(history_row "${Env.Db.publicSchema}"."TestEntity_history", should_copy_current_entity BOOLEAN)
+    let expected = `CREATE OR REPLACE FUNCTION "insert_TestEntity_history"(history_row "public"."TestEntity_history", should_copy_current_entity BOOLEAN)
       RETURNS void AS $$
       DECLARE
         v_previous_record RECORD;
@@ -161,7 +161,7 @@ describe("Entity History Codegen", () => {
         IF history_row.previous_entity_history_block_timestamp IS NULL OR history_row.previous_entity_history_chain_id IS NULL OR history_row.previous_entity_history_block_number IS NULL OR history_row.previous_entity_history_log_index IS NULL THEN
           -- Find the most recent record for the same id
           SELECT entity_history_block_timestamp, entity_history_chain_id, entity_history_block_number, entity_history_log_index INTO v_previous_record
-          FROM "${Env.Db.publicSchema}"."TestEntity_history"
+          FROM "public"."TestEntity_history"
           WHERE id = history_row.id
           ORDER BY entity_history_block_timestamp DESC, entity_history_chain_id DESC, entity_history_block_number DESC, entity_history_log_index DESC
           LIMIT 1;
@@ -171,9 +171,9 @@ describe("Entity History Codegen", () => {
             history_row.previous_entity_history_block_timestamp := v_previous_record.entity_history_block_timestamp; history_row.previous_entity_history_chain_id := v_previous_record.entity_history_chain_id; history_row.previous_entity_history_block_number := v_previous_record.entity_history_block_number; history_row.previous_entity_history_log_index := v_previous_record.entity_history_log_index;
             ElSIF should_copy_current_entity THEN
             -- Check if a value for the id exists in the origin table and if so, insert a history row for it.
-            SELECT "id", "fieldA", "fieldB" FROM "${Env.Db.publicSchema}"."TestEntity" WHERE id = history_row.id INTO v_origin_record;
+            SELECT "id", "fieldA", "fieldB" FROM "public"."TestEntity" WHERE id = history_row.id INTO v_origin_record;
             IF FOUND THEN
-              INSERT INTO "${Env.Db.publicSchema}"."TestEntity_history" (entity_history_block_timestamp, entity_history_chain_id, entity_history_block_number, entity_history_log_index, "id", "fieldA", "fieldB", "action")
+              INSERT INTO "public"."TestEntity_history" (entity_history_block_timestamp, entity_history_chain_id, entity_history_block_number, entity_history_log_index, "id", "fieldA", "fieldB", "action")
               -- SET the current change data fields to 0 since we don't know what they were
               -- and it doesn't matter provided they are less than any new values
               VALUES (0, 0, 0, 0, v_origin_record."id", v_origin_record."fieldA", v_origin_record."fieldB", 'SET');
@@ -183,7 +183,7 @@ describe("Entity History Codegen", () => {
           END IF;
         END IF;
 
-        INSERT INTO "${Env.Db.publicSchema}"."TestEntity_history" ("entity_history_block_timestamp", "entity_history_chain_id", "entity_history_block_number", "entity_history_log_index", "previous_entity_history_block_timestamp", "previous_entity_history_chain_id", "previous_entity_history_block_number", "previous_entity_history_log_index", "id", "fieldA", "fieldB", "action")
+        INSERT INTO "public"."TestEntity_history" ("entity_history_block_timestamp", "entity_history_chain_id", "entity_history_block_number", "entity_history_log_index", "previous_entity_history_block_timestamp", "previous_entity_history_chain_id", "previous_entity_history_block_number", "previous_entity_history_log_index", "id", "fieldA", "fieldB", "action")
         VALUES (history_row."entity_history_block_timestamp", history_row."entity_history_chain_id", history_row."entity_history_block_number", history_row."entity_history_log_index", history_row."previous_entity_history_block_timestamp", history_row."previous_entity_history_chain_id", history_row."previous_entity_history_block_number", history_row."previous_entity_history_log_index", history_row."id", history_row."fieldA", history_row."fieldB", history_row."action");
       END;
       $$ LANGUAGE plpgsql;
