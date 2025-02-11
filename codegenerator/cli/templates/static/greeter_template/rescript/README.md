@@ -26,16 +26,8 @@ networks:
         address: ["0x2B502ab6F783c2Ae96A75dc68cf82a77ce2637c2"]
         handler: ./src/EventHandlers.bs.js
         events:
-          - name: "NewGreeting"
-            requiredEntities:
-              - name: "Greeting"
-                labels:
-                  - "greetingWithChanges"
-          - name: "ClearGreeting"
-            requiredEntities:
-              - name: "Greeting"
-                labels:
-                  - "greetingWithChanges"
+          - name: "NewGreeting"            
+          - name: "ClearGreeting"            
 ```
 
 **Field Descriptions**
