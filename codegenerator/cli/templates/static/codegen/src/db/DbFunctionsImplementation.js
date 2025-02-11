@@ -171,7 +171,6 @@ const batchSetEndOfBlockRangeScannedDataCore = (sql, rowDataArray) => {
   ${sql(
     rowDataArray,
     "chain_id",
-    "block_timestamp",
     "block_number",
     "block_hash"
   )}
