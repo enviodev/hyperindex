@@ -89,7 +89,7 @@ impl PersistedStateExists {
             schema_hash,
             handler_files_hash,
             abi_files_hash
-         from "{}".persisted_state WHERE id = 1",
+            FROM \"{}\".persisted_state WHERE id = 1",
             public_schema
         ))
         .fetch_optional(pool)
