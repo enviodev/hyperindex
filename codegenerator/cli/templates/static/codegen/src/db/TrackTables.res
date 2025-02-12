@@ -81,10 +81,15 @@ let trackTable = async (~tableName: string) => {
     "type": "pg_track_table",
     "args": {
       "source": "public",
-      "schema": "public",
+      "schema": Env.Db.publicSchema,
       "name": tableName,
     },
   }
+
+  Logging.trace({
+    "msg": `Tracking table ${tableName} in schema ${Env.Db.publicSchema}`,
+    "body": body,
+  })
 
   let response = await fetch(
     Env.Hasura.graphqlEndpoint,
@@ -124,7 +129,10 @@ let createSelectPermissions = async (~tableName: string) => {
   let body = {
     "type": "pg_create_select_permission",
     "args": {
-      "table": tableName,
+      "table": {
+        "schema": Env.Db.publicSchema,
+        "name": tableName,
+      },
       "role": "public",
       "source": "default",
       "permission": {
@@ -179,7 +187,7 @@ let createEntityRelationship = async (
 ) => {
   let derivedFromTo = isDerivedFrom ? `"id": "${relationalKey}"` : `"${relationalKey}_id" : "id"`
 
-  let bodyString = `{"type": "pg_create_${relationshipType}_relationship","args": {"table": "${tableName}","name": "${objectName}","source": "default","using": {"manual_configuration": {"remote_table": "${mappedEntity}","column_mapping": {${derivedFromTo}}}}}}`
+  let bodyString = `{"type": "pg_create_${relationshipType}_relationship","args": {"table": {"schema": "${Env.Db.publicSchema}", "name": "${tableName}"},"name": "${objectName}","source": "default","using": {"manual_configuration": {"remote_table": {"schema": "${Env.Db.publicSchema}", "name": "${mappedEntity}"},"column_mapping": {${derivedFromTo}}}}}}`
 
   let response = await fetch(
     Env.Hasura.graphqlEndpoint,

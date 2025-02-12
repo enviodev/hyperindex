@@ -26,7 +26,7 @@ let creatTableIfNotExists = (sql, table) => {
     ->Js.Array2.joinWith(", ")
 
   let query = `
-    CREATE TABLE IF NOT EXISTS "public"."${table.tableName}"(${fieldsMapped}${primaryKeyFieldNames->Array.length > 0
+    CREATE TABLE IF NOT EXISTS "${Env.Db.publicSchema}"."${table.tableName}"(${fieldsMapped}${primaryKeyFieldNames->Array.length > 0
       ? `, PRIMARY KEY(${primaryKey})`
       : ""});`
 
@@ -36,7 +36,7 @@ let creatTableIfNotExists = (sql, table) => {
 let makeCreateIndexQuery = (~tableName, ~indexFields) => {
   let indexName = tableName ++ "_" ++ indexFields->Js.Array2.joinWith("_")
   let index = indexFields->Belt.Array.map(idx => `"${idx}"`)->Js.Array2.joinWith(", ")
-  `CREATE INDEX IF NOT EXISTS "${indexName}" ON "public"."${tableName}"(${index}); `
+  `CREATE INDEX IF NOT EXISTS "${indexName}" ON "${Env.Db.publicSchema}"."${tableName}"(${index}); `
 }
 
 let createTableIndices = (sql, table: Table.table) => {
@@ -82,14 +82,19 @@ let createEnumIfNotExists = (sql, enum: Enum.enum<_>) => {
 
 let deleteAllTables: unit => promise<unit> = async () => {
   Logging.trace("Dropping all tables")
-  // NOTE: we can refine the `IF EXISTS` part because this now prints to the terminal if the table doesn't exist (which isn't nice for the developer).
+  let query = `
+    DO $$ 
+    BEGIN
+      IF EXISTS(SELECT 1 FROM information_schema.schemata WHERE schema_name = '${Env.Db.publicSchema}') THEN
+        DROP SCHEMA ${Env.Db.publicSchema} CASCADE;
+      END IF;
+      CREATE SCHEMA ${Env.Db.publicSchema};
+      GRANT ALL ON SCHEMA ${Env.Db.publicSchema} TO postgres;
+      GRANT ALL ON SCHEMA ${Env.Db.publicSchema} TO public;
+    END $$;`
 
   @warning("-21")
-  await (
-    %raw(
-      "sql.unsafe`DROP SCHEMA public CASCADE;CREATE SCHEMA public;GRANT ALL ON SCHEMA public TO postgres;GRANT ALL ON SCHEMA public TO public;`"
-    )
-  )
+  await sql->unsafe(query)
 }
 
 type t

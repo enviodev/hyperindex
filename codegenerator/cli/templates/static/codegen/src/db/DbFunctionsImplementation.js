@@ -1,5 +1,6 @@
 const TableModule = require("envio/src/db/Table.bs.js");
 const Utils = require("envio/src/Utils.bs.js");
+const { publicSchema } = require("./Db.bs.js");
 
 // db operations for raw_events:
 const MAX_ITEMS_PER_QUERY = 500;
@@ -29,7 +30,7 @@ module.exports.batchDeleteItemsInTable = (table, sql, pkArray) => {
   if (primaryKeyFieldNames.length === 1) {
     return sql`
       DELETE
-      FROM "public".${sql(table.tableName)}
+      FROM ${sql(publicSchema)}.${sql(table.tableName)}
       WHERE ${sql(primaryKeyFieldNames[0])} IN ${sql(pkArray)};
       `;
   } else {
@@ -44,7 +45,7 @@ module.exports.batchReadItemsInTable = (table, sql, pkArray) => {
   if (primaryKeyFieldNames.length === 1) {
     return sql`
       SELECT *
-      FROM "public".${sql(table.tableName)}
+      FROM ${sql(publicSchema)}.${sql(table.tableName)}
       WHERE ${sql(primaryKeyFieldNames[0])} IN ${sql(pkArray)};
       `;
   } else {
@@ -56,7 +57,7 @@ module.exports.batchReadItemsInTable = (table, sql, pkArray) => {
 module.exports.whereEqQuery = (table, sql, fieldName, value) => {
   return sql`
     SELECT *
-    FROM "public".${sql(table.tableName)}
+    FROM ${sql(publicSchema)}.${sql(table.tableName)}
     WHERE ${sql(fieldName)} = ${value};
     `;
 };
@@ -64,19 +65,19 @@ module.exports.whereEqQuery = (table, sql, fieldName, value) => {
 module.exports.whereGtQuery = (table, sql, fieldName, value) => {
   return sql`
     SELECT *
-    FROM "public".${sql(table.tableName)}
+    FROM ${sql(publicSchema)}.${sql(table.tableName)}
     WHERE ${sql(fieldName)} > ${value};
     `;
 };
 
 module.exports.readLatestSyncedEventOnChainId = (sql, chainId) => sql`
   SELECT *
-  FROM public.event_sync_state
+  FROM ${sql(publicSchema)}.event_sync_state
   WHERE chain_id = ${chainId}`;
 
 module.exports.batchSetEventSyncState = (sql, entityDataArray) => {
   return sql`
-    INSERT INTO public.event_sync_state
+    INSERT INTO ${sql(publicSchema)}.event_sync_state
   ${sql(
     entityDataArray,
     "chain_id",
@@ -97,12 +98,12 @@ module.exports.batchSetEventSyncState = (sql, entityDataArray) => {
 
 module.exports.readLatestChainMetadataState = (sql, chainId) => sql`
   SELECT *
-  FROM public.chain_metadata
+  FROM ${sql(publicSchema)}.chain_metadata
   WHERE chain_id = ${chainId}`;
 
 module.exports.batchSetChainMetadata = (sql, entityDataArray) => {
   return sql`
-    INSERT INTO public.chain_metadata
+    INSERT INTO ${sql(publicSchema)}.chain_metadata
   ${sql(
     entityDataArray,
     "chain_id",
@@ -135,7 +136,7 @@ module.exports.batchSetChainMetadata = (sql, entityDataArray) => {
 
 module.exports.batchDeleteRawEvents = (sql, entityIdArray) => sql`
   DELETE
-  FROM "public"."raw_events"
+  FROM ${sql(publicSchema)}."raw_events"
   WHERE (chain_id, event_id) IN ${sql(entityIdArray)};`;
 // end db operations for raw_events
 
@@ -153,7 +154,7 @@ module.exports.makeBatchSetEntityValues = (table) => {
 
   return chunkBatchQuery((sql, rowDataArray) => {
     return sql`
-INSERT INTO "public".${sql(table.tableName)}
+INSERT INTO ${sql(publicSchema)}.${sql(table.tableName)}
 ${sql(rowDataArray, ...fieldNames)}
 ON CONFLICT(${sql`${commaSeparateDynamicMapQuery(
       sql,
@@ -166,8 +167,13 @@ ${sql`${commaSeparateDynamicMapQuery(sql, fieldQueryConstructors)}`};`;
 
 const batchSetEndOfBlockRangeScannedDataCore = (sql, rowDataArray) => {
   return sql`
-    INSERT INTO "public"."end_of_block_range_scanned_data"
-  ${sql(rowDataArray, "chain_id", "block_number", "block_hash")}
+    INSERT INTO ${sql(publicSchema)}."end_of_block_range_scanned_data"
+  ${sql(
+    rowDataArray,
+    "chain_id",
+    "block_number",
+    "block_hash"
+  )}
     ON CONFLICT(chain_id, block_number) DO UPDATE
     SET
     "chain_id" = EXCLUDED."chain_id",
@@ -181,7 +187,7 @@ module.exports.batchSetEndOfBlockRangeScannedData = chunkBatchQuery(
 
 module.exports.readEndOfBlockRangeScannedDataForChain = (sql, chainId) => {
   return sql`
-    SELECT * FROM "public"."end_of_block_range_scanned_data"
+    SELECT * FROM ${sql(publicSchema)}."end_of_block_range_scanned_data"
     WHERE
       chain_id = ${chainId}
       ORDER BY block_number ASC;`;
@@ -194,7 +200,7 @@ module.exports.deleteStaleEndOfBlockRangeScannedDataForChain = (
 ) => {
   return sql`
     DELETE
-    FROM "public"."end_of_block_range_scanned_data"
+    FROM ${sql(publicSchema)}."end_of_block_range_scanned_data"
     WHERE chain_id = ${chainId}
     AND block_number < ${blockNumberThreshold};`;
 };
@@ -206,7 +212,7 @@ module.exports.rollbackEndOfBlockRangeScannedDataForChain = (
 ) => {
   return sql`
     DELETE
-    FROM "public"."end_of_block_range_scanned_data"
+    FROM ${sql(publicSchema)}."end_of_block_range_scanned_data"
     WHERE chain_id = ${chainId}
     AND block_number > ${knownBlockNumber};`;
 };
@@ -219,7 +225,7 @@ module.exports.deleteInvalidDynamicContractsOnRestart = (
 ) => {
   return sql`
     DELETE
-    FROM "public"."dynamic_contract_registry"
+    FROM ${sql(publicSchema)}."dynamic_contract_registry"
     WHERE chain_id = ${chainId}
     AND is_pre_registered = false
     AND (
@@ -237,7 +243,7 @@ module.exports.deleteInvalidDynamicContractsHistoryOnRestart = (
 ) => {
   return sql`
     DELETE
-    FROM "public"."dynamic_contract_registry_history"
+    FROM ${sql(publicSchema)}."dynamic_contract_registry_history"
     WHERE entity_history_chain_id = ${chainId}
     AND (
       entity_history_block_number > ${restartBlockNumber} 
@@ -248,7 +254,7 @@ module.exports.deleteInvalidDynamicContractsHistoryOnRestart = (
 
 module.exports.readAllDynamicContracts = (sql, chainId) => sql`
   SELECT *
-  FROM "public"."dynamic_contract_registry"
+  FROM ${sql(publicSchema)}."dynamic_contract_registry"
   WHERE chain_id = ${chainId};`;
 
 const makeHistoryTableName = (entityName) => entityName + "_history";
@@ -267,7 +273,7 @@ module.exports.getFirstChangeSerial_UnorderedMultichain = (
     SELECT
       MIN(serial) AS first_change_serial
     FROM
-      public.${sql(makeHistoryTableName(entityName))}
+      ${sql(publicSchema)}.${sql(makeHistoryTableName(entityName))}
     WHERE
       entity_history_chain_id = ${reorgChainId}
       AND entity_history_block_number > ${safeBlockNumber}
@@ -287,7 +293,7 @@ module.exports.getFirstChangeSerial_OrderedMultichain = (
     SELECT
       MIN(serial) AS first_change_serial
     FROM
-      public.${sql(makeHistoryTableName(entityName))}
+      ${sql(publicSchema)}.${sql(makeHistoryTableName(entityName))}
     WHERE
       entity_history_block_timestamp > ${safeBlockTimestamp}
       OR
@@ -312,7 +318,7 @@ module.exports.getFirstChangeEntityHistoryPerChain = (
   SELECT DISTINCT
     ON (entity_history_chain_id) *
   FROM
-    public.${sql(makeHistoryTableName(entityName))}
+    ${sql(publicSchema)}.${sql(makeHistoryTableName(entityName))}
   WHERE
     serial >= (
       SELECT
@@ -339,7 +345,7 @@ module.exports.deleteRolledBackEntityHistory = (
     )
   -- Step 2: Delete all rows that have a serial >= the first change serial
   DELETE FROM
-    public.${sql(makeHistoryTableName(entityName))}
+    ${sql(publicSchema)}.${sql(makeHistoryTableName(entityName))}
   WHERE
     serial >= (
       SELECT
@@ -364,7 +370,7 @@ module.exports.pruneStaleEntityHistory = (
     SELECT
       MIN(serial) AS first_change_serial
     FROM
-      public.${sql(tableName)}
+      ${sql(publicSchema)}.${sql(tableName)}
     WHERE
       ${Utils.$$Array.interleave(
         safeChainIdAndBlockNumberArray.map(
@@ -378,7 +384,7 @@ module.exports.pruneStaleEntityHistory = (
     SELECT DISTINCT
       ON (id) *
     FROM
-      public.${sql(tableName)}
+      ${sql(publicSchema)}.${sql(tableName)}
     WHERE
       serial >= (SELECT first_change_serial FROM first_change)
     ORDER BY
@@ -393,7 +399,7 @@ module.exports.pruneStaleEntityHistory = (
       prev.id,
       prev.serial
     FROM
-      public.${sql(tableName)} prev
+      ${sql(publicSchema)}.${sql(tableName)} prev
     INNER JOIN
       items_in_reorg_threshold r
     ON
@@ -408,7 +414,7 @@ module.exports.pruneStaleEntityHistory = (
       : sql``
   }
   DELETE FROM
-    public.${sql(tableName)} eh
+    ${sql(publicSchema)}.${sql(tableName)} eh
   WHERE
     -- Delete all entity history of entities that are not in the reorg threshold
     eh.id NOT IN (SELECT id FROM items_in_reorg_threshold)
@@ -435,7 +441,7 @@ module.exports.getRollbackDiff = (sql, entityName, getFirstChangeSerial) => sql`
       SELECT DISTINCT
         ON (id) after.*
       FROM
-        public.${sql(makeHistoryTableName(entityName))} after
+        ${sql(publicSchema)}.${sql(makeHistoryTableName(entityName))} after
       WHERE
         after.serial >= (
           SELECT
@@ -462,7 +468,7 @@ module.exports.getRollbackDiff = (sql, entityName, getFirstChangeSerial) => sql`
     COALESCE(before.entity_history_log_index, 0) AS entity_history_log_index
   FROM
     -- Use a RIGHT JOIN, to ensure that nulls get returned if there is no "before" row
-    public.${sql(makeHistoryTableName(entityName))} before
+    ${sql(publicSchema)}.${sql(makeHistoryTableName(entityName))} before
     RIGHT JOIN rollback_ids after ON before.id = after.id
     AND before.entity_history_block_timestamp = after.previous_entity_history_block_timestamp
     AND before.entity_history_chain_id = after.previous_entity_history_chain_id
