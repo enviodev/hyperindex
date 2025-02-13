@@ -11,10 +11,7 @@ networks:
         events:
           - event: "Approval(address indexed owner, address indexed spender, uint256 value)"
           - event: "Transfer(address indexed from, address indexed to, uint256 value)"
-# Rollback on reorg mode currently incurs a performance hit on historical sync
-# while developing an indexer we recommend setting this to false
-rollback_on_reorg: false
-# Unordered multichain mode allows you to index events from multiple chains 
+# Unordered multichain mode allows you to index events from multiple chains
 # in realtime but doesn't guarentee ordering between chains
 # https://docs.envio.dev/docs/HyperIndex/multichain-indexing#unordered-multichain-mode
 unordered_multichain_mode: true
