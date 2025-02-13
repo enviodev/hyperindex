@@ -165,7 +165,7 @@ pub mod evm {
                 networks: networks_map.into_values().sorted_by_key(|v| v.id).collect(),
                 unordered_multichain_mode: None,
                 event_decoder: None,
-                rollback_on_reorg: Some(false),
+                rollback_on_reorg: None,
                 save_full_history: None,
                 field_selection: None,
                 raw_events: None,
