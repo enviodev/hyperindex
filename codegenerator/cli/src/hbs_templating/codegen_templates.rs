@@ -475,8 +475,7 @@ impl EventTemplate {
          fromStringUnsafe])->Utils.unwrapResultExn]";
 
     const EVENT_FILTER_TYPE_STUB: &'static str = "{}";
-    const CONVERT_HYPER_SYNC_EVENT_ARGS_NOOP: &'static str =
-        "(Utils.magic: HyperSyncClient.Decoder.decodedEvent => eventArgs)";
+    const CONVERT_HYPER_SYNC_EVENT_ARGS_NOOP: &'static str = "_ => ()";
 
     pub fn generate_event_filter_type(params: &Vec<EventParam>) -> String {
         let field_rows = params
@@ -1512,7 +1511,7 @@ let paramsRawEventSchema = S.literal(%raw(`null`))->S.to(_ => ())
 let blockSchema = Block.schema
 let transactionSchema = Transaction.schema
 
-let convertHyperSyncEventArgs = (Utils.magic: HyperSyncClient.Decoder.decodedEvent => eventArgs)
+let convertHyperSyncEventArgs = _ => ()
 
 let handlerRegister: HandlerTypes.Register.t = HandlerTypes.Register.make(
   ~topic0=sighash->EvmTypes.Hex.fromStringUnsafe,
@@ -1579,7 +1578,7 @@ let paramsRawEventSchema = S.literal(%raw(`null`))->S.to(_ => ())
 let blockSchema = S.object((_): block => {{}})
 let transactionSchema = S.object((s): transaction => {{from: s.field("from", S.option(Address.schema))}})
 
-let convertHyperSyncEventArgs = (Utils.magic: HyperSyncClient.Decoder.decodedEvent => eventArgs)
+let convertHyperSyncEventArgs = _ => ()
 
 let handlerRegister: HandlerTypes.Register.t = HandlerTypes.Register.make(
   ~topic0=sighash->EvmTypes.Hex.fromStringUnsafe,
