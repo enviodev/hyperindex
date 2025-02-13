@@ -35,3 +35,8 @@ CONFIG_FILE="config-dynamic-contracts.yaml" SHOULD_FAIL=false TEST_RESTART=true 
 export TEMPLATE="test_indexers/wildcard-uni-factory"
 export TEST_FILE="WildcardUniFactory"
 CONFIG_FILE="config.yaml" SHOULD_FAIL=false ./tests/testIndexerExits.sh
+
+export ENVIO_PG_PUBLIC_SCHEMA="custom"
+export TEMPLATE="test_indexers/wildcard-uni-factory"
+export TEST_FILE="WildcardUniFactory"
+CONFIG_FILE="config.yaml" SHOULD_FAIL=false ./tests/testIndexerExits.sh

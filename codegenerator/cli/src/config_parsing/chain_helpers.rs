@@ -68,6 +68,9 @@ pub enum Network {
     BaseSepolia = 84532,
 
     #[subenum(HypersyncNetwork)]
+    Berachain = 80094,
+
+    #[subenum(HypersyncNetwork)]
     BerachainBartio = 80084,
 
     #[subenum(HypersyncNetwork, NetworkWithExplorer)]
@@ -156,7 +159,7 @@ pub enum Network {
     Fuse = 122,
 
     #[subenum(
-        HypersyncNetwork(serde(rename = "galadriel-devnet (experimental)")),
+        HypersyncNetwork(serde(rename = "galadriel-devnet (Stone)")),
         NetworkWithExplorer
     )]
     GaladrielDevnet = 696969,
@@ -225,6 +228,9 @@ pub enum Network {
 
     #[subenum(NetworkWithExplorer)]
     ModeSepolia = 919,
+
+    #[subenum(HypersyncNetwork)]
+    MonadTestnet = 41454,
 
     #[subenum(
         HypersyncNetwork,
@@ -468,7 +474,9 @@ impl Network {
             | Network::Fraxtal
             | Network::Soneium
             | Network::Ink
-            | Network::Metall2 => DEFAULT_CONFIRMED_BLOCK_THRESHOLD,
+            | Network::Metall2
+            | Network::Berachain
+            | Network::MonadTestnet => DEFAULT_CONFIRMED_BLOCK_THRESHOLD,
         }
     }
 }
@@ -480,7 +488,7 @@ pub enum ChainTier {
     Silver,
     Bronze,
     #[serde(alias = "TESTNET")]
-    Experimental,
+    Stone,
     #[serde(alias = "HIDDEN")]
     Internal,
 }
@@ -491,14 +499,14 @@ impl ChainTier {
             Self::Gold => "🥇",
             Self::Silver => "🥈",
             Self::Bronze => "🥉",
-            Self::Experimental => "🧪",
+            Self::Stone => "🪨",
             Self::Internal => "🔒",
         }
     }
 
     pub fn is_public(&self) -> bool {
         match self {
-            Self::Gold | Self::Silver | Self::Bronze | Self::Experimental => true,
+            Self::Gold | Self::Silver | Self::Bronze | Self::Stone => true,
             Self::Internal => false,
         }
     }
@@ -513,19 +521,21 @@ impl HypersyncNetwork {
         use ChainTier::*;
         use HypersyncNetwork::*;
         match self {
-            EthereumMainnet | Fantom | Zeta | Sepolia | Metis | ZksyncEra | Optimism
-            | ArbitrumNova | Avalanche | Polygon | Bsc | Mantle | Gnosis => Gold,
+            EthereumMainnet | Fantom | Sepolia | ZksyncEra | Optimism | ArbitrumNova
+            | Avalanche | Polygon | Bsc | Gnosis => Gold,
 
-            Linea | Manta | Base | Boba | Blast | Cyber | Aurora | Harmony | Scroll | Darwinia
-            | Rsk | ShimmerEvm | Amoy | Saakuru | Moonbeam | Lisk | Chiliz | ArbitrumOne => Silver,
+            Linea | Base | Blast | Cyber | Harmony | Scroll | Rsk | Amoy | Saakuru | Moonbeam
+            | Lisk | Chiliz | ArbitrumOne => Silver,
 
-            Zora | Morph | Kroma | Lukso | Crab | Sophon | Flare | PolygonZkevm => Bronze,
+            Zora | Morph | Lukso | Sophon | PolygonZkevm => Bronze,
 
-            Ink | Metall2 | SophonTestnet | MorphTestnet | GaladrielDevnet | CitreaTestnet
-            | Goerli | BscTestnet | UnichainSepolia | Zircuit | Celo | Opbnb | GnosisChiado
-            | LuksoTestnet | BlastSepolia | Holesky | BerachainBartio | OptimismSepolia | Fuji
-            | NeonEvm | ArbitrumSepolia | Fraxtal | Soneium | BaseSepolia | MevCommit | Merlin
-            | Mode | MoonbaseAlpha => Experimental,
+            MonadTestnet | Berachain | Aurora | Zeta | Manta | Kroma | Crab | Flare | Mantle
+            | Metis | ShimmerEvm | Darwinia | Boba | Ink | Metall2 | SophonTestnet
+            | MorphTestnet | GaladrielDevnet | CitreaTestnet | Goerli | BscTestnet
+            | UnichainSepolia | Zircuit | Celo | Opbnb | GnosisChiado | LuksoTestnet
+            | BlastSepolia | Holesky | BerachainBartio | OptimismSepolia | Fuji | NeonEvm
+            | ArbitrumSepolia | Fraxtal | Soneium | BaseSepolia | MevCommit | Merlin | Mode
+            | MoonbaseAlpha => Stone,
         }
     }
 
