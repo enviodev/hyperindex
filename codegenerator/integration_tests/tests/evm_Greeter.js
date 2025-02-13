@@ -26,8 +26,11 @@ const pollGraphQL = async () => {
       try {
         assert(!!user, "greeting should not be null or undefined");
         assert(
-          user.greetings.slice(0, 3).toString() === "gm,gn,gm paris",
-          "First 3 greetings should be 'gm,gn,gm paris'"
+          user.greetings.slice(0, 5).join(",") ===
+            // First "gm Linea,assah dude" are from Linea chain
+            // The rest should be from Polygon
+            "gm Linea,assah dude,gm,gn,gm paris",
+          "First 5 greetings should be 'gm Linea,assah dude,gm,gn,gm paris'"
         );
         assert(user.numberOfGreetings >= 3, "numberOfGreetings should be >= 3");
         console.log("Second test passed.");
