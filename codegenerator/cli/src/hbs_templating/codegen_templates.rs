@@ -476,6 +476,8 @@ impl EventTemplate {
 
     const EVENT_FILTER_TYPE_STUB: &'static str = "{}";
     const CONVERT_HYPER_SYNC_EVENT_ARGS_NOOP: &'static str = "_ => ()";
+    const CONVERT_HYPER_SYNC_EVENT_ARGS_NEVER: &'static str =
+        "_ => Js.Exn.raiseError(\"Not implemented\")";
 
     pub fn generate_event_filter_type(params: &Vec<EventParam>) -> String {
         let field_rows = params
@@ -583,7 +585,7 @@ impl EventTemplate {
             event_name: event_name.clone(),
             data_type: "Internal.fuelSupplyParams".to_string(),
             params_raw_event_schema: "Internal.fuelSupplyParamsSchema".to_string(),
-            convert_hyper_sync_event_args_code: Self::CONVERT_HYPER_SYNC_EVENT_ARGS_NOOP
+            convert_hyper_sync_event_args_code: Self::CONVERT_HYPER_SYNC_EVENT_ARGS_NEVER
                 .to_string(),
             event_filter_type: Self::EVENT_FILTER_TYPE_STUB.to_string(),
             get_topic_selection_code: Self::GET_TOPIC_SELECTION_CODE_STUB.to_string(),
@@ -608,7 +610,7 @@ impl EventTemplate {
             event_name: event_name.clone(),
             data_type: "Internal.fuelTransferParams".to_string(),
             params_raw_event_schema: "Internal.fuelTransferParamsSchema".to_string(),
-            convert_hyper_sync_event_args_code: Self::CONVERT_HYPER_SYNC_EVENT_ARGS_NOOP
+            convert_hyper_sync_event_args_code: Self::CONVERT_HYPER_SYNC_EVENT_ARGS_NEVER
                 .to_string(),
             event_filter_type: Self::EVENT_FILTER_TYPE_STUB.to_string(),
             get_topic_selection_code: Self::GET_TOPIC_SELECTION_CODE_STUB.to_string(),
@@ -695,7 +697,7 @@ impl EventTemplate {
                                 type_indent.to_rescript_schema(&RescriptSchemaMode::ForDb)
                             ),
                             convert_hyper_sync_event_args_code:
-                                Self::CONVERT_HYPER_SYNC_EVENT_ARGS_NOOP.to_string(),
+                                Self::CONVERT_HYPER_SYNC_EVENT_ARGS_NEVER.to_string(),
                             event_filter_type: Self::EVENT_FILTER_TYPE_STUB.to_string(),
                             get_topic_selection_code: Self::GET_TOPIC_SELECTION_CODE_STUB
                                 .to_string(),
