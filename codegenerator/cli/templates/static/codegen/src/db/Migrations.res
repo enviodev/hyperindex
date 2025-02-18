@@ -93,8 +93,16 @@ let deleteAllTables: unit => promise<unit> = async () => {
       GRANT ALL ON SCHEMA ${Env.Db.publicSchema} TO public;
     END $$;`
 
-  @warning("-21")
   await sql->unsafe(query)
+}
+
+let needsRunUpMigrations = async sql => {
+  let schemas =
+    await sql->Postgres.unsafe(
+      `SELECT schema_name FROM information_schema.schemata WHERE schema_name = '${Env.Db.publicSchema}';`,
+    )
+  let schemaExists = schemas->Array.length > 0
+  !schemaExists
 }
 
 type t
@@ -117,6 +125,17 @@ let runUpMigrations = async (~shouldExit) => {
       exn->ErrorHandling.make(~msg, ~logger)->ErrorHandling.log
     | _ => ()
     }
+
+  let _ = await sql->unsafe(
+    `DO $$ 
+    BEGIN
+      IF NOT EXISTS(SELECT 1 FROM information_schema.schemata WHERE schema_name = '${Env.Db.publicSchema}') THEN
+        CREATE SCHEMA ${Env.Db.publicSchema};
+        GRANT ALL ON SCHEMA ${Env.Db.publicSchema} TO postgres;
+        GRANT ALL ON SCHEMA ${Env.Db.publicSchema} TO public;
+      END IF;
+    END $$;`,
+  )
 
   //Add all enums
   await Enums.allEnums->awaitEach(enum => {
@@ -145,8 +164,7 @@ let runUpMigrations = async (~shouldExit) => {
   })
 
   //Create all derivedFromField indices (must be done after all tables are created)
-  await Db.allEntityTables
-  ->awaitEach(async table => {
+  await Db.allEntityTables->awaitEach(async table => {
     await table
     ->Table.getDerivedFromFields
     ->awaitEach(derivedFromField => {

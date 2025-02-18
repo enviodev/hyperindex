@@ -131,21 +131,6 @@ impl PersistedState {
 
         (!non_matching_fields.is_empty(), non_matching_fields)
     }
-
-    ///Compares the current state and a persisted state on the db,
-    ///returning a boolean of whether it should resync from raw events
-    ///ie. in the case where nothing has changed except event handlers
-    pub fn should_sync_from_raw_events(&self, persisted_state_db: &Self) -> bool {
-        let any_changes = StateField::iter().collect::<Vec<_>>();
-        let non_matching_fields = self.get_non_matching_fields(persisted_state_db, any_changes);
-
-        let only_handler_file_change = vec![StateField::HandlerFiles];
-
-        match non_matching_fields {
-            changes if changes == only_handler_file_change => true,
-            _ => false,
-        }
-    }
 }
 
 #[derive(Debug)]
@@ -281,50 +266,6 @@ mod test {
         assert!(
             should_run_db_migrations,
             "should run codegen should be true due since a change occurred"
-        );
-
-        let should_sync_from_raw_events = current_state.should_sync_from_raw_events(&persisted_db);
-
-        assert!(
-            !should_sync_from_raw_events,
-            "should_sync_from_raw_events should be false since there were additional changes \
-             other than handler_files_hash"
-        );
-    }
-
-    #[test]
-    fn should_sync_from_raw_events() {
-        let persisted_db: PersistedState = serde_json::from_value(json!({
-            "envio_version": "0.0.1",
-            "config_hash": "<HASH_STRING>",
-            "schema_hash": "<HASH_STRING>",
-            "handler_files_hash": "<HASH_STRING>",
-            "abi_files_hash": "<HASH_STRING>",
-        }))
-        .unwrap();
-
-        let current_state: PersistedState = serde_json::from_value(json!({
-            "envio_version": "0.0.1",
-            "config_hash": "<HASH_STRING>",
-            "schema_hash": "<HASH_STRING>",
-            "handler_files_hash": "<CHANGED_HASH_STRING>",
-            "abi_files_hash": "<HASH_STRING>",
-        }))
-        .unwrap();
-
-        let (should_run_db_migrations, _changed_fields) =
-            current_state.should_run_db_migrations(&persisted_db);
-
-        assert!(
-            should_run_db_migrations,
-            "should run codegen should be true due since a change occurred"
-        );
-
-        let should_sync_from_raw_events = current_state.should_sync_from_raw_events(&persisted_db);
-
-        assert!(
-            should_sync_from_raw_events,
-            "should_sync_from_raw_events should be true since only handler files changed"
         );
     }
 

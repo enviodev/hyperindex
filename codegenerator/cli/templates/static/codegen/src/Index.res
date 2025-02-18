@@ -157,6 +157,11 @@ let main = async () => {
     let config = RegisterHandlers.registerAllHandlers()
     let mainArgs: mainArgs = process->argv->Yargs.hideBin->Yargs.yargs->Yargs.argv
     let shouldUseTui = !(mainArgs.tuiOff->Belt.Option.getWithDefault(Env.tuiOffEnvVar))
+    let sql = Db.sql
+    let needsRunUpMigrations = await sql->Migrations.needsRunUpMigrations
+    if needsRunUpMigrations {
+      let _ = await Migrations.runUpMigrations(~shouldExit=false)
+    }
     let chainManager = await ChainManager.makeFromDbState(~config)
     let loadLayer = LoadLayer.makeWithDbConnection()
     let globalState = GlobalState.make(~config, ~chainManager, ~loadLayer)

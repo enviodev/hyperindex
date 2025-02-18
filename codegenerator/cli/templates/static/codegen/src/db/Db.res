@@ -37,7 +37,6 @@ let allStaticTables: array<Table.table> = [
   TablesStatic.PersistedState.table,
   TablesStatic.EndOfBlockRangeScannedData.table,
   TablesStatic.RawEvents.table,
-  TablesStatic.DynamicContractRegistry.table,
 ]
 
 let schema = Schema.make(allEntityTables)

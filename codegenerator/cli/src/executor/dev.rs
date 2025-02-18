@@ -88,15 +88,7 @@ pub async fn run_dev(project_paths: ParsedProjectPaths) -> Result<()> {
                 .await
                 .context("Failed to read persisted state from the DB")?;
 
-            //Temporarily disabled since it is causing issues
-            const TEMPORARY_SHOULD_SYNC_FROM_RAW_EVENTS: bool = false;
-            let should_sync_from_raw_events = TEMPORARY_SHOULD_SYNC_FROM_RAW_EVENTS;
-
-            let (
-                /*DISABLED*/ _should_sync_from_raw_events,
-                should_run_db_migrations,
-                changes_detected,
-            ) = match &persisted_state_db {
+            let (should_run_db_migrations, changes_detected) = match &persisted_state_db {
                 PersistedStateExists::Exists(persisted_state) =>
                 //In the case where the persisted state exists, compare it to current state
                 //determine whether to run migrations and which changes have occured to
@@ -105,19 +97,10 @@ pub async fn run_dev(project_paths: ParsedProjectPaths) -> Result<()> {
                     let (should_run_db_migrations, changes_detected) =
                         current_state.should_run_db_migrations(persisted_state);
 
-                    let should_sync_from_raw_events =
-                        current_state.should_sync_from_raw_events(persisted_state);
-
-                    (
-                        should_sync_from_raw_events,
-                        should_run_db_migrations,
-                        changes_detected,
-                    )
+                    (should_run_db_migrations, changes_detected)
                 }
                 //Otherwise we should run db migrations
-                PersistedStateExists::NotExists | PersistedStateExists::Corrupted => {
-                    (false, true, vec![])
-                }
+                PersistedStateExists::NotExists | PersistedStateExists::Corrupted => (true, vec![]),
             };
 
             if should_run_db_migrations {
@@ -130,30 +113,16 @@ pub async fn run_dev(project_paths: ParsedProjectPaths) -> Result<()> {
                 }
                 println!("Running db migrations");
 
-                let should_drop_raw_events = !should_sync_from_raw_events;
-
-                commands::db_migrate::run_db_setup(
-                    &project_paths,
-                    should_drop_raw_events,
-                    &current_state,
-                )
-                .await
-                .context("Failed running db setup command")?;
-            }
-
-            if should_sync_from_raw_events {
-                println!("Resyncing from raw_events");
+                commands::db_migrate::run_db_setup(&project_paths, &current_state)
+                    .await
+                    .context("Failed running db setup command")?;
             }
 
             println!("Starting indexer");
 
-            commands::start::start_indexer(
-                &project_paths,
-                should_sync_from_raw_events,
-                should_open_hasura_console,
-            )
-            .await
-            .context("Failed running start on the indexer")?;
+            commands::start::start_indexer(&project_paths, should_open_hasura_console)
+                .await
+                .context("Failed running start on the indexer")?;
         }
     }
 
