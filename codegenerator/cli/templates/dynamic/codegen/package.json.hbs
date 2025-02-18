@@ -10,7 +10,7 @@
     "format": "rescript format -all",
     "db-up": "node -e 'require(`./src/db/Migrations.bs.js`).runUpMigrations(true)'",
     "db-down": "node -e 'require(`./src/db/Migrations.bs.js`).runDownMigrations(true)'",
-    "db-setup": "node -e 'require(`./src/db/Migrations.bs.js`).setupDb()'",
+    "db-setup": "node -e 'require(`./src/db/Migrations.bs.js`).runUpMigrations(true, true)'",
     "print-benchmark-summary": "node -e 'require(`./src/Benchmark.bs.js`).Summary.printSummary()'",
     "start": "node src/Index.bs.js"
   },

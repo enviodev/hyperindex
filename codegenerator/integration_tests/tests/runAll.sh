@@ -36,7 +36,6 @@ export TEMPLATE="test_indexers/wildcard-uni-factory"
 export TEST_FILE="WildcardUniFactory"
 CONFIG_FILE="config.yaml" SHOULD_FAIL=false ./tests/testIndexerExits.sh
 
-export ENVIO_PG_PUBLIC_SCHEMA="custom"
 export TEMPLATE="test_indexers/wildcard-uni-factory"
 export TEST_FILE="WildcardUniFactory"
-CONFIG_FILE="config.yaml" SHOULD_FAIL=false ./tests/testIndexerExits.sh
+ENVIO_PG_PUBLIC_SCHEMA="custom" CONFIG_FILE="config.yaml" SHOULD_FAIL=false ./tests/testIndexerExits.sh
