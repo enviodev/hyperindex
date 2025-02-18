@@ -76,20 +76,21 @@ let clearHasuraMetadata = async () => {
   }
 }
 
-let trackTable = async (~tableName: string) => {
+let trackTables = async (~tableNames: array<string>) => {
   let body = {
-    "type": "pg_track_table",
+    "type": "pg_track_tables",
     "args": {
-      "source": "public",
-      "schema": Env.Db.publicSchema,
-      "name": tableName,
+      // If set to false, any warnings will cause the API call to fail and no new tables to be tracked. Otherwise tables that fail to track will be raised as warnings. (default: true)
+      "allow_warnings": false,
+      "tables": tableNames->Js.Array2.map(tableName =>
+        {
+          "source": "public",
+          "schema": Env.Db.publicSchema,
+          "name": tableName,
+        }
+      ),
     },
   }
-
-  Logging.trace({
-    "msg": `Tracking table ${tableName} in schema ${Env.Db.publicSchema}`,
-    "body": body,
-  })
 
   let response = await fetch(
     Env.Hasura.graphqlEndpoint,
@@ -106,19 +107,19 @@ let trackTable = async (~tableName: string) => {
   switch validateHasuraResponse(~statusCode, ~responseJson) {
   | Error(_) =>
     Logging.error({
-      "msg": `EE807: There was an issue tracking the ${tableName} table in hasura - indexing may still work - but you may have issues querying the data in hasura.`,
-      "tableName": tableName,
+      "msg": `EE807: There was an issue tracking tables in hasura - indexing may still work - but you may have issues querying the data in hasura.`,
+      "tableNames": tableNames,
       "requestStatusCode": statusCode,
       "requestResponseJson": responseJson,
     })
   | Ok(case) =>
     let msg = switch case {
-    | QuerySucceeded => "Table Tracked"
+    | QuerySucceeded => "Tables Tracked"
     | AlreadyDone => "Table Already Tracked"
     }
     Logging.trace({
       "msg": msg,
-      "tableName": tableName,
+      "tableNames": tableNames,
       "requestStatusCode": statusCode,
       "requestResponseJson": responseJson,
     })
@@ -227,10 +228,12 @@ let trackAllTables = async () => {
   Logging.info("Tracking tables in Hasura")
 
   let _ = await clearHasuraMetadata()
-  await [Db.allStaticTables, Db.allEntityTables]
-  ->Belt.Array.concatMany
-  ->Utils.Array.awaitEach(async ({tableName}) => {
-    await trackTable(~tableName)
+  let tableNames =
+    [Db.allStaticTables, Db.allEntityTables]
+    ->Belt.Array.concatMany
+    ->Js.Array2.map(({tableName}) => tableName)
+  await trackTables(~tableNames)
+  await tableNames->Utils.Array.awaitEach(async tableName => {
     await createSelectPermissions(~tableName)
   })
 
