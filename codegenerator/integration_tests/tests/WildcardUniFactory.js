@@ -11,9 +11,8 @@ const maxRetryMessage =
   "Max retries reached - if you have changed the shape of the chain_metadata table update this test and the UI before releasing.";
 
 const pollGraphQL = async () => {
-  const customSchema = process.env.ENVIO_PG_PUBLIC_SCHEMA;
   const poolCreatedQuery = `query {
-    ${customSchema ? `${customSchema}_PoolCreated` : `PoolCreated`} {
+    PoolCreated {
       token0
       token1
     }

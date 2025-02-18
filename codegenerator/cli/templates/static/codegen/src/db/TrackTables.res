@@ -84,9 +84,14 @@ let trackTables = async (~tableNames: array<string>) => {
       "allow_warnings": false,
       "tables": tableNames->Js.Array2.map(tableName =>
         {
-          "source": "public",
-          "schema": Env.Db.publicSchema,
-          "name": tableName,
+          "table": {
+            "name": tableName,
+            "schema": Env.Db.publicSchema,
+          }
+          "configuration": {
+            // Otherwise the entity in gql will be prefixed with the schema name (when it's not public)
+            "custom_name": tableName
+          }
         }
       ),
     },

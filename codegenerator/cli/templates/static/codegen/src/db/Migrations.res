@@ -11,7 +11,10 @@ let creatTableIfNotExists = (sql, table) => {
       let fieldName = field->Table.getDbFieldName
 
       {
-        `"${fieldName}" ${(fieldType :> string)}${isArray ? "[]" : ""}${switch defaultValue {
+        `"${fieldName}" ${switch fieldType {
+        | Custom(name) => `${Env.Db.publicSchema}.${name}`
+        | _ => fieldType :> string
+        }}${isArray ? "[]" : ""}${switch defaultValue {
           | Some(defaultValue) => ` DEFAULT ${defaultValue}`
           | None => isNullable ? `` : ` NOT NULL`
           }}`
@@ -73,7 +76,7 @@ let createEnumIfNotExists = (sql, enum: Enum.enum<_>) => {
   let query = `
       DO $$ BEGIN
       IF NOT EXISTS(SELECT 1 FROM pg_type WHERE typname = '${name->Js.String2.toLowerCase}') THEN
-        CREATE TYPE ${name} AS ENUM(${mappedVariants});
+        CREATE TYPE "${Env.Db.publicSchema}".${name} AS ENUM(${mappedVariants});
         END IF;
       END $$; `
 
