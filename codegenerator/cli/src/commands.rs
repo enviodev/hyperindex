@@ -168,7 +168,6 @@ pub mod start {
 
     pub async fn start_indexer(
         project_paths: &ParsedProjectPaths,
-        should_use_raw_events_worker: bool,
         should_open_hasura: bool,
     ) -> anyhow::Result<()> {
         if should_open_hasura {
@@ -181,15 +180,8 @@ pub mod start {
             }
         }
         let cmd = "npm";
-        let mut args = vec!["run", "start"];
+        let args = vec!["run", "start"];
         let current_dir = &project_paths.project_root;
-
-        //TODO: put the start script in the generated package.json
-        //and run from there.
-        if should_use_raw_events_worker {
-            args.push("--");
-            args.push("--sync-from-raw-events");
-        }
 
         let exit = execute_command(cmd, args, current_dir).await?;
 
@@ -265,15 +257,9 @@ pub mod db_migrate {
 
     pub async fn run_db_setup(
         project_paths: &ParsedProjectPaths,
-        should_drop_raw_events: bool,
         persisted_state: &PersistedState,
     ) -> anyhow::Result<()> {
-        let arg = if should_drop_raw_events {
-            "db-setup"
-        } else {
-            "db-setup-keep-raw-events"
-        };
-        let args = vec![arg];
+        let args = vec!["db-setup"];
         let current_dir = &project_paths.generated;
         let exit = execute_command("pnpm", args, current_dir).await?;
 

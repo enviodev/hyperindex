@@ -68,7 +68,7 @@ jobs:
       - name: Cache (hardhat) Solidity
         if: steps.changes.outputs.testChanges == 'true'
         id: cache-hardhat-solidity
-        uses: actions/cache@v2
+        uses: actions/cache@v3
         with:
           path: ~/.cache/hardhat-nodejs
           key: ${{ runner.os }}-solidity-hardhat-${{ hashFiles('**/hardhat.config.*s') }}

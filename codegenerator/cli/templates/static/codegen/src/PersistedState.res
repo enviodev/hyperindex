@@ -6,12 +6,12 @@ type t = {
   @as("abi_files_hash") abiFilesHash: string,
 }
 
-let schema: S.t<t> = S.object(s => {
-  envioVersion: s.field("envio_version", S.string),
-  configHash: s.field("config_hash", S.string),
-  schemaHash: s.field("schema_hash", S.string),
-  handlerFilesHash: s.field("handler_files_hash", S.string),
-  abiFilesHash: s.field("abi_files_hash", S.string),
+let schema = S.schema(s => {
+  envioVersion: s.matches(S.string),
+  configHash: s.matches(S.string),
+  schemaHash: s.matches(S.string),
+  handlerFilesHash: s.matches(S.string),
+  abiFilesHash: s.matches(S.string),
 })
 
 external requireJson: string => Js.Json.t = "require"

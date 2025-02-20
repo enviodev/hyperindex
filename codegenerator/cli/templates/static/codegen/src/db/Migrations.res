@@ -11,7 +11,10 @@ let creatTableIfNotExists = (sql, table) => {
       let fieldName = field->Table.getDbFieldName
 
       {
-        `"${fieldName}" ${(fieldType :> string)}${isArray ? "[]" : ""}${switch defaultValue {
+        `"${fieldName}" ${switch fieldType {
+          | Custom(name) if !(name->Js.String2.startsWith("NUMERIC(")) => `"${Env.Db.publicSchema}".${name}`
+          | _ => (fieldType :> string)
+          }}${isArray ? "[]" : ""}${switch defaultValue {
           | Some(defaultValue) => ` DEFAULT ${defaultValue}`
           | None => isNullable ? `` : ` NOT NULL`
           }}`
@@ -70,12 +73,15 @@ let createEnumIfNotExists = (sql, enum: Enum.enum<_>) => {
   open Belt
   let {variants, name} = enum
   let mappedVariants = variants->Array.map(v => `'${v->Utils.magic}'`)->Js.Array2.joinWith(", ")
-  let query = `
-      DO $$ BEGIN
-      IF NOT EXISTS(SELECT 1 FROM pg_type WHERE typname = '${name->Js.String2.toLowerCase}') THEN
-        CREATE TYPE ${name} AS ENUM(${mappedVariants});
-        END IF;
-      END $$; `
+  let query = `DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 
+    FROM pg_type 
+    WHERE typname = '${name->Js.String2.toLowerCase}' 
+    AND typnamespace = (SELECT oid FROM pg_namespace WHERE nspname = '${Env.Db.publicSchema}')
+  ) THEN CREATE TYPE "${Env.Db.publicSchema}".${name} AS ENUM(${mappedVariants});
+  END IF;
+END $$;`
 
   sql->unsafe(query)
 }
@@ -85,16 +91,22 @@ let deleteAllTables: unit => promise<unit> = async () => {
   let query = `
     DO $$ 
     BEGIN
-      IF EXISTS(SELECT 1 FROM information_schema.schemata WHERE schema_name = '${Env.Db.publicSchema}') THEN
-        DROP SCHEMA ${Env.Db.publicSchema} CASCADE;
-      END IF;
+      DROP SCHEMA IF EXISTS ${Env.Db.publicSchema} CASCADE;
       CREATE SCHEMA ${Env.Db.publicSchema};
       GRANT ALL ON SCHEMA ${Env.Db.publicSchema} TO postgres;
       GRANT ALL ON SCHEMA ${Env.Db.publicSchema} TO public;
     END $$;`
 
-  @warning("-21")
   await sql->unsafe(query)
+}
+
+let needsRunUpMigrations = async sql => {
+  let schemas =
+    await sql->Postgres.unsafe(
+      `SELECT schema_name FROM information_schema.schemata WHERE schema_name = '${Env.Db.publicSchema}';`,
+    )
+  let schemaExists = schemas->Array.length > 0
+  !schemaExists
 }
 
 type t
@@ -106,7 +118,11 @@ type exitCode = | @as(0) Success | @as(1) Failure
 let awaitEach = Utils.Array.awaitEach
 
 // TODO: all the migration steps should run as a single transaction
-let runUpMigrations = async (~shouldExit) => {
+let runUpMigrations = async (
+  ~shouldExit,
+  // Reset is used for db-setup
+  ~reset=false,
+) => {
   let exitCode = ref(Success)
   let logger = Logging.createChild(~params={"context": "Running DB Migrations"})
 
@@ -117,6 +133,18 @@ let runUpMigrations = async (~shouldExit) => {
       exn->ErrorHandling.make(~msg, ~logger)->ErrorHandling.log
     | _ => ()
     }
+
+  let _ = await sql->unsafe(
+    `DO $$ 
+    BEGIN
+      ${reset ? `DROP SCHEMA IF EXISTS ${Env.Db.publicSchema} CASCADE;` : ``}
+      IF NOT EXISTS(SELECT 1 FROM information_schema.schemata WHERE schema_name = '${Env.Db.publicSchema}') THEN
+        CREATE SCHEMA ${Env.Db.publicSchema};
+        GRANT ALL ON SCHEMA ${Env.Db.publicSchema} TO postgres;
+        GRANT ALL ON SCHEMA ${Env.Db.publicSchema} TO public;
+      END IF;
+    END $$;`,
+  )
 
   //Add all enums
   await Enums.allEnums->awaitEach(enum => {
@@ -145,8 +173,7 @@ let runUpMigrations = async (~shouldExit) => {
   })
 
   //Create all derivedFromField indices (must be done after all tables are created)
-  await Db.allEntityTables
-  ->awaitEach(async table => {
+  await Db.allEntityTables->awaitEach(async table => {
     await table
     ->Table.getDerivedFromFields
     ->awaitEach(derivedFromField => {
@@ -179,23 +206,4 @@ let runDownMigrations = async (~shouldExit) => {
     process->exit(exitCode.contents)
   }
   exitCode.contents
-}
-
-let setupDb = async () => {
-  Logging.info("Provisioning Database")
-  // TODO: we should make a hash of the schema file (that gets stored in the DB) and either drop the tables and create new ones or keep this migration.
-  //       for now we always run the down migration.
-  // if (process.env.MIGRATE === "force" || hash_of_schema_file !== hash_of_current_schema)
-  let exitCodeDown = await runDownMigrations(~shouldExit=false)
-  // else
-  //   await clearDb()
-
-  let exitCodeUp = await runUpMigrations(~shouldExit=false)
-
-  let exitCode = switch (exitCodeDown, exitCodeUp) {
-  | (Success, Success) => Success
-  | _ => Failure
-  }
-
-  process->exit(exitCode)
 }

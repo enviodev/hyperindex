@@ -45,13 +45,7 @@ pub async fn run_local(
 
                 DbMigrateSubcommands::Setup => {
                     let persisted_state = get_persisted_state()?;
-                    const SHOULD_DROP_RAW_EVENTS: bool = true;
-                    commands::db_migrate::run_db_setup(
-                        &project_paths,
-                        SHOULD_DROP_RAW_EVENTS,
-                        &persisted_state,
-                    )
-                    .await?;
+                    commands::db_migrate::run_db_setup(&project_paths, &persisted_state).await?;
                 }
             }
         }

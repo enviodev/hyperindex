@@ -72,23 +72,10 @@ pub async fn execute(command_line_args: CommandLineArgs) -> Result<()> {
                 let persisted_state = PersistedState::get_current_state(&config)
                     .context("Failed constructing persisted state")?;
 
-                const SHOULD_DROP_RAW_EVENTS: bool = true;
-
-                commands::db_migrate::run_db_setup(
-                    &parsed_project_paths,
-                    SHOULD_DROP_RAW_EVENTS,
-                    &persisted_state,
-                )
-                .await?;
+                commands::db_migrate::run_db_setup(&parsed_project_paths, &persisted_state).await?;
             }
-            const SHOULD_SYNC_FROM_RAW_EVENTS: bool = false;
             const SHOULD_OPEN_HASURA: bool = false;
-            commands::start::start_indexer(
-                &parsed_project_paths,
-                SHOULD_SYNC_FROM_RAW_EVENTS,
-                SHOULD_OPEN_HASURA,
-            )
-            .await?;
+            commands::start::start_indexer(&parsed_project_paths, SHOULD_OPEN_HASURA).await?;
         }
 
         CommandType::Local(local_commands) => {
