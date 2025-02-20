@@ -9,10 +9,18 @@ use std::collections::HashSet;
 use strum::IntoEnumIterator;
 
 #[derive(Deserialize, Debug)]
+#[serde(rename_all = "lowercase")]
+pub enum Ecosystem {
+    Evm,
+    Fuel,
+}
+
+#[derive(Deserialize, Debug)]
 struct Chain {
     name: String,
-    chain_id: Option<u64>, // None for Fuel chains
+    chain_id: Option<u64>, // None for Fuel testnet chain
     tier: Option<ChainTier>,
+    ecosystem: Ecosystem,
 }
 
 pub struct Diff {
@@ -47,9 +55,15 @@ impl Diff {
 
         for chain in public_chains {
             let Some(chain_id) = chain.chain_id else {
-                // Fuel chains don't have a chain_id
-                continue;
+                continue; // Skip Fuel testnet chain
             };
+            match chain.ecosystem {
+                Ecosystem::Evm => (),
+                Ecosystem::Fuel => {
+                    // Skip Fuel
+                    continue;
+                }
+            }
 
             api_chain_ids.insert(chain_id);
 
