@@ -187,9 +187,6 @@ pub enum Network {
     #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     Kroma = 255,
 
-    #[subenum(HypersyncNetwork)]
-    Unichain = 130,
-
     #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     Linea = 59144,
 
@@ -235,9 +232,6 @@ pub enum Network {
     #[subenum(HypersyncNetwork)]
     MonadTestnet = 10143,
 
-    #[subenum(HypersyncNetwork)]
-    MosaicMatrix = 41454,
-
     #[subenum(
         HypersyncNetwork,
         NetworkWithExplorer,
@@ -256,6 +250,9 @@ pub enum Network {
 
     #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     MorphTestnet = 2810,
+
+    #[subenum(HypersyncNetwork)]
+    MosaicMatrix = 41454,
 
     #[subenum(GraphNetwork)]
     Mumbai = 80001,
@@ -329,6 +326,9 @@ pub enum Network {
 
     #[subenum(NetworkWithExplorer)]
     Tangle = 5845,
+
+    #[subenum(HypersyncNetwork)]
+    Unichain = 130,
 
     #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     UnichainSepolia = 1301,
