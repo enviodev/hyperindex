@@ -122,6 +122,7 @@ pub enum Network {
     #[subenum(HypersyncNetwork)]
     Cyber = 7560,
 
+    #[subenum(HypersyncNetwork)]
     Darwinia = 46,
 
     #[subenum(
@@ -536,8 +537,8 @@ impl HypersyncNetwork {
 
             Zora | Morph | Lukso | Sophon | PolygonZkevm => Bronze,
 
-            Unichain | Berachain | Aurora | Zeta | Manta | Kroma | Crab | Flare | Mantle
-            | Metis | ShimmerEvm | Boba | Ink | Metall2 | SophonTestnet | MorphTestnet
+            Darwinia | Unichain | Berachain | Aurora | Zeta | Manta | Kroma | Crab | Flare
+            | Mantle | Metis | ShimmerEvm | Boba | Ink | Metall2 | SophonTestnet | MorphTestnet
             | GaladrielDevnet | CitreaTestnet | Goerli | BscTestnet | UnichainSepolia | Zircuit
             | Celo | Opbnb | GnosisChiado | LuksoTestnet | BlastSepolia | Holesky
             | BerachainBartio | OptimismSepolia | Fuji | ArbitrumSepolia | Fraxtal | Soneium
