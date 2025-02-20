@@ -529,20 +529,21 @@ impl HypersyncNetwork {
         use ChainTier::*;
         use HypersyncNetwork::*;
         match self {
-            EthereumMainnet | MonadTestnet | MosaicMatrix | Fantom | Sepolia | ZksyncEra
-            | Optimism | ArbitrumNova | Avalanche | Polygon | Bsc | Gnosis => Gold,
+            EthereumMainnet | MonadTestnet | MosaicMatrix | Sepolia | ZksyncEra | Optimism
+            | ArbitrumNova | Avalanche | Polygon | Bsc | Gnosis => Gold,
 
             Linea | Base | Blast | Cyber | Harmony | Scroll | Rsk | Amoy | Saakuru | Moonbeam
             | Lisk | Chiliz | ArbitrumOne => Silver,
 
-            Zora | Morph | Lukso | Sophon | PolygonZkevm => Bronze,
+            Morph | Lukso | Sophon | PolygonZkevm | Fantom => Bronze,
 
-            Darwinia | Unichain | Berachain | Aurora | Zeta | Manta | Kroma | Crab | Flare
-            | Mantle | Metis | ShimmerEvm | Boba | Ink | Metall2 | SophonTestnet | MorphTestnet
-            | GaladrielDevnet | CitreaTestnet | Goerli | BscTestnet | UnichainSepolia | Zircuit
-            | Celo | Opbnb | GnosisChiado | LuksoTestnet | BlastSepolia | Holesky
-            | BerachainBartio | OptimismSepolia | Fuji | ArbitrumSepolia | Fraxtal | Soneium
-            | BaseSepolia | MevCommit | Merlin | Mode | MoonbaseAlpha => Stone,
+            Zora | Darwinia | Unichain | Berachain | Aurora | Zeta | Manta | Kroma | Crab
+            | Flare | Mantle | Metis | ShimmerEvm | Boba | Ink | Metall2 | SophonTestnet
+            | MorphTestnet | GaladrielDevnet | CitreaTestnet | Goerli | BscTestnet
+            | UnichainSepolia | Zircuit | Celo | Opbnb | GnosisChiado | LuksoTestnet
+            | BlastSepolia | Holesky | BerachainBartio | OptimismSepolia | Fuji
+            | ArbitrumSepolia | Fraxtal | Soneium | BaseSepolia | MevCommit | Merlin | Mode
+            | MoonbaseAlpha => Stone,
         }
     }
 
