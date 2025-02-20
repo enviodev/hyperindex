@@ -137,8 +137,7 @@ Exposing
 let setupDb = async () => {
   open Migrations
   Logging.info("Provisioning Database")
-  let _exitCodeDown = await runDownMigrations(~shouldExit=false)
-  let _exitCodeUp = await runUpMigrations(~shouldExit=false)
+  let _exitCodeUp = await runUpMigrations(~shouldExit=false, ~reset=true)
 }
 
 describe("Single Chain Simple Rollback", () => {

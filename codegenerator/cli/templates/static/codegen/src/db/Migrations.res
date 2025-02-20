@@ -12,7 +12,7 @@ let creatTableIfNotExists = (sql, table) => {
 
       {
         `"${fieldName}" ${switch fieldType {
-          | Custom(name) => `${Env.Db.publicSchema}.${name}`
+          | Custom(name) if !(name->Js.String2.startsWith("NUMERIC(")) => `"${Env.Db.publicSchema}".${name}`
           | _ => (fieldType :> string)
           }}${isArray ? "[]" : ""}${switch defaultValue {
           | Some(defaultValue) => ` DEFAULT ${defaultValue}`
@@ -73,12 +73,15 @@ let createEnumIfNotExists = (sql, enum: Enum.enum<_>) => {
   open Belt
   let {variants, name} = enum
   let mappedVariants = variants->Array.map(v => `'${v->Utils.magic}'`)->Js.Array2.joinWith(", ")
-  let query = `
-      DO $$ BEGIN
-      IF NOT EXISTS(SELECT 1 FROM pg_type WHERE typname = '${name->Js.String2.toLowerCase}') THEN
-        CREATE TYPE "${Env.Db.publicSchema}".${name} AS ENUM(${mappedVariants});
-        END IF;
-      END $$; `
+  let query = `DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 
+    FROM pg_type 
+    WHERE typname = '${name->Js.String2.toLowerCase}' 
+    AND typnamespace = (SELECT oid FROM pg_namespace WHERE nspname = '${Env.Db.publicSchema}')
+  ) THEN CREATE TYPE "${Env.Db.publicSchema}".${name} AS ENUM(${mappedVariants});
+  END IF;
+END $$;`
 
   sql->unsafe(query)
 }

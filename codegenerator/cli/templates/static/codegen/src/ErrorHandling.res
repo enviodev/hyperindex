@@ -19,7 +19,7 @@ let log = (self: t) => {
 }
 
 let raiseExn = (self: t) => {
-  self.exn->raise
+  self.exn->prettifyExn->raise
 }
 
 let mkLogAndRaise = (~logger=?, ~msg=?, exn) => {

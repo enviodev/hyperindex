@@ -1,7 +1,4 @@
-import {
-  runDownMigrations,
-  runUpMigrations,
-} from "../../generated/src/db/Migrations.bs";
+import { runUpMigrations } from "../../generated/src/db/Migrations.bs";
 import Postgres from "postgres";
 import { config } from "../../generated/src/db/Db.bs";
 
@@ -18,8 +15,7 @@ export const enableConsoleLog = () => {
 };
 
 export const runMigrationsNoExit = async () => {
-  await runDownMigrations(false);
-  await runUpMigrations(false);
+  await runUpMigrations(false, true);
 };
 
 export const runFunctionNoLogs = async (func: () => any) => {
