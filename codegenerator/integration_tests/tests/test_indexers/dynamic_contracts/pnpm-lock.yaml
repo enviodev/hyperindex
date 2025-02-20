@@ -13,7 +13,7 @@ importers:
         version: 4.3.10
       envio:
         specifier: file:../../../../cli/npm/envio
-        version: file:../../../../cli/npm/envio
+        version: file:../../../../cli/npm/envio(typescript@5.2.2)
     optionalDependencies:
       generated:
         specifier: ./generated
@@ -43,9 +43,52 @@ importers:
 
 packages:
 
+  '@adraffy/ens-normalize@1.10.0':
+    resolution: {integrity: sha512-nA9XHtlAkYfJxY7bce8DcN7eKxWWCWkU+1GR9d+U6MbNpfwQp8TI7vqOsBsMcHoT4mBu2kypKoSKnghEzOOq5Q==}
+
   '@cspotcode/source-map-support@0.8.1':
     resolution: {integrity: sha512-IchNf6dN4tHoMFIn/7OE8LWZ19Y6q/67Bmf6vnGREv8RSbBVb9LPJxEcnwrcwX6ixSvaiGoomAUvu4YSxXrVgw==}
     engines: {node: '>=12'}
+
+  '@envio-dev/hypersync-client-darwin-arm64@0.6.3':
+    resolution: {integrity: sha512-w4OLJaq3lD03iXPJxLnPpoxOduvzCfEe2nYtamvIRLPB2SlbxnB5EF5dSyFs6WKh1x4PMsksQOUKeCcOtQPZow==}
+    engines: {node: '>= 10'}
+    cpu: [arm64]
+    os: [darwin]
+
+  '@envio-dev/hypersync-client-darwin-x64@0.6.3':
+    resolution: {integrity: sha512-zh98zCbm2cse/iIzyMs1YCcA1iI1U/j4Yex1xBVaEa1ogzQSK9peS6M+NygzdmlwPqr7K9rUQ/U56ICRl67fWw==}
+    engines: {node: '>= 10'}
+    cpu: [x64]
+    os: [darwin]
+
+  '@envio-dev/hypersync-client-linux-arm64-gnu@0.6.3':
+    resolution: {integrity: sha512-5pI0N6W7W0L7LpgN76BAWRsC+NPOvrlvBEq8IjlBUS47vqZALvcJj3gYNkm466tUBQ4q4tF1x48k7MFKtoO8aw==}
+    engines: {node: '>= 10'}
+    cpu: [arm64]
+    os: [linux]
+
+  '@envio-dev/hypersync-client-linux-x64-gnu@0.6.3':
+    resolution: {integrity: sha512-jL3sxWVyTJuKdO5y/0tu1EtWSox+nJdpmr7rdVW1w0gLk4ewzWORp9cl5pXkpqM4MUsjJz+NkcQKsUquGYBkKg==}
+    engines: {node: '>= 10'}
+    cpu: [x64]
+    os: [linux]
+
+  '@envio-dev/hypersync-client-linux-x64-musl@0.6.3':
+    resolution: {integrity: sha512-4rAh9x3PEWIweih731lWVEUGm+qrIHouElqZgXfTcZS6KkPeDnSYKVw10K5EyDuDtZla/NccEr0pJmcvpui5Ew==}
+    engines: {node: '>= 10'}
+    cpu: [x64]
+    os: [linux]
+
+  '@envio-dev/hypersync-client-win32-x64-msvc@0.6.3':
+    resolution: {integrity: sha512-AINzLdjqU+y6ZiHnxorjFlrGNIw/AAJ80YXABYzokvGhDTF9qupjR1gdZo4sQEumgrRyg7fiG8QnsZVEm6V/zA==}
+    engines: {node: '>= 10'}
+    cpu: [x64]
+    os: [win32]
+
+  '@envio-dev/hypersync-client@0.6.3':
+    resolution: {integrity: sha512-Lr5WyMZBK1cI++kAQLM/zd62NfUM60A3KWTKgeNew4NOghfoY5YZr99C7vo+CMYePXskYBR+ul+5iNPoHqkFrw==}
+    engines: {node: '>= 10'}
 
   '@jridgewell/resolve-uri@3.1.2':
     resolution: {integrity: sha512-bRISgCIjP20/tbWSPWMEi54QVPRZExkuD9lJL+UIxUKtwVJA8wW1Trb1jMs1RFXo1CBTNZ/5hpC9QvmKWdopKw==}
@@ -56,6 +99,22 @@ packages:
 
   '@jridgewell/trace-mapping@0.3.9':
     resolution: {integrity: sha512-3Belt6tdc8bPgAtbcmdtNJlirVoTmEb5e2gC94PnkwEW9jI6CAHUeoG85tjWP5WquqfavoMtMwiG4P926ZKKuQ==}
+
+  '@noble/curves@1.4.0':
+    resolution: {integrity: sha512-p+4cb332SFCrReJkCYe8Xzm0OWi4Jji5jVdIZRL/PmacmDkFNw6MrrV+gGpiPxLHbV+zKFRywUWbaseT+tZRXg==}
+
+  '@noble/hashes@1.4.0':
+    resolution: {integrity: sha512-V1JJ1WTRUqHHrOSh597hURcMqVKVGL/ea3kv0gSnEdsEZ0/+VyPghM1lMNGc00z7CIQorSvbKpuJkxvuHbvdbg==}
+    engines: {node: '>= 16'}
+
+  '@scure/base@1.1.9':
+    resolution: {integrity: sha512-8YKhl8GHiNI/pU2VMaofa2Tor7PJRAjwQLBBuilkJ9L5+13yVbC7JO/wS7piioAvPSwR3JKM1IJ/u4xQzbcXKg==}
+
+  '@scure/bip32@1.4.0':
+    resolution: {integrity: sha512-sVUpc0Vq3tXCkDGYVWGIZTRfnvu8LoTDaev7vbwh0omSvVORONr960MQWdKqJDCReIEmTj3PAr73O3aoxz7OPg==}
+
+  '@scure/bip39@1.3.0':
+    resolution: {integrity: sha512-disdg7gHuTDZtY+ZdkmLpPCk7fxZSu3gBiEGuoC1XYxv9cGx3Z6cpTggCgW6odSOOIXCiDjuGejW+aJKCY/pIQ==}
 
   '@tsconfig/node10@1.0.11':
     resolution: {integrity: sha512-DcRjDCujK/kCk/cUe8Xz8ZSpm8mS3mNNpta+jGCA6USEDfktlNvm1+IuZ9eTcDbNk41BHwpHHeW+N1lKCz4zOw==}
@@ -80,6 +139,17 @@ packages:
 
   '@types/node@20.8.8':
     resolution: {integrity: sha512-YRsdVxq6OaLfmR9Hy816IMp33xOBjfyOgUd77ehqg96CFywxAPbDbXvAsuN2KVg2HOT8Eh6uAfU+l4WffwPVrQ==}
+
+  abitype@1.0.5:
+    resolution: {integrity: sha512-YzDhti7cjlfaBhHutMaboYB21Ha3rXR9QTkNJFzYC4kC8YclaiwPBBBJY8ejFdu2wnJeZCVZSMlQJ7fi8S6hsw==}
+    peerDependencies:
+      typescript: '>=5.0.4'
+      zod: ^3 >=3.22.0
+    peerDependenciesMeta:
+      typescript:
+        optional: true
+      zod:
+        optional: true
 
   acorn-walk@8.3.2:
     resolution: {integrity: sha512-cjkyv4OtNCIeqhHrfS81QWXoCBPExR/J62oyEqepVw8WaQeSqpW2uhuLPh1m9eWhDuOo/jUXVTlifvesOWp/4A==}
@@ -297,6 +367,11 @@ packages:
     resolution: {integrity: sha512-knxG2q4UC3u8stRGyAVJCOdxFmv5DZiRcdlIaAQXAbSfJya+OhopNotLQrstBhququ4ZpuKbDc/8S6mgXgPFPw==}
     engines: {node: '>=10'}
 
+  isows@1.0.4:
+    resolution: {integrity: sha512-hEzjY+x9u9hPmBom9IIAqdJCwNLax+xrPb51vEPpERoFlIxgmZcHzsT5jKG06nvInKOBGvReAVz80Umed5CczQ==}
+    peerDependencies:
+      ws: '*'
+
   js-yaml@4.1.0:
     resolution: {integrity: sha512-wpxZs9NoxZaJESJGIZTyDEaYpl0FKSA+FB9aJiyemKhMwkxQg63h4T1KJgUGHpTqPDNRcmmYLugrRjJlBtWvRA==}
     hasBin: true
@@ -390,6 +465,11 @@ packages:
     resolution: {integrity: sha512-fGxEI7+wsG9xrvdjsrlmL22OMTTiHRwAMroiEeMgq8gzoLC/PQr7RsRDSTLUg/bZAZtF+TVIkHc6/4RIKrui+Q==}
     engines: {node: '>=0.10.0'}
 
+  rescript-schema@9.1.0:
+    resolution: {integrity: sha512-zD6hpg59HF6QJ3rnmhFV6mYtbfUd6ZTu20osL93aR9fdc3GTIX6N8Fy/6btgZ9a35A2NAzTvCgh/dz3EK7qfAw==}
+    peerDependencies:
+      rescript: 11.x
+
   rescript@11.1.3:
     resolution: {integrity: sha512-bI+yxDcwsv7qE34zLuXeO8Qkc2+1ng5ErlSjnUIZdrAWKoGzHXpJ6ZxiiRBUoYnoMsgRwhqvrugIFyNgWasmsw==}
     engines: {node: '>=10'}
@@ -480,6 +560,17 @@ packages:
   v8-compile-cache-lib@3.0.1:
     resolution: {integrity: sha512-wa7YjyUGfNZngI/vtK0UHAN+lgDCxBPCylVXGp0zu59Fz5aiGtNXaq3DhIov063MorB+VfufLh3JlF2KdTK3xg==}
 
+  viem@2.21.0:
+    resolution: {integrity: sha512-9g3Gw2nOU6t4bNuoDI5vwVExzIxseU0J7Jjx10gA2RNQVrytIrLxggW++tWEe3w4mnnm/pS1WgZFjQ/QKf/nHw==}
+    peerDependencies:
+      typescript: '>=5.0.4'
+    peerDependenciesMeta:
+      typescript:
+        optional: true
+
+  webauthn-p256@0.0.5:
+    resolution: {integrity: sha512-drMGNWKdaixZNobeORVIqq7k5DsRC9FnG201K2QjeOoQLmtSDaSsVZdkg6n5jUALJKcAG++zBPJXmv6hy0nWFg==}
+
   workerpool@6.2.1:
     resolution: {integrity: sha512-ILEIE97kDZvF9Wb9f6h5aXK4swSlKGUcOEGiIYb2OOu/IrDU9iwj0fD//SsA6E5ibwJxpEvhullJY4Sl4GcpAw==}
 
@@ -489,6 +580,18 @@ packages:
 
   wrappy@1.0.2:
     resolution: {integrity: sha512-l4Sp/DRseor9wL6EvV2+TuQn63dMkPjZ/sp9XkghTEbV9KlPS1xUsZ3u7/IQO4wxtcFB4bgpQPRcR3QCvezPcQ==}
+
+  ws@8.17.1:
+    resolution: {integrity: sha512-6XQFvXTkbfUOZOKKILFG1PDK2NDQs4azKQl26T0YS5CxqWLgXajbPZ+h4gZekJyRqFU8pvnbAbbs/3TgRPy+GQ==}
+    engines: {node: '>=10.0.0'}
+    peerDependencies:
+      bufferutil: ^4.0.1
+      utf-8-validate: '>=5.0.2'
+    peerDependenciesMeta:
+      bufferutil:
+        optional: true
+      utf-8-validate:
+        optional: true
 
   y18n@5.0.8:
     resolution: {integrity: sha512-0pfFzegeDWJHJIAmTLRP2DwHjdF5s7jo9tuztdQxAhINCdvS+3nGINqPd00AphqJR/0LhANUS6/+7SCb98YOfA==}
@@ -520,9 +623,38 @@ packages:
 
 snapshots:
 
+  '@adraffy/ens-normalize@1.10.0': {}
+
   '@cspotcode/source-map-support@0.8.1':
     dependencies:
       '@jridgewell/trace-mapping': 0.3.9
+
+  '@envio-dev/hypersync-client-darwin-arm64@0.6.3':
+    optional: true
+
+  '@envio-dev/hypersync-client-darwin-x64@0.6.3':
+    optional: true
+
+  '@envio-dev/hypersync-client-linux-arm64-gnu@0.6.3':
+    optional: true
+
+  '@envio-dev/hypersync-client-linux-x64-gnu@0.6.3':
+    optional: true
+
+  '@envio-dev/hypersync-client-linux-x64-musl@0.6.3':
+    optional: true
+
+  '@envio-dev/hypersync-client-win32-x64-msvc@0.6.3':
+    optional: true
+
+  '@envio-dev/hypersync-client@0.6.3':
+    optionalDependencies:
+      '@envio-dev/hypersync-client-darwin-arm64': 0.6.3
+      '@envio-dev/hypersync-client-darwin-x64': 0.6.3
+      '@envio-dev/hypersync-client-linux-arm64-gnu': 0.6.3
+      '@envio-dev/hypersync-client-linux-x64-gnu': 0.6.3
+      '@envio-dev/hypersync-client-linux-x64-musl': 0.6.3
+      '@envio-dev/hypersync-client-win32-x64-msvc': 0.6.3
 
   '@jridgewell/resolve-uri@3.1.2': {}
 
@@ -532,6 +664,25 @@ snapshots:
     dependencies:
       '@jridgewell/resolve-uri': 3.1.2
       '@jridgewell/sourcemap-codec': 1.4.15
+
+  '@noble/curves@1.4.0':
+    dependencies:
+      '@noble/hashes': 1.4.0
+
+  '@noble/hashes@1.4.0': {}
+
+  '@scure/base@1.1.9': {}
+
+  '@scure/bip32@1.4.0':
+    dependencies:
+      '@noble/curves': 1.4.0
+      '@noble/hashes': 1.4.0
+      '@scure/base': 1.1.9
+
+  '@scure/bip39@1.3.0':
+    dependencies:
+      '@noble/hashes': 1.4.0
+      '@scure/base': 1.1.9
 
   '@tsconfig/node10@1.0.11': {}
 
@@ -551,6 +702,10 @@ snapshots:
   '@types/node@20.8.8':
     dependencies:
       undici-types: 5.25.3
+
+  abitype@1.0.5(typescript@5.2.2):
+    optionalDependencies:
+      typescript: 5.2.2
 
   acorn-walk@8.3.2: {}
 
@@ -667,9 +822,17 @@ snapshots:
 
   emoji-regex@8.0.0: {}
 
-  envio@file:../../../../cli/npm/envio:
+  envio@file:../../../../cli/npm/envio(typescript@5.2.2):
     dependencies:
+      '@envio-dev/hypersync-client': 0.6.3
       rescript: 11.1.3
+      rescript-schema: 9.1.0(rescript@11.1.3)
+      viem: 2.21.0(typescript@5.2.2)
+    transitivePeerDependencies:
+      - bufferutil
+      - typescript
+      - utf-8-validate
+      - zod
 
   escalade@3.1.2: {}
 
@@ -736,6 +899,10 @@ snapshots:
   is-plain-obj@2.1.0: {}
 
   is-unicode-supported@0.1.0: {}
+
+  isows@1.0.4(ws@8.17.1):
+    dependencies:
+      ws: 8.17.1
 
   js-yaml@4.1.0:
     dependencies:
@@ -837,6 +1004,10 @@ snapshots:
 
   require-directory@2.1.1: {}
 
+  rescript-schema@9.1.0(rescript@11.1.3):
+    dependencies:
+      rescript: 11.1.3
+
   rescript@11.1.3: {}
 
   safe-buffer@5.2.1: {}
@@ -931,6 +1102,29 @@ snapshots:
 
   v8-compile-cache-lib@3.0.1: {}
 
+  viem@2.21.0(typescript@5.2.2):
+    dependencies:
+      '@adraffy/ens-normalize': 1.10.0
+      '@noble/curves': 1.4.0
+      '@noble/hashes': 1.4.0
+      '@scure/bip32': 1.4.0
+      '@scure/bip39': 1.3.0
+      abitype: 1.0.5(typescript@5.2.2)
+      isows: 1.0.4(ws@8.17.1)
+      webauthn-p256: 0.0.5
+      ws: 8.17.1
+    optionalDependencies:
+      typescript: 5.2.2
+    transitivePeerDependencies:
+      - bufferutil
+      - utf-8-validate
+      - zod
+
+  webauthn-p256@0.0.5:
+    dependencies:
+      '@noble/curves': 1.4.0
+      '@noble/hashes': 1.4.0
+
   workerpool@6.2.1: {}
 
   wrap-ansi@7.0.0:
@@ -940,6 +1134,8 @@ snapshots:
       strip-ansi: 6.0.1
 
   wrappy@1.0.2: {}
+
+  ws@8.17.1: {}
 
   y18n@5.0.8: {}
 

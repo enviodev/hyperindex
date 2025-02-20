@@ -67,8 +67,11 @@ start_indexer() {
 }
 
 # run the setup commands and start indexer
+$envio_cmd local docker up
+sleep 10
+$envio_cmd local db-migrate up --config ./$CONFIG_FILE
 echo "Starting indexer"
-TUI_OFF="true" $envio_cmd dev --config ./$CONFIG_FILE &
+start_indexer "start"
 
 if [ $TEST_RESTART = true ]; then
     echo "Restarting indexer"
