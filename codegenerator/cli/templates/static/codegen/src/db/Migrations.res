@@ -93,7 +93,7 @@ let deleteAllTables: unit => promise<unit> = async () => {
     BEGIN
       DROP SCHEMA IF EXISTS ${Env.Db.publicSchema} CASCADE;
       CREATE SCHEMA ${Env.Db.publicSchema};
-      GRANT ALL ON SCHEMA ${Env.Db.publicSchema} TO postgres;
+      GRANT ALL ON SCHEMA ${Env.Db.publicSchema} TO ${Env.Db.user};
       GRANT ALL ON SCHEMA ${Env.Db.publicSchema} TO public;
     END $$;`
 
