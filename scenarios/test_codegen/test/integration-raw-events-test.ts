@@ -23,6 +23,8 @@ import {
 // import { setLogLevel } from "generated/src/Logging.bs.js";
 // require("mocha-reporter").hook(); //Outputs filename in error logs with mocha-reporter
 
+// TODO: I failed to connect RpcSource with hardhat to make the test work.
+// Should rewrite it to use a real rpc or a completely mocked source.
 describe.skip("Raw Events Integration", () => {
   const sql = createSql();
   let simpleNftContractAddress: string;

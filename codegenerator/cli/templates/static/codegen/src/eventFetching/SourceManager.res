@@ -18,7 +18,7 @@ type t = {
 let make = (~sources, ~maxPartitionConcurrency, ~logger) => {
   let activeSource = switch sources->Array.get(0) {
   | Some(source) => source
-  | None => Js.Exn.raiseError("Invalid configuration, no sources provided")
+  | None => Js.Exn.raiseError("Invalid configuration, no data-sources provided")
   }
   {
     logger,
