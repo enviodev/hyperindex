@@ -283,6 +283,14 @@ let addEventToRawEvents = (eventItem: Internal.eventItem, ~inMemoryStore: InMemo
     params
     ->S.reverseConvertOrThrow(paramsRawEventSchema)
     ->(Utils.magic: unknown => Js.Json.t)
+  let params = if params === %raw(`null`) {
+    // Should probably make the params field nullable
+    // But this is currently needed to make events
+    // with empty params work
+    %raw(`"null"`)
+  } else {
+    params
+  }
 
   let rawEvent: TablesStatic.RawEvents.t = {
     chainId,
