@@ -163,7 +163,7 @@ pub mod evm {
                 schema: None,
                 contracts,
                 networks: networks_map.into_values().sorted_by_key(|v| v.id).collect(),
-                unordered_multichain_mode: None,
+                unordered_multichain_mode: Some(true),
                 event_decoder: None,
                 rollback_on_reorg: None,
                 save_full_history: None,
