@@ -119,10 +119,7 @@ fn prompt_add_new_contract_option(
 ) -> Result<AddNewContractOption> {
     let mut options = AddNewContractOption::iter().collect::<Vec<_>>();
     if !can_add_network {
-        options = options
-            .into_iter()
-            .filter(|o| o != &AddNewContractOption::AddNetwork)
-            .collect();
+        options.retain(|o| o != &AddNewContractOption::AddNetwork);
     }
     let help_message = format!(
         "Current contract: {}, on network: {}",
@@ -182,8 +179,7 @@ where
             let contract_name_lower = contract.get_name().to_lowercase();
             let contract_name_exists = contracts
                 .iter()
-                .find(|c| &c.get_name().to_lowercase() == &contract_name_lower)
-                .is_some();
+                .any(|c| c.get_name().to_lowercase() == contract_name_lower);
 
             if contract_name_exists {
                 //TODO: Handle more cases gracefully like:

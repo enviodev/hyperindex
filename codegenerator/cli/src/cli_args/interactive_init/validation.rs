@@ -146,7 +146,7 @@ pub fn filter_duplicate_events(
         if event_list.len() > 1 {
             let first_event = event_list[0].clone();
             for event in event_list.iter().skip(1) {
-                if !are_events_equivalent(&first_event, &event) {
+                if !are_events_equivalent(&first_event, event) {
                     let warning_message = "Note: this is unimplemented! The code might behave \
                                            unexpectedly.\n"
                         .red()

@@ -41,7 +41,7 @@ impl<T: Clone> NormalizedList<T> {
 
 impl<T: Clone> From<OptSingleOrList<T>> for NormalizedList<T> {
     fn from(single_or_list: OptSingleOrList<T>) -> Self {
-        NormalizedList(single_or_list.map_or_else(|| vec![], |v| v.into()))
+        NormalizedList(single_or_list.map_or_else(std::vec::Vec::new, |v| v.into()))
     }
 }
 impl<T: Clone> From<NormalizedList<T>> for Vec<T> {

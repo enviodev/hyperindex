@@ -46,7 +46,7 @@ impl<'a, T: Serialize> HandleBarsDirGenerator<'a, T> {
             match entry {
                 DirEntry::File(file) => {
                     let path = file.path();
-                    let is_hbs_file = path.extension().map_or(false, |ext| ext == "hbs");
+                    let is_hbs_file = path.extension().is_some_and(|ext| ext == "hbs");
 
                     if is_hbs_file {
                         // let get_path_str = |path: AsRef<Path>>| path.to_str().unwrap_or_else(|| "bad path");

@@ -21,7 +21,7 @@ pub fn get_config_path_relative_to_root(
         )
     })?;
 
-    let path_relative = PathBuf::from(relative_config_path);
+    let path_relative = relative_config_path;
     let path_joined = config_directory.join(path_relative);
     let path = normalize_path(path_joined);
 

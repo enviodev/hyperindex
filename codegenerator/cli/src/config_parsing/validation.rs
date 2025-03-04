@@ -61,7 +61,7 @@ fn check_reserved_words(words: &Vec<String>) -> Vec<String> {
     flagged_words
 }
 
-fn is_valid_identifier(s: &String) -> bool {
+fn is_valid_identifier(s: &str) -> bool {
     // Check if the string is empty
     if s.is_empty() {
         return false;
@@ -69,9 +69,8 @@ fn is_valid_identifier(s: &String) -> bool {
 
     // Check the first character to ensure it's not a digit
     let first_char = s.chars().next().unwrap();
-    match first_char {
-        '0'..='9' => return false,
-        _ => (),
+    if let '0'..='9' = first_char {
+        return false;
     }
 
     // Check that all characters are either alphanumeric or an underscore
@@ -107,7 +106,7 @@ pub fn validate_names_valid_rescript(
 
     let mut invalid_names = Vec::new();
     for name in names_from_config {
-        if !is_valid_identifier(&name) {
+        if !is_valid_identifier(name) {
             invalid_names.push(name.to_string());
         }
     }
@@ -146,15 +145,14 @@ impl human_config::evm::Network {
                     finite_end_block
                 ))
             };
-            match chain_helpers::Network::from_network_id(self.id) {
-                Ok(network) => match (self.end_block, network.get_finite_end_block()) {
+            if let Ok(network) = chain_helpers::Network::from_network_id(self.id) {
+                match (self.end_block, network.get_finite_end_block()) {
                     (Some(end_block), Some(finite_end_block)) if end_block > finite_end_block => {
                         return make_err(finite_end_block)
                     }
                     (None, Some(finite_end_block)) => return make_err(finite_end_block),
                     _ => (),
-                },
-                Err(_) => (),
+                }
             }
         }
         Ok(())
@@ -189,7 +187,7 @@ pub fn validate_deserialized_config_yaml(evm_config: &HumanConfig) -> anyhow::Re
         network.validate_finite_endblock_networks(evm_config)?;
 
         for contract in &network.contracts {
-            if let Some(_) = contract.config.as_ref() {
+            if contract.config.as_ref().is_some() {
                 contract_names.push(contract.name.clone());
             }
 
@@ -243,7 +241,7 @@ pub fn check_names_from_schema_for_reserved_words(schema_words: Vec<String>) -> 
 pub fn check_schema_enums_are_valid_postgres(enum_names: &Vec<String>) -> Vec<String> {
     let mut detected_enum_not_valid = Vec::new();
     for name in enum_names {
-        if !is_valid_postgres_db_name(&name.as_str()) {
+        if !is_valid_postgres_db_name(name.as_str()) {
             detected_enum_not_valid.push(name.clone());
         }
     }

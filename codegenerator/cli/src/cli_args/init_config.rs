@@ -43,7 +43,7 @@ pub mod evm {
     ///Converts the selection object into a human config
     type ContractName = String;
     impl ContractImportSelection {
-        pub fn to_human_config(self: &Self, init_config: &InitConfig) -> Result<HumanConfig> {
+        pub fn to_human_config(&self, init_config: &InitConfig) -> Result<HumanConfig> {
             let mut networks_map: HashMap<u64, Network> = HashMap::new();
             let mut global_contracts: HashMap<ContractName, GlobalContract<ContractConfig>> =
                 HashMap::new();
@@ -121,8 +121,7 @@ pub mod evm {
                                 NetworkKind::Unsupported { network_id, .. } => {
                                     chain_helpers::Network::from_network_id(network_id)
                                         .ok()
-                                        .map(|network| network.get_finite_end_block())
-                                        .flatten()
+                                        .and_then(|network| network.get_finite_end_block())
                                 }
                             };
 
@@ -173,12 +172,9 @@ pub mod evm {
         }
 
         fn uses_hypersync(&self) -> bool {
-            self.selected_contracts.iter().fold(false, |accum_c, c| {
-                accum_c
-                    || c.networks
+            self.selected_contracts.iter().any(|c| c.networks
                         .iter()
-                        .fold(false, |accum_n, n| accum_n || n.uses_hypersync())
-            })
+                        .any(|n| n.uses_hypersync()))
         }
     }
 
@@ -240,7 +236,7 @@ pub mod fuel {
     }
 
     impl SelectedContract {
-        pub fn get_vendored_abi_file_path(self: &Self) -> String {
+        pub fn get_vendored_abi_file_path(&self) -> String {
             format!("abis/{}-abi.json", self.name.to_lowercase())
         }
     }
@@ -251,7 +247,7 @@ pub mod fuel {
     }
 
     impl ContractImportSelection {
-        pub fn to_human_config(self: &Self, init_config: &InitConfig) -> HumanConfig {
+        pub fn to_human_config(&self, init_config: &InitConfig) -> HumanConfig {
             let mut contracts_by_network: HashMap<Network, Vec<SelectedContract>> = HashMap::new();
 
             for contract in self.contracts.clone() {
@@ -342,7 +338,7 @@ pub enum Language {
 
 impl Language {
     // Logic to get the event handler directory based on the language
-    pub fn get_event_handler_directory(self: &Self) -> String {
+    pub fn get_event_handler_directory(&self) -> String {
         match self {
             Language::ReScript => "./src/EventHandlers.bs.js".to_string(),
             Language::TypeScript => "src/EventHandlers.ts".to_string(),

@@ -358,7 +358,7 @@ pub enum Network {
 
 impl Network {
     pub fn get_network_id(&self) -> u64 {
-        self.clone() as u64
+        *self as u64
     }
 
     pub fn from_network_id(id: u64) -> anyhow::Result<Self> {
@@ -675,7 +675,7 @@ mod test {
             .into_iter()
             .map(|s| {
                 GraphNetwork::deserialize(serde_json::Value::String(s.clone()))
-                    .expect(format!("Invalid graph network: {}", s).as_str())
+                    .unwrap_or_else(|_| panic!("Invalid graph network: {}", s))
             })
             .collect::<Vec<GraphNetwork>>();
 
@@ -684,8 +684,7 @@ mod test {
         for n in defined_networks {
             let included_in_supported_networks = supported_graph_networks
                 .iter()
-                .find(|&sn| &n == sn)
-                .is_some();
+                .any(|sn| &n == sn);
             assert!(
                 included_in_supported_networks,
                 "expected {:?} to be included",

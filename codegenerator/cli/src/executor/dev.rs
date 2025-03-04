@@ -43,7 +43,7 @@ pub async fn run_dev(project_paths: ParsedProjectPaths) -> Result<()> {
         }
 
         match persisted_state_file {
-            PersistedStateExists::Exists(ps) if &ps.envio_version != CURRENT_CRATE_VERSION => {
+            PersistedStateExists::Exists(ps) if ps.envio_version != CURRENT_CRATE_VERSION => {
                 println!(
                     "Envio version '{}' does not match the previous version '{}' used in the \
                      generated directory",

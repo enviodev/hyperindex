@@ -24,7 +24,7 @@ pub struct FuelType {
 }
 
 impl FuelType {
-    fn get_event_name(self: &Self) -> String {
+    fn get_event_name(&self) -> String {
         match self.abi_type_field.as_str() {
             "()" => "UnitLog",
             "bool" => "BoolLog",
@@ -43,11 +43,11 @@ impl FuelType {
             type_field if type_field.starts_with("struct ") => type_field
                 .strip_prefix("struct ")
                 .and_then(|s| s.split("::").last())
-                .unwrap_or_else(|| "StructLog"),
+                .unwrap_or("StructLog"),
             type_field if type_field.starts_with("enum ") => type_field
                 .strip_prefix("enum ")
                 .and_then(|s| s.split("::").last())
-                .unwrap_or_else(|| "EnumLog"),
+                .unwrap_or("EnumLog"),
             type_field if type_field.starts_with("(_,") => "TupleLog",
             type_field if type_field.starts_with("[_;") => "ArrayLog",
             _ => "UnknownLog",
@@ -75,7 +75,7 @@ pub struct FuelAbi {
 }
 
 impl FuelAbi {
-    fn decode_program(raw: &String) -> Result<UnifiedProgramABI> {
+    fn decode_program(raw: &str) -> Result<UnifiedProgramABI> {
         Ok(UnifiedProgramABI::from_json_abi(raw)?)
     }
 
@@ -132,7 +132,7 @@ impl FuelAbi {
                 let get_first_type_param = || match abi_type_decl
                     .type_parameters
                     .clone()
-                    .unwrap_or(vec![])
+                    .unwrap_or_default()
                     .as_slice()
                 {
                     [type_id] => generic_param_name_map.get(type_id).cloned().ok_or(anyhow!(
@@ -164,7 +164,7 @@ impl FuelAbi {
                                 },
                                 //if the type_id is in the generic_param_name_map
                                 //it is a generic param
-                                |generic_name| RescriptTypeIdent::GenericParam(generic_name),
+                                RescriptTypeIdent::GenericParam,
                             ),
                         //When there are type arguments it is a generic type
                         Some(typ_args) => {
@@ -175,8 +175,8 @@ impl FuelAbi {
                                         //If the type_id is not a defined generic type it is
                                         //a named type
                                         unified_type_application_to_type_ident(
-                                            &ta,
-                                            &generic_param_name_map,
+                                            ta,
+                                            generic_param_name_map,
                                         ),
                                         //if the type_id is in the generic_param_name_map
                                         //it is a generic param
@@ -208,7 +208,7 @@ impl FuelAbi {
                             Ok((
                                 name,
                                 unified_type_application_to_type_ident(
-                                    &comp,
+                                    comp,
                                     &generic_param_name_map,
                                 ),
                             ))
@@ -219,30 +219,30 @@ impl FuelAbi {
                 let type_expr: Result<RescriptTypeExpr> = {
                     use RescriptTypeIdent::*;
                     match abi_type_decl.type_field.as_str() {
-                        "()" => Unit.to_ok_expr(),
-                        "bool" => Bool.to_ok_expr(), //Note this is represented as 0 or 1
+                        "()" => Unit.get_ok_expr(),
+                        "bool" => Bool.get_ok_expr(), //Note this is represented as 0 or 1
                         //NOTE: its possible when doing rescript int operations you can
                         //overflow with u32 but its a rare case and likely user will do operation
                         //int ts/js
-                        "u8" | "u16" | "u32" => Int.to_ok_expr(),
-                        "u64" | "u128" | "u256" | "raw untyped ptr" => BigInt.to_ok_expr(),
-                        "b256" | "address" => String.to_ok_expr(),
-                        "str" | "struct std::string::String" => String.to_ok_expr(),
-                        type_field if type_field.starts_with("str[") => String.to_ok_expr(),
+                        "u8" | "u16" | "u32" => Int.get_ok_expr(),
+                        "u64" | "u128" | "u256" | "raw untyped ptr" => BigInt.get_ok_expr(),
+                        "b256" | "address" => String.get_ok_expr(),
+                        "str" | "struct std::string::String" => String.get_ok_expr(),
+                        type_field if type_field.starts_with("str[") => String.get_ok_expr(),
                         "struct std::vec::Vec" => Array(Box::new(GenericParam(
                             get_first_type_param()
                                 .context("Failed getting param for struct Vec")?,
                         )))
-                        .to_ok_expr(),
+                        .get_ok_expr(),
                         // It's decoded as Uint8Array, but we don't have a schema for it yet
-                        "struct std::bytes::Bytes" => Unknown.to_ok_expr(),
+                        "struct std::bytes::Bytes" => Unknown.get_ok_expr(),
                         //TODO: handle nested option since this would need to be flattened to
                         //single level rescript option.
                         "enum Option" => Option(Box::new(GenericParam(
                             get_first_type_param()
                                 .context("Failed getting param for enum Option")?,
                         )))
-                        .to_ok_expr(),
+                        .get_ok_expr(),
                         type_field if type_field.starts_with("struct ") => {
                             let record_fields = get_components_name_and_type_ident()
                                 .context(format!(
@@ -279,7 +279,7 @@ impl FuelAbi {
                                 .map(|(_name, type_ident)| type_ident)
                                 .collect();
 
-                            RescriptTypeIdent::Tuple(tuple_types).to_ok_expr()
+                            RescriptTypeIdent::Tuple(tuple_types).get_ok_expr()
                         }
                         type_field if type_field.starts_with("[_;") => {
                             let components =
@@ -290,7 +290,7 @@ impl FuelAbi {
                             let element_name_and_type_ident = components
                                 .first()
                                 .ok_or(anyhow!("Missing array element type component"))?;
-                            Array(Box::new(element_name_and_type_ident.1.clone())).to_ok_expr()
+                            Array(Box::new(element_name_and_type_ident.1.clone())).get_ok_expr()
                         }
                         type_field => {
                             //Unknown
@@ -330,7 +330,7 @@ impl FuelAbi {
             .context("Failed getting type declarations from fuel abi")?
             .into_iter()
             //Filter out None values since these are declarations we don't want (ie generics)
-            .filter_map(|x| x)
+            .flatten()
             .for_each(|v| {
                 types_map.insert(v.id, v);
             });
@@ -387,7 +387,7 @@ impl FuelAbi {
                     id.clone(),
                     FuelLog {
                         id,
-                        event_name: event_name,
+                        event_name,
                         data_type: Self::get_type_application(&abi_log.application, types)?,
                         logged_type: logged_type.clone(),
                     },

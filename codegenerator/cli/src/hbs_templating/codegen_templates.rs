@@ -1,4 +1,9 @@
-use std::{collections::HashMap, collections::HashSet, path::PathBuf, vec};
+use std::{
+    collections::{HashMap, HashSet},
+    fmt::{Display, Write},
+    path::PathBuf,
+    vec,
+};
 
 use super::hbs_dir_generator::HandleBarsDirGenerator;
 use crate::{
@@ -172,8 +177,7 @@ impl EntityParamTypeTemplate {
         let res_type: RescriptTypeIdent = field
             .field_type
             .to_rescript_type(&config.schema)
-            .context("Failed getting rescript type")?
-            .into();
+            .context("Failed getting rescript type")?;
 
         let schema = &config.schema;
 
@@ -305,7 +309,7 @@ impl EntityRecordTypeTemplate {
             .map(|gql_field| gql_field.get_postgres_field(&config.schema, entity))
             .collect::<Result<Vec<_>>>()?
             .into_iter()
-            .filter_map(|opt| opt)
+            .flatten()
             .collect();
 
         let derived_fields = entity
@@ -343,8 +347,14 @@ pub struct EventMod {
     pub fuel_event_kind: Option<FuelEventKind>,
 }
 
+impl Display for EventMod {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.to_string_internal())
+    }
+}
+
 impl EventMod {
-    fn to_string(&self) -> String {
+    fn to_string_internal(&self) -> String {
         let sighash = &self.sighash;
         let topic_count = &self.topic_count;
         let event_name = &self.event_name;
@@ -360,12 +370,13 @@ impl EventMod {
             Some(FuelEventKind::Burn) => Some("Burn".to_string()),
             Some(FuelEventKind::Call) => Some("Call".to_string()),
             Some(FuelEventKind::Transfer) => Some("Transfer".to_string()),
-            Some(FuelEventKind::LogData(_)) => Some(format!(
-                r#"LogData({{
+            Some(FuelEventKind::LogData(_)) => Some(
+                r#"LogData({
   logId: sighash,
   decode: Fuel.Receipt.getLogDataDecoder(~abi, ~logId=sighash),
-}})"#
-            )),
+})"#
+                .to_string(),
+            ),
         };
 
         let event_id = match self.fuel_event_kind {
@@ -479,7 +490,7 @@ impl EventTemplate {
     const CONVERT_HYPER_SYNC_EVENT_ARGS_NEVER: &'static str =
         "_ => Js.Exn.raiseError(\"Not implemented\")";
 
-    pub fn generate_event_filter_type(params: &Vec<EventParam>) -> String {
+    pub fn generate_event_filter_type(params: &[EventParam]) -> String {
         let field_rows = params
             .iter()
             .filter(|param| param.indexed)
@@ -497,31 +508,33 @@ impl EventTemplate {
         format!("{{ {field_rows} }}")
     }
 
-    pub fn generate_get_topic_selection_code(params: &Vec<EventParam>) -> String {
+    pub fn generate_get_topic_selection_code(params: &[EventParam]) -> String {
         let indexed_params = params.iter().filter(|param| param.indexed);
 
         //Prefixed with underscore for cases where it is not used to avoid compiler warnings
         let event_filter_arg = "_eventFilter";
 
-        let topic_filter_calls = indexed_params
-            .enumerate()
-            .map(|(i, param)| {
-                let param = EthereumEventParam::from(param);
-                let topic_number = i + 1;
-                let param_name = RescriptRecordField::to_valid_res_name(param.name);
-                let topic_encoder = param.get_topic_encoder();
-                let nested_type_flags = match param.get_nested_type_depth() {
-                    depth if depth > 0 => format!("(~nestedArrayDepth={depth})"),
-                    _ => "".to_string(),
-                };
-                format!(
-                    "~topic{topic_number}=?{event_filter_arg}.{param_name}->Belt.Option.\
+        let topic_filter_calls =
+            indexed_params
+                .enumerate()
+                .fold(String::new(), |mut output, (i, param)| {
+                    let param = EthereumEventParam::from(param);
+                    let topic_number = i + 1;
+                    let param_name = RescriptRecordField::to_valid_res_name(param.name);
+                    let topic_encoder = param.get_topic_encoder();
+                    let nested_type_flags = match param.get_nested_type_depth() {
+                        depth if depth > 0 => format!("(~nestedArrayDepth={depth})"),
+                        _ => "".to_string(),
+                    };
+                    let _ = write!(
+                        output,
+                        "~topic{topic_number}=?{event_filter_arg}.{param_name}->Belt.Option.\
                      map(topicFilters => \
                      topicFilters->SingleOrMultiple.normalizeOrThrow{nested_type_flags}->Belt.\
                      Array.map({topic_encoder})), "
-                )
-            })
-            .collect::<String>();
+                    );
+                    output
+                });
 
         format!(
             "(eventFilters) => \
@@ -531,7 +544,7 @@ impl EventTemplate {
         )
     }
 
-    pub fn generate_convert_hyper_sync_event_args_code(params: &Vec<EventParam>) -> String {
+    pub fn generate_convert_hyper_sync_event_args_code(params: &[EventParam]) -> String {
         if params.is_empty() {
             return Self::CONVERT_HYPER_SYNC_EVENT_ARGS_NOOP.to_string();
         }
@@ -744,7 +757,7 @@ impl ContractTemplate {
         let codegen_events = contract
             .events
             .iter()
-            .map(|event| EventTemplate::from_config_event(event))
+            .map(EventTemplate::from_config_event)
             .collect::<Result<_>>()?;
 
         let module_code = match &contract.abi {
@@ -774,7 +787,7 @@ let eventSignatures = [{}]"#,
                     // If we decide to inline the abi, instead of using require
                     // we need to remember that abi might contain ` and we should escape it
                     abi.path_buf.to_string_lossy(),
-                    all_abi_type_declarations.to_string(),
+                    all_abi_type_declarations,
                     all_abi_type_declarations.to_rescript_schema(&RescriptSchemaMode::ForDb)
                 )
             }
@@ -1123,7 +1136,7 @@ impl ProjectTemplate {
 
         let global_field_selection = FieldSelection::global_selection(&cfg.field_selection);
         // TODO: Remove schemas for aggreaged, since they are not used in runtime
-        let aggregated_field_selection = FieldSelection::aggregated_selection(&cfg);
+        let aggregated_field_selection = FieldSelection::aggregated_selection(cfg);
 
         Ok(ProjectTemplate {
             project_name: cfg.name.clone(),
@@ -1183,9 +1196,8 @@ mod test {
         let config = SystemConfig::parse_from_project_files(&project_paths)
             .expect("Deserialized yml config should be parseable");
 
-        let project_template = super::ProjectTemplate::from_config(&config, &project_paths)
-            .expect("should be able to get project template");
-        project_template
+        super::ProjectTemplate::from_config(&config, &project_paths)
+            .expect("should be able to get project template")
     }
 
     impl Default for NetworkTemplate {
@@ -1486,8 +1498,7 @@ let getTopicSelection = (eventFilters) => eventFilters->SingleOrMultiple.normali
             EventTemplate {
                 name: "NewGravatar".to_string(),
                 params: vec![],
-                module_code: format!(
-                    r#"
+                module_code: r#"
 let id = "0x50f7d27e90d1a5a38aeed4ceced2e8ec1ff185737aca96d15791b470d3f17363_1"
 let sighash = "0x50f7d27e90d1a5a38aeed4ceced2e8ec1ff185737aca96d15791b470d3f17363"
 let name = "NewGravatar"
@@ -1522,11 +1533,10 @@ let handlerRegister: HandlerTypes.Register.t = HandlerTypes.Register.make(
 )
 
 @genType
-type eventFilter = {{  }}
+type eventFilter = {  }
 
 let getTopicSelection = (eventFilters) => eventFilters->SingleOrMultiple.normalizeOrThrow->Belt.Array.map(_eventFilter => LogSelection.makeTopicSelection(~topic0=[sighash->EvmTypes.Hex.fromStringUnsafe], )->Utils.unwrapResultExn)
-"#
-                ),
+"#.to_string(),
             }
         );
     }
@@ -1553,8 +1563,7 @@ let getTopicSelection = (eventFilters) => eventFilters->SingleOrMultiple.normali
             EventTemplate {
                 name: "NewGravatar".to_string(),
                 params: vec![],
-                module_code: format!(
-                    r#"
+                module_code: r#"
 let id = "0x50f7d27e90d1a5a38aeed4ceced2e8ec1ff185737aca96d15791b470d3f17363_1"
 let sighash = "0x50f7d27e90d1a5a38aeed4ceced2e8ec1ff185737aca96d15791b470d3f17363"
 let name = "NewGravatar"
@@ -1563,9 +1572,9 @@ let contractName = contractName
 @genType
 type eventArgs = unit
 @genType
-type block = {{}}
+type block = {}
 @genType
-type transaction = {{from: option<Address.t>}}
+type transaction = {from: option<Address.t>}
 
 @genType
 type event = Internal.genericEvent<eventArgs, block, transaction>
@@ -1577,8 +1586,8 @@ type handler<'loaderReturn> = Internal.genericHandler<Internal.genericHandlerArg
 type contractRegister = Internal.genericContractRegister<Internal.genericContractRegisterArgs<event, contractRegistrations>>
 
 let paramsRawEventSchema = S.literal(%raw(`null`))->S.to(_ => ())
-let blockSchema = S.object((_): block => {{}})
-let transactionSchema = S.object((s): transaction => {{from: s.field("from", S.option(Address.schema))}})
+let blockSchema = S.object((_): block => {})
+let transactionSchema = S.object((s): transaction => {from: s.field("from", S.option(Address.schema))})
 
 let convertHyperSyncEventArgs = _ => ()
 
@@ -1589,11 +1598,10 @@ let handlerRegister: HandlerTypes.Register.t = HandlerTypes.Register.make(
 )
 
 @genType
-type eventFilter = {{  }}
+type eventFilter = {  }
 
 let getTopicSelection = (eventFilters) => eventFilters->SingleOrMultiple.normalizeOrThrow->Belt.Array.map(_eventFilter => LogSelection.makeTopicSelection(~topic0=[sighash->EvmTypes.Hex.fromStringUnsafe], )->Utils.unwrapResultExn)
-"#
-                ),
+"#.to_string(),
             }
         );
     }

@@ -121,9 +121,7 @@ impl Contract for SelectedContract {
 //network/contract config
 async fn get_contract_import_selection(args: ContractImportArgs) -> Result<SelectedContract> {
     let local_or_explorer_import = get_local_or_explorer_import(&args);
-    let local_import_args = match local_or_explorer_import {
-        LocalOrExplorerImport::Local(local_import_args) => local_import_args,
-    };
+    let LocalOrExplorerImport::Local(local_import_args) = local_or_explorer_import;
 
     let abi_path_string =
         get_abi_path_string(&local_import_args).context("Failed getting Fuel ABI path")?;
@@ -176,7 +174,7 @@ async fn get_contract_import_selection(args: ContractImportArgs) -> Result<Selec
 //Constructs SelectedContract via local prompt. Uses abis and manual
 //network/contract config
 async fn prompt_selected_contracts(args: ContractImportArgs) -> Result<Vec<SelectedContract>> {
-    let should_prompt_to_continue_adding = !args.single_contract.clone();
+    let should_prompt_to_continue_adding = !args.single_contract;
     let first_contract = get_contract_import_selection(args).await?;
     let mut contracts = vec![first_contract];
 

@@ -6,7 +6,7 @@ async fn execute_command(
     args: Vec<&str>,
     current_dir: &Path,
 ) -> anyhow::Result<std::process::ExitStatus> {
-    Ok(tokio::process::Command::new(cmd)
+    tokio::process::Command::new(cmd)
         .args(&args)
         .current_dir(current_dir)
         .stdin(std::process::Stdio::null()) //passes null on any stdinprompt
@@ -26,20 +26,20 @@ async fn execute_command(
             cmd,
             args.join(" "),
             current_dir.to_str().unwrap_or("bad_path")
-        ))?)
+        ))
 }
 
 pub mod rescript {
     use super::execute_command;
     use anyhow::Result;
-    use std::path::PathBuf;
+    use std::path::Path;
 
-    pub async fn clean(path: &PathBuf) -> Result<std::process::ExitStatus> {
+    pub async fn clean(path: &Path) -> Result<std::process::ExitStatus> {
         let args = vec!["rescript", "clean"];
         execute_command("pnpm", args, path).await
     }
 
-    pub async fn build(path: &PathBuf) -> Result<std::process::ExitStatus> {
+    pub async fn build(path: &Path) -> Result<std::process::ExitStatus> {
         let args = vec!["rescript"];
         execute_command("pnpm", args, path).await
     }
@@ -51,12 +51,12 @@ pub mod codegen {
         config_parsing::system_config::SystemConfig, hbs_templating, template_dirs::TemplateDirs,
     };
     use anyhow::{self, Context, Result};
-    use std::path::PathBuf;
+    use std::path::Path;
 
     use crate::project_paths::ParsedProjectPaths;
     use tokio::fs;
 
-    pub async fn remove_files_except_git(directory: &PathBuf) -> Result<()> {
+    pub async fn remove_files_except_git(directory: &Path) -> Result<()> {
         let mut entries = fs::read_dir(directory).await?;
         while let Some(entry) = entries.next_entry().await? {
             let file_type = entry.file_type().await?;
@@ -76,7 +76,7 @@ pub mod codegen {
         Ok(())
     }
 
-    pub async fn check_and_install_pnpm(current_dir: &PathBuf) -> Result<()> {
+    pub async fn check_and_install_pnpm(current_dir: &Path) -> Result<()> {
         // Check if pnpm is already installed
         let check_pnpm = execute_command("pnpm", vec!["--version"], current_dir).await;
 
@@ -172,7 +172,7 @@ pub mod start {
     ) -> anyhow::Result<()> {
         if should_open_hasura {
             println!("Opening Hasura console at http://localhost:8080 ...");
-            if let Err(_) = open::that_detached("http://localhost:8080") {
+            if open::that_detached("http://localhost:8080").is_err() {
                 println!(
                     "Unable to open http://localhost:8080 in your browser automatically for you. \
                      You can open that link yourself to view hasura"

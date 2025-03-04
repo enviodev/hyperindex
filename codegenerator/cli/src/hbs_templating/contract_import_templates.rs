@@ -42,7 +42,7 @@ mod nested_params {
         //Turns the recursive NestedEventParam structure into a vec of FlattenedEventParam structs
         //This is the internal function that takes an array as a second param. The public function
         //calls this with an empty vec.
-        fn into_flattened_inputs_inner(
+        fn get_flattened_inputs_inner(
             &self,
             mut accessor_indexes: Vec<ParamIndex>,
         ) -> Vec<FlattenedEventParam> {
@@ -62,19 +62,19 @@ mod nested_params {
                 }
                 Self::TupleParam(i, arg_or_tuple) => {
                     accessor_indexes.push(*i);
-                    arg_or_tuple.into_flattened_inputs_inner(accessor_indexes)
+                    arg_or_tuple.get_flattened_inputs_inner(accessor_indexes)
                 }
                 Self::Tuple(params) => params
                     .iter()
-                    .flat_map(|param| param.into_flattened_inputs_inner(accessor_indexes.clone()))
+                    .flat_map(|param| param.get_flattened_inputs_inner(accessor_indexes.clone()))
                     .collect::<Vec<_>>(),
             }
         }
 
         //Public function that converts the NestedEventParam into a Vec of FlattenedEventParams
         //calls the internal function with an empty vec of accessor indexes
-        pub fn into_flattened_inputs(&self) -> Vec<FlattenedEventParam> {
-            self.into_flattened_inputs_inner(vec![])
+        pub fn get_flattened_inputs(&self) -> Vec<FlattenedEventParam> {
+            self.get_flattened_inputs_inner(vec![])
         }
     }
 
@@ -181,7 +181,7 @@ mod nested_params {
             .into_iter()
             .enumerate()
             .flat_map(|(i, event_input)| {
-                NestedEventParam::from(event_input, i).into_flattened_inputs()
+                NestedEventParam::from(event_input, i).get_flattened_inputs()
             })
             .collect()
     }
@@ -202,7 +202,7 @@ use anyhow::{Context, Result};
 use ethers::abi::ParamType;
 use nested_params::{flatten_event_inputs, FlattenedEventParam, ParamIndex};
 use serde::Serialize;
-use std::{path::PathBuf, vec};
+use std::{path::Path, vec};
 
 ///The struct that houses all the details of each contract necessary for
 ///populating the contract import templates
@@ -227,7 +227,7 @@ impl Contract {
         let imported_events = contract
             .events
             .iter()
-            .map(|event| Event::from_config_event(event, &contract, is_fuel, &language))
+            .map(|event| Event::from_config_event(event, contract, is_fuel, language))
             .collect::<Result<_>>()
             .context(format!(
                 "Failed getting events for contract {}",
@@ -310,14 +310,14 @@ impl Event {
         };
         let params = flatten_event_inputs(params.clone())
             .into_iter()
-            .map(|input| Param::from_event_param(input))
+            .map(Param::from_event_param)
             .collect::<Result<_>>()
             .context(format!("Failed getting params for event {}", event.name))?;
 
         Ok(Event {
             name: event.name.to_string(),
-            entity_id_from_event_code: Event::get_entity_id_code(is_fuel, &language),
-            create_mock_code: Event::get_create_mock_code(&event, &contract, is_fuel, &language),
+            entity_id_from_event_code: Event::get_entity_id_code(is_fuel, language),
+            create_mock_code: Event::get_create_mock_code(event, contract, is_fuel, language),
             params,
         })
     }
@@ -360,11 +360,11 @@ impl Param {
     }
 }
 
-impl Into<Field> for Param {
-    fn into(self) -> Field {
+impl From<Param> for Field {
+    fn from(val: Param) -> Self {
         Field {
-            name: self.entity_key.original,
-            field_type: self.graphql_type,
+            name: val.entity_key.original,
+            field_type: val.graphql_type,
         }
     }
 }
@@ -382,7 +382,7 @@ impl AutoSchemaHandlerTemplate {
                 Contract::from_config_contract(
                     contract,
                     config.get_ecosystem() == Ecosystem::Fuel,
-                    &language,
+                    language,
                 )
             })
             .collect::<Result<_>>()?;
@@ -395,7 +395,7 @@ impl AutoSchemaHandlerTemplate {
     pub fn generate_contract_import_templates(
         &self,
         lang: &Language,
-        project_root: &PathBuf,
+        project_root: &Path,
     ) -> Result<()> {
         let template_dirs = TemplateDirs::new();
 
@@ -407,8 +407,8 @@ impl AutoSchemaHandlerTemplate {
             .get_contract_import_lang_dir(lang)
             .context(format!("Failed getting {} contract import templates", lang))?;
 
-        let hbs = HandleBarsDirGenerator::new(&lang_dir, &self, &project_root);
-        let hbs_shared = HandleBarsDirGenerator::new(&shared_dir, &self, &project_root);
+        let hbs = HandleBarsDirGenerator::new(&lang_dir, &self, project_root);
+        let hbs_shared = HandleBarsDirGenerator::new(&shared_dir, &self, project_root);
         hbs.generate_hbs_templates().context(format!(
             "Failed generating {} contract import templates",
             lang
@@ -423,7 +423,7 @@ impl AutoSchemaHandlerTemplate {
     pub fn generate_subgraph_migration_templates(
         &self,
         lang: &Language,
-        project_root: &PathBuf,
+        project_root: &Path,
     ) -> Result<()> {
         let template_dirs = TemplateDirs::new();
 
@@ -434,7 +434,7 @@ impl AutoSchemaHandlerTemplate {
                 lang
             ))?;
 
-        let hbs = HandleBarsDirGenerator::new(&lang_dir, &self, &project_root);
+        let hbs = HandleBarsDirGenerator::new(&lang_dir, &self, project_root);
 
         hbs.generate_hbs_templates().context(format!(
             "Failed generating {} subgraph migration templates",

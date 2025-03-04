@@ -65,7 +65,7 @@ impl RescriptTypeDeclMulti {
             .join("\n")
     }
 
-    pub fn to_string(&self) -> String {
+    fn to_string_internal(&self) -> String {
         match self.0.as_slice() {
             [single_decl] => single_decl.to_string(),
             multiple_declarations => {
@@ -93,6 +93,12 @@ impl RescriptTypeDeclMulti {
                 )
             }
         }
+    }
+}
+
+impl Display for RescriptTypeDeclMulti {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", self.to_string_internal())
     }
 }
 
@@ -135,14 +141,13 @@ impl RescriptTypeDecl {
             format!("<{param_names_joined}>")
         };
         format!(
-            "{}{} = {}",
-            &self.name,
-            parameters,
-            self.type_expr.to_string()
+            "{type_name}{parameters} = {type_expr}",
+            type_name = &self.name,
+            type_expr = self.type_expr
         )
     }
 
-    pub fn to_string(&self) -> String {
+    fn to_string_internal(&self) -> String {
         format!(
             "{}type {}",
             self.get_tag_string_if_expr_is_variant(),
@@ -194,6 +199,12 @@ impl RescriptTypeDecl {
     }
 }
 
+impl Display for RescriptTypeDecl {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", self.to_string_internal())
+    }
+}
+
 #[derive(Debug, PartialEq, Clone)]
 pub enum RescriptTypeExpr {
     Identifier(RescriptTypeIdent),
@@ -201,8 +212,14 @@ pub enum RescriptTypeExpr {
     Variant(Vec<RescriptVariantConstr>),
 }
 
+impl Display for RescriptTypeExpr {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", self.to_string_internal())
+    }
+}
+
 impl RescriptTypeExpr {
-    pub fn to_string(&self) -> String {
+    fn to_string_internal(&self) -> String {
         match self {
             Self::Identifier(type_ident) => type_ident.to_string(),
             Self::Record(params) => {
@@ -296,9 +313,8 @@ impl RescriptRecordField {
         }
 
         let first_char = s.chars().next().unwrap();
-        match first_char {
-            '0'..='9' => return format!("_{}", s),
-            _ => (),
+        if let '0'..='9' = first_char {
+            return format!("_{}", s);
         }
 
         let uncapitalized = s.to_string().uncapitalize();
@@ -318,12 +334,18 @@ impl RescriptRecordField {
         }
     }
 
-    fn to_string(&self) -> String {
+    fn to_string_internal(&self) -> String {
         let as_prefix = self
             .as_name
             .clone()
             .map_or("".to_string(), |s| format!("@as(\"{s}\") "));
         format!("{}{}: {}", as_prefix, self.name, self.type_ident)
+    }
+}
+
+impl Display for RescriptRecordField {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", self.to_string_internal())
     }
 }
 
@@ -371,16 +393,17 @@ pub enum RescriptTypeIdent {
 
 impl RescriptTypeIdent {
     //Simply an ergonomic shorthand
-    pub fn to_expr(self) -> RescriptTypeExpr {
+    pub fn get_expr(self) -> RescriptTypeExpr {
         RescriptTypeExpr::Identifier(self)
     }
 
     //Simply an ergonomic shorthand
-    pub fn to_ok_expr(self) -> anyhow::Result<RescriptTypeExpr> {
-        Ok(self.to_expr())
+    pub fn get_ok_expr(self) -> anyhow::Result<RescriptTypeExpr> {
+        Ok(self.get_expr())
     }
 
-    fn to_string(&self) -> String {
+    /// Recursively builds the string representation of the type
+    fn to_string_internal(&self) -> String {
         match self {
             Self::Unit => "unit".to_string(),
             Self::Int => "int".to_string(),
@@ -394,10 +417,10 @@ impl RescriptTypeIdent {
             Self::Bool => "bool".to_string(),
             Self::Timestamp => "Js.Date.t".to_string(),
             Self::Array(inner_type) => {
-                format!("array<{}>", inner_type.to_string())
+                format!("array<{}>", inner_type)
             }
             Self::Option(inner_type) => {
-                format!("option<{}>", inner_type.to_string())
+                format!("option<{}>", inner_type)
             }
             Self::Tuple(inner_types) => {
                 let inner_types_str = inner_types
@@ -650,10 +673,7 @@ impl RescriptTypeIdent {
     }
 
     pub fn is_option(&self) -> bool {
-        match self {
-            Self::Option(_) => true,
-            _ => false,
-        }
+        matches!(self, Self::Option(_))
     }
 
     pub fn option(inner_type: Self) -> Self {
@@ -667,7 +687,7 @@ impl RescriptTypeIdent {
 
 impl Display for RescriptTypeIdent {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", self.to_string())
+        write!(f, "{}", self.to_string_internal())
     }
 }
 

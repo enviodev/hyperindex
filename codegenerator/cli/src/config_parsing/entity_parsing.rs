@@ -111,7 +111,7 @@ impl Schema {
         let schema_string = std::fs::read_to_string(&schema_path).context(format!(
             "EE200: Failed to read schema file at {}. Please ensure that the schema file is \
              placed correctly in the directory.",
-            &schema_path.to_str().unwrap_or_else(|| "bad file path"),
+            &schema_path.to_str().unwrap_or("bad file path"),
         ))?;
 
         let schema_doc = graphql_parser::parse_schema::<String>(&schema_string)
@@ -156,7 +156,7 @@ impl Schema {
     }
 
     fn check_schema_for_reserved_words(self) -> anyhow::Result<Self> {
-        let all_names = vec![
+        let all_names = [
             self.get_all_enum_type_names(),
             self.get_all_enum_values(),
             self.get_all_entity_type_names(),
@@ -177,7 +177,7 @@ impl Schema {
         let duplicate_names = self
             .get_all_enum_type_names()
             .into_iter()
-            .filter(|k| self.entities.get(k).is_some())
+            .filter(|k| self.entities.contains_key(k))
             .collect::<Vec<_>>();
         if !duplicate_names.is_empty() {
             Err(anyhow!(
@@ -296,7 +296,7 @@ impl GraphQLEnum {
     }
 
     fn check_valid_postgres_name(self) -> anyhow::Result<Self> {
-        let values_to_check = vec![vec![self.name.clone()], self.values.clone()].concat();
+        let values_to_check = [vec![self.name.clone()], self.values.clone()].concat();
         let invalid_names = values_to_check
             .into_iter()
             .filter(|v| !is_valid_postgres_db_name(v))
@@ -352,7 +352,7 @@ impl Entity {
                     .validate_no_duplicates(&fields)?
                     .validate_field_name_exists_or_is_allowed(
                         &fields,
-                        &vec!["db_write_timestamp".to_string()],
+                        &["db_write_timestamp".to_string()],
                     )?
                     .validate_no_index_on_derived_field(&fields)?
                     .validate_no_index_on_id_field()
@@ -442,7 +442,7 @@ impl Entity {
     }
 
     /// Returns the fields of this [`Entity`] sorted by field name.
-    pub fn get_fields<'a>(&'a self) -> Vec<&'a Field> {
+    pub fn get_fields(&self) -> Vec<&Field> {
         self.fields.values().sorted_by_key(|v| &v.name).collect()
     }
 
@@ -467,7 +467,7 @@ impl Entity {
             .filter_map(|f| f.get_relationship())
             .collect();
 
-        vec![derived_from_fields, object_relationship_fields].concat()
+        [derived_from_fields, object_relationship_fields].concat()
     }
 
     pub fn get_related_entities<'a>(
@@ -596,7 +596,7 @@ impl Field {
             ));
         }
 
-        let maybe_derived_from_directive = derived_from_directives.get(0);
+        let maybe_derived_from_directive = derived_from_directives.first();
         let derived_from_field = match maybe_derived_from_directive {
             None => None,
             Some(d) => {
@@ -795,21 +795,16 @@ impl Field {
     }
 
     pub fn is_derived_lookup_field(&self, entity: &Entity, schema: &Schema) -> bool {
-        schema.entities.values().fold(false, |accum, entity_inner| {
-            accum
-                || entity_inner
-                    .get_fields()
-                    .iter()
-                    .fold(false, |accum, field| {
-                        accum
-                            || matches!(
-                                &field.field_type,
-                                FieldType::DerivedFromField {
-                                    entity_name,
-                                    derived_from_field
-                                } if entity_name == &entity.name && derived_from_field == &self.name
-                            )
-                    })
+        schema.entities.values().any(|entity_inner| {
+            entity_inner.get_fields().iter().any(|field| {
+                matches!(
+                    &field.field_type,
+                    FieldType::DerivedFromField {
+                        entity_name,
+                        derived_from_field
+                    } if entity_name == &entity.name && derived_from_field == &self.name
+                )
+            })
         })
     }
 
@@ -869,7 +864,7 @@ impl MultiFieldIndex {
 
     fn get_single_field_index(&self) -> Option<String> {
         if self.0.len() == 1 {
-            self.0.get(0).cloned()
+            self.0.first().cloned()
         } else {
             None
         }
@@ -877,7 +872,7 @@ impl MultiFieldIndex {
 
     pub fn get_multi_field_index(&self) -> Option<&Self> {
         if self.0.len() > 1 {
-            Some(&self)
+            Some(self)
         } else {
             None
         }
@@ -886,7 +881,7 @@ impl MultiFieldIndex {
     fn validate_field_name_exists_or_is_allowed(
         self,
         fields: &HashMap<String, Field>,
-        allowed_names: &Vec<String>,
+        allowed_names: &[String],
     ) -> anyhow::Result<Self> {
         for field_name in &self.0 {
             if !fields.contains_key(field_name) && !allowed_names.contains(field_name) {
@@ -1096,11 +1091,11 @@ impl UserDefinedFieldType {
         self.get_underlying_scalar().get_linked_entity(schema)
     }
 
-    fn to_string(&self) -> String {
+    fn to_string_internal(&self) -> String {
         match &self {
             Self::Single(gql_scalar) => gql_scalar.to_string(),
-            Self::ListType(field_type) => format!("[{}]", field_type.to_string()),
-            Self::NonNullType(field_type) => format!("{}!", field_type.to_string()),
+            Self::ListType(field_type) => format!("[{}]", field_type),
+            Self::NonNullType(field_type) => format!("{}!", field_type),
         }
     }
 
@@ -1166,7 +1161,7 @@ impl UserDefinedFieldType {
 // Implement the Display trait for the custom struct
 impl fmt::Display for UserDefinedFieldType {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", self.to_string())
+        write!(f, "{}", self.to_string_internal())
     }
 }
 
@@ -1296,7 +1291,7 @@ impl FieldType {
         self.to_user_defined_field_type().is_entity_field(schema)
     }
 
-    fn to_string(&self) -> String {
+    fn to_string_internal(&self) -> String {
         match self {
             Self::DerivedFromField { entity_name, .. } => {
                 let field_str = self.to_user_defined_field_type().to_string();
@@ -1317,7 +1312,7 @@ impl FieldType {
 // Implement the Display trait for the custom struct
 impl fmt::Display for FieldType {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", self.to_string())
+        write!(f, "{}", self.to_string_internal())
     }
 }
 
