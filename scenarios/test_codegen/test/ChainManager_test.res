@@ -137,7 +137,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
       currentTime := currentTime.contents + blockTime
       currentBlockNumber := currentBlockNumber.contents + 1
     }
-    let chainConfig = config.defaultChain->Utils.magic
+    let chainConfig = config.defaultChain->Option.getUnsafe
     let mockChainFetcher: ChainFetcher.t = {
       timestampCaughtUpToHeadOrEndblock: None,
       dbFirstEventBlockNumber: None,
@@ -148,6 +148,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
       fetchState: fetchState.contents,
       logger: Logging.logger,
       sourceManager: SourceManager.make(
+        ~sources=chainConfig.sources,
         ~maxPartitionConcurrency=Env.maxPartitionConcurrency,
         ~logger=Logging.logger,
       ),

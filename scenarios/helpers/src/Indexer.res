@@ -113,6 +113,7 @@ module type S = {
     type t = {
       name: string,
       chain: ChainMap.Chain.t,
+      poweredByHyperSync: bool,
       /* Frequency (in ms) used when polling for new events on this network. */
       pollingInterval: int,
       getBlockHashes: (
@@ -140,16 +141,13 @@ module type S = {
       events: array<module(Types.Event)>,
     }
 
-    type syncSource = HyperSync | HyperFuel | Rpc
-
     type chainConfig = {
-      syncSource: syncSource,
       startBlock: int,
       endBlock: option<int>,
       confirmedBlockThreshold: int,
       chain: ChainMap.Chain.t,
       contracts: array<contract>,
-      source: Source.t,
+      sources: array<Source.t>,
     }
   }
 }

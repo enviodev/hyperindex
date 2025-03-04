@@ -136,11 +136,7 @@ let makeAppState = (globalState: GlobalState.t): EnvioInkApp.appState => {
           numBatchesFetched,
           chainId: cf.chainConfig.chain->ChainMap.Chain.toChainId,
           endBlock: cf.chainConfig.endBlock,
-          poweredByHyperSync: switch cf.chainConfig.syncSource {
-          | HyperSync
-          | HyperFuel => true
-          | Rpc => false
-          },
+          poweredByHyperSync: cf.sourceManager.activeSource.poweredByHyperSync,
         }: EnvioInkApp.chainData
       )
     })
