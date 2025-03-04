@@ -1,0 +1,188 @@
+{
+  "programType": "contract",
+  "specVersion": "1",
+  "encodingVersion": "1",
+  "concreteTypes": [
+    {
+      "type": "()",
+      "concreteTypeId": "2e38e77b22c314a449e91fafed92a43826ac6aa403ae6a8acb6cf58239fbaf5d"
+    },
+    {
+      "type": "enum Error",
+      "concreteTypeId": "4ed298ed0be3fc65895c5d5263885191731caa9f79ff63e56d98b449e5ba4b3f",
+      "metadataTypeId": 1
+    },
+    {
+      "type": "enum std::option::Option<struct Greeting>",
+      "concreteTypeId": "6131325e56e0a740b11c011fd2f7e67e7104a223cad4ddd4c4033d9fe1fe9768",
+      "metadataTypeId": 2,
+      "typeArguments": [
+        "270fc75adb9a9c47c2092f42f632ea79d1f5e558793ff90fcde067ff3a899ccf"
+      ]
+    },
+    {
+      "type": "str[8]",
+      "concreteTypeId": "fd59cdd2c531ab3564f4fcc13eb876860d4d7cd4d12aa1f042a5aeceacde951f"
+    },
+    {
+      "type": "struct ClearGreeting",
+      "concreteTypeId": "3e3ffd83393027a4af2a81a6fd031daba84882b4117a89be43a798f807322e98",
+      "metadataTypeId": 4
+    },
+    {
+      "type": "struct Greeting",
+      "concreteTypeId": "270fc75adb9a9c47c2092f42f632ea79d1f5e558793ff90fcde067ff3a899ccf",
+      "metadataTypeId": 5
+    },
+    {
+      "type": "struct NewGreeting",
+      "concreteTypeId": "4d8812009a01dfce9ead2049933d9eb736fadce2d22525e8f451c3f5c00fc4fe",
+      "metadataTypeId": 6
+    }
+  ],
+  "metadataTypes": [
+    {
+      "type": "b256",
+      "metadataTypeId": 0
+    },
+    {
+      "type": "enum Error",
+      "metadataTypeId": 1,
+      "components": [
+        {
+          "name": "InvalidContractSender",
+          "typeId": "2e38e77b22c314a449e91fafed92a43826ac6aa403ae6a8acb6cf58239fbaf5d"
+        },
+        {
+          "name": "ToThrow",
+          "typeId": "2e38e77b22c314a449e91fafed92a43826ac6aa403ae6a8acb6cf58239fbaf5d"
+        }
+      ]
+    },
+    {
+      "type": "enum std::option::Option",
+      "metadataTypeId": 2,
+      "components": [
+        {
+          "name": "None",
+          "typeId": "2e38e77b22c314a449e91fafed92a43826ac6aa403ae6a8acb6cf58239fbaf5d"
+        },
+        {
+          "name": "Some",
+          "typeId": 3
+        }
+      ],
+      "typeParameters": [3]
+    },
+    {
+      "type": "generic T",
+      "metadataTypeId": 3
+    },
+    {
+      "type": "struct ClearGreeting",
+      "metadataTypeId": 4,
+      "components": [
+        {
+          "name": "user",
+          "typeId": 7
+        }
+      ]
+    },
+    {
+      "type": "struct Greeting",
+      "metadataTypeId": 5,
+      "components": [
+        {
+          "name": "value",
+          "typeId": "fd59cdd2c531ab3564f4fcc13eb876860d4d7cd4d12aa1f042a5aeceacde951f"
+        }
+      ]
+    },
+    {
+      "type": "struct NewGreeting",
+      "metadataTypeId": 6,
+      "components": [
+        {
+          "name": "user",
+          "typeId": 7
+        },
+        {
+          "name": "greeting",
+          "typeId": 5
+        }
+      ]
+    },
+    {
+      "type": "struct std::address::Address",
+      "metadataTypeId": 7,
+      "components": [
+        {
+          "name": "bits",
+          "typeId": 0
+        }
+      ]
+    }
+  ],
+  "functions": [
+    {
+      "inputs": [],
+      "name": "clear_greeting",
+      "output": "2e38e77b22c314a449e91fafed92a43826ac6aa403ae6a8acb6cf58239fbaf5d",
+      "attributes": [
+        {
+          "name": "storage",
+          "arguments": ["write"]
+        }
+      ]
+    },
+    {
+      "inputs": [],
+      "name": "current_greeting",
+      "output": "6131325e56e0a740b11c011fd2f7e67e7104a223cad4ddd4c4033d9fe1fe9768",
+      "attributes": [
+        {
+          "name": "storage",
+          "arguments": ["read"]
+        }
+      ]
+    },
+    {
+      "inputs": [
+        {
+          "name": "greeting",
+          "concreteTypeId": "fd59cdd2c531ab3564f4fcc13eb876860d4d7cd4d12aa1f042a5aeceacde951f"
+        }
+      ],
+      "name": "set_greeting",
+      "output": "2e38e77b22c314a449e91fafed92a43826ac6aa403ae6a8acb6cf58239fbaf5d",
+      "attributes": [
+        {
+          "name": "storage",
+          "arguments": ["write"]
+        }
+      ]
+    },
+    {
+      "inputs": [],
+      "name": "throw_error",
+      "output": "2e38e77b22c314a449e91fafed92a43826ac6aa403ae6a8acb6cf58239fbaf5d",
+      "attributes": null
+    }
+  ],
+  "loggedTypes": [
+    {
+      "logId": "4485582493926303652",
+      "concreteTypeId": "3e3ffd83393027a4af2a81a6fd031daba84882b4117a89be43a798f807322e98"
+    },
+    {
+      "logId": "5679770223941778533",
+      "concreteTypeId": "4ed298ed0be3fc65895c5d5263885191731caa9f79ff63e56d98b449e5ba4b3f"
+    },
+    {
+      "logId": "5586735131546214350",
+      "concreteTypeId": "4d8812009a01dfce9ead2049933d9eb736fadce2d22525e8f451c3f5c00fc4fe"
+    }
+  ],
+  "messagesTypes": [],
+  "configurables": []
+}

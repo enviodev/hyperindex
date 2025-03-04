@@ -797,26 +797,21 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
                 end_block: None,
                 hyperfuel_config: None,
                 contracts: vec![NetworkContract {
-                    name: "OrderBook".to_string(),
+                    name: "Greeter".to_string(),
                     address: "0x4a2ce054e3e94155f7092f7365b212f7f45105b74819c623744ebcc5d065c6ac"
                         .to_string()
                         .into(),
                     config: Some(fuel::ContractConfig {
-                        abi_file_path: "./abis/spark-orderbook.json".to_string(),
-                        handler: "./src/OrderBookHandlers.ts".to_string(),
+                        abi_file_path: "../abis/greeter-abi.json".to_string(),
+                        handler: "./src/EventHandlers.js".to_string(),
                         events: vec![
                             fuel::EventConfig {
-                                name: "OrderChangeEvent".to_string(),
+                                name: "NewGreeting".to_string(),
                                 log_id: None,
                                 type_: None,
                             },
                             fuel::EventConfig {
-                                name: "MarketCreateEvent".to_string(),
-                                log_id: None,
-                                type_: None,
-                            },
-                            fuel::EventConfig {
-                                name: "TradeEvent".to_string(),
+                                name: "ClearGreeting".to_string(),
                                 log_id: None,
                                 type_: None,
                             },
