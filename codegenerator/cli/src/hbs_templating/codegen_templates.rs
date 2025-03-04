@@ -1,4 +1,9 @@
-use std::{collections::HashMap, collections::HashSet, path::PathBuf, vec};
+use std::{
+    collections::{HashMap, HashSet},
+    fmt::{Display, Write},
+    path::PathBuf,
+    vec,
+};
 
 use super::hbs_dir_generator::HandleBarsDirGenerator;
 use crate::{
@@ -342,8 +347,14 @@ pub struct EventMod {
     pub fuel_event_kind: Option<FuelEventKind>,
 }
 
+impl Display for EventMod {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.to_string_internal())
+    }
+}
+
 impl EventMod {
-    fn to_string(&self) -> String {
+    fn to_string_internal(&self) -> String {
         let sighash = &self.sighash;
         let topic_count = &self.topic_count;
         let event_name = &self.event_name;
@@ -359,10 +370,13 @@ impl EventMod {
             Some(FuelEventKind::Burn) => Some("Burn".to_string()),
             Some(FuelEventKind::Call) => Some("Call".to_string()),
             Some(FuelEventKind::Transfer) => Some("Transfer".to_string()),
-            Some(FuelEventKind::LogData(_)) => Some(r#"LogData({
+            Some(FuelEventKind::LogData(_)) => Some(
+                r#"LogData({
   logId: sighash,
   decode: Fuel.Receipt.getLogDataDecoder(~abi, ~logId=sighash),
-})"#.to_string()),
+})"#
+                .to_string(),
+            ),
         };
 
         let event_id = match self.fuel_event_kind {
@@ -476,7 +490,7 @@ impl EventTemplate {
     const CONVERT_HYPER_SYNC_EVENT_ARGS_NEVER: &'static str =
         "_ => Js.Exn.raiseError(\"Not implemented\")";
 
-    pub fn generate_event_filter_type(params: &Vec<EventParam>) -> String {
+    pub fn generate_event_filter_type(params: &[EventParam]) -> String {
         let field_rows = params
             .iter()
             .filter(|param| param.indexed)
@@ -494,31 +508,33 @@ impl EventTemplate {
         format!("{{ {field_rows} }}")
     }
 
-    pub fn generate_get_topic_selection_code(params: &Vec<EventParam>) -> String {
+    pub fn generate_get_topic_selection_code(params: &[EventParam]) -> String {
         let indexed_params = params.iter().filter(|param| param.indexed);
 
         //Prefixed with underscore for cases where it is not used to avoid compiler warnings
         let event_filter_arg = "_eventFilter";
 
-        let topic_filter_calls = indexed_params
-            .enumerate()
-            .map(|(i, param)| {
-                let param = EthereumEventParam::from(param);
-                let topic_number = i + 1;
-                let param_name = RescriptRecordField::to_valid_res_name(param.name);
-                let topic_encoder = param.get_topic_encoder();
-                let nested_type_flags = match param.get_nested_type_depth() {
-                    depth if depth > 0 => format!("(~nestedArrayDepth={depth})"),
-                    _ => "".to_string(),
-                };
-                format!(
-                    "~topic{topic_number}=?{event_filter_arg}.{param_name}->Belt.Option.\
+        let topic_filter_calls =
+            indexed_params
+                .enumerate()
+                .fold(String::new(), |mut output, (i, param)| {
+                    let param = EthereumEventParam::from(param);
+                    let topic_number = i + 1;
+                    let param_name = RescriptRecordField::to_valid_res_name(param.name);
+                    let topic_encoder = param.get_topic_encoder();
+                    let nested_type_flags = match param.get_nested_type_depth() {
+                        depth if depth > 0 => format!("(~nestedArrayDepth={depth})"),
+                        _ => "".to_string(),
+                    };
+                    let _ = write!(
+                        output,
+                        "~topic{topic_number}=?{event_filter_arg}.{param_name}->Belt.Option.\
                      map(topicFilters => \
                      topicFilters->SingleOrMultiple.normalizeOrThrow{nested_type_flags}->Belt.\
                      Array.map({topic_encoder})), "
-                )
-            })
-            .collect::<String>();
+                    );
+                    output
+                });
 
         format!(
             "(eventFilters) => \
@@ -528,7 +544,7 @@ impl EventTemplate {
         )
     }
 
-    pub fn generate_convert_hyper_sync_event_args_code(params: &Vec<EventParam>) -> String {
+    pub fn generate_convert_hyper_sync_event_args_code(params: &[EventParam]) -> String {
         if params.is_empty() {
             return Self::CONVERT_HYPER_SYNC_EVENT_ARGS_NOOP.to_string();
         }
@@ -771,7 +787,7 @@ let eventSignatures = [{}]"#,
                     // If we decide to inline the abi, instead of using require
                     // we need to remember that abi might contain ` and we should escape it
                     abi.path_buf.to_string_lossy(),
-                    all_abi_type_declarations.to_string(),
+                    all_abi_type_declarations,
                     all_abi_type_declarations.to_rescript_schema(&RescriptSchemaMode::ForDb)
                 )
             }
@@ -1180,7 +1196,6 @@ mod test {
         let config = SystemConfig::parse_from_project_files(&project_paths)
             .expect("Deserialized yml config should be parseable");
 
-        
         super::ProjectTemplate::from_config(&config, &project_paths)
             .expect("should be able to get project template")
     }

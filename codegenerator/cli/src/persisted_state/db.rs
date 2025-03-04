@@ -82,7 +82,7 @@ impl PersistedStateExists {
             .var("ENVIO_PG_PUBLIC_SCHEMA")
             .unwrap_or_else(|| "public".to_string());
 
-            let val = sqlx::query_as::<_, PersistedState>(&format!(
+        let val = sqlx::query_as::<_, PersistedState>(&format!(
             "SELECT 
             envio_version,
             config_hash,

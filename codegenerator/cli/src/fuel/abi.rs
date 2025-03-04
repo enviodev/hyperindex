@@ -75,7 +75,7 @@ pub struct FuelAbi {
 }
 
 impl FuelAbi {
-    fn decode_program(raw: &String) -> Result<UnifiedProgramABI> {
+    fn decode_program(raw: &str) -> Result<UnifiedProgramABI> {
         Ok(UnifiedProgramABI::from_json_abi(raw)?)
     }
 
@@ -219,30 +219,30 @@ impl FuelAbi {
                 let type_expr: Result<RescriptTypeExpr> = {
                     use RescriptTypeIdent::*;
                     match abi_type_decl.type_field.as_str() {
-                        "()" => Unit.to_ok_expr(),
-                        "bool" => Bool.to_ok_expr(), //Note this is represented as 0 or 1
+                        "()" => Unit.get_ok_expr(),
+                        "bool" => Bool.get_ok_expr(), //Note this is represented as 0 or 1
                         //NOTE: its possible when doing rescript int operations you can
                         //overflow with u32 but its a rare case and likely user will do operation
                         //int ts/js
-                        "u8" | "u16" | "u32" => Int.to_ok_expr(),
-                        "u64" | "u128" | "u256" | "raw untyped ptr" => BigInt.to_ok_expr(),
-                        "b256" | "address" => String.to_ok_expr(),
-                        "str" | "struct std::string::String" => String.to_ok_expr(),
-                        type_field if type_field.starts_with("str[") => String.to_ok_expr(),
+                        "u8" | "u16" | "u32" => Int.get_ok_expr(),
+                        "u64" | "u128" | "u256" | "raw untyped ptr" => BigInt.get_ok_expr(),
+                        "b256" | "address" => String.get_ok_expr(),
+                        "str" | "struct std::string::String" => String.get_ok_expr(),
+                        type_field if type_field.starts_with("str[") => String.get_ok_expr(),
                         "struct std::vec::Vec" => Array(Box::new(GenericParam(
                             get_first_type_param()
                                 .context("Failed getting param for struct Vec")?,
                         )))
-                        .to_ok_expr(),
+                        .get_ok_expr(),
                         // It's decoded as Uint8Array, but we don't have a schema for it yet
-                        "struct std::bytes::Bytes" => Unknown.to_ok_expr(),
+                        "struct std::bytes::Bytes" => Unknown.get_ok_expr(),
                         //TODO: handle nested option since this would need to be flattened to
                         //single level rescript option.
                         "enum Option" => Option(Box::new(GenericParam(
                             get_first_type_param()
                                 .context("Failed getting param for enum Option")?,
                         )))
-                        .to_ok_expr(),
+                        .get_ok_expr(),
                         type_field if type_field.starts_with("struct ") => {
                             let record_fields = get_components_name_and_type_ident()
                                 .context(format!(
@@ -279,7 +279,7 @@ impl FuelAbi {
                                 .map(|(_name, type_ident)| type_ident)
                                 .collect();
 
-                            RescriptTypeIdent::Tuple(tuple_types).to_ok_expr()
+                            RescriptTypeIdent::Tuple(tuple_types).get_ok_expr()
                         }
                         type_field if type_field.starts_with("[_;") => {
                             let components =
@@ -290,7 +290,7 @@ impl FuelAbi {
                             let element_name_and_type_ident = components
                                 .first()
                                 .ok_or(anyhow!("Missing array element type component"))?;
-                            Array(Box::new(element_name_and_type_ident.1.clone())).to_ok_expr()
+                            Array(Box::new(element_name_and_type_ident.1.clone())).get_ok_expr()
                         }
                         type_field => {
                             //Unknown

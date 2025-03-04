@@ -32,14 +32,14 @@ async fn execute_command(
 pub mod rescript {
     use super::execute_command;
     use anyhow::Result;
-    use std::path::PathBuf;
+    use std::path::Path;
 
-    pub async fn clean(path: &PathBuf) -> Result<std::process::ExitStatus> {
+    pub async fn clean(path: &Path) -> Result<std::process::ExitStatus> {
         let args = vec!["rescript", "clean"];
         execute_command("pnpm", args, path).await
     }
 
-    pub async fn build(path: &PathBuf) -> Result<std::process::ExitStatus> {
+    pub async fn build(path: &Path) -> Result<std::process::ExitStatus> {
         let args = vec!["rescript"];
         execute_command("pnpm", args, path).await
     }
@@ -51,12 +51,12 @@ pub mod codegen {
         config_parsing::system_config::SystemConfig, hbs_templating, template_dirs::TemplateDirs,
     };
     use anyhow::{self, Context, Result};
-    use std::path::PathBuf;
+    use std::path::Path;
 
     use crate::project_paths::ParsedProjectPaths;
     use tokio::fs;
 
-    pub async fn remove_files_except_git(directory: &PathBuf) -> Result<()> {
+    pub async fn remove_files_except_git(directory: &Path) -> Result<()> {
         let mut entries = fs::read_dir(directory).await?;
         while let Some(entry) = entries.next_entry().await? {
             let file_type = entry.file_type().await?;
@@ -76,7 +76,7 @@ pub mod codegen {
         Ok(())
     }
 
-    pub async fn check_and_install_pnpm(current_dir: &PathBuf) -> Result<()> {
+    pub async fn check_and_install_pnpm(current_dir: &Path) -> Result<()> {
         // Check if pnpm is already installed
         let check_pnpm = execute_command("pnpm", vec!["--version"], current_dir).await;
 

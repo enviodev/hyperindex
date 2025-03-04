@@ -61,7 +61,7 @@ fn check_reserved_words(words: &Vec<String>) -> Vec<String> {
     flagged_words
 }
 
-fn is_valid_identifier(s: &String) -> bool {
+fn is_valid_identifier(s: &str) -> bool {
     // Check if the string is empty
     if s.is_empty() {
         return false;
@@ -69,7 +69,9 @@ fn is_valid_identifier(s: &String) -> bool {
 
     // Check the first character to ensure it's not a digit
     let first_char = s.chars().next().unwrap();
-    if let '0'..='9' = first_char { return false }
+    if let '0'..='9' = first_char {
+        return false;
+    }
 
     // Check that all characters are either alphanumeric or an underscore
     for c in s.chars() {
@@ -143,13 +145,15 @@ impl human_config::evm::Network {
                     finite_end_block
                 ))
             };
-            if let Ok(network) = chain_helpers::Network::from_network_id(self.id) { match (self.end_block, network.get_finite_end_block()) {
-                (Some(end_block), Some(finite_end_block)) if end_block > finite_end_block => {
-                    return make_err(finite_end_block)
+            if let Ok(network) = chain_helpers::Network::from_network_id(self.id) {
+                match (self.end_block, network.get_finite_end_block()) {
+                    (Some(end_block), Some(finite_end_block)) if end_block > finite_end_block => {
+                        return make_err(finite_end_block)
+                    }
+                    (None, Some(finite_end_block)) => return make_err(finite_end_block),
+                    _ => (),
                 }
-                (None, Some(finite_end_block)) => return make_err(finite_end_block),
-                _ => (),
-            } }
+            }
         }
         Ok(())
     }

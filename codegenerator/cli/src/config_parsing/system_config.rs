@@ -29,7 +29,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::{HashMap, HashSet},
     fs,
-    path::PathBuf,
+    path::{Path, PathBuf},
 };
 
 type ContractNameKey = String;
@@ -56,10 +56,10 @@ pub struct EnvState {
 }
 
 impl EnvState {
-    pub fn new(project_root: &PathBuf) -> Self {
+    pub fn new(project_root: &Path) -> Self {
         EnvState {
             maybe_dotenv: None,
-            project_root: project_root.clone(),
+            project_root: PathBuf::from(project_root),
         }
     }
 
@@ -141,9 +141,9 @@ mod interpolation {
 
         if name.is_empty()
             || name.chars().next().is_some_and(|c| c.is_ascii_digit())
-            || !name.chars().all(|c| match c {
-                'a'..='z' | 'A'..='Z' | '0'..='9' | '_' => true,
-                _ => false,
+            || !name.chars().all(|c| {
+                matches!(c,
+                'a'..='z' | 'A'..='Z' | '0'..='9' | '_')
             })
         {
             return (name.to_string(), InterpolationResult::InvalidName);
@@ -581,7 +581,7 @@ impl SystemConfig {
                             None => {
                                 //Validate that there is a global contract for the given contract if
                                 //there is no config
-                                if contracts.get(&contract.name).is_none() {
+                                if !contracts.contains_key(&contract.name) {
                                     Err(anyhow!(
                                         "Failed to parse contract '{}' for the network '{}'. If \
                                          you use a global contract definition, please verify that \
@@ -672,7 +672,7 @@ impl SystemConfig {
                             g_contract.name.clone(),
                             g_contract.config.handler.clone(),
                             events,
-                            Abi::Fuel(fuel_abi),
+                            Abi::fuel(fuel_abi),
                         )?;
 
                         //Check if contract exists
@@ -701,7 +701,7 @@ impl SystemConfig {
                                     contract.name.clone(),
                                     l_contract.handler,
                                     events,
-                                    Abi::Fuel(fuel_abi),
+                                    Abi::fuel(fuel_abi),
                                 )?;
 
                                 //Check if contract exists
@@ -719,7 +719,7 @@ impl SystemConfig {
                             None => {
                                 //Validate that there is a global contract for the given contract if
                                 //there is no local_contract_config
-                                if contracts.get(&contract.name).is_none() {
+                                if !contracts.contains_key(&contract.name) {
                                     Err(anyhow!(
                                         "Failed to parse contract '{}' for the network '{}'. If \
                                          you use a global contract definition, please verify that \
@@ -1118,7 +1118,7 @@ impl EvmAbi {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Abi {
     Evm(EvmAbi),
-    Fuel(FuelAbi),
+    Fuel(Box<FuelAbi>),
 }
 
 impl Abi {
@@ -1127,6 +1127,10 @@ impl Abi {
             Abi::Evm(abi) => abi.path.clone(),
             Abi::Fuel(abi) => Some(abi.path_buf.clone()),
         }
+    }
+
+    fn fuel(fuel_abi: FuelAbi) -> Self {
+        Abi::Fuel(Box::new(fuel_abi))
     }
 }
 
@@ -1206,7 +1210,7 @@ pub struct Event {
 }
 
 impl Event {
-    fn get_abi_event(event_string: &String, opt_abi: &Option<EvmAbi>) -> Result<EthAbiEvent> {
+    fn get_abi_event(event_string: &str, opt_abi: &Option<EvmAbi>) -> Result<EthAbiEvent> {
         let parse_event_sig = |sig: &str| -> Result<EthAbiEvent> {
             match HumanReadableParser::parse_event(sig) {
                 Ok(event) => Ok(event),
@@ -1314,8 +1318,8 @@ impl Event {
     }
 
     pub fn from_fuel_events_config(
-        events_config: &Vec<FuelEventConfig>,
-        abi_file_path: &String,
+        events_config: &[FuelEventConfig],
+        abi_file_path: &str,
         project_paths: &ParsedProjectPaths,
     ) -> Result<(Vec<Self>, FuelAbi)> {
         use human_config::fuel::EventType;
@@ -1488,7 +1492,9 @@ impl FieldSelection {
 
         if has_rpc_sync_src {
             let invalid_rpc_tx_fields: Vec<_> = transaction_fields
-                .iter().filter(|&field| RpcTransactionField::try_from(field.clone()).is_err()).cloned()
+                .iter()
+                .filter(|&field| RpcTransactionField::try_from(field.clone()).is_err())
+                .cloned()
                 .collect();
 
             if !invalid_rpc_tx_fields.is_empty() {
@@ -1500,7 +1506,9 @@ impl FieldSelection {
             }
 
             let invalid_rpc_block_fields: Vec<_> = block_fields
-                .iter().filter(|&field| RpcBlockField::try_from(field.clone()).is_err()).cloned()
+                .iter()
+                .filter(|&field| RpcBlockField::try_from(field.clone()).is_err())
+                .cloned()
                 .collect();
 
             if !invalid_rpc_block_fields.is_empty() {

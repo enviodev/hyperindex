@@ -156,10 +156,12 @@ impl Schema {
     }
 
     fn check_schema_for_reserved_words(self) -> anyhow::Result<Self> {
-        let all_names = [self.get_all_enum_type_names(),
+        let all_names = [
+            self.get_all_enum_type_names(),
             self.get_all_enum_values(),
             self.get_all_entity_type_names(),
-            self.get_all_entity_field_names()]
+            self.get_all_entity_field_names(),
+        ]
         .concat();
 
         match check_names_from_schema_for_reserved_words(all_names) {
@@ -175,7 +177,7 @@ impl Schema {
         let duplicate_names = self
             .get_all_enum_type_names()
             .into_iter()
-            .filter(|k| self.entities.get(k).is_some())
+            .filter(|k| self.entities.contains_key(k))
             .collect::<Vec<_>>();
         if !duplicate_names.is_empty() {
             Err(anyhow!(
@@ -350,7 +352,7 @@ impl Entity {
                     .validate_no_duplicates(&fields)?
                     .validate_field_name_exists_or_is_allowed(
                         &fields,
-                        &vec!["db_write_timestamp".to_string()],
+                        &["db_write_timestamp".to_string()],
                     )?
                     .validate_no_index_on_derived_field(&fields)?
                     .validate_no_index_on_id_field()
@@ -793,19 +795,17 @@ impl Field {
     }
 
     pub fn is_derived_lookup_field(&self, entity: &Entity, schema: &Schema) -> bool {
-        schema.entities.values().any(|entity_inner| entity_inner
-                    .get_fields()
-                    .iter()
-                    .fold(false, |accum, field| {
-                        accum
-                            || matches!(
-                                &field.field_type,
-                                FieldType::DerivedFromField {
-                                    entity_name,
-                                    derived_from_field
-                                } if entity_name == &entity.name && derived_from_field == &self.name
-                            )
-                    }))
+        schema.entities.values().any(|entity_inner| {
+            entity_inner.get_fields().iter().any(|field| {
+                matches!(
+                    &field.field_type,
+                    FieldType::DerivedFromField {
+                        entity_name,
+                        derived_from_field
+                    } if entity_name == &entity.name && derived_from_field == &self.name
+                )
+            })
+        })
     }
 
     pub fn is_primary_key(&self) -> bool {
@@ -881,7 +881,7 @@ impl MultiFieldIndex {
     fn validate_field_name_exists_or_is_allowed(
         self,
         fields: &HashMap<String, Field>,
-        allowed_names: &Vec<String>,
+        allowed_names: &[String],
     ) -> anyhow::Result<Self> {
         for field_name in &self.0 {
             if !fields.contains_key(field_name) && !allowed_names.contains(field_name) {
@@ -1091,7 +1091,7 @@ impl UserDefinedFieldType {
         self.get_underlying_scalar().get_linked_entity(schema)
     }
 
-    fn to_string(&self) -> String {
+    fn to_string_internal(&self) -> String {
         match &self {
             Self::Single(gql_scalar) => gql_scalar.to_string(),
             Self::ListType(field_type) => format!("[{}]", field_type),
@@ -1161,7 +1161,7 @@ impl UserDefinedFieldType {
 // Implement the Display trait for the custom struct
 impl fmt::Display for UserDefinedFieldType {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", self.to_string())
+        write!(f, "{}", self.to_string_internal())
     }
 }
 
@@ -1291,7 +1291,7 @@ impl FieldType {
         self.to_user_defined_field_type().is_entity_field(schema)
     }
 
-    fn to_string(&self) -> String {
+    fn to_string_internal(&self) -> String {
         match self {
             Self::DerivedFromField { entity_name, .. } => {
                 let field_str = self.to_user_defined_field_type().to_string();
@@ -1312,7 +1312,7 @@ impl FieldType {
 // Implement the Display trait for the custom struct
 impl fmt::Display for FieldType {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", self.to_string())
+        write!(f, "{}", self.to_string_internal())
     }
 }
 

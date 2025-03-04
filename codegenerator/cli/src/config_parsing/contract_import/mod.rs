@@ -24,7 +24,6 @@ pub enum ContractImportResult {
 
 #[derive(Deserialize, Debug)]
 #[serde(untagged)]
-
 enum ContractImportResponse {
     Contract {
         // Currently it always returns a name, but handle None for future,
