@@ -34,6 +34,7 @@ describe("E2E Integration Test", () => {
         sources: [
           RpcSource.make({
             chain,
+            sourceFor: Sync,
             contracts,
             syncConfig: {
               initialBlockInterval: 10000,

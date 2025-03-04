@@ -853,9 +853,6 @@ type EthAddress = String;
 #[derive(Debug, Serialize, PartialEq, Clone)]
 struct NetworkTemplate {
     pub id: u64,
-    rpc_config: Option<RpcConfig>,
-    hypersync_config: Option<HypersyncConfig>,
-    hyperfuel_config: Option<HyperfuelConfig>,
     confirmed_block_threshold: i32,
     start_block: u64,
     end_block: Option<u64>,
@@ -865,22 +862,6 @@ impl NetworkTemplate {
     fn from_config_network(network: &system_config::Network) -> Self {
         NetworkTemplate {
             id: network.id,
-            rpc_config: match &network.sync_source {
-                system_config::SyncSource::RpcConfig(rpc_config) => Some(rpc_config.clone()),
-                _ => None,
-            },
-            hypersync_config: match &network.sync_source {
-                system_config::SyncSource::HypersyncConfig(hypersync_config) => {
-                    Some(hypersync_config.clone())
-                }
-                _ => None,
-            },
-            hyperfuel_config: match &network.sync_source {
-                system_config::SyncSource::HyperfuelConfig(hyperfuel_config) => {
-                    Some(hyperfuel_config.clone())
-                }
-                _ => None,
-            },
             confirmed_block_threshold: network.confirmed_block_threshold,
             start_block: network.start_block,
             end_block: network.end_block,
@@ -892,6 +873,10 @@ impl NetworkTemplate {
 pub struct NetworkConfigTemplate {
     network_config: NetworkTemplate,
     codegen_contracts: Vec<PerNetworkContractTemplate>,
+    is_fuel: bool,
+    sources_code: String,
+    // This is only used to prevent ConfigYAML free from breaking changes
+    deprecated_sync_source_code: String,
 }
 
 impl NetworkConfigTemplate {
@@ -900,7 +885,7 @@ impl NetworkConfigTemplate {
         config: &SystemConfig,
     ) -> Result<Self> {
         let network_config = NetworkTemplate::from_config_network(network);
-        let codegen_contracts = network
+        let codegen_contracts: Vec<PerNetworkContractTemplate> = network
             .contracts
             .iter()
             .map(|network_contract| {
@@ -909,9 +894,104 @@ impl NetworkConfigTemplate {
             .collect::<Result<_>>()
             .context("Failed mapping network contracts")?;
 
+        let (sources_code, deprecated_sync_source_code) = match &network.sync_source {
+            system_config::SyncSource::HyperfuelConfig(HyperfuelConfig { endpoint_url }) => {
+                let contracts_code: String = codegen_contracts
+                    .iter()
+                    .map(|contract| {
+                        let events_code: String = contract
+                            .events
+                            .iter()
+                            .map(|event| {
+                                format!(
+                                    "Types.{}.{}.register()",
+                                    contract.name.capitalized, event.name
+                                )
+                            })
+                            .collect::<Vec<String>>()
+                            .join(", ");
+
+                        format!(
+                            "{{name: \"{}\",events: [{}]}}",
+                            contract.name.capitalized, events_code
+                        )
+                    })
+                    .collect::<Vec<String>>()
+                    .join(", ");
+
+                (
+                    format!(
+                        "[HyperFuelSource.make({{
+  chain: chain,
+  endpointUrl: \"{endpoint_url}\",
+  contracts: [{}]
+}})]",
+                        contracts_code
+                    ),
+                    format!("HyperFuel({{endpointUrl: \"{endpoint_url}\"}})"),
+                )
+            }
+            system_config::SyncSource::HypersyncConfig(HypersyncConfig {
+                endpoint_url,
+                is_client_decoder,
+            }) => {
+                let all_event_signatures = codegen_contracts
+                    .iter()
+                    .map(|contract| format!("Types.{}.eventSignatures", contract.name.capitalized))
+                    .collect::<Vec<String>>()
+                    .join(", ");
+
+                (
+                  format!("NetworkSources.evm(~chain, ~contracts, ~hyperSync=Some(\"{endpoint_url}\"), ~allEventSignatures=[{all_event_signatures}]->Belt.Array.concatMany, ~shouldUseHypersyncClientDecoder={is_client_decoder}, ~rpcs=[])"),
+                  format!("HyperSync({{endpointUrl: \"{endpoint_url}\"}})"),
+                )
+            }
+            system_config::SyncSource::RpcConfig(RpcConfig { sync_config, urls }) => {
+                let sync_config_code = format!(
+                    "Config.getSyncConfig({{
+  initialBlockInterval: {},
+  backoffMultiplicative: {},
+  accelerationAdditive: {},
+  intervalCeiling: {},
+  backoffMillis: {},
+  queryTimeoutMillis: {},
+  fallbackStallTimeout: {},
+}})",
+                    sync_config.initial_block_interval,
+                    sync_config.backoff_multiplicative,
+                    sync_config.acceleration_additive,
+                    sync_config.interval_ceiling,
+                    sync_config.backoff_millis,
+                    sync_config.query_timeout_millis,
+                    sync_config.fallback_stall_timeout
+                );
+                let urls_code = format!(
+                    "[{}]",
+                    urls.iter()
+                        .map(|url| format!("\"{url}\""))
+                        .collect::<Vec<String>>()
+                        .join(", ")
+                );
+                (
+                  format!("NetworkSources.evm(~chain, ~contracts, ~hyperSync=None, ~allEventSignatures=[], ~shouldUseHypersyncClientDecoder=false, ~rpcs=[{{
+  sourceFor: Sync,
+  syncConfig: {sync_config_code},
+  urls: {urls_code},
+}}])"),
+                  format!("Rpc({{syncConfig: {sync_config_code}}})"),
+                )
+            }
+        };
+
         Ok(NetworkConfigTemplate {
             network_config,
             codegen_contracts,
+            is_fuel: matches!(
+                network.sync_source,
+                system_config::SyncSource::HyperfuelConfig(_)
+            ),
+            sources_code,
+            deprecated_sync_source_code,
         })
     }
 }
@@ -1204,9 +1284,6 @@ mod test {
         fn default() -> Self {
             Self {
                 id: 0,
-                rpc_config: None,
-                hypersync_config: None,
-                hyperfuel_config: None,
                 confirmed_block_threshold: 200,
                 start_block: 0,
                 end_block: None,
@@ -1228,7 +1305,6 @@ mod test {
 
         let network1 = NetworkTemplate {
             id: 1,
-            rpc_config: Some(rpc_config1),
             ..NetworkTemplate::default()
         };
 
@@ -1242,6 +1318,9 @@ mod test {
         let chain_config_1 = super::NetworkConfigTemplate {
             network_config: network1,
             codegen_contracts: vec![contract1],
+            is_fuel: false,
+            sources_code: format!("[]"),
+            deprecated_sync_source_code: format!("[]"),
         };
 
         let expected_chain_configs = vec![chain_config_1];
@@ -1274,7 +1353,6 @@ mod test {
         };
         let network1 = NetworkTemplate {
             id: 1,
-            rpc_config: Some(rpc_config1.clone()),
             ..NetworkTemplate::default()
         };
 
@@ -1292,7 +1370,6 @@ mod test {
 
         let network2 = NetworkTemplate {
             id: 2,
-            rpc_config: Some(rpc_config2),
             ..NetworkTemplate::default()
         };
 
@@ -1313,10 +1390,16 @@ mod test {
         let chain_config_1 = super::NetworkConfigTemplate {
             network_config: network1,
             codegen_contracts: vec![contract1],
+            is_fuel: false,
+            sources_code: format!("[]"),
+            deprecated_sync_source_code: format!("[]"),
         };
         let chain_config_2 = super::NetworkConfigTemplate {
             network_config: network2,
             codegen_contracts: vec![contract2],
+            is_fuel: false,
+            sources_code: format!("[]"),
+            deprecated_sync_source_code: format!("[]"),
         };
 
         let expected_chain_configs = vec![chain_config_1, chain_config_2];
@@ -1332,10 +1415,6 @@ mod test {
 
         let network1 = NetworkTemplate {
             id: 1,
-            hypersync_config: Some(HypersyncConfig {
-                endpoint_url: "https://1.hypersync.xyz".to_string(),
-                is_client_decoder: true,
-            }),
             ..NetworkTemplate::default()
         };
 
@@ -1350,6 +1429,9 @@ mod test {
         let chain_config_1 = super::NetworkConfigTemplate {
             network_config: network1,
             codegen_contracts: vec![contract1],
+            is_fuel: false,
+            sources_code: format!("[]"),
+            deprecated_sync_source_code: format!("[]"),
         };
 
         let expected_chain_configs = vec![chain_config_1];
@@ -1363,30 +1445,28 @@ mod test {
     fn convert_to_chain_configs_case_4() {
         let network1 = NetworkTemplate {
             id: 1,
-            hypersync_config: Some(HypersyncConfig {
-                endpoint_url: "https://myskar.com".to_string(),
-                is_client_decoder: true,
-            }),
             ..NetworkTemplate::default()
         };
 
         let network2 = NetworkTemplate {
             id: 137,
-            hypersync_config: Some(HypersyncConfig {
-                endpoint_url: "https://137.hypersync.xyz".to_string(),
-                is_client_decoder: true,
-            }),
             ..NetworkTemplate::default()
         };
 
         let chain_config_1 = super::NetworkConfigTemplate {
             network_config: network1,
             codegen_contracts: vec![],
+            is_fuel: false,
+            sources_code: format!("[]"),
+            deprecated_sync_source_code: format!("[]"),
         };
 
         let chain_config_2 = super::NetworkConfigTemplate {
             network_config: network2,
             codegen_contracts: vec![],
+            is_fuel: false,
+            sources_code: format!("[]"),
+            deprecated_sync_source_code: format!("[]"),
         };
 
         let expected_chain_configs = vec![chain_config_1, chain_config_2];

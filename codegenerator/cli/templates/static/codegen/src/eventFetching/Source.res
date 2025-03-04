@@ -22,8 +22,10 @@ type blockRangeFetchResponse = {
   stats: blockRangeFetchStats,
 }
 
+type sourceFor = Sync | Fallback
 type t = {
   name: string,
+  sourceFor: sourceFor,
   chain: ChainMap.Chain.t,
   poweredByHyperSync: bool,
   /* Frequency (in ms) used when polling for new events on this network. */

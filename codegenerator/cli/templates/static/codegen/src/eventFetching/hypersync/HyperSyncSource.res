@@ -520,6 +520,7 @@ let make = (
 
   {
     name,
+    sourceFor: Sync,
     chain,
     pollingInterval: 100,
     poweredByHyperSync: true,

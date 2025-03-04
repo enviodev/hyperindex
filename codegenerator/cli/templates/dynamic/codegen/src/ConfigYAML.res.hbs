@@ -54,35 +54,11 @@ let publicConfig = ChainMap.fromArrayUnsafe([
       {{/each}}
     ])
     let chain = ChainMap.Chain.makeUnsafe(~chainId={{chain_config.network_config.id}})
-    {{#if chain_config.network_config.rpc_config }}
-    let rpcConfig = {
-      {{#with chain_config.network_config.rpc_config.sync_config as | sync_config |}}
-      syncConfig: Config.getSyncConfig({
-        initialBlockInterval: {{sync_config.initial_block_interval}},
-        backoffMultiplicative: {{sync_config.backoff_multiplicative}},
-        accelerationAdditive: {{sync_config.acceleration_additive}},
-        intervalCeiling: {{sync_config.interval_ceiling}},
-        backoffMillis: {{sync_config.backoff_millis}},
-        queryTimeoutMillis: {{sync_config.query_timeout_millis}},
-        fallbackStallTimeout: {{sync_config.fallback_stall_timeout}},
-      }),
-      {{/with}}
-    }
-    {{/if}}
     (
       chain,
       {
         confirmedBlockThreshold: {{chain_config.network_config.confirmed_block_threshold}},
-        syncSource: 
-          {{#if chain_config.network_config.rpc_config}}
-          Rpc(rpcConfig)
-          {{/if}}
-          {{#if chain_config.network_config.hypersync_config}}
-          HyperSync({endpointUrl: "{{chain_config.network_config.hypersync_config.endpoint_url}}"})
-          {{/if}}
-          {{#if chain_config.network_config.hyperfuel_config}}
-          HyperFuel({endpointUrl: "{{chain_config.network_config.hyperfuel_config.endpoint_url}}"})
-          {{/if}},
+        syncSource: {{chain_config.deprecated_sync_source_code}},
         startBlock: {{chain_config.network_config.start_block}},
         contracts
       }
