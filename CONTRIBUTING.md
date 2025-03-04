@@ -53,7 +53,7 @@ To updated just the config json schemas
 `make update-schemas`
 
 Or to update just the cli help md file
-`update-help`
+`make update-help`
 
 ## Create templates
 
