@@ -296,10 +296,7 @@ impl RescriptRecordField {
         }
 
         let first_char = s.chars().next().unwrap();
-        match first_char {
-            '0'..='9' => return format!("_{}", s),
-            _ => (),
-        }
+        if let '0'..='9' = first_char { return format!("_{}", s) }
 
         let uncapitalized = s.to_string().uncapitalize();
         if RESCRIPT_RESERVED_WORDS.contains(&uncapitalized.as_str()) {
@@ -394,10 +391,10 @@ impl RescriptTypeIdent {
             Self::Bool => "bool".to_string(),
             Self::Timestamp => "Js.Date.t".to_string(),
             Self::Array(inner_type) => {
-                format!("array<{}>", inner_type.to_string())
+                format!("array<{}>", inner_type)
             }
             Self::Option(inner_type) => {
-                format!("option<{}>", inner_type.to_string())
+                format!("option<{}>", inner_type)
             }
             Self::Tuple(inner_types) => {
                 let inner_types_str = inner_types

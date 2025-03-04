@@ -61,7 +61,7 @@ pub enum NetworkKind {
 impl NetworkKind {
     pub fn get_network_id(&self) -> u64 {
         match self {
-            Self::Supported(n) => n.clone() as u64,
+            Self::Supported(n) => *n as u64,
             Self::Unsupported { network_id, .. } => *network_id,
         }
     }

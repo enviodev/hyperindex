@@ -122,7 +122,7 @@ fn get_event_handler_directory(language: &Language) -> String {
 
 // Function to replace unsupported field types from schema
 fn update_schema_with_supported_field_types(schema_str: String) -> String {
-    return schema_str.replace("BigDecimal", "Float");
+    schema_str.replace("BigDecimal", "Float")
 }
 
 // Function to fetch a file from IPFS
@@ -157,7 +157,7 @@ async fn generate_network_contract_hashmap(
             .collect();
         network_contracts
             .entry(network)
-            .or_insert_with(Vec::new)
+            .or_default()
             .extend(contracts);
     }
 
@@ -173,13 +173,13 @@ async fn generate_network_contract_hashmap(
                 .collect();
             network_contracts
                 .entry(network)
-                .or_insert_with(Vec::new)
+                .or_default()
                 .extend(contracts);
         }
     }
 
     // remove any duplicate contracts per network before returning the network_contracts hashmap
-    for (_, contracts) in &mut network_contracts {
+    for contracts in network_contracts.values_mut() {
         contracts.sort();
         contracts.dedup();
     }
@@ -580,9 +580,9 @@ mod test {
         let valid_2 = super::valid_ipfs_cid(subgraph_id_2);
         let valid_3 = super::valid_ipfs_cid(subgraph_id_3);
 
-        assert_eq!(valid_1, true);
-        assert_eq!(valid_2, true);
-        assert_eq!(valid_3, false);
+        assert!(valid_1);
+        assert!(valid_2);
+        assert!(!valid_3);
     }
 
     #[test]

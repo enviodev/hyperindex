@@ -227,7 +227,7 @@ impl Contract {
         let imported_events = contract
             .events
             .iter()
-            .map(|event| Event::from_config_event(event, &contract, is_fuel, &language))
+            .map(|event| Event::from_config_event(event, contract, is_fuel, language))
             .collect::<Result<_>>()
             .context(format!(
                 "Failed getting events for contract {}",
@@ -310,14 +310,14 @@ impl Event {
         };
         let params = flatten_event_inputs(params.clone())
             .into_iter()
-            .map(|input| Param::from_event_param(input))
+            .map(Param::from_event_param)
             .collect::<Result<_>>()
             .context(format!("Failed getting params for event {}", event.name))?;
 
         Ok(Event {
             name: event.name.to_string(),
-            entity_id_from_event_code: Event::get_entity_id_code(is_fuel, &language),
-            create_mock_code: Event::get_create_mock_code(&event, &contract, is_fuel, &language),
+            entity_id_from_event_code: Event::get_entity_id_code(is_fuel, language),
+            create_mock_code: Event::get_create_mock_code(event, contract, is_fuel, language),
             params,
         })
     }
@@ -360,11 +360,11 @@ impl Param {
     }
 }
 
-impl Into<Field> for Param {
-    fn into(self) -> Field {
+impl From<Param> for Field {
+    fn from(val: Param) -> Self {
         Field {
-            name: self.entity_key.original,
-            field_type: self.graphql_type,
+            name: val.entity_key.original,
+            field_type: val.graphql_type,
         }
     }
 }
@@ -382,7 +382,7 @@ impl AutoSchemaHandlerTemplate {
                 Contract::from_config_contract(
                     contract,
                     config.get_ecosystem() == Ecosystem::Fuel,
-                    &language,
+                    language,
                 )
             })
             .collect::<Result<_>>()?;
@@ -407,8 +407,8 @@ impl AutoSchemaHandlerTemplate {
             .get_contract_import_lang_dir(lang)
             .context(format!("Failed getting {} contract import templates", lang))?;
 
-        let hbs = HandleBarsDirGenerator::new(&lang_dir, &self, &project_root);
-        let hbs_shared = HandleBarsDirGenerator::new(&shared_dir, &self, &project_root);
+        let hbs = HandleBarsDirGenerator::new(&lang_dir, &self, project_root);
+        let hbs_shared = HandleBarsDirGenerator::new(&shared_dir, &self, project_root);
         hbs.generate_hbs_templates().context(format!(
             "Failed generating {} contract import templates",
             lang
@@ -434,7 +434,7 @@ impl AutoSchemaHandlerTemplate {
                 lang
             ))?;
 
-        let hbs = HandleBarsDirGenerator::new(&lang_dir, &self, &project_root);
+        let hbs = HandleBarsDirGenerator::new(&lang_dir, &self, project_root);
 
         hbs.generate_hbs_templates().context(format!(
             "Failed generating {} subgraph migration templates",

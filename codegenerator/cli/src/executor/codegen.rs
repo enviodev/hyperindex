@@ -8,7 +8,7 @@ use anyhow::{Context, Result};
 
 pub async fn run_codegen(project_paths: &ParsedProjectPaths) -> Result<()> {
     //Manage purging of gengerated folder
-    match PersistedStateExists::get_persisted_state_file(&project_paths) {
+    match PersistedStateExists::get_persisted_state_file(project_paths) {
         PersistedStateExists::Exists(ps) if &ps.envio_version != CURRENT_CRATE_VERSION => {
             println!(
                 "Envio version '{}' does not match the previous version '{}' used in the \

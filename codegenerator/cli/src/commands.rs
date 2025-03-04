@@ -6,7 +6,7 @@ async fn execute_command(
     args: Vec<&str>,
     current_dir: &Path,
 ) -> anyhow::Result<std::process::ExitStatus> {
-    Ok(tokio::process::Command::new(cmd)
+    tokio::process::Command::new(cmd)
         .args(&args)
         .current_dir(current_dir)
         .stdin(std::process::Stdio::null()) //passes null on any stdinprompt
@@ -26,7 +26,7 @@ async fn execute_command(
             cmd,
             args.join(" "),
             current_dir.to_str().unwrap_or("bad_path")
-        ))?)
+        ))
 }
 
 pub mod rescript {
@@ -172,7 +172,7 @@ pub mod start {
     ) -> anyhow::Result<()> {
         if should_open_hasura {
             println!("Opening Hasura console at http://localhost:8080 ...");
-            if let Err(_) = open::that_detached("http://localhost:8080") {
+            if open::that_detached("http://localhost:8080").is_err() {
                 println!(
                     "Unable to open http://localhost:8080 in your browser automatically for you. \
                      You can open that link yourself to view hasura"

@@ -140,7 +140,7 @@ mod interpolation {
         };
 
         if name.is_empty()
-            || name.chars().next().map_or(false, |c| c.is_ascii_digit())
+            || name.chars().next().is_some_and(|c| c.is_ascii_digit())
             || !name.chars().all(|c| match c {
                 'a'..='z' | 'A'..='Z' | '0'..='9' | '_' => true,
                 _ => false,
@@ -172,7 +172,7 @@ mod interpolation {
             }
             match (get_env(&name), interpolation_result) {
                 (Some(val), InterpolationResult::DefaultForMissingAndEmpty(default))
-                    if val == "" =>
+                    if val.is_empty() =>
                 {
                     default
                 }
@@ -505,7 +505,7 @@ impl SystemConfig {
         match human_config {
             HumanConfig::Evm(ref evm_config) => {
                 // TODO: Add similar validation for Fuel
-                validation::validate_deserialized_config_yaml(&evm_config)?;
+                validation::validate_deserialized_config_yaml(evm_config)?;
 
                 let has_rpc_sync_src = evm_config.networks.iter().any(|n| n.rpc_config.is_some());
 
@@ -515,7 +515,7 @@ impl SystemConfig {
                         let (events, evm_abi) = Event::from_evm_events_config(
                             g_contract.config.events.clone(),
                             &g_contract.config.abi_file_path,
-                            &project_paths,
+                            project_paths,
                             has_rpc_sync_src,
                         )
                         .context(format!(
@@ -545,7 +545,7 @@ impl SystemConfig {
                                 let (events, evm_abi) = Event::from_evm_events_config(
                                     l_contract.events,
                                     &l_contract.abi_file_path,
-                                    &project_paths,
+                                    project_paths,
                                     has_rpc_sync_src,
                                 )
                                 .context(format!(
@@ -581,7 +581,7 @@ impl SystemConfig {
                             None => {
                                 //Validate that there is a global contract for the given contract if
                                 //there is no config
-                                if !contracts.get(&contract.name).is_some() {
+                                if contracts.get(&contract.name).is_none() {
                                     Err(anyhow!(
                                         "Failed to parse contract '{}' for the network '{}'. If \
                                          you use a global contract definition, please verify that \
@@ -620,7 +620,7 @@ impl SystemConfig {
                         contracts,
                     };
 
-                    unique_hashmap::try_insert(&mut networks, network.id.clone(), network)
+                    unique_hashmap::try_insert(&mut networks, network.id, network)
                         .context("Failed inserting network at networks map")?;
                 }
 
@@ -661,7 +661,7 @@ impl SystemConfig {
                         let (events, fuel_abi) = Event::from_fuel_events_config(
                             &g_contract.config.events,
                             &g_contract.config.abi_file_path,
-                            &project_paths,
+                            project_paths,
                         )
                         .context(format!(
                             "Failed parsing abi types for events in global contract {}",
@@ -689,7 +689,7 @@ impl SystemConfig {
                                 let (events, fuel_abi) = Event::from_fuel_events_config(
                                     &l_contract.events,
                                     &l_contract.abi_file_path,
-                                    &project_paths,
+                                    project_paths,
                                 )
                                 .context(format!(
                                     "Failed parsing abi types for events in contract {} on \
@@ -719,7 +719,7 @@ impl SystemConfig {
                             None => {
                                 //Validate that there is a global contract for the given contract if
                                 //there is no local_contract_config
-                                if !contracts.get(&contract.name).is_some() {
+                                if contracts.get(&contract.name).is_none() {
                                     Err(anyhow!(
                                         "Failed to parse contract '{}' for the network '{}'. If \
                                          you use a global contract definition, please verify that \
@@ -759,7 +759,7 @@ impl SystemConfig {
                         .collect();
 
                     let network = Network {
-                        id: network.id as u64,
+                        id: network.id,
                         start_block: network.start_block,
                         end_block: network.end_block,
                         confirmed_block_threshold: 0,
@@ -767,7 +767,7 @@ impl SystemConfig {
                         contracts,
                     };
 
-                    unique_hashmap::try_insert(&mut networks, network.id.clone(), network)
+                    unique_hashmap::try_insert(&mut networks, network.id, network)
                         .context("Failed inserting network at networks map")?;
                 }
 
@@ -832,7 +832,7 @@ impl SystemConfig {
                          {}",
                         links::DOC_CONFIGURATION_FILE
                     ))?;
-                let schema = Schema::parse_from_file(&project_paths, &evm_config.schema)
+                let schema = Schema::parse_from_file(project_paths, &evm_config.schema)
                     .context("Parsing schema file for config")?;
                 Self::from_human_config(HumanConfig::Evm(evm_config), schema, project_paths)
             }
@@ -843,7 +843,7 @@ impl SystemConfig {
                          {}",
                         links::DOC_CONFIGURATION_FILE
                     ))?;
-                let schema = Schema::parse_from_file(&project_paths, &fuel_config.schema)
+                let schema = Schema::parse_from_file(project_paths, &fuel_config.schema)
                     .context("Parsing schema file for config")?;
                 Self::from_human_config(HumanConfig::Fuel(fuel_config), schema, project_paths)
             }
@@ -936,7 +936,7 @@ impl SyncSource {
               rpc_config: None,
                 ..
             } => {
-                let defualt_hypersync_endpoint = hypersync_endpoints::get_default_hypersync_endpoint(network.id.clone())
+                let defualt_hypersync_endpoint = hypersync_endpoints::get_default_hypersync_endpoint(network.id)
                     .context("EE106: Undefined network config, please provide rpc_config, read more in our docs https://docs.envio.dev/docs/configuration-file")?;
                 Ok(Self::HypersyncConfig(HypersyncConfig {
                     endpoint_url: defualt_hypersync_endpoint,
@@ -986,7 +986,7 @@ impl SyncSource {
                           query_timeout_millis,
                           fallback_stall_timeout: c
                               .fallback_stall_timeout
-                              .unwrap_or_else(|| query_timeout_millis / 2),
+                              .unwrap_or(query_timeout_millis / 2),
                       }},
                   },
               }))
@@ -1068,7 +1068,7 @@ impl EvmAbi {
     pub fn get_event_signatures(&self) -> Vec<String> {
         self.typed
             .events()
-            .map(|event| Self::event_signature_from_abi_event(event))
+            .map(Self::event_signature_from_abi_event)
             .collect()
     }
 
@@ -1246,7 +1246,7 @@ impl Event {
         project_paths: &ParsedProjectPaths,
         has_rpc_sync_src: bool,
     ) -> Result<(Vec<Self>, EvmAbi)> {
-        let abi_from_file = EvmAbi::from_file(&abi_file_path, &project_paths)?;
+        let abi_from_file = EvmAbi::from_file(abi_file_path, project_paths)?;
 
         let mut events = vec![];
         let mut events_abi = ethers::abi::Abi::default();
@@ -1266,7 +1266,7 @@ impl Event {
                 .into_iter()
                 .enumerate()
                 .map(|(i, e)| {
-                    let name = if e.name == "" {
+                    let name = if e.name.is_empty() {
                         format!("_{}", i)
                     } else {
                         e.name
@@ -1325,7 +1325,7 @@ impl Event {
             PathBuf::from(&abi_file_path),
         )
         .context("Failed to get path to ABI relative to the root of the project")?;
-        let fuel_abi = FuelAbi::parse(abi_path).context(format!("Failed to parse ABI",))?;
+        let fuel_abi = FuelAbi::parse(abi_path).context("Failed to parse ABI".to_string())?;
 
         let mut events = vec![];
 
@@ -1366,7 +1366,7 @@ impl Event {
                                 )?;
                             fuel_abi.get_log_by_type(logged_type.id)?
                         }
-                        Some(log_id) => fuel_abi.get_log(&log_id)?,
+                        Some(log_id) => fuel_abi.get_log(log_id)?,
                     };
                     Event {
                         name: event_config.name.clone(),
@@ -1464,8 +1464,8 @@ impl FieldSelection {
         use human_config::evm::BlockField;
         use human_config::evm::TransactionField;
 
-        let transaction_fields = field_selection_cfg.transaction_fields.unwrap_or(vec![]);
-        let block_fields = field_selection_cfg.block_fields.unwrap_or(vec![]);
+        let transaction_fields = field_selection_cfg.transaction_fields.unwrap_or_default();
+        let block_fields = field_selection_cfg.block_fields.unwrap_or_default();
 
         //Validate no duplicates in field selection
         let tx_duplicates: Vec<_> = transaction_fields.iter().duplicates().collect();
@@ -1488,9 +1488,7 @@ impl FieldSelection {
 
         if has_rpc_sync_src {
             let invalid_rpc_tx_fields: Vec<_> = transaction_fields
-                .iter()
-                .cloned()
-                .filter(|field| RpcTransactionField::try_from(field.clone()).is_err())
+                .iter().filter(|&field| RpcTransactionField::try_from(field.clone()).is_err()).cloned()
                 .collect();
 
             if !invalid_rpc_tx_fields.is_empty() {
@@ -1502,9 +1500,7 @@ impl FieldSelection {
             }
 
             let invalid_rpc_block_fields: Vec<_> = block_fields
-                .iter()
-                .cloned()
-                .filter(|field| RpcBlockField::try_from(field.clone()).is_err())
+                .iter().filter(|&field| RpcBlockField::try_from(field.clone()).is_err()).cloned()
                 .collect();
 
             if !invalid_rpc_block_fields.is_empty() {

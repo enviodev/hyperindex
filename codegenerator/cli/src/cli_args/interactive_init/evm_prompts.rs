@@ -108,7 +108,7 @@ impl ContractImportArgs {
                     ..self.clone()
                 })
                 .get_contract_import_selection_from_local_import_args(&LocalImportArgs {
-                    blockchain: Some(NetworkOrChainId::ChainId(network.clone() as u64)),
+                    blockchain: Some(NetworkOrChainId::ChainId(*network as u64)),
                     ..LocalImportArgs::default()
                 })
                 .await;
@@ -120,7 +120,7 @@ impl ContractImportArgs {
             abi_events = prompt_abi_events_selection(abi_events)?;
         }
 
-        let network_kind = get_converter_network_u64(network.clone() as u64, &None, &None)?;
+        let network_kind = get_converter_network_u64(*network as u64, &None, &None)?;
 
         let network_selection = ContractImportNetworkSelection::new(network_kind, contract_address);
 
@@ -218,11 +218,11 @@ fn prompt_for_network_id(
             let network_id = *n as u64;
             !already_selected_ids.contains(&network_id)
         })
-        .map(|n| NetworkSelection::Network(n))
+        .map(NetworkSelection::Network)
         .collect::<Vec<_>>();
 
     //User's options to either enter an id or select a supported network
-    let options = vec![vec![NetworkSelection::EnterNetworkId], networks].concat();
+    let options = [vec![NetworkSelection::EnterNetworkId], networks].concat();
 
     //Action prompt
     let choose_from_networks = Select::new("Choose network:", options)
@@ -272,7 +272,7 @@ fn get_converter_network_u64(
                 None => prompt_for_rpc_url()?,
             };
             let start_block = match start_block {
-                Some(s) => s.clone(),
+                Some(s) => *s,
                 None => prompt_for_start_block()?,
             };
 
@@ -315,7 +315,7 @@ impl ExplorerImportArgs {
     ///for a user to select one.
     fn get_network_with_explorer(&self) -> Result<NetworkWithExplorer> {
         let chosen_network = match &self.blockchain {
-            Some(chain) => chain.clone(),
+            Some(chain) => *chain,
             None => {
                 let options = NetworkWithExplorer::iter().collect();
 
@@ -336,7 +336,7 @@ impl LocalImportArgs {
         let abi_file = std::fs::read_to_string(&abi_path).context(format!(
             "Failed to read abi file at {:?}, relative to the current directory {:?}",
             abi_path,
-            env::current_dir().unwrap_or(PathBuf::default())
+            env::current_dir().unwrap_or_default()
         ))?;
 
         let abi: ethers::abi::Contract = serde_json::from_str(&abi_file).context(format!(
@@ -456,7 +456,7 @@ async fn get_contract_import_selection(args: ContractImportArgs) -> Result<Selec
 //Constructs SelectedContract via local prompt. Uses abis and manual
 //network/contract config
 async fn prompt_selected_contracts(args: ContractImportArgs) -> Result<Vec<SelectedContract>> {
-    let should_prompt_to_continue_adding = !args.single_contract.clone();
+    let should_prompt_to_continue_adding = !args.single_contract;
     let first_contract = get_contract_import_selection(args).await?;
     let mut contracts = vec![first_contract];
 

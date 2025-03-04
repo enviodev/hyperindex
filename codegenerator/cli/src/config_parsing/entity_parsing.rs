@@ -111,7 +111,7 @@ impl Schema {
         let schema_string = std::fs::read_to_string(&schema_path).context(format!(
             "EE200: Failed to read schema file at {}. Please ensure that the schema file is \
              placed correctly in the directory.",
-            &schema_path.to_str().unwrap_or_else(|| "bad file path"),
+            &schema_path.to_str().unwrap_or("bad file path"),
         ))?;
 
         let schema_doc = graphql_parser::parse_schema::<String>(&schema_string)
@@ -156,12 +156,10 @@ impl Schema {
     }
 
     fn check_schema_for_reserved_words(self) -> anyhow::Result<Self> {
-        let all_names = vec![
-            self.get_all_enum_type_names(),
+        let all_names = [self.get_all_enum_type_names(),
             self.get_all_enum_values(),
             self.get_all_entity_type_names(),
-            self.get_all_entity_field_names(),
-        ]
+            self.get_all_entity_field_names()]
         .concat();
 
         match check_names_from_schema_for_reserved_words(all_names) {
@@ -296,7 +294,7 @@ impl GraphQLEnum {
     }
 
     fn check_valid_postgres_name(self) -> anyhow::Result<Self> {
-        let values_to_check = vec![vec![self.name.clone()], self.values.clone()].concat();
+        let values_to_check = [vec![self.name.clone()], self.values.clone()].concat();
         let invalid_names = values_to_check
             .into_iter()
             .filter(|v| !is_valid_postgres_db_name(v))
@@ -442,7 +440,7 @@ impl Entity {
     }
 
     /// Returns the fields of this [`Entity`] sorted by field name.
-    pub fn get_fields<'a>(&'a self) -> Vec<&'a Field> {
+    pub fn get_fields(&self) -> Vec<&Field> {
         self.fields.values().sorted_by_key(|v| &v.name).collect()
     }
 
@@ -467,7 +465,7 @@ impl Entity {
             .filter_map(|f| f.get_relationship())
             .collect();
 
-        vec![derived_from_fields, object_relationship_fields].concat()
+        [derived_from_fields, object_relationship_fields].concat()
     }
 
     pub fn get_related_entities<'a>(
@@ -596,7 +594,7 @@ impl Field {
             ));
         }
 
-        let maybe_derived_from_directive = derived_from_directives.get(0);
+        let maybe_derived_from_directive = derived_from_directives.first();
         let derived_from_field = match maybe_derived_from_directive {
             None => None,
             Some(d) => {
@@ -795,9 +793,7 @@ impl Field {
     }
 
     pub fn is_derived_lookup_field(&self, entity: &Entity, schema: &Schema) -> bool {
-        schema.entities.values().fold(false, |accum, entity_inner| {
-            accum
-                || entity_inner
+        schema.entities.values().any(|entity_inner| entity_inner
                     .get_fields()
                     .iter()
                     .fold(false, |accum, field| {
@@ -809,8 +805,7 @@ impl Field {
                                     derived_from_field
                                 } if entity_name == &entity.name && derived_from_field == &self.name
                             )
-                    })
-        })
+                    }))
     }
 
     pub fn is_primary_key(&self) -> bool {
@@ -869,7 +864,7 @@ impl MultiFieldIndex {
 
     fn get_single_field_index(&self) -> Option<String> {
         if self.0.len() == 1 {
-            self.0.get(0).cloned()
+            self.0.first().cloned()
         } else {
             None
         }
@@ -877,7 +872,7 @@ impl MultiFieldIndex {
 
     pub fn get_multi_field_index(&self) -> Option<&Self> {
         if self.0.len() > 1 {
-            Some(&self)
+            Some(self)
         } else {
             None
         }
@@ -1099,8 +1094,8 @@ impl UserDefinedFieldType {
     fn to_string(&self) -> String {
         match &self {
             Self::Single(gql_scalar) => gql_scalar.to_string(),
-            Self::ListType(field_type) => format!("[{}]", field_type.to_string()),
-            Self::NonNullType(field_type) => format!("{}!", field_type.to_string()),
+            Self::ListType(field_type) => format!("[{}]", field_type),
+            Self::NonNullType(field_type) => format!("{}!", field_type),
         }
     }
 

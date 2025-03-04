@@ -43,7 +43,7 @@ impl Diff {
         let mut incorrect_tiers = Vec::new();
 
         let public_chains = chains.into_iter().filter(|c| {
-            if c.name == "gnosis-traces".to_string() {
+            if c.name == *"gnosis-traces" {
                 false
             } else {
                 match &c.tier {
@@ -74,7 +74,7 @@ impl Diff {
                     GraphNetwork::from_repr(chain_id).map(|_| "GraphNetwork"),
                 ]
                 .into_iter()
-                .filter_map(|s| s)
+                .flatten()
                 .collect::<Vec<_>>()
                 .join(", ");
 
@@ -128,7 +128,7 @@ impl Diff {
             incorrect_tiers,
         } = self;
 
-        vec![missing_chains, extra_chains, missing_tiers, incorrect_tiers]
+        [missing_chains, extra_chains, missing_tiers, incorrect_tiers]
             .iter()
             .all(|v| v.is_empty())
     }

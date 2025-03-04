@@ -807,17 +807,17 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
                         events: vec![
                             fuel::EventConfig {
                                 name: "OrderChangeEvent".to_string(),
-                                log_id: None.into(),
+                                log_id: None,
                                 type_: None,
                             },
                             fuel::EventConfig {
                                 name: "MarketCreateEvent".to_string(),
-                                log_id: None.into(),
+                                log_id: None,
                                 type_: None,
                             },
                             fuel::EventConfig {
                                 name: "TradeEvent".to_string(),
-                                log_id: None.into(),
+                                log_id: None,
                                 type_: None,
                             },
                         ],

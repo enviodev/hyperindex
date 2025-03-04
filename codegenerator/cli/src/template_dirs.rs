@@ -9,11 +9,11 @@ use std::{
 };
 
 pub trait Template: Display {
-    fn to_dir_name(self: &Self) -> String;
+    fn to_dir_name(&self) -> String;
 }
 
 impl Template for evm::Template {
-    fn to_dir_name(self: &Self) -> String {
+    fn to_dir_name(&self) -> String {
         match self {
             evm::Template::Greeter => "greeter",
             evm::Template::Erc20 => "erc20",
@@ -23,7 +23,7 @@ impl Template for evm::Template {
 }
 
 impl Template for fuel::Template {
-    fn to_dir_name(self: &Self) -> String {
+    fn to_dir_name(&self) -> String {
         match self {
             fuel::Template::Greeter => "greeteronfuel",
         }
@@ -189,7 +189,7 @@ impl<'a> TemplateDirs<'a> {
             .get_template_dir(TemplateType::Dynamic)
             .context("Failed getting template dir")?;
 
-        template_dir.get_dir(&dirname.to_string()).ok_or_else(|| {
+        template_dir.get_dir(dirname.to_string()).ok_or_else(|| {
             anyhow!(
                 "Unexpected, dynamic {} dir does not exist at {:?}",
                 dirname,

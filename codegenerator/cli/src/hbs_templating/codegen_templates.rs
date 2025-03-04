@@ -172,8 +172,7 @@ impl EntityParamTypeTemplate {
         let res_type: RescriptTypeIdent = field
             .field_type
             .to_rescript_type(&config.schema)
-            .context("Failed getting rescript type")?
-            .into();
+            .context("Failed getting rescript type")?;
 
         let schema = &config.schema;
 
@@ -305,7 +304,7 @@ impl EntityRecordTypeTemplate {
             .map(|gql_field| gql_field.get_postgres_field(&config.schema, entity))
             .collect::<Result<Vec<_>>>()?
             .into_iter()
-            .filter_map(|opt| opt)
+            .flatten()
             .collect();
 
         let derived_fields = entity
@@ -360,12 +359,10 @@ impl EventMod {
             Some(FuelEventKind::Burn) => Some("Burn".to_string()),
             Some(FuelEventKind::Call) => Some("Call".to_string()),
             Some(FuelEventKind::Transfer) => Some("Transfer".to_string()),
-            Some(FuelEventKind::LogData(_)) => Some(format!(
-                r#"LogData({{
+            Some(FuelEventKind::LogData(_)) => Some(r#"LogData({
   logId: sighash,
   decode: Fuel.Receipt.getLogDataDecoder(~abi, ~logId=sighash),
-}})"#
-            )),
+})"#.to_string()),
         };
 
         let event_id = match self.fuel_event_kind {
@@ -744,7 +741,7 @@ impl ContractTemplate {
         let codegen_events = contract
             .events
             .iter()
-            .map(|event| EventTemplate::from_config_event(event))
+            .map(EventTemplate::from_config_event)
             .collect::<Result<_>>()?;
 
         let module_code = match &contract.abi {
@@ -1123,7 +1120,7 @@ impl ProjectTemplate {
 
         let global_field_selection = FieldSelection::global_selection(&cfg.field_selection);
         // TODO: Remove schemas for aggreaged, since they are not used in runtime
-        let aggregated_field_selection = FieldSelection::aggregated_selection(&cfg);
+        let aggregated_field_selection = FieldSelection::aggregated_selection(cfg);
 
         Ok(ProjectTemplate {
             project_name: cfg.name.clone(),
@@ -1183,9 +1180,9 @@ mod test {
         let config = SystemConfig::parse_from_project_files(&project_paths)
             .expect("Deserialized yml config should be parseable");
 
-        let project_template = super::ProjectTemplate::from_config(&config, &project_paths)
-            .expect("should be able to get project template");
-        project_template
+        
+        super::ProjectTemplate::from_config(&config, &project_paths)
+            .expect("should be able to get project template")
     }
 
     impl Default for NetworkTemplate {
@@ -1486,8 +1483,7 @@ let getTopicSelection = (eventFilters) => eventFilters->SingleOrMultiple.normali
             EventTemplate {
                 name: "NewGravatar".to_string(),
                 params: vec![],
-                module_code: format!(
-                    r#"
+                module_code: r#"
 let id = "0x50f7d27e90d1a5a38aeed4ceced2e8ec1ff185737aca96d15791b470d3f17363_1"
 let sighash = "0x50f7d27e90d1a5a38aeed4ceced2e8ec1ff185737aca96d15791b470d3f17363"
 let name = "NewGravatar"
@@ -1522,11 +1518,10 @@ let handlerRegister: HandlerTypes.Register.t = HandlerTypes.Register.make(
 )
 
 @genType
-type eventFilter = {{  }}
+type eventFilter = {  }
 
 let getTopicSelection = (eventFilters) => eventFilters->SingleOrMultiple.normalizeOrThrow->Belt.Array.map(_eventFilter => LogSelection.makeTopicSelection(~topic0=[sighash->EvmTypes.Hex.fromStringUnsafe], )->Utils.unwrapResultExn)
-"#
-                ),
+"#.to_string(),
             }
         );
     }
@@ -1553,8 +1548,7 @@ let getTopicSelection = (eventFilters) => eventFilters->SingleOrMultiple.normali
             EventTemplate {
                 name: "NewGravatar".to_string(),
                 params: vec![],
-                module_code: format!(
-                    r#"
+                module_code: r#"
 let id = "0x50f7d27e90d1a5a38aeed4ceced2e8ec1ff185737aca96d15791b470d3f17363_1"
 let sighash = "0x50f7d27e90d1a5a38aeed4ceced2e8ec1ff185737aca96d15791b470d3f17363"
 let name = "NewGravatar"
@@ -1563,9 +1557,9 @@ let contractName = contractName
 @genType
 type eventArgs = unit
 @genType
-type block = {{}}
+type block = {}
 @genType
-type transaction = {{from: option<Address.t>}}
+type transaction = {from: option<Address.t>}
 
 @genType
 type event = Internal.genericEvent<eventArgs, block, transaction>
@@ -1577,8 +1571,8 @@ type handler<'loaderReturn> = Internal.genericHandler<Internal.genericHandlerArg
 type contractRegister = Internal.genericContractRegister<Internal.genericContractRegisterArgs<event, contractRegistrations>>
 
 let paramsRawEventSchema = S.literal(%raw(`null`))->S.to(_ => ())
-let blockSchema = S.object((_): block => {{}})
-let transactionSchema = S.object((s): transaction => {{from: s.field("from", S.option(Address.schema))}})
+let blockSchema = S.object((_): block => {})
+let transactionSchema = S.object((s): transaction => {from: s.field("from", S.option(Address.schema))})
 
 let convertHyperSyncEventArgs = _ => ()
 
@@ -1589,11 +1583,10 @@ let handlerRegister: HandlerTypes.Register.t = HandlerTypes.Register.make(
 )
 
 @genType
-type eventFilter = {{  }}
+type eventFilter = {  }
 
 let getTopicSelection = (eventFilters) => eventFilters->SingleOrMultiple.normalizeOrThrow->Belt.Array.map(_eventFilter => LogSelection.makeTopicSelection(~topic0=[sighash->EvmTypes.Hex.fromStringUnsafe], )->Utils.unwrapResultExn)
-"#
-                ),
+"#.to_string(),
             }
         );
     }

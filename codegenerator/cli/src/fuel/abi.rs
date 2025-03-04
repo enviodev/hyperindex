@@ -24,7 +24,7 @@ pub struct FuelType {
 }
 
 impl FuelType {
-    fn get_event_name(self: &Self) -> String {
+    fn get_event_name(&self) -> String {
         match self.abi_type_field.as_str() {
             "()" => "UnitLog",
             "bool" => "BoolLog",
@@ -43,11 +43,11 @@ impl FuelType {
             type_field if type_field.starts_with("struct ") => type_field
                 .strip_prefix("struct ")
                 .and_then(|s| s.split("::").last())
-                .unwrap_or_else(|| "StructLog"),
+                .unwrap_or("StructLog"),
             type_field if type_field.starts_with("enum ") => type_field
                 .strip_prefix("enum ")
                 .and_then(|s| s.split("::").last())
-                .unwrap_or_else(|| "EnumLog"),
+                .unwrap_or("EnumLog"),
             type_field if type_field.starts_with("(_,") => "TupleLog",
             type_field if type_field.starts_with("[_;") => "ArrayLog",
             _ => "UnknownLog",
@@ -132,7 +132,7 @@ impl FuelAbi {
                 let get_first_type_param = || match abi_type_decl
                     .type_parameters
                     .clone()
-                    .unwrap_or(vec![])
+                    .unwrap_or_default()
                     .as_slice()
                 {
                     [type_id] => generic_param_name_map.get(type_id).cloned().ok_or(anyhow!(
@@ -164,7 +164,7 @@ impl FuelAbi {
                                 },
                                 //if the type_id is in the generic_param_name_map
                                 //it is a generic param
-                                |generic_name| RescriptTypeIdent::GenericParam(generic_name),
+                                RescriptTypeIdent::GenericParam,
                             ),
                         //When there are type arguments it is a generic type
                         Some(typ_args) => {
@@ -175,8 +175,8 @@ impl FuelAbi {
                                         //If the type_id is not a defined generic type it is
                                         //a named type
                                         unified_type_application_to_type_ident(
-                                            &ta,
-                                            &generic_param_name_map,
+                                            ta,
+                                            generic_param_name_map,
                                         ),
                                         //if the type_id is in the generic_param_name_map
                                         //it is a generic param
@@ -208,7 +208,7 @@ impl FuelAbi {
                             Ok((
                                 name,
                                 unified_type_application_to_type_ident(
-                                    &comp,
+                                    comp,
                                     &generic_param_name_map,
                                 ),
                             ))
@@ -330,7 +330,7 @@ impl FuelAbi {
             .context("Failed getting type declarations from fuel abi")?
             .into_iter()
             //Filter out None values since these are declarations we don't want (ie generics)
-            .filter_map(|x| x)
+            .flatten()
             .for_each(|v| {
                 types_map.insert(v.id, v);
             });
@@ -387,7 +387,7 @@ impl FuelAbi {
                     id.clone(),
                     FuelLog {
                         id,
-                        event_name: event_name,
+                        event_name,
                         data_type: Self::get_type_application(&abi_log.application, types)?,
                         logged_type: logged_type.clone(),
                     },

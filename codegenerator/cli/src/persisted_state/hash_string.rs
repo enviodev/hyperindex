@@ -1,7 +1,6 @@
 use anyhow::Context;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use sqlx;
 use std::{
     fmt::{self, Display},
     fs::File,

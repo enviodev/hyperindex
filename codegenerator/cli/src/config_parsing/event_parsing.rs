@@ -25,7 +25,7 @@ impl EthereumEventParam<'_> {
     pub fn get_nested_type_depth(&self) -> usize {
         fn rec(param: &EthAbiParamType, accum: usize) -> usize {
             match param {
-                EthAbiParamType::Tuple(params) => match params.get(0) {
+                EthAbiParamType::Tuple(params) => match params.first() {
                     Some(p) => rec(p, accum + 1),
                     None => accum,
                 },
