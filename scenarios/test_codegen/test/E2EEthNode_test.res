@@ -15,7 +15,6 @@ describe("E2E Integration Test", () => {
 
     let contracts = await SetupRpcNode.deployContracts()
     await SetupRpcNode.runBasicGravatarTransactions(contracts.gravatar)
-    let provider = Hardhat.hardhatProvider
     let localChainConfig: Config.chainConfig = {
       let contracts = [
         {
@@ -28,27 +27,29 @@ describe("E2E Integration Test", () => {
       let chain = MockConfig.chain1337
       {
         confirmedBlockThreshold: 200,
-        syncSource: Rpc,
         startBlock: 0,
         endBlock: None,
         chain,
         contracts,
-        source: RpcSource.make({
-          chain,
-          contracts,
-          syncConfig: {
-            initialBlockInterval: 10000,
-            backoffMultiplicative: 10000.0,
-            accelerationAdditive: 10000,
-            intervalCeiling: 10000,
-            backoffMillis: 10000,
-            queryTimeoutMillis: 10000,
-          },
-          provider,
-          eventRouter: contracts
-          ->Belt.Array.flatMap(contract => contract.events)
-          ->EventRouter.fromEvmEventModsOrThrow(~chain),
-        }),
+        sources: [
+          RpcSource.make({
+            chain,
+            contracts,
+            syncConfig: {
+              initialBlockInterval: 10000,
+              backoffMultiplicative: 10000.0,
+              accelerationAdditive: 10000,
+              intervalCeiling: 10000,
+              backoffMillis: 10000,
+              queryTimeoutMillis: 10000,
+              fallbackStallTimeout: 1000,
+            },
+            urls: ["http://127.0.0.1:8545"],
+            eventRouter: contracts
+            ->Belt.Array.flatMap(contract => contract.events)
+            ->EventRouter.fromEvmEventModsOrThrow(~chain),
+          }),
+        ],
       }
     }
 

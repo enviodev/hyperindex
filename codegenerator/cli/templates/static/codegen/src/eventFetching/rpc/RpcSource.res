@@ -36,16 +36,21 @@ let getSelectionConfig = (selection: FetchState.selection, ~contracts: array<Con
       "RPC data-source currently supports event filters only when there's a single wildcard event. Join our Discord channel, to get updates on the new releases.",
     )
   }
-
-  // Our integration test with hardcat would fail
+  
+  // Some RPC providers would fail
   // if we don't strip trailing empty topics
+  // also we need to change empty topics in the middle to null
   let topics = switch topicSelection {
   | {topic0, topic1: [], topic2: [], topic3: []} => [topic0]
   | {topic0, topic1, topic2: [], topic3: []} => [topic0, topic1]
+  | {topic0, topic1: [], topic2, topic3: []} => [topic0, %raw(`null`), topic2]
   | {topic0, topic1, topic2, topic3: []} => [topic0, topic1, topic2]
+  | {topic0, topic1: [], topic2: [], topic3} => [topic0, %raw(`null`), %raw(`null`), topic3]
+  | {topic0, topic1: [], topic2, topic3} => [topic0, %raw(`null`), topic2, topic3]
+  | {topic0, topic1, topic2: [], topic3} => [topic0, topic1, %raw(`null`), topic3]
   | {topic0, topic1, topic2, topic3} => [topic0, topic1, topic2, topic3]
   }
-
+  
   {
     topics: topics,
   }
@@ -135,13 +140,15 @@ let makeThrowingGetEventTransaction = (~getTransactionFields) => {
 
 type options = {
   syncConfig: Config.syncConfig,
-  provider: Ethers.JsonRpcProvider.t,
+  urls: array<string>,
   chain: ChainMap.Chain.t,
   contracts: array<Config.contract>,
   eventRouter: EventRouter.t<module(Types.InternalEvent)>,
 }
 
-let make = ({syncConfig, provider, chain, contracts, eventRouter}: options): t => {
+let make = ({syncConfig, urls, chain, contracts, eventRouter}: options): t => {
+  let provider = Ethers.JsonRpcProvider.make(~rpcUrls=urls, ~chainId=chain->ChainMap.Chain.toChainId, ~fallbackStallTimeout=syncConfig.fallbackStallTimeout)
+
   let name = "RPC"
 
   let getSelectionConfig = memoGetSelectionConfig(~contracts)
@@ -380,6 +387,7 @@ let make = ({syncConfig, provider, chain, contracts, eventRouter}: options): t =
   {
     name,
     chain,
+    poweredByHyperSync: false,
     pollingInterval: 1000,
     getBlockHashes,
     getHeightOrThrow: () => provider->Ethers.JsonRpcProvider.getBlockNumber,

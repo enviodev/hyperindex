@@ -26,7 +26,7 @@ networks:
     contracts:
       - name: Gravatar
         abi_file_path: abis/gravatar-abi.json
-        address: "0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3" # -> use this if you want to deploy to local ganache
+        address: "0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3"
         handler: ./src/EventHandlers.bs.js
         events:
           - event: "CustomSelection()"
@@ -80,10 +80,10 @@ networks:
     start_block: 1
     contracts:
       - name: Noop
-        address: "0x0B2f78c5BF6D9C12Ee1225D5F374aa91204580c3" # -> use this if you want to deploy to local ganache
+        address: "0x0B2f78c5BF6D9C12Ee1225D5F374aa91204580c3"
   - id: 137
     start_block: 1
     contracts:
       - name: Noop
-        address: "0x0B2f78c5BF6D9C12Ee1225D5F374aa91204580c3" # -> use this if you want to deploy to local ganache
+        address: "0x0B2f78c5BF6D9C12Ee1225D5F374aa91204580c3"
 raw_events: true

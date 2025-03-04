@@ -116,7 +116,7 @@ module Stubs = {
 
   //Stub wait for new block
   let makeWaitForNewBlock = (stubData: t) => async (
-    source: Source.t,
+    ~source: Source.t,
     ~currentBlockHeight,
     ~logger,
   ) => {
@@ -140,7 +140,10 @@ module Stubs = {
       ~waitForNewBlock=makeWaitForNewBlock(stubData),
       ~getLastKnownValidBlock=chainFetcher =>
         chainFetcher->ChainFetcher.getLastKnownValidBlock(
-          ~getBlockHashes=makeGetBlockHashes(~stubData, ~source=chainFetcher.chainConfig.source),
+          ~getBlockHashes=makeGetBlockHashes(
+            ~stubData,
+            ~source=chainFetcher.sourceManager.activeSource,
+          ),
         ),
     )(
       ~dispatchAction=makeDispatchAction(stubData, _),

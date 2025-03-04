@@ -1,16 +1,8 @@
-// import hre from "hardhat";
-
-type hre
-@module external hre: hre = "hardhat"
-@get @scope("ethers") external getProvider: hre => Ethers.JsonRpcProvider.t = "provider"
-
 @genType.opaque
 type chainConfig = Config.chainConfig
 
 @genType
 let getLocalChainConfig = (nftFactoryContractAddress): chainConfig => {
-  let provider = hre->getProvider
-
   let contracts = [
     {
       Config.name: "NftFactory",
@@ -28,27 +20,29 @@ let getLocalChainConfig = (nftFactoryContractAddress): chainConfig => {
   let chain = MockConfig.chain1337
   {
     confirmedBlockThreshold: 200,
-    syncSource: Rpc,
     startBlock: 1,
     endBlock: None,
     chain,
     contracts,
-    source: RpcSource.make({
-      chain,
-      contracts,
-      syncConfig: {
-        initialBlockInterval: 10000,
-        backoffMultiplicative: 10000.,
-        accelerationAdditive: 10000,
-        intervalCeiling: 10000,
-        backoffMillis: 10000,
-        queryTimeoutMillis: 10000,
-      },
-      provider,
-      eventRouter: contracts
-      ->Belt.Array.flatMap(contract => contract.events)
-      ->EventRouter.fromEvmEventModsOrThrow(~chain),
-    }),
+    sources: [
+      RpcSource.make({
+        chain,
+        contracts,
+        syncConfig: {
+          initialBlockInterval: 10000,
+          backoffMultiplicative: 10000.,
+          accelerationAdditive: 10000,
+          intervalCeiling: 10000,
+          backoffMillis: 10000,
+          queryTimeoutMillis: 10000,
+          fallbackStallTimeout: 1000,
+        },
+        urls: ["http://127.0.0.1:8545"],
+        eventRouter: contracts
+        ->Belt.Array.flatMap(contract => contract.events)
+        ->EventRouter.fromEvmEventModsOrThrow(~chain),
+      }),
+    ],
   }
 }
 

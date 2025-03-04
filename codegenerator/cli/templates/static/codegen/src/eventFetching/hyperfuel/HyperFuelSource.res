@@ -518,6 +518,7 @@ let make = ({chain, contracts, endpointUrl}: options): t => {
     chain,
     getBlockHashes,
     pollingInterval: 100,
+    poweredByHyperSync: true,
     getHeightOrThrow: () => HyperFuel.heightRoute->Rest.fetch(endpointUrl, ()),
     fetchBlockRange,
   }

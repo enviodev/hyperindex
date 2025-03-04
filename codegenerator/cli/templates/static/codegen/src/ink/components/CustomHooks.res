@@ -18,18 +18,14 @@ module InitApi = {
   })
 
   let makeBody = (~envioVersion, ~envioApiToken, ~config: Config.t) => {
-    let ecosystem = ref(Evm)
     let hyperSyncNetworks = []
     let rpcNetworks = []
     config.chainMap
     ->ChainMap.values
-    ->Array.forEach(({syncSource, chain}) => {
-      switch syncSource {
-      | HyperSync => hyperSyncNetworks
-      | HyperFuel =>
-        ecosystem := Fuel
-        hyperSyncNetworks
-      | Rpc => rpcNetworks
+    ->Array.forEach(({sources, chain}) => {
+      switch sources->Js.Array2.some(s => s.poweredByHyperSync) {
+      | true => hyperSyncNetworks
+      | false => rpcNetworks
       }
       ->Js.Array2.push(chain->ChainMap.Chain.toChainId)
       ->ignore
@@ -38,7 +34,7 @@ module InitApi = {
     {
       envioVersion,
       envioApiToken,
-      ecosystem: ecosystem.contents,
+      ecosystem: (config.ecosystem :> ecosystem),
       hyperSyncNetworks,
       rpcNetworks,
     }
@@ -80,7 +76,7 @@ module InitApi = {
     method: Post,
     path: "/hyperindex/init",
     variables: s => s.body(bodySchema),
-    responses: [s => s.field("messages", S.array(messageSchema))]
+    responses: [s => s.field("messages", S.array(messageSchema))],
   })
 
   let getMessages = async (~config) => {
@@ -89,8 +85,8 @@ module InitApi = {
     let body = makeBody(~envioVersion, ~envioApiToken=Env.envioApiToken, ~config)
 
     switch await route->Rest.fetch(endpoint, body) {
-      | exception exn => Error(exn->Obj.magic)
-      | messages => Ok(messages)
+    | exception exn => Error(exn->Obj.magic)
+    | messages => Ok(messages)
     }
   }
 }

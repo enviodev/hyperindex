@@ -126,6 +126,7 @@ let make = (
     chainConfig,
     startBlock,
     sourceManager: SourceManager.make(
+      ~sources=chainConfig.sources,
       ~maxPartitionConcurrency=Env.maxPartitionConcurrency,
       ~logger,
     ),
@@ -420,7 +421,7 @@ If not found, returns the higehest block below threshold
 let getLastKnownValidBlock = async (
   chainFetcher: t,
   //Parameter used for dependency injecting in tests
-  ~getBlockHashes=chainFetcher.chainConfig.source.getBlockHashes,
+  ~getBlockHashes=chainFetcher.sourceManager.activeSource.getBlockHashes,
 ) => {
   let scannedBlockNumbers =
     chainFetcher.lastBlockScannedHashes->ReorgDetection.LastBlockScannedHashes.getThresholdBlockNumbers(
