@@ -15,6 +15,8 @@ type t = {
   mutable fetchingPartitionsCount: int,
 }
 
+let getActiveSource = sourceManager => sourceManager.activeSource
+
 let make = (~sources, ~maxPartitionConcurrency, ~logger) => {
   let activeSource = switch sources->Array.get(0) {
   | Some(source) => source

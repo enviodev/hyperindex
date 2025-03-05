@@ -142,7 +142,7 @@ module Stubs = {
         chainFetcher->ChainFetcher.getLastKnownValidBlock(
           ~getBlockHashes=makeGetBlockHashes(
             ~stubData,
-            ~source=chainFetcher.sourceManager.activeSource,
+            ~source=chainFetcher->SourceManager.getActiveSource,
           ),
         ),
     )(

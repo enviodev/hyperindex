@@ -156,7 +156,7 @@ let updateChainMetadataTable = async (cm: ChainManager.t, ~throttler: Throttler.
         firstEventBlockNumber: cf->ChainFetcher.getFirstEventBlockNumber,
         latestProcessedBlock: cf.latestProcessedBlock, // this is already optional
         numEventsProcessed: Some(cf.numEventsProcessed),
-        poweredByHyperSync: cf.sourceManager.activeSource.poweredByHyperSync,
+        poweredByHyperSync: (cf.sourceManager->SourceManager.getActiveSource).poweredByHyperSync,
         numBatchesFetched: cf.numBatchesFetched,
         latestFetchedBlockNumber: latestFetchedBlock.blockNumber,
         timestampCaughtUpToHeadOrEndblock: cf.timestampCaughtUpToHeadOrEndblock->Js.Nullable.fromOption,
