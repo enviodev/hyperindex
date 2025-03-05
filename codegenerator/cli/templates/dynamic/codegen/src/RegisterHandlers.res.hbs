@@ -53,81 +53,10 @@ let registerContractHandlers = (
         {
           Config.confirmedBlockThreshold: {{chain_config.network_config.confirmed_block_threshold}},
           startBlock: {{chain_config.network_config.start_block}},
-          endBlock: {{#if chain_config.network_config.end_block}} Some({{chain_config.network_config.end_block}}) {{else}} None {{/if}},
+          endBlock: {{#if chain_config.network_config.end_block}}Some({{chain_config.network_config.end_block}}){{else}}None{{/if}},
           chain,
           contracts,
-          sources: [
-            {{#if chain_config.network_config.rpc_config }}
-            {{#with chain_config.network_config.rpc_config as | rpc_config |}}
-            RpcSource.make({
-              chain,
-              contracts,
-              syncConfig: Config.getSyncConfig({
-                initialBlockInterval: {{rpc_config.sync_config.initial_block_interval}},
-                backoffMultiplicative: {{rpc_config.sync_config.backoff_multiplicative}},
-                accelerationAdditive: {{rpc_config.sync_config.acceleration_additive}},
-                intervalCeiling: {{rpc_config.sync_config.interval_ceiling}},
-                backoffMillis: {{rpc_config.sync_config.backoff_millis}},
-                queryTimeoutMillis: {{rpc_config.sync_config.query_timeout_millis}},
-                fallbackStallTimeout: {{rpc_config.sync_config.fallback_stall_timeout}},
-              }),
-              urls: {{vec_to_array rpc_config.urls}},
-              eventRouter:
-                contracts
-                ->Belt.Array.flatMap(contract => contract.events)
-                ->EventRouter.fromEvmEventModsOrThrow(~chain)
-            }),
-            {{/with}}
-            {{/if}}
-            {{#if chain_config.network_config.hypersync_config }}
-            {{#with chain_config.network_config.hypersync_config as | hypersync_config |}}
-            HyperSyncSource.make({
-              chain,
-              contracts,
-              endpointUrl: "{{hypersync_config.endpoint_url}}",
-              allEventSignatures: [
-                {{#each ../codegen_contracts as |contract|}}
-                Types.{{contract.name.capitalized}}.eventSignatures,
-                {{/each}}
-              ]->Belt.Array.concatMany,
-              eventRouter:
-                contracts
-                ->Belt.Array.flatMap(contract => contract.events)
-                ->EventRouter.fromEvmEventModsOrThrow(~chain),
-              /*
-                Determines whether to use HypersyncClient Decoder or Viem for parsing events
-                Default is hypersync client decoder, configurable in config with:
-                ```yaml
-                event_decoder: "viem" || "hypersync-client"
-                ```
-              */
-              shouldUseHypersyncClientDecoder: Env.Configurable.shouldUseHypersyncClientDecoder->Belt.Option.getWithDefault(
-                {{hypersync_config.is_client_decoder}},
-              )
-            }),
-            {{/with}}
-            {{/if}}
-            {{#if chain_config.network_config.hyperfuel_config }}
-            {{#with chain_config.network_config.hyperfuel_config as | hyperfuel_config |}}
-            HyperFuelSource.make({
-              chain,
-              endpointUrl: "{{hyperfuel_config.endpoint_url}}",
-              contracts: [
-                {{#each chain_config.codegen_contracts as | contract |}}
-                {
-                  name: "{{contract.name.capitalized}}",
-                  events: [
-                    {{#each contract.events as | event |}}
-                    Types.{{contract.name.capitalized}}.{{event.name}}.register(),
-                    {{/each}}
-                  ]
-                },
-                {{/each}}
-              ]
-            }),
-            {{/with}}
-            {{/if}}
-          ]
+          sources: {{chain_config.sources_code}}
         }
       },
       {{/each}}
@@ -144,7 +73,7 @@ let registerContractHandlers = (
         module(Entities.{{entity.name.capitalized}}),
       {{/each}}
       ],
-      {{#if chain_config.network_config.hyperfuel_config}}
+      {{#if chain_config.is_fuel}}
       ~ecosystem=Fuel,
       {{/if}}
     )

@@ -515,6 +515,7 @@ let make = ({chain, contracts, endpointUrl}: options): t => {
 
   {
     name,
+    sourceFor: Sync,
     chain,
     getBlockHashes,
     pollingInterval: 100,

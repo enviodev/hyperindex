@@ -36,7 +36,7 @@ let getSelectionConfig = (selection: FetchState.selection, ~contracts: array<Con
       "RPC data-source currently supports event filters only when there's a single wildcard event. Join our Discord channel, to get updates on the new releases.",
     )
   }
-  
+
   // Some RPC providers would fail
   // if we don't strip trailing empty topics
   // also we need to change empty topics in the middle to null
@@ -50,7 +50,7 @@ let getSelectionConfig = (selection: FetchState.selection, ~contracts: array<Con
   | {topic0, topic1, topic2: [], topic3} => [topic0, topic1, %raw(`null`), topic3]
   | {topic0, topic1, topic2, topic3} => [topic0, topic1, topic2, topic3]
   }
-  
+
   {
     topics: topics,
   }
@@ -139,6 +139,7 @@ let makeThrowingGetEventTransaction = (~getTransactionFields) => {
 }
 
 type options = {
+  sourceFor: Source.sourceFor,
   syncConfig: Config.syncConfig,
   urls: array<string>,
   chain: ChainMap.Chain.t,
@@ -146,8 +147,12 @@ type options = {
   eventRouter: EventRouter.t<module(Types.InternalEvent)>,
 }
 
-let make = ({syncConfig, urls, chain, contracts, eventRouter}: options): t => {
-  let provider = Ethers.JsonRpcProvider.make(~rpcUrls=urls, ~chainId=chain->ChainMap.Chain.toChainId, ~fallbackStallTimeout=syncConfig.fallbackStallTimeout)
+let make = ({sourceFor, syncConfig, urls, chain, contracts, eventRouter}: options): t => {
+  let provider = Ethers.JsonRpcProvider.make(
+    ~rpcUrls=urls,
+    ~chainId=chain->ChainMap.Chain.toChainId,
+    ~fallbackStallTimeout=syncConfig.fallbackStallTimeout,
+  )
 
   let name = "RPC"
 
@@ -386,6 +391,7 @@ let make = ({syncConfig, urls, chain, contracts, eventRouter}: options): t => {
 
   {
     name,
+    sourceFor,
     chain,
     poweredByHyperSync: false,
     pollingInterval: 1000,

@@ -37,6 +37,7 @@ let mockChainConfig: Config.chainConfig = {
     RpcSource.make({
       chain: chain1337,
       contracts,
+      sourceFor: Sync,
       syncConfig: Config.getSyncConfig({
         initialBlockInterval: 10000,
         backoffMultiplicative: 10000.0,

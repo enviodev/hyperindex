@@ -27,6 +27,7 @@ let getLocalChainConfig = (nftFactoryContractAddress): chainConfig => {
     sources: [
       RpcSource.make({
         chain,
+        sourceFor: Sync,
         contracts,
         syncConfig: {
           initialBlockInterval: 10000,

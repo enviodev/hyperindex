@@ -131,6 +131,7 @@ describe("SourceManager fetchNext", () => {
 
   let source: Source.t = {
     name: "MockSource",
+    sourceFor: Sync,
     poweredByHyperSync: false,
     chain: ChainMap.Chain.makeUnsafe(~chainId=0),
     pollingInterval: 100,

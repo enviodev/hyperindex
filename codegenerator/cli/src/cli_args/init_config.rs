@@ -16,7 +16,7 @@ pub mod evm {
             chain_helpers,
             contract_import::converters::{NetworkKind, SelectedContract},
             human_config::{
-                evm::{ContractConfig, EventConfig, HumanConfig, Network, RpcConfig},
+                evm::{ContractConfig, EventConfig, HumanConfig, Network, NetworkRpc},
                 GlobalContract, NetworkContract,
             },
             system_config::EvmAbi,
@@ -106,12 +106,11 @@ pub mod evm {
                     let network = networks_map
                         .entry(selected_network.network.get_network_id())
                         .or_insert({
-                            let rpc_config = match &selected_network.network {
+                            let rpc = match &selected_network.network {
                                 NetworkKind::Supported(_) => None,
-                                NetworkKind::Unsupported { rpc_url, .. } => Some(RpcConfig {
-                                    url: rpc_url.clone().into(),
-                                    sync_config: None,
-                                }),
+                                NetworkKind::Unsupported { rpc_url, .. } => {
+                                    Some(NetworkRpc::Url(rpc_url.to_string()))
+                                }
                             };
 
                             let end_block = match selected_network.network {
@@ -128,7 +127,8 @@ pub mod evm {
                             Network {
                                 id: selected_network.network.get_network_id(),
                                 hypersync_config: None,
-                                rpc_config,
+                                rpc_config: None,
+                                rpc,
                                 start_block: selected_network.network.get_start_block(),
                                 end_block,
                                 confirmed_block_threshold: None,
@@ -172,9 +172,9 @@ pub mod evm {
         }
 
         fn uses_hypersync(&self) -> bool {
-            self.selected_contracts.iter().any(|c| c.networks
-                        .iter()
-                        .any(|n| n.uses_hypersync()))
+            self.selected_contracts
+                .iter()
+                .any(|c| c.networks.iter().any(|n| n.uses_hypersync()))
         }
     }
 

@@ -272,16 +272,27 @@
       "type": "object",
       "properties": {
         "id": {
-          "description": "Public chain/network id",
+          "description": "The public blockchain network ID.",
           "type": "integer",
           "format": "uint64",
           "minimum": 0
         },
         "rpc_config": {
-          "description": "RPC Config that will be used to subscribe to blockchain data on this network (TIP: This is optional and in most cases does not need to be specified if the network is supported with HyperSync. We recommend using HyperSync instead of RPC for 100x speed-up)",
+          "description": "RPC configuration for utilizing as the network's data-source. Typically optional for chains with HyperSync support, which is highly recommended. HyperSync dramatically enhances performance, providing up to a 1000x speed boost over traditional RPC.",
           "anyOf": [
             {
               "$ref": "#/$defs/RpcConfig"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "rpc": {
+          "description": "RPC configuration for your indexer. If not specified otherwise, for networks supported by HyperSync, RPC serves as a fallback for added reliability. For others, it acts as the primary data-source. HyperSync offers significant performance improvements, up to a 1000x faster than traditional RPC.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NetworkRpc"
             },
             {
               "type": "null"
@@ -420,6 +431,116 @@
       "additionalProperties": false,
       "required": [
         "url"
+      ]
+    },
+    "NetworkRpc": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "$ref": "#/$defs/Rpc"
+        },
+        {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Rpc"
+          }
+        }
+      ]
+    },
+    "Rpc": {
+      "type": "object",
+      "properties": {
+        "url": {
+          "description": "The RPC endpoint URL.",
+          "type": "string"
+        },
+        "for": {
+          "description": "Determines if this RPC is for historical sync, real-time chain indexing, or as a fallback.",
+          "$ref": "#/$defs/For"
+        },
+        "initial_block_interval": {
+          "description": "The starting interval in range of blocks per query",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        },
+        "backoff_multiplicative": {
+          "description": "After an RPC error, how much to scale back the number of blocks requested at once",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "acceleration_additive": {
+          "description": "Without RPC errors or timeouts, how much to increase the number of blocks requested by for the next batch",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        },
+        "interval_ceiling": {
+          "description": "Do not further increase the block interval past this limit",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        },
+        "backoff_millis": {
+          "description": "After an error, how long to wait before retrying",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        },
+        "fallback_stall_timeout": {
+          "description": "If a fallback RPC is provided, the amount of time in ms to wait before kicking off the next provider",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        },
+        "query_timeout_millis": {
+          "description": "How long to wait before cancelling an RPC request",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "url",
+        "for"
+      ]
+    },
+    "For": {
+      "oneOf": [
+        {
+          "description": "Use RPC as the main data-source for both historical sync and real-time chain indexing.",
+          "type": "string",
+          "const": "sync"
+        },
+        {
+          "description": "Use RPC as a backup for the main data-source. Currently, it acts as a fallback when real-time indexing stalls, with potential for more cases in the future.",
+          "type": "string",
+          "const": "fallback"
+        }
       ]
     },
     "HypersyncConfig": {
