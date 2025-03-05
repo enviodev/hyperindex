@@ -10,10 +10,11 @@ use crate::{
     config_parsing::{
         entity_parsing::{Entity, Field, GraphQLEnum, MultiFieldIndex, Schema},
         event_parsing::{abi_to_rescript_type, EthereumEventParam},
+        human_config::evm::{For, Rpc, RpcSyncConfig},
         postgres_types,
         system_config::{
-            self, Abi, Ecosystem, EventKind, FuelEventKind, HyperfuelConfig, HypersyncConfig,
-            RpcConfig, SelectedField, SystemConfig,
+            self, Abi, Ecosystem, EventKind, FuelEventKind, MainEvmDataSource, SelectedField,
+            SystemConfig,
         },
     },
     persisted_state::{PersistedState, PersistedStateJsonString},
@@ -895,7 +896,9 @@ impl NetworkConfigTemplate {
             .context("Failed mapping network contracts")?;
 
         let (sources_code, deprecated_sync_source_code) = match &network.sync_source {
-            system_config::SyncSource::HyperfuelConfig(HyperfuelConfig { endpoint_url }) => {
+            system_config::DataSource::Fuel {
+                hypersync_endpoint_url,
+            } => {
                 let contracts_code: String = codegen_contracts
                     .iter()
                     .map(|contract| {
@@ -923,62 +926,118 @@ impl NetworkConfigTemplate {
                     format!(
                         "[HyperFuelSource.make({{
   chain: chain,
-  endpointUrl: \"{endpoint_url}\",
+  endpointUrl: \"{hypersync_endpoint_url}\",
   contracts: [{}]
 }})]",
                         contracts_code
                     ),
-                    format!("HyperFuel({{endpointUrl: \"{endpoint_url}\"}})"),
+                    format!("HyperFuel({{endpointUrl: \"{hypersync_endpoint_url}\"}})"),
                 )
             }
-            system_config::SyncSource::HypersyncConfig(HypersyncConfig {
-                endpoint_url,
+            system_config::DataSource::Evm {
+                main,
                 is_client_decoder,
-            }) => {
+                rpcs,
+            } => {
                 let all_event_signatures = codegen_contracts
                     .iter()
                     .map(|contract| format!("Types.{}.eventSignatures", contract.name.capitalized))
                     .collect::<Vec<String>>()
                     .join(", ");
 
+                let hyper_sync_code = match main {
+                    MainEvmDataSource::HyperSync {
+                        hypersync_endpoint_url,
+                    } => format!("Some(\"{hypersync_endpoint_url}\")"),
+                    MainEvmDataSource::Rpc(_) => format!("None"),
+                };
+
+                let rpc_to_sync_config_options = |rpc: &Rpc| match rpc.sync_config {
+                    None => "{}".to_string(),
+                    Some(RpcSyncConfig {
+                        acceleration_additive,
+                        initial_block_interval,
+                        backoff_multiplicative,
+                        interval_ceiling,
+                        backoff_millis,
+                        fallback_stall_timeout,
+                        query_timeout_millis,
+                    }) => {
+                        let mut code = String::from("{");
+                        if let Some(acceleration_additive) = acceleration_additive {
+                            code.push_str(&format!(
+                                "accelerationAdditive: {},",
+                                acceleration_additive
+                            ));
+                        }
+                        if let Some(initial_block_interval) = initial_block_interval {
+                            code.push_str(&format!(
+                                "initialBlockInterval: {},",
+                                initial_block_interval
+                            ));
+                        }
+                        if let Some(backoff_multiplicative) = backoff_multiplicative {
+                            code.push_str(&format!(
+                                "backoffMultiplicative: {},",
+                                backoff_multiplicative
+                            ));
+                        }
+                        if let Some(interval_ceiling) = interval_ceiling {
+                            code.push_str(&format!("intervalCeiling: {},", interval_ceiling));
+                        }
+                        if let Some(backoff_millis) = backoff_millis {
+                            code.push_str(&format!("backoffMillis: {},", backoff_millis));
+                        }
+                        if let Some(fallback_stall_timeout) = fallback_stall_timeout {
+                            code.push_str(&format!(
+                                "fallbackStallTimeout: {},",
+                                fallback_stall_timeout
+                            ));
+                        }
+                        if let Some(query_timeout_millis) = query_timeout_millis {
+                            code.push_str(&format!(
+                                "queryTimeoutMillis: {},",
+                                query_timeout_millis
+                            ));
+                        }
+                        code.push('}');
+                        code
+                    }
+                };
+
+                let deprecated_sync_source_code = match main {
+                    MainEvmDataSource::HyperSync {
+                        hypersync_endpoint_url,
+                    } => {
+                        format!("HyperSync({{endpointUrl: \"{hypersync_endpoint_url}\"}})")
+                    }
+                    MainEvmDataSource::Rpc(rpc) => {
+                        format!(
+                            "Rpc({{syncConfig: Config.getSyncConfig({})}})",
+                            rpc_to_sync_config_options(&rpc)
+                        )
+                    }
+                };
+
+                let rpcs = rpcs
+                    .iter()
+                    .map(|rpc| {
+                        format!(
+                            "{{url: \"{}\", sourceFor: {}, syncConfig: {}}}",
+                            rpc.url,
+                            match rpc.source_for {
+                                For::Sync => "Sync",
+                                For::Fallback => "Fallback",
+                            },
+                            rpc_to_sync_config_options(rpc)
+                        )
+                    })
+                    .collect::<Vec<String>>()
+                    .join(", ");
+
                 (
-                  format!("NetworkSources.evm(~chain, ~contracts, ~hyperSync=Some(\"{endpoint_url}\"), ~allEventSignatures=[{all_event_signatures}]->Belt.Array.concatMany, ~shouldUseHypersyncClientDecoder={is_client_decoder}, ~rpcs=[])"),
-                  format!("HyperSync({{endpointUrl: \"{endpoint_url}\"}})"),
-                )
-            }
-            system_config::SyncSource::RpcConfig(RpcConfig { sync_config, urls }) => {
-                let sync_config_code = format!(
-                    "Config.getSyncConfig({{
-  initialBlockInterval: {},
-  backoffMultiplicative: {},
-  accelerationAdditive: {},
-  intervalCeiling: {},
-  backoffMillis: {},
-  queryTimeoutMillis: {},
-  fallbackStallTimeout: {},
-}})",
-                    sync_config.initial_block_interval,
-                    sync_config.backoff_multiplicative,
-                    sync_config.acceleration_additive,
-                    sync_config.interval_ceiling,
-                    sync_config.backoff_millis,
-                    sync_config.query_timeout_millis,
-                    sync_config.fallback_stall_timeout
-                );
-                let urls_code = format!(
-                    "[{}]",
-                    urls.iter()
-                        .map(|url| format!("\"{url}\""))
-                        .collect::<Vec<String>>()
-                        .join(", ")
-                );
-                (
-                  format!("NetworkSources.evm(~chain, ~contracts, ~hyperSync=None, ~allEventSignatures=[], ~shouldUseHypersyncClientDecoder=false, ~rpcs=[{{
-  sourceFor: Sync,
-  syncConfig: {sync_config_code},
-  urls: {urls_code},
-}}])"),
-                  format!("Rpc({{syncConfig: {sync_config_code}}})"),
+                  format!("NetworkSources.evm(~chain, ~contracts, ~hyperSync={hyper_sync_code}, ~allEventSignatures=[{all_event_signatures}]->Belt.Array.concatMany, ~shouldUseHypersyncClientDecoder={is_client_decoder}, ~rpcs=[{rpcs}])"),
+                  deprecated_sync_source_code,
                 )
             }
         };
@@ -986,10 +1045,7 @@ impl NetworkConfigTemplate {
         Ok(NetworkConfigTemplate {
             network_config,
             codegen_contracts,
-            is_fuel: matches!(
-                network.sync_source,
-                system_config::SyncSource::HyperfuelConfig(_)
-            ),
+            is_fuel: matches!(network.sync_source, system_config::DataSource::Fuel { .. }),
             sources_code,
             deprecated_sync_source_code,
         })
@@ -1356,28 +1412,8 @@ mod test {
             network_config: network1,
             codegen_contracts: vec![contract1],
             is_fuel: false,
-            sources_code: format!("NetworkSources.evm(~chain, ~contracts, ~hyperSync=None, ~allEventSignatures=[], ~shouldUseHypersyncClientDecoder=false, ~rpcs=[{{
-  sourceFor: Sync,
-  syncConfig: Config.getSyncConfig({{
-  initialBlockInterval: 10000,
-  backoffMultiplicative: 0.8,
-  accelerationAdditive: 2000,
-  intervalCeiling: 10000,
-  backoffMillis: 5000,
-  queryTimeoutMillis: 20000,
-  fallbackStallTimeout: 10000,
-}}),
-  urls: [\"https://eth.com\"],
-}}])"),
-            deprecated_sync_source_code: format!("Rpc({{syncConfig: Config.getSyncConfig({{
-  initialBlockInterval: 10000,
-  backoffMultiplicative: 0.8,
-  accelerationAdditive: 2000,
-  intervalCeiling: 10000,
-  backoffMillis: 5000,
-  queryTimeoutMillis: 20000,
-  fallbackStallTimeout: 10000,
-}})}})"),
+            sources_code: "NetworkSources.evm(~chain, ~contracts, ~hyperSync=None, ~allEventSignatures=[Types.Contract1.eventSignatures]->Belt.Array.concatMany, ~shouldUseHypersyncClientDecoder=true, ~rpcs=[{url: \"https://eth.com\", sourceFor: Sync, syncConfig: {accelerationAdditive: 2000,initialBlockInterval: 10000,backoffMultiplicative: 0.8,intervalCeiling: 10000,backoffMillis: 5000,queryTimeoutMillis: 20000,}}])".to_string(),
+            deprecated_sync_source_code: "Rpc({syncConfig: Config.getSyncConfig({accelerationAdditive: 2000,initialBlockInterval: 10000,backoffMultiplicative: 0.8,intervalCeiling: 10000,backoffMillis: 5000,queryTimeoutMillis: 20000,})})".to_string(),
         };
 
         let expected_chain_configs = vec![chain_config_1];
@@ -1393,7 +1429,7 @@ mod test {
             expected_chain_configs[0].network_config,
             project_template.chain_configs[0].network_config
         );
-        assert_eq!(expected_chain_configs, project_template.chain_configs,);
+        assert_eq!(expected_chain_configs, project_template.chain_configs);
     }
 
     #[tokio::test]
@@ -1429,55 +1465,15 @@ mod test {
             network_config: network1,
             codegen_contracts: vec![contract1],
             is_fuel: false,
-            sources_code: format!("NetworkSources.evm(~chain, ~contracts, ~hyperSync=None, ~allEventSignatures=[], ~shouldUseHypersyncClientDecoder=false, ~rpcs=[{{
-  sourceFor: Sync,
-  syncConfig: Config.getSyncConfig({{
-  initialBlockInterval: 10000,
-  backoffMultiplicative: 0.8,
-  accelerationAdditive: 2000,
-  intervalCeiling: 10000,
-  backoffMillis: 5000,
-  queryTimeoutMillis: 20000,
-  fallbackStallTimeout: 10000,
-}}),
-  urls: [\"https://eth.com\"],
-}}])"),
-            deprecated_sync_source_code: format!("Rpc({{syncConfig: Config.getSyncConfig({{
-  initialBlockInterval: 10000,
-  backoffMultiplicative: 0.8,
-  accelerationAdditive: 2000,
-  intervalCeiling: 10000,
-  backoffMillis: 5000,
-  queryTimeoutMillis: 20000,
-  fallbackStallTimeout: 10000,
-}})}})"),
+            sources_code: "NetworkSources.evm(~chain, ~contracts, ~hyperSync=None, ~allEventSignatures=[Types.Contract1.eventSignatures]->Belt.Array.concatMany, ~shouldUseHypersyncClientDecoder=true, ~rpcs=[{url: \"https://eth.com\", sourceFor: Sync, syncConfig: {accelerationAdditive: 2000,initialBlockInterval: 10000,backoffMultiplicative: 0.8,intervalCeiling: 10000,backoffMillis: 5000,queryTimeoutMillis: 20000,}}])".to_string(),
+            deprecated_sync_source_code: "Rpc({syncConfig: Config.getSyncConfig({accelerationAdditive: 2000,initialBlockInterval: 10000,backoffMultiplicative: 0.8,intervalCeiling: 10000,backoffMillis: 5000,queryTimeoutMillis: 20000,})})".to_string(),
         };
         let chain_config_2 = super::NetworkConfigTemplate {
             network_config: network2,
             codegen_contracts: vec![contract2],
             is_fuel: false,
-            sources_code: format!("NetworkSources.evm(~chain, ~contracts, ~hyperSync=None, ~allEventSignatures=[], ~shouldUseHypersyncClientDecoder=false, ~rpcs=[{{
-  sourceFor: Sync,
-  syncConfig: Config.getSyncConfig({{
-  initialBlockInterval: 10000,
-  backoffMultiplicative: 0.8,
-  accelerationAdditive: 2000,
-  intervalCeiling: 10000,
-  backoffMillis: 5000,
-  queryTimeoutMillis: 20000,
-  fallbackStallTimeout: 10000,
-}}),
-  urls: [\"https://eth.com\", \"https://eth.com/fallback\"],
-}}])"),
-            deprecated_sync_source_code: format!("Rpc({{syncConfig: Config.getSyncConfig({{
-  initialBlockInterval: 10000,
-  backoffMultiplicative: 0.8,
-  accelerationAdditive: 2000,
-  intervalCeiling: 10000,
-  backoffMillis: 5000,
-  queryTimeoutMillis: 20000,
-  fallbackStallTimeout: 10000,
-}})}})"),
+            sources_code: "NetworkSources.evm(~chain, ~contracts, ~hyperSync=None, ~allEventSignatures=[Types.Contract2.eventSignatures]->Belt.Array.concatMany, ~shouldUseHypersyncClientDecoder=true, ~rpcs=[{url: \"https://eth.com\", sourceFor: Sync, syncConfig: {accelerationAdditive: 2000,initialBlockInterval: 10000,backoffMultiplicative: 0.8,intervalCeiling: 10000,backoffMillis: 5000,queryTimeoutMillis: 20000,}}, {url: \"https://eth.com/fallback\", sourceFor: Sync, syncConfig: {accelerationAdditive: 2000,initialBlockInterval: 10000,backoffMultiplicative: 0.8,intervalCeiling: 10000,backoffMillis: 5000,queryTimeoutMillis: 20000,}}])".to_string(),
+            deprecated_sync_source_code: "Rpc({syncConfig: Config.getSyncConfig({accelerationAdditive: 2000,initialBlockInterval: 10000,backoffMultiplicative: 0.8,intervalCeiling: 10000,backoffMillis: 5000,queryTimeoutMillis: 20000,})})".to_string(),
         };
 
         let expected_chain_configs = vec![chain_config_1, chain_config_2];
@@ -1508,8 +1504,8 @@ mod test {
             network_config: network1,
             codegen_contracts: vec![contract1],
             is_fuel: false,
-            sources_code: format!("NetworkSources.evm(~chain, ~contracts, ~hyperSync=Some(\"https://1.hypersync.xyz\"), ~allEventSignatures=[Types.Contract1.eventSignatures]->Belt.Array.concatMany, ~shouldUseHypersyncClientDecoder=true, ~rpcs=[])"),
-            deprecated_sync_source_code: format!("HyperSync({{endpointUrl: \"https://1.hypersync.xyz\"}})"),
+            sources_code: "NetworkSources.evm(~chain, ~contracts, ~hyperSync=Some(\"https://1.hypersync.xyz\"), ~allEventSignatures=[Types.Contract1.eventSignatures]->Belt.Array.concatMany, ~shouldUseHypersyncClientDecoder=true, ~rpcs=[{url: \"https://fallback.eth.com\", sourceFor: Fallback, syncConfig: {}}])".to_string(),
+            deprecated_sync_source_code: "HyperSync({endpointUrl: \"https://1.hypersync.xyz\"})".to_string(),
         };
 
         let expected_chain_configs = vec![chain_config_1];

@@ -1,10 +1,9 @@
 open Belt
 
 type rpc = {
+  url: string,
   sourceFor: Source.sourceFor,
-  syncConfig: Config.syncConfig,
-  // FIXME: Instead of multiple urls we should have different rpc sources
-  urls: array<string>,
+  syncConfig?: Config.syncConfigOptions,
 }
 
 let evm = (
@@ -20,10 +19,8 @@ let evm = (
     ->Belt.Array.flatMap(contract => contract.events)
     ->EventRouter.fromEvmEventModsOrThrow(~chain)
 
-  let isRpcSync = rpcs->Js.Array2.some(rpc => rpc.sourceFor === Sync)
-
   let sources = switch hyperSync {
-  | Some(endpointUrl) if !isRpcSync => [
+  | Some(endpointUrl) => [
       HyperSyncSource.make({
         chain,
         contracts,
@@ -37,35 +34,14 @@ let evm = (
     ]
   | _ => []
   }
-  rpcs->Js.Array2.forEach(({syncConfig, urls, sourceFor}) => {
+  rpcs->Js.Array2.forEach(({?syncConfig, url, sourceFor}) => {
     let _ = sources->Js.Array2.push(
       RpcSource.make({
         chain,
         sourceFor,
         contracts,
-        syncConfig: {
-          initialBlockInterval: Env.Configurable.SyncConfig.initialBlockInterval->Option.getWithDefault(
-            syncConfig.initialBlockInterval,
-          ),
-          // After an RPC error, how much to scale back the number of blocks requested at once
-          backoffMultiplicative: Env.Configurable.SyncConfig.backoffMultiplicative->Option.getWithDefault(
-            syncConfig.backoffMultiplicative,
-          ),
-          // Without RPC errors or timeouts, how much to increase the number of blocks requested by for the next batch
-          accelerationAdditive: Env.Configurable.SyncConfig.accelerationAdditive->Option.getWithDefault(
-            syncConfig.accelerationAdditive,
-          ),
-          // Do not further increase the block interval past this limit
-          intervalCeiling: Env.Configurable.SyncConfig.intervalCeiling->Option.getWithDefault(
-            syncConfig.intervalCeiling,
-          ),
-          // After an error, how long to wait before retrying
-          backoffMillis: syncConfig.backoffMillis,
-          // How long to wait before cancelling an RPC request
-          queryTimeoutMillis: syncConfig.queryTimeoutMillis,
-          fallbackStallTimeout: syncConfig.fallbackStallTimeout,
-        },
-        urls,
+        syncConfig: Config.getSyncConfig(syncConfig->Option.getWithDefault({})),
+        urls: [url],
         eventRouter,
       }),
     )

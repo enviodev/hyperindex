@@ -4,8 +4,8 @@ use super::{
     human_config::{
         self,
         evm::{
-            EventConfig as EvmEventConfig, EventDecoder, HumanConfig as EvmConfig,
-            Network as EvmNetwork,
+            EventConfig as EvmEventConfig, EventDecoder, For, HumanConfig as EvmConfig,
+            Network as EvmNetwork, NetworkRpc, Rpc,
         },
         fuel::{EventConfig as FuelEventConfig, HumanConfig as FuelConfig},
         HumanConfig,
@@ -19,13 +19,13 @@ use crate::{
     fuel::abi::{FuelAbi, BURN_EVENT_NAME, CALL_EVENT_NAME, MINT_EVENT_NAME, TRANSFER_EVENT_NAME},
     project_paths::{path_utils, ParsedProjectPaths},
     rescript_types::RescriptTypeIdent,
-    utils::unique_hashmap,
+    utils::{normalized_list::SingleOrList, unique_hashmap},
 };
 use anyhow::{anyhow, Context, Result};
 use dotenvy::{EnvLoader, EnvMap, EnvSequence};
 use ethers::abi::{ethabi::Event as EthAbiEvent, EventExt, EventParam, HumanReadableParser};
 use itertools::Itertools;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize};
 use std::{
     collections::{HashMap, HashSet},
     fs,
@@ -594,7 +594,7 @@ impl SystemConfig {
                         }
                     }
 
-                    let sync_source = SyncSource::from_evm_network_config(
+                    let sync_source = DataSource::from_evm_network_config(
                         network.clone(),
                         evm_config.event_decoder.clone(),
                     )?;
@@ -732,8 +732,8 @@ impl SystemConfig {
                         }
                     }
 
-                    let sync_source = SyncSource::HyperfuelConfig(HyperfuelConfig {
-                        endpoint_url: match &network.hyperfuel_config {
+                    let sync_source = DataSource::Fuel {
+                        hypersync_endpoint_url: match &network.hyperfuel_config {
                             Some(config) => config.url.clone(),
                             None => match network.id {
                                 0 => "https://fuel-testnet.hypersync.xyz".to_string(),
@@ -746,7 +746,7 @@ impl SystemConfig {
                                 }
                             },
                         },
-                    });
+                    };
 
                     let contracts: Vec<NetworkContract> = network
                         .contracts
@@ -853,54 +853,24 @@ impl SystemConfig {
 
 type ServerUrl = String;
 
-#[derive(Debug, Serialize, Clone, PartialEq)]
-pub struct HypersyncConfig {
-    pub endpoint_url: ServerUrl,
-    pub is_client_decoder: bool,
-}
-
-#[derive(Debug, Serialize, Clone, PartialEq)]
-pub struct HyperfuelConfig {
-    pub endpoint_url: ServerUrl,
-}
-
-#[derive(Debug, Serialize, PartialEq, Clone)]
-pub struct SyncConfig {
-    pub initial_block_interval: u32,
-    pub backoff_multiplicative: f64,
-    pub acceleration_additive: u32,
-    pub interval_ceiling: u32,
-    pub backoff_millis: u32,
-    pub query_timeout_millis: u32,
-    pub fallback_stall_timeout: u32,
-}
-
-impl Default for SyncConfig {
-    fn default() -> Self {
-        const QUERY_TIMEOUT_MILLIS: u32 = 20_000;
-        Self {
-            initial_block_interval: 10_000,
-            backoff_multiplicative: 0.8,
-            acceleration_additive: 500,
-            interval_ceiling: 10_000,
-            backoff_millis: 5000,
-            query_timeout_millis: QUERY_TIMEOUT_MILLIS,
-            fallback_stall_timeout: QUERY_TIMEOUT_MILLIS / 2,
-        }
-    }
-}
-
-#[derive(Debug, Serialize, PartialEq, Clone)]
-pub struct RpcConfig {
-    pub urls: Vec<String>,
-    pub sync_config: SyncConfig,
+// This data structure mainly needed to conviniently prepare data
+// for ConfigYAML, so we don't break backward compatibility
+#[derive(Debug, Clone, PartialEq)]
+pub enum MainEvmDataSource {
+    HyperSync { hypersync_endpoint_url: ServerUrl },
+    Rpc(Rpc),
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum SyncSource {
-    RpcConfig(RpcConfig),
-    HypersyncConfig(HypersyncConfig),
-    HyperfuelConfig(HyperfuelConfig),
+pub enum DataSource {
+    Evm {
+        main: MainEvmDataSource,
+        is_client_decoder: bool,
+        rpcs: Vec<Rpc>,
+    },
+    Fuel {
+        hypersync_endpoint_url: ServerUrl,
+    },
 }
 
 // Check if the given URL is valid in terms of formatting
@@ -914,7 +884,7 @@ fn parse_url(url: &str) -> Option<String> {
     Some(trimmed_url)
 }
 
-impl SyncSource {
+impl DataSource {
     fn from_evm_network_config(
         network: EvmNetwork,
         event_decoder: Option<EventDecoder>,
@@ -923,92 +893,93 @@ impl SyncSource {
             Some(EventDecoder::HypersyncClient) | None => true,
             Some(EventDecoder::Viem) => false,
         };
-        match network {
-            human_config::evm::Network {
-                hypersync_config: Some(_),
-                rpc_config: Some(_),
-                ..
-            } => {
-                Err(anyhow!("EE106: Cannot define both rpc_config and hypersync_config for the same network, please choose only one of them, read more in our docs https://docs.envio.dev/docs/configuration-file"))
-            }
-            human_config::evm::Network {
-              hypersync_config: None,
-              rpc_config: None,
-                ..
-            } => {
-                let defualt_hypersync_endpoint = hypersync_endpoints::get_default_hypersync_endpoint(network.id)
-                    .context("EE106: Undefined network config, please provide rpc_config, read more in our docs https://docs.envio.dev/docs/configuration-file")?;
-                Ok(Self::HypersyncConfig(HypersyncConfig {
-                    endpoint_url: defualt_hypersync_endpoint,
-                    is_client_decoder,
-                }))
-            }
-            human_config::evm::Network {
-              hypersync_config: None,
-              rpc_config: Some(human_config::evm::RpcConfig {
-                url,
-                sync_config
-              }),
-              ..
-            } => {
-              let config_urls: Vec<String> = url.into();
-              let mut urls = vec![];
-              for url in config_urls.iter() {
-                match parse_url(url) {
-                    None => return Err(anyhow!("EE109: The RPC url \"{}\" is incorrect format. The RPC url needs to start with either http:// or https://", url)),
-                    Some(endpoint_url) => urls.push(endpoint_url)
-                }
-              }
-              Ok(Self::RpcConfig(RpcConfig {
-                  urls,
-                  sync_config: match sync_config {
-                      None => SyncConfig::default(),
-                      Some(c) => {
-                        let query_timeout_millis = c
-                          .query_timeout_millis
-                          .unwrap_or_else(|| SyncConfig::default().query_timeout_millis);
-                        SyncConfig {
-                          acceleration_additive: c
-                              .acceleration_additive
-                              .unwrap_or_else(|| SyncConfig::default().acceleration_additive),
-                          backoff_millis: c
-                              .backoff_millis
-                              .unwrap_or_else(|| SyncConfig::default().backoff_millis),
-                          backoff_multiplicative: c
-                              .backoff_multiplicative
-                              .unwrap_or_else(|| SyncConfig::default().backoff_multiplicative),
-                          initial_block_interval: c
-                              .initial_block_interval
-                              .unwrap_or_else(|| SyncConfig::default().initial_block_interval),
-                          interval_ceiling: c
-                              .interval_ceiling
-                              .unwrap_or_else(|| SyncConfig::default().interval_ceiling),
-                          query_timeout_millis,
-                          fallback_stall_timeout: c
-                              .fallback_stall_timeout
-                              .unwrap_or(query_timeout_millis / 2),
-                      }},
-                  },
-              }))
+        let hypersync_endpoint_url = match &network.hypersync_config {
+            Some(config) => Some(config.url.to_string()),
+            None => match hypersync_endpoints::get_default_hypersync_endpoint(network.id) {
+                Ok(url) => Some(url),
+                Err(_) => None,
             },
-            human_config::evm::Network {
-              hypersync_config: Some(human_config::evm::HypersyncConfig { url }),
-              rpc_config: None,
-              ..
-            } => {
-              match parse_url(&url) {
-                  None => Err(anyhow!("EE106: The HyperSync url \"{}\" is incorrect format. The HyperSync url needs to start with either http:// or https://", url)),
-                  Some(endpoint_url) => Ok(Self::HypersyncConfig(HypersyncConfig { endpoint_url, is_client_decoder }))
-              }
+        };
+        let raw_rpcs = match (network.rpc_config, network.rpc) {
+            (Some(_), Some(_)) => Err(anyhow!("EE106: Cannot define both rpc and deprecated rpc_config for the same network, please only use the rpc option. Read more in our docs https://docs.envio.dev/docs/configuration-file"))?,
+            (None, Some(NetworkRpc::Url(url))) => vec![Rpc {
+                url: url.to_string(),
+                source_for: match hypersync_endpoint_url {
+                  Some(_) => For::Fallback,
+                  None => For::Sync,
+                },
+                sync_config: None,
+            }],
+            (None, Some(NetworkRpc::Single(rpc))) => vec![rpc],
+            (None, Some(NetworkRpc::List(list))) => list,
+            (Some(rpc_config), None) => match rpc_config.url {
+                SingleOrList::Single(url) => vec![Rpc {
+                    url: url.to_string(),
+                    source_for: For::Sync,
+                    sync_config: rpc_config.sync_config,
+                }],
+                SingleOrList::List(urls) => urls
+                    .iter()
+                    .map(|url| Rpc {
+                        url: url.to_string(),
+                        source_for: For::Sync,
+                        sync_config: rpc_config.sync_config.clone(),
+                    })
+                    .collect(),
+            },
+            (None, None) => vec![],
+        };
+
+        let mut rpcs = vec![];
+        for rpc in raw_rpcs.iter() {
+            match parse_url(rpc.url.as_str()) {
+              None => return Err(anyhow!("EE109: The RPC url \"{}\" is incorrect format. The RPC url needs to start with either http:// or https://", rpc.url)),
+              Some(url) => rpcs.push(Rpc {
+                  url,
+                  ..rpc.clone()
+              })
             }
         }
+
+        let rpc_for_sync = rpcs.iter().find(|rpc| rpc.source_for == For::Sync);
+
+        let main = match rpc_for_sync {
+            Some(rpc) => {
+                match network.hypersync_config {
+                  Some(_) => Err(anyhow!("EE106: Cannot define both hypersync_config and rpc as a data-source for historical sync at the same time, please choose only one option or set RPC to be a fallback. Read more in our docs https://docs.envio.dev/docs/configuration-file"))?,
+                  None => ()
+                };
+
+                MainEvmDataSource::Rpc(rpc.clone())
+            }
+            None => {
+                match hypersync_endpoint_url {
+                  | None => Err(anyhow!("EE106: Failed to automatically find HyperSync endpoint for the network, please provide it manually via the hypersync_config option or provide an RPC url to use for historical sync. Read more in our docs https://docs.envio.dev/docs/configuration-file"))?,
+                  | Some(hypersync_endpoint_url) => {
+                    match parse_url(&hypersync_endpoint_url) {
+                        None => Err(anyhow!("EE106: The HyperSync url \"{}\" is incorrect format. The HyperSync url needs to start with either http:// or https://", hypersync_endpoint_url))?,
+                        Some(hypersync_endpoint_url) => MainEvmDataSource::HyperSync {
+                            hypersync_endpoint_url: hypersync_endpoint_url,
+                        }
+                    }
+                    
+                  }
+                }
+            }
+        };
+
+        Ok(Self::Evm {
+            main,
+            is_client_decoder,
+            rpcs,
+        })
     }
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Network {
     pub id: u64,
-    pub sync_source: SyncSource,
+    pub sync_source: DataSource,
     pub start_block: u64,
     pub end_block: Option<u64>,
     pub confirmed_block_threshold: i32,
@@ -1630,7 +1601,7 @@ mod test {
     use crate::{
         config_parsing::{
             human_config::evm::HumanConfig as EvmConfig,
-            system_config::{Event, SyncConfig, SyncSource},
+            system_config::{DataSource, Event, MainEvmDataSource},
         },
         project_paths::ParsedProjectPaths,
     };
@@ -1647,26 +1618,6 @@ mod test {
             .render_template(
                 "{{backoff_multiplicative}}",
                 &json!({"backoff_multiplicative": 0.8}),
-            )
-            .unwrap();
-        assert_eq!(&rendered_backoff_multiplicative, "0.8");
-
-        let sync_config = SyncConfig {
-            initial_block_interval: 10_000,
-            backoff_multiplicative: 0.8,
-            acceleration_additive: 2_000,
-            interval_ceiling: 10_000,
-            backoff_millis: 5000,
-            query_timeout_millis: 20_000,
-            fallback_stall_timeout: 10_000,
-        };
-
-        assert_eq!(sync_config.backoff_multiplicative.to_string(), "0.8");
-
-        let rendered_backoff_multiplicative = hbs
-            .render_template(
-                "{{backoff_multiplicative}}",
-                &json!({"backoff_multiplicative": sync_config.backoff_multiplicative}),
             )
             .unwrap();
         assert_eq!(&rendered_backoff_multiplicative, "0.8");
@@ -1859,10 +1810,10 @@ mod test {
         assert!(cfg.networks[0].rpc_config.is_some());
         assert!(cfg.networks[0].hypersync_config.is_some());
 
-        let error = SyncSource::from_evm_network_config(cfg.networks[0].clone(), cfg.event_decoder)
+        let error = DataSource::from_evm_network_config(cfg.networks[0].clone(), cfg.event_decoder)
             .unwrap_err();
 
-        assert_eq!(error.to_string(), "EE106: Cannot define both rpc_config and hypersync_config for the same network, please choose only one of them, read more in our docs https://docs.envio.dev/docs/configuration-file");
+        assert_eq!(error.to_string(), "EE106: Cannot define both hypersync_config and rpc as a data-source for historical sync at the same time, please choose only one option or set RPC to be a fallback. Read more in our docs https://docs.envio.dev/docs/configuration-file");
     }
 
     #[test]
@@ -1875,19 +1826,22 @@ mod test {
                 url: "https://somechain.hypersync.xyz//".to_string(),
             }),
             rpc_config: None,
+            rpc: None,
             start_block: 0,
             end_block: None,
             confirmed_block_threshold: None,
             contracts: vec![],
         };
 
-        let sync_source = SyncSource::from_evm_network_config(network, None).unwrap();
+        let sync_source = DataSource::from_evm_network_config(network, None).unwrap();
 
-        match sync_source {
-            SyncSource::HypersyncConfig(config) => {
-                assert_eq!(config.endpoint_url, "https://somechain.hypersync.xyz");
-            }
-            _ => panic!("Expected HypersyncConfig"),
-        }
+
+        assert_eq!(sync_source, DataSource::Evm {
+            main: MainEvmDataSource::HyperSync {
+                hypersync_endpoint_url: "https://somechain.hypersync.xyz".to_string(),
+            },
+            is_client_decoder: true,
+            rpcs: vec![],
+        });
     }
 }
