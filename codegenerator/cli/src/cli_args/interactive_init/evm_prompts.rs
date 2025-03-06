@@ -339,13 +339,42 @@ impl LocalImportArgs {
             env::current_dir().unwrap_or_default()
         ))?;
 
-        let abi: ethers::abi::Contract = serde_json::from_str(&abi_file).context(format!(
-            "Failed to deserialize ABI at {:?} -  Please ensure the ABI file is formatted \
-             correctly or contact the team.",
-            abi_path
-        ))?;
+        // First try to parse the JSON directly as an ABI
+        let direct_abi_result: Result<ethers::abi::Contract, _> = serde_json::from_str(&abi_file);
 
-        Ok(abi)
+        match direct_abi_result {
+            Ok(abi) => Ok(abi),
+            Err(_) => {
+                // If direct parsing fails, try to parse it as a JSON object that might contain an "abi" field
+                let json_value: Result<serde_json::Value, _> = serde_json::from_str(&abi_file);
+
+                match json_value {
+                    Ok(value) => {
+                        if let Some(abi_value) = value.get("abi") {
+                            // Try to parse the "abi" field as an ABI
+                            let abi: ethers::abi::Contract = serde_json::from_value(abi_value.clone())
+                                .context(format!(
+                                    "Found 'abi' field in JSON at {:?}, but failed to parse it as a valid ABI",
+                                    abi_path
+                                ))?;
+                            Ok(abi)
+                        } else {
+                            Err(anyhow::anyhow!(
+                                "JSON at {:?} is not a valid ABI and does not contain an 'abi' field",
+                                abi_path
+                            ))
+                        }
+                    },
+                    Err(e) => {
+                        Err(anyhow::anyhow!(
+                            "Failed to deserialize ABI at {:?} - Please ensure the ABI file is formatted correctly: {}",
+                            abi_path,
+                            e
+                        ))
+                    }
+                }
+            }
+        }
     }
 
     ///Internal function to get the abi path from the cli args or prompt for
@@ -478,4 +507,46 @@ pub async fn prompt_contract_import_init_flow(args: ContractImportArgs) -> Resul
             .await
             .context("Failed getting contract selection")?,
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+
+    #[test]
+    fn test_parse_contract_abi_direct() {
+        let test_dir = format!("{}/test", env!("CARGO_MANIFEST_DIR"));
+        let abi_path = Path::new(&test_dir).join("abis/Contract1.json");
+
+        let result = LocalImportArgs::parse_contract_abi(abi_path);
+        assert!(
+            result.is_ok(),
+            "Failed to parse direct ABI: {:?}",
+            result.err()
+        );
+
+        let abi = result.unwrap();
+        assert_eq!(abi.events.len(), 2);
+        assert!(abi.events.iter().any(|(name, _)| name == "NewGravatar"));
+        assert!(abi.events.iter().any(|(name, _)| name == "UpdatedGravatar"));
+    }
+
+    #[test]
+    fn test_parse_contract_abi_nested() {
+        let test_dir = format!("{}/test", env!("CARGO_MANIFEST_DIR"));
+        let abi_path = Path::new(&test_dir).join("abis/Contract3.json");
+
+        let result = LocalImportArgs::parse_contract_abi(abi_path);
+        assert!(
+            result.is_ok(),
+            "Failed to parse nested ABI: {:?}",
+            result.err()
+        );
+
+        let abi = result.unwrap();
+        assert_eq!(abi.events.len(), 2);
+        assert!(abi.events.iter().any(|(name, _)| name == "NewGravatar"));
+        assert!(abi.events.iter().any(|(name, _)| name == "UpdatedGravatar"));
+    }
 }
