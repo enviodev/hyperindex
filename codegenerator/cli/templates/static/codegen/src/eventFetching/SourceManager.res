@@ -7,7 +7,6 @@ open Belt
 // with a mutable state for easier reasoning and testing.
 type t = {
   sources: array<Source.t>,
-  syncSources: array<Source.t>,
   maxPartitionConcurrency: int,
   newBlockFallbackStallTimeout: int,
   stalledPollingInterval: int,
@@ -25,15 +24,13 @@ let make = (
   ~newBlockFallbackStallTimeout=20_000,
   ~stalledPollingInterval=5_000,
 ) => {
-  let syncSources = sources->Js.Array2.filter(source => source.sourceFor === Sync)
-  let initialActiveSource = switch syncSources->Array.get(0) {
+  let initialActiveSource = switch sources->Js.Array2.find(source => source.sourceFor === Sync) {
   | None => Js.Exn.raiseError("Invalid configuration, no data-source for historical sync provided")
   | Some(source) => source
   }
   {
     maxPartitionConcurrency,
     sources,
-    syncSources,
     activeSource: initialActiveSource,
     waitingForNewBlockStateId: None,
     fetchingPartitionsCount: 0,
