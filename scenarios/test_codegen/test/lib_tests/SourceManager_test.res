@@ -33,7 +33,7 @@ let executeQueryMock = () => {
 }
 
 type waitForNewBlockMock = {
-  fn: (~source: Source.t, ~currentBlockHeight: int, ~logger: Pino.t) => Promise.t<int>,
+  fn: (~source: Source.t, ~currentBlockHeight: int) => Promise.t<int>,
   calls: array<int>,
   resolveAll: int => unit,
   resolveFns: array<int => unit>,
@@ -46,7 +46,7 @@ let waitForNewBlockMock = () => {
     resolveAll: currentBlockHeight => {
       resolveFns->Js.Array2.forEach(resolve => resolve(currentBlockHeight))
     },
-    fn: (~source as _, ~currentBlockHeight, ~logger as _) => {
+    fn: (~source as _, ~currentBlockHeight) => {
       calls->Js.Array2.push(currentBlockHeight)->ignore
       Promise.make((resolve, _reject) => {
         resolveFns->Js.Array2.push(resolve)->ignore
@@ -120,7 +120,7 @@ describe("SourceManager fetchNext", () => {
     }->FetchState.updateInternal
   }
 
-  let neverWaitForNewBlock = async (~source as _, ~currentBlockHeight as _, ~logger as _) =>
+  let neverWaitForNewBlock = async (~source as _, ~currentBlockHeight as _) =>
     Assert.fail("The waitForNewBlock shouldn't be called for the test")
 
   let neverOnNewBlock = (~currentBlockHeight as _) =>
@@ -151,11 +151,7 @@ describe("SourceManager fetchNext", () => {
   Async.it(
     "Executes full partitions in any order when we didn't reach concurency limit",
     async () => {
-      let sourceManager = SourceManager.make(
-        ~sources=[source],
-        ~maxPartitionConcurrency=10,
-        ~logger=Logging.logger,
-      )
+      let sourceManager = SourceManager.make(~sources=[source], ~maxPartitionConcurrency=10)
 
       let partition0 = mockFullPartition(~partitionIndex=0, ~latestFetchedBlockNumber=4)
       let partition1 = mockFullPartition(~partitionIndex=1, ~latestFetchedBlockNumber=5)
@@ -218,11 +214,7 @@ describe("SourceManager fetchNext", () => {
   Async.it(
     "Slices full partitions to the concurrency limit, takes the earliest queries first",
     async () => {
-      let sourceManager = SourceManager.make(
-        ~sources=[source],
-        ~maxPartitionConcurrency=2,
-        ~logger=Logging.logger,
-      )
+      let sourceManager = SourceManager.make(~sources=[source], ~maxPartitionConcurrency=2)
 
       let partition0 = mockFullPartition(~partitionIndex=0, ~latestFetchedBlockNumber=4)
       let partition1 = mockFullPartition(~partitionIndex=1, ~latestFetchedBlockNumber=5)
@@ -278,11 +270,7 @@ describe("SourceManager fetchNext", () => {
   Async.it(
     "Skips full partitions at the chain last block and the ones at the endBlock",
     async () => {
-      let sourceManager = SourceManager.make(
-        ~sources=[source],
-        ~maxPartitionConcurrency=10,
-        ~logger=Logging.logger,
-      )
+      let sourceManager = SourceManager.make(~sources=[source], ~maxPartitionConcurrency=10)
 
       let p0 = mockFullPartition(~partitionIndex=0, ~latestFetchedBlockNumber=4)
       let p1 = mockFullPartition(~partitionIndex=1, ~latestFetchedBlockNumber=5)
@@ -317,11 +305,7 @@ describe("SourceManager fetchNext", () => {
   )
 
   Async.it("Starts indexing from the initial state", async () => {
-    let sourceManager = SourceManager.make(
-      ~sources=[source],
-      ~maxPartitionConcurrency=10,
-      ~logger=Logging.logger,
-    )
+    let sourceManager = SourceManager.make(~sources=[source], ~maxPartitionConcurrency=10)
 
     let waitForNewBlockMock = waitForNewBlockMock()
     let onNewBlockMock = onNewBlockMock()
@@ -371,11 +355,7 @@ describe("SourceManager fetchNext", () => {
   Async.it(
     "Waits for new block with currentBlockHeight=0 even when all partitions are done",
     async () => {
-      let sourceManager = SourceManager.make(
-        ~sources=[source],
-        ~maxPartitionConcurrency=10,
-        ~logger=Logging.logger,
-      )
+      let sourceManager = SourceManager.make(~sources=[source], ~maxPartitionConcurrency=10)
 
       let waitForNewBlockMock = waitForNewBlockMock()
       let onNewBlockMock = onNewBlockMock()
@@ -404,11 +384,7 @@ describe("SourceManager fetchNext", () => {
   )
 
   Async.it("Waits for new block when all partitions are at the currentBlockHeight", async () => {
-    let sourceManager = SourceManager.make(
-      ~sources=[source],
-      ~maxPartitionConcurrency=10,
-      ~logger=Logging.logger,
-    )
+    let sourceManager = SourceManager.make(~sources=[source], ~maxPartitionConcurrency=10)
 
     let p0 = mockFullPartition(~partitionIndex=0, ~latestFetchedBlockNumber=5)
     let p1 = mockFullPartition(~partitionIndex=1, ~latestFetchedBlockNumber=5)
@@ -453,11 +429,7 @@ describe("SourceManager fetchNext", () => {
   })
 
   Async.it("Restarts waiting for new block after a rollback", async () => {
-    let sourceManager = SourceManager.make(
-      ~sources=[source],
-      ~maxPartitionConcurrency=10,
-      ~logger=Logging.logger,
-    )
+    let sourceManager = SourceManager.make(~sources=[source], ~maxPartitionConcurrency=10)
 
     let p0 = mockFullPartition(~partitionIndex=0, ~latestFetchedBlockNumber=5)
 
@@ -523,11 +495,7 @@ describe("SourceManager fetchNext", () => {
   })
 
   Async.it("Can add new partitions until the concurrency limit reached", async () => {
-    let sourceManager = SourceManager.make(
-      ~sources=[source],
-      ~maxPartitionConcurrency=3,
-      ~logger=Logging.logger,
-    )
+    let sourceManager = SourceManager.make(~sources=[source], ~maxPartitionConcurrency=3)
 
     let p0 = mockFullPartition(~partitionIndex=0, ~latestFetchedBlockNumber=4)
     let p1 = mockFullPartition(~partitionIndex=1, ~latestFetchedBlockNumber=5)
@@ -655,11 +623,7 @@ describe("SourceManager fetchNext", () => {
   })
 
   Async.it("Should not query partitions that are at max queue size", async () => {
-    let sourceManager = SourceManager.make(
-      ~sources=[source],
-      ~maxPartitionConcurrency=10,
-      ~logger=Logging.logger,
-    )
+    let sourceManager = SourceManager.make(~sources=[source], ~maxPartitionConcurrency=10)
 
     let executeQueryMock = executeQueryMock()
 
@@ -700,11 +664,7 @@ describe("SourceManager fetchNext", () => {
   })
 
   Async.it("Sorts after all the filtering is applied", async () => {
-    let sourceManager = SourceManager.make(
-      ~sources=[source],
-      ~maxPartitionConcurrency=1,
-      ~logger=Logging.logger,
-    )
+    let sourceManager = SourceManager.make(~sources=[source], ~maxPartitionConcurrency=1)
 
     let executeQueryMock = executeQueryMock()
 

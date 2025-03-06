@@ -6,7 +6,6 @@ open Belt
 // So this module is to encapsulate the fetching logic only
 // with a mutable state for easier reasoning and testing.
 type t = {
-  logger: Pino.t,
   sources: array<Source.t>,
   maxPartitionConcurrency: int,
   mutable activeSource: Source.t,
@@ -17,13 +16,12 @@ type t = {
 
 let getActiveSource = sourceManager => sourceManager.activeSource
 
-let make = (~sources, ~maxPartitionConcurrency, ~logger) => {
-  let activeSource = switch sources->Array.get(0) {
+let make = (~sources: array<Source.t>, ~maxPartitionConcurrency) => {
+  let activeSource = switch sources->Js.Array2.find(source => source.sourceFor === Sync) {
+  | None => Js.Exn.raiseError("Invalid configuration, no data-source for historical sync provided")
   | Some(source) => source
-  | None => Js.Exn.raiseError("Invalid configuration, no data-sources provided")
   }
   {
-    logger,
     maxPartitionConcurrency,
     sources,
     activeSource,
@@ -42,7 +40,7 @@ let fetchNext = async (
   ~maxPerChainQueueSize,
   ~stateId,
 ) => {
-  let {logger, maxPartitionConcurrency, activeSource} = sourceManager
+  let {maxPartitionConcurrency, activeSource} = sourceManager
 
   switch fetchState->FetchState.getNextQuery(
     ~concurrencyLimit={
@@ -60,18 +58,14 @@ let fetchNext = async (
     | Some(_) // Case for the prev state before a rollback
     | None =>
       sourceManager.waitingForNewBlockStateId = Some(stateId)
-      let currentBlockHeight = await waitForNewBlock(
-        ~source=activeSource,
-        ~currentBlockHeight,
-        ~logger,
-      )
+      let currentBlockHeight = await waitForNewBlock(~source=activeSource, ~currentBlockHeight)
       switch sourceManager.waitingForNewBlockStateId {
-        | Some(waitingStateId) if waitingStateId === stateId => {
+      | Some(waitingStateId) if waitingStateId === stateId => {
           sourceManager.waitingForNewBlockStateId = None
           onNewBlock(~currentBlockHeight)
         }
-        | Some(_) // Don't reset it if we are waiting for another state
-        | None => ()
+      | Some(_) // Don't reset it if we are waiting for another state
+      | None => ()
       }
     }
   | Ready(queries) => {

@@ -73,10 +73,10 @@ let getHeightWithRetry = async (~source, ~logger) => {
 
 //Poll for a height greater or equal to the given blocknumber.
 //Used for waiting until there is a new block to index
-let waitForNewBlock = async (~source, ~currentBlockHeight, ~logger) => {
-  let logger = Logging.createChildFrom(
-    ~logger,
+let waitForNewBlock = async (~source, ~currentBlockHeight) => {
+  let logger = Logging.createChild(
     ~params={
+      "chainId": source.chain->ChainMap.Chain.toChainId,
       "logType": "Poll for block greater than current height",
       "currentBlockHeight": currentBlockHeight,
     },
@@ -99,10 +99,8 @@ let fetchBlockRange = async (
   ~toBlock,
   ~contractAddressMapping,
   ~partitionId,
-  ~chain,
   ~currentBlockHeight,
   ~selection,
-  ~logger,
 ) => {
   let logger = {
     let allAddresses = contractAddressMapping->ContractAddressingMap.getAllAddresses
@@ -112,10 +110,9 @@ let fetchBlockRange = async (
     if restCount > 0 {
       addresses->Js.Array2.push(`... and ${restCount->Int.toString} more`)->ignore
     }
-    Logging.createChildFrom(
-      ~logger,
+    Logging.createChild(
       ~params={
-        "chainId": chain->ChainMap.Chain.toChainId,
+        "chainId": source.chain->ChainMap.Chain.toChainId,
         "logType": "Block Range Query",
         "partitionId": partitionId,
         "source": source.name,

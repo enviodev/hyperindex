@@ -128,7 +128,6 @@ let make = (
     sourceManager: SourceManager.make(
       ~sources=chainConfig.sources,
       ~maxPartitionConcurrency=Env.maxPartitionConcurrency,
-      ~logger,
     ),
     lastBlockScannedHashes,
     currentBlockHeight: 0,

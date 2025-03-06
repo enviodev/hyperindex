@@ -742,7 +742,7 @@ let invalidatedActionReducer = (state: t, action: action) =>
     (state, [])
   }
 
-let executeQuery = (q: FetchState.query, ~logger, ~source, ~currentBlockHeight, ~chain) => {
+let executeQuery = (q: FetchState.query, ~source, ~currentBlockHeight) => {
   source->Source.fetchBlockRange(
     ~fromBlock=q.fromBlock,
     ~toBlock=switch q.target {
@@ -753,9 +753,7 @@ let executeQuery = (q: FetchState.query, ~logger, ~source, ~currentBlockHeight, 
     },
     ~contractAddressMapping=q.contractAddressMapping,
     ~partitionId=q.partitionId,
-    ~chain,
     ~currentBlockHeight,
-    ~logger,
     ~selection=q.selection,
   )
 }
@@ -770,7 +768,7 @@ let checkAndFetchForChain = (
 ) => async chain => {
   let chainFetcher = state.chainManager.chainFetchers->ChainMap.get(chain)
   if !isRollingBack(state) {
-    let {logger, currentBlockHeight, fetchState} = chainFetcher
+    let {currentBlockHeight, fetchState} = chainFetcher
 
     await chainFetcher.sourceManager->SourceManager.fetchNext(
       ~fetchState,
@@ -779,7 +777,7 @@ let checkAndFetchForChain = (
         dispatchAction(FinishWaitingForNewBlock({chain, currentBlockHeight})),
       ~currentBlockHeight,
       ~executeQuery=async (query, ~source) => {
-        switch await query->executeQuery(~logger, ~source, ~currentBlockHeight, ~chain) {
+        switch await query->executeQuery(~source, ~currentBlockHeight) {
         | Ok(response) => dispatchAction(PartitionQueryResponse({chain, response, query}))
         | Error(e) => dispatchAction(ErrorExit(e))
         }
