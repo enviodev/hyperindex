@@ -46,53 +46,6 @@ type t = {
   ) => promise<result<blockRangeFetchResponse, ErrorHandling.t>>,
 }
 
-let getHeightWithRetry = async (~source, ~logger) => {
-  //Amount the retry interval is multiplied between each retry
-  let backOffMultiplicative = 2
-  //Interval after which to retry request (multiplied by backOffMultiplicative between each retry)
-  let retryIntervalMillis = ref(500)
-  //height to be set in loop
-  let height = ref(0)
-
-  //Retry if the height is 0 (expect height to be greater)
-  while height.contents <= 0 {
-    switch await source.getHeightOrThrow() {
-    | newHeight => height := newHeight
-    | exception exn =>
-      logger->Logging.childWarn({
-        "msg": `Failed to get height from endpoint. Retrying in ${retryIntervalMillis.contents->Int.toString}ms...`,
-        "error": exn->ErrorHandling.prettifyExn,
-      })
-      await Time.resolvePromiseAfterDelay(~delayMilliseconds=retryIntervalMillis.contents)
-      retryIntervalMillis := retryIntervalMillis.contents * backOffMultiplicative
-    }
-  }
-
-  height.contents
-}
-
-//Poll for a height greater or equal to the given blocknumber.
-//Used for waiting until there is a new block to index
-let waitForNewBlock = async (~source, ~currentBlockHeight) => {
-  let logger = Logging.createChild(
-    ~params={
-      "chainId": source.chain->ChainMap.Chain.toChainId,
-      "logType": "Poll for block greater than current height",
-      "currentBlockHeight": currentBlockHeight,
-    },
-  )
-  logger->Logging.childTrace("Waiting for new blocks")
-
-  let pollHeight = ref(await getHeightWithRetry(~source, ~logger))
-
-  while pollHeight.contents <= currentBlockHeight {
-    await Time.resolvePromiseAfterDelay(~delayMilliseconds=source.pollingInterval)
-    pollHeight := (await getHeightWithRetry(~source, ~logger))
-  }
-
-  pollHeight.contents
-}
-
 let fetchBlockRange = async (
   source,
   ~fromBlock,

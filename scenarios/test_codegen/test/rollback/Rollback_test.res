@@ -49,8 +49,8 @@ module Mock = {
 
 module Stubs = {
   //Stub wait for new block
-  let waitForNewBlock = async (~source, ~currentBlockHeight) => {
-    (currentBlockHeight, source)->ignore
+  let waitForNewBlock = async (_sourceManager, ~currentBlockHeight) => {
+    currentBlockHeight->ignore
     Mock.mockChainData->MockChainData.getHeight
   }
 

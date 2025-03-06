@@ -369,10 +369,12 @@ let handlePartitionQueryResponse = (
       | Ok(lastBlockScannedHashes) => lastBlockScannedHashes
       | Error(reorgDetected) => {
           chainFetcher.logger->Logging.childInfo(
-            reorgDetected->ReorgDetection.reorgDetectedToLogParams(~shouldRollbackOnReorg=false)
+            reorgDetected->ReorgDetection.reorgDetectedToLogParams(~shouldRollbackOnReorg=false),
           )
           Prometheus.incrementReorgsDetected(~chain)
-          ReorgDetection.LastBlockScannedHashes.empty(~confirmedBlockThreshold=chainFetcher.chainConfig.confirmedBlockThreshold)
+          ReorgDetection.LastBlockScannedHashes.empty(
+            ~confirmedBlockThreshold=chainFetcher.chainConfig.confirmedBlockThreshold,
+          )
         }
       }
       let updatedChainFetcher =
@@ -772,7 +774,8 @@ let checkAndFetchForChain = (
 
     await chainFetcher.sourceManager->SourceManager.fetchNext(
       ~fetchState,
-      ~waitForNewBlock,
+      ~waitForNewBlock=(~currentBlockHeight) =>
+        chainFetcher.sourceManager->waitForNewBlock(~currentBlockHeight),
       ~onNewBlock=(~currentBlockHeight) =>
         dispatchAction(FinishWaitingForNewBlock({chain, currentBlockHeight})),
       ~currentBlockHeight,
@@ -857,15 +860,16 @@ let injectedTaskReducer = (
           false
         }
         let timeRef = Hrtime.makeTimer()
-        let _ = await Promise.all(Entities.allEntities->Belt.Array.map(entityMod => {
-          let module(Entity) = entityMod
-          Db.sql->DbFunctions.EntityHistory.pruneStaleEntityHistory(
-            ~entityName=Entity.name,
-            ~safeChainIdAndBlockNumberArray,
-            ~shouldDeepClean,
-          )
-        }))
-        
+        let _ = await Promise.all(
+          Entities.allEntities->Belt.Array.map(entityMod => {
+            let module(Entity) = entityMod
+            Db.sql->DbFunctions.EntityHistory.pruneStaleEntityHistory(
+              ~entityName=Entity.name,
+              ~safeChainIdAndBlockNumberArray,
+              ~shouldDeepClean,
+            )
+          }),
+        )
 
         if Env.Benchmark.shouldSaveData {
           let elapsedTimeMillis = Hrtime.timeSince(timeRef)->Hrtime.toMillis->Hrtime.floatFromMillis
@@ -1177,7 +1181,7 @@ let injectedTaskReducer = (
 }
 
 let taskReducer = injectedTaskReducer(
-  ~waitForNewBlock=Source.waitForNewBlock,
+  ~waitForNewBlock=SourceManager.waitForNewBlock,
   ~executeQuery,
   ~getLastKnownValidBlock=ChainFetcher.getLastKnownValidBlock(_),
 )
