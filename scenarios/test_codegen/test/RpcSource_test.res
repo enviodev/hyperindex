@@ -316,40 +316,44 @@ describe("RpcSource - getSelectionConfig", () => {
   })
 
   it("Panics when can't find a selected event", () => {
-    Assert.throws(
-      () =>
-        {
-          isWildcard: false,
-          eventConfigs: [
-            {
-              contractName: "Foo",
-              eventId,
-              isWildcard: false,
-            },
-          ],
-        }->RpcSource.getSelectionConfig(
-          ~contracts=[
-            {
-              name: "Foo",
-              abi: %raw(`[]`),
-              addresses: [],
-              events: [
-                module(
-                  MockEvent({
-                    type transaction = {}
-                    type block = {}
-                    let blockSchema = S.object((_): block => {})
-                    let transactionSchema = S.object((_): transaction => {})
-                  })
-                )->withConfig({wildcard: true}),
-              ],
-            },
-          ],
-        ),
-      ~error={
-        "message": "Invalid events configuration for the partition. Nothing to fetch. Please, report to the Envio team.",
-      },
-    )
+    try {
+      let _ = {
+        isWildcard: false,
+        eventConfigs: [
+          {
+            contractName: "Foo",
+            eventId,
+            isWildcard: false,
+          },
+        ],
+      }->RpcSource.getSelectionConfig(
+        ~contracts=[
+          {
+            name: "Foo",
+            abi: %raw(`[]`),
+            addresses: [],
+            events: [
+              module(
+                MockEvent({
+                  type transaction = {}
+                  type block = {}
+                  let blockSchema = S.object((_): block => {})
+                  let transactionSchema = S.object((_): transaction => {})
+                })
+              )->withConfig({wildcard: true}),
+            ],
+          },
+        ],
+      )
+      Assert.fail("Should have thrown")
+    } catch {
+    | Source.GetItemsError(UnsupportedSelection({message})) =>
+      Assert.equal(
+        message,
+        "Invalid events configuration for the partition. Nothing to fetch. Please, report to the Envio team.",
+      )
+    | _ => Assert.fail("Should have thrown UnsupportedSelection")
+    }
   })
 
   Async.it(

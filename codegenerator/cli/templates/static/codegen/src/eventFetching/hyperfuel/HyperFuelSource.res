@@ -286,227 +286,223 @@ let make = ({chain, contracts, endpointUrl}: options): t => {
     ~logger,
   ) => {
     let mkLogAndRaise = ErrorHandling.mkLogAndRaise(~logger, ...)
-    try {
-      let totalTimeRef = Hrtime.makeTimer()
+    let totalTimeRef = Hrtime.makeTimer()
 
-      let selectionConfig = getSelectionConfig(selection)
-      let recieptsSelection = selectionConfig.getRecieptsSelection(~contractAddressMapping)
+    let selectionConfig = getSelectionConfig(selection)
+    let recieptsSelection = selectionConfig.getRecieptsSelection(~contractAddressMapping)
 
-      let startFetchingBatchTimeRef = Hrtime.makeTimer()
+    let startFetchingBatchTimeRef = Hrtime.makeTimer()
 
-      //fetch batch
-      let pageUnsafe = await Helpers.queryLogsPageWithBackoff(
-        () =>
-          HyperFuel.queryLogsPage(~serverUrl=endpointUrl, ~fromBlock, ~toBlock, ~recieptsSelection),
-        logger,
-      )
+    //fetch batch
+    let pageUnsafe = await Helpers.queryLogsPageWithBackoff(
+      () =>
+        HyperFuel.queryLogsPage(~serverUrl=endpointUrl, ~fromBlock, ~toBlock, ~recieptsSelection),
+      logger,
+    )
 
-      let pageFetchTime =
-        startFetchingBatchTimeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
+    let pageFetchTime =
+      startFetchingBatchTimeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
 
-      //set height and next from block
-      let currentBlockHeight = pageUnsafe.archiveHeight
+    //set height and next from block
+    let currentBlockHeight = pageUnsafe.archiveHeight
 
-      //The heighest (biggest) blocknumber that was accounted for in
-      //Our query. Not necessarily the blocknumber of the last log returned
-      //In the query
-      let heighestBlockQueried = pageUnsafe.nextBlock - 1
+    //The heighest (biggest) blocknumber that was accounted for in
+    //Our query. Not necessarily the blocknumber of the last log returned
+    //In the query
+    let heighestBlockQueried = pageUnsafe.nextBlock - 1
 
-      let lastBlockQueriedPromise = // switch pageUnsafe.rollbackGuard {
-      // //In the case a rollbackGuard is returned (this only happens at the head for unconfirmed blocks)
-      // //use these values
-      // | Some({blockNumber, timestamp, hash}) =>
-      //   {
-      //     ReorgDetection.blockNumber,
-      //     blockTimestamp: timestamp,
-      //     blockHash: hash,
-      //   }->Promise.resolve
-      // | None =>
-      //The optional block and timestamp of the last item returned by the query
-      //(Optional in the case that there are no logs returned in the query)
-      switch pageUnsafe.items->Belt.Array.get(pageUnsafe.items->Belt.Array.length - 1) {
-      | Some({block}) if block.height == heighestBlockQueried =>
-        //If the last log item in the current page is equal to the
-        //heighest block acounted for in the query. Simply return this
-        //value without making an extra query
+    let lastBlockQueriedPromise = // switch pageUnsafe.rollbackGuard {
+    // //In the case a rollbackGuard is returned (this only happens at the head for unconfirmed blocks)
+    // //use these values
+    // | Some({blockNumber, timestamp, hash}) =>
+    //   {
+    //     ReorgDetection.blockNumber,
+    //     blockTimestamp: timestamp,
+    //     blockHash: hash,
+    //   }->Promise.resolve
+    // | None =>
+    //The optional block and timestamp of the last item returned by the query
+    //(Optional in the case that there are no logs returned in the query)
+    switch pageUnsafe.items->Belt.Array.get(pageUnsafe.items->Belt.Array.length - 1) {
+    | Some({block}) if block.height == heighestBlockQueried =>
+      //If the last log item in the current page is equal to the
+      //heighest block acounted for in the query. Simply return this
+      //value without making an extra query
 
-        (
-          {
-            blockNumber: block.height,
-            blockTimestamp: block.time,
-            blockHash: block.id,
-          }: ReorgDetection.blockDataWithTimestamp
-        )->Promise.resolve
-      //If it does not match it means that there were no matching logs in the last
-      //block so we should fetch the block data
-      | Some(_)
-      | None =>
-        //If there were no logs at all in the current page query then fetch the
-        //timestamp of the heighest block accounted for
-        HyperFuel.queryBlockData(~serverUrl=endpointUrl, ~blockNumber=heighestBlockQueried, ~logger)
-        ->Promise.thenResolve(res => {
-          switch res {
-          | Some(blockData) => blockData
-          | None =>
-            mkLogAndRaise(
-              Not_found,
-              ~msg=`Failure, blockData for block ${heighestBlockQueried->Int.toString} unexpectedly returned None`,
-            )
-          }
-        })
-        ->Promise.catch(exn => {
-          exn->mkLogAndRaise(
-            ~msg=`Failed to query blockData for block ${heighestBlockQueried->Int.toString}`,
+      (
+        {
+          blockNumber: block.height,
+          blockTimestamp: block.time,
+          blockHash: block.id,
+        }: ReorgDetection.blockDataWithTimestamp
+      )->Promise.resolve
+    //If it does not match it means that there were no matching logs in the last
+    //block so we should fetch the block data
+    | Some(_)
+    | None =>
+      //If there were no logs at all in the current page query then fetch the
+      //timestamp of the heighest block accounted for
+      HyperFuel.queryBlockData(~serverUrl=endpointUrl, ~blockNumber=heighestBlockQueried, ~logger)
+      ->Promise.thenResolve(res => {
+        switch res {
+        | Some(blockData) => blockData
+        | None =>
+          mkLogAndRaise(
+            Not_found,
+            ~msg=`Failure, blockData for block ${heighestBlockQueried->Int.toString} unexpectedly returned None`,
           )
-        })
-      }
-
-      let parsingTimeRef = Hrtime.makeTimer()
-
-      let parsedQueueItems = pageUnsafe.items->Array.map(item => {
-        let {contractId: contractAddress, receipt, block, receiptIndex} = item
-
-        let chainId = chain->ChainMap.Chain.toChainId
-        let eventId = switch receipt {
-        | LogData({rb}) => BigInt.toString(rb)
-        | Mint(_) => mintEventTag
-        | Burn(_) => burnEventTag
-        | Transfer(_)
-        | TransferOut(_) => transferEventTag
-        | Call(_) => callEventTag
         }
-
-        let eventConfig = switch selectionConfig.route(
-          ~eventId,
-          ~contractAddressMapping,
-          ~contractAddress,
-        ) {
-        | None => {
-            let logger = Logging.createChildFrom(
-              ~logger,
-              ~params={
-                "chainId": chainId,
-                "blockNumber": block.height,
-                "logIndex": receiptIndex,
-                "contractAddress": contractAddress,
-                "eventId": eventId,
-              },
-            )
-            EventRoutingFailed->ErrorHandling.mkLogAndRaise(
-              ~msg="Failed to route registered event",
-              ~logger,
-            )
-          }
-        | Some(eventConfig) => eventConfig
-        }
-
-        let params = switch (eventConfig, receipt) {
-        | ({kind: LogData({decode})}, LogData({data})) =>
-          try decode(data) catch {
-          | exn => {
-              let params = {
-                "chainId": chainId,
-                "blockNumber": block.height,
-                "logIndex": receiptIndex,
-              }
-              let logger = Logging.createChildFrom(~logger, ~params)
-              exn->ErrorHandling.mkLogAndRaise(
-                ~msg="Failed to decode Fuel LogData receipt, please double check your ABI.",
-                ~logger,
-              )
-            }
-          }
-        | (_, Mint({val, subId}))
-        | (_, Burn({val, subId})) =>
-          (
-            {
-              subId,
-              amount: val,
-            }: Internal.fuelSupplyParams
-          )->Obj.magic
-        | (_, Transfer({amount, assetId, to})) =>
-          (
-            {
-              to: to->Address.unsafeFromString,
-              assetId,
-              amount,
-            }: Internal.fuelTransferParams
-          )->Obj.magic
-        | (_, TransferOut({amount, assetId, toAddress})) =>
-          (
-            {
-              to: toAddress->Address.unsafeFromString,
-              assetId,
-              amount,
-            }: Internal.fuelTransferParams
-          )->Obj.magic
-        | (_, Call({amount, assetId, to})) =>
-          (
-            {
-              to: to->Address.unsafeFromString,
-              assetId,
-              amount,
-            }: Internal.fuelTransferParams
-          )->Obj.magic
-        // This should never happen unless there's a bug in the routing logic
-        | _ => Js.Exn.raiseError("Unexpected bug in the event routing logic")
-        }
-
-        (
-          {
-            eventName: eventConfig.name,
-            contractName: eventConfig.contractName,
-            loader: eventConfig.loader,
-            handler: eventConfig.handler,
-            contractRegister: eventConfig.contractRegister,
-            paramsRawEventSchema: eventConfig.paramsRawEventSchema,
-            timestamp: block.time,
-            chain,
-            blockNumber: block.height,
-            logIndex: receiptIndex,
-            event: {
-              chainId,
-              params,
-              transaction: {
-                "id": item.transactionId,
-              }->Obj.magic, // TODO: Obj.magic needed until the field selection types are not configurable for Fuel and Evm separately
-              block: block->Obj.magic,
-              srcAddress: contractAddress,
-              logIndex: receiptIndex,
-            },
-          }: Internal.eventItem
+      })
+      ->Promise.catch(exn => {
+        exn->mkLogAndRaise(
+          ~msg=`Failed to query blockData for block ${heighestBlockQueried->Int.toString}`,
         )
       })
+    }
 
-      let parsingTimeElapsed =
-        parsingTimeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
+    let parsingTimeRef = Hrtime.makeTimer()
 
-      let lastBlockScannedData = await lastBlockQueriedPromise
+    let parsedQueueItems = pageUnsafe.items->Array.map(item => {
+      let {contractId: contractAddress, receipt, block, receiptIndex} = item
 
-      let reorgGuard: ReorgDetection.reorgGuard = {
-        lastBlockScannedData: lastBlockScannedData->ReorgDetection.generalizeBlockDataWithTimestamp,
-        firstBlockParentNumberAndHash: None,
+      let chainId = chain->ChainMap.Chain.toChainId
+      let eventId = switch receipt {
+      | LogData({rb}) => BigInt.toString(rb)
+      | Mint(_) => mintEventTag
+      | Burn(_) => burnEventTag
+      | Transfer(_)
+      | TransferOut(_) => transferEventTag
+      | Call(_) => callEventTag
       }
 
-      let totalTimeElapsed = totalTimeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
-
-      let stats = {
-        totalTimeElapsed,
-        parsingTimeElapsed,
-        pageFetchTime,
+      let eventConfig = switch selectionConfig.route(
+        ~eventId,
+        ~contractAddressMapping,
+        ~contractAddress,
+      ) {
+      | None => {
+          let logger = Logging.createChildFrom(
+            ~logger,
+            ~params={
+              "chainId": chainId,
+              "blockNumber": block.height,
+              "logIndex": receiptIndex,
+              "contractAddress": contractAddress,
+              "eventId": eventId,
+            },
+          )
+          EventRoutingFailed->ErrorHandling.mkLogAndRaise(
+            ~msg="Failed to route registered event",
+            ~logger,
+          )
+        }
+      | Some(eventConfig) => eventConfig
       }
 
-      {
-        latestFetchedBlockTimestamp: lastBlockScannedData.blockTimestamp,
-        parsedQueueItems,
-        latestFetchedBlockNumber: lastBlockScannedData.blockNumber,
-        stats,
-        currentBlockHeight,
-        reorgGuard,
-        fromBlockQueried: fromBlock,
-      }->Ok
-    } catch {
-    | exn => exn->ErrorHandling.make(~logger, ~msg="Failed to fetch block Range")->Error
+      let params = switch (eventConfig, receipt) {
+      | ({kind: LogData({decode})}, LogData({data})) =>
+        try decode(data) catch {
+        | exn => {
+            let params = {
+              "chainId": chainId,
+              "blockNumber": block.height,
+              "logIndex": receiptIndex,
+            }
+            let logger = Logging.createChildFrom(~logger, ~params)
+            exn->ErrorHandling.mkLogAndRaise(
+              ~msg="Failed to decode Fuel LogData receipt, please double check your ABI.",
+              ~logger,
+            )
+          }
+        }
+      | (_, Mint({val, subId}))
+      | (_, Burn({val, subId})) =>
+        (
+          {
+            subId,
+            amount: val,
+          }: Internal.fuelSupplyParams
+        )->Obj.magic
+      | (_, Transfer({amount, assetId, to})) =>
+        (
+          {
+            to: to->Address.unsafeFromString,
+            assetId,
+            amount,
+          }: Internal.fuelTransferParams
+        )->Obj.magic
+      | (_, TransferOut({amount, assetId, toAddress})) =>
+        (
+          {
+            to: toAddress->Address.unsafeFromString,
+            assetId,
+            amount,
+          }: Internal.fuelTransferParams
+        )->Obj.magic
+      | (_, Call({amount, assetId, to})) =>
+        (
+          {
+            to: to->Address.unsafeFromString,
+            assetId,
+            amount,
+          }: Internal.fuelTransferParams
+        )->Obj.magic
+      // This should never happen unless there's a bug in the routing logic
+      | _ => Js.Exn.raiseError("Unexpected bug in the event routing logic")
+      }
+
+      (
+        {
+          eventName: eventConfig.name,
+          contractName: eventConfig.contractName,
+          loader: eventConfig.loader,
+          handler: eventConfig.handler,
+          contractRegister: eventConfig.contractRegister,
+          paramsRawEventSchema: eventConfig.paramsRawEventSchema,
+          timestamp: block.time,
+          chain,
+          blockNumber: block.height,
+          logIndex: receiptIndex,
+          event: {
+            chainId,
+            params,
+            transaction: {
+              "id": item.transactionId,
+            }->Obj.magic, // TODO: Obj.magic needed until the field selection types are not configurable for Fuel and Evm separately
+            block: block->Obj.magic,
+            srcAddress: contractAddress,
+            logIndex: receiptIndex,
+          },
+        }: Internal.eventItem
+      )
+    })
+
+    let parsingTimeElapsed =
+      parsingTimeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
+
+    let lastBlockScannedData = await lastBlockQueriedPromise
+
+    let reorgGuard: ReorgDetection.reorgGuard = {
+      lastBlockScannedData: lastBlockScannedData->ReorgDetection.generalizeBlockDataWithTimestamp,
+      firstBlockParentNumberAndHash: None,
+    }
+
+    let totalTimeElapsed = totalTimeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
+
+    let stats = {
+      totalTimeElapsed,
+      parsingTimeElapsed,
+      pageFetchTime,
+    }
+
+    {
+      latestFetchedBlockTimestamp: lastBlockScannedData.blockTimestamp,
+      parsedQueueItems,
+      latestFetchedBlockNumber: lastBlockScannedData.blockNumber,
+      stats,
+      currentBlockHeight,
+      reorgGuard,
+      fromBlockQueried: fromBlock,
     }
   }
 

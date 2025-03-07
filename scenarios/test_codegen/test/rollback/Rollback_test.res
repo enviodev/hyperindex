@@ -58,11 +58,9 @@ module Stubs = {
   let executePartitionQueryWithMockChainData = mockChainData => async (
     _,
     ~query,
-    ~currentBlockHeight,
+    ~currentBlockHeight as _,
   ) => {
-    currentBlockHeight->ignore
-
-    Ok(mockChainData->MockChainData.executeQuery(query))
+    mockChainData->MockChainData.executeQuery(query)
   }
 
   //Stub for getting block hashes instead of the worker

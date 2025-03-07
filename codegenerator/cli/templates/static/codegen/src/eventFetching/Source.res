@@ -20,7 +20,10 @@ type blockRangeFetchResponse = {
   stats: blockRangeFetchStats,
 }
 
-type getItemsError = ()
+type getItemsError =
+  | UnsupportedSelection({message: string})
+  | FailedGettingFieldSelection({exn: exn, blockNumber: int, logIndex: int, message: string})
+  | FailedParsingItems({exn: exn, blockNumber: int, logIndex: int, message: string})
 
 exception GetItemsError(getItemsError)
 
@@ -45,5 +48,5 @@ type t = {
     ~partitionId: string,
     ~selection: FetchState.selection,
     ~logger: Pino.t,
-  ) => promise<result<blockRangeFetchResponse, ErrorHandling.t>>,
+  ) => promise<blockRangeFetchResponse>,
 }

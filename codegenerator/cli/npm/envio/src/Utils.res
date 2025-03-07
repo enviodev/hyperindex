@@ -335,7 +335,7 @@ module Set = {
   external make: unit => t<'value> = "Set"
 
   @ocaml.doc("Creates a new `Set` object.") @new
-  external fromEntries: array<'value> => t<'value> = "Set"
+  external fromArray: array<'value> => t<'value> = "Set"
 
   /*
    * Instance properties

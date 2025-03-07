@@ -130,7 +130,7 @@ module type S = {
         ~partitionId: string,
         ~selection: FetchState.selection,
         ~logger: Pino.t,
-      ) => promise<result<blockRangeFetchResponse, ErrorHandling.t>>,
+      ) => promise<blockRangeFetchResponse>,
     }
   }
 
