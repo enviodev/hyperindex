@@ -36,7 +36,7 @@ let sourceMock = (~sourceFor=Source.Sync, ~mockGetHeightOrThrow=false, ~pollingI
         } else {
           _ => Js.Exn.raiseError("The getHeightOrThrow not implemented")
         },
-        fetchBlockRange: (
+        getItemsOrThrow: (
           ~fromBlock as _,
           ~toBlock as _,
           ~contractAddressMapping as _,
@@ -44,14 +44,14 @@ let sourceMock = (~sourceFor=Source.Sync, ~mockGetHeightOrThrow=false, ~pollingI
           ~partitionId as _,
           ~selection as _,
           ~logger as _,
-        ) => Js.Exn.raiseError("The fetchBlockRange not implemented"),
+        ) => Js.Exn.raiseError("The getItemsOrThrow not implemented"),
       }
     },
   }
 }
 
 type executeQueryMock = {
-  fn: (FetchState.query, ~source: Source.t) => Promise.t<unit>,
+  fn: FetchState.query => Promise.t<unit>,
   calls: array<FetchState.query>,
   callIds: array<string>,
   resolveAll: unit => unit,
@@ -67,7 +67,7 @@ let executeQueryMock = () => {
     resolveAll: () => {
       resolveFns->Js.Array2.forEach(resolve => resolve())
     },
-    fn: (query, ~source as _) => {
+    fn: query => {
       calls->Js.Array2.push(query)->ignore
       callIds
       ->Js.Array2.push(query.partitionId)
@@ -216,7 +216,7 @@ describe("SourceManager fetchNext", () => {
   let neverOnNewBlock = (~currentBlockHeight as _) =>
     Assert.fail("The onNewBlock shouldn't be called for the test")
 
-  let neverExecutePartitionQuery = (_, ~source as _) =>
+  let neverExecutePartitionQuery = _ =>
     Assert.fail("The executeQuery shouldn't be called for the test")
 
   let source: Source.t = sourceMock().source

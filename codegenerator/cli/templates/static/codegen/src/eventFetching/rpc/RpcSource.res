@@ -235,7 +235,7 @@ let make = ({sourceFor, syncConfig, url, chain, contracts, eventRouter}: options
     contractNameAbiMapping->Js.Dict.set(contract.name, contract.abi)
   })
 
-  let fetchBlockRange = async (
+  let getItemsOrThrow = async (
     ~fromBlock,
     ~toBlock,
     ~contractAddressMapping,
@@ -423,6 +423,6 @@ let make = ({sourceFor, syncConfig, url, chain, contracts, eventRouter}: options
     pollingInterval: 1000,
     getBlockHashes,
     getHeightOrThrow: () => Rpc.GetBlockHeight.route->Rest.fetch((), ~client),
-    fetchBlockRange,
+    getItemsOrThrow,
   }
 }

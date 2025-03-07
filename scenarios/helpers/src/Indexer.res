@@ -122,7 +122,7 @@ module type S = {
         ~logger: Pino.t,
       ) => promise<result<array<ReorgDetection.blockDataWithTimestamp>, exn>>,
       getHeightOrThrow: unit => promise<int>,
-      fetchBlockRange: (
+      getItemsOrThrow: (
         ~fromBlock: int,
         ~toBlock: option<int>,
         ~contractAddressMapping: ContractAddressingMap.mapping,

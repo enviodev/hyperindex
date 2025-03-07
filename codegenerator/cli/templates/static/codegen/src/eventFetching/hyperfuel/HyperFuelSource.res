@@ -276,7 +276,7 @@ let make = ({chain, contracts, endpointUrl}: options): t => {
       }
   }
 
-  let fetchBlockRange = async (
+  let getItemsOrThrow = async (
     ~fromBlock,
     ~toBlock,
     ~contractAddressMapping,
@@ -523,6 +523,6 @@ let make = ({chain, contracts, endpointUrl}: options): t => {
     pollingInterval: 100,
     poweredByHyperSync: true,
     getHeightOrThrow: () => HyperFuel.heightRoute->Rest.fetch((), ~client=jsonApiClient),
-    fetchBlockRange,
+    getItemsOrThrow,
   }
 }

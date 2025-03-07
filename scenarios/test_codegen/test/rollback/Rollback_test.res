@@ -56,11 +56,11 @@ module Stubs = {
 
   //Stub executePartitionQuery with mock data
   let executePartitionQueryWithMockChainData = mockChainData => async (
-    query,
-    ~source,
+    _,
+    ~query,
     ~currentBlockHeight,
   ) => {
-    (currentBlockHeight, source)->ignore
+    currentBlockHeight->ignore
 
     Ok(mockChainData->MockChainData.executeQuery(query))
   }

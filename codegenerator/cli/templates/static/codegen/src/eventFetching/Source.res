@@ -1,5 +1,3 @@
-open Belt
-
 /**
 A set of stats for logging about the block range fetch
 */
@@ -22,6 +20,10 @@ type blockRangeFetchResponse = {
   stats: blockRangeFetchStats,
 }
 
+type getItemsError = ()
+
+exception GetItemsError(getItemsError)
+
 type sourceFor = Sync | Fallback
 type t = {
   name: string,
@@ -35,7 +37,7 @@ type t = {
     ~logger: Pino.t,
   ) => promise<result<array<ReorgDetection.blockDataWithTimestamp>, exn>>,
   getHeightOrThrow: unit => promise<int>,
-  fetchBlockRange: (
+  getItemsOrThrow: (
     ~fromBlock: int,
     ~toBlock: option<int>,
     ~contractAddressMapping: ContractAddressingMap.mapping,
@@ -44,54 +46,4 @@ type t = {
     ~selection: FetchState.selection,
     ~logger: Pino.t,
   ) => promise<result<blockRangeFetchResponse, ErrorHandling.t>>,
-}
-
-let fetchBlockRange = async (
-  source,
-  ~fromBlock,
-  ~toBlock,
-  ~contractAddressMapping,
-  ~partitionId,
-  ~currentBlockHeight,
-  ~selection,
-) => {
-  let logger = {
-    let allAddresses = contractAddressMapping->ContractAddressingMap.getAllAddresses
-    let addresses =
-      allAddresses->Js.Array2.slice(~start=0, ~end_=3)->Array.map(addr => addr->Address.toString)
-    let restCount = allAddresses->Array.length - addresses->Array.length
-    if restCount > 0 {
-      addresses->Js.Array2.push(`... and ${restCount->Int.toString} more`)->ignore
-    }
-    Logging.createChild(
-      ~params={
-        "chainId": source.chain->ChainMap.Chain.toChainId,
-        "logType": "Block Range Query",
-        "partitionId": partitionId,
-        "source": source.name,
-        "fromBlock": fromBlock,
-        "toBlock": toBlock,
-        "addresses": addresses,
-      },
-    )
-  }
-
-  (
-    await source.fetchBlockRange(
-      ~fromBlock,
-      ~toBlock,
-      ~contractAddressMapping,
-      ~partitionId,
-      ~logger,
-      ~selection,
-      ~currentBlockHeight,
-    )
-  )->Utils.Result.forEach(response => {
-    logger->Logging.childTrace({
-      "msg": "Fetched block range from server",
-      "latestFetchedBlockNumber": response.latestFetchedBlockNumber,
-      "numEvents": response.parsedQueueItems->Array.length,
-      "stats": response.stats,
-    })
-  })
 }

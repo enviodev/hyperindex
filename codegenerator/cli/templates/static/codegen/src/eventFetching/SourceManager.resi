@@ -13,7 +13,7 @@ let fetchNext: (
   t,
   ~fetchState: FetchState.t,
   ~currentBlockHeight: int,
-  ~executeQuery: (FetchState.query, ~source: Source.t) => promise<unit>,
+  ~executeQuery: (FetchState.query) => promise<unit>,
   ~waitForNewBlock: (~currentBlockHeight: int) => promise<int>,
   ~onNewBlock: (~currentBlockHeight: int) => unit,
   ~maxPerChainQueueSize: int,
@@ -21,3 +21,9 @@ let fetchNext: (
 ) => promise<unit>
 
 let waitForNewBlock: (t, ~currentBlockHeight: int) => promise<int>
+
+let executeQuery: (
+  t,
+  ~query: FetchState.query,
+  ~currentBlockHeight: int,
+) => promise<result<Source.blockRangeFetchResponse, ErrorHandling.t>>

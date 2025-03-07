@@ -241,7 +241,7 @@ let make = (
     contractNameAbiMapping->Js.Dict.set(contract.name, contract.abi)
   })
 
-  let fetchBlockRange = async (
+  let getItemsOrThrow = async (
     ~fromBlock,
     ~toBlock,
     ~contractAddressMapping,
@@ -528,6 +528,6 @@ let make = (
     poweredByHyperSync: true,
     getBlockHashes,
     getHeightOrThrow: () => HyperSyncJsonApi.heightRoute->Rest.fetch((), ~client=jsonApiClient),
-    fetchBlockRange,
+    getItemsOrThrow,
   }
 }

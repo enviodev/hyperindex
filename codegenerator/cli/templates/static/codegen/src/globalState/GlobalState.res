@@ -744,22 +744,6 @@ let invalidatedActionReducer = (state: t, action: action) =>
     (state, [])
   }
 
-let executeQuery = (q: FetchState.query, ~source, ~currentBlockHeight) => {
-  source->Source.fetchBlockRange(
-    ~fromBlock=q.fromBlock,
-    ~toBlock=switch q.target {
-    | Head => None
-    | EndBlock({toBlock})
-    | Merge({toBlock}) =>
-      Some(toBlock)
-    },
-    ~contractAddressMapping=q.contractAddressMapping,
-    ~partitionId=q.partitionId,
-    ~currentBlockHeight,
-    ~selection=q.selection,
-  )
-}
-
 let checkAndFetchForChain = (
   //Used for dependency injection for tests
   ~waitForNewBlock,
@@ -779,8 +763,8 @@ let checkAndFetchForChain = (
       ~onNewBlock=(~currentBlockHeight) =>
         dispatchAction(FinishWaitingForNewBlock({chain, currentBlockHeight})),
       ~currentBlockHeight,
-      ~executeQuery=async (query, ~source) => {
-        switch await query->executeQuery(~source, ~currentBlockHeight) {
+      ~executeQuery=async query => {
+        switch await chainFetcher.sourceManager->executeQuery(~query, ~currentBlockHeight) {
         | Ok(response) => dispatchAction(PartitionQueryResponse({chain, response, query}))
         | Error(e) => dispatchAction(ErrorExit(e))
         }
@@ -1182,6 +1166,6 @@ let injectedTaskReducer = (
 
 let taskReducer = injectedTaskReducer(
   ~waitForNewBlock=SourceManager.waitForNewBlock,
-  ~executeQuery,
+  ~executeQuery=SourceManager.executeQuery,
   ~getLastKnownValidBlock=ChainFetcher.getLastKnownValidBlock(_),
 )

@@ -49,7 +49,7 @@ let fetchNext = async (
   ~maxPerChainQueueSize,
   ~stateId,
 ) => {
-  let {maxPartitionConcurrency, activeSource} = sourceManager
+  let {maxPartitionConcurrency} = sourceManager
 
   switch fetchState->FetchState.getNextQuery(
     ~concurrencyLimit={
@@ -84,7 +84,7 @@ let fetchNext = async (
       let _ =
         await queries
         ->Array.map(q => {
-          let promise = q->executeQuery(~source=activeSource)
+          let promise = q->executeQuery
           let _ = promise->Promise.thenResolve(_ => {
             sourceManager.fetchingPartitionsCount = sourceManager.fetchingPartitionsCount - 1
           })
@@ -239,4 +239,55 @@ let waitForNewBlock = async (sourceManager: t, ~currentBlockHeight) => {
   status := Done
 
   newBlockHeight
+}
+
+let executeQuery = async (sourceManager: t, ~query: FetchState.query, ~currentBlockHeight) => {
+  let source = sourceManager.activeSource
+
+  let toBlock = switch query.target {
+  | Head => None
+  | EndBlock({toBlock})
+  | Merge({toBlock}) =>
+    Some(toBlock)
+  }
+
+  let logger = {
+    let allAddresses = query.contractAddressMapping->ContractAddressingMap.getAllAddresses
+    let addresses =
+      allAddresses->Js.Array2.slice(~start=0, ~end_=3)->Array.map(addr => addr->Address.toString)
+    let restCount = allAddresses->Array.length - addresses->Array.length
+    if restCount > 0 {
+      addresses->Js.Array2.push(`... and ${restCount->Int.toString} more`)->ignore
+    }
+    Logging.createChild(
+      ~params={
+        "chainId": source.chain->ChainMap.Chain.toChainId,
+        "logType": "Block Range Query",
+        "partitionId": query.partitionId,
+        "source": source.name,
+        "fromBlock": query.fromBlock,
+        "toBlock": toBlock,
+        "addresses": addresses,
+      },
+    )
+  }
+
+  (
+    await source.getItemsOrThrow(
+      ~fromBlock=query.fromBlock,
+      ~toBlock,
+      ~contractAddressMapping=query.contractAddressMapping,
+      ~partitionId=query.partitionId,
+      ~currentBlockHeight,
+      ~selection=query.selection,
+      ~logger,
+    )
+  )->Utils.Result.forEach(response => {
+    logger->Logging.childTrace({
+      "msg": "Fetched block range from server",
+      "latestFetchedBlockNumber": response.latestFetchedBlockNumber,
+      "numEvents": response.parsedQueueItems->Array.length,
+      "stats": response.stats,
+    })
+  })
 }
