@@ -41,7 +41,7 @@ let evm = (
         sourceFor,
         contracts,
         syncConfig: Config.getSyncConfig(syncConfig->Option.getWithDefault({})),
-        urls: [url],
+        url,
         eventRouter,
       }),
     )

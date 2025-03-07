@@ -5,13 +5,15 @@ describe_skip("Rpc Test", () => {
   // let rpcUrl = "https://eth.rpc.hypersync.xyz"
   let rpcUrl = "https://eth.llamarpc.com"
 
+  let client = Rest.client(rpcUrl)
+
   Async.it("Executes single getBlockByNumber rpc call and parses response", async () => {
     let maybeBlock = await Rpc.GetBlockByNumber.route->Rest.fetch(
-      rpcUrl,
       {
         "blockNumber": 1,
         "includeTransactions": false,
       },
+      ~client,
     )
 
     Assert.deepEqual(
@@ -42,7 +44,7 @@ describe_skip("Rpc Test", () => {
   })
 
   Async.it("Gets block height from rpc", async () => {
-    let height = await Rpc.GetBlockHeight.route->Rest.fetch(rpcUrl, ())
+    let height = await Rpc.GetBlockHeight.route->Rest.fetch((), ~client)
 
     Assert.ok(
       height > 21244092,
@@ -52,13 +54,13 @@ describe_skip("Rpc Test", () => {
 
   Async.it("GetLogs rpc call wildcard call", async () => {
     let logs = await Rpc.GetLogs.route->Rest.fetch(
-      rpcUrl,
       {
         fromBlock: 20742567,
         toBlock: 20742567,
         address: [],
         topics: [Single("0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef")],
       },
+      ~client,
     )
 
     Assert.deepEqual(logs->Array.length, 88, ~message="Should have 88 transfer logs")
@@ -66,13 +68,13 @@ describe_skip("Rpc Test", () => {
 
   Async.it("GetLogs rpc call with address", async () => {
     let logs = await Rpc.GetLogs.route->Rest.fetch(
-      rpcUrl,
       {
         fromBlock: 20742567,
         toBlock: 20742567,
         address: ["0xF57e7e7C23978C3cAEC3C3548E3D615c346e79fF"->Address.Evm.fromStringOrThrow],
         topics: [Single("0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef")],
       },
+      ~client,
     )
 
     Assert.deepEqual(

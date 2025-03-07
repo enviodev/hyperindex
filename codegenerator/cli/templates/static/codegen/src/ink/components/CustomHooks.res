@@ -70,12 +70,12 @@ module InitApi = {
     content: s.field("content", S.string),
   })
 
-  let endpoint = Env.envioApiUrl
+  let client = Rest.client(Env.envioApiUrl)
 
   let route = Rest.route(() => {
     method: Post,
     path: "/hyperindex/init",
-    variables: s => s.body(bodySchema),
+    input: s => s.body(bodySchema),
     responses: [s => s.field("messages", S.array(messageSchema))],
   })
 
@@ -84,7 +84,7 @@ module InitApi = {
       PersistedState.getPersistedState()->Result.mapWithDefault(None, p => Some(p.envioVersion))
     let body = makeBody(~envioVersion, ~envioApiToken=Env.envioApiToken, ~config)
 
-    switch await route->Rest.fetch(endpoint, body) {
+    switch await route->Rest.fetch(body, ~client) {
     | exception exn => Error(exn->Obj.magic)
     | messages => Ok(messages)
     }

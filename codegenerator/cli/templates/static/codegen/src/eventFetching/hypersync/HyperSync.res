@@ -265,7 +265,7 @@ module BlockData = {
     )
 
     let maybeSuccessfulRes = switch await Time.retryAsyncWithExponentialBackOff(
-      () => HyperSyncJsonApi.queryRoute->Rest.fetch(serverUrl, body),
+      () => HyperSyncJsonApi.queryRoute->Rest.fetch(body, ~client=Rest.client(serverUrl)),
       ~logger,
     ) {
     | exception _ => None

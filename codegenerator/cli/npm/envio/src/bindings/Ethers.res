@@ -185,9 +185,6 @@ module JsonRpcProvider = {
     fields->Obj.magic
   }
 
-  @send
-  external getBlockNumber: t => promise<int> = "getBlockNumber"
-
   type block = {
     _difficulty: bigint,
     difficulty: int,

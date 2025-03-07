@@ -49,8 +49,7 @@ type missingParams = {
   queryName: string,
   missingParams: array<string>,
 }
-type queryError =
-  UnexpectedMissingParams(missingParams)
+type queryError = UnexpectedMissingParams(missingParams)
 
 let queryErrorToMsq = (e: queryError): string => {
   switch e {
@@ -271,6 +270,6 @@ let queryBlockData = BlockData.queryBlockData
 let heightRoute = Rest.route(() => {
   path: "/height",
   method: Get,
-  variables: _ => (),
+  input: _ => (),
   responses: [s => s.field("height", S.int)],
 })

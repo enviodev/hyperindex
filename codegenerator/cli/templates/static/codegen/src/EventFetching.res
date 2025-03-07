@@ -1,7 +1,6 @@
 open Belt
 
 exception QueryTimout(string)
-exception EventRoutingFailed
 
 let getKnownBlock = (provider, blockNumber) =>
   provider

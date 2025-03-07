@@ -38,7 +38,7 @@ let getLocalChainConfig = (nftFactoryContractAddress): chainConfig => {
           queryTimeoutMillis: 10000,
           fallbackStallTimeout: 1000,
         },
-        urls: ["http://127.0.0.1:8545"],
+        url: "http://127.0.0.1:8545",
         eventRouter: contracts
         ->Belt.Array.flatMap(contract => contract.events)
         ->EventRouter.fromEvmEventModsOrThrow(~chain),
