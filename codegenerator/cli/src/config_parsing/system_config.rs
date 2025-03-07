@@ -1760,6 +1760,93 @@ mod test {
     }
 
     #[test]
+    fn test_get_nested_contract_abi() {
+        let test_dir = format!("{}/test", env!("CARGO_MANIFEST_DIR"));
+        let project_root = test_dir.as_str();
+        let config_dir = "configs/nested-abi.yaml";
+        let generated = "generated/";
+        let project_paths = ParsedProjectPaths::new(project_root, generated, config_dir)
+            .expect("Failed creating parsed_paths");
+
+        let config =
+            SystemConfig::parse_from_project_files(&project_paths).expect("Failed parsing config");
+
+        let contract_name = "Contract3".to_string();
+
+        let contract_abi = match &config
+            .get_contract(&contract_name)
+            .expect("Failed getting contract")
+            .abi
+        {
+            super::Abi::Evm(abi) => abi.typed.clone(),
+            super::Abi::Fuel(_) => panic!("Fuel abi should not be parsed"),
+        };
+
+        let expected_abi_string = r#"
+                [
+                {
+                    "anonymous": false,
+                    "inputs": [
+                    {
+                        "indexed": false,
+                        "name": "id",
+                        "type": "uint256"
+                    },
+                    {
+                        "indexed": false,
+                        "name": "owner",
+                        "type": "address"
+                    },
+                    {
+                        "indexed": false,
+                        "name": "displayName",
+                        "type": "string"
+                    },
+                    {
+                        "indexed": false,
+                        "name": "imageUrl",
+                        "type": "string"
+                    }
+                    ],
+                    "name": "NewGravatar",
+                    "type": "event"
+                },
+                {
+                    "anonymous": false,
+                    "inputs": [
+                    {
+                        "indexed": false,
+                        "name": "id",
+                        "type": "uint256"
+                    },
+                    {
+                        "indexed": false,
+                        "name": "owner",
+                        "type": "address"
+                    },
+                    {
+                        "indexed": false,
+                        "name": "displayName",
+                        "type": "string"
+                    },
+                    {
+                        "indexed": false,
+                        "name": "imageUrl",
+                        "type": "string"
+                    }
+                    ],
+                    "name": "UpdatedGravatar",
+                    "type": "event"
+                }
+                ]
+    "#;
+
+        let expected_abi: ethers::abi::Abi = serde_json::from_str(expected_abi_string).unwrap();
+
+        assert_eq!(expected_abi, contract_abi);
+    }
+
+    #[test]
     fn parse_event_sig_with_event_prefix() {
         let event_string = "event MyEvent(uint256 myArg)".to_string();
 

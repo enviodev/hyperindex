@@ -333,19 +333,37 @@ impl ExplorerImportArgs {
 
 impl LocalImportArgs {
     fn parse_contract_abi(abi_path: PathBuf) -> anyhow::Result<ethers::abi::Contract> {
-        let abi_file = std::fs::read_to_string(&abi_path).context(format!(
+        use crate::config_parsing::system_config::EvmAbi;
+        use crate::project_paths::ParsedProjectPaths;
+
+        let _abi_file = std::fs::read_to_string(&abi_path).context(format!(
             "Failed to read abi file at {:?}, relative to the current directory {:?}",
             abi_path,
             env::current_dir().unwrap_or_default()
         ))?;
 
-        let abi: ethers::abi::Contract = serde_json::from_str(&abi_file).context(format!(
-            "Failed to deserialize ABI at {:?} -  Please ensure the ABI file is formatted \
-             correctly or contact the team.",
-            abi_path
-        ))?;
+        // Create a temporary ParsedProjectPaths with the current directory
+        // This is needed because EvmAbi::from_file expects a project path
+        // but we're working with an absolute path here
+        let current_dir = env::current_dir().unwrap_or_default();
+        let temp_project_paths = ParsedProjectPaths {
+            project_root: current_dir.clone(),
+            config: current_dir.clone(),
+            generated: current_dir,
+        };
 
-        Ok(abi)
+        // Convert the absolute path to a relative path string for EvmAbi::from_file
+        let abi_path_str = abi_path.to_string_lossy().to_string();
+
+        // Use the EvmAbi::from_file functionality
+        match EvmAbi::from_file(&Some(abi_path_str), &temp_project_paths)? {
+            Some(evm_abi) => {
+                // Convert the EvmAbi to ethers::abi::Contract
+                let contract: ethers::abi::Contract = serde_json::from_str(&evm_abi.raw)?;
+                Ok(contract)
+            }
+            None => Err(anyhow::anyhow!("Failed to parse ABI from file")),
+        }
     }
 
     ///Internal function to get the abi path from the cli args or prompt for
@@ -478,4 +496,46 @@ pub async fn prompt_contract_import_init_flow(args: ContractImportArgs) -> Resul
             .await
             .context("Failed getting contract selection")?,
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+
+    #[test]
+    fn test_parse_contract_abi_direct() {
+        let test_dir = format!("{}/test", env!("CARGO_MANIFEST_DIR"));
+        let abi_path = Path::new(&test_dir).join("abis/Contract1.json");
+
+        let result = LocalImportArgs::parse_contract_abi(abi_path);
+        assert!(
+            result.is_ok(),
+            "Failed to parse direct ABI: {:?}",
+            result.err()
+        );
+
+        let abi = result.unwrap();
+        assert_eq!(abi.events.len(), 2);
+        assert!(abi.events.iter().any(|(name, _)| name == "NewGravatar"));
+        assert!(abi.events.iter().any(|(name, _)| name == "UpdatedGravatar"));
+    }
+
+    #[test]
+    fn test_parse_contract_abi_nested() {
+        let test_dir = format!("{}/test", env!("CARGO_MANIFEST_DIR"));
+        let abi_path = Path::new(&test_dir).join("abis/Contract3.json");
+
+        let result = LocalImportArgs::parse_contract_abi(abi_path);
+        assert!(
+            result.is_ok(),
+            "Failed to parse nested ABI: {:?}",
+            result.err()
+        );
+
+        let abi = result.unwrap();
+        assert_eq!(abi.events.len(), 2);
+        assert!(abi.events.iter().any(|(name, _)| name == "NewGravatar"));
+        assert!(abi.events.iter().any(|(name, _)| name == "UpdatedGravatar"));
+    }
 }

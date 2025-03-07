@@ -1,0 +1,29 @@
+# yaml-language-server: $schema=../../npm/envio/evm.schema.json
+name: config3
+schema: ../schemas/schema.graphql
+description: Gravatar for Ethereum with nested ABI
+networks:
+  - id: 1
+    rpc_config:
+      url: https://eth-mainnet.g.alchemy.com/v2/demo
+      initial_block_interval: 10000
+      backoff_multiplicative: 0.8
+      acceleration_additive: 2000
+      interval_ceiling: 10000
+      backoff_millis: 5000
+      query_timeout_millis: 20000
+    start_block: 0
+    contracts:
+      - name: Contract3
+        abi_file_path: ../abis/Contract3.json
+        handler: ./src/EventHandler.js
+        address: "0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"
+        events:
+          - event: "NewGravatar"
+          - event: "UpdatedGravatar"
+field_selection:
+  transaction_fields:
+    - !from
+    - !value
+  block_fields:
+    - !difficulty
