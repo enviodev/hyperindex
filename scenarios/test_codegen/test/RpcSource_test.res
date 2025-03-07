@@ -21,6 +21,36 @@ let mockEthersLog = (
   logIndex: 2,
 }
 
+describe("RpcSource - name", () => {
+  it("Returns the name of the source including sanitized rpc url", () => {
+    let source = RpcSource.make({
+      url: "https://eth.rpc.hypersync.xyz?api_key=123",
+      chain: MockConfig.chain1337,
+      contracts: [],
+      eventRouter: EventRouter.empty(),
+      sourceFor: Sync,
+      syncConfig: Config.getSyncConfig({}),
+    })
+    Assert.equal(source.name, "RPC (eth.rpc.hypersync.xyz)")
+  })
+})
+
+describe("RpcSource - getHeightOrThrow", () => {
+  Async.it("Returns the name of the source including sanitized rpc url", async () => {
+    let source = RpcSource.make({
+      url: "https://eth.rpc.hypersync.xyz",
+      chain: MockConfig.chain1337,
+      contracts: [],
+      eventRouter: EventRouter.empty(),
+      sourceFor: Sync,
+      syncConfig: Config.getSyncConfig({}),
+    })
+    let height = await source.getHeightOrThrow()
+    Assert.equal(height > 21994218, true)
+    Assert.equal(height < 30000000, true)
+  })
+})
+
 describe("RpcSource - getEventTransactionOrThrow", () => {
   let neverGetTransactionFields = _ => Assert.fail("The getTransactionFields should not be called")
 
@@ -134,7 +164,7 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
     let testTransactionHash = "0x3dce529e9661cfb65defa88ae5cd46866ddf39c9751d89774d89728703c2049f"
 
     let provider = Ethers.JsonRpcProvider.make(
-      ~rpcUrls=["https://eth.llamarpc.com"],
+      ~rpcUrls=["https://eth.rpc.hypersync.xyz"],
       ~chainId=1,
       ~fallbackStallTimeout=0,
     )

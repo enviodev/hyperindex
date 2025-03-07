@@ -518,6 +518,8 @@ let make = (
       ~logger,
     )->Promise.thenResolve(HyperSync.mapExn)
 
+  let jsonApiClient = Rest.client(endpointUrl)
+
   {
     name,
     sourceFor: Sync,
@@ -525,7 +527,7 @@ let make = (
     pollingInterval: 100,
     poweredByHyperSync: true,
     getBlockHashes,
-    getHeightOrThrow: () => HyperSyncJsonApi.heightRoute->Rest.fetch(endpointUrl, ()),
+    getHeightOrThrow: () => HyperSyncJsonApi.heightRoute->Rest.fetch((), ~client=jsonApiClient),
     fetchBlockRange,
   }
 }

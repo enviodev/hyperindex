@@ -138,23 +138,47 @@ let makeThrowingGetEventTransaction = (~getTransactionFields) => {
   }
 }
 
+let sanitizeUrl = (url: string) => {
+  // Regular expression requiring protocol and capturing hostname
+  // - (https?:\/\/) : Required http:// or https:// (capturing group)
+  // - ([^\/?]+) : Capture hostname (one or more characters that aren't / or ?)
+  // - .* : Match rest of the string
+  let regex = %re("/https?:\/\/([^\/?]+).*/")
+
+  switch Js.Re.exec_(regex, url) {
+  | Some(result) =>
+    switch Js.Re.captures(result)->Belt.Array.get(1) {
+    | Some(host) => host->Js.Nullable.toOption
+    | None => None
+    }
+  | None => None
+  }
+}
+
 type options = {
   sourceFor: Source.sourceFor,
   syncConfig: Config.syncConfig,
-  urls: array<string>,
+  url: string,
   chain: ChainMap.Chain.t,
   contracts: array<Config.contract>,
   eventRouter: EventRouter.t<module(Types.InternalEvent)>,
 }
 
-let make = ({sourceFor, syncConfig, urls, chain, contracts, eventRouter}: options): t => {
+let make = ({sourceFor, syncConfig, url, chain, contracts, eventRouter}: options): t => {
+  let urlHost = switch sanitizeUrl(url) {
+  | None =>
+    Js.Exn.raiseError(
+      `EE109: The RPC url "${url}" is incorrect format. The RPC url needs to start with either http:// or https://`,
+    )
+  | Some(host) => host
+  }
+  let name = `RPC (${urlHost})`
+
   let provider = Ethers.JsonRpcProvider.make(
-    ~rpcUrls=urls,
+    ~rpcUrls=[url],
     ~chainId=chain->ChainMap.Chain.toChainId,
     ~fallbackStallTimeout=syncConfig.fallbackStallTimeout,
   )
-
-  let name = "RPC"
 
   let getSelectionConfig = memoGetSelectionConfig(~contracts)
 
@@ -389,6 +413,8 @@ let make = ({sourceFor, syncConfig, urls, chain, contracts, eventRouter}: option
     ->Promise.catch(exn => exn->Error->Promise.resolve)
   }
 
+  let client = Rest.client(url)
+
   {
     name,
     sourceFor,
@@ -396,7 +422,7 @@ let make = ({sourceFor, syncConfig, urls, chain, contracts, eventRouter}: option
     poweredByHyperSync: false,
     pollingInterval: 1000,
     getBlockHashes,
-    getHeightOrThrow: () => provider->Ethers.JsonRpcProvider.getBlockNumber,
+    getHeightOrThrow: () => Rpc.GetBlockHeight.route->Rest.fetch((), ~client),
     fetchBlockRange,
   }
 }

@@ -513,6 +513,8 @@ let make = ({chain, contracts, endpointUrl}: options): t => {
   let getBlockHashes = (~blockNumbers as _, ~logger as _) =>
     Js.Exn.raiseError("HyperFuel does not support getting block hashes")
 
+  let jsonApiClient = Rest.client(endpointUrl)
+
   {
     name,
     sourceFor: Sync,
@@ -520,7 +522,7 @@ let make = ({chain, contracts, endpointUrl}: options): t => {
     getBlockHashes,
     pollingInterval: 100,
     poweredByHyperSync: true,
-    getHeightOrThrow: () => HyperFuel.heightRoute->Rest.fetch(endpointUrl, ()),
+    getHeightOrThrow: () => HyperFuel.heightRoute->Rest.fetch((), ~client=jsonApiClient),
     fetchBlockRange,
   }
 }
