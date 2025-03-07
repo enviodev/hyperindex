@@ -333,47 +333,36 @@ impl ExplorerImportArgs {
 
 impl LocalImportArgs {
     fn parse_contract_abi(abi_path: PathBuf) -> anyhow::Result<ethers::abi::Contract> {
-        let abi_file = std::fs::read_to_string(&abi_path).context(format!(
+        use crate::config_parsing::system_config::EvmAbi;
+        use crate::project_paths::ParsedProjectPaths;
+
+        let _abi_file = std::fs::read_to_string(&abi_path).context(format!(
             "Failed to read abi file at {:?}, relative to the current directory {:?}",
             abi_path,
             env::current_dir().unwrap_or_default()
         ))?;
 
-        // First try to parse the JSON directly as an ABI
-        let direct_abi_result: Result<ethers::abi::Contract, _> = serde_json::from_str(&abi_file);
+        // Create a temporary ParsedProjectPaths with the current directory
+        // This is needed because EvmAbi::from_file expects a project path
+        // but we're working with an absolute path here
+        let current_dir = env::current_dir().unwrap_or_default();
+        let temp_project_paths = ParsedProjectPaths {
+            project_root: current_dir.clone(),
+            config: current_dir.clone(),
+            generated: current_dir,
+        };
 
-        match direct_abi_result {
-            Ok(abi) => Ok(abi),
-            Err(_) => {
-                // If direct parsing fails, try to parse it as a JSON object that might contain an "abi" field
-                let json_value: Result<serde_json::Value, _> = serde_json::from_str(&abi_file);
+        // Convert the absolute path to a relative path string for EvmAbi::from_file
+        let abi_path_str = abi_path.to_string_lossy().to_string();
 
-                match json_value {
-                    Ok(value) => {
-                        if let Some(abi_value) = value.get("abi") {
-                            // Try to parse the "abi" field as an ABI
-                            let abi: ethers::abi::Contract = serde_json::from_value(abi_value.clone())
-                                .context(format!(
-                                    "Found 'abi' field in JSON at {:?}, but failed to parse it as a valid ABI",
-                                    abi_path
-                                ))?;
-                            Ok(abi)
-                        } else {
-                            Err(anyhow::anyhow!(
-                                "JSON at {:?} is not a valid ABI and does not contain an 'abi' field",
-                                abi_path
-                            ))
-                        }
-                    },
-                    Err(e) => {
-                        Err(anyhow::anyhow!(
-                            "Failed to deserialize ABI at {:?} - Please ensure the ABI file is formatted correctly: {}",
-                            abi_path,
-                            e
-                        ))
-                    }
-                }
+        // Use the EvmAbi::from_file functionality
+        match EvmAbi::from_file(&Some(abi_path_str), &temp_project_paths)? {
+            Some(evm_abi) => {
+                // Convert the EvmAbi to ethers::abi::Contract
+                let contract: ethers::abi::Contract = serde_json::from_str(&evm_abi.raw)?;
+                Ok(contract)
             }
+            None => Err(anyhow::anyhow!("Failed to parse ABI from file")),
         }
     }
 
