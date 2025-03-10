@@ -332,6 +332,8 @@ let executeQuery = async (sourceManager: t, ~query: FetchState.query, ~currentBl
       | UnsupportedSelection(_)
       | FailedGettingFieldSelection(_)
       | FailedParsingItems(_) => {
+          let nextSource = sourceManager->getNextSyncSource(~initialSource)
+
           // These errors are impossible to recover, so we delete the source
           // from sourceManager so it's not attempted anymore
           let notAlreadyDeleted = sourceManager.sources->Utils.Set.delete(source)
@@ -351,7 +353,7 @@ let executeQuery = async (sourceManager: t, ~query: FetchState.query, ~currentBl
             | _ => ()
             }
           }
-          let nextSource = sourceManager->getNextSyncSource(~initialSource)
+
           if nextSource === source {
             logger->Logging.childError(
               "The indexer doesn't have data-sources which can continue fetching. Please, check the error logs or reach out to the Envio team.",
