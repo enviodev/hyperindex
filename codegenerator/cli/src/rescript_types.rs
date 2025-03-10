@@ -813,8 +813,8 @@ mod tests {
                 RescriptRecordField::new("fieldB".to_string(), RescriptTypeIdent::Bool),
             ])
             .to_rescript_schema(&"eventArgs".to_string(), &RescriptSchemaMode::ForDb),
-            "S.object((s): eventArgs => {fieldA: s.field(\"fieldA\", \
-             S.int), fieldB: s.field(\"fieldB\", S.bool)})"
+            "S.object((s): eventArgs => {fieldA: s.field(\"fieldA\", S.int), fieldB: \
+             s.field(\"fieldB\", S.bool)})"
                 .to_string()
         );
         assert_eq!(

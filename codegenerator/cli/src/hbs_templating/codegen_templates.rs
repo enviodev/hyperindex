@@ -530,9 +530,9 @@ impl EventTemplate {
                     let _ = write!(
                         output,
                         "~topic{topic_number}=?{event_filter_arg}.{param_name}->Belt.Option.\
-                     map(topicFilters => \
-                     topicFilters->SingleOrMultiple.normalizeOrThrow{nested_type_flags}->Belt.\
-                     Array.map({topic_encoder})), "
+                         map(topicFilters => \
+                         topicFilters->SingleOrMultiple.normalizeOrThrow{nested_type_flags}->Belt.\
+                         Array.map({topic_encoder})), "
                     );
                     output
                 });
@@ -924,11 +924,8 @@ impl NetworkConfigTemplate {
 
                 (
                     format!(
-                        "[HyperFuelSource.make({{
-  chain: chain,
-  endpointUrl: \"{hypersync_endpoint_url}\",
-  contracts: [{}]
-}})]",
+                        "[HyperFuelSource.make({{chain: chain, endpointUrl: \
+                         \"{hypersync_endpoint_url}\", contracts: [{}]}})]",
                         contracts_code
                     ),
                     format!("HyperFuel({{endpointUrl: \"{hypersync_endpoint_url}\"}})"),
@@ -949,7 +946,7 @@ impl NetworkConfigTemplate {
                     MainEvmDataSource::HyperSync {
                         hypersync_endpoint_url,
                     } => format!("Some(\"{hypersync_endpoint_url}\")"),
-                    MainEvmDataSource::Rpc(_) => format!("None"),
+                    MainEvmDataSource::Rpc(_) => "None".to_string(),
                 };
 
                 let rpc_to_sync_config_options = |rpc: &Rpc| match rpc.sync_config {
@@ -1014,7 +1011,7 @@ impl NetworkConfigTemplate {
                     MainEvmDataSource::Rpc(rpc) => {
                         format!(
                             "Rpc({{syncConfig: Config.getSyncConfig({})}})",
-                            rpc_to_sync_config_options(&rpc)
+                            rpc_to_sync_config_options(rpc)
                         )
                     }
                 };
@@ -1036,8 +1033,12 @@ impl NetworkConfigTemplate {
                     .join(", ");
 
                 (
-                  format!("NetworkSources.evm(~chain, ~contracts, ~hyperSync={hyper_sync_code}, ~allEventSignatures=[{all_event_signatures}]->Belt.Array.concatMany, ~shouldUseHypersyncClientDecoder={is_client_decoder}, ~rpcs=[{rpcs}])"),
-                  deprecated_sync_source_code,
+                    format!(
+                        "NetworkSources.evm(~chain, ~contracts, ~hyperSync={hyper_sync_code}, \
+                         ~allEventSignatures=[{all_event_signatures}]->Belt.Array.concatMany, \
+                         ~shouldUseHypersyncClientDecoder={is_client_decoder}, ~rpcs=[{rpcs}])"
+                    ),
+                    deprecated_sync_source_code,
                 )
             }
         };
@@ -1368,12 +1369,12 @@ mod test {
             network_config: network1,
             codegen_contracts: vec![contract1],
             is_fuel: true,
-            sources_code: format!("[HyperFuelSource.make({{
-  chain: chain,
-  endpointUrl: \"https://fuel-testnet.hypersync.xyz\",
-  contracts: [{{name: \"Greeter\",events: [Types.Greeter.NewGreeting.register(), Types.Greeter.ClearGreeting.register()]}}]
-}})]"),
-            deprecated_sync_source_code: format!("HyperFuel({{endpointUrl: \"https://fuel-testnet.hypersync.xyz\"}})"),
+            sources_code: format!(
+                "[HyperFuelSource.make({{chain: chain, endpointUrl: \"https://fuel-testnet.hypersync.xyz\", contracts: [{{name: \"Greeter\",events: [Types.Greeter.NewGreeting.register(), Types.Greeter.ClearGreeting.register()]}}]}})]"
+            ),
+            deprecated_sync_source_code: format!(
+                "HyperFuel({{endpointUrl: \"https://fuel-testnet.hypersync.xyz\"}})"
+            ),
         };
 
         let expected_chain_configs = vec![chain_config_1];
@@ -1531,8 +1532,14 @@ mod test {
             network_config: network1,
             codegen_contracts: vec![],
             is_fuel: false,
-            sources_code: format!("NetworkSources.evm(~chain, ~contracts, ~hyperSync=Some(\"https://myskar.com\"), ~allEventSignatures=[]->Belt.Array.concatMany, ~shouldUseHypersyncClientDecoder=true, ~rpcs=[])"),
-            deprecated_sync_source_code: format!("HyperSync({{endpointUrl: \"https://myskar.com\"}})"),
+            sources_code: format!(
+                "NetworkSources.evm(~chain, ~contracts, ~hyperSync=Some(\"https://myskar.com\"), \
+                 ~allEventSignatures=[]->Belt.Array.concatMany, \
+                 ~shouldUseHypersyncClientDecoder=true, ~rpcs=[])"
+            ),
+            deprecated_sync_source_code: format!(
+                "HyperSync({{endpointUrl: \"https://myskar.com\"}})"
+            ),
         };
 
         let chain_config_2 = super::NetworkConfigTemplate {

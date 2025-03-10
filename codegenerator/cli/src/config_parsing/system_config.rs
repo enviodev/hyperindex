@@ -19,13 +19,13 @@ use crate::{
     fuel::abi::{FuelAbi, BURN_EVENT_NAME, CALL_EVENT_NAME, MINT_EVENT_NAME, TRANSFER_EVENT_NAME},
     project_paths::{path_utils, ParsedProjectPaths},
     rescript_types::RescriptTypeIdent,
-    utils::{normalized_list::SingleOrList, unique_hashmap},
+    utils::unique_hashmap,
 };
 use anyhow::{anyhow, Context, Result};
 use dotenvy::{EnvLoader, EnvMap, EnvSequence};
 use ethers::abi::{ethabi::Event as EthAbiEvent, EventExt, EventParam, HumanReadableParser};
 use itertools::Itertools;
-use serde::{Deserialize};
+use serde::Deserialize;
 use std::{
     collections::{HashMap, HashSet},
     fs,
@@ -853,8 +853,8 @@ impl SystemConfig {
 
 type ServerUrl = String;
 
-// This data structure mainly needed to conviniently prepare data
-// for ConfigYAML, so we don't break backward compatibility
+/// This data structure mainly needed to conviniently prepare data
+/// for ConfigYAML, so we don't break backward compatibility
 #[derive(Debug, Clone, PartialEq)]
 pub enum MainEvmDataSource {
     HyperSync { hypersync_endpoint_url: ServerUrl },
@@ -912,20 +912,16 @@ impl DataSource {
             }],
             (None, Some(NetworkRpc::Single(rpc))) => vec![rpc],
             (None, Some(NetworkRpc::List(list))) => list,
-            (Some(rpc_config), None) => match rpc_config.url {
-                SingleOrList::Single(url) => vec![Rpc {
-                    url: url.to_string(),
-                    source_for: For::Sync,
-                    sync_config: rpc_config.sync_config,
-                }],
-                SingleOrList::List(urls) => urls
-                    .iter()
-                    .map(|url| Rpc {
-                        url: url.to_string(),
-                        source_for: For::Sync,
-                        sync_config: rpc_config.sync_config.clone(),
-                    })
-                    .collect(),
+            (Some(rpc_config), None) => {
+              let urls: Vec<String> = rpc_config.url.into();
+              urls
+              .iter()
+              .map(|url| Rpc {
+                  url: url.to_string(),
+                  source_for: For::Sync,
+                  sync_config: rpc_config.sync_config.clone(),
+              })
+              .collect()
             },
             (None, None) => vec![],
         };
@@ -945,9 +941,8 @@ impl DataSource {
 
         let main = match rpc_for_sync {
             Some(rpc) => {
-                match network.hypersync_config {
-                  Some(_) => Err(anyhow!("EE106: Cannot define both hypersync_config and rpc as a data-source for historical sync at the same time, please choose only one option or set RPC to be a fallback. Read more in our docs https://docs.envio.dev/docs/configuration-file"))?,
-                  None => ()
+                if network.hypersync_config.is_some() {
+                  Err(anyhow!("EE106: Cannot define both hypersync_config and rpc as a data-source for historical sync at the same time, please choose only one option or set RPC to be a fallback. Read more in our docs https://docs.envio.dev/docs/configuration-file"))?
                 };
 
                 MainEvmDataSource::Rpc(rpc.clone())
@@ -959,10 +954,9 @@ impl DataSource {
                     match parse_url(&hypersync_endpoint_url) {
                         None => Err(anyhow!("EE106: The HyperSync url \"{}\" is incorrect format. The HyperSync url needs to start with either http:// or https://", hypersync_endpoint_url))?,
                         Some(hypersync_endpoint_url) => MainEvmDataSource::HyperSync {
-                            hypersync_endpoint_url: hypersync_endpoint_url,
+                            hypersync_endpoint_url,
                         }
                     }
-                    
                   }
                 }
             }
@@ -1835,13 +1829,15 @@ mod test {
 
         let sync_source = DataSource::from_evm_network_config(network, None).unwrap();
 
-
-        assert_eq!(sync_source, DataSource::Evm {
-            main: MainEvmDataSource::HyperSync {
-                hypersync_endpoint_url: "https://somechain.hypersync.xyz".to_string(),
-            },
-            is_client_decoder: true,
-            rpcs: vec![],
-        });
+        assert_eq!(
+            sync_source,
+            DataSource::Evm {
+                main: MainEvmDataSource::HyperSync {
+                    hypersync_endpoint_url: "https://somechain.hypersync.xyz".to_string(),
+                },
+                is_client_decoder: true,
+                rpcs: vec![],
+            }
+        );
     }
 }

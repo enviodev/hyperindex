@@ -388,11 +388,14 @@ pub mod evm {
     #[serde(rename_all = "lowercase")]
     pub enum For {
         #[schemars(
-            description = "Use RPC as the main data-source for both historical sync and real-time chain indexing."
+            description = "Use RPC as the main data-source for both historical sync and real-time \
+                           chain indexing."
         )]
         Sync,
         #[schemars(
-            description = "Use RPC as a backup for the main data-source. Currently, it acts as a fallback when real-time indexing stalls, with potential for more cases in the future."
+            description = "Use RPC as a backup for the main data-source. Currently, it acts as a \
+                           fallback when real-time indexing stalls, with potential for more cases \
+                           in the future."
         )]
         Fallback,
     }
@@ -403,7 +406,8 @@ pub mod evm {
         #[schemars(description = "The RPC endpoint URL.")]
         pub url: String,
         #[schemars(
-            description = "Determines if this RPC is for historical sync, real-time chain indexing, or as a fallback."
+            description = "Determines if this RPC is for historical sync, real-time chain \
+                           indexing, or as a fallback."
         )]
         #[serde(rename = "for")]
         pub source_for: For,
@@ -428,16 +432,17 @@ pub mod evm {
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
             description = "RPC configuration for utilizing as the network's data-source. \
-                 Typically optional for chains with HyperSync support, which is highly recommended. \
-                 HyperSync dramatically enhances performance, providing up to a 1000x speed boost over traditional RPC."
+                           Typically optional for chains with HyperSync support, which is highly \
+                           recommended. HyperSync dramatically enhances performance, providing up \
+                           to a 1000x speed boost over traditional RPC."
         )]
         pub rpc_config: Option<RpcConfig>,
         #[serde(skip_serializing_if = "Option::is_none")]
-        #[schemars(
-            description = "RPC configuration for your indexer. If not specified otherwise, for networks supported by HyperSync, \
-                 RPC serves as a fallback for added reliability. For others, it acts as the primary data-source. \
-                 HyperSync offers significant performance improvements, up to a 1000x faster than traditional RPC."
-        )]
+        #[schemars(description = "RPC configuration for your indexer. If not specified \
+                                  otherwise, for networks supported by HyperSync, RPC serves as \
+                                  a fallback for added reliability. For others, it acts as the \
+                                  primary data-source. HyperSync offers significant performance \
+                                  improvements, up to a 1000x faster than traditional RPC.")]
         pub rpc: Option<NetworkRpc>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(description = "Optional HyperSync Config for additional fine-tuning")]
