@@ -467,7 +467,7 @@ describe("RpcSource - getSelectionConfig", () => {
 })
 
 describe("RpcSource - getSuggestedBlockIntervalFromExn", () => {
-  let getSuggestedBlockIntervalFromExn = EventFetching.getSuggestedBlockIntervalFromExn
+  let getSuggestedBlockIntervalFromExn = RpcSource.getSuggestedBlockIntervalFromExn
 
   it("Should handle retry with the range", () => {
     let error = JsError(

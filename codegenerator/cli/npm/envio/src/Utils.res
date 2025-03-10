@@ -92,6 +92,7 @@ module Math = {
     | (None, None) => None
     }
 }
+
 module Array = {
   @val external jsArrayCreate: int => array<'a> = "Array"
 

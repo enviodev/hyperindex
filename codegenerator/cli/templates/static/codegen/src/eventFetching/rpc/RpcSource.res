@@ -1,6 +1,155 @@
 open Belt
 open Source
 
+exception QueryTimout(string)
+
+let getKnownBlock = (provider, blockNumber) =>
+  provider
+  ->Ethers.JsonRpcProvider.getBlock(blockNumber)
+  ->Promise.then(blockNullable =>
+    switch blockNullable->Js.Nullable.toOption {
+    | Some(block) => Promise.resolve(block)
+    | None =>
+      Promise.reject(
+        Js.Exn.raiseError(`RPC returned null for blockNumber ${blockNumber->Belt.Int.toString}`),
+      )
+    }
+  )
+
+let rec getKnownBlockWithBackoff = async (~provider, ~blockNumber, ~backoffMsOnFailure) =>
+  switch await getKnownBlock(provider, blockNumber) {
+  | exception err =>
+    Logging.warn({
+      "err": err,
+      "msg": `Issue while running fetching batch of events from the RPC. Will wait ${backoffMsOnFailure->Belt.Int.toString}ms and try again.`,
+      "type": "EXPONENTIAL_BACKOFF",
+    })
+    await Time.resolvePromiseAfterDelay(~delayMilliseconds=backoffMsOnFailure)
+    await getKnownBlockWithBackoff(
+      ~provider,
+      ~blockNumber,
+      ~backoffMsOnFailure=backoffMsOnFailure * 2,
+    )
+  | result => result
+  }
+
+let getSuggestedBlockIntervalFromExn = {
+  let suggestedRangeRegExp = %re(`/retry with the range (\d+)-(\d+)/`)
+
+  let blockRangeLimitRegExp = %re(`/limited to a (\d+) blocks range/`)
+
+  exn =>
+    switch exn {
+    | Js.Exn.Error(error) =>
+      try {
+        // Didn't use parse here since it didn't work
+        // because the error is some sort of weird Ethers object
+        let message: string = (error->Obj.magic)["error"]["message"]
+        message->S.assertOrThrow(S.string)
+        switch suggestedRangeRegExp->Js.Re.exec_(message) {
+        | Some(execResult) =>
+          switch execResult->Js.Re.captures {
+          | [_, Js.Nullable.Value(fromBlock), Js.Nullable.Value(toBlock)] =>
+            switch (fromBlock->Int.fromString, toBlock->Int.fromString) {
+            | (Some(fromBlock), Some(toBlock)) if toBlock >= fromBlock =>
+              Some(toBlock - fromBlock + 1)
+            | _ => None
+            }
+          | _ => None
+          }
+        | None =>
+          switch blockRangeLimitRegExp->Js.Re.exec_(message) {
+          | Some(execResult) =>
+            switch execResult->Js.Re.captures {
+            | [_, Js.Nullable.Value(blockRangeLimit)] =>
+              switch blockRangeLimit->Int.fromString {
+              | Some(blockRangeLimit) if blockRangeLimit > 0 => Some(blockRangeLimit)
+              | _ => None
+              }
+            | _ => None
+            }
+          | None => None
+          }
+        }
+      } catch {
+      | _ => None
+      }
+    | _ => None
+    }
+}
+
+type eventBatchQuery = {
+  logs: array<Ethers.log>,
+  latestFetchedBlock: Ethers.JsonRpcProvider.block,
+}
+
+let getNextPage = (
+  ~fromBlock,
+  ~toBlock,
+  ~addresses,
+  ~topics,
+  ~loadBlock,
+  ~syncConfig as sc: Config.syncConfig,
+  ~provider,
+): promise<eventBatchQuery> => {
+  //If the query hangs for longer than this, reject this promise to reduce the block interval
+  let queryTimoutPromise =
+    Time.resolvePromiseAfterDelay(~delayMilliseconds=sc.queryTimeoutMillis)->Promise.then(() =>
+      Promise.reject(
+        QueryTimout(
+          `Query took longer than ${Belt.Int.toString(sc.queryTimeoutMillis / 1000)} seconds`,
+        ),
+      )
+    )
+
+  let latestFetchedBlockPromise = loadBlock(toBlock)
+  let logsPromise =
+    provider
+    ->Ethers.JsonRpcProvider.getLogs(
+      ~filter={
+        address: ?addresses,
+        topics,
+        fromBlock,
+        toBlock,
+      }->Ethers.CombinedFilter.toFilter,
+    )
+    ->Promise.then(async logs => {
+      {
+        logs,
+        latestFetchedBlock: await latestFetchedBlockPromise,
+      }
+    })
+
+  [queryTimoutPromise, logsPromise]
+  ->Promise.race
+  ->Promise.catch(err => {
+    switch getSuggestedBlockIntervalFromExn(err) {
+    | Some(nextBlockIntervalTry) =>
+      raise(
+        Source.GetItemsError(
+          FailedGettingItems({
+            exn: err,
+            retry: WithSuggestedToBlock({
+              toBlock: fromBlock + nextBlockIntervalTry - 1,
+            }),
+          }),
+        ),
+      )
+    | None =>
+      raise(
+        Source.GetItemsError(
+          Source.FailedGettingItems({
+            exn: err,
+            retry: WithBackoff({
+              backoffMillis: sc.backoffMillis,
+            }),
+          }),
+        ),
+      )
+    }
+  })
+}
+
 type selectionConfig = {topics: array<array<EvmTypes.Hex.t>>}
 
 let getSelectionConfig = (selection: FetchState.selection, ~contracts: array<Config.contract>) => {
@@ -208,7 +357,7 @@ let make = ({sourceFor, syncConfig, url, chain, contracts, eventRouter}: options
 
   let blockLoader = LazyLoader.make(
     ~loaderFn=blockNumber =>
-      EventFetching.getKnownBlockWithBackoff(~provider, ~backoffMsOnFailure=1000, ~blockNumber),
+      getKnownBlockWithBackoff(~provider, ~backoffMsOnFailure=1000, ~blockNumber),
     ~onError=(am, ~exn) => {
       Logging.error({
         "err": exn,
@@ -246,9 +395,14 @@ let make = ({sourceFor, syncConfig, url, chain, contracts, eventRouter}: options
     ~currentBlockHeight,
     ~partitionId,
     ~selection: FetchState.selection,
-    ~logger,
+    ~logger as _,
   ) => {
     let startFetchingBatchTimeRef = Hrtime.makeTimer()
+
+    let suggestedBlockInterval =
+      suggestedBlockIntervals
+      ->Utils.Dict.dangerouslyGetNonOption(partitionId)
+      ->Belt.Option.getWithDefault(syncConfig.initialBlockInterval)
 
     // Always have a toBlock for an RPC worker
     let toBlock = switch toBlock {
@@ -256,10 +410,9 @@ let make = ({sourceFor, syncConfig, url, chain, contracts, eventRouter}: options
     | None => currentBlockHeight
     }
 
-    let suggestedBlockInterval =
-      suggestedBlockIntervals
-      ->Utils.Dict.dangerouslyGetNonOption(partitionId)
-      ->Belt.Option.getWithDefault(syncConfig.initialBlockInterval)
+    let suggestedToBlock = Pervasives.min(fromBlock + suggestedBlockInterval - 1, toBlock)
+    //Defensively ensure we never query a target block below fromBlock
+    ->Pervasives.max(fromBlock)
 
     let firstBlockParentPromise =
       fromBlock > 0
@@ -272,18 +425,41 @@ let make = ({sourceFor, syncConfig, url, chain, contracts, eventRouter}: options
     | addresses => Some(addresses)
     }
 
-    let {logs, nextSuggestedBlockInterval, latestFetchedBlock} = await EventFetching.getNextPage(
+    let {logs, latestFetchedBlock} = try await getNextPage(
       ~fromBlock,
-      ~toBlock,
+      ~toBlock=suggestedToBlock,
       ~addresses,
       ~topics,
       ~loadBlock=blockNumber => blockLoader->LazyLoader.get(blockNumber),
-      ~suggestedBlockInterval,
       ~syncConfig,
       ~provider,
-      ~logger,
-    )
-    suggestedBlockIntervals->Js.Dict.set(partitionId, nextSuggestedBlockInterval)
+    ) catch {
+    | Source.GetItemsError(FailedGettingItems({retry})) as exn => {
+        let nextBlockIntervalTry = switch retry {
+        | WithSuggestedToBlock({toBlock}) => toBlock - fromBlock + 1
+        | _ =>
+          (suggestedBlockInterval->Belt.Int.toFloat *. syncConfig.backoffMultiplicative)
+            ->Belt.Int.fromFloat
+        }
+        suggestedBlockIntervals->Js.Dict.set(partitionId, nextBlockIntervalTry)
+        raise(exn)
+      }
+    }
+    let executedBlockInterval = suggestedToBlock - fromBlock + 1
+
+    // Increase the suggested block interval only when it was actually applied
+    // and we didn't query to a hard toBlock
+    if executedBlockInterval >= suggestedBlockInterval {
+      // Increase batch size going forward, but do not increase past a configured maximum
+      // See: https://en.wikipedia.org/wiki/Additive_increase/multiplicative_decrease
+      suggestedBlockIntervals->Js.Dict.set(
+        partitionId,
+        Pervasives.min(
+          executedBlockInterval + syncConfig.accelerationAdditive,
+          syncConfig.intervalCeiling,
+        ),
+      )
+    }
 
     let parsedQueueItems =
       await logs

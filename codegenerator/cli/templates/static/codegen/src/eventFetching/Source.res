@@ -20,10 +20,15 @@ type blockRangeFetchResponse = {
   stats: blockRangeFetchStats,
 }
 
+type getItemsRetry =
+  | WithSuggestedToBlock({toBlock: int})
+  | WithBackoff({backoffMillis: int})
+
 type getItemsError =
   | UnsupportedSelection({message: string})
   | FailedGettingFieldSelection({exn: exn, blockNumber: int, logIndex: int, message: string})
   | FailedParsingItems({exn: exn, blockNumber: int, logIndex: int, message: string})
+  | FailedGettingItems({exn: exn, retry: getItemsRetry})
 
 exception GetItemsError(getItemsError)
 

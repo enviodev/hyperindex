@@ -7,15 +7,20 @@ type sourceMock = {
   // for better logging during debugging
   getHeightOrThrowCalls: array<bool>,
   resolveGetHeightOrThrow: int => unit,
+  rejectGetHeightOrThrow: 'exn. 'exn => unit,
 }
 
 let sourceMock = (~sourceFor=Source.Sync, ~mockGetHeightOrThrow=false, ~pollingInterval=1000) => {
   let getHeightOrThrowCalls = []
   let getHeightOrThrowResolveFns = []
+  let getHeightOrThrowRejectFns = []
   {
     getHeightOrThrowCalls,
     resolveGetHeightOrThrow: height => {
       getHeightOrThrowResolveFns->Array.forEach(resolve => resolve(height))
+    },
+    rejectGetHeightOrThrow: exn => {
+      getHeightOrThrowRejectFns->Array.forEach(reject => reject(exn->Obj.magic))
     },
     source: {
       {
@@ -29,8 +34,9 @@ let sourceMock = (~sourceFor=Source.Sync, ~mockGetHeightOrThrow=false, ~pollingI
         getHeightOrThrow: if mockGetHeightOrThrow {
           () => {
             getHeightOrThrowCalls->Js.Array2.push(true)->ignore
-            Promise.make((resolve, _reject) => {
+            Promise.make((resolve, reject) => {
               getHeightOrThrowResolveFns->Js.Array2.push(resolve)->ignore
+              getHeightOrThrowRejectFns->Js.Array2.push(reject)->ignore
             })
           }
         } else {
@@ -913,6 +919,149 @@ describe("SourceManager wait for new blocks", () => {
     Assert.deepEqual(
       mock0.getHeightOrThrowCalls->Array.length,
       3,
+      ~message="Polling for source 0 should stop after successful response",
+    )
+    Assert.deepEqual(
+      mock1.getHeightOrThrowCalls->Array.length,
+      3,
+      ~message="Polling for source 1 should stop after successful response",
+    )
+  })
+
+  Async.it("Retries on throw without affecting polling of other sources", async () => {
+    let pollingInterval0 = 1
+    let pollingInterval1 = 2
+    let initialRetryInterval = 4
+    let mock0 = sourceMock(~mockGetHeightOrThrow=true, ~pollingInterval=pollingInterval0)
+    let mock1 = sourceMock(~mockGetHeightOrThrow=true, ~pollingInterval=pollingInterval1)
+    let sourceManager = SourceManager.make(
+      ~sources=[mock0.source, mock1.source],
+      ~maxPartitionConcurrency=10,
+      ~getHeightRetryInterval=SourceManager.makeGetHeightRetryInterval(
+        ~initialRetryInterval,
+        ~backoffMultiplicative=2,
+        ~maxRetryInterval=10,
+      ),
+    )
+
+    let p = sourceManager->SourceManager.waitForNewBlock(~currentBlockHeight=100)
+
+    let ((), ()) = await Promise.all2((
+      (
+        async () => {
+          Assert.deepEqual(mock0.getHeightOrThrowCalls->Array.length, 1)
+
+          mock0.rejectGetHeightOrThrow("ERROR")
+
+          await Utils.delay(initialRetryInterval)
+          Assert.deepEqual(
+            mock0.getHeightOrThrowCalls->Array.length,
+            1,
+            ~message="Shouldn't immediately call getHeightOrThrow again",
+          )
+          await Utils.delay(0)
+          Assert.deepEqual(
+            mock0.getHeightOrThrowCalls->Array.length,
+            2,
+            ~message="Should call after a retry",
+          )
+
+          mock0.rejectGetHeightOrThrow("ERROR")
+
+          await Utils.delay(initialRetryInterval * 2)
+          Assert.deepEqual(
+            mock0.getHeightOrThrowCalls->Array.length,
+            2,
+            ~message="Should increase the retry interval",
+          )
+          await Utils.delay(0)
+          Assert.deepEqual(
+            mock0.getHeightOrThrowCalls->Array.length,
+            3,
+            ~message="Should call after a longer retry",
+          )
+
+          mock0.rejectGetHeightOrThrow("ERROR")
+
+          await Utils.delay(10)
+          Assert.deepEqual(
+            mock0.getHeightOrThrowCalls->Array.length,
+            3,
+            ~message="Should increase the retry interval but not exceed the max",
+          )
+          await Utils.delay(0)
+          Assert.deepEqual(
+            mock0.getHeightOrThrowCalls->Array.length,
+            4,
+            ~message="Should call after the max retry interval",
+          )
+
+          mock0.resolveGetHeightOrThrow(100)
+          await Utils.delay(pollingInterval0 + 1)
+          Assert.deepEqual(
+            mock0.getHeightOrThrowCalls->Array.length,
+            5,
+            ~message="Should return to normal polling after a successful retry",
+          )
+
+          mock0.rejectGetHeightOrThrow("ERROR3")
+          await Utils.delay(initialRetryInterval)
+          Assert.deepEqual(
+            mock0.getHeightOrThrowCalls->Array.length,
+            5,
+            ~message="Retry interval resets after a successful resolve",
+          )
+          await Utils.delay(0)
+          Assert.deepEqual(
+            mock0.getHeightOrThrowCalls->Array.length,
+            6,
+            ~message="Should call after a retry for error3",
+          )
+        }
+      )(),
+      // This is not affected by the source0 and done in parallel
+
+      (
+        async () => {
+          Assert.deepEqual(mock1.getHeightOrThrowCalls->Array.length, 1)
+          mock1.resolveGetHeightOrThrow(100)
+
+          await Utils.delay(pollingInterval1)
+          Assert.deepEqual(
+            mock1.getHeightOrThrowCalls->Array.length,
+            1,
+            ~message="Shouldn't immediately call getHeightOrThrow again",
+          )
+          await Utils.delay(0)
+          Assert.deepEqual(
+            mock1.getHeightOrThrowCalls->Array.length,
+            2,
+            ~message="Should call after a polling interval",
+          )
+
+          mock1.resolveGetHeightOrThrow(100)
+          await Utils.delay(pollingInterval1 + 1)
+          Assert.deepEqual(
+            mock1.getHeightOrThrowCalls->Array.length,
+            3,
+            ~message="Should have a second round",
+          )
+        }
+      )(),
+    ))
+
+    mock0.resolveGetHeightOrThrow(101)
+    mock1.resolveGetHeightOrThrow(100)
+
+    Assert.deepEqual(await p, 101)
+
+    await Utils.delay(
+      // Time during which a new polling should definetely happen
+      pollingInterval0 + pollingInterval1,
+    )
+    Assert.deepEqual(
+      mock0.getHeightOrThrowCalls->Array.length,
+      6,
       ~message="Polling for source 0 should stop after successful response",
     )
     Assert.deepEqual(

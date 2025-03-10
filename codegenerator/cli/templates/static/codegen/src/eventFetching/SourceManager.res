@@ -10,6 +10,7 @@ type t = {
   maxPartitionConcurrency: int,
   newBlockFallbackStallTimeout: int,
   stalledPollingInterval: int,
+  getHeightRetryInterval: (~retry: int) => int,
   mutable activeSource: Source.t,
   mutable waitingForNewBlockStateId: option<int>,
   // Should take into consideration partitions fetching for previous states (before rollback)
@@ -18,16 +19,15 @@ type t = {
 
 let getActiveSource = sourceManager => sourceManager.activeSource
 
-let getNextActiveSource = sourceManager => {
-  let temp = ref(None)
-  sourceManager.sources->Utils.Set.forEach(source => {
-    switch source.sourceFor {
-    | Sync => temp := Some(source)
-    | Fallback if temp.contents->Option.isNone => temp := Some(source)
-    | Fallback => ()
+let makeGetHeightRetryInterval = (~initialRetryInterval, ~backoffMultiplicative, ~maxRetryInterval) => {
+  (~retry: int) => {
+    let backoff = if retry === 0 {
+      1
+    } else {
+      retry * backoffMultiplicative
     }
-  })
-  temp.contents
+    Pervasives.min(initialRetryInterval * backoff, maxRetryInterval)
+  }
 }
 
 let make = (
@@ -35,6 +35,7 @@ let make = (
   ~maxPartitionConcurrency,
   ~newBlockFallbackStallTimeout=20_000,
   ~stalledPollingInterval=5_000,
+  ~getHeightRetryInterval=makeGetHeightRetryInterval(~initialRetryInterval=1000, ~backoffMultiplicative=2, ~maxRetryInterval=60_000),
 ) => {
   let initialActiveSource = switch sources->Js.Array2.find(source => source.sourceFor === Sync) {
   | None => Js.Exn.raiseError("Invalid configuration, no data-source for historical sync provided")
@@ -48,6 +49,7 @@ let make = (
     fetchingPartitionsCount: 0,
     newBlockFallbackStallTimeout,
     stalledPollingInterval,
+    getHeightRetryInterval,
   }
 }
 
@@ -110,47 +112,39 @@ let fetchNext = async (
 type status = Active | Stalled | Done
 
 let getSourceNewHeight = async (
+  sourceManager,
   ~source: Source.t,
   ~currentBlockHeight,
-  ~stalledPollingInterval,
   ~status: ref<status>,
   ~logger,
 ) => {
   let newHeight = ref(0)
-  //Amount the retry interval is multiplied between each retry
-  let backOffMultiplicative = 2
-  let initalRetryIntervalMillis = 1000
-  //Interval after which to retry request (multiplied by backOffMultiplicative between each retry)
-  let retryIntervalMillis = ref(initalRetryIntervalMillis)
+  let retry = ref(0)
 
   while newHeight.contents <= currentBlockHeight && status.contents !== Done {
     try {
       let height = await source.getHeightOrThrow()
       newHeight := height
       if height <= currentBlockHeight {
+        retry := 0
         // Slowdown polling when the chain isn't progressing
-        let delayMilliseconds = if status.contents === Stalled {
-          retryIntervalMillis := stalledPollingInterval // Reset possible backOff
-          stalledPollingInterval
+        let pollingInterval = if status.contents === Stalled {
+          sourceManager.stalledPollingInterval
         } else {
-          retryIntervalMillis := initalRetryIntervalMillis // Reset possible backOff
           source.pollingInterval
         }
-        await Time.resolvePromiseAfterDelay(~delayMilliseconds)
+        await Utils.delay(pollingInterval)
       }
     } catch {
     | exn =>
+      let retryInterval = sourceManager.getHeightRetryInterval(~retry=retry.contents)
       logger->Logging.childTrace({
-        "msg": `Height retrieval from ${source.name} source failed. Retrying in ${retryIntervalMillis.contents->Int.toString}ms.`,
+        "msg": `Height retrieval from ${source.name} source failed. Retrying in ${retryInterval->Int.toString}ms.`,
         "source": source.name,
         "error": exn->ErrorHandling.prettifyExn,
       })
-      await Time.resolvePromiseAfterDelay(
-        ~delayMilliseconds=Pervasives.max(
-          retryIntervalMillis.contents * backOffMultiplicative,
-          60_000,
-        ),
-      )
+      retry := retry.contents + 1
+      await Utils.delay(retryInterval)
     }
   }
   newHeight.contents
@@ -158,7 +152,7 @@ let getSourceNewHeight = async (
 
 // Polls for a block height greater than the given block number to ensure a new block is available for indexing.
 let waitForNewBlock = async (sourceManager: t, ~currentBlockHeight) => {
-  let {stalledPollingInterval, sources} = sourceManager
+  let {sources} = sourceManager
 
   let logger = Logging.createChild(
     ~params={
@@ -191,13 +185,7 @@ let waitForNewBlock = async (sourceManager: t, ~currentBlockHeight) => {
     ->Array.map(async source => {
       (
         source,
-        await getSourceNewHeight(
-          ~source,
-          ~currentBlockHeight,
-          ~status,
-          ~logger,
-          ~stalledPollingInterval,
-        ),
+        await sourceManager->getSourceNewHeight(~source, ~currentBlockHeight, ~status, ~logger),
       )
     })
     ->Array.concat([
@@ -224,12 +212,11 @@ let waitForNewBlock = async (sourceManager: t, ~currentBlockHeight) => {
           fallbackSources->Array.map(async source => {
             (
               source,
-              await getSourceNewHeight(
+              await sourceManager->getSourceNewHeight(
                 ~source,
                 ~currentBlockHeight,
                 ~status,
                 ~logger,
-                ~stalledPollingInterval,
               ),
             )
           }),
@@ -253,14 +240,40 @@ let waitForNewBlock = async (sourceManager: t, ~currentBlockHeight) => {
   newBlockHeight
 }
 
-let executeQuery = async (sourceManager: t, ~query: FetchState.query, ~currentBlockHeight) => {
-  let toBlock = switch query.target {
-  | Head => None
-  | EndBlock({toBlock})
-  | Merge({toBlock}) =>
-    Some(toBlock)
-  }
+let getNextSyncSource = (
+  sourceManager,
+  // This is needed to include the Fallback source to rotation
+  ~initialSource,
+) => {
+  let before = []
+  let after = []
 
+  let hasActive = ref(false)
+
+  sourceManager.sources->Utils.Set.forEach(source => {
+    if source === sourceManager.activeSource {
+      hasActive := true
+    } else if (
+      switch source.sourceFor {
+      | Sync => true
+      | Fallback => source === initialSource
+      }
+    ) {
+      (hasActive.contents ? after : before)->Array.push(source)
+    }
+  })
+
+  switch after->Array.get(0) {
+  | Some(s) => s
+  | None =>
+    switch before->Array.get(0) {
+    | Some(s) => s
+    | None => sourceManager.activeSource
+    }
+  }
+}
+
+let executeQuery = async (sourceManager: t, ~query: FetchState.query, ~currentBlockHeight) => {
   let allAddresses = query.contractAddressMapping->ContractAddressingMap.getAllAddresses
   let addresses =
     allAddresses->Js.Array2.slice(~start=0, ~end_=3)->Array.map(addr => addr->Address.toString)
@@ -269,10 +282,20 @@ let executeQuery = async (sourceManager: t, ~query: FetchState.query, ~currentBl
     addresses->Js.Array2.push(`... and ${restCount->Int.toString} more`)->ignore
   }
 
+  let toBlockRef = ref(
+    switch query.target {
+    | Head => None
+    | EndBlock({toBlock})
+    | Merge({toBlock}) =>
+      Some(toBlock)
+    },
+  )
   let responseRef = ref(None)
+  let initialSource = sourceManager.activeSource
 
   while responseRef.contents->Option.isNone {
     let source = sourceManager.activeSource
+    let toBlock = toBlockRef.contents
 
     let logger = Logging.createChild(
       ~params={
@@ -304,45 +327,68 @@ let executeQuery = async (sourceManager: t, ~query: FetchState.query, ~currentBl
       })
       responseRef := Some(response)
     } catch {
-    | Source.GetItemsError(error) => {
-        // TODO: When we start handling fetch failures,
-        // we shouldn't delete the source from the set
-        // but keep it for retries. Still need to delete
-        // for cases like UnsupportedSelection which are
-        // not retryable
-        let notAlreadyDeleted = sourceManager.sources->Utils.Set.delete(source)
+    | Source.GetItemsError(error) =>
+      switch error {
+      | UnsupportedSelection(_)
+      | FailedGettingFieldSelection(_)
+      | FailedParsingItems(_) => {
+          // These errors are impossible to recover, so we delete the source
+          // from sourceManager so it's not attempted anymore
+          let notAlreadyDeleted = sourceManager.sources->Utils.Set.delete(source)
 
-        // In case there are multiple partitions
-        // failing at the same time. Log only once
-        if notAlreadyDeleted {
-          switch error {
-          | UnsupportedSelection({message}) => logger->Logging.childError(message)
-          | FailedGettingFieldSelection({message, blockNumber, logIndex})
-          | FailedParsingItems({message, blockNumber, logIndex}) =>
-            logger->Logging.childError({
-              "msg": message,
-              "blockNumber": blockNumber,
-              "logIndex": logIndex,
-            })
+          // In case there are multiple partitions
+          // failing at the same time. Log only once
+          if notAlreadyDeleted {
+            switch error {
+            | UnsupportedSelection({message}) => logger->Logging.childError(message)
+            | FailedGettingFieldSelection({message, blockNumber, logIndex})
+            | FailedParsingItems({message, blockNumber, logIndex}) =>
+              logger->Logging.childError({
+                "msg": message,
+                "blockNumber": blockNumber,
+                "logIndex": logIndex,
+              })
+            | _ => ()
+            }
           }
-        }
-
-        switch sourceManager->getNextActiveSource {
-        | None => {
+          let nextSource = sourceManager->getNextSyncSource(~initialSource)
+          if nextSource === source {
             logger->Logging.childError(
               "The indexer doesn't have data-sources which can continue fetching. Please, check the error logs or reach out to the Envio team.",
             )
             // Hang until the process is terminated
             await Promise.make((_, _) => ())
-          }
-        | Some(nextSource) => {
+          } else {
             logger->Logging.childInfo({
               "msg": "Switching to another data-source",
               "source": nextSource.name,
             })
             sourceManager.activeSource = nextSource
-            // Will loop because of while
           }
+        }
+      | FailedGettingItems({retry: WithSuggestedToBlock({toBlock})}) =>
+        logger->Logging.childTrace({
+          "msg": "Failed getting data for the block range. Retrying with the suggested block range from response.",
+          "suggestedToBlock": toBlock,
+        })
+        toBlockRef := Some(toBlock)
+
+      | FailedGettingItems({exn, retry: WithBackoff({backoffMillis})}) =>
+        let nextSource = sourceManager->getNextSyncSource(~initialSource)
+        let hasAnotherSyncSource = nextSource !== source
+        logger->Logging.childTrace({
+          "msg": `Failed getting data for the block range. Will try smaller block range for the next attempt.`,
+          "backOffMilliseconds": backoffMillis,
+          "err": exn,
+        })
+        if hasAnotherSyncSource {
+          logger->Logging.childInfo({
+            "msg": "Switching to another data-source",
+            "source": nextSource.name,
+          })
+          sourceManager.activeSource = nextSource
+        } else {
+          await Utils.delay(backoffMillis)
         }
       }
     // TODO: Handle more error cases and hang/retry instead of throwing

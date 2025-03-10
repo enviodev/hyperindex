@@ -5,6 +5,7 @@ let make: (
   ~maxPartitionConcurrency: int,
   ~newBlockFallbackStallTimeout: int=?,
   ~stalledPollingInterval: int=?,
+  ~getHeightRetryInterval: (~retry: int) => int=?,
 ) => t
 
 let getActiveSource: t => Source.t
@@ -27,3 +28,5 @@ let executeQuery: (
   ~query: FetchState.query,
   ~currentBlockHeight: int,
 ) => promise<Source.blockRangeFetchResponse>
+
+let makeGetHeightRetryInterval: (~initialRetryInterval: int, ~backoffMultiplicative: int, ~maxRetryInterval: int) => (~retry: int) => int
