@@ -321,13 +321,13 @@ let executeQuery = async (sourceManager: t, ~query: FetchState.query, ~currentBl
       )
       logger->Logging.childTrace({
         "msg": "Fetched block range from server",
-        "latestFetchedBlockNumber": response.latestFetchedBlockNumber,
+        "toBlock": response.latestFetchedBlockNumber,
         "numEvents": response.parsedQueueItems->Array.length,
         "stats": response.stats,
       })
       responseRef := Some(response)
     } catch {
-    | Source.GetItemsError(error) =>
+    | Source.GetItemsError(error) as exn =>
       switch error {
       | UnsupportedSelection(_)
       | FailedGettingFieldSelection(_)
@@ -338,29 +338,24 @@ let executeQuery = async (sourceManager: t, ~query: FetchState.query, ~currentBl
           // from sourceManager so it's not attempted anymore
           let notAlreadyDeleted = sourceManager.sources->Utils.Set.delete(source)
 
-          // In case there are multiple partitions
-          // failing at the same time. Log only once
-          if notAlreadyDeleted {
-            switch error {
-            | UnsupportedSelection({message}) => logger->Logging.childError(message)
-            | FailedGettingFieldSelection({message, blockNumber, logIndex})
-            | FailedParsingItems({message, blockNumber, logIndex}) =>
-              logger->Logging.childError({
-                "msg": message,
-                "blockNumber": blockNumber,
-                "logIndex": logIndex,
-              })
-            | _ => ()
-            }
-          }
-
           if nextSource === source {
-            logger->Logging.childError(
-              "The indexer doesn't have data-sources which can continue fetching. Please, check the error logs or reach out to the Envio team.",
-            )
-            // Hang until the process is terminated
-            await Promise.make((_, _) => ())
+            exn->ErrorHandling.mkLogAndRaise(~logger, ~msg="The indexer doesn't have data-sources which can continue fetching. Please, check the error logs or reach out to the Envio team.")
           } else {
+            // In case there are multiple partitions
+            // failing at the same time. Log only once
+            if notAlreadyDeleted {
+              switch error {
+              | UnsupportedSelection({message}) => logger->Logging.childError(message)
+              | FailedGettingFieldSelection({message, blockNumber, logIndex})
+              | FailedParsingItems({message, blockNumber, logIndex}) =>
+                logger->Logging.childError({
+                  "msg": message,
+                  "blockNumber": blockNumber,
+                  "logIndex": logIndex,
+                })
+              | _ => ()
+              }
+            }
             logger->Logging.childInfo({
               "msg": "Switching to another data-source",
               "source": nextSource.name,
@@ -368,18 +363,19 @@ let executeQuery = async (sourceManager: t, ~query: FetchState.query, ~currentBl
             sourceManager.activeSource = nextSource
           }
         }
-      | FailedGettingItems({retry: WithSuggestedToBlock({toBlock})}) =>
+      | FailedGettingItems({attemptedToBlock, retry: WithSuggestedToBlock({toBlock})}) =>
         logger->Logging.childTrace({
           "msg": "Failed getting data for the block range. Retrying with the suggested block range from response.",
+          "toBlock": attemptedToBlock,
           "suggestedToBlock": toBlock,
         })
         toBlockRef := Some(toBlock)
-
-      | FailedGettingItems({exn, retry: WithBackoff({backoffMillis})}) =>
+      | FailedGettingItems({exn, attemptedToBlock, retry: WithBackoff({backoffMillis})}) =>
         let nextSource = sourceManager->getNextSyncSource(~initialSource)
         let hasAnotherSyncSource = nextSource !== source
         logger->Logging.childTrace({
           "msg": `Failed getting data for the block range. Will try smaller block range for the next attempt.`,
+          "toBlock": attemptedToBlock,
           "backOffMilliseconds": backoffMillis,
           "err": exn,
         })

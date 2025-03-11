@@ -764,8 +764,12 @@ let checkAndFetchForChain = (
         dispatchAction(FinishWaitingForNewBlock({chain, currentBlockHeight})),
       ~currentBlockHeight,
       ~executeQuery=async query => {
-        let response = await chainFetcher.sourceManager->executeQuery(~query, ~currentBlockHeight)
-        dispatchAction(PartitionQueryResponse({chain, response, query}))
+        try {
+          let response = await chainFetcher.sourceManager->executeQuery(~query, ~currentBlockHeight)
+          dispatchAction(PartitionQueryResponse({chain, response, query}))
+        } catch {
+        | exn => dispatchAction(ErrorExit(exn->ErrorHandling.make))
+        }
       },
       ~maxPerChainQueueSize=state.maxPerChainQueueSize,
       ~stateId=state.id,

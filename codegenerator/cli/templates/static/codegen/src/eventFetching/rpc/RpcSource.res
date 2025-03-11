@@ -91,6 +91,8 @@ let getNextPage = (
   ~loadBlock,
   ~syncConfig as sc: Config.syncConfig,
   ~provider,
+  ~suggestedBlockIntervals,
+  ~partitionId,
 ): promise<eventBatchQuery> => {
   //If the query hangs for longer than this, reject this promise to reduce the block interval
   let queryTimoutPromise =
@@ -125,10 +127,12 @@ let getNextPage = (
   ->Promise.catch(err => {
     switch getSuggestedBlockIntervalFromExn(err) {
     | Some(nextBlockIntervalTry) =>
+      suggestedBlockIntervals->Js.Dict.set(partitionId, nextBlockIntervalTry)
       raise(
         Source.GetItemsError(
           FailedGettingItems({
             exn: err,
+            attemptedToBlock: toBlock,
             retry: WithSuggestedToBlock({
               toBlock: fromBlock + nextBlockIntervalTry - 1,
             }),
@@ -136,10 +140,15 @@ let getNextPage = (
         ),
       )
     | None =>
+      let executedBlockInterval = toBlock - fromBlock + 1
+      let nextBlockIntervalTry =
+        (executedBlockInterval->Belt.Int.toFloat *. sc.backoffMultiplicative)->Belt.Int.fromFloat
+      suggestedBlockIntervals->Js.Dict.set(partitionId, nextBlockIntervalTry)
       raise(
         Source.GetItemsError(
           Source.FailedGettingItems({
             exn: err,
+            attemptedToBlock: toBlock,
             retry: WithBackoff({
               backoffMillis: sc.backoffMillis,
             }),
@@ -327,11 +336,7 @@ let make = ({sourceFor, syncConfig, url, chain, contracts, eventRouter}: options
   }
   let name = `RPC (${urlHost})`
 
-  let provider = Ethers.JsonRpcProvider.make(
-    ~rpcUrls=[url],
-    ~chainId=chain->ChainMap.Chain.toChainId,
-    ~fallbackStallTimeout=syncConfig.fallbackStallTimeout,
-  )
+  let provider = Ethers.JsonRpcProvider.make(~rpcUrl=url, ~chainId=chain->ChainMap.Chain.toChainId)
 
   let getSelectionConfig = memoGetSelectionConfig(~contracts)
 
@@ -425,7 +430,7 @@ let make = ({sourceFor, syncConfig, url, chain, contracts, eventRouter}: options
     | addresses => Some(addresses)
     }
 
-    let {logs, latestFetchedBlock} = try await getNextPage(
+    let {logs, latestFetchedBlock} = await getNextPage(
       ~fromBlock,
       ~toBlock=suggestedToBlock,
       ~addresses,
@@ -433,18 +438,10 @@ let make = ({sourceFor, syncConfig, url, chain, contracts, eventRouter}: options
       ~loadBlock=blockNumber => blockLoader->LazyLoader.get(blockNumber),
       ~syncConfig,
       ~provider,
-    ) catch {
-    | Source.GetItemsError(FailedGettingItems({retry})) as exn => {
-        let nextBlockIntervalTry = switch retry {
-        | WithSuggestedToBlock({toBlock}) => toBlock - fromBlock + 1
-        | _ =>
-          (suggestedBlockInterval->Belt.Int.toFloat *. syncConfig.backoffMultiplicative)
-            ->Belt.Int.fromFloat
-        }
-        suggestedBlockIntervals->Js.Dict.set(partitionId, nextBlockIntervalTry)
-        raise(exn)
-      }
-    }
+      ~suggestedBlockIntervals,
+      ~partitionId,
+    )
+
     let executedBlockInterval = suggestedToBlock - fromBlock + 1
 
     // Increase the suggested block interval only when it was actually applied

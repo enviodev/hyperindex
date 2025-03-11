@@ -1364,7 +1364,11 @@ describe("SourceManager.executeQuery", () => {
     let p = sourceManager->SourceManager.executeQuery(~query=mockQuery(), ~currentBlockHeight=100)
     rejectGetItemsOrThrow(
       Source.GetItemsError(
-        FailedGettingItems({exn: %raw(`null`), retry: WithSuggestedToBlock({toBlock: 10})}),
+        FailedGettingItems({
+          exn: %raw(`null`),
+          attemptedToBlock: 100,
+          retry: WithSuggestedToBlock({toBlock: 10}),
+        }),
       ),
     )
     Assert.deepEqual(
@@ -1391,7 +1395,11 @@ describe("SourceManager.executeQuery", () => {
       let p = sourceManager->SourceManager.executeQuery(~query=mockQuery(), ~currentBlockHeight=100)
       mock0.rejectGetItemsOrThrow(
         Source.GetItemsError(
-          FailedGettingItems({exn: %raw(`null`), retry: WithBackoff({backoffMillis: 1000})}),
+          FailedGettingItems({
+            exn: %raw(`null`),
+            attemptedToBlock: 100,
+            retry: WithBackoff({backoffMillis: 1000}),
+          }),
         ),
       )
       await Promise.resolve() // Wait for microtask, so the rejection is caught
@@ -1404,7 +1412,11 @@ describe("SourceManager.executeQuery", () => {
 
       mock1.rejectGetItemsOrThrow(
         Source.GetItemsError(
-          FailedGettingItems({exn: %raw(`null`), retry: WithBackoff({backoffMillis: 1000})}),
+          FailedGettingItems({
+            exn: %raw(`null`),
+            attemptedToBlock: 100,
+            retry: WithBackoff({backoffMillis: 1000}),
+          }),
         ),
       )
       await Promise.resolve() // Wait for microtask, so the rejection is caught
@@ -1431,7 +1443,11 @@ describe("SourceManager.executeQuery", () => {
     let p = sourceManager->SourceManager.executeQuery(~query=mockQuery(), ~currentBlockHeight=100)
     mock0.rejectGetItemsOrThrow(
       Source.GetItemsError(
-        FailedGettingItems({exn: %raw(`null`), retry: WithBackoff({backoffMillis: backoffMillis})}),
+        FailedGettingItems({
+          exn: %raw(`null`),
+          attemptedToBlock: 100,
+          retry: WithBackoff({backoffMillis: backoffMillis}),
+        }),
       ),
     )
 
@@ -1491,7 +1507,11 @@ describe("SourceManager.executeQuery", () => {
 
     mock1.rejectGetItemsOrThrow(
       Source.GetItemsError(
-        FailedGettingItems({exn: %raw(`null`), retry: WithBackoff({backoffMillis: backoffMillis})}),
+        FailedGettingItems({
+          exn: %raw(`null`),
+          attemptedToBlock: 100,
+          retry: WithBackoff({backoffMillis: backoffMillis}),
+        }),
       ),
     )
 
@@ -1504,7 +1524,11 @@ describe("SourceManager.executeQuery", () => {
 
     mock0.rejectGetItemsOrThrow(
       Source.GetItemsError(
-        FailedGettingItems({exn: %raw(`null`), retry: WithBackoff({backoffMillis: backoffMillis})}),
+        FailedGettingItems({
+          exn: %raw(`null`),
+          attemptedToBlock: 100,
+          retry: WithBackoff({backoffMillis: backoffMillis}),
+        }),
       ),
     )
 
@@ -1535,7 +1559,11 @@ describe("SourceManager.executeQuery", () => {
 
     mock0.rejectGetItemsOrThrow(
       Source.GetItemsError(
-        FailedGettingItems({exn: %raw(`null`), retry: WithBackoff({backoffMillis: backoffMillis})}),
+        FailedGettingItems({
+          exn: %raw(`null`),
+          attemptedToBlock: 100,
+          retry: WithBackoff({backoffMillis: backoffMillis}),
+        }),
       ),
     )
     await Utils.delay(backoffMillis)

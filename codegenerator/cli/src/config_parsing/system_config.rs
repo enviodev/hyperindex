@@ -942,22 +942,23 @@ impl DataSource {
         let main = match rpc_for_sync {
             Some(rpc) => {
                 if network.hypersync_config.is_some() {
-                  Err(anyhow!("EE106: Cannot define both hypersync_config and rpc as a data-source for historical sync at the same time, please choose only one option or set RPC to be a fallback. Read more in our docs https://docs.envio.dev/docs/configuration-file"))?
+                    Err(anyhow!("EE106: Cannot define both hypersync_config and rpc as a data-source for historical sync at the same time, please choose only one option or set RPC to be a fallback. Read more in our docs https://docs.envio.dev/docs/configuration-file"))?
                 };
 
                 MainEvmDataSource::Rpc(rpc.clone())
             }
             None => {
-                match hypersync_endpoint_url {
-                  | None => Err(anyhow!("EE106: Failed to automatically find HyperSync endpoint for the network, please provide it manually via the hypersync_config option or provide an RPC url to use for historical sync. Read more in our docs https://docs.envio.dev/docs/configuration-file"))?,
-                  | Some(hypersync_endpoint_url) => {
-                    match parse_url(&hypersync_endpoint_url) {
-                        None => Err(anyhow!("EE106: The HyperSync url \"{}\" is incorrect format. The HyperSync url needs to start with either http:// or https://", hypersync_endpoint_url))?,
-                        Some(hypersync_endpoint_url) => MainEvmDataSource::HyperSync {
-                            hypersync_endpoint_url,
-                        }
-                    }
-                  }
+                let url = hypersync_endpoint_url.ok_or(anyhow!(
+                  "EE106: Failed to automatically find HyperSync endpoint for the network. Please provide it manually via the hypersync_config option, or provide an RPC URL for historical sync. Read more in our docs: https://docs.envio.dev/docs/configuration-file"
+                ))?;
+
+                let parsed_url = parse_url(&url).ok_or(anyhow!(
+                  "EE106: The HyperSync URL \"{}\" is in incorrect format. The URL needs to start with either http:// or https://",
+                  url
+                ))?;
+
+                MainEvmDataSource::HyperSync {
+                    hypersync_endpoint_url: parsed_url,
                 }
             }
         };
