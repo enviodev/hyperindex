@@ -18,6 +18,7 @@ Build a real-time API for your blockchain application in minutes.
 - Write JavaScript, TypeScript, or ReScript with automatically generated types
 - Detailed logging & Error messaging
 - [Hosted Service](https://docs.envio.dev/docs/HyperIndex/hosted-service) to take care of your infrastructure
+- Seamlessly integrate new chains and enhance reliability with the RPC data source
 
 ## Getting Started
 
