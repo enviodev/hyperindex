@@ -128,43 +128,17 @@ module JsonRpcProvider = {
     weight?: int,
   }
 
-  type fallbackProviderOptions = {
-    // How many providers must agree on a value before reporting
-    // back the response
-    // Note: Default the half of the providers weight, so we need to set it to accept result from the first rpc
-    quorum?: int,
-  }
-
   @module("ethers") @scope("ethers") @new
   external makeWithOptions: (~rpcUrl: string, ~network: Network.t, ~options: rpcOptions) => t =
     "JsonRpcProvider"
-
-  @module("ethers") @scope("ethers") @new
-  external makeFallbackProvider: (
-    ~providers: array<t>,
-    ~network: Network.t,
-    ~options: fallbackProviderOptions,
-  ) => t = "FallbackProvider"
 
   let makeStatic = (~rpcUrl: string, ~network: Network.t, ~priority=?, ~stallTimeout=?): t => {
     makeWithOptions(~rpcUrl, ~network, ~options={staticNetwork: network, ?priority, ?stallTimeout})
   }
 
-  let make = (~rpcUrls: array<string>, ~chainId: int, ~fallbackStallTimeout): t => {
+  let make = (~rpcUrl: string, ~chainId: int): t => {
     let network = Network.fromChainId(~chainId)
-    switch rpcUrls {
-    | [rpcUrl] => makeStatic(~rpcUrl, ~network)
-    | rpcUrls =>
-      makeFallbackProvider(
-        ~providers=rpcUrls->Js.Array2.mapi((rpcUrl, index) =>
-          makeStatic(~rpcUrl, ~network, ~priority=index, ~stallTimeout=fallbackStallTimeout)
-        ),
-        ~network,
-        ~options={
-          quorum: 1,
-        },
-      )
-    }
+    makeStatic(~rpcUrl, ~network)
   }
 
   @send
@@ -184,9 +158,6 @@ module JsonRpcProvider = {
 
     fields->Obj.magic
   }
-
-  @send
-  external getBlockNumber: t => promise<int> = "getBlockNumber"
 
   type block = {
     _difficulty: bigint,

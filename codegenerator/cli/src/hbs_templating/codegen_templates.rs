@@ -10,10 +10,11 @@ use crate::{
     config_parsing::{
         entity_parsing::{Entity, Field, GraphQLEnum, MultiFieldIndex, Schema},
         event_parsing::{abi_to_rescript_type, EthereumEventParam},
+        human_config::evm::{For, Rpc, RpcSyncConfig},
         postgres_types,
         system_config::{
-            self, Abi, Ecosystem, EventKind, FuelEventKind, HyperfuelConfig, HypersyncConfig,
-            RpcConfig, SelectedField, SystemConfig,
+            self, Abi, Ecosystem, EventKind, FuelEventKind, MainEvmDataSource, SelectedField,
+            SystemConfig,
         },
     },
     persisted_state::{PersistedState, PersistedStateJsonString},
@@ -529,9 +530,9 @@ impl EventTemplate {
                     let _ = write!(
                         output,
                         "~topic{topic_number}=?{event_filter_arg}.{param_name}->Belt.Option.\
-                     map(topicFilters => \
-                     topicFilters->SingleOrMultiple.normalizeOrThrow{nested_type_flags}->Belt.\
-                     Array.map({topic_encoder})), "
+                         map(topicFilters => \
+                         topicFilters->SingleOrMultiple.normalizeOrThrow{nested_type_flags}->Belt.\
+                         Array.map({topic_encoder})), "
                     );
                     output
                 });
@@ -853,9 +854,6 @@ type EthAddress = String;
 #[derive(Debug, Serialize, PartialEq, Clone)]
 struct NetworkTemplate {
     pub id: u64,
-    rpc_config: Option<RpcConfig>,
-    hypersync_config: Option<HypersyncConfig>,
-    hyperfuel_config: Option<HyperfuelConfig>,
     confirmed_block_threshold: i32,
     start_block: u64,
     end_block: Option<u64>,
@@ -865,22 +863,6 @@ impl NetworkTemplate {
     fn from_config_network(network: &system_config::Network) -> Self {
         NetworkTemplate {
             id: network.id,
-            rpc_config: match &network.sync_source {
-                system_config::SyncSource::RpcConfig(rpc_config) => Some(rpc_config.clone()),
-                _ => None,
-            },
-            hypersync_config: match &network.sync_source {
-                system_config::SyncSource::HypersyncConfig(hypersync_config) => {
-                    Some(hypersync_config.clone())
-                }
-                _ => None,
-            },
-            hyperfuel_config: match &network.sync_source {
-                system_config::SyncSource::HyperfuelConfig(hyperfuel_config) => {
-                    Some(hyperfuel_config.clone())
-                }
-                _ => None,
-            },
             confirmed_block_threshold: network.confirmed_block_threshold,
             start_block: network.start_block,
             end_block: network.end_block,
@@ -892,6 +874,10 @@ impl NetworkTemplate {
 pub struct NetworkConfigTemplate {
     network_config: NetworkTemplate,
     codegen_contracts: Vec<PerNetworkContractTemplate>,
+    is_fuel: bool,
+    sources_code: String,
+    // This is only used to prevent ConfigYAML free from breaking changes
+    deprecated_sync_source_code: String,
 }
 
 impl NetworkConfigTemplate {
@@ -900,7 +886,7 @@ impl NetworkConfigTemplate {
         config: &SystemConfig,
     ) -> Result<Self> {
         let network_config = NetworkTemplate::from_config_network(network);
-        let codegen_contracts = network
+        let codegen_contracts: Vec<PerNetworkContractTemplate> = network
             .contracts
             .iter()
             .map(|network_contract| {
@@ -909,9 +895,160 @@ impl NetworkConfigTemplate {
             .collect::<Result<_>>()
             .context("Failed mapping network contracts")?;
 
+        let (sources_code, deprecated_sync_source_code) = match &network.sync_source {
+            system_config::DataSource::Fuel {
+                hypersync_endpoint_url,
+            } => {
+                let contracts_code: String = codegen_contracts
+                    .iter()
+                    .map(|contract| {
+                        let events_code: String = contract
+                            .events
+                            .iter()
+                            .map(|event| {
+                                format!(
+                                    "Types.{}.{}.register()",
+                                    contract.name.capitalized, event.name
+                                )
+                            })
+                            .collect::<Vec<String>>()
+                            .join(", ");
+
+                        format!(
+                            "{{name: \"{}\",events: [{}]}}",
+                            contract.name.capitalized, events_code
+                        )
+                    })
+                    .collect::<Vec<String>>()
+                    .join(", ");
+
+                (
+                    format!(
+                        "[HyperFuelSource.make({{chain: chain, endpointUrl: \
+                         \"{hypersync_endpoint_url}\", contracts: [{}]}})]",
+                        contracts_code
+                    ),
+                    format!("HyperFuel({{endpointUrl: \"{hypersync_endpoint_url}\"}})"),
+                )
+            }
+            system_config::DataSource::Evm {
+                main,
+                is_client_decoder,
+                rpcs,
+            } => {
+                let all_event_signatures = codegen_contracts
+                    .iter()
+                    .map(|contract| format!("Types.{}.eventSignatures", contract.name.capitalized))
+                    .collect::<Vec<String>>()
+                    .join(", ");
+
+                let hyper_sync_code = match main {
+                    MainEvmDataSource::HyperSync {
+                        hypersync_endpoint_url,
+                    } => format!("Some(\"{hypersync_endpoint_url}\")"),
+                    MainEvmDataSource::Rpc(_) => "None".to_string(),
+                };
+
+                let rpc_to_sync_config_options = |rpc: &Rpc| match rpc.sync_config {
+                    None => "{}".to_string(),
+                    Some(RpcSyncConfig {
+                        acceleration_additive,
+                        initial_block_interval,
+                        backoff_multiplicative,
+                        interval_ceiling,
+                        backoff_millis,
+                        fallback_stall_timeout,
+                        query_timeout_millis,
+                    }) => {
+                        let mut code = String::from("{");
+                        if let Some(acceleration_additive) = acceleration_additive {
+                            code.push_str(&format!(
+                                "accelerationAdditive: {},",
+                                acceleration_additive
+                            ));
+                        }
+                        if let Some(initial_block_interval) = initial_block_interval {
+                            code.push_str(&format!(
+                                "initialBlockInterval: {},",
+                                initial_block_interval
+                            ));
+                        }
+                        if let Some(backoff_multiplicative) = backoff_multiplicative {
+                            code.push_str(&format!(
+                                "backoffMultiplicative: {},",
+                                backoff_multiplicative
+                            ));
+                        }
+                        if let Some(interval_ceiling) = interval_ceiling {
+                            code.push_str(&format!("intervalCeiling: {},", interval_ceiling));
+                        }
+                        if let Some(backoff_millis) = backoff_millis {
+                            code.push_str(&format!("backoffMillis: {},", backoff_millis));
+                        }
+                        if let Some(fallback_stall_timeout) = fallback_stall_timeout {
+                            code.push_str(&format!(
+                                "fallbackStallTimeout: {},",
+                                fallback_stall_timeout
+                            ));
+                        }
+                        if let Some(query_timeout_millis) = query_timeout_millis {
+                            code.push_str(&format!(
+                                "queryTimeoutMillis: {},",
+                                query_timeout_millis
+                            ));
+                        }
+                        code.push('}');
+                        code
+                    }
+                };
+
+                let deprecated_sync_source_code = match main {
+                    MainEvmDataSource::HyperSync {
+                        hypersync_endpoint_url,
+                    } => {
+                        format!("HyperSync({{endpointUrl: \"{hypersync_endpoint_url}\"}})")
+                    }
+                    MainEvmDataSource::Rpc(rpc) => {
+                        format!(
+                            "Rpc({{syncConfig: Config.getSyncConfig({})}})",
+                            rpc_to_sync_config_options(rpc)
+                        )
+                    }
+                };
+
+                let rpcs = rpcs
+                    .iter()
+                    .map(|rpc| {
+                        format!(
+                            "{{url: \"{}\", sourceFor: {}, syncConfig: {}}}",
+                            rpc.url,
+                            match rpc.source_for {
+                                For::Sync => "Sync",
+                                For::Fallback => "Fallback",
+                            },
+                            rpc_to_sync_config_options(rpc)
+                        )
+                    })
+                    .collect::<Vec<String>>()
+                    .join(", ");
+
+                (
+                    format!(
+                        "NetworkSources.evm(~chain, ~contracts, ~hyperSync={hyper_sync_code}, \
+                         ~allEventSignatures=[{all_event_signatures}]->Belt.Array.concatMany, \
+                         ~shouldUseHypersyncClientDecoder={is_client_decoder}, ~rpcs=[{rpcs}])"
+                    ),
+                    deprecated_sync_source_code,
+                )
+            }
+        };
+
         Ok(NetworkConfigTemplate {
             network_config,
             codegen_contracts,
+            is_fuel: matches!(network.sync_source, system_config::DataSource::Fuel { .. }),
+            sources_code,
+            deprecated_sync_source_code,
         })
     }
 }
@@ -1165,8 +1302,7 @@ impl ProjectTemplate {
 mod test {
     use super::*;
     use crate::{
-        config_parsing::system_config::{RpcConfig, SystemConfig},
-        project_paths::ParsedProjectPaths,
+        config_parsing::system_config::SystemConfig, project_paths::ParsedProjectPaths,
         utils::text::Capitalize,
     };
     use pretty_assertions::assert_eq;
@@ -1204,9 +1340,6 @@ mod test {
         fn default() -> Self {
             Self {
                 id: 0,
-                rpc_config: None,
-                hypersync_config: None,
-                hyperfuel_config: None,
                 confirmed_block_threshold: 200,
                 start_block: 0,
                 end_block: None,
@@ -1215,20 +1348,57 @@ mod test {
     }
 
     #[test]
+    fn chain_configs_parsed_case_fuel() {
+        let address1 =
+            String::from("0x4a2ce054e3e94155f7092f7365b212f7f45105b74819c623744ebcc5d065c6ac");
+
+        let network1 = NetworkTemplate {
+            id: 0,
+            confirmed_block_threshold: 0,
+            ..NetworkTemplate::default()
+        };
+
+        let events = get_per_contract_events_vec_helper(vec!["NewGreeting", "ClearGreeting"]);
+        let contract1 = super::PerNetworkContractTemplate {
+            name: String::from("Greeter").to_capitalized_options(),
+            addresses: vec![address1.clone()],
+            events,
+        };
+
+        let chain_config_1 = super::NetworkConfigTemplate {
+            network_config: network1,
+            codegen_contracts: vec![contract1],
+            is_fuel: true,
+            sources_code: format!(
+                "[HyperFuelSource.make({{chain: chain, endpointUrl: \"https://fuel-testnet.hypersync.xyz\", contracts: [{{name: \"Greeter\",events: [Types.Greeter.NewGreeting.register(), Types.Greeter.ClearGreeting.register()]}}]}})]"
+            ),
+            deprecated_sync_source_code: format!(
+                "HyperFuel({{endpointUrl: \"https://fuel-testnet.hypersync.xyz\"}})"
+            ),
+        };
+
+        let expected_chain_configs = vec![chain_config_1];
+
+        let project_template = get_project_template_helper("fuel-config.yaml");
+
+        assert_eq!(
+            project_template.relative_path_to_root_from_generated,
+            "../.".to_string()
+        );
+
+        assert_eq!(
+            expected_chain_configs[0].network_config,
+            project_template.chain_configs[0].network_config
+        );
+        assert_eq!(expected_chain_configs, project_template.chain_configs,);
+    }
+
+    #[test]
     fn chain_configs_parsed_case_1() {
         let address1 = String::from("0x2E645469f354BB4F5c8a05B3b30A929361cf77eC");
 
-        let rpc_config1 = RpcConfig {
-            urls: vec!["https://eth.com".to_string()],
-            sync_config: system_config::SyncConfig {
-                acceleration_additive: 2_000,
-                ..system_config::SyncConfig::default()
-            },
-        };
-
         let network1 = NetworkTemplate {
             id: 1,
-            rpc_config: Some(rpc_config1),
             ..NetworkTemplate::default()
         };
 
@@ -1242,6 +1412,9 @@ mod test {
         let chain_config_1 = super::NetworkConfigTemplate {
             network_config: network1,
             codegen_contracts: vec![contract1],
+            is_fuel: false,
+            sources_code: "NetworkSources.evm(~chain, ~contracts, ~hyperSync=None, ~allEventSignatures=[Types.Contract1.eventSignatures]->Belt.Array.concatMany, ~shouldUseHypersyncClientDecoder=true, ~rpcs=[{url: \"https://eth.com\", sourceFor: Sync, syncConfig: {accelerationAdditive: 2000,initialBlockInterval: 10000,backoffMultiplicative: 0.8,intervalCeiling: 10000,backoffMillis: 5000,queryTimeoutMillis: 20000,}}])".to_string(),
+            deprecated_sync_source_code: "Rpc({syncConfig: Config.getSyncConfig({accelerationAdditive: 2000,initialBlockInterval: 10000,backoffMultiplicative: 0.8,intervalCeiling: 10000,backoffMillis: 5000,queryTimeoutMillis: 20000,})})".to_string(),
         };
 
         let expected_chain_configs = vec![chain_config_1];
@@ -1257,7 +1430,7 @@ mod test {
             expected_chain_configs[0].network_config,
             project_template.chain_configs[0].network_config
         );
-        assert_eq!(expected_chain_configs, project_template.chain_configs,);
+        assert_eq!(expected_chain_configs, project_template.chain_configs);
     }
 
     #[tokio::test]
@@ -1265,34 +1438,13 @@ mod test {
         let address1 = String::from("0x2E645469f354BB4F5c8a05B3b30A929361cf77eC");
         let address2 = String::from("0x1E645469f354BB4F5c8a05B3b30A929361cf77eC");
 
-        let rpc_config1 = RpcConfig {
-            urls: vec!["https://eth.com".to_string()],
-            sync_config: system_config::SyncConfig {
-                acceleration_additive: 2_000,
-                ..system_config::SyncConfig::default()
-            },
-        };
         let network1 = NetworkTemplate {
             id: 1,
-            rpc_config: Some(rpc_config1.clone()),
             ..NetworkTemplate::default()
-        };
-
-        let rpc_config2 = RpcConfig {
-            urls: vec![
-                "https://eth.com".to_string(),
-                // Should support fallback urls
-                "https://eth.com/fallback".to_string(),
-            ],
-            sync_config: system_config::SyncConfig {
-                acceleration_additive: 2_000,
-                ..system_config::SyncConfig::default()
-            },
         };
 
         let network2 = NetworkTemplate {
             id: 2,
-            rpc_config: Some(rpc_config2),
             ..NetworkTemplate::default()
         };
 
@@ -1313,10 +1465,16 @@ mod test {
         let chain_config_1 = super::NetworkConfigTemplate {
             network_config: network1,
             codegen_contracts: vec![contract1],
+            is_fuel: false,
+            sources_code: "NetworkSources.evm(~chain, ~contracts, ~hyperSync=None, ~allEventSignatures=[Types.Contract1.eventSignatures]->Belt.Array.concatMany, ~shouldUseHypersyncClientDecoder=true, ~rpcs=[{url: \"https://eth.com\", sourceFor: Sync, syncConfig: {accelerationAdditive: 2000,initialBlockInterval: 10000,backoffMultiplicative: 0.8,intervalCeiling: 10000,backoffMillis: 5000,queryTimeoutMillis: 20000,}}])".to_string(),
+            deprecated_sync_source_code: "Rpc({syncConfig: Config.getSyncConfig({accelerationAdditive: 2000,initialBlockInterval: 10000,backoffMultiplicative: 0.8,intervalCeiling: 10000,backoffMillis: 5000,queryTimeoutMillis: 20000,})})".to_string(),
         };
         let chain_config_2 = super::NetworkConfigTemplate {
             network_config: network2,
             codegen_contracts: vec![contract2],
+            is_fuel: false,
+            sources_code: "NetworkSources.evm(~chain, ~contracts, ~hyperSync=None, ~allEventSignatures=[Types.Contract2.eventSignatures]->Belt.Array.concatMany, ~shouldUseHypersyncClientDecoder=true, ~rpcs=[{url: \"https://eth.com\", sourceFor: Sync, syncConfig: {accelerationAdditive: 2000,initialBlockInterval: 10000,backoffMultiplicative: 0.8,intervalCeiling: 10000,backoffMillis: 5000,queryTimeoutMillis: 20000,}}, {url: \"https://eth.com/fallback\", sourceFor: Sync, syncConfig: {accelerationAdditive: 2000,initialBlockInterval: 10000,backoffMultiplicative: 0.8,intervalCeiling: 10000,backoffMillis: 5000,queryTimeoutMillis: 20000,}}])".to_string(),
+            deprecated_sync_source_code: "Rpc({syncConfig: Config.getSyncConfig({accelerationAdditive: 2000,initialBlockInterval: 10000,backoffMultiplicative: 0.8,intervalCeiling: 10000,backoffMillis: 5000,queryTimeoutMillis: 20000,})})".to_string(),
         };
 
         let expected_chain_configs = vec![chain_config_1, chain_config_2];
@@ -1332,10 +1490,6 @@ mod test {
 
         let network1 = NetworkTemplate {
             id: 1,
-            hypersync_config: Some(HypersyncConfig {
-                endpoint_url: "https://1.hypersync.xyz".to_string(),
-                is_client_decoder: true,
-            }),
             ..NetworkTemplate::default()
         };
 
@@ -1350,6 +1504,9 @@ mod test {
         let chain_config_1 = super::NetworkConfigTemplate {
             network_config: network1,
             codegen_contracts: vec![contract1],
+            is_fuel: false,
+            sources_code: "NetworkSources.evm(~chain, ~contracts, ~hyperSync=Some(\"https://1.hypersync.xyz\"), ~allEventSignatures=[Types.Contract1.eventSignatures]->Belt.Array.concatMany, ~shouldUseHypersyncClientDecoder=true, ~rpcs=[{url: \"https://fallback.eth.com\", sourceFor: Fallback, syncConfig: {}}])".to_string(),
+            deprecated_sync_source_code: "HyperSync({endpointUrl: \"https://1.hypersync.xyz\"})".to_string(),
         };
 
         let expected_chain_configs = vec![chain_config_1];
@@ -1363,30 +1520,34 @@ mod test {
     fn convert_to_chain_configs_case_4() {
         let network1 = NetworkTemplate {
             id: 1,
-            hypersync_config: Some(HypersyncConfig {
-                endpoint_url: "https://myskar.com".to_string(),
-                is_client_decoder: true,
-            }),
             ..NetworkTemplate::default()
         };
 
         let network2 = NetworkTemplate {
             id: 137,
-            hypersync_config: Some(HypersyncConfig {
-                endpoint_url: "https://137.hypersync.xyz".to_string(),
-                is_client_decoder: true,
-            }),
             ..NetworkTemplate::default()
         };
 
         let chain_config_1 = super::NetworkConfigTemplate {
             network_config: network1,
             codegen_contracts: vec![],
+            is_fuel: false,
+            sources_code: format!(
+                "NetworkSources.evm(~chain, ~contracts, ~hyperSync=Some(\"https://myskar.com\"), \
+                 ~allEventSignatures=[]->Belt.Array.concatMany, \
+                 ~shouldUseHypersyncClientDecoder=true, ~rpcs=[])"
+            ),
+            deprecated_sync_source_code: format!(
+                "HyperSync({{endpointUrl: \"https://myskar.com\"}})"
+            ),
         };
 
         let chain_config_2 = super::NetworkConfigTemplate {
             network_config: network2,
             codegen_contracts: vec![],
+            is_fuel: false,
+            sources_code: format!("NetworkSources.evm(~chain, ~contracts, ~hyperSync=Some(\"https://137.hypersync.xyz\"), ~allEventSignatures=[]->Belt.Array.concatMany, ~shouldUseHypersyncClientDecoder=true, ~rpcs=[])"),
+            deprecated_sync_source_code: format!("HyperSync({{endpointUrl: \"https://137.hypersync.xyz\"}})"),
         };
 
         let expected_chain_configs = vec![chain_config_1, chain_config_2];

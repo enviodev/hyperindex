@@ -23,6 +23,7 @@ let raiseExn = (self: t) => {
 }
 
 let mkLogAndRaise = (~logger=?, ~msg=?, exn) => {
+  let exn = exn->prettifyExn
   exn->make(~logger?, ~msg?)->log
   exn->raise
 }

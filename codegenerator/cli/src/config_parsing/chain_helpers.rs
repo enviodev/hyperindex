@@ -682,9 +682,7 @@ mod test {
         let defined_networks = GraphNetwork::iter().collect::<Vec<_>>();
 
         for n in defined_networks {
-            let included_in_supported_networks = supported_graph_networks
-                .iter()
-                .any(|sn| &n == sn);
+            let included_in_supported_networks = supported_graph_networks.iter().any(|sn| &n == sn);
             assert!(
                 included_in_supported_networks,
                 "expected {:?} to be included",

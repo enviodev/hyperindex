@@ -86,14 +86,13 @@ module Stubs = {
 
   //Stub executePartitionQuery with mock data
   let makeExecutePartitionQuery = (stubData: t) => async (
-    query,
-    ~logger,
-    ~source,
-    ~currentBlockHeight,
-    ~chain,
+    sourceManager,
+    ~query,
+    ~currentBlockHeight as _,
   ) => {
-    (logger, currentBlockHeight, source)->ignore
-    stubData->getMockChainData(chain)->MockChainData.executeQuery(query)->Ok
+    stubData
+    ->getMockChainData((sourceManager->SourceManager.getActiveSource).chain)
+    ->MockChainData.executeQuery(query)
   }
 
   //Stub for getting block hashes instead of the worker
@@ -115,13 +114,11 @@ module Stubs = {
   }
 
   //Stub wait for new block
-  let makeWaitForNewBlock = (stubData: t) => async (
-    ~source: Source.t,
-    ~currentBlockHeight,
-    ~logger,
-  ) => {
-    (logger, currentBlockHeight)->ignore
-    stubData->getMockChainData(source.chain)->MockChainData.getHeight
+  let makeWaitForNewBlock = (stubData: t) => async (sourceManager, ~currentBlockHeight) => {
+    currentBlockHeight->ignore
+    stubData
+    ->getMockChainData((sourceManager->SourceManager.getActiveSource).chain)
+    ->MockChainData.getHeight
   }
   //Stub dispatch action to set state and not dispatch task but store in
   //the tasks ref
@@ -142,7 +139,7 @@ module Stubs = {
         chainFetcher->ChainFetcher.getLastKnownValidBlock(
           ~getBlockHashes=makeGetBlockHashes(
             ~stubData,
-            ~source=chainFetcher.sourceManager.activeSource,
+            ~source=chainFetcher.sourceManager->SourceManager.getActiveSource,
           ),
         ),
     )(

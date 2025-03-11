@@ -37,6 +37,7 @@ let mockChainConfig: Config.chainConfig = {
     RpcSource.make({
       chain: chain1337,
       contracts,
+      sourceFor: Sync,
       syncConfig: Config.getSyncConfig({
         initialBlockInterval: 10000,
         backoffMultiplicative: 10000.0,
@@ -46,7 +47,7 @@ let mockChainConfig: Config.chainConfig = {
         queryTimeoutMillis: 10000,
         fallbackStallTimeout: 3,
       }),
-      urls: ["http://127.0.0.1:8545"],
+      url: "http://127.0.0.1:8545",
       eventRouter: contracts
       ->Belt.Array.flatMap(contract => contract.events)
       ->EventRouter.fromEvmEventModsOrThrow(~chain=chain1337),

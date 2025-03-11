@@ -5,11 +5,10 @@ networks:
   - id: 0
     start_block: 0
     contracts:
-      - name: OrderBook
+      - name: Greeter
         address: 0x4a2ce054e3e94155f7092f7365b212f7f45105b74819c623744ebcc5d065c6ac
-        abi_file_path: ./abis/spark-orderbook.json
-        handler: ./src/OrderBookHandlers.ts
+        abi_file_path: ../abis/greeter-abi.json
+        handler: ./src/EventHandlers.js
         events:
-          - name: OrderChangeEvent
-          - name: MarketCreateEvent
-          - name: TradeEvent
+          - name: NewGreeting
+          - name: ClearGreeting

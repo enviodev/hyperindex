@@ -9,6 +9,16 @@ type contract = {
   events: array<module(Types.Event)>,
 }
 
+type syncConfigOptions = {
+  initialBlockInterval?: int,
+  backoffMultiplicative?: float,
+  accelerationAdditive?: int,
+  intervalCeiling?: int,
+  backoffMillis?: int,
+  queryTimeoutMillis?: int,
+  fallbackStallTimeout?: int,
+}
+
 type syncConfig = {
   initialBlockInterval: int,
   backoffMultiplicative: float,
@@ -45,35 +55,40 @@ type historyFlag = FullHistory | MinHistory
 type rollbackFlag = RollbackOnReorg | NoRollback
 type historyConfig = {rollbackFlag: rollbackFlag, historyFlag: historyFlag}
 
-let getSyncConfig = ({
-  initialBlockInterval,
-  backoffMultiplicative,
-  accelerationAdditive,
-  intervalCeiling,
-  backoffMillis,
-  queryTimeoutMillis,
-  fallbackStallTimeout,
-}) => {
-  initialBlockInterval: Env.Configurable.SyncConfig.initialBlockInterval->Option.getWithDefault(
-    initialBlockInterval,
-  ),
-  // After an RPC error, how much to scale back the number of blocks requested at once
-  backoffMultiplicative: Env.Configurable.SyncConfig.backoffMultiplicative->Option.getWithDefault(
-    backoffMultiplicative,
-  ),
-  // Without RPC errors or timeouts, how much to increase the number of blocks requested by for the next batch
-  accelerationAdditive: Env.Configurable.SyncConfig.accelerationAdditive->Option.getWithDefault(
-    accelerationAdditive,
-  ),
-  // Do not further increase the block interval past this limit
-  intervalCeiling: Env.Configurable.SyncConfig.intervalCeiling->Option.getWithDefault(
-    intervalCeiling,
-  ),
-  // After an error, how long to wait before retrying
-  backoffMillis,
-  // How long to wait before cancelling an RPC request
-  queryTimeoutMillis,
-  fallbackStallTimeout,
+let getSyncConfig = (
+  {
+    ?initialBlockInterval,
+    ?backoffMultiplicative,
+    ?accelerationAdditive,
+    ?intervalCeiling,
+    ?backoffMillis,
+    ?queryTimeoutMillis,
+    ?fallbackStallTimeout,
+  }: syncConfigOptions,
+): syncConfig => {
+  let queryTimeoutMillis = queryTimeoutMillis->Option.getWithDefault(20_000)
+  {
+    initialBlockInterval: Env.Configurable.SyncConfig.initialBlockInterval->Option.getWithDefault(
+      initialBlockInterval->Option.getWithDefault(10_000),
+    ),
+    // After an RPC error, how much to scale back the number of blocks requested at once
+    backoffMultiplicative: Env.Configurable.SyncConfig.backoffMultiplicative->Option.getWithDefault(
+      backoffMultiplicative->Option.getWithDefault(0.8),
+    ),
+    // Without RPC errors or timeouts, how much to increase the number of blocks requested by for the next batch
+    accelerationAdditive: Env.Configurable.SyncConfig.accelerationAdditive->Option.getWithDefault(
+      accelerationAdditive->Option.getWithDefault(500),
+    ),
+    // Do not further increase the block interval past this limit
+    intervalCeiling: Env.Configurable.SyncConfig.intervalCeiling->Option.getWithDefault(
+      intervalCeiling->Option.getWithDefault(10_000),
+    ),
+    // After an error, how long to wait before retrying
+    backoffMillis: backoffMillis->Option.getWithDefault(5000),
+    // How long to wait before cancelling an RPC request
+    queryTimeoutMillis,
+    fallbackStallTimeout: fallbackStallTimeout->Option.getWithDefault(queryTimeoutMillis / 2),
+  }
 }
 
 type t = {

@@ -385,18 +385,65 @@ pub mod evm {
     }
 
     #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
+    #[serde(rename_all = "lowercase")]
+    pub enum For {
+        #[schemars(
+            description = "Use RPC as the main data-source for both historical sync and real-time \
+                           chain indexing."
+        )]
+        Sync,
+        #[schemars(
+            description = "Use RPC as a backup for the main data-source. Currently, it acts as a \
+                           fallback when real-time indexing stalls, with potential for more cases \
+                           in the future."
+        )]
+        Fallback,
+    }
+
+    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
+    #[serde(deny_unknown_fields)]
+    pub struct Rpc {
+        #[schemars(description = "The RPC endpoint URL.")]
+        pub url: String,
+        #[schemars(
+            description = "Determines if this RPC is for historical sync, real-time chain \
+                           indexing, or as a fallback."
+        )]
+        #[serde(rename = "for")]
+        pub source_for: For,
+        #[serde(flatten, skip_serializing_if = "Option::is_none")]
+        #[schemars(description = "Options for RPC data-source indexing.")]
+        pub sync_config: Option<RpcSyncConfig>,
+    }
+
+    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
+    #[serde(untagged)]
+    pub enum NetworkRpc {
+        Url(String),
+        Single(Rpc),
+        List(Vec<Rpc>),
+    }
+
+    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
     #[serde(deny_unknown_fields)]
     pub struct Network {
-        #[schemars(description = "Public chain/network id")]
+        #[schemars(description = "The public blockchain network ID.")]
         pub id: NetworkId,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
-            description = "RPC Config that will be used to subscribe to blockchain data on this \
-                           network (TIP: This is optional and in most cases does not need to be \
-                           specified if the network is supported with HyperSync. We recommend \
-                           using HyperSync instead of RPC for 100x speed-up)"
+            description = "RPC configuration for utilizing as the network's data-source. \
+                           Typically optional for chains with HyperSync support, which is highly \
+                           recommended. HyperSync dramatically enhances performance, providing up \
+                           to a 1000x speed boost over traditional RPC."
         )]
         pub rpc_config: Option<RpcConfig>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(description = "RPC configuration for your indexer. If not specified \
+                                  otherwise, for networks supported by HyperSync, RPC serves as \
+                                  a fallback for added reliability. For others, it acts as the \
+                                  primary data-source. HyperSync offers significant performance \
+                                  improvements, up to a 1000x faster than traditional RPC.")]
+        pub rpc: Option<NetworkRpc>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(description = "Optional HyperSync Config for additional fine-tuning")]
         pub hypersync_config: Option<HypersyncConfig>,
@@ -797,26 +844,21 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
                 end_block: None,
                 hyperfuel_config: None,
                 contracts: vec![NetworkContract {
-                    name: "OrderBook".to_string(),
+                    name: "Greeter".to_string(),
                     address: "0x4a2ce054e3e94155f7092f7365b212f7f45105b74819c623744ebcc5d065c6ac"
                         .to_string()
                         .into(),
                     config: Some(fuel::ContractConfig {
-                        abi_file_path: "./abis/spark-orderbook.json".to_string(),
-                        handler: "./src/OrderBookHandlers.ts".to_string(),
+                        abi_file_path: "../abis/greeter-abi.json".to_string(),
+                        handler: "./src/EventHandlers.js".to_string(),
                         events: vec![
                             fuel::EventConfig {
-                                name: "OrderChangeEvent".to_string(),
+                                name: "NewGreeting".to_string(),
                                 log_id: None,
                                 type_: None,
                             },
                             fuel::EventConfig {
-                                name: "MarketCreateEvent".to_string(),
-                                log_id: None,
-                                type_: None,
-                            },
-                            fuel::EventConfig {
-                                name: "TradeEvent".to_string(),
+                                name: "ClearGreeting".to_string(),
                                 log_id: None,
                                 type_: None,
                             },
@@ -885,6 +927,7 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
                 id: 1,
                 hypersync_config: None,
                 rpc_config: None,
+                rpc: None,
                 start_block: 2_000,
                 confirmed_block_threshold: None,
                 end_block: Some(2_000_000),

@@ -4,7 +4,7 @@ let makeRpcRoute = (method: string, paramsSchema, resultSchema) => {
   Rest.route(() => {
     method: Post,
     path: "",
-    variables: s => {
+    input: s => {
       let _ = s.field("method", S.literal(method))
       let _ = s.field("id", idSchema)
       let _ = s.field("jsonrpc", versionSchema)
