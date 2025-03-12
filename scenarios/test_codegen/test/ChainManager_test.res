@@ -394,6 +394,7 @@ describe("determineNextEvent", () => {
     ): ChainManager.fetchStateWithData => {
       {
         fetchState: makeMockFetchState(~latestFetchedBlockTimestamp, ~item),
+        currentBlockHeight: 700,
         heighestBlockBelowThreshold: 500,
       }
     }

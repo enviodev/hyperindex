@@ -320,8 +320,7 @@ describe("Dynamic contract rollback test", () => {
     Assert.deepEqual(
       stubDataInitial->Stubs.getTasks,
       [
-        GlobalState.NextQuery(CheckAllChains),
-        ProcessEventBatch,
+        NextQuery(CheckAllChains),
         Mock.getUpdateEndofBlockRangeScannedData(
           Mock.mockChainDataMap,
           ~chain=Mock.Chain1.chain,

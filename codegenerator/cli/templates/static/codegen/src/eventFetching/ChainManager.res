@@ -71,17 +71,17 @@ type isInReorgThresholdRes<'payload> = {
 type fetchStateWithData = {
   fetchState: FetchState.t,
   heighestBlockBelowThreshold: int,
+  currentBlockHeight: int,
 }
 
 let isQueueItemEarlierUnorderedBelowReorgThreshold = (
   ~fetchStatesMap: ChainMap.t<fetchStateWithData>,
 ) => (a: multiChainEventComparitor, b: multiChainEventComparitor) => {
   let isItemBelowReorgThreshold = item => {
+    let data = fetchStatesMap->ChainMap.get(item.chain)
     item.earliestEvent->FetchState.queueItemIsInReorgThreshold(
-      ~heighestBlockBelowThreshold=ChainMap.get(
-        fetchStatesMap,
-        a.chain,
-      ).heighestBlockBelowThreshold,
+      ~currentBlockHeight=data.currentBlockHeight,
+      ~heighestBlockBelowThreshold=data.heighestBlockBelowThreshold,
     )
   }
   // The idea here is if we are in undordered multichain mode, always prioritize queue
@@ -115,7 +115,7 @@ let determineNextEvent = (
     ->ChainMap.entries
     ->Array.reduce({isInReorgThreshold: false, val: None}, (
       accum,
-      (chain, {fetchState, heighestBlockBelowThreshold}),
+      (chain, {fetchState, currentBlockHeight, heighestBlockBelowThreshold}),
     ) => {
       // If the fetch state has reached the end block we don't need to consider it
       if fetchState->FetchState.isActivelyIndexing {
@@ -125,7 +125,10 @@ let determineNextEvent = (
         | Some(previous) if comparitorFunction(previous, current) => accum
         | _ =>
           let isInReorgThreshold =
-            earliestEvent->FetchState.queueItemIsInReorgThreshold(~heighestBlockBelowThreshold)
+            earliestEvent->FetchState.queueItemIsInReorgThreshold(
+              ~currentBlockHeight,
+              ~heighestBlockBelowThreshold,
+            )
 
           {
             val: Some(current),
@@ -287,6 +290,7 @@ let getFetchStateWithData = (self: t, ~shouldDeepCopy=false): ChainMap.t<fetchSt
     {
       fetchState: shouldDeepCopy ? cf.fetchState->FetchState.copy : cf.fetchState,
       heighestBlockBelowThreshold: cf->ChainFetcher.getHeighestBlockBelowThreshold,
+      currentBlockHeight: cf.currentBlockHeight,
     }
   })
 }

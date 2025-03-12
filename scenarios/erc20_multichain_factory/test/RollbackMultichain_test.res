@@ -415,9 +415,9 @@ describe("Multichain rollback test", () => {
       ~chain2User2Balance=Some(100),
     )
     Assert.deepEqual(
+      stubDataInitial->Stubs.getTasks,
       [
-        GlobalState.NextQuery(CheckAllChains),
-        ProcessEventBatch,
+        NextQuery(CheckAllChains),
         Mock.getUpdateEndofBlockRangeScannedData(
           Mock.mockChainDataMapInitial,
           ~chain=Mock.Chain1.chain,
@@ -440,7 +440,6 @@ describe("Multichain rollback test", () => {
         ProcessEventBatch,
         PruneStaleEntityHistory,
       ],
-      stubDataInitial->Stubs.getTasks,
       ~message="Should have processed a batch and run next queries on all chains",
     )
 
