@@ -100,56 +100,45 @@ let determineNextEvent = (
   ~isUnorderedMultichainMode: bool,
   ~onlyBelowReorgThreshold: bool,
 ): result<isInReorgThresholdRes<multiChainEventComparitor>, noItemsInArray> => {
-  let nextItem = switch fetchStatesMap->ChainMap.entries {
-  | [(chain, {fetchState, currentBlockHeight, heighestBlockBelowThreshold})] => {
-      let earliestEvent = fetchState->FetchState.getEarliestEvent
-      {
-        isInReorgThreshold: earliestEvent->FetchState.queueItemIsInReorgThreshold(
-          ~currentBlockHeight,
-          ~heighestBlockBelowThreshold,
-        ),
-        val: fetchState->FetchState.isActivelyIndexing ? Some({chain, earliestEvent}) : None,
-      }
+  let comparitorFunction = if isUnorderedMultichainMode {
+    if onlyBelowReorgThreshold {
+      isQueueItemEarlierUnorderedBelowReorgThreshold(~fetchStatesMap)
+    } else {
+      isQueueItemEarlierUnorderedMultichain
     }
-  | chainData => {
-      let comparitorFunction = if fetchStatesMap->ChainMap.size > 1 && isUnorderedMultichainMode {
-        if onlyBelowReorgThreshold {
-          isQueueItemEarlierUnorderedBelowReorgThreshold(~fetchStatesMap)
-        } else {
-          isQueueItemEarlierUnorderedMultichain
+  } else {
+    isQueueItemEarlier
+  }
+
+  let nextItem =
+    fetchStatesMap
+    ->ChainMap.entries
+    ->Array.reduce({isInReorgThreshold: false, val: None}, (
+      accum,
+      (chain, {fetchState, currentBlockHeight, heighestBlockBelowThreshold}),
+    ) => {
+      // If the fetch state has reached the end block we don't need to consider it
+      if fetchState->FetchState.isActivelyIndexing {
+        let earliestEvent = fetchState->FetchState.getEarliestEvent
+        let current: multiChainEventComparitor = {chain, earliestEvent}
+        switch accum.val {
+        | Some(previous) if comparitorFunction(previous, current) => accum
+        | _ =>
+          let isInReorgThreshold =
+            earliestEvent->FetchState.queueItemIsInReorgThreshold(
+              ~currentBlockHeight,
+              ~heighestBlockBelowThreshold,
+            )
+
+          {
+            val: Some(current),
+            isInReorgThreshold,
+          }
         }
       } else {
-        isQueueItemEarlier
+        accum
       }
-
-      chainData->Array.reduce({isInReorgThreshold: false, val: None}, (
-        accum,
-        (chain, {fetchState, currentBlockHeight, heighestBlockBelowThreshold}),
-      ) => {
-        // If the fetch state has reached the end block we don't need to consider it
-        if fetchState->FetchState.isActivelyIndexing {
-          let earliestEvent = fetchState->FetchState.getEarliestEvent
-          let current: multiChainEventComparitor = {chain, earliestEvent}
-          switch accum.val {
-          | Some(previous) if comparitorFunction(previous, current) => accum
-          | _ =>
-            let isInReorgThreshold =
-              earliestEvent->FetchState.queueItemIsInReorgThreshold(
-                ~currentBlockHeight,
-                ~heighestBlockBelowThreshold,
-              )
-
-            {
-              val: Some(current),
-              isInReorgThreshold,
-            }
-          }
-        } else {
-          accum
-        }
-      })
-    }
-  }
+    })
 
   switch nextItem {
   | {val: None} => Error(NoItemsInArray)
