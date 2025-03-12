@@ -204,8 +204,8 @@ pub fn validate_deserialized_config_yaml(evm_config: &HumanConfig) -> anyhow::Re
     // Checking that contract names are non-unique
     if !are_contract_names_unique(&contract_names) {
         return Err(anyhow!(
-            "EE101: The config file cannot have duplicate contract names. All contract names need \
-             to be unique, regardless of network. Contract names are not case-sensitive.",
+            "EE101: Duplicate contract names detected. All contract names must be unique across all networks, and are case-insensitive. \
+     For multichain indexing, consider using a global contract definition. More information is available at: https://docs.envio.dev/docs/HyperIndex/multichain-indexing",
         ));
     }
 
