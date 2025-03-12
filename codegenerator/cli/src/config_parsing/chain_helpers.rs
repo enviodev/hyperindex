@@ -335,15 +335,15 @@ pub enum Network {
     #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     UnichainSepolia = 1301,
 
+    XLayer = 196,
+
+    XLayerTestnet = 195,
+
     #[subenum(HypersyncNetwork)]
     Xdc = 50,
 
     #[subenum(HypersyncNetwork)]
     XdcTestnet = 51,
-
-    XLayer = 196,
-
-    XLayerTestnet = 195,
 
     #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     Zeta = 7000,
