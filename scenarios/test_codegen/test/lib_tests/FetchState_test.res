@@ -68,7 +68,7 @@ let mockEvent = (~blockNumber, ~logIndex=0, ~chainId=1): Internal.eventItem => {
   event: Utils.magic("Mock event in fetchstate test"),
 }
 
-let makeInitial = () => {
+let makeInitial = (~startBlock=0) => {
   FetchState.make(
     ~eventConfigs=[
       {
@@ -79,7 +79,7 @@ let makeInitial = () => {
     ],
     ~staticContracts=Js.Dict.fromArray([("Gravatar", [mockAddress0])]),
     ~dynamicContracts=[],
-    ~startBlock=0,
+    ~startBlock,
     ~endBlock=None,
     ~maxAddrInPartition=3,
   )
@@ -2481,4 +2481,35 @@ describe("Test queue item", () => {
       ~message=`5. Above reversed`,
     )
   })
+})
+
+describe("FetchState.queueItemIsInReorgThreshold", () => {
+  it("Returns false when we just started the indexer and it has currentBlockHeight=0", () => {
+    let fetchState = makeInitial()
+    Assert.equal(
+      fetchState
+      ->FetchState.getEarliestEvent
+      ->FetchState.queueItemIsInReorgThreshold(
+        ~currentBlockHeight=0,
+        ~heighestBlockBelowThreshold=0,
+      ),
+      false,
+    )
+  })
+
+  it(
+    "Returns false when we just started the indexer and it has currentBlockHeight=0, while start block is more than 0 + reorg threshold",
+    () => {
+      let fetchState = makeInitial(~startBlock=6000)
+      Assert.equal(
+        fetchState
+        ->FetchState.getEarliestEvent
+        ->FetchState.queueItemIsInReorgThreshold(
+          ~currentBlockHeight=0,
+          ~heighestBlockBelowThreshold=0,
+        ),
+        false,
+      )
+    },
+  )
 })

@@ -576,7 +576,7 @@ let actionReducer = (state: t, action: action) => {
     if isInReorgThreshold {
       Logging.info("Reorg threshold reached")
     }
-    ({...state, chainManager: {...state.chainManager, isInReorgThreshold}}, [ProcessEventBatch])
+    ({...state, chainManager: {...state.chainManager, isInReorgThreshold}}, [])
   | SetSyncedChains => {
       let shouldExit = EventProcessing.EventsProcessed.allChainsEventsProcessedToEndblock(
         state.chainManager.chainFetchers,
@@ -982,85 +982,104 @@ let injectedTaskReducer = (
         false
       }
 
-      switch state.chainManager->ChainManager.createBatch(
-        ~maxBatchSize=state.maxBatchSize,
-        ~onlyBelowReorgThreshold,
-      ) {
-      | {isInReorgThreshold: true, val: None} if onlyBelowReorgThreshold =>
-        dispatchAction(SetIsInReorgThreshold(true))
-      | {isInReorgThreshold, val: Some({batch, fetchStatesMap, arbitraryEventQueue})} =>
-        dispatchAction(SetCurrentlyProcessing(true))
-        dispatchAction(UpdateQueues(fetchStatesMap, arbitraryEventQueue))
-        if (
-          state.config->Config.shouldRollbackOnReorg &&
-          isInReorgThreshold &&
-          !state.chainManager.isInReorgThreshold
-        ) {
-          //On the first time we enter the reorg threshold, copy all entities to entity history
-          //And set the isInReorgThreshold isInReorgThreshold state to true
-          dispatchAction(SetIsInReorgThreshold(true))
-        }
-
-        let isInReorgThreshold = state.chainManager.isInReorgThreshold || isInReorgThreshold
-
-        // This function is used to ensure that registering an alreday existing contract as a dynamic contract can't cause issues.
-        let checkContractIsRegistered = (
-          ~chain,
-          ~contractAddress,
-          ~contractName: Enums.ContractType.t,
-        ) => {
-          let {fetchState} = fetchStatesMap->ChainMap.get(chain)
-          fetchState->FetchState.checkContainsRegisteredContractAddress(
-            ~contractAddress,
-            ~contractName=(contractName :> string),
-            ~chainId=chain->ChainMap.Chain.toChainId,
-          )
-        }
-
-        let latestProcessedBlocks = EventProcessing.EventsProcessed.makeFromChainManager(
-          state.chainManager,
+      let batch =
+        state.chainManager->ChainManager.createBatch(
+          ~maxBatchSize=state.maxBatchSize,
+          ~onlyBelowReorgThreshold,
         )
 
-        //In the case of a rollback, use the provided in memory store
-        //With rolled back values
-        let rollbackInMemStore = switch state.rollbackState {
-        | RollbackInMemStore(inMemoryStore) => Some(inMemoryStore)
-        | NoRollback
-        | RollingBack(
-          _,
-        ) /* This is an impossible case due to the surrounding if statement check */ =>
-          None
-        }
-
-        let inMemoryStore = rollbackInMemStore->Option.getWithDefault(InMemoryStore.make())
-
-        switch await EventProcessing.processEventBatch(
-          ~eventBatch=batch,
-          ~inMemoryStore,
-          ~isInReorgThreshold,
-          ~checkContractIsRegistered,
-          ~latestProcessedBlocks,
-          ~loadLayer=state.loadLayer,
-          ~config=state.config,
-        ) {
-        | exception exn =>
-          //All casese should be handled/caught before this with better user messaging.
-          //This is just a safety in case something unexpected happens
-          let errHandler =
-            exn->ErrorHandling.make(~msg="A top level unexpected error occurred during processing")
-          dispatchAction(ErrorExit(errHandler))
-        | res =>
-          if rollbackInMemStore->Option.isSome {
-            //if the batch was executed with a rollback inMemoryStore
-            //reset the rollback state once the batch has been processed
-            dispatchAction(ResetRollbackState)
+      let handleBatch = async (
+        batch: ChainManager.isInReorgThresholdRes<option<ChainManager.batchRes>>,
+      ) => {
+        switch batch {
+        | {isInReorgThreshold, val: Some({batch, fetchStatesMap, arbitraryEventQueue})} =>
+          dispatchAction(SetCurrentlyProcessing(true))
+          dispatchAction(UpdateQueues(fetchStatesMap, arbitraryEventQueue))
+          if (
+            state.config->Config.shouldRollbackOnReorg &&
+            isInReorgThreshold &&
+            !state.chainManager.isInReorgThreshold
+          ) {
+            //On the first time we enter the reorg threshold, copy all entities to entity history
+            //And set the isInReorgThreshold isInReorgThreshold state to true
+            dispatchAction(SetIsInReorgThreshold(true))
           }
-          switch res {
-          | Ok(loadRes) => dispatchAction(EventBatchProcessed(loadRes))
-          | Error(errHandler) => dispatchAction(ErrorExit(errHandler))
+
+          let isInReorgThreshold = state.chainManager.isInReorgThreshold || isInReorgThreshold
+
+          // This function is used to ensure that registering an alreday existing contract as a dynamic contract can't cause issues.
+          let checkContractIsRegistered = (
+            ~chain,
+            ~contractAddress,
+            ~contractName: Enums.ContractType.t,
+          ) => {
+            let {fetchState} = fetchStatesMap->ChainMap.get(chain)
+            fetchState->FetchState.checkContainsRegisteredContractAddress(
+              ~contractAddress,
+              ~contractName=(contractName :> string),
+              ~chainId=chain->ChainMap.Chain.toChainId,
+            )
           }
+
+          let latestProcessedBlocks = EventProcessing.EventsProcessed.makeFromChainManager(
+            state.chainManager,
+          )
+
+          //In the case of a rollback, use the provided in memory store
+          //With rolled back values
+          let rollbackInMemStore = switch state.rollbackState {
+          | RollbackInMemStore(inMemoryStore) => Some(inMemoryStore)
+          | NoRollback
+          | RollingBack(
+            _,
+          ) /* This is an impossible case due to the surrounding if statement check */ =>
+            None
+          }
+
+          let inMemoryStore = rollbackInMemStore->Option.getWithDefault(InMemoryStore.make())
+
+          switch await EventProcessing.processEventBatch(
+            ~eventBatch=batch,
+            ~inMemoryStore,
+            ~isInReorgThreshold,
+            ~checkContractIsRegistered,
+            ~latestProcessedBlocks,
+            ~loadLayer=state.loadLayer,
+            ~config=state.config,
+          ) {
+          | exception exn =>
+            //All casese should be handled/caught before this with better user messaging.
+            //This is just a safety in case something unexpected happens
+            let errHandler =
+              exn->ErrorHandling.make(
+                ~msg="A top level unexpected error occurred during processing",
+              )
+            dispatchAction(ErrorExit(errHandler))
+          | res =>
+            if rollbackInMemStore->Option.isSome {
+              //if the batch was executed with a rollback inMemoryStore
+              //reset the rollback state once the batch has been processed
+              dispatchAction(ResetRollbackState)
+            }
+            switch res {
+            | Ok(loadRes) => dispatchAction(EventBatchProcessed(loadRes))
+            | Error(errHandler) => dispatchAction(ErrorExit(errHandler))
+            }
+          }
+        | {val: None} => dispatchAction(SetSyncedChains) //Known that there are no items available on the queue so safely call this action
         }
-      | {val: None} => dispatchAction(SetSyncedChains) //Known that there are no items available on the queue so safely call this action
+      }
+
+      switch batch {
+      | {isInReorgThreshold: true, val: None} if onlyBelowReorgThreshold =>
+        dispatchAction(SetIsInReorgThreshold(true))
+        let batch =
+          state.chainManager->ChainManager.createBatch(
+            ~maxBatchSize=state.maxBatchSize,
+            ~onlyBelowReorgThreshold=false,
+          )
+        await handleBatch(batch)
+      | _ => await handleBatch(batch)
       }
     }
   | Rollback =>
