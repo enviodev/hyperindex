@@ -64,6 +64,11 @@ impl Diff {
                     continue;
                 }
             }
+            // A quick workaround for HyperliquidTemp
+            // Can be removed in the future
+            if chain.name.ends_with("-temp") {
+                continue;
+            }
 
             api_chain_ids.insert(chain_id);
 
