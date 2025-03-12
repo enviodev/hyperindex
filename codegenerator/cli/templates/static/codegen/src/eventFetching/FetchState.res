@@ -700,16 +700,15 @@ let queueItemBlockNumber = (queueItem: queueItem) => {
   }
 }
 
-let queueItemIsInReorgThreshold = (queueItem: queueItem, ~heighestBlockBelowThreshold) => {
-  //Only consider it in reorg threshold when the current block number has advanced beyond 0
-  if heighestBlockBelowThreshold > 0 {
+let queueItemIsInReorgThreshold = (queueItem: queueItem, ~currentBlockHeight, ~heighestBlockBelowThreshold) => {
+  if currentBlockHeight === 0 {
+    false
+  } else {
     switch queueItem {
     | Item(_) =>
-      queueItem->queueItemBlockNumber > heighestBlockBelowThreshold
+        queueItem->queueItemBlockNumber > heighestBlockBelowThreshold
     | NoItem(_) => queueItem->queueItemBlockNumber > heighestBlockBelowThreshold
     }
-  } else {
-    false
   }
 }
 

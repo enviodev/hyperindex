@@ -2489,7 +2489,10 @@ describe("FetchState.queueItemIsInReorgThreshold", () => {
     Assert.equal(
       fetchState
       ->FetchState.getEarliestEvent
-      ->FetchState.queueItemIsInReorgThreshold(~heighestBlockBelowThreshold=0),
+      ->FetchState.queueItemIsInReorgThreshold(
+        ~currentBlockHeight=0,
+        ~heighestBlockBelowThreshold=0,
+      ),
       false,
     )
   })
@@ -2501,7 +2504,10 @@ describe("FetchState.queueItemIsInReorgThreshold", () => {
       Assert.equal(
         fetchState
         ->FetchState.getEarliestEvent
-        ->FetchState.queueItemIsInReorgThreshold(~heighestBlockBelowThreshold=0),
+        ->FetchState.queueItemIsInReorgThreshold(
+          ~currentBlockHeight=0,
+          ~heighestBlockBelowThreshold=0,
+        ),
         false,
       )
     },

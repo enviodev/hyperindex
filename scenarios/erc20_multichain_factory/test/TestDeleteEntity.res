@@ -2,6 +2,19 @@ open Belt
 open RescriptMocha
 
 let config = RegisterHandlers.getConfig()
+// Keep only the first chain
+let config = Config.make(
+  ~shouldRollbackOnReorg=false,
+  ~shouldSaveFullHistory=false,
+  ~isUnorderedMultichainMode=false,
+  ~chains=config.chainMap
+  ->ChainMap.entries
+  ->Array.keepMap(((chain, config)) =>
+    chain == RollbackMultichain_test.Mock.Chain1.chain ? Some(config) : None
+  ),
+  ~enableRawEvents=false,
+  ~entities=config.entities->Obj.magic,
+)
 
 module Mock = {
   /*
@@ -64,12 +77,10 @@ module Mock = {
       accum->MockChainData.addBlock(~makeLogConstructors)
     })
   }
-  module Chain2 = RollbackMultichain_test.Mock.Chain2
 
   let mockChainDataMap = config.chainMap->ChainMap.mapWithKey((chain, _) =>
     switch chain->ChainMap.Chain.toChainId {
     | 1 => Chain1.mockChainData
-    | 137 => Chain2.mockChainDataEmpty
     | _ => Js.Exn.raiseError("Unexpected chain")
     }
   )
@@ -106,10 +117,10 @@ describe("Unsafe delete test", () => {
   Async.it("Deletes account entity successfully", async () => {
     //Setup a chainManager with unordered multichain mode to make processing happen
     //without blocking for the purposes of this test
-    let chainManager = {
-      ...ChainManager.makeFromConfig(~config, ~maxAddrInPartition=Env.maxAddrInPartition),
-      isUnorderedMultichainMode: true,
-    }
+    let chainManager = ChainManager.makeFromConfig(
+      ~config,
+      ~maxAddrInPartition=Env.maxAddrInPartition,
+    )
 
     let loadLayer = LoadLayer.makeWithDbConnection()
 
@@ -131,13 +142,14 @@ describe("Unsafe delete test", () => {
     await dispatchTask(NextQuery(CheckAllChains))
 
     Assert.deepEqual(
-      [GlobalState.NextQuery(Chain(Mock.Chain1.chain)), NextQuery(Chain(Mock.Chain2.chain))],
       stubDataInitial->Stubs.getTasks,
+      [GlobalState.NextQuery(Chain(Mock.Chain1.chain))],
       ~message="Should have completed query to get height, next tasks would be to execute block range query",
     )
 
     await dispatchAllTasks()
     await dispatchAllTasks()
+
     let users = await Sql.getAllRowsInTable("Account")
     Assert.equal(users->Array.length, 2, ~message="Should contain user1 and minter address")
     await dispatchAllTasks()

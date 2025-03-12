@@ -2,6 +2,17 @@ open Belt
 open RescriptMocha
 
 let config = RegisterHandlers.registerAllHandlers()
+// Keep only chain1337
+let config = Config.make(
+  ~shouldRollbackOnReorg=true,
+  ~shouldSaveFullHistory=false,
+  ~isUnorderedMultichainMode=false,
+  ~chains=config.chainMap
+  ->ChainMap.entries
+  ->Array.keepMap(((chain, config)) => chain == MockConfig.chain1337 ? Some(config) : None),
+  ~enableRawEvents=false,
+  ~entities=config.entities->Obj.magic,
+)
 
 module Mock = {
   let mockChainDataEmpty = MockChainData.make(
@@ -69,16 +80,6 @@ module Stubs = {
 
   //Hold next tasks temporarily here so they do not get actioned off automatically
   let tasks = ref([])
-
-  let replaceNexQueryCheckAllChainsWithGivenChain = chain => {
-    tasks :=
-      tasks.contents->Array.map(t =>
-        switch t {
-        | GlobalState.NextQuery(CheckAllChains) => GlobalState.NextQuery(Chain(chain))
-        | task => task
-        }
-      )
-  }
 
   //Stub dispatch action to set state and not dispatch task but store in
   //the tasks ref
@@ -293,12 +294,10 @@ describe("Single Chain Simple Rollback", () => {
         Rollback,
         UpdateChainMetaDataAndCheckForExit(NoExit),
         ProcessEventBatch,
+        PruneStaleEntityHistory,
       ],
       ~message="should detect rollback with reorg chain",
     )
-
-    //Substitute check all chains for given chain
-    replaceNexQueryCheckAllChainsWithGivenChain(chain)
 
     await dispatchAllTasksReorgChain()
 
@@ -308,8 +307,6 @@ describe("Single Chain Simple Rollback", () => {
       ~message="Rollback should have actioned, and now next queries and process event batch should action",
     )
 
-    //Substitute check all chains for given chain
-    replaceNexQueryCheckAllChainsWithGivenChain(chain)
     await dispatchAllTasksReorgChain()
 
     let block2 =
@@ -360,6 +357,7 @@ describe("Single Chain Simple Rollback", () => {
         NextQuery(Chain(chain)),
         UpdateChainMetaDataAndCheckForExit(NoExit),
         ProcessEventBatch,
+        PruneStaleEntityHistory,
       ],
       ~message="Query should have returned with batch to process",
     )
