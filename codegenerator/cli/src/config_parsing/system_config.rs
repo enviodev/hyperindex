@@ -16,6 +16,7 @@ use super::{
 use crate::{
     config_parsing::human_config::evm::{RpcBlockField, RpcTransactionField},
     constants::{links, project_paths::DEFAULT_SCHEMA_PATH},
+    evm::abi::AbiOrNestedAbi,
     fuel::abi::{FuelAbi, BURN_EVENT_NAME, CALL_EVENT_NAME, MINT_EVENT_NAME, TRANSFER_EVENT_NAME},
     project_paths::{path_utils, ParsedProjectPaths},
     rescript_types::RescriptTypeIdent,
@@ -25,7 +26,6 @@ use anyhow::{anyhow, Context, Result};
 use dotenvy::{EnvLoader, EnvMap, EnvSequence};
 use ethers::abi::{ethabi::Event as EthAbiEvent, EventExt, EventParam, HumanReadableParser};
 use itertools::Itertools;
-use serde::Deserialize;
 use std::{
     collections::{HashMap, HashSet},
     fs,
@@ -1045,13 +1045,6 @@ impl EvmAbi {
         match &abi_file_path {
             None => Ok(None),
             Some(abi_file_path) => {
-                #[derive(Deserialize)]
-                #[serde(untagged)]
-                enum AbiOrNestedAbi {
-                    Abi(ethers::abi::Abi),
-                    NestedAbi { abi: ethers::abi::Abi },
-                }
-
                 let relative_path_buf = PathBuf::from(abi_file_path);
                 let path =
                     path_utils::get_config_path_relative_to_root(project_paths, relative_path_buf)
@@ -1631,6 +1624,93 @@ mod test {
             SystemConfig::parse_from_project_files(&project_paths).expect("Failed parsing config");
 
         let contract_name = "Contract1".to_string();
+
+        let contract_abi = match &config
+            .get_contract(&contract_name)
+            .expect("Failed getting contract")
+            .abi
+        {
+            super::Abi::Evm(abi) => abi.typed.clone(),
+            super::Abi::Fuel(_) => panic!("Fuel abi should not be parsed"),
+        };
+
+        let expected_abi_string = r#"
+                [
+                {
+                    "anonymous": false,
+                    "inputs": [
+                    {
+                        "indexed": false,
+                        "name": "id",
+                        "type": "uint256"
+                    },
+                    {
+                        "indexed": false,
+                        "name": "owner",
+                        "type": "address"
+                    },
+                    {
+                        "indexed": false,
+                        "name": "displayName",
+                        "type": "string"
+                    },
+                    {
+                        "indexed": false,
+                        "name": "imageUrl",
+                        "type": "string"
+                    }
+                    ],
+                    "name": "NewGravatar",
+                    "type": "event"
+                },
+                {
+                    "anonymous": false,
+                    "inputs": [
+                    {
+                        "indexed": false,
+                        "name": "id",
+                        "type": "uint256"
+                    },
+                    {
+                        "indexed": false,
+                        "name": "owner",
+                        "type": "address"
+                    },
+                    {
+                        "indexed": false,
+                        "name": "displayName",
+                        "type": "string"
+                    },
+                    {
+                        "indexed": false,
+                        "name": "imageUrl",
+                        "type": "string"
+                    }
+                    ],
+                    "name": "UpdatedGravatar",
+                    "type": "event"
+                }
+                ]
+    "#;
+
+        let expected_abi: ethers::abi::Abi = serde_json::from_str(expected_abi_string).unwrap();
+
+        assert_eq!(expected_abi, contract_abi);
+    }
+
+    #[test]
+    fn test_get_nested_contract_abi() {
+        let test_dir = format!("{}/test", env!("CARGO_MANIFEST_DIR"));
+        let project_root = test_dir.as_str();
+        let config_dir = "configs/nested-abi.yaml";
+        let generated = "generated/";
+        let project_paths = ParsedProjectPaths::new(project_root, generated, config_dir)
+            .expect("Failed creating parsed_paths");
+
+        let config =
+            SystemConfig::parse_from_project_files(&project_paths).expect("Failed parsing config");
+
+        let contract_name = "Contract3".to_string();
 
         let contract_abi = match &config
             .get_contract(&contract_name)

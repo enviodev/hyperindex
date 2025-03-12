@@ -20,7 +20,7 @@ use crate::{
         },
         system_config::EvmAbi,
     },
-    evm::address::Address,
+    evm::{abi::AbiOrNestedAbi, address::Address},
     init_config::evm::{ContractImportSelection, InitFlow},
 };
 use anyhow::{Context, Result};
@@ -339,11 +339,14 @@ impl LocalImportArgs {
             env::current_dir().unwrap_or_default()
         ))?;
 
-        let abi: ethers::abi::Contract = serde_json::from_str(&abi_file).context(format!(
+        let abi = match serde_json::from_str::<AbiOrNestedAbi>(&abi_file).context(format!(
             "Failed to deserialize ABI at {:?} -  Please ensure the ABI file is formatted \
              correctly or contact the team.",
             abi_path
-        ))?;
+        ))? {
+            AbiOrNestedAbi::Abi(abi) => abi,
+            AbiOrNestedAbi::NestedAbi { abi } => abi,
+        };
 
         Ok(abi)
     }
@@ -478,4 +481,46 @@ pub async fn prompt_contract_import_init_flow(args: ContractImportArgs) -> Resul
             .await
             .context("Failed getting contract selection")?,
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+
+    #[test]
+    fn test_parse_contract_abi_direct() {
+        let test_dir = format!("{}/test", env!("CARGO_MANIFEST_DIR"));
+        let abi_path = Path::new(&test_dir).join("abis/Contract1.json");
+
+        let result = LocalImportArgs::parse_contract_abi(abi_path);
+        assert!(
+            result.is_ok(),
+            "Failed to parse direct ABI: {:?}",
+            result.err()
+        );
+
+        let abi = result.unwrap();
+        assert_eq!(abi.events.len(), 2);
+        assert!(abi.events.iter().any(|(name, _)| name == "NewGravatar"));
+        assert!(abi.events.iter().any(|(name, _)| name == "UpdatedGravatar"));
+    }
+
+    #[test]
+    fn test_parse_contract_abi_nested() {
+        let test_dir = format!("{}/test", env!("CARGO_MANIFEST_DIR"));
+        let abi_path = Path::new(&test_dir).join("abis/nested-abi.json");
+
+        let result = LocalImportArgs::parse_contract_abi(abi_path);
+        assert!(
+            result.is_ok(),
+            "Failed to parse nested ABI: {:?}",
+            result.err()
+        );
+
+        let abi = result.unwrap();
+        assert_eq!(abi.events.len(), 2);
+        assert!(abi.events.iter().any(|(name, _)| name == "NewGravatar"));
+        assert!(abi.events.iter().any(|(name, _)| name == "UpdatedGravatar"));
+    }
 }
