@@ -176,11 +176,11 @@ pub enum Network {
     #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     Harmony = 1666600000,
 
-    #[subenum(HypersyncNetwork)]
-    Hyperliquid = 645749,
-
     #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     Holesky = 17000,
+
+    #[subenum(HypersyncNetwork)]
+    Hyperliquid = 645749,
 
     IncoGentryTestnet = 9090,
 
