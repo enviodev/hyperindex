@@ -98,6 +98,9 @@ module ChainMetadata = {
     @as("chain_id") chainId: int,
     @as("block_height") blockHeight: int,
     @as("start_block") startBlock: int,
+    // The values below could use `Js.Null.t` instead of `Js.Nullable.t`
+    // It just needs to be confiremed that the postgres lib never returns
+    // undefined.
     @as("end_block") endBlock: Js.Nullable.t<int>,
     @as("first_event_block_number") firstEventBlockNumber: Js.Nullable.t<int>,
     @as("latest_processed_block") latestProcessedBlock: Js.Nullable.t<int>,
