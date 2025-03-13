@@ -152,10 +152,10 @@ let updateChainMetadataTable = async (cm: ChainManager.t, ~throttler: Throttler.
         startBlock: cf.chainConfig.startBlock,
         blockHeight: cf.currentBlockHeight,
         //optional fields
-        endBlock: cf.chainConfig.endBlock, //this is already optional
-        firstEventBlockNumber: cf->ChainFetcher.getFirstEventBlockNumber,
-        latestProcessedBlock: cf.latestProcessedBlock, // this is already optional
-        numEventsProcessed: Some(cf.numEventsProcessed),
+        endBlock: cf.chainConfig.endBlock->Js.Nullable.fromOption, //this is already optional
+        firstEventBlockNumber: cf->ChainFetcher.getFirstEventBlockNumber->Js.Nullable.fromOption,
+        latestProcessedBlock: cf.latestProcessedBlock->Js.Nullable.fromOption, // this is already optional
+        numEventsProcessed: Value(cf.numEventsProcessed),
         poweredByHyperSync: (cf.sourceManager->SourceManager.getActiveSource).poweredByHyperSync,
         numBatchesFetched: cf.numBatchesFetched,
         latestFetchedBlockNumber: latestFetchedBlock.blockNumber,

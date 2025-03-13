@@ -267,14 +267,14 @@ let makeFromDbState = async (
     }) => {
       // on restart, reset the events_processed gauge to the previous state
       switch numEventsProcessed {
-      | Some(numEventsProcessed) =>
+      | Value(numEventsProcessed) =>
         Prometheus.setEventsProcessedGuage(~number=numEventsProcessed, ~chainId)
-      | None => () // do nothing if no events have been processed yet for this chain
+      | Null | Undefined => () // do nothing if no events have been processed yet for this chain
       }
       (
-        firstEventBlockNumber,
-        latestProcessedBlock,
-        numEventsProcessed,
+        firstEventBlockNumber->Js.Nullable.toOption,
+        latestProcessedBlock->Js.Nullable.toOption,
+        numEventsProcessed->Js.Nullable.toOption,
         Env.updateSyncTimeOnRestart
           ? None
           : timestampCaughtUpToHeadOrEndblock->Js.Nullable.toOption,
