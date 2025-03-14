@@ -98,10 +98,13 @@ module ChainMetadata = {
     @as("chain_id") chainId: int,
     @as("block_height") blockHeight: int,
     @as("start_block") startBlock: int,
-    @as("end_block") endBlock: option<int>,
-    @as("first_event_block_number") firstEventBlockNumber: option<int>,
-    @as("latest_processed_block") latestProcessedBlock: option<int>,
-    @as("num_events_processed") numEventsProcessed: option<int>,
+    // The values below could use `Js.Null.t` instead of `Js.Nullable.t`
+    // It just needs to be confiremed that the postgres lib never returns
+    // undefined.
+    @as("end_block") endBlock: Js.Nullable.t<int>,
+    @as("first_event_block_number") firstEventBlockNumber: Js.Nullable.t<int>,
+    @as("latest_processed_block") latestProcessedBlock: Js.Nullable.t<int>,
+    @as("num_events_processed") numEventsProcessed: Js.Nullable.t<int>,
     @as("is_hyper_sync") poweredByHyperSync: bool,
     @as("num_batches_fetched") numBatchesFetched: int,
     @as("latest_fetched_block_number") latestFetchedBlockNumber: int,
