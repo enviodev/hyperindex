@@ -257,11 +257,15 @@ let popBatchItem = (
     switch maybeArbItem {
     //If there is item on the arbitray events queue, and it is earlier than
     //than the earlist event, take the item off from there
-    | Some({val: itemWithPopFn, isInReorgThreshold})
-      if Item(itemWithPopFn)->getQueueItemComparitor(~chain=itemWithPopFn.item.chain) <
-        earliestEvent->getQueueItemComparitor(~chain) => {
+    | Some({val: arbItem, isInReorgThreshold})
+      if arbItem.item.chain === chain
+        // This is for the case when FetchState has a NoItem
+        // if we use a multichain comparison, the arbItem will be ignored because of lower timestamp
+        // prevent it by a special case for events with the same chain
+        ? Item(arbItem)->FetchState.qItemLt(earliestEvent)
+        : arbItem.item->getComparitorFromItem < earliestEvent->getQueueItemComparitor(~chain) => {
         isInReorgThreshold,
-        val: Some(itemWithPopFn),
+        val: Some(arbItem),
       }
     | _ =>
       switch earliestEvent {
