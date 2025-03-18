@@ -14,7 +14,8 @@ let rec retryAsyncWithExponentialBackOff = async (
   | exn =>
     if retryCount < maxRetries {
       let nextRetryCount = retryCount + 1
-      logger->Logging.childWarn({
+      let log = retryCount === 0 ? Logging.childTrace : Logging.childWarn
+      logger->log({
         "msg": `Retrying query ${nextRetryCount->Belt.Int.toString}/${maxRetries->Belt.Int.toString} in ${backOffMillis->Belt.Int.toString}ms - waiting for correct result.`,
         "error": exn->ErrorHandling.prettifyExn,
       })
