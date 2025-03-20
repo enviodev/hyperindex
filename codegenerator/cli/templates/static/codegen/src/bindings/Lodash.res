@@ -1,2 +1,2 @@
-// TODO: Remove this file once we have our own implementation of cloneDeep
-@module external cloneDeep: 'a => 'a = "lodash/cloneDeep"
+// TODO: Remove this file once we have our own impl of cloneDeep or it is no longer needed
+@module("./vendored-lodash-fns.js") external cloneDeep: 'a => 'a = "cloneDeep"
