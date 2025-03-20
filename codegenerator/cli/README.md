@@ -1,6 +1,6 @@
 # HyperIndex: Ultra-Fast Multichain Indexer
 
-[![GitHub release](https://img.shields.io/github/release/enviodev/hyperindex.svg)](https://github.com/enviodev/hyperindex/releases) [![GitHub issues](https://img.shields.io/github/issues/enviodev/hyperindex.svg)](https://github.com/enviodev/hyperindex/issues) [![GitHub contributors](https://img.shields.io/github/contributors/enviodev/hyperindex.svg)](https://github.com/enviodev/hyperindex/graphs/contributors) [![GitHub stars](https://img.shields.io/github/stars/enviodev/hyperindex.svg)](https://github.com/enviodev/hyperindex/stargazers)
+[![GitHub release](https://img.shields.io/github/release/enviodev/hyperindex.svg)](https://github.com/enviodev/hyperindex/releases) [![GitHub issues](https://img.shields.io/github/issues/enviodev/hyperindex.svg)](https://github.com/enviodev/hyperindex/issues) [![GitHub contributors](https://img.shields.io/github/contributors/enviodev/hyperindex.svg)](https://github.com/enviodev/hyperindex/graphs/contributors) [![Discord](https://img.shields.io/badge/Discord-Join%20Chat-7289da?logo=discord&logoColor=white)](https://discord.gg/DhfFhzuJQh) [![GitHub stars](https://img.shields.io/github/stars/enviodev/hyperindex.svg)](https://github.com/enviodev/hyperindex/stargazers)
 
 HyperIndex is a fast, developer-friendly multichain indexer, optimized for both local development and reliable hosted deployment. It empowers developers to effortlessly build robust backends for blockchain applications.
 
