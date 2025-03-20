@@ -7,7 +7,7 @@ HyperIndex is a fast, developer-friendly multichain indexer, optimized for both 
 > For comprehensive documentation, visit our [Documentation Portal](https://docs.envio.dev).
 > For hosted services and other solutions, visit [envio.dev](https://envio.dev).
 
-![Envio Logo](./sync.gif)
+![Envio Sync Gif](./sync.gif)
 
 ## Key Features
 
