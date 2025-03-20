@@ -14,17 +14,17 @@ HyperIndex is a fast, developer-friendly multichain indexer, optimized for both 
 - **[Indexer auto-generation](https://docs.envio.dev/docs/HyperIndex/contract-import)** – Generate Indexers directly from smart contract addresses
 - **High performance** – Historical backfills at over 5,000+ events per second ([fastest in market](https://docs.envio.dev/blog/indexer-benchmarking-results))
 - **Local development** – Full-featured local environment with Docker
-- **Multichain indexing** – Index any EVM-compatible blockchain and Fuel (simultaneously)
+- **[Multichain indexing](https://docs.envio.dev/docs/HyperIndex/multichain-indexing)** – Index any EVM-compatible blockchain and Fuel (simultaneously)
 - **Real-time indexing** – Instantly track blockchain events
-- **Reorg support** – Graceful handling of blockchain reorganizations
+- **[Reorg support](https://docs.envio.dev/docs/HyperIndex/reorgs-support)** – Graceful handling of blockchain reorganizations
 - **GraphQL API** – Easy-to-query indexed data
 - **Flexible language support** – JavaScript, TypeScript, and ReScript
 - **Factory contract support** – Index data from 100,000+ factory contracts seamlessly
 - **On-chain & off-chain data integration** – Easily combine multiple data sources
-- **Self-hosted & managed options** – Run your own setup or use HyperIndex hosted services
+- **[Self-hosted & managed options](https://docs.envio.dev/docs/HyperIndex/hosted-service)** – Run your own setup or use HyperIndex hosted services
 - **Detailed logging & error reporting** – Debug and optimize with clarity
 - **External API actions** – Trigger external services based on blockchain events
-- **Wildcard topic indexing** – Flexible indexing based on event topics
+- **[Wildcard topic indexing](https://docs.envio.dev/docs/HyperIndex/wildcard-indexing)** – Flexible indexing based on event topics
 - **Fallback RPC data sources** – Enhanced reliability with RPC connections
 
 ## Getting Started
