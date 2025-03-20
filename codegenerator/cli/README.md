@@ -1,24 +1,30 @@
-# Envio
+# HyperIndex: Ultra-Fast Multichain Indexer
 
-Envio is a modern, multi-chain data indexing framework for efficiently querying real-time and historical data from any EVM blockchain and Fuel.
-
-Designed with a core focus on delivering superior performance and seamless developer experience, Envio optimizes the user experience.
-
-Build a real-time API for your blockchain application in minutes.
+HyperIndex is a fast, developer-friendly multichain indexer, optimized for both local development and reliable hosted deployment. It empowers developers to effortlessly build robust backends for blockchain applications.
 
 > 📖 For a thorough understanding and to dive deeper into each feature, refer to the original [documentation website](https://docs.envio.dev).
 
+![Sync GIF](./sync.gif)
+
 ## Key Features
 
-- Simple installation & Setup
-- Any EVM blockchain, as well as Fuel
-- The fastest historical sync
-- Real-time indexing with reorg handling
-- Multi-chain support
-- Write JavaScript, TypeScript, or ReScript with automatically generated types
-- Detailed logging & Error messaging
-- [Hosted Service](https://docs.envio.dev/docs/HyperIndex/hosted-service) to take care of your infrastructure
-- Seamlessly integrate new chains and enhance reliability with the RPC data source
+- **Quickstart templates** – Rapidly bootstrap your indexer.
+- **Real-time indexing** – Instantly track blockchain events.
+- **Multichain indexing** – Supports multiple blockchains simultaneously.
+- **Local development** – Full-featured local environment with Docker.
+- **Reorg support** – Gracefully handles blockchain reorganizations.
+- **GraphQL API** – Easy-to-query indexed data.
+- **Cross-platform support** – Index any EVM-compatible blockchain and Fuel.
+- **High performance** – Historical backfills at over 5,000+ events per second.
+- **Indexer auto-generation** – Generate indexers directly from smart contract addresses.
+- **Flexible language support** – JavaScript, TypeScript, and ReScript.
+- **Factory contract support** – Index data from 100,000+ factory contracts seamlessly.
+- **On-chain & off-chain data integration** – Easily combine multiple data sources.
+- **Self-hosted & managed options** – Run your own setup or use HyperIndex hosted services.
+- **Detailed logging & error reporting** – Debug and optimize with clarity.
+- **External API actions** – Trigger external services based on blockchain events.
+- **Wildcard topic indexing** – Flexible indexing based on event topics.
+- **Fallback RPC data sources** – Enhanced reliability with RPC connections.
 
 ## Getting Started
 
