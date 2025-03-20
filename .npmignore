@@ -1,0 +1,47 @@
+# Ignore GIF files to keep package size small
+*.gif
+sync.gif
+
+
+
+# # Development files
+# .git
+# .github
+# .vscode
+# .idea
+# .DS_Store
+
+# # Test and documentation
+# test/
+# tests/
+# __tests__/
+# docs/
+# *.test.js
+# *.spec.js
+# *.md
+# !README.md
+
+# # Build artifacts and source maps
+# *.map
+# coverage/
+# .nyc_output/
+
+# # Configuration files
+# .eslintrc*
+# .prettierrc*
+# .babelrc*
+# .editorconfig
+# tsconfig.json
+# jest.config.js
+
+# # Logs
+# logs/
+# *.log
+# npm-debug.log*
+
+# # Node modules (though typically not included in published packages anyway)
+# node_modules/
+
+# # Source files if you're publishing built assets
+# src/
+# examples/ 
