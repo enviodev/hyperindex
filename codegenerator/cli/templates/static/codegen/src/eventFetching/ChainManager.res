@@ -61,7 +61,7 @@ let isQueueItemEarlierUnorderedMultichain = (
   }
 }
 
-type noItemsInArray = NoItemsInArray
+type noActiveChains = NoActiveChains
 
 type isInReorgThresholdRes<'payload> = {
   isInReorgThreshold: bool,
@@ -99,7 +99,7 @@ let determineNextEvent = (
   fetchStatesMap: ChainMap.t<fetchStateWithData>,
   ~isUnorderedMultichainMode: bool,
   ~onlyBelowReorgThreshold: bool,
-): result<isInReorgThresholdRes<multiChainEventComparitor>, noItemsInArray> => {
+): result<isInReorgThresholdRes<multiChainEventComparitor>, noActiveChains> => {
   let comparitorFunction = if isUnorderedMultichainMode {
     if onlyBelowReorgThreshold {
       isQueueItemEarlierUnorderedBelowReorgThreshold(~fetchStatesMap)
@@ -141,7 +141,7 @@ let determineNextEvent = (
     })
 
   switch nextItem {
-  | {val: None} => Error(NoItemsInArray)
+  | {val: None} => Error(NoActiveChains)
   | {val: Some(item), isInReorgThreshold} => Ok({val: item, isInReorgThreshold})
   }
 }
@@ -257,17 +257,65 @@ let popBatchItem = (
     switch maybeArbItem {
     //If there is item on the arbitray events queue, and it is earlier than
     //than the earlist event, take the item off from there
-    | Some({val: itemWithPopFn, isInReorgThreshold})
-      if Item(itemWithPopFn)->getQueueItemComparitor(~chain=itemWithPopFn.item.chain) <
-        earliestEvent->getQueueItemComparitor(~chain) => {
+    | Some({val: arbVal, isInReorgThreshold})
+      if if arbVal.item.chain === chain {
+        // This is for the case when FetchState has a NoItem
+        // if we use a multichain comparison, the arbVal will be ignored because of lower timestamp
+        // prevent it by a special case for events with the same chain
+        // (qItemLt only compares blockNumber and logIndex a `NoItem`
+        // with the same blockNumber is prioritised so the case of valid events
+        // from a dynamic contract appearing in the same block before the registering
+        // event is still handled)
+        Item(arbVal)->FetchState.qItemLt(earliestEvent)
+      } else {
+        arbVal.item->getComparitorFromItem < earliestEvent->getQueueItemComparitor(~chain)
+      } => {
         isInReorgThreshold,
-        val: Some(itemWithPopFn),
+        val: Some(arbVal),
       }
     | _ =>
       switch earliestEvent {
-      | NoItem(_) => {
-          isInReorgThreshold,
-          val: None,
+      | NoItem(_) =>
+        // Case when we don't have items in fetch state for any chain
+        // but there's an arbitary event on one of the chains
+        // (`maybeArbItem` for `isUnorderedMultichainMode`
+        // only cares about items from the same chain)
+        if (
+          isUnorderedMultichainMode &&
+          // This check is needed to prevent comparing items for the second time
+          // Potentially, there might be a maybeArbItem for another chain earlier than the earliest event on fetch state
+          maybeArbItem->Option.isNone
+        ) {
+          // check if there is an earlier item on the arb events queue from a different chain
+          switch arbitraryEventQueue->getFirstArbitraryEventsItem(~fetchStatesMap) {
+          | Some({val: anotherChainArbVal, isInReorgThreshold})
+            if {
+              let anotherChain = anotherChainArbVal.item.chain
+              // This is unreachable because of the maybeArbItem->Option.isNone check above
+              // Keep it just in case the logic is changed
+              if anotherChain === chain {
+                false
+              } else {
+                let anotherChainEarliestEvent =
+                  (
+                    fetchStatesMap->ChainMap.get(anotherChain)
+                  ).fetchState->FetchState.getEarliestEvent
+                Item(anotherChainArbVal)->FetchState.qItemLt(anotherChainEarliestEvent)
+              }
+            } => {
+              isInReorgThreshold,
+              val: Some(anotherChainArbVal),
+            }
+          | _ => {
+              isInReorgThreshold,
+              val: None,
+            }
+          }
+        } else {
+          {
+            isInReorgThreshold,
+            val: None,
+          }
         }
       | Item(itemWithPopFn) => {
           isInReorgThreshold,
@@ -275,7 +323,7 @@ let popBatchItem = (
         }
       }
     }
-  | Error(NoItemsInArray) =>
+  | Error(NoActiveChains) =>
     arbitraryEventQueue
     ->getFirstArbitraryEventsItem(~fetchStatesMap)
     ->Option.mapWithDefault({val: None, isInReorgThreshold: false}, ({val, isInReorgThreshold}) => {
