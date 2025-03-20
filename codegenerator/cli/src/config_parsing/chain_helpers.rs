@@ -28,6 +28,9 @@ use crate::constants::DEFAULT_CONFIRMED_BLOCK_THRESHOLD;
 #[strum(serialize_all = "kebab-case")]
 #[repr(u64)]
 pub enum Network {
+    #[subenum(HypersyncNetwork)]
+    Abstract = 2741,
+
     #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     Amoy = 80002,
 
@@ -495,6 +498,7 @@ impl Network {
             | Network::Unichain
             | Network::Xdc
             | Network::XdcTestnet
+            | Network::Abstract
             | Network::Hyperliquid => DEFAULT_CONFIRMED_BLOCK_THRESHOLD,
         }
     }
@@ -548,8 +552,8 @@ impl HypersyncNetwork {
 
             Morph | Lukso | Sophon | PolygonZkevm | Fantom | Hyperliquid => Bronze,
 
-            Zora | Darwinia | Unichain | Berachain | Aurora | Zeta | Manta | Kroma | Crab
-            | Flare | Mantle | Metis | ShimmerEvm | Boba | Ink | Metall2 | SophonTestnet
+            Abstract | Zora | Darwinia | Unichain | Berachain | Aurora | Zeta | Manta | Kroma
+            | Crab | Flare | Mantle | Metis | ShimmerEvm | Boba | Ink | Metall2 | SophonTestnet
             | MorphTestnet | GaladrielDevnet | CitreaTestnet | BscTestnet | UnichainSepolia
             | Zircuit | Celo | Opbnb | GnosisChiado | LuksoTestnet | BlastSepolia | Holesky
             | BerachainBartio | OptimismSepolia | Fuji | ArbitrumSepolia | Fraxtal | Soneium
