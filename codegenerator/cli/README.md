@@ -1,39 +1,47 @@
 # HyperIndex: Ultra-Fast Multichain Indexer
 
+[![GitHub release](https://img.shields.io/github/release/enviodev/hyperindex.svg)](https://github.com/enviodev/hyperindex/releases) [![GitHub issues](https://img.shields.io/github/issues/enviodev/hyperindex.svg)](https://github.com/enviodev/hyperindex/issues) [![GitHub contributors](https://img.shields.io/github/contributors/enviodev/hyperindex.svg)](https://github.com/enviodev/hyperindex/graphs/contributors) [![GitHub stars](https://img.shields.io/github/stars/enviodev/hyperindex.svg)](https://github.com/enviodev/hyperindex/stargazers)
+
 HyperIndex is a fast, developer-friendly multichain indexer, optimized for both local development and reliable hosted deployment. It empowers developers to effortlessly build robust backends for blockchain applications.
 
-> 📖 For a thorough understanding and to dive deeper into each feature, refer to the original [documentation website](https://docs.envio.dev).
+> For comprehensive documentation, visit our [Documentation Portal](https://docs.envio.dev).
+> For hosted services and other solutions, visit [envio.dev](https://envio.dev).
 
-![Sync GIF](./sync.gif)
+![Envio Logo](./sync.gif)
 
 ## Key Features
 
-- **Quickstart templates** – Rapidly bootstrap your indexer.
-- **Real-time indexing** – Instantly track blockchain events.
-- **Multichain indexing** – Supports multiple blockchains simultaneously.
-- **Local development** – Full-featured local environment with Docker.
-- **Reorg support** – Gracefully handles blockchain reorganizations.
-- **GraphQL API** – Easy-to-query indexed data.
-- **Cross-platform support** – Index any EVM-compatible blockchain and Fuel.
-- **High performance** – Historical backfills at over 5,000+ events per second.
-- **Indexer auto-generation** – Generate indexers directly from smart contract addresses.
-- **Flexible language support** – JavaScript, TypeScript, and ReScript.
-- **Factory contract support** – Index data from 100,000+ factory contracts seamlessly.
-- **On-chain & off-chain data integration** – Easily combine multiple data sources.
-- **Self-hosted & managed options** – Run your own setup or use HyperIndex hosted services.
-- **Detailed logging & error reporting** – Debug and optimize with clarity.
-- **External API actions** – Trigger external services based on blockchain events.
-- **Wildcard topic indexing** – Flexible indexing based on event topics.
-- **Fallback RPC data sources** – Enhanced reliability with RPC connections.
+- **Quickstart templates** – Rapidly bootstrap your indexer
+- **Real-time indexing** – Instantly track blockchain events
+- **Multichain indexing** – Support for multiple blockchains simultaneously
+- **Local development** – Full-featured local environment with Docker
+- **Reorg support** – Graceful handling of blockchain reorganizations
+- **GraphQL API** – Easy-to-query indexed data
+- **Cross-platform support** – Index any EVM-compatible blockchain and Fuel
+- **High performance** – Historical backfills at over 5,000+ events per second
+- **Indexer auto-generation** – Generate indexers directly from smart contract addresses
+- **Flexible language support** – JavaScript, TypeScript, and ReScript
+- **Factory contract support** – Index data from 100,000+ factory contracts seamlessly
+- **On-chain & off-chain data integration** – Easily combine multiple data sources
+- **Self-hosted & managed options** – Run your own setup or use HyperIndex hosted services
+- **Detailed logging & error reporting** – Debug and optimize with clarity
+- **External API actions** – Trigger external services based on blockchain events
+- **Wildcard topic indexing** – Flexible indexing based on event topics
+- **Fallback RPC data sources** – Enhanced reliability with RPC connections
 
 ## Getting Started
 
-Check out our [Getting Started](https://docs.envio.dev/docs/HyperIndex/getting-started) documentation to start querying your smart contract data with just a few clicks!
+Check out our [Getting Started Guide](https://docs.envio.dev/docs/HyperIndex/getting-started) to start querying your smart contract data with just a few clicks!
+
+## Performance
+
+HyperIndex delivers industry-leading indexing speeds, with capability to process thousands of events per second while maintaining data integrity across multiple chains.
 
 ## Contribution & Support
 
-For support and updates, follow Envio on [Twitter](https://twitter.com/envio_indexer) or join the [Discord community](https://discord.gg/DhfFhzuJQh).
+- Follow us on [X](https://twitter.com/envio_indexer)
+- Join our [Discord community](https://discord.gg/DhfFhzuJQh)
+- Report issues on [GitHub](https://github.com/enviodev/hyperindex/issues/new/choose)
+- Check our [Common Issues](https://docs.envio.dev/docs/common-issues) page for troubleshooting
 
-Please create an [issue](https://github.com/enviodev/hyperindex/issues/new/choose) in our GitHub repository if you have specific suggestions or requirements. And a star is always appreciated 💫
-
-Our [common issues](https://docs.envio.dev/docs/common-issues) page may also help you.
+If you find HyperIndex useful, please consider giving us a ⭐ on this repo!
