@@ -89,20 +89,18 @@ let getEvmEventId = (~sighash, ~topicCount) => {
   sighash ++ "_" ++ topicCount->Belt.Int.toString
 }
 
-let fromEvmEventModsOrThrow = (eventMods: array<module(Types.Event)>, ~chain): t<
-  module(Types.InternalEvent),
+let fromEvmEventModsOrThrow = (events: array<Internal.evmEventConfig>, ~chain): t<
+  Internal.evmEventConfig,
 > => {
   let router = empty()
-  eventMods->Belt.Array.forEach(eventMod => {
-    let eventMod = eventMod->(Utils.magic: module(Types.Event) => module(Types.InternalEvent))
-    let module(Event) = eventMod
+  events->Belt.Array.forEach(config => {
     router->addOrThrow(
-      Event.id,
-      eventMod,
-      ~contractName=Event.contractName,
-      ~eventName=Event.name,
+      config.id,
+      config,
+      ~contractName=config.contractName,
+      ~eventName=config.name,
       ~chain,
-      ~isWildcard=(Event.handlerRegister->Types.HandlerTypes.Register.getEventOptions).isWildcard,
+      ~isWildcard=config.isWildcard,
     )
   })
   router

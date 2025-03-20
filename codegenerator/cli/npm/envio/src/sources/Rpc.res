@@ -71,7 +71,7 @@ module GetLogs = {
     topics->Belt.Array.map(toTopicFilter)
   }
 
-  let mapTopicQuery = ({topic0, topic1, topic2, topic3}: LogSelection.topicSelection): topicQuery =>
+  let mapTopicQuery = ({topic0, topic1, topic2, topic3}: Internal.topicSelection): topicQuery =>
     makeTopicQuery(~topic0, ~topic1, ~topic2, ~topic3)
 
   type param = {

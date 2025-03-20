@@ -48,7 +48,11 @@ type selectionConfig = {
   nonOptionalTransactionFieldNames: array<string>,
 }
 
-let getSelectionConfig = (selection: FetchState.selection, ~contracts: array<Config.contract>) => {
+let getSelectionConfig = (
+  selection: FetchState.selection,
+  ~contracts: array<Internal.evmContractConfig>,
+  ~chain,
+) => {
   let nonOptionalBlockFieldNames = Utils.Set.make()
   let nonOptionalTransactionFieldNames = Utils.Set.make()
   let capitalizedBlockFields = Utils.Set.make()
@@ -60,31 +64,34 @@ let getSelectionConfig = (selection: FetchState.selection, ~contracts: array<Con
   contracts->Array.forEach(contract => {
     let normalTopicSelections = []
 
-    contract.events->Array.forEach(event => {
-      let module(Event) = event
-      let {isWildcard, topicSelections} =
-        Event.handlerRegister->Types.HandlerTypes.Register.getEventOptions
-
+    contract.events->Array.forEach(({
+      isWildcard,
+      id,
+      getTopicSelectionsOrThrow,
+      blockSchema,
+      transactionSchema,
+    }) => {
       if (
         FetchState.checkIsInSelection(
           ~selection,
           ~contractName=contract.name,
-          ~eventId=Event.id,
+          ~eventId=id,
           ~isWildcard,
         )
       ) {
         nonOptionalBlockFieldNames->Utils.Set.addMany(
-          Event.blockSchema->Utils.Schema.getNonOptionalFieldNames,
+          blockSchema->Utils.Schema.getNonOptionalFieldNames,
         )
         nonOptionalTransactionFieldNames->Utils.Set.addMany(
-          Event.transactionSchema->Utils.Schema.getNonOptionalFieldNames,
+          transactionSchema->Utils.Schema.getNonOptionalFieldNames,
         )
         capitalizedBlockFields->Utils.Set.addMany(
-          Event.blockSchema->Utils.Schema.getCapitalizedFieldNames,
+          blockSchema->Utils.Schema.getCapitalizedFieldNames,
         )
         capitalizedTransactionFields->Utils.Set.addMany(
-          Event.transactionSchema->Utils.Schema.getCapitalizedFieldNames,
+          transactionSchema->Utils.Schema.getCapitalizedFieldNames,
         )
+        let topicSelections = getTopicSelectionsOrThrow(~chain)
         if isWildcard {
           wildcardTopicSelections->Js.Array2.pushMany(topicSelections)->ignore
         } else {
@@ -143,13 +150,13 @@ let getSelectionConfig = (selection: FetchState.selection, ~contracts: array<Con
   }
 }
 
-let memoGetSelectionConfig = (~contracts) => {
+let memoGetSelectionConfig = (~contracts, ~chain) => {
   let cache = Utils.WeakMap.make()
   selection =>
     switch cache->Utils.WeakMap.get(selection) {
     | Some(c) => c
     | None => {
-        let c = selection->getSelectionConfig(~contracts)
+        let c = selection->getSelectionConfig(~contracts, ~chain)
         let _ = cache->Utils.WeakMap.set(selection, c)
         c
       }
@@ -157,12 +164,12 @@ let memoGetSelectionConfig = (~contracts) => {
 }
 
 type options = {
-  contracts: array<Config.contract>,
+  contracts: array<Internal.evmContractConfig>,
   chain: ChainMap.Chain.t,
   endpointUrl: string,
   allEventSignatures: array<string>,
   shouldUseHypersyncClientDecoder: bool,
-  eventRouter: EventRouter.t<module(Types.InternalEvent)>,
+  eventRouter: EventRouter.t<Internal.evmEventConfig>,
 }
 
 let make = (
@@ -177,7 +184,7 @@ let make = (
 ): t => {
   let name = "HyperSync"
 
-  let getSelectionConfig = memoGetSelectionConfig(~contracts)
+  let getSelectionConfig = memoGetSelectionConfig(~contracts, ~chain)
 
   let client = HyperSyncClient.make(
     ~url=endpointUrl,
@@ -208,19 +215,13 @@ let make = (
   let makeEventBatchQueueItem = (
     item: HyperSync.logsQueryPageItem,
     ~params: Internal.eventParams,
-    ~eventMod: module(Types.InternalEvent),
+    ~eventConfig: Internal.evmEventConfig,
   ): Internal.eventItem => {
-    let module(Event) = eventMod
     let {block, log, transaction} = item
     let chainId = chain->ChainMap.Chain.toChainId
 
     {
-      eventName: Event.name,
-      contractName: Event.contractName,
-      loader: Event.handlerRegister->Types.HandlerTypes.Register.getLoader,
-      handler: Event.handlerRegister->Types.HandlerTypes.Register.getHandler,
-      contractRegister: Event.handlerRegister->Types.HandlerTypes.Register.getContractRegister,
-      paramsRawEventSchema: Event.paramsRawEventSchema,
+      eventConfig: (eventConfig :> Internal.baseEventConfig),
       timestamp: block->Types.Block.getTimestamp,
       chain,
       blockNumber: block->Types.Block.getNumber,
@@ -255,9 +256,7 @@ let make = (
 
     let selectionConfig = selection->getSelectionConfig
 
-    let logSelections = try selectionConfig.getLogSelectionOrThrow(
-      ~contractAddressMapping,
-    ) catch {
+    let logSelections = try selectionConfig.getLogSelectionOrThrow(~contractAddressMapping) catch {
     | exn =>
       exn->ErrorHandling.mkLogAndRaise(~logger, ~msg="Failed getting log selection for the query")
     }
@@ -355,20 +354,18 @@ let make = (
     let parsedQueueItems = []
 
     let handleDecodeFailure = (
-      ~eventMod: module(Types.InternalEvent),
+      ~eventConfig: Internal.evmEventConfig,
       ~decoder,
       ~logIndex,
       ~blockNumber,
       ~chainId,
       ~exn,
     ) => {
-      let module(Event) = eventMod
-      let {isWildcard} = Event.handlerRegister->Types.HandlerTypes.Register.getEventOptions
-      if !isWildcard {
+      if !eventConfig.isWildcard {
         //Wildcard events can be parsed as undefined if the number of topics
         //don't match the event with the given topic0
         //Non wildcard events should be expected to be parsed
-        let msg = `Event ${Event.name} was unexpectedly parsed as undefined`
+        let msg = `Event ${eventConfig.name} was unexpectedly parsed as undefined`
         let logger = Logging.createChildFrom(
           ~logger,
           ~params={
@@ -398,7 +395,7 @@ let make = (
         let {block, log} = item
         let chainId = chain->ChainMap.Chain.toChainId
         let topic0 = log.topics->Js.Array2.unsafe_get(0)
-        let maybeEventMod =
+        let maybeEventConfig =
           eventRouter->EventRouter.get(
             ~tag=EventRouter.getEvmEventId(
               ~sighash=topic0->EvmTypes.Hex.toString,
@@ -409,21 +406,20 @@ let make = (
           )
         let maybeDecodedEvent = parsedEvents->Js.Array2.unsafe_get(index)
 
-        switch (maybeEventMod, maybeDecodedEvent) {
-        | (Some(eventMod), Value(decoded)) =>
-          let module(Event) = eventMod
+        switch (maybeEventConfig, maybeDecodedEvent) {
+        | (Some(eventConfig), Value(decoded)) =>
           parsedQueueItems
           ->Js.Array2.push(
             makeEventBatchQueueItem(
               item,
-              ~params=decoded->Event.convertHyperSyncEventArgs,
-              ~eventMod,
+              ~params=decoded->eventConfig.convertHyperSyncEventArgs,
+              ~eventConfig,
             ),
           )
           ->ignore
-        | (Some(eventMod), Null | Undefined) =>
+        | (Some(eventConfig), Null | Undefined) =>
           handleDecodeFailure(
-            ~eventMod,
+            ~eventConfig,
             ~decoder="hypersync-client",
             ~logIndex=log.logIndex,
             ~blockNumber=block->Types.Block.getNumber,
@@ -448,17 +444,15 @@ let make = (
           ~contractAddressMapping,
           ~contractAddress=log.address,
         ) {
-        | Some(eventMod) =>
-          let module(Event) = eventMod
-
+        | Some(eventConfig) =>
           switch contractNameAbiMapping->Viem.parseLogOrThrow(
-            ~contractName=Event.contractName,
+            ~contractName=eventConfig.contractName,
             ~topics=log.topics,
             ~data=log.data,
           ) {
           | exception exn =>
             handleDecodeFailure(
-              ~eventMod,
+              ~eventConfig,
               ~decoder="viem",
               ~logIndex=log.logIndex,
               ~blockNumber=block->Types.Block.getNumber,
@@ -467,7 +461,7 @@ let make = (
             )
           | decodedEvent =>
             parsedQueueItems
-            ->Js.Array2.push(makeEventBatchQueueItem(item, ~params=decodedEvent.args, ~eventMod))
+            ->Js.Array2.push(makeEventBatchQueueItem(item, ~params=decodedEvent.args, ~eventConfig))
             ->ignore
           }
         | None => () //Ignore events that aren't registered
@@ -475,8 +469,7 @@ let make = (
       })
     }
 
-    let parsingTimeElapsed =
-      parsingTimeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
+    let parsingTimeElapsed = parsingTimeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
 
     let lastBlockScannedData = await lastBlockQueriedPromise
 

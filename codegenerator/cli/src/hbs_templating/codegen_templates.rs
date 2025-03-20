@@ -340,10 +340,10 @@ pub struct EventMod {
     pub topic_count: usize,
     pub event_name: String,
     pub data_type: String,
+    pub get_topic_selections_code: String,
     pub params_raw_event_schema: String,
     pub convert_hyper_sync_event_args_code: String,
     pub event_filter_type: String,
-    pub get_topic_selection_code: String,
     pub custom_field_selection: Option<system_config::FieldSelection>,
     pub fuel_event_kind: Option<FuelEventKind>,
 }
@@ -363,7 +363,12 @@ impl EventMod {
         let params_raw_event_schema = &self.params_raw_event_schema;
         let convert_hyper_sync_event_args_code = &self.convert_hyper_sync_event_args_code;
         let event_filter_type = &self.event_filter_type;
-        let get_topic_selection_code = &self.get_topic_selection_code;
+        let get_topic_selections_code = &self.get_topic_selections_code;
+
+        let event_filters_type_code = match self.event_filter_type.as_str() {
+            "{}" => "type eventFilters = Internal.noEventFilters".to_string(),
+            _ => "@unboxed type eventFilters = Single(eventFilter) | Multiple(array<eventFilter>) | Dynamic(() => array<eventFilter>)".to_string(),
+        };
 
         let fuel_event_kind_code = match self.fuel_event_kind {
             None => None,
@@ -413,19 +418,36 @@ impl EventMod {
                 ),
             };
 
-        let non_event_mod_code = match fuel_event_kind_code {
-            None => "".to_string(),
-            Some(fuel_event_kind_code) => format!(
-                r#"
-let register = (): Internal.fuelEventConfig => {{
+        let base_event_config_code = format!(
+            r#"
+  id,
   name,
   contractName,
-  kind: {fuel_event_kind_code},
   isWildcard: (handlerRegister->HandlerTypes.Register.getEventOptions).isWildcard,
+  preRegisterDynamicContracts: (handlerRegister->HandlerTypes.Register.getEventOptions).preRegisterDynamicContracts,
   loader: handlerRegister->HandlerTypes.Register.getLoader,
   handler: handlerRegister->HandlerTypes.Register.getHandler,
   contractRegister: handlerRegister->HandlerTypes.Register.getContractRegister,
   paramsRawEventSchema: paramsRawEventSchema->(Utils.magic: S.t<eventArgs> => S.t<Internal.eventParams>),
+"#
+        );
+
+        let non_event_mod_code = match fuel_event_kind_code {
+            None => format!(
+                r#"
+let register = (): Internal.evmEventConfig => {{
+  getTopicSelectionsOrThrow: {get_topic_selections_code},
+  blockSchema: blockSchema->(Utils.magic: S.t<block> => S.t<Internal.eventBlock>),
+  transactionSchema: transactionSchema->(Utils.magic: S.t<transaction> => S.t<Internal.eventTransaction>),
+  convertHyperSyncEventArgs: {convert_hyper_sync_event_args_code},
+  {base_event_config_code}
+}}"#
+            ),
+            Some(fuel_event_kind_code) => format!(
+                r#"
+let register = (): Internal.fuelEventConfig => {{
+  kind: {fuel_event_kind_code},
+  {base_event_config_code}
 }}"#
             ),
         };
@@ -457,10 +479,7 @@ let paramsRawEventSchema = {params_raw_event_schema}
 let blockSchema = {block_schema}
 let transactionSchema = {transaction_schema}
 
-let convertHyperSyncEventArgs = {convert_hyper_sync_event_args_code}
-
 let handlerRegister: HandlerTypes.Register.t = HandlerTypes.Register.make(
-  ~topic0=sighash->EvmTypes.Hex.fromStringUnsafe,
   ~contractName,
   ~eventName=name,
 )
@@ -468,7 +487,8 @@ let handlerRegister: HandlerTypes.Register.t = HandlerTypes.Register.make(
 @genType
 type eventFilter = {event_filter_type}
 
-let getTopicSelection = {get_topic_selection_code}
+@genType
+{event_filters_type_code}
 {non_event_mod_code}"#
         )
     }
@@ -482,12 +502,9 @@ pub struct EventTemplate {
 }
 
 impl EventTemplate {
-    const GET_TOPIC_SELECTION_CODE_STUB: &'static str =
-        "_ => [LogSelection.makeTopicSelection(~topic0=[sighash->EvmTypes.Hex.\
-         fromStringUnsafe])->Utils.unwrapResultExn]";
-
     const EVENT_FILTER_TYPE_STUB: &'static str = "{}";
-    const CONVERT_HYPER_SYNC_EVENT_ARGS_NOOP: &'static str = "_ => ()";
+    const CONVERT_HYPER_SYNC_EVENT_ARGS_NOOP: &'static str =
+        "_ => ()->(Utils.magic: eventArgs => Internal.eventParams)";
     const CONVERT_HYPER_SYNC_EVENT_ARGS_NEVER: &'static str =
         "_ => Js.Exn.raiseError(\"Not implemented\")";
 
@@ -506,10 +523,10 @@ impl EventTemplate {
             .collect::<Vec<_>>()
             .join(", ");
 
-        format!("{{ {field_rows} }}")
+        format!("{{{field_rows}}}")
     }
 
-    pub fn generate_get_topic_selection_code(params: &[EventParam]) -> String {
+    pub fn generate_get_topic_selections_code(params: &[EventParam]) -> String {
         let indexed_params = params.iter().filter(|param| param.indexed);
 
         //Prefixed with underscore for cases where it is not used to avoid compiler warnings
@@ -529,19 +546,16 @@ impl EventTemplate {
                     };
                     let _ = write!(
                         output,
-                        "~topic{topic_number}=?{event_filter_arg}.{param_name}->Belt.Option.\
-                         map(topicFilters => \
-                         topicFilters->SingleOrMultiple.normalizeOrThrow{nested_type_flags}->Belt.\
-                         Array.map({topic_encoder})), "
+                        ", ~topic{topic_number}=({event_filter_arg}) => {event_filter_arg}->Utils.Dict.dangerouslyGetNonOption(\"{param_name}\")->Belt.Option.\
+                         mapWithDefault([], topicFilters => \
+                         topicFilters->Obj.magic->SingleOrMultiple.normalizeOrThrow{nested_type_flags}->Belt.\
+                         Array.map({topic_encoder}))"
                     );
                     output
                 });
 
         format!(
-            "(eventFilters) => \
-             eventFilters->SingleOrMultiple.normalizeOrThrow->Belt.Array.map({event_filter_arg} \
-             => LogSelection.makeTopicSelection(~topic0=[sighash->EvmTypes.Hex.fromStringUnsafe], \
-             {topic_filter_calls})->Utils.unwrapResultExn)"
+            "(~chain) => LogSelection.fromEventFiltersOrThrow(~chain, ~eventFilters=(handlerRegister->HandlerTypes.Register.getEventOptions).eventFilters, ~sighash{topic_filter_calls})"
         )
     }
 
@@ -559,15 +573,13 @@ impl EventTemplate {
             .filter(|param| !param.indexed)
             .collect::<Vec<_>>();
 
-        let mut code = String::from(
-            "(decodedEvent: HyperSyncClient.Decoder.decodedEvent): eventArgs => {\n      {\n",
-        );
+        let mut code = String::from("(decodedEvent: HyperSyncClient.Decoder.decodedEvent) => {");
 
         for (index, param) in indexed_params.into_iter().enumerate() {
             code.push_str(&format!(
-                "        {}: \
+                "{}: \
                  decodedEvent.indexed->Js.Array2.unsafe_get({})->HyperSyncClient.Decoder.\
-                 toUnderlying->Utils.magic,\n",
+                 toUnderlying->Utils.magic, ",
                 RescriptRecordField::to_valid_res_name(&param.name),
                 index
             ));
@@ -575,15 +587,15 @@ impl EventTemplate {
 
         for (index, param) in body_params.into_iter().enumerate() {
             code.push_str(&format!(
-                "        {}: \
+                "{}: \
                  decodedEvent.body->Js.Array2.unsafe_get({})->HyperSyncClient.Decoder.\
-                 toUnderlying->Utils.magic,\n",
+                 toUnderlying->Utils.magic, ",
                 RescriptRecordField::to_valid_res_name(&param.name),
                 index
             ));
         }
 
-        code.push_str("      }\n    }");
+        code.push_str("}->(Utils.magic: eventArgs => Internal.eventParams)");
 
         code
     }
@@ -597,12 +609,12 @@ impl EventTemplate {
             sighash: config_event.sighash.to_string(),
             topic_count: 0, //Default to 0 for fuel,
             event_name: event_name.clone(),
+            get_topic_selections_code: "".to_string(),
             data_type: "Internal.fuelSupplyParams".to_string(),
             params_raw_event_schema: "Internal.fuelSupplyParamsSchema".to_string(),
             convert_hyper_sync_event_args_code: Self::CONVERT_HYPER_SYNC_EVENT_ARGS_NEVER
                 .to_string(),
             event_filter_type: Self::EVENT_FILTER_TYPE_STUB.to_string(),
-            get_topic_selection_code: Self::GET_TOPIC_SELECTION_CODE_STUB.to_string(),
             custom_field_selection: config_event.field_selection.clone(),
             fuel_event_kind: Some(fuel_event_kind),
         };
@@ -622,12 +634,12 @@ impl EventTemplate {
             sighash: config_event.sighash.to_string(),
             topic_count: 0, //Default to 0 for fuel,
             event_name: event_name.clone(),
+            get_topic_selections_code: "".to_string(),
             data_type: "Internal.fuelTransferParams".to_string(),
             params_raw_event_schema: "Internal.fuelTransferParamsSchema".to_string(),
             convert_hyper_sync_event_args_code: Self::CONVERT_HYPER_SYNC_EVENT_ARGS_NEVER
                 .to_string(),
             event_filter_type: Self::EVENT_FILTER_TYPE_STUB.to_string(),
-            get_topic_selection_code: Self::GET_TOPIC_SELECTION_CODE_STUB.to_string(),
             custom_field_selection: config_event.field_selection.clone(),
             fuel_event_kind: Some(fuel_event_kind),
         };
@@ -681,12 +693,12 @@ impl EventTemplate {
                         .fold(1, |acc, param| if param.indexed { acc + 1 } else { acc }),
                     event_name: event_name.clone(),
                     data_type: data_type_expr.to_string(),
+                    get_topic_selections_code: Self::generate_get_topic_selections_code(params),
                     params_raw_event_schema: data_type_expr
                         .to_rescript_schema(&"eventArgs".to_string(), &RescriptSchemaMode::ForDb),
                     convert_hyper_sync_event_args_code:
                         Self::generate_convert_hyper_sync_event_args_code(params),
                     event_filter_type: Self::generate_event_filter_type(params),
-                    get_topic_selection_code: Self::generate_get_topic_selection_code(params),
                     custom_field_selection: config_event.field_selection.clone(),
                     fuel_event_kind: None,
                 };
@@ -705,6 +717,7 @@ impl EventTemplate {
                             sighash: config_event.sighash.to_string(),
                             topic_count: 0, //Default to 0 for fuel,
                             event_name: event_name.clone(),
+                            get_topic_selections_code: "".to_string(),
                             data_type: type_indent.to_string(),
                             params_raw_event_schema: format!(
                                 "{}->Utils.Schema.coerceToJsonPgType",
@@ -713,8 +726,6 @@ impl EventTemplate {
                             convert_hyper_sync_event_args_code:
                                 Self::CONVERT_HYPER_SYNC_EVENT_ARGS_NEVER.to_string(),
                             event_filter_type: Self::EVENT_FILTER_TYPE_STUB.to_string(),
-                            get_topic_selection_code: Self::GET_TOPIC_SELECTION_CODE_STUB
-                                .to_string(),
                             custom_field_selection: config_event.field_selection.clone(),
                             fuel_event_kind: Some(fuel_event_kind),
                         };
@@ -895,42 +906,46 @@ impl NetworkConfigTemplate {
             .collect::<Result<_>>()
             .context("Failed mapping network contracts")?;
 
-        let (sources_code, deprecated_sync_source_code) = match &network.sync_source {
-            system_config::DataSource::Fuel {
-                hypersync_endpoint_url,
-            } => {
-                let contracts_code: String = codegen_contracts
+        let contracts_code: String = codegen_contracts
+            .iter()
+            .map(|contract| {
+                let events_code: String = contract
+                    .events
                     .iter()
-                    .map(|contract| {
-                        let events_code: String = contract
-                            .events
-                            .iter()
-                            .map(|event| {
-                                format!(
-                                    "Types.{}.{}.register()",
-                                    contract.name.capitalized, event.name
-                                )
-                            })
-                            .collect::<Vec<String>>()
-                            .join(", ");
-
+                    .map(|event| {
                         format!(
-                            "{{name: \"{}\",events: [{}]}}",
-                            contract.name.capitalized, events_code
+                            "Types.{}.{}.register()",
+                            contract.name.capitalized, event.name
                         )
                     })
                     .collect::<Vec<String>>()
                     .join(", ");
 
-                (
-                    format!(
-                        "[HyperFuelSource.make({{chain: chain, endpointUrl: \
-                         \"{hypersync_endpoint_url}\", contracts: [{}]}})]",
-                        contracts_code
-                    ),
-                    format!("HyperFuel({{endpointUrl: \"{hypersync_endpoint_url}\"}})"),
+                let ecosystem_fields = match &network.sync_source {
+                    system_config::DataSource::Evm { .. } => {
+                        format!(",abi: Types.{}.abi", contract.name.capitalized)
+                    }
+                    system_config::DataSource::Fuel { .. } => "".to_string(),
+                };
+
+                format!(
+                    "{{name: \"{}\",events: [{}]{ecosystem_fields}}}",
+                    contract.name.capitalized, events_code
                 )
-            }
+            })
+            .collect::<Vec<String>>()
+            .join(", ");
+
+        let (sources_code, deprecated_sync_source_code) = match &network.sync_source {
+            system_config::DataSource::Fuel {
+                hypersync_endpoint_url,
+            } => (
+                format!(
+                    "[HyperFuelSource.make({{chain: chain, endpointUrl: \
+                         \"{hypersync_endpoint_url}\", contracts: [{contracts_code}]}})]",
+                ),
+                format!("HyperFuel({{endpointUrl: \"{hypersync_endpoint_url}\"}})"),
+            ),
             system_config::DataSource::Evm {
                 main,
                 is_client_decoder,
@@ -1034,7 +1049,7 @@ impl NetworkConfigTemplate {
 
                 (
                     format!(
-                        "NetworkSources.evm(~chain, ~contracts, ~hyperSync={hyper_sync_code}, \
+                        "NetworkSources.evm(~chain, ~contracts=[{contracts_code}], ~hyperSync={hyper_sync_code}, \
                          ~allEventSignatures=[{all_event_signatures}]->Belt.Array.concatMany, \
                          ~shouldUseHypersyncClientDecoder={is_client_decoder}, ~rpcs=[{rpcs}])"
                     ),
@@ -1629,7 +1644,6 @@ let convertHyperSyncEventArgs = (decodedEvent: HyperSyncClient.Decoder.decodedEv
     }}
 
 let handlerRegister: HandlerTypes.Register.t = HandlerTypes.Register.make(
-  ~topic0=sighash->EvmTypes.Hex.fromStringUnsafe,
   ~contractName,
   ~eventName=name,
 )
@@ -1688,7 +1702,6 @@ let transactionSchema = Transaction.schema
 let convertHyperSyncEventArgs = _ => ()
 
 let handlerRegister: HandlerTypes.Register.t = HandlerTypes.Register.make(
-  ~topic0=sighash->EvmTypes.Hex.fromStringUnsafe,
   ~contractName,
   ~eventName=name,
 )
@@ -1753,7 +1766,6 @@ let transactionSchema = S.object((s): transaction => {from: s.field("from", S.op
 let convertHyperSyncEventArgs = _ => ()
 
 let handlerRegister: HandlerTypes.Register.t = HandlerTypes.Register.make(
-  ~topic0=sighash->EvmTypes.Hex.fromStringUnsafe,
   ~contractName,
   ~eventName=name,
 )
