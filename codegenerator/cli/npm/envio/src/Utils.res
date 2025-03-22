@@ -267,8 +267,6 @@ let unwrapResultExn = res =>
 external queueMicrotask: (unit => unit) => unit = "queueMicrotask"
 
 module Schema = {
-  let enum = S.enum
-
   let getNonOptionalFieldNames = schema => {
     let acc = []
     switch schema->S.classify {

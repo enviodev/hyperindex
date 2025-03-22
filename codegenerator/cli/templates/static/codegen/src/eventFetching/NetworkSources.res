@@ -8,7 +8,7 @@ type rpc = {
 
 let evm = (
   ~chain,
-  ~contracts: array<Config.contract>,
+  ~contracts: array<Internal.evmContractConfig>,
   ~hyperSync,
   ~allEventSignatures,
   ~shouldUseHypersyncClientDecoder,

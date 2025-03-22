@@ -3,6 +3,8 @@
 /* eslint-disable */
 /* tslint:disable */
 
+import type {invalid as $$noEventFilters} from './bindings/OpaqueTypes.ts';
+
 import type {t as Address_t} from './Address.gen';
 
 export type genericEvent<params,block,transaction> = {
@@ -45,3 +47,5 @@ export type fuelTransferParams = {
   readonly assetId: string; 
   readonly amount: bigint
 };
+
+export type noEventFilters = $$noEventFilters;

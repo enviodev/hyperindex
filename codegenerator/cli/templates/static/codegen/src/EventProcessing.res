@@ -137,8 +137,8 @@ let runEventContractRegister = (
       chainId,
       registeringEventBlockNumber: blockNumber,
       registeringEventLogIndex: logIndex,
-      registeringEventName: eventItem.eventName,
-      registeringEventContractName: eventItem.contractName,
+      registeringEventName: eventItem.eventConfig.name,
+      registeringEventContractName: eventItem.eventConfig.contractName,
       registeringEventSrcAddress: eventItem.event.srcAddress,
       registeringEventBlockTimestamp: timestamp,
       contractAddress,
@@ -235,8 +235,8 @@ let runEventLoader = async (~contextEnv, ~loader: Internal.loader, ~inMemoryStor
 
 let convertFieldsToJson = (fields: option<dict<unknown>>) => {
   switch fields {
-    | None => %raw(`{}`)
-    | Some(fields) => {
+  | None => %raw(`{}`)
+  | Some(fields) => {
       let keys = fields->Js.Dict.keys
       let new = Js.Dict.empty()
       for i in 0 to keys->Js.Array2.length - 1 {
@@ -255,15 +255,7 @@ let convertFieldsToJson = (fields: option<dict<unknown>>) => {
 }
 
 let addEventToRawEvents = (eventItem: Internal.eventItem, ~inMemoryStore: InMemoryStore.t) => {
-  let {
-    event,
-    eventName,
-    contractName,
-    chain,
-    blockNumber,
-    paramsRawEventSchema,
-    timestamp: blockTimestamp,
-  } = eventItem
+  let {event, eventConfig, chain, blockNumber, timestamp: blockTimestamp} = eventItem
   let {block, transaction, params, logIndex, srcAddress} = event
   let chainId = chain->ChainMap.Chain.toChainId
   let eventId = EventUtils.packEventIndex(~logIndex, ~blockNumber)
@@ -281,7 +273,7 @@ let addEventToRawEvents = (eventItem: Internal.eventItem, ~inMemoryStore: InMemo
   // Serialize to unknown, because serializing to Js.Json.t fails for Bytes Fuel type, since it has unknown schema
   let params =
     params
-    ->S.reverseConvertOrThrow(paramsRawEventSchema)
+    ->S.reverseConvertOrThrow(eventConfig.paramsRawEventSchema)
     ->(Utils.magic: unknown => Js.Json.t)
   let params = if params === %raw(`null`) {
     // Should probably make the params field nullable
@@ -295,8 +287,8 @@ let addEventToRawEvents = (eventItem: Internal.eventItem, ~inMemoryStore: InMemo
   let rawEvent: TablesStatic.RawEvents.t = {
     chainId,
     eventId,
-    eventName,
-    contractName,
+    eventName: eventConfig.name,
+    contractName: eventConfig.contractName,
     blockNumber,
     logIndex,
     srcAddress,
@@ -356,7 +348,7 @@ let runEventHandler = (
 
         Benchmark.addSummaryData(
           ~group="Handlers Per Event",
-          ~label=`${eventItem.contractName} ${eventItem.eventName} Handler (ms)`,
+          ~label=`${eventItem.eventConfig.contractName} ${eventItem.eventConfig.name} Handler (ms)`,
           ~value=timeEnd,
           ~decimalPlaces=4,
         )
@@ -375,11 +367,11 @@ let runHandler = async (
   ~config: Config.t,
   ~isInReorgThreshold,
 ) => {
-  let result = switch eventItem.handler {
+  let result = switch eventItem.eventConfig.handler {
   | None => Ok()
   | Some(handler) =>
     await eventItem->runEventHandler(
-      ~loader=eventItem.loader,
+      ~loader=eventItem.eventConfig.loader,
       ~handler,
       ~inMemoryStore,
       ~logger,
@@ -434,7 +426,7 @@ let rec registerDynamicContracts = (
       )
       ->Ok
     } else {
-      switch eventItem {
+      switch eventItem.eventConfig {
       | {contractRegister: Some(handler)} =>
         handler->runEventContractRegister(
           ~logger,
@@ -485,7 +477,7 @@ let runLoaders = (eventBatch: array<Internal.eventItem>, ~loadLayer, ~inMemorySt
     let _: array<Internal.loaderReturn> =
       await eventBatch
       ->Array.keepMap(eventItem => {
-        switch eventItem {
+        switch eventItem.eventConfig {
         | {loader: Some(loader)} => {
             let contextEnv = ContextEnv.make(~eventItem, ~logger)
             runEventLoader(~contextEnv, ~loader, ~inMemoryStore, ~loadLayer)

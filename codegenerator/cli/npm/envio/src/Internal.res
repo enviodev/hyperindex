@@ -64,22 +64,16 @@ type genericHandlerWithLoader<'loader, 'handler, 'eventFilters> = {
   preRegisterDynamicContracts?: bool,
 }
 
-type eventItem = {
-  eventName: string,
+type baseEventConfig = {
+  id: string,
+  name: string,
   contractName: string,
+  isWildcard: bool,
+  preRegisterDynamicContracts: bool,
   loader: option<loader>,
   handler: option<handler>,
   contractRegister: option<contractRegister>,
-  timestamp: int,
-  chain: ChainMap.Chain.t,
-  blockNumber: int,
-  logIndex: int,
-  event: event,
   paramsRawEventSchema: S.schema<eventParams>,
-  //Default to false, if an event needs to
-  //be reprocessed after it has loaded dynamic contracts
-  //This gets set to true and does not try and reload events
-  hasRegisteredDynamicContracts?: bool,
 }
 
 type fuelEventKind =
@@ -89,18 +83,45 @@ type fuelEventKind =
   | Transfer
   | Call
 type fuelEventConfig = {
-  name: string,
-  contractName: string,
+  ...baseEventConfig,
   kind: fuelEventKind,
-  isWildcard: bool,
-  loader: option<loader>,
-  handler: option<handler>,
-  contractRegister: option<contractRegister>,
-  paramsRawEventSchema: S.schema<eventParams>,
 }
 type fuelContractConfig = {
   name: string,
   events: array<fuelEventConfig>,
+}
+
+type topicSelection = {
+  topic0: array<EvmTypes.Hex.t>,
+  topic1: array<EvmTypes.Hex.t>,
+  topic2: array<EvmTypes.Hex.t>,
+  topic3: array<EvmTypes.Hex.t>,
+}
+
+type evmEventConfig = {
+  ...baseEventConfig,
+  getTopicSelectionsOrThrow: (~chain: ChainMap.Chain.t) => array<topicSelection>,
+  blockSchema: S.schema<eventBlock>,
+  transactionSchema: S.schema<eventTransaction>,
+  convertHyperSyncEventArgs: HyperSyncClient.Decoder.decodedEvent => eventParams,
+}
+type evmContractConfig = {
+  name: string,
+  abi: Ethers.abi,
+  events: array<evmEventConfig>,
+}
+
+type eventItem = {
+  eventConfig: baseEventConfig,
+  timestamp: int,
+  chain: ChainMap.Chain.t,
+  blockNumber: int,
+  logIndex: int,
+  event: event,
+  //Default to false, if an event needs to
+  //be reprocessed after it has loaded dynamic contracts
+  //This gets set to true and does not try and reload events
+  hasRegisteredDynamicContracts?: bool,
 }
 
 @genType
@@ -125,3 +146,8 @@ let fuelTransferParamsSchema = S.schema(s => {
 })
 
 type entity = private {id: string}
+
+@genType.import(("./bindings/OpaqueTypes.ts", "invalid"))
+type noEventFilters
+type eventFilters
+type eventFiltersArgs = {chainId: int}

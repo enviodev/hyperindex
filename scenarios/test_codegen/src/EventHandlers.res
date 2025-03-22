@@ -10,7 +10,7 @@ Handlers.Gravatar.NewGravatar.handler(async ({event, context}) => {
   }
 
   context.gravatar.set(gravatarObject)
-})
+}, ~eventConfig={})
 
 Handlers.Gravatar.UpdatedGravatar.handlerWithLoader({
   loader: ({event, context}) => {
