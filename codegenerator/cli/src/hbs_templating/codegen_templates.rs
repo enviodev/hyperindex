@@ -367,7 +367,7 @@ impl EventMod {
 
         let event_filters_type_code = match self.event_filter_type.as_str() {
             "{}" => "type eventFilters = Internal.noEventFilters".to_string(),
-            _ => "@unboxed type eventFilters = Single(eventFilter) | Multiple(array<eventFilter>) | Dynamic(() => array<eventFilter>)".to_string(),
+            _ => "@unboxed type eventFilters = Single(eventFilter) | Multiple(array<eventFilter>) | Dynamic(Internal.eventFiltersArgs => array<eventFilter>)".to_string(),
         };
 
         let fuel_event_kind_code = match self.fuel_event_kind {

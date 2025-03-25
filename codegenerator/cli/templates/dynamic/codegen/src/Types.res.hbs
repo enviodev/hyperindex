@@ -255,9 +255,6 @@ module HandlerTypes = {
     let setLoaderHandler: (
       t,
       Internal.genericHandlerWithLoader<'loader, 'handler, 'eventFilters>,
-      ~getEventOptions: Internal.genericHandlerWithLoader<'loader, 'handler, 'eventFilters> => option<
-        EventOptions.t,
-      >,
       ~logger: Pino.t=?,
     ) => unit
     let setContractRegister: (
@@ -273,6 +270,8 @@ module HandlerTypes = {
     let getEventOptions: t => EventOptions.t
     let hasRegistration: t => bool
   } = {
+    open Belt
+
     type handlerWithLoader = Internal.genericHandlerWithLoader<Internal.loader, Internal.handler, Internal.eventFilters>
 
     type t = {
@@ -340,7 +339,6 @@ module HandlerTypes = {
     let setLoaderHandler = (
       t: t,
       value,
-      ~getEventOptions,
       ~logger=Logging.logger,
     ) => {
       switch t.loaderHandler {
@@ -357,9 +355,17 @@ module HandlerTypes = {
         )
       }
 
-      switch getEventOptions(value) {
-      | Some(eventOptions) => t->setEventOptions(eventOptions, ~logger)
-      | None => ()
+      switch value {
+        | {wildcard: ?None, eventFilters: ?None, preRegisterDynamicContracts: ?None} => ()
+        | {?wildcard, ?eventFilters, ?preRegisterDynamicContracts} =>
+        t->setEventOptions(
+          EventOptions.make(
+            ~isWildcard=wildcard->Option.getWithDefault(false),
+            ~eventFilters,
+            ~preRegisterDynamicContracts=preRegisterDynamicContracts->Option.getWithDefault(false),
+          ),
+          ~logger
+        )
       }
     }
 
@@ -387,41 +393,31 @@ module HandlerTypes = {
 }
 
 module type Event = {
-  let id: string // The unique identifier for the event
-  let sighash: string // topic0 for Evm and rb for Fuel receipts
-  let name: string
-  let contractName: string
-
   type eventArgs
   type block
   type transaction
 
   type event = Internal.genericEvent<eventArgs, block, transaction>
-  type loader<'loaderReturn> = Internal.genericLoader<Internal.genericLoaderArgs<event, loaderContext>, 'loaderReturn>
-  type handler<'loaderReturn> = Internal.genericHandler<Internal.genericHandlerArgs<event, handlerContext, 'loaderReturn>>
-  type contractRegister = Internal.genericContractRegister<Internal.genericContractRegisterArgs<event, contractRegistrations>>
-
-  let paramsRawEventSchema: S.schema<eventArgs>
-  let blockSchema: S.schema<block>
-  let transactionSchema: S.schema<transaction>
+  type loader<'loaderReturn> = Internal.genericLoader<
+    Internal.genericLoaderArgs<event, loaderContext>,
+    'loaderReturn,
+  >
+  type handler<'loaderReturn> = Internal.genericHandler<
+    Internal.genericHandlerArgs<event, handlerContext, 'loaderReturn>,
+  >
+  type contractRegister = Internal.genericContractRegister<
+    Internal.genericContractRegisterArgs<event, contractRegistrations>,
+  >
 
   let handlerRegister: HandlerTypes.Register.t
 
   type eventFilters
 }
-module type InternalEvent = Event
-  with type eventArgs = Internal.eventParams
-  and type transaction = Internal.eventTransaction
-  and type block = Internal.eventBlock
-external eventModToInternal: module(Event with type eventArgs = 'a) => module(InternalEvent) = "%identity"
-external eventModWithoutArgTypeToInternal: module(Event) => module(InternalEvent) = "%identity"
 
 let makeEventOptions = (
   type eventFilters,
   eventConfig: option<HandlerTypes.eventConfig<eventFilters>>,
-  eventMod: module(Event),
 ) => {
-  let module(Event) = eventMod
   open Belt
   eventConfig->Option.map(({?wildcard, ?eventFilters, ?preRegisterDynamicContracts}) =>
     HandlerTypes.EventOptions.make(
@@ -430,24 +426,6 @@ let makeEventOptions = (
       ~preRegisterDynamicContracts=preRegisterDynamicContracts->Option.getWithDefault(false),
     )
   )
-}
-
-let makeGetEventOptions = (
-  type eventArgs,
-  eventMod: module(Event with type eventArgs = eventArgs),
-) => {
-  open Belt
-  let module(Event) = eventMod
-  (loaderHandler: Internal.genericHandlerWithLoader<'loader, 'handler, 'eventFilters>) =>
-  switch loaderHandler {
-    | {wildcard: ?None, eventFilters: ?None, preRegisterDynamicContracts: ?None} => None
-    | {?wildcard, ?eventFilters, ?preRegisterDynamicContracts} =>
-    HandlerTypes.EventOptions.make(
-      ~isWildcard=wildcard->Option.getWithDefault(false),
-      ~eventFilters,
-      ~preRegisterDynamicContracts=preRegisterDynamicContracts->Option.getWithDefault(false),
-    )->Some
-  }
 }
 
 @genType.import(("./bindings/OpaqueTypes.ts", "HandlerWithOptions"))
@@ -483,7 +461,6 @@ module MakeRegister = (Event: Event) => {
           c.preRegisterDynamicContracts
         ),
       },
-      ~getEventOptions=makeGetEventOptions(module(Event)),
     )
   }
 
@@ -496,7 +473,7 @@ module MakeRegister = (Event: Event) => {
   ) =>
     Event.handlerRegister->HandlerTypes.Register.setContractRegister(
       contractRegister,
-      ~eventOptions=makeEventOptions(eventConfig, module(Event)),
+      ~eventOptions=makeEventOptions(eventConfig),
     )
 
   let handlerWithLoader = (args: Internal.genericHandlerWithLoader<
@@ -506,7 +483,6 @@ module MakeRegister = (Event: Event) => {
   >) =>
     Event.handlerRegister->HandlerTypes.Register.setLoaderHandler(
       args,
-      ~getEventOptions=makeGetEventOptions(module(Event)),
     )
 }
 

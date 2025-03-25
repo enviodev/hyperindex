@@ -58,13 +58,8 @@ let mockEvent = (~blockNumber, ~logIndex=0, ~chainId=1): Internal.eventItem => {
   timestamp: blockNumber * 15,
   chain: ChainMap.Chain.makeUnsafe(~chainId),
   blockNumber,
+  eventConfig: Utils.magic("Mock eventConfig in fetchstate test"),
   logIndex,
-  eventName: "MockEvent",
-  contractName: "MockContract",
-  handler: None,
-  loader: None,
-  contractRegister: None,
-  paramsRawEventSchema: Utils.magic("Mock event paramsRawEventSchema in fetchstate test"),
   event: Utils.magic("Mock event in fetchstate test"),
 }
 

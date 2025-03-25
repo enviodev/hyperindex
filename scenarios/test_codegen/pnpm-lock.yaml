@@ -32,6 +32,9 @@ importers:
       typescript:
         specifier: ^5.0.4
         version: 5.5.4
+      viem:
+        specifier: 2.21.0
+        version: 2.21.0(typescript@5.5.4)
     optionalDependencies:
       generated:
         specifier: ./generated

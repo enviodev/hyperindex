@@ -262,10 +262,9 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
   })
 })
 
-module MockEvent = HyperSyncSource_test.MockEvent
+let chain = HyperSyncSource_test.chain
+let mockEventConfig = HyperSyncSource_test.mockEventConfig
 describe("RpcSource - getSelectionConfig", () => {
-  let withConfig = HyperSyncSource_test.withConfig
-  let withOverride = HyperSyncSource_test.withOverride
   let eventId = HyperSyncSource_test.eventId
 
   it("Selection config for the most basic case with no wildcards", () => {
@@ -279,20 +278,13 @@ describe("RpcSource - getSelectionConfig", () => {
         },
       ],
     }->RpcSource.getSelectionConfig(
+      ~chain,
       ~contracts=[
         {
           name: "Foo",
           abi: %raw(`[]`),
-          addresses: [],
           events: [
-            module(
-              MockEvent({
-                type transaction = {}
-                type block = {}
-                let blockSchema = S.object((_): block => {})
-                let transactionSchema = S.object((_): transaction => {})
-              })
-            ),
+            mockEventConfig(~blockSchema=S.object(_ => ()), ~transactionSchema=S.object(_ => ())),
           ],
         },
       ],
@@ -323,20 +315,17 @@ describe("RpcSource - getSelectionConfig", () => {
           },
         ],
       }->RpcSource.getSelectionConfig(
+        ~chain,
         ~contracts=[
           {
             name: "Foo",
             abi: %raw(`[]`),
-            addresses: [],
             events: [
-              module(
-                MockEvent({
-                  type transaction = {}
-                  type block = {}
-                  let blockSchema = S.object((_): block => {})
-                  let transactionSchema = S.object((_): transaction => {})
-                })
-              )->withConfig({wildcard: true}),
+              mockEventConfig(
+                ~isWildcard=true,
+                ~blockSchema=S.object(_ => ()),
+                ~transactionSchema=S.object(_ => ()),
+              ),
             ],
           },
         ],
@@ -355,87 +344,73 @@ describe("RpcSource - getSelectionConfig", () => {
   Async.it(
     "Doesn't include events not specified in the selection to the selection config",
     async () => {
-      let contracts: array<Config.contract> = [
+      let contracts: array<Internal.evmContractConfig> = [
         {
           name: "Foo",
           abi: %raw(`[]`),
-          addresses: [],
           events: [
-            module(
-              MockEvent({
-                type transaction = {}
-                type block = {}
-                let blockSchema = S.object(
-                  (s): block => {
-                    let _ = s.field("hash", S.string)
-                    let _ = s.field("number", S.int)
-                    let _ = s.field("timestamp", S.int)
-                    {}
+            mockEventConfig(
+              ~blockSchema=S.schema(
+                s =>
+                  {
+                    "hash": s.matches(S.string),
+                    "number": s.matches(S.int),
+                    "timestamp": s.matches(S.int),
                   },
-                )
-                let transactionSchema = S.object(
-                  (s): transaction => {
-                    let _ = s.field("hash", S.string)
-                    {}
+              ),
+              ~transactionSchema=S.schema(
+                s =>
+                  {
+                    "hash": s.matches(S.string),
                   },
-                )
-              })
+              ),
             ),
           ],
         },
         {
           name: "Bar",
           abi: %raw(`[]`),
-          addresses: [],
           events: [
-            module(
-              MockEvent({
-                type transaction = {}
-                type block = {}
-                let blockSchema = S.object(
-                  (s): block => {
-                    let _ = s.field("nonce", S.null(BigInt.schema))
-                    {}
+            mockEventConfig(
+              ~id="Should be the only topic0",
+              ~isWildcard=true,
+              ~blockSchema=S.schema(
+                s =>
+                  {
+                    "nonce": s.matches(S.null(BigInt.schema)),
                   },
-                )
-                let transactionSchema = S.object(
-                  (s): transaction => {
-                    let _ = s.field("gasPrice", S.null(S.string))
-                    {}
+              ),
+              ~transactionSchema=S.schema(
+                s =>
+                  {
+                    "gasPrice": s.matches(S.null(S.string)),
                   },
-                )
-              })
-            )
-            ->withOverride(~sighash="Should be the only topic0")
-            ->withConfig({wildcard: true}),
+              ),
+            ),
           ],
         },
         {
           name: "Baz",
           abi: %raw(`[]`),
-          addresses: [],
           events: [
-            module(
-              MockEvent({
-                type transaction = {}
-                type block = {}
-                let blockSchema = S.object(
-                  (s): block => {
-                    let _ = s.field("uncles", S.null(BigInt.schema))
-                    {}
-                  },
-                )
-                let transactionSchema = S.object(
-                  (s): transaction => {
-                    let _ = s.field("gasPrice", S.null(S.string))
-                    {}
-                  },
-                )
-              })
+            mockEventConfig(
               // Eventhough this is a second wildcard event
               // it shouldn't be included in the field selection,
               // since it's not specified in the FetchState.selection
-            )->withConfig({wildcard: true}),
+              ~isWildcard=true,
+              ~blockSchema=S.schema(
+                s =>
+                  {
+                    "uncles": s.matches(S.null(BigInt.schema)),
+                  },
+              ),
+              ~transactionSchema=S.schema(
+                s =>
+                  {
+                    "gasPrice": s.matches(S.null(S.string)),
+                  },
+              ),
+            ),
           ],
         },
       ]
@@ -449,7 +424,7 @@ describe("RpcSource - getSelectionConfig", () => {
             isWildcard: true,
           },
         ],
-      }->RpcSource.getSelectionConfig(~contracts)
+      }->RpcSource.getSelectionConfig(~chain, ~contracts)
 
       Assert.deepEqual(
         selectionConfig,

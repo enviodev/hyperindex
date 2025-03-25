@@ -179,10 +179,8 @@ describe("EventRouter", () => {
   )
 
   it("fromEvmEventModsOrThrow works", () => {
-    let router = EventRouter.fromEvmEventModsOrThrow(
-      [module(Types.Gravatar.NewGravatar)],
-      ~chain=mockChain,
-    )
+    let item = Types.Gravatar.NewGravatar.register()
+    let router = EventRouter.fromEvmEventModsOrThrow([item], ~chain=mockChain)
 
     Assert.deepEqual(
       router,
@@ -191,10 +189,8 @@ describe("EventRouter", () => {
           "0x9ab3aefb2ba6dc12910ac1bce4692cf5c3c0d06cff16327c64a3ef78228b130b_1",
           {
             wildcard: None,
-            all: [module(Types.Gravatar.NewGravatar)->Types.eventModToInternal],
-            byContractName: Js.Dict.fromArray([
-              ("Gravatar", module(Types.Gravatar.NewGravatar)->Types.eventModToInternal),
-            ]),
+            all: [item],
+            byContractName: Js.Dict.fromArray([("Gravatar", item)]),
           },
         ),
       ]),

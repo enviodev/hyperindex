@@ -8,15 +8,22 @@ let getLocalChainConfig = (nftFactoryContractAddress): chainConfig => {
       Config.name: "NftFactory",
       abi: Types.NftFactory.abi,
       addresses: [nftFactoryContractAddress],
-      events: [module(Types.NftFactory.SimpleNftCreated)],
+      events: [(Types.NftFactory.SimpleNftCreated.register() :> Internal.baseEventConfig)],
     },
     {
       name: "SimpleNft",
       abi: Types.SimpleNft.abi,
       addresses: [],
-      events: [module(Types.SimpleNft.Transfer)],
+      events: [(Types.SimpleNft.Transfer.register() :> Internal.baseEventConfig)],
     },
   ]
+  let evmContracts = contracts->Js.Array2.map((contract): Internal.evmContractConfig => {
+    name: contract.name,
+    abi: contract.abi,
+    events: contract.events->(
+      Utils.magic: array<Internal.baseEventConfig> => array<Internal.evmEventConfig>
+    ),
+  })
   let chain = MockConfig.chain1337
   {
     confirmedBlockThreshold: 200,
@@ -28,7 +35,7 @@ let getLocalChainConfig = (nftFactoryContractAddress): chainConfig => {
       RpcSource.make({
         chain,
         sourceFor: Sync,
-        contracts,
+        contracts: evmContracts,
         syncConfig: {
           initialBlockInterval: 10000,
           backoffMultiplicative: 10000.,
@@ -39,7 +46,7 @@ let getLocalChainConfig = (nftFactoryContractAddress): chainConfig => {
           fallbackStallTimeout: 1000,
         },
         url: "http://127.0.0.1:8545",
-        eventRouter: contracts
+        eventRouter: evmContracts
         ->Belt.Array.flatMap(contract => contract.events)
         ->EventRouter.fromEvmEventModsOrThrow(~chain),
       }),
