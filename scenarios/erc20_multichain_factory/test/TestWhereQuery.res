@@ -57,21 +57,17 @@ module Mock = {
 
     open ChainDataHelpers.ERC20
     open ChainDataHelpers.ERC20Factory
-    let mkTransferEventConstr = Transfer.mkEventConstrWithParamsAndAddress(
-      ~srcAddress=ChainDataHelpers.ERC20.getDefaultAddress(chain),
-      ~params=_,
-      ...
-    )
-    let mkDeletUserEventConstr = DeleteUser.mkEventConstrWithParamsAndAddress(
-      ~srcAddress=factoryAddress,
-      ~params=_,
-      ...
-    )
 
     let b0 = []
-    let b1 = [mint50ToUser1->mkTransferEventConstr, transfer10User1ToUser2->mkTransferEventConstr]
+    let b1 = [
+      mint50ToUser1->Transfer.mkEventConstr(~chain),
+      transfer10User1ToUser2->mkTransferEventConstr,
+    ]
     let b2 = []
-    let b3 = [deleteUser1->mkDeletUserEventConstr, transfer10User1ToUser2->mkTransferEventConstr]
+    let b3 = [
+      deleteUser1->DeleteUser.mkEventConstr(~chain),
+      transfer10User1ToUser2->mkTransferEventConstr,
+    ]
 
     let blocks = [b0, b1, b2, b3]
 

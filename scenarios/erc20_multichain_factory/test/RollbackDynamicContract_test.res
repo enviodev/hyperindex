@@ -62,16 +62,20 @@ ensure that this doesn't trigger a reorg
 
     open ChainDataHelpers.ERC20
     open ChainDataHelpers.ERC20Factory
-    let mkTransferEventConstr = Transfer.mkEventConstrWithParamsAndAddress(
-      ~srcAddress=mockDyamicToken1,
-      ~params=_,
-      ...
-    )
-    let mkTokenCreatedEventConstr = TokenCreated.mkEventConstrWithParamsAndAddress(
-      ~srcAddress=factoryAddress,
-      ~params=_,
-      ...
-    )
+    let mkTransferEventConstr = params =>
+      Transfer.mkEventConstrWithParamsAndAddress(
+        ~srcAddress=mockDyamicToken1,
+        ~params=params->(Utils.magic: Types.ERC20.Transfer.eventArgs => Internal.eventParams),
+        ...
+      )
+    let mkTokenCreatedEventConstr = params =>
+      TokenCreated.mkEventConstrWithParamsAndAddress(
+        ~srcAddress=factoryAddress,
+        ~params=params->(
+          Utils.magic: Types.ERC20Factory.TokenCreated.eventArgs => Internal.eventParams
+        ),
+        ...
+      )
 
     let b0 = []
     let b1 = []

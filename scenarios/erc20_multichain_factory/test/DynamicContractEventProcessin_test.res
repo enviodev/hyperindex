@@ -17,13 +17,13 @@ module Mock = {
   let mintAddress = Ethers.Constants.zeroAddress
   let userAddress1 = Ethers.Addresses.mockAddresses[1]->Option.getExn
 
-  let mockDyamicToken1 = Ethers.Addresses.mockAddresses[3]->Option.getExn
-  let mockDyamicToken2 = Ethers.Addresses.mockAddresses[4]->Option.getExn
-  let mockDyamicToken3 = Ethers.Addresses.mockAddresses[5]->Option.getExn
+  let mockDynamicToken1 = Ethers.Addresses.mockAddresses[3]->Option.getExn
+  let mockDynamicToken2 = Ethers.Addresses.mockAddresses[4]->Option.getExn
+  let mockDynamicToken3 = Ethers.Addresses.mockAddresses[5]->Option.getExn
 
-  let deployToken1 = makeTokenCreatedMock(~token=mockDyamicToken1)
-  let deployToken2 = makeTokenCreatedMock(~token=mockDyamicToken2)
-  let deployToken3 = makeTokenCreatedMock(~token=mockDyamicToken3)
+  let deployToken1 = makeTokenCreatedMock(~token=mockDynamicToken1)
+  let deployToken2 = makeTokenCreatedMock(~token=mockDynamicToken2)
+  let deployToken3 = makeTokenCreatedMock(~token=mockDynamicToken3)
 
   let mint50ToUser1 = makeTransferMock(~from=mintAddress, ~to=userAddress1, ~value=50)
 
@@ -43,21 +43,26 @@ module Mock = {
 
   open ChainDataHelpers.ERC20
   open ChainDataHelpers.ERC20Factory
-  let mkTransferToken1EventConstr = Transfer.mkEventConstrWithParamsAndAddress(
-    ~srcAddress=mockDyamicToken1,
-    ~params=_,
-    ...
-  )
-  let mkTransferToken2EventConstr = Transfer.mkEventConstrWithParamsAndAddress(
-    ~srcAddress=mockDyamicToken2,
-    ~params=_,
-    ...
-  )
-  let mkTokenCreatedEventConstr = TokenCreated.mkEventConstrWithParamsAndAddress(
-    ~srcAddress=factoryAddress,
-    ~params=_,
-    ...
-  )
+  let mkTransferToken1EventConstr = params =>
+    Transfer.mkEventConstrWithParamsAndAddress(
+      ~srcAddress=mockDynamicToken1,
+      ~params=params->(Utils.magic: Types.ERC20.Transfer.eventArgs => Internal.eventParams),
+      ...
+    )
+  let mkTransferToken2EventConstr = params =>
+    Transfer.mkEventConstrWithParamsAndAddress(
+      ~srcAddress=mockDynamicToken2,
+      ~params=params->(Utils.magic: Types.ERC20.Transfer.eventArgs => Internal.eventParams),
+      ...
+    )
+  let mkTokenCreatedEventConstr = params =>
+    TokenCreated.mkEventConstrWithParamsAndAddress(
+      ~srcAddress=factoryAddress,
+      ~params=params->(
+        Utils.magic: Types.ERC20Factory.TokenCreated.eventArgs => Internal.eventParams
+      ),
+      ...
+    )
 
   let b0 = [deployToken1->mkTokenCreatedEventConstr, mint50ToUser1->mkTransferToken1EventConstr]
   let b1 = [deployToken2->mkTokenCreatedEventConstr, deployToken3->mkTokenCreatedEventConstr]
@@ -116,7 +121,7 @@ describe("dynamic contract event processing test", () => {
       ~latestProcessedBlocks=EventProcessing.EventsProcessed.makeEmpty(~config),
       //As if dynamic token 3 is already registered
       ~checkContractIsRegistered=(~chain as _, ~contractAddress, ~contractName as _) =>
-        contractAddress == Mock.mockDyamicToken3,
+        contractAddress == Mock.mockDynamicToken3,
     )
     switch res {
     | Ok({dynamicContractRegistrations: Some({dynamicContractsByChain, unprocessedBatch})}) =>
@@ -146,7 +151,7 @@ describe("dynamic contract event processing test", () => {
       ~latestProcessedBlocks=EventProcessing.EventsProcessed.makeEmpty(~config),
       //As if dynamic token 3 is already registered
       ~checkContractIsRegistered=(~chain as _, ~contractAddress, ~contractName as _) =>
-        contractAddress == Mock.mockDyamicToken3,
+        contractAddress == Mock.mockDynamicToken3,
     )
     switch res {
     | Ok({dynamicContractRegistrations: Some({dynamicContractsByChain, unprocessedBatch})}) =>

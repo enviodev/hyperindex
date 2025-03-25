@@ -43,21 +43,26 @@ module Mock = {
 
     open ChainDataHelpers.ERC20
     open ChainDataHelpers.ERC20Factory
-    let mkTransferToken1EventConstr = Transfer.mkEventConstrWithParamsAndAddress(
-      ~srcAddress=mockDynamicToken1,
-      ~params=_,
-      ...
-    )
-    let mkTransferToken2EventConstr = Transfer.mkEventConstrWithParamsAndAddress(
-      ~srcAddress=mockDynamicToken2,
-      ~params=_,
-      ...
-    )
-    let mkTokenCreatedEventConstr = TokenCreated.mkEventConstrWithParamsAndAddress(
-      ~srcAddress=factoryAddress,
-      ~params=_,
-      ...
-    )
+    let mkTransferToken1EventConstr = params =>
+      Transfer.mkEventConstrWithParamsAndAddress(
+        ~srcAddress=mockDynamicToken1,
+        ~params=params->(Utils.magic: Types.ERC20.Transfer.eventArgs => Internal.eventParams),
+        ...
+      )
+    let mkTransferToken2EventConstr = params =>
+      Transfer.mkEventConstrWithParamsAndAddress(
+        ~srcAddress=mockDynamicToken2,
+        ~params=params->(Utils.magic: Types.ERC20.Transfer.eventArgs => Internal.eventParams),
+        ...
+      )
+    let mkTokenCreatedEventConstr = params =>
+      TokenCreated.mkEventConstrWithParamsAndAddress(
+        ~srcAddress=factoryAddress,
+        ~params=params->(
+          Utils.magic: Types.ERC20Factory.TokenCreated.eventArgs => Internal.eventParams
+        ),
+        ...
+      )
 
     let b0 = [deployToken1->mkTokenCreatedEventConstr]
     let b1 = [mint50ToUser1->mkTransferToken1EventConstr, deployToken2->mkTokenCreatedEventConstr]
@@ -140,19 +145,6 @@ describe("Dynamic contract restart resistance test", () => {
     chainFetcher->getChainFetcherDcs
   }
 
-  //Test the preRegistration restart function getting all the dynamic contracts
-  let setRegisterPreRegistration: (
-    Types.HandlerTypes.Register.t,
-    bool,
-  ) => unit => unit = %raw(`(register, bool)=> {
-    const eventOptions = register.eventOptions;
-    if (!eventOptions) {
-      register.eventOptions = {};
-    }
-    register.eventOptions.preRegisterDynamicContracts=bool;
-    return () => register.eventOptions = eventOptions;
-  }`)
-
   Async.it(
     "Indexer should restart with only the dynamic contracts up to the block that was processed",
     async () => {
@@ -164,6 +156,31 @@ describe("Dynamic contract restart resistance test", () => {
         isInReorgThreshold: true,
       }
       let chainConfig = config.chainMap->ChainMap.get(ChainMap.Chain.makeUnsafe(~chainId=1))
+      let chainConfigWithPreRegistration = {
+        ...chainConfig,
+        contracts: chainConfig.contracts->Array.map(
+          c => {
+            if c.name == Types.ERC20Factory.contractName {
+              {
+                ...c,
+                events: c.events->Array.map(
+                  e =>
+                    if e.id === Types.ERC20Factory.TokenCreated.id {
+                      {
+                        ...e,
+                        preRegisterDynamicContracts: true,
+                      }
+                    } else {
+                      e
+                    },
+                ),
+              }
+            } else {
+              c
+            }
+          },
+        ),
+      }
       let loadLayer = LoadLayer.makeWithDbConnection()
 
       //Setup initial state stub that will be used for both
@@ -267,11 +284,8 @@ describe("Dynamic contract restart resistance test", () => {
         sql => [
           (
             async () => {
-              let resetEventOptionsToOriginal =
-                Types.ERC20Factory.TokenCreated.handlerRegister->setRegisterPreRegistration(true)
-
               let restartedChainFetcher = await ChainFetcher.makeFromDbState(
-                chainConfig,
+                chainConfigWithPreRegistration,
                 ~maxAddrInPartition=Env.maxAddrInPartition,
                 ~enableRawEvents=false,
                 ~sql,
@@ -308,8 +322,6 @@ describe("Dynamic contract restart resistance test", () => {
             Note: Without it there's a case when the indexer might crash because of a conflict`,
               )
 
-              resetEventOptionsToOriginal()
-
               raise(RollbackTransaction)
             }
           )(),
@@ -323,16 +335,13 @@ describe("Dynamic contract restart resistance test", () => {
         sql => [
           (
             async () => {
-              let resetEventOptionsToOriginal =
-                Types.ERC20Factory.TokenCreated.handlerRegister->setRegisterPreRegistration(true)
-
               // Manualy update the second dc in db to make it look as if it was pre registered
               let () = await sql->Postgres.unsafe(`UPDATE public.dynamic_contract_registry
                 SET is_pre_registered = true
                 WHERE registering_event_block_number = 1;`)
 
               let restartedChainFetcher = await ChainFetcher.makeFromDbState(
-                chainConfig,
+                chainConfigWithPreRegistration,
                 ~maxAddrInPartition=Env.maxAddrInPartition,
                 ~enableRawEvents=false,
                 ~sql,
@@ -378,8 +387,6 @@ describe("Dynamic contract restart resistance test", () => {
                 ~message=`But it'll still remove the dc history for pre-registered one,
                 this case is not possible in real life, since pre-registration never happens in reorg threshold`,
               )
-
-              resetEventOptionsToOriginal()
 
               raise(RollbackTransaction)
             }

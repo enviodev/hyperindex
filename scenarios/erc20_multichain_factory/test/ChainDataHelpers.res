@@ -28,14 +28,18 @@ module ERC20 = {
   module Transfer = {
     let mkEventConstrWithParamsAndAddress =
       MockChainData.makeEventConstructor(
-        ~eventMod=module(Types.ERC20.Transfer),
+        ~eventConfig=Types.ERC20.Transfer.register(),
         ~makeBlock,
         ~makeTransaction,
         ...
       )
 
     let mkEventConstr = (params, ~chain) =>
-      mkEventConstrWithParamsAndAddress(~srcAddress=getDefaultAddress(chain), ~params, ...)
+      mkEventConstrWithParamsAndAddress(
+        ~srcAddress=getDefaultAddress(chain),
+        ~params=params->(Utils.magic: Types.ERC20.Transfer.eventArgs => Internal.eventParams),
+        ...
+      )
   }
 }
 
@@ -46,26 +50,38 @@ module ERC20Factory = {
   module TokenCreated = {
     let mkEventConstrWithParamsAndAddress =
       MockChainData.makeEventConstructor(
-        ~eventMod=module(Types.ERC20Factory.TokenCreated),
+        ~eventConfig=Types.ERC20Factory.TokenCreated.register(),
         ~makeBlock,
         ~makeTransaction,
         ...
       )
 
     let mkEventConstr = (params, ~chain) =>
-      mkEventConstrWithParamsAndAddress(~srcAddress=getDefaultAddress(chain), ~params, ...)
+      mkEventConstrWithParamsAndAddress(
+        ~srcAddress=getDefaultAddress(chain),
+        ~params=params->(
+          Utils.magic: Types.ERC20Factory.TokenCreated.eventArgs => Internal.eventParams
+        ),
+        ...
+      )
   }
   module DeleteUser = {
     let mkEventConstrWithParamsAndAddress =
       MockChainData.makeEventConstructor(
-        ~eventMod=module(Types.ERC20Factory.DeleteUser),
+        ~eventConfig=Types.ERC20Factory.DeleteUser.register(),
         ~makeBlock,
         ~makeTransaction,
         ...
       )
 
     let mkEventConstr = (params, ~chain) =>
-      mkEventConstrWithParamsAndAddress(~srcAddress=getDefaultAddress(chain), ~params, ...)
+      mkEventConstrWithParamsAndAddress(
+        ~srcAddress=getDefaultAddress(chain),
+        ~params=params->(
+          Utils.magic: Types.ERC20Factory.DeleteUser.eventArgs => Internal.eventParams
+        ),
+        ...
+      )
   }
 }
 
