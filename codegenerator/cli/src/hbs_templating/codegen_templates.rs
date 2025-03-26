@@ -367,7 +367,7 @@ impl EventMod {
 
         let event_filters_type_code = match self.event_filter_type.as_str() {
             "{}" => "@genType type eventFilters = Internal.noEventFilters".to_string(),
-            _ => "@genType type eventFiltersArgs = {/** A unique identifier for the event blockchain network. */ chainId: chainId}\n
+            _ => "@genType type eventFiltersArgs = {/** The unique identifier of the blockchain network where this event occurred. */ chainId: chainId}\n
 @genType @unboxed type eventFiltersDefinition = Single(eventFilter) | Multiple(array<eventFilter>)\n
 @genType @unboxed type eventFilters = | ...eventFiltersDefinition | Dynamic(eventFiltersArgs => eventFiltersDefinition)".to_string(),
         };
@@ -421,8 +421,7 @@ impl EventMod {
             };
 
         let base_event_config_code = format!(
-            r#"
-  id,
+            r#"id,
   name,
   contractName,
   isWildcard: (handlerRegister->HandlerTypes.Register.getEventOptions).isWildcard,
@@ -430,8 +429,7 @@ impl EventMod {
   loader: handlerRegister->HandlerTypes.Register.getLoader,
   handler: handlerRegister->HandlerTypes.Register.getHandler,
   contractRegister: handlerRegister->HandlerTypes.Register.getContractRegister,
-  paramsRawEventSchema: paramsRawEventSchema->(Utils.magic: S.t<eventArgs> => S.t<Internal.eventParams>),
-"#
+  paramsRawEventSchema: paramsRawEventSchema->(Utils.magic: S.t<eventArgs> => S.t<Internal.eventParams>),"#
         );
 
         let non_event_mod_code = match fuel_event_kind_code {
@@ -469,7 +467,21 @@ type block = {block_type}
 type transaction = {transaction_type}
 
 @genType
-type event = Internal.genericEvent<eventArgs, block, transaction>
+type event = {{
+  /** The parameters or arguments associated with this event. */
+  params: eventArgs,
+  /** The unique identifier of the blockchain network where this event occurred. */
+  chainId: chainId,
+  /** The address of the contract that emitted this event. */
+  srcAddress: Address.t,
+  /** The index of this event's log within the block. */
+  logIndex: int,
+  /** The transaction that triggered this event. Configurable in `config.yaml` via the `field_selection` option. */
+  transaction: transaction,
+  /** The block in which this event was recorded. Configurable in `config.yaml` via the `field_selection` option. */
+  block: block,
+}}
+
 @genType
 type loader<'loaderReturn> = Internal.genericLoader<Internal.genericLoaderArgs<event, loaderContext>, 'loaderReturn>
 @genType
@@ -1638,7 +1650,21 @@ type block = Block.t
 type transaction = Transaction.t
 
 @genType
-type event = Internal.genericEvent<eventArgs, block, transaction>
+type event = {{
+  /** The parameters or arguments associated with this event. */
+  params: eventArgs,
+  /** The unique identifier of the blockchain network where this event occurred. */
+  chainId: chainId,
+  /** The address of the contract that emitted this event. */
+  srcAddress: Address.t,
+  /** The index of this event's log within the block. */
+  logIndex: int,
+  /** The transaction that triggered this event. Configurable in `config.yaml` via the `field_selection` option. */
+  transaction: transaction,
+  /** The block in which this event was recorded. Configurable in `config.yaml` via the `field_selection` option. */
+  block: block,
+}}
+
 @genType
 type loader<'loaderReturn> = Internal.genericLoader<Internal.genericLoaderArgs<event, loaderContext>, 'loaderReturn>
 @genType
@@ -1665,7 +1691,6 @@ let register = (): Internal.evmEventConfig => {{
   blockSchema: blockSchema->(Utils.magic: S.t<block> => S.t<Internal.eventBlock>),
   transactionSchema: transactionSchema->(Utils.magic: S.t<transaction> => S.t<Internal.eventTransaction>),
   convertHyperSyncEventArgs: (decodedEvent: HyperSyncClient.Decoder.decodedEvent) => {{id: decodedEvent.body->Js.Array2.unsafe_get(0)->HyperSyncClient.Decoder.toUnderlying->Utils.magic, owner: decodedEvent.body->Js.Array2.unsafe_get(1)->HyperSyncClient.Decoder.toUnderlying->Utils.magic, displayName: decodedEvent.body->Js.Array2.unsafe_get(2)->HyperSyncClient.Decoder.toUnderlying->Utils.magic, imageUrl: decodedEvent.body->Js.Array2.unsafe_get(3)->HyperSyncClient.Decoder.toUnderlying->Utils.magic, }}->(Utils.magic: eventArgs => Internal.eventParams),
-  
   id,
   name,
   contractName,
@@ -1675,7 +1700,6 @@ let register = (): Internal.evmEventConfig => {{
   handler: handlerRegister->HandlerTypes.Register.getHandler,
   contractRegister: handlerRegister->HandlerTypes.Register.getContractRegister,
   paramsRawEventSchema: paramsRawEventSchema->(Utils.magic: S.t<eventArgs> => S.t<Internal.eventParams>),
-
 }}"#
             ),
         }
@@ -1711,7 +1735,21 @@ type block = Block.t
 type transaction = Transaction.t
 
 @genType
-type event = Internal.genericEvent<eventArgs, block, transaction>
+type event = {
+  /** The parameters or arguments associated with this event. */
+  params: eventArgs,
+  /** The unique identifier of the blockchain network where this event occurred. */
+  chainId: chainId,
+  /** The address of the contract that emitted this event. */
+  srcAddress: Address.t,
+  /** The index of this event's log within the block. */
+  logIndex: int,
+  /** The transaction that triggered this event. Configurable in `config.yaml` via the `field_selection` option. */
+  transaction: transaction,
+  /** The block in which this event was recorded. Configurable in `config.yaml` via the `field_selection` option. */
+  block: block,
+}
+
 @genType
 type loader<'loaderReturn> = Internal.genericLoader<Internal.genericLoaderArgs<event, loaderContext>, 'loaderReturn>
 @genType
@@ -1738,7 +1776,6 @@ let register = (): Internal.evmEventConfig => {
   blockSchema: blockSchema->(Utils.magic: S.t<block> => S.t<Internal.eventBlock>),
   transactionSchema: transactionSchema->(Utils.magic: S.t<transaction> => S.t<Internal.eventTransaction>),
   convertHyperSyncEventArgs: _ => ()->(Utils.magic: eventArgs => Internal.eventParams),
-  
   id,
   name,
   contractName,
@@ -1748,7 +1785,6 @@ let register = (): Internal.evmEventConfig => {
   handler: handlerRegister->HandlerTypes.Register.getHandler,
   contractRegister: handlerRegister->HandlerTypes.Register.getContractRegister,
   paramsRawEventSchema: paramsRawEventSchema->(Utils.magic: S.t<eventArgs> => S.t<Internal.eventParams>),
-
 }"#.to_string(),
             }
         );
@@ -1790,7 +1826,21 @@ type block = {}
 type transaction = {from: option<Address.t>}
 
 @genType
-type event = Internal.genericEvent<eventArgs, block, transaction>
+type event = {
+  /** The parameters or arguments associated with this event. */
+  params: eventArgs,
+  /** The unique identifier of the blockchain network where this event occurred. */
+  chainId: chainId,
+  /** The address of the contract that emitted this event. */
+  srcAddress: Address.t,
+  /** The index of this event's log within the block. */
+  logIndex: int,
+  /** The transaction that triggered this event. Configurable in `config.yaml` via the `field_selection` option. */
+  transaction: transaction,
+  /** The block in which this event was recorded. Configurable in `config.yaml` via the `field_selection` option. */
+  block: block,
+}
+
 @genType
 type loader<'loaderReturn> = Internal.genericLoader<Internal.genericLoaderArgs<event, loaderContext>, 'loaderReturn>
 @genType
@@ -1817,7 +1867,6 @@ let register = (): Internal.evmEventConfig => {
   blockSchema: blockSchema->(Utils.magic: S.t<block> => S.t<Internal.eventBlock>),
   transactionSchema: transactionSchema->(Utils.magic: S.t<transaction> => S.t<Internal.eventTransaction>),
   convertHyperSyncEventArgs: _ => ()->(Utils.magic: eventArgs => Internal.eventParams),
-  
   id,
   name,
   contractName,
@@ -1827,7 +1876,6 @@ let register = (): Internal.evmEventConfig => {
   handler: handlerRegister->HandlerTypes.Register.getHandler,
   contractRegister: handlerRegister->HandlerTypes.Register.getContractRegister,
   paramsRawEventSchema: paramsRawEventSchema->(Utils.magic: S.t<eventArgs> => S.t<Internal.eventParams>),
-
 }"#.to_string(),
             }
         );

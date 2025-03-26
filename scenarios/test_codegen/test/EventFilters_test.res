@@ -1,11 +1,14 @@
 open RescriptMocha
 
+// Test types:
+let filterArgsShouldBeASubsetOfInternal = (%raw(`null`): Types.EventFiltersTest.Transfer.eventFiltersArgs :> Internal.eventFiltersArgs)
+
 describe("Test eventFilters", () => {
   it("Supports multichain filters", () => {
     let eventConfig = Types.EventFiltersTest.Transfer.register()
 
     Assert.deepEqual(
-      eventConfig.getTopicSelectionsOrThrow(~chain=ChainMap.Chain.makeUnsafe(~chainId=1)),
+      eventConfig.getTopicSelectionsOrThrow(~chain=ChainMap.Chain.makeUnsafe(~chainId=137)),
       [
         {
           topic0: [

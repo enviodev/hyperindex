@@ -393,11 +393,8 @@ module HandlerTypes = {
 }
 
 module type Event = {
-  type eventArgs
-  type block
-  type transaction
+  type event
 
-  type event = Internal.genericEvent<eventArgs, block, transaction>
   type loader<'loaderReturn> = Internal.genericLoader<
     Internal.genericLoaderArgs<event, loaderContext>,
     'loaderReturn,

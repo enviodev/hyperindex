@@ -400,7 +400,8 @@ describe("determineNextEvent", () => {
               ) /* earlier timestamp than the test event */
             | 137 =>
               makeMockPartitionedFetchState(~latestFetchedBlockTimestamp=5, ~item=Some(singleItem))
-            | 1337 => makeMockPartitionedFetchState(~latestFetchedBlockTimestamp=655, ~item=None)
+            | 1337 | 100 =>
+              makeMockPartitionedFetchState(~latestFetchedBlockTimestamp=655, ~item=None)
             | _ => Js.Exn.raiseError("Unexpected chain")
             },
         )
@@ -442,7 +443,7 @@ describe("determineNextEvent", () => {
                 ~latestFetchedBlockTimestamp=singleItemTimestamp,
                 ~item=Some(singleItem),
               )
-            | 1337 =>
+            | 1337 | 100 =>
               let higherTS = singleItemTimestamp + 1
               makeMockPartitionedFetchState(
                 ~latestFetchedBlockTimestamp=higherTS,
