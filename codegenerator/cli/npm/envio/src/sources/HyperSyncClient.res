@@ -422,13 +422,11 @@ type t = {
 
 @module("@envio-dev/hypersync-client") @scope("HypersyncClient") external new: cfg => t = "new"
 
-let defaultToken = "3dc856dd-b0ea-494f-b27e-017b8b6b7e07"
-
-let make = (~url, ~bearerToken: option<string>, ~httpReqTimeoutMillis, ~maxNumRetries) =>
+let make = (~url, ~apiToken, ~httpReqTimeoutMillis, ~maxNumRetries) =>
   new({
     url,
     enableChecksumAddresses: true,
-    bearerToken: bearerToken->Belt.Option.getWithDefault(defaultToken),
+    bearerToken: apiToken,
     httpReqTimeoutMillis,
     maxNumRetries,
   })

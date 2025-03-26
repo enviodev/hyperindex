@@ -186,9 +186,12 @@ let make = (
 
   let getSelectionConfig = memoGetSelectionConfig(~contracts, ~chain)
 
+  let apiToken =
+    Env.envioApiToken->Belt.Option.getWithDefault("3dc856dd-b0ea-494f-b27e-017b8b6b7e07")
+
   let client = HyperSyncClient.make(
     ~url=endpointUrl,
-    ~bearerToken=Env.envioApiToken,
+    ~apiToken,
     ~maxNumRetries=Env.hyperSyncClientMaxRetries,
     ~httpReqTimeoutMillis=Env.hyperSyncClientTimeoutMillis,
   )
@@ -329,6 +332,7 @@ let make = (
         //timestamp of the heighest block accounted for
         HyperSync.queryBlockData(
           ~serverUrl=endpointUrl,
+          ~apiToken,
           ~blockNumber=heighestBlockQueried,
           ~logger,
         )->Promise.thenResolve(res =>
@@ -503,6 +507,7 @@ let make = (
   let getBlockHashes = (~blockNumbers, ~logger) =>
     HyperSync.queryBlockDataMulti(
       ~serverUrl=endpointUrl,
+      ~apiToken,
       ~blockNumbers,
       ~logger,
     )->Promise.thenResolve(HyperSync.mapExn)
@@ -516,7 +521,8 @@ let make = (
     pollingInterval: 100,
     poweredByHyperSync: true,
     getBlockHashes,
-    getHeightOrThrow: () => HyperSyncJsonApi.heightRoute->Rest.fetch((), ~client=jsonApiClient),
+    getHeightOrThrow: () =>
+      HyperSyncJsonApi.heightRoute->Rest.fetch(apiToken, ~client=jsonApiClient),
     getItemsOrThrow,
   }
 }

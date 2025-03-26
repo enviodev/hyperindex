@@ -360,13 +360,17 @@ module ResponseTypes = {
 let queryRoute = Rest.route(() => {
   path: "/query",
   method: Post,
-  input: s => s.body(QueryTypes.postQueryBodySchema),
+  input: s =>
+    {
+      "query": s.body(QueryTypes.postQueryBodySchema),
+      "token": s.auth(Bearer),
+    },
   responses: [s => s.data(ResponseTypes.queryResponseSchema)],
 })
 
 let heightRoute = Rest.route(() => {
   path: "/height",
   method: Get,
-  input: _ => (),
+  input: s => s.auth(Bearer),
   responses: [s => s.field("height", S.int)],
 })
