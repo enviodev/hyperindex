@@ -98,7 +98,7 @@ describe("FetchState.make", () => {
             selection: fetchState.normalSelection,
             contractAddressMapping: ContractAddressingMap.fromArray([(mockAddress0, "Gravatar")]),
             dynamicContracts: [],
-            fetchedEventQueue: [],
+            fetchedEventQueue: Cow.Array.make([]),
           },
         ],
         endBlock: None,
@@ -177,7 +177,7 @@ describe("FetchState.make", () => {
                 (mockAddress2, "Gravatar"),
               ]),
               dynamicContracts: [dc],
-              fetchedEventQueue: [],
+              fetchedEventQueue: Cow.Array.make([]),
             },
           ],
           nextPartitionIndex: 1,
@@ -237,7 +237,7 @@ describe("FetchState.make", () => {
                 (mockAddress1, "ContractA"),
               ]),
               dynamicContracts: [],
-              fetchedEventQueue: [],
+              fetchedEventQueue: Cow.Array.make([]),
             },
             {
               id: "1",
@@ -249,7 +249,7 @@ describe("FetchState.make", () => {
               selection: fetchState.normalSelection,
               contractAddressMapping: ContractAddressingMap.fromArray([(mockAddress2, "Gravatar")]),
               dynamicContracts: [dc],
-              fetchedEventQueue: [],
+              fetchedEventQueue: Cow.Array.make([]),
             },
           ],
           nextPartitionIndex: 2,
@@ -316,7 +316,7 @@ describe("FetchState.make", () => {
                 (mockAddress1, "ContractA"),
               ]),
               dynamicContracts: [],
-              fetchedEventQueue: [],
+              fetchedEventQueue: Cow.Array.make([]),
             },
             {
               id: "1",
@@ -330,7 +330,7 @@ describe("FetchState.make", () => {
                 (mockAddress2, "ContractA"),
               ]),
               dynamicContracts: [],
-              fetchedEventQueue: [],
+              fetchedEventQueue: Cow.Array.make([]),
             },
             {
               id: "2",
@@ -342,7 +342,7 @@ describe("FetchState.make", () => {
               selection: fetchState.normalSelection,
               contractAddressMapping: ContractAddressingMap.fromArray([(mockAddress3, "Gravatar")]),
               dynamicContracts: [dc1],
-              fetchedEventQueue: [],
+              fetchedEventQueue: Cow.Array.make([]),
             },
             {
               id: "3",
@@ -354,7 +354,7 @@ describe("FetchState.make", () => {
               selection: fetchState.normalSelection,
               contractAddressMapping: ContractAddressingMap.fromArray([(mockAddress4, "Gravatar")]),
               dynamicContracts: [dc2],
-              fetchedEventQueue: [],
+              fetchedEventQueue: Cow.Array.make([]),
             },
           ],
           nextPartitionIndex: 4,
@@ -418,7 +418,7 @@ describe("FetchState.registerDynamicContracts", () => {
                 (mockAddress2, "Gravatar"),
               ]),
               dynamicContracts: [dc1, dc2],
-              fetchedEventQueue: [],
+              fetchedEventQueue: Cow.Array.make([]),
             },
             {
               id: "2",
@@ -430,7 +430,7 @@ describe("FetchState.registerDynamicContracts", () => {
               selection: fetchState.normalSelection,
               contractAddressMapping: ContractAddressingMap.fromArray([(mockAddress3, "Gravatar")]),
               dynamicContracts: [dc3],
-              fetchedEventQueue: [],
+              fetchedEventQueue: Cow.Array.make([]),
             },
           ]),
         },
@@ -508,7 +508,7 @@ describe("FetchState.registerDynamicContracts", () => {
               },
               contractAddressMapping: ContractAddressingMap.make(),
               dynamicContracts: [],
-              fetchedEventQueue: [],
+              fetchedEventQueue: Cow.Array.make([]),
             },
             {
               id: "1",
@@ -530,7 +530,7 @@ describe("FetchState.registerDynamicContracts", () => {
                   ~contractAddress=mockAddress5,
                 ),
               ],
-              fetchedEventQueue: [],
+              fetchedEventQueue: Cow.Array.make([]),
             },
           ],
           endBlock: None,
@@ -579,7 +579,7 @@ describe("FetchState.getNextQuery & integration", () => {
           selection: normalSelection,
           contractAddressMapping: ContractAddressingMap.fromArray([(mockAddress0, "Gravatar")]),
           dynamicContracts: [],
-          fetchedEventQueue: [mockEvent(~blockNumber=2), mockEvent(~blockNumber=1)],
+          fetchedEventQueue: Cow.Array.make([mockEvent(~blockNumber=2), mockEvent(~blockNumber=1)]),
         },
       ],
       nextPartitionIndex: 1,
@@ -619,7 +619,7 @@ describe("FetchState.getNextQuery & integration", () => {
           selection: normalSelection,
           contractAddressMapping: ContractAddressingMap.fromArray([(mockAddress0, "Gravatar")]),
           dynamicContracts: [],
-          fetchedEventQueue: [mockEvent(~blockNumber=2), mockEvent(~blockNumber=1)],
+          fetchedEventQueue: Cow.Array.make([mockEvent(~blockNumber=2), mockEvent(~blockNumber=1)]),
         },
         {
           id: "2",
@@ -635,7 +635,7 @@ describe("FetchState.getNextQuery & integration", () => {
             (mockAddress1, "Gravatar"),
           ]),
           dynamicContracts: [dc2, dc3, dc1],
-          fetchedEventQueue: [],
+          fetchedEventQueue: Cow.Array.make([]),
         },
       ],
       nextPartitionIndex: 3,
@@ -707,7 +707,7 @@ describe("FetchState.getNextQuery & integration", () => {
             selection: fetchState.normalSelection,
             contractAddressMapping: ContractAddressingMap.fromArray([(mockAddress0, "Gravatar")]),
             dynamicContracts: [],
-            fetchedEventQueue: [],
+            fetchedEventQueue: Cow.Array.make([]),
           },
         ],
       },
@@ -819,7 +819,7 @@ describe("FetchState.getNextQuery & integration", () => {
             selection: fetchState.normalSelection,
             contractAddressMapping: ContractAddressingMap.fromArray([(mockAddress1, "Gravatar")]),
             dynamicContracts: [dc1],
-            fetchedEventQueue: [],
+            fetchedEventQueue: Cow.Array.make([]),
           },
           {
             id: "2",
@@ -834,7 +834,7 @@ describe("FetchState.getNextQuery & integration", () => {
               (mockAddress3, "Gravatar"),
             ]),
             dynamicContracts: [dc2, dc3],
-            fetchedEventQueue: [],
+            fetchedEventQueue: Cow.Array.make([]),
           },
         ]),
       },
@@ -1019,7 +1019,10 @@ describe("FetchState.getNextQuery & integration", () => {
             selection: fetchState.normalSelection,
             contractAddressMapping: ContractAddressingMap.fromArray([(mockAddress0, "Gravatar")]),
             dynamicContracts: [],
-            fetchedEventQueue: [mockEvent(~blockNumber=2), mockEvent(~blockNumber=1)],
+            fetchedEventQueue: Cow.Array.make([
+              mockEvent(~blockNumber=2),
+              mockEvent(~blockNumber=1),
+            ]),
           },
           {
             id: "2",
@@ -1035,10 +1038,10 @@ describe("FetchState.getNextQuery & integration", () => {
               (mockAddress1, "Gravatar"),
             ]),
             dynamicContracts: [dc2, dc3, dc1],
-            fetchedEventQueue: [
+            fetchedEventQueue: Cow.Array.make([
               mockEvent(~blockNumber=4, ~logIndex=6),
               mockEvent(~blockNumber=4, ~logIndex=2),
-            ],
+            ]),
           },
         ],
         latestFullyFetchedBlock: {
@@ -1107,12 +1110,12 @@ describe("FetchState.getNextQuery & integration", () => {
               (mockAddress1, "Gravatar"),
             ]),
             dynamicContracts: [dc2, dc3, dc1],
-            fetchedEventQueue: [
+            fetchedEventQueue: Cow.Array.make([
               mockEvent(~blockNumber=4, ~logIndex=6),
               mockEvent(~blockNumber=4, ~logIndex=2),
               mockEvent(~blockNumber=2),
               mockEvent(~blockNumber=1),
-            ],
+            ]),
           },
         ],
         latestFullyFetchedBlock: {
@@ -1158,12 +1161,12 @@ describe("FetchState.getNextQuery & integration", () => {
               (mockAddress1, "Gravatar"),
             ]),
             dynamicContracts: [dc1],
-            fetchedEventQueue: [
+            fetchedEventQueue: Cow.Array.make([
               mockEvent(~blockNumber=4, ~logIndex=6),
               mockEvent(~blockNumber=4, ~logIndex=2),
               mockEvent(~blockNumber=2),
               mockEvent(~blockNumber=1),
-            ],
+            ]),
           },
           {
             id: "2",
@@ -1178,7 +1181,7 @@ describe("FetchState.getNextQuery & integration", () => {
               (mockAddress3, "Gravatar"),
             ]),
             dynamicContracts: [dc2, dc3],
-            fetchedEventQueue: [],
+            fetchedEventQueue: Cow.Array.make([]),
           },
         ],
         latestFullyFetchedBlock: {
@@ -1281,7 +1284,7 @@ describe("FetchState.getNextQuery & integration", () => {
             contractAddressMapping: ContractAddressingMap.fromArray([(mockAddress0, "Gravatar")]),
             dynamicContracts: [],
             // Removed an item here, but kept the partition.
-            fetchedEventQueue: [mockEvent(~blockNumber=1)],
+            fetchedEventQueue: Cow.Array.make([mockEvent(~blockNumber=1)]),
           },
           {
             id: "2",
@@ -1294,7 +1297,7 @@ describe("FetchState.getNextQuery & integration", () => {
             selection: fetchState.normalSelection,
             contractAddressMapping: ContractAddressingMap.fromArray([(mockAddress1, "Gravatar")]),
             dynamicContracts: [dc1],
-            fetchedEventQueue: [],
+            fetchedEventQueue: Cow.Array.make([]),
             // Removed dc2, even though the latestFetchedBlock is not exceeding the lastScannedBlock
           },
         ],
@@ -1322,7 +1325,7 @@ describe("FetchState.getNextQuery & integration", () => {
             selection: fetchState.normalSelection,
             contractAddressMapping: ContractAddressingMap.fromArray([(mockAddress0, "Gravatar")]),
             dynamicContracts: [],
-            fetchedEventQueue: [],
+            fetchedEventQueue: Cow.Array.make([]),
           },
         ],
         latestFullyFetchedBlock: {
@@ -1408,7 +1411,7 @@ describe("FetchState.getNextQuery & integration", () => {
             },
             contractAddressMapping: ContractAddressingMap.make(),
             dynamicContracts: [],
-            fetchedEventQueue: [],
+            fetchedEventQueue: Cow.Array.make([]),
           },
         ],
         queueSize: 0,
@@ -1436,11 +1439,11 @@ describe("FetchState unit tests for specific cases", () => {
           selection: normalSelection,
           contractAddressMapping: ContractAddressingMap.make(),
           dynamicContracts: [],
-          fetchedEventQueue: [
+          fetchedEventQueue: Cow.Array.make([
             mockEvent(~blockNumber=4, ~logIndex=2),
             mockEvent(~blockNumber=4),
             mockEvent(~blockNumber=2),
-          ],
+          ]),
         },
         {
           id: "1",
@@ -1452,7 +1455,7 @@ describe("FetchState unit tests for specific cases", () => {
           selection: normalSelection,
           contractAddressMapping: ContractAddressingMap.make(),
           dynamicContracts: [],
-          fetchedEventQueue: [mockEvent(~blockNumber=3), mockEvent(~blockNumber=1)],
+          fetchedEventQueue: Cow.Array.make([mockEvent(~blockNumber=3), mockEvent(~blockNumber=1)]),
         },
       ],
       nextPartitionIndex: 2,
@@ -1505,7 +1508,7 @@ describe("FetchState unit tests for specific cases", () => {
             selection: fetchState.normalSelection,
             contractAddressMapping: ContractAddressingMap.make(),
             dynamicContracts: [],
-            fetchedEventQueue: [
+            fetchedEventQueue: Cow.Array.make([
               mockEvent(~blockNumber=4, ~logIndex=2),
               mockEvent(~blockNumber=4, ~logIndex=1),
               mockEvent(~blockNumber=4, ~logIndex=1),
@@ -1513,7 +1516,7 @@ describe("FetchState unit tests for specific cases", () => {
               mockEvent(~blockNumber=3),
               mockEvent(~blockNumber=2),
               mockEvent(~blockNumber=1),
-            ],
+            ]),
           },
         ],
         latestFullyFetchedBlock: {
@@ -1892,11 +1895,11 @@ describe("FetchState unit tests for specific cases", () => {
           selection: normalSelection,
           contractAddressMapping: ContractAddressingMap.make(),
           dynamicContracts: [],
-          fetchedEventQueue: [
+          fetchedEventQueue: Cow.Array.make([
             mockEvent(~blockNumber=6, ~logIndex=2),
             mockEvent(~blockNumber=4),
             mockEvent(~blockNumber=2, ~logIndex=1),
-          ],
+          ]),
         },
         {
           id: "1",
@@ -1905,11 +1908,11 @@ describe("FetchState unit tests for specific cases", () => {
           selection: normalSelection,
           contractAddressMapping: ContractAddressingMap.make(),
           dynamicContracts: [],
-          fetchedEventQueue: [
+          fetchedEventQueue: Cow.Array.make([
             mockEvent(~blockNumber=6, ~logIndex=1),
             mockEvent(~blockNumber=5),
             mockEvent(~blockNumber=2, ~logIndex=2),
-          ],
+          ]),
         },
       ],
       nextPartitionIndex: 2,
