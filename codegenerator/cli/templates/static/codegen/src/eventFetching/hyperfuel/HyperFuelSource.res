@@ -453,12 +453,7 @@ let make = ({chain, contracts, endpointUrl}: options): t => {
 
       (
         {
-          eventName: eventConfig.name,
-          contractName: eventConfig.contractName,
-          loader: eventConfig.loader,
-          handler: eventConfig.handler,
-          contractRegister: eventConfig.contractRegister,
-          paramsRawEventSchema: eventConfig.paramsRawEventSchema,
+          eventConfig: (eventConfig :> Internal.baseEventConfig),
           timestamp: block.time,
           chain,
           blockNumber: block.height,
@@ -477,8 +472,7 @@ let make = ({chain, contracts, endpointUrl}: options): t => {
       )
     })
 
-    let parsingTimeElapsed =
-      parsingTimeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
+    let parsingTimeElapsed = parsingTimeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
 
     let lastBlockScannedData = await lastBlockQueriedPromise
 

@@ -64,21 +64,17 @@ let make = (
   chainConfig.contracts->Array.forEach(contract => {
     let contractName = contract.name
 
-    contract.events->Array.forEach(event => {
-      let module(Event) = event
-
-      let {isWildcard, preRegisterDynamicContracts} =
-        Event.handlerRegister->Types.HandlerTypes.Register.getEventOptions
-      let hasContractRegister =
-        Event.handlerRegister->Types.HandlerTypes.Register.getContractRegister->Option.isSome
+    contract.events->Array.forEach(eventConfig => {
+      let {isWildcard, preRegisterDynamicContracts} = eventConfig
+      let hasContractRegister = eventConfig.contractRegister->Option.isSome
 
       // Should validate the events
       eventRouter->EventRouter.addOrThrow(
-        Event.id,
+        eventConfig.id,
         (),
         ~contractName,
         ~chain=chainConfig.chain,
-        ~eventName=Event.name,
+        ~eventName=eventConfig.name,
         ~isWildcard,
       )
 
@@ -89,12 +85,10 @@ let make = (
       } else if enableRawEvents {
         true
       } else {
-        let isRegistered =
-          hasContractRegister ||
-          Event.handlerRegister->Types.HandlerTypes.Register.getHandler->Option.isSome
+        let isRegistered = hasContractRegister || eventConfig.handler->Option.isSome
         if !isRegistered {
           logger->Logging.childInfo(
-            `The event "${Event.name}" for contract "${contractName}" is not going to be indexed, because it doesn't have either a contract register or a handler.`,
+            `The event "${eventConfig.name}" for contract "${contractName}" is not going to be indexed, because it doesn't have either a contract register or a handler.`,
           )
         }
         isRegistered
@@ -103,7 +97,7 @@ let make = (
       if shouldBeIncluded {
         eventConfigs->Array.push({
           contractName,
-          eventId: Event.id,
+          eventId: eventConfig.id,
           isWildcard,
         })
       }

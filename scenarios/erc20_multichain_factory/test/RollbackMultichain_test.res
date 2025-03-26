@@ -58,7 +58,7 @@ module Mock = {
   let transfer6FromU1ToU2 = makeTransferMock(~from=userAddress1, ~to=userAddress2, ~value=6)
 
   let addBlocksOfTransferEvents = (
-    blocksOfTransferEventParams,
+    blocksOfTransferEventParams: array<array<Types.ERC20.Transfer.eventArgs>>,
     ~mockChainData,
     ~mkTransferEventConstr,
   ) =>

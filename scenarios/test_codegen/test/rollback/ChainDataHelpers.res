@@ -28,18 +28,22 @@ module Gravatar = {
     )
 
   module NewGravatar = {
-    let mkEventConstr = makeEventConstructorWithDefaultSrcAddress(
-      ~eventMod=module(Types.Gravatar.NewGravatar),
-      ~params=_,
-      ...
-    )
+    let mkEventConstr = params =>
+      makeEventConstructorWithDefaultSrcAddress(
+        ~eventConfig=Types.Gravatar.NewGravatar.register(),
+        ~params=params->(Utils.magic: Types.Gravatar.NewGravatar.eventArgs => Internal.eventParams),
+        ...
+      )
   }
 
   module UpdatedGravatar = {
-    let mkEventConstr = makeEventConstructorWithDefaultSrcAddress(
-      ~eventMod=module(Types.Gravatar.UpdatedGravatar),
-      ~params=_,
-      ...
-    )
+    let mkEventConstr = params =>
+      makeEventConstructorWithDefaultSrcAddress(
+        ~eventConfig=Types.Gravatar.UpdatedGravatar.register(),
+        ~params=params->(
+          Utils.magic: Types.Gravatar.UpdatedGravatar.eventArgs => Internal.eventParams
+        ),
+        ...
+      )
   }
 }

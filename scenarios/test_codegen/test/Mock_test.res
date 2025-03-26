@@ -12,11 +12,11 @@ describe("E2E Mock Event Batch", () => {
     let loadLayer = LoadLayer.makeWithDbConnection()
 
     let runEventHandler = async (eventItem: Internal.eventItem) => {
-      switch eventItem.handler {
+      switch eventItem.eventConfig.handler {
       | None => Ok()
       | Some(handler) =>
         await eventItem->EventProcessing.runEventHandler(
-          ~loader=eventItem.loader,
+          ~loader=eventItem.eventConfig.loader,
           ~handler,
           ~inMemoryStore,
           ~logger=Logging.logger,
