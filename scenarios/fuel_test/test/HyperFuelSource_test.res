@@ -73,12 +73,14 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
           name: "TestContract",
           events: [
             {
+              id: "1",
               name: "StrLog",
               contractName: "TestContract",
               kind: LogData({
                 logId: "1",
                 decode: _ => %raw(`null`),
               }),
+              preRegisterDynamicContracts: false,
               isWildcard: false,
               handler: None,
               loader: None,
@@ -111,10 +113,12 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
             name: "TestContract",
             events: [
               {
+                id: "Transfer",
                 name: "Transfer",
                 contractName: "TestContract",
                 kind: Transfer,
                 isWildcard: false,
+                preRegisterDynamicContracts: false,
                 handler: None,
                 loader: None,
                 contractRegister: None,
@@ -126,10 +130,12 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
             name: "TestContract2",
             events: [
               {
+                id: "Transfer",
                 name: "Transfer",
                 contractName: "TestContract2",
                 kind: Transfer,
                 isWildcard: false,
+                preRegisterDynamicContracts: false,
                 handler: None,
                 loader: None,
                 contractRegister: None,
@@ -164,10 +170,12 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
           name: "TestContract",
           events: [
             {
+              id: "Mint",
               name: "Mint",
               contractName: "TestContract",
               kind: Mint,
               isWildcard: false,
+              preRegisterDynamicContracts: false,
               handler: None,
               loader: None,
               contractRegister: None,
@@ -179,10 +187,12 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
           name: "TestContract2",
           events: [
             {
+              id: "Mint",
               name: "Mint",
               contractName: "TestContract2",
               kind: Mint,
               isWildcard: false,
+              preRegisterDynamicContracts: false,
               handler: None,
               loader: None,
               contractRegister: None,
@@ -216,10 +226,12 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
           name: "TestContract",
           events: [
             {
+              id: "Burn",
               name: "Burn",
               contractName: "TestContract",
               kind: Burn,
               isWildcard: false,
+              preRegisterDynamicContracts: false,
               handler: None,
               loader: None,
               contractRegister: None,
@@ -231,10 +243,12 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
           name: "TestContract2",
           events: [
             {
+              id: "Burn",
               name: "Burn",
               contractName: "TestContract2",
               kind: Burn,
               isWildcard: false,
+              preRegisterDynamicContracts: false,
               handler: None,
               loader: None,
               contractRegister: None,
@@ -268,6 +282,7 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
           name: "TestContract",
           events: [
             {
+              id: "1",
               name: "StrLog",
               contractName: "TestContract",
               kind: LogData({
@@ -275,12 +290,14 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
                 decode: _ => %raw(`null`),
               }),
               isWildcard: false,
+              preRegisterDynamicContracts: false,
               handler: None,
               loader: None,
               contractRegister: None,
               paramsRawEventSchema: %raw(`"Not relevat"`),
             },
             {
+              id: "2",
               name: "BoolLog",
               contractName: "TestContract",
               kind: LogData({
@@ -288,46 +305,55 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
                 decode: _ => %raw(`null`),
               }),
               isWildcard: true,
+              preRegisterDynamicContracts: false,
               handler: None,
               loader: None,
               contractRegister: None,
               paramsRawEventSchema: %raw(`"Not relevat"`),
             },
             {
+              id: "Mint",
               name: "Mint",
               contractName: "TestContract",
               kind: Mint,
               isWildcard: false,
+              preRegisterDynamicContracts: false,
               handler: None,
               loader: None,
               contractRegister: None,
               paramsRawEventSchema: %raw(`"Not relevat"`),
             },
             {
+              id: "Burn",
               name: "Burn",
               contractName: "TestContract",
               kind: Burn,
               isWildcard: false,
+              preRegisterDynamicContracts: false,
               handler: None,
               loader: None,
               contractRegister: None,
               paramsRawEventSchema: %raw(`"Not relevat"`),
             },
             {
+              id: "Transfer",
               name: "Transfer",
               contractName: "TestContract",
               kind: Transfer,
               isWildcard: false,
+              preRegisterDynamicContracts: false,
               handler: None,
               loader: None,
               contractRegister: None,
               paramsRawEventSchema: %raw(`"Not relevat"`),
             },
             {
+              id: "Call",
               name: "Call",
               contractName: "TestContract",
               kind: Call,
               isWildcard: true,
+              preRegisterDynamicContracts: false,
               handler: None,
               loader: None,
               contractRegister: None,
@@ -339,6 +365,7 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
           name: "TestContract2",
           events: [
             {
+              id: "UnitLog",
               name: "UnitLog",
               contractName: "TestContract2",
               kind: LogData({
@@ -346,16 +373,19 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
                 decode: _ => %raw(`null`),
               }),
               isWildcard: false,
+              preRegisterDynamicContracts: false,
               handler: None,
               loader: None,
               contractRegister: None,
               paramsRawEventSchema: %raw(`"Not relevat"`),
             },
             {
+              id: "Burn",
               name: "Burn",
               contractName: "TestContract2",
               kind: Burn,
               isWildcard: false,
+              preRegisterDynamicContracts: false,
               handler: None,
               loader: None,
               contractRegister: None,
@@ -404,10 +434,12 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
               name: "TestContract",
               events: [
                 {
+                  id: "Call",
                   name: "Call",
                   contractName: "TestContract",
                   kind: Call,
                   isWildcard: false,
+                  preRegisterDynamicContracts: false,
                   handler: None,
                   loader: None,
                   contractRegister: None,
@@ -433,20 +465,24 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
               name: "TestContract",
               events: [
                 {
+                  id: "Mint",
                   name: "MyEvent",
                   contractName: "TestContract",
                   kind: Mint,
                   isWildcard: false,
+                  preRegisterDynamicContracts: false,
                   handler: None,
                   loader: None,
                   contractRegister: None,
                   paramsRawEventSchema: %raw(`"Not relevat"`),
                 },
                 {
+                  id: "Mint",
                   name: "MyEvent2",
                   contractName: "TestContract",
                   kind: Mint,
                   isWildcard: false,
+                  preRegisterDynamicContracts: false,
                   handler: None,
                   loader: None,
                   contractRegister: None,
@@ -472,20 +508,24 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
               name: "TestContract",
               events: [
                 {
+                  id: "Burn",
                   name: "MyEvent",
                   contractName: "TestContract",
                   kind: Burn,
                   isWildcard: false,
+                  preRegisterDynamicContracts: false,
                   handler: None,
                   loader: None,
                   contractRegister: None,
                   paramsRawEventSchema: %raw(`"Not relevat"`),
                 },
                 {
+                  id: "Burn",
                   name: "MyEvent2",
                   contractName: "TestContract",
                   kind: Burn,
                   isWildcard: false,
+                  preRegisterDynamicContracts: false,
                   handler: None,
                   loader: None,
                   contractRegister: None,
@@ -511,20 +551,24 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
             name: "TestContract",
             events: [
               {
+                id: "Mint",
                 name: "WildcardMint",
                 contractName: "TestContract",
                 kind: Mint,
                 isWildcard: true,
+                preRegisterDynamicContracts: false,
                 handler: None,
                 loader: None,
                 contractRegister: None,
                 paramsRawEventSchema: %raw(`"Not relevat"`),
               },
               {
+                id: "Mint",
                 name: "Mint",
                 contractName: "TestContract",
                 kind: Mint,
                 isWildcard: false,
+                preRegisterDynamicContracts: false,
                 handler: None,
                 loader: None,
                 contractRegister: None,
@@ -554,10 +598,12 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
           name: "TestContract2",
           events: [
             {
+              id: "Mint",
               name: "Mint",
               contractName: "TestContract2",
               kind: Mint,
               isWildcard: false,
+              preRegisterDynamicContracts: false,
               handler: None,
               loader: None,
               contractRegister: None,
@@ -569,10 +615,12 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
           name: "TestContract",
           events: [
             {
+              id: "Mint",
               name: "Mint",
               contractName: "TestContract",
               kind: Mint,
               isWildcard: true,
+              preRegisterDynamicContracts: false,
               handler: None,
               loader: None,
               contractRegister: None,
@@ -600,10 +648,12 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
           name: "TestContract",
           events: [
             {
+              id: "Mint",
               name: "Mint",
               contractName: "TestContract",
               kind: Mint,
               isWildcard: true,
+              preRegisterDynamicContracts: false,
               handler: None,
               loader: None,
               contractRegister: None,
@@ -615,10 +665,12 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
           name: "TestContract2",
           events: [
             {
+              id: "Mint",
               name: "Mint",
               contractName: "TestContract2",
               kind: Mint,
               isWildcard: false,
+              preRegisterDynamicContracts: false,
               handler: None,
               loader: None,
               contractRegister: None,
@@ -647,10 +699,12 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
           name: "TestContract2",
           events: [
             {
+              id: "Burn",
               name: "Burn",
               contractName: "TestContract2",
               kind: Burn,
               isWildcard: false,
+              preRegisterDynamicContracts: false,
               handler: None,
               loader: None,
               contractRegister: None,
@@ -662,10 +716,12 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
           name: "TestContract",
           events: [
             {
+              id: "Burn",
               name: "Burn",
               contractName: "TestContract",
               kind: Burn,
               isWildcard: true,
+              preRegisterDynamicContracts: false,
               handler: None,
               loader: None,
               contractRegister: None,
@@ -693,10 +749,12 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
           name: "TestContract",
           events: [
             {
+              id: "Burn",
               name: "Burn",
               contractName: "TestContract",
               kind: Burn,
               isWildcard: true,
+              preRegisterDynamicContracts: false,
               handler: None,
               loader: None,
               contractRegister: None,
@@ -708,10 +766,12 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
           name: "TestContract2",
           events: [
             {
+              id: "Burn",
               name: "Burn",
               contractName: "TestContract2",
               kind: Burn,
               isWildcard: false,
+              preRegisterDynamicContracts: false,
               handler: None,
               loader: None,
               contractRegister: None,
@@ -795,6 +855,7 @@ describe("HyperFuelSource - makeWildcardRecieptsSelection", () => {
           name: "TestContract",
           events: [
             {
+              id: "1",
               name: "StrLog",
               contractName: "TestContract",
               kind: LogData({
@@ -802,12 +863,14 @@ describe("HyperFuelSource - makeWildcardRecieptsSelection", () => {
                 decode: _ => %raw(`null`),
               }),
               isWildcard: false,
+              preRegisterDynamicContracts: false,
               handler: None,
               loader: None,
               contractRegister: None,
               paramsRawEventSchema: %raw(`"Not relevat"`),
             },
             {
+              id: "2",
               name: "BoolLog",
               contractName: "TestContract",
               kind: LogData({
@@ -815,46 +878,55 @@ describe("HyperFuelSource - makeWildcardRecieptsSelection", () => {
                 decode: _ => %raw(`null`),
               }),
               isWildcard: true,
+              preRegisterDynamicContracts: false,
               handler: None,
               loader: None,
               contractRegister: None,
               paramsRawEventSchema: %raw(`"Not relevat"`),
             },
             {
+              id: "Mint",
               name: "Mint",
               contractName: "TestContract",
               kind: Mint,
               isWildcard: false,
+              preRegisterDynamicContracts: false,
               handler: None,
               loader: None,
               contractRegister: None,
               paramsRawEventSchema: %raw(`"Not relevat"`),
             },
             {
+              id: "Burn",
               name: "Burn",
               contractName: "TestContract",
               kind: Burn,
               isWildcard: false,
+              preRegisterDynamicContracts: false,
               handler: None,
               loader: None,
               contractRegister: None,
               paramsRawEventSchema: %raw(`"Not relevat"`),
             },
             {
+              id: "Transfer",
               name: "Transfer",
               contractName: "TestContract",
               kind: Transfer,
               isWildcard: false,
+              preRegisterDynamicContracts: false,
               handler: None,
               loader: None,
               contractRegister: None,
               paramsRawEventSchema: %raw(`"Not relevat"`),
             },
             {
+              id: "Call",
               name: "Call",
               contractName: "TestContract",
               kind: Call,
               isWildcard: true,
+              preRegisterDynamicContracts: false,
               handler: None,
               loader: None,
               contractRegister: None,
@@ -866,6 +938,7 @@ describe("HyperFuelSource - makeWildcardRecieptsSelection", () => {
           name: "TestContract2",
           events: [
             {
+              id: "3",
               name: "UnitLog",
               contractName: "TestContract2",
               kind: LogData({
@@ -873,16 +946,19 @@ describe("HyperFuelSource - makeWildcardRecieptsSelection", () => {
                 decode: _ => %raw(`null`),
               }),
               isWildcard: false,
+              preRegisterDynamicContracts: false,
               handler: None,
               loader: None,
               contractRegister: None,
               paramsRawEventSchema: %raw(`"Not relevat"`),
             },
             {
+              id: "Burn",
               name: "Burn",
               contractName: "TestContract2",
               kind: Burn,
               isWildcard: false,
+              preRegisterDynamicContracts: false,
               handler: None,
               loader: None,
               contractRegister: None,
@@ -916,11 +992,13 @@ describe("HyperFuelSource - makeWildcardRecieptsSelection", () => {
           name: "TestContract2",
           events: [
             {
+              id: "Mint",
               name: "Mint",
               contractName: "TestContract2",
               kind: Mint,
               isWildcard: false,
               handler: None,
+              preRegisterDynamicContracts: false,
               loader: None,
               contractRegister: None,
               paramsRawEventSchema: %raw(`"Not relevat"`),
@@ -931,10 +1009,12 @@ describe("HyperFuelSource - makeWildcardRecieptsSelection", () => {
           name: "TestContract",
           events: [
             {
+              id: "Mint",
               name: "Mint",
               contractName: "TestContract",
               kind: Mint,
               isWildcard: true,
+              preRegisterDynamicContracts: false,
               handler: None,
               loader: None,
               contractRegister: None,
@@ -962,10 +1042,12 @@ describe("HyperFuelSource - makeWildcardRecieptsSelection", () => {
           name: "TestContract",
           events: [
             {
+              id: "Mint",
               name: "Mint",
               contractName: "TestContract",
               kind: Mint,
               isWildcard: true,
+              preRegisterDynamicContracts: false,
               handler: None,
               loader: None,
               contractRegister: None,
@@ -993,10 +1075,12 @@ describe("HyperFuelSource - makeWildcardRecieptsSelection", () => {
           name: "TestContract",
           events: [
             {
+              id: "Burn",
               name: "Burn",
               contractName: "TestContract",
               kind: Burn,
               isWildcard: true,
+              preRegisterDynamicContracts: false,
               handler: None,
               loader: None,
               contractRegister: None,
@@ -1024,6 +1108,7 @@ describe("HyperFuelSource - makeWildcardRecieptsSelection", () => {
           name: "TestContract",
           events: [
             {
+              id: "1",
               name: "StrLog",
               contractName: "TestContract",
               kind: LogData({
@@ -1031,12 +1116,14 @@ describe("HyperFuelSource - makeWildcardRecieptsSelection", () => {
                 decode: _ => %raw(`null`),
               }),
               isWildcard: true,
+              preRegisterDynamicContracts: false,
               handler: None,
               loader: None,
               contractRegister: None,
               paramsRawEventSchema: %raw(`"Not relevat"`),
             },
             {
+              id: "2",
               name: "BoolLog",
               contractName: "TestContract",
               kind: LogData({
@@ -1044,6 +1131,7 @@ describe("HyperFuelSource - makeWildcardRecieptsSelection", () => {
                 decode: _ => %raw(`null`),
               }),
               isWildcard: true,
+              preRegisterDynamicContracts: false,
               handler: None,
               loader: None,
               contractRegister: None,
@@ -1055,6 +1143,7 @@ describe("HyperFuelSource - makeWildcardRecieptsSelection", () => {
           name: "TestContract2",
           events: [
             {
+              id: "3",
               name: "UnitLog",
               contractName: "TestContract2",
               kind: LogData({
@@ -1062,6 +1151,7 @@ describe("HyperFuelSource - makeWildcardRecieptsSelection", () => {
                 decode: _ => %raw(`null`),
               }),
               isWildcard: true,
+              preRegisterDynamicContracts: false,
               handler: None,
               loader: None,
               contractRegister: None,
