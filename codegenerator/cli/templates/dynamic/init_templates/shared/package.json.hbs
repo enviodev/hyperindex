@@ -6,7 +6,7 @@
     "clean": "tsc --clean",
     "build": "tsc --build",
     "watch": "tsc --watch",
-    "mocha": "ts-mocha test/**/*.ts",
+    "mocha": "ts-mocha -p tsconfig.json --require ts-node/register --exit test/**/*.ts",
   {{/if}}
   {{#if is_rescript}}
     "clean": "rescript clean",
