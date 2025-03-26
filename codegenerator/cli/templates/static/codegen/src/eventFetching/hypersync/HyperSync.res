@@ -250,7 +250,7 @@ module BlockData = {
     ->Utils.Array.transposeResults
   }
 
-  let rec queryBlockData = async (~serverUrl, ~fromBlock, ~toBlock, ~logger): queryResponse<
+  let rec queryBlockData = async (~serverUrl, ~apiToken, ~fromBlock, ~toBlock, ~logger): queryResponse<
     array<ReorgDetection.blockDataWithTimestamp>,
   > => {
     let body = makeRequestBody(~fromBlock, ~toBlock)
@@ -265,7 +265,10 @@ module BlockData = {
     )
 
     let maybeSuccessfulRes = switch await Time.retryAsyncWithExponentialBackOff(
-      () => HyperSyncJsonApi.queryRoute->Rest.fetch(body, ~client=Rest.client(serverUrl)),
+      () => HyperSyncJsonApi.queryRoute->Rest.fetch({
+        "query": body,
+        "token": apiToken,
+      }, ~client=Rest.client(serverUrl)),
       ~logger,
     ) {
     | exception _ => None
@@ -282,7 +285,7 @@ module BlockData = {
           `Block #${fromBlock->Int.toString} not found in HyperSync. HyperSync has multiple instances and it's possible that they drift independently slightly from the head. Indexing should continue correctly after retrying the query in ${delayMilliseconds->Int.toString}ms.`,
         )
         await Time.resolvePromiseAfterDelay(~delayMilliseconds)
-        await queryBlockData(~serverUrl, ~fromBlock, ~toBlock, ~logger)
+        await queryBlockData(~serverUrl, ~apiToken, ~fromBlock, ~toBlock, ~logger)
       }
     | Some(res) =>
       switch res->convertResponse {
@@ -290,6 +293,7 @@ module BlockData = {
       | Ok(datas) if res.nextBlock <= toBlock => {
           let restRes = await queryBlockData(
             ~serverUrl,
+            ~apiToken,
             ~fromBlock=res.nextBlock,
             ~toBlock,
             ~logger,
@@ -301,7 +305,7 @@ module BlockData = {
     }
   }
 
-  let queryBlockDataMulti = async (~serverUrl, ~blockNumbers, ~logger) => {
+  let queryBlockDataMulti = async (~serverUrl, ~apiToken, ~blockNumbers, ~logger) => {
     switch blockNumbers->Array.get(0) {
     | None => Ok([])
     | Some(firstBlock) => {
@@ -327,6 +331,7 @@ module BlockData = {
           ~fromBlock=fromBlock.contents,
           ~toBlock=toBlock.contents,
           ~serverUrl,
+          ~apiToken,
           ~logger,
         )
         let filtered = res->Result.map(datas => {
@@ -346,9 +351,10 @@ module BlockData = {
 }
 
 let queryLogsPage = LogsQuery.queryLogsPage
-let queryBlockData = (~serverUrl, ~blockNumber, ~logger) =>
+let queryBlockData = (~serverUrl, ~apiToken, ~blockNumber, ~logger) =>
   BlockData.queryBlockData(
     ~serverUrl,
+    ~apiToken,
     ~fromBlock=blockNumber,
     ~toBlock=blockNumber,
     ~logger,

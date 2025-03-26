@@ -119,7 +119,7 @@ pub enum Network {
     #[subenum(GraphNetwork)]
     Clover = 1023,
 
-    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
+    #[subenum(NetworkWithExplorer)]
     Crab = 44,
 
     #[subenum(HypersyncNetwork)]
@@ -276,6 +276,9 @@ pub enum Network {
 
     #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     OptimismSepolia = 11155420,
+
+    #[subenum(HypersyncNetwork)]
+    PharosDevnet = 50002,
 
     #[subenum(GraphNetwork, NetworkWithExplorer)]
     PoaCore = 99,
@@ -499,7 +502,8 @@ impl Network {
             | Network::Xdc
             | Network::XdcTestnet
             | Network::Abstract
-            | Network::Hyperliquid => DEFAULT_CONFIRMED_BLOCK_THRESHOLD,
+            | Network::Hyperliquid
+            | Network::PharosDevnet => DEFAULT_CONFIRMED_BLOCK_THRESHOLD,
         }
     }
 }
@@ -544,20 +548,23 @@ impl HypersyncNetwork {
         use ChainTier::*;
         use HypersyncNetwork::*;
         match self {
-            EthereumMainnet | MonadTestnet | Sepolia | ZksyncEra | Optimism | ArbitrumNova
-            | Avalanche | Polygon | Bsc | Gnosis => Gold,
+            EthereumMainnet | Optimism | Polygon | MonadTestnet | Gnosis | ArbitrumOne | Base => {
+                Gold
+            }
 
-            Linea | Base | Blast | Cyber | Harmony | Scroll | Rsk | Amoy | Saakuru | Moonbeam
-            | Lisk | Chiliz | ArbitrumOne | Xdc => Silver,
+            Xdc | Moonbeam => Silver,
 
-            Morph | Lukso | Sophon | PolygonZkevm | Fantom | Hyperliquid => Bronze,
+            Sepolia | Linea | Blast | Sophon | Lisk | Chiliz | Rsk | Amoy | Scroll | ZksyncEra
+            | ArbitrumNova | Avalanche | Bsc | Fantom | Hyperliquid => Bronze,
 
-            Abstract | Zora | Darwinia | Unichain | Berachain | Aurora | Zeta | Manta | Kroma
-            | Crab | Flare | Mantle | Metis | ShimmerEvm | Boba | Ink | Metall2 | SophonTestnet
-            | MorphTestnet | GaladrielDevnet | CitreaTestnet | BscTestnet | UnichainSepolia
-            | Zircuit | Celo | Opbnb | GnosisChiado | LuksoTestnet | BlastSepolia | Holesky
-            | BerachainBartio | OptimismSepolia | Fuji | ArbitrumSepolia | Fraxtal | Soneium
-            | BaseSepolia | MevCommit | Merlin | Mode | MoonbaseAlpha | XdcTestnet => Stone,
+            PolygonZkevm | Lukso | Abstract | PharosDevnet | Zora | Darwinia | Unichain
+            | Berachain | Aurora | Zeta | Manta | Kroma | Flare | Mantle | Metis | ShimmerEvm
+            | Boba | Ink | Metall2 | SophonTestnet | MorphTestnet | GaladrielDevnet
+            | CitreaTestnet | BscTestnet | UnichainSepolia | Zircuit | Celo | Opbnb
+            | GnosisChiado | LuksoTestnet | BlastSepolia | Holesky | BerachainBartio
+            | OptimismSepolia | Fuji | ArbitrumSepolia | Fraxtal | Soneium | BaseSepolia
+            | MevCommit | Merlin | Mode | MoonbaseAlpha | XdcTestnet | Morph | Harmony
+            | Saakuru | Cyber => Stone,
         }
     }
 
