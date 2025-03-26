@@ -14,10 +14,9 @@ let get = (self: t<'key, 'val>, key: 'key) =>
 
 let values = (self: t<'key, 'val>) => self.dict->Js.Dict.values
 
-@val external structuredClone: 'a => 'a = "structuredClone"
 let clone = (self: t<'key, 'val>) => {
   ...self,
-  dict: self.dict->structuredClone,
+  dict: self.dict->Lodash.cloneDeep,
 }
 
 module Entity = {

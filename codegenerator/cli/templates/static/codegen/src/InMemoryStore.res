@@ -65,7 +65,7 @@ let clone = (self: t) => {
   eventSyncState: self.eventSyncState->InMemoryTable.clone,
   rawEvents: self.rawEvents->InMemoryTable.clone,
   entities: self.entities->EntityTables.clone,
-  rollBackEventIdentifier: self.rollBackEventIdentifier->InMemoryTable.structuredClone,
+  rollBackEventIdentifier: self.rollBackEventIdentifier->Lodash.cloneDeep,
 }
 
 let getInMemTable = (
