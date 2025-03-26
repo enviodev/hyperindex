@@ -27,7 +27,17 @@ let mockEventConfig = (
   transactionSchema: transactionSchema->(
     Utils.magic: S.t<'transaction> => S.t<Internal.eventTransaction>
   ),
-  getTopicSelectionsOrThrow: (~chain as _) => Js.Exn.raiseError("Not implemented"),
+  getTopicSelectionsOrThrow: (~chain as _) => [
+    {
+      topic0: [
+        // This is a sighash in the original code
+        id->EvmTypes.Hex.fromStringUnsafe,
+      ],
+      topic1: [],
+      topic2: [],
+      topic3: [],
+    },
+  ],
   convertHyperSyncEventArgs: _ => Js.Exn.raiseError("Not implemented"),
 }
 
@@ -88,9 +98,7 @@ describe("HyperSyncSource - getSelectionConfig", () => {
             addresses: [mockAddress0],
             topicSelections: [
               {
-                topic0: [
-                  "0xcf16a92280c1bbb43f72d31126b724d508df2877835849e8744017ab36a9b47f"->EvmTypes.Hex.fromStringUnsafe,
-                ],
+                topic0: [eventId->EvmTypes.Hex.fromStringUnsafe],
                 topic1: [],
                 topic2: [],
                 topic3: [],
@@ -377,9 +385,7 @@ describe("HyperSyncSource - getSelectionConfig", () => {
             addresses: [mockAddress0],
             topicSelections: [
               {
-                topic0: [
-                  "0xcf16a92280c1bbb43f72d31126b724d508df2877835849e8744017ab36a9b47f"->EvmTypes.Hex.fromStringUnsafe,
-                ],
+                topic0: [eventId->EvmTypes.Hex.fromStringUnsafe],
                 topic1: [],
                 topic2: [],
                 topic3: [],
@@ -398,9 +404,7 @@ describe("HyperSyncSource - getSelectionConfig", () => {
             addresses: [],
             topicSelections: [
               {
-                topic0: [
-                  "0xcf16a92280c1bbb43f72d31126b724d508df2877835849e8744017ab36a9b47f"->EvmTypes.Hex.fromStringUnsafe,
-                ],
+                topic0: [eventId->EvmTypes.Hex.fromStringUnsafe],
                 topic1: [],
                 topic2: [],
                 topic3: [],
@@ -446,12 +450,12 @@ describe("HyperSyncSource - getSelectionConfig", () => {
       eventConfigs: [
         {
           contractName: "Bar",
-          eventId,
+          eventId: "wildcard event 1",
           isWildcard: true,
         },
         {
           contractName: "Baz",
-          eventId,
+          eventId: "wildcard event 2",
           isWildcard: true,
         },
       ],
@@ -465,8 +469,8 @@ describe("HyperSyncSource - getSelectionConfig", () => {
           topicSelections: [
             {
               topic0: [
-                "topic0 - wildcard event 1"->EvmTypes.Hex.fromStringUnsafe,
-                "topic0 - wildcard event 2"->EvmTypes.Hex.fromStringUnsafe,
+                "wildcard event 1"->EvmTypes.Hex.fromStringUnsafe,
+                "wildcard event 2"->EvmTypes.Hex.fromStringUnsafe,
               ],
               topic1: [],
               topic2: [],

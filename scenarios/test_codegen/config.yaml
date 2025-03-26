@@ -12,6 +12,11 @@ contracts:
     handler: ./src/EventHandlers.bs.js
     events:
       - event: "EmptyEvent()"
+  - name: EventFiltersTest
+    handler: ./src/EventHandlers.bs.js
+    events:
+      - event: Transfer(address indexed from, address indexed to, uint256 amount)
+      - event: EmptyFiltersArray(address indexed from)
 networks:
   - id: 1337
     rpc_config:
@@ -24,6 +29,7 @@ networks:
       query_timeout_millis: 20000
     start_block: 1
     contracts:
+      - name: EventFiltersTest
       - name: Gravatar
         abi_file_path: abis/gravatar-abi.json
         address: "0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3"
@@ -79,6 +85,7 @@ networks:
   - id: 1
     start_block: 1
     contracts:
+      - name: EventFiltersTest
       - name: Noop
         address: "0x0B2f78c5BF6D9C12Ee1225D5F374aa91204580c3"
   - id: 137

@@ -366,8 +366,10 @@ impl EventMod {
         let get_topic_selections_code = &self.get_topic_selections_code;
 
         let event_filters_type_code = match self.event_filter_type.as_str() {
-            "{}" => "type eventFilters = Internal.noEventFilters".to_string(),
-            _ => "@unboxed type eventFilters = Single(eventFilter) | Multiple(array<eventFilter>) | Dynamic(Internal.eventFiltersArgs => array<eventFilter>)".to_string(),
+            "{}" => "@genType type eventFilters = Internal.noEventFilters".to_string(),
+            _ => "@genType type eventFiltersArgs = {/** A unique identifier for the event blockchain network. */ chainId: chainId}\n
+@genType @unboxed type eventFiltersDefinition = Single(eventFilter) | Multiple(array<eventFilter>)\n
+@genType @unboxed type eventFilters = | ...eventFiltersDefinition | Dynamic(eventFiltersArgs => eventFiltersDefinition)".to_string(),
         };
 
         let fuel_event_kind_code = match self.fuel_event_kind {
@@ -487,7 +489,6 @@ let handlerRegister: HandlerTypes.Register.t = HandlerTypes.Register.make(
 @genType
 type eventFilter = {event_filter_type}
 
-@genType
 {event_filters_type_code}
 {non_event_mod_code}"#
         )
@@ -752,7 +753,6 @@ impl EventTemplate {
 pub struct ContractTemplate {
     pub name: CapitalizedOptions,
     pub codegen_events: Vec<EventTemplate>,
-    pub chain_ids: Vec<u64>,
     pub module_code: String,
     pub handler: HandlerPathsTemplate,
 }
@@ -772,13 +772,32 @@ impl ContractTemplate {
             .map(EventTemplate::from_config_event)
             .collect::<Result<_>>()?;
 
+        let chain_ids = contract.get_chain_ids(config);
+
+        let chain_id_type_code = {
+            let chain_id_type = if chain_ids.is_empty() {
+                "int".to_string()
+            } else {
+                format!(
+                    "[{}]",
+                    chain_ids
+                        .iter()
+                        .map(|chain_id| format!("#{chain_id}"))
+                        .collect::<Vec<_>>()
+                        .join(" | ")
+                )
+            };
+            format!("@genType type chainId = {chain_id_type}")
+        };
+
         let module_code = match &contract.abi {
             Abi::Evm(abi) => {
                 let signatures = abi.get_event_signatures();
 
                 format!(
                     r#"let abi = Ethers.makeAbi((%raw(`{}`): Js.Json.t))
-let eventSignatures = [{}]"#,
+let eventSignatures = [{}]
+{chain_id_type_code}"#,
                     abi.raw,
                     signatures
                         .iter()
@@ -795,7 +814,7 @@ let eventSignatures = [{}]"#,
                     ))?;
 
                 format!(
-                    "let abi = Fuel.transpileAbi(%raw(`require(\"../../{}\")`))\n{}\n{}",
+                    "let abi = Fuel.transpileAbi(%raw(`require(\"../../{}\")`))\n{}\n{}\n{chain_id_type_code}",
                     // If we decide to inline the abi, instead of using require
                     // we need to remember that abi might contain ` and we should escape it
                     abi.path_buf.to_string_lossy(),
@@ -805,13 +824,10 @@ let eventSignatures = [{}]"#,
             }
         };
 
-        let chain_ids = contract.get_chain_ids(config);
-
         Ok(ContractTemplate {
             name,
             handler,
             codegen_events,
-            chain_ids,
             module_code,
         })
     }
@@ -1428,7 +1444,7 @@ mod test {
             network_config: network1,
             codegen_contracts: vec![contract1],
             is_fuel: false,
-            sources_code: "NetworkSources.evm(~chain, ~contracts, ~hyperSync=None, ~allEventSignatures=[Types.Contract1.eventSignatures]->Belt.Array.concatMany, ~shouldUseHypersyncClientDecoder=true, ~rpcs=[{url: \"https://eth.com\", sourceFor: Sync, syncConfig: {accelerationAdditive: 2000,initialBlockInterval: 10000,backoffMultiplicative: 0.8,intervalCeiling: 10000,backoffMillis: 5000,queryTimeoutMillis: 20000,}}])".to_string(),
+            sources_code: "NetworkSources.evm(~chain, ~contracts=[{name: \"Contract1\",events: [Types.Contract1.NewGravatar.register(), Types.Contract1.UpdatedGravatar.register()],abi: Types.Contract1.abi}], ~hyperSync=None, ~allEventSignatures=[Types.Contract1.eventSignatures]->Belt.Array.concatMany, ~shouldUseHypersyncClientDecoder=true, ~rpcs=[{url: \"https://eth.com\", sourceFor: Sync, syncConfig: {accelerationAdditive: 2000,initialBlockInterval: 10000,backoffMultiplicative: 0.8,intervalCeiling: 10000,backoffMillis: 5000,queryTimeoutMillis: 20000,}}])".to_string(),
             deprecated_sync_source_code: "Rpc({syncConfig: Config.getSyncConfig({accelerationAdditive: 2000,initialBlockInterval: 10000,backoffMultiplicative: 0.8,intervalCeiling: 10000,backoffMillis: 5000,queryTimeoutMillis: 20000,})})".to_string(),
         };
 
@@ -1481,14 +1497,14 @@ mod test {
             network_config: network1,
             codegen_contracts: vec![contract1],
             is_fuel: false,
-            sources_code: "NetworkSources.evm(~chain, ~contracts, ~hyperSync=None, ~allEventSignatures=[Types.Contract1.eventSignatures]->Belt.Array.concatMany, ~shouldUseHypersyncClientDecoder=true, ~rpcs=[{url: \"https://eth.com\", sourceFor: Sync, syncConfig: {accelerationAdditive: 2000,initialBlockInterval: 10000,backoffMultiplicative: 0.8,intervalCeiling: 10000,backoffMillis: 5000,queryTimeoutMillis: 20000,}}])".to_string(),
+            sources_code: "NetworkSources.evm(~chain, ~contracts=[{name: \"Contract1\",events: [Types.Contract1.NewGravatar.register(), Types.Contract1.UpdatedGravatar.register()],abi: Types.Contract1.abi}], ~hyperSync=None, ~allEventSignatures=[Types.Contract1.eventSignatures]->Belt.Array.concatMany, ~shouldUseHypersyncClientDecoder=true, ~rpcs=[{url: \"https://eth.com\", sourceFor: Sync, syncConfig: {accelerationAdditive: 2000,initialBlockInterval: 10000,backoffMultiplicative: 0.8,intervalCeiling: 10000,backoffMillis: 5000,queryTimeoutMillis: 20000,}}])".to_string(),
             deprecated_sync_source_code: "Rpc({syncConfig: Config.getSyncConfig({accelerationAdditive: 2000,initialBlockInterval: 10000,backoffMultiplicative: 0.8,intervalCeiling: 10000,backoffMillis: 5000,queryTimeoutMillis: 20000,})})".to_string(),
         };
         let chain_config_2 = super::NetworkConfigTemplate {
             network_config: network2,
             codegen_contracts: vec![contract2],
             is_fuel: false,
-            sources_code: "NetworkSources.evm(~chain, ~contracts, ~hyperSync=None, ~allEventSignatures=[Types.Contract2.eventSignatures]->Belt.Array.concatMany, ~shouldUseHypersyncClientDecoder=true, ~rpcs=[{url: \"https://eth.com\", sourceFor: Sync, syncConfig: {accelerationAdditive: 2000,initialBlockInterval: 10000,backoffMultiplicative: 0.8,intervalCeiling: 10000,backoffMillis: 5000,queryTimeoutMillis: 20000,}}, {url: \"https://eth.com/fallback\", sourceFor: Sync, syncConfig: {accelerationAdditive: 2000,initialBlockInterval: 10000,backoffMultiplicative: 0.8,intervalCeiling: 10000,backoffMillis: 5000,queryTimeoutMillis: 20000,}}])".to_string(),
+            sources_code: "NetworkSources.evm(~chain, ~contracts=[{name: \"Contract2\",events: [Types.Contract2.NewGravatar.register(), Types.Contract2.UpdatedGravatar.register()],abi: Types.Contract2.abi}], ~hyperSync=None, ~allEventSignatures=[Types.Contract2.eventSignatures]->Belt.Array.concatMany, ~shouldUseHypersyncClientDecoder=true, ~rpcs=[{url: \"https://eth.com\", sourceFor: Sync, syncConfig: {accelerationAdditive: 2000,initialBlockInterval: 10000,backoffMultiplicative: 0.8,intervalCeiling: 10000,backoffMillis: 5000,queryTimeoutMillis: 20000,}}, {url: \"https://eth.com/fallback\", sourceFor: Sync, syncConfig: {accelerationAdditive: 2000,initialBlockInterval: 10000,backoffMultiplicative: 0.8,intervalCeiling: 10000,backoffMillis: 5000,queryTimeoutMillis: 20000,}}])".to_string(),
             deprecated_sync_source_code: "Rpc({syncConfig: Config.getSyncConfig({accelerationAdditive: 2000,initialBlockInterval: 10000,backoffMultiplicative: 0.8,intervalCeiling: 10000,backoffMillis: 5000,queryTimeoutMillis: 20000,})})".to_string(),
         };
 
@@ -1520,7 +1536,7 @@ mod test {
             network_config: network1,
             codegen_contracts: vec![contract1],
             is_fuel: false,
-            sources_code: "NetworkSources.evm(~chain, ~contracts, ~hyperSync=Some(\"https://1.hypersync.xyz\"), ~allEventSignatures=[Types.Contract1.eventSignatures]->Belt.Array.concatMany, ~shouldUseHypersyncClientDecoder=true, ~rpcs=[{url: \"https://fallback.eth.com\", sourceFor: Fallback, syncConfig: {}}])".to_string(),
+            sources_code: "NetworkSources.evm(~chain, ~contracts=[{name: \"Contract1\",events: [Types.Contract1.NewGravatar.register(), Types.Contract1.UpdatedGravatar.register()],abi: Types.Contract1.abi}], ~hyperSync=Some(\"https://1.hypersync.xyz\"), ~allEventSignatures=[Types.Contract1.eventSignatures]->Belt.Array.concatMany, ~shouldUseHypersyncClientDecoder=true, ~rpcs=[{url: \"https://fallback.eth.com\", sourceFor: Fallback, syncConfig: {}}])".to_string(),
             deprecated_sync_source_code: "HyperSync({endpointUrl: \"https://1.hypersync.xyz\"})".to_string(),
         };
 
@@ -1548,7 +1564,7 @@ mod test {
             codegen_contracts: vec![],
             is_fuel: false,
             sources_code: format!(
-                "NetworkSources.evm(~chain, ~contracts, ~hyperSync=Some(\"https://myskar.com\"), \
+                "NetworkSources.evm(~chain, ~contracts=[], ~hyperSync=Some(\"https://myskar.com\"), \
                  ~allEventSignatures=[]->Belt.Array.concatMany, \
                  ~shouldUseHypersyncClientDecoder=true, ~rpcs=[])"
             ),
@@ -1561,7 +1577,7 @@ mod test {
             network_config: network2,
             codegen_contracts: vec![],
             is_fuel: false,
-            sources_code: format!("NetworkSources.evm(~chain, ~contracts, ~hyperSync=Some(\"https://137.hypersync.xyz\"), ~allEventSignatures=[]->Belt.Array.concatMany, ~shouldUseHypersyncClientDecoder=true, ~rpcs=[])"),
+            sources_code: format!("NetworkSources.evm(~chain, ~contracts=[], ~hyperSync=Some(\"https://137.hypersync.xyz\"), ~allEventSignatures=[]->Belt.Array.concatMany, ~shouldUseHypersyncClientDecoder=true, ~rpcs=[])"),
             deprecated_sync_source_code: format!("HyperSync({{endpointUrl: \"https://137.hypersync.xyz\"}})"),
         };
 
@@ -1634,25 +1650,33 @@ let paramsRawEventSchema = S.object((s): eventArgs => {{id: s.field("id", BigInt
 let blockSchema = Block.schema
 let transactionSchema = Transaction.schema
 
-let convertHyperSyncEventArgs = (decodedEvent: HyperSyncClient.Decoder.decodedEvent): eventArgs => {{
-      {{
-        id: decodedEvent.body->Js.Array2.unsafe_get(0)->HyperSyncClient.Decoder.toUnderlying->Utils.magic,
-        owner: decodedEvent.body->Js.Array2.unsafe_get(1)->HyperSyncClient.Decoder.toUnderlying->Utils.magic,
-        displayName: decodedEvent.body->Js.Array2.unsafe_get(2)->HyperSyncClient.Decoder.toUnderlying->Utils.magic,
-        imageUrl: decodedEvent.body->Js.Array2.unsafe_get(3)->HyperSyncClient.Decoder.toUnderlying->Utils.magic,
-      }}
-    }}
-
 let handlerRegister: HandlerTypes.Register.t = HandlerTypes.Register.make(
   ~contractName,
   ~eventName=name,
 )
 
 @genType
-type eventFilter = {{  }}
+type eventFilter = {{}}
 
-let getTopicSelection = (eventFilters) => eventFilters->SingleOrMultiple.normalizeOrThrow->Belt.Array.map(_eventFilter => LogSelection.makeTopicSelection(~topic0=[sighash->EvmTypes.Hex.fromStringUnsafe], )->Utils.unwrapResultExn)
-"#
+@genType type eventFilters = Internal.noEventFilters
+
+let register = (): Internal.evmEventConfig => {{
+  getTopicSelectionsOrThrow: (~chain) => LogSelection.fromEventFiltersOrThrow(~chain, ~eventFilters=(handlerRegister->HandlerTypes.Register.getEventOptions).eventFilters, ~sighash),
+  blockSchema: blockSchema->(Utils.magic: S.t<block> => S.t<Internal.eventBlock>),
+  transactionSchema: transactionSchema->(Utils.magic: S.t<transaction> => S.t<Internal.eventTransaction>),
+  convertHyperSyncEventArgs: (decodedEvent: HyperSyncClient.Decoder.decodedEvent) => {{id: decodedEvent.body->Js.Array2.unsafe_get(0)->HyperSyncClient.Decoder.toUnderlying->Utils.magic, owner: decodedEvent.body->Js.Array2.unsafe_get(1)->HyperSyncClient.Decoder.toUnderlying->Utils.magic, displayName: decodedEvent.body->Js.Array2.unsafe_get(2)->HyperSyncClient.Decoder.toUnderlying->Utils.magic, imageUrl: decodedEvent.body->Js.Array2.unsafe_get(3)->HyperSyncClient.Decoder.toUnderlying->Utils.magic, }}->(Utils.magic: eventArgs => Internal.eventParams),
+  
+  id,
+  name,
+  contractName,
+  isWildcard: (handlerRegister->HandlerTypes.Register.getEventOptions).isWildcard,
+  preRegisterDynamicContracts: (handlerRegister->HandlerTypes.Register.getEventOptions).preRegisterDynamicContracts,
+  loader: handlerRegister->HandlerTypes.Register.getLoader,
+  handler: handlerRegister->HandlerTypes.Register.getHandler,
+  contractRegister: handlerRegister->HandlerTypes.Register.getContractRegister,
+  paramsRawEventSchema: paramsRawEventSchema->(Utils.magic: S.t<eventArgs> => S.t<Internal.eventParams>),
+
+}}"#
             ),
         }
     }
@@ -1699,18 +1723,33 @@ let paramsRawEventSchema = S.literal(%raw(`null`))->S.to(_ => ())
 let blockSchema = Block.schema
 let transactionSchema = Transaction.schema
 
-let convertHyperSyncEventArgs = _ => ()
-
 let handlerRegister: HandlerTypes.Register.t = HandlerTypes.Register.make(
   ~contractName,
   ~eventName=name,
 )
 
 @genType
-type eventFilter = {  }
+type eventFilter = {}
 
-let getTopicSelection = (eventFilters) => eventFilters->SingleOrMultiple.normalizeOrThrow->Belt.Array.map(_eventFilter => LogSelection.makeTopicSelection(~topic0=[sighash->EvmTypes.Hex.fromStringUnsafe], )->Utils.unwrapResultExn)
-"#.to_string(),
+@genType type eventFilters = Internal.noEventFilters
+
+let register = (): Internal.evmEventConfig => {
+  getTopicSelectionsOrThrow: (~chain) => LogSelection.fromEventFiltersOrThrow(~chain, ~eventFilters=(handlerRegister->HandlerTypes.Register.getEventOptions).eventFilters, ~sighash),
+  blockSchema: blockSchema->(Utils.magic: S.t<block> => S.t<Internal.eventBlock>),
+  transactionSchema: transactionSchema->(Utils.magic: S.t<transaction> => S.t<Internal.eventTransaction>),
+  convertHyperSyncEventArgs: _ => ()->(Utils.magic: eventArgs => Internal.eventParams),
+  
+  id,
+  name,
+  contractName,
+  isWildcard: (handlerRegister->HandlerTypes.Register.getEventOptions).isWildcard,
+  preRegisterDynamicContracts: (handlerRegister->HandlerTypes.Register.getEventOptions).preRegisterDynamicContracts,
+  loader: handlerRegister->HandlerTypes.Register.getLoader,
+  handler: handlerRegister->HandlerTypes.Register.getHandler,
+  contractRegister: handlerRegister->HandlerTypes.Register.getContractRegister,
+  paramsRawEventSchema: paramsRawEventSchema->(Utils.magic: S.t<eventArgs> => S.t<Internal.eventParams>),
+
+}"#.to_string(),
             }
         );
     }
@@ -1763,18 +1802,33 @@ let paramsRawEventSchema = S.literal(%raw(`null`))->S.to(_ => ())
 let blockSchema = S.object((_): block => {})
 let transactionSchema = S.object((s): transaction => {from: s.field("from", S.option(Address.schema))})
 
-let convertHyperSyncEventArgs = _ => ()
-
 let handlerRegister: HandlerTypes.Register.t = HandlerTypes.Register.make(
   ~contractName,
   ~eventName=name,
 )
 
 @genType
-type eventFilter = {  }
+type eventFilter = {}
 
-let getTopicSelection = (eventFilters) => eventFilters->SingleOrMultiple.normalizeOrThrow->Belt.Array.map(_eventFilter => LogSelection.makeTopicSelection(~topic0=[sighash->EvmTypes.Hex.fromStringUnsafe], )->Utils.unwrapResultExn)
-"#.to_string(),
+@genType type eventFilters = Internal.noEventFilters
+
+let register = (): Internal.evmEventConfig => {
+  getTopicSelectionsOrThrow: (~chain) => LogSelection.fromEventFiltersOrThrow(~chain, ~eventFilters=(handlerRegister->HandlerTypes.Register.getEventOptions).eventFilters, ~sighash),
+  blockSchema: blockSchema->(Utils.magic: S.t<block> => S.t<Internal.eventBlock>),
+  transactionSchema: transactionSchema->(Utils.magic: S.t<transaction> => S.t<Internal.eventTransaction>),
+  convertHyperSyncEventArgs: _ => ()->(Utils.magic: eventArgs => Internal.eventParams),
+  
+  id,
+  name,
+  contractName,
+  isWildcard: (handlerRegister->HandlerTypes.Register.getEventOptions).isWildcard,
+  preRegisterDynamicContracts: (handlerRegister->HandlerTypes.Register.getEventOptions).preRegisterDynamicContracts,
+  loader: handlerRegister->HandlerTypes.Register.getLoader,
+  handler: handlerRegister->HandlerTypes.Register.getHandler,
+  contractRegister: handlerRegister->HandlerTypes.Register.getContractRegister,
+  paramsRawEventSchema: paramsRawEventSchema->(Utils.magic: S.t<eventArgs> => S.t<Internal.eventParams>),
+
+}"#.to_string(),
             }
         );
     }

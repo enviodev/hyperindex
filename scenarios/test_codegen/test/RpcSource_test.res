@@ -293,11 +293,7 @@ describe("RpcSource - getSelectionConfig", () => {
     Assert.deepEqual(
       selectionConfig,
       {
-        topics: [
-          [
-            "0xcf16a92280c1bbb43f72d31126b724d508df2877835849e8744017ab36a9b47f"->EvmTypes.Hex.fromStringUnsafe,
-          ],
-        ],
+        topics: [[eventId->EvmTypes.Hex.fromStringUnsafe]],
       },
       ~message=`Should include only single topic0 address`,
     )
@@ -420,7 +416,7 @@ describe("RpcSource - getSelectionConfig", () => {
         eventConfigs: [
           {
             contractName: "Bar",
-            eventId: "0xcf16a92280c1bbb43f72d31126b724d508df2877835849e8744017ab36a9b47f_1",
+            eventId: "Should be the only topic0",
             isWildcard: true,
           },
         ],

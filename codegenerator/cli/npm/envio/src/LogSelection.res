@@ -58,7 +58,8 @@ let make = (~addresses, ~topicSelections) => {
 }
 
 let fromEventFiltersOrThrow = {
-  let noopGetter = _ => []
+  let emptyTopics = []
+  let noopGetter = _ => emptyTopics
 
   (
     ~chain,
@@ -69,25 +70,26 @@ let fromEventFiltersOrThrow = {
     ~topic3=noopGetter,
   ) => {
     let topic0 = [sighash->EvmTypes.Hex.fromStringUnsafe]
-    switch eventFilters->Js.typeof {
-    | "undefined" => [
+    switch eventFilters {
+    | None => [
         {
           Internal.topic0,
-          topic1: [],
-          topic2: [],
-          topic3: [],
+          topic1: emptyTopics,
+          topic2: emptyTopics,
+          topic3: emptyTopics,
         },
       ]
-    | typeof => {
-        let eventFilters: Js.Json.t = if typeof === "function" {
-          (eventFilters->Obj.magic)(
-            ({chainId: chain->ChainMap.Chain.toChainId}: Internal.eventFiltersArgs),
-          )
+    | Some(eventFilters) => {
+        let eventFilters = if Js.typeof(eventFilters) === "function" {
+          (eventFilters->(Utils.magic: Js.Json.t => Internal.eventFiltersArgs => Js.Json.t))({
+            chainId: chain->ChainMap.Chain.toChainId,
+          })
         } else {
-          eventFilters->Obj.magic
+          eventFilters
         }
 
         switch eventFilters {
+        | Array([]) => [%raw(`{}`)]
         | Array(a) => a
         | _ => [eventFilters]
         }->Js.Array2.map(eventFilter => {
