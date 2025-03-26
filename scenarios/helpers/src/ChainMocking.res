@@ -40,7 +40,6 @@ module Make = (Indexer: Indexer.S) => {
     eventItem: Internal.eventItem,
     srcAddress: Address.t,
     transactionHash: string,
-    eventMod: module(Types.InternalEvent),
   }
 
   type makeEvent = (~blockHash: string) => Internal.event
@@ -50,7 +49,7 @@ module Make = (Indexer: Indexer.S) => {
     makeEvent: makeEvent,
     logIndex: int,
     srcAddress: Address.t,
-    eventMod: module(Types.InternalEvent),
+    eventConfig: Internal.evmEventConfig,
   }
 
   type composedEventConstructor = (
@@ -62,9 +61,8 @@ module Make = (Indexer: Indexer.S) => {
   ) => logConstructor
 
   let makeEventConstructor = (
-    type eventArgs,
-    ~params: eventArgs,
-    ~eventMod: module(Types.Event with type eventArgs = eventArgs),
+    ~params: Internal.eventParams,
+    ~eventConfig: Internal.evmEventConfig,
     ~srcAddress,
     ~makeBlock: (
       ~blockNumber: int,
@@ -81,11 +79,9 @@ module Make = (Indexer: Indexer.S) => {
     ~transactionIndex,
     ~logIndex,
   ) => {
-    let module(Event) = eventMod
-
     let transactionHash =
       Crypto.hashKeccak256Any(
-        params->RescriptSchema.S.reverseConvertToJsonOrThrow(Event.paramsRawEventSchema),
+        params->RescriptSchema.S.reverseConvertToJsonOrThrow(eventConfig.paramsRawEventSchema),
       )
       ->Crypto.hashKeccak256Compound(transactionIndex)
       ->Crypto.hashKeccak256Compound(blockNumber)
@@ -93,7 +89,7 @@ module Make = (Indexer: Indexer.S) => {
     let makeEvent: makeEvent = (~blockHash) => {
       let block = makeBlock(~blockHash, ~blockNumber, ~blockTimestamp)
       {
-        params: params->(Utils.magic: eventArgs => Internal.eventParams),
+        params,
         srcAddress,
         chainId,
         block,
@@ -107,11 +103,7 @@ module Make = (Indexer: Indexer.S) => {
       makeEvent,
       logIndex,
       srcAddress,
-      eventMod: eventMod->(
-        Utils.magic: module(Types.Event with
-          type eventArgs = eventArgs
-        ) => module(Types.InternalEvent)
-      ),
+      eventConfig,
     }
   }
 
@@ -172,23 +164,17 @@ module Make = (Indexer: Indexer.S) => {
       logIndex,
       srcAddress,
       transactionHash,
-      eventMod,
+      eventConfig,
     }): log => {
-      let module(Event) = eventMod
       let log: Internal.eventItem = {
-        eventName: Event.name,
-        contractName: Event.contractName,
-        handler: Event.handlerRegister->Types.HandlerTypes.Register.getHandler,
-        loader: Event.handlerRegister->Types.HandlerTypes.Register.getLoader,
-        contractRegister: Event.handlerRegister->Types.HandlerTypes.Register.getContractRegister,
-        paramsRawEventSchema: Event.paramsRawEventSchema,
+        eventConfig: (eventConfig :> Internal.baseEventConfig),
         event: makeEvent(~blockHash),
         chain: self.chainConfig.chain,
         timestamp: blockTimestamp,
         blockNumber,
         logIndex,
       }
-      {eventItem: log, srcAddress, transactionHash, eventMod}
+      {eventItem: log, srcAddress, transactionHash}
     })
 
     let block = {blockNumber, blockTimestamp, blockHash, logs}
@@ -223,9 +209,8 @@ module Make = (Indexer: Indexer.S) => {
     eventKeys: array<string>,
   }
 
-  let getEventKey = (eventMod: module(Types.InternalEvent)) => {
-    let module(Event) = eventMod
-    Event.contractName ++ "_" ++ Event.sighash
+  let getEventKey = (eventConfig: Internal.baseEventConfig) => {
+    eventConfig.contractName ++ "_" ++ eventConfig.id
   }
 
   let getLogsFromBlocks = (
@@ -238,7 +223,8 @@ module Make = (Indexer: Indexer.S) => {
           false,
           (prev, {addresses, eventKeys}) => {
             prev ||
-            (addresses->arrayHas(l.srcAddress) && eventKeys->arrayHas(getEventKey(l.eventMod)))
+            (addresses->arrayHas(l.srcAddress) &&
+              eventKeys->arrayHas(getEventKey(l.eventItem.eventConfig)))
           },
         )
         if isLogInConfig {
@@ -274,8 +260,8 @@ module Make = (Indexer: Indexer.S) => {
         )
       {
         addresses,
-        eventKeys: c.events->Belt.Array.map(event => {
-          event->(Utils.magic: module(Types.Event) => module(Types.InternalEvent))->getEventKey
+        eventKeys: c.events->Belt.Array.map(eventConfig => {
+          eventConfig->getEventKey
         }),
       }
     })

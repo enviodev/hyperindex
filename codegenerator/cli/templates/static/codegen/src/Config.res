@@ -6,7 +6,7 @@ type contract = {
   name: string,
   abi: Ethers.abi,
   addresses: array<Address.t>,
-  events: array<module(Types.Event)>,
+  events: array<Internal.baseEventConfig>,
 }
 
 type syncConfigOptions = {
@@ -40,13 +40,8 @@ type chainConfig = {
 
 let shouldPreRegisterDynamicContracts = (chainConfig: chainConfig) => {
   chainConfig.contracts->Array.some(contract => {
-    contract.events->Array.some(event => {
-      let module(Event) = event
-
-      let {preRegisterDynamicContracts} =
-        Event.handlerRegister->Types.HandlerTypes.Register.getEventOptions
-
-      preRegisterDynamicContracts
+    contract.events->Array.some(eventConfig => {
+      eventConfig.preRegisterDynamicContracts
     })
   })
 }

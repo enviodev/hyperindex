@@ -1,24 +1,17 @@
-type topicSelection = {
-  topic0: array<EvmTypes.Hex.t>,
-  topic1: array<EvmTypes.Hex.t>,
-  topic2: array<EvmTypes.Hex.t>,
-  topic3: array<EvmTypes.Hex.t>,
-}
-
 exception MissingRequiredTopic0
 let makeTopicSelection = (~topic0, ~topic1=[], ~topic2=[], ~topic3=[]) =>
   if topic0->Utils.Array.isEmpty {
     Error(MissingRequiredTopic0)
   } else {
     {
-      topic0,
+      Internal.topic0,
       topic1,
       topic2,
       topic3,
     }->Ok
   }
 
-let hasFilters = ({topic1, topic2, topic3}: topicSelection) => {
+let hasFilters = ({topic1, topic2, topic3}: Internal.topicSelection) => {
   [topic1, topic2, topic3]->Js.Array2.find(topic => !Utils.Array.isEmpty(topic))->Belt.Option.isSome
 }
 
@@ -26,7 +19,7 @@ let hasFilters = ({topic1, topic2, topic3}: topicSelection) => {
 For a group of topic selections, if multiple only use topic0, then they can be compressed into one
 selection combining the topic0s
 */
-let compressTopicSelections = (topicSelections: array<topicSelection>) => {
+let compressTopicSelections = (topicSelections: array<Internal.topicSelection>) => {
   let topic0sOfSelectionsWithoutFilters = []
 
   let selectionsWithFilters = []
@@ -45,7 +38,7 @@ let compressTopicSelections = (topicSelections: array<topicSelection>) => {
   | [] => selectionsWithFilters
   | topic0 =>
     let selectionWithoutFilters = {
-      topic0,
+      Internal.topic0,
       topic1: [],
       topic2: [],
       topic3: [],
@@ -56,10 +49,61 @@ let compressTopicSelections = (topicSelections: array<topicSelection>) => {
 
 type t = {
   addresses: array<Address.t>,
-  topicSelections: array<topicSelection>,
+  topicSelections: array<Internal.topicSelection>,
 }
 
 let make = (~addresses, ~topicSelections) => {
   let topicSelections = compressTopicSelections(topicSelections)
   {addresses, topicSelections}
+}
+
+let fromEventFiltersOrThrow = {
+  let emptyTopics = []
+  let noopGetter = _ => emptyTopics
+
+  (
+    ~chain,
+    ~eventFilters: option<Js.Json.t>,
+    ~sighash,
+    ~topic1=noopGetter,
+    ~topic2=noopGetter,
+    ~topic3=noopGetter,
+  ) => {
+    let topic0 = [sighash->EvmTypes.Hex.fromStringUnsafe]
+    switch eventFilters {
+    | None => [
+        {
+          Internal.topic0,
+          topic1: emptyTopics,
+          topic2: emptyTopics,
+          topic3: emptyTopics,
+        },
+      ]
+    | Some(eventFilters) => {
+        let eventFilters = if Js.typeof(eventFilters) === "function" {
+          (eventFilters->(Utils.magic: Js.Json.t => Internal.eventFiltersArgs => Js.Json.t))({
+            chainId: chain->ChainMap.Chain.toChainId,
+          })
+        } else {
+          eventFilters
+        }
+
+        switch eventFilters {
+        | Array([]) => [%raw(`{}`)]
+        | Array(a) => a
+        | _ => [eventFilters]
+        }->Js.Array2.map(eventFilter => {
+          switch eventFilter {
+          | Object(eventFilter) => {
+              Internal.topic0,
+              topic1: topic1(eventFilter),
+              topic2: topic2(eventFilter),
+              topic3: topic3(eventFilter),
+            }
+          | _ => Js.Exn.raiseError("Invalid event filters configuration. Expected an object")
+          }
+        })
+      }
+    }
+  }
 }

@@ -47,10 +47,17 @@ impl EthereumEventParam<'_> {
                 (encoder.to_string(), IsValueEncoder(false))
             }
             match &param {
-                EthAbiParamType::Bytes | EthAbiParamType::String if !is_nested_type.0 => {
+                EthAbiParamType::String | EthAbiParamType::Bytes if !is_nested_type.0 => {
                     //In the case of a string or bytes param we simply create a keccak256 hash of the value
                     //unless it is a nested type inside a tuple or array
                     non_value_encoder("TopicFilter.castToHexUnsafe")
+                }
+                // Since we have bytes as a string type,
+                // they should already be passed to event filters as a hex
+                // NOTE: This is tested only for the bytes32 type
+                // Might need to keccak256 for bigger size or pad for smaller size
+                EthAbiParamType::FixedBytes(_) if !is_nested_type.0 => {
+                    value_encoder("TopicFilter.castToHexUnsafe")
                 }
                 EthAbiParamType::Address => value_encoder("TopicFilter.fromAddress"),
                 EthAbiParamType::Uint(_size) => value_encoder("TopicFilter.fromBigInt"),

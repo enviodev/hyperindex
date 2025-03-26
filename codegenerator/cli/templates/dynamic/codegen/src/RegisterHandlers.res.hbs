@@ -43,7 +43,7 @@ let registerContractHandlers = (
             ],
             events: [
               {{#each contract.events as | event |}}
-              module(Types.{{contract.name.capitalized}}.{{event.name}}),
+              (Types.{{contract.name.capitalized}}.{{event.name}}.register() :> Internal.baseEventConfig),
               {{/each}}
             ],
           },

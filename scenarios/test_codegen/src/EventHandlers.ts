@@ -1,3 +1,6 @@
+import { TestEvents } from "generated";
+import { TestHelpers } from "generated";
+import { EventFiltersTest } from "generated";
 import {
   Gravatar,
   BigDecimal,
@@ -11,6 +14,7 @@ import {
 } from "generated";
 import * as S from "rescript-schema";
 import { expectType, TypeEqual } from "ts-expect";
+import { bytesToHex, keccak256, toHex } from "viem";
 
 const zeroAddress = "0x0000000000000000000000000000000000000000";
 
@@ -164,4 +168,116 @@ SimpleNft.Transfer.handlerWithLoader({
 
     context.Token.set(token);
   },
+});
+
+// Test event filtering hashing
+export const hashingTestParams = {
+  id: 50n,
+  addr: TestHelpers.Addresses.mockAddresses[0],
+  str: "test",
+  isTrue: true,
+  dynBytes: new Uint8Array([1, 2, 3, 4, 5, 6, 7, 9]),
+  fixedBytes32: new Uint8Array(32).fill(0x12),
+  struct: [50n, "test"] satisfies [bigint, string],
+};
+TestEvents.IndexedUint.handler(async (_) => {}, {
+  eventFilters: {
+    num: [hashingTestParams.id],
+  },
+});
+TestEvents.IndexedInt.handler(async (_) => {}, {
+  eventFilters: {
+    num: [-hashingTestParams.id],
+  },
+});
+TestEvents.IndexedBool.handler(async (_) => {}, {
+  eventFilters: {
+    isTrue: [hashingTestParams.isTrue],
+  },
+});
+TestEvents.IndexedAddress.handler(async (_) => {}, {
+  eventFilters: {
+    addr: [hashingTestParams.addr],
+  },
+});
+TestEvents.IndexedBytes.handler(async (_) => {}, {
+  eventFilters: {
+    dynBytes: [bytesToHex(hashingTestParams.dynBytes)],
+  },
+});
+TestEvents.IndexedFixedBytes.handler(async (_) => {}, {
+  eventFilters: {
+    fixedBytes: [bytesToHex(hashingTestParams.fixedBytes32)],
+  },
+});
+TestEvents.IndexedString.handler(async (_) => {}, {
+  eventFilters: {
+    str: [hashingTestParams.str],
+  },
+});
+TestEvents.IndexedStruct.handler(async (_) => {}, {
+  eventFilters: {
+    testStruct: hashingTestParams.struct,
+  },
+});
+TestEvents.IndexedArray.handler(async (_) => {}, {
+  eventFilters: {
+    array: [[hashingTestParams.id, hashingTestParams.id + 1n]],
+  },
+});
+TestEvents.IndexedFixedArray.handler(async (_) => {}, {
+  eventFilters: {
+    array: [[hashingTestParams.id, hashingTestParams.id + 1n]],
+  },
+});
+TestEvents.IndexedNestedArray.handler(async (_) => {}, {
+  eventFilters: {
+    array: [
+      [
+        [hashingTestParams.id, hashingTestParams.id],
+        [hashingTestParams.id, hashingTestParams.id],
+      ],
+    ],
+  },
+});
+TestEvents.IndexedStructArray.handler(async (_) => {}, {
+  eventFilters: {
+    array: [[hashingTestParams.struct, hashingTestParams.struct]],
+  },
+});
+TestEvents.IndexedNestedStruct.handler(async (_) => {}, {
+  eventFilters: {
+    nestedStruct: [[hashingTestParams.id, hashingTestParams.struct]],
+  },
+});
+TestEvents.IndexedStructWithArray.handler(async (_) => {}, {
+  eventFilters: {
+    structWithArray: [
+      [hashingTestParams.id, hashingTestParams.id + 1n],
+      [hashingTestParams.str, hashingTestParams.str],
+    ],
+  },
+});
+
+const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
+const WHITELISTED_ADDRESSES = {
+  137: [
+    "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+    "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+  ],
+  100: ["0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC"],
+};
+EventFiltersTest.Transfer.handler(async (_) => {}, {
+  wildcard: true,
+  eventFilters: ({ chainId }) => {
+    return [
+      { from: ZERO_ADDRESS, to: WHITELISTED_ADDRESSES[chainId] },
+      { from: WHITELISTED_ADDRESSES[chainId], to: ZERO_ADDRESS },
+    ];
+  },
+});
+
+EventFiltersTest.EmptyFiltersArray.handler(async (_) => {}, {
+  wildcard: true,
+  eventFilters: [],
 });

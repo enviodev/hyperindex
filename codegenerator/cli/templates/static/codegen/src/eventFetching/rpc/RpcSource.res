@@ -161,24 +161,24 @@ let getNextPage = (
 
 type selectionConfig = {topics: array<array<EvmTypes.Hex.t>>}
 
-let getSelectionConfig = (selection: FetchState.selection, ~contracts: array<Config.contract>) => {
+let getSelectionConfig = (
+  selection: FetchState.selection,
+  ~contracts: array<Internal.evmContractConfig>,
+  ~chain,
+) => {
   let includedTopicSelections = []
 
   contracts->Belt.Array.forEach(contract => {
-    contract.events->Belt.Array.forEach(event => {
-      let module(Event) = event
-      let {isWildcard, topicSelections} =
-        Event.handlerRegister->Types.HandlerTypes.Register.getEventOptions
-
+    contract.events->Belt.Array.forEach(({isWildcard, getTopicSelectionsOrThrow, id}) => {
       if (
         FetchState.checkIsInSelection(
           ~selection,
           ~contractName=contract.name,
-          ~eventId=Event.id,
+          ~eventId=id,
           ~isWildcard,
         )
       ) {
-        includedTopicSelections->Js.Array2.pushMany(topicSelections)->ignore
+        includedTopicSelections->Js.Array2.pushMany(getTopicSelectionsOrThrow(~chain))->ignore
       }
     })
   })
@@ -222,13 +222,13 @@ let getSelectionConfig = (selection: FetchState.selection, ~contracts: array<Con
   }
 }
 
-let memoGetSelectionConfig = (~contracts) => {
+let memoGetSelectionConfig = (~contracts, ~chain) => {
   let cache = Utils.WeakMap.make()
   selection =>
     switch cache->Utils.WeakMap.get(selection) {
     | Some(c) => c
     | None => {
-        let c = selection->getSelectionConfig(~contracts)
+        let c = selection->getSelectionConfig(~contracts, ~chain)
         let _ = cache->Utils.WeakMap.set(selection, c)
         c
       }
@@ -322,8 +322,8 @@ type options = {
   syncConfig: Config.syncConfig,
   url: string,
   chain: ChainMap.Chain.t,
-  contracts: array<Config.contract>,
-  eventRouter: EventRouter.t<module(Types.InternalEvent)>,
+  contracts: array<Internal.evmContractConfig>,
+  eventRouter: EventRouter.t<Internal.evmEventConfig>,
 }
 
 let make = ({sourceFor, syncConfig, url, chain, contracts, eventRouter}: options): t => {
@@ -338,7 +338,7 @@ let make = ({sourceFor, syncConfig, url, chain, contracts, eventRouter}: options
 
   let provider = Ethers.JsonRpcProvider.make(~rpcUrl=url, ~chainId=chain->ChainMap.Chain.toChainId)
 
-  let getSelectionConfig = memoGetSelectionConfig(~contracts)
+  let getSelectionConfig = memoGetSelectionConfig(~contracts, ~chain)
 
   let suggestedBlockIntervals = Js.Dict.empty()
 
@@ -471,8 +471,7 @@ let make = ({sourceFor, syncConfig, url, chain, contracts, eventRouter}: options
           ~contractAddress=log.address,
         ) {
         | None => None //ignore events that aren't registered
-        | Some(eventMod: module(Types.InternalEvent)) =>
-          let module(Event) = eventMod
+        | Some(eventConfig) =>
           let blockNumber = log.blockNumber
           let logIndex = log.logIndex
           Some(
@@ -480,7 +479,7 @@ let make = ({sourceFor, syncConfig, url, chain, contracts, eventRouter}: options
               async () => {
                 let (block, transaction) = try await Promise.all2((
                   log->getEventBlockOrThrow,
-                  log->getEventTransactionOrThrow(~transactionSchema=Event.transactionSchema),
+                  log->getEventTransactionOrThrow(~transactionSchema=eventConfig.transactionSchema),
                 )) catch {
                 // Promise.catch won't work here, because the error
                 // might be thrown before a microtask is created
@@ -498,7 +497,7 @@ let make = ({sourceFor, syncConfig, url, chain, contracts, eventRouter}: options
                 }
 
                 let decodedEvent = try contractNameAbiMapping->Viem.parseLogOrThrow(
-                  ~contractName=Event.contractName,
+                  ~contractName=eventConfig.contractName,
                   ~topics=log.topics,
                   ~data=log.data,
                 ) catch {
@@ -517,12 +516,7 @@ let make = ({sourceFor, syncConfig, url, chain, contracts, eventRouter}: options
 
                 (
                   {
-                    eventName: Event.name,
-                    contractName: Event.contractName,
-                    loader: Event.handlerRegister->Types.HandlerTypes.Register.getLoader,
-                    handler: Event.handlerRegister->Types.HandlerTypes.Register.getHandler,
-                    contractRegister: Event.handlerRegister->Types.HandlerTypes.Register.getContractRegister,
-                    paramsRawEventSchema: Event.paramsRawEventSchema,
+                    eventConfig: (eventConfig :> Internal.baseEventConfig),
                     timestamp: block->Types.Block.getTimestamp,
                     chain,
                     blockNumber: block->Types.Block.getNumber,

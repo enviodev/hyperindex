@@ -8,24 +8,32 @@ let contracts = [
     abi: Types.Gravatar.abi,
     addresses: ["0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3"->Address.Evm.fromStringOrThrow],
     events: [
-      module(Types.Gravatar.TestEvent),
-      module(Types.Gravatar.NewGravatar),
-      module(Types.Gravatar.UpdatedGravatar),
+      (Types.Gravatar.TestEvent.register() :> Internal.baseEventConfig),
+      (Types.Gravatar.NewGravatar.register() :> Internal.baseEventConfig),
+      (Types.Gravatar.UpdatedGravatar.register() :> Internal.baseEventConfig),
     ],
   },
   {
     name: "NftFactory",
     abi: Types.NftFactory.abi,
     addresses: ["0xa2F6E6029638cCb484A2ccb6414499aD3e825CaC"->Address.Evm.fromStringOrThrow],
-    events: [module(Types.NftFactory.SimpleNftCreated)],
+    events: [(Types.NftFactory.SimpleNftCreated.register() :> Internal.baseEventConfig)],
   },
   {
     name: "SimpleNft",
     abi: Types.SimpleNft.abi,
     addresses: [],
-    events: [module(Types.SimpleNft.Transfer)],
+    events: [(Types.SimpleNft.Transfer.register() :> Internal.baseEventConfig)],
   },
 ]
+
+let evmContracts = contracts->Js.Array2.map((contract): Internal.evmContractConfig => {
+  name: contract.name,
+  abi: contract.abi,
+  events: contract.events->(
+    Utils.magic: array<Internal.baseEventConfig> => array<Internal.evmEventConfig>
+  ),
+})
 
 let mockChainConfig: Config.chainConfig = {
   confirmedBlockThreshold: 200,
@@ -36,7 +44,7 @@ let mockChainConfig: Config.chainConfig = {
   sources: [
     RpcSource.make({
       chain: chain1337,
-      contracts,
+      contracts: evmContracts,
       sourceFor: Sync,
       syncConfig: Config.getSyncConfig({
         initialBlockInterval: 10000,
@@ -48,7 +56,7 @@ let mockChainConfig: Config.chainConfig = {
         fallbackStallTimeout: 3,
       }),
       url: "http://127.0.0.1:8545",
-      eventRouter: contracts
+      eventRouter: evmContracts
       ->Belt.Array.flatMap(contract => contract.events)
       ->EventRouter.fromEvmEventModsOrThrow(~chain=chain1337),
     }),

@@ -144,14 +144,7 @@ let newGravatarEventToBatchItem = (
     chain: MockConfig.chain1337,
     blockNumber: event.block.number,
     logIndex: event.logIndex,
-    eventName: "NewGravatar",
-    contractName: "Gravatar",
-    handler: Types.Gravatar.NewGravatar.handlerRegister->Types.HandlerTypes.Register.getHandler,
-    loader: Types.Gravatar.NewGravatar.handlerRegister->Types.HandlerTypes.Register.getLoader,
-    contractRegister: Types.Gravatar.NewGravatar.handlerRegister->Types.HandlerTypes.Register.getContractRegister,
-    paramsRawEventSchema: Types.Gravatar.NewGravatar.paramsRawEventSchema->(
-      Utils.magic: S.t<Types.Gravatar.NewGravatar.eventArgs> => S.t<Internal.eventParams>
-    ),
+    eventConfig: (Types.Gravatar.NewGravatar.register() :> Internal.baseEventConfig),
     event: event->Internal.fromGenericEvent,
   }
 }
@@ -164,14 +157,7 @@ let updatedGravatarEventToBatchItem = (
     chain: MockConfig.chain1337,
     blockNumber: event.block.number,
     logIndex: event.logIndex,
-    eventName: "UpdatedGravatar",
-    contractName: "Gravatar",
-    handler: Types.Gravatar.UpdatedGravatar.handlerRegister->Types.HandlerTypes.Register.getHandler,
-    loader: Types.Gravatar.UpdatedGravatar.handlerRegister->Types.HandlerTypes.Register.getLoader,
-    contractRegister: Types.Gravatar.UpdatedGravatar.handlerRegister->Types.HandlerTypes.Register.getContractRegister,
-    paramsRawEventSchema: Types.Gravatar.UpdatedGravatar.paramsRawEventSchema->(
-      Utils.magic: S.t<Types.Gravatar.UpdatedGravatar.eventArgs> => S.t<Internal.eventParams>
-    ),
+    eventConfig: (Types.Gravatar.UpdatedGravatar.register() :> Internal.baseEventConfig),
     event: event->Internal.fromGenericEvent,
   }
 }

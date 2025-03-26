@@ -21,9 +21,21 @@ describe("E2E Integration Test", () => {
           Config.name: "GravatarRegistry",
           abi: Types.Gravatar.abi,
           addresses: ["0x5FbDB2315678afecb367f032d93F642f64180aa3"->Address.Evm.fromStringOrThrow],
-          events: [module(Types.Gravatar.NewGravatar), module(Types.Gravatar.UpdatedGravatar)],
+          events: [
+            (Types.Gravatar.NewGravatar.register() :> Internal.baseEventConfig),
+            (Types.Gravatar.UpdatedGravatar.register() :> Internal.baseEventConfig),
+          ],
         },
       ]
+      let evmContracts = contracts->Js.Array2.map(
+        (contract): Internal.evmContractConfig => {
+          name: contract.name,
+          abi: contract.abi,
+          events: contract.events->(
+            Utils.magic: array<Internal.baseEventConfig> => array<Internal.evmEventConfig>
+          ),
+        },
+      )
       let chain = MockConfig.chain1337
       {
         confirmedBlockThreshold: 200,
@@ -35,7 +47,7 @@ describe("E2E Integration Test", () => {
           RpcSource.make({
             chain,
             sourceFor: Sync,
-            contracts,
+            contracts: evmContracts,
             syncConfig: {
               initialBlockInterval: 10000,
               backoffMultiplicative: 10000.0,
@@ -46,7 +58,7 @@ describe("E2E Integration Test", () => {
               fallbackStallTimeout: 1000,
             },
             url: "http://127.0.0.1:8545",
-            eventRouter: contracts
+            eventRouter: evmContracts
             ->Belt.Array.flatMap(contract => contract.events)
             ->EventRouter.fromEvmEventModsOrThrow(~chain),
           }),
