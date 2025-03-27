@@ -1,4 +1,20 @@
-{
+open Belt
+
+@tag("status")
+type state =
+  | @as("disabled") Disabled({})
+  | @as("initializing") Initializing({})
+  | @as("active") Active({envioVersion: option<string>})
+
+let stateSchema = S.union([
+  S.literal(Disabled({})),
+  S.literal(Initializing({})),
+  S.schema(s => Active({
+    envioVersion: s.matches(S.option(S.string)),
+  })),
+])
+
+let startServer = (~getState) => {
   open Express
 
   let app = makeCjs()
@@ -8,7 +24,28 @@
   app->get("/healthz", (_req, res) => {
     // this is the machine readable port used in kubernetes to check the health of this service.
     //   aditional health information could be added in the future (info about errors, back-offs, etc).
-    let _ = res->sendStatus(200)
+    res->sendStatus(200)
+  })
+
+  app->useFor("/console", (req, res, next) => {
+    switch req.headers->Js.Dict.get("origin") {
+    | Some(origin) if origin === "https://envio.dev" || origin === "http://localhost:3000" =>
+      res->setHeader("Access-Control-Allow-Origin", origin)
+    | _ => ()
+    }
+
+    res->setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+    res->setHeader("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept")
+
+    if req.method === Options {
+      res->sendStatus(200)
+    } else {
+      next()
+    }
+  })
+
+  app->get("/console/state", (_req, res) => {
+    res->json(getState.contents()->S.reverseConvertToJsonOrThrow(stateSchema))
   })
 
   PromClient.collectDefaultMetrics()
@@ -36,7 +73,6 @@ type process
 type mainArgs = Yargs.parsedArgs<args>
 
 let makeAppState = (globalState: GlobalState.t): EnvioInkApp.appState => {
-  open Belt
   let chains =
     globalState.chainManager.chainFetchers
     ->ChainMap.values
@@ -120,9 +156,14 @@ let makeAppState = (globalState: GlobalState.t): EnvioInkApp.appState => {
 
 let main = async () => {
   try {
-    let config = RegisterHandlers.registerAllHandlers()
     let mainArgs: mainArgs = process->argv->Yargs.hideBin->Yargs.yargs->Yargs.argv
     let shouldUseTui = !(mainArgs.tuiOff->Belt.Option.getWithDefault(Env.tuiOffEnvVar))
+
+    let getState = ref(shouldUseTui ? () => Initializing({}) : () => Disabled({}))
+
+    startServer(~getState)
+
+    let config = RegisterHandlers.registerAllHandlers()
     let sql = Db.sql
     let needsRunUpMigrations = await sql->Migrations.needsRunUpMigrations
     if needsRunUpMigrations {
@@ -133,6 +174,9 @@ let main = async () => {
     let globalState = GlobalState.make(~config, ~chainManager, ~loadLayer)
     let stateUpdatedHook = if shouldUseTui {
       let rerender = EnvioInkApp.startApp(makeAppState(globalState))
+      let envioVersion =
+        PersistedState.getPersistedState()->Result.mapWithDefault(None, p => Some(p.envioVersion))
+      getState := (() => Active({envioVersion: envioVersion}))
       Some(globalState => globalState->makeAppState->rerender)
     } else {
       None
