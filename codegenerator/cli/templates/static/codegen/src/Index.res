@@ -1,16 +1,49 @@
 open Belt
 
+type chainData = {
+  chainId: float,
+  poweredByHyperSync: bool,
+  firstEventBlockNumber: option<int>,
+  latestProcessedBlock: option<int>,
+  timestampCaughtUpToHeadOrEndblock: option<Js.Date.t>,
+  numEventsProcessed: int,
+  latestFetchedBlockNumber: int,
+  currentBlockHeight: int,
+  numBatchesFetched: int,
+  endBlock: option<int>,
+}
 @tag("status")
 type state =
   | @as("disabled") Disabled({})
   | @as("initializing") Initializing({})
-  | @as("active") Active({envioVersion: option<string>})
+  | @as("active")
+  Active({
+      envioVersion: option<string>,
+      chains: array<chainData>,
+      indexerStartTime: Js.Date.t,
+      isPreRegisteringDynamicContracts: bool,
+    })
 
+let chainDataSchema = S.schema((s): chainData => {
+  chainId: s.matches(S.float),
+  poweredByHyperSync: s.matches(S.bool),
+  firstEventBlockNumber: s.matches(S.option(S.int)),
+  latestProcessedBlock: s.matches(S.option(S.int)),
+  timestampCaughtUpToHeadOrEndblock: s.matches(S.option(S.datetime(S.string))),
+  numEventsProcessed: s.matches(S.int),
+  latestFetchedBlockNumber: s.matches(S.int),
+  currentBlockHeight: s.matches(S.int),
+  numBatchesFetched: s.matches(S.int),
+  endBlock: s.matches(S.option(S.int)),
+})
 let stateSchema = S.union([
   S.literal(Disabled({})),
   S.literal(Initializing({})),
   S.schema(s => Active({
     envioVersion: s.matches(S.option(S.string)),
+    chains: s.matches(S.array(chainDataSchema)),
+    indexerStartTime: s.matches(S.datetime(S.string)),
+    isPreRegisteringDynamicContracts: s.matches(S.bool),
   })),
 ])
 
@@ -45,7 +78,7 @@ let startServer = (~getState) => {
   })
 
   app->get("/console/state", (_req, res) => {
-    res->json(getState.contents()->S.reverseConvertToJsonOrThrow(stateSchema))
+    res->json(getState()->S.reverseConvertToJsonOrThrow(stateSchema))
   })
 
   PromClient.collectDefaultMetrics()
@@ -159,9 +192,59 @@ let main = async () => {
     let mainArgs: mainArgs = process->argv->Yargs.hideBin->Yargs.yargs->Yargs.argv
     let shouldUseTui = !(mainArgs.tuiOff->Belt.Option.getWithDefault(Env.tuiOffEnvVar))
 
-    let getState = ref(shouldUseTui ? () => Initializing({}) : () => Disabled({}))
+    let gsManagerRef = ref(None)
 
-    startServer(~getState)
+    startServer(
+      ~getState=if shouldUseTui {
+        let envioVersion =
+          PersistedState.getPersistedState()->Result.mapWithDefault(None, p => Some(p.envioVersion))
+
+        () =>
+          switch gsManagerRef.contents {
+          | None => Initializing({})
+          | Some(gsManager) => {
+              let state = gsManager->GlobalStateManager.getState->makeAppState
+              Active({
+                envioVersion,
+                chains: state.chains->Js.Array2.map(c => {
+                  chainId: c.chainId->Js.Int.toFloat,
+                  poweredByHyperSync: c.poweredByHyperSync,
+                  latestFetchedBlockNumber: c.latestFetchedBlockNumber,
+                  currentBlockHeight: c.currentBlockHeight,
+                  numBatchesFetched: c.numBatchesFetched,
+                  endBlock: c.endBlock,
+                  firstEventBlockNumber: switch c.progress {
+                  | SearchingForEvents => None
+                  | Syncing({firstEventBlockNumber}) | Synced({firstEventBlockNumber}) =>
+                    Some(firstEventBlockNumber)
+                  },
+                  latestProcessedBlock: switch c.progress {
+                  | SearchingForEvents => None
+                  | Syncing({latestProcessedBlock}) | Synced({latestProcessedBlock}) =>
+                    Some(latestProcessedBlock)
+                  },
+                  timestampCaughtUpToHeadOrEndblock: switch c.progress {
+                  | SearchingForEvents
+                  | Syncing(_) =>
+                    None
+                  | Synced({timestampCaughtUpToHeadOrEndblock}) =>
+                    Some(timestampCaughtUpToHeadOrEndblock)
+                  },
+                  numEventsProcessed: switch c.progress {
+                  | SearchingForEvents => 0
+                  | Syncing({numEventsProcessed})
+                  | Synced({numEventsProcessed}) => numEventsProcessed
+                  },
+                }),
+                indexerStartTime: state.indexerStartTime,
+                isPreRegisteringDynamicContracts: state.isPreRegisteringDynamicContracts,
+              })
+            }
+          }
+      } else {
+        () => Disabled({})
+      },
+    )
 
     let config = RegisterHandlers.registerAllHandlers()
     let sql = Db.sql
@@ -174,14 +257,12 @@ let main = async () => {
     let globalState = GlobalState.make(~config, ~chainManager, ~loadLayer)
     let stateUpdatedHook = if shouldUseTui {
       let rerender = EnvioInkApp.startApp(makeAppState(globalState))
-      let envioVersion =
-        PersistedState.getPersistedState()->Result.mapWithDefault(None, p => Some(p.envioVersion))
-      getState := (() => Active({envioVersion: envioVersion}))
       Some(globalState => globalState->makeAppState->rerender)
     } else {
       None
     }
     let gsManager = globalState->GlobalStateManager.make(~stateUpdatedHook?)
+    gsManagerRef := Some(gsManager)
     gsManager->GlobalStateManager.dispatchTask(NextQuery(CheckAllChains))
     /*
     NOTE:
