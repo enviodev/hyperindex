@@ -22,6 +22,8 @@ type state =
       chains: array<chainData>,
       indexerStartTime: Js.Date.t,
       isPreRegisteringDynamicContracts: bool,
+      isUnorderedMultichainMode: bool,
+      rollbackOnReorg: bool,
     })
 
 let chainDataSchema = S.schema((s): chainData => {
@@ -44,6 +46,8 @@ let stateSchema = S.union([
     chains: s.matches(S.array(chainDataSchema)),
     indexerStartTime: s.matches(S.datetime(S.string)),
     isPreRegisteringDynamicContracts: s.matches(S.bool),
+    isUnorderedMultichainMode: s.matches(S.bool),
+    rollbackOnReorg: s.matches(S.bool),
   })),
 ])
 
@@ -192,6 +196,8 @@ let main = async () => {
     let mainArgs: mainArgs = process->argv->Yargs.hideBin->Yargs.yargs->Yargs.argv
     let shouldUseTui = !(mainArgs.tuiOff->Belt.Option.getWithDefault(Env.tuiOffEnvVar))
 
+    let config = RegisterHandlers.registerAllHandlers()
+
     let gsManagerRef = ref(None)
 
     startServer(
@@ -238,6 +244,8 @@ let main = async () => {
                 }),
                 indexerStartTime: state.indexerStartTime,
                 isPreRegisteringDynamicContracts: state.isPreRegisteringDynamicContracts,
+                rollbackOnReorg: config.historyConfig.rollbackFlag === RollbackOnReorg,
+                isUnorderedMultichainMode: config.isUnorderedMultichainMode,
               })
             }
           }
@@ -246,7 +254,6 @@ let main = async () => {
       },
     )
 
-    let config = RegisterHandlers.registerAllHandlers()
     let sql = Db.sql
     let needsRunUpMigrations = await sql->Migrations.needsRunUpMigrations
     if needsRunUpMigrations {
