@@ -150,4 +150,4 @@ type entity = private {id: string}
 @genType.import(("./bindings/OpaqueTypes.ts", "invalid"))
 type noEventFilters
 type eventFilters
-type eventFiltersArgs = {chainId: int}
+type eventFiltersArgs = {chainId: int, addresses: array<Address.t>}

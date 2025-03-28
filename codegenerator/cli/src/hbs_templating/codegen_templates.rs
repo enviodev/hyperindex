@@ -367,7 +367,7 @@ impl EventMod {
 
         let event_filters_type_code = match self.event_filter_type.as_str() {
             "{}" => "@genType type eventFilters = Internal.noEventFilters".to_string(),
-            _ => "@genType type eventFiltersArgs = {/** The unique identifier of the blockchain network where this event occurred. */ chainId: chainId}\n
+            _ => "@genType type eventFiltersArgs = {/** The unique identifier of the blockchain network where this event occurred. */ chainId: chainId, /** Addresses of the contracts indexing the event. */ addresses: array<Address.t>}\n
 @genType @unboxed type eventFiltersDefinition = Single(eventFilter) | Multiple(array<eventFilter>)\n
 @genType @unboxed type eventFilters = | ...eventFiltersDefinition | Dynamic(eventFiltersArgs => eventFiltersDefinition)".to_string(),
         };

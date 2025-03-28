@@ -83,6 +83,7 @@ let fromEventFiltersOrThrow = {
         let eventFilters = if Js.typeof(eventFilters) === "function" {
           (eventFilters->(Utils.magic: Js.Json.t => Internal.eventFiltersArgs => Js.Json.t))({
             chainId: chain->ChainMap.Chain.toChainId,
+            addresses: [],
           })
         } else {
           eventFilters
