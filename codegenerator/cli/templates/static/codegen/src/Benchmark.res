@@ -216,7 +216,7 @@ let throttler = Throttler.make(
   ~logger=Logging.createChild(~params={"context": "Benchmarking framework"}),
 )
 let cacheFileName = "BenchmarkCache.json"
-let cacheFilePath = NodeJsLocal.Path.join(NodeJsLocal.Path.__dirname, cacheFileName)
+let cacheFilePath = NodeJs.Path.join(NodeJs.Path.__dirname, cacheFileName)
 
 let saveToCacheFile = if (
   Env.Benchmark.saveDataStrategy->Env.Benchmark.SaveDataStrategy.shouldSaveJsonFile
@@ -225,7 +225,7 @@ let saveToCacheFile = if (
   data => {
     let write = () => {
       let json = data->S.reverseConvertToJsonStringOrThrow(Data.schema)
-      NodeJsLocal.Fs.Promises.writeFile(~filepath=cacheFilePath, ~content=json)
+      NodeJs.Fs.Promises.writeFile(~filepath=cacheFilePath, ~content=json)
     }
     throttler->Throttler.schedule(write)
   }
@@ -234,7 +234,7 @@ let saveToCacheFile = if (
 }
 
 let readFromCacheFile = async () => {
-  switch await NodeJsLocal.Fs.Promises.readFile(~filepath=cacheFilePath, ~encoding=Utf8) {
+  switch await NodeJs.Fs.Promises.readFile(~filepath=cacheFilePath, ~encoding=Utf8) {
   | exception _ => None
   | content =>
     try content->S.parseJsonStringOrThrow(Data.schema)->Some catch {

@@ -51,12 +51,60 @@ let stateSchema = S.union([
   })),
 ])
 
-let startServer = (~getState) => {
+let setApiTokenEnv = {
+  let initialted = ref(None)
+  let envPath = NodeJs.Path.resolve([".env"])
+  async apiToken => {
+    // Execute once even with multiple calls
+    if initialted.contents !== Some(apiToken) {
+      initialted := Some(apiToken)
+
+      let tokenLine = `ENVIO_API_TOKEN="${apiToken}"`
+
+      try {
+        // Check if file exists
+        let exists = try {
+          await NodeJs.Fs.Promises.access(envPath)
+          true
+        } catch {
+        | _ => false
+        }
+
+        if !exists {
+          // Create new file if it doesn't exist
+          await NodeJs.Fs.Promises.writeFile(
+            ~filepath=envPath,
+            ~content=tokenLine ++ "\n",
+            ~options={encoding: "utf8"},
+          )
+        } else {
+          // Read existing file
+          let content = await NodeJs.Fs.Promises.readFile(~filepath=envPath, ~encoding=Utf8)
+
+          // Check if token is already set
+          if !Js.String.includes(content, "ENVIO_API_TOKEN=") {
+            // Append token line if not present
+            await NodeJs.Fs.Promises.appendFile(
+              ~filepath=envPath,
+              ~content="\n" ++ tokenLine ++ "\n",
+              ~options={encoding: "utf8"},
+            )
+          }
+        }
+      } catch {
+      | Js.Exn.Error(err) => {
+          Js.Console.error("Error setting up ENVIO_API_TOKEN to the .env file:")
+          Js.Console.error(err)
+        }
+      }
+    }
+  }
+}
+
+let startServer = (~getState, ~shouldUseTui) => {
   open Express
 
   let app = makeCjs()
-
-  app->use(jsonMiddleware())
 
   app->get("/healthz", (_req, res) => {
     // this is the machine readable port used in kubernetes to check the health of this service.
@@ -84,6 +132,19 @@ let startServer = (~getState) => {
   app->get("/console/state", (_req, res) => {
     res->json(getState()->S.reverseConvertToJsonOrThrow(stateSchema))
   })
+
+  // Keep /console/state exposed, so it can return `disabled` status
+  if shouldUseTui {
+    app->post("/console/api-token", (req, res) => {
+      switch req.query->Utils.Dict.dangerouslyGetNonOption("value") {
+      | Some(apiToken) if Some(apiToken) !== Env.envioApiToken =>
+        setApiTokenEnv(apiToken)->Promise.done
+      | _ => ()
+      }
+
+      res->sendStatus(200)
+    })
+  }
 
   PromClient.collectDefaultMetrics()
 
@@ -191,7 +252,6 @@ let makeAppState = (globalState: GlobalState.t): EnvioInkApp.appState => {
   }
 }
 
-
 // Function to open the URL in the browser
 @module("child_process")
 external exec: (string, (Js.Nullable.t<Js.Exn.t>, 'a, 'b) => unit) => unit = "exec"
@@ -206,7 +266,6 @@ let openConsole = () => {
   exec(`${command} ${endpoint}/console`, (_, _, _) => ())
 }
 
-
 let main = async () => {
   try {
     let mainArgs: mainArgs = process->argv->Yargs.hideBin->Yargs.yargs->Yargs.argv
@@ -217,6 +276,7 @@ let main = async () => {
     let gsManagerRef = ref(None)
 
     startServer(
+      ~shouldUseTui,
       ~getState=if shouldUseTui {
         EnvioInkApp.startApp()
         openConsole()
@@ -294,7 +354,7 @@ let main = async () => {
   } catch {
   | e => {
       e->ErrorHandling.make(~msg="Failed at initialization")->ErrorHandling.log
-      NodeJsLocal.process->NodeJsLocal.exitWithCode(Failure)
+      NodeJs.process->NodeJs.exitWithCode(Failure)
     }
   }
 }
