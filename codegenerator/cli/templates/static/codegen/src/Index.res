@@ -191,6 +191,22 @@ let makeAppState = (globalState: GlobalState.t): EnvioInkApp.appState => {
   }
 }
 
+
+// Function to open the URL in the browser
+@module("child_process")
+external exec: (string, (Js.Nullable.t<Js.Exn.t>, 'a, 'b) => unit) => unit = "exec"
+@module("process") external platform: string = "platform"
+let openConsole = () => {
+  let endpoint = "http://localhost:3000" // https://envio.dev
+  let command = switch platform {
+  | "win32" => "start"
+  | "darwin" => "open"
+  | _ => "xdg-open"
+  }
+  exec(`${command} ${endpoint}/console`, (_, _, _) => ())
+}
+
+
 let main = async () => {
   try {
     let mainArgs: mainArgs = process->argv->Yargs.hideBin->Yargs.yargs->Yargs.argv
@@ -202,6 +218,9 @@ let main = async () => {
 
     startServer(
       ~getState=if shouldUseTui {
+        EnvioInkApp.startApp()
+        openConsole()
+
         let envioVersion =
           PersistedState.getPersistedState()->Result.mapWithDefault(None, p => Some(p.envioVersion))
 
@@ -262,13 +281,7 @@ let main = async () => {
     let chainManager = await ChainManager.makeFromDbState(~config)
     let loadLayer = LoadLayer.makeWithDbConnection()
     let globalState = GlobalState.make(~config, ~chainManager, ~loadLayer)
-    let stateUpdatedHook = if shouldUseTui {
-      let rerender = EnvioInkApp.startApp(makeAppState(globalState))
-      Some(globalState => globalState->makeAppState->rerender)
-    } else {
-      None
-    }
-    let gsManager = globalState->GlobalStateManager.make(~stateUpdatedHook?)
+    let gsManager = globalState->GlobalStateManager.make(~stateUpdatedHook=?None) // TODO: Remove the hook as not needed
     gsManagerRef := Some(gsManager)
     gsManager->GlobalStateManager.dispatchTask(NextQuery(CheckAllChains))
     /*
