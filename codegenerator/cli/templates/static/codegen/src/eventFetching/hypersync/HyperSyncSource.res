@@ -91,7 +91,10 @@ let getSelectionConfig = (
         capitalizedTransactionFields->Utils.Set.addMany(
           transactionSchema->Utils.Schema.getCapitalizedFieldNames,
         )
-        let topicSelections = getTopicSelectionsOrThrow(~chain)
+        let topicSelections = getTopicSelectionsOrThrow({
+          chainId: chain->ChainMap.Chain.toChainId,
+          addresses: [],
+        })
         if isWildcard {
           wildcardTopicSelections->Js.Array2.pushMany(topicSelections)->ignore
         } else {

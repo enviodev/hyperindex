@@ -178,7 +178,14 @@ let getSelectionConfig = (
           ~isWildcard,
         )
       ) {
-        includedTopicSelections->Js.Array2.pushMany(getTopicSelectionsOrThrow(~chain))->ignore
+        includedTopicSelections
+        ->Js.Array2.pushMany(
+          getTopicSelectionsOrThrow({
+            chainId: chain->ChainMap.Chain.toChainId,
+            addresses: [],
+          }),
+        )
+        ->ignore
       }
     })
   })

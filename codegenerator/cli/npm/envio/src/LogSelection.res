@@ -62,7 +62,7 @@ let fromEventFiltersOrThrow = {
   let noopGetter = _ => emptyTopics
 
   (
-    ~chain,
+    args: Internal.eventFiltersArgs,
     ~eventFilters: option<Js.Json.t>,
     ~sighash,
     ~topic1=noopGetter,
@@ -81,10 +81,7 @@ let fromEventFiltersOrThrow = {
       ]
     | Some(eventFilters) => {
         let eventFilters = if Js.typeof(eventFilters) === "function" {
-          (eventFilters->(Utils.magic: Js.Json.t => Internal.eventFiltersArgs => Js.Json.t))({
-            chainId: chain->ChainMap.Chain.toChainId,
-            addresses: [],
-          })
+          (eventFilters->(Utils.magic: Js.Json.t => Internal.eventFiltersArgs => Js.Json.t))(args)
         } else {
           eventFilters
         }
