@@ -64,7 +64,11 @@ type genericHandlerWithLoader<'loader, 'handler, 'eventFilters> = {
   preRegisterDynamicContracts?: bool,
 }
 
-type baseEventConfig = {
+// This is private so it's not manually constructed internally
+// The idea is that it can only be coerced from fuel/evmEventConfig
+// and it can include their fields. We prevent manual creation,
+// so the fields are not overwritten and we can safely cast the type back to fuel/evmEventConfig
+type eventConfig = private {
   id: string,
   name: string,
   contractName: string,
@@ -83,7 +87,7 @@ type fuelEventKind =
   | Transfer
   | Call
 type fuelEventConfig = {
-  ...baseEventConfig,
+  ...eventConfig,
   kind: fuelEventKind,
 }
 type fuelContractConfig = {
@@ -101,7 +105,7 @@ type topicSelection = {
 type eventFiltersArgs = {chainId: int, addresses: array<Address.t>}
 
 type evmEventConfig = {
-  ...baseEventConfig,
+  ...eventConfig,
   getTopicSelectionsOrThrow: eventFiltersArgs => array<topicSelection>,
   blockSchema: S.schema<eventBlock>,
   transactionSchema: S.schema<eventTransaction>,
@@ -114,7 +118,7 @@ type evmContractConfig = {
 }
 
 type eventItem = {
-  eventConfig: baseEventConfig,
+  eventConfig: eventConfig,
   timestamp: int,
   chain: ChainMap.Chain.t,
   blockNumber: int,

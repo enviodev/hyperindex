@@ -22,8 +22,8 @@ describe("E2E Integration Test", () => {
           abi: Types.Gravatar.abi,
           addresses: ["0x5FbDB2315678afecb367f032d93F642f64180aa3"->Address.Evm.fromStringOrThrow],
           events: [
-            (Types.Gravatar.NewGravatar.register() :> Internal.baseEventConfig),
-            (Types.Gravatar.UpdatedGravatar.register() :> Internal.baseEventConfig),
+            (Types.Gravatar.NewGravatar.register() :> Internal.eventConfig),
+            (Types.Gravatar.UpdatedGravatar.register() :> Internal.eventConfig),
           ],
         },
       ]
@@ -32,7 +32,7 @@ describe("E2E Integration Test", () => {
           name: contract.name,
           abi: contract.abi,
           events: contract.events->(
-            Utils.magic: array<Internal.baseEventConfig> => array<Internal.evmEventConfig>
+            Utils.magic: array<Internal.eventConfig> => array<Internal.evmEventConfig>
           ),
         },
       )

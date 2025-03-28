@@ -523,7 +523,7 @@ let make = ({sourceFor, syncConfig, url, chain, contracts, eventRouter}: options
 
                 (
                   {
-                    eventConfig: (eventConfig :> Internal.baseEventConfig),
+                    eventConfig: (eventConfig :> Internal.eventConfig),
                     timestamp: block->Types.Block.getTimestamp,
                     chain,
                     blockNumber: block->Types.Block.getNumber,

@@ -453,7 +453,7 @@ let make = ({chain, contracts, endpointUrl}: options): t => {
 
       (
         {
-          eventConfig: (eventConfig :> Internal.baseEventConfig),
+          eventConfig: (eventConfig :> Internal.eventConfig),
           timestamp: block.time,
           chain,
           blockNumber: block.height,
