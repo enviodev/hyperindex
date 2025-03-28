@@ -37,16 +37,43 @@ module Util = {
 
 module Path = {
   type t
+
+  @module("path") @variadic
+  external resolve: array<string> => t = "resolve"
+
   @module("path") external join: (t, string) => t = "join"
+
   external toString: t => string = "%identity"
+
   external __dirname: t = "__dirname"
 }
+
 module Fs = {
+  type writeFileOptions = {
+    mode?: int,
+    // flag?: Flag.t,
+    encoding?: string,
+  }
+
   module Promises = {
     @module("fs") @scope("promises")
-    external writeFile: (~filepath: Path.t, ~content: string) => promise<unit> = "writeFile"
+    external writeFile: (
+      ~filepath: Path.t,
+      ~content: string,
+      ~options: writeFileOptions=?,
+    ) => promise<unit> = "writeFile"
 
-    type encoding = | @as("utf-8") Utf8
+    @module("fs") @scope("promises")
+    external appendFile: (
+      ~filepath: Path.t,
+      ~content: string,
+      ~options: writeFileOptions=?,
+    ) => Js.Promise.t<unit> = "appendFile"
+
+    @module("fs") @scope("promises")
+    external access: Path.t => Js.Promise.t<unit> = "access"
+
+    type encoding = | @as("utf8") Utf8
 
     @module("fs") @scope("promises")
     external readFile: (~filepath: Path.t, ~encoding: encoding) => promise<string> = "readFile"
