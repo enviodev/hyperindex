@@ -48,68 +48,45 @@ type selectionConfig = {
   nonOptionalTransactionFieldNames: array<string>,
 }
 
-let getSelectionConfig = (
-  selection: FetchState.selection,
-  ~contracts: array<Internal.evmContractConfig>,
-  ~chain,
-) => {
+let getSelectionConfig = (selection: FetchState.selection, ~chain) => {
   let nonOptionalBlockFieldNames = Utils.Set.make()
   let nonOptionalTransactionFieldNames = Utils.Set.make()
   let capitalizedBlockFields = Utils.Set.make()
   let capitalizedTransactionFields = Utils.Set.make()
   let wildcardTopicSelections = []
 
-  let contractTopicSelections = []
+  let normalTopicSelectionsByContract = Js.Dict.empty()
 
-  contracts->Array.forEach(contract => {
-    let normalTopicSelections = []
-
-    contract.events->Array.forEach(({
-      isWildcard,
-      id,
-      getTopicSelectionsOrThrow,
-      blockSchema,
-      transactionSchema,
-    }) => {
-      if (
-        FetchState.checkIsInSelection(
-          ~selection,
-          ~contractName=contract.name,
-          ~eventId=id,
-          ~isWildcard,
-        )
-      ) {
-        nonOptionalBlockFieldNames->Utils.Set.addMany(
-          blockSchema->Utils.Schema.getNonOptionalFieldNames,
-        )
-        nonOptionalTransactionFieldNames->Utils.Set.addMany(
-          transactionSchema->Utils.Schema.getNonOptionalFieldNames,
-        )
-        capitalizedBlockFields->Utils.Set.addMany(
-          blockSchema->Utils.Schema.getCapitalizedFieldNames,
-        )
-        capitalizedTransactionFields->Utils.Set.addMany(
-          transactionSchema->Utils.Schema.getCapitalizedFieldNames,
-        )
-        let topicSelections = getTopicSelectionsOrThrow({
-          chainId: chain->ChainMap.Chain.toChainId,
-          addresses: [],
-        })
-        if isWildcard {
-          wildcardTopicSelections->Js.Array2.pushMany(topicSelections)->ignore
-        } else {
-          normalTopicSelections->Js.Array2.pushMany(topicSelections)->ignore
-        }
-      }
+  selection.eventConfigs
+  ->(Utils.magic: array<Internal.eventConfig> => array<Internal.evmEventConfig>)
+  ->Array.forEach(({
+    isWildcard,
+    contractName,
+    getTopicSelectionsOrThrow,
+    blockSchema,
+    transactionSchema,
+  }) => {
+    nonOptionalBlockFieldNames->Utils.Set.addMany(
+      blockSchema->Utils.Schema.getNonOptionalFieldNames,
+    )
+    nonOptionalTransactionFieldNames->Utils.Set.addMany(
+      transactionSchema->Utils.Schema.getNonOptionalFieldNames,
+    )
+    capitalizedBlockFields->Utils.Set.addMany(blockSchema->Utils.Schema.getCapitalizedFieldNames)
+    capitalizedTransactionFields->Utils.Set.addMany(
+      transactionSchema->Utils.Schema.getCapitalizedFieldNames,
+    )
+    let topicSelections = getTopicSelectionsOrThrow({
+      chainId: chain->ChainMap.Chain.toChainId,
+      addresses: [],
     })
-
-    switch normalTopicSelections {
-    | [] => ()
-    | _ =>
-      contractTopicSelections->Array.push({
-        "contractName": contract.name,
-        "topicSelections": normalTopicSelections,
-      })
+    if isWildcard {
+      wildcardTopicSelections->Js.Array2.pushMany(topicSelections)->ignore
+    } else {
+      switch normalTopicSelectionsByContract->Utils.Dict.dangerouslyGetNonOption(contractName) {
+      | Some(arr) => arr->Js.Array2.pushMany(topicSelections)->ignore
+      | None => normalTopicSelectionsByContract->Js.Dict.set(contractName, topicSelections)
+      }
     }
   })
 
@@ -124,25 +101,31 @@ let getSelectionConfig = (
   }
 
   let getNormalLogSelectionOrThrow = (~contractAddressMapping): array<LogSelection.t> => {
-    contractTopicSelections->Belt.Array.keepMap((data): option<LogSelection.t> => {
-      let contractName = data["contractName"]
-      let topicSelections = data["topicSelections"]
+    normalTopicSelectionsByContract
+    ->Js.Dict.keys
+    ->Belt.Array.keepMap(contractName => {
       switch contractAddressMapping->ContractAddressingMap.getAddressesFromContractName(
         ~contractName,
       ) {
       | [] => None
-      | addresses => Some(LogSelection.make(~addresses, ~topicSelections))
+      | addresses =>
+        Some(
+          LogSelection.make(
+            ~addresses,
+            ~topicSelections=normalTopicSelectionsByContract->Js.Dict.unsafeGet(contractName),
+          ),
+        )
       }
     })
   }
 
-  let getLogSelectionOrThrow = switch selection.isWildcard {
-  | true =>
+  let getLogSelectionOrThrow = switch selection.needsAddresses {
+  | false =>
     let logSelections = [LogSelection.make(~addresses=[], ~topicSelections=wildcardTopicSelections)]
     (~contractAddressMapping as _) => {
       logSelections
     }
-  | false => getNormalLogSelectionOrThrow
+  | true => getNormalLogSelectionOrThrow
   }
 
   {
@@ -153,13 +136,13 @@ let getSelectionConfig = (
   }
 }
 
-let memoGetSelectionConfig = (~contracts, ~chain) => {
+let memoGetSelectionConfig = (~chain) => {
   let cache = Utils.WeakMap.make()
   selection =>
     switch cache->Utils.WeakMap.get(selection) {
     | Some(c) => c
     | None => {
-        let c = selection->getSelectionConfig(~contracts, ~chain)
+        let c = selection->getSelectionConfig(~chain)
         let _ = cache->Utils.WeakMap.set(selection, c)
         c
       }
@@ -187,7 +170,7 @@ let make = (
 ): t => {
   let name = "HyperSync"
 
-  let getSelectionConfig = memoGetSelectionConfig(~contracts, ~chain)
+  let getSelectionConfig = memoGetSelectionConfig(~chain)
 
   let apiToken =
     Env.envioApiToken->Belt.Option.getWithDefault("3dc856dd-b0ea-494f-b27e-017b8b6b7e07")

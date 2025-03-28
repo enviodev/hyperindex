@@ -161,33 +161,20 @@ let getNextPage = (
 
 type selectionConfig = {topics: array<array<EvmTypes.Hex.t>>}
 
-let getSelectionConfig = (
-  selection: FetchState.selection,
-  ~contracts: array<Internal.evmContractConfig>,
-  ~chain,
-) => {
+let getSelectionConfig = (selection: FetchState.selection, ~chain) => {
   let includedTopicSelections = []
 
-  contracts->Belt.Array.forEach(contract => {
-    contract.events->Belt.Array.forEach(({isWildcard, getTopicSelectionsOrThrow, id}) => {
-      if (
-        FetchState.checkIsInSelection(
-          ~selection,
-          ~contractName=contract.name,
-          ~eventId=id,
-          ~isWildcard,
-        )
-      ) {
-        includedTopicSelections
-        ->Js.Array2.pushMany(
-          getTopicSelectionsOrThrow({
-            chainId: chain->ChainMap.Chain.toChainId,
-            addresses: [],
-          }),
-        )
-        ->ignore
-      }
-    })
+  selection.eventConfigs
+  ->(Utils.magic: array<Internal.eventConfig> => array<Internal.evmEventConfig>)
+  ->Belt.Array.forEach(({getTopicSelectionsOrThrow}) => {
+    includedTopicSelections
+    ->Js.Array2.pushMany(
+      getTopicSelectionsOrThrow({
+        chainId: chain->ChainMap.Chain.toChainId,
+        addresses: [],
+      }),
+    )
+    ->ignore
   })
 
   let topicSelection = switch includedTopicSelections->LogSelection.compressTopicSelections {
@@ -229,13 +216,13 @@ let getSelectionConfig = (
   }
 }
 
-let memoGetSelectionConfig = (~contracts, ~chain) => {
+let memoGetSelectionConfig = (~chain) => {
   let cache = Utils.WeakMap.make()
   selection =>
     switch cache->Utils.WeakMap.get(selection) {
     | Some(c) => c
     | None => {
-        let c = selection->getSelectionConfig(~contracts, ~chain)
+        let c = selection->getSelectionConfig(~chain)
         let _ = cache->Utils.WeakMap.set(selection, c)
         c
       }
@@ -345,7 +332,7 @@ let make = ({sourceFor, syncConfig, url, chain, contracts, eventRouter}: options
 
   let provider = Ethers.JsonRpcProvider.make(~rpcUrl=url, ~chainId=chain->ChainMap.Chain.toChainId)
 
-  let getSelectionConfig = memoGetSelectionConfig(~contracts, ~chain)
+  let getSelectionConfig = memoGetSelectionConfig(~chain)
 
   let suggestedBlockIntervals = Js.Dict.empty()
 

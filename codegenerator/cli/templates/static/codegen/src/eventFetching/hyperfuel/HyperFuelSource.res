@@ -7,15 +7,6 @@ let mintEventTag = "mint"
 let burnEventTag = "burn"
 let transferEventTag = "transfer"
 let callEventTag = "call"
-let getEventId = (eventConfig: Internal.fuelEventConfig) => {
-  switch eventConfig.kind {
-  | Mint => mintEventTag
-  | Burn => burnEventTag
-  | Transfer => transferEventTag
-  | Call => callEventTag
-  | LogData({logId}) => logId
-  }
-}
 
 type selectionConfig = {
   getRecieptsSelection: (
@@ -144,67 +135,59 @@ let getSelectionConfig = (
     }
   }
 
-  contracts->Belt.Array.forEach(contract => {
-    let nonWildcardLogDataRbs = []
-    contract.events->Array.forEach(eventConfig => {
-      let eventId = getEventId(eventConfig)
-      if (
-        FetchState.checkIsInSelection(
-          ~selection,
-          ~contractName=contract.name,
-          ~eventId,
-          ~isWildcard=eventConfig.isWildcard,
-        )
-      ) {
-        eventRouter->EventRouter.addOrThrow(
-          eventId,
-          eventConfig,
-          ~contractName=contract.name,
-          ~eventName=eventConfig.name,
-          ~chain,
-          ~isWildcard=eventConfig.isWildcard,
-        )
+  selection.eventConfigs
+  ->(Utils.magic: array<Internal.eventConfig> => array<Internal.fuelEventConfig>)
+  ->Array.forEach(eventConfig => {
+    let contractName = eventConfig.contractName
+    eventRouter->EventRouter.addOrThrow(
+      eventConfig.id,
+      eventConfig,
+      ~contractName,
+      ~eventName=eventConfig.name,
+      ~chain,
+      ~isWildcard=eventConfig.isWildcard,
+    )
 
-        switch eventConfig {
-        | {kind: Mint, isWildcard: true} => addNonLogDataWildcardReceiptTypes(Mint)
-        | {kind: Mint} => addNonLogDataReceiptType(contract.name, Mint)
-        | {kind: Burn, isWildcard: true} => addNonLogDataWildcardReceiptTypes(Burn)
-        | {kind: Burn} => addNonLogDataReceiptType(contract.name, Burn)
-        | {kind: Transfer, isWildcard: true} => {
-            addNonLogDataWildcardReceiptTypes(Transfer)
-            addNonLogDataWildcardReceiptTypes(TransferOut)
-          }
-        | {kind: Transfer} => {
-            addNonLogDataReceiptType(contract.name, Transfer)
-            addNonLogDataReceiptType(contract.name, TransferOut)
-          }
-        | {kind: Call, isWildcard: true} => addNonLogDataWildcardReceiptTypes(Call)
-        | {kind: Call} =>
-          Js.Exn.raiseError("Call receipt indexing currently supported only in wildcard mode")
-        | {kind: LogData({logId}), isWildcard} => {
-            let rb = logId->BigInt.fromStringUnsafe
-            if isWildcard {
-              wildcardLogDataRbs->Array.push(rb)->ignore
-            } else {
-              nonWildcardLogDataRbs->Array.push(rb)->ignore
-            }
+    switch eventConfig {
+    | {kind: Mint, isWildcard: true} => addNonLogDataWildcardReceiptTypes(Mint)
+    | {kind: Mint} => addNonLogDataReceiptType(contractName, Mint)
+    | {kind: Burn, isWildcard: true} => addNonLogDataWildcardReceiptTypes(Burn)
+    | {kind: Burn} => addNonLogDataReceiptType(contractName, Burn)
+    | {kind: Transfer, isWildcard: true} => {
+        addNonLogDataWildcardReceiptTypes(Transfer)
+        addNonLogDataWildcardReceiptTypes(TransferOut)
+      }
+    | {kind: Transfer} => {
+        addNonLogDataReceiptType(contractName, Transfer)
+        addNonLogDataReceiptType(contractName, TransferOut)
+      }
+    | {kind: Call, isWildcard: true} => addNonLogDataWildcardReceiptTypes(Call)
+    | {kind: Call} =>
+      Js.Exn.raiseError("Call receipt indexing currently supported only in wildcard mode")
+    | {kind: LogData({logId}), isWildcard} => {
+        let rb = logId->BigInt.fromStringUnsafe
+        if isWildcard {
+          wildcardLogDataRbs->Array.push(rb)->ignore
+        } else {
+          switch nonWildcardLogDataRbsByContract->Utils.Dict.dangerouslyGetNonOption(contractName) {
+          | Some(arr) => arr->Belt.Array.push(rb)
+          | None => nonWildcardLogDataRbsByContract->Js.Dict.set(contractName, [rb])
           }
         }
       }
-    })
-    nonWildcardLogDataRbsByContract->Js.Dict.set(contract.name, nonWildcardLogDataRbs)
+    }
   })
 
   {
-    getRecieptsSelection: switch selection.isWildcard {
-    | true => {
+    getRecieptsSelection: switch selection.needsAddresses {
+    | false => {
         let recieptsSelection = makeWildcardRecieptsSelection(
           ~wildcardLogDataRbs,
           ~nonLogDataWildcardReceiptTypes,
         )
         (~contractAddressMapping as _) => recieptsSelection
       }
-    | false =>
+    | true =>
       makeGetNormalRecieptsSelection(
         ~nonWildcardLogDataRbsByContract,
         ~nonLogDataReceiptTypesByContract,
