@@ -144,7 +144,7 @@ let newGravatarEventToBatchItem = (
     chain: MockConfig.chain1337,
     blockNumber: event.block.number,
     logIndex: event.logIndex,
-    eventConfig: (Types.Gravatar.NewGravatar.register() :> Internal.baseEventConfig),
+    eventConfig: (Types.Gravatar.NewGravatar.register() :> Internal.eventConfig),
     event: event->Internal.fromGenericEvent,
   }
 }
@@ -157,7 +157,7 @@ let updatedGravatarEventToBatchItem = (
     chain: MockConfig.chain1337,
     blockNumber: event.block.number,
     logIndex: event.logIndex,
-    eventConfig: (Types.Gravatar.UpdatedGravatar.register() :> Internal.baseEventConfig),
+    eventConfig: (Types.Gravatar.UpdatedGravatar.register() :> Internal.eventConfig),
     event: event->Internal.fromGenericEvent,
   }
 }

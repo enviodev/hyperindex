@@ -367,7 +367,7 @@ impl EventMod {
 
         let event_filters_type_code = match self.event_filter_type.as_str() {
             "{}" => "@genType type eventFilters = Internal.noEventFilters".to_string(),
-            _ => "@genType type eventFiltersArgs = {/** The unique identifier of the blockchain network where this event occurred. */ chainId: chainId}\n
+            _ => "@genType type eventFiltersArgs = {/** The unique identifier of the blockchain network where this event occurred. */ chainId: chainId, /** Addresses of the contracts indexing the event. */ addresses: array<Address.t>}\n
 @genType @unboxed type eventFiltersDefinition = Single(eventFilter) | Multiple(array<eventFilter>)\n
 @genType @unboxed type eventFilters = | ...eventFiltersDefinition | Dynamic(eventFiltersArgs => eventFiltersDefinition)".to_string(),
         };
@@ -568,7 +568,7 @@ impl EventTemplate {
                 });
 
         format!(
-            "(~chain) => LogSelection.fromEventFiltersOrThrow(~chain, ~eventFilters=(handlerRegister->HandlerTypes.Register.getEventOptions).eventFilters, ~sighash{topic_filter_calls})"
+            "args => args->LogSelection.fromEventFiltersOrThrow(~eventFilters=(handlerRegister->HandlerTypes.Register.getEventOptions).eventFilters, ~sighash{topic_filter_calls})"
         )
     }
 
@@ -1687,7 +1687,7 @@ type eventFilter = {{}}
 @genType type eventFilters = Internal.noEventFilters
 
 let register = (): Internal.evmEventConfig => {{
-  getTopicSelectionsOrThrow: (~chain) => LogSelection.fromEventFiltersOrThrow(~chain, ~eventFilters=(handlerRegister->HandlerTypes.Register.getEventOptions).eventFilters, ~sighash),
+  getTopicSelectionsOrThrow: args => args->LogSelection.fromEventFiltersOrThrow(~eventFilters=(handlerRegister->HandlerTypes.Register.getEventOptions).eventFilters, ~sighash),
   blockSchema: blockSchema->(Utils.magic: S.t<block> => S.t<Internal.eventBlock>),
   transactionSchema: transactionSchema->(Utils.magic: S.t<transaction> => S.t<Internal.eventTransaction>),
   convertHyperSyncEventArgs: (decodedEvent: HyperSyncClient.Decoder.decodedEvent) => {{id: decodedEvent.body->Js.Array2.unsafe_get(0)->HyperSyncClient.Decoder.toUnderlying->Utils.magic, owner: decodedEvent.body->Js.Array2.unsafe_get(1)->HyperSyncClient.Decoder.toUnderlying->Utils.magic, displayName: decodedEvent.body->Js.Array2.unsafe_get(2)->HyperSyncClient.Decoder.toUnderlying->Utils.magic, imageUrl: decodedEvent.body->Js.Array2.unsafe_get(3)->HyperSyncClient.Decoder.toUnderlying->Utils.magic, }}->(Utils.magic: eventArgs => Internal.eventParams),
@@ -1772,7 +1772,7 @@ type eventFilter = {}
 @genType type eventFilters = Internal.noEventFilters
 
 let register = (): Internal.evmEventConfig => {
-  getTopicSelectionsOrThrow: (~chain) => LogSelection.fromEventFiltersOrThrow(~chain, ~eventFilters=(handlerRegister->HandlerTypes.Register.getEventOptions).eventFilters, ~sighash),
+  getTopicSelectionsOrThrow: args => args->LogSelection.fromEventFiltersOrThrow(~eventFilters=(handlerRegister->HandlerTypes.Register.getEventOptions).eventFilters, ~sighash),
   blockSchema: blockSchema->(Utils.magic: S.t<block> => S.t<Internal.eventBlock>),
   transactionSchema: transactionSchema->(Utils.magic: S.t<transaction> => S.t<Internal.eventTransaction>),
   convertHyperSyncEventArgs: _ => ()->(Utils.magic: eventArgs => Internal.eventParams),
@@ -1863,7 +1863,7 @@ type eventFilter = {}
 @genType type eventFilters = Internal.noEventFilters
 
 let register = (): Internal.evmEventConfig => {
-  getTopicSelectionsOrThrow: (~chain) => LogSelection.fromEventFiltersOrThrow(~chain, ~eventFilters=(handlerRegister->HandlerTypes.Register.getEventOptions).eventFilters, ~sighash),
+  getTopicSelectionsOrThrow: args => args->LogSelection.fromEventFiltersOrThrow(~eventFilters=(handlerRegister->HandlerTypes.Register.getEventOptions).eventFilters, ~sighash),
   blockSchema: blockSchema->(Utils.magic: S.t<block> => S.t<Internal.eventBlock>),
   transactionSchema: transactionSchema->(Utils.magic: S.t<transaction> => S.t<Internal.eventTransaction>),
   convertHyperSyncEventArgs: _ => ()->(Utils.magic: eventArgs => Internal.eventParams),

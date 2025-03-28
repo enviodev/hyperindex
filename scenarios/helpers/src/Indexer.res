@@ -82,7 +82,7 @@ module type S = {
       name: string,
       abi: Ethers.abi,
       addresses: array<Address.t>,
-      events: array<Internal.baseEventConfig>,
+      events: array<Internal.eventConfig>,
     }
 
     type chainConfig = {
