@@ -96,15 +96,15 @@ let useShouldDisplayEta = (~chains: array<TuiData.chain>) => {
 
 let useEta = (~chains, ~indexerStartTime) => {
   let shouldDisplayEta = useShouldDisplayEta(~chains)
-  let (secondsToSub, setSecondsToSub) = React.useState(_ => 0.)
-  let (timeSinceStart, setTimeSinceStart) = React.useState(_ => 0.)
+  let (initialBlocks, setInitialBlocks) = React.useState(_ => 0.)
+  let (timeSinceRestart, setTimeSinceRestart) = React.useState(_ => 0.)
 
   React.useEffect2(() => {
-    setTimeSinceStart(_ => Js.Date.now() -. indexerStartTime->Js.Date.valueOf)
-    setSecondsToSub(_ => 0.)
+    setInitialBlocks(_ => getTotalBlocksProcessed(chains)->Int.toFloat)
+    setTimeSinceRestart(_ => 0.)
 
     let intervalId = Js.Global.setInterval(() => {
-      setSecondsToSub(prev => prev +. 1.)
+      setTimeSinceRestart(_ => Js.Date.now() -. indexerStartTime->Js.Date.valueOf)
     }, 1000)
 
     Some(() => Js.Global.clearInterval(intervalId))
@@ -113,13 +113,12 @@ let useEta = (~chains, ~indexerStartTime) => {
   //blocksProcessed/remainingBlocks = timeSoFar/eta
   //eta = (timeSoFar/blocksProcessed) * remainingBlocks
 
-  let blocksProcessed = getTotalBlocksProcessed(chains)->Int.toFloat
-  if shouldDisplayEta && blocksProcessed > 0. {
+  let blocksSinceRestart = getTotalBlocksProcessed(chains)->Int.toFloat -. initialBlocks
+  if shouldDisplayEta && blocksSinceRestart > 0. && timeSinceRestart > 1000. {
     let nowDate = Js.Date.now()
     let remainingBlocks = getTotalRemainingBlocks(chains)->Int.toFloat
-    let etaFloat = timeSinceStart /. blocksProcessed *. remainingBlocks
-    let millisToSub = secondsToSub *. 1000.
-    let etaFloat = Pervasives.max(etaFloat -. millisToSub, 0.0) //template this
+    let etaFloat = timeSinceRestart /. blocksSinceRestart *. remainingBlocks
+    let etaFloat = Pervasives.max(etaFloat, 0.0)
     let eta = (etaFloat +. nowDate)->Js.Date.fromFloat
     let interval: DateFns.interval = {start: nowDate->Js.Date.fromFloat, end: eta}
     let duration = DateFns.intervalToDuration(interval)
