@@ -37,7 +37,7 @@ module App = {
       <BigText text="envio" colors=[Secondary, Primary] font={Block} />
       <Box flexDirection={Column}>
         <Text>
-          {"Track the indexer's progress and access GraphQL Playground in the Development Console:"->React.string}
+          {"Track the indexer's progress and access GraphQL Playground at the Development Console:"->React.string}
         </Text>
         <Text color={Info} underline=true> {"https://envio.dev/console"->React.string} </Text>
       </Box>

@@ -10,6 +10,7 @@ type app
 type req = private {
   headers: dict<string>,
   method: Rest.method,
+  query: dict<string>,
 }
 type res
 
@@ -22,6 +23,7 @@ type middleware = (req, res, unit => unit) => unit
 @send external useFor: (app, string, middleware) => unit = "use"
 
 @send external get: (app, string, handler) => unit = "get"
+@send external post: (app, string, handler) => unit = "post"
 
 type server
 

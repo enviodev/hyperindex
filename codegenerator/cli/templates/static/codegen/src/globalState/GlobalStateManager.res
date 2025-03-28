@@ -34,7 +34,7 @@ module MakeManager = (S: State) => {
     } catch {
     | e =>
       e->ErrorHandling.make(~msg="Indexer has failed with an unxpected error")->ErrorHandling.log
-      NodeJsLocal.process->NodeJsLocal.exitWithCode(Failure)
+      NodeJs.process->NodeJs.exitWithCode(Failure)
     }
   }
   and dispatchTask = (self, task: S.task) => {
