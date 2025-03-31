@@ -549,6 +549,7 @@ impl EventTemplate {
 
         //Prefixed with underscore for cases where it is not used to avoid compiler warnings
         let event_filter_arg = "_eventFilter";
+        let mut params_code = "".to_string();
 
         let topic_filter_calls =
             indexed_params
@@ -562,6 +563,7 @@ impl EventTemplate {
                         depth if depth > 0 => format!("(~nestedArrayDepth={depth})"),
                         _ => "".to_string(),
                     };
+                    params_code = format!("{params_code}\"{param_name}\",");
                     let _ = write!(
                         output,
                         ", ~topic{topic_number}=({event_filter_arg}) => {event_filter_arg}->Utils.Dict.dangerouslyGetNonOption(\"{param_name}\")->Belt.Option.\
@@ -573,7 +575,7 @@ impl EventTemplate {
                 });
 
         format!(
-            "args => args->LogSelection.fromEventFiltersOrThrow(~eventFilters=(handlerRegister->HandlerTypes.Register.getEventOptions).eventFilters, ~sighash{topic_filter_calls})"
+            "args => args->LogSelection.fromEventFiltersOrThrow(~eventFilters=(handlerRegister->HandlerTypes.Register.getEventOptions).eventFilters, ~sighash, ~params=[{params_code}]{topic_filter_calls})"
         )
     }
 

@@ -65,20 +65,20 @@ let fromEventFiltersOrThrow = {
     args: Internal.eventFiltersArgs,
     ~eventFilters: option<Js.Json.t>,
     ~sighash,
+    ~params,
     ~topic1=noopGetter,
     ~topic2=noopGetter,
     ~topic3=noopGetter,
   ) => {
     let topic0 = [sighash->EvmTypes.Hex.fromStringUnsafe]
+    let default = {
+      Internal.topic0,
+      topic1: emptyTopics,
+      topic2: emptyTopics,
+      topic3: emptyTopics,
+    }
     switch eventFilters {
-    | None => [
-        {
-          Internal.topic0,
-          topic1: emptyTopics,
-          topic2: emptyTopics,
-          topic3: emptyTopics,
-        },
-      ]
+    | None => [default]
     | Some(eventFilters) => {
         let eventFilters = if Js.typeof(eventFilters) === "function" {
           (eventFilters->(Utils.magic: Js.Json.t => Internal.eventFiltersArgs => Js.Json.t))(args)
@@ -93,10 +93,27 @@ let fromEventFiltersOrThrow = {
         }->Js.Array2.map(eventFilter => {
           switch eventFilter {
           | Object(eventFilter) => {
-              Internal.topic0,
-              topic1: topic1(eventFilter),
-              topic2: topic2(eventFilter),
-              topic3: topic3(eventFilter),
+              let filterKeys = eventFilter->Js.Dict.keys
+              switch filterKeys {
+              | [] => default
+              | _ => {
+                  filterKeys->Js.Array2.forEach(key => {
+                    if params->Js.Array2.includes(key)->not {
+                      // In TS type validation doesn't catch this
+                      // when we have eventFilters as a callback
+                      Js.Exn.raiseError(
+                        `Invalid event filters configuration. The event doesn't have an indexed parameter "${key}" and can't use it for filtering`,
+                      )
+                    }
+                  })
+                  {
+                    Internal.topic0,
+                    topic1: topic1(eventFilter),
+                    topic2: topic2(eventFilter),
+                    topic3: topic3(eventFilter),
+                  }
+                }
+              }
             }
           | _ => Js.Exn.raiseError("Invalid event filters configuration. Expected an object")
           }
