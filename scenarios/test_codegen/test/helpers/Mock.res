@@ -127,13 +127,14 @@ let evmEventConfig = (
   ~blockSchema: option<S.t<'block>>=?,
   ~transactionSchema: option<S.t<'transaction>>=?,
   ~isWildcard=false,
+  ~dependsOnAddresses=?,
 ): Internal.evmEventConfig => {
   {
     id,
     contractName,
     name: "EventWithoutFields",
     isWildcard,
-    dependsOnAddresses: !isWildcard,
+    dependsOnAddresses: dependsOnAddresses->Belt.Option.getWithDefault(!isWildcard),
     preRegisterDynamicContracts: false,
     loader: None,
     handler: None,

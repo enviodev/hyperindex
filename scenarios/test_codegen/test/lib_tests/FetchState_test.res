@@ -426,9 +426,15 @@ describe("FetchState.registerDynamicContracts", () => {
         ~id="normal1",
         ~contractName="NftFactory",
       ) :> Internal.eventConfig)
+      let normal2 = (Mock.evmEventConfig(
+        ~id="normal2",
+        ~contractName="NftFactory",
+        ~isWildcard=true,
+        ~dependsOnAddresses=true,
+      ) :> Internal.eventConfig)
 
       let fetchState = FetchState.make(
-        ~eventConfigs=[wildcard1, wildcard2, normal1],
+        ~eventConfigs=[wildcard1, wildcard2, normal1, normal2],
         ~staticContracts=Js.Dict.fromArray([
           ("NftFactory", [mockAddress0, mockAddress1]),
           ("Gravatar", [mockAddress2, mockAddress3]),
@@ -463,6 +469,8 @@ describe("FetchState.registerDynamicContracts", () => {
               },
               selection: {
                 dependsOnAddresses: false,
+                // Even though normal2 is also a wildcard event
+                // it should be a part of the normal selection
                 eventConfigs: [wildcard1, wildcard2],
               },
               contractAddressMapping: ContractAddressingMap.make(),
@@ -476,7 +484,10 @@ describe("FetchState.registerDynamicContracts", () => {
                 blockNumber: 0,
                 blockTimestamp: 0,
               },
-              selection: fetchState.normalSelection,
+              selection: {
+                dependsOnAddresses: true,
+                eventConfigs: [normal1, normal2],
+              },
               contractAddressMapping: ContractAddressingMap.fromArray([
                 (mockAddress0, "NftFactory"),
                 (mockAddress1, "NftFactory"),
