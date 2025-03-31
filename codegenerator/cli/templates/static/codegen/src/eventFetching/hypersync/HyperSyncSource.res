@@ -53,14 +53,14 @@ let getSelectionConfig = (selection: FetchState.selection, ~chain) => {
   let nonOptionalTransactionFieldNames = Utils.Set.make()
   let capitalizedBlockFields = Utils.Set.make()
   let capitalizedTransactionFields = Utils.Set.make()
-  let wildcardTopicSelections = []
 
   let normalTopicSelectionsByContract = Js.Dict.empty()
+  let noAddressesTopicSelections = []
 
   selection.eventConfigs
   ->(Utils.magic: array<Internal.eventConfig> => array<Internal.evmEventConfig>)
   ->Array.forEach(({
-    isWildcard,
+    dependsOnAddresses,
     contractName,
     getTopicSelectionsOrThrow,
     blockSchema,
@@ -80,13 +80,13 @@ let getSelectionConfig = (selection: FetchState.selection, ~chain) => {
       chainId: chain->ChainMap.Chain.toChainId,
       addresses: [],
     })
-    if isWildcard {
-      wildcardTopicSelections->Js.Array2.pushMany(topicSelections)->ignore
-    } else {
+    if dependsOnAddresses {
       switch normalTopicSelectionsByContract->Utils.Dict.dangerouslyGetNonOption(contractName) {
       | Some(arr) => arr->Js.Array2.pushMany(topicSelections)->ignore
       | None => normalTopicSelectionsByContract->Js.Dict.set(contractName, topicSelections)
       }
+    } else {
+      noAddressesTopicSelections->Js.Array2.pushMany(topicSelections)->ignore
     }
   })
 
@@ -100,16 +100,24 @@ let getSelectionConfig = (selection: FetchState.selection, ~chain) => {
     ->(Utils.magic: array<string> => array<HyperSyncClient.QueryTypes.transactionField>),
   }
 
-  let getNormalLogSelectionOrThrow = (~contractAddressMapping): array<LogSelection.t> => {
-    normalTopicSelectionsByContract
-    ->Js.Dict.keys
-    ->Belt.Array.keepMap(contractName => {
+  let noAddressesLogSelection = LogSelection.make(
+    ~addresses=[],
+    ~topicSelections=noAddressesTopicSelections,
+  )
+  let contractNames = normalTopicSelectionsByContract->Js.Dict.keys
+
+  let getLogSelectionOrThrow = (~contractAddressMapping): array<LogSelection.t> => {
+    let logSelections = []
+    if noAddressesLogSelection.topicSelections->Utils.Array.isEmpty->not {
+      logSelections->Array.push(noAddressesLogSelection)
+    }
+    contractNames->Array.forEach(contractName => {
       switch contractAddressMapping->ContractAddressingMap.getAddressesFromContractName(
         ~contractName,
       ) {
-      | [] => None
+      | [] => ()
       | addresses =>
-        Some(
+        logSelections->Array.push(
           LogSelection.make(
             ~addresses,
             ~topicSelections=normalTopicSelectionsByContract->Js.Dict.unsafeGet(contractName),
@@ -117,15 +125,7 @@ let getSelectionConfig = (selection: FetchState.selection, ~chain) => {
         )
       }
     })
-  }
-
-  let getLogSelectionOrThrow = switch selection.dependsOnAddresses {
-  | false =>
-    let logSelections = [LogSelection.make(~addresses=[], ~topicSelections=wildcardTopicSelections)]
-    (~contractAddressMapping as _) => {
-      logSelections
-    }
-  | true => getNormalLogSelectionOrThrow
+    logSelections
   }
 
   {
