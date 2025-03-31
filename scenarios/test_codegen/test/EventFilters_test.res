@@ -8,7 +8,10 @@ describe("Test eventFilters", () => {
     let eventConfig = Types.EventFiltersTest.Transfer.register()
 
     Assert.deepEqual(
-      eventConfig.getTopicSelectionsOrThrow(~chain=ChainMap.Chain.makeUnsafe(~chainId=137)),
+      eventConfig.getTopicSelectionsOrThrow({
+        chainId: 137,
+        addresses: [],
+      }),
       [
         {
           topic0: [
@@ -38,13 +41,17 @@ describe("Test eventFilters", () => {
         },
       ],
     )
+    Assert.equal(eventConfig.dependsOnAddresses, false)
   })
 
   it("Empty filters should fallback to normal topic selection with only topic0", () => {
     let eventConfig = Types.EventFiltersTest.EmptyFiltersArray.register()
 
     Assert.deepEqual(
-      eventConfig.getTopicSelectionsOrThrow(~chain=ChainMap.Chain.makeUnsafe(~chainId=1)),
+      eventConfig.getTopicSelectionsOrThrow({
+        chainId: 1,
+        addresses: [],
+      }),
       [
         {
           topic0: [
@@ -56,5 +63,6 @@ describe("Test eventFilters", () => {
         },
       ],
     )
+    Assert.equal(eventConfig.dependsOnAddresses, false)
   })
 })

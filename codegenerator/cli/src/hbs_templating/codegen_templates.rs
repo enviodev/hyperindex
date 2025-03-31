@@ -436,17 +436,22 @@ impl EventMod {
             None => format!(
                 r#"
 let register = (): Internal.evmEventConfig => {{
-  getTopicSelectionsOrThrow: {get_topic_selections_code},
-  blockSchema: blockSchema->(Utils.magic: S.t<block> => S.t<Internal.eventBlock>),
-  transactionSchema: transactionSchema->(Utils.magic: S.t<transaction> => S.t<Internal.eventTransaction>),
-  convertHyperSyncEventArgs: {convert_hyper_sync_event_args_code},
-  {base_event_config_code}
+  let getTopicSelectionsOrThrow = {get_topic_selections_code}
+  {{
+    getTopicSelectionsOrThrow,
+    dependsOnAddresses: !(handlerRegister->HandlerTypes.Register.getEventOptions).isWildcard || LogSelection.dependsOnAddresses(~getTopicSelectionsOrThrow),
+    blockSchema: blockSchema->(Utils.magic: S.t<block> => S.t<Internal.eventBlock>),
+    transactionSchema: transactionSchema->(Utils.magic: S.t<transaction> => S.t<Internal.eventTransaction>),
+    convertHyperSyncEventArgs: {convert_hyper_sync_event_args_code},
+    {base_event_config_code}
+  }}
 }}"#
             ),
             Some(fuel_event_kind_code) => format!(
                 r#"
 let register = (): Internal.fuelEventConfig => {{
   kind: {fuel_event_kind_code},
+  dependsOnAddresses: !(handlerRegister->HandlerTypes.Register.getEventOptions).isWildcard,
   {base_event_config_code}
 }}"#
             ),
@@ -970,7 +975,7 @@ impl NetworkConfigTemplate {
             } => (
                 format!(
                     "[HyperFuelSource.make({{chain: chain, endpointUrl: \
-                         \"{hypersync_endpoint_url}\", contracts: [{contracts_code}]}})]",
+                         \"{hypersync_endpoint_url}\"}})]",
                 ),
                 format!("HyperFuel({{endpointUrl: \"{hypersync_endpoint_url}\"}})"),
             ),

@@ -7,6 +7,21 @@ let delay = milliseconds =>
     }, milliseconds)
   })
 
+module Object = {
+  // Define a type for the property descriptor
+  type propertyDescriptor<'a> = {
+    configurable?: bool,
+    enumerable?: bool,
+    writable?: bool,
+    value?: 'a,
+    get?: unit => 'a,
+    set?: 'a => unit,
+  }
+
+  @val @scope("Object")
+  external defineProperty: ('obj, string, propertyDescriptor<'a>) => 'obj = "defineProperty"
+}
+
 module Option = {
   let mapNone = (opt: option<'a>, val: 'b): option<'b> => {
     switch opt {

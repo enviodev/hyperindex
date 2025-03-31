@@ -263,69 +263,47 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
 })
 
 let chain = HyperSyncSource_test.chain
-let mockEventConfig = HyperSyncSource_test.mockEventConfig
-describe("RpcSource - getSelectionConfig", () => {
-  let eventId = HyperSyncSource_test.eventId
 
+describe("RpcSource - getSelectionConfig", () => {
   it("Selection config for the most basic case with no wildcards", () => {
     let selectionConfig = {
-      isWildcard: false,
-      eventConfigs: [
-        {
-          contractName: "Foo",
-          eventId,
-          isWildcard: false,
-        },
-      ],
-    }->RpcSource.getSelectionConfig(
-      ~chain,
-      ~contracts=[
-        {
-          name: "Foo",
-          abi: %raw(`[]`),
-          events: [
-            mockEventConfig(~blockSchema=S.object(_ => ()), ~transactionSchema=S.object(_ => ())),
-          ],
-        },
-      ],
-    )
+      dependsOnAddresses: true,
+      eventConfigs: [(Mock.evmEventConfig() :> Internal.eventConfig)],
+    }->RpcSource.getSelectionConfig(~chain)
 
     Assert.deepEqual(
       selectionConfig,
       {
-        topics: [[eventId->EvmTypes.Hex.fromStringUnsafe]],
+        topics: [[Mock.eventId->EvmTypes.Hex.fromStringUnsafe]],
       },
       ~message=`Should include only single topic0 address`,
     )
   })
 
-  it("Panics when can't find a selected event", () => {
+  it("Selection config with wildcard events", () => {
+    let selectionConfig = {
+      dependsOnAddresses: true,
+      eventConfigs: [
+        (Mock.evmEventConfig(~id="1", ~isWildcard=true) :> Internal.eventConfig),
+        (Mock.evmEventConfig(~id="2", ~isWildcard=true) :> Internal.eventConfig),
+      ],
+    }->RpcSource.getSelectionConfig(~chain)
+
+    Assert.deepEqual(
+      selectionConfig,
+      {
+        topics: [["1"->EvmTypes.Hex.fromStringUnsafe, "2"->EvmTypes.Hex.fromStringUnsafe]],
+      },
+      ~message=`Should include only topic0 addresses`,
+    )
+  })
+
+  it("Panics when selection has empty event configs", () => {
     try {
       let _ = {
-        isWildcard: false,
-        eventConfigs: [
-          {
-            contractName: "Foo",
-            eventId,
-            isWildcard: false,
-          },
-        ],
-      }->RpcSource.getSelectionConfig(
-        ~chain,
-        ~contracts=[
-          {
-            name: "Foo",
-            abi: %raw(`[]`),
-            events: [
-              mockEventConfig(
-                ~isWildcard=true,
-                ~blockSchema=S.object(_ => ()),
-                ~transactionSchema=S.object(_ => ()),
-              ),
-            ],
-          },
-        ],
-      )
+        dependsOnAddresses: true,
+        eventConfigs: [],
+      }->RpcSource.getSelectionConfig(~chain)
       Assert.fail("Should have thrown")
     } catch {
     | Source.GetItemsError(UnsupportedSelection({message})) =>
@@ -336,101 +314,6 @@ describe("RpcSource - getSelectionConfig", () => {
     | _ => Assert.fail("Should have thrown UnsupportedSelection")
     }
   })
-
-  Async.it(
-    "Doesn't include events not specified in the selection to the selection config",
-    async () => {
-      let contracts: array<Internal.evmContractConfig> = [
-        {
-          name: "Foo",
-          abi: %raw(`[]`),
-          events: [
-            mockEventConfig(
-              ~blockSchema=S.schema(
-                s =>
-                  {
-                    "hash": s.matches(S.string),
-                    "number": s.matches(S.int),
-                    "timestamp": s.matches(S.int),
-                  },
-              ),
-              ~transactionSchema=S.schema(
-                s =>
-                  {
-                    "hash": s.matches(S.string),
-                  },
-              ),
-            ),
-          ],
-        },
-        {
-          name: "Bar",
-          abi: %raw(`[]`),
-          events: [
-            mockEventConfig(
-              ~id="Should be the only topic0",
-              ~isWildcard=true,
-              ~blockSchema=S.schema(
-                s =>
-                  {
-                    "nonce": s.matches(S.null(BigInt.schema)),
-                  },
-              ),
-              ~transactionSchema=S.schema(
-                s =>
-                  {
-                    "gasPrice": s.matches(S.null(S.string)),
-                  },
-              ),
-            ),
-          ],
-        },
-        {
-          name: "Baz",
-          abi: %raw(`[]`),
-          events: [
-            mockEventConfig(
-              // Eventhough this is a second wildcard event
-              // it shouldn't be included in the field selection,
-              // since it's not specified in the FetchState.selection
-              ~isWildcard=true,
-              ~blockSchema=S.schema(
-                s =>
-                  {
-                    "uncles": s.matches(S.null(BigInt.schema)),
-                  },
-              ),
-              ~transactionSchema=S.schema(
-                s =>
-                  {
-                    "gasPrice": s.matches(S.null(S.string)),
-                  },
-              ),
-            ),
-          ],
-        },
-      ]
-
-      let selectionConfig = {
-        isWildcard: true,
-        eventConfigs: [
-          {
-            contractName: "Bar",
-            eventId: "Should be the only topic0",
-            isWildcard: true,
-          },
-        ],
-      }->RpcSource.getSelectionConfig(~chain, ~contracts)
-
-      Assert.deepEqual(
-        selectionConfig,
-        {
-          topics: [["Should be the only topic0"->EvmTypes.Hex.fromStringUnsafe]],
-        },
-        ~message=`Should only include the topic of the single wildcard event`,
-      )
-    },
-  )
 })
 
 describe("RpcSource - getSuggestedBlockIntervalFromExn", () => {

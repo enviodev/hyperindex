@@ -105,3 +105,29 @@ let fromEventFiltersOrThrow = {
     }
   }
 }
+
+let dependsOnAddresses = (~getTopicSelectionsOrThrow) => {
+  let depends = ref(false)
+  try {
+    let nonEmptyAddresses = ["0x0000000000000000000000000000000000000000"->Address.unsafeFromString]
+
+    let args = (
+      {
+        chainId: 0,
+        addresses: nonEmptyAddresses,
+      }: Internal.eventFiltersArgs
+    )->Utils.Object.defineProperty(
+      "addresses",
+      {
+        get: () => {
+          depends := true
+          nonEmptyAddresses
+        },
+      },
+    )
+    let _ = getTopicSelectionsOrThrow(args)
+  } catch {
+  | _ => ()
+  }
+  depends.contents
+}

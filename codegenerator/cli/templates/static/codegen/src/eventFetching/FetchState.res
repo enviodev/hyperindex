@@ -13,7 +13,7 @@ type blockNumberAndTimestamp = {
 
 type blockNumberAndLogIndex = {blockNumber: int, logIndex: int}
 
-type selection = {eventConfigs: array<Internal.eventConfig>, needsAddresses: bool}
+type selection = {eventConfigs: array<Internal.eventConfig>, dependsOnAddresses: bool}
 
 type status = {mutable fetchingStateId: option<int>}
 
@@ -92,7 +92,7 @@ let mergeSortedEventList = (a, b) => Utils.Array.mergeSorted(eventItemGt, a, b)
 
 let mergeIntoPartition = (p: partition, ~target: partition, ~maxAddrInPartition) => {
   switch (p, target) {
-  | ({selection: {needsAddresses: true}}, {selection: {needsAddresses: true}}) => {
+  | ({selection: {dependsOnAddresses: true}}, {selection: {dependsOnAddresses: true}}) => {
       let latestFetchedBlock = target.latestFetchedBlock
       let targetContractAddressMapping = target.contractAddressMapping
       let targetDynamicContracts = target.dynamicContracts
@@ -168,8 +168,8 @@ let mergeIntoPartition = (p: partition, ~target: partition, ~maxAddrInPartition)
         rest,
       )
     }
-  | ({selection: {needsAddresses: false}}, _)
-  | (_, {selection: {needsAddresses: false}}) => (p, Some(target))
+  | ({selection: {dependsOnAddresses: false}}, _)
+  | (_, {selection: {dependsOnAddresses: false}}) => (p, Some(target))
   }
 }
 
@@ -508,7 +508,7 @@ let startFetchingQueries = ({partitions}: t, ~queries: array<query>, ~stateId) =
 @inline
 let isFullPartition = (p: partition, ~maxAddrInPartition) => {
   switch p {
-  | {selection: {needsAddresses: false}} => true
+  | {selection: {dependsOnAddresses: false}} => true
   | {contractAddressMapping} =>
     contractAddressMapping->ContractAddressingMap.addressCount >= maxAddrInPartition
   }
@@ -777,22 +777,22 @@ let make = (
     blockNumber: Pervasives.max(startBlock - 1, 0),
   }
 
-  let wildcardEventConfigs = []
+  let notDependingOnAddresses = []
   let normalEventConfigs = []
   let contractNamesWithNormalEvents = Utils.Set.make()
 
   eventConfigs->Array.forEach(ec => {
-    if ec.isWildcard {
-      wildcardEventConfigs->Array.push(ec)
-    } else {
+    if ec.dependsOnAddresses {
       normalEventConfigs->Array.push(ec)
       contractNamesWithNormalEvents->Utils.Set.add(ec.contractName)->ignore
+    } else {
+      notDependingOnAddresses->Array.push(ec)
     }
   })
 
   let partitions = []
 
-  if wildcardEventConfigs->Array.length > 0 {
+  if notDependingOnAddresses->Array.length > 0 {
     partitions->Array.push({
       id: partitions->Array.length->Int.toString,
       status: {
@@ -800,8 +800,8 @@ let make = (
       },
       latestFetchedBlock,
       selection: {
-        needsAddresses: false,
-        eventConfigs: wildcardEventConfigs,
+        dependsOnAddresses: false,
+        eventConfigs: notDependingOnAddresses,
       },
       contractAddressMapping: ContractAddressingMap.make(),
       dynamicContracts: [],
@@ -810,7 +810,7 @@ let make = (
   }
 
   let normalSelection = {
-    needsAddresses: true,
+    dependsOnAddresses: true,
     eventConfigs: normalEventConfigs,
   }
 
@@ -939,7 +939,7 @@ let checkContainsRegisteredContractAddress = (
 ) => {
   self.partitions->Array.some(p => {
     switch p {
-    | {selection: {needsAddresses: false}} => false
+    | {selection: {dependsOnAddresses: false}} => false
     | {contractAddressMapping} =>
       switch contractAddressMapping->ContractAddressingMap.getContractNameFromAddress(
         ~contractAddress,
@@ -979,7 +979,7 @@ Rolls back partitions to the given valid block
 */
 let rollbackPartition = (p: partition, ~firstChangeEvent: blockNumberAndLogIndex) => {
   switch p {
-  | {selection: {needsAddresses: false}} =>
+  | {selection: {dependsOnAddresses: false}} =>
     Some({
       ...p,
       status: {

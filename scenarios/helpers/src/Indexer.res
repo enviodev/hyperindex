@@ -11,15 +11,9 @@ module type S = {
   }
 
   module FetchState: {
-    type eventConfig = {
-      contractName: string,
-      eventId: string,
-      isWildcard: bool,
-    }
-
     type selection = {
-      eventConfigs: array<eventConfig>,
-      isWildcard: bool,
+      eventConfigs: array<Internal.eventConfig>,
+      dependsOnAddresses: bool,
     }
 
     type queryTarget =

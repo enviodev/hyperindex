@@ -73,6 +73,9 @@ type eventConfig = private {
   name: string,
   contractName: string,
   isWildcard: bool,
+  // Usually always false for wildcard events
+  // But might be true for wildcard event with dynamic event filter by addresses
+  dependsOnAddresses: bool,
   preRegisterDynamicContracts: bool,
   loader: option<loader>,
   handler: option<handler>,

@@ -118,3 +118,46 @@ let mockRawEventRow: TablesStatic.RawEvents.t = {
     "baz": 42,
   }->Utils.magic,
 }
+
+let eventId = "0xcf16a92280c1bbb43f72d31126b724d508df2877835849e8744017ab36a9b47f_1"
+
+let evmEventConfig = (
+  ~id=eventId,
+  ~contractName="ERC20",
+  ~blockSchema: option<S.t<'block>>=?,
+  ~transactionSchema: option<S.t<'transaction>>=?,
+  ~isWildcard=false,
+): Internal.evmEventConfig => {
+  {
+    id,
+    contractName,
+    name: "EventWithoutFields",
+    isWildcard,
+    dependsOnAddresses: !isWildcard,
+    preRegisterDynamicContracts: false,
+    loader: None,
+    handler: None,
+    contractRegister: None,
+    paramsRawEventSchema: S.literal(%raw(`null`))
+    ->S.to(_ => ())
+    ->(Utils.magic: S.t<unit> => S.t<Internal.eventParams>),
+    blockSchema: blockSchema
+    ->Belt.Option.getWithDefault(S.object(_ => ())->Utils.magic)
+    ->Utils.magic,
+    transactionSchema: transactionSchema
+    ->Belt.Option.getWithDefault(S.object(_ => ())->Utils.magic)
+    ->Utils.magic,
+    getTopicSelectionsOrThrow: _ => [
+      {
+        topic0: [
+          // This is a sighash in the original code
+          id->EvmTypes.Hex.fromStringUnsafe,
+        ],
+        topic1: [],
+        topic2: [],
+        topic3: [],
+      },
+    ],
+    convertHyperSyncEventArgs: _ => Js.Exn.raiseError("Not implemented"),
+  }
+}

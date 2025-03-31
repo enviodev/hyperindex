@@ -27,20 +27,20 @@ let txStatusSelection = [1]
 let makeGetNormalRecieptsSelection = (
   ~nonWildcardLogDataRbsByContract,
   ~nonLogDataReceiptTypesByContract,
-  ~contracts: array<Internal.fuelContractConfig>,
+  ~contractNames,
 ) => {
   (~contractAddressMapping) => {
     let selection: array<HyperFuelClient.QueryTypes.receiptSelection> = []
 
     //Instantiate each time to add new registered contract addresses
-    contracts->Array.forEach(contract => {
+    contractNames->Utils.Set.forEach(contractName => {
       switch contractAddressMapping->ContractAddressingMap.getAddressesFromContractName(
-        ~contractName=contract.name,
+        ~contractName,
       ) {
       | [] => ()
       | addresses => {
           switch nonLogDataReceiptTypesByContract->Utils.Dict.dangerouslyGetNonOption(
-            contract.name,
+            contractName,
           ) {
           | Some(receiptTypes) =>
             selection
@@ -52,9 +52,7 @@ let makeGetNormalRecieptsSelection = (
             ->ignore
           | None => ()
           }
-          switch nonWildcardLogDataRbsByContract->Utils.Dict.dangerouslyGetNonOption(
-            contract.name,
-          ) {
+          switch nonWildcardLogDataRbsByContract->Utils.Dict.dangerouslyGetNonOption(contractName) {
           | None
           | Some([]) => ()
           | Some(nonWildcardLogDataRbs) =>
@@ -112,11 +110,7 @@ let makeWildcardRecieptsSelection = (~wildcardLogDataRbs, ~nonLogDataWildcardRec
   selection
 }
 
-let getSelectionConfig = (
-  selection: FetchState.selection,
-  ~contracts: array<Internal.fuelContractConfig>,
-  ~chain,
-) => {
+let getSelectionConfig = (selection: FetchState.selection, ~chain) => {
   let eventRouter = EventRouter.empty()
   let nonWildcardLogDataRbsByContract = Js.Dict.empty()
   let wildcardLogDataRbs = []
@@ -135,10 +129,15 @@ let getSelectionConfig = (
     }
   }
 
+  let contractNames = Utils.Set.make()
+
   selection.eventConfigs
   ->(Utils.magic: array<Internal.eventConfig> => array<Internal.fuelEventConfig>)
   ->Array.forEach(eventConfig => {
     let contractName = eventConfig.contractName
+    if !eventConfig.isWildcard {
+      let _ = contractNames->Utils.Set.add(contractName)
+    }
     eventRouter->EventRouter.addOrThrow(
       eventConfig.id,
       eventConfig,
@@ -179,7 +178,7 @@ let getSelectionConfig = (
   })
 
   {
-    getRecieptsSelection: switch selection.needsAddresses {
+    getRecieptsSelection: switch selection.dependsOnAddresses {
     | false => {
         let recieptsSelection = makeWildcardRecieptsSelection(
           ~wildcardLogDataRbs,
@@ -191,7 +190,7 @@ let getSelectionConfig = (
       makeGetNormalRecieptsSelection(
         ~nonWildcardLogDataRbsByContract,
         ~nonLogDataReceiptTypesByContract,
-        ~contracts,
+        ~contractNames,
       )
     },
     route: (~eventId, ~contractAddressMapping, ~contractAddress) =>
@@ -199,13 +198,13 @@ let getSelectionConfig = (
   }
 }
 
-let memoGetSelectionConfig = (~contracts, ~chain) => {
+let memoGetSelectionConfig = (~chain) => {
   let cache = Utils.WeakMap.make()
   selection =>
     switch cache->Utils.WeakMap.get(selection) {
     | Some(c) => c
     | None => {
-        let c = selection->getSelectionConfig(~contracts, ~chain)
+        let c = selection->getSelectionConfig(~chain)
         let _ = cache->Utils.WeakMap.set(selection, c)
         c
       }
@@ -214,14 +213,13 @@ let memoGetSelectionConfig = (~contracts, ~chain) => {
 
 type options = {
   chain: ChainMap.Chain.t,
-  contracts: array<Internal.fuelContractConfig>,
   endpointUrl: string,
 }
 
-let make = ({chain, contracts, endpointUrl}: options): t => {
+let make = ({chain, endpointUrl}: options): t => {
   let name = "HyperFuel"
 
-  let getSelectionConfig = memoGetSelectionConfig(~contracts, ~chain)
+  let getSelectionConfig = memoGetSelectionConfig(~chain)
 
   module Helpers = {
     let rec queryLogsPageWithBackoff = async (

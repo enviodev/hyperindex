@@ -18,7 +18,7 @@ describe("E2E Integration Test", () => {
     let localChainConfig: Config.chainConfig = {
       let contracts = [
         {
-          Config.name: "GravatarRegistry",
+          Config.name: "Gravatar",
           abi: Types.Gravatar.abi,
           addresses: ["0x5FbDB2315678afecb367f032d93F642f64180aa3"->Address.Evm.fromStringOrThrow],
           events: [

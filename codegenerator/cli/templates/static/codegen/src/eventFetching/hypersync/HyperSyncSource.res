@@ -119,7 +119,7 @@ let getSelectionConfig = (selection: FetchState.selection, ~chain) => {
     })
   }
 
-  let getLogSelectionOrThrow = switch selection.needsAddresses {
+  let getLogSelectionOrThrow = switch selection.dependsOnAddresses {
   | false =>
     let logSelections = [LogSelection.make(~addresses=[], ~topicSelections=wildcardTopicSelections)]
     (~contractAddressMapping as _) => {
