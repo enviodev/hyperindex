@@ -148,17 +148,35 @@ let evmEventConfig = (
     transactionSchema: transactionSchema
     ->Belt.Option.getWithDefault(S.object(_ => ())->Utils.magic)
     ->Utils.magic,
-    getTopicSelectionsOrThrow: _ => [
-      {
-        topic0: [
-          // This is a sighash in the original code
-          id->EvmTypes.Hex.fromStringUnsafe,
-        ],
-        topic1: [],
-        topic2: [],
-        topic3: [],
+    getEventFiltersOrThrow: _ =>
+      switch dependsOnAddresses {
+      | Some(true) =>
+        Dynamic(
+          addresses => [
+            {
+              topic0: [
+                // This is a sighash in the original code
+                id->EvmTypes.Hex.fromStringUnsafe,
+              ],
+              topic1: addresses->Utils.magic,
+              topic2: [],
+              topic3: [],
+            },
+          ],
+        )
+      | _ =>
+        Static([
+          {
+            topic0: [
+              // This is a sighash in the original code
+              id->EvmTypes.Hex.fromStringUnsafe,
+            ],
+            topic1: [],
+            topic2: [],
+            topic3: [],
+          },
+        ])
       },
-    ],
     convertHyperSyncEventArgs: _ => Js.Exn.raiseError("Not implemented"),
   }
 }

@@ -107,16 +107,19 @@ type topicSelection = {
 
 type eventFiltersArgs = {chainId: int, addresses: array<Address.t>}
 
+type eventFilters =
+  Static(array<topicSelection>) | Dynamic(array<Address.t> => array<topicSelection>)
+
 type evmEventConfig = {
   ...eventConfig,
-  getTopicSelectionsOrThrow: eventFiltersArgs => array<topicSelection>,
+  getEventFiltersOrThrow: ChainMap.Chain.t => eventFilters,
   blockSchema: S.schema<eventBlock>,
   transactionSchema: S.schema<eventTransaction>,
   convertHyperSyncEventArgs: HyperSyncClient.Decoder.decodedEvent => eventParams,
 }
 type evmContractConfig = {
   name: string,
-  abi: Ethers.abi,
+  abi: EvmTypes.Abi.t,
   events: array<evmEventConfig>,
 }
 
@@ -158,4 +161,3 @@ type entity = private {id: string}
 
 @genType.import(("./bindings/OpaqueTypes.ts", "invalid"))
 type noEventFilters
-type eventFilters

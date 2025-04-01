@@ -8,11 +8,8 @@ describe("Test eventFilters", () => {
     let eventConfig = Types.EventFiltersTest.Transfer.register()
 
     Assert.deepEqual(
-      eventConfig.getTopicSelectionsOrThrow({
-        chainId: 137,
-        addresses: [],
-      }),
-      [
+      eventConfig.getEventFiltersOrThrow(ChainMap.Chain.makeUnsafe(~chainId=137)),
+      Static([
         {
           topic0: [
             "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
@@ -39,7 +36,7 @@ describe("Test eventFilters", () => {
           ]->EvmTypes.Hex.fromStringsUnsafe,
           topic3: [],
         },
-      ],
+      ]),
     )
     Assert.equal(
       eventConfig.dependsOnAddresses,
@@ -54,13 +51,14 @@ describe("Test eventFilters", () => {
     let eventConfig = Types.EventFiltersTest.WildcardWithAddress.register()
 
     Assert.deepEqual(
-      eventConfig.getTopicSelectionsOrThrow({
-        chainId: 137,
-        addresses: [
+      switch eventConfig.getEventFiltersOrThrow(ChainMap.Chain.makeUnsafe(~chainId=137)) {
+      | Static(_) => Assert.fail("Should be dynamic")
+      | Dynamic(fn) =>
+        fn([
           "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"->Address.unsafeFromString,
           "0x70997970C51812dc3A010C7d01b50e0d17dc79C8"->Address.unsafeFromString,
-        ],
-      }),
+        ])
+      },
       [
         {
           topic0: [
@@ -98,11 +96,8 @@ describe("Test eventFilters", () => {
     let eventConfig = Types.EventFiltersTest.EmptyFiltersArray.register()
 
     Assert.deepEqual(
-      eventConfig.getTopicSelectionsOrThrow({
-        chainId: 1,
-        addresses: [],
-      }),
-      [
+      eventConfig.getEventFiltersOrThrow(ChainMap.Chain.makeUnsafe(~chainId=1)),
+      Static([
         {
           topic0: [
             "0x668839194402d721b0cf3fe98a505bd32f7601265985fd3ca34b9ddaaaa06ea5",
@@ -111,7 +106,7 @@ describe("Test eventFilters", () => {
           topic2: [],
           topic3: [],
         },
-      ],
+      ]),
     )
     Assert.equal(eventConfig.dependsOnAddresses, false)
   })
@@ -121,10 +116,7 @@ describe("Test eventFilters", () => {
 
     Assert.throws(
       () => {
-        eventConfig.getTopicSelectionsOrThrow({
-          chainId: 1,
-          addresses: [],
-        })
+        eventConfig.getEventFiltersOrThrow(ChainMap.Chain.makeUnsafe(~chainId=1))
       },
       ~error={
         "message": `Invalid event filters configuration. The event doesn't have an indexed parameter "to" and can't use it for filtering`,

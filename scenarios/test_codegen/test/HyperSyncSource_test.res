@@ -193,38 +193,50 @@ describe("HyperSyncSource - getSelectionConfig", () => {
     )
   })
 
-  Async.it("Normal topic selection which depends on addresses", async () => {
-    let selectionConfig = {
-      dependsOnAddresses: false,
-      eventConfigs: [
-        (Mock.evmEventConfig(~id="event 1") :> Internal.eventConfig),
-        (Mock.evmEventConfig(
-          ~id="event 2",
-          ~isWildcard=true,
-          ~dependsOnAddresses=true,
-        ) :> Internal.eventConfig),
-      ],
-    }->HyperSyncSource.getSelectionConfig(~chain)
+  Async.it(
+    "Normal topic selection which depends on addresses & wildcard topic selection which depends on addresses",
+    async () => {
+      let selectionConfig = {
+        dependsOnAddresses: false,
+        eventConfigs: [
+          (Mock.evmEventConfig(~id="event 1") :> Internal.eventConfig),
+          (Mock.evmEventConfig(
+            ~id="event 2",
+            ~isWildcard=true,
+            ~dependsOnAddresses=true,
+          ) :> Internal.eventConfig),
+        ],
+      }->HyperSyncSource.getSelectionConfig(~chain)
 
-    Assert.deepEqual(
-      selectionConfig.getLogSelectionOrThrow(~contractAddressMapping=ContractAddressingMap.make()),
-      [
-        {
-          addresses: [],
-          topicSelections: [
-            {
-              topic0: [
-                "wildcard event 1"->EvmTypes.Hex.fromStringUnsafe,
-                "wildcard event 2"->EvmTypes.Hex.fromStringUnsafe,
-              ],
-              topic1: [],
-              topic2: [],
-              topic3: [],
-            },
-          ],
-        },
-      ],
-      ~message=`Even though wildcard events belong to different contracts, they should be joined in to a single log selection`,
-    )
-  })
+      Assert.deepEqual(
+        selectionConfig.getLogSelectionOrThrow(
+          ~contractAddressMapping=ContractAddressingMap.fromArray([(mockAddress0, "ERC20")]),
+        ),
+        [
+          {
+            addresses: [mockAddress0],
+            topicSelections: [
+              {
+                topic0: ["event 1"->EvmTypes.Hex.fromStringUnsafe],
+                topic1: [],
+                topic2: [],
+                topic3: [],
+              },
+            ],
+          },
+          {
+            addresses: [],
+            topicSelections: [
+              {
+                topic0: ["event 2"->EvmTypes.Hex.fromStringUnsafe],
+                topic1: [mockAddress0->Utils.magic],
+                topic2: [],
+                topic3: [],
+              },
+            ],
+          },
+        ],
+      )
+    },
+  )
 })

@@ -87,7 +87,7 @@ let getNextPage = (
   ~fromBlock,
   ~toBlock,
   ~addresses,
-  ~topics,
+  ~topicQuery,
   ~loadBlock,
   ~syncConfig as sc: Config.syncConfig,
   ~provider,
@@ -110,7 +110,7 @@ let getNextPage = (
     ->Ethers.JsonRpcProvider.getLogs(
       ~filter={
         address: ?addresses,
-        topics,
+        topics: topicQuery,
         fromBlock,
         toBlock,
       }->Ethers.CombinedFilter.toFilter,
@@ -159,26 +159,33 @@ let getNextPage = (
   })
 }
 
-type selectionConfig = {topics: array<array<EvmTypes.Hex.t>>}
+type logSelection = {
+  addresses: option<array<Address.t>>,
+  topicQuery: Rpc.GetLogs.topicQuery,
+}
+
+type selectionConfig = {
+  getLogSelectionOrThrow: (~contractAddressMapping: ContractAddressingMap.mapping) => logSelection,
+}
 
 let getSelectionConfig = (selection: FetchState.selection, ~chain) => {
-  let includedTopicSelections = []
+  let staticTopicSelections = []
+  let dynamicEventFilters = []
 
   selection.eventConfigs
   ->(Utils.magic: array<Internal.eventConfig> => array<Internal.evmEventConfig>)
-  ->Belt.Array.forEach(({getTopicSelectionsOrThrow}) => {
-    includedTopicSelections
-    ->Js.Array2.pushMany(
-      getTopicSelectionsOrThrow({
-        chainId: chain->ChainMap.Chain.toChainId,
-        addresses: [],
-      }),
-    )
-    ->ignore
+  ->Belt.Array.forEach(({getEventFiltersOrThrow}) => {
+    switch getEventFiltersOrThrow(chain) {
+    | Static(s) => staticTopicSelections->Js.Array2.pushMany(s)->ignore
+    | Dynamic(fn) => dynamicEventFilters->Js.Array2.push(fn)->ignore
+    }
   })
 
-  let topicSelection = switch includedTopicSelections->LogSelection.compressTopicSelections {
-  | [] =>
+  let getLogSelectionOrThrow = switch (
+    staticTopicSelections->LogSelection.compressTopicSelections,
+    dynamicEventFilters,
+  ) {
+  | ([], []) =>
     raise(
       Source.GetItemsError(
         UnsupportedSelection({
@@ -186,33 +193,49 @@ let getSelectionConfig = (selection: FetchState.selection, ~chain) => {
         }),
       ),
     )
-  | [topicSelection] => topicSelection
+  | ([topicSelection], _) if dynamicEventFilters->Utils.Array.isEmpty => {
+      let topicQuery = topicSelection->Rpc.GetLogs.mapTopicQuery
+      (~contractAddressMapping) => {
+        addresses: switch contractAddressMapping->ContractAddressingMap.getAllAddresses {
+        | [] => None
+        | addresses => Some(addresses)
+        },
+        topicQuery,
+      }
+    }
   | _ =>
-    raise(
-      Source.GetItemsError(
-        UnsupportedSelection({
-          message: "RPC data-source currently supports event filters only when there's a single wildcard event. Join our Discord channel, to get updates on the new releases.",
-        }),
-      ),
-    )
-  }
-
-  // Some RPC providers would fail
-  // if we don't strip trailing empty topics
-  // also we need to change empty topics in the middle to null
-  let topics = switch topicSelection {
-  | {topic0, topic1: [], topic2: [], topic3: []} => [topic0]
-  | {topic0, topic1, topic2: [], topic3: []} => [topic0, topic1]
-  | {topic0, topic1: [], topic2, topic3: []} => [topic0, %raw(`null`), topic2]
-  | {topic0, topic1, topic2, topic3: []} => [topic0, topic1, topic2]
-  | {topic0, topic1: [], topic2: [], topic3} => [topic0, %raw(`null`), %raw(`null`), topic3]
-  | {topic0, topic1: [], topic2, topic3} => [topic0, %raw(`null`), topic2, topic3]
-  | {topic0, topic1, topic2: [], topic3} => [topic0, topic1, %raw(`null`), topic3]
-  | {topic0, topic1, topic2, topic3} => [topic0, topic1, topic2, topic3]
+    switch (dynamicEventFilters, selection.eventConfigs) {
+    | ([dynamicEventFilter], [eventConfig]) =>
+      (~contractAddressMapping) => {
+        let addresses = contractAddressMapping->ContractAddressingMap.getAllAddresses
+        {
+          addresses: eventConfig.isWildcard ? None : Some(addresses),
+          topicQuery: switch dynamicEventFilter(addresses) {
+          | [topicSelection] => topicSelection->Rpc.GetLogs.mapTopicQuery
+          | _ =>
+            raise(
+              Source.GetItemsError(
+                UnsupportedSelection({
+                  message: "RPC data-source currently doesn't support an array of event filters. Please create a GitHub issue if it's a blocker for you.",
+                }),
+              ),
+            )
+          },
+        }
+      }
+    | _ =>
+      raise(
+        Source.GetItemsError(
+          UnsupportedSelection({
+            message: "RPC data-source currently supports event filters only when there's a single wildcard event. Please create a GitHub issue if it's a blocker for you.",
+          }),
+        ),
+      )
+    }
   }
 
   {
-    topics: topics,
+    getLogSelectionOrThrow: getLogSelectionOrThrow,
   }
 }
 
@@ -418,17 +441,14 @@ let make = ({sourceFor, syncConfig, url, chain, contracts, eventRouter}: options
         ? blockLoader->LazyLoader.get(fromBlock - 1)->Promise.thenResolve(res => res->Some)
         : Promise.resolve(None)
 
-    let {topics} = getSelectionConfig(selection)
-    let addresses = switch contractAddressMapping->ContractAddressingMap.getAllAddresses {
-    | [] => None
-    | addresses => Some(addresses)
-    }
+    let {getLogSelectionOrThrow} = getSelectionConfig(selection)
+    let {addresses, topicQuery} = getLogSelectionOrThrow(~contractAddressMapping)
 
     let {logs, latestFetchedBlock} = await getNextPage(
       ~fromBlock,
       ~toBlock=suggestedToBlock,
       ~addresses,
-      ~topics,
+      ~topicQuery,
       ~loadBlock=blockNumber => blockLoader->LazyLoader.get(blockNumber),
       ~syncConfig,
       ~provider,

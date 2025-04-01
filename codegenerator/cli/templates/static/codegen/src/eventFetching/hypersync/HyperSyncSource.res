@@ -54,17 +54,21 @@ let getSelectionConfig = (selection: FetchState.selection, ~chain) => {
   let capitalizedBlockFields = Utils.Set.make()
   let capitalizedTransactionFields = Utils.Set.make()
 
-  let normalTopicSelectionsByContract = Js.Dict.empty()
+  let staticTopicSelectionsByContract = Js.Dict.empty()
+  let dynamicEventFiltersByContract = Js.Dict.empty()
+  let dynamicWildcardEventFiltersByContract = Js.Dict.empty()
   let noAddressesTopicSelections = []
+  let contractNames = Utils.Set.make()
 
   selection.eventConfigs
   ->(Utils.magic: array<Internal.eventConfig> => array<Internal.evmEventConfig>)
   ->Array.forEach(({
     dependsOnAddresses,
     contractName,
-    getTopicSelectionsOrThrow,
+    getEventFiltersOrThrow,
     blockSchema,
     transactionSchema,
+    isWildcard,
   }) => {
     nonOptionalBlockFieldNames->Utils.Set.addMany(
       blockSchema->Utils.Schema.getNonOptionalFieldNames,
@@ -76,17 +80,27 @@ let getSelectionConfig = (selection: FetchState.selection, ~chain) => {
     capitalizedTransactionFields->Utils.Set.addMany(
       transactionSchema->Utils.Schema.getCapitalizedFieldNames,
     )
-    let topicSelections = getTopicSelectionsOrThrow({
-      chainId: chain->ChainMap.Chain.toChainId,
-      addresses: [],
-    })
+
+    let eventFilters = getEventFiltersOrThrow(chain)
     if dependsOnAddresses {
-      switch normalTopicSelectionsByContract->Utils.Dict.dangerouslyGetNonOption(contractName) {
-      | Some(arr) => arr->Js.Array2.pushMany(topicSelections)->ignore
-      | None => normalTopicSelectionsByContract->Js.Dict.set(contractName, topicSelections)
+      let _ = contractNames->Utils.Set.add(contractName)
+      switch eventFilters {
+      | Static(topicSelections) =>
+        staticTopicSelectionsByContract->Utils.Dict.pushMany(contractName, topicSelections)
+      | Dynamic(fn) =>
+        (
+          isWildcard ? dynamicWildcardEventFiltersByContract : dynamicEventFiltersByContract
+        )->Utils.Dict.push(contractName, fn)
       }
     } else {
-      noAddressesTopicSelections->Js.Array2.pushMany(topicSelections)->ignore
+      noAddressesTopicSelections
+      ->Js.Array2.pushMany(
+        switch eventFilters {
+        | Static(s) => s
+        | Dynamic(fn) => fn([])
+        },
+      )
+      ->ignore
     }
   })
 
@@ -104,25 +118,45 @@ let getSelectionConfig = (selection: FetchState.selection, ~chain) => {
     ~addresses=[],
     ~topicSelections=noAddressesTopicSelections,
   )
-  let contractNames = normalTopicSelectionsByContract->Js.Dict.keys
 
   let getLogSelectionOrThrow = (~contractAddressMapping): array<LogSelection.t> => {
     let logSelections = []
     if noAddressesLogSelection.topicSelections->Utils.Array.isEmpty->not {
       logSelections->Array.push(noAddressesLogSelection)
     }
-    contractNames->Array.forEach(contractName => {
+    contractNames->Utils.Set.forEach(contractName => {
       switch contractAddressMapping->ContractAddressingMap.getAddressesFromContractName(
         ~contractName,
       ) {
       | [] => ()
       | addresses =>
-        logSelections->Array.push(
-          LogSelection.make(
-            ~addresses,
-            ~topicSelections=normalTopicSelectionsByContract->Js.Dict.unsafeGet(contractName),
-          ),
-        )
+        switch staticTopicSelectionsByContract->Utils.Dict.dangerouslyGetNonOption(contractName) {
+        | None => ()
+        | Some(topicSelections) =>
+          logSelections->Array.push(LogSelection.make(~addresses, ~topicSelections))
+        }
+        switch dynamicEventFiltersByContract->Utils.Dict.dangerouslyGetNonOption(contractName) {
+        | None => ()
+        | Some(fns) =>
+          logSelections->Array.push(
+            LogSelection.make(
+              ~addresses,
+              ~topicSelections=fns->Array.flatMapU(fn => fn(addresses)),
+            ),
+          )
+        }
+        switch dynamicWildcardEventFiltersByContract->Utils.Dict.dangerouslyGetNonOption(
+          contractName,
+        ) {
+        | None => ()
+        | Some(fns) =>
+          logSelections->Array.push(
+            LogSelection.make(
+              ~addresses=[],
+              ~topicSelections=fns->Array.flatMapU(fn => fn(addresses)),
+            ),
+          )
+        }
       }
     })
     logSelections

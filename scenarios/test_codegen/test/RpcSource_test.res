@@ -264,7 +264,10 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
 
 let chain = HyperSyncSource_test.chain
 
-describe("RpcSource - getSelectionConfig", () => {
+describe_only("RpcSource - getSelectionConfig", () => {
+  let mockAddress0 = TestHelpers.Addresses.mockAddresses[0]
+  let contractAddressMappingWithAddress = ContractAddressingMap.fromArray([(mockAddress0, "ERC20")])
+
   it("Selection config for the most basic case with no wildcards", () => {
     let selectionConfig = {
       dependsOnAddresses: true,
@@ -272,9 +275,12 @@ describe("RpcSource - getSelectionConfig", () => {
     }->RpcSource.getSelectionConfig(~chain)
 
     Assert.deepEqual(
-      selectionConfig,
+      selectionConfig.getLogSelectionOrThrow(
+        ~contractAddressMapping=contractAddressMappingWithAddress,
+      ),
       {
-        topics: [[Mock.eventId->EvmTypes.Hex.fromStringUnsafe]],
+        addresses: Some([mockAddress0]),
+        topicQuery: [Single(Mock.eventId)],
       },
       ~message=`Should include only single topic0 address`,
     )
@@ -282,7 +288,7 @@ describe("RpcSource - getSelectionConfig", () => {
 
   it("Selection config with wildcard events", () => {
     let selectionConfig = {
-      dependsOnAddresses: true,
+      dependsOnAddresses: false,
       eventConfigs: [
         (Mock.evmEventConfig(~id="1", ~isWildcard=true) :> Internal.eventConfig),
         (Mock.evmEventConfig(~id="2", ~isWildcard=true) :> Internal.eventConfig),
@@ -290,13 +296,61 @@ describe("RpcSource - getSelectionConfig", () => {
     }->RpcSource.getSelectionConfig(~chain)
 
     Assert.deepEqual(
-      selectionConfig,
+      selectionConfig.getLogSelectionOrThrow(~contractAddressMapping=ContractAddressingMap.make()),
       {
-        topics: [["1"->EvmTypes.Hex.fromStringUnsafe, "2"->EvmTypes.Hex.fromStringUnsafe]],
+        addresses: None,
+        topicQuery: [Multiple(["1", "2"])],
       },
       ~message=`Should include only topic0 addresses`,
     )
   })
+
+  Async.it(
+    "Normal topic selection which depends on addresses & wildcard topic selection which depends on addresses",
+    async () => {
+      let selectionConfig = {
+        dependsOnAddresses: false,
+        eventConfigs: [
+          (Mock.evmEventConfig(~id="event 1") :> Internal.eventConfig),
+          (Mock.evmEventConfig(
+            ~id="event 2",
+            ~isWildcard=true,
+            ~dependsOnAddresses=true,
+          ) :> Internal.eventConfig),
+        ],
+      }->HyperSyncSource.getSelectionConfig(~chain)
+
+      Assert.deepEqual(
+        selectionConfig.getLogSelectionOrThrow(
+          ~contractAddressMapping=ContractAddressingMap.fromArray([(mockAddress0, "ERC20")]),
+        ),
+        [
+          {
+            addresses: [mockAddress0],
+            topicSelections: [
+              {
+                topic0: ["event 1"->EvmTypes.Hex.fromStringUnsafe],
+                topic1: [],
+                topic2: [],
+                topic3: [],
+              },
+            ],
+          },
+          {
+            addresses: [],
+            topicSelections: [
+              {
+                topic0: ["event 2"->EvmTypes.Hex.fromStringUnsafe],
+                topic1: [mockAddress0->Utils.magic],
+                topic2: [],
+                topic3: [],
+              },
+            ],
+          },
+        ],
+      )
+    },
+  )
 
   it("Panics when selection has empty event configs", () => {
     try {

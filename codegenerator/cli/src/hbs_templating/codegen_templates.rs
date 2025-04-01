@@ -340,7 +340,7 @@ pub struct EventMod {
     pub topic_count: usize,
     pub event_name: String,
     pub data_type: String,
-    pub get_topic_selections_code: String,
+    pub parse_event_filters_code: String,
     pub params_raw_event_schema: String,
     pub convert_hyper_sync_event_args_code: String,
     pub event_filter_type: String,
@@ -363,7 +363,7 @@ impl EventMod {
         let params_raw_event_schema = &self.params_raw_event_schema;
         let convert_hyper_sync_event_args_code = &self.convert_hyper_sync_event_args_code;
         let event_filter_type = &self.event_filter_type;
-        let get_topic_selections_code = &self.get_topic_selections_code;
+        let parse_event_filters_code = &self.parse_event_filters_code;
 
         let event_filters_type_code = match self.event_filter_type.as_str() {
             "{}" => "@genType type eventFilters = Internal.noEventFilters".to_string(),
@@ -436,10 +436,10 @@ impl EventMod {
             None => format!(
                 r#"
 let register = (): Internal.evmEventConfig => {{
-  let getTopicSelectionsOrThrow = {get_topic_selections_code}
+  let {{getEventFiltersOrThrow, dependsOnAddresses}} = {parse_event_filters_code}
   {{
-    getTopicSelectionsOrThrow,
-    dependsOnAddresses: !(handlerRegister->HandlerTypes.Register.getEventOptions).isWildcard || LogSelection.dependsOnAddresses(~getTopicSelectionsOrThrow),
+    getEventFiltersOrThrow,
+    dependsOnAddresses: !(handlerRegister->HandlerTypes.Register.getEventOptions).isWildcard || dependsOnAddresses,
     blockSchema: blockSchema->(Utils.magic: S.t<block> => S.t<Internal.eventBlock>),
     transactionSchema: transactionSchema->(Utils.magic: S.t<transaction> => S.t<Internal.eventTransaction>),
     convertHyperSyncEventArgs: {convert_hyper_sync_event_args_code},
@@ -544,7 +544,7 @@ impl EventTemplate {
         format!("{{{field_rows}}}")
     }
 
-    pub fn generate_get_topic_selections_code(params: &[EventParam]) -> String {
+    pub fn generate_parse_event_filters_code(params: &[EventParam]) -> String {
         let indexed_params = params.iter().filter(|param| param.indexed);
 
         //Prefixed with underscore for cases where it is not used to avoid compiler warnings
@@ -575,7 +575,7 @@ impl EventTemplate {
                 });
 
         format!(
-            "args => args->LogSelection.fromEventFiltersOrThrow(~eventFilters=(handlerRegister->HandlerTypes.Register.getEventOptions).eventFilters, ~sighash, ~params=[{params_code}]{topic_filter_calls})"
+            "LogSelection.parseEventFiltersOrThrow(~eventFilters=(handlerRegister->HandlerTypes.Register.getEventOptions).eventFilters, ~sighash, ~params=[{params_code}]{topic_filter_calls})"
         )
     }
 
@@ -629,7 +629,7 @@ impl EventTemplate {
             sighash: config_event.sighash.to_string(),
             topic_count: 0, //Default to 0 for fuel,
             event_name: event_name.clone(),
-            get_topic_selections_code: "".to_string(),
+            parse_event_filters_code: "".to_string(),
             data_type: "Internal.fuelSupplyParams".to_string(),
             params_raw_event_schema: "Internal.fuelSupplyParamsSchema".to_string(),
             convert_hyper_sync_event_args_code: Self::CONVERT_HYPER_SYNC_EVENT_ARGS_NEVER
@@ -654,7 +654,7 @@ impl EventTemplate {
             sighash: config_event.sighash.to_string(),
             topic_count: 0, //Default to 0 for fuel,
             event_name: event_name.clone(),
-            get_topic_selections_code: "".to_string(),
+            parse_event_filters_code: "".to_string(),
             data_type: "Internal.fuelTransferParams".to_string(),
             params_raw_event_schema: "Internal.fuelTransferParamsSchema".to_string(),
             convert_hyper_sync_event_args_code: Self::CONVERT_HYPER_SYNC_EVENT_ARGS_NEVER
@@ -713,7 +713,7 @@ impl EventTemplate {
                         .fold(1, |acc, param| if param.indexed { acc + 1 } else { acc }),
                     event_name: event_name.clone(),
                     data_type: data_type_expr.to_string(),
-                    get_topic_selections_code: Self::generate_get_topic_selections_code(params),
+                    parse_event_filters_code: Self::generate_parse_event_filters_code(params),
                     params_raw_event_schema: data_type_expr
                         .to_rescript_schema(&"eventArgs".to_string(), &RescriptSchemaMode::ForDb),
                     convert_hyper_sync_event_args_code:
@@ -737,7 +737,7 @@ impl EventTemplate {
                             sighash: config_event.sighash.to_string(),
                             topic_count: 0, //Default to 0 for fuel,
                             event_name: event_name.clone(),
-                            get_topic_selections_code: "".to_string(),
+                            parse_event_filters_code: "".to_string(),
                             data_type: type_indent.to_string(),
                             params_raw_event_schema: format!(
                                 "{}->Utils.Schema.coerceToJsonPgType",
