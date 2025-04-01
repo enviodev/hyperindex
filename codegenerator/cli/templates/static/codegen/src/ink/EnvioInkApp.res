@@ -32,20 +32,33 @@ module TotalEventsProcessed = {
 
 module App = {
   @react.component
-  let make = () => {
+  let make = (~appState: appState) => {
+    let {chains, indexerStartTime, config, isPreRegisteringDynamicContracts} = appState
+    let totalEventsProcessed = getTotalNumEventsProcessed(~chains)
     <Box flexDirection={Column}>
       <BigText text="envio" colors=[Secondary, Primary] font={Block} />
+      {chains
+      ->Array.mapWithIndex((i, chainData) => {
+        <ChainData key={i->Int.toString} chainData isPreRegisteringDynamicContracts />
+      })
+      ->React.array}
+      <TotalEventsProcessed totalEventsProcessed isPreRegisteringDynamicContracts />
+      <SyncETA chains indexerStartTime isPreRegisteringDynamicContracts />
+      <Newline />
       <Box flexDirection={Column}>
         <Text>
           {"Track the indexer's progress and access GraphQL Playground at the Development Console:"->React.string}
         </Text>
         <Text color={Info} underline=true> {"https://envio.dev/console"->React.string} </Text>
       </Box>
-      // <Messages config /> TODO: Rerturn it back
+      <Messages config />
     </Box>
   }
 }
 
-let startApp = () => {
-  let _ = render(<App />)
+let startApp = appState => {
+  let {rerender} = render(<App appState />)
+  appState => {
+    rerender(<App appState />)
+  }
 }
