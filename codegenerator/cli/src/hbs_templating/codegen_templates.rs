@@ -1420,7 +1420,7 @@ mod test {
             codegen_contracts: vec![contract1],
             is_fuel: true,
             sources_code: format!(
-                "[HyperFuelSource.make({{chain: chain, endpointUrl: \"https://fuel-testnet.hypersync.xyz\", contracts: [{{name: \"Greeter\",events: [Types.Greeter.NewGreeting.register(), Types.Greeter.ClearGreeting.register()]}}]}})]"
+                "[HyperFuelSource.make({{chain: chain, endpointUrl: \"https://fuel-testnet.hypersync.xyz\"}})]"
             ),
             deprecated_sync_source_code: format!(
                 "HyperFuel({{endpointUrl: \"https://fuel-testnet.hypersync.xyz\"}})"
@@ -1694,11 +1694,14 @@ type eventFilter = {{}}
 @genType type eventFilters = Internal.noEventFilters
 
 let register = (): Internal.evmEventConfig => {{
-  getTopicSelectionsOrThrow: args => args->LogSelection.fromEventFiltersOrThrow(~eventFilters=(handlerRegister->HandlerTypes.Register.getEventOptions).eventFilters, ~sighash),
-  blockSchema: blockSchema->(Utils.magic: S.t<block> => S.t<Internal.eventBlock>),
-  transactionSchema: transactionSchema->(Utils.magic: S.t<transaction> => S.t<Internal.eventTransaction>),
-  convertHyperSyncEventArgs: (decodedEvent: HyperSyncClient.Decoder.decodedEvent) => {{id: decodedEvent.body->Js.Array2.unsafe_get(0)->HyperSyncClient.Decoder.toUnderlying->Utils.magic, owner: decodedEvent.body->Js.Array2.unsafe_get(1)->HyperSyncClient.Decoder.toUnderlying->Utils.magic, displayName: decodedEvent.body->Js.Array2.unsafe_get(2)->HyperSyncClient.Decoder.toUnderlying->Utils.magic, imageUrl: decodedEvent.body->Js.Array2.unsafe_get(3)->HyperSyncClient.Decoder.toUnderlying->Utils.magic, }}->(Utils.magic: eventArgs => Internal.eventParams),
-  id,
+  let {{getEventFiltersOrThrow, dependsOnAddresses}} = LogSelection.parseEventFiltersOrThrow(~eventFilters=(handlerRegister->HandlerTypes.Register.getEventOptions).eventFilters, ~sighash, ~params=[])
+  {{
+    getEventFiltersOrThrow,
+    dependsOnAddresses: !(handlerRegister->HandlerTypes.Register.getEventOptions).isWildcard || dependsOnAddresses,
+    blockSchema: blockSchema->(Utils.magic: S.t<block> => S.t<Internal.eventBlock>),
+    transactionSchema: transactionSchema->(Utils.magic: S.t<transaction> => S.t<Internal.eventTransaction>),
+    convertHyperSyncEventArgs: (decodedEvent: HyperSyncClient.Decoder.decodedEvent) => {{id: decodedEvent.body->Js.Array2.unsafe_get(0)->HyperSyncClient.Decoder.toUnderlying->Utils.magic, owner: decodedEvent.body->Js.Array2.unsafe_get(1)->HyperSyncClient.Decoder.toUnderlying->Utils.magic, displayName: decodedEvent.body->Js.Array2.unsafe_get(2)->HyperSyncClient.Decoder.toUnderlying->Utils.magic, imageUrl: decodedEvent.body->Js.Array2.unsafe_get(3)->HyperSyncClient.Decoder.toUnderlying->Utils.magic, }}->(Utils.magic: eventArgs => Internal.eventParams),
+    id,
   name,
   contractName,
   isWildcard: (handlerRegister->HandlerTypes.Register.getEventOptions).isWildcard,
@@ -1707,6 +1710,7 @@ let register = (): Internal.evmEventConfig => {{
   handler: handlerRegister->HandlerTypes.Register.getHandler,
   contractRegister: handlerRegister->HandlerTypes.Register.getContractRegister,
   paramsRawEventSchema: paramsRawEventSchema->(Utils.magic: S.t<eventArgs> => S.t<Internal.eventParams>),
+  }}
 }}"#
             ),
         }
@@ -1779,11 +1783,14 @@ type eventFilter = {}
 @genType type eventFilters = Internal.noEventFilters
 
 let register = (): Internal.evmEventConfig => {
-  getTopicSelectionsOrThrow: args => args->LogSelection.fromEventFiltersOrThrow(~eventFilters=(handlerRegister->HandlerTypes.Register.getEventOptions).eventFilters, ~sighash),
-  blockSchema: blockSchema->(Utils.magic: S.t<block> => S.t<Internal.eventBlock>),
-  transactionSchema: transactionSchema->(Utils.magic: S.t<transaction> => S.t<Internal.eventTransaction>),
-  convertHyperSyncEventArgs: _ => ()->(Utils.magic: eventArgs => Internal.eventParams),
-  id,
+  let {getEventFiltersOrThrow, dependsOnAddresses} = LogSelection.parseEventFiltersOrThrow(~eventFilters=(handlerRegister->HandlerTypes.Register.getEventOptions).eventFilters, ~sighash, ~params=[])
+  {
+    getEventFiltersOrThrow,
+    dependsOnAddresses: !(handlerRegister->HandlerTypes.Register.getEventOptions).isWildcard || dependsOnAddresses,
+    blockSchema: blockSchema->(Utils.magic: S.t<block> => S.t<Internal.eventBlock>),
+    transactionSchema: transactionSchema->(Utils.magic: S.t<transaction> => S.t<Internal.eventTransaction>),
+    convertHyperSyncEventArgs: _ => ()->(Utils.magic: eventArgs => Internal.eventParams),
+    id,
   name,
   contractName,
   isWildcard: (handlerRegister->HandlerTypes.Register.getEventOptions).isWildcard,
@@ -1792,6 +1799,7 @@ let register = (): Internal.evmEventConfig => {
   handler: handlerRegister->HandlerTypes.Register.getHandler,
   contractRegister: handlerRegister->HandlerTypes.Register.getContractRegister,
   paramsRawEventSchema: paramsRawEventSchema->(Utils.magic: S.t<eventArgs> => S.t<Internal.eventParams>),
+  }
 }"#.to_string(),
             }
         );
@@ -1870,11 +1878,14 @@ type eventFilter = {}
 @genType type eventFilters = Internal.noEventFilters
 
 let register = (): Internal.evmEventConfig => {
-  getTopicSelectionsOrThrow: args => args->LogSelection.fromEventFiltersOrThrow(~eventFilters=(handlerRegister->HandlerTypes.Register.getEventOptions).eventFilters, ~sighash),
-  blockSchema: blockSchema->(Utils.magic: S.t<block> => S.t<Internal.eventBlock>),
-  transactionSchema: transactionSchema->(Utils.magic: S.t<transaction> => S.t<Internal.eventTransaction>),
-  convertHyperSyncEventArgs: _ => ()->(Utils.magic: eventArgs => Internal.eventParams),
-  id,
+  let {getEventFiltersOrThrow, dependsOnAddresses} = LogSelection.parseEventFiltersOrThrow(~eventFilters=(handlerRegister->HandlerTypes.Register.getEventOptions).eventFilters, ~sighash, ~params=[])
+  {
+    getEventFiltersOrThrow,
+    dependsOnAddresses: !(handlerRegister->HandlerTypes.Register.getEventOptions).isWildcard || dependsOnAddresses,
+    blockSchema: blockSchema->(Utils.magic: S.t<block> => S.t<Internal.eventBlock>),
+    transactionSchema: transactionSchema->(Utils.magic: S.t<transaction> => S.t<Internal.eventTransaction>),
+    convertHyperSyncEventArgs: _ => ()->(Utils.magic: eventArgs => Internal.eventParams),
+    id,
   name,
   contractName,
   isWildcard: (handlerRegister->HandlerTypes.Register.getEventOptions).isWildcard,
@@ -1883,6 +1894,7 @@ let register = (): Internal.evmEventConfig => {
   handler: handlerRegister->HandlerTypes.Register.getHandler,
   contractRegister: handlerRegister->HandlerTypes.Register.getContractRegister,
   paramsRawEventSchema: paramsRawEventSchema->(Utils.magic: S.t<eventArgs> => S.t<Internal.eventParams>),
+  }
 }"#.to_string(),
             }
         );

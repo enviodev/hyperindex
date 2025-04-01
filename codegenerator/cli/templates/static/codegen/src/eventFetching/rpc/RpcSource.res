@@ -216,7 +216,7 @@ let getSelectionConfig = (selection: FetchState.selection, ~chain) => {
             raise(
               Source.GetItemsError(
                 UnsupportedSelection({
-                  message: "RPC data-source currently doesn't support an array of event filters. Please create a GitHub issue if it's a blocker for you.",
+                  message: "RPC data-source currently doesn't support an array of event filters. Please, create a GitHub issue if it's a blocker for you.",
                 }),
               ),
             )
@@ -227,7 +227,7 @@ let getSelectionConfig = (selection: FetchState.selection, ~chain) => {
       raise(
         Source.GetItemsError(
           UnsupportedSelection({
-            message: "RPC data-source currently supports event filters only when there's a single wildcard event. Please create a GitHub issue if it's a blocker for you.",
+            message: "RPC data-source currently supports event filters only when there's a single wildcard event. Please, create a GitHub issue if it's a blocker for you.",
           }),
         ),
       )

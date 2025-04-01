@@ -264,7 +264,7 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
 
 let chain = HyperSyncSource_test.chain
 
-describe_only("RpcSource - getSelectionConfig", () => {
+describe("RpcSource - getSelectionConfig", () => {
   let mockAddress0 = TestHelpers.Addresses.mockAddresses[0]
   let contractAddressMappingWithAddress = ContractAddressingMap.fromArray([(mockAddress0, "ERC20")])
 
@@ -305,52 +305,51 @@ describe_only("RpcSource - getSelectionConfig", () => {
     )
   })
 
-  Async.it(
-    "Normal topic selection which depends on addresses & wildcard topic selection which depends on addresses",
-    async () => {
-      let selectionConfig = {
-        dependsOnAddresses: false,
-        eventConfigs: [
-          (Mock.evmEventConfig(~id="event 1") :> Internal.eventConfig),
-          (Mock.evmEventConfig(
-            ~id="event 2",
-            ~isWildcard=true,
-            ~dependsOnAddresses=true,
-          ) :> Internal.eventConfig),
-        ],
-      }->HyperSyncSource.getSelectionConfig(~chain)
+  Async.it("Wildcard topic selection which depends on addresses", async () => {
+    let selectionConfig = {
+      dependsOnAddresses: false,
+      eventConfigs: [
+        (Mock.evmEventConfig(
+          ~id="event 2",
+          ~isWildcard=true,
+          ~dependsOnAddresses=true,
+        ) :> Internal.eventConfig),
+      ],
+    }->RpcSource.getSelectionConfig(~chain)
 
-      Assert.deepEqual(
-        selectionConfig.getLogSelectionOrThrow(
-          ~contractAddressMapping=ContractAddressingMap.fromArray([(mockAddress0, "ERC20")]),
-        ),
-        [
-          {
-            addresses: [mockAddress0],
-            topicSelections: [
-              {
-                topic0: ["event 1"->EvmTypes.Hex.fromStringUnsafe],
-                topic1: [],
-                topic2: [],
-                topic3: [],
-              },
-            ],
-          },
-          {
-            addresses: [],
-            topicSelections: [
-              {
-                topic0: ["event 2"->EvmTypes.Hex.fromStringUnsafe],
-                topic1: [mockAddress0->Utils.magic],
-                topic2: [],
-                topic3: [],
-              },
-            ],
-          },
-        ],
-      )
-    },
-  )
+    Assert.deepEqual(
+      selectionConfig.getLogSelectionOrThrow(
+        ~contractAddressMapping=ContractAddressingMap.fromArray([(mockAddress0, "ERC20")]),
+      ),
+      {
+        addresses: None,
+        topicQuery: [Single("event 2"), Single(mockAddress0->Address.toString)],
+      },
+    )
+  })
+
+  Async.it("Non-wildcard topic selection which depends on addresses", async () => {
+    let selectionConfig = {
+      dependsOnAddresses: false,
+      eventConfigs: [
+        (Mock.evmEventConfig(
+          ~id="event 2",
+          ~isWildcard=false,
+          ~dependsOnAddresses=true,
+        ) :> Internal.eventConfig),
+      ],
+    }->RpcSource.getSelectionConfig(~chain)
+
+    Assert.deepEqual(
+      selectionConfig.getLogSelectionOrThrow(
+        ~contractAddressMapping=ContractAddressingMap.fromArray([(mockAddress0, "ERC20")]),
+      ),
+      {
+        addresses: Some([mockAddress0]),
+        topicQuery: [Single("event 2"), Single(mockAddress0->Address.toString)],
+      },
+    )
+  })
 
   it("Panics when selection has empty event configs", () => {
     try {
@@ -364,6 +363,26 @@ describe_only("RpcSource - getSelectionConfig", () => {
       Assert.equal(
         message,
         "Invalid events configuration for the partition. Nothing to fetch. Please, report to the Envio team.",
+      )
+    | _ => Assert.fail("Should have thrown UnsupportedSelection")
+    }
+  })
+
+  it("Panics when selection has normal event and event with filters", () => {
+    try {
+      let _ = {
+        dependsOnAddresses: true,
+        eventConfigs: [
+          (Mock.evmEventConfig(~id="1") :> Internal.eventConfig),
+          (Mock.evmEventConfig(~id="2", ~dependsOnAddresses=true) :> Internal.eventConfig),
+        ],
+      }->RpcSource.getSelectionConfig(~chain)
+      Assert.fail("Should have thrown")
+    } catch {
+    | Source.GetItemsError(UnsupportedSelection({message})) =>
+      Assert.equal(
+        message,
+        "RPC data-source currently supports event filters only when there's a single wildcard event. Please, create a GitHub issue if it's a blocker for you.",
       )
     | _ => Assert.fail("Should have thrown UnsupportedSelection")
     }
