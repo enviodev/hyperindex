@@ -193,7 +193,7 @@ let getSelectionConfig = (selection: FetchState.selection, ~chain) => {
         }),
       ),
     )
-  | ([topicSelection], _) if dynamicEventFilters->Utils.Array.isEmpty => {
+  | ([topicSelection], []) => {
       let topicQuery = topicSelection->Rpc.GetLogs.mapTopicQuery
       (~contractAddressMapping) => {
         addresses: switch contractAddressMapping->ContractAddressingMap.getAllAddresses {
@@ -203,35 +203,34 @@ let getSelectionConfig = (selection: FetchState.selection, ~chain) => {
         topicQuery,
       }
     }
-  | _ =>
-    switch (dynamicEventFilters, selection.eventConfigs) {
-    | ([dynamicEventFilter], [eventConfig]) =>
-      (~contractAddressMapping) => {
-        let addresses = contractAddressMapping->ContractAddressingMap.getAllAddresses
-        {
-          addresses: eventConfig.isWildcard ? None : Some(addresses),
-          topicQuery: switch dynamicEventFilter(addresses) {
-          | [topicSelection] => topicSelection->Rpc.GetLogs.mapTopicQuery
-          | _ =>
-            raise(
-              Source.GetItemsError(
-                UnsupportedSelection({
-                  message: "RPC data-source currently doesn't support an array of event filters. Please, create a GitHub issue if it's a blocker for you.",
-                }),
-              ),
-            )
-          },
-        }
+  | ([], [dynamicEventFilter]) if selection.eventConfigs->Js.Array2.length === 1 =>
+    let eventConfig = selection.eventConfigs->Js.Array2.unsafe_get(0)
+
+    (~contractAddressMapping) => {
+      let addresses = contractAddressMapping->ContractAddressingMap.getAllAddresses
+      {
+        addresses: eventConfig.isWildcard ? None : Some(addresses),
+        topicQuery: switch dynamicEventFilter(addresses) {
+        | [topicSelection] => topicSelection->Rpc.GetLogs.mapTopicQuery
+        | _ =>
+          raise(
+            Source.GetItemsError(
+              UnsupportedSelection({
+                message: "RPC data-source currently doesn't support an array of event filters. Please, create a GitHub issue if it's a blocker for you.",
+              }),
+            ),
+          )
+        },
       }
-    | _ =>
-      raise(
-        Source.GetItemsError(
-          UnsupportedSelection({
-            message: "RPC data-source currently supports event filters only when there's a single wildcard event. Please, create a GitHub issue if it's a blocker for you.",
-          }),
-        ),
-      )
     }
+  | _ =>
+    raise(
+      Source.GetItemsError(
+        UnsupportedSelection({
+          message: "RPC data-source currently supports event filters only when there's a single wildcard event. Please, create a GitHub issue if it's a blocker for you.",
+        }),
+      ),
+    )
   }
 
   {

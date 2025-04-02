@@ -65,7 +65,6 @@ type parsedEventFilters = {
 let parseEventFiltersOrThrow = {
   let emptyTopics = []
   let noopGetter = _ => emptyTopics
-  let nonEmptyAddresses = ["0x0000000000000000000000000000000000000000"->Address.unsafeFromString]
 
   (
     ~eventFilters: option<Js.Json.t>,
@@ -127,18 +126,27 @@ let parseEventFiltersOrThrow = {
     | Some(eventFilters) =>
       if Js.typeof(eventFilters) === "function" {
         let fn = eventFilters->(Utils.magic: Js.Json.t => Internal.eventFiltersArgs => Js.Json.t)
+        // When user passess a function to event filters we need to
+        // first determine whether it uses addresses or not
+        // Because the fetching logic will be different for wildcard events
+        // 1. If wildcard event doesn't use addresses,
+        //    it should start fetching even without static addresses in the config
+        // 2. If wildcard event uses addresses in event filters,
+        //    it should first wait for dynamic contract registration
+        // So to deterimine which case we run the function with dummy args
+        // and check if it uses addresses by using the getter.
         try {
           let args = (
             {
               chainId: 0,
-              addresses: nonEmptyAddresses,
+              addresses: [],
             }: Internal.eventFiltersArgs
           )->Utils.Object.defineProperty(
             "addresses",
             {
               get: () => {
                 dependsOnAddresses := true
-                nonEmptyAddresses
+                []
               },
             },
           )
