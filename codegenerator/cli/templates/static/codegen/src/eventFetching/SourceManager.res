@@ -195,7 +195,7 @@ let waitForNewBlock = async (sourceManager: t, ~currentBlockHeight) => {
 
           switch fallbackSources {
           | [] =>
-            logger->Logging.childError(
+            logger->Logging.childWarn(
               `No new blocks detected within ${(sourceManager.newBlockFallbackStallTimeout / 1000)
                   ->Int.toString}s. Polling will continue at a reduced rate. For better reliability, refer to our RPC fallback guide: https://docs.envio.dev/docs/HyperIndex/rpc-sync`,
             )

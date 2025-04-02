@@ -63,7 +63,7 @@ module EventFunctions = {
       let {event, mockDb, ?chainId} = args->(Utils.magic: eventProcessorArgs<'event> => eventProcessorArgs<Internal.event>)
 
       let config = RegisterHandlers.getConfig()
-      let eventConfig: Internal.baseEventConfig = register()
+      let eventConfig: Internal.eventConfig = register()
 
       // The user can specify a chainId of an event or leave it off
       // and it will default to the first chain in the config
@@ -227,7 +227,7 @@ module {{contract.name.capitalized}} = {
   module {{event.name}} = {
     @genType
     let processEvent: EventFunctions.eventProcessor<Types.{{contract.name.capitalized}}.{{event.name}}.event> = EventFunctions.makeEventProcessor(
-      ~register=(Types.{{contract.name.capitalized}}.{{event.name}}.register :> unit => Internal.baseEventConfig),
+      ~register=(Types.{{contract.name.capitalized}}.{{event.name}}.register :> unit => Internal.eventConfig),
     )
 
     {{#if ../../is_evm_ecosystem}}

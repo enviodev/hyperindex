@@ -276,8 +276,22 @@ EventFiltersTest.Transfer.handler(async (_) => {}, {
     ];
   },
 });
-
 EventFiltersTest.EmptyFiltersArray.handler(async (_) => {}, {
   wildcard: true,
   eventFilters: [],
+});
+EventFiltersTest.WildcardWithAddress.handler(async (_) => {}, {
+  wildcard: true,
+  eventFilters: ({ addresses }) => {
+    return [
+      { from: ZERO_ADDRESS, to: addresses },
+      { from: addresses, to: ZERO_ADDRESS },
+    ];
+  },
+});
+EventFiltersTest.WithExcessField.handler(async (_) => {}, {
+  wildcard: true,
+  eventFilters: (_) => {
+    return { from: ZERO_ADDRESS, to: ZERO_ADDRESS };
+  },
 });

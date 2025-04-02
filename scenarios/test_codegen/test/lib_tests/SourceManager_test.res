@@ -213,7 +213,7 @@ describe("SourceManager creation", () => {
 })
 
 describe("SourceManager fetchNext", () => {
-  let normalSelection = {FetchState.isWildcard: true, eventConfigs: []}
+  let normalSelection = {FetchState.dependsOnAddresses: false, eventConfigs: []}
 
   let mockFullPartition = (
     ~partitionIndex,
@@ -1314,7 +1314,7 @@ describe("SourceManager wait for new blocks", () => {
 })
 
 describe("SourceManager.executeQuery", () => {
-  let selection = {FetchState.isWildcard: true, eventConfigs: []}
+  let selection = {FetchState.dependsOnAddresses: false, eventConfigs: []}
   let contractAddressMapping = ContractAddressingMap.make()
   let items = []
 

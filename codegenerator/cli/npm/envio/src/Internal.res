@@ -64,11 +64,18 @@ type genericHandlerWithLoader<'loader, 'handler, 'eventFilters> = {
   preRegisterDynamicContracts?: bool,
 }
 
-type baseEventConfig = {
+// This is private so it's not manually constructed internally
+// The idea is that it can only be coerced from fuel/evmEventConfig
+// and it can include their fields. We prevent manual creation,
+// so the fields are not overwritten and we can safely cast the type back to fuel/evmEventConfig
+type eventConfig = private {
   id: string,
   name: string,
   contractName: string,
   isWildcard: bool,
+  // Usually always false for wildcard events
+  // But might be true for wildcard event with dynamic event filter by addresses
+  dependsOnAddresses: bool,
   preRegisterDynamicContracts: bool,
   loader: option<loader>,
   handler: option<handler>,
@@ -83,7 +90,7 @@ type fuelEventKind =
   | Transfer
   | Call
 type fuelEventConfig = {
-  ...baseEventConfig,
+  ...eventConfig,
   kind: fuelEventKind,
 }
 type fuelContractConfig = {
@@ -98,21 +105,26 @@ type topicSelection = {
   topic3: array<EvmTypes.Hex.t>,
 }
 
+type eventFiltersArgs = {chainId: int, addresses: array<Address.t>}
+
+type eventFilters =
+  Static(array<topicSelection>) | Dynamic(array<Address.t> => array<topicSelection>)
+
 type evmEventConfig = {
-  ...baseEventConfig,
-  getTopicSelectionsOrThrow: (~chain: ChainMap.Chain.t) => array<topicSelection>,
+  ...eventConfig,
+  getEventFiltersOrThrow: ChainMap.Chain.t => eventFilters,
   blockSchema: S.schema<eventBlock>,
   transactionSchema: S.schema<eventTransaction>,
   convertHyperSyncEventArgs: HyperSyncClient.Decoder.decodedEvent => eventParams,
 }
 type evmContractConfig = {
   name: string,
-  abi: Ethers.abi,
+  abi: EvmTypes.Abi.t,
   events: array<evmEventConfig>,
 }
 
 type eventItem = {
-  eventConfig: baseEventConfig,
+  eventConfig: eventConfig,
   timestamp: int,
   chain: ChainMap.Chain.t,
   blockNumber: int,
@@ -149,5 +161,3 @@ type entity = private {id: string}
 
 @genType.import(("./bindings/OpaqueTypes.ts", "invalid"))
 type noEventFilters
-type eventFilters
-type eventFiltersArgs = {chainId: int}
