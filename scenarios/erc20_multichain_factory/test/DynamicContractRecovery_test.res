@@ -166,10 +166,10 @@ describe("Dynamic contract restart resistance test", () => {
                 events: c.events->Array.map(
                   e =>
                     if e.id === Types.ERC20Factory.TokenCreated.id {
-                      {
-                        ...e,
+                      ({
+                        ...e->(Utils.magic: Internal.eventConfig => Internal.evmEventConfig),
                         preRegisterDynamicContracts: true,
-                      }
+                      } :> Internal.eventConfig)
                     } else {
                       e
                     },

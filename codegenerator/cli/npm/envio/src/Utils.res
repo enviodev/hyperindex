@@ -7,6 +7,21 @@ let delay = milliseconds =>
     }, milliseconds)
   })
 
+module Object = {
+  // Define a type for the property descriptor
+  type propertyDescriptor<'a> = {
+    configurable?: bool,
+    enumerable?: bool,
+    writable?: bool,
+    value?: 'a,
+    get?: unit => 'a,
+    set?: 'a => unit,
+  }
+
+  @val @scope("Object")
+  external defineProperty: ('obj, string, propertyDescriptor<'a>) => 'obj = "defineProperty"
+}
+
 module Option = {
   let mapNone = (opt: option<'a>, val: 'b): option<'b> => {
     switch opt {
@@ -49,6 +64,20 @@ module Dict = {
     It's the same as `Js.Dict.get` but it doesn't have runtime overhead to check if the key exists.
    */
   external dangerouslyGetNonOption: (dict<'a>, string) => option<'a> = ""
+
+  let push = (dict, key, value) => {
+    switch dict->dangerouslyGetNonOption(key) {
+    | Some(arr) => arr->Js.Array2.push(value)->ignore
+    | None => dict->Js.Dict.set(key, [value])
+    }
+  }
+
+  let pushMany = (dict, key, values) => {
+    switch dict->dangerouslyGetNonOption(key) {
+    | Some(arr) => arr->Js.Array2.pushMany(values)->ignore
+    | None => dict->Js.Dict.set(key, values)
+    }
+  }
 
   let merge: (dict<'a>, dict<'a>) => dict<'a> = %raw(`(dictA, dictB) => ({...dictA, ...dictB})`)
 

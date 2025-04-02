@@ -8,22 +8,22 @@ let contracts = [
     abi: Types.Gravatar.abi,
     addresses: ["0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3"->Address.Evm.fromStringOrThrow],
     events: [
-      (Types.Gravatar.TestEvent.register() :> Internal.baseEventConfig),
-      (Types.Gravatar.NewGravatar.register() :> Internal.baseEventConfig),
-      (Types.Gravatar.UpdatedGravatar.register() :> Internal.baseEventConfig),
+      (Types.Gravatar.TestEvent.register() :> Internal.eventConfig),
+      (Types.Gravatar.NewGravatar.register() :> Internal.eventConfig),
+      (Types.Gravatar.UpdatedGravatar.register() :> Internal.eventConfig),
     ],
   },
   {
     name: "NftFactory",
     abi: Types.NftFactory.abi,
     addresses: ["0xa2F6E6029638cCb484A2ccb6414499aD3e825CaC"->Address.Evm.fromStringOrThrow],
-    events: [(Types.NftFactory.SimpleNftCreated.register() :> Internal.baseEventConfig)],
+    events: [(Types.NftFactory.SimpleNftCreated.register() :> Internal.eventConfig)],
   },
   {
     name: "SimpleNft",
     abi: Types.SimpleNft.abi,
     addresses: [],
-    events: [(Types.SimpleNft.Transfer.register() :> Internal.baseEventConfig)],
+    events: [(Types.SimpleNft.Transfer.register() :> Internal.eventConfig)],
   },
 ]
 
@@ -31,7 +31,7 @@ let evmContracts = contracts->Js.Array2.map((contract): Internal.evmContractConf
   name: contract.name,
   abi: contract.abi,
   events: contract.events->(
-    Utils.magic: array<Internal.baseEventConfig> => array<Internal.evmEventConfig>
+    Utils.magic: array<Internal.eventConfig> => array<Internal.evmEventConfig>
   ),
 })
 

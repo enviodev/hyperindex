@@ -7,15 +7,6 @@ let mintEventTag = "mint"
 let burnEventTag = "burn"
 let transferEventTag = "transfer"
 let callEventTag = "call"
-let getEventId = (eventConfig: Internal.fuelEventConfig) => {
-  switch eventConfig.kind {
-  | Mint => mintEventTag
-  | Burn => burnEventTag
-  | Transfer => transferEventTag
-  | Call => callEventTag
-  | LogData({logId}) => logId
-  }
-}
 
 type selectionConfig = {
   getRecieptsSelection: (
@@ -36,20 +27,20 @@ let txStatusSelection = [1]
 let makeGetNormalRecieptsSelection = (
   ~nonWildcardLogDataRbsByContract,
   ~nonLogDataReceiptTypesByContract,
-  ~contracts: array<Internal.fuelContractConfig>,
+  ~contractNames,
 ) => {
   (~contractAddressMapping) => {
     let selection: array<HyperFuelClient.QueryTypes.receiptSelection> = []
 
     //Instantiate each time to add new registered contract addresses
-    contracts->Array.forEach(contract => {
+    contractNames->Utils.Set.forEach(contractName => {
       switch contractAddressMapping->ContractAddressingMap.getAddressesFromContractName(
-        ~contractName=contract.name,
+        ~contractName,
       ) {
       | [] => ()
       | addresses => {
           switch nonLogDataReceiptTypesByContract->Utils.Dict.dangerouslyGetNonOption(
-            contract.name,
+            contractName,
           ) {
           | Some(receiptTypes) =>
             selection
@@ -61,9 +52,7 @@ let makeGetNormalRecieptsSelection = (
             ->ignore
           | None => ()
           }
-          switch nonWildcardLogDataRbsByContract->Utils.Dict.dangerouslyGetNonOption(
-            contract.name,
-          ) {
+          switch nonWildcardLogDataRbsByContract->Utils.Dict.dangerouslyGetNonOption(contractName) {
           | None
           | Some([]) => ()
           | Some(nonWildcardLogDataRbs) =>
@@ -121,11 +110,7 @@ let makeWildcardRecieptsSelection = (~wildcardLogDataRbs, ~nonLogDataWildcardRec
   selection
 }
 
-let getSelectionConfig = (
-  selection: FetchState.selection,
-  ~contracts: array<Internal.fuelContractConfig>,
-  ~chain,
-) => {
+let getSelectionConfig = (selection: FetchState.selection, ~chain) => {
   let eventRouter = EventRouter.empty()
   let nonWildcardLogDataRbsByContract = Js.Dict.empty()
   let wildcardLogDataRbs = []
@@ -144,71 +129,68 @@ let getSelectionConfig = (
     }
   }
 
-  contracts->Belt.Array.forEach(contract => {
-    let nonWildcardLogDataRbs = []
-    contract.events->Array.forEach(eventConfig => {
-      let eventId = getEventId(eventConfig)
-      if (
-        FetchState.checkIsInSelection(
-          ~selection,
-          ~contractName=contract.name,
-          ~eventId,
-          ~isWildcard=eventConfig.isWildcard,
-        )
-      ) {
-        eventRouter->EventRouter.addOrThrow(
-          eventId,
-          eventConfig,
-          ~contractName=contract.name,
-          ~eventName=eventConfig.name,
-          ~chain,
-          ~isWildcard=eventConfig.isWildcard,
-        )
+  let contractNames = Utils.Set.make()
 
-        switch eventConfig {
-        | {kind: Mint, isWildcard: true} => addNonLogDataWildcardReceiptTypes(Mint)
-        | {kind: Mint} => addNonLogDataReceiptType(contract.name, Mint)
-        | {kind: Burn, isWildcard: true} => addNonLogDataWildcardReceiptTypes(Burn)
-        | {kind: Burn} => addNonLogDataReceiptType(contract.name, Burn)
-        | {kind: Transfer, isWildcard: true} => {
-            addNonLogDataWildcardReceiptTypes(Transfer)
-            addNonLogDataWildcardReceiptTypes(TransferOut)
-          }
-        | {kind: Transfer} => {
-            addNonLogDataReceiptType(contract.name, Transfer)
-            addNonLogDataReceiptType(contract.name, TransferOut)
-          }
-        | {kind: Call, isWildcard: true} => addNonLogDataWildcardReceiptTypes(Call)
-        | {kind: Call} =>
-          Js.Exn.raiseError("Call receipt indexing currently supported only in wildcard mode")
-        | {kind: LogData({logId}), isWildcard} => {
-            let rb = logId->BigInt.fromStringUnsafe
-            if isWildcard {
-              wildcardLogDataRbs->Array.push(rb)->ignore
-            } else {
-              nonWildcardLogDataRbs->Array.push(rb)->ignore
-            }
+  selection.eventConfigs
+  ->(Utils.magic: array<Internal.eventConfig> => array<Internal.fuelEventConfig>)
+  ->Array.forEach(eventConfig => {
+    let contractName = eventConfig.contractName
+    if !eventConfig.isWildcard {
+      let _ = contractNames->Utils.Set.add(contractName)
+    }
+    eventRouter->EventRouter.addOrThrow(
+      eventConfig.id,
+      eventConfig,
+      ~contractName,
+      ~eventName=eventConfig.name,
+      ~chain,
+      ~isWildcard=eventConfig.isWildcard,
+    )
+
+    switch eventConfig {
+    | {kind: Mint, isWildcard: true} => addNonLogDataWildcardReceiptTypes(Mint)
+    | {kind: Mint} => addNonLogDataReceiptType(contractName, Mint)
+    | {kind: Burn, isWildcard: true} => addNonLogDataWildcardReceiptTypes(Burn)
+    | {kind: Burn} => addNonLogDataReceiptType(contractName, Burn)
+    | {kind: Transfer, isWildcard: true} => {
+        addNonLogDataWildcardReceiptTypes(Transfer)
+        addNonLogDataWildcardReceiptTypes(TransferOut)
+      }
+    | {kind: Transfer} => {
+        addNonLogDataReceiptType(contractName, Transfer)
+        addNonLogDataReceiptType(contractName, TransferOut)
+      }
+    | {kind: Call, isWildcard: true} => addNonLogDataWildcardReceiptTypes(Call)
+    | {kind: Call} =>
+      Js.Exn.raiseError("Call receipt indexing currently supported only in wildcard mode")
+    | {kind: LogData({logId}), isWildcard} => {
+        let rb = logId->BigInt.fromStringUnsafe
+        if isWildcard {
+          wildcardLogDataRbs->Array.push(rb)->ignore
+        } else {
+          switch nonWildcardLogDataRbsByContract->Utils.Dict.dangerouslyGetNonOption(contractName) {
+          | Some(arr) => arr->Belt.Array.push(rb)
+          | None => nonWildcardLogDataRbsByContract->Js.Dict.set(contractName, [rb])
           }
         }
       }
-    })
-    nonWildcardLogDataRbsByContract->Js.Dict.set(contract.name, nonWildcardLogDataRbs)
+    }
   })
 
   {
-    getRecieptsSelection: switch selection.isWildcard {
-    | true => {
+    getRecieptsSelection: switch selection.dependsOnAddresses {
+    | false => {
         let recieptsSelection = makeWildcardRecieptsSelection(
           ~wildcardLogDataRbs,
           ~nonLogDataWildcardReceiptTypes,
         )
         (~contractAddressMapping as _) => recieptsSelection
       }
-    | false =>
+    | true =>
       makeGetNormalRecieptsSelection(
         ~nonWildcardLogDataRbsByContract,
         ~nonLogDataReceiptTypesByContract,
-        ~contracts,
+        ~contractNames,
       )
     },
     route: (~eventId, ~contractAddressMapping, ~contractAddress) =>
@@ -216,13 +198,13 @@ let getSelectionConfig = (
   }
 }
 
-let memoGetSelectionConfig = (~contracts, ~chain) => {
+let memoGetSelectionConfig = (~chain) => {
   let cache = Utils.WeakMap.make()
   selection =>
     switch cache->Utils.WeakMap.get(selection) {
     | Some(c) => c
     | None => {
-        let c = selection->getSelectionConfig(~contracts, ~chain)
+        let c = selection->getSelectionConfig(~chain)
         let _ = cache->Utils.WeakMap.set(selection, c)
         c
       }
@@ -231,14 +213,13 @@ let memoGetSelectionConfig = (~contracts, ~chain) => {
 
 type options = {
   chain: ChainMap.Chain.t,
-  contracts: array<Internal.fuelContractConfig>,
   endpointUrl: string,
 }
 
-let make = ({chain, contracts, endpointUrl}: options): t => {
+let make = ({chain, endpointUrl}: options): t => {
   let name = "HyperFuel"
 
-  let getSelectionConfig = memoGetSelectionConfig(~contracts, ~chain)
+  let getSelectionConfig = memoGetSelectionConfig(~chain)
 
   module Helpers = {
     let rec queryLogsPageWithBackoff = async (
@@ -453,7 +434,7 @@ let make = ({chain, contracts, endpointUrl}: options): t => {
 
       (
         {
-          eventConfig: (eventConfig :> Internal.baseEventConfig),
+          eventConfig: (eventConfig :> Internal.eventConfig),
           timestamp: block.time,
           chain,
           blockNumber: block.height,

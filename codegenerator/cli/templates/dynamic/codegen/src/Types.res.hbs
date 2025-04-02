@@ -272,7 +272,7 @@ module HandlerTypes = {
   } = {
     open Belt
 
-    type handlerWithLoader = Internal.genericHandlerWithLoader<Internal.loader, Internal.handler, Internal.eventFilters>
+    type handlerWithLoader = Internal.genericHandlerWithLoader<Internal.loader, Internal.handler, Js.Json.t>
 
     type t = {
       contractName: string,
