@@ -221,49 +221,14 @@ let make = ({chain, endpointUrl}: options): t => {
 
   let getSelectionConfig = memoGetSelectionConfig(~chain)
 
-  module Helpers = {
-    let rec queryLogsPageWithBackoff = async (
-      ~backoffMsOnFailure=200,
-      ~callDepth=0,
-      ~maxCallDepth=15,
-      query: unit => promise<HyperFuel.queryResponse<HyperFuel.logsQueryPage>>,
-      logger: Pino.t,
-    ) =>
-      switch await query() {
-      | Error(e) =>
-        let msg = e->HyperFuel.queryErrorToMsq
-        if callDepth < maxCallDepth {
-          logger->Logging.childWarn({
-            "err": msg,
-            "msg": `Issue while running fetching of events from Hypersync endpoint. Will wait ${backoffMsOnFailure->Belt.Int.toString}ms and try again.`,
-            "type": "EXPONENTIAL_BACKOFF",
-          })
-          await Time.resolvePromiseAfterDelay(~delayMilliseconds=backoffMsOnFailure)
-          await queryLogsPageWithBackoff(
-            ~callDepth=callDepth + 1,
-            ~backoffMsOnFailure=2 * backoffMsOnFailure,
-            query,
-            logger,
-          )
-        } else {
-          logger->Logging.childError({
-            "err": msg,
-            "msg": `Issue while running fetching batch of events from Hypersync endpoint. Attempted query a maximum of ${maxCallDepth->string_of_int} times. Will NOT retry.`,
-            "type": "EXPONENTIAL_BACKOFF_MAX_DEPTH",
-          })
-          Js.Exn.raiseError(msg)
-        }
-      | Ok(v) => v
-      }
-  }
-
   let getItemsOrThrow = async (
     ~fromBlock,
     ~toBlock,
     ~contractAddressMapping,
-    ~currentBlockHeight as _,
+    ~currentBlockHeight,
     ~partitionId as _,
     ~selection: FetchState.selection,
+    ~retry,
     ~logger,
   ) => {
     let mkLogAndRaise = ErrorHandling.mkLogAndRaise(~logger, ...)
@@ -275,11 +240,59 @@ let make = ({chain, endpointUrl}: options): t => {
     let startFetchingBatchTimeRef = Hrtime.makeTimer()
 
     //fetch batch
-    let pageUnsafe = await Helpers.queryLogsPageWithBackoff(
-      () =>
-        HyperFuel.queryLogsPage(~serverUrl=endpointUrl, ~fromBlock, ~toBlock, ~recieptsSelection),
-      logger,
-    )
+    let pageUnsafe = try await HyperFuel.GetLogs.query(
+      ~serverUrl=endpointUrl,
+      ~fromBlock,
+      ~toBlock,
+      ~recieptsSelection,
+    ) catch {
+    | HyperSync.GetLogs.Error(error) =>
+      raise(
+        Source.GetItemsError(
+          Source.FailedGettingItems({
+            exn: %raw(`null`),
+            attemptedToBlock: toBlock->Option.getWithDefault(currentBlockHeight),
+            retry: switch error {
+            | WrongInstance =>
+              let backoffMillis = switch retry {
+              | 0 => 100
+              | _ => 500 * retry
+              }
+              WithBackoff({
+                message: `Block #${fromBlock->Int.toString} not found in HyperFuel. HyperFuel has multiple instances and it's possible that they drift independently slightly from the head. Indexing should continue correctly after retrying the query in ${backoffMillis->Int.toString}ms.`,
+                backoffMillis,
+              })
+            | UnexpectedMissingParams({missingParams}) =>
+              WithBackoff({
+                message: `Received page response with invalid data. Attempt a retry. Missing params: ${missingParams->Js.Array2.joinWith(
+                    ",",
+                  )}`,
+                backoffMillis: switch retry {
+                | 0 => 1000
+                | _ => 4000 * retry
+                },
+              })
+            },
+          }),
+        ),
+      )
+    | exn =>
+      raise(
+        Source.GetItemsError(
+          Source.FailedGettingItems({
+            exn,
+            attemptedToBlock: toBlock->Option.getWithDefault(currentBlockHeight),
+            retry: WithBackoff({
+              message: `Unexpected issue while fetching events from HyperFuel client. Attempt a retry.`,
+              backoffMillis: switch retry {
+              | 0 => 500
+              | _ => 1000 * retry
+              },
+            }),
+          }),
+        ),
+      )
+    }
 
     let pageFetchTime =
       startFetchingBatchTimeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis

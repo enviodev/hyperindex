@@ -66,6 +66,7 @@ module type S = {
         ~currentBlockHeight: int,
         ~partitionId: string,
         ~selection: FetchState.selection,
+        ~retry: int,
         ~logger: Pino.t,
       ) => promise<blockRangeFetchResponse>,
     }

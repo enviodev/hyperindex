@@ -39,8 +39,6 @@ let queryErrorToExn = queryError => {
   HyperSyncQueryError(queryError)
 }
 
-exception UnexpectedMissingParamsExn(missingParams)
-
 let queryErrorToMsq = (e: queryError): string => {
   switch e {
   | UnexpectedMissingParams({queryName, missingParams}) =>
@@ -56,13 +54,13 @@ let mapExn = (queryResponse: queryResponse<'a>) =>
   | Error(err) => err->queryErrorToExn->Error
   }
 
-let getExn = (queryResponse: queryResponse<'a>) =>
-  switch queryResponse {
-  | Ok(v) => v
-  | Error(err) => err->queryErrorToExn->raise
-  }
+module GetLogs = {
+  type error =
+    | UnexpectedMissingParams({missingParams: array<string>})
+    | WrongInstance
 
-module LogsQuery = {
+  exception Error(error)
+
   let makeRequestBody = (
     ~fromBlock,
     ~toBlockInclusive,
@@ -104,10 +102,7 @@ module LogsQuery = {
       ~prefix="transaction",
     )
     if missingParams->Array.length > 0 {
-      UnexpectedMissingParamsExn({
-        queryName: "queryLogsPage HyperSync",
-        missingParams,
-      })->raise
+      raise(Error(UnexpectedMissingParams({missingParams: missingParams})))
     }
 
     //Topics can be nullable and still need to be filtered
@@ -131,28 +126,23 @@ module LogsQuery = {
     res: HyperSyncClient.ResponseTypes.eventResponse,
     ~nonOptionalBlockFieldNames,
     ~nonOptionalTransactionFieldNames,
-  ): queryResponse<logsQueryPage> => {
-    try {
-      let {nextBlock, archiveHeight, rollbackGuard} = res
-      let items =
-        res.data->Array.map(item =>
-          item->convertEvent(~nonOptionalBlockFieldNames, ~nonOptionalTransactionFieldNames)
-        )
-      let page: logsQueryPage = {
-        items,
-        nextBlock,
-        archiveHeight: archiveHeight->Option.getWithDefault(0), //Archive Height is only None if height is 0
-        events: res.data,
-        rollbackGuard,
-      }
-
-      Ok(page)
-    } catch {
-    | UnexpectedMissingParamsExn(err) => Error(UnexpectedMissingParams(err))
+  ): logsQueryPage => {
+    let {nextBlock, archiveHeight, rollbackGuard} = res
+    let items =
+      res.data->Array.map(item =>
+        item->convertEvent(~nonOptionalBlockFieldNames, ~nonOptionalTransactionFieldNames)
+      )
+    let page: logsQueryPage = {
+      items,
+      nextBlock,
+      archiveHeight: archiveHeight->Option.getWithDefault(0), //Archive Height is only None if height is 0
+      events: res.data,
+      rollbackGuard,
     }
+    page
   }
 
-  let queryLogsPage = async (
+  let query = async (
     ~client: HyperSyncClient.t,
     ~fromBlock,
     ~toBlock,
@@ -160,8 +150,7 @@ module LogsQuery = {
     ~fieldSelection,
     ~nonOptionalBlockFieldNames,
     ~nonOptionalTransactionFieldNames,
-    ~logger,
-  ): queryResponse<logsQueryPage> => {
+  ): logsQueryPage => {
     let addressesWithTopics = logSelections->Array.flatMap(({addresses, topicSelections}) =>
       topicSelections->Array.map(({topic0, topic1, topic2, topic3}) => {
         let topics = HyperSyncClient.QueryTypes.makeTopicSelection(
@@ -181,18 +170,11 @@ module LogsQuery = {
       ~fieldSelection,
     )
 
-    let executeQuery = async () => {
-      let res = await client.getEvents(~query)
-      if res.nextBlock <= fromBlock {
-        // Might happen when /height response was from another instance of HyperSync
-        Js.Exn.raiseError(
-          "Received page response from another instance of HyperSync. Should work after a retry.",
-        )
-      }
-      res
+    let res = await client.getEvents(~query)
+    if res.nextBlock <= fromBlock {
+      // Might happen when /height response was from another instance of HyperSync
+      raise(Error(WrongInstance))
     }
-
-    let res = await executeQuery->Time.retryAsyncWithExponentialBackOff(~logger)
 
     res->convertResponse(~nonOptionalBlockFieldNames, ~nonOptionalTransactionFieldNames)
   }
@@ -250,9 +232,13 @@ module BlockData = {
     ->Utils.Array.transposeResults
   }
 
-  let rec queryBlockData = async (~serverUrl, ~apiToken, ~fromBlock, ~toBlock, ~logger): queryResponse<
-    array<ReorgDetection.blockDataWithTimestamp>,
-  > => {
+  let rec queryBlockData = async (
+    ~serverUrl,
+    ~apiToken,
+    ~fromBlock,
+    ~toBlock,
+    ~logger,
+  ): queryResponse<array<ReorgDetection.blockDataWithTimestamp>> => {
     let body = makeRequestBody(~fromBlock, ~toBlock)
 
     let logger = Logging.createChildFrom(
@@ -264,13 +250,15 @@ module BlockData = {
       },
     )
 
-    let maybeSuccessfulRes = switch await Time.retryAsyncWithExponentialBackOff(
-      () => HyperSyncJsonApi.queryRoute->Rest.fetch({
-        "query": body,
-        "token": apiToken,
-      }, ~client=Rest.client(serverUrl)),
-      ~logger,
-    ) {
+    let maybeSuccessfulRes = switch await Time.retryAsyncWithExponentialBackOff(() =>
+      HyperSyncJsonApi.queryRoute->Rest.fetch(
+        {
+          "query": body,
+          "token": apiToken,
+        },
+        ~client=Rest.client(serverUrl),
+      )
+    , ~logger) {
     | exception _ => None
     | res if res.nextBlock <= fromBlock => None
     | res => Some(res)
@@ -350,7 +338,6 @@ module BlockData = {
   }
 }
 
-let queryLogsPage = LogsQuery.queryLogsPage
 let queryBlockData = (~serverUrl, ~apiToken, ~blockNumber, ~logger) =>
   BlockData.queryBlockData(
     ~serverUrl,
