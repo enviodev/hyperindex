@@ -29,20 +29,26 @@ type missingParams = {
   queryName: string,
   missingParams: array<string>,
 }
-type queryError =
-  UnexpectedMissingParams(missingParams)
-
-exception UnexpectedMissingParamsExn(missingParams)
+type queryError = UnexpectedMissingParams(missingParams)
 
 let queryErrorToMsq: queryError => string
 
 type queryResponse<'a> = result<'a, queryError>
-let queryLogsPage: (
-  ~serverUrl: string,
-  ~fromBlock: int,
-  ~toBlock: option<int>,
-  ~recieptsSelection: array<HyperFuelClient.QueryTypes.receiptSelection>,
-) => promise<queryResponse<logsQueryPage>>
+
+module GetLogs: {
+  type error =
+    | UnexpectedMissingParams({missingParams: array<string>})
+    | WrongInstance
+
+  exception Error(error)
+
+  let query: (
+    ~serverUrl: string,
+    ~fromBlock: int,
+    ~toBlock: option<int>,
+    ~recieptsSelection: array<HyperFuelClient.QueryTypes.receiptSelection>,
+  ) => promise<logsQueryPage>
+}
 
 let queryBlockData: (
   ~serverUrl: string,
@@ -50,4 +56,4 @@ let queryBlockData: (
   ~logger: Pino.t,
 ) => promise<option<ReorgDetection.blockDataWithTimestamp>>
 
-let heightRoute: Rest.route<(), int>
+let heightRoute: Rest.route<unit, int>

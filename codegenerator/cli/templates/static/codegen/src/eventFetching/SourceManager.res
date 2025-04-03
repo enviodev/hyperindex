@@ -19,7 +19,11 @@ type t = {
 
 let getActiveSource = sourceManager => sourceManager.activeSource
 
-let makeGetHeightRetryInterval = (~initialRetryInterval, ~backoffMultiplicative, ~maxRetryInterval) => {
+let makeGetHeightRetryInterval = (
+  ~initialRetryInterval,
+  ~backoffMultiplicative,
+  ~maxRetryInterval,
+) => {
   (~retry: int) => {
     let backoff = if retry === 0 {
       1
@@ -35,7 +39,11 @@ let make = (
   ~maxPartitionConcurrency,
   ~newBlockFallbackStallTimeout=20_000,
   ~stalledPollingInterval=5_000,
-  ~getHeightRetryInterval=makeGetHeightRetryInterval(~initialRetryInterval=1000, ~backoffMultiplicative=2, ~maxRetryInterval=60_000),
+  ~getHeightRetryInterval=makeGetHeightRetryInterval(
+    ~initialRetryInterval=1000,
+    ~backoffMultiplicative=2,
+    ~maxRetryInterval=60_000,
+  ),
 ) => {
   let initialActiveSource = switch sources->Js.Array2.find(source => source.sourceFor === Sync) {
   | None => Js.Exn.raiseError("Invalid configuration, no data-source for historical sync provided")
@@ -244,6 +252,10 @@ let getNextSyncSource = (
   sourceManager,
   // This is needed to include the Fallback source to rotation
   ~initialSource,
+  // After multiple failures start returning fallback sources as well
+  // But don't try it when main sync sources fail because of invalid configuration
+  // note: The logic might be changed in the future
+  ~attemptFallbacks=false,
 ) => {
   let before = []
   let after = []
@@ -256,7 +268,7 @@ let getNextSyncSource = (
     } else if (
       switch source.sourceFor {
       | Sync => true
-      | Fallback => source === initialSource
+      | Fallback => attemptFallbacks || source === initialSource
       }
     ) {
       (hasActive.contents ? after : before)->Array.push(source)
@@ -291,11 +303,13 @@ let executeQuery = async (sourceManager: t, ~query: FetchState.query, ~currentBl
     },
   )
   let responseRef = ref(None)
+  let retryRef = ref(0)
   let initialSource = sourceManager.activeSource
 
   while responseRef.contents->Option.isNone {
     let source = sourceManager.activeSource
     let toBlock = toBlockRef.contents
+    let retry = retryRef.contents
 
     let logger = Logging.createChild(
       ~params={
@@ -306,6 +320,7 @@ let executeQuery = async (sourceManager: t, ~query: FetchState.query, ~currentBl
         "fromBlock": query.fromBlock,
         "toBlock": toBlock,
         "addresses": addresses,
+        "retry": retry,
       },
     )
 
@@ -317,6 +332,7 @@ let executeQuery = async (sourceManager: t, ~query: FetchState.query, ~currentBl
         ~partitionId=query.partitionId,
         ~currentBlockHeight,
         ~selection=query.selection,
+        ~retry,
         ~logger,
       )
       logger->Logging.childTrace({
@@ -339,7 +355,10 @@ let executeQuery = async (sourceManager: t, ~query: FetchState.query, ~currentBl
           let notAlreadyDeleted = sourceManager.sources->Utils.Set.delete(source)
 
           if nextSource === source {
-            exn->ErrorHandling.mkLogAndRaise(~logger, ~msg="The indexer doesn't have data-sources which can continue fetching. Please, check the error logs or reach out to the Envio team.")
+            exn->ErrorHandling.mkLogAndRaise(
+              ~logger,
+              ~msg="The indexer doesn't have data-sources which can continue fetching. Please, check the error logs or reach out to the Envio team.",
+            )
           } else {
             // In case there are multiple partitions
             // failing at the same time. Log only once
@@ -361,33 +380,60 @@ let executeQuery = async (sourceManager: t, ~query: FetchState.query, ~currentBl
               "source": nextSource.name,
             })
             sourceManager.activeSource = nextSource
+            retryRef := 0
           }
         }
       | FailedGettingItems({attemptedToBlock, retry: WithSuggestedToBlock({toBlock})}) =>
         logger->Logging.childTrace({
-          "msg": "Failed getting data for the block range. Retrying with the suggested block range from response.",
+          "msg": "Failed getting data for the block range. Immediately retrying with the suggested block range from response.",
           "toBlock": attemptedToBlock,
           "suggestedToBlock": toBlock,
         })
         toBlockRef := Some(toBlock)
-      | FailedGettingItems({exn, attemptedToBlock, retry: WithBackoff({backoffMillis})}) =>
-        let nextSource = sourceManager->getNextSyncSource(~initialSource)
-        let hasAnotherSyncSource = nextSource !== source
-        logger->Logging.childTrace({
-          "msg": `Failed getting data for the block range. Will try smaller block range for the next attempt.`,
+        retryRef := 0
+      | FailedGettingItems({exn, attemptedToBlock, retry: WithBackoff({message, backoffMillis})}) =>
+        // Starting from the 11th failure (retry=10)
+        // include fallback sources for switch
+        // (previously it would consider only sync sources or the initial one)
+        // This is a little bit tricky to find the right number,
+        // because meaning between RPC and HyperSync is different for the error
+        // but since Fallback was initially designed to be used only for height check
+        // just keep the value high
+        let attemptFallbacks = retry >= 10
+
+        let nextSource = switch retry {
+        // Don't attempt a switch on first two failure
+        | 0 | 1 => source
+        | _ =>
+          // Then try to switch every second failure
+          if retry->mod(2) === 0 {
+            sourceManager->getNextSyncSource(~initialSource, ~attemptFallbacks)
+          } else {
+            source
+          }
+        }
+
+        // Start displaying warnings after 4 failures
+        let log = retry >= 4 ? Logging.childWarn : Logging.childTrace
+        logger->log({
+          "msg": message,
           "toBlock": attemptedToBlock,
           "backOffMilliseconds": backoffMillis,
-          "err": exn,
+          "retry": retry,
+          "err": exn->ErrorHandling.prettifyExn,
         })
-        if hasAnotherSyncSource {
+
+        let shouldSwitch = nextSource !== source
+        if shouldSwitch {
           logger->Logging.childInfo({
             "msg": "Switching to another data-source",
             "source": nextSource.name,
           })
           sourceManager.activeSource = nextSource
         } else {
-          await Utils.delay(backoffMillis)
+          await Utils.delay(Pervasives.min(backoffMillis, 60_000))
         }
+        retryRef := retryRef.contents + 1
       }
     // TODO: Handle more error cases and hang/retry instead of throwing
     | exn => exn->ErrorHandling.mkLogAndRaise(~logger, ~msg="Failed to fetch block Range")
