@@ -1315,7 +1315,7 @@ describe("SourceManager wait for new blocks", () => {
   )
 })
 
-describe_only("SourceManager.executeQuery", () => {
+describe("SourceManager.executeQuery", () => {
   let selection = {FetchState.dependsOnAddresses: false, eventConfigs: []}
   let contractAddressMapping = ContractAddressingMap.make()
   let items = []
