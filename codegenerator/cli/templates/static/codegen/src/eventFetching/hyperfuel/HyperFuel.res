@@ -59,11 +59,15 @@ let queryErrorToMsq = (e: queryError): string => {
   }
 }
 
-exception UnexpectedMissingParamsExn(missingParams)
-
 type queryResponse<'a> = result<'a, queryError>
 
-module LogsQuery = {
+module GetLogs = {
+  type error =
+    | UnexpectedMissingParams({missingParams: array<string>})
+    | WrongInstance
+
+  exception Error(error)
+
   let makeRequestBody = (
     ~fromBlock,
     ~toBlockInclusive,
@@ -103,10 +107,11 @@ module LogsQuery = {
     | Some(v) => v
     | None =>
       raise(
-        UnexpectedMissingParamsExn({
-          queryName: "queryLogsPage HyperFuel",
-          missingParams: [name],
-        }),
+        Error(
+          UnexpectedMissingParams({
+            missingParams: [name],
+          }),
+        ),
       )
     }
   }
@@ -153,24 +158,17 @@ module LogsQuery = {
     items
   }
 
-  let convertResponse = (res: HyperFuelClient.queryResponseTyped): queryResponse<logsQueryPage> => {
-    try {
-      let {nextBlock, ?archiveHeight} = res
-      let page: logsQueryPage = {
-        items: res.data->decodeLogQueryPageItems,
-        nextBlock,
-        archiveHeight: archiveHeight->Option.getWithDefault(0), // TODO: FIXME: Shouldn't have a default here
-      }
-
-      Ok(page)
-    } catch {
-    | UnexpectedMissingParamsExn(err) => Error(UnexpectedMissingParams(err))
+  let convertResponse = (res: HyperFuelClient.queryResponseTyped): logsQueryPage => {
+    let {nextBlock, ?archiveHeight} = res
+    let page: logsQueryPage = {
+      items: res.data->decodeLogQueryPageItems,
+      nextBlock,
+      archiveHeight: archiveHeight->Option.getWithDefault(0), // TODO: FIXME: Shouldn't have a default here
     }
+    page
   }
 
-  let queryLogsPage = async (~serverUrl, ~fromBlock, ~toBlock, ~recieptsSelection): queryResponse<
-    logsQueryPage,
-  > => {
+  let query = async (~serverUrl, ~fromBlock, ~toBlock, ~recieptsSelection): logsQueryPage => {
     let query: HyperFuelClient.QueryTypes.query = makeRequestBody(
       ~fromBlock,
       ~toBlockInclusive=toBlock,
@@ -179,23 +177,11 @@ module LogsQuery = {
 
     let hyperFuelClient = CachedClients.getClient(serverUrl)
 
-    let logger = Logging.createChild(
-      ~params={"type": "hypersync query", "fromBlock": fromBlock, "serverUrl": serverUrl},
-    )
-
-    let executeQuery = async () => {
-      let res = await hyperFuelClient->HyperFuelClient.getSelectedData(query)
-      if res.nextBlock <= fromBlock {
-        // Might happen when /height response was from another instance of HyperSync
-        Js.Exn.raiseError(
-          "Received page response from another instance of HyperFuel. Should work after a retry.",
-        )
-      }
-      res
+    let res = await hyperFuelClient->HyperFuelClient.getSelectedData(query)
+    if res.nextBlock <= fromBlock {
+      // Might happen when /height response was from another instance of HyperSync
+      raise(Error(WrongInstance))
     }
-
-    let res = await executeQuery->Time.retryAsyncWithExponentialBackOff(~logger)
-
     res->convertResponse
   }
 }
@@ -264,7 +250,6 @@ module BlockData = {
   }
 }
 
-let queryLogsPage = LogsQuery.queryLogsPage
 let queryBlockData = BlockData.queryBlockData
 
 let heightRoute = Rest.route(() => {

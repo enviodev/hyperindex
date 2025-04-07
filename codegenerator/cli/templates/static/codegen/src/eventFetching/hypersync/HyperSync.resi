@@ -30,21 +30,27 @@ type missingParams = {
 
 type queryError = UnexpectedMissingParams(missingParams)
 
-exception UnexpectedMissingParamsExn(missingParams)
-
 let queryErrorToMsq: queryError => string
 
 type queryResponse<'a> = result<'a, queryError>
-let queryLogsPage: (
-  ~client: HyperSyncClient.t,
-  ~fromBlock: int,
-  ~toBlock: option<int>,
-  ~logSelections: array<LogSelection.t>,
-  ~fieldSelection: HyperSyncClient.QueryTypes.fieldSelection,
-  ~nonOptionalBlockFieldNames: array<string>,
-  ~nonOptionalTransactionFieldNames: array<string>,
-  ~logger: Pino.t,
-) => promise<queryResponse<logsQueryPage>>
+
+module GetLogs: {
+  type error =
+    | UnexpectedMissingParams({missingParams: array<string>})
+    | WrongInstance
+
+  exception Error(error)
+
+  let query: (
+    ~client: HyperSyncClient.t,
+    ~fromBlock: int,
+    ~toBlock: option<int>,
+    ~logSelections: array<LogSelection.t>,
+    ~fieldSelection: HyperSyncClient.QueryTypes.fieldSelection,
+    ~nonOptionalBlockFieldNames: array<string>,
+    ~nonOptionalTransactionFieldNames: array<string>,
+  ) => promise<logsQueryPage>
+}
 
 let queryBlockData: (
   ~serverUrl: string,
@@ -61,4 +67,3 @@ let queryBlockDataMulti: (
 ) => promise<queryResponse<array<ReorgDetection.blockDataWithTimestamp>>>
 
 let mapExn: queryResponse<'a> => result<'a, exn>
-let getExn: queryResponse<'a> => 'a

@@ -1,7 +1,7 @@
 type t = {logger: Pino.t, exn: exn, msg: option<string>}
 
 let prettifyExn = exn => {
-  switch exn {
+  switch exn->Js.Exn.anyToExnInternal {
   | Js.Exn.Error(e) => e->(Utils.magic: Js.Exn.t => exn)
   | exn => exn
   }

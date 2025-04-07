@@ -150,6 +150,7 @@ let getNextPage = (
             exn: err,
             attemptedToBlock: toBlock,
             retry: WithBackoff({
+              message: `Failed getting data for the block range. Will try smaller block range for the next attempt.`,
               backoffMillis: sc.backoffMillis,
             }),
           }),
@@ -416,6 +417,7 @@ let make = ({sourceFor, syncConfig, url, chain, contracts, eventRouter}: options
     ~currentBlockHeight,
     ~partitionId,
     ~selection: FetchState.selection,
+    ~retry as _,
     ~logger as _,
   ) => {
     let startFetchingBatchTimeRef = Hrtime.makeTimer()
