@@ -1,5 +1,5 @@
 open Ink
-open Belt
+
 
 let isIndexerFullySynced = (chains: array<ChainData.chainData>) => {
   chains->Array.reduce(true, (accum, current) => {

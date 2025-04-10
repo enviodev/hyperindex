@@ -1,4 +1,4 @@
-open Belt
+
 
 module Log = {
   type t = {
@@ -102,7 +102,7 @@ module GetLogs = {
       ~prefix="transaction",
     )
     if missingParams->Array.length > 0 {
-      raise(Error(UnexpectedMissingParams({missingParams: missingParams})))
+      throw(Error(UnexpectedMissingParams({missingParams: missingParams})))
     }
 
     //Topics can be nullable and still need to be filtered
@@ -173,7 +173,7 @@ module GetLogs = {
     let res = await client.getEvents(~query)
     if res.nextBlock <= fromBlock {
       // Might happen when /height response was from another instance of HyperSync
-      raise(Error(WrongInstance))
+      throw(Error(WrongInstance))
     }
 
     res->convertResponse(~nonOptionalBlockFieldNames, ~nonOptionalTransactionFieldNames)

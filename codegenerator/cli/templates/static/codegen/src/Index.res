@@ -66,7 +66,7 @@ type process
 type mainArgs = Yargs.parsedArgs<args>
 
 let makeAppState = (globalState: GlobalState.t): EnvioInkApp.appState => {
-  open Belt
+  
   let chains =
     globalState.chainManager.chainFetchers
     ->ChainMap.values

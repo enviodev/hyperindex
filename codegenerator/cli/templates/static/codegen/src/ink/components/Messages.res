@@ -1,4 +1,4 @@
-open Belt
+
 open Ink
 module Message = {
   @react.component

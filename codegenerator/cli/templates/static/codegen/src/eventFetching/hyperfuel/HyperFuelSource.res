@@ -1,5 +1,5 @@
 open Source
-open Belt
+
 
 exception EventRoutingFailed
 
@@ -247,7 +247,7 @@ let make = ({chain, endpointUrl}: options): t => {
       ~recieptsSelection,
     ) catch {
     | HyperSync.GetLogs.Error(error) =>
-      raise(
+      throw(
         Source.GetItemsError(
           Source.FailedGettingItems({
             exn: %raw(`null`),
@@ -277,7 +277,7 @@ let make = ({chain, endpointUrl}: options): t => {
         ),
       )
     | exn =>
-      raise(
+      throw(
         Source.GetItemsError(
           Source.FailedGettingItems({
             exn,

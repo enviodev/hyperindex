@@ -1,4 +1,4 @@
-open Belt
+
 
 //Manage clients in cache so we don't need to reinstantiate each time
 //Ideally client should be passed in as a param to the functions but
@@ -106,7 +106,7 @@ module GetLogs = {
     switch param {
     | Some(v) => v
     | None =>
-      raise(
+      throw(
         Error(
           UnexpectedMissingParams({
             missingParams: [name],
@@ -180,7 +180,7 @@ module GetLogs = {
     let res = await hyperFuelClient->HyperFuelClient.getSelectedData(query)
     if res.nextBlock <= fromBlock {
       // Might happen when /height response was from another instance of HyperSync
-      raise(Error(WrongInstance))
+      throw(Error(WrongInstance))
     }
     res->convertResponse
   }

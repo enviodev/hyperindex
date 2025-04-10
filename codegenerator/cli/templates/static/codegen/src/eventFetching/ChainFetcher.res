@@ -1,4 +1,4 @@
-open Belt
+
 
 //A filter should return true if the event should be kept and isValid should return
 //false when the filter should be removed/cleaned up

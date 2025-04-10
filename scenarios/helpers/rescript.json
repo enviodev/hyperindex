@@ -11,5 +11,5 @@
   },
   "suffix": ".res.js",
   "bs-dependencies": ["rescript-schema", "envio"],
-  "bsc-flags": ["-open Belt"]
+  "bsc-flags": ["-"]
 }

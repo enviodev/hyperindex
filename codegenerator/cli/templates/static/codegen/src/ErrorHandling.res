@@ -19,13 +19,13 @@ let log = (self: t) => {
 }
 
 let raiseExn = (self: t) => {
-  self.exn->prettifyExn->raise
+  self.exn->prettifyExn->throw
 }
 
 let mkLogAndRaise = (~logger=?, ~msg=?, exn) => {
   let exn = exn->prettifyExn
   exn->make(~logger?, ~msg?)->log
-  exn->raise
+  exn->throw
 }
 
 let unwrapLogAndRaise = (~logger=?, ~msg=?, result) => {
@@ -62,6 +62,6 @@ module ResultPropogateEnv = {
   let propogate = (res: resultWithErrorHandle<'a>) =>
     switch res {
     | Ok(v) => v
-    | Error(e) => raise(ErrorHandlingEarlyReturn(e))
+    | Error(e) => throw(ErrorHandlingEarlyReturn(e))
     }
 }

@@ -117,7 +117,7 @@ module SummaryData = {
 }
 
 module Stats = {
-  open Belt
+  
   type t = {
     n: float,
     mean: float,
@@ -242,7 +242,7 @@ let readFromCacheFile = async () => {
       Logging.error(
         "Failed to parse benchmark cache file, please delete it and rerun the benchmark",
       )
-      e->S.Error.raise
+      e->S.Error.throw
     }
   }
 }
@@ -313,7 +313,7 @@ let addEventProcessing = (
 }
 
 module Summary = {
-  open Belt
+  
 
   type summaryTable = dict<Stats.t>
 

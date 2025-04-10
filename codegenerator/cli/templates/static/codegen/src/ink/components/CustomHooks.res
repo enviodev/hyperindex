@@ -1,4 +1,4 @@
-open Belt
+
 module InitApi = {
   type ecosystem = | @as("evm") Evm | @as("fuel") Fuel
   type body = {

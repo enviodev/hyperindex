@@ -1,5 +1,5 @@
 open Ink
-open Belt
+
 @react.component
 let make = (~loaded, ~buffered=?, ~outOf, ~barWidth=36, ~loadingColor=Style.Secondary) => {
   let maxCount = barWidth

@@ -1,4 +1,4 @@
-open Belt
+
 
 type ecosystem = | @as("evm") Evm | @as("fuel") Fuel
 

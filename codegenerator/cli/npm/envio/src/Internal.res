@@ -1,3 +1,5 @@
+type bytes
+
 type eventParams
 type eventBlock
 type eventTransaction
@@ -143,7 +145,7 @@ type fuelSupplyParams = {
 }
 let fuelSupplyParamsSchema = S.schema(s => {
   subId: s.matches(S.string),
-  amount: s.matches(BigInt.schema),
+  amount: s.matches(Utils.Schema.dbBigint),
 })
 @genType
 type fuelTransferParams = {
@@ -154,7 +156,7 @@ type fuelTransferParams = {
 let fuelTransferParamsSchema = S.schema(s => {
   to: s.matches(Address.schema),
   assetId: s.matches(S.string),
-  amount: s.matches(BigInt.schema),
+  amount: s.matches(Utils.Schema.dbBigint),
 })
 
 type entity = private {id: string}

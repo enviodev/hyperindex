@@ -14,7 +14,7 @@ type decodedEvent<'a> = {
 type hex = EvmTypes.Hex.t
 @module("viem") external toHex: 'a => hex = "toHex"
 @module("viem") external keccak256: hex => hex = "keccak256"
-@module("viem") external keccak256Bytes: bytes => hex = "keccak256"
+@module("viem") external keccak256Bytes: Internal.bytes => hex = "keccak256"
 @module("viem") external pad: hex => hex = "pad"
 @module("viem")
 external encodePacked: (~types: array<string>, ~values: array<'a>) => hex = "encodePacked"
@@ -24,7 +24,7 @@ type sizeOptions = {size: int}
 @module("viem") external bigintToHex: (bigint, ~options: sizeOptions=?) => hex = "numberToHex"
 @module("viem") external stringToHex: (string, ~options: sizeOptions=?) => hex = "stringToHex"
 @module("viem") external boolToHex: (bool, ~options: sizeOptions=?) => hex = "boolToHex"
-@module("viem") external bytesToHex: (bytes, ~options: sizeOptions=?) => hex = "bytesToHex"
+@module("viem") external bytesToHex: (Internal.bytes, ~options: sizeOptions=?) => hex = "bytesToHex"
 @module("viem") external concat: array<hex> => hex = "concat"
 
 exception ParseError(exn)
@@ -37,7 +37,7 @@ let parseLogOrThrow = (
   ~data,
 ) => {
   switch contractNameAbiMapping->Utils.Dict.dangerouslyGetNonOption(contractName) {
-  | None => raise(UnknownContractName({contractName: contractName}))
+  | None => throw(UnknownContractName({contractName: contractName}))
   | Some(abi) =>
     let viemLog: eventLog = {
       abi,
@@ -46,7 +46,7 @@ let parseLogOrThrow = (
     }
 
     try viemLog->decodeEventLogOrThrow catch {
-    | exn => raise(ParseError(exn))
+    | exn => throw(ParseError(exn))
     }
   }
 }

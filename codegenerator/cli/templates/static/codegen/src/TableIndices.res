@@ -1,5 +1,5 @@
 module FieldValue = {
-  open Belt
+  
   @unboxed
   type rec tNonOptional =
     | String(string)

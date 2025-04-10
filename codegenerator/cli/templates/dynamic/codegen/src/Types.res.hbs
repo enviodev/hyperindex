@@ -270,7 +270,7 @@ module HandlerTypes = {
     let getEventOptions: t => EventOptions.t
     let hasRegistration: t => bool
   } = {
-    open Belt
+    
 
     type handlerWithLoader = Internal.genericHandlerWithLoader<Internal.loader, Internal.handler, Js.Json.t>
 
@@ -415,7 +415,7 @@ let makeEventOptions = (
   type eventFilters,
   eventConfig: option<HandlerTypes.eventConfig<eventFilters>>,
 ) => {
-  open Belt
+  
   eventConfig->Option.map(({?wildcard, ?eventFilters, ?preRegisterDynamicContracts}) =>
     HandlerTypes.EventOptions.make(
       ~isWildcard=wildcard->Option.getWithDefault(false),

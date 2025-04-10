@@ -1,4 +1,3 @@
-open Belt
 open RescriptMocha
 
 let config = RegisterHandlers.getConfig()

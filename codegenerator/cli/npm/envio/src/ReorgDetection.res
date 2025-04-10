@@ -1,5 +1,3 @@
-open Belt
-
 type blockDataWithTimestamp = {
   blockHash: string,
   blockNumber: int,

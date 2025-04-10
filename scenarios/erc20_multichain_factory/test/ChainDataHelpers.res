@@ -1,5 +1,3 @@
-open Belt
-
 let getDefaultAddress = (chain, contractName) => {
   let chainConfig = RegisterHandlers.getConfig().chainMap->ChainMap.get(chain)
   let contract = chainConfig.contracts->Js.Array2.find(c => c.name == contractName)->Option.getExn

@@ -1,4 +1,3 @@
-open Belt
 open RescriptMocha
 
 let config = RegisterHandlers.getConfig()
@@ -272,7 +271,7 @@ describe("Dynamic contract restart resistance test", () => {
             Note: Without it there's a case when the indexer might crash because of a conflict`,
               )
 
-              raise(RollbackTransaction)
+              throw(RollbackTransaction)
             }
           )(),
         ],
@@ -322,13 +321,13 @@ describe("Dynamic contract restart resistance test", () => {
             Note: Without it there's a case when the indexer might crash because of a conflict`,
               )
 
-              raise(RollbackTransaction)
+              throw(RollbackTransaction)
             }
           )(),
         ],
       ) catch {
       | RollbackTransaction => ()
-      | Js.Exn.Error(e) => raise(e->Obj.magic)
+      | Js.Exn.Error(e) => throw(e->Obj.magic)
       }
 
       try await Db.sql->Postgres.beginSql(
@@ -388,13 +387,13 @@ describe("Dynamic contract restart resistance test", () => {
                 this case is not possible in real life, since pre-registration never happens in reorg threshold`,
               )
 
-              raise(RollbackTransaction)
+              throw(RollbackTransaction)
             }
           )(),
         ],
       ) catch {
       | RollbackTransaction => ()
-      | Js.Exn.Error(e) => raise(e->Obj.magic)
+      | Js.Exn.Error(e) => throw(e->Obj.magic)
       }
 
       Assert.deepEqual(

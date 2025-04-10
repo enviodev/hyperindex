@@ -1,5 +1,4 @@
 open RescriptMocha
-open Belt
 
 let mockAddress0 = TestHelpers.Addresses.mockAddresses[0]->Option.getExn
 

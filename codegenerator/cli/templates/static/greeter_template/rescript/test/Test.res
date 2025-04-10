@@ -1,6 +1,6 @@
 open RescriptMocha
 
-open Belt
+
 
 describe("Greeter template tests", () => {
   Async.it("A NewGreeting event creates a User entity", async () => {

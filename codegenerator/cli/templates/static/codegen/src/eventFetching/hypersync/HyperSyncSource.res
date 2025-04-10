@@ -1,5 +1,5 @@
 open Source
-open Belt
+
 
 type selectionConfig = {
   getLogSelectionOrThrow: (
@@ -260,7 +260,7 @@ let make = (
       ~nonOptionalTransactionFieldNames=selectionConfig.nonOptionalTransactionFieldNames,
     ) catch {
     | HyperSync.GetLogs.Error(error) =>
-      raise(
+      throw(
         Source.GetItemsError(
           Source.FailedGettingItems({
             exn: %raw(`null`),
@@ -290,7 +290,7 @@ let make = (
         ),
       )
     | exn =>
-      raise(
+      throw(
         Source.GetItemsError(
           Source.FailedGettingItems({
             exn,

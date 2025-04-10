@@ -16,7 +16,7 @@ module Exn = {
   @new
   external makeError: string => error = "Error"
 
-  let raiseAny = (any: 'any): 'a => any->Obj.magic->raise
+  let raiseAny = (any: 'any): 'a => any->Obj.magic->throw
 
   let raiseError: error => 'a = raiseAny
 }

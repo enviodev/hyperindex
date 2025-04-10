@@ -1,4 +1,3 @@
-open Belt
 open RescriptMocha
 
 let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) => {

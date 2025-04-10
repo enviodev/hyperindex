@@ -137,18 +137,18 @@ module Array = {
 
       let rec loop = (i, j, k) => {
         if i < Array.length(xs) && j < Array.length(ys) {
-          if f(xs[i], ys[j]) {
-            result[k] = xs[i]
+          if f(xs->Array.getUnsafe(i), ys->Array.getUnsafe(j)) {
+            result[k] = xs->Array.getUnsafe(i)
             loop(i + 1, j, k + 1)
           } else {
-            result[k] = ys[j]
+            result[k] = ys->Array.getUnsafe(j)
             loop(i, j + 1, k + 1)
           }
         } else if i < Array.length(xs) {
-          result[k] = xs[i]
+          result[k] = xs->Array.getUnsafe(i)
           loop(i + 1, j, k + 1)
         } else if j < Array.length(ys) {
-          result[k] = ys[j]
+          result[k] = ys->Array.getUnsafe(j)
           loop(i, j + 1, k + 1)
         }
       }
@@ -199,7 +199,7 @@ Helper to check if a value exists in an array
 
   let awaitEach = async (arr: array<'a>, fn: 'a => promise<unit>) => {
     for i in 0 to arr->Array.length - 1 {
-      let item = arr[i]
+      let item = arr->Array.getUnsafe(i)
       await item->fn
     }
   }
@@ -226,7 +226,7 @@ Helper to check if a value exists in an array
       if index < 0 {
         None
       } else {
-        let item = arr[index]
+        let item = arr->Array.getUnsafe(index)
         if fn(item) {
           Some((item, index))
         } else {
@@ -290,7 +290,7 @@ bet the actual underlying exn
 let unwrapResultExn = res =>
   switch res {
   | Ok(v) => v
-  | Error(exn) => exn->raise
+  | Error(exn) => exn->throw
   }
 
 external queueMicrotask: (unit => unit) => unit = "queueMicrotask"
@@ -320,6 +320,17 @@ module Schema = {
     | _ => []
     }
   }
+
+  let dbBigint =
+    S.string
+    ->S.setName("BigInt")
+    ->S.transform(s => {
+      parser: string =>
+        try string->BigInt.fromString catch {
+        | _ => s.fail("The string is not valid BigInt")
+        },
+      serializer: bigint => bigint->BigInt.toString,
+    })
 
   // Don't use S.unknown, since it's not serializable to json
   // In a nutshell, this is completely unsafe.
@@ -451,4 +462,23 @@ module Map = {
   @send external has: (t<'k, 'v>, 'k) => bool = "has"
   @send external set: (t<'k, 'v>, 'k, 'v) => t<'k, 'v> = "set"
   @send external delete: (t<'k, 'v>, 'k) => bool = "delete"
+}
+
+module BigInt = {
+  let fromString = str => {
+    try {
+      str->BigInt.fromString->Some
+    } catch {
+    | _ => None
+    }
+  }
+
+  module Bitwise = {
+    @@warning("-27")
+    let shift_left = (a: bigint, b: bigint): bigint => %raw("a << b")
+    let shift_right = (a: bigint, b: bigint): bigint => %raw("a >> b")
+    let logor = (a: bigint, b: bigint): bigint => %raw("a | b")
+    let logand = (a: bigint, b: bigint): bigint => %raw("a & b")
+    @@warning("+27")
+  }
 }

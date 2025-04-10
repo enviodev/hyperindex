@@ -1,4 +1,3 @@
-open Belt
 open RescriptMocha
 
 type sourceMock = {

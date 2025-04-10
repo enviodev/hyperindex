@@ -1,4 +1,3 @@
-open Belt
 open RescriptMocha
 
 describe("Check that MockChainData works as expected", () => {

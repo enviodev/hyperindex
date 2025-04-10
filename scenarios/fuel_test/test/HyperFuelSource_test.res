@@ -1,5 +1,4 @@
 open RescriptMocha
-open Belt
 
 describe("HyperFuelSource - getNormalRecieptsSelection", () => {
   let contractName1 = "TestContract"

@@ -1,5 +1,4 @@
 open RescriptMocha
-open Belt
 
 describe("Test Processing Filters", () => {
   // Assert.deepEqual doesn't work, because of deeply nested rescript-schema objects

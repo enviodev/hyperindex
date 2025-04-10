@@ -1,5 +1,4 @@
 open RescriptMocha
-open Belt
 
 describe_skip("Rpc Test", () => {
   // let rpcUrl = "https://eth.rpc.hypersync.xyz"

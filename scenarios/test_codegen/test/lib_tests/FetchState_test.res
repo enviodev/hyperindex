@@ -1,4 +1,3 @@
-open Belt
 open RescriptMocha
 open Enums.ContractType
 
