@@ -700,13 +700,16 @@ let queueItemBlockNumber = (queueItem: queueItem) => {
   }
 }
 
-let queueItemIsInReorgThreshold = (queueItem: queueItem, ~currentBlockHeight, ~heighestBlockBelowThreshold) => {
+let queueItemIsInReorgThreshold = (
+  queueItem: queueItem,
+  ~currentBlockHeight,
+  ~heighestBlockBelowThreshold,
+) => {
   if currentBlockHeight === 0 {
     false
   } else {
     switch queueItem {
-    | Item(_) =>
-        queueItem->queueItemBlockNumber > heighestBlockBelowThreshold
+    | Item(_) => queueItem->queueItemBlockNumber > heighestBlockBelowThreshold
     | NoItem(_) => queueItem->queueItemBlockNumber > heighestBlockBelowThreshold
     }
   }
@@ -1079,3 +1082,9 @@ let isActivelyIndexing = ({latestFullyFetchedBlock, endBlock} as fetchState: t) 
   | None => true
   }
 }
+
+let numAddresses = fetchState =>
+  fetchState.partitions->Js.Array2.reduce(
+    (acc, p) => acc + p.contractAddressMapping->ContractAddressingMap.addressCount,
+    0,
+  )

@@ -11,6 +11,7 @@ type chainData = {
   currentBlockHeight: int,
   numBatchesFetched: int,
   endBlock: option<int>,
+  numAddresses: int,
 }
 @tag("status")
 type state =
@@ -37,6 +38,7 @@ let chainDataSchema = S.schema((s): chainData => {
   currentBlockHeight: s.matches(S.int),
   numBatchesFetched: s.matches(S.int),
   endBlock: s.matches(S.option(S.int)),
+  numAddresses: s.matches(S.int),
 })
 let stateSchema = S.union([
   S.literal(Disabled({})),
@@ -238,7 +240,7 @@ let makeAppState = (globalState: GlobalState.t): EnvioInkApp.appState => {
           currentBlockHeight,
           latestFetchedBlockNumber,
           numBatchesFetched,
-          chainId: cf.chainConfig.chain->ChainMap.Chain.toChainId,
+          chain: cf.chainConfig.chain,
           endBlock: cf.chainConfig.endBlock,
           poweredByHyperSync: (cf.sourceManager->SourceManager.getActiveSource).poweredByHyperSync,
         }: EnvioInkApp.chainData
@@ -285,41 +287,46 @@ let main = async () => {
           switch gsManagerRef.contents {
           | None => Initializing({})
           | Some(gsManager) => {
-              let state = gsManager->GlobalStateManager.getState->makeAppState
+              let state = gsManager->GlobalStateManager.getState
+              let appState = state->makeAppState
               Active({
                 envioVersion,
-                chains: state.chains->Js.Array2.map(c => {
-                  chainId: c.chainId->Js.Int.toFloat,
-                  poweredByHyperSync: c.poweredByHyperSync,
-                  latestFetchedBlockNumber: c.latestFetchedBlockNumber,
-                  currentBlockHeight: c.currentBlockHeight,
-                  numBatchesFetched: c.numBatchesFetched,
-                  endBlock: c.endBlock,
-                  firstEventBlockNumber: switch c.progress {
-                  | SearchingForEvents => None
-                  | Syncing({firstEventBlockNumber}) | Synced({firstEventBlockNumber}) =>
-                    Some(firstEventBlockNumber)
-                  },
-                  latestProcessedBlock: switch c.progress {
-                  | SearchingForEvents => None
-                  | Syncing({latestProcessedBlock}) | Synced({latestProcessedBlock}) =>
-                    Some(latestProcessedBlock)
-                  },
-                  timestampCaughtUpToHeadOrEndblock: switch c.progress {
-                  | SearchingForEvents
-                  | Syncing(_) =>
-                    None
-                  | Synced({timestampCaughtUpToHeadOrEndblock}) =>
-                    Some(timestampCaughtUpToHeadOrEndblock)
-                  },
-                  numEventsProcessed: switch c.progress {
-                  | SearchingForEvents => 0
-                  | Syncing({numEventsProcessed})
-                  | Synced({numEventsProcessed}) => numEventsProcessed
-                  },
+                chains: appState.chains->Js.Array2.map(c => {
+                  let cf = state.chainManager.chainFetchers->ChainMap.get(c.chain)
+                  {
+                    chainId: c.chain->ChainMap.Chain.toChainId->Js.Int.toFloat,
+                    poweredByHyperSync: c.poweredByHyperSync,
+                    latestFetchedBlockNumber: c.latestFetchedBlockNumber,
+                    currentBlockHeight: c.currentBlockHeight,
+                    numBatchesFetched: c.numBatchesFetched,
+                    endBlock: c.endBlock,
+                    firstEventBlockNumber: switch c.progress {
+                    | SearchingForEvents => None
+                    | Syncing({firstEventBlockNumber}) | Synced({firstEventBlockNumber}) =>
+                      Some(firstEventBlockNumber)
+                    },
+                    latestProcessedBlock: switch c.progress {
+                    | SearchingForEvents => None
+                    | Syncing({latestProcessedBlock}) | Synced({latestProcessedBlock}) =>
+                      Some(latestProcessedBlock)
+                    },
+                    timestampCaughtUpToHeadOrEndblock: switch c.progress {
+                    | SearchingForEvents
+                    | Syncing(_) =>
+                      None
+                    | Synced({timestampCaughtUpToHeadOrEndblock}) =>
+                      Some(timestampCaughtUpToHeadOrEndblock)
+                    },
+                    numEventsProcessed: switch c.progress {
+                    | SearchingForEvents => 0
+                    | Syncing({numEventsProcessed})
+                    | Synced({numEventsProcessed}) => numEventsProcessed
+                    },
+                    numAddresses: cf.fetchState->FetchState.numAddresses,
+                  }
                 }),
-                indexerStartTime: state.indexerStartTime,
-                isPreRegisteringDynamicContracts: state.isPreRegisteringDynamicContracts,
+                indexerStartTime: appState.indexerStartTime,
+                isPreRegisteringDynamicContracts: appState.isPreRegisteringDynamicContracts,
                 rollbackOnReorg: config.historyConfig.rollbackFlag === RollbackOnReorg,
                 isUnorderedMultichainMode: config.isUnorderedMultichainMode,
               })
@@ -344,7 +351,7 @@ let main = async () => {
     } else {
       None
     }
-    let gsManager = globalState->GlobalStateManager.make(~stateUpdatedHook=?stateUpdatedHook)
+    let gsManager = globalState->GlobalStateManager.make(~stateUpdatedHook?)
     gsManagerRef := Some(gsManager)
     gsManager->GlobalStateManager.dispatchTask(NextQuery(CheckAllChains))
     /*
