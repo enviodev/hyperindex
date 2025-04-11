@@ -33,9 +33,9 @@ type eventIndex = {
 let packEventIndex = (~blockNumber, ~logIndex) => {
   let blockNumber = blockNumber->BigInt.fromInt
   let logIndex = logIndex->BigInt.fromInt
-  let blockNumber = BigInt.Bitwise.shift_left(blockNumber, 16->BigInt.fromInt)
+  let blockNumber = Utils.BigInt.Bitwise.shift_left(blockNumber, 16->BigInt.fromInt)
 
-  blockNumber->BigInt.Bitwise.logor(logIndex)
+  blockNumber->Utils.BigInt.Bitwise.logor(logIndex)
 }
 
 //Currently not used but keeping in utils
@@ -47,23 +47,23 @@ let packMultiChainEventIndex = (~timestamp, ~chainId, ~blockNumber, ~logIndex) =
   let blockNumber = blockNumber->BigInt.fromInt
   let logIndex = logIndex->BigInt.fromInt
 
-  let timestamp = BigInt.Bitwise.shift_left(timestamp, 48->BigInt.fromInt)
-  let chainId = BigInt.Bitwise.shift_left(chainId, 16->BigInt.fromInt)
-  let blockNumber = BigInt.Bitwise.shift_left(blockNumber, 16->BigInt.fromInt)
+  let timestamp = Utils.BigInt.Bitwise.shift_left(timestamp, 48->BigInt.fromInt)
+  let chainId = Utils.BigInt.Bitwise.shift_left(chainId, 16->BigInt.fromInt)
+  let blockNumber = Utils.BigInt.Bitwise.shift_left(blockNumber, 16->BigInt.fromInt)
 
   timestamp
-  ->BigInt.Bitwise.logor(chainId)
-  ->BigInt.Bitwise.logor(blockNumber)
-  ->BigInt.Bitwise.logor(logIndex)
+  ->Utils.BigInt.Bitwise.logor(chainId)
+  ->Utils.BigInt.Bitwise.logor(blockNumber)
+  ->Utils.BigInt.Bitwise.logor(logIndex)
 }
 
 //Currently not used but keeping in utils
 //using @live flag for dead code analyser
 @live
 let unpackEventIndex = (packedEventIndex: bigint) => {
-  let blockNumber = packedEventIndex->BigInt.Bitwise.shift_right(16->BigInt.fromInt)
+  let blockNumber = packedEventIndex->Utils.BigInt.Bitwise.shift_right(16->BigInt.fromInt)
   let logIndexMask = 65535->BigInt.fromInt
-  let logIndex = packedEventIndex->BigInt.Bitwise.logand(logIndexMask)
+  let logIndex = packedEventIndex->Utils.BigInt.Bitwise.logand(logIndexMask)
   {
     blockNumber: blockNumber->BigInt.toString->Belt.Int.fromString->Belt.Option.getUnsafe,
     logIndex: logIndex->BigInt.toString->Belt.Int.fromString->Belt.Option.getUnsafe,

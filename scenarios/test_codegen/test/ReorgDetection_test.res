@@ -1,6 +1,5 @@
 open RescriptMocha
 
-open Belt
 open ReorgDetection
 
 describe("Validate reorg detection functions", () => {

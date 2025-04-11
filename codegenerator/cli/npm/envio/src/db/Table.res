@@ -1,5 +1,3 @@
-open Belt
-
 type primitive
 type derived
 @unboxed
@@ -99,7 +97,7 @@ let mkTable = (tableName, ~schemaName, ~compositeIndices=[], ~fields) => {
 }
 
 let getPrimaryKeyFieldNames = table =>
-  table.fields->Array.keepMap(field =>
+  table.fields->Array.filterMap(field =>
     switch field {
     | Field({isPrimaryKey: true, fieldName}) => Some(fieldName)
     | _ => None
@@ -107,7 +105,7 @@ let getPrimaryKeyFieldNames = table =>
   )
 
 let getFields = table =>
-  table.fields->Array.keepMap(field =>
+  table.fields->Array.filterMap(field =>
     switch field {
     | Field(field) => Some(field)
     | DerivedFrom(_) => None
@@ -119,7 +117,7 @@ let getFieldNames = table => {
 }
 
 let getNonDefaultFields = table =>
-  table.fields->Array.keepMap(field =>
+  table.fields->Array.filterMap(field =>
     switch field {
     | Field(field) if field.defaultValue->Option.isNone => Some(field)
     | _ => None
@@ -127,7 +125,7 @@ let getNonDefaultFields = table =>
   )
 
 let getLinkedEntityFields = table =>
-  table.fields->Array.keepMap(field =>
+  table.fields->Array.filterMap(field =>
     switch field {
     | Field({linkedEntity: Some(linkedEntityName)} as field) => Some((field, linkedEntityName))
     | Field({linkedEntity: None})
@@ -137,7 +135,7 @@ let getLinkedEntityFields = table =>
   )
 
 let getDerivedFromFields = table =>
-  table.fields->Array.keepMap(field =>
+  table.fields->Array.filterMap(field =>
     switch field {
     | DerivedFrom(field) => Some(field)
     | Field(_) => None
@@ -170,7 +168,7 @@ let getUnfilteredCompositeIndicesUnsafe = (table): array<array<string>> => {
     compositeIndex->Array.map(userDefinedFieldName =>
       switch table->getFieldByName(userDefinedFieldName) {
       | Some(field) => field->getFieldName
-      | None => raise(NonExistingTableField(userDefinedFieldName)) //Unexpected should be validated in schema parser
+      | None => throw(NonExistingTableField(userDefinedFieldName)) //Unexpected should be validated in schema parser
       }
     )
   )
@@ -197,7 +195,7 @@ let toSqlParams = (table: table, ~schema) => {
       items->Belt.Array.forEach(({location, inlinedLocation, schema}) => {
         let rec coerceSchema = schema =>
           switch schema->S.classify {
-          | BigInt => BigInt.schema->S.toUnknown
+          | BigInt => Utils.Schema.dbBigint->S.toUnknown
           | Option(child)
           | Null(child) =>
             S.null(child->coerceSchema)->S.toUnknown
@@ -211,13 +209,16 @@ let toSqlParams = (table: table, ~schema) => {
             }
           | Bool =>
             // Workaround for https://github.com/porsager/postgres/issues/471
-            S.union([S.literal(1)->S.to(_ => true), S.literal(0)->S.to(_ => false)])->S.toUnknown
+            S.union([
+              S.literal(1)->S.shape(_ => true),
+              S.literal(0)->S.shape(_ => false),
+            ])->S.toUnknown
           | _ => schema
           }
 
         let field = switch table->getFieldByDbName(location) {
         | Some(field) => field
-        | None => raise(NonExistingTableField(location))
+        | None => throw(NonExistingTableField(location))
         }
 
         quotedFieldNames
@@ -265,7 +266,7 @@ Gets all single indicies
 And maps the fields defined to their actual db name (some have _id suffix)
 */
 let getSingleIndices = (table): array<string> => {
-  let indexFields = table.fields->Array.keepMap(field =>
+  let indexFields = table.fields->Array.filterMap(field =>
     switch field {
     | Field(field) if field.isIndex => Some(field->getDbFieldName)
     | _ => None
@@ -276,11 +277,11 @@ let getSingleIndices = (table): array<string> => {
   ->getUnfilteredCompositeIndicesUnsafe
   //get all composite indices with only 1 field defined
   //this is still a single index
-  ->Array.keep(cidx => cidx->Array.length == 1)
+  ->Array.filter(cidx => cidx->Array.length == 1)
   ->Array.concat([indexFields])
-  ->Array.concatMany
-  ->Set.String.fromArray
-  ->Set.String.toArray
+  ->Utils.Array.flatten
+  ->Set.fromArray
+  ->Set.toArray
   ->Js.Array2.sortInPlace
 }
 
@@ -291,7 +292,7 @@ And maps the fields defined to their actual db name (some have _id suffix)
 let getCompositeIndices = (table): array<array<string>> => {
   table
   ->getUnfilteredCompositeIndicesUnsafe
-  ->Array.keep(ind => ind->Array.length > 1)
+  ->Array.filter(ind => ind->Array.length > 1)
 }
 
 module PostgresInterop = {

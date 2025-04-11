@@ -1,5 +1,4 @@
 open RescriptMocha
-open Belt
 
 describe("Test Processing Filters", () => {
   // Assert.deepEqual doesn't work, because of deeply nested rescript-schema objects
@@ -11,7 +10,7 @@ describe("Test Processing Filters", () => {
       items2->Array.length,
       ~message="Length of the items doesn't match",
     )
-    items1->Array.forEachWithIndex((i, item1) => {
+    items1->Array.forEachWithIndex((item1, i) => {
       let item2 = items2->Js.Array2.unsafe_get(i)
       Assert.equal(item1, item2)
     })

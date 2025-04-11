@@ -117,7 +117,6 @@ module SummaryData = {
 }
 
 module Stats = {
-  open Belt
   type t = {
     n: float,
     mean: float,
@@ -313,8 +312,6 @@ let addEventProcessing = (
 }
 
 module Summary = {
-  open Belt
-
   type summaryTable = dict<Stats.t>
 
   external logSummaryTable: summaryTable => unit = "console.table"
@@ -361,7 +358,7 @@ module Summary = {
         ->Js.Dict.get(eventProcessingGroup)
         ->Option.flatMap(g => g->Js.Dict.get(batchSizeLabel))
         ->Option.map(data => data.sum)
-        ->Option.getWithDefault(BigDecimal.zero)
+        ->Option.getOr(BigDecimal.zero)
 
       let totalRuntimeMillis =
         millisAccum.endTime->Js.Date.getTime -. millisAccum.startTime->Js.Date.getTime

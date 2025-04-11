@@ -1,4 +1,4 @@
-open Belt
+
 
 exception EventDuplicate
 exception WildcardCollision
@@ -19,10 +19,10 @@ module Group = {
   let addOrThrow = (group: t<'a>, event, ~contractName, ~isWildcard) => {
     let {all, byContractName, wildcard} = group
     switch byContractName->Utils.Dict.dangerouslyGetNonOption(contractName) {
-    | Some(_) => raise(EventDuplicate)
+    | Some(_) => throw(EventDuplicate)
     | None =>
       if isWildcard && wildcard->Option.isSome {
-        raise(WildcardCollision)
+        throw(WildcardCollision)
       } else {
         if isWildcard {
           group.wildcard = Some(event)

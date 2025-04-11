@@ -1,4 +1,4 @@
-open Belt
+
 open Source
 
 exception QueryTimout(string)
@@ -128,7 +128,7 @@ let getNextPage = (
     switch getSuggestedBlockIntervalFromExn(err) {
     | Some(nextBlockIntervalTry) =>
       suggestedBlockIntervals->Js.Dict.set(partitionId, nextBlockIntervalTry)
-      raise(
+      throw(
         Source.GetItemsError(
           FailedGettingItems({
             exn: err,
@@ -144,7 +144,7 @@ let getNextPage = (
       let nextBlockIntervalTry =
         (executedBlockInterval->Belt.Int.toFloat *. sc.backoffMultiplicative)->Belt.Int.fromFloat
       suggestedBlockIntervals->Js.Dict.set(partitionId, nextBlockIntervalTry)
-      raise(
+      throw(
         Source.GetItemsError(
           Source.FailedGettingItems({
             exn: err,
@@ -187,7 +187,7 @@ let getSelectionConfig = (selection: FetchState.selection, ~chain) => {
     dynamicEventFilters,
   ) {
   | ([], []) =>
-    raise(
+    throw(
       Source.GetItemsError(
         UnsupportedSelection({
           message: "Invalid events configuration for the partition. Nothing to fetch. Please, report to the Envio team.",
@@ -214,7 +214,7 @@ let getSelectionConfig = (selection: FetchState.selection, ~chain) => {
         topicQuery: switch dynamicEventFilter(addresses) {
         | [topicSelection] => topicSelection->Rpc.GetLogs.mapTopicQuery
         | _ =>
-          raise(
+          throw(
             Source.GetItemsError(
               UnsupportedSelection({
                 message: "RPC data-source currently doesn't support an array of event filters. Please, create a GitHub issue if it's a blocker for you.",
@@ -225,7 +225,7 @@ let getSelectionConfig = (selection: FetchState.selection, ~chain) => {
       }
     }
   | _ =>
-    raise(
+    throw(
       Source.GetItemsError(
         UnsupportedSelection({
           message: "RPC data-source currently supports event filters only when there's a single wildcard event. Please, create a GitHub issue if it's a blocker for you.",
@@ -499,7 +499,7 @@ let make = ({sourceFor, syncConfig, url, chain, contracts, eventRouter}: options
                 // Promise.catch won't work here, because the error
                 // might be thrown before a microtask is created
                 | exn =>
-                  raise(
+                  throw(
                     Source.GetItemsError(
                       FailedGettingFieldSelection({
                         message: "Failed getting selected fields. Please double-check your RPC provider returns correct data.",
@@ -517,7 +517,7 @@ let make = ({sourceFor, syncConfig, url, chain, contracts, eventRouter}: options
                   ~data=log.data,
                 ) catch {
                 | exn =>
-                  raise(
+                  throw(
                     Source.GetItemsError(
                       FailedParsingItems({
                         message: "Failed to parse event with viem, please double-check your ABI.",

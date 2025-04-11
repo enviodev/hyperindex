@@ -1,4 +1,3 @@
-open Belt
 let makeBlock = (~blockNumber, ~blockTimestamp, ~blockHash) =>
   {
     number: blockNumber,
@@ -19,13 +18,12 @@ module Gravatar = {
   let contract = chainConfig.contracts->Js.Array2.find(c => c.name == contractName)->Option.getExn
   let defaultAddress = contract.addresses[0]->Option.getExn
 
-  let makeEventConstructorWithDefaultSrcAddress =
-    MockChainData.makeEventConstructor(
-      ~srcAddress=defaultAddress,
-      ~makeBlock,
-      ~makeTransaction,
-      ...
-    )
+  let makeEventConstructorWithDefaultSrcAddress = MockChainData.makeEventConstructor(
+    ~srcAddress=defaultAddress,
+    ~makeBlock,
+    ~makeTransaction,
+    ...
+  )
 
   module NewGravatar = {
     let mkEventConstr = params =>

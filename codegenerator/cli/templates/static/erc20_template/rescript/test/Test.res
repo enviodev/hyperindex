@@ -1,5 +1,5 @@
 open RescriptMocha
-open Belt
+
 open TestHelpers
 
 describe("Transfers", () => {

@@ -1,5 +1,4 @@
 open RescriptMocha
-open Belt
 
 let mockAddress0 = TestHelpers.Addresses.mockAddresses[0]->Option.getExn
 
@@ -78,7 +77,7 @@ describe("HyperSyncSource - getSelectionConfig", () => {
                   "hash": s.matches(S.string),
                   "number": s.matches(S.int),
                   "timestamp": s.matches(S.int),
-                  "nonce": s.matches(S.null(BigInt.schema)),
+                  "nonce": s.matches(S.null(Utils.Schema.dbBigint)),
                 },
             ),
             ~transactionSchema=S.schema(
@@ -134,7 +133,7 @@ describe("HyperSyncSource - getSelectionConfig", () => {
           ~blockSchema=S.schema(
             s =>
               {
-                "nonce": s.matches(S.null(BigInt.schema)),
+                "nonce": s.matches(S.null(Utils.Schema.dbBigint)),
               },
           ),
           ~transactionSchema=S.schema(

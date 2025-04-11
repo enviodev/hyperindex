@@ -1,5 +1,4 @@
 open Source
-open Belt
 
 type selectionConfig = {
   getLogSelectionOrThrow: (
@@ -101,10 +100,7 @@ let getSelectionConfig = (selection: FetchState.selection, ~chain) => {
         | None => ()
         | Some(fns) =>
           logSelections->Array.push(
-            LogSelection.make(
-              ~addresses,
-              ~topicSelections=fns->Array.flatMapU(fn => fn(addresses)),
-            ),
+            LogSelection.make(~addresses, ~topicSelections=fns->Array.flatMap(fn => fn(addresses))),
           )
         }
         switch dynamicWildcardEventFiltersByContract->Utils.Dict.dangerouslyGetNonOption(
@@ -115,7 +111,7 @@ let getSelectionConfig = (selection: FetchState.selection, ~chain) => {
           logSelections->Array.push(
             LogSelection.make(
               ~addresses=[],
-              ~topicSelections=fns->Array.flatMapU(fn => fn(addresses)),
+              ~topicSelections=fns->Array.flatMap(fn => fn(addresses)),
             ),
           )
         }
@@ -168,8 +164,7 @@ let make = (
 
   let getSelectionConfig = memoGetSelectionConfig(~chain)
 
-  let apiToken =
-    Env.envioApiToken->Belt.Option.getWithDefault("3dc856dd-b0ea-494f-b27e-017b8b6b7e07")
+  let apiToken = Env.envioApiToken->Option.getOr("3dc856dd-b0ea-494f-b27e-017b8b6b7e07")
 
   let client = HyperSyncClient.make(
     ~url=endpointUrl,
@@ -260,11 +255,11 @@ let make = (
       ~nonOptionalTransactionFieldNames=selectionConfig.nonOptionalTransactionFieldNames,
     ) catch {
     | HyperSync.GetLogs.Error(error) =>
-      raise(
+      throw(
         Source.GetItemsError(
           Source.FailedGettingItems({
             exn: %raw(`null`),
-            attemptedToBlock: toBlock->Option.getWithDefault(currentBlockHeight),
+            attemptedToBlock: toBlock->Option.getOr(currentBlockHeight),
             retry: switch error {
             | WrongInstance =>
               let backoffMillis = switch retry {
@@ -290,11 +285,11 @@ let make = (
         ),
       )
     | exn =>
-      raise(
+      throw(
         Source.GetItemsError(
           Source.FailedGettingItems({
             exn,
-            attemptedToBlock: toBlock->Option.getWithDefault(currentBlockHeight),
+            attemptedToBlock: toBlock->Option.getOr(currentBlockHeight),
             retry: WithBackoff({
               message: `Unexpected issue while fetching events from HyperSync client. Attempt a retry.`,
               backoffMillis: switch retry {

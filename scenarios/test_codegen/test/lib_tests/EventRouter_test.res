@@ -1,8 +1,8 @@
 open RescriptMocha
 
 let mockChain = ChainMap.Chain.makeUnsafe(~chainId=1)
-let mockAddress1 = TestHelpers.Addresses.mockAddresses[0]
-let mockAddress2 = TestHelpers.Addresses.mockAddresses[1]
+let mockAddress1 = TestHelpers.Addresses.mockAddresses->Array.getUnsafe(0)
+let mockAddress2 = TestHelpers.Addresses.mockAddresses->Array.getUnsafe(0)
 
 let mockFromArray = (array): EventRouter.t<'a> => {
   Js.Dict.fromArray(array)

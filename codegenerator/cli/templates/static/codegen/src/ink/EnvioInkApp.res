@@ -1,5 +1,4 @@
 open Ink
-open Belt
 
 type chainData = ChainData.chainData
 type appState = {
@@ -39,7 +38,7 @@ module App = {
     <Box flexDirection={Column}>
       <BigText text="envio" colors=[Secondary, Primary] font={Block} />
       {chains
-      ->Array.mapWithIndex((i, chainData) => {
+      ->Array.mapWithIndex((chainData, i) => {
         <ChainData key={i->Int.toString} chainData isPreRegisteringDynamicContracts />
       })
       ->React.array}

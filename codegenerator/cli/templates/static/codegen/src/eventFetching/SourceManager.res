@@ -1,4 +1,4 @@
-open Belt
+
 
 // Ideally the ChainFetcher name suits this better
 // But currently the ChainFetcher module is immutable

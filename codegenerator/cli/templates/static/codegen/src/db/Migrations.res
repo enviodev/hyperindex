@@ -2,7 +2,7 @@ let sql = Db.sql
 let unsafe = Postgres.unsafe
 
 let creatTableIfNotExists = (sql, table) => {
-  open Belt
+  
   let fieldsMapped =
     table
     ->Table.getFields
@@ -43,7 +43,7 @@ let makeCreateIndexQuery = (~tableName, ~indexFields) => {
 }
 
 let createTableIndices = (sql, table: Table.table) => {
-  open Belt
+  
   let tableName = table.tableName
   let createIndex = indexField => makeCreateIndexQuery(~tableName, ~indexFields=[indexField])
   let createCompositeIndex = indexFields => {
@@ -70,7 +70,7 @@ let createDerivedFromDbIndex = (~derivedFromField: Table.derivedFromField, ~sche
 }
 
 let createEnumIfNotExists = (sql, enum: Enum.enum<_>) => {
-  open Belt
+  
   let {variants, name} = enum
   let mappedVariants = variants->Array.map(v => `'${v->Utils.magic}'`)->Js.Array2.joinWith(", ")
   let query = `DO $$ BEGIN

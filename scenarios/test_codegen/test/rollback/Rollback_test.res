@@ -1,4 +1,3 @@
-open Belt
 open RescriptMocha
 
 let config = RegisterHandlers.registerAllHandlers()
@@ -9,7 +8,7 @@ let config = Config.make(
   ~isUnorderedMultichainMode=false,
   ~chains=config.chainMap
   ->ChainMap.entries
-  ->Array.keepMap(((chain, config)) => chain == MockConfig.chain1337 ? Some(config) : None),
+  ->Array.filterMap(((chain, config)) => chain == MockConfig.chain1337 ? Some(config) : None),
   ~enableRawEvents=false,
   ~entities=config.entities->Obj.magic,
 )
@@ -66,17 +65,15 @@ module Stubs = {
   }
 
   //Stub executePartitionQuery with mock data
-  let executePartitionQueryWithMockChainData = mockChainData => async (
-    _,
-    ~query,
-    ~currentBlockHeight as _,
-  ) => {
-    mockChainData->MockChainData.executeQuery(query)
-  }
+  let executePartitionQueryWithMockChainData = mockChainData =>
+    async (_, ~query, ~currentBlockHeight as _) => {
+      mockChainData->MockChainData.executeQuery(query)
+    }
 
   //Stub for getting block hashes instead of the worker
-  let getBlockHashes = mockChainData => async (~blockNumbers, ~logger as _) =>
-    mockChainData->MockChainData.getBlockHashes(~blockNumbers)->Ok
+  let getBlockHashes = mockChainData =>
+    async (~blockNumbers, ~logger as _) =>
+      mockChainData->MockChainData.getBlockHashes(~blockNumbers)->Ok
 
   //Hold next tasks temporarily here so they do not get actioned off automatically
   let tasks = ref([])

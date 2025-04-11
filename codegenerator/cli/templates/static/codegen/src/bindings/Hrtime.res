@@ -18,7 +18,7 @@ let secToMilli = (sec: seconds): milliseconds => sec *. 1_000.
 let nanoToTimeTuple = (nano: nanoseconds): timeTuple => {
   let factor = 1_000_000_000.
   let seconds = Js.Math.floor_float(nano /. factor)
-  let nanos = mod_float(nano, factor)
+  let nanos = Float.mod(nano, factor)
   (seconds, nanos)
 }
 
