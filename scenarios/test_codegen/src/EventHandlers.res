@@ -24,33 +24,45 @@ Handlers.Gravatar.UpdatedGravatar.handlerWithLoader({
     context.log.error(`We are processing the event, ${event.block.hash} (error)`)
 
     // Some examples of user logging not using strings
-    context.log->Logs.debug({
-      "msg": "We are processing the event",
-      "type": "debug",
-      "data": {"blockHash": event.block.hash},
-    })
-    context.log->Logs.info({
-      "msg": "We are processing the event",
-      "type": "info",
-      "data": {"blockHash": event.block.hash},
-    })
-    context.log->Logs.warn({
-      "msg": "We are processing the event",
-      "type": "warn",
-      "data": {"blockHash": event.block.hash},
-    })
-    context.log->Logs.error({
-      "msg": "We are processing the event",
-      "type": "error",
-      "data": {"blockHash": event.block.hash},
-    })
-    exception ExampleException(string)
-    context.log->Logs.errorWithExn(
-      ExampleException("some error processing the event")->Js.Exn.asJsExn,
-      {
-        "msg": "We are processing the event",
+    context.log.debug(
+      "We are processing the event",
+      ~params={
+        "type": "debug",
+        "data": {"blockHash": event.block.hash},
+      },
+    )
+    context.log.info(
+      "We are processing the event",
+      ~params={
+        "type": "info",
+        "data": {"blockHash": event.block.hash},
+      },
+    )
+    context.log.warn(
+      "We are processing the event",
+      ~params={
+        "type": "warn",
+        "data": {"blockHash": event.block.hash},
+      },
+    )
+    context.log.error(
+      "We are processing the event",
+      ~params={
         "type": "error",
         "data": {"blockHash": event.block.hash},
+      },
+    )
+    exception ExampleException(string)
+    context.log.errorWithExn(
+      "We are processing the event",
+      ExampleException("some error processing the event"),
+    )
+    context.log.error(
+      "We are processing the event",
+      ~params={
+        "type": "error",
+        "data": {"blockHash": event.block.hash},
+        "err": ExampleException("some error processing the event")->Js.Exn.asJsExn,
       },
     )
 

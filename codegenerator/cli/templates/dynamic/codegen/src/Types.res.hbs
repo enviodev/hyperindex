@@ -20,7 +20,7 @@ type entityLoaderContext<'entity, 'indexedFieldOperations> = {
 
 @genType
 type loaderContext = {
-  log: Logs.userLogger,
+  log: Envio.logger,
   {{#each entities as | entity |}}
   @as("{{entity.name.original}}") {{entity.name.uncapitalized}}: entityLoaderContext<Entities.{{entity.name.capitalized}}.t, Entities.{{entity.name.capitalized}}.indexedFieldOperations>,
   {{/each}}
@@ -36,7 +36,7 @@ type entityHandlerContext<'entity> = {
 
 @genType
 type handlerContext = {
-  log: Logs.userLogger,
+  log: Envio.logger,
   {{#each entities as | entity |}}
   @as("{{entity.name.original}}") {{entity.name.uncapitalized}}: entityHandlerContext<Entities.{{entity.name.capitalized}}.t>,
   {{/each}}

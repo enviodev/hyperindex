@@ -159,5 +159,12 @@ let fuelTransferParamsSchema = S.schema(s => {
 
 type entity = private {id: string}
 
-@genType.import(("./bindings/OpaqueTypes.ts", "invalid"))
+@genType.import(("./Types.ts", "Invalid"))
 type noEventFilters
+
+let prettifyExn = exn => {
+  switch exn->Js.Exn.anyToExnInternal {
+  | Js.Exn.Error(e) => e->(Utils.magic: Js.Exn.t => exn)
+  | exn => exn
+  }
+}

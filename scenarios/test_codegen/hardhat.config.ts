@@ -3,7 +3,6 @@ import "hardhat-deploy";
 import { HardhatUserConfig } from "hardhat/config";
 
 import "hardhat-abi-exporter";
-import { AbiExporterUserConfig } from "hardhat-abi-exporter";
 
 import "@typechain/hardhat";
 import "./contracts/tasks";
@@ -24,20 +23,18 @@ let typeChainConfig: TypechainUserConfig = {
   target: "ethers-v6",
 };
 
-const abiExporter: AbiExporterUserConfig = {
-  path: "./abis",
-  clear: true,
-  flat: true,
-  spacing: 2,
-};
-
 const config: HardhatUserConfig = {
   solidity: "0.8.19",
   paths: {
     root: "contracts",
   },
   typechain: typeChainConfig,
-  abiExporter: abiExporter,
+  abiExporter: {
+    path: "./abis",
+    clear: true,
+    flat: true,
+    spacing: 2,
+  },
   networks: {
     hardhat: {
       chainId: 1337,

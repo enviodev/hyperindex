@@ -8,15 +8,6 @@ type t = {
   eventItem: Internal.eventItem,
 }
 
-let getUserLogger = (logger): Logs.userLogger => {
-  info: (message: string) => logger->Logging.uinfo(message),
-  debug: (message: string) => logger->Logging.udebug(message),
-  warn: (message: string) => logger->Logging.uwarn(message),
-  error: (message: string) => logger->Logging.uerror(message),
-  errorWithExn: (exn: option<Js.Exn.t>, message: string) =>
-    logger->Logging.uerrorWithExn(exn, message),
-}
-
 let makeEventIdentifier = (
   eventItem: Internal.eventItem,
 ): Types.eventIdentifier => {
@@ -137,7 +128,7 @@ let getContractRegisterContext = (~onRegister) => {
 let getLoaderContext = (contextEnv: t, ~inMemoryStore: InMemoryStore.t, ~loadLayer: LoadLayer.t) => {
   let {logger} = contextEnv
   {
-    log: logger->getUserLogger,
+    log: logger->Logging.getUserLogger,
     {{#each entities as | entity |}}
     {{entity.name.uncapitalized}}: {
       get: loadLayer->LoadLayer.makeLoader(
@@ -171,7 +162,7 @@ let getHandlerContext = (
 
   let eventIdentifier = eventItem->makeEventIdentifier
   {
-    log: logger->getUserLogger,
+    log: logger->Logging.getUserLogger,
     {{#each entities as | entity |}}
     {{entity.name.uncapitalized}}: makeEntityHandlerContext(
       ~eventIdentifier,

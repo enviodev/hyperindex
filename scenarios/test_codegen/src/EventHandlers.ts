@@ -1,3 +1,4 @@
+import { Logger } from "envio";
 import { TestEvents } from "generated";
 import { TestHelpers } from "generated";
 import { EventFiltersTest } from "generated";
@@ -19,6 +20,12 @@ import { bytesToHex, keccak256, toHex } from "viem";
 const zeroAddress = "0x0000000000000000000000000000000000000000";
 
 Gravatar.CustomSelection.handler(async ({ event, context }) => {
+  if (0) {
+    context.log.error("There's an error");
+    context.log.error("This is a test error", new Error("Test error message"));
+    context.log.warn("This is a test warn", { foo: "bar" });
+  }
+
   const transactionSchema = S.schema({
     to: S.undefined,
     from: "0xfoo",

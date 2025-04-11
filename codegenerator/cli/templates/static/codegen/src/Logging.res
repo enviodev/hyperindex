@@ -138,9 +138,18 @@ let createChildFrom = (~logger: t, ~params: 'a) => {
   logger->child(params->createChildParams)
 }
 
-// NOTE: these functions are used for the user logging, but they are exposed to the user only via the context and the `Logs.res` file.
-@send external udebug: (Pino.t, 'a) => unit = "udebug"
-@send external uinfo: (Pino.t, 'a) => unit = "uinfo"
-@send external uwarn: (Pino.t, 'a) => unit = "uwarn"
-@send external uerror: (Pino.t, 'a) => unit = "uerror"
-@send external uerrorWithExn: (Pino.t, option<Js.Exn.t>, 'a) => unit = "uerror"
+let getUserLogger = {
+  @inline
+  let log = (logger: Pino.t, level: Pino.logLevelUser, message: string, ~params) => {
+    (logger->Utils.magic->Js.Dict.unsafeGet((level :> string)))(params, message)
+  }
+
+  (logger): Envio.logger => {
+    info: (message: string, ~params=?) => logger->log(#uinfo, message, ~params),
+    debug: (message: string, ~params=?) => logger->log(#udebug, message, ~params),
+    warn: (message: string, ~params=?) => logger->log(#uwarn, message, ~params),
+    error: (message: string, ~params=?) => logger->log(#uerror, message, ~params),
+    errorWithExn: (message: string, exn) =>
+      logger->log(#uerror, message, ~params={"err": exn->Internal.prettifyExn}),
+  }
+}

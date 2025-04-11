@@ -149,7 +149,7 @@ let getSourceNewHeight = async (
       logger->Logging.childTrace({
         "msg": `Height retrieval from ${source.name} source failed. Retrying in ${retryInterval->Int.toString}ms.`,
         "source": source.name,
-        "error": exn->ErrorHandling.prettifyExn,
+        "error": exn->Internal.prettifyExn,
       })
       retry := retry.contents + 1
       await Utils.delay(retryInterval)
@@ -420,7 +420,7 @@ let executeQuery = async (sourceManager: t, ~query: FetchState.query, ~currentBl
           "toBlock": attemptedToBlock,
           "backOffMilliseconds": backoffMillis,
           "retry": retry,
-          "err": exn->ErrorHandling.prettifyExn,
+          "err": exn->Internal.prettifyExn,
         })
 
         let shouldSwitch = nextSource !== source
