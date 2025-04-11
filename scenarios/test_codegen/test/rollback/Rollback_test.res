@@ -8,7 +8,7 @@ let config = Config.make(
   ~isUnorderedMultichainMode=false,
   ~chains=config.chainMap
   ->ChainMap.entries
-  ->Array.keepMap(((chain, config)) => chain == MockConfig.chain1337 ? Some(config) : None),
+  ->Array.filterMap(((chain, config)) => chain == MockConfig.chain1337 ? Some(config) : None),
   ~enableRawEvents=false,
   ~entities=config.entities->Obj.magic,
 )

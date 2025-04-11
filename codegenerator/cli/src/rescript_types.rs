@@ -460,7 +460,7 @@ impl RescriptTypeIdent {
             Self::Float => "S.float".to_string(),
             Self::BigInt => match mode {
                 RescriptSchemaMode::ForDb => "Utils.Schema.dbBigint".to_string(),
-                RescriptSchemaMode::ForFieldSelection => "BigInt.nativeSchema".to_string(),
+                RescriptSchemaMode::ForFieldSelection => "S.bigint".to_string(),
             },
             Self::BigDecimal => "BigDecimal.schema".to_string(),
             Self::Address => "Address.schema".to_string(),
@@ -742,7 +742,7 @@ mod tests {
                 &"eventArgs".to_string(),
                 &RescriptSchemaMode::ForFieldSelection
             ),
-            "BigInt.nativeSchema".to_string()
+            "S.bigint".to_string()
         );
         assert_eq!(
             RescriptTypeExpr::Identifier(RescriptTypeIdent::BigDecimal)
@@ -780,7 +780,7 @@ mod tests {
                     &"eventArgs".to_string(),
                     &RescriptSchemaMode::ForFieldSelection
                 ),
-            "S.option(BigInt.nativeSchema)".to_string()
+            "S.option(S.bigint)".to_string()
         );
         assert_eq!(
             RescriptTypeExpr::Identifier(RescriptTypeIdent::Tuple(vec![

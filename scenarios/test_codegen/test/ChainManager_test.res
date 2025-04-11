@@ -16,7 +16,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
     }
     /// Generates a random number between two ints inclusive
     let getRandomInt = (min, max) => {
-      Belt.Int.fromFloat(Js.Math.random() *. float_of_int(max - min + 1) +. float_of_int(min))
+      Belt.Int.fromFloat(Js.Math.random() *. Int.toFloat(max - min + 1) +. Int.toFloat(min))
     }
 
     let eventConfigs = [
@@ -65,7 +65,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
           blockNumber: currentBlockNumber.contents,
           logIndex,
           eventConfig: Utils.magic("Mock eventConfig in ChainManager test"),
-          event: `mock event (chainId)${chain->ChainMap.Chain.toString} - (blockNumber)${currentBlockNumber.contents->string_of_int} - (logIndex)${logIndex->string_of_int} - (timestamp)${currentTime.contents->string_of_int}`->Utils.magic,
+          event: `mock event (chainId)${chain->ChainMap.Chain.toString} - (blockNumber)${currentBlockNumber.contents->Int.toString} - (logIndex)${logIndex->Int.toString} - (timestamp)${currentTime.contents->Int.toString}`->Utils.magic,
         }
 
         allEvents->Js.Array2.push(batchItem)->ignore
@@ -240,7 +240,7 @@ describe("ChainManager", () => {
             //       // Assert.equal(
             //       //   previous.blockNumber,
             //       //   current.blockNumber,
-            //       //   ~message=`The block number within a block should always be the same, here ${previous.blockNumber->string_of_int} (previous.blockNumber) != ${current.blockNumber->string_of_int}(current.blockNumber)`,
+            //       //   ~message=`The block number within a block should always be the same, here ${previous.blockNumber->Int.toString} (previous.blockNumber) != ${current.blockNumber->Int.toString}(current.blockNumber)`,
             //       // )
             //
             //       Assert.equal(
@@ -350,7 +350,7 @@ describe("determineNextEvent", () => {
         selection: normalSelection,
         contractAddressMapping: ContractAddressingMap.make(),
         dynamicContracts: [],
-        fetchedEventQueue: item->Option.mapWithDefault([], v => [v]),
+        fetchedEventQueue: item->Option.mapOr([], v => [v]),
       }
       {
         partitions: [partition],

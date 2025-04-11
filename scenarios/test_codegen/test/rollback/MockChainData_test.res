@@ -38,8 +38,8 @@ describe("Check that MockChainData works as expected", () => {
     let hasUniqueBlockHashes =
       mockChainData.blocks
       ->Array.map(block => block.blockHash)
-      ->HashSet.String.fromArray
-      ->HashSet.String.size == mockChainData.blocks->Array.length
+      ->Belt.HashSet.String.fromArray
+      ->Belt.HashSet.String.size == mockChainData.blocks->Array.length
 
     Assert.equal(
       hasUniqueBlockHashes,
@@ -55,15 +55,12 @@ describe("Check that MockChainData works as expected", () => {
       (accum, next) => {
         Assert.equal(
           next.blockNumber,
-          accum->Option.mapWithDefault(
-            0,
-            ({MockChainData.blockNumber: blockNumber}) => blockNumber + 1,
-          ),
+          accum->Option.mapOr(0, ({MockChainData.blockNumber: blockNumber}) => blockNumber + 1),
           ~message="Block numbers should increment",
         )
         Assert.equal(
           next.blockTimestamp,
-          accum->Option.mapWithDefault(
+          accum->Option.mapOr(
             0,
             ({MockChainData.blockTimestamp: blockTimestamp}) =>
               blockTimestamp + mockChainData.blockTimestampInterval,

@@ -181,16 +181,16 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
               "transactionIndex": s.matches(S.int),
               "from": s.matches(S.option(Address.schema)),
               "to": s.matches(S.option(Address.schema)),
-              // "gas": s.matches(BigInt.nativeSchema), --- Not exposed by Ethers
-              "gasPrice": s.matches(S.option(BigInt.nativeSchema)),
-              "maxPriorityFeePerGas": s.matches(S.option(BigInt.nativeSchema)),
-              "maxFeePerGas": s.matches(S.option(BigInt.nativeSchema)),
-              // "cumulativeGasUsed": s.matches(BigInt.nativeSchema), --- Invalid transaction field "cumulativeGasUsed" found in the RPC response. Error: Expected bigint
-              // "effectiveGasPrice": s.matches(BigInt.nativeSchema), --- Invalid transaction field "effectiveGasPrice" found in the RPC response. Error: Expected bigint
-              // "gasUsed": s.matches(BigInt.nativeSchema), --- Invalid transaction field "gasUsed" found in the RPC response. Error: Expected bigint
+              // "gas": s.matches(S.bigint), --- Not exposed by Ethers
+              "gasPrice": s.matches(S.option(S.bigint)),
+              "maxPriorityFeePerGas": s.matches(S.option(S.bigint)),
+              "maxFeePerGas": s.matches(S.option(S.bigint)),
+              // "cumulativeGasUsed": s.matches(S.bigint), --- Invalid transaction field "cumulativeGasUsed" found in the RPC response. Error: Expected bigint
+              // "effectiveGasPrice": s.matches(S.bigint), --- Invalid transaction field "effectiveGasPrice" found in the RPC response. Error: Expected bigint
+              // "gasUsed": s.matches(S.bigint), --- Invalid transaction field "gasUsed" found in the RPC response. Error: Expected bigint
               "input": s.matches(S.string),
-              // "nonce": s.matches(BigInt.nativeSchema), --- Returned as number by ethers
-              "value": s.matches(BigInt.nativeSchema),
+              // "nonce": s.matches(S.bigint), --- Returned as number by ethers
+              "value": s.matches(S.bigint),
               // "v": s.matches(S.option(S.string)), --- Invalid transaction field "v" found in the RPC response. Error: Expected Option(String), received 28
               // "r": s.matches(S.option(S.string)), --- Inside of signature
               // "s": s.matches(S.option(S.string)),
@@ -200,14 +200,14 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
               "root": s.matches(S.option(S.string)),
               "status": s.matches(S.option(S.int)),
               // "chainId": s.matches(S.option(S.int)), --- Decoded to bigint by ethers
-              "maxFeePerBlobGas": s.matches(S.option(BigInt.nativeSchema)),
+              "maxFeePerBlobGas": s.matches(S.option(S.bigint)),
               "blobVersionedHashes": s.matches(S.option(S.array(S.string))),
               "kind": s.matches(S.option(S.int)),
-              "l1Fee": s.matches(S.option(BigInt.nativeSchema)),
-              "l1GasPrice": s.matches(S.option(BigInt.nativeSchema)),
-              "l1GasUsed": s.matches(S.option(BigInt.nativeSchema)),
+              "l1Fee": s.matches(S.option(S.bigint)),
+              "l1GasPrice": s.matches(S.option(S.bigint)),
+              "l1GasUsed": s.matches(S.option(S.bigint)),
               "l1FeeScalar": s.matches(S.option(S.float)),
-              "gasUsedForL1": s.matches(S.option(BigInt.nativeSchema)),
+              "gasUsedForL1": s.matches(S.option(S.bigint)),
             },
         ),
       ),
@@ -265,7 +265,7 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
 let chain = HyperSyncSource_test.chain
 
 describe("RpcSource - getSelectionConfig", () => {
-  let mockAddress0 = TestHelpers.Addresses.mockAddresses[0]
+  let mockAddress0 = TestHelpers.Addresses.mockAddresses->Array.getUnsafe(0)
   let contractAddressMappingWithAddress = ContractAddressingMap.fromArray([(mockAddress0, "ERC20")])
 
   it("Selection config for the most basic case with no wildcards", () => {
