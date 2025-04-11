@@ -3,7 +3,7 @@
 /* eslint-disable */
 /* tslint:disable */
 
-import type {invalid as $$noEventFilters} from './bindings/OpaqueTypes.ts';
+import type {Invalid as $$noEventFilters} from './Types.ts';
 
 import type {t as Address_t} from './Address.gen';
 
