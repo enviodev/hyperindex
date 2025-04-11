@@ -20,7 +20,7 @@ let getNumberOfEventsProccessed = (progress: progress) => {
   }
 }
 type chainData = {
-  chainId: int,
+  chain: ChainMap.Chain.t,
   poweredByHyperSync: bool,
   progress: progress,
   latestFetchedBlockNumber: int,
@@ -89,13 +89,14 @@ module SyncBar = {
 @react.component
 let make = (~chainData: chainData, ~isPreRegisteringDynamicContracts) => {
   let {
-    chainId,
+    chain,
     progress,
     poweredByHyperSync,
     latestFetchedBlockNumber,
     currentBlockHeight,
     endBlock,
   } = chainData
+  let chainId = chain->ChainMap.Chain.toChainId
 
   let toBlock = minOfOption(currentBlockHeight, endBlock)
 

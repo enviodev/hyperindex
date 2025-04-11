@@ -1066,3 +1066,9 @@ let isActivelyIndexing = ({latestFullyFetchedBlock, endBlock} as fetchState: t) 
   | None => true
   }
 }
+
+let numAddresses = fetchState =>
+  fetchState.partitions->Js.Array2.reduce(
+    (acc, p) => acc + p.contractAddressMapping->ContractAddressingMap.addressCount,
+    0,
+  )

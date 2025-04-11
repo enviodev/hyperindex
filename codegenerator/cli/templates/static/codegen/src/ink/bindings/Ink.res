@@ -170,6 +170,7 @@ module Hooks = {
     pageDown: bool,
     pageUp: bool,
     meta: bool,
+    enter: bool,
   }
   type input = string
   type inputHandler = (input, key) => unit
