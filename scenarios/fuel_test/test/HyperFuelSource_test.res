@@ -11,27 +11,19 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
 
   let mock = (~contracts: array<Internal.fuelContractConfig>) => {
     let selectionConfig = {
-      isWildcard: false,
+      dependsOnAddresses: true,
       eventConfigs: contracts->Array.flatMap(c => {
         c.events->Array.keepMap(
           e => {
             if e.isWildcard {
               None
             } else {
-              Some(
-                (
-                  {
-                    isWildcard: false,
-                    eventId: HyperFuelSource.getEventId(e),
-                    contractName: e.contractName,
-                  }: FetchState.eventConfig
-                ),
-              )
+              Some((e :> Internal.eventConfig))
             }
           },
         )
       }),
-    }->HyperFuelSource.getSelectionConfig(~contracts, ~chain)
+    }->HyperFuelSource.getSelectionConfig(~chain)
     selectionConfig.getRecieptsSelection
   }
 
@@ -82,6 +74,7 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
               }),
               preRegisterDynamicContracts: false,
               isWildcard: false,
+              dependsOnAddresses: true,
               handler: None,
               loader: None,
               contractRegister: None,
@@ -118,6 +111,7 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
                 contractName: "TestContract",
                 kind: Transfer,
                 isWildcard: false,
+                dependsOnAddresses: true,
                 preRegisterDynamicContracts: false,
                 handler: None,
                 loader: None,
@@ -135,6 +129,7 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
                 contractName: "TestContract2",
                 kind: Transfer,
                 isWildcard: false,
+                dependsOnAddresses: true,
                 preRegisterDynamicContracts: false,
                 handler: None,
                 loader: None,
@@ -175,6 +170,7 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
               contractName: "TestContract",
               kind: Mint,
               isWildcard: false,
+              dependsOnAddresses: true,
               preRegisterDynamicContracts: false,
               handler: None,
               loader: None,
@@ -192,6 +188,7 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
               contractName: "TestContract2",
               kind: Mint,
               isWildcard: false,
+              dependsOnAddresses: true,
               preRegisterDynamicContracts: false,
               handler: None,
               loader: None,
@@ -231,6 +228,7 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
               contractName: "TestContract",
               kind: Burn,
               isWildcard: false,
+              dependsOnAddresses: true,
               preRegisterDynamicContracts: false,
               handler: None,
               loader: None,
@@ -248,6 +246,7 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
               contractName: "TestContract2",
               kind: Burn,
               isWildcard: false,
+              dependsOnAddresses: true,
               preRegisterDynamicContracts: false,
               handler: None,
               loader: None,
@@ -290,6 +289,7 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
                 decode: _ => %raw(`null`),
               }),
               isWildcard: false,
+              dependsOnAddresses: true,
               preRegisterDynamicContracts: false,
               handler: None,
               loader: None,
@@ -305,6 +305,7 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
                 decode: _ => %raw(`null`),
               }),
               isWildcard: true,
+              dependsOnAddresses: false,
               preRegisterDynamicContracts: false,
               handler: None,
               loader: None,
@@ -317,6 +318,7 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
               contractName: "TestContract",
               kind: Mint,
               isWildcard: false,
+              dependsOnAddresses: true,
               preRegisterDynamicContracts: false,
               handler: None,
               loader: None,
@@ -329,6 +331,7 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
               contractName: "TestContract",
               kind: Burn,
               isWildcard: false,
+              dependsOnAddresses: true,
               preRegisterDynamicContracts: false,
               handler: None,
               loader: None,
@@ -341,6 +344,7 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
               contractName: "TestContract",
               kind: Transfer,
               isWildcard: false,
+              dependsOnAddresses: true,
               preRegisterDynamicContracts: false,
               handler: None,
               loader: None,
@@ -353,6 +357,7 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
               contractName: "TestContract",
               kind: Call,
               isWildcard: true,
+              dependsOnAddresses: false,
               preRegisterDynamicContracts: false,
               handler: None,
               loader: None,
@@ -373,6 +378,7 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
                 decode: _ => %raw(`null`),
               }),
               isWildcard: false,
+              dependsOnAddresses: true,
               preRegisterDynamicContracts: false,
               handler: None,
               loader: None,
@@ -385,6 +391,7 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
               contractName: "TestContract2",
               kind: Burn,
               isWildcard: false,
+              dependsOnAddresses: true,
               preRegisterDynamicContracts: false,
               handler: None,
               loader: None,
@@ -439,6 +446,7 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
                   contractName: "TestContract",
                   kind: Call,
                   isWildcard: false,
+                  dependsOnAddresses: true,
                   preRegisterDynamicContracts: false,
                   handler: None,
                   loader: None,
@@ -470,6 +478,7 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
                   contractName: "TestContract",
                   kind: Mint,
                   isWildcard: false,
+                  dependsOnAddresses: true,
                   preRegisterDynamicContracts: false,
                   handler: None,
                   loader: None,
@@ -482,6 +491,7 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
                   contractName: "TestContract",
                   kind: Mint,
                   isWildcard: false,
+                  dependsOnAddresses: true,
                   preRegisterDynamicContracts: false,
                   handler: None,
                   loader: None,
@@ -513,6 +523,7 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
                   contractName: "TestContract",
                   kind: Burn,
                   isWildcard: false,
+                  dependsOnAddresses: true,
                   preRegisterDynamicContracts: false,
                   handler: None,
                   loader: None,
@@ -525,6 +536,7 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
                   contractName: "TestContract",
                   kind: Burn,
                   isWildcard: false,
+                  dependsOnAddresses: true,
                   preRegisterDynamicContracts: false,
                   handler: None,
                   loader: None,
@@ -556,6 +568,7 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
                 contractName: "TestContract",
                 kind: Mint,
                 isWildcard: true,
+                dependsOnAddresses: false,
                 preRegisterDynamicContracts: false,
                 handler: None,
                 loader: None,
@@ -568,6 +581,7 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
                 contractName: "TestContract",
                 kind: Mint,
                 isWildcard: false,
+                dependsOnAddresses: true,
                 preRegisterDynamicContracts: false,
                 handler: None,
                 loader: None,
@@ -603,6 +617,7 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
               contractName: "TestContract2",
               kind: Mint,
               isWildcard: false,
+              dependsOnAddresses: true,
               preRegisterDynamicContracts: false,
               handler: None,
               loader: None,
@@ -620,6 +635,7 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
               contractName: "TestContract",
               kind: Mint,
               isWildcard: true,
+              dependsOnAddresses: false,
               preRegisterDynamicContracts: false,
               handler: None,
               loader: None,
@@ -653,6 +669,7 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
               contractName: "TestContract",
               kind: Mint,
               isWildcard: true,
+              dependsOnAddresses: false,
               preRegisterDynamicContracts: false,
               handler: None,
               loader: None,
@@ -670,6 +687,7 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
               contractName: "TestContract2",
               kind: Mint,
               isWildcard: false,
+              dependsOnAddresses: true,
               preRegisterDynamicContracts: false,
               handler: None,
               loader: None,
@@ -704,6 +722,7 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
               contractName: "TestContract2",
               kind: Burn,
               isWildcard: false,
+              dependsOnAddresses: true,
               preRegisterDynamicContracts: false,
               handler: None,
               loader: None,
@@ -721,6 +740,7 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
               contractName: "TestContract",
               kind: Burn,
               isWildcard: true,
+              dependsOnAddresses: false,
               preRegisterDynamicContracts: false,
               handler: None,
               loader: None,
@@ -754,6 +774,7 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
               contractName: "TestContract",
               kind: Burn,
               isWildcard: true,
+              dependsOnAddresses: false,
               preRegisterDynamicContracts: false,
               handler: None,
               loader: None,
@@ -771,6 +792,7 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
               contractName: "TestContract2",
               kind: Burn,
               isWildcard: false,
+              dependsOnAddresses: true,
               preRegisterDynamicContracts: false,
               handler: None,
               loader: None,
@@ -799,27 +821,19 @@ describe("HyperFuelSource - makeWildcardRecieptsSelection", () => {
 
   let mock = (~contracts: array<Internal.fuelContractConfig>) => {
     let selectionConfig = {
-      isWildcard: true,
+      dependsOnAddresses: false,
       eventConfigs: contracts->Array.flatMap(c => {
         c.events->Array.keepMap(
           e => {
             if e.isWildcard {
-              Some(
-                (
-                  {
-                    isWildcard: true,
-                    eventId: HyperFuelSource.getEventId(e),
-                    contractName: e.contractName,
-                  }: FetchState.eventConfig
-                ),
-              )
+              Some((e :> Internal.eventConfig))
             } else {
               None
             }
           },
         )
       }),
-    }->HyperFuelSource.getSelectionConfig(~contracts, ~chain)
+    }->HyperFuelSource.getSelectionConfig(~chain)
     selectionConfig.getRecieptsSelection(~contractAddressMapping=ContractAddressingMap.make())
   }
 
@@ -863,6 +877,7 @@ describe("HyperFuelSource - makeWildcardRecieptsSelection", () => {
                 decode: _ => %raw(`null`),
               }),
               isWildcard: false,
+              dependsOnAddresses: true,
               preRegisterDynamicContracts: false,
               handler: None,
               loader: None,
@@ -878,6 +893,7 @@ describe("HyperFuelSource - makeWildcardRecieptsSelection", () => {
                 decode: _ => %raw(`null`),
               }),
               isWildcard: true,
+              dependsOnAddresses: false,
               preRegisterDynamicContracts: false,
               handler: None,
               loader: None,
@@ -890,6 +906,7 @@ describe("HyperFuelSource - makeWildcardRecieptsSelection", () => {
               contractName: "TestContract",
               kind: Mint,
               isWildcard: false,
+              dependsOnAddresses: true,
               preRegisterDynamicContracts: false,
               handler: None,
               loader: None,
@@ -902,6 +919,7 @@ describe("HyperFuelSource - makeWildcardRecieptsSelection", () => {
               contractName: "TestContract",
               kind: Burn,
               isWildcard: false,
+              dependsOnAddresses: true,
               preRegisterDynamicContracts: false,
               handler: None,
               loader: None,
@@ -914,6 +932,7 @@ describe("HyperFuelSource - makeWildcardRecieptsSelection", () => {
               contractName: "TestContract",
               kind: Transfer,
               isWildcard: false,
+              dependsOnAddresses: true,
               preRegisterDynamicContracts: false,
               handler: None,
               loader: None,
@@ -926,6 +945,7 @@ describe("HyperFuelSource - makeWildcardRecieptsSelection", () => {
               contractName: "TestContract",
               kind: Call,
               isWildcard: true,
+              dependsOnAddresses: false,
               preRegisterDynamicContracts: false,
               handler: None,
               loader: None,
@@ -946,6 +966,7 @@ describe("HyperFuelSource - makeWildcardRecieptsSelection", () => {
                 decode: _ => %raw(`null`),
               }),
               isWildcard: false,
+              dependsOnAddresses: true,
               preRegisterDynamicContracts: false,
               handler: None,
               loader: None,
@@ -958,6 +979,7 @@ describe("HyperFuelSource - makeWildcardRecieptsSelection", () => {
               contractName: "TestContract2",
               kind: Burn,
               isWildcard: false,
+              dependsOnAddresses: true,
               preRegisterDynamicContracts: false,
               handler: None,
               loader: None,
@@ -997,6 +1019,7 @@ describe("HyperFuelSource - makeWildcardRecieptsSelection", () => {
               contractName: "TestContract2",
               kind: Mint,
               isWildcard: false,
+              dependsOnAddresses: true,
               handler: None,
               preRegisterDynamicContracts: false,
               loader: None,
@@ -1014,6 +1037,7 @@ describe("HyperFuelSource - makeWildcardRecieptsSelection", () => {
               contractName: "TestContract",
               kind: Mint,
               isWildcard: true,
+              dependsOnAddresses: false,
               preRegisterDynamicContracts: false,
               handler: None,
               loader: None,
@@ -1047,6 +1071,7 @@ describe("HyperFuelSource - makeWildcardRecieptsSelection", () => {
               contractName: "TestContract",
               kind: Mint,
               isWildcard: true,
+              dependsOnAddresses: false,
               preRegisterDynamicContracts: false,
               handler: None,
               loader: None,
@@ -1080,6 +1105,7 @@ describe("HyperFuelSource - makeWildcardRecieptsSelection", () => {
               contractName: "TestContract",
               kind: Burn,
               isWildcard: true,
+              dependsOnAddresses: false,
               preRegisterDynamicContracts: false,
               handler: None,
               loader: None,
@@ -1116,6 +1142,7 @@ describe("HyperFuelSource - makeWildcardRecieptsSelection", () => {
                 decode: _ => %raw(`null`),
               }),
               isWildcard: true,
+              dependsOnAddresses: false,
               preRegisterDynamicContracts: false,
               handler: None,
               loader: None,
@@ -1131,6 +1158,7 @@ describe("HyperFuelSource - makeWildcardRecieptsSelection", () => {
                 decode: _ => %raw(`null`),
               }),
               isWildcard: true,
+              dependsOnAddresses: false,
               preRegisterDynamicContracts: false,
               handler: None,
               loader: None,
@@ -1151,6 +1179,7 @@ describe("HyperFuelSource - makeWildcardRecieptsSelection", () => {
                 decode: _ => %raw(`null`),
               }),
               isWildcard: true,
+              dependsOnAddresses: false,
               preRegisterDynamicContracts: false,
               handler: None,
               loader: None,

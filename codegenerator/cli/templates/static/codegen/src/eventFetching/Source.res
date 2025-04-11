@@ -22,7 +22,7 @@ type blockRangeFetchResponse = {
 
 type getItemsRetry =
   | WithSuggestedToBlock({toBlock: int})
-  | WithBackoff({backoffMillis: int})
+  | WithBackoff({message: string, backoffMillis: int})
 
 type getItemsError =
   | UnsupportedSelection({message: string})
@@ -52,6 +52,7 @@ type t = {
     ~currentBlockHeight: int,
     ~partitionId: string,
     ~selection: FetchState.selection,
+    ~retry: int,
     ~logger: Pino.t,
   ) => promise<blockRangeFetchResponse>,
 }

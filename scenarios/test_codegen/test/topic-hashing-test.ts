@@ -48,12 +48,14 @@ describe("Topic Hashing", () => {
     sighash: string;
     register: () => {
       name: string;
-      getTopicSelectionsOrThrow: (chain: number) => unknown[];
+      getEventFiltersOrThrow: (chain: number) => {
+        _0: unknown;
+      };
     };
   }) => {
     let eventConfig = eventMod.register();
     const topics = GetLogs.mapTopicQuery(
-      eventConfig.getTopicSelectionsOrThrow(1)[0]
+      (eventConfig.getEventFiltersOrThrow(1)._0 as unknown[])[0]
     );
 
     const res = await hre.ethers.provider.getLogs({

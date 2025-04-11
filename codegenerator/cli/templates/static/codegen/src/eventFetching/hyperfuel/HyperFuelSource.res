@@ -7,15 +7,6 @@ let mintEventTag = "mint"
 let burnEventTag = "burn"
 let transferEventTag = "transfer"
 let callEventTag = "call"
-let getEventId = (eventConfig: Internal.fuelEventConfig) => {
-  switch eventConfig.kind {
-  | Mint => mintEventTag
-  | Burn => burnEventTag
-  | Transfer => transferEventTag
-  | Call => callEventTag
-  | LogData({logId}) => logId
-  }
-}
 
 type selectionConfig = {
   getRecieptsSelection: (
@@ -36,20 +27,20 @@ let txStatusSelection = [1]
 let makeGetNormalRecieptsSelection = (
   ~nonWildcardLogDataRbsByContract,
   ~nonLogDataReceiptTypesByContract,
-  ~contracts: array<Internal.fuelContractConfig>,
+  ~contractNames,
 ) => {
   (~contractAddressMapping) => {
     let selection: array<HyperFuelClient.QueryTypes.receiptSelection> = []
 
     //Instantiate each time to add new registered contract addresses
-    contracts->Array.forEach(contract => {
+    contractNames->Utils.Set.forEach(contractName => {
       switch contractAddressMapping->ContractAddressingMap.getAddressesFromContractName(
-        ~contractName=contract.name,
+        ~contractName,
       ) {
       | [] => ()
       | addresses => {
           switch nonLogDataReceiptTypesByContract->Utils.Dict.dangerouslyGetNonOption(
-            contract.name,
+            contractName,
           ) {
           | Some(receiptTypes) =>
             selection
@@ -61,9 +52,7 @@ let makeGetNormalRecieptsSelection = (
             ->ignore
           | None => ()
           }
-          switch nonWildcardLogDataRbsByContract->Utils.Dict.dangerouslyGetNonOption(
-            contract.name,
-          ) {
+          switch nonWildcardLogDataRbsByContract->Utils.Dict.dangerouslyGetNonOption(contractName) {
           | None
           | Some([]) => ()
           | Some(nonWildcardLogDataRbs) =>
@@ -121,11 +110,7 @@ let makeWildcardRecieptsSelection = (~wildcardLogDataRbs, ~nonLogDataWildcardRec
   selection
 }
 
-let getSelectionConfig = (
-  selection: FetchState.selection,
-  ~contracts: array<Internal.fuelContractConfig>,
-  ~chain,
-) => {
+let getSelectionConfig = (selection: FetchState.selection, ~chain) => {
   let eventRouter = EventRouter.empty()
   let nonWildcardLogDataRbsByContract = Js.Dict.empty()
   let wildcardLogDataRbs = []
@@ -144,71 +129,68 @@ let getSelectionConfig = (
     }
   }
 
-  contracts->Belt.Array.forEach(contract => {
-    let nonWildcardLogDataRbs = []
-    contract.events->Array.forEach(eventConfig => {
-      let eventId = getEventId(eventConfig)
-      if (
-        FetchState.checkIsInSelection(
-          ~selection,
-          ~contractName=contract.name,
-          ~eventId,
-          ~isWildcard=eventConfig.isWildcard,
-        )
-      ) {
-        eventRouter->EventRouter.addOrThrow(
-          eventId,
-          eventConfig,
-          ~contractName=contract.name,
-          ~eventName=eventConfig.name,
-          ~chain,
-          ~isWildcard=eventConfig.isWildcard,
-        )
+  let contractNames = Utils.Set.make()
 
-        switch eventConfig {
-        | {kind: Mint, isWildcard: true} => addNonLogDataWildcardReceiptTypes(Mint)
-        | {kind: Mint} => addNonLogDataReceiptType(contract.name, Mint)
-        | {kind: Burn, isWildcard: true} => addNonLogDataWildcardReceiptTypes(Burn)
-        | {kind: Burn} => addNonLogDataReceiptType(contract.name, Burn)
-        | {kind: Transfer, isWildcard: true} => {
-            addNonLogDataWildcardReceiptTypes(Transfer)
-            addNonLogDataWildcardReceiptTypes(TransferOut)
-          }
-        | {kind: Transfer} => {
-            addNonLogDataReceiptType(contract.name, Transfer)
-            addNonLogDataReceiptType(contract.name, TransferOut)
-          }
-        | {kind: Call, isWildcard: true} => addNonLogDataWildcardReceiptTypes(Call)
-        | {kind: Call} =>
-          Js.Exn.raiseError("Call receipt indexing currently supported only in wildcard mode")
-        | {kind: LogData({logId}), isWildcard} => {
-            let rb = logId->BigInt.fromStringUnsafe
-            if isWildcard {
-              wildcardLogDataRbs->Array.push(rb)->ignore
-            } else {
-              nonWildcardLogDataRbs->Array.push(rb)->ignore
-            }
+  selection.eventConfigs
+  ->(Utils.magic: array<Internal.eventConfig> => array<Internal.fuelEventConfig>)
+  ->Array.forEach(eventConfig => {
+    let contractName = eventConfig.contractName
+    if !eventConfig.isWildcard {
+      let _ = contractNames->Utils.Set.add(contractName)
+    }
+    eventRouter->EventRouter.addOrThrow(
+      eventConfig.id,
+      eventConfig,
+      ~contractName,
+      ~eventName=eventConfig.name,
+      ~chain,
+      ~isWildcard=eventConfig.isWildcard,
+    )
+
+    switch eventConfig {
+    | {kind: Mint, isWildcard: true} => addNonLogDataWildcardReceiptTypes(Mint)
+    | {kind: Mint} => addNonLogDataReceiptType(contractName, Mint)
+    | {kind: Burn, isWildcard: true} => addNonLogDataWildcardReceiptTypes(Burn)
+    | {kind: Burn} => addNonLogDataReceiptType(contractName, Burn)
+    | {kind: Transfer, isWildcard: true} => {
+        addNonLogDataWildcardReceiptTypes(Transfer)
+        addNonLogDataWildcardReceiptTypes(TransferOut)
+      }
+    | {kind: Transfer} => {
+        addNonLogDataReceiptType(contractName, Transfer)
+        addNonLogDataReceiptType(contractName, TransferOut)
+      }
+    | {kind: Call, isWildcard: true} => addNonLogDataWildcardReceiptTypes(Call)
+    | {kind: Call} =>
+      Js.Exn.raiseError("Call receipt indexing currently supported only in wildcard mode")
+    | {kind: LogData({logId}), isWildcard} => {
+        let rb = logId->BigInt.fromStringUnsafe
+        if isWildcard {
+          wildcardLogDataRbs->Array.push(rb)->ignore
+        } else {
+          switch nonWildcardLogDataRbsByContract->Utils.Dict.dangerouslyGetNonOption(contractName) {
+          | Some(arr) => arr->Belt.Array.push(rb)
+          | None => nonWildcardLogDataRbsByContract->Js.Dict.set(contractName, [rb])
           }
         }
       }
-    })
-    nonWildcardLogDataRbsByContract->Js.Dict.set(contract.name, nonWildcardLogDataRbs)
+    }
   })
 
   {
-    getRecieptsSelection: switch selection.isWildcard {
-    | true => {
+    getRecieptsSelection: switch selection.dependsOnAddresses {
+    | false => {
         let recieptsSelection = makeWildcardRecieptsSelection(
           ~wildcardLogDataRbs,
           ~nonLogDataWildcardReceiptTypes,
         )
         (~contractAddressMapping as _) => recieptsSelection
       }
-    | false =>
+    | true =>
       makeGetNormalRecieptsSelection(
         ~nonWildcardLogDataRbsByContract,
         ~nonLogDataReceiptTypesByContract,
-        ~contracts,
+        ~contractNames,
       )
     },
     route: (~eventId, ~contractAddressMapping, ~contractAddress) =>
@@ -216,13 +198,13 @@ let getSelectionConfig = (
   }
 }
 
-let memoGetSelectionConfig = (~contracts, ~chain) => {
+let memoGetSelectionConfig = (~chain) => {
   let cache = Utils.WeakMap.make()
   selection =>
     switch cache->Utils.WeakMap.get(selection) {
     | Some(c) => c
     | None => {
-        let c = selection->getSelectionConfig(~contracts, ~chain)
+        let c = selection->getSelectionConfig(~chain)
         let _ = cache->Utils.WeakMap.set(selection, c)
         c
       }
@@ -231,58 +213,22 @@ let memoGetSelectionConfig = (~contracts, ~chain) => {
 
 type options = {
   chain: ChainMap.Chain.t,
-  contracts: array<Internal.fuelContractConfig>,
   endpointUrl: string,
 }
 
-let make = ({chain, contracts, endpointUrl}: options): t => {
+let make = ({chain, endpointUrl}: options): t => {
   let name = "HyperFuel"
 
-  let getSelectionConfig = memoGetSelectionConfig(~contracts, ~chain)
-
-  module Helpers = {
-    let rec queryLogsPageWithBackoff = async (
-      ~backoffMsOnFailure=200,
-      ~callDepth=0,
-      ~maxCallDepth=15,
-      query: unit => promise<HyperFuel.queryResponse<HyperFuel.logsQueryPage>>,
-      logger: Pino.t,
-    ) =>
-      switch await query() {
-      | Error(e) =>
-        let msg = e->HyperFuel.queryErrorToMsq
-        if callDepth < maxCallDepth {
-          logger->Logging.childWarn({
-            "err": msg,
-            "msg": `Issue while running fetching of events from Hypersync endpoint. Will wait ${backoffMsOnFailure->Belt.Int.toString}ms and try again.`,
-            "type": "EXPONENTIAL_BACKOFF",
-          })
-          await Time.resolvePromiseAfterDelay(~delayMilliseconds=backoffMsOnFailure)
-          await queryLogsPageWithBackoff(
-            ~callDepth=callDepth + 1,
-            ~backoffMsOnFailure=2 * backoffMsOnFailure,
-            query,
-            logger,
-          )
-        } else {
-          logger->Logging.childError({
-            "err": msg,
-            "msg": `Issue while running fetching batch of events from Hypersync endpoint. Attempted query a maximum of ${maxCallDepth->string_of_int} times. Will NOT retry.`,
-            "type": "EXPONENTIAL_BACKOFF_MAX_DEPTH",
-          })
-          Js.Exn.raiseError(msg)
-        }
-      | Ok(v) => v
-      }
-  }
+  let getSelectionConfig = memoGetSelectionConfig(~chain)
 
   let getItemsOrThrow = async (
     ~fromBlock,
     ~toBlock,
     ~contractAddressMapping,
-    ~currentBlockHeight as _,
+    ~currentBlockHeight,
     ~partitionId as _,
     ~selection: FetchState.selection,
+    ~retry,
     ~logger,
   ) => {
     let mkLogAndRaise = ErrorHandling.mkLogAndRaise(~logger, ...)
@@ -294,11 +240,59 @@ let make = ({chain, contracts, endpointUrl}: options): t => {
     let startFetchingBatchTimeRef = Hrtime.makeTimer()
 
     //fetch batch
-    let pageUnsafe = await Helpers.queryLogsPageWithBackoff(
-      () =>
-        HyperFuel.queryLogsPage(~serverUrl=endpointUrl, ~fromBlock, ~toBlock, ~recieptsSelection),
-      logger,
-    )
+    let pageUnsafe = try await HyperFuel.GetLogs.query(
+      ~serverUrl=endpointUrl,
+      ~fromBlock,
+      ~toBlock,
+      ~recieptsSelection,
+    ) catch {
+    | HyperSync.GetLogs.Error(error) =>
+      raise(
+        Source.GetItemsError(
+          Source.FailedGettingItems({
+            exn: %raw(`null`),
+            attemptedToBlock: toBlock->Option.getWithDefault(currentBlockHeight),
+            retry: switch error {
+            | WrongInstance =>
+              let backoffMillis = switch retry {
+              | 0 => 100
+              | _ => 500 * retry
+              }
+              WithBackoff({
+                message: `Block #${fromBlock->Int.toString} not found in HyperFuel. HyperFuel has multiple instances and it's possible that they drift independently slightly from the head. Indexing should continue correctly after retrying the query in ${backoffMillis->Int.toString}ms.`,
+                backoffMillis,
+              })
+            | UnexpectedMissingParams({missingParams}) =>
+              WithBackoff({
+                message: `Received page response with invalid data. Attempt a retry. Missing params: ${missingParams->Js.Array2.joinWith(
+                    ",",
+                  )}`,
+                backoffMillis: switch retry {
+                | 0 => 1000
+                | _ => 4000 * retry
+                },
+              })
+            },
+          }),
+        ),
+      )
+    | exn =>
+      raise(
+        Source.GetItemsError(
+          Source.FailedGettingItems({
+            exn,
+            attemptedToBlock: toBlock->Option.getWithDefault(currentBlockHeight),
+            retry: WithBackoff({
+              message: `Unexpected issue while fetching events from HyperFuel client. Attempt a retry.`,
+              backoffMillis: switch retry {
+              | 0 => 500
+              | _ => 1000 * retry
+              },
+            }),
+          }),
+        ),
+      )
+    }
 
     let pageFetchTime =
       startFetchingBatchTimeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
@@ -453,7 +447,7 @@ let make = ({chain, contracts, endpointUrl}: options): t => {
 
       (
         {
-          eventConfig: (eventConfig :> Internal.baseEventConfig),
+          eventConfig: (eventConfig :> Internal.eventConfig),
           timestamp: block.time,
           chain,
           blockNumber: block.height,

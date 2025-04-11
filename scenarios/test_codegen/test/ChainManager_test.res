@@ -21,11 +21,11 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
     }
 
     let eventConfigs = [
-      {
-        FetchState.contractName: "Gravatar",
-        eventId: "0",
-        isWildcard: true,
-      },
+      (Mock.evmEventConfig(
+        ~id="0",
+        ~contractName="Gravatar",
+        ~isWildcard=true,
+      ) :> Internal.eventConfig),
     ]
     let fetcherStateInit: FetchState.t = FetchState.make(
       ~maxAddrInPartition=Env.maxAddrInPartition,
@@ -84,7 +84,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
                 fromBlock: 0,
                 target: Head,
                 selection: {
-                  isWildcard: true,
+                  dependsOnAddresses: false,
                   eventConfigs,
                 },
                 contractAddressMapping: ContractAddressingMap.make(),
@@ -111,7 +111,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
                   fromBlock: 0,
                   target: Head,
                   selection: {
-                    isWildcard: true,
+                    dependsOnAddresses: false,
                     eventConfigs,
                   },
                   contractAddressMapping: ContractAddressingMap.make(),
@@ -334,13 +334,9 @@ describe("determineNextEvent", () => {
 
     let makeMockFetchState = (~latestFetchedBlockTimestamp, ~item): FetchState.t => {
       let normalSelection: FetchState.selection = {
-        isWildcard: false,
+        dependsOnAddresses: true,
         eventConfigs: [
-          {
-            FetchState.contractName: "MockContract",
-            eventId: "0",
-            isWildcard: false,
-          },
+          (Mock.evmEventConfig(~id="0", ~contractName="MockContract") :> Internal.eventConfig),
         ],
       }
       let partition: FetchState.partition = {

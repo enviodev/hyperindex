@@ -59,7 +59,7 @@ let make = (
 
   // Aggregate events we want to fetch
   let staticContracts = Js.Dict.empty()
-  let eventConfigs: array<FetchState.eventConfig> = []
+  let eventConfigs: array<Internal.eventConfig> = []
 
   chainConfig.contracts->Array.forEach(contract => {
     let contractName = contract.name
@@ -95,11 +95,7 @@ let make = (
       }
 
       if shouldBeIncluded {
-        eventConfigs->Array.push({
-          contractName,
-          eventId: eventConfig.id,
-          isWildcard,
-        })
+        eventConfigs->Array.push(eventConfig)
       }
     })
 

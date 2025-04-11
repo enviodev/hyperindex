@@ -167,7 +167,7 @@ module Make = (Indexer: Indexer.S) => {
       eventConfig,
     }): log => {
       let log: Internal.eventItem = {
-        eventConfig: (eventConfig :> Internal.baseEventConfig),
+        eventConfig: (eventConfig :> Internal.eventConfig),
         event: makeEvent(~blockHash),
         chain: self.chainConfig.chain,
         timestamp: blockTimestamp,
@@ -209,7 +209,7 @@ module Make = (Indexer: Indexer.S) => {
     eventKeys: array<string>,
   }
 
-  let getEventKey = (eventConfig: Internal.baseEventConfig) => {
+  let getEventKey = (eventConfig: Internal.eventConfig) => {
     eventConfig.contractName ++ "_" ++ eventConfig.id
   }
 

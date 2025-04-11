@@ -55,7 +55,7 @@ module CombinedFilter = {
   type combinedFilterRecord = {
     address?: array<Address.t>,
     //The second element of the tuple is the
-    topics: array<array<EvmTypes.Hex.t>>,
+    topics: Rpc.GetLogs.topicQuery,
     fromBlock: int,
     toBlock: int,
   }
@@ -147,17 +147,18 @@ module JsonRpcProvider = {
   @send
   external getTransaction: (t, ~transactionHash: string) => promise<transaction> = "getTransaction"
 
-  let makeGetTransactionFields = (~getTransactionByHash) => async (log: log): promise<unknown> => {
-    let transaction = await getTransactionByHash(log.transactionHash)
-    // Mutating should be fine, since the transaction isn't used anywhere else outside the function
-    let fields: {..} = transaction->Obj.magic
+  let makeGetTransactionFields = (~getTransactionByHash) =>
+    async (log: log): promise<unknown> => {
+      let transaction = await getTransactionByHash(log.transactionHash)
+      // Mutating should be fine, since the transaction isn't used anywhere else outside the function
+      let fields: {..} = transaction->Obj.magic
 
-    // Make it compatible with HyperSync transaction fields
-    fields["transactionIndex"] = log.transactionIndex
-    fields["input"] = fields["data"]
+      // Make it compatible with HyperSync transaction fields
+      fields["transactionIndex"] = log.transactionIndex
+      fields["input"] = fields["data"]
 
-    fields->Obj.magic
-  }
+      fields->Obj.magic
+    }
 
   type block = {
     _difficulty: bigint,

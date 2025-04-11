@@ -218,6 +218,9 @@ pub enum Network {
     MantleTestnet = 5001,
 
     #[subenum(HypersyncNetwork)]
+    MegaethTestnet = 6342,
+
+    #[subenum(HypersyncNetwork)]
     Merlin = 4200,
 
     #[subenum(HypersyncNetwork)]
@@ -328,6 +331,9 @@ pub enum Network {
 
     #[subenum(HypersyncNetwork)]
     SophonTestnet = 531050104,
+
+    #[subenum(HypersyncNetwork)]
+    Superseed = 5330,
 
     #[subenum(NetworkWithExplorer)]
     Taiko = 167000,
@@ -503,7 +509,9 @@ impl Network {
             | Network::XdcTestnet
             | Network::Abstract
             | Network::Hyperliquid
-            | Network::PharosDevnet => DEFAULT_CONFIRMED_BLOCK_THRESHOLD,
+            | Network::PharosDevnet
+            | Network::Superseed
+            | Network::MegaethTestnet => DEFAULT_CONFIRMED_BLOCK_THRESHOLD,
         }
     }
 }
@@ -564,7 +572,7 @@ impl HypersyncNetwork {
             | GnosisChiado | LuksoTestnet | BlastSepolia | Holesky | BerachainBartio
             | OptimismSepolia | Fuji | ArbitrumSepolia | Fraxtal | Soneium | BaseSepolia
             | MevCommit | Merlin | Mode | MoonbaseAlpha | XdcTestnet | Morph | Harmony
-            | Saakuru | Cyber => Stone,
+            | Saakuru | Cyber | Superseed | MegaethTestnet => Stone,
         }
     }
 

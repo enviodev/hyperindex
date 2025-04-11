@@ -11,15 +11,9 @@ module type S = {
   }
 
   module FetchState: {
-    type eventConfig = {
-      contractName: string,
-      eventId: string,
-      isWildcard: bool,
-    }
-
     type selection = {
-      eventConfigs: array<eventConfig>,
-      isWildcard: bool,
+      eventConfigs: array<Internal.eventConfig>,
+      dependsOnAddresses: bool,
     }
 
     type queryTarget =
@@ -72,6 +66,7 @@ module type S = {
         ~currentBlockHeight: int,
         ~partitionId: string,
         ~selection: FetchState.selection,
+        ~retry: int,
         ~logger: Pino.t,
       ) => promise<blockRangeFetchResponse>,
     }
@@ -82,7 +77,7 @@ module type S = {
       name: string,
       abi: Ethers.abi,
       addresses: array<Address.t>,
-      events: array<Internal.baseEventConfig>,
+      events: array<Internal.eventConfig>,
     }
 
     type chainConfig = {

@@ -263,69 +263,100 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
 })
 
 let chain = HyperSyncSource_test.chain
-let mockEventConfig = HyperSyncSource_test.mockEventConfig
+
 describe("RpcSource - getSelectionConfig", () => {
-  let eventId = HyperSyncSource_test.eventId
+  let mockAddress0 = TestHelpers.Addresses.mockAddresses[0]
+  let contractAddressMappingWithAddress = ContractAddressingMap.fromArray([(mockAddress0, "ERC20")])
 
   it("Selection config for the most basic case with no wildcards", () => {
     let selectionConfig = {
-      isWildcard: false,
-      eventConfigs: [
-        {
-          contractName: "Foo",
-          eventId,
-          isWildcard: false,
-        },
-      ],
-    }->RpcSource.getSelectionConfig(
-      ~chain,
-      ~contracts=[
-        {
-          name: "Foo",
-          abi: %raw(`[]`),
-          events: [
-            mockEventConfig(~blockSchema=S.object(_ => ()), ~transactionSchema=S.object(_ => ())),
-          ],
-        },
-      ],
-    )
+      dependsOnAddresses: true,
+      eventConfigs: [(Mock.evmEventConfig() :> Internal.eventConfig)],
+    }->RpcSource.getSelectionConfig(~chain)
 
     Assert.deepEqual(
-      selectionConfig,
+      selectionConfig.getLogSelectionOrThrow(
+        ~contractAddressMapping=contractAddressMappingWithAddress,
+      ),
       {
-        topics: [[eventId->EvmTypes.Hex.fromStringUnsafe]],
+        addresses: Some([mockAddress0]),
+        topicQuery: [Single(Mock.eventId)],
       },
       ~message=`Should include only single topic0 address`,
     )
   })
 
-  it("Panics when can't find a selected event", () => {
+  it("Selection config with wildcard events", () => {
+    let selectionConfig = {
+      dependsOnAddresses: false,
+      eventConfigs: [
+        (Mock.evmEventConfig(~id="1", ~isWildcard=true) :> Internal.eventConfig),
+        (Mock.evmEventConfig(~id="2", ~isWildcard=true) :> Internal.eventConfig),
+      ],
+    }->RpcSource.getSelectionConfig(~chain)
+
+    Assert.deepEqual(
+      selectionConfig.getLogSelectionOrThrow(~contractAddressMapping=ContractAddressingMap.make()),
+      {
+        addresses: None,
+        topicQuery: [Multiple(["1", "2"])],
+      },
+      ~message=`Should include only topic0 addresses`,
+    )
+  })
+
+  Async.it("Wildcard topic selection which depends on addresses", async () => {
+    let selectionConfig = {
+      dependsOnAddresses: false,
+      eventConfigs: [
+        (Mock.evmEventConfig(
+          ~id="event 2",
+          ~isWildcard=true,
+          ~dependsOnAddresses=true,
+        ) :> Internal.eventConfig),
+      ],
+    }->RpcSource.getSelectionConfig(~chain)
+
+    Assert.deepEqual(
+      selectionConfig.getLogSelectionOrThrow(
+        ~contractAddressMapping=ContractAddressingMap.fromArray([(mockAddress0, "ERC20")]),
+      ),
+      {
+        addresses: None,
+        topicQuery: [Single("event 2"), Single(mockAddress0->Address.toString)],
+      },
+    )
+  })
+
+  Async.it("Non-wildcard topic selection which depends on addresses", async () => {
+    let selectionConfig = {
+      dependsOnAddresses: false,
+      eventConfigs: [
+        (Mock.evmEventConfig(
+          ~id="event 2",
+          ~isWildcard=false,
+          ~dependsOnAddresses=true,
+        ) :> Internal.eventConfig),
+      ],
+    }->RpcSource.getSelectionConfig(~chain)
+
+    Assert.deepEqual(
+      selectionConfig.getLogSelectionOrThrow(
+        ~contractAddressMapping=ContractAddressingMap.fromArray([(mockAddress0, "ERC20")]),
+      ),
+      {
+        addresses: Some([mockAddress0]),
+        topicQuery: [Single("event 2"), Single(mockAddress0->Address.toString)],
+      },
+    )
+  })
+
+  it("Panics when selection has empty event configs", () => {
     try {
       let _ = {
-        isWildcard: false,
-        eventConfigs: [
-          {
-            contractName: "Foo",
-            eventId,
-            isWildcard: false,
-          },
-        ],
-      }->RpcSource.getSelectionConfig(
-        ~chain,
-        ~contracts=[
-          {
-            name: "Foo",
-            abi: %raw(`[]`),
-            events: [
-              mockEventConfig(
-                ~isWildcard=true,
-                ~blockSchema=S.object(_ => ()),
-                ~transactionSchema=S.object(_ => ()),
-              ),
-            ],
-          },
-        ],
-      )
+        dependsOnAddresses: true,
+        eventConfigs: [],
+      }->RpcSource.getSelectionConfig(~chain)
       Assert.fail("Should have thrown")
     } catch {
     | Source.GetItemsError(UnsupportedSelection({message})) =>
@@ -337,100 +368,25 @@ describe("RpcSource - getSelectionConfig", () => {
     }
   })
 
-  Async.it(
-    "Doesn't include events not specified in the selection to the selection config",
-    async () => {
-      let contracts: array<Internal.evmContractConfig> = [
-        {
-          name: "Foo",
-          abi: %raw(`[]`),
-          events: [
-            mockEventConfig(
-              ~blockSchema=S.schema(
-                s =>
-                  {
-                    "hash": s.matches(S.string),
-                    "number": s.matches(S.int),
-                    "timestamp": s.matches(S.int),
-                  },
-              ),
-              ~transactionSchema=S.schema(
-                s =>
-                  {
-                    "hash": s.matches(S.string),
-                  },
-              ),
-            ),
-          ],
-        },
-        {
-          name: "Bar",
-          abi: %raw(`[]`),
-          events: [
-            mockEventConfig(
-              ~id="Should be the only topic0",
-              ~isWildcard=true,
-              ~blockSchema=S.schema(
-                s =>
-                  {
-                    "nonce": s.matches(S.null(BigInt.schema)),
-                  },
-              ),
-              ~transactionSchema=S.schema(
-                s =>
-                  {
-                    "gasPrice": s.matches(S.null(S.string)),
-                  },
-              ),
-            ),
-          ],
-        },
-        {
-          name: "Baz",
-          abi: %raw(`[]`),
-          events: [
-            mockEventConfig(
-              // Eventhough this is a second wildcard event
-              // it shouldn't be included in the field selection,
-              // since it's not specified in the FetchState.selection
-              ~isWildcard=true,
-              ~blockSchema=S.schema(
-                s =>
-                  {
-                    "uncles": s.matches(S.null(BigInt.schema)),
-                  },
-              ),
-              ~transactionSchema=S.schema(
-                s =>
-                  {
-                    "gasPrice": s.matches(S.null(S.string)),
-                  },
-              ),
-            ),
-          ],
-        },
-      ]
-
-      let selectionConfig = {
-        isWildcard: true,
+  it("Panics when selection has normal event and event with filters", () => {
+    try {
+      let _ = {
+        dependsOnAddresses: true,
         eventConfigs: [
-          {
-            contractName: "Bar",
-            eventId: "Should be the only topic0",
-            isWildcard: true,
-          },
+          (Mock.evmEventConfig(~id="1") :> Internal.eventConfig),
+          (Mock.evmEventConfig(~id="2", ~dependsOnAddresses=true) :> Internal.eventConfig),
         ],
-      }->RpcSource.getSelectionConfig(~chain, ~contracts)
-
-      Assert.deepEqual(
-        selectionConfig,
-        {
-          topics: [["Should be the only topic0"->EvmTypes.Hex.fromStringUnsafe]],
-        },
-        ~message=`Should only include the topic of the single wildcard event`,
+      }->RpcSource.getSelectionConfig(~chain)
+      Assert.fail("Should have thrown")
+    } catch {
+    | Source.GetItemsError(UnsupportedSelection({message})) =>
+      Assert.equal(
+        message,
+        "RPC data-source currently supports event filters only when there's a single wildcard event. Please, create a GitHub issue if it's a blocker for you.",
       )
-    },
-  )
+    | _ => Assert.fail("Should have thrown UnsupportedSelection")
+    }
+  })
 })
 
 describe("RpcSource - getSuggestedBlockIntervalFromExn", () => {

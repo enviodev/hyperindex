@@ -1,44 +1,6 @@
 open Source
 open Belt
 
-module Helpers = {
-  let rec queryLogsPageWithBackoff = async (
-    ~backoffMsOnFailure=200,
-    ~callDepth=0,
-    ~maxCallDepth=15,
-    query: unit => promise<HyperSync.queryResponse<HyperSync.logsQueryPage>>,
-    logger: Pino.t,
-  ) =>
-    switch await query() {
-    | Error(e) =>
-      let msg = e->HyperSync.queryErrorToMsq
-      if callDepth < maxCallDepth {
-        logger->Logging.childWarn({
-          "err": msg,
-          "msg": `Issue while running fetching of events from Hypersync endpoint. Will wait ${backoffMsOnFailure->Belt.Int.toString}ms and try again.`,
-          "type": "EXPONENTIAL_BACKOFF",
-        })
-        await Time.resolvePromiseAfterDelay(~delayMilliseconds=backoffMsOnFailure)
-        await queryLogsPageWithBackoff(
-          ~callDepth=callDepth + 1,
-          ~backoffMsOnFailure=2 * backoffMsOnFailure,
-          query,
-          logger,
-        )
-      } else {
-        logger->Logging.childError({
-          "err": msg,
-          "msg": `Issue while running fetching batch of events from Hypersync endpoint. Attempted query a maximum of ${maxCallDepth->string_of_int} times. Will NOT retry.`,
-          "type": "EXPONENTIAL_BACKOFF_MAX_DEPTH",
-        })
-        Js.Exn.raiseError(msg)
-      }
-    | Ok(v) => v
-    }
-
-  exception ErrorMessage(string)
-}
-
 type selectionConfig = {
   getLogSelectionOrThrow: (
     ~contractAddressMapping: ContractAddressingMap.mapping,
@@ -48,65 +10,59 @@ type selectionConfig = {
   nonOptionalTransactionFieldNames: array<string>,
 }
 
-let getSelectionConfig = (
-  selection: FetchState.selection,
-  ~contracts: array<Internal.evmContractConfig>,
-  ~chain,
-) => {
+let getSelectionConfig = (selection: FetchState.selection, ~chain) => {
   let nonOptionalBlockFieldNames = Utils.Set.make()
   let nonOptionalTransactionFieldNames = Utils.Set.make()
   let capitalizedBlockFields = Utils.Set.make()
   let capitalizedTransactionFields = Utils.Set.make()
-  let wildcardTopicSelections = []
 
-  let contractTopicSelections = []
+  let staticTopicSelectionsByContract = Js.Dict.empty()
+  let dynamicEventFiltersByContract = Js.Dict.empty()
+  let dynamicWildcardEventFiltersByContract = Js.Dict.empty()
+  let noAddressesTopicSelections = []
+  let contractNames = Utils.Set.make()
 
-  contracts->Array.forEach(contract => {
-    let normalTopicSelections = []
+  selection.eventConfigs
+  ->(Utils.magic: array<Internal.eventConfig> => array<Internal.evmEventConfig>)
+  ->Array.forEach(({
+    dependsOnAddresses,
+    contractName,
+    getEventFiltersOrThrow,
+    blockSchema,
+    transactionSchema,
+    isWildcard,
+  }) => {
+    nonOptionalBlockFieldNames->Utils.Set.addMany(
+      blockSchema->Utils.Schema.getNonOptionalFieldNames,
+    )
+    nonOptionalTransactionFieldNames->Utils.Set.addMany(
+      transactionSchema->Utils.Schema.getNonOptionalFieldNames,
+    )
+    capitalizedBlockFields->Utils.Set.addMany(blockSchema->Utils.Schema.getCapitalizedFieldNames)
+    capitalizedTransactionFields->Utils.Set.addMany(
+      transactionSchema->Utils.Schema.getCapitalizedFieldNames,
+    )
 
-    contract.events->Array.forEach(({
-      isWildcard,
-      id,
-      getTopicSelectionsOrThrow,
-      blockSchema,
-      transactionSchema,
-    }) => {
-      if (
-        FetchState.checkIsInSelection(
-          ~selection,
-          ~contractName=contract.name,
-          ~eventId=id,
-          ~isWildcard,
-        )
-      ) {
-        nonOptionalBlockFieldNames->Utils.Set.addMany(
-          blockSchema->Utils.Schema.getNonOptionalFieldNames,
-        )
-        nonOptionalTransactionFieldNames->Utils.Set.addMany(
-          transactionSchema->Utils.Schema.getNonOptionalFieldNames,
-        )
-        capitalizedBlockFields->Utils.Set.addMany(
-          blockSchema->Utils.Schema.getCapitalizedFieldNames,
-        )
-        capitalizedTransactionFields->Utils.Set.addMany(
-          transactionSchema->Utils.Schema.getCapitalizedFieldNames,
-        )
-        let topicSelections = getTopicSelectionsOrThrow(~chain)
-        if isWildcard {
-          wildcardTopicSelections->Js.Array2.pushMany(topicSelections)->ignore
-        } else {
-          normalTopicSelections->Js.Array2.pushMany(topicSelections)->ignore
-        }
+    let eventFilters = getEventFiltersOrThrow(chain)
+    if dependsOnAddresses {
+      let _ = contractNames->Utils.Set.add(contractName)
+      switch eventFilters {
+      | Static(topicSelections) =>
+        staticTopicSelectionsByContract->Utils.Dict.pushMany(contractName, topicSelections)
+      | Dynamic(fn) =>
+        (
+          isWildcard ? dynamicWildcardEventFiltersByContract : dynamicEventFiltersByContract
+        )->Utils.Dict.push(contractName, fn)
       }
-    })
-
-    switch normalTopicSelections {
-    | [] => ()
-    | _ =>
-      contractTopicSelections->Array.push({
-        "contractName": contract.name,
-        "topicSelections": normalTopicSelections,
-      })
+    } else {
+      noAddressesTopicSelections
+      ->Js.Array2.pushMany(
+        switch eventFilters {
+        | Static(s) => s
+        | Dynamic(fn) => fn([])
+        },
+      )
+      ->ignore
     }
   })
 
@@ -120,26 +76,52 @@ let getSelectionConfig = (
     ->(Utils.magic: array<string> => array<HyperSyncClient.QueryTypes.transactionField>),
   }
 
-  let getNormalLogSelectionOrThrow = (~contractAddressMapping): array<LogSelection.t> => {
-    contractTopicSelections->Belt.Array.keepMap((data): option<LogSelection.t> => {
-      let contractName = data["contractName"]
-      let topicSelections = data["topicSelections"]
+  let noAddressesLogSelection = LogSelection.make(
+    ~addresses=[],
+    ~topicSelections=noAddressesTopicSelections,
+  )
+
+  let getLogSelectionOrThrow = (~contractAddressMapping): array<LogSelection.t> => {
+    let logSelections = []
+    if noAddressesLogSelection.topicSelections->Utils.Array.isEmpty->not {
+      logSelections->Array.push(noAddressesLogSelection)
+    }
+    contractNames->Utils.Set.forEach(contractName => {
       switch contractAddressMapping->ContractAddressingMap.getAddressesFromContractName(
         ~contractName,
       ) {
-      | [] => None
-      | addresses => Some(LogSelection.make(~addresses, ~topicSelections))
+      | [] => ()
+      | addresses =>
+        switch staticTopicSelectionsByContract->Utils.Dict.dangerouslyGetNonOption(contractName) {
+        | None => ()
+        | Some(topicSelections) =>
+          logSelections->Array.push(LogSelection.make(~addresses, ~topicSelections))
+        }
+        switch dynamicEventFiltersByContract->Utils.Dict.dangerouslyGetNonOption(contractName) {
+        | None => ()
+        | Some(fns) =>
+          logSelections->Array.push(
+            LogSelection.make(
+              ~addresses,
+              ~topicSelections=fns->Array.flatMapU(fn => fn(addresses)),
+            ),
+          )
+        }
+        switch dynamicWildcardEventFiltersByContract->Utils.Dict.dangerouslyGetNonOption(
+          contractName,
+        ) {
+        | None => ()
+        | Some(fns) =>
+          logSelections->Array.push(
+            LogSelection.make(
+              ~addresses=[],
+              ~topicSelections=fns->Array.flatMapU(fn => fn(addresses)),
+            ),
+          )
+        }
       }
     })
-  }
-
-  let getLogSelectionOrThrow = switch selection.isWildcard {
-  | true =>
-    let logSelections = [LogSelection.make(~addresses=[], ~topicSelections=wildcardTopicSelections)]
-    (~contractAddressMapping as _) => {
-      logSelections
-    }
-  | false => getNormalLogSelectionOrThrow
+    logSelections
   }
 
   {
@@ -150,13 +132,13 @@ let getSelectionConfig = (
   }
 }
 
-let memoGetSelectionConfig = (~contracts, ~chain) => {
+let memoGetSelectionConfig = (~chain) => {
   let cache = Utils.WeakMap.make()
   selection =>
     switch cache->Utils.WeakMap.get(selection) {
     | Some(c) => c
     | None => {
-        let c = selection->getSelectionConfig(~contracts, ~chain)
+        let c = selection->getSelectionConfig(~chain)
         let _ = cache->Utils.WeakMap.set(selection, c)
         c
       }
@@ -184,7 +166,7 @@ let make = (
 ): t => {
   let name = "HyperSync"
 
-  let getSelectionConfig = memoGetSelectionConfig(~contracts, ~chain)
+  let getSelectionConfig = memoGetSelectionConfig(~chain)
 
   let apiToken =
     Env.envioApiToken->Belt.Option.getWithDefault("3dc856dd-b0ea-494f-b27e-017b8b6b7e07")
@@ -224,7 +206,7 @@ let make = (
     let chainId = chain->ChainMap.Chain.toChainId
 
     {
-      eventConfig: (eventConfig :> Internal.baseEventConfig),
+      eventConfig: (eventConfig :> Internal.eventConfig),
       timestamp: block->Types.Block.getTimestamp,
       chain,
       blockNumber: block->Types.Block.getNumber,
@@ -249,9 +231,10 @@ let make = (
     ~fromBlock,
     ~toBlock,
     ~contractAddressMapping,
-    ~currentBlockHeight as _,
+    ~currentBlockHeight,
     ~partitionId as _,
     ~selection,
+    ~retry,
     ~logger,
   ) => {
     let mkLogAndRaise = ErrorHandling.mkLogAndRaise(~logger, ...)
@@ -267,24 +250,62 @@ let make = (
     let startFetchingBatchTimeRef = Hrtime.makeTimer()
 
     //fetch batch
-    let pageUnsafe = await Helpers.queryLogsPageWithBackoff(() =>
-      HyperSync.queryLogsPage(
-        ~client,
-        ~fromBlock,
-        ~toBlock,
-        ~logSelections,
-        ~fieldSelection=selectionConfig.fieldSelection,
-        ~nonOptionalBlockFieldNames=selectionConfig.nonOptionalBlockFieldNames,
-        ~nonOptionalTransactionFieldNames=selectionConfig.nonOptionalTransactionFieldNames,
-        ~logger=Logging.createChild(
-          ~params={
-            "type": "Hypersync Query",
-            "fromBlock": fromBlock,
-            "serverUrl": endpointUrl,
-          },
+    let pageUnsafe = try await HyperSync.GetLogs.query(
+      ~client,
+      ~fromBlock,
+      ~toBlock,
+      ~logSelections,
+      ~fieldSelection=selectionConfig.fieldSelection,
+      ~nonOptionalBlockFieldNames=selectionConfig.nonOptionalBlockFieldNames,
+      ~nonOptionalTransactionFieldNames=selectionConfig.nonOptionalTransactionFieldNames,
+    ) catch {
+    | HyperSync.GetLogs.Error(error) =>
+      raise(
+        Source.GetItemsError(
+          Source.FailedGettingItems({
+            exn: %raw(`null`),
+            attemptedToBlock: toBlock->Option.getWithDefault(currentBlockHeight),
+            retry: switch error {
+            | WrongInstance =>
+              let backoffMillis = switch retry {
+              | 0 => 100
+              | _ => 500 * retry
+              }
+              WithBackoff({
+                message: `Block #${fromBlock->Int.toString} not found in HyperSync. HyperSync has multiple instances and it's possible that they drift independently slightly from the head. Indexing should continue correctly after retrying the query in ${backoffMillis->Int.toString}ms.`,
+                backoffMillis,
+              })
+            | UnexpectedMissingParams({missingParams}) =>
+              WithBackoff({
+                message: `Received page response with invalid data. Attempt a retry. Missing params: ${missingParams->Js.Array2.joinWith(
+                    ",",
+                  )}`,
+                backoffMillis: switch retry {
+                | 0 => 1000
+                | _ => 4000 * retry
+                },
+              })
+            },
+          }),
         ),
       )
-    , logger)
+    | exn =>
+      raise(
+        Source.GetItemsError(
+          Source.FailedGettingItems({
+            exn,
+            attemptedToBlock: toBlock->Option.getWithDefault(currentBlockHeight),
+            retry: WithBackoff({
+              message: `Unexpected issue while fetching events from HyperSync client. Attempt a retry.`,
+              backoffMillis: switch retry {
+              | 0 => 500
+              | _ => 1000 * retry
+              },
+            }),
+          }),
+        ),
+      )
+    }
 
     let pageFetchTime =
       startFetchingBatchTimeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
@@ -344,7 +365,9 @@ let make = (
               ~msg=`Failure, blockData for block ${heighestBlockQueried->Int.toString} unexpectedly returned None`,
             )
           | Error(e) =>
-            Helpers.ErrorMessage(HyperSync.queryErrorToMsq(e))->mkLogAndRaise(
+            HyperSync.queryErrorToMsq(e)
+            ->Obj.magic
+            ->mkLogAndRaise(
               ~msg=`Failed to query blockData for block ${heighestBlockQueried->Int.toString}`,
             )
           }

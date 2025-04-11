@@ -16,6 +16,8 @@ contracts:
     handler: ./src/EventHandlers.bs.js
     events:
       - event: Transfer(address indexed from, address indexed to, uint256 amount)
+      - event: WildcardWithAddress(address indexed from, address indexed to, uint256 amount)
+      - event: WithExcessField(address indexed from)
       - event: EmptyFiltersArray(address indexed from)
 networks:
   - id: 1337
