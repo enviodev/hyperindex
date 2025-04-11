@@ -1,5 +1,3 @@
-
-
 type chain = ChainMap.Chain.t
 type rollbackState = NoRollback | RollingBack(chain) | RollbackInMemStore(InMemoryStore.t)
 
@@ -489,7 +487,7 @@ let actionReducer = (state: t, action: action) => {
     }) =>
     let updatedArbQueue = Utils.Array.mergeSorted((a, b) => {
       a->EventUtils.getEventComparatorFromQueueItem > b->EventUtils.getEventComparatorFromQueueItem
-    }, unprocessedBatch->Array.reverse, state.chainManager.arbitraryEventQueue)
+    }, unprocessedBatch->Belt.Array.reverse, state.chainManager.arbitraryEventQueue)
 
     let maybePruneEntityHistory =
       state.config->Config.shouldPruneHistory(
@@ -691,7 +689,7 @@ let actionReducer = (state: t, action: action) => {
       } = cf
 
       ChainFetcher.make(
-        ~dynamicContracts=dynamicContractPreRegistration->Option.mapWithDefault([], Js.Dict.values),
+        ~dynamicContracts=dynamicContractPreRegistration->Option.mapOr([], Js.Dict.values),
         ~chainConfig,
         ~lastBlockScannedHashes=ReorgDetection.LastBlockScannedHashes.empty(
           ~confirmedBlockThreshold=chainConfig.confirmedBlockThreshold,
@@ -751,439 +749,444 @@ let checkAndFetchForChain = (
   //required args
   ~state,
   ~dispatchAction,
-) => async chain => {
-  let chainFetcher = state.chainManager.chainFetchers->ChainMap.get(chain)
-  if !isRollingBack(state) {
-    let {currentBlockHeight, fetchState} = chainFetcher
+) =>
+  async chain => {
+    let chainFetcher = state.chainManager.chainFetchers->ChainMap.get(chain)
+    if !isRollingBack(state) {
+      let {currentBlockHeight, fetchState} = chainFetcher
 
-    await chainFetcher.sourceManager->SourceManager.fetchNext(
-      ~fetchState,
-      ~waitForNewBlock=(~currentBlockHeight) =>
-        chainFetcher.sourceManager->waitForNewBlock(~currentBlockHeight),
-      ~onNewBlock=(~currentBlockHeight) =>
-        dispatchAction(FinishWaitingForNewBlock({chain, currentBlockHeight})),
-      ~currentBlockHeight,
-      ~executeQuery=async query => {
-        try {
-          let response = await chainFetcher.sourceManager->executeQuery(~query, ~currentBlockHeight)
-          dispatchAction(PartitionQueryResponse({chain, response, query}))
-        } catch {
-        | exn => dispatchAction(ErrorExit(exn->ErrorHandling.make))
-        }
-      },
-      ~maxPerChainQueueSize=state.maxPerChainQueueSize,
-      ~stateId=state.id,
-    )
+      await chainFetcher.sourceManager->SourceManager.fetchNext(
+        ~fetchState,
+        ~waitForNewBlock=(~currentBlockHeight) =>
+          chainFetcher.sourceManager->waitForNewBlock(~currentBlockHeight),
+        ~onNewBlock=(~currentBlockHeight) =>
+          dispatchAction(FinishWaitingForNewBlock({chain, currentBlockHeight})),
+        ~currentBlockHeight,
+        ~executeQuery=async query => {
+          try {
+            let response =
+              await chainFetcher.sourceManager->executeQuery(~query, ~currentBlockHeight)
+            dispatchAction(PartitionQueryResponse({chain, response, query}))
+          } catch {
+          | exn => dispatchAction(ErrorExit(exn->ErrorHandling.make))
+          }
+        },
+        ~maxPerChainQueueSize=state.maxPerChainQueueSize,
+        ~stateId=state.id,
+      )
+    }
   }
-}
 
 let injectedTaskReducer = (
   //Used for dependency injection for tests
   ~waitForNewBlock,
   ~executeQuery,
   ~getLastKnownValidBlock,
-) => async (
-  //required args
-  state: t,
-  task: task,
-  ~dispatchAction,
-) => {
-  switch task {
-  | UpdateEndOfBlockRangeScannedData({
-      chain,
-      blockNumberThreshold,
-      nextEndOfBlockRangeScannedData,
-    }) =>
-    let timeRef = Hrtime.makeTimer()
-    await Db.sql->DbFunctions.EndOfBlockRangeScannedData.setEndOfBlockRangeScannedData(
-      nextEndOfBlockRangeScannedData,
-    )
-
-    if Env.Benchmark.shouldSaveData {
-      let elapsedTimeMillis = Hrtime.timeSince(timeRef)->Hrtime.toMillis->Hrtime.intFromMillis
-      Benchmark.addSummaryData(
-        ~group="Other",
-        ~label=`Chain ${chain->ChainMap.Chain.toString} UpdateEndOfBlockRangeScannedData (ms)`,
-        ~value=elapsedTimeMillis->Belt.Int.toFloat,
-      )
-    }
-
-    //These prune functions can be scheduled and throttled if a more recent prune function gets called
-    //before the current one is executed
-    let runPrune = async () => {
+) =>
+  async (
+    //required args
+    state: t,
+    task: task,
+    ~dispatchAction,
+  ) => {
+    switch task {
+    | UpdateEndOfBlockRangeScannedData({
+        chain,
+        blockNumberThreshold,
+        nextEndOfBlockRangeScannedData,
+      }) =>
       let timeRef = Hrtime.makeTimer()
-      await Db.sql->DbFunctions.EndOfBlockRangeScannedData.deleteStaleEndOfBlockRangeScannedDataForChain(
-        ~chainId=chain->ChainMap.Chain.toChainId,
-        ~blockNumberThreshold,
+      await Db.sql->DbFunctions.EndOfBlockRangeScannedData.setEndOfBlockRangeScannedData(
+        nextEndOfBlockRangeScannedData,
       )
 
       if Env.Benchmark.shouldSaveData {
         let elapsedTimeMillis = Hrtime.timeSince(timeRef)->Hrtime.toMillis->Hrtime.intFromMillis
         Benchmark.addSummaryData(
           ~group="Other",
-          ~label=`Chain ${chain->ChainMap.Chain.toString} PruneStaleData (ms)`,
+          ~label=`Chain ${chain->ChainMap.Chain.toString} UpdateEndOfBlockRangeScannedData (ms)`,
           ~value=elapsedTimeMillis->Belt.Int.toFloat,
         )
       }
-    }
 
-    let throttler = state.writeThrottlers.pruneStaleEndBlockData->ChainMap.get(chain)
-    throttler->Throttler.schedule(runPrune)
-  | PruneStaleEntityHistory =>
-    let runPrune = async () => {
-      let safeChainIdAndBlockNumberArray =
-        state.chainManager->ChainManager.getSafeChainIdAndBlockNumberArray
-
-      if safeChainIdAndBlockNumberArray->Belt.Array.length > 0 {
-        let shouldDeepClean = if (
-          state.writeThrottlers.deepCleanCount ==
-            Env.ThrottleWrites.deepCleanEntityHistoryCycleCount
-        ) {
-          state.writeThrottlers.deepCleanCount = 0
-          true
-        } else {
-          state.writeThrottlers.deepCleanCount = state.writeThrottlers.deepCleanCount + 1
-          false
-        }
+      //These prune functions can be scheduled and throttled if a more recent prune function gets called
+      //before the current one is executed
+      let runPrune = async () => {
         let timeRef = Hrtime.makeTimer()
-        let _ = await Promise.all(
-          Entities.allEntities->Belt.Array.map(entityMod => {
-            let module(Entity) = entityMod
-            Db.sql->DbFunctions.EntityHistory.pruneStaleEntityHistory(
-              ~entityName=Entity.name,
-              ~safeChainIdAndBlockNumberArray,
-              ~shouldDeepClean,
-            )
-          }),
+        await Db.sql->DbFunctions.EndOfBlockRangeScannedData.deleteStaleEndOfBlockRangeScannedDataForChain(
+          ~chainId=chain->ChainMap.Chain.toChainId,
+          ~blockNumberThreshold,
         )
 
         if Env.Benchmark.shouldSaveData {
-          let elapsedTimeMillis = Hrtime.timeSince(timeRef)->Hrtime.toMillis->Hrtime.floatFromMillis
-
+          let elapsedTimeMillis = Hrtime.timeSince(timeRef)->Hrtime.toMillis->Hrtime.intFromMillis
           Benchmark.addSummaryData(
             ~group="Other",
-            ~label="Prune Stale History Time (ms)",
-            ~value=elapsedTimeMillis,
+            ~label=`Chain ${chain->ChainMap.Chain.toString} PruneStaleData (ms)`,
+            ~value=elapsedTimeMillis->Belt.Int.toFloat,
           )
         }
       }
-    }
-    state.writeThrottlers.pruneStaleEntityHistory->Throttler.schedule(runPrune)
 
-  | UpdateChainMetaDataAndCheckForExit(shouldExit) =>
-    let {chainManager, writeThrottlers} = state
-    switch shouldExit {
-    | ExitWithSuccess =>
-      updateChainMetadataTable(chainManager, ~throttler=writeThrottlers.chainMetaData)
-      ->Promise.thenResolve(_ => dispatchAction(SuccessExit))
-      ->ignore
-    | NoExit =>
-      updateChainMetadataTable(chainManager, ~throttler=writeThrottlers.chainMetaData)->ignore
-    }
-  | NextQuery(chainCheck) =>
-    let fetchForChain = checkAndFetchForChain(
-      ~waitForNewBlock,
-      ~executeQuery,
-      ~state,
-      ~dispatchAction,
-    )
+      let throttler = state.writeThrottlers.pruneStaleEndBlockData->ChainMap.get(chain)
+      throttler->Throttler.schedule(runPrune)
+    | PruneStaleEntityHistory =>
+      let runPrune = async () => {
+        let safeChainIdAndBlockNumberArray =
+          state.chainManager->ChainManager.getSafeChainIdAndBlockNumberArray
 
-    switch chainCheck {
-    | Chain(chain) => await chain->fetchForChain
-    | CheckAllChains =>
-      //Mapping from the states chainManager so we can construct tests that don't use
-      //all chains
-      let _ =
-        await state.chainManager.chainFetchers
-        ->ChainMap.keys
-        ->Array.map(fetchForChain(_))
-        ->Promise.all
-    }
-  | PreRegisterDynamicContracts =>
-    let startIndexingAfterPreRegister = async () => {
-      //Persisted event sync state needs to reset before starting indexing
-      //otherwise crash and restart will have stale sync state from pre-registration
-      await DbFunctions.EventSyncState.resetEventSyncState()
-      dispatchAction(StartIndexingAfterPreRegister)
-    }
-    if !state.currentlyProcessingBatch && !isRollingBack(state) {
-      switch state.chainManager->ChainManager.createBatch(
-        ~maxBatchSize=state.maxBatchSize,
-        ~onlyBelowReorgThreshold=true,
-      ) {
-      | {val: Some({batch, fetchStatesMap, arbitraryEventQueue})} =>
-        dispatchAction(SetCurrentlyProcessing(true))
-        dispatchAction(UpdateQueues(fetchStatesMap, arbitraryEventQueue))
-        let latestProcessedBlocks = EventProcessing.EventsProcessed.makeFromChainManager(
-          state.chainManager,
-        )
-
-        let checkContractIsRegistered = (
-          ~chain,
-          ~contractAddress,
-          ~contractName: Enums.ContractType.t,
-        ) => {
-          let chainFetcher = state.chainManager.chainFetchers->ChainMap.get(chain)
-
-          switch chainFetcher.dynamicContractPreRegistration->Option.flatMap(
-            Js.Dict.get(_, contractAddress->Address.toString),
+        if safeChainIdAndBlockNumberArray->Belt.Array.length > 0 {
+          let shouldDeepClean = if (
+            state.writeThrottlers.deepCleanCount ==
+              Env.ThrottleWrites.deepCleanEntityHistoryCycleCount
           ) {
-          | Some({contractType}) =>
-            FetchState.warnIfAttemptedAddressRegisterOnDifferentContracts(
-              ~contractAddress,
-              ~contractName=(contractName :> string),
-              ~existingContractName=(contractType :> string),
-              ~chainId=chain->ChainMap.Chain.toChainId,
-            )
+            state.writeThrottlers.deepCleanCount = 0
             true
-          | None => false
+          } else {
+            state.writeThrottlers.deepCleanCount = state.writeThrottlers.deepCleanCount + 1
+            false
+          }
+          let timeRef = Hrtime.makeTimer()
+          let _ = await Promise.all(
+            Entities.allEntities->Belt.Array.map(entityMod => {
+              let module(Entity) = entityMod
+              Db.sql->DbFunctions.EntityHistory.pruneStaleEntityHistory(
+                ~entityName=Entity.name,
+                ~safeChainIdAndBlockNumberArray,
+                ~shouldDeepClean,
+              )
+            }),
+          )
+
+          if Env.Benchmark.shouldSaveData {
+            let elapsedTimeMillis =
+              Hrtime.timeSince(timeRef)->Hrtime.toMillis->Hrtime.floatFromMillis
+
+            Benchmark.addSummaryData(
+              ~group="Other",
+              ~label="Prune Stale History Time (ms)",
+              ~value=elapsedTimeMillis,
+            )
           }
         }
-
-        switch await EventProcessing.getDynamicContractRegistrations(
-          ~latestProcessedBlocks,
-          ~eventBatch=batch,
-          ~checkContractIsRegistered,
-          ~config=state.config,
-        ) {
-        | Ok(batchProcessed) => dispatchAction(DynamicContractPreRegisterProcessed(batchProcessed))
-        | Error(errHandler) => dispatchAction(ErrorExit(errHandler))
-        | exception exn =>
-          //All casese should be handled/caught before this with better user messaging.
-          //This is just a safety in case something unexpected happens
-          let errHandler =
-            exn->ErrorHandling.make(
-              ~msg="A top level unexpected error occurred during pre registration of dynamic contracts",
-            )
-          dispatchAction(ErrorExit(errHandler))
-        }
-      | {isInReorgThreshold: true, val: None} =>
-        //pre registration is done, we've hit the multichain reorg threshold
-        //on the last batch and there are no items on the queue
-        await startIndexingAfterPreRegister()
-      | {val: None} if state.chainManager->ChainManager.isFetchingAtHead =>
-        //pre registration is done, there are no items on the queue and we are fetching at head
-        //this case is only hit if we are indexing chains with no reorg threshold
-        await startIndexingAfterPreRegister()
-      | {val: None} if !(state.chainManager->ChainManager.isActivelyIndexing) =>
-        //pre registration is done, there are no items on the queue
-        //this case is hit when there's a chain with an endBlock
-        await startIndexingAfterPreRegister()
-      | _ => () //Nothing to process and pre registration is not done
       }
-    }
-  | ProcessEventBatch =>
-    if !state.currentlyProcessingBatch && !isRollingBack(state) {
-      //Allows us to process events all the way up until we hit the reorg threshold
-      //across all chains before starting to capture entity history
-      let onlyBelowReorgThreshold = if state.config->Config.shouldRollbackOnReorg {
-        state.chainManager.isInReorgThreshold ? false : true
-      } else {
-        false
-      }
+      state.writeThrottlers.pruneStaleEntityHistory->Throttler.schedule(runPrune)
 
-      let batch =
-        state.chainManager->ChainManager.createBatch(
+    | UpdateChainMetaDataAndCheckForExit(shouldExit) =>
+      let {chainManager, writeThrottlers} = state
+      switch shouldExit {
+      | ExitWithSuccess =>
+        updateChainMetadataTable(chainManager, ~throttler=writeThrottlers.chainMetaData)
+        ->Promise.thenResolve(_ => dispatchAction(SuccessExit))
+        ->ignore
+      | NoExit =>
+        updateChainMetadataTable(chainManager, ~throttler=writeThrottlers.chainMetaData)->ignore
+      }
+    | NextQuery(chainCheck) =>
+      let fetchForChain = checkAndFetchForChain(
+        ~waitForNewBlock,
+        ~executeQuery,
+        ~state,
+        ~dispatchAction,
+      )
+
+      switch chainCheck {
+      | Chain(chain) => await chain->fetchForChain
+      | CheckAllChains =>
+        //Mapping from the states chainManager so we can construct tests that don't use
+        //all chains
+        let _ =
+          await state.chainManager.chainFetchers
+          ->ChainMap.keys
+          ->Array.map(fetchForChain(_))
+          ->Promise.all
+      }
+    | PreRegisterDynamicContracts =>
+      let startIndexingAfterPreRegister = async () => {
+        //Persisted event sync state needs to reset before starting indexing
+        //otherwise crash and restart will have stale sync state from pre-registration
+        await DbFunctions.EventSyncState.resetEventSyncState()
+        dispatchAction(StartIndexingAfterPreRegister)
+      }
+      if !state.currentlyProcessingBatch && !isRollingBack(state) {
+        switch state.chainManager->ChainManager.createBatch(
           ~maxBatchSize=state.maxBatchSize,
-          ~onlyBelowReorgThreshold,
-        )
-
-      let handleBatch = async (
-        batch: ChainManager.isInReorgThresholdRes<option<ChainManager.batchRes>>,
-      ) => {
-        switch batch {
-        | {isInReorgThreshold, val: Some({batch, fetchStatesMap, arbitraryEventQueue})} =>
+          ~onlyBelowReorgThreshold=true,
+        ) {
+        | {val: Some({batch, fetchStatesMap, arbitraryEventQueue})} =>
           dispatchAction(SetCurrentlyProcessing(true))
           dispatchAction(UpdateQueues(fetchStatesMap, arbitraryEventQueue))
-          if (
-            state.config->Config.shouldRollbackOnReorg &&
-            isInReorgThreshold &&
-            !state.chainManager.isInReorgThreshold
-          ) {
-            //On the first time we enter the reorg threshold, copy all entities to entity history
-            //And set the isInReorgThreshold isInReorgThreshold state to true
-            dispatchAction(SetIsInReorgThreshold(true))
-          }
+          let latestProcessedBlocks = EventProcessing.EventsProcessed.makeFromChainManager(
+            state.chainManager,
+          )
 
-          let isInReorgThreshold = state.chainManager.isInReorgThreshold || isInReorgThreshold
-
-          // This function is used to ensure that registering an alreday existing contract as a dynamic contract can't cause issues.
           let checkContractIsRegistered = (
             ~chain,
             ~contractAddress,
             ~contractName: Enums.ContractType.t,
           ) => {
-            let {fetchState} = fetchStatesMap->ChainMap.get(chain)
-            fetchState->FetchState.checkContainsRegisteredContractAddress(
-              ~contractAddress,
-              ~contractName=(contractName :> string),
-              ~chainId=chain->ChainMap.Chain.toChainId,
-            )
+            let chainFetcher = state.chainManager.chainFetchers->ChainMap.get(chain)
+
+            switch chainFetcher.dynamicContractPreRegistration->Option.flatMap(
+              Js.Dict.get(_, contractAddress->Address.toString),
+            ) {
+            | Some({contractType}) =>
+              FetchState.warnIfAttemptedAddressRegisterOnDifferentContracts(
+                ~contractAddress,
+                ~contractName=(contractName :> string),
+                ~existingContractName=(contractType :> string),
+                ~chainId=chain->ChainMap.Chain.toChainId,
+              )
+              true
+            | None => false
+            }
           }
 
-          let latestProcessedBlocks = EventProcessing.EventsProcessed.makeFromChainManager(
-            state.chainManager,
-          )
-
-          //In the case of a rollback, use the provided in memory store
-          //With rolled back values
-          let rollbackInMemStore = switch state.rollbackState {
-          | RollbackInMemStore(inMemoryStore) => Some(inMemoryStore)
-          | NoRollback
-          | RollingBack(
-            _,
-          ) /* This is an impossible case due to the surrounding if statement check */ =>
-            None
-          }
-
-          let inMemoryStore = rollbackInMemStore->Option.getWithDefault(InMemoryStore.make())
-
-          switch await EventProcessing.processEventBatch(
-            ~eventBatch=batch,
-            ~inMemoryStore,
-            ~isInReorgThreshold,
-            ~checkContractIsRegistered,
+          switch await EventProcessing.getDynamicContractRegistrations(
             ~latestProcessedBlocks,
-            ~loadLayer=state.loadLayer,
+            ~eventBatch=batch,
+            ~checkContractIsRegistered,
             ~config=state.config,
           ) {
+          | Ok(batchProcessed) =>
+            dispatchAction(DynamicContractPreRegisterProcessed(batchProcessed))
+          | Error(errHandler) => dispatchAction(ErrorExit(errHandler))
           | exception exn =>
             //All casese should be handled/caught before this with better user messaging.
             //This is just a safety in case something unexpected happens
             let errHandler =
               exn->ErrorHandling.make(
-                ~msg="A top level unexpected error occurred during processing",
+                ~msg="A top level unexpected error occurred during pre registration of dynamic contracts",
               )
             dispatchAction(ErrorExit(errHandler))
-          | res =>
-            if rollbackInMemStore->Option.isSome {
-              //if the batch was executed with a rollback inMemoryStore
-              //reset the rollback state once the batch has been processed
-              dispatchAction(ResetRollbackState)
-            }
-            switch res {
-            | Ok(loadRes) => dispatchAction(EventBatchProcessed(loadRes))
-            | Error(errHandler) => dispatchAction(ErrorExit(errHandler))
-            }
           }
-        | {val: None} => dispatchAction(SetSyncedChains) //Known that there are no items available on the queue so safely call this action
+        | {isInReorgThreshold: true, val: None} =>
+          //pre registration is done, we've hit the multichain reorg threshold
+          //on the last batch and there are no items on the queue
+          await startIndexingAfterPreRegister()
+        | {val: None} if state.chainManager->ChainManager.isFetchingAtHead =>
+          //pre registration is done, there are no items on the queue and we are fetching at head
+          //this case is only hit if we are indexing chains with no reorg threshold
+          await startIndexingAfterPreRegister()
+        | {val: None} if !(state.chainManager->ChainManager.isActivelyIndexing) =>
+          //pre registration is done, there are no items on the queue
+          //this case is hit when there's a chain with an endBlock
+          await startIndexingAfterPreRegister()
+        | _ => () //Nothing to process and pre registration is not done
         }
       }
+    | ProcessEventBatch =>
+      if !state.currentlyProcessingBatch && !isRollingBack(state) {
+        //Allows us to process events all the way up until we hit the reorg threshold
+        //across all chains before starting to capture entity history
+        let onlyBelowReorgThreshold = if state.config->Config.shouldRollbackOnReorg {
+          state.chainManager.isInReorgThreshold ? false : true
+        } else {
+          false
+        }
 
-      switch batch {
-      | {isInReorgThreshold: true, val: None} if onlyBelowReorgThreshold =>
-        dispatchAction(SetIsInReorgThreshold(true))
         let batch =
           state.chainManager->ChainManager.createBatch(
             ~maxBatchSize=state.maxBatchSize,
-            ~onlyBelowReorgThreshold=false,
+            ~onlyBelowReorgThreshold,
           )
-        await handleBatch(batch)
-      | _ => await handleBatch(batch)
+
+        let handleBatch = async (
+          batch: ChainManager.isInReorgThresholdRes<option<ChainManager.batchRes>>,
+        ) => {
+          switch batch {
+          | {isInReorgThreshold, val: Some({batch, fetchStatesMap, arbitraryEventQueue})} =>
+            dispatchAction(SetCurrentlyProcessing(true))
+            dispatchAction(UpdateQueues(fetchStatesMap, arbitraryEventQueue))
+            if (
+              state.config->Config.shouldRollbackOnReorg &&
+              isInReorgThreshold &&
+              !state.chainManager.isInReorgThreshold
+            ) {
+              //On the first time we enter the reorg threshold, copy all entities to entity history
+              //And set the isInReorgThreshold isInReorgThreshold state to true
+              dispatchAction(SetIsInReorgThreshold(true))
+            }
+
+            let isInReorgThreshold = state.chainManager.isInReorgThreshold || isInReorgThreshold
+
+            // This function is used to ensure that registering an alreday existing contract as a dynamic contract can't cause issues.
+            let checkContractIsRegistered = (
+              ~chain,
+              ~contractAddress,
+              ~contractName: Enums.ContractType.t,
+            ) => {
+              let {fetchState} = fetchStatesMap->ChainMap.get(chain)
+              fetchState->FetchState.checkContainsRegisteredContractAddress(
+                ~contractAddress,
+                ~contractName=(contractName :> string),
+                ~chainId=chain->ChainMap.Chain.toChainId,
+              )
+            }
+
+            let latestProcessedBlocks = EventProcessing.EventsProcessed.makeFromChainManager(
+              state.chainManager,
+            )
+
+            //In the case of a rollback, use the provided in memory store
+            //With rolled back values
+            let rollbackInMemStore = switch state.rollbackState {
+            | RollbackInMemStore(inMemoryStore) => Some(inMemoryStore)
+            | NoRollback
+            | RollingBack(
+              _,
+            ) /* This is an impossible case due to the surrounding if statement check */ =>
+              None
+            }
+
+            let inMemoryStore = rollbackInMemStore->Option.getOr(InMemoryStore.make())
+
+            switch await EventProcessing.processEventBatch(
+              ~eventBatch=batch,
+              ~inMemoryStore,
+              ~isInReorgThreshold,
+              ~checkContractIsRegistered,
+              ~latestProcessedBlocks,
+              ~loadLayer=state.loadLayer,
+              ~config=state.config,
+            ) {
+            | exception exn =>
+              //All casese should be handled/caught before this with better user messaging.
+              //This is just a safety in case something unexpected happens
+              let errHandler =
+                exn->ErrorHandling.make(
+                  ~msg="A top level unexpected error occurred during processing",
+                )
+              dispatchAction(ErrorExit(errHandler))
+            | res =>
+              if rollbackInMemStore->Option.isSome {
+                //if the batch was executed with a rollback inMemoryStore
+                //reset the rollback state once the batch has been processed
+                dispatchAction(ResetRollbackState)
+              }
+              switch res {
+              | Ok(loadRes) => dispatchAction(EventBatchProcessed(loadRes))
+              | Error(errHandler) => dispatchAction(ErrorExit(errHandler))
+              }
+            }
+          | {val: None} => dispatchAction(SetSyncedChains) //Known that there are no items available on the queue so safely call this action
+          }
+        }
+
+        switch batch {
+        | {isInReorgThreshold: true, val: None} if onlyBelowReorgThreshold =>
+          dispatchAction(SetIsInReorgThreshold(true))
+          let batch =
+            state.chainManager->ChainManager.createBatch(
+              ~maxBatchSize=state.maxBatchSize,
+              ~onlyBelowReorgThreshold=false,
+            )
+          await handleBatch(batch)
+        | _ => await handleBatch(batch)
+        }
       }
-    }
-  | Rollback =>
-    //If it isn't processing a batch currently continue with rollback otherwise wait for current batch to finish processing
-    switch state {
-    | {currentlyProcessingBatch: false, rollbackState: RollingBack(reorgChain)} =>
-      let chainFetcher = state.chainManager.chainFetchers->ChainMap.get(reorgChain)
+    | Rollback =>
+      //If it isn't processing a batch currently continue with rollback otherwise wait for current batch to finish processing
+      switch state {
+      | {currentlyProcessingBatch: false, rollbackState: RollingBack(reorgChain)} =>
+        let chainFetcher = state.chainManager.chainFetchers->ChainMap.get(reorgChain)
 
-      let {
-        blockNumber: lastKnownValidBlockNumber,
-        blockTimestamp: lastKnownValidBlockTimestamp,
-      }: ReorgDetection.blockDataWithTimestamp =
-        await chainFetcher->getLastKnownValidBlock
+        let {
+          blockNumber: lastKnownValidBlockNumber,
+          blockTimestamp: lastKnownValidBlockTimestamp,
+        }: ReorgDetection.blockDataWithTimestamp =
+          await chainFetcher->getLastKnownValidBlock
 
-      chainFetcher.logger->Logging.childInfo({
-        "msg": "Executing indexer rollback",
-        "targetBlockNumber": lastKnownValidBlockNumber,
-        "targetBlockTimestamp": lastKnownValidBlockTimestamp,
-      })
+        chainFetcher.logger->Logging.childInfo({
+          "msg": "Executing indexer rollback",
+          "targetBlockNumber": lastKnownValidBlockNumber,
+          "targetBlockTimestamp": lastKnownValidBlockTimestamp,
+        })
 
-      let isUnorderedMultichainMode = state.config.isUnorderedMultichainMode
+        let isUnorderedMultichainMode = state.config.isUnorderedMultichainMode
 
-      let reorgChainId = reorgChain->ChainMap.Chain.toChainId
+        let reorgChainId = reorgChain->ChainMap.Chain.toChainId
 
-      //Get the first change event that occurred on each chain after the last known valid block
-      //Uses a different method depending on if the reorg chain is ordered or unordered
-      let firstChangeEventIdentifierPerChain =
-        await Db.sql->DbFunctions.EntityHistory.getFirstChangeEventPerChain(
-          isUnorderedMultichainMode
-            ? UnorderedMultichain({
-                reorgChainId,
-                safeBlockNumber: lastKnownValidBlockNumber,
-              })
-            : OrderedMultichain({
-                safeBlockTimestamp: lastKnownValidBlockTimestamp,
-                reorgChainId,
-                safeBlockNumber: lastKnownValidBlockNumber,
-              }),
+        //Get the first change event that occurred on each chain after the last known valid block
+        //Uses a different method depending on if the reorg chain is ordered or unordered
+        let firstChangeEventIdentifierPerChain =
+          await Db.sql->DbFunctions.EntityHistory.getFirstChangeEventPerChain(
+            isUnorderedMultichainMode
+              ? UnorderedMultichain({
+                  reorgChainId,
+                  safeBlockNumber: lastKnownValidBlockNumber,
+                })
+              : OrderedMultichain({
+                  safeBlockTimestamp: lastKnownValidBlockTimestamp,
+                  reorgChainId,
+                  safeBlockNumber: lastKnownValidBlockNumber,
+                }),
+          )
+
+        firstChangeEventIdentifierPerChain->DbFunctions.EntityHistory.FirstChangeEventPerChain.setIfEarlier(
+          ~chainId=reorgChainId,
+          ~event={
+            blockNumber: lastKnownValidBlockNumber + 1,
+            logIndex: 0,
+          },
         )
 
-      firstChangeEventIdentifierPerChain->DbFunctions.EntityHistory.FirstChangeEventPerChain.setIfEarlier(
-        ~chainId=reorgChainId,
-        ~event={
-          blockNumber: lastKnownValidBlockNumber + 1,
-          logIndex: 0,
-        },
-      )
+        let chainFetchers = state.chainManager.chainFetchers->ChainMap.mapWithKey((chain, cf) => {
+          switch firstChangeEventIdentifierPerChain->DbFunctions.EntityHistory.FirstChangeEventPerChain.get(
+            ~chainId=chain->ChainMap.Chain.toChainId,
+          ) {
+          | Some(firstChangeEvent) =>
+            let fetchState = cf.fetchState->FetchState.rollback(~firstChangeEvent)
 
-      let chainFetchers = state.chainManager.chainFetchers->ChainMap.mapWithKey((chain, cf) => {
-        switch firstChangeEventIdentifierPerChain->DbFunctions.EntityHistory.FirstChangeEventPerChain.get(
-          ~chainId=chain->ChainMap.Chain.toChainId,
-        ) {
-        | Some(firstChangeEvent) =>
-          let fetchState = cf.fetchState->FetchState.rollback(~firstChangeEvent)
-
-          let rolledBackCf = {
-            ...cf,
-            lastBlockScannedHashes: chain == reorgChain
-              ? cf.lastBlockScannedHashes->ReorgDetection.LastBlockScannedHashes.rollbackToValidBlockNumber(
-                  ~blockNumber=lastKnownValidBlockNumber,
-                )
-              : cf.lastBlockScannedHashes,
-            fetchState,
+            let rolledBackCf = {
+              ...cf,
+              lastBlockScannedHashes: chain == reorgChain
+                ? cf.lastBlockScannedHashes->ReorgDetection.LastBlockScannedHashes.rollbackToValidBlockNumber(
+                    ~blockNumber=lastKnownValidBlockNumber,
+                  )
+                : cf.lastBlockScannedHashes,
+              fetchState,
+            }
+            //On other chains, filter out evennts based on the first change present on the chain after the reorg
+            rolledBackCf->ChainFetcher.addProcessingFilter(
+              ~filter=eventItem => {
+                //Filter out events that occur passed the block where the query starts but
+                //are lower than the timestamp where we rolled back to
+                (eventItem.blockNumber, eventItem.logIndex) >=
+                (firstChangeEvent.blockNumber, firstChangeEvent.logIndex)
+              },
+              ~isValid=(~fetchState) => {
+                //Remove the event filter once the fetchState has fetched passed the
+                //blockNumber of the valid first change event
+                let {blockNumber} = FetchState.getLatestFullyFetchedBlock(fetchState)
+                blockNumber <= firstChangeEvent.blockNumber
+              },
+            )
+          | None => //If no change was produced on the given chain after the reorged chain, no need to rollback anything
+            cf
           }
-          //On other chains, filter out evennts based on the first change present on the chain after the reorg
-          rolledBackCf->ChainFetcher.addProcessingFilter(
-            ~filter=eventItem => {
-              //Filter out events that occur passed the block where the query starts but
-              //are lower than the timestamp where we rolled back to
-              (eventItem.blockNumber, eventItem.logIndex) >=
-              (firstChangeEvent.blockNumber, firstChangeEvent.logIndex)
-            },
-            ~isValid=(~fetchState) => {
-              //Remove the event filter once the fetchState has fetched passed the
-              //blockNumber of the valid first change event
-              let {blockNumber} = FetchState.getLatestFullyFetchedBlock(fetchState)
-              blockNumber <= firstChangeEvent.blockNumber
-            },
-          )
-        | None => //If no change was produced on the given chain after the reorged chain, no need to rollback anything
-          cf
+        })
+
+        //Construct a rolledback in Memory store
+        let inMemoryStore = await IO.RollBack.rollBack(
+          ~chainId=reorgChain->ChainMap.Chain.toChainId,
+          ~blockTimestamp=lastKnownValidBlockTimestamp,
+          ~blockNumber=lastKnownValidBlockNumber,
+          ~logIndex=0,
+          ~isUnorderedMultichainMode,
+        )
+
+        let chainManager = {
+          ...state.chainManager,
+          chainFetchers,
         }
-      })
 
-      //Construct a rolledback in Memory store
-      let inMemoryStore = await IO.RollBack.rollBack(
-        ~chainId=reorgChain->ChainMap.Chain.toChainId,
-        ~blockTimestamp=lastKnownValidBlockTimestamp,
-        ~blockNumber=lastKnownValidBlockNumber,
-        ~logIndex=0,
-        ~isUnorderedMultichainMode,
-      )
+        dispatchAction(SetRollbackState(inMemoryStore, chainManager))
 
-      let chainManager = {
-        ...state.chainManager,
-        chainFetchers,
+      | _ => Logging.info("Waiting for batch to finish processing before executing rollback") //wait for batch to finish processing
       }
-
-      dispatchAction(SetRollbackState(inMemoryStore, chainManager))
-
-    | _ => Logging.info("Waiting for batch to finish processing before executing rollback") //wait for batch to finish processing
     }
   }
-}
 
 let taskReducer = injectedTaskReducer(
   ~waitForNewBlock=SourceManager.waitForNewBlock,

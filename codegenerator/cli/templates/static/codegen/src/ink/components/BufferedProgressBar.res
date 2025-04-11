@@ -10,7 +10,7 @@ let make = (~loaded, ~buffered=?, ~outOf, ~barWidth=36, ~loadingColor=Style.Seco
     maxCount,
   )
 
-  let bufferedCount = buffered->Option.mapWithDefault(loadedCount, buffered => {
+  let bufferedCount = buffered->Option.mapOr(loadedCount, buffered => {
     let bufferedFraction = buffered->Int.toFloat /. outOf->Int.toFloat
     Pervasives.min(
       Js.Math.floor_float(maxCount->Js.Int.toFloat *. bufferedFraction)->Belt.Float.toInt,

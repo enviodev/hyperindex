@@ -1,5 +1,3 @@
-
-
 type t = {
   chainFetchers: ChainMap.t<ChainFetcher.t>,
   //Holds arbitrary events that were added when a batch ended processing early
@@ -76,24 +74,25 @@ type fetchStateWithData = {
 
 let isQueueItemEarlierUnorderedBelowReorgThreshold = (
   ~fetchStatesMap: ChainMap.t<fetchStateWithData>,
-) => (a: multiChainEventComparitor, b: multiChainEventComparitor) => {
-  let isItemBelowReorgThreshold = item => {
-    let data = fetchStatesMap->ChainMap.get(item.chain)
-    item.earliestEvent->FetchState.queueItemIsInReorgThreshold(
-      ~currentBlockHeight=data.currentBlockHeight,
-      ~heighestBlockBelowThreshold=data.heighestBlockBelowThreshold,
-    )
+) =>
+  (a: multiChainEventComparitor, b: multiChainEventComparitor) => {
+    let isItemBelowReorgThreshold = item => {
+      let data = fetchStatesMap->ChainMap.get(item.chain)
+      item.earliestEvent->FetchState.queueItemIsInReorgThreshold(
+        ~currentBlockHeight=data.currentBlockHeight,
+        ~heighestBlockBelowThreshold=data.heighestBlockBelowThreshold,
+      )
+    }
+    // The idea here is if we are in undordered multichain mode, always prioritize queue
+    // items that are below the reorg threshold. That way we can register contracts all
+    // the way up to the threshold on all chains before starting.
+    // Similarly we wait till all chains are at their threshold before saving entity history.
+    switch (a->isItemBelowReorgThreshold, b->isItemBelowReorgThreshold) {
+    | (false, true) => true
+    | (true, false) => false
+    | _ => isQueueItemEarlierUnorderedMultichain(a, b)
+    }
   }
-  // The idea here is if we are in undordered multichain mode, always prioritize queue
-  // items that are below the reorg threshold. That way we can register contracts all
-  // the way up to the threshold on all chains before starting.
-  // Similarly we wait till all chains are at their threshold before saving entity history.
-  switch (a->isItemBelowReorgThreshold, b->isItemBelowReorgThreshold) {
-  | (false, true) => true
-  | (true, false) => false
-  | _ => isQueueItemEarlierUnorderedMultichain(a, b)
-  }
-}
 
 let determineNextEvent = (
   fetchStatesMap: ChainMap.t<fetchStateWithData>,
@@ -291,6 +290,7 @@ let popBatchItem = (
           | Some({val: anotherChainArbVal, isInReorgThreshold})
             if {
               let anotherChain = anotherChainArbVal.item.chain
+
               // This is unreachable because of the maybeArbItem->Option.isNone check above
               // Keep it just in case the logic is changed
               if anotherChain === chain {
@@ -326,7 +326,7 @@ let popBatchItem = (
   | Error(NoActiveChains) =>
     arbitraryEventQueue
     ->getFirstArbitraryEventsItem(~fetchStatesMap)
-    ->Option.mapWithDefault({val: None, isInReorgThreshold: false}, ({val, isInReorgThreshold}) => {
+    ->Option.mapOr({val: None, isInReorgThreshold: false}, ({val, isInReorgThreshold}) => {
       isInReorgThreshold,
       val: Some(val),
     })

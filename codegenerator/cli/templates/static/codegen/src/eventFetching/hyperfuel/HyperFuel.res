@@ -1,5 +1,3 @@
-
-
 //Manage clients in cache so we don't need to reinstantiate each time
 //Ideally client should be passed in as a param to the functions but
 //we are still sharing the same signature with eth archive query builder
@@ -163,7 +161,7 @@ module GetLogs = {
     let page: logsQueryPage = {
       items: res.data->decodeLogQueryPageItems,
       nextBlock,
-      archiveHeight: archiveHeight->Option.getWithDefault(0), // TODO: FIXME: Shouldn't have a default here
+      archiveHeight: archiveHeight->Option.getOr(0), // TODO: FIXME: Shouldn't have a default here
     }
     page
   }

@@ -1,5 +1,3 @@
-
-
 type t<'key, 'val> = {
   dict: dict<'val>,
   hash: 'key => string,
@@ -215,11 +213,11 @@ module Entity = {
         let res =
           relatedEntityIds
           ->Utils.Set.toArray
-          ->Array.keepMap(entityId => inMemTable->get(entityId)->Utils.Option.flatten)
+          ->Array.filterMap(entityId => inMemTable->get(entityId)->Utils.Option.flatten)
         res
       })
     })
-    ->Option.getWithDefault([])
+    ->Option.getOr([])
   }
 
   let indexDoesNotExists = (inMemTable: t<'entity>, ~index) => {
@@ -287,7 +285,7 @@ module Entity = {
   let values = (inMemTable: t<'entity>) => {
     inMemTable.table
     ->values
-    ->Array.keepMap(rowToEntity)
+    ->Array.filterMap(rowToEntity)
   }
 
   let clone = ({table, fieldNameIndices}: t<'entity>) => {

@@ -1,5 +1,3 @@
-
-
 //A filter should return true if the event should be kept and isValid should return
 //false when the filter should be removed/cleaned up
 type processingFilter = {
@@ -297,7 +295,7 @@ let makeFromDbState = async (
     ~dbFirstEventBlockNumber=firstEventBlockNumber,
     ~latestProcessedBlock=latestProcessedBlockChainMetadata,
     ~timestampCaughtUpToHeadOrEndblock,
-    ~numEventsProcessed=numEventsProcessed->Option.getWithDefault(0),
+    ~numEventsProcessed=numEventsProcessed->Option.getOr(0),
     ~numBatchesFetched=0,
     ~logger,
     ~processingFilters,
@@ -327,7 +325,7 @@ let applyProcessingFilters = (
   items: array<Internal.eventItem>,
   ~processingFilters: array<processingFilter>,
 ) =>
-  items->Array.keep(item => {
+  items->Array.filter(item => {
     processingFilters->Js.Array2.every(processingFilter => processingFilter.filter(item))
   })
 
@@ -337,7 +335,9 @@ let cleanUpProcessingFilters = (
   processingFilters: array<processingFilter>,
   ~fetchState: FetchState.t,
 ) => {
-  switch processingFilters->Array.keep(processingFilter => processingFilter.isValid(~fetchState)) {
+  switch processingFilters->Array.filter(processingFilter =>
+    processingFilter.isValid(~fetchState)
+  ) {
   | [] => None
   | filters => Some(filters)
   }

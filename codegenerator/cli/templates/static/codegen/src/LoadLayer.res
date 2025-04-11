@@ -1,5 +1,3 @@
-
-
 type fieldValue
 
 module BatchQueue = {
@@ -155,7 +153,7 @@ let executeLoadEntitiesByIndex = async (
 
     // TODO: Maybe worth moving the check before the place where we register the load in a batchQueue
     // Need to duble check that it won't resolve an empty index
-    let lookupIndexesNotInMemory = indexesToLoad->Array.keep(({index}) => {
+    let lookupIndexesNotInMemory = indexesToLoad->Array.filter(({index}) => {
       let notInMemory = inMemTable->InMemoryTable.Entity.indexDoesNotExists(~index)
       if notInMemory {
         inMemTable->InMemoryTable.Entity.addEmptyIndex(~index)

@@ -66,7 +66,6 @@ type process
 type mainArgs = Yargs.parsedArgs<args>
 
 let makeAppState = (globalState: GlobalState.t): EnvioInkApp.appState => {
-  
   let chains =
     globalState.chainManager.chainFetchers
     ->ChainMap.values
@@ -76,7 +75,7 @@ let makeAppState = (globalState: GlobalState.t): EnvioInkApp.appState => {
       let hasProcessedToEndblock = cf->ChainFetcher.hasProcessedToEndblock
       let currentBlockHeight =
         cf->ChainFetcher.hasProcessedToEndblock
-          ? cf.chainConfig.endBlock->Option.getWithDefault(cf.currentBlockHeight)
+          ? cf.chainConfig.endBlock->Option.getOr(cf.currentBlockHeight)
           : cf.currentBlockHeight
 
       let progress: ChainData.progress = if hasProcessedToEndblock {
@@ -89,9 +88,9 @@ let makeAppState = (globalState: GlobalState.t): EnvioInkApp.appState => {
         let firstEventBlockNumber = cf->ChainFetcher.getFirstEventBlockNumber
 
         Synced({
-          firstEventBlockNumber: firstEventBlockNumber->Option.getWithDefault(0),
-          latestProcessedBlock: latestProcessedBlock->Option.getWithDefault(currentBlockHeight),
-          timestampCaughtUpToHeadOrEndblock: timestampCaughtUpToHeadOrEndblock->Option.getWithDefault(
+          firstEventBlockNumber: firstEventBlockNumber->Option.getOr(0),
+          latestProcessedBlock: latestProcessedBlock->Option.getOr(currentBlockHeight),
+          timestampCaughtUpToHeadOrEndblock: timestampCaughtUpToHeadOrEndblock->Option.getOr(
             Js.Date.now()->Js.Date.fromFloat,
           ),
           numEventsProcessed,
@@ -105,8 +104,7 @@ let makeAppState = (globalState: GlobalState.t): EnvioInkApp.appState => {
             },
             Some(firstEventBlockNumber),
           ) =>
-          let latestProcessedBlock =
-            latestProcessedBlock->Option.getWithDefault(firstEventBlockNumber)
+          let latestProcessedBlock = latestProcessedBlock->Option.getOr(firstEventBlockNumber)
           Synced({
             firstEventBlockNumber,
             latestProcessedBlock,
@@ -117,8 +115,7 @@ let makeAppState = (globalState: GlobalState.t): EnvioInkApp.appState => {
             {latestProcessedBlock, timestampCaughtUpToHeadOrEndblock: None},
             Some(firstEventBlockNumber),
           ) =>
-          let latestProcessedBlock =
-            latestProcessedBlock->Option.getWithDefault(firstEventBlockNumber)
+          let latestProcessedBlock = latestProcessedBlock->Option.getOr(firstEventBlockNumber)
           Syncing({
             firstEventBlockNumber,
             latestProcessedBlock,
@@ -152,7 +149,7 @@ let main = async () => {
   try {
     let config = RegisterHandlers.registerAllHandlers()
     let mainArgs: mainArgs = process->argv->Yargs.hideBin->Yargs.yargs->Yargs.argv
-    let shouldUseTui = !(mainArgs.tuiOff->Belt.Option.getWithDefault(Env.tuiOffEnvVar))
+    let shouldUseTui = !(mainArgs.tuiOff->Option.getOr(Env.tuiOffEnvVar))
     let sql = Db.sql
     let needsRunUpMigrations = await sql->Migrations.needsRunUpMigrations
     if needsRunUpMigrations {

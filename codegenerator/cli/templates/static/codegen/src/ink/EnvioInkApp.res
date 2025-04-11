@@ -1,6 +1,5 @@
 open Ink
 
-
 type chainData = ChainData.chainData
 type appState = {
   chains: array<ChainData.chainData>,
@@ -39,7 +38,7 @@ module App = {
     <Box flexDirection={Column}>
       <BigText text="envio" colors=[Secondary, Primary] font={Block} />
       {chains
-      ->Array.mapWithIndex((i, chainData) => {
+      ->Array.mapWithIndex((chainData, i) => {
         <ChainData key={i->Int.toString} chainData isPreRegisteringDynamicContracts />
       })
       ->React.array}

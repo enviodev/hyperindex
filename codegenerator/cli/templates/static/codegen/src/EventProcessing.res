@@ -1,5 +1,3 @@
-
-
 module EventsProcessed = {
   type eventsProcessed = {
     numEventsProcessed: int,
@@ -85,7 +83,7 @@ let addToDynamicContractRegistrations = (
       key,
       dynamicContractsByChain
       ->Utils.Dict.dangerouslyGetNonOption(key)
-      ->Option.getWithDefault([])
+      ->Option.getOr([])
       ->Array.concat(dynamicContracts),
     )
   }
@@ -105,9 +103,7 @@ let checkContractIsInCurrentRegistrations = (
   | Some(dynamicContracts) =>
     dynamicContracts.dynamicContractsByChain
     ->Utils.Dict.dangerouslyGetNonOption(chain->ChainMap.Chain.toString)
-    ->Option.mapWithDefault(false, dcs =>
-      dcs->Array.some(dc => dc.contractAddress == contractAddress)
-    )
+    ->Option.mapOr(false, dcs => dcs->Array.some(dc => dc.contractAddress == contractAddress))
 
   | None => false
   }
@@ -416,7 +412,7 @@ let rec registerDynamicContracts = (
   | None => (eventsBeforeDynamicRegistrations, dynamicContractRegistrations)->Ok
   | Some(eventItem) =>
     let dynamicContractRegistrationsResult = if (
-      eventItem.hasRegisteredDynamicContracts->Option.getWithDefault(false)
+      eventItem.hasRegisteredDynamicContracts->Option.getOr(false)
     ) {
       //If an item has already been registered, it would have been
       //put back on the arbitrary events queue and is now being reprocessed
@@ -476,7 +472,7 @@ let runLoaders = (eventBatch: array<Internal.eventItem>, ~loadLayer, ~inMemorySt
     // Still need to propogate the errors.
     let _: array<Internal.loaderReturn> =
       await eventBatch
-      ->Array.keepMap(eventItem => {
+      ->Array.filterMap(eventItem => {
         switch eventItem.eventConfig {
         | {loader: Some(loader)} => {
             let contextEnv = ContextEnv.make(~eventItem, ~logger)

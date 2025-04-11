@@ -459,7 +459,7 @@ impl RescriptTypeIdent {
             Self::Unknown => "S.unknown".to_string(),
             Self::Float => "S.float".to_string(),
             Self::BigInt => match mode {
-                RescriptSchemaMode::ForDb => "BigInt.schema".to_string(),
+                RescriptSchemaMode::ForDb => "Utils.Schema.dbBigint".to_string(),
                 RescriptSchemaMode::ForFieldSelection => "BigInt.nativeSchema".to_string(),
             },
             Self::BigDecimal => "BigDecimal.schema".to_string(),
@@ -735,7 +735,7 @@ mod tests {
         assert_eq!(
             RescriptTypeExpr::Identifier(RescriptTypeIdent::BigInt)
                 .to_rescript_schema(&"eventArgs".to_string(), &RescriptSchemaMode::ForDb),
-            "BigInt.schema".to_string()
+            "Utils.Schema.dbBigint".to_string()
         );
         assert_eq!(
             RescriptTypeExpr::Identifier(RescriptTypeIdent::BigInt).to_rescript_schema(
@@ -772,7 +772,7 @@ mod tests {
         assert_eq!(
             RescriptTypeExpr::Identifier(RescriptTypeIdent::option(RescriptTypeIdent::BigInt))
                 .to_rescript_schema(&"eventArgs".to_string(), &RescriptSchemaMode::ForDb),
-            "S.null(BigInt.schema)".to_string()
+            "S.null(Utils.Schema.dbBigint)".to_string()
         );
         assert_eq!(
             RescriptTypeExpr::Identifier(RescriptTypeIdent::option(RescriptTypeIdent::BigInt))

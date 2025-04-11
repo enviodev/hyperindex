@@ -1,5 +1,3 @@
-
-
 /**
 The block number and log index of the event that registered a
 dynamic contract
@@ -350,7 +348,7 @@ let registerDynamicContracts = (
   let newPartitions =
     dcsByStartBlock
     ->Js.Dict.entries
-    ->Array.mapWithIndex((index, (startBlockKey, dcs)) => {
+    ->Array.mapWithIndex(((startBlockKey, dcs), index) => {
       makeDcPartition(
         ~partitionIndex=fetchState.nextPartitionIndex + index,
         ~dynamicContracts=dcs,
@@ -407,18 +405,18 @@ let setQueryResponse = (
   {
     let partitionId = query.partitionId
 
-    switch partitions->Array.getIndexBy(p => p.id === partitionId) {
+    switch partitions->Array.findIndexOpt(p => p.id === partitionId) {
     | Some(pIndex) =>
       let p = partitions->Js.Array2.unsafe_get(pIndex)
       let updatedPartition =
-        p->addItemsToPartition(~latestFetchedBlock, ~reversedNewItems=newItems->Array.reverse)
+        p->addItemsToPartition(~latestFetchedBlock, ~reversedNewItems=newItems->Belt.Array.reverse)
 
       switch query.target {
       | Head
       | EndBlock(_) =>
         Ok(partitions->Utils.Array.setIndexImmutable(pIndex, updatedPartition))
       | Merge({intoPartitionId}) =>
-        switch partitions->Array.getIndexBy(p => p.id === intoPartitionId) {
+        switch partitions->Array.findIndexOpt(p => p.id === intoPartitionId) {
         | Some(targetIndex)
           if (partitions->Js.Array2.unsafe_get(targetIndex)).latestFetchedBlock.blockNumber ===
             latestFetchedBlock.blockNumber => {
@@ -969,7 +967,7 @@ let pruneQueueFromFirstChangeEvent = (
   queue: array<Internal.eventItem>,
   ~firstChangeEvent: blockNumberAndLogIndex,
 ) => {
-  queue->Array.keep(item =>
+  queue->Array.filter(item =>
     (item.blockNumber, item.logIndex) < (firstChangeEvent.blockNumber, firstChangeEvent.logIndex)
   )
 }
@@ -990,7 +988,7 @@ let rollbackPartition = (p: partition, ~firstChangeEvent: blockNumberAndLogIndex
       //get all dynamic contract addresses past valid blockNumber to remove along with
       //updated dynamicContracts map
       let addressesToRemove = []
-      let dynamicContracts = dynamicContracts->Array.keep(dc => {
+      let dynamicContracts = dynamicContracts->Array.filter(dc => {
         if (
           (dc.registeringEventBlockNumber, dc.registeringEventLogIndex) >=
           (firstChangeEvent.blockNumber, firstChangeEvent.logIndex)
@@ -1045,7 +1043,7 @@ let rollbackPartition = (p: partition, ~firstChangeEvent: blockNumberAndLogIndex
 
 let rollback = (fetchState: t, ~firstChangeEvent) => {
   let partitions =
-    fetchState.partitions->Array.keepMap(p => p->rollbackPartition(~firstChangeEvent))
+    fetchState.partitions->Array.filterMap(p => p->rollbackPartition(~firstChangeEvent))
 
   fetchState->updateInternal(~partitions)
 }

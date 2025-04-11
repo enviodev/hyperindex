@@ -1,5 +1,3 @@
-
-
 module Log = {
   type t = {
     address: Address.t,
@@ -107,7 +105,7 @@ module GetLogs = {
 
     //Topics can be nullable and still need to be filtered
     let logUnsanitized: Log.t = event.log->Utils.magic
-    let topics = event.log.topics->Option.getUnsafe->Array.keepMap(Js.Nullable.toOption)
+    let topics = event.log.topics->Option.getUnsafe->Array.filterMap(Js.Nullable.toOption)
     let address = event.log.address->Option.getUnsafe
     let log = {
       ...logUnsanitized,
@@ -135,7 +133,7 @@ module GetLogs = {
     let page: logsQueryPage = {
       items,
       nextBlock,
-      archiveHeight: archiveHeight->Option.getWithDefault(0), //Archive Height is only None if height is 0
+      archiveHeight: archiveHeight->Option.getOr(0), //Archive Height is only None if height is 0
       events: res.data,
       rollbackGuard,
     }
@@ -195,12 +193,12 @@ module BlockData = {
   > => {
     res.data
     ->Array.flatMap(item => {
-      item.blocks->Option.mapWithDefault([], blocks => {
+      item.blocks->Option.mapOr([], blocks => {
         blocks->Array.map(
           block => {
             switch block {
             | {number: blockNumber, timestamp, hash: blockHash} =>
-              let blockTimestamp = timestamp->BigInt.toInt->Option.getExn
+              let blockTimestamp = timestamp->BigInt.toInt
               Ok(
                 (
                   {
@@ -216,7 +214,7 @@ module BlockData = {
                   block.number->Utils.Option.mapNone("block.number"),
                   block.timestamp->Utils.Option.mapNone("block.timestamp"),
                   block.hash->Utils.Option.mapNone("block.hash"),
-                ]->Array.keepMap(p => p)
+                ]->Array.filterMap(p => p)
 
               Error(
                 UnexpectedMissingParams({
@@ -323,7 +321,7 @@ module BlockData = {
           ~logger,
         )
         let filtered = res->Result.map(datas => {
-          datas->Array.keep(data => set->Utils.Set.delete(data.blockNumber))
+          datas->Array.filter(data => set->Utils.Set.delete(data.blockNumber))
         })
         if set->Utils.Set.size > 0 {
           Js.Exn.raiseError(

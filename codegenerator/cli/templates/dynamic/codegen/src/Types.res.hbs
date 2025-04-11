@@ -360,9 +360,9 @@ module HandlerTypes = {
         | {?wildcard, ?eventFilters, ?preRegisterDynamicContracts} =>
         t->setEventOptions(
           EventOptions.make(
-            ~isWildcard=wildcard->Option.getWithDefault(false),
+            ~isWildcard=wildcard->Option.getOr(false),
             ~eventFilters,
-            ~preRegisterDynamicContracts=preRegisterDynamicContracts->Option.getWithDefault(false),
+            ~preRegisterDynamicContracts=preRegisterDynamicContracts->Option.getOr(false),
           ),
           ~logger
         )
@@ -418,9 +418,9 @@ let makeEventOptions = (
   
   eventConfig->Option.map(({?wildcard, ?eventFilters, ?preRegisterDynamicContracts}) =>
     HandlerTypes.EventOptions.make(
-      ~isWildcard=wildcard->Option.getWithDefault(false),
+      ~isWildcard=wildcard->Option.getOr(false),
       ~eventFilters,
-      ~preRegisterDynamicContracts=preRegisterDynamicContracts->Option.getWithDefault(false),
+      ~preRegisterDynamicContracts=preRegisterDynamicContracts->Option.getOr(false),
     )
   )
 }

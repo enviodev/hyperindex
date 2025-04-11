@@ -1,5 +1,3 @@
-
-
 type ecosystem = | @as("evm") Evm | @as("fuel") Fuel
 
 type contract = {
@@ -61,28 +59,28 @@ let getSyncConfig = (
     ?fallbackStallTimeout,
   }: syncConfigOptions,
 ): syncConfig => {
-  let queryTimeoutMillis = queryTimeoutMillis->Option.getWithDefault(20_000)
+  let queryTimeoutMillis = queryTimeoutMillis->Option.getOr(20_000)
   {
-    initialBlockInterval: Env.Configurable.SyncConfig.initialBlockInterval->Option.getWithDefault(
-      initialBlockInterval->Option.getWithDefault(10_000),
+    initialBlockInterval: Env.Configurable.SyncConfig.initialBlockInterval->Option.getOr(
+      initialBlockInterval->Option.getOr(10_000),
     ),
     // After an RPC error, how much to scale back the number of blocks requested at once
-    backoffMultiplicative: Env.Configurable.SyncConfig.backoffMultiplicative->Option.getWithDefault(
-      backoffMultiplicative->Option.getWithDefault(0.8),
+    backoffMultiplicative: Env.Configurable.SyncConfig.backoffMultiplicative->Option.getOr(
+      backoffMultiplicative->Option.getOr(0.8),
     ),
     // Without RPC errors or timeouts, how much to increase the number of blocks requested by for the next batch
-    accelerationAdditive: Env.Configurable.SyncConfig.accelerationAdditive->Option.getWithDefault(
-      accelerationAdditive->Option.getWithDefault(500),
+    accelerationAdditive: Env.Configurable.SyncConfig.accelerationAdditive->Option.getOr(
+      accelerationAdditive->Option.getOr(500),
     ),
     // Do not further increase the block interval past this limit
-    intervalCeiling: Env.Configurable.SyncConfig.intervalCeiling->Option.getWithDefault(
-      intervalCeiling->Option.getWithDefault(10_000),
+    intervalCeiling: Env.Configurable.SyncConfig.intervalCeiling->Option.getOr(
+      intervalCeiling->Option.getOr(10_000),
     ),
     // After an error, how long to wait before retrying
-    backoffMillis: backoffMillis->Option.getWithDefault(5000),
+    backoffMillis: backoffMillis->Option.getOr(5000),
     // How long to wait before cancelling an RPC request
     queryTimeoutMillis,
-    fallbackStallTimeout: fallbackStallTimeout->Option.getWithDefault(queryTimeoutMillis / 2),
+    fallbackStallTimeout: fallbackStallTimeout->Option.getOr(queryTimeoutMillis / 2),
   }
 }
 
@@ -110,10 +108,8 @@ let make = (
       rollbackFlag: shouldRollbackOnReorg ? RollbackOnReorg : NoRollback,
       historyFlag: shouldSaveFullHistory ? FullHistory : MinHistory,
     },
-    isUnorderedMultichainMode: Env.Configurable.isUnorderedMultichainMode->Option.getWithDefault(
-      Env.Configurable.unstable__temp_unordered_head_mode->Option.getWithDefault(
-        isUnorderedMultichainMode,
-      ),
+    isUnorderedMultichainMode: Env.Configurable.isUnorderedMultichainMode->Option.getOr(
+      Env.Configurable.unstable__temp_unordered_head_mode->Option.getOr(isUnorderedMultichainMode),
     ),
     chainMap: chains
     ->Js.Array2.map(n => {

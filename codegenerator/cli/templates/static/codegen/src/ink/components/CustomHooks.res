@@ -1,4 +1,3 @@
-
 module InitApi = {
   type ecosystem = | @as("evm") Evm | @as("fuel") Fuel
   type body = {
@@ -81,7 +80,7 @@ module InitApi = {
 
   let getMessages = async (~config) => {
     let envioVersion =
-      PersistedState.getPersistedState()->Result.mapWithDefault(None, p => Some(p.envioVersion))
+      PersistedState.getPersistedState()->Result.mapOr(None, p => Some(p.envioVersion))
     let body = makeBody(~envioVersion, ~envioApiToken=Env.envioApiToken, ~config)
 
     switch await route->Rest.fetch(body, ~client) {

@@ -117,7 +117,6 @@ module SummaryData = {
 }
 
 module Stats = {
-  
   type t = {
     n: float,
     mean: float,
@@ -242,7 +241,7 @@ let readFromCacheFile = async () => {
       Logging.error(
         "Failed to parse benchmark cache file, please delete it and rerun the benchmark",
       )
-      e->S.Error.throw
+      e->S.Error.raise
     }
   }
 }
@@ -313,8 +312,6 @@ let addEventProcessing = (
 }
 
 module Summary = {
-  
-
   type summaryTable = dict<Stats.t>
 
   external logSummaryTable: summaryTable => unit = "console.table"
@@ -361,7 +358,7 @@ module Summary = {
         ->Js.Dict.get(eventProcessingGroup)
         ->Option.flatMap(g => g->Js.Dict.get(batchSizeLabel))
         ->Option.map(data => data.sum)
-        ->Option.getWithDefault(BigDecimal.zero)
+        ->Option.getOr(BigDecimal.zero)
 
       let totalRuntimeMillis =
         millisAccum.endTime->Js.Date.getTime -. millisAccum.startTime->Js.Date.getTime

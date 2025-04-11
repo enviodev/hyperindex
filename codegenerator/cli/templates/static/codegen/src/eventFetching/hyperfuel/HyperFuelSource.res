@@ -1,6 +1,5 @@
 open Source
 
-
 exception EventRoutingFailed
 
 let mintEventTag = "mint"
@@ -164,7 +163,7 @@ let getSelectionConfig = (selection: FetchState.selection, ~chain) => {
     | {kind: Call} =>
       Js.Exn.raiseError("Call receipt indexing currently supported only in wildcard mode")
     | {kind: LogData({logId}), isWildcard} => {
-        let rb = logId->BigInt.fromStringUnsafe
+        let rb = logId->BigInt.fromStringExn
         if isWildcard {
           wildcardLogDataRbs->Array.push(rb)->ignore
         } else {
@@ -251,7 +250,7 @@ let make = ({chain, endpointUrl}: options): t => {
         Source.GetItemsError(
           Source.FailedGettingItems({
             exn: %raw(`null`),
-            attemptedToBlock: toBlock->Option.getWithDefault(currentBlockHeight),
+            attemptedToBlock: toBlock->Option.getOr(currentBlockHeight),
             retry: switch error {
             | WrongInstance =>
               let backoffMillis = switch retry {
@@ -281,7 +280,7 @@ let make = ({chain, endpointUrl}: options): t => {
         Source.GetItemsError(
           Source.FailedGettingItems({
             exn,
-            attemptedToBlock: toBlock->Option.getWithDefault(currentBlockHeight),
+            attemptedToBlock: toBlock->Option.getOr(currentBlockHeight),
             retry: WithBackoff({
               message: `Unexpected issue while fetching events from HyperFuel client. Attempt a retry.`,
               backoffMillis: switch retry {

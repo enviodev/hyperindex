@@ -1,5 +1,3 @@
-
-
 type rpc = {
   url: string,
   sourceFor: Source.sourceFor,
@@ -27,7 +25,7 @@ let evm = (
         endpointUrl,
         allEventSignatures,
         eventRouter,
-        shouldUseHypersyncClientDecoder: Env.Configurable.shouldUseHypersyncClientDecoder->Option.getWithDefault(
+        shouldUseHypersyncClientDecoder: Env.Configurable.shouldUseHypersyncClientDecoder->Option.getOr(
           shouldUseHypersyncClientDecoder,
         ),
       }),
@@ -40,7 +38,7 @@ let evm = (
         chain,
         sourceFor,
         contracts,
-        syncConfig: Config.getSyncConfig(syncConfig->Option.getWithDefault({})),
+        syncConfig: Config.getSyncConfig(syncConfig->Option.getOr({})),
         url,
         eventRouter,
       }),

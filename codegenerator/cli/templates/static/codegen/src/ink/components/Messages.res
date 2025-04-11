@@ -1,4 +1,3 @@
-
 open Ink
 module Message = {
   @react.component
@@ -29,7 +28,7 @@ let make = (~config) => {
     | Data(messages) =>
       <Notifications>
         {messages
-        ->Array.mapWithIndex((i, message) => {<Message key={i->Int.toString} message />})
+        ->Array.mapWithIndex((message, i) => {<Message key={i->Int.toString} message />})
         ->React.array}
       </Notifications>
     | Err(_) =>
