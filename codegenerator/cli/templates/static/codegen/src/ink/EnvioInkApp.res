@@ -49,7 +49,7 @@ module App = {
         <Text>
           {"Track the indexer's progress and access GraphQL Playground at the Development Console:"->React.string}
         </Text>
-        <Text color={Info} underline=true> {"https://envio.dev/console"->React.string} </Text>
+        <Text color={Info} underline=true> {`${Env.envioAppUrl}/console`->React.string} </Text>
       </Box>
       <Messages config />
     </Box>

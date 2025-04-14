@@ -26,8 +26,9 @@ let logFilePath = envSafe->EnvSafe.get("LOG_FILE", S.string, ~fallback="logs/env
 let userLogLevel = getLogLevelConfig("LOG_LEVEL", ~default=#info)
 let defaultFileLogLevel = getLogLevelConfig("FILE_LOG_LEVEL", ~default=#trace)
 
+let prodEnvioAppUrl = "https://envio.dev"
+let envioAppUrl = envSafe->EnvSafe.get("ENVIO_APP", S.string, ~fallback=prodEnvioAppUrl)
 let envioApiToken = envSafe->EnvSafe.get("ENVIO_API_TOKEN", S.option(S.string))
-let envioApiUrl = envSafe->EnvSafe.get("ENVIO_API_URL", S.string, ~fallback="https://envio.dev/api")
 let hyperSyncClientTimeoutMillis =
   envSafe->EnvSafe.get("ENVIO_HYPERSYNC_CLIENT_TIMEOUT_MILLIS", S.int, ~fallback=120_000)
 

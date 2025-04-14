@@ -116,7 +116,7 @@ let startServer = (~getState, ~shouldUseTui as _) => {
 
   app->useFor("/console", (req, res, next) => {
     switch req.headers->Js.Dict.get("origin") {
-    | Some(origin) if origin === "https://envio.dev" || origin === "http://localhost:3000" =>
+    | Some(origin) if origin === Env.prodEnvioAppUrl || origin === Env.envioAppUrl =>
       res->setHeader("Access-Control-Allow-Origin", origin)
     | _ => ()
     }
