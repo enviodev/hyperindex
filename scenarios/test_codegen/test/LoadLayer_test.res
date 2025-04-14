@@ -396,14 +396,14 @@ describe("LoadLayer", () => {
       mock.loadLayer->LoadLayer.makeWhereLoader(
         ~entityMod=module(Entities.User),
         ~operator=Gt,
-        ~inMemoryStore=InMemoryStore.make(),
+        ~inMemoryStore,
         ~logger=Logging.getLogger(),
         ~fieldName="updatesCountOnUserForTesting",
         ~fieldValueSchema=S.int,
       )
 
     Assert.deepEqual(await getUsersWithId("1"), [user1])
-    Assert.deepEqual(await getUsersWithUpdates(0), [user2])
+    Assert.deepEqual(await getUsersWithUpdates(0), [user2], ~message="Should have loaded user2")
     Assert.deepEqual(mock.loadEntitiesByIdsCalls, [])
     Assert.deepEqual(
       mock.loadEntitiesByFieldCalls,
