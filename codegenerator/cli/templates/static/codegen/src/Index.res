@@ -1,33 +1,3 @@
-/**
- * This function can be used to override the console.log (and related functions for users). This means these logs will also be available to the user
- */
-let overrideConsoleLog: Pino.t => unit = %raw(`function (logger) {
-    console.log = function() {
-      var args = Array.from(arguments);
-
-      logger.uinfo(args.length > 1 ? args : args[0])
-    };
-    console.info = console.log; // Use uinfo for both console.log and console.info
-
-    console.debug = function() {
-      var args = Array.from(arguments);
-
-      logger.udebug(args.length > 1 ? args : args[0]);
-    };
-    console.warn = function() {
-      var args = Array.from(arguments);
-
-      logger.uwarn(args.length > 1 ? args : args[0]);
-    };
-    console.error = function() {
-      var args = Array.from(arguments);
-
-      logger.uerror(args.length > 1 ? args : args[0]);
-    };
-  }
-`)
-// overrideConsoleLog(Logging.logger)
-
 {
   open Express
 

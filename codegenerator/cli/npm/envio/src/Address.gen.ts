@@ -3,6 +3,6 @@
 /* eslint-disable */
 /* tslint:disable */
 
-import type {Address as $$t} from './bindings/OpaqueTypes.ts';
+import type {Address as $$t} from './Types.ts';
 
 export type t = $$t;

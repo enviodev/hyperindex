@@ -4,6 +4,7 @@
   "private": true,
   "description": "A latency and sync speed optimized, developer friendly blockchain data indexer.",
   "bin": "./local-bin.mjs",
+  "types": "index.d.ts",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/enviodev/hyperindex.git"
