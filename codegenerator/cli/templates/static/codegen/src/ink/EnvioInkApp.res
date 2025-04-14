@@ -10,7 +10,7 @@ type appState = {
 }
 
 let getTotalNumEventsProcessed = (~chains: array<ChainData.chainData>) => {
-  chains->Belt.Array.reduce(0, (acc, chain) => {
+  chains->Array.reduce(0, (acc, chain) => {
     acc + chain.progress->ChainData.getNumberOfEventsProccessed
   })
 }
@@ -29,12 +29,11 @@ module TotalEventsProcessed = {
     </Text>
   }
 }
+
 module App = {
   @react.component
   let make = (~appState: appState) => {
     let {chains, indexerStartTime, config, isPreRegisteringDynamicContracts} = appState
-    let hasuraPort = "8080"
-    let hasuraLink = `http://localhost:${hasuraPort}`
     let totalEventsProcessed = getTotalNumEventsProcessed(~chains)
     <Box flexDirection={Column}>
       <BigText text="envio" colors=[Secondary, Primary] font={Block} />
@@ -47,8 +46,10 @@ module App = {
       <SyncETA chains indexerStartTime isPreRegisteringDynamicContracts />
       <Newline />
       <Box flexDirection={Column}>
-        <Text bold=true> {"GraphQL:"->React.string} </Text>
-        <Text color={Info} underline=true> {hasuraLink->React.string} </Text>
+        <Text>
+          {"Track the indexer's progress and access GraphQL Playground at the Development Console:"->React.string}
+        </Text>
+        <Text color={Info} underline=true> {`${Env.envioAppUrl}/console`->React.string} </Text>
       </Box>
       <Messages config />
     </Box>

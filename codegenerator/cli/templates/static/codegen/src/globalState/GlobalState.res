@@ -723,12 +723,12 @@ let actionReducer = (state: t, action: action) => {
     (freshState->incrementId, [NextQuery(CheckAllChains)])
   | SuccessExit => {
       Logging.info("exiting with success")
-      NodeJsLocal.process->NodeJsLocal.exitWithCode(Success)
+      NodeJs.process->NodeJs.exitWithCode(Success)
       (state, [])
     }
   | ErrorExit(errHandler) =>
     errHandler->ErrorHandling.log
-    NodeJsLocal.process->NodeJsLocal.exitWithCode(Failure)
+    NodeJs.process->NodeJs.exitWithCode(Failure)
     (state, [])
   }
 }

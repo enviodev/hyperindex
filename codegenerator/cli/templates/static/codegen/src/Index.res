@@ -1,15 +1,152 @@
-{
+open Belt
+
+type chainData = {
+  chainId: float,
+  poweredByHyperSync: bool,
+  firstEventBlockNumber: option<int>,
+  latestProcessedBlock: option<int>,
+  timestampCaughtUpToHeadOrEndblock: option<Js.Date.t>,
+  numEventsProcessed: int,
+  latestFetchedBlockNumber: int,
+  currentBlockHeight: int,
+  numBatchesFetched: int,
+  endBlock: option<int>,
+  numAddresses: int,
+}
+@tag("status")
+type state =
+  | @as("disabled") Disabled({})
+  | @as("initializing") Initializing({})
+  | @as("active")
+  Active({
+      envioVersion: option<string>,
+      chains: array<chainData>,
+      indexerStartTime: Js.Date.t,
+      isPreRegisteringDynamicContracts: bool,
+      isUnorderedMultichainMode: bool,
+      rollbackOnReorg: bool,
+    })
+
+let chainDataSchema = S.schema((s): chainData => {
+  chainId: s.matches(S.float),
+  poweredByHyperSync: s.matches(S.bool),
+  firstEventBlockNumber: s.matches(S.option(S.int)),
+  latestProcessedBlock: s.matches(S.option(S.int)),
+  timestampCaughtUpToHeadOrEndblock: s.matches(S.option(S.datetime(S.string))),
+  numEventsProcessed: s.matches(S.int),
+  latestFetchedBlockNumber: s.matches(S.int),
+  currentBlockHeight: s.matches(S.int),
+  numBatchesFetched: s.matches(S.int),
+  endBlock: s.matches(S.option(S.int)),
+  numAddresses: s.matches(S.int),
+})
+let stateSchema = S.union([
+  S.literal(Disabled({})),
+  S.literal(Initializing({})),
+  S.schema(s => Active({
+    envioVersion: s.matches(S.option(S.string)),
+    chains: s.matches(S.array(chainDataSchema)),
+    indexerStartTime: s.matches(S.datetime(S.string)),
+    isPreRegisteringDynamicContracts: s.matches(S.bool),
+    isUnorderedMultichainMode: s.matches(S.bool),
+    rollbackOnReorg: s.matches(S.bool),
+  })),
+])
+
+// let setApiTokenEnv = {
+//   let initialted = ref(None)
+//   let envPath = NodeJs.Path.resolve([".env"])
+//   async apiToken => {
+//     // Execute once even with multiple calls
+//     if initialted.contents !== Some(apiToken) {
+//       initialted := Some(apiToken)
+
+//       let tokenLine = `ENVIO_API_TOKEN="${apiToken}"`
+
+//       try {
+//         // Check if file exists
+//         let exists = try {
+//           await NodeJs.Fs.Promises.access(envPath)
+//           true
+//         } catch {
+//         | _ => false
+//         }
+
+//         if !exists {
+//           // Create new file if it doesn't exist
+//           await NodeJs.Fs.Promises.writeFile(
+//             ~filepath=envPath,
+//             ~content=tokenLine ++ "\n",
+//             ~options={encoding: "utf8"},
+//           )
+//         } else {
+//           // Read existing file
+//           let content = await NodeJs.Fs.Promises.readFile(~filepath=envPath, ~encoding=Utf8)
+
+//           // Check if token is already set
+//           if !Js.String.includes(content, "ENVIO_API_TOKEN=") {
+//             // Append token line if not present
+//             await NodeJs.Fs.Promises.appendFile(
+//               ~filepath=envPath,
+//               ~content="\n" ++ tokenLine ++ "\n",
+//               ~options={encoding: "utf8"},
+//             )
+//           }
+//         }
+//       } catch {
+//       | Js.Exn.Error(err) => {
+//           Js.Console.error("Error setting up ENVIO_API_TOKEN to the .env file:")
+//           Js.Console.error(err)
+//         }
+//       }
+//     }
+//   }
+// }
+
+let startServer = (~getState, ~shouldUseTui as _) => {
   open Express
 
   let app = makeCjs()
 
-  app->use(jsonMiddleware())
-
   app->get("/healthz", (_req, res) => {
     // this is the machine readable port used in kubernetes to check the health of this service.
     //   aditional health information could be added in the future (info about errors, back-offs, etc).
-    let _ = res->sendStatus(200)
+    res->sendStatus(200)
   })
+
+  app->useFor("/console", (req, res, next) => {
+    switch req.headers->Js.Dict.get("origin") {
+    | Some(origin) if origin === Env.prodEnvioAppUrl || origin === Env.envioAppUrl =>
+      res->setHeader("Access-Control-Allow-Origin", origin)
+    | _ => ()
+    }
+
+    res->setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+    res->setHeader("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept")
+
+    if req.method === Options {
+      res->sendStatus(200)
+    } else {
+      next()
+    }
+  })
+
+  app->get("/console/state", (_req, res) => {
+    res->json(getState()->S.reverseConvertToJsonOrThrow(stateSchema))
+  })
+
+  // Keep /console/state exposed, so it can return `disabled` status
+  // if shouldUseTui {
+  //   app->post("/console/api-token", (req, res) => {
+  //     switch req.query->Utils.Dict.dangerouslyGetNonOption("value") {
+  //     | Some(apiToken) if Some(apiToken) !== Env.envioApiToken =>
+  //       setApiTokenEnv(apiToken)->Promise.done
+  //     | _ => ()
+  //     }
+
+  //     res->sendStatus(200)
+  //   })
+  // }
 
   PromClient.collectDefaultMetrics()
 
@@ -36,7 +173,6 @@ type process
 type mainArgs = Yargs.parsedArgs<args>
 
 let makeAppState = (globalState: GlobalState.t): EnvioInkApp.appState => {
-  open Belt
   let chains =
     globalState.chainManager.chainFetchers
     ->ChainMap.values
@@ -104,7 +240,7 @@ let makeAppState = (globalState: GlobalState.t): EnvioInkApp.appState => {
           currentBlockHeight,
           latestFetchedBlockNumber,
           numBatchesFetched,
-          chainId: cf.chainConfig.chain->ChainMap.Chain.toChainId,
+          chain: cf.chainConfig.chain,
           endBlock: cf.chainConfig.endBlock,
           poweredByHyperSync: (cf.sourceManager->SourceManager.getActiveSource).poweredByHyperSync,
         }: EnvioInkApp.chainData
@@ -118,11 +254,89 @@ let makeAppState = (globalState: GlobalState.t): EnvioInkApp.appState => {
   }
 }
 
+// Function to open the URL in the browser
+// @module("child_process")
+// external exec: (string, (Js.Nullable.t<Js.Exn.t>, 'a, 'b) => unit) => unit = "exec"
+// @module("process") external platform: string = "platform"
+// let openConsole = () => {
+//   let host = "https://envio.dev"
+//   let command = switch platform {
+//   | "win32" => "start"
+//   | "darwin" => "open"
+//   | _ => "xdg-open"
+//   }
+//   exec(`${command} ${host}/console`, (_, _, _) => ())
+// }
+
 let main = async () => {
   try {
-    let config = RegisterHandlers.registerAllHandlers()
     let mainArgs: mainArgs = process->argv->Yargs.hideBin->Yargs.yargs->Yargs.argv
     let shouldUseTui = !(mainArgs.tuiOff->Belt.Option.getWithDefault(Env.tuiOffEnvVar))
+
+    let config = RegisterHandlers.registerAllHandlers()
+
+    let gsManagerRef = ref(None)
+
+    startServer(
+      ~shouldUseTui,
+      ~getState=if shouldUseTui {
+        let envioVersion =
+          PersistedState.getPersistedState()->Result.mapWithDefault(None, p => Some(p.envioVersion))
+
+        () =>
+          switch gsManagerRef.contents {
+          | None => Initializing({})
+          | Some(gsManager) => {
+              let state = gsManager->GlobalStateManager.getState
+              let appState = state->makeAppState
+              Active({
+                envioVersion,
+                chains: appState.chains->Js.Array2.map(c => {
+                  let cf = state.chainManager.chainFetchers->ChainMap.get(c.chain)
+                  {
+                    chainId: c.chain->ChainMap.Chain.toChainId->Js.Int.toFloat,
+                    poweredByHyperSync: c.poweredByHyperSync,
+                    latestFetchedBlockNumber: c.latestFetchedBlockNumber,
+                    currentBlockHeight: c.currentBlockHeight,
+                    numBatchesFetched: c.numBatchesFetched,
+                    endBlock: c.endBlock,
+                    firstEventBlockNumber: switch c.progress {
+                    | SearchingForEvents => None
+                    | Syncing({firstEventBlockNumber}) | Synced({firstEventBlockNumber}) =>
+                      Some(firstEventBlockNumber)
+                    },
+                    latestProcessedBlock: switch c.progress {
+                    | SearchingForEvents => None
+                    | Syncing({latestProcessedBlock}) | Synced({latestProcessedBlock}) =>
+                      Some(latestProcessedBlock)
+                    },
+                    timestampCaughtUpToHeadOrEndblock: switch c.progress {
+                    | SearchingForEvents
+                    | Syncing(_) =>
+                      None
+                    | Synced({timestampCaughtUpToHeadOrEndblock}) =>
+                      Some(timestampCaughtUpToHeadOrEndblock)
+                    },
+                    numEventsProcessed: switch c.progress {
+                    | SearchingForEvents => 0
+                    | Syncing({numEventsProcessed})
+                    | Synced({numEventsProcessed}) => numEventsProcessed
+                    },
+                    numAddresses: cf.fetchState->FetchState.numAddresses,
+                  }
+                }),
+                indexerStartTime: appState.indexerStartTime,
+                isPreRegisteringDynamicContracts: appState.isPreRegisteringDynamicContracts,
+                rollbackOnReorg: config.historyConfig.rollbackFlag === RollbackOnReorg,
+                isUnorderedMultichainMode: config.isUnorderedMultichainMode,
+              })
+            }
+          }
+      } else {
+        () => Disabled({})
+      },
+    )
+
     let sql = Db.sql
     let needsRunUpMigrations = await sql->Migrations.needsRunUpMigrations
     if needsRunUpMigrations {
@@ -138,6 +352,7 @@ let main = async () => {
       None
     }
     let gsManager = globalState->GlobalStateManager.make(~stateUpdatedHook?)
+    gsManagerRef := Some(gsManager)
     gsManager->GlobalStateManager.dispatchTask(NextQuery(CheckAllChains))
     /*
     NOTE:
@@ -149,7 +364,7 @@ let main = async () => {
   } catch {
   | e => {
       e->ErrorHandling.make(~msg="Failed at initialization")->ErrorHandling.log
-      NodeJsLocal.process->NodeJsLocal.exitWithCode(Failure)
+      NodeJs.process->NodeJs.exitWithCode(Failure)
     }
   }
 }

@@ -70,7 +70,7 @@ module InitApi = {
     content: s.field("content", S.string),
   })
 
-  let client = Rest.client(Env.envioApiUrl)
+  let client = Rest.client(Env.envioAppUrl ++ "/api")
 
   let route = Rest.route(() => {
     method: Post,
