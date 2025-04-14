@@ -91,20 +91,19 @@ module Benchmark = {
     saveDataStrategy->SaveDataStrategy.shouldSaveJsonFile
 }
 
-type logStrategyType =
-  | @as("ecs-file") EcsFile
-  | @as("ecs-console") EcsConsole
-  | @as("ecs-console-multistream") EcsConsoleMultistream
-  | @as("file-only") FileOnly
-  | @as("console-raw") ConsoleRaw
-  | @as("console-pretty") ConsolePretty
-  | @as("both-prettyconsole") Both
 let logStrategy =
   envSafe->EnvSafe.get(
     "LOG_STRATEGY",
-    S.enum([EcsFile, EcsConsole, EcsConsoleMultistream, FileOnly, ConsoleRaw, ConsolePretty, Both]),
+    S.enum([Logging.EcsFile, EcsConsole, EcsConsoleMultistream, FileOnly, ConsoleRaw, ConsolePretty, Both]),
     ~fallback=ConsolePretty,
   )
+
+Logging.setLogger(
+  ~logStrategy,
+  ~logFilePath,
+  ~defaultFileLogLevel,
+  ~userLogLevel,
+)
 
 module Db = {
   let host = envSafe->EnvSafe.get("ENVIO_PG_HOST", S.string, ~devFallback="localhost")

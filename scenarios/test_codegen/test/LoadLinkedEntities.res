@@ -58,7 +58,7 @@ describe_skip("Linked Entity Loader Integration Test", () => {
   //       "logIndex": 0,
   //       "blockTimestamp": 123,
   //     }->Utils.magic,
-  //     ~logger=Logging.logger,
+  //     ~logger=Logging.getLogger(),
   //     ~asyncGetters=ContextEnv.asyncGetters,
   //   )
   //
@@ -121,7 +121,7 @@ describe_skip("Linked Entity Loader Integration Test", () => {
   //     ~inMemoryStore,
   //     ~chainId=123,
   //     ~event={"devMsg": "This is a placeholder event", "blockNumber": 456}->Utils.magic,
-  //     ~logger=Logging.logger,
+  //     ~logger=Logging.getLogger(),
   //     ~asyncGetters=ContextEnv.asyncGetters,
   //   )
   //

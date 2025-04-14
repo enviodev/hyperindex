@@ -19,7 +19,7 @@ describe("E2E Mock Event Batch", () => {
           ~loader=eventItem.eventConfig.loader,
           ~handler,
           ~inMemoryStore,
-          ~logger=Logging.logger,
+          ~logger=Logging.getLogger(),
           ~loadLayer,
           ~shouldSaveHistory=false,
         )

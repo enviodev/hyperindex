@@ -2,7 +2,7 @@ open RescriptMocha
 
 describe("Throttler", () => {
   Async.it("Schedules and throttles functions as expected", async () => {
-    let throttler = Throttler.make(~intervalMillis=10, ~logger=Logging.logger)
+    let throttler = Throttler.make(~intervalMillis=10, ~logger=Logging.getLogger())
     let actionsCalled = []
 
     throttler->Throttler.schedule(async () => actionsCalled->Js.Array2.push(1)->ignore)
@@ -29,7 +29,7 @@ describe("Throttler", () => {
   })
 
   Async.it("Does not continuously increase schedule time", async () => {
-    let throttler = Throttler.make(~intervalMillis=20, ~logger=Logging.logger)
+    let throttler = Throttler.make(~intervalMillis=20, ~logger=Logging.getLogger())
     let actionsCalled = []
     throttler->Throttler.schedule(async () => actionsCalled->Js.Array2.push(1)->ignore)
     await Time.resolvePromiseAfterDelay(~delayMilliseconds=10)
@@ -44,7 +44,7 @@ describe("Throttler", () => {
   })
 
   Async.it("Does not run until previous task is finished", async () => {
-    let throttler = Throttler.make(~intervalMillis=10, ~logger=Logging.logger)
+    let throttler = Throttler.make(~intervalMillis=10, ~logger=Logging.getLogger())
     let actionsCalled = []
     throttler->Throttler.schedule(
       async () => {
@@ -80,7 +80,7 @@ describe("Throttler", () => {
   Async.it(
     "Does not immediately execute after a task has finished if below the interval",
     async () => {
-      let throttler = Throttler.make(~intervalMillis=10, ~logger=Logging.logger)
+      let throttler = Throttler.make(~intervalMillis=10, ~logger=Logging.getLogger())
       let actionsCalled = []
       throttler->Throttler.schedule(
         async () => {
