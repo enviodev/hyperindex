@@ -2,7 +2,7 @@ import { expect } from "chai";
 import {
   packEventIndexFromRecord,
   unpackEventIndex,
-} from "../generated/src/EventUtils.bs";
+} from "../../../codegenerator/cli/npm/envio/src/EventUtils.bs";
 
 // require("mocha-reporter").hook(); //Outputs filename in error logs with mocha-reporter
 
