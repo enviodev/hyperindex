@@ -8,7 +8,7 @@ describe("LoadLayer", () => {
       mock.loadLayer->LoadLayer.makeLoader(
         ~entityMod=module(Entities.User),
         ~inMemoryStore=InMemoryStore.make(),
-        ~logger=Logging.logger,
+        ~logger=Logging.getLogger(),
       )
 
     let user = await getUser("123")
@@ -20,7 +20,7 @@ describe("LoadLayer", () => {
         {
           entityIds: ["123"],
           entityMod: module(Entities.User)->Entities.entityModToInternal,
-          logger: Logging.logger,
+          logger: Logging.getLogger(),
         },
       ],
     )
@@ -36,7 +36,7 @@ describe("LoadLayer", () => {
         mock.loadLayer->LoadLayer.makeLoader(
           ~entityMod=module(Entities.User),
           ~inMemoryStore=InMemoryStore.make(),
-          ~logger=Logging.logger,
+          ~logger=Logging.getLogger(),
         )
 
       let user1 = await getUser("1")
@@ -50,12 +50,12 @@ describe("LoadLayer", () => {
           {
             entityIds: ["1"],
             entityMod: module(Entities.User)->Entities.entityModToInternal,
-            logger: Logging.logger,
+            logger: Logging.getLogger(),
           },
           {
             entityIds: ["2"],
             entityMod: module(Entities.User)->Entities.entityModToInternal,
-            logger: Logging.logger,
+            logger: Logging.getLogger(),
           },
         ],
       )
@@ -72,7 +72,7 @@ describe("LoadLayer", () => {
         mock.loadLayer->LoadLayer.makeLoader(
           ~entityMod=module(Entities.User),
           ~inMemoryStore=InMemoryStore.make(),
-          ~logger=Logging.logger,
+          ~logger=Logging.getLogger(),
         )
 
       let user1 = await getUser("1")
@@ -86,7 +86,7 @@ describe("LoadLayer", () => {
           {
             entityIds: ["1"],
             entityMod: module(Entities.User)->Entities.entityModToInternal,
-            logger: Logging.logger,
+            logger: Logging.getLogger(),
           },
         ],
       )
@@ -101,7 +101,7 @@ describe("LoadLayer", () => {
       mock.loadLayer->LoadLayer.makeLoader(
         ~entityMod=module(Entities.User),
         ~inMemoryStore=InMemoryStore.make(),
-        ~logger=Logging.logger,
+        ~logger=Logging.getLogger(),
       )
 
     let user1 = await getUser("1")
@@ -127,12 +127,12 @@ describe("LoadLayer", () => {
         {
           entityIds: ["1"],
           entityMod: module(Entities.User)->Entities.entityModToInternal,
-          logger: Logging.logger,
+          logger: Logging.getLogger(),
         },
         {
           entityIds: ["2"],
           entityMod: module(Entities.User)->Entities.entityModToInternal,
-          logger: Logging.logger,
+          logger: Logging.getLogger(),
         },
       ],
     )
@@ -148,7 +148,7 @@ describe("LoadLayer", () => {
         mock.loadLayer->LoadLayer.makeLoader(
           ~entityMod=module(Entities.User),
           ~inMemoryStore=InMemoryStore.make(),
-          ~logger=Logging.logger,
+          ~logger=Logging.getLogger(),
         )
 
       let users = await Promise.all([getUser("1"), getUser("2")])
@@ -160,7 +160,7 @@ describe("LoadLayer", () => {
           {
             entityIds: ["1", "2"],
             entityMod: module(Entities.User)->Entities.entityModToInternal,
-            logger: Logging.logger,
+            logger: Logging.getLogger(),
           },
         ],
       )
@@ -189,7 +189,7 @@ describe("LoadLayer", () => {
         mock.loadLayer->LoadLayer.makeLoader(
           ~entityMod=module(Entities.User),
           ~inMemoryStore,
-          ~logger=Logging.logger,
+          ~logger=Logging.getLogger(),
         )
 
       let users = await Promise.all([getUser("1"), getUser("2")])
@@ -201,7 +201,7 @@ describe("LoadLayer", () => {
           {
             entityIds: ["2"],
             entityMod: module(Entities.User)->Entities.entityModToInternal,
-            logger: Logging.logger,
+            logger: Logging.getLogger(),
           },
         ],
       )
@@ -230,7 +230,7 @@ describe("LoadLayer", () => {
         mock.loadLayer->LoadLayer.makeLoader(
           ~entityMod=module(Entities.User),
           ~inMemoryStore,
-          ~logger=Logging.logger,
+          ~logger=Logging.getLogger(),
         )
 
       let userPromise = getUser("1")
@@ -247,7 +247,7 @@ describe("LoadLayer", () => {
           {
             entityIds: ["1"],
             entityMod: module(Entities.User)->Entities.entityModToInternal,
-            logger: Logging.logger,
+            logger: Logging.getLogger(),
           },
         ],
       )
@@ -276,7 +276,7 @@ describe("LoadLayer", () => {
         mock.loadLayer->LoadLayer.makeLoader(
           ~entityMod=module(Entities.User),
           ~inMemoryStore,
-          ~logger=Logging.logger,
+          ~logger=Logging.getLogger(),
         )
 
       let users = await Promise.all([
@@ -298,12 +298,12 @@ describe("LoadLayer", () => {
           {
             entityIds: ["2"],
             entityMod: module(Entities.User)->Entities.entityModToInternal,
-            logger: Logging.logger,
+            logger: Logging.getLogger(),
           },
           {
             entityIds: ["3"],
             entityMod: module(Entities.User)->Entities.entityModToInternal,
-            logger: Logging.logger,
+            logger: Logging.getLogger(),
           },
         ],
       )
@@ -319,7 +319,7 @@ describe("LoadLayer", () => {
         ~entityMod=module(Entities.User),
         ~operator=Eq,
         ~inMemoryStore=InMemoryStore.make(),
-        ~logger=Logging.logger,
+        ~logger=Logging.getLogger(),
         ~fieldName="id",
         ~fieldValueSchema=S.string,
       )
@@ -328,7 +328,7 @@ describe("LoadLayer", () => {
         ~entityMod=module(Entities.User),
         ~operator=Gt,
         ~inMemoryStore=InMemoryStore.make(),
-        ~logger=Logging.logger,
+        ~logger=Logging.getLogger(),
         ~fieldName="updatesCountOnUserForTesting",
         ~fieldValueSchema=S.int,
       )
@@ -347,7 +347,7 @@ describe("LoadLayer", () => {
           fieldValue: "123"->Utils.magic,
           fieldValueSchema: S.string->Utils.magic,
           entityMod: module(Entities.User)->Entities.entityModToInternal,
-          logger: Logging.logger,
+          logger: Logging.getLogger(),
           operator: Eq,
         },
         {
@@ -355,7 +355,7 @@ describe("LoadLayer", () => {
           fieldValue: 0->Utils.magic,
           fieldValueSchema: S.int->Utils.magic,
           entityMod: module(Entities.User)->Entities.entityModToInternal,
-          logger: Logging.logger,
+          logger: Logging.getLogger(),
           operator: Gt,
         },
       ],
@@ -387,7 +387,7 @@ describe("LoadLayer", () => {
         ~operator=Eq,
         ~entityMod=module(Entities.User),
         ~inMemoryStore,
-        ~logger=Logging.logger,
+        ~logger=Logging.getLogger(),
         ~fieldName="id",
         ~fieldValueSchema=S.string,
       )
@@ -396,14 +396,14 @@ describe("LoadLayer", () => {
       mock.loadLayer->LoadLayer.makeWhereLoader(
         ~entityMod=module(Entities.User),
         ~operator=Gt,
-        ~inMemoryStore=InMemoryStore.make(),
-        ~logger=Logging.logger,
+        ~inMemoryStore,
+        ~logger=Logging.getLogger(),
         ~fieldName="updatesCountOnUserForTesting",
         ~fieldValueSchema=S.int,
       )
 
     Assert.deepEqual(await getUsersWithId("1"), [user1])
-    Assert.deepEqual(await getUsersWithUpdates(0), [user2])
+    Assert.deepEqual(await getUsersWithUpdates(0), [user2], ~message="Should have loaded user2")
     Assert.deepEqual(mock.loadEntitiesByIdsCalls, [])
     Assert.deepEqual(
       mock.loadEntitiesByFieldCalls,
@@ -413,7 +413,7 @@ describe("LoadLayer", () => {
           fieldValue: "1"->Utils.magic,
           fieldValueSchema: S.string->Utils.magic,
           entityMod: module(Entities.User)->Entities.entityModToInternal,
-          logger: Logging.logger,
+          logger: Logging.getLogger(),
           operator: Eq,
         },
         {
@@ -421,7 +421,7 @@ describe("LoadLayer", () => {
           fieldValue: 0->Utils.magic,
           fieldValueSchema: S.int->Utils.magic,
           entityMod: module(Entities.User)->Entities.entityModToInternal,
-          logger: Logging.logger,
+          logger: Logging.getLogger(),
           operator: Gt,
         },
       ],
@@ -477,7 +477,7 @@ describe("LoadLayer", () => {
           ~operator=Eq,
           ~entityMod=module(Entities.User),
           ~inMemoryStore,
-          ~logger=Logging.logger,
+          ~logger=Logging.getLogger(),
           ~fieldName="id",
           ~fieldValueSchema=S.string,
         )
@@ -491,7 +491,7 @@ describe("LoadLayer", () => {
             fieldValue: "1"->Utils.magic,
             fieldValueSchema: S.string->Utils.magic,
             entityMod: module(Entities.User)->Entities.entityModToInternal,
-            logger: Logging.logger,
+            logger: Logging.getLogger(),
             operator: Eq,
           }: Mock.LoadLayer.loadEntitiesByFieldCall
         ),

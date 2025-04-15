@@ -29,7 +29,7 @@ describe("Load and save an entity with a Timestamp from DB", () => {
 
     let contextEnv = ContextEnv.make(
       ~eventItem=MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem,
-      ~logger=Logging.logger,
+      ~logger=Logging.getLogger(),
     )
 
     let loaderContext =

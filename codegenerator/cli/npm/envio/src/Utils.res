@@ -22,6 +22,11 @@ module Object = {
   external defineProperty: ('obj, string, propertyDescriptor<'a>) => 'obj = "defineProperty"
 }
 
+module Error = {
+  @new
+  external make: string => exn = "Error"
+}
+
 module Option = {
   let mapNone = (opt: option<'a>, val: 'b): option<'b> => {
     switch opt {
@@ -123,6 +128,9 @@ module Math = {
 }
 
 module Array = {
+  @send
+  external forEachAsync: (array<'a>, 'a => promise<unit>) => unit = "forEach"
+
   @val external jsArrayCreate: int => array<'a> = "Array"
 
   /* Given a comaprator and two sorted lists, combine them into a single sorted list */

@@ -324,7 +324,7 @@ module HandlerTypes = {
     type eventNamespace = {contractName: string, eventName: string}
     exception DuplicateEventRegistration(eventNamespace)
 
-    let setEventOptions = (t: t, value: EventOptions.t, ~logger=Logging.logger) => {
+    let setEventOptions = (t: t, value: EventOptions.t, ~logger=Logging.getLogger()) => {
       switch t.eventOptions {
       | None => t.eventOptions = Some(value)
       | Some(_) =>
@@ -339,7 +339,7 @@ module HandlerTypes = {
     let setLoaderHandler = (
       t: t,
       value,
-      ~logger=Logging.logger,
+      ~logger=Logging.getLogger(),
     ) => {
       switch t.loaderHandler {
       | None =>
@@ -373,7 +373,7 @@ module HandlerTypes = {
       t: t,
       value,
       ~eventOptions,
-      ~logger=Logging.logger,
+      ~logger=Logging.getLogger(),
     ) => {
       switch t.contractRegister {
       | None => t.contractRegister = Some(value->(Utils.magic: Internal.genericContractRegister<Internal.genericContractRegisterArgs<'event, 'context>> => Internal.contractRegister))

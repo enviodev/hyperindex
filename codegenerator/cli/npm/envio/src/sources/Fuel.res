@@ -18,8 +18,7 @@ type receiptType =
 external transpileAbi: Js.Json.t => Ethers.abi = "transpileAbi"
 
 @module("./vendored-fuel-abi-coder.js") @scope("AbiCoder")
-external getLogDecoder: (~abi: Ethers.abi, ~logId: string) => (. string) => unknown =
-  "getLogDecoder"
+external getLogDecoder: (~abi: Ethers.abi, ~logId: string) => string => unknown = "getLogDecoder"
 
 module Receipt = {
   @tag("receiptType")

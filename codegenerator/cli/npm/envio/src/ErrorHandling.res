@@ -1,6 +1,6 @@
 type t = {logger: Pino.t, exn: exn, msg: option<string>}
 
-let make = (exn, ~logger=Logging.logger, ~msg=?) => {
+let make = (exn, ~logger=Logging.getLogger(), ~msg=?) => {
   {logger, msg, exn}
 }
 

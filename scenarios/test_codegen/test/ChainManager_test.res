@@ -141,7 +141,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
       numBatchesFetched: 0,
       startBlock: 0,
       fetchState: fetchState.contents,
-      logger: Logging.logger,
+      logger: Logging.getLogger(),
       sourceManager: SourceManager.make(
         ~sources=chainConfig.sources,
         ~maxPartitionConcurrency=Env.maxPartitionConcurrency,

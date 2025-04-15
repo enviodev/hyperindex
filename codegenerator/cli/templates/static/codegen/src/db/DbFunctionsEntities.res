@@ -123,7 +123,7 @@ let makeWhereQuery = (type entity, sql: Postgres.sql) => async (
   ~fieldName: string,
   ~fieldValue: 'fieldValue,
   ~fieldValueSchema: S.t<'fieldValue>,
-  ~logger=Logging.logger,
+  ~logger=Logging.getLogger(),
 ): array<entity> => {
   let module(Entity) = entityMod
 
