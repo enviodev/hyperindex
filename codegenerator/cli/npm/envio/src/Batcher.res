@@ -8,113 +8,125 @@ module Call = {
     resolve: output => unit,
     reject: exn => unit,
     mutable promise: promise<output>,
+    mutable isPending: bool,
   }
 }
 
-module Batch = {
+module Operation = {
   type t = {
     // Unique calls by input as a key
     calls: dict<Call.t>,
-    operation: array<Call.input> => promise<array<Call.output>>,
+    fn: array<Call.input> => promise<array<Call.output>>,
   }
 }
 
 type t = {
-  // Batches for different operations by operation key
+  // Batches of different operations by operation key
   // Can be: Load by id, load by index, effect
-  mutable batches: dict<Batch.t>,
-  mutable isScheduled: bool,
+  operations: dict<Operation.t>,
+  mutable isCollecting: bool,
 }
 
 let make = () => {
-  batches: Js.Dict.empty(),
-  isScheduled: false,
+  operations: Js.Dict.empty(),
+  isCollecting: false,
 }
 
 let schedule = async batcher => {
-  // Ensure that the logic runs only once until we finish executing.
-  batcher.isScheduled = true
-
-  // Use a while loop instead of a recursive function,
-  // so the memory is grabaged collected between executions.
-  // Although recursive function shouldn't have caused a memory leak,
-  // there's still a chance for it living for a long time.
-  while batcher.isScheduled {
-    // Wait for a microtask here, to get all the actions registered in case when
-    // running loaders in batch or using Promise.all
-    // Theoretically, we could use a setTimeout, which would allow to skip awaits for
-    // some context.<entitty>.get which are already in the in memory store.
-    // This way we'd be able to register more actions,
-    // but assuming it would not affect performance in a positive way.
-    // On the other hand `await Promise.resolve()` is more predictable, easier for testing and less memory intensive.
+  // For the first schedule, wait for a microtask first
+  // to collect all calls before the next await
+  // If the batcher is already collecting,
+  // then we do nothing. The call will be automatically
+  // handled when the promise below resolves
+  if !batcher.isCollecting {
+    batcher.isCollecting = true
     await Promise.resolve()
+    batcher.isCollecting = false
 
-    // Start accumulating new batches
-    let batches = batcher.batches
-    batcher.batches = Js.Dict.empty()
+    let operations = batcher.operations
+    operations
+    ->Js.Dict.keys
+    ->Utils.Array.forEachAsync(async operationKey => {
+      let batch = operations->Js.Dict.unsafeGet(operationKey)
+      let calls = batch.calls
 
-    let _ = await Promise.all(
-      batches
-      ->Js.Dict.keys
-      ->Js.Array2.map(async batchKey => {
-        let batch = batches->Js.Dict.unsafeGet(batchKey)
-        let calls = batch.calls->Js.Dict.values
+      let inputs = []
+      let inputKeys =
+        calls
+        ->Js.Dict.keys
+        ->Js.Array2.filter(inputKey => {
+          let call = calls->Js.Dict.unsafeGet(inputKey)
+          if call.isPending {
+            false
+          } else {
+            call.isPending = true
+            inputs->Js.Array2.push(call.input)->ignore
+            true
+          }
+        })
 
-        let reject = exn =>
-          calls->Array.forEach(call => {
-            call.reject(exn->Internal.prettifyExn)
+      if inputs->Utils.Array.isEmpty->not {
+        let reject = exn => {
+          let exn = exn->Internal.prettifyExn
+          inputKeys->Array.forEach(inputKey => {
+            let call = calls->Js.Dict.unsafeGet(inputKey)
+            call.reject(exn)
           })
+        }
 
         try {
-          let outputs = await batch.operation(calls->Js.Array2.map(c => c.input))
-          if calls->Js.Array2.length !== outputs->Js.Array2.length {
+          let outputs = await batch.fn(inputs)
+          if inputs->Js.Array2.length !== outputs->Js.Array2.length {
             reject(
               Utils.Error.make(
                 `Invalid case. Reseived ${outputs
                   ->Js.Array2.length
-                  ->Js.Int.toString} responses for ${calls
+                  ->Js.Int.toString} responses for ${inputs
                   ->Js.Array2.length
-                  ->Js.Int.toString} ${batchKey} calls.`,
+                  ->Js.Int.toString} ${operationKey} calls.`,
               ),
             )
           } else {
-            calls->Js.Array2.forEachi((call, idx) => {
+            inputKeys->Js.Array2.forEachi((inputKey, idx) => {
+              let call = calls->Js.Dict.unsafeGet(inputKey)
               let output = outputs->Js.Array2.unsafe_get(idx)
+              calls->Utils.Dict.deleteInPlace(inputKey)
               call.resolve(output)
             })
+
+            // Clean up executed batch to reset
+            // logger passed to operation
+            let latestBatch = operations->Js.Dict.unsafeGet(operationKey)
+            if latestBatch.calls->Js.Dict.keys->Utils.Array.isEmpty {
+              operations->Utils.Dict.deleteInPlace(operationKey)
+            }
           }
         } catch {
         | exn => reject(exn)
         }
-      }),
-    )
-
-    // If there are new loaders register, schedule the next execution immediately.
-    // Otherwise reset the schedule function, so it can be triggered externally again.
-    if batcher.batches->Js.Dict.values->Array.length === 0 {
-      batcher.isScheduled = false
-    }
+      }
+    })
   }
 }
 
 let call = (batcher, ~operationKey, ~operation, ~inputKey, ~input) => {
-  let batch = switch batcher.batches->Utils.Dict.dangerouslyGetNonOption(operationKey) {
-  | Some(b) => b
+  let o = switch batcher.operations->Utils.Dict.dangerouslyGetNonOption(operationKey) {
+  | Some(o) => o
   | None => {
-      let b: Batch.t = {
+      let o: Operation.t = {
         calls: Js.Dict.empty(),
-        operation: operation->(
+        fn: operation->(
           Utils.magic: (array<'input> => promise<array<'output>>) => array<Call.input> => promise<
             array<Call.output>,
           >
         ),
       }
-      batcher.batches->Js.Dict.set(operationKey, b)
-      b
+      batcher.operations->Js.Dict.set(operationKey, o)
+      o
     }
   }
 
-  switch batch.calls->Utils.Dict.dangerouslyGetNonOption(inputKey) {
+  switch o.calls->Utils.Dict.dangerouslyGetNonOption(inputKey) {
   | Some(c) => c.promise
   | None => {
       let promise = Promise.make((resolve, reject) => {
@@ -123,16 +135,15 @@ let call = (batcher, ~operationKey, ~operation, ~inputKey, ~input) => {
           resolve,
           reject,
           promise: %raw(`null`),
+          isPending: false,
         }
-        batch.calls->Js.Dict.set(inputKey, call)
+        o.calls->Js.Dict.set(inputKey, call)
       })
 
       // Don't use ref since it'll allocate an object to store .contents
-      (batch.calls->Js.Dict.unsafeGet(inputKey)).promise = promise
+      (o.calls->Js.Dict.unsafeGet(inputKey)).promise = promise
 
-      if !batcher.isScheduled {
-        let _: promise<unit> = batcher->schedule
-      }
+      let _: promise<unit> = batcher->schedule
 
       promise
     }
