@@ -13,20 +13,19 @@ module Call = {
 }
 
 module Group = {
-  type t<'ctx> = {
+  type t = {
     // Unique calls by input as a key
     calls: dict<Call.t>,
-    ctx: 'ctx,
-    load: (array<Call.input>, ~ctx: 'ctx) => promise<unit>,
+    load: array<Call.input> => promise<unit>,
     getUnsafeInMemory: string => Call.output,
     hasInMemory: string => bool,
   }
 }
 
-type t<'ctx> = {
+type t = {
   // Batches of different operations by operation key
   // Can be: Load by id, load by index, effect
-  groups: dict<Group.t<'ctx>>,
+  groups: dict<Group.t>,
   mutable isCollecting: bool,
 }
 
@@ -70,7 +69,7 @@ let schedule = async batcher => {
 
       if inputsToLoad->Utils.Array.isEmpty->not {
         try {
-          await group.load(inputsToLoad, ~ctx=group.ctx)
+          await group.load(inputsToLoad)
         } catch {
         | exn => {
             let exn = exn->Internal.prettifyExn
@@ -102,65 +101,57 @@ let schedule = async batcher => {
 
 let noopHasher = input => input->(Utils.magic: 'input => string)
 
-let operation = (batcher, ~key, ~load, ~hasher, ~group, ~hasInMemory, ~getUnsafeInMemory) => {
+let call = (batcher, ~input, ~key, ~load, ~hasher, ~group, ~hasInMemory, ~getUnsafeInMemory) => {
   if group {
-    ctx => input => {
-      let inputKey = hasher === noopHasher ? input->(Utils.magic: 'input => string) : hasher(input)
-      let group = switch batcher.groups->Utils.Dict.dangerouslyGetNonOption(key) {
-      | Some(group) => group
-      | None => {
-          let g: Group.t<'ctx> = {
-            calls: Js.Dict.empty(),
-            ctx,
-            load: load->(
-              Utils.magic: ((array<'input>, ~ctx: 'ctx) => promise<unit>) => (
-                array<Call.input>,
-                ~ctx: 'ctx,
-              ) => promise<unit>
-            ),
-            getUnsafeInMemory: getUnsafeInMemory->(
-              Utils.magic: (string => 'output) => string => Call.output
-            ),
-            hasInMemory: hasInMemory->(Utils.magic: (string => bool) => string => bool),
-          }
-          batcher.groups->Js.Dict.set(key, g)
-          g
+    let inputKey = hasher === noopHasher ? input->(Utils.magic: 'input => string) : hasher(input)
+    let group = switch batcher.groups->Utils.Dict.dangerouslyGetNonOption(key) {
+    | Some(group) => group
+    | None => {
+        let g: Group.t = {
+          calls: Js.Dict.empty(),
+          load: load->(
+            Utils.magic: (array<'input> => promise<unit>) => array<Call.input> => promise<unit>
+          ),
+          getUnsafeInMemory: getUnsafeInMemory->(
+            Utils.magic: (string => 'output) => string => Call.output
+          ),
+          hasInMemory: hasInMemory->(Utils.magic: (string => bool) => string => bool),
         }
+        batcher.groups->Js.Dict.set(key, g)
+        g
       }
-
-      switch group.calls->Utils.Dict.dangerouslyGetNonOption(inputKey) {
-      | Some(c) => c.promise
-      | None => {
-          let promise = Promise.make((resolve, reject) => {
-            let call: Call.t = {
-              input: input->(Utils.magic: 'input => Call.input),
-              resolve,
-              reject,
-              promise: %raw(`null`),
-              isLoading: false,
-            }
-            group.calls->Js.Dict.set(inputKey, call)
-          })
-
-          // Don't use ref since it'll allocate an object to store .contents
-          (group.calls->Js.Dict.unsafeGet(inputKey)).promise = promise
-
-          let _: promise<unit> = batcher->schedule
-
-          promise
-        }
-      }->(Utils.magic: promise<Call.output> => promise<'output>)
     }
-  } else {
-    ctx => input => {
-      let inputKey = hasher === noopHasher ? input->(Utils.magic: 'input => string) : hasher(input)
-      if hasInMemory(inputKey) {
-        getUnsafeInMemory(inputKey)->Promise.resolve
-      } else {
-        load([input], ~ctx)->Promise.thenResolve(() => {
-          getUnsafeInMemory(inputKey)
+
+    switch group.calls->Utils.Dict.dangerouslyGetNonOption(inputKey) {
+    | Some(c) => c.promise
+    | None => {
+        let promise = Promise.make((resolve, reject) => {
+          let call: Call.t = {
+            input: input->(Utils.magic: 'input => Call.input),
+            resolve,
+            reject,
+            promise: %raw(`null`),
+            isLoading: false,
+          }
+          group.calls->Js.Dict.set(inputKey, call)
         })
+
+        // Don't use ref since it'll allocate an object to store .contents
+        (group.calls->Js.Dict.unsafeGet(inputKey)).promise = promise
+
+        let _: promise<unit> = batcher->schedule
+
+        promise
       }
+    }->(Utils.magic: promise<Call.output> => promise<'output>)
+  } else {
+    let inputKey = hasher === noopHasher ? input->(Utils.magic: 'input => string) : hasher(input)
+    if hasInMemory(inputKey) {
+      getUnsafeInMemory(inputKey)->Promise.resolve
+    } else {
+      load([input])->Promise.thenResolve(() => {
+        getUnsafeInMemory(inputKey)
+      })
     }
   }
 }

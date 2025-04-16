@@ -20,14 +20,16 @@ let make: (
 
 let makeWithDbConnection: unit => t
 
-let makeLoader: (
+let loadById: (
   t,
   ~entityMod: module(Entities.Entity with type t = 'entity),
   ~inMemoryStore: InMemoryStore.t,
   ~groupLoad: bool,
-) => Internal.eventItem => string => promise<option<'entity>>
+  ~eventItem: Internal.eventItem,
+  ~entityId: string,
+) => promise<option<'entity>>
 
-let makeWhereLoader: (
+let loadByField: (
   t,
   ~operator: TableIndices.Operator.t,
   ~entityMod: module(Entities.Entity with type t = 'entity),
@@ -35,4 +37,6 @@ let makeWhereLoader: (
   ~fieldName: string,
   ~fieldValueSchema: RescriptSchema.S.t<'fieldValue>,
   ~groupLoad: bool,
-) => Internal.eventItem => 'fieldValue => promise<array<'entity>>
+  ~eventItem: Internal.eventItem,
+  ~fieldValue: 'fieldValue,
+) => promise<array<'entity>>

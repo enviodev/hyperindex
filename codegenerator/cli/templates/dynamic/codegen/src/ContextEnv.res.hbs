@@ -46,22 +46,26 @@ let makeWhereLoader = (
   ~eventItem,
   ~groupLoad,
 ) => {
-  Entities.eq: (loadLayer->LoadLayer.makeWhereLoader(
+  Entities.eq: fieldValue => loadLayer->LoadLayer.loadByField(
     ~operator=Eq,
     ~entityMod,
     ~fieldName,
     ~fieldValueSchema,
     ~inMemoryStore,
     ~groupLoad,
-  ))(eventItem),
-  gt: (loadLayer->LoadLayer.makeWhereLoader(
+    ~eventItem,
+    ~fieldValue,
+  ),
+  gt: fieldValue => loadLayer->LoadLayer.loadByField(
     ~operator=Gt,
     ~entityMod,
     ~fieldName,
     ~fieldValueSchema,
     ~inMemoryStore,
     ~groupLoad,
-  ))(eventItem),
+    ~eventItem,
+    ~fieldValue,
+  )
 }
 
 let makeEntityHandlerContext = (
@@ -74,21 +78,20 @@ let makeEntityHandlerContext = (
   ~loadLayer,
   ~shouldSaveHistory,
 ): entityHandlerContext<entity> => {
-  let inMemTable = inMemoryStore->InMemoryStore.getInMemTable(~entityMod)
   {
     set: entity => {
-      inMemTable->InMemoryTable.Entity.set(
+      inMemoryStore->InMemoryStore.getInMemTable(~entityMod)->InMemoryTable.Entity.set(
         Set(entity)->Types.mkEntityUpdate(~eventIdentifier, ~entityId=getKey(entity)),
         ~shouldSaveHistory,
       )
     },
     deleteUnsafe: entityId => {
-      inMemTable->InMemoryTable.Entity.set(
+      inMemoryStore->InMemoryStore.getInMemTable(~entityMod)->InMemoryTable.Entity.set(
         Delete->Types.mkEntityUpdate(~eventIdentifier, ~entityId),
         ~shouldSaveHistory,
       )
     },
-    get: (loadLayer->LoadLayer.makeLoader(~entityMod, ~inMemoryStore, ~groupLoad=false))(eventItem),
+    get: entityId => loadLayer->LoadLayer.loadById(~entityMod, ~inMemoryStore, ~groupLoad=false, ~eventItem, ~entityId),
   }
 }
 
@@ -104,11 +107,14 @@ let getLoaderContext = (eventItem: Internal.eventItem, ~inMemoryStore: InMemoryS
     log: eventItem->Logging.getUserLogger,
     {{#each entities as | entity |}}
     {{entity.name.uncapitalized}}: {
-      get: (loadLayer->LoadLayer.makeLoader(
-        ~entityMod=module(Entities.{{entity.name.capitalized}}),
-        ~inMemoryStore,
-        ~groupLoad,
-      ))(eventItem),
+      get: entityId => 
+        loadLayer->LoadLayer.loadById(
+          ~entityMod=module(Entities.{{entity.name.capitalized}}),
+          ~inMemoryStore,
+          ~groupLoad,
+          ~eventItem,
+          ~entityId
+        ),
       getWhere: {
         {{#each entity.params as | param |}}{{#if param.is_queryable_field }}
         {{param.field_name.uncapitalized}}{{#if param.is_entity_field }}_id{{/if}}: loadLayer->makeWhereLoader(

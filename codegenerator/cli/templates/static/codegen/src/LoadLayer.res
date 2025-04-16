@@ -3,7 +3,7 @@ open Belt
 type fieldValue
 
 type t = {
-  batcher: Batcher.t<Internal.eventItem>,
+  batcher: Batcher.t,
   loadEntitiesByIds: (
     array<Types.id>,
     ~entityMod: module(Entities.InternalEntity),
@@ -37,19 +37,21 @@ let makeWithDbConnection = () => {
   )
 }
 
-let makeLoader = (
+let loadById = (
   type entity,
   loadLayer,
   ~entityMod: module(Entities.Entity with type t = entity),
   ~inMemoryStore,
   ~groupLoad,
+  ~eventItem,
+  ~entityId,
 ) => {
   let module(Entity) = entityMod
   let key = `${(Entity.name :> string)}.get`
   let entityMod = entityMod->Entities.entityModToInternal
   let inMemTable = inMemoryStore->InMemoryStore.getInMemTable(~entityMod)
 
-  let load = async (idsToLoad, ~ctx as eventItem) => {
+  let load = async idsToLoad => {
     // Since makeLoader prevents registerign entities already existing in the inMemoryStore,
     // we can be sure that we load only the new ones.
     let dbEntities =
@@ -75,7 +77,7 @@ let makeLoader = (
     })
   }
 
-  loadLayer.batcher->Batcher.operation(
+  loadLayer.batcher->Batcher.call(
     ~key,
     ~load,
     ~group=groupLoad,
@@ -84,10 +86,11 @@ let makeLoader = (
     ->InMemoryTable.Entity.getUnsafe
     ->(Utils.magic: (string => option<Entities.internalEntity>) => string => option<entity>),
     ~hasInMemory=inMemTable->InMemoryTable.Entity.has,
+    ~input=entityId,
   )
 }
 
-let makeWhereLoader = (
+let loadByField = (
   type entity,
   loadLayer,
   ~operator: TableIndices.Operator.t,
@@ -96,6 +99,8 @@ let makeWhereLoader = (
   ~fieldName,
   ~fieldValueSchema,
   ~groupLoad,
+  ~eventItem,
+  ~fieldValue,
 ) => {
   let module(Entity) = entityMod
   let key = `${(Entity.name :> string)}.getWhere.${fieldName}.${switch operator {
@@ -105,7 +110,7 @@ let makeWhereLoader = (
   let entityMod = entityMod->Entities.entityModToInternal
   let inMemTable = inMemoryStore->InMemoryStore.getInMemTable(~entityMod)
 
-  let load = async (fieldValues: array<'fieldValue>, ~ctx as eventItem) => {
+  let load = async (fieldValues: array<'fieldValue>) => {
     let indiciesToLoad = fieldValues->Js.Array2.map((fieldValue): TableIndices.Index.t => {
       Single({
         fieldName,
@@ -144,9 +149,10 @@ let makeWhereLoader = (
       ->Promise.all
   }
 
-  loadLayer.batcher->Batcher.operation(
+  loadLayer.batcher->Batcher.call(
     ~key,
     ~load,
+    ~input=fieldValue,
     ~group=groupLoad,
     ~hasher=fieldValue =>
       fieldValue->TableIndices.FieldValue.castFrom->TableIndices.FieldValue.toString,
