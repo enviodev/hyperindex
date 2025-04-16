@@ -13,19 +13,20 @@ module Call = {
 }
 
 module Group = {
-  type t = {
+  type t<'ctx> = {
     // Unique calls by input as a key
     calls: dict<Call.t>,
-    load: array<Call.input> => promise<unit>,
+    ctx: 'ctx,
+    load: (array<Call.input>, ~ctx: 'ctx) => promise<unit>,
     getUnsafeInMemory: string => Call.output,
     hasInMemory: string => bool,
   }
 }
 
-type t = {
+type t<'ctx> = {
   // Batches of different operations by operation key
   // Can be: Load by id, load by index, effect
-  groups: dict<Group.t>,
+  groups: dict<Group.t<'ctx>>,
   mutable isCollecting: bool,
 }
 
@@ -69,7 +70,7 @@ let schedule = async batcher => {
 
       if inputsToLoad->Utils.Array.isEmpty->not {
         try {
-          await group.load(inputsToLoad)
+          await group.load(inputsToLoad, ~ctx=group.ctx)
         } catch {
         | exn => {
             let exn = exn->Internal.prettifyExn
@@ -103,15 +104,19 @@ let noopHasher = input => input->(Utils.magic: 'input => string)
 
 let operation = (batcher, ~key, ~load, ~hasher, ~group, ~hasInMemory, ~getUnsafeInMemory) => {
   if group {
-    input => {
+    ctx => input => {
       let inputKey = hasher === noopHasher ? input->(Utils.magic: 'input => string) : hasher(input)
       let group = switch batcher.groups->Utils.Dict.dangerouslyGetNonOption(key) {
       | Some(group) => group
       | None => {
-          let g: Group.t = {
+          let g: Group.t<'ctx> = {
             calls: Js.Dict.empty(),
+            ctx,
             load: load->(
-              Utils.magic: (array<'input> => promise<unit>) => array<Call.input> => promise<unit>
+              Utils.magic: ((array<'input>, ~ctx: 'ctx) => promise<unit>) => (
+                array<Call.input>,
+                ~ctx: 'ctx,
+              ) => promise<unit>
             ),
             getUnsafeInMemory: getUnsafeInMemory->(
               Utils.magic: (string => 'output) => string => Call.output
@@ -147,12 +152,12 @@ let operation = (batcher, ~key, ~load, ~hasher, ~group, ~hasInMemory, ~getUnsafe
       }->(Utils.magic: promise<Call.output> => promise<'output>)
     }
   } else {
-    input => {
+    ctx => input => {
       let inputKey = hasher === noopHasher ? input->(Utils.magic: 'input => string) : hasher(input)
       if hasInMemory(inputKey) {
         getUnsafeInMemory(inputKey)->Promise.resolve
       } else {
-        load([input])->Promise.thenResolve(() => {
+        load([input], ~ctx)->Promise.thenResolve(() => {
           getUnsafeInMemory(inputKey)
         })
       }

@@ -24,17 +24,15 @@ let makeLoader: (
   t,
   ~entityMod: module(Entities.Entity with type t = 'entity),
   ~inMemoryStore: InMemoryStore.t,
-  ~logger: Pino.t,
   ~groupLoad: bool,
-) => string => promise<option<'entity>>
+) => Internal.eventItem => string => promise<option<'entity>>
 
 let makeWhereLoader: (
   t,
   ~operator: TableIndices.Operator.t,
   ~entityMod: module(Entities.Entity with type t = 'entity),
   ~inMemoryStore: InMemoryStore.t,
-  ~logger: Pino.t,
   ~fieldName: string,
   ~fieldValueSchema: RescriptSchema.S.t<'fieldValue>,
   ~groupLoad: bool,
-) => 'fieldValue => promise<array<'entity>>
+) => Internal.eventItem => 'fieldValue => promise<array<'entity>>

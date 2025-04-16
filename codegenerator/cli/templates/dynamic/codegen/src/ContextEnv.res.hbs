@@ -43,27 +43,25 @@ let makeWhereLoader = (
   ~inMemoryStore,
   ~fieldName,
   ~fieldValueSchema,
-  ~logger,
+  ~eventItem,
   ~groupLoad,
 ) => {
-  Entities.eq: loadLayer->LoadLayer.makeWhereLoader(
+  Entities.eq: (loadLayer->LoadLayer.makeWhereLoader(
     ~operator=Eq,
     ~entityMod,
     ~fieldName,
     ~fieldValueSchema,
     ~inMemoryStore,
-    ~logger,
     ~groupLoad,
-  ),
-  gt: loadLayer->LoadLayer.makeWhereLoader(
+  ))(eventItem),
+  gt: (loadLayer->LoadLayer.makeWhereLoader(
     ~operator=Gt,
     ~entityMod,
     ~fieldName,
     ~fieldValueSchema,
     ~inMemoryStore,
-    ~logger,
     ~groupLoad,
-  ),
+  ))(eventItem),
 }
 
 let makeEntityHandlerContext = (
@@ -71,7 +69,7 @@ let makeEntityHandlerContext = (
   ~eventIdentifier,
   ~inMemoryStore,
   ~entityMod: module(Entities.Entity with type t = entity),
-  ~logger,
+  ~eventItem,
   ~getKey,
   ~loadLayer,
   ~shouldSaveHistory,
@@ -90,7 +88,7 @@ let makeEntityHandlerContext = (
         ~shouldSaveHistory,
       )
     },
-    get: loadLayer->LoadLayer.makeLoader(~entityMod, ~logger, ~inMemoryStore, ~groupLoad=false),
+    get: (loadLayer->LoadLayer.makeLoader(~entityMod, ~inMemoryStore, ~groupLoad=false))(eventItem),
   }
 }
 
@@ -106,12 +104,11 @@ let getLoaderContext = (eventItem: Internal.eventItem, ~inMemoryStore: InMemoryS
     log: eventItem->Logging.getUserLogger,
     {{#each entities as | entity |}}
     {{entity.name.uncapitalized}}: {
-      get: loadLayer->LoadLayer.makeLoader(
+      get: (loadLayer->LoadLayer.makeLoader(
         ~entityMod=module(Entities.{{entity.name.capitalized}}),
         ~inMemoryStore,
-        ~logger=eventItem->Logging.getEventLogger,
         ~groupLoad,
-      ),
+      ))(eventItem),
       getWhere: {
         {{#each entity.params as | param |}}{{#if param.is_queryable_field }}
         {{param.field_name.uncapitalized}}{{#if param.is_entity_field }}_id{{/if}}: loadLayer->makeWhereLoader(
@@ -119,7 +116,7 @@ let getLoaderContext = (eventItem: Internal.eventItem, ~inMemoryStore: InMemoryS
           ~inMemoryStore,
           ~fieldName="{{param.field_name.original}}{{#if param.is_entity_field }}_id{{/if}}",
           ~fieldValueSchema={{param.res_schema_code}},
-          ~logger=eventItem->Logging.getEventLogger,
+          ~eventItem,
           ~groupLoad,
         ),
       {{/if}}{{/each}}
@@ -140,11 +137,11 @@ let getHandlerContext = (
     log: eventItem->Logging.getUserLogger,
     {{#each entities as | entity |}}
     {{entity.name.uncapitalized}}: makeEntityHandlerContext(
+      ~eventItem,
       ~eventIdentifier,
       ~inMemoryStore,
       ~entityMod=module(Entities.{{entity.name.capitalized}}),
       ~getKey=entity => entity.id,
-      ~logger=eventItem->Logging.getEventLogger,
       ~loadLayer,
       ~shouldSaveHistory,
     ),

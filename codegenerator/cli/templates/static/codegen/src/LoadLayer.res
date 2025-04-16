@@ -3,7 +3,7 @@ open Belt
 type fieldValue
 
 type t = {
-  batcher: Batcher.t,
+  batcher: Batcher.t<Internal.eventItem>,
   loadEntitiesByIds: (
     array<Types.id>,
     ~entityMod: module(Entities.InternalEntity),
@@ -42,7 +42,6 @@ let makeLoader = (
   loadLayer,
   ~entityMod: module(Entities.Entity with type t = entity),
   ~inMemoryStore,
-  ~logger,
   ~groupLoad,
 ) => {
   let module(Entity) = entityMod
@@ -50,10 +49,14 @@ let makeLoader = (
   let entityMod = entityMod->Entities.entityModToInternal
   let inMemTable = inMemoryStore->InMemoryStore.getInMemTable(~entityMod)
 
-  let load = async idsToLoad => {
+  let load = async (idsToLoad, ~ctx as eventItem) => {
     // Since makeLoader prevents registerign entities already existing in the inMemoryStore,
     // we can be sure that we load only the new ones.
-    let dbEntities = await idsToLoad->loadLayer.loadEntitiesByIds(~entityMod, ~logger)
+    let dbEntities =
+      await idsToLoad->loadLayer.loadEntitiesByIds(
+        ~entityMod,
+        ~logger=eventItem->Logging.getEventLogger,
+      )
 
     let entitiesMap = Js.Dict.empty()
     for idx in 0 to dbEntities->Array.length - 1 {
@@ -90,7 +93,6 @@ let makeWhereLoader = (
   ~operator: TableIndices.Operator.t,
   ~entityMod: module(Entities.Entity with type t = entity),
   ~inMemoryStore,
-  ~logger,
   ~fieldName,
   ~fieldValueSchema,
   ~groupLoad,
@@ -103,7 +105,7 @@ let makeWhereLoader = (
   let entityMod = entityMod->Entities.entityModToInternal
   let inMemTable = inMemoryStore->InMemoryStore.getInMemTable(~entityMod)
 
-  let load = async (fieldValues: array<'fieldValue>) => {
+  let load = async (fieldValues: array<'fieldValue>, ~ctx as eventItem) => {
     let indiciesToLoad = fieldValues->Js.Array2.map((fieldValue): TableIndices.Index.t => {
       Single({
         fieldName,
@@ -127,7 +129,7 @@ let makeWhereLoader = (
             fieldValue->(Utils.magic: TableIndices.FieldValue.t => fieldValue)
           },
           ~fieldValueSchema=fieldValueSchema->(Utils.magic: S.t<'fieldValue> => S.t<fieldValue>),
-          ~logger,
+          ~logger=eventItem->Logging.getEventLogger,
         )
 
         entities->Array.forEach(entity => {
