@@ -1,4 +1,4 @@
-let codegenHelpMessage = `Rerun "pnpm dev" to update generated code after schema.graphql changes.`
+let codegenHelpMessage = `Rerun 'pnpm dev' to update generated code after schema.graphql changes.`
 
 let makeEventIdentifier = (eventItem: Internal.eventItem): Types.eventIdentifier => {
   let {event, blockNumber, timestamp} = eventItem
@@ -75,7 +75,7 @@ let handlerTraps: Utils.Proxy.traps<handlerContextParams> = {
         switch Entities.byName->Utils.Dict.dangerouslyGetNonOption(prop) {
         | Some(entityMod) => makeEntityHandlerContext(~entityMod, ~params=target)->Utils.magic
         | None =>
-          Js.Exn.raiseError(`Invalid context access by "${prop}" property. ${codegenHelpMessage}`)
+          Js.Exn.raiseError(`Invalid context access by '${prop}' property. ${codegenHelpMessage}`)
         }
       }
     }
@@ -199,7 +199,7 @@ let loaderTraps: Utils.Proxy.traps<loaderContextParams> = {
             entityMod,
           })->Utils.magic
         | None =>
-          Js.Exn.raiseError(`Invalid context access by "${prop}" property. ${codegenHelpMessage}`)
+          Js.Exn.raiseError(`Invalid context access by '${prop}' property. ${codegenHelpMessage}`)
         }
       }
     }
