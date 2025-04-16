@@ -132,7 +132,7 @@ let runEventContractRegister = (
 
     let chainId = chain->ChainMap.Chain.toChainId
     let dc: TablesStatic.DynamicContractRegistry.t = {
-      id: ContextEnv.makeDynamicContractId(~chainId, ~contractAddress),
+      id: UserContext.makeDynamicContractId(~chainId, ~contractAddress),
       chainId,
       registeringEventBlockNumber: blockNumber,
       registeringEventLogIndex: logIndex,

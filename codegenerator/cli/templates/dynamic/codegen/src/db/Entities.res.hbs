@@ -114,3 +114,11 @@ let allEntities = [
 {{/each}}
   module(TablesStatic.DynamicContractRegistry),
 ]->entityModsToInternal
+
+let byName =
+  allEntities
+  ->Js.Array2.map(entityMod => {
+    let module(Entity) = entityMod
+    (Entity.name :> string, entityMod)
+  })
+  ->Js.Dict.fromArray

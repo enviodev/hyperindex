@@ -1,29 +1,5 @@
 open Types
 
-let makeEventIdentifier = (
-  eventItem: Internal.eventItem,
-): Types.eventIdentifier => {
-  let {event, blockNumber, timestamp} = eventItem
-  {
-    chainId: event.chainId,
-    blockTimestamp: timestamp,
-    blockNumber,
-    logIndex: event.logIndex,
-  }
-}
-
-let getEventId = (eventItem: Internal.eventItem) => {
-  EventUtils.packEventIndex(
-    ~blockNumber=eventItem.blockNumber,
-    ~logIndex=eventItem.event.logIndex,
-  )
-}
-
-
-let makeDynamicContractId = (~chainId, ~contractAddress) => {
-  chainId->Belt.Int.toString ++ "-" ++ contractAddress->Address.toString
-}
-
 let makeDynamicContractRegisterFn = (
   ~contractName: Enums.ContractType.t,
   ~onRegister,
@@ -68,33 +44,6 @@ let makeWhereLoader = (
   )
 }
 
-let makeEntityHandlerContext = (
-  type entity,
-  ~eventIdentifier,
-  ~inMemoryStore,
-  ~entityMod: module(Entities.Entity with type t = entity),
-  ~eventItem,
-  ~getKey,
-  ~loadLayer,
-  ~shouldSaveHistory,
-): entityHandlerContext<entity> => {
-  {
-    set: entity => {
-      inMemoryStore->InMemoryStore.getInMemTable(~entityMod)->InMemoryTable.Entity.set(
-        Set(entity)->Types.mkEntityUpdate(~eventIdentifier, ~entityId=getKey(entity)),
-        ~shouldSaveHistory,
-      )
-    },
-    deleteUnsafe: entityId => {
-      inMemoryStore->InMemoryStore.getInMemTable(~entityMod)->InMemoryTable.Entity.set(
-        Delete->Types.mkEntityUpdate(~eventIdentifier, ~entityId),
-        ~shouldSaveHistory,
-      )
-    },
-    get: entityId => loadLayer->LoadLayer.loadById(~entityMod, ~inMemoryStore, ~groupLoad=false, ~eventItem, ~entityId),
-  }
-}
-
 let getContractRegisterContext = (~onRegister) => {
   //TODO only add contracts we've registered for the event in the config
   {{#each codegen_contracts as |contract| }}
@@ -132,29 +81,6 @@ let getLoaderContext = (eventItem: Internal.eventItem, ~inMemoryStore: InMemoryS
   }->(Utils.magic: Types.loaderContext => Internal.loaderContext)
 }
 
-let getHandlerContext = (
-  eventItem: Internal.eventItem,
-  ~inMemoryStore: InMemoryStore.t,
-  ~loadLayer,
-  ~shouldSaveHistory,
-) => {
-  let eventIdentifier = eventItem->makeEventIdentifier
-  {
-    log: eventItem->Logging.getUserLogger,
-    {{#each entities as | entity |}}
-    {{entity.name.uncapitalized}}: makeEntityHandlerContext(
-      ~eventItem,
-      ~eventIdentifier,
-      ~inMemoryStore,
-      ~entityMod=module(Entities.{{entity.name.capitalized}}),
-      ~getKey=entity => entity.id,
-      ~loadLayer,
-      ~shouldSaveHistory,
-    ),
-    {{/each}}
-  }->(Utils.magic: Types.handlerContext => Internal.handlerContext)
-}
-
 let getContractRegisterArgs = (eventItem: Internal.eventItem, ~onRegister): Internal.contractRegisterArgs => {
   event: eventItem.event,
   context: getContractRegisterContext(~onRegister),
@@ -173,6 +99,11 @@ let getHandlerArgs = (
   ~shouldSaveHistory,
 ): Internal.handlerArgs => {
   event: eventItem.event,
-  context: eventItem->getHandlerContext(~inMemoryStore, ~loadLayer, ~shouldSaveHistory),
+  context: UserContext.getHandlerContext({
+    eventItem,
+    inMemoryStore,
+    loadLayer,
+    shouldSaveHistory,
+  }),
   loaderReturn,
 }

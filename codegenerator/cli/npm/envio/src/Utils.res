@@ -460,3 +460,10 @@ module Map = {
   @send external set: (t<'k, 'v>, 'k, 'v) => t<'k, 'v> = "set"
   @send external delete: (t<'k, 'v>, 'k) => bool = "delete"
 }
+
+module Proxy = {
+  type traps<'a> = {get?: (~target: 'a, ~prop: unknown) => unknown}
+
+  @new
+  external make: ('a, traps<'a>) => 'a = "Proxy"
+}
