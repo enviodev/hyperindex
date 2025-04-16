@@ -186,7 +186,7 @@ let fromTable = (table: table, ~schema: S.t<'entity>): t<'entity> => {
 
   let currentHistoryFields =
     currentChangeFieldNames->Belt.Array.map(fieldName =>
-      mkField(fieldName, Integer, ~isPrimaryKey=true)
+      mkField(fieldName, Integer, ~fieldSchema=S.never, ~isPrimaryKey=true)
     )
 
   let previousChangeFieldNames =
@@ -194,7 +194,7 @@ let fromTable = (table: table, ~schema: S.t<'entity>): t<'entity> => {
 
   let previousHistoryFields =
     previousChangeFieldNames->Belt.Array.map(fieldName =>
-      mkField(fieldName, Integer, ~isNullable=true)
+      mkField(fieldName, Integer, ~fieldSchema=S.never, ~isNullable=true)
     )
 
   let id = "id"
@@ -224,9 +224,9 @@ let fromTable = (table: table, ~schema: S.t<'entity>): t<'entity> => {
 
   let actionFieldName = "action"
 
-  let actionField = mkField(actionFieldName, Custom(RowAction.enum.name))
+  let actionField = mkField(actionFieldName, Custom(RowAction.enum.name), ~fieldSchema=S.never)
 
-  let serialField = mkField("serial", Serial, ~isNullable=true, ~isIndex=true)
+  let serialField = mkField("serial", Serial, ~fieldSchema=S.never, ~isNullable=true, ~isIndex=true)
 
   let dataFieldNames = dataFields->Belt.Array.map(field => field->getFieldName)
 

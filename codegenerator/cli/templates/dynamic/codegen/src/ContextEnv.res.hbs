@@ -13,97 +13,14 @@ let makeDynamicContractRegisterFn = (
   onRegister(~contractAddress, ~contractName)
 }
 
-let makeWhereLoader = (
-  loadLayer,
-  ~entityMod,
-  ~inMemoryStore,
-  ~fieldName,
-  ~fieldValueSchema,
-  ~eventItem,
-  ~groupLoad,
-) => {
-  Entities.eq: fieldValue => loadLayer->LoadLayer.loadByField(
-    ~operator=Eq,
-    ~entityMod,
-    ~fieldName,
-    ~fieldValueSchema,
-    ~inMemoryStore,
-    ~groupLoad,
-    ~eventItem,
-    ~fieldValue,
-  ),
-  gt: fieldValue => loadLayer->LoadLayer.loadByField(
-    ~operator=Gt,
-    ~entityMod,
-    ~fieldName,
-    ~fieldValueSchema,
-    ~inMemoryStore,
-    ~groupLoad,
-    ~eventItem,
-    ~fieldValue,
-  )
-}
-
 let getContractRegisterContext = (~onRegister) => {
-  //TODO only add contracts we've registered for the event in the config
+  // TODO: only add contracts we've registered for the event in the config
   {{#each codegen_contracts as |contract| }}
   add{{contract.name.capitalized}}:  makeDynamicContractRegisterFn(~contractName={{contract.name.capitalized}}, ~onRegister),
   {{/each}}
 }->(Utils.magic: Types.contractRegistrations => Internal.contractRegisterContext)
 
-let getLoaderContext = (eventItem: Internal.eventItem, ~inMemoryStore: InMemoryStore.t, ~loadLayer: LoadLayer.t, ~groupLoad) => {
-  {
-    log: eventItem->Logging.getUserLogger,
-    {{#each entities as | entity |}}
-    {{entity.name.uncapitalized}}: {
-      get: entityId => 
-        loadLayer->LoadLayer.loadById(
-          ~entityMod=module(Entities.{{entity.name.capitalized}}),
-          ~inMemoryStore,
-          ~groupLoad,
-          ~eventItem,
-          ~entityId
-        ),
-      getWhere: {
-        {{#each entity.params as | param |}}{{#if param.is_queryable_field }}
-        {{param.field_name.uncapitalized}}{{#if param.is_entity_field }}_id{{/if}}: loadLayer->makeWhereLoader(
-          ~entityMod=module(Entities.{{entity.name.capitalized}}),
-          ~inMemoryStore,
-          ~fieldName="{{param.field_name.original}}{{#if param.is_entity_field }}_id{{/if}}",
-          ~fieldValueSchema={{param.res_schema_code}},
-          ~eventItem,
-          ~groupLoad,
-        ),
-      {{/if}}{{/each}}
-      },
-    },
-    {{/each}}
-  }->(Utils.magic: Types.loaderContext => Internal.loaderContext)
-}
-
 let getContractRegisterArgs = (eventItem: Internal.eventItem, ~onRegister): Internal.contractRegisterArgs => {
   event: eventItem.event,
   context: getContractRegisterContext(~onRegister),
-}
-
-let getLoaderArgs = (eventItem: Internal.eventItem, ~inMemoryStore, ~loadLayer, ~groupLoad): Internal.loaderArgs => {
-  event: eventItem.event,
-  context: eventItem->getLoaderContext(~inMemoryStore, ~loadLayer, ~groupLoad),
-}
-
-let getHandlerArgs = (
-  eventItem: Internal.eventItem,
-  ~inMemoryStore,
-  ~loaderReturn,
-  ~loadLayer,
-  ~shouldSaveHistory,
-): Internal.handlerArgs => {
-  event: eventItem.event,
-  context: UserContext.getHandlerContext({
-    eventItem,
-    inMemoryStore,
-    loadLayer,
-    shouldSaveHistory,
-  }),
-  loaderReturn,
 }

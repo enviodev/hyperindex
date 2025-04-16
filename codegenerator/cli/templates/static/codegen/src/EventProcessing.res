@@ -225,7 +225,14 @@ let runEventLoader = async (
   ~loadLayer,
   ~groupLoad=false,
 ) => {
-  switch await loader(eventItem->ContextEnv.getLoaderArgs(~inMemoryStore, ~loadLayer, ~groupLoad)) {
+  switch await loader(
+    UserContext.getLoaderArgs({
+      eventItem,
+      inMemoryStore,
+      loadLayer,
+      groupLoad,
+    }),
+  ) {
   | exception exn =>
     exn
     ->ErrorHandling.make(
@@ -328,7 +335,7 @@ let runEventHandler = (
     }
 
     switch await handler(
-      eventItem->ContextEnv.getHandlerArgs(
+      eventItem->UserContext.getHandlerArgs(
         ~loaderReturn,
         ~inMemoryStore,
         ~loadLayer,
