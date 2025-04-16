@@ -116,7 +116,6 @@ let checkContractIsInCurrentRegistrations = (
 let runEventContractRegister = (
   contractRegister: Internal.contractRegister,
   ~eventItem: Internal.eventItem,
-  ~logger,
   ~checkContractIsRegistered,
   ~dynamicContractRegistrations: option<dynamicContractRegistrations>,
   ~inMemoryStore,
@@ -175,13 +174,12 @@ let runEventContractRegister = (
     }
   }
 
-  let contextEnv = ContextEnv.make(~eventItem, ~logger)
-  switch contractRegister(contextEnv->ContextEnv.getContractRegisterArgs(~onRegister)) {
+  switch contractRegister(eventItem->ContextEnv.getContractRegisterArgs(~onRegister)) {
   | exception exn =>
     exn
     ->ErrorHandling.make(
       ~msg="Event contractRegister failed, please fix the error to keep the indexer running smoothly",
-      ~logger=contextEnv.logger,
+      ~logger=eventItem->Logging.getEventLogger,
     )
     ->Error
   | () =>
@@ -220,13 +218,19 @@ let runEventContractRegister = (
   }
 }
 
-let runEventLoader = async (~contextEnv, ~loader: Internal.loader, ~inMemoryStore, ~loadLayer, ~groupLoad=false) => {
-  switch await loader(contextEnv->ContextEnv.getLoaderArgs(~inMemoryStore, ~loadLayer, ~groupLoad)) {
+let runEventLoader = async (
+  ~eventItem,
+  ~loader: Internal.loader,
+  ~inMemoryStore,
+  ~loadLayer,
+  ~groupLoad=false,
+) => {
+  switch await loader(eventItem->ContextEnv.getLoaderArgs(~inMemoryStore, ~loadLayer, ~groupLoad)) {
   | exception exn =>
     exn
     ->ErrorHandling.make(
       ~msg="Event pre loader failed, please fix the error to keep the indexer running smoothly",
-      ~logger=contextEnv.logger,
+      ~logger=eventItem->Logging.getEventLogger,
     )
     ->Error
   | loadReturn => loadReturn->Ok
@@ -309,25 +313,22 @@ let runEventHandler = (
   ~loader,
   ~handler,
   ~inMemoryStore,
-  ~logger,
   ~loadLayer,
   ~shouldSaveHistory,
 ) => {
   open ErrorHandling.ResultPropogateEnv
   runAsyncEnv(async () => {
-    let contextEnv = ContextEnv.make(~eventItem, ~logger)
-
     //Include the load in time before handler
     let timeBeforeHandler = Hrtime.makeTimer()
 
     let loaderReturn = switch loader {
     | Some(loader) =>
-      (await runEventLoader(~contextEnv, ~loader, ~inMemoryStore, ~loadLayer))->propogate
+      (await runEventLoader(~eventItem, ~loader, ~inMemoryStore, ~loadLayer))->propogate
     | None => (%raw(`undefined`): Internal.loaderReturn)
     }
 
     switch await handler(
-      contextEnv->ContextEnv.getHandlerArgs(
+      eventItem->ContextEnv.getHandlerArgs(
         ~loaderReturn,
         ~inMemoryStore,
         ~loadLayer,
@@ -338,7 +339,7 @@ let runEventHandler = (
       exn
       ->ErrorHandling.make(
         ~msg="Event Handler failed, please fix the error to keep the indexer running smoothly",
-        ~logger=contextEnv.logger,
+        ~logger=eventItem->Logging.getEventLogger,
       )
       ->Error
       ->propogate
@@ -362,7 +363,6 @@ let runHandler = async (
   eventItem: Internal.eventItem,
   ~latestProcessedBlocks,
   ~inMemoryStore,
-  ~logger,
   ~loadLayer,
   ~config: Config.t,
   ~isInReorgThreshold,
@@ -374,7 +374,6 @@ let runHandler = async (
       ~loader=eventItem.eventConfig.loader,
       ~handler,
       ~inMemoryStore,
-      ~logger,
       ~loadLayer,
       ~shouldSaveHistory=config->Config.shouldSaveHistory(~isInReorgThreshold),
     )
@@ -429,7 +428,6 @@ let rec registerDynamicContracts = (
       switch eventItem.eventConfig {
       | {contractRegister: Some(handler)} =>
         handler->runEventContractRegister(
-          ~logger,
           ~checkContractIsRegistered,
           ~eventItem,
           ~dynamicContractRegistrations,
@@ -467,7 +465,7 @@ let rec registerDynamicContracts = (
   }
 }
 
-let runLoaders = (eventBatch: array<Internal.eventItem>, ~loadLayer, ~inMemoryStore, ~logger) => {
+let runLoaders = (eventBatch: array<Internal.eventItem>, ~loadLayer, ~inMemoryStore) => {
   open ErrorHandling.ResultPropogateEnv
   runAsyncEnv(async () => {
     // We don't actually need loader returns,
@@ -478,12 +476,10 @@ let runLoaders = (eventBatch: array<Internal.eventItem>, ~loadLayer, ~inMemorySt
       await eventBatch
       ->Array.keepMap(eventItem => {
         switch eventItem.eventConfig {
-        | {loader: Some(loader)} => {
-            let contextEnv = ContextEnv.make(~eventItem, ~logger)
-            runEventLoader(~contextEnv, ~loader, ~inMemoryStore, ~loadLayer, ~groupLoad=true)
-            ->Promise.thenResolve(propogate)
-            ->Some
-          }
+        | {loader: Some(loader)} =>
+          runEventLoader(~eventItem, ~loader, ~inMemoryStore, ~loadLayer, ~groupLoad=true)
+          ->Promise.thenResolve(propogate)
+          ->Some
         | _ => None
         }
       })
@@ -496,7 +492,6 @@ let runHandlers = (
   eventBatch: array<Internal.eventItem>,
   ~inMemoryStore,
   ~latestProcessedBlocks,
-  ~logger,
   ~loadLayer,
   ~config,
   ~isInReorgThreshold,
@@ -512,7 +507,6 @@ let runHandlers = (
           await runHandler(
             eventItem,
             ~inMemoryStore,
-            ~logger,
             ~latestProcessedBlocks=latestProcessedBlocks.contents,
             ~loadLayer,
             ~config,
@@ -615,13 +609,14 @@ let processEventBatch = (
   ~loadLayer,
   ~config,
 ) => {
-  let logger = Logging.createChild(
+  let logger = Logging.createChildFrom(
+    ~logger=Logging.getLogger(),
     ~params={
-      "context": "batch",
-      "batch-size": eventBatch->Array.length,
-      "first-event-timestamp": eventBatch[0]->Option.map(v => v.timestamp),
+      "batchSize": eventBatch->Array.length,
+      "firstEventTimestamp": eventBatch[0]->Option.map(v => v.timestamp),
     },
   )
+  logger->Logging.childTrace("Started processing batch")
 
   let timeRef = Hrtime.makeTimer()
 
@@ -645,9 +640,7 @@ let processEventBatch = (
     let elapsedAfterContractRegister =
       timeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
 
-    (await eventsBeforeDynamicRegistrations
-    ->runLoaders(~loadLayer, ~inMemoryStore, ~logger))
-    ->propogate
+    (await eventsBeforeDynamicRegistrations->runLoaders(~loadLayer, ~inMemoryStore))->propogate
 
     let elapsedAfterLoad = timeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
 
@@ -656,7 +649,6 @@ let processEventBatch = (
       ->runHandlers(
         ~inMemoryStore,
         ~latestProcessedBlocks,
-        ~logger,
         ~loadLayer,
         ~config,
         ~isInReorgThreshold,

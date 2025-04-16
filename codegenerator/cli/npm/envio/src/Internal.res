@@ -134,6 +134,8 @@ type eventItem = {
   //be reprocessed after it has loaded dynamic contracts
   //This gets set to true and does not try and reload events
   hasRegisteredDynamicContracts?: bool,
+  // Reuse logger object for event
+  mutable loggerCache?: Pino.t,
 }
 
 @genType

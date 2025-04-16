@@ -144,18 +144,36 @@ let createChildFrom = (~logger: t, ~params: 'a) => {
   logger->child(params->createChildParams)
 }
 
+let getEventLogger = (eventItem: Internal.eventItem) => {
+  switch eventItem.loggerCache {
+  | Some(l) => l
+  | None => {
+      let l = getLogger()->child(
+        {
+          "context": `Event '${eventItem.eventConfig.name}' for contract '${eventItem.eventConfig.contractName}'`,
+          "chainId": eventItem.chain->ChainMap.Chain.toChainId,
+          "block": eventItem.blockNumber,
+          "logIndex": eventItem.logIndex,
+        }->createChildParams,
+      )
+      eventItem.loggerCache = Some(l)
+      l
+    }
+  }
+}
+
 let getUserLogger = {
   @inline
-  let log = (logger: Pino.t, level: Pino.logLevelUser, message: string, ~params) => {
-    (logger->Utils.magic->Js.Dict.unsafeGet((level :> string)))(params, message)
+  let log = (eventItem, level: Pino.logLevelUser, message: string, ~params) => {
+    (eventItem->getEventLogger->Utils.magic->Js.Dict.unsafeGet((level :> string)))(params, message)
   }
 
-  (logger): Envio.logger => {
-    info: (message: string, ~params=?) => logger->log(#uinfo, message, ~params),
-    debug: (message: string, ~params=?) => logger->log(#udebug, message, ~params),
-    warn: (message: string, ~params=?) => logger->log(#uwarn, message, ~params),
-    error: (message: string, ~params=?) => logger->log(#uerror, message, ~params),
+  (eventItem): Envio.logger => {
+    info: (message: string, ~params=?) => eventItem->log(#uinfo, message, ~params),
+    debug: (message: string, ~params=?) => eventItem->log(#udebug, message, ~params),
+    warn: (message: string, ~params=?) => eventItem->log(#uwarn, message, ~params),
+    error: (message: string, ~params=?) => eventItem->log(#uerror, message, ~params),
     errorWithExn: (message: string, exn) =>
-      logger->log(#uerror, message, ~params={"err": exn->Internal.prettifyExn}),
+      eventItem->log(#uerror, message, ~params={"err": exn->Internal.prettifyExn}),
   }
 }

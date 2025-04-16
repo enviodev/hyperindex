@@ -1,13 +1,5 @@
 open Types
 
-/**
-The context holds all the state for a given events loader and handler.
-*/
-type t = {
-  logger: Pino.t,
-  eventItem: Internal.eventItem,
-}
-
 let makeEventIdentifier = (
   eventItem: Internal.eventItem,
 ): Types.eventIdentifier => {
@@ -27,25 +19,6 @@ let getEventId = (eventItem: Internal.eventItem) => {
   )
 }
 
-let make = (~eventItem: Internal.eventItem, ~logger) => {
-  let {event, chain, eventConfig, blockNumber} = eventItem
-  let logger = logger->(
-    Logging.createChildFrom(
-      ~logger=_,
-      ~params={
-        "context": `Event '${eventConfig.name}' for contract '${eventConfig.contractName}'`,
-        "chainId": chain->ChainMap.Chain.toChainId,
-        "block": blockNumber,
-        "logIndex": event.logIndex,
-      },
-    )
-  )
-
-  {
-    logger,
-    eventItem,
-  }
-}
 
 let makeDynamicContractId = (~chainId, ~contractAddress) => {
   chainId->Belt.Int.toString ++ "-" ++ contractAddress->Address.toString
@@ -128,16 +101,15 @@ let getContractRegisterContext = (~onRegister) => {
   {{/each}}
 }->(Utils.magic: Types.contractRegistrations => Internal.contractRegisterContext)
 
-let getLoaderContext = (contextEnv: t, ~inMemoryStore: InMemoryStore.t, ~loadLayer: LoadLayer.t, ~groupLoad) => {
-  let {logger} = contextEnv
+let getLoaderContext = (eventItem: Internal.eventItem, ~inMemoryStore: InMemoryStore.t, ~loadLayer: LoadLayer.t, ~groupLoad) => {
   {
-    log: logger->Logging.getUserLogger,
+    log: eventItem->Logging.getUserLogger,
     {{#each entities as | entity |}}
     {{entity.name.uncapitalized}}: {
       get: loadLayer->LoadLayer.makeLoader(
         ~entityMod=module(Entities.{{entity.name.capitalized}}),
         ~inMemoryStore,
-        ~logger,
+        ~logger=eventItem->Logging.getEventLogger,
         ~groupLoad,
       ),
       getWhere: {
@@ -147,7 +119,7 @@ let getLoaderContext = (contextEnv: t, ~inMemoryStore: InMemoryStore.t, ~loadLay
           ~inMemoryStore,
           ~fieldName="{{param.field_name.original}}{{#if param.is_entity_field }}_id{{/if}}",
           ~fieldValueSchema={{param.res_schema_code}},
-          ~logger,
+          ~logger=eventItem->Logging.getEventLogger,
           ~groupLoad,
         ),
       {{/if}}{{/each}}
@@ -158,23 +130,21 @@ let getLoaderContext = (contextEnv: t, ~inMemoryStore: InMemoryStore.t, ~loadLay
 }
 
 let getHandlerContext = (
-  context,
+  eventItem: Internal.eventItem,
   ~inMemoryStore: InMemoryStore.t,
   ~loadLayer,
   ~shouldSaveHistory,
 ) => {
-  let {eventItem, logger} = context
-
   let eventIdentifier = eventItem->makeEventIdentifier
   {
-    log: logger->Logging.getUserLogger,
+    log: eventItem->Logging.getUserLogger,
     {{#each entities as | entity |}}
     {{entity.name.uncapitalized}}: makeEntityHandlerContext(
       ~eventIdentifier,
       ~inMemoryStore,
       ~entityMod=module(Entities.{{entity.name.capitalized}}),
       ~getKey=entity => entity.id,
-      ~logger,
+      ~logger=eventItem->Logging.getEventLogger,
       ~loadLayer,
       ~shouldSaveHistory,
     ),
@@ -182,24 +152,24 @@ let getHandlerContext = (
   }->(Utils.magic: Types.handlerContext => Internal.handlerContext)
 }
 
-let getContractRegisterArgs = (contextEnv, ~onRegister): Internal.contractRegisterArgs => {
-  event: contextEnv.eventItem.event,
+let getContractRegisterArgs = (eventItem: Internal.eventItem, ~onRegister): Internal.contractRegisterArgs => {
+  event: eventItem.event,
   context: getContractRegisterContext(~onRegister),
 }
 
-let getLoaderArgs = (contextEnv, ~inMemoryStore, ~loadLayer, ~groupLoad): Internal.loaderArgs => {
-  event: contextEnv.eventItem.event,
-  context: contextEnv->getLoaderContext(~inMemoryStore, ~loadLayer, ~groupLoad),
+let getLoaderArgs = (eventItem: Internal.eventItem, ~inMemoryStore, ~loadLayer, ~groupLoad): Internal.loaderArgs => {
+  event: eventItem.event,
+  context: eventItem->getLoaderContext(~inMemoryStore, ~loadLayer, ~groupLoad),
 }
 
 let getHandlerArgs = (
-  contextEnv,
+  eventItem: Internal.eventItem,
   ~inMemoryStore,
   ~loaderReturn,
   ~loadLayer,
   ~shouldSaveHistory,
 ): Internal.handlerArgs => {
-  event: contextEnv.eventItem.event,
-  context: contextEnv->getHandlerContext(~inMemoryStore, ~loadLayer, ~shouldSaveHistory),
+  event: eventItem.event,
+  context: eventItem->getHandlerContext(~inMemoryStore, ~loadLayer, ~shouldSaveHistory),
   loaderReturn,
 }
