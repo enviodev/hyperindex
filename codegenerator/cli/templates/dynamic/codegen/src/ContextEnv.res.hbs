@@ -71,6 +71,7 @@ let makeWhereLoader = (
   ~fieldName,
   ~fieldValueSchema,
   ~logger,
+  ~groupLoad,
 ) => {
   Entities.eq: loadLayer->LoadLayer.makeWhereLoader(
     ~operator=Eq,
@@ -79,6 +80,7 @@ let makeWhereLoader = (
     ~fieldValueSchema,
     ~inMemoryStore,
     ~logger,
+    ~groupLoad,
   ),
   gt: loadLayer->LoadLayer.makeWhereLoader(
     ~operator=Gt,
@@ -87,6 +89,7 @@ let makeWhereLoader = (
     ~fieldValueSchema,
     ~inMemoryStore,
     ~logger,
+    ~groupLoad,
   ),
 }
 
@@ -114,7 +117,7 @@ let makeEntityHandlerContext = (
         ~shouldSaveHistory,
       )
     },
-    get: loadLayer->LoadLayer.makeLoader(~entityMod, ~logger, ~inMemoryStore),
+    get: loadLayer->LoadLayer.makeLoader(~entityMod, ~logger, ~inMemoryStore, ~groupLoad=false),
   }
 }
 
@@ -125,7 +128,7 @@ let getContractRegisterContext = (~onRegister) => {
   {{/each}}
 }->(Utils.magic: Types.contractRegistrations => Internal.contractRegisterContext)
 
-let getLoaderContext = (contextEnv: t, ~inMemoryStore: InMemoryStore.t, ~loadLayer: LoadLayer.t) => {
+let getLoaderContext = (contextEnv: t, ~inMemoryStore: InMemoryStore.t, ~loadLayer: LoadLayer.t, ~groupLoad) => {
   let {logger} = contextEnv
   {
     log: logger->Logging.getUserLogger,
@@ -135,6 +138,7 @@ let getLoaderContext = (contextEnv: t, ~inMemoryStore: InMemoryStore.t, ~loadLay
         ~entityMod=module(Entities.{{entity.name.capitalized}}),
         ~inMemoryStore,
         ~logger,
+        ~groupLoad,
       ),
       getWhere: {
         {{#each entity.params as | param |}}{{#if param.is_queryable_field }}
@@ -144,6 +148,7 @@ let getLoaderContext = (contextEnv: t, ~inMemoryStore: InMemoryStore.t, ~loadLay
           ~fieldName="{{param.field_name.original}}{{#if param.is_entity_field }}_id{{/if}}",
           ~fieldValueSchema={{param.res_schema_code}},
           ~logger,
+          ~groupLoad,
         ),
       {{/if}}{{/each}}
       },
@@ -182,9 +187,9 @@ let getContractRegisterArgs = (contextEnv, ~onRegister): Internal.contractRegist
   context: getContractRegisterContext(~onRegister),
 }
 
-let getLoaderArgs = (contextEnv, ~inMemoryStore, ~loadLayer): Internal.loaderArgs => {
+let getLoaderArgs = (contextEnv, ~inMemoryStore, ~loadLayer, ~groupLoad): Internal.loaderArgs => {
   event: contextEnv.eventItem.event,
-  context: contextEnv->getLoaderContext(~inMemoryStore, ~loadLayer),
+  context: contextEnv->getLoaderContext(~inMemoryStore, ~loadLayer, ~groupLoad),
 }
 
 let getHandlerArgs = (

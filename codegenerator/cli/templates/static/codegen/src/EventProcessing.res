@@ -220,8 +220,8 @@ let runEventContractRegister = (
   }
 }
 
-let runEventLoader = async (~contextEnv, ~loader: Internal.loader, ~inMemoryStore, ~loadLayer) => {
-  switch await loader(contextEnv->ContextEnv.getLoaderArgs(~inMemoryStore, ~loadLayer)) {
+let runEventLoader = async (~contextEnv, ~loader: Internal.loader, ~inMemoryStore, ~loadLayer, ~groupLoad=false) => {
+  switch await loader(contextEnv->ContextEnv.getLoaderArgs(~inMemoryStore, ~loadLayer, ~groupLoad)) {
   | exception exn =>
     exn
     ->ErrorHandling.make(
@@ -480,7 +480,7 @@ let runLoaders = (eventBatch: array<Internal.eventItem>, ~loadLayer, ~inMemorySt
         switch eventItem.eventConfig {
         | {loader: Some(loader)} => {
             let contextEnv = ContextEnv.make(~eventItem, ~logger)
-            runEventLoader(~contextEnv, ~loader, ~inMemoryStore, ~loadLayer)
+            runEventLoader(~contextEnv, ~loader, ~inMemoryStore, ~loadLayer, ~groupLoad=true)
             ->Promise.thenResolve(propogate)
             ->Some
           }

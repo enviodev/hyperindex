@@ -9,6 +9,7 @@ describe("LoadLayer", () => {
         ~entityMod=module(Entities.User),
         ~inMemoryStore=InMemoryStore.make(),
         ~logger=Logging.getLogger(),
+        ~groupLoad=true,
       )
 
     let user = await getUser("123")
@@ -37,6 +38,7 @@ describe("LoadLayer", () => {
           ~entityMod=module(Entities.User),
           ~inMemoryStore=InMemoryStore.make(),
           ~logger=Logging.getLogger(),
+          ~groupLoad=true,
         )
 
       let user1 = await getUser("1")
@@ -73,6 +75,7 @@ describe("LoadLayer", () => {
           ~entityMod=module(Entities.User),
           ~inMemoryStore=InMemoryStore.make(),
           ~logger=Logging.getLogger(),
+          ~groupLoad=true,
         )
 
       let user1 = await getUser("1")
@@ -102,6 +105,7 @@ describe("LoadLayer", () => {
         ~entityMod=module(Entities.User),
         ~inMemoryStore=InMemoryStore.make(),
         ~logger=Logging.getLogger(),
+        ~groupLoad=true,
       )
 
     let user1 = await getUser("1")
@@ -149,6 +153,7 @@ describe("LoadLayer", () => {
           ~entityMod=module(Entities.User),
           ~inMemoryStore=InMemoryStore.make(),
           ~logger=Logging.getLogger(),
+          ~groupLoad=true,
         )
 
       let users = await Promise.all([getUser("1"), getUser("2")])
@@ -190,6 +195,7 @@ describe("LoadLayer", () => {
           ~entityMod=module(Entities.User),
           ~inMemoryStore,
           ~logger=Logging.getLogger(),
+          ~groupLoad=true,
         )
 
       let users = await Promise.all([getUser("1"), getUser("2")])
@@ -231,6 +237,7 @@ describe("LoadLayer", () => {
           ~entityMod=module(Entities.User),
           ~inMemoryStore,
           ~logger=Logging.getLogger(),
+          ~groupLoad=false,
         )
 
       let userPromise = getUser("1")
@@ -277,6 +284,7 @@ describe("LoadLayer", () => {
           ~entityMod=module(Entities.User),
           ~inMemoryStore,
           ~logger=Logging.getLogger(),
+          ~groupLoad=true,
         )
 
       let users = await Promise.all([
@@ -322,6 +330,7 @@ describe("LoadLayer", () => {
         ~logger=Logging.getLogger(),
         ~fieldName="id",
         ~fieldValueSchema=S.string,
+        ~groupLoad=true,
       )
     let getUsersWithUpdates =
       mock.loadLayer->LoadLayer.makeWhereLoader(
@@ -331,6 +340,7 @@ describe("LoadLayer", () => {
         ~logger=Logging.getLogger(),
         ~fieldName="updatesCountOnUserForTesting",
         ~fieldValueSchema=S.int,
+        ~groupLoad=true,
       )
 
     let users1 = await getUsersWithId("123")
@@ -390,6 +400,7 @@ describe("LoadLayer", () => {
         ~logger=Logging.getLogger(),
         ~fieldName="id",
         ~fieldValueSchema=S.string,
+        ~groupLoad=true,
       )
 
     let getUsersWithUpdates =
@@ -400,6 +411,7 @@ describe("LoadLayer", () => {
         ~logger=Logging.getLogger(),
         ~fieldName="updatesCountOnUserForTesting",
         ~fieldValueSchema=S.int,
+        ~groupLoad=true,
       )
 
     Assert.deepEqual(await getUsersWithId("1"), [user1])
@@ -480,6 +492,7 @@ describe("LoadLayer", () => {
           ~logger=Logging.getLogger(),
           ~fieldName="id",
           ~fieldValueSchema=S.string,
+          ~groupLoad=true,
         )
 
       let users = await getUsersWithId("1")

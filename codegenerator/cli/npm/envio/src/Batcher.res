@@ -8,27 +8,29 @@ module Call = {
     resolve: output => unit,
     reject: exn => unit,
     mutable promise: promise<output>,
-    mutable isPending: bool,
+    mutable isLoading: bool,
   }
 }
 
-module Operation = {
+module Group = {
   type t = {
     // Unique calls by input as a key
     calls: dict<Call.t>,
-    fn: array<Call.input> => promise<array<Call.output>>,
+    load: array<Call.input> => promise<unit>,
+    getUnsafeInMemory: string => Call.output,
+    hasInMemory: string => bool,
   }
 }
 
 type t = {
   // Batches of different operations by operation key
   // Can be: Load by id, load by index, effect
-  operations: dict<Operation.t>,
+  groups: dict<Group.t>,
   mutable isCollecting: bool,
 }
 
 let make = () => {
-  operations: Js.Dict.empty(),
+  groups: Js.Dict.empty(),
   isCollecting: false,
 }
 
@@ -43,109 +45,117 @@ let schedule = async batcher => {
     await Promise.resolve()
     batcher.isCollecting = false
 
-    let operations = batcher.operations
-    operations
+    let groups = batcher.groups
+    groups
     ->Js.Dict.keys
-    ->Utils.Array.forEachAsync(async operationKey => {
-      let batch = operations->Js.Dict.unsafeGet(operationKey)
-      let calls = batch.calls
+    ->Utils.Array.forEachAsync(async key => {
+      let group = groups->Js.Dict.unsafeGet(key)
+      let calls = group.calls
 
-      let inputs = []
-      let inputKeys =
-        calls
-        ->Js.Dict.keys
-        ->Js.Array2.filter(inputKey => {
-          let call = calls->Js.Dict.unsafeGet(inputKey)
-          if call.isPending {
-            false
-          } else {
-            call.isPending = true
-            inputs->Js.Array2.push(call.input)->ignore
-            true
+      let inputsToLoad = []
+      let currentInputKeys = []
+      calls
+      ->Js.Dict.keys
+      ->Js.Array2.forEach(inputKey => {
+        let call = calls->Js.Dict.unsafeGet(inputKey)
+        if !call.isLoading {
+          call.isLoading = true
+          currentInputKeys->Js.Array2.push(inputKey)->ignore
+          if group.hasInMemory(inputKey)->not {
+            inputsToLoad->Js.Array2.push(call.input)->ignore
           }
+        }
+      })
+
+      if inputsToLoad->Utils.Array.isEmpty->not {
+        try {
+          await group.load(inputsToLoad)
+        } catch {
+        | exn => {
+            let exn = exn->Internal.prettifyExn
+            currentInputKeys->Array.forEach(inputKey => {
+              let call = calls->Js.Dict.unsafeGet(inputKey)
+              call.reject(exn)
+            })
+          }
+        }
+      }
+
+      if currentInputKeys->Utils.Array.isEmpty->not {
+        currentInputKeys->Js.Array2.forEach(inputKey => {
+          let call = calls->Js.Dict.unsafeGet(inputKey)
+          calls->Utils.Dict.deleteInPlace(inputKey)
+          call.resolve(group.getUnsafeInMemory(inputKey))
         })
 
-      if inputs->Utils.Array.isEmpty->not {
-        let reject = exn => {
-          let exn = exn->Internal.prettifyExn
-          inputKeys->Array.forEach(inputKey => {
-            let call = calls->Js.Dict.unsafeGet(inputKey)
-            call.reject(exn)
-          })
-        }
-
-        try {
-          let outputs = await batch.fn(inputs)
-          if inputs->Js.Array2.length !== outputs->Js.Array2.length {
-            reject(
-              Utils.Error.make(
-                `Invalid case. Reseived ${outputs
-                  ->Js.Array2.length
-                  ->Js.Int.toString} responses for ${inputs
-                  ->Js.Array2.length
-                  ->Js.Int.toString} ${operationKey} calls.`,
-              ),
-            )
-          } else {
-            inputKeys->Js.Array2.forEachi((inputKey, idx) => {
-              let call = calls->Js.Dict.unsafeGet(inputKey)
-              let output = outputs->Js.Array2.unsafe_get(idx)
-              calls->Utils.Dict.deleteInPlace(inputKey)
-              call.resolve(output)
-            })
-
-            // Clean up executed batch to reset
-            // logger passed to operation
-            let latestBatch = operations->Js.Dict.unsafeGet(operationKey)
-            if latestBatch.calls->Js.Dict.keys->Utils.Array.isEmpty {
-              operations->Utils.Dict.deleteInPlace(operationKey)
-            }
-          }
-        } catch {
-        | exn => reject(exn)
+        // Clean up executed batch to reset
+        // logger passed to the load fn
+        let latestGroup = groups->Js.Dict.unsafeGet(key)
+        if latestGroup.calls->Js.Dict.keys->Utils.Array.isEmpty {
+          groups->Utils.Dict.deleteInPlace(key)
         }
       }
     })
   }
 }
 
-let call = (batcher, ~operationKey, ~operation, ~inputKey, ~input) => {
-  let o = switch batcher.operations->Utils.Dict.dangerouslyGetNonOption(operationKey) {
-  | Some(o) => o
-  | None => {
-      let o: Operation.t = {
-        calls: Js.Dict.empty(),
-        fn: operation->(
-          Utils.magic: (array<'input> => promise<array<'output>>) => array<Call.input> => promise<
-            array<Call.output>,
-          >
-        ),
+let noopHasher = input => input->(Utils.magic: 'input => string)
+
+let operation = (batcher, ~key, ~load, ~hasher, ~group, ~hasInMemory, ~getUnsafeInMemory) => {
+  if group {
+    input => {
+      let inputKey = hasher === noopHasher ? input->(Utils.magic: 'input => string) : hasher(input)
+      let group = switch batcher.groups->Utils.Dict.dangerouslyGetNonOption(key) {
+      | Some(group) => group
+      | None => {
+          let g: Group.t = {
+            calls: Js.Dict.empty(),
+            load: load->(
+              Utils.magic: (array<'input> => promise<unit>) => array<Call.input> => promise<unit>
+            ),
+            getUnsafeInMemory: getUnsafeInMemory->(
+              Utils.magic: (string => 'output) => string => Call.output
+            ),
+            hasInMemory: hasInMemory->(Utils.magic: (string => bool) => string => bool),
+          }
+          batcher.groups->Js.Dict.set(key, g)
+          g
+        }
       }
-      batcher.operations->Js.Dict.set(operationKey, o)
-      o
+
+      switch group.calls->Utils.Dict.dangerouslyGetNonOption(inputKey) {
+      | Some(c) => c.promise
+      | None => {
+          let promise = Promise.make((resolve, reject) => {
+            let call: Call.t = {
+              input: input->(Utils.magic: 'input => Call.input),
+              resolve,
+              reject,
+              promise: %raw(`null`),
+              isLoading: false,
+            }
+            group.calls->Js.Dict.set(inputKey, call)
+          })
+
+          // Don't use ref since it'll allocate an object to store .contents
+          (group.calls->Js.Dict.unsafeGet(inputKey)).promise = promise
+
+          let _: promise<unit> = batcher->schedule
+
+          promise
+        }
+      }->(Utils.magic: promise<Call.output> => promise<'output>)
+    }
+  } else {
+    input => {
+      let inputKey = hasher === noopHasher ? input->(Utils.magic: 'input => string) : hasher(input)
+      if hasInMemory(inputKey) {
+        getUnsafeInMemory(inputKey)->Promise.resolve
+      } else {
+        load([input])->Promise.thenResolve(() => {
+          getUnsafeInMemory(inputKey)
+        })
+      }
     }
   }
-
-  switch o.calls->Utils.Dict.dangerouslyGetNonOption(inputKey) {
-  | Some(c) => c.promise
-  | None => {
-      let promise = Promise.make((resolve, reject) => {
-        let call: Call.t = {
-          input: input->(Utils.magic: 'input => Call.input),
-          resolve,
-          reject,
-          promise: %raw(`null`),
-          isPending: false,
-        }
-        o.calls->Js.Dict.set(inputKey, call)
-      })
-
-      // Don't use ref since it'll allocate an object to store .contents
-      (o.calls->Js.Dict.unsafeGet(inputKey)).promise = promise
-
-      let _: promise<unit> = batcher->schedule
-
-      promise
-    }
-  }->(Utils.magic: promise<Call.output> => promise<'output>)
 }
