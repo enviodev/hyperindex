@@ -56,7 +56,7 @@ let makeEntityHandlerContext = (
       params.loadLayer->LoadLayer.loadById(
         ~entityMod,
         ~inMemoryStore=params.inMemoryStore,
-        ~groupLoad=false,
+        ~shouldGroup=false,
         ~eventItem=params.eventItem,
         ~entityId,
       ),
@@ -107,7 +107,7 @@ type loaderContextParams = {
   eventItem: Internal.eventItem,
   inMemoryStore: InMemoryStore.t,
   loadLayer: LoadLayer.t,
-  groupLoad: bool,
+  shouldGroup: bool,
 }
 
 type loaderEntityContextParams = {
@@ -142,7 +142,7 @@ let getWhereTraps: Utils.Proxy.traps<loaderEntityContextParams> = {
               ~fieldName=dbFieldName,
               ~fieldValueSchema,
               ~inMemoryStore=params.inMemoryStore,
-              ~groupLoad=params.groupLoad,
+              ~shouldGroup=params.shouldGroup,
               ~eventItem=params.eventItem,
               ~fieldValue,
             ),
@@ -153,7 +153,7 @@ let getWhereTraps: Utils.Proxy.traps<loaderEntityContextParams> = {
               ~fieldName=dbFieldName,
               ~fieldValueSchema,
               ~inMemoryStore=params.inMemoryStore,
-              ~groupLoad=params.groupLoad,
+              ~shouldGroup=params.shouldGroup,
               ~eventItem=params.eventItem,
               ~fieldValue,
             ),
@@ -172,7 +172,7 @@ let makeEntityLoaderContext = (params): Types.entityLoaderContext<
       params.loadLayer->LoadLayer.loadById(
         ~entityMod=params.entityMod,
         ~inMemoryStore=params.inMemoryStore,
-        ~groupLoad=params.groupLoad,
+        ~shouldGroup=params.shouldGroup,
         ~eventItem=params.eventItem,
         ~entityId,
       ),
@@ -193,7 +193,7 @@ let loaderTraps: Utils.Proxy.traps<loaderContextParams> = {
         | Some(entityMod) =>
           makeEntityLoaderContext({
             eventItem: target.eventItem,
-            groupLoad: target.groupLoad,
+            shouldGroup: target.shouldGroup,
             inMemoryStore: target.inMemoryStore,
             loadLayer: target.loadLayer,
             entityMod,

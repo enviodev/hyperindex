@@ -223,14 +223,14 @@ let runEventLoader = async (
   ~loader: Internal.loader,
   ~inMemoryStore,
   ~loadLayer,
-  ~groupLoad=false,
+  ~shouldGroup=false,
 ) => {
   switch await loader(
     UserContext.getLoaderArgs({
       eventItem,
       inMemoryStore,
       loadLayer,
-      groupLoad,
+      shouldGroup,
     }),
   ) {
   | exception exn =>
@@ -484,7 +484,7 @@ let runLoaders = (eventBatch: array<Internal.eventItem>, ~loadLayer, ~inMemorySt
       ->Array.keepMap(eventItem => {
         switch eventItem.eventConfig {
         | {loader: Some(loader)} =>
-          runEventLoader(~eventItem, ~loader, ~inMemoryStore, ~loadLayer, ~groupLoad=true)
+          runEventLoader(~eventItem, ~loader, ~inMemoryStore, ~loadLayer, ~shouldGroup=true)
           ->Promise.thenResolve(propogate)
           ->Some
         | _ => None

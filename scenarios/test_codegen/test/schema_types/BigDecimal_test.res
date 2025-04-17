@@ -38,7 +38,7 @@ describe("Load and save an entity with a BigDecimal from DB", () => {
       eventItem,
       loadLayer,
       inMemoryStore,
-      groupLoad: true,
+      shouldGroup: true,
     })->(Utils.magic: Internal.loaderContext => Types.loaderContext)
 
     let _ = loaderContext.entityWithBigDecimal.get(testEntity1.id)

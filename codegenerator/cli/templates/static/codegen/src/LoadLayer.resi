@@ -24,7 +24,7 @@ let loadById: (
   t,
   ~entityMod: module(Entities.Entity with type t = 'entity),
   ~inMemoryStore: InMemoryStore.t,
-  ~groupLoad: bool,
+  ~shouldGroup: bool,
   ~eventItem: Internal.eventItem,
   ~entityId: string,
 ) => promise<option<'entity>>
@@ -36,7 +36,7 @@ let loadByField: (
   ~inMemoryStore: InMemoryStore.t,
   ~fieldName: string,
   ~fieldValueSchema: RescriptSchema.S.t<'fieldValue>,
-  ~groupLoad: bool,
+  ~shouldGroup: bool,
   ~eventItem: Internal.eventItem,
   ~fieldValue: 'fieldValue,
 ) => promise<array<'entity>>

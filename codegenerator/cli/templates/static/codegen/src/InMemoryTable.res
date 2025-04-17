@@ -229,6 +229,7 @@ module Entity = {
     ~operator: TableIndices.Operator.t,
   ) => {
     let getEntity = inMemTable->getUnsafe
+    let hasEntity = inMemTable->has
     fieldValueHash => {
       switch inMemTable.fieldNameIndices.dict->Utils.Dict.dangerouslyGetNonOption(fieldName) {
       | None => Js.Exn.raiseError(`Unexpected error. Must have an index on field ${fieldName}`)
@@ -244,7 +245,12 @@ module Entity = {
               let res =
                 relatedEntityIds
                 ->Utils.Set.toArray
-                ->Array.keepMap(getEntity)
+                ->Array.keepMap(entityId => {
+                  switch hasEntity(entityId) {
+                  | true => getEntity(entityId)
+                  | false => None
+                  }
+                })
               res
             }
           }

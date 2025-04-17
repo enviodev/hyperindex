@@ -42,7 +42,7 @@ let loadById = (
   loadLayer,
   ~entityMod: module(Entities.Entity with type t = entity),
   ~inMemoryStore,
-  ~groupLoad,
+  ~shouldGroup,
   ~eventItem,
   ~entityId,
 ) => {
@@ -80,7 +80,7 @@ let loadById = (
   loadLayer.loadManager->LoadManager.call(
     ~key,
     ~load,
-    ~group=groupLoad,
+    ~shouldGroup,
     ~hasher=LoadManager.noopHasher,
     ~getUnsafeInMemory=inMemTable
     ->InMemoryTable.Entity.getUnsafe
@@ -98,7 +98,7 @@ let loadByField = (
   ~inMemoryStore,
   ~fieldName,
   ~fieldValueSchema,
-  ~groupLoad,
+  ~shouldGroup,
   ~eventItem,
   ~fieldValue,
 ) => {
@@ -153,7 +153,7 @@ let loadByField = (
     ~key,
     ~load,
     ~input=fieldValue,
-    ~group=groupLoad,
+    ~shouldGroup,
     ~hasher=fieldValue =>
       fieldValue->TableIndices.FieldValue.castFrom->TableIndices.FieldValue.toString,
     ~getUnsafeInMemory=inMemTable

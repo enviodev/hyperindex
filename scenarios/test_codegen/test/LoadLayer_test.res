@@ -11,7 +11,7 @@ describe("LoadLayer", () => {
         ~inMemoryStore,
         ~entityId,
         ~eventItem=MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem,
-        ~groupLoad=true,
+        ~shouldGroup=true,
       )
 
     let user = await getUser("123")
@@ -41,7 +41,7 @@ describe("LoadLayer", () => {
           ~inMemoryStore,
           ~entityId,
           ~eventItem=MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem,
-          ~groupLoad=true,
+          ~shouldGroup=true,
         )
 
       let user1 = await getUser("1")
@@ -78,7 +78,7 @@ describe("LoadLayer", () => {
           ~inMemoryStore,
           ~entityId,
           ~eventItem=MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem,
-          ~groupLoad=true,
+          ~shouldGroup=true,
         )
 
       let user1 = await getUser("1")
@@ -109,7 +109,7 @@ describe("LoadLayer", () => {
         ~inMemoryStore,
         ~entityId,
         ~eventItem=MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem,
-        ~groupLoad=true,
+        ~shouldGroup=true,
       )
 
     let user1 = await getUser("1")
@@ -157,7 +157,7 @@ describe("LoadLayer", () => {
           ~inMemoryStore,
           ~entityId,
           ~eventItem=MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem,
-          ~groupLoad=true,
+          ~shouldGroup=true,
         )
 
       let users = await Promise.all([getUser("1"), getUser("2")])
@@ -198,7 +198,7 @@ describe("LoadLayer", () => {
           ~inMemoryStore,
           ~entityId,
           ~eventItem=MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem,
-          ~groupLoad=true,
+          ~shouldGroup=true,
         )
 
       let users = await Promise.all([getUser("1"), getUser("2")])
@@ -239,7 +239,7 @@ describe("LoadLayer", () => {
           ~inMemoryStore,
           ~entityId,
           ~eventItem=MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem,
-          ~groupLoad=true,
+          ~shouldGroup=true,
         )
 
       let userPromise = getUser("1")
@@ -291,7 +291,7 @@ describe("LoadLayer", () => {
           ~inMemoryStore,
           ~entityId,
           ~eventItem=MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem,
-          ~groupLoad=true,
+          ~shouldGroup=true,
         )
 
       let users = await Promise.all([
@@ -338,7 +338,7 @@ describe("LoadLayer", () => {
         ~fieldValueSchema=S.string,
         ~eventItem,
         ~fieldValue,
-        ~groupLoad=true,
+        ~shouldGroup=true,
       )
     let getUsersWithUpdates = fieldValue =>
       mock.loadLayer->LoadLayer.loadByField(
@@ -349,7 +349,7 @@ describe("LoadLayer", () => {
         ~fieldValueSchema=S.int,
         ~eventItem,
         ~fieldValue,
-        ~groupLoad=true,
+        ~shouldGroup=true,
       )
 
     let users1 = await getUsersWithId("123")
@@ -409,7 +409,7 @@ describe("LoadLayer", () => {
         ~fieldValueSchema=S.string,
         ~eventItem,
         ~fieldValue,
-        ~groupLoad=true,
+        ~shouldGroup=true,
       )
 
     let getUsersWithUpdates = fieldValue =>
@@ -421,7 +421,7 @@ describe("LoadLayer", () => {
         ~fieldValueSchema=S.int,
         ~eventItem,
         ~fieldValue,
-        ~groupLoad=true,
+        ~shouldGroup=true,
       )
 
     Assert.deepEqual(await getUsersWithId("1"), [user1])
@@ -501,7 +501,7 @@ describe("LoadLayer", () => {
           ~fieldValueSchema=S.string,
           ~eventItem,
           ~fieldValue,
-          ~groupLoad=true,
+          ~shouldGroup=true,
         )
 
       let users = await getUsersWithId("1")
