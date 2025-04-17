@@ -101,9 +101,20 @@ let schedule = async batcher => {
 
 let noopHasher = input => input->(Utils.magic: 'input => string)
 
-let call = (batcher, ~input, ~key, ~load, ~hasher, ~group, ~hasInMemory, ~getUnsafeInMemory) => {
-  if group {
-    let inputKey = hasher === noopHasher ? input->(Utils.magic: 'input => string) : hasher(input)
+let call = (
+  batcher,
+  ~input,
+  ~key,
+  ~load,
+  ~hasher,
+  ~group as shouldGroup,
+  ~hasInMemory,
+  ~getUnsafeInMemory,
+) => {
+  let inputKey = hasher === noopHasher ? input->(Utils.magic: 'input => string) : hasher(input)
+  if !shouldGroup && hasInMemory(inputKey) {
+    getUnsafeInMemory(inputKey)->Promise.resolve
+  } else {
     let group = switch batcher.groups->Utils.Dict.dangerouslyGetNonOption(key) {
     | Some(group) => group
     | None => {
@@ -144,14 +155,5 @@ let call = (batcher, ~input, ~key, ~load, ~hasher, ~group, ~hasInMemory, ~getUns
         promise
       }
     }->(Utils.magic: promise<Call.output> => promise<'output>)
-  } else {
-    let inputKey = hasher === noopHasher ? input->(Utils.magic: 'input => string) : hasher(input)
-    if hasInMemory(inputKey) {
-      getUnsafeInMemory(inputKey)->Promise.resolve
-    } else {
-      load([input])->Promise.thenResolve(() => {
-        getUnsafeInMemory(inputKey)
-      })
-    }
   }
 }
