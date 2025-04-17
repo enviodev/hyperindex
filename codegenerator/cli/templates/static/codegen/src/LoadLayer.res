@@ -3,7 +3,7 @@ open Belt
 type fieldValue
 
 type t = {
-  batcher: Batcher.t,
+  loadManager: LoadManager.t,
   loadEntitiesByIds: (
     array<Types.id>,
     ~entityMod: module(Entities.InternalEntity),
@@ -21,7 +21,7 @@ type t = {
 
 let make = (~loadEntitiesByIds, ~loadEntitiesByField) => {
   {
-    batcher: Batcher.make(),
+    loadManager: LoadManager.make(),
     loadEntitiesByIds,
     loadEntitiesByField,
   }
@@ -77,11 +77,11 @@ let loadById = (
     })
   }
 
-  loadLayer.batcher->Batcher.call(
+  loadLayer.loadManager->LoadManager.call(
     ~key,
     ~load,
     ~group=groupLoad,
-    ~hasher=Batcher.noopHasher,
+    ~hasher=LoadManager.noopHasher,
     ~getUnsafeInMemory=inMemTable
     ->InMemoryTable.Entity.getUnsafe
     ->(Utils.magic: (string => option<Entities.internalEntity>) => string => option<entity>),
@@ -149,7 +149,7 @@ let loadByField = (
       ->Promise.all
   }
 
-  loadLayer.batcher->Batcher.call(
+  loadLayer.loadManager->LoadManager.call(
     ~key,
     ~load,
     ~input=fieldValue,

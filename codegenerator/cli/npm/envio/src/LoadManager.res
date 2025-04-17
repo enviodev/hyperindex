@@ -112,6 +112,19 @@ let call = (
   ~getUnsafeInMemory,
 ) => {
   let inputKey = hasher === noopHasher ? input->(Utils.magic: 'input => string) : hasher(input)
+
+  // We group external calls by operation to:
+  // 1. Reduce the IO by allowing batch requests
+  // 2. By allowing parallel processing of events
+  //    and make awaits run at the same time
+  //
+  // In the handlers it's not as important to group
+  // calls, because usually we run a single handler at a time
+  // So have a quick exit when an entity is already in memory
+  //
+  // But since we're going to parallelize handlers per chain,
+  // keep the grouping logic when the data needs to be loaded
+  // It has a small additional runtime cost, but might reduce IO time
   if !shouldGroup && hasInMemory(inputKey) {
     getUnsafeInMemory(inputKey)->Promise.resolve
   } else {
