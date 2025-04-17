@@ -27,22 +27,23 @@ describe("Load and save an entity with a Timestamp from DB", () => {
     let inMemoryStore = InMemoryStore.make()
     let loadLayer = LoadLayer.makeWithDbConnection()
 
-    let contextEnv = ContextEnv.make(
-      ~eventItem=MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem,
-      ~logger=Logging.getLogger(),
-    )
+    let eventItem = MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem
 
-    let loaderContext =
-      contextEnv
-      ->ContextEnv.getLoaderContext(~loadLayer, ~inMemoryStore, ~groupLoad=true)
-      ->(Utils.magic: Internal.loaderContext => Types.loaderContext)
+    let loaderContext = UserContext.getLoaderContext({
+      eventItem,
+      loadLayer,
+      inMemoryStore,
+      groupLoad: true,
+    })->(Utils.magic: Internal.loaderContext => Types.loaderContext)
 
     let _ = loaderContext.entityWithTimestamp.get(testEntity.id)
 
-    let handlerContext =
-      contextEnv
-      ->ContextEnv.getHandlerContext(~inMemoryStore, ~loadLayer, ~shouldSaveHistory=false)
-      ->(Utils.magic: Internal.handlerContext => Types.handlerContext)
+    let handlerContext = UserContext.getHandlerContext({
+      eventItem,
+      inMemoryStore,
+      loadLayer,
+      shouldSaveHistory: false,
+    })->(Utils.magic: Internal.handlerContext => Types.handlerContext)
 
     switch await handlerContext.entityWithTimestamp.get(testEntity.id) {
     | Some(entity) =>

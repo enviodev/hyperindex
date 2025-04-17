@@ -47,15 +47,13 @@ module.exports.batchReadItemsInTable = (table, sql, pkArray) => {
       return sql`
         SELECT *
         FROM ${sql(publicSchema)}.${sql(table.tableName)}
-        WHERE ${sql(primaryKeyFieldNames[0])} = ${pkArray[0]};
-        `;
+        WHERE ${sql(primaryKeyFieldNames[0])} = ${pkArray[0]}
+        LIMIT 1;`;
     } else {
       return sql`
         SELECT *
         FROM ${sql(publicSchema)}.${sql(table.tableName)}
-        WHERE ${sql(primaryKeyFieldNames[0])} IN ${sql(pkArray)}
-        LIMIT 1;
-        `;
+        WHERE ${sql(primaryKeyFieldNames[0])} IN ${sql(pkArray)};`;
     }
   } else {
     throw new Error(

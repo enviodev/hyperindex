@@ -8,7 +8,10 @@ describe("Table functions postgres interop", () => {
     let table = mkTable(
       "test_table",
       ~schemaName="public",
-      ~fields=[mkField("id", Text, ~isPrimaryKey), mkField("field_a", Numeric)],
+      ~fields=[
+        mkField("id", Text, ~fieldSchema=S.string, ~isPrimaryKey),
+        mkField("field_a", Numeric, ~fieldSchema=S.bigint),
+      ],
     )
 
     let batchSetFnString = table->PostgresInterop.makeBatchSetFnString
@@ -29,7 +32,10 @@ describe("Table functions postgres interop", () => {
     let table = mkTable(
       "test_table",
       ~schemaName="custom",
-      ~fields=[mkField("id", Text, ~isPrimaryKey), mkField("field_a", Numeric)],
+      ~fields=[
+        mkField("id", Text, ~fieldSchema=S.string, ~isPrimaryKey),
+        mkField("field_a", ~fieldSchema=S.bigint, Numeric),
+      ],
     )
 
     let batchSetFnString = table->PostgresInterop.makeBatchSetFnString
@@ -51,9 +57,9 @@ describe("Table functions postgres interop", () => {
       "test_table",
       ~schemaName="public",
       ~fields=[
-        mkField("field_a", Integer, ~isPrimaryKey=true),
-        mkField("field_b", Integer, ~isPrimaryKey=true),
-        mkField("field_c", Text),
+        mkField("field_a", Integer, ~fieldSchema=S.bigint, ~isPrimaryKey=true),
+        mkField("field_b", Integer, ~fieldSchema=S.bigint, ~isPrimaryKey=true),
+        mkField("field_c", Text, ~fieldSchema=S.string),
       ],
     )
 
@@ -76,9 +82,9 @@ describe("Table functions postgres interop", () => {
       "test_table",
       ~schemaName="public",
       ~fields=[
-        mkField("id", Text, ~isPrimaryKey),
-        mkField("field_a", Numeric),
-        mkField("token", Text, ~linkedEntity="Token"),
+        mkField("id", Text, ~fieldSchema=S.string, ~isPrimaryKey),
+        mkField("field_a", Numeric, ~fieldSchema=S.bigint),
+        mkField("token", Text, ~fieldSchema=S.string, ~linkedEntity="Token"),
       ],
     )
 
@@ -101,8 +107,8 @@ describe("Table functions postgres interop", () => {
       "test_table",
       ~schemaName="public",
       ~fields=[
-        mkField("id", Text, ~isPrimaryKey),
-        mkField("field_a", Numeric),
+        mkField("id", Text, ~fieldSchema=S.string, ~isPrimaryKey),
+        mkField("field_a", Numeric, ~fieldSchema=S.bigint),
         mkDerivedFromField("tokens", ~derivedFromEntity="Token", ~derivedFromField="token"),
       ],
     )
@@ -125,9 +131,14 @@ describe("Table functions postgres interop", () => {
       "test_table",
       ~schemaName="public",
       ~fields=[
-        mkField("id", Text, ~isPrimaryKey),
-        mkField("field_a", Numeric),
-        mkField("db_write_timestamp", TimestampWithoutTimezone, ~default="CURRENT_TIMESTAMP"),
+        mkField("id", Text, ~fieldSchema=S.string, ~isPrimaryKey),
+        mkField("field_a", Numeric, ~fieldSchema=S.bigint),
+        mkField(
+          "db_write_timestamp",
+          TimestampWithoutTimezone,
+          ~fieldSchema=Utils.Schema.dbDate,
+          ~default="CURRENT_TIMESTAMP",
+        ),
       ],
     )
 
