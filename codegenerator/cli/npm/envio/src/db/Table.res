@@ -19,6 +19,7 @@ type fieldType =
 type field = {
   fieldName: string,
   fieldType: fieldType,
+  fieldSchema: S.t<unknown>,
   isArray: bool,
   isNullable: bool,
   isPrimaryKey: bool,
@@ -36,18 +37,20 @@ type derivedFromField = {
 type fieldOrDerived = Field(field) | DerivedFrom(derivedFromField)
 
 let mkField = (
+  fieldName,
+  fieldType,
+  ~fieldSchema,
   ~default=?,
   ~isArray=false,
   ~isNullable=false,
   ~isPrimaryKey=false,
   ~isIndex=false,
   ~linkedEntity=?,
-  fieldName,
-  fieldType,
 ) =>
   {
     fieldName,
     fieldType,
+    fieldSchema: fieldSchema->S.toUnknown,
     isArray,
     isNullable,
     isPrimaryKey,

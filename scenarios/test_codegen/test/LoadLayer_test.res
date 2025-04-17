@@ -4,11 +4,14 @@ describe("LoadLayer", () => {
   Async.it("Trys to load non existing entity from db", async () => {
     let mock = Mock.LoadLayer.make()
 
-    let getUser =
-      mock.loadLayer->LoadLayer.makeLoader(
+    let inMemoryStore = InMemoryStore.make()
+    let getUser = entityId =>
+      mock.loadLayer->LoadLayer.loadById(
         ~entityMod=module(Entities.User),
-        ~inMemoryStore=InMemoryStore.make(),
-        ~logger=Logging.getLogger(),
+        ~inMemoryStore,
+        ~entityId,
+        ~eventItem=MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem,
+        ~shouldGroup=true,
       )
 
     let user = await getUser("123")
@@ -19,8 +22,7 @@ describe("LoadLayer", () => {
       [
         {
           entityIds: ["123"],
-          entityMod: module(Entities.User)->Entities.entityModToInternal,
-          logger: Logging.getLogger(),
+          entityName: "User",
         },
       ],
     )
@@ -32,11 +34,14 @@ describe("LoadLayer", () => {
     async () => {
       let mock = Mock.LoadLayer.make()
 
-      let getUser =
-        mock.loadLayer->LoadLayer.makeLoader(
+      let inMemoryStore = InMemoryStore.make()
+      let getUser = entityId =>
+        mock.loadLayer->LoadLayer.loadById(
           ~entityMod=module(Entities.User),
-          ~inMemoryStore=InMemoryStore.make(),
-          ~logger=Logging.getLogger(),
+          ~inMemoryStore,
+          ~entityId,
+          ~eventItem=MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem,
+          ~shouldGroup=true,
         )
 
       let user1 = await getUser("1")
@@ -49,13 +54,11 @@ describe("LoadLayer", () => {
         [
           {
             entityIds: ["1"],
-            entityMod: module(Entities.User)->Entities.entityModToInternal,
-            logger: Logging.getLogger(),
+            entityName: "User",
           },
           {
             entityIds: ["2"],
-            entityMod: module(Entities.User)->Entities.entityModToInternal,
-            logger: Logging.getLogger(),
+            entityName: "User",
           },
         ],
       )
@@ -68,11 +71,14 @@ describe("LoadLayer", () => {
     async () => {
       let mock = Mock.LoadLayer.make()
 
-      let getUser =
-        mock.loadLayer->LoadLayer.makeLoader(
+      let inMemoryStore = InMemoryStore.make()
+      let getUser = entityId =>
+        mock.loadLayer->LoadLayer.loadById(
           ~entityMod=module(Entities.User),
-          ~inMemoryStore=InMemoryStore.make(),
-          ~logger=Logging.getLogger(),
+          ~inMemoryStore,
+          ~entityId,
+          ~eventItem=MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem,
+          ~shouldGroup=true,
         )
 
       let user1 = await getUser("1")
@@ -85,8 +91,7 @@ describe("LoadLayer", () => {
         [
           {
             entityIds: ["1"],
-            entityMod: module(Entities.User)->Entities.entityModToInternal,
-            logger: Logging.getLogger(),
+            entityName: "User",
           },
         ],
       )
@@ -97,11 +102,14 @@ describe("LoadLayer", () => {
   Async.it("Doesn't stack with an await in between of loader calls", async () => {
     let mock = Mock.LoadLayer.make()
 
-    let getUser =
-      mock.loadLayer->LoadLayer.makeLoader(
+    let inMemoryStore = Mock.InMemoryStore.make()
+    let getUser = entityId =>
+      mock.loadLayer->LoadLayer.loadById(
         ~entityMod=module(Entities.User),
-        ~inMemoryStore=InMemoryStore.make(),
-        ~logger=Logging.getLogger(),
+        ~inMemoryStore,
+        ~entityId,
+        ~eventItem=MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem,
+        ~shouldGroup=true,
       )
 
     let user1 = await getUser("1")
@@ -126,13 +134,11 @@ describe("LoadLayer", () => {
       [
         {
           entityIds: ["1"],
-          entityMod: module(Entities.User)->Entities.entityModToInternal,
-          logger: Logging.getLogger(),
+          entityName: "User",
         },
         {
           entityIds: ["2"],
-          entityMod: module(Entities.User)->Entities.entityModToInternal,
-          logger: Logging.getLogger(),
+          entityName: "User",
         },
       ],
     )
@@ -144,11 +150,14 @@ describe("LoadLayer", () => {
     async () => {
       let mock = Mock.LoadLayer.make()
 
-      let getUser =
-        mock.loadLayer->LoadLayer.makeLoader(
+      let inMemoryStore = Mock.InMemoryStore.make()
+      let getUser = entityId =>
+        mock.loadLayer->LoadLayer.loadById(
           ~entityMod=module(Entities.User),
-          ~inMemoryStore=InMemoryStore.make(),
-          ~logger=Logging.getLogger(),
+          ~inMemoryStore,
+          ~entityId,
+          ~eventItem=MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem,
+          ~shouldGroup=true,
         )
 
       let users = await Promise.all([getUser("1"), getUser("2")])
@@ -159,8 +168,7 @@ describe("LoadLayer", () => {
         [
           {
             entityIds: ["1", "2"],
-            entityMod: module(Entities.User)->Entities.entityModToInternal,
-            logger: Logging.getLogger(),
+            entityName: "User",
           },
         ],
       )
@@ -184,12 +192,13 @@ describe("LoadLayer", () => {
       )
 
       let inMemoryStore = Mock.InMemoryStore.make(~entities=[(module(Entities.User), [user1])])
-
-      let getUser =
-        mock.loadLayer->LoadLayer.makeLoader(
+      let getUser = entityId =>
+        mock.loadLayer->LoadLayer.loadById(
           ~entityMod=module(Entities.User),
           ~inMemoryStore,
-          ~logger=Logging.getLogger(),
+          ~entityId,
+          ~eventItem=MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem,
+          ~shouldGroup=true,
         )
 
       let users = await Promise.all([getUser("1"), getUser("2")])
@@ -200,8 +209,7 @@ describe("LoadLayer", () => {
         [
           {
             entityIds: ["2"],
-            entityMod: module(Entities.User)->Entities.entityModToInternal,
-            logger: Logging.getLogger(),
+            entityName: "User",
           },
         ],
       )
@@ -225,15 +233,21 @@ describe("LoadLayer", () => {
       )
 
       let inMemoryStore = Mock.InMemoryStore.make()
-
-      let getUser =
-        mock.loadLayer->LoadLayer.makeLoader(
+      let getUser = entityId =>
+        mock.loadLayer->LoadLayer.loadById(
           ~entityMod=module(Entities.User),
           ~inMemoryStore,
-          ~logger=Logging.getLogger(),
+          ~entityId,
+          ~eventItem=MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem,
+          ~shouldGroup=true,
         )
 
       let userPromise = getUser("1")
+
+      // There's a one more in-memory check
+      // After schedule resolve and before load operation call
+      // So skip a microtask to bypass the check
+      await Promise.resolve()
 
       inMemoryStore->Mock.InMemoryStore.setEntity(~entityMod=module(Entities.User), user1)
 
@@ -246,8 +260,7 @@ describe("LoadLayer", () => {
         [
           {
             entityIds: ["1"],
-            entityMod: module(Entities.User)->Entities.entityModToInternal,
-            logger: Logging.getLogger(),
+            entityName: "User",
           },
         ],
       )
@@ -272,11 +285,13 @@ describe("LoadLayer", () => {
 
       let inMemoryStore = Mock.InMemoryStore.make(~entities=[(module(Entities.User), [user1])])
 
-      let getUser =
-        mock.loadLayer->LoadLayer.makeLoader(
+      let getUser = entityId =>
+        mock.loadLayer->LoadLayer.loadById(
           ~entityMod=module(Entities.User),
           ~inMemoryStore,
-          ~logger=Logging.getLogger(),
+          ~entityId,
+          ~eventItem=MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem,
+          ~shouldGroup=true,
         )
 
       let users = await Promise.all([
@@ -297,13 +312,11 @@ describe("LoadLayer", () => {
         [
           {
             entityIds: ["2"],
-            entityMod: module(Entities.User)->Entities.entityModToInternal,
-            logger: Logging.getLogger(),
+            entityName: "User",
           },
           {
             entityIds: ["3"],
-            entityMod: module(Entities.User)->Entities.entityModToInternal,
-            logger: Logging.getLogger(),
+            entityName: "User",
           },
         ],
       )
@@ -314,23 +327,29 @@ describe("LoadLayer", () => {
   Async.it("Trys to load non existing entities from db by field", async () => {
     let mock = Mock.LoadLayer.make()
 
-    let getUsersWithId =
-      mock.loadLayer->LoadLayer.makeWhereLoader(
+    let eventItem = MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem
+    let inMemoryStore = InMemoryStore.make()
+    let getUsersWithId = fieldValue =>
+      mock.loadLayer->LoadLayer.loadByField(
         ~entityMod=module(Entities.User),
         ~operator=Eq,
-        ~inMemoryStore=InMemoryStore.make(),
-        ~logger=Logging.getLogger(),
+        ~inMemoryStore,
         ~fieldName="id",
         ~fieldValueSchema=S.string,
+        ~eventItem,
+        ~fieldValue,
+        ~shouldGroup=true,
       )
-    let getUsersWithUpdates =
-      mock.loadLayer->LoadLayer.makeWhereLoader(
+    let getUsersWithUpdates = fieldValue =>
+      mock.loadLayer->LoadLayer.loadByField(
         ~entityMod=module(Entities.User),
         ~operator=Gt,
-        ~inMemoryStore=InMemoryStore.make(),
-        ~logger=Logging.getLogger(),
+        ~inMemoryStore,
         ~fieldName="updatesCountOnUserForTesting",
         ~fieldValueSchema=S.int,
+        ~eventItem,
+        ~fieldValue,
+        ~shouldGroup=true,
       )
 
     let users1 = await getUsersWithId("123")
@@ -346,16 +365,14 @@ describe("LoadLayer", () => {
           fieldName: "id",
           fieldValue: "123"->Utils.magic,
           fieldValueSchema: S.string->Utils.magic,
-          entityMod: module(Entities.User)->Entities.entityModToInternal,
-          logger: Logging.getLogger(),
+          entityName: "User",
           operator: Eq,
         },
         {
           fieldName: "updatesCountOnUserForTesting",
           fieldValue: 0->Utils.magic,
           fieldValueSchema: S.int->Utils.magic,
-          entityMod: module(Entities.User)->Entities.entityModToInternal,
-          logger: Logging.getLogger(),
+          entityName: "User",
           operator: Gt,
         },
       ],
@@ -382,24 +399,29 @@ describe("LoadLayer", () => {
 
     let inMemoryStore = Mock.InMemoryStore.make(~entities=[(module(Entities.User), [user1, user2])])
 
-    let getUsersWithId =
-      mock.loadLayer->LoadLayer.makeWhereLoader(
-        ~operator=Eq,
+    let eventItem = MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem
+    let getUsersWithId = fieldValue =>
+      mock.loadLayer->LoadLayer.loadByField(
         ~entityMod=module(Entities.User),
+        ~operator=Eq,
         ~inMemoryStore,
-        ~logger=Logging.getLogger(),
         ~fieldName="id",
         ~fieldValueSchema=S.string,
+        ~eventItem,
+        ~fieldValue,
+        ~shouldGroup=true,
       )
 
-    let getUsersWithUpdates =
-      mock.loadLayer->LoadLayer.makeWhereLoader(
+    let getUsersWithUpdates = fieldValue =>
+      mock.loadLayer->LoadLayer.loadByField(
         ~entityMod=module(Entities.User),
         ~operator=Gt,
         ~inMemoryStore,
-        ~logger=Logging.getLogger(),
         ~fieldName="updatesCountOnUserForTesting",
         ~fieldValueSchema=S.int,
+        ~eventItem,
+        ~fieldValue,
+        ~shouldGroup=true,
       )
 
     Assert.deepEqual(await getUsersWithId("1"), [user1])
@@ -412,16 +434,14 @@ describe("LoadLayer", () => {
           fieldName: "id",
           fieldValue: "1"->Utils.magic,
           fieldValueSchema: S.string->Utils.magic,
-          entityMod: module(Entities.User)->Entities.entityModToInternal,
-          logger: Logging.getLogger(),
+          entityName: "User",
           operator: Eq,
         },
         {
           fieldName: "updatesCountOnUserForTesting",
           fieldValue: 0->Utils.magic,
           fieldValueSchema: S.int->Utils.magic,
-          entityMod: module(Entities.User)->Entities.entityModToInternal,
-          logger: Logging.getLogger(),
+          entityName: "User",
           operator: Gt,
         },
       ],
@@ -470,16 +490,18 @@ describe("LoadLayer", () => {
         }: Entities.User.t
       )
 
+      let eventItem = MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem
       let inMemoryStore = InMemoryStore.make()
-
-      let getUsersWithId =
-        mock.loadLayer->LoadLayer.makeWhereLoader(
-          ~operator=Eq,
+      let getUsersWithId = fieldValue =>
+        mock.loadLayer->LoadLayer.loadByField(
           ~entityMod=module(Entities.User),
+          ~operator=Eq,
           ~inMemoryStore,
-          ~logger=Logging.getLogger(),
           ~fieldName="id",
           ~fieldValueSchema=S.string,
+          ~eventItem,
+          ~fieldValue,
+          ~shouldGroup=true,
         )
 
       let users = await getUsersWithId("1")
@@ -490,8 +512,7 @@ describe("LoadLayer", () => {
             fieldName: "id",
             fieldValue: "1"->Utils.magic,
             fieldValueSchema: S.string->Utils.magic,
-            entityMod: module(Entities.User)->Entities.entityModToInternal,
-            logger: Logging.getLogger(),
+            entityName: "User",
             operator: Eq,
           }: Mock.LoadLayer.loadEntitiesByFieldCall
         ),

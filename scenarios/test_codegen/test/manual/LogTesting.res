@@ -43,40 +43,41 @@ fatal("This is a fatal message.")
 setLogLevel(#udebug)
 info(`##Current log level: ${(getLogger()->getLevel :> string)}`)
 
-let userLogger = Logging.getUserLogger(createChild(~params={"child": "userLogs debug"}))
-// Js.log(childLogger)
-userLogger.debug("This is a user debug message.")
-userLogger.info("This is a user info message.")
-userLogger.warn("This is a user warn message.")
-userLogger.error("This is a user error message.")
+let eventItem = MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem
+
+let userLogger = Logging.getUserLogger(eventItem)
+userLogger.debug("This is a user debug message.", ~params={"child": "userLogs debug"})
+userLogger.info("This is a user info message.", ~params={"child": "userLogs debug"})
+userLogger.warn("This is a user warn message.", ~params={"child": "userLogs debug"})
+userLogger.error("This is a user error message.", ~params={"child": "userLogs debug"})
+
 setLogLevel(#uinfo)
 info(`##Current log level: ${(getLogger()->getLevel :> string)}`)
-let userLogger = Logging.getUserLogger(createChild(~params={"child": "userLogs info"}))
-userLogger.debug("This is a user debug message.")
-userLogger.info("This is a user info message.")
+
+userLogger.debug("This is a user debug message.", ~params={"child": "userLogs info"})
+userLogger.info("This is a user info message.", ~params={"child": "userLogs info"})
 userLogger.warn(
   "This is a user warn message.",
-  ~params={"type": "warn", "data": {"blockHash": "0x123"}},
+  ~params={"child": "userLogs info", "type": "warn", "data": {"blockHash": "0x123"}},
 )
-userLogger.error("This is a user error message.")
+userLogger.error("This is a user error message.", ~params={"child": "userLogs info"})
 userLogger.errorWithExn(
   "This is a user error with exception.",
   SomethingWrong({myMessage: "example exception"}),
 )
 setLogLevel(#uwarn)
 info(`##Current log level: ${(getLogger()->getLevel :> string)}`)
-let userLogger = Logging.getUserLogger(createChild(~params={"child": "userLogs warn"}))
-userLogger.debug("This is a user debug message.")
-userLogger.info("This is a user info message.")
-userLogger.warn("This is a user warn message.")
-userLogger.error("This is a user error message.")
+userLogger.debug("This is a user debug message.", ~params={"child": "userLogs warn"})
+userLogger.info("This is a user info message.", ~params={"child": "userLogs warn"})
+userLogger.warn("This is a user warn message.", ~params={"child": "userLogs warn"})
+userLogger.error("This is a user error message.", ~params={"child": "userLogs warn"})
+
 setLogLevel(#uerror)
 info(`##Current log level: ${(getLogger()->getLevel :> string)}`)
-let userLogger = Logging.getUserLogger(createChild(~params={"child": "userLogs error"}))
-userLogger.debug("This is a user debug message.")
-userLogger.info("This is a user info message.")
-userLogger.warn("This is a user warn message.")
-userLogger.error("This is a user error message.")
+userLogger.debug("This is a user debug message.", ~params={"child": "userLogs error"})
+userLogger.info("This is a user info message.", ~params={"child": "userLogs error"})
+userLogger.warn("This is a user warn message.", ~params={"child": "userLogs error"})
+userLogger.error("This is a user error message.", ~params={"child": "userLogs error"})
 
 setLogLevel(#warn)
 info(`##Current log level: ${(getLogger()->getLevel :> string)}`)

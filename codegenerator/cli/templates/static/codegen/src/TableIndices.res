@@ -63,8 +63,9 @@ module SingleIndex = {
     operator,
   }
 
+  // Should much hashing logic in InMemoryTable
   let toString = ({fieldName, fieldValue, operator}) =>
-    `{fn:${fieldName},fv:${fieldValue->FieldValue.toString},o:${(operator :> string)}}`
+    `${fieldName}:${(operator :> string)}:${fieldValue->FieldValue.toString}`
 
   let evaluate = (self: t, ~fieldName, ~fieldValue) =>
     self.fieldName === fieldName &&

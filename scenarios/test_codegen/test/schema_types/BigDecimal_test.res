@@ -32,31 +32,32 @@ describe("Load and save an entity with a BigDecimal from DB", () => {
     let inMemoryStore = InMemoryStore.make()
     let loadLayer = LoadLayer.makeWithDbConnection()
 
-    let contextEnv = ContextEnv.make(
-      ~eventItem=MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem,
-      ~logger=Logging.getLogger(),
-    )
+    let eventItem = MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem
 
-    let loaderContext =
-      contextEnv
-      ->ContextEnv.getLoaderContext(~loadLayer, ~inMemoryStore)
-      ->(Utils.magic: Internal.loaderContext => Types.loaderContext)
+    let loaderContext = UserContext.getLoaderContext({
+      eventItem,
+      loadLayer,
+      inMemoryStore,
+      shouldGroup: true,
+    })->(Utils.magic: Internal.loaderContext => Types.loaderContext)
 
     let _ = loaderContext.entityWithBigDecimal.get(testEntity1.id)
     let _ = loaderContext.entityWithBigDecimal.get(testEntity2.id)
 
-    let handlerContext =
-      contextEnv
-      ->ContextEnv.getHandlerContext(~inMemoryStore, ~loadLayer, ~shouldSaveHistory=false)
-      ->(Utils.magic: Internal.handlerContext => Types.handlerContext)
+    let handlerContext = UserContext.getHandlerContext({
+      eventItem,
+      inMemoryStore,
+      loadLayer,
+      shouldSaveHistory: false,
+    })->(Utils.magic: Internal.handlerContext => Types.handlerContext)
 
     switch await handlerContext.entityWithBigDecimal.get(testEntity1.id) {
     | Some(entity) => Assert.equal(entity.bigDecimal.toString(), "123.456")
-    | None => Assert.fail("Entity should exist")
+    | None => Assert.fail("testEntity1 should exist")
     }
     switch await handlerContext.entityWithBigDecimal.get(testEntity2.id) {
     | Some(entity) => Assert.equal(entity.bigDecimal.toString(), "654.321")
-    | None => Assert.fail("Entity should exist")
+    | None => Assert.fail("testEntity2 should exist")
     }
   })
 })

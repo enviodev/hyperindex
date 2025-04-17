@@ -149,7 +149,7 @@ let getSourceNewHeight = async (
       logger->Logging.childTrace({
         "msg": `Height retrieval from ${source.name} source failed. Retrying in ${retryInterval->Int.toString}ms.`,
         "source": source.name,
-        "error": exn->Internal.prettifyExn,
+        "err": exn->Internal.prettifyExn,
       })
       retry := retry.contents + 1
       await Utils.delay(retryInterval)

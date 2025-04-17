@@ -43,12 +43,22 @@ module.exports.batchReadItemsInTable = (table, sql, pkArray) => {
   const primaryKeyFieldNames = TableModule.getPrimaryKeyFieldNames(table);
 
   if (primaryKeyFieldNames.length === 1) {
-    return sql`
-      SELECT *
-      FROM ${sql(publicSchema)}.${sql(table.tableName)}
-      WHERE ${sql(primaryKeyFieldNames[0])} IN ${sql(pkArray)};
-      `;
+    if (pkArray.length === 1) {
+      return sql`
+        SELECT *
+        FROM ${sql(publicSchema)}.${sql(table.tableName)}
+        WHERE ${sql(primaryKeyFieldNames[0])} = ${pkArray[0]}
+        LIMIT 1;`;
+    } else {
+      return sql`
+        SELECT *
+        FROM ${sql(publicSchema)}.${sql(table.tableName)}
+        WHERE ${sql(primaryKeyFieldNames[0])} IN ${sql(pkArray)};`;
+    }
   } else {
+    throw new Error(
+      "Batch read not implemented for tables with composite primary keys"
+    );
     //TODO, if needed create a select query for multiple field matches
     //May be best to make pkArray an array of objects with fieldName -> value
   }
@@ -168,12 +178,7 @@ ${sql`${commaSeparateDynamicMapQuery(sql, fieldQueryConstructors)}`};`;
 const batchSetEndOfBlockRangeScannedDataCore = (sql, rowDataArray) => {
   return sql`
     INSERT INTO ${sql(publicSchema)}."end_of_block_range_scanned_data"
-  ${sql(
-    rowDataArray,
-    "chain_id",
-    "block_number",
-    "block_hash"
-  )}
+  ${sql(rowDataArray, "chain_id", "block_number", "block_hash")}
     ON CONFLICT(chain_id, block_number) DO UPDATE
     SET
     "chain_id" = EXCLUDED."chain_id",

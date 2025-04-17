@@ -120,9 +120,16 @@ let makeStoreOperatorEntity = (
   ~getStore: InMemoryStore.t => InMemoryTable.Entity.t<'entity>,
   ~getKey: 'entity => Types.id,
 ): storeOperations<Types.id, 'entity> => {
-  let {get, values, set} = module(InMemoryTable.Entity)
+  let {getUnsafe, has, values, set} = module(InMemoryTable.Entity)
 
-  let get = id => get(inMemoryStore->getStore, id)->Utils.Option.flatten
+  let get = id => {
+    let store = inMemoryStore->getStore
+    if has(store)(id) {
+      getUnsafe(store)(id)
+    } else {
+      None
+    }
+  }
 
   let getAll = () =>
     inMemoryStore
@@ -229,7 +236,7 @@ let rec makeWithInMemoryStore: InMemoryStore.t => t = (inMemoryStore: InMemorySt
       db.entities->InMemoryStore.EntityTables.get(module(TablesStatic.DynamicContractRegistry)),
     ~makeMockDb=makeWithInMemoryStore,
     ~getKey=({chainId, contractAddress}) =>
-      ContextEnv.makeDynamicContractId(~chainId, ~contractAddress),
+      UserContext.makeDynamicContractId(~chainId, ~contractAddress),
   )
 
   let entities = {
@@ -287,6 +294,7 @@ let makeLoadEntitiesByIds = (mockDb: t) => {
   }
 }
 
+
 let makeLoadEntitiesByField = (mockDb: t) => {
   async (
     ~operator,
@@ -297,9 +305,13 @@ let makeLoadEntitiesByField = (mockDb: t) => {
     ~logger as _=?,
   ) => {
     let mockDbTable = mockDb.__dbInternal__->InMemoryStore.getInMemTable(~entityMod)
-    mockDbTable->InMemoryTable.Entity.getOnIndex(
-      ~index=TableIndices.Index.makeSingle(~fieldName, ~fieldValue, ~operator),
-    )
+    let fieldValueHash =
+      fieldValue->TableIndices.FieldValue.castFrom->TableIndices.FieldValue.toString
+    if (mockDbTable->InMemoryTable.Entity.hasIndex(~fieldName, ~operator))(fieldValueHash) {
+      (mockDbTable->InMemoryTable.Entity.getUnsafeOnIndex(~fieldName, ~operator))(fieldValueHash)
+    } else {
+      []
+    }
   }
 }
 

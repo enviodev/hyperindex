@@ -3,7 +3,7 @@ open Belt
 type fieldValue
 
 type t = {
-  batcher: Batcher.t,
+  loadManager: LoadManager.t,
   loadEntitiesByIds: (
     array<Types.id>,
     ~entityMod: module(Entities.InternalEntity),
@@ -21,7 +21,7 @@ type t = {
 
 let make = (~loadEntitiesByIds, ~loadEntitiesByField) => {
   {
-    batcher: Batcher.make(),
+    loadManager: LoadManager.make(),
     loadEntitiesByIds,
     loadEntitiesByField,
   }
@@ -37,29 +37,35 @@ let makeWithDbConnection = () => {
   )
 }
 
-let makeLoader = (
+let loadById = (
   type entity,
   loadLayer,
   ~entityMod: module(Entities.Entity with type t = entity),
   ~inMemoryStore,
-  ~logger,
+  ~shouldGroup,
+  ~eventItem,
+  ~entityId,
 ) => {
   let module(Entity) = entityMod
-  let operationKey = `${(Entity.name :> string)}.get`
+  let key = `${(Entity.name :> string)}.get`
   let entityMod = entityMod->Entities.entityModToInternal
   let inMemTable = inMemoryStore->InMemoryStore.getInMemTable(~entityMod)
 
-  let operation = async idsToLoad => {
+  let load = async idsToLoad => {
     // Since makeLoader prevents registerign entities already existing in the inMemoryStore,
     // we can be sure that we load only the new ones.
-    let dbEntities = await idsToLoad->loadLayer.loadEntitiesByIds(~entityMod, ~logger)
+    let dbEntities =
+      await idsToLoad->loadLayer.loadEntitiesByIds(
+        ~entityMod,
+        ~logger=eventItem->Logging.getEventLogger,
+      )
 
     let entitiesMap = Js.Dict.empty()
     for idx in 0 to dbEntities->Array.length - 1 {
       let entity = dbEntities->Js.Array2.unsafe_get(idx)
       entitiesMap->Js.Dict.set(entity.id, entity)
     }
-    idsToLoad->Js.Array2.map(entityId => {
+    idsToLoad->Js.Array2.forEach(entityId => {
       // Set the entity in the in memory store
       // without overwriting existing values
       // which might be newer than what we got from db
@@ -68,98 +74,91 @@ let makeLoader = (
         ~key=entityId,
         ~entity=entitiesMap->Utils.Dict.dangerouslyGetNonOption(entityId),
       )
-
-      // For the same reason as above
-      // get an entity from in-memory store
-      // since it might be newer than the one from DB
-      inMemTable->InMemoryTable.Entity.get(entityId)->Utils.Option.flatten
     })
   }
 
-  entityId => {
-    switch inMemTable->InMemoryTable.Entity.get(entityId) {
-    | Some(maybeEntity) => Promise.resolve(maybeEntity)
-    | None =>
-      loadLayer.batcher->Batcher.call(
-        ~operationKey,
-        ~operation,
-        ~inputKey=entityId,
-        ~input=entityId,
-      )
-    }->(Utils.magic: promise<option<Entities.internalEntity>> => promise<option<entity>>)
-  }
+  loadLayer.loadManager->LoadManager.call(
+    ~key,
+    ~load,
+    ~shouldGroup,
+    ~hasher=LoadManager.noopHasher,
+    ~getUnsafeInMemory=inMemTable
+    ->InMemoryTable.Entity.getUnsafe
+    ->(Utils.magic: (string => option<Entities.internalEntity>) => string => option<entity>),
+    ~hasInMemory=inMemTable->InMemoryTable.Entity.has,
+    ~input=entityId,
+  )
 }
 
-let makeWhereLoader = (
+let loadByField = (
   type entity,
   loadLayer,
-  ~operator,
+  ~operator: TableIndices.Operator.t,
   ~entityMod: module(Entities.Entity with type t = entity),
   ~inMemoryStore,
-  ~logger,
   ~fieldName,
   ~fieldValueSchema,
+  ~shouldGroup,
+  ~eventItem,
+  ~fieldValue,
 ) => {
   let module(Entity) = entityMod
-  let operationKey = `${(Entity.name :> string)}.getWhere`
+  let key = `${(Entity.name :> string)}.getWhere.${fieldName}.${switch operator {
+    | Eq => "eq"
+    | Gt => "gt"
+    }}`
   let entityMod = entityMod->Entities.entityModToInternal
   let inMemTable = inMemoryStore->InMemoryStore.getInMemTable(~entityMod)
 
-  let operation = async (indiciesToLoad: array<TableIndices.Index.t>) => {
-    // TODO: Maybe worth moving the check before the place where we register the load in a batchQueue
-    // Need to duble check that it won't resolve an empty index
-    let lookupIndexesNotInMemory = indiciesToLoad->Array.keep(index => {
-      let notInMemory = inMemTable->InMemoryTable.Entity.indexDoesNotExists(~index)
-      if notInMemory {
-        inMemTable->InMemoryTable.Entity.addEmptyIndex(~index)
-      }
-      notInMemory
-    })
-
-    //Do not do these queries concurrently. They are cpu expensive for
-    //postgres
-    await lookupIndexesNotInMemory->Utils.Array.awaitEach(async index => {
-      let entities = await loadLayer.loadEntitiesByField(
-        ~operator=switch index {
-        | Single({operator}) => operator
-        },
-        ~entityMod,
-        ~fieldName=index->TableIndices.Index.getFieldName,
-        ~fieldValue=switch index {
-        | Single({fieldValue}) => fieldValue->(Utils.magic: TableIndices.FieldValue.t => fieldValue)
-        },
-        ~fieldValueSchema=fieldValueSchema->(Utils.magic: S.t<'fieldValue> => S.t<fieldValue>),
-        ~logger,
-      )
-
-      entities->Array.forEach(entity => {
-        //Set the entity in the in memory store
-        inMemTable->InMemoryTable.Entity.initValue(
-          ~allowOverWriteEntity=false,
-          ~key=Entities.getEntityId(entity),
-          ~entity=Some(entity),
-        )
+  let load = async (fieldValues: array<'fieldValue>) => {
+    let indiciesToLoad = fieldValues->Js.Array2.map((fieldValue): TableIndices.Index.t => {
+      Single({
+        fieldName,
+        fieldValue: TableIndices.FieldValue.castFrom(fieldValue),
+        operator,
       })
     })
 
-    indiciesToLoad->Array.map(index => {
-      inMemTable->InMemoryTable.Entity.getOnIndex(~index)
-    })
+    let _ =
+      await indiciesToLoad
+      ->Js.Array2.map(async index => {
+        inMemTable->InMemoryTable.Entity.addEmptyIndex(~index)
+        let entities = await loadLayer.loadEntitiesByField(
+          ~operator=switch index {
+          | Single({operator}) => operator
+          },
+          ~entityMod,
+          ~fieldName=index->TableIndices.Index.getFieldName,
+          ~fieldValue=switch index {
+          | Single({fieldValue}) =>
+            fieldValue->(Utils.magic: TableIndices.FieldValue.t => fieldValue)
+          },
+          ~fieldValueSchema=fieldValueSchema->(Utils.magic: S.t<'fieldValue> => S.t<fieldValue>),
+          ~logger=eventItem->Logging.getEventLogger,
+        )
+
+        entities->Array.forEach(entity => {
+          //Set the entity in the in memory store
+          inMemTable->InMemoryTable.Entity.initValue(
+            ~allowOverWriteEntity=false,
+            ~key=Entities.getEntityId(entity),
+            ~entity=Some(entity),
+          )
+        })
+      })
+      ->Promise.all
   }
 
-  (fieldValue: 'fieldValue) => {
-    let index: TableIndices.Index.t = Single({
-      fieldName,
-      fieldValue: TableIndices.FieldValue.castFrom(fieldValue),
-      operator,
-    })
-    loadLayer.batcher
-    ->Batcher.call(
-      ~operationKey,
-      ~operation,
-      ~inputKey=index->TableIndices.Index.toString,
-      ~input=index,
-    )
-    ->(Utils.magic: promise<array<Entities.internalEntity>> => promise<array<entity>>)
-  }
+  loadLayer.loadManager->LoadManager.call(
+    ~key,
+    ~load,
+    ~input=fieldValue,
+    ~shouldGroup,
+    ~hasher=fieldValue =>
+      fieldValue->TableIndices.FieldValue.castFrom->TableIndices.FieldValue.toString,
+    ~getUnsafeInMemory=inMemTable
+    ->InMemoryTable.Entity.getUnsafeOnIndex(~fieldName, ~operator)
+    ->(Utils.magic: (string => array<Entities.internalEntity>) => string => array<entity>),
+    ~hasInMemory=inMemTable->InMemoryTable.Entity.hasIndex(~fieldName, ~operator),
+  )
 }

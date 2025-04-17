@@ -14,7 +14,7 @@ module TestEntity = {
   let schema = S.schema(s => {
     id: s.matches(S.string),
     fieldA: s.matches(S.int),
-    fieldB: s.matches(S.option(S.string)),
+    fieldB: s.matches(S.null(S.string)),
   })
 
   let rowsSchema = S.array(schema)
@@ -22,9 +22,9 @@ module TestEntity = {
     "TestEntity",
     ~schemaName="public",
     ~fields=[
-      Table.mkField("id", Text, ~isPrimaryKey=true),
-      Table.mkField("fieldA", Integer),
-      Table.mkField("fieldB", Text, ~isNullable=true),
+      Table.mkField("id", Text, ~fieldSchema=S.string, ~isPrimaryKey=true),
+      Table.mkField("fieldA", Integer, ~fieldSchema=S.int),
+      Table.mkField("fieldB", Text, ~fieldSchema=S.null(S.string), ~isNullable=true),
     ],
   )
 

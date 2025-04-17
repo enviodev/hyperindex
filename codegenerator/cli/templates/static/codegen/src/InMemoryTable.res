@@ -200,30 +200,63 @@ module Entity = {
   that the entity is not set to the in memory store,
   and the second option means that the entity doesn't esist/deleted.
   It's needed to prevent an additional round trips to the database for deleted entities. */
-  let get = (inMemTable: t<'entity>, key: Types.id) =>
-    inMemTable.table
-    ->get(key)
-    ->Option.map(rowToEntity)
+  let getUnsafe = (inMemTable: t<'entity>) => (key: Types.id) =>
+    inMemTable.table.dict
+    ->Js.Dict.unsafeGet(key)
+    ->rowToEntity
 
-  let getOnIndex = (inMemTable: t<'entity>, ~index: TableIndices.Index.t) => {
-    inMemTable.fieldNameIndices
-    ->getRow(index)
-    ->Option.flatMap(indicesSerializedToValue => {
-      indicesSerializedToValue
-      ->getRow(index)
-      ->Option.map(((_index, relatedEntityIds)) => {
-        let res =
-          relatedEntityIds
-          ->Utils.Set.toArray
-          ->Array.keepMap(entityId => inMemTable->get(entityId)->Utils.Option.flatten)
-        res
-      })
-    })
-    ->Option.getWithDefault([])
+  let has = (inMemTable: t<'entity>) => (key: Types.id) =>
+    inMemTable.table.dict->Utils.Dict.dangerouslyGetNonOption(key) !== None
+
+  let hasIndex = (
+    inMemTable: t<'entity>,
+    ~fieldName,
+    ~operator: TableIndices.Operator.t,
+  ) => fieldValueHash => {
+    switch inMemTable.fieldNameIndices.dict->Utils.Dict.dangerouslyGetNonOption(fieldName) {
+    | None => false
+    | Some(indicesSerializedToValue) => {
+        // Should match TableIndices.toString logic
+        let key = `${fieldName}:${(operator :> string)}:${fieldValueHash}`
+        indicesSerializedToValue.dict->Utils.Dict.dangerouslyGetNonOption(key) !== None
+      }
+    }
   }
 
-  let indexDoesNotExists = (inMemTable: t<'entity>, ~index) => {
-    inMemTable.fieldNameIndices->getRow(index)->Option.flatMap(getRow(_, index))->Option.isNone
+  let getUnsafeOnIndex = (
+    inMemTable: t<'entity>,
+    ~fieldName,
+    ~operator: TableIndices.Operator.t,
+  ) => {
+    let getEntity = inMemTable->getUnsafe
+    let hasEntity = inMemTable->has
+    fieldValueHash => {
+      switch inMemTable.fieldNameIndices.dict->Utils.Dict.dangerouslyGetNonOption(fieldName) {
+      | None => Js.Exn.raiseError(`Unexpected error. Must have an index on field ${fieldName}`)
+      | Some(indicesSerializedToValue) => {
+          // Should match TableIndices.toString logic
+          let key = `${fieldName}:${(operator :> string)}:${fieldValueHash}`
+          switch indicesSerializedToValue.dict->Utils.Dict.dangerouslyGetNonOption(key) {
+          | None =>
+            Js.Exn.raiseError(
+              `Unexpected error. Must have an index for the value ${fieldValueHash} on field ${fieldName}`,
+            )
+          | Some((_index, relatedEntityIds)) => {
+              let res =
+                relatedEntityIds
+                ->Utils.Set.toArray
+                ->Array.keepMap(entityId => {
+                  switch hasEntity(entityId) {
+                  | true => getEntity(entityId)
+                  | false => None
+                  }
+                })
+              res
+            }
+          }
+        }
+      }
+    }
   }
 
   let addEmptyIndex = (inMemTable: t<'entity>, ~index) => {

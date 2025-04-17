@@ -33,7 +33,7 @@ let makeDynContractRegistration = (
   ~registeringEventSrcAddress=mockFactoryAddress,
 ): TablesStatic.DynamicContractRegistry.t => {
   {
-    id: ContextEnv.makeDynamicContractId(~chainId, ~contractAddress),
+    id: UserContext.makeDynamicContractId(~chainId, ~contractAddress),
     chainId,
     registeringEventBlockNumber: blockNumber,
     registeringEventLogIndex: logIndex,

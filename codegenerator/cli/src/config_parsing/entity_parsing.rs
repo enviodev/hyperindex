@@ -9,7 +9,7 @@ use crate::{
     constants::project_paths::DEFAULT_SCHEMA_PATH,
     hbs_templating::codegen_templates::DerivedFieldTemplate,
     project_paths::{path_utils, ParsedProjectPaths},
-    rescript_types::RescriptTypeIdent,
+    rescript_types::{RescriptSchemaMode, RescriptTypeIdent},
     utils::{text::Capitalize, unique_hashmap},
 };
 use anyhow::{anyhow, Context};
@@ -823,15 +823,23 @@ impl Field {
             FieldType::RegularField {
                 field_type: gql_field_type,
                 ..
-            } => Ok(Some(PGField {
-                field_name: self.name.clone(),
-                field_type: gql_field_type.to_underlying_postgres_primitive(schema)?,
-                is_array: gql_field_type.is_array(),
-                is_index: self.is_indexed_field(entity),
-                linked_entity: gql_field_type.get_linked_entity(schema)?,
-                is_primary_key: self.is_primary_key(),
-                is_nullable: gql_field_type.is_optional(),
-            })),
+            } => {
+                let res_type = self
+                    .field_type
+                    .to_rescript_type(&schema)
+                    .context("Failed getting rescript type")?;
+
+                Ok(Some(PGField {
+                    field_name: self.name.clone(),
+                    field_type: gql_field_type.to_underlying_postgres_primitive(schema)?,
+                    is_array: gql_field_type.is_array(),
+                    is_index: self.is_indexed_field(entity),
+                    linked_entity: gql_field_type.get_linked_entity(schema)?,
+                    is_primary_key: self.is_primary_key(),
+                    is_nullable: gql_field_type.is_optional(),
+                    res_schema_code: res_type.to_rescript_schema(&RescriptSchemaMode::ForDb),
+                }))
+            }
         }
     }
 

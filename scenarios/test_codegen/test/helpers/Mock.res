@@ -33,16 +33,14 @@ module InMemoryStore = {
 module LoadLayer = {
   type loadEntitiesByIdsCall = {
     entityIds: array<string>,
-    entityMod: module(Entities.InternalEntity),
-    logger?: Pino.t,
+    entityName: string,
   }
   type loadEntitiesByFieldCall = {
-    entityMod: module(Entities.InternalEntity),
+    entityName: string,
     fieldName: string,
     fieldValue: LoadLayer.fieldValue,
     fieldValueSchema: S.t<LoadLayer.fieldValue>,
     operator: TableIndices.Operator.t,
-    logger?: Pino.t,
   }
   type t = {
     loadLayer: LoadLayer.t,
@@ -54,12 +52,12 @@ module LoadLayer = {
     let loadEntitiesByIdsCalls = []
     let loadEntitiesByFieldCalls = []
     let loadLayer = LoadLayer.make(
-      ~loadEntitiesByIds=async (entityIds, ~entityMod, ~logger=?) => {
+      ~loadEntitiesByIds=async (entityIds, ~entityMod, ~logger as _=?) => {
+        let module(Entity) = entityMod
         loadEntitiesByIdsCalls
         ->Js.Array2.push({
           entityIds,
-          entityMod,
-          ?logger,
+          entityName: (Entity.name :> string),
         })
         ->ignore
         []
@@ -70,16 +68,16 @@ module LoadLayer = {
         ~fieldName,
         ~fieldValue,
         ~fieldValueSchema,
-        ~logger=?,
+        ~logger as _=?,
       ) => {
+        let module(Entity) = entityMod
         loadEntitiesByFieldCalls
         ->Js.Array2.push({
           operator,
-          entityMod,
+          entityName: (Entity.name :> string),
           fieldName,
           fieldValue,
           fieldValueSchema,
-          ?logger,
         })
         ->ignore
         []

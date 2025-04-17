@@ -73,6 +73,7 @@ module {{entity.name.capitalized}} = {
       mkField(
       "{{pg_field.field_name}}", 
       {{pg_field.field_type}},
+      ~fieldSchema={{pg_field.res_schema_code}},
       {{!--Cleaner readability if the flags are not applied when not needed but it could be inlined--}}
       {{#if pg_field.is_primary_key}}~isPrimaryKey,{{/if}}
       {{#if pg_field.is_nullable}}~isNullable,{{/if}}
@@ -81,7 +82,7 @@ module {{entity.name.capitalized}} = {
       {{#if pg_field.linked_entity}}~linkedEntity="{{pg_field.linked_entity}}",{{/if}}
       ),
   {{/each}}
-      mkField("db_write_timestamp", TimestampWithoutTimezone, ~default="CURRENT_TIMESTAMP"),
+      mkField("db_write_timestamp", TimestampWithoutTimezone, ~fieldSchema=Utils.Schema.dbDate, ~default="CURRENT_TIMESTAMP"),
   {{#each entity.derived_fields as | derived_field |}}
       mkDerivedFromField(
       "{{derived_field.field_name}}", 
@@ -114,3 +115,11 @@ let allEntities = [
 {{/each}}
   module(TablesStatic.DynamicContractRegistry),
 ]->entityModsToInternal
+
+let byName =
+  allEntities
+  ->Js.Array2.map(entityMod => {
+    let module(Entity) = entityMod
+    (Entity.name :> string, entityMod)
+  })
+  ->Js.Dict.fromArray
