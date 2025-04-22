@@ -274,3 +274,21 @@ module PartitionBlockFetched = {
     counter->SafeGauge.handleInt(~labels={chainId, partitionId}, ~value=blockNumber)
   }
 }
+
+module IndexingAddresses = {
+  type labels = {chainId: int}
+
+  let labelSchema = S.schema(s => {
+    chainId: s.matches(S.string->S.coerce(S.int)),
+  })
+
+  let gauge = SafeGauge.makeOrThrow(
+    ~name="envio_indexing_addresses",
+    ~help="The number of addresses indexed on chain. Includes both static and dynamic addresses.",
+    ~labelSchema,
+  )
+
+  let set = (~addressesCount, ~chainId) => {
+    gauge->SafeGauge.handleInt(~labels={chainId: chainId}, ~value=addressesCount)
+  }
+}

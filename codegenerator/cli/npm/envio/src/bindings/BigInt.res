@@ -46,7 +46,14 @@ let zero = fromInt(0)
 
 let schema =
   S.string
-  ->S.coerce(S.bigint)
   ->S.setName("BigInt")
+  ->S.transform(s => {
+    parser: string =>
+      switch string->fromString {
+      | Some(bigInt) => bigInt
+      | None => s.fail("The string is not valid BigInt")
+      },
+    serializer: bigint => bigint->toString,
+  })
 
 let nativeSchema = S.bigint

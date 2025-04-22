@@ -257,6 +257,7 @@ describe("SourceManager fetchNext", () => {
       normalSelection,
       latestFullyFetchedBlock: %raw(`null`),
       isFetchingAtHead: false,
+      chainId: 0,
       // All the null values should be computed during updateInternal
     }->FetchState.updateInternal
   }
