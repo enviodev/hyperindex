@@ -1768,7 +1768,7 @@ type handler<'loaderReturn> = Internal.genericHandler<Internal.genericHandlerArg
 @genType
 type contractRegister = Internal.genericContractRegister<Internal.genericContractRegisterArgs<event, contractRegistrations>>
 
-let paramsRawEventSchema = S.literal(%raw(`null`))->S.to(_ => ())
+let paramsRawEventSchema = S.literal(%raw(`null`))->S.shape(_ => ())
 let blockSchema = Block.schema
 let transactionSchema = Transaction.schema
 
@@ -1863,7 +1863,7 @@ type handler<'loaderReturn> = Internal.genericHandler<Internal.genericHandlerArg
 @genType
 type contractRegister = Internal.genericContractRegister<Internal.genericContractRegisterArgs<event, contractRegistrations>>
 
-let paramsRawEventSchema = S.literal(%raw(`null`))->S.to(_ => ())
+let paramsRawEventSchema = S.literal(%raw(`null`))->S.shape(_ => ())
 let blockSchema = S.object((_): block => {})
 let transactionSchema = S.object((s): transaction => {from: s.field("from", S.option(Address.schema))})
 

@@ -182,51 +182,6 @@ module BenchmarkSummaryData = {
   }
 }
 
-module BenchmarkCounters = {
-  type labels = {label: string}
-  let labelSchema = S.schema(s => {
-    label: s.matches(S.string),
-  })
-
-  let gauge = SafeGauge.makeOrThrow(
-    ~name="benchmark_counters",
-    ~help="All counters collected during indexer benchmark",
-    ~labelSchema,
-  )
-
-  let set = (~label, ~millis, ~totalRuntimeMillis) => {
-    gauge->SafeGauge.handleFloat(~labels={label: label}, ~value=millis)
-    gauge->SafeGauge.handleFloat(~labels={label: "Total Run Time (ms)"}, ~value=totalRuntimeMillis)
-  }
-}
-
-module PartitionBlockFetched = {
-  type labels = {chainId: int, partitionId: string}
-  let intAsString = S.string->S.transform(s => {
-    serializer: int => int->Belt.Int.toString,
-    parser: string =>
-      switch string->Belt.Int.fromString {
-      | Some(int) => int
-      | None => s.fail("The string is not valid int")
-      },
-  })
-
-  let labelSchema = S.schema(s => {
-    chainId: s.matches(intAsString),
-    partitionId: s.matches(S.string),
-  })
-
-  let counter = SafeGauge.makeOrThrow(
-    ~name="partition_block_fetched",
-    ~help="The latest fetched block number for each partition",
-    ~labelSchema,
-  )
-
-  let set = (~blockNumber, ~partitionId, ~chainId) => {
-    counter->SafeGauge.handleInt(~labels={chainId, partitionId}, ~value=blockNumber)
-  }
-}
-
 let processedUntilHeight = PromClient.Gauge.makeGauge({
   "name": "chain_block_height_processed",
   "help": "Block height processed by indexer",
@@ -281,4 +236,41 @@ let setFetchedUntilHeight = (~blockNumber, ~chain) => {
   fetchedUntilHeight
   ->PromClient.Gauge.labels({"chainId": chain->ChainMap.Chain.toString})
   ->PromClient.Gauge.set(blockNumber)
+}
+
+module BenchmarkCounters = {
+  type labels = {label: string}
+  let labelSchema = S.schema(s => {
+    label: s.matches(S.string),
+  })
+
+  let gauge = SafeGauge.makeOrThrow(
+    ~name="benchmark_counters",
+    ~help="All counters collected during indexer benchmark",
+    ~labelSchema,
+  )
+
+  let set = (~label, ~millis, ~totalRuntimeMillis) => {
+    gauge->SafeGauge.handleFloat(~labels={label: label}, ~value=millis)
+    gauge->SafeGauge.handleFloat(~labels={label: "Total Run Time (ms)"}, ~value=totalRuntimeMillis)
+  }
+}
+
+module PartitionBlockFetched = {
+  type labels = {chainId: int, partitionId: string}
+
+  let labelSchema = S.schema(s => {
+    chainId: s.matches(S.string->S.coerce(S.int)),
+    partitionId: s.matches(S.string),
+  })
+
+  let counter = SafeGauge.makeOrThrow(
+    ~name="partition_block_fetched",
+    ~help="The latest fetched block number for each partition",
+    ~labelSchema,
+  )
+
+  let set = (~blockNumber, ~partitionId, ~chainId) => {
+    counter->SafeGauge.handleInt(~labels={chainId, partitionId}, ~value=blockNumber)
+  }
 }
