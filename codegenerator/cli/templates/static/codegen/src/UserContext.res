@@ -18,10 +18,37 @@ let makeDynamicContractId = (~chainId, ~contractAddress) => {
   chainId->Belt.Int.toString ++ "-" ++ contractAddress->Address.toString
 }
 
-type handlerContextParams = {
+type baseContextParams = {
   eventItem: Internal.eventItem,
   inMemoryStore: InMemoryStore.t,
   loadLayer: LoadLayer.t,
+}
+
+let rec initEffect = (params: baseContextParams) => (
+  effect: Internal.effect,
+  input: Internal.effectInput,
+) => effect.handler({input, context: params->Utils.Proxy.make(effectTraps)->Utils.magic})
+and effectTraps: Utils.Proxy.traps<baseContextParams> = {
+  get: (~target as params, ~prop: unknown) => {
+    let prop = prop->(Utils.magic: unknown => string)
+    switch prop {
+    | "log" => params.eventItem->Logging.getUserLogger->Utils.magic
+    | "effect" =>
+      initEffect(params)->(
+        Utils.magic: (
+          (Internal.effect, Internal.effectInput) => promise<Internal.effectOutput>
+        ) => unknown
+      )
+    | _ =>
+      Js.Exn.raiseError(
+        `Invalid context access by '${prop}' property. Effect context doesn't allow access to storage.`,
+      )
+    }
+  },
+}
+
+type handlerContextParams = {
+  ...baseContextParams,
   shouldSaveHistory: bool,
 }
 
@@ -64,19 +91,22 @@ let makeEntityHandlerContext = (
 }
 
 let handlerTraps: Utils.Proxy.traps<handlerContextParams> = {
-  get: (~target, ~prop: unknown) => {
-    if prop->Js.typeof !== "string" {
-      Js.Exn.raiseError("Invalid context access by a non-string property.")
-    } else {
-      let prop = prop->(Utils.magic: unknown => string)
-      if prop === "log" {
-        target.eventItem->Logging.getUserLogger->Utils.magic
-      } else {
-        switch Entities.byName->Utils.Dict.dangerouslyGetNonOption(prop) {
-        | Some(entityMod) => makeEntityHandlerContext(~entityMod, ~params=target)->Utils.magic
-        | None =>
-          Js.Exn.raiseError(`Invalid context access by '${prop}' property. ${codegenHelpMessage}`)
-        }
+  get: (~target as params, ~prop: unknown) => {
+    let prop = prop->(Utils.magic: unknown => string)
+    switch prop {
+    | "log" => params.eventItem->Logging.getUserLogger->Utils.magic
+    | "effect" =>
+      initEffect((params :> baseContextParams))->(
+        Utils.magic: (
+          (Internal.effect, Internal.effectInput) => promise<Internal.effectOutput>
+        ) => unknown
+      )
+
+    | _ =>
+      switch Entities.byName->Utils.Dict.dangerouslyGetNonOption(prop) {
+      | Some(entityMod) => makeEntityHandlerContext(~entityMod, ~params)->Utils.magic
+      | None =>
+        Js.Exn.raiseError(`Invalid context access by '${prop}' property. ${codegenHelpMessage}`)
       }
     }
   },
@@ -104,9 +134,7 @@ let getHandlerArgs = (
 }
 
 type loaderContextParams = {
-  eventItem: Internal.eventItem,
-  inMemoryStore: InMemoryStore.t,
-  loadLayer: LoadLayer.t,
+  ...baseContextParams,
   shouldGroup: bool,
 }
 
@@ -181,26 +209,29 @@ let makeEntityLoaderContext = (params): Types.entityLoaderContext<
 }
 
 let loaderTraps: Utils.Proxy.traps<loaderContextParams> = {
-  get: (~target, ~prop: unknown) => {
-    if prop->Js.typeof !== "string" {
-      Js.Exn.raiseError("Invalid context access by a non-string property.")
-    } else {
-      let prop = prop->(Utils.magic: unknown => string)
-      if prop === "log" {
-        target.eventItem->Logging.getUserLogger->Utils.magic
-      } else {
-        switch Entities.byName->Utils.Dict.dangerouslyGetNonOption(prop) {
-        | Some(entityMod) =>
-          makeEntityLoaderContext({
-            eventItem: target.eventItem,
-            shouldGroup: target.shouldGroup,
-            inMemoryStore: target.inMemoryStore,
-            loadLayer: target.loadLayer,
-            entityMod,
-          })->Utils.magic
-        | None =>
-          Js.Exn.raiseError(`Invalid context access by '${prop}' property. ${codegenHelpMessage}`)
-        }
+  get: (~target as params, ~prop: unknown) => {
+    let prop = prop->(Utils.magic: unknown => string)
+    switch prop {
+    | "log" => params.eventItem->Logging.getUserLogger->Utils.magic
+    | "effect" =>
+      initEffect((params :> baseContextParams))->(
+        Utils.magic: (
+          (Internal.effect, Internal.effectInput) => promise<Internal.effectOutput>
+        ) => unknown
+      )
+
+    | _ =>
+      switch Entities.byName->Utils.Dict.dangerouslyGetNonOption(prop) {
+      | Some(entityMod) =>
+        makeEntityLoaderContext({
+          eventItem: params.eventItem,
+          shouldGroup: params.shouldGroup,
+          inMemoryStore: params.inMemoryStore,
+          loadLayer: params.loadLayer,
+          entityMod,
+        })->Utils.magic
+      | None =>
+        Js.Exn.raiseError(`Invalid context access by '${prop}' property. ${codegenHelpMessage}`)
       }
     }
   },

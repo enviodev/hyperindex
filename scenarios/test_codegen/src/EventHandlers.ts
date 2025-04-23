@@ -1,4 +1,4 @@
-import { Logger } from "envio";
+import { createEffect, Effect, Logger } from "envio";
 import { TestEvents } from "generated";
 import { TestHelpers } from "generated";
 import { EventFiltersTest } from "generated";
@@ -16,6 +16,23 @@ import {
 import * as S from "rescript-schema";
 import { expectType, TypeEqual } from "ts-expect";
 import { bytesToHex, keccak256, toHex } from "viem";
+
+let getFiles = createEffect({
+  name: "getFiles",
+  handler: async ({ context }) => {
+    if (Math.random() > 0.5) {
+      return "files";
+    }
+    const recursive = await context.effect(getFiles, undefined);
+
+    expectType<TypeEqual<typeof recursive, "files" | "foo">>(true);
+    expectType<TypeEqual<typeof getFiles, Effect<unknown, "files" | "foo">>>(
+      true
+    );
+
+    return "foo";
+  },
+});
 
 const zeroAddress = "0x0000000000000000000000000000000000000000";
 

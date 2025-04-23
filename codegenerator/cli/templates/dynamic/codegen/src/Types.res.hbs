@@ -18,7 +18,7 @@ type entityLoaderContext<'entity, 'indexedFieldOperations> = {
   getWhere: 'indexedFieldOperations,
 }
 
-@genType
+@genType.import(("./Types.ts", "LoaderContext"))
 type loaderContext = {
   log: Envio.logger,
   {{#each entities as | entity |}}

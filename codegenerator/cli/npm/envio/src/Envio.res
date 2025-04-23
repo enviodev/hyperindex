@@ -10,3 +10,27 @@ type logger = {
   error: 'params. (string, ~params: {..} as 'params=?) => unit,
   errorWithExn: (string, exn) => unit,
 }
+
+@@warning("-30") // Duplicated type names (input)
+@genType.import(("./Types.ts", "Effect"))
+type rec effect<'input, 'output>
+@genType
+and effectOptions<'input, 'output> = {
+  name: string,
+  handler: effectArgs<'input> => promise<'output>,
+}
+@genType.import(("./Types.ts", "EffectContext"))
+and effectContext = {
+  log: logger,
+  effect: 'input 'output. (effect<'input, 'output>, 'input) => promise<'output>,
+}
+@genType
+and effectArgs<'input> = {
+  input: 'input,
+  context: effectContext,
+}
+@@warning("+30")
+
+let createEffect = options => {
+  options->(Utils.magic: Internal.effect => effect<'input, 'output>)
+}
