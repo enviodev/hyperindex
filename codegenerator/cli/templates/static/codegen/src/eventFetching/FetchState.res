@@ -910,6 +910,10 @@ let make = (
   }
 
   Prometheus.IndexingAddresses.set(~addressesCount=numAddresses.contents, ~chainId)
+  switch endBlock {
+  | Some(endBlock) => Prometheus.IndexingEndBlock.set(~endBlock, ~chainId)
+  | None => ()
+  }
 
   {
     partitions,

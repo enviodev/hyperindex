@@ -292,3 +292,21 @@ module IndexingAddresses = {
     gauge->SafeGauge.handleInt(~labels={chainId: chainId}, ~value=addressesCount)
   }
 }
+
+module IndexingEndBlock = {
+  type labels = {chainId: int}
+
+  let labelSchema = S.schema(s => {
+    chainId: s.matches(S.string->S.coerce(S.int)),
+  })
+
+  let gauge = SafeGauge.makeOrThrow(
+    ~name="envio_indexing_end_block",
+    ~help="The block number to stop indexing at. (inclusive)",
+    ~labelSchema,
+  )
+
+  let set = (~endBlock, ~chainId) => {
+    gauge->SafeGauge.handleInt(~labels={chainId: chainId}, ~value=endBlock)
+  }
+}
