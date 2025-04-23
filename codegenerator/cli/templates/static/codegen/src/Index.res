@@ -344,7 +344,7 @@ let main = async () => {
     }
     let chainManager = await ChainManager.makeFromDbState(~config)
     let loadLayer = LoadLayer.makeWithDbConnection()
-    let globalState = GlobalState.make(~config, ~chainManager, ~loadLayer)
+    let globalState = GlobalState.make(~config, ~chainManager, ~loadLayer, ~shouldUseTui)
     let stateUpdatedHook = if shouldUseTui {
       let rerender = EnvioInkApp.startApp(makeAppState(globalState))
       Some(globalState => globalState->makeAppState->rerender)
