@@ -275,38 +275,42 @@ module PartitionBlockFetched = {
   }
 }
 
+let chainIdLabelsSchema = S.object(s => {
+  s.field("chainId", S.string->S.coerce(S.int))
+})
+
 module IndexingAddresses = {
-  type labels = {chainId: int}
-
-  let labelSchema = S.schema(s => {
-    chainId: s.matches(S.string->S.coerce(S.int)),
-  })
-
   let gauge = SafeGauge.makeOrThrow(
     ~name="envio_indexing_addresses",
     ~help="The number of addresses indexed on chain. Includes both static and dynamic addresses.",
-    ~labelSchema,
+    ~labelSchema=chainIdLabelsSchema,
   )
 
   let set = (~addressesCount, ~chainId) => {
-    gauge->SafeGauge.handleInt(~labels={chainId: chainId}, ~value=addressesCount)
+    gauge->SafeGauge.handleInt(~labels=chainId, ~value=addressesCount)
   }
 }
 
 module IndexingEndBlock = {
-  type labels = {chainId: int}
-
-  let labelSchema = S.schema(s => {
-    chainId: s.matches(S.string->S.coerce(S.int)),
-  })
-
   let gauge = SafeGauge.makeOrThrow(
     ~name="envio_indexing_end_block",
     ~help="The block number to stop indexing at. (inclusive)",
-    ~labelSchema,
+    ~labelSchema=chainIdLabelsSchema,
   )
 
   let set = (~endBlock, ~chainId) => {
-    gauge->SafeGauge.handleInt(~labels={chainId: chainId}, ~value=endBlock)
+    gauge->SafeGauge.handleInt(~labels=chainId, ~value=endBlock)
+  }
+}
+
+module ProgressBlockNumber = {
+  let gauge = SafeGauge.makeOrThrow(
+    ~name="envio_progress_block_number",
+    ~help="The block number to track the progress of indexing at. Currently uses the fully fetched block number. In the future will be changed to block number processed and stored in the database.",
+    ~labelSchema=chainIdLabelsSchema,
+  )
+
+  let set = (~endBlock, ~chainId) => {
+    gauge->SafeGauge.handleInt(~labels=chainId, ~value=endBlock)
   }
 }

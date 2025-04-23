@@ -551,6 +551,7 @@ let actionReducer = (state: t, action: action) => {
       ).blockNumber
 
       Prometheus.setFetchedUntilHeight(~blockNumber=highestFetchedBlockOnChain, ~chain)
+      Prometheus.ProgressBlockNumber.set(~endBlock=highestFetchedBlockOnChain, ~chainId=chain->ChainMap.Chain.toChainId)
       switch chainFetcher.latestProcessedBlock {
       | Some(blockNumber) => Prometheus.setProcessedUntilHeight(~blockNumber, ~chain)
       | None => ()
