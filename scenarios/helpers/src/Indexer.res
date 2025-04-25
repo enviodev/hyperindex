@@ -36,7 +36,11 @@ module type S = {
   }
 
   module Source: {
-    type blockRangeFetchStats
+    type blockRangeFetchStats = {
+      @as("total time elapsed (ms)") totalTimeElapsed: int,
+      @as("parsing time (ms)") parsingTimeElapsed?: int,
+      @as("page fetch time (ms)") pageFetchTime?: int,
+    }
     type blockRangeFetchResponse = {
       currentBlockHeight: int,
       reorgGuard: ReorgDetection.reorgGuard,
