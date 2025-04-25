@@ -16,7 +16,9 @@ type logger = {
 type rec effect<'input, 'output>
 @genType
 and effectOptions<'input, 'output> = {
+  /** The name of the effect. Used for logging and debugging. */
   name: string,
+  /** The handler function that will be called when the effect is executed. */
   handler: effectArgs<'input> => promise<'output>,
 }
 @genType.import(("./Types.ts", "EffectContext"))
