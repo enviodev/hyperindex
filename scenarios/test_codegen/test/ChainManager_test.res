@@ -34,6 +34,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
       ~eventConfigs,
       ~dynamicContracts=[],
       ~startBlock=0,
+      ~chainId=0,
     )
 
     let fetchState = ref(fetcherStateInit)
@@ -366,6 +367,7 @@ describe("determineNextEvent", () => {
         isFetchingAtHead: false,
         firstEventBlockNumber: item->Option.map(v => v.blockNumber),
         normalSelection,
+        chainId: 0,
       }
     }
 

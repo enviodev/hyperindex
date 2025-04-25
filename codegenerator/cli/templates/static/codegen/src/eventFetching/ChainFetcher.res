@@ -109,6 +109,7 @@ let make = (
     ~startBlock,
     ~endBlock,
     ~eventConfigs,
+    ~chainId=chainConfig.chain->ChainMap.Chain.toChainId,
   )
 
   {

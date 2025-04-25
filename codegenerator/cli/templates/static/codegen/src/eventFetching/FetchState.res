@@ -46,6 +46,8 @@ type t = {
   maxAddrInPartition: int,
   firstEventBlockNumber: option<int>,
   normalSelection: selection,
+  // Not used for logic - only metadata
+  chainId: int,
   // Fields computed by updateInternal
   latestFullyFetchedBlock: blockNumberAndTimestamp,
   queueSize: int,
@@ -68,6 +70,7 @@ let copy = (fetchState: t) => {
     queueSize: fetchState.queueSize,
     normalSelection: fetchState.normalSelection,
     firstEventBlockNumber: fetchState.firstEventBlockNumber,
+    chainId: fetchState.chainId,
   }
 }
 
@@ -281,6 +284,7 @@ let updateInternal = (
     maxAddrInPartition: fetchState.maxAddrInPartition,
     endBlock: fetchState.endBlock,
     normalSelection: fetchState.normalSelection,
+    chainId: fetchState.chainId,
     nextPartitionIndex,
     firstEventBlockNumber,
     partitions,
@@ -317,6 +321,12 @@ let makeDcPartition = (
     fetchedEventQueue: [],
   }
 }
+
+let numAddresses = fetchState =>
+  fetchState.partitions->Js.Array2.reduce(
+    (acc, p) => acc + p.contractAddressMapping->ContractAddressingMap.addressCount,
+    0,
+  )
 
 let registerDynamicContracts = (
   fetchState: t,
@@ -361,6 +371,11 @@ let registerDynamicContracts = (
         ~selection=fetchState.normalSelection,
       )
     })
+
+  Prometheus.IndexingAddresses.set(
+    ~addressesCount=fetchState->numAddresses + dynamicContracts->Array.length,
+    ~chainId=fetchState.chainId,
+  )
 
   fetchState->updateInternal(
     ~partitions=fetchState.partitions->Js.Array2.concat(newPartitions),
@@ -770,6 +785,7 @@ let make = (
   ~staticContracts: dict<array<Address.t>>,
   ~dynamicContracts: array<TablesStatic.DynamicContractRegistry.t>,
   ~maxAddrInPartition,
+  ~chainId,
 ): t => {
   let latestFetchedBlock = {
     blockTimestamp: 0,
@@ -791,6 +807,7 @@ let make = (
   })
 
   let partitions = []
+  let numAddresses = ref(0)
 
   if notDependingOnAddresses->Array.length > 0 {
     partitions->Array.push({
@@ -835,6 +852,7 @@ let make = (
 
       let registerAddress = (contractName, address, ~dc=?) => {
         let pendingPartition = pendingNormalPartition.contents
+        numAddresses := numAddresses.contents + 1
         pendingPartition.contractAddressMapping->ContractAddressingMap.addAddress(
           ~name=contractName,
           ~address,
@@ -891,11 +909,18 @@ let make = (
     )
   }
 
+  Prometheus.IndexingAddresses.set(~addressesCount=numAddresses.contents, ~chainId)
+  switch endBlock {
+  | Some(endBlock) => Prometheus.IndexingEndBlock.set(~endBlock, ~chainId)
+  | None => ()
+  }
+
   {
     partitions,
     nextPartitionIndex: partitions->Array.length,
     isFetchingAtHead: false,
     maxAddrInPartition,
+    chainId,
     endBlock,
     latestFullyFetchedBlock: latestFetchedBlock,
     queueSize: 0,
@@ -1066,9 +1091,3 @@ let isActivelyIndexing = ({latestFullyFetchedBlock, endBlock} as fetchState: t) 
   | None => true
   }
 }
-
-let numAddresses = fetchState =>
-  fetchState.partitions->Js.Array2.reduce(
-    (acc, p) => acc + p.contractAddressMapping->ContractAddressingMap.addressCount,
-    0,
-  )
