@@ -58,12 +58,13 @@ type t = {
   indexerStartTime: Js.Date.t,
   writeThrottlers: WriteThrottlers.t,
   loadLayer: LoadLayer.t,
+  shouldUseTui: bool,
   //Initialized as 0, increments, when rollbacks occur to invalidate
   //responses based on the wrong stateId
   id: int,
 }
 
-let make = (~config, ~chainManager, ~loadLayer) => {
+let make = (~config, ~chainManager, ~loadLayer, ~shouldUseTui=false) => {
   config,
   currentlyProcessingBatch: false,
   chainManager,
@@ -76,6 +77,7 @@ let make = (~config, ~chainManager, ~loadLayer) => {
   rollbackState: NoRollback,
   writeThrottlers: WriteThrottlers.make(~config),
   loadLayer,
+  shouldUseTui,
   id: 0,
 }
 
@@ -551,6 +553,7 @@ let actionReducer = (state: t, action: action) => {
       ).blockNumber
 
       Prometheus.setFetchedUntilHeight(~blockNumber=highestFetchedBlockOnChain, ~chain)
+      Prometheus.ProgressBlockNumber.set(~endBlock=highestFetchedBlockOnChain, ~chainId=chain->ChainMap.Chain.toChainId)
       switch chainFetcher.latestProcessedBlock {
       | Some(blockNumber) => Prometheus.setProcessedUntilHeight(~blockNumber, ~chain)
       | None => ()
@@ -583,7 +586,9 @@ let actionReducer = (state: t, action: action) => {
       )
         ? {
             Logging.info("All chains are caught up to the endblock.")
-            ExitWithSuccess
+            // Keep the indexer process running in TUI mode
+            // so the Dev Console server stays working
+            state.shouldUseTui ? NoExit : ExitWithSuccess
           }
         : NoExit
       (

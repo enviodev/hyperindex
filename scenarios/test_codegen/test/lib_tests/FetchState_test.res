@@ -2,6 +2,8 @@ open Belt
 open RescriptMocha
 open Enums.ContractType
 
+let chainId = 0
+
 let getItem = (item: FetchState.queueItem) =>
   switch item {
   | Item({item}) => item->Some
@@ -76,6 +78,7 @@ let makeInitial = (~startBlock=0) => {
     ~startBlock,
     ~endBlock=None,
     ~maxAddrInPartition=3,
+    ~chainId,
   )
 }
 
@@ -111,6 +114,7 @@ describe("FetchState.make", () => {
         queueSize: 0,
         firstEventBlockNumber: None,
         normalSelection: fetchState.normalSelection,
+        chainId: 0,
       },
     )
   })
@@ -125,6 +129,7 @@ describe("FetchState.make", () => {
           ~startBlock=0,
           ~endBlock=None,
           ~maxAddrInPartition=2,
+          ~chainId,
         )
       },
       ~error={
@@ -145,6 +150,7 @@ describe("FetchState.make", () => {
         ~startBlock=0,
         ~endBlock=None,
         ~maxAddrInPartition=2,
+        ~chainId,
       )
 
       Assert.deepEqual(
@@ -178,6 +184,7 @@ describe("FetchState.make", () => {
           endBlock: None,
           firstEventBlockNumber: None,
           normalSelection: fetchState.normalSelection,
+          chainId,
         },
         ~message=`Should create only one partition`,
       )
@@ -198,6 +205,7 @@ describe("FetchState.make", () => {
         ~startBlock=0,
         ~endBlock=None,
         ~maxAddrInPartition=1,
+        ~chainId,
       )
 
       Assert.deepEqual(
@@ -242,6 +250,7 @@ describe("FetchState.make", () => {
           endBlock: None,
           firstEventBlockNumber: None,
           normalSelection: fetchState.normalSelection,
+          chainId,
         },
       )
 
@@ -269,6 +278,7 @@ describe("FetchState.make", () => {
         ~startBlock=0,
         ~endBlock=None,
         ~maxAddrInPartition=1,
+        ~chainId,
       )
 
       Assert.deepEqual(
@@ -339,6 +349,7 @@ describe("FetchState.make", () => {
           firstEventBlockNumber: None,
           endBlock: None,
           normalSelection: fetchState.normalSelection,
+          chainId,
         },
       )
     },
@@ -454,6 +465,7 @@ describe("FetchState.registerDynamicContracts", () => {
         ~endBlock=None,
         ~startBlock=0,
         ~maxAddrInPartition=1000,
+        ~chainId,
       )
 
       Assert.deepEqual(
@@ -514,6 +526,7 @@ describe("FetchState.registerDynamicContracts", () => {
           queueSize: 0,
           firstEventBlockNumber: None,
           normalSelection: fetchState.normalSelection,
+          chainId,
         },
         ~message=`The static addresses for the Gravatar contract should be skipped, since they don't have non-wildcard event configs`,
       )
@@ -557,6 +570,7 @@ describe("FetchState.getNextQuery & integration", () => {
       firstEventBlockNumber: Some(1),
       endBlock: None,
       normalSelection,
+      chainId,
     }
   }
 
@@ -607,6 +621,7 @@ describe("FetchState.getNextQuery & integration", () => {
       firstEventBlockNumber: Some(1),
       endBlock: None,
       normalSelection,
+      chainId,
     }
   }
 
@@ -1166,6 +1181,7 @@ describe("FetchState.getNextQuery & integration", () => {
         ~startBlock=0,
         ~endBlock=None,
         ~maxAddrInPartition=2,
+        ~chainId,
       )->FetchState.registerDynamicContracts(
         [makeDynContractRegistration(~blockNumber=2, ~contractAddress=mockAddress2)],
         ~currentBlockHeight=10,
@@ -1305,6 +1321,7 @@ describe("FetchState.getNextQuery & integration", () => {
         ~startBlock=0,
         ~endBlock=None,
         ~maxAddrInPartition=3,
+        ~chainId,
       )->FetchState.registerDynamicContracts(
         [makeDynContractRegistration(~blockNumber=2, ~contractAddress=mockAddress2)],
         ~currentBlockHeight=10,
@@ -1412,6 +1429,7 @@ describe("FetchState unit tests for specific cases", () => {
       firstEventBlockNumber: Some(1),
       endBlock: None,
       normalSelection,
+      chainId,
     }
 
     let updatedFetchState =
@@ -1491,6 +1509,7 @@ describe("FetchState unit tests for specific cases", () => {
       ~startBlock=0,
       ~endBlock=None,
       ~maxAddrInPartition=2,
+      ~chainId,
     )
     let fetchState =
       fetchState
@@ -1578,6 +1597,7 @@ describe("FetchState unit tests for specific cases", () => {
       ~startBlock=0,
       ~endBlock=None,
       ~maxAddrInPartition=1,
+      ~chainId,
     )
     let fetchState =
       fetchState
@@ -1753,6 +1773,7 @@ describe("FetchState unit tests for specific cases", () => {
       ~startBlock=0,
       ~endBlock=None,
       ~maxAddrInPartition=1,
+      ~chainId,
     )
 
     Assert.deepEqual(
@@ -1839,6 +1860,7 @@ describe("FetchState unit tests for specific cases", () => {
       firstEventBlockNumber: Some(1),
       endBlock: None,
       normalSelection,
+      chainId,
     }
 
     Assert.deepEqual(
@@ -1877,6 +1899,7 @@ describe("FetchState unit tests for specific cases", () => {
         ~startBlock=0,
         ~endBlock=None,
         ~maxAddrInPartition=2,
+        ~chainId,
       )->FetchState.registerDynamicContracts(
         [
           makeDynContractRegistration(
@@ -1937,6 +1960,7 @@ describe("FetchState unit tests for specific cases", () => {
       ~startBlock=0,
       ~endBlock=None,
       ~maxAddrInPartition=1,
+      ~chainId,
     )
 
     let q0 = {
@@ -2140,6 +2164,7 @@ describe("FetchState unit tests for specific cases", () => {
         ~startBlock=0,
         ~endBlock=None,
         ~maxAddrInPartition=2,
+        ~chainId,
       )
       let fetchState =
         fetchState
