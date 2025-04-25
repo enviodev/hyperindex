@@ -1865,7 +1865,7 @@ type contractRegister = Internal.genericContractRegister<Internal.genericContrac
 
 let paramsRawEventSchema = S.literal(%raw(`null`))->S.to(_ => ())
 let blockSchema = S.object((_): block => {})
-let transactionSchema = S.object((s): transaction => {from: s.field("from", S.option(Address.schema))})
+let transactionSchema = S.object((s): transaction => {from: s.field("from", S.nullable(Address.schema))})
 
 let handlerRegister: HandlerTypes.Register.t = HandlerTypes.Register.make(
   ~contractName,

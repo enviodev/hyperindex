@@ -780,7 +780,7 @@ mod tests {
                     &"eventArgs".to_string(),
                     &RescriptSchemaMode::ForFieldSelection
                 ),
-            "S.option(BigInt.nativeSchema)".to_string()
+            "S.nullable(BigInt.nativeSchema)".to_string()
         );
         assert_eq!(
             RescriptTypeExpr::Identifier(RescriptTypeIdent::Tuple(vec![
