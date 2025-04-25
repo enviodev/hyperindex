@@ -470,7 +470,7 @@ describe("RpcSource - getSuggestedBlockIntervalFromExn", () => {
           "method": "eth_getLogs",
           "params": [
             {
-              "address": "0xdac17f958d2ee523a2206206994597c13d831ec7",
+              "address": "0xdac17f958d2ee523a2206206994597c13d831ec7", 
               "topics": [
                 [
                   "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
@@ -488,5 +488,35 @@ describe("RpcSource - getSuggestedBlockIntervalFromExn", () => {
     )
 
     Assert.deepEqual(getSuggestedBlockIntervalFromExn(error), Some(1000))
+  })
+
+  it("Should handle block range limit from Alchemy", () => {
+    let error = JsError(
+      %raw(`{
+        "code": "UNKNOWN_ERROR",
+        "error": {
+          "code": -32600,
+          "message": "You can make eth_getLogs requests with up to a 500 block range. Based on your parameters, this block range should work: [0x3d7773, 0x3d7966]"
+        },
+        "payload": {
+          "method": "eth_getLogs",
+          "params": [
+            {
+              "address": "0x2da25e7446a70d7be65fd4c053948becaa6374c8",
+              "topics": [
+                "0x0d3648bd0f6ba80134a33ba9275ac585d9d315f0ad8355cddefde31afa28d0e9"
+              ],
+              "fromBlock": "0x3d7773",
+              "toBlock": "0x3d843e"
+            }
+          ],
+          "id": 13,
+          "jsonrpc": "2.0"
+        },
+        "shortMessage": "could not coalesce error"
+      }`),
+    )
+
+    Assert.deepEqual(getSuggestedBlockIntervalFromExn(error), Some(500))
   })
 })
