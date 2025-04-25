@@ -108,13 +108,7 @@ let startServer = (~getState, ~shouldUseTui as _) => {
 
   let app = makeCjs()
 
-  app->get("/healthz", (_req, res) => {
-    // this is the machine readable port used in kubernetes to check the health of this service.
-    //   aditional health information could be added in the future (info about errors, back-offs, etc).
-    res->sendStatus(200)
-  })
-
-  app->useFor("/console", (req, res, next) => {
+  let consoleCorsMiddleware = (req, res, next) => {
     switch req.headers->Js.Dict.get("origin") {
     | Some(origin) if origin === Env.prodEnvioAppUrl || origin === Env.envioAppUrl =>
       res->setHeader("Access-Control-Allow-Origin", origin)
@@ -129,6 +123,14 @@ let startServer = (~getState, ~shouldUseTui as _) => {
     } else {
       next()
     }
+  }
+  app->useFor("/console", consoleCorsMiddleware)
+  app->useFor("/metrics", consoleCorsMiddleware)
+
+  app->get("/healthz", (_req, res) => {
+    // this is the machine readable port used in kubernetes to check the health of this service.
+    //   aditional health information could be added in the future (info about errors, back-offs, etc).
+    res->sendStatus(200)
   })
 
   app->get("/console/state", (_req, res) => {

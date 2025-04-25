@@ -65,20 +65,22 @@ type t = {
 }
 
 let make = (~config, ~chainManager, ~loadLayer, ~shouldUseTui=false) => {
-  config,
-  currentlyProcessingBatch: false,
-  chainManager,
-  maxBatchSize: Env.maxProcessBatchSize,
-  maxPerChainQueueSize: {
-    let numChains = config.chainMap->ChainMap.size
-    Env.maxEventFetchedQueueSize / numChains
-  },
-  indexerStartTime: Js.Date.make(),
-  rollbackState: NoRollback,
-  writeThrottlers: WriteThrottlers.make(~config),
-  loadLayer,
-  shouldUseTui,
-  id: 0,
+  {
+    config,
+    currentlyProcessingBatch: false,
+    chainManager,
+    maxBatchSize: Env.maxProcessBatchSize,
+    maxPerChainQueueSize: {
+      let numChains = config.chainMap->ChainMap.size
+      Env.maxEventFetchedQueueSize / numChains
+    },
+    indexerStartTime: Js.Date.make(),
+    rollbackState: NoRollback,
+    writeThrottlers: WriteThrottlers.make(~config),
+    loadLayer,
+    shouldUseTui,
+    id: 0,
+  }
 }
 
 let getId = self => self.id
@@ -723,11 +725,11 @@ let actionReducer = (state: t, action: action) => {
       isUnorderedMultichainMode: chainManager.isUnorderedMultichainMode,
     }
 
-    let freshState = make(~config, ~chainManager, ~loadLayer)
+    let freshState = make(~config, ~chainManager, ~loadLayer, ~shouldUseTui=state.shouldUseTui)
 
     (freshState->incrementId, [NextQuery(CheckAllChains)])
   | SuccessExit => {
-      Logging.info("exiting with success")
+      Logging.info("Exiting with success")
       NodeJs.process->NodeJs.exitWithCode(Success)
       (state, [])
     }
