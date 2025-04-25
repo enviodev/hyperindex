@@ -214,7 +214,10 @@ let toSqlParams = (table: table, ~schema) => {
             }
           | Bool =>
             // Workaround for https://github.com/porsager/postgres/issues/471
-            S.union([S.literal(1)->S.to(_ => true), S.literal(0)->S.to(_ => false)])->S.toUnknown
+            S.union([
+              S.literal(1)->S.shape(_ => true),
+              S.literal(0)->S.shape(_ => false),
+            ])->S.toUnknown
           | _ => schema
           }
 
