@@ -119,7 +119,7 @@ pub enum Network {
     #[subenum(GraphNetwork)]
     Clover = 1023,
 
-    #[subenum(NetworkWithExplorer)]
+    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     Crab = 44,
 
     #[subenum(HypersyncNetwork)]
@@ -330,6 +330,9 @@ pub enum Network {
     Soneium = 1868,
 
     #[subenum(HypersyncNetwork)]
+    Sonic = 146,
+
+    #[subenum(HypersyncNetwork)]
     Sophon = 50104,
 
     #[subenum(HypersyncNetwork)]
@@ -349,6 +352,9 @@ pub enum Network {
 
     #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     UnichainSepolia = 1301,
+
+    #[subenum(HypersyncNetwork)]
+    Worldchain = 480,
 
     XLayer = 196,
 
@@ -515,7 +521,9 @@ impl Network {
             | Network::PharosDevnet
             | Network::Superseed
             | Network::MegaethTestnet
-            | Network::Curtis => DEFAULT_CONFIRMED_BLOCK_THRESHOLD,
+            | Network::Curtis
+            | Network::Worldchain
+            | Network::Sonic => DEFAULT_CONFIRMED_BLOCK_THRESHOLD,
         }
     }
 }
@@ -574,7 +582,7 @@ impl HypersyncNetwork {
             | Opbnb | GnosisChiado | LuksoTestnet | BlastSepolia | Holesky | BerachainBartio
             | OptimismSepolia | Fuji | ArbitrumSepolia | Fraxtal | Soneium | BaseSepolia
             | MevCommit | Merlin | Mode | MoonbaseAlpha | XdcTestnet | Morph | Harmony
-            | Saakuru | Cyber | Superseed | MegaethTestnet => Stone,
+            | Saakuru | Cyber | Superseed | MegaethTestnet | Sonic | Worldchain | Crab => Stone,
         }
     }
 
