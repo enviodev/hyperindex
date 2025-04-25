@@ -474,7 +474,7 @@ impl RescriptTypeIdent {
             Self::Option(inner_type) => {
                 let schema = match mode {
                     RescriptSchemaMode::ForDb => "S.null".to_string(),
-                    RescriptSchemaMode::ForFieldSelection => "S.option".to_string(),
+                    RescriptSchemaMode::ForFieldSelection => "S.nullable".to_string(),
                 };
                 format!("{schema}({})", inner_type.to_rescript_schema(mode))
             }
