@@ -38,6 +38,8 @@ let getSuggestedBlockIntervalFromExn = {
 
   let blockRangeLimitRegExp = %re(`/limited to a (\d+) blocks range/`)
 
+  let alchemyRangeRegExp = %re(`/up to a (\d+) block range/`)
+
   exn =>
     switch exn {
     | Js.Exn.Error(error) =>
@@ -68,7 +70,19 @@ let getSuggestedBlockIntervalFromExn = {
               }
             | _ => None
             }
-          | None => None
+          | None =>
+            switch alchemyRangeRegExp->Js.Re.exec_(message) {
+            | Some(execResult) =>
+              switch execResult->Js.Re.captures {
+              | [_, Js.Nullable.Value(blockRangeLimit)] =>
+                switch blockRangeLimit->Int.fromString {
+                | Some(blockRangeLimit) if blockRangeLimit > 0 => Some(blockRangeLimit)
+                | _ => None
+                }
+              | _ => None
+              }
+            | None => None
+            }
           }
         }
       } catch {
