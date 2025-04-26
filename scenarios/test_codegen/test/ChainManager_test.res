@@ -231,7 +231,7 @@ describe("ChainManager", () => {
             )
 
             //Note -> this test was originally for popping all events related to a single block
-            //Now we don't guarentee processing all events in a block so these assertions are no longer needed.
+            //Now we don't guarantee processing all events in a block so these assertions are no longer needed.
             // let lastEvent =
             //   batch
             //   ->List.toArray
