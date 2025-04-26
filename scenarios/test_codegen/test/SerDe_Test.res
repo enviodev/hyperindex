@@ -52,7 +52,7 @@ describe("SerDe Test", () => {
       entityData: Set(entity),
     }
 
-    //Fails if serialziation does not work
+    //Fails if serialization does not work
     let set = DbFunctionsEntities.batchSet(~entityMod=module(Entities.EntityWithAllTypes))
     //Fails if parsing does not work
     let read = DbFunctionsEntities.batchRead(~entityMod=module(Entities.EntityWithAllTypes))
@@ -130,7 +130,7 @@ describe("SerDe Test", () => {
       entityData: Set(entity),
     }
 
-    //Fails if serialziation does not work
+    //Fails if serialization does not work
     let set = DbFunctionsEntities.batchSet(~entityMod=module(Entities.EntityWithAllNonArrayTypes))
     //Fails if parsing does not work
     let read = DbFunctionsEntities.batchRead(~entityMod=module(Entities.EntityWithAllNonArrayTypes))
