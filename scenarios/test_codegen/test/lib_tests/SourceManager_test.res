@@ -720,7 +720,7 @@ describe("SourceManager fetchNext", () => {
 
     // Partitions 2 and 3 should be ignored.
     // Eventhogh they are not fetching,
-    // but we've alredy called them with the same query
+    // but we've already called them with the same query
     await sourceManager->SourceManager.fetchNext(
       ~fetchState=mockFetchState([
         mockFullPartition(~partitionIndex=0, ~latestFetchedBlockNumber=10),
