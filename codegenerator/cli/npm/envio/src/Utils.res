@@ -467,3 +467,49 @@ module Proxy = {
   @new
   external make: ('a, traps<'a>) => 'a = "Proxy"
 }
+
+module Hash = {
+  let rec makeOrThrow = (any: 'a): string => {
+    switch any->Js.typeof {
+    | "string" => any->magic
+    | "number" => any->magic->Js.Int.toString
+    | "bigint" => any->magic->BigInt.toString
+    | "boolean" => any->magic ? "true" : "false"
+    | "undefined" => "undefined"
+    | "object" =>
+      if any === %raw(`null`) {
+        "null"
+      } else if any->Js.Array2.isArray {
+        let any: array<'a> = any->magic
+        let hash = ref("[")
+        for i in 0 to any->Js.Array2.length - 1 {
+          hash := hash.contents ++ any->Js.Array2.unsafe_get(i)->makeOrThrow ++ ","
+        }
+        hash.contents ++ "]"
+      } else {
+        let any: dict<'a> = any->magic
+        let constructor = any->Js.Dict.unsafeGet("constructor")->magic
+        if constructor === %raw(`Object`) {
+          let hash = ref("{")
+          let keys = any->Js.Dict.keys->Js.Array2.sortInPlace
+          for i in 0 to keys->Js.Array2.length - 1 {
+            let key = keys->Js.Array2.unsafe_get(i)
+            // Ideally should escape and wrap the key in double quotes
+            // but since we don't need to decode the hash,
+            // it's fine to keep it super simple
+            hash := hash.contents ++ key ++ ":" ++ any->Js.Dict.unsafeGet(key)->makeOrThrow ++ ","
+          }
+          hash.contents ++ "}"
+        } else if constructor["name"] === "BigNumber" {
+          (any->magic)["toString"]()
+        } else {
+          Js.Exn.raiseError(`Don't know how to serialize ${(constructor->magic)["name"]}`)
+        }
+      }
+    | "symbol"
+    | "function" =>
+      (any->magic)["toString"]()
+    | typeof => Js.Exn.raiseError(`Don't know how to serialize ${typeof}`)
+    }
+  }
+}
