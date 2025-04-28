@@ -6,7 +6,7 @@ use super::{
         prompt_abi_file_path, prompt_contract_address, prompt_contract_name,
         prompt_events_selection, prompt_to_continue_adding, Contract, SelectItem,
     },
-    validation::UniqueValueValidator,
+    // validation::UniqueValueValidator,
 };
 use crate::{
     clap_definitions::evm::NetworkOrChainId,
@@ -221,46 +221,30 @@ fn prompt_for_network_id(
     already_selected_ids: Vec<u64>,
 ) -> Result<converters::NetworkKind> {
     //Select one of our supported networks
-    let networks = HypersyncNetwork::iter()
+    let networks = NetworkWithExplorer::iter() // TODO: check if this should rather be `HypersyncNetwork::iter()` or both `NetworkWithExplorer::iter()` and `HypersyncNetwork::iter()`
         //Don't allow selection of networks that have been previously
         //selected.
         .filter(|n| {
             let network_id = *n as u64;
             !already_selected_ids.contains(&network_id)
         })
-        .map(NetworkSelection::Network)
         .collect::<Vec<_>>();
 
-    //User's options to either enter an id or select a supported network
-    let options = [vec![NetworkSelection::EnterNetworkId], networks].concat();
+    // Standard Select prompt without custom filter
+    // The NetworkWithExplorer's Display/to_string will use our updated pretty format with chain ID
+    let selected_explorer_network = Select::new(
+        "Which blockchain would you like to import a contract from?",
+        networks,
+    )
+    .prompt()?;
 
-    //Action prompt
-    let choose_from_networks = Select::new("Choose network:", options)
-        .prompt()
-        .context("Failed during prompt for network")?;
-
-    let selected = match choose_from_networks {
-        //If the user's choice evaluates to the enter network id option, prompt them for
-        //a network id
-        NetworkSelection::EnterNetworkId => {
-            let network_id = CustomType::<u64>::new("Enter the network id:")
-                //Validate that this ID is not already selected
-                .with_validator(UniqueValueValidator::new(already_selected_ids))
-                .with_error_message("Invalid network id input, please enter a number")
-                .prompt()?;
-
-            //Convert the id into a supported or unsupported network.
-            //If unsupported, it will use the optional rpc url or prompt
-            //for an rpc url
-            get_converter_network_u64(network_id, opt_rpc_url, opt_start_block)?
-        }
-        //If a supported network choice was selected. We should be able to
-        //parse it back to a supported network since it was serialized as a
-        //string
-        NetworkSelection::Network(network) => converters::NetworkKind::Supported(network),
-    };
-
-    Ok(selected)
+    // Convert the NetworkWithExplorer to NetworkKind
+    let network_id = selected_explorer_network as u64;
+    Ok(get_converter_network_u64(
+        network_id,
+        opt_rpc_url,
+        opt_start_block,
+    )?)
 }
 
 //Takes a u64 network ID and turns it into either "Supported" network or
@@ -325,13 +309,50 @@ impl ExplorerImportArgs {
     ///for a user to select one.
     fn get_network_with_explorer(&self) -> Result<NetworkWithExplorer> {
         let chosen_network = match &self.blockchain {
-            Some(chain) => *chain,
+            Some(network_or_chain_id) => {
+                match network_or_chain_id {
+                    NetworkOrChainId::NetworkName(network) => {
+                        // Try to convert Network to NetworkWithExplorer
+                        match NetworkWithExplorer::try_from(*network) {
+                            Ok(network_with_explorer) => network_with_explorer,
+                            Err(_) => {
+                                return Err(anyhow::anyhow!(
+                                    "The selected network does not support explorer-based import"
+                                ));
+                            }
+                        }
+                    }
+                    NetworkOrChainId::ChainId(chain_id) => {
+                        // Try to convert chain_id to Network first
+                        match Network::from_network_id(*chain_id) {
+                            Ok(network) => {
+                                // Then try to convert to NetworkWithExplorer
+                                match NetworkWithExplorer::try_from(network) {
+                                    Ok(network_with_explorer) => network_with_explorer,
+                                    Err(_) => {
+                                        return Err(anyhow::anyhow!(
+                                            "The network with chain ID {} does not support explorer-based import",
+                                            chain_id
+                                        ));
+                                    }
+                                }
+                            }
+                            Err(_) => {
+                                return Err(anyhow::anyhow!(
+                                    "Unsupported chain ID: {}. Network not found",
+                                    chain_id
+                                ));
+                            }
+                        }
+                    }
+                }
+            }
             None => {
-                let options = NetworkWithExplorer::iter().collect();
-
+                // Filter out already selected networks
+                let networks = NetworkWithExplorer::iter().collect::<Vec<_>>();
                 Select::new(
                     "Which blockchain would you like to import a contract from?",
-                    options,
+                    networks,
                 )
                 .prompt()?
             }
