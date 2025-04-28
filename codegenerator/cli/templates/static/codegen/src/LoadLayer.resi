@@ -40,3 +40,11 @@ let loadByField: (
   ~eventItem: Internal.eventItem,
   ~fieldValue: 'fieldValue,
 ) => promise<array<'entity>>
+
+let loadEffect: (
+  t,
+  ~effect: Internal.effect,
+  ~effectArgs: Internal.effectArgs,
+  ~inMemoryStore: InMemoryStore.t,
+  ~shouldGroup: bool,
+) => promise<Internal.effectOutput>

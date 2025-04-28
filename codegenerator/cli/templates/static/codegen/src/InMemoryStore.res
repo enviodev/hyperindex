@@ -47,7 +47,8 @@ module EntityTables = {
 type t = {
   eventSyncState: InMemoryTable.t<int, TablesStatic.EventSyncState.t>,
   rawEvents: InMemoryTable.t<rawEventsKey, TablesStatic.RawEvents.t>,
-  entities: Js.Dict.t<InMemoryTable.Entity.t<Entities.internalEntity>>,
+  entities: dict<InMemoryTable.Entity.t<Entities.internalEntity>>,
+  effects: dict<InMemoryTable.t<Internal.effectInput, Internal.effectOutput>>,
   rollBackEventIdentifier: option<Types.eventIdentifier>,
 }
 
@@ -58,6 +59,7 @@ let make = (
   eventSyncState: InMemoryTable.make(~hash=v => v->Belt.Int.toString),
   rawEvents: InMemoryTable.make(~hash=hashRawEventsKey),
   entities: EntityTables.make(entities),
+  effects: Js.Dict.empty(),
   rollBackEventIdentifier,
 }
 
@@ -65,7 +67,19 @@ let clone = (self: t) => {
   eventSyncState: self.eventSyncState->InMemoryTable.clone,
   rawEvents: self.rawEvents->InMemoryTable.clone,
   entities: self.entities->EntityTables.clone,
+  effects: Js.Dict.map(table => table->InMemoryTable.clone, self.effects),
   rollBackEventIdentifier: self.rollBackEventIdentifier->Lodash.cloneDeep,
+}
+
+let getEffectInMemTable = (inMemoryStore: t, ~effect: Internal.effect) => {
+  let key = effect.name
+  switch inMemoryStore.effects->Utils.Dict.dangerouslyGetNonOption(key) {
+  | Some(table) => table
+  | None =>
+    let table = InMemoryTable.make(~hash=Utils.Hash.makeOrThrow)
+    inMemoryStore.effects->Js.Dict.set(key, table)
+    table
+  }
 }
 
 let getInMemTable = (

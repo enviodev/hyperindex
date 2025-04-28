@@ -120,11 +120,11 @@ let makeStoreOperatorEntity = (
   ~getStore: InMemoryStore.t => InMemoryTable.Entity.t<'entity>,
   ~getKey: 'entity => Types.id,
 ): storeOperations<Types.id, 'entity> => {
-  let {getUnsafe, has, values, set} = module(InMemoryTable.Entity)
+  let {getUnsafe, values, set} = module(InMemoryTable.Entity)
 
   let get = id => {
     let store = inMemoryStore->getStore
-    if has(store)(id) {
+    if store.table->InMemoryTable.hasByHash(id) {
       getUnsafe(store)(id)
     } else {
       None

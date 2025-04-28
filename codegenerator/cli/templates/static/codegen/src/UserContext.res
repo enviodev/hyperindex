@@ -27,7 +27,17 @@ type baseContextParams = {
 let rec initEffect = (params: baseContextParams) => (
   effect: Internal.effect,
   input: Internal.effectInput,
-) => effect.handler({input, context: params->Utils.Proxy.make(effectTraps)->Utils.magic})
+) =>
+  params.loadLayer->LoadLayer.loadEffect(
+    ~effect,
+    ~effectArgs={
+      input,
+      context: params->Utils.Proxy.make(effectTraps)->Utils.magic,
+      cacheKey: input->Utils.Hash.makeOrThrow,
+    },
+    ~inMemoryStore=params.inMemoryStore,
+    ~shouldGroup=true,
+  )
 and effectTraps: Utils.Proxy.traps<baseContextParams> = {
   get: (~target as params, ~prop: unknown) => {
     let prop = prop->(Utils.magic: unknown => string)
@@ -39,6 +49,7 @@ and effectTraps: Utils.Proxy.traps<baseContextParams> = {
           (Internal.effect, Internal.effectInput) => promise<Internal.effectOutput>
         ) => unknown
       )
+
     | _ =>
       Js.Exn.raiseError(
         `Invalid context access by '${prop}' property. Effect context doesn't allow access to storage.`,

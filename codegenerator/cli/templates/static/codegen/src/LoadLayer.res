@@ -85,8 +85,40 @@ let loadById = (
     ~getUnsafeInMemory=inMemTable
     ->InMemoryTable.Entity.getUnsafe
     ->(Utils.magic: (string => option<Entities.internalEntity>) => string => option<entity>),
-    ~hasInMemory=inMemTable->InMemoryTable.Entity.has,
+    ~hasInMemory=hash => inMemTable.table->InMemoryTable.hasByHash(hash),
     ~input=entityId,
+  )
+}
+
+let loadEffect = (
+  loadLayer,
+  ~effect: Internal.effect,
+  ~effectArgs,
+  ~inMemoryStore,
+  ~shouldGroup,
+) => {
+  let key = `${effect.name}.effect`
+  let inMemTable = inMemoryStore->InMemoryStore.getEffectInMemTable(~effect)
+
+  let load = async args => {
+    args
+    ->Js.Array2.map(arg => {
+      effect.handler(arg)->Promise.thenResolve(output => {
+        inMemTable->InMemoryTable.setByHash(arg.cacheKey, output)
+      })
+    })
+    ->Promise.all
+    ->Promise.done
+  }
+
+  loadLayer.loadManager->LoadManager.call(
+    ~key,
+    ~load,
+    ~shouldGroup,
+    ~hasher=args => args.cacheKey,
+    ~getUnsafeInMemory=hash => inMemTable->InMemoryTable.getUnsafeByHash(hash),
+    ~hasInMemory=hash => inMemTable->InMemoryTable.hasByHash(hash),
+    ~input=effectArgs,
   )
 }
 

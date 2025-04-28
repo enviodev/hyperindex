@@ -5,9 +5,22 @@ type t<'key, 'val> = {
   hash: 'key => string,
 }
 
-let make = (~hash): t<'key, 'val> => {dict: Js.Dict.empty(), hash}
+let make = (~hash): t<'key, 'val> => {
+  dict: Js.Dict.empty(),
+  hash,
+}
 
 let set = (self: t<'key, 'val>, key, value) => self.dict->Js.Dict.set(key->self.hash, value)
+
+let setByHash = (self: t<'key, 'val>, hash, value) => self.dict->Js.Dict.set(hash, value)
+
+let hasByHash = (self: t<'key, 'val>, hash) => {
+  self.dict->Utils.Dict.dangerouslyGetNonOption(hash) !== None
+}
+
+let getUnsafeByHash = (self: t<'key, 'val>, hash) => {
+  self.dict->Js.Dict.unsafeGet(hash)
+}
 
 let get = (self: t<'key, 'val>, key: 'key) =>
   self.dict->Utils.Dict.dangerouslyGetNonOption(key->self.hash)
@@ -205,9 +218,6 @@ module Entity = {
     ->Js.Dict.unsafeGet(key)
     ->rowToEntity
 
-  let has = (inMemTable: t<'entity>) => (key: Types.id) =>
-    inMemTable.table.dict->Utils.Dict.dangerouslyGetNonOption(key) !== None
-
   let hasIndex = (
     inMemTable: t<'entity>,
     ~fieldName,
@@ -229,7 +239,6 @@ module Entity = {
     ~operator: TableIndices.Operator.t,
   ) => {
     let getEntity = inMemTable->getUnsafe
-    let hasEntity = inMemTable->has
     fieldValueHash => {
       switch inMemTable.fieldNameIndices.dict->Utils.Dict.dangerouslyGetNonOption(fieldName) {
       | None => Js.Exn.raiseError(`Unexpected error. Must have an index on field ${fieldName}`)
@@ -246,7 +255,7 @@ module Entity = {
                 relatedEntityIds
                 ->Utils.Set.toArray
                 ->Array.keepMap(entityId => {
-                  switch hasEntity(entityId) {
+                  switch hasByHash(inMemTable.table, entityId) {
                   | true => getEntity(entityId)
                   | false => None
                   }

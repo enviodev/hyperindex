@@ -167,6 +167,7 @@ type effectContext
 type effectArgs = {
   input: effectInput,
   context: effectContext,
+  cacheKey: string,
 }
 type effect = {
   name: string,
