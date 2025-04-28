@@ -101,14 +101,13 @@ let loadEffect = (
   let inMemTable = inMemoryStore->InMemoryStore.getEffectInMemTable(~effect)
 
   let load = async args => {
-    args
+    let _ = await args
     ->Js.Array2.map(arg => {
       effect.handler(arg)->Promise.thenResolve(output => {
         inMemTable->InMemoryTable.setByHash(arg.cacheKey, output)
       })
     })
     ->Promise.all
-    ->Promise.done
   }
 
   loadLayer.loadManager->LoadManager.call(
