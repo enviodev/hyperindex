@@ -105,9 +105,9 @@ Initialize by pulling the contract ABI from a block explorer
 ###### **Options:**
 
 * `-b`, `--blockchain <BLOCKCHAIN>` — Network to import the contract from
-
-  Possible values: `amoy`, `arbitrum-nova`, `arbitrum-one`, `arbitrum-sepolia`, `arbitrum-testnet`, `aurora`, `aurora-testnet`, `avalanche`, `b2-testnet`, `base`, `base-sepolia`, `blast`, `blast-sepolia`, `boba`, `bsc`, `bsc-testnet`, `celo`, `celo-alfajores`, `celo-baklava`, `citrea-testnet`, `crab`, `ethereum-mainnet`, `evmos`, `fantom`, `fantom-testnet`, `fhenix-helium`, `flare`, `fuji`, `galadriel-devnet`, `gnosis`, `gnosis-chiado`, `goerli`, `harmony`, `holesky`, `kroma`, `linea`, `linea-sepolia`, `lisk`, `lukso`, `lukso-testnet`, `manta`, `mantle`, `mantle-testnet`, `metis`, `mode`, `mode-sepolia`, `moonbase-alpha`, `moonbeam`, `moonriver`, `morph`, `morph-testnet`, `neon-evm`, `opbnb`, `optimism`, `optimism-sepolia`, `poa-core`, `poa-sokol`, `polygon`, `polygon-zkevm`, `polygon-zkevm-testnet`, `rsk`, `saakuru`, `scroll`, `scroll-sepolia`, `sepolia`, `shimmer-evm`, `taiko`, `tangle`, `unichain-sepolia`, `zeta`, `zora`, `zora-sepolia`
-
+* `--api-token <API_TOKEN>` — API token for the block explorer
+* `--single-contract` — If selected, prompt will not ask for additional contracts/addresses/networks
+* `--all-events` — If selected, prompt will not ask to confirm selection of events on a contract
 
 
 

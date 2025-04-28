@@ -50,12 +50,18 @@ impl ContractImportArgs {
         &self,
         local_import_args: &LocalImportArgs,
     ) -> Result<SelectedContract> {
+        // Create a modified copy of self with the flags from local_import_args
+        let mut args_with_flags = self.clone();
+        args_with_flags.all_events = local_import_args.all_events || args_with_flags.all_events;
+        args_with_flags.single_contract =
+            local_import_args.single_contract || args_with_flags.single_contract;
+
         let parsed_abi = local_import_args
             .get_abi()
             .context("Failed getting parsed abi")?;
 
         let mut abi_events: Vec<ethers::abi::Event> = parsed_abi.events().cloned().collect();
-        if !self.all_events {
+        if !args_with_flags.all_events {
             abi_events = prompt_abi_events_selection(abi_events)?;
         }
 
@@ -67,7 +73,7 @@ impl ContractImportArgs {
             .get_contract_name()
             .context("Failed getting contract name")?;
 
-        let address = self
+        let address = args_with_flags
             .get_contract_address()
             .context("Failed getting contract address")?;
 
@@ -141,15 +147,19 @@ impl ContractImportArgs {
         &self,
         explorer_import_args: &ExplorerImportArgs,
     ) -> Result<SelectedContract> {
-        let network_with_explorer: NetworkWithExplorer = explorer_import_args
-            .get_network_with_explorer()
-            .context("Failed getting NetworkWithExplorer")?;
+        // Create a modified copy of self with the flags from explorer_import_args
+        let mut args_with_flags = self.clone();
+        args_with_flags.all_events = explorer_import_args.all_events;
+        args_with_flags.single_contract = explorer_import_args.single_contract;
 
-        let chosen_contract_address = self
+        let network_with_explorer = explorer_import_args.get_network_with_explorer()?;
+
+        let chosen_contract_address = args_with_flags
             .get_contract_address()
             .context("Failed getting contract address")?;
 
-        let selected_contract = self
+        // Use the version with the flags set properly
+        let selected_contract = args_with_flags
             .get_selected_contract(&network_with_explorer, chosen_contract_address)
             .await
             .context("Failed getting SelectedContract from explorer")?;
@@ -444,7 +454,9 @@ impl Contract for SelectedContract {
 ///Constructs SelectedContract via cli args and prompts
 async fn get_contract_import_selection(args: ContractImportArgs) -> Result<SelectedContract> {
     //Construct SelectedContract via explorer or local import
-    match &args.get_local_or_explorer_import()? {
+    let import_variant = args.get_local_or_explorer_import()?;
+
+    match &import_variant {
         LocalOrExplorerImport::Explorer(explorer_import_args) => args
             .get_contract_import_selection_from_explore_import_args(explorer_import_args)
             .await
@@ -458,11 +470,27 @@ async fn get_contract_import_selection(args: ContractImportArgs) -> Result<Selec
 
 //Constructs SelectedContract via local prompt. Uses abis and manual
 //network/contract config
-async fn prompt_selected_contracts(args: ContractImportArgs) -> Result<Vec<SelectedContract>> {
+async fn prompt_selected_contracts(mut args: ContractImportArgs) -> Result<Vec<SelectedContract>> {
+    // Always check the args for the explorer flags if they exist
+    if let Some(import_variant) = &args.local_or_explorer {
+        let (all_events, single_contract) = import_variant.get_flags();
+        args.all_events = all_events || args.all_events;
+        args.single_contract = single_contract || args.single_contract;
+    }
+
     let should_prompt_to_continue_adding = !args.single_contract;
+    println!(
+        "(prompt contracts) args.single_contract: {:?}",
+        args.single_contract
+    );
+    println!("(prompt contracts) args.all_events: {:?}", args.all_events);
     let first_contract = get_contract_import_selection(args).await?;
     let mut contracts = vec![first_contract];
 
+    println!(
+        "should_prompt_to_continue_adding: {:?}",
+        should_prompt_to_continue_adding
+    );
     if should_prompt_to_continue_adding {
         prompt_to_continue_adding(
             &mut contracts,
@@ -475,7 +503,14 @@ async fn prompt_selected_contracts(args: ContractImportArgs) -> Result<Vec<Selec
     Ok(contracts)
 }
 
-pub async fn prompt_contract_import_init_flow(args: ContractImportArgs) -> Result<InitFlow> {
+pub async fn prompt_contract_import_init_flow(mut args: ContractImportArgs) -> Result<InitFlow> {
+    // Apply flags from the LocalOrExplorerImport variant if present
+    if let Some(import_variant) = &args.local_or_explorer {
+        let (all_events, single_contract) = import_variant.get_flags();
+        args.all_events = all_events || args.all_events;
+        args.single_contract = single_contract || args.single_contract;
+    }
+
     Ok(InitFlow::ContractImport(ContractImportSelection {
         selected_contracts: prompt_selected_contracts(args)
             .await
