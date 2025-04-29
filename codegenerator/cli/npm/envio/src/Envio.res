@@ -18,8 +18,10 @@ type rec effect<'input, 'output>
 and effectOptions<'input, 'output> = {
   /** The name of the effect. Used for logging and debugging. */
   name: string,
-  /** The handler function that will be called when the effect is executed. */
-  handler: effectArgs<'input> => promise<'output>,
+  /** The input schema of the effect. */
+  input: S.t<'input>,
+  /** The output schema of the effect. */
+  output: S.t<'output>,
 }
 @genType.import(("./Types.ts", "EffectContext"))
 and effectContext = {
@@ -33,6 +35,15 @@ and effectArgs<'input> = {
 }
 @@warning("+30")
 
-let createEffect = options => {
-  options->(Utils.magic: Internal.effect => effect<'input, 'output>)
+let unstable_createEffect = (options, handler: effectArgs<'input> => promise<'output>) => {
+  {
+    name: options.name,
+    handler: handler->(
+      Utils.magic: (effectArgs<'input> => promise<'output>) => Internal.effectArgs => promise<
+        Internal.effectOutput,
+      >
+    ),
+  }->(Utils.magic: Internal.effect => effect<'input, 'output>)
 }
+
+module S = RescriptSchema.S

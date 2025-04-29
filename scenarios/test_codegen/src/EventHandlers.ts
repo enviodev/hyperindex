@@ -1,4 +1,4 @@
-import { createEffect, Effect, Logger } from "envio";
+import { unstable_createEffect, Effect, S } from "envio";
 import { TestEvents } from "generated";
 import { TestHelpers } from "generated";
 import { EventFiltersTest } from "generated";
@@ -13,26 +13,73 @@ import {
   NftFactory_SimpleNftCreated_eventArgs,
   NftFactory_SimpleNftCreated_event,
 } from "generated";
-import * as S from "rescript-schema";
 import { expectType, TypeEqual } from "ts-expect";
 import { bytesToHex, keccak256, toHex } from "viem";
 
-let getFiles = createEffect({
-  name: "getFiles",
-  handler: async ({ context }) => {
+// Test effects type inference
+const noopEffect = unstable_createEffect(
+  {
+    name: "noopEffect",
+    input: undefined,
+    output: undefined,
+  },
+  async ({ context, input }) => {
+    expectType<TypeEqual<typeof input, undefined>>(true);
+    expectType<TypeEqual<typeof noopEffect, Effect<undefined, undefined>>>(
+      true
+    );
+    const result = await context.effect(noopEffect, undefined);
+    expectType<TypeEqual<typeof result, undefined>>(true);
+    // @ts-expect-error
+    await context.effect(noopEffect, "foo");
+    return undefined;
+  }
+);
+
+let getFiles = unstable_createEffect(
+  {
+    name: "getFiles",
+    input: {
+      foo: S.string,
+      bar: undefined,
+    },
+    output: S.union(["foo", "files"]),
+  },
+  async ({ context, input }) => {
     if (Math.random() > 0.5) {
       return "files";
     }
-    const recursive = await context.effect(getFiles, undefined);
+    const recursive = await context.effect(getFiles, {
+      foo: "bar",
+      bar: undefined,
+    });
 
+    expectType<
+      TypeEqual<
+        typeof input,
+        {
+          foo: string;
+          bar: undefined;
+        }
+      >
+    >(true);
     expectType<TypeEqual<typeof recursive, "files" | "foo">>(true);
-    expectType<TypeEqual<typeof getFiles, Effect<unknown, "files" | "foo">>>(
-      true
-    );
+    expectType<
+      TypeEqual<
+        typeof getFiles,
+        Effect<
+          {
+            foo: string;
+            bar: undefined;
+          },
+          "files" | "foo"
+        >
+      >
+    >(true);
 
     return "foo";
-  },
-});
+  }
+);
 
 const zeroAddress = "0x0000000000000000000000000000000000000000";
 
@@ -44,7 +91,7 @@ Gravatar.CustomSelection.handler(async ({ event, context }) => {
   }
 
   const transactionSchema = S.schema({
-    to: S.undefined,
+    to: undefined,
     from: "0xfoo",
     hash: S.string,
   });

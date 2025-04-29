@@ -25,7 +25,13 @@ export abstract class Effect<I, O> {
   protected opaque!: I | O;
 }
 
-export type EffectCaller = <I, O>(effect: Effect<I, O>, input: I) => Promise<O>;
+export type EffectCaller = <I, O>(
+  effect: Effect<I, O>,
+  // This is a hack to make the call complain on undefined
+  // when it's not needed, instead of extending the input type.
+  // Might be not needed if I misunderstand something in TS.
+  input: I extends undefined ? undefined : I
+) => Promise<O>;
 
 export type EffectContext = {
   /**
