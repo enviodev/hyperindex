@@ -1,4 +1,19 @@
+// Test types
+
+let noopEffect = Envio.experimental_createEffect(
+  {
+    name: "noopEffect",
+    input: S.literal(),
+    output: S.literal(),
+  },
+  async ({input}) => {
+    let () = input
+  },
+)
+
 Handlers.Gravatar.NewGravatar.handler(async ({event, context}) => {
+  let () = await context.effect(noopEffect, ())
+
   let gravatarSize: Enums.GravatarSize.t = SMALL
   let gravatarObject: Types.gravatar = {
     id: event.params.id->BigInt.toString,

@@ -84,6 +84,7 @@ const zeroAddress = "0x0000000000000000000000000000000000000000";
 
 Gravatar.CustomSelection.handler(async ({ event, context }) => {
   if (0) {
+    const _ = await context.effect(noopEffect, undefined);
     context.log.error("There's an error");
     context.log.error("This is a test error", new Error("Test error message"));
     context.log.warn("This is a test warn", { foo: "bar" });

@@ -35,7 +35,10 @@ and effectArgs<'input> = {
 }
 @@warning("+30")
 
-let experimental_createEffect = (options, handler: effectArgs<'input> => promise<'output>) => {
+let experimental_createEffect = (
+  options: effectOptions<'input, 'output>,
+  handler: effectArgs<'input> => promise<'output>,
+) => {
   {
     name: options.name,
     handler: handler->(

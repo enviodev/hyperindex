@@ -8,16 +8,16 @@ import {
 {{#each codegen_contracts as |contract|}}
   {{contract.name.capitalized}},
 {{/each}}
-MockDb,
-Addresses 
+  MockDb,
+  Addresses 
 } from "./src/TestHelpers.gen";
 
 export const TestHelpers = {
 {{#each codegen_contracts as |contract|}}
   {{contract.name.capitalized}},
 {{/each}}
-MockDb,
-Addresses 
+  MockDb,
+  Addresses 
 };
 
 export {
@@ -27,4 +27,4 @@ export {
 } from "./src/Enum.gen";
 
 export {default as BigDecimal} from 'bignumber.js';
-export {LoaderContext} from './src/Types.ts';
+export type {LoaderContext, HandlerContext} from './src/Types.ts';
