@@ -2,7 +2,7 @@
 // Some parts like Sury reexport are impossible to implement
 // on the JS side, so we need to do it here
 
-const envioGen = require("./src/Envio.gen");
+const envioGen = require("./src/Envio.bs.js");
 Object.assign(exports, envioGen);
 
 const Sury = require("rescript-schema");
