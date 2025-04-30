@@ -9,7 +9,6 @@ export type { EffectCaller } from "./src/Types.ts";
 
 import type {
   effect as Effect,
-  effectOptions as EffectOptoins,
   effectArgs as EffectArgs,
 } from "./src/Envio.gen.ts";
 
@@ -58,7 +57,7 @@ type UnknownToInput<T> = T extends Sury.Schema<unknown>
 // })
 // The behaviour is inspired by Sury code:
 // https://github.com/DZakh/sury/blob/551f8ee32c1af95320936d00c086e5fb337f59fa/packages/sury/src/S.d.ts#L344C1-L355C50
-export function unstable_createEffect<
+export function experimental_createEffect<
   IS,
   OS,
   I = UnknownToInput<IS>,
@@ -78,6 +77,7 @@ export function unstable_createEffect<
   handler: (args: EffectArgs<I>) => Promise<R>
 ): Effect<I, O>;
 
+// Important! Should match the index.js file
 export declare namespace S {
   export type Schema<Output, Input = unknown> = Sury.Schema<Output, Input>;
   export const string: typeof Sury.string;

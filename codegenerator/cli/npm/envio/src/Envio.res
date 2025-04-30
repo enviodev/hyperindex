@@ -35,7 +35,7 @@ and effectArgs<'input> = {
 }
 @@warning("+30")
 
-let unstable_createEffect = (options, handler: effectArgs<'input> => promise<'output>) => {
+let experimental_createEffect = (options, handler: effectArgs<'input> => promise<'output>) => {
   {
     name: options.name,
     handler: handler->(
@@ -45,5 +45,3 @@ let unstable_createEffect = (options, handler: effectArgs<'input> => promise<'ou
     ),
   }->(Utils.magic: Internal.effect => effect<'input, 'output>)
 }
-
-module S = RescriptSchema.S

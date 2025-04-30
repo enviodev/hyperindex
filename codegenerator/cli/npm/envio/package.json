@@ -4,7 +4,7 @@
   "private": true,
   "description": "A latency and sync speed optimized, developer friendly blockchain data indexer.",
   "bin": "./local-bin.mjs",
-  "main": "./src/Envio.bs.js",
+  "main": "./index.js",
   "types": "./index.d.ts",
   "repository": {
     "type": "git",

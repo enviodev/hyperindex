@@ -1,4 +1,4 @@
-import { unstable_createEffect, Effect, S } from "envio";
+import { experimental_createEffect, Effect, S } from "envio";
 import { TestEvents } from "generated";
 import { TestHelpers } from "generated";
 import { EventFiltersTest } from "generated";
@@ -14,10 +14,10 @@ import {
   NftFactory_SimpleNftCreated_event,
 } from "generated";
 import { expectType, TypeEqual } from "ts-expect";
-import { bytesToHex, keccak256, toHex } from "viem";
+import { bytesToHex } from "viem";
 
 // Test effects type inference
-const noopEffect = unstable_createEffect(
+const noopEffect = experimental_createEffect(
   {
     name: "noopEffect",
     input: undefined,
@@ -35,13 +35,12 @@ const noopEffect = unstable_createEffect(
     return undefined;
   }
 );
-
-let getFiles = unstable_createEffect(
+const getFiles = experimental_createEffect(
   {
     name: "getFiles",
     input: {
       foo: S.string,
-      bar: undefined,
+      bar: S.optional(S.string),
     },
     output: S.union(["foo", "files"]),
   },
@@ -49,17 +48,18 @@ let getFiles = unstable_createEffect(
     if (Math.random() > 0.5) {
       return "files";
     }
+    // @ts-expect-error
+    await context.effect(getFiles, undefined);
     const recursive = await context.effect(getFiles, {
       foo: "bar",
       bar: undefined,
     });
-
     expectType<
       TypeEqual<
         typeof input,
         {
           foo: string;
-          bar: undefined;
+          bar: string | undefined;
         }
       >
     >(true);
@@ -70,13 +70,12 @@ let getFiles = unstable_createEffect(
         Effect<
           {
             foo: string;
-            bar: undefined;
+            bar: string | undefined;
           },
           "files" | "foo"
         >
       >
     >(true);
-
     return "foo";
   }
 );
