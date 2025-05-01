@@ -412,10 +412,12 @@ let handleQueryResult = (
         reversedWithContractRegister->Array.push(item)
       }
 
+      // FIXME: Don't really need to keep it in the queue
+      // besides the correct count of events
       // FIXME: Or raw_events enabled
-      if item.eventConfig.handler !== None {
-        reversedNewItems->Array.push(item)
-      }
+      // if item.eventConfig.handler !== None {
+      //   reversedNewItems->Array.push(item)
+      // }
     }
   }
 
@@ -464,8 +466,8 @@ let hasProcessedToEndblock = (self: t) => {
   }
 }
 
-let hasNoMoreEventsToProcess = (self: t, ~hasArbQueueEvents) => {
-  !hasArbQueueEvents && self.fetchState->FetchState.queueSize === 0
+let hasNoMoreEventsToProcess = (self: t) => {
+  self.fetchState->FetchState.queueSize === 0
 }
 
 let getHeighestBlockBelowThreshold = (cf: t): int => {

@@ -2,9 +2,6 @@ open Belt
 
 type t = {
   chainFetchers: ChainMap.t<ChainFetcher.t>,
-  //Holds arbitrary events that were added when a batch ended processing early
-  //due to contract registration. Ordered from latest to earliest
-  arbitraryEventQueue: array<Internal.eventItem>,
   isUnorderedMultichainMode: bool,
   isInReorgThreshold: bool,
 }
@@ -153,7 +150,6 @@ let makeFromConfig = (~config: Config.t, ~maxAddrInPartition=Env.maxAddrInPartit
     )
   {
     chainFetchers,
-    arbitraryEventQueue: [],
     isUnorderedMultichainMode: config.isUnorderedMultichainMode,
     isInReorgThreshold: false,
   }
@@ -185,7 +181,6 @@ let makeFromDbState = async (~config: Config.t, ~maxAddrInPartition=Env.maxAddrI
 
   {
     isUnorderedMultichainMode: config.isUnorderedMultichainMode,
-    arbitraryEventQueue: [],
     chainFetchers,
     //If we have started saving history, continue to save history
     //as regardless of whether we are still in a reorg threshold
@@ -204,132 +199,25 @@ let setChainFetcher = (self: t, chainFetcher: ChainFetcher.t) => {
   }
 }
 
-let getFirstArbitraryEventsItemForChain = (
-  queue: array<Internal.eventItem>,
-  ~chain,
-  ~fetchStatesMap: ChainMap.t<fetchStateWithData>,
-): option<isInReorgThresholdRes<FetchState.itemWithPopFn>> =>
-  queue
-  ->Utils.Array.findReverseWithIndex((item: Internal.eventItem) => {
-    item.chain == chain
-  })
-  ->Option.map(((item, index)) => {
-    let {heighestBlockBelowThreshold} = fetchStatesMap->ChainMap.get(item.chain)
-    let isInReorgThreshold = item.blockNumber > heighestBlockBelowThreshold
-    {
-      val: {
-        FetchState.item,
-        popItemOffQueue: () => queue->Utils.Array.spliceInPlace(~pos=index, ~remove=1)->ignore,
-      },
-      isInReorgThreshold,
-    }
-  })
-
-let getFirstArbitraryEventsItem = (
-  queue: array<Internal.eventItem>,
-  ~fetchStatesMap: ChainMap.t<fetchStateWithData>,
-): option<isInReorgThresholdRes<FetchState.itemWithPopFn>> =>
-  queue
-  ->Utils.Array.last
-  ->Option.map(item => {
-    let {heighestBlockBelowThreshold} = fetchStatesMap->ChainMap.get(item.chain)
-    let isInReorgThreshold = item.blockNumber > heighestBlockBelowThreshold
-    {
-      val: {FetchState.item, popItemOffQueue: () => queue->Js.Array2.pop->ignore},
-      isInReorgThreshold,
-    }
-  })
-
 let popBatchItem = (
   ~fetchStatesMap: ChainMap.t<fetchStateWithData>,
-  ~arbitraryEventQueue: array<Internal.eventItem>,
   ~isUnorderedMultichainMode,
   ~onlyBelowReorgThreshold,
 ): isInReorgThresholdRes<option<FetchState.itemWithPopFn>> => {
   //Compare the peeked items and determine the next item
   switch fetchStatesMap->determineNextEvent(~isUnorderedMultichainMode, ~onlyBelowReorgThreshold) {
-  | Ok({val: {chain, earliestEvent}, isInReorgThreshold}) =>
-    let maybeArbItem = if isUnorderedMultichainMode {
-      arbitraryEventQueue->getFirstArbitraryEventsItemForChain(~chain, ~fetchStatesMap)
-    } else {
-      arbitraryEventQueue->getFirstArbitraryEventsItem(~fetchStatesMap)
-    }
-    switch maybeArbItem {
-    //If there is item on the arbitray events queue, and it is earlier than
-    //than the earlist event, take the item off from there
-    | Some({val: arbVal, isInReorgThreshold})
-      if if arbVal.item.chain === chain {
-        // This is for the case when FetchState has a NoItem
-        // if we use a multichain comparison, the arbVal will be ignored because of lower timestamp
-        // prevent it by a special case for events with the same chain
-        // (qItemLt only compares blockNumber and logIndex a `NoItem`
-        // with the same blockNumber is prioritised so the case of valid events
-        // from a dynamic contract appearing in the same block before the registering
-        // event is still handled)
-        Item(arbVal)->FetchState.qItemLt(earliestEvent)
-      } else {
-        arbVal.item->getComparitorFromItem < earliestEvent->getQueueItemComparitor(~chain)
-      } => {
+  | Ok({val: {earliestEvent}, isInReorgThreshold}) =>
+    switch earliestEvent {
+    | NoItem(_) => {
         isInReorgThreshold,
-        val: Some(arbVal),
+        val: None,
       }
-    | _ =>
-      switch earliestEvent {
-      | NoItem(_) =>
-        // Case when we don't have items in fetch state for any chain
-        // but there's an arbitary event on one of the chains
-        // (`maybeArbItem` for `isUnorderedMultichainMode`
-        // only cares about items from the same chain)
-        if (
-          isUnorderedMultichainMode &&
-          // This check is needed to prevent comparing items for the second time
-          // Potentially, there might be a maybeArbItem for another chain earlier than the earliest event on fetch state
-          maybeArbItem->Option.isNone
-        ) {
-          // check if there is an earlier item on the arb events queue from a different chain
-          switch arbitraryEventQueue->getFirstArbitraryEventsItem(~fetchStatesMap) {
-          | Some({val: anotherChainArbVal, isInReorgThreshold})
-            if {
-              let anotherChain = anotherChainArbVal.item.chain
-              // This is unreachable because of the maybeArbItem->Option.isNone check above
-              // Keep it just in case the logic is changed
-              if anotherChain === chain {
-                false
-              } else {
-                let anotherChainEarliestEvent =
-                  (
-                    fetchStatesMap->ChainMap.get(anotherChain)
-                  ).fetchState->FetchState.getEarliestEvent
-                Item(anotherChainArbVal)->FetchState.qItemLt(anotherChainEarliestEvent)
-              }
-            } => {
-              isInReorgThreshold,
-              val: Some(anotherChainArbVal),
-            }
-          | _ => {
-              isInReorgThreshold,
-              val: None,
-            }
-          }
-        } else {
-          {
-            isInReorgThreshold,
-            val: None,
-          }
-        }
-      | Item(itemWithPopFn) => {
-          isInReorgThreshold,
-          val: Some(itemWithPopFn),
-        }
+    | Item(itemWithPopFn) => {
+        isInReorgThreshold,
+        val: Some(itemWithPopFn),
       }
     }
-  | Error(NoActiveChains) =>
-    arbitraryEventQueue
-    ->getFirstArbitraryEventsItem(~fetchStatesMap)
-    ->Option.mapWithDefault({val: None, isInReorgThreshold: false}, ({val, isInReorgThreshold}) => {
-      isInReorgThreshold,
-      val: Some(val),
-    })
+  | Error(NoActiveChains) => {val: None, isInReorgThreshold: false}
   }
 }
 
@@ -350,20 +238,14 @@ the context of a batch
 let nextItemIsNone = (self: t): bool => {
   popBatchItem(
     ~fetchStatesMap=self->getFetchStateWithData,
-    ~arbitraryEventQueue=self.arbitraryEventQueue,
     ~isUnorderedMultichainMode=self.isUnorderedMultichainMode,
     ~onlyBelowReorgThreshold=false,
   ).val->Option.isNone
 }
 
-let hasChainItemsOnArbQueue = (self: t, ~chain): bool => {
-  self.arbitraryEventQueue->Js.Array2.find(item => item.chain == chain)->Option.isSome
-}
-
 let createBatchInternal = (
   ~maxBatchSize,
   ~fetchStatesMap: ChainMap.t<fetchStateWithData>,
-  ~arbitraryEventQueue,
   ~isUnorderedMultichainMode,
   ~onlyBelowReorgThreshold,
 ) => {
@@ -373,7 +255,6 @@ let createBatchInternal = (
     if batch->Array.length < maxBatchSize {
       let {val, isInReorgThreshold} = popBatchItem(
         ~fetchStatesMap,
-        ~arbitraryEventQueue,
         ~isUnorderedMultichainMode,
         ~onlyBelowReorgThreshold,
       )
@@ -400,21 +281,17 @@ let createBatchInternal = (
 type batchRes = {
   batch: array<Internal.eventItem>,
   fetchStatesMap: ChainMap.t<fetchStateWithData>,
-  arbitraryEventQueue: array<Internal.eventItem>,
 }
 
 let createBatch = (self: t, ~maxBatchSize: int, ~onlyBelowReorgThreshold: bool) => {
   let refTime = Hrtime.makeTimer()
 
-  let {arbitraryEventQueue} = self
   //Make a copy of the queues and fetch states since we are going to mutate them
-  let arbitraryEventQueue = arbitraryEventQueue->Array.copy
   let fetchStatesMap = self->getFetchStateWithData(~shouldDeepCopy=true)
 
   let {val: batch, isInReorgThreshold} = createBatchInternal(
     ~maxBatchSize,
     ~fetchStatesMap,
-    ~arbitraryEventQueue,
     ~isUnorderedMultichainMode=self.isUnorderedMultichainMode,
     ~onlyBelowReorgThreshold,
   )
@@ -437,7 +314,6 @@ let createBatch = (self: t, ~maxBatchSize: int, ~onlyBelowReorgThreshold: bool) 
         chain->ChainMap.Chain.toString,
         v.fetchState->FetchState.queueSize,
       ))
-      ->Array.concat([("arbitrary", self.arbitraryEventQueue->Array.length)])
       ->Js.Dict.fromArray
 
     let timeElapsed = refTime->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
@@ -459,7 +335,7 @@ let createBatch = (self: t, ~maxBatchSize: int, ~onlyBelowReorgThreshold: bool) 
       Benchmark.addSummaryData(~group, ~label=`Batch Size`, ~value=batchSize->Belt.Int.toFloat)
     }
 
-    Some({batch, fetchStatesMap, arbitraryEventQueue})
+    Some({batch, fetchStatesMap})
   } else {
     None
   }

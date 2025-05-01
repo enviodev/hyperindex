@@ -97,8 +97,6 @@ let isRollingBack = state =>
   | _ => false
   }
 
-type arbitraryEventQueue = array<Internal.eventItem>
-
 type shouldExit = ExitWithSuccess | NoExit
 type action =
   | PartitionQueryResponse({
@@ -112,7 +110,7 @@ type action =
   | StartIndexingAfterPreRegister
   | SetCurrentlyProcessing(bool)
   | SetIsInReorgThreshold(bool)
-  | UpdateQueues(ChainMap.t<ChainManager.fetchStateWithData>, arbitraryEventQueue)
+  | UpdateQueues(ChainMap.t<ChainManager.fetchStateWithData>)
   | SetSyncedChains
   | SuccessExit
   | ErrorExit(ErrorHandling.t)
@@ -232,9 +230,7 @@ let checkAndSetSyncedChains = (
         //CASE2 -> Only calculate if case1 fails
         //All events have been processed on the chain fetchers queue
         //Other chains may be busy syncing
-        let hasArbQueueEvents =
-          chainManager->ChainManager.hasChainItemsOnArbQueue(~chain=cf.chainConfig.chain)
-        let hasNoMoreEventsToProcess = cf->ChainFetcher.hasNoMoreEventsToProcess(~hasArbQueueEvents)
+        let hasNoMoreEventsToProcess = cf->ChainFetcher.hasNoMoreEventsToProcess
 
         if hasNoMoreEventsToProcess {
           {
@@ -280,8 +276,7 @@ let updateLatestProcessedBlocks = (
       let {chainConfig: {chain}, fetchState} = cf
       let {numEventsProcessed, latestProcessedBlock} = latestProcessedBlocks->ChainMap.get(chain)
 
-      let hasArbQueueEvents = state.chainManager->ChainManager.hasChainItemsOnArbQueue(~chain)
-      let hasNoMoreEventsToProcess = cf->ChainFetcher.hasNoMoreEventsToProcess(~hasArbQueueEvents)
+      let hasNoMoreEventsToProcess = cf->ChainFetcher.hasNoMoreEventsToProcess
 
       let latestProcessedBlock = if hasNoMoreEventsToProcess {
         FetchState.getLatestFullyFetchedBlock(fetchState).blockNumber->Some
@@ -393,9 +388,7 @@ let handlePartitionQueryResponse = (
         ->Utils.unwrapResultExn
         ->updateChainFetcherCurrentBlockHeight(~currentBlockHeight)
 
-      let hasArbQueueEvents = state.chainManager->ChainManager.hasChainItemsOnArbQueue(~chain)
-      let hasNoMoreEventsToProcess =
-        updatedChainFetcher->ChainFetcher.hasNoMoreEventsToProcess(~hasArbQueueEvents)
+      let hasNoMoreEventsToProcess = updatedChainFetcher->ChainFetcher.hasNoMoreEventsToProcess
 
       let latestProcessedBlock = if hasNoMoreEventsToProcess {
         FetchState.getLatestFullyFetchedBlock(updatedChainFetcher.fetchState).blockNumber->Some
@@ -574,7 +567,7 @@ let actionReducer = (state: t, action: action) => {
         [UpdateChainMetaDataAndCheckForExit(shouldExit)],
       )
     }
-  | UpdateQueues(fetchStatesMap, arbitraryEventQueue) =>
+  | UpdateQueues(fetchStatesMap) =>
     let chainFetchers = state.chainManager.chainFetchers->ChainMap.mapWithKey((chain, cf) => {
       {
         ...cf,
@@ -585,7 +578,6 @@ let actionReducer = (state: t, action: action) => {
     let chainManager = {
       ...state.chainManager,
       chainFetchers,
-      arbitraryEventQueue,
     }
 
     (
@@ -693,7 +685,6 @@ let actionReducer = (state: t, action: action) => {
 
     let chainManager: ChainManager.t = {
       chainFetchers,
-      arbitraryEventQueue: [],
       isInReorgThreshold: false,
       isUnorderedMultichainMode: chainManager.isUnorderedMultichainMode,
     }
@@ -891,9 +882,9 @@ let injectedTaskReducer = (
         ~maxBatchSize=state.maxBatchSize,
         ~onlyBelowReorgThreshold=true,
       ) {
-      | {val: Some({batch, fetchStatesMap, arbitraryEventQueue})} =>
+      | {val: Some({batch, fetchStatesMap})} =>
         dispatchAction(SetCurrentlyProcessing(true))
-        dispatchAction(UpdateQueues(fetchStatesMap, arbitraryEventQueue))
+        dispatchAction(UpdateQueues(fetchStatesMap))
         let latestProcessedBlocks = EventProcessing.EventsProcessed.makeFromChainManager(
           state.chainManager,
         )
@@ -973,9 +964,9 @@ let injectedTaskReducer = (
         batch: ChainManager.isInReorgThresholdRes<option<ChainManager.batchRes>>,
       ) => {
         switch batch {
-        | {isInReorgThreshold, val: Some({batch, fetchStatesMap, arbitraryEventQueue})} =>
+        | {isInReorgThreshold, val: Some({batch, fetchStatesMap})} =>
           dispatchAction(SetCurrentlyProcessing(true))
-          dispatchAction(UpdateQueues(fetchStatesMap, arbitraryEventQueue))
+          dispatchAction(UpdateQueues(fetchStatesMap))
           if (
             state.config->Config.shouldRollbackOnReorg &&
             isInReorgThreshold &&
