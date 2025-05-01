@@ -224,11 +224,33 @@ pub mod evm {
         Local(LocalImportArgs),
     }
 
+    impl LocalOrExplorerImport {
+        // Helper method to get flags from either variant
+        pub fn get_flags(&self) -> (bool, bool) {
+            match self {
+                LocalOrExplorerImport::Explorer(args) => (args.all_events, args.single_contract),
+                LocalOrExplorerImport::Local(args) => (args.all_events, args.single_contract),
+            }
+        }
+    }
+
     #[derive(Args, Debug, Default, Clone)]
     pub struct ExplorerImportArgs {
         ///Network to import the contract from
         #[arg(short, long)]
         pub blockchain: Option<NetworkWithExplorer>,
+
+        ///API token for the block explorer
+        #[arg(long)]
+        pub api_token: Option<String>,
+
+        ///If selected, prompt will not ask for additional contracts/addresses/networks
+        #[arg(long, action)]
+        pub single_contract: bool,
+
+        ///If selected, prompt will not ask to confirm selection of events on a contract
+        #[arg(long, action)]
+        pub all_events: bool,
     }
 
     #[derive(Debug, Clone)]
@@ -282,6 +304,14 @@ pub mod evm {
         ///The start block to use on this network
         #[arg(short, long)]
         pub start_block: Option<u64>,
+
+        ///If selected, prompt will not ask for additional contracts/addresses/networks
+        #[arg(long, action)]
+        pub single_contract: bool,
+
+        ///If selected, prompt will not ask to confirm selection of events on a contract
+        #[arg(long, action)]
+        pub all_events: bool,
     }
 }
 
