@@ -426,7 +426,6 @@ let handleQueryResult = (
     switch dynamicContracts {
     | [] => self.fetchState
     | _ =>
-      // FIXME: Store DC in the db
       self.fetchState->FetchState.registerDynamicContracts(dynamicContracts, ~currentBlockHeight)
     }
   } else {

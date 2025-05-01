@@ -46,6 +46,9 @@ type t = {
   maxAddrInPartition: int,
   firstEventBlockNumber: option<int>,
   normalSelection: selection,
+  // Registered dynamic contracts that need to be stored in the db
+  // Should read them at the same time when getting items for the batch
+  dcsToStore?: array<TablesStatic.DynamicContractRegistry.t>,
   // Not used for logic - only metadata
   chainId: int,
   // Fields computed by updateInternal
@@ -233,6 +236,7 @@ let updateInternal = (
   ~nextPartitionIndex=fetchState.nextPartitionIndex,
   ~firstEventBlockNumber=fetchState.firstEventBlockNumber,
   ~currentBlockHeight=?,
+  ~dcsToStore=?,
 ): t => {
   let firstPartition = partitions->Js.Array2.unsafe_get(0)
 
@@ -291,6 +295,12 @@ let updateInternal = (
     isFetchingAtHead,
     latestFullyFetchedBlock,
     queueSize: queueSize.contents,
+    dcsToStore: ?switch (fetchState.dcsToStore, dcsToStore) {
+    | (Some(existingDcs), Some(newDcs)) => Some(Array.concat(existingDcs, newDcs))
+    | (Some(existingDcs), None) => Some(existingDcs)
+    | (None, Some(newDcs)) => Some(newDcs)
+    | (None, None) => None
+    },
   }
 }
 
@@ -389,11 +399,12 @@ let registerDynamicContracts = (
     // Probably only on pre-registration, but we don't
     // register dynamic contracts during it
     Js.Exn.raiseError(
-      "Invalid configuration. Nothing to events to fetch for the dynamic contract registration.",
+      "Invalid configuration. No events to fetch for the dynamic contract registration.",
     )
   }
 
   let addedDynamicContractsAddresses = Utils.Set.make()
+  let dcsToStore = []
 
   let dcsByStartBlock = Js.Dict.empty()
   dynamicContracts->Array.forEach(dc => {
@@ -410,6 +421,7 @@ let registerDynamicContracts = (
       ()
     } else {
       let _ = addedDynamicContractsAddresses->Utils.Set.add(dc.contractAddress)
+      let _ = dcsToStore->Array.push(dc)
 
       let key = dc.registeringEventBlockNumber->Int.toString
       let dcs = switch dcsByStartBlock->Utils.Dict.dangerouslyGetNonOption(key) {
@@ -451,6 +463,7 @@ let registerDynamicContracts = (
       fetchState->updateInternal(
         ~partitions=fetchState.partitions->Js.Array2.concat(newPartitions),
         ~currentBlockHeight,
+        ~dcsToStore,
         ~nextPartitionIndex=fetchState.nextPartitionIndex + newPartitions->Array.length,
       )
     }

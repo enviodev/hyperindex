@@ -281,6 +281,7 @@ let createBatchInternal = (
 type batchRes = {
   batch: array<Internal.eventItem>,
   fetchStatesMap: ChainMap.t<fetchStateWithData>,
+  dcsToStore: array<TablesStatic.DynamicContractRegistry.t>,
 }
 
 let createBatch = (self: t, ~maxBatchSize: int, ~onlyBelowReorgThreshold: bool) => {
@@ -296,11 +297,22 @@ let createBatch = (self: t, ~maxBatchSize: int, ~onlyBelowReorgThreshold: bool) 
     ~onlyBelowReorgThreshold,
   )
 
+  let dcsToStore = []
   // Needed to recalculate the computed queue sizes
   let fetchStatesMap = fetchStatesMap->ChainMap.map(v => {
+    let fs = switch v.fetchState.dcsToStore {
+    | Some(dcs) => {
+        dcsToStore->Js.Array2.pushMany(dcs)->ignore
+        {
+          ...v.fetchState,
+          dcsToStore: ?None,
+        }
+      }
+    | None => v.fetchState
+    }
     {
       ...v,
-      fetchState: v.fetchState->FetchState.updateInternal,
+      fetchState: fs->FetchState.updateInternal,
     }
   })
 
@@ -335,7 +347,7 @@ let createBatch = (self: t, ~maxBatchSize: int, ~onlyBelowReorgThreshold: bool) 
       Benchmark.addSummaryData(~group, ~label=`Batch Size`, ~value=batchSize->Belt.Int.toFloat)
     }
 
-    Some({batch, fetchStatesMap})
+    Some({batch, fetchStatesMap, dcsToStore})
   } else {
     None
   }

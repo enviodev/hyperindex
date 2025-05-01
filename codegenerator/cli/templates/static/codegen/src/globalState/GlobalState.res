@@ -964,7 +964,7 @@ let injectedTaskReducer = (
         batch: ChainManager.isInReorgThresholdRes<option<ChainManager.batchRes>>,
       ) => {
         switch batch {
-        | {isInReorgThreshold, val: Some({batch, fetchStatesMap})} =>
+        | {isInReorgThreshold, val: Some({batch, fetchStatesMap, dcsToStore})} =>
           dispatchAction(SetCurrentlyProcessing(true))
           dispatchAction(UpdateQueues(fetchStatesMap))
           if (
@@ -978,19 +978,6 @@ let injectedTaskReducer = (
           }
 
           let isInReorgThreshold = state.chainManager.isInReorgThreshold || isInReorgThreshold
-
-          // This function is used to ensure that registering an alreday existing contract as a dynamic contract can't cause issues.
-          let checkContractIsRegistered = (
-            ~chain,
-            ~contractAddress,
-            ~contractName: Enums.ContractType.t,
-          ) => {
-            let {fetchState} = fetchStatesMap->ChainMap.get(chain)
-            fetchState->FetchState.checkContainsRegisteredContractAddress(
-              ~contractAddress,
-              ~contractName=(contractName :> string),
-            )
-          }
 
           let latestProcessedBlocks = EventProcessing.EventsProcessed.makeFromChainManager(
             state.chainManager,
@@ -1008,6 +995,26 @@ let injectedTaskReducer = (
           }
 
           let inMemoryStore = rollbackInMemStore->Option.getWithDefault(InMemoryStore.make())
+
+          if dcsToStore->Utils.Array.isEmpty->not {
+            let shouldSaveHistory = state.config->Config.shouldSaveHistory(~isInReorgThreshold)
+            let inMemTable =
+              inMemoryStore.InMemoryStore.entities->InMemoryStore.EntityTables.get(
+                module(TablesStatic.DynamicContractRegistry),
+              )
+            dcsToStore->Array.forEach(dc => {
+              let eventIdentifier: Types.eventIdentifier = {
+                chainId: dc.chainId,
+                blockTimestamp: dc.registeringEventBlockTimestamp,
+                blockNumber: dc.registeringEventBlockNumber,
+                logIndex: dc.registeringEventLogIndex,
+              }
+              inMemTable->InMemoryTable.Entity.set(
+                Set(dc)->Types.mkEntityUpdate(~eventIdentifier, ~entityId=dc.id),
+                ~shouldSaveHistory,
+              )
+            })
+          }
 
           switch await EventProcessing.processEventBatch(
             ~eventBatch=batch,
