@@ -30,6 +30,7 @@ exports.S = {
   merge: Sury.merge,
   optional: Sury.optional,
   nullable: Sury.nullable,
+  bigDecimal: require("./src/bindings/BigDecimal.bs.js").schema,
   // Nullish type will change in "sury@10"
   // nullish: Sury.nullish,
   assertOrThrow: Sury.assertOrThrow,

@@ -79,6 +79,46 @@ const getFiles = experimental_createEffect(
     return "foo";
   }
 );
+const getBalance = experimental_createEffect(
+  {
+    name: "getBalance",
+    input: {
+      address: S.string,
+      blockNumber: S.optional(S.bigint),
+    },
+    output: S.bigDecimal,
+  },
+  async ({ context, input: { address, blockNumber } }) => {
+    try {
+      // If blockNumber is provided, use it to get balance at that specific block
+      const options = blockNumber ? { blockNumber } : undefined;
+      // const balance = await lbtcContract.read.balanceOf(
+      //   [address as `0x${string}`],
+      //   options
+      // );
+      const balance = 123n;
+
+      // Only log on successful retrieval to reduce noise
+      context.log.info(
+        `Balance of ${address}${
+          blockNumber ? ` at block ${blockNumber}` : ""
+        }: ${balance}`
+      );
+
+      return BigDecimal(balance.toString());
+    } catch (error) {
+      context.log.error(`Error getting balance for ${address}`, error as Error);
+      // Return 0 on error to prevent processing failures
+      return BigDecimal(0);
+    }
+  }
+);
+expectType<
+  TypeEqual<
+    typeof getBalance,
+    Effect<{ address: string; blockNumber: bigint | undefined }, BigDecimal>
+  >
+>(true);
 
 const zeroAddress = "0x0000000000000000000000000000000000000000";
 

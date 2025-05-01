@@ -12,6 +12,7 @@ import type {
   effectArgs as EffectArgs,
 } from "./src/Envio.gen.ts";
 
+import { schema as bigDecimalSchema } from "./src/bindings/BigDecimal.gen.ts";
 import * as Sury from "rescript-schema";
 
 type UnknownToOutput<T> = T extends Sury.Schema<unknown>
@@ -102,6 +103,7 @@ export declare namespace S {
   export const merge: typeof Sury.merge;
   export const optional: typeof Sury.optional;
   export const nullable: typeof Sury.nullable;
+  export const bigDecimal: typeof bigDecimalSchema;
   // Nullish type will change in "sury@10"
   // export const nullish: typeof Sury.nullish;
   export const assertOrThrow: typeof Sury.assertOrThrow;
