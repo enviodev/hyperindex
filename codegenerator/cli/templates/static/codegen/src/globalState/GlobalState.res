@@ -107,8 +107,8 @@ type action =
       query: FetchState.query,
     })
   | FinishWaitingForNewBlock({chain: chain, currentBlockHeight: int})
-  | EventBatchProcessed(EventProcessing.batchProcessed)
-  | DynamicContractPreRegisterProcessed(EventProcessing.batchProcessed)
+  | EventBatchProcessed(EventProcessing.EventsProcessed.t)
+  | DynamicContractPreRegisterProcessed(EventProcessing.EventsProcessed.t)
   | StartIndexingAfterPreRegister
   | SetCurrentlyProcessing(bool)
   | SetIsInReorgThreshold(bool)
@@ -487,83 +487,56 @@ let actionReducer = (state: t, action: action) => {
     )
   | PartitionQueryResponse({chain, response, query}) =>
     state->handlePartitionQueryResponse(~chain, ~response, ~query)
-  | EventBatchProcessed({
-      latestProcessedBlocks,
-      dynamicContractRegistrations: Some({dynamicContractsByChain, unprocessedBatch}),
-    }) =>
-    let updatedArbQueue = Utils.Array.mergeSorted((a, b) => {
-      a->EventUtils.getEventComparatorFromQueueItem > b->EventUtils.getEventComparatorFromQueueItem
-    }, unprocessedBatch->Array.reverse, state.chainManager.arbitraryEventQueue)
+  // | EventBatchProcessed(latestProcessedBlocks) =>
+  //   let updatedArbQueue = Utils.Array.mergeSorted((a, b) => {
+  //     a->EventUtils.getEventComparatorFromQueueItem > b->EventUtils.getEventComparatorFromQueueItem
+  //   }, unprocessedBatch->Array.reverse, state.chainManager.arbitraryEventQueue)
 
-    let maybePruneEntityHistory =
-      state.config->Config.shouldPruneHistory(
-        ~isInReorgThreshold=state.chainManager.isInReorgThreshold,
-      )
-        ? [PruneStaleEntityHistory]
-        : []
+  //   let maybePruneEntityHistory =
+  //     state.config->Config.shouldPruneHistory(
+  //       ~isInReorgThreshold=state.chainManager.isInReorgThreshold,
+  //     )
+  //       ? [PruneStaleEntityHistory]
+  //       : []
 
-    let nextTasks =
-      [
-        UpdateChainMetaDataAndCheckForExit(NoExit),
-        ProcessEventBatch,
-        NextQuery(CheckAllChains),
-      ]->Array.concat(maybePruneEntityHistory)
+  //   let nextTasks =
+  //     [
+  //       UpdateChainMetaDataAndCheckForExit(NoExit),
+  //       ProcessEventBatch,
+  //       NextQuery(CheckAllChains),
+  //     ]->Array.concat(maybePruneEntityHistory)
 
-    let updatedChainFetchers = state.chainManager.chainFetchers->ChainMap.mapWithKey((
-      chain,
-      cf,
-    ) => {
-      switch dynamicContractsByChain->Utils.Dict.dangerouslyGetNonOption(
-        chain->ChainMap.Chain.toString,
-      ) {
-      | None => cf
-      | Some(dcs) => {
-          let fetchState =
-            cf.fetchState->FetchState.registerDynamicContracts(
-              dcs,
-              ~currentBlockHeight=cf.currentBlockHeight,
-            )
+  //   let updatedChainManager: ChainManager.t = {
+  //     ...state.chainManager,
+  //     arbitraryEventQueue: updatedArbQueue,
+  //   }
 
-          {
-            ...cf,
-            fetchState,
-            timestampCaughtUpToHeadOrEndblock: fetchState.isFetchingAtHead
-              ? cf.timestampCaughtUpToHeadOrEndblock
-              : None,
-          }
-        }
-      }
-    })
+  //   let nextState = {
+  //     ...state,
+  //     chainManager: updatedChainManager,
+  //   }
+  //   let nextState = updateLatestProcessedBlocks(~state=nextState, ~latestProcessedBlocks)
+  //   // This ONLY updates the metrics - no logic is performed.
+  //   nextState.chainManager.chainFetchers
+  //   ->ChainMap.entries
+  //   ->Array.forEach(((chain, chainFetcher)) => {
+  //     let highestFetchedBlockOnChain = FetchState.getLatestFullyFetchedBlock(
+  //       chainFetcher.fetchState,
+  //     ).blockNumber
 
-    let updatedChainManager: ChainManager.t = {
-      ...state.chainManager,
-      chainFetchers: updatedChainFetchers,
-      arbitraryEventQueue: updatedArbQueue,
-    }
+  //     Prometheus.setFetchedUntilHeight(~blockNumber=highestFetchedBlockOnChain, ~chain)
+  //     Prometheus.ProgressBlockNumber.set(
+  //       ~endBlock=highestFetchedBlockOnChain,
+  //       ~chainId=chain->ChainMap.Chain.toChainId,
+  //     )
+  //     switch chainFetcher.latestProcessedBlock {
+  //     | Some(blockNumber) => Prometheus.setProcessedUntilHeight(~blockNumber, ~chain)
+  //     | None => ()
+  //     }
+  //   })
+  //   (nextState, nextTasks)
 
-    let nextState = {
-      ...state,
-      chainManager: updatedChainManager,
-    }
-    let nextState = updateLatestProcessedBlocks(~state=nextState, ~latestProcessedBlocks)
-    // This ONLY updates the metrics - no logic is performed.
-    nextState.chainManager.chainFetchers
-    ->ChainMap.entries
-    ->Array.forEach(((chain, chainFetcher)) => {
-      let highestFetchedBlockOnChain = FetchState.getLatestFullyFetchedBlock(
-        chainFetcher.fetchState,
-      ).blockNumber
-
-      Prometheus.setFetchedUntilHeight(~blockNumber=highestFetchedBlockOnChain, ~chain)
-      Prometheus.ProgressBlockNumber.set(~endBlock=highestFetchedBlockOnChain, ~chainId=chain->ChainMap.Chain.toChainId)
-      switch chainFetcher.latestProcessedBlock {
-      | Some(blockNumber) => Prometheus.setProcessedUntilHeight(~blockNumber, ~chain)
-      | None => ()
-      }
-    })
-    (nextState, nextTasks)
-
-  | EventBatchProcessed({latestProcessedBlocks, dynamicContractRegistrations: None}) =>
+  | EventBatchProcessed(latestProcessedBlocks) =>
     let maybePruneEntityHistory =
       state.config->Config.shouldPruneHistory(
         ~isInReorgThreshold=state.chainManager.isInReorgThreshold,
@@ -627,54 +600,54 @@ let actionReducer = (state: t, action: action) => {
       [NextQuery(CheckAllChains), ProcessEventBatch],
     )
   | ResetRollbackState => ({...state, rollbackState: NoRollback}, [])
-  | DynamicContractPreRegisterProcessed({latestProcessedBlocks, dynamicContractRegistrations}) =>
+  | DynamicContractPreRegisterProcessed(latestProcessedBlocks) =>
     let state = updateLatestProcessedBlocks(
       ~state,
       ~latestProcessedBlocks,
       ~shouldSetPrometheusSynced=false,
     )
 
-    let state = switch dynamicContractRegistrations {
-    | None => state
-    | Some({dynamicContractsByChain}) =>
-      let updatedChainFetchers = state.chainManager.chainFetchers->ChainMap.mapWithKey((
-        chain,
-        cf,
-      ) => {
-        switch dynamicContractsByChain->Utils.Dict.dangerouslyGetNonOption(
-          chain->ChainMap.Chain.toString,
-        ) {
-        | None => cf
-        | Some(dcs) => {
-            let contractAddressMapping = Js.Dict.empty()
+    // let state = switch dynamicContractRegistrations {
+    // | None => state
+    // | Some({dynamicContractsByChain}) =>
+    //   let updatedChainFetchers = state.chainManager.chainFetchers->ChainMap.mapWithKey((
+    //     chain,
+    //     cf,
+    //   ) => {
+    //     switch dynamicContractsByChain->Utils.Dict.dangerouslyGetNonOption(
+    //       chain->ChainMap.Chain.toString,
+    //     ) {
+    //     | None => cf
+    //     | Some(dcs) => {
+    //         let contractAddressMapping = Js.Dict.empty()
 
-            dcs->Array.forEach(dc =>
-              contractAddressMapping->Js.Dict.set(dc.contractAddress->Address.toString, dc)
-            )
+    //         dcs->Array.forEach(dc =>
+    //           contractAddressMapping->Js.Dict.set(dc.contractAddress->Address.toString, dc)
+    //         )
 
-            let dynamicContractPreRegistration = switch cf.dynamicContractPreRegistration {
-            | Some(current) => current->Utils.Dict.merge(contractAddressMapping)
-            //Should never be the case while this task is being scheduled
-            | None => contractAddressMapping
-            }->Some
+    //         let dynamicContractPreRegistration = switch cf.dynamicContractPreRegistration {
+    //         | Some(current) => current->Utils.Dict.merge(contractAddressMapping)
+    //         //Should never be the case while this task is being scheduled
+    //         | None => contractAddressMapping
+    //         }->Some
 
-            {
-              ...cf,
-              dynamicContractPreRegistration,
-            }
-          }
-        }
-      })
+    //         {
+    //           ...cf,
+    //           dynamicContractPreRegistration,
+    //         }
+    //       }
+    //     }
+    //   })
 
-      let updatedChainManager = {
-        ...state.chainManager,
-        chainFetchers: updatedChainFetchers,
-      }
-      {
-        ...state,
-        chainManager: updatedChainManager,
-      }
-    }
+    //   let updatedChainManager = {
+    //     ...state.chainManager,
+    //     chainFetchers: updatedChainFetchers,
+    //   }
+    //   {
+    //     ...state,
+    //     chainManager: updatedChainManager,
+    //   }
+    // }
 
     (
       state,
@@ -947,23 +920,24 @@ let injectedTaskReducer = (
           }
         }
 
-        switch await EventProcessing.getDynamicContractRegistrations(
-          ~latestProcessedBlocks,
-          ~eventBatch=batch,
-          ~checkContractIsRegistered,
-          ~config=state.config,
-        ) {
-        | Ok(batchProcessed) => dispatchAction(DynamicContractPreRegisterProcessed(batchProcessed))
-        | Error(errHandler) => dispatchAction(ErrorExit(errHandler))
-        | exception exn =>
-          //All casese should be handled/caught before this with better user messaging.
-          //This is just a safety in case something unexpected happens
-          let errHandler =
-            exn->ErrorHandling.make(
-              ~msg="A top level unexpected error occurred during pre registration of dynamic contracts",
-            )
-          dispatchAction(ErrorExit(errHandler))
-        }
+      // FIXME:
+      // switch await EventProcessing.getDynamicContractRegistrations(
+      //   ~latestProcessedBlocks,
+      //   ~eventBatch=batch,
+      //   ~checkContractIsRegistered,
+      //   ~config=state.config,
+      // ) {
+      // | Ok(batchProcessed) => dispatchAction(DynamicContractPreRegisterProcessed(batchProcessed))
+      // | Error(errHandler) => dispatchAction(ErrorExit(errHandler))
+      // | exception exn =>
+      //   //All casese should be handled/caught before this with better user messaging.
+      //   //This is just a safety in case something unexpected happens
+      //   let errHandler =
+      //     exn->ErrorHandling.make(
+      //       ~msg="A top level unexpected error occurred during pre registration of dynamic contracts",
+      //     )
+      //   dispatchAction(ErrorExit(errHandler))
+      // }
       | {isInReorgThreshold: true, val: None} =>
         //pre registration is done, we've hit the multichain reorg threshold
         //on the last batch and there are no items on the queue
@@ -1048,7 +1022,6 @@ let injectedTaskReducer = (
             ~eventBatch=batch,
             ~inMemoryStore,
             ~isInReorgThreshold,
-            ~checkContractIsRegistered,
             ~latestProcessedBlocks,
             ~loadLayer=state.loadLayer,
             ~config=state.config,

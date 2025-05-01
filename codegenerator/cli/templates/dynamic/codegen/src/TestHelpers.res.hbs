@@ -118,7 +118,8 @@ module EventFunctions = {
         blockNumber: event.block->Types.Block.getNumber,
       }
 
-      switch eventConfig.contractRegister {
+      {{!-- FIXME: Return it back in the future --}}
+      {{!-- switch eventConfig.contractRegister {
       | Some(contractRegister) =>
         switch contractRegister->EventProcessing.runEventContractRegister(
           ~eventItem,
@@ -132,7 +133,7 @@ module EventFunctions = {
         | Error(e) => e->ErrorHandling.logAndRaise
         }
       | None => () //No need to run contract registration
-      }
+      } --}}
 
       switch eventConfig.handler {
       | Some(handler) =>
