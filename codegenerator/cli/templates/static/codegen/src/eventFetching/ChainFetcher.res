@@ -324,14 +324,6 @@ let addProcessingFilter = (self: t, ~filter, ~isValid) => {
   }
 }
 
-let applyProcessingFilters = (
-  items: array<Internal.eventItem>,
-  ~processingFilters: array<processingFilter>,
-) =>
-  items->Array.keep(item => {
-    processingFilters->Js.Array2.every(processingFilter => processingFilter.filter(item))
-  })
-
 //Run the clean up condition "isNoLongerValid" against fetchState on each eventFilter and remove
 //any that meet the cleanup condition
 let cleanUpProcessingFilters = (
@@ -344,12 +336,57 @@ let cleanUpProcessingFilters = (
   }
 }
 
+let runContractRegistersOrThrow = (~reversedWithContractRegister: array<Internal.eventItem>) => {
+  let dynamicContracts = []
+
+  let onRegister = (~eventItem: Internal.eventItem, ~contractAddress, ~contractName) => {
+    let {chain, timestamp, blockNumber, logIndex} = eventItem
+
+    let chainId = chain->ChainMap.Chain.toChainId
+    let dc: TablesStatic.DynamicContractRegistry.t = {
+      id: UserContext.makeDynamicContractId(~chainId, ~contractAddress),
+      chainId,
+      registeringEventBlockNumber: blockNumber,
+      registeringEventLogIndex: logIndex,
+      registeringEventName: eventItem.eventConfig.name,
+      registeringEventContractName: eventItem.eventConfig.contractName,
+      registeringEventSrcAddress: eventItem.event.srcAddress,
+      registeringEventBlockTimestamp: timestamp,
+      contractAddress,
+      contractType: contractName,
+      isPreRegistered: eventItem.eventConfig.preRegisterDynamicContracts,
+    }
+
+    dynamicContracts->Array.push(dc)
+  }
+
+  for idx in reversedWithContractRegister->Array.length - 1 downto 0 {
+    let eventItem = reversedWithContractRegister->Array.getUnsafe(idx)
+    let contractRegister = switch eventItem.eventConfig.contractRegister {
+    | Some(contractRegister) => contractRegister
+    | None =>
+      // Unexpected case, since we should pass only events with contract register to this function
+      Js.Exn.raiseError("Contract register is not set for event " ++ eventItem.eventConfig.name)
+    }
+
+    try contractRegister(eventItem->ContextEnv.getContractRegisterArgs(~onRegister)) catch {
+    | exn =>
+      exn->ErrorHandling.mkLogAndRaise(
+        ~msg="Event contractRegister failed, please fix the error to keep the indexer running smoothly",
+        ~logger=eventItem->Logging.getEventLogger,
+      )
+    }
+  }
+
+  dynamicContracts
+}
+
 /**
 Updates of fetchState and cleans up event filters. Should be used whenever updating fetchState
 to ensure processingFilters are always valid.
 Returns Error if the node with given id cannot be found (unexpected)
 */
-let setQueryResponse = (
+let handleQueryResult = (
   self: t,
   ~query: FetchState.query,
   ~latestFetchedBlockTimestamp,
@@ -357,19 +394,51 @@ let setQueryResponse = (
   ~fetchedEvents,
   ~currentBlockHeight,
 ) => {
-  let newItems = switch self.processingFilters {
-  | None => fetchedEvents
-  | Some(processingFilters) => fetchedEvents->applyProcessingFilters(~processingFilters)
+  let reversedWithContractRegister = []
+  let reversedNewItems = []
+
+  // It's cheaper to reverse only items with contract register
+  // Then all items. That's why we use downto loop
+  for idx in fetchedEvents->Array.length - 1 downto 0 {
+    let item = fetchedEvents->Array.getUnsafe(idx)
+    if (
+      switch self.processingFilters {
+      | None => true
+      | Some(processingFilters) =>
+        processingFilters->Js.Array2.every(processingFilter => processingFilter.filter(item))
+      }
+    ) {
+      if item.eventConfig.contractRegister !== None {
+        reversedWithContractRegister->Array.push(item)
+      }
+
+      // FIXME: Or raw_events enabled
+      if item.eventConfig.handler !== None {
+        reversedNewItems->Array.push(item)
+      }
+    }
   }
 
-  self.fetchState
-  ->FetchState.setQueryResponse(
+  let fs = if reversedWithContractRegister->Array.length > 0 {
+    let dynamicContracts = runContractRegistersOrThrow(~reversedWithContractRegister)
+    switch dynamicContracts {
+    | [] => self.fetchState
+    | _ =>
+      // FIXME: Store DC in the db
+      self.fetchState->FetchState.registerDynamicContracts(dynamicContracts, ~currentBlockHeight)
+    }
+  } else {
+    self.fetchState
+  }
+
+  fs
+  ->FetchState.handleQueryResult(
     ~query,
     ~latestFetchedBlock={
       blockNumber: latestFetchedBlockNumber,
       blockTimestamp: latestFetchedBlockTimestamp,
     },
-    ~newItems,
+    ~reversedNewItems,
     ~currentBlockHeight,
   )
   ->Result.map(fetchState => {

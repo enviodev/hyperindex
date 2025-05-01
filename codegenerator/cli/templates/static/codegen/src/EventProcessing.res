@@ -127,7 +127,7 @@ let runEventContractRegister = (
   let addedDynamicContracts = []
   let addedDynamicContractsAddresses = Utils.Set.make()
 
-  let onRegister = (~contractAddress, ~contractName) => {
+  let onRegister = (~eventItem: Internal.eventItem, ~contractAddress, ~contractName) => {
     let {chain, timestamp, blockNumber, logIndex} = eventItem
 
     let chainId = chain->ChainMap.Chain.toChainId

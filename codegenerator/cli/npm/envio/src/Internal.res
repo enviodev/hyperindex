@@ -133,7 +133,7 @@ type eventItem = {
   //Default to false, if an event needs to
   //be reprocessed after it has loaded dynamic contracts
   //This gets set to true and does not try and reload events
-  hasRegisteredDynamicContracts?: bool,
+  hasRegisteredDynamicContracts?: bool, // FIXME: Remove?
   // Reuse logger object for event
   mutable loggerCache?: Pino.t,
 }

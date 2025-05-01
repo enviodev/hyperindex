@@ -697,7 +697,7 @@ describe("FetchState.getNextQuery & integration", () => {
 
     let updatedFetchState =
       fetchState
-      ->FetchState.setQueryResponse(
+      ->FetchState.handleQueryResult(
         ~query,
         ~latestFetchedBlock={
           blockNumber: 10,
@@ -844,7 +844,7 @@ describe("FetchState.getNextQuery & integration", () => {
 
     let updatedFetchState =
       fetchStateWithDcs
-      ->FetchState.setQueryResponse(
+      ->FetchState.handleQueryResult(
         ~query,
         ~latestFetchedBlock={
           blockNumber: 1,
@@ -966,7 +966,7 @@ describe("FetchState.getNextQuery & integration", () => {
     // When it didn't finish fetching to the target partition block
     let fetchStateWithResponse1 =
       fetchState
-      ->FetchState.setQueryResponse(
+      ->FetchState.handleQueryResult(
         ~query,
         ~latestFetchedBlock={
           blockNumber: 9,
@@ -1050,7 +1050,7 @@ describe("FetchState.getNextQuery & integration", () => {
 
     let fetchStateWithResponse2 =
       fetchStateWithResponse1
-      ->FetchState.setQueryResponse(
+      ->FetchState.handleQueryResult(
         ~query,
         ~latestFetchedBlock={
           blockNumber: 10,
@@ -1102,7 +1102,7 @@ describe("FetchState.getNextQuery & integration", () => {
         // should split on merge
         maxAddrInPartition: 2,
       }
-      ->FetchState.setQueryResponse(
+      ->FetchState.handleQueryResult(
         ~query,
         ~latestFetchedBlock={
           blockNumber: 10,
@@ -1434,7 +1434,7 @@ describe("FetchState unit tests for specific cases", () => {
 
     let updatedFetchState =
       fetchState
-      ->FetchState.setQueryResponse(
+      ->FetchState.handleQueryResult(
         ~query={
           partitionId: "1",
           target: Merge({
@@ -1513,7 +1513,7 @@ describe("FetchState unit tests for specific cases", () => {
     )
     let fetchState =
       fetchState
-      ->FetchState.setQueryResponse(
+      ->FetchState.handleQueryResult(
         ~query={
           partitionId: "0",
           target: Head,
@@ -1529,7 +1529,7 @@ describe("FetchState unit tests for specific cases", () => {
         ~currentBlockHeight=2,
       )
       ->Result.getExn
-      ->FetchState.setQueryResponse(
+      ->FetchState.handleQueryResult(
         ~query={
           partitionId: "1",
           target: Head,
@@ -1601,7 +1601,7 @@ describe("FetchState unit tests for specific cases", () => {
     )
     let fetchState =
       fetchState
-      ->FetchState.setQueryResponse(
+      ->FetchState.handleQueryResult(
         ~query={
           partitionId: "0",
           target: Head,
@@ -1664,7 +1664,7 @@ describe("FetchState unit tests for specific cases", () => {
 
     let fetchStateWithBothInSyncRange =
       fetchState
-      ->FetchState.setQueryResponse(
+      ->FetchState.handleQueryResult(
         ~query={
           partitionId: "1",
           target: Head,
@@ -1722,7 +1722,7 @@ describe("FetchState unit tests for specific cases", () => {
 
     let fetchStateWithEvents =
       fetchState
-      ->FetchState.setQueryResponse(
+      ->FetchState.handleQueryResult(
         ~query={
           partitionId: "0",
           target: Head,
@@ -1788,7 +1788,7 @@ describe("FetchState unit tests for specific cases", () => {
 
     let updatedFetchState =
       fetchState
-      ->FetchState.setQueryResponse(
+      ->FetchState.handleQueryResult(
         ~query={
           partitionId: "0",
           target: Head,
@@ -1982,7 +1982,7 @@ describe("FetchState unit tests for specific cases", () => {
 
     let fetchStateWithResponse1 =
       fetchState
-      ->FetchState.setQueryResponse(
+      ->FetchState.handleQueryResult(
         ~query=q0,
         ~newItems=[],
         ~currentBlockHeight=10,
@@ -1999,7 +1999,7 @@ describe("FetchState unit tests for specific cases", () => {
 
     let fetchStateWithResponse2 =
       fetchStateWithResponse1
-      ->FetchState.setQueryResponse(
+      ->FetchState.handleQueryResult(
         ~query=q1,
         ~newItems=[],
         ~currentBlockHeight=10,
@@ -2015,7 +2015,7 @@ describe("FetchState unit tests for specific cases", () => {
 
     let fetchStateWithResponse3 =
       fetchStateWithResponse2
-      ->FetchState.setQueryResponse(
+      ->FetchState.handleQueryResult(
         ~query=q0,
         ~newItems=[],
         ~currentBlockHeight=11,
@@ -2032,14 +2032,14 @@ describe("FetchState unit tests for specific cases", () => {
 
     let fetchStateAt999 =
       fetchState
-      ->FetchState.setQueryResponse(
+      ->FetchState.handleQueryResult(
         ~query=q0,
         ~newItems=[],
         ~currentBlockHeight=999,
         ~latestFetchedBlock=getBlockData(~blockNumber=999),
       )
       ->Result.getExn
-      ->FetchState.setQueryResponse(
+      ->FetchState.handleQueryResult(
         ~query=q1,
         ~newItems=[],
         ~currentBlockHeight=999,
@@ -2055,7 +2055,7 @@ describe("FetchState unit tests for specific cases", () => {
 
     let fetchStatePartiallyAt1000 =
       fetchStateAt999
-      ->FetchState.setQueryResponse(
+      ->FetchState.handleQueryResult(
         ~query=q0,
         ~newItems=[],
         ~currentBlockHeight=1000,
@@ -2072,7 +2072,7 @@ describe("FetchState unit tests for specific cases", () => {
 
     let fetchStatePartiallyAt1001 =
       fetchStateAt999
-      ->FetchState.setQueryResponse(
+      ->FetchState.handleQueryResult(
         ~query=q0,
         ~newItems=[],
         ~currentBlockHeight=1001,
@@ -2133,7 +2133,7 @@ describe("FetchState unit tests for specific cases", () => {
         ...makeInitial(),
         endBlock: Some(0),
       }
-      ->FetchState.setQueryResponse(
+      ->FetchState.handleQueryResult(
         ~query={
           partitionId: "0",
           fromBlock: 0,
@@ -2168,7 +2168,7 @@ describe("FetchState unit tests for specific cases", () => {
       )
       let fetchState =
         fetchState
-        ->FetchState.setQueryResponse(
+        ->FetchState.handleQueryResult(
           ~query={
             partitionId: "0",
             target: Head,
@@ -2250,7 +2250,7 @@ describe("FetchState unit tests for specific cases", () => {
       //Response with updated fetch state
       let fetchStateWithBothDcsAndQueryAResponse =
         fetchStateWithDcB
-        ->FetchState.setQueryResponse(
+        ->FetchState.handleQueryResult(
           ~query=queryA,
           ~latestFetchedBlock=getBlockData(~blockNumber=400),
           ~currentBlockHeight,

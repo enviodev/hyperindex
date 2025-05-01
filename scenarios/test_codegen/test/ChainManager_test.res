@@ -79,7 +79,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
         | 1 =>
           fetchState :=
             fetchState.contents
-            ->FetchState.setQueryResponse(
+            ->FetchState.handleQueryResult(
               ~query={
                 partitionId: "0",
                 fromBlock: 0,
@@ -106,7 +106,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
           } else {
             fetchState :=
               fetchState.contents
-              ->FetchState.setQueryResponse(
+              ->FetchState.handleQueryResult(
                 ~query={
                   partitionId: "0",
                   fromBlock: 0,

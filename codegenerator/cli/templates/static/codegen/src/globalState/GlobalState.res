@@ -383,7 +383,7 @@ let handlePartitionQueryResponse = (
       }
       let updatedChainFetcher =
         chainFetcher
-        ->ChainFetcher.setQueryResponse(
+        ->ChainFetcher.handleQueryResult(
           ~query,
           ~currentBlockHeight,
           ~latestFetchedBlockTimestamp,
@@ -1024,7 +1024,6 @@ let injectedTaskReducer = (
             fetchState->FetchState.checkContainsRegisteredContractAddress(
               ~contractAddress,
               ~contractName=(contractName :> string),
-              ~chainId=chain->ChainMap.Chain.toChainId,
             )
           }
 
