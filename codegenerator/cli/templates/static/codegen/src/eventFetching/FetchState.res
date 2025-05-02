@@ -47,9 +47,6 @@ type partition = {
   latestFetchedBlock: blockNumberAndTimestamp,
   selection: selection,
   contractAddressMapping: ContractAddressingMap.mapping,
-  //Used to prune dynamic contract registrations in the event
-  //of a rollback.
-  dynamicContracts: array<TablesStatic.DynamicContractRegistry.t>,
   //Events ordered from latest to earliest
   fetchedEventQueue: array<Internal.eventItem>,
 }
@@ -123,12 +120,9 @@ let mergeIntoPartition = (p: partition, ~target: partition, ~maxAddrInPartition)
   | ({selection: {dependsOnAddresses: true}}, {selection: {dependsOnAddresses: true}}) => {
       let latestFetchedBlock = target.latestFetchedBlock
       let targetContractAddressMapping = target.contractAddressMapping
-      let targetDynamicContracts = target.dynamicContracts
       let mergingContractAddressMapping = p.contractAddressMapping
-      let mergingDynamicContracts = p.dynamicContracts
 
       let mergedContractAddressMapping = targetContractAddressMapping->ContractAddressingMap.copy
-      let mergedDynamicContracts = targetDynamicContracts->Js.Array2.copy
 
       let restDcsCount =
         targetContractAddressMapping->ContractAddressingMap.addressCount +
@@ -137,11 +131,6 @@ let mergeIntoPartition = (p: partition, ~target: partition, ~maxAddrInPartition)
 
       let rest = if restDcsCount > 0 {
         let restAddresses = Utils.Set.make()
-
-        let restDcs = mergingDynamicContracts->Js.Array2.slice(~start=0, ~end_=restDcsCount)
-        restDcs->Array.forEach(dc => {
-          let _ = restAddresses->Utils.Set.add(dc.contractAddress)
-        })
 
         let restContractAddressMapping = ContractAddressingMap.make()
 
@@ -157,11 +146,6 @@ let mergeIntoPartition = (p: partition, ~target: partition, ~maxAddrInPartition)
           map->ContractAddressingMap.addAddress(~address, ~name)
         })
 
-        let _ =
-          mergedDynamicContracts->Js.Array2.pushMany(
-            mergingDynamicContracts->Js.Array2.sliceFrom(restDcsCount),
-          )
-
         Some({
           id: p.id,
           status: {
@@ -170,14 +154,12 @@ let mergeIntoPartition = (p: partition, ~target: partition, ~maxAddrInPartition)
           fetchedEventQueue: [],
           selection: target.selection,
           contractAddressMapping: restContractAddressMapping,
-          dynamicContracts: restDcs,
           latestFetchedBlock,
         })
       } else {
         mergingContractAddressMapping->ContractAddressingMap.mergeInPlace(
           ~target=mergedContractAddressMapping,
         )
-        let _ = mergedDynamicContracts->Js.Array2.pushMany(mergingDynamicContracts)
         None
       }
 
@@ -189,7 +171,6 @@ let mergeIntoPartition = (p: partition, ~target: partition, ~maxAddrInPartition)
           },
           selection: target.selection,
           contractAddressMapping: mergedContractAddressMapping,
-          dynamicContracts: mergedDynamicContracts,
           fetchedEventQueue: mergeSortedEventList(p.fetchedEventQueue, target.fetchedEventQueue),
           latestFetchedBlock,
         },
@@ -351,7 +332,6 @@ let makeDcPartition = (
     latestFetchedBlock,
     selection,
     contractAddressMapping,
-    dynamicContracts,
     fetchedEventQueue: [],
   }
 }
@@ -921,7 +901,6 @@ let make = (
         eventConfigs: notDependingOnAddresses,
       },
       contractAddressMapping: ContractAddressingMap.make(),
-      dynamicContracts: [],
       fetchedEventQueue: [],
     })
   }
@@ -943,7 +922,6 @@ let make = (
           latestFetchedBlock,
           selection: normalSelection,
           contractAddressMapping: ContractAddressingMap.make(),
-          dynamicContracts: [],
           fetchedEventQueue: [],
         }
       }
@@ -985,10 +963,6 @@ let make = (
             }
           },
         )
-        switch dc {
-        | Some(dc) => pendingPartition.dynamicContracts->Array.push(dc)
-        | None => ()
-        }
         if (
           pendingPartition.contractAddressMapping->ContractAddressingMap.addressCount ===
             maxAddrInPartition
@@ -1078,7 +1052,11 @@ let pruneQueueFromFirstChangeEvent = (
 /**
 Rolls back partitions to the given valid block
 */
-let rollbackPartition = (p: partition, ~firstChangeEvent: blockNumberAndLogIndex) => {
+let rollbackPartition = (
+  p: partition,
+  ~firstChangeEvent: blockNumberAndLogIndex,
+  ~addressesToRemove,
+) => {
   switch p {
   | {selection: {dependsOnAddresses: false}} =>
     Some({
@@ -1087,68 +1065,67 @@ let rollbackPartition = (p: partition, ~firstChangeEvent: blockNumberAndLogIndex
         fetchingStateId: None,
       },
     })
-  | {contractAddressMapping, dynamicContracts} => {
-      //get all dynamic contract addresses past valid blockNumber to remove along with
-      //updated dynamicContracts map
-      let addressesToRemove = []
-      let dynamicContracts = dynamicContracts->Array.keep(dc => {
-        if (
-          (dc.registeringEventBlockNumber, dc.registeringEventLogIndex) >=
-          (firstChangeEvent.blockNumber, firstChangeEvent.logIndex)
-        ) {
-          //If the registration block is later than the first change event,
-          //Do not keep it and add to the removed addresses
-          addressesToRemove->Array.push(dc.contractAddress)
-          false
-        } else {
-          true
-        }
-      })
+  | {contractAddressMapping} =>
+    //remove them from the contract address mapping and dynamic contract addresses mapping
+    let contractAddressMapping =
+      contractAddressMapping->ContractAddressingMap.removeAddresses(~addressesToRemove)
 
-      if (
-        addressesToRemove->Array.length ===
-          contractAddressMapping->ContractAddressingMap.addressCount
-      ) {
-        None
+    if contractAddressMapping->ContractAddressingMap.addressCount === 0 {
+      None
+    } else {
+      let shouldRollbackFetched = p.latestFetchedBlock.blockNumber >= firstChangeEvent.blockNumber
+
+      let fetchedEventQueue = if shouldRollbackFetched {
+        p.fetchedEventQueue->pruneQueueFromFirstChangeEvent(~firstChangeEvent)
       } else {
-        //remove them from the contract address mapping and dynamic contract addresses mapping
-        let contractAddressMapping =
-          contractAddressMapping->ContractAddressingMap.removeAddresses(~addressesToRemove)
-
-        let shouldRollbackFetched = p.latestFetchedBlock.blockNumber >= firstChangeEvent.blockNumber
-
-        let fetchedEventQueue = if shouldRollbackFetched {
-          p.fetchedEventQueue->pruneQueueFromFirstChangeEvent(~firstChangeEvent)
-        } else {
-          p.fetchedEventQueue
-        }
-
-        Some({
-          id: p.id,
-          selection: p.selection,
-          status: {
-            fetchingStateId: None,
-          },
-          dynamicContracts,
-          contractAddressMapping,
-          fetchedEventQueue,
-          latestFetchedBlock: shouldRollbackFetched
-            ? {
-                blockNumber: Pervasives.max(firstChangeEvent.blockNumber - 1, 0),
-                blockTimestamp: 0,
-              }
-            : p.latestFetchedBlock,
-        })
+        p.fetchedEventQueue
       }
+
+      Some({
+        id: p.id,
+        selection: p.selection,
+        status: {
+          fetchingStateId: None,
+        },
+        contractAddressMapping,
+        fetchedEventQueue,
+        latestFetchedBlock: shouldRollbackFetched
+          ? {
+              blockNumber: Pervasives.max(firstChangeEvent.blockNumber - 1, 0),
+              blockTimestamp: 0,
+            }
+          : p.latestFetchedBlock,
+      })
     }
   }
 }
 
 let rollback = (fetchState: t, ~firstChangeEvent) => {
-  let partitions =
-    fetchState.partitions->Array.keepMap(p => p->rollbackPartition(~firstChangeEvent))
+  let addressesToRemove = []
+  let indexingContracts = Js.Dict.empty()
 
-  fetchState->updateInternal(~partitions)
+  fetchState.indexingContracts
+  ->Js.Dict.keys
+  ->Array.forEach(address => {
+    let indexingContract = fetchState.indexingContracts->Js.Dict.unsafeGet(address)
+    if (
+      (indexingContract.startBlockNumber, indexingContract.startLogIndex) >=
+      (firstChangeEvent.blockNumber, firstChangeEvent.logIndex)
+    ) {
+      //If the registration block is later than the first change event,
+      //Do not keep it and add to the removed addresses
+      addressesToRemove->Array.push(address->Address.unsafeFromString)
+    } else {
+      indexingContracts->Js.Dict.set(address, indexingContract)
+    }
+  })
+
+  let partitions =
+    fetchState.partitions->Array.keepMap(p =>
+      p->rollbackPartition(~firstChangeEvent, ~addressesToRemove)
+    )
+
+  fetchState->updateInternal(~partitions, ~indexingContracts)
 }
 
 /**
