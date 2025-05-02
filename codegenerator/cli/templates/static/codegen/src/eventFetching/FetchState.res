@@ -6,6 +6,24 @@ dynamic contract
 */
 type dynamicContractId = EventUtils.eventIndex
 
+@unboxed
+type contractRegister =
+  | Config
+  | DC({
+      id: dynamicContractId,
+      startBlockTimestamp: int,
+      registeringEventContractName: string,
+      registeringEventName: string,
+      registeringEventSrcAddress: Address.t,
+    })
+type indexingContract = {
+  address: Address.t,
+  contractName: string,
+  startBlockNumber: int,
+  startLogIndex: int,
+  register: contractRegister,
+}
+
 type blockNumberAndTimestamp = {
   blockNumber: int,
   blockTimestamp: int,
@@ -46,6 +64,8 @@ type t = {
   maxAddrInPartition: int,
   firstEventBlockNumber: option<int>,
   normalSelection: selection,
+  // By address
+  indexingContracts: dict<indexingContract>,
   // Registered dynamic contracts that need to be stored in the db
   // Should read them at the same time when getting items for the batch
   dcsToStore?: array<TablesStatic.DynamicContractRegistry.t>,
@@ -74,6 +94,7 @@ let copy = (fetchState: t) => {
     normalSelection: fetchState.normalSelection,
     firstEventBlockNumber: fetchState.firstEventBlockNumber,
     chainId: fetchState.chainId,
+    indexingContracts: fetchState.indexingContracts,
     dcsToStore: ?fetchState.dcsToStore,
   }
 }
@@ -236,6 +257,7 @@ let updateInternal = (
   ~partitions=fetchState.partitions,
   ~nextPartitionIndex=fetchState.nextPartitionIndex,
   ~firstEventBlockNumber=fetchState.firstEventBlockNumber,
+  ~indexingContracts=fetchState.indexingContracts,
   ~currentBlockHeight=?,
   ~dcsToStore=?,
 ): t => {
@@ -296,6 +318,7 @@ let updateInternal = (
     isFetchingAtHead,
     latestFullyFetchedBlock,
     queueSize: queueSize.contents,
+    indexingContracts,
     dcsToStore: ?switch (fetchState.dcsToStore, dcsToStore) {
     | (Some(existingDcs), Some(newDcs)) => Some(Array.concat(existingDcs, newDcs))
     | (Some(existingDcs), None) => Some(existingDcs)
@@ -333,11 +356,7 @@ let makeDcPartition = (
   }
 }
 
-let numAddresses = fetchState =>
-  fetchState.partitions->Js.Array2.reduce(
-    (acc, p) => acc + p.contractAddressMapping->ContractAddressingMap.addressCount,
-    0,
-  )
+let numAddresses = fetchState => fetchState.indexingContracts->Js.Dict.keys->Array.length
 
 let warnIfAttemptedAddressRegisterOnDifferentContracts = (
   ~contractAddress,
@@ -360,34 +379,6 @@ let warnIfAttemptedAddressRegisterOnDifferentContracts = (
   }
 }
 
-/**
-Recurses through partitions and determines whether a contract has already been registered with
-the given name and address
-*/
-let checkContainsRegisteredContractAddress = (fetchState: t, ~contractName, ~contractAddress) => {
-  fetchState.partitions->Array.some(p => {
-    switch p {
-    | {selection: {dependsOnAddresses: false}} => false
-    | {contractAddressMapping} =>
-      switch contractAddressMapping->ContractAddressingMap.getContractNameFromAddress(
-        ~contractAddress,
-      ) {
-      | Some(existingContractName) =>
-        if existingContractName != contractName {
-          warnIfAttemptedAddressRegisterOnDifferentContracts(
-            ~contractAddress,
-            ~contractName,
-            ~existingContractName,
-            ~chainId=fetchState.chainId,
-          )
-        }
-        true
-      | None => false
-      }
-    }
-  })
-}
-
 let registerDynamicContracts = (
   fetchState: t,
   // These are raw dynamic contracts received from contractRegister call.
@@ -404,36 +395,58 @@ let registerDynamicContracts = (
     )
   }
 
-  let addedDynamicContractsAddresses = Utils.Set.make()
+  let indexingContracts = fetchState.indexingContracts->Utils.Dict.shallowCopy
   let dcsToStore = []
 
   let dcsByStartBlock = Js.Dict.empty()
   dynamicContracts->Array.forEach(dc => {
-    if (
-      // To prevent duplicates from the batch
-      addedDynamicContractsAddresses->Utils.Set.has(dc.contractAddress) ||
-        // And already registered contracts
-        fetchState->checkContainsRegisteredContractAddress(
-          ~contractName=(dc.contractType :> string),
-          ~contractAddress=dc.contractAddress,
-        )
+    // Prevent registering already indexing contracts
+    switch indexingContracts->Utils.Dict.dangerouslyGetNonOption(
+      dc.contractAddress->Address.toString,
     ) {
-      // Skip duplicates
+    | Some(existingContract) =>
+      // FIXME: Instead of filtering out duplicates,
+      // we should check the block number first.
+      // If new registration with earlier block number
+      // we should register it for the missing block range
+      warnIfAttemptedAddressRegisterOnDifferentContracts(
+        ~contractAddress=dc.contractAddress,
+        ~contractName=(dc.contractType :> string),
+        ~existingContractName=existingContract.contractName,
+        ~chainId=fetchState.chainId,
+      )
       ()
-    } else {
-      let _ = addedDynamicContractsAddresses->Utils.Set.add(dc.contractAddress)
-      let _ = dcsToStore->Array.push(dc)
+    | None => {
+        indexingContracts->Js.Dict.set(
+          dc.contractAddress->Address.toString,
+          {
+            address: dc.contractAddress,
+            contractName: (dc.contractType :> string),
+            startBlockNumber: dc.registeringEventBlockNumber,
+            startLogIndex: dc.registeringEventLogIndex,
+            register: DC({
+              id: dc.id->Utils.magic,
+              startBlockTimestamp: dc.registeringEventBlockTimestamp,
+              registeringEventContractName: dc.registeringEventContractName,
+              registeringEventName: dc.registeringEventName,
+              registeringEventSrcAddress: dc.registeringEventSrcAddress,
+            }),
+          },
+        )
 
-      let key = dc.registeringEventBlockNumber->Int.toString
-      let dcs = switch dcsByStartBlock->Utils.Dict.dangerouslyGetNonOption(key) {
-      | Some(dcs) => dcs
-      | None => {
-          let dcs = []
-          dcsByStartBlock->Js.Dict.set(key, dcs)
-          dcs
+        let _ = dcsToStore->Array.push(dc)
+
+        let key = dc.registeringEventBlockNumber->Int.toString
+        let dcs = switch dcsByStartBlock->Utils.Dict.dangerouslyGetNonOption(key) {
+        | Some(dcs) => dcs
+        | None => {
+            let dcs = []
+            dcsByStartBlock->Js.Dict.set(key, dcs)
+            dcs
+          }
         }
+        dcs->Array.push(dc)
       }
-      dcs->Array.push(dc)
     }
   })
 
@@ -465,6 +478,7 @@ let registerDynamicContracts = (
         ~partitions=fetchState.partitions->Js.Array2.concat(newPartitions),
         ~currentBlockHeight,
         ~dcsToStore,
+        ~indexingContracts,
         ~nextPartitionIndex=fetchState.nextPartitionIndex + newPartitions->Array.length,
       )
     }
@@ -882,6 +896,7 @@ let make = (
   let notDependingOnAddresses = []
   let normalEventConfigs = []
   let contractNamesWithNormalEvents = Utils.Set.make()
+  let indexingContracts = Js.Dict.empty()
 
   eventConfigs->Array.forEach(ec => {
     if ec.dependsOnAddresses {
@@ -893,7 +908,6 @@ let make = (
   })
 
   let partitions = []
-  let numAddresses = ref(0)
 
   if notDependingOnAddresses->Array.length > 0 {
     partitions->Array.push({
@@ -936,12 +950,40 @@ let make = (
 
       let pendingNormalPartition = ref(makePendingNormalPartition())
 
-      let registerAddress = (contractName, address, ~dc=?) => {
+      let registerAddress = (
+        contractName,
+        address,
+        ~dc: option<TablesStatic.DynamicContractRegistry.t>=?,
+      ) => {
         let pendingPartition = pendingNormalPartition.contents
-        numAddresses := numAddresses.contents + 1
         pendingPartition.contractAddressMapping->ContractAddressingMap.addAddress(
           ~name=contractName,
           ~address,
+        )
+        indexingContracts->Js.Dict.set(
+          address->Address.toString,
+          switch dc {
+          | Some(dc) => {
+              address,
+              contractName,
+              startBlockNumber: dc.registeringEventBlockNumber,
+              startLogIndex: dc.registeringEventLogIndex,
+              register: DC({
+                id: dc.id->Utils.magic,
+                startBlockTimestamp: dc.registeringEventBlockTimestamp,
+                registeringEventContractName: dc.registeringEventContractName,
+                registeringEventName: dc.registeringEventName,
+                registeringEventSrcAddress: dc.registeringEventSrcAddress,
+              }),
+            }
+          | None => {
+              address,
+              contractName,
+              startBlockNumber: startBlock,
+              startLogIndex: 0,
+              register: Config,
+            }
+          },
         )
         switch dc {
         | Some(dc) => pendingPartition.dynamicContracts->Array.push(dc)
@@ -995,7 +1037,8 @@ let make = (
     )
   }
 
-  Prometheus.IndexingAddresses.set(~addressesCount=numAddresses.contents, ~chainId)
+  let numAddresses = indexingContracts->Js.Dict.keys->Array.length
+  Prometheus.IndexingAddresses.set(~addressesCount=numAddresses, ~chainId)
   switch endBlock {
   | Some(endBlock) => Prometheus.IndexingEndBlock.set(~endBlock, ~chainId)
   | None => ()
@@ -1012,6 +1055,7 @@ let make = (
     queueSize: 0,
     firstEventBlockNumber: None,
     normalSelection,
+    indexingContracts,
   }
 }
 
