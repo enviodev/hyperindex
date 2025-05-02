@@ -74,6 +74,7 @@ let copy = (fetchState: t) => {
     normalSelection: fetchState.normalSelection,
     firstEventBlockNumber: fetchState.firstEventBlockNumber,
     chainId: fetchState.chainId,
+    dcsToStore: ?fetchState.dcsToStore,
   }
 }
 
