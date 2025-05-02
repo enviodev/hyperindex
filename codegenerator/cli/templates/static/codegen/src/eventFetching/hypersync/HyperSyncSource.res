@@ -430,6 +430,7 @@ let make = (
             ),
             ~indexingContracts,
             ~contractAddress=log.address,
+            ~blockNumber=block->Types.Block.getNumber,
           )
         let maybeDecodedEvent = parsedEvents->Js.Array2.unsafe_get(index)
 
@@ -470,6 +471,7 @@ let make = (
           ),
           ~indexingContracts,
           ~contractAddress=log.address,
+          ~blockNumber=block->Types.Block.getNumber,
         ) {
         | Some(eventConfig) =>
           switch contractNameAbiMapping->Viem.parseLogOrThrow(

@@ -36,16 +36,20 @@ module Group = {
   let get = (
     group: t<'a>,
     ~contractAddress,
+    ~blockNumber,
     ~indexingContracts: dict<FetchState.indexingContract>,
   ) =>
     switch group {
-    | {all: [event]} => Some(event)
     | {wildcard, byContractName} =>
       switch indexingContracts->Utils.Dict.dangerouslyGetNonOption(
         contractAddress->Address.toString,
       ) {
       | Some(indexingContract) =>
-        byContractName->Utils.Dict.dangerouslyGetNonOption(indexingContract.contractName)
+        if indexingContract.startBlock <= blockNumber {
+          byContractName->Utils.Dict.dangerouslyGetNonOption(indexingContract.contractName)
+        } else {
+          None
+        }
       | None => wildcard
       }
     }
@@ -83,10 +87,10 @@ let addOrThrow = (
   }
 }
 
-let get = (router: t<'a>, ~tag, ~contractAddress, ~indexingContracts) => {
+let get = (router: t<'a>, ~tag, ~contractAddress, ~blockNumber, ~indexingContracts) => {
   switch router->Utils.Dict.dangerouslyGetNonOption(tag) {
   | None => None
-  | Some(group) => group->Group.get(~contractAddress, ~indexingContracts)
+  | Some(group) => group->Group.get(~contractAddress, ~blockNumber, ~indexingContracts)
   }
 }
 

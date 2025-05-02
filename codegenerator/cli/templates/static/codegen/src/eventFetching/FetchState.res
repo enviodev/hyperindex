@@ -11,7 +11,8 @@ type contractRegister =
   | Config
   | DC({
       id: dynamicContractId,
-      startBlockTimestamp: int,
+      registeringEventBlockTimestamp: int,
+      registeringEventLogIndex: int,
       registeringEventContractName: string,
       registeringEventName: string,
       registeringEventSrcAddress: Address.t,
@@ -19,8 +20,7 @@ type contractRegister =
 type indexingContract = {
   address: Address.t,
   contractName: string,
-  startBlockNumber: int,
-  startLogIndex: int,
+  startBlock: int,
   register: contractRegister,
 }
 
@@ -324,13 +324,15 @@ let updateInternal = (
 
 let makeDcPartition = (
   ~partitionIndex,
-  ~latestFetchedBlock,
   ~dynamicContracts: array<TablesStatic.DynamicContractRegistry.t>=[],
   ~selection,
 ) => {
   let addressesByContractName = Js.Dict.empty()
+  let earliestRegisteringEventBlockNumber = ref(%raw(`Infinity`))
 
   dynamicContracts->Array.forEach(dc => {
+    earliestRegisteringEventBlockNumber :=
+      Pervasives.min(earliestRegisteringEventBlockNumber.contents, dc.registeringEventBlockNumber)
     switch addressesByContractName->Utils.Dict.dangerouslyGetNonOption(
       (dc.contractType :> string),
     ) {
@@ -345,7 +347,10 @@ let makeDcPartition = (
     status: {
       fetchingStateId: None,
     },
-    latestFetchedBlock,
+    latestFetchedBlock: {
+      blockNumber: earliestRegisteringEventBlockNumber.contents - 1,
+      blockTimestamp: 0,
+    },
     selection,
     addressesByContractName,
     fetchedEventQueue: [],
@@ -394,7 +399,7 @@ let registerDynamicContracts = (
   let indexingContracts = fetchState.indexingContracts->Utils.Dict.shallowCopy
   let dcsToStore = []
 
-  let dcsByStartBlock = Js.Dict.empty()
+  let dcsByGroup = Js.Dict.empty()
   dynamicContracts->Array.forEach(dc => {
     // Prevent registering already indexing contracts
     switch indexingContracts->Utils.Dict.dangerouslyGetNonOption(
@@ -418,11 +423,11 @@ let registerDynamicContracts = (
           {
             address: dc.contractAddress,
             contractName: (dc.contractType :> string),
-            startBlockNumber: dc.registeringEventBlockNumber,
-            startLogIndex: dc.registeringEventLogIndex,
+            startBlock: dc.registeringEventBlockNumber,
             register: DC({
               id: dc.id->Utils.magic,
-              startBlockTimestamp: dc.registeringEventBlockTimestamp,
+              registeringEventBlockTimestamp: dc.registeringEventBlockTimestamp,
+              registeringEventLogIndex: dc.registeringEventLogIndex,
               registeringEventContractName: dc.registeringEventContractName,
               registeringEventName: dc.registeringEventName,
               registeringEventSrcAddress: dc.registeringEventSrcAddress,
@@ -432,12 +437,17 @@ let registerDynamicContracts = (
 
         let _ = dcsToStore->Array.push(dc)
 
-        let key = dc.registeringEventBlockNumber->Int.toString
-        let dcs = switch dcsByStartBlock->Utils.Dict.dangerouslyGetNonOption(key) {
+        // Group dcs by every 1000 blocks (so there's not very big spread)
+        // This is to avoid having too many partitions
+        // performing too many separate queries. 1000 is random number from my head.
+        // We shouldn't care about events earlier than registeringEventBlockNumber
+        // because they should be filtered out by the event router
+        let group = (dc.registeringEventBlockNumber / 1000)->Int.toString
+        let dcs = switch dcsByGroup->Utils.Dict.dangerouslyGetNonOption(group) {
         | Some(dcs) => dcs
         | None => {
             let dcs = []
-            dcsByStartBlock->Js.Dict.set(key, dcs)
+            dcsByGroup->Js.Dict.set(group, dcs)
             dcs
           }
         }
@@ -446,21 +456,17 @@ let registerDynamicContracts = (
     }
   })
 
-  let blockNumbers = dcsByStartBlock->Js.Dict.keys
-  switch blockNumbers {
+  let groups = dcsByGroup->Js.Dict.keys
+  switch groups {
   // The case when everything was filter out
   | [] => fetchState
   | _ => {
       // Will be in the ASC order by Js spec
-      let newPartitions = blockNumbers->Array.mapWithIndex((index, startBlockKey) => {
-        let dcs = dcsByStartBlock->Js.Dict.unsafeGet(startBlockKey)
+      let newPartitions = groups->Array.mapWithIndex((index, group) => {
+        let dcs = dcsByGroup->Js.Dict.unsafeGet(group)
         makeDcPartition(
           ~partitionIndex=fetchState.nextPartitionIndex + index,
           ~dynamicContracts=dcs,
-          ~latestFetchedBlock={
-            blockNumber: Pervasives.max(startBlockKey->Int.fromString->Option.getExn - 1, 0),
-            blockTimestamp: 0,
-          },
           ~selection=fetchState.normalSelection,
         )
       })
@@ -984,11 +990,11 @@ let make = (
           | Some(dc) => {
               address,
               contractName,
-              startBlockNumber: dc.registeringEventBlockNumber,
-              startLogIndex: dc.registeringEventLogIndex,
+              startBlock: dc.registeringEventBlockNumber,
               register: DC({
                 id: dc.id->Utils.magic,
-                startBlockTimestamp: dc.registeringEventBlockTimestamp,
+                registeringEventLogIndex: dc.registeringEventLogIndex,
+                registeringEventBlockTimestamp: dc.registeringEventBlockTimestamp,
                 registeringEventContractName: dc.registeringEventContractName,
                 registeringEventName: dc.registeringEventName,
                 registeringEventSrcAddress: dc.registeringEventSrcAddress,
@@ -997,8 +1003,7 @@ let make = (
           | None => {
               address,
               contractName,
-              startBlockNumber: startBlock,
-              startLogIndex: 0,
+              startBlock,
               register: Config,
             }
           },
@@ -1152,14 +1157,19 @@ let rollback = (fetchState: t, ~firstChangeEvent) => {
   ->Array.forEach(address => {
     let indexingContract = fetchState.indexingContracts->Js.Dict.unsafeGet(address)
     if (
-      (indexingContract.startBlockNumber, indexingContract.startLogIndex) >=
-      (firstChangeEvent.blockNumber, firstChangeEvent.logIndex)
+      switch indexingContract {
+      | {register: Config} => true
+      | {register: DC(dc)} =>
+        indexingContract.startBlock < firstChangeEvent.blockNumber ||
+          (indexingContract.startBlock === firstChangeEvent.blockNumber &&
+            dc.registeringEventLogIndex < firstChangeEvent.logIndex)
+      }
     ) {
+      indexingContracts->Js.Dict.set(address, indexingContract)
+    } else {
       //If the registration block is later than the first change event,
       //Do not keep it and add to the removed addresses
       let _ = addressesToRemove->Utils.Set.add(address->Address.unsafeFromString)
-    } else {
-      indexingContracts->Js.Dict.set(address, indexingContract)
     }
   })
 

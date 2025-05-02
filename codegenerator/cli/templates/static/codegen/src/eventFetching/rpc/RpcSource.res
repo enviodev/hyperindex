@@ -499,6 +499,7 @@ let make = ({sourceFor, syncConfig, url, chain, contracts, eventRouter}: options
           ),
           ~indexingContracts,
           ~contractAddress=log.address,
+          ~blockNumber=log.blockNumber,
         ) {
         | None => None //ignore events that aren't registered
         | Some(eventConfig) =>

@@ -12,11 +12,7 @@ type selectionConfig = {
   getRecieptsSelection: (
     ~addressesByContractName: dict<array<Address.t>>,
   ) => array<HyperFuelClient.QueryTypes.receiptSelection>,
-  route: (
-    ~eventId: string,
-    ~indexingContracts: dict<FetchState.indexingContract>,
-    ~contractAddress: Address.t,
-  ) => option<Internal.fuelEventConfig>,
+  eventRouter: EventRouter.t<Internal.fuelEventConfig>,
 }
 
 let logDataReceiptTypeSelection: array<Fuel.receiptType> = [LogData]
@@ -192,8 +188,7 @@ let getSelectionConfig = (selection: FetchState.selection, ~chain) => {
         ~contractNames,
       )
     },
-    route: (~eventId, ~indexingContracts, ~contractAddress) =>
-      eventRouter->EventRouter.get(~tag=eventId, ~indexingContracts, ~contractAddress),
+    eventRouter,
   }
 }
 
@@ -369,10 +364,11 @@ let make = ({chain, endpointUrl}: options): t => {
       | Call(_) => callEventTag
       }
 
-      let eventConfig = switch selectionConfig.route(
-        ~eventId,
+      let eventConfig = switch selectionConfig.eventRouter->EventRouter.get(
+        ~tag=eventId,
         ~indexingContracts,
         ~contractAddress,
+        ~blockNumber=block.height,
       ) {
       | None => {
           let logger = Logging.createChildFrom(
