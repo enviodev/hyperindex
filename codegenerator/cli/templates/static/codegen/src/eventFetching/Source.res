@@ -48,7 +48,8 @@ type t = {
   getItemsOrThrow: (
     ~fromBlock: int,
     ~toBlock: option<int>,
-    ~contractAddressMapping: ContractAddressingMap.mapping,
+    ~addressesByContractName: dict<array<Address.t>>,
+    ~indexingContracts: dict<FetchState.indexingContract>,
     ~currentBlockHeight: int,
     ~partitionId: string,
     ~selection: FetchState.selection,

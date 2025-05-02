@@ -286,14 +286,6 @@ let getNextSyncSource = (
 }
 
 let executeQuery = async (sourceManager: t, ~query: FetchState.query, ~currentBlockHeight) => {
-  let allAddresses = query.contractAddressMapping->ContractAddressingMap.getAllAddresses
-  let addresses =
-    allAddresses->Js.Array2.slice(~start=0, ~end_=3)->Array.map(addr => addr->Address.toString)
-  let restCount = allAddresses->Array.length - addresses->Array.length
-  if restCount > 0 {
-    addresses->Js.Array2.push(`... and ${restCount->Int.toString} more`)->ignore
-  }
-
   let toBlockRef = ref(
     switch query.target {
     | Head => None
@@ -319,7 +311,7 @@ let executeQuery = async (sourceManager: t, ~query: FetchState.query, ~currentBl
         "source": source.name,
         "fromBlock": query.fromBlock,
         "toBlock": toBlock,
-        "addresses": addresses,
+        "addresses": query.addressesByContractName->FetchState.addressesByContractNameCount,
         "retry": retry,
       },
     )
@@ -328,7 +320,8 @@ let executeQuery = async (sourceManager: t, ~query: FetchState.query, ~currentBl
       let response = await source.getItemsOrThrow(
         ~fromBlock=query.fromBlock,
         ~toBlock,
-        ~contractAddressMapping=query.contractAddressMapping,
+        ~addressesByContractName=query.addressesByContractName,
+        ~indexingContracts=query.indexingContracts,
         ~partitionId=query.partitionId,
         ~currentBlockHeight,
         ~selection=query.selection,

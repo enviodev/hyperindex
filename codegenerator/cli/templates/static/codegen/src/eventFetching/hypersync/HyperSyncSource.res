@@ -3,7 +3,7 @@ open Belt
 
 type selectionConfig = {
   getLogSelectionOrThrow: (
-    ~contractAddressMapping: ContractAddressingMap.mapping,
+    ~addressesByContractName: dict<array<Address.t>>,
   ) => array<LogSelection.t>,
   fieldSelection: HyperSyncClient.QueryTypes.fieldSelection,
   nonOptionalBlockFieldNames: array<string>,
@@ -81,17 +81,16 @@ let getSelectionConfig = (selection: FetchState.selection, ~chain) => {
     ~topicSelections=noAddressesTopicSelections,
   )
 
-  let getLogSelectionOrThrow = (~contractAddressMapping): array<LogSelection.t> => {
+  let getLogSelectionOrThrow = (~addressesByContractName): array<LogSelection.t> => {
     let logSelections = []
     if noAddressesLogSelection.topicSelections->Utils.Array.isEmpty->not {
       logSelections->Array.push(noAddressesLogSelection)
     }
     contractNames->Utils.Set.forEach(contractName => {
-      switch contractAddressMapping->ContractAddressingMap.getAddressesFromContractName(
-        ~contractName,
-      ) {
-      | [] => ()
-      | addresses =>
+      switch addressesByContractName->Utils.Dict.dangerouslyGetNonOption(contractName) {
+      | None
+      | Some([]) => ()
+      | Some(addresses) =>
         switch staticTopicSelectionsByContract->Utils.Dict.dangerouslyGetNonOption(contractName) {
         | None => ()
         | Some(topicSelections) =>
@@ -230,7 +229,8 @@ let make = (
   let getItemsOrThrow = async (
     ~fromBlock,
     ~toBlock,
-    ~contractAddressMapping,
+    ~addressesByContractName,
+    ~indexingContracts,
     ~currentBlockHeight,
     ~partitionId as _,
     ~selection,
@@ -242,7 +242,7 @@ let make = (
 
     let selectionConfig = selection->getSelectionConfig
 
-    let logSelections = try selectionConfig.getLogSelectionOrThrow(~contractAddressMapping) catch {
+    let logSelections = try selectionConfig.getLogSelectionOrThrow(~addressesByContractName) catch {
     | exn =>
       exn->ErrorHandling.mkLogAndRaise(~logger, ~msg="Failed getting log selection for the query")
     }
@@ -428,7 +428,7 @@ let make = (
               ~sighash=topic0->EvmTypes.Hex.toString,
               ~topicCount=log.topics->Array.length,
             ),
-            ~contractAddressMapping,
+            ~indexingContracts,
             ~contractAddress=log.address,
           )
         let maybeDecodedEvent = parsedEvents->Js.Array2.unsafe_get(index)
@@ -468,7 +468,7 @@ let make = (
             ~sighash=topic0->EvmTypes.Hex.toString,
             ~topicCount=log.topics->Array.length,
           ),
-          ~contractAddressMapping,
+          ~indexingContracts,
           ~contractAddress=log.address,
         ) {
         | Some(eventConfig) =>

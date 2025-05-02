@@ -180,7 +180,7 @@ type logSelection = {
 }
 
 type selectionConfig = {
-  getLogSelectionOrThrow: (~contractAddressMapping: ContractAddressingMap.mapping) => logSelection,
+  getLogSelectionOrThrow: (~addressesByContractName: dict<array<Address.t>>) => logSelection,
 }
 
 let getSelectionConfig = (selection: FetchState.selection, ~chain) => {
@@ -210,8 +210,8 @@ let getSelectionConfig = (selection: FetchState.selection, ~chain) => {
     )
   | ([topicSelection], []) => {
       let topicQuery = topicSelection->Rpc.GetLogs.mapTopicQuery
-      (~contractAddressMapping) => {
-        addresses: switch contractAddressMapping->ContractAddressingMap.getAllAddresses {
+      (~addressesByContractName) => {
+        addresses: switch addressesByContractName->FetchState.addressesByContractNameGetAll {
         | [] => None
         | addresses => Some(addresses)
         },
@@ -221,8 +221,8 @@ let getSelectionConfig = (selection: FetchState.selection, ~chain) => {
   | ([], [dynamicEventFilter]) if selection.eventConfigs->Js.Array2.length === 1 =>
     let eventConfig = selection.eventConfigs->Js.Array2.unsafe_get(0)
 
-    (~contractAddressMapping) => {
-      let addresses = contractAddressMapping->ContractAddressingMap.getAllAddresses
+    (~addressesByContractName) => {
+      let addresses = addressesByContractName->FetchState.addressesByContractNameGetAll
       {
         addresses: eventConfig.isWildcard ? None : Some(addresses),
         topicQuery: switch dynamicEventFilter(addresses) {
@@ -427,7 +427,8 @@ let make = ({sourceFor, syncConfig, url, chain, contracts, eventRouter}: options
   let getItemsOrThrow = async (
     ~fromBlock,
     ~toBlock,
-    ~contractAddressMapping,
+    ~addressesByContractName,
+    ~indexingContracts,
     ~currentBlockHeight,
     ~partitionId,
     ~selection: FetchState.selection,
@@ -457,7 +458,7 @@ let make = ({sourceFor, syncConfig, url, chain, contracts, eventRouter}: options
         : Promise.resolve(None)
 
     let {getLogSelectionOrThrow} = getSelectionConfig(selection)
-    let {addresses, topicQuery} = getLogSelectionOrThrow(~contractAddressMapping)
+    let {addresses, topicQuery} = getLogSelectionOrThrow(~addressesByContractName)
 
     let {logs, latestFetchedBlock} = await getNextPage(
       ~fromBlock,
@@ -496,7 +497,7 @@ let make = ({sourceFor, syncConfig, url, chain, contracts, eventRouter}: options
             ~sighash=topic0->EvmTypes.Hex.toString,
             ~topicCount=log.topics->Array.length,
           ),
-          ~contractAddressMapping,
+          ~indexingContracts,
           ~contractAddress=log.address,
         ) {
         | None => None //ignore events that aren't registered

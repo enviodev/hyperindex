@@ -103,6 +103,14 @@ module Dict = {
     }
   }
 
+  let forEachWithKey = (dict, fn) => {
+    let keys = dict->Js.Dict.keys
+    for idx in 0 to keys->Js.Array2.length - 1 {
+      let key = keys->Js.Array2.unsafe_get(idx)
+      fn(key, dict->Js.Dict.unsafeGet(key))
+    }
+  }
+
   let deleteInPlace: (dict<'a>, string) => unit = %raw(`(dict, key) => {
       delete dict[key];
     }
@@ -270,6 +278,9 @@ Helper to check if a value exists in an array
 
   @send
   external flatten: (array<array<'a>>, @as(1) _) => array<'a> = "flat"
+
+  @send
+  external copy: array<'a> => array<'a> = "slice"
 }
 
 module String = {

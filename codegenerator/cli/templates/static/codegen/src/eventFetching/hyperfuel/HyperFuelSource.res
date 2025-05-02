@@ -10,11 +10,11 @@ let callEventTag = "call"
 
 type selectionConfig = {
   getRecieptsSelection: (
-    ~contractAddressMapping: ContractAddressingMap.mapping,
+    ~addressesByContractName: dict<array<Address.t>>,
   ) => array<HyperFuelClient.QueryTypes.receiptSelection>,
   route: (
     ~eventId: string,
-    ~contractAddressMapping: ContractAddressingMap.mapping,
+    ~indexingContracts: dict<FetchState.indexingContract>,
     ~contractAddress: Address.t,
   ) => option<Internal.fuelEventConfig>,
 }
@@ -29,16 +29,15 @@ let makeGetNormalRecieptsSelection = (
   ~nonLogDataReceiptTypesByContract,
   ~contractNames,
 ) => {
-  (~contractAddressMapping) => {
+  (~addressesByContractName) => {
     let selection: array<HyperFuelClient.QueryTypes.receiptSelection> = []
 
     //Instantiate each time to add new registered contract addresses
     contractNames->Utils.Set.forEach(contractName => {
-      switch contractAddressMapping->ContractAddressingMap.getAddressesFromContractName(
-        ~contractName,
-      ) {
-      | [] => ()
-      | addresses => {
+      switch addressesByContractName->Utils.Dict.dangerouslyGetNonOption(contractName) {
+      | None
+      | Some([]) => ()
+      | Some(addresses) => {
           switch nonLogDataReceiptTypesByContract->Utils.Dict.dangerouslyGetNonOption(
             contractName,
           ) {
@@ -184,7 +183,7 @@ let getSelectionConfig = (selection: FetchState.selection, ~chain) => {
           ~wildcardLogDataRbs,
           ~nonLogDataWildcardReceiptTypes,
         )
-        (~contractAddressMapping as _) => recieptsSelection
+        (~addressesByContractName as _) => recieptsSelection
       }
     | true =>
       makeGetNormalRecieptsSelection(
@@ -193,8 +192,8 @@ let getSelectionConfig = (selection: FetchState.selection, ~chain) => {
         ~contractNames,
       )
     },
-    route: (~eventId, ~contractAddressMapping, ~contractAddress) =>
-      eventRouter->EventRouter.get(~tag=eventId, ~contractAddressMapping, ~contractAddress),
+    route: (~eventId, ~indexingContracts, ~contractAddress) =>
+      eventRouter->EventRouter.get(~tag=eventId, ~indexingContracts, ~contractAddress),
   }
 }
 
@@ -224,7 +223,8 @@ let make = ({chain, endpointUrl}: options): t => {
   let getItemsOrThrow = async (
     ~fromBlock,
     ~toBlock,
-    ~contractAddressMapping,
+    ~addressesByContractName,
+    ~indexingContracts,
     ~currentBlockHeight,
     ~partitionId as _,
     ~selection: FetchState.selection,
@@ -235,7 +235,7 @@ let make = ({chain, endpointUrl}: options): t => {
     let totalTimeRef = Hrtime.makeTimer()
 
     let selectionConfig = getSelectionConfig(selection)
-    let recieptsSelection = selectionConfig.getRecieptsSelection(~contractAddressMapping)
+    let recieptsSelection = selectionConfig.getRecieptsSelection(~addressesByContractName)
 
     let startFetchingBatchTimeRef = Hrtime.makeTimer()
 
@@ -371,7 +371,7 @@ let make = ({chain, endpointUrl}: options): t => {
 
       let eventConfig = switch selectionConfig.route(
         ~eventId,
-        ~contractAddressMapping,
+        ~indexingContracts,
         ~contractAddress,
       ) {
       | None => {

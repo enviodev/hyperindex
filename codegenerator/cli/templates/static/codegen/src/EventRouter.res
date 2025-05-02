@@ -33,14 +33,19 @@ module Group = {
     }
   }
 
-  let get = (group: t<'a>, ~contractAddress, ~contractAddressMapping) =>
+  let get = (
+    group: t<'a>,
+    ~contractAddress,
+    ~indexingContracts: dict<FetchState.indexingContract>,
+  ) =>
     switch group {
     | {all: [event]} => Some(event)
     | {wildcard, byContractName} =>
-      switch contractAddressMapping->ContractAddressingMap.getContractNameFromAddress(
-        ~contractAddress,
+      switch indexingContracts->Utils.Dict.dangerouslyGetNonOption(
+        contractAddress->Address.toString,
       ) {
-      | Some(contractName) => byContractName->Utils.Dict.dangerouslyGetNonOption(contractName)
+      | Some(indexingContract) =>
+        byContractName->Utils.Dict.dangerouslyGetNonOption(indexingContract.contractName)
       | None => wildcard
       }
     }
@@ -78,10 +83,10 @@ let addOrThrow = (
   }
 }
 
-let get = (router: t<'a>, ~tag, ~contractAddress, ~contractAddressMapping) => {
+let get = (router: t<'a>, ~tag, ~contractAddress, ~indexingContracts) => {
   switch router->Utils.Dict.dangerouslyGetNonOption(tag) {
   | None => None
-  | Some(group) => group->Group.get(~contractAddress, ~contractAddressMapping)
+  | Some(group) => group->Group.get(~contractAddress, ~indexingContracts)
   }
 }
 
