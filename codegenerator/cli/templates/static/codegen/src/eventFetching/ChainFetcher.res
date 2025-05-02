@@ -416,7 +416,7 @@ let handleQueryResult = (
       // besides the correct count of events
       // FIXME: Or raw_events enabled
       // if item.eventConfig.handler !== None {
-      //   reversedNewItems->Array.push(item)
+      reversedNewItems->Array.push(item)
       // }
     }
   }
