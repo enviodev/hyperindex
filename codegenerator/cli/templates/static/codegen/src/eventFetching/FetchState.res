@@ -33,7 +33,7 @@ type partition = {
   //of a rollback.
   dynamicContracts: array<TablesStatic.DynamicContractRegistry.t>,
   //Events ordered from latest to earliest
-  fetchedEventQueue: array<Internal.eventItem>,
+  fetchedEventQueue: Cow.Array.t<Internal.eventItem>,
 }
 
 type t = {
@@ -55,7 +55,7 @@ type t = {
 
 let shallowCopyPartition = (p: partition) => {
   ...p,
-  fetchedEventQueue: p.fetchedEventQueue->Array.copy,
+  fetchedEventQueue: p.fetchedEventQueue->Cow.copy,
 }
 
 let copy = (fetchState: t) => {
@@ -142,7 +142,7 @@ let mergeIntoPartition = (p: partition, ~target: partition, ~maxAddrInPartition)
           status: {
             fetchingStateId: None,
           },
-          fetchedEventQueue: [],
+          fetchedEventQueue: []->Cow.Array.make,
           selection: target.selection,
           contractAddressMapping: restContractAddressMapping,
           dynamicContracts: restDcs,
@@ -165,7 +165,10 @@ let mergeIntoPartition = (p: partition, ~target: partition, ~maxAddrInPartition)
           selection: target.selection,
           contractAddressMapping: mergedContractAddressMapping,
           dynamicContracts: mergedDynamicContracts,
-          fetchedEventQueue: mergeSortedEventList(p.fetchedEventQueue, target.fetchedEventQueue),
+          fetchedEventQueue: mergeSortedEventList(
+            p.fetchedEventQueue->Cow.getDataRef,
+            target.fetchedEventQueue->Cow.getDataRef,
+          )->Cow.Array.make,
           latestFetchedBlock,
         },
         rest,
@@ -192,7 +195,10 @@ let addItemsToPartition = (
       fetchingStateId: None,
     },
     latestFetchedBlock,
-    fetchedEventQueue: Array.concat(reversedNewItems, p.fetchedEventQueue),
+    fetchedEventQueue: Array.concat(
+      reversedNewItems,
+      p.fetchedEventQueue->Cow.getDataRef,
+    )->Cow.Array.make,
   }
 }
 
@@ -242,7 +248,7 @@ let updateInternal = (
   for idx in 0 to partitions->Array.length - 1 {
     let p = partitions->Js.Array2.unsafe_get(idx)
 
-    let partitionQueueSize = p.fetchedEventQueue->Array.length
+    let partitionQueueSize = p.fetchedEventQueue->Cow.Array.length
 
     queueSize := queueSize.contents + partitionQueueSize
 
@@ -318,7 +324,7 @@ let makeDcPartition = (
     selection,
     contractAddressMapping,
     dynamicContracts,
-    fetchedEventQueue: [],
+    fetchedEventQueue: Cow.Array.make([]),
   }
 }
 
@@ -626,7 +632,7 @@ let getNextQuery = (
       if (
         p->checkIsFetchingPartition->not &&
         p.latestFetchedBlock.blockNumber < currentBlockHeight &&
-        (checkQueueSize ? p.fetchedEventQueue->Array.length < maxPartitionQueueSize : true) && (
+        (checkQueueSize ? p.fetchedEventQueue->Cow.Array.length < maxPartitionQueueSize : true) && (
           isWithinSyncRange
             ? true
             : !checkIsWithinSyncRange(~latestFetchedBlock=p.latestFetchedBlock, ~currentBlockHeight)
@@ -750,9 +756,9 @@ Returns queue item WITHOUT the updated fetch state. Used for checking values
 not updating state
 */
 let getEarliestEventInPartition = (p: partition) => {
-  switch p.fetchedEventQueue->Utils.Array.last {
+  switch p.fetchedEventQueue->Cow.Array.last {
   | Some(head) =>
-    Item({item: head, popItemOffQueue: () => p.fetchedEventQueue->Js.Array2.pop->ignore})
+    Item({item: head, popItemOffQueue: () => p.fetchedEventQueue->Cow.Array.pop->ignore})
   | None => makeNoItem(p)
   }
 }
@@ -822,7 +828,7 @@ let make = (
       },
       contractAddressMapping: ContractAddressingMap.make(),
       dynamicContracts: [],
-      fetchedEventQueue: [],
+      fetchedEventQueue: Cow.Array.make([]),
     })
   }
 
@@ -844,7 +850,7 @@ let make = (
           selection: normalSelection,
           contractAddressMapping: ContractAddressingMap.make(),
           dynamicContracts: [],
-          fetchedEventQueue: [],
+          fetchedEventQueue: Cow.Array.make([]),
         }
       }
 
@@ -991,12 +997,15 @@ let checkContainsRegisteredContractAddress = (
 let getLatestFullyFetchedBlock = ({latestFullyFetchedBlock}: t) => latestFullyFetchedBlock
 
 let pruneQueueFromFirstChangeEvent = (
-  queue: array<Internal.eventItem>,
+  queue: Cow.Array.t<Internal.eventItem>,
   ~firstChangeEvent: blockNumberAndLogIndex,
 ) => {
-  queue->Array.keep(item =>
+  queue
+  ->Cow.getDataRef
+  ->Array.keep(item =>
     (item.blockNumber, item.logIndex) < (firstChangeEvent.blockNumber, firstChangeEvent.logIndex)
   )
+  ->Cow.Array.make
 }
 
 /**
