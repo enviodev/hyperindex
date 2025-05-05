@@ -251,6 +251,7 @@ let createBatchInternal = (
 ) => {
   let isInReorgThresholdRef = ref(false)
   let batch = []
+
   let rec loop = () =>
     if batch->Array.length < maxBatchSize {
       let {val, isInReorgThreshold} = popBatchItem(
@@ -278,10 +279,11 @@ let createBatchInternal = (
   {val: batch, isInReorgThreshold: isInReorgThresholdRef.contents}
 }
 
-type batchRes = {
-  batch: array<Internal.eventItem>,
+type batch = {
+  items: array<Internal.eventItem>,
   fetchStatesMap: ChainMap.t<fetchStateWithData>,
   dcsToStore: array<TablesStatic.DynamicContractRegistry.t>,
+  isInReorgThreshold: bool,
 }
 
 let createBatch = (self: t, ~maxBatchSize: int, ~onlyBelowReorgThreshold: bool) => {
@@ -290,7 +292,7 @@ let createBatch = (self: t, ~maxBatchSize: int, ~onlyBelowReorgThreshold: bool) 
   //Make a copy of the queues and fetch states since we are going to mutate them
   let fetchStatesMap = self->getFetchStateWithData(~shouldDeepCopy=true)
 
-  let {val: batch, isInReorgThreshold} = createBatchInternal(
+  let {val: items, isInReorgThreshold} = createBatchInternal(
     ~maxBatchSize,
     ~fetchStatesMap,
     ~isUnorderedMultichainMode=self.isUnorderedMultichainMode,
@@ -316,9 +318,8 @@ let createBatch = (self: t, ~maxBatchSize: int, ~onlyBelowReorgThreshold: bool) 
     }
   })
 
-  let batchSize = batch->Array.length
-
-  let val = if batchSize > 0 {
+  let batchSize = items->Array.length
+  if batchSize > 0 {
     let fetchedEventsBuffer =
       fetchStatesMap
       ->ChainMap.entries
@@ -346,13 +347,9 @@ let createBatch = (self: t, ~maxBatchSize: int, ~onlyBelowReorgThreshold: bool) 
       )
       Benchmark.addSummaryData(~group, ~label=`Batch Size`, ~value=batchSize->Belt.Int.toFloat)
     }
-
-    Some({batch, fetchStatesMap, dcsToStore})
-  } else {
-    None
   }
 
-  {val, isInReorgThreshold}
+  {items, fetchStatesMap, dcsToStore, isInReorgThreshold}
 }
 
 let isFetchingAtHead = self =>

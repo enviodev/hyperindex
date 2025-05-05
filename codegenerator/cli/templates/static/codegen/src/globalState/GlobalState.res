@@ -472,55 +472,6 @@ let actionReducer = (state: t, action: action) => {
     )
   | PartitionQueryResponse({chain, response, query}) =>
     state->handlePartitionQueryResponse(~chain, ~response, ~query)
-  // | EventBatchProcessed(latestProcessedBlocks) =>
-  //   let updatedArbQueue = Utils.Array.mergeSorted((a, b) => {
-  //     a->EventUtils.getEventComparatorFromQueueItem > b->EventUtils.getEventComparatorFromQueueItem
-  //   }, unprocessedBatch->Array.reverse, state.chainManager.arbitraryEventQueue)
-
-  //   let maybePruneEntityHistory =
-  //     state.config->Config.shouldPruneHistory(
-  //       ~isInReorgThreshold=state.chainManager.isInReorgThreshold,
-  //     )
-  //       ? [PruneStaleEntityHistory]
-  //       : []
-
-  //   let nextTasks =
-  //     [
-  //       UpdateChainMetaDataAndCheckForExit(NoExit),
-  //       ProcessEventBatch,
-  //       NextQuery(CheckAllChains),
-  //     ]->Array.concat(maybePruneEntityHistory)
-
-  //   let updatedChainManager: ChainManager.t = {
-  //     ...state.chainManager,
-  //     arbitraryEventQueue: updatedArbQueue,
-  //   }
-
-  //   let nextState = {
-  //     ...state,
-  //     chainManager: updatedChainManager,
-  //   }
-  //   let nextState = updateLatestProcessedBlocks(~state=nextState, ~latestProcessedBlocks)
-  //   // This ONLY updates the metrics - no logic is performed.
-  //   nextState.chainManager.chainFetchers
-  //   ->ChainMap.entries
-  //   ->Array.forEach(((chain, chainFetcher)) => {
-  //     let highestFetchedBlockOnChain = FetchState.getLatestFullyFetchedBlock(
-  //       chainFetcher.fetchState,
-  //     ).blockNumber
-
-  //     Prometheus.setFetchedUntilHeight(~blockNumber=highestFetchedBlockOnChain, ~chain)
-  //     Prometheus.ProgressBlockNumber.set(
-  //       ~endBlock=highestFetchedBlockOnChain,
-  //       ~chainId=chain->ChainMap.Chain.toChainId,
-  //     )
-  //     switch chainFetcher.latestProcessedBlock {
-  //     | Some(blockNumber) => Prometheus.setProcessedUntilHeight(~blockNumber, ~chain)
-  //     | None => ()
-  //     }
-  //   })
-  //   (nextState, nextTasks)
-
   | EventBatchProcessed(latestProcessedBlocks) =>
     let maybePruneEntityHistory =
       state.config->Config.shouldPruneHistory(
@@ -778,11 +729,10 @@ let injectedTaskReducer = (
           ~onlyBelowReorgThreshold,
         )
 
-      let handleBatch = async (
-        batch: ChainManager.isInReorgThresholdRes<option<ChainManager.batchRes>>,
-      ) => {
+      let handleBatch = async (batch: ChainManager.batch) => {
         switch batch {
-        | {isInReorgThreshold, val: Some({batch, fetchStatesMap, dcsToStore})} =>
+        | {items: []} => dispatchAction(SetSyncedChains) //Known that there are no items available on the queue so safely call this action
+        | {isInReorgThreshold, items, fetchStatesMap, dcsToStore} =>
           dispatchAction(SetCurrentlyProcessing(true))
           dispatchAction(UpdateQueues(fetchStatesMap))
           if (
@@ -816,26 +766,11 @@ let injectedTaskReducer = (
 
           if dcsToStore->Utils.Array.isEmpty->not {
             let shouldSaveHistory = state.config->Config.shouldSaveHistory(~isInReorgThreshold)
-            let inMemTable =
-              inMemoryStore.InMemoryStore.entities->InMemoryStore.EntityTables.get(
-                module(TablesStatic.DynamicContractRegistry),
-              )
-            dcsToStore->Array.forEach(dc => {
-              let eventIdentifier: Types.eventIdentifier = {
-                chainId: dc.chainId,
-                blockTimestamp: dc.registeringEventBlockTimestamp,
-                blockNumber: dc.registeringEventBlockNumber,
-                logIndex: dc.registeringEventLogIndex,
-              }
-              inMemTable->InMemoryTable.Entity.set(
-                Set(dc)->Types.mkEntityUpdate(~eventIdentifier, ~entityId=dc.id),
-                ~shouldSaveHistory,
-              )
-            })
+            inMemoryStore->InMemoryStore.setDcsToStore(dcsToStore, ~shouldSaveHistory)
           }
 
           switch await EventProcessing.processEventBatch(
-            ~eventBatch=batch,
+            ~eventBatch=items,
             ~inMemoryStore,
             ~isInReorgThreshold,
             ~latestProcessedBlocks,
@@ -861,12 +796,11 @@ let injectedTaskReducer = (
             | Error(errHandler) => dispatchAction(ErrorExit(errHandler))
             }
           }
-        | {val: None} => dispatchAction(SetSyncedChains) //Known that there are no items available on the queue so safely call this action
         }
       }
 
       switch batch {
-      | {isInReorgThreshold: true, val: None} if onlyBelowReorgThreshold =>
+      | {isInReorgThreshold: true, items: []} if onlyBelowReorgThreshold =>
         dispatchAction(SetIsInReorgThreshold(true))
         let batch =
           state.chainManager->ChainManager.createBatch(

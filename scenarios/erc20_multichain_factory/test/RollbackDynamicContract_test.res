@@ -312,7 +312,7 @@ describe("Dynamic contract rollback test", () => {
     await dispatchAllTasks()
     await makeAssertions(
       ~queryName="B",
-      ~chain1LatestFetchBlock=3,
+      ~chain1LatestFetchBlock=2,
       ~chain2LatestFetchBlock=5,
       ~totalQueueSize=3,
       ~batchName="A",
@@ -359,8 +359,8 @@ describe("Dynamic contract rollback test", () => {
 
     Assert.deepEqual(
       getFetchState(Mock.Chain1.chain).partitions->Array.map(p => p.id),
-      ["0"],
-      ~message=`Should have only one partition`,
+      ["0", "1"],
+      ~message=`Should have main partition and one dynamic contract partition`,
     )
 
     //Process batch 2 of events
@@ -374,8 +374,8 @@ describe("Dynamic contract rollback test", () => {
         Mock.getUpdateEndofBlockRangeScannedData(
           Mock.mockChainDataMap,
           ~chain=Mock.Chain1.chain,
-          ~blockNumberThreshold=-195,
-          ~blockNumber=5,
+          ~blockNumberThreshold=-197,
+          ~blockNumber=3,
         ),
         UpdateChainMetaDataAndCheckForExit(NoExit),
         ProcessEventBatch,
@@ -391,7 +391,6 @@ describe("Dynamic contract rollback test", () => {
         NextQuery(Chain(Mock.Chain2.chain)),
         UpdateChainMetaDataAndCheckForExit(NoExit),
         ProcessEventBatch,
-        NextQuery(CheckAllChains),
         PruneStaleEntityHistory,
       ],
       ~message="Next round of tasks after query C",
@@ -400,33 +399,45 @@ describe("Dynamic contract rollback test", () => {
     let partitions = getFetchState(Mock.Chain1.chain).partitions
     Assert.deepEqual(
       partitions->Array.map(p => p.id),
-      ["0", "1"],
-      ~message=`Should get a dc partition`,
+      ["0"],
+      ~message=`DC partition should be merged into main`,
     )
-    let dcPartition = partitions->Js.Array2.unsafe_get(1)
+    let rootPartition = partitions->Js.Array2.unsafe_get(0)
     Assert.deepEqual(
-      dcPartition.latestFetchedBlock,
+      rootPartition.latestFetchedBlock,
       {
-        {blockNumber: 2, blockTimestamp: 0}
+        {blockNumber: 3, blockTimestamp: 75}
       },
       ~message=`Should get a root partition`,
     )
     Assert.deepEqual(
-      dcPartition.dynamicContracts->Array.length,
-      1,
+      rootPartition.addressesByContractName,
+      Js.Dict.fromArray([
+        (
+          "ERC20",
+          [
+            // From Config
+            "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984"->Address.unsafeFromString,
+            // From DC
+            "0x90F79bf6EB2c4f870365E785982E1f101E93b906"->Address.unsafeFromString,
+          ],
+        ),
+        // From Config
+        ("ERC20Factory", ["0x8626f6940E2eb28930eFb4CeF49B2d1F2C9C1199"->Address.unsafeFromString]),
+      ]),
       ~message=`Should have a single dc`,
     )
 
     await makeAssertions(
       ~queryName="C",
-      ~chain1LatestFetchBlock=2, //dynamic contract registered and fetchState set to block before registration (dyn contract query not yet made)
+      ~chain1LatestFetchBlock=3, // Made DC query and merged partitions
       ~chain2LatestFetchBlock=8,
-      ~totalQueueSize=3,
+      ~totalQueueSize=4,
       ~batchName="B",
       ~chain1User1Balance=None,
       ~chain1User2Balance=None,
-      ~chain2User1Balance=Some(80),
-      ~chain2User2Balance=Some(70),
+      ~chain2User1Balance=Some(100),
+      ~chain2User2Balance=Some(50),
     )
 
     //Artificially cut the tasks to only do one round of queries and batch processing
@@ -444,8 +455,8 @@ describe("Dynamic contract rollback test", () => {
         Mock.getUpdateEndofBlockRangeScannedData(
           Mock.mockChainDataMap,
           ~chain=Mock.Chain1.chain,
-          ~blockNumberThreshold=-196,
-          ~blockNumber=4,
+          ~blockNumberThreshold=-195,
+          ~blockNumber=5,
         ),
         UpdateChainMetaDataAndCheckForExit(NoExit),
         ProcessEventBatch,
@@ -469,7 +480,7 @@ describe("Dynamic contract rollback test", () => {
 
     await makeAssertions(
       ~queryName="D",
-      ~chain1LatestFetchBlock=4,
+      ~chain1LatestFetchBlock=5,
       ~chain2LatestFetchBlock=9,
       ~totalQueueSize=2, //One from dynamic contract, one from 137
       ~batchName="C",

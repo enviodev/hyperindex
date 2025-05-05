@@ -77,3 +77,24 @@ let getInMemTable = (
 }
 
 let isRollingBack = (inMemoryStore: t) => inMemoryStore.rollBackEventIdentifier->Belt.Option.isSome
+
+let setDcsToStore = (
+  inMemoryStore: t,
+  dcsToStore: array<TablesStatic.DynamicContractRegistry.t>,
+  ~shouldSaveHistory,
+) => {
+  let inMemTable =
+    inMemoryStore.entities->EntityTables.get(module(TablesStatic.DynamicContractRegistry))
+  dcsToStore->Js.Array2.forEach(dc => {
+    let eventIdentifier: Types.eventIdentifier = {
+      chainId: dc.chainId,
+      blockTimestamp: dc.registeringEventBlockTimestamp,
+      blockNumber: dc.registeringEventBlockNumber,
+      logIndex: dc.registeringEventLogIndex,
+    }
+    inMemTable->InMemoryTable.Entity.set(
+      Set(dc)->Types.mkEntityUpdate(~eventIdentifier, ~entityId=dc.id),
+      ~shouldSaveHistory,
+    )
+  })
+}

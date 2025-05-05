@@ -129,8 +129,13 @@ describe("Dynamic contract restart resistance test", () => {
   })
 
   let getChainFetcherDcs = (chainFetcher: ChainFetcher.t) => {
-    chainFetcher.fetchState.partitions->Array.flatMap(p =>
-      p.dynamicContracts->Array.map(dc => dc.contractAddress)
+    chainFetcher.fetchState.indexingContracts
+    ->Js.Dict.values
+    ->Belt.Array.keepMap(indexingContract =>
+      switch indexingContract {
+      | {register: Config} => None
+      | {register: DC(_), address} => Some(address)
+      }
     )
   }
 
@@ -155,32 +160,6 @@ describe("Dynamic contract restart resistance test", () => {
         isUnorderedMultichainMode: true,
         isInReorgThreshold: true,
       }
-      let chainConfig = config.chainMap->ChainMap.get(ChainMap.Chain.makeUnsafe(~chainId=1))
-      let chainConfigWithPreRegistration = {
-        ...chainConfig,
-        contracts: chainConfig.contracts->Array.map(
-          c => {
-            if c.name == Types.ERC20Factory.contractName {
-              {
-                ...c,
-                events: c.events->Array.map(
-                  e =>
-                    if e.id === Types.ERC20Factory.TokenCreated.id {
-                      ({
-                        ...e->(Utils.magic: Internal.eventConfig => Internal.evmEventConfig),
-                        preRegisterDynamicContracts: true,
-                      } :> Internal.eventConfig)
-                    } else {
-                      e
-                    },
-                ),
-              }
-            } else {
-              c
-            }
-          },
-        ),
-      }
       let loadLayer = LoadLayer.makeWithDbConnection()
 
       //Setup initial state stub that will be used for both
@@ -194,7 +173,9 @@ describe("Dynamic contract restart resistance test", () => {
       //Stub specifically for using data from then initial chain data and functions
       let stubDataInitial = makeStub(~mockChainDataMap=Mock.mockChainDataMap)
       let dispatchTask = Stubs.makeDispatchTask(stubDataInitial, _)
-      let dispatchAllTasks = () => stubDataInitial->Stubs.dispatchAllTasks
+      let dispatchAllTasks = () => {
+        stubDataInitial->Stubs.dispatchAllTasks
+      }
 
       //Dispatch first task of next query all chains
       //First query will just get the height
@@ -227,6 +208,16 @@ describe("Dynamic contract restart resistance test", () => {
 
       await dispatchAllTasks()
 
+      Assert.deepEqual(
+        (await Db.sql
+        ->Postgres.unsafe(`SELECT * FROM public.dynamic_contract_registry;`))
+        ->Array.length,
+        0,
+        ~message="Should have 0 dynamic contracts in db. Since the batch is not created yet and dcsToStore aren't commited",
+      )
+
+      await dispatchAllTasks()
+
       //After this step, the dynamic contracts should be in the database but on restart
       //Only the the first dynamic contract should be registered since we haven't processed
       //up to the second one yet
@@ -252,8 +243,24 @@ describe("Dynamic contract restart resistance test", () => {
             async () => {
               Assert.deepEqual(
                 await getFetchingDcAddressesFromDbState(~sql),
+                dcsBeforeRestart->Js.Array2.map(dc => dc["contract_address"]),
+                ~message="Should get all addresses on restart",
+              )
+
+              // But let's say the indexer crashed before
+              // the processing of events catch up to the dcs we stored in the db
+              // In this case on restart we should prune contracts after event_sync_state
+              let _ =
+                await sql->Postgres.unsafe(`UPDATE public.event_sync_state SET block_number = 0 WHERE chain_id = 1;`)
+
+              Assert.deepEqual(
+                await getFetchingDcAddressesFromDbState(~sql),
+                // This one has
+                // registering_event_block_number: 0
+                // registering_event_log_index: 0
+                // So it's not pruned
                 [Mock.mockDynamicToken1],
-                ~message="Should have registered only the dynamic contract up to the block that was processed",
+                ~message="Should keep only the dc up to the event_sync_state",
               )
 
               Assert.equal(
@@ -261,15 +268,15 @@ describe("Dynamic contract restart resistance test", () => {
                 ->Postgres.unsafe(`SELECT * FROM public.dynamic_contract_registry;`))
                 ->Array.length,
                 1,
-                ~message="Should clean up invalid dc from db on restart",
+                ~message="Should clean up pruned dc from db on restart",
               )
               Assert.equal(
                 (await sql
                 ->Postgres.unsafe(`SELECT * FROM public.dynamic_contract_registry_history;`))
                 ->Array.length,
                 1,
-                ~message=`Should clean up invalid dc history from db on restart.
-            Note: Without it there's a case when the indexer might crash because of a conflict`,
+                ~message=`Should clean up pruned dc history from db on restart.
+              Note: Without it there's a case when the indexer might crash because of a conflict`,
               )
 
               raise(RollbackTransaction)
@@ -278,124 +285,6 @@ describe("Dynamic contract restart resistance test", () => {
         ],
       ) catch {
       | RollbackTransaction => ()
-      }
-
-      try await Db.sql->Postgres.beginSql(
-        sql => [
-          (
-            async () => {
-              let restartedChainFetcher = await ChainFetcher.makeFromDbState(
-                chainConfigWithPreRegistration,
-                ~maxAddrInPartition=Env.maxAddrInPartition,
-                ~enableRawEvents=false,
-                ~sql,
-              )
-
-              Assert.deepEqual(
-                restartedChainFetcher.dynamicContractPreRegistration->Option.getExn->Js.Dict.keys,
-                [Mock.mockDynamicToken1->Address.toString],
-                ~message=`Should recover with only dc1 since it was registered at the restart start block.
-                The dc2 wasn't registered during preRegistration phase, so it's not recovered
-                even though the eventOptions says that preRegistration enabled.
-                This might happen when a preRegistered contract, registers itself on the actual indexer run`,
-              )
-
-              Assert.deepEqual(
-                restartedChainFetcher->getChainFetcherDcs,
-                [],
-                ~message="Should have no dynamic contracts yet since this tests the case starting in preregistration",
-              )
-
-              Assert.equal(
-                (await sql
-                ->Postgres.unsafe(`SELECT * FROM public.dynamic_contract_registry;`))
-                ->Array.length,
-                1,
-                ~message="Should clean up invalid dc from db on restart",
-              )
-              Assert.equal(
-                (await sql
-                ->Postgres.unsafe(`SELECT * FROM public.dynamic_contract_registry_history;`))
-                ->Array.length,
-                1,
-                ~message=`Should clean up invalid dc history from db on restart.
-            Note: Without it there's a case when the indexer might crash because of a conflict`,
-              )
-
-              raise(RollbackTransaction)
-            }
-          )(),
-        ],
-      ) catch {
-      | RollbackTransaction => ()
-      | Js.Exn.Error(e) => raise(e->Obj.magic)
-      }
-
-      try await Db.sql->Postgres.beginSql(
-        sql => [
-          (
-            async () => {
-              // Manualy update the second dc in db to make it look as if it was pre registered
-              let () = await sql->Postgres.unsafe(`UPDATE public.dynamic_contract_registry
-                SET is_pre_registered = true
-                WHERE registering_event_block_number = 1;`)
-              // FIXME:
-
-              let restartedChainFetcher = await ChainFetcher.makeFromDbState(
-                chainConfigWithPreRegistration,
-                ~maxAddrInPartition=Env.maxAddrInPartition,
-                ~enableRawEvents=false,
-                ~sql,
-              )
-
-              Assert.deepEqual(
-                restartedChainFetcher.dynamicContractPreRegistration->Option.getExn->Js.Dict.keys,
-                [
-                  Mock.mockDynamicToken1->Address.toString,
-                  Mock.mockDynamicToken2->Address.toString,
-                ],
-                ~message=`Should include both dc1 which is not pre registered, but registered at the restart start block
-                and dc2 which is after restart start block, but was pre registered`,
-              )
-
-              Assert.deepEqual(
-                restartedChainFetcher->getChainFetcherDcs,
-                [],
-                ~message="Should have no dynamic contracts yet since this tests the case starting in preregistration",
-              )
-
-              Assert.deepEqual(
-                await sql->Postgres.unsafe(`SELECT * FROM public.dynamic_contract_registry;`),
-                switch dcsBeforeRestart {
-                | [dc1, dc2] => [
-                    dc1,
-                    (
-                      {
-                        ...dc2,
-                        isPreRegistered: true,
-                      }: TablesStatic.DynamicContractRegistry.t
-                    ),
-                  ]
-                | _ => Assert.fail("Should have 2 dcs")
-                },
-                ~message="Should keep both dcs after restart in db",
-              )
-              Assert.equal(
-                (await sql
-                ->Postgres.unsafe(`SELECT * FROM public.dynamic_contract_registry_history;`))
-                ->Array.length,
-                1,
-                ~message=`But it'll still remove the dc history for pre-registered one,
-                this case is not possible in real life, since pre-registration never happens in reorg threshold`,
-              )
-
-              raise(RollbackTransaction)
-            }
-          )(),
-        ],
-      ) catch {
-      | RollbackTransaction => ()
-      | Js.Exn.Error(e) => raise(e->Obj.magic)
       }
 
       Assert.deepEqual(
@@ -425,7 +314,6 @@ describe("Dynamic contract restart resistance test", () => {
           NextQuery(Chain(Mock.Chain2.chain)),
           UpdateChainMetaDataAndCheckForExit(NoExit),
           ProcessEventBatch,
-          NextQuery(CheckAllChains),
           PruneStaleEntityHistory,
         ],
         ~message="This looks wrong, but snapshot to track how it changes with time",
