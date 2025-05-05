@@ -87,7 +87,7 @@ module SyncBar = {
 }
 
 @react.component
-let make = (~chainData: chainData, ~isPreRegisteringDynamicContracts) => {
+let make = (~chainData: chainData) => {
   let {
     chain,
     progress,
@@ -122,9 +122,7 @@ let make = (~chainData: chainData, ~isPreRegisteringDynamicContracts) => {
       <Box flexDirection={Row} justifyContent={SpaceBetween} width=Num(57)>
         <Box>
           <Text>
-            {isPreRegisteringDynamicContracts
-              ? "Contracts Registered: "->React.string
-              : "Events Processed: "->React.string}
+            {"Events Processed: "->React.string}
           </Text>
           <Text bold=true> {numEventsProcessed->formatLocaleString->React.string} </Text>
         </Box>
@@ -135,7 +133,7 @@ let make = (~chainData: chainData, ~isPreRegisteringDynamicContracts) => {
         loaded={latestProcessedBlock - firstEventBlockNumber}
         buffered={latestFetchedBlockNumber - firstEventBlockNumber}
         outOf={toBlock - firstEventBlockNumber}
-        loadingColor={isPreRegisteringDynamicContracts ? Primary : Secondary}
+        loadingColor={Secondary}
         poweredByHyperSync
       />
       <Newline />

@@ -38,14 +38,6 @@ type chainConfig = {
   sources: array<Source.t>,
 }
 
-let shouldPreRegisterDynamicContracts = (chainConfig: chainConfig) => {
-  chainConfig.contracts->Array.some(contract => {
-    contract.events->Array.some(eventConfig => {
-      eventConfig.preRegisterDynamicContracts
-    })
-  })
-}
-
 type historyFlag = FullHistory | MinHistory
 type rollbackFlag = RollbackOnReorg | NoRollback
 type historyConfig = {rollbackFlag: rollbackFlag, historyFlag: historyFlag}

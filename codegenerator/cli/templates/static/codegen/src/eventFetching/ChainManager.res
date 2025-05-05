@@ -365,11 +365,6 @@ let isActivelyIndexing = self =>
   ->ChainMap.values
   ->Js.Array2.every(ChainFetcher.isActivelyIndexing)
 
-let isPreRegisteringDynamicContracts = self =>
-  self.chainFetchers
-  ->ChainMap.values
-  ->Array.reduce(false, (accum, cf) => accum || cf->ChainFetcher.isPreRegisteringDynamicContracts)
-
 let getSafeChainIdAndBlockNumberArray = (self: t): array<
   DbFunctions.EntityHistory.chainIdAndBlockNumber,
 > => {

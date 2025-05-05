@@ -232,7 +232,6 @@ module.exports.deleteInvalidDynamicContractsOnRestart = (
     DELETE
     FROM ${sql(publicSchema)}."dynamic_contract_registry"
     WHERE chain_id = ${chainId}
-    AND is_pre_registered = false
     AND (
       registering_event_block_number > ${restartBlockNumber} 
       OR registering_event_block_number = ${restartBlockNumber}

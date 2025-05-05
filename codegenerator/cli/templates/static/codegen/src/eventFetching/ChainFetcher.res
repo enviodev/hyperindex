@@ -25,10 +25,6 @@ type t = {
   //An optional list of filters to apply on event queries
   //Used for reorgs and restarts
   processingFilters: option<array<processingFilter>>,
-  //Currently this state applies to all chains simultaneously but it may be possible to,
-  //in the future, have a per chain state and allow individual chains to start indexing as
-  //soon as the pre registration is done
-  dynamicContractPreRegistration: option<addressToDynContractLookup>,
 }
 
 //CONSTRUCTION
@@ -46,11 +42,8 @@ let make = (
   ~numBatchesFetched,
   ~processingFilters,
   ~maxAddrInPartition,
-  ~dynamicContractPreRegistration,
   ~enableRawEvents,
 ): t => {
-  let isPreRegisteringDynamicContracts = dynamicContractPreRegistration->Option.isSome
-
   // We don't need the router itself, but only validation logic,
   // since now event router is created for selection of events
   // and validation doesn't work correctly in routers.
@@ -65,7 +58,7 @@ let make = (
     let contractName = contract.name
 
     contract.events->Array.forEach(eventConfig => {
-      let {isWildcard, preRegisterDynamicContracts} = eventConfig
+      let {isWildcard} = eventConfig
       let hasContractRegister = eventConfig.contractRegister->Option.isSome
 
       // Should validate the events
@@ -80,9 +73,7 @@ let make = (
 
       // Filter out non-preRegistration events on preRegistration phase
       // so we don't care about it in fetch state and workers anymore
-      let shouldBeIncluded = if isPreRegisteringDynamicContracts {
-        preRegisterDynamicContracts && hasContractRegister
-      } else if enableRawEvents {
+      let shouldBeIncluded = if enableRawEvents {
         true
       } else {
         let isRegistered = hasContractRegister || eventConfig.handler->Option.isSome
@@ -129,7 +120,6 @@ let make = (
     numEventsProcessed,
     numBatchesFetched,
     processingFilters,
-    dynamicContractPreRegistration,
   }
 }
 
@@ -138,9 +128,6 @@ let makeFromConfig = (chainConfig: Config.chainConfig, ~maxAddrInPartition, ~ena
   let lastBlockScannedHashes = ReorgDetection.LastBlockScannedHashes.empty(
     ~confirmedBlockThreshold=chainConfig.confirmedBlockThreshold,
   )
-
-  let dynamicContractPreRegistration =
-    chainConfig->Config.shouldPreRegisterDynamicContracts ? Some(Js.Dict.empty()) : None
 
   make(
     ~chainConfig,
@@ -156,7 +143,6 @@ let makeFromConfig = (chainConfig: Config.chainConfig, ~maxAddrInPartition, ~ena
     ~processingFilters=None,
     ~dynamicContracts=[],
     ~maxAddrInPartition,
-    ~dynamicContractPreRegistration,
     ~enableRawEvents,
   )
 }
@@ -176,12 +162,9 @@ let makeFromDbState = async (
 
   let chainMetadata = await sql->DbFunctions.ChainMetadata.getLatestChainMetadataState(~chainId)
 
-  let preRegisterDynamicContracts = chainConfig->Config.shouldPreRegisterDynamicContracts
-
   let (
     restartBlockNumber: int,
     restartLogIndex: int,
-    isPreRegisteringDynamicContracts: bool,
     processingFilters: option<array<processingFilter>>,
   ) = switch latestProcessedEvent {
   | Some(event) =>
@@ -203,10 +186,9 @@ let makeFromDbState = async (
     (
       event.blockNumber,
       event.logIndex,
-      event.isPreRegisteringDynamicContracts,
       Some(processingFilters),
     )
-  | None => (chainConfig.startBlock, 0, preRegisterDynamicContracts, None)
+  | None => (chainConfig.startBlock, 0, None)
   }
 
   let _ = await Promise.all([
@@ -223,26 +205,9 @@ let makeFromDbState = async (
   ])
 
   // Since we deleted all contracts after the restart point,
-  // besides the preRegistered ones,
   // we can simply query all dcs we have in db
   let dbRecoveredDynamicContracts =
     await sql->DbFunctions.DynamicContractRegistry.readAllDynamicContracts(~chainId)
-
-  let (
-    dynamicContractPreRegistration: option<addressToDynContractLookup>,
-    dynamicContracts: array<TablesStatic.DynamicContractRegistry.t>,
-  ) = if isPreRegisteringDynamicContracts {
-    let dynamicContractPreRegistration: addressToDynContractLookup = Js.Dict.empty()
-    dbRecoveredDynamicContracts->Array.forEach(contract => {
-      dynamicContractPreRegistration->Js.Dict.set(
-        contract.contractAddress->Address.toString,
-        contract,
-      )
-    })
-    (Some(dynamicContractPreRegistration), [])
-  } else {
-    (None, dbRecoveredDynamicContracts)
-  }
 
   let (
     firstEventBlockNumber,
@@ -290,7 +255,7 @@ let makeFromDbState = async (
     )
 
   make(
-    ~dynamicContracts,
+    ~dynamicContracts=dbRecoveredDynamicContracts,
     ~chainConfig,
     ~startBlock=restartBlockNumber,
     ~endBlock=chainConfig.endBlock,
@@ -303,7 +268,6 @@ let makeFromDbState = async (
     ~logger,
     ~processingFilters,
     ~maxAddrInPartition,
-    ~dynamicContractPreRegistration,
     ~enableRawEvents,
   )
 }
@@ -354,7 +318,6 @@ let runContractRegistersOrThrow = (~reversedWithContractRegister: array<Internal
       registeringEventBlockTimestamp: timestamp,
       contractAddress,
       contractType: contractName,
-      isPreRegistered: eventItem.eventConfig.preRegisterDynamicContracts,
     }
 
     dynamicContracts->Array.push(dc)
@@ -535,6 +498,3 @@ let getFirstEventBlockNumber = (chainFetcher: t) =>
     chainFetcher.dbFirstEventBlockNumber,
     chainFetcher.fetchState.firstEventBlockNumber,
   )
-
-let isPreRegisteringDynamicContracts = (chainFetcher: t) =>
-  chainFetcher.dynamicContractPreRegistration->Option.isSome

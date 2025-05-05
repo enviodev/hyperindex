@@ -106,8 +106,6 @@ type action =
     })
   | FinishWaitingForNewBlock({chain: chain, currentBlockHeight: int})
   | EventBatchProcessed(EventProcessing.EventsProcessed.t)
-  | DynamicContractPreRegisterProcessed(EventProcessing.EventsProcessed.t)
-  | StartIndexingAfterPreRegister
   | SetCurrentlyProcessing(bool)
   | SetIsInReorgThreshold(bool)
   | UpdateQueues(ChainMap.t<ChainManager.fetchStateWithData>)
@@ -126,7 +124,6 @@ type task =
       nextEndOfBlockRangeScannedData: DbFunctions.EndOfBlockRangeScannedData.endOfBlockRangeScannedData,
     })
   | ProcessEventBatch
-  | PreRegisterDynamicContracts
   | UpdateChainMetaDataAndCheckForExit(shouldExit)
   | Rollback
   | PruneStaleEntityHistory
@@ -435,16 +432,11 @@ let handlePartitionQueryResponse = (
         },
       }
 
-      let processAction =
-        updatedChainFetcher->ChainFetcher.isPreRegisteringDynamicContracts
-          ? PreRegisterDynamicContracts
-          : ProcessEventBatch
-
       (
         nextState,
         Array.concat(
           updateEndOfBlockRangeScannedDataArr,
-          [UpdateChainMetaDataAndCheckForExit(NoExit), processAction, NextQuery(Chain(chain))],
+          [UpdateChainMetaDataAndCheckForExit(NoExit), ProcessEventBatch, NextQuery(Chain(chain))],
         ),
       )
     }
@@ -592,106 +584,6 @@ let actionReducer = (state: t, action: action) => {
       [NextQuery(CheckAllChains), ProcessEventBatch],
     )
   | ResetRollbackState => ({...state, rollbackState: NoRollback}, [])
-  | DynamicContractPreRegisterProcessed(latestProcessedBlocks) =>
-    let state = updateLatestProcessedBlocks(
-      ~state,
-      ~latestProcessedBlocks,
-      ~shouldSetPrometheusSynced=false,
-    )
-
-    // let state = switch dynamicContractRegistrations {
-    // | None => state
-    // | Some({dynamicContractsByChain}) =>
-    //   let updatedChainFetchers = state.chainManager.chainFetchers->ChainMap.mapWithKey((
-    //     chain,
-    //     cf,
-    //   ) => {
-    //     switch dynamicContractsByChain->Utils.Dict.dangerouslyGetNonOption(
-    //       chain->ChainMap.Chain.toString,
-    //     ) {
-    //     | None => cf
-    //     | Some(dcs) => {
-    //         let contractAddressMapping = Js.Dict.empty()
-
-    //         dcs->Array.forEach(dc =>
-    //           contractAddressMapping->Js.Dict.set(dc.contractAddress->Address.toString, dc)
-    //         )
-
-    //         let dynamicContractPreRegistration = switch cf.dynamicContractPreRegistration {
-    //         | Some(current) => current->Utils.Dict.merge(contractAddressMapping)
-    //         //Should never be the case while this task is being scheduled
-    //         | None => contractAddressMapping
-    //         }->Some
-
-    //         {
-    //           ...cf,
-    //           dynamicContractPreRegistration,
-    //         }
-    //       }
-    //     }
-    //   })
-
-    //   let updatedChainManager = {
-    //     ...state.chainManager,
-    //     chainFetchers: updatedChainFetchers,
-    //   }
-    //   {
-    //     ...state,
-    //     chainManager: updatedChainManager,
-    //   }
-    // }
-
-    (
-      state,
-      [
-        UpdateChainMetaDataAndCheckForExit(NoExit),
-        PreRegisterDynamicContracts,
-        NextQuery(CheckAllChains),
-      ],
-    )
-  | StartIndexingAfterPreRegister =>
-    let {config, chainManager, loadLayer} = state
-
-    Logging.info("Starting indexing after pre-registration")
-    let chainFetchers = chainManager.chainFetchers->ChainMap.map(cf => {
-      let {
-        chainConfig,
-        logger,
-        startBlock,
-        fetchState: {maxAddrInPartition},
-        dynamicContractPreRegistration,
-      } = cf
-
-      ChainFetcher.make(
-        ~dynamicContracts=dynamicContractPreRegistration->Option.mapWithDefault([], Js.Dict.values),
-        ~chainConfig,
-        ~lastBlockScannedHashes=ReorgDetection.LastBlockScannedHashes.empty(
-          ~confirmedBlockThreshold=chainConfig.confirmedBlockThreshold,
-        ),
-        ~startBlock,
-        ~endBlock=chainConfig.endBlock,
-        ~dbFirstEventBlockNumber=None,
-        ~latestProcessedBlock=None,
-        ~logger,
-        ~timestampCaughtUpToHeadOrEndblock=None,
-        ~numEventsProcessed=0,
-        ~numBatchesFetched=0,
-        ~processingFilters=None,
-        ~maxAddrInPartition,
-        ~dynamicContractPreRegistration=None,
-        ~enableRawEvents=config.enableRawEvents,
-      )
-    })
-
-    let chainManager: ChainManager.t = {
-      chainFetchers,
-      isInReorgThreshold: false,
-      isUnorderedMultichainMode: chainManager.isUnorderedMultichainMode,
-    }
-
-    let freshState = make(~config, ~chainManager, ~loadLayer, ~shouldUseTui=state.shouldUseTui)
-
-    (freshState->incrementId, [NextQuery(CheckAllChains)])
   | SuccessExit => {
       Logging.info("Exiting with success")
       NodeJs.process->NodeJs.exitWithCode(Success)
@@ -869,80 +761,6 @@ let injectedTaskReducer = (
         ->ChainMap.keys
         ->Array.map(fetchForChain(_))
         ->Promise.all
-    }
-  | PreRegisterDynamicContracts =>
-    let startIndexingAfterPreRegister = async () => {
-      //Persisted event sync state needs to reset before starting indexing
-      //otherwise crash and restart will have stale sync state from pre-registration
-      await DbFunctions.EventSyncState.resetEventSyncState()
-      dispatchAction(StartIndexingAfterPreRegister)
-    }
-    if !state.currentlyProcessingBatch && !isRollingBack(state) {
-      switch state.chainManager->ChainManager.createBatch(
-        ~maxBatchSize=state.maxBatchSize,
-        ~onlyBelowReorgThreshold=true,
-      ) {
-      | {val: Some({batch, fetchStatesMap})} =>
-        dispatchAction(SetCurrentlyProcessing(true))
-        dispatchAction(UpdateQueues(fetchStatesMap))
-        let latestProcessedBlocks = EventProcessing.EventsProcessed.makeFromChainManager(
-          state.chainManager,
-        )
-
-        let checkContractIsRegistered = (
-          ~chain,
-          ~contractAddress,
-          ~contractName: Enums.ContractType.t,
-        ) => {
-          let chainFetcher = state.chainManager.chainFetchers->ChainMap.get(chain)
-
-          switch chainFetcher.dynamicContractPreRegistration->Option.flatMap(
-            Js.Dict.get(_, contractAddress->Address.toString),
-          ) {
-          | Some({contractType}) =>
-            FetchState.warnIfAttemptedAddressRegisterOnDifferentContracts(
-              ~contractAddress,
-              ~contractName=(contractName :> string),
-              ~existingContractName=(contractType :> string),
-              ~chainId=chain->ChainMap.Chain.toChainId,
-            )
-            true
-          | None => false
-          }
-        }
-
-      // FIXME:
-      // switch await EventProcessing.getDynamicContractRegistrations(
-      //   ~latestProcessedBlocks,
-      //   ~eventBatch=batch,
-      //   ~checkContractIsRegistered,
-      //   ~config=state.config,
-      // ) {
-      // | Ok(batchProcessed) => dispatchAction(DynamicContractPreRegisterProcessed(batchProcessed))
-      // | Error(errHandler) => dispatchAction(ErrorExit(errHandler))
-      // | exception exn =>
-      //   //All casese should be handled/caught before this with better user messaging.
-      //   //This is just a safety in case something unexpected happens
-      //   let errHandler =
-      //     exn->ErrorHandling.make(
-      //       ~msg="A top level unexpected error occurred during pre registration of dynamic contracts",
-      //     )
-      //   dispatchAction(ErrorExit(errHandler))
-      // }
-      | {isInReorgThreshold: true, val: None} =>
-        //pre registration is done, we've hit the multichain reorg threshold
-        //on the last batch and there are no items on the queue
-        await startIndexingAfterPreRegister()
-      | {val: None} if state.chainManager->ChainManager.isFetchingAtHead =>
-        //pre registration is done, there are no items on the queue and we are fetching at head
-        //this case is only hit if we are indexing chains with no reorg threshold
-        await startIndexingAfterPreRegister()
-      | {val: None} if !(state.chainManager->ChainManager.isActivelyIndexing) =>
-        //pre registration is done, there are no items on the queue
-        //this case is hit when there's a chain with an endBlock
-        await startIndexingAfterPreRegister()
-      | _ => () //Nothing to process and pre registration is not done
-      }
     }
   | ProcessEventBatch =>
     if !state.currentlyProcessingBatch && !isRollingBack(state) {

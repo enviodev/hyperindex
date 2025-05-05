@@ -38,7 +38,6 @@ module EventsProcessed = {
 let updateEventSyncState = (
   eventItem: Internal.eventItem,
   ~inMemoryStore: InMemoryStore.t,
-  ~isPreRegisteringDynamicContracts,
 ) => {
   let {event, chain, blockNumber, timestamp: blockTimestamp} = eventItem
   let {logIndex} = event
@@ -50,7 +49,6 @@ let updateEventSyncState = (
       blockTimestamp,
       blockNumber,
       logIndex,
-      isPreRegisteringDynamicContracts,
     },
   )
 }
@@ -224,7 +222,7 @@ let runHandler = async (
   }
 
   result->Result.map(() => {
-    eventItem->updateEventSyncState(~inMemoryStore, ~isPreRegisteringDynamicContracts=false)
+    eventItem->updateEventSyncState(~inMemoryStore)
 
     if config.enableRawEvents {
       eventItem->addEventToRawEvents(~inMemoryStore)

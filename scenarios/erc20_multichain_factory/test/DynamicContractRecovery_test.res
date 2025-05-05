@@ -339,6 +339,7 @@ describe("Dynamic contract restart resistance test", () => {
               let () = await sql->Postgres.unsafe(`UPDATE public.dynamic_contract_registry
                 SET is_pre_registered = true
                 WHERE registering_event_block_number = 1;`)
+              // FIXME:
 
               let restartedChainFetcher = await ChainFetcher.makeFromDbState(
                 chainConfigWithPreRegistration,
