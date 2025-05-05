@@ -118,7 +118,8 @@ describe("EventRouter", () => {
       router->EventRouter.get(
         ~tag="test-event-tag",
         ~contractAddress=mockAddress1,
-        ~contractAddressMapping=ContractAddressingMap.make(),
+        ~blockNumber=0,
+        ~indexingContracts=Js.Dict.empty(),
       ),
       Some(1),
     )
@@ -150,17 +151,23 @@ describe("EventRouter", () => {
         ~isWildcard=false,
       )
 
-      let contractAddressMapping = ContractAddressingMap.make()
-      contractAddressMapping->ContractAddressingMap.addAddress(
-        ~name=nonWildcardContractName,
-        ~address=nonWildcardContractAddress,
+      let indexingContracts = Js.Dict.empty()
+      indexingContracts->Js.Dict.set(
+        nonWildcardContractName,
+        {
+          FetchState.startBlock: 0,
+          contractName: nonWildcardContractName,
+          address: nonWildcardContractAddress,
+          register: Config,
+        },
       )
 
       Assert.deepEqual(
         router->EventRouter.get(
           ~tag="test-event-tag",
           ~contractAddress=nonWildcardContractAddress,
-          ~contractAddressMapping,
+          ~blockNumber=0,
+          ~indexingContracts,
         ),
         Some("non-wildcard"),
         ~message="Should return the non wildcard event",
@@ -170,7 +177,8 @@ describe("EventRouter", () => {
         router->EventRouter.get(
           ~tag="test-event-tag",
           ~contractAddress=wildcardContractAddress,
-          ~contractAddressMapping,
+          ~blockNumber=0,
+          ~indexingContracts,
         ),
         Some("wildcard"),
         ~message="Should return the wildcard event",

@@ -63,7 +63,8 @@ let sourceMock = (
         getItemsOrThrow: (
           ~fromBlock,
           ~toBlock,
-          ~contractAddressMapping as _,
+          ~addressesByContractName as _,
+          ~indexingContracts as _,
           ~currentBlockHeight,
           ~partitionId as _,
           ~selection as _,
@@ -223,12 +224,15 @@ describe("SourceManager fetchNext", () => {
     ~numContracts=2,
     ~fetchedEventQueue=[],
   ): FetchState.partition => {
-    let contractAddressMapping = ContractAddressingMap.make()
+    let addressesByContractName = Js.Dict.empty()
+    let addresses = []
 
     for i in 0 to numContracts - 1 {
       let address = TestHelpers.Addresses.mockAddresses[i]->Option.getExn
-      contractAddressMapping->ContractAddressingMap.addAddress(~name="MockContract", ~address)
+      addresses->Array.push(address)
     }
+
+    addressesByContractName->Js.Dict.set("MockContract", addresses)
 
     {
       id: partitionIndex->Int.toString,
@@ -240,13 +244,35 @@ describe("SourceManager fetchNext", () => {
         blockTimestamp: latestFetchedBlockNumber * 15,
       },
       selection: normalSelection,
-      contractAddressMapping,
-      dynamicContracts: [],
+      addressesByContractName,
       fetchedEventQueue,
     }
   }
 
-  let mockFetchState = (partitions, ~endBlock=None): FetchState.t => {
+  let mockFetchState = (partitions: array<FetchState.partition>, ~endBlock=None): FetchState.t => {
+    let indexingContracts = Js.Dict.empty()
+    partitions->Array.forEach(partition => {
+      partition.addressesByContractName
+      ->Js.Dict.entries
+      ->Array.forEach(
+        ((contractName, addresses)) => {
+          addresses->Array.forEach(
+            address => {
+              indexingContracts->Js.Dict.set(
+                address->Address.toString,
+                {
+                  FetchState.contractName,
+                  startBlock: 0,
+                  address,
+                  register: Config,
+                },
+              )
+            },
+          )
+        },
+      )
+    })
+
     {
       partitions,
       endBlock,
@@ -258,6 +284,7 @@ describe("SourceManager fetchNext", () => {
       latestFullyFetchedBlock: %raw(`null`),
       isFetchingAtHead: false,
       chainId: 0,
+      indexingContracts,
       // All the null values should be computed during updateInternal
     }->FetchState.updateInternal
   }
@@ -305,21 +332,24 @@ describe("SourceManager fetchNext", () => {
             fromBlock: 5,
             target: Head,
             selection: normalSelection,
-            contractAddressMapping: partition0.contractAddressMapping,
+            addressesByContractName: partition0.addressesByContractName,
+            indexingContracts: fetchState.indexingContracts,
           },
           {
             partitionId: "1",
             fromBlock: 6,
             target: Head,
             selection: normalSelection,
-            contractAddressMapping: partition1.contractAddressMapping,
+            addressesByContractName: partition1.addressesByContractName,
+            indexingContracts: fetchState.indexingContracts,
           },
           {
             partitionId: "2",
             fromBlock: 2,
             target: Head,
             selection: normalSelection,
-            contractAddressMapping: partition2.contractAddressMapping,
+            addressesByContractName: partition2.addressesByContractName,
+            indexingContracts: fetchState.indexingContracts,
           },
         ],
       )
@@ -368,14 +398,16 @@ describe("SourceManager fetchNext", () => {
             fromBlock: 2,
             target: Head,
             selection: normalSelection,
-            contractAddressMapping: partition2.contractAddressMapping,
+            addressesByContractName: partition2.addressesByContractName,
+            indexingContracts: fetchState.indexingContracts,
           },
           {
             partitionId: "0",
             fromBlock: 5,
             target: Head,
             selection: normalSelection,
-            contractAddressMapping: partition0.contractAddressMapping,
+            addressesByContractName: partition0.addressesByContractName,
+            indexingContracts: fetchState.indexingContracts,
           },
         ],
       )
@@ -1315,10 +1347,9 @@ describe("SourceManager wait for new blocks", () => {
     },
   )
 })
-
 describe("SourceManager.executeQuery", () => {
   let selection = {FetchState.dependsOnAddresses: false, eventConfigs: []}
-  let contractAddressMapping = ContractAddressingMap.make()
+  let addressesByContractName = Js.Dict.empty()
   let items = []
 
   let mockQuery = (): FetchState.query => {
@@ -1326,7 +1357,8 @@ describe("SourceManager.executeQuery", () => {
     fromBlock: 0,
     target: Head,
     selection,
-    contractAddressMapping,
+    addressesByContractName,
+    indexingContracts: Js.Dict.empty(),
   }
 
   Async.it("Successfully executes the query", async () => {

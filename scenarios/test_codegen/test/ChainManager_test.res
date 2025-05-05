@@ -88,13 +88,14 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
                   dependsOnAddresses: false,
                   eventConfigs,
                 },
-                contractAddressMapping: ContractAddressingMap.make(),
+                addressesByContractName: Js.Dict.empty(),
+                indexingContracts: fetchState.contents.indexingContracts,
               },
               ~latestFetchedBlock={
                 blockNumber: batchItem.blockNumber,
                 blockTimestamp: batchItem.timestamp,
               },
-              ~newItems=[batchItem],
+              ~reversedNewItems=[batchItem],
               ~currentBlockHeight=currentBlockNumber.contents,
             )
             ->Result.getExn
@@ -115,13 +116,14 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
                     dependsOnAddresses: false,
                     eventConfigs,
                   },
-                  contractAddressMapping: ContractAddressingMap.make(),
+                  addressesByContractName: Js.Dict.empty(),
+                  indexingContracts: fetchState.contents.indexingContracts,
                 },
                 ~latestFetchedBlock={
                   blockNumber: batchItem.blockNumber,
                   blockTimestamp: batchItem.timestamp,
                 },
-                ~newItems=[batchItem],
+                ~reversedNewItems=[batchItem],
                 ~currentBlockHeight=currentBlockNumber.contents,
               )
               ->Result.getExn
@@ -154,7 +156,6 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
       ),
       currentBlockHeight: 0,
       processingFilters: None,
-      dynamicContractPreRegistration: None,
     }
 
     mockChainFetcher
@@ -162,8 +163,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
 
   (
     {
-      ChainManager.arbitraryEventQueue: arbitraryEventPriorityQueue.contents,
-      chainFetchers,
+      ChainManager.chainFetchers,
       isUnorderedMultichainMode: false,
       isInReorgThreshold: false,
     },
@@ -205,7 +205,7 @@ describe("ChainManager", () => {
           // ensure that the events are ordered correctly
           switch eventsInBlock.val {
           | None => chainManager
-          | Some({batch, fetchStatesMap, arbitraryEventQueue}) =>
+          | Some({batch, fetchStatesMap}) =>
             batch->Belt.Array.forEach(
               i => {
                 let _ = allEventsRead->Js.Array2.push(i)
@@ -271,7 +271,6 @@ describe("ChainManager", () => {
 
             let nextChainManager: ChainManager.t = {
               ...chainManager,
-              arbitraryEventQueue,
               chainFetchers: nextChainFetchers,
             }
             testThatCreatedEventsAreOrderedCorrectly(nextChainManager, lastEvent)
@@ -285,15 +284,14 @@ describe("ChainManager", () => {
 
         // Test that no events were missed
         let amountStillOnQueues =
-          finalChainManager.arbitraryEventQueue->Array.length +
-            finalChainManager.chainFetchers
-            ->ChainMap.values
-            ->Belt.Array.reduce(
-              0,
-              (accum, val) => {
-                accum + val.fetchState->FetchState.queueSize
-              },
-            )
+          finalChainManager.chainFetchers
+          ->ChainMap.values
+          ->Belt.Array.reduce(
+            0,
+            (accum, val) => {
+              accum + val.fetchState->FetchState.queueSize
+            },
+          )
 
         Assert.equal(
           amountStillOnQueues + numberOfMockEventsReadFromQueues.contents,
@@ -350,8 +348,7 @@ describe("determineNextEvent", () => {
           fetchingStateId: None,
         },
         selection: normalSelection,
-        contractAddressMapping: ContractAddressingMap.make(),
-        dynamicContracts: [],
+        addressesByContractName: Js.Dict.empty(),
         fetchedEventQueue: item->Option.mapWithDefault([], v => [v]),
       }
       {
@@ -368,6 +365,7 @@ describe("determineNextEvent", () => {
         firstEventBlockNumber: item->Option.map(v => v.blockNumber),
         normalSelection,
         chainId: 0,
+        indexingContracts: Js.Dict.empty(),
       }
     }
 

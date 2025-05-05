@@ -254,10 +254,7 @@ module Make = (Indexer: Indexer.S) => {
     let currentBlockHeight = self->getHeight
 
     let addressesAndEventNames = self.chainConfig.contracts->Array.map(c => {
-      let addresses =
-        query.contractAddressMapping->ContractAddressingMap.getAddressesFromContractName(
-          ~contractName=c.name,
-        )
+      let addresses = query.addressesByContractName->Js.Dict.get(c.name)->Option.getWithDefault([])
       {
         addresses,
         eventKeys: c.events->Belt.Array.map(eventConfig => {

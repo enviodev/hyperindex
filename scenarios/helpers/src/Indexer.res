@@ -3,14 +3,9 @@ module type S = {
     type t
   }
 
-  module ContractAddressingMap: {
-    type mapping
-    let make: unit => mapping
-    let getAllAddresses: mapping => array<Address.t>
-    let getAddressesFromContractName: (mapping, ~contractName: string) => array<Address.t>
-  }
-
   module FetchState: {
+    type indexingContract
+
     type selection = {
       eventConfigs: array<Internal.eventConfig>,
       dependsOnAddresses: bool,
@@ -30,8 +25,9 @@ module type S = {
       partitionId: string,
       fromBlock: int,
       selection: selection,
-      contractAddressMapping: ContractAddressingMap.mapping,
+      addressesByContractName: dict<array<Address.t>>,
       target: queryTarget,
+      indexingContracts: dict<indexingContract>,
     }
   }
 
@@ -66,7 +62,8 @@ module type S = {
       getItemsOrThrow: (
         ~fromBlock: int,
         ~toBlock: option<int>,
-        ~contractAddressMapping: ContractAddressingMap.mapping,
+        ~addressesByContractName: dict<array<Address.t>>,
+        ~indexingContracts: dict<FetchState.indexingContract>,
         ~currentBlockHeight: int,
         ~partitionId: string,
         ~selection: FetchState.selection,

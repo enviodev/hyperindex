@@ -263,10 +263,8 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
 })
 
 let chain = HyperSyncSource_test.chain
-
 describe("RpcSource - getSelectionConfig", () => {
   let mockAddress0 = TestHelpers.Addresses.mockAddresses[0]
-  let contractAddressMappingWithAddress = ContractAddressingMap.fromArray([(mockAddress0, "ERC20")])
 
   it("Selection config for the most basic case with no wildcards", () => {
     let selectionConfig = {
@@ -276,7 +274,7 @@ describe("RpcSource - getSelectionConfig", () => {
 
     Assert.deepEqual(
       selectionConfig.getLogSelectionOrThrow(
-        ~contractAddressMapping=contractAddressMappingWithAddress,
+        ~addressesByContractName=Js.Dict.fromArray([("ERC20", [mockAddress0])]),
       ),
       {
         addresses: Some([mockAddress0]),
@@ -296,7 +294,7 @@ describe("RpcSource - getSelectionConfig", () => {
     }->RpcSource.getSelectionConfig(~chain)
 
     Assert.deepEqual(
-      selectionConfig.getLogSelectionOrThrow(~contractAddressMapping=ContractAddressingMap.make()),
+      selectionConfig.getLogSelectionOrThrow(~addressesByContractName=Js.Dict.empty()),
       {
         addresses: None,
         topicQuery: [Multiple(["1", "2"])],
@@ -319,7 +317,7 @@ describe("RpcSource - getSelectionConfig", () => {
 
     Assert.deepEqual(
       selectionConfig.getLogSelectionOrThrow(
-        ~contractAddressMapping=ContractAddressingMap.fromArray([(mockAddress0, "ERC20")]),
+        ~addressesByContractName=Js.Dict.fromArray([("ERC20", [mockAddress0])]),
       ),
       {
         addresses: None,
@@ -342,7 +340,7 @@ describe("RpcSource - getSelectionConfig", () => {
 
     Assert.deepEqual(
       selectionConfig.getLogSelectionOrThrow(
-        ~contractAddressMapping=ContractAddressingMap.fromArray([(mockAddress0, "ERC20")]),
+        ~addressesByContractName=Js.Dict.fromArray([("ERC20", [mockAddress0])]),
       ),
       {
         addresses: Some([mockAddress0]),
