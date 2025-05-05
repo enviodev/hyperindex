@@ -6,18 +6,16 @@ exception WildcardCollision
 module Group = {
   type t<'a> = {
     mutable wildcard: option<'a>,
-    all: array<'a>,
     byContractName: dict<'a>,
   }
 
   let empty = () => {
     wildcard: None,
-    all: [],
     byContractName: Js.Dict.empty(),
   }
 
   let addOrThrow = (group: t<'a>, event, ~contractName, ~isWildcard) => {
-    let {all, byContractName, wildcard} = group
+    let {byContractName, wildcard} = group
     switch byContractName->Utils.Dict.dangerouslyGetNonOption(contractName) {
     | Some(_) => raise(EventDuplicate)
     | None =>
@@ -27,7 +25,6 @@ module Group = {
         if isWildcard {
           group.wildcard = Some(event)
         }
-        all->Js.Array2.push(event)->ignore
         byContractName->Js.Dict.set(contractName, event)
       }
     }
