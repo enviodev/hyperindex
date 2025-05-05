@@ -27,18 +27,14 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
     selectionConfig.getRecieptsSelection
   }
 
-  let mockContractAddressMapping = () => {
-    ContractAddressingMap.fromArray([
-      (address1, contractName1),
-      (address2, contractName1),
-      (address3, contractName2),
-    ])
+  let mockAddressesByContractName = () => {
+    Js.Dict.fromArray([(contractName1, [address1, address2]), (contractName2, [address3])])
   }
 
   it("Receipts Selection with no contracts", () => {
     let getNormalRecieptsSelection = mock(~contracts=[])
     Assert.deepEqual(
-      getNormalRecieptsSelection(~contractAddressMapping=mockContractAddressMapping()),
+      getNormalRecieptsSelection(~addressesByContractName=mockAddressesByContractName()),
       [],
     )
   })
@@ -53,7 +49,7 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
       ],
     )
     Assert.deepEqual(
-      getNormalRecieptsSelection(~contractAddressMapping=mockContractAddressMapping()),
+      getNormalRecieptsSelection(~addressesByContractName=mockAddressesByContractName()),
       [],
     )
   })
@@ -85,7 +81,7 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
       ],
     )
     Assert.deepEqual(
-      getNormalRecieptsSelection(~contractAddressMapping=mockContractAddressMapping()),
+      getNormalRecieptsSelection(~addressesByContractName=mockAddressesByContractName()),
       [
         {
           rb: [1n],
@@ -141,7 +137,7 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
         ],
       )
       Assert.deepEqual(
-        getNormalRecieptsSelection(~contractAddressMapping=mockContractAddressMapping()),
+        getNormalRecieptsSelection(~addressesByContractName=mockAddressesByContractName()),
         [
           {
             receiptType: [Transfer, TransferOut],
@@ -200,7 +196,7 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
       ],
     )
     Assert.deepEqual(
-      getNormalRecieptsSelection(~contractAddressMapping=mockContractAddressMapping()),
+      getNormalRecieptsSelection(~addressesByContractName=mockAddressesByContractName()),
       [
         {
           receiptType: [Mint],
@@ -258,7 +254,7 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
       ],
     )
     Assert.deepEqual(
-      getNormalRecieptsSelection(~contractAddressMapping=mockContractAddressMapping()),
+      getNormalRecieptsSelection(~addressesByContractName=mockAddressesByContractName()),
       [
         {
           receiptType: [Burn],
@@ -403,7 +399,7 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
       ],
     )
     Assert.deepEqual(
-      getNormalRecieptsSelection(~contractAddressMapping=mockContractAddressMapping()),
+      getNormalRecieptsSelection(~addressesByContractName=mockAddressesByContractName()),
       [
         {
           receiptType: [Mint, Burn, Transfer, TransferOut],
@@ -593,7 +589,7 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
         ],
       )
       Assert.deepEqual(
-        getNormalRecieptsSelection(~contractAddressMapping=mockContractAddressMapping()),
+        getNormalRecieptsSelection(~addressesByContractName=mockAddressesByContractName()),
         [
           {
             receiptType: [Mint],
@@ -647,7 +643,7 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
       ],
     )
     Assert.deepEqual(
-      getNormalRecieptsSelection(~contractAddressMapping=mockContractAddressMapping()),
+      getNormalRecieptsSelection(~addressesByContractName=mockAddressesByContractName()),
       [
         {
           receiptType: [Mint],
@@ -699,7 +695,7 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
       ],
     )
     Assert.deepEqual(
-      getNormalRecieptsSelection(~contractAddressMapping=mockContractAddressMapping()),
+      getNormalRecieptsSelection(~addressesByContractName=mockAddressesByContractName()),
       [
         {
           receiptType: [Mint],
@@ -752,7 +748,7 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
       ],
     )
     Assert.deepEqual(
-      getNormalRecieptsSelection(~contractAddressMapping=mockContractAddressMapping()),
+      getNormalRecieptsSelection(~addressesByContractName=mockAddressesByContractName()),
       [
         {
           receiptType: [Burn],
@@ -804,7 +800,7 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
       ],
     )
     Assert.deepEqual(
-      getNormalRecieptsSelection(~contractAddressMapping=mockContractAddressMapping()),
+      getNormalRecieptsSelection(~addressesByContractName=mockAddressesByContractName()),
       [
         {
           receiptType: [Burn],
@@ -834,7 +830,7 @@ describe("HyperFuelSource - makeWildcardRecieptsSelection", () => {
         )
       }),
     }->HyperFuelSource.getSelectionConfig(~chain)
-    selectionConfig.getRecieptsSelection(~contractAddressMapping=ContractAddressingMap.make())
+    selectionConfig.getRecieptsSelection(~addressesByContractName=Js.Dict.empty())
   }
 
   it("Receipts Selection with no contracts", () => {
