@@ -183,11 +183,7 @@ let makeFromDbState = async (
       },
     ]
 
-    (
-      event.blockNumber,
-      event.logIndex,
-      Some(processingFilters),
-    )
+    (event.blockNumber, event.logIndex, Some(processingFilters))
   | None => (chainConfig.startBlock, 0, None)
   }
 
@@ -344,13 +340,18 @@ let runContractRegistersOrThrow = (~reversedWithContractRegister: array<Internal
   dynamicContracts
 }
 
+@inline
+let applyProcessingFilters = (~item: Internal.eventItem, ~processingFilters) => {
+  processingFilters->Js.Array2.every(processingFilter => processingFilter.filter(item))
+}
+
 /**
 Updates of fetchState and cleans up event filters. Should be used whenever updating fetchState
 to ensure processingFilters are always valid.
 Returns Error if the node with given id cannot be found (unexpected)
 */
 let handleQueryResult = (
-  self: t,
+  chainFetcher: t,
   ~query: FetchState.query,
   ~latestFetchedBlockTimestamp,
   ~latestFetchedBlockNumber,
@@ -365,34 +366,33 @@ let handleQueryResult = (
   for idx in fetchedEvents->Array.length - 1 downto 0 {
     let item = fetchedEvents->Array.getUnsafe(idx)
     if (
-      switch self.processingFilters {
+      switch chainFetcher.processingFilters {
       | None => true
-      | Some(processingFilters) =>
-        processingFilters->Js.Array2.every(processingFilter => processingFilter.filter(item))
+      | Some(processingFilters) => applyProcessingFilters(~item, ~processingFilters)
       }
     ) {
       if item.eventConfig.contractRegister !== None {
         reversedWithContractRegister->Array.push(item)
       }
 
-      // FIXME: Don't really need to keep it in the queue
-      // besides the correct count of events
-      // FIXME: Or raw_events enabled
-      // if item.eventConfig.handler !== None {
+      // TODO: Don't really need to keep it in the queue
+      // when there's no handler (besides raw_events, processed counter, and dcsToStore consuming)
       reversedNewItems->Array.push(item)
-      // }
     }
   }
 
   let fs = if reversedWithContractRegister->Array.length > 0 {
     let dynamicContracts = runContractRegistersOrThrow(~reversedWithContractRegister)
     switch dynamicContracts {
-    | [] => self.fetchState
+    | [] => chainFetcher.fetchState
     | _ =>
-      self.fetchState->FetchState.registerDynamicContracts(dynamicContracts, ~currentBlockHeight)
+      chainFetcher.fetchState->FetchState.registerDynamicContracts(
+        dynamicContracts,
+        ~currentBlockHeight,
+      )
     }
   } else {
-    self.fetchState
+    chainFetcher.fetchState
   }
 
   fs
@@ -407,9 +407,9 @@ let handleQueryResult = (
   )
   ->Result.map(fetchState => {
     {
-      ...self,
+      ...chainFetcher,
       fetchState,
-      processingFilters: switch self.processingFilters {
+      processingFilters: switch chainFetcher.processingFilters {
       | Some(processingFilters) => processingFilters->cleanUpProcessingFilters(~fetchState)
       | None => None
       },
