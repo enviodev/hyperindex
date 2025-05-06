@@ -252,8 +252,8 @@ let updateInternal = (
   ~nextPartitionIndex=fetchState.nextPartitionIndex,
   ~firstEventBlockNumber=fetchState.firstEventBlockNumber,
   ~indexingContracts=fetchState.indexingContracts,
+  ~dcsToStore=fetchState.dcsToStore,
   ~currentBlockHeight=?,
-  ~dcsToStore=?,
 ): t => {
   let firstPartition = partitions->Js.Array2.unsafe_get(0)
 
@@ -313,12 +313,7 @@ let updateInternal = (
     latestFullyFetchedBlock,
     queueSize: queueSize.contents,
     indexingContracts,
-    dcsToStore: ?switch (fetchState.dcsToStore, dcsToStore) {
-    | (Some(existingDcs), Some(newDcs)) => Some(Array.concat(existingDcs, newDcs))
-    | (Some(existingDcs), None) => Some(existingDcs)
-    | (None, Some(newDcs)) => Some(newDcs)
-    | (None, None) => None
-    },
+    ?dcsToStore,
   }
 }
 
@@ -442,7 +437,7 @@ let registerDynamicContracts = (
         // performing too many separate queries. 1000 is random number from my head.
         // We shouldn't care about events earlier than registeringEventBlockNumber
         // because they should be filtered out by the event router
-        let group = (dc.registeringEventBlockNumber / 1000)->Int.toString
+        let group = "0" // (dc.registeringEventBlockNumber / 1000)->Int.toString
         let dcs = switch dcsByGroup->Utils.Dict.dangerouslyGetNonOption(group) {
         | Some(dcs) => dcs
         | None => {
@@ -479,7 +474,10 @@ let registerDynamicContracts = (
       fetchState->updateInternal(
         ~partitions=fetchState.partitions->Js.Array2.concat(newPartitions),
         ~currentBlockHeight,
-        ~dcsToStore,
+        ~dcsToStore=switch fetchState.dcsToStore {
+        | Some(existingDcs) => Some(Array.concat(existingDcs, dcsToStore))
+        | None => Some(dcsToStore)
+        },
         ~indexingContracts,
         ~nextPartitionIndex=fetchState.nextPartitionIndex + newPartitions->Array.length,
       )
@@ -1178,7 +1176,20 @@ let rollback = (fetchState: t, ~firstChangeEvent) => {
       p->rollbackPartition(~firstChangeEvent, ~addressesToRemove)
     )
 
-  fetchState->updateInternal(~partitions, ~indexingContracts)
+  fetchState->updateInternal(
+    ~partitions,
+    ~indexingContracts,
+    ~dcsToStore=switch fetchState.dcsToStore {
+    | Some(dcsToStore) =>
+      let filtered =
+        dcsToStore->Js.Array2.filter(dc => !(addressesToRemove->Utils.Set.has(dc.contractAddress)))
+      switch filtered {
+      | [] => None
+      | _ => Some(filtered)
+      }
+    | None => None
+    },
+  )
 }
 
 /**

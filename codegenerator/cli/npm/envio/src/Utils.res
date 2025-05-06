@@ -123,6 +123,8 @@ module Dict = {
   ) => dict<'a> = %raw(`(dict, key, value) => ({...dict, [key]: value})`)
 
   let shallowCopy: dict<'a> => dict<'a> = %raw(`(dict) => ({...dict})`)
+
+  let size = dict => dict->Js.Dict.keys->Js.Array2.length
 }
 
 module Math = {
