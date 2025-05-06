@@ -732,7 +732,7 @@ let injectedTaskReducer = (
       let handleBatch = async (batch: ChainManager.batch) => {
         switch batch {
         | {items: []} => dispatchAction(SetSyncedChains) //Known that there are no items available on the queue so safely call this action
-        | {isInReorgThreshold, items, fetchStatesMap, dcsToStore} =>
+        | {isInReorgThreshold, items, fetchStatesMap, dcsToStoreByChainId} =>
           dispatchAction(SetCurrentlyProcessing(true))
           dispatchAction(UpdateQueues(fetchStatesMap))
           if (
@@ -764,9 +764,9 @@ let injectedTaskReducer = (
 
           let inMemoryStore = rollbackInMemStore->Option.getWithDefault(InMemoryStore.make())
 
-          if dcsToStore->Utils.Array.isEmpty->not {
+          if dcsToStoreByChainId->Utils.Dict.size > 0 {
             let shouldSaveHistory = state.config->Config.shouldSaveHistory(~isInReorgThreshold)
-            inMemoryStore->InMemoryStore.setDcsToStore(dcsToStore, ~shouldSaveHistory)
+            inMemoryStore->InMemoryStore.setDcsToStore(dcsToStoreByChainId, ~shouldSaveHistory)
           }
 
           switch await EventProcessing.processEventBatch(

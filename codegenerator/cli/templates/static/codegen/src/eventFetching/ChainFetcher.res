@@ -300,20 +300,19 @@ let runContractRegistersOrThrow = (~reversedWithContractRegister: array<Internal
   let dynamicContracts = []
 
   let onRegister = (~eventItem: Internal.eventItem, ~contractAddress, ~contractName) => {
-    let {chain, timestamp, blockNumber, logIndex} = eventItem
+    let {timestamp, blockNumber, logIndex} = eventItem
 
-    let chainId = chain->ChainMap.Chain.toChainId
-    let dc: TablesStatic.DynamicContractRegistry.t = {
-      id: UserContext.makeDynamicContractId(~chainId, ~contractAddress),
-      chainId,
-      registeringEventBlockNumber: blockNumber,
-      registeringEventLogIndex: logIndex,
-      registeringEventName: eventItem.eventConfig.name,
-      registeringEventContractName: eventItem.eventConfig.contractName,
-      registeringEventSrcAddress: eventItem.event.srcAddress,
-      registeringEventBlockTimestamp: timestamp,
-      contractAddress,
-      contractType: contractName,
+    let dc: FetchState.indexingContract = {
+      address: contractAddress,
+      contractName: (contractName: Enums.ContractType.t :> string),
+      startBlock: blockNumber,
+      register: DC({
+        registeringEventBlockTimestamp: timestamp,
+        registeringEventLogIndex: logIndex,
+        registeringEventName: eventItem.eventConfig.name,
+        registeringEventContractName: eventItem.eventConfig.contractName,
+        registeringEventSrcAddress: eventItem.event.srcAddress,
+      }),
     }
 
     dynamicContracts->Array.push(dc)

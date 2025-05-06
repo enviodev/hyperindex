@@ -14,10 +14,6 @@ let getEventId = (eventItem: Internal.eventItem) => {
   EventUtils.packEventIndex(~blockNumber=eventItem.blockNumber, ~logIndex=eventItem.event.logIndex)
 }
 
-let makeDynamicContractId = (~chainId, ~contractAddress) => {
-  chainId->Belt.Int.toString ++ "-" ++ contractAddress->Address.toString
-}
-
 type handlerContextParams = {
   eventItem: Internal.eventItem,
   inMemoryStore: InMemoryStore.t,

@@ -236,7 +236,7 @@ let rec makeWithInMemoryStore: InMemoryStore.t => t = (inMemoryStore: InMemorySt
       db.entities->InMemoryStore.EntityTables.get(module(TablesStatic.DynamicContractRegistry)),
     ~makeMockDb=makeWithInMemoryStore,
     ~getKey=({chainId, contractAddress}) =>
-      UserContext.makeDynamicContractId(~chainId, ~contractAddress),
+      TablesStatic.DynamicContractRegistry.makeId(~chainId, ~contractAddress),
   )
 
   let entities = {

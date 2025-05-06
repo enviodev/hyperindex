@@ -28,31 +28,49 @@ let makeDynContractRegistration = (
   ~contractAddress,
   ~blockNumber,
   ~logIndex=0,
-  ~chainId=1,
   ~contractType=Gravatar,
   ~registeringEventContractName="MockGravatarFactory",
   ~registeringEventName="MockCreateGravatar",
   ~registeringEventSrcAddress=mockFactoryAddress,
-): TablesStatic.DynamicContractRegistry.t => {
+): FetchState.indexingContract => {
   {
-    id: UserContext.makeDynamicContractId(~chainId, ~contractAddress),
-    chainId,
-    registeringEventBlockNumber: blockNumber,
-    registeringEventLogIndex: logIndex,
-    registeringEventName,
-    registeringEventSrcAddress,
-    registeringEventBlockTimestamp: getTimestamp(~blockNumber),
-    contractAddress,
-    contractType,
-    registeringEventContractName,
+    address: contractAddress,
+    contractName: (contractType :> string),
+    startBlock: blockNumber,
+    register: DC({
+      registeringEventLogIndex: logIndex,
+      registeringEventBlockTimestamp: getTimestamp(~blockNumber),
+      registeringEventContractName,
+      registeringEventName,
+      registeringEventSrcAddress,
+    }),
   }
 }
 
-let getDynContractId = (
-  {registeringEventBlockNumber, registeringEventLogIndex}: TablesStatic.DynamicContractRegistry.t,
-): FetchState.dynamicContractId => {
-  blockNumber: registeringEventBlockNumber,
-  logIndex: registeringEventLogIndex,
+let toTableDcs = (dcs: array<FetchState.indexingContract>): array<
+  TablesStatic.DynamicContractRegistry.t,
+> => {
+  dcs->Array.map(dc => {
+    let dcData = switch dc.register {
+    | Config => Js.Exn.raiseError("Config contract should not be in dcsToStore")
+    | DC(data) => data
+    }
+    {
+      TablesStatic.DynamicContractRegistry.id: TablesStatic.DynamicContractRegistry.makeId(
+        ~chainId,
+        ~contractAddress=dc.address,
+      ),
+      chainId,
+      contractAddress: dc.address,
+      contractType: dc.contractName->(Utils.magic: string => Enums.ContractType.t),
+      registeringEventBlockNumber: dc.startBlock,
+      registeringEventBlockTimestamp: dcData.registeringEventBlockTimestamp,
+      registeringEventLogIndex: dcData.registeringEventLogIndex,
+      registeringEventContractName: dc.contractName,
+      registeringEventName: dcData.registeringEventName,
+      registeringEventSrcAddress: dcData.registeringEventSrcAddress,
+    }
+  })
 }
 
 let mockEvent = (~blockNumber, ~logIndex=0, ~chainId=1): Internal.eventItem => {
@@ -83,26 +101,10 @@ let makeInitial = (~startBlock=0) => {
 
 // Helper to build indexingContracts dict for test expectations
 // Note: dynamic contract info is now only tracked by the register field (DC variant)
-let makeIndexingContractsWithDynamics = (
-  dcs: array<TablesStatic.DynamicContractRegistry.t>,
-  ~static=[],
-) => {
+let makeIndexingContractsWithDynamics = (dcs: array<FetchState.indexingContract>, ~static=[]) => {
   let dict = Js.Dict.empty()
   dcs->Array.forEach(dc => {
-    let contract: FetchState.indexingContract = {
-      address: dc.contractAddress,
-      contractName: (dc.contractType :> string),
-      startBlock: dc.registeringEventBlockNumber,
-      register: DC({
-        id: dc.id->Utils.magic,
-        registeringEventBlockTimestamp: dc.registeringEventBlockTimestamp,
-        registeringEventLogIndex: dc.registeringEventLogIndex,
-        registeringEventContractName: dc.registeringEventContractName,
-        registeringEventName: dc.registeringEventName,
-        registeringEventSrcAddress: dc.registeringEventSrcAddress,
-      }),
-    }
-    dict->Js.Dict.set(dc.contractAddress->Address.toString, contract)
+    dict->Js.Dict.set(dc.address->Address.toString, dc)
   })
   static->Array.forEach(address => {
     dict->Js.Dict.set(
@@ -186,7 +188,7 @@ describe("FetchState.make", () => {
       let fetchState = FetchState.make(
         ~eventConfigs=[baseEventConfig],
         ~staticContracts=Js.Dict.fromArray([("Gravatar", [mockAddress1])]),
-        ~dynamicContracts=[dc],
+        ~dynamicContracts=[dc]->toTableDcs,
         ~startBlock=0,
         ~endBlock=None,
         ~maxAddrInPartition=2,
@@ -240,7 +242,7 @@ describe("FetchState.make", () => {
           baseEventConfig,
         ],
         ~staticContracts=Js.Dict.fromArray([("ContractA", [mockAddress1])]),
-        ~dynamicContracts=[dc],
+        ~dynamicContracts=[dc]->toTableDcs,
         ~startBlock=0,
         ~endBlock=None,
         ~maxAddrInPartition=1,
@@ -310,7 +312,7 @@ describe("FetchState.make", () => {
           baseEventConfig,
         ],
         ~staticContracts=Js.Dict.fromArray([("ContractA", [mockAddress1, mockAddress2])]),
-        ~dynamicContracts=[dc1, dc2],
+        ~dynamicContracts=[dc1, dc2]->toTableDcs,
         ~startBlock=0,
         ~endBlock=None,
         ~maxAddrInPartition=1,
@@ -411,6 +413,7 @@ describe("FetchState.registerDynamicContracts", () => {
   })
 
   // TODO: Test for contract with event filtering using addresses
+  // TODO: Fix test framework
   it(
     "Should create a new partition for an already registered dc if it has an earlier start block",
     () => {
@@ -667,7 +670,7 @@ describe("FetchState.registerDynamicContracts", () => {
             ~blockNumber=0,
             ~contractAddress=mockAddress5,
           ),
-        ],
+        ]->toTableDcs,
         ~endBlock=None,
         ~startBlock=0,
         ~maxAddrInPartition=1000,

@@ -1,22 +1,17 @@
 open Belt
 
-/**
-The block number and log index of the event that registered a
-dynamic contract
-*/
-type dynamicContractId = EventUtils.eventIndex
+type dcData = {
+  registeringEventBlockTimestamp: int,
+  registeringEventLogIndex: int,
+  registeringEventContractName: string,
+  registeringEventName: string,
+  registeringEventSrcAddress: Address.t,
+}
 
 @unboxed
 type contractRegister =
   | Config
-  | DC({
-      id: dynamicContractId,
-      registeringEventBlockTimestamp: int,
-      registeringEventLogIndex: int,
-      registeringEventContractName: string,
-      registeringEventName: string,
-      registeringEventSrcAddress: Address.t,
-    })
+  | DC(dcData)
 type indexingContract = {
   address: Address.t,
   contractName: string,
@@ -65,7 +60,7 @@ type t = {
   indexingContracts: dict<indexingContract>,
   // Registered dynamic contracts that need to be stored in the db
   // Should read them at the same time when getting items for the batch
-  dcsToStore?: array<TablesStatic.DynamicContractRegistry.t>,
+  dcsToStore?: array<indexingContract>,
   // Not used for logic - only metadata
   chainId: int,
   // Fields computed by updateInternal
@@ -319,17 +314,13 @@ let updateInternal = (
 
 let numAddresses = fetchState => fetchState.indexingContracts->Js.Dict.keys->Array.length
 
-let warnDifferentContractType = (
-  fetchState,
-  ~existingContract,
-  ~dc: TablesStatic.DynamicContractRegistry.t,
-) => {
+let warnDifferentContractType = (fetchState, ~existingContract, ~dc: indexingContract) => {
   let logger = Logging.createChild(
     ~params={
       "chainId": fetchState.chainId,
-      "contractAddress": dc.contractAddress->Address.toString,
+      "contractAddress": dc.address->Address.toString,
       "existingContractType": existingContract.contractName,
-      "newContractType": dc.contractType,
+      "newContractType": dc.contractName,
     },
   )
   logger->Logging.childWarn(`Skipping contract registration: Contract address is already registered for one contract and cannot be registered for another contract.`)
@@ -339,7 +330,7 @@ let registerDynamicContracts = (
   fetchState: t,
   // These are raw dynamic contracts received from contractRegister call.
   // Might contain duplicates which we should filter out
-  dynamicContracts: array<TablesStatic.DynamicContractRegistry.t>,
+  dynamicContracts: array<indexingContract>,
   ~currentBlockHeight,
 ) => {
   if fetchState.normalSelection.eventConfigs->Utils.Array.isEmpty {
@@ -353,29 +344,26 @@ let registerDynamicContracts = (
 
   let indexingContracts = fetchState.indexingContracts
   let registeringContracts = Js.Dict.empty()
-  let dcsToStore = []
   let addressesByContractName = Js.Dict.empty()
   let earliestRegisteringEventBlockNumber = ref(%raw(`Infinity`))
 
   dynamicContracts->Array.forEach(dc => {
     // Prevent registering already indexing contracts
-    switch indexingContracts->Utils.Dict.dangerouslyGetNonOption(
-      dc.contractAddress->Address.toString,
-    ) {
+    switch indexingContracts->Utils.Dict.dangerouslyGetNonOption(dc.address->Address.toString) {
     | Some(existingContract) =>
       // FIXME: Instead of filtering out duplicates,
       // we should check the block number first.
       // If new registration with earlier block number
       // we should register it for the missing block range
-      if existingContract.contractName != (dc.contractType :> string) {
+      if existingContract.contractName != dc.contractName {
         fetchState->warnDifferentContractType(~existingContract, ~dc)
-      } else if existingContract.startBlock > dc.registeringEventBlockNumber {
+      } else if existingContract.startBlock > dc.startBlock {
         let logger = Logging.createChild(
           ~params={
             "chainId": fetchState.chainId,
-            "contractAddress": dc.contractAddress->Address.toString,
+            "contractAddress": dc.address->Address.toString,
             "existingBlockNumber": existingContract.startBlock,
-            "newBlockNumber": dc.registeringEventBlockNumber,
+            "newBlockNumber": dc.startBlock,
           },
         )
         logger->Logging.childWarn(`Skipping contract registration: Contract address is already registered at a later block number. Currently registration of the same contract address is not supported by Envio. Reach out to us if it's a problem for you.`)
@@ -383,56 +371,40 @@ let registerDynamicContracts = (
       ()
     | None =>
       let shouldUpdate = switch registeringContracts->Utils.Dict.dangerouslyGetNonOption(
-        dc.contractAddress->Address.toString,
+        dc.address->Address.toString,
       ) {
-      | Some(registeringContract)
-        if registeringContract.contractName != (dc.contractType :> string) =>
+      | Some(registeringContract) if registeringContract.contractName != dc.contractName =>
         fetchState->warnDifferentContractType(~existingContract=registeringContract, ~dc)
         false
       | Some(registeringContract) =>
-        switch registeringContract.register {
-        | DC({registeringEventLogIndex}) =>
+        switch (registeringContract.register, dc.register) {
+        | (
+            DC({registeringEventLogIndex}),
+            DC({registeringEventLogIndex: newRegisteringEventLogIndex}),
+          ) =>
           // Update DC registration if the new one from the batch has an earlier registration log
-          registeringContract.startBlock > dc.registeringEventBlockNumber ||
-            (registeringContract.startBlock === dc.registeringEventBlockNumber &&
-              registeringEventLogIndex > dc.registeringEventLogIndex)
-        | Config =>
+          registeringContract.startBlock > dc.startBlock ||
+            (registeringContract.startBlock === dc.startBlock &&
+              registeringEventLogIndex > newRegisteringEventLogIndex)
+        | (Config, _) | (_, Config) =>
           Js.Exn.raiseError(
             "Unexpected case: Config registration should be handled in a different function",
           )
         }
       | None => {
-          dcsToStore->Array.push(dc)
-          addressesByContractName->Utils.Dict.push((dc.contractType :> string), dc.contractAddress)
+          addressesByContractName->Utils.Dict.push(dc.contractName, dc.address)
           true
         }
       }
       if shouldUpdate {
         earliestRegisteringEventBlockNumber :=
-          Pervasives.min(
-            earliestRegisteringEventBlockNumber.contents,
-            dc.registeringEventBlockNumber,
-          )
-        registeringContracts->Js.Dict.set(
-          dc.contractAddress->Address.toString,
-          {
-            address: dc.contractAddress,
-            contractName: (dc.contractType :> string),
-            startBlock: dc.registeringEventBlockNumber,
-            register: DC({
-              id: dc.id->Utils.magic,
-              registeringEventBlockTimestamp: dc.registeringEventBlockTimestamp,
-              registeringEventLogIndex: dc.registeringEventLogIndex,
-              registeringEventContractName: dc.registeringEventContractName,
-              registeringEventName: dc.registeringEventName,
-              registeringEventSrcAddress: dc.registeringEventSrcAddress,
-            }),
-          },
-        )
+          Pervasives.min(earliestRegisteringEventBlockNumber.contents, dc.startBlock)
+        registeringContracts->Js.Dict.set(dc.address->Address.toString, dc)
       }
     }
   })
 
+  let dcsToStore = registeringContracts->Js.Dict.values
   switch dcsToStore {
   // Dont update anything when everything was filter out
   | [] => fetchState
@@ -1036,7 +1008,6 @@ let make = (
               contractName,
               startBlock: dc.registeringEventBlockNumber,
               register: DC({
-                id: dc.id->Utils.magic,
                 registeringEventLogIndex: dc.registeringEventLogIndex,
                 registeringEventBlockTimestamp: dc.registeringEventBlockTimestamp,
                 registeringEventContractName: dc.registeringEventContractName,
@@ -1228,7 +1199,7 @@ let rollback = (fetchState: t, ~firstChangeEvent) => {
     ~dcsToStore=switch fetchState.dcsToStore {
     | Some(dcsToStore) =>
       let filtered =
-        dcsToStore->Js.Array2.filter(dc => !(addressesToRemove->Utils.Set.has(dc.contractAddress)))
+        dcsToStore->Js.Array2.filter(dc => !(addressesToRemove->Utils.Set.has(dc.address)))
       switch filtered {
       | [] => None
       | _ => Some(filtered)

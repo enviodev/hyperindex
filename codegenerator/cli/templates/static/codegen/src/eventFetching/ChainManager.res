@@ -282,7 +282,7 @@ let createBatchInternal = (
 type batch = {
   items: array<Internal.eventItem>,
   fetchStatesMap: ChainMap.t<fetchStateWithData>,
-  dcsToStore: array<TablesStatic.DynamicContractRegistry.t>,
+  dcsToStoreByChainId: dict<array<FetchState.indexingContract>>,
   isInReorgThreshold: bool,
 }
 
@@ -299,12 +299,12 @@ let createBatch = (self: t, ~maxBatchSize: int, ~onlyBelowReorgThreshold: bool) 
     ~onlyBelowReorgThreshold,
   )
 
-  let dcsToStore = []
+  let dcsToStoreByChainId = Js.Dict.empty()
   // Needed to recalculate the computed queue sizes
   let fetchStatesMap = fetchStatesMap->ChainMap.map(v => {
     let fs = switch v.fetchState.dcsToStore {
     | Some(dcs) => {
-        dcsToStore->Js.Array2.pushMany(dcs)->ignore
+        dcsToStoreByChainId->Js.Dict.set(v.fetchState.chainId->Int.toString, dcs)
         {
           ...v.fetchState,
           dcsToStore: ?None,
@@ -349,7 +349,7 @@ let createBatch = (self: t, ~maxBatchSize: int, ~onlyBelowReorgThreshold: bool) 
     }
   }
 
-  {items, fetchStatesMap, dcsToStore, isInReorgThreshold}
+  {items, fetchStatesMap, dcsToStoreByChainId, isInReorgThreshold}
 }
 
 let isFetchingAtHead = self =>

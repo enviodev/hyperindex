@@ -190,6 +190,11 @@ module RawEvents = {
 module DynamicContractRegistry = {
   let name = Enums.EntityType.DynamicContractRegistry
 
+
+  let makeId = (~chainId, ~contractAddress) => {
+    chainId->Belt.Int.toString ++ "-" ++ contractAddress->Address.toString
+  }
+
   @genType
   type t = {
     id: string,
