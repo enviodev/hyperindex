@@ -86,6 +86,9 @@ module Dict = {
 
   let merge: (dict<'a>, dict<'a>) => dict<'a> = %raw(`(dictA, dictB) => ({...dictA, ...dictB})`)
 
+  @val
+  external mergeInPlace: (dict<'a>, dict<'a>) => dict<'a> = "Object.assign"
+
   let map = (dict, fn) => {
     let newDict = Js.Dict.empty()
     let keys = dict->Js.Dict.keys

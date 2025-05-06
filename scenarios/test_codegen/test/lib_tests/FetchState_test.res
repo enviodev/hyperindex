@@ -393,7 +393,186 @@ describe("FetchState.registerDynamicContracts", () => {
     Assert.equal(
       fetchState->FetchState.registerDynamicContracts([], ~currentBlockHeight=0),
       fetchState,
-      ~message="Should return fetchState without changing it",
+      ~message="Should return fetchState without updating it",
+    )
+  })
+
+  it("Doesn't register a dc which is already registered in config", () => {
+    let fetchState = makeInitial()
+
+    Assert.equal(
+      fetchState->FetchState.registerDynamicContracts(
+        [makeDynContractRegistration(~blockNumber=0, ~contractAddress=mockAddress0)],
+        ~currentBlockHeight=0,
+      ),
+      fetchState,
+      ~message="Should return fetchState without updating it",
+    )
+  })
+
+  // TODO: Test for contract with event filtering using addresses
+  it(
+    "Should create a new partition for an already registered dc if it has an earlier start block",
+    () => {
+      let fetchState = makeInitial()
+
+      let dc1 = makeDynContractRegistration(~blockNumber=2, ~contractAddress=mockAddress1)
+
+      let fetchStateWithDc1 =
+        fetchState->FetchState.registerDynamicContracts([dc1], ~currentBlockHeight=0)
+
+      Assert.deepEqual(
+        (fetchState.partitions->Array.length, fetchStateWithDc1.partitions->Array.length),
+        (1, 2),
+        ~message="Should have created a new partition for the dc",
+      )
+
+      Assert.equal(
+        fetchStateWithDc1->FetchState.registerDynamicContracts([dc1], ~currentBlockHeight=0),
+        fetchStateWithDc1,
+        ~message="Calling it with the same dc for the second time shouldn't change anything",
+      )
+
+      Assert.equal(
+        fetchStateWithDc1->FetchState.registerDynamicContracts(
+          [makeDynContractRegistration(~blockNumber=0, ~contractAddress=mockAddress1)],
+          ~currentBlockHeight=0,
+        ),
+        fetchStateWithDc1,
+        ~message=`BROKEN: Calling it with the same dc
+        but earlier block number should create a new short lived partition
+        for the specific contract from block 0 to 1. And update the dc in db`,
+        // This is an edge case we currently don't cover
+        // But show a warning in the logs
+      )
+    },
+  )
+
+  it("Should split dcs into multiple partitions if they exceed maxAddrInPartition", () => {
+    let fetchState = makeInitial()
+
+    let dc1 = makeDynContractRegistration(~blockNumber=2, ~contractAddress=mockAddress1)
+    let dc2 = makeDynContractRegistration(~blockNumber=2, ~contractAddress=mockAddress2)
+    let dc3 = makeDynContractRegistration(~blockNumber=2, ~contractAddress=mockAddress3)
+    let dc4 = makeDynContractRegistration(~blockNumber=2, ~contractAddress=mockAddress4)
+
+    let updatedFetchState =
+      fetchState->FetchState.registerDynamicContracts([dc1, dc2, dc3, dc4], ~currentBlockHeight=0)
+
+    Assert.deepEqual(
+      updatedFetchState.partitions,
+      fetchState.partitions->Array.concat([
+        {
+          id: "1",
+          status: {fetchingStateId: None},
+          latestFetchedBlock: {
+            blockNumber: 1,
+            blockTimestamp: 0,
+          },
+          selection: fetchState.normalSelection,
+          addressesByContractName: Js.Dict.fromArray([
+            ("Gravatar", [mockAddress1, mockAddress2, mockAddress3]),
+          ]),
+          fetchedEventQueue: [],
+        },
+        {
+          id: "2",
+          status: {fetchingStateId: None},
+          latestFetchedBlock: {
+            blockNumber: 1,
+            blockTimestamp: 0,
+          },
+          selection: fetchState.normalSelection,
+          addressesByContractName: Js.Dict.fromArray([("Gravatar", [mockAddress4])]),
+          fetchedEventQueue: [],
+        },
+      ]),
+      ~message=`Should split into two partitions`,
+    )
+
+    let dc1FromAnotherContract = makeDynContractRegistration(
+      ~blockNumber=2,
+      ~contractAddress=mockAddress1,
+      ~contractType=NftFactory,
+    )
+    let dc4FromAnotherContract = makeDynContractRegistration(
+      ~blockNumber=2,
+      ~contractAddress=mockAddress4,
+      ~contractType=NftFactory,
+    )
+    let updatedFetchState =
+      fetchState->FetchState.registerDynamicContracts(
+        [dc1FromAnotherContract, dc2, dc3, dc4FromAnotherContract],
+        ~currentBlockHeight=0,
+      )
+
+    Assert.deepEqual(
+      updatedFetchState.partitions,
+      fetchState.partitions->Array.concat([
+        {
+          id: "1",
+          status: {fetchingStateId: None},
+          latestFetchedBlock: {
+            blockNumber: 1,
+            blockTimestamp: 0,
+          },
+          selection: fetchState.normalSelection,
+          addressesByContractName: Js.Dict.fromArray([
+            ("NftFactory", [mockAddress1, mockAddress4]),
+            ("Gravatar", [mockAddress2]),
+          ]),
+          fetchedEventQueue: [],
+        },
+        {
+          id: "2",
+          status: {fetchingStateId: None},
+          latestFetchedBlock: {
+            blockNumber: 1,
+            blockTimestamp: 0,
+          },
+          selection: fetchState.normalSelection,
+          addressesByContractName: Js.Dict.fromArray([("Gravatar", [mockAddress3])]),
+          fetchedEventQueue: [],
+        },
+      ]),
+      ~message=`Still split into two partitions, but try to put addresses from the same contract together as much as possible`,
+    )
+  })
+
+  it("Choose the earliest dc from the batch when there are two with the same address", () => {
+    let fetchState = makeInitial()
+
+    let dc1 = makeDynContractRegistration(~blockNumber=20, ~contractAddress=mockAddress1)
+    let dc2 = makeDynContractRegistration(~blockNumber=10, ~contractAddress=mockAddress1)
+
+    let updatedFetchState =
+      fetchState->FetchState.registerDynamicContracts([dc1, dc2], ~currentBlockHeight=0)
+
+    Assert.deepEqual(
+      updatedFetchState.dcsToStore,
+      Some([dc2]),
+      ~message="Should choose the earliest dc from the batch",
+    )
+    Assert.deepEqual(
+      updatedFetchState.indexingContracts,
+      makeIndexingContractsWithDynamics([dc2], ~static=[mockAddress0]),
+      ~message="Should choose the earliest dc from the batch",
+    )
+    Assert.deepEqual(
+      updatedFetchState.partitions,
+      fetchState.partitions->Array.concat([
+        {
+          id: "1",
+          status: {fetchingStateId: None},
+          latestFetchedBlock: {
+            blockNumber: 9,
+            blockTimestamp: 0,
+          },
+          selection: fetchState.normalSelection,
+          addressesByContractName: Js.Dict.fromArray([("Gravatar", [mockAddress1])]),
+          fetchedEventQueue: [],
+        },
+      ]),
     )
   })
 
