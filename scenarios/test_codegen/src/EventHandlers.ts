@@ -303,6 +303,6 @@ EventFiltersTest.WithExcessField.handler(async (_) => {}, {
   },
 });
 
-TestEvents.FactoryEvent.contractRegister(async ({ event, context }) => {
+Gravatar.FactoryEvent.contractRegister(async ({ event, context }) => {
   context.addSimpleNft(event.params.contract);
 });

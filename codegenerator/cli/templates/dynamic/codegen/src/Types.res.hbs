@@ -222,6 +222,9 @@ module HandlerTypes = {
   type eventConfig<'eventFilters> = {
     wildcard?: bool,
     eventFilters?: 'eventFilters,
+    /**
+      @deprecated The option is removed starting from v2.19 since we made normal mode even faster than pre-registration.
+    */
     preRegisterDynamicContracts?: bool,
   }
 

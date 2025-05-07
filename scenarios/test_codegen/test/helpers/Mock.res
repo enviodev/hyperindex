@@ -133,7 +133,6 @@ let evmEventConfig = (
     name: "EventWithoutFields",
     isWildcard,
     dependsOnAddresses: dependsOnAddresses->Belt.Option.getWithDefault(!isWildcard),
-    preRegisterDynamicContracts: false,
     loader: None,
     handler: None,
     contractRegister: None,

@@ -413,7 +413,6 @@ describe("FetchState.registerDynamicContracts", () => {
   })
 
   // TODO: Test for contract with event filtering using addresses
-  // TODO: Fix test framework
   it(
     "Should create a new partition for an already registered dc if it has an earlier start block",
     () => {
