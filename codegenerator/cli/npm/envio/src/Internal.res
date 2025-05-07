@@ -62,7 +62,7 @@ type genericHandlerWithLoader<'loader, 'handler, 'eventFilters> = {
   wildcard?: bool,
   eventFilters?: 'eventFilters,
   /**
-   @deprecated The option is removed starting from v2.19 since we made normal mode even faster than pre-registration.
+   @deprecated The option is removed starting from v2.19 since we made the default mode even faster than pre-registration.
    */
   preRegisterDynamicContracts?: bool,
 }
@@ -76,6 +76,7 @@ type eventConfig = private {
   name: string,
   contractName: string,
   isWildcard: bool,
+  // Whether the event has an event filter which uses addresses
   filterByAddresses: bool,
   // Usually always false for wildcard events
   // But might be true for wildcard event with dynamic event filter by addresses

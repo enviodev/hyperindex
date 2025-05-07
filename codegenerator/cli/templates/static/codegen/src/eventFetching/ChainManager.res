@@ -302,19 +302,13 @@ let createBatch = (self: t, ~maxBatchSize: int, ~onlyBelowReorgThreshold: bool) 
   let dcsToStoreByChainId = Js.Dict.empty()
   // Needed to recalculate the computed queue sizes
   let fetchStatesMap = fetchStatesMap->ChainMap.map(v => {
-    let fs = switch v.fetchState.dcsToStore {
-    | Some(dcs) => {
-        dcsToStoreByChainId->Js.Dict.set(v.fetchState.chainId->Int.toString, dcs)
-        {
-          ...v.fetchState,
-          dcsToStore: ?None,
-        }
-      }
-    | None => v.fetchState
+    switch v.fetchState.dcsToStore {
+    | Some(dcs) => dcsToStoreByChainId->Js.Dict.set(v.fetchState.chainId->Int.toString, dcs)
+    | None => ()
     }
     {
       ...v,
-      fetchState: fs->FetchState.updateInternal,
+      fetchState: v.fetchState->FetchState.updateInternal(~dcsToStore=None),
     }
   })
 

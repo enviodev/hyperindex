@@ -30,6 +30,7 @@ module EventSyncState = {
       mkField(blockNumberFieldName, Integer, ~fieldSchema=S.int),
       mkField(logIndexFieldName, Integer, ~fieldSchema=S.int),
       mkField(blockTimestampFieldName, Integer, ~fieldSchema=S.int),
+      // Keep it in case Hosted Service relies on it to prevent a breaking changes
       mkField(isPreRegisteringDynamicContractsFieldName, Boolean, ~default="false", ~fieldSchema=S.bool),
     ],
   )
