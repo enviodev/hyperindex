@@ -43,6 +43,7 @@ describe("Load and save an entity with a Timestamp from DB", () => {
       inMemoryStore,
       loadLayer,
       shouldSaveHistory: false,
+      shouldGroup: false,
     })->(Utils.magic: Internal.handlerContext => Types.handlerContext)
 
     switch await handlerContext.entityWithTimestamp.get(testEntity.id) {
