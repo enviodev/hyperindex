@@ -59,7 +59,7 @@ const getFiles = experimental_createEffect(
         typeof input,
         {
           foo: string;
-          bar: string | undefined;
+          bar?: string | undefined;
         }
       >
     >(true);
@@ -70,7 +70,7 @@ const getFiles = experimental_createEffect(
         Effect<
           {
             foo: string;
-            bar: string | undefined;
+            bar?: string | undefined;
           },
           "files" | "foo"
         >
@@ -116,7 +116,7 @@ const getBalance = experimental_createEffect(
 expectType<
   TypeEqual<
     typeof getBalance,
-    Effect<{ address: string; blockNumber: bigint | undefined }, BigDecimal>
+    Effect<{ address: string; blockNumber?: bigint | undefined }, BigDecimal>
   >
 >(true);
 

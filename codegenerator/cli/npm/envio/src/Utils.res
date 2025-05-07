@@ -70,6 +70,8 @@ module Dict = {
    */
   external dangerouslyGetNonOption: (dict<'a>, string) => option<'a> = ""
 
+  let has: (dict<'a>, string) => bool = %raw(`(dict, key) => key in dict`)
+
   let push = (dict, key, value) => {
     switch dict->dangerouslyGetNonOption(key) {
     | Some(arr) => arr->Js.Array2.push(value)->ignore

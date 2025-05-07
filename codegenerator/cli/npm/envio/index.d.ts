@@ -3,7 +3,7 @@ export type {
   effect as Effect,
   effectContext as EffectContext,
   effectArgs as EffectArgs,
-  effectOptions as EffectOptoins,
+  effectOptions as EffectOptions,
 } from "./src/Envio.gen.ts";
 export type { EffectCaller } from "./src/Types.ts";
 
@@ -17,22 +17,53 @@ import * as Sury from "rescript-schema";
 
 type UnknownToOutput<T> = T extends Sury.Schema<unknown>
   ? Sury.Output<T>
-  : T extends {
-      [k in keyof T]: unknown;
-    }
-  ? {
-      [k in keyof T]: UnknownToOutput<T[k]>;
-    }
+  : T extends (...args: any[]) => any
+  ? T
+  : T extends unknown[]
+  ? { [K in keyof T]: UnknownToOutput<T[K]> }
+  : T extends { [k in keyof T]: unknown }
+  ? Flatten<
+      {
+        [k in keyof T as HasUndefined<UnknownToOutput<T[k]>> extends true
+          ? k
+          : never]?: UnknownToOutput<T[k]>;
+      } & {
+        [k in keyof T as HasUndefined<UnknownToOutput<T[k]>> extends true
+          ? never
+          : k]: UnknownToOutput<T[k]>;
+      }
+    >
   : T;
 
 type UnknownToInput<T> = T extends Sury.Schema<unknown>
   ? Sury.Input<T>
-  : T extends {
-      [k in keyof T]: unknown;
-    }
-  ? {
-      [k in keyof T]: UnknownToInput<T[k]>;
-    }
+  : T extends (...args: any[]) => any
+  ? T
+  : T extends unknown[]
+  ? { [K in keyof T]: UnknownToInput<T[K]> }
+  : T extends { [k in keyof T]: unknown }
+  ? Flatten<
+      {
+        [k in keyof T as HasUndefined<UnknownToInput<T[k]>> extends true
+          ? k
+          : never]?: UnknownToInput<T[k]>;
+      } & {
+        [k in keyof T as HasUndefined<UnknownToInput<T[k]>> extends true
+          ? never
+          : k]: UnknownToInput<T[k]>;
+      }
+    >
+  : T;
+
+type HasUndefined<T> = [T] extends [undefined]
+  ? true
+  : undefined extends T
+  ? true
+  : false;
+
+// Utility to flatten the type into a single object
+type Flatten<T> = T extends object
+  ? { [K in keyof T as T[K] extends never ? never : K]: T[K] }
   : T;
 
 // All the type gymnastics with generics to be able to
@@ -80,6 +111,8 @@ export function experimental_createEffect<
 
 // Important! Should match the index.js file
 export declare namespace S {
+  export type Output<T> = Sury.Output<T>;
+  export type Input<T> = Sury.Input<T>;
   export type Schema<Output, Input = unknown> = Sury.Schema<Output, Input>;
   export const string: typeof Sury.string;
   export const jsonString: typeof Sury.jsonString;
@@ -104,6 +137,7 @@ export declare namespace S {
   export const optional: typeof Sury.optional;
   export const nullable: typeof Sury.nullable;
   export const bigDecimal: typeof bigDecimalSchema;
+  export const unknown: typeof Sury.unknown;
   // Nullish type will change in "sury@10"
   // export const nullish: typeof Sury.nullish;
   export const assertOrThrow: typeof Sury.assertOrThrow;

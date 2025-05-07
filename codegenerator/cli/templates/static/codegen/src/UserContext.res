@@ -22,6 +22,7 @@ type baseContextParams = {
   eventItem: Internal.eventItem,
   inMemoryStore: InMemoryStore.t,
   loadLayer: LoadLayer.t,
+  shouldGroup: bool,
 }
 
 let rec initEffect = (params: baseContextParams) => (
@@ -36,7 +37,7 @@ let rec initEffect = (params: baseContextParams) => (
       cacheKey: input->Utils.Hash.makeOrThrow,
     },
     ~inMemoryStore=params.inMemoryStore,
-    ~shouldGroup=true,
+    ~shouldGroup=params.shouldGroup,
   )
 and effectTraps: Utils.Proxy.traps<baseContextParams> = {
   get: (~target as params, ~prop: unknown) => {
@@ -127,30 +128,14 @@ let getHandlerContext = (params: handlerContextParams): Internal.handlerContext 
   params->Utils.Proxy.make(handlerTraps)->Utils.magic
 }
 
-let getHandlerArgs = (
-  eventItem: Internal.eventItem,
-  ~inMemoryStore,
-  ~loaderReturn,
-  ~loadLayer,
-  ~shouldSaveHistory,
-): Internal.handlerArgs => {
-  event: eventItem.event,
-  context: getHandlerContext({
-    eventItem,
-    inMemoryStore,
-    loadLayer,
-    shouldSaveHistory,
-  }),
+let getHandlerArgs = (params: handlerContextParams, ~loaderReturn): Internal.handlerArgs => {
+  event: params.eventItem.event,
+  context: getHandlerContext(params),
   loaderReturn,
 }
 
-type loaderContextParams = {
-  ...baseContextParams,
-  shouldGroup: bool,
-}
-
 type loaderEntityContextParams = {
-  ...loaderContextParams,
+  ...baseContextParams,
   entityMod: module(Entities.InternalEntity),
 }
 
@@ -219,7 +204,7 @@ let makeEntityLoaderContext = (params): Types.entityLoaderContext<
   }
 }
 
-let loaderTraps: Utils.Proxy.traps<loaderContextParams> = {
+let loaderTraps: Utils.Proxy.traps<baseContextParams> = {
   get: (~target as params, ~prop: unknown) => {
     let prop = prop->(Utils.magic: unknown => string)
     switch prop {
@@ -248,11 +233,11 @@ let loaderTraps: Utils.Proxy.traps<loaderContextParams> = {
   },
 }
 
-let getLoaderContext = (params: loaderContextParams): Internal.loaderContext => {
+let getLoaderContext = (params: baseContextParams): Internal.loaderContext => {
   params->Utils.Proxy.make(loaderTraps)->Utils.magic
 }
 
-let getLoaderArgs = (params: loaderContextParams): Internal.loaderArgs => {
+let getLoaderArgs = (params: baseContextParams): Internal.loaderArgs => {
   event: params.eventItem.event,
   context: getLoaderContext(params),
 }

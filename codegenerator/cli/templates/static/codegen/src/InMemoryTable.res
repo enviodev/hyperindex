@@ -15,7 +15,7 @@ let set = (self: t<'key, 'val>, key, value) => self.dict->Js.Dict.set(key->self.
 let setByHash = (self: t<'key, 'val>, hash, value) => self.dict->Js.Dict.set(hash, value)
 
 let hasByHash = (self: t<'key, 'val>, hash) => {
-  self.dict->Utils.Dict.dangerouslyGetNonOption(hash) !== None
+  self.dict->Utils.Dict.has(hash)
 }
 
 let getUnsafeByHash = (self: t<'key, 'val>, hash) => {
