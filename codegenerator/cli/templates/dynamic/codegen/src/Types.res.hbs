@@ -18,9 +18,10 @@ type entityLoaderContext<'entity, 'indexedFieldOperations> = {
   getWhere: 'indexedFieldOperations,
 }
 
-@genType
+@genType.import(("./Types.ts", "LoaderContext"))
 type loaderContext = {
   log: Envio.logger,
+  effect: 'input 'output. (Envio.effect<'input, 'output>, 'input) => promise<'output>,
   {{#each entities as | entity |}}
   @as("{{entity.name.original}}") {{entity.name.uncapitalized}}: entityLoaderContext<Entities.{{entity.name.capitalized}}.t, Entities.{{entity.name.capitalized}}.indexedFieldOperations>,
   {{/each}}
@@ -34,9 +35,10 @@ type entityHandlerContext<'entity> = {
 }
 
 
-@genType
+@genType.import(("./Types.ts", "HandlerContext"))
 type handlerContext = {
   log: Envio.logger,
+  effect: 'input 'output. (Envio.effect<'input, 'output>, 'input) => promise<'output>,
   {{#each entities as | entity |}}
   @as("{{entity.name.original}}") {{entity.name.uncapitalized}}: entityHandlerContext<Entities.{{entity.name.capitalized}}.t>,
   {{/each}}

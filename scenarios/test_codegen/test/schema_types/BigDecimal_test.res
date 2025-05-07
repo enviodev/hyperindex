@@ -49,6 +49,7 @@ describe("Load and save an entity with a BigDecimal from DB", () => {
       inMemoryStore,
       loadLayer,
       shouldSaveHistory: false,
+      shouldGroup: false,
     })->(Utils.magic: Internal.handlerContext => Types.handlerContext)
 
     switch await handlerContext.entityWithBigDecimal.get(testEntity1.id) {

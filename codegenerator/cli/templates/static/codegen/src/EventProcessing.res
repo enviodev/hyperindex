@@ -335,11 +335,15 @@ let runEventHandler = (
     }
 
     switch await handler(
-      eventItem->UserContext.getHandlerArgs(
+      UserContext.getHandlerArgs(
+        {
+          eventItem,
+          inMemoryStore,
+          loadLayer,
+          shouldSaveHistory,
+          shouldGroup: false,
+        },
         ~loaderReturn,
-        ~inMemoryStore,
-        ~loadLayer,
-        ~shouldSaveHistory,
       ),
     ) {
     | exception exn =>
