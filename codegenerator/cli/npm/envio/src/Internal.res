@@ -78,6 +78,7 @@ type eventConfig = private {
   isWildcard: bool,
   // Usually always false for wildcard events
   // But might be true for wildcard event with dynamic event filter by addresses
+  filterByAddresses: bool,
   dependsOnAddresses: bool,
   loader: option<loader>,
   handler: option<handler>,

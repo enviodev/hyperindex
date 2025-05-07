@@ -59,7 +59,7 @@ let make = (~addresses, ~topicSelections) => {
 
 type parsedEventFilters = {
   getEventFiltersOrThrow: ChainMap.Chain.t => Internal.eventFilters,
-  dependsOnAddresses: bool,
+  filterByAddresses: bool,
 }
 
 let parseEventFiltersOrThrow = {
@@ -74,7 +74,7 @@ let parseEventFiltersOrThrow = {
     ~topic2=noopGetter,
     ~topic3=noopGetter,
   ): parsedEventFilters => {
-    let dependsOnAddresses = ref(false)
+    let filterByAddresses = ref(false)
     let topic0 = [sighash->EvmTypes.Hex.fromStringUnsafe]
     let default = {
       Internal.topic0,
@@ -145,7 +145,7 @@ let parseEventFiltersOrThrow = {
             "addresses",
             {
               get: () => {
-                dependsOnAddresses := true
+                filterByAddresses := true
                 []
               },
             },
@@ -154,7 +154,7 @@ let parseEventFiltersOrThrow = {
         } catch {
         | _ => ()
         }
-        if dependsOnAddresses.contents {
+        if filterByAddresses.contents {
           chain => Internal.Dynamic(
             addresses => fn({chainId: chain->ChainMap.Chain.toChainId, addresses})->parse,
           )
@@ -173,7 +173,7 @@ let parseEventFiltersOrThrow = {
 
     {
       getEventFiltersOrThrow,
-      dependsOnAddresses: dependsOnAddresses.contents,
+      filterByAddresses: filterByAddresses.contents,
     }
   }
 }
