@@ -1,9 +1,9 @@
 /*
  * Please refer to https://docs.envio.dev for a thorough guide on all Envio indexer features
  */
+import { S } from "envio";
 import { AllEvents } from "generated";
 import { expectType, TypeEqual } from "ts-expect";
-import * as S from "rescript-schema";
 
 type RemoveReadonly<T> = T extends {}
   ? {
@@ -17,7 +17,7 @@ type AssertSchemaType<Target, Schema> = TypeEqual<
 >;
 
 const SExtra = {
-  void: S.undefined as S.Schema<void>,
+  void: S.schema(undefined) as S.Schema<void, void>,
   swayOptional: <T>(schema: S.Schema<T>) =>
     S.union([
       {

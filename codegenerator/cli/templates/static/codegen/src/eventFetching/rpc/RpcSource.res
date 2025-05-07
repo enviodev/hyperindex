@@ -32,22 +32,74 @@ let rec getKnownBlockWithBackoff = async (~provider, ~blockNumber, ~backoffMsOnF
     )
   | result => result
   }
-
 let getSuggestedBlockIntervalFromExn = {
+  // Unknown provider: "retry with the range 123-456"
   let suggestedRangeRegExp = %re(`/retry with the range (\d+)-(\d+)/`)
 
+  // QuickNode, 1RPC, Blast: "limited to a 1000 blocks range"
   let blockRangeLimitRegExp = %re(`/limited to a (\d+) blocks range/`)
 
+  // Alchemy: "up to a 500 block range"
   let alchemyRangeRegExp = %re(`/up to a (\d+) block range/`)
+
+  // Cloudflare: "Max range: 3500"
+  let cloudflareRangeRegExp = %re(`/Max range: (\d+)/`)
+
+  // Thirdweb: "Maximum allowed number of requested blocks is 3500"
+  let thirdwebRangeRegExp = %re(`/Maximum allowed number of requested blocks is (\d+)/`)
+
+  // BlockPI: "limited to 2000 block"
+  let blockpiRangeRegExp = %re(`/limited to (\d+) block/`)
+
+  // Base: "block range too large" - fixed 2000 block limit
+  let baseRangeRegExp = %re(`/block range too large/`)
+
+  // Blast (paid): "exceeds the range allowed for your plan (5000 > 3000)"
+  let blastPaidRegExp = %re(`/exceeds the range allowed for your plan \(\d+ > (\d+)\)/`)
+
+  // Chainstack: "Block range limit exceeded" - 10000 block limit
+  let chainstackRegExp = %re(`/Block range limit exceeded./`)
+
+  // Coinbase: "please limit the query to at most 1000 blocks"
+  let coinbaseRegExp = %re(`/please limit the query to at most (\d+) blocks/`)
+
+  // PublicNode: "maximum block range: 2000"
+  let publicNodeRegExp = %re(`/maximum block range: (\d+)/`)
+
+  // Hyperliquid: "query exceeds max block range 1000"
+  let hyperliquidRegExp = %re(`/query exceeds max block range (\d+)/`)
+
+  // TODO: Reproduce how the error message looks like
+  // when we send request with numeric block range instead of hex
+  // Infura, ZkSync: "Try with this block range [0x123,0x456]"
+
+  // Future handling needed for these providers that don't suggest ranges:
+  // - Ankr: "block range is too wide"
+  // - 1RPC: "response size should not greater than 10000000 bytes"
+  // - ZkEVM: "query returned more than 10000 results"
+  // - LlamaRPC: "query exceeds max results"
+  // - Optimism: "backend response too large" or "Block range is too large"
+  // - Arbitrum: "logs matched by query exceeds limit of 10000"
 
   exn =>
     switch exn {
     | Js.Exn.Error(error) =>
       try {
-        // Didn't use parse here since it didn't work
-        // because the error is some sort of weird Ethers object
         let message: string = (error->Obj.magic)["error"]["message"]
         message->S.assertOrThrow(S.string)
+
+        // Helper to extract block range from regex match
+        let extractBlockRange = execResult =>
+          switch execResult->Js.Re.captures {
+          | [_, Js.Nullable.Value(blockRangeLimit)] =>
+            switch blockRangeLimit->Int.fromString {
+            | Some(blockRangeLimit) if blockRangeLimit > 0 => Some(blockRangeLimit)
+            | _ => None
+            }
+          | _ => None
+          }
+
+        // Try each regex pattern in order
         switch suggestedRangeRegExp->Js.Re.exec_(message) {
         | Some(execResult) =>
           switch execResult->Js.Re.captures {
@@ -60,28 +112,49 @@ let getSuggestedBlockIntervalFromExn = {
           | _ => None
           }
         | None =>
+          // Try each provider's specific error pattern
           switch blockRangeLimitRegExp->Js.Re.exec_(message) {
-          | Some(execResult) =>
-            switch execResult->Js.Re.captures {
-            | [_, Js.Nullable.Value(blockRangeLimit)] =>
-              switch blockRangeLimit->Int.fromString {
-              | Some(blockRangeLimit) if blockRangeLimit > 0 => Some(blockRangeLimit)
-              | _ => None
-              }
-            | _ => None
-            }
+          | Some(execResult) => extractBlockRange(execResult)
           | None =>
             switch alchemyRangeRegExp->Js.Re.exec_(message) {
-            | Some(execResult) =>
-              switch execResult->Js.Re.captures {
-              | [_, Js.Nullable.Value(blockRangeLimit)] =>
-                switch blockRangeLimit->Int.fromString {
-                | Some(blockRangeLimit) if blockRangeLimit > 0 => Some(blockRangeLimit)
-                | _ => None
+            | Some(execResult) => extractBlockRange(execResult)
+            | None =>
+              switch cloudflareRangeRegExp->Js.Re.exec_(message) {
+              | Some(execResult) => extractBlockRange(execResult)
+              | None =>
+                switch thirdwebRangeRegExp->Js.Re.exec_(message) {
+                | Some(execResult) => extractBlockRange(execResult)
+                | None =>
+                  switch blockpiRangeRegExp->Js.Re.exec_(message) {
+                  | Some(execResult) => extractBlockRange(execResult)
+                  | None =>
+                    switch baseRangeRegExp->Js.Re.exec_(message) {
+                    | Some(_) => Some(2000)
+                    | None =>
+                      switch blastPaidRegExp->Js.Re.exec_(message) {
+                      | Some(execResult) => extractBlockRange(execResult)
+                      | None =>
+                        switch chainstackRegExp->Js.Re.exec_(message) {
+                        | Some(_) => Some(10000)
+                        | None =>
+                          switch coinbaseRegExp->Js.Re.exec_(message) {
+                          | Some(execResult) => extractBlockRange(execResult)
+                          | None =>
+                            switch publicNodeRegExp->Js.Re.exec_(message) {
+                            | Some(execResult) => extractBlockRange(execResult)
+                            | None =>
+                              switch hyperliquidRegExp->Js.Re.exec_(message) {
+                              | Some(execResult) => extractBlockRange(execResult)
+                              | None => None
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
                 }
-              | _ => None
               }
-            | None => None
             }
           }
         }

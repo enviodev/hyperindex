@@ -106,6 +106,11 @@ let call = (
   ~key,
   ~load,
   ~hasher,
+  /*
+   Whether the call should be grouped
+   with the same calls until the next microtask
+   or executed immediately
+ */
   ~shouldGroup,
   ~hasInMemory,
   ~getUnsafeInMemory,

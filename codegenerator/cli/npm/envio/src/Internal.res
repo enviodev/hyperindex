@@ -160,6 +160,19 @@ let fuelTransferParamsSchema = S.schema(s => {
 
 type entity = private {id: string}
 
+type effectInput
+type effectOutput
+type effectContext
+type effectArgs = {
+  input: effectInput,
+  context: effectContext,
+  cacheKey: string,
+}
+type effect = {
+  name: string,
+  handler: effectArgs => promise<effectOutput>,
+}
+
 @genType.import(("./Types.ts", "Invalid"))
 type noEventFilters
 

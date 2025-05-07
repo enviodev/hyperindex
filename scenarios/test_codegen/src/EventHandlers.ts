@@ -1,4 +1,4 @@
-import { Logger } from "envio";
+import { experimental_createEffect, Effect, S } from "envio";
 import { TestEvents } from "generated";
 import { TestHelpers } from "generated";
 import { EventFiltersTest } from "generated";
@@ -13,21 +13,125 @@ import {
   NftFactory_SimpleNftCreated_eventArgs,
   NftFactory_SimpleNftCreated_event,
 } from "generated";
-import * as S from "rescript-schema";
 import { expectType, TypeEqual } from "ts-expect";
-import { bytesToHex, keccak256, toHex } from "viem";
+import { bytesToHex } from "viem";
+
+// Test effects type inference
+const noopEffect = experimental_createEffect(
+  {
+    name: "noopEffect",
+    input: undefined,
+    output: undefined,
+  },
+  async ({ context, input }) => {
+    expectType<TypeEqual<typeof input, undefined>>(true);
+    expectType<TypeEqual<typeof noopEffect, Effect<undefined, undefined>>>(
+      true
+    );
+    const result = await context.effect(noopEffect, undefined);
+    expectType<TypeEqual<typeof result, undefined>>(true);
+    // @ts-expect-error
+    await context.effect(noopEffect, "foo");
+    return undefined;
+  }
+);
+const getFiles = experimental_createEffect(
+  {
+    name: "getFiles",
+    input: {
+      foo: S.string,
+      bar: S.optional(S.string),
+    },
+    output: S.union(["foo", "files"]),
+  },
+  async ({ context, input }) => {
+    if (Math.random() > 0.5) {
+      return "files";
+    }
+    // @ts-expect-error
+    await context.effect(getFiles, undefined);
+    const recursive = await context.effect(getFiles, {
+      foo: "bar",
+      bar: undefined,
+    });
+    expectType<
+      TypeEqual<
+        typeof input,
+        {
+          foo: string;
+          bar?: string | undefined;
+        }
+      >
+    >(true);
+    expectType<TypeEqual<typeof recursive, "files" | "foo">>(true);
+    expectType<
+      TypeEqual<
+        typeof getFiles,
+        Effect<
+          {
+            foo: string;
+            bar?: string | undefined;
+          },
+          "files" | "foo"
+        >
+      >
+    >(true);
+    return "foo";
+  }
+);
+const getBalance = experimental_createEffect(
+  {
+    name: "getBalance",
+    input: {
+      address: S.string,
+      blockNumber: S.optional(S.bigint),
+    },
+    output: S.bigDecimal,
+  },
+  async ({ context, input: { address, blockNumber } }) => {
+    try {
+      // If blockNumber is provided, use it to get balance at that specific block
+      const options = blockNumber ? { blockNumber } : undefined;
+      // const balance = await lbtcContract.read.balanceOf(
+      //   [address as `0x${string}`],
+      //   options
+      // );
+      const balance = 123n;
+
+      // Only log on successful retrieval to reduce noise
+      context.log.info(
+        `Balance of ${address}${
+          blockNumber ? ` at block ${blockNumber}` : ""
+        }: ${balance}`
+      );
+
+      return BigDecimal(balance.toString());
+    } catch (error) {
+      context.log.error(`Error getting balance for ${address}`, error as Error);
+      // Return 0 on error to prevent processing failures
+      return BigDecimal(0);
+    }
+  }
+);
+expectType<
+  TypeEqual<
+    typeof getBalance,
+    Effect<{ address: string; blockNumber?: bigint | undefined }, BigDecimal>
+  >
+>(true);
 
 const zeroAddress = "0x0000000000000000000000000000000000000000";
 
 Gravatar.CustomSelection.handler(async ({ event, context }) => {
   if (0) {
+    const _ = await context.effect(noopEffect, undefined);
     context.log.error("There's an error");
     context.log.error("This is a test error", new Error("Test error message"));
     context.log.warn("This is a test warn", { foo: "bar" });
   }
 
   const transactionSchema = S.schema({
-    to: S.undefined,
+    to: undefined,
     from: "0xfoo",
     hash: S.string,
   });
