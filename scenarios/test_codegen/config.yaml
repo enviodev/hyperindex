@@ -83,6 +83,7 @@ networks:
           - event: "IndexedStructArray"
           - event: "IndexedNestedStruct"
           - event: "IndexedStructWithArray"
+          - event: "FactoryEvent(address indexed contract)"
   - id: 1
     start_block: 1
     contracts:

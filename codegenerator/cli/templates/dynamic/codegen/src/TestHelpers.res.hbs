@@ -118,22 +118,18 @@ module EventFunctions = {
         blockNumber: event.block->Types.Block.getNumber,
       }
 
-      {{!-- FIXME: Return it back in the future --}}
-      {{!-- switch eventConfig.contractRegister {
-      | Some(contractRegister) =>
-        switch contractRegister->EventProcessing.runEventContractRegister(
-          ~eventItem,
-          ~checkContractIsRegistered=(~chain as _, ~contractAddress as _, ~contractName as _) =>
-            false,
-          ~dynamicContractRegistrations=None,
-          ~inMemoryStore,
-          ~shouldSaveHistory=false,
-        ) {
-        | Ok(_) => ()
-        | Error(e) => e->ErrorHandling.logAndRaise
+      switch eventConfig.contractRegister {
+      | Some(_) =>
+        let dcs = ChainFetcher.runContractRegistersOrThrow(~reversedWithContractRegister=[eventItem])
+        // TODO: Reuse FetchState logic to clean up duplicate dcs
+        if dcs->Utils.Array.notEmpty {
+          inMemoryStore->InMemoryStore.setDcsToStore(
+            Js.Dict.fromArray([(chain->ChainMap.Chain.toChainId->Belt.Int.toString, dcs)]),
+            ~shouldSaveHistory=false,
+          )
         }
       | None => () //No need to run contract registration
-      } --}}
+      }
 
       switch eventConfig.handler {
       | Some(handler) =>

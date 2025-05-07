@@ -218,6 +218,12 @@ Helper to check if a value exists in an array
     | _ => false
     }
 
+  let notEmpty = (arr: array<_>) =>
+    switch arr {
+    | [] => false
+    | _ => true
+    }
+
   let awaitEach = async (arr: array<'a>, fn: 'a => promise<unit>) => {
     for i in 0 to arr->Array.length - 1 {
       let item = arr[i]

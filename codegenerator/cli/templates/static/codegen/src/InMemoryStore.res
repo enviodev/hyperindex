@@ -100,7 +100,7 @@ let setDcsToStore = (
         registeringEventBlockNumber: dc.startBlock,
         registeringEventBlockTimestamp: dcData.registeringEventBlockTimestamp,
         registeringEventLogIndex: dcData.registeringEventLogIndex,
-        registeringEventContractName: dc.contractName,
+        registeringEventContractName: dcData.registeringEventContractName,
         registeringEventName: dcData.registeringEventName,
         registeringEventSrcAddress: dcData.registeringEventSrcAddress,
       }
