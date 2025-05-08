@@ -6,7 +6,6 @@ type appState = {
   chains: array<ChainData.chainData>,
   indexerStartTime: Js.Date.t,
   config: Config.t,
-  isPreRegisteringDynamicContracts: bool,
 }
 
 let getTotalNumEventsProcessed = (~chains: array<ChainData.chainData>) => {
@@ -17,10 +16,8 @@ let getTotalNumEventsProcessed = (~chains: array<ChainData.chainData>) => {
 
 module TotalEventsProcessed = {
   @react.component
-  let make = (~totalEventsProcessed, ~isPreRegisteringDynamicContracts) => {
-    let label = isPreRegisteringDynamicContracts
-      ? "Total Contracts Registered: "
-      : "Total Events Processed: "
+  let make = (~totalEventsProcessed) => {
+    let label = "Total Events Processed: "
     <Text>
       <Text bold=true> {label->React.string} </Text>
       <Text color={Secondary}>
@@ -33,17 +30,17 @@ module TotalEventsProcessed = {
 module App = {
   @react.component
   let make = (~appState: appState) => {
-    let {chains, indexerStartTime, config, isPreRegisteringDynamicContracts} = appState
+    let {chains, indexerStartTime, config} = appState
     let totalEventsProcessed = getTotalNumEventsProcessed(~chains)
     <Box flexDirection={Column}>
       <BigText text="envio" colors=[Secondary, Primary] font={Block} />
       {chains
       ->Array.mapWithIndex((i, chainData) => {
-        <ChainData key={i->Int.toString} chainData isPreRegisteringDynamicContracts />
+        <ChainData key={i->Int.toString} chainData />
       })
       ->React.array}
-      <TotalEventsProcessed totalEventsProcessed isPreRegisteringDynamicContracts />
-      <SyncETA chains indexerStartTime isPreRegisteringDynamicContracts />
+      <TotalEventsProcessed totalEventsProcessed />
+      <SyncETA chains indexerStartTime />
       <Newline />
       <Box flexDirection={Column}>
         <Text>

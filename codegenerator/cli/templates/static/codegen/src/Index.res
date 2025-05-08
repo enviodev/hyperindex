@@ -47,7 +47,8 @@ let stateSchema = S.union([
     envioVersion: s.matches(S.option(S.string)),
     chains: s.matches(S.array(chainDataSchema)),
     indexerStartTime: s.matches(S.datetime(S.string)),
-    isPreRegisteringDynamicContracts: s.matches(S.bool),
+    // Keep the field, since Dev Console expects it to be present
+    isPreRegisteringDynamicContracts: false,
     isUnorderedMultichainMode: s.matches(S.bool),
     rollbackOnReorg: s.matches(S.bool),
   })),
@@ -252,7 +253,6 @@ let makeAppState = (globalState: GlobalState.t): EnvioInkApp.appState => {
     config: globalState.config,
     indexerStartTime: globalState.indexerStartTime,
     chains,
-    isPreRegisteringDynamicContracts: globalState.chainManager->ChainManager.isPreRegisteringDynamicContracts,
   }
 }
 
@@ -328,7 +328,7 @@ let main = async () => {
                   }
                 }),
                 indexerStartTime: appState.indexerStartTime,
-                isPreRegisteringDynamicContracts: appState.isPreRegisteringDynamicContracts,
+                isPreRegisteringDynamicContracts: false,
                 rollbackOnReorg: config.historyConfig.rollbackFlag === RollbackOnReorg,
                 isUnorderedMultichainMode: config.isUnorderedMultichainMode,
               })

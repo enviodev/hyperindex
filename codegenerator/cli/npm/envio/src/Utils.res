@@ -88,6 +88,9 @@ module Dict = {
 
   let merge: (dict<'a>, dict<'a>) => dict<'a> = %raw(`(dictA, dictB) => ({...dictA, ...dictB})`)
 
+  @val
+  external mergeInPlace: (dict<'a>, dict<'a>) => dict<'a> = "Object.assign"
+
   let map = (dict, fn) => {
     let newDict = Js.Dict.empty()
     let keys = dict->Js.Dict.keys
@@ -105,6 +108,14 @@ module Dict = {
     }
   }
 
+  let forEachWithKey = (dict, fn) => {
+    let keys = dict->Js.Dict.keys
+    for idx in 0 to keys->Js.Array2.length - 1 {
+      let key = keys->Js.Array2.unsafe_get(idx)
+      fn(key, dict->Js.Dict.unsafeGet(key))
+    }
+  }
+
   let deleteInPlace: (dict<'a>, string) => unit = %raw(`(dict, key) => {
       delete dict[key];
     }
@@ -117,6 +128,8 @@ module Dict = {
   ) => dict<'a> = %raw(`(dict, key, value) => ({...dict, [key]: value})`)
 
   let shallowCopy: dict<'a> => dict<'a> = %raw(`(dict) => ({...dict})`)
+
+  let size = dict => dict->Js.Dict.keys->Js.Array2.length
 }
 
 module Math = {
@@ -207,6 +220,12 @@ Helper to check if a value exists in an array
     | _ => false
     }
 
+  let notEmpty = (arr: array<_>) =>
+    switch arr {
+    | [] => false
+    | _ => true
+    }
+
   let awaitEach = async (arr: array<'a>, fn: 'a => promise<unit>) => {
     for i in 0 to arr->Array.length - 1 {
       let item = arr[i]
@@ -272,6 +291,9 @@ Helper to check if a value exists in an array
 
   @send
   external flatten: (array<array<'a>>, @as(1) _) => array<'a> = "flat"
+
+  @send
+  external copy: array<'a> => array<'a> = "slice"
 }
 
 module String = {

@@ -4,7 +4,6 @@ module Indexer = {
   module Config = Config
   module Source = Source
   module FetchState = FetchState
-  module ContractAddressingMap = ContractAddressingMap
 }
 
 include Helpers.ChainMocking.Make(Indexer)

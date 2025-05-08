@@ -142,12 +142,10 @@ let useEta = (~chains, ~indexerStartTime) => {
 
 module Syncing = {
   @react.component
-  let make = (~etaStr, ~isPreRegisteringDynamicContracts) => {
+  let make = (~etaStr) => {
     <Text bold=true>
       <Text>
-        {isPreRegisteringDynamicContracts
-          ? "Start Time ETA: "->React.string
-          : "Sync Time ETA: "->React.string}
+        {"Sync Time ETA: "->React.string}
       </Text>
       <Text> {etaStr->React.string} </Text>
       <Text> {" ("->React.string} </Text>
@@ -186,14 +184,14 @@ module Calculating = {
 }
 
 @react.component
-let make = (~chains, ~indexerStartTime, ~isPreRegisteringDynamicContracts) => {
+let make = (~chains, ~indexerStartTime) => {
   let optEta = useEta(~chains, ~indexerStartTime)
   if isIndexerFullySynced(chains) {
     let latestTimeCaughtUpToHeadStr = getLatestTimeCaughtUpToHead(chains, indexerStartTime)
     <Synced latestTimeCaughtUpToHeadStr /> //TODO add real time
   } else {
     switch optEta {
-    | Some(etaStr) => <Syncing etaStr isPreRegisteringDynamicContracts />
+    | Some(etaStr) => <Syncing etaStr />
     | None => <Calculating />
     }
   }

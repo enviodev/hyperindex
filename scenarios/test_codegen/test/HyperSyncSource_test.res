@@ -28,17 +28,16 @@ describe("HyperSyncSource - getSelectionConfig", () => {
         },
       )
       Assert.deepEqual(
-        selectionConfig.getLogSelectionOrThrow(
-          ~contractAddressMapping=ContractAddressingMap.make(),
-        ),
+        selectionConfig.getLogSelectionOrThrow(~addressesByContractName=Js.Dict.empty()),
         [],
         ~message=`Shouldn't have a log selection without addresses.
         This is actually a wrong a behaviour and should throw in this case.
         If this happens it means we incorrectly created partitions for fetch state`,
       )
+
       Assert.deepEqual(
         selectionConfig.getLogSelectionOrThrow(
-          ~contractAddressMapping=ContractAddressingMap.fromArray([(mockAddress0, "ERC20")]),
+          ~addressesByContractName=Js.Dict.fromArray([("ERC20", [mockAddress0])]),
         ),
         [
           {
@@ -55,9 +54,10 @@ describe("HyperSyncSource - getSelectionConfig", () => {
         ],
         ~message=`Should have a log selection when an address is provided`,
       )
+
       Assert.deepEqual(
         selectionConfig.getLogSelectionOrThrow(
-          ~contractAddressMapping=ContractAddressingMap.fromArray([(mockAddress0, "Bar")]),
+          ~addressesByContractName=Js.Dict.fromArray([("Bar", [mockAddress0])]),
         ),
         [],
         ~message=`Shouldn't have a log selection when contract name doesn't much the one in selection`,
@@ -172,7 +172,7 @@ describe("HyperSyncSource - getSelectionConfig", () => {
     }->HyperSyncSource.getSelectionConfig(~chain)
 
     Assert.deepEqual(
-      selectionConfig.getLogSelectionOrThrow(~contractAddressMapping=ContractAddressingMap.make()),
+      selectionConfig.getLogSelectionOrThrow(~addressesByContractName=Js.Dict.empty()),
       [
         {
           addresses: [],
@@ -210,7 +210,7 @@ describe("HyperSyncSource - getSelectionConfig", () => {
 
       Assert.deepEqual(
         selectionConfig.getLogSelectionOrThrow(
-          ~contractAddressMapping=ContractAddressingMap.fromArray([(mockAddress0, "ERC20")]),
+          ~addressesByContractName=Js.Dict.fromArray([("ERC20", [mockAddress0])]),
         ),
         [
           {

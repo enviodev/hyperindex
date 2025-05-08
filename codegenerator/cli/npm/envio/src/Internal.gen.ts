@@ -37,6 +37,7 @@ export type genericHandlerWithLoader<loader,handler,eventFilters> = {
   readonly handler: handler; 
   readonly wildcard?: boolean; 
   readonly eventFilters?: eventFilters; 
+  /** @deprecated The option is removed starting from v2.19 since we made the default mode even faster than pre-registration. */
   readonly preRegisterDynamicContracts?: boolean
 };
 

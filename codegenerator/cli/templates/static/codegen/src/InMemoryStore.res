@@ -91,3 +91,44 @@ let getInMemTable = (
 }
 
 let isRollingBack = (inMemoryStore: t) => inMemoryStore.rollBackEventIdentifier->Belt.Option.isSome
+
+let setDcsToStore = (
+  inMemoryStore: t,
+  dcsToStoreByChainId: dict<array<FetchState.indexingContract>>,
+  ~shouldSaveHistory,
+) => {
+  let inMemTable =
+    inMemoryStore.entities->EntityTables.get(module(TablesStatic.DynamicContractRegistry))
+  dcsToStoreByChainId->Utils.Dict.forEachWithKey((chainId, dcs) => {
+    let chainId = chainId->Belt.Int.fromString->Belt.Option.getExn
+    dcs->Belt.Array.forEach(dc => {
+      let dcData = switch dc.register {
+      | Config => Js.Exn.raiseError("Config contract should not be in dcsToStore")
+      | DC(data) => data
+      }
+      let entity: TablesStatic.DynamicContractRegistry.t = {
+        id: TablesStatic.DynamicContractRegistry.makeId(~chainId, ~contractAddress=dc.address),
+        chainId,
+        contractAddress: dc.address,
+        contractType: dc.contractName->(Utils.magic: string => Enums.ContractType.t),
+        registeringEventBlockNumber: dc.startBlock,
+        registeringEventBlockTimestamp: dcData.registeringEventBlockTimestamp,
+        registeringEventLogIndex: dcData.registeringEventLogIndex,
+        registeringEventContractName: dcData.registeringEventContractName,
+        registeringEventName: dcData.registeringEventName,
+        registeringEventSrcAddress: dcData.registeringEventSrcAddress,
+      }
+
+      let eventIdentifier: Types.eventIdentifier = {
+        chainId,
+        blockTimestamp: dcData.registeringEventBlockTimestamp,
+        blockNumber: dc.startBlock,
+        logIndex: dcData.registeringEventLogIndex,
+      }
+      inMemTable->InMemoryTable.Entity.set(
+        Set(entity)->Types.mkEntityUpdate(~eventIdentifier, ~entityId=entity.id),
+        ~shouldSaveHistory,
+      )
+    })
+  })
+}

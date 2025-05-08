@@ -6,18 +6,16 @@ exception WildcardCollision
 module Group = {
   type t<'a> = {
     mutable wildcard: option<'a>,
-    all: array<'a>,
     byContractName: dict<'a>,
   }
 
   let empty = () => {
     wildcard: None,
-    all: [],
     byContractName: Js.Dict.empty(),
   }
 
   let addOrThrow = (group: t<'a>, event, ~contractName, ~isWildcard) => {
-    let {all, byContractName, wildcard} = group
+    let {byContractName, wildcard} = group
     switch byContractName->Utils.Dict.dangerouslyGetNonOption(contractName) {
     | Some(_) => raise(EventDuplicate)
     | None =>
@@ -27,20 +25,28 @@ module Group = {
         if isWildcard {
           group.wildcard = Some(event)
         }
-        all->Js.Array2.push(event)->ignore
         byContractName->Js.Dict.set(contractName, event)
       }
     }
   }
 
-  let get = (group: t<'a>, ~contractAddress, ~contractAddressMapping) =>
+  let get = (
+    group: t<'a>,
+    ~contractAddress,
+    ~blockNumber,
+    ~indexingContracts: dict<FetchState.indexingContract>,
+  ) =>
     switch group {
-    | {all: [event]} => Some(event)
     | {wildcard, byContractName} =>
-      switch contractAddressMapping->ContractAddressingMap.getContractNameFromAddress(
-        ~contractAddress,
+      switch indexingContracts->Utils.Dict.dangerouslyGetNonOption(
+        contractAddress->Address.toString,
       ) {
-      | Some(contractName) => byContractName->Utils.Dict.dangerouslyGetNonOption(contractName)
+      | Some(indexingContract) =>
+        if indexingContract.startBlock <= blockNumber {
+          byContractName->Utils.Dict.dangerouslyGetNonOption(indexingContract.contractName)
+        } else {
+          None
+        }
       | None => wildcard
       }
     }
@@ -78,10 +84,10 @@ let addOrThrow = (
   }
 }
 
-let get = (router: t<'a>, ~tag, ~contractAddress, ~contractAddressMapping) => {
+let get = (router: t<'a>, ~tag, ~contractAddress, ~blockNumber, ~indexingContracts) => {
   switch router->Utils.Dict.dangerouslyGetNonOption(tag) {
   | None => None
-  | Some(group) => group->Group.get(~contractAddress, ~contractAddressMapping)
+  | Some(group) => group->Group.get(~contractAddress, ~blockNumber, ~indexingContracts)
   }
 }
 

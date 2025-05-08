@@ -50,15 +50,9 @@ describe_skip("E2E Db check", () => {
       [MockEntities.gravatarEntity1, MockEntities.gravatarEntity2],
     )
 
-    let checkContractIsRegisteredStub = (~chain, ~contractAddress, ~contractName) => {
-      (chain, contractAddress, contractName)->ignore
-      false
-    }
-
     let _ = await EventProcessing.processEventBatch(
       ~inMemoryStore,
       ~eventBatch=MockEvents.eventBatchItems,
-      ~checkContractIsRegistered=checkContractIsRegisteredStub,
       ~latestProcessedBlocks=EventProcessing.EventsProcessed.makeEmpty(~config),
       ~loadLayer,
       ~config,

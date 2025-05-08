@@ -1,10 +1,25 @@
 open Belt
 
-/**
-The block number and log index of the event that registered a
-dynamic contract
-*/
-type dynamicContractId = EventUtils.eventIndex
+type dcData = {
+  registeringEventBlockTimestamp: int,
+  registeringEventLogIndex: int,
+  registeringEventContractName: string,
+  registeringEventName: string,
+  registeringEventSrcAddress: Address.t,
+}
+
+@unboxed
+type contractRegister =
+  | Config
+  | DC(dcData)
+type indexingContract = {
+  address: Address.t,
+  contractName: string,
+  startBlock: int,
+  register: contractRegister,
+}
+
+type contractConfig = {filterByAddresses: bool}
 
 type blockNumberAndTimestamp = {
   blockNumber: int,
@@ -28,10 +43,7 @@ type partition = {
   status: status,
   latestFetchedBlock: blockNumberAndTimestamp,
   selection: selection,
-  contractAddressMapping: ContractAddressingMap.mapping,
-  //Used to prune dynamic contract registrations in the event
-  //of a rollback.
-  dynamicContracts: array<TablesStatic.DynamicContractRegistry.t>,
+  addressesByContractName: dict<array<Address.t>>,
   //Events ordered from latest to earliest
   fetchedEventQueue: array<Internal.eventItem>,
 }
@@ -46,6 +58,13 @@ type t = {
   maxAddrInPartition: int,
   firstEventBlockNumber: option<int>,
   normalSelection: selection,
+  // By address
+  indexingContracts: dict<indexingContract>,
+  // By contract name
+  contractConfigs: dict<contractConfig>,
+  // Registered dynamic contracts that need to be stored in the db
+  // Should read them at the same time when getting items for the batch
+  dcsToStore?: array<indexingContract>,
   // Not used for logic - only metadata
   chainId: int,
   // Fields computed by updateInternal
@@ -71,6 +90,9 @@ let copy = (fetchState: t) => {
     normalSelection: fetchState.normalSelection,
     firstEventBlockNumber: fetchState.firstEventBlockNumber,
     chainId: fetchState.chainId,
+    contractConfigs: fetchState.contractConfigs,
+    indexingContracts: fetchState.indexingContracts,
+    dcsToStore: ?fetchState.dcsToStore,
   }
 }
 
@@ -97,45 +119,48 @@ let mergeIntoPartition = (p: partition, ~target: partition, ~maxAddrInPartition)
   switch (p, target) {
   | ({selection: {dependsOnAddresses: true}}, {selection: {dependsOnAddresses: true}}) => {
       let latestFetchedBlock = target.latestFetchedBlock
-      let targetContractAddressMapping = target.contractAddressMapping
-      let targetDynamicContracts = target.dynamicContracts
-      let mergingContractAddressMapping = p.contractAddressMapping
-      let mergingDynamicContracts = p.dynamicContracts
 
-      let mergedContractAddressMapping = targetContractAddressMapping->ContractAddressingMap.copy
-      let mergedDynamicContracts = targetDynamicContracts->Js.Array2.copy
+      let mergedAddresses = Js.Dict.empty()
 
-      let restDcsCount =
-        targetContractAddressMapping->ContractAddressingMap.addressCount +
-        mergingContractAddressMapping->ContractAddressingMap.addressCount -
-        maxAddrInPartition
+      let allowedAddressesNumber = ref(maxAddrInPartition)
 
-      let rest = if restDcsCount > 0 {
-        let restAddresses = Utils.Set.make()
+      target.addressesByContractName->Utils.Dict.forEachWithKey((contractName, addresses) => {
+        allowedAddressesNumber := allowedAddressesNumber.contents - addresses->Array.length
+        mergedAddresses->Js.Dict.set(contractName, addresses)
+      })
 
-        let restDcs = mergingDynamicContracts->Js.Array2.slice(~start=0, ~end_=restDcsCount)
-        restDcs->Array.forEach(dc => {
-          let _ = restAddresses->Utils.Set.add(dc.contractAddress)
+      // Start with putting all addresses to the merging dict
+      // And if they exceed the limit, start removing from the merging dict
+      // and putting into the rest dict
+      p.addressesByContractName->Utils.Dict.forEachWithKey((contractName, addresses) => {
+        allowedAddressesNumber := allowedAddressesNumber.contents - addresses->Array.length
+        switch mergedAddresses->Utils.Dict.dangerouslyGetNonOption(contractName) {
+        | Some(targetAddresses) =>
+          mergedAddresses->Js.Dict.set(contractName, Array.concat(targetAddresses, addresses))
+        | None => mergedAddresses->Js.Dict.set(contractName, addresses)
+        }
+      })
+
+      let rest = if allowedAddressesNumber.contents < 0 {
+        let restAddresses = Js.Dict.empty()
+
+        mergedAddresses->Utils.Dict.forEachWithKey((contractName, addresses) => {
+          if allowedAddressesNumber.contents === 0 {
+            ()
+          } else if addresses->Array.length <= -allowedAddressesNumber.contents {
+            allowedAddressesNumber := allowedAddressesNumber.contents + addresses->Array.length
+            mergedAddresses->Utils.Dict.deleteInPlace(contractName)
+            restAddresses->Js.Dict.set(contractName, addresses)
+          } else {
+            let restFrom = addresses->Array.length + allowedAddressesNumber.contents
+            mergedAddresses->Js.Dict.set(
+              contractName,
+              addresses->Js.Array2.slice(~start=0, ~end_=restFrom),
+            )
+            restAddresses->Js.Dict.set(contractName, addresses->Js.Array2.sliceFrom(restFrom))
+            allowedAddressesNumber := 0
+          }
         })
-
-        let restContractAddressMapping = ContractAddressingMap.make()
-
-        mergingContractAddressMapping.nameByAddress
-        ->Js.Dict.keys
-        ->Belt.Array.forEach(key => {
-          let name = mergingContractAddressMapping.nameByAddress->Js.Dict.unsafeGet(key)
-          let address = key->Address.unsafeFromString
-          let map =
-            restAddresses->Utils.Set.has(address)
-              ? restContractAddressMapping
-              : mergedContractAddressMapping
-          map->ContractAddressingMap.addAddress(~address, ~name)
-        })
-
-        let _ =
-          mergedDynamicContracts->Js.Array2.pushMany(
-            mergingDynamicContracts->Js.Array2.sliceFrom(restDcsCount),
-          )
 
         Some({
           id: p.id,
@@ -144,15 +169,10 @@ let mergeIntoPartition = (p: partition, ~target: partition, ~maxAddrInPartition)
           },
           fetchedEventQueue: [],
           selection: target.selection,
-          contractAddressMapping: restContractAddressMapping,
-          dynamicContracts: restDcs,
+          addressesByContractName: restAddresses,
           latestFetchedBlock,
         })
       } else {
-        mergingContractAddressMapping->ContractAddressingMap.mergeInPlace(
-          ~target=mergedContractAddressMapping,
-        )
-        let _ = mergedDynamicContracts->Js.Array2.pushMany(mergingDynamicContracts)
         None
       }
 
@@ -163,8 +183,7 @@ let mergeIntoPartition = (p: partition, ~target: partition, ~maxAddrInPartition)
             fetchingStateId: None,
           },
           selection: target.selection,
-          contractAddressMapping: mergedContractAddressMapping,
-          dynamicContracts: mergedDynamicContracts,
+          addressesByContractName: mergedAddresses,
           fetchedEventQueue: mergeSortedEventList(p.fetchedEventQueue, target.fetchedEventQueue),
           latestFetchedBlock,
         },
@@ -232,6 +251,8 @@ let updateInternal = (
   ~partitions=fetchState.partitions,
   ~nextPartitionIndex=fetchState.nextPartitionIndex,
   ~firstEventBlockNumber=fetchState.firstEventBlockNumber,
+  ~indexingContracts=fetchState.indexingContracts,
+  ~dcsToStore=fetchState.dcsToStore,
   ~currentBlockHeight=?,
 ): t => {
   let firstPartition = partitions->Js.Array2.unsafe_get(0)
@@ -283,6 +304,7 @@ let updateInternal = (
   {
     maxAddrInPartition: fetchState.maxAddrInPartition,
     endBlock: fetchState.endBlock,
+    contractConfigs: fetchState.contractConfigs,
     normalSelection: fetchState.normalSelection,
     chainId: fetchState.chainId,
     nextPartitionIndex,
@@ -291,97 +313,265 @@ let updateInternal = (
     isFetchingAtHead,
     latestFullyFetchedBlock,
     queueSize: queueSize.contents,
+    indexingContracts,
+    ?dcsToStore,
   }
 }
 
-let makeDcPartition = (
-  ~partitionIndex,
-  ~latestFetchedBlock,
-  ~dynamicContracts: array<TablesStatic.DynamicContractRegistry.t>=[],
-  ~selection,
-) => {
-  let contractAddressMapping = ContractAddressingMap.make()
+let numAddresses = fetchState => fetchState.indexingContracts->Js.Dict.keys->Array.length
 
-  dynamicContracts->Array.forEach(dc => {
-    contractAddressMapping->ContractAddressingMap.addAddress(
-      ~name=(dc.contractType :> string),
-      ~address=dc.contractAddress,
-    )
-  })
-
-  {
-    id: partitionIndex->Int.toString,
-    status: {
-      fetchingStateId: None,
+let warnDifferentContractType = (fetchState, ~existingContract, ~dc: indexingContract) => {
+  let logger = Logging.createChild(
+    ~params={
+      "chainId": fetchState.chainId,
+      "contractAddress": dc.address->Address.toString,
+      "existingContractType": existingContract.contractName,
+      "newContractType": dc.contractName,
     },
-    latestFetchedBlock,
-    selection,
-    contractAddressMapping,
-    dynamicContracts,
-    fetchedEventQueue: [],
-  }
-}
-
-let numAddresses = fetchState =>
-  fetchState.partitions->Js.Array2.reduce(
-    (acc, p) => acc + p.contractAddressMapping->ContractAddressingMap.addressCount,
-    0,
   )
+  logger->Logging.childWarn(`Skipping contract registration: Contract address is already registered for one contract and cannot be registered for another contract.`)
+}
 
 let registerDynamicContracts = (
   fetchState: t,
-  dynamicContracts: array<TablesStatic.DynamicContractRegistry.t>,
+  // These are raw dynamic contracts received from contractRegister call.
+  // Might contain duplicates which we should filter out
+  dynamicContracts: array<indexingContract>,
   ~currentBlockHeight,
 ) => {
-  let dcsByStartBlock = Js.Dict.empty()
-  dynamicContracts->Array.forEach(dc => {
-    let key = dc.registeringEventBlockNumber->Int.toString
-    let dcs = switch dcsByStartBlock->Utils.Dict.dangerouslyGetNonOption(key) {
-    | Some(dcs) => dcs
-    | None => {
-        let dcs = []
-        dcsByStartBlock->Js.Dict.set(key, dcs)
-        dcs
-      }
-    }
-    dcs->Array.push(dc)
-  })
-
   if fetchState.normalSelection.eventConfigs->Utils.Array.isEmpty {
     // Can the normalSelection be empty?
     // Probably only on pre-registration, but we don't
     // register dynamic contracts during it
     Js.Exn.raiseError(
-      "Invalid configuration. Nothing to events to fetch for the dynamic contract registration.",
+      "Invalid configuration. No events to fetch for the dynamic contract registration.",
     )
   }
 
-  // Will be in the ASC order by Js spec
-  let newPartitions =
-    dcsByStartBlock
-    ->Js.Dict.entries
-    ->Array.mapWithIndex((index, (startBlockKey, dcs)) => {
-      makeDcPartition(
-        ~partitionIndex=fetchState.nextPartitionIndex + index,
-        ~dynamicContracts=dcs,
-        ~latestFetchedBlock={
-          blockNumber: Pervasives.max(startBlockKey->Int.fromString->Option.getExn - 1, 0),
-          blockTimestamp: 0,
-        },
-        ~selection=fetchState.normalSelection,
+  let indexingContracts = fetchState.indexingContracts
+  let registeringContracts = Js.Dict.empty()
+  let addressesByContractName = Js.Dict.empty()
+  let earliestRegisteringEventBlockNumber = ref(%raw(`Infinity`))
+  let hasDCWithFilterByAddresses = ref(false)
+
+  for idx in 0 to dynamicContracts->Array.length - 1 {
+    let dc = dynamicContracts->Js.Array2.unsafe_get(idx)
+    switch fetchState.contractConfigs->Utils.Dict.dangerouslyGetNonOption(dc.contractName) {
+    | Some({filterByAddresses}) =>
+      // Prevent registering already indexing contracts
+      switch indexingContracts->Utils.Dict.dangerouslyGetNonOption(dc.address->Address.toString) {
+      | Some(existingContract) =>
+        // FIXME: Instead of filtering out duplicates,
+        // we should check the block number first.
+        // If new registration with earlier block number
+        // we should register it for the missing block range
+        if existingContract.contractName != dc.contractName {
+          fetchState->warnDifferentContractType(~existingContract, ~dc)
+        } else if existingContract.startBlock > dc.startBlock {
+          let logger = Logging.createChild(
+            ~params={
+              "chainId": fetchState.chainId,
+              "contractAddress": dc.address->Address.toString,
+              "existingBlockNumber": existingContract.startBlock,
+              "newBlockNumber": dc.startBlock,
+            },
+          )
+          logger->Logging.childWarn(`Skipping contract registration: Contract address is already registered at a later block number. Currently registration of the same contract address is not supported by Envio. Reach out to us if it's a problem for you.`)
+        }
+        ()
+      | None =>
+        let shouldUpdate = switch registeringContracts->Utils.Dict.dangerouslyGetNonOption(
+          dc.address->Address.toString,
+        ) {
+        | Some(registeringContract) if registeringContract.contractName != dc.contractName =>
+          fetchState->warnDifferentContractType(~existingContract=registeringContract, ~dc)
+          false
+        | Some(registeringContract) =>
+          switch (registeringContract.register, dc.register) {
+          | (
+              DC({registeringEventLogIndex}),
+              DC({registeringEventLogIndex: newRegisteringEventLogIndex}),
+            ) =>
+            // Update DC registration if the new one from the batch has an earlier registration log
+            registeringContract.startBlock > dc.startBlock ||
+              (registeringContract.startBlock === dc.startBlock &&
+                registeringEventLogIndex > newRegisteringEventLogIndex)
+          | (Config, _) | (_, Config) =>
+            Js.Exn.raiseError(
+              "Unexpected case: Config registration should be handled in a different function",
+            )
+          }
+        | None =>
+          hasDCWithFilterByAddresses := hasDCWithFilterByAddresses.contents || filterByAddresses
+          addressesByContractName->Utils.Dict.push(dc.contractName, dc.address)
+          true
+        }
+        if shouldUpdate {
+          earliestRegisteringEventBlockNumber :=
+            Pervasives.min(earliestRegisteringEventBlockNumber.contents, dc.startBlock)
+          registeringContracts->Js.Dict.set(dc.address->Address.toString, dc)
+        }
+      }
+    | None => {
+        let logger = Logging.createChild(
+          ~params={
+            "chainId": fetchState.chainId,
+            "contractAddress": dc.address->Address.toString,
+            "contractName": dc.contractName,
+          },
+        )
+        logger->Logging.childWarn(`Skipping contract registration: Contract doesn't have any events to fetch.`)
+      }
+    }
+  }
+
+  let dcsToStore = registeringContracts->Js.Dict.values
+  switch dcsToStore {
+  // Dont update anything when everything was filter out
+  | [] => fetchState
+  | _ => {
+      let newPartitions = if (
+        // This case is more like a simple case when we need to create a single partition.
+        // Theoretically, we can only keep else, but don't want to iterate over the addresses again.
+
+        dcsToStore->Array.length <= fetchState.maxAddrInPartition &&
+          !hasDCWithFilterByAddresses.contents
+      ) {
+        [
+          {
+            id: fetchState.nextPartitionIndex->Int.toString,
+            status: {
+              fetchingStateId: None,
+            },
+            latestFetchedBlock: {
+              blockNumber: earliestRegisteringEventBlockNumber.contents - 1,
+              blockTimestamp: 0,
+            },
+            selection: fetchState.normalSelection,
+            addressesByContractName,
+            fetchedEventQueue: [],
+          },
+        ]
+      } else {
+        let partitions = []
+
+        let earliestRegisteringEventBlockNumber = ref(%raw(`Infinity`))
+        let pendingAddressesByContractName = ref(Js.Dict.empty())
+        let pendingCount = ref(0)
+
+        let addPartition = () =>
+          partitions->Array.push({
+            id: (fetchState.nextPartitionIndex + partitions->Array.length)->Int.toString,
+            status: {
+              fetchingStateId: None,
+            },
+            latestFetchedBlock: {
+              blockNumber: earliestRegisteringEventBlockNumber.contents - 1,
+              blockTimestamp: 0,
+            },
+            selection: fetchState.normalSelection,
+            addressesByContractName: pendingAddressesByContractName.contents,
+            fetchedEventQueue: [],
+          })
+
+        // I use for loops instead of forEach, so ReScript better inlines ref access
+        for idx in 0 to addressesByContractName->Js.Dict.keys->Array.length - 1 {
+          let contractName = addressesByContractName->Js.Dict.keys->Js.Array2.unsafe_get(idx)
+          let addresses = addressesByContractName->Js.Dict.unsafeGet(contractName)
+
+          // Can unsafely get it, because we already filtered out the contracts
+          // that don't have any events to fetch
+          let contractConfig = fetchState.contractConfigs->Js.Dict.unsafeGet(contractName)
+
+          // For this case we can't filter out events earlier than contract registration
+          // on the client side, so we need to keep the old logic of creating
+          // a partition for every block range, so there are no irrelevant events
+          if contractConfig.filterByAddresses {
+            let byStartBlock = Js.Dict.empty()
+
+            for jdx in 0 to addresses->Array.length - 1 {
+              let address = addresses->Js.Array2.unsafe_get(jdx)
+              let indexingContract =
+                registeringContracts->Js.Dict.unsafeGet(address->Address.toString)
+
+              byStartBlock->Utils.Dict.push(indexingContract.startBlock->Int.toString, address)
+            }
+
+            // Will be in the ASC order by Js spec
+            byStartBlock
+            ->Js.Dict.keys
+            ->Js.Array2.forEach(startBlockKey => {
+              let addresses = byStartBlock->Js.Dict.unsafeGet(startBlockKey)
+              let addressesByContractName = Js.Dict.empty()
+              addressesByContractName->Js.Dict.set(contractName, addresses)
+              partitions->Array.push({
+                id: (fetchState.nextPartitionIndex + partitions->Array.length)->Int.toString,
+                status: {
+                  fetchingStateId: None,
+                },
+                latestFetchedBlock: {
+                  blockNumber: Pervasives.max(startBlockKey->Int.fromString->Option.getExn - 1, 0),
+                  blockTimestamp: 0,
+                },
+                selection: fetchState.normalSelection,
+                addressesByContractName,
+                fetchedEventQueue: [],
+              })
+            })
+          } else {
+            // The goal is to try to split partitions the way,
+            // so there are mostly addresses of the same contract in each partition
+            // TODO: Should do the same for the initial FetchState creation
+            for jdx in 0 to addresses->Array.length - 1 {
+              let address = addresses->Js.Array2.unsafe_get(jdx)
+              if pendingCount.contents === fetchState.maxAddrInPartition {
+                addPartition()
+                pendingAddressesByContractName := Js.Dict.empty()
+                pendingCount := 0
+                earliestRegisteringEventBlockNumber := %raw(`Infinity`)
+              }
+
+              let indexingContract =
+                registeringContracts->Js.Dict.unsafeGet(address->Address.toString)
+
+              pendingCount := pendingCount.contents + 1
+              pendingAddressesByContractName.contents->Utils.Dict.push(contractName, address)
+              earliestRegisteringEventBlockNumber :=
+                Pervasives.min(
+                  earliestRegisteringEventBlockNumber.contents,
+                  indexingContract.startBlock,
+                )
+            }
+          }
+        }
+
+        if pendingCount.contents > 0 {
+          addPartition()
+        }
+
+        partitions
+      }
+
+      Prometheus.IndexingAddresses.set(
+        ~addressesCount=fetchState->numAddresses + dcsToStore->Array.length,
+        ~chainId=fetchState.chainId,
       )
-    })
 
-  Prometheus.IndexingAddresses.set(
-    ~addressesCount=fetchState->numAddresses + dynamicContracts->Array.length,
-    ~chainId=fetchState.chainId,
-  )
-
-  fetchState->updateInternal(
-    ~partitions=fetchState.partitions->Js.Array2.concat(newPartitions),
-    ~currentBlockHeight,
-    ~nextPartitionIndex=fetchState.nextPartitionIndex + newPartitions->Array.length,
-  )
+      fetchState->updateInternal(
+        ~partitions=fetchState.partitions->Js.Array2.concat(newPartitions),
+        ~currentBlockHeight,
+        ~dcsToStore=switch fetchState.dcsToStore {
+        | Some(existingDcs) => Some(Array.concat(existingDcs, dcsToStore))
+        | None => Some(dcsToStore)
+        },
+        ~indexingContracts=// We don't need registeringContracts anymore,
+        // so we can safely mixin indexingContracts in it
+        // The original indexingContracts won't be mutated
+        Utils.Dict.mergeInPlace(registeringContracts, indexingContracts),
+        ~nextPartitionIndex=fetchState.nextPartitionIndex + newPartitions->Array.length,
+      )
+    }
+  }
 }
 
 type queryTarget =
@@ -398,8 +588,9 @@ type query = {
   partitionId: string,
   fromBlock: int,
   selection: selection,
-  contractAddressMapping: ContractAddressingMap.mapping,
+  addressesByContractName: dict<array<Address.t>>,
   target: queryTarget,
+  indexingContracts: dict<indexingContract>,
 }
 
 exception UnexpectedPartitionNotFound({partitionId: string})
@@ -412,11 +603,11 @@ If MergeQuery caught up to the target partition, it triggers the merge of the pa
 
 newItems are ordered earliest to latest (as they are returned from the worker)
 */
-let setQueryResponse = (
+let handleQueryResult = (
   {partitions} as fetchState: t,
   ~query: query,
   ~latestFetchedBlock: blockNumberAndTimestamp,
-  ~newItems,
+  ~reversedNewItems,
   ~currentBlockHeight,
 ): result<t, exn> =>
   {
@@ -425,8 +616,7 @@ let setQueryResponse = (
     switch partitions->Array.getIndexBy(p => p.id === partitionId) {
     | Some(pIndex) =>
       let p = partitions->Js.Array2.unsafe_get(pIndex)
-      let updatedPartition =
-        p->addItemsToPartition(~latestFetchedBlock, ~reversedNewItems=newItems->Array.reverse)
+      let updatedPartition = p->addItemsToPartition(~latestFetchedBlock, ~reversedNewItems)
 
       switch query.target {
       | Head
@@ -468,7 +658,7 @@ let setQueryResponse = (
     fetchState->updateInternal(
       ~partitions,
       ~currentBlockHeight,
-      ~firstEventBlockNumber=switch newItems->Array.get(0) {
+      ~firstEventBlockNumber=switch reversedNewItems->Utils.Array.last {
       | Some(newFirstItem) =>
         Utils.Math.minOptInt(fetchState.firstEventBlockNumber, Some(newFirstItem.blockNumber))
       | None => fetchState.firstEventBlockNumber
@@ -476,7 +666,7 @@ let setQueryResponse = (
     )
   })
 
-let makePartitionQuery = (p: partition, ~endBlock, ~mergeTarget) => {
+let makePartitionQuery = (p: partition, ~indexingContracts, ~endBlock, ~mergeTarget) => {
   let fromBlock = switch p.latestFetchedBlock.blockNumber {
   | 0 => 0
   | latestFetchedBlockNumber => latestFetchedBlockNumber + 1
@@ -498,7 +688,8 @@ let makePartitionQuery = (p: partition, ~endBlock, ~mergeTarget) => {
       fromBlock,
       target,
       selection: p.selection,
-      contractAddressMapping: p.contractAddressMapping,
+      addressesByContractName: p.addressesByContractName,
+      indexingContracts,
     }
   })
 }
@@ -520,17 +711,37 @@ let startFetchingQueries = ({partitions}: t, ~queries: array<query>, ~stateId) =
   })
 }
 
+let addressesByContractNameCount = (addressesByContractName: dict<array<Address.t>>) => {
+  let numAddresses = ref(0)
+  let contractNames = addressesByContractName->Js.Dict.keys
+  for idx in 0 to contractNames->Array.length - 1 {
+    let contractName = contractNames->Js.Array2.unsafe_get(idx)
+    numAddresses :=
+      numAddresses.contents + addressesByContractName->Js.Dict.unsafeGet(contractName)->Array.length
+  }
+  numAddresses.contents
+}
+
+let addressesByContractNameGetAll = (addressesByContractName: dict<array<Address.t>>) => {
+  let all = ref([])
+  let contractNames = addressesByContractName->Js.Dict.keys
+  for idx in 0 to contractNames->Array.length - 1 {
+    let contractName = contractNames->Js.Array2.unsafe_get(idx)
+    all := all.contents->Array.concat(addressesByContractName->Js.Dict.unsafeGet(contractName))
+  }
+  all.contents
+}
+
 @inline
 let isFullPartition = (p: partition, ~maxAddrInPartition) => {
   switch p {
   | {selection: {dependsOnAddresses: false}} => true
-  | {contractAddressMapping} =>
-    contractAddressMapping->ContractAddressingMap.addressCount >= maxAddrInPartition
+  | _ => p.addressesByContractName->addressesByContractNameCount >= maxAddrInPartition
   }
 }
 
 let getNextQuery = (
-  {partitions, maxAddrInPartition, endBlock, latestFullyFetchedBlock}: t,
+  {partitions, maxAddrInPartition, endBlock, latestFullyFetchedBlock, indexingContracts}: t,
   ~concurrencyLimit,
   ~maxQueueSize,
   ~currentBlockHeight,
@@ -632,7 +843,7 @@ let getNextQuery = (
             : !checkIsWithinSyncRange(~latestFetchedBlock=p.latestFetchedBlock, ~currentBlockHeight)
         )
       ) {
-        switch p->makePartitionQuery(~endBlock, ~mergeTarget) {
+        switch p->makePartitionQuery(~indexingContracts, ~endBlock, ~mergeTarget) {
         | Some(q) => queries->Array.push(q)
         | None => ()
         }
@@ -796,8 +1007,20 @@ let make = (
   let notDependingOnAddresses = []
   let normalEventConfigs = []
   let contractNamesWithNormalEvents = Utils.Set.make()
+  let indexingContracts = Js.Dict.empty()
+  let contractConfigs = Js.Dict.empty()
 
   eventConfigs->Array.forEach(ec => {
+    switch contractConfigs->Utils.Dict.dangerouslyGetNonOption(ec.contractName) {
+    | Some({filterByAddresses}) =>
+      contractConfigs->Js.Dict.set(
+        ec.contractName,
+        {filterByAddresses: filterByAddresses || ec.filterByAddresses},
+      )
+    | None =>
+      contractConfigs->Js.Dict.set(ec.contractName, {filterByAddresses: ec.filterByAddresses})
+    }
+
     if ec.dependsOnAddresses {
       normalEventConfigs->Array.push(ec)
       contractNamesWithNormalEvents->Utils.Set.add(ec.contractName)->ignore
@@ -807,7 +1030,6 @@ let make = (
   })
 
   let partitions = []
-  let numAddresses = ref(0)
 
   if notDependingOnAddresses->Array.length > 0 {
     partitions->Array.push({
@@ -820,8 +1042,7 @@ let make = (
         dependsOnAddresses: false,
         eventConfigs: notDependingOnAddresses,
       },
-      contractAddressMapping: ContractAddressingMap.make(),
-      dynamicContracts: [],
+      addressesByContractName: Js.Dict.empty(),
       fetchedEventQueue: [],
     })
   }
@@ -842,27 +1063,50 @@ let make = (
           },
           latestFetchedBlock,
           selection: normalSelection,
-          contractAddressMapping: ContractAddressingMap.make(),
-          dynamicContracts: [],
+          addressesByContractName: Js.Dict.empty(),
           fetchedEventQueue: [],
         }
       }
 
       let pendingNormalPartition = ref(makePendingNormalPartition())
 
-      let registerAddress = (contractName, address, ~dc=?) => {
+      let registerAddress = (
+        contractName,
+        address,
+        ~dc: option<TablesStatic.DynamicContractRegistry.t>=?,
+      ) => {
         let pendingPartition = pendingNormalPartition.contents
-        numAddresses := numAddresses.contents + 1
-        pendingPartition.contractAddressMapping->ContractAddressingMap.addAddress(
-          ~name=contractName,
-          ~address,
-        )
-        switch dc {
-        | Some(dc) => pendingPartition.dynamicContracts->Array.push(dc)
-        | None => ()
+        switch pendingPartition.addressesByContractName->Utils.Dict.dangerouslyGetNonOption(
+          contractName,
+        ) {
+        | Some(addresses) => addresses->Array.push(address)
+        | None => pendingPartition.addressesByContractName->Js.Dict.set(contractName, [address])
         }
+        indexingContracts->Js.Dict.set(
+          address->Address.toString,
+          switch dc {
+          | Some(dc) => {
+              address,
+              contractName,
+              startBlock: dc.registeringEventBlockNumber,
+              register: DC({
+                registeringEventLogIndex: dc.registeringEventLogIndex,
+                registeringEventBlockTimestamp: dc.registeringEventBlockTimestamp,
+                registeringEventContractName: dc.registeringEventContractName,
+                registeringEventName: dc.registeringEventName,
+                registeringEventSrcAddress: dc.registeringEventSrcAddress,
+              }),
+            }
+          | None => {
+              address,
+              contractName,
+              startBlock,
+              register: Config,
+            }
+          },
+        )
         if (
-          pendingPartition.contractAddressMapping->ContractAddressingMap.addressCount ===
+          pendingPartition.addressesByContractName->addressesByContractNameCount ===
             maxAddrInPartition
         ) {
           partitions->Array.push(pendingPartition)
@@ -887,9 +1131,7 @@ let make = (
         }
       })
 
-      if (
-        pendingNormalPartition.contents.contractAddressMapping->ContractAddressingMap.addressCount > 0
-      ) {
+      if pendingNormalPartition.contents.addressesByContractName->addressesByContractNameCount > 0 {
         partitions->Array.push(pendingNormalPartition.contents)
       }
     }
@@ -909,7 +1151,8 @@ let make = (
     )
   }
 
-  Prometheus.IndexingAddresses.set(~addressesCount=numAddresses.contents, ~chainId)
+  let numAddresses = indexingContracts->Js.Dict.keys->Array.length
+  Prometheus.IndexingAddresses.set(~addressesCount=numAddresses, ~chainId)
   switch endBlock {
   | Some(endBlock) => Prometheus.IndexingEndBlock.set(~endBlock, ~chainId)
   | None => ()
@@ -918,6 +1161,7 @@ let make = (
   {
     partitions,
     nextPartitionIndex: partitions->Array.length,
+    contractConfigs,
     isFetchingAtHead: false,
     maxAddrInPartition,
     chainId,
@@ -926,64 +1170,11 @@ let make = (
     queueSize: 0,
     firstEventBlockNumber: None,
     normalSelection,
+    indexingContracts,
   }
 }
 
 let queueSize = ({queueSize}: t) => queueSize
-
-let warnIfAttemptedAddressRegisterOnDifferentContracts = (
-  ~contractAddress,
-  ~contractName,
-  ~existingContractName,
-  ~chainId,
-) => {
-  if existingContractName != contractName {
-    let logger = Logging.createChild(
-      ~params={
-        "chainId": chainId,
-        "contractAddress": contractAddress->Address.toString,
-        "existingContractType": existingContractName,
-        "newContractType": contractName,
-      },
-    )
-    logger->Logging.childWarn(
-      `Contract address ${contractAddress->Address.toString} is already registered as contract ${existingContractName} and cannot also be registered as ${(contractName :> string)}`,
-    )
-  }
-}
-
-/**
-Recurses through partitions and determines whether a contract has already been registered with
-the given name and address
-*/
-let checkContainsRegisteredContractAddress = (
-  self: t,
-  ~contractName,
-  ~contractAddress,
-  ~chainId,
-) => {
-  self.partitions->Array.some(p => {
-    switch p {
-    | {selection: {dependsOnAddresses: false}} => false
-    | {contractAddressMapping} =>
-      switch contractAddressMapping->ContractAddressingMap.getContractNameFromAddress(
-        ~contractAddress,
-      ) {
-      | Some(existingContractName) =>
-        if existingContractName != contractName {
-          warnIfAttemptedAddressRegisterOnDifferentContracts(
-            ~contractAddress,
-            ~contractName,
-            ~existingContractName,
-            ~chainId,
-          )
-        }
-        true
-      | None => false
-      }
-    }
-  })
-}
 
 /**
 * Returns the latest block number fetched for the lowest fetcher queue (ie the earliest un-fetched dynamic contract)
@@ -1002,7 +1193,11 @@ let pruneQueueFromFirstChangeEvent = (
 /**
 Rolls back partitions to the given valid block
 */
-let rollbackPartition = (p: partition, ~firstChangeEvent: blockNumberAndLogIndex) => {
+let rollbackPartition = (
+  p: partition,
+  ~firstChangeEvent: blockNumberAndLogIndex,
+  ~addressesToRemove,
+) => {
   switch p {
   | {selection: {dependsOnAddresses: false}} =>
     Some({
@@ -1011,68 +1206,90 @@ let rollbackPartition = (p: partition, ~firstChangeEvent: blockNumberAndLogIndex
         fetchingStateId: None,
       },
     })
-  | {contractAddressMapping, dynamicContracts} => {
-      //get all dynamic contract addresses past valid blockNumber to remove along with
-      //updated dynamicContracts map
-      let addressesToRemove = []
-      let dynamicContracts = dynamicContracts->Array.keep(dc => {
-        if (
-          (dc.registeringEventBlockNumber, dc.registeringEventLogIndex) >=
-          (firstChangeEvent.blockNumber, firstChangeEvent.logIndex)
-        ) {
-          //If the registration block is later than the first change event,
-          //Do not keep it and add to the removed addresses
-          addressesToRemove->Array.push(dc.contractAddress)
-          false
-        } else {
-          true
-        }
-      })
-
-      if (
-        addressesToRemove->Array.length ===
-          contractAddressMapping->ContractAddressingMap.addressCount
-      ) {
-        None
-      } else {
-        //remove them from the contract address mapping and dynamic contract addresses mapping
-        let contractAddressMapping =
-          contractAddressMapping->ContractAddressingMap.removeAddresses(~addressesToRemove)
-
-        let shouldRollbackFetched = p.latestFetchedBlock.blockNumber >= firstChangeEvent.blockNumber
-
-        let fetchedEventQueue = if shouldRollbackFetched {
-          p.fetchedEventQueue->pruneQueueFromFirstChangeEvent(~firstChangeEvent)
-        } else {
-          p.fetchedEventQueue
-        }
-
-        Some({
-          id: p.id,
-          selection: p.selection,
-          status: {
-            fetchingStateId: None,
-          },
-          dynamicContracts,
-          contractAddressMapping,
-          fetchedEventQueue,
-          latestFetchedBlock: shouldRollbackFetched
-            ? {
-                blockNumber: Pervasives.max(firstChangeEvent.blockNumber - 1, 0),
-                blockTimestamp: 0,
-              }
-            : p.latestFetchedBlock,
-        })
+  | {addressesByContractName} =>
+    let rollbackedAddressesByContractName = Js.Dict.empty()
+    addressesByContractName->Utils.Dict.forEachWithKey((contractName, addresses) => {
+      let keptAddresses =
+        addresses->Array.keep(address => !(addressesToRemove->Utils.Set.has(address)))
+      if keptAddresses->Array.length > 0 {
+        rollbackedAddressesByContractName->Js.Dict.set(contractName, keptAddresses)
       }
+    })
+
+    if rollbackedAddressesByContractName->Js.Dict.keys->Array.length === 0 {
+      None
+    } else {
+      let shouldRollbackFetched = p.latestFetchedBlock.blockNumber >= firstChangeEvent.blockNumber
+
+      let fetchedEventQueue = if shouldRollbackFetched {
+        p.fetchedEventQueue->pruneQueueFromFirstChangeEvent(~firstChangeEvent)
+      } else {
+        p.fetchedEventQueue
+      }
+
+      Some({
+        id: p.id,
+        selection: p.selection,
+        status: {
+          fetchingStateId: None,
+        },
+        addressesByContractName: rollbackedAddressesByContractName,
+        fetchedEventQueue,
+        latestFetchedBlock: shouldRollbackFetched
+          ? {
+              blockNumber: Pervasives.max(firstChangeEvent.blockNumber - 1, 0),
+              blockTimestamp: 0,
+            }
+          : p.latestFetchedBlock,
+      })
     }
   }
 }
 
 let rollback = (fetchState: t, ~firstChangeEvent) => {
-  let partitions =
-    fetchState.partitions->Array.keepMap(p => p->rollbackPartition(~firstChangeEvent))
+  let addressesToRemove = Utils.Set.make()
+  let indexingContracts = Js.Dict.empty()
 
-  fetchState->updateInternal(~partitions)
+  fetchState.indexingContracts
+  ->Js.Dict.keys
+  ->Array.forEach(address => {
+    let indexingContract = fetchState.indexingContracts->Js.Dict.unsafeGet(address)
+    if (
+      switch indexingContract {
+      | {register: Config} => true
+      | {register: DC(dc)} =>
+        indexingContract.startBlock < firstChangeEvent.blockNumber ||
+          (indexingContract.startBlock === firstChangeEvent.blockNumber &&
+            dc.registeringEventLogIndex < firstChangeEvent.logIndex)
+      }
+    ) {
+      indexingContracts->Js.Dict.set(address, indexingContract)
+    } else {
+      //If the registration block is later than the first change event,
+      //Do not keep it and add to the removed addresses
+      let _ = addressesToRemove->Utils.Set.add(address->Address.unsafeFromString)
+    }
+  })
+
+  let partitions =
+    fetchState.partitions->Array.keepMap(p =>
+      p->rollbackPartition(~firstChangeEvent, ~addressesToRemove)
+    )
+
+  fetchState->updateInternal(
+    ~partitions,
+    ~indexingContracts,
+    ~dcsToStore=switch fetchState.dcsToStore {
+    | Some(dcsToStore) =>
+      let filtered =
+        dcsToStore->Js.Array2.filter(dc => !(addressesToRemove->Utils.Set.has(dc.address)))
+      switch filtered {
+      | [] => None
+      | _ => Some(filtered)
+      }
+    | None => None
+    },
+  )
 }
 
 /**

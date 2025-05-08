@@ -20,7 +20,6 @@ module EventSyncState = {
     @as("block_number") blockNumber: int,
     @as("log_index") logIndex: int,
     @as("block_timestamp") blockTimestamp: int,
-    @as("is_pre_registering_dynamic_contracts") isPreRegisteringDynamicContracts: bool,
   }
 
   let table = mkTable(
@@ -31,7 +30,8 @@ module EventSyncState = {
       mkField(blockNumberFieldName, Integer, ~fieldSchema=S.int),
       mkField(logIndexFieldName, Integer, ~fieldSchema=S.int),
       mkField(blockTimestampFieldName, Integer, ~fieldSchema=S.int),
-      mkField(isPreRegisteringDynamicContractsFieldName, Boolean, ~fieldSchema=S.bool),
+      // Keep it in case Hosted Service relies on it to prevent a breaking changes
+      mkField(isPreRegisteringDynamicContractsFieldName, Boolean, ~default="false", ~fieldSchema=S.bool),
     ],
   )
 
@@ -191,6 +191,11 @@ module RawEvents = {
 module DynamicContractRegistry = {
   let name = Enums.EntityType.DynamicContractRegistry
 
+
+  let makeId = (~chainId, ~contractAddress) => {
+    chainId->Belt.Int.toString ++ "-" ++ contractAddress->Address.toString
+  }
+
   @genType
   type t = {
     id: string,
@@ -203,7 +208,6 @@ module DynamicContractRegistry = {
     @as("registering_event_src_address") registeringEventSrcAddress: Address.t,
     @as("contract_address") contractAddress: Address.t,
     @as("contract_type") contractType: Enums.ContractType.t,
-    @as("is_pre_registered") isPreRegistered: bool,
   }
 
   let schema = S.schema(s => {
@@ -217,7 +221,6 @@ module DynamicContractRegistry = {
     registeringEventBlockTimestamp: s.matches(S.int),
     contractAddress: s.matches(Address.schema),
     contractType: s.matches(Enums.ContractType.enum.schema),
-    isPreRegistered: s.matches(S.bool),
   })
 
   let rowsSchema = S.array(schema)
@@ -240,7 +243,6 @@ module DynamicContractRegistry = {
         Custom(Enums.ContractType.enum.name),
         ~fieldSchema=Enums.ContractType.enum.schema,
       ),
-      mkField("is_pre_registered", Boolean, ~fieldSchema=S.bool),
     ],
   )
 

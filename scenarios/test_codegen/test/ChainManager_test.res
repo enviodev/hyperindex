@@ -4,14 +4,11 @@ open RescriptMocha
 let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) => {
   let config = RegisterHandlers.registerAllHandlers()
   let allEvents = []
-
-  let arbitraryEventPriorityQueue = ref([])
   let numberOfMockEventsCreated = ref(0)
 
   let chainFetchers = config.chainMap->ChainMap.map(({chain}) => {
     let getCurrentTimestamp = () => {
       let timestampMillis = Js.Date.now()
-
       // Convert milliseconds to seconds
       Belt.Int.fromFloat(timestampMillis /. 1000.0)
     }
@@ -51,13 +48,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
     let currentBlockNumber = ref(blockNumberStart)
 
     while currentTime.contents <= endTimestamp {
-      // there is 1 in 3 chance that all the events in the block are in the arbitraryEventPriorityQueue, all in the ChainEventQueue or split between the two
-      //   0 -> all in arbitraryEventPriorityQueue
-      //   1 -> all in ChainEventQueue
-      //   2 -> split between the two
-      let queuesToUse = getRandomInt(0, 2)
       let blockTime = getRandomInt(0, 2 * averageBlockTime)
-
       let numberOfEventsInBatch = getRandomInt(0, 2 * averageEventsPerBlock)
 
       for logIndex in 0 to numberOfEventsInBatch {
@@ -72,67 +63,36 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
 
         allEvents->Js.Array2.push(batchItem)->ignore
 
-        switch queuesToUse {
-        | 0 =>
-          arbitraryEventPriorityQueue :=
-            [batchItem]->FetchState.mergeSortedEventList(arbitraryEventPriorityQueue.contents)
-        | 1 =>
-          fetchState :=
-            fetchState.contents
-            ->FetchState.setQueryResponse(
-              ~query={
-                partitionId: "0",
-                fromBlock: 0,
-                target: Head,
-                selection: {
-                  dependsOnAddresses: false,
-                  eventConfigs,
-                },
-                contractAddressMapping: ContractAddressingMap.make(),
+        fetchState :=
+          fetchState.contents
+          ->FetchState.handleQueryResult(
+            ~query={
+              partitionId: "0",
+              fromBlock: 0,
+              target: Head,
+              selection: {
+                dependsOnAddresses: false,
+                eventConfigs,
               },
-              ~latestFetchedBlock={
-                blockNumber: batchItem.blockNumber,
-                blockTimestamp: batchItem.timestamp,
-              },
-              ~newItems=[batchItem],
-              ~currentBlockHeight=currentBlockNumber.contents,
-            )
-            ->Result.getExn
-        | 2
-        | _ =>
-          if Js.Math.random() < 0.5 {
-            arbitraryEventPriorityQueue :=
-              [batchItem]->FetchState.mergeSortedEventList(arbitraryEventPriorityQueue.contents)
-          } else {
-            fetchState :=
-              fetchState.contents
-              ->FetchState.setQueryResponse(
-                ~query={
-                  partitionId: "0",
-                  fromBlock: 0,
-                  target: Head,
-                  selection: {
-                    dependsOnAddresses: false,
-                    eventConfigs,
-                  },
-                  contractAddressMapping: ContractAddressingMap.make(),
-                },
-                ~latestFetchedBlock={
-                  blockNumber: batchItem.blockNumber,
-                  blockTimestamp: batchItem.timestamp,
-                },
-                ~newItems=[batchItem],
-                ~currentBlockHeight=currentBlockNumber.contents,
-              )
-              ->Result.getExn
-          }
-        }
+              addressesByContractName: Js.Dict.empty(),
+              indexingContracts: fetchState.contents.indexingContracts,
+            },
+            ~latestFetchedBlock={
+              blockNumber: batchItem.blockNumber,
+              blockTimestamp: batchItem.timestamp,
+            },
+            ~reversedNewItems=[batchItem],
+            ~currentBlockHeight=currentBlockNumber.contents,
+          )
+          ->Result.getExn
+
         numberOfMockEventsCreated := numberOfMockEventsCreated.contents + 1
       }
 
       currentTime := currentTime.contents + blockTime
       currentBlockNumber := currentBlockNumber.contents + 1
     }
+
     let chainConfig = config.defaultChain->Option.getUnsafe
     let mockChainFetcher: ChainFetcher.t = {
       timestampCaughtUpToHeadOrEndblock: None,
@@ -154,7 +114,6 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
       ),
       currentBlockHeight: 0,
       processingFilters: None,
-      dynamicContractPreRegistration: None,
     }
 
     mockChainFetcher
@@ -162,8 +121,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
 
   (
     {
-      ChainManager.arbitraryEventQueue: arbitraryEventPriorityQueue.contents,
-      chainFetchers,
+      ChainManager.chainFetchers,
       isUnorderedMultichainMode: false,
       isInReorgThreshold: false,
     },
@@ -203,25 +161,19 @@ describe("ChainManager", () => {
           )
 
           // ensure that the events are ordered correctly
-          switch eventsInBlock.val {
-          | None => chainManager
-          | Some({batch, fetchStatesMap, arbitraryEventQueue}) =>
-            batch->Belt.Array.forEach(
+          switch eventsInBlock {
+          | {items: []} => chainManager
+          | {items, fetchStatesMap} =>
+            items->Belt.Array.forEach(
               i => {
                 let _ = allEventsRead->Js.Array2.push(i)
               },
             )
-            let batchSize = batch->Array.length
+            let batchSize = items->Array.length
             numberOfMockEventsReadFromQueues :=
               numberOfMockEventsReadFromQueues.contents + batchSize
-            // Check that events has at least 1 item in it
-            Assert.equal(
-              batchSize > 0,
-              true,
-              ~message="if `Some` is returned, the array must have at least 1 item in it.",
-            )
 
-            let firstEventInBlock = batch[0]->Option.getExn
+            let firstEventInBlock = items[0]->Option.getExn
 
             Assert.equal(
               firstEventInBlock->ChainManager.ExposedForTesting_Hidden.getComparitorFromItem >
@@ -271,7 +223,6 @@ describe("ChainManager", () => {
 
             let nextChainManager: ChainManager.t = {
               ...chainManager,
-              arbitraryEventQueue,
               chainFetchers: nextChainFetchers,
             }
             testThatCreatedEventsAreOrderedCorrectly(nextChainManager, lastEvent)
@@ -285,15 +236,14 @@ describe("ChainManager", () => {
 
         // Test that no events were missed
         let amountStillOnQueues =
-          finalChainManager.arbitraryEventQueue->Array.length +
-            finalChainManager.chainFetchers
-            ->ChainMap.values
-            ->Belt.Array.reduce(
-              0,
-              (accum, val) => {
-                accum + val.fetchState->FetchState.queueSize
-              },
-            )
+          finalChainManager.chainFetchers
+          ->ChainMap.values
+          ->Belt.Array.reduce(
+            0,
+            (accum, val) => {
+              accum + val.fetchState->FetchState.queueSize
+            },
+          )
 
         Assert.equal(
           amountStillOnQueues + numberOfMockEventsReadFromQueues.contents,
@@ -350,8 +300,7 @@ describe("determineNextEvent", () => {
           fetchingStateId: None,
         },
         selection: normalSelection,
-        contractAddressMapping: ContractAddressingMap.make(),
-        dynamicContracts: [],
+        addressesByContractName: Js.Dict.empty(),
         fetchedEventQueue: item->Option.mapWithDefault([], v => [v]),
       }
       {
@@ -368,6 +317,8 @@ describe("determineNextEvent", () => {
         firstEventBlockNumber: item->Option.map(v => v.blockNumber),
         normalSelection,
         chainId: 0,
+        indexingContracts: Js.Dict.empty(),
+        contractConfigs: Js.Dict.fromArray([("Gravatar", {FetchState.filterByAddresses: false})]),
       }
     }
 

@@ -19,44 +19,57 @@ describe("Test Processing Filters", () => {
 
   it("Keeps items when there are not filters", () => {
     let items = MockEvents.eventBatchItems
-    assertEqualItems(items->ChainFetcher.applyProcessingFilters(~processingFilters=[]), items)
+    assertEqualItems(
+      items,
+      items->Js.Array2.filter(
+        item => ChainFetcher.applyProcessingFilters(~item, ~processingFilters=[]),
+      ),
+    )
   })
 
   it("Keeps items when all filters return true", () => {
     let items = MockEvents.eventBatchItems
     assertEqualItems(
-      items->ChainFetcher.applyProcessingFilters(
-        ~processingFilters=[
-          {
-            filter: _ => true,
-            isValid: (~fetchState as _) => true,
-          },
-          {
-            filter: _ => true,
-            isValid: (~fetchState as _) => true,
-          },
-        ],
-      ),
       items,
+      items->Js.Array2.filter(
+        item =>
+          ChainFetcher.applyProcessingFilters(
+            ~item,
+            ~processingFilters=[
+              {
+                filter: _ => true,
+                isValid: (~fetchState as _) => true,
+              },
+              {
+                filter: _ => true,
+                isValid: (~fetchState as _) => true,
+              },
+            ],
+          ),
+      ),
     )
   })
 
   it("Removes all items when there is one filter returning false", () => {
     let items = MockEvents.eventBatchItems
     assertEqualItems(
-      items->ChainFetcher.applyProcessingFilters(
-        ~processingFilters=[
-          {
-            filter: _ => false,
-            isValid: (~fetchState as _) => true,
-          },
-          {
-            filter: _ => true,
-            isValid: (~fetchState as _) => true,
-          },
-        ],
-      ),
       [],
+      items->Js.Array2.filter(
+        item =>
+          ChainFetcher.applyProcessingFilters(
+            ~item,
+            ~processingFilters=[
+              {
+                filter: _ => false,
+                isValid: (~fetchState as _) => true,
+              },
+              {
+                filter: _ => true,
+                isValid: (~fetchState as _) => true,
+              },
+            ],
+          ),
+      ),
     )
   })
 })
