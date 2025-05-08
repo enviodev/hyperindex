@@ -9,7 +9,7 @@ import type {Effect as $$effect} from './Types.ts';
 
 import type {Logger as $$logger} from './Types.ts';
 
-import type {S_t as RescriptSchema_S_t} from 'rescript-schema/RescriptSchema.gen';
+import type {S_t as RescriptSchema_S_t} from './RescriptSchema.gen';
 
 export type logger = $$logger;
 
