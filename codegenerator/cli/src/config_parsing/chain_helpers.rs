@@ -572,17 +572,18 @@ impl HypersyncNetwork {
 
             Xdc | Polygon | ArbitrumOne => Silver,
 
-            Sepolia | Linea | Blast | Moonbeam | Sophon | Lisk | Chiliz | Rsk | Amoy | Scroll
-            | ZksyncEra | ArbitrumNova | Avalanche | Bsc | Fantom | Hyperliquid => Bronze,
+            Linea | Berachain | Blast | Amoy | Scroll | ZksyncEra | ArbitrumNova | Avalanche
+            | Bsc => Bronze,
 
             Curtis | PolygonZkevm | Lukso | Abstract | PharosDevnet | Zora | Darwinia
-            | Unichain | Berachain | Aurora | Zeta | Manta | Kroma | Flare | Mantle | Metis
-            | ShimmerEvm | Boba | Ink | Metall2 | SophonTestnet | MorphTestnet
-            | GaladrielDevnet | CitreaTestnet | BscTestnet | UnichainSepolia | Zircuit | Celo
-            | Opbnb | GnosisChiado | LuksoTestnet | BlastSepolia | Holesky | BerachainBartio
+            | Unichain | Aurora | Zeta | Manta | Kroma | Flare | Mantle | Metis | ShimmerEvm
+            | Boba | Ink | Metall2 | SophonTestnet | MorphTestnet | GaladrielDevnet
+            | CitreaTestnet | BscTestnet | UnichainSepolia | Zircuit | Celo | Opbnb
+            | GnosisChiado | LuksoTestnet | BlastSepolia | Holesky | BerachainBartio
             | OptimismSepolia | Fuji | ArbitrumSepolia | Fraxtal | Soneium | BaseSepolia
             | MevCommit | Merlin | Mode | MoonbaseAlpha | XdcTestnet | Morph | Harmony
-            | Saakuru | Cyber | Superseed | MegaethTestnet | Sonic | Worldchain | Crab => Stone,
+            | Saakuru | Cyber | Superseed | MegaethTestnet | Sonic | Worldchain | Crab | Sophon
+            | Fantom | Sepolia | Rsk | Chiliz | Lisk | Hyperliquid | Moonbeam => Stone,
         }
     }
 
