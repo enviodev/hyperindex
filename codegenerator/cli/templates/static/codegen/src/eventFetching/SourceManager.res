@@ -131,7 +131,18 @@ let getSourceNewHeight = async (
 
   while newHeight.contents <= currentBlockHeight && status.contents !== Done {
     try {
+      //Set a timer to warn if the source is taking too long to respond
+      let warningTimeOutMillis = 1_000
+      let timeoutId = Js.Global.setTimeout(() => {
+        logger->Logging.childTrace({
+          "msg": `Height retrieval from the source is taking longer than ${warningTimeOutMillis->Int.toString}ms.`,
+          "source": source.name,
+        })
+      }, warningTimeOutMillis)
+
       let height = await source.getHeightOrThrow()
+      //Clear the timer after the source responds
+      timeoutId->Js.Global.clearTimeout
       newHeight := height
       if height <= currentBlockHeight {
         retry := 0
@@ -437,3 +448,4 @@ let executeQuery = async (sourceManager: t, ~query: FetchState.query, ~currentBl
 
   responseRef.contents->Option.getUnsafe
 }
+
