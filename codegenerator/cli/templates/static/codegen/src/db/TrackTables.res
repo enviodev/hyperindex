@@ -1,4 +1,3 @@
-%%raw(`globalThis.fetch = require('node-fetch')`)
 open Fetch
 
 let headers = {
