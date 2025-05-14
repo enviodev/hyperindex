@@ -64,16 +64,30 @@ type t = {
   id: int,
 }
 
-let make = (~config, ~chainManager, ~loadLayer, ~shouldUseTui=false) => {
+let make = (
+  ~config: Config.t,
+  ~chainManager: ChainManager.t,
+  ~loadLayer: LoadLayer.t,
+  ~shouldUseTui=false,
+) => {
+  let maxPerChainQueueSize = {
+    let numChains = config.chainMap->ChainMap.size
+    Env.maxEventFetchedQueueSize / numChains
+  }
+  config.chainMap
+  ->ChainMap.keys
+  ->Array.forEach(chain => {
+    Prometheus.IndexingMaxBufferSize.set(
+      ~maxBufferSize=maxPerChainQueueSize,
+      ~chainId=chain->ChainMap.Chain.toChainId,
+    )
+  })
   {
     config,
     currentlyProcessingBatch: false,
     chainManager,
     maxBatchSize: Env.maxProcessBatchSize,
-    maxPerChainQueueSize: {
-      let numChains = config.chainMap->ChainMap.size
-      Env.maxEventFetchedQueueSize / numChains
-    },
+    maxPerChainQueueSize,
     indexerStartTime: Js.Date.make(),
     rollbackState: NoRollback,
     writeThrottlers: WriteThrottlers.make(~config),

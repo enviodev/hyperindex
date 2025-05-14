@@ -232,12 +232,6 @@ let setProcessedUntilHeight = (~blockNumber, ~chain) => {
   ->PromClient.Gauge.set(blockNumber)
 }
 
-let setFetchedUntilHeight = (~blockNumber, ~chain) => {
-  fetchedUntilHeight
-  ->PromClient.Gauge.labels({"chainId": chain->ChainMap.Chain.toString})
-  ->PromClient.Gauge.set(blockNumber)
-}
-
 module BenchmarkCounters = {
   type labels = {label: string}
   let labelSchema = S.schema(s => {
@@ -279,6 +273,18 @@ let chainIdLabelsSchema = S.object(s => {
   s.field("chainId", S.string->S.coerce(S.int))
 })
 
+module ProgressBlockNumber = {
+  let gauge = SafeGauge.makeOrThrow(
+    ~name="envio_progress_block_number",
+    ~help="The block number to track the progress of indexing at. Currently uses the fully fetched block number. In the future will be changed to block number processed and stored in the database.",
+    ~labelSchema=chainIdLabelsSchema,
+  )
+
+  let set = (~blockNumber, ~chainId) => {
+    gauge->SafeGauge.handleInt(~labels=chainId, ~value=blockNumber)
+  }
+}
+
 module IndexingAddresses = {
   let gauge = SafeGauge.makeOrThrow(
     ~name="envio_indexing_addresses",
@@ -315,22 +321,52 @@ module IndexingConcurrency = {
   }
 }
 
+module IndexingBufferSize = {
+  let gauge = SafeGauge.makeOrThrow(
+    ~name="envio_indexing_buffer_size",
+    ~help="The current number of items in the indexing buffer.",
+    ~labelSchema=chainIdLabelsSchema,
+  )
+
+  let set = (~bufferSize, ~chainId) => {
+    gauge->SafeGauge.handleInt(~labels=chainId, ~value=bufferSize)
+  }
+}
+
+module IndexingMaxBufferSize = {
+  let gauge = SafeGauge.makeOrThrow(
+    ~name="envio_indexing_max_buffer_size",
+    ~help="The maximum number of items allowed in the indexing buffer for the chain.",
+    ~labelSchema=chainIdLabelsSchema,
+  )
+
+  let set = (~maxBufferSize, ~chainId) => {
+    gauge->SafeGauge.handleInt(~labels=chainId, ~value=maxBufferSize)
+  }
+}
+
+module IndexingBufferBlockNumber = {
+  let gauge = SafeGauge.makeOrThrow(
+    ~name="envio_indexing_buffer_block_number",
+    ~help="The highest block number that has been fully fetched by the indexer.",
+    ~labelSchema=chainIdLabelsSchema,
+  )
+
+  let set = (~blockNumber, ~chainId) => {
+    // TODO: Remove in V3
+    fetchedUntilHeight
+    ->PromClient.Gauge.labels({"chainId": chainId})
+    ->PromClient.Gauge.set(blockNumber)
+    // TODO: Use the block number stored in the database instead
+    ProgressBlockNumber.set(~blockNumber, ~chainId)
+    gauge->SafeGauge.handleInt(~labels=chainId, ~value=blockNumber)
+  }
+}
+
 module IndexingEndBlock = {
   let gauge = SafeGauge.makeOrThrow(
     ~name="envio_indexing_end_block",
     ~help="The block number to stop indexing at. (inclusive)",
-    ~labelSchema=chainIdLabelsSchema,
-  )
-
-  let set = (~endBlock, ~chainId) => {
-    gauge->SafeGauge.handleInt(~labels=chainId, ~value=endBlock)
-  }
-}
-
-module ProgressBlockNumber = {
-  let gauge = SafeGauge.makeOrThrow(
-    ~name="envio_progress_block_number",
-    ~help="The block number to track the progress of indexing at. Currently uses the fully fetched block number. In the future will be changed to block number processed and stored in the database.",
     ~labelSchema=chainIdLabelsSchema,
   )
 
