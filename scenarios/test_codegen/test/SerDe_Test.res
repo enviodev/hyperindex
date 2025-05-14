@@ -39,6 +39,7 @@ describe("SerDe Test", () => {
       // optTimestamp: Some(mockDate(~day=2)),
       // arrayOfTimestamps: [Js.Date.fromFloat(3.3), Js.Date.fromFloat(4.4)],
       // arrayOfTimestamps: [],
+      json: %raw(`{"foo": ["bar"]}`),
     }
 
     let entityHistoryItem: EntityHistory.historyRow<_> = {
@@ -81,7 +82,7 @@ describe("SerDe Test", () => {
     | exception exn =>
       Js.log(exn)
       Assert.fail("Failed to read entity from table")
-    | [_entity] => Assert.deepEqual(_entity, entity)      
+    | [_entity] => Assert.deepEqual(_entity, entity)
     | _ => Assert.fail("Should have returned a row on batch read fn")
     }
 
@@ -159,7 +160,7 @@ describe("SerDe Test", () => {
     | exception exn =>
       Js.log(exn)
       Assert.fail("Failed to read entity from table")
-    | [_entity] => Assert.deepEqual(_entity, entity)      
+    | [_entity] => Assert.deepEqual(_entity, entity)
     | _ => Assert.fail("Should have returned a row on batch read fn")
     }
 

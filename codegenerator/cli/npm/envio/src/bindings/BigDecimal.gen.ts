@@ -5,7 +5,7 @@
 
 const BigDecimalJS = require('./BigDecimal.bs.js');
 
-import type {S_t as RescriptSchema_S_t} from './RescriptSchema.gen';
+import type {S_t as RescriptSchema_S_t} from 'rescript-schema/RescriptSchema.gen';
 
 import type {default as $$t} from 'bignumber.js';
 

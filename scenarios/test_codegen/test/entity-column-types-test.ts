@@ -158,6 +158,9 @@ describe("Postgres Numeric Precision Entity Tester Migrations", () => {
     });
 
     // Check that there are no extra columns
-    expect(actualColumns.length).to.equal(expectedColumns.length + 1 /*  We need to add one since the db_write_timestamp is added automatically. */);
+    expect(actualColumns.length).to.equal(
+      expectedColumns.length +
+        1 /*  We need to add one since the db_write_timestamp is added automatically. */
+    );
   });
 });
