@@ -131,18 +131,15 @@ let getSourceNewHeight = async (
 
   while newHeight.contents <= currentBlockHeight && status.contents !== Done {
     try {
-      //Set a timer to warn if the source is taking too long to respond
-      let warningTimeOutMillis = 1_000
-      let timeoutId = Js.Global.setTimeout(() => {
-        logger->Logging.childTrace({
-          "msg": `Height retrieval from the source is taking longer than ${warningTimeOutMillis->Int.toString}ms.`,
-          "source": source.name,
-        })
-      }, warningTimeOutMillis)
-
+      let startTime = Hrtime.makeTimer()
       let height = await source.getHeightOrThrow()
-      //Clear the timer after the source responds
-      timeoutId->Js.Global.clearTimeout
+      // Use to detect if the source is taking too long to respond
+      Prometheus.SourceGetHeightDuration.set(
+        ~sourceName=source.name,
+        ~chainId=source.chain->ChainMap.Chain.toChainId,
+        ~duration=Hrtime.timeSince(startTime)->Hrtime.toMillis->Hrtime.floatFromMillis,
+      )
+
       newHeight := height
       if height <= currentBlockHeight {
         retry := 0
@@ -166,6 +163,7 @@ let getSourceNewHeight = async (
       await Utils.delay(retryInterval)
     }
   }
+  Prometheus.SourceBlockNumber.set(~sourceName=source.name, ~chainId=source.chain->ChainMap.Chain.toChainId, ~blockNumber=newHeight.contents)
   newHeight.contents
 }
 

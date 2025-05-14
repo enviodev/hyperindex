@@ -314,3 +314,40 @@ module ProgressBlockNumber = {
     gauge->SafeGauge.handleInt(~labels=chainId, ~value=endBlock)
   }
 }
+
+let sourceLabelsSchema = S.schema(s =>
+  {
+    "source": s.matches(S.string),
+    "chainId": s.matches(S.string->S.coerce(S.int)),
+  }
+)
+
+module SourceBlockNumber = {
+  let gauge = SafeGauge.makeOrThrow(
+    ~name="envio_source_block_number",
+    ~help="The known block number of the source height",
+    ~labelSchema=sourceLabelsSchema,
+  )
+
+  let set = (~sourceName, ~chainId, ~blockNumber) => {
+    gauge->SafeGauge.handleInt(
+      ~labels={"source": sourceName, "chainId": chainId},
+      ~value=blockNumber,
+    )
+  }
+}
+
+module SourceGetHeightDuration = {
+  let gauge = SafeGauge.makeOrThrow(
+    ~name="envio_source_get_height_duration",
+    ~help="The duration of the source get height request",
+    ~labelSchema=sourceLabelsSchema,
+  )
+
+  let set = (~sourceName, ~chainId, ~duration) => {
+    gauge->SafeGauge.handleFloat(
+      ~labels={"source": sourceName, "chainId": chainId},
+      ~value=duration,
+    )
+  }
+}
