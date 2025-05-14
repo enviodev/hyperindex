@@ -49,6 +49,14 @@ let make = (
   | None => Js.Exn.raiseError("Invalid configuration, no data-source for historical sync provided")
   | Some(source) => source
   }
+  Prometheus.IndexingMaxConcurrency.set(
+    ~maxConcurrency=maxPartitionConcurrency,
+    ~chainId=initialActiveSource.chain->ChainMap.Chain.toChainId,
+  )
+  Prometheus.IndexingConcurrency.set(
+    ~concurrency=0,
+    ~chainId=initialActiveSource.chain->ChainMap.Chain.toChainId,
+  )
   {
     maxPartitionConcurrency,
     sources: Utils.Set.fromArray(sources),
@@ -103,12 +111,20 @@ let fetchNext = async (
       fetchState->FetchState.startFetchingQueries(~queries, ~stateId)
       sourceManager.fetchingPartitionsCount =
         sourceManager.fetchingPartitionsCount + queries->Array.length
+      Prometheus.IndexingConcurrency.set(
+        ~concurrency=sourceManager.fetchingPartitionsCount,
+        ~chainId=sourceManager.activeSource.chain->ChainMap.Chain.toChainId,
+      )
       let _ =
         await queries
         ->Array.map(q => {
           let promise = q->executeQuery
           let _ = promise->Promise.thenResolve(_ => {
             sourceManager.fetchingPartitionsCount = sourceManager.fetchingPartitionsCount - 1
+            Prometheus.IndexingConcurrency.set(
+              ~concurrency=sourceManager.fetchingPartitionsCount,
+              ~chainId=sourceManager.activeSource.chain->ChainMap.Chain.toChainId,
+            )
           })
           promise
         })
@@ -134,10 +150,10 @@ let getSourceNewHeight = async (
       let startTime = Hrtime.makeTimer()
       let height = await source.getHeightOrThrow()
       // Use to detect if the source is taking too long to respond
-      Prometheus.SourceGetHeightDuration.set(
+      Prometheus.SourceGetHeightLatency.set(
         ~sourceName=source.name,
         ~chainId=source.chain->ChainMap.Chain.toChainId,
-        ~duration=Hrtime.timeSince(startTime)->Hrtime.toMillis->Hrtime.floatFromMillis,
+        ~latency=Hrtime.timeSince(startTime)->Hrtime.toMillis->Hrtime.floatFromMillis,
       )
 
       newHeight := height
@@ -163,7 +179,7 @@ let getSourceNewHeight = async (
       await Utils.delay(retryInterval)
     }
   }
-  Prometheus.SourceBlockNumber.set(~sourceName=source.name, ~chainId=source.chain->ChainMap.Chain.toChainId, ~blockNumber=newHeight.contents)
+  Prometheus.SourceHeight.set(~sourceName=source.name, ~chainId=source.chain->ChainMap.Chain.toChainId, ~blockNumber=newHeight.contents)
   newHeight.contents
 }
 

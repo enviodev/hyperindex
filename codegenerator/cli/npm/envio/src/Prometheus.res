@@ -291,6 +291,30 @@ module IndexingAddresses = {
   }
 }
 
+module IndexingMaxConcurrency = {
+  let gauge = SafeGauge.makeOrThrow(
+    ~name="envio_indexing_max_concurrency",
+    ~help="The maximum number of concurrent queries to the chain data-source.",
+    ~labelSchema=chainIdLabelsSchema,
+  )
+
+  let set = (~maxConcurrency, ~chainId) => {
+    gauge->SafeGauge.handleInt(~labels=chainId, ~value=maxConcurrency)
+  }
+}
+
+module IndexingConcurrency = {
+  let gauge = SafeGauge.makeOrThrow(
+    ~name="envio_indexing_concurrency",
+    ~help="The current number of concurrent queries to the chain data-source.",
+    ~labelSchema=chainIdLabelsSchema,
+  )
+
+  let set = (~concurrency, ~chainId) => {
+    gauge->SafeGauge.handleInt(~labels=chainId, ~value=concurrency)
+  }
+}
+
 module IndexingEndBlock = {
   let gauge = SafeGauge.makeOrThrow(
     ~name="envio_indexing_end_block",
@@ -322,10 +346,10 @@ let sourceLabelsSchema = S.schema(s =>
   }
 )
 
-module SourceBlockNumber = {
+module SourceHeight = {
   let gauge = SafeGauge.makeOrThrow(
-    ~name="envio_source_block_number",
-    ~help="The known block number of the source height",
+    ~name="envio_source_height",
+    ~help="The latest known block number reported by the source. This value may lag behind the actual chain height, as it is updated only when queried.",
     ~labelSchema=sourceLabelsSchema,
   )
 
@@ -337,17 +361,14 @@ module SourceBlockNumber = {
   }
 }
 
-module SourceGetHeightDuration = {
+module SourceGetHeightLatency = {
   let gauge = SafeGauge.makeOrThrow(
-    ~name="envio_source_get_height_duration",
-    ~help="The duration of the source get height request",
+    ~name="envio_source_get_height_latency",
+    ~help="How much time a single source get height request takes in milliseconds",
     ~labelSchema=sourceLabelsSchema,
   )
 
-  let set = (~sourceName, ~chainId, ~duration) => {
-    gauge->SafeGauge.handleFloat(
-      ~labels={"source": sourceName, "chainId": chainId},
-      ~value=duration,
-    )
+  let set = (~sourceName, ~chainId, ~latency) => {
+    gauge->SafeGauge.handleFloat(~labels={"source": sourceName, "chainId": chainId}, ~value=latency)
   }
 }
