@@ -39,6 +39,7 @@ describe("SerDe Test", () => {
       // optTimestamp: Some(mockDate(~day=2)),
       // arrayOfTimestamps: [Js.Date.fromFloat(3.3), Js.Date.fromFloat(4.4)],
       // arrayOfTimestamps: [],
+      json: %raw(`{"foo": ["bar"]}`),
     }
 
     let entityHistoryItem: EntityHistory.historyRow<_> = {

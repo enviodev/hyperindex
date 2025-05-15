@@ -373,6 +373,7 @@ pub enum RescriptTypeIdent {
     BigDecimal,
     Address,
     String,
+    Json,
     Bool,
     Unknown,
     Timestamp,
@@ -413,6 +414,7 @@ impl RescriptTypeIdent {
             Self::BigDecimal => "BigDecimal.t".to_string(),
             Self::Address => "Address.t".to_string(),
             Self::String => "string".to_string(),
+            Self::Json => "Js.Json.t".to_string(),
             Self::ID => "id".to_string(),
             Self::Bool => "bool".to_string(),
             Self::Timestamp => "Js.Date.t".to_string(),
@@ -465,6 +467,7 @@ impl RescriptTypeIdent {
             Self::BigDecimal => "BigDecimal.schema".to_string(),
             Self::Address => "Address.schema".to_string(),
             Self::String => "S.string".to_string(),
+            Self::Json => "S.json(~validate=false)".to_string(),
             Self::ID => "S.string".to_string(),
             Self::Bool => "S.bool".to_string(),
             Self::Timestamp => "Utils.Schema.dbDate".to_string(),
@@ -523,6 +526,7 @@ impl RescriptTypeIdent {
             | Self::ID
             | Self::Bool
             | Self::Timestamp
+            | Self::Json
             | Self::SchemaEnum(_)
             | Self::GenericParam(_) => vec![],
             Self::TypeApplication {
@@ -549,6 +553,7 @@ impl RescriptTypeIdent {
             Self::Unknown => "%raw(`undefined`)".to_string(),
             Self::Float => "0.0".to_string(),
             Self::BigInt => "0n".to_string(),
+            Self::Json => "%raw(`{}`)".to_string(),
             Self::BigDecimal => "BigDecimal.zero".to_string(),
             Self::Address => "TestHelpers_MockAddresses.defaultAddress".to_string(),
             Self::String => "\"foo\"".to_string(),
@@ -612,6 +617,7 @@ impl RescriptTypeIdent {
         match self {
             Self::Unit | Self::Unknown => "undefined".to_string(),
             Self::Int | Self::Float => "0".to_string(),
+            Self::Json => "{}".to_string(),
             Self::BigInt => "0n".to_string(),
             Self::BigDecimal => "// default value not required since BigDecimal doesn't exist on \
                                  contracts for contract import"

@@ -120,6 +120,7 @@ type EntityWithAllTypes {
   # optTimestamp: Timestamp
   # NOTE: array of timestamps has the same problem as array of booleans described above
   # arrayOfTimestamps: [Timestamp!]!
+  json: Json!
 }
 
 # We are using insert unnest for the case

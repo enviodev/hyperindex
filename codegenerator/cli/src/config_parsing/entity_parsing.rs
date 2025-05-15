@@ -1354,6 +1354,8 @@ pub enum GqlScalar {
     Timestamp,
     #[subenum(AdditionalGqlScalar)]
     Bytes,
+    #[subenum(AdditionalGqlScalar)]
+    Json,
     Custom(String),
 }
 
@@ -1397,6 +1399,7 @@ impl GqlScalar {
             }
             "Timestamp" => GqlScalar::Timestamp,
             "Bytes" => GqlScalar::Bytes,
+            "Json" => GqlScalar::Json,
             name => GqlScalar::Custom(name.to_string()),
         }
     }
@@ -1409,6 +1412,7 @@ impl GqlScalar {
             GqlScalar::Float => PGPrimitive::DoublePrecision, // Should we allow this type? Rounding issues will abound.
             GqlScalar::Boolean => PGPrimitive::Boolean,
             GqlScalar::Bytes => PGPrimitive::Text,
+            GqlScalar::Json => PGPrimitive::JsonB,
             GqlScalar::BigInt(None) => PGPrimitive::Numeric(None),
             GqlScalar::BigInt(Some(precision)) => PGPrimitive::Numeric(Some((*precision, 0))), //  We leave the scale as zero since it is not relevant for integers.
             GqlScalar::BigDecimal(None) => PGPrimitive::Numeric(None),
@@ -1433,6 +1437,7 @@ impl GqlScalar {
             GqlScalar::BigDecimal(_) => RescriptTypeIdent::BigDecimal,
             GqlScalar::Float => RescriptTypeIdent::Float,
             GqlScalar::Bytes => RescriptTypeIdent::String,
+            GqlScalar::Json => RescriptTypeIdent::Json,
             GqlScalar::Boolean => RescriptTypeIdent::Bool,
             GqlScalar::Timestamp => RescriptTypeIdent::Timestamp,
             GqlScalar::Custom(name) => match schema.try_get_type_def(name)? {
