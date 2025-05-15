@@ -148,7 +148,7 @@ let getSourceNewHeight = async (
   while newHeight.contents <= currentBlockHeight && status.contents !== Done {
     try {
       // Use to detect if the source is taking too long to respond
-      let endTimer = Prometheus.SourceGetHeight.startTimer(
+      let endTimer = Prometheus.SourceGetHeightDuration.startTimer(
         {
           "source": source.name,
           "chainId": source.chain->ChainMap.Chain.toChainId,

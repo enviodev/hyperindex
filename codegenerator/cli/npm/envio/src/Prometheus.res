@@ -428,10 +428,10 @@ module SourceHeight = {
   }
 }
 
-module SourceGetHeight = {
+module SourceGetHeightDuration = {
   let startTimer = makeSafeHistogramOrThrow(
-    ~name="envio_source_get_height",
-    ~help="History of source get height requests",
+    ~name="envio_source_get_height_duration",
+    ~help="Duration of the source get height requests in seconds",
     ~labelSchema=sourceLabelsSchema,
     ~backets=[0.1, 0.5, 1., 10.],
   )
