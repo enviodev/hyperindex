@@ -137,6 +137,21 @@ module SafeGauge = MakeSafePromMetric({
   let handleFloat = PromClient.Gauge.setFloat
 })
 
+let makeSafeHistogramOrThrow = (~name, ~help, ~labelSchema, ~backets=?) => {
+  let histogram = PromClient.Histogram.make({
+    "name": name,
+    "help": help,
+    "labelNames": labelSchema->Labels.getLabelNames->Belt.Result.getExn,
+    "buckets": backets,
+  })
+
+  labels => {
+    histogram
+    ->PromClient.Histogram.labels(labels->S.reverseConvertToJsonOrThrow(labelSchema))
+    ->PromClient.Histogram.startTimer
+  }
+}
+
 module BenchmarkSummaryData = {
   type labels = {
     group: string,
@@ -397,14 +412,11 @@ module SourceHeight = {
   }
 }
 
-module SourceGetHeightLatency = {
-  let gauge = SafeGauge.makeOrThrow(
-    ~name="envio_source_get_height_latency",
-    ~help="How much time a single source get height request takes in milliseconds",
+module SourceGetHeight = {
+  let startTimer = makeSafeHistogramOrThrow(
+    ~name="envio_source_get_height",
+    ~help="History of source get height requests",
     ~labelSchema=sourceLabelsSchema,
+    ~backets=[0.1, 0.5, 1., 10.],
   )
-
-  let set = (~sourceName, ~chainId, ~latency) => {
-    gauge->SafeGauge.handleFloat(~labels={"source": sourceName, "chainId": chainId}, ~value=latency)
-  }
 }

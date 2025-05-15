@@ -147,14 +147,15 @@ let getSourceNewHeight = async (
 
   while newHeight.contents <= currentBlockHeight && status.contents !== Done {
     try {
-      let startTime = Hrtime.makeTimer()
-      let height = await source.getHeightOrThrow()
       // Use to detect if the source is taking too long to respond
-      Prometheus.SourceGetHeightLatency.set(
-        ~sourceName=source.name,
-        ~chainId=source.chain->ChainMap.Chain.toChainId,
-        ~latency=Hrtime.timeSince(startTime)->Hrtime.toMillis->Hrtime.floatFromMillis,
+      let endTimer = Prometheus.SourceGetHeight.startTimer(
+        {
+          "source": source.name,
+          "chainId": source.chain->ChainMap.Chain.toChainId,
+        },
       )
+      let height = await source.getHeightOrThrow()
+      endTimer()
 
       newHeight := height
       if height <= currentBlockHeight {
