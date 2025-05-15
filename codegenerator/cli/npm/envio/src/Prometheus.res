@@ -455,10 +455,10 @@ module ReorgCount = {
   }
 }
 
-module ReorgBlockNumber = {
+module ReorgDetectionBlockNumber = {
   let gauge = SafeGauge.makeOrThrow(
-    ~name="envio_reorg_block_number",
-    ~help="The block number of the last reorg detected by the indexer",
+    ~name="envio_reorg_detection_block_number",
+    ~help="The block number where reorg was detected the last time. This doesn't mean that the block was reorged, this is simply where we found block hash to be different.",
     ~labelSchema=chainIdLabelsSchema,
   )
 
@@ -487,5 +487,17 @@ module RollbackDuration = {
 
   let startTimer = () => {
     histogram->PromClient.Histogram.startTimer
+  }
+}
+
+module RollbackTargetBlockNumber = {
+  let gauge = SafeGauge.makeOrThrow(
+    ~name="envio_rollback_target_block_number",
+    ~help="The block number reorg was rollbacked to the last time.",
+    ~labelSchema=chainIdLabelsSchema,
+  )
+
+  let set = (~blockNumber, ~chain) => {
+    gauge->SafeGauge.handleInt(~labels=chain->ChainMap.Chain.toChainId, ~value=blockNumber)
   }
 }
