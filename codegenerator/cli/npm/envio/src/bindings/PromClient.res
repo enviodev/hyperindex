@@ -18,7 +18,6 @@ module Counter = {
   @send external inc: counter => unit = "inc"
   @send external incMany: (counter, int) => unit = "inc"
 
-  @send external incLabels: (counter, 'labelsObject) => unit = "labels"
   @send external labels: (counter, 'labelsObject) => counter = "labels"
 }
 

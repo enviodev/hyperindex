@@ -448,7 +448,9 @@ module ReorgCount = {
   )
 
   let increment = (~chain) => {
-    deprecatedCounter->PromClient.Counter.incLabels({"chainId": chain->ChainMap.Chain.toString})
+    deprecatedCounter
+    ->PromClient.Counter.labels({"chainId": chain->ChainMap.Chain.toString})
+    ->PromClient.Counter.inc
     counter->SafeGauge.increment(~labels=chain->ChainMap.Chain.toChainId)
   }
 }
@@ -473,5 +475,17 @@ module RollbackEnabled = {
 
   let set = (~enabled) => {
     gauge->PromClient.Gauge.set(enabled ? 1 : 0)
+  }
+}
+
+module RollbackDuration = {
+  let histogram = PromClient.Histogram.make({
+    "name": "envio_rollback_duration",
+    "help": "Rollback on reorg duration in seconds",
+    "buckets": [0.5, 1., 5., 10.],
+  })
+
+  let startTimer = () => {
+    histogram->PromClient.Histogram.startTimer
   }
 }

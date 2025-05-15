@@ -355,14 +355,6 @@ let handlePartitionQueryResponse = (
     )
   }
 
-  chainFetcher.logger->Logging.childTrace({
-    "msg": "Finished page range",
-    "fromBlock": fromBlockQueried,
-    "toBlock": latestFetchedBlockNumber,
-    "number of logs": parsedQueueItems->Array.length,
-    "stats": stats,
-  })
-
   switch chainFetcher.lastBlockScannedHashes->ReorgDetection.LastBlockScannedHashes.registerReorgGuard(
     ~reorgGuard,
     ~currentBlockHeight,
@@ -566,6 +558,11 @@ let actionReducer = (state: t, action: action) => {
   }
 }
 
+let actionNameSchema = S.union([
+  S.string,
+  S.object(s => s.field("TAG", S.string)),
+])
+
 let invalidatedActionReducer = (state: t, action: action) =>
   switch (state, action) {
   | ({rollbackState: RollingBack(_)}, EventBatchProcessed(_)) =>
@@ -573,7 +570,10 @@ let invalidatedActionReducer = (state: t, action: action) =>
     ({...state, currentlyProcessingBatch: false}, [Rollback])
   | (_, ErrorExit(_)) => actionReducer(state, action)
   | _ =>
-    Logging.info("Invalidated action discarded")
+    Logging.info({
+      "msg": "Invalidated action discarded",
+      "action": action->S.convertOrThrow(actionNameSchema),
+    })
     (state, [])
   }
 
@@ -834,6 +834,8 @@ let injectedTaskReducer = (
     //If it isn't processing a batch currently continue with rollback otherwise wait for current batch to finish processing
     switch state {
     | {currentlyProcessingBatch: false, rollbackState: RollingBack(reorgChain)} =>
+      let endTimer = Prometheus.RollbackDuration.startTimer()
+
       let chainFetcher = state.chainManager.chainFetchers->ChainMap.get(reorgChain)
 
       let {
@@ -925,6 +927,8 @@ let injectedTaskReducer = (
         ...state.chainManager,
         chainFetchers,
       }
+
+      endTimer()
 
       dispatchAction(SetRollbackState(inMemoryStore, chainManager))
 
