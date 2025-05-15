@@ -1,7 +1,7 @@
 let sql = Db.sql
 let unsafe = Postgres.unsafe
 
-let creatTableIfNotExists = (sql, table) => {
+let internalMakeCreateTableSqlUnsafe = (table: Table.table) => {
   open Belt
   let fieldsMapped =
     table
@@ -12,7 +12,8 @@ let creatTableIfNotExists = (sql, table) => {
 
       {
         `"${fieldName}" ${switch fieldType {
-          | Custom(name) if !(name->Js.String2.startsWith("NUMERIC(")) => `"${Env.Db.publicSchema}".${name}`
+          | Custom(name) if !(name->Js.String2.startsWith("NUMERIC(")) =>
+            `"${Env.Db.publicSchema}".${name}`
           | _ => (fieldType :> string)
           }}${isArray ? "[]" : ""}${switch defaultValue {
           | Some(defaultValue) => ` DEFAULT ${defaultValue}`
@@ -28,11 +29,40 @@ let creatTableIfNotExists = (sql, table) => {
     ->Array.map(field => `"${field}"`)
     ->Js.Array2.joinWith(", ")
 
-  let query = `
-    CREATE TABLE IF NOT EXISTS "${Env.Db.publicSchema}"."${table.tableName}"(${fieldsMapped}${primaryKeyFieldNames->Array.length > 0
+  `CREATE TABLE IF NOT EXISTS "${Env.Db.publicSchema}"."${table.tableName}"(${fieldsMapped}${primaryKeyFieldNames->Array.length > 0
       ? `, PRIMARY KEY(${primaryKey})`
       : ""});`
+}
 
+let creatTableIfNotExists = (sql, table) => {
+  open Belt
+  let fieldsMapped =
+    table
+    ->Table.getFields
+    ->Array.map(field => {
+      let {fieldType, isNullable, isArray, defaultValue} = field
+      let fieldName = field->Table.getDbFieldName
+
+      {
+        `"${fieldName}" ${switch fieldType {
+          | Custom(name) if !(name->Js.String2.startsWith("NUMERIC(")) =>
+            `"${Env.Db.publicSchema}".${name}`
+          | _ => (fieldType :> string)
+          }}${isArray ? "[]" : ""}${switch defaultValue {
+          | Some(defaultValue) => ` DEFAULT ${defaultValue}`
+          | None => isNullable ? `` : ` NOT NULL`
+          }}`
+      }
+    })
+    ->Js.Array2.joinWith(", ")
+
+  let primaryKeyFieldNames = table->Table.getPrimaryKeyFieldNames
+  let primaryKey =
+    primaryKeyFieldNames
+    ->Array.map(field => `"${field}"`)
+    ->Js.Array2.joinWith(", ")
+
+  let query = table->internalMakeCreateTableSqlUnsafe
   sql->unsafe(query)
 }
 
