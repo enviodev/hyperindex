@@ -35,10 +35,6 @@ importers:
       viem:
         specifier: 2.21.0
         version: 2.21.0(typescript@5.5.4)
-    optionalDependencies:
-      generated:
-        specifier: ./generated
-        version: link:generated
     devDependencies:
       '@glennsl/rescript-fetch':
         specifier: 0.2.0
@@ -97,6 +93,10 @@ importers:
       ts-node:
         specifier: ^10.9.1
         version: 10.9.2(@types/node@18.19.47)(typescript@5.5.4)
+    optionalDependencies:
+      generated:
+        specifier: ./generated
+        version: link:generated
 
   ../helpers:
     dependencies:

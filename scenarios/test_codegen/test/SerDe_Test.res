@@ -103,6 +103,26 @@ describe("SerDe Test", () => {
     }
   })
 
+  it("contains correct query for unnest entity", () => {
+    let createQuery =
+      Entities.EntityWithAllNonArrayTypes.table->Migrations.internalMakeCreateTableSqlUnsafe
+    Assert.equal(
+      `CREATE TABLE IF NOT EXISTS "public"."EntityWithAllNonArrayTypes"("bigDecimal" NUMERIC NOT NULL, "bigInt" NUMERIC NOT NULL, "bool" BOOLEAN NOT NULL, "float_" DOUBLE PRECISION NOT NULL, "id" TEXT NOT NULL, "int_" INTEGER NOT NULL, "optBigDecimal" NUMERIC, "optBigInt" NUMERIC, "optBool" BOOLEAN, "optFloat" DOUBLE PRECISION, "optInt" INTEGER, "optString" TEXT, "string" TEXT NOT NULL, "db_write_timestamp" TIMESTAMP DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY("id"));`,
+      createQuery,
+    )
+    let query =
+      Entities.EntityWithAllNonArrayTypes.table->DbFunctions.internalMakeEntityUnnestUnsafeSql(
+        ~schema=Entities.EntityWithAllNonArrayTypes.schema,
+        ~isRawEvents=false,
+      )
+
+    Assert.equal(
+      query,
+      `INSERT INTO "public"."EntityWithAllNonArrayTypes" ("bigDecimal", "bigInt", "bool", "float_", "id", "int_", "optBigDecimal", "optBigInt", "optBool", "optFloat", "optInt", "optString", "string")
+SELECT * FROM unnest($1::NUMERIC[],$2::NUMERIC[],$3::INTEGER[]::BOOLEAN[],$4::DOUBLE PRECISION[],$5::TEXT[],$6::INTEGER[],$7::NUMERIC[],$8::NUMERIC[],$9::INTEGER[]::BOOLEAN[],$10::DOUBLE PRECISION[],$11::INTEGER[],$12::TEXT[],$13::TEXT[])ON CONFLICT("id") DO UPDATE SET "bigDecimal" = EXCLUDED."bigDecimal","bigInt" = EXCLUDED."bigInt","bool" = EXCLUDED."bool","float_" = EXCLUDED."float_","int_" = EXCLUDED."int_","optBigDecimal" = EXCLUDED."optBigDecimal","optBigInt" = EXCLUDED."optBigInt","optBool" = EXCLUDED."optBool","optFloat" = EXCLUDED."optFloat","optInt" = EXCLUDED."optInt","optString" = EXCLUDED."optString","string" = EXCLUDED."string";`,
+    )
+  })
+
   Async.it("All type entity without array types for unnest case", async () => {
     let entity: Entities.EntityWithAllNonArrayTypes.t = {
       id: "1",
