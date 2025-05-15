@@ -288,6 +288,22 @@ let chainIdLabelsSchema = S.object(s => {
   s.field("chainId", S.string->S.coerce(S.int))
 })
 
+module Info = {
+  let gauge = SafeGauge.makeOrThrow(
+    ~name="envio_info",
+    ~help="Information about the indexer",
+    ~labelSchema=S.schema(s =>
+      {
+        "version": s.matches(S.string),
+      }
+    ),
+  )
+
+  let set = (~version) => {
+    gauge->SafeGauge.handleInt(~labels={"version": version}, ~value=1)
+  }
+}
+
 module ProgressBlockNumber = {
   let gauge = SafeGauge.makeOrThrow(
     ~name="envio_progress_block_number",

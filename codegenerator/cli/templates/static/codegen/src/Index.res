@@ -279,12 +279,14 @@ let main = async () => {
 
     let gsManagerRef = ref(None)
 
+    let envioVersion =
+      PersistedState.getPersistedState()->Result.mapWithDefault(None, p => Some(p.envioVersion))
+
+    Prometheus.Info.set(~version=envioVersion)
+
     startServer(
       ~shouldUseTui,
       ~getState=if shouldUseTui {
-        let envioVersion =
-          PersistedState.getPersistedState()->Result.mapWithDefault(None, p => Some(p.envioVersion))
-
         () =>
           switch gsManagerRef.contents {
           | None => Initializing({})
