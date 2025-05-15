@@ -35,33 +35,6 @@ let internalMakeCreateTableSqlUnsafe = (table: Table.table) => {
 }
 
 let creatTableIfNotExists = (sql, table) => {
-  open Belt
-  let fieldsMapped =
-    table
-    ->Table.getFields
-    ->Array.map(field => {
-      let {fieldType, isNullable, isArray, defaultValue} = field
-      let fieldName = field->Table.getDbFieldName
-
-      {
-        `"${fieldName}" ${switch fieldType {
-          | Custom(name) if !(name->Js.String2.startsWith("NUMERIC(")) =>
-            `"${Env.Db.publicSchema}".${name}`
-          | _ => (fieldType :> string)
-          }}${isArray ? "[]" : ""}${switch defaultValue {
-          | Some(defaultValue) => ` DEFAULT ${defaultValue}`
-          | None => isNullable ? `` : ` NOT NULL`
-          }}`
-      }
-    })
-    ->Js.Array2.joinWith(", ")
-
-  let primaryKeyFieldNames = table->Table.getPrimaryKeyFieldNames
-  let primaryKey =
-    primaryKeyFieldNames
-    ->Array.map(field => `"${field}"`)
-    ->Js.Array2.joinWith(", ")
-
   let query = table->internalMakeCreateTableSqlUnsafe
   sql->unsafe(query)
 }
