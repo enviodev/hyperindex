@@ -371,7 +371,8 @@ let handlePartitionQueryResponse = (
       chainFetcher.logger->Logging.childInfo(
         reorgDetected->ReorgDetection.reorgDetectedToLogParams(~shouldRollbackOnReorg=true),
       )
-      Prometheus.incrementReorgsDetected(~chain)
+      Prometheus.ReorgCount.increment(~chain)
+      Prometheus.ReorgBlockNumber.set(~blockNumber=reorgDetected.scannedBlock.blockNumber, ~chain)
       (state->incrementId->setRollingBack(chain), [Rollback])
     }
   | reorgResult => {
@@ -381,7 +382,11 @@ let handlePartitionQueryResponse = (
           chainFetcher.logger->Logging.childInfo(
             reorgDetected->ReorgDetection.reorgDetectedToLogParams(~shouldRollbackOnReorg=false),
           )
-          Prometheus.incrementReorgsDetected(~chain)
+          Prometheus.ReorgCount.increment(~chain)
+          Prometheus.ReorgBlockNumber.set(
+            ~blockNumber=reorgDetected.scannedBlock.blockNumber,
+            ~chain,
+          )
           ReorgDetection.LastBlockScannedHashes.empty(
             ~confirmedBlockThreshold=chainFetcher.chainConfig.confirmedBlockThreshold,
           )

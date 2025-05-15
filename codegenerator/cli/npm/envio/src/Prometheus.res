@@ -22,12 +22,6 @@ let eventsProcessedCounter = PromClient.Gauge.makeGauge({
   "labelNames": ["chainId"],
 })
 
-let reorgsDetectedCounter = PromClient.Counter.makeCounter({
-  "name": "reorgs_detected",
-  "help": "Total number of reorgs detected",
-  "labelNames": ["chainId"],
-})
-
 let allChainsSyncedToHead = PromClient.Gauge.makeGauge({
   "name": "hyperindex_synced_to_head",
   "help": "All chains fully synced",
@@ -88,6 +82,7 @@ module MakeSafePromMetric = (
   let makeOrThrow: (~name: string, ~help: string, ~labelSchema: S.t<'a>) => t<'a>
   let handleInt: (t<'a>, ~labels: 'a, ~value: int) => unit
   let handleFloat: (t<'a>, ~labels: 'a, ~value: float) => unit
+  let increment: (t<'a>, ~labels: 'a) => unit
 } => {
   type t<'a> = {metric: M.t, labelSchema: S.t<'a>}
 
@@ -119,6 +114,13 @@ module MakeSafePromMetric = (
     metric
     ->M.labels(labels->S.reverseConvertToJsonOrThrow(labelSchema))
     ->M.handleInt(value)
+
+  let increment = ({metric, labelSchema}: t<'a>, ~labels: 'a) =>
+    (
+      metric
+      ->M.labels(labels->S.reverseConvertToJsonOrThrow(labelSchema))
+      ->Obj.magic
+    )["inc"]()
 }
 
 module SafeCounter = MakeSafePromMetric({
@@ -225,10 +227,6 @@ let setEventsProcessedGuage = (~number, ~chainId) => {
   eventsProcessedCounter
   ->PromClient.Gauge.labels({"chainId": chainId})
   ->PromClient.Gauge.set(number)
-}
-
-let incrementReorgsDetected = (~chain) => {
-  reorgsDetectedCounter->PromClient.Counter.incLabels({"chainId": chain->ChainMap.Chain.toString})
 }
 
 let setSourceChainHeight = (~blockNumber, ~chain) => {
@@ -435,4 +433,35 @@ module SourceGetHeightDuration = {
     ~labelSchema=sourceLabelsSchema,
     ~backets=[0.1, 0.5, 1., 10.],
   )
+}
+
+module ReorgCount = {
+  let deprecatedCounter = PromClient.Counter.makeCounter({
+    "name": "reorgs_detected",
+    "help": "Total number of reorgs detected",
+    "labelNames": ["chainId"],
+  })
+
+  let counter = SafeGauge.makeOrThrow(
+    ~name="envio_reorg_count",
+    ~help="Total number of reorgs detected",
+    ~labelSchema=chainIdLabelsSchema,
+  )
+
+  let increment = (~chain) => {
+    deprecatedCounter->PromClient.Counter.incLabels({"chainId": chain->ChainMap.Chain.toString})
+    counter->SafeGauge.increment(~labels=chain->ChainMap.Chain.toChainId)
+  }
+}
+
+module ReorgBlockNumber = {
+  let gauge = SafeGauge.makeOrThrow(
+    ~name="envio_reorg_block_number",
+    ~help="The block number of the last reorg detected by the indexer",
+    ~labelSchema=chainIdLabelsSchema,
+  )
+
+  let set = (~blockNumber, ~chain) => {
+    gauge->SafeGauge.handleInt(~labels=chain->ChainMap.Chain.toChainId, ~value=blockNumber)
+  }
 }

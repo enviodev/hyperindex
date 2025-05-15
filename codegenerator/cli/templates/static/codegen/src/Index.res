@@ -282,7 +282,10 @@ let main = async () => {
     let envioVersion =
       PersistedState.getPersistedState()->Result.mapWithDefault(None, p => Some(p.envioVersion))
 
-    Prometheus.Info.set(~version=envioVersion)
+    switch envioVersion {
+    | Some(version) => Prometheus.Info.set(~version)
+    | None => ()
+    }
 
     startServer(
       ~shouldUseTui,
