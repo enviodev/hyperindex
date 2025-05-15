@@ -286,6 +286,7 @@ let main = async () => {
     | Some(version) => Prometheus.Info.set(~version)
     | None => ()
     }
+    Prometheus.RollbackEnabled.set(~enabled=config.historyConfig.rollbackFlag === RollbackOnReorg)
 
     startServer(
       ~shouldUseTui,

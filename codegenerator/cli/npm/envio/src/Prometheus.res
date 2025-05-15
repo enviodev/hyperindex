@@ -205,12 +205,6 @@ let processedUntilHeight = PromClient.Gauge.makeGauge({
   "labelNames": ["chainId"],
 })
 
-let fetchedUntilHeight = PromClient.Gauge.makeGauge({
-  "name": "chain_block_height_fully_fetched",
-  "help": "Block height fully fetched by indexer",
-  "labelNames": ["chainId"],
-})
-
 let incrementLoadEntityDurationCounter = (~duration) => {
   loadEntitiesDurationCounter->PromClient.Counter.incMany(duration)
 }
@@ -375,6 +369,12 @@ module IndexingMaxBufferSize = {
 }
 
 module IndexingBufferBlockNumber = {
+  let deprecatedGauge = PromClient.Gauge.makeGauge({
+    "name": "chain_block_height_fully_fetched",
+    "help": "Block height fully fetched by indexer",
+    "labelNames": ["chainId"],
+  })
+
   let gauge = SafeGauge.makeOrThrow(
     ~name="envio_indexing_buffer_block_number",
     ~help="The highest block number that has been fully fetched by the indexer.",
@@ -382,8 +382,7 @@ module IndexingBufferBlockNumber = {
   )
 
   let set = (~blockNumber, ~chainId) => {
-    // TODO: Remove in V3
-    fetchedUntilHeight
+    deprecatedGauge
     ->PromClient.Gauge.labels({"chainId": chainId})
     ->PromClient.Gauge.set(blockNumber)
     // TODO: Use the block number stored in the database instead
@@ -463,5 +462,16 @@ module ReorgBlockNumber = {
 
   let set = (~blockNumber, ~chain) => {
     gauge->SafeGauge.handleInt(~labels=chain->ChainMap.Chain.toChainId, ~value=blockNumber)
+  }
+}
+
+module RollbackEnabled = {
+  let gauge = PromClient.Gauge.makeGauge({
+    "name": "envio_rollback_enabled",
+    "help": "Whether rollback on reorg is enabled",
+  })
+
+  let set = (~enabled) => {
+    gauge->PromClient.Gauge.set(enabled ? 1 : 0)
   }
 }
