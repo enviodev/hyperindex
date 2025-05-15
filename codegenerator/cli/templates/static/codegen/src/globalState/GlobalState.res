@@ -558,10 +558,7 @@ let actionReducer = (state: t, action: action) => {
   }
 }
 
-let actionNameSchema = S.union([
-  S.string,
-  S.object(s => s.field("TAG", S.string)),
-])
+let actionNameSchema = S.union([S.string, S.object(s => s.field("TAG", S.string))])
 
 let invalidatedActionReducer = (state: t, action: action) =>
   switch (state, action) {
@@ -845,7 +842,7 @@ let injectedTaskReducer = (
         await chainFetcher->getLastKnownValidBlock
 
       chainFetcher.logger->Logging.childInfo({
-        "msg": "Executing indexer rollback",
+        "msg": "Started rollback on reorg",
         "targetBlockNumber": lastKnownValidBlockNumber,
         "targetBlockTimestamp": lastKnownValidBlockTimestamp,
       })
@@ -915,7 +912,7 @@ let injectedTaskReducer = (
       })
 
       //Construct a rolledback in Memory store
-      let inMemoryStore = await IO.RollBack.rollBack(
+      let rollbackResult = await IO.RollBack.rollBack(
         ~chainId=reorgChain->ChainMap.Chain.toChainId,
         ~blockTimestamp=lastKnownValidBlockTimestamp,
         ~blockNumber=lastKnownValidBlockNumber,
@@ -928,9 +925,16 @@ let injectedTaskReducer = (
         chainFetchers,
       }
 
+      chainFetcher.logger->Logging.childInfo({
+        "msg": "Finished rollback on reorg",
+        "entityChanges": {
+          "deleted": rollbackResult["deletedEntities"],
+          "upserted": rollbackResult["setEntities"],
+        },
+      })
       endTimer()
 
-      dispatchAction(SetRollbackState(inMemoryStore, chainManager))
+      dispatchAction(SetRollbackState(rollbackResult["inMemStore"], chainManager))
 
     | _ => Logging.info("Waiting for batch to finish processing before executing rollback") //wait for batch to finish processing
     }

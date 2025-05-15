@@ -212,6 +212,9 @@ module RollBack = {
 
     let inMemStore = InMemoryStore.make(~rollBackEventIdentifier)
 
+    let deletedEntities = Js.Dict.empty()
+    let setEntities = Js.Dict.empty()
+
     let _ =
       await Entities.allEntities
       ->Belt.Array.map(async entityMod => {
@@ -247,15 +250,14 @@ module RollBack = {
             blockTimestamp: historyRow.current.block_timestamp,
           }
           switch historyRow.entityData {
-          | Set(entity) =>
+          | Set(entity: Entities.internalEntity) =>
+            setEntities->Utils.Dict.push((Entity.name :> string), entity.id)
             entityTable->InMemoryTable.Entity.set(
-              Set(entity)->Types.mkEntityUpdate(
-                ~eventIdentifier,
-                ~entityId=entity->Entities.getEntityId,
-              ),
+              Set(entity)->Types.mkEntityUpdate(~eventIdentifier, ~entityId=entity.id),
               ~shouldSaveHistory=false,
             )
           | Delete({id}) =>
+            deletedEntities->Utils.Dict.push((Entity.name :> string), id)
             entityTable->InMemoryTable.Entity.set(
               Delete->Types.mkEntityUpdate(~eventIdentifier, ~entityId=id),
               ~shouldSaveHistory=false,
@@ -265,6 +267,10 @@ module RollBack = {
       })
       ->Promise.all
 
-    inMemStore
+    {
+      "inMemStore": inMemStore,
+      "deletedEntities": deletedEntities,
+      "setEntities": setEntities,
+    }
   }
 }
