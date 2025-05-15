@@ -22,12 +22,6 @@ let eventsProcessedCounter = PromClient.Gauge.makeGauge({
   "labelNames": ["chainId"],
 })
 
-let reorgsDetectedCounter = PromClient.Counter.makeCounter({
-  "name": "reorgs_detected",
-  "help": "Total number of reorgs detected",
-  "labelNames": ["chainId"],
-})
-
 let allChainsSyncedToHead = PromClient.Gauge.makeGauge({
   "name": "hyperindex_synced_to_head",
   "help": "All chains fully synced",
@@ -88,6 +82,7 @@ module MakeSafePromMetric = (
   let makeOrThrow: (~name: string, ~help: string, ~labelSchema: S.t<'a>) => t<'a>
   let handleInt: (t<'a>, ~labels: 'a, ~value: int) => unit
   let handleFloat: (t<'a>, ~labels: 'a, ~value: float) => unit
+  let increment: (t<'a>, ~labels: 'a) => unit
 } => {
   type t<'a> = {metric: M.t, labelSchema: S.t<'a>}
 
@@ -119,6 +114,13 @@ module MakeSafePromMetric = (
     metric
     ->M.labels(labels->S.reverseConvertToJsonOrThrow(labelSchema))
     ->M.handleInt(value)
+
+  let increment = ({metric, labelSchema}: t<'a>, ~labels: 'a) =>
+    (
+      metric
+      ->M.labels(labels->S.reverseConvertToJsonOrThrow(labelSchema))
+      ->Obj.magic
+    )["inc"]()
 }
 
 module SafeCounter = MakeSafePromMetric({
@@ -136,6 +138,21 @@ module SafeGauge = MakeSafePromMetric({
   let handleInt = PromClient.Gauge.set
   let handleFloat = PromClient.Gauge.setFloat
 })
+
+let makeSafeHistogramOrThrow = (~name, ~help, ~labelSchema, ~backets=?) => {
+  let histogram = PromClient.Histogram.make({
+    "name": name,
+    "help": help,
+    "labelNames": labelSchema->Labels.getLabelNames->Belt.Result.getExn,
+    "buckets": backets,
+  })
+
+  labels => {
+    histogram
+    ->PromClient.Histogram.labels(labels->S.reverseConvertToJsonOrThrow(labelSchema))
+    ->PromClient.Histogram.startTimer
+  }
+}
 
 module BenchmarkSummaryData = {
   type labels = {
@@ -188,12 +205,6 @@ let processedUntilHeight = PromClient.Gauge.makeGauge({
   "labelNames": ["chainId"],
 })
 
-let fetchedUntilHeight = PromClient.Gauge.makeGauge({
-  "name": "chain_block_height_fully_fetched",
-  "help": "Block height fully fetched by indexer",
-  "labelNames": ["chainId"],
-})
-
 let incrementLoadEntityDurationCounter = (~duration) => {
   loadEntitiesDurationCounter->PromClient.Counter.incMany(duration)
 }
@@ -212,10 +223,6 @@ let setEventsProcessedGuage = (~number, ~chainId) => {
   ->PromClient.Gauge.set(number)
 }
 
-let incrementReorgsDetected = (~chain) => {
-  reorgsDetectedCounter->PromClient.Counter.incLabels({"chainId": chain->ChainMap.Chain.toString})
-}
-
 let setSourceChainHeight = (~blockNumber, ~chain) => {
   sourceChainHeight
   ->PromClient.Gauge.labels({"chainId": chain->ChainMap.Chain.toString})
@@ -228,12 +235,6 @@ let setAllChainsSyncedToHead = () => {
 
 let setProcessedUntilHeight = (~blockNumber, ~chain) => {
   processedUntilHeight
-  ->PromClient.Gauge.labels({"chainId": chain->ChainMap.Chain.toString})
-  ->PromClient.Gauge.set(blockNumber)
-}
-
-let setFetchedUntilHeight = (~blockNumber, ~chain) => {
-  fetchedUntilHeight
   ->PromClient.Gauge.labels({"chainId": chain->ChainMap.Chain.toString})
   ->PromClient.Gauge.set(blockNumber)
 }
@@ -279,6 +280,34 @@ let chainIdLabelsSchema = S.object(s => {
   s.field("chainId", S.string->S.coerce(S.int))
 })
 
+module Info = {
+  let gauge = SafeGauge.makeOrThrow(
+    ~name="envio_info",
+    ~help="Information about the indexer",
+    ~labelSchema=S.schema(s =>
+      {
+        "version": s.matches(S.string),
+      }
+    ),
+  )
+
+  let set = (~version) => {
+    gauge->SafeGauge.handleInt(~labels={"version": version}, ~value=1)
+  }
+}
+
+module ProgressBlockNumber = {
+  let gauge = SafeGauge.makeOrThrow(
+    ~name="envio_progress_block_number",
+    ~help="The block number to track the progress of indexing at. Currently uses the fully fetched block number. In the future will be changed to block number processed and stored in the database.",
+    ~labelSchema=chainIdLabelsSchema,
+  )
+
+  let set = (~blockNumber, ~chainId) => {
+    gauge->SafeGauge.handleInt(~labels=chainId, ~value=blockNumber)
+  }
+}
+
 module IndexingAddresses = {
   let gauge = SafeGauge.makeOrThrow(
     ~name="envio_indexing_addresses",
@@ -288,6 +317,77 @@ module IndexingAddresses = {
 
   let set = (~addressesCount, ~chainId) => {
     gauge->SafeGauge.handleInt(~labels=chainId, ~value=addressesCount)
+  }
+}
+
+module IndexingMaxConcurrency = {
+  let gauge = SafeGauge.makeOrThrow(
+    ~name="envio_indexing_max_concurrency",
+    ~help="The maximum number of concurrent queries to the chain data-source.",
+    ~labelSchema=chainIdLabelsSchema,
+  )
+
+  let set = (~maxConcurrency, ~chainId) => {
+    gauge->SafeGauge.handleInt(~labels=chainId, ~value=maxConcurrency)
+  }
+}
+
+module IndexingConcurrency = {
+  let gauge = SafeGauge.makeOrThrow(
+    ~name="envio_indexing_concurrency",
+    ~help="The current number of concurrent queries to the chain data-source.",
+    ~labelSchema=chainIdLabelsSchema,
+  )
+
+  let set = (~concurrency, ~chainId) => {
+    gauge->SafeGauge.handleInt(~labels=chainId, ~value=concurrency)
+  }
+}
+
+module IndexingBufferSize = {
+  let gauge = SafeGauge.makeOrThrow(
+    ~name="envio_indexing_buffer_size",
+    ~help="The current number of items in the indexing buffer.",
+    ~labelSchema=chainIdLabelsSchema,
+  )
+
+  let set = (~bufferSize, ~chainId) => {
+    gauge->SafeGauge.handleInt(~labels=chainId, ~value=bufferSize)
+  }
+}
+
+module IndexingMaxBufferSize = {
+  let gauge = SafeGauge.makeOrThrow(
+    ~name="envio_indexing_max_buffer_size",
+    ~help="The maximum number of items allowed in the indexing buffer for the chain.",
+    ~labelSchema=chainIdLabelsSchema,
+  )
+
+  let set = (~maxBufferSize, ~chainId) => {
+    gauge->SafeGauge.handleInt(~labels=chainId, ~value=maxBufferSize)
+  }
+}
+
+module IndexingBufferBlockNumber = {
+  let deprecatedGauge = PromClient.Gauge.makeGauge({
+    "name": "chain_block_height_fully_fetched",
+    "help": "Block height fully fetched by indexer",
+    "labelNames": ["chainId"],
+  })
+
+  let gauge = SafeGauge.makeOrThrow(
+    ~name="envio_indexing_buffer_block_number",
+    ~help="The highest block number that has been fully fetched by the indexer.",
+    ~labelSchema=chainIdLabelsSchema,
+  )
+
+  let set = (~blockNumber, ~chainId) => {
+    deprecatedGauge
+    ->PromClient.Gauge.labels({"chainId": chainId})
+    ->PromClient.Gauge.set(blockNumber)
+    // TODO: Use the block number stored in the database instead
+    ProgressBlockNumber.set(~blockNumber, ~chainId)
+    gauge->SafeGauge.handleInt(~labels=chainId, ~value=blockNumber)
   }
 }
 
@@ -303,14 +403,101 @@ module IndexingEndBlock = {
   }
 }
 
-module ProgressBlockNumber = {
+let sourceLabelsSchema = S.schema(s =>
+  {
+    "source": s.matches(S.string),
+    "chainId": s.matches(S.string->S.coerce(S.int)),
+  }
+)
+
+module SourceHeight = {
   let gauge = SafeGauge.makeOrThrow(
-    ~name="envio_progress_block_number",
-    ~help="The block number to track the progress of indexing at. Currently uses the fully fetched block number. In the future will be changed to block number processed and stored in the database.",
+    ~name="envio_source_height",
+    ~help="The latest known block number reported by the source. This value may lag behind the actual chain height, as it is updated only when queried.",
+    ~labelSchema=sourceLabelsSchema,
+  )
+
+  let set = (~sourceName, ~chainId, ~blockNumber) => {
+    gauge->SafeGauge.handleInt(
+      ~labels={"source": sourceName, "chainId": chainId},
+      ~value=blockNumber,
+    )
+  }
+}
+
+module SourceGetHeightDuration = {
+  let startTimer = makeSafeHistogramOrThrow(
+    ~name="envio_source_get_height_duration",
+    ~help="Duration of the source get height requests in seconds",
+    ~labelSchema=sourceLabelsSchema,
+    ~backets=[0.1, 0.5, 1., 10.],
+  )
+}
+
+module ReorgCount = {
+  let deprecatedCounter = PromClient.Counter.makeCounter({
+    "name": "reorgs_detected",
+    "help": "Total number of reorgs detected",
+    "labelNames": ["chainId"],
+  })
+
+  let counter = SafeGauge.makeOrThrow(
+    ~name="envio_reorg_count",
+    ~help="Total number of reorgs detected",
     ~labelSchema=chainIdLabelsSchema,
   )
 
-  let set = (~endBlock, ~chainId) => {
-    gauge->SafeGauge.handleInt(~labels=chainId, ~value=endBlock)
+  let increment = (~chain) => {
+    deprecatedCounter
+    ->PromClient.Counter.labels({"chainId": chain->ChainMap.Chain.toString})
+    ->PromClient.Counter.inc
+    counter->SafeGauge.increment(~labels=chain->ChainMap.Chain.toChainId)
+  }
+}
+
+module ReorgDetectionBlockNumber = {
+  let gauge = SafeGauge.makeOrThrow(
+    ~name="envio_reorg_detection_block_number",
+    ~help="The block number where reorg was detected the last time. This doesn't mean that the block was reorged, this is simply where we found block hash to be different.",
+    ~labelSchema=chainIdLabelsSchema,
+  )
+
+  let set = (~blockNumber, ~chain) => {
+    gauge->SafeGauge.handleInt(~labels=chain->ChainMap.Chain.toChainId, ~value=blockNumber)
+  }
+}
+
+module RollbackEnabled = {
+  let gauge = PromClient.Gauge.makeGauge({
+    "name": "envio_rollback_enabled",
+    "help": "Whether rollback on reorg is enabled",
+  })
+
+  let set = (~enabled) => {
+    gauge->PromClient.Gauge.set(enabled ? 1 : 0)
+  }
+}
+
+module RollbackDuration = {
+  let histogram = PromClient.Histogram.make({
+    "name": "envio_rollback_duration",
+    "help": "Rollback on reorg duration in seconds",
+    "buckets": [0.5, 1., 5., 10.],
+  })
+
+  let startTimer = () => {
+    histogram->PromClient.Histogram.startTimer
+  }
+}
+
+module RollbackTargetBlockNumber = {
+  let gauge = SafeGauge.makeOrThrow(
+    ~name="envio_rollback_target_block_number",
+    ~help="The block number reorg was rollbacked to the last time.",
+    ~labelSchema=chainIdLabelsSchema,
+  )
+
+  let set = (~blockNumber, ~chain) => {
+    gauge->SafeGauge.handleInt(~labels=chain->ChainMap.Chain.toChainId, ~value=blockNumber)
   }
 }

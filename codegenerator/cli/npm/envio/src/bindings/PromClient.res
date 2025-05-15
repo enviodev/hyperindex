@@ -18,7 +18,6 @@ module Counter = {
   @send external inc: counter => unit = "inc"
   @send external incMany: (counter, int) => unit = "inc"
 
-  @send external incLabels: (counter, 'labelsObject) => unit = "labels"
   @send external labels: (counter, 'labelsObject) => counter = "labels"
 }
 
@@ -41,10 +40,10 @@ module Gauge = {
 
 module Histogram = {
   type histogram
-  @new @module("prom-client") external makeHistogram: customMetric<'a> => histogram = "Histogram"
+  @new @module("prom-client") external make: customMetric<'a> => histogram = "Histogram"
 
   @send external observe: (histogram, float) => unit = "observe"
-  @send external startTimer: (histogram, unit) => float = "startTimer"
+  @send external startTimer: histogram => unit => unit = "startTimer"
 
   @send external labels: (histogram, 'labelsObject) => histogram = "labels"
 }

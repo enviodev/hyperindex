@@ -272,16 +272,6 @@ let updateInternal = (
     }
   }
 
-  if (
-    Env.Benchmark.shouldSaveData && fetchState.partitions->Array.length !== partitions->Array.length
-  ) {
-    Benchmark.addSummaryData(
-      ~group="Other",
-      ~label="Num partitions",
-      ~value=partitions->Array.length->Int.toFloat,
-    )
-  }
-
   let latestFullyFetchedBlock = latestFullyFetchedBlock.contents
 
   let isFetchingAtHead = switch currentBlockHeight {
@@ -300,6 +290,21 @@ let updateInternal = (
       false
     }
   }
+
+  if (
+    Env.Benchmark.shouldSaveData && fetchState.partitions->Array.length !== partitions->Array.length
+  ) {
+    Benchmark.addSummaryData(
+      ~group="Other",
+      ~label="Num partitions",
+      ~value=partitions->Array.length->Int.toFloat,
+    )
+  }
+  Prometheus.IndexingBufferSize.set(~bufferSize=queueSize.contents, ~chainId=fetchState.chainId)
+  Prometheus.IndexingBufferBlockNumber.set(
+    ~blockNumber=latestFullyFetchedBlock.blockNumber,
+    ~chainId=fetchState.chainId,
+  )
 
   {
     maxAddrInPartition: fetchState.maxAddrInPartition,
@@ -1153,6 +1158,8 @@ let make = (
 
   let numAddresses = indexingContracts->Js.Dict.keys->Array.length
   Prometheus.IndexingAddresses.set(~addressesCount=numAddresses, ~chainId)
+  Prometheus.IndexingBufferSize.set(~bufferSize=0, ~chainId)
+  Prometheus.IndexingBufferBlockNumber.set(~blockNumber=latestFetchedBlock.blockNumber, ~chainId)
   switch endBlock {
   | Some(endBlock) => Prometheus.IndexingEndBlock.set(~endBlock, ~chainId)
   | None => ()

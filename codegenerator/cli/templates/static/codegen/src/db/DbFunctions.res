@@ -19,7 +19,7 @@ external makeBatchSetEntityValues: Table.table => (Postgres.sql, unknown) => pro
   "makeBatchSetEntityValues"
 
 let internalMakeEntityUnnestUnsafeSql = (table: Table.table, ~schema, ~isRawEvents) => {
-  let {quotedFieldNames, quotedNonPrimaryFieldNames, arrayFieldTypes, hasArrayField} =
+  let {quotedFieldNames, quotedNonPrimaryFieldNames, arrayFieldTypes} =
     table->Table.toSqlParams(~schema)
 
   let primaryKeyFieldNames = Table.getPrimaryKeyFieldNames(table)
@@ -51,8 +51,7 @@ SELECT * FROM unnest(${arrayFieldTypes
 }
 
 let makeTableBatchSet = (table, schema: S.t<'entity>) => {
-  let {dbSchema, quotedFieldNames, quotedNonPrimaryFieldNames, arrayFieldTypes, hasArrayField} =
-    table->Table.toSqlParams(~schema)
+  let {dbSchema, hasArrayField} = table->Table.toSqlParams(~schema)
   let isRawEvents = table.tableName === TablesStatic.RawEvents.table.tableName
 
   let typeValidation = false

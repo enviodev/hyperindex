@@ -64,16 +64,30 @@ type t = {
   id: int,
 }
 
-let make = (~config, ~chainManager, ~loadLayer, ~shouldUseTui=false) => {
+let make = (
+  ~config: Config.t,
+  ~chainManager: ChainManager.t,
+  ~loadLayer: LoadLayer.t,
+  ~shouldUseTui=false,
+) => {
+  let maxPerChainQueueSize = {
+    let numChains = config.chainMap->ChainMap.size
+    Env.maxEventFetchedQueueSize / numChains
+  }
+  config.chainMap
+  ->ChainMap.keys
+  ->Array.forEach(chain => {
+    Prometheus.IndexingMaxBufferSize.set(
+      ~maxBufferSize=maxPerChainQueueSize,
+      ~chainId=chain->ChainMap.Chain.toChainId,
+    )
+  })
   {
     config,
     currentlyProcessingBatch: false,
     chainManager,
     maxBatchSize: Env.maxProcessBatchSize,
-    maxPerChainQueueSize: {
-      let numChains = config.chainMap->ChainMap.size
-      Env.maxEventFetchedQueueSize / numChains
-    },
+    maxPerChainQueueSize,
     indexerStartTime: Js.Date.make(),
     rollbackState: NoRollback,
     writeThrottlers: WriteThrottlers.make(~config),
@@ -341,14 +355,6 @@ let handlePartitionQueryResponse = (
     )
   }
 
-  chainFetcher.logger->Logging.childTrace({
-    "msg": "Finished page range",
-    "fromBlock": fromBlockQueried,
-    "toBlock": latestFetchedBlockNumber,
-    "number of logs": parsedQueueItems->Array.length,
-    "stats": stats,
-  })
-
   switch chainFetcher.lastBlockScannedHashes->ReorgDetection.LastBlockScannedHashes.registerReorgGuard(
     ~reorgGuard,
     ~currentBlockHeight,
@@ -357,7 +363,8 @@ let handlePartitionQueryResponse = (
       chainFetcher.logger->Logging.childInfo(
         reorgDetected->ReorgDetection.reorgDetectedToLogParams(~shouldRollbackOnReorg=true),
       )
-      Prometheus.incrementReorgsDetected(~chain)
+      Prometheus.ReorgCount.increment(~chain)
+      Prometheus.ReorgDetectionBlockNumber.set(~blockNumber=reorgDetected.scannedBlock.blockNumber, ~chain)
       (state->incrementId->setRollingBack(chain), [Rollback])
     }
   | reorgResult => {
@@ -367,7 +374,11 @@ let handlePartitionQueryResponse = (
           chainFetcher.logger->Logging.childInfo(
             reorgDetected->ReorgDetection.reorgDetectedToLogParams(~shouldRollbackOnReorg=false),
           )
-          Prometheus.incrementReorgsDetected(~chain)
+          Prometheus.ReorgCount.increment(~chain)
+          Prometheus.ReorgDetectionBlockNumber.set(
+            ~blockNumber=reorgDetected.scannedBlock.blockNumber,
+            ~chain,
+          )
           ReorgDetection.LastBlockScannedHashes.empty(
             ~confirmedBlockThreshold=chainFetcher.chainConfig.confirmedBlockThreshold,
           )
@@ -547,6 +558,8 @@ let actionReducer = (state: t, action: action) => {
   }
 }
 
+let actionNameSchema = S.union([S.string, S.object(s => s.field("TAG", S.string))])
+
 let invalidatedActionReducer = (state: t, action: action) =>
   switch (state, action) {
   | ({rollbackState: RollingBack(_)}, EventBatchProcessed(_)) =>
@@ -554,7 +567,10 @@ let invalidatedActionReducer = (state: t, action: action) =>
     ({...state, currentlyProcessingBatch: false}, [Rollback])
   | (_, ErrorExit(_)) => actionReducer(state, action)
   | _ =>
-    Logging.info("Invalidated action discarded")
+    Logging.info({
+      "msg": "Invalidated action discarded",
+      "action": action->S.convertOrThrow(actionNameSchema),
+    })
     (state, [])
   }
 
@@ -815,6 +831,8 @@ let injectedTaskReducer = (
     //If it isn't processing a batch currently continue with rollback otherwise wait for current batch to finish processing
     switch state {
     | {currentlyProcessingBatch: false, rollbackState: RollingBack(reorgChain)} =>
+      let endTimer = Prometheus.RollbackDuration.startTimer()
+
       let chainFetcher = state.chainManager.chainFetchers->ChainMap.get(reorgChain)
 
       let {
@@ -824,7 +842,7 @@ let injectedTaskReducer = (
         await chainFetcher->getLastKnownValidBlock
 
       chainFetcher.logger->Logging.childInfo({
-        "msg": "Executing indexer rollback",
+        "msg": "Started rollback on reorg",
         "targetBlockNumber": lastKnownValidBlockNumber,
         "targetBlockTimestamp": lastKnownValidBlockTimestamp,
       })
@@ -894,7 +912,7 @@ let injectedTaskReducer = (
       })
 
       //Construct a rolledback in Memory store
-      let inMemoryStore = await IO.RollBack.rollBack(
+      let rollbackResult = await IO.RollBack.rollBack(
         ~chainId=reorgChain->ChainMap.Chain.toChainId,
         ~blockTimestamp=lastKnownValidBlockTimestamp,
         ~blockNumber=lastKnownValidBlockNumber,
@@ -907,7 +925,16 @@ let injectedTaskReducer = (
         chainFetchers,
       }
 
-      dispatchAction(SetRollbackState(inMemoryStore, chainManager))
+      chainFetcher.logger->Logging.childInfo({
+        "msg": "Finished rollback on reorg",
+        "entityChanges": {
+          "deleted": rollbackResult["deletedEntities"],
+          "upserted": rollbackResult["setEntities"],
+        },
+      })
+      endTimer()
+
+      dispatchAction(SetRollbackState(rollbackResult["inMemStore"], chainManager))
 
     | _ => Logging.info("Waiting for batch to finish processing before executing rollback") //wait for batch to finish processing
     }

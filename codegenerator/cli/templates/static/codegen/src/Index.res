@@ -279,12 +279,18 @@ let main = async () => {
 
     let gsManagerRef = ref(None)
 
+    let envioVersion =
+      PersistedState.getPersistedState()->Result.mapWithDefault(None, p => Some(p.envioVersion))
+
+    switch envioVersion {
+    | Some(version) => Prometheus.Info.set(~version)
+    | None => ()
+    }
+    Prometheus.RollbackEnabled.set(~enabled=config.historyConfig.rollbackFlag === RollbackOnReorg)
+
     startServer(
       ~shouldUseTui,
       ~getState=if shouldUseTui {
-        let envioVersion =
-          PersistedState.getPersistedState()->Result.mapWithDefault(None, p => Some(p.envioVersion))
-
         () =>
           switch gsManagerRef.contents {
           | None => Initializing({})

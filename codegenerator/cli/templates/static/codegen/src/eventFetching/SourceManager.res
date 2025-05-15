@@ -49,6 +49,14 @@ let make = (
   | None => Js.Exn.raiseError("Invalid configuration, no data-source for historical sync provided")
   | Some(source) => source
   }
+  Prometheus.IndexingMaxConcurrency.set(
+    ~maxConcurrency=maxPartitionConcurrency,
+    ~chainId=initialActiveSource.chain->ChainMap.Chain.toChainId,
+  )
+  Prometheus.IndexingConcurrency.set(
+    ~concurrency=0,
+    ~chainId=initialActiveSource.chain->ChainMap.Chain.toChainId,
+  )
   {
     maxPartitionConcurrency,
     sources: Utils.Set.fromArray(sources),
@@ -103,12 +111,20 @@ let fetchNext = async (
       fetchState->FetchState.startFetchingQueries(~queries, ~stateId)
       sourceManager.fetchingPartitionsCount =
         sourceManager.fetchingPartitionsCount + queries->Array.length
+      Prometheus.IndexingConcurrency.set(
+        ~concurrency=sourceManager.fetchingPartitionsCount,
+        ~chainId=sourceManager.activeSource.chain->ChainMap.Chain.toChainId,
+      )
       let _ =
         await queries
         ->Array.map(q => {
           let promise = q->executeQuery
           let _ = promise->Promise.thenResolve(_ => {
             sourceManager.fetchingPartitionsCount = sourceManager.fetchingPartitionsCount - 1
+            Prometheus.IndexingConcurrency.set(
+              ~concurrency=sourceManager.fetchingPartitionsCount,
+              ~chainId=sourceManager.activeSource.chain->ChainMap.Chain.toChainId,
+            )
           })
           promise
         })
@@ -131,18 +147,16 @@ let getSourceNewHeight = async (
 
   while newHeight.contents <= currentBlockHeight && status.contents !== Done {
     try {
-      //Set a timer to warn if the source is taking too long to respond
-      let warningTimeOutMillis = 1_000
-      let timeoutId = Js.Global.setTimeout(() => {
-        logger->Logging.childTrace({
-          "msg": `Height retrieval from the source is taking longer than ${warningTimeOutMillis->Int.toString}ms.`,
+      // Use to detect if the source is taking too long to respond
+      let endTimer = Prometheus.SourceGetHeightDuration.startTimer(
+        {
           "source": source.name,
-        })
-      }, warningTimeOutMillis)
-
+          "chainId": source.chain->ChainMap.Chain.toChainId,
+        },
+      )
       let height = await source.getHeightOrThrow()
-      //Clear the timer after the source responds
-      timeoutId->Js.Global.clearTimeout
+      endTimer()
+
       newHeight := height
       if height <= currentBlockHeight {
         retry := 0
@@ -166,6 +180,7 @@ let getSourceNewHeight = async (
       await Utils.delay(retryInterval)
     }
   }
+  Prometheus.SourceHeight.set(~sourceName=source.name, ~chainId=source.chain->ChainMap.Chain.toChainId, ~blockNumber=newHeight.contents)
   newHeight.contents
 }
 
