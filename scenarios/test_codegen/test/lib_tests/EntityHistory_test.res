@@ -3,6 +3,31 @@ open RescriptMocha
 //unsafe polymorphic toString binding for any type
 @send external toStringUnsafe: 'a => string = "toString"
 
+let stripUndefinedFieldsInPlace = (val: 'a): 'a => {
+  let json = val->(Utils.magic: 'a => Js.Json.t)
+  //Hot fix for rescript equality check that removes optional fields
+  let rec strip = (json: Js.Json.t) => {
+    switch json {
+    | Object(obj) =>
+      obj
+      ->Js.Dict.keys
+      ->Belt.Array.forEach(key => {
+        let value = obj->Utils.Dict.dangerouslyGetNonOption(key)
+        if value === %raw(`undefined`) {
+          obj->Utils.Dict.deleteInPlace(key)
+        } else {
+          strip(value->Belt.Option.getExn)
+        }
+      })
+    | Array(arr) => arr->Belt.Array.forEach(value => strip(value))
+    | _ => ()
+    }
+  }
+
+  json->strip
+  json->(Utils.magic: Js.Json.t => 'a)
+}
+
 module TestEntity = {
   type t = {
     id: string,
@@ -78,7 +103,7 @@ describe("Entity history serde", () => {
 
     Assert.deepEqual(serializedHistory, expected)
     let deserializedHistory = serializedHistory->S.parseJsonOrThrow(testEntityHistorySchema)
-    Assert.deepEqual(deserializedHistory, history)
+    Assert.deepEqual(deserializedHistory->stripUndefinedFieldsInPlace, history)
   })
 
   it("serializes and deserializes correctly with previous history", () => {
@@ -665,8 +690,8 @@ describe("Entity history rollbacks", () => {
     let expectedHistoryItems = Mocks.historyRows->Belt.Array.slice(~offset=0, ~len=4)
 
     Assert.deepEqual(
-      parsedHistoryItems,
-      expectedHistoryItems,
+      parsedHistoryItems->stripUndefinedFieldsInPlace,
+      expectedHistoryItems->stripUndefinedFieldsInPlace,
       ~message="Should have deleted last 2 items in history",
     )
   })
@@ -686,8 +711,8 @@ describe("Entity history rollbacks", () => {
     let expectedHistoryItems = Mocks.historyRows->Belt.Array.slice(~offset=0, ~len=5)
 
     Assert.deepEqual(
-      parsedHistoryItems,
-      expectedHistoryItems,
+      parsedHistoryItems->stripUndefinedFieldsInPlace,
+      expectedHistoryItems->stripUndefinedFieldsInPlace,
       ~message="Should have deleted just the last item in history",
     )
   })
@@ -716,8 +741,8 @@ describe("Entity history rollbacks", () => {
       )
 
     Assert.deepEqual(
-      parsedHistoryItems->sort,
-      expectedHistoryItems->sort,
+      parsedHistoryItems->sort->stripUndefinedFieldsInPlace,
+      expectedHistoryItems->sort->stripUndefinedFieldsInPlace,
       ~message="Should have deleted the unneeded first items in history",
     )
   })
@@ -744,7 +769,7 @@ describe("Entity history rollbacks", () => {
         )
 
       Assert.deepEqual(
-        parsedHistoryItems->sort,
+        parsedHistoryItems->sort->stripUndefinedFieldsInPlace,
         Mocks.historyRows,
         ~message="Should have deleted the unneeded first items in history",
       )

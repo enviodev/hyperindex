@@ -20,8 +20,6 @@ type entityIdOnly = {id: string}
 let entityIdOnlySchema = S.schema(s => {id: s.matches(S.string)})
 type entityData<'entity> = Delete(entityIdOnly) | Set('entity)
 
-type containsRollbackDiffChange = {containsRollbackDiffChange?: bool}
-
 type historyRow<'entity> = {
   current: historyFields,
   previous: option<historyFields>,
