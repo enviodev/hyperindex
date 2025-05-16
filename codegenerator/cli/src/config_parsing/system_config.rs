@@ -949,7 +949,8 @@ impl DataSource {
             }
             None => {
                 let url = hypersync_endpoint_url.ok_or(anyhow!(
-                  "EE106: Failed to automatically find HyperSync endpoint for the network. Please provide it manually via the hypersync_config option, or provide an RPC URL for historical sync. Read more in our docs: https://docs.envio.dev/docs/configuration-file"
+                  "EE106: Failed to automatically find HyperSync endpoint for the network {}. Please provide it manually via the hypersync_config option, or provide an RPC URL for historical sync. Read more in our docs: https://docs.envio.dev/docs/configuration-file",
+                  network.id
                 ))?;
 
                 let parsed_url = parse_url(&url).ok_or(anyhow!(
