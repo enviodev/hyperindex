@@ -502,11 +502,7 @@ describe("Entity history rollbacks", () => {
 
       try await Db.sql->Postgres.beginSql(
         sql => [
-          TestEntity.entityHistory->EntityHistory.batchInsertRows(
-            ~sql,
-            ~rows=Mocks.historyRows,
-            ~shouldCopyCurrentEntity=true,
-          ),
+          TestEntity.entityHistory->EntityHistory.batchInsertRows(~sql, ~rows=Mocks.historyRows),
         ],
       ) catch {
       | exn =>
@@ -801,13 +797,7 @@ describe_skip("Prune performance test", () => {
     }
 
     try await Db.sql->Postgres.beginSql(
-      sql => [
-        TestEntity.entityHistory->EntityHistory.batchInsertRows(
-          ~sql,
-          ~rows,
-          ~shouldCopyCurrentEntity=false,
-        ),
-      ],
+      sql => [TestEntity.entityHistory->EntityHistory.batchInsertRows(~sql, ~rows)],
     ) catch {
     | exn =>
       Js.log2("insert mock rows exn", exn)
