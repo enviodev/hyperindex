@@ -846,6 +846,7 @@ let injectedTaskReducer = (
         "targetBlockNumber": lastKnownValidBlockNumber,
         "targetBlockTimestamp": lastKnownValidBlockTimestamp,
       })
+      Prometheus.RollbackTargetBlockNumber.set(~blockNumber=lastKnownValidBlockNumber, ~chain=reorgChain)
 
       let isUnorderedMultichainMode = state.config.isUnorderedMultichainMode
 
