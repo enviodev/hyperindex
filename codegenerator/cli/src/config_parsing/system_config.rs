@@ -1378,6 +1378,18 @@ pub struct SelectedField {
     pub data_type: RescriptTypeIdent,
 }
 
+impl PartialOrd for SelectedField {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for SelectedField {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.name.cmp(&other.name)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct FieldSelection {
     pub transaction_fields: Vec<SelectedField>,

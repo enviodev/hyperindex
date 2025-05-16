@@ -24,6 +24,15 @@ type historyRow<'entity> = {
   current: historyFields,
   previous: option<historyFields>,
   entityData: entityData<'entity>,
+  // In the event of a rollback, some entity updates may have been
+  // been affected by a rollback diff. If there was no rollback diff
+  // this will always be false.
+  // If there was a rollback diff, this will be false in the case of a
+  // new entity update (where entity affected is not present in the diff) b
+  // but true if the update is related to an entity that is
+  // currently present in the diff
+  // Optional since it's discarded during parsing/serialization
+  containsRollbackDiffChange?: bool,
 }
 
 type previousHistoryFields = historyFieldsGeneral<option<int>>
@@ -134,6 +143,7 @@ type t<'entity> = {
   table: table,
   createInsertFnQuery: string,
   schema: S.t<historyRow<'entity>>,
+  // Used for parsing
   schemaRows: S.t<array<historyRow<'entity>>>,
   insertFn: (Postgres.sql, Js.Json.t, ~shouldCopyCurrentEntity: bool) => promise<unit>,
 }
@@ -148,19 +158,13 @@ let insertRow = (
   self.insertFn(sql, row, ~shouldCopyCurrentEntity)
 }
 
-let batchInsertRows = (
-  self: t<'entity>,
-  ~sql,
-  ~rows: array<historyRow<'entity>>,
-  ~shouldCopyCurrentEntity,
-) => {
-  let rows =
-    rows
-    ->S.reverseConvertToJsonOrThrow(self.schemaRows)
-    ->(Utils.magic: Js.Json.t => array<Js.Json.t>)
+let batchInsertRows = (self: t<'entity>, ~sql, ~rows: array<historyRow<'entity>>) => {
   rows
-  ->Belt.Array.map(row => {
-    self.insertFn(sql, row, ~shouldCopyCurrentEntity)
+  ->Belt.Array.map(historyRow => {
+    let containsRollbackDiffChange =
+      historyRow.containsRollbackDiffChange->Belt.Option.getWithDefault(false)
+    let shouldCopyCurrentEntity = !containsRollbackDiffChange
+    self->insertRow(~sql, ~historyRow, ~shouldCopyCurrentEntity)
   })
   ->Promise.all
   ->Promise.thenResolve(_ => ())
