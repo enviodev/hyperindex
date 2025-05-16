@@ -27,7 +27,7 @@
       ]
     },
     "schema": {
-      "description": "Custom path to schema.yaml file",
+      "description": "Custom path to schema.graphql file",
       "type": [
         "string",
         "null"
