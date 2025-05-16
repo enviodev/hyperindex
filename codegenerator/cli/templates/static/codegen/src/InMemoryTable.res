@@ -157,17 +157,21 @@ module Entity = {
     inMemTable: t<'entity>,
     entityUpdate: Types.entityUpdate<'entity>,
     ~shouldSaveHistory,
+    ~containsRollbackDiffChange=false,
   ) => {
     //New entity row with only the latest update
-    let newEntityRow = Types.Updated({
+    @inline
+    let newEntityRow = () => Types.Updated({
       latest: entityUpdate,
       history: shouldSaveHistory ? [entityUpdate] : [],
+      // For new entities, apply "containsRollbackDiffChange" from param
+      containsRollbackDiffChange,
     })
 
     let {entityRow, entityIndices} = switch inMemTable.table->get(entityUpdate.entityId) {
-    | None => {entityRow: newEntityRow, entityIndices: Utils.Set.make()}
+    | None => {entityRow: newEntityRow(), entityIndices: Utils.Set.make()}
     | Some({entityRow: InitialReadFromDb(_), entityIndices}) => {
-        entityRow: newEntityRow,
+        entityRow: newEntityRow(),
         entityIndices,
       }
     | Some({entityRow: Updated(previous_values), entityIndices})
@@ -180,6 +184,9 @@ module Entity = {
           previous_values.history->Array.length - 1,
           entityUpdate,
         ),
+        // For updated entities, apply "containsRollbackDiffChange" from previous values
+        // (so that the first change if from a rollback diff applies throughout the batch)
+        containsRollbackDiffChange: previous_values.containsRollbackDiffChange,
       })
       {entityRow, entityIndices}
     | Some({entityRow: Updated(previous_values), entityIndices}) =>
@@ -188,6 +195,9 @@ module Entity = {
         history: shouldSaveHistory
           ? [...previous_values.history, entityUpdate]
           : previous_values.history,
+        // For updated entities, apply "containsRollbackDiffChange" from previous values
+        // (so that the first change if from a rollback diff applies throughout the batch)
+        containsRollbackDiffChange: previous_values.containsRollbackDiffChange,
       })
       {entityRow, entityIndices}
     }
