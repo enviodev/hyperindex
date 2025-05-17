@@ -75,6 +75,7 @@ module QueryTypes = {
     | L1GasUsed
     | L1FeeScalar
     | GasUsedForL1
+    | AuthorizationList
 
   type logField =
     | Removed
@@ -307,6 +308,30 @@ module ResponseTypes = {
     storageKeys?: array<string>,
   }
 
+  let accessListSchema = S.object(s => {
+    address: ?s.field("address", S.option(Address.schema)),
+    storageKeys: ?s.field("storageKeys", S.option(S.array(S.string))),
+  })
+
+  // TODO: update some of these fields to be integers rather than strings.
+  type authorizationList = {
+    chainId: string,
+    address: Address.t,
+    nonce: string,
+    yParity: string,
+    r: string,
+    s: string,
+  }
+
+  let authorizationListSchema = S.object(s => {
+    chainId: s.field("chainId", S.string),
+    address: s.field("address", Address.schema),
+    nonce: s.field("nonce", S.string),
+    yParity: s.field("yParity", S.string),
+    r: s.field("r", S.string),
+    s: s.field("s", S.string),
+  })
+
   type transaction = {
     blockHash?: string,
     blockNumber?: int,
@@ -342,6 +367,7 @@ module ResponseTypes = {
     l1GasUsed?: bigint,
     l1FeeScalar?: int,
     gasUsedForL1?: bigint,
+    authorizationList?: array<authorizationList>,
   }
 
   type log = {

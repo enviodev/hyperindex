@@ -1571,7 +1571,6 @@ impl FieldSelection {
                 Tx::Status => Res::option(Res::Int),
                 Tx::YParity => Res::option(Res::String),
                 Tx::ChainId => Res::option(Res::Int),
-                // TxField::AccessList => todo!(),
                 Tx::MaxFeePerBlobGas => Res::option(Res::BigInt),
                 Tx::BlobVersionedHashes => Res::option(Res::array(Res::String)),
                 Tx::Kind => Res::option(Res::Int),
@@ -1580,6 +1579,14 @@ impl FieldSelection {
                 Tx::L1GasUsed => Res::option(Res::BigInt),
                 Tx::L1FeeScalar => Res::option(Res::Float),
                 Tx::GasUsedForL1 => Res::option(Res::BigInt),
+                Tx::AccessList => Res::option(Res::Array(Box::new(Res::TypeApplication {
+                    name: "HyperSyncClient.ResponseTypes.accessList".to_string(),
+                    type_params: vec![],
+                }))),
+                Tx::AuthorizationList => Res::option(Res::Array(Box::new(Res::TypeApplication {
+                    name: "HyperSyncClient.ResponseTypes.authorizationList".to_string(),
+                    type_params: vec![],
+                }))),
             };
             selected_transaction_fields.push(SelectedField {
                 name: transaction_field.to_string(),
