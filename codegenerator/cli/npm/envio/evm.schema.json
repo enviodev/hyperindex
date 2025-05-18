@@ -229,6 +229,7 @@
         "status",
         "yParity",
         "chainId",
+        "accessList",
         "maxFeePerBlobGas",
         "blobVersionedHashes",
         "kind",
@@ -236,7 +237,8 @@
         "l1GasPrice",
         "l1GasUsed",
         "l1FeeScalar",
-        "gasUsedForL1"
+        "gasUsedForL1",
+        "authorizationList"
       ]
     },
     "BlockField": {
