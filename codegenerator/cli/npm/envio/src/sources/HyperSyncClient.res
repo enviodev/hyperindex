@@ -315,19 +315,19 @@ module ResponseTypes = {
 
   // TODO: update some of these fields to be integers rather than strings.
   type authorizationList = {
-    chainId: string,
+    chainId: bigint,
     address: Address.t,
-    nonce: string,
-    yParity: string,
+    nonce: int,
+    yParity: int, // 0 or 1
     r: string,
     s: string,
   }
 
   let authorizationListSchema = S.object(s => {
-    chainId: s.field("chainId", S.string),
+    chainId: s.field("chainId", S.bigint),
     address: s.field("address", Address.schema),
-    nonce: s.field("nonce", S.string),
-    yParity: s.field("yParity", S.string),
+    nonce: s.field("nonce", S.int),
+    yParity: s.field("yParity", S.int), // 0 or 1
     r: s.field("r", S.string),
     s: s.field("s", S.string),
   })
