@@ -303,6 +303,7 @@ module ResponseTypes = {
     mixHash?: string,
   }
 
+  @genType
   type accessList = {
     address?: Address.t,
     storageKeys?: array<string>,
@@ -313,21 +314,21 @@ module ResponseTypes = {
     storageKeys: ?s.field("storageKeys", S.option(S.array(S.string))),
   })
 
-  // TODO: update some of these fields to be integers rather than strings.
+  @genType
   type authorizationList = {
-    chainId: string,
+    chainId: bigint,
     address: Address.t,
-    nonce: string,
-    yParity: string,
+    nonce: int,
+    yParity: [#0 | #1],
     r: string,
     s: string,
   }
 
   let authorizationListSchema = S.object(s => {
-    chainId: s.field("chainId", S.string),
+    chainId: s.field("chainId", S.bigint),
     address: s.field("address", Address.schema),
-    nonce: s.field("nonce", S.string),
-    yParity: s.field("yParity", S.string),
+    nonce: s.field("nonce", S.int),
+    yParity: s.field("yParity", S.enum([#0, #1])),
     r: s.field("r", S.string),
     s: s.field("s", S.string),
   })
