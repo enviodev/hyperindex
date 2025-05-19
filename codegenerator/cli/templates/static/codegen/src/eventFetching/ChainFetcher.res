@@ -303,8 +303,8 @@ let runContractRegistersOrThrow = (~reversedWithContractRegister: array<Internal
   let onRegister = (~eventItem: Internal.eventItem, ~contractAddress, ~contractName) => {
     if isDone.contents {
       eventItem->Logging.logForItem(
-        #error,
-        `The context.add${(contractName: Enums.ContractType.t :> string)} was called after the contract register resolved. Use await or return a promise from the contract register handler to avoid this error.`,
+        #warn,
+        `Skipping contract registration: The context.add${(contractName: Enums.ContractType.t :> string)} was called after the contract register resolved. Use await or return a promise from the contract register handler to avoid this error.`,
       )
     } else {
       let {timestamp, blockNumber, logIndex} = eventItem
