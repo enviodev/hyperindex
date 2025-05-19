@@ -193,10 +193,10 @@ describe("Dynamic contract restart resistance test", () => {
       Assert.deepEqual(
         stubDataInitial->Stubs.getTasks,
         [
+          NextQuery(Chain(Mock.Chain2.chain)),
           UpdateChainMetaDataAndCheckForExit(NoExit),
           ProcessEventBatch,
           NextQuery(Chain(Mock.Chain1.chain)),
-          NextQuery(Chain(Mock.Chain2.chain)),
         ],
         ~message="Should have received a response and next tasks will be to process batch and next query",
       )
