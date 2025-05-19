@@ -328,7 +328,7 @@ let unwrapResultExn = res =>
 external queueMicrotask: (unit => unit) => unit = "queueMicrotask"
 
 module Schema = {
-  let variantName = S.union([S.string, S.object(s => s.field("TAG", S.string))])
+  let variantTag = S.union([S.string, S.object(s => s.field("TAG", S.string))])
 
   let getNonOptionalFieldNames = schema => {
     let acc = []
@@ -387,8 +387,8 @@ module Schema = {
   }
 }
 
-let getVariantsNames = variants => {
-  variants->Js.Array2.map(variant => variant->S.parseOrThrow(Schema.variantName))
+let getVariantsTags = variants => {
+  variants->Js.Array2.map(variant => variant->S.parseOrThrow(Schema.variantTag))
 }
 
 module Set = {

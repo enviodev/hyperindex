@@ -167,7 +167,7 @@ describe("Single Chain Simple Rollback", () => {
     let block2 = Mock.mockChainData->MockChainData.getBlock(~blockNumber=2)->Option.getUnsafe
 
     Assert.deepEqual(
-      tasks.contents->Utils.getVariantsNames,
+      tasks.contents->Utils.getVariantsTags,
       ["UpdateEndOfBlockRangeScannedData", "ProcessPartitionQueryResponse"],
     )
     Assert.deepEqual(
@@ -234,7 +234,7 @@ describe("Single Chain Simple Rollback", () => {
 
     let block2 = Mock.mockChainData->MockChainData.getBlock(~blockNumber=2)->Option.getUnsafe
     Assert.deepEqual(
-      tasks.contents->Utils.getVariantsNames,
+      tasks.contents->Utils.getVariantsTags,
       ["UpdateEndOfBlockRangeScannedData", "ProcessPartitionQueryResponse"],
     )
     Assert.deepEqual(
@@ -329,7 +329,7 @@ describe("Single Chain Simple Rollback", () => {
       ->Option.getUnsafe
 
     Assert.deepEqual(
-      tasks.contents->Utils.getVariantsNames,
+      tasks.contents->Utils.getVariantsTags,
       [
         "UpdateChainMetaDataAndCheckForExit",
         "UpdateEndOfBlockRangeScannedData",
@@ -365,7 +365,7 @@ describe("Single Chain Simple Rollback", () => {
       ->Option.getUnsafe
 
     Assert.deepEqual(
-      tasks.contents->Utils.getVariantsNames,
+      tasks.contents->Utils.getVariantsTags,
       [
         "NextQuery",
         "UpdateEndOfBlockRangeScannedData",

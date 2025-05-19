@@ -690,7 +690,7 @@ let invalidatedActionReducer = (state: t, action: action) =>
   | _ =>
     Logging.info({
       "msg": "Invalidated action discarded",
-      "action": action->S.convertOrThrow(Utils.Schema.variantName),
+      "action": action->S.convertOrThrow(Utils.Schema.variantTag),
     })
     (state, [])
   }
