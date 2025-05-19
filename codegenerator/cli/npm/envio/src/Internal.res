@@ -35,8 +35,8 @@ type genericContractRegisterArgs<'event, 'context> = {
   event: 'event,
   context: 'context,
 }
-@genType
-type genericContractRegister<'args> = 'args => unit
+@genType.import(("./Types.ts", "GenericContractRegister"))
+type genericContractRegister<'args> = 'args => promise<unit>
 
 type contractRegisterContext
 type contractRegisterArgs = genericContractRegisterArgs<event, contractRegisterContext>

@@ -296,7 +296,9 @@ let cleanUpProcessingFilters = (
   }
 }
 
-let runContractRegistersOrThrow = async (~reversedWithContractRegister: array<Internal.eventItem>) => {
+let runContractRegistersOrThrow = async (
+  ~reversedWithContractRegister: array<Internal.eventItem>,
+) => {
   let dynamicContracts = []
   let isDone = ref(false)
 
@@ -326,6 +328,7 @@ let runContractRegistersOrThrow = async (~reversedWithContractRegister: array<In
     }
   }
 
+  let promises = []
   for idx in reversedWithContractRegister->Array.length - 1 downto 0 {
     let eventItem = reversedWithContractRegister->Array.getUnsafe(idx)
     let contractRegister = switch eventItem.eventConfig.contractRegister {
@@ -335,13 +338,32 @@ let runContractRegistersOrThrow = async (~reversedWithContractRegister: array<In
       Js.Exn.raiseError("Contract register is not set for event " ++ eventItem.eventConfig.name)
     }
 
-    try contractRegister(eventItem->ContextEnv.getContractRegisterArgs(~onRegister)) catch {
+    let errorMessage = "Event contractRegister failed, please fix the error to keep the indexer running smoothly"
+
+    // Catch sync and async errors
+    try {
+      let result = contractRegister(eventItem->ContextEnv.getContractRegisterArgs(~onRegister))
+
+      // Even though `contractRegister` always returns a promise,
+      // in the ReScript type, but it might return a non-promise value for TS API.
+      if result->Promise.isCatchable {
+        promises->Array.push(
+          result->Promise.catch(exn => {
+            exn->ErrorHandling.mkLogAndRaise(
+              ~msg=errorMessage,
+              ~logger=eventItem->Logging.getEventLogger,
+            )
+          }),
+        )
+      }
+    } catch {
     | exn =>
-      exn->ErrorHandling.mkLogAndRaise(
-        ~msg="Event contractRegister failed, please fix the error to keep the indexer running smoothly",
-        ~logger=eventItem->Logging.getEventLogger,
-      )
+      exn->ErrorHandling.mkLogAndRaise(~msg=errorMessage, ~logger=eventItem->Logging.getEventLogger)
     }
+  }
+
+  if promises->Utils.Array.notEmpty {
+    let _ = await Promise.all(promises)
   }
 
   isDone.contents = true

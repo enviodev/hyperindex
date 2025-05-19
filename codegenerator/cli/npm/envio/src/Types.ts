@@ -45,3 +45,7 @@ export type EffectContext = {
    */
   readonly effect: EffectCaller;
 };
+
+export type GenericContractRegister<Args> = (
+  args: Args
+) => void | Promise<void>;

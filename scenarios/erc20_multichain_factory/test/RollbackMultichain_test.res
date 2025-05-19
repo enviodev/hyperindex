@@ -1,5 +1,5 @@
 open Belt
-open RescriptMocha
+// open RescriptMocha
 
 let config = {
   ...RegisterHandlers.registerAllHandlers(),
