@@ -35,4 +35,36 @@ describe("Use Envio test framework to test event handlers", () => {
       },
     ] satisfies typeof registeredDcs);
   });
+
+  it("Throws when contract registered in an unawaited macrotask", async () => {
+    // Initializing the mock database
+    const mockDbInitial = MockDb.createMockDb();
+
+    const dcAddress = "0x1234567890123456789012345678901234567890";
+
+    const event = Gravatar.FactoryEvent.createMockEvent({
+      contract: dcAddress,
+      testCase: "throwOnHangingRegistration",
+    });
+
+    const updatedMockDb = await Gravatar.FactoryEvent.processEvent({
+      event: event,
+      mockDb: mockDbInitial,
+    });
+    const registeredDcs = updatedMockDb.dynamicContractRegistry.getAll();
+    assert.deepEqual(
+      registeredDcs,
+      [],
+      `Since the error thrown in the separate macrotask,
+      can't really break the flow here.
+      So the contract register should finish successfully.`
+    );
+
+    // Currently no good way to test this:
+    // But you should be able to see it the logs when running the test
+    // assert.equal(
+    //   log.message,
+    //   "The context.addSimpleNft was called after the contract register resolved. Use await or return a promise from the contract register handler to avoid this error."
+    // );
+  });
 });

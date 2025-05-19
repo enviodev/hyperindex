@@ -150,7 +150,8 @@ let getEventLogger = (eventItem: Internal.eventItem) => {
   | None => {
       let l = getLogger()->child(
         {
-          "context": `Event '${eventItem.eventConfig.name}' for contract '${eventItem.eventConfig.contractName}'`,
+          "contractName": eventItem.eventConfig.contractName,
+          "eventName": eventItem.eventConfig.name,
           "chainId": eventItem.chain->ChainMap.Chain.toChainId,
           "block": eventItem.blockNumber,
           "logIndex": eventItem.logIndex,
@@ -162,18 +163,16 @@ let getEventLogger = (eventItem: Internal.eventItem) => {
   }
 }
 
-let getUserLogger = {
-  @inline
-  let log = (eventItem, level: Pino.logLevelUser, message: string, ~params) => {
-    (eventItem->getEventLogger->Utils.magic->Js.Dict.unsafeGet((level :> string)))(params, message)
-  }
+@inline
+let logForItem = (eventItem, level: Pino.logLevel, message: string, ~params=?) => {
+  (eventItem->getEventLogger->Utils.magic->Js.Dict.unsafeGet((level :> string)))(params, message)
+}
 
-  (eventItem): Envio.logger => {
-    info: (message: string, ~params=?) => eventItem->log(#uinfo, message, ~params),
-    debug: (message: string, ~params=?) => eventItem->log(#udebug, message, ~params),
-    warn: (message: string, ~params=?) => eventItem->log(#uwarn, message, ~params),
-    error: (message: string, ~params=?) => eventItem->log(#uerror, message, ~params),
-    errorWithExn: (message: string, exn) =>
-      eventItem->log(#uerror, message, ~params={"err": exn->Internal.prettifyExn}),
-  }
+let getUserLogger = (eventItem): Envio.logger => {
+  info: (message: string, ~params=?) => eventItem->logForItem(#uinfo, message, ~params?),
+  debug: (message: string, ~params=?) => eventItem->logForItem(#udebug, message, ~params?),
+  warn: (message: string, ~params=?) => eventItem->logForItem(#uwarn, message, ~params?),
+  error: (message: string, ~params=?) => eventItem->logForItem(#uerror, message, ~params?),
+  errorWithExn: (message: string, exn) =>
+    eventItem->logForItem(#uerror, message, ~params={"err": exn->Internal.prettifyExn}),
 }

@@ -408,5 +408,14 @@ EventFiltersTest.WithExcessField.handler(async (_) => {}, {
 });
 
 Gravatar.FactoryEvent.contractRegister(async ({ event, context }) => {
-  context.addSimpleNft(event.params.contract);
+  switch (event.params.testCase) {
+    case "throwOnHangingRegistration":
+      setTimeout(() => {
+        context.addSimpleNft(event.params.contract);
+      }, 0);
+      break;
+    default:
+      context.addSimpleNft(event.params.contract);
+      break;
+  }
 });

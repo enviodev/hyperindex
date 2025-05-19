@@ -298,24 +298,32 @@ let cleanUpProcessingFilters = (
 
 let runContractRegistersOrThrow = (~reversedWithContractRegister: array<Internal.eventItem>) => {
   let dynamicContracts = []
+  let isDone = ref(false)
 
   let onRegister = (~eventItem: Internal.eventItem, ~contractAddress, ~contractName) => {
-    let {timestamp, blockNumber, logIndex} = eventItem
+    if isDone.contents {
+      eventItem->Logging.logForItem(
+        #error,
+        `The context.add${(contractName: Enums.ContractType.t :> string)} was called after the contract register resolved. Use await or return a promise from the contract register handler to avoid this error.`,
+      )
+    } else {
+      let {timestamp, blockNumber, logIndex} = eventItem
 
-    let dc: FetchState.indexingContract = {
-      address: contractAddress,
-      contractName: (contractName: Enums.ContractType.t :> string),
-      startBlock: blockNumber,
-      register: DC({
-        registeringEventBlockTimestamp: timestamp,
-        registeringEventLogIndex: logIndex,
-        registeringEventName: eventItem.eventConfig.name,
-        registeringEventContractName: eventItem.eventConfig.contractName,
-        registeringEventSrcAddress: eventItem.event.srcAddress,
-      }),
+      let dc: FetchState.indexingContract = {
+        address: contractAddress,
+        contractName: (contractName: Enums.ContractType.t :> string),
+        startBlock: blockNumber,
+        register: DC({
+          registeringEventBlockTimestamp: timestamp,
+          registeringEventLogIndex: logIndex,
+          registeringEventName: eventItem.eventConfig.name,
+          registeringEventContractName: eventItem.eventConfig.contractName,
+          registeringEventSrcAddress: eventItem.event.srcAddress,
+        }),
+      }
+
+      dynamicContracts->Array.push(dc)
     }
-
-    dynamicContracts->Array.push(dc)
   }
 
   for idx in reversedWithContractRegister->Array.length - 1 downto 0 {
@@ -336,6 +344,7 @@ let runContractRegistersOrThrow = (~reversedWithContractRegister: array<Internal
     }
   }
 
+  isDone.contents = true
   dynamicContracts
 }
 
