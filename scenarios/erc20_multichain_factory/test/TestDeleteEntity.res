@@ -153,6 +153,7 @@ describe("Unsafe delete test", () => {
 
     await dispatchAllTasks()
     await dispatchAllTasks()
+    await dispatchAllTasks()
 
     let users = await Sql.getAllRowsInTable("Account")
     Assert.equal(users->Array.length, 2, ~message="Should contain user1 and minter address")

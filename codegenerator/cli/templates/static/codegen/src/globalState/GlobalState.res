@@ -111,12 +111,30 @@ let isRollingBack = state =>
   | _ => false
   }
 
+type partitionQueryResponse = {
+  chain: chain,
+  response: Source.blockRangeFetchResponse,
+  query: FetchState.query,
+}
+
 type shouldExit = ExitWithSuccess | NoExit
+
+// Need to dispatch an action for every async operation
+// to get access to the latest state.
 type action =
-  | PartitionQueryResponse({
-      chain: chain,
-      response: Source.blockRangeFetchResponse,
+  // After a response is received, we validate it with the new state
+  // if there's no reorg to continue processing the response.
+  | ValidatePartitionQueryResponse(partitionQueryResponse)
+  // This should be a separate action from ValidatePartitionQueryResponse
+  // because when processing the response, there might be an async contract registration.
+  // So after it's finished we dispatch the  submit action to get the latest fetch state.
+  | SubmitPartitionQueryResponse({
+      reversedNewItems: array<Internal.eventItem>,
+      dynamicContracts: array<FetchState.indexingContract>,
+      currentBlockHeight: int,
+      latestFetchedBlock: FetchState.blockNumberAndTimestamp,
       query: FetchState.query,
+      chain: chain,
     })
   | FinishWaitingForNewBlock({chain: chain, currentBlockHeight: int})
   | EventBatchProcessed(EventProcessing.EventsProcessed.t)
@@ -137,6 +155,7 @@ type task =
       blockNumberThreshold: int,
       nextEndOfBlockRangeScannedData: DbFunctions.EndOfBlockRangeScannedData.endOfBlockRangeScannedData,
     })
+  | ProcessPartitionQueryResponse(partitionQueryResponse)
   | ProcessEventBatch
   | UpdateChainMetaDataAndCheckForExit(shouldExit)
   | Rollback
@@ -309,11 +328,9 @@ let updateLatestProcessedBlocks = (
   }
 }
 
-let handlePartitionQueryResponse = (
+let validatePartitionQueryResponse = (
   state,
-  ~chain,
-  ~response: Source.blockRangeFetchResponse,
-  ~query: FetchState.query,
+  {chain, response, query} as partitionQueryResponse: partitionQueryResponse,
 ) => {
   let chainFetcher = state.chainManager.chainFetchers->ChainMap.get(chain)
   let {
@@ -323,7 +340,6 @@ let handlePartitionQueryResponse = (
     currentBlockHeight,
     reorgGuard,
     fromBlockQueried,
-    latestFetchedBlockTimestamp,
   } = response
   let {lastBlockScannedData} = reorgGuard
 
@@ -364,7 +380,10 @@ let handlePartitionQueryResponse = (
         reorgDetected->ReorgDetection.reorgDetectedToLogParams(~shouldRollbackOnReorg=true),
       )
       Prometheus.ReorgCount.increment(~chain)
-      Prometheus.ReorgDetectionBlockNumber.set(~blockNumber=reorgDetected.scannedBlock.blockNumber, ~chain)
+      Prometheus.ReorgDetectionBlockNumber.set(
+        ~blockNumber=reorgDetected.scannedBlock.blockNumber,
+        ~chain,
+      )
       (state->incrementId->setRollingBack(chain), [Rollback])
     }
   | reorgResult => {
@@ -384,38 +403,18 @@ let handlePartitionQueryResponse = (
           )
         }
       }
-      let updatedChainFetcher =
-        chainFetcher
-        ->ChainFetcher.handleQueryResult(
-          ~query,
-          ~currentBlockHeight,
-          ~latestFetchedBlockTimestamp,
-          ~latestFetchedBlockNumber,
-          ~fetchedEvents=parsedQueueItems,
-        )
-        ->Utils.unwrapResultExn
-        ->updateChainFetcherCurrentBlockHeight(~currentBlockHeight)
-
-      let hasNoMoreEventsToProcess = updatedChainFetcher->ChainFetcher.hasNoMoreEventsToProcess
-
-      let latestProcessedBlock = if hasNoMoreEventsToProcess {
-        FetchState.getLatestFullyFetchedBlock(updatedChainFetcher.fetchState).blockNumber->Some
-      } else {
-        updatedChainFetcher.latestProcessedBlock
-      }
 
       let updatedChainFetcher = {
-        ...updatedChainFetcher,
-        latestProcessedBlock,
+        ...chainFetcher,
         lastBlockScannedHashes,
-        numBatchesFetched: updatedChainFetcher.numBatchesFetched + 1,
       }
 
-      let wasFetchingAtHead = ChainFetcher.isFetchingAtHead(chainFetcher)
-      let isCurrentlyFetchingAtHead = ChainFetcher.isFetchingAtHead(updatedChainFetcher)
-
-      if !wasFetchingAtHead && isCurrentlyFetchingAtHead {
-        updatedChainFetcher.logger->Logging.childInfo("All events have been fetched")
+      let nextState = {
+        ...state,
+        chainManager: {
+          ...state.chainManager,
+          chainFetchers: state.chainManager.chainFetchers->ChainMap.set(chain, updatedChainFetcher),
+        },
       }
 
       let updateEndOfBlockRangeScannedDataArr =
@@ -435,23 +434,131 @@ let handlePartitionQueryResponse = (
             ]
           : []
 
-      let nextState = {
-        ...state,
-        chainManager: {
-          ...state.chainManager,
-          chainFetchers: state.chainManager.chainFetchers->ChainMap.set(chain, updatedChainFetcher),
-        },
-      }
-
       (
         nextState,
         Array.concat(
           updateEndOfBlockRangeScannedDataArr,
-          [UpdateChainMetaDataAndCheckForExit(NoExit), ProcessEventBatch, NextQuery(Chain(chain))],
+          [ProcessPartitionQueryResponse(partitionQueryResponse)],
         ),
       )
     }
   }
+}
+
+let submitPartitionQueryResponse = (
+  state,
+  ~reversedNewItems,
+  ~dynamicContracts,
+  ~currentBlockHeight,
+  ~latestFetchedBlock,
+  ~query,
+  ~chain,
+) => {
+  let chainFetcher = state.chainManager.chainFetchers->ChainMap.get(chain)
+
+  let updatedChainFetcher =
+    chainFetcher
+    ->ChainFetcher.handleQueryResult(
+      ~query,
+      ~currentBlockHeight,
+      ~latestFetchedBlock,
+      ~reversedNewItems,
+      ~dynamicContracts,
+    )
+    ->Utils.unwrapResultExn
+    ->updateChainFetcherCurrentBlockHeight(~currentBlockHeight)
+
+  let hasNoMoreEventsToProcess = updatedChainFetcher->ChainFetcher.hasNoMoreEventsToProcess
+
+  let latestProcessedBlock = if hasNoMoreEventsToProcess {
+    FetchState.getLatestFullyFetchedBlock(updatedChainFetcher.fetchState).blockNumber->Some
+  } else {
+    updatedChainFetcher.latestProcessedBlock
+  }
+
+  let updatedChainFetcher = {
+    ...updatedChainFetcher,
+    latestProcessedBlock,
+    numBatchesFetched: updatedChainFetcher.numBatchesFetched + 1,
+  }
+
+  let wasFetchingAtHead = ChainFetcher.isFetchingAtHead(chainFetcher)
+  let isCurrentlyFetchingAtHead = ChainFetcher.isFetchingAtHead(updatedChainFetcher)
+
+  if !wasFetchingAtHead && isCurrentlyFetchingAtHead {
+    updatedChainFetcher.logger->Logging.childInfo("All events have been fetched")
+  }
+
+  let nextState = {
+    ...state,
+    chainManager: {
+      ...state.chainManager,
+      chainFetchers: state.chainManager.chainFetchers->ChainMap.set(chain, updatedChainFetcher),
+    },
+  }
+
+  (
+    nextState,
+    [UpdateChainMetaDataAndCheckForExit(NoExit), ProcessEventBatch, NextQuery(Chain(chain))],
+  )
+}
+
+let processPartitionQueryResponse = async (
+  state,
+  {chain, response, query}: partitionQueryResponse,
+  ~dispatchAction,
+) => {
+  let chainFetcher = state.chainManager.chainFetchers->ChainMap.get(chain)
+  let {
+    parsedQueueItems,
+    latestFetchedBlockNumber,
+    currentBlockHeight,
+    latestFetchedBlockTimestamp,
+  } = response
+
+  let reversedWithContractRegister = []
+  let reversedNewItems = []
+
+  // It's cheaper to reverse only items with contract register
+  // Then all items. That's why we use downto loop
+  for idx in parsedQueueItems->Array.length - 1 downto 0 {
+    let item = parsedQueueItems->Array.getUnsafe(idx)
+    if (
+      switch chainFetcher.processingFilters {
+      | None => true
+      | Some(processingFilters) => ChainFetcher.applyProcessingFilters(~item, ~processingFilters)
+      }
+    ) {
+      if item.eventConfig.contractRegister !== None {
+        reversedWithContractRegister->Array.push(item)
+      }
+
+      // TODO: Don't really need to keep it in the queue
+      // when there's no handler (besides raw_events, processed counter, and dcsToStore consuming)
+      reversedNewItems->Array.push(item)
+    }
+  }
+
+  let dynamicContracts = switch reversedWithContractRegister {
+  | [] as empty =>
+    // A small optimisation to not recreate an empty array
+    empty->(Utils.magic: array<Internal.eventItem> => array<FetchState.indexingContract>)
+  | _ => await ChainFetcher.runContractRegistersOrThrow(~reversedWithContractRegister)
+  }
+
+  dispatchAction(
+    SubmitPartitionQueryResponse({
+      reversedNewItems,
+      dynamicContracts,
+      currentBlockHeight,
+      latestFetchedBlock: {
+        blockNumber: latestFetchedBlockNumber,
+        blockTimestamp: latestFetchedBlockTimestamp,
+      },
+      chain,
+      query,
+    }),
+  )
 }
 
 let updateChainFetcher = (chainFetcherUpdate, ~state, ~chain) => {
@@ -481,8 +588,24 @@ let actionReducer = (state: t, action: action) => {
       },
       [NextQuery(Chain(chain))],
     )
-  | PartitionQueryResponse({chain, response, query}) =>
-    state->handlePartitionQueryResponse(~chain, ~response, ~query)
+  | ValidatePartitionQueryResponse(partitionQueryResponse) =>
+    state->validatePartitionQueryResponse(partitionQueryResponse)
+  | SubmitPartitionQueryResponse({
+      reversedNewItems,
+      dynamicContracts,
+      currentBlockHeight,
+      latestFetchedBlock,
+      query,
+      chain,
+    }) =>
+    state->submitPartitionQueryResponse(
+      ~reversedNewItems,
+      ~dynamicContracts,
+      ~currentBlockHeight,
+      ~latestFetchedBlock,
+      ~query,
+      ~chain,
+    )
   | EventBatchProcessed(latestProcessedBlocks) =>
     let maybePruneEntityHistory =
       state.config->Config.shouldPruneHistory(
@@ -558,8 +681,6 @@ let actionReducer = (state: t, action: action) => {
   }
 }
 
-let actionNameSchema = S.union([S.string, S.object(s => s.field("TAG", S.string))])
-
 let invalidatedActionReducer = (state: t, action: action) =>
   switch (state, action) {
   | ({rollbackState: RollingBack(_)}, EventBatchProcessed(_)) =>
@@ -569,7 +690,7 @@ let invalidatedActionReducer = (state: t, action: action) =>
   | _ =>
     Logging.info({
       "msg": "Invalidated action discarded",
-      "action": action->S.convertOrThrow(actionNameSchema),
+      "action": action->S.convertOrThrow(Utils.Schema.variantName),
     })
     (state, [])
   }
@@ -596,7 +717,7 @@ let checkAndFetchForChain = (
       ~executeQuery=async query => {
         try {
           let response = await chainFetcher.sourceManager->executeQuery(~query, ~currentBlockHeight)
-          dispatchAction(PartitionQueryResponse({chain, response, query}))
+          dispatchAction(ValidatePartitionQueryResponse({chain, response, query}))
         } catch {
         | exn => dispatchAction(ErrorExit(exn->ErrorHandling.make))
         }
@@ -619,6 +740,8 @@ let injectedTaskReducer = (
   ~dispatchAction,
 ) => {
   switch task {
+  | ProcessPartitionQueryResponse(partitionQueryResponse) =>
+    state->processPartitionQueryResponse(partitionQueryResponse, ~dispatchAction)->Promise.done
   | UpdateEndOfBlockRangeScannedData({
       chain,
       blockNumberThreshold,

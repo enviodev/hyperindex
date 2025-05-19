@@ -139,6 +139,8 @@ let setupDb = async () => {
 
 describe("Single Chain Simple Rollback", () => {
   Async.it("Detects reorgs and actions a rollback", async () => {
+    await setupDb()
+
     let chainManager = ChainManager.makeFromConfig(~config)
     let loadLayer = LoadLayer.makeWithDbConnection()
     let initState = GlobalState.make(~config, ~chainManager, ~loadLayer)
@@ -165,21 +167,27 @@ describe("Single Chain Simple Rollback", () => {
     let block2 = Mock.mockChainData->MockChainData.getBlock(~blockNumber=2)->Option.getUnsafe
 
     Assert.deepEqual(
+      tasks.contents->Utils.getVariantsNames,
+      ["UpdateEndOfBlockRangeScannedData", "ProcessPartitionQueryResponse"],
+    )
+    Assert.deepEqual(
+      tasks.contents->Js.Array2.unsafe_get(0),
+      UpdateEndOfBlockRangeScannedData({
+        blockNumberThreshold: -198,
+        chain: MockConfig.chain1337,
+        nextEndOfBlockRangeScannedData: {
+          blockHash: block2.blockHash,
+          blockNumber: block2.blockNumber,
+          chainId: 1337,
+        },
+      }),
+    )
+
+    await dispatchAllTasksInitalChain()
+
+    Assert.deepEqual(
       tasks.contents,
-      [
-        UpdateEndOfBlockRangeScannedData({
-          blockNumberThreshold: -198,
-          chain: MockConfig.chain1337,
-          nextEndOfBlockRangeScannedData: {
-            blockHash: block2.blockHash,
-            blockNumber: block2.blockNumber,
-            chainId: 1337,
-          },
-        }),
-        UpdateChainMetaDataAndCheckForExit(NoExit),
-        ProcessEventBatch,
-        NextQuery(Chain(chain)),
-      ],
+      [UpdateChainMetaDataAndCheckForExit(NoExit), ProcessEventBatch, NextQuery(Chain(chain))],
       ~message="should successfully have actioned batch",
     )
 
@@ -226,21 +234,27 @@ describe("Single Chain Simple Rollback", () => {
 
     let block2 = Mock.mockChainData->MockChainData.getBlock(~blockNumber=2)->Option.getUnsafe
     Assert.deepEqual(
+      tasks.contents->Utils.getVariantsNames,
+      ["UpdateEndOfBlockRangeScannedData", "ProcessPartitionQueryResponse"],
+    )
+    Assert.deepEqual(
+      tasks.contents->Js.Array2.unsafe_get(0),
+      UpdateEndOfBlockRangeScannedData({
+        blockNumberThreshold: -198,
+        chain: MockConfig.chain1337,
+        nextEndOfBlockRangeScannedData: {
+          blockHash: block2.blockHash,
+          blockNumber: block2.blockNumber,
+          chainId: 1337,
+        },
+      }),
+    )
+
+    await dispatchAllTasksInitalChain()
+
+    Assert.deepEqual(
       tasks.contents,
-      [
-        UpdateEndOfBlockRangeScannedData({
-          blockNumberThreshold: -198,
-          chain: MockConfig.chain1337,
-          nextEndOfBlockRangeScannedData: {
-            blockHash: block2.blockHash,
-            blockNumber: block2.blockNumber,
-            chainId: 1337,
-          },
-        }),
-        UpdateChainMetaDataAndCheckForExit(NoExit),
-        ProcessEventBatch,
-        NextQuery(Chain(chain)),
-      ],
+      [UpdateChainMetaDataAndCheckForExit(NoExit), ProcessEventBatch, NextQuery(Chain(chain))],
       ~message="should successfully have processed batch",
     )
 
@@ -313,23 +327,33 @@ describe("Single Chain Simple Rollback", () => {
       Mock.mockChainDataReorg
       ->MockChainData.getBlock(~blockNumber=2)
       ->Option.getUnsafe
+
+    Assert.deepEqual(
+      tasks.contents->Utils.getVariantsNames,
+      [
+        "UpdateChainMetaDataAndCheckForExit",
+        "UpdateEndOfBlockRangeScannedData",
+        "ProcessPartitionQueryResponse",
+      ],
+    )
+    Assert.deepEqual(
+      tasks.contents->Js.Array2.unsafe_get(1),
+      GlobalState.UpdateEndOfBlockRangeScannedData({
+        blockNumberThreshold: -198,
+        chain: MockConfig.chain1337,
+        nextEndOfBlockRangeScannedData: {
+          blockHash: block2.blockHash,
+          blockNumber: block2.blockNumber,
+          chainId: 1337,
+        },
+      }),
+    )
+
+    await dispatchAllTasksReorgChain()
+
     Assert.deepEqual(
       tasks.contents,
-      [
-        UpdateChainMetaDataAndCheckForExit(NoExit),
-        GlobalState.UpdateEndOfBlockRangeScannedData({
-          blockNumberThreshold: -198,
-          chain: MockConfig.chain1337,
-          nextEndOfBlockRangeScannedData: {
-            blockHash: block2.blockHash,
-            blockNumber: block2.blockNumber,
-            chainId: 1337,
-          },
-        }),
-        UpdateChainMetaDataAndCheckForExit(NoExit),
-        ProcessEventBatch,
-        NextQuery(Chain(chain)),
-      ],
+      [UpdateChainMetaDataAndCheckForExit(NoExit), ProcessEventBatch, NextQuery(Chain(chain))],
       ~message="Query should have returned with batch to process",
     )
 
@@ -339,27 +363,29 @@ describe("Single Chain Simple Rollback", () => {
       Mock.mockChainDataReorg
       ->MockChainData.getBlock(~blockNumber=4)
       ->Option.getUnsafe
+
     Assert.deepEqual(
-      tasks.contents,
+      tasks.contents->Utils.getVariantsNames,
       [
-        NextQuery(CheckAllChains),
-        GlobalState.UpdateEndOfBlockRangeScannedData({
-          blockNumberThreshold: -196,
-          chain: MockConfig.chain1337,
-          nextEndOfBlockRangeScannedData: {
-            blockHash: block4.blockHash,
-            blockNumber: block4.blockNumber,
-            chainId: 1337,
-          },
-        }),
-        UpdateChainMetaDataAndCheckForExit(NoExit),
-        ProcessEventBatch,
-        NextQuery(Chain(chain)),
-        UpdateChainMetaDataAndCheckForExit(NoExit),
-        ProcessEventBatch,
-        PruneStaleEntityHistory,
+        "NextQuery",
+        "UpdateEndOfBlockRangeScannedData",
+        "ProcessPartitionQueryResponse",
+        "UpdateChainMetaDataAndCheckForExit",
+        "ProcessEventBatch",
+        "PruneStaleEntityHistory",
       ],
-      ~message="Query should have returned with batch to process",
+    )
+    Assert.deepEqual(
+      tasks.contents->Js.Array2.unsafe_get(1),
+      GlobalState.UpdateEndOfBlockRangeScannedData({
+        blockNumberThreshold: -196,
+        chain: MockConfig.chain1337,
+        nextEndOfBlockRangeScannedData: {
+          blockHash: block4.blockHash,
+          blockNumber: block4.blockNumber,
+          chainId: 1337,
+        },
+      }),
     )
 
     let expectedGravatars: array<Entities.Gravatar.t> = [

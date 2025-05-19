@@ -296,7 +296,7 @@ let cleanUpProcessingFilters = (
   }
 }
 
-let runContractRegistersOrThrow = (~reversedWithContractRegister: array<Internal.eventItem>) => {
+let runContractRegistersOrThrow = async (~reversedWithContractRegister: array<Internal.eventItem>) => {
   let dynamicContracts = []
   let isDone = ref(false)
 
@@ -361,55 +361,24 @@ Returns Error if the node with given id cannot be found (unexpected)
 let handleQueryResult = (
   chainFetcher: t,
   ~query: FetchState.query,
-  ~latestFetchedBlockTimestamp,
-  ~latestFetchedBlockNumber,
-  ~fetchedEvents,
+  ~reversedNewItems,
+  ~dynamicContracts,
+  ~latestFetchedBlock,
   ~currentBlockHeight,
 ) => {
-  let reversedWithContractRegister = []
-  let reversedNewItems = []
-
-  // It's cheaper to reverse only items with contract register
-  // Then all items. That's why we use downto loop
-  for idx in fetchedEvents->Array.length - 1 downto 0 {
-    let item = fetchedEvents->Array.getUnsafe(idx)
-    if (
-      switch chainFetcher.processingFilters {
-      | None => true
-      | Some(processingFilters) => applyProcessingFilters(~item, ~processingFilters)
-      }
-    ) {
-      if item.eventConfig.contractRegister !== None {
-        reversedWithContractRegister->Array.push(item)
-      }
-
-      // TODO: Don't really need to keep it in the queue
-      // when there's no handler (besides raw_events, processed counter, and dcsToStore consuming)
-      reversedNewItems->Array.push(item)
-    }
-  }
-
-  let fs = if reversedWithContractRegister->Array.length > 0 {
-    let dynamicContracts = runContractRegistersOrThrow(~reversedWithContractRegister)
-    switch dynamicContracts {
-    | [] => chainFetcher.fetchState
-    | _ =>
-      chainFetcher.fetchState->FetchState.registerDynamicContracts(
-        dynamicContracts,
-        ~currentBlockHeight,
-      )
-    }
-  } else {
-    chainFetcher.fetchState
+  let fs = switch dynamicContracts {
+  | [] => chainFetcher.fetchState
+  | _ =>
+    chainFetcher.fetchState->FetchState.registerDynamicContracts(
+      dynamicContracts,
+      ~currentBlockHeight,
+    )
   }
 
   fs
   ->FetchState.handleQueryResult(
     ~query,
-    ~latestFetchedBlock={
-      blockNumber: latestFetchedBlockNumber,
-      blockTimestamp: latestFetchedBlockTimestamp,
-    },
+    ~latestFetchedBlock,
     ~reversedNewItems,
     ~currentBlockHeight,
   )
