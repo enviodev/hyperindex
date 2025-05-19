@@ -407,6 +407,22 @@ EventFiltersTest.WithExcessField.handler(async (_) => {}, {
   },
 });
 
-Gravatar.FactoryEvent.contractRegister(async ({ event, context }) => {
-  context.addSimpleNft(event.params.contract);
+Gravatar.FactoryEvent.contractRegister(({ event, context }) => {
+  switch (event.params.testCase) {
+    case "throwOnHangingRegistration":
+      setTimeout(() => {
+        context.addSimpleNft(event.params.contract);
+      }, 0);
+      break;
+    case "asyncRegistration":
+      return new Promise((resolve) =>
+        setTimeout(() => {
+          context.addSimpleNft(event.params.contract);
+          resolve();
+        }, 0)
+      );
+    default:
+      context.addSimpleNft(event.params.contract);
+      break;
+  }
 });

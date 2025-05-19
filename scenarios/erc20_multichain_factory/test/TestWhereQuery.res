@@ -147,6 +147,8 @@ describe("Tests where eq queries", () => {
 
     await dispatchAllTasks()
     await dispatchAllTasks()
+    await dispatchAllTasks()
+
     Assert.equal(
       EventHandlers.whereEqFromAccountTest.contents->Array.length,
       1,

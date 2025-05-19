@@ -296,28 +296,39 @@ let cleanUpProcessingFilters = (
   }
 }
 
-let runContractRegistersOrThrow = (~reversedWithContractRegister: array<Internal.eventItem>) => {
+let runContractRegistersOrThrow = async (
+  ~reversedWithContractRegister: array<Internal.eventItem>,
+) => {
   let dynamicContracts = []
+  let isDone = ref(false)
 
   let onRegister = (~eventItem: Internal.eventItem, ~contractAddress, ~contractName) => {
-    let {timestamp, blockNumber, logIndex} = eventItem
+    if isDone.contents {
+      eventItem->Logging.logForItem(
+        #warn,
+        `Skipping contract registration: The context.add${(contractName: Enums.ContractType.t :> string)} was called after the contract register resolved. Use await or return a promise from the contract register handler to avoid this error.`,
+      )
+    } else {
+      let {timestamp, blockNumber, logIndex} = eventItem
 
-    let dc: FetchState.indexingContract = {
-      address: contractAddress,
-      contractName: (contractName: Enums.ContractType.t :> string),
-      startBlock: blockNumber,
-      register: DC({
-        registeringEventBlockTimestamp: timestamp,
-        registeringEventLogIndex: logIndex,
-        registeringEventName: eventItem.eventConfig.name,
-        registeringEventContractName: eventItem.eventConfig.contractName,
-        registeringEventSrcAddress: eventItem.event.srcAddress,
-      }),
+      let dc: FetchState.indexingContract = {
+        address: contractAddress,
+        contractName: (contractName: Enums.ContractType.t :> string),
+        startBlock: blockNumber,
+        register: DC({
+          registeringEventBlockTimestamp: timestamp,
+          registeringEventLogIndex: logIndex,
+          registeringEventName: eventItem.eventConfig.name,
+          registeringEventContractName: eventItem.eventConfig.contractName,
+          registeringEventSrcAddress: eventItem.event.srcAddress,
+        }),
+      }
+
+      dynamicContracts->Array.push(dc)
     }
-
-    dynamicContracts->Array.push(dc)
   }
 
+  let promises = []
   for idx in reversedWithContractRegister->Array.length - 1 downto 0 {
     let eventItem = reversedWithContractRegister->Array.getUnsafe(idx)
     let contractRegister = switch eventItem.eventConfig.contractRegister {
@@ -327,15 +338,35 @@ let runContractRegistersOrThrow = (~reversedWithContractRegister: array<Internal
       Js.Exn.raiseError("Contract register is not set for event " ++ eventItem.eventConfig.name)
     }
 
-    try contractRegister(eventItem->ContextEnv.getContractRegisterArgs(~onRegister)) catch {
+    let errorMessage = "Event contractRegister failed, please fix the error to keep the indexer running smoothly"
+
+    // Catch sync and async errors
+    try {
+      let result = contractRegister(eventItem->ContextEnv.getContractRegisterArgs(~onRegister))
+
+      // Even though `contractRegister` always returns a promise,
+      // in the ReScript type, but it might return a non-promise value for TS API.
+      if result->Promise.isCatchable {
+        promises->Array.push(
+          result->Promise.catch(exn => {
+            exn->ErrorHandling.mkLogAndRaise(
+              ~msg=errorMessage,
+              ~logger=eventItem->Logging.getEventLogger,
+            )
+          }),
+        )
+      }
+    } catch {
     | exn =>
-      exn->ErrorHandling.mkLogAndRaise(
-        ~msg="Event contractRegister failed, please fix the error to keep the indexer running smoothly",
-        ~logger=eventItem->Logging.getEventLogger,
-      )
+      exn->ErrorHandling.mkLogAndRaise(~msg=errorMessage, ~logger=eventItem->Logging.getEventLogger)
     }
   }
 
+  if promises->Utils.Array.notEmpty {
+    let _ = await Promise.all(promises)
+  }
+
+  isDone.contents = true
   dynamicContracts
 }
 
@@ -352,55 +383,24 @@ Returns Error if the node with given id cannot be found (unexpected)
 let handleQueryResult = (
   chainFetcher: t,
   ~query: FetchState.query,
-  ~latestFetchedBlockTimestamp,
-  ~latestFetchedBlockNumber,
-  ~fetchedEvents,
+  ~reversedNewItems,
+  ~dynamicContracts,
+  ~latestFetchedBlock,
   ~currentBlockHeight,
 ) => {
-  let reversedWithContractRegister = []
-  let reversedNewItems = []
-
-  // It's cheaper to reverse only items with contract register
-  // Then all items. That's why we use downto loop
-  for idx in fetchedEvents->Array.length - 1 downto 0 {
-    let item = fetchedEvents->Array.getUnsafe(idx)
-    if (
-      switch chainFetcher.processingFilters {
-      | None => true
-      | Some(processingFilters) => applyProcessingFilters(~item, ~processingFilters)
-      }
-    ) {
-      if item.eventConfig.contractRegister !== None {
-        reversedWithContractRegister->Array.push(item)
-      }
-
-      // TODO: Don't really need to keep it in the queue
-      // when there's no handler (besides raw_events, processed counter, and dcsToStore consuming)
-      reversedNewItems->Array.push(item)
-    }
-  }
-
-  let fs = if reversedWithContractRegister->Array.length > 0 {
-    let dynamicContracts = runContractRegistersOrThrow(~reversedWithContractRegister)
-    switch dynamicContracts {
-    | [] => chainFetcher.fetchState
-    | _ =>
-      chainFetcher.fetchState->FetchState.registerDynamicContracts(
-        dynamicContracts,
-        ~currentBlockHeight,
-      )
-    }
-  } else {
-    chainFetcher.fetchState
+  let fs = switch dynamicContracts {
+  | [] => chainFetcher.fetchState
+  | _ =>
+    chainFetcher.fetchState->FetchState.registerDynamicContracts(
+      dynamicContracts,
+      ~currentBlockHeight,
+    )
   }
 
   fs
   ->FetchState.handleQueryResult(
     ~query,
-    ~latestFetchedBlock={
-      blockNumber: latestFetchedBlockNumber,
-      blockTimestamp: latestFetchedBlockTimestamp,
-    },
+    ~latestFetchedBlock,
     ~reversedNewItems,
     ~currentBlockHeight,
   )
