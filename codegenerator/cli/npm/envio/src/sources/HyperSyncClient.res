@@ -303,6 +303,7 @@ module ResponseTypes = {
     mixHash?: string,
   }
 
+  @genType
   type accessList = {
     address?: Address.t,
     storageKeys?: array<string>,
@@ -313,12 +314,12 @@ module ResponseTypes = {
     storageKeys: ?s.field("storageKeys", S.option(S.array(S.string))),
   })
 
-  // TODO: update some of these fields to be integers rather than strings.
+  @genType
   type authorizationList = {
     chainId: bigint,
     address: Address.t,
     nonce: int,
-    yParity: int, // 0 or 1
+    yParity: [#0 | #1],
     r: string,
     s: string,
   }
@@ -327,7 +328,7 @@ module ResponseTypes = {
     chainId: s.field("chainId", S.bigint),
     address: s.field("address", Address.schema),
     nonce: s.field("nonce", S.int),
-    yParity: s.field("yParity", S.int), // 0 or 1
+    yParity: s.field("yParity", S.enum([#0, #1])),
     r: s.field("r", S.string),
     s: s.field("s", S.string),
   })
