@@ -1,6 +1,6 @@
 open Entities
 
-Handlers.ERC20Factory.TokenCreated.contractRegister(({event, context}) => {
+Handlers.ERC20Factory.TokenCreated.contractRegister(async ({event, context}) => {
   context.addERC20(event.params.token)
 })
 

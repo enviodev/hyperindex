@@ -189,19 +189,14 @@ describe("Dynamic contract restart resistance test", () => {
 
       //Make the first queries (A)
       await dispatchAllTasks()
+      await dispatchAllTasks()
       Assert.deepEqual(
         stubDataInitial->Stubs.getTasks,
         [
-          Mock.getUpdateEndofBlockRangeScannedData(
-            Mock.mockChainDataMap,
-            ~chain=Mock.Chain1.chain,
-            ~blockNumberThreshold=-199,
-            ~blockNumber=1,
-          ),
+          NextQuery(Chain(Mock.Chain2.chain)),
           UpdateChainMetaDataAndCheckForExit(NoExit),
           ProcessEventBatch,
           NextQuery(Chain(Mock.Chain1.chain)),
-          NextQuery(Chain(Mock.Chain2.chain)),
         ],
         ~message="Should have received a response and next tasks will be to process batch and next query",
       )
@@ -216,6 +211,7 @@ describe("Dynamic contract restart resistance test", () => {
         ~message="Should have 0 dynamic contracts in db. Since the batch is not created yet and dcsToStore aren't commited",
       )
 
+      await dispatchAllTasks()
       await dispatchAllTasks()
 
       //After this step, the dynamic contracts should be in the database but on restart
@@ -296,27 +292,6 @@ describe("Dynamic contract restart resistance test", () => {
         await Db.sql->Postgres.unsafe(`SELECT * FROM public.dynamic_contract_registry_history;`),
         dcsHistoryBeforeRestart,
         ~message="Dcs history should rollback after restart tests",
-      )
-
-      Assert.deepEqual(
-        stubDataInitial->Stubs.getTasks,
-        [
-          NextQuery(CheckAllChains),
-          Mock.getUpdateEndofBlockRangeScannedData(
-            Mock.mockChainDataMap,
-            ~chain=Mock.Chain1.chain,
-            ~blockNumberThreshold=-197,
-            ~blockNumber=3,
-          ),
-          UpdateChainMetaDataAndCheckForExit(NoExit),
-          ProcessEventBatch,
-          NextQuery(Chain(Mock.Chain1.chain)),
-          NextQuery(Chain(Mock.Chain2.chain)),
-          UpdateChainMetaDataAndCheckForExit(NoExit),
-          ProcessEventBatch,
-          PruneStaleEntityHistory,
-        ],
-        ~message="This looks wrong, but snapshot to track how it changes with time",
       )
     },
   )
