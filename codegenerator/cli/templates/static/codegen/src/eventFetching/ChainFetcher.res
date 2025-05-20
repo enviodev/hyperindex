@@ -112,6 +112,7 @@ let make = (
     ~endBlock,
     ~eventConfigs,
     ~chainId=chainConfig.chain->ChainMap.Chain.toChainId,
+    ~blockLag=?Env.indexingBlockLag,
   )
 
   {

@@ -17,6 +17,7 @@ let maxProcessBatchSize = envSafe->EnvSafe.get("MAX_BATCH_SIZE", S.int, ~fallbac
 let maxAddrInPartition = envSafe->EnvSafe.get("MAX_PARTITION_SIZE", S.int, ~fallback=5_000)
 let maxPartitionConcurrency =
   envSafe->EnvSafe.get("ENVIO_MAX_PARTITION_CONCURRENCY", S.int, ~fallback=10)
+let indexingBlockLag = envSafe->EnvSafe.get("ENVIO_INDEXING_BLOCK_LAG", S.option(S.int))
 
 let metricsPort = envSafe->EnvSafe.get("METRICS_PORT", S.int->S.port, ~devFallback=9898)
 
