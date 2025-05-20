@@ -291,15 +291,10 @@ let updateInternal = (
     }
   }
 
-  if (
-    Env.Benchmark.shouldSaveData && fetchState.partitions->Array.length !== partitions->Array.length
-  ) {
-    Benchmark.addSummaryData(
-      ~group="Other",
-      ~label="Num partitions",
-      ~value=partitions->Array.length->Int.toFloat,
-    )
-  }
+  Prometheus.IndexingPartitions.set(
+    ~partitionsCount=partitions->Array.length,
+    ~chainId=fetchState.chainId,
+  )
   Prometheus.IndexingBufferSize.set(~bufferSize=queueSize.contents, ~chainId=fetchState.chainId)
   Prometheus.IndexingBufferBlockNumber.set(
     ~blockNumber=latestFullyFetchedBlock.blockNumber,
@@ -999,7 +994,7 @@ let make = (
   ~endBlock,
   ~eventConfigs: array<Internal.eventConfig>,
   ~staticContracts: dict<array<Address.t>>,
-  ~dynamicContracts: array<TablesStatic.DynamicContractRegistry.t>,
+  ~dynamicContracts: array<indexingContract>,
   ~maxAddrInPartition,
   ~chainId,
 ): t => {
@@ -1075,11 +1070,7 @@ let make = (
 
       let pendingNormalPartition = ref(makePendingNormalPartition())
 
-      let registerAddress = (
-        contractName,
-        address,
-        ~dc: option<TablesStatic.DynamicContractRegistry.t>=?,
-      ) => {
+      let registerAddress = (contractName, address, ~dc: option<indexingContract>=?) => {
         let pendingPartition = pendingNormalPartition.contents
         switch pendingPartition.addressesByContractName->Utils.Dict.dangerouslyGetNonOption(
           contractName,
@@ -1090,18 +1081,7 @@ let make = (
         indexingContracts->Js.Dict.set(
           address->Address.toString,
           switch dc {
-          | Some(dc) => {
-              address,
-              contractName,
-              startBlock: dc.registeringEventBlockNumber,
-              register: DC({
-                registeringEventLogIndex: dc.registeringEventLogIndex,
-                registeringEventBlockTimestamp: dc.registeringEventBlockTimestamp,
-                registeringEventContractName: dc.registeringEventContractName,
-                registeringEventName: dc.registeringEventName,
-                registeringEventSrcAddress: dc.registeringEventSrcAddress,
-              }),
-            }
+          | Some(dc) => dc
           | None => {
               address,
               contractName,
@@ -1130,9 +1110,9 @@ let make = (
       })
 
       dynamicContracts->Array.forEach(dc => {
-        let contractName = (dc.contractType :> string)
+        let contractName = dc.contractName
         if contractNamesWithNormalEvents->Utils.Set.has(contractName) {
-          registerAddress(contractName, dc.contractAddress, ~dc)
+          registerAddress(contractName, dc.address, ~dc)
         }
       })
 
@@ -1148,16 +1128,9 @@ let make = (
     )
   }
 
-  if Env.Benchmark.shouldSaveData {
-    Benchmark.addSummaryData(
-      ~group="Other",
-      ~label="Num partitions",
-      ~value=partitions->Array.length->Int.toFloat,
-    )
-  }
-
   let numAddresses = indexingContracts->Js.Dict.keys->Array.length
   Prometheus.IndexingAddresses.set(~addressesCount=numAddresses, ~chainId)
+  Prometheus.IndexingPartitions.set(~partitionsCount=partitions->Array.length, ~chainId)
   Prometheus.IndexingBufferSize.set(~bufferSize=0, ~chainId)
   Prometheus.IndexingBufferBlockNumber.set(~blockNumber=latestFetchedBlock.blockNumber, ~chainId)
   switch endBlock {

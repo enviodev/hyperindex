@@ -48,32 +48,6 @@ let makeDynContractRegistration = (
   }
 }
 
-let toTableDcs = (dcs: array<FetchState.indexingContract>): array<
-  TablesStatic.DynamicContractRegistry.t,
-> => {
-  dcs->Array.map(dc => {
-    let dcData = switch dc.register {
-    | Config => Js.Exn.raiseError("Config contract should not be in dcsToStore")
-    | DC(data) => data
-    }
-    {
-      TablesStatic.DynamicContractRegistry.id: TablesStatic.DynamicContractRegistry.makeId(
-        ~chainId,
-        ~contractAddress=dc.address,
-      ),
-      chainId,
-      contractAddress: dc.address,
-      contractType: dc.contractName->(Utils.magic: string => Enums.ContractType.t),
-      registeringEventBlockNumber: dc.startBlock,
-      registeringEventBlockTimestamp: dcData.registeringEventBlockTimestamp,
-      registeringEventLogIndex: dcData.registeringEventLogIndex,
-      registeringEventContractName: dc.contractName,
-      registeringEventName: dcData.registeringEventName,
-      registeringEventSrcAddress: dcData.registeringEventSrcAddress,
-    }
-  })
-}
-
 let mockEvent = (~blockNumber, ~logIndex=0, ~chainId=1): Internal.eventItem => {
   timestamp: blockNumber * 15,
   chain: ChainMap.Chain.makeUnsafe(~chainId),
@@ -195,7 +169,7 @@ describe("FetchState.make", () => {
       let fetchState = FetchState.make(
         ~eventConfigs=[baseEventConfig],
         ~staticContracts=Js.Dict.fromArray([("Gravatar", [mockAddress1])]),
-        ~dynamicContracts=[dc]->toTableDcs,
+        ~dynamicContracts=[dc],
         ~startBlock=0,
         ~endBlock=None,
         ~maxAddrInPartition=2,
@@ -250,7 +224,7 @@ describe("FetchState.make", () => {
           baseEventConfig,
         ],
         ~staticContracts=Js.Dict.fromArray([("ContractA", [mockAddress1])]),
-        ~dynamicContracts=[dc]->toTableDcs,
+        ~dynamicContracts=[dc],
         ~startBlock=0,
         ~endBlock=None,
         ~maxAddrInPartition=1,
@@ -321,7 +295,7 @@ describe("FetchState.make", () => {
           baseEventConfig,
         ],
         ~staticContracts=Js.Dict.fromArray([("ContractA", [mockAddress1, mockAddress2])]),
-        ~dynamicContracts=[dc1, dc2]->toTableDcs,
+        ~dynamicContracts=[dc1, dc2],
         ~startBlock=0,
         ~endBlock=None,
         ~maxAddrInPartition=1,
@@ -825,7 +799,7 @@ describe("FetchState.registerDynamicContracts", () => {
             ~blockNumber=0,
             ~contractAddress=mockAddress5,
           ),
-        ]->toTableDcs,
+        ],
         ~endBlock=None,
         ~startBlock=0,
         ~maxAddrInPartition=1000,
