@@ -67,7 +67,7 @@ let baseEventConfig2 = (Mock.evmEventConfig(
   ~contractName="NftFactory",
 ) :> Internal.eventConfig)
 
-let makeInitial = (~startBlock=0) => {
+let makeInitial = (~startBlock=0, ~blockLag=?) => {
   FetchState.make(
     ~eventConfigs=[baseEventConfig, baseEventConfig2],
     ~staticContracts=Js.Dict.fromArray([("Gravatar", [mockAddress0])]),
@@ -76,6 +76,7 @@ let makeInitial = (~startBlock=0) => {
     ~endBlock=None,
     ~maxAddrInPartition=3,
     ~chainId,
+    ~blockLag?,
   )
 }
 
@@ -138,6 +139,8 @@ describe("FetchState.make", () => {
         chainId: 0,
         indexingContracts: fetchState.indexingContracts,
         contractConfigs: fetchState.contractConfigs,
+        dcsToStore: None,
+        blockLag: None,
       },
     )
   })
@@ -208,6 +211,8 @@ describe("FetchState.make", () => {
           chainId,
           indexingContracts: fetchState.indexingContracts,
           contractConfigs: fetchState.contractConfigs,
+          dcsToStore: None,
+          blockLag: None,
         },
         ~message=`Should create only one partition`,
       )
@@ -272,6 +277,8 @@ describe("FetchState.make", () => {
           chainId,
           indexingContracts: fetchState.indexingContracts,
           contractConfigs: fetchState.contractConfigs,
+          dcsToStore: None,
+          blockLag: None,
         },
       )
 
@@ -365,6 +372,8 @@ describe("FetchState.make", () => {
           chainId,
           indexingContracts: fetchState.indexingContracts,
           contractConfigs: fetchState.contractConfigs,
+          dcsToStore: None,
+          blockLag: None,
         },
       )
     },
@@ -735,7 +744,7 @@ describe("FetchState.registerDynamicContracts", () => {
       updatedFetchState,
       {
         ...fetchState,
-        dcsToStore: [dc1, dc3, dc2],
+        dcsToStore: Some([dc1, dc3, dc2]),
         firstEventBlockNumber: undefined,
         indexingContracts: updatedFetchState.indexingContracts,
         nextPartitionIndex: 2,
@@ -857,6 +866,8 @@ describe("FetchState.registerDynamicContracts", () => {
           chainId,
           indexingContracts: fetchState.indexingContracts,
           contractConfigs: fetchState.contractConfigs,
+          dcsToStore: None,
+          blockLag: None,
         },
         ~message=`The static addresses for the Gravatar contract should be skipped, since they don't have non-wildcard event configs`,
       )
@@ -894,8 +905,9 @@ describe("FetchState.getNextQuery & integration", () => {
       },
       queueSize: 2,
       firstEventBlockNumber: Some(1),
-      endBlock: undefined,
-      dcsToStore: ?undefined,
+      endBlock: None,
+      dcsToStore: None,
+      blockLag: None,
       normalSelection,
       chainId,
       indexingContracts: Js.Dict.fromArray([
@@ -916,7 +928,7 @@ describe("FetchState.getNextQuery & integration", () => {
   let makeIntermidiateDcMerge = (): FetchState.t => {
     let normalSelection = makeInitial().normalSelection
     {
-      dcsToStore: [dc2, dc1, dc3],
+      dcsToStore: Some([dc2, dc1, dc3]),
       partitions: [
         {
           id: "0",
@@ -957,10 +969,11 @@ describe("FetchState.getNextQuery & integration", () => {
       chainId,
       indexingContracts: makeIndexingContractsWithDynamics([dc3, dc2, dc1], ~static=[mockAddress0]),
       contractConfigs: makeInitial().contractConfigs,
+      blockLag: undefined,
     }
   }
 
-  it("Emulate first indexer queris with a static event", () => {
+  it("Emulate first indexer queries with a static event", () => {
     // The default configuration with ability to overwrite some values
     let getNextQuery = (
       fs,
@@ -1090,6 +1103,86 @@ describe("FetchState.getNextQuery & integration", () => {
     )
   })
 
+  it("Emulate first indexer queries with block lag configured", () => {
+    // The default configuration with ability to overwrite some values
+    let getNextQuery = (
+      fs,
+      ~endBlock=None,
+      ~currentBlockHeight=10,
+      ~maxQueueSize=10,
+      ~concurrencyLimit=10,
+    ) =>
+      switch endBlock {
+      | Some(_) => {...fs, endBlock}
+      | None => fs
+      }->FetchState.getNextQuery(~currentBlockHeight, ~concurrencyLimit, ~maxQueueSize, ~stateId=0)
+
+    let fetchState = makeInitial(~blockLag=2)
+
+    Assert.deepEqual(fetchState->getNextQuery(~currentBlockHeight=0), WaitingForNewBlock)
+
+    let nextQuery = fetchState->getNextQuery(~endBlock=Some(8), ~currentBlockHeight=10)
+    Assert.deepEqual(
+      nextQuery,
+      Ready([
+        {
+          partitionId: "0",
+          target: EndBlock({toBlock: 8}),
+          selection: fetchState.normalSelection,
+          addressesByContractName: Js.Dict.fromArray([("Gravatar", [mockAddress0])]),
+          fromBlock: 0,
+          indexingContracts: fetchState.indexingContracts,
+        },
+      ]),
+      ~message="No block lag when we are close to the end block",
+    )
+
+    let nextQuery = fetchState->getNextQuery(~endBlock=Some(10), ~currentBlockHeight=10)
+    Assert.deepEqual(
+      nextQuery,
+      Ready([
+        {
+          partitionId: "0",
+          target: EndBlock({toBlock: 8}),
+          selection: fetchState.normalSelection,
+          addressesByContractName: Js.Dict.fromArray([("Gravatar", [mockAddress0])]),
+          fromBlock: 0,
+          indexingContracts: fetchState.indexingContracts,
+        },
+      ]),
+      ~message="Should apply block lag even when there's an upcoming end block",
+    )
+
+    let query = switch nextQuery {
+    | Ready([q]) => q
+    | _ => Assert.fail("Failed to extract query")
+    }
+
+    fetchState->FetchState.startFetchingQueries(~queries=[query], ~stateId=0)
+
+    let repeatedNextQuery = fetchState->getNextQuery
+    Assert.deepEqual(
+      repeatedNextQuery,
+      NothingToQuery,
+      ~message="Shouldn't double fetch the same partition",
+    )
+
+    let updatedFetchState =
+      fetchState
+      ->FetchState.handleQueryResult(
+        ~query,
+        ~latestFetchedBlock={
+          blockNumber: 8,
+          blockTimestamp: 8,
+        },
+        ~reversedNewItems=[mockEvent(~blockNumber=2), mockEvent(~blockNumber=1)],
+        ~currentBlockHeight=10,
+      )
+      ->Result.getExn
+
+    Assert.deepEqual(updatedFetchState->getNextQuery, WaitingForNewBlock)
+  })
+
   it("Emulate dynamic contract registration", () => {
     // The default configuration with ability to overwrite some values
     let getNextQuery = (
@@ -1116,7 +1209,7 @@ describe("FetchState.getNextQuery & integration", () => {
       fetchStateWithDcs,
       {
         ...fetchState,
-        dcsToStore: [dc2, dc1, dc3],
+        dcsToStore: Some([dc2, dc1, dc3]),
         indexingContracts: makeIndexingContractsWithDynamics(
           [dc2, dc1, dc3],
           ~static=[mockAddress0],
@@ -1574,7 +1667,7 @@ describe("FetchState.getNextQuery & integration", () => {
       fetchStateAfterRollback1,
       {
         ...fetchState,
-        dcsToStore: [dc1],
+        dcsToStore: Some([dc1]),
         indexingContracts: makeIndexingContractsWithDynamics([dc1], ~static=[mockAddress0]),
         partitions: [
           {
@@ -1616,7 +1709,7 @@ describe("FetchState.getNextQuery & integration", () => {
       fetchStateAfterRollback2,
       {
         ...fetchStateAfterRollback1,
-        dcsToStore: ?undefined,
+        dcsToStore: None,
         indexingContracts: makeIndexingContractsWithDynamics([], ~static=[mockAddress0]),
         partitions: [
           {
@@ -1698,7 +1791,7 @@ describe("FetchState.getNextQuery & integration", () => {
       fetchStateAfterRollback,
       {
         ...fetchState,
-        dcsToStore: ?undefined,
+        dcsToStore: None,
         indexingContracts: Js.Dict.empty(),
         partitions: [
           {
@@ -1775,6 +1868,8 @@ describe("FetchState unit tests for specific cases", () => {
         ("Gravatar", {FetchState.filterByAddresses: false}),
         ("NftFactory", {FetchState.filterByAddresses: false}),
       ]),
+      dcsToStore: None,
+      blockLag: None,
     }
 
     let updatedFetchState =
@@ -1807,7 +1902,7 @@ describe("FetchState unit tests for specific cases", () => {
       updatedFetchState,
       {
         ...fetchState,
-        dcsToStore: ?undefined,
+        dcsToStore: None,
         partitions: [
           {
             id: "0",
@@ -2225,6 +2320,8 @@ describe("FetchState unit tests for specific cases", () => {
         ("Gravatar", {FetchState.filterByAddresses: false}),
         ("NftFactory", {FetchState.filterByAddresses: false}),
       ]),
+      dcsToStore: None,
+      blockLag: None,
     }
 
     Assert.deepEqual(

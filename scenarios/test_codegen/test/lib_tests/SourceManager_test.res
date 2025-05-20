@@ -286,6 +286,8 @@ describe("SourceManager fetchNext", () => {
       chainId: 0,
       indexingContracts,
       contractConfigs: Js.Dict.empty(),
+      dcsToStore: None,
+      blockLag: None,
       // All the null values should be computed during updateInternal
     }->FetchState.updateInternal
   }

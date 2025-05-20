@@ -64,12 +64,15 @@ type t = {
   contractConfigs: dict<contractConfig>,
   // Registered dynamic contracts that need to be stored in the db
   // Should read them at the same time when getting items for the batch
-  dcsToStore?: array<indexingContract>,
+  dcsToStore: option<array<indexingContract>>,
   // Not used for logic - only metadata
   chainId: int,
   // Fields computed by updateInternal
   latestFullyFetchedBlock: blockNumberAndTimestamp,
   queueSize: int,
+  // How much blocks behind the head we should query
+  // Added for the purpose of avoiding reorg handling
+  blockLag: option<int>,
 }
 
 let shallowCopyPartition = (p: partition) => {
@@ -92,7 +95,8 @@ let copy = (fetchState: t) => {
     chainId: fetchState.chainId,
     contractConfigs: fetchState.contractConfigs,
     indexingContracts: fetchState.indexingContracts,
-    dcsToStore: ?fetchState.dcsToStore,
+    dcsToStore: fetchState.dcsToStore,
+    blockLag: fetchState.blockLag,
   }
 }
 
@@ -314,7 +318,8 @@ let updateInternal = (
     latestFullyFetchedBlock,
     queueSize: queueSize.contents,
     indexingContracts,
-    ?dcsToStore,
+    dcsToStore,
+    blockLag: fetchState.blockLag,
   }
 }
 
@@ -741,7 +746,14 @@ let isFullPartition = (p: partition, ~maxAddrInPartition) => {
 }
 
 let getNextQuery = (
-  {partitions, maxAddrInPartition, endBlock, latestFullyFetchedBlock, indexingContracts}: t,
+  {
+    partitions,
+    maxAddrInPartition,
+    endBlock,
+    latestFullyFetchedBlock,
+    indexingContracts,
+    blockLag,
+  }: t,
   ~concurrencyLimit,
   ~maxQueueSize,
   ~currentBlockHeight,
@@ -752,6 +764,8 @@ let getNextQuery = (
   } else if concurrencyLimit === 0 {
     ReachedMaxConcurrency
   } else {
+    let headBlock = currentBlockHeight - blockLag->Option.getWithDefault(0)
+
     let fullPartitions = []
     let mergingPartitions = []
     let areMergingPartitionsFetching = ref(false)
@@ -759,7 +773,7 @@ let getNextQuery = (
     let mergingPartitionTarget = ref(None)
     let shouldWaitForNewBlock = ref(
       switch endBlock {
-      | Some(endBlock) => currentBlockHeight < endBlock
+      | Some(endBlock) => headBlock < endBlock
       | None => true
       },
     )
@@ -775,9 +789,9 @@ let getNextQuery = (
       let p = partitions->Js.Array2.unsafe_get(idx)
 
       let isFetching = checkIsFetchingPartition(p)
-      let isReachedTheHead = p.latestFetchedBlock.blockNumber >= currentBlockHeight
+      let hasReachedTheHead = p.latestFetchedBlock.blockNumber >= headBlock
 
-      if isFetching || !isReachedTheHead {
+      if isFetching || !hasReachedTheHead {
         // Even if there are some partitions waiting for the new block
         // We still want to wait for all partitions reaching the head
         // because they might update currentBlockHeight in their response
@@ -843,7 +857,20 @@ let getNextQuery = (
             : !checkIsWithinSyncRange(~latestFetchedBlock=p.latestFetchedBlock, ~currentBlockHeight)
         )
       ) {
-        switch p->makePartitionQuery(~indexingContracts, ~endBlock, ~mergeTarget) {
+        switch p->makePartitionQuery(
+          ~indexingContracts,
+          ~endBlock=switch blockLag {
+          | Some(_) =>
+            switch endBlock {
+            | Some(endBlock) => Some(Pervasives.min(headBlock, endBlock))
+            // Force head block as an endBlock when blockLag is set
+            // because otherwise HyperSync might return bigger range
+            | None => Some(headBlock)
+            }
+          | None => endBlock
+          },
+          ~mergeTarget,
+        ) {
         | Some(q) => queries->Array.push(q)
         | None => ()
         }
@@ -997,6 +1024,7 @@ let make = (
   ~dynamicContracts: array<indexingContract>,
   ~maxAddrInPartition,
   ~chainId,
+  ~blockLag=?,
 ): t => {
   let latestFetchedBlock = {
     blockTimestamp: 0,
@@ -1151,6 +1179,8 @@ let make = (
     firstEventBlockNumber: None,
     normalSelection,
     indexingContracts,
+    dcsToStore: None,
+    blockLag,
   }
 }
 
