@@ -120,7 +120,7 @@ module EventFunctions = {
 
       switch eventConfig.contractRegister {
       | Some(_) =>
-        let dcs = ChainFetcher.runContractRegistersOrThrow(~reversedWithContractRegister=[eventItem])
+        let dcs = await ChainFetcher.runContractRegistersOrThrow(~reversedWithContractRegister=[eventItem])
         // TODO: Reuse FetchState logic to clean up duplicate dcs
         if dcs->Utils.Array.notEmpty {
           inMemoryStore->InMemoryStore.setDcsToStore(

@@ -137,7 +137,7 @@ pub mod evm {
         #[schemars(description = "Ecosystem of the project.")]
         pub ecosystem: Option<EcosystemTag>,
         #[serde(skip_serializing_if = "Option::is_none")]
-        #[schemars(description = "Custom path to schema.yaml file")]
+        #[schemars(description = "Custom path to schema.graphql file")]
         pub schema: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
@@ -255,7 +255,7 @@ pub mod evm {
         Status,
         YParity,
         ChainId,
-        // AccessList, //TODO this should produce an array of AccessList records
+        AccessList,
         MaxFeePerBlobGas,
         BlobVersionedHashes,
         Kind,
@@ -264,6 +264,7 @@ pub mod evm {
         L1GasUsed,
         L1FeeScalar,
         GasUsedForL1,
+        AuthorizationList,
         //These values are available by default on the block
         //so no need to allow users to configure these values
         // BlockHash,
@@ -527,7 +528,7 @@ pub mod fuel {
         #[schemars(description = "Ecosystem of the project.")]
         pub ecosystem: EcosystemTag,
         #[serde(skip_serializing_if = "Option::is_none")]
-        #[schemars(description = "Custom path to schema.yaml file")]
+        #[schemars(description = "Custom path to schema.graphql file")]
         pub schema: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(

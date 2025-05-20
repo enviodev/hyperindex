@@ -1,2 +1,0 @@
-require("./playPloffenTask");
-require("./winPloffenTask");

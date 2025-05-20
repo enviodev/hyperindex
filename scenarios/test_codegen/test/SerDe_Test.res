@@ -59,11 +59,7 @@ describe("SerDe Test", () => {
     let read = DbFunctionsEntities.batchRead(~entityMod=module(Entities.EntityWithAllTypes))
 
     let setHistory = (sql, row) =>
-      Entities.EntityWithAllTypes.entityHistory->EntityHistory.batchInsertRows(
-        ~sql,
-        ~rows=[row],
-        ~shouldCopyCurrentEntity=true,
-      )
+      Entities.EntityWithAllTypes.entityHistory->EntityHistory.batchInsertRows(~sql, ~rows=[row])
 
     try await Db.sql->setHistory(entityHistoryItem) catch {
     | exn =>
@@ -160,7 +156,6 @@ SELECT * FROM unnest($1::NUMERIC[],$2::NUMERIC[],$3::INTEGER[]::BOOLEAN[],$4::DO
       Entities.EntityWithAllNonArrayTypes.entityHistory->EntityHistory.batchInsertRows(
         ~sql,
         ~rows=[row],
-        ~shouldCopyCurrentEntity=true,
       )
 
     try await Db.sql->setHistory(entityHistoryItem) catch {

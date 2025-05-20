@@ -13,7 +13,7 @@
     "resolveJsonModule": true,
     "skipLibCheck": true
   },
-  "include": ["src", "generated"],
+  "include": ["src", "generated", "test"],
   "exclude": ["node_modules", "generated/node_modules"],
   "files": ["./hardhat.config.ts"]
 }

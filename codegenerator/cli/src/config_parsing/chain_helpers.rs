@@ -119,7 +119,7 @@ pub enum Network {
     #[subenum(GraphNetwork)]
     Clover = 1023,
 
-    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
+    #[subenum(NetworkWithExplorer)]
     Crab = 44,
 
     #[subenum(HypersyncNetwork)]
@@ -128,7 +128,6 @@ pub enum Network {
     #[subenum(HypersyncNetwork)]
     Cyber = 7560,
 
-    #[subenum(HypersyncNetwork)]
     Darwinia = 46,
 
     #[subenum(
@@ -229,7 +228,7 @@ pub enum Network {
     #[subenum(HypersyncNetwork)]
     Metall2 = 1750,
 
-    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
+    #[subenum(NetworkWithExplorer)]
     Metis = 1088,
 
     #[subenum(HypersyncNetwork)]
@@ -251,7 +250,7 @@ pub enum Network {
     )]
     MoonbaseAlpha = 1287,
 
-    #[subenum(HypersyncNetwork, NetworkWithExplorer, GraphNetwork)]
+    #[subenum(NetworkWithExplorer, GraphNetwork)]
     Moonbeam = 1284,
 
     #[subenum(GraphNetwork, NetworkWithExplorer)]
@@ -575,15 +574,15 @@ impl HypersyncNetwork {
             Linea | Berachain | Blast | Amoy | Scroll | ZksyncEra | ArbitrumNova | Avalanche
             | Bsc => Bronze,
 
-            Curtis | PolygonZkevm | Lukso | Abstract | PharosDevnet | Zora | Darwinia
-            | Unichain | Aurora | Zeta | Manta | Kroma | Flare | Mantle | Metis | ShimmerEvm
-            | Boba | Ink | Metall2 | SophonTestnet | MorphTestnet | GaladrielDevnet
-            | CitreaTestnet | BscTestnet | UnichainSepolia | Zircuit | Celo | Opbnb
-            | GnosisChiado | LuksoTestnet | BlastSepolia | Holesky | BerachainBartio
-            | OptimismSepolia | Fuji | ArbitrumSepolia | Fraxtal | Soneium | BaseSepolia
-            | MevCommit | Merlin | Mode | MoonbaseAlpha | XdcTestnet | Morph | Harmony
-            | Saakuru | Cyber | Superseed | MegaethTestnet | Sonic | Worldchain | Crab | Sophon
-            | Fantom | Sepolia | Rsk | Chiliz | Lisk | Hyperliquid | Moonbeam => Stone,
+            Curtis | PolygonZkevm | Lukso | Abstract | PharosDevnet | Zora | Unichain | Aurora
+            | Zeta | Manta | Kroma | Flare | Mantle | ShimmerEvm | Boba | Ink | Metall2
+            | SophonTestnet | MorphTestnet | GaladrielDevnet | CitreaTestnet | BscTestnet
+            | UnichainSepolia | Zircuit | Celo | Opbnb | GnosisChiado | LuksoTestnet
+            | BlastSepolia | Holesky | BerachainBartio | OptimismSepolia | Fuji
+            | ArbitrumSepolia | Fraxtal | Soneium | BaseSepolia | MevCommit | Merlin | Mode
+            | MoonbaseAlpha | XdcTestnet | Morph | Harmony | Saakuru | Cyber | Superseed
+            | MegaethTestnet | Sonic | Worldchain | Sophon | Fantom | Sepolia | Rsk | Chiliz
+            | Lisk | Hyperliquid => Stone,
         }
     }
 

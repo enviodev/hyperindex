@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{BTreeSet, HashMap},
     fmt::{Display, Write},
     path::PathBuf,
     vec,
@@ -1182,13 +1182,13 @@ impl FieldSelection {
     }
 
     fn aggregated_selection(cfg: &system_config::SystemConfig) -> Self {
-        let mut transaction_fields: HashSet<_> = cfg
+        let mut transaction_fields: BTreeSet<_> = cfg
             .field_selection
             .transaction_fields
             .iter()
             .cloned()
             .collect();
-        let mut block_fields: HashSet<_> =
+        let mut block_fields: BTreeSet<_> =
             cfg.field_selection.block_fields.iter().cloned().collect();
 
         cfg.contracts.iter().for_each(|(_name, contract)| {

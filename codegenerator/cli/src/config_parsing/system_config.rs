@@ -949,7 +949,8 @@ impl DataSource {
             }
             None => {
                 let url = hypersync_endpoint_url.ok_or(anyhow!(
-                  "EE106: Failed to automatically find HyperSync endpoint for the network. Please provide it manually via the hypersync_config option, or provide an RPC URL for historical sync. Read more in our docs: https://docs.envio.dev/docs/configuration-file"
+                  "EE106: Failed to automatically find HyperSync endpoint for the network {}. Please provide it manually via the hypersync_config option, or provide an RPC URL for historical sync. Read more in our docs: https://docs.envio.dev/docs/configuration-file",
+                  network.id
                 ))?;
 
                 let parsed_url = parse_url(&url).ok_or(anyhow!(
@@ -1378,6 +1379,18 @@ pub struct SelectedField {
     pub data_type: RescriptTypeIdent,
 }
 
+impl PartialOrd for SelectedField {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for SelectedField {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.name.cmp(&other.name)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct FieldSelection {
     pub transaction_fields: Vec<SelectedField>,
@@ -1558,7 +1571,6 @@ impl FieldSelection {
                 Tx::Status => Res::option(Res::Int),
                 Tx::YParity => Res::option(Res::String),
                 Tx::ChainId => Res::option(Res::Int),
-                // TxField::AccessList => todo!(),
                 Tx::MaxFeePerBlobGas => Res::option(Res::BigInt),
                 Tx::BlobVersionedHashes => Res::option(Res::array(Res::String)),
                 Tx::Kind => Res::option(Res::Int),
@@ -1567,6 +1579,14 @@ impl FieldSelection {
                 Tx::L1GasUsed => Res::option(Res::BigInt),
                 Tx::L1FeeScalar => Res::option(Res::Float),
                 Tx::GasUsedForL1 => Res::option(Res::BigInt),
+                Tx::AccessList => Res::option(Res::Array(Box::new(Res::TypeApplication {
+                    name: "HyperSyncClient.ResponseTypes.accessList".to_string(),
+                    type_params: vec![],
+                }))),
+                Tx::AuthorizationList => Res::option(Res::Array(Box::new(Res::TypeApplication {
+                    name: "HyperSyncClient.ResponseTypes.authorizationList".to_string(),
+                    type_params: vec![],
+                }))),
             };
             selected_transaction_fields.push(SelectedField {
                 name: transaction_field.to_string(),

@@ -3,6 +3,8 @@
 /* eslint-disable */
 /* tslint:disable */
 
+import type {GenericContractRegister as $$genericContractRegister} from './Types.ts';
+
 import type {Invalid as $$noEventFilters} from './Types.ts';
 
 import type {t as Address_t} from './Address.gen';
@@ -22,7 +24,7 @@ export type genericLoader<args,loaderReturn> = (_1:args) => Promise<loaderReturn
 
 export type genericContractRegisterArgs<event,context> = { readonly event: event; readonly context: context };
 
-export type genericContractRegister<args> = (_1:args) => void;
+export type genericContractRegister<args> = $$genericContractRegister<args>;
 
 export type genericHandlerArgs<event,context,loaderReturn> = {
   readonly event: event; 

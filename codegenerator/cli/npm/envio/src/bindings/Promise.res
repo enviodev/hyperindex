@@ -50,3 +50,5 @@ external done: promise<'a> => unit = "%ignore"
 
 external unsafe_async: 'a => promise<'a> = "%identity"
 external unsafe_await: promise<'a> => 'a = "?await"
+
+let isCatchable: 'any => bool = %raw(`value => value && typeof value.catch === 'function'`)

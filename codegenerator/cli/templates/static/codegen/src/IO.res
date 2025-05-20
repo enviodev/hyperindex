@@ -12,7 +12,7 @@ let executeSet = (
   }
 }
 
-let getEntityHistoryItems = entityUpdates => {
+let getEntityHistoryItems = (entityUpdates, ~containsRollbackDiffChange) => {
   let (_, entityHistoryItems) = entityUpdates->Belt.Array.reduce((None, []), (
     prev: (option<Types.eventIdentifier>, array<EntityHistory.historyRow<_>>),
     entityUpdate: Types.entityUpdate<'a>,
@@ -38,6 +38,7 @@ let getEntityHistoryItems = entityUpdates => {
         | Set(entity) => Set(entity)
         | Delete => Delete({id: entityId})
         },
+        containsRollbackDiffChange,
       }
       entityHistoryItems->Belt.Array.concat([historyItem])
     }
@@ -63,8 +64,8 @@ let executeSetEntityWithHistory = (
     ([], [], []),
     ((entitiesToSet, idsToDelete, entityHistoryItemsToSet), row) => {
       switch row {
-      | Updated({latest, history}) =>
-        let entityHistoryItems = history->getEntityHistoryItems
+      | Updated({latest, history, containsRollbackDiffChange}) =>
+        let entityHistoryItems = history->getEntityHistoryItems(~containsRollbackDiffChange)
 
         switch latest.entityUpdateAction {
         | Set(entity) => (
@@ -87,7 +88,6 @@ let executeSetEntityWithHistory = (
     EntityMod.entityHistory->EntityHistory.batchInsertRows(
       ~sql,
       ~rows=Belt.Array.concatMany(entityHistoryItemsToSet),
-      ~shouldCopyCurrentEntity=!(inMemoryStore->InMemoryStore.isRollingBack),
     ),
     if entitiesToSet->Array.length > 0 {
       sql->DbFunctionsEntities.batchSet(~entityMod)(entitiesToSet)
@@ -255,12 +255,14 @@ module RollBack = {
             entityTable->InMemoryTable.Entity.set(
               Set(entity)->Types.mkEntityUpdate(~eventIdentifier, ~entityId=entity.id),
               ~shouldSaveHistory=false,
+              ~containsRollbackDiffChange=true,
             )
           | Delete({id}) =>
             deletedEntities->Utils.Dict.push((Entity.name :> string), id)
             entityTable->InMemoryTable.Entity.set(
               Delete->Types.mkEntityUpdate(~eventIdentifier, ~entityId=id),
               ~shouldSaveHistory=false,
+              ~containsRollbackDiffChange=true,
             )
           }
         })
