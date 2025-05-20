@@ -319,6 +319,8 @@ describe("determineNextEvent", () => {
         chainId: 0,
         indexingContracts: Js.Dict.empty(),
         contractConfigs: Js.Dict.fromArray([("Gravatar", {FetchState.filterByAddresses: false})]),
+        dcsToStore: None,
+        blockLag: None,
       }
     }
 

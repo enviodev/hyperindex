@@ -96,11 +96,23 @@ let make = (
   let fetchState = FetchState.make(
     ~maxAddrInPartition,
     ~staticContracts,
-    ~dynamicContracts,
+    ~dynamicContracts=dynamicContracts->Array.map(dc => {
+      FetchState.address: dc.contractAddress,
+      contractName: (dc.contractType :> string),
+      startBlock: dc.registeringEventBlockNumber,
+      register: DC({
+        registeringEventLogIndex: dc.registeringEventLogIndex,
+        registeringEventBlockTimestamp: dc.registeringEventBlockTimestamp,
+        registeringEventContractName: dc.registeringEventContractName,
+        registeringEventName: dc.registeringEventName,
+        registeringEventSrcAddress: dc.registeringEventSrcAddress,
+      }),
+    }),
     ~startBlock,
     ~endBlock,
     ~eventConfigs,
     ~chainId=chainConfig.chain->ChainMap.Chain.toChainId,
+    ~blockLag=?Env.indexingBlockLag,
   )
 
   {

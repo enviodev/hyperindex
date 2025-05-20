@@ -335,12 +335,24 @@ module IndexingMaxConcurrency = {
 module IndexingConcurrency = {
   let gauge = SafeGauge.makeOrThrow(
     ~name="envio_indexing_concurrency",
-    ~help="The current number of concurrent queries to the chain data-source.",
+    ~help="The number of executing concurrent queries to the chain data-source.",
     ~labelSchema=chainIdLabelsSchema,
   )
 
   let set = (~concurrency, ~chainId) => {
     gauge->SafeGauge.handleInt(~labels=chainId, ~value=concurrency)
+  }
+}
+
+module IndexingPartitions = {
+  let gauge = SafeGauge.makeOrThrow(
+    ~name="envio_indexing_partitions",
+    ~help="The number of partitions used to split fetching logic by addresses and block ranges.",
+    ~labelSchema=chainIdLabelsSchema,
+  )
+
+  let set = (~partitionsCount, ~chainId) => {
+    gauge->SafeGauge.handleInt(~labels=chainId, ~value=partitionsCount)
   }
 }
 

@@ -148,12 +148,10 @@ let getSourceNewHeight = async (
   while newHeight.contents <= currentBlockHeight && status.contents !== Done {
     try {
       // Use to detect if the source is taking too long to respond
-      let endTimer = Prometheus.SourceGetHeightDuration.startTimer(
-        {
-          "source": source.name,
-          "chainId": source.chain->ChainMap.Chain.toChainId,
-        },
-      )
+      let endTimer = Prometheus.SourceGetHeightDuration.startTimer({
+        "source": source.name,
+        "chainId": source.chain->ChainMap.Chain.toChainId,
+      })
       let height = await source.getHeightOrThrow()
       endTimer()
 
@@ -180,7 +178,11 @@ let getSourceNewHeight = async (
       await Utils.delay(retryInterval)
     }
   }
-  Prometheus.SourceHeight.set(~sourceName=source.name, ~chainId=source.chain->ChainMap.Chain.toChainId, ~blockNumber=newHeight.contents)
+  Prometheus.SourceHeight.set(
+    ~sourceName=source.name,
+    ~chainId=source.chain->ChainMap.Chain.toChainId,
+    ~blockNumber=newHeight.contents,
+  )
   newHeight.contents
 }
 
@@ -463,4 +465,3 @@ let executeQuery = async (sourceManager: t, ~query: FetchState.query, ~currentBl
 
   responseRef.contents->Option.getUnsafe
 }
-
