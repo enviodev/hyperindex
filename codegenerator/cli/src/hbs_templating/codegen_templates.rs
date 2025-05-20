@@ -489,9 +489,13 @@ type event = {{
 }}
 
 @genType
-type loader<'loaderReturn> = Internal.genericLoader<Internal.genericLoaderArgs<event, loaderContext>, 'loaderReturn>
+type loaderArgs = Internal.genericLoaderArgs<event, loaderContext>
 @genType
-type handler<'loaderReturn> = Internal.genericHandler<Internal.genericHandlerArgs<event, handlerContext, 'loaderReturn>>
+type loader<'loaderReturn> = Internal.genericLoader<loaderArgs, 'loaderReturn>
+@genType
+type handlerArgs<'loaderReturn> = Internal.genericHandlerArgs<event, handlerContext, 'loaderReturn>
+@genType
+type handler<'loaderReturn> = Internal.genericHandler<handlerArgs<'loaderReturn>>
 @genType
 type contractRegister = Internal.genericContractRegister<Internal.genericContractRegisterArgs<event, contractRegistrations>>
 
