@@ -94,19 +94,8 @@ let isQueueItemEarlierUnorderedBelowReorgThreshold = (
 
 let determineNextEvent = (
   fetchStatesMap: ChainMap.t<fetchStateWithData>,
-  ~isUnorderedMultichainMode: bool,
   ~onlyBelowReorgThreshold: bool,
 ): result<isInReorgThresholdRes<multiChainEventComparitor>, noActiveChains> => {
-  let comparitorFunction = if isUnorderedMultichainMode {
-    if onlyBelowReorgThreshold {
-      isQueueItemEarlierUnorderedBelowReorgThreshold(~fetchStatesMap)
-    } else {
-      isQueueItemEarlierUnorderedMultichain
-    }
-  } else {
-    isQueueItemEarlier
-  }
-
   let nextItem =
     fetchStatesMap
     ->ChainMap.entries
@@ -119,7 +108,7 @@ let determineNextEvent = (
         let earliestEvent = fetchState->FetchState.getEarliestEvent
         let current: multiChainEventComparitor = {chain, earliestEvent}
         switch accum.val {
-        | Some(previous) if comparitorFunction(previous, current) => accum
+        | Some(previous) if isQueueItemEarlier(previous, current) => accum
         | _ =>
           let isInReorgThreshold =
             earliestEvent->FetchState.queueItemIsInReorgThreshold(
@@ -201,7 +190,6 @@ let setChainFetcher = (self: t, chainFetcher: ChainFetcher.t) => {
 
 let popBatchItem = (
   ~fetchStatesMap: ChainMap.t<fetchStateWithData>,
-  ~isUnorderedMultichainMode,
   ~onlyBelowReorgThreshold,
 ): isInReorgThresholdRes<option<FetchState.itemWithPopFn>> => {
   //Compare the peeked items and determine the next item
@@ -243,10 +231,13 @@ let nextItemIsNone = (self: t): bool => {
   ).val->Option.isNone
 }
 
-let createBatchInternal = (
+type items =
+  | Ordered(array<Internal.eventItem>)
+  | Unordered({byChain: ChainMap.t<array<Internal.eventItem>>, totalBatchSize: int})
+
+let createOrderedBatchItems = (
   ~maxBatchSize,
   ~fetchStatesMap: ChainMap.t<fetchStateWithData>,
-  ~isUnorderedMultichainMode,
   ~onlyBelowReorgThreshold,
 ) => {
   let isInReorgThresholdRef = ref(false)
@@ -254,11 +245,7 @@ let createBatchInternal = (
 
   let rec loop = () =>
     if batch->Array.length < maxBatchSize {
-      let {val, isInReorgThreshold} = popBatchItem(
-        ~fetchStatesMap,
-        ~isUnorderedMultichainMode,
-        ~onlyBelowReorgThreshold,
-      )
+      let {val, isInReorgThreshold} = popBatchItem(~fetchStatesMap, ~onlyBelowReorgThreshold)
 
       isInReorgThresholdRef := isInReorgThresholdRef.contents || isInReorgThreshold
 
@@ -280,7 +267,7 @@ let createBatchInternal = (
 }
 
 type batch = {
-  items: array<Internal.eventItem>,
+  items: items,
   fetchStatesMap: ChainMap.t<fetchStateWithData>,
   dcsToStoreByChainId: dict<array<FetchState.indexingContract>>,
   isInReorgThreshold: bool,
@@ -292,12 +279,16 @@ let createBatch = (self: t, ~maxBatchSize: int, ~onlyBelowReorgThreshold: bool) 
   //Make a copy of the queues and fetch states since we are going to mutate them
   let fetchStatesMap = self->getFetchStateWithData(~shouldDeepCopy=true)
 
-  let {val: items, isInReorgThreshold} = createBatchInternal(
-    ~maxBatchSize,
-    ~fetchStatesMap,
-    ~isUnorderedMultichainMode=self.isUnorderedMultichainMode,
-    ~onlyBelowReorgThreshold,
-  )
+  let (items, isInReorgThreshold) = if self.isUnorderedMultichainMode {
+    (Ordered([]), false)
+  } else {
+    let {val, isInReorgThreshold} = createOrderedBatchItems(
+      ~maxBatchSize,
+      ~fetchStatesMap,
+      ~onlyBelowReorgThreshold,
+    )
+    (Ordered(val), isInReorgThreshold)
+  }
 
   let dcsToStoreByChainId = Js.Dict.empty()
   // Needed to recalculate the computed queue sizes
@@ -312,7 +303,10 @@ let createBatch = (self: t, ~maxBatchSize: int, ~onlyBelowReorgThreshold: bool) 
     }
   })
 
-  let batchSize = items->Array.length
+  let batchSize = switch items {
+  | Ordered(items) => items->Array.length
+  | Unordered({totalBatchSize}) => totalBatchSize
+  }
   if batchSize > 0 {
     let fetchedEventsBuffer =
       fetchStatesMap

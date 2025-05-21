@@ -1,0 +1,7 @@
+---
+description: 
+globs: *.res
+alwaysApply: false
+---
+Always ReScript 11 documentation.
+Never suggest ReasonML syntax.
