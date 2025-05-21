@@ -343,6 +343,17 @@ let validatePartitionQueryResponse = (
   } = response
   let {lastBlockScannedData} = reorgGuard
 
+  if currentBlockHeight > chainFetcher.currentBlockHeight {
+    Prometheus.SourceHeight.set(
+      ~blockNumber=currentBlockHeight,
+      ~chainId=chainFetcher.chainConfig.chain->ChainMap.Chain.toChainId,
+      // The currentBlockHeight from response won't necessarily
+      // belong to the currently active source.
+      // But for simplicity, assume it does.
+      ~sourceName=(chainFetcher.sourceManager->SourceManager.getActiveSource).name,
+    )
+  }
+
   if Env.Benchmark.shouldSaveData {
     switch query.target {
     | Merge(_) => ()
@@ -969,7 +980,10 @@ let injectedTaskReducer = (
         "targetBlockNumber": lastKnownValidBlockNumber,
         "targetBlockTimestamp": lastKnownValidBlockTimestamp,
       })
-      Prometheus.RollbackTargetBlockNumber.set(~blockNumber=lastKnownValidBlockNumber, ~chain=reorgChain)
+      Prometheus.RollbackTargetBlockNumber.set(
+        ~blockNumber=lastKnownValidBlockNumber,
+        ~chain=reorgChain,
+      )
 
       let isUnorderedMultichainMode = state.config.isUnorderedMultichainMode
 
