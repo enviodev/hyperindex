@@ -648,11 +648,11 @@ let make = ({sourceFor, syncConfig, url, chain, contracts, eventRouter}: options
       startFetchingBatchTimeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
 
     let reorgGuard: ReorgDetection.reorgGuard = {
-      firstBlockParentNumberAndHash: optFirstBlockParent->Option.map(b => {
+      prevRangeLastBlock: optFirstBlockParent->Option.map(b => {
         ReorgDetection.blockNumber: b.number,
         blockHash: b.hash,
       }),
-      lastBlockScannedData: {
+      rangeLastBlock: {
         blockNumber: latestFetchedBlock.number,
         blockHash: latestFetchedBlock.hash,
       },

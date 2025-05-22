@@ -341,7 +341,7 @@ let validatePartitionQueryResponse = (
     reorgGuard,
     fromBlockQueried,
   } = response
-  let {lastBlockScannedData} = reorgGuard
+  let {rangeLastBlock} = reorgGuard
 
   if Env.Benchmark.shouldSaveData {
     switch query.target {
@@ -417,12 +417,12 @@ let validatePartitionQueryResponse = (
         ? [
             UpdateEndOfBlockRangeScannedData({
               chain,
-              blockNumberThreshold: lastBlockScannedData.blockNumber -
+              blockNumberThreshold: rangeLastBlock.blockNumber -
               updatedChainFetcher.chainConfig.confirmedBlockThreshold,
               nextEndOfBlockRangeScannedData: {
                 chainId: chain->ChainMap.Chain.toChainId,
-                blockNumber: lastBlockScannedData.blockNumber,
-                blockHash: lastBlockScannedData.blockHash,
+                blockNumber: rangeLastBlock.blockNumber,
+                blockHash: rangeLastBlock.blockHash,
               },
             }),
           ]

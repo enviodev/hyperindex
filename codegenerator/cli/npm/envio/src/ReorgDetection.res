@@ -15,8 +15,8 @@ type blockData = {
 external generalizeBlockDataWithTimestamp: blockDataWithTimestamp => blockData = "%identity"
 
 type reorgGuard = {
-  lastBlockScannedData: blockData,
-  firstBlockParentNumberAndHash: option<blockData>,
+  rangeLastBlock: blockData,
+  prevRangeLastBlock: option<blockData>,
 }
 
 type reorgDetected = {
@@ -46,7 +46,7 @@ module LastBlockScannedHashes: {
   let makeWithData: (
     array<blockData>,
     ~confirmedBlockThreshold: int,
-    ~lastScannedReorgDetectedBlock: blockData=?,
+    ~detectedReorgBlock: blockData=?,
   ) => t
 
   /**Instantiat empty t with no block data*/
@@ -89,10 +89,10 @@ module LastBlockScannedHashes: {
     // and should never be valid.
     // We keep track of this to avoid responses
     // with the stale data from other data-source instances.
-    lastScannedReorgDetectedBlock: option<blockData>,
+    detectedReorgBlock: option<blockData>,
   }
 
-  let makeWithData = (blocks, ~confirmedBlockThreshold, ~lastScannedReorgDetectedBlock=?) => {
+  let makeWithData = (blocks, ~confirmedBlockThreshold, ~detectedReorgBlock=?) => {
     let dataByBlockNumber = Js.Dict.empty()
 
     blocks->Belt.Array.forEach(block => {
@@ -102,14 +102,14 @@ module LastBlockScannedHashes: {
     {
       confirmedBlockThreshold,
       dataByBlockNumber,
-      lastScannedReorgDetectedBlock,
+      detectedReorgBlock,
     }
   }
   //Instantiates empty LastBlockHashes
   let empty = (~confirmedBlockThreshold) => {
     confirmedBlockThreshold,
     dataByBlockNumber: Js.Dict.empty(),
-    lastScannedReorgDetectedBlock: None,
+    detectedReorgBlock: None,
   }
 
   let getDataByBlockNumberCopyInThreshold = (
@@ -143,29 +143,28 @@ module LastBlockScannedHashes: {
     let dataByBlockNumberCopyInThreshold =
       self->getDataByBlockNumberCopyInThreshold(~currentBlockHeight)
 
-    let {lastBlockScannedData, firstBlockParentNumberAndHash} = reorgGuard
+    let {rangeLastBlock, prevRangeLastBlock} = reorgGuard
 
     let maybeReorgDetected = switch dataByBlockNumberCopyInThreshold->Utils.Dict.dangerouslyGetNonOption(
-      lastBlockScannedData.blockNumber->Int.toString,
+      rangeLastBlock.blockNumber->Int.toString,
     ) {
-    | Some(scannedBlock) if scannedBlock.blockHash !== lastBlockScannedData.blockHash =>
+    | Some(scannedBlock) if scannedBlock.blockHash !== rangeLastBlock.blockHash =>
       Some({
-        receivedBlock: lastBlockScannedData,
+        receivedBlock: rangeLastBlock,
         scannedBlock,
       })
     | _ =>
-      switch firstBlockParentNumberAndHash {
+      switch prevRangeLastBlock {
       //If parentHash is None, then it's the genesis block (no reorg)
       //Need to check that parentHash matches because of the dynamic contracts
       | None => None
-      | Some(firstBlockParentNumberAndHash) =>
+      | Some(prevRangeLastBlock) =>
         switch dataByBlockNumberCopyInThreshold->Utils.Dict.dangerouslyGetNonOption(
-          firstBlockParentNumberAndHash.blockNumber->Int.toString,
+          prevRangeLastBlock.blockNumber->Int.toString,
         ) {
-        | Some(scannedBlock)
-          if scannedBlock.blockHash !== firstBlockParentNumberAndHash.blockHash =>
+        | Some(scannedBlock) if scannedBlock.blockHash !== prevRangeLastBlock.blockHash =>
           Some({
-            receivedBlock: firstBlockParentNumberAndHash,
+            receivedBlock: prevRangeLastBlock,
             scannedBlock,
           })
         | _ => None
@@ -178,22 +177,22 @@ module LastBlockScannedHashes: {
         shouldRollbackOnReorg
           ? {
               ...self,
-              lastScannedReorgDetectedBlock: Some(reorgDetected.scannedBlock),
+              detectedReorgBlock: Some(reorgDetected.scannedBlock),
             }
           : empty(~confirmedBlockThreshold),
         ReorgDetected(reorgDetected),
       )
     | None => {
         dataByBlockNumberCopyInThreshold->Js.Dict.set(
-          lastBlockScannedData.blockNumber->Int.toString,
-          lastBlockScannedData,
+          rangeLastBlock.blockNumber->Int.toString,
+          rangeLastBlock,
         )
-        switch firstBlockParentNumberAndHash {
+        switch prevRangeLastBlock {
         | None => ()
-        | Some(firstBlockParentNumberAndHash) =>
+        | Some(prevRangeLastBlock) =>
           dataByBlockNumberCopyInThreshold->Js.Dict.set(
-            firstBlockParentNumberAndHash.blockNumber->Int.toString,
-            firstBlockParentNumberAndHash,
+            prevRangeLastBlock.blockNumber->Int.toString,
+            prevRangeLastBlock,
           )
         }
 
@@ -201,7 +200,7 @@ module LastBlockScannedHashes: {
           {
             confirmedBlockThreshold,
             dataByBlockNumber: dataByBlockNumberCopyInThreshold,
-            lastScannedReorgDetectedBlock: None,
+            detectedReorgBlock: None,
           },
           NoReorg,
         )
@@ -220,13 +219,12 @@ module LastBlockScannedHashes: {
       verifiedDataByBlockNumber->Js.Dict.set(blockData.blockNumber->Int.toString, blockData)
     }
 
-    let isAlreadyReorgedResponse = switch self.lastScannedReorgDetectedBlock {
-    | Some(lastScannedReorgDetectedBlock) =>
+    let isAlreadyReorgedResponse = switch self.detectedReorgBlock {
+    | Some(detectedReorgBlock) =>
       switch verifiedDataByBlockNumber->Utils.Dict.dangerouslyGetNonOption(
-        lastScannedReorgDetectedBlock.blockNumber->Int.toString,
+        detectedReorgBlock.blockNumber->Int.toString,
       ) {
-      | Some(verifiedBlockData) =>
-        verifiedBlockData.blockHash === lastScannedReorgDetectedBlock.blockHash
+      | Some(verifiedBlockData) => verifiedBlockData.blockHash === detectedReorgBlock.blockHash
       | None => false
       }
     | None => false
@@ -303,7 +301,7 @@ module LastBlockScannedHashes: {
     {
       confirmedBlockThreshold,
       dataByBlockNumber: newDataByBlockNumber,
-      lastScannedReorgDetectedBlock: None,
+      detectedReorgBlock: None,
     }
   }
 

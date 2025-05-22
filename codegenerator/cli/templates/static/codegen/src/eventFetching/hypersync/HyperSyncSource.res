@@ -500,11 +500,11 @@ let make = (
 
     let parsingTimeElapsed = parsingTimeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
 
-    let lastBlockScannedData = await lastBlockQueriedPromise
+    let rangeLastBlock = await lastBlockQueriedPromise
 
     let reorgGuard: ReorgDetection.reorgGuard = {
-      lastBlockScannedData: lastBlockScannedData->ReorgDetection.generalizeBlockDataWithTimestamp,
-      firstBlockParentNumberAndHash: pageUnsafe.rollbackGuard->Option.map(v => {
+      rangeLastBlock: rangeLastBlock->ReorgDetection.generalizeBlockDataWithTimestamp,
+      prevRangeLastBlock: pageUnsafe.rollbackGuard->Option.map(v => {
         ReorgDetection.blockHash: v.firstParentHash,
         blockNumber: v.firstBlockNumber - 1,
       }),
@@ -519,9 +519,9 @@ let make = (
     }
 
     {
-      latestFetchedBlockTimestamp: lastBlockScannedData.blockTimestamp,
+      latestFetchedBlockTimestamp: rangeLastBlock.blockTimestamp,
       parsedQueueItems,
-      latestFetchedBlockNumber: lastBlockScannedData.blockNumber,
+      latestFetchedBlockNumber: rangeLastBlock.blockNumber,
       stats,
       currentBlockHeight,
       reorgGuard,
