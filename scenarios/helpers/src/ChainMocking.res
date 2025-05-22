@@ -247,7 +247,7 @@ module Make = (Indexer: Indexer.S) => {
 
     let unfilteredBlocks = self->getBlocks(~fromBlock, ~toBlock)
     let heighstBlock = unfilteredBlocks->getLast->Option.getExn
-    let firstBlockParentNumberAndHash =
+    let prevRangeLastBlock =
       self
       ->getBlock(~blockNumber=fromBlock - 1)
       ->Option.map(b => {ReorgDetection.blockNumber: b.blockNumber, blockHash: b.blockHash})
@@ -268,11 +268,11 @@ module Make = (Indexer: Indexer.S) => {
     {
       currentBlockHeight,
       reorgGuard: {
-        lastBlockScannedData: {
+        rangeLastBlock: {
           blockHash: heighstBlock.blockHash,
           blockNumber: heighstBlock.blockNumber,
         },
-        firstBlockParentNumberAndHash,
+        prevRangeLastBlock,
       },
       parsedQueueItems,
       fromBlockQueried: fromBlock,

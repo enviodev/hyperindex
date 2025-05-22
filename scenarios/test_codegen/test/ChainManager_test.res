@@ -331,7 +331,7 @@ describe("determineNextEvent", () => {
       {
         fetchState: makeMockFetchState(~latestFetchedBlockTimestamp, ~item),
         currentBlockHeight: 700,
-        heighestBlockBelowThreshold: 500,
+        highestBlockBelowThreshold: 500,
       }
     }
 
