@@ -44,8 +44,6 @@ type partition = {
   latestFetchedBlock: blockNumberAndTimestamp,
   selection: selection,
   addressesByContractName: dict<array<Address.t>>,
-  //Events ordered from latest to earliest
-  fetchedEventQueue: array<Internal.eventItem>,
 }
 
 type t = {
@@ -69,27 +67,21 @@ type t = {
   chainId: int,
   // Fields computed by updateInternal
   latestFullyFetchedBlock: blockNumberAndTimestamp,
-  queueSize: int,
   // How much blocks behind the head we should query
   // Added for the purpose of avoiding reorg handling
   blockLag: option<int>,
-}
-
-let shallowCopyPartition = (p: partition) => {
-  ...p,
-  fetchedEventQueue: p.fetchedEventQueue->Array.copy,
+  //Items ordered from latest to earliest
+  queue: array<Internal.eventItem>,
 }
 
 let copy = (fetchState: t) => {
-  let partitions = fetchState.partitions->Js.Array2.map(shallowCopyPartition)
   {
     maxAddrInPartition: fetchState.maxAddrInPartition,
-    partitions,
+    partitions: fetchState.partitions,
     endBlock: fetchState.endBlock,
     nextPartitionIndex: fetchState.nextPartitionIndex,
     isFetchingAtHead: fetchState.isFetchingAtHead,
     latestFullyFetchedBlock: fetchState.latestFullyFetchedBlock,
-    queueSize: fetchState.queueSize,
     normalSelection: fetchState.normalSelection,
     firstEventBlockNumber: fetchState.firstEventBlockNumber,
     chainId: fetchState.chainId,
@@ -97,6 +89,7 @@ let copy = (fetchState: t) => {
     indexingContracts: fetchState.indexingContracts,
     dcsToStore: fetchState.dcsToStore,
     blockLag: fetchState.blockLag,
+    queue: fetchState.queue->Array.copy,
   }
 }
 
@@ -171,7 +164,6 @@ let mergeIntoPartition = (p: partition, ~target: partition, ~maxAddrInPartition)
           status: {
             fetchingStateId: None,
           },
-          fetchedEventQueue: [],
           selection: target.selection,
           addressesByContractName: restAddresses,
           latestFetchedBlock,
@@ -188,7 +180,6 @@ let mergeIntoPartition = (p: partition, ~target: partition, ~maxAddrInPartition)
           },
           selection: target.selection,
           addressesByContractName: mergedAddresses,
-          fetchedEventQueue: mergeSortedEventList(p.fetchedEventQueue, target.fetchedEventQueue),
           latestFetchedBlock,
         },
         rest,
@@ -196,26 +187,6 @@ let mergeIntoPartition = (p: partition, ~target: partition, ~maxAddrInPartition)
     }
   | ({selection: {dependsOnAddresses: false}}, _)
   | (_, {selection: {dependsOnAddresses: false}}) => (p, Some(target))
-  }
-}
-
-/**
-Updates a given partition with new latest block values and new fetched
-events.
-*/
-let addItemsToPartition = (
-  p: partition,
-  ~latestFetchedBlock,
-  //Events ordered latest to earliest
-  ~reversedNewItems: array<Internal.eventItem>,
-) => {
-  {
-    ...p,
-    status: {
-      fetchingStateId: None,
-    },
-    latestFetchedBlock,
-    fetchedEventQueue: Array.concat(reversedNewItems, p.fetchedEventQueue),
   }
 }
 
@@ -254,28 +225,19 @@ let updateInternal = (
   fetchState: t,
   ~partitions=fetchState.partitions,
   ~nextPartitionIndex=fetchState.nextPartitionIndex,
-  ~firstEventBlockNumber=fetchState.firstEventBlockNumber,
   ~indexingContracts=fetchState.indexingContracts,
   ~dcsToStore=fetchState.dcsToStore,
   ~currentBlockHeight=?,
+  ~queue=fetchState.queue,
 ): t => {
   let firstPartition = partitions->Js.Array2.unsafe_get(0)
-
-  let queueSize = ref(0)
   let latestFullyFetchedBlock = ref(firstPartition.latestFetchedBlock)
-
   for idx in 0 to partitions->Array.length - 1 {
     let p = partitions->Js.Array2.unsafe_get(idx)
-
-    let partitionQueueSize = p.fetchedEventQueue->Array.length
-
-    queueSize := queueSize.contents + partitionQueueSize
-
     if latestFullyFetchedBlock.contents.blockNumber > p.latestFetchedBlock.blockNumber {
       latestFullyFetchedBlock := p.latestFetchedBlock
     }
   }
-
   let latestFullyFetchedBlock = latestFullyFetchedBlock.contents
 
   let isFetchingAtHead = switch currentBlockHeight {
@@ -295,11 +257,12 @@ let updateInternal = (
     }
   }
 
+  let queueSize = queue->Array.length
   Prometheus.IndexingPartitions.set(
     ~partitionsCount=partitions->Array.length,
     ~chainId=fetchState.chainId,
   )
-  Prometheus.IndexingBufferSize.set(~bufferSize=queueSize.contents, ~chainId=fetchState.chainId)
+  Prometheus.IndexingBufferSize.set(~bufferSize=queueSize, ~chainId=fetchState.chainId)
   Prometheus.IndexingBufferBlockNumber.set(
     ~blockNumber=latestFullyFetchedBlock.blockNumber,
     ~chainId=fetchState.chainId,
@@ -312,14 +275,17 @@ let updateInternal = (
     normalSelection: fetchState.normalSelection,
     chainId: fetchState.chainId,
     nextPartitionIndex,
-    firstEventBlockNumber,
+    firstEventBlockNumber: switch queue->Utils.Array.last {
+    | Some(item) => Utils.Math.minOptInt(fetchState.firstEventBlockNumber, Some(item.blockNumber))
+    | None => fetchState.firstEventBlockNumber
+    },
     partitions,
     isFetchingAtHead,
     latestFullyFetchedBlock,
-    queueSize: queueSize.contents,
     indexingContracts,
     dcsToStore,
     blockLag: fetchState.blockLag,
+    queue,
   }
 }
 
@@ -454,7 +420,6 @@ let registerDynamicContracts = (
             },
             selection: fetchState.normalSelection,
             addressesByContractName,
-            fetchedEventQueue: [],
           },
         ]
       } else {
@@ -476,7 +441,6 @@ let registerDynamicContracts = (
             },
             selection: fetchState.normalSelection,
             addressesByContractName: pendingAddressesByContractName.contents,
-            fetchedEventQueue: [],
           })
 
         // I use for loops instead of forEach, so ReScript better inlines ref access
@@ -520,7 +484,6 @@ let registerDynamicContracts = (
                 },
                 selection: fetchState.normalSelection,
                 addressesByContractName,
-                fetchedEventQueue: [],
               })
             })
           } else {
@@ -621,7 +584,13 @@ let handleQueryResult = (
     switch partitions->Array.getIndexBy(p => p.id === partitionId) {
     | Some(pIndex) =>
       let p = partitions->Js.Array2.unsafe_get(pIndex)
-      let updatedPartition = p->addItemsToPartition(~latestFetchedBlock, ~reversedNewItems)
+      let updatedPartition = {
+        ...p,
+        status: {
+          fetchingStateId: None,
+        },
+        latestFetchedBlock,
+      }
 
       switch query.target {
       | Head
@@ -663,11 +632,7 @@ let handleQueryResult = (
     fetchState->updateInternal(
       ~partitions,
       ~currentBlockHeight,
-      ~firstEventBlockNumber=switch reversedNewItems->Utils.Array.last {
-      | Some(newFirstItem) =>
-        Utils.Math.minOptInt(fetchState.firstEventBlockNumber, Some(newFirstItem.blockNumber))
-      | None => fetchState.firstEventBlockNumber
-      },
+      ~queue=mergeSortedEventList(reversedNewItems, fetchState.queue),
     )
   })
 
@@ -746,19 +711,14 @@ let isFullPartition = (p: partition, ~maxAddrInPartition) => {
 }
 
 let getNextQuery = (
-  {
-    partitions,
-    maxAddrInPartition,
-    endBlock,
-    latestFullyFetchedBlock,
-    indexingContracts,
-    blockLag,
-  }: t,
+  {queue, partitions, maxAddrInPartition, endBlock, indexingContracts, blockLag}: t,
   ~concurrencyLimit,
-  ~maxQueueSize,
+  ~maxQueueSize as _,
   ~currentBlockHeight,
   ~stateId,
 ) => {
+  let batchSize = 5000
+
   if currentBlockHeight === 0 {
     WaitingForNewBlock
   } else if concurrencyLimit === 0 {
@@ -840,22 +800,20 @@ let getNextQuery = (
       }
     }
 
-    let maxPartitionQueueSize = maxQueueSize / (fullPartitions->Array.length + 1)
-    let isWithinSyncRange = checkIsWithinSyncRange(
-      ~latestFetchedBlock=latestFullyFetchedBlock,
-      ~currentBlockHeight,
-    )
+    // We want to limit the buffer size to 3 * batchSize
+    // To make sure the processing always has some buffer
+    // and not increase the memory usage too much
+    // If a partition fetched further than 3 * batchSize,
+    // it should be skipped until the buffer is consumed
+    let maxQueryBlockNumber = switch queue->Array.get(queue->Array.length - 1 - batchSize * 3) {
+    | Some(item) => Pervasives.min(item.blockNumber, currentBlockHeight) // Just in case check that we don't query beyond the current block
+    | None => currentBlockHeight
+    }
     let queries = []
 
-    let registerPartitionQuery = (p, ~checkQueueSize, ~mergeTarget=?) => {
+    let registerPartitionQuery = (p, ~mergeTarget=?) => {
       if (
-        p->checkIsFetchingPartition->not &&
-        p.latestFetchedBlock.blockNumber < currentBlockHeight &&
-        (checkQueueSize ? p.fetchedEventQueue->Array.length < maxPartitionQueueSize : true) && (
-          isWithinSyncRange
-            ? true
-            : !checkIsWithinSyncRange(~latestFetchedBlock=p.latestFetchedBlock, ~currentBlockHeight)
-        )
+        p->checkIsFetchingPartition->not && p.latestFetchedBlock.blockNumber < maxQueryBlockNumber
       ) {
         switch p->makePartitionQuery(
           ~indexingContracts,
@@ -877,23 +835,16 @@ let getNextQuery = (
       }
     }
 
-    fullPartitions->Array.forEach(p => p->registerPartitionQuery(~checkQueueSize=true))
+    fullPartitions->Array.forEach(p => p->registerPartitionQuery)
 
     if areMergingPartitionsFetching.contents->not {
       switch mergingPartitions {
       | [] => ()
-      | [p] =>
-        // If there's only one non-full partition without merge target,
-        // check that it didn't exceed queue size
-        p->registerPartitionQuery(~checkQueueSize=true)
+      | [p] => p->registerPartitionQuery
       | _ =>
         switch (mostBehindMergingPartition.contents, mergingPartitionTarget.contents) {
-        | (Some(p), None) =>
-          // Even though there's no merge target for the query,
-          // we still have partitions to merge, so don't check for the queue size here
-          p->registerPartitionQuery(~checkQueueSize=false)
-        | (Some(p), Some(mergeTarget)) =>
-          p->registerPartitionQuery(~checkQueueSize=false, ~mergeTarget)
+        | (Some(p), None) => p->registerPartitionQuery
+        | (Some(p), Some(mergeTarget)) => p->registerPartitionQuery(~mergeTarget)
         | (None, _) =>
           Js.Exn.raiseError("Unexpected case, should always have a most behind partition.")
         }
@@ -984,33 +935,26 @@ let qItemLt = (a, b) => {
 }
 
 /**
-Returns queue item WITHOUT the updated fetch state. Used for checking values
-not updating state
-*/
-let getEarliestEventInPartition = (p: partition) => {
-  switch p.fetchedEventQueue->Utils.Array.last {
-  | Some(head) =>
-    Item({item: head, popItemOffQueue: () => p.fetchedEventQueue->Js.Array2.pop->ignore})
-  | None => makeNoItem(p)
-  }
-}
-
-/**
 Gets the earliest queueItem from thgetNodeEarliestEventWithUpdatedQueue.
 
 Finds the earliest queue item across all partitions and then returns that
 queue item with an update fetch state.
 */
-let getEarliestEvent = ({partitions}: t) => {
-  let item = ref(partitions->Js.Array2.unsafe_get(0)->getEarliestEventInPartition)
-  for idx in 1 to partitions->Array.length - 1 {
-    let p = partitions->Js.Array2.unsafe_get(idx)
-    let pItem = p->getEarliestEventInPartition
-    if pItem->qItemLt(item.contents) {
-      item := pItem
+let getEarliestEvent = ({queue, latestFullyFetchedBlock}: t) => {
+  switch queue->Utils.Array.last {
+  | Some(item) =>
+    if item.blockNumber <= latestFullyFetchedBlock.blockNumber {
+      Item({item, popItemOffQueue: () => queue->Js.Array2.pop->ignore})
+    } else {
+      NoItem({
+        latestFetchedBlock: latestFullyFetchedBlock,
+      })
     }
+  | None =>
+    NoItem({
+      latestFetchedBlock: latestFullyFetchedBlock,
+    })
   }
-  item.contents
 }
 
 /**
@@ -1071,7 +1015,6 @@ let make = (
         eventConfigs: notDependingOnAddresses,
       },
       addressesByContractName: Js.Dict.empty(),
-      fetchedEventQueue: [],
     })
   }
 
@@ -1092,7 +1035,6 @@ let make = (
           latestFetchedBlock,
           selection: normalSelection,
           addressesByContractName: Js.Dict.empty(),
-          fetchedEventQueue: [],
         }
       }
 
@@ -1175,16 +1117,16 @@ let make = (
     chainId,
     endBlock,
     latestFullyFetchedBlock: latestFetchedBlock,
-    queueSize: 0,
     firstEventBlockNumber: None,
     normalSelection,
     indexingContracts,
     dcsToStore: None,
     blockLag,
+    queue: [],
   }
 }
 
-let queueSize = ({queueSize}: t) => queueSize
+let queueSize = ({queue}: t) => queue->Array.length
 
 /**
 * Returns the latest block number fetched for the lowest fetcher queue (ie the earliest un-fetched dynamic contract)
@@ -1231,12 +1173,6 @@ let rollbackPartition = (
     } else {
       let shouldRollbackFetched = p.latestFetchedBlock.blockNumber >= firstChangeEvent.blockNumber
 
-      let fetchedEventQueue = if shouldRollbackFetched {
-        p.fetchedEventQueue->pruneQueueFromFirstChangeEvent(~firstChangeEvent)
-      } else {
-        p.fetchedEventQueue
-      }
-
       Some({
         id: p.id,
         selection: p.selection,
@@ -1244,7 +1180,6 @@ let rollbackPartition = (
           fetchingStateId: None,
         },
         addressesByContractName: rollbackedAddressesByContractName,
-        fetchedEventQueue,
         latestFetchedBlock: shouldRollbackFetched
           ? {
               blockNumber: Pervasives.max(firstChangeEvent.blockNumber - 1, 0),
@@ -1289,6 +1224,7 @@ let rollback = (fetchState: t, ~firstChangeEvent) => {
   fetchState->updateInternal(
     ~partitions,
     ~indexingContracts,
+    ~queue=fetchState.queue->pruneQueueFromFirstChangeEvent(~firstChangeEvent),
     ~dcsToStore=switch fetchState.dcsToStore {
     | Some(dcsToStore) =>
       let filtered =
