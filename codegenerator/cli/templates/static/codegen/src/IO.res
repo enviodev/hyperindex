@@ -241,8 +241,9 @@ module RollBack = {
               }),
           ~entityMod,
         )
-
-        fullDiff->Js.Dict.set((Entity.name :> string), diff)
+        if diff->Utils.Array.notEmpty {
+          fullDiff->Js.Dict.set((Entity.name :> string), diff)
+        }
 
         let entityTable = inMemStore.entities->InMemoryStore.EntityTables.get(entityMod)
 
