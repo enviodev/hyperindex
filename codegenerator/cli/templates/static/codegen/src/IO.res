@@ -215,6 +215,8 @@ module RollBack = {
     let deletedEntities = Js.Dict.empty()
     let setEntities = Js.Dict.empty()
 
+    let fullDiff: dict<array<EntityHistory.historyRow<Entities.internalEntity>>> = Js.Dict.empty()
+
     let _ =
       await Entities.allEntities
       ->Belt.Array.map(async entityMod => {
@@ -239,6 +241,8 @@ module RollBack = {
               }),
           ~entityMod,
         )
+
+        fullDiff->Js.Dict.set((Entity.name :> string), diff)
 
         let entityTable = inMemStore.entities->InMemoryStore.EntityTables.get(entityMod)
 
@@ -273,6 +277,7 @@ module RollBack = {
       "inMemStore": inMemStore,
       "deletedEntities": deletedEntities,
       "setEntities": setEntities,
+      "fullDiff": fullDiff,
     }
   }
 }
