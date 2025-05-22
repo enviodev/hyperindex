@@ -940,14 +940,14 @@ let queueItemBlockNumber = (queueItem: queueItem) => {
 let queueItemIsInReorgThreshold = (
   queueItem: queueItem,
   ~currentBlockHeight,
-  ~heighestBlockBelowThreshold,
+  ~highestBlockBelowThreshold,
 ) => {
   if currentBlockHeight === 0 {
     false
   } else {
     switch queueItem {
-    | Item(_) => queueItem->queueItemBlockNumber > heighestBlockBelowThreshold
-    | NoItem(_) => queueItem->queueItemBlockNumber > heighestBlockBelowThreshold
+    | Item(_) => queueItem->queueItemBlockNumber > highestBlockBelowThreshold
+    | NoItem(_) => queueItem->queueItemBlockNumber > highestBlockBelowThreshold
     }
   }
 }

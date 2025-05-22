@@ -5,14 +5,22 @@ open ReorgDetection
 
 describe("Validate reorg detection functions", () => {
   let scannedHashesFixture = [(1, "0x123"), (50, "0x456"), (300, "0x789"), (500, "0x5432")]
+  let shouldRollbackOnReorg = true
 
-  let mock = (arr, ~confirmedBlockThreshold=200) => {
+  let pipeNoReorg = ((updated, reorgResult)) => {
+    switch reorgResult {
+    | ReorgDetected(_) => Js.Exn.raiseError("Unexpected reorg detected")
+    | NoReorg => updated
+    }
+  }
+
+  let mock = (arr, ~confirmedBlockThreshold=200, ~detectedReorgBlock=?) => {
     arr
     ->Array.map(((blockNumber, blockHash)) => {
       blockNumber,
       blockHash,
     })
-    ->LastBlockScannedHashes.makeWithData(~confirmedBlockThreshold)
+    ->LastBlockScannedHashes.makeWithData(~confirmedBlockThreshold, ~detectedReorgBlock?)
   }
 
   it("getThresholdBlockNumbers works as expected", () => {
@@ -73,57 +81,61 @@ describe("Validate reorg detection functions", () => {
       ReorgDetection.LastBlockScannedHashes.empty(~confirmedBlockThreshold=500)
       ->ReorgDetection.LastBlockScannedHashes.registerReorgGuard(
         ~reorgGuard={
-          lastBlockScannedData: {
+          rangeLastBlock: {
             blockNumber: 1,
             blockHash: "0x123",
           },
-          firstBlockParentNumberAndHash: None,
+          prevRangeLastBlock: None,
         },
         ~currentBlockHeight,
+        ~shouldRollbackOnReorg,
       )
-      ->Result.getExn
+      ->pipeNoReorg
       ->ReorgDetection.LastBlockScannedHashes.registerReorgGuard(
         ~reorgGuard={
-          lastBlockScannedData: {
+          rangeLastBlock: {
             blockNumber: 50,
             blockHash: "0x456",
           },
-          firstBlockParentNumberAndHash: Some({
+          prevRangeLastBlock: Some({
             blockNumber: 1,
             blockHash: "0x123",
           }),
         },
         ~currentBlockHeight,
+        ~shouldRollbackOnReorg,
       )
-      ->Result.getExn
+      ->pipeNoReorg
       ->ReorgDetection.LastBlockScannedHashes.registerReorgGuard(
         ~reorgGuard={
-          lastBlockScannedData: {
+          rangeLastBlock: {
             blockNumber: 300,
             blockHash: "0x789",
           },
-          firstBlockParentNumberAndHash: Some({
+          prevRangeLastBlock: Some({
             blockNumber: 50,
             blockHash: "0x456",
           }),
         },
         ~currentBlockHeight,
+        ~shouldRollbackOnReorg,
       )
-      ->Result.getExn
+      ->pipeNoReorg
       ->ReorgDetection.LastBlockScannedHashes.registerReorgGuard(
         ~reorgGuard={
-          lastBlockScannedData: {
+          rangeLastBlock: {
             blockNumber: 500,
             blockHash: "0x5432",
           },
-          firstBlockParentNumberAndHash: Some({
+          prevRangeLastBlock: Some({
             blockNumber: 300,
             blockHash: "0x789",
           }),
         },
         ~currentBlockHeight,
+        ~shouldRollbackOnReorg,
       )
-      ->Result.getExn
+      ->pipeNoReorg
 
     Assert.deepEqual(
       reorgDetection,
@@ -133,30 +145,31 @@ describe("Validate reorg detection functions", () => {
   })
 
   it(
-    "The firstBlockParentNumberAndHash in reorg guard should add a scanned block data to reorg detection",
+    "The prevRangeLastBlock in reorg guard should add a scanned block data to reorg detection",
     () => {
       let currentBlockHeight = 500
       let reorgDetection =
         ReorgDetection.LastBlockScannedHashes.empty(~confirmedBlockThreshold=200)
         ->ReorgDetection.LastBlockScannedHashes.registerReorgGuard(
           ~reorgGuard={
-            lastBlockScannedData: {
+            rangeLastBlock: {
               blockNumber: 50,
               blockHash: "0x456",
             },
-            firstBlockParentNumberAndHash: Some({
+            prevRangeLastBlock: Some({
               blockNumber: 1,
               blockHash: "0x123",
             }),
           },
           ~currentBlockHeight,
+          ~shouldRollbackOnReorg,
         )
-        ->Result.getExn
+        ->pipeNoReorg
 
       Assert.deepEqual(
         reorgDetection,
         mock([(1, "0x123"), (50, "0x456")], ~confirmedBlockThreshold=200),
-        ~message="Should add two records. One for lastBlockScannedData and one for firstBlockParentNumberAndHash",
+        ~message="Should add two records. One for rangeLastBlock and one for prevRangeLastBlock",
       )
     },
   )
@@ -166,18 +179,19 @@ describe("Validate reorg detection functions", () => {
       mock([(1, "0x1"), (2, "0x2"), (3, "0x3")], ~confirmedBlockThreshold=2)
       ->ReorgDetection.LastBlockScannedHashes.registerReorgGuard(
         ~reorgGuard={
-          lastBlockScannedData: {
+          rangeLastBlock: {
             blockNumber: 4,
             blockHash: "0x4",
           },
-          firstBlockParentNumberAndHash: Some({
+          prevRangeLastBlock: Some({
             blockNumber: 3,
             blockHash: "0x3",
           }),
         },
         ~currentBlockHeight=4,
+        ~shouldRollbackOnReorg,
       )
-      ->Result.getExn
+      ->pipeNoReorg
 
     Assert.deepEqual(
       reorgDetection,
@@ -191,18 +205,19 @@ describe("Validate reorg detection functions", () => {
       mock(scannedHashesFixture, ~confirmedBlockThreshold=200)
       ->ReorgDetection.LastBlockScannedHashes.registerReorgGuard(
         ~reorgGuard={
-          lastBlockScannedData: {
+          rangeLastBlock: {
             blockNumber: 50,
             blockHash: "0x50-invalid",
           },
-          firstBlockParentNumberAndHash: Some({
+          prevRangeLastBlock: Some({
             blockNumber: 20,
             blockHash: "0x20-invalid",
           }),
         },
         ~currentBlockHeight=500,
+        ~shouldRollbackOnReorg,
       )
-      ->Result.getExn
+      ->pipeNoReorg
 
     Assert.deepEqual(
       reorgDetection,
@@ -214,74 +229,197 @@ describe("Validate reorg detection functions", () => {
     )
   })
 
-  it("Should detect reorg when lastBlockScannedData hash doesn't match the scanned block", () => {
+  it(
+    "Correctly getLatestValidScannedBlock when returned invalid block from another instance",
+    () => {
+      let reorgGuard = {
+        rangeLastBlock: {
+          blockNumber: 10,
+          blockHash: "0x10",
+        },
+        prevRangeLastBlock: None,
+      }
+
+      let hashes = mock([(9, "0x9"), (10, "0x10-invalid")])
+      let (updatedHashes, reorgResult) =
+        hashes->ReorgDetection.LastBlockScannedHashes.registerReorgGuard(
+          ~reorgGuard,
+          ~currentBlockHeight=10,
+          ~shouldRollbackOnReorg,
+        )
+
+      Assert.deepEqual(
+        updatedHashes,
+        mock(
+          [(9, "0x9"), (10, "0x10-invalid")],
+          ~detectedReorgBlock={
+            blockNumber: 10,
+            blockHash: "0x10-invalid",
+          },
+        ),
+        ~message="Should register a reorg detected block with invalid hash",
+      )
+      Assert.deepEqual(
+        reorgResult,
+        ReorgDetected({
+          scannedBlock: {
+            blockNumber: 10,
+            blockHash: "0x10-invalid",
+          },
+          receivedBlock: reorgGuard.rangeLastBlock,
+        }),
+      )
+      Assert.deepEqual(
+        updatedHashes->LastBlockScannedHashes.getThresholdBlockNumbers(~currentBlockHeight=10),
+        [9, 10],
+        ~message="Returns block numbers in hashes together with the invalid one",
+      )
+      Assert.deepEqual(
+        updatedHashes->LastBlockScannedHashes.getLatestValidScannedBlock(
+          ~blockNumbersAndHashes=[
+            {
+              blockNumber: 9,
+              blockHash: "0x9",
+              blockTimestamp: 9,
+            },
+            {
+              blockNumber: 10,
+              blockHash: "0x10-invalid",
+              blockTimestamp: 10,
+            },
+          ],
+          ~currentBlockHeight=10,
+        ),
+        Error(AlreadyReorgedHashes),
+        ~message=`Imagine we get a response from another HyperSync instance that still has an invalid block.
+        In this case, we should use the detectedReorgBlock to detect it and retry the request to the source.
+        `,
+      )
+      Assert.deepEqual(
+        updatedHashes->LastBlockScannedHashes.getLatestValidScannedBlock(
+          ~blockNumbersAndHashes=[
+            {
+              blockNumber: 9,
+              blockHash: "0x9",
+              blockTimestamp: 9,
+            },
+            {
+              blockNumber: 10,
+              blockHash: "0x10",
+              blockTimestamp: 10,
+            },
+          ],
+          ~currentBlockHeight=10,
+        ),
+        Ok({
+          blockNumber: 9,
+          blockHash: "0x9",
+          blockTimestamp: 9,
+        }),
+        ~message=`Should return the valid block on retry`,
+      )
+
+      Assert.deepEqual(
+        updatedHashes->LastBlockScannedHashes.rollbackToValidBlockNumber(~blockNumber=9),
+        mock([(9, "0x9")]),
+        ~message=`Should clean up the invalid block during rollback`,
+      )
+    },
+  )
+
+  it("Should detect reorg when rangeLastBlock hash doesn't match the scanned block", () => {
     let reorgGuard = {
-      lastBlockScannedData: {
+      rangeLastBlock: {
         blockNumber: 10,
-        blockHash: "0x10-invalid",
+        blockHash: "0x10",
       },
-      firstBlockParentNumberAndHash: None,
+      prevRangeLastBlock: None,
+    }
+    let scannedBlock = {
+      blockNumber: 10,
+      blockHash: "0x10-invalid",
     }
 
-    let reorgDetectionResult =
-      mock(
-        [(10, "0x10")],
-        ~confirmedBlockThreshold=2,
-      )->ReorgDetection.LastBlockScannedHashes.registerReorgGuard(
+    let hashes = mock([(10, "0x10-invalid")])
+
+    Assert.deepEqual(
+      hashes->ReorgDetection.LastBlockScannedHashes.registerReorgGuard(
         ~reorgGuard,
         ~currentBlockHeight=10,
+        ~shouldRollbackOnReorg,
+      ),
+      (
+        mock([(10, "0x10-invalid")], ~detectedReorgBlock=scannedBlock),
+        ReorgDetected({
+          scannedBlock,
+          receivedBlock: reorgGuard.rangeLastBlock,
+        }),
+      ),
+    )
+
+    Assert.deepEqual(
+      hashes->ReorgDetection.LastBlockScannedHashes.registerReorgGuard(
+        ~reorgGuard,
+        ~currentBlockHeight=10,
+        ~shouldRollbackOnReorg=false,
+      ),
+      (
+        mock([]),
+        ReorgDetected({
+          scannedBlock,
+          receivedBlock: reorgGuard.rangeLastBlock,
+        }),
+      ),
+      ~message=`Correctly detects reorg when shouldRollbackOnReorg is false.
+      But resets the state every time to drop invalid state (since it's not done by rollback)`,
+    )
+  })
+
+  it("Should detect reorg when prevRangeLastBlock hash doesn't match the scanned block", () => {
+    let reorgGuard = {
+      rangeLastBlock: {
+        blockNumber: 11,
+        blockHash: "0x11",
+      },
+      prevRangeLastBlock: Some({
+        blockNumber: 10,
+        blockHash: "0x10",
+      }),
+    }
+
+    let hashes = mock([(10, "0x10-invalid")], ~confirmedBlockThreshold=2)
+
+    let reorgDetectionResult =
+      hashes->ReorgDetection.LastBlockScannedHashes.registerReorgGuard(
+        ~reorgGuard,
+        ~currentBlockHeight=11,
+        ~shouldRollbackOnReorg,
       )
 
     Assert.deepEqual(
       reorgDetectionResult,
-      Error({
-        scannedBlock: {
-          blockNumber: 10,
-          blockHash: "0x10",
-        },
-        receivedBlock: reorgGuard.lastBlockScannedData,
-      }),
-    )
-  })
-
-  it(
-    "Should detect reorg when firstBlockParentNumberAndHash hash doesn't match the scanned block",
-    () => {
-      let reorgGuard = {
-        lastBlockScannedData: {
-          blockNumber: 11,
-          blockHash: "0x11",
-        },
-        firstBlockParentNumberAndHash: Some({
-          blockNumber: 10,
-          blockHash: "0x10-invalid",
-        }),
-      }
-
-      let reorgDetectionResult =
+      (
         mock(
-          [(10, "0x10")],
+          [(10, "0x10-invalid")],
           ~confirmedBlockThreshold=2,
-        )->ReorgDetection.LastBlockScannedHashes.registerReorgGuard(
-          ~reorgGuard,
-          ~currentBlockHeight=11,
-        )
-
-      Assert.deepEqual(
-        reorgDetectionResult,
-        Error({
-          scannedBlock: {
-            blockNumber: 10,
-            blockHash: "0x10",
-          },
-          receivedBlock: {
+          ~detectedReorgBlock={
             blockNumber: 10,
             blockHash: "0x10-invalid",
           },
+        ),
+        ReorgDetected({
+          scannedBlock: {
+            blockNumber: 10,
+            blockHash: "0x10-invalid",
+          },
+          receivedBlock: {
+            blockNumber: 10,
+            blockHash: "0x10",
+          },
         }),
-      )
-    },
-  )
+      ),
+    )
+  })
 
   it("rollbackToValidBlockNumber works as expected", () => {
     let reorgDetection = mock(scannedHashesFixture, ~confirmedBlockThreshold=200)
@@ -321,7 +459,7 @@ describe("Validate reorg detection functions", () => {
         ~blockNumbersAndHashes,
         ~currentBlockHeight=500,
       ),
-      Some({
+      Ok({
         blockNumber: 50,
         blockHash: "0x456",
         blockTimestamp: unusedBlockTimestamp,
@@ -336,7 +474,7 @@ describe("Validate reorg detection functions", () => {
         ~blockNumbersAndHashes,
         ~currentBlockHeight=500,
       ),
-      None,
+      Error(NotFound),
       ~message="Returns None if there's no valid block in threshold",
     )
 
@@ -360,7 +498,7 @@ describe("Validate reorg detection functions", () => {
         ~blockNumbersAndHashes,
         ~currentBlockHeight=500,
       ),
-      Some({
+      Ok({
         blockNumber: 50,
         blockHash: "0x456",
         blockTimestamp: unusedBlockTimestamp,
@@ -375,8 +513,8 @@ describe("Validate reorg detection functions", () => {
         ~blockNumbersAndHashes,
         ~currentBlockHeight=500,
       ),
-      None,
-      ~message="Returns None if the different block is the last one in the threshold",
+      Error(NotFound),
+      ~message="Returns Error(NotFound) if the different block is the last one in the threshold",
     )
     Assert.deepEqual(
       mock(
@@ -386,7 +524,7 @@ describe("Validate reorg detection functions", () => {
         ~blockNumbersAndHashes,
         ~currentBlockHeight=501,
       ),
-      Some({
+      Ok({
         blockNumber: 500,
         blockHash: "0x5432",
         blockTimestamp: unusedBlockTimestamp,

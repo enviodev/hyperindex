@@ -341,7 +341,7 @@ let validatePartitionQueryResponse = (
     reorgGuard,
     fromBlockQueried,
   } = response
-  let {lastBlockScannedData} = reorgGuard
+  let {rangeLastBlock} = reorgGuard
 
   if currentBlockHeight > chainFetcher.currentBlockHeight {
     Prometheus.SourceHeight.set(
@@ -382,77 +382,70 @@ let validatePartitionQueryResponse = (
     )
   }
 
-  switch chainFetcher.lastBlockScannedHashes->ReorgDetection.LastBlockScannedHashes.registerReorgGuard(
-    ~reorgGuard,
-    ~currentBlockHeight,
-  ) {
-  | Error(reorgDetected) if state.config->Config.shouldRollbackOnReorg => {
+  let (updatedLastBlockScannedHashes, reorgResult) =
+    chainFetcher.lastBlockScannedHashes->ReorgDetection.LastBlockScannedHashes.registerReorgGuard(
+      ~reorgGuard,
+      ~currentBlockHeight,
+      ~shouldRollbackOnReorg=state.config->Config.shouldRollbackOnReorg,
+    )
+
+  let updatedChainFetcher = {
+    ...chainFetcher,
+    lastBlockScannedHashes: updatedLastBlockScannedHashes,
+  }
+
+  let nextState = {
+    ...state,
+    chainManager: {
+      ...state.chainManager,
+      chainFetchers: state.chainManager.chainFetchers->ChainMap.set(chain, updatedChainFetcher),
+    },
+  }
+
+  let isRollback = switch reorgResult {
+  | ReorgDetected(reorgDetected) => {
       chainFetcher.logger->Logging.childInfo(
-        reorgDetected->ReorgDetection.reorgDetectedToLogParams(~shouldRollbackOnReorg=true),
+        reorgDetected->ReorgDetection.reorgDetectedToLogParams(
+          ~shouldRollbackOnReorg=state.config->Config.shouldRollbackOnReorg,
+        ),
       )
       Prometheus.ReorgCount.increment(~chain)
       Prometheus.ReorgDetectionBlockNumber.set(
         ~blockNumber=reorgDetected.scannedBlock.blockNumber,
         ~chain,
       )
-      (state->incrementId->setRollingBack(chain), [Rollback])
+      state.config->Config.shouldRollbackOnReorg
     }
-  | reorgResult => {
-      let lastBlockScannedHashes = switch reorgResult {
-      | Ok(lastBlockScannedHashes) => lastBlockScannedHashes
-      | Error(reorgDetected) => {
-          chainFetcher.logger->Logging.childInfo(
-            reorgDetected->ReorgDetection.reorgDetectedToLogParams(~shouldRollbackOnReorg=false),
-          )
-          Prometheus.ReorgCount.increment(~chain)
-          Prometheus.ReorgDetectionBlockNumber.set(
-            ~blockNumber=reorgDetected.scannedBlock.blockNumber,
-            ~chain,
-          )
-          ReorgDetection.LastBlockScannedHashes.empty(
-            ~confirmedBlockThreshold=chainFetcher.chainConfig.confirmedBlockThreshold,
-          )
-        }
-      }
+  | NoReorg => false
+  }
 
-      let updatedChainFetcher = {
-        ...chainFetcher,
-        lastBlockScannedHashes,
-      }
+  if isRollback {
+    (nextState->incrementId->setRollingBack(chain), [Rollback])
+  } else {
+    let updateEndOfBlockRangeScannedDataArr =
+      //Only update endOfBlockRangeScannedData if rollbacks are enabled
+      state.config->Config.shouldRollbackOnReorg
+        ? [
+            UpdateEndOfBlockRangeScannedData({
+              chain,
+              blockNumberThreshold: rangeLastBlock.blockNumber -
+              updatedChainFetcher.chainConfig.confirmedBlockThreshold,
+              nextEndOfBlockRangeScannedData: {
+                chainId: chain->ChainMap.Chain.toChainId,
+                blockNumber: rangeLastBlock.blockNumber,
+                blockHash: rangeLastBlock.blockHash,
+              },
+            }),
+          ]
+        : []
 
-      let nextState = {
-        ...state,
-        chainManager: {
-          ...state.chainManager,
-          chainFetchers: state.chainManager.chainFetchers->ChainMap.set(chain, updatedChainFetcher),
-        },
-      }
-
-      let updateEndOfBlockRangeScannedDataArr =
-        //Only update endOfBlockRangeScannedData if rollbacks are enabled
-        state.config->Config.shouldRollbackOnReorg
-          ? [
-              UpdateEndOfBlockRangeScannedData({
-                chain,
-                blockNumberThreshold: lastBlockScannedData.blockNumber -
-                updatedChainFetcher.chainConfig.confirmedBlockThreshold,
-                nextEndOfBlockRangeScannedData: {
-                  chainId: chain->ChainMap.Chain.toChainId,
-                  blockNumber: lastBlockScannedData.blockNumber,
-                  blockHash: lastBlockScannedData.blockHash,
-                },
-              }),
-            ]
-          : []
-
-      (
-        nextState,
-        Array.concat(
-          updateEndOfBlockRangeScannedDataArr,
-          [ProcessPartitionQueryResponse(partitionQueryResponse)],
-        ),
-      )
-    }
+    (
+      nextState,
+      Array.concat(
+        updateEndOfBlockRangeScannedDataArr,
+        [ProcessPartitionQueryResponse(partitionQueryResponse)],
+      ),
+    )
   }
 }
 
@@ -984,7 +977,6 @@ let injectedTaskReducer = (
           "targetBlockTimestamp": lastKnownValidBlockTimestamp,
         },
       )
-
       logger->Logging.childInfo("Started rollback on reorg")
       Prometheus.RollbackTargetBlockNumber.set(
         ~blockNumber=lastKnownValidBlockNumber,
@@ -1076,7 +1068,6 @@ let injectedTaskReducer = (
           "upserted": rollbackResult["setEntities"],
         },
       })
-
       logger->Logging.childTrace({
         "msg": "Initial diff of rollback entity history",
         "diff": rollbackResult["fullDiff"],
