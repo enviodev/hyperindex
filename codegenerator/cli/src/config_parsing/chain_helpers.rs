@@ -250,7 +250,7 @@ pub enum Network {
     )]
     MoonbaseAlpha = 1287,
 
-    #[subenum(NetworkWithExplorer, GraphNetwork)]
+    #[subenum(HypersyncNetwork, NetworkWithExplorer, GraphNetwork)]
     Moonbeam = 1284,
 
     #[subenum(GraphNetwork, NetworkWithExplorer)]
@@ -339,6 +339,9 @@ pub enum Network {
 
     #[subenum(HypersyncNetwork)]
     Superseed = 5330,
+
+    #[subenum(HypersyncNetwork)]
+    Swell = 1923,
 
     #[subenum(NetworkWithExplorer)]
     Taiko = 167000,
@@ -522,7 +525,8 @@ impl Network {
             | Network::MegaethTestnet
             | Network::Curtis
             | Network::Worldchain
-            | Network::Sonic => DEFAULT_CONFIRMED_BLOCK_THRESHOLD,
+            | Network::Sonic
+            | Network::Swell => DEFAULT_CONFIRMED_BLOCK_THRESHOLD,
         }
     }
 }
@@ -582,7 +586,7 @@ impl HypersyncNetwork {
             | ArbitrumSepolia | Fraxtal | Soneium | BaseSepolia | MevCommit | Merlin | Mode
             | MoonbaseAlpha | XdcTestnet | Morph | Harmony | Saakuru | Cyber | Superseed
             | MegaethTestnet | Sonic | Worldchain | Sophon | Fantom | Sepolia | Rsk | Chiliz
-            | Lisk | Hyperliquid => Stone,
+            | Lisk | Hyperliquid | Swell | Moonbeam => Stone,
         }
     }
 
