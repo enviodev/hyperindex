@@ -37,11 +37,17 @@ let reorgDetectedToLogParams = (reorgDetected: reorgDetected, ~shouldRollbackOnR
 }
 
 type reorgResult = NoReorg | ReorgDetected(reorgDetected)
+type validBlockError = NotFound | AlreadyReorgedHashes
+type validBlockResult = result<blockDataWithTimestamp, validBlockError>
 
 module LastBlockScannedHashes: {
   type t
   /**Instantiat t with existing data*/
-  let makeWithData: (array<blockData>, ~confirmedBlockThreshold: int) => t
+  let makeWithData: (
+    array<blockData>,
+    ~confirmedBlockThreshold: int,
+    ~lastScannedReorgDetectedBlock: blockData=?,
+  ) => t
 
   /**Instantiat empty t with no block data*/
   let empty: (~confirmedBlockThreshold: int) => t
@@ -64,7 +70,7 @@ module LastBlockScannedHashes: {
     t,
     ~blockNumbersAndHashes: array<blockDataWithTimestamp>,
     ~currentBlockHeight: int,
-  ) => option<blockDataWithTimestamp>
+  ) => validBlockResult
 
   let getThresholdBlockNumbers: (t, ~currentBlockHeight: int) => array<int>
 
@@ -79,9 +85,14 @@ module LastBlockScannedHashes: {
     // A hash map of recent blockdata by block number to make comparison checks
     // for reorgs.
     dataByBlockNumber: dict<blockData>,
+    // The latest block which detected a reorg
+    // and should never be valid.
+    // We keep track of this to avoid responses
+    // with the stale data from other data-source instances.
+    lastScannedReorgDetectedBlock: option<blockData>,
   }
 
-  let makeWithData = (blocks, ~confirmedBlockThreshold) => {
+  let makeWithData = (blocks, ~confirmedBlockThreshold, ~lastScannedReorgDetectedBlock=?) => {
     let dataByBlockNumber = Js.Dict.empty()
 
     blocks->Belt.Array.forEach(block => {
@@ -91,12 +102,14 @@ module LastBlockScannedHashes: {
     {
       confirmedBlockThreshold,
       dataByBlockNumber,
+      lastScannedReorgDetectedBlock,
     }
   }
   //Instantiates empty LastBlockHashes
   let empty = (~confirmedBlockThreshold) => {
     confirmedBlockThreshold,
     dataByBlockNumber: Js.Dict.empty(),
+    lastScannedReorgDetectedBlock: None,
   }
 
   let getDataByBlockNumberCopyInThreshold = (
@@ -162,7 +175,12 @@ module LastBlockScannedHashes: {
 
     switch maybeReorgDetected {
     | Some(reorgDetected) => (
-        shouldRollbackOnReorg ? self : empty(~confirmedBlockThreshold),
+        shouldRollbackOnReorg
+          ? {
+              ...self,
+              lastScannedReorgDetectedBlock: Some(reorgDetected.scannedBlock),
+            }
+          : empty(~confirmedBlockThreshold),
         ReorgDetected(reorgDetected),
       )
     | None => {
@@ -183,6 +201,7 @@ module LastBlockScannedHashes: {
           {
             confirmedBlockThreshold,
             dataByBlockNumber: dataByBlockNumberCopyInThreshold,
+            lastScannedReorgDetectedBlock: None,
           },
           NoReorg,
         )
@@ -196,39 +215,59 @@ module LastBlockScannedHashes: {
     ~currentBlockHeight,
   ) => {
     let verifiedDataByBlockNumber = Js.Dict.empty()
-    blockNumbersAndHashes->Array.forEach(blockData => {
+    for idx in 0 to blockNumbersAndHashes->Array.length - 1 {
+      let blockData = blockNumbersAndHashes->Array.getUnsafe(idx)
       verifiedDataByBlockNumber->Js.Dict.set(blockData.blockNumber->Int.toString, blockData)
-    })
-
-    let dataByBlockNumber = self->getDataByBlockNumberCopyInThreshold(~currentBlockHeight)
-    // Js engine automatically orders numeric object keys
-    let ascBlockNumberKeys = dataByBlockNumber->Js.Dict.keys
-
-    let getPrevScannedBlock = idx =>
-      ascBlockNumberKeys
-      ->Belt.Array.get(idx - 1)
-      ->Option.flatMap(key => {
-        // We should already validate that the block number is verified at the point
-        verifiedDataByBlockNumber->Utils.Dict.dangerouslyGetNonOption(key)
-      })
-
-    let rec loop = idx => {
-      switch ascBlockNumberKeys->Belt.Array.get(idx) {
-      | Some(blockNumberKey) =>
-        let scannedBlock = dataByBlockNumber->Js.Dict.unsafeGet(blockNumberKey)
-        switch verifiedDataByBlockNumber->Utils.Dict.dangerouslyGetNonOption(blockNumberKey) {
-        | None =>
-          Js.Exn.raiseError(
-            `Unexpected case. Couldn't find verified hash for block number ${blockNumberKey}`,
-          )
-        | Some(verifiedBlockData) if verifiedBlockData.blockHash === scannedBlock.blockHash =>
-          loop(idx + 1)
-        | Some(_) => getPrevScannedBlock(idx)
-        }
-      | None => getPrevScannedBlock(idx)
-      }
     }
-    loop(0)
+
+    let isAlreadyReorgedResponse = switch self.lastScannedReorgDetectedBlock {
+    | Some(lastScannedReorgDetectedBlock) =>
+      switch verifiedDataByBlockNumber->Utils.Dict.dangerouslyGetNonOption(
+        lastScannedReorgDetectedBlock.blockNumber->Int.toString,
+      ) {
+      | Some(verifiedBlockData) =>
+        verifiedBlockData.blockHash === lastScannedReorgDetectedBlock.blockHash
+      | None => false
+      }
+    | None => false
+    }
+
+    if isAlreadyReorgedResponse {
+      Error(AlreadyReorgedHashes)
+    } else {
+      let dataByBlockNumber = self->getDataByBlockNumberCopyInThreshold(~currentBlockHeight)
+      // Js engine automatically orders numeric object keys
+      let ascBlockNumberKeys = dataByBlockNumber->Js.Dict.keys
+
+      let getPrevScannedBlock = idx =>
+        switch ascBlockNumberKeys
+        ->Belt.Array.get(idx - 1)
+        ->Option.flatMap(key => {
+          // We should already validate that the block number is verified at the point
+          verifiedDataByBlockNumber->Utils.Dict.dangerouslyGetNonOption(key)
+        }) {
+        | Some(data) => Ok(data)
+        | None => Error(NotFound)
+        }
+
+      let rec loop = idx => {
+        switch ascBlockNumberKeys->Belt.Array.get(idx) {
+        | Some(blockNumberKey) =>
+          let scannedBlock = dataByBlockNumber->Js.Dict.unsafeGet(blockNumberKey)
+          switch verifiedDataByBlockNumber->Utils.Dict.dangerouslyGetNonOption(blockNumberKey) {
+          | None =>
+            Js.Exn.raiseError(
+              `Unexpected case. Couldn't find verified hash for block number ${blockNumberKey}`,
+            )
+          | Some(verifiedBlockData) if verifiedBlockData.blockHash === scannedBlock.blockHash =>
+            loop(idx + 1)
+          | Some(_) => getPrevScannedBlock(idx)
+          }
+        | None => getPrevScannedBlock(idx)
+        }
+      }
+      loop(0)
+    }
   }
 
   /**
@@ -264,6 +303,7 @@ module LastBlockScannedHashes: {
     {
       confirmedBlockThreshold,
       dataByBlockNumber: newDataByBlockNumber,
+      lastScannedReorgDetectedBlock: None,
     }
   }
 

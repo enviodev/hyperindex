@@ -67,7 +67,7 @@ type isInReorgThresholdRes<'payload> = {
 
 type fetchStateWithData = {
   fetchState: FetchState.t,
-  heighestBlockBelowThreshold: int,
+  highestBlockBelowThreshold: int,
   currentBlockHeight: int,
 }
 
@@ -78,7 +78,7 @@ let isQueueItemEarlierUnorderedBelowReorgThreshold = (
     let data = fetchStatesMap->ChainMap.get(item.chain)
     item.earliestEvent->FetchState.queueItemIsInReorgThreshold(
       ~currentBlockHeight=data.currentBlockHeight,
-      ~heighestBlockBelowThreshold=data.heighestBlockBelowThreshold,
+      ~highestBlockBelowThreshold=data.highestBlockBelowThreshold,
     )
   }
   // The idea here is if we are in undordered multichain mode, always prioritize queue
@@ -112,7 +112,7 @@ let determineNextEvent = (
     ->ChainMap.entries
     ->Array.reduce({isInReorgThreshold: false, val: None}, (
       accum,
-      (chain, {fetchState, currentBlockHeight, heighestBlockBelowThreshold}),
+      (chain, {fetchState, currentBlockHeight, highestBlockBelowThreshold}),
     ) => {
       // If the fetch state has reached the end block we don't need to consider it
       if fetchState->FetchState.isActivelyIndexing {
@@ -124,7 +124,7 @@ let determineNextEvent = (
           let isInReorgThreshold =
             earliestEvent->FetchState.queueItemIsInReorgThreshold(
               ~currentBlockHeight,
-              ~heighestBlockBelowThreshold,
+              ~highestBlockBelowThreshold,
             )
 
           {
@@ -225,7 +225,7 @@ let getFetchStateWithData = (self: t, ~shouldDeepCopy=false): ChainMap.t<fetchSt
   self.chainFetchers->ChainMap.map(cf => {
     {
       fetchState: shouldDeepCopy ? cf.fetchState->FetchState.copy : cf.fetchState,
-      heighestBlockBelowThreshold: cf->ChainFetcher.getHeighestBlockBelowThreshold,
+      highestBlockBelowThreshold: cf->ChainFetcher.getHighestBlockBelowThreshold,
       currentBlockHeight: cf.currentBlockHeight,
     }
   })
@@ -363,7 +363,7 @@ let getSafeChainIdAndBlockNumberArray = (self: t): array<
   ->ChainMap.values
   ->Array.map((cf): DbFunctions.EntityHistory.chainIdAndBlockNumber => {
     chainId: cf.chainConfig.chain->ChainMap.Chain.toChainId,
-    blockNumber: cf->ChainFetcher.getHeighestBlockBelowThreshold,
+    blockNumber: cf->ChainFetcher.getHighestBlockBelowThreshold,
   })
 }
 

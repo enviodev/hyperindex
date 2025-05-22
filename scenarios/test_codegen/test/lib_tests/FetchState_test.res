@@ -2809,7 +2809,7 @@ describe("FetchState.queueItemIsInReorgThreshold", () => {
       ->FetchState.getEarliestEvent
       ->FetchState.queueItemIsInReorgThreshold(
         ~currentBlockHeight=0,
-        ~heighestBlockBelowThreshold=0,
+        ~highestBlockBelowThreshold=0,
       ),
       false,
     )
@@ -2824,7 +2824,7 @@ describe("FetchState.queueItemIsInReorgThreshold", () => {
         ->FetchState.getEarliestEvent
         ->FetchState.queueItemIsInReorgThreshold(
           ~currentBlockHeight=0,
-          ~heighestBlockBelowThreshold=0,
+          ~highestBlockBelowThreshold=0,
         ),
         false,
       )
