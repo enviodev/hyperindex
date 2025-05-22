@@ -36,6 +36,8 @@ let reorgDetectedToLogParams = (reorgDetected: reorgDetected, ~shouldRollbackOnR
   }
 }
 
+type reorgResult = NoReorg | ReorgDetected(reorgDetected)
+
 module LastBlockScannedHashes: {
   type t
   /**Instantiat t with existing data*/
@@ -44,14 +46,15 @@ module LastBlockScannedHashes: {
   /**Instantiat empty t with no block data*/
   let empty: (~confirmedBlockThreshold: int) => t
 
-  /** Registers a new reorg guard, prunes unnened data and returns the updated data 
-   or an error if a reorg has occured 
-  */
+  /** Registers a new reorg guard, prunes unneeded data, and returns the updated state.
+   * Resets internal state if shouldRollbackOnReorg is false (detect-only mode)
+   */
   let registerReorgGuard: (
     t,
     ~reorgGuard: reorgGuard,
     ~currentBlockHeight: int,
-  ) => result<t, reorgDetected>
+    ~shouldRollbackOnReorg: bool,
+  ) => (t, reorgResult)
 
   /**
   Returns the latest block data which matches block number and hashes in the provided array
@@ -122,6 +125,7 @@ module LastBlockScannedHashes: {
     {confirmedBlockThreshold} as self: t,
     ~reorgGuard: reorgGuard,
     ~currentBlockHeight,
+    ~shouldRollbackOnReorg,
   ) => {
     let dataByBlockNumberCopyInThreshold =
       self->getDataByBlockNumberCopyInThreshold(~currentBlockHeight)
@@ -157,7 +161,10 @@ module LastBlockScannedHashes: {
     }
 
     switch maybeReorgDetected {
-    | Some(reorgDetected) => Error(reorgDetected)
+    | Some(reorgDetected) => (
+        shouldRollbackOnReorg ? self : empty(~confirmedBlockThreshold),
+        ReorgDetected(reorgDetected),
+      )
     | None => {
         dataByBlockNumberCopyInThreshold->Js.Dict.set(
           lastBlockScannedData.blockNumber->Int.toString,
@@ -172,10 +179,13 @@ module LastBlockScannedHashes: {
           )
         }
 
-        Ok({
-          confirmedBlockThreshold,
-          dataByBlockNumber: dataByBlockNumberCopyInThreshold,
-        })
+        (
+          {
+            confirmedBlockThreshold,
+            dataByBlockNumber: dataByBlockNumberCopyInThreshold,
+          },
+          NoReorg,
+        )
       }
     }
   }
