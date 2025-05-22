@@ -1045,12 +1045,17 @@ let injectedTaskReducer = (
         chainFetchers,
       }
 
-      chainFetcher.logger->Logging.childInfo({
+      logger->Logging.childTrace({
         "msg": "Finished rollback on reorg",
         "entityChanges": {
           "deleted": rollbackResult["deletedEntities"],
           "upserted": rollbackResult["setEntities"],
         },
+      })
+
+      logger->Logging.childTrace({
+        "msg": "Initial diff of rollback entity history",
+        "diff": rollbackResult["fullDiff"],
       })
       endTimer()
 
