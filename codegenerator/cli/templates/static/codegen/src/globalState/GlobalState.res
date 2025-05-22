@@ -957,11 +957,16 @@ let injectedTaskReducer = (
       }: ReorgDetection.blockDataWithTimestamp =
         await chainFetcher->getLastKnownValidBlock
 
-      chainFetcher.logger->Logging.childInfo({
-        "msg": "Started rollback on reorg",
-        "targetBlockNumber": lastKnownValidBlockNumber,
-        "targetBlockTimestamp": lastKnownValidBlockTimestamp,
-      })
+      let logger = Logging.createChildFrom(
+        ~logger=chainFetcher.logger,
+        ~params={
+          "action": "Rollback",
+          "reorgChain": reorgChain,
+          "targetBlockNumber": lastKnownValidBlockNumber,
+          "targetBlockTimestamp": lastKnownValidBlockTimestamp,
+        },
+      )
+      logger->Logging.childInfo("Started rollback on reorg")
       Prometheus.RollbackTargetBlockNumber.set(
         ~blockNumber=lastKnownValidBlockNumber,
         ~chain=reorgChain,
@@ -1052,7 +1057,6 @@ let injectedTaskReducer = (
           "upserted": rollbackResult["setEntities"],
         },
       })
-
       logger->Logging.childTrace({
         "msg": "Initial diff of rollback entity history",
         "diff": rollbackResult["fullDiff"],
