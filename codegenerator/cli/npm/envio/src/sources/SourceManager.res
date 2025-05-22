@@ -1,5 +1,7 @@
 open Belt
 
+type sourceManagerStatus = Idle | WaitingForNewBlock | Querieng
+
 // Ideally the ChainFetcher name suits this better
 // But currently the ChainFetcher module is immutable
 // and handles both processing and fetching.
@@ -7,6 +9,8 @@ open Belt
 // with a mutable state for easier reasoning and testing.
 type t = {
   sources: Utils.Set.t<Source.t>,
+  mutable statusStart: Hrtime.timeRef,
+  mutable status: sourceManagerStatus,
   maxPartitionConcurrency: int,
   newBlockFallbackStallTimeout: int,
   stalledPollingInterval: int,
@@ -66,7 +70,23 @@ let make = (
     newBlockFallbackStallTimeout,
     stalledPollingInterval,
     getHeightRetryInterval,
+    statusStart: Hrtime.makeTimer(),
+    status: Idle,
   }
+}
+
+let trackNewStatus = (sourceManager: t, ~newStatus) => {
+  let promCounter = switch newStatus {
+  | Idle => Prometheus.IndexingIdleTime.counter
+  | WaitingForNewBlock => Prometheus.IndexingSourceWaitingTime.counter
+  | Querieng => Prometheus.IndexingQueryTime.counter
+  }
+  promCounter->Prometheus.SafeCounter.incrementMany(
+    ~labels=sourceManager.activeSource.chain->ChainMap.Chain.toChainId,
+    ~value=sourceManager.statusStart->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis,
+  )
+  sourceManager.statusStart = Hrtime.makeTimer()
+  sourceManager.status = newStatus
 }
 
 let fetchNext = async (
@@ -96,10 +116,12 @@ let fetchNext = async (
     | Some(waitingStateId) if waitingStateId >= stateId => ()
     | Some(_) // Case for the prev state before a rollback
     | None =>
+      sourceManager->trackNewStatus(~newStatus=WaitingForNewBlock)
       sourceManager.waitingForNewBlockStateId = Some(stateId)
       let currentBlockHeight = await waitForNewBlock(~currentBlockHeight)
       switch sourceManager.waitingForNewBlockStateId {
       | Some(waitingStateId) if waitingStateId === stateId => {
+          sourceManager->trackNewStatus(~newStatus=Idle)
           sourceManager.waitingForNewBlockStateId = None
           onNewBlock(~currentBlockHeight)
         }
@@ -115,6 +137,7 @@ let fetchNext = async (
         ~concurrency=sourceManager.fetchingPartitionsCount,
         ~chainId=sourceManager.activeSource.chain->ChainMap.Chain.toChainId,
       )
+      sourceManager->trackNewStatus(~newStatus=Querieng)
       let _ =
         await queries
         ->Array.map(q => {
@@ -125,6 +148,9 @@ let fetchNext = async (
               ~concurrency=sourceManager.fetchingPartitionsCount,
               ~chainId=sourceManager.activeSource.chain->ChainMap.Chain.toChainId,
             )
+            if sourceManager.fetchingPartitionsCount === 0 {
+              sourceManager->trackNewStatus(~newStatus=Idle)
+            }
           })
           promise
         })

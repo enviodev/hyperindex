@@ -83,6 +83,7 @@ module MakeSafePromMetric = (
   let handleInt: (t<'a>, ~labels: 'a, ~value: int) => unit
   let handleFloat: (t<'a>, ~labels: 'a, ~value: float) => unit
   let increment: (t<'a>, ~labels: 'a) => unit
+  let incrementMany: (t<'a>, ~labels: 'a, ~value: int) => unit
 } => {
   type t<'a> = {metric: M.t, labelSchema: S.t<'a>}
 
@@ -121,6 +122,13 @@ module MakeSafePromMetric = (
       ->M.labels(labels->S.reverseConvertToJsonOrThrow(labelSchema))
       ->Obj.magic
     )["inc"]()
+
+  let incrementMany = ({metric, labelSchema}: t<'a>, ~labels: 'a, ~value) =>
+    (
+      metric
+      ->M.labels(labels->S.reverseConvertToJsonOrThrow(labelSchema))
+      ->Obj.magic
+    )["inc"](value)
 }
 
 module SafeCounter = MakeSafePromMetric({
@@ -354,6 +362,30 @@ module IndexingPartitions = {
   let set = (~partitionsCount, ~chainId) => {
     gauge->SafeGauge.handleInt(~labels=chainId, ~value=partitionsCount)
   }
+}
+
+module IndexingIdleTime = {
+  let counter = SafeCounter.makeOrThrow(
+    ~name="envio_indexing_idle_time",
+    ~help="The number of milliseconds the indexer source syncing has been idle. A high value may indicate the source sync is a bottleneck.",
+    ~labelSchema=chainIdLabelsSchema,
+  )
+}
+
+module IndexingSourceWaitingTime = {
+  let counter = SafeCounter.makeOrThrow(
+    ~name="envio_indexing_source_waiting_time",
+    ~help="The number of milliseconds the indexer has been waiting for new blocks.",
+    ~labelSchema=chainIdLabelsSchema,
+  )
+}
+
+module IndexingQueryTime = {
+  let counter = SafeCounter.makeOrThrow(
+    ~name="envio_indexing_query_time",
+    ~help="The number of milliseconds spent performing queries to the chain data-source.",
+    ~labelSchema=chainIdLabelsSchema,
+  )
 }
 
 module IndexingBufferSize = {
