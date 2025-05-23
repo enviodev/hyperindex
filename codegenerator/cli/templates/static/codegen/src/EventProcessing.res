@@ -314,7 +314,7 @@ let processEventBatch = (
   open ErrorHandling.ResultPropogateEnv
   runAsyncEnv(async () => {
     let _ =
-      processingPartitions
+      await processingPartitions
       ->Array.map(async ({items}) => {
         (await items->runLoaders(~loadLayer, ~inMemoryStore))->propogate
 
