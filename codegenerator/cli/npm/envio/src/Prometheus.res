@@ -364,15 +364,14 @@ module IndexingBufferSize = {
   }
 }
 
-module IndexingMaxBufferSize = {
-  let gauge = SafeGauge.makeOrThrow(
-    ~name="envio_indexing_max_buffer_size",
-    ~help="The maximum number of items allowed in the indexing buffer for the chain.",
-    ~labelSchema=chainIdLabelsSchema,
-  )
+module IndexingTargetBufferSize = {
+  let gauge = PromClient.Gauge.makeGauge({
+    "name": "envio_indexing_target_buffer_size",
+    "help": "The target buffer size per chain for indexing. The actual number of items in the queue may exceed this value, but the indexer always tries to keep the buffer filled up to this target.",
+  })
 
-  let set = (~maxBufferSize, ~chainId) => {
-    gauge->SafeGauge.handleInt(~labels=chainId, ~value=maxBufferSize)
+  let set = (~targetBufferSize) => {
+    gauge->PromClient.Gauge.set(targetBufferSize)
   }
 }
 
@@ -573,5 +572,16 @@ module ProgressProcessedCount = {
     ->PromClient.Gauge.labels({"chainId": chainId})
     ->PromClient.Gauge.set(processedCount)
     gauge->SafeGauge.handleInt(~labels=chainId, ~value=processedCount)
+  }
+}
+
+module ProcessingMaxBatchSize = {
+  let gauge = PromClient.Gauge.makeGauge({
+    "name": "envio_processing_max_batch_size",
+    "help": "The maximum number of items to process in a single batch.",
+  })
+
+  let set = (~maxBatchSize) => {
+    gauge->PromClient.Gauge.set(maxBatchSize)
   }
 }
