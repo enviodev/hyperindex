@@ -162,8 +162,8 @@ describe("ChainManager", () => {
 
           // ensure that the events are ordered correctly
           switch eventsInBlock {
-          | {items: []} => chainManager
-          | {items, fetchStatesMap} =>
+          | {totalBatchSize: 0} => chainManager
+          | {processingPartitions: [{items}], fetchStatesMap} =>
             items->Belt.Array.forEach(
               i => {
                 let _ = allEventsRead->Js.Array2.push(i)
@@ -226,6 +226,7 @@ describe("ChainManager", () => {
               chainFetchers: nextChainFetchers,
             }
             testThatCreatedEventsAreOrderedCorrectly(nextChainManager, lastEvent)
+          | _ => Js.Exn.raiseError("Unexpected to have a single processing partition")
           }
         }
 
@@ -257,17 +258,8 @@ describe("ChainManager", () => {
 
 // NOTE: this is likely a temporary feature - can delete if feature no longer important.
 describe("determineNextEvent", () => {
-  describe("optimistic-unordered-mode", () => {
-    let determineNextEvent_unordered = ChainManager.ExposedForTesting_Hidden.createDetermineNextEventFunction(
-      ~isUnorderedMultichainMode=true,
-      _,
-      ~onlyBelowReorgThreshold=false,
-    )
-    let determineNextEvent_ordered = ChainManager.ExposedForTesting_Hidden.createDetermineNextEventFunction(
-      ~isUnorderedMultichainMode=false,
-      _,
-      ~onlyBelowReorgThreshold=false,
-    )
+  describe("optimistic-ordered-mode", () => {
+    let determineNextEvent_ordered = ChainManager.determineNextEvent
 
     let makeNoItem = timestamp => FetchState.NoItem({
       latestFetchedBlock: {blockTimestamp: timestamp, blockNumber: 0},
@@ -357,13 +349,13 @@ describe("determineNextEvent", () => {
             },
         )
 
-        let {val: {earliestEvent}} = determineNextEvent_unordered(fetchStatesMap)->Result.getExn
+        // let {val: {earliestEvent}} = determineNextEvent_unordered(fetchStatesMap)->Result.getExn
 
-        Assert.deepEqual(
-          earliestEvent->FetchState_test.getItem,
-          Some(singleItem),
-          ~message="Should have taken the single item",
-        )
+        // Assert.deepEqual(
+        //   earliestEvent->FetchState_test.getItem,
+        //   Some(singleItem),
+        //   ~message="Should have taken the single item",
+        // )
 
         let {val: {earliestEvent}} = determineNextEvent_ordered(fetchStatesMap)->Result.getExn
 
@@ -412,13 +404,13 @@ describe("determineNextEvent", () => {
         //   NoItem(655 /* later timestamp than the test event */, {id:1}),
         // ]
 
-        let {val: {earliestEvent}} = determineNextEvent_unordered(fetchStatesMap)->Result.getExn
+        // let {val: {earliestEvent}} = determineNextEvent_unordered(fetchStatesMap)->Result.getExn
 
-        Assert.deepEqual(
-          earliestEvent->FetchState_test.getItem,
-          Some(singleItem),
-          ~message="Should have taken the single item",
-        )
+        // Assert.deepEqual(
+        //   earliestEvent->FetchState_test.getItem,
+        //   Some(singleItem),
+        //   ~message="Should have taken the single item",
+        // )
 
         let {val: {earliestEvent}} = determineNextEvent_ordered(fetchStatesMap)->Result.getExn
 
