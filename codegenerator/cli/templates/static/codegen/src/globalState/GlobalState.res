@@ -300,10 +300,11 @@ let updateLatestProcessedBlocks = (
       let {chainConfig: {chain}, fetchState} = cf
       let {numEventsProcessed, latestProcessedBlock} = latestProcessedBlocks->ChainMap.get(chain)
 
-      let hasNoMoreEventsToProcess = cf->ChainFetcher.hasNoMoreEventsToProcess
-
-      let latestProcessedBlock = if hasNoMoreEventsToProcess {
-        FetchState.getLatestFullyFetchedBlock(fetchState).blockNumber->Some
+      let latestProcessedBlock = if cf->ChainFetcher.hasNoMoreEventsToProcess {
+        Pervasives.max(
+          FetchState.getLatestFullyFetchedBlock(fetchState).blockNumber,
+          0,
+        )->Some
       } else {
         latestProcessedBlock
       }
