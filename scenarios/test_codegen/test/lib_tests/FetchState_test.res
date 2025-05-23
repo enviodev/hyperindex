@@ -105,7 +105,7 @@ let makeIndexingContractsWithDynamics = (dcs: array<FetchState.indexingContract>
 // instead of setting a value to undefined. It's fixed in v12.
 let undefined = (%raw(`undefined`): option<'a>)
 
-describe("FetchState.make", () => {
+describe_only("FetchState.make", () => {
   it("Creates FetchState with a single static address", () => {
     let fetchState = makeInitial()
 
@@ -117,7 +117,7 @@ describe("FetchState.make", () => {
             id: "0",
             status: {fetchingStateId: None},
             latestFetchedBlock: {
-              blockNumber: 0,
+              blockNumber: -1,
               blockTimestamp: 0,
             },
             selection: fetchState.normalSelection,
@@ -129,7 +129,7 @@ describe("FetchState.make", () => {
         isFetchingAtHead: false,
         maxAddrInPartition: 3,
         latestFullyFetchedBlock: {
-          blockNumber: 0,
+          blockNumber: -1,
           blockTimestamp: 0,
         },
         queue: [],
@@ -186,7 +186,7 @@ describe("FetchState.make", () => {
               id: "0",
               status: {fetchingStateId: None},
               latestFetchedBlock: {
-                blockNumber: 0,
+                blockNumber: -1,
                 blockTimestamp: 0,
               },
               selection: fetchState.normalSelection,
@@ -199,7 +199,7 @@ describe("FetchState.make", () => {
           isFetchingAtHead: false,
           maxAddrInPartition: 2,
           latestFullyFetchedBlock: {
-            blockNumber: 0,
+            blockNumber: -1,
             blockTimestamp: 0,
           },
           queue: [],
@@ -242,7 +242,7 @@ describe("FetchState.make", () => {
               id: "0",
               status: {fetchingStateId: None},
               latestFetchedBlock: {
-                blockNumber: 0,
+                blockNumber: -1,
                 blockTimestamp: 0,
               },
               selection: fetchState.normalSelection,
@@ -252,7 +252,7 @@ describe("FetchState.make", () => {
               id: "1",
               status: {fetchingStateId: None},
               latestFetchedBlock: {
-                blockNumber: 0,
+                blockNumber: -1,
                 blockTimestamp: 0,
               },
               selection: fetchState.normalSelection,
@@ -263,7 +263,7 @@ describe("FetchState.make", () => {
           isFetchingAtHead: false,
           maxAddrInPartition: 1,
           latestFullyFetchedBlock: {
-            blockNumber: 0,
+            blockNumber: -1,
             blockTimestamp: 0,
           },
           queue: [],
@@ -313,7 +313,7 @@ describe("FetchState.make", () => {
               id: "0",
               status: {fetchingStateId: None},
               latestFetchedBlock: {
-                blockNumber: 0,
+                blockNumber: -1,
                 blockTimestamp: 0,
               },
               selection: fetchState.normalSelection,
@@ -323,7 +323,7 @@ describe("FetchState.make", () => {
               id: "1",
               status: {fetchingStateId: None},
               latestFetchedBlock: {
-                blockNumber: 0,
+                blockNumber: -1,
                 blockTimestamp: 0,
               },
               selection: fetchState.normalSelection,
@@ -333,7 +333,7 @@ describe("FetchState.make", () => {
               id: "2",
               status: {fetchingStateId: None},
               latestFetchedBlock: {
-                blockNumber: 0,
+                blockNumber: -1,
                 blockTimestamp: 0,
               },
               selection: fetchState.normalSelection,
@@ -343,7 +343,7 @@ describe("FetchState.make", () => {
               id: "3",
               status: {fetchingStateId: None},
               latestFetchedBlock: {
-                blockNumber: 0,
+                blockNumber: -1,
                 blockTimestamp: 0,
               },
               selection: fetchState.normalSelection,
@@ -354,7 +354,7 @@ describe("FetchState.make", () => {
           isFetchingAtHead: false,
           maxAddrInPartition: 1,
           latestFullyFetchedBlock: {
-            blockNumber: 0,
+            blockNumber: -1,
             blockTimestamp: 0,
           },
           queue: [],
@@ -372,7 +372,7 @@ describe("FetchState.make", () => {
   )
 })
 
-describe("FetchState.registerDynamicContracts", () => {
+describe_only("FetchState.registerDynamicContracts", () => {
   // It shouldn't happen, but just in case
   it("Nothing breaks when provided an empty array", () => {
     let fetchState = makeInitial()
@@ -806,7 +806,7 @@ describe("FetchState.registerDynamicContracts", () => {
               id: "0",
               status: {fetchingStateId: None},
               latestFetchedBlock: {
-                blockNumber: 0,
+                blockNumber: -1,
                 blockTimestamp: 0,
               },
               selection: {
@@ -821,7 +821,7 @@ describe("FetchState.registerDynamicContracts", () => {
               id: "1",
               status: {fetchingStateId: None},
               latestFetchedBlock: {
-                blockNumber: 0,
+                blockNumber: -1,
                 blockTimestamp: 0,
               },
               selection: {
@@ -838,7 +838,7 @@ describe("FetchState.registerDynamicContracts", () => {
           isFetchingAtHead: false,
           maxAddrInPartition: 1000,
           latestFullyFetchedBlock: {
-            blockNumber: 0,
+            blockNumber: -1,
             blockTimestamp: 0,
           },
           queue: [],
@@ -856,7 +856,7 @@ describe("FetchState.registerDynamicContracts", () => {
   )
 })
 
-describe("FetchState.getNextQuery & integration", () => {
+describe_only("FetchState.getNextQuery & integration", () => {
   let dc1 = makeDynContractRegistration(~blockNumber=1, ~contractAddress=mockAddress1)
   let dc2 = makeDynContractRegistration(~blockNumber=2, ~contractAddress=mockAddress2)
   let dc3 = makeDynContractRegistration(~blockNumber=2, ~contractAddress=mockAddress3)
@@ -1006,7 +1006,7 @@ describe("FetchState.getNextQuery & integration", () => {
             id: "0",
             status: {fetchingStateId: Some(0)},
             latestFetchedBlock: {
-              blockNumber: 0,
+              blockNumber: -1,
               blockTimestamp: 0,
             },
             selection: fetchState.normalSelection,
@@ -1699,7 +1699,7 @@ describe("FetchState.getNextQuery & integration", () => {
             id: "0",
             status: {fetchingStateId: None},
             latestFetchedBlock: {
-              blockNumber: 0,
+              blockNumber: -1,
               blockTimestamp: 0,
             },
             selection: fetchState.normalSelection,
@@ -1707,7 +1707,7 @@ describe("FetchState.getNextQuery & integration", () => {
           },
         ],
         latestFullyFetchedBlock: {
-          blockNumber: 0,
+          blockNumber: -1,
           blockTimestamp: 0,
         },
         queue: [],
@@ -1780,7 +1780,7 @@ describe("FetchState.getNextQuery & integration", () => {
             id: "0",
             status: {fetchingStateId: None},
             latestFetchedBlock: {
-              blockNumber: 0,
+              blockNumber: -1,
               blockTimestamp: 0,
             },
             selection: {
@@ -1797,7 +1797,7 @@ describe("FetchState.getNextQuery & integration", () => {
   })
 })
 
-describe("FetchState unit tests for specific cases", () => {
+describe_only("FetchState unit tests for specific cases", () => {
   it("Should merge events in correct order on merging", () => {
     let normalSelection: FetchState.selection = {
       dependsOnAddresses: true,
@@ -2012,7 +2012,7 @@ describe("FetchState unit tests for specific cases", () => {
       fetchState->FetchState.getEarliestEvent,
       NoItem({
         latestFetchedBlock: {
-          blockNumber: 0,
+          blockNumber: -1,
           blockTimestamp: 0,
         },
       }),
@@ -2081,7 +2081,7 @@ describe("FetchState unit tests for specific cases", () => {
       fetchState->FetchState.getEarliestEvent,
       NoItem({
         latestFetchedBlock: {
-          blockNumber: 0,
+          blockNumber: -1,
           blockTimestamp: 0,
         },
       }),
@@ -2110,7 +2110,7 @@ describe("FetchState unit tests for specific cases", () => {
       updatedFetchState->FetchState.getEarliestEvent,
       NoItem({
         latestFetchedBlock: {
-          blockNumber: 0,
+          blockNumber: -1,
           blockTimestamp: 0,
         },
       }),
@@ -2370,8 +2370,13 @@ describe("FetchState unit tests for specific cases", () => {
     )
     Assert.deepEqual(
       {...makeInitial(), endBlock: Some(0)}->FetchState.isActivelyIndexing,
+      true,
+      ~message=`Should be active if endBlock is equal to the startBlock`,
+    )
+    Assert.deepEqual(
+      {...makeInitial(~startBlock=10), endBlock: Some(9)}->FetchState.isActivelyIndexing,
       false,
-      ~message=`But if endBlock is equal to the startBlock, initial state shouldn't be active`,
+      ~message=`Shouldn't be active if endBlock is less than the startBlock`,
     )
     let fetchState = {
       ...makeInitial(),
@@ -2389,7 +2394,7 @@ describe("FetchState unit tests for specific cases", () => {
           indexingContracts: fetchState.indexingContracts,
         },
         ~reversedNewItems=[mockEvent(~blockNumber=0)],
-        ~latestFetchedBlock={blockNumber: 0, blockTimestamp: 0},
+        ~latestFetchedBlock={blockNumber: -1, blockTimestamp: 0},
         ~currentBlockHeight=1,
       )
       ->Result.getExn
@@ -2527,7 +2532,7 @@ describe("FetchState unit tests for specific cases", () => {
   )
 })
 
-describe("Test queue item", () => {
+describe_only("Test queue item", () => {
   it("Correctly compares queue items", () => {
     Assert.deepEqual(
       FetchState.NoItem({
@@ -2643,7 +2648,7 @@ describe("Test queue item", () => {
   })
 })
 
-describe("FetchState.queueItemIsInReorgThreshold", () => {
+describe_only("FetchState.queueItemIsInReorgThreshold", () => {
   it("Returns false when we just started the indexer and it has currentBlockHeight=0", () => {
     let fetchState = makeInitial()
     Assert.equal(

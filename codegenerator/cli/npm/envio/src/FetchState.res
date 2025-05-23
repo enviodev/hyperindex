@@ -948,11 +948,7 @@ queue item with an update fetch state.
 let getEarliestEvent = ({queue, latestFullyFetchedBlock}: t) => {
   switch queue->Utils.Array.last {
   | Some(item) =>
-    if (
-      item.blockNumber <= latestFullyFetchedBlock.blockNumber &&
-        // FIXME: Should make latestFullyFetchedBlock a -1 instead
-        item.blockNumber > 0
-    ) {
+    if item.blockNumber <= latestFullyFetchedBlock.blockNumber {
       Item({item, popItemOffQueue: () => queue->Js.Array2.pop->ignore})
     } else {
       NoItem({
@@ -981,8 +977,7 @@ let make = (
 ): t => {
   let latestFetchedBlock = {
     blockTimestamp: 0,
-    // Here's a bug that startBlock: 1 won't work
-    blockNumber: Pervasives.max(startBlock - 1, 0),
+    blockNumber: startBlock - 1,
   }
 
   let notDependingOnAddresses = []
@@ -1191,7 +1186,7 @@ let rollbackPartition = (
         addressesByContractName: rollbackedAddressesByContractName,
         latestFetchedBlock: shouldRollbackFetched
           ? {
-              blockNumber: Pervasives.max(firstChangeEvent.blockNumber - 1, 0),
+              blockNumber: firstChangeEvent.blockNumber - 1,
               blockTimestamp: 0,
             }
           : p.latestFetchedBlock,
