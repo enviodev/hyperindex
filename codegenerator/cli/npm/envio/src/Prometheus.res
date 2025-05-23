@@ -16,12 +16,6 @@ let executeBatchDurationCounter = PromClient.Counter.makeCounter({
   "labelNames": [],
 })
 
-let eventsProcessedCounter = PromClient.Gauge.makeGauge({
-  "name": "events_processed",
-  "help": "Total number of events processed",
-  "labelNames": ["chainId"],
-})
-
 let allChainsSyncedToHead = PromClient.Gauge.makeGauge({
   "name": "hyperindex_synced_to_head",
   "help": "All chains fully synced",
@@ -207,12 +201,6 @@ module BenchmarkSummaryData = {
   }
 }
 
-let processedUntilHeight = PromClient.Gauge.makeGauge({
-  "name": "chain_block_height_processed",
-  "help": "Block height processed by indexer",
-  "labelNames": ["chainId"],
-})
-
 let incrementLoadEntityDurationCounter = (~duration) => {
   loadEntitiesDurationCounter->PromClient.Counter.incMany(duration)
 }
@@ -225,12 +213,6 @@ let incrementExecuteBatchDurationCounter = (~duration) => {
   executeBatchDurationCounter->PromClient.Counter.incMany(duration)
 }
 
-let setEventsProcessedGuage = (~number, ~chainId) => {
-  eventsProcessedCounter
-  ->PromClient.Gauge.labels({"chainId": chainId})
-  ->PromClient.Gauge.set(number)
-}
-
 let setSourceChainHeight = (~blockNumber, ~chain) => {
   sourceChainHeight
   ->PromClient.Gauge.labels({"chainId": chain->ChainMap.Chain.toString})
@@ -239,12 +221,6 @@ let setSourceChainHeight = (~blockNumber, ~chain) => {
 
 let setAllChainsSyncedToHead = () => {
   allChainsSyncedToHead->PromClient.Gauge.set(1)
-}
-
-let setProcessedUntilHeight = (~blockNumber, ~chain) => {
-  processedUntilHeight
-  ->PromClient.Gauge.labels({"chainId": chain->ChainMap.Chain.toString})
-  ->PromClient.Gauge.set(blockNumber)
 }
 
 module BenchmarkCounters = {
@@ -301,18 +277,6 @@ module Info = {
 
   let set = (~version) => {
     gauge->SafeGauge.handleInt(~labels={"version": version}, ~value=1)
-  }
-}
-
-module ProgressBlockNumber = {
-  let gauge = SafeGauge.makeOrThrow(
-    ~name="envio_progress_block_number",
-    ~help="The block number to track the progress of indexing at. Currently uses the fully fetched block number. In the future will be changed to block number processed and stored in the database.",
-    ~labelSchema=chainIdLabelsSchema,
-  )
-
-  let set = (~blockNumber, ~chainId) => {
-    gauge->SafeGauge.handleInt(~labels=chainId, ~value=blockNumber)
   }
 }
 
@@ -429,8 +393,6 @@ module IndexingBufferBlockNumber = {
     deprecatedGauge
     ->PromClient.Gauge.labels({"chainId": chainId})
     ->PromClient.Gauge.set(blockNumber)
-    // TODO: Use the block number stored in the database instead
-    ProgressBlockNumber.set(~blockNumber, ~chainId)
     gauge->SafeGauge.handleInt(~labels=chainId, ~value=blockNumber)
   }
 }
@@ -543,5 +505,73 @@ module RollbackTargetBlockNumber = {
 
   let set = (~blockNumber, ~chain) => {
     gauge->SafeGauge.handleInt(~labels=chain->ChainMap.Chain.toChainId, ~value=blockNumber)
+  }
+}
+
+module ProcessingBlockNumber = {
+  let gauge = SafeGauge.makeOrThrow(
+    ~name="envio_processing_block_number",
+    ~help="The latest item block number included in the currently processing batch for the chain.",
+    ~labelSchema=chainIdLabelsSchema,
+  )
+
+  let set = (~blockNumber, ~chainId) => {
+    gauge->SafeGauge.handleInt(~labels=chainId, ~value=blockNumber)
+  }
+}
+
+module ProcessingBatchSize = {
+  let gauge = SafeGauge.makeOrThrow(
+    ~name="envio_processing_batch_size",
+    ~help="The number of items included in the currently processing batch for the chain.",
+    ~labelSchema=chainIdLabelsSchema,
+  )
+
+  let set = (~batchSize, ~chainId) => {
+    gauge->SafeGauge.handleInt(~labels=chainId, ~value=batchSize)
+  }
+}
+
+module ProcessingTotalBatchSize = {
+  let gauge = PromClient.Gauge.makeGauge({
+    "name": "envio_processing_total_batch_size",
+    "help": "The total number of items included in the currently processing batch.",
+  })
+
+  let set = (~totalBatchSize) => {
+    gauge->PromClient.Gauge.set(totalBatchSize)
+  }
+}
+
+module ProgressBlockNumber = {
+  let gauge = SafeGauge.makeOrThrow(
+    ~name="envio_progress_block_number",
+    ~help="The block number of the latest block processed and stored in the database.",
+    ~labelSchema=chainIdLabelsSchema,
+  )
+
+  let set = (~blockNumber, ~chainId) => {
+    gauge->SafeGauge.handleInt(~labels=chainId, ~value=blockNumber)
+  }
+}
+
+module ProgressProcessedCount = {
+  let deprecatedGauge = PromClient.Gauge.makeGauge({
+    "name": "events_processed",
+    "help": "Total number of events processed",
+    "labelNames": ["chainId"],
+  })
+
+  let gauge = SafeGauge.makeOrThrow(
+    ~name="envio_progress_processed_count",
+    ~help="The number of events processed and stored in the database.",
+    ~labelSchema=chainIdLabelsSchema,
+  )
+
+  let set = (~processedCount, ~chainId) => {
+    deprecatedGauge
+    ->PromClient.Gauge.labels({"chainId": chainId})
+    ->PromClient.Gauge.set(processedCount)
+    gauge->SafeGauge.handleInt(~labels=chainId, ~value=processedCount)
   }
 }
