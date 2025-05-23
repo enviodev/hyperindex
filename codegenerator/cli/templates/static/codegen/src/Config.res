@@ -97,21 +97,24 @@ let make = (
   ~entities=[],
   ~ecosystem=Evm,
 ) => {
+  let chainMap =
+    chains
+    ->Js.Array2.map(n => {
+      (n.chain, n)
+    })
+    ->ChainMap.fromArrayUnsafe
   {
     historyConfig: {
       rollbackFlag: shouldRollbackOnReorg ? RollbackOnReorg : NoRollback,
       historyFlag: shouldSaveFullHistory ? FullHistory : MinHistory,
     },
-    isUnorderedMultichainMode: Env.Configurable.isUnorderedMultichainMode->Option.getWithDefault(
-      Env.Configurable.unstable__temp_unordered_head_mode->Option.getWithDefault(
-        isUnorderedMultichainMode,
+    isUnorderedMultichainMode: chainMap->ChainMap.size === 1 ||
+      Env.Configurable.isUnorderedMultichainMode->Option.getWithDefault(
+        Env.Configurable.unstable__temp_unordered_head_mode->Option.getWithDefault(
+          isUnorderedMultichainMode,
+        ),
       ),
-    ),
-    chainMap: chains
-    ->Js.Array2.map(n => {
-      (n.chain, n)
-    })
-    ->ChainMap.fromArrayUnsafe,
+    chainMap,
     defaultChain: chains->Array.get(0),
     enableRawEvents,
     entities: entities->(
