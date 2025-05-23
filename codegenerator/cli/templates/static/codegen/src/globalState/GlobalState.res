@@ -874,8 +874,15 @@ let injectedTaskReducer = (
 
       let handleBatch = async (batch: ChainManager.batch) => {
         switch batch {
-        | {items: Ordered([]) | Unordered({totalBatchSize: 0})} => dispatchAction(SetSyncedChains) //Known that there are no items available on the queue so safely call this action
-        | {isInReorgThreshold, items, fetchStatesMap, dcsToStoreByChainId} =>
+        | {totalBatchSize: 0} => dispatchAction(SetSyncedChains) //Known that there are no items available on the queue so safely call this action
+        | {
+            isInReorgThreshold,
+            processingPartitions,
+            processingMetricsByChainId,
+            totalBatchSize,
+            fetchStatesMap,
+            dcsToStoreByChainId,
+          } =>
           dispatchAction(SetCurrentlyProcessing(true))
           dispatchAction(UpdateQueues(fetchStatesMap))
           if (
@@ -913,7 +920,9 @@ let injectedTaskReducer = (
           }
 
           switch await EventProcessing.processEventBatch(
-            ~eventBatch=items,
+            ~processingPartitions,
+            ~processingMetricsByChainId,
+            ~totalBatchSize,
             ~inMemoryStore,
             ~isInReorgThreshold,
             ~latestProcessedBlocks,
@@ -943,7 +952,7 @@ let injectedTaskReducer = (
       }
 
       switch batch {
-      | {isInReorgThreshold: true, items: []} if onlyBelowReorgThreshold =>
+      | {isInReorgThreshold: true, totalBatchSize: 0} if onlyBelowReorgThreshold =>
         dispatchAction(SetIsInReorgThreshold(true))
         let batch =
           state.chainManager->ChainManager.createBatch(

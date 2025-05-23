@@ -193,20 +193,28 @@ let nextItemIsNone = (self: t): bool => {
   popOrderedBatchItem(~fetchStatesMap=self->getFetchStateWithData).val->Option.isNone
 }
 
-type items =
-  | Ordered(array<Internal.eventItem>)
-  | Unordered({byChain: ChainMap.t<array<Internal.eventItem>>, totalBatchSize: int})
+type processingPartition = {
+  // Either for specific chain or for all chains (ordered)
+  chain: option<ChainMap.Chain.t>,
+  items: array<Internal.eventItem>,
+}
+
+type processingChainMetrics = {
+  batchSize: int,
+  targetBlockNumber: int,
+}
 
 let createOrderedBatchItems = (
   ~maxBatchSize,
   ~fetchStatesMap: ChainMap.t<fetchStateWithData>,
   ~onlyBelowReorgThreshold,
+  ~mutProcessingMetricsByChainId: dict<processingChainMetrics>,
 ) => {
   let isInReorgThresholdRef = ref(false)
-  let batch = []
+  let items = []
 
   let rec loop = () =>
-    if batch->Array.length < maxBatchSize {
+    if items->Array.length < maxBatchSize {
       let {val, isInReorgThreshold} = popOrderedBatchItem(~fetchStatesMap)
 
       isInReorgThresholdRef := isInReorgThresholdRef.contents || isInReorgThreshold
@@ -218,67 +226,105 @@ let createOrderedBatchItems = (
         let shouldNotAddItem = isInReorgThreshold && onlyBelowReorgThreshold
         if !shouldNotAddItem {
           popItemOffQueue()
-          batch->Js.Array2.push(item)->ignore
+          items->Js.Array2.push(item)->ignore
+          mutProcessingMetricsByChainId->Js.Dict.set(
+            item.chain->ChainMap.Chain.toChainId->Int.toString,
+            {
+              batchSize: switch mutProcessingMetricsByChainId->Utils.Dict.dangerouslyGetNonOption(
+                item.chain->ChainMap.Chain.toChainId->Int.toString,
+              ) {
+              | Some(metrics) => metrics.batchSize + 1
+              | None => 1
+              },
+              targetBlockNumber: item.blockNumber,
+            },
+          )
           loop()
         }
       }
     }
   loop()
 
-  (Ordered(batch), isInReorgThresholdRef.contents)
+  (
+    [
+      {
+        chain: None,
+        items,
+      },
+    ],
+    items->Array.length,
+    isInReorgThresholdRef.contents,
+  )
 }
 
 let createUnorderedBatchItems = (
   ~maxBatchSize,
   ~fetchStatesMap: ChainMap.t<fetchStateWithData>,
   ~onlyBelowReorgThreshold,
+  ~mutProcessingMetricsByChainId: dict<processingChainMetrics>,
 ) => {
   let isInReorgThresholdRef = ref(false)
   let totalBatchSize = ref(0)
 
-  let byChain = fetchStatesMap->ChainMap.map(({
-    fetchState,
-    currentBlockHeight,
-    highestBlockBelowThreshold,
-  }) => {
-    let batch = []
+  let processingPartitions =
+    fetchStatesMap
+    ->ChainMap.entries
+    ->Array.keepMap(((chain, {fetchState, currentBlockHeight, highestBlockBelowThreshold})) => {
+      let items = []
 
-    // If the fetch state has reached the end block we don't need to consider it
-    if fetchState->FetchState.isActivelyIndexing {
-      let rec loop = () =>
-        if batch->Array.length < maxBatchSize {
-          let earliestEvent = fetchState->FetchState.getEarliestEvent
-          let isInReorgThreshold =
-            earliestEvent->FetchState.queueItemIsInReorgThreshold(
-              ~currentBlockHeight,
-              ~highestBlockBelowThreshold,
-            )
+      // If the fetch state has reached the end block we don't need to consider it
+      if fetchState->FetchState.isActivelyIndexing {
+        let rec loop = () =>
+          if items->Array.length < maxBatchSize {
+            let earliestEvent = fetchState->FetchState.getEarliestEvent
+            let isInReorgThreshold =
+              earliestEvent->FetchState.queueItemIsInReorgThreshold(
+                ~currentBlockHeight,
+                ~highestBlockBelowThreshold,
+              )
 
-          isInReorgThresholdRef := isInReorgThresholdRef.contents || isInReorgThreshold
+            isInReorgThresholdRef := isInReorgThresholdRef.contents || isInReorgThreshold
 
-          switch earliestEvent {
-          | NoItem(_) => ()
-          | Item({item, popItemOffQueue}) =>
-            //For dynamic contract pre registration, allow creating a batch up to the reorg threshold
-            let shouldNotAddItem = isInReorgThreshold && onlyBelowReorgThreshold
-            if !shouldNotAddItem {
-              popItemOffQueue()
-              batch->Js.Array2.push(item)->ignore
-              loop()
-              totalBatchSize := totalBatchSize.contents + 1
+            switch earliestEvent {
+            | NoItem(_) => ()
+            | Item({item, popItemOffQueue}) =>
+              //For dynamic contract pre registration, allow creating a batch up to the reorg threshold
+              let shouldNotAddItem = isInReorgThreshold && onlyBelowReorgThreshold
+              if !shouldNotAddItem {
+                popItemOffQueue()
+                items->Js.Array2.push(item)->ignore
+                loop()
+                totalBatchSize := totalBatchSize.contents + 1
+              }
             }
           }
-        }
-      loop()
-    }
-    batch
-  })
+        loop()
+      }
 
-  (Unordered({byChain, totalBatchSize: totalBatchSize.contents}), isInReorgThresholdRef.contents)
+      switch items {
+      | [] => None
+      | _ =>
+        mutProcessingMetricsByChainId->Js.Dict.set(
+          chain->ChainMap.Chain.toChainId->Int.toString,
+          {
+            batchSize: items->Array.length,
+            targetBlockNumber: (items->Utils.Array.last->Option.getUnsafe).blockNumber,
+          },
+        )
+        Some({
+          chain: Some(chain),
+          items,
+        })
+      }
+    })
+
+  (processingPartitions, totalBatchSize.contents, isInReorgThresholdRef.contents)
 }
 
 type batch = {
-  items: items,
+  processingPartitions: array<processingPartition>,
+  processingMetricsByChainId: dict<processingChainMetrics>,
+  totalBatchSize: int,
   fetchStatesMap: ChainMap.t<fetchStateWithData>,
   dcsToStoreByChainId: dict<array<FetchState.indexingContract>>,
   isInReorgThreshold: bool,
@@ -290,10 +336,23 @@ let createBatch = (self: t, ~maxBatchSize: int, ~onlyBelowReorgThreshold: bool) 
   //Make a copy of the queues and fetch states since we are going to mutate them
   let fetchStatesMap = self->getFetchStateWithData(~shouldDeepCopy=true)
 
-  let (items, isInReorgThreshold) = if self.isUnorderedMultichainMode {
-    createUnorderedBatchItems(~maxBatchSize, ~fetchStatesMap, ~onlyBelowReorgThreshold)
+  let mutProcessingMetricsByChainId = Js.Dict.empty()
+  let (processingPartitions, totalBatchSize, isInReorgThreshold) = if (
+    self.isUnorderedMultichainMode
+  ) {
+    createUnorderedBatchItems(
+      ~maxBatchSize,
+      ~fetchStatesMap,
+      ~onlyBelowReorgThreshold,
+      ~mutProcessingMetricsByChainId,
+    )
   } else {
-    createOrderedBatchItems(~maxBatchSize, ~fetchStatesMap, ~onlyBelowReorgThreshold)
+    createOrderedBatchItems(
+      ~maxBatchSize,
+      ~fetchStatesMap,
+      ~onlyBelowReorgThreshold,
+      ~mutProcessingMetricsByChainId,
+    )
   }
 
   let dcsToStoreByChainId = Js.Dict.empty()
@@ -309,10 +368,6 @@ let createBatch = (self: t, ~maxBatchSize: int, ~onlyBelowReorgThreshold: bool) 
     }
   })
 
-  let totalBatchSize = switch items {
-  | Ordered(items) => items->Array.length
-  | Unordered({totalBatchSize}) => totalBatchSize
-  }
   if totalBatchSize > 0 {
     let fetchedEventsBuffer =
       fetchStatesMap
@@ -343,7 +398,14 @@ let createBatch = (self: t, ~maxBatchSize: int, ~onlyBelowReorgThreshold: bool) 
     }
   }
 
-  {items, fetchStatesMap, dcsToStoreByChainId, isInReorgThreshold}
+  {
+    processingPartitions,
+    processingMetricsByChainId: mutProcessingMetricsByChainId,
+    totalBatchSize,
+    fetchStatesMap,
+    dcsToStoreByChainId,
+    isInReorgThreshold,
+  }
 }
 
 let isFetchingAtHead = self =>

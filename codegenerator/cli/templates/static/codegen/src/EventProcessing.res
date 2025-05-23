@@ -35,10 +35,7 @@ module EventsProcessed = {
   }
 }
 
-let updateEventSyncState = (
-  eventItem: Internal.eventItem,
-  ~inMemoryStore: InMemoryStore.t,
-) => {
+let updateEventSyncState = (eventItem: Internal.eventItem, ~inMemoryStore: InMemoryStore.t) => {
   let {event, chain, blockNumber, timestamp: blockTimestamp} = eventItem
   let {logIndex} = event
   let chainId = chain->ChainMap.Chain.toChainId
@@ -294,7 +291,6 @@ let runHandlers = (
 
 let registerProcessEventBatchMetrics = (
   ~logger,
-  ~batchSize,
   ~loadDuration,
   ~handlerDuration,
   ~dbWriteDuration,
@@ -302,7 +298,6 @@ let registerProcessEventBatchMetrics = (
 ) => {
   logger->Logging.childTrace({
     "msg": "Finished processing batch",
-    "batch_size": batchSize,
     "loader_time_elapsed": loadDuration,
     "handlers_time_elapsed": handlerDuration,
     "write_time_elapsed": dbWriteDuration,
@@ -321,8 +316,17 @@ let registerProcessEventBatchMetrics = (
   })
 }
 
+type logPartitionInfo = {
+  batchSize: int,
+  firstItemTimestamp: option<int>,
+  firstItemBlockNumber?: int,
+  lastItemBlockNumber?: int,
+}
+
 let processEventBatch = (
-  ~eventBatch: array<Internal.eventItem>,
+  ~processingPartitions: array<ChainManager.processingPartition>,
+  ~processingMetricsByChainId: dict<ChainManager.processingChainMetrics>,
+  ~totalBatchSize: int,
   ~inMemoryStore: InMemoryStore.t,
   ~isInReorgThreshold,
   ~latestProcessedBlocks: EventsProcessed.t,
@@ -332,8 +336,30 @@ let processEventBatch = (
   let logger = Logging.createChildFrom(
     ~logger=Logging.getLogger(),
     ~params={
-      "batchSize": eventBatch->Array.length,
-      "firstEventTimestamp": eventBatch[0]->Option.map(v => v.timestamp),
+      "totalBatchSize": totalBatchSize,
+      "partitions": processingPartitions
+      ->Array.map(v => {
+        let firstItemTimestamp = v.items[0]->Option.map(v => v.timestamp)
+        switch v.chain {
+        | Some(chain) => (
+            chain->ChainMap.Chain.toString,
+            {
+              batchSize: v.items->Array.length,
+              firstItemTimestamp,
+              firstItemBlockNumber: (v.items[0]->Option.getUnsafe).blockNumber,
+              lastItemBlockNumber: (v.items->Utils.Array.last->Option.getUnsafe).blockNumber,
+            },
+          )
+        | None => (
+            "ordered",
+            {
+              batchSize: v.items->Array.length,
+              firstItemTimestamp,
+            },
+          )
+        }
+      })
+      ->Js.Dict.fromArray,
     },
   )
   logger->Logging.childTrace("Started processing batch")
@@ -342,20 +368,24 @@ let processEventBatch = (
 
   open ErrorHandling.ResultPropogateEnv
   runAsyncEnv(async () => {
-    (await eventBatch->runLoaders(~loadLayer, ~inMemoryStore))->propogate
+    let _ =
+      processingPartitions
+      ->Array.map(async ({items}) => {
+        (await items->runLoaders(~loadLayer, ~inMemoryStore))->propogate
+        let elapsedAfterLoad = timeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
 
-    let elapsedAfterLoad = timeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
-
-    let latestProcessedBlocks =
-      (await eventBatch
-      ->runHandlers(
-        ~inMemoryStore,
-        ~latestProcessedBlocks,
-        ~loadLayer,
-        ~config,
-        ~isInReorgThreshold,
-      ))
-      ->propogate
+        let latestProcessedBlocks =
+          (await items
+          ->runHandlers(
+            ~inMemoryStore,
+            ~latestProcessedBlocks,
+            ~loadLayer,
+            ~config,
+            ~isInReorgThreshold,
+          ))
+          ->propogate
+      })
+      ->Promise.all
 
     let elapsedTimeAfterProcess = timeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
 
@@ -366,22 +396,20 @@ let processEventBatch = (
     }
 
     let elapsedTimeAfterDbWrite = timeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
-    let batchSize = eventBatch->Array.length
-    let handlerDuration = elapsedTimeAfterProcess - elapsedAfterLoad
+    let handlerDuration = elapsedTimeAfterProcess - 0 // elapsedAfterLoad
     let dbWriteDuration = elapsedTimeAfterDbWrite - elapsedTimeAfterProcess
     registerProcessEventBatchMetrics(
       ~logger,
-      ~batchSize,
-      ~loadDuration=elapsedAfterLoad,
+      ~loadDuration=0, // elapsedAfterLoad,
       ~handlerDuration,
       ~dbWriteDuration,
       ~latestProcessedBlocks,
     )
     if Env.Benchmark.shouldSaveData {
       Benchmark.addEventProcessing(
-        ~batchSize=eventBatch->Array.length,
+        ~batchSize=totalBatchSize,
         ~contractRegisterDuration=0,
-        ~loadDuration=elapsedAfterLoad,
+        ~loadDuration=0, // elapsedAfterLoad,
         ~handlerDuration,
         ~dbWriteDuration,
         ~totalTimeElapsed=elapsedTimeAfterDbWrite,
