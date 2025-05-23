@@ -307,7 +307,10 @@ let updateLatestProcessedBlocks = (
         )
 
       let latestProcessedBlock = if cf->ChainFetcher.hasNoMoreEventsToProcess {
-        FetchState.getLatestFullyFetchedBlock(fetchState).blockNumber->Some
+        Pervasives.max(
+          FetchState.getLatestFullyFetchedBlock(fetchState).blockNumber,
+          0,
+        )->Some
       } else {
         switch maybeMetrics {
         | Some(metrics) => Some(metrics.targetBlockNumber)
