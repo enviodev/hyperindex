@@ -105,7 +105,7 @@ let makeIndexingContractsWithDynamics = (dcs: array<FetchState.indexingContract>
 // instead of setting a value to undefined. It's fixed in v12.
 let undefined = (%raw(`undefined`): option<'a>)
 
-describe_only("FetchState.make", () => {
+describe("FetchState.make", () => {
   it("Creates FetchState with a single static address", () => {
     let fetchState = makeInitial()
 
@@ -372,7 +372,7 @@ describe_only("FetchState.make", () => {
   )
 })
 
-describe_only("FetchState.registerDynamicContracts", () => {
+describe("FetchState.registerDynamicContracts", () => {
   // It shouldn't happen, but just in case
   it("Nothing breaks when provided an empty array", () => {
     let fetchState = makeInitial()
@@ -856,7 +856,7 @@ describe_only("FetchState.registerDynamicContracts", () => {
   )
 })
 
-describe_only("FetchState.getNextQuery & integration", () => {
+describe("FetchState.getNextQuery & integration", () => {
   let dc1 = makeDynContractRegistration(~blockNumber=1, ~contractAddress=mockAddress1)
   let dc2 = makeDynContractRegistration(~blockNumber=2, ~contractAddress=mockAddress2)
   let dc3 = makeDynContractRegistration(~blockNumber=2, ~contractAddress=mockAddress3)
@@ -1797,7 +1797,7 @@ describe_only("FetchState.getNextQuery & integration", () => {
   })
 })
 
-describe_only("FetchState unit tests for specific cases", () => {
+describe("FetchState unit tests for specific cases", () => {
   it("Should merge events in correct order on merging", () => {
     let normalSelection: FetchState.selection = {
       dependsOnAddresses: true,
@@ -2532,7 +2532,7 @@ describe_only("FetchState unit tests for specific cases", () => {
   )
 })
 
-describe_only("Test queue item", () => {
+describe("Test queue item", () => {
   it("Correctly compares queue items", () => {
     Assert.deepEqual(
       FetchState.NoItem({
@@ -2648,7 +2648,7 @@ describe_only("Test queue item", () => {
   })
 })
 
-describe_only("FetchState.queueItemIsInReorgThreshold", () => {
+describe("FetchState.queueItemIsInReorgThreshold", () => {
   it("Returns false when we just started the indexer and it has currentBlockHeight=0", () => {
     let fetchState = makeInitial()
     Assert.equal(
