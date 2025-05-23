@@ -283,35 +283,35 @@ describe("determineNextEvent", () => {
       }
     }
 
-    let makeMockFetchState = (~latestFetchedBlockTimestamp, ~item): FetchState.t => {
+    let makeMockFetchState = (
+      ~latestFetchedBlockTimestamp,
+      ~item: option<Internal.eventItem>,
+    ): FetchState.t => {
       let normalSelection: FetchState.selection = {
         dependsOnAddresses: true,
         eventConfigs: [
           (Mock.evmEventConfig(~id="0", ~contractName="MockContract") :> Internal.eventConfig),
         ],
       }
+      let latestFetchedBlock: FetchState.blockNumberAndTimestamp = {
+        blockTimestamp: latestFetchedBlockTimestamp,
+        blockNumber: item->Option.mapWithDefault(0, v => v.blockNumber),
+      }
       let partition: FetchState.partition = {
         id: "0",
-        latestFetchedBlock: {
-          blockTimestamp: latestFetchedBlockTimestamp,
-          blockNumber: 0,
-        },
+        latestFetchedBlock,
         status: {
           fetchingStateId: None,
         },
         selection: normalSelection,
         addressesByContractName: Js.Dict.empty(),
-        fetchedEventQueue: item->Option.mapWithDefault([], v => [v]),
       }
       {
         partitions: [partition],
         maxAddrInPartition: 5,
         nextPartitionIndex: 1,
-        queueSize: 10,
-        latestFullyFetchedBlock: {
-          blockTimestamp: latestFetchedBlockTimestamp,
-          blockNumber: 0,
-        },
+        queue: item->Option.mapWithDefault([], v => [v]),
+        latestFullyFetchedBlock: latestFetchedBlock,
         endBlock: None,
         isFetchingAtHead: false,
         firstEventBlockNumber: item->Option.map(v => v.blockNumber),
