@@ -874,7 +874,7 @@ let injectedTaskReducer = (
 
       let handleBatch = async (batch: ChainManager.batch) => {
         switch batch {
-        | {items: []} => dispatchAction(SetSyncedChains) //Known that there are no items available on the queue so safely call this action
+        | {items: Ordered([]) | Unordered({totalBatchSize: 0})} => dispatchAction(SetSyncedChains) //Known that there are no items available on the queue so safely call this action
         | {isInReorgThreshold, items, fetchStatesMap, dcsToStoreByChainId} =>
           dispatchAction(SetCurrentlyProcessing(true))
           dispatchAction(UpdateQueues(fetchStatesMap))
