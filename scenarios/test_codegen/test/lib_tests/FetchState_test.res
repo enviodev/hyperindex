@@ -122,7 +122,6 @@ describe("FetchState.make", () => {
             },
             selection: fetchState.normalSelection,
             addressesByContractName: Js.Dict.fromArray([("Gravatar", [mockAddress0])]),
-            fetchedEventQueue: [],
           },
         ],
         endBlock: undefined,
@@ -133,7 +132,7 @@ describe("FetchState.make", () => {
           blockNumber: 0,
           blockTimestamp: 0,
         },
-        queueSize: 0,
+        queue: [],
         firstEventBlockNumber: None,
         normalSelection: fetchState.normalSelection,
         chainId: 0,
@@ -194,7 +193,6 @@ describe("FetchState.make", () => {
               addressesByContractName: Js.Dict.fromArray([
                 ("Gravatar", [mockAddress1, mockAddress2]),
               ]),
-              fetchedEventQueue: [],
             },
           ],
           nextPartitionIndex: 1,
@@ -204,7 +202,7 @@ describe("FetchState.make", () => {
             blockNumber: 0,
             blockTimestamp: 0,
           },
-          queueSize: 0,
+          queue: [],
           endBlock: undefined,
           firstEventBlockNumber: None,
           normalSelection: fetchState.normalSelection,
@@ -249,7 +247,6 @@ describe("FetchState.make", () => {
               },
               selection: fetchState.normalSelection,
               addressesByContractName: Js.Dict.fromArray([("ContractA", [mockAddress1])]),
-              fetchedEventQueue: [],
             },
             {
               id: "1",
@@ -260,7 +257,6 @@ describe("FetchState.make", () => {
               },
               selection: fetchState.normalSelection,
               addressesByContractName: Js.Dict.fromArray([("Gravatar", [mockAddress2])]),
-              fetchedEventQueue: [],
             },
           ],
           nextPartitionIndex: 2,
@@ -270,7 +266,7 @@ describe("FetchState.make", () => {
             blockNumber: 0,
             blockTimestamp: 0,
           },
-          queueSize: 0,
+          queue: [],
           endBlock: undefined,
           firstEventBlockNumber: None,
           normalSelection: fetchState.normalSelection,
@@ -322,7 +318,6 @@ describe("FetchState.make", () => {
               },
               selection: fetchState.normalSelection,
               addressesByContractName: Js.Dict.fromArray([("ContractA", [mockAddress1])]),
-              fetchedEventQueue: [],
             },
             {
               id: "1",
@@ -333,7 +328,6 @@ describe("FetchState.make", () => {
               },
               selection: fetchState.normalSelection,
               addressesByContractName: Js.Dict.fromArray([("ContractA", [mockAddress2])]),
-              fetchedEventQueue: [],
             },
             {
               id: "2",
@@ -344,7 +338,6 @@ describe("FetchState.make", () => {
               },
               selection: fetchState.normalSelection,
               addressesByContractName: Js.Dict.fromArray([("Gravatar", [mockAddress3])]),
-              fetchedEventQueue: [],
             },
             {
               id: "3",
@@ -355,7 +348,6 @@ describe("FetchState.make", () => {
               },
               selection: fetchState.normalSelection,
               addressesByContractName: Js.Dict.fromArray([("Gravatar", [mockAddress4])]),
-              fetchedEventQueue: [],
             },
           ],
           nextPartitionIndex: 4,
@@ -365,7 +357,7 @@ describe("FetchState.make", () => {
             blockNumber: 0,
             blockTimestamp: 0,
           },
-          queueSize: 0,
+          queue: [],
           firstEventBlockNumber: None,
           endBlock: undefined,
           normalSelection: fetchState.normalSelection,
@@ -467,7 +459,6 @@ describe("FetchState.registerDynamicContracts", () => {
           addressesByContractName: Js.Dict.fromArray([
             ("Gravatar", [mockAddress1, mockAddress2, mockAddress3]),
           ]),
-          fetchedEventQueue: [],
         },
         {
           id: "2",
@@ -478,7 +469,6 @@ describe("FetchState.registerDynamicContracts", () => {
           },
           selection: fetchState.normalSelection,
           addressesByContractName: Js.Dict.fromArray([("Gravatar", [mockAddress4])]),
-          fetchedEventQueue: [],
         },
       ]),
       ~message=`Should split into two partitions`,
@@ -515,7 +505,6 @@ describe("FetchState.registerDynamicContracts", () => {
             ("NftFactory", [mockAddress1, mockAddress4]),
             ("Gravatar", [mockAddress2]),
           ]),
-          fetchedEventQueue: [],
         },
         {
           id: "2",
@@ -526,7 +515,6 @@ describe("FetchState.registerDynamicContracts", () => {
           },
           selection: fetchState.normalSelection,
           addressesByContractName: Js.Dict.fromArray([("Gravatar", [mockAddress3])]),
-          fetchedEventQueue: [],
         },
       ]),
       ~message=`Still split into two partitions, but try to put addresses from the same contract together as much as possible`,
@@ -616,7 +604,6 @@ describe("FetchState.registerDynamicContracts", () => {
             addressesByContractName: Js.Dict.fromArray([
               ("SimpleNft", [mockAddress2, mockAddress3]),
             ]),
-            fetchedEventQueue: [],
           },
           {
             id: "2",
@@ -627,7 +614,6 @@ describe("FetchState.registerDynamicContracts", () => {
             },
             selection: fetchState.normalSelection,
             addressesByContractName: Js.Dict.fromArray([("SimpleNft", [mockAddress4])]),
-            fetchedEventQueue: [],
           },
           {
             id: "3",
@@ -641,7 +627,6 @@ describe("FetchState.registerDynamicContracts", () => {
               ("NftFactory", [mockAddress5]),
               ("Gravatar", [mockAddress1]),
             ]),
-            fetchedEventQueue: [],
           },
         ]),
         ~message=`All dcs without filterByAddresses should use the original logic and be grouped into a single partition,
@@ -652,7 +637,7 @@ describe("FetchState.registerDynamicContracts", () => {
         updatedFetchState->FetchState.getNextQuery(
           ~currentBlockHeight=10,
           ~concurrencyLimit=10,
-          ~maxQueueSize=10,
+          ~targetBufferSize=10,
           ~stateId=0,
         )
 
@@ -711,7 +696,6 @@ describe("FetchState.registerDynamicContracts", () => {
           },
           selection: fetchState.normalSelection,
           addressesByContractName: Js.Dict.fromArray([("Gravatar", [mockAddress1])]),
-          fetchedEventQueue: [],
         },
       ]),
     )
@@ -760,7 +744,6 @@ describe("FetchState.registerDynamicContracts", () => {
             addressesByContractName: Js.Dict.fromArray([
               ("Gravatar", [mockAddress1, mockAddress3, mockAddress2]),
             ]),
-            fetchedEventQueue: [],
           },
         ]),
       },
@@ -833,7 +816,6 @@ describe("FetchState.registerDynamicContracts", () => {
                 eventConfigs: [wildcard1, wildcard2],
               },
               addressesByContractName: Js.Dict.empty(),
-              fetchedEventQueue: [],
             },
             {
               id: "1",
@@ -849,7 +831,6 @@ describe("FetchState.registerDynamicContracts", () => {
               addressesByContractName: Js.Dict.fromArray([
                 ("NftFactory", [mockAddress0, mockAddress1, mockAddress5]),
               ]),
-              fetchedEventQueue: [],
             },
           ],
           endBlock: undefined,
@@ -860,7 +841,7 @@ describe("FetchState.registerDynamicContracts", () => {
             blockNumber: 0,
             blockTimestamp: 0,
           },
-          queueSize: 0,
+          queue: [],
           firstEventBlockNumber: None,
           normalSelection: fetchState.normalSelection,
           chainId,
@@ -893,7 +874,6 @@ describe("FetchState.getNextQuery & integration", () => {
           },
           selection: normalSelection,
           addressesByContractName: Js.Dict.fromArray([("Gravatar", [mockAddress0])]),
-          fetchedEventQueue: [mockEvent(~blockNumber=2), mockEvent(~blockNumber=1)],
         },
       ],
       nextPartitionIndex: 1,
@@ -903,7 +883,7 @@ describe("FetchState.getNextQuery & integration", () => {
         blockNumber: 10,
         blockTimestamp: 10,
       },
-      queueSize: 2,
+      queue: [mockEvent(~blockNumber=2), mockEvent(~blockNumber=1)],
       firstEventBlockNumber: Some(1),
       endBlock: None,
       dcsToStore: None,
@@ -939,7 +919,6 @@ describe("FetchState.getNextQuery & integration", () => {
           },
           selection: normalSelection,
           addressesByContractName: Js.Dict.fromArray([("Gravatar", [mockAddress0])]),
-          fetchedEventQueue: [mockEvent(~blockNumber=2), mockEvent(~blockNumber=1)],
         },
         {
           id: "2",
@@ -952,7 +931,6 @@ describe("FetchState.getNextQuery & integration", () => {
           addressesByContractName: Js.Dict.fromArray([
             ("Gravatar", [mockAddress3, mockAddress2, mockAddress1]),
           ]),
-          fetchedEventQueue: [],
         },
       ],
       nextPartitionIndex: 3,
@@ -962,7 +940,7 @@ describe("FetchState.getNextQuery & integration", () => {
         blockNumber: 1,
         blockTimestamp: 0,
       },
-      queueSize: 2,
+      queue: [mockEvent(~blockNumber=2), mockEvent(~blockNumber=1)],
       firstEventBlockNumber: Some(1),
       endBlock: undefined,
       normalSelection,
@@ -979,13 +957,18 @@ describe("FetchState.getNextQuery & integration", () => {
       fs,
       ~endBlock=None,
       ~currentBlockHeight=10,
-      ~maxQueueSize=10,
+      ~targetBufferSize=10,
       ~concurrencyLimit=10,
     ) =>
       switch endBlock {
       | Some(_) => {...fs, endBlock}
       | None => fs
-      }->FetchState.getNextQuery(~currentBlockHeight, ~concurrencyLimit, ~maxQueueSize, ~stateId=0)
+      }->FetchState.getNextQuery(
+        ~currentBlockHeight,
+        ~concurrencyLimit,
+        ~targetBufferSize,
+        ~stateId=0,
+      )
 
     let fetchState = makeInitial()
 
@@ -1028,7 +1011,6 @@ describe("FetchState.getNextQuery & integration", () => {
             },
             selection: fetchState.normalSelection,
             addressesByContractName: Js.Dict.fromArray([("Gravatar", [mockAddress0])]),
-            fetchedEventQueue: [],
           },
         ],
       },
@@ -1083,12 +1065,12 @@ describe("FetchState.getNextQuery & integration", () => {
       when block height exceeded the end block`,
     )
     Assert.deepEqual(
-      updatedFetchState->getNextQuery(~maxQueueSize=2),
+      updatedFetchState->getNextQuery(~targetBufferSize=2),
       WaitingForNewBlock,
       ~message=`Should wait for new block even if partitions have nothing to query`,
     )
     Assert.deepEqual(
-      updatedFetchState->getNextQuery(~maxQueueSize=2, ~currentBlockHeight=11),
+      updatedFetchState->getNextQuery(~targetBufferSize=2, ~currentBlockHeight=11),
       NothingToQuery,
       ~message=`Should do nothing if the case above is not waiting for new block`,
     )
@@ -1109,13 +1091,18 @@ describe("FetchState.getNextQuery & integration", () => {
       fs,
       ~endBlock=None,
       ~currentBlockHeight=10,
-      ~maxQueueSize=10,
+      ~targetBufferSize=10,
       ~concurrencyLimit=10,
     ) =>
       switch endBlock {
       | Some(_) => {...fs, endBlock}
       | None => fs
-      }->FetchState.getNextQuery(~currentBlockHeight, ~concurrencyLimit, ~maxQueueSize, ~stateId=0)
+      }->FetchState.getNextQuery(
+        ~currentBlockHeight,
+        ~concurrencyLimit,
+        ~targetBufferSize,
+        ~stateId=0,
+      )
 
     let fetchState = makeInitial(~blockLag=2)
 
@@ -1189,13 +1176,18 @@ describe("FetchState.getNextQuery & integration", () => {
       fs,
       ~endBlock=None,
       ~currentBlockHeight=11,
-      ~maxQueueSize=10,
+      ~targetBufferSize=10,
       ~concurrencyLimit=10,
     ) =>
       switch endBlock {
       | Some(_) => {...fs, endBlock}
       | None => fs
-      }->FetchState.getNextQuery(~currentBlockHeight, ~concurrencyLimit, ~maxQueueSize, ~stateId=0)
+      }->FetchState.getNextQuery(
+        ~currentBlockHeight,
+        ~concurrencyLimit,
+        ~targetBufferSize,
+        ~stateId=0,
+      )
 
     // Continue with the state from previous test
     let fetchState = makeAfterFirstStaticAddressesQuery()
@@ -1232,7 +1224,6 @@ describe("FetchState.getNextQuery & integration", () => {
             addressesByContractName: Js.Dict.fromArray([
               ("Gravatar", [mockAddress2, mockAddress1]),
             ]),
-            fetchedEventQueue: [],
           },
           {
             id: "2",
@@ -1243,7 +1234,6 @@ describe("FetchState.getNextQuery & integration", () => {
             },
             selection: fetchState.normalSelection,
             addressesByContractName: Js.Dict.fromArray([("Gravatar", [mockAddress3])]),
-            fetchedEventQueue: [],
           },
         ]),
       },
@@ -1319,18 +1309,11 @@ describe("FetchState.getNextQuery & integration", () => {
     }
 
     Assert.deepEqual(
-      updatedFetchState->getNextQuery(~maxQueueSize=6),
+      updatedFetchState->getNextQuery(~targetBufferSize=6),
       Ready([expectedPartition2Query, expectedPartition1Query]),
       ~message=`Since the partition "2" reached the maxAddrNumber,
       there's no point to continue merging partitions,
       so we have two queries concurrently`,
-    )
-    Assert.deepEqual(
-      updatedFetchState->getNextQuery(~maxQueueSize=5),
-      Ready([expectedPartition2Query]),
-      ~message=`Partition queue size is adjusted according to
-      the number of fully fetched partitions + 1. In the case it should be 5 / 2 = 2,
-      so the partition "0" is skipped`,
     )
     Assert.deepEqual(
       updatedFetchState->getNextQuery(~concurrencyLimit=1),
@@ -1361,13 +1344,18 @@ describe("FetchState.getNextQuery & integration", () => {
       fs,
       ~endBlock=None,
       ~currentBlockHeight=11,
-      ~maxQueueSize=10,
+      ~targetBufferSize=10,
       ~concurrencyLimit=10,
     ) =>
       switch endBlock {
       | Some(_) => {...fs, endBlock}
       | None => fs
-      }->FetchState.getNextQuery(~currentBlockHeight, ~concurrencyLimit, ~maxQueueSize, ~stateId=0)
+      }->FetchState.getNextQuery(
+        ~currentBlockHeight,
+        ~concurrencyLimit,
+        ~targetBufferSize,
+        ~stateId=0,
+      )
 
     // Continue with the state from previous test
     // But increase the maxAddrInPartition up to 4
@@ -1431,7 +1419,6 @@ describe("FetchState.getNextQuery & integration", () => {
             },
             selection: fetchState.normalSelection,
             addressesByContractName: Js.Dict.fromArray([("Gravatar", [mockAddress0])]),
-            fetchedEventQueue: [mockEvent(~blockNumber=2), mockEvent(~blockNumber=1)],
           },
           {
             id: "2",
@@ -1444,23 +1431,23 @@ describe("FetchState.getNextQuery & integration", () => {
             addressesByContractName: Js.Dict.fromArray([
               ("Gravatar", [mockAddress3, mockAddress2, mockAddress1]),
             ]),
-            // dynamicContracts: [dc2, dc3, dc1],
-            fetchedEventQueue: [
-              mockEvent(~blockNumber=4, ~logIndex=6),
-              mockEvent(~blockNumber=4, ~logIndex=2),
-            ],
           },
         ],
         latestFullyFetchedBlock: {
           blockNumber: 9,
           blockTimestamp: 9,
         },
-        queueSize: 4,
+        queue: [
+          mockEvent(~blockNumber=4, ~logIndex=6),
+          mockEvent(~blockNumber=4, ~logIndex=2),
+          mockEvent(~blockNumber=2),
+          mockEvent(~blockNumber=1),
+        ],
       },
     )
 
     Assert.deepEqual(
-      fetchStateWithResponse1->getNextQuery(~maxQueueSize=0),
+      fetchStateWithResponse1->getNextQuery(~targetBufferSize=0),
       Ready([
         {
           partitionId: "2",
@@ -1476,10 +1463,10 @@ describe("FetchState.getNextQuery & integration", () => {
           indexingContracts: fetchState.indexingContracts,
         },
       ]),
-      ~message="MergeQuery should ignore the maxQueueSize limit",
+      ~message="MergeQuery should ignore the targetBufferSize limit",
     )
 
-    let query = switch fetchState->getNextQuery(~maxQueueSize=0) {
+    let query = switch fetchState->getNextQuery(~targetBufferSize=0) {
     | Ready([q]) => q
     | _ => Assert.fail("Failed to extract query. The getNextQuery should be idempotent")
     }
@@ -1512,19 +1499,18 @@ describe("FetchState.getNextQuery & integration", () => {
             addressesByContractName: Js.Dict.fromArray([
               ("Gravatar", [mockAddress0, mockAddress3, mockAddress2, mockAddress1]),
             ]),
-            // dynamicContracts: [dc2, dc3, dc1],
-            fetchedEventQueue: [
-              mockEvent(~blockNumber=4, ~logIndex=6),
-              mockEvent(~blockNumber=4, ~logIndex=2),
-              mockEvent(~blockNumber=2),
-              mockEvent(~blockNumber=1),
-            ],
           },
         ],
         latestFullyFetchedBlock: {
           blockNumber: 10,
           blockTimestamp: 10,
         },
+        queue: [
+          mockEvent(~blockNumber=4, ~logIndex=6),
+          mockEvent(~blockNumber=4, ~logIndex=2),
+          mockEvent(~blockNumber=2),
+          mockEvent(~blockNumber=1),
+        ],
       },
     )
 
@@ -1562,12 +1548,6 @@ describe("FetchState.getNextQuery & integration", () => {
             addressesByContractName: Js.Dict.fromArray([
               ("Gravatar", [mockAddress0, mockAddress3]),
             ]),
-            fetchedEventQueue: [
-              mockEvent(~blockNumber=4, ~logIndex=6),
-              mockEvent(~blockNumber=4, ~logIndex=2),
-              mockEvent(~blockNumber=2),
-              mockEvent(~blockNumber=1),
-            ],
           },
           {
             id: "2",
@@ -1580,13 +1560,18 @@ describe("FetchState.getNextQuery & integration", () => {
             addressesByContractName: Js.Dict.fromArray([
               ("Gravatar", [mockAddress2, mockAddress1]),
             ]),
-            fetchedEventQueue: [],
           },
         ],
         latestFullyFetchedBlock: {
           blockNumber: 10,
           blockTimestamp: 10,
         },
+        queue: [
+          mockEvent(~blockNumber=4, ~logIndex=6),
+          mockEvent(~blockNumber=4, ~logIndex=2),
+          mockEvent(~blockNumber=2),
+          mockEvent(~blockNumber=1),
+        ],
       },
       ~message=`If on merge the target partition exceeds maxAddrsInPartition,
       then it should keep the rest addresses in the merging partition`,
@@ -1623,7 +1608,7 @@ describe("FetchState.getNextQuery & integration", () => {
       fetchState->FetchState.getNextQuery(
         ~currentBlockHeight=10,
         ~concurrencyLimit=10,
-        ~maxQueueSize=10,
+        ~targetBufferSize=10,
         ~stateId=0,
       )
 
@@ -1679,8 +1664,6 @@ describe("FetchState.getNextQuery & integration", () => {
             },
             selection: fetchState.normalSelection,
             addressesByContractName: Js.Dict.fromArray([("Gravatar", [mockAddress0])]),
-            // Removed an item here, but kept the partition.
-            fetchedEventQueue: [mockEvent(~blockNumber=1)],
           },
           {
             id: "2",
@@ -1691,12 +1674,12 @@ describe("FetchState.getNextQuery & integration", () => {
               blockTimestamp: 0,
             },
             selection: fetchState.normalSelection,
-            addressesByContractName: Js.Dict.fromArray([("Gravatar", [mockAddress1])]),
-            fetchedEventQueue: [],
             // Removed dc2 and dc3, even though the latestFetchedBlock is not exceeding the lastScannedBlock
+            addressesByContractName: Js.Dict.fromArray([("Gravatar", [mockAddress1])]),
           },
         ],
-        queueSize: 1,
+        // Removed an item here, but kept the partition.
+        queue: [mockEvent(~blockNumber=1)],
       },
       ~message=`Should rollback the partition state, but keep them`,
     )
@@ -1721,14 +1704,13 @@ describe("FetchState.getNextQuery & integration", () => {
             },
             selection: fetchState.normalSelection,
             addressesByContractName: Js.Dict.fromArray([("Gravatar", [mockAddress0])]),
-            fetchedEventQueue: [],
           },
         ],
         latestFullyFetchedBlock: {
           blockNumber: 0,
           blockTimestamp: 0,
         },
-        queueSize: 0,
+        queue: [],
       },
       ~message=`Partition "2" should be removed, but the partition "0" should be kept`,
     )
@@ -1806,10 +1788,9 @@ describe("FetchState.getNextQuery & integration", () => {
               eventConfigs: wildcardEventConfigs,
             },
             addressesByContractName: Js.Dict.empty(),
-            fetchedEventQueue: [],
           },
         ],
-        queueSize: 0,
+        queue: [],
       },
       ~message=`Should keep Wildcard partition even if it's empty`,
     )
@@ -1833,11 +1814,6 @@ describe("FetchState unit tests for specific cases", () => {
           },
           selection: normalSelection,
           addressesByContractName: Js.Dict.empty(),
-          fetchedEventQueue: [
-            mockEvent(~blockNumber=4, ~logIndex=2),
-            mockEvent(~blockNumber=4),
-            mockEvent(~blockNumber=2),
-          ],
         },
         {
           id: "1",
@@ -1848,7 +1824,6 @@ describe("FetchState unit tests for specific cases", () => {
           },
           selection: normalSelection,
           addressesByContractName: Js.Dict.empty(),
-          fetchedEventQueue: [mockEvent(~blockNumber=3), mockEvent(~blockNumber=1)],
         },
       ],
       nextPartitionIndex: 2,
@@ -1858,7 +1833,13 @@ describe("FetchState unit tests for specific cases", () => {
         blockNumber: 1,
         blockTimestamp: 0,
       },
-      queueSize: 5,
+      queue: [
+        mockEvent(~blockNumber=4, ~logIndex=2),
+        mockEvent(~blockNumber=4),
+        mockEvent(~blockNumber=3),
+        mockEvent(~blockNumber=2),
+        mockEvent(~blockNumber=1),
+      ],
       firstEventBlockNumber: Some(1),
       endBlock: undefined,
       normalSelection,
@@ -1913,22 +1894,21 @@ describe("FetchState unit tests for specific cases", () => {
             },
             selection: fetchState.normalSelection,
             addressesByContractName: Js.Dict.empty(),
-            fetchedEventQueue: [
-              mockEvent(~blockNumber=4, ~logIndex=2),
-              mockEvent(~blockNumber=4, ~logIndex=1),
-              mockEvent(~blockNumber=4, ~logIndex=1),
-              mockEvent(~blockNumber=4),
-              mockEvent(~blockNumber=3),
-              mockEvent(~blockNumber=2),
-              mockEvent(~blockNumber=1),
-            ],
           },
         ],
         latestFullyFetchedBlock: {
           blockNumber: 10,
           blockTimestamp: 10,
         },
-        queueSize: 7,
+        queue: [
+          mockEvent(~blockNumber=4, ~logIndex=2),
+          mockEvent(~blockNumber=4, ~logIndex=1),
+          mockEvent(~blockNumber=4, ~logIndex=1),
+          mockEvent(~blockNumber=4),
+          mockEvent(~blockNumber=3),
+          mockEvent(~blockNumber=2),
+          mockEvent(~blockNumber=1),
+        ],
       },
       ~message="Should merge events in correct order",
     )
@@ -1993,7 +1973,7 @@ describe("FetchState unit tests for specific cases", () => {
       fetchState->FetchState.getNextQuery(
         ~concurrencyLimit=10,
         ~currentBlockHeight=2,
-        ~maxQueueSize=10,
+        ~targetBufferSize=10,
         ~stateId=0,
       ),
       Ready([
@@ -2016,146 +1996,12 @@ describe("FetchState unit tests for specific cases", () => {
       fetchState->FetchState.getNextQuery(
         ~concurrencyLimit=10,
         ~currentBlockHeight=2,
-        ~maxQueueSize=4,
+        ~targetBufferSize=2,
         ~stateId=0,
       ),
       NothingToQuery,
       ~message=`Should wait until queue is processed, to continue fetching.
       Don't wait for new block, until all partitions reached the head`,
-    )
-  })
-
-  it("Shouldn't query full partitions at the head until all partitions entered sync range", () => {
-    let currentBlockHeight = 1_000_000
-    let syncRange = 1_000 // Should be 1/1000 of block height
-
-    // FetchState with 2 full partitions,
-    // one of them reached the head
-    // For the test we have 1 address per partition,
-    // but in real life it's going to be 5000.
-    // And we don't want to query 5000 addresses every new block,
-    // until all partitions reached the head
-    let fetchState = FetchState.make(
-      ~eventConfigs=[
-        (Mock.evmEventConfig(~id="0", ~contractName="ContractA") :> Internal.eventConfig),
-      ],
-      ~staticContracts=Js.Dict.fromArray([("ContractA", [mockAddress0, mockAddress1])]),
-      ~dynamicContracts=[],
-      ~startBlock=0,
-      ~endBlock=None,
-      ~maxAddrInPartition=1,
-      ~chainId,
-    )
-    let fetchState =
-      fetchState
-      ->FetchState.handleQueryResult(
-        ~query={
-          partitionId: "0",
-          target: Head,
-          selection: fetchState.normalSelection,
-          addressesByContractName: Js.Dict.empty(),
-          fromBlock: 0,
-          indexingContracts: fetchState.indexingContracts,
-        },
-        ~latestFetchedBlock=getBlockData(~blockNumber=currentBlockHeight - syncRange),
-        ~reversedNewItems=[],
-        ~currentBlockHeight,
-      )
-      ->Result.getExn
-
-    Assert.deepEqual(
-      fetchState->FetchState.getNextQuery(
-        ~concurrencyLimit=10,
-        ~currentBlockHeight,
-        ~maxQueueSize=10,
-        ~stateId=0,
-      ),
-      Ready([
-        {
-          partitionId: "1",
-          target: Head,
-          selection: fetchState.normalSelection,
-          addressesByContractName: Js.Dict.fromArray([("ContractA", [mockAddress1])]),
-          fromBlock: 0,
-          indexingContracts: fetchState.indexingContracts,
-        },
-      ]),
-      ~message=`Should only query partition "1", since partition "0" already entered the sync range
-        and it need to wait until all partitions reach it`,
-    )
-
-    Assert.deepEqual(
-      fetchState->FetchState.getNextQuery(
-        ~concurrencyLimit=10,
-        ~currentBlockHeight=currentBlockHeight + 1,
-        ~maxQueueSize=10,
-        ~stateId=0,
-      ),
-      Ready([
-        {
-          partitionId: "0",
-          target: Head,
-          selection: fetchState.normalSelection,
-          addressesByContractName: Js.Dict.fromArray([("ContractA", [mockAddress0])]),
-          fromBlock: 999001,
-          indexingContracts: fetchState.indexingContracts,
-        },
-        {
-          partitionId: "1",
-          target: Head,
-          selection: fetchState.normalSelection,
-          addressesByContractName: Js.Dict.fromArray([("ContractA", [mockAddress1])]),
-          fromBlock: 0,
-          indexingContracts: fetchState.indexingContracts,
-        },
-      ]),
-      ~message=`After partition exists from the sync range, it should be included to the query again.
-        Not a perfect solution, but as a quick fix it's good to query every 1000+ blocks than every block`,
-    )
-
-    let fetchStateWithBothInSyncRange =
-      fetchState
-      ->FetchState.handleQueryResult(
-        ~query={
-          partitionId: "1",
-          target: Head,
-          selection: fetchState.normalSelection,
-          addressesByContractName: Js.Dict.empty(),
-          fromBlock: 0,
-          indexingContracts: fetchState.indexingContracts,
-        },
-        ~latestFetchedBlock=getBlockData(~blockNumber=currentBlockHeight - syncRange),
-        ~reversedNewItems=[],
-        ~currentBlockHeight,
-      )
-      ->Result.getExn
-
-    Assert.deepEqual(
-      fetchStateWithBothInSyncRange->FetchState.getNextQuery(
-        ~concurrencyLimit=10,
-        ~currentBlockHeight,
-        ~maxQueueSize=10,
-        ~stateId=0,
-      ),
-      Ready([
-        {
-          partitionId: "0",
-          target: Head,
-          selection: fetchState.normalSelection,
-          addressesByContractName: Js.Dict.fromArray([("ContractA", [mockAddress0])]),
-          fromBlock: 999001,
-          indexingContracts: fetchState.indexingContracts,
-        },
-        {
-          partitionId: "1",
-          target: Head,
-          selection: fetchState.normalSelection,
-          addressesByContractName: Js.Dict.fromArray([("ContractA", [mockAddress1])]),
-          fromBlock: 999001,
-          indexingContracts: fetchState.indexingContracts,
-        },
-      ]),
-      ~message=`Should query both partitions when both are in the sync range`,
     )
   })
 
@@ -2258,6 +2104,8 @@ describe("FetchState unit tests for specific cases", () => {
       )
       ->Result.getExn
 
+    Js.log(updatedFetchState)
+
     Assert.deepEqual(
       updatedFetchState->FetchState.getEarliestEvent,
       NoItem({
@@ -2287,11 +2135,6 @@ describe("FetchState unit tests for specific cases", () => {
           latestFetchedBlock,
           selection: normalSelection,
           addressesByContractName: Js.Dict.empty(),
-          fetchedEventQueue: [
-            mockEvent(~blockNumber=6, ~logIndex=2),
-            mockEvent(~blockNumber=4),
-            mockEvent(~blockNumber=2, ~logIndex=1),
-          ],
         },
         {
           id: "1",
@@ -2299,18 +2142,17 @@ describe("FetchState unit tests for specific cases", () => {
           latestFetchedBlock,
           selection: normalSelection,
           addressesByContractName: Js.Dict.empty(),
-          fetchedEventQueue: [
-            mockEvent(~blockNumber=6, ~logIndex=1),
-            mockEvent(~blockNumber=5),
-            mockEvent(~blockNumber=2, ~logIndex=2),
-          ],
         },
       ],
       nextPartitionIndex: 2,
       isFetchingAtHead: false,
       maxAddrInPartition: 2,
       latestFullyFetchedBlock: latestFetchedBlock,
-      queueSize: 5,
+      queue: [
+        mockEvent(~blockNumber=6, ~logIndex=1),
+        mockEvent(~blockNumber=5),
+        mockEvent(~blockNumber=2, ~logIndex=1),
+      ],
       firstEventBlockNumber: Some(1),
       endBlock: undefined,
       normalSelection,
@@ -2600,7 +2442,7 @@ describe("FetchState unit tests for specific cases", () => {
       let queryA = switch fetchStateWithDcA->FetchState.getNextQuery(
         ~concurrencyLimit=10,
         ~currentBlockHeight,
-        ~maxQueueSize=10,
+        ~targetBufferSize=10,
         ~stateId=0,
       ) {
       | Ready([q]) => {
@@ -2641,7 +2483,7 @@ describe("FetchState unit tests for specific cases", () => {
         fetchStateWithDcB->FetchState.getNextQuery(
           ~concurrencyLimit=10,
           ~currentBlockHeight,
-          ~maxQueueSize=10,
+          ~targetBufferSize=10,
           ~stateId=0,
         ),
         NothingToQuery,
@@ -2663,7 +2505,7 @@ describe("FetchState unit tests for specific cases", () => {
         fetchStateWithBothDcsAndQueryAResponse->FetchState.getNextQuery(
           ~concurrencyLimit=10,
           ~currentBlockHeight,
-          ~maxQueueSize=10,
+          ~targetBufferSize=10,
           ~stateId=0,
         ),
         Ready([

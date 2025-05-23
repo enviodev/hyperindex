@@ -713,12 +713,10 @@ let isFullPartition = (p: partition, ~maxAddrInPartition) => {
 let getNextQuery = (
   {queue, partitions, maxAddrInPartition, endBlock, indexingContracts, blockLag}: t,
   ~concurrencyLimit,
-  ~maxQueueSize as _,
+  ~targetBufferSize,
   ~currentBlockHeight,
   ~stateId,
 ) => {
-  let batchSize = 5000
-
   if currentBlockHeight === 0 {
     WaitingForNewBlock
   } else if concurrencyLimit === 0 {
@@ -800,14 +798,21 @@ let getNextQuery = (
       }
     }
 
-    // We want to limit the buffer size to 3 * batchSize
+    // We want to limit the buffer size to targetBufferSize (usually 3 * batchSize)
     // To make sure the processing always has some buffer
     // and not increase the memory usage too much
     // If a partition fetched further than 3 * batchSize,
     // it should be skipped until the buffer is consumed
-    let maxQueryBlockNumber = switch queue->Array.get(queue->Array.length - 1 - batchSize * 3) {
-    | Some(item) => Pervasives.min(item.blockNumber, currentBlockHeight) // Just in case check that we don't query beyond the current block
-    | None => currentBlockHeight
+    let maxQueryBlockNumber = {
+      let targetBlockIdx = queue->Array.length - targetBufferSize
+      if targetBlockIdx < 0 {
+        currentBlockHeight
+      } else {
+        switch queue->Array.get(targetBlockIdx) {
+        | Some(item) => Pervasives.min(item.blockNumber, currentBlockHeight) // Just in case check that we don't query beyond the current block
+        | None => currentBlockHeight
+        }
+      }
     }
     let queries = []
 
@@ -943,7 +948,11 @@ queue item with an update fetch state.
 let getEarliestEvent = ({queue, latestFullyFetchedBlock}: t) => {
   switch queue->Utils.Array.last {
   | Some(item) =>
-    if item.blockNumber <= latestFullyFetchedBlock.blockNumber {
+    if (
+      item.blockNumber <= latestFullyFetchedBlock.blockNumber &&
+        // FIXME: Should make latestFullyFetchedBlock a -1 instead
+        item.blockNumber > 0
+    ) {
       Item({item, popItemOffQueue: () => queue->Js.Array2.pop->ignore})
     } else {
       NoItem({
