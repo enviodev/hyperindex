@@ -271,6 +271,9 @@ pub enum Network {
     NeonEvm = 245022934,
 
     #[subenum(HypersyncNetwork, NetworkWithExplorer)]
+    Nibiru = 6900,
+
+    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     Opbnb = 204,
 
     #[subenum(HypersyncNetwork, NetworkWithExplorer, GraphNetwork)]
@@ -476,6 +479,7 @@ impl Network {
             | Network::Moonriver
             | Network::Mumbai
             | Network::NeonEvm
+            | Network::Nibiru
             | Network::PoaCore
             | Network::PoaSokol
             | Network::Polygon
@@ -586,7 +590,7 @@ impl HypersyncNetwork {
             | ArbitrumSepolia | Fraxtal | Soneium | BaseSepolia | MevCommit | Merlin | Mode
             | MoonbaseAlpha | XdcTestnet | Morph | Harmony | Saakuru | Cyber | Superseed
             | MegaethTestnet | Sonic | Worldchain | Sophon | Fantom | Sepolia | Rsk | Chiliz
-            | Lisk | Hyperliquid | Swell | Moonbeam => Stone,
+            | Lisk | Hyperliquid | Swell | Moonbeam | Nibiru => Stone,
         }
     }
 
