@@ -356,6 +356,12 @@ module.exports.deleteRolledBackEntityHistory = (
         first_change_serial
       FROM
         first_change
+    )
+    -- Filter out rows with a chain_id of 0 since they are the copied history rows
+    -- check timestamp as well in case a future chain is added with id of 0
+    AND NOT (
+      entity_history_chain_id = 0 AND
+      entity_history_block_timestamp = 0
     );
   `;
 

@@ -648,11 +648,18 @@ describe_only("Entity history rollbacks", () => {
 
       let historyItems = {
         let items = await Db.sql->getAllMockEntityHistory
-        Js.log2("historyItems", items)
         items->S.parseJsonOrThrow(TestEntity.entityHistory.schemaRows)
       }
 
       Assert.equal(historyItems->Js.Array2.length, 2, ~message="Should have the 2 copied items")
+
+      let allItemsAreZeroChainId =
+        historyItems->Belt.Array.every(item => item.current.chain_id == 0)
+
+      Assert.ok(
+        allItemsAreZeroChainId,
+        ~message="Should have all items in the zero chain id since they are copied",
+      )
     },
   )
 })
