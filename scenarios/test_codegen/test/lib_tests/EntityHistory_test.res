@@ -404,6 +404,10 @@ module Mocks = {
     let entityId2 = "2"
     let mockEntity5 = {id: entityId2, fieldA: 5, fieldB: None}
     let mockEntity6 = {id: entityId2, fieldA: 6, fieldB: None}
+
+    let entityId3 = "3"
+    let mockEntity7 = {id: entityId3, fieldA: 7, fieldB: None}
+    let mockEntity8 = {id: entityId3, fieldA: 8, fieldB: None}
   }
 
   module GnosisBug = {
@@ -436,6 +440,28 @@ module Mocks = {
     }
 
     let historyRows = [historyRow1, historyRow2]
+
+    // For setting a different entity and testing pruning
+    let event3: EntityHistory.historyFields = {
+      chain_id,
+      block_timestamp: 12 * 5,
+      block_number: 12,
+      log_index: 0,
+    }
+
+    let historyRow3: testEntityHistory = {
+      current: event3,
+      previous: None,
+      entityData: Set(Entity.mockEntity3),
+    }
+
+    let historyRow4: testEntityHistory = {
+      current: event3,
+      previous: None,
+      entityData: Set(Entity.mockEntity8),
+    }
+
+    let historyRowsForPrune = [historyRow3, historyRow4]
   }
 
   module Chain1 = {
@@ -662,6 +688,51 @@ describe_only("Entity history rollbacks", () => {
       )
     },
   )
+
+  Async.it("Prunes history correctly with items in reorg threshold", async () => {
+    // set the current entity of id 3
+    await Db.sql->DbFunctionsEntities.batchSet(~entityMod=module(TestEntity))([
+      Mocks.Entity.mockEntity7,
+    ])
+
+    // set an updated version of its row to get a copied entity history
+    try await Db.sql->Postgres.beginSql(
+      sql => [
+        TestEntity.entityHistory->EntityHistory.batchInsertRows(
+          ~sql,
+          ~rows=Mocks.GnosisBug.historyRowsForPrune,
+        ),
+      ],
+    ) catch {
+    | exn =>
+      Js.log2("insert mock rows exn", exn)
+      Assert.fail("Failed to insert mock rows")
+    }
+
+    // let historyItemsBefore = {
+    //   let items = await Db.sql->getAllMockEntityHistory
+    //   Js.log2("history items before prune", items)
+    //   items->S.parseJsonOrThrow(TestEntity.entityHistory.schemaRows)
+    // }
+
+    await Db.sql->DbFunctions.EntityHistory.pruneStaleEntityHistory(
+      ~entityName=TestEntity.name,
+      ~safeChainIdAndBlockNumberArray=[{chainId: Mocks.GnosisBug.chain_id, blockNumber: 11}],
+      ~shouldDeepClean=true,
+    )
+
+    let historyItemsAfter = {
+      let items = await Db.sql->getAllMockEntityHistory
+      // Js.log2("history items after prune", items)
+      items->S.parseJsonOrThrow(TestEntity.entityHistory.schemaRows)
+    }
+
+    Assert.equal(
+      historyItemsAfter->Js.Array2.length,
+      4,
+      ~message="Should have 4 history items for entity id 1 and 3 before and after block 11",
+    )
+  })
 })
 
 describe("Entity history rollbacks", () => {
