@@ -323,6 +323,9 @@ pub enum Network {
     Sepolia = 11155111,
 
     #[subenum(HypersyncNetwork, NetworkWithExplorer)]
+    Shardeum = 8118,
+
+    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     ShimmerEvm = 148,
 
     #[subenum(HypersyncNetwork)]
@@ -486,6 +489,7 @@ impl Network {
             | Network::Scroll
             | Network::ScrollSepolia
             | Network::Sepolia
+            | Network::Shardeum
             | Network::ShimmerEvm
             | Network::Sophon
             | Network::SophonTestnet
@@ -586,7 +590,7 @@ impl HypersyncNetwork {
             | ArbitrumSepolia | Fraxtal | Soneium | BaseSepolia | MevCommit | Merlin | Mode
             | MoonbaseAlpha | XdcTestnet | Morph | Harmony | Saakuru | Cyber | Superseed
             | MegaethTestnet | Sonic | Worldchain | Sophon | Fantom | Sepolia | Rsk | Chiliz
-            | Lisk | Hyperliquid | Swell | Moonbeam => Stone,
+            | Lisk | Hyperliquid | Swell | Moonbeam | Shardeum => Stone,
         }
     }
 
