@@ -308,7 +308,6 @@ describe("Single Chain Simple Rollback", () => {
         Rollback,
         UpdateChainMetaDataAndCheckForExit(NoExit),
         ProcessEventBatch,
-        PruneStaleEntityHistory,
       ],
       ~message="should detect rollback with reorg chain",
     )
@@ -372,7 +371,6 @@ describe("Single Chain Simple Rollback", () => {
         "ProcessPartitionQueryResponse",
         "UpdateChainMetaDataAndCheckForExit",
         "ProcessEventBatch",
-        "PruneStaleEntityHistory",
       ],
     )
     Assert.deepEqual(

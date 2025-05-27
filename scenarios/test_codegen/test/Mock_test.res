@@ -57,6 +57,8 @@ describe_skip("E2E Db check", () => {
       ~loadLayer,
       ~config,
       ~isInReorgThreshold=false,
+      // Pass in if pruning is needed
+      ~safeChainIdAndBlockNumberArray=[],
     )
 
     //// TODO: write code (maybe via dependency injection) to allow us to use the stub rather than the actual database here.

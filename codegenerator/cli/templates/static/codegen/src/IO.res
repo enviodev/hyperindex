@@ -163,7 +163,15 @@ let executeDbFunctionsEntity = (
   promises->Promise.all->Promise.thenResolve(_ => ())
 }
 
-let executeBatch = async (sql, ~inMemoryStore: InMemoryStore.t, ~isInReorgThreshold, ~config) => {
+let deepCleanCount = ref(0)
+
+let executeBatch = async (
+  sql,
+  ~inMemoryStore: InMemoryStore.t,
+  ~isInReorgThreshold,
+  ~config,
+  ~safeChainIdAndBlockNumberArray,
+) => {
   let entityDbExecutionComposer =
     config->Config.shouldSaveHistory(~isInReorgThreshold)
       ? executeSetEntityWithHistory
@@ -212,6 +220,51 @@ let executeBatch = async (sql, ~inMemoryStore: InMemoryStore.t, ~isInReorgThresh
       setEntities,
     ])->Belt.Array.map(dbFunc => sql->dbFunc)
   })
+
+  if config->Config.shouldPruneHistory(~isInReorgThreshold) {
+    if safeChainIdAndBlockNumberArray->Belt.Array.length > 0 {
+      let shouldDeepClean = if (
+        deepCleanCount.contents == Env.ThrottleWrites.deepCleanEntityHistoryCycleCount
+      ) {
+        deepCleanCount := 0
+        true
+      } else {
+        deepCleanCount := deepCleanCount.contents + 1
+        false
+      }
+      let timeRef = Hrtime.makeTimer()
+      let logger = Logging.createChild(
+        ~params={
+          "action": "PruneStaleEntityHistory",
+          "deepCleanCycleCount": deepCleanCount.contents,
+          "shouldDeepClean": shouldDeepClean,
+          "safeBlockNumbers": safeChainIdAndBlockNumberArray,
+        },
+      )
+      logger->Logging.childTrace("Prune stale entity history")
+      let _ = await Promise.all(
+        Entities.allEntities->Belt.Array.map(entityMod => {
+          let module(Entity) = entityMod
+          Db.sql->DbFunctions.EntityHistory.pruneStaleEntityHistory(
+            ~entityName=Entity.name,
+            ~safeChainIdAndBlockNumberArray,
+            ~shouldDeepClean,
+          )
+        }),
+      )
+      logger->Logging.childTrace("Finished pruning stale entity history")
+
+      if Env.Benchmark.shouldSaveData {
+        let elapsedTimeMillis = Hrtime.timeSince(timeRef)->Hrtime.toMillis->Hrtime.floatFromMillis
+
+        Benchmark.addSummaryData(
+          ~group="Other",
+          ~label="Prune Stale History Time (ms)",
+          ~value=elapsedTimeMillis,
+        )
+      }
+    }
+  }
 
   res
 }

@@ -35,10 +35,7 @@ module EventsProcessed = {
   }
 }
 
-let updateEventSyncState = (
-  eventItem: Internal.eventItem,
-  ~inMemoryStore: InMemoryStore.t,
-) => {
+let updateEventSyncState = (eventItem: Internal.eventItem, ~inMemoryStore: InMemoryStore.t) => {
   let {event, chain, blockNumber, timestamp: blockTimestamp} = eventItem
   let {logIndex} = event
   let chainId = chain->ChainMap.Chain.toChainId
@@ -325,6 +322,7 @@ let processEventBatch = (
   ~eventBatch: array<Internal.eventItem>,
   ~inMemoryStore: InMemoryStore.t,
   ~isInReorgThreshold,
+  ~safeChainIdAndBlockNumberArray,
   ~latestProcessedBlocks: EventsProcessed.t,
   ~loadLayer,
   ~config,
@@ -359,7 +357,12 @@ let processEventBatch = (
 
     let elapsedTimeAfterProcess = timeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
 
-    switch await Db.sql->IO.executeBatch(~inMemoryStore, ~isInReorgThreshold, ~config) {
+    switch await Db.sql->IO.executeBatch(
+      ~inMemoryStore,
+      ~isInReorgThreshold,
+      ~config,
+      ~safeChainIdAndBlockNumberArray,
+    ) {
     | exception exn =>
       exn->ErrorHandling.make(~msg="Failed writing batch to database", ~logger)->Error->propogate
     | () => ()

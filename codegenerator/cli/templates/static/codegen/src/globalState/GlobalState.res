@@ -159,7 +159,6 @@ type task =
   | ProcessEventBatch
   | UpdateChainMetaDataAndCheckForExit(shouldExit)
   | Rollback
-  | PruneStaleEntityHistory
 
 let updateChainFetcherCurrentBlockHeight = (chainFetcher: ChainFetcher.t, ~currentBlockHeight) => {
   if currentBlockHeight > chainFetcher.currentBlockHeight {
@@ -610,18 +609,9 @@ let actionReducer = (state: t, action: action) => {
       ~query,
       ~chain,
     )
-  | EventBatchProcessed(latestProcessedBlocks) =>
-    let maybePruneEntityHistory =
-      state.config->Config.shouldPruneHistory(
-        ~isInReorgThreshold=state.chainManager.isInReorgThreshold,
-      )
-        ? [PruneStaleEntityHistory]
-        : []
-    (
+  | EventBatchProcessed(latestProcessedBlocks) => (
       updateLatestProcessedBlocks(~state, ~latestProcessedBlocks),
-      [UpdateChainMetaDataAndCheckForExit(NoExit), ProcessEventBatch]->Array.concat(
-        maybePruneEntityHistory,
-      ),
+      [UpdateChainMetaDataAndCheckForExit(NoExit), ProcessEventBatch],
     )
   | SetCurrentlyProcessing(currentlyProcessingBatch) => ({...state, currentlyProcessingBatch}, [])
   | SetIsInReorgThreshold(isInReorgThreshold) =>
@@ -786,46 +776,6 @@ let injectedTaskReducer = (
 
     let throttler = state.writeThrottlers.pruneStaleEndBlockData->ChainMap.get(chain)
     throttler->Throttler.schedule(runPrune)
-  | PruneStaleEntityHistory =>
-    let runPrune = async () => {
-      let safeChainIdAndBlockNumberArray =
-        state.chainManager->ChainManager.getSafeChainIdAndBlockNumberArray
-
-      if safeChainIdAndBlockNumberArray->Belt.Array.length > 0 {
-        let shouldDeepClean = if (
-          state.writeThrottlers.deepCleanCount ==
-            Env.ThrottleWrites.deepCleanEntityHistoryCycleCount
-        ) {
-          state.writeThrottlers.deepCleanCount = 0
-          true
-        } else {
-          state.writeThrottlers.deepCleanCount = state.writeThrottlers.deepCleanCount + 1
-          false
-        }
-        let timeRef = Hrtime.makeTimer()
-        let _ = await Promise.all(
-          Entities.allEntities->Belt.Array.map(entityMod => {
-            let module(Entity) = entityMod
-            Db.sql->DbFunctions.EntityHistory.pruneStaleEntityHistory(
-              ~entityName=Entity.name,
-              ~safeChainIdAndBlockNumberArray,
-              ~shouldDeepClean,
-            )
-          }),
-        )
-
-        if Env.Benchmark.shouldSaveData {
-          let elapsedTimeMillis = Hrtime.timeSince(timeRef)->Hrtime.toMillis->Hrtime.floatFromMillis
-
-          Benchmark.addSummaryData(
-            ~group="Other",
-            ~label="Prune Stale History Time (ms)",
-            ~value=elapsedTimeMillis,
-          )
-        }
-      }
-    }
-    state.writeThrottlers.pruneStaleEntityHistory->Throttler.schedule(runPrune)
 
   | UpdateChainMetaDataAndCheckForExit(shouldExit) =>
     let {chainManager, writeThrottlers} = state
@@ -919,6 +869,7 @@ let injectedTaskReducer = (
             ~latestProcessedBlocks,
             ~loadLayer=state.loadLayer,
             ~config=state.config,
+            ~safeChainIdAndBlockNumberArray=state.chainManager->ChainManager.getSafeChainIdAndBlockNumberArray,
           ) {
           | exception exn =>
             //All casese should be handled/caught before this with better user messaging.
