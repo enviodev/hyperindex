@@ -804,10 +804,9 @@ let injectedTaskReducer = (
         }
         let timeRef = Hrtime.makeTimer()
         let _ = await Promise.all(
-          Entities.allEntities->Belt.Array.map(entityMod => {
-            let module(Entity) = entityMod
+          Entities.allEntities->Belt.Array.map(entityConfig => {
             Db.sql->DbFunctions.EntityHistory.pruneStaleEntityHistory(
-              ~entityName=Entity.name,
+              ~entityName=entityConfig.name,
               ~safeChainIdAndBlockNumberArray,
               ~shouldDeepClean,
             )

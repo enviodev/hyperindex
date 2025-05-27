@@ -54,6 +54,8 @@ module TestEntity = {
   )
 
   let entityHistory = table->EntityHistory.fromTable(~schema)
+
+  external castToInternal: t => Internal.entity = "%identity"
 }
 
 type testEntityHistory = EntityHistory.historyRow<TestEntity.t>
@@ -775,7 +777,7 @@ describe("Entity history rollbacks", () => {
   Async.it("Returns expected diff for ordered multichain mode", async () => {
     let orderdMultichainRollbackDiff = try await Db.sql->DbFunctions.EntityHistory.getRollbackDiff(
       Mocks.Chain1.orderedMultichainArg,
-      ~entityMod=module(TestEntity),
+      ~entityConfig=module(TestEntity)->Entities.entityModToInternal,
     ) catch {
     | exn =>
       Js.log2("getRollbackDiff exn", exn)
@@ -794,7 +796,7 @@ describe("Entity history rollbacks", () => {
       )
       Assert.deepEqual(
         entitySetA,
-        Mocks.Entity.mockEntity2,
+        Mocks.Entity.mockEntity2->TestEntity.castToInternal,
         ~message="First history item should haved diffed to mockEntity2",
       )
       Assert.deepEqual(
@@ -814,7 +816,7 @@ describe("Entity history rollbacks", () => {
   Async.it("Returns expected diff for unordered multichain mode", async () => {
     let unorderedMultichainRollbackDiff = try await Db.sql->DbFunctions.EntityHistory.getRollbackDiff(
       Mocks.Chain1.unorderedMultichainArg,
-      ~entityMod=module(TestEntity),
+      ~entityConfig=module(TestEntity)->Entities.entityModToInternal,
     ) catch {
     | exn =>
       Js.log2("getRollbackDiff exn", exn)
@@ -830,7 +832,7 @@ describe("Entity history rollbacks", () => {
       )
       Assert.deepEqual(
         entitySetA,
-        Mocks.Entity.mockEntity2,
+        Mocks.Entity.mockEntity2->TestEntity.castToInternal,
         ~message="First history item should haved diffed to mockEntity2",
       )
     | _ => Assert.fail("Should have only chain 1 item in diff")
@@ -940,7 +942,7 @@ describe("Entity history rollbacks", () => {
 
   Async.it("Prunes history correctly with items in reorg threshold", async () => {
     await Db.sql->DbFunctions.EntityHistory.pruneStaleEntityHistory(
-      ~entityName=TestEntity.name,
+      ~entityName=(module(TestEntity)->Entities.entityModToInternal).name,
       ~safeChainIdAndBlockNumberArray=[{chainId: 1, blockNumber: 3}, {chainId: 2, blockNumber: 2}],
       ~shouldDeepClean=true,
     )
@@ -972,7 +974,7 @@ describe("Entity history rollbacks", () => {
     "Deep clean prunes history correctly with items in reorg threshold without checking for stale history entities in threshold",
     async () => {
       await Db.sql->DbFunctions.EntityHistory.pruneStaleEntityHistory(
-        ~entityName=TestEntity.name,
+        ~entityName=(module(TestEntity)->Entities.entityModToInternal).name,
         ~safeChainIdAndBlockNumberArray=[
           {chainId: 1, blockNumber: 3},
           {chainId: 2, blockNumber: 2},
@@ -998,7 +1000,7 @@ describe("Entity history rollbacks", () => {
   )
   Async.it("Prunes history correctly with no items in reorg threshold", async () => {
     await Db.sql->DbFunctions.EntityHistory.pruneStaleEntityHistory(
-      ~entityName=TestEntity.name,
+      ~entityName=(module(TestEntity)->Entities.entityModToInternal).name,
       ~safeChainIdAndBlockNumberArray=[{chainId: 1, blockNumber: 4}, {chainId: 2, blockNumber: 3}],
       ~shouldDeepClean=true,
     )
@@ -1053,7 +1055,7 @@ describe_skip("Prune performance test", () => {
     let startTime = Hrtime.makeTimer()
 
     try await Db.sql->DbFunctions.EntityHistory.pruneStaleEntityHistory(
-      ~entityName=TestEntity.name,
+      ~entityName=(module(TestEntity)->Entities.entityModToInternal).name,
       ~safeChainIdAndBlockNumberArray=[{chainId: 1, blockNumber: 500}],
       ~shouldDeepClean=false,
     ) catch {

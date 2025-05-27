@@ -45,9 +45,14 @@ describe_skip("E2E Db check", () => {
     let config = RegisterHandlers.registerAllHandlers()
     let loadLayer = LoadLayer.makeWithDbConnection()
 
-    let _ = await DbFunctionsEntities.batchSet(~entityMod=module(Entities.Gravatar))(
+    let _ = await DbFunctionsEntities.batchSet(
+      ~entityConfig=module(Entities.Gravatar)->Entities.entityModToInternal,
+    )(
       Migrations.sql,
-      [MockEntities.gravatarEntity1, MockEntities.gravatarEntity2],
+      [
+        MockEntities.gravatarEntity1->Entities.Gravatar.castToInternal,
+        MockEntities.gravatarEntity2->Entities.Gravatar.castToInternal,
+      ],
     )
 
     let _ = await EventProcessing.processEventBatch(
@@ -68,7 +73,9 @@ describe_skip("E2E Db check", () => {
   it("Validate inmemory store state", () => {
     let gravatars =
       inMemoryStore.entities
-      ->InMemoryStore.EntityTables.get(module(Entities.Gravatar))
+      ->InMemoryStore.EntityTables.get(
+        ~entityConfig=module(Entities.Gravatar)->Entities.entityModToInternal,
+      )
       ->InMemoryTable.Entity.values
 
     Assert.deepEqual(
@@ -81,7 +88,7 @@ describe_skip("E2E Db check", () => {
           imageUrl: "https://gravatar1.com",
           updatesCount: BigInt.fromInt(2),
           size: MEDIUM,
-        },
+        }->Entities.Gravatar.castToInternal,
         {
           id: "1002",
           owner_id: "0x4560000000000000000000000000000000000000",
@@ -89,7 +96,7 @@ describe_skip("E2E Db check", () => {
           imageUrl: "https://gravatar2.com",
           updatesCount: BigInt.fromInt(2),
           size: MEDIUM,
-        },
+        }->Entities.Gravatar.castToInternal,
         {
           id: "1003",
           owner_id: "0x7890000000000000000000000000000000000000",
@@ -97,7 +104,7 @@ describe_skip("E2E Db check", () => {
           imageUrl: "https://gravatar3.com",
           updatesCount: BigInt.fromInt(2),
           size: MEDIUM,
-        },
+        }->Entities.Gravatar.castToInternal,
       ],
     )
   })

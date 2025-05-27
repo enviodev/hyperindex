@@ -61,13 +61,13 @@ type handlerContextParams = {
 }
 
 let makeEntityHandlerContext = (
-  ~entityMod: module(Entities.InternalEntity),
+  ~entityConfig: Internal.entityConfig,
   ~params,
-): Types.entityHandlerContext<Entities.internalEntity> => {
+): Types.entityHandlerContext<Internal.entity> => {
   {
     set: entity => {
       params.inMemoryStore
-      ->InMemoryStore.getInMemTable(~entityMod)
+      ->InMemoryStore.getInMemTable(~entityConfig)
       ->InMemoryTable.Entity.set(
         Set(entity)->Types.mkEntityUpdate(
           ~eventIdentifier=params.eventItem->makeEventIdentifier,
@@ -78,7 +78,7 @@ let makeEntityHandlerContext = (
     },
     deleteUnsafe: entityId => {
       params.inMemoryStore
-      ->InMemoryStore.getInMemTable(~entityMod)
+      ->InMemoryStore.getInMemTable(~entityConfig)
       ->InMemoryTable.Entity.set(
         Delete->Types.mkEntityUpdate(
           ~eventIdentifier=params.eventItem->makeEventIdentifier,
@@ -89,7 +89,7 @@ let makeEntityHandlerContext = (
     },
     get: entityId =>
       params.loadLayer->LoadLayer.loadById(
-        ~entityMod,
+        ~entityConfig,
         ~inMemoryStore=params.inMemoryStore,
         ~shouldGroup=false,
         ~eventItem=params.eventItem,
@@ -112,7 +112,7 @@ let handlerTraps: Utils.Proxy.traps<handlerContextParams> = {
 
     | _ =>
       switch Entities.byName->Utils.Dict.dangerouslyGetNonOption(prop) {
-      | Some(entityMod) => makeEntityHandlerContext(~entityMod, ~params)->Utils.magic
+      | Some(entityConfig) => makeEntityHandlerContext(~entityConfig, ~params)->Utils.magic
       | None =>
         Js.Exn.raiseError(`Invalid context access by '${prop}' property. ${codegenHelpMessage}`)
       }
@@ -132,22 +132,22 @@ let getHandlerArgs = (params: handlerContextParams, ~loaderReturn): Internal.han
 
 type loaderEntityContextParams = {
   ...baseContextParams,
-  entityMod: module(Entities.InternalEntity),
+  entityConfig: Internal.entityConfig,
 }
 
 let getWhereTraps: Utils.Proxy.traps<loaderEntityContextParams> = {
   get: (~target as params, ~prop: unknown) => {
-    let module(Entity) = params.entityMod
+    let entityConfig = params.entityConfig
     if prop->Js.typeof !== "string" {
       Js.Exn.raiseError(
-        `Invalid context.${(Entity.name :> string)}.getWhere access by a non-string property.`,
+        `Invalid context.${entityConfig.name}.getWhere access by a non-string property.`,
       )
     } else {
       let dbFieldName = prop->(Utils.magic: unknown => string)
-      switch Entity.table->Table.getFieldByDbName(dbFieldName) {
+      switch entityConfig.table->Table.getFieldByDbName(dbFieldName) {
       | None =>
         Js.Exn.raiseError(
-          `Invalid context.${(Entity.name :> string)}.getWhere.${dbFieldName} - the field doesn't exist. ${codegenHelpMessage}`,
+          `Invalid context.${entityConfig.name}.getWhere.${dbFieldName} - the field doesn't exist. ${codegenHelpMessage}`,
         )
       | Some(field) =>
         let fieldValueSchema = switch field {
@@ -158,7 +158,7 @@ let getWhereTraps: Utils.Proxy.traps<loaderEntityContextParams> = {
           Entities.eq: fieldValue =>
             params.loadLayer->LoadLayer.loadByField(
               ~operator=Eq,
-              ~entityMod=params.entityMod,
+              ~entityConfig,
               ~fieldName=dbFieldName,
               ~fieldValueSchema,
               ~inMemoryStore=params.inMemoryStore,
@@ -169,7 +169,7 @@ let getWhereTraps: Utils.Proxy.traps<loaderEntityContextParams> = {
           gt: fieldValue =>
             params.loadLayer->LoadLayer.loadByField(
               ~operator=Gt,
-              ~entityMod=params.entityMod,
+              ~entityConfig,
               ~fieldName=dbFieldName,
               ~fieldValueSchema,
               ~inMemoryStore=params.inMemoryStore,
@@ -190,7 +190,7 @@ let makeEntityLoaderContext = (params): Types.entityLoaderContext<
   {
     get: entityId =>
       params.loadLayer->LoadLayer.loadById(
-        ~entityMod=params.entityMod,
+        ~entityConfig=params.entityConfig,
         ~inMemoryStore=params.inMemoryStore,
         ~shouldGroup=params.shouldGroup,
         ~eventItem=params.eventItem,
@@ -214,13 +214,13 @@ let loaderTraps: Utils.Proxy.traps<baseContextParams> = {
 
     | _ =>
       switch Entities.byName->Utils.Dict.dangerouslyGetNonOption(prop) {
-      | Some(entityMod) =>
+      | Some(entityConfig) =>
         makeEntityLoaderContext({
           eventItem: params.eventItem,
           shouldGroup: params.shouldGroup,
           inMemoryStore: params.inMemoryStore,
           loadLayer: params.loadLayer,
-          entityMod,
+          entityConfig,
         })->Utils.magic
       | None =>
         Js.Exn.raiseError(`Invalid context access by '${prop}' property. ${codegenHelpMessage}`)
