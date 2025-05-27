@@ -216,6 +216,13 @@ describe("Entity History Codegen", () => {
 
     Assert.equal(expected, TestEntity.entityHistory.createInsertFnQuery)
   })
+  it("Creates an entity history table", () => {
+    let createQuery = TestEntity.entityHistory.table->Migrations.internalMakeCreateTableSqlUnsafe
+    Assert.equal(
+      `CREATE TABLE IF NOT EXISTS "public"."TestEntity_history"("entity_history_block_timestamp" INTEGER NOT NULL, "entity_history_chain_id" INTEGER NOT NULL, "entity_history_block_number" INTEGER NOT NULL, "entity_history_log_index" INTEGER NOT NULL, "previous_entity_history_block_timestamp" INTEGER, "previous_entity_history_chain_id" INTEGER, "previous_entity_history_block_number" INTEGER, "previous_entity_history_log_index" INTEGER, "id" TEXT NOT NULL, "fieldA" INTEGER, "fieldB" TEXT, "action" "public".ENTITY_HISTORY_ROW_ACTION NOT NULL, "serial" SERIAL, PRIMARY KEY("entity_history_block_timestamp", "entity_history_chain_id", "entity_history_block_number", "entity_history_log_index", "id"));`,
+      createQuery,
+    )
+  })
 
   it("Creates a js insert function", () => {
     let insertFnString = TestEntity.entityHistory.insertFn->toStringUnsafe
@@ -595,7 +602,7 @@ describe_only("Entity history rollbacks", () => {
     }
   })
 
-  Async.it("Rollback contains a delete for the second entity (bad case to be fixed)", async () => {
+  Async.it("Rollback ignores copied entities as an item in reorg threshold", async () => {
     let rollbackDiff = await Db.sql->DbFunctions.EntityHistory.getRollbackDiff(
       OrderedMultichain({
         reorgChainId: Mocks.GnosisBug.chain_id,
@@ -605,21 +612,23 @@ describe_only("Entity history rollbacks", () => {
       ~entityMod=module(TestEntity),
     )
 
-    let containsIncorrectDelete = rollbackDiff->Belt.Array.some(
-      item =>
-        switch item.entityData {
-        | Delete(_) => true
-        | Set(_) => false
-        },
-    )
+    let expectedDiff: array<EntityHistory.historyRow<TestEntity.t>> = [
+      {
+        current: {chain_id: 0, block_timestamp: 0, block_number: 0, log_index: 0},
+        previous: %raw(`undefined`),
+        entityData: Set(Mocks.Entity.mockEntity1),
+      },
+      {
+        current: {chain_id: 0, block_timestamp: 0, block_number: 0, log_index: 0},
+        previous: %raw(`undefined`),
+        entityData: Set(Mocks.Entity.mockEntity5),
+      },
+    ]
 
-    if !containsIncorrectDelete {
-      Js.log2("rollbackDiff", rollbackDiff)
-    }
-
-    Assert.ok(
-      containsIncorrectDelete,
-      ~message="Should have a delete for the second entity (bad case)",
+    Assert.deepStrictEqual(
+      rollbackDiff,
+      expectedDiff,
+      ~message="Should rollback to the copied entity",
     )
   })
 })
