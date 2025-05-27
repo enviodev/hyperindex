@@ -266,6 +266,10 @@ const makeHistoryTableName = (entityName) => entityName + "_history";
 /**
   Find the "first change" serial originating from the reorg chain above the safe block number 
   (Using serial to account for unordered multi chain reorgs, where an earier event on another chain could be rolled back)
+
+  If for instance there are no entity changes based on the reorg chain, the other
+  chains do not need to be rolled back, and if the reorg chain has new included events, it does not matter
+  that if those events are processed out of order from other chains since this is "unordered_multichain_mode"
 */
 module.exports.getFirstChangeSerial_UnorderedMultichain = (
   sql,
@@ -285,6 +289,11 @@ module.exports.getFirstChangeSerial_UnorderedMultichain = (
 
 /**
   Find the "first change" serial originating from any chain above the provided safe block
+
+  Ordered multichain mode needs to ensure that all chains rollback to any event that occurred after the reorg chain
+  block number. Regardless of whether the reorg chain incurred any changes or not to entities. There could be no changes
+  on the orphaned blocks, but new changes on the reorged blocks where other chains need to be processed in order after this
+  fact.
 */
 module.exports.getFirstChangeSerial_OrderedMultichain = (
   sql,
