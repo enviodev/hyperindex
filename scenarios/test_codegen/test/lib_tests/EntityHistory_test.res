@@ -631,6 +631,30 @@ describe_only("Entity history rollbacks", () => {
       ~message="Should rollback to the copied entity",
     )
   })
+
+  Async.it(
+    "Deleting items after reorg event should not remove the copied history item",
+    async () => {
+      await Db.sql->DbFunctions.EntityHistory.deleteAllEntityHistoryAfterEventIdentifier(
+        ~isUnorderedMultichainMode=false,
+        ~eventIdentifier={
+          chainId: Mocks.GnosisBug.chain_id,
+          blockTimestamp: 9 * 5,
+          blockNumber: 9,
+          logIndex: 0,
+        },
+        ~allEntities=[module(TestEntity)->Entities.entityModToInternal],
+      )
+
+      let historyItems = {
+        let items = await Db.sql->getAllMockEntityHistory
+        Js.log2("historyItems", items)
+        items->S.parseJsonOrThrow(TestEntity.entityHistory.schemaRows)
+      }
+
+      Assert.equal(historyItems->Js.Array2.length, 2, ~message="Should have the 2 copied items")
+    },
+  )
 })
 
 describe("Entity history rollbacks", () => {
