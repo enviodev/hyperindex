@@ -579,7 +579,7 @@ module Mocks = {
   )
 }
 
-describe_only("Entity history rollbacks", () => {
+describe("Entity history rollbacks", () => {
   Async.beforeEach(async () => {
     try {
       let _ = DbHelpers.resetPostgresClient()
