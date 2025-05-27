@@ -399,6 +399,38 @@ module Mocks = {
     let mockEntity6 = {id: entityId2, fieldA: 6, fieldB: None}
   }
 
+  module GnosisBug = {
+    let chain_id = 1
+
+    let event1: EntityHistory.historyFields = {
+      chain_id,
+      block_timestamp: 10 * 5,
+      block_number: 10,
+      log_index: 0,
+    }
+
+    let event2: EntityHistory.historyFields = {
+      chain_id,
+      block_timestamp: 10 * 5,
+      block_number: 10,
+      log_index: 1,
+    }
+
+    let historyRow1: testEntityHistory = {
+      current: event1,
+      previous: None,
+      entityData: Set(Entity.mockEntity2),
+    }
+
+    let historyRow2: testEntityHistory = {
+      current: event2,
+      previous: None,
+      entityData: Set(Entity.mockEntity6),
+    }
+
+    let historyRows = [historyRow1, historyRow2]
+  }
+
   module Chain1 = {
     let chain_id = 1
 
@@ -513,6 +545,84 @@ module Mocks = {
     Chain2.historyRows,
   )
 }
+
+describe_only("Entity history rollbacks", () => {
+  Async.beforeEach(async () => {
+    try {
+      let _ = DbHelpers.resetPostgresClient()
+      let _ = await Migrations.runDownMigrations(~shouldExit=false)
+      let _ = await Migrations.createEnumIfNotExists(Db.sql, EntityHistory.RowAction.enum)
+      let _ = await Migrations.creatTableIfNotExists(Db.sql, TestEntity.table)
+      let _ = await Migrations.creatTableIfNotExists(Db.sql, TestEntity.entityHistory.table)
+
+      let _ = await Db.sql->Postgres.unsafe(TestEntity.entityHistory.createInsertFnQuery)
+
+      try await Db.sql->DbFunctionsEntities.batchSet(~entityMod=module(TestEntity))([
+        Mocks.Entity.mockEntity1,
+        Mocks.Entity.mockEntity5,
+      ]) catch {
+      | exn =>
+        Js.log2("batchSet mock entity exn", exn)
+        Assert.fail("Failed to set mock entity in table")
+      }
+
+      try await Db.sql->Postgres.beginSql(
+        sql => [
+          TestEntity.entityHistory->EntityHistory.batchInsertRows(
+            ~sql,
+            ~rows=Mocks.GnosisBug.historyRows,
+          ),
+        ],
+      ) catch {
+      | exn =>
+        Js.log2("insert mock rows exn", exn)
+        Assert.fail("Failed to insert mock rows")
+      }
+
+      let historyItems = {
+        let items = await Db.sql->getAllMockEntityHistory
+        items->S.parseJsonOrThrow(TestEntity.entityHistory.schemaRows)
+      }
+      Assert.equal(historyItems->Js.Array2.length, 4, ~message="Should have 4 history items")
+      Assert.ok(
+        historyItems->Belt.Array.some(item => item.current.chain_id == 0),
+        ~message="Should contain 2 copied items",
+      )
+    } catch {
+    | exn =>
+      Js.log2(" Entity history setup exn", exn)
+      Assert.fail("Failed setting up tables")
+    }
+  })
+
+  Async.it("Rollback contains a delete for the second entity (bad case to be fixed)", async () => {
+    let rollbackDiff = await Db.sql->DbFunctions.EntityHistory.getRollbackDiff(
+      OrderedMultichain({
+        reorgChainId: Mocks.GnosisBug.chain_id,
+        safeBlockNumber: 9,
+        safeBlockTimestamp: 9 * 5,
+      }),
+      ~entityMod=module(TestEntity),
+    )
+
+    let containsIncorrectDelete = rollbackDiff->Belt.Array.some(
+      item =>
+        switch item.entityData {
+        | Delete(_) => true
+        | Set(_) => false
+        },
+    )
+
+    if !containsIncorrectDelete {
+      Js.log2("rollbackDiff", rollbackDiff)
+    }
+
+    Assert.ok(
+      containsIncorrectDelete,
+      ~message="Should have a delete for the second entity (bad case)",
+    )
+  })
+})
 
 describe("Entity history rollbacks", () => {
   Async.beforeEach(async () => {
