@@ -54,7 +54,7 @@ type t = {
   currentlyProcessingBatch: bool,
   rollbackState: rollbackState,
   maxBatchSize: int,
-  maxPerChainQueueSize: int,
+  targetBufferSize: int,
   indexerStartTime: Js.Date.t,
   writeThrottlers: WriteThrottlers.t,
   loadLayer: LoadLayer.t,
@@ -70,24 +70,18 @@ let make = (
   ~loadLayer: LoadLayer.t,
   ~shouldUseTui=false,
 ) => {
-  let maxPerChainQueueSize = {
-    let numChains = config.chainMap->ChainMap.size
-    Env.maxEventFetchedQueueSize / numChains
-  }
-  config.chainMap
-  ->ChainMap.keys
-  ->Array.forEach(chain => {
-    Prometheus.IndexingMaxBufferSize.set(
-      ~maxBufferSize=maxPerChainQueueSize,
-      ~chainId=chain->ChainMap.Chain.toChainId,
-    )
-  })
+  Prometheus.ProcessingMaxBatchSize.set(
+    ~maxBatchSize=Env.maxProcessBatchSize,
+  )
+  Prometheus.IndexingTargetBufferSize.set(
+    ~targetBufferSize=Env.targetBufferSize,
+  )
   {
     config,
     currentlyProcessingBatch: false,
     chainManager,
     maxBatchSize: Env.maxProcessBatchSize,
-    maxPerChainQueueSize,
+    targetBufferSize: Env.targetBufferSize,
     indexerStartTime: Js.Date.make(),
     rollbackState: NoRollback,
     writeThrottlers: WriteThrottlers.make(~config),
@@ -306,10 +300,11 @@ let updateLatestProcessedBlocks = (
       let {chainConfig: {chain}, fetchState} = cf
       let {numEventsProcessed, latestProcessedBlock} = latestProcessedBlocks->ChainMap.get(chain)
 
-      let hasNoMoreEventsToProcess = cf->ChainFetcher.hasNoMoreEventsToProcess
-
-      let latestProcessedBlock = if hasNoMoreEventsToProcess {
-        FetchState.getLatestFullyFetchedBlock(fetchState).blockNumber->Some
+      let latestProcessedBlock = if cf->ChainFetcher.hasNoMoreEventsToProcess {
+        Pervasives.max(
+          FetchState.getLatestFullyFetchedBlock(fetchState).blockNumber,
+          0,
+        )->Some
       } else {
         latestProcessedBlock
       }
@@ -726,7 +721,7 @@ let checkAndFetchForChain = (
         | exn => dispatchAction(ErrorExit(exn->ErrorHandling.make))
         }
       },
-      ~maxPerChainQueueSize=state.maxPerChainQueueSize,
+      ~targetBufferSize=state.targetBufferSize,
       ~stateId=state.id,
     )
   }
