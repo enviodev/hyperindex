@@ -21,7 +21,7 @@ const commaSeparateDynamicMapQuery = (sql, dynQueryConstructors) =>
     (constrQuery, i) =>
       sql`${constrQuery(sql)}${
         i === dynQueryConstructors.length - 1 ? sql`` : sql`, `
-      }`
+      }`,
   )}`;
 
 module.exports.batchDeleteItemsInTable = (table, sql, pkArray) => {
@@ -57,7 +57,7 @@ module.exports.batchReadItemsInTable = (table, sql, pkArray) => {
     }
   } else {
     throw new Error(
-      "Batch read not implemented for tables with composite primary keys"
+      "Batch read not implemented for tables with composite primary keys",
     );
     //TODO, if needed create a select query for multiple field matches
     //May be best to make pkArray an array of objects with fieldName -> value
@@ -94,7 +94,7 @@ module.exports.batchSetEventSyncState = (sql, entityDataArray) => {
     "block_number",
     "log_index",
     "block_timestamp",
-    "is_pre_registering_dynamic_contracts"
+    "is_pre_registering_dynamic_contracts",
   )}
     ON CONFLICT(chain_id) DO UPDATE
     SET
@@ -126,7 +126,7 @@ module.exports.batchSetChainMetadata = (sql, entityDataArray) => {
     "is_hyper_sync", // this is left out of the on conflict below as it only needs to be set once
     "num_batches_fetched",
     "latest_fetched_block_number",
-    "timestamp_caught_up_to_head_or_endblock"
+    "timestamp_caught_up_to_head_or_endblock",
   )}
   ON CONFLICT(chain_id) DO UPDATE
   SET
@@ -152,14 +152,14 @@ module.exports.batchDeleteRawEvents = (sql, entityIdArray) => sql`
 
 module.exports.makeBatchSetEntityValues = (table) => {
   const fieldNames = TableModule.getFieldNames(table).filter(
-    (fieldName) => fieldName !== "db_write_timestamp"
+    (fieldName) => fieldName !== "db_write_timestamp",
   );
   const primaryKeyFieldNames = TableModule.getPrimaryKeyFieldNames(table);
   const fieldQueryConstructors = fieldNames.map(
-    (fieldName) => (sql) => sql`${sql(fieldName)} = EXCLUDED.${sql(fieldName)}`
+    (fieldName) => (sql) => sql`${sql(fieldName)} = EXCLUDED.${sql(fieldName)}`,
   );
   const pkQueryConstructors = primaryKeyFieldNames.map(
-    (pkField) => (sql) => sql(pkField)
+    (pkField) => (sql) => sql(pkField),
   );
 
   return chunkBatchQuery((sql, rowDataArray) => {
@@ -168,7 +168,7 @@ INSERT INTO ${sql(publicSchema)}.${sql(table.tableName)}
 ${sql(rowDataArray, ...fieldNames)}
 ON CONFLICT(${sql`${commaSeparateDynamicMapQuery(
       sql,
-      pkQueryConstructors
+      pkQueryConstructors,
     )}`}) DO UPDATE
 SET
 ${sql`${commaSeparateDynamicMapQuery(sql, fieldQueryConstructors)}`};`;
@@ -187,7 +187,7 @@ const batchSetEndOfBlockRangeScannedDataCore = (sql, rowDataArray) => {
 };
 
 module.exports.batchSetEndOfBlockRangeScannedData = chunkBatchQuery(
-  batchSetEndOfBlockRangeScannedDataCore
+  batchSetEndOfBlockRangeScannedDataCore,
 );
 
 module.exports.readEndOfBlockRangeScannedDataForChain = (sql, chainId) => {
@@ -201,7 +201,7 @@ module.exports.readEndOfBlockRangeScannedDataForChain = (sql, chainId) => {
 module.exports.deleteStaleEndOfBlockRangeScannedDataForChain = (
   sql,
   chainId,
-  blockNumberThreshold
+  blockNumberThreshold,
 ) => {
   return sql`
     DELETE
@@ -213,7 +213,7 @@ module.exports.deleteStaleEndOfBlockRangeScannedDataForChain = (
 module.exports.rollbackEndOfBlockRangeScannedDataForChain = (
   sql,
   chainId,
-  knownBlockNumber
+  knownBlockNumber,
 ) => {
   return sql`
     DELETE
@@ -226,7 +226,7 @@ module.exports.deleteInvalidDynamicContractsOnRestart = (
   sql,
   chainId,
   restartBlockNumber,
-  restartLogIndex
+  restartLogIndex,
 ) => {
   return sql`
     DELETE
@@ -243,7 +243,7 @@ module.exports.deleteInvalidDynamicContractsHistoryOnRestart = (
   sql,
   chainId,
   restartBlockNumber,
-  restartLogIndex
+  restartLogIndex,
 ) => {
   return sql`
     DELETE
@@ -266,12 +266,16 @@ const makeHistoryTableName = (entityName) => entityName + "_history";
 /**
   Find the "first change" serial originating from the reorg chain above the safe block number 
   (Using serial to account for unordered multi chain reorgs, where an earier event on another chain could be rolled back)
+
+  If for instance there are no entity changes based on the reorg chain, the other
+  chains do not need to be rolled back, and if the reorg chain has new included events, it does not matter
+  that if those events are processed out of order from other chains since this is "unordered_multichain_mode"
 */
 module.exports.getFirstChangeSerial_UnorderedMultichain = (
   sql,
   reorgChainId,
   safeBlockNumber,
-  entityName
+  entityName,
 ) =>
   sql`
     SELECT
@@ -285,13 +289,18 @@ module.exports.getFirstChangeSerial_UnorderedMultichain = (
 
 /**
   Find the "first change" serial originating from any chain above the provided safe block
+
+  Ordered multichain mode needs to ensure that all chains rollback to any event that occurred after the reorg chain
+  block number. Regardless of whether the reorg chain incurred any changes or not to entities. There could be no changes
+  on the orphaned blocks, but new changes on the reorged blocks where other chains need to be processed in order after this
+  fact.
 */
 module.exports.getFirstChangeSerial_OrderedMultichain = (
   sql,
   safeBlockTimestamp,
   reorgChainId,
   safeBlockNumber,
-  entityName
+  entityName,
 ) =>
   sql`
     SELECT
@@ -309,7 +318,7 @@ module.exports.getFirstChangeSerial_OrderedMultichain = (
 module.exports.getFirstChangeEntityHistoryPerChain = (
   sql,
   entityName,
-  getFirstChangeSerial
+  getFirstChangeSerial,
 ) => sql`
   WITH
     first_change AS (
@@ -339,7 +348,7 @@ module.exports.getFirstChangeEntityHistoryPerChain = (
 module.exports.deleteRolledBackEntityHistory = (
   sql,
   entityName,
-  getFirstChangeSerial
+  getFirstChangeSerial,
 ) => sql`
   WITH
     first_change AS (
@@ -356,6 +365,12 @@ module.exports.deleteRolledBackEntityHistory = (
         first_change_serial
       FROM
         first_change
+    )
+    -- Filter out rows with a chain_id of 0 since they are the copied history rows
+    -- check timestamp as well in case a future chain is added with id of 0
+    AND NOT (
+      entity_history_chain_id = 0 AND
+      entity_history_block_timestamp = 0
     );
   `;
 
@@ -366,7 +381,7 @@ module.exports.pruneStaleEntityHistory = (
   // shouldDeepCleanHistory is a boolean that determines whether to delete stale history
   // items of entities that are in the reorg threshold (expensive to calculate)
   // or to do a shallow clean (only deletes history items of entities that are not in the reorg threshold)
-  shouldDeepClean
+  shouldDeepClean,
 ) => {
   const tableName = makeHistoryTableName(entityName);
   return sql`
@@ -379,9 +394,9 @@ module.exports.pruneStaleEntityHistory = (
       ${Utils.$$Array.interleave(
         safeChainIdAndBlockNumberArray.map(
           ({ chainId, blockNumber }) =>
-            sql`(entity_history_chain_id = ${chainId} AND entity_history_block_number > ${blockNumber})`
+            sql`(entity_history_chain_id = ${chainId} AND entity_history_block_number > ${blockNumber})`,
         ),
-        sql` OR `
+        sql` OR `,
       )}
   ),
   items_in_reorg_threshold AS (
@@ -391,6 +406,12 @@ module.exports.pruneStaleEntityHistory = (
       ${sql(publicSchema)}.${sql(tableName)}
     WHERE
       serial >= (SELECT first_change_serial FROM first_change)
+      -- Filter out rows with a chain_id of 0 since they are the copied history rows
+      -- check timestamp as well in case a future chain is added with id of 0
+      AND NOT (
+        entity_history_chain_id = 0 AND
+        entity_history_block_timestamp = 0
+      )
     ORDER BY
       id,
       serial ASC -- Select the row with the lowest serial per id
@@ -452,6 +473,12 @@ module.exports.getRollbackDiff = (sql, entityName, getFirstChangeSerial) => sql`
             first_change_serial
           FROM
             first_change
+        ) 
+        -- Filter out rows with a chain_id of 0 since they are the copied history rows
+        -- check timestamp as well in case a future chain is added with id of 0
+        AND NOT (
+          after.entity_history_chain_id = 0 AND
+          after.entity_history_block_timestamp = 0
         )
       ORDER BY
         after.id,

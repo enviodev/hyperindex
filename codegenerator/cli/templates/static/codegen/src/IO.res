@@ -83,12 +83,34 @@ let executeSetEntityWithHistory = (
       }
     },
   )
+  // Keep history items in the order of the events. Without sorting,
+  // they will only be in order per row, but not across the whole entity
+  // table.
+
+  let orderedHistoryItems =
+    entityHistoryItemsToSet
+    ->Array.concatMany
+    ->Js.Array2.sortInPlaceWith((a, b) => {
+      EventUtils.isEarlierEvent(
+        {
+          timestamp: a.current.block_timestamp,
+          chainId: a.current.chain_id,
+          blockNumber: a.current.block_number,
+          logIndex: a.current.log_index,
+        },
+        {
+          timestamp: b.current.block_timestamp,
+          chainId: b.current.chain_id,
+          blockNumber: b.current.block_number,
+          logIndex: b.current.log_index,
+        },
+      )
+        ? -1
+        : 1
+    })
 
   [
-    EntityMod.entityHistory->EntityHistory.batchInsertRows(
-      ~sql,
-      ~rows=Belt.Array.concatMany(entityHistoryItemsToSet),
-    ),
+    EntityMod.entityHistory->EntityHistory.batchInsertRows(~sql, ~rows=orderedHistoryItems),
     if entitiesToSet->Array.length > 0 {
       sql->DbFunctionsEntities.batchSet(~entityMod)(entitiesToSet)
     } else {
