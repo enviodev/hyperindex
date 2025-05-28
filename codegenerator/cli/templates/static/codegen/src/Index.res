@@ -276,6 +276,9 @@ let main = async () => {
     let shouldUseTui = !(mainArgs.tuiOff->Belt.Option.getWithDefault(Env.tuiOffEnvVar))
 
     let config = RegisterHandlers.registerAllHandlers()
+    // FIXME: Shouldn't await here.
+    // Should finish moving all migration logic here.
+    await config.persistence->Persistence.init
 
     let gsManagerRef = ref(None)
 
@@ -345,11 +348,6 @@ let main = async () => {
       },
     )
 
-    let sql = Db.sql
-    let needsRunUpMigrations = await sql->Migrations.needsRunUpMigrations
-    if needsRunUpMigrations {
-      let _ = await Migrations.runUpMigrations(~shouldExit=false)
-    }
     let chainManager = await ChainManager.makeFromDbState(~config)
     let loadLayer = LoadLayer.makeWithDbConnection()
     let globalState = GlobalState.make(~config, ~chainManager, ~loadLayer, ~shouldUseTui)

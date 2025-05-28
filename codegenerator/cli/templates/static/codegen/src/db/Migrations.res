@@ -103,15 +103,6 @@ let deleteAllTables: unit => promise<unit> = async () => {
   await sql->unsafe(query)
 }
 
-let needsRunUpMigrations = async sql => {
-  let schemas =
-    await sql->Postgres.unsafe(
-      `SELECT schema_name FROM information_schema.schemata WHERE schema_name = '${Env.Db.publicSchema}';`,
-    )
-  let schemaExists = schemas->Array.length > 0
-  !schemaExists
-}
-
 type t
 @module external process: t = "process"
 
@@ -136,16 +127,19 @@ let runUpMigrations = async (
       exn->ErrorHandling.make(~msg, ~logger)->ErrorHandling.log
     | _ => ()
     }
+    
+  if reset {
+    let _ = await sql->unsafe(
+      `DROP SCHEMA IF EXISTS ${Env.Db.publicSchema} CASCADE;`,
+    )
+  }
 
   let _ = await sql->unsafe(
     `DO $$ 
     BEGIN
-      ${reset ? `DROP SCHEMA IF EXISTS ${Env.Db.publicSchema} CASCADE;` : ``}
-      IF NOT EXISTS(SELECT 1 FROM information_schema.schemata WHERE schema_name = '${Env.Db.publicSchema}') THEN
-        CREATE SCHEMA ${Env.Db.publicSchema};
-        GRANT ALL ON SCHEMA ${Env.Db.publicSchema} TO postgres;
-        GRANT ALL ON SCHEMA ${Env.Db.publicSchema} TO public;
-      END IF;
+      CREATE SCHEMA IF NOT EXISTS ${Env.Db.publicSchema};
+      GRANT ALL ON SCHEMA ${Env.Db.publicSchema} TO postgres;
+      GRANT ALL ON SCHEMA ${Env.Db.publicSchema} TO public;
     END $$;`,
   )
 

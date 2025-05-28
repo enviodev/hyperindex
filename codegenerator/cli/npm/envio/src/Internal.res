@@ -167,6 +167,8 @@ type entityConfig = {
   table: Table.table,
   entityHistory: EntityHistory.t<entity>,
 }
+type enum
+type enumConfig = Enum.enum<enum>
 
 type effectInput
 type effectOutput

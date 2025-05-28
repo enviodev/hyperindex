@@ -5,9 +5,67 @@
 // Currently there are quite many code spread across
 // DbFunctions, Db, Migrations, InMemoryStore modules which use codegen code directly.
 
-type t = {userEntities: array<Internal.entityConfig>, allEntities: array<Internal.entityConfig>}
+type storage = {
+  // Should return true if we already have persisted data
+  // and we can skip initialization
+  isInitialized: unit => promise<bool>,
+  // Should initialize the storage so we can start interacting with it
+  // Eg create connection, schema, tables, etc.
+  initialize: (
+    ~entities: array<Internal.entityConfig>,
+    ~enums: array<Internal.enumConfig>,
+  ) => promise<unit>,
+}
 
-let make = (~userEntities, ~dcRegistryEntityConfig) => {
+type storageStatus =
+  | Unknown
+  | Initializing(promise<unit>)
+  | Ready({cleanRun: bool})
+
+type t = {
+  userEntities: array<Internal.entityConfig>,
+  allEntities: array<Internal.entityConfig>,
+  allEnums: array<Internal.enumConfig>,
+  mutable storageStatus: storageStatus,
+  storage: storage,
+}
+
+let make = (
+  ~userEntities,
+  ~dcRegistryEntityConfig,
+  // TODO: Should only pass userEnums and create internal config in runtime
+  ~allEnums,
+  ~storage,
+) => {
   let allEntities = userEntities->Js.Array2.concat([dcRegistryEntityConfig])
-  {userEntities, allEntities}
+  {
+    userEntities,
+    allEntities,
+    allEnums,
+    storageStatus: Unknown,
+    storage,
+  }
+}
+
+let init = async persistence => {
+  switch persistence.storageStatus {
+  | Unknown =>
+    let resolveRef = ref(%raw(`null`))
+    let promise = Promise.make((resolve, _) => {
+      resolveRef := resolve
+    })
+    persistence.storageStatus = Initializing(promise)
+
+    if await persistence.storage.isInitialized() {
+      persistence.storageStatus = Ready({cleanRun: false})
+    } else {
+      let _ = await persistence.storage.initialize(
+        ~entities=persistence.allEntities,
+        ~enums=persistence.allEnums,
+      )
+      persistence.storageStatus = Ready({cleanRun: true})
+    }
+  | Initializing(promise) => await promise
+  | Ready(_) => ()
+  }
 }
