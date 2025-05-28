@@ -78,6 +78,15 @@ let getSyncConfig = (
   }
 }
 
+let codegenPersistence = Persistence.make(
+  ~userEntities=Entities.userEntities,
+  ~dcRegistryEntityConfig=module(
+    TablesStatic.DynamicContractRegistry
+  )->Entities.entityModToInternal,
+  ~allEnums=Enums.allEnums->(Utils.magic: array<module(Enum.S)> => array<Internal.enumConfig>),
+  ~storage=PgStorage.make(~sql=Db.sql, ~pgSchema=Env.Db.publicSchema),
+)
+
 type t = {
   historyConfig: historyConfig,
   isUnorderedMultichainMode: bool,
@@ -85,7 +94,7 @@ type t = {
   defaultChain: option<chainConfig>,
   ecosystem: ecosystem,
   enableRawEvents: bool,
-  entities: array<module(Entities.InternalEntity)>,
+  persistence: Persistence.t,
 }
 
 let make = (
@@ -94,7 +103,7 @@ let make = (
   ~isUnorderedMultichainMode=false,
   ~chains=[],
   ~enableRawEvents=false,
-  ~entities=[],
+  ~persistence=codegenPersistence,
   ~ecosystem=Evm,
 ) => {
   {
@@ -114,9 +123,7 @@ let make = (
     ->ChainMap.fromArrayUnsafe,
     defaultChain: chains->Array.get(0),
     enableRawEvents,
-    entities: entities->(
-      Utils.magic: array<module(Entities.Entity)> => array<module(Entities.InternalEntity)>
-    ),
+    persistence,
     ecosystem,
   }
 }

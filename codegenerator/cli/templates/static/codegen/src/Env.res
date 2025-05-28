@@ -100,10 +100,7 @@ let logStrategy =
   )
 
 Logging.setLogger(
-  ~logStrategy,
-  ~logFilePath,
-  ~defaultFileLogLevel,
-  ~userLogLevel,
+  Logging.makeLogger(~logStrategy, ~logFilePath, ~defaultFileLogLevel, ~userLogLevel),
 )
 
 module Db = {

@@ -7,7 +7,7 @@ describe("LoadLayer", () => {
     let inMemoryStore = InMemoryStore.make()
     let getUser = entityId =>
       mock.loadLayer->LoadLayer.loadById(
-        ~entityMod=module(Entities.User),
+        ~entityConfig=module(Entities.User)->Entities.entityModToInternal,
         ~inMemoryStore,
         ~entityId,
         ~eventItem=MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem,
@@ -37,7 +37,7 @@ describe("LoadLayer", () => {
       let inMemoryStore = InMemoryStore.make()
       let getUser = entityId =>
         mock.loadLayer->LoadLayer.loadById(
-          ~entityMod=module(Entities.User),
+          ~entityConfig=module(Entities.User)->Entities.entityModToInternal,
           ~inMemoryStore,
           ~entityId,
           ~eventItem=MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem,
@@ -74,7 +74,7 @@ describe("LoadLayer", () => {
       let inMemoryStore = InMemoryStore.make()
       let getUser = entityId =>
         mock.loadLayer->LoadLayer.loadById(
-          ~entityMod=module(Entities.User),
+          ~entityConfig=module(Entities.User)->Entities.entityModToInternal,
           ~inMemoryStore,
           ~entityId,
           ~eventItem=MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem,
@@ -105,7 +105,7 @@ describe("LoadLayer", () => {
     let inMemoryStore = Mock.InMemoryStore.make()
     let getUser = entityId =>
       mock.loadLayer->LoadLayer.loadById(
-        ~entityMod=module(Entities.User),
+        ~entityConfig=module(Entities.User)->Entities.entityModToInternal,
         ~inMemoryStore,
         ~entityId,
         ~eventItem=MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem,
@@ -153,7 +153,7 @@ describe("LoadLayer", () => {
       let inMemoryStore = Mock.InMemoryStore.make()
       let getUser = entityId =>
         mock.loadLayer->LoadLayer.loadById(
-          ~entityMod=module(Entities.User),
+          ~entityConfig=module(Entities.User)->Entities.entityModToInternal,
           ~inMemoryStore,
           ~entityId,
           ~eventItem=MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem,
@@ -194,7 +194,7 @@ describe("LoadLayer", () => {
       let inMemoryStore = Mock.InMemoryStore.make(~entities=[(module(Entities.User), [user1])])
       let getUser = entityId =>
         mock.loadLayer->LoadLayer.loadById(
-          ~entityMod=module(Entities.User),
+          ~entityConfig=module(Entities.User)->Entities.entityModToInternal,
           ~inMemoryStore,
           ~entityId,
           ~eventItem=MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem,
@@ -203,7 +203,7 @@ describe("LoadLayer", () => {
 
       let users = await Promise.all([getUser("1"), getUser("2")])
 
-      Assert.deepEqual(users, [Some(user1), None])
+      Assert.deepEqual(users, [Some(user1->Entities.User.castToInternal), None])
       Assert.deepEqual(
         mock.loadEntitiesByIdsCalls,
         [
@@ -235,7 +235,7 @@ describe("LoadLayer", () => {
       let inMemoryStore = Mock.InMemoryStore.make()
       let getUser = entityId =>
         mock.loadLayer->LoadLayer.loadById(
-          ~entityMod=module(Entities.User),
+          ~entityConfig=module(Entities.User)->Entities.entityModToInternal,
           ~inMemoryStore,
           ~entityId,
           ~eventItem=MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem,
@@ -254,7 +254,7 @@ describe("LoadLayer", () => {
       let user = await userPromise
 
       // It's Some(user1) even though from db we get None
-      Assert.deepEqual(user, Some(user1))
+      Assert.deepEqual(user, Some(user1->Entities.User.castToInternal))
       Assert.deepEqual(
         mock.loadEntitiesByIdsCalls,
         [
@@ -287,7 +287,7 @@ describe("LoadLayer", () => {
 
       let getUser = entityId =>
         mock.loadLayer->LoadLayer.loadById(
-          ~entityMod=module(Entities.User),
+          ~entityConfig=module(Entities.User)->Entities.entityModToInternal,
           ~inMemoryStore,
           ~entityId,
           ~eventItem=MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem,
@@ -331,7 +331,7 @@ describe("LoadLayer", () => {
     let inMemoryStore = InMemoryStore.make()
     let getUsersWithId = fieldValue =>
       mock.loadLayer->LoadLayer.loadByField(
-        ~entityMod=module(Entities.User),
+        ~entityConfig=module(Entities.User)->Entities.entityModToInternal,
         ~operator=Eq,
         ~inMemoryStore,
         ~fieldName="id",
@@ -342,7 +342,7 @@ describe("LoadLayer", () => {
       )
     let getUsersWithUpdates = fieldValue =>
       mock.loadLayer->LoadLayer.loadByField(
-        ~entityMod=module(Entities.User),
+        ~entityConfig=module(Entities.User)->Entities.entityModToInternal,
         ~operator=Gt,
         ~inMemoryStore,
         ~fieldName="updatesCountOnUserForTesting",
@@ -402,7 +402,7 @@ describe("LoadLayer", () => {
     let eventItem = MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem
     let getUsersWithId = fieldValue =>
       mock.loadLayer->LoadLayer.loadByField(
-        ~entityMod=module(Entities.User),
+        ~entityConfig=module(Entities.User)->Entities.entityModToInternal,
         ~operator=Eq,
         ~inMemoryStore,
         ~fieldName="id",
@@ -414,7 +414,7 @@ describe("LoadLayer", () => {
 
     let getUsersWithUpdates = fieldValue =>
       mock.loadLayer->LoadLayer.loadByField(
-        ~entityMod=module(Entities.User),
+        ~entityConfig=module(Entities.User)->Entities.entityModToInternal,
         ~operator=Gt,
         ~inMemoryStore,
         ~fieldName="updatesCountOnUserForTesting",
@@ -424,8 +424,12 @@ describe("LoadLayer", () => {
         ~shouldGroup=true,
       )
 
-    Assert.deepEqual(await getUsersWithId("1"), [user1])
-    Assert.deepEqual(await getUsersWithUpdates(0), [user2], ~message="Should have loaded user2")
+    Assert.deepEqual(await getUsersWithId("1"), [user1->Entities.User.castToInternal])
+    Assert.deepEqual(
+      await getUsersWithUpdates(0),
+      [user2->Entities.User.castToInternal],
+      ~message="Should have loaded user2",
+    )
     Assert.deepEqual(mock.loadEntitiesByIdsCalls, [])
     Assert.deepEqual(
       mock.loadEntitiesByFieldCalls,
@@ -448,8 +452,8 @@ describe("LoadLayer", () => {
     )
 
     // The second time gets from inMemoryStore
-    Assert.deepEqual(await getUsersWithId("1"), [user1])
-    Assert.deepEqual(await getUsersWithUpdates(0), [user2])
+    Assert.deepEqual(await getUsersWithId("1"), [user1->Entities.User.castToInternal])
+    Assert.deepEqual(await getUsersWithUpdates(0), [user2->Entities.User.castToInternal])
     Assert.deepEqual(mock.loadEntitiesByIdsCalls, [])
     Assert.deepEqual(
       mock.loadEntitiesByFieldCalls->Array.length,
@@ -494,7 +498,7 @@ describe("LoadLayer", () => {
       let inMemoryStore = InMemoryStore.make()
       let getUsersWithId = fieldValue =>
         mock.loadLayer->LoadLayer.loadByField(
-          ~entityMod=module(Entities.User),
+          ~entityConfig=module(Entities.User)->Entities.entityModToInternal,
           ~operator=Eq,
           ~inMemoryStore,
           ~fieldName="id",
@@ -525,7 +529,7 @@ describe("LoadLayer", () => {
 
       // The second time gets from inMemoryStore
       let users = await getUsersWithId("1")
-      Assert.deepEqual(users, [user1])
+      Assert.deepEqual(users, [user1->Entities.User.castToInternal])
       Assert.deepEqual(mock.loadEntitiesByIdsCalls, [])
       Assert.deepEqual(mock.loadEntitiesByFieldCalls, loadEntitiesByFieldSingleDbCall)
     },

@@ -49,17 +49,14 @@ let getEntityHistoryItems = (entityUpdates, ~containsRollbackDiffChange) => {
 }
 
 let executeSetEntityWithHistory = (
-  type entity,
   sql: Postgres.sql,
   ~inMemoryStore: InMemoryStore.t,
-  ~entityMod: module(Entities.Entity with type t = entity),
+  ~entityConfig,
 ): promise<unit> => {
-  let entityMod = entityMod->Entities.entityModToInternal
   let rows =
     inMemoryStore.entities
-    ->InMemoryStore.EntityTables.get(entityMod)
+    ->InMemoryStore.EntityTables.get(~entityConfig)
     ->InMemoryTable.Entity.rows
-  let module(EntityMod) = entityMod
   let (entitiesToSet, idsToDelete, entityHistoryItemsToSet) = rows->Belt.Array.reduce(
     ([], [], []),
     ((entitiesToSet, idsToDelete, entityHistoryItemsToSet), row) => {
@@ -110,14 +107,14 @@ let executeSetEntityWithHistory = (
     })
 
   [
-    EntityMod.entityHistory->EntityHistory.batchInsertRows(~sql, ~rows=orderedHistoryItems),
+    entityConfig.entityHistory->EntityHistory.batchInsertRows(~sql, ~rows=orderedHistoryItems),
     if entitiesToSet->Array.length > 0 {
-      sql->DbFunctionsEntities.batchSet(~entityMod)(entitiesToSet)
+      sql->DbFunctionsEntities.batchSet(~entityConfig)(entitiesToSet)
     } else {
       Promise.resolve()
     },
     if idsToDelete->Array.length > 0 {
-      sql->DbFunctionsEntities.batchDelete(~entityMod)(idsToDelete)
+      sql->DbFunctionsEntities.batchDelete(~entityConfig)(idsToDelete)
     } else {
       Promise.resolve()
     },
@@ -127,15 +124,13 @@ let executeSetEntityWithHistory = (
 }
 
 let executeDbFunctionsEntity = (
-  type entity,
   sql: Postgres.sql,
   ~inMemoryStore: InMemoryStore.t,
-  ~entityMod: module(Entities.Entity with type t = entity),
+  ~entityConfig: Internal.entityConfig,
 ): promise<unit> => {
-  let entityMod = entityMod->Entities.entityModToInternal
   let rows =
     inMemoryStore.entities
-    ->InMemoryStore.EntityTables.get(entityMod)
+    ->InMemoryStore.EntityTables.get(~entityConfig)
     ->InMemoryTable.Entity.rows
 
   let entitiesToSet = []
@@ -152,11 +147,11 @@ let executeDbFunctionsEntity = (
   let promises =
     (
       entitiesToSet->Array.length > 0
-        ? [sql->DbFunctionsEntities.batchSet(~entityMod)(entitiesToSet)]
+        ? [sql->DbFunctionsEntities.batchSet(~entityConfig)(entitiesToSet)]
         : []
     )->Belt.Array.concat(
       idsToDelete->Array.length > 0
-        ? [sql->DbFunctionsEntities.batchDelete(~entityMod)(idsToDelete)]
+        ? [sql->DbFunctionsEntities.batchDelete(~entityConfig)(idsToDelete)]
         : [],
     )
 
@@ -181,8 +176,8 @@ let executeBatch = async (sql, ~inMemoryStore: InMemoryStore.t, ~isInReorgThresh
     ~items=inMemoryStore.rawEvents->InMemoryTable.values,
   )
 
-  let setEntities = Entities.allEntities->Belt.Array.map(entityMod => {
-    entityDbExecutionComposer(_, ~entityMod, ~inMemoryStore)
+  let setEntities = Entities.allEntities->Belt.Array.map(entityConfig => {
+    entityDbExecutionComposer(_, ~entityConfig, ~inMemoryStore)
   })
 
   //In the event of a rollback, rollback all meta tables based on the given
@@ -241,15 +236,7 @@ module RollBack = {
 
     let _ =
       await Entities.allEntities
-      ->Belt.Array.map(async entityMod => {
-        let module(Entity) = entityMod
-        let entityMod =
-          entityMod->(
-            Utils.magic: module(Entities.InternalEntity) => module(Entities.Entity with
-              type t = 'entity
-            )
-          )
-
+      ->Belt.Array.map(async entityConfig => {
         let diff = await Db.sql->DbFunctions.EntityHistory.getRollbackDiff(
           isUnorderedMultichainMode
             ? UnorderedMultichain({
@@ -261,13 +248,13 @@ module RollBack = {
                 reorgChainId: chainId,
                 safeBlockNumber: blockNumber,
               }),
-          ~entityMod,
+          ~entityConfig,
         )
         if diff->Utils.Array.notEmpty {
-          fullDiff->Js.Dict.set((Entity.name :> string), diff)
+          fullDiff->Js.Dict.set(entityConfig.name, diff)
         }
 
-        let entityTable = inMemStore.entities->InMemoryStore.EntityTables.get(entityMod)
+        let entityTable = inMemStore.entities->InMemoryStore.EntityTables.get(~entityConfig)
 
         diff->Belt.Array.forEach(historyRow => {
           let eventIdentifier: Types.eventIdentifier = {
@@ -278,14 +265,14 @@ module RollBack = {
           }
           switch historyRow.entityData {
           | Set(entity: Entities.internalEntity) =>
-            setEntities->Utils.Dict.push((Entity.name :> string), entity.id)
+            setEntities->Utils.Dict.push(entityConfig.name, entity.id)
             entityTable->InMemoryTable.Entity.set(
               Set(entity)->Types.mkEntityUpdate(~eventIdentifier, ~entityId=entity.id),
               ~shouldSaveHistory=false,
               ~containsRollbackDiffChange=true,
             )
           | Delete({id}) =>
-            deletedEntities->Utils.Dict.push((Entity.name :> string), id)
+            deletedEntities->Utils.Dict.push(entityConfig.name, id)
             entityTable->InMemoryTable.Entity.set(
               Delete->Types.mkEntityUpdate(~eventIdentifier, ~entityId=id),
               ~shouldSaveHistory=false,

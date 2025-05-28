@@ -54,9 +54,13 @@ describe("SerDe Test", () => {
     }
 
     //Fails if serialziation does not work
-    let set = DbFunctionsEntities.batchSet(~entityMod=module(Entities.EntityWithAllTypes))
+    let set = DbFunctionsEntities.batchSet(
+      ~entityConfig=module(Entities.EntityWithAllTypes)->Entities.entityModToInternal,
+    )
     //Fails if parsing does not work
-    let read = DbFunctionsEntities.batchRead(~entityMod=module(Entities.EntityWithAllTypes))
+    let read = DbFunctionsEntities.batchRead(
+      ~entityConfig=module(Entities.EntityWithAllTypes)->Entities.entityModToInternal,
+    )
 
     let setHistory = (sql, row) =>
       Entities.EntityWithAllTypes.entityHistory->EntityHistory.batchInsertRows(~sql, ~rows=[row])
@@ -68,7 +72,7 @@ describe("SerDe Test", () => {
     }
 
     //set the entity
-    try await Db.sql->set([entity]) catch {
+    try await Db.sql->set([entity->Entities.EntityWithAllTypes.castToInternal]) catch {
     | exn =>
       Js.log(exn)
       Assert.fail("Failed to set entity in table")
@@ -78,7 +82,7 @@ describe("SerDe Test", () => {
     | exception exn =>
       Js.log(exn)
       Assert.fail("Failed to read entity from table")
-    | [_entity] => Assert.deepEqual(_entity, entity)
+    | [_entity] => Assert.deepEqual(_entity, entity->Entities.EntityWithAllTypes.castToInternal)
     | _ => Assert.fail("Should have returned a row on batch read fn")
     }
 
@@ -148,9 +152,13 @@ SELECT * FROM unnest($1::NUMERIC[],$2::NUMERIC[],$3::INTEGER[]::BOOLEAN[],$4::DO
     }
 
     //Fails if serialziation does not work
-    let set = DbFunctionsEntities.batchSet(~entityMod=module(Entities.EntityWithAllNonArrayTypes))
+    let set = DbFunctionsEntities.batchSet(
+      ~entityConfig=module(Entities.EntityWithAllNonArrayTypes)->Entities.entityModToInternal,
+    )
     //Fails if parsing does not work
-    let read = DbFunctionsEntities.batchRead(~entityMod=module(Entities.EntityWithAllNonArrayTypes))
+    let read = DbFunctionsEntities.batchRead(
+      ~entityConfig=module(Entities.EntityWithAllNonArrayTypes)->Entities.entityModToInternal,
+    )
 
     let setHistory = (sql, row) =>
       Entities.EntityWithAllNonArrayTypes.entityHistory->EntityHistory.batchInsertRows(
@@ -165,7 +173,7 @@ SELECT * FROM unnest($1::NUMERIC[],$2::NUMERIC[],$3::INTEGER[]::BOOLEAN[],$4::DO
     }
 
     //set the entity
-    try await Db.sql->set([entity]) catch {
+    try await Db.sql->set([entity->Entities.EntityWithAllNonArrayTypes.castToInternal]) catch {
     | exn =>
       Js.log(exn)
       Assert.fail("Failed to set entity in table")
@@ -175,7 +183,8 @@ SELECT * FROM unnest($1::NUMERIC[],$2::NUMERIC[],$3::INTEGER[]::BOOLEAN[],$4::DO
     | exception exn =>
       Js.log(exn)
       Assert.fail("Failed to read entity from table")
-    | [_entity] => Assert.deepEqual(_entity, entity)
+    | [_entity] =>
+      Assert.deepEqual(_entity, entity->Entities.EntityWithAllNonArrayTypes.castToInternal)
     | _ => Assert.fail("Should have returned a row on batch read fn")
     }
 

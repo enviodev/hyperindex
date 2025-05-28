@@ -54,6 +54,8 @@ module TestEntity = {
   )
 
   let entityHistory = table->EntityHistory.fromTable(~schema)
+
+  external castToInternal: t => Internal.entity = "%identity"
 }
 
 type testEntityHistory = EntityHistory.historyRow<TestEntity.t>
@@ -590,9 +592,11 @@ describe("Entity history rollbacks", () => {
 
       let _ = await Db.sql->Postgres.unsafe(TestEntity.entityHistory.createInsertFnQuery)
 
-      try await Db.sql->DbFunctionsEntities.batchSet(~entityMod=module(TestEntity))([
-        Mocks.Entity.mockEntity1,
-        Mocks.Entity.mockEntity5,
+      try await Db.sql->DbFunctionsEntities.batchSet(
+        ~entityConfig=module(TestEntity)->Entities.entityModToInternal,
+      )([
+        Mocks.Entity.mockEntity1->TestEntity.castToInternal,
+        Mocks.Entity.mockEntity5->TestEntity.castToInternal,
       ]) catch {
       | exn =>
         Js.log2("batchSet mock entity exn", exn)
@@ -635,19 +639,19 @@ describe("Entity history rollbacks", () => {
         safeBlockNumber: 9,
         safeBlockTimestamp: 9 * 5,
       }),
-      ~entityMod=module(TestEntity),
+      ~entityConfig=module(TestEntity)->Entities.entityModToInternal,
     )
 
-    let expectedDiff: array<EntityHistory.historyRow<TestEntity.t>> = [
+    let expectedDiff: array<EntityHistory.historyRow<Internal.entity>> = [
       {
         current: {chain_id: 0, block_timestamp: 0, block_number: 0, log_index: 0},
         previous: %raw(`undefined`),
-        entityData: Set(Mocks.Entity.mockEntity1),
+        entityData: Set(Mocks.Entity.mockEntity1->TestEntity.castToInternal),
       },
       {
         current: {chain_id: 0, block_timestamp: 0, block_number: 0, log_index: 0},
         previous: %raw(`undefined`),
-        entityData: Set(Mocks.Entity.mockEntity5),
+        entityData: Set(Mocks.Entity.mockEntity5->TestEntity.castToInternal),
       },
     ]
 
@@ -691,9 +695,9 @@ describe("Entity history rollbacks", () => {
 
   Async.it("Prunes history correctly with items in reorg threshold", async () => {
     // set the current entity of id 3
-    await Db.sql->DbFunctionsEntities.batchSet(~entityMod=module(TestEntity))([
-      Mocks.Entity.mockEntity7,
-    ])
+    await Db.sql->DbFunctionsEntities.batchSet(
+      ~entityConfig=module(TestEntity)->Entities.entityModToInternal,
+    )([Mocks.Entity.mockEntity7->TestEntity.castToInternal])
 
     // set an updated version of its row to get a copied entity history
     try await Db.sql->Postgres.beginSql(
@@ -716,7 +720,7 @@ describe("Entity history rollbacks", () => {
     // }
 
     await Db.sql->DbFunctions.EntityHistory.pruneStaleEntityHistory(
-      ~entityName=TestEntity.name,
+      ~entityName=(module(TestEntity)->Entities.entityModToInternal).name,
       ~safeChainIdAndBlockNumberArray=[{chainId: Mocks.GnosisBug.chain_id, blockNumber: 11}],
       ~shouldDeepClean=true,
     )
@@ -775,7 +779,7 @@ describe("Entity history rollbacks", () => {
   Async.it("Returns expected diff for ordered multichain mode", async () => {
     let orderdMultichainRollbackDiff = try await Db.sql->DbFunctions.EntityHistory.getRollbackDiff(
       Mocks.Chain1.orderedMultichainArg,
-      ~entityMod=module(TestEntity),
+      ~entityConfig=module(TestEntity)->Entities.entityModToInternal,
     ) catch {
     | exn =>
       Js.log2("getRollbackDiff exn", exn)
@@ -794,7 +798,7 @@ describe("Entity history rollbacks", () => {
       )
       Assert.deepEqual(
         entitySetA,
-        Mocks.Entity.mockEntity2,
+        Mocks.Entity.mockEntity2->TestEntity.castToInternal,
         ~message="First history item should haved diffed to mockEntity2",
       )
       Assert.deepEqual(
@@ -814,7 +818,7 @@ describe("Entity history rollbacks", () => {
   Async.it("Returns expected diff for unordered multichain mode", async () => {
     let unorderedMultichainRollbackDiff = try await Db.sql->DbFunctions.EntityHistory.getRollbackDiff(
       Mocks.Chain1.unorderedMultichainArg,
-      ~entityMod=module(TestEntity),
+      ~entityConfig=module(TestEntity)->Entities.entityModToInternal,
     ) catch {
     | exn =>
       Js.log2("getRollbackDiff exn", exn)
@@ -830,7 +834,7 @@ describe("Entity history rollbacks", () => {
       )
       Assert.deepEqual(
         entitySetA,
-        Mocks.Entity.mockEntity2,
+        Mocks.Entity.mockEntity2->TestEntity.castToInternal,
         ~message="First history item should haved diffed to mockEntity2",
       )
     | _ => Assert.fail("Should have only chain 1 item in diff")
@@ -940,7 +944,7 @@ describe("Entity history rollbacks", () => {
 
   Async.it("Prunes history correctly with items in reorg threshold", async () => {
     await Db.sql->DbFunctions.EntityHistory.pruneStaleEntityHistory(
-      ~entityName=TestEntity.name,
+      ~entityName=(module(TestEntity)->Entities.entityModToInternal).name,
       ~safeChainIdAndBlockNumberArray=[{chainId: 1, blockNumber: 3}, {chainId: 2, blockNumber: 2}],
       ~shouldDeepClean=true,
     )
@@ -972,7 +976,7 @@ describe("Entity history rollbacks", () => {
     "Deep clean prunes history correctly with items in reorg threshold without checking for stale history entities in threshold",
     async () => {
       await Db.sql->DbFunctions.EntityHistory.pruneStaleEntityHistory(
-        ~entityName=TestEntity.name,
+        ~entityName=(module(TestEntity)->Entities.entityModToInternal).name,
         ~safeChainIdAndBlockNumberArray=[
           {chainId: 1, blockNumber: 3},
           {chainId: 2, blockNumber: 2},
@@ -998,7 +1002,7 @@ describe("Entity history rollbacks", () => {
   )
   Async.it("Prunes history correctly with no items in reorg threshold", async () => {
     await Db.sql->DbFunctions.EntityHistory.pruneStaleEntityHistory(
-      ~entityName=TestEntity.name,
+      ~entityName=(module(TestEntity)->Entities.entityModToInternal).name,
       ~safeChainIdAndBlockNumberArray=[{chainId: 1, blockNumber: 4}, {chainId: 2, blockNumber: 3}],
       ~shouldDeepClean=true,
     )
@@ -1053,7 +1057,7 @@ describe_skip("Prune performance test", () => {
     let startTime = Hrtime.makeTimer()
 
     try await Db.sql->DbFunctions.EntityHistory.pruneStaleEntityHistory(
-      ~entityName=TestEntity.name,
+      ~entityName=(module(TestEntity)->Entities.entityModToInternal).name,
       ~safeChainIdAndBlockNumberArray=[{chainId: 1, blockNumber: 500}],
       ~shouldDeepClean=false,
     ) catch {
