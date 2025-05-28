@@ -592,9 +592,11 @@ describe("Entity history rollbacks", () => {
 
       let _ = await Db.sql->Postgres.unsafe(TestEntity.entityHistory.createInsertFnQuery)
 
-      try await Db.sql->DbFunctionsEntities.batchSet(~entityMod=module(TestEntity))([
-        Mocks.Entity.mockEntity1,
-        Mocks.Entity.mockEntity5,
+      try await Db.sql->DbFunctionsEntities.batchSet(
+        ~entityConfig=module(TestEntity)->Entities.entityModToInternal,
+      )([
+        Mocks.Entity.mockEntity1->TestEntity.castToInternal,
+        Mocks.Entity.mockEntity5->TestEntity.castToInternal,
       ]) catch {
       | exn =>
         Js.log2("batchSet mock entity exn", exn)
@@ -637,19 +639,19 @@ describe("Entity history rollbacks", () => {
         safeBlockNumber: 9,
         safeBlockTimestamp: 9 * 5,
       }),
-      ~entityMod=module(TestEntity),
+      ~entityConfig=module(TestEntity)->Entities.entityModToInternal,
     )
 
-    let expectedDiff: array<EntityHistory.historyRow<TestEntity.t>> = [
+    let expectedDiff: array<EntityHistory.historyRow<Internal.entity>> = [
       {
         current: {chain_id: 0, block_timestamp: 0, block_number: 0, log_index: 0},
         previous: %raw(`undefined`),
-        entityData: Set(Mocks.Entity.mockEntity1),
+        entityData: Set(Mocks.Entity.mockEntity1->TestEntity.castToInternal),
       },
       {
         current: {chain_id: 0, block_timestamp: 0, block_number: 0, log_index: 0},
         previous: %raw(`undefined`),
-        entityData: Set(Mocks.Entity.mockEntity5),
+        entityData: Set(Mocks.Entity.mockEntity5->TestEntity.castToInternal),
       },
     ]
 
@@ -693,9 +695,9 @@ describe("Entity history rollbacks", () => {
 
   Async.it("Prunes history correctly with items in reorg threshold", async () => {
     // set the current entity of id 3
-    await Db.sql->DbFunctionsEntities.batchSet(~entityMod=module(TestEntity))([
-      Mocks.Entity.mockEntity7,
-    ])
+    await Db.sql->DbFunctionsEntities.batchSet(
+      ~entityConfig=module(TestEntity)->Entities.entityModToInternal,
+    )([Mocks.Entity.mockEntity7->TestEntity.castToInternal])
 
     // set an updated version of its row to get a copied entity history
     try await Db.sql->Postgres.beginSql(
@@ -718,7 +720,7 @@ describe("Entity history rollbacks", () => {
     // }
 
     await Db.sql->DbFunctions.EntityHistory.pruneStaleEntityHistory(
-      ~entityName=TestEntity.name,
+      ~entityName=(module(TestEntity)->Entities.entityModToInternal).name,
       ~safeChainIdAndBlockNumberArray=[{chainId: Mocks.GnosisBug.chain_id, blockNumber: 11}],
       ~shouldDeepClean=true,
     )
