@@ -26,7 +26,7 @@ let logLevels = [
 
 %%private(let logger = ref(None))
 
-let setLogger = (~logStrategy, ~logFilePath, ~defaultFileLogLevel, ~userLogLevel) => {
+let makeLogger = (~logStrategy, ~logFilePath, ~defaultFileLogLevel, ~userLogLevel) => {
   // Currently unused - useful if using multiple transports.
   // let pinoRaw = {"target": "pino/file", "level": Config.userLogLevel}
   let pinoFile: Transport.transportTarget = {
@@ -42,38 +42,38 @@ let setLogger = (~logStrategy, ~logFilePath, ~defaultFileLogLevel, ~userLogLevel
   let makeMultiStreamLogger =
     MultiStreamLogger.make(~userLogLevel, ~defaultFileLogLevel, ~customLevels=logLevels, ...)
 
-  logger :=
-    Some(
-      switch logStrategy {
-      | EcsFile =>
-        makeWithOptionsAndTransport(
-          {
-            ...Pino.ECS.make(),
-            customLevels: logLevels,
-          },
-          Transport.make(pinoFile),
-        )
-      | EcsConsoleMultistream =>
-        makeMultiStreamLogger(~logFile=None, ~options=Some(Pino.ECS.make()))
-      | EcsConsole =>
-        make({
-          ...Pino.ECS.make(),
-          level: userLogLevel,
-          customLevels: logLevels,
-        })
-      | FileOnly =>
-        makeWithOptionsAndTransport(
-          {
-            customLevels: logLevels,
-            level: defaultFileLogLevel,
-          },
-          Transport.make(pinoFile),
-        )
-      | ConsoleRaw => makeMultiStreamLogger(~logFile=None, ~options=None)
-      | ConsolePretty => makeMultiStreamLogger(~logFile=None, ~options=None)
-      | Both => makeMultiStreamLogger(~logFile=Some(logFilePath), ~options=None)
+  switch logStrategy {
+  | EcsFile =>
+    makeWithOptionsAndTransport(
+      {
+        ...Pino.ECS.make(),
+        customLevels: logLevels,
       },
+      Transport.make(pinoFile),
     )
+  | EcsConsoleMultistream => makeMultiStreamLogger(~logFile=None, ~options=Some(Pino.ECS.make()))
+  | EcsConsole =>
+    make({
+      ...Pino.ECS.make(),
+      level: userLogLevel,
+      customLevels: logLevels,
+    })
+  | FileOnly =>
+    makeWithOptionsAndTransport(
+      {
+        customLevels: logLevels,
+        level: defaultFileLogLevel,
+      },
+      Transport.make(pinoFile),
+    )
+  | ConsoleRaw => makeMultiStreamLogger(~logFile=None, ~options=None)
+  | ConsolePretty => makeMultiStreamLogger(~logFile=None, ~options=None)
+  | Both => makeMultiStreamLogger(~logFile=Some(logFilePath), ~options=None)
+  }
+}
+
+let setLogger = l => {
+  logger := Some(l)
 }
 
 let getLogger = () => {

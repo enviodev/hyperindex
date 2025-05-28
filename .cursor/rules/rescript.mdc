@@ -1,0 +1,8 @@
+---
+description: Rules to let Cursor help you write relevant ReScript code.
+globs: *.res,*.resi
+alwaysApply: false
+---
+- Always use ReScript 11 documentation.
+- Never suggest ReasonML syntax.
+- Never use `[| item |]` to create an array. Use `[ item ]` instead.
