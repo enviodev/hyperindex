@@ -1,4 +1,3 @@
-
 /***** TAKE NOTE ******
 This file module is a hack to get genType to work!
 
@@ -41,6 +40,15 @@ let deleteDictKey: (dict<'a>, string) => unit = %raw(`
   `)
 
 /**
+Type to track which entities have been accessed via get operations
+*/
+@genType
+type accessedEntityRecord = {
+  entityType: string,
+  entityId: string,
+}
+
+/**
 The mockDb type is simply an InMemoryStore internally. __dbInternal__ holds a reference
 to an inMemoryStore and all the the accessor methods point to the reference of that inMemory
 store
@@ -51,6 +59,7 @@ type inMemoryStore = InMemoryStore.t
 @genType
 type rec t = {
   __dbInternal__: inMemoryStore,
+  __accessedIds__: ref<array<accessedEntityRecord>>,
   entities: entities,
   rawEvents: storeOperations<InMemoryStore.rawEventsKey, TablesStatic.RawEvents.t>,
   eventSyncState: storeOperations<Types.chainId, TablesStatic.EventSyncState.t>,
@@ -119,10 +128,16 @@ let makeStoreOperatorEntity = (
   ~makeMockDb,
   ~getStore: InMemoryStore.t => InMemoryTable.Entity.t<'entity>,
   ~getKey: 'entity => Types.id,
+  ~accessedIds: ref<array<accessedEntityRecord>>,
+  ~entityType: string,
 ): storeOperations<Types.id, 'entity> => {
   let {getUnsafe, values, set} = module(InMemoryTable.Entity)
 
+  // Track entity access when get is called
   let get = id => {
+    // Record this access
+    accessedIds := accessedIds.contents->Array.concat([{entityType, entityId: id}])
+    
     let store = inMemoryStore->getStore
     if store.table->InMemoryTable.hasByHash(id) {
       getUnsafe(store)(id)
@@ -213,6 +228,9 @@ instantiate a "MockDb". This is useful for cloning or making a MockDb
 out of an existing inMemoryStore
 */
 let rec makeWithInMemoryStore: InMemoryStore.t => t = (inMemoryStore: InMemoryStore.t) => {
+  // Create shared access tracking ref
+  let accessedIds = ref([])
+  
   let rawEvents = makeStoreOperatorMeta(
     ~inMemoryStore,
     ~makeMockDb=makeWithInMemoryStore,
@@ -237,6 +255,8 @@ let rec makeWithInMemoryStore: InMemoryStore.t => t = (inMemoryStore: InMemorySt
     ~makeMockDb=makeWithInMemoryStore,
     ~getKey=({chainId, contractAddress}) =>
       TablesStatic.DynamicContractRegistry.makeId(~chainId, ~contractAddress),
+    ~accessedIds,
+    ~entityType="DynamicContractRegistry",
   )
 
   let entities = {
@@ -247,12 +267,14 @@ let rec makeWithInMemoryStore: InMemoryStore.t => t = (inMemoryStore: InMemorySt
           ~makeMockDb=makeWithInMemoryStore,
           ~getStore=db => db.entities->InMemoryStore.EntityTables.get(module(Entities.{{entity.name.capitalized}})),
           ~getKey=({id}) => id,
+          ~accessedIds,
+          ~entityType="{{entity.name.capitalized}}",
         )
       },
   {{/each}}
   }
 
-  {__dbInternal__: inMemoryStore, entities, rawEvents, eventSyncState, dynamicContractRegistry}
+  {__dbInternal__: inMemoryStore, __accessedIds__: accessedIds, entities, rawEvents, eventSyncState, dynamicContractRegistry}
 }
 
 /**
@@ -277,6 +299,43 @@ state and no references to data from the passed in mockDb
 let cloneMockDb = (self: t) => {
   let clonedInternalDb = self->getInternalDb->InMemoryStore.clone
   clonedInternalDb->makeWithInMemoryStore
+}
+
+/**
+Get all accessed entity records (entity type and ID pairs)
+*/
+@genType
+let getAccessedIds = (self: t): array<accessedEntityRecord> => {
+  self.__accessedIds__.contents
+}
+
+/**
+Get accessed entity IDs filtered by entity type
+*/
+@genType
+let getAccessedIdsByEntityType = (self: t, entityType: string): array<string> => {
+  self.__accessedIds__.contents
+  ->Array.keepMap(record => 
+    record.entityType == entityType ? Some(record.entityId) : None
+  )
+}
+
+{{#each entities as | entity |}}
+/**
+Get accessed {{entity.name.capitalized}} entity IDs
+*/
+@genType
+let getAccessed{{entity.name.capitalized}}Ids = (self: t): array<string> => {
+  self->getAccessedIdsByEntityType("{{entity.name.capitalized}}")
+}
+
+{{/each}}
+/**
+Clear the access tracking (useful for testing scenarios where you want to reset tracking between operations)
+*/
+@genType
+let clearAccessTracking = (self: t): unit => {
+  self.__accessedIds__ := []
 }
 
 let getEntityOperations = (mockDb: t, ~entityMod): entityStoreOperations<Entities.internalEntity> => {

@@ -31,6 +31,20 @@ as MyModule_b
 module MockDb = {
   @genType
   let createMockDb = TestHelpers_MockDb.createMockDb
+  
+  @genType
+  let getAccessedIds = TestHelpers_MockDb.getAccessedIds
+  
+  @genType
+  let getAccessedIdsByEntityType = TestHelpers_MockDb.getAccessedIdsByEntityType
+  
+  {{#each entities as | entity |}}
+  @genType
+  let getAccessed{{entity.name.capitalized}}Ids = TestHelpers_MockDb.getAccessed{{entity.name.capitalized}}Ids
+  
+  {{/each}}
+  @genType
+  let clearAccessTracking = TestHelpers_MockDb.clearAccessTracking
 }
 
 @genType
