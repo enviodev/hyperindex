@@ -232,49 +232,56 @@ let trackDatabase = async (
     [allStaticTables, allEntityTables]
     ->Belt.Array.concatMany
     ->Js.Array2.map(({tableName}: Table.table) => tableName)
+
   await trackTables(~endpoint, ~auth, ~pgSchema, ~tableNames)
-  await tableNames->Utils.Array.awaitEach(async tableName => {
-    await createSelectPermissions(~endpoint, ~auth, ~tableName, ~pgSchema, ~responseLimit)
-  })
 
-  await allEntityTables->Utils.Array.awaitEach(async table => {
-    let {tableName} = table
-    //Set array relationships
-    await table
-    ->Table.getDerivedFromFields
-    ->Utils.Array.awaitEach(async derivedFromField => {
-      //determines the actual name of the underlying relational field (if it's an entity mapping then suffixes _id for eg.)
-      let relationalFieldName =
-        schema->Schema.getDerivedFromFieldName(derivedFromField)->Utils.unwrapResultExn
+  let _ =
+    await tableNames
+    ->Js.Array2.map(tableName =>
+      createSelectPermissions(~endpoint, ~auth, ~tableName, ~pgSchema, ~responseLimit)
+    )
+    ->Js.Array2.concatMany(
+      allEntityTables->Js.Array2.map(table => {
+        let {tableName} = table
+        [
+          //Set array relationships
+          table
+          ->Table.getDerivedFromFields
+          ->Js.Array2.map(derivedFromField => {
+            //determines the actual name of the underlying relational field (if it's an entity mapping then suffixes _id for eg.)
+            let relationalFieldName =
+              schema->Schema.getDerivedFromFieldName(derivedFromField)->Utils.unwrapResultExn
 
-      await createEntityRelationship(
-        ~endpoint,
-        ~auth,
-        ~pgSchema,
-        ~tableName,
-        ~relationshipType="array",
-        ~isDerivedFrom=true,
-        ~objectName=derivedFromField.fieldName,
-        ~relationalKey=relationalFieldName,
-        ~mappedEntity=derivedFromField.derivedFromEntity,
-      )
-    })
-
-    //Set object relationships
-    await table
-    ->Table.getLinkedEntityFields
-    ->Utils.Array.awaitEach(async ((field, linkedEntityName)) => {
-      await createEntityRelationship(
-        ~endpoint,
-        ~auth,
-        ~pgSchema,
-        ~tableName,
-        ~relationshipType="object",
-        ~isDerivedFrom=false,
-        ~objectName=field.fieldName,
-        ~relationalKey=field.fieldName,
-        ~mappedEntity=linkedEntityName,
-      )
-    })
-  })
+            createEntityRelationship(
+              ~endpoint,
+              ~auth,
+              ~pgSchema,
+              ~tableName,
+              ~relationshipType="array",
+              ~isDerivedFrom=true,
+              ~objectName=derivedFromField.fieldName,
+              ~relationalKey=relationalFieldName,
+              ~mappedEntity=derivedFromField.derivedFromEntity,
+            )
+          }),
+          //Set object relationships
+          table
+          ->Table.getLinkedEntityFields
+          ->Js.Array2.map(((field, linkedEntityName)) => {
+            createEntityRelationship(
+              ~endpoint,
+              ~auth,
+              ~pgSchema,
+              ~tableName,
+              ~relationshipType="object",
+              ~isDerivedFrom=false,
+              ~objectName=field.fieldName,
+              ~relationalKey=field.fieldName,
+              ~mappedEntity=linkedEntityName,
+            )
+          }),
+        ]->Utils.Array.flatten
+      }),
+    )
+    ->Promise.all
 }
