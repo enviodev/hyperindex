@@ -43,6 +43,25 @@ module MockDb = {
   let getAccessed{{entity.name.capitalized}}Ids = TestHelpers_MockDb.getAccessed{{entity.name.capitalized}}Ids
   
   {{/each}}
+
+  @genType
+  let getRequestedButNotFoundIdsByEntityType = TestHelpers_MockDb.getRequestedButNotFoundIdsByEntityType
+  
+  {{#each entities as | entity |}}
+  @genType
+  let getRequestedButNotFound{{entity.name.capitalized}}Ids = TestHelpers_MockDb.getRequestedButNotFound{{entity.name.capitalized}}Ids
+  
+  {{/each}}
+  
+  @genType
+  let getFoundIdsByEntityType = TestHelpers_MockDb.getFoundIdsByEntityType
+  
+  {{#each entities as | entity |}}
+  @genType
+  let getFound{{entity.name.capitalized}}Ids = TestHelpers_MockDb.getFound{{entity.name.capitalized}}Ids
+  
+  {{/each}}
+
   @genType
   let clearAccessTracking = TestHelpers_MockDb.clearAccessTracking
 }

@@ -46,6 +46,7 @@ Type to track which entities have been accessed via get operations
 type accessedEntityRecord = {
   entityType: string,
   entityId: string,
+  found: bool, // whether the entity was found in the store
 }
 
 /**
@@ -135,11 +136,13 @@ let makeStoreOperatorEntity = (
 
   // Track entity access when get is called
   let get = id => {
-    // Record this access
-    accessedIds := accessedIds.contents->Array.concat([{entityType, entityId: id}])
-    
     let store = inMemoryStore->getStore
-    if store.table->InMemoryTable.hasByHash(id) {
+    let found = store.table->InMemoryTable.hasByHash(id)
+    
+    // Record this access regardless of whether found
+    accessedIds := accessedIds.contents->Array.concat([{entityType, entityId: id, found}])
+    
+    if found {
       getUnsafe(store)(id)
     } else {
       None
@@ -330,6 +333,51 @@ let getAccessed{{entity.name.capitalized}}Ids = (self: t): array<string> => {
 }
 
 {{/each}}
+
+/**
+Get entity IDs that were requested but not found, filtered by entity type
+*/
+@genType
+let getRequestedButNotFoundIdsByEntityType = (self: t, entityType: string): array<string> => {
+  self.__accessedIds__.contents
+  ->Array.keepMap(record => 
+    record.entityType == entityType && !record.found ? Some(record.entityId) : None
+  )
+}
+
+{{#each entities as | entity |}}
+/**
+Get {{entity.name.capitalized}} entity IDs that were requested but not found
+*/
+@genType
+let getRequestedButNotFound{{entity.name.capitalized}}Ids = (self: t): array<string> => {
+  self->getRequestedButNotFoundIdsByEntityType("{{entity.name.capitalized}}")
+}
+
+{{/each}}
+
+/**
+Get entity IDs that were successfully found when accessed, filtered by entity type
+*/
+@genType
+let getFoundIdsByEntityType = (self: t, entityType: string): array<string> => {
+  self.__accessedIds__.contents
+  ->Array.keepMap(record => 
+    record.entityType == entityType && record.found ? Some(record.entityId) : None
+  )
+}
+
+{{#each entities as | entity |}}
+/**
+Get {{entity.name.capitalized}} entity IDs that were successfully found when accessed
+*/
+@genType
+let getFound{{entity.name.capitalized}}Ids = (self: t): array<string> => {
+  self->getFoundIdsByEntityType("{{entity.name.capitalized}}")
+}
+
+{{/each}}
+
 /**
 Clear the access tracking (useful for testing scenarios where you want to reset tracking between operations)
 */
