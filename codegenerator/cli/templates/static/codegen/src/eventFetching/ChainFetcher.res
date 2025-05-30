@@ -496,7 +496,7 @@ let getLastKnownValidBlock = async (
         switch chainFetcher.lastBlockScannedHashes->ReorgDetection.LastBlockScannedHashes.getLatestValidScannedBlock(
           ~blockNumbersAndHashes,
           ~currentBlockHeight=chainFetcher.currentBlockHeight,
-          ~skipReorgDuplicationCheck=retryCount.contents > 1,
+          ~skipReorgDuplicationCheck=retryCount.contents > 2,
         ) {
         | Ok(block) => blockRef := Some(block)
         | Error(NotFound) => blockRef := Some(await fallback())
