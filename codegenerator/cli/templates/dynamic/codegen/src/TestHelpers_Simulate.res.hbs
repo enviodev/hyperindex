@@ -1,0 +1,564 @@
+open Belt
+
+// Union type for event params - dynamically generated for all events
+@genType
+type eventParams =
+{{#each codegen_contracts as | contract |}}
+{{#each contract.codegen_events as | event |}}
+  | {{contract.name.capitalized}}{{event.name}}Params(Types.{{contract.name.capitalized}}.{{event.name}}.eventArgs)
+{{/each}}
+{{/each}}
+
+// Common event context type
+@genType
+type eventContext = {
+  block: Types.Block.t,
+  chainId: int,
+  logIndex: int,
+  srcAddress: Address.t,
+  transaction: Types.Transaction.t,
+}
+
+// Parsed event with union type for params
+@genType
+type parsedEvent = {
+  name: string,
+  params: eventParams,
+  context: eventContext,
+}
+
+// State representation - dynamically generated for all entities
+@genType
+type stateBefore = {
+{{#each entities as | entity |}}
+  {{entity.name.uncapitalized}}s: array<Entities.{{entity.name.capitalized}}.t>,
+{{/each}}
+}
+
+// Complete simulator input
+@genType
+type simulatorInput = {
+  event: parsedEvent,
+  stateBefore: stateBefore,
+}
+
+// JSON serialization schemas and functions to handle BigInt conversion
+{{#each entities as | entity |}}
+// Serializable version of {{entity.name.capitalized}} with BigInt fields as strings
+@genType
+type {{entity.name.uncapitalized}}Serializable = {
+{{#each entity.schema_fields as | field |}}
+{{#if (eq field.res_type "BigInt.t")}}
+  {{field.name}}: string,
+{{else}}
+  {{field.name}}: {{field.res_type}},
+{{/if}}
+{{/each}}
+}
+
+let {{entity.name.uncapitalized}}SerializableSchema = S.object((s): {{entity.name.uncapitalized}}Serializable => {
+{{#each entity.schema_fields as | field |}}
+{{#if (eq field.res_type "BigInt.t")}}
+  {{field.name}}: s.field("{{field.name}}", S.string),
+{{else if (eq field.res_type "string")}}
+  {{field.name}}: s.field("{{field.name}}", S.string),
+{{else}}
+  {{field.name}}: s.field("{{field.name}}", S.string),
+{{/if}}
+{{/each}}
+})
+
+let serialize{{entity.name.capitalized}} = ({{entity.name.uncapitalized}}: Entities.{{entity.name.capitalized}}.t): {{entity.name.uncapitalized}}Serializable => {
+{{#each entity.schema_fields as | field |}}
+{{#if (eq field.res_type "BigInt.t")}}
+  {{field.name}}: {{entity.name.uncapitalized}}.{{field.name}}->BigInt.toString,
+{{else}}
+  {{field.name}}: {{entity.name.uncapitalized}}.{{field.name}},
+{{/if}}
+{{/each}}
+}
+
+{{/each}}
+
+// Serializable simulation summary type
+@genType
+type simulationSummarySerializable = {
+  "accessed": {
+{{#each entities as | entity |}}
+    "{{entity.name.capitalized}}": array<string>,
+{{/each}}
+  },
+  "found": {
+{{#each entities as | entity |}}
+    "{{entity.name.capitalized}}": array<string>,
+{{/each}}
+  },
+  "notFound": {
+{{#each entities as | entity |}}
+    "{{entity.name.capitalized}}": array<string>,
+{{/each}}
+  },
+  "unusedProvided": {
+{{#each entities as | entity |}}
+    "{{entity.name.capitalized}}": array<string>,
+{{/each}}
+  },
+  "created": {
+{{#each entities as | entity |}}
+    "{{entity.name.capitalized}}": array<{{entity.name.uncapitalized}}Serializable>,
+{{/each}}
+  },
+  "deleted": {
+{{#each entities as | entity |}}
+    "{{entity.name.capitalized}}": array<string>,
+{{/each}}
+  },
+  "modified": {
+{{#each entities as | entity |}}
+    "{{entity.name.capitalized}}": array<{{entity.name.uncapitalized}}Serializable>,
+{{/each}}
+  },
+  "errors": array<string>,
+}
+
+// Function to serialize the simulation result
+let serializeSimulationResult = (summary: 'a): Js.Json.t => {
+  let serializableSummary: simulationSummarySerializable = {
+    "accessed": {
+{{#each entities as | entity |}}
+      "{{entity.name.capitalized}}": summary["accessed"]["{{entity.name.capitalized}}"],
+{{/each}}
+    },
+    "found": {
+{{#each entities as | entity |}}
+      "{{entity.name.capitalized}}": summary["found"]["{{entity.name.capitalized}}"],
+{{/each}}
+    },
+    "notFound": {
+{{#each entities as | entity |}}
+      "{{entity.name.capitalized}}": summary["notFound"]["{{entity.name.capitalized}}"],
+{{/each}}
+    },
+    "unusedProvided": {
+{{#each entities as | entity |}}
+      "{{entity.name.capitalized}}": summary["unusedProvided"]["{{entity.name.capitalized}}"],
+{{/each}}
+    },
+    "created": {
+{{#each entities as | entity |}}
+      "{{entity.name.capitalized}}": summary["created"]["{{entity.name.capitalized}}"]->Array.map(serialize{{entity.name.capitalized}}),
+{{/each}}
+    },
+    "deleted": {
+{{#each entities as | entity |}}
+      "{{entity.name.capitalized}}": summary["deleted"]["{{entity.name.capitalized}}"],
+{{/each}}
+    },
+    "modified": {
+{{#each entities as | entity |}}
+      "{{entity.name.capitalized}}": summary["modified"]["{{entity.name.capitalized}}"]->Array.map(serialize{{entity.name.capitalized}}),
+{{/each}}
+    },
+    "errors": summary["errors"],
+  }
+
+  let result = {"summary": serializableSummary}
+  result->Utils.magic
+}
+
+// Event-specific parsing functions using Sury schemas
+{{#each codegen_contracts as | contract |}}
+{{#each contract.codegen_events as | event |}}
+let parse{{contract.name.capitalized}}{{event.name}}Event = (eventObj: Js.Dict.t<Js.Json.t>): result<parsedEvent, string> => {
+  try {
+    let name = eventObj->Js.Dict.get("name")->Option.getExn->S.parseOrThrow(S.string)
+    let params =
+      eventObj
+      ->Js.Dict.get("params")
+      ->Option.getExn
+      ->S.parseOrThrow(Types.{{contract.name.capitalized}}.{{event.name}}.paramsRawEventSchema)
+
+    // Parse context manually for better control
+    let contextObj =
+      eventObj->Js.Dict.get("context")->Option.getExn->Js.Json.decodeObject->Option.getExn
+    let blockObj =
+      contextObj->Js.Dict.get("block")->Option.getExn->Js.Json.decodeObject->Option.getExn
+
+    let block: Types.Block.t = {
+      number: blockObj
+      ->Js.Dict.get("number")
+      ->Option.getExn
+      ->Js.Json.decodeNumber
+      ->Option.getExn
+      ->Float.toInt,
+      timestamp: blockObj
+      ->Js.Dict.get("timestamp")
+      ->Option.getExn
+      ->Js.Json.decodeNumber
+      ->Option.getExn
+      ->Float.toInt,
+      hash: blockObj->Js.Dict.get("hash")->Option.getExn->Js.Json.decodeString->Option.getExn,
+    }
+
+    let context: eventContext = {
+      block,
+      chainId: contextObj
+      ->Js.Dict.get("chainId")
+      ->Option.getExn
+      ->Js.Json.decodeNumber
+      ->Option.getExn
+      ->Float.toInt,
+      logIndex: contextObj
+      ->Js.Dict.get("logIndex")
+      ->Option.getExn
+      ->Js.Json.decodeNumber
+      ->Option.getExn
+      ->Float.toInt,
+      srcAddress: contextObj
+      ->Js.Dict.get("srcAddress")
+      ->Option.getExn
+      ->S.parseOrThrow(Address.schema),
+      transaction: ({}: Types.Transaction.t), // Empty transaction for now
+    }
+
+    Ok({
+      name,
+      params: {{contract.name.capitalized}}{{event.name}}Params(params),
+      context,
+    })
+  } catch {
+  | exn => {
+      let errorMessage = switch exn->Js.Exn.asJsExn {
+      | Some(jsExn) =>
+        "Failed to parse {{contract.name.capitalized}}.{{event.name}} event: " ++
+        jsExn->Js.Exn.message->Option.getWithDefault("Unknown error")
+      | None => "Failed to parse {{contract.name.capitalized}}.{{event.name}} event: Unknown error"
+      }
+      Error(errorMessage)
+    }
+  }
+}
+
+{{/each}}
+{{/each}}
+
+// Manual parsing for stateBefore
+let parseStateBefore = (stateObj: Js.Dict.t<Js.Json.t>): result<stateBefore, string> => {
+  try {
+{{#each entities as | entity |}}
+    let {{entity.name.uncapitalized}}s = switch stateObj->Js.Dict.get("{{entity.name.capitalized}}") {
+    | Some({{entity.name.uncapitalized}}sJson) =>
+      switch {{entity.name.uncapitalized}}sJson->Js.Json.decodeArray {
+      | Some(arr) =>
+        arr->Array.map({{entity.name.uncapitalized}}Json => {
+          let {{entity.name.uncapitalized}}Obj = {{entity.name.uncapitalized}}Json->Js.Json.decodeObject->Option.getExn
+          let id = {{entity.name.uncapitalized}}Obj->Js.Dict.get("id")->Option.getExn->Js.Json.decodeString->Option.getExn
+          // Handle entity-specific fields based on entity structure
+          {{#each entity.schema_fields as | field |}}
+          {{#if (eq field.name "id")}}
+          // id already handled above
+          {{else}}
+          {{#if (eq field.res_type "BigInt.t")}}
+          let {{field.name}} = switch {{entity.name.uncapitalized}}Obj->Js.Dict.get("{{field.name}}") {
+          | Some(value) => value->Js.Json.decodeString->Option.getExn->BigInt.fromString->Option.getExn
+          | None => BigInt.fromInt(0)
+          }
+          {{else if (eq field.res_type "string")}}
+          let {{field.name}} = switch {{entity.name.uncapitalized}}Obj->Js.Dict.get("{{field.name}}") {
+          | Some(value) => value->Js.Json.decodeString->Option.getExn
+          | None => ""
+          }
+          {{else if (eq field.res_type "int")}}
+          let {{field.name}} = switch {{entity.name.uncapitalized}}Obj->Js.Dict.get("{{field.name}}") {
+          | Some(value) => value->Js.Json.decodeNumber->Option.getExn->Float.toInt
+          | None => 0
+          }
+          {{else}}
+          let {{field.name}} = switch {{entity.name.uncapitalized}}Obj->Js.Dict.get("{{field.name}}") {
+          | Some(value) => value->Js.Json.decodeString->Option.getExn
+          | None => ""
+          }
+          {{/if}}
+          {{/if}}
+          {{/each}}
+          {Entities.{{entity.name.capitalized}}.{{#each entity.schema_fields as | field |}}{{field.name}}{{#unless @last}}, {{/unless}}{{/each}}}
+        })
+      | None => []
+      }
+    | None => []
+    }
+
+{{/each}}
+    Ok({
+{{#each entities as | entity |}}
+      {{entity.name.uncapitalized}}s,
+{{/each}}
+    })
+  } catch {
+  | exn => {
+      let errorMessage = switch exn->Js.Exn.asJsExn {
+      | Some(jsExn) =>
+        "Failed to parse stateBefore: " ++
+        jsExn->Js.Exn.message->Option.getWithDefault("Unknown error")
+      | None => "Failed to parse stateBefore: Unknown error"
+      }
+      Error(errorMessage)
+    }
+  }
+}
+
+// Main parsing function that dispatches based on event name
+let parseInput = (input: Js.Json.t): result<simulatorInput, string> => {
+  try {
+    let inputObj = input->Js.Json.decodeObject->Option.getExn
+    let eventObj =
+      inputObj->Js.Dict.get("event")->Option.getExn->Js.Json.decodeObject->Option.getExn
+    let eventName = eventObj->Js.Dict.get("name")->Option.getExn->S.parseOrThrow(S.string)
+
+    let parsedEventResult = switch eventName {
+{{#each codegen_contracts as | contract |}}
+{{#each contract.codegen_events as | event |}}
+    | "{{contract.name.capitalized}}.{{event.name}}" => parse{{contract.name.capitalized}}{{event.name}}Event(eventObj)
+{{/each}}
+{{/each}}
+    | _ => Error("Unsupported event type: " ++ eventName)
+    }
+
+    switch parsedEventResult {
+    | Error(err) => Error(err)
+    | Ok(parsedEvent) =>
+      let stateObj =
+        inputObj->Js.Dict.get("stateBefore")->Option.getExn->Js.Json.decodeObject->Option.getExn
+      switch parseStateBefore(stateObj) {
+      | Error(err) => Error(err)
+      | Ok(stateBefore) =>
+        Ok({
+          event: parsedEvent,
+          stateBefore,
+        })
+      }
+    }
+  } catch {
+  | exn => {
+      let errorMessage = switch exn->Js.Exn.asJsExn {
+      | Some(jsExn) =>
+        "Failed to parse input: " ++ jsExn->Js.Exn.message->Option.getWithDefault("Unknown error")
+      | None => "Failed to parse input: Unknown error"
+      }
+      Error(errorMessage)
+    }
+  }
+}
+
+// Helper function to create a MockDb from stateBefore
+let createMockDbFromState = (stateBefore: stateBefore): TestHelpers_MockDb.t => {
+  let mockDb = TestHelpers.MockDb.createMockDb()
+
+{{#each entities as | entity |}}
+  // Set up {{entity.name.uncapitalized}}s
+  let mockDbWith{{entity.name.capitalized}}s = stateBefore.{{entity.name.uncapitalized}}s->Array.reduce(mockDb, (db, {{entity.name.uncapitalized}}) => {
+    db.entities.{{entity.name.uncapitalized}}.set({{entity.name.uncapitalized}})
+  })
+
+{{/each}}
+  mockDbWith{{#each entities as | entity |}}{{#if @last}}{{entity.name.capitalized}}s{{/if}}{{/each}}
+}
+
+// Helper function to extract entities from MockDb result
+let extractEntitiesFromMockDb = (mockDb: TestHelpers_MockDb.t) => {
+{{#each entities as | entity |}}
+  let {{entity.name.uncapitalized}}s = mockDb.entities.{{entity.name.uncapitalized}}.getAll()
+{{/each}}
+
+  {
+{{#each entities as | entity |}}
+    "{{entity.name.capitalized}}": {{entity.name.uncapitalized}}s,
+{{/each}}
+  }
+}
+
+// Analysis functions for entity usage
+{{#each entities as | entity |}}
+let getInitiallyProvided{{entity.name.capitalized}}Ids = (mockDbBefore: TestHelpers_MockDb.t): array<string> => {
+  mockDbBefore.entities.{{entity.name.uncapitalized}}.getAll()->Array.map({{entity.name.uncapitalized}} => {{entity.name.uncapitalized}}.id)
+}
+
+let getProvidedButUnused{{entity.name.capitalized}}Ids = (
+  mockDbBefore: TestHelpers_MockDb.t,
+  mockDbAfter: TestHelpers_MockDb.t,
+): array<string> => {
+  let initial{{entity.name.capitalized}}Ids = getInitiallyProvided{{entity.name.capitalized}}Ids(mockDbBefore)
+  let found{{entity.name.capitalized}}Ids = mockDbAfter->TestHelpers.MockDb.getFound{{entity.name.capitalized}}Ids
+  initial{{entity.name.capitalized}}Ids->Array.keep(id => !Array.some(found{{entity.name.capitalized}}Ids, foundId => foundId == id))
+}
+
+let getCreated{{entity.name.capitalized}}Ids = (
+  mockDbBefore: TestHelpers_MockDb.t,
+  mockDbAfter: TestHelpers_MockDb.t,
+): array<string> => {
+  let initial{{entity.name.capitalized}}Ids = getInitiallyProvided{{entity.name.capitalized}}Ids(mockDbBefore)
+  let final{{entity.name.capitalized}}Ids = mockDbAfter.entities.{{entity.name.uncapitalized}}.getAll()->Array.map({{entity.name.uncapitalized}} => {{entity.name.uncapitalized}}.id)
+  final{{entity.name.capitalized}}Ids->Array.keep(id => !Array.some(initial{{entity.name.capitalized}}Ids, initialId => initialId == id))
+}
+
+let getDeleted{{entity.name.capitalized}}Ids = (
+  mockDbBefore: TestHelpers_MockDb.t,
+  mockDbAfter: TestHelpers_MockDb.t,
+): array<string> => {
+  let initial{{entity.name.capitalized}}Ids = getInitiallyProvided{{entity.name.capitalized}}Ids(mockDbBefore)
+  let final{{entity.name.capitalized}}Ids = mockDbAfter.entities.{{entity.name.uncapitalized}}.getAll()->Array.map({{entity.name.uncapitalized}} => {{entity.name.uncapitalized}}.id)
+  initial{{entity.name.capitalized}}Ids->Array.keep(id => !Array.some(final{{entity.name.capitalized}}Ids, finalId => finalId == id))
+}
+
+let getModified{{entity.name.capitalized}}s = (
+  mockDbBefore: TestHelpers_MockDb.t,
+  mockDbAfter: TestHelpers_MockDb.t,
+): array<Entities.{{entity.name.capitalized}}.t> => {
+  let initial{{entity.name.capitalized}}s = mockDbBefore.entities.{{entity.name.uncapitalized}}.getAll()
+  let final{{entity.name.capitalized}}s = mockDbAfter.entities.{{entity.name.uncapitalized}}.getAll()
+
+  initial{{entity.name.capitalized}}s->Array.keepMap(initial{{entity.name.capitalized}} => {
+    switch final{{entity.name.capitalized}}s->Array.getBy(final{{entity.name.capitalized}} => final{{entity.name.capitalized}}.id == initial{{entity.name.capitalized}}.id) {
+    | Some(final{{entity.name.capitalized}}) =>
+      // Entity exists in both, check if modified
+      {{#if entity.schema_fields}}
+      if (
+      {{#each entity.schema_fields as | field |}}
+      {{#unless (eq field.name "id")}}
+        initial{{../entity.name.capitalized}}.{{field.name}} != final{{../entity.name.capitalized}}.{{field.name}}{{#unless @last}} ||{{/unless}}
+      {{/unless}}
+      {{/each}}
+      ) {
+        Some(final{{entity.name.capitalized}})
+      } else {
+        None
+      }
+      {{else}}
+      Some(final{{entity.name.capitalized}})
+      {{/if}}
+    | None => None // Entity was deleted, not modified
+    }
+  })
+}
+
+let getCreated{{entity.name.capitalized}}s = (
+  mockDbBefore: TestHelpers_MockDb.t,
+  mockDbAfter: TestHelpers_MockDb.t,
+): array<Entities.{{entity.name.capitalized}}.t> => {
+  let initial{{entity.name.capitalized}}Ids = getInitiallyProvided{{entity.name.capitalized}}Ids(mockDbBefore)
+  let final{{entity.name.capitalized}}s = mockDbAfter.entities.{{entity.name.uncapitalized}}.getAll()
+  final{{entity.name.capitalized}}s->Array.keep({{entity.name.uncapitalized}} =>
+    !Array.some(initial{{entity.name.capitalized}}Ids, initialId => initialId == {{entity.name.uncapitalized}}.id)
+  )
+}
+
+{{/each}}
+
+// Event processing function
+let processEvent = (parsedEvent: parsedEvent, mockDb: TestHelpers_MockDb.t): promise<
+  TestHelpers_MockDb.t,
+> => {
+  switch parsedEvent.params {
+{{#each codegen_contracts as | contract |}}
+{{#each contract.codegen_events as | event |}}
+  | {{contract.name.capitalized}}{{event.name}}Params(params) =>
+    let fullEvent: Types.{{contract.name.capitalized}}.{{event.name}}.event = {
+      params,
+      chainId: #1,
+      srcAddress: parsedEvent.context.srcAddress,
+      logIndex: parsedEvent.context.logIndex,
+      transaction: parsedEvent.context.transaction,
+      block: parsedEvent.context.block,
+    }
+    TestHelpers.{{contract.name.capitalized}}.{{event.name}}.processEvent({
+      event: fullEvent,
+      mockDb,
+    })
+{{/each}}
+{{/each}}
+  }
+}
+
+// Complete simulation function with comprehensive analysis
+let simulateEvent = async (input: Js.Json.t): promise<result<Js.Json.t, string>> => {
+  switch parseInput(input) {
+  | Error(error) => Promise.resolve(Error(error))
+  | Ok(parsed) =>
+    try {
+      // Create MockDb from initial state
+      let mockDb = createMockDbFromState(parsed.stateBefore)
+
+      // Clear access tracking before processing
+      mockDb->TestHelpers.MockDb.clearAccessTracking
+
+      // Process the event
+      let mockDbAfter = await processEvent(parsed.event, mockDb)
+
+      // Get all the analysis data
+{{#each entities as | entity |}}
+      let accessed{{entity.name.capitalized}}Ids = mockDbAfter->TestHelpers.MockDb.getAccessed{{entity.name.capitalized}}Ids
+      let found{{entity.name.capitalized}}Ids = mockDbAfter->TestHelpers.MockDb.getFound{{entity.name.capitalized}}Ids
+      let requestedButNotFound{{entity.name.capitalized}}Ids =
+        mockDbAfter->TestHelpers.MockDb.getRequestedButNotFound{{entity.name.capitalized}}Ids
+      let providedButUnused{{entity.name.capitalized}}Ids = getProvidedButUnused{{entity.name.capitalized}}Ids(mockDb, mockDbAfter)
+      let created{{entity.name.capitalized}}s = getCreated{{entity.name.capitalized}}s(mockDb, mockDbAfter)
+      let deleted{{entity.name.capitalized}}Ids = getDeleted{{entity.name.capitalized}}Ids(mockDb, mockDbAfter)
+      let modified{{entity.name.capitalized}}s = getModified{{entity.name.capitalized}}s(mockDb, mockDbAfter)
+{{/each}}
+
+      // Create the comprehensive summary matching Notes.txt format
+      let summary = {
+        "accessed": {
+{{#each entities as | entity |}}
+          "{{entity.name.capitalized}}": accessed{{entity.name.capitalized}}Ids,
+{{/each}}
+        },
+        "found": {
+{{#each entities as | entity |}}
+          "{{entity.name.capitalized}}": found{{entity.name.capitalized}}Ids,
+{{/each}}
+        },
+        "notFound": {
+{{#each entities as | entity |}}
+          "{{entity.name.capitalized}}": requestedButNotFound{{entity.name.capitalized}}Ids,
+{{/each}}
+        },
+        "unusedProvided": {
+{{#each entities as | entity |}}
+          "{{entity.name.capitalized}}": providedButUnused{{entity.name.capitalized}}Ids,
+{{/each}}
+        },
+        "created": {
+{{#each entities as | entity |}}
+          "{{entity.name.capitalized}}": created{{entity.name.capitalized}}s,
+{{/each}}
+        },
+        "deleted": {
+{{#each entities as | entity |}}
+          "{{entity.name.capitalized}}": deleted{{entity.name.capitalized}}Ids,
+{{/each}}
+        },
+        "modified": {
+{{#each entities as | entity |}}
+          "{{entity.name.capitalized}}": modified{{entity.name.capitalized}}s,
+{{/each}}
+        },
+        "errors": [],
+      }
+
+      // Convert result to JSON with proper serialization
+      let result = serializeSimulationResult(summary)
+      Promise.resolve(Ok(result))
+    } catch {
+    | exn => {
+        let errorMsg = switch exn->Js.Exn.asJsExn {
+        | Some(jsExn) =>
+          "Simulation failed: " ++ jsExn->Js.Exn.message->Option.getWithDefault("Unknown error")
+        | None => "Simulation failed: Unknown error"
+        }
+        Js.log("❌ " ++ errorMsg)
+        Promise.resolve(Error(errorMsg))
+      }
+    }
+  }
+}
