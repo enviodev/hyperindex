@@ -11,9 +11,9 @@ module type Entity = {
   let table: Table.table
   let entityHistory: EntityHistory.t<t>
 }
-module type InternalEntity = Entity with type t = internalEntity
-external entityModToInternal: module(Entity with type t = 'a) => module(InternalEntity) = "%identity"
-external entityModsToInternal: array<module(Entity)> => array<module(InternalEntity)> = "%identity"
+external entityModToInternal: module(Entity with type t = 'a) => Internal.entityConfig = "%identity"
+external entityModsToInternal: array<module(Entity)> => array<Internal.entityConfig> = "%identity"
+external entitiesToInternal: array<'a> => array<Internal.entity> = "%identity"
 
 @get
 external getEntityId: internalEntity => string = "id"
@@ -106,6 +106,8 @@ module {{entity.name.capitalized}} = {
   )
 
   let entityHistory = table->EntityHistory.fromTable(~schema)
+
+  external castToInternal: t => Internal.entity = "%identity"
 }
 {{/each}}
 
@@ -118,8 +120,7 @@ let allEntities = [
 
 let byName =
   allEntities
-  ->Js.Array2.map(entityMod => {
-    let module(Entity) = entityMod
-    (Entity.name :> string, entityMod)
+  ->Js.Array2.map(entityConfig => {
+    (entityConfig.name, entityConfig)
   })
   ->Js.Dict.fromArray

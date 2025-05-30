@@ -1,7 +1,9 @@
 module InMemoryStore = {
   let setEntity = (inMemoryStore, ~entityMod, entity) => {
     let inMemTable =
-      inMemoryStore->InMemoryStore.getInMemTable(~entityMod=entityMod->Entities.entityModToInternal)
+      inMemoryStore->InMemoryStore.getInMemTable(
+        ~entityConfig=entityMod->Entities.entityModToInternal,
+      )
     let entity = entity->(Utils.magic: 'a => Entities.internalEntity)
     inMemTable->InMemoryTable.Entity.set(
       Set(entity)->Types.mkEntityUpdate(
@@ -52,29 +54,27 @@ module LoadLayer = {
     let loadEntitiesByIdsCalls = []
     let loadEntitiesByFieldCalls = []
     let loadLayer = LoadLayer.make(
-      ~loadEntitiesByIds=async (entityIds, ~entityMod, ~logger as _=?) => {
-        let module(Entity) = entityMod
+      ~loadEntitiesByIds=async (entityIds, ~entityConfig, ~logger as _=?) => {
         loadEntitiesByIdsCalls
         ->Js.Array2.push({
           entityIds,
-          entityName: (Entity.name :> string),
+          entityName: entityConfig.name,
         })
         ->ignore
         []
       },
       ~loadEntitiesByField=async (
         ~operator,
-        ~entityMod,
+        ~entityConfig,
         ~fieldName,
         ~fieldValue,
         ~fieldValueSchema,
         ~logger as _=?,
       ) => {
-        let module(Entity) = entityMod
         loadEntitiesByFieldCalls
         ->Js.Array2.push({
           operator,
-          entityName: (Entity.name :> string),
+          entityName: entityConfig.name,
           fieldName,
           fieldValue,
           fieldValueSchema,

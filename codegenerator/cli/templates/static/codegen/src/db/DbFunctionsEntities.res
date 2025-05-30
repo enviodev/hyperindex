@@ -66,39 +66,28 @@ let makeBatchDelete = (~table) => async (~logger=?, sql, ids) =>
   | res => res
   }
 
-let batchRead = (type entity, ~entityMod: module(Entities.Entity with type t = entity)) => {
-  let module(EntityMod) = entityMod
-  let {table, rowsSchema} = module(EntityMod)
+let batchRead = (~entityConfig: Internal.entityConfig) => {
+  let {table, rowsSchema} = entityConfig
   makeReadEntities(~table, ~rowsSchema)
 }
 
 type batchSet<'entity> = (Postgres.sql, array<'entity>, ~logger: Pino.t=?) => promise<unit>
 let batchSetCache: Utils.WeakMap.t<
-  module(Entities.InternalEntity),
+  Internal.entityConfig,
   batchSet<Internal.entity>,
 > = Utils.WeakMap.make()
-let batchSet = (type entity, ~entityMod: module(Entities.Entity with type t = entity)): batchSet<
-  entity,
-> => {
-  let module(EntityMod) = entityMod
-  let {table, schema} = module(EntityMod)
-  switch Utils.WeakMap.get(batchSetCache, entityMod->Entities.entityModToInternal) {
+let batchSet = (~entityConfig: Internal.entityConfig): batchSet<Internal.entity> => {
+  switch Utils.WeakMap.get(batchSetCache, entityConfig) {
   | None =>
-    let query = makeBatchSet(~table, ~schema)
-    Utils.WeakMap.set(
-      batchSetCache,
-      entityMod->Entities.entityModToInternal,
-      query->(Utils.magic: batchSet<entity> => batchSet<Internal.entity>),
-    )->ignore
+    let query = makeBatchSet(~table=entityConfig.table, ~schema=entityConfig.schema)
+    Utils.WeakMap.set(batchSetCache, entityConfig, query)->ignore
     query
-  | Some(query) => query->(Utils.magic: batchSet<Internal.entity> => batchSet<entity>)
+  | Some(query) => query
   }
 }
 
-let batchDelete = (type entity, ~entityMod: module(Entities.Entity with type t = entity)) => {
-  let module(EntityMod) = entityMod
-  let {table} = module(EntityMod)
-  makeBatchDelete(~table)
+let batchDelete = (~entityConfig: Internal.entityConfig) => {
+  makeBatchDelete(~table=entityConfig.table)
 }
 
 @module("./DbFunctionsImplementation.js")
@@ -117,16 +106,14 @@ external whereGtQuery: (
   ~value: Js.Json.t,
 ) => promise<Js.Json.t> = "whereGtQuery"
 
-let makeWhereQuery = (type entity, sql: Postgres.sql) => async (
+let makeWhereQuery = (sql: Postgres.sql) => async (
   ~operator: TableIndices.Operator.t,
-  ~entityMod: module(Entities.Entity with type t = entity),
+  ~entityConfig: Internal.entityConfig,
   ~fieldName: string,
   ~fieldValue: 'fieldValue,
   ~fieldValueSchema: S.t<'fieldValue>,
   ~logger=Logging.getLogger(),
-): array<entity> => {
-  let module(Entity) = entityMod
-
+): array<Internal.entity> => {
   let queryType = switch operator {
   | Eq => "whereEq"
   | Gt => "whereGt"
@@ -141,7 +128,7 @@ let makeWhereQuery = (type entity, sql: Postgres.sql) => async (
     ~logger,
     ~params={
       "queryType": queryType,
-      "tableName": Entity.table.tableName,
+      "tableName": entityConfig.table.tableName,
       "fieldName": fieldName,
       "fieldValue": fieldValue,
     },
@@ -152,14 +139,14 @@ let makeWhereQuery = (type entity, sql: Postgres.sql) => async (
   | value => value
   }
 
-  switch await query(~table=Entity.table, ~sql, ~fieldName, ~value) {
+  switch await query(~table=entityConfig.table, ~sql, ~fieldName, ~value) {
   | exception exn => exn->ErrorHandling.mkLogAndRaise(~logger, ~msg=`Failed to execute query`)
   | res =>
-    switch res->S.parseOrThrow(Entity.rowsSchema) {
+    switch res->S.parseOrThrow(entityConfig.rowsSchema) {
     | exception exn =>
       exn->ErrorHandling.mkLogAndRaise(
         ~logger,
-        ~msg=`Failed to parse rows from database of entity ${Entity.table.tableName}`,
+        ~msg=`Failed to parse rows from database of entity ${entityConfig.table.tableName}`,
       )
     | entities => entities
     }

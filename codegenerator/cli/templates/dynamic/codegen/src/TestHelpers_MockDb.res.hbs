@@ -233,9 +233,11 @@ let rec makeWithInMemoryStore: InMemoryStore.t => t = (inMemoryStore: InMemorySt
   let dynamicContractRegistry = makeStoreOperatorEntity(
     ~inMemoryStore,
     ~getStore=db =>
-      db.entities->InMemoryStore.EntityTables.get(module(TablesStatic.DynamicContractRegistry)),
+      db.entities->InMemoryStore.EntityTables.get(
+        ~entityConfig=module(TablesStatic.DynamicContractRegistry)->Entities.entityModToInternal,
+      ),
     ~makeMockDb=makeWithInMemoryStore,
-    ~getKey=({chainId, contractAddress}) =>
+    ~getKey=({chainId, contractAddress}: TablesStatic.DynamicContractRegistry.t) =>
       TablesStatic.DynamicContractRegistry.makeId(~chainId, ~contractAddress),
   )
 
@@ -245,8 +247,10 @@ let rec makeWithInMemoryStore: InMemoryStore.t => t = (inMemoryStore: InMemorySt
         makeStoreOperatorEntity(
           ~inMemoryStore,
           ~makeMockDb=makeWithInMemoryStore,
-          ~getStore=db => db.entities->InMemoryStore.EntityTables.get(module(Entities.{{entity.name.capitalized}})),
-          ~getKey=({id}) => id,
+          ~getStore=db => db.entities->InMemoryStore.EntityTables.get(
+            ~entityConfig=module(Entities.{{entity.name.capitalized}})->Entities.entityModToInternal,
+          ),
+          ~getKey=({id}: Entities.{{entity.name.capitalized}}.t) => id,
         )
       },
   {{/each}}
@@ -279,32 +283,32 @@ let cloneMockDb = (self: t) => {
   clonedInternalDb->makeWithInMemoryStore
 }
 
-let getEntityOperations = (mockDb: t, ~entityMod): entityStoreOperations<Entities.internalEntity> => {
-  let module(Entity: Entities.InternalEntity) = entityMod
+let getEntityOperations = (mockDb: t, ~entityConfig: Internal.entityConfig): entityStoreOperations<
+  Internal.entity,
+> => {
   mockDb.entities
   ->Utils.magic
-  ->Utils.Dict.dangerouslyGetNonOption((Entity.name :> string))
-  ->Utils.Option.getExn("Mocked operations for entity " ++ (Entity.name :> string) ++ " not found")
+  ->Utils.Dict.dangerouslyGetNonOption(entityConfig.name)
+  ->Utils.Option.getExn("Mocked operations for entity " ++ entityConfig.name ++ " not found")
 }
 
 let makeLoadEntitiesByIds = (mockDb: t) => {
-  (ids, ~entityMod, ~logger as _=?) => {
-    let operations = mockDb->getEntityOperations(~entityMod)
+  (ids, ~entityConfig, ~logger as _=?) => {
+    let operations = mockDb->getEntityOperations(~entityConfig)
     ids->Array.keepMap(id => operations.get(id))->Promise.resolve
   }
 }
 
-
 let makeLoadEntitiesByField = (mockDb: t) => {
   async (
     ~operator,
-    ~entityMod,
+    ~entityConfig,
     ~fieldName,
     ~fieldValue,
     ~fieldValueSchema as _,
     ~logger as _=?,
   ) => {
-    let mockDbTable = mockDb.__dbInternal__->InMemoryStore.getInMemTable(~entityMod)
+    let mockDbTable = mockDb.__dbInternal__->InMemoryStore.getInMemTable(~entityConfig)
     let fieldValueHash =
       fieldValue->TableIndices.FieldValue.castFrom->TableIndices.FieldValue.toString
     if (mockDbTable->InMemoryTable.Entity.hasIndex(~fieldName, ~operator))(fieldValueHash) {
@@ -327,7 +331,9 @@ let executeRowsEntity = (
   ~getKey: entity => 'key,
 ) => {
   let getInMemTable = (inMemoryStore: InMemoryStore.t) =>
-    inMemoryStore.entities->InMemoryStore.EntityTables.get(entityMod)
+    inMemoryStore.entities->InMemoryStore.EntityTables.get(
+      ~entityConfig=entityMod->Entities.entityModToInternal,
+    )
 
   let inMemTable = getInMemTable(inMemoryStore)
 

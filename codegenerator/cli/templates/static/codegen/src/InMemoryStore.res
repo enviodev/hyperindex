@@ -9,19 +9,17 @@ let hashRawEventsKey = (key: rawEventsKey) =>
 
 module EntityTables = {
   type t = dict<InMemoryTable.Entity.t<Entities.internalEntity>>
-  exception UndefinedEntity(Enums.EntityType.t)
-  let make = (entities: array<module(Entities.InternalEntity)>): t => {
+  exception UndefinedEntity({entityName: string})
+  let make = (entities: array<Internal.entityConfig>): t => {
     let init = Js.Dict.empty()
-    entities->Belt.Array.forEach(entity => {
-      let module(Entity) = entity
-      init->Js.Dict.set((Entity.name :> string), InMemoryTable.Entity.make())
+    entities->Belt.Array.forEach(entityConfig => {
+      init->Js.Dict.set((entityConfig.name :> string), InMemoryTable.Entity.make())
     })
     init
   }
 
-  let get = (type entity, self: t, entityMod: module(Entities.Entity with type t = entity)) => {
-    let module(Entity) = entityMod
-    switch self->Utils.Dict.dangerouslyGetNonOption((Entity.name :> string)) {
+  let get = (type entity, self: t, ~entityConfig: Internal.entityConfig) => {
+    switch self->Utils.Dict.dangerouslyGetNonOption(entityConfig.name) {
     | Some(table) =>
       table->(
         Utils.magic: InMemoryTable.Entity.t<Entities.internalEntity> => InMemoryTable.Entity.t<
@@ -30,7 +28,7 @@ module EntityTables = {
       )
 
     | None =>
-      UndefinedEntity(Entity.name)->ErrorHandling.mkLogAndRaise(
+      UndefinedEntity({entityName: entityConfig.name})->ErrorHandling.mkLogAndRaise(
         ~msg="Unexpected, entity InMemoryTable is undefined",
       )
     }
@@ -53,7 +51,7 @@ type t = {
 }
 
 let make = (
-  ~entities: array<module(Entities.InternalEntity)>=Entities.allEntities,
+  ~entities: array<Internal.entityConfig>=Entities.allEntities,
   ~rollBackEventIdentifier=?,
 ): t => {
   eventSyncState: InMemoryTable.make(~hash=v => v->Belt.Int.toString),
@@ -83,11 +81,10 @@ let getEffectInMemTable = (inMemoryStore: t, ~effect: Internal.effect) => {
 }
 
 let getInMemTable = (
-  type entity,
   inMemoryStore: t,
-  ~entityMod: module(Entities.Entity with type t = entity),
-): InMemoryTable.Entity.t<entity> => {
-  inMemoryStore.entities->EntityTables.get(entityMod)
+  ~entityConfig: Internal.entityConfig,
+): InMemoryTable.Entity.t<Internal.entity> => {
+  inMemoryStore.entities->EntityTables.get(~entityConfig)
 }
 
 let isRollingBack = (inMemoryStore: t) => inMemoryStore.rollBackEventIdentifier->Belt.Option.isSome
@@ -98,7 +95,9 @@ let setDcsToStore = (
   ~shouldSaveHistory,
 ) => {
   let inMemTable =
-    inMemoryStore.entities->EntityTables.get(module(TablesStatic.DynamicContractRegistry))
+    inMemoryStore.entities->EntityTables.get(
+      ~entityConfig=module(TablesStatic.DynamicContractRegistry)->Entities.entityModToInternal,
+    )
   dcsToStoreByChainId->Utils.Dict.forEachWithKey((chainId, dcs) => {
     let chainId = chainId->Belt.Int.fromString->Belt.Option.getExn
     dcs->Belt.Array.forEach(dc => {

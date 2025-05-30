@@ -160,6 +160,13 @@ let fuelTransferParamsSchema = S.schema(s => {
 })
 
 type entity = private {id: string}
+type entityConfig = {
+  name: string,
+  schema: S.t<entity>,
+  rowsSchema: S.t<array<entity>>,
+  table: Table.table,
+  entityHistory: EntityHistory.t<entity>,
+}
 
 type effectInput
 type effectOutput
