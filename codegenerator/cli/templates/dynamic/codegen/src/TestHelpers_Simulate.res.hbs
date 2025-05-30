@@ -1,5 +1,3 @@
-// TODO this file needs to be implemented.
-
 open Belt
 
 // Union type for event params - dynamically generated for all events
@@ -42,6 +40,130 @@ type stateBefore = {
 type simulatorInput = {
   event: parsedEvent,
   stateBefore: stateBefore,
+}
+
+// JSON serialization schemas and functions to handle BigInt conversion
+{{#each entities as | entity |}}
+// Serializable version of {{entity.name.capitalized}} with BigInt fields as strings
+@genType
+type {{entity.name.uncapitalized}}Serializable = {
+{{#each entity.schema_fields as | field |}}
+{{#if (eq field.res_type "BigInt.t")}}
+  {{field.name}}: string,
+{{else}}
+  {{field.name}}: {{field.res_type}},
+{{/if}}
+{{/each}}
+}
+
+let {{entity.name.uncapitalized}}SerializableSchema = S.object((s): {{entity.name.uncapitalized}}Serializable => {
+{{#each entity.schema_fields as | field |}}
+{{#if (eq field.res_type "BigInt.t")}}
+  {{field.name}}: s.field("{{field.name}}", S.string),
+{{else if (eq field.res_type "string")}}
+  {{field.name}}: s.field("{{field.name}}", S.string),
+{{else}}
+  {{field.name}}: s.field("{{field.name}}", S.string),
+{{/if}}
+{{/each}}
+})
+
+let serialize{{entity.name.capitalized}} = ({{entity.name.uncapitalized}}: Entities.{{entity.name.capitalized}}.t): {{entity.name.uncapitalized}}Serializable => {
+{{#each entity.schema_fields as | field |}}
+{{#if (eq field.res_type "BigInt.t")}}
+  {{field.name}}: {{entity.name.uncapitalized}}.{{field.name}}->BigInt.toString,
+{{else}}
+  {{field.name}}: {{entity.name.uncapitalized}}.{{field.name}},
+{{/if}}
+{{/each}}
+}
+
+{{/each}}
+
+// Serializable simulation summary type
+@genType
+type simulationSummarySerializable = {
+  "accessed": {
+{{#each entities as | entity |}}
+    "{{entity.name.capitalized}}": array<string>,
+{{/each}}
+  },
+  "found": {
+{{#each entities as | entity |}}
+    "{{entity.name.capitalized}}": array<string>,
+{{/each}}
+  },
+  "notFound": {
+{{#each entities as | entity |}}
+    "{{entity.name.capitalized}}": array<string>,
+{{/each}}
+  },
+  "unusedProvided": {
+{{#each entities as | entity |}}
+    "{{entity.name.capitalized}}": array<string>,
+{{/each}}
+  },
+  "created": {
+{{#each entities as | entity |}}
+    "{{entity.name.capitalized}}": array<{{entity.name.uncapitalized}}Serializable>,
+{{/each}}
+  },
+  "deleted": {
+{{#each entities as | entity |}}
+    "{{entity.name.capitalized}}": array<string>,
+{{/each}}
+  },
+  "modified": {
+{{#each entities as | entity |}}
+    "{{entity.name.capitalized}}": array<{{entity.name.uncapitalized}}Serializable>,
+{{/each}}
+  },
+  "errors": array<string>,
+}
+
+// Function to serialize the simulation result
+let serializeSimulationResult = (summary: 'a): Js.Json.t => {
+  let serializableSummary: simulationSummarySerializable = {
+    "accessed": {
+{{#each entities as | entity |}}
+      "{{entity.name.capitalized}}": summary["accessed"]["{{entity.name.capitalized}}"],
+{{/each}}
+    },
+    "found": {
+{{#each entities as | entity |}}
+      "{{entity.name.capitalized}}": summary["found"]["{{entity.name.capitalized}}"],
+{{/each}}
+    },
+    "notFound": {
+{{#each entities as | entity |}}
+      "{{entity.name.capitalized}}": summary["notFound"]["{{entity.name.capitalized}}"],
+{{/each}}
+    },
+    "unusedProvided": {
+{{#each entities as | entity |}}
+      "{{entity.name.capitalized}}": summary["unusedProvided"]["{{entity.name.capitalized}}"],
+{{/each}}
+    },
+    "created": {
+{{#each entities as | entity |}}
+      "{{entity.name.capitalized}}": summary["created"]["{{entity.name.capitalized}}"]->Array.map(serialize{{entity.name.capitalized}}),
+{{/each}}
+    },
+    "deleted": {
+{{#each entities as | entity |}}
+      "{{entity.name.capitalized}}": summary["deleted"]["{{entity.name.capitalized}}"],
+{{/each}}
+    },
+    "modified": {
+{{#each entities as | entity |}}
+      "{{entity.name.capitalized}}": summary["modified"]["{{entity.name.capitalized}}"]->Array.map(serialize{{entity.name.capitalized}}),
+{{/each}}
+    },
+    "errors": summary["errors"],
+  }
+
+  let result = {"summary": serializableSummary}
+  result->Utils.magic
 }
 
 // Event-specific parsing functions using Sury schemas
@@ -424,8 +546,8 @@ let simulateEvent = async (input: Js.Json.t): promise<result<Js.Json.t, string>>
         "errors": [],
       }
 
-      // Convert result to JSON
-      let result = {"summary": summary}->Utils.magic
+      // Convert result to JSON with proper serialization
+      let result = serializeSimulationResult(summary)
       Promise.resolve(Ok(result))
     } catch {
     | exn => {
