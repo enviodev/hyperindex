@@ -464,11 +464,11 @@ let make = ({chain, endpointUrl}: options): t => {
 
     let parsingTimeElapsed = parsingTimeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
 
-    let lastBlockScannedData = await lastBlockQueriedPromise
+    let rangeLastBlock = await lastBlockQueriedPromise
 
     let reorgGuard: ReorgDetection.reorgGuard = {
-      lastBlockScannedData: lastBlockScannedData->ReorgDetection.generalizeBlockDataWithTimestamp,
-      firstBlockParentNumberAndHash: None,
+      rangeLastBlock: rangeLastBlock->ReorgDetection.generalizeBlockDataWithTimestamp,
+      prevRangeLastBlock: None,
     }
 
     let totalTimeElapsed = totalTimeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
@@ -480,9 +480,9 @@ let make = ({chain, endpointUrl}: options): t => {
     }
 
     {
-      latestFetchedBlockTimestamp: lastBlockScannedData.blockTimestamp,
+      latestFetchedBlockTimestamp: rangeLastBlock.blockTimestamp,
       parsedQueueItems,
-      latestFetchedBlockNumber: lastBlockScannedData.blockNumber,
+      latestFetchedBlockNumber: rangeLastBlock.blockNumber,
       stats,
       currentBlockHeight,
       reorgGuard,

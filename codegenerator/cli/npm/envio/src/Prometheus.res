@@ -83,6 +83,7 @@ module MakeSafePromMetric = (
   let handleInt: (t<'a>, ~labels: 'a, ~value: int) => unit
   let handleFloat: (t<'a>, ~labels: 'a, ~value: float) => unit
   let increment: (t<'a>, ~labels: 'a) => unit
+  let incrementMany: (t<'a>, ~labels: 'a, ~value: int) => unit
 } => {
   type t<'a> = {metric: M.t, labelSchema: S.t<'a>}
 
@@ -121,6 +122,13 @@ module MakeSafePromMetric = (
       ->M.labels(labels->S.reverseConvertToJsonOrThrow(labelSchema))
       ->Obj.magic
     )["inc"]()
+
+  let incrementMany = ({metric, labelSchema}: t<'a>, ~labels: 'a, ~value) =>
+    (
+      metric
+      ->M.labels(labels->S.reverseConvertToJsonOrThrow(labelSchema))
+      ->Obj.magic
+    )["inc"](value)
 }
 
 module SafeCounter = MakeSafePromMetric({
@@ -335,13 +343,49 @@ module IndexingMaxConcurrency = {
 module IndexingConcurrency = {
   let gauge = SafeGauge.makeOrThrow(
     ~name="envio_indexing_concurrency",
-    ~help="The current number of concurrent queries to the chain data-source.",
+    ~help="The number of executing concurrent queries to the chain data-source.",
     ~labelSchema=chainIdLabelsSchema,
   )
 
   let set = (~concurrency, ~chainId) => {
     gauge->SafeGauge.handleInt(~labels=chainId, ~value=concurrency)
   }
+}
+
+module IndexingPartitions = {
+  let gauge = SafeGauge.makeOrThrow(
+    ~name="envio_indexing_partitions",
+    ~help="The number of partitions used to split fetching logic by addresses and block ranges.",
+    ~labelSchema=chainIdLabelsSchema,
+  )
+
+  let set = (~partitionsCount, ~chainId) => {
+    gauge->SafeGauge.handleInt(~labels=chainId, ~value=partitionsCount)
+  }
+}
+
+module IndexingIdleTime = {
+  let counter = SafeCounter.makeOrThrow(
+    ~name="envio_indexing_idle_time",
+    ~help="The number of milliseconds the indexer source syncing has been idle. A high value may indicate the source sync is a bottleneck.",
+    ~labelSchema=chainIdLabelsSchema,
+  )
+}
+
+module IndexingSourceWaitingTime = {
+  let counter = SafeCounter.makeOrThrow(
+    ~name="envio_indexing_source_waiting_time",
+    ~help="The number of milliseconds the indexer has been waiting for new blocks.",
+    ~labelSchema=chainIdLabelsSchema,
+  )
+}
+
+module IndexingQueryTime = {
+  let counter = SafeCounter.makeOrThrow(
+    ~name="envio_indexing_query_time",
+    ~help="The number of milliseconds spent performing queries to the chain data-source.",
+    ~labelSchema=chainIdLabelsSchema,
+  )
 }
 
 module IndexingBufferSize = {
@@ -356,15 +400,14 @@ module IndexingBufferSize = {
   }
 }
 
-module IndexingMaxBufferSize = {
-  let gauge = SafeGauge.makeOrThrow(
-    ~name="envio_indexing_max_buffer_size",
-    ~help="The maximum number of items allowed in the indexing buffer for the chain.",
-    ~labelSchema=chainIdLabelsSchema,
-  )
+module IndexingTargetBufferSize = {
+  let gauge = PromClient.Gauge.makeGauge({
+    "name": "envio_indexing_target_buffer_size",
+    "help": "The target buffer size per chain for indexing. The actual number of items in the queue may exceed this value, but the indexer always tries to keep the buffer filled up to this target.",
+  })
 
-  let set = (~maxBufferSize, ~chainId) => {
-    gauge->SafeGauge.handleInt(~labels=chainId, ~value=maxBufferSize)
+  let set = (~targetBufferSize) => {
+    gauge->PromClient.Gauge.set(targetBufferSize)
   }
 }
 
@@ -499,5 +542,16 @@ module RollbackTargetBlockNumber = {
 
   let set = (~blockNumber, ~chain) => {
     gauge->SafeGauge.handleInt(~labels=chain->ChainMap.Chain.toChainId, ~value=blockNumber)
+  }
+}
+
+module ProcessingMaxBatchSize = {
+  let gauge = PromClient.Gauge.makeGauge({
+    "name": "envio_processing_max_batch_size",
+    "help": "The maximum number of items to process in a single batch.",
+  })
+
+  let set = (~maxBatchSize) => {
+    gauge->PromClient.Gauge.set(maxBatchSize)
   }
 }

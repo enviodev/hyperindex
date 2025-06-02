@@ -17,7 +17,7 @@ let fetchNext: (
   ~executeQuery: FetchState.query => promise<unit>,
   ~waitForNewBlock: (~currentBlockHeight: int) => promise<int>,
   ~onNewBlock: (~currentBlockHeight: int) => unit,
-  ~maxPerChainQueueSize: int,
+  ~targetBufferSize: int,
   ~stateId: int,
 ) => promise<unit>
 
@@ -29,4 +29,8 @@ let executeQuery: (
   ~currentBlockHeight: int,
 ) => promise<Source.blockRangeFetchResponse>
 
-let makeGetHeightRetryInterval: (~initialRetryInterval: int, ~backoffMultiplicative: int, ~maxRetryInterval: int) => (~retry: int) => int
+let makeGetHeightRetryInterval: (
+  ~initialRetryInterval: int,
+  ~backoffMultiplicative: int,
+  ~maxRetryInterval: int,
+) => (~retry: int) => int

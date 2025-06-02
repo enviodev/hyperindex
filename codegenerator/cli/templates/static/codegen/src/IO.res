@@ -83,12 +83,34 @@ let executeSetEntityWithHistory = (
       }
     },
   )
+  // Keep history items in the order of the events. Without sorting,
+  // they will only be in order per row, but not across the whole entity
+  // table.
+
+  let orderedHistoryItems =
+    entityHistoryItemsToSet
+    ->Array.concatMany
+    ->Js.Array2.sortInPlaceWith((a, b) => {
+      EventUtils.isEarlierEvent(
+        {
+          timestamp: a.current.block_timestamp,
+          chainId: a.current.chain_id,
+          blockNumber: a.current.block_number,
+          logIndex: a.current.log_index,
+        },
+        {
+          timestamp: b.current.block_timestamp,
+          chainId: b.current.chain_id,
+          blockNumber: b.current.block_number,
+          logIndex: b.current.log_index,
+        },
+      )
+        ? -1
+        : 1
+    })
 
   [
-    EntityMod.entityHistory->EntityHistory.batchInsertRows(
-      ~sql,
-      ~rows=Belt.Array.concatMany(entityHistoryItemsToSet),
-    ),
+    EntityMod.entityHistory->EntityHistory.batchInsertRows(~sql, ~rows=orderedHistoryItems),
     if entitiesToSet->Array.length > 0 {
       sql->DbFunctionsEntities.batchSet(~entityMod)(entitiesToSet)
     } else {
@@ -215,6 +237,8 @@ module RollBack = {
     let deletedEntities = Js.Dict.empty()
     let setEntities = Js.Dict.empty()
 
+    let fullDiff: dict<array<EntityHistory.historyRow<Entities.internalEntity>>> = Js.Dict.empty()
+
     let _ =
       await Entities.allEntities
       ->Belt.Array.map(async entityMod => {
@@ -239,6 +263,9 @@ module RollBack = {
               }),
           ~entityMod,
         )
+        if diff->Utils.Array.notEmpty {
+          fullDiff->Js.Dict.set((Entity.name :> string), diff)
+        }
 
         let entityTable = inMemStore.entities->InMemoryStore.EntityTables.get(entityMod)
 
@@ -273,6 +300,7 @@ module RollBack = {
       "inMemStore": inMemStore,
       "deletedEntities": deletedEntities,
       "setEntities": setEntities,
+      "fullDiff": fullDiff,
     }
   }
 }

@@ -96,11 +96,23 @@ let make = (
   let fetchState = FetchState.make(
     ~maxAddrInPartition,
     ~staticContracts,
-    ~dynamicContracts,
+    ~dynamicContracts=dynamicContracts->Array.map(dc => {
+      FetchState.address: dc.contractAddress,
+      contractName: (dc.contractType :> string),
+      startBlock: dc.registeringEventBlockNumber,
+      register: DC({
+        registeringEventLogIndex: dc.registeringEventLogIndex,
+        registeringEventBlockTimestamp: dc.registeringEventBlockTimestamp,
+        registeringEventContractName: dc.registeringEventContractName,
+        registeringEventName: dc.registeringEventName,
+        registeringEventSrcAddress: dc.registeringEventSrcAddress,
+      }),
+    }),
     ~startBlock,
     ~endBlock,
     ~eventConfigs,
     ~chainId=chainConfig.chain->ChainMap.Chain.toChainId,
+    ~blockLag=?Env.indexingBlockLag,
   )
 
   {
@@ -431,7 +443,7 @@ let hasNoMoreEventsToProcess = (self: t) => {
   self.fetchState->FetchState.queueSize === 0
 }
 
-let getHeighestBlockBelowThreshold = (cf: t): int => {
+let getHighestBlockBelowThreshold = (cf: t): int => {
   let highestBlockBelowThreshold = cf.currentBlockHeight - cf.chainConfig.confirmedBlockThreshold
   highestBlockBelowThreshold < 0 ? 0 : highestBlockBelowThreshold
 }
@@ -463,7 +475,7 @@ let getLastKnownValidBlock = async (
   }
 
   let fallback = async () => {
-    switch await getBlockHashes([chainFetcher->getHeighestBlockBelowThreshold]) {
+    switch await getBlockHashes([chainFetcher->getHighestBlockBelowThreshold]) {
     | [block] => block
     | _ =>
       Js.Exn.raiseError(
@@ -475,15 +487,30 @@ let getLastKnownValidBlock = async (
   switch scannedBlockNumbers {
   | [] => await fallback()
   | _ => {
-      let blockNumbersAndHashes = await getBlockHashes(scannedBlockNumbers)
+      let blockRef = ref(None)
+      let retryCount = ref(0)
 
-      switch chainFetcher.lastBlockScannedHashes->ReorgDetection.LastBlockScannedHashes.getLatestValidScannedBlock(
-        ~blockNumbersAndHashes,
-        ~currentBlockHeight=chainFetcher.currentBlockHeight,
-      ) {
-      | Some(block) => block
-      | None => await fallback()
+      while blockRef.contents->Option.isNone {
+        let blockNumbersAndHashes = await getBlockHashes(scannedBlockNumbers)
+
+        switch chainFetcher.lastBlockScannedHashes->ReorgDetection.LastBlockScannedHashes.getLatestValidScannedBlock(
+          ~blockNumbersAndHashes,
+          ~currentBlockHeight=chainFetcher.currentBlockHeight,
+          ~skipReorgDuplicationCheck=retryCount.contents > 2,
+        ) {
+        | Ok(block) => blockRef := Some(block)
+        | Error(NotFound) => blockRef := Some(await fallback())
+        | Error(AlreadyReorgedHashes) =>
+          let delayMilliseconds = 100
+          chainFetcher.logger->Logging.childTrace(
+            `Failed to find a valid block to rollback to, since received already reorged hashes from another HyperSync instance. HyperSync has multiple instances and it's possible that they drift independently slightly from the head. Indexing should continue correctly after retrying the query in ${delayMilliseconds->Int.toString}ms.`,
+          )
+          await Utils.delay(delayMilliseconds)
+          retryCount := retryCount.contents + 1
+        }
       }
+
+      blockRef.contents->Option.getUnsafe
     }
   }
 }

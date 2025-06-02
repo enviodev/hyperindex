@@ -216,6 +216,13 @@ describe("Entity History Codegen", () => {
 
     Assert.equal(expected, TestEntity.entityHistory.createInsertFnQuery)
   })
+  it("Creates an entity history table", () => {
+    let createQuery = TestEntity.entityHistory.table->Migrations.internalMakeCreateTableSqlUnsafe
+    Assert.equal(
+      `CREATE TABLE IF NOT EXISTS "public"."TestEntity_history"("entity_history_block_timestamp" INTEGER NOT NULL, "entity_history_chain_id" INTEGER NOT NULL, "entity_history_block_number" INTEGER NOT NULL, "entity_history_log_index" INTEGER NOT NULL, "previous_entity_history_block_timestamp" INTEGER, "previous_entity_history_chain_id" INTEGER, "previous_entity_history_block_number" INTEGER, "previous_entity_history_log_index" INTEGER, "id" TEXT NOT NULL, "fieldA" INTEGER, "fieldB" TEXT, "action" "public".ENTITY_HISTORY_ROW_ACTION NOT NULL, "serial" SERIAL, PRIMARY KEY("entity_history_block_timestamp", "entity_history_chain_id", "entity_history_block_number", "entity_history_log_index", "id"));`,
+      createQuery,
+    )
+  })
 
   it("Creates a js insert function", () => {
     let insertFnString = TestEntity.entityHistory.insertFn->toStringUnsafe
@@ -397,6 +404,64 @@ module Mocks = {
     let entityId2 = "2"
     let mockEntity5 = {id: entityId2, fieldA: 5, fieldB: None}
     let mockEntity6 = {id: entityId2, fieldA: 6, fieldB: None}
+
+    let entityId3 = "3"
+    let mockEntity7 = {id: entityId3, fieldA: 7, fieldB: None}
+    let mockEntity8 = {id: entityId3, fieldA: 8, fieldB: None}
+  }
+
+  module GnosisBug = {
+    let chain_id = 1
+
+    let event1: EntityHistory.historyFields = {
+      chain_id,
+      block_timestamp: 10 * 5,
+      block_number: 10,
+      log_index: 0,
+    }
+
+    let event2: EntityHistory.historyFields = {
+      chain_id,
+      block_timestamp: 10 * 5,
+      block_number: 10,
+      log_index: 1,
+    }
+
+    let historyRow1: testEntityHistory = {
+      current: event1,
+      previous: None,
+      entityData: Set(Entity.mockEntity2),
+    }
+
+    let historyRow2: testEntityHistory = {
+      current: event2,
+      previous: None,
+      entityData: Set(Entity.mockEntity6),
+    }
+
+    let historyRows = [historyRow1, historyRow2]
+
+    // For setting a different entity and testing pruning
+    let event3: EntityHistory.historyFields = {
+      chain_id,
+      block_timestamp: 12 * 5,
+      block_number: 12,
+      log_index: 0,
+    }
+
+    let historyRow3: testEntityHistory = {
+      current: event3,
+      previous: None,
+      entityData: Set(Entity.mockEntity3),
+    }
+
+    let historyRow4: testEntityHistory = {
+      current: event3,
+      previous: None,
+      entityData: Set(Entity.mockEntity8),
+    }
+
+    let historyRowsForPrune = [historyRow3, historyRow4]
   }
 
   module Chain1 = {
@@ -513,6 +578,162 @@ module Mocks = {
     Chain2.historyRows,
   )
 }
+
+describe("Entity history rollbacks", () => {
+  Async.beforeEach(async () => {
+    try {
+      let _ = DbHelpers.resetPostgresClient()
+      let _ = await Migrations.runDownMigrations(~shouldExit=false)
+      let _ = await Migrations.createEnumIfNotExists(Db.sql, EntityHistory.RowAction.enum)
+      let _ = await Migrations.creatTableIfNotExists(Db.sql, TestEntity.table)
+      let _ = await Migrations.creatTableIfNotExists(Db.sql, TestEntity.entityHistory.table)
+
+      let _ = await Db.sql->Postgres.unsafe(TestEntity.entityHistory.createInsertFnQuery)
+
+      try await Db.sql->DbFunctionsEntities.batchSet(~entityMod=module(TestEntity))([
+        Mocks.Entity.mockEntity1,
+        Mocks.Entity.mockEntity5,
+      ]) catch {
+      | exn =>
+        Js.log2("batchSet mock entity exn", exn)
+        Assert.fail("Failed to set mock entity in table")
+      }
+
+      try await Db.sql->Postgres.beginSql(
+        sql => [
+          TestEntity.entityHistory->EntityHistory.batchInsertRows(
+            ~sql,
+            ~rows=Mocks.GnosisBug.historyRows,
+          ),
+        ],
+      ) catch {
+      | exn =>
+        Js.log2("insert mock rows exn", exn)
+        Assert.fail("Failed to insert mock rows")
+      }
+
+      let historyItems = {
+        let items = await Db.sql->getAllMockEntityHistory
+        items->S.parseJsonOrThrow(TestEntity.entityHistory.schemaRows)
+      }
+      Assert.equal(historyItems->Js.Array2.length, 4, ~message="Should have 4 history items")
+      Assert.ok(
+        historyItems->Belt.Array.some(item => item.current.chain_id == 0),
+        ~message="Should contain 2 copied items",
+      )
+    } catch {
+    | exn =>
+      Js.log2(" Entity history setup exn", exn)
+      Assert.fail("Failed setting up tables")
+    }
+  })
+
+  Async.it("Rollback ignores copied entities as an item in reorg threshold", async () => {
+    let rollbackDiff = await Db.sql->DbFunctions.EntityHistory.getRollbackDiff(
+      OrderedMultichain({
+        reorgChainId: Mocks.GnosisBug.chain_id,
+        safeBlockNumber: 9,
+        safeBlockTimestamp: 9 * 5,
+      }),
+      ~entityMod=module(TestEntity),
+    )
+
+    let expectedDiff: array<EntityHistory.historyRow<TestEntity.t>> = [
+      {
+        current: {chain_id: 0, block_timestamp: 0, block_number: 0, log_index: 0},
+        previous: %raw(`undefined`),
+        entityData: Set(Mocks.Entity.mockEntity1),
+      },
+      {
+        current: {chain_id: 0, block_timestamp: 0, block_number: 0, log_index: 0},
+        previous: %raw(`undefined`),
+        entityData: Set(Mocks.Entity.mockEntity5),
+      },
+    ]
+
+    Assert.deepStrictEqual(
+      rollbackDiff,
+      expectedDiff,
+      ~message="Should rollback to the copied entity",
+    )
+  })
+
+  Async.it(
+    "Deleting items after reorg event should not remove the copied history item",
+    async () => {
+      await Db.sql->DbFunctions.EntityHistory.deleteAllEntityHistoryAfterEventIdentifier(
+        ~isUnorderedMultichainMode=false,
+        ~eventIdentifier={
+          chainId: Mocks.GnosisBug.chain_id,
+          blockTimestamp: 9 * 5,
+          blockNumber: 9,
+          logIndex: 0,
+        },
+        ~allEntities=[module(TestEntity)->Entities.entityModToInternal],
+      )
+
+      let historyItems = {
+        let items = await Db.sql->getAllMockEntityHistory
+        items->S.parseJsonOrThrow(TestEntity.entityHistory.schemaRows)
+      }
+
+      Assert.equal(historyItems->Js.Array2.length, 2, ~message="Should have the 2 copied items")
+
+      let allItemsAreZeroChainId =
+        historyItems->Belt.Array.every(item => item.current.chain_id == 0)
+
+      Assert.ok(
+        allItemsAreZeroChainId,
+        ~message="Should have all items in the zero chain id since they are copied",
+      )
+    },
+  )
+
+  Async.it("Prunes history correctly with items in reorg threshold", async () => {
+    // set the current entity of id 3
+    await Db.sql->DbFunctionsEntities.batchSet(~entityMod=module(TestEntity))([
+      Mocks.Entity.mockEntity7,
+    ])
+
+    // set an updated version of its row to get a copied entity history
+    try await Db.sql->Postgres.beginSql(
+      sql => [
+        TestEntity.entityHistory->EntityHistory.batchInsertRows(
+          ~sql,
+          ~rows=Mocks.GnosisBug.historyRowsForPrune,
+        ),
+      ],
+    ) catch {
+    | exn =>
+      Js.log2("insert mock rows exn", exn)
+      Assert.fail("Failed to insert mock rows")
+    }
+
+    // let historyItemsBefore = {
+    //   let items = await Db.sql->getAllMockEntityHistory
+    //   Js.log2("history items before prune", items)
+    //   items->S.parseJsonOrThrow(TestEntity.entityHistory.schemaRows)
+    // }
+
+    await Db.sql->DbFunctions.EntityHistory.pruneStaleEntityHistory(
+      ~entityName=TestEntity.name,
+      ~safeChainIdAndBlockNumberArray=[{chainId: Mocks.GnosisBug.chain_id, blockNumber: 11}],
+      ~shouldDeepClean=true,
+    )
+
+    let historyItemsAfter = {
+      let items = await Db.sql->getAllMockEntityHistory
+      // Js.log2("history items after prune", items)
+      items->S.parseJsonOrThrow(TestEntity.entityHistory.schemaRows)
+    }
+
+    Assert.equal(
+      historyItemsAfter->Js.Array2.length,
+      4,
+      ~message="Should have 4 history items for entity id 1 and 3 before and after block 11",
+    )
+  })
+})
 
 describe("Entity history rollbacks", () => {
   Async.beforeEach(async () => {

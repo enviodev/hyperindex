@@ -1,5 +1,7 @@
 open Belt
 
+type sourceManagerStatus = Idle | WaitingForNewBlock | Querieng
+
 // Ideally the ChainFetcher name suits this better
 // But currently the ChainFetcher module is immutable
 // and handles both processing and fetching.
@@ -7,6 +9,8 @@ open Belt
 // with a mutable state for easier reasoning and testing.
 type t = {
   sources: Utils.Set.t<Source.t>,
+  mutable statusStart: Hrtime.timeRef,
+  mutable status: sourceManagerStatus,
   maxPartitionConcurrency: int,
   newBlockFallbackStallTimeout: int,
   stalledPollingInterval: int,
@@ -66,7 +70,23 @@ let make = (
     newBlockFallbackStallTimeout,
     stalledPollingInterval,
     getHeightRetryInterval,
+    statusStart: Hrtime.makeTimer(),
+    status: Idle,
   }
+}
+
+let trackNewStatus = (sourceManager: t, ~newStatus) => {
+  let promCounter = switch newStatus {
+  | Idle => Prometheus.IndexingIdleTime.counter
+  | WaitingForNewBlock => Prometheus.IndexingSourceWaitingTime.counter
+  | Querieng => Prometheus.IndexingQueryTime.counter
+  }
+  promCounter->Prometheus.SafeCounter.incrementMany(
+    ~labels=sourceManager.activeSource.chain->ChainMap.Chain.toChainId,
+    ~value=sourceManager.statusStart->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis,
+  )
+  sourceManager.statusStart = Hrtime.makeTimer()
+  sourceManager.status = newStatus
 }
 
 let fetchNext = async (
@@ -76,7 +96,7 @@ let fetchNext = async (
   ~executeQuery,
   ~waitForNewBlock,
   ~onNewBlock,
-  ~maxPerChainQueueSize,
+  ~targetBufferSize,
   ~stateId,
 ) => {
   let {maxPartitionConcurrency} = sourceManager
@@ -85,7 +105,7 @@ let fetchNext = async (
     ~concurrencyLimit={
       maxPartitionConcurrency - sourceManager.fetchingPartitionsCount
     },
-    ~maxQueueSize=maxPerChainQueueSize,
+    ~targetBufferSize,
     ~currentBlockHeight,
     ~stateId,
   ) {
@@ -96,10 +116,12 @@ let fetchNext = async (
     | Some(waitingStateId) if waitingStateId >= stateId => ()
     | Some(_) // Case for the prev state before a rollback
     | None =>
+      sourceManager->trackNewStatus(~newStatus=WaitingForNewBlock)
       sourceManager.waitingForNewBlockStateId = Some(stateId)
       let currentBlockHeight = await waitForNewBlock(~currentBlockHeight)
       switch sourceManager.waitingForNewBlockStateId {
       | Some(waitingStateId) if waitingStateId === stateId => {
+          sourceManager->trackNewStatus(~newStatus=Idle)
           sourceManager.waitingForNewBlockStateId = None
           onNewBlock(~currentBlockHeight)
         }
@@ -115,6 +137,7 @@ let fetchNext = async (
         ~concurrency=sourceManager.fetchingPartitionsCount,
         ~chainId=sourceManager.activeSource.chain->ChainMap.Chain.toChainId,
       )
+      sourceManager->trackNewStatus(~newStatus=Querieng)
       let _ =
         await queries
         ->Array.map(q => {
@@ -125,6 +148,9 @@ let fetchNext = async (
               ~concurrency=sourceManager.fetchingPartitionsCount,
               ~chainId=sourceManager.activeSource.chain->ChainMap.Chain.toChainId,
             )
+            if sourceManager.fetchingPartitionsCount === 0 {
+              sourceManager->trackNewStatus(~newStatus=Idle)
+            }
           })
           promise
         })
@@ -148,12 +174,10 @@ let getSourceNewHeight = async (
   while newHeight.contents <= currentBlockHeight && status.contents !== Done {
     try {
       // Use to detect if the source is taking too long to respond
-      let endTimer = Prometheus.SourceGetHeightDuration.startTimer(
-        {
-          "source": source.name,
-          "chainId": source.chain->ChainMap.Chain.toChainId,
-        },
-      )
+      let endTimer = Prometheus.SourceGetHeightDuration.startTimer({
+        "source": source.name,
+        "chainId": source.chain->ChainMap.Chain.toChainId,
+      })
       let height = await source.getHeightOrThrow()
       endTimer()
 
@@ -180,7 +204,11 @@ let getSourceNewHeight = async (
       await Utils.delay(retryInterval)
     }
   }
-  Prometheus.SourceHeight.set(~sourceName=source.name, ~chainId=source.chain->ChainMap.Chain.toChainId, ~blockNumber=newHeight.contents)
+  Prometheus.SourceHeight.set(
+    ~sourceName=source.name,
+    ~chainId=source.chain->ChainMap.Chain.toChainId,
+    ~blockNumber=newHeight.contents,
+  )
   newHeight.contents
 }
 
@@ -463,4 +491,3 @@ let executeQuery = async (sourceManager: t, ~query: FetchState.query, ~currentBl
 
   responseRef.contents->Option.getUnsafe
 }
-
