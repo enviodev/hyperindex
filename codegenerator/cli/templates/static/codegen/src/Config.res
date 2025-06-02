@@ -84,7 +84,7 @@ let codegenPersistence = Persistence.make(
   ~dcRegistryEntityConfig=module(
     TablesStatic.DynamicContractRegistry
   )->Entities.entityModToInternal,
-  ~allEnums=Enums.allEnums->(Utils.magic: array<module(Enum.S)> => array<Internal.enumConfig>),
+  ~allEnums=Enums.allEnums,
   ~storage=PgStorage.make(~sql=Db.sql, ~pgSchema=Env.Db.publicSchema),
   ~onStorageInitialize=() => {
     TrackTables.trackAllTables()->Promise.catch(err => {

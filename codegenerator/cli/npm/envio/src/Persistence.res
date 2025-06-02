@@ -14,7 +14,7 @@ type storage = {
   initialize: (
     ~entities: array<Internal.entityConfig>,
     ~staticTables: array<Table.table>,
-    ~enums: array<Internal.enumConfig>,
+    ~enums: array<Internal.enumConfig<Internal.enum>>,
     // If true, the storage should clear existing data
     ~reset: bool,
   ) => promise<unit>,
@@ -29,7 +29,7 @@ type t = {
   userEntities: array<Internal.entityConfig>,
   staticTables: array<Table.table>,
   allEntities: array<Internal.entityConfig>,
-  allEnums: array<Internal.enumConfig>,
+  allEnums: array<Internal.enumConfig<Internal.enum>>,
   mutable storageStatus: storageStatus,
   storage: storage,
   onStorageInitialize: option<unit => promise<unit>>,
@@ -45,6 +45,14 @@ let make = (
   ~onStorageInitialize=?,
 ) => {
   let allEntities = userEntities->Js.Array2.concat([dcRegistryEntityConfig])
+  let allEnums = allEnums->Js.Array2.concat([
+    {
+      name: EntityHistory.RowAction.name,
+      variants: EntityHistory.RowAction.variants,
+      schema: EntityHistory.RowAction.schema,
+      default: SET,
+    }->Internal.fromGenericEnumConfig,
+  ])
   {
     userEntities,
     staticTables,

@@ -71,7 +71,7 @@ CREATE SCHEMA '${pgSchema}';`
 GRANT ALL ON SCHEMA '${pgSchema}' TO public;`,
   )
 
-  enums->Js.Array2.forEach((enumConfig: Internal.enumConfig) => {
+  enums->Js.Array2.forEach((enumConfig: Internal.enumConfig<Internal.enum>) => {
     query :=
       query.contents ++
       `\nIF NOT EXISTS (
