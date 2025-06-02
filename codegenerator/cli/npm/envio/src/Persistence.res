@@ -35,6 +35,13 @@ type t = {
   onStorageInitialize: option<unit => promise<unit>>,
 }
 
+let entityHistoryActionEnumConfig: Internal.enumConfig<EntityHistory.RowAction.t> = {
+  name: EntityHistory.RowAction.name,
+  variants: EntityHistory.RowAction.variants,
+  schema: EntityHistory.RowAction.schema,
+  default: SET,
+}
+
 let make = (
   ~userEntities,
   ~dcRegistryEntityConfig,
@@ -45,14 +52,8 @@ let make = (
   ~onStorageInitialize=?,
 ) => {
   let allEntities = userEntities->Js.Array2.concat([dcRegistryEntityConfig])
-  let allEnums = allEnums->Js.Array2.concat([
-    {
-      name: EntityHistory.RowAction.name,
-      variants: EntityHistory.RowAction.variants,
-      schema: EntityHistory.RowAction.schema,
-      default: SET,
-    }->Internal.fromGenericEnumConfig,
-  ])
+  let allEnums =
+    allEnums->Js.Array2.concat([entityHistoryActionEnumConfig->Internal.fromGenericEnumConfig])
   {
     userEntities,
     staticTables,
