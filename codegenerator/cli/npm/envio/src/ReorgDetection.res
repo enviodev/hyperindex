@@ -70,6 +70,7 @@ module LastBlockScannedHashes: {
     t,
     ~blockNumbersAndHashes: array<blockDataWithTimestamp>,
     ~currentBlockHeight: int,
+    ~skipReorgDuplicationCheck: bool=?,
   ) => validBlockResult
 
   let getThresholdBlockNumbers: (t, ~currentBlockHeight: int) => array<int>
@@ -212,6 +213,7 @@ module LastBlockScannedHashes: {
     self: t,
     ~blockNumbersAndHashes: array<blockDataWithTimestamp>,
     ~currentBlockHeight,
+    ~skipReorgDuplicationCheck=false,
   ) => {
     let verifiedDataByBlockNumber = Js.Dict.empty()
     for idx in 0 to blockNumbersAndHashes->Array.length - 1 {
@@ -219,16 +221,31 @@ module LastBlockScannedHashes: {
       verifiedDataByBlockNumber->Js.Dict.set(blockData.blockNumber->Int.toString, blockData)
     }
 
-    let isAlreadyReorgedResponse = switch self.detectedReorgBlock {
-    | Some(detectedReorgBlock) =>
-      switch verifiedDataByBlockNumber->Utils.Dict.dangerouslyGetNonOption(
-        detectedReorgBlock.blockNumber->Int.toString,
-      ) {
-      | Some(verifiedBlockData) => verifiedBlockData.blockHash === detectedReorgBlock.blockHash
-      | None => false
-      }
-    | None => false
-    }
+    /*
+     Let's say we indexed block X with hash A.
+     The next query we got the block X with hash B.
+     We assume that the hash A is reorged since we received it earlier than B.
+     So when we try to detect the reorg depth, we consider hash A as already invalid,
+     and retry the block hashes query if we receive one. (since it could come from a different instance and cause a double reorg)
+     But the assumption that A is reorged might be wrong sometimes,
+     for example if we got B from instance which didn't handle a reorg A.
+     Theoretically, it's possible with high partition concurrency.
+     So to handle this and prevent entering an infinite loop,
+     we can skip the reorg duplication check if we're sure that the block hashes query
+     is not coming from a different instance. (let's say we tried several times)
+ */
+    let isAlreadyReorgedResponse = skipReorgDuplicationCheck
+      ? false
+      : switch self.detectedReorgBlock {
+        | Some(detectedReorgBlock) =>
+          switch verifiedDataByBlockNumber->Utils.Dict.dangerouslyGetNonOption(
+            detectedReorgBlock.blockNumber->Int.toString,
+          ) {
+          | Some(verifiedBlockData) => verifiedBlockData.blockHash === detectedReorgBlock.blockHash
+          | None => false
+          }
+        | None => false
+        }
 
     if isAlreadyReorgedResponse {
       Error(AlreadyReorgedHashes)

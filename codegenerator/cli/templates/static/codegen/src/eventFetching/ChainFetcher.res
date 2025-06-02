@@ -488,6 +488,7 @@ let getLastKnownValidBlock = async (
   | [] => await fallback()
   | _ => {
       let blockRef = ref(None)
+      let retryCount = ref(0)
 
       while blockRef.contents->Option.isNone {
         let blockNumbersAndHashes = await getBlockHashes(scannedBlockNumbers)
@@ -495,6 +496,7 @@ let getLastKnownValidBlock = async (
         switch chainFetcher.lastBlockScannedHashes->ReorgDetection.LastBlockScannedHashes.getLatestValidScannedBlock(
           ~blockNumbersAndHashes,
           ~currentBlockHeight=chainFetcher.currentBlockHeight,
+          ~skipReorgDuplicationCheck=retryCount.contents > 2,
         ) {
         | Ok(block) => blockRef := Some(block)
         | Error(NotFound) => blockRef := Some(await fallback())
@@ -504,6 +506,7 @@ let getLastKnownValidBlock = async (
             `Failed to find a valid block to rollback to, since received already reorged hashes from another HyperSync instance. HyperSync has multiple instances and it's possible that they drift independently slightly from the head. Indexing should continue correctly after retrying the query in ${delayMilliseconds->Int.toString}ms.`,
           )
           await Utils.delay(delayMilliseconds)
+          retryCount := retryCount.contents + 1
         }
       }
 
