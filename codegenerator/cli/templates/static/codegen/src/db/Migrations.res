@@ -117,77 +117,16 @@ let runUpMigrations = async (
   // Reset is used for db-setup
   ~reset=false,
 ) => {
-  let exitCode = ref(Success)
-  let logger = Logging.createChild(~params={"context": "Running DB Migrations"})
-
-  let handleFailure = async (res, ~msg) =>
-    switch await res {
-    | exception exn =>
-      exitCode := Failure
-      exn->ErrorHandling.make(~msg, ~logger)->ErrorHandling.log
-    | _ => ()
-    }
-    
-  if reset {
-    let _ = await sql->unsafe(
-      `DROP SCHEMA IF EXISTS ${Env.Db.publicSchema} CASCADE;`,
-    )
+  let exitCode = try {
+    await Config.codegenPersistence->Persistence.init(~skipIsInitializedCheck=true, ~reset)
+    Success
+  } catch {
+  | _ => Failure
   }
-
-  let _ = await sql->unsafe(
-    `DO $$ 
-    BEGIN
-      CREATE SCHEMA IF NOT EXISTS ${Env.Db.publicSchema};
-      GRANT ALL ON SCHEMA ${Env.Db.publicSchema} TO postgres;
-      GRANT ALL ON SCHEMA ${Env.Db.publicSchema} TO public;
-    END $$;`,
-  )
-
-  //Add all enums
-  await Enums.allEnums->awaitEach(enum => {
-    let module(EnumMod) = enum
-    createEnumIfNotExists(Db.sql, EnumMod.enum)->handleFailure(
-      ~msg=`EE800: Error creating ${EnumMod.enum.name} enum`,
-    )
-  })
-
-  //Create all tables with indices
-  await [Db.allStaticTables, Db.allEntityTables, Db.allEntityHistoryTables]
-  ->Belt.Array.concatMany
-  ->awaitEach(async table => {
-    await creatTableIfNotExists(Db.sql, table)->handleFailure(
-      ~msg=`EE800: Error creating ${table.tableName} table`,
-    )
-    await createTableIndices(Db.sql, table)->handleFailure(
-      ~msg=`EE800: Error creating ${table.tableName} indices`,
-    )
-  })
-
-  await Db.allEntityHistory->awaitEach(async entityHistory => {
-    await sql
-    ->Postgres.unsafe(entityHistory.createInsertFnQuery)
-    ->handleFailure(~msg=`EE800: Error creating ${entityHistory.table.tableName} insert function`)
-  })
-
-  //Create all derivedFromField indices (must be done after all tables are created)
-  await Db.allEntityTables->awaitEach(async table => {
-    await table
-    ->Table.getDerivedFromFields
-    ->awaitEach(derivedFromField => {
-      createDerivedFromDbIndex(~derivedFromField, ~schema=Db.schema)->handleFailure(
-        ~msg=`Error creating derivedFrom index of "${derivedFromField.fieldName}" in entity "${table.tableName}"`,
-      )
-    })
-  })
-
-  await TrackTables.trackAllTables()->Promise.catch(err => {
-    Logging.errorWithExn(err, `EE803: Error tracking tables`)->Promise.resolve
-  })
-
   if shouldExit {
-    process->exit(exitCode.contents)
+    process->exit(exitCode)
   }
-  exitCode.contents
+  exitCode
 }
 
 let runDownMigrations = async (~shouldExit) => {

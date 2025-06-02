@@ -276,9 +276,6 @@ let main = async () => {
     let shouldUseTui = !(mainArgs.tuiOff->Belt.Option.getWithDefault(Env.tuiOffEnvVar))
 
     let config = RegisterHandlers.registerAllHandlers()
-    // FIXME: Shouldn't await here.
-    // Should finish moving all migration logic here.
-    await config.persistence->Persistence.init
 
     let gsManagerRef = ref(None)
 
@@ -347,6 +344,8 @@ let main = async () => {
         () => Disabled({})
       },
     )
+
+    await config.persistence->Persistence.init
 
     let chainManager = await ChainManager.makeFromDbState(~config)
     let loadLayer = LoadLayer.makeWithDbConnection()

@@ -52,7 +52,7 @@ let makeCreateTableSqlUnsafe = (table: Table.table, ~pgSchema) => {
       : ""});`
 }
 
-let makeInitializeQuery = (~pgSchema, ~staticTables, ~entities, ~enums) => {
+let makeInitializeQuery = (~pgSchema, ~staticTables, ~entities, ~enums, ~reset) => {
   let allTables = staticTables->Array.copy
   let allEntityTables = []
   entities->Js.Array2.forEach((entity: Internal.entityConfig) => {
@@ -63,8 +63,11 @@ let makeInitializeQuery = (~pgSchema, ~staticTables, ~entities, ~enums) => {
   let derivedSchema = Schema.make(allEntityTables)
 
   let query = ref(
-    `CREATE SCHEMA IF NOT EXISTS '${pgSchema}';
-GRANT ALL ON SCHEMA '${pgSchema}' TO postgres;
+    reset
+      ? `DROP SCHEMA IF EXISTS '${pgSchema}' CASCADE;
+CREATE SCHEMA '${pgSchema}';`
+      : `CREATE SCHEMA IF NOT EXISTS '${pgSchema}';` ++
+        `GRANT ALL ON SCHEMA '${pgSchema}' TO postgres;
 GRANT ALL ON SCHEMA '${pgSchema}' TO public;`,
   )
 
@@ -121,9 +124,11 @@ let make = (~sql: Postgres.sql, ~pgSchema): Persistence.storage => {
     schemas->Utils.Array.notEmpty
   }
 
-  let initialize = async (~entities, ~staticTables, ~enums) => {
+  let initialize = async (~entities, ~staticTables, ~enums, ~reset) => {
     let _ =
-      await sql->Postgres.unsafe(makeInitializeQuery(~pgSchema, ~staticTables, ~entities, ~enums))
+      await sql->Postgres.unsafe(
+        makeInitializeQuery(~pgSchema, ~staticTables, ~entities, ~enums, ~reset),
+      )
   }
 
   {

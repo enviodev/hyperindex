@@ -86,6 +86,11 @@ let codegenPersistence = Persistence.make(
   )->Entities.entityModToInternal,
   ~allEnums=Enums.allEnums->(Utils.magic: array<module(Enum.S)> => array<Internal.enumConfig>),
   ~storage=PgStorage.make(~sql=Db.sql, ~pgSchema=Env.Db.publicSchema),
+  ~onStorageInitialize=() => {
+    TrackTables.trackAllTables()->Promise.catch(err => {
+      Logging.errorWithExn(err, `EE803: Error tracking tables`)->Promise.resolve
+    })
+  }
 )
 
 type t = {

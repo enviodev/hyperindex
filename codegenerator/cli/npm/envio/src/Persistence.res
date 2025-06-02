@@ -15,6 +15,8 @@ type storage = {
     ~entities: array<Internal.entityConfig>,
     ~staticTables: array<Table.table>,
     ~enums: array<Internal.enumConfig>,
+    // If true, the storage should clear existing data
+    ~reset: bool,
   ) => promise<unit>,
 }
 
@@ -30,6 +32,7 @@ type t = {
   allEnums: array<Internal.enumConfig>,
   mutable storageStatus: storageStatus,
   storage: storage,
+  onStorageInitialize: option<unit => promise<unit>>,
 }
 
 let make = (
@@ -39,6 +42,7 @@ let make = (
   ~allEnums,
   ~staticTables,
   ~storage,
+  ~onStorageInitialize=?,
 ) => {
   let allEntities = userEntities->Js.Array2.concat([dcRegistryEntityConfig])
   {
@@ -48,29 +52,46 @@ let make = (
     allEnums,
     storageStatus: Unknown,
     storage,
+    onStorageInitialize,
   }
 }
 
-let init = async persistence => {
-  switch persistence.storageStatus {
-  | Unknown =>
-    let resolveRef = ref(%raw(`null`))
-    let promise = Promise.make((resolve, _) => {
-      resolveRef := resolve
-    })
-    persistence.storageStatus = Initializing(promise)
+let init = async (
+  persistence,
+  // There are not much sense in the option,
+  // but this is how the runUpMigration used to work
+  // and we want to keep the upsert behavior without breaking changes.
+  ~skipIsInitializedCheck=false,
+  ~reset=false,
+) => {
+  try {
+    switch persistence.storageStatus {
+    | Unknown =>
+      let resolveRef = ref(%raw(`null`))
+      let promise = Promise.make((resolve, _) => {
+        resolveRef := resolve
+      })
+      persistence.storageStatus = Initializing(promise)
 
-    if await persistence.storage.isInitialized() {
-      persistence.storageStatus = Ready({cleanRun: false})
-    } else {
-      let _ = await persistence.storage.initialize(
-        ~entities=persistence.allEntities,
-        ~staticTables=persistence.staticTables,
-        ~enums=persistence.allEnums,
-      )
-      persistence.storageStatus = Ready({cleanRun: true})
+      if !(reset || skipIsInitializedCheck) && (await persistence.storage.isInitialized()) {
+        persistence.storageStatus = Ready({cleanRun: false})
+      } else {
+        let _ = await persistence.storage.initialize(
+          ~entities=persistence.allEntities,
+          ~staticTables=persistence.staticTables,
+          ~enums=persistence.allEnums,
+          ~reset,
+        )
+        persistence.storageStatus = Ready({cleanRun: true})
+        switch persistence.onStorageInitialize {
+        | Some(onStorageInitialize) => await onStorageInitialize()
+        | None => ()
+        }
+      }
+    | Initializing(promise) => await promise
+    | Ready(_) => ()
     }
-  | Initializing(promise) => await promise
-  | Ready(_) => ()
+  } catch {
+  | exn => exn->ErrorHandling.mkLogAndRaise(~msg=`EE800: Failed to initialize the indexer storage.`)
   }
 }
