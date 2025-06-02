@@ -80,6 +80,7 @@ let getSyncConfig = (
 
 let codegenPersistence = Persistence.make(
   ~userEntities=Entities.userEntities,
+  ~staticTables=Db.allStaticTables,
   ~dcRegistryEntityConfig=module(
     TablesStatic.DynamicContractRegistry
   )->Entities.entityModToInternal,

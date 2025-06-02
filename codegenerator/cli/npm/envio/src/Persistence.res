@@ -13,6 +13,7 @@ type storage = {
   // Eg create connection, schema, tables, etc.
   initialize: (
     ~entities: array<Internal.entityConfig>,
+    ~staticTables: array<Table.table>,
     ~enums: array<Internal.enumConfig>,
   ) => promise<unit>,
 }
@@ -24,6 +25,7 @@ type storageStatus =
 
 type t = {
   userEntities: array<Internal.entityConfig>,
+  staticTables: array<Table.table>,
   allEntities: array<Internal.entityConfig>,
   allEnums: array<Internal.enumConfig>,
   mutable storageStatus: storageStatus,
@@ -35,11 +37,13 @@ let make = (
   ~dcRegistryEntityConfig,
   // TODO: Should only pass userEnums and create internal config in runtime
   ~allEnums,
+  ~staticTables,
   ~storage,
 ) => {
   let allEntities = userEntities->Js.Array2.concat([dcRegistryEntityConfig])
   {
     userEntities,
+    staticTables,
     allEntities,
     allEnums,
     storageStatus: Unknown,
@@ -61,6 +65,7 @@ let init = async persistence => {
     } else {
       let _ = await persistence.storage.initialize(
         ~entities=persistence.allEntities,
+        ~staticTables=persistence.staticTables,
         ~enums=persistence.allEnums,
       )
       persistence.storageStatus = Ready({cleanRun: true})
