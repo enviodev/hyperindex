@@ -245,7 +245,7 @@ module EntityHistory = {
       Postgres.sql,
       ~reorgChainId: int,
       ~safeBlockNumber: int,
-      ~entityName: Enums.EntityType.t,
+      ~entityName: string,
     ) => dynamicSqlQuery = "getFirstChangeSerial_UnorderedMultichain"
   }
 
@@ -256,21 +256,21 @@ module EntityHistory = {
       ~safeBlockTimestamp: int,
       ~reorgChainId: int,
       ~safeBlockNumber: int,
-      ~entityName: Enums.EntityType.t,
+      ~entityName: string,
     ) => dynamicSqlQuery = "getFirstChangeSerial_OrderedMultichain"
   }
 
   @module("./DbFunctionsImplementation.js")
   external getFirstChangeEntityHistoryPerChain: (
     Postgres.sql,
-    ~entityName: Enums.EntityType.t,
+    ~entityName: string,
     ~getFirstChangeSerial: Postgres.sql => dynamicSqlQuery,
   ) => promise<Js.Json.t> = "getFirstChangeEntityHistoryPerChain"
 
   @module("./DbFunctionsImplementation.js")
   external getRollbackDiffInternal: (
     Postgres.sql,
-    ~entityName: Enums.EntityType.t,
+    ~entityName: string,
     ~getFirstChangeSerial: Postgres.sql => dynamicSqlQuery,
   ) => //Returns an array of entity history rows
   promise<Js.Json.t> = "getRollbackDiff"
@@ -278,7 +278,7 @@ module EntityHistory = {
   @module("./DbFunctionsImplementation.js")
   external deleteRolledBackEntityHistory: (
     Postgres.sql,
-    ~entityName: Enums.EntityType.t,
+    ~entityName: string,
     ~getFirstChangeSerial: Postgres.sql => dynamicSqlQuery,
   ) => promise<unit> = "deleteRolledBackEntityHistory"
 
@@ -290,7 +290,7 @@ module EntityHistory = {
   @module("./DbFunctionsImplementation.js")
   external pruneStaleEntityHistoryInternal: (
     Postgres.sql,
-    ~entityName: Enums.EntityType.t,
+    ~entityName: string,
     ~safeChainIdAndBlockNumberArray: array<chainIdAndBlockNumber>,
     // shouldDeepClean is a boolean that determines whether to delete stale history
     // items of entities that are in the reorg threshold (expensive to calculate)
@@ -406,17 +406,16 @@ module EntityHistory = {
 
     let _ =
       await allEntities
-      ->Belt.Array.map(async entityMod => {
-        let module(Entity) = entityMod
+      ->Belt.Array.map(async entityConfig => {
         try await deleteRolledBackEntityHistory(
           sql,
-          ~entityName=Entity.name,
-          ~getFirstChangeSerial=args->Args.makeGetFirstChangeSerial(~entityName=Entity.name),
+          ~entityName=entityConfig.name,
+          ~getFirstChangeSerial=args->Args.makeGetFirstChangeSerial(~entityName=entityConfig.name),
         ) catch {
         | exn =>
           exn->ErrorHandling.mkLogAndRaise(
             ~msg=`Failed to delete rolled back entity history`,
-            ~logger=args->Args.getLogger(~entityName=Entity.name),
+            ~logger=args->Args.getLogger(~entityName=entityConfig.name),
           )
         }
       })
@@ -433,24 +432,18 @@ module EntityHistory = {
     }
   }
 
-  let getRollbackDiff = async (
-    type entity,
-    sql,
-    args: Args.t,
-    ~entityMod: module(Entities.Entity with type t = entity),
-  ) => {
-    let module(Entity) = entityMod
+  let getRollbackDiff = async (sql, args: Args.t, ~entityConfig: Internal.entityConfig) => {
     let startTime = Hrtime.makeTimer()
 
     let diffRes = switch await getRollbackDiffInternal(
       sql,
-      ~getFirstChangeSerial=args->Args.makeGetFirstChangeSerial(~entityName=Entity.name),
-      ~entityName=Entity.name,
+      ~getFirstChangeSerial=args->Args.makeGetFirstChangeSerial(~entityName=entityConfig.name),
+      ~entityName=entityConfig.name,
     ) {
     | exception exn =>
       exn->ErrorHandling.mkLogAndRaise(
         ~msg="Failed to get rollback diff from entity history",
-        ~logger=args->Args.getLogger(~entityName=Entity.name),
+        ~logger=args->Args.getLogger(~entityName=entityConfig.name),
       )
     | res => res
     }
@@ -465,11 +458,11 @@ module EntityHistory = {
       )
     }
 
-    switch diffRes->S.parseOrThrow(Entity.entityHistory.schemaRows) {
+    switch diffRes->S.parseOrThrow(entityConfig.entityHistory.schemaRows) {
     | exception exn =>
       exn->ErrorHandling.mkLogAndRaise(
         ~msg="Failed to parse rollback diff from entity history",
-        ~logger=args->Args.getLogger(~entityName=Entity.name),
+        ~logger=args->Args.getLogger(~entityName=entityConfig.name),
       )
     | diffRows => diffRows
     }
@@ -505,25 +498,26 @@ module EntityHistory = {
 
     let _ =
       await allEntities
-      ->Belt.Array.map(async entityMod => {
-        let module(Entity) = entityMod
+      ->Belt.Array.map(async entityConfig => {
         let res = try await getFirstChangeEntityHistoryPerChain(
           sql,
-          ~entityName=Entity.name,
-          ~getFirstChangeSerial=args->Args.makeGetFirstChangeSerial(~entityName=Entity.name),
+          ~entityName=entityConfig.name,
+          ~getFirstChangeSerial=args->Args.makeGetFirstChangeSerial(~entityName=entityConfig.name),
         ) catch {
         | exn =>
           exn->ErrorHandling.mkLogAndRaise(
             ~msg=`Failed to get first change entity history per chain for entity`,
-            ~logger=args->Args.getLogger(~entityName=Entity.name),
+            ~logger=args->Args.getLogger(~entityName=entityConfig.name),
           )
         }
 
-        let chainHistoryRows = try res->S.parseOrThrow(Entity.entityHistory.schemaRows) catch {
+        let chainHistoryRows = try res->S.parseOrThrow(
+          entityConfig.entityHistory.schemaRows,
+        ) catch {
         | exn =>
           exn->ErrorHandling.mkLogAndRaise(
             ~msg=`Failed to parse entity history rows from db on getFirstChangeEntityHistoryPerChain`,
-            ~logger=args->Args.getLogger(~entityName=Entity.name),
+            ~logger=args->Args.getLogger(~entityName=entityConfig.name),
           )
         }
 
@@ -555,15 +549,14 @@ module EntityHistory = {
   let hasRows = async sql => {
     let all =
       await Entities.allEntities
-      ->Belt.Array.map(async entityMod => {
-        let module(Entity) = entityMod
-        try await General.hasRows(sql, ~table=Entity.entityHistory.table) catch {
+      ->Belt.Array.map(async entityConfig => {
+        try await General.hasRows(sql, ~table=entityConfig.entityHistory.table) catch {
         | exn =>
           exn->ErrorHandling.mkLogAndRaise(
             ~msg=`Failed to check if entity history table has rows`,
             ~logger=Logging.createChild(
               ~params={
-                "entityName": Entity.name,
+                "entityName": entityConfig.name,
               },
             ),
           )

@@ -54,7 +54,7 @@ type t = {
   currentlyProcessingBatch: bool,
   rollbackState: rollbackState,
   maxBatchSize: int,
-  maxPerChainQueueSize: int,
+  targetBufferSize: int,
   indexerStartTime: Js.Date.t,
   writeThrottlers: WriteThrottlers.t,
   loadLayer: LoadLayer.t,
@@ -70,24 +70,18 @@ let make = (
   ~loadLayer: LoadLayer.t,
   ~shouldUseTui=false,
 ) => {
-  let maxPerChainQueueSize = {
-    let numChains = config.chainMap->ChainMap.size
-    Env.maxEventFetchedQueueSize / numChains
-  }
-  config.chainMap
-  ->ChainMap.keys
-  ->Array.forEach(chain => {
-    Prometheus.IndexingMaxBufferSize.set(
-      ~maxBufferSize=maxPerChainQueueSize,
-      ~chainId=chain->ChainMap.Chain.toChainId,
-    )
-  })
+  Prometheus.ProcessingMaxBatchSize.set(
+    ~maxBatchSize=Env.maxProcessBatchSize,
+  )
+  Prometheus.IndexingTargetBufferSize.set(
+    ~targetBufferSize=Env.targetBufferSize,
+  )
   {
     config,
     currentlyProcessingBatch: false,
     chainManager,
     maxBatchSize: Env.maxProcessBatchSize,
-    maxPerChainQueueSize,
+    targetBufferSize: Env.targetBufferSize,
     indexerStartTime: Js.Date.make(),
     rollbackState: NoRollback,
     writeThrottlers: WriteThrottlers.make(~config),
@@ -313,7 +307,10 @@ let updateLatestProcessedBlocks = (
         )
 
       let latestProcessedBlock = if cf->ChainFetcher.hasNoMoreEventsToProcess {
-        FetchState.getLatestFullyFetchedBlock(fetchState).blockNumber->Some
+        Pervasives.max(
+          FetchState.getLatestFullyFetchedBlock(fetchState).blockNumber,
+          0,
+        )->Some
       } else {
         switch maybeMetrics {
         | Some(metrics) => Some(metrics.targetBlockNumber)
@@ -335,7 +332,7 @@ let updateLatestProcessedBlocks = (
       | None => cf.numEventsProcessed
       }
 
-      Prometheus.ProgressProcessedCount.set(
+      Prometheus.ProgressEventsCount.set(
         ~processedCount=numEventsProcessed,
         ~chainId=chain->ChainMap.Chain.toChainId,
       )
@@ -752,7 +749,7 @@ let checkAndFetchForChain = (
         | exn => dispatchAction(ErrorExit(exn->ErrorHandling.make))
         }
       },
-      ~maxPerChainQueueSize=state.maxPerChainQueueSize,
+      ~targetBufferSize=state.targetBufferSize,
       ~stateId=state.id,
     )
   }
@@ -830,10 +827,9 @@ let injectedTaskReducer = (
         }
         let timeRef = Hrtime.makeTimer()
         let _ = await Promise.all(
-          Entities.allEntities->Belt.Array.map(entityMod => {
-            let module(Entity) = entityMod
+          Entities.allEntities->Belt.Array.map(entityConfig => {
             Db.sql->DbFunctions.EntityHistory.pruneStaleEntityHistory(
-              ~entityName=Entity.name,
+              ~entityName=entityConfig.name,
               ~safeChainIdAndBlockNumberArray,
               ~shouldDeepClean,
             )

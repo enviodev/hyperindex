@@ -364,15 +364,14 @@ module IndexingBufferSize = {
   }
 }
 
-module IndexingMaxBufferSize = {
-  let gauge = SafeGauge.makeOrThrow(
-    ~name="envio_indexing_max_buffer_size",
-    ~help="The maximum number of items allowed in the indexing buffer for the chain.",
-    ~labelSchema=chainIdLabelsSchema,
-  )
+module IndexingTargetBufferSize = {
+  let gauge = PromClient.Gauge.makeGauge({
+    "name": "envio_indexing_target_buffer_size",
+    "help": "The target buffer size per chain for indexing. The actual number of items in the queue may exceed this value, but the indexer always tries to keep the buffer filled up to this target.",
+  })
 
-  let set = (~maxBufferSize, ~chainId) => {
-    gauge->SafeGauge.handleInt(~labels=chainId, ~value=maxBufferSize)
+  let set = (~targetBufferSize) => {
+    gauge->PromClient.Gauge.set(targetBufferSize)
   }
 }
 
@@ -532,14 +531,14 @@ module ProcessingBatchSize = {
   }
 }
 
-module ProcessingTotalBatchSize = {
+module ProcessingMaxBatchSize = {
   let gauge = PromClient.Gauge.makeGauge({
-    "name": "envio_processing_total_batch_size",
-    "help": "The total number of items included in the currently processing batch.",
+    "name": "envio_processing_max_batch_size",
+    "help": "The maximum number of items to process in a single batch.",
   })
 
-  let set = (~totalBatchSize) => {
-    gauge->PromClient.Gauge.set(totalBatchSize)
+  let set = (~maxBatchSize) => {
+    gauge->PromClient.Gauge.set(maxBatchSize)
   }
 }
 
@@ -555,7 +554,7 @@ module ProgressBlockNumber = {
   }
 }
 
-module ProgressProcessedCount = {
+module ProgressEventsCount = {
   let deprecatedGauge = PromClient.Gauge.makeGauge({
     "name": "events_processed",
     "help": "Total number of events processed",
@@ -563,8 +562,8 @@ module ProgressProcessedCount = {
   })
 
   let gauge = SafeGauge.makeOrThrow(
-    ~name="envio_progress_processed_count",
-    ~help="The number of events processed and stored in the database.",
+    ~name="envio_progress_events_count",
+    ~help="The number of events processed and reflected in the database.",
     ~labelSchema=chainIdLabelsSchema,
   )
 

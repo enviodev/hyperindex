@@ -16,17 +16,15 @@ let config: Postgres.poolConfig = {
 let sql = Postgres.makeSql(~config)
 let publicSchema = Env.Db.publicSchema
 
-let allEntityTables: array<Table.table> = Entities.allEntities->Belt.Array.map(entityMod => {
-  let module(Entity) = entityMod
-  Entity.table
+let allEntityTables: array<Table.table> = Entities.allEntities->Belt.Array.map(entityConfig => {
+  entityConfig.table
 })
 
 let allEntityHistoryTables: array<Table.table> = []
 let allEntityHistory: array<
   EntityHistory.t<EntityHistory.entityInternal>,
-> = Entities.allEntities->Belt.Array.map(entityMod => {
-  let module(Entity) = entityMod
-  let entityHistory = Entity.entityHistory->EntityHistory.castInternal
+> = Entities.allEntities->Belt.Array.map(entityConfig => {
+  let entityHistory = entityConfig.entityHistory->EntityHistory.castInternal
   allEntityHistoryTables->Js.Array2.push(entityHistory.table)->ignore
   entityHistory
 })

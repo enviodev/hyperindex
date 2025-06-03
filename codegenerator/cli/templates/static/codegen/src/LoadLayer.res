@@ -6,17 +6,17 @@ type t = {
   loadManager: LoadManager.t,
   loadEntitiesByIds: (
     array<Types.id>,
-    ~entityMod: module(Entities.InternalEntity),
+    ~entityConfig: Internal.entityConfig,
     ~logger: Pino.t=?,
-  ) => promise<array<Entities.internalEntity>>,
+  ) => promise<array<Internal.entity>>,
   loadEntitiesByField: (
     ~operator: TableIndices.Operator.t,
-    ~entityMod: module(Entities.InternalEntity),
+    ~entityConfig: Internal.entityConfig,
     ~fieldName: string,
     ~fieldValue: fieldValue,
     ~fieldValueSchema: S.t<fieldValue>,
     ~logger: Pino.t=?,
-  ) => promise<array<Entities.internalEntity>>,
+  ) => promise<array<Internal.entity>>,
 }
 
 let make = (~loadEntitiesByIds, ~loadEntitiesByField) => {
@@ -31,32 +31,29 @@ let make = (~loadEntitiesByIds, ~loadEntitiesByField) => {
 // until we have a proper mocking solution.
 let makeWithDbConnection = () => {
   make(
-    ~loadEntitiesByIds=(ids, ~entityMod, ~logger=?) =>
-      DbFunctionsEntities.batchRead(~entityMod)(Db.sql, ids, ~logger?),
+    ~loadEntitiesByIds=(ids, ~entityConfig, ~logger=?) =>
+      DbFunctionsEntities.batchRead(~entityConfig)(Db.sql, ids, ~logger?),
     ~loadEntitiesByField=DbFunctionsEntities.makeWhereQuery(Db.sql),
   )
 }
 
 let loadById = (
-  type entity,
   loadLayer,
-  ~entityMod: module(Entities.Entity with type t = entity),
+  ~entityConfig: Internal.entityConfig,
   ~inMemoryStore,
   ~shouldGroup,
   ~eventItem,
   ~entityId,
 ) => {
-  let module(Entity) = entityMod
-  let key = `${(Entity.name :> string)}.get`
-  let entityMod = entityMod->Entities.entityModToInternal
-  let inMemTable = inMemoryStore->InMemoryStore.getInMemTable(~entityMod)
+  let key = `${entityConfig.name}.get`
+  let inMemTable = inMemoryStore->InMemoryStore.getInMemTable(~entityConfig)
 
   let load = async idsToLoad => {
     // Since makeLoader prevents registerign entities already existing in the inMemoryStore,
     // we can be sure that we load only the new ones.
     let dbEntities =
       await idsToLoad->loadLayer.loadEntitiesByIds(
-        ~entityMod,
+        ~entityConfig,
         ~logger=eventItem->Logging.getEventLogger,
       )
 
@@ -82,9 +79,7 @@ let loadById = (
     ~load,
     ~shouldGroup,
     ~hasher=LoadManager.noopHasher,
-    ~getUnsafeInMemory=inMemTable
-    ->InMemoryTable.Entity.getUnsafe
-    ->(Utils.magic: (string => option<Entities.internalEntity>) => string => option<entity>),
+    ~getUnsafeInMemory=inMemTable->InMemoryTable.Entity.getUnsafe,
     ~hasInMemory=hash => inMemTable.table->InMemoryTable.hasByHash(hash),
     ~input=entityId,
   )
@@ -123,10 +118,9 @@ let loadEffect = (
 }
 
 let loadByField = (
-  type entity,
   loadLayer,
   ~operator: TableIndices.Operator.t,
-  ~entityMod: module(Entities.Entity with type t = entity),
+  ~entityConfig: Internal.entityConfig,
   ~inMemoryStore,
   ~fieldName,
   ~fieldValueSchema,
@@ -134,13 +128,11 @@ let loadByField = (
   ~eventItem,
   ~fieldValue,
 ) => {
-  let module(Entity) = entityMod
-  let key = `${(Entity.name :> string)}.getWhere.${fieldName}.${switch operator {
+  let key = `${entityConfig.name}.getWhere.${fieldName}.${switch operator {
     | Eq => "eq"
     | Gt => "gt"
     }}`
-  let entityMod = entityMod->Entities.entityModToInternal
-  let inMemTable = inMemoryStore->InMemoryStore.getInMemTable(~entityMod)
+  let inMemTable = inMemoryStore->InMemoryStore.getInMemTable(~entityConfig)
 
   let load = async (fieldValues: array<'fieldValue>) => {
     let indiciesToLoad = fieldValues->Js.Array2.map((fieldValue): TableIndices.Index.t => {
@@ -159,7 +151,7 @@ let loadByField = (
           ~operator=switch index {
           | Single({operator}) => operator
           },
-          ~entityMod,
+          ~entityConfig,
           ~fieldName=index->TableIndices.Index.getFieldName,
           ~fieldValue=switch index {
           | Single({fieldValue}) =>
@@ -188,9 +180,7 @@ let loadByField = (
     ~shouldGroup,
     ~hasher=fieldValue =>
       fieldValue->TableIndices.FieldValue.castFrom->TableIndices.FieldValue.toString,
-    ~getUnsafeInMemory=inMemTable
-    ->InMemoryTable.Entity.getUnsafeOnIndex(~fieldName, ~operator)
-    ->(Utils.magic: (string => array<Entities.internalEntity>) => string => array<entity>),
+    ~getUnsafeInMemory=inMemTable->InMemoryTable.Entity.getUnsafeOnIndex(~fieldName, ~operator),
     ~hasInMemory=inMemTable->InMemoryTable.Entity.hasIndex(~fieldName, ~operator),
   )
 }

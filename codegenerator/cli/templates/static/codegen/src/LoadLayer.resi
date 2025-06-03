@@ -5,41 +5,41 @@ type fieldValue
 let make: (
   ~loadEntitiesByIds: (
     array<Types.id>,
-    ~entityMod: module(Entities.InternalEntity),
+    ~entityConfig: Internal.entityConfig,
     ~logger: Pino.t=?,
-  ) => promise<array<Entities.internalEntity>>,
+  ) => promise<array<Internal.entity>>,
   ~loadEntitiesByField: (
     ~operator: TableIndices.Operator.t,
-    ~entityMod: module(Entities.InternalEntity),
+    ~entityConfig: Internal.entityConfig,
     ~fieldName: string,
     ~fieldValue: fieldValue,
     ~fieldValueSchema: S.t<fieldValue>,
     ~logger: Pino.t=?,
-  ) => promise<array<Entities.internalEntity>>,
+  ) => promise<array<Internal.entity>>,
 ) => t
 
 let makeWithDbConnection: unit => t
 
 let loadById: (
   t,
-  ~entityMod: module(Entities.Entity with type t = 'entity),
+  ~entityConfig: Internal.entityConfig,
   ~inMemoryStore: InMemoryStore.t,
   ~shouldGroup: bool,
   ~eventItem: Internal.eventItem,
   ~entityId: string,
-) => promise<option<'entity>>
+) => promise<option<Internal.entity>>
 
 let loadByField: (
   t,
   ~operator: TableIndices.Operator.t,
-  ~entityMod: module(Entities.Entity with type t = 'entity),
+  ~entityConfig: Internal.entityConfig,
   ~inMemoryStore: InMemoryStore.t,
   ~fieldName: string,
   ~fieldValueSchema: RescriptSchema.S.t<'fieldValue>,
   ~shouldGroup: bool,
   ~eventItem: Internal.eventItem,
   ~fieldValue: 'fieldValue,
-) => promise<array<'entity>>
+) => promise<array<Internal.entity>>
 
 let loadEffect: (
   t,

@@ -85,7 +85,7 @@ type t = {
   defaultChain: option<chainConfig>,
   ecosystem: ecosystem,
   enableRawEvents: bool,
-  entities: array<module(Entities.InternalEntity)>,
+  entities: array<Internal.entityConfig>,
 }
 
 let make = (
@@ -118,7 +118,7 @@ let make = (
     defaultChain: chains->Array.get(0),
     enableRawEvents,
     entities: entities->(
-      Utils.magic: array<module(Entities.Entity)> => array<module(Entities.InternalEntity)>
+      Utils.magic: array<module(Entities.Entity)> => array<Internal.entityConfig>
     ),
     ecosystem,
   }
