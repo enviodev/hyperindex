@@ -16,7 +16,7 @@ type storage = {
     ~staticTables: array<Table.table>,
     ~enums: array<Internal.enumConfig<Internal.enum>>,
     // If true, the storage should clear existing data
-    ~reset: bool,
+    ~cleanRun: bool,
   ) => promise<unit>,
 }
 
@@ -83,28 +83,27 @@ let init = async (
     | Ready(_) => reset
     }
     if shouldRun {
+      let resolveRef = ref(%raw(`null`))
+      let promise = Promise.make((resolve, _) => {
+        resolveRef := resolve
+      })
+      persistence.storageStatus = Initializing(promise)
       if !(reset || skipIsInitializedCheck) && (await persistence.storage.isInitialized()) {
         persistence.storageStatus = Ready({cleanRun: false})
       } else {
-        let resolveRef = ref(%raw(`null`))
-        let promise = Promise.make((resolve, _) => {
-          resolveRef := resolve
-        })
-        persistence.storageStatus = Initializing(promise)
-
         let _ = await persistence.storage.initialize(
           ~entities=persistence.allEntities,
           ~staticTables=persistence.staticTables,
           ~enums=persistence.allEnums,
-          ~reset=reset || !skipIsInitializedCheck,
+          ~cleanRun=reset || !skipIsInitializedCheck,
         )
         persistence.storageStatus = Ready({cleanRun: true})
         switch persistence.onStorageInitialize {
         | Some(onStorageInitialize) => await onStorageInitialize()
         | None => ()
         }
-        resolveRef.contents()
       }
+      resolveRef.contents()
     }
   } catch {
   | exn => exn->ErrorHandling.mkLogAndRaise(~msg=`EE800: Failed to initialize the indexer storage.`)

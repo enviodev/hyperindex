@@ -1,7 +1,7 @@
 let makeCreateIndexSqlUnsafe = (~tableName, ~indexFields, ~pgSchema) => {
   let indexName = tableName ++ "_" ++ indexFields->Js.Array2.joinWith("_")
   let index = indexFields->Belt.Array.map(idx => `"${idx}"`)->Js.Array2.joinWith(", ")
-  `CREATE INDEX IF NOT EXISTS "${indexName}" ON "${pgSchema}"."${tableName}"(${index}); `
+  `CREATE INDEX IF NOT EXISTS "${indexName}" ON "${pgSchema}"."${tableName}"(${index});`
 }
 
 let makeCreateTableIndicesSqlUnsafe = (table: Table.table, ~pgSchema) => {
@@ -52,7 +52,7 @@ let makeCreateTableSqlUnsafe = (table: Table.table, ~pgSchema) => {
       : ""});`
 }
 
-let makeInitializeTransaction = (~pgSchema, ~staticTables, ~entities, ~enums, ~reset) => {
+let makeInitializeTransaction = (~pgSchema, ~staticTables, ~entities, ~enums, ~cleanRun) => {
   let allTables = staticTables->Array.copy
   let allEntityTables = []
   entities->Js.Array2.forEach((entity: Internal.entityConfig) => {
@@ -64,7 +64,7 @@ let makeInitializeTransaction = (~pgSchema, ~staticTables, ~entities, ~enums, ~r
 
   let query = ref(
     (
-      reset
+      cleanRun
         ? `DROP SCHEMA IF EXISTS "${pgSchema}" CASCADE;
 CREATE SCHEMA "${pgSchema}";`
         : `CREATE SCHEMA IF NOT EXISTS "${pgSchema}";`
@@ -73,7 +73,7 @@ CREATE SCHEMA "${pgSchema}";`
 GRANT ALL ON SCHEMA "${pgSchema}" TO public;`,
   )
 
-  // Optimized enum creation - direct when reset, conditional otherwise
+  // Optimized enum creation - direct when cleanRun, conditional otherwise
   enums->Js.Array2.forEach((enumConfig: Internal.enumConfig<Internal.enum>) => {
     // Create base enum creation query once
     let enumCreateQuery = `CREATE TYPE "${pgSchema}".${enumConfig.name} AS ENUM(${enumConfig.variants
@@ -82,11 +82,11 @@ GRANT ALL ON SCHEMA "${pgSchema}" TO public;`,
 
     query :=
       query.contents ++
-      "\n" ++ if reset {
-        // Direct creation when resetting (faster)
+      "\n" ++ if cleanRun {
+        // Direct creation when cleanRunting (faster)
         enumCreateQuery
       } else {
-        // Wrap with conditional check only when not resetting
+        // Wrap with conditional check only when not cleanRunting
         `IF NOT EXISTS (
   SELECT 1 FROM pg_type 
   WHERE typname = '${enumConfig.name->Js.String2.toLowerCase}' 
@@ -135,8 +135,8 @@ END IF;`
   [
     // Return optimized queries - main DDL in DO block, functions separate
     // Note: DO $$ BEGIN wrapper is only needed for PL/pgSQL conditionals (IF NOT EXISTS)
-    // Reset case uses direct DDL (faster), non-reset case uses conditionals (safer)
-    reset ? query.contents : `DO $$ BEGIN ${query.contents} END $$;`,
+    // Reset case uses direct DDL (faster), non-cleanRun case uses conditionals (safer)
+    cleanRun ? query.contents : `DO $$ BEGIN ${query.contents} END $$;`,
     // Functions query (separate as they can't be in DO block)
   ]->Js.Array2.concat(functionsQuery.contents !== "" ? [functionsQuery.contents] : [])
 }
@@ -150,8 +150,8 @@ let make = (~sql: Postgres.sql, ~pgSchema): Persistence.storage => {
     schemas->Utils.Array.notEmpty
   }
 
-  let initialize = async (~entities, ~staticTables, ~enums, ~reset) => {
-    let queries = makeInitializeTransaction(~pgSchema, ~staticTables, ~entities, ~enums, ~reset)
+  let initialize = async (~entities, ~staticTables, ~enums, ~cleanRun) => {
+    let queries = makeInitializeTransaction(~pgSchema, ~staticTables, ~entities, ~enums, ~cleanRun)
     // Execute all queries within a single transaction for integrity
     let _ = await sql->Postgres.beginSql(sql => {
       queries->Js.Array2.map(query => sql->Postgres.unsafe(query))

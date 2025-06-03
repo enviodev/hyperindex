@@ -244,7 +244,7 @@ describe("Entity History Codegen", () => {
         ~entities=[module(TestEntity)->Entities.entityModToInternal],
         ~staticTables=[],
         ~enums=[Persistence.entityHistoryActionEnumConfig->Internal.fromGenericEnumConfig],
-        ~reset=true,
+        ~cleanRun=true,
       )
     } catch {
     | exn =>
@@ -594,7 +594,7 @@ describe("Entity history rollbacks", () => {
         ~entities=[module(TestEntity)->Entities.entityModToInternal],
         ~staticTables=[],
         ~enums=[Persistence.entityHistoryActionEnumConfig->Internal.fromGenericEnumConfig],
-        ~reset=true,
+        ~cleanRun=true,
       )
 
       let _ = await Db.sql->Postgres.unsafe(TestEntity.entityHistory.createInsertFnQuery)
@@ -755,7 +755,7 @@ describe("Entity history rollbacks", () => {
         ~entities=[module(TestEntity)->Entities.entityModToInternal],
         ~staticTables=[],
         ~enums=[Persistence.entityHistoryActionEnumConfig->Internal.fromGenericEnumConfig],
-        ~reset=true,
+        ~cleanRun=true,
       )
 
       let _ = await Db.sql->Postgres.unsafe(TestEntity.entityHistory.createInsertFnQuery)
@@ -1033,7 +1033,7 @@ describe_skip("Prune performance test", () => {
       ~entities=[module(TestEntity)->Entities.entityModToInternal],
       ~staticTables=[],
       ~enums=[Persistence.entityHistoryActionEnumConfig->Internal.fromGenericEnumConfig],
-      ~reset=true,
+      ~cleanRun=true,
     )
 
     let _ = await Db.sql->Postgres.unsafe(TestEntity.entityHistory.createInsertFnQuery)
