@@ -162,8 +162,8 @@ describe("ChainManager", () => {
 
           // ensure that the events are ordered correctly
           switch eventsInBlock {
-          | {totalBatchSize: 0} => chainManager
-          | {processingPartitions: [{items}], fetchStatesMap} =>
+          | {items: []} => chainManager
+          | {items, fetchStatesMap} =>
             items->Belt.Array.forEach(
               i => {
                 let _ = allEventsRead->Js.Array2.push(i)
@@ -226,7 +226,6 @@ describe("ChainManager", () => {
               chainFetchers: nextChainFetchers,
             }
             testThatCreatedEventsAreOrderedCorrectly(nextChainManager, lastEvent)
-          | _ => Js.Exn.raiseError("Unexpected to have a single processing partition")
           }
         }
 

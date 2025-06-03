@@ -193,18 +193,12 @@ let nextItemIsNone = (self: t): bool => {
   popOrderedBatchItem(~fetchStatesMap=self->getFetchStateWithData).val->Option.isNone
 }
 
-type processingPartition = {
-  // Either for specific chain or for all chains (ordered)
-  chain: option<ChainMap.Chain.t>,
-  items: array<Internal.eventItem>,
-}
-
 type processingChainMetrics = {
   batchSize: int,
   targetBlockNumber: int,
 }
 
-let createOrderedBatchItems = (
+let createOrderedBatch = (
   ~maxBatchSize,
   ~fetchStatesMap: ChainMap.t<fetchStateWithData>,
   ~onlyBelowReorgThreshold,
@@ -245,86 +239,93 @@ let createOrderedBatchItems = (
     }
   loop()
 
-  (
-    [
-      {
-        chain: None,
-        items,
-      },
-    ],
-    items->Array.length,
-    isInReorgThresholdRef.contents,
-  )
+  (items, isInReorgThresholdRef.contents)
 }
 
-let createUnorderedBatchItems = (
+// Use a global pointer to spread the processing across chains
+let nextChainIdx = ref(0)
+
+let createUnorderedBatch = (
   ~maxBatchSize,
   ~fetchStatesMap: ChainMap.t<fetchStateWithData>,
   ~onlyBelowReorgThreshold,
   ~mutProcessingMetricsByChainId: dict<processingChainMetrics>,
 ) => {
   let isInReorgThresholdRef = ref(false)
-  let totalBatchSize = ref(0)
+  let items = []
 
-  let processingPartitions =
-    fetchStatesMap
-    ->ChainMap.entries
-    ->Array.keepMap(((chain, {fetchState, currentBlockHeight, highestBlockBelowThreshold})) => {
-      let items = []
+  let chains = fetchStatesMap->ChainMap.keys
+  let unprocessedChains = ref(chains->Array.length) // Prevent entering the same chain twice
+  let batchSize = ref(0) // Faster than Array.length
 
-      // If the fetch state has reached the end block we don't need to consider it
-      if fetchState->FetchState.isActivelyIndexing {
-        let rec loop = () =>
-          if items->Array.length < maxBatchSize {
-            let earliestEvent = fetchState->FetchState.getEarliestEvent
-            let isInReorgThreshold =
-              earliestEvent->FetchState.queueItemIsInReorgThreshold(
-                ~currentBlockHeight,
-                ~highestBlockBelowThreshold,
-              )
+  // Accumulate items for all actively indexing chains
+  // the way to group as many items from a single chain as possible
+  // This way the loaders optimisations will hit more often
+  // Also, keep the nextChainIdx global, so we start with a new chain every batch
+  while batchSize.contents < maxBatchSize && unprocessedChains.contents > 0 {
+    let chainIdx = nextChainIdx.contents
+    switch chains->Array.get(chainIdx) {
+    | None => nextChainIdx := 0
+    | Some(chain) => {
+        let {fetchState, currentBlockHeight, highestBlockBelowThreshold} =
+          fetchStatesMap->ChainMap.get(chain)
 
-            isInReorgThresholdRef := isInReorgThresholdRef.contents || isInReorgThreshold
+        // If the fetch state has reached the end block we don't need to consider it
+        if fetchState->FetchState.isActivelyIndexing {
+          let batchSizeBeforeTheChain = batchSize.contents
 
-            switch earliestEvent {
-            | NoItem(_) => ()
-            | Item({item, popItemOffQueue}) =>
-              //For dynamic contract pre registration, allow creating a batch up to the reorg threshold
-              let shouldNotAddItem = isInReorgThreshold && onlyBelowReorgThreshold
-              if !shouldNotAddItem {
-                popItemOffQueue()
-                items->Js.Array2.push(item)->ignore
-                loop()
-                totalBatchSize := totalBatchSize.contents + 1
+          let rec loop = () =>
+            if batchSize.contents < maxBatchSize {
+              let earliestEvent = fetchState->FetchState.getEarliestEvent
+              let isInReorgThreshold =
+                earliestEvent->FetchState.queueItemIsInReorgThreshold(
+                  ~currentBlockHeight,
+                  ~highestBlockBelowThreshold,
+                )
+
+              isInReorgThresholdRef := isInReorgThresholdRef.contents || isInReorgThreshold
+
+              switch earliestEvent {
+              | NoItem(_) => ()
+              | Item({item, popItemOffQueue}) =>
+                //For dynamic contract pre registration, allow creating a batch up to the reorg threshold
+                let shouldNotAddItem = isInReorgThreshold && onlyBelowReorgThreshold
+                if !shouldNotAddItem {
+                  popItemOffQueue()
+                  items->Js.Array2.push(item)->ignore
+                  batchSize := batchSize.contents + 1
+                  loop()
+                }
               }
             }
+          loop()
+
+          let chainBatchSize = batchSize.contents - batchSizeBeforeTheChain
+          if chainBatchSize > 0 {
+            mutProcessingMetricsByChainId->Js.Dict.set(
+              chain->ChainMap.Chain.toChainId->Int.toString,
+              {
+                batchSize: chainBatchSize,
+                // If there's the chainBatchSize,
+                // then it's guaranteed that the last item belongs to the chain
+                targetBlockNumber: (items->Utils.Array.last->Option.getUnsafe).blockNumber,
+              },
+            )
           }
-        loop()
-      }
+        }
 
-      switch items {
-      | [] => None
-      | _ =>
-        mutProcessingMetricsByChainId->Js.Dict.set(
-          chain->ChainMap.Chain.toChainId->Int.toString,
-          {
-            batchSize: items->Array.length,
-            targetBlockNumber: (items->Utils.Array.last->Option.getUnsafe).blockNumber,
-          },
-        )
-        Some({
-          chain: Some(chain),
-          items,
-        })
+        nextChainIdx := nextChainIdx.contents + 1
+        unprocessedChains := unprocessedChains.contents - 1
       }
-    })
+    }
+  }
 
-  (processingPartitions, totalBatchSize.contents, isInReorgThresholdRef.contents)
+  (items, isInReorgThresholdRef.contents)
 }
 
 type batch = {
-  processingPartitions: array<processingPartition>,
+  items: array<Internal.eventItem>,
   processingMetricsByChainId: dict<processingChainMetrics>,
-  totalBatchSize: int,
   fetchStatesMap: ChainMap.t<fetchStateWithData>,
   dcsToStoreByChainId: dict<array<FetchState.indexingContract>>,
   isInReorgThreshold: bool,
@@ -337,17 +338,17 @@ let createBatch = (self: t, ~maxBatchSize: int, ~onlyBelowReorgThreshold: bool) 
   let fetchStatesMap = self->getFetchStateWithData(~shouldDeepCopy=true)
 
   let mutProcessingMetricsByChainId = Js.Dict.empty()
-  let (processingPartitions, totalBatchSize, isInReorgThreshold) = if (
-    self.isUnorderedMultichainMode
+  let (items, isInReorgThreshold) = if (
+    self.isUnorderedMultichainMode || fetchStatesMap->ChainMap.size === 1
   ) {
-    createUnorderedBatchItems(
+    createUnorderedBatch(
       ~maxBatchSize,
       ~fetchStatesMap,
       ~onlyBelowReorgThreshold,
       ~mutProcessingMetricsByChainId,
     )
   } else {
-    createOrderedBatchItems(
+    createOrderedBatch(
       ~maxBatchSize,
       ~fetchStatesMap,
       ~onlyBelowReorgThreshold,
@@ -368,7 +369,8 @@ let createBatch = (self: t, ~maxBatchSize: int, ~onlyBelowReorgThreshold: bool) 
     }
   })
 
-  if totalBatchSize > 0 {
+  let batchSize = items->Array.length
+  if batchSize > 0 {
     let fetchedEventsBuffer =
       fetchStatesMap
       ->ChainMap.entries
@@ -382,7 +384,7 @@ let createBatch = (self: t, ~maxBatchSize: int, ~onlyBelowReorgThreshold: bool) 
 
     Logging.trace({
       "msg": "New batch created for processing",
-      "totalBatchSize": totalBatchSize,
+      "batchSize": batchSize,
       "buffers": fetchedEventsBuffer,
       "time taken (ms)": timeElapsed,
     })
@@ -394,14 +396,13 @@ let createBatch = (self: t, ~maxBatchSize: int, ~onlyBelowReorgThreshold: bool) 
         ~label=`Batch Creation Time (ms)`,
         ~value=timeElapsed->Belt.Int.toFloat,
       )
-      Benchmark.addSummaryData(~group, ~label=`Batch Size`, ~value=totalBatchSize->Belt.Int.toFloat)
+      Benchmark.addSummaryData(~group, ~label=`Batch Size`, ~value=batchSize->Belt.Int.toFloat)
     }
   }
 
   {
-    processingPartitions,
+    items,
     processingMetricsByChainId: mutProcessingMetricsByChainId,
-    totalBatchSize,
     fetchStatesMap,
     dcsToStoreByChainId,
     isInReorgThreshold,

@@ -70,12 +70,8 @@ let make = (
   ~loadLayer: LoadLayer.t,
   ~shouldUseTui=false,
 ) => {
-  Prometheus.ProcessingMaxBatchSize.set(
-    ~maxBatchSize=Env.maxProcessBatchSize,
-  )
-  Prometheus.IndexingTargetBufferSize.set(
-    ~targetBufferSize=Env.targetBufferSize,
-  )
+  Prometheus.ProcessingMaxBatchSize.set(~maxBatchSize=Env.maxProcessBatchSize)
+  Prometheus.IndexingTargetBufferSize.set(~targetBufferSize=Env.targetBufferSize)
   {
     config,
     currentlyProcessingBatch: false,
@@ -307,10 +303,7 @@ let updateLatestProcessedBlocks = (
         )
 
       let latestProcessedBlock = if cf->ChainFetcher.hasNoMoreEventsToProcess {
-        Pervasives.max(
-          FetchState.getLatestFullyFetchedBlock(fetchState).blockNumber,
-          0,
-        )->Some
+        Pervasives.max(FetchState.getLatestFullyFetchedBlock(fetchState).blockNumber, 0)->Some
       } else {
         switch maybeMetrics {
         | Some(metrics) => Some(metrics.targetBlockNumber)
@@ -896,12 +889,11 @@ let injectedTaskReducer = (
 
       let handleBatch = async (batch: ChainManager.batch) => {
         switch batch {
-        | {totalBatchSize: 0} => dispatchAction(SetSyncedChains) //Known that there are no items available on the queue so safely call this action
+        | {items: []} => dispatchAction(SetSyncedChains) //Known that there are no items available on the queue so safely call this action
         | {
             isInReorgThreshold,
-            processingPartitions,
+            items,
             processingMetricsByChainId,
-            totalBatchSize,
             fetchStatesMap,
             dcsToStoreByChainId,
           } =>
@@ -937,7 +929,6 @@ let injectedTaskReducer = (
             inMemoryStore->InMemoryStore.setDcsToStore(dcsToStoreByChainId, ~shouldSaveHistory)
           }
 
-          Prometheus.ProcessingTotalBatchSize.set(~totalBatchSize)
           state.chainManager.chainFetchers
           ->ChainMap.keys
           ->Array.forEach(chain => {
@@ -953,8 +944,8 @@ let injectedTaskReducer = (
           })
 
           switch await EventProcessing.processEventBatch(
-            ~processingPartitions,
-            ~totalBatchSize,
+            ~items,
+            ~processingMetricsByChainId,
             ~inMemoryStore,
             ~isInReorgThreshold,
             ~loadLayer=state.loadLayer,
@@ -986,7 +977,7 @@ let injectedTaskReducer = (
       }
 
       switch batch {
-      | {isInReorgThreshold: true, totalBatchSize: 0} if onlyBelowReorgThreshold =>
+      | {isInReorgThreshold: true, items: []} if onlyBelowReorgThreshold =>
         dispatchAction(SetIsInReorgThreshold(true))
         let batch =
           state.chainManager->ChainManager.createBatch(

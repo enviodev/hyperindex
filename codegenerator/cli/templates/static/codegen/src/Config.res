@@ -108,12 +108,11 @@ let make = (
       rollbackFlag: shouldRollbackOnReorg ? RollbackOnReorg : NoRollback,
       historyFlag: shouldSaveFullHistory ? FullHistory : MinHistory,
     },
-    isUnorderedMultichainMode: chainMap->ChainMap.size === 1 ||
-      Env.Configurable.isUnorderedMultichainMode->Option.getWithDefault(
-        Env.Configurable.unstable__temp_unordered_head_mode->Option.getWithDefault(
-          isUnorderedMultichainMode,
-        ),
+    isUnorderedMultichainMode: Env.Configurable.isUnorderedMultichainMode->Option.getWithDefault(
+      Env.Configurable.unstable__temp_unordered_head_mode->Option.getWithDefault(
+        isUnorderedMultichainMode,
       ),
+    ),
     chainMap,
     defaultChain: chains->Array.get(0),
     enableRawEvents,

@@ -270,62 +270,37 @@ type logPartitionInfo = {
 }
 
 let processEventBatch = (
-  ~processingPartitions: array<ChainManager.processingPartition>,
-  ~totalBatchSize: int,
+  ~items: array<Internal.eventItem>,
+  ~processingMetricsByChainId: dict<ChainManager.processingChainMetrics>,
   ~inMemoryStore: InMemoryStore.t,
   ~isInReorgThreshold,
   ~loadLayer,
   ~config,
 ) => {
+  let batchSize = items->Array.length
   let logger = Logging.createChildFrom(
     ~logger=Logging.getLogger(),
     ~params={
-      "totalBatchSize": totalBatchSize,
-      "partitions": processingPartitions
-      ->Array.map(v => {
-        let firstItemTimestamp = v.items[0]->Option.map(v => v.timestamp)
-        switch v.chain {
-        | Some(chain) => (
-            chain->ChainMap.Chain.toString,
-            {
-              batchSize: v.items->Array.length,
-              firstItemTimestamp,
-              firstItemBlockNumber: (v.items[0]->Option.getUnsafe).blockNumber,
-              lastItemBlockNumber: (v.items->Utils.Array.last->Option.getUnsafe).blockNumber,
-            },
-          )
-        | None => (
-            "ordered",
-            {
-              batchSize: v.items->Array.length,
-              firstItemTimestamp,
-            },
-          )
+      "totalBatchSize": batchSize,
+      "byChain": processingMetricsByChainId->Utils.Dict.map(v => {
+        {
+          "batchSize": v.batchSize,
+          "toBlockNumber": v.targetBlockNumber,
         }
-      })
-      ->Js.Dict.fromArray,
+      }),
     },
   )
   logger->Logging.childTrace("Started processing batch")
 
   let timeRef = Hrtime.makeTimer()
-  let maxLoaderTime = ref(0)
 
   open ErrorHandling.ResultPropogateEnv
   runAsyncEnv(async () => {
-    let _ =
-      await processingPartitions
-      ->Array.map(async ({items}) => {
-        (await items->runLoaders(~loadLayer, ~inMemoryStore))->propogate
+    (await items->runLoaders(~loadLayer, ~inMemoryStore))->propogate
 
-        let partitionLoaderTime = timeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
-        maxLoaderTime := Pervasives.max(maxLoaderTime.contents, partitionLoaderTime)
+    let elapsedTimeAfterLoaders = timeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
 
-        (await items
-        ->runHandlers(~inMemoryStore, ~loadLayer, ~config, ~isInReorgThreshold))
-        ->propogate
-      })
-      ->Promise.all
+    (await items->runHandlers(~inMemoryStore, ~loadLayer, ~config, ~isInReorgThreshold))->propogate
 
     let elapsedTimeAfterProcessing =
       timeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
@@ -337,7 +312,7 @@ let processEventBatch = (
     }
 
     let elapsedTimeAfterDbWrite = timeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
-    let loaderDuration = maxLoaderTime.contents
+    let loaderDuration = elapsedTimeAfterLoaders
     let handlerDuration = elapsedTimeAfterProcessing - loaderDuration
     let dbWriteDuration = elapsedTimeAfterDbWrite - elapsedTimeAfterProcessing
     registerProcessEventBatchMetrics(
@@ -348,7 +323,7 @@ let processEventBatch = (
     )
     if Env.Benchmark.shouldSaveData {
       Benchmark.addEventProcessing(
-        ~batchSize=totalBatchSize,
+        ~batchSize,
         ~contractRegisterDuration=0,
         ~loadDuration=loaderDuration,
         ~handlerDuration,
