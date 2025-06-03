@@ -12,4 +12,6 @@
 - **Be concise**: Please avoid long wafty paragraphs - bullet points are great.
 - **TODOs are ok**: Please use TODOs in the docs like we do in the code. If there are features we want in the code that 
 - **Not a place for discussion**: Keep discussions in github discussions (or sometimes in discord - although less searchable than github discussions) - link to the discussion from docs if relevant, but remember *be concise*.
+- Keep docs up to date with major code changes.
+
 

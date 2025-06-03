@@ -1,7 +1,7 @@
 use tokio::time::{timeout, Duration};
 
 // NOTE: This assumes the hasura graphql availability means the postgres database is also available
-const MAXIMUM_BACKOFF: Duration = Duration::from_secs(120); // Likely the user will kill this before it gets here but wanted to make it quite large to allow for users with slow computers
+const MAXIMUM_BACKOFF: Duration = Duration::from_secs(120); // Likely the user will kill this before it gets here, but wanted to make it quite large to allow for users with slow computers
 const BACKOFF_INCREMENT: Duration = Duration::from_secs(1);
 const HASURA_ENDPOINT: &str = "http://localhost:8080/"; // todo: is this available somewhere
 
