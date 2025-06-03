@@ -219,7 +219,8 @@ describe("Entity History Codegen", () => {
     Assert.equal(expected, TestEntity.entityHistory.createInsertFnQuery)
   })
   it("Creates an entity history table", () => {
-    let createQuery = TestEntity.entityHistory.table->Migrations.internalMakeCreateTableSqlUnsafe
+    let createQuery =
+      TestEntity.entityHistory.table->PgStorage.makeCreateTableSqlUnsafe(~pgSchema="public")
     Assert.equal(
       `CREATE TABLE IF NOT EXISTS "public"."TestEntity_history"("entity_history_block_timestamp" INTEGER NOT NULL, "entity_history_chain_id" INTEGER NOT NULL, "entity_history_block_number" INTEGER NOT NULL, "entity_history_log_index" INTEGER NOT NULL, "previous_entity_history_block_timestamp" INTEGER, "previous_entity_history_chain_id" INTEGER, "previous_entity_history_block_number" INTEGER, "previous_entity_history_log_index" INTEGER, "id" TEXT NOT NULL, "fieldA" INTEGER, "fieldB" TEXT, "action" "public".ENTITY_HISTORY_ROW_ACTION NOT NULL, "serial" SERIAL, PRIMARY KEY("entity_history_block_timestamp", "entity_history_chain_id", "entity_history_block_number", "entity_history_log_index", "id"));`,
       createQuery,
@@ -237,11 +238,14 @@ describe("Entity History Codegen", () => {
   })
 
   Async.it("Creating tables and functions works", async () => {
+    let storage = PgStorage.make(~sql=Db.sql, ~pgSchema="public")
     try {
-      let _ = await Migrations.runDownMigrations(~shouldExit=false)
-      let _ = await Migrations.createEnumIfNotExists(Db.sql, EntityHistory.RowAction.enum)
-      let _resA = await Migrations.creatTableIfNotExists(Db.sql, TestEntity.table)
-      let _resB = await Migrations.creatTableIfNotExists(Db.sql, TestEntity.entityHistory.table)
+      await storage.initialize(
+        ~entities=[module(TestEntity)->Entities.entityModToInternal],
+        ~staticTables=[],
+        ~enums=[Persistence.entityHistoryActionEnumConfig->Internal.fromGenericEnumConfig],
+        ~cleanRun=true,
+      )
     } catch {
     | exn =>
       Js.log2("Setup exn", exn)
@@ -585,10 +589,13 @@ describe("Entity history rollbacks", () => {
   Async.beforeEach(async () => {
     try {
       let _ = DbHelpers.resetPostgresClient()
-      let _ = await Migrations.runDownMigrations(~shouldExit=false)
-      let _ = await Migrations.createEnumIfNotExists(Db.sql, EntityHistory.RowAction.enum)
-      let _ = await Migrations.creatTableIfNotExists(Db.sql, TestEntity.table)
-      let _ = await Migrations.creatTableIfNotExists(Db.sql, TestEntity.entityHistory.table)
+      let storage = PgStorage.make(~sql=Db.sql, ~pgSchema="public")
+      await storage.initialize(
+        ~entities=[module(TestEntity)->Entities.entityModToInternal],
+        ~staticTables=[],
+        ~enums=[Persistence.entityHistoryActionEnumConfig->Internal.fromGenericEnumConfig],
+        ~cleanRun=true,
+      )
 
       let _ = await Db.sql->Postgres.unsafe(TestEntity.entityHistory.createInsertFnQuery)
 
@@ -743,10 +750,13 @@ describe("Entity history rollbacks", () => {
   Async.beforeEach(async () => {
     try {
       let _ = DbHelpers.resetPostgresClient()
-      let _ = await Migrations.runDownMigrations(~shouldExit=false)
-      let _ = await Migrations.createEnumIfNotExists(Db.sql, EntityHistory.RowAction.enum)
-      let _ = await Migrations.creatTableIfNotExists(Db.sql, TestEntity.table)
-      let _ = await Migrations.creatTableIfNotExists(Db.sql, TestEntity.entityHistory.table)
+      let storage = PgStorage.make(~sql=Db.sql, ~pgSchema="public")
+      await storage.initialize(
+        ~entities=[module(TestEntity)->Entities.entityModToInternal],
+        ~staticTables=[],
+        ~enums=[Persistence.entityHistoryActionEnumConfig->Internal.fromGenericEnumConfig],
+        ~cleanRun=true,
+      )
 
       let _ = await Db.sql->Postgres.unsafe(TestEntity.entityHistory.createInsertFnQuery)
 
@@ -1018,10 +1028,13 @@ describe("Entity history rollbacks", () => {
 describe_skip("Prune performance test", () => {
   Async.it("Print benchmark of prune function", async () => {
     let _ = DbHelpers.resetPostgresClient()
-    let _ = await Migrations.runDownMigrations(~shouldExit=false)
-    let _ = await Migrations.createEnumIfNotExists(Db.sql, EntityHistory.RowAction.enum)
-    let _ = await Migrations.creatTableIfNotExists(Db.sql, TestEntity.table)
-    let _ = await Migrations.creatTableIfNotExists(Db.sql, TestEntity.entityHistory.table)
+    let storage = PgStorage.make(~sql=Db.sql, ~pgSchema="public")
+    await storage.initialize(
+      ~entities=[module(TestEntity)->Entities.entityModToInternal],
+      ~staticTables=[],
+      ~enums=[Persistence.entityHistoryActionEnumConfig->Internal.fromGenericEnumConfig],
+      ~cleanRun=true,
+    )
 
     let _ = await Db.sql->Postgres.unsafe(TestEntity.entityHistory.createInsertFnQuery)
 

@@ -29,7 +29,7 @@ impl Primitive {
             Self::JsonB => "JsonB".to_string(),
             Self::Timestamp => "Timestamp".to_string(),
             Self::DoublePrecision => "DoublePrecision".to_string(),
-            Self::Enum(enum_name) => format!("Custom(Enums.{enum_name}.enum.name)"),
+            Self::Enum(enum_name) => format!("Custom(Enums.{enum_name}.config.name)"),
         }
     }
 }

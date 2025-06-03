@@ -11,7 +11,7 @@ module ContractType = {
     {{contract.name.capitalized}},
   {{/each}}
   ]
-  let enum = Enum.make(~name, ~variants)
+  let config = Internal.makeEnumConfig(~name, ~variants)
 }
 
 module EntityType = {
@@ -29,8 +29,7 @@ module EntityType = {
   {{/each}}
     DynamicContractRegistry,
   ]
-
-  let enum = Enum.make(~name, ~variants)
+  let config = Internal.makeEnumConfig(~name, ~variants)
 }
 {{#each gql_enums as | enum |}} 
 
@@ -47,15 +46,14 @@ module {{enum.name.capitalized}} = {
     {{param.capitalized}},
   {{/each}}
   ]
-  let enum = Enum.make(~name, ~variants)
+  let config = Internal.makeEnumConfig(~name, ~variants)
 }
 {{/each}}
 
-let allEnums: array<module(Enum.S)> = [
-  module(EntityHistory.RowAction),
-  module(ContractType), 
-  module(EntityType),
+let allEnums = ([
+  ContractType.config->Internal.fromGenericEnumConfig,
+  EntityType.config->Internal.fromGenericEnumConfig,
 {{#each gql_enums as | enum |}} 
-  module({{enum.name.capitalized}}),
+  {{enum.name.capitalized}}.config->Internal.fromGenericEnumConfig,
 {{/each}}
-]
+])

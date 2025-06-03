@@ -493,7 +493,7 @@ impl RescriptTypeIdent {
                 format!("S.tuple(s => ({}))", inner_str)
             }
             Self::SchemaEnum(enum_name) => {
-                format!("Enums.{}.enum.schema", &enum_name.capitalized)
+                format!("Enums.{}.config.schema", &enum_name.capitalized)
             }
             // TODO: ensure these are defined
             Self::GenericParam(name) => {

@@ -4,7 +4,7 @@ module RowAction = {
   type t = SET | DELETE
   let variants = [SET, DELETE]
   let name = "ENTITY_HISTORY_ROW_ACTION"
-  let enum = Enum.make(~name, ~variants)
+  let schema = S.enum(variants)
 }
 
 type historyFieldsGeneral<'a> = {
@@ -88,7 +88,7 @@ let makeHistoryRowSchema: S.t<'entity> => S.t<historyRow<'entity>> = entitySchem
       "current": s.flatten(currentHistoryFieldsSchema),
       "previous": s.flatten(previousHistoryFieldsSchema),
       "entityData": s.flatten(nullableEntitySchema),
-      "action": s.field("action", RowAction.enum.schema),
+      "action": s.field("action", RowAction.schema),
     }
   })->S.transform(s => {
     parser: v => {
@@ -228,7 +228,7 @@ let fromTable = (table: table, ~schema: S.t<'entity>): t<'entity> => {
 
   let actionFieldName = "action"
 
-  let actionField = mkField(actionFieldName, Custom(RowAction.enum.name), ~fieldSchema=S.never)
+  let actionField = mkField(actionFieldName, Custom(RowAction.name), ~fieldSchema=S.never)
 
   let serialField = mkField("serial", Serial, ~fieldSchema=S.never, ~isNullable=true, ~isIndex=true)
 
