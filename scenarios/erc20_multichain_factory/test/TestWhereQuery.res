@@ -13,7 +13,6 @@ let config = Config.make(
     chain == RollbackMultichain_test.Mock.Chain1.chain ? Some(config) : None
   ),
   ~enableRawEvents=false,
-  ~entities=config.entities->Obj.magic,
 )
 
 module Mock = {
