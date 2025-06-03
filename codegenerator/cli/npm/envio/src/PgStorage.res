@@ -63,11 +63,13 @@ let makeInitializeTransaction = (~pgSchema, ~staticTables, ~entities, ~enums, ~r
   let derivedSchema = Schema.make(allEntityTables)
 
   let query = ref(
-    reset
-      ? `DROP SCHEMA IF EXISTS "${pgSchema}" CASCADE;
+    (
+      reset
+        ? `DROP SCHEMA IF EXISTS "${pgSchema}" CASCADE;
 CREATE SCHEMA "${pgSchema}";`
-      : `CREATE SCHEMA IF NOT EXISTS "${pgSchema}";` ++
-        `GRANT ALL ON SCHEMA "${pgSchema}" TO postgres;
+        : `CREATE SCHEMA IF NOT EXISTS "${pgSchema}";`
+    ) ++
+    `GRANT ALL ON SCHEMA "${pgSchema}" TO postgres;
 GRANT ALL ON SCHEMA "${pgSchema}" TO public;`,
   )
 

@@ -74,31 +74,37 @@ let init = async (
   ~reset=false,
 ) => {
   try {
-    switch persistence.storageStatus {
-    | Unknown =>
-      let resolveRef = ref(%raw(`null`))
-      let promise = Promise.make((resolve, _) => {
-        resolveRef := resolve
-      })
-      persistence.storageStatus = Initializing(promise)
-
+    let shouldRun = switch persistence.storageStatus {
+    | Unknown => true
+    | Initializing(promise) => {
+        await promise
+        reset
+      }
+    | Ready(_) => reset
+    }
+    if shouldRun {
       if !(reset || skipIsInitializedCheck) && (await persistence.storage.isInitialized()) {
         persistence.storageStatus = Ready({cleanRun: false})
       } else {
+        let resolveRef = ref(%raw(`null`))
+        let promise = Promise.make((resolve, _) => {
+          resolveRef := resolve
+        })
+        persistence.storageStatus = Initializing(promise)
+
         let _ = await persistence.storage.initialize(
           ~entities=persistence.allEntities,
           ~staticTables=persistence.staticTables,
           ~enums=persistence.allEnums,
-          ~reset,
+          ~reset=reset || !skipIsInitializedCheck,
         )
         persistence.storageStatus = Ready({cleanRun: true})
         switch persistence.onStorageInitialize {
         | Some(onStorageInitialize) => await onStorageInitialize()
         | None => ()
         }
+        resolveRef.contents()
       }
-    | Initializing(promise) => await promise
-    | Ready(_) => ()
     }
   } catch {
   | exn => exn->ErrorHandling.mkLogAndRaise(~msg=`EE800: Failed to initialize the indexer storage.`)

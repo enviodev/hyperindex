@@ -90,7 +90,7 @@ let codegenPersistence = Persistence.make(
     TrackTables.trackAllTables()->Promise.catch(err => {
       Logging.errorWithExn(err, `EE803: Error tracking tables`)->Promise.resolve
     })
-  }
+  },
 )
 
 type t = {
