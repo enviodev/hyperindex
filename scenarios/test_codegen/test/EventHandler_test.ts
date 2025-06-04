@@ -103,7 +103,7 @@ describe("Use Envio test framework to test event handlers", () => {
     // );
   });
 
-  it("Runs contract register handler", async () => {
+  it("Runs handler for entity with all types set", async () => {
     // Initializing the mock database
     const mockDbInitial = MockDb.createMockDb();
 
