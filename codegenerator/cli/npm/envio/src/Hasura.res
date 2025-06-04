@@ -136,6 +136,7 @@ let createSelectPermissions = async (
   ~tableName: string,
   ~pgSchema,
   ~responseLimit,
+  ~aggregateEntities,
 ) => {
   try {
     let result = await createSelectPermissionRoute->Rest.fetch(
@@ -152,6 +153,7 @@ let createSelectPermissions = async (
             "columns": "*",
             "filter": Js.Obj.empty(),
             "limit": responseLimit,
+            "allow_aggregations": aggregateEntities->Js.Array2.includes(tableName),
           },
         }->(Utils.magic: 'a => Js.Json.t),
       },
@@ -222,6 +224,7 @@ let trackDatabase = async (
   ~pgSchema,
   ~allStaticTables,
   ~allEntityTables,
+  ~aggregateEntities,
   ~responseLimit,
   ~schema,
 ) => {
@@ -238,7 +241,14 @@ let trackDatabase = async (
   let _ =
     await tableNames
     ->Js.Array2.map(tableName =>
-      createSelectPermissions(~endpoint, ~auth, ~tableName, ~pgSchema, ~responseLimit)
+      createSelectPermissions(
+        ~endpoint,
+        ~auth,
+        ~tableName,
+        ~pgSchema,
+        ~responseLimit,
+        ~aggregateEntities,
+      )
     )
     ->Js.Array2.concatMany(
       allEntityTables->Js.Array2.map(table => {

@@ -98,6 +98,7 @@ let codegenPersistence = Persistence.make(
       ~allEntityTables=Db.allEntityTables,
       ~responseLimit=Env.Hasura.responseLimit,
       ~schema=Db.schema,
+      ~aggregateEntities=Env.Hasura.aggregateEntities,
     )->Promise.catch(err => {
       Logging.errorWithExn(err, `EE803: Error tracking tables`)->Promise.resolve
     })
