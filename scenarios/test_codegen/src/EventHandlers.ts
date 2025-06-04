@@ -1,3 +1,4 @@
+import { deepEqual } from "assert";
 import { experimental_createEffect, Effect, S } from "envio";
 import { TestEvents } from "generated";
 import { TestHelpers } from "generated";
@@ -424,5 +425,82 @@ Gravatar.FactoryEvent.contractRegister(({ event, context }) => {
     default:
       context.addSimpleNft(event.params.contract);
       break;
+  }
+});
+
+const notify = (event: unknown) => {
+  console.log(event);
+};
+
+const indexerStartedAt = (new Date().getTime() / 1000) | 0;
+const isLiveEvent = (event: { block: { timestamp: number } }) => {
+  return event.block.timestamp > indexerStartedAt;
+};
+
+Gravatar.FactoryEvent.handler(async ({ event, context }) => {
+  if (isLiveEvent(event)) {
+    notify(event);
+  }
+
+  switch (event.params.testCase) {
+    case "getOrCreate - creates": {
+      const user = await context.User.getOrCreate({
+        id: "0",
+        address: "0x",
+        updatesCountOnUserForTesting: 0,
+        gravatar_id: undefined,
+        accountType: "USER",
+      });
+      expectType<TypeEqual<typeof user, User>>(true);
+      deepEqual(user, {
+        id: "0",
+        address: "0x",
+        updatesCountOnUserForTesting: 0,
+        gravatar_id: undefined,
+        accountType: "USER",
+      });
+      break;
+    }
+
+    case "getOrCreate - loads": {
+      const user = await context.User.getOrCreate({
+        id: "0",
+        address: "0x",
+        updatesCountOnUserForTesting: 0,
+        gravatar_id: undefined,
+        accountType: "USER",
+      });
+      expectType<TypeEqual<typeof user, User>>(true);
+      deepEqual(
+        user,
+        {
+          id: "0",
+          address: "existing",
+          updatesCountOnUserForTesting: 0,
+          gravatar_id: undefined,
+          accountType: "USER",
+        },
+        "Note how address is 'existing' and not '0x'"
+      );
+      break;
+    }
+
+    case "getOrThrow": {
+      const user = await context.User.getOrThrow("0");
+      expectType<TypeEqual<typeof user, User>>(true);
+      deepEqual(user, {
+        id: "0",
+        address: "existing",
+        updatesCountOnUserForTesting: 0,
+        gravatar_id: undefined,
+        accountType: "USER",
+      });
+      break;
+    }
+
+    case "getOrThrow - custom message": {
+      await context.User.getOrThrow("0", "User should always exist");
+      break;
+    }
   }
 });

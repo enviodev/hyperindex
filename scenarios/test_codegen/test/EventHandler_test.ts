@@ -1,6 +1,6 @@
 import assert from "assert";
 import { it } from "mocha";
-import { TestHelpers } from "generated";
+import { TestHelpers, User } from "generated";
 const { MockDb, Gravatar } = TestHelpers;
 
 describe("Use Envio test framework to test event handlers", () => {
@@ -99,5 +99,132 @@ describe("Use Envio test framework to test event handlers", () => {
     //   log.message,
     //   "The context.addSimpleNft was called after the contract register resolved. Use await or return a promise from the contract register handler to avoid this error."
     // );
+  });
+
+  it.only("entity.getOrCreate should create the entity if it doesn't exist", async () => {
+    const mockDbInitial = MockDb.createMockDb();
+
+    const dcAddress = "0x1234567890123456789012345678901234567890";
+
+    const event = Gravatar.FactoryEvent.createMockEvent({
+      contract: dcAddress,
+      testCase: "getOrCreate - creates",
+    });
+
+    const updatedMockDb = await Gravatar.FactoryEvent.processEvent({
+      event: event,
+      mockDb: mockDbInitial,
+    });
+
+    const users = updatedMockDb.entities.User.getAll();
+    assert.deepEqual(users, [
+      {
+        id: "0",
+        address: "0x",
+        updatesCountOnUserForTesting: 0,
+        gravatar_id: undefined,
+        accountType: "USER",
+      },
+    ] satisfies typeof users);
+  });
+
+  it.only("entity.getOrCreate should load the entity if it exists", async () => {
+    let mockDb = MockDb.createMockDb();
+
+    const dcAddress = "0x1234567890123456789012345678901234567890";
+
+    const event = Gravatar.FactoryEvent.createMockEvent({
+      contract: dcAddress,
+      testCase: "getOrCreate - loads",
+    });
+
+    const existingUser: User = {
+      id: "0",
+      address: "existing",
+      updatesCountOnUserForTesting: 0,
+      gravatar_id: undefined,
+      accountType: "USER",
+    };
+    mockDb = mockDb.entities.User.set(existingUser);
+
+    mockDb = await Gravatar.FactoryEvent.processEvent({
+      event: event,
+      mockDb: mockDb,
+    });
+
+    const users = mockDb.entities.User.getAll();
+    assert.deepEqual(users, [existingUser] satisfies typeof users);
+  });
+
+  it.only("entity.getOrThrow should return existing entity", async () => {
+    let mockDb = MockDb.createMockDb();
+
+    const dcAddress = "0x1234567890123456789012345678901234567890";
+
+    const event = Gravatar.FactoryEvent.createMockEvent({
+      contract: dcAddress,
+      testCase: "getOrThrow",
+    });
+
+    const existingUser: User = {
+      id: "0",
+      address: "existing",
+      updatesCountOnUserForTesting: 0,
+      gravatar_id: undefined,
+      accountType: "USER",
+    };
+    mockDb = mockDb.entities.User.set(existingUser);
+
+    mockDb = await Gravatar.FactoryEvent.processEvent({
+      event: event,
+      mockDb: mockDb,
+    });
+
+    const users = mockDb.entities.User.getAll();
+    assert.deepEqual(users, [existingUser] satisfies typeof users);
+  });
+
+  it.only("entity.getOrThrow throws if entity doesn't exist", async () => {
+    let mockDb = MockDb.createMockDb();
+
+    const dcAddress = "0x1234567890123456789012345678901234567890";
+
+    const event = Gravatar.FactoryEvent.createMockEvent({
+      contract: dcAddress,
+      testCase: "getOrThrow",
+    });
+
+    await assert.rejects(
+      Gravatar.FactoryEvent.processEvent({
+        event: event,
+        mockDb: mockDb,
+      }),
+      // It also logs to the console.
+      {
+        message: `Entity 'User' with ID '0' is expected to exist.`,
+      }
+    );
+  });
+
+  it.only("entity.getOrThrow throws if entity doesn't exist with custom message", async () => {
+    let mockDb = MockDb.createMockDb();
+
+    const dcAddress = "0x1234567890123456789012345678901234567890";
+
+    const event = Gravatar.FactoryEvent.createMockEvent({
+      contract: dcAddress,
+      testCase: "getOrThrow - custom message",
+    });
+
+    await assert.rejects(
+      Gravatar.FactoryEvent.processEvent({
+        event: event,
+        mockDb: mockDb,
+      }),
+      // It also logs to the console.
+      {
+        message: `User should always exist`,
+      }
+    );
   });
 });
