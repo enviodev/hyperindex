@@ -101,7 +101,7 @@ describe("Use Envio test framework to test event handlers", () => {
     // );
   });
 
-  it.only("entity.getOrCreate should create the entity if it doesn't exist", async () => {
+  it("entity.getOrCreate should create the entity if it doesn't exist", async () => {
     const mockDbInitial = MockDb.createMockDb();
 
     const dcAddress = "0x1234567890123456789012345678901234567890";
@@ -128,7 +128,7 @@ describe("Use Envio test framework to test event handlers", () => {
     ] satisfies typeof users);
   });
 
-  it.only("entity.getOrCreate should load the entity if it exists", async () => {
+  it("entity.getOrCreate should load the entity if it exists", async () => {
     let mockDb = MockDb.createMockDb();
 
     const dcAddress = "0x1234567890123456789012345678901234567890";
@@ -156,7 +156,7 @@ describe("Use Envio test framework to test event handlers", () => {
     assert.deepEqual(users, [existingUser] satisfies typeof users);
   });
 
-  it.only("entity.getOrThrow should return existing entity", async () => {
+  it("entity.getOrThrow should return existing entity", async () => {
     let mockDb = MockDb.createMockDb();
 
     const dcAddress = "0x1234567890123456789012345678901234567890";
@@ -184,7 +184,7 @@ describe("Use Envio test framework to test event handlers", () => {
     assert.deepEqual(users, [existingUser] satisfies typeof users);
   });
 
-  it.only("entity.getOrThrow throws if entity doesn't exist", async () => {
+  it("entity.getOrThrow throws if entity doesn't exist", async () => {
     let mockDb = MockDb.createMockDb();
 
     const dcAddress = "0x1234567890123456789012345678901234567890";
@@ -206,7 +206,7 @@ describe("Use Envio test framework to test event handlers", () => {
     );
   });
 
-  it.only("entity.getOrThrow throws if entity doesn't exist with custom message", async () => {
+  it("entity.getOrThrow throws if entity doesn't exist with custom message", async () => {
     let mockDb = MockDb.createMockDb();
 
     const dcAddress = "0x1234567890123456789012345678901234567890";
