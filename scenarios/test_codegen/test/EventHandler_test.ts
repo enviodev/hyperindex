@@ -1,6 +1,7 @@
 import assert from "assert";
 import { it } from "mocha";
 import { TestHelpers } from "generated";
+import { BigDecimal } from "generated";
 const { MockDb, Gravatar } = TestHelpers;
 
 describe("Use Envio test framework to test event handlers", () => {
@@ -12,6 +13,7 @@ describe("Use Envio test framework to test event handlers", () => {
 
     const event = Gravatar.FactoryEvent.createMockEvent({
       contract: dcAddress,
+      testCase: "syncRegistration",
     });
 
     const updatedMockDb = await Gravatar.FactoryEvent.processEvent({
@@ -99,5 +101,52 @@ describe("Use Envio test framework to test event handlers", () => {
     //   log.message,
     //   "The context.addSimpleNft was called after the contract register resolved. Use await or return a promise from the contract register handler to avoid this error."
     // );
+  });
+
+  it("Runs contract register handler", async () => {
+    // Initializing the mock database
+    const mockDbInitial = MockDb.createMockDb();
+
+    const dcAddress = "0x1234567890123456789012345678901234567890";
+
+    const event = Gravatar.FactoryEvent.createMockEvent({
+      contract: dcAddress,
+      testCase: "entityWithAllTypesSet",
+    });
+
+    const updatedMockDb = await Gravatar.FactoryEvent.processEvent({
+      event: event,
+      mockDb: mockDbInitial,
+    });
+
+    const entities = updatedMockDb.entities.EntityWithAllTypes.getAll();
+    const expectedEntity1 = {
+      id: "1",
+      string: "string",
+      optString: "optString",
+      arrayOfStrings: ["arrayOfStrings1", "arrayOfStrings2"],
+      int_: 1,
+      optInt: 2,
+      arrayOfInts: [3, 4],
+      float_: 1.1,
+      optFloat: 2.2,
+      arrayOfFloats: [3.3, 4.4],
+      bool: true,
+      optBool: false,
+      bigInt: 1n,
+      optBigInt: 2n,
+      arrayOfBigInts: [3n, 4n],
+      bigDecimal: new BigDecimal("1.1"),
+      optBigDecimal: new BigDecimal("2.2"),
+      arrayOfBigDecimals: [new BigDecimal("3.3"), new BigDecimal("4.4")],
+      json: { foo: ["bar"] },
+    };
+    assert.deepEqual(entities, [
+      expectedEntity1,
+      {
+        ...expectedEntity1,
+        id: "2",
+      },
+    ] satisfies typeof entities);
   });
 });
