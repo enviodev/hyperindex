@@ -64,18 +64,27 @@ let makeEntityHandlerContext = (
   ~entityConfig: Internal.entityConfig,
   ~params,
 ): Types.entityHandlerContext<Internal.entity> => {
+  let get = entityId =>
+    params.loadLayer->LoadLayer.loadById(
+      ~entityConfig,
+      ~inMemoryStore=params.inMemoryStore,
+      ~shouldGroup=false,
+      ~eventItem=params.eventItem,
+      ~entityId,
+    )
+  let set = (entity: Internal.entity) => {
+    params.inMemoryStore
+    ->InMemoryStore.getInMemTable(~entityConfig)
+    ->InMemoryTable.Entity.set(
+      Set(entity)->Types.mkEntityUpdate(
+        ~eventIdentifier=params.eventItem->makeEventIdentifier,
+        ~entityId=entity.id,
+      ),
+      ~shouldSaveHistory=params.shouldSaveHistory,
+    )
+  }
   {
-    set: entity => {
-      params.inMemoryStore
-      ->InMemoryStore.getInMemTable(~entityConfig)
-      ->InMemoryTable.Entity.set(
-        Set(entity)->Types.mkEntityUpdate(
-          ~eventIdentifier=params.eventItem->makeEventIdentifier,
-          ~entityId=entity.id,
-        ),
-        ~shouldSaveHistory=params.shouldSaveHistory,
-      )
-    },
+    set,
     deleteUnsafe: entityId => {
       params.inMemoryStore
       ->InMemoryStore.getInMemTable(~entityConfig)
@@ -87,14 +96,30 @@ let makeEntityHandlerContext = (
         ~shouldSaveHistory=params.shouldSaveHistory,
       )
     },
-    get: entityId =>
-      params.loadLayer->LoadLayer.loadById(
-        ~entityConfig,
-        ~inMemoryStore=params.inMemoryStore,
-        ~shouldGroup=false,
-        ~eventItem=params.eventItem,
-        ~entityId,
-      ),
+    getOrThrow: (entityId, ~message=?) =>
+      get(entityId)->Promise.thenResolve(entity => {
+        switch entity {
+        | Some(entity) => entity
+        | None =>
+          Js.Exn.raiseError(
+            message->Belt.Option.getWithDefault(
+              `Entity '${entityConfig.name}' with ID '${entityId}' is expected to exist.`,
+            ),
+          )
+        }
+      }),
+    getOrCreate: (entity: Internal.entity) => {
+      get(entity.id)->Promise.thenResolve(storageEntity => {
+        switch storageEntity {
+        | Some(entity) => entity
+        | None => {
+            set(entity)
+            entity
+          }
+        }
+      })
+    },
+    get,
   }
 }
 
@@ -187,15 +212,28 @@ let makeEntityLoaderContext = (params): Types.entityLoaderContext<
   Entities.internalEntity,
   unknown,
 > => {
+  let get = entityId =>
+    params.loadLayer->LoadLayer.loadById(
+      ~entityConfig=params.entityConfig,
+      ~inMemoryStore=params.inMemoryStore,
+      ~shouldGroup=params.shouldGroup,
+      ~eventItem=params.eventItem,
+      ~entityId,
+    )
   {
-    get: entityId =>
-      params.loadLayer->LoadLayer.loadById(
-        ~entityConfig=params.entityConfig,
-        ~inMemoryStore=params.inMemoryStore,
-        ~shouldGroup=params.shouldGroup,
-        ~eventItem=params.eventItem,
-        ~entityId,
-      ),
+    get,
+    getOrThrow: (entityId, ~message=?) =>
+      get(entityId)->Promise.thenResolve(entity => {
+        switch entity {
+        | Some(entity) => entity
+        | None =>
+          Js.Exn.raiseError(
+            message->Belt.Option.getWithDefault(
+              `Entity '${params.entityConfig.name}' with ID '${entityId}' is expected to exist.`,
+            ),
+          )
+        }
+      }),
     getWhere: params->Utils.Proxy.make(getWhereTraps)->Utils.magic,
   }
 }
