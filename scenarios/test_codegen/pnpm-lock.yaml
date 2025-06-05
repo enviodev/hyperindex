@@ -40,9 +40,6 @@ importers:
         specifier: ./generated
         version: link:generated
     devDependencies:
-      '@glennsl/rescript-fetch':
-        specifier: 0.2.0
-        version: 0.2.0
       '@glennsl/rescript-jest':
         specifier: ^0.9.2
         version: 0.9.2(ts-node@10.9.2(@types/node@18.19.47)(typescript@5.5.4))
@@ -139,9 +136,6 @@ importers:
       '@envio-dev/hypersync-client':
         specifier: 0.6.5
         version: 0.6.5
-      '@glennsl/rescript-fetch':
-        specifier: 0.2.0
-        version: 0.2.0
       '@rescript/react':
         specifier: 0.12.1
         version: 0.12.1(react-dom@18.3.1(react@18.2.0))(react@18.2.0)
@@ -520,9 +514,6 @@ packages:
   '@fastify/busboy@2.1.1':
     resolution: {integrity: sha512-vBZP4NlzfOlerQTnba4aqZoMhE/a9HY7HRqoOPaETQcSQuWEIyZMHGfVu6w9wGtGK5fED5qRs2DteVCjOH60sA==}
     engines: {node: '>=14'}
-
-  '@glennsl/rescript-fetch@0.2.0':
-    resolution: {integrity: sha512-0tsEqJ/6/WBm02prM4RYG+qpnNTaB8QKKIeQHXdDaE4C5YfA/nzjxMNW3CjsGIaEgyrAmmIXFS0kx24UjvOI6A==}
 
   '@glennsl/rescript-jest@0.9.2':
     resolution: {integrity: sha512-Qy7O5/vYWgfVyXveFAcOy0Wa0tZ1hUVdSmZJgmblnHvZYyeVJOCIxdSk8vvjBF/gujlvGBFcSeHMWs6Bx22luQ==}
@@ -3945,8 +3936,6 @@ snapshots:
       '@ethersproject/strings': 5.7.0
 
   '@fastify/busboy@2.1.1': {}
-
-  '@glennsl/rescript-fetch@0.2.0': {}
 
   '@glennsl/rescript-jest@0.9.2(ts-node@10.9.2(@types/node@18.19.47)(typescript@5.5.4))':
     dependencies:
