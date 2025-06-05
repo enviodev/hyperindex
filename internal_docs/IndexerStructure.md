@@ -1,31 +1,26 @@
 # Indexer Structure
 
-The indexer runs two top level long running processes.
+The indexer is composed of two long‑running components:
 
-This is the 'event fetcher' (housed in the ChainManager) which fetches events continuously from different sources such as an RPC or Skar and the 'event processor'.
+1. **Event fetchers** – managed by `ChainManager`, these continuously pull events
+   from multiple chains using the configured sources.
+2. **Event processor** – consumes batches from the manager and writes results to
+   the database.
 
 ```mermaid
 graph TD
   A[EventSyncing.start] -->|create| B[ChainManager]
   A -->|run| C[startProcessingEventsOnQueue]
   B -->|run| D[startFetchers]
-  B -->|takes in| C
+  B --> C
 ```
 
-TODO: Currently the 'event processor' takes in the ChainManager, it would be better if the event processor only interacted with the ChainManager (and the queue that it pushes to) via connector of sorts which is a simplified interface. For example we call it `EventRetrievalAdaptor` or `EventRetrievalInterface`, this interface would restrict the possible interactions with the Queue that can be made from outside the system.
+The manager owns a `ChainFetcher` per chain. Each fetcher maintains a queue of
+events populated via its `SourceManager`. The processor simply requests batches
+from the manager and executes loaders and handlers.
 
-## Proposed:
+### Future improvement
 
-```mermaid
-graph TD
-  A[EventSyncing.start] -->|make| B[ChainManager]
-  A -->|run| C[startProcessingEventsOnQueue]
-  B -->|returns| D[EventRetrievalAdaptor]
-  D -->|run| E[startFetchers]
-  D -->|takes in| C
-```
-
-Notes: The EventProcessor doesn't rely on the ChainManager directly, this is known as Inversion of Control (IoC); the benefit is that larger changes can be made to the ChainManager and its subcomponents without worry that they will effect EventProcessor if the adaptor remains intact. The Dependency Rule says that the direction of source code dependencies is inwards whene the inner most part are the core business rules. 
-
-Inside the `startFetchers` function, it calls out to a ChainFetcher for each process to manage the process of fetching events from that chain.
-
+Ideally the processor would only depend on a lightweight interface (for example
+`EventRetrievalAdaptor`) rather than the full `ChainManager`. This would allow
+internal changes without affecting the processor.

@@ -1,6 +1,6 @@
 # Event Fetchers
 
-Here are [the original diagrams](https://www.figma.com/file/YC7rKkGC65Out0QlQ2jxi9/Multi-queue-architecture?type=whiteboard&node-id=0-1&t=LpRK9cTFcHFaYaNO-0), put here for reference, - but they don't represent the most up-to-date plans.
+The original [design diagrams](https://www.figma.com/file/YC7rKkGC65Out0QlQ2jxi9/Multi-queue-architecture?type=whiteboard&node-id=0-1&t=LpRK9cTFcHFaYaNO-0) are kept for context but the implementation has diverged. This document reflects the current fetcher architecture.
 
 ## ChainManager
 
@@ -8,76 +8,71 @@ Here are [the original diagrams](https://www.figma.com/file/YC7rKkGC65Out0QlQ2jx
 classDiagram
   class ChainManager {
     chainFetchers: dictionary(ChainFetcher.t)
-    arbitraryEventPriorityQueue: PriorityQueue(eventItem)
+    isUnorderedMultichainMode: bool
 
     startFetchers(): void
     getChainFetcher(chainId: int): ChainFetcher.t
-    createBatch(minBatchSize: int, maxBatchSize: int): promise(eventType[])
-    addItemToArbitraryEvents(eventItem: EventFetching.eventItem): void
+    createBatch(maxBatchSize: int, onlyBelowReorgThreshold: bool): batch
   }
 ```
 
-This manages the main queue that items for the batches are pulled from.
-
-The high level of how this works currently is each chain queue and the arbitrary events queue are peeked to see if they contain the lowest item and then they return it.
-TODO: This could be implemented more efficiently by an internal queue only holds 1 item from each each chain at a time (eg. if there are 5 chains - the queue will always have 5 items in it) - you'd also need to track 'NoItems' in that queue so this becomes a bit more complicated. Internally every time an item is pulled from the `arbitraryEventPriorityQueue` it adds at item back from a chain queue that that event belonged to.
-
-The arbitrary events queue is only going to get populated with items if there are dynamic contracts added with events.
-
-TODO: currently the ChainManager is passed directly to the `EventProcessor` as discussed in `IndexerStrucutre.md` this is an antipatern - an interface or adaptor should be used. Additionally, the `addItemToArbitaryEvents` function is called directly - the EventProcessor should only consume what is given to it - it shouldn't directly be adding to the queue itself. Solution is to end the batch early when a new contract is registered - and then just fetch the next batch when it is ready (it might require blocking the batch until the new events have been fetched).
+`ChainManager` owns a `ChainFetcher` for every configured chain. `createBatch` peeks
+all fetcher queues and selects the earliest events across chains. When running in
+unordered mode it prioritises items below the reorg threshold so that contracts
+can be registered on every chain before history is stored. Dynamic contract
+registrations discovered during processing are queued for later batches.
 
 ## ChainFetcher
 
 ```mermaid
 classDiagram
   class ChainFetcher {
-    fetchedEventQueue: ChainEventQueue.t,
-    chainConfig: Config.chainConfig,
-    source: Source.source,
+    fetchState: FetchState.t
+    sourceManager: SourceManager.t
+    chainConfig: Config.chainConfig
 
     startFetchingEvents(): promise
-    popAndAwaitQueueItem(): eventType
-    popQueueItem(): ?eventType
-    addDynamicContractAndFetchMissingEvents(dynamicContracts: array, fromBlock, fromLogIndex): promise(eventType[])
+    popQueueItem(): option(eventItem)
+    addDynamicContractAndFetchMissingEvents(dynamicContracts: array, fromBlock, fromLogIndex): promise(eventItem[])
     peekFrontItemOfQueue(): NoItem|Item
-    addNewRangeQueriedCallback(): promise
   }
 ```
 
-The `startFetchingEvents` function is a thin function that directly calls to the appropriate Source to do the work of fetching the events.
+Each `ChainFetcher` maintains a queue of events for a single chain. It delegates
+actual fetching to its `SourceManager` and keeps track of dynamic contracts and
+reorg state.
+
+## SourceManager
+
+`SourceManager` coordinates one or more `Source` implementations for a chain. It
+selects an active source (HyperSync, RPC or HyperFuel) and falls back when a
+source stalls. Concurrency is limited based on configuration and metrics are
+recorded for each source.
 
 ## Source
 
 ```mermaid
 classDiagram
   class Source {
-    make(workerTypeSelected, chainConfig)
+    make(config)
     startFetchingEvents(source, logger, fetchedEventQueue)
     addNewRangeQueriedCallback(source)
     getLatestFetchedBlockTimestamp(source)
     addDynamicContractAndFetchMissingEvents(source, dynamicContracts, fromBlock, fromLogIndex, logger)
   }
-  Source <|.. SkarSource : Implements
+  Source <|.. HyperSyncSource : Implements
   Source <|.. RpcSource : Implements
+  Source <|.. HyperFuelSource : Implements
 ```
 
-A `Source` is an abstraction over the actual implementation of retrieving the events and adding them to the `ChainFetcher` queue. It should only interact with and be interacted with within our code from the ChainFetcher. For example - the skar worker already has the blocktimestamps for all events - whereas the RPC worker needs to fetch the blocks to get the timestamps - the rest of the algoritm doesn't need to know about these details.
-
-Some values in the chain workers are accessed or used in different parts of the application even if those might be in the process of changing. To avoid this we turn accessing or using those into promises that resolve only once the processing that involves those values completes. This makes the code safe, eg look at `latestFetchedBlockNumber` in the Skar Source.
-TODO: it is a good pattern, but potentially risky since you need to remember to 'resolve' that promise afterwards. An idea might be to encapsulate the logic that uses that value into a function so that it is easy to see the scope of code in which that variable is 'locked'.
-
-### Skar Source
-
-High level steps:
-
-- Determine which block to start fetching from and starting state
-- loop indefinitely
-  - Create the contract interfaces and fetch a batch of events from skar
-  - Fetch block timestamps for all these blocks (could this not be integrated with skar to be a single query?)
-    - Check if any dynamic contracts have been loaded - If there are discard all these contracts before processing or adding them to the queue.
-  - Parse all the events fetched from skar
-  - Finish updating state, release locked values and start loop again
+A `Source` encapsulates the logic for retrieving events from a particular data
+provider. `HyperSyncSource` streams data from the HyperSync API, `RpcSource`
+fetches via standard RPC endpoints and `HyperFuelSource` indexes Fuel networks.
+All sources adhere to the same interface so `ChainFetcher` does not need to know
+about implementation details such as block timestamp retrieval.
 
 ## ChainEventQueue
 
-This is a data structure with some utility functions that is created and managed by the `ChainFetcher` used and shared by the `Source`.
+`ChainEventQueue` is an internal data structure created by the `ChainFetcher` and
+shared with the active `Source`. It buffers fetched events and tracks state
+needed for reorg detection.
