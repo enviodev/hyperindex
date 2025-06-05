@@ -6,7 +6,7 @@ let registerContractHandlers = (
   ~handlerPathRelativeToConfig,
 ) => {
   try {
-    require("root/" ++ handlerPathRelativeToRoot)
+    require(`../${Path.relativePathToRootFromGenerated}/${handlerPathRelativeToRoot}`)
   } catch {
   | exn =>
     let params = {

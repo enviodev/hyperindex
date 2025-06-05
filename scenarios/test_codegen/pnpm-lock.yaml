@@ -196,9 +196,6 @@ importers:
       rescript-schema:
         specifier: 9.3.0
         version: 9.3.0(rescript@11.1.3)
-      root:
-        specifier: ../.
-        version: link:..
       viem:
         specifier: 2.21.0
         version: 2.21.0(typescript@5.5.4)
