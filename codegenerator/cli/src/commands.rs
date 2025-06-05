@@ -34,11 +34,6 @@ pub mod rescript {
     use anyhow::Result;
     use std::path::Path;
 
-    pub async fn clean(path: &Path) -> Result<std::process::ExitStatus> {
-        let args = vec!["rescript", "clean"];
-        execute_command("pnpm", args, path).await
-    }
-
     pub async fn build(path: &Path) -> Result<std::process::ExitStatus> {
         let args = vec!["rescript"];
         execute_command("pnpm", args, path).await
@@ -94,15 +89,22 @@ pub mod codegen {
         Ok(())
     }
 
-    pub async fn pnpm_install(
-        project_paths: &ParsedProjectPaths,
-    ) -> Result<std::process::ExitStatus> {
+    async fn pnpm_install(project_paths: &ParsedProjectPaths) -> Result<std::process::ExitStatus> {
         println!("Checking for pnpm package...");
-        let current_dir = &project_paths.project_root;
-        check_and_install_pnpm(current_dir).await?;
+        check_and_install_pnpm(&project_paths.generated).await?;
 
-        let args = vec!["install", "--no-frozen-lockfile", "--prefer-offline"];
-        execute_command("pnpm", args, current_dir).await
+        execute_command(
+            "pnpm",
+            vec!["install", "--no-lockfile", "--prefer-offline"],
+            &project_paths.generated,
+        )
+        .await?;
+        execute_command(
+            "pnpm",
+            vec!["install", "--prefer-offline"],
+            &project_paths.project_root,
+        )
+        .await
     }
 
     async fn run_post_codegen_command_sequence(
@@ -114,15 +116,7 @@ pub mod codegen {
             return Ok(exit1);
         }
 
-        println!("Clean build directory");
-        let exit2 = rescript::clean(&project_paths.generated)
-            .await
-            .context("Failed running rescript clean")?;
-        if !exit2.success() {
-            return Ok(exit2);
-        }
-
-        println!("Building code");
+        println!("Generating HyperIndex code...");
         let exit3 = rescript::build(&project_paths.generated)
             .await
             .context("Failed running rescript build")?;
