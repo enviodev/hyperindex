@@ -124,6 +124,10 @@ impl<'a> RelativeDir<'a> {
                     self.new_child(dir).extract(base_path)?;
                 }
                 DirEntry::File(f) => {
+                    // Skip .gitkeep files
+                    if path.file_name().map_or(false, |n| n == ".gitkeep") {
+                        continue;
+                    }
                     fs::write(path, f.contents())?;
                 }
             }
