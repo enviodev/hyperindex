@@ -216,7 +216,7 @@ let createOrderedBatch = (
       switch val {
       | None => ()
       | Some({item, popItemOffQueue}) =>
-        //For dynamic contract pre registration, allow creating a batch up to the reorg threshold
+        // To ensure history saving only starts when all chains have reached their reorg threshold
         let shouldNotAddItem = isInReorgThreshold && onlyBelowReorgThreshold
         if !shouldNotAddItem {
           popItemOffQueue()
@@ -288,7 +288,7 @@ let createUnorderedBatch = (
               switch earliestEvent {
               | NoItem(_) => ()
               | Item({item, popItemOffQueue}) =>
-                //For dynamic contract pre registration, allow creating a batch up to the reorg threshold
+                // To ensure history saving only starts when all chains have reached their reorg threshold
                 let shouldNotAddItem = isInReorgThreshold && onlyBelowReorgThreshold
                 if !shouldNotAddItem {
                   popItemOffQueue()

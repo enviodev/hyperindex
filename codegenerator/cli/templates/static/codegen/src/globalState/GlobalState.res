@@ -271,9 +271,7 @@ let checkAndSetSyncedChains = (
   let allChainsSyncedAtHead =
     chainFetchers
     ->ChainMap.values
-    ->Array.reduce(true, (accum, cf) =>
-      cf.timestampCaughtUpToHeadOrEndblock->Option.isSome && accum
-    )
+    ->Array.every(cf => cf.timestampCaughtUpToHeadOrEndblock->Option.isSome)
 
   if allChainsSyncedAtHead && shouldSetPrometheusSynced {
     Prometheus.setAllChainsSyncedToHead()

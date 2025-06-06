@@ -3,7 +3,7 @@ open Belt
 let allChainsEventsProcessedToEndblock = (chainFetchers: ChainMap.t<ChainFetcher.t>) => {
   chainFetchers
   ->ChainMap.values
-  ->Array.reduce(true, (accum, cf) => cf->ChainFetcher.hasProcessedToEndblock && accum)
+  ->Array.every(cf => cf->ChainFetcher.hasProcessedToEndblock)
 }
 
 let updateEventSyncState = (eventItem: Internal.eventItem, ~inMemoryStore: InMemoryStore.t) => {
@@ -324,7 +324,6 @@ let processEventBatch = (
     if Env.Benchmark.shouldSaveData {
       Benchmark.addEventProcessing(
         ~batchSize,
-        ~contractRegisterDuration=0,
         ~loadDuration=loaderDuration,
         ~handlerDuration,
         ~dbWriteDuration,
