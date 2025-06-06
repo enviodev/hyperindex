@@ -18,5 +18,5 @@
     "module": "commonjs",
     "in-source": true
   },
-  "bs-dependencies": ["generated", "envio"]
+  "bs-dependencies": ["generated", "envio", "rescript-schema"]
 }
