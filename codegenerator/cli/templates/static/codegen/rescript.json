@@ -28,7 +28,6 @@
   "bs-dependencies": [
     "rescript-envsafe",
     "rescript-schema",
-    "@glennsl/rescript-fetch",
     "@rescript/react",
     "envio"
   ],

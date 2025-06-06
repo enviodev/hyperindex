@@ -182,35 +182,6 @@ describe("ChainManager", () => {
               ~message="Check that first event in this block group is AFTER the last event before this block group",
             )
 
-            //Note -> this test was originally for popping all events related to a single block
-            //Now we don't guarentee processing all events in a block so these assertions are no longer needed.
-            // let lastEvent =
-            //   batch
-            //   ->List.toArray
-            //   ->Belt.Array.sliceToEnd(1)
-            //   ->Belt.Array.reduce(
-            //     firstEventInBlock,
-            //     (previous, current) => {
-            //       // Assert.equal(
-            //       //   previous.blockNumber,
-            //       //   current.blockNumber,
-            //       //   ~message=`The block number within a block should always be the same, here ${previous.blockNumber->string_of_int} (previous.blockNumber) != ${current.blockNumber->string_of_int}(current.blockNumber)`,
-            //       // )
-            //
-            //       Assert.equal(
-            //         previous.chain,
-            //         current.chain,
-            //         ~message=`The chainId within a block should always be the same, here ${previous.chain->ChainMap.Chain.toString} (previous.chainId) != ${current.chain->ChainMap.Chain.toString}(current.chainId)`,
-            //       )
-            //
-            //       Assert.equal(
-            //         current.logIndex > previous.logIndex,
-            //         true,
-            //         ~message=`Incorrect log index, the offending event pair: ${current.event->Utils.magic} - ${previous.event->Utils.magic}`,
-            //       )
-            //       current
-            //     },
-            //   )
             let nextChainFetchers = chainManager.chainFetchers->ChainMap.mapWithKey(
               (chain, fetcher) => {
                 let {fetchState} = fetchStatesMap->ChainMap.get(chain)
@@ -257,17 +228,8 @@ describe("ChainManager", () => {
 
 // NOTE: this is likely a temporary feature - can delete if feature no longer important.
 describe("determineNextEvent", () => {
-  describe("optimistic-unordered-mode", () => {
-    let determineNextEvent_unordered = ChainManager.ExposedForTesting_Hidden.createDetermineNextEventFunction(
-      ~isUnorderedMultichainMode=true,
-      _,
-      ~onlyBelowReorgThreshold=false,
-    )
-    let determineNextEvent_ordered = ChainManager.ExposedForTesting_Hidden.createDetermineNextEventFunction(
-      ~isUnorderedMultichainMode=false,
-      _,
-      ~onlyBelowReorgThreshold=false,
-    )
+  describe("optimistic-ordered-mode", () => {
+    let determineNextEvent_ordered = ChainManager.determineNextEvent
 
     let makeNoItem = timestamp => FetchState.NoItem({
       latestFetchedBlock: {blockTimestamp: timestamp, blockNumber: 0},
@@ -357,14 +319,6 @@ describe("determineNextEvent", () => {
             },
         )
 
-        let {val: {earliestEvent}} = determineNextEvent_unordered(fetchStatesMap)->Result.getExn
-
-        Assert.deepEqual(
-          earliestEvent->FetchState_test.getItem,
-          Some(singleItem),
-          ~message="Should have taken the single item",
-        )
-
         let {val: {earliestEvent}} = determineNextEvent_ordered(fetchStatesMap)->Result.getExn
 
         Assert.deepEqual(
@@ -402,22 +356,6 @@ describe("determineNextEvent", () => {
               )
             | _ => Js.Exn.raiseError("Unexpected chain")
             },
-        )
-
-        // let example: array<ChainFetcher.eventQueuePeek> = [
-        //   earliestItem,
-        //   NoItem(653 /* earlier timestamp than the test event */, {id:1}),
-        //   Item({...singleItem, timestamp: singleItem.timestamp + 1}),
-        //   Item(singleItem),
-        //   NoItem(655 /* later timestamp than the test event */, {id:1}),
-        // ]
-
-        let {val: {earliestEvent}} = determineNextEvent_unordered(fetchStatesMap)->Result.getExn
-
-        Assert.deepEqual(
-          earliestEvent->FetchState_test.getItem,
-          Some(singleItem),
-          ~message="Should have taken the single item",
         )
 
         let {val: {earliestEvent}} = determineNextEvent_ordered(fetchStatesMap)->Result.getExn

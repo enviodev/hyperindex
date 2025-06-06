@@ -1,6 +1,6 @@
 import assert from "assert";
 import { it } from "mocha";
-import { TestHelpers, User } from "generated";
+import { TestHelpers } from "generated";
 const { MockDb, Gravatar } = TestHelpers;
 
 describe("Use Envio test framework to test event handlers", () => {
@@ -12,6 +12,7 @@ describe("Use Envio test framework to test event handlers", () => {
 
     const event = Gravatar.FactoryEvent.createMockEvent({
       contract: dcAddress,
+      testCase: "syncRegistration",
     });
 
     const updatedMockDb = await Gravatar.FactoryEvent.processEvent({

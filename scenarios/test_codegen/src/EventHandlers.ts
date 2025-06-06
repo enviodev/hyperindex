@@ -422,27 +422,59 @@ Gravatar.FactoryEvent.contractRegister(({ event, context }) => {
           resolve();
         }, 0)
       );
-    default:
+    case "syncRegistration":
       context.addSimpleNft(event.params.contract);
       break;
   }
 });
 
-const notify = (event: unknown) => {
-  console.log(event);
-};
-
-const indexerStartedAt = (new Date().getTime() / 1000) | 0;
-const isLiveEvent = (event: { block: { timestamp: number } }) => {
-  return event.block.timestamp > indexerStartedAt;
-};
-
 Gravatar.FactoryEvent.handler(async ({ event, context }) => {
-  if (isLiveEvent(event)) {
-    notify(event);
-  }
-
   switch (event.params.testCase) {
+    case "entityWithAllTypesSet":
+      context.EntityWithAllTypes.set({
+        id: "1",
+        string: "string",
+        optString: "optString",
+        arrayOfStrings: ["arrayOfStrings1", "arrayOfStrings2"],
+        int_: 1,
+        optInt: 2,
+        arrayOfInts: [3, 4],
+        float_: 1.1,
+        optFloat: 2.2,
+        arrayOfFloats: [3.3, 4.4],
+        bool: true,
+        optBool: false,
+        bigInt: 1n,
+        optBigInt: 2n,
+        arrayOfBigInts: [3n, 4n],
+        bigDecimal: new BigDecimal("1.1"),
+        optBigDecimal: new BigDecimal("2.2"),
+        arrayOfBigDecimals: [new BigDecimal("3.3"), new BigDecimal("4.4")],
+        json: { foo: ["bar"] },
+      });
+      context.EntityWithAllTypes.set({
+        id: "2",
+        string: "string",
+        optString: "optString",
+        arrayOfStrings: ["arrayOfStrings1", "arrayOfStrings2"],
+        int_: 1,
+        optInt: 2,
+        arrayOfInts: [3, 4],
+        float_: 1.1,
+        optFloat: 2.2,
+        arrayOfFloats: [3.3, 4.4],
+        bool: true,
+        optBool: false,
+        bigInt: 1n,
+        optBigInt: 2n,
+        arrayOfBigInts: [3n, 4n],
+        bigDecimal: new BigDecimal("1.1"),
+        optBigDecimal: new BigDecimal("2.2"),
+        arrayOfBigDecimals: [new BigDecimal("3.3"), new BigDecimal("4.4")],
+        json: { foo: ["bar"] },
+      });
+      break;
+
     case "getOrCreate - creates": {
       const user = await context.User.getOrCreate({
         id: "0",

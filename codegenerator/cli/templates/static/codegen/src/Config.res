@@ -87,7 +87,19 @@ let codegenPersistence = Persistence.make(
   ~allEnums=Enums.allEnums,
   ~storage=PgStorage.make(~sql=Db.sql, ~pgSchema=Env.Db.publicSchema),
   ~onStorageInitialize=() => {
-    TrackTables.trackAllTables()->Promise.catch(err => {
+    Hasura.trackDatabase(
+      ~endpoint=Env.Hasura.graphqlEndpoint,
+      ~auth={
+        role: Env.Hasura.role,
+        secret: Env.Hasura.secret,
+      },
+      ~pgSchema=Env.Db.publicSchema,
+      ~allStaticTables=Db.allStaticTables,
+      ~allEntityTables=Db.allEntityTables,
+      ~responseLimit=Env.Hasura.responseLimit,
+      ~schema=Db.schema,
+      ~aggregateEntities=Env.Hasura.aggregateEntities,
+    )->Promise.catch(err => {
       Logging.errorWithExn(err, `EE803: Error tracking tables`)->Promise.resolve
     })
   },
@@ -112,6 +124,12 @@ let make = (
   ~persistence=codegenPersistence,
   ~ecosystem=Evm,
 ) => {
+  let chainMap =
+    chains
+    ->Js.Array2.map(n => {
+      (n.chain, n)
+    })
+    ->ChainMap.fromArrayUnsafe
   {
     historyConfig: {
       rollbackFlag: shouldRollbackOnReorg ? RollbackOnReorg : NoRollback,
@@ -122,11 +140,7 @@ let make = (
         isUnorderedMultichainMode,
       ),
     ),
-    chainMap: chains
-    ->Js.Array2.map(n => {
-      (n.chain, n)
-    })
-    ->ChainMap.fromArrayUnsafe,
+    chainMap,
     defaultChain: chains->Array.get(0),
     enableRawEvents,
     persistence,
