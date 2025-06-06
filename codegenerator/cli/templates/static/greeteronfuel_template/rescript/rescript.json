@@ -19,6 +19,5 @@
     "version": 4
   },
   "suffix": ".bs.js",
-  "bs-dependencies": ["generated", "envio"],
-  "pinned-dependencies": ["generated"]
+  "bs-dependencies": ["generated", "envio"]
 }
