@@ -6,7 +6,7 @@ const {
 {{#each imported_contracts as |contract|}}
   {{contract.name.capitalized}}{{#unless @last}},{{/unless}}
 {{/each}}
-} = require("../generated/src/Handlers.bs.js");
+} = require("../generated/src/Handlers.res.js");
 
 {{#each imported_contracts as |contract|}}
   {{#each contract.imported_events as |event|}}

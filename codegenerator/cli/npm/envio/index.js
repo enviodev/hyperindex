@@ -2,7 +2,7 @@
 // Some parts like Sury reexport are impossible to implement
 // on the JS side, so we need to do it here
 
-const envioGen = require("./src/Envio.bs.js");
+const envioGen = require("./src/Envio.res.js");
 Object.assign(exports, envioGen);
 
 const Sury = require("rescript-schema");
@@ -30,7 +30,7 @@ exports.S = {
   merge: Sury.merge,
   optional: Sury.optional,
   nullable: Sury.nullable,
-  bigDecimal: require("./src/bindings/BigDecimal.bs.js").schema,
+  bigDecimal: require("./src/bindings/BigDecimal.res.js").schema,
   // Nullish type will change in "sury@10"
   // nullish: Sury.nullish,
   assertOrThrow: Sury.assertOrThrow,

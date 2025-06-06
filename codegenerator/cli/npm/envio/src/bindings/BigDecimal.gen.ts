@@ -3,7 +3,7 @@
 /* eslint-disable */
 /* tslint:disable */
 
-const BigDecimalJS = require('./BigDecimal.bs.js');
+const BigDecimalJS = require('./BigDecimal.res.js');
 
 import type {S_t as RescriptSchema_S_t} from 'rescript-schema/RescriptSchema.gen';
 

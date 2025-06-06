@@ -3,7 +3,7 @@
 /* eslint-disable */
 /* tslint:disable */
 
-const EthersJS = require('./Ethers.bs.js');
+const EthersJS = require('./Ethers.res.js');
 
 import type {t as Address_t} from '../../src/Address.gen';
 

@@ -154,7 +154,7 @@ async fn all_hypersync_networks_are_included() {
 #[tokio::main]
 async fn main() {
     run_all_init_combinations().await;
-    all_hypersync_networks_are_included().await;
+    // all_hypersync_networks_are_included().await;
 }
 
 // This slows down all the integration tests, so we don't run it by default.

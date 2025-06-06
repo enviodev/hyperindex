@@ -114,7 +114,7 @@ pub struct BlockHandler {
 // Logic to get the event handler directory based on the language
 fn get_event_handler_directory(language: &Language) -> String {
     match language {
-        Language::ReScript => "./src/EventHandlers.bs.js".to_string(),
+        Language::ReScript => "./src/EventHandlers.res.js".to_string(),
         Language::TypeScript => "src/EventHandlers.ts".to_string(),
         Language::JavaScript => "./src/EventHandlers.js".to_string(),
     }
@@ -554,7 +554,7 @@ mod test {
         let event_handler_directory_1 = super::get_event_handler_directory(&language_1);
         let event_handler_directory_2 = super::get_event_handler_directory(&language_2);
         let event_handler_directory_3 = super::get_event_handler_directory(&language_3);
-        assert_eq!(event_handler_directory_1, "./src/EventHandlers.bs.js");
+        assert_eq!(event_handler_directory_1, "./src/EventHandlers.res.js");
         assert_eq!(event_handler_directory_2, "./src/EventHandlers.js");
         assert_eq!(event_handler_directory_3, "src/EventHandlers.ts");
     }

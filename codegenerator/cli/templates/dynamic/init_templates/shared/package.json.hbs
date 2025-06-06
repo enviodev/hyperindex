@@ -18,12 +18,12 @@
     "dev": "{{#if is_rescript}}pnpm build && {{/if}}envio dev",
     "test": "pnpm mocha",
     {{#if is_rescript}}
-    "start": "pnpm build && node generated/src/Index.bs.js"
+    "start": "pnpm build && node generated/src/Index.res.js"
     {{else}}
       {{#if is_typescript}}
-    "start": "ts-node generated/src/Index.bs.js"
+    "start": "ts-node generated/src/Index.res.js"
       {{else}}
-    "start": "node generated/src/Index.bs.js"
+    "start": "node generated/src/Index.res.js"
       {{/if}}
     {{/if}}
   },
