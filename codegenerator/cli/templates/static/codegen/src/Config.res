@@ -124,6 +124,12 @@ let make = (
   ~persistence=codegenPersistence,
   ~ecosystem=Evm,
 ) => {
+  let chainMap =
+    chains
+    ->Js.Array2.map(n => {
+      (n.chain, n)
+    })
+    ->ChainMap.fromArrayUnsafe
   {
     historyConfig: {
       rollbackFlag: shouldRollbackOnReorg ? RollbackOnReorg : NoRollback,
@@ -134,11 +140,7 @@ let make = (
         isUnorderedMultichainMode,
       ),
     ),
-    chainMap: chains
-    ->Js.Array2.map(n => {
-      (n.chain, n)
-    })
-    ->ChainMap.fromArrayUnsafe,
+    chainMap,
     defaultChain: chains->Array.get(0),
     enableRawEvents,
     persistence,

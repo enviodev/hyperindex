@@ -291,7 +291,6 @@ let batchSizeLabel = "Batch Size"
 
 let addEventProcessing = (
   ~batchSize,
-  ~contractRegisterDuration,
   ~loadDuration,
   ~handlerDuration,
   ~dbWriteDuration,
@@ -301,7 +300,6 @@ let addEventProcessing = (
     data->Data.addSummaryData(~group=eventProcessingGroup, ~label, ~value=value->Belt.Int.toFloat)
 
   add(batchSizeLabel, batchSize)
-  add("Contract Register Duration (ms)", contractRegisterDuration)
   add("Load Duration (ms)", loadDuration)
   add("Handler Duration (ms)", handlerDuration)
   add("DB Write Duration (ms)", dbWriteDuration)
