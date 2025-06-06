@@ -13,8 +13,8 @@ use crate::{
         human_config::evm::{For, Rpc, RpcSyncConfig},
         postgres_types,
         system_config::{
-            self, Abi, Ecosystem, EventKind, FuelEventKind, MainEvmDataSource, SelectedField,
-            SystemConfig,
+            self, get_envio_version, Abi, Ecosystem, EventKind, FuelEventKind, MainEvmDataSource,
+            SelectedField, SystemConfig,
         },
     },
     persisted_state::{PersistedState, PersistedStateJsonString},
@@ -838,7 +838,7 @@ let eventSignatures = [{}]
                     ))?;
 
                 format!(
-                    "let abi = Fuel.transpileAbi(%raw(`require(\"../../{}\")`))\n{}\n{}\n{chain_id_type_code}",
+                    "let abi = Fuel.transpileAbi(%raw(`require`)(`../${{Path.relativePathToRootFromGenerated}}/{}`))\n{}\n{}\n{chain_id_type_code}",
                     // If we decide to inline the abi, instead of using require
                     // we need to remember that abi might contain ` and we should escape it
                     abi.path_buf.to_string_lossy(),
@@ -1242,6 +1242,7 @@ pub struct ProjectTemplate {
     aggregated_field_selection: FieldSelection,
     is_evm_ecosystem: bool,
     is_fuel_ecosystem: bool,
+    envio_version: String,
     //Used for the package.json reference to handlers in generated
     relative_path_to_root_from_generated: String,
 }
@@ -1347,6 +1348,7 @@ impl ProjectTemplate {
             aggregated_field_selection,
             is_evm_ecosystem: cfg.get_ecosystem() == Ecosystem::Evm,
             is_fuel_ecosystem: cfg.get_ecosystem() == Ecosystem::Fuel,
+            envio_version: get_envio_version()?,
             //Used for the package.json reference to handlers in generated
             relative_path_to_root_from_generated,
         })

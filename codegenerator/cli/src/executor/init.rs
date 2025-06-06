@@ -6,8 +6,10 @@ use crate::{
     },
     commands,
     config_parsing::{
-        entity_parsing::Schema, graph_migration::generate_config_from_subgraph_id,
-        human_config::HumanConfig, system_config::SystemConfig,
+        entity_parsing::Schema,
+        graph_migration::generate_config_from_subgraph_id,
+        human_config::HumanConfig,
+        system_config::{get_envio_version, SystemConfig},
     },
     hbs_templating::{
         contract_import_templates, hbs_dir_generator::HandleBarsDirGenerator,
@@ -18,17 +20,8 @@ use crate::{
     utils::file_system,
 };
 use anyhow::{anyhow, Context, Result};
-use regex::Regex;
-use std::{env, path::PathBuf};
 
-//Validates version name (3 digits separated by period ".")
-//Returns false if there are any additional chars as this should imply
-//it is a dev release version or an unstable release
-fn is_valid_release_version_number(version: &str) -> bool {
-    let re_version_pattern = Regex::new(r"^\d+\.\d+\.\d+(-rc\.\d+)?$")
-        .expect("version regex pattern should be valid regex");
-    re_version_pattern.is_match(version) || version.contains("-main-")
-}
+use std::path::PathBuf;
 
 pub async fn run_init_args(init_args: InitArgs, project_paths: &ProjectPaths) -> Result<()> {
     let template_dirs = TemplateDirs::new();
@@ -236,23 +229,7 @@ pub async fn run_init_args(init_args: InitArgs, project_paths: &ProjectPaths) ->
         }
     }
 
-    let envio_version = {
-        let crate_version = env!("CARGO_PKG_VERSION");
-        if is_valid_release_version_number(crate_version) {
-            // Check that crate version is not a dev release. In which case the
-            // version should be installable from npm
-            crate_version.to_string()
-        } else {
-            // Else install the local version for development and testing
-            match env::current_exe() {
-                // This should be something like "file:~/envio/hyperindex/codegenerator/target/debug/envio" or "file:.../target/debug/integration_tests"
-                Ok(exe_path) => {
-                    format!("file:{}/../../../cli/npm/envio", exe_path.to_string_lossy())
-                }
-                Err(e) => return Err(anyhow!("failed to get current exe path: {e}")),
-            }
-        }
-    };
+    let envio_version = get_envio_version()?;
 
     let hbs_template = InitTemplates::new(
         init_config.name.clone(),
@@ -297,43 +274,4 @@ pub async fn run_init_args(init_args: InitArgs, project_paths: &ProjectPaths) ->
     }
 
     Ok(())
-}
-
-#[cfg(test)]
-mod test {
-
-    #[test]
-    fn test_valid_version_numbers() {
-        let valid_version_numbers = vec![
-            "0.0.0",
-            "999.999.999",
-            "0.0.1",
-            "10.2.3",
-            "2.0.0-rc.1",
-            "0.0.0-main-20241001144237-a236a894",
-        ];
-
-        for vn in valid_version_numbers {
-            assert!(super::is_valid_release_version_number(vn));
-        }
-    }
-
-    #[test]
-    fn test_invalid_version_numbers() {
-        let invalid_version_numbers = vec![
-            "v10.1.0",
-            "0.1",
-            "0.0.1-dev",
-            "0.1.*",
-            "^0.1.2",
-            "0.0.1.2",
-            "1..1",
-            "1.1.",
-            ".1.1",
-            "1.1.1.",
-        ];
-        for vn in invalid_version_numbers {
-            assert!(!super::is_valid_release_version_number(vn));
-        }
-    }
 }

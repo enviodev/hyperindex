@@ -26,9 +26,10 @@ use anyhow::{anyhow, Context, Result};
 use dotenvy::{EnvLoader, EnvMap, EnvSequence};
 use ethers::abi::{ethabi::Event as EthAbiEvent, EventExt, EventParam, HumanReadableParser};
 use itertools::Itertools;
+use regex::Regex;
 use std::{
     collections::{HashMap, HashSet},
-    fs,
+    env, fs,
     path::{Path, PathBuf},
 };
 
@@ -366,6 +367,34 @@ DefaultForMissingAndEmpty with empty env and many dashes: "---:---"
 DefaultForMissingAndEmpty with empty env and empty default: ""
 "#
             );
+        }
+    }
+}
+
+//Validates version name (3 digits separated by period ".")
+//Returns false if there are any additional chars as this should imply
+//it is a dev release version or an unstable release
+fn is_valid_release_version_number(version: &str) -> bool {
+    let re_version_pattern = Regex::new(r"^\d+\.\d+\.\d+(-rc\.\d+)?$")
+        .expect("version regex pattern should be valid regex");
+    re_version_pattern.is_match(version) || version.contains("-main-")
+}
+
+pub fn get_envio_version() -> Result<String> {
+    let crate_version = env!("CARGO_PKG_VERSION");
+    if is_valid_release_version_number(crate_version) {
+        // Check that crate version is not a dev release. In which case the
+        // version should be installable from npm
+        Ok(crate_version.to_string())
+    } else {
+        // Else install the local version for development and testing
+        match env::current_exe() {
+            // This should be something like "file:~/envio/hyperindex/codegenerator/target/debug/envio" or "file:.../target/debug/integration_tests"
+            Ok(exe_path) => Ok(format!(
+                "file:{}/../../../cli/npm/envio",
+                exe_path.to_string_lossy()
+            )),
+            Err(e) => Err(anyhow!("failed to get current exe path: {e}")),
         }
     }
 }
@@ -1940,5 +1969,40 @@ mod test {
                 rpcs: vec![],
             }
         );
+    }
+
+    #[test]
+    fn test_valid_version_numbers() {
+        let valid_version_numbers = vec![
+            "0.0.0",
+            "999.999.999",
+            "0.0.1",
+            "10.2.3",
+            "2.0.0-rc.1",
+            "0.0.0-main-20241001144237-a236a894",
+        ];
+
+        for vn in valid_version_numbers {
+            assert!(super::is_valid_release_version_number(vn));
+        }
+    }
+
+    #[test]
+    fn test_invalid_version_numbers() {
+        let invalid_version_numbers = vec![
+            "v10.1.0",
+            "0.1",
+            "0.0.1-dev",
+            "0.1.*",
+            "^0.1.2",
+            "0.0.1.2",
+            "1..1",
+            "1.1.",
+            ".1.1",
+            "1.1.1.",
+        ];
+        for vn in invalid_version_numbers {
+            assert!(!super::is_valid_release_version_number(vn));
+        }
     }
 }
