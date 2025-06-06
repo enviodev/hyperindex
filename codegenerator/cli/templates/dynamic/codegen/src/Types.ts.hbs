@@ -23,6 +23,11 @@ export type LoaderContext = {
      * If the entity is not found, returns undefined.
      */
     readonly get: (id: string) => Promise<Entities.{{entity.name.capitalized}}_t | undefined>,
+    /**
+     * Load the entity {{entity.name.original}} from the storage by ID.
+     * If the entity is not found, throws an error.
+     */
+    readonly getOrThrow: (id: string, message?: string) => Promise<Entities.{{entity.name.capitalized}}_t>,
     readonly getWhere: Entities.{{entity.name.capitalized}}_indexedFieldOperations,
   }
   {{/each}}
@@ -46,6 +51,16 @@ export type HandlerContext = {
      * If the entity is not found, returns undefined.
      */
     readonly get: (id: string) => Promise<Entities.{{entity.name.capitalized}}_t | undefined>,
+    /**
+     * Load the entity {{entity.name.original}} from the storage by ID.
+     * If the entity is not found, throws an error.
+     */
+    readonly getOrThrow: (id: string, message?: string) => Promise<Entities.{{entity.name.capitalized}}_t>,
+    /**
+     * Returns the entity {{entity.name.original}} from the storage by ID.
+     * If the entity is not found, creates it using provided parameters and returns it.
+     */
+    readonly getOrCreate: (entity: Entities.{{entity.name.capitalized}}_t) => Promise<Entities.{{entity.name.capitalized}}_t>,
     /**
      * Set the entity {{entity.name.original}} in the storage.
      */

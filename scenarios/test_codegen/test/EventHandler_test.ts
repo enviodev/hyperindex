@@ -1,7 +1,6 @@
 import assert from "assert";
 import { it } from "mocha";
-import { TestHelpers } from "generated";
-import { BigDecimal } from "generated";
+import { TestHelpers, User } from "generated";
 const { MockDb, Gravatar } = TestHelpers;
 
 describe("Use Envio test framework to test event handlers", () => {
@@ -103,15 +102,14 @@ describe("Use Envio test framework to test event handlers", () => {
     // );
   });
 
-  it("Runs handler for entity with all types set", async () => {
-    // Initializing the mock database
+  it("entity.getOrCreate should create the entity if it doesn't exist", async () => {
     const mockDbInitial = MockDb.createMockDb();
 
     const dcAddress = "0x1234567890123456789012345678901234567890";
 
     const event = Gravatar.FactoryEvent.createMockEvent({
       contract: dcAddress,
-      testCase: "entityWithAllTypesSet",
+      testCase: "getOrCreate - creates",
     });
 
     const updatedMockDb = await Gravatar.FactoryEvent.processEvent({
@@ -119,34 +117,137 @@ describe("Use Envio test framework to test event handlers", () => {
       mockDb: mockDbInitial,
     });
 
-    const entities = updatedMockDb.entities.EntityWithAllTypes.getAll();
-    const expectedEntity1 = {
-      id: "1",
-      string: "string",
-      optString: "optString",
-      arrayOfStrings: ["arrayOfStrings1", "arrayOfStrings2"],
-      int_: 1,
-      optInt: 2,
-      arrayOfInts: [3, 4],
-      float_: 1.1,
-      optFloat: 2.2,
-      arrayOfFloats: [3.3, 4.4],
-      bool: true,
-      optBool: false,
-      bigInt: 1n,
-      optBigInt: 2n,
-      arrayOfBigInts: [3n, 4n],
-      bigDecimal: new BigDecimal("1.1"),
-      optBigDecimal: new BigDecimal("2.2"),
-      arrayOfBigDecimals: [new BigDecimal("3.3"), new BigDecimal("4.4")],
-      json: { foo: ["bar"] },
-    };
-    assert.deepEqual(entities, [
-      expectedEntity1,
+    const users = updatedMockDb.entities.User.getAll();
+    assert.deepEqual(users, [
       {
-        ...expectedEntity1,
-        id: "2",
+        id: "0",
+        address: "0x",
+        updatesCountOnUserForTesting: 0,
+        gravatar_id: undefined,
+        accountType: "USER",
       },
-    ] satisfies typeof entities);
+    ] satisfies typeof users);
+  });
+
+  it("entity.getOrCreate should load the entity if it exists", async () => {
+    let mockDb = MockDb.createMockDb();
+
+    const dcAddress = "0x1234567890123456789012345678901234567890";
+
+    const event = Gravatar.FactoryEvent.createMockEvent({
+      contract: dcAddress,
+      testCase: "getOrCreate - loads",
+    });
+
+    const existingUser: User = {
+      id: "0",
+      address: "existing",
+      updatesCountOnUserForTesting: 0,
+      gravatar_id: undefined,
+      accountType: "USER",
+    };
+    mockDb = mockDb.entities.User.set(existingUser);
+
+    mockDb = await Gravatar.FactoryEvent.processEvent({
+      event: event,
+      mockDb: mockDb,
+    });
+
+    const users = mockDb.entities.User.getAll();
+    assert.deepEqual(users, [existingUser] satisfies typeof users);
+  });
+
+  it("entity.getOrThrow should return existing entity", async () => {
+    let mockDb = MockDb.createMockDb();
+
+    const dcAddress = "0x1234567890123456789012345678901234567890";
+
+    const event = Gravatar.FactoryEvent.createMockEvent({
+      contract: dcAddress,
+      testCase: "getOrThrow",
+    });
+
+    const existingUser: User = {
+      id: "0",
+      address: "existing",
+      updatesCountOnUserForTesting: 0,
+      gravatar_id: undefined,
+      accountType: "USER",
+    };
+    mockDb = mockDb.entities.User.set(existingUser);
+
+    mockDb = await Gravatar.FactoryEvent.processEvent({
+      event: event,
+      mockDb: mockDb,
+    });
+
+    const users = mockDb.entities.User.getAll();
+    assert.deepEqual(users, [existingUser] satisfies typeof users);
+  });
+
+  it("entity.getOrThrow throws if entity doesn't exist", async () => {
+    let mockDb = MockDb.createMockDb();
+
+    const dcAddress = "0x1234567890123456789012345678901234567890";
+
+    const event = Gravatar.FactoryEvent.createMockEvent({
+      contract: dcAddress,
+      testCase: "getOrThrow",
+    });
+
+    await assert.rejects(
+      Gravatar.FactoryEvent.processEvent({
+        event: event,
+        mockDb: mockDb,
+      }),
+      // It also logs to the console.
+      {
+        message: `Entity 'User' with ID '0' is expected to exist.`,
+      }
+    );
+  });
+
+  it("entity.getOrThrow throws if entity doesn't exist with custom message", async () => {
+    let mockDb = MockDb.createMockDb();
+
+    const dcAddress = "0x1234567890123456789012345678901234567890";
+
+    const event = Gravatar.FactoryEvent.createMockEvent({
+      contract: dcAddress,
+      testCase: "getOrThrow - custom message",
+    });
+
+    await assert.rejects(
+      Gravatar.FactoryEvent.processEvent({
+        event: event,
+        mockDb: mockDb,
+      }),
+      // It also logs to the console.
+      {
+        message: `User should always exist`,
+      }
+    );
+  });
+
+  it("entity.getOrThrow - ignores the first fail in loader", async () => {
+    let mockDb = MockDb.createMockDb();
+
+    const dcAddress = "0x1234567890123456789012345678901234567890";
+
+    const event = Gravatar.FactoryEvent.createMockEvent({
+      contract: dcAddress,
+      testCase: "getOrThrow - ignores the first fail in loader",
+    });
+
+    await assert.rejects(
+      Gravatar.FactoryEvent.processEvent({
+        event: event,
+        mockDb: mockDb,
+      }),
+      // It also logs to the console.
+      {
+        message: `Second loader failure should abort processing`,
+      }
+    );
   });
 });
