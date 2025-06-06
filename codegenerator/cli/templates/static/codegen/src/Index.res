@@ -345,11 +345,8 @@ let main = async () => {
       },
     )
 
-    let sql = Db.sql
-    let needsRunUpMigrations = await sql->Migrations.needsRunUpMigrations
-    if needsRunUpMigrations {
-      let _ = await Migrations.runUpMigrations(~shouldExit=false)
-    }
+    await config.persistence->Persistence.init
+
     let chainManager = await ChainManager.makeFromDbState(~config)
     let loadLayer = LoadLayer.makeWithDbConnection()
     let globalState = GlobalState.make(~config, ~chainManager, ~loadLayer, ~shouldUseTui)

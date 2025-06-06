@@ -1,0 +1,286 @@
+open RescriptMocha
+
+describe("Test PgStorage SQL generation functions", () => {
+  describe("makeCreateIndexSqlUnsafe", () => {
+    Async.it(
+      "Should create simple index SQL",
+      async () => {
+        let sql = PgStorage.makeCreateIndexSqlUnsafe(
+          ~tableName="test_table",
+          ~indexFields=["field1"],
+          ~pgSchema="test_schema",
+        )
+
+        Assert.equal(
+          sql,
+          `CREATE INDEX IF NOT EXISTS "test_table_field1" ON "test_schema"."test_table"("field1");`,
+          ~message="Should generate correct single field index SQL",
+        )
+      },
+    )
+
+    Async.it(
+      "Should create composite index SQL",
+      async () => {
+        let sql = PgStorage.makeCreateIndexSqlUnsafe(
+          ~tableName="test_table",
+          ~indexFields=["field1", "field2", "field3"],
+          ~pgSchema="test_schema",
+        )
+
+        Assert.equal(
+          sql,
+          `CREATE INDEX IF NOT EXISTS "test_table_field1_field2_field3" ON "test_schema"."test_table"("field1", "field2", "field3");`,
+          ~message="Should generate correct composite index SQL",
+        )
+      },
+    )
+  })
+
+  describe("makeCreateTableIndicesSqlUnsafe", () => {
+    Async.it(
+      "Should create indices for A entity table",
+      async () => {
+        let sql = PgStorage.makeCreateTableIndicesSqlUnsafe(
+          Entities.A.table,
+          ~pgSchema="test_schema",
+        )
+
+        let expectedIndices = `CREATE INDEX IF NOT EXISTS "A_b_id" ON "test_schema"."A"("b_id");`
+        Assert.equal(sql, expectedIndices, ~message="Indices SQL should match exactly")
+      },
+    )
+
+    Async.it(
+      "Should handle table with no indices",
+      async () => {
+        let sql = PgStorage.makeCreateTableIndicesSqlUnsafe(
+          Entities.B.table,
+          ~pgSchema="test_schema",
+        )
+
+        // B entity has no indexed fields, so should return empty string
+        Assert.equal(sql, "", ~message="Should return empty string for table with no indices")
+      },
+    )
+  })
+
+  describe("makeCreateTableSqlUnsafe", () => {
+    Async.it(
+      "Should create SQL for A entity table",
+      async () => {
+        let sql = PgStorage.makeCreateTableSqlUnsafe(Entities.A.table, ~pgSchema="test_schema")
+
+        let expectedTableSql = `CREATE TABLE IF NOT EXISTS "test_schema"."A"("b_id" TEXT NOT NULL, "id" TEXT NOT NULL, "optionalStringToTestLinkedEntities" TEXT, "db_write_timestamp" TIMESTAMP DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY("id"));`
+        Assert.equal(sql, expectedTableSql, ~message="A table SQL should match exactly")
+      },
+    )
+
+    Async.it(
+      "Should create SQL for B entity table with derived fields",
+      async () => {
+        let sql = PgStorage.makeCreateTableSqlUnsafe(Entities.B.table, ~pgSchema="test_schema")
+
+        let expectedBTableSql = `CREATE TABLE IF NOT EXISTS "test_schema"."B"("c_id" TEXT, "id" TEXT NOT NULL, "db_write_timestamp" TIMESTAMP DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY("id"));`
+        Assert.equal(sql, expectedBTableSql, ~message="B table SQL should match exactly")
+      },
+    )
+
+    Async.it(
+      "Should handle default values",
+      async () => {
+        let sql = PgStorage.makeCreateTableSqlUnsafe(Entities.A.table, ~pgSchema="test_schema")
+
+        let expectedDefaultTestSql = `CREATE TABLE IF NOT EXISTS "test_schema"."A"("b_id" TEXT NOT NULL, "id" TEXT NOT NULL, "optionalStringToTestLinkedEntities" TEXT, "db_write_timestamp" TIMESTAMP DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY("id"));`
+        Assert.equal(
+          sql,
+          expectedDefaultTestSql,
+          ~message="Default value table SQL should match exactly",
+        )
+      },
+    )
+  })
+
+  describe("makeInitializeTransaction", () => {
+    Async.it(
+      "Should create complete initialization queries with clean run",
+      async () => {
+        let entities = [
+          module(Entities.A)->Entities.entityModToInternal,
+          module(Entities.B)->Entities.entityModToInternal,
+        ]
+        let staticTables = [TablesStatic.ChainMetadata.table]
+        let enums = [Enums.EntityType.config->Internal.fromGenericEnumConfig]
+
+        let queries = PgStorage.makeInitializeTransaction(
+          ~pgSchema="test_schema",
+          ~staticTables,
+          ~entities,
+          ~enums,
+          ~cleanRun=true,
+        )
+
+        // Should return exactly 2 queries: main DDL + functions
+        Assert.equal(
+          queries->Array.length,
+          2,
+          ~message="Should return exactly 2 queries for main DDL and functions",
+        )
+
+        let mainQuery = queries->Belt.Array.get(0)->Belt.Option.getExn
+        let functionsQuery = queries->Belt.Array.get(1)->Belt.Option.getExn
+
+        let expectedMainQuery = `DROP SCHEMA IF EXISTS "test_schema" CASCADE;
+CREATE SCHEMA "test_schema";GRANT ALL ON SCHEMA "test_schema" TO postgres;
+GRANT ALL ON SCHEMA "test_schema" TO public;
+CREATE TYPE "test_schema".ENTITY_TYPE AS ENUM('A', 'B', 'C', 'CustomSelectionTestPass', 'D', 'EntityWithAllNonArrayTypes', 'EntityWithAllTypes', 'EntityWithBigDecimal', 'EntityWithTimestamp', 'Gravatar', 'NftCollection', 'PostgresNumericPrecisionEntityTester', 'Token', 'User', 'dynamic_contract_registry');
+CREATE TABLE IF NOT EXISTS "test_schema"."chain_metadata"("chain_id" INTEGER NOT NULL, "start_block" INTEGER NOT NULL, "end_block" INTEGER, "block_height" INTEGER NOT NULL, "first_event_block_number" INTEGER, "latest_processed_block" INTEGER, "num_events_processed" INTEGER, "is_hyper_sync" BOOLEAN NOT NULL, "num_batches_fetched" INTEGER NOT NULL, "latest_fetched_block_number" INTEGER NOT NULL, "timestamp_caught_up_to_head_or_endblock" TIMESTAMP WITH TIME ZONE NULL, PRIMARY KEY("chain_id"));
+CREATE TABLE IF NOT EXISTS "test_schema"."A"("b_id" TEXT NOT NULL, "id" TEXT NOT NULL, "optionalStringToTestLinkedEntities" TEXT, "db_write_timestamp" TIMESTAMP DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY("id"));
+CREATE TABLE IF NOT EXISTS "test_schema"."A_history"("entity_history_block_timestamp" INTEGER NOT NULL, "entity_history_chain_id" INTEGER NOT NULL, "entity_history_block_number" INTEGER NOT NULL, "entity_history_log_index" INTEGER NOT NULL, "previous_entity_history_block_timestamp" INTEGER, "previous_entity_history_chain_id" INTEGER, "previous_entity_history_block_number" INTEGER, "previous_entity_history_log_index" INTEGER, "b_id" TEXT, "id" TEXT NOT NULL, "optionalStringToTestLinkedEntities" TEXT, "action" "test_schema".ENTITY_HISTORY_ROW_ACTION NOT NULL, "serial" SERIAL, PRIMARY KEY("entity_history_block_timestamp", "entity_history_chain_id", "entity_history_block_number", "entity_history_log_index", "id"));
+CREATE TABLE IF NOT EXISTS "test_schema"."B"("c_id" TEXT, "id" TEXT NOT NULL, "db_write_timestamp" TIMESTAMP DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY("id"));
+CREATE TABLE IF NOT EXISTS "test_schema"."B_history"("entity_history_block_timestamp" INTEGER NOT NULL, "entity_history_chain_id" INTEGER NOT NULL, "entity_history_block_number" INTEGER NOT NULL, "entity_history_log_index" INTEGER NOT NULL, "previous_entity_history_block_timestamp" INTEGER, "previous_entity_history_chain_id" INTEGER, "previous_entity_history_block_number" INTEGER, "previous_entity_history_log_index" INTEGER, "c_id" TEXT, "id" TEXT NOT NULL, "action" "test_schema".ENTITY_HISTORY_ROW_ACTION NOT NULL, "serial" SERIAL, PRIMARY KEY("entity_history_block_timestamp", "entity_history_chain_id", "entity_history_block_number", "entity_history_log_index", "id"));
+CREATE INDEX IF NOT EXISTS "A_b_id" ON "test_schema"."A"("b_id");
+CREATE INDEX IF NOT EXISTS "A_history_serial" ON "test_schema"."A_history"("serial");
+CREATE INDEX IF NOT EXISTS "B_history_serial" ON "test_schema"."B_history"("serial");
+CREATE INDEX IF NOT EXISTS "A_b_id" ON "test_schema"."A"("b_id");`
+
+        Assert.equal(
+          mainQuery,
+          expectedMainQuery,
+          ~message="Main query should match expected SQL exactly",
+        )
+
+        // Functions query should contain both A and B history functions
+        Assert.ok(
+          functionsQuery->Js.String2.includes(`CREATE OR REPLACE FUNCTION "insert_A_history"`),
+          ~message="Should contain A history function",
+        )
+
+        Assert.ok(
+          functionsQuery->Js.String2.includes(`CREATE OR REPLACE FUNCTION "insert_B_history"`),
+          ~message="Should contain B history function",
+        )
+      },
+    )
+
+    Async.it(
+      "Should create conditional initialization queries without clean run",
+      async () => {
+        let entities = [module(Entities.A)->Entities.entityModToInternal]
+        let staticTables = [TablesStatic.ChainMetadata.table]
+        let enums = [Enums.EntityType.config->Internal.fromGenericEnumConfig]
+
+        let queries = PgStorage.makeInitializeTransaction(
+          ~pgSchema="test_schema",
+          ~staticTables,
+          ~entities,
+          ~enums,
+          ~cleanRun=false,
+        )
+
+        // Should return exactly 2 queries: main DDL + functions
+        Assert.equal(queries->Array.length, 2, ~message="Should return exactly 2 queries")
+
+        let mainQuery = queries->Belt.Array.get(0)->Belt.Option.getExn
+
+        let expectedMainQuery = `DO $$ BEGIN CREATE SCHEMA IF NOT EXISTS "test_schema";GRANT ALL ON SCHEMA "test_schema" TO postgres;
+GRANT ALL ON SCHEMA "test_schema" TO public;
+IF NOT EXISTS (
+  SELECT 1 FROM pg_type 
+  WHERE typname = 'entity_type' 
+  AND typnamespace = (SELECT oid FROM pg_namespace WHERE nspname = 'test_schema')
+) THEN 
+    CREATE TYPE "test_schema".ENTITY_TYPE AS ENUM('A', 'B', 'C', 'CustomSelectionTestPass', 'D', 'EntityWithAllNonArrayTypes', 'EntityWithAllTypes', 'EntityWithBigDecimal', 'EntityWithTimestamp', 'Gravatar', 'NftCollection', 'PostgresNumericPrecisionEntityTester', 'Token', 'User', 'dynamic_contract_registry');
+END IF;
+CREATE TABLE IF NOT EXISTS "test_schema"."chain_metadata"("chain_id" INTEGER NOT NULL, "start_block" INTEGER NOT NULL, "end_block" INTEGER, "block_height" INTEGER NOT NULL, "first_event_block_number" INTEGER, "latest_processed_block" INTEGER, "num_events_processed" INTEGER, "is_hyper_sync" BOOLEAN NOT NULL, "num_batches_fetched" INTEGER NOT NULL, "latest_fetched_block_number" INTEGER NOT NULL, "timestamp_caught_up_to_head_or_endblock" TIMESTAMP WITH TIME ZONE NULL, PRIMARY KEY("chain_id"));
+CREATE TABLE IF NOT EXISTS "test_schema"."A"("b_id" TEXT NOT NULL, "id" TEXT NOT NULL, "optionalStringToTestLinkedEntities" TEXT, "db_write_timestamp" TIMESTAMP DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY("id"));
+CREATE TABLE IF NOT EXISTS "test_schema"."A_history"("entity_history_block_timestamp" INTEGER NOT NULL, "entity_history_chain_id" INTEGER NOT NULL, "entity_history_block_number" INTEGER NOT NULL, "entity_history_log_index" INTEGER NOT NULL, "previous_entity_history_block_timestamp" INTEGER, "previous_entity_history_chain_id" INTEGER, "previous_entity_history_block_number" INTEGER, "previous_entity_history_log_index" INTEGER, "b_id" TEXT, "id" TEXT NOT NULL, "optionalStringToTestLinkedEntities" TEXT, "action" "test_schema".ENTITY_HISTORY_ROW_ACTION NOT NULL, "serial" SERIAL, PRIMARY KEY("entity_history_block_timestamp", "entity_history_chain_id", "entity_history_block_number", "entity_history_log_index", "id"));
+CREATE INDEX IF NOT EXISTS "A_b_id" ON "test_schema"."A"("b_id");
+CREATE INDEX IF NOT EXISTS "A_history_serial" ON "test_schema"."A_history"("serial"); END $$;`
+
+        Assert.equal(
+          mainQuery,
+          expectedMainQuery,
+          ~message="Main query should match expected conditional SQL exactly",
+        )
+      },
+    )
+
+    Async.it(
+      "Should handle minimal configuration correctly",
+      async () => {
+        let queries = PgStorage.makeInitializeTransaction(
+          ~pgSchema="test_schema",
+          ~staticTables=[],
+          ~entities=[],
+          ~enums=[],
+          ~cleanRun=true,
+        )
+
+        // Should return exactly 1 query (just main DDL, no functions)
+        Assert.equal(
+          queries->Array.length,
+          1,
+          ~message="Should return single query when no entities have functions",
+        )
+
+        let mainQuery = queries->Belt.Array.get(0)->Belt.Option.getExn
+
+        let expectedMainQuery = `DROP SCHEMA IF EXISTS "test_schema" CASCADE;
+CREATE SCHEMA "test_schema";GRANT ALL ON SCHEMA "test_schema" TO postgres;
+GRANT ALL ON SCHEMA "test_schema" TO public;`
+
+        Assert.equal(
+          mainQuery,
+          expectedMainQuery,
+          ~message="Minimal configuration should match expected SQL exactly",
+        )
+      },
+    )
+
+    Async.it(
+      "Should create SQL for single entity with indices",
+      async () => {
+        // Test with just entity A which has an indexed field
+        let entities = [module(Entities.A)->Entities.entityModToInternal]
+
+        let queries = PgStorage.makeInitializeTransaction(
+          ~pgSchema="public",
+          ~staticTables=[],
+          ~entities,
+          ~enums=[],
+          ~cleanRun=true,
+        )
+
+        Assert.equal(
+          queries->Array.length,
+          2,
+          ~message="Should return 2 queries for entity with history function",
+        )
+
+        let mainQuery = queries->Belt.Array.get(0)->Belt.Option.getExn
+        let functionsQuery = queries->Belt.Array.get(1)->Belt.Option.getExn
+
+        let expectedMainQuery = `DROP SCHEMA IF EXISTS "public" CASCADE;
+CREATE SCHEMA "public";GRANT ALL ON SCHEMA "public" TO postgres;
+GRANT ALL ON SCHEMA "public" TO public;
+CREATE TABLE IF NOT EXISTS "public"."A"("b_id" TEXT NOT NULL, "id" TEXT NOT NULL, "optionalStringToTestLinkedEntities" TEXT, "db_write_timestamp" TIMESTAMP DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY("id"));
+CREATE TABLE IF NOT EXISTS "public"."A_history"("entity_history_block_timestamp" INTEGER NOT NULL, "entity_history_chain_id" INTEGER NOT NULL, "entity_history_block_number" INTEGER NOT NULL, "entity_history_log_index" INTEGER NOT NULL, "previous_entity_history_block_timestamp" INTEGER, "previous_entity_history_chain_id" INTEGER, "previous_entity_history_block_number" INTEGER, "previous_entity_history_log_index" INTEGER, "b_id" TEXT, "id" TEXT NOT NULL, "optionalStringToTestLinkedEntities" TEXT, "action" "public".ENTITY_HISTORY_ROW_ACTION NOT NULL, "serial" SERIAL, PRIMARY KEY("entity_history_block_timestamp", "entity_history_chain_id", "entity_history_block_number", "entity_history_log_index", "id"));
+CREATE INDEX IF NOT EXISTS "A_b_id" ON "public"."A"("b_id");
+CREATE INDEX IF NOT EXISTS "A_history_serial" ON "public"."A_history"("serial");`
+
+        Assert.equal(
+          mainQuery,
+          expectedMainQuery,
+          ~message="Single entity SQL should match expected output exactly",
+        )
+
+        // Verify functions query contains the A history function
+        Assert.ok(
+          functionsQuery->Js.String2.includes(`CREATE OR REPLACE FUNCTION "insert_A_history"`),
+          ~message="Should contain A history function definition",
+        )
+      },
+    )
+  })
+})

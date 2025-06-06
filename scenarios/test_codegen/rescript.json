@@ -34,8 +34,7 @@
     "rescript-nodejs",
     "rescript-schema",
     "helpers",
-    "envio",
-    "@glennsl/rescript-fetch"
+    "envio"
   ],
   "bsc-flags": ["-open RescriptSchema"]
 }

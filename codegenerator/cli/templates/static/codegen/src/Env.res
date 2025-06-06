@@ -100,10 +100,7 @@ let logStrategy =
   )
 
 Logging.setLogger(
-  ~logStrategy,
-  ~logFilePath,
-  ~defaultFileLogLevel,
-  ~userLogLevel,
+  Logging.makeLogger(~logStrategy, ~logFilePath, ~defaultFileLogLevel, ~userLogLevel),
 )
 
 module Db = {
@@ -135,6 +132,8 @@ module Hasura = {
   let role = envSafe->EnvSafe.get("HASURA_GRAPHQL_ROLE", S.string, ~devFallback="admin")
 
   let secret = envSafe->EnvSafe.get("HASURA_GRAPHQL_ADMIN_SECRET", S.string, ~devFallback="testing")
+
+  let aggregateEntities = envSafe->EnvSafe.get("ENVIO_HASURA_PUBLIC_AGGREGATE", S.array(S.string), ~fallback=[])
 }
 
 module Configurable = {

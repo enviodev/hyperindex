@@ -31,7 +31,12 @@ module EventSyncState = {
       mkField(logIndexFieldName, Integer, ~fieldSchema=S.int),
       mkField(blockTimestampFieldName, Integer, ~fieldSchema=S.int),
       // Keep it in case Hosted Service relies on it to prevent a breaking changes
-      mkField(isPreRegisteringDynamicContractsFieldName, Boolean, ~default="false", ~fieldSchema=S.bool),
+      mkField(
+        isPreRegisteringDynamicContractsFieldName,
+        Boolean,
+        ~default="false",
+        ~fieldSchema=S.bool,
+      ),
     ],
   )
 
@@ -191,7 +196,6 @@ module RawEvents = {
 module DynamicContractRegistry = {
   let name = Enums.EntityType.DynamicContractRegistry
 
-
   let makeId = (~chainId, ~contractAddress) => {
     chainId->Belt.Int.toString ++ "-" ++ contractAddress->Address.toString
   }
@@ -220,7 +224,7 @@ module DynamicContractRegistry = {
     registeringEventSrcAddress: s.matches(Address.schema),
     registeringEventBlockTimestamp: s.matches(S.int),
     contractAddress: s.matches(Address.schema),
-    contractType: s.matches(Enums.ContractType.enum.schema),
+    contractType: s.matches(Enums.ContractType.config.schema),
   })
 
   let rowsSchema = S.array(schema)
@@ -240,8 +244,8 @@ module DynamicContractRegistry = {
       mkField("contract_address", Text, ~fieldSchema=Address.schema),
       mkField(
         "contract_type",
-        Custom(Enums.ContractType.enum.name),
-        ~fieldSchema=Enums.ContractType.enum.schema,
+        Custom(Enums.ContractType.config.name),
+        ~fieldSchema=Enums.ContractType.config.schema,
       ),
     ],
   )

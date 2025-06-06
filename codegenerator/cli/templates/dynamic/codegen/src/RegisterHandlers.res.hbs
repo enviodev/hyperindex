@@ -6,7 +6,7 @@ let registerContractHandlers = (
   ~handlerPathRelativeToConfig,
 ) => {
   try {
-    require("root/" ++ handlerPathRelativeToRoot)
+    require(`../${Path.relativePathToRootFromGenerated}/${handlerPathRelativeToRoot}`)
   } catch {
   | exn =>
     let params = {
@@ -68,11 +68,6 @@ let registerContractHandlers = (
       ~isUnorderedMultichainMode={{is_unordered_multichain_mode}},
       ~chains,
       ~enableRawEvents={{enable_raw_events}},
-      ~entities=[
-      {{#each entities as |entity|}}
-        module(Entities.{{entity.name.capitalized}}),
-      {{/each}}
-      ],
       {{#if chain_config.is_fuel}}
       ~ecosystem=Fuel,
       {{/if}}

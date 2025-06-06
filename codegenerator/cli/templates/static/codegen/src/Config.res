@@ -78,6 +78,33 @@ let getSyncConfig = (
   }
 }
 
+let codegenPersistence = Persistence.make(
+  ~userEntities=Entities.userEntities,
+  ~staticTables=Db.allStaticTables,
+  ~dcRegistryEntityConfig=module(
+    TablesStatic.DynamicContractRegistry
+  )->Entities.entityModToInternal,
+  ~allEnums=Enums.allEnums,
+  ~storage=PgStorage.make(~sql=Db.sql, ~pgSchema=Env.Db.publicSchema),
+  ~onStorageInitialize=() => {
+    Hasura.trackDatabase(
+      ~endpoint=Env.Hasura.graphqlEndpoint,
+      ~auth={
+        role: Env.Hasura.role,
+        secret: Env.Hasura.secret,
+      },
+      ~pgSchema=Env.Db.publicSchema,
+      ~allStaticTables=Db.allStaticTables,
+      ~allEntityTables=Db.allEntityTables,
+      ~responseLimit=Env.Hasura.responseLimit,
+      ~schema=Db.schema,
+      ~aggregateEntities=Env.Hasura.aggregateEntities,
+    )->Promise.catch(err => {
+      Logging.errorWithExn(err, `EE803: Error tracking tables`)->Promise.resolve
+    })
+  },
+)
+
 type t = {
   historyConfig: historyConfig,
   isUnorderedMultichainMode: bool,
@@ -85,7 +112,7 @@ type t = {
   defaultChain: option<chainConfig>,
   ecosystem: ecosystem,
   enableRawEvents: bool,
-  entities: array<Internal.entityConfig>,
+  persistence: Persistence.t,
 }
 
 let make = (
@@ -94,7 +121,7 @@ let make = (
   ~isUnorderedMultichainMode=false,
   ~chains=[],
   ~enableRawEvents=false,
-  ~entities=[],
+  ~persistence=codegenPersistence,
   ~ecosystem=Evm,
 ) => {
   let chainMap =
@@ -116,9 +143,7 @@ let make = (
     chainMap,
     defaultChain: chains->Array.get(0),
     enableRawEvents,
-    entities: entities->(
-      Utils.magic: array<module(Entities.Entity)> => array<Internal.entityConfig>
-    ),
+    persistence,
     ecosystem,
   }
 }

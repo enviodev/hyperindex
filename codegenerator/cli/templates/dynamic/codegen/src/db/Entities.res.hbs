@@ -111,12 +111,16 @@ module {{entity.name.capitalized}} = {
 }
 {{/each}}
 
-let allEntities = [
+let userEntities = [
 {{#each entities as |entity|}}
   module({{entity.name.capitalized}}),
 {{/each}}
-  module(TablesStatic.DynamicContractRegistry),
 ]->entityModsToInternal
+
+let allEntities =
+  userEntities->Js.Array2.concat(
+    [module(TablesStatic.DynamicContractRegistry)]->entityModsToInternal,
+  )
 
 let byName =
   allEntities

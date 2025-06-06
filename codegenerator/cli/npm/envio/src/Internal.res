@@ -167,6 +167,24 @@ type entityConfig = {
   table: Table.table,
   entityHistory: EntityHistory.t<entity>,
 }
+type enum
+type enumConfig<'enum> = {
+  name: string,
+  variants: array<'enum>,
+  schema: S.t<'enum>,
+  default: 'enum,
+}
+external fromGenericEnumConfig: enumConfig<'enum> => enumConfig<enum> = "%identity"
+
+let makeEnumConfig = (~name, ~variants) => {
+  name,
+  variants,
+  schema: S.enum(variants),
+  default: switch variants->Belt.Array.get(0) {
+  | Some(v) => v
+  | None => Js.Exn.raiseError("No variants defined for enum " ++ name)
+  },
+}
 
 type effectInput
 type effectOutput
