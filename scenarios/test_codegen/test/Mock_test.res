@@ -1,4 +1,3 @@
-open Belt
 open RescriptMocha
 
 let inMemoryStore = InMemoryStore.make()
@@ -11,27 +10,19 @@ describe("E2E Mock Event Batch", () => {
 
     let loadLayer = LoadLayer.makeWithDbConnection()
 
-    let runEventHandler = async (eventItem: Internal.eventItem) => {
-      switch eventItem.eventConfig.handler {
-      | None => Ok()
-      | Some(handler) =>
-        await eventItem->EventProcessing.runEventHandler(
-          ~loader=eventItem.eventConfig.loader,
-          ~handler,
-          ~inMemoryStore,
-          ~loadLayer,
-          ~shouldSaveHistory=false,
-        )
-      }
-    }
-
-    for i in 0 to MockEvents.eventBatchItems->Array.length - 1 {
-      let batchItem = MockEvents.eventBatchItems->Js.Array2.unsafe_get(i)
-      let res = await batchItem->runEventHandler
-      switch res {
-      | Error(e) => e->ErrorHandling.logAndRaise
-      | Ok(_) => ()
-      }
+    try {
+      await MockEvents.eventBatchItems->EventProcessing.runBatchHandlersOrThrow(
+        ~inMemoryStore,
+        ~loadLayer,
+        ~config=RegisterHandlers.getConfig(),
+        ~shouldSaveHistory=false,
+        ~shouldBenchmark=false,
+      )
+    } catch {
+    | EventProcessing.ProcessingError({message, exn, eventItem}) =>
+      exn
+      ->ErrorHandling.make(~msg=message, ~logger=eventItem->Logging.getEventLogger)
+      ->ErrorHandling.logAndRaise
     }
   })
 })

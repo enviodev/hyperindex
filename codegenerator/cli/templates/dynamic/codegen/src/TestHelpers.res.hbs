@@ -60,7 +60,8 @@ module EventFunctions = {
   */
   let makeEventProcessor = (~register) => {
     async args => {
-      let {event, mockDb, ?chainId} = args->(Utils.magic: eventProcessorArgs<'event> => eventProcessorArgs<Internal.event>)
+      let {event, mockDb, ?chainId} =
+        args->(Utils.magic: eventProcessorArgs<'event> => eventProcessorArgs<Internal.event>)
 
       let config = RegisterHandlers.getConfig()
       let eventConfig: Internal.eventConfig = register()
@@ -93,7 +94,12 @@ module EventFunctions = {
       //steps
       let mockDbClone = mockDb->TestHelpers_MockDb.cloneMockDb
 
-      if !(eventConfig.handler->Belt.Option.isSome || eventConfig.contractRegister->Belt.Option.isSome) {
+      if (
+        !(
+          eventConfig.handler->Belt.Option.isSome ||
+            eventConfig.contractRegister->Belt.Option.isSome
+        )
+      ) {
         Not_found->ErrorHandling.mkLogAndRaise(
           ~logger,
           ~msg=`No registered handler found for "${eventConfig.name}" on contract "${eventConfig.contractName}"`,
@@ -120,7 +126,10 @@ module EventFunctions = {
 
       switch eventConfig.contractRegister {
       | Some(_) =>
-        let dcs = await ChainFetcher.runContractRegistersOrThrow(~reversedWithContractRegister=[eventItem])
+        let dcs = await ChainFetcher.runContractRegistersOrThrow(
+          ~reversedWithContractRegister=[eventItem],
+        )
+
         // TODO: Reuse FetchState logic to clean up duplicate dcs
         if dcs->Utils.Array.notEmpty {
           inMemoryStore->InMemoryStore.setDcsToStore(
@@ -131,19 +140,21 @@ module EventFunctions = {
       | None => () //No need to run contract registration
       }
 
-      switch eventConfig.handler {
-      | Some(handler) =>
-        switch await eventItem->EventProcessing.runEventHandler(
+      let batch = [eventItem]
+      try {
+        await batch->EventProcessing.runBatchLoadersOrThrow(~loadLayer, ~inMemoryStore)
+        await batch->EventProcessing.runBatchHandlersOrThrow(
           ~inMemoryStore,
-          ~loader=eventConfig.loader,
-          ~handler,
           ~loadLayer,
+          ~config,
           ~shouldSaveHistory=false,
-        ) {
-        | Ok(_) => ()
-        | Error(e) => e->ErrorHandling.logAndRaise
-        }
-      | None => () //No need to run handler
+          ~shouldBenchmark=false,
+        )
+      } catch {
+      | EventProcessing.ProcessingError({message, exn, eventItem}) =>
+        exn
+        ->ErrorHandling.make(~msg=message, ~logger=eventItem->Logging.getEventLogger)
+        ->ErrorHandling.logAndRaise
       }
 
       //In mem store can still contatin raw events and dynamic contracts for the

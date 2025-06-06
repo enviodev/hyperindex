@@ -1,6 +1,6 @@
 import assert from "assert";
 import { it } from "mocha";
-import { TestHelpers } from "generated";
+import { TestHelpers, User } from "generated";
 const { MockDb, Gravatar } = TestHelpers;
 
 describe("Use Envio test framework to test event handlers", () => {
@@ -225,6 +225,28 @@ describe("Use Envio test framework to test event handlers", () => {
       // It also logs to the console.
       {
         message: `User should always exist`,
+      }
+    );
+  });
+
+  it("entity.getOrThrow - ignores the first fail in loader", async () => {
+    let mockDb = MockDb.createMockDb();
+
+    const dcAddress = "0x1234567890123456789012345678901234567890";
+
+    const event = Gravatar.FactoryEvent.createMockEvent({
+      contract: dcAddress,
+      testCase: "getOrThrow - ignores the first fail in loader",
+    });
+
+    await assert.rejects(
+      Gravatar.FactoryEvent.processEvent({
+        event: event,
+        mockDb: mockDb,
+      }),
+      // It also logs to the console.
+      {
+        message: `Second loader failure should abort processing`,
       }
     );
   });

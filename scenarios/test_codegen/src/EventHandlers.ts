@@ -428,111 +428,139 @@ Gravatar.FactoryEvent.contractRegister(({ event, context }) => {
   }
 });
 
-Gravatar.FactoryEvent.handler(async ({ event, context }) => {
-  switch (event.params.testCase) {
-    case "entityWithAllTypesSet":
-      context.EntityWithAllTypes.set({
-        id: "1",
-        string: "string",
-        optString: "optString",
-        arrayOfStrings: ["arrayOfStrings1", "arrayOfStrings2"],
-        int_: 1,
-        optInt: 2,
-        arrayOfInts: [3, 4],
-        float_: 1.1,
-        optFloat: 2.2,
-        arrayOfFloats: [3.3, 4.4],
-        bool: true,
-        optBool: false,
-        bigInt: 1n,
-        optBigInt: 2n,
-        arrayOfBigInts: [3n, 4n],
-        bigDecimal: new BigDecimal("1.1"),
-        optBigDecimal: new BigDecimal("2.2"),
-        arrayOfBigDecimals: [new BigDecimal("3.3"), new BigDecimal("4.4")],
-        json: { foo: ["bar"] },
-      });
-      context.EntityWithAllTypes.set({
-        id: "2",
-        string: "string",
-        optString: "optString",
-        arrayOfStrings: ["arrayOfStrings1", "arrayOfStrings2"],
-        int_: 1,
-        optInt: 2,
-        arrayOfInts: [3, 4],
-        float_: 1.1,
-        optFloat: 2.2,
-        arrayOfFloats: [3.3, 4.4],
-        bool: true,
-        optBool: false,
-        bigInt: 1n,
-        optBigInt: 2n,
-        arrayOfBigInts: [3n, 4n],
-        bigDecimal: new BigDecimal("1.1"),
-        optBigDecimal: new BigDecimal("2.2"),
-        arrayOfBigDecimals: [new BigDecimal("3.3"), new BigDecimal("4.4")],
-        json: { foo: ["bar"] },
-      });
-      break;
+let getOrThrowInLoaderCount = 0;
 
-    case "getOrCreate - creates": {
-      const user = await context.User.getOrCreate({
-        id: "0",
-        address: "0x",
-        updatesCountOnUserForTesting: 0,
-        gravatar_id: undefined,
-        accountType: "USER",
-      });
-      expectType<TypeEqual<typeof user, User>>(true);
-      deepEqual(user, {
-        id: "0",
-        address: "0x",
-        updatesCountOnUserForTesting: 0,
-        gravatar_id: undefined,
-        accountType: "USER",
-      });
-      break;
+Gravatar.FactoryEvent.handlerWithLoader({
+  loader: async ({ event, context }) => {
+    switch (event.params.testCase) {
+      case "getOrThrow - ignores the first fail in loader": {
+        switch (getOrThrowInLoaderCount) {
+          case 0: {
+            getOrThrowInLoaderCount++;
+            await context.User.getOrThrow(
+              "0",
+              "This should fail, but silently ignored on the first loader run."
+            );
+            break;
+          }
+          case 1: {
+            await context.User.getOrThrow(
+              "0",
+              "Second loader failure should abort processing"
+            );
+            break;
+          }
+        }
+        break;
+      }
     }
+  },
+  handler: async ({ event, context }) => {
+    switch (event.params.testCase) {
+      case "entityWithAllTypesSet":
+        context.EntityWithAllTypes.set({
+          id: "1",
+          string: "string",
+          optString: "optString",
+          arrayOfStrings: ["arrayOfStrings1", "arrayOfStrings2"],
+          int_: 1,
+          optInt: 2,
+          arrayOfInts: [3, 4],
+          float_: 1.1,
+          optFloat: 2.2,
+          arrayOfFloats: [3.3, 4.4],
+          bool: true,
+          optBool: false,
+          bigInt: 1n,
+          optBigInt: 2n,
+          arrayOfBigInts: [3n, 4n],
+          bigDecimal: new BigDecimal("1.1"),
+          optBigDecimal: new BigDecimal("2.2"),
+          arrayOfBigDecimals: [new BigDecimal("3.3"), new BigDecimal("4.4")],
+          json: { foo: ["bar"] },
+        });
+        context.EntityWithAllTypes.set({
+          id: "2",
+          string: "string",
+          optString: "optString",
+          arrayOfStrings: ["arrayOfStrings1", "arrayOfStrings2"],
+          int_: 1,
+          optInt: 2,
+          arrayOfInts: [3, 4],
+          float_: 1.1,
+          optFloat: 2.2,
+          arrayOfFloats: [3.3, 4.4],
+          bool: true,
+          optBool: false,
+          bigInt: 1n,
+          optBigInt: 2n,
+          arrayOfBigInts: [3n, 4n],
+          bigDecimal: new BigDecimal("1.1"),
+          optBigDecimal: new BigDecimal("2.2"),
+          arrayOfBigDecimals: [new BigDecimal("3.3"), new BigDecimal("4.4")],
+          json: { foo: ["bar"] },
+        });
+        break;
 
-    case "getOrCreate - loads": {
-      const user = await context.User.getOrCreate({
-        id: "0",
-        address: "0x",
-        updatesCountOnUserForTesting: 0,
-        gravatar_id: undefined,
-        accountType: "USER",
-      });
-      expectType<TypeEqual<typeof user, User>>(true);
-      deepEqual(
-        user,
-        {
+      case "getOrCreate - creates": {
+        const user = await context.User.getOrCreate({
+          id: "0",
+          address: "0x",
+          updatesCountOnUserForTesting: 0,
+          gravatar_id: undefined,
+          accountType: "USER",
+        });
+        expectType<TypeEqual<typeof user, User>>(true);
+        deepEqual(user, {
+          id: "0",
+          address: "0x",
+          updatesCountOnUserForTesting: 0,
+          gravatar_id: undefined,
+          accountType: "USER",
+        });
+        break;
+      }
+
+      case "getOrCreate - loads": {
+        const user = await context.User.getOrCreate({
+          id: "0",
+          address: "0x",
+          updatesCountOnUserForTesting: 0,
+          gravatar_id: undefined,
+          accountType: "USER",
+        });
+        expectType<TypeEqual<typeof user, User>>(true);
+        deepEqual(
+          user,
+          {
+            id: "0",
+            address: "existing",
+            updatesCountOnUserForTesting: 0,
+            gravatar_id: undefined,
+            accountType: "USER",
+          },
+          "Note how address is 'existing' and not '0x'"
+        );
+        break;
+      }
+
+      case "getOrThrow": {
+        const user = await context.User.getOrThrow("0");
+        expectType<TypeEqual<typeof user, User>>(true);
+        deepEqual(user, {
           id: "0",
           address: "existing",
           updatesCountOnUserForTesting: 0,
           gravatar_id: undefined,
           accountType: "USER",
-        },
-        "Note how address is 'existing' and not '0x'"
-      );
-      break;
-    }
+        });
+        break;
+      }
 
-    case "getOrThrow": {
-      const user = await context.User.getOrThrow("0");
-      expectType<TypeEqual<typeof user, User>>(true);
-      deepEqual(user, {
-        id: "0",
-        address: "existing",
-        updatesCountOnUserForTesting: 0,
-        gravatar_id: undefined,
-        accountType: "USER",
-      });
-      break;
+      case "getOrThrow - custom message": {
+        await context.User.getOrThrow("0", "User should always exist");
+        break;
+      }
     }
-
-    case "getOrThrow - custom message": {
-      await context.User.getOrThrow("0", "User should always exist");
-      break;
-    }
-  }
+  },
 });
