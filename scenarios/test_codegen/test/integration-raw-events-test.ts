@@ -2,8 +2,8 @@
 import { expect } from "chai";
 
 //CODEGEN
-import { registerAllHandlers } from "../generated/src/RegisterHandlers.bs";
-import { runDownMigrations } from "../generated/src/db/Migrations.bs";
+import { registerAllHandlers } from "../generated/src/RegisterHandlers.res.js";
+import { runDownMigrations } from "../generated/src/db/Migrations.res.js";
 
 //HELPERS
 import {

@@ -26,7 +26,6 @@
 .bsb.lock
 /node_modules/
 /benchmarks/
-*.bs.js
-*.bs.mjs
+*.res.js
 logs/*
 *BenchmarkCache.json

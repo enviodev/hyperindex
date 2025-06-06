@@ -30,8 +30,7 @@ artifacts
 cache
 generated
 logs
-*.bs.js
-*.bs.mjs
+*.res.js
 *.gen.ts
 build
 .env

@@ -9,11 +9,11 @@
     "build": "rescript",
     "watch": "rescript -w",
     "format": "rescript format -all",
-    "db-up": "node -e 'require(`./src/db/Migrations.bs.js`).runUpMigrations(true)'",
-    "db-down": "node -e 'require(`./src/db/Migrations.bs.js`).runDownMigrations(true)'",
-    "db-setup": "node -e 'require(`./src/db/Migrations.bs.js`).runUpMigrations(true, true)'",
-    "print-benchmark-summary": "node -e 'require(`./src/Benchmark.bs.js`).Summary.printSummary()'",
-    "start": "node src/Index.bs.js"
+    "db-up": "node -e 'require(`./src/db/Migrations.res.js`).runUpMigrations(true)'",
+    "db-down": "node -e 'require(`./src/db/Migrations.res.js`).runDownMigrations(true)'",
+    "db-setup": "node -e 'require(`./src/db/Migrations.res.js`).runUpMigrations(true, true)'",
+    "print-benchmark-summary": "node -e 'require(`./src/Benchmark.res.js`).Summary.printSummary()'",
+    "start": "node src/Index.res.js"
   },
   "keywords": [
     "ReScript"
@@ -48,7 +48,6 @@
     "ink-spinner": "4.0.3",
     "js-sdsl": "4.4.2",
     "pino": "8.16.1",
-    "pino-pretty": "10.2.3",
     "postgres": "3.4.1",
     "prom-client": "15.0.0",
     "react": "18.2.0",

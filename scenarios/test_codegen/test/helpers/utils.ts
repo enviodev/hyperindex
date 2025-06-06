@@ -1,6 +1,6 @@
-import { runUpMigrations } from "../../generated/src/db/Migrations.bs";
+import { runUpMigrations } from "../../generated/src/db/Migrations.res.js";
 import Postgres from "postgres";
-import { config } from "../../generated/src/db/Db.bs";
+import { config } from "../../generated/src/db/Db.res.js";
 
 export const createSql = () => Postgres(config);
 
