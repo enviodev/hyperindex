@@ -202,7 +202,7 @@ let runBatchLoadersOrThrow = async (
   // whether it's an error or a return type.
   // We'll rerun the loader again right before the handler run,
   // to avoid having a stale data returned from the loader.
-  let _ = Promise.all(
+  let _ = await Promise.all(
     eventBatch->Array.keepMap(eventItem => {
       switch eventItem.eventConfig {
       | {loader: Some(loader)} =>
@@ -215,6 +215,9 @@ let runBatchLoadersOrThrow = async (
                 loadLayer,
                 shouldGroup: true,
               }),
+              // Must have Promise.catch as well as normal catch,
+              // because if user throws an error before await in the handler,
+              // it won't create a rejected promise
             )->Promise.silentCatch,
           )
         } catch {

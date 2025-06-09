@@ -51,9 +51,6 @@ importers:
       '@envio-dev/hypersync-client':
         specifier: 0.6.5
         version: 0.6.5
-      '@glennsl/rescript-fetch':
-        specifier: 0.2.0
-        version: 0.2.0
       '@rescript/react':
         specifier: 0.12.1
         version: 0.12.1(react-dom@19.1.0(react@18.2.0))(react@18.2.0)
@@ -170,9 +167,6 @@ packages:
   '@envio-dev/hypersync-client@0.6.5':
     resolution: {integrity: sha512-mii+ponVo5ZmVOlEtJxyugGHuIuzYp5bVfr88mCuRwcWZIkNrWfad/aAW6H7YNe63E0gq0ePtRDrkLzlpAUuGQ==}
     engines: {node: '>= 10'}
-
-  '@glennsl/rescript-fetch@0.2.0':
-    resolution: {integrity: sha512-0tsEqJ/6/WBm02prM4RYG+qpnNTaB8QKKIeQHXdDaE4C5YfA/nzjxMNW3CjsGIaEgyrAmmIXFS0kx24UjvOI6A==}
 
   '@noble/curves@1.2.0':
     resolution: {integrity: sha512-oYclrNgRaM9SsBUBVbb8M6DTV7ZHRTKugureoYEncY5c65HOmRzvSiTE3y5CYaPYJA/GVkrhXEoF0M3Ya9PMnw==}
@@ -1311,8 +1305,6 @@ snapshots:
       '@envio-dev/hypersync-client-linux-x64-musl': 0.6.5
       '@envio-dev/hypersync-client-win32-x64-msvc': 0.6.5
 
-  '@glennsl/rescript-fetch@0.2.0': {}
-
   '@noble/curves@1.2.0':
     dependencies:
       '@noble/hashes': 1.3.2
@@ -1581,6 +1573,7 @@ snapshots:
   envio@file:../../codegenerator/cli/npm/envio:
     dependencies:
       '@envio-dev/hypersync-client': 0.6.5
+      bignumber.js: 9.1.2
       rescript: 11.1.3
       rescript-schema: 9.3.0(rescript@11.1.3)
       viem: 2.21.0
