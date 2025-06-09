@@ -20,7 +20,7 @@ import {
   makeChainManager,
   startProcessing,
 } from "./Integration_ts_helpers.gen";
-// import { setLogLevel } from "generated/src/Logging.bs.js";
+// import { setLogLevel } from "generated/src/Logging.res.js";
 // require("mocha-reporter").hook(); //Outputs filename in error logs with mocha-reporter
 
 // TODO: I failed to connect RpcSource with hardhat to make the test work.

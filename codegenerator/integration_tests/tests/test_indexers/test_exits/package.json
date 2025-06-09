@@ -6,7 +6,7 @@
     "build": "tsc --build",
     "watch": "tsc --watch",
     "codegen": "envio codegen",
-    "start": "ts-node generated/src/Index.bs.js"
+    "start": "ts-node generated/src/Index.res.js"
   },
   "devDependencies": {
     "@types/node": "^18.16.1",

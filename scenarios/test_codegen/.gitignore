@@ -28,6 +28,7 @@ lib/*
 benchmarks/
 cache
 build
+*.res.js
 *.bs.js
 generated
 logs

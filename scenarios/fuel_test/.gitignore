@@ -29,6 +29,7 @@ benchmarks/
 artifacts
 cache
 build
+*.res.js
 *.bs.js
 generated
 .env
