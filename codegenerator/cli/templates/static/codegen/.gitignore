@@ -27,5 +27,6 @@
 /node_modules/
 /benchmarks/
 *.res.js
+*.res.mjs
 logs/*
 *BenchmarkCache.json

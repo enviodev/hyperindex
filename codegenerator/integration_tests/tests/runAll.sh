@@ -13,29 +13,29 @@ LANGUAGE="JavaScript" ./tests/runSingle.sh
 LANGUAGE="TypeScript" ./tests/runSingle.sh
 LANGUAGE="ReScript" ./tests/runSingle.sh
 
-# export TEMPLATE="evm_Greeter"
-# LANGUAGE="JavaScript" ./tests/runSingle.sh
-# LANGUAGE="TypeScript" ./tests/runSingle.sh
-# LANGUAGE="ReScript" ./tests/runSingle.sh
+export TEMPLATE="evm_Greeter"
+LANGUAGE="JavaScript" ./tests/runSingle.sh
+LANGUAGE="TypeScript" ./tests/runSingle.sh
+LANGUAGE="ReScript" ./tests/runSingle.sh
 
-# export TEMPLATE="fuel_Greeter"
-# LANGUAGE="JavaScript" ./tests/runSingle.sh
-# LANGUAGE="TypeScript" ./tests/runSingle.sh
-# LANGUAGE="ReScript" ./tests/runSingle.sh
+export TEMPLATE="fuel_Greeter"
+LANGUAGE="JavaScript" ./tests/runSingle.sh
+LANGUAGE="TypeScript" ./tests/runSingle.sh
+LANGUAGE="ReScript" ./tests/runSingle.sh
 
-# export TEMPLATE="test_indexers/test_exits"
-# export TEST_FILE="EndblockSuccess"
-# CONFIG_FILE="config.yaml" SHOULD_FAIL=false TEST_RESTART=false ./tests/testIndexerExits.sh
-# CONFIG_FILE="config-broken.yaml" SHOULD_FAIL=true TEST_RESTART=false ./tests/testIndexerExits.sh
+export TEMPLATE="test_indexers/test_exits"
+export TEST_FILE="EndblockSuccess"
+CONFIG_FILE="config.yaml" SHOULD_FAIL=false TEST_RESTART=false ./tests/testIndexerExits.sh
+CONFIG_FILE="config-broken.yaml" SHOULD_FAIL=true TEST_RESTART=false ./tests/testIndexerExits.sh
 
-# export TEMPLATE="test_indexers/dynamic_contracts"
-# export TEST_FILE="DynamicContracts"
-# CONFIG_FILE="config-dynamic-contracts.yaml" SHOULD_FAIL=false TEST_RESTART=true ./tests/testIndexerExits.sh
+export TEMPLATE="test_indexers/dynamic_contracts"
+export TEST_FILE="DynamicContracts"
+CONFIG_FILE="config-dynamic-contracts.yaml" SHOULD_FAIL=false TEST_RESTART=true ./tests/testIndexerExits.sh
 
-# export TEMPLATE="test_indexers/wildcard-uni-factory"
-# export TEST_FILE="WildcardUniFactory"
-# CONFIG_FILE="config.yaml" SHOULD_FAIL=false ./tests/testIndexerExits.sh
+export TEMPLATE="test_indexers/wildcard-uni-factory"
+export TEST_FILE="WildcardUniFactory"
+CONFIG_FILE="config.yaml" SHOULD_FAIL=false ./tests/testIndexerExits.sh
 
-# export TEMPLATE="test_indexers/wildcard-uni-factory"
-# export TEST_FILE="WildcardUniFactory"
-# ENVIO_PG_PUBLIC_SCHEMA="custom" CONFIG_FILE="config.yaml" SHOULD_FAIL=false ./tests/testIndexerExits.sh
+export TEMPLATE="test_indexers/wildcard-uni-factory"
+export TEST_FILE="WildcardUniFactory"
+ENVIO_PG_PUBLIC_SCHEMA="custom" CONFIG_FILE="config.yaml" SHOULD_FAIL=false ./tests/testIndexerExits.sh

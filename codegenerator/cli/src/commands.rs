@@ -175,9 +175,7 @@ pub mod start {
         }
         let cmd = "npm";
         let args = vec!["run", "start"];
-        let current_dir = &project_paths.project_root;
-
-        let exit = execute_command(cmd, args, current_dir).await?;
+        let exit = execute_command(cmd, args, &project_paths.generated).await?;
 
         if !exit.success() {
             return Err(anyhow!(

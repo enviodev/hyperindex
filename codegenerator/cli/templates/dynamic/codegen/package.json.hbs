@@ -13,7 +13,7 @@
     "db-down": "node -e 'require(`./src/db/Migrations.res.js`).runDownMigrations(true)'",
     "db-setup": "node -e 'require(`./src/db/Migrations.res.js`).runUpMigrations(true, true)'",
     "print-benchmark-summary": "node -e 'require(`./src/Benchmark.res.js`).Summary.printSummary()'",
-    "start": "node src/Index.res.js"
+    "start": "{{#if has_typescript}}ts-{{/if}}node src/Index.res.js"
   },
   "keywords": [
     "ReScript"
@@ -56,6 +56,7 @@
     "rescript-schema": "9.3.0",
     "envio": "{{envio_version}}",
     "viem": "2.21.0",
-    "yargs": "17.7.2"
+    "yargs": "17.7.2",
+    "ts-node": "10.9.1"
   }
 }

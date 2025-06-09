@@ -30,5 +30,6 @@ artifacts
 cache
 build
 *.res.js
+*.res.mjs
 generated
 .env

@@ -27,5 +27,14 @@
     "bignumber.js": "9.1.2",
     "pino": "8.16.1",
     "pino-pretty": "10.2.3"
-  }
+  },
+  "files": [
+    "local-bin.mjs",
+    "evm.schema.json",
+    "fuel.schema.json",
+    "rescript.json",
+    "index.d.ts",
+    "index.js",
+    "src"
+  ]
 }

@@ -135,3 +135,4 @@ lib
 
 # ReScript artifacts
 *.res.js
+*.res.mjs

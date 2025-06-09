@@ -30,5 +30,6 @@ benchmarks/
 artifacts
 cache
 *.res.js
+*.res.mjs
 generated
 .env

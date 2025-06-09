@@ -31,6 +31,6 @@ cache
 generated
 logs
 *.res.js
-*.bs.mjs
+*.res.mjs
 *.gen.ts
 build

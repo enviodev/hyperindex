@@ -165,7 +165,6 @@ let startServer = (~getState, ~shouldUseTui as _) => {
 }
 
 type args = {
-  @as("sync-from-raw-events") syncFromRawEvents?: bool,
   @as("tui-off") tuiOff?: bool,
 }
 
