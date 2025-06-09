@@ -37,6 +37,11 @@ external all6: ((t<'a>, t<'b>, t<'c>, t<'d>, t<'e>, t<'f>)) => t<('a, 'b, 'c, 'd
 @send
 external catch: (t<'a>, @uncurry exn => t<'a>) => t<'a> = "catch"
 
+%%private(let noop = (() => ())->Obj.magic)
+let silentCatch = (promise: promise<'a>): promise<'a> => {
+  catch(promise, noop)
+}
+
 let catch = (promise: promise<'a>, callback: exn => promise<'a>): promise<'a> => {
   catch(promise, err => {
     callback(Js.Exn.anyToExnInternal(err))
