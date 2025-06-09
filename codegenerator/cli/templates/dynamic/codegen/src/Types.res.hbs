@@ -15,6 +15,7 @@ type contractRegistrations = {
 @genType
 type entityLoaderContext<'entity, 'indexedFieldOperations> = {
   get: id => promise<option<'entity>>,
+  getOrThrow: (id, ~message: string=?) => promise<'entity>,
   getWhere: 'indexedFieldOperations,
 }
 
@@ -30,10 +31,11 @@ type loaderContext = {
 @genType
 type entityHandlerContext<'entity> = {
   get: id => promise<option<'entity>>,
+  getOrThrow: (id, ~message: string=?) => promise<'entity>,
+  getOrCreate: ('entity) => promise<'entity>,
   set: 'entity => unit,
   deleteUnsafe: id => unit,
 }
-
 
 @genType.import(("./Types.ts", "HandlerContext"))
 type handlerContext = {

@@ -21,32 +21,6 @@ let updateEventSyncState = (eventItem: Internal.eventItem, ~inMemoryStore: InMem
   )
 }
 
-let runEventLoader = async (
-  ~eventItem,
-  ~loader: Internal.loader,
-  ~inMemoryStore,
-  ~loadLayer,
-  ~shouldGroup=false,
-) => {
-  switch await loader(
-    UserContext.getLoaderArgs({
-      eventItem,
-      inMemoryStore,
-      loadLayer,
-      shouldGroup,
-    }),
-  ) {
-  | exception exn =>
-    exn
-    ->ErrorHandling.make(
-      ~msg="Event pre loader failed, please fix the error to keep the indexer running smoothly",
-      ~logger=eventItem->Logging.getEventLogger,
-    )
-    ->Error
-  | loadReturn => loadReturn->Ok
-  }
-}
-
 let convertFieldsToJson = (fields: option<dict<unknown>>) => {
   switch fields {
   | None => %raw(`{}`)
@@ -118,26 +92,46 @@ let addEventToRawEvents = (eventItem: Internal.eventItem, ~inMemoryStore: InMemo
   inMemoryStore.rawEvents->InMemoryTable.set({chainId, eventId: eventIdStr}, rawEvent)
 }
 
-let runEventHandler = (
+exception ProcessingError({message: string, exn: exn, eventItem: Internal.eventItem})
+
+let runEventHandlerOrThrow = async (
   eventItem: Internal.eventItem,
   ~loader,
   ~handler,
   ~inMemoryStore,
   ~loadLayer,
   ~shouldSaveHistory,
+  ~shouldBenchmark,
 ) => {
-  open ErrorHandling.ResultPropogateEnv
-  runAsyncEnv(async () => {
-    //Include the load in time before handler
-    let timeBeforeHandler = Hrtime.makeTimer()
+  //Include the load in time before handler
+  let timeBeforeHandler = Hrtime.makeTimer()
 
-    let loaderReturn = switch loader {
-    | Some(loader) =>
-      (await runEventLoader(~eventItem, ~loader, ~inMemoryStore, ~loadLayer))->propogate
-    | None => (%raw(`undefined`): Internal.loaderReturn)
+  let loaderReturn = switch loader {
+  | Some(loader) =>
+    try {
+      await loader(
+        UserContext.getLoaderArgs({
+          eventItem,
+          inMemoryStore,
+          loadLayer,
+          shouldGroup: false,
+        }),
+      )
+    } catch {
+    | exn =>
+      raise(
+        ProcessingError({
+          message: "Unexpected error in the event loader. Please handle the error to keep the indexer running smoothly.",
+          eventItem,
+          exn,
+        }),
+      )
     }
+  | None => (%raw(`undefined`): Internal.loaderReturn)
+  }
 
-    switch await handler(
+  try {
+    await handler(
       UserContext.getHandlerArgs(
         {
           eventItem,
@@ -148,100 +142,112 @@ let runEventHandler = (
         },
         ~loaderReturn,
       ),
-    ) {
-    | exception exn =>
-      exn
-      ->ErrorHandling.make(
-        ~msg="Event Handler failed, please fix the error to keep the indexer running smoothly",
-        ~logger=eventItem->Logging.getEventLogger,
-      )
-      ->Error
-      ->propogate
-    | () =>
-      if Env.Benchmark.shouldSaveData {
-        let timeEnd = timeBeforeHandler->Hrtime.timeSince->Hrtime.toMillis->Hrtime.floatFromMillis
+    )
+  } catch {
+  | exn =>
+    raise(
+      ProcessingError({
+        message: "Unexpected error in the event handler. Please handle the error to keep the indexer running smoothly.",
+        eventItem,
+        exn,
+      }),
+    )
+  }
+  if shouldBenchmark {
+    let timeEnd = timeBeforeHandler->Hrtime.timeSince->Hrtime.toMillis->Hrtime.floatFromMillis
 
-        Benchmark.addSummaryData(
-          ~group="Handlers Per Event",
-          ~label=`${eventItem.eventConfig.contractName} ${eventItem.eventConfig.name} Handler (ms)`,
-          ~value=timeEnd,
-          ~decimalPlaces=4,
-        )
-      }
-      Ok()
-    }
-  })
+    Benchmark.addSummaryData(
+      ~group="Handlers Per Event",
+      ~label=`${eventItem.eventConfig.contractName} ${eventItem.eventConfig.name} Handler (ms)`,
+      ~value=timeEnd,
+      ~decimalPlaces=4,
+    )
+  }
 }
 
-let runHandler = async (
+let runHandlerOrThrow = async (
   eventItem: Internal.eventItem,
   ~inMemoryStore,
   ~loadLayer,
   ~config: Config.t,
-  ~isInReorgThreshold,
+  ~shouldSaveHistory,
+  ~shouldBenchmark,
 ) => {
-  let result = switch eventItem.eventConfig.handler {
-  | None => Ok()
+  switch eventItem.eventConfig.handler {
   | Some(handler) =>
-    await eventItem->runEventHandler(
+    await eventItem->runEventHandlerOrThrow(
       ~loader=eventItem.eventConfig.loader,
       ~handler,
       ~inMemoryStore,
       ~loadLayer,
-      ~shouldSaveHistory=config->Config.shouldSaveHistory(~isInReorgThreshold),
+      ~shouldSaveHistory,
+      ~shouldBenchmark,
     )
+  | None => ()
   }
 
-  result->Result.map(() => {
-    eventItem->updateEventSyncState(~inMemoryStore)
+  eventItem->updateEventSyncState(~inMemoryStore)
 
-    if config.enableRawEvents {
-      eventItem->addEventToRawEvents(~inMemoryStore)
-    }
-  })
+  if config.enableRawEvents {
+    eventItem->addEventToRawEvents(~inMemoryStore)
+  }
 }
 
-let runLoaders = (eventBatch: array<Internal.eventItem>, ~loadLayer, ~inMemoryStore) => {
-  open ErrorHandling.ResultPropogateEnv
-  runAsyncEnv(async () => {
-    // We don't actually need loader returns,
-    // since we'll need to rerun each loader separately
-    // before the handler, to get the uptodate entities from the in memory store.
-    // Still need to propogate the errors.
-    let _: array<Internal.loaderReturn> =
-      await eventBatch
-      ->Array.keepMap(eventItem => {
-        switch eventItem.eventConfig {
-        | {loader: Some(loader)} =>
-          runEventLoader(~eventItem, ~loader, ~inMemoryStore, ~loadLayer, ~shouldGroup=true)
-          ->Promise.thenResolve(propogate)
-          ->Some
+let runBatchLoadersOrThrow = async (
+  eventBatch: array<Internal.eventItem>,
+  ~loadLayer,
+  ~inMemoryStore,
+) => {
+  // On the first run of loaders, we don't care about the result,
+  // whether it's an error or a return type.
+  // We'll rerun the loader again right before the handler run,
+  // to avoid having a stale data returned from the loader.
+  let _ = await Promise.all(
+    eventBatch->Array.keepMap(eventItem => {
+      switch eventItem.eventConfig {
+      | {loader: Some(loader)} =>
+        try {
+          Some(
+            loader(
+              UserContext.getLoaderArgs({
+                eventItem,
+                inMemoryStore,
+                loadLayer,
+                shouldGroup: true,
+              }),
+              // Must have Promise.catch as well as normal catch,
+              // because if user throws an error before await in the handler,
+              // it won't create a rejected promise
+            )->Promise.silentCatch,
+          )
+        } catch {
         | _ => None
         }
-      })
-      ->Promise.all
-    Ok()
-  })
+      | _ => None
+      }
+    }),
+  )
 }
 
-let runHandlers = (
+let runBatchHandlersOrThrow = async (
   eventBatch: array<Internal.eventItem>,
   ~inMemoryStore,
   ~loadLayer,
   ~config,
-  ~isInReorgThreshold,
+  ~shouldSaveHistory,
+  ~shouldBenchmark,
 ) => {
-  open ErrorHandling.ResultPropogateEnv
-  runAsyncEnv(async () => {
-    for i in 0 to eventBatch->Array.length - 1 {
-      let eventItem = eventBatch->Js.Array2.unsafe_get(i)
-
-      (
-        await runHandler(eventItem, ~inMemoryStore, ~loadLayer, ~config, ~isInReorgThreshold)
-      )->propogate
-    }
-    Ok()
-  })
+  for i in 0 to eventBatch->Array.length - 1 {
+    let eventItem = eventBatch->Js.Array2.unsafe_get(i)
+    await runHandlerOrThrow(
+      eventItem,
+      ~inMemoryStore,
+      ~loadLayer,
+      ~config,
+      ~shouldSaveHistory,
+      ~shouldBenchmark,
+    )
+  }
 }
 
 let registerProcessEventBatchMetrics = (
@@ -269,7 +275,7 @@ type logPartitionInfo = {
   lastItemBlockNumber?: int,
 }
 
-let processEventBatch = (
+let processEventBatch = async (
   ~items: array<Internal.eventItem>,
   ~processingMetricsByChainId: dict<ChainManager.processingChainMetrics>,
   ~inMemoryStore: InMemoryStore.t,
@@ -292,45 +298,55 @@ let processEventBatch = (
   )
   logger->Logging.childTrace("Started processing batch")
 
-  let timeRef = Hrtime.makeTimer()
+  try {
+    let timeRef = Hrtime.makeTimer()
 
-  open ErrorHandling.ResultPropogateEnv
-  runAsyncEnv(async () => {
-    (await items->runLoaders(~loadLayer, ~inMemoryStore))->propogate
+    await items->runBatchLoadersOrThrow(~loadLayer, ~inMemoryStore)
 
     let elapsedTimeAfterLoaders = timeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
 
-    (await items->runHandlers(~inMemoryStore, ~loadLayer, ~config, ~isInReorgThreshold))->propogate
+    await items->runBatchHandlersOrThrow(
+      ~inMemoryStore,
+      ~loadLayer,
+      ~config,
+      ~shouldSaveHistory=config->Config.shouldSaveHistory(~isInReorgThreshold),
+      ~shouldBenchmark=Env.Benchmark.shouldSaveData,
+    )
 
     let elapsedTimeAfterProcessing =
       timeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
 
     switch await Db.sql->IO.executeBatch(~inMemoryStore, ~isInReorgThreshold, ~config) {
     | exception exn =>
-      exn->ErrorHandling.make(~msg="Failed writing batch to database", ~logger)->Error->propogate
-    | () => ()
+      exn->ErrorHandling.make(~msg="Failed writing batch to database", ~logger)->Error
+    | () => {
+        let elapsedTimeAfterDbWrite =
+          timeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
+        let loaderDuration = elapsedTimeAfterLoaders
+        let handlerDuration = elapsedTimeAfterProcessing - loaderDuration
+        let dbWriteDuration = elapsedTimeAfterDbWrite - elapsedTimeAfterProcessing
+        registerProcessEventBatchMetrics(
+          ~logger,
+          ~loadDuration=loaderDuration,
+          ~handlerDuration,
+          ~dbWriteDuration,
+        )
+        if Env.Benchmark.shouldSaveData {
+          Benchmark.addEventProcessing(
+            ~batchSize,
+            ~loadDuration=loaderDuration,
+            ~handlerDuration,
+            ~dbWriteDuration,
+            ~totalTimeElapsed=elapsedTimeAfterDbWrite,
+          )
+        }
+        Ok()
+      }
     }
-
-    let elapsedTimeAfterDbWrite = timeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
-    let loaderDuration = elapsedTimeAfterLoaders
-    let handlerDuration = elapsedTimeAfterProcessing - loaderDuration
-    let dbWriteDuration = elapsedTimeAfterDbWrite - elapsedTimeAfterProcessing
-    registerProcessEventBatchMetrics(
-      ~logger,
-      ~loadDuration=loaderDuration,
-      ~handlerDuration,
-      ~dbWriteDuration,
-    )
-    if Env.Benchmark.shouldSaveData {
-      Benchmark.addEventProcessing(
-        ~batchSize,
-        ~loadDuration=loaderDuration,
-        ~handlerDuration,
-        ~dbWriteDuration,
-        ~totalTimeElapsed=elapsedTimeAfterDbWrite,
-      )
-    }
-
-    Ok()
-  })
+  } catch {
+  | ProcessingError({message, exn, eventItem}) =>
+    exn
+    ->ErrorHandling.make(~msg=message, ~logger=eventItem->Logging.getEventLogger)
+    ->Error
+  }
 }
