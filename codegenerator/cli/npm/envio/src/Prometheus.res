@@ -575,15 +575,15 @@ module ProgressEventsCount = {
   }
 }
 
-let effectNameLabelsSchema = S.object(s => {
-  s.field("effectName", S.string)
+let effectLabelsSchema = S.object(s => {
+  s.field("effect", S.string)
 })
 
 module EffectCallsCount = {
   let gauge = SafeGauge.makeOrThrow(
     ~name="envio_effect_calls_count",
     ~help="The number of calls to the effect. Including both handler execution and cache hits.",
-    ~labelSchema=effectNameLabelsSchema,
+    ~labelSchema=effectLabelsSchema,
   )
 
   let set = (~callsCount, ~effectName) => {
