@@ -18,7 +18,7 @@ let make: (
   ) => promise<array<Internal.entity>>,
 ) => t
 
-let makeWithDbConnection: unit => t
+let makeWithDbConnection: (~persistence: Persistence.t=?) => t
 
 let loadById: (
   t,

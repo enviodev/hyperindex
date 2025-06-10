@@ -86,6 +86,7 @@ let codegenPersistence = Persistence.make(
   )->Entities.entityModToInternal,
   ~allEnums=Enums.allEnums,
   ~storage=PgStorage.make(~sql=Db.sql, ~pgSchema=Env.Db.publicSchema),
+  ~cacheStorage=PgStorage.make(~sql=Db.sql, ~pgSchema=Env.Db.cacheSchema),
   ~onStorageInitialize=() => {
     Hasura.trackDatabase(
       ~endpoint=Env.Hasura.graphqlEndpoint,

@@ -52,8 +52,8 @@ let makeCreateTableSqlUnsafe = (table: Table.table, ~pgSchema) => {
       : ""});`
 }
 
-let makeInitializeTransaction = (~pgSchema, ~staticTables, ~entities, ~enums, ~cleanRun) => {
-  let allTables = staticTables->Array.copy
+let makeInitializeTransaction = (~pgSchema, ~generalTables, ~entities, ~enums, ~cleanRun) => {
+  let allTables = generalTables->Array.copy
   let allEntityTables = []
   entities->Js.Array2.forEach((entity: Internal.entityConfig) => {
     allEntityTables->Js.Array2.push(entity.table)->ignore
@@ -136,9 +136,19 @@ END IF;`
     // Return optimized queries - main DDL in DO block, functions separate
     // Note: DO $$ BEGIN wrapper is only needed for PL/pgSQL conditionals (IF NOT EXISTS)
     // Reset case uses direct DDL (faster), non-cleanRun case uses conditionals (safer)
-    cleanRun ? query.contents : `DO $$ BEGIN ${query.contents} END $$;`,
+    cleanRun || enums->Utils.Array.isEmpty
+      ? query.contents
+      : `DO $$ BEGIN ${query.contents} END $$;`,
     // Functions query (separate as they can't be in DO block)
   ]->Js.Array2.concat(functionsQuery.contents !== "" ? [functionsQuery.contents] : [])
+}
+
+let makeLoadByIdQuery = (~pgSchema, ~tableName) => {
+  `SELECT * FROM "${pgSchema}"."${tableName}" WHERE id = $1 LIMIT 1;`
+}
+
+let makeLoadByIdsQuery = (~pgSchema, ~tableName) => {
+  `SELECT * FROM "${pgSchema}"."${tableName}" WHERE id IN $1;`
 }
 
 let make = (~sql: Postgres.sql, ~pgSchema): Persistence.storage => {
@@ -150,16 +160,52 @@ let make = (~sql: Postgres.sql, ~pgSchema): Persistence.storage => {
     schemas->Utils.Array.notEmpty
   }
 
-  let initialize = async (~entities, ~staticTables, ~enums, ~cleanRun) => {
-    let queries = makeInitializeTransaction(~pgSchema, ~staticTables, ~entities, ~enums, ~cleanRun)
+  let initialize = async (~entities=[], ~generalTables=[], ~enums=[], ~cleanRun=false) => {
+    let queries = makeInitializeTransaction(~pgSchema, ~generalTables, ~entities, ~enums, ~cleanRun)
     // Execute all queries within a single transaction for integrity
     let _ = await sql->Postgres.beginSql(sql => {
       queries->Js.Array2.map(query => sql->Postgres.unsafe(query))
     })
   }
 
+  let loadByIdsOrThrow = async (~ids, ~table: Table.table, ~rowsSchema) => {
+    switch await (
+      switch ids {
+      | [id] =>
+        sql->Postgres.preparedUnsafe(
+          makeLoadByIdQuery(~pgSchema, ~tableName=table.tableName),
+          id->Obj.magic,
+        )
+      | _ =>
+        sql->Postgres.preparedUnsafe(
+          makeLoadByIdsQuery(~pgSchema, ~tableName=table.tableName),
+          ids->Obj.magic,
+        )
+      }
+    ) {
+    | exception exn =>
+      raise(
+        Persistence.StorageError({
+          message: `Failed loading "${table.tableName}" from storage by ids`,
+          reason: exn,
+        }),
+      )
+    | rows =>
+      try rows->S.parseOrThrow(rowsSchema) catch {
+      | exn =>
+        raise(
+          Persistence.StorageError({
+            message: `Failed to parse "${table.tableName}" loaded from storage by ids`,
+            reason: exn,
+          }),
+        )
+      }
+    }
+  }
+
   {
     isInitialized,
     initialize,
+    loadByIdsOrThrow,
   }
 }
