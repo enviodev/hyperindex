@@ -1,7 +1,5 @@
 {
-  "spec": [
-    "test/**/*.bs.js"
-  ],
+  "spec": ["test/**/*.res.js"],
   "timeout": 30000, //Mostly integration tests so just precaution to stop ci from breaking
   "exit": true
 }

@@ -5,3 +5,4 @@
 .merlin
 *.bs.js
 *.res.js
+*.res.mjs

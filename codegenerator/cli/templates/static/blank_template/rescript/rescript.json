@@ -18,6 +18,6 @@
   "jsx": {
     "version": 4
   },
-  "suffix": ".bs.js",
-  "bs-dependencies": ["generated", "envio"]
+  "suffix": ".res.js",
+  "bs-dependencies": ["generated", "envio", "rescript-schema"]
 }

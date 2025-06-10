@@ -45,7 +45,7 @@ $envio_cmd stop || true
 start_indexer() {
     local startState="$1"
     export TUI_OFF=true
-    $envio_cmd start
+    pnpm start
     local status=$?
         if [ $status -ne 0 ]; then
             if [ $SHOULD_FAIL = true ]; then

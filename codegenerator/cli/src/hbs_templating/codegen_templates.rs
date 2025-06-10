@@ -1228,6 +1228,7 @@ struct SelectedFieldTemplate {
 pub struct ProjectTemplate {
     project_name: String,
     codegen_contracts: Vec<ContractTemplate>,
+    has_typescript: bool,
     entities: Vec<EntityRecordTypeTemplate>,
     gql_enums: Vec<GraphQlEnumTypeTemplate>,
     chain_configs: Vec<NetworkConfigTemplate>,
@@ -1331,8 +1332,13 @@ impl ProjectTemplate {
         // TODO: Remove schemas for aggreaged, since they are not used in runtime
         let aggregated_field_selection = FieldSelection::aggregated_selection(cfg);
 
+        let has_typescript = codegen_contracts
+            .iter()
+            .any(|contract| contract.handler.relative_to_config.ends_with(".ts"));
+
         Ok(ProjectTemplate {
             project_name: cfg.name.clone(),
+            has_typescript,
             codegen_contracts,
             entities,
             gql_enums,

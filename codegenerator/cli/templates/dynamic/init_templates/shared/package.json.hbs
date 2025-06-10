@@ -16,16 +16,8 @@
   {{/if}}
     "codegen": "envio codegen",
     "dev": "{{#if is_rescript}}pnpm build && {{/if}}envio dev",
-    "test": "pnpm mocha",
-    {{#if is_rescript}}
-    "start": "pnpm build && node generated/src/Index.bs.js"
-    {{else}}
-      {{#if is_typescript}}
-    "start": "ts-node generated/src/Index.bs.js"
-      {{else}}
-    "start": "node generated/src/Index.bs.js"
-      {{/if}}
-    {{/if}}
+    "start": "{{#if is_rescript}}pnpm build && {{/if}}envio start",
+    "test": "pnpm mocha"
   },
   "devDependencies": {
   {{#if is_rescript}}
@@ -37,7 +29,6 @@
     "@types/mocha": "10.0.6",
     "@types/node": "20.8.8",
     "ts-mocha": "^10.0.0",
-    "ts-node": "10.9.1",
     "typescript": "5.2.2",
     "chai": "4.3.10",
   {{/if}}    

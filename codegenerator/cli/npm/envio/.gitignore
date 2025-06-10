@@ -134,4 +134,5 @@ pnpm-lock.yaml
 lib
 
 # ReScript artifacts
-*.bs.js
+*.res.js
+*.res.mjs

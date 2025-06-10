@@ -3,7 +3,7 @@
 /* eslint-disable */
 /* tslint:disable */
 
-const Integration_ts_helpersJS = require('./Integration_ts_helpers.bs.js');
+const Integration_ts_helpersJS = require('./Integration_ts_helpers.res.js');
 
 import type {t as Address_t} from 'envio/src/Address.gen';
 
