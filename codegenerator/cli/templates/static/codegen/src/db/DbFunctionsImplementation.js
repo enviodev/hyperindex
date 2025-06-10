@@ -39,31 +39,6 @@ module.exports.batchDeleteItemsInTable = (table, sql, pkArray) => {
   }
 };
 
-module.exports.batchReadItemsInTable = (table, sql, pkArray) => {
-  const primaryKeyFieldNames = TableModule.getPrimaryKeyFieldNames(table);
-
-  if (primaryKeyFieldNames.length === 1) {
-    if (pkArray.length === 1) {
-      return sql`
-        SELECT *
-        FROM ${sql(publicSchema)}.${sql(table.tableName)}
-        WHERE ${sql(primaryKeyFieldNames[0])} = ${pkArray[0]}
-        LIMIT 1;`;
-    } else {
-      return sql`
-        SELECT *
-        FROM ${sql(publicSchema)}.${sql(table.tableName)}
-        WHERE ${sql(primaryKeyFieldNames[0])} IN ${sql(pkArray)};`;
-    }
-  } else {
-    throw new Error(
-      "Batch read not implemented for tables with composite primary keys"
-    );
-    //TODO, if needed create a select query for multiple field matches
-    //May be best to make pkArray an array of objects with fieldName -> value
-  }
-};
-
 module.exports.whereEqQuery = (table, sql, fieldName, value) => {
   return sql`
     SELECT *
