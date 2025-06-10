@@ -70,14 +70,19 @@ let make = (
   ~loadLayer: LoadLayer.t,
   ~shouldUseTui=false,
 ) => {
+  let targetBatchesInBuffer = 3
+  let targetBufferSize = switch Env.targetBufferSize {
+    | Some(size) => size
+    | None => Env.maxProcessBatchSize * (chainManager.chainFetchers->ChainMap.size > targetBatchesInBuffer ? 1 : targetBatchesInBuffer)
+  }
   Prometheus.ProcessingMaxBatchSize.set(~maxBatchSize=Env.maxProcessBatchSize)
-  Prometheus.IndexingTargetBufferSize.set(~targetBufferSize=Env.targetBufferSize)
+  Prometheus.IndexingTargetBufferSize.set(~targetBufferSize)
   {
     config,
     currentlyProcessingBatch: false,
     chainManager,
     maxBatchSize: Env.maxProcessBatchSize,
-    targetBufferSize: Env.targetBufferSize,
+    targetBufferSize,
     indexerStartTime: Js.Date.make(),
     rollbackState: NoRollback,
     writeThrottlers: WriteThrottlers.make(~config),
