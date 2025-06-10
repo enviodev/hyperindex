@@ -2,8 +2,8 @@
 import { expect } from "chai";
 
 //CODEGEN
-import { registerAllHandlers } from "../generated/src/RegisterHandlers.bs";
-import { runDownMigrations } from "../generated/src/db/Migrations.bs";
+import { registerAllHandlers } from "../generated/src/RegisterHandlers.res.js";
+import { runDownMigrations } from "../generated/src/db/Migrations.res.js";
 
 //HELPERS
 import {
@@ -20,7 +20,7 @@ import {
   makeChainManager,
   startProcessing,
 } from "./Integration_ts_helpers.gen";
-// import { setLogLevel } from "generated/src/Logging.bs.js";
+// import { setLogLevel } from "generated/src/Logging.res.js";
 // require("mocha-reporter").hook(); //Outputs filename in error logs with mocha-reporter
 
 // TODO: I failed to connect RpcSource with hardhat to make the test work.

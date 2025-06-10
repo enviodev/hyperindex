@@ -24,7 +24,7 @@
   "jsx": {
     "version": 4
   },
-  "suffix": ".bs.js",
+  "suffix": ".res.js",
   "bs-dependencies": [
     "rescript-envsafe",
     "rescript-schema",

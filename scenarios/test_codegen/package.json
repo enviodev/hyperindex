@@ -11,7 +11,7 @@
     "gen:watch": "(cd generated && rescript -w)",
     "res:clean": "rescript clean",
     "res:build": "rescript",
-    "res:start": "node generated/src/Index.bs.js",
+    "res:start": "node generated/src/Index.res.js",
     "res:watch": "rescript -w",
     "test": "rescript && pnpm mocha",
     "test-coverage": "rescript && nyc mocha",
@@ -20,7 +20,7 @@
     "docker-up": "cargo run --manifest-path ../../codegenerator/cli/Cargo.toml -- local docker up",
     "docker-down": "cargo run --manifest-path ../../codegenerator/cli/Cargo.toml -- local docker down",
     "db-setup": "cargo run --manifest-path ../../codegenerator/cli/Cargo.toml -- local db-migrate setup",
-    "start": "ts-node ./generated/src/Index.bs.js"
+    "start": "ts-node ./generated/src/Index.res.js"
   },
   "keywords": [
     "ReScript"

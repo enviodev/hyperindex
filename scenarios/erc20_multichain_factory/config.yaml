@@ -10,12 +10,12 @@ field_selection:
     - gasUsed #just an example to test codegen
 contracts:
   - name: ERC20
-    handler: src/EventHandlers.bs.js
+    handler: src/EventHandlers.res.js
     events:
       - event: "Approval(address indexed owner, address indexed spender, uint256 value)"
       - event: "Transfer(address indexed from, address indexed to, uint256 value)"
   - name: ERC20Factory
-    handler: src/EventHandlers.bs.js
+    handler: src/EventHandlers.res.js
     events:
       - event: "TokenCreated(address indexed token)"
       - event: "DeleteUser(address indexed user)"

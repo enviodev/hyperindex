@@ -11,7 +11,7 @@
       "subdirs": true
     }
   ],
-  "suffix": ".bs.js",
+  "suffix": ".res.js",
   "package-specs": {
     "module": "commonjs",
     "in-source": true

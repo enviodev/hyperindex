@@ -29,7 +29,7 @@
   "jsx": {
     "version": 4
   },
-  "suffix": ".bs.js",
+  "suffix": ".res.js",
   "bs-dependencies": ["generated", "rescript-schema", "helpers", "envio"],
   "bsc-flags": ["-open RescriptSchema"]
 }

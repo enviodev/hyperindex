@@ -1,6 +1,6 @@
-const TableModule = require("envio/src/db/Table.bs.js");
-const Utils = require("envio/src/Utils.bs.js");
-const { publicSchema } = require("./Db.bs.js");
+const TableModule = require("envio/src/db/Table.res.js");
+const Utils = require("envio/src/Utils.res.js");
+const { publicSchema } = require("./Db.res.js");
 
 // db operations for raw_events:
 const MAX_ITEMS_PER_QUERY = 500;
@@ -21,7 +21,7 @@ const commaSeparateDynamicMapQuery = (sql, dynQueryConstructors) =>
     (constrQuery, i) =>
       sql`${constrQuery(sql)}${
         i === dynQueryConstructors.length - 1 ? sql`` : sql`, `
-      }`,
+      }`
   )}`;
 
 module.exports.batchDeleteItemsInTable = (table, sql, pkArray) => {
@@ -57,7 +57,7 @@ module.exports.batchReadItemsInTable = (table, sql, pkArray) => {
     }
   } else {
     throw new Error(
-      "Batch read not implemented for tables with composite primary keys",
+      "Batch read not implemented for tables with composite primary keys"
     );
     //TODO, if needed create a select query for multiple field matches
     //May be best to make pkArray an array of objects with fieldName -> value
@@ -94,7 +94,7 @@ module.exports.batchSetEventSyncState = (sql, entityDataArray) => {
     "block_number",
     "log_index",
     "block_timestamp",
-    "is_pre_registering_dynamic_contracts",
+    "is_pre_registering_dynamic_contracts"
   )}
     ON CONFLICT(chain_id) DO UPDATE
     SET
@@ -126,7 +126,7 @@ module.exports.batchSetChainMetadata = (sql, entityDataArray) => {
     "is_hyper_sync", // this is left out of the on conflict below as it only needs to be set once
     "num_batches_fetched",
     "latest_fetched_block_number",
-    "timestamp_caught_up_to_head_or_endblock",
+    "timestamp_caught_up_to_head_or_endblock"
   )}
   ON CONFLICT(chain_id) DO UPDATE
   SET
@@ -152,14 +152,14 @@ module.exports.batchDeleteRawEvents = (sql, entityIdArray) => sql`
 
 module.exports.makeBatchSetEntityValues = (table) => {
   const fieldNames = TableModule.getFieldNames(table).filter(
-    (fieldName) => fieldName !== "db_write_timestamp",
+    (fieldName) => fieldName !== "db_write_timestamp"
   );
   const primaryKeyFieldNames = TableModule.getPrimaryKeyFieldNames(table);
   const fieldQueryConstructors = fieldNames.map(
-    (fieldName) => (sql) => sql`${sql(fieldName)} = EXCLUDED.${sql(fieldName)}`,
+    (fieldName) => (sql) => sql`${sql(fieldName)} = EXCLUDED.${sql(fieldName)}`
   );
   const pkQueryConstructors = primaryKeyFieldNames.map(
-    (pkField) => (sql) => sql(pkField),
+    (pkField) => (sql) => sql(pkField)
   );
 
   return chunkBatchQuery((sql, rowDataArray) => {
@@ -168,7 +168,7 @@ INSERT INTO ${sql(publicSchema)}.${sql(table.tableName)}
 ${sql(rowDataArray, ...fieldNames)}
 ON CONFLICT(${sql`${commaSeparateDynamicMapQuery(
       sql,
-      pkQueryConstructors,
+      pkQueryConstructors
     )}`}) DO UPDATE
 SET
 ${sql`${commaSeparateDynamicMapQuery(sql, fieldQueryConstructors)}`};`;
@@ -187,7 +187,7 @@ const batchSetEndOfBlockRangeScannedDataCore = (sql, rowDataArray) => {
 };
 
 module.exports.batchSetEndOfBlockRangeScannedData = chunkBatchQuery(
-  batchSetEndOfBlockRangeScannedDataCore,
+  batchSetEndOfBlockRangeScannedDataCore
 );
 
 module.exports.readEndOfBlockRangeScannedDataForChain = (sql, chainId) => {
@@ -201,7 +201,7 @@ module.exports.readEndOfBlockRangeScannedDataForChain = (sql, chainId) => {
 module.exports.deleteStaleEndOfBlockRangeScannedDataForChain = (
   sql,
   chainId,
-  blockNumberThreshold,
+  blockNumberThreshold
 ) => {
   return sql`
     DELETE
@@ -213,7 +213,7 @@ module.exports.deleteStaleEndOfBlockRangeScannedDataForChain = (
 module.exports.rollbackEndOfBlockRangeScannedDataForChain = (
   sql,
   chainId,
-  knownBlockNumber,
+  knownBlockNumber
 ) => {
   return sql`
     DELETE
@@ -226,7 +226,7 @@ module.exports.deleteInvalidDynamicContractsOnRestart = (
   sql,
   chainId,
   restartBlockNumber,
-  restartLogIndex,
+  restartLogIndex
 ) => {
   return sql`
     DELETE
@@ -243,7 +243,7 @@ module.exports.deleteInvalidDynamicContractsHistoryOnRestart = (
   sql,
   chainId,
   restartBlockNumber,
-  restartLogIndex,
+  restartLogIndex
 ) => {
   return sql`
     DELETE
@@ -275,7 +275,7 @@ module.exports.getFirstChangeSerial_UnorderedMultichain = (
   sql,
   reorgChainId,
   safeBlockNumber,
-  entityName,
+  entityName
 ) =>
   sql`
     SELECT
@@ -300,7 +300,7 @@ module.exports.getFirstChangeSerial_OrderedMultichain = (
   safeBlockTimestamp,
   reorgChainId,
   safeBlockNumber,
-  entityName,
+  entityName
 ) =>
   sql`
     SELECT
@@ -318,7 +318,7 @@ module.exports.getFirstChangeSerial_OrderedMultichain = (
 module.exports.getFirstChangeEntityHistoryPerChain = (
   sql,
   entityName,
-  getFirstChangeSerial,
+  getFirstChangeSerial
 ) => sql`
   WITH
     first_change AS (
@@ -348,7 +348,7 @@ module.exports.getFirstChangeEntityHistoryPerChain = (
 module.exports.deleteRolledBackEntityHistory = (
   sql,
   entityName,
-  getFirstChangeSerial,
+  getFirstChangeSerial
 ) => sql`
   WITH
     first_change AS (
@@ -381,7 +381,7 @@ module.exports.pruneStaleEntityHistory = (
   // shouldDeepCleanHistory is a boolean that determines whether to delete stale history
   // items of entities that are in the reorg threshold (expensive to calculate)
   // or to do a shallow clean (only deletes history items of entities that are not in the reorg threshold)
-  shouldDeepClean,
+  shouldDeepClean
 ) => {
   const tableName = makeHistoryTableName(entityName);
   return sql`
@@ -394,9 +394,9 @@ module.exports.pruneStaleEntityHistory = (
       ${Utils.$$Array.interleave(
         safeChainIdAndBlockNumberArray.map(
           ({ chainId, blockNumber }) =>
-            sql`(entity_history_chain_id = ${chainId} AND entity_history_block_number > ${blockNumber})`,
+            sql`(entity_history_chain_id = ${chainId} AND entity_history_block_number > ${blockNumber})`
         ),
-        sql` OR `,
+        sql` OR `
       )}
   ),
   items_in_reorg_threshold AS (

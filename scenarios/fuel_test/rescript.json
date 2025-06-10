@@ -10,7 +10,7 @@
       "subdirs": true
     }
   ],
-  "suffix": ".bs.js",
+  "suffix": ".res.js",
   "jsx": {
     "version": 4
   },

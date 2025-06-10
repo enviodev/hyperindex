@@ -9,7 +9,7 @@ use std::path::PathBuf;
 pub struct HandlerPathsTemplate {
     absolute: String,
     relative_to_generated_src: String,
-    relative_to_config: String,
+    pub relative_to_config: String,
     relative_to_project_root: String,
 }
 
