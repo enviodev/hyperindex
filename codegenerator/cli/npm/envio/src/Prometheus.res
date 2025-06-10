@@ -446,7 +446,7 @@ module ReorgCount = {
     "labelNames": ["chainId"],
   })
 
-  let counter = SafeGauge.makeOrThrow(
+  let gauge = SafeGauge.makeOrThrow(
     ~name="envio_reorg_count",
     ~help="Total number of reorgs detected",
     ~labelSchema=chainIdLabelsSchema,
@@ -456,7 +456,7 @@ module ReorgCount = {
     deprecatedCounter
     ->PromClient.Counter.labels({"chainId": chain->ChainMap.Chain.toString})
     ->PromClient.Counter.inc
-    counter->SafeGauge.increment(~labels=chain->ChainMap.Chain.toChainId)
+    gauge->SafeGauge.increment(~labels=chain->ChainMap.Chain.toChainId)
   }
 }
 
@@ -572,5 +572,21 @@ module ProgressEventsCount = {
     ->PromClient.Gauge.labels({"chainId": chainId})
     ->PromClient.Gauge.set(processedCount)
     gauge->SafeGauge.handleInt(~labels=chainId, ~value=processedCount)
+  }
+}
+
+let effectLabelsSchema = S.object(s => {
+  s.field("effect", S.string)
+})
+
+module EffectCallsCount = {
+  let gauge = SafeGauge.makeOrThrow(
+    ~name="envio_effect_calls_count",
+    ~help="The number of calls to the effect. Including both handler execution and cache hits.",
+    ~labelSchema=effectLabelsSchema,
+  )
+
+  let set = (~callsCount, ~effectName) => {
+    gauge->SafeGauge.handleInt(~labels=effectName, ~value=callsCount)
   }
 }

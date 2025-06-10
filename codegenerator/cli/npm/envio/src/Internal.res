@@ -197,6 +197,7 @@ type effectArgs = {
 type effect = {
   name: string,
   handler: effectArgs => promise<effectOutput>,
+  mutable callsCount: int,
 }
 
 @genType.import(("./Types.ts", "Invalid"))
