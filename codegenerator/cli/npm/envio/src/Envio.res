@@ -39,6 +39,7 @@ let experimental_createEffect = (
   options: effectOptions<'input, 'output>,
   handler: effectArgs<'input> => promise<'output>,
 ) => {
+  Prometheus.EffectCallsCount.set(~callsCount=0, ~effectName=options.name)
   {
     name: options.name,
     handler: handler->(
@@ -46,5 +47,6 @@ let experimental_createEffect = (
         Internal.effectOutput,
       >
     ),
+    callsCount: 0,
   }->(Utils.magic: Internal.effect => effect<'input, 'output>)
 }

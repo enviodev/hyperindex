@@ -96,6 +96,8 @@ let loadEffect = (
   let inMemTable = inMemoryStore->InMemoryStore.getEffectInMemTable(~effect)
 
   let load = args => {
+    effect.callsCount = effect.callsCount + args->Array.length
+    Prometheus.EffectCallsCount.set(~callsCount=effect.callsCount, ~effectName=effect.name)
     args
     ->Js.Array2.map(arg => {
       effect.handler(arg)->Promise.thenResolve(output => {
