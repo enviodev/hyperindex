@@ -267,14 +267,19 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-      - name: Install node
+
+      - uses: pnpm/action-setup@v4
+        name: Install pnpm
+        with:
+          version: 9
+          run_install: false
+
+      - name: Install Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "18.16.0"
-          registry-url: "https://registry.npmjs.org"
-      - uses: pnpm/action-setup@v3
-        with:
-          version: 8
+          node-version: 20
+          cache: "pnpm"
+
       - name: Publish the package
         shell: bash
         env:
@@ -285,6 +290,8 @@ jobs:
           envsubst < ./package.json.tmpl > "package.json"
           cat package.json # Leave this here for the sake of debugging bad builds.
           cp ../../README.md .
+          pnpm install --frozen-lockfile
+          pnpm rescript # Build .res.js files to publish them to npm
           echo "Publishing with tag ${RELEASE_TYPE}"
           npm publish --access public --tag ${RELEASE_TYPE}
 
