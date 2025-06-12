@@ -279,6 +279,7 @@ jobs:
         with:
           node-version: 20
           cache: "pnpm"
+          cache-dependency-path: codegenerator/cli/npm/envio/pnpm-lock.yaml
 
       - name: Publish the package
         shell: bash
