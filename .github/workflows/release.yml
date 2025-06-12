@@ -285,6 +285,7 @@ jobs:
           envsubst < ./package.json.tmpl > "package.json"
           cat package.json # Leave this here for the sake of debugging bad builds.
           cp ../../README.md .
+          pnpm rescript # Build .res.js files to publish them to npm
           echo "Publishing with tag ${RELEASE_TYPE}"
           npm publish --access public --tag ${RELEASE_TYPE}
 
