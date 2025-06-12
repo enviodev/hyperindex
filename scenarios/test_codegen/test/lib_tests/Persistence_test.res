@@ -4,7 +4,7 @@ type storageMock = {
   isInitializedCalls: array<bool>,
   initializeCalls: array<{
     "entities": array<Internal.entityConfig>,
-    "staticTables": array<Table.table>,
+    "generalTables": array<Table.table>,
     "enums": array<Internal.enumConfig<Internal.enum>>,
     "cleanRun": bool,
   }>,
@@ -13,7 +13,7 @@ type storageMock = {
   storage: Persistence.storage,
 }
 
-let storageMock = () => {
+let makeStorageMock = () => {
   let isInitializedCalls = []
   let initializeCalls = []
   let isInitializedResolveFns = []
@@ -34,11 +34,11 @@ let storageMock = () => {
           isInitializedResolveFns->Js.Array2.push(resolve)->ignore
         })
       },
-      initialize: (~entities, ~staticTables, ~enums, ~cleanRun) => {
+      initialize: (~entities=[], ~generalTables=[], ~enums=[], ~cleanRun=true) => {
         initializeCalls
         ->Js.Array2.push({
           "entities": entities,
-          "staticTables": staticTables,
+          "generalTables": generalTables,
           "enums": enums,
           "cleanRun": cleanRun,
         })
@@ -47,13 +47,16 @@ let storageMock = () => {
           initializeResolveFns->Js.Array2.push(resolve)->ignore
         })
       },
+      loadByIdsOrThrow: (~ids as _, ~table as _, ~rowsSchema as _) => {
+        Js.Exn.raiseError("Not implemented")
+      },
     },
   }
 }
 
 describe("Test Persistence layer init", () => {
   Async.it("Should initialize the persistence layer without the user entities", async () => {
-    let storageMock = storageMock()
+    let storageMock = makeStorageMock()
 
     let persistence = Persistence.make(
       ~userEntities=[],
@@ -63,6 +66,7 @@ describe("Test Persistence layer init", () => {
       )->Entities.entityModToInternal,
       ~allEnums=[],
       ~storage=storageMock.storage,
+      ~cacheStorage=makeStorageMock().storage,
     )
 
     Assert.deepEqual(
@@ -124,7 +128,7 @@ describe("Test Persistence layer init", () => {
       [
         {
           "entities": persistence.allEntities,
-          "staticTables": persistence.staticTables,
+          "generalTables": persistence.staticTables,
           "enums": persistence.allEnums,
           "cleanRun": true,
         },
@@ -163,7 +167,7 @@ describe("Test Persistence layer init", () => {
         2,
         {
           "entities": persistence.allEntities,
-          "staticTables": persistence.staticTables,
+          "generalTables": persistence.staticTables,
           "enums": persistence.allEnums,
           "cleanRun": true,
         },
@@ -174,7 +178,7 @@ describe("Test Persistence layer init", () => {
   })
 
   Async.it("Should skip initialization when storage is already initialized", async () => {
-    let storageMock = storageMock()
+    let storageMock = makeStorageMock()
 
     let persistence = Persistence.make(
       ~userEntities=[],
@@ -184,6 +188,7 @@ describe("Test Persistence layer init", () => {
       )->Entities.entityModToInternal,
       ~allEnums=[],
       ~storage=storageMock.storage,
+      ~cacheStorage=makeStorageMock().storage,
     )
 
     let p = persistence->Persistence.init
@@ -210,7 +215,7 @@ describe("Test Persistence layer init", () => {
   })
 
   Async.it("Case for `envio local db-up`", async () => {
-    let storageMock = storageMock()
+    let storageMock = makeStorageMock()
 
     let persistence = Persistence.make(
       ~userEntities=[],
@@ -220,6 +225,7 @@ describe("Test Persistence layer init", () => {
       )->Entities.entityModToInternal,
       ~allEnums=[],
       ~storage=storageMock.storage,
+      ~cacheStorage=makeStorageMock().storage,
     )
 
     let _ = persistence->Persistence.init(~skipIsInitializedCheck=true)
@@ -231,7 +237,7 @@ describe("Test Persistence layer init", () => {
         [
           {
             "entities": persistence.allEntities,
-            "staticTables": persistence.staticTables,
+            "generalTables": persistence.staticTables,
             "enums": persistence.allEnums,
             "cleanRun": false,
           },

@@ -110,6 +110,7 @@ module Db = {
   let password = envSafe->EnvSafe.get("ENVIO_POSTGRES_PASSWORD", S.string, ~devFallback="testing")
   let database = envSafe->EnvSafe.get("ENVIO_PG_DATABASE", S.string, ~devFallback="envio-dev")
   let publicSchema = envSafe->EnvSafe.get("ENVIO_PG_PUBLIC_SCHEMA", S.string, ~fallback="public")
+  let cacheSchema = envSafe->EnvSafe.get("ENVIO_PG_CACHE_SCHEMA", S.string, ~fallback="envio_cache")
   let ssl = envSafe->EnvSafe.get(
     "ENVIO_PG_SSL_MODE",
     Postgres.sslOptionsSchema,
