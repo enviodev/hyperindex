@@ -242,7 +242,6 @@ describe("Entity History Codegen", () => {
     try {
       await storage.initialize(
         ~entities=[module(TestEntity)->Entities.entityModToInternal],
-        ~staticTables=[],
         ~enums=[Persistence.entityHistoryActionEnumConfig->Internal.fromGenericEnumConfig],
         ~cleanRun=true,
       )
@@ -592,7 +591,6 @@ describe("Entity history rollbacks", () => {
       let storage = PgStorage.make(~sql=Db.sql, ~pgSchema="public", ~pgUser="postgres")
       await storage.initialize(
         ~entities=[module(TestEntity)->Entities.entityModToInternal],
-        ~staticTables=[],
         ~enums=[Persistence.entityHistoryActionEnumConfig->Internal.fromGenericEnumConfig],
         ~cleanRun=true,
       )
@@ -753,7 +751,6 @@ describe("Entity history rollbacks", () => {
       let storage = PgStorage.make(~sql=Db.sql, ~pgSchema="public", ~pgUser="postgres")
       await storage.initialize(
         ~entities=[module(TestEntity)->Entities.entityModToInternal],
-        ~staticTables=[],
         ~enums=[Persistence.entityHistoryActionEnumConfig->Internal.fromGenericEnumConfig],
         ~cleanRun=true,
       )
@@ -1031,7 +1028,6 @@ describe_skip("Prune performance test", () => {
     let storage = PgStorage.make(~sql=Db.sql, ~pgSchema="public", ~pgUser="postgres")
     await storage.initialize(
       ~entities=[module(TestEntity)->Entities.entityModToInternal],
-      ~staticTables=[],
       ~enums=[Persistence.entityHistoryActionEnumConfig->Internal.fromGenericEnumConfig],
       ~cleanRun=true,
     )

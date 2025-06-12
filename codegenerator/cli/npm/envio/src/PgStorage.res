@@ -155,7 +155,7 @@ let makeLoadByIdQuery = (~pgSchema, ~tableName) => {
 }
 
 let makeLoadByIdsQuery = (~pgSchema, ~tableName) => {
-  `SELECT * FROM "${pgSchema}"."${tableName}" WHERE id IN $1;`
+  `SELECT * FROM "${pgSchema}"."${tableName}" WHERE id = ANY($1::text[]);`
 }
 
 let make = (~sql: Postgres.sql, ~pgSchema, ~pgUser): Persistence.storage => {
@@ -185,15 +185,15 @@ let make = (~sql: Postgres.sql, ~pgSchema, ~pgUser): Persistence.storage => {
   let loadByIdsOrThrow = async (~ids, ~table: Table.table, ~rowsSchema) => {
     switch await (
       switch ids {
-      | [id] =>
+      | [_] =>
         sql->Postgres.preparedUnsafe(
           makeLoadByIdQuery(~pgSchema, ~tableName=table.tableName),
-          id->Obj.magic,
+          ids->Obj.magic,
         )
       | _ =>
         sql->Postgres.preparedUnsafe(
           makeLoadByIdsQuery(~pgSchema, ~tableName=table.tableName),
-          ids->Obj.magic,
+          [ids]->Obj.magic,
         )
       }
     ) {

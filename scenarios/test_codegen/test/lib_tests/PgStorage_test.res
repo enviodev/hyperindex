@@ -109,13 +109,13 @@ describe("Test PgStorage SQL generation functions", () => {
           module(Entities.A)->Entities.entityModToInternal,
           module(Entities.B)->Entities.entityModToInternal,
         ]
-        let staticTables = [TablesStatic.ChainMetadata.table]
+        let generalTables = [TablesStatic.ChainMetadata.table]
         let enums = [Enums.EntityType.config->Internal.fromGenericEnumConfig]
 
         let queries = PgStorage.makeInitializeTransaction(
           ~pgSchema="test_schema",
           ~pgUser="postgres",
-          ~staticTables,
+          ~generalTables,
           ~entities,
           ~enums,
           ~cleanRun=true,
@@ -168,13 +168,13 @@ CREATE INDEX IF NOT EXISTS "A_b_id" ON "test_schema"."A"("b_id");`
       "Should create conditional initialization queries without clean run",
       async () => {
         let entities = [module(Entities.A)->Entities.entityModToInternal]
-        let staticTables = [TablesStatic.ChainMetadata.table]
+        let generalTables = [TablesStatic.ChainMetadata.table]
         let enums = [Enums.EntityType.config->Internal.fromGenericEnumConfig]
 
         let queries = PgStorage.makeInitializeTransaction(
           ~pgSchema="test_schema",
           ~pgUser="postgres",
-          ~staticTables,
+          ~generalTables,
           ~entities,
           ~enums,
           ~cleanRun=false,
@@ -214,8 +214,6 @@ CREATE INDEX IF NOT EXISTS "A_history_serial" ON "test_schema"."A_history"("seri
         let queries = PgStorage.makeInitializeTransaction(
           ~pgSchema="test_schema",
           ~pgUser="postgres",
-          ~staticTables=[],
-          ~entities=[],
           ~enums=[],
           ~cleanRun=true,
         )
@@ -250,7 +248,7 @@ GRANT ALL ON SCHEMA "test_schema" TO public;`
         let queries = PgStorage.makeInitializeTransaction(
           ~pgSchema="public",
           ~pgUser="postgres",
-          ~staticTables=[],
+          ~generalTables=[],
           ~entities,
           ~enums=[],
           ~cleanRun=true,
@@ -283,6 +281,62 @@ CREATE INDEX IF NOT EXISTS "A_history_serial" ON "public"."A_history"("serial");
         Assert.ok(
           functionsQuery->Js.String2.includes(`CREATE OR REPLACE FUNCTION "insert_A_history"`),
           ~message="Should contain A history function definition",
+        )
+      },
+    )
+  })
+
+  describe("makeLoadByIdQuery", () => {
+    Async.it(
+      "Should create correct SQL for loading single record by ID",
+      async () => {
+        let sql = PgStorage.makeLoadByIdQuery(~pgSchema="test_schema", ~tableName="users")
+
+        Assert.equal(
+          sql,
+          `SELECT * FROM "test_schema"."users" WHERE id = $1 LIMIT 1;`,
+          ~message="Should generate correct single ID query SQL",
+        )
+      },
+    )
+
+    Async.it(
+      "Should handle different schema and table names",
+      async () => {
+        let sql = PgStorage.makeLoadByIdQuery(~pgSchema="public", ~tableName="A")
+
+        Assert.equal(
+          sql,
+          `SELECT * FROM "public"."A" WHERE id = $1 LIMIT 1;`,
+          ~message="Should generate correct SQL with different schema and table names",
+        )
+      },
+    )
+  })
+
+  describe("makeLoadByIdsQuery", () => {
+    Async.it(
+      "Should create correct SQL for loading multiple records by IDs",
+      async () => {
+        let sql = PgStorage.makeLoadByIdsQuery(~pgSchema="test_schema", ~tableName="users")
+
+        Assert.equal(
+          sql,
+          `SELECT * FROM "test_schema"."users" WHERE id = ANY($1::text[]);`,
+          ~message="Should generate correct multiple IDs query SQL",
+        )
+      },
+    )
+
+    Async.it(
+      "Should handle different schema and table names",
+      async () => {
+        let sql = PgStorage.makeLoadByIdsQuery(~pgSchema="production", ~tableName="entities")
+
+        Assert.equal(
+          sql,
+          `SELECT * FROM "production"."entities" WHERE id = ANY($1::text[]);`,
+          ~message="Should generate correct SQL with different schema and table names",
         )
       },
     )
