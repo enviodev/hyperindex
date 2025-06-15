@@ -175,6 +175,9 @@ importers:
       postgres:
         specifier: 3.4.1
         version: 3.4.1
+      prom-client:
+        specifier: 15.0.0
+        version: 15.0.0
       react:
         specifier: 18.2.0
         version: 18.2.0
