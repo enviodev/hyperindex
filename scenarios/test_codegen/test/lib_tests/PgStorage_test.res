@@ -1,11 +1,11 @@
 open RescriptMocha
 
 describe("Test PgStorage SQL generation functions", () => {
-  describe("makeCreateIndexSqlUnsafe", () => {
+  describe("makeCreateIndexSql", () => {
     Async.it(
       "Should create simple index SQL",
       async () => {
-        let sql = PgStorage.makeCreateIndexSqlUnsafe(
+        let sql = PgStorage.makeCreateIndexSql(
           ~tableName="test_table",
           ~indexFields=["field1"],
           ~pgSchema="test_schema",
@@ -22,7 +22,7 @@ describe("Test PgStorage SQL generation functions", () => {
     Async.it(
       "Should create composite index SQL",
       async () => {
-        let sql = PgStorage.makeCreateIndexSqlUnsafe(
+        let sql = PgStorage.makeCreateIndexSql(
           ~tableName="test_table",
           ~indexFields=["field1", "field2", "field3"],
           ~pgSchema="test_schema",
@@ -37,14 +37,11 @@ describe("Test PgStorage SQL generation functions", () => {
     )
   })
 
-  describe("makeCreateTableIndicesSqlUnsafe", () => {
+  describe("makeCreateTableIndicesSql", () => {
     Async.it(
       "Should create indices for A entity table",
       async () => {
-        let sql = PgStorage.makeCreateTableIndicesSqlUnsafe(
-          Entities.A.table,
-          ~pgSchema="test_schema",
-        )
+        let sql = PgStorage.makeCreateTableIndicesSql(Entities.A.table, ~pgSchema="test_schema")
 
         let expectedIndices = `CREATE INDEX IF NOT EXISTS "A_b_id" ON "test_schema"."A"("b_id");`
         Assert.equal(sql, expectedIndices, ~message="Indices SQL should match exactly")
@@ -54,10 +51,7 @@ describe("Test PgStorage SQL generation functions", () => {
     Async.it(
       "Should handle table with no indices",
       async () => {
-        let sql = PgStorage.makeCreateTableIndicesSqlUnsafe(
-          Entities.B.table,
-          ~pgSchema="test_schema",
-        )
+        let sql = PgStorage.makeCreateTableIndicesSql(Entities.B.table, ~pgSchema="test_schema")
 
         // B entity has no indexed fields, so should return empty string
         Assert.equal(sql, "", ~message="Should return empty string for table with no indices")
@@ -65,11 +59,11 @@ describe("Test PgStorage SQL generation functions", () => {
     )
   })
 
-  describe("makeCreateTableSqlUnsafe", () => {
+  describe("makeCreateTableSql", () => {
     Async.it(
       "Should create SQL for A entity table",
       async () => {
-        let sql = PgStorage.makeCreateTableSqlUnsafe(Entities.A.table, ~pgSchema="test_schema")
+        let sql = PgStorage.makeCreateTableSql(Entities.A.table, ~pgSchema="test_schema")
 
         let expectedTableSql = `CREATE TABLE IF NOT EXISTS "test_schema"."A"("b_id" TEXT NOT NULL, "id" TEXT NOT NULL, "optionalStringToTestLinkedEntities" TEXT, "db_write_timestamp" TIMESTAMP DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY("id"));`
         Assert.equal(sql, expectedTableSql, ~message="A table SQL should match exactly")
@@ -79,7 +73,7 @@ describe("Test PgStorage SQL generation functions", () => {
     Async.it(
       "Should create SQL for B entity table with derived fields",
       async () => {
-        let sql = PgStorage.makeCreateTableSqlUnsafe(Entities.B.table, ~pgSchema="test_schema")
+        let sql = PgStorage.makeCreateTableSql(Entities.B.table, ~pgSchema="test_schema")
 
         let expectedBTableSql = `CREATE TABLE IF NOT EXISTS "test_schema"."B"("c_id" TEXT, "id" TEXT NOT NULL, "db_write_timestamp" TIMESTAMP DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY("id"));`
         Assert.equal(sql, expectedBTableSql, ~message="B table SQL should match exactly")
@@ -89,7 +83,7 @@ describe("Test PgStorage SQL generation functions", () => {
     Async.it(
       "Should handle default values",
       async () => {
-        let sql = PgStorage.makeCreateTableSqlUnsafe(Entities.A.table, ~pgSchema="test_schema")
+        let sql = PgStorage.makeCreateTableSql(Entities.A.table, ~pgSchema="test_schema")
 
         let expectedDefaultTestSql = `CREATE TABLE IF NOT EXISTS "test_schema"."A"("b_id" TEXT NOT NULL, "id" TEXT NOT NULL, "optionalStringToTestLinkedEntities" TEXT, "db_write_timestamp" TIMESTAMP DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY("id"));`
         Assert.equal(
@@ -286,11 +280,11 @@ CREATE INDEX IF NOT EXISTS "A_history_serial" ON "public"."A_history"("serial");
     )
   })
 
-  describe("makeLoadByIdQuery", () => {
+  describe("makeLoadByIdSql", () => {
     Async.it(
       "Should create correct SQL for loading single record by ID",
       async () => {
-        let sql = PgStorage.makeLoadByIdQuery(~pgSchema="test_schema", ~tableName="users")
+        let sql = PgStorage.makeLoadByIdSql(~pgSchema="test_schema", ~tableName="users")
 
         Assert.equal(
           sql,
@@ -303,7 +297,7 @@ CREATE INDEX IF NOT EXISTS "A_history_serial" ON "public"."A_history"("serial");
     Async.it(
       "Should handle different schema and table names",
       async () => {
-        let sql = PgStorage.makeLoadByIdQuery(~pgSchema="public", ~tableName="A")
+        let sql = PgStorage.makeLoadByIdSql(~pgSchema="public", ~tableName="A")
 
         Assert.equal(
           sql,
@@ -314,11 +308,11 @@ CREATE INDEX IF NOT EXISTS "A_history_serial" ON "public"."A_history"("serial");
     )
   })
 
-  describe("makeLoadByIdsQuery", () => {
+  describe("makeLoadByIdsSql", () => {
     Async.it(
       "Should create correct SQL for loading multiple records by IDs",
       async () => {
-        let sql = PgStorage.makeLoadByIdsQuery(~pgSchema="test_schema", ~tableName="users")
+        let sql = PgStorage.makeLoadByIdsSql(~pgSchema="test_schema", ~tableName="users")
 
         Assert.equal(
           sql,
@@ -331,7 +325,7 @@ CREATE INDEX IF NOT EXISTS "A_history_serial" ON "public"."A_history"("serial");
     Async.it(
       "Should handle different schema and table names",
       async () => {
-        let sql = PgStorage.makeLoadByIdsQuery(~pgSchema="production", ~tableName="entities")
+        let sql = PgStorage.makeLoadByIdsSql(~pgSchema="production", ~tableName="entities")
 
         Assert.equal(
           sql,

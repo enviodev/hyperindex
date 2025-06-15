@@ -125,31 +125,6 @@ module.exports.batchDeleteRawEvents = (sql, entityIdArray) => sql`
   WHERE (chain_id, event_id) IN ${sql(entityIdArray)};`;
 // end db operations for raw_events
 
-module.exports.makeBatchSetEntityValues = (table) => {
-  const fieldNames = TableModule.getFieldNames(table).filter(
-    (fieldName) => fieldName !== "db_write_timestamp"
-  );
-  const primaryKeyFieldNames = TableModule.getPrimaryKeyFieldNames(table);
-  const fieldQueryConstructors = fieldNames.map(
-    (fieldName) => (sql) => sql`${sql(fieldName)} = EXCLUDED.${sql(fieldName)}`
-  );
-  const pkQueryConstructors = primaryKeyFieldNames.map(
-    (pkField) => (sql) => sql(pkField)
-  );
-
-  return chunkBatchQuery((sql, rowDataArray) => {
-    return sql`
-INSERT INTO ${sql(publicSchema)}.${sql(table.tableName)}
-${sql(rowDataArray, ...fieldNames)}
-ON CONFLICT(${sql`${commaSeparateDynamicMapQuery(
-      sql,
-      pkQueryConstructors
-    )}`}) DO UPDATE
-SET
-${sql`${commaSeparateDynamicMapQuery(sql, fieldQueryConstructors)}`};`;
-  });
-};
-
 const batchSetEndOfBlockRangeScannedDataCore = (sql, rowDataArray) => {
   return sql`
     INSERT INTO ${sql(publicSchema)}."end_of_block_range_scanned_data"

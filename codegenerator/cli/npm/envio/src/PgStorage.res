@@ -1,16 +1,16 @@
-let makeCreateIndexSqlUnsafe = (~tableName, ~indexFields, ~pgSchema) => {
+let makeCreateIndexSql = (~tableName, ~indexFields, ~pgSchema) => {
   let indexName = tableName ++ "_" ++ indexFields->Js.Array2.joinWith("_")
   let index = indexFields->Belt.Array.map(idx => `"${idx}"`)->Js.Array2.joinWith(", ")
   `CREATE INDEX IF NOT EXISTS "${indexName}" ON "${pgSchema}"."${tableName}"(${index});`
 }
 
-let makeCreateTableIndicesSqlUnsafe = (table: Table.table, ~pgSchema) => {
+let makeCreateTableIndicesSql = (table: Table.table, ~pgSchema) => {
   open Belt
   let tableName = table.tableName
   let createIndex = indexField =>
-    makeCreateIndexSqlUnsafe(~tableName, ~indexFields=[indexField], ~pgSchema)
+    makeCreateIndexSql(~tableName, ~indexFields=[indexField], ~pgSchema)
   let createCompositeIndex = indexFields => {
-    makeCreateIndexSqlUnsafe(~tableName, ~indexFields, ~pgSchema)
+    makeCreateIndexSql(~tableName, ~indexFields, ~pgSchema)
   }
 
   let singleIndices = table->Table.getSingleIndices
@@ -20,7 +20,7 @@ let makeCreateTableIndicesSqlUnsafe = (table: Table.table, ~pgSchema) => {
     compositeIndices->Array.map(createCompositeIndex)->Js.Array2.joinWith("\n")
 }
 
-let makeCreateTableSqlUnsafe = (table: Table.table, ~pgSchema) => {
+let makeCreateTableSql = (table: Table.table, ~pgSchema) => {
   open Belt
   let fieldsMapped =
     table
@@ -106,12 +106,12 @@ END IF;`
 
   // Batch all table creation first (optimal for PostgreSQL)
   allTables->Js.Array2.forEach((table: Table.table) => {
-    query := query.contents ++ "\n" ++ makeCreateTableSqlUnsafe(table, ~pgSchema)
+    query := query.contents ++ "\n" ++ makeCreateTableSql(table, ~pgSchema)
   })
 
   // Then batch all indices (better performance when tables exist)
   allTables->Js.Array2.forEach((table: Table.table) => {
-    let indices = makeCreateTableIndicesSqlUnsafe(table, ~pgSchema)
+    let indices = makeCreateTableIndicesSql(table, ~pgSchema)
     if indices !== "" {
       query := query.contents ++ "\n" ++ indices
     }
@@ -131,7 +131,7 @@ END IF;`
       query :=
         query.contents ++
         "\n" ++
-        makeCreateIndexSqlUnsafe(
+        makeCreateIndexSql(
           ~tableName=derivedFromField.derivedFromEntity,
           ~indexFields=[indexField],
           ~pgSchema,
@@ -150,12 +150,136 @@ END IF;`
   ]->Js.Array2.concat(functionsQuery.contents !== "" ? [functionsQuery.contents] : [])
 }
 
-let makeLoadByIdQuery = (~pgSchema, ~tableName) => {
+let makeLoadByIdSql = (~pgSchema, ~tableName) => {
   `SELECT * FROM "${pgSchema}"."${tableName}" WHERE id = $1 LIMIT 1;`
 }
 
-let makeLoadByIdsQuery = (~pgSchema, ~tableName) => {
+let makeLoadByIdsSql = (~pgSchema, ~tableName) => {
   `SELECT * FROM "${pgSchema}"."${tableName}" WHERE id = ANY($1::text[]);`
+}
+
+let makeInsertUnnestSetSql = (~pgSchema, ~table: Table.table, ~itemSchema, ~isRawEvents) => {
+  let {quotedFieldNames, quotedNonPrimaryFieldNames, arrayFieldTypes} =
+    table->Table.toSqlParams(~schema=itemSchema)
+
+  let primaryKeyFieldNames = Table.getPrimaryKeyFieldNames(table)
+
+  `INSERT INTO "${pgSchema}"."${table.tableName}" (${quotedFieldNames->Js.Array2.joinWith(", ")})
+SELECT * FROM unnest(${arrayFieldTypes
+    ->Js.Array2.mapi((arrayFieldType, idx) => {
+      `$${(idx + 1)->Js.Int.toString}::${arrayFieldType}`
+    })
+    ->Js.Array2.joinWith(",")})` ++
+  switch (isRawEvents, primaryKeyFieldNames) {
+  | (true, _)
+  | (_, []) => ``
+  | (false, primaryKeyFieldNames) =>
+    `ON CONFLICT(${primaryKeyFieldNames
+      ->Js.Array2.map(fieldName => `"${fieldName}"`)
+      ->Js.Array2.joinWith(",")}) DO ` ++ (
+      quotedNonPrimaryFieldNames->Utils.Array.isEmpty
+        ? `NOTHING`
+        : `UPDATE SET ${quotedNonPrimaryFieldNames
+            ->Js.Array2.map(fieldName => {
+              `${fieldName} = EXCLUDED.${fieldName}`
+            })
+            ->Js.Array2.joinWith(",")}`
+    )
+  } ++ ";"
+}
+
+let makeInsertValuesSetSql = (~pgSchema, ~table: Table.table, ~itemSchema, ~isRawEvents) => {
+  let {quotedFieldNames, quotedNonPrimaryFieldNames} = table->Table.toSqlParams(~schema=itemSchema)
+
+  let primaryKeyFieldNames = Table.getPrimaryKeyFieldNames(table)
+
+  // Create placeholder variables for the VALUES clause - using $1, $2, etc.
+  let placeholders =
+    quotedFieldNames
+    ->Belt.Array.mapWithIndex((idx, _) => `$${(idx + 1)->Js.Int.toString}`)
+    ->Js.Array2.joinWith(", ")
+
+  `INSERT INTO "${pgSchema}"."${table.tableName}" (${quotedFieldNames->Js.Array2.joinWith(", ")})
+VALUES (${placeholders})` ++
+  switch (isRawEvents, primaryKeyFieldNames) {
+  | (true, _)
+  | (_, []) => ``
+  | (false, primaryKeyFieldNames) =>
+    `ON CONFLICT(${primaryKeyFieldNames
+      ->Js.Array2.map(fieldName => `"${fieldName}"`)
+      ->Js.Array2.joinWith(",")}) DO ` ++ (
+      quotedNonPrimaryFieldNames->Utils.Array.isEmpty
+        ? `NOTHING`
+        : `UPDATE SET ${quotedNonPrimaryFieldNames
+            ->Js.Array2.map(fieldName => {
+              `${fieldName} = EXCLUDED.${fieldName}`
+            })
+            ->Js.Array2.joinWith(",")}`
+    )
+  } ++ ";"
+}
+
+// Should move this to a better place
+// We need it for the isRawEvents check in makeTableBatchSet
+// to always apply the unnest optimization.
+// This is needed, because even though it has JSON fields,
+// they are always guaranteed to be an object.
+// FIXME what about Fuel params?
+let rawEventsTableName = "raw_events"
+
+let makeTableBatchSetQuery = (~pgSchema, ~table: Table.table, ~itemSchema: S.t<'item>) => {
+  let {dbSchema, hasArrayField} = table->Table.toSqlParams(~schema=itemSchema)
+  let isRawEvents = table.tableName === rawEventsTableName
+
+  // Should experiment how much it'll affect performance
+  // Although, it should be fine not to perform the validation check,
+  // since the values are validated by type system.
+  // As an alternative, we can only run Sury validation only when
+  // db write fails to show a better user error.
+  let typeValidation = false
+
+  if isRawEvents || !hasArrayField {
+    {
+      "sql": makeInsertUnnestSetSql(~pgSchema, ~table, ~itemSchema, ~isRawEvents),
+      "convertOrThrow": S.compile(
+        S.unnest(dbSchema),
+        ~input=Value,
+        ~output=Unknown,
+        ~mode=Sync,
+        ~typeValidation,
+      ),
+      "needsChunking": false,
+    }
+  } else {
+    {
+      "sql": makeInsertValuesSetSql(~pgSchema, ~table, ~itemSchema, ~isRawEvents),
+      "convertOrThrow": S.compile(
+        S.array(itemSchema),
+        ~input=Value,
+        ~output=Unknown,
+        ~mode=Sync,
+        ~typeValidation,
+      ),
+      "needsChunking": true,
+    }
+  }
+}
+
+// WeakMap for caching table batch set queries
+let queryCache = Utils.WeakMap.make()
+
+// Constants for chunking
+let maxItemsPerQuery = 500
+
+let chunkArray = (arr: array<'a>, ~chunkSize) => {
+  let chunks = []
+  let i = ref(0)
+  while i.contents < arr->Array.length {
+    let chunk = arr->Js.Array2.slice(~start=i.contents, ~end_=i.contents + chunkSize)
+    chunks->Js.Array2.push(chunk)->ignore
+    i := i.contents + chunkSize
+  }
+  chunks
 }
 
 let make = (~sql: Postgres.sql, ~pgSchema, ~pgUser): Persistence.storage => {
@@ -187,12 +311,12 @@ let make = (~sql: Postgres.sql, ~pgSchema, ~pgUser): Persistence.storage => {
       switch ids {
       | [_] =>
         sql->Postgres.preparedUnsafe(
-          makeLoadByIdQuery(~pgSchema, ~tableName=table.tableName),
+          makeLoadByIdSql(~pgSchema, ~tableName=table.tableName),
           ids->Obj.magic,
         )
       | _ =>
         sql->Postgres.preparedUnsafe(
-          makeLoadByIdsQuery(~pgSchema, ~tableName=table.tableName),
+          makeLoadByIdsSql(~pgSchema, ~tableName=table.tableName),
           [ids]->Obj.magic,
         )
       }
@@ -217,9 +341,77 @@ let make = (~sql: Postgres.sql, ~pgSchema, ~pgUser): Persistence.storage => {
     }
   }
 
+  let setOrThrow = async (~items, ~table: Table.table, ~itemSchema) => {
+    if items->Array.length === 0 {
+      ()
+    } else {
+      // Get or create cached query for this table
+      let query = switch queryCache->Utils.WeakMap.get(table) {
+      | Some(cached) => cached
+      | None => {
+          let newQuery = makeTableBatchSetQuery(~pgSchema, ~table, ~itemSchema)
+          queryCache->Utils.WeakMap.set(table, newQuery)->ignore
+          newQuery
+        }
+      }
+
+      let sqlQuery = query["sql"]
+      let convertOrThrow = query["convertOrThrow"]
+      let needsChunking = query["needsChunking"]
+
+      if needsChunking {
+        // Chunk the items for VALUES-based queries
+        let chunks = chunkArray(items, ~chunkSize=maxItemsPerQuery)
+        let responses = []
+
+        chunks->Js.Array2.forEach(chunk => {
+          let convertedChunk = switch convertOrThrow(chunk) {
+          | exception exn =>
+            raise(
+              Persistence.StorageError({
+                message: `Failed to convert items for table "${table.tableName}"`,
+                reason: exn,
+              }),
+            )
+          | result => result
+          }
+
+          let response = sql->Postgres.preparedUnsafe(sqlQuery, convertedChunk->Obj.magic)
+          responses->Js.Array2.push(response)->ignore
+        })
+
+        let _ = await Promise.all(responses)
+      } else {
+        // Use UNNEST approach for single query
+        let convertedItems = switch convertOrThrow(items) {
+        | exception exn =>
+          raise(
+            Persistence.StorageError({
+              message: `Failed to convert items for table "${table.tableName}"`,
+              reason: exn,
+            }),
+          )
+        | result => result
+        }
+
+        switch await sql->Postgres.preparedUnsafe(sqlQuery, convertedItems->Obj.magic) {
+        | exception exn =>
+          raise(
+            Persistence.StorageError({
+              message: `Failed to insert items into table "${table.tableName}"`,
+              reason: exn,
+            }),
+          )
+        | _ => ()
+        }
+      }
+    }
+  }
+
   {
     isInitialized,
     initialize,
     loadByIdsOrThrow,
+    setOrThrow,
   }
 }

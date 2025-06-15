@@ -167,7 +167,7 @@ module RawEvents = {
   })
 
   let table = mkTable(
-    "raw_events",
+    PgStorage.rawEventsTableName,
     ~schemaName=publicSchema,
     ~fields=[
       mkField("chain_id", Integer, ~fieldSchema=S.int),
