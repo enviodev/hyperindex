@@ -24,6 +24,12 @@ type storage = {
     ~table: Table.table,
     ~rowsSchema: S.t<array<'item>>,
   ) => promise<array<'item>>,
+  @raises("StorageError")
+  setOrThrow: 'item. (
+    ~items: array<'item>,
+    ~table: Table.table,
+    ~itemSchema: S.t<'item>,
+  ) => promise<unit>,
 }
 
 exception StorageError({message: string, reason: exn})
