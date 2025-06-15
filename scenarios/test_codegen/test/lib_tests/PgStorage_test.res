@@ -1,11 +1,11 @@
 open RescriptMocha
 
 describe("Test PgStorage SQL generation functions", () => {
-  describe("makeCreateIndexSqlUnsafe", () => {
+  describe("makeCreateIndexSql", () => {
     Async.it(
       "Should create simple index SQL",
       async () => {
-        let sql = PgStorage.makeCreateIndexSqlUnsafe(
+        let sql = PgStorage.makeCreateIndexSql(
           ~tableName="test_table",
           ~indexFields=["field1"],
           ~pgSchema="test_schema",
@@ -22,7 +22,7 @@ describe("Test PgStorage SQL generation functions", () => {
     Async.it(
       "Should create composite index SQL",
       async () => {
-        let sql = PgStorage.makeCreateIndexSqlUnsafe(
+        let sql = PgStorage.makeCreateIndexSql(
           ~tableName="test_table",
           ~indexFields=["field1", "field2", "field3"],
           ~pgSchema="test_schema",
@@ -37,14 +37,11 @@ describe("Test PgStorage SQL generation functions", () => {
     )
   })
 
-  describe("makeCreateTableIndicesSqlUnsafe", () => {
+  describe("makeCreateTableIndicesSql", () => {
     Async.it(
       "Should create indices for A entity table",
       async () => {
-        let sql = PgStorage.makeCreateTableIndicesSqlUnsafe(
-          Entities.A.table,
-          ~pgSchema="test_schema",
-        )
+        let sql = PgStorage.makeCreateTableIndicesSql(Entities.A.table, ~pgSchema="test_schema")
 
         let expectedIndices = `CREATE INDEX IF NOT EXISTS "A_b_id" ON "test_schema"."A"("b_id");`
         Assert.equal(sql, expectedIndices, ~message="Indices SQL should match exactly")
@@ -54,10 +51,7 @@ describe("Test PgStorage SQL generation functions", () => {
     Async.it(
       "Should handle table with no indices",
       async () => {
-        let sql = PgStorage.makeCreateTableIndicesSqlUnsafe(
-          Entities.B.table,
-          ~pgSchema="test_schema",
-        )
+        let sql = PgStorage.makeCreateTableIndicesSql(Entities.B.table, ~pgSchema="test_schema")
 
         // B entity has no indexed fields, so should return empty string
         Assert.equal(sql, "", ~message="Should return empty string for table with no indices")
@@ -65,11 +59,11 @@ describe("Test PgStorage SQL generation functions", () => {
     )
   })
 
-  describe("makeCreateTableSqlUnsafe", () => {
+  describe("makeCreateTableSql", () => {
     Async.it(
       "Should create SQL for A entity table",
       async () => {
-        let sql = PgStorage.makeCreateTableSqlUnsafe(Entities.A.table, ~pgSchema="test_schema")
+        let sql = PgStorage.makeCreateTableSql(Entities.A.table, ~pgSchema="test_schema")
 
         let expectedTableSql = `CREATE TABLE IF NOT EXISTS "test_schema"."A"("b_id" TEXT NOT NULL, "id" TEXT NOT NULL, "optionalStringToTestLinkedEntities" TEXT, "db_write_timestamp" TIMESTAMP DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY("id"));`
         Assert.equal(sql, expectedTableSql, ~message="A table SQL should match exactly")
@@ -79,7 +73,7 @@ describe("Test PgStorage SQL generation functions", () => {
     Async.it(
       "Should create SQL for B entity table with derived fields",
       async () => {
-        let sql = PgStorage.makeCreateTableSqlUnsafe(Entities.B.table, ~pgSchema="test_schema")
+        let sql = PgStorage.makeCreateTableSql(Entities.B.table, ~pgSchema="test_schema")
 
         let expectedBTableSql = `CREATE TABLE IF NOT EXISTS "test_schema"."B"("c_id" TEXT, "id" TEXT NOT NULL, "db_write_timestamp" TIMESTAMP DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY("id"));`
         Assert.equal(sql, expectedBTableSql, ~message="B table SQL should match exactly")
@@ -89,7 +83,7 @@ describe("Test PgStorage SQL generation functions", () => {
     Async.it(
       "Should handle default values",
       async () => {
-        let sql = PgStorage.makeCreateTableSqlUnsafe(Entities.A.table, ~pgSchema="test_schema")
+        let sql = PgStorage.makeCreateTableSql(Entities.A.table, ~pgSchema="test_schema")
 
         let expectedDefaultTestSql = `CREATE TABLE IF NOT EXISTS "test_schema"."A"("b_id" TEXT NOT NULL, "id" TEXT NOT NULL, "optionalStringToTestLinkedEntities" TEXT, "db_write_timestamp" TIMESTAMP DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY("id"));`
         Assert.equal(
@@ -109,12 +103,12 @@ describe("Test PgStorage SQL generation functions", () => {
           module(Entities.A)->Entities.entityModToInternal,
           module(Entities.B)->Entities.entityModToInternal,
         ]
-        let staticTables = [TablesStatic.ChainMetadata.table]
+        let generalTables = [TablesStatic.ChainMetadata.table]
         let enums = [Enums.EntityType.config->Internal.fromGenericEnumConfig]
 
         let queries = PgStorage.makeInitializeTransaction(
           ~pgSchema="test_schema",
-          ~staticTables,
+          ~generalTables,
           ~entities,
           ~enums,
           ~cleanRun=true,
@@ -167,12 +161,12 @@ CREATE INDEX IF NOT EXISTS "A_b_id" ON "test_schema"."A"("b_id");`
       "Should create conditional initialization queries without clean run",
       async () => {
         let entities = [module(Entities.A)->Entities.entityModToInternal]
-        let staticTables = [TablesStatic.ChainMetadata.table]
+        let generalTables = [TablesStatic.ChainMetadata.table]
         let enums = [Enums.EntityType.config->Internal.fromGenericEnumConfig]
 
         let queries = PgStorage.makeInitializeTransaction(
           ~pgSchema="test_schema",
-          ~staticTables,
+          ~generalTables,
           ~entities,
           ~enums,
           ~cleanRun=false,
@@ -211,7 +205,7 @@ CREATE INDEX IF NOT EXISTS "A_history_serial" ON "test_schema"."A_history"("seri
       async () => {
         let queries = PgStorage.makeInitializeTransaction(
           ~pgSchema="test_schema",
-          ~staticTables=[],
+          ~generalTables=[],
           ~entities=[],
           ~enums=[],
           ~cleanRun=true,
@@ -246,7 +240,7 @@ GRANT ALL ON SCHEMA "test_schema" TO public;`
 
         let queries = PgStorage.makeInitializeTransaction(
           ~pgSchema="public",
-          ~staticTables=[],
+          ~generalTables=[],
           ~entities,
           ~enums=[],
           ~cleanRun=true,
@@ -279,6 +273,62 @@ CREATE INDEX IF NOT EXISTS "A_history_serial" ON "public"."A_history"("serial");
         Assert.ok(
           functionsQuery->Js.String2.includes(`CREATE OR REPLACE FUNCTION "insert_A_history"`),
           ~message="Should contain A history function definition",
+        )
+      },
+    )
+  })
+
+  describe("makeLoadByIdSql", () => {
+    Async.it(
+      "Should create correct SQL for loading single record by ID",
+      async () => {
+        let sql = PgStorage.makeLoadByIdSql(~pgSchema="test_schema", ~tableName="users")
+
+        Assert.equal(
+          sql,
+          `SELECT * FROM "test_schema"."users" WHERE id = $1 LIMIT 1;`,
+          ~message="Should generate correct single ID query SQL",
+        )
+      },
+    )
+
+    Async.it(
+      "Should handle different schema and table names",
+      async () => {
+        let sql = PgStorage.makeLoadByIdSql(~pgSchema="public", ~tableName="A")
+
+        Assert.equal(
+          sql,
+          `SELECT * FROM "public"."A" WHERE id = $1 LIMIT 1;`,
+          ~message="Should generate correct SQL with different schema and table names",
+        )
+      },
+    )
+  })
+
+  describe("makeLoadByIdsSql", () => {
+    Async.it(
+      "Should create correct SQL for loading multiple records by IDs",
+      async () => {
+        let sql = PgStorage.makeLoadByIdsSql(~pgSchema="test_schema", ~tableName="users")
+
+        Assert.equal(
+          sql,
+          `SELECT * FROM "test_schema"."users" WHERE id = ANY($1::text[]);`,
+          ~message="Should generate correct multiple IDs query SQL",
+        )
+      },
+    )
+
+    Async.it(
+      "Should handle different schema and table names",
+      async () => {
+        let sql = PgStorage.makeLoadByIdsSql(~pgSchema="production", ~tableName="entities")
+
+        Assert.equal(
+          sql,
+          `SELECT * FROM "production"."entities" WHERE id = ANY($1::text[]);`,
+          ~message="Should generate correct SQL with different schema and table names",
         )
       },
     )

@@ -7,3 +7,20 @@ alwaysApply: false
 - Never suggest ReasonML syntax.
 - Never use `[| item |]` to create an array. Use `[ item ]` instead.
 - Must always use `=` for setting value to a field. Use `:=` only for ref values created using `ref` function.
+- ReScript has record types which require a type definition before hand. You can access record fields by dot like `foo.myField`:
+```rescript
+type foo = {
+  myField: string
+}
+
+fooValue.myField
+```
+- It's also possible to define an inline object, it'll have quotedfields in this case:
+```rescript
+let objValue = {
+  "myField": "value",
+}
+let fieldValue = objValue["myField"]
+```
+- Use records when working with a structured data, and objects to conviniently pass payload data between functions.
+- Never use %raw to access object fields if you know the type.
