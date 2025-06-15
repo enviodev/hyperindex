@@ -52,7 +52,14 @@ let makeCreateTableSqlUnsafe = (table: Table.table, ~pgSchema) => {
       : ""});`
 }
 
-let makeInitializeTransaction = (~pgSchema, ~staticTables, ~entities, ~enums, ~cleanRun) => {
+let makeInitializeTransaction = (
+  ~pgSchema,
+  ~pgUser,
+  ~staticTables,
+  ~entities,
+  ~enums,
+  ~cleanRun,
+) => {
   let allTables = staticTables->Array.copy
   let allEntityTables = []
   entities->Js.Array2.forEach((entity: Internal.entityConfig) => {
@@ -69,7 +76,7 @@ let makeInitializeTransaction = (~pgSchema, ~staticTables, ~entities, ~enums, ~c
 CREATE SCHEMA "${pgSchema}";`
         : `CREATE SCHEMA IF NOT EXISTS "${pgSchema}";`
     ) ++
-    `GRANT ALL ON SCHEMA "${pgSchema}" TO postgres;
+    `GRANT ALL ON SCHEMA "${pgSchema}" TO ${pgUser};
 GRANT ALL ON SCHEMA "${pgSchema}" TO public;`,
   )
 
@@ -141,7 +148,7 @@ END IF;`
   ]->Js.Array2.concat(functionsQuery.contents !== "" ? [functionsQuery.contents] : [])
 }
 
-let make = (~sql: Postgres.sql, ~pgSchema): Persistence.storage => {
+let make = (~sql: Postgres.sql, ~pgSchema, ~pgUser): Persistence.storage => {
   let isInitialized = async () => {
     let schemas =
       await sql->Postgres.unsafe(
@@ -151,7 +158,14 @@ let make = (~sql: Postgres.sql, ~pgSchema): Persistence.storage => {
   }
 
   let initialize = async (~entities, ~staticTables, ~enums, ~cleanRun) => {
-    let queries = makeInitializeTransaction(~pgSchema, ~staticTables, ~entities, ~enums, ~cleanRun)
+    let queries = makeInitializeTransaction(
+      ~pgSchema,
+      ~pgUser,
+      ~staticTables,
+      ~entities,
+      ~enums,
+      ~cleanRun,
+    )
     // Execute all queries within a single transaction for integrity
     let _ = await sql->Postgres.beginSql(sql => {
       queries->Js.Array2.map(query => sql->Postgres.unsafe(query))

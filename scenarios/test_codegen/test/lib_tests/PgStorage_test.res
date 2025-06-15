@@ -114,6 +114,7 @@ describe("Test PgStorage SQL generation functions", () => {
 
         let queries = PgStorage.makeInitializeTransaction(
           ~pgSchema="test_schema",
+          ~pgUser="postgres",
           ~staticTables,
           ~entities,
           ~enums,
@@ -172,6 +173,7 @@ CREATE INDEX IF NOT EXISTS "A_b_id" ON "test_schema"."A"("b_id");`
 
         let queries = PgStorage.makeInitializeTransaction(
           ~pgSchema="test_schema",
+          ~pgUser="postgres",
           ~staticTables,
           ~entities,
           ~enums,
@@ -211,6 +213,7 @@ CREATE INDEX IF NOT EXISTS "A_history_serial" ON "test_schema"."A_history"("seri
       async () => {
         let queries = PgStorage.makeInitializeTransaction(
           ~pgSchema="test_schema",
+          ~pgUser="postgres",
           ~staticTables=[],
           ~entities=[],
           ~enums=[],
@@ -246,6 +249,7 @@ GRANT ALL ON SCHEMA "test_schema" TO public;`
 
         let queries = PgStorage.makeInitializeTransaction(
           ~pgSchema="public",
+          ~pgUser="postgres",
           ~staticTables=[],
           ~entities,
           ~enums=[],
