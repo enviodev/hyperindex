@@ -335,4 +335,89 @@ CREATE INDEX IF NOT EXISTS "A_history_serial" ON "public"."A_history"("serial");
       },
     )
   })
+
+  describe("makeInsertUnnestSetSql", () => {
+    Async.it(
+      "Should create correct SQL for inserting with unnest",
+      async () => {
+        let sql = PgStorage.makeInsertUnnestSetSql(
+          ~pgSchema="test_schema",
+          ~table=Entities.A.table,
+          ~itemSchema=Entities.A.schema,
+          ~isRawEvents=false,
+        )
+
+        let expectedSql = `INSERT INTO "test_schema"."A" ("b_id", "id", "optionalStringToTestLinkedEntities")
+SELECT * FROM unnest($1::TEXT[],$2::TEXT[],$3::TEXT[])ON CONFLICT("id") DO UPDATE SET "b_id" = EXCLUDED."b_id","optionalStringToTestLinkedEntities" = EXCLUDED."optionalStringToTestLinkedEntities";`
+
+        Assert.equal(sql, expectedSql, ~message="Should generate correct unnest insert SQL")
+      },
+    )
+
+    Async.it(
+      "Should handle raw events table correctly",
+      async () => {
+        let sql = PgStorage.makeInsertUnnestSetSql(
+          ~pgSchema="test_schema",
+          ~table=Entities.A.table,
+          ~itemSchema=Entities.A.schema,
+          ~isRawEvents=true,
+        )
+
+        let expectedSql = `INSERT INTO "test_schema"."A" ("b_id", "id", "optionalStringToTestLinkedEntities")
+SELECT * FROM unnest($1::TEXT[],$2::TEXT[],$3::TEXT[]);`
+
+        Assert.equal(
+          sql,
+          expectedSql,
+          ~message="Should generate correct unnest insert SQL for raw events",
+        )
+      },
+    )
+  })
+
+  describe("makeInsertValuesSetSql", () => {
+    Async.it(
+      "Should create correct SQL for inserting with values",
+      async () => {
+        let sql = PgStorage.makeInsertValuesSetSql(
+          ~pgSchema="test_schema",
+          ~table=Entities.A.table,
+          ~itemSchema=Entities.A.schema,
+          ~itemsCount=2,
+        )
+
+        let expectedSql = `INSERT INTO "test_schema"."A" ("b_id", "id", "optionalStringToTestLinkedEntities")
+VALUES($1,$3,$5),($2,$4,$6)ON CONFLICT("id") DO UPDATE SET "b_id" = EXCLUDED."b_id","optionalStringToTestLinkedEntities" = EXCLUDED."optionalStringToTestLinkedEntities";`
+
+        Assert.equal(
+          sql,
+          expectedSql,
+          ~message=`Should generate correct values insert SQL.
+        The $x in the order, because we flatten unnested entities for the query`,
+        )
+      },
+    )
+
+    Async.it(
+      "Should handle table without primary key",
+      async () => {
+        let sql = PgStorage.makeInsertValuesSetSql(
+          ~pgSchema="test_schema",
+          ~table=Entities.B.table,
+          ~itemSchema=Entities.B.schema,
+          ~itemsCount=1,
+        )
+
+        let expectedSql = `INSERT INTO "test_schema"."B" ("c_id", "id")
+VALUES($1,$2)ON CONFLICT("id") DO UPDATE SET "c_id" = EXCLUDED."c_id";`
+
+        Assert.equal(
+          sql,
+          expectedSql,
+          ~message="Should generate correct values insert SQL for table without primary key",
+        )
+      },
+    )
+  })
 })

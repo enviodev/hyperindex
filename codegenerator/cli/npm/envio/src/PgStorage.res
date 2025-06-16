@@ -211,7 +211,7 @@ let makeInsertValuesSetSql = (~pgSchema, ~table: Table.table, ~itemSchema, ~item
   }
 
   `INSERT INTO "${pgSchema}"."${table.tableName}" (${quotedFieldNames->Js.Array2.joinWith(", ")})
-VALUES ${placeholders.contents}` ++
+VALUES${placeholders.contents}` ++
   switch primaryKeyFieldNames {
   | [] => ``
   | primaryKeyFieldNames =>
