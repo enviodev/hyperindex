@@ -120,10 +120,6 @@ module EventSyncState = {
   }
 }
 
-module RawEvents = {
-  let batchSet = makeTableBatchSet(TablesStatic.RawEvents.table, TablesStatic.RawEvents.schema)
-}
-
 module DynamicContractRegistry = {
   @module("./DbFunctionsImplementation.js")
   external deleteInvalidDynamicContractsOnRestart: (

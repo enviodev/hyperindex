@@ -50,6 +50,9 @@ let makeStorageMock = () => {
       loadByIdsOrThrow: (~ids as _, ~table as _, ~rowsSchema as _) => {
         Js.Exn.raiseError("Not implemented")
       },
+      setOrThrow: (~items as _, ~table as _, ~itemSchema as _) => {
+        Js.Exn.raiseError("Not implemented")
+      },
     },
   }
 }

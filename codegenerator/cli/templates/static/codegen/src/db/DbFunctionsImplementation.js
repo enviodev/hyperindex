@@ -16,14 +16,6 @@ const chunkBatchQuery = (queryToExecute) => async (sql, entityDataArray) => {
   return Promise.all(responses);
 };
 
-const commaSeparateDynamicMapQuery = (sql, dynQueryConstructors) =>
-  sql`${dynQueryConstructors.map(
-    (constrQuery, i) =>
-      sql`${constrQuery(sql)}${
-        i === dynQueryConstructors.length - 1 ? sql`` : sql`, `
-      }`
-  )}`;
-
 module.exports.batchDeleteItemsInTable = (table, sql, pkArray) => {
   const primaryKeyFieldNames = TableModule.getPrimaryKeyFieldNames(table);
 

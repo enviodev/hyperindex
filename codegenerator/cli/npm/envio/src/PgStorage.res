@@ -55,10 +55,10 @@ let makeCreateTableSql = (table: Table.table, ~pgSchema) => {
 let makeInitializeTransaction = (
   ~pgSchema,
   ~pgUser,
-  ~generalTables,
-  ~entities,
-  ~enums,
-  ~cleanRun,
+  ~generalTables=[],
+  ~entities=[],
+  ~enums=[],
+  ~cleanRun=false,
 ) => {
   let allTables = generalTables->Array.copy
   let allEntityTables = []
@@ -188,23 +188,33 @@ SELECT * FROM unnest(${arrayFieldTypes
   } ++ ";"
 }
 
-let makeInsertValuesSetSql = (~pgSchema, ~table: Table.table, ~itemSchema, ~isRawEvents) => {
+let makeInsertValuesSetSql = (~pgSchema, ~table: Table.table, ~itemSchema, ~itemsCount) => {
   let {quotedFieldNames, quotedNonPrimaryFieldNames} = table->Table.toSqlParams(~schema=itemSchema)
 
   let primaryKeyFieldNames = Table.getPrimaryKeyFieldNames(table)
+  let fieldsCount = quotedFieldNames->Array.length
 
   // Create placeholder variables for the VALUES clause - using $1, $2, etc.
-  let placeholders =
-    quotedFieldNames
-    ->Belt.Array.mapWithIndex((idx, _) => `$${(idx + 1)->Js.Int.toString}`)
-    ->Js.Array2.joinWith(", ")
+  let placeholders = ref("")
+  for idx in 1 to itemsCount {
+    if idx > 1 {
+      placeholders := placeholders.contents ++ ","
+    }
+    placeholders := placeholders.contents ++ "("
+    for fieldIdx in 0 to fieldsCount - 1 {
+      if fieldIdx > 0 {
+        placeholders := placeholders.contents ++ ","
+      }
+      placeholders := placeholders.contents ++ `$${(fieldIdx * itemsCount + idx)->Js.Int.toString}`
+    }
+    placeholders := placeholders.contents ++ ")"
+  }
 
   `INSERT INTO "${pgSchema}"."${table.tableName}" (${quotedFieldNames->Js.Array2.joinWith(", ")})
-VALUES (${placeholders})` ++
-  switch (isRawEvents, primaryKeyFieldNames) {
-  | (true, _)
-  | (_, []) => ``
-  | (false, primaryKeyFieldNames) =>
+VALUES ${placeholders.contents}` ++
+  switch primaryKeyFieldNames {
+  | [] => ``
+  | primaryKeyFieldNames =>
     `ON CONFLICT(${primaryKeyFieldNames
       ->Js.Array2.map(fieldName => `"${fieldName}"`)
       ->Js.Array2.joinWith(",")}) DO ` ++ (
@@ -227,6 +237,9 @@ VALUES (${placeholders})` ++
 // FIXME what about Fuel params?
 let rawEventsTableName = "raw_events"
 
+// Constants for chunking
+let maxItemsPerQuery = 500
+
 let makeTableBatchSetQuery = (~pgSchema, ~table: Table.table, ~itemSchema: S.t<'item>) => {
   let {dbSchema, hasArrayField} = table->Table.toSqlParams(~schema=itemSchema)
   let isRawEvents = table.tableName === rawEventsTableName
@@ -248,28 +261,24 @@ let makeTableBatchSetQuery = (~pgSchema, ~table: Table.table, ~itemSchema: S.t<'
         ~mode=Sync,
         ~typeValidation,
       ),
-      "needsChunking": false,
+      "isInsertValues": false,
     }
   } else {
     {
-      "sql": makeInsertValuesSetSql(~pgSchema, ~table, ~itemSchema, ~isRawEvents),
+      "sql": makeInsertValuesSetSql(~pgSchema, ~table, ~itemSchema, ~itemsCount=maxItemsPerQuery),
       "convertOrThrow": S.compile(
-        S.array(itemSchema),
+        S.unnest(itemSchema)->S.preprocess(_ => {
+          serializer: Utils.Array.flatten->Utils.magic,
+        }),
         ~input=Value,
         ~output=Unknown,
         ~mode=Sync,
         ~typeValidation,
       ),
-      "needsChunking": true,
+      "isInsertValues": true,
     }
   }
 }
-
-// WeakMap for caching table batch set queries
-let queryCache = Utils.WeakMap.make()
-
-// Constants for chunking
-let maxItemsPerQuery = 500
 
 let chunkArray = (arr: array<'a>, ~chunkSize) => {
   let chunks = []
@@ -280,6 +289,90 @@ let chunkArray = (arr: array<'a>, ~chunkSize) => {
     i := i.contents + chunkSize
   }
   chunks
+}
+
+// WeakMap for caching table batch set queries
+let setQueryCache = Utils.WeakMap.make()
+let setOrThrow = async (sql, ~items, ~table: Table.table, ~itemSchema, ~pgSchema) => {
+  if items->Array.length === 0 {
+    ()
+  } else {
+    // Get or create cached query for this table
+    let query = switch setQueryCache->Utils.WeakMap.get(table) {
+    | Some(cached) => cached
+    | None => {
+        let newQuery = makeTableBatchSetQuery(
+          ~pgSchema,
+          ~table,
+          ~itemSchema=itemSchema->S.toUnknown,
+        )
+        setQueryCache->Utils.WeakMap.set(table, newQuery)->ignore
+        newQuery
+      }
+    }
+
+    let sqlQuery = query["sql"]
+
+    try {
+      let payload =
+        query["convertOrThrow"](items->(Utils.magic: array<'item> => array<unknown>))->(
+          Utils.magic: unknown => array<unknown>
+        )
+
+      if query["isInsertValues"] {
+        let fieldsCount = switch itemSchema->S.classify {
+        | S.Object({items}) => items->Array.length
+        | _ => Js.Exn.raiseError("Expected an object schema for table")
+        }
+
+        // Chunk the items for VALUES-based queries
+        // We need to multiply by fields count,
+        // because we flattened our entity values with S.unnest
+        // to optimize the query execution.
+        let maxChunkSize = maxItemsPerQuery * fieldsCount
+        let chunks = chunkArray(payload, ~chunkSize=maxChunkSize)
+        let responses = []
+        chunks->Js.Array2.forEach(chunk => {
+          let chunkSize = chunk->Array.length
+          let isFullChunk = chunkSize === maxChunkSize
+
+          let response = sql->Postgres.preparedUnsafe(
+            // Either use the sql query for full chunks from cache
+            // or create a new one for partial chunks on the fly.
+            isFullChunk
+              ? sqlQuery
+              : makeInsertValuesSetSql(
+                  ~pgSchema,
+                  ~table,
+                  ~itemSchema,
+                  ~itemsCount=chunkSize / fieldsCount,
+                ),
+            chunk->Utils.magic,
+          )
+          responses->Js.Array2.push(response)->ignore
+        })
+        let _ = await Promise.all(responses)
+      } else {
+        // Use UNNEST approach for single query
+        await sql->Postgres.preparedUnsafe(sqlQuery, payload->Obj.magic)
+      }
+    } catch {
+    | S.Raised(_) as exn =>
+      raise(
+        Persistence.StorageError({
+          message: `Failed to convert items for table "${table.tableName}"`,
+          reason: exn,
+        }),
+      )
+    | exn =>
+      raise(
+        Persistence.StorageError({
+          message: `Failed to insert items into table "${table.tableName}"`,
+          reason: exn,
+        }),
+      )
+    }
+  }
 }
 
 let make = (~sql: Postgres.sql, ~pgSchema, ~pgUser): Persistence.storage => {
@@ -341,71 +434,19 @@ let make = (~sql: Postgres.sql, ~pgSchema, ~pgUser): Persistence.storage => {
     }
   }
 
-  let setOrThrow = async (~items, ~table: Table.table, ~itemSchema) => {
-    if items->Array.length === 0 {
-      ()
-    } else {
-      // Get or create cached query for this table
-      let query = switch queryCache->Utils.WeakMap.get(table) {
-      | Some(cached) => cached
-      | None => {
-          let newQuery = makeTableBatchSetQuery(~pgSchema, ~table, ~itemSchema)
-          queryCache->Utils.WeakMap.set(table, newQuery)->ignore
-          newQuery
-        }
-      }
-
-      let sqlQuery = query["sql"]
-      let convertOrThrow = query["convertOrThrow"]
-      let needsChunking = query["needsChunking"]
-
-      if needsChunking {
-        // Chunk the items for VALUES-based queries
-        let chunks = chunkArray(items, ~chunkSize=maxItemsPerQuery)
-        let responses = []
-
-        chunks->Js.Array2.forEach(chunk => {
-          let convertedChunk = switch convertOrThrow(chunk) {
-          | exception exn =>
-            raise(
-              Persistence.StorageError({
-                message: `Failed to convert items for table "${table.tableName}"`,
-                reason: exn,
-              }),
-            )
-          | result => result
-          }
-
-          let response = sql->Postgres.preparedUnsafe(sqlQuery, convertedChunk->Obj.magic)
-          responses->Js.Array2.push(response)->ignore
-        })
-
-        let _ = await Promise.all(responses)
-      } else {
-        // Use UNNEST approach for single query
-        let convertedItems = switch convertOrThrow(items) {
-        | exception exn =>
-          raise(
-            Persistence.StorageError({
-              message: `Failed to convert items for table "${table.tableName}"`,
-              reason: exn,
-            }),
-          )
-        | result => result
-        }
-
-        switch await sql->Postgres.preparedUnsafe(sqlQuery, convertedItems->Obj.magic) {
-        | exception exn =>
-          raise(
-            Persistence.StorageError({
-              message: `Failed to insert items into table "${table.tableName}"`,
-              reason: exn,
-            }),
-          )
-        | _ => ()
-        }
-      }
-    }
+  let setOrThrow = (
+    type item,
+    ~items: array<item>,
+    ~table: Table.table,
+    ~itemSchema: S.t<item>,
+  ) => {
+    setOrThrow(
+      sql,
+      ~items=items->(Utils.magic: array<item> => array<unknown>),
+      ~table,
+      ~itemSchema=itemSchema->S.toUnknown,
+      ~pgSchema,
+    )
   }
 
   {

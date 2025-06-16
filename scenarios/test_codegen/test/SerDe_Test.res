@@ -56,9 +56,14 @@ describe("SerDe Test", () => {
     }
 
     //Fails if serialziation does not work
-    let set = DbFunctionsEntities.batchSet(
-      ~entityConfig=module(Entities.EntityWithAllTypes)->Entities.entityModToInternal,
-    )
+    let set = (sql, items) =>
+      sql->PgStorage.setOrThrow(
+        ~items,
+        ~table=Entities.EntityWithAllTypes.table,
+        ~itemSchema=Entities.EntityWithAllTypes.schema,
+        ~pgSchema=Config.storagePgSchema,
+      )
+
     //Fails if parsing does not work
     let read = ids =>
       storage.loadByIdsOrThrow(
@@ -115,11 +120,12 @@ describe("SerDe Test", () => {
       `CREATE TABLE IF NOT EXISTS "public"."EntityWithAllNonArrayTypes"("bigDecimal" NUMERIC NOT NULL, "bigInt" NUMERIC NOT NULL, "bool" BOOLEAN NOT NULL, "float_" DOUBLE PRECISION NOT NULL, "id" TEXT NOT NULL, "int_" INTEGER NOT NULL, "optBigDecimal" NUMERIC, "optBigInt" NUMERIC, "optBool" BOOLEAN, "optFloat" DOUBLE PRECISION, "optInt" INTEGER, "optString" TEXT, "string" TEXT NOT NULL, "db_write_timestamp" TIMESTAMP DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY("id"));`,
       createQuery,
     )
-    let query =
-      Entities.EntityWithAllNonArrayTypes.table->DbFunctions.internalMakeEntityUnnestUnsafeSql(
-        ~schema=Entities.EntityWithAllNonArrayTypes.schema,
-        ~isRawEvents=false,
-      )
+    let query = PgStorage.makeInsertUnnestSetSql(
+      ~table=Entities.EntityWithAllNonArrayTypes.table,
+      ~itemSchema=Entities.EntityWithAllNonArrayTypes.schema,
+      ~isRawEvents=false,
+      ~pgSchema="public",
+    )
 
     Assert.equal(
       query,
@@ -159,9 +165,15 @@ SELECT * FROM unnest($1::NUMERIC[],$2::NUMERIC[],$3::INTEGER[]::BOOLEAN[],$4::DO
     }
 
     //Fails if serialziation does not work
-    let set = DbFunctionsEntities.batchSet(
-      ~entityConfig=module(Entities.EntityWithAllNonArrayTypes)->Entities.entityModToInternal,
-    )
+    let set = (sql, items) => {
+      sql->PgStorage.setOrThrow(
+        ~items,
+        ~table=Entities.EntityWithAllNonArrayTypes.table,
+        ~itemSchema=Entities.EntityWithAllNonArrayTypes.schema,
+        ~pgSchema="public",
+      )
+    }
+
     //Fails if parsing does not work
     let read = ids =>
       storage.loadByIdsOrThrow(

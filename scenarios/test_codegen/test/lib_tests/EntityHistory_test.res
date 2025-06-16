@@ -597,12 +597,15 @@ describe("Entity history rollbacks", () => {
 
       let _ = await Db.sql->Postgres.unsafe(TestEntity.entityHistory.createInsertFnQuery)
 
-      try await Db.sql->DbFunctionsEntities.batchSet(
-        ~entityConfig=module(TestEntity)->Entities.entityModToInternal,
-      )([
-        Mocks.Entity.mockEntity1->TestEntity.castToInternal,
-        Mocks.Entity.mockEntity5->TestEntity.castToInternal,
-      ]) catch {
+      try await Db.sql->PgStorage.setOrThrow(
+        ~items=[
+          Mocks.Entity.mockEntity1->TestEntity.castToInternal,
+          Mocks.Entity.mockEntity5->TestEntity.castToInternal,
+        ],
+        ~table=TestEntity.table,
+        ~itemSchema=TestEntity.schema,
+        ~pgSchema=Config.storagePgSchema,
+      ) catch {
       | exn =>
         Js.log2("batchSet mock entity exn", exn)
         Assert.fail("Failed to set mock entity in table")
@@ -700,9 +703,12 @@ describe("Entity history rollbacks", () => {
 
   Async.it("Prunes history correctly with items in reorg threshold", async () => {
     // set the current entity of id 3
-    await Db.sql->DbFunctionsEntities.batchSet(
-      ~entityConfig=module(TestEntity)->Entities.entityModToInternal,
-    )([Mocks.Entity.mockEntity7->TestEntity.castToInternal])
+    await Db.sql->PgStorage.setOrThrow(
+      ~items=[Mocks.Entity.mockEntity7->TestEntity.castToInternal],
+      ~table=TestEntity.table,
+      ~itemSchema=TestEntity.schema,
+      ~pgSchema=Config.storagePgSchema,
+    )
 
     // set an updated version of its row to get a copied entity history
     try await Db.sql->Postgres.beginSql(
