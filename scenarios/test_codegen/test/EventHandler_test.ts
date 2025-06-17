@@ -250,4 +250,31 @@ describe("Use Envio test framework to test event handlers", () => {
       }
     );
   });
+
+  it("entity.set should be ignored in unordered loader run", async () => {
+    const mockDbInitial = MockDb.createMockDb();
+
+    const dcAddress = "0x1234567890123456789012345678901234567890";
+
+    const event = Gravatar.FactoryEvent.createMockEvent({
+      contract: dcAddress,
+      testCase: "loaderSetCount",
+    });
+
+    const updatedMockDb = await Gravatar.FactoryEvent.processEvent({
+      event: event,
+      mockDb: mockDbInitial,
+    });
+
+    const users = updatedMockDb.entities.User.getAll();
+    assert.deepEqual(users, [
+      {
+        id: "0",
+        address: "0x",
+        updatesCountOnUserForTesting: 0,
+        gravatar_id: undefined,
+        accountType: "USER",
+      },
+    ] satisfies typeof users);
+  });
 });

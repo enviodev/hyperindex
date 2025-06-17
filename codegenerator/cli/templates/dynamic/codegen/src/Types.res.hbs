@@ -17,6 +17,9 @@ type entityLoaderContext<'entity, 'indexedFieldOperations> = {
   get: id => promise<option<'entity>>,
   getOrThrow: (id, ~message: string=?) => promise<'entity>,
   getWhere: 'indexedFieldOperations,
+  getOrCreate: ('entity) => promise<'entity>,
+  set: 'entity => unit,
+  deleteUnsafe: id => unit,
 }
 
 @genType.import(("./Types.ts", "LoaderContext"))

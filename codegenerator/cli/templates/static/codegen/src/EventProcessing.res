@@ -114,7 +114,8 @@ let runEventHandlerOrThrow = async (
           eventItem,
           inMemoryStore,
           loadLayer,
-          shouldGroup: false,
+          unorderedRun: false,
+          shouldSaveHistory,
         }),
       )
     } catch {
@@ -138,7 +139,7 @@ let runEventHandlerOrThrow = async (
           inMemoryStore,
           loadLayer,
           shouldSaveHistory,
-          shouldGroup: false,
+          unorderedRun: false,
         },
         ~loaderReturn,
       ),
@@ -213,7 +214,8 @@ let runBatchLoadersOrThrow = async (
                 eventItem,
                 inMemoryStore,
                 loadLayer,
-                shouldGroup: true,
+                unorderedRun: true,
+                shouldSaveHistory: false,
               }),
               // Must have Promise.catch as well as normal catch,
               // because if user throws an error before await in the handler,

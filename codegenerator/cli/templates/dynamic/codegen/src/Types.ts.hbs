@@ -29,6 +29,21 @@ export type LoaderContext = {
      */
     readonly getOrThrow: (id: string, message?: string) => Promise<Entities.{{entity.name.capitalized}}_t>,
     readonly getWhere: Entities.{{entity.name.capitalized}}_indexedFieldOperations,
+    /**
+     * Returns the entity {{entity.name.original}} from the storage by ID.
+     * If the entity is not found, creates it using provided parameters and returns it.
+     */
+    readonly getOrCreate: (entity: Entities.{{entity.name.capitalized}}_t) => Promise<Entities.{{entity.name.capitalized}}_t>,
+    /**
+     * Set the entity {{entity.name.original}} in the storage.
+     */
+    readonly set: (entity: Entities.{{entity.name.capitalized}}_t) => void,
+    /**
+     * Delete the entity {{entity.name.original}} from the storage.
+     *
+     * The 'deleteUnsafe' method is experimental and unsafe. You should manually handle all entity references after deletion to maintain database consistency.
+     */
+    readonly deleteUnsafe: (id: string) => void,
   }
   {{/each}}
 };
