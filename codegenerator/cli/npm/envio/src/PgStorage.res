@@ -76,7 +76,7 @@ let makeInitializeTransaction = (
 CREATE SCHEMA "${pgSchema}";`
         : `CREATE SCHEMA IF NOT EXISTS "${pgSchema}";`
     ) ++
-    `GRANT ALL ON SCHEMA "${pgSchema}" TO ${pgUser};
+    `GRANT ALL ON SCHEMA "${pgSchema}" TO "${pgUser}";
 GRANT ALL ON SCHEMA "${pgSchema}" TO public;`,
   )
 
