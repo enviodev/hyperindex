@@ -24,14 +24,14 @@ describe("Load and save an entity with a BigDecimal from DB", () => {
       bigDecimal: BigDecimal.fromFloat(654.321),
     }
 
-    await DbFunctionsEntities.batchSet(
-      ~entityConfig=module(Entities.EntityWithBigDecimal)->Entities.entityModToInternal,
-    )(
-      sql,
-      [
+    await sql->PgStorage.setOrThrow(
+      ~items=[
         testEntity1->Entities.EntityWithBigDecimal.castToInternal,
         testEntity2->Entities.EntityWithBigDecimal.castToInternal,
       ],
+      ~table=Entities.EntityWithBigDecimal.table,
+      ~itemSchema=Entities.EntityWithBigDecimal.schema,
+      ~pgSchema=Config.storagePgSchema,
     )
 
     let inMemoryStore = InMemoryStore.make()

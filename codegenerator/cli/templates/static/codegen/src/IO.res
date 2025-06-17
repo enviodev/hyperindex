@@ -109,7 +109,12 @@ let executeSetEntityWithHistory = (
   [
     entityConfig.entityHistory->EntityHistory.batchInsertRows(~sql, ~rows=orderedHistoryItems),
     if entitiesToSet->Array.length > 0 {
-      sql->DbFunctionsEntities.batchSet(~entityConfig)(entitiesToSet)
+      sql->PgStorage.setOrThrow(
+        ~items=entitiesToSet,
+        ~table=entityConfig.table,
+        ~itemSchema=entityConfig.schema,
+        ~pgSchema=Config.storagePgSchema,
+      )
     } else {
       Promise.resolve()
     },
@@ -147,7 +152,14 @@ let executeDbFunctionsEntity = (
   let promises =
     (
       entitiesToSet->Array.length > 0
-        ? [sql->DbFunctionsEntities.batchSet(~entityConfig)(entitiesToSet)]
+        ? [
+            sql->PgStorage.setOrThrow(
+              ~items=entitiesToSet,
+              ~table=entityConfig.table,
+              ~itemSchema=entityConfig.schema,
+              ~pgSchema=Config.storagePgSchema,
+            ),
+          ]
         : []
     )->Belt.Array.concat(
       idsToDelete->Array.length > 0
@@ -172,7 +184,14 @@ let executeBatch = async (sql, ~inMemoryStore: InMemoryStore.t, ~isInReorgThresh
 
   let setRawEvents = executeSet(
     _,
-    ~dbFunction=DbFunctions.RawEvents.batchSet,
+    ~dbFunction=(sql, items) => {
+      sql->PgStorage.setOrThrow(
+        ~items,
+        ~table=TablesStatic.RawEvents.table,
+        ~itemSchema=TablesStatic.RawEvents.schema,
+        ~pgSchema=Config.storagePgSchema,
+      )
+    },
     ~items=inMemoryStore.rawEvents->InMemoryTable.values,
   )
 

@@ -78,6 +78,7 @@ let getSyncConfig = (
   }
 }
 
+let storagePgSchema = Env.Db.publicSchema
 let codegenPersistence = Persistence.make(
   ~userEntities=Entities.userEntities,
   ~staticTables=Db.allStaticTables,
@@ -85,7 +86,8 @@ let codegenPersistence = Persistence.make(
     TablesStatic.DynamicContractRegistry
   )->Entities.entityModToInternal,
   ~allEnums=Enums.allEnums,
-  ~storage=PgStorage.make(~sql=Db.sql, ~pgSchema=Env.Db.publicSchema, ~pgUser=Env.Db.user),
+  ~storage=PgStorage.make(~sql=Db.sql, ~pgSchema=storagePgSchema, ~pgUser=Env.Db.user),
+  ~cacheStorage=PgStorage.make(~sql=Db.sql, ~pgSchema=Env.Db.cacheSchema, ~pgUser=Env.Db.user),
   ~onStorageInitialize=() => {
     Hasura.trackDatabase(
       ~endpoint=Env.Hasura.graphqlEndpoint,
@@ -93,14 +95,17 @@ let codegenPersistence = Persistence.make(
         role: Env.Hasura.role,
         secret: Env.Hasura.secret,
       },
-      ~pgSchema=Env.Db.publicSchema,
+      ~pgSchema=storagePgSchema,
       ~allStaticTables=Db.allStaticTables,
       ~allEntityTables=Db.allEntityTables,
       ~responseLimit=Env.Hasura.responseLimit,
       ~schema=Db.schema,
       ~aggregateEntities=Env.Hasura.aggregateEntities,
     )->Promise.catch(err => {
-      Logging.errorWithExn(err->Internal.prettifyExn, `EE803: Error tracking tables`)->Promise.resolve
+      Logging.errorWithExn(
+        err->Internal.prettifyExn,
+        `EE803: Error tracking tables`,
+      )->Promise.resolve
     })
   },
 )

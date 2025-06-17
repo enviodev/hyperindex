@@ -13,6 +13,8 @@ describe("SerDe Test", () => {
   })
 
   Async.it("All type entity", async () => {
+    let storage = Config.codegenPersistence->Persistence.getInitializedStorageOrThrow
+
     let entity: Entities.EntityWithAllTypes.t = {
       id: "1",
       string: "string",
@@ -54,13 +56,21 @@ describe("SerDe Test", () => {
     }
 
     //Fails if serialziation does not work
-    let set = DbFunctionsEntities.batchSet(
-      ~entityConfig=module(Entities.EntityWithAllTypes)->Entities.entityModToInternal,
-    )
+    let set = (sql, items) =>
+      sql->PgStorage.setOrThrow(
+        ~items,
+        ~table=Entities.EntityWithAllTypes.table,
+        ~itemSchema=Entities.EntityWithAllTypes.schema,
+        ~pgSchema=Config.storagePgSchema,
+      )
+
     //Fails if parsing does not work
-    let read = DbFunctionsEntities.batchRead(
-      ~entityConfig=module(Entities.EntityWithAllTypes)->Entities.entityModToInternal,
-    )
+    let read = ids =>
+      storage.loadByIdsOrThrow(
+        ~ids,
+        ~table=Entities.EntityWithAllTypes.table,
+        ~rowsSchema=Entities.EntityWithAllTypes.rowsSchema,
+      )
 
     let setHistory = (sql, row) =>
       Entities.EntityWithAllTypes.entityHistory->EntityHistory.batchInsertRows(~sql, ~rows=[row])
@@ -78,11 +88,11 @@ describe("SerDe Test", () => {
       Assert.fail("Failed to set entity in table")
     }
 
-    switch await Db.sql->read([entity.id]) {
+    switch await read([entity.id]) {
     | exception exn =>
       Js.log(exn)
       Assert.fail("Failed to read entity from table")
-    | [_entity] => Assert.deepEqual(_entity, entity->Entities.EntityWithAllTypes.castToInternal)
+    | [_entity] => Assert.deepEqual(_entity, entity)
     | _ => Assert.fail("Should have returned a row on batch read fn")
     }
 
@@ -105,18 +115,17 @@ describe("SerDe Test", () => {
 
   it("contains correct query for unnest entity", () => {
     let createQuery =
-      Entities.EntityWithAllNonArrayTypes.table->PgStorage.makeCreateTableSqlUnsafe(
-        ~pgSchema="public",
-      )
+      Entities.EntityWithAllNonArrayTypes.table->PgStorage.makeCreateTableSql(~pgSchema="public")
     Assert.equal(
       `CREATE TABLE IF NOT EXISTS "public"."EntityWithAllNonArrayTypes"("bigDecimal" NUMERIC NOT NULL, "bigInt" NUMERIC NOT NULL, "bool" BOOLEAN NOT NULL, "float_" DOUBLE PRECISION NOT NULL, "id" TEXT NOT NULL, "int_" INTEGER NOT NULL, "optBigDecimal" NUMERIC, "optBigInt" NUMERIC, "optBool" BOOLEAN, "optFloat" DOUBLE PRECISION, "optInt" INTEGER, "optString" TEXT, "string" TEXT NOT NULL, "db_write_timestamp" TIMESTAMP DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY("id"));`,
       createQuery,
     )
-    let query =
-      Entities.EntityWithAllNonArrayTypes.table->DbFunctions.internalMakeEntityUnnestUnsafeSql(
-        ~schema=Entities.EntityWithAllNonArrayTypes.schema,
-        ~isRawEvents=false,
-      )
+    let query = PgStorage.makeInsertUnnestSetSql(
+      ~table=Entities.EntityWithAllNonArrayTypes.table,
+      ~itemSchema=Entities.EntityWithAllNonArrayTypes.schema,
+      ~isRawEvents=false,
+      ~pgSchema="public",
+    )
 
     Assert.equal(
       query,
@@ -126,6 +135,8 @@ SELECT * FROM unnest($1::NUMERIC[],$2::NUMERIC[],$3::INTEGER[]::BOOLEAN[],$4::DO
   })
 
   Async.it("All type entity without array types for unnest case", async () => {
+    let storage = Config.codegenPersistence->Persistence.getInitializedStorageOrThrow
+
     let entity: Entities.EntityWithAllNonArrayTypes.t = {
       id: "1",
       string: "string",
@@ -154,13 +165,22 @@ SELECT * FROM unnest($1::NUMERIC[],$2::NUMERIC[],$3::INTEGER[]::BOOLEAN[],$4::DO
     }
 
     //Fails if serialziation does not work
-    let set = DbFunctionsEntities.batchSet(
-      ~entityConfig=module(Entities.EntityWithAllNonArrayTypes)->Entities.entityModToInternal,
-    )
+    let set = (sql, items) => {
+      sql->PgStorage.setOrThrow(
+        ~items,
+        ~table=Entities.EntityWithAllNonArrayTypes.table,
+        ~itemSchema=Entities.EntityWithAllNonArrayTypes.schema,
+        ~pgSchema="public",
+      )
+    }
+
     //Fails if parsing does not work
-    let read = DbFunctionsEntities.batchRead(
-      ~entityConfig=module(Entities.EntityWithAllNonArrayTypes)->Entities.entityModToInternal,
-    )
+    let read = ids =>
+      storage.loadByIdsOrThrow(
+        ~ids,
+        ~table=Entities.EntityWithAllNonArrayTypes.table,
+        ~rowsSchema=Entities.EntityWithAllNonArrayTypes.rowsSchema,
+      )
 
     let setHistory = (sql, row) =>
       Entities.EntityWithAllNonArrayTypes.entityHistory->EntityHistory.batchInsertRows(
@@ -181,12 +201,11 @@ SELECT * FROM unnest($1::NUMERIC[],$2::NUMERIC[],$3::INTEGER[]::BOOLEAN[],$4::DO
       Assert.fail("Failed to set entity in table")
     }
 
-    switch await Db.sql->read([entity.id]) {
+    switch await read([entity.id]) {
     | exception exn =>
       Js.log(exn)
       Assert.fail("Failed to read entity from table")
-    | [_entity] =>
-      Assert.deepEqual(_entity, entity->Entities.EntityWithAllNonArrayTypes.castToInternal)
+    | [_entity] => Assert.deepEqual(_entity, entity)
     | _ => Assert.fail("Should have returned a row on batch read fn")
     }
 

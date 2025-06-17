@@ -16,14 +16,6 @@ const chunkBatchQuery = (queryToExecute) => async (sql, entityDataArray) => {
   return Promise.all(responses);
 };
 
-const commaSeparateDynamicMapQuery = (sql, dynQueryConstructors) =>
-  sql`${dynQueryConstructors.map(
-    (constrQuery, i) =>
-      sql`${constrQuery(sql)}${
-        i === dynQueryConstructors.length - 1 ? sql`` : sql`, `
-      }`
-  )}`;
-
 module.exports.batchDeleteItemsInTable = (table, sql, pkArray) => {
   const primaryKeyFieldNames = TableModule.getPrimaryKeyFieldNames(table);
 
@@ -35,31 +27,6 @@ module.exports.batchDeleteItemsInTable = (table, sql, pkArray) => {
       `;
   } else {
     //TODO, if needed create a delete query for multiple field matches
-    //May be best to make pkArray an array of objects with fieldName -> value
-  }
-};
-
-module.exports.batchReadItemsInTable = (table, sql, pkArray) => {
-  const primaryKeyFieldNames = TableModule.getPrimaryKeyFieldNames(table);
-
-  if (primaryKeyFieldNames.length === 1) {
-    if (pkArray.length === 1) {
-      return sql`
-        SELECT *
-        FROM ${sql(publicSchema)}.${sql(table.tableName)}
-        WHERE ${sql(primaryKeyFieldNames[0])} = ${pkArray[0]}
-        LIMIT 1;`;
-    } else {
-      return sql`
-        SELECT *
-        FROM ${sql(publicSchema)}.${sql(table.tableName)}
-        WHERE ${sql(primaryKeyFieldNames[0])} IN ${sql(pkArray)};`;
-    }
-  } else {
-    throw new Error(
-      "Batch read not implemented for tables with composite primary keys"
-    );
-    //TODO, if needed create a select query for multiple field matches
     //May be best to make pkArray an array of objects with fieldName -> value
   }
 };
@@ -149,31 +116,6 @@ module.exports.batchDeleteRawEvents = (sql, entityIdArray) => sql`
   FROM ${sql(publicSchema)}."raw_events"
   WHERE (chain_id, event_id) IN ${sql(entityIdArray)};`;
 // end db operations for raw_events
-
-module.exports.makeBatchSetEntityValues = (table) => {
-  const fieldNames = TableModule.getFieldNames(table).filter(
-    (fieldName) => fieldName !== "db_write_timestamp"
-  );
-  const primaryKeyFieldNames = TableModule.getPrimaryKeyFieldNames(table);
-  const fieldQueryConstructors = fieldNames.map(
-    (fieldName) => (sql) => sql`${sql(fieldName)} = EXCLUDED.${sql(fieldName)}`
-  );
-  const pkQueryConstructors = primaryKeyFieldNames.map(
-    (pkField) => (sql) => sql(pkField)
-  );
-
-  return chunkBatchQuery((sql, rowDataArray) => {
-    return sql`
-INSERT INTO ${sql(publicSchema)}.${sql(table.tableName)}
-${sql(rowDataArray, ...fieldNames)}
-ON CONFLICT(${sql`${commaSeparateDynamicMapQuery(
-      sql,
-      pkQueryConstructors
-    )}`}) DO UPDATE
-SET
-${sql`${commaSeparateDynamicMapQuery(sql, fieldQueryConstructors)}`};`;
-  });
-};
 
 const batchSetEndOfBlockRangeScannedDataCore = (sql, rowDataArray) => {
   return sql`

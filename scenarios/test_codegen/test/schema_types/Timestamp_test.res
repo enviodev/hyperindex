@@ -19,9 +19,12 @@ describe("Load and save an entity with a Timestamp from DB", () => {
       id: "testEntity",
       timestamp: Js.Date.fromString("1970-01-01T00:02:03.456Z"),
     }
-    await DbFunctionsEntities.batchSet(
-      ~entityConfig=module(Entities.EntityWithTimestamp)->Entities.entityModToInternal,
-    )(sql, [testEntity->Entities.EntityWithTimestamp.castToInternal])
+    await sql->PgStorage.setOrThrow(
+      ~items=[testEntity->Entities.EntityWithTimestamp.castToInternal],
+      ~table=Entities.EntityWithTimestamp.table,
+      ~itemSchema=Entities.EntityWithTimestamp.schema,
+      ~pgSchema=Config.storagePgSchema,
+    )
 
     let inMemoryStore = InMemoryStore.make()
     let loadLayer = LoadLayer.makeWithDbConnection()

@@ -317,6 +317,8 @@ let processEventBatch = async (
       timeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
 
     switch await Db.sql->IO.executeBatch(~inMemoryStore, ~isInReorgThreshold, ~config) {
+    | exception Persistence.StorageError({message, reason}) =>
+      reason->ErrorHandling.make(~msg=message, ~logger)->Error
     | exception exn =>
       exn->ErrorHandling.make(~msg="Failed writing batch to database", ~logger)->Error
     | () => {

@@ -220,7 +220,7 @@ describe("Entity History Codegen", () => {
   })
   it("Creates an entity history table", () => {
     let createQuery =
-      TestEntity.entityHistory.table->PgStorage.makeCreateTableSqlUnsafe(~pgSchema="public")
+      TestEntity.entityHistory.table->PgStorage.makeCreateTableSql(~pgSchema="public")
     Assert.equal(
       `CREATE TABLE IF NOT EXISTS "public"."TestEntity_history"("entity_history_block_timestamp" INTEGER NOT NULL, "entity_history_chain_id" INTEGER NOT NULL, "entity_history_block_number" INTEGER NOT NULL, "entity_history_log_index" INTEGER NOT NULL, "previous_entity_history_block_timestamp" INTEGER, "previous_entity_history_chain_id" INTEGER, "previous_entity_history_block_number" INTEGER, "previous_entity_history_log_index" INTEGER, "id" TEXT NOT NULL, "fieldA" INTEGER, "fieldB" TEXT, "action" "public".ENTITY_HISTORY_ROW_ACTION NOT NULL, "serial" SERIAL, PRIMARY KEY("entity_history_block_timestamp", "entity_history_chain_id", "entity_history_block_number", "entity_history_log_index", "id"));`,
       createQuery,
@@ -242,7 +242,6 @@ describe("Entity History Codegen", () => {
     try {
       await storage.initialize(
         ~entities=[module(TestEntity)->Entities.entityModToInternal],
-        ~staticTables=[],
         ~enums=[Persistence.entityHistoryActionEnumConfig->Internal.fromGenericEnumConfig],
         ~cleanRun=true,
       )
@@ -592,19 +591,21 @@ describe("Entity history rollbacks", () => {
       let storage = PgStorage.make(~sql=Db.sql, ~pgSchema="public", ~pgUser="postgres")
       await storage.initialize(
         ~entities=[module(TestEntity)->Entities.entityModToInternal],
-        ~staticTables=[],
         ~enums=[Persistence.entityHistoryActionEnumConfig->Internal.fromGenericEnumConfig],
         ~cleanRun=true,
       )
 
       let _ = await Db.sql->Postgres.unsafe(TestEntity.entityHistory.createInsertFnQuery)
 
-      try await Db.sql->DbFunctionsEntities.batchSet(
-        ~entityConfig=module(TestEntity)->Entities.entityModToInternal,
-      )([
-        Mocks.Entity.mockEntity1->TestEntity.castToInternal,
-        Mocks.Entity.mockEntity5->TestEntity.castToInternal,
-      ]) catch {
+      try await Db.sql->PgStorage.setOrThrow(
+        ~items=[
+          Mocks.Entity.mockEntity1->TestEntity.castToInternal,
+          Mocks.Entity.mockEntity5->TestEntity.castToInternal,
+        ],
+        ~table=TestEntity.table,
+        ~itemSchema=TestEntity.schema,
+        ~pgSchema=Config.storagePgSchema,
+      ) catch {
       | exn =>
         Js.log2("batchSet mock entity exn", exn)
         Assert.fail("Failed to set mock entity in table")
@@ -702,9 +703,12 @@ describe("Entity history rollbacks", () => {
 
   Async.it("Prunes history correctly with items in reorg threshold", async () => {
     // set the current entity of id 3
-    await Db.sql->DbFunctionsEntities.batchSet(
-      ~entityConfig=module(TestEntity)->Entities.entityModToInternal,
-    )([Mocks.Entity.mockEntity7->TestEntity.castToInternal])
+    await Db.sql->PgStorage.setOrThrow(
+      ~items=[Mocks.Entity.mockEntity7->TestEntity.castToInternal],
+      ~table=TestEntity.table,
+      ~itemSchema=TestEntity.schema,
+      ~pgSchema=Config.storagePgSchema,
+    )
 
     // set an updated version of its row to get a copied entity history
     try await Db.sql->Postgres.beginSql(
@@ -753,7 +757,6 @@ describe("Entity history rollbacks", () => {
       let storage = PgStorage.make(~sql=Db.sql, ~pgSchema="public", ~pgUser="postgres")
       await storage.initialize(
         ~entities=[module(TestEntity)->Entities.entityModToInternal],
-        ~staticTables=[],
         ~enums=[Persistence.entityHistoryActionEnumConfig->Internal.fromGenericEnumConfig],
         ~cleanRun=true,
       )
@@ -1031,7 +1034,6 @@ describe_skip("Prune performance test", () => {
     let storage = PgStorage.make(~sql=Db.sql, ~pgSchema="public", ~pgUser="postgres")
     await storage.initialize(
       ~entities=[module(TestEntity)->Entities.entityModToInternal],
-      ~staticTables=[],
       ~enums=[Persistence.entityHistoryActionEnumConfig->Internal.fromGenericEnumConfig],
       ~cleanRun=true,
     )

@@ -29,12 +29,18 @@ let make = (~loadEntitiesByIds, ~loadEntitiesByField) => {
 
 // Ideally it shouldn't be here, but it'll make writing tests easier,
 // until we have a proper mocking solution.
-let makeWithDbConnection = () => {
-  make(
-    ~loadEntitiesByIds=(ids, ~entityConfig, ~logger=?) =>
-      DbFunctionsEntities.batchRead(~entityConfig)(Db.sql, ids, ~logger?),
-    ~loadEntitiesByField=DbFunctionsEntities.makeWhereQuery(Db.sql),
-  )
+let makeWithDbConnection = (~persistence=Config.codegenPersistence) => {
+  let storage = Persistence.getInitializedStorageOrThrow(persistence)
+  {
+    loadManager: LoadManager.make(),
+    loadEntitiesByIds: (ids, ~entityConfig, ~logger as _=?) =>
+      storage.loadByIdsOrThrow(
+        ~table=entityConfig.table,
+        ~rowsSchema=entityConfig.rowsSchema,
+        ~ids,
+      ),
+    loadEntitiesByField: DbFunctionsEntities.makeWhereQuery(Db.sql),
+  }
 }
 
 let loadById = (
@@ -51,11 +57,15 @@ let loadById = (
   let load = async idsToLoad => {
     // Since makeLoader prevents registerign entities already existing in the inMemoryStore,
     // we can be sure that we load only the new ones.
-    let dbEntities =
+    let dbEntities = try {
       await idsToLoad->loadLayer.loadEntitiesByIds(
         ~entityConfig,
         ~logger=eventItem->Logging.getEventLogger,
       )
+    } catch {
+    | Persistence.StorageError({message, reason}) =>
+      reason->ErrorHandling.mkLogAndRaise(~logger=eventItem->Logging.getEventLogger, ~msg=message)
+    }
 
     let entitiesMap = Js.Dict.empty()
     for idx in 0 to dbEntities->Array.length - 1 {

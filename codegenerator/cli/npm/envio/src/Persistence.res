@@ -12,13 +12,27 @@ type storage = {
   // Should initialize the storage so we can start interacting with it
   // Eg create connection, schema, tables, etc.
   initialize: (
-    ~entities: array<Internal.entityConfig>,
-    ~staticTables: array<Table.table>,
-    ~enums: array<Internal.enumConfig<Internal.enum>>,
+    ~entities: array<Internal.entityConfig>=?,
+    ~generalTables: array<Table.table>=?,
+    ~enums: array<Internal.enumConfig<Internal.enum>>=?,
     // If true, the storage should clear existing data
-    ~cleanRun: bool,
+    ~cleanRun: bool=?,
+  ) => promise<unit>,
+  @raises("StorageError")
+  loadByIdsOrThrow: 'item. (
+    ~ids: array<string>,
+    ~table: Table.table,
+    ~rowsSchema: S.t<array<'item>>,
+  ) => promise<array<'item>>,
+  @raises("StorageError")
+  setOrThrow: 'item. (
+    ~items: array<'item>,
+    ~table: Table.table,
+    ~itemSchema: S.t<'item>,
   ) => promise<unit>,
 }
+
+exception StorageError({message: string, reason: exn})
 
 type storageStatus =
   | Unknown
@@ -33,6 +47,7 @@ type t = {
   mutable storageStatus: storageStatus,
   storage: storage,
   onStorageInitialize: option<unit => promise<unit>>,
+  cacheStorage: storage,
 }
 
 let entityHistoryActionEnumConfig: Internal.enumConfig<EntityHistory.RowAction.t> = {
@@ -49,6 +64,7 @@ let make = (
   ~allEnums,
   ~staticTables,
   ~storage,
+  ~cacheStorage,
   ~onStorageInitialize=?,
 ) => {
   let allEntities = userEntities->Js.Array2.concat([dcRegistryEntityConfig])
@@ -62,6 +78,7 @@ let make = (
     storageStatus: Unknown,
     storage,
     onStorageInitialize,
+    cacheStorage,
   }
 }
 
@@ -93,7 +110,7 @@ let init = async (
       } else {
         let _ = await persistence.storage.initialize(
           ~entities=persistence.allEntities,
-          ~staticTables=persistence.staticTables,
+          ~generalTables=persistence.staticTables,
           ~enums=persistence.allEnums,
           ~cleanRun=reset || !skipIsInitializedCheck,
         )
@@ -107,5 +124,14 @@ let init = async (
     }
   } catch {
   | exn => exn->ErrorHandling.mkLogAndRaise(~msg=`EE800: Failed to initialize the indexer storage.`)
+  }
+}
+
+let getInitializedStorageOrThrow = persistence => {
+  switch persistence.storageStatus {
+  | Unknown
+  | Initializing(_) =>
+    Js.Exn.raiseError(`Failed to access the indexer storage. The Persistence layer is not initialized.`)
+  | Ready(_) => persistence.storage
   }
 }
