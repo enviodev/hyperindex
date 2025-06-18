@@ -47,34 +47,40 @@ type simulatorInput = {
 // Serializable version of {{entity.name.capitalized}} with BigInt fields as strings
 @genType
 type {{entity.name.uncapitalized}}Serializable = {
-{{#each entity.schema_fields as | field |}}
-{{#if (eq field.res_type "BigInt.t")}}
-  {{field.name}}: string,
+{{#each entity.params as | param |}}
+{{#unless param.is_derived_from}}
+{{#if (eq param.res_type "BigInt.t")}}
+  {{param.field_name.uncapitalized}}{{#if param.is_entity_field}}_id{{/if}}: string,
 {{else}}
-  {{field.name}}: {{field.res_type}},
+  {{param.field_name.uncapitalized}}{{#if param.is_entity_field}}_id{{/if}}: {{param.res_type}},
 {{/if}}
+{{/unless}}
 {{/each}}
 }
 
 let {{entity.name.uncapitalized}}SerializableSchema = S.object((s): {{entity.name.uncapitalized}}Serializable => {
-{{#each entity.schema_fields as | field |}}
-{{#if (eq field.res_type "BigInt.t")}}
-  {{field.name}}: s.field("{{field.name}}", S.string),
-{{else if (eq field.res_type "string")}}
-  {{field.name}}: s.field("{{field.name}}", S.string),
+{{#each entity.params as | param |}}
+{{#unless param.is_derived_from}}
+{{#if (eq param.res_type "BigInt.t")}}
+  {{param.field_name.uncapitalized}}{{#if param.is_entity_field}}_id{{/if}}: s.field("{{param.field_name.uncapitalized}}{{#if param.is_entity_field}}_id{{/if}}", S.string),
+{{else if (eq param.res_type "string")}}
+  {{param.field_name.uncapitalized}}{{#if param.is_entity_field}}_id{{/if}}: s.field("{{param.field_name.uncapitalized}}{{#if param.is_entity_field}}_id{{/if}}", S.string),
 {{else}}
-  {{field.name}}: s.field("{{field.name}}", S.string),
+  {{param.field_name.uncapitalized}}{{#if param.is_entity_field}}_id{{/if}}: s.field("{{param.field_name.uncapitalized}}{{#if param.is_entity_field}}_id{{/if}}", S.string),
 {{/if}}
+{{/unless}}
 {{/each}}
 })
 
 let serialize{{entity.name.capitalized}} = ({{entity.name.uncapitalized}}: Entities.{{entity.name.capitalized}}.t): {{entity.name.uncapitalized}}Serializable => {
-{{#each entity.schema_fields as | field |}}
-{{#if (eq field.res_type "BigInt.t")}}
-  {{field.name}}: {{entity.name.uncapitalized}}.{{field.name}}->BigInt.toString,
+{{#each entity.params as | param |}}
+{{#unless param.is_derived_from}}
+{{#if (eq param.res_type "BigInt.t")}}
+  {{param.field_name.uncapitalized}}{{#if param.is_entity_field}}_id{{/if}}: {{entity.name.uncapitalized}}.{{param.field_name.uncapitalized}}{{#if param.is_entity_field}}_id{{/if}}->BigInt.toString,
 {{else}}
-  {{field.name}}: {{entity.name.uncapitalized}}.{{field.name}},
+  {{param.field_name.uncapitalized}}{{#if param.is_entity_field}}_id{{/if}}: {{entity.name.uncapitalized}}.{{param.field_name.uncapitalized}}{{#if param.is_entity_field}}_id{{/if}},
 {{/if}}
+{{/unless}}
 {{/each}}
 }
 
@@ -254,34 +260,36 @@ let parseStateBefore = (stateObj: Js.Dict.t<Js.Json.t>): result<stateBefore, str
           let {{entity.name.uncapitalized}}Obj = {{entity.name.uncapitalized}}Json->Js.Json.decodeObject->Option.getExn
           let id = {{entity.name.uncapitalized}}Obj->Js.Dict.get("id")->Option.getExn->Js.Json.decodeString->Option.getExn
           // Handle entity-specific fields based on entity structure
-          {{#each entity.schema_fields as | field |}}
-          {{#if (eq field.name "id")}}
-          // id already handled above
+          {{#each entity.params as | param |}}
+          {{#unless param.is_derived_from}}
+          {{#if (eq param.field_name.uncapitalized "id")}}
+            // id already handled above
           {{else}}
-          {{#if (eq field.res_type "BigInt.t")}}
-          let {{field.name}} = switch {{entity.name.uncapitalized}}Obj->Js.Dict.get("{{field.name}}") {
-          | Some(value) => value->Js.Json.decodeString->Option.getExn->BigInt.fromString->Option.getExn
-          | None => BigInt.fromInt(0)
-          }
-          {{else if (eq field.res_type "string")}}
-          let {{field.name}} = switch {{entity.name.uncapitalized}}Obj->Js.Dict.get("{{field.name}}") {
-          | Some(value) => value->Js.Json.decodeString->Option.getExn
-          | None => ""
-          }
-          {{else if (eq field.res_type "int")}}
-          let {{field.name}} = switch {{entity.name.uncapitalized}}Obj->Js.Dict.get("{{field.name}}") {
-          | Some(value) => value->Js.Json.decodeNumber->Option.getExn->Float.toInt
-          | None => 0
-          }
+          {{#if (eq param.res_type "BigInt.t")}}
+            let {{param.field_name.uncapitalized}}{{#if param.is_entity_field}}_id{{/if}} = switch {{entity.name.uncapitalized}}Obj->Js.Dict.get("{{param.field_name.uncapitalized}}{{#if param.is_entity_field}}_id{{/if}}") {
+            | Some(value) => value->Js.Json.decodeString->Option.getExn->BigInt.fromString->Option.getExn
+            | None => BigInt.fromInt(0)
+            }
+          {{else if (eq param.res_type "string")}}
+            let {{param.field_name.uncapitalized}}{{#if param.is_entity_field}}_id{{/if}} = switch {{entity.name.uncapitalized}}Obj->Js.Dict.get("{{param.field_name.uncapitalized}}{{#if param.is_entity_field}}_id{{/if}}") {
+            | Some(value) => value->Js.Json.decodeString->Option.getExn
+            | None => ""
+            }
+          {{else if (eq param.res_type "int")}}
+            let {{param.field_name.uncapitalized}}{{#if param.is_entity_field}}_id{{/if}} = switch {{entity.name.uncapitalized}}Obj->Js.Dict.get("{{param.field_name.uncapitalized}}{{#if param.is_entity_field}}_id{{/if}}") {
+            | Some(value) => value->Js.Json.decodeNumber->Option.getExn->Float.toInt
+            | None => 0
+            }
           {{else}}
-          let {{field.name}} = switch {{entity.name.uncapitalized}}Obj->Js.Dict.get("{{field.name}}") {
-          | Some(value) => value->Js.Json.decodeString->Option.getExn
-          | None => ""
-          }
+            let {{param.field_name.uncapitalized}}{{#if param.is_entity_field}}_id{{/if}} = switch {{entity.name.uncapitalized}}Obj->Js.Dict.get("{{param.field_name.uncapitalized}}{{#if param.is_entity_field}}_id{{/if}}") {
+            | Some(value) => value->Js.Json.decodeString->Option.getExn
+            | None => ""
+            }
           {{/if}}
           {{/if}}
+          {{/unless}}
           {{/each}}
-          {Entities.{{entity.name.capitalized}}.{{#each entity.schema_fields as | field |}}{{field.name}}{{#unless @last}}, {{/unless}}{{/each}}}
+          {Entities.{{entity.name.capitalized}}.{{#each entity.params as | param |}}{{#unless param.is_derived_from}}{{param.field_name.uncapitalized}}{{#if param.is_entity_field}}_id{{/if}}{{#unless @last}}, {{/unless}}{{/unless}}{{/each}}}
         })
       | None => []
       }
@@ -421,11 +429,13 @@ let getModified{{entity.name.capitalized}}s = (
     switch final{{entity.name.capitalized}}s->Array.getBy(final{{entity.name.capitalized}} => final{{entity.name.capitalized}}.id == initial{{entity.name.capitalized}}.id) {
     | Some(final{{entity.name.capitalized}}) =>
       // Entity exists in both, check if modified
-      {{#if entity.schema_fields}}
+      {{#if entity.params}}
       if (
-      {{#each entity.schema_fields as | field |}}
-      {{#unless (eq field.name "id")}}
-        initial{{../entity.name.capitalized}}.{{field.name}} != final{{../entity.name.capitalized}}.{{field.name}}{{#unless @last}} ||{{/unless}}
+      {{#each entity.params as | param |}}
+      {{#unless param.is_derived_from}}
+      {{#unless (eq param.field_name.uncapitalized "id")}}
+        initial{{../entity.name.capitalized}}.{{param.field_name.uncapitalized}}{{#if param.is_entity_field}}_id{{/if}} != final{{../entity.name.capitalized}}.{{param.field_name.uncapitalized}}{{#if param.is_entity_field}}_id{{/if}}{{#unless @last}} ||{{/unless}}
+      {{/unless}}
       {{/unless}}
       {{/each}}
       ) {
