@@ -18,9 +18,10 @@ export type LoaderContext = {
   readonly effect: EffectCaller;
   /**
    * True when the loaders run in parallel for the whole batch.
+   * Loaders are run twice per batch of events, and the first time is the "preload" run
    * During preload entities aren't set, logs are ignored and exceptions are silently swallowed.
-   * But the mode is the best to populate data to in-memory cache.
-   * After preload the loader will run the second before handler one at a time.
+   * Preload mode is the best time to populate data to in-memory cache.
+   * After preload the loader will run for the second time before its handler in sequentially order of events.
    */
   readonly isPreload: boolean;
   {{#each entities as | entity |}}
