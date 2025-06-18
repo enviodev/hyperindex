@@ -168,6 +168,14 @@ let logForItem = (eventItem, level: Pino.logLevel, message: string, ~params=?) =
   (eventItem->getEventLogger->Utils.magic->Js.Dict.unsafeGet((level :> string)))(params, message)
 }
 
+let noopLogger: Envio.logger = {
+  info: (_message: string, ~params as _=?) => (),
+  debug: (_message: string, ~params as _=?) => (),
+  warn: (_message: string, ~params as _=?) => (),
+  error: (_message: string, ~params as _=?) => (),
+  errorWithExn: (_message: string, _exn) => (),
+}
+
 let getUserLogger = (eventItem): Envio.logger => {
   info: (message: string, ~params=?) => eventItem->logForItem(#uinfo, message, ~params?),
   debug: (message: string, ~params=?) => eventItem->logForItem(#udebug, message, ~params?),

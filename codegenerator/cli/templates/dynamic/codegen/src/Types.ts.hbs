@@ -16,6 +16,14 @@ export type LoaderContext = {
    * Define a new Effect using createEffect outside of the handler.
    */
   readonly effect: EffectCaller;
+  /**
+   * True when the loaders run in parallel for the whole batch.
+   * Loaders are run twice per batch of events, and the first time is the "preload" run
+   * During preload entities aren't set, logs are ignored and exceptions are silently swallowed.
+   * Preload mode is the best time to populate data to in-memory cache.
+   * After preload the loader will run for the second time before its handler in sequentially order of events.
+   */
+  readonly isPreload: boolean;
   {{#each entities as | entity |}}
   readonly {{entity.name.original}}: {
     /**
@@ -29,6 +37,21 @@ export type LoaderContext = {
      */
     readonly getOrThrow: (id: string, message?: string) => Promise<Entities.{{entity.name.capitalized}}_t>,
     readonly getWhere: Entities.{{entity.name.capitalized}}_indexedFieldOperations,
+    /**
+     * Returns the entity {{entity.name.original}} from the storage by ID.
+     * If the entity is not found, creates it using provided parameters and returns it.
+     */
+    readonly getOrCreate: (entity: Entities.{{entity.name.capitalized}}_t) => Promise<Entities.{{entity.name.capitalized}}_t>,
+    /**
+     * Set the entity {{entity.name.original}} in the storage.
+     */
+    readonly set: (entity: Entities.{{entity.name.capitalized}}_t) => void,
+    /**
+     * Delete the entity {{entity.name.original}} from the storage.
+     *
+     * The 'deleteUnsafe' method is experimental and unsafe. You should manually handle all entity references after deletion to maintain database consistency.
+     */
+    readonly deleteUnsafe: (id: string) => void,
   }
   {{/each}}
 };

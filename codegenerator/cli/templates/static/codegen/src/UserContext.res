@@ -14,14 +14,15 @@ let getEventId = (eventItem: Internal.eventItem) => {
   EventUtils.packEventIndex(~blockNumber=eventItem.blockNumber, ~logIndex=eventItem.event.logIndex)
 }
 
-type baseContextParams = {
+type contextParams = {
   eventItem: Internal.eventItem,
   inMemoryStore: InMemoryStore.t,
   loadLayer: LoadLayer.t,
-  shouldGroup: bool,
+  isPreload: bool,
+  shouldSaveHistory: bool,
 }
 
-let rec initEffect = (params: baseContextParams) => (
+let rec initEffect = (params: contextParams) => (
   effect: Internal.effect,
   input: Internal.effectInput,
 ) =>
@@ -33,9 +34,9 @@ let rec initEffect = (params: baseContextParams) => (
       cacheKey: input->Utils.Hash.makeOrThrow,
     },
     ~inMemoryStore=params.inMemoryStore,
-    ~shouldGroup=params.shouldGroup,
+    ~shouldGroup=params.isPreload,
   )
-and effectTraps: Utils.Proxy.traps<baseContextParams> = {
+and effectTraps: Utils.Proxy.traps<contextParams> = {
   get: (~target as params, ~prop: unknown) => {
     let prop = prop->(Utils.magic: unknown => string)
     switch prop {
@@ -53,11 +54,6 @@ and effectTraps: Utils.Proxy.traps<baseContextParams> = {
       )
     }
   },
-}
-
-type handlerContextParams = {
-  ...baseContextParams,
-  shouldSaveHistory: bool,
 }
 
 let makeEntityHandlerContext = (
@@ -123,13 +119,13 @@ let makeEntityHandlerContext = (
   }
 }
 
-let handlerTraps: Utils.Proxy.traps<handlerContextParams> = {
+let handlerTraps: Utils.Proxy.traps<contextParams> = {
   get: (~target as params, ~prop: unknown) => {
     let prop = prop->(Utils.magic: unknown => string)
     switch prop {
     | "log" => params.eventItem->Logging.getUserLogger->Utils.magic
     | "effect" =>
-      initEffect((params :> baseContextParams))->(
+      initEffect((params :> contextParams))->(
         Utils.magic: (
           (Internal.effect, Internal.effectInput) => promise<Internal.effectOutput>
         ) => unknown
@@ -145,22 +141,22 @@ let handlerTraps: Utils.Proxy.traps<handlerContextParams> = {
   },
 }
 
-let getHandlerContext = (params: handlerContextParams): Internal.handlerContext => {
+let getHandlerContext = (params: contextParams): Internal.handlerContext => {
   params->Utils.Proxy.make(handlerTraps)->Utils.magic
 }
 
-let getHandlerArgs = (params: handlerContextParams, ~loaderReturn): Internal.handlerArgs => {
+let getHandlerArgs = (params: contextParams, ~loaderReturn): Internal.handlerArgs => {
   event: params.eventItem.event,
   context: getHandlerContext(params),
   loaderReturn,
 }
 
-type loaderEntityContextParams = {
-  ...baseContextParams,
+type entityContextParams = {
+  ...contextParams,
   entityConfig: Internal.entityConfig,
 }
 
-let getWhereTraps: Utils.Proxy.traps<loaderEntityContextParams> = {
+let getWhereTraps: Utils.Proxy.traps<entityContextParams> = {
   get: (~target as params, ~prop: unknown) => {
     let entityConfig = params.entityConfig
     if prop->Js.typeof !== "string" {
@@ -187,7 +183,7 @@ let getWhereTraps: Utils.Proxy.traps<loaderEntityContextParams> = {
               ~fieldName=dbFieldName,
               ~fieldValueSchema,
               ~inMemoryStore=params.inMemoryStore,
-              ~shouldGroup=params.shouldGroup,
+              ~shouldGroup=params.isPreload,
               ~eventItem=params.eventItem,
               ~fieldValue,
             ),
@@ -198,7 +194,7 @@ let getWhereTraps: Utils.Proxy.traps<loaderEntityContextParams> = {
               ~fieldName=dbFieldName,
               ~fieldValueSchema,
               ~inMemoryStore=params.inMemoryStore,
-              ~shouldGroup=params.shouldGroup,
+              ~shouldGroup=params.isPreload,
               ~eventItem=params.eventItem,
               ~fieldValue,
             ),
@@ -208,58 +204,116 @@ let getWhereTraps: Utils.Proxy.traps<loaderEntityContextParams> = {
   },
 }
 
-let makeEntityLoaderContext = (params): Types.entityLoaderContext<
-  Entities.internalEntity,
-  unknown,
-> => {
-  let get = entityId =>
-    params.loadLayer->LoadLayer.loadById(
-      ~entityConfig=params.entityConfig,
-      ~inMemoryStore=params.inMemoryStore,
-      ~shouldGroup=params.shouldGroup,
-      ~eventItem=params.eventItem,
-      ~entityId,
-    )
-  {
-    get,
-    getOrThrow: (entityId, ~message=?) =>
-      get(entityId)->Promise.thenResolve(entity => {
-        switch entity {
-        | Some(entity) => entity
-        | None =>
-          Js.Exn.raiseError(
-            message->Belt.Option.getWithDefault(
-              `Entity '${params.entityConfig.name}' with ID '${entityId}' is expected to exist.`,
+let noopSet = (_entity: Internal.entity) => ()
+
+let entityTraps: Utils.Proxy.traps<entityContextParams> = {
+  get: (~target as params, ~prop: unknown) => {
+    let prop = prop->(Utils.magic: unknown => string)
+
+    let set = params.isPreload
+      ? noopSet
+      : (entity: Internal.entity) => {
+          params.inMemoryStore
+          ->InMemoryStore.getInMemTable(~entityConfig=params.entityConfig)
+          ->InMemoryTable.Entity.set(
+            Set(entity)->Types.mkEntityUpdate(
+              ~eventIdentifier=params.eventItem->makeEventIdentifier,
+              ~entityId=entity.id,
             ),
+            ~shouldSaveHistory=params.shouldSaveHistory,
           )
         }
-      }),
-    getWhere: params->Utils.Proxy.make(getWhereTraps)->Utils.magic,
-  }
+
+    switch prop {
+    | "get" =>
+      (
+        entityId =>
+          params.loadLayer->LoadLayer.loadById(
+            ~entityConfig=params.entityConfig,
+            ~inMemoryStore=params.inMemoryStore,
+            ~shouldGroup=params.isPreload,
+            ~eventItem=params.eventItem,
+            ~entityId,
+          )
+      )->Utils.magic
+    | "getWhere" => params->Utils.Proxy.make(getWhereTraps)->Utils.magic
+    | "getOrThrow" =>
+      (
+        (entityId, ~message=?) =>
+          params.loadLayer
+          ->LoadLayer.loadById(
+            ~entityConfig=params.entityConfig,
+            ~inMemoryStore=params.inMemoryStore,
+            ~shouldGroup=params.isPreload,
+            ~eventItem=params.eventItem,
+            ~entityId,
+          )
+          ->Promise.thenResolve(entity => {
+            switch entity {
+            | Some(entity) => entity
+            | None =>
+              Js.Exn.raiseError(
+                message->Belt.Option.getWithDefault(
+                  `Entity '${params.entityConfig.name}' with ID '${entityId}' is expected to exist.`,
+                ),
+              )
+            }
+          })
+      )->Utils.magic
+    | "getOrCreate" =>
+      (
+        (entity: Internal.entity) =>
+          params.loadLayer
+          ->LoadLayer.loadById(
+            ~entityConfig=params.entityConfig,
+            ~inMemoryStore=params.inMemoryStore,
+            ~shouldGroup=params.isPreload,
+            ~eventItem=params.eventItem,
+            ~entityId=entity.id,
+          )
+          ->Promise.thenResolve(storageEntity => {
+            switch storageEntity {
+            | Some(entity) => entity
+            | None => {
+                set(entity)
+                entity
+              }
+            }
+          })
+      )->Utils.magic
+    | "set" => set->Utils.magic
+    | _ => Js.Exn.raiseError(`Invalid context.${params.entityConfig.name}.${prop} operation.`)
+    }
+  },
 }
 
-let loaderTraps: Utils.Proxy.traps<baseContextParams> = {
+let loaderTraps: Utils.Proxy.traps<contextParams> = {
   get: (~target as params, ~prop: unknown) => {
     let prop = prop->(Utils.magic: unknown => string)
     switch prop {
-    | "log" => params.eventItem->Logging.getUserLogger->Utils.magic
+    | "log" =>
+      (params.isPreload ? Logging.noopLogger : params.eventItem->Logging.getUserLogger)->Utils.magic
     | "effect" =>
-      initEffect((params :> baseContextParams))->(
+      initEffect((params :> contextParams))->(
         Utils.magic: (
           (Internal.effect, Internal.effectInput) => promise<Internal.effectOutput>
         ) => unknown
       )
 
+    | "isPreload" => params.isPreload->Utils.magic
     | _ =>
       switch Entities.byName->Utils.Dict.dangerouslyGetNonOption(prop) {
       | Some(entityConfig) =>
-        makeEntityLoaderContext({
+        {
           eventItem: params.eventItem,
-          shouldGroup: params.shouldGroup,
+          isPreload: params.isPreload,
           inMemoryStore: params.inMemoryStore,
           loadLayer: params.loadLayer,
+          shouldSaveHistory: params.shouldSaveHistory,
           entityConfig,
-        })->Utils.magic
+        }
+        ->Utils.Proxy.make(entityTraps)
+        ->Utils.magic
       | None =>
         Js.Exn.raiseError(`Invalid context access by '${prop}' property. ${codegenHelpMessage}`)
       }
@@ -267,11 +321,11 @@ let loaderTraps: Utils.Proxy.traps<baseContextParams> = {
   },
 }
 
-let getLoaderContext = (params: baseContextParams): Internal.loaderContext => {
+let getLoaderContext = (params: contextParams): Internal.loaderContext => {
   params->Utils.Proxy.make(loaderTraps)->Utils.magic
 }
 
-let getLoaderArgs = (params: baseContextParams): Internal.loaderArgs => {
+let getLoaderArgs = (params: contextParams): Internal.loaderArgs => {
   event: params.eventItem.event,
   context: getLoaderContext(params),
 }

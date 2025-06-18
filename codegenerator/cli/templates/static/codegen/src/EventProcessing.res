@@ -106,17 +106,18 @@ let runEventHandlerOrThrow = async (
   //Include the load in time before handler
   let timeBeforeHandler = Hrtime.makeTimer()
 
+  let contextParams: UserContext.contextParams = {
+    eventItem,
+    inMemoryStore,
+    loadLayer,
+    shouldSaveHistory,
+    isPreload: false,
+  }
+
   let loaderReturn = switch loader {
   | Some(loader) =>
     try {
-      await loader(
-        UserContext.getLoaderArgs({
-          eventItem,
-          inMemoryStore,
-          loadLayer,
-          shouldGroup: false,
-        }),
-      )
+      await loader(UserContext.getLoaderArgs(contextParams))
     } catch {
     | exn =>
       raise(
@@ -132,16 +133,7 @@ let runEventHandlerOrThrow = async (
 
   try {
     await handler(
-      UserContext.getHandlerArgs(
-        {
-          eventItem,
-          inMemoryStore,
-          loadLayer,
-          shouldSaveHistory,
-          shouldGroup: false,
-        },
-        ~loaderReturn,
-      ),
+      UserContext.getHandlerArgs(contextParams, ~loaderReturn),
     )
   } catch {
   | exn =>
@@ -213,7 +205,8 @@ let runBatchLoadersOrThrow = async (
                 eventItem,
                 inMemoryStore,
                 loadLayer,
-                shouldGroup: true,
+                isPreload: true,
+                shouldSaveHistory: false,
               }),
               // Must have Promise.catch as well as normal catch,
               // because if user throws an error before await in the handler,

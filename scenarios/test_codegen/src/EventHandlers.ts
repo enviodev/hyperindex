@@ -429,6 +429,7 @@ Gravatar.FactoryEvent.contractRegister(({ event, context }) => {
 });
 
 let getOrThrowInLoaderCount = 0;
+let loaderSetCount = 0;
 
 Gravatar.FactoryEvent.handlerWithLoader({
   loader: async ({ event, context }) => {
@@ -451,6 +452,32 @@ Gravatar.FactoryEvent.handlerWithLoader({
             break;
           }
         }
+        break;
+      }
+      case "loaderSetCount": {
+        const entity = await context.User.get("0");
+        const newEntity: User = {
+          id: "0",
+          address: "0x",
+          updatesCountOnUserForTesting: 0,
+          gravatar_id: undefined,
+          accountType: "USER",
+        };
+        context.User.set(newEntity);
+        switch (loaderSetCount) {
+          case 0:
+            deepEqual(entity, undefined);
+            deepEqual(await context.User.get("0"), undefined);
+            deepEqual(context.isPreload, true);
+            break;
+          case 1:
+            // It should only apply set only on the second loader run
+            deepEqual(entity, undefined);
+            deepEqual(await context.User.get("0"), newEntity);
+            deepEqual(context.isPreload, false);
+            break;
+        }
+        loaderSetCount++;
         break;
       }
     }
