@@ -468,11 +468,13 @@ Gravatar.FactoryEvent.handlerWithLoader({
           case 0:
             deepEqual(entity, undefined);
             deepEqual(await context.User.get("0"), undefined);
+            deepEqual(context.isPreload, true);
             break;
           case 1:
             // It should only apply set only on the second loader run
             deepEqual(entity, undefined);
             deepEqual(await context.User.get("0"), newEntity);
+            deepEqual(context.isPreload, false);
             break;
         }
         loaderSetCount++;

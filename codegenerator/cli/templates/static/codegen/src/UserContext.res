@@ -18,7 +18,7 @@ type contextParams = {
   eventItem: Internal.eventItem,
   inMemoryStore: InMemoryStore.t,
   loadLayer: LoadLayer.t,
-  unorderedRun: bool,
+  isPreload: bool,
   shouldSaveHistory: bool,
 }
 
@@ -34,7 +34,7 @@ let rec initEffect = (params: contextParams) => (
       cacheKey: input->Utils.Hash.makeOrThrow,
     },
     ~inMemoryStore=params.inMemoryStore,
-    ~shouldGroup=params.unorderedRun,
+    ~shouldGroup=params.isPreload,
   )
 and effectTraps: Utils.Proxy.traps<contextParams> = {
   get: (~target as params, ~prop: unknown) => {
@@ -183,7 +183,7 @@ let getWhereTraps: Utils.Proxy.traps<entityContextParams> = {
               ~fieldName=dbFieldName,
               ~fieldValueSchema,
               ~inMemoryStore=params.inMemoryStore,
-              ~shouldGroup=params.unorderedRun,
+              ~shouldGroup=params.isPreload,
               ~eventItem=params.eventItem,
               ~fieldValue,
             ),
@@ -194,7 +194,7 @@ let getWhereTraps: Utils.Proxy.traps<entityContextParams> = {
               ~fieldName=dbFieldName,
               ~fieldValueSchema,
               ~inMemoryStore=params.inMemoryStore,
-              ~shouldGroup=params.unorderedRun,
+              ~shouldGroup=params.isPreload,
               ~eventItem=params.eventItem,
               ~fieldValue,
             ),
@@ -210,7 +210,7 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
   get: (~target as params, ~prop: unknown) => {
     let prop = prop->(Utils.magic: unknown => string)
 
-    let set = params.unorderedRun
+    let set = params.isPreload
       ? noopSet
       : (entity: Internal.entity) => {
           params.inMemoryStore
@@ -231,7 +231,7 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
           params.loadLayer->LoadLayer.loadById(
             ~entityConfig=params.entityConfig,
             ~inMemoryStore=params.inMemoryStore,
-            ~shouldGroup=params.unorderedRun,
+            ~shouldGroup=params.isPreload,
             ~eventItem=params.eventItem,
             ~entityId,
           )
@@ -244,7 +244,7 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
           ->LoadLayer.loadById(
             ~entityConfig=params.entityConfig,
             ~inMemoryStore=params.inMemoryStore,
-            ~shouldGroup=params.unorderedRun,
+            ~shouldGroup=params.isPreload,
             ~eventItem=params.eventItem,
             ~entityId,
           )
@@ -267,7 +267,7 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
           ->LoadLayer.loadById(
             ~entityConfig=params.entityConfig,
             ~inMemoryStore=params.inMemoryStore,
-            ~shouldGroup=params.unorderedRun,
+            ~shouldGroup=params.isPreload,
             ~eventItem=params.eventItem,
             ~entityId=entity.id,
           )
@@ -292,9 +292,7 @@ let loaderTraps: Utils.Proxy.traps<contextParams> = {
     let prop = prop->(Utils.magic: unknown => string)
     switch prop {
     | "log" =>
-      (
-        params.unorderedRun ? Logging.noopLogger : params.eventItem->Logging.getUserLogger
-      )->Utils.magic
+      (params.isPreload ? Logging.noopLogger : params.eventItem->Logging.getUserLogger)->Utils.magic
     | "effect" =>
       initEffect((params :> contextParams))->(
         Utils.magic: (
@@ -302,12 +300,13 @@ let loaderTraps: Utils.Proxy.traps<contextParams> = {
         ) => unknown
       )
 
+    | "isPreload" => params.isPreload->Utils.magic
     | _ =>
       switch Entities.byName->Utils.Dict.dangerouslyGetNonOption(prop) {
       | Some(entityConfig) =>
         {
           eventItem: params.eventItem,
-          unorderedRun: params.unorderedRun,
+          isPreload: params.isPreload,
           inMemoryStore: params.inMemoryStore,
           loadLayer: params.loadLayer,
           shouldSaveHistory: params.shouldSaveHistory,

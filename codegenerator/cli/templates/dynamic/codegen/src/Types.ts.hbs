@@ -16,6 +16,13 @@ export type LoaderContext = {
    * Define a new Effect using createEffect outside of the handler.
    */
   readonly effect: EffectCaller;
+  /**
+   * True when the loaders run in parallel for the whole batch.
+   * During preload entities aren't set, logs are ignored and exceptions are silently swallowed.
+   * But the mode is the best to populate data to in-memory cache.
+   * After preload the loader will run the second before handler one at a time.
+   */
+  readonly isPreload: boolean;
   {{#each entities as | entity |}}
   readonly {{entity.name.original}}: {
     /**

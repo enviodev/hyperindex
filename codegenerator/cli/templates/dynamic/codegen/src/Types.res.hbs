@@ -26,6 +26,7 @@ type entityLoaderContext<'entity, 'indexedFieldOperations> = {
 type loaderContext = {
   log: Envio.logger,
   effect: 'input 'output. (Envio.effect<'input, 'output>, 'input) => promise<'output>,
+  isPreload: bool,
   {{#each entities as | entity |}}
   @as("{{entity.name.original}}") {{entity.name.uncapitalized}}: entityLoaderContext<Entities.{{entity.name.capitalized}}.t, Entities.{{entity.name.capitalized}}.indexedFieldOperations>,
   {{/each}}
