@@ -611,11 +611,10 @@ impl fmt::Display for HypersyncNetwork {
 impl NetworkWithExplorer {
     pub fn get_pretty_name(&self) -> String {
         let chain_id = *self as u64;
-        let network_str = self.to_string();
+        let network = Network::from(*self);
+        let network_str = network.to_string();
 
         // Try to get the tier (icon) if it's a HypersyncNetwork
-        let network = Network::from(*self);
-
         match HypersyncNetwork::try_from(network) {
             Ok(hypersync_network) => {
                 let tier = hypersync_network.get_tier();

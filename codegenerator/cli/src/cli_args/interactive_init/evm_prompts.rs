@@ -348,7 +348,7 @@ impl ExplorerImportArgs {
                 }
             }
             None => {
-                // Filter out already selected networks
+                // Filter out already selected networks and show both network name and chain ID
                 let networks = NetworkWithExplorer::iter().collect::<Vec<_>>();
                 Select::new(
                     "Which blockchain would you like to import a contract from?",
