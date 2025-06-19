@@ -14,7 +14,8 @@ pub async fn run_dev(project_paths: ParsedProjectPaths) -> Result<()> {
     let current_state = PersistedState::get_current_state(&config)
         .context("Failed getting current indexer state")?;
 
-    let persisted_state_file = PersistedStateExists::get_persisted_state_file(&project_paths);
+    let persisted_state_file =
+        PersistedStateExists::get_persisted_state_file(&config.parsed_project_paths);
 
     let (should_run_codegen, changes_detected) = match &persisted_state_file {
         PersistedStateExists::Exists(persisted_state) => {
@@ -50,7 +51,7 @@ pub async fn run_dev(project_paths: ParsedProjectPaths) -> Result<()> {
                     CURRENT_CRATE_VERSION, &ps.envio_version
                 );
                 println!("Purging generated directory",);
-                commands::codegen::remove_files_except_git(&project_paths.generated)
+                commands::codegen::remove_files_except_git(&config.parsed_project_paths.generated)
                     .await
                     .context("Failed purging generated")?;
             }
@@ -59,7 +60,7 @@ pub async fn run_dev(project_paths: ParsedProjectPaths) -> Result<()> {
 
         println!("Running codegen");
 
-        commands::codegen::run_codegen(&config, &project_paths)
+        commands::codegen::run_codegen(&config)
             .await
             .context("Failed running codegen")?;
     }
@@ -68,7 +69,7 @@ pub async fn run_dev(project_paths: ParsedProjectPaths) -> Result<()> {
 
     let should_open_hasura_console = if hasura_health_check_is_error {
         //Run docker commands to spin up container
-        commands::docker::docker_compose_up_d(&project_paths)
+        commands::docker::docker_compose_up_d(&config)
             .await
             .context("Failed running docker compose up after server liveness check")?;
         true
@@ -113,14 +114,14 @@ pub async fn run_dev(project_paths: ParsedProjectPaths) -> Result<()> {
                 }
                 println!("Running db migrations");
 
-                commands::db_migrate::run_db_setup(&project_paths, &current_state)
+                commands::db_migrate::run_db_setup(&config, &current_state)
                     .await
                     .context("Failed running db setup command")?;
             }
 
             println!("Starting indexer");
 
-            commands::start::start_indexer(&project_paths, should_open_hasura_console)
+            commands::start::start_indexer(&config, should_open_hasura_console)
                 .await
                 .context("Failed running start on the indexer")?;
         }

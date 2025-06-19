@@ -30,7 +30,7 @@ use regex::Regex;
 use std::{
     collections::{HashMap, HashSet},
     env, fs,
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
 };
 
 type ContractNameKey = String;
@@ -531,6 +531,44 @@ impl SystemConfig {
         let mut networks: NetworkMap = HashMap::new();
         let mut contracts: ContractMap = HashMap::new();
 
+        // Create a new ParsedProjectPaths that uses the output field from config if specified
+        let final_project_paths = {
+            let output_path = match &human_config {
+                HumanConfig::Evm(evm_config) => evm_config.output.as_ref(),
+                HumanConfig::Fuel(fuel_config) => fuel_config.output.as_ref(),
+            };
+
+            match output_path {
+                Some(output) => {
+                    // If output is specified, create a new ParsedProjectPaths with the custom output path
+                    // The output path is relative to the config file location
+                    let config_dir = project_paths.config.parent().ok_or_else(|| {
+                        anyhow!("Unexpected config file should have a parent directory")
+                    })?;
+
+                    let output_relative_path = PathBuf::from(output);
+                    if let Some(Component::ParentDir) =
+                        output_relative_path.components().peekable().peek()
+                    {
+                        return Err(anyhow!("Output folder must be in project directory"));
+                    }
+
+                    let output_joined = config_dir.join(output_relative_path);
+                    let output_normalized = path_utils::normalize_path(output_joined);
+
+                    ParsedProjectPaths {
+                        project_root: project_paths.project_root.clone(),
+                        config: project_paths.config.clone(),
+                        generated: output_normalized,
+                    }
+                }
+                None => {
+                    // If no output is specified, use the default ParsedProjectPaths
+                    project_paths.clone()
+                }
+            }
+        };
+
         match human_config {
             HumanConfig::Evm(ref evm_config) => {
                 // TODO: Add similar validation for Fuel
@@ -544,7 +582,7 @@ impl SystemConfig {
                         let (events, evm_abi) = Event::from_evm_events_config(
                             g_contract.config.events.clone(),
                             &g_contract.config.abi_file_path,
-                            project_paths,
+                            &final_project_paths,
                             has_rpc_sync_src,
                         )
                         .context(format!(
@@ -574,7 +612,7 @@ impl SystemConfig {
                                 let (events, evm_abi) = Event::from_evm_events_config(
                                     l_contract.events,
                                     &l_contract.abi_file_path,
-                                    project_paths,
+                                    &final_project_paths,
                                     has_rpc_sync_src,
                                 )
                                 .context(format!(
@@ -665,7 +703,7 @@ impl SystemConfig {
 
                 Ok(SystemConfig {
                     name: evm_config.name.clone(),
-                    parsed_project_paths: project_paths.clone(),
+                    parsed_project_paths: final_project_paths,
                     schema_path: evm_config
                         .schema
                         .clone()
@@ -690,7 +728,7 @@ impl SystemConfig {
                         let (events, fuel_abi) = Event::from_fuel_events_config(
                             &g_contract.config.events,
                             &g_contract.config.abi_file_path,
-                            project_paths,
+                            &final_project_paths,
                         )
                         .context(format!(
                             "Failed parsing abi types for events in global contract {}",
@@ -718,7 +756,7 @@ impl SystemConfig {
                                 let (events, fuel_abi) = Event::from_fuel_events_config(
                                     &l_contract.events,
                                     &l_contract.abi_file_path,
-                                    project_paths,
+                                    &final_project_paths,
                                 )
                                 .context(format!(
                                     "Failed parsing abi types for events in contract {} on \
@@ -802,7 +840,7 @@ impl SystemConfig {
 
                 Ok(SystemConfig {
                     name: fuel_config.name.clone(),
-                    parsed_project_paths: project_paths.clone(),
+                    parsed_project_paths: final_project_paths,
                     schema_path: fuel_config
                         .schema
                         .clone()
@@ -2004,5 +2042,99 @@ mod test {
         for vn in invalid_version_numbers {
             assert!(!super::is_valid_release_version_number(vn));
         }
+    }
+
+    #[test]
+    fn test_output_configuration() {
+        use crate::config_parsing::human_config::{
+            evm::{HumanConfig as EvmConfig, Network as EvmNetwork},
+            HumanConfig,
+        };
+        use crate::project_paths::ParsedProjectPaths;
+
+        // Test with default output (no output field specified)
+        let evm_config = EvmConfig {
+            name: "Test Project".to_string(),
+            description: None,
+            ecosystem: None,
+            schema: None,
+            output: None,
+            contracts: None,
+            networks: vec![EvmNetwork {
+                id: 1,
+                hypersync_config: None,
+                rpc_config: None,
+                rpc: None,
+                start_block: 0,
+                end_block: None,
+                confirmed_block_threshold: None,
+                contracts: vec![],
+            }],
+            unordered_multichain_mode: None,
+            event_decoder: None,
+            rollback_on_reorg: None,
+            save_full_history: None,
+            field_selection: None,
+            raw_events: None,
+        };
+
+        let project_paths = ParsedProjectPaths::new(".", "generated", "config.yaml").unwrap();
+        let schema = crate::config_parsing::entity_parsing::Schema {
+            entities: std::collections::HashMap::new(),
+            enums: std::collections::HashMap::new(),
+        };
+
+        let system_config = SystemConfig::from_human_config(
+            HumanConfig::Evm(evm_config),
+            schema.clone(),
+            &project_paths,
+        )
+        .unwrap();
+
+        // Should use the default generated path
+        assert_eq!(
+            system_config.parsed_project_paths.generated,
+            project_paths.generated
+        );
+
+        // Test with custom output path
+        let evm_config_with_output = EvmConfig {
+            name: "Test Project".to_string(),
+            description: None,
+            ecosystem: None,
+            schema: None,
+            output: Some("custom/output".to_string()),
+            contracts: None,
+            networks: vec![EvmNetwork {
+                id: 1,
+                hypersync_config: None,
+                rpc_config: None,
+                rpc: None,
+                start_block: 0,
+                end_block: None,
+                confirmed_block_threshold: None,
+                contracts: vec![],
+            }],
+            unordered_multichain_mode: None,
+            event_decoder: None,
+            rollback_on_reorg: None,
+            save_full_history: None,
+            field_selection: None,
+            raw_events: None,
+        };
+
+        let system_config_with_output = SystemConfig::from_human_config(
+            HumanConfig::Evm(evm_config_with_output),
+            schema,
+            &project_paths,
+        )
+        .unwrap();
+
+        // Should use the custom output path relative to config location
+        let expected_custom_path = std::path::PathBuf::from("custom/output");
+        assert_eq!(
+            system_config_with_output.parsed_project_paths.generated,
+            expected_custom_path
+        );
     }
 }

@@ -33,6 +33,13 @@
         "null"
       ]
     },
+    "output": {
+      "description": "Path where the generated directory will be placed. By default it's 'generated' relative to the current working directory. If set, it'll be a path relative to the config file location.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
     "contracts": {
       "description": "Global contract definitions that must contain all definitions except addresses. You can share a single handler/abi/event definitions for contracts across multiple chains.",
       "type": [
