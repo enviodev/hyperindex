@@ -131,11 +131,8 @@ pub mod codegen {
         let template_dirs = TemplateDirs::new();
         fs::create_dir_all(&config.parsed_project_paths.generated).await?;
 
-        let template = hbs_templating::codegen_templates::ProjectTemplate::from_config(
-            config,
-            &config.parsed_project_paths,
-        )
-        .context("Failed creating project template")?;
+        let template = hbs_templating::codegen_templates::ProjectTemplate::from_config(config)
+            .context("Failed creating project template")?;
 
         template_dirs
             .get_codegen_static_dir()?
