@@ -49,6 +49,7 @@ module EventFunctions = {
   type eventProcessorArgs<'event> = {
     event: 'event,
     mockDb: TestHelpers_MockDb.t,
+    @deprecated("Set the chainId for the event instead")
     chainId?: int,
   }
 
@@ -58,111 +59,15 @@ module EventFunctions = {
   /**
   A function composer to help create individual processEvent functions
   */
-  let makeEventProcessor = (~register) => {
-    async args => {
-      let {event, mockDb, ?chainId} =
-        args->(Utils.magic: eventProcessorArgs<'event> => eventProcessorArgs<Internal.event>)
+  let makeEventProcessor = (~register) => args => {
+    let {event, mockDb, ?chainId} =
+      args->(Utils.magic: eventProcessorArgs<'event> => eventProcessorArgs<Internal.event>)
 
-      let config = RegisterHandlers.getConfig()
-      let eventConfig: Internal.eventConfig = register()
-
-      // The user can specify a chainId of an event or leave it off
-      // and it will default to the first chain in the config
-      let chain = switch chainId {
-      | Some(chainId) => config->Config.getChain(~chainId)
-      | None =>
-        switch config.defaultChain {
-        | Some(chainConfig) => chainConfig.chain
-        | None =>
-          Js.Exn.raiseError(
-            "No default chain Id found, please add at least 1 chain to your config.yaml",
-          )
-        }
-      }
-
-      //Create an individual logging context for traceability
-      let logger = Logging.createChild(
-        ~params={
-          "Context": `Test Processor for "${eventConfig.name}" event on contract "${eventConfig.contractName}"`,
-          "Chain ID": chain->ChainMap.Chain.toChainId,
-          "event": event,
-        },
-      )
-
-      //Deep copy the data in mockDb, mutate the clone and return the clone
-      //So no side effects occur here and state can be compared between process
-      //steps
-      let mockDbClone = mockDb->TestHelpers_MockDb.cloneMockDb
-
-      if (
-        !(
-          eventConfig.handler->Belt.Option.isSome ||
-            eventConfig.contractRegister->Belt.Option.isSome
-        )
-      ) {
-        Not_found->ErrorHandling.mkLogAndRaise(
-          ~logger,
-          ~msg=`No registered handler found for "${eventConfig.name}" on contract "${eventConfig.contractName}"`,
-        )
-      }
-      //Construct a new instance of an in memory store to run for the given event
-      let inMemoryStore = InMemoryStore.make()
-      let loadLayer = LoadLayer.make(
-        ~loadEntitiesByIds=TestHelpers_MockDb.makeLoadEntitiesByIds(mockDbClone),
-        ~loadEntitiesByField=TestHelpers_MockDb.makeLoadEntitiesByField(mockDbClone),
-      )
-
-      //No need to check contract is registered or return anything.
-      //The only purpose is to test the registerContract function and to
-      //add the entity to the in memory store for asserting registrations
-      let eventItem: Internal.eventItem = {
-        eventConfig,
-        event,
-        chain,
-        logIndex: event.logIndex,
-        timestamp: event.block->Types.Block.getTimestamp,
-        blockNumber: event.block->Types.Block.getNumber,
-      }
-
-      switch eventConfig.contractRegister {
-      | Some(_) =>
-        let dcs = await ChainFetcher.runContractRegistersOrThrow(
-          ~reversedWithContractRegister=[eventItem],
-        )
-
-        // TODO: Reuse FetchState logic to clean up duplicate dcs
-        if dcs->Utils.Array.notEmpty {
-          inMemoryStore->InMemoryStore.setDcsToStore(
-            Js.Dict.fromArray([(chain->ChainMap.Chain.toChainId->Belt.Int.toString, dcs)]),
-            ~shouldSaveHistory=false,
-          )
-        }
-      | None => () //No need to run contract registration
-      }
-
-      let batch = [eventItem]
-      try {
-        await batch->EventProcessing.runBatchLoadersOrThrow(~loadLayer, ~inMemoryStore)
-        await batch->EventProcessing.runBatchHandlersOrThrow(
-          ~inMemoryStore,
-          ~loadLayer,
-          ~config,
-          ~shouldSaveHistory=false,
-          ~shouldBenchmark=false,
-        )
-      } catch {
-      | EventProcessing.ProcessingError({message, exn, eventItem}) =>
-        exn
-        ->ErrorHandling.make(~msg=message, ~logger=eventItem->Logging.getEventLogger)
-        ->ErrorHandling.logAndRaise
-      }
-
-      //In mem store can still contatin raw events and dynamic contracts for the
-      //testing framework in cases where either contract register or loaderHandler
-      //is None
-      mockDbClone->TestHelpers_MockDb.writeFromMemoryStore(~inMemoryStore)
-      mockDbClone
-    }
+    // Have the line here, just in case the function is called with
+    // a manually created event. We don't want to break the existing tests here.
+    let _ =
+      TestHelpers_MockDb.mockEventRegisters->Utils.WeakMap.set(event, register)
+    TestHelpers_MockDb.makeProcessEvents(mockDb, ~chainId=?chainId)([event->(Utils.magic: Internal.event => Types.eventLog<unknown>)])
   }
 
   module MockBlock = {
@@ -210,19 +115,35 @@ module EventFunctions = {
   let makeEventMocker = (
     ~params: Internal.eventParams,
     ~mockEventData: option<mockEventData>,
+    ~register: unit => Internal.eventConfig,
   ): Internal.event => {
     let {?block, ?transaction, ?srcAddress, ?chainId, ?logIndex} =
       mockEventData->Belt.Option.getWithDefault({})
     let block = block->Belt.Option.getWithDefault({})->MockBlock.toBlock
     let transaction = transaction->Belt.Option.getWithDefault({})->MockTransaction.toTransaction
-    {
+    let config = RegisterHandlers.getConfig()
+    let event: Internal.event = {
       params,
       transaction,
-      chainId: chainId->Belt.Option.getWithDefault(1),
+      chainId: switch chainId {
+      | Some(chainId) => chainId
+      | None =>
+        switch config.defaultChain {
+        | Some(chainConfig) => chainConfig.chain->ChainMap.Chain.toChainId
+        | None =>
+          Js.Exn.raiseError(
+            "No default chain Id found, please add at least 1 chain to your config.yaml",
+          )
+        }
+      },
       block,
       srcAddress: srcAddress->Belt.Option.getWithDefault(Addresses.defaultAddress),
       logIndex: logIndex->Belt.Option.getWithDefault(0),
     }
+    // Since currently it's not possible to figure out the event config from the event
+    // we store a reference to the register function by event in a weak map
+    let _ = TestHelpers_MockDb.mockEventRegisters->Utils.WeakMap.set(event, register)
+    event
   }
 }
 
@@ -270,8 +191,11 @@ module {{contract.name.capitalized}} = {
       ()
       {{/if}}->(Utils.magic: Types.{{contract.name.capitalized}}.{{event.name}}.eventArgs => Internal.eventParams)
 
-      EventFunctions.makeEventMocker(~params, ~mockEventData)
-        ->(Utils.magic: Internal.event => Types.{{contract.name.capitalized}}.{{event.name}}.event)
+      EventFunctions.makeEventMocker(
+        ~params,
+        ~mockEventData,
+        ~register=(Types.{{contract.name.capitalized}}.{{event.name}}.register :> unit => Internal.eventConfig),
+      )->(Utils.magic: Internal.event => Types.{{contract.name.capitalized}}.{{event.name}}.event)
     }
     {{/if}}
     {{#if ../../is_fuel_ecosystem}}
@@ -279,7 +203,8 @@ module {{contract.name.capitalized}} = {
     let mockData = (params) => {
       EventFunctions.makeEventMocker(
         ~params=params->(Utils.magic: Types.{{contract.name.capitalized}}.{{event.name}}.eventArgs => Internal.eventParams),
-        ~mockEventData=None
+        ~mockEventData=None,
+        ~register=(Types.{{contract.name.capitalized}}.{{event.name}}.register :> unit => Internal.eventConfig),
       )->(Utils.magic: Internal.event => Types.{{contract.name.capitalized}}.{{event.name}}.event)
     }
     {{/if}}

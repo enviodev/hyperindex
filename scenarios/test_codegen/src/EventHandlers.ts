@@ -588,6 +588,22 @@ Gravatar.FactoryEvent.handlerWithLoader({
         await context.User.getOrThrow("0", "User should always exist");
         break;
       }
+
+      case "processMultipleEvents - 1": {
+        context.D.set({
+          id: "1",
+          c: "1",
+        });
+        break;
+      }
+
+      case "processMultipleEvents - 2": {
+        context.D.set({
+          id: "2",
+          c: "2",
+        });
+        break;
+      }
     }
   },
 });
