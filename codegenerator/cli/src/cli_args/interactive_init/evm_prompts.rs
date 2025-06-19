@@ -221,21 +221,83 @@ fn prompt_for_network_id(
     already_selected_ids: Vec<u64>,
 ) -> Result<converters::NetworkKind> {
     //Select one of our supported networks
-    let networks = NetworkWithExplorer::iter() // TODO: check if this should rather be `HypersyncNetwork::iter()` or both `NetworkWithExplorer::iter()` and `HypersyncNetwork::iter()`
+    let mut networks: Vec<NetworkWithExplorer> = NetworkWithExplorer::iter()
         //Don't allow selection of networks that have been previously
         //selected.
         .filter(|n| {
             let network_id = *n as u64;
             !already_selected_ids.contains(&network_id)
         })
-        .collect::<Vec<_>>();
+        .collect();
 
-    // Standard Select prompt without custom filter
-    // The NetworkWithExplorer's Display/to_string will use our updated pretty format with chain ID
+    // Sort networks alphabetically by name for default ordering
+    networks.sort_by(|a, b| {
+        let a_name = Network::from(*a).to_string();
+        let b_name = Network::from(*b).to_string();
+        a_name.cmp(&b_name)
+    });
+
+    // Custom scorer that provides dynamic ordering based on input type
+    let network_scorer = |input: &str,
+                          _option: &NetworkWithExplorer,
+                          _option_string: &str,
+                          option_index: usize|
+     -> Option<i64> {
+        if input.trim().is_empty() {
+            // No input: maintain alphabetical order (use negative index for descending order)
+            return Some(100000 - option_index as i64);
+        }
+
+        let chain_id = *_option as u64;
+        let display_name = _option.get_pretty_name().to_lowercase();
+        let input_lower = input.to_lowercase();
+
+        // Check if input is a number
+        if let Ok(input_chain_id) = input.parse::<u64>() {
+            // Numeric input: prioritize by chain ID proximity and exact matches
+            if chain_id == input_chain_id {
+                // Exact chain ID match gets highest priority
+                return Some(1000000);
+            }
+
+            // Chain ID contains the input digits gets high priority
+            if chain_id.to_string().contains(&input) {
+                // Score based on how close the chain ID is to the input number
+                let diff = if chain_id > input_chain_id {
+                    chain_id - input_chain_id
+                } else {
+                    input_chain_id - chain_id
+                };
+                return Some(500000 - diff as i64);
+            }
+
+            // Name matches for numeric input get lower priority
+            if display_name.contains(&input_lower) {
+                return Some(100000);
+            }
+        } else {
+            // Text input: prioritize by name matching, maintain alphabetical sub-ordering
+            if display_name.contains(&input_lower) {
+                // Calculate match quality (earlier matches = higher score)
+                let match_pos = display_name.find(&input_lower).unwrap_or(0);
+                return Some(200000 - match_pos as i64);
+            }
+
+            // Chain ID string contains input (for mixed searches)
+            if chain_id.to_string().contains(&input) {
+                return Some(50000);
+            }
+        }
+
+        // No match
+        None
+    };
+
     let selected_explorer_network = Select::new(
         "Which blockchain would you like to import a contract from?",
         networks,
     )
+    .with_scorer(&network_scorer)
     .prompt()?;
 
     // Convert the NetworkWithExplorer to NetworkKind
@@ -349,11 +411,76 @@ impl ExplorerImportArgs {
             }
             None => {
                 // Filter out already selected networks and show both network name and chain ID
-                let networks = NetworkWithExplorer::iter().collect::<Vec<_>>();
+                let mut networks: Vec<NetworkWithExplorer> = NetworkWithExplorer::iter().collect();
+
+                // Sort networks alphabetically by name for default ordering
+                networks.sort_by(|a, b| {
+                    let a_name = Network::from(*a).to_string();
+                    let b_name = Network::from(*b).to_string();
+                    a_name.cmp(&b_name)
+                });
+
+                // Use the same custom scorer as in prompt_for_network_id for consistency
+                let network_scorer = |input: &str,
+                                      _option: &NetworkWithExplorer,
+                                      _option_string: &str,
+                                      option_index: usize|
+                 -> Option<i64> {
+                    if input.trim().is_empty() {
+                        // No input: maintain alphabetical order (use negative index for descending order)
+                        return Some(100000 - option_index as i64);
+                    }
+
+                    let chain_id = *_option as u64;
+                    let display_name = _option.get_pretty_name().to_lowercase();
+                    let input_lower = input.to_lowercase();
+
+                    // Check if input is a number
+                    if let Ok(input_chain_id) = input.parse::<u64>() {
+                        // Numeric input: prioritize by chain ID proximity and exact matches
+                        if chain_id == input_chain_id {
+                            // Exact chain ID match gets highest priority
+                            return Some(1000000);
+                        }
+
+                        // Chain ID contains the input digits gets high priority
+                        if chain_id.to_string().contains(&input) {
+                            // Score based on how close the chain ID is to the input number
+                            let diff = if chain_id > input_chain_id {
+                                chain_id - input_chain_id
+                            } else {
+                                input_chain_id - chain_id
+                            };
+                            return Some(500000 - diff as i64);
+                        }
+
+                        // Name matches for numeric input get lower priority
+                        if display_name.contains(&input_lower) {
+                            return Some(100000);
+                        }
+                    } else {
+                        // Text input: prioritize by name matching, maintain alphabetical sub-ordering
+                        if display_name.contains(&input_lower) {
+                            // Calculate match quality (earlier matches = higher score)
+                            let match_pos = display_name.find(&input_lower).unwrap_or(0);
+                            return Some(200000 - match_pos as i64);
+                        }
+
+                        // Chain ID string contains input (for mixed searches)
+                        if chain_id.to_string().contains(&input) {
+                            return Some(50000);
+                        }
+                    }
+
+                    // No match
+                    None
+                };
+
                 Select::new(
                     "Which blockchain would you like to import a contract from?",
                     networks,
                 )
+                .with_scorer(&network_scorer)
                 .prompt()?
             }
         };
