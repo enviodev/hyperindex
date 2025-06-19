@@ -7,7 +7,6 @@ type t = {
   loadEntitiesByIds: (
     array<Types.id>,
     ~entityConfig: Internal.entityConfig,
-    ~logger: Pino.t=?,
   ) => promise<array<Internal.entity>>,
   loadEntitiesByField: (
     ~operator: TableIndices.Operator.t,
@@ -33,7 +32,7 @@ let makeWithDbConnection = (~persistence=Config.codegenPersistence) => {
   let storage = Persistence.getInitializedStorageOrThrow(persistence)
   {
     loadManager: LoadManager.make(),
-    loadEntitiesByIds: (ids, ~entityConfig, ~logger as _=?) =>
+    loadEntitiesByIds: (ids, ~entityConfig) =>
       storage.loadByIdsOrThrow(
         ~table=entityConfig.table,
         ~rowsSchema=entityConfig.rowsSchema,
@@ -55,13 +54,10 @@ let loadById = (
   let inMemTable = inMemoryStore->InMemoryStore.getInMemTable(~entityConfig)
 
   let load = async idsToLoad => {
-    // Since makeLoader prevents registerign entities already existing in the inMemoryStore,
+    // Since LoadManager.call prevents registerign entities already existing in the inMemoryStore,
     // we can be sure that we load only the new ones.
     let dbEntities = try {
-      await idsToLoad->loadLayer.loadEntitiesByIds(
-        ~entityConfig,
-        ~logger=eventItem->Logging.getEventLogger,
-      )
+      await idsToLoad->loadLayer.loadEntitiesByIds(~entityConfig)
     } catch {
     | Persistence.StorageError({message, reason}) =>
       reason->ErrorHandling.mkLogAndRaise(~logger=eventItem->Logging.getEventLogger, ~msg=message)

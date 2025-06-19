@@ -54,7 +54,7 @@ module LoadLayer = {
     let loadEntitiesByIdsCalls = []
     let loadEntitiesByFieldCalls = []
     let loadLayer = LoadLayer.make(
-      ~loadEntitiesByIds=async (entityIds, ~entityConfig, ~logger as _=?) => {
+      ~loadEntitiesByIds=async (entityIds, ~entityConfig) => {
         loadEntitiesByIdsCalls
         ->Js.Array2.push({
           entityIds,

@@ -67,7 +67,6 @@ module {{entity.name.capitalized}} = {
 
   let table = mkTable(
     (name :> string),
-    ~schemaName=Env.Db.publicSchema,
     ~fields=[
   {{#each entity.postgres_fields as | pg_field |}}
       mkField(
@@ -105,7 +104,7 @@ module {{entity.name.capitalized}} = {
   {{/if}}
   )
 
-  let entityHistory = table->EntityHistory.fromTable(~schema)
+  let entityHistory = table->EntityHistory.fromTable(~pgSchema=Env.Db.publicSchema, ~schema)
 
   external castToInternal: t => Internal.entity = "%identity"
 }
