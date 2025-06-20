@@ -47,7 +47,6 @@ type t = {
   mutable storageStatus: storageStatus,
   storage: storage,
   onStorageInitialize: option<unit => promise<unit>>,
-  cacheStorage: storage,
 }
 
 let entityHistoryActionEnumConfig: Internal.enumConfig<EntityHistory.RowAction.t> = {
@@ -64,7 +63,6 @@ let make = (
   ~allEnums,
   ~staticTables,
   ~storage,
-  ~cacheStorage,
   ~onStorageInitialize=?,
 ) => {
   let allEntities = userEntities->Js.Array2.concat([dcRegistryEntityConfig])
@@ -78,7 +76,6 @@ let make = (
     storageStatus: Unknown,
     storage,
     onStorageInitialize,
-    cacheStorage,
   }
 }
 

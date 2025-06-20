@@ -1232,7 +1232,6 @@ pub struct ProjectTemplate {
     entities: Vec<EntityRecordTypeTemplate>,
     gql_enums: Vec<GraphQlEnumTypeTemplate>,
     chain_configs: Vec<NetworkConfigTemplate>,
-    codegen_out_path: String,
     persisted_state: PersistedStateJsonString,
     is_unordered_multichain_mode: bool,
     should_rollback_on_reorg: bool,
@@ -1262,13 +1261,8 @@ impl ProjectTemplate {
         Ok(())
     }
 
-    pub fn from_config(cfg: &SystemConfig, project_paths: &ParsedProjectPaths) -> Result<Self> {
-        //TODO: make this a method in path handlers
-        let gitignore_generated_path = project_paths.generated.join("*");
-        let gitignore_path_str = gitignore_generated_path
-            .to_str()
-            .ok_or_else(|| anyhow!("invalid codegen path"))?
-            .to_string();
+    pub fn from_config(cfg: &SystemConfig) -> Result<Self> {
+        let project_paths = &cfg.parsed_project_paths;
 
         let codegen_contracts: Vec<ContractTemplate> = cfg
             .get_contracts()
@@ -1326,7 +1320,7 @@ impl ProjectTemplate {
         };
         let relative_path_to_root_from_generated =
             diff_from_current(&project_paths.project_root, &project_paths.generated)
-                .context("Failed to diff generated to root path")?;
+                .context("Failed to get relative path from output directory to project root")?;
 
         let global_field_selection = FieldSelection::global_selection(&cfg.field_selection);
         // TODO: Remove schemas for aggreaged, since they are not used in runtime
@@ -1343,7 +1337,6 @@ impl ProjectTemplate {
             entities,
             gql_enums,
             chain_configs,
-            codegen_out_path: gitignore_path_str,
             persisted_state,
             is_unordered_multichain_mode: cfg.unordered_multichain_mode,
             should_rollback_on_reorg: cfg.rollback_on_reorg,
@@ -1395,7 +1388,7 @@ mod test {
         let config = SystemConfig::parse_from_project_files(&project_paths)
             .expect("Deserialized yml config should be parseable");
 
-        super::ProjectTemplate::from_config(&config, &project_paths)
+        super::ProjectTemplate::from_config(&config)
             .expect("should be able to get project template")
     }
 

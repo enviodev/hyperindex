@@ -275,6 +275,7 @@ pub async fn generate_config_from_subgraph_id(
         description: manifest.description,
         ecosystem: None,
         schema: None,
+        output: None,
         contracts: None,
         networks: vec![],
         unordered_multichain_mode: None,

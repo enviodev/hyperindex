@@ -5,8 +5,6 @@ let isPrimaryKey = true
 let isNullable = true
 let isIndex = true
 
-let publicSchema = Env.Db.publicSchema
-
 module EventSyncState = {
   //Used unsafely in DbFunctions.res so just enforcing the naming here
   let blockTimestampFieldName = "block_timestamp"
@@ -24,7 +22,6 @@ module EventSyncState = {
 
   let table = mkTable(
     "event_sync_state",
-    ~schemaName=publicSchema,
     ~fields=[
       mkField("chain_id", Integer, ~fieldSchema=S.int, ~isPrimaryKey),
       mkField(blockNumberFieldName, Integer, ~fieldSchema=S.int),
@@ -42,7 +39,7 @@ module EventSyncState = {
 
   //We need to update values here not delet the rows, since restarting without a row
   //has a different behaviour to restarting with an initialised row with zero values
-  let resetCurrentCurrentSyncStateQuery = `UPDATE ${table.schemaName}.${table.tableName}
+  let resetCurrentCurrentSyncStateQuery = `UPDATE "${Env.Db.publicSchema}"."${table.tableName}"
     SET ${blockNumberFieldName} = 0, 
         ${logIndexFieldName} = 0, 
         ${blockTimestampFieldName} = 0, 
@@ -67,7 +64,6 @@ module ChainMetadata = {
 
   let table = mkTable(
     "chain_metadata",
-    ~schemaName=publicSchema,
     ~fields=[
       mkField("chain_id", Integer, ~fieldSchema=S.int, ~isPrimaryKey),
       mkField("start_block", Integer, ~fieldSchema=S.int),
@@ -103,7 +99,6 @@ module PersistedState = {
 
   let table = mkTable(
     "persisted_state",
-    ~schemaName=publicSchema,
     ~fields=[
       mkField("id", Serial, ~fieldSchema=S.int, ~isPrimaryKey),
       mkField("envio_version", Text, ~fieldSchema=S.string),
@@ -125,7 +120,6 @@ module EndOfBlockRangeScannedData = {
 
   let table = mkTable(
     "end_of_block_range_scanned_data",
-    ~schemaName=publicSchema,
     ~fields=[
       mkField("chain_id", Integer, ~fieldSchema=S.int, ~isPrimaryKey),
       mkField("block_number", Integer, ~fieldSchema=S.int, ~isPrimaryKey),
@@ -168,7 +162,6 @@ module RawEvents = {
 
   let table = mkTable(
     PgStorage.rawEventsTableName,
-    ~schemaName=publicSchema,
     ~fields=[
       mkField("chain_id", Integer, ~fieldSchema=S.int),
       mkField("event_id", Numeric, ~fieldSchema=S.bigint),
@@ -231,7 +224,6 @@ module DynamicContractRegistry = {
 
   let table = mkTable(
     "dynamic_contract_registry",
-    ~schemaName=publicSchema,
     ~fields=[
       mkField("id", Text, ~isPrimaryKey, ~fieldSchema=S.string),
       mkField("chain_id", Integer, ~fieldSchema=S.int),
@@ -250,5 +242,5 @@ module DynamicContractRegistry = {
     ],
   )
 
-  let entityHistory = table->EntityHistory.fromTable(~schema)
+  let entityHistory = table->EntityHistory.fromTable(~pgSchema=Env.Db.publicSchema, ~schema)
 }

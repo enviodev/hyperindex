@@ -263,7 +263,7 @@ let getEntityOperations = (mockDb: t, ~entityConfig: Internal.entityConfig): ent
 }
 
 let makeLoadEntitiesByIds = (mockDb: t) => {
-  (ids, ~entityConfig, ~logger as _=?) => {
+  (ids, ~entityConfig) => {
     let operations = mockDb->getEntityOperations(~entityConfig)
     ids->Array.keepMap(id => operations.get(id))->Promise.resolve
   }

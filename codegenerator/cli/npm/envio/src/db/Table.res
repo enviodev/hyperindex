@@ -89,14 +89,12 @@ let getFieldType = (field: field) => {
 
 type table = {
   tableName: string,
-  schemaName: string,
   fields: array<fieldOrDerived>,
   compositeIndices: array<array<string>>,
 }
 
-let mkTable = (tableName, ~schemaName, ~compositeIndices=[], ~fields) => {
+let mkTable = (tableName, ~compositeIndices=[], ~fields) => {
   tableName,
-  schemaName,
   fields,
   compositeIndices,
 }
@@ -298,60 +296,4 @@ let getCompositeIndices = (table): array<array<string>> => {
   table
   ->getUnfilteredCompositeIndicesUnsafe
   ->Array.keep(ind => ind->Array.length > 1)
-}
-
-module PostgresInterop = {
-  type pgFn<'payload, 'return> = (Postgres.sql, 'payload) => promise<'return>
-  type batchSetFn<'a> = (Postgres.sql, array<'a>) => promise<unit>
-  external eval: string => 'a = "eval"
-
-  let makeBatchSetFnString = (table: table) => {
-    let fieldNamesInQuotes =
-      table->getNonDefaultFieldNames->Array.map(fieldName => `"${fieldName}"`)
-    `(sql, rows) => {
-      return sql\`
-        INSERT INTO "${table.schemaName}"."${table.tableName}"
-        \${sql(rows, ${fieldNamesInQuotes->Js.Array2.joinWith(", ")})}
-        ON CONFLICT(${table->getPrimaryKeyFieldNames->Js.Array2.joinWith(", ")}) DO UPDATE
-        SET
-        ${fieldNamesInQuotes
-      ->Array.map(fieldNameInQuotes => `${fieldNameInQuotes} = EXCLUDED.${fieldNameInQuotes}`)
-      ->Js.Array2.joinWith(", ")};\`
-    }`
-  }
-
-  let chunkBatchQuery = (
-    sql,
-    entityDataArray: array<'entity>,
-    queryToExecute: pgFn<array<'entity>, 'return>,
-    ~maxItemsPerQuery=500,
-  ): promise<array<'return>> => {
-    let responses = []
-    let i = ref(0)
-    let shouldContinue = () => i.contents < entityDataArray->Array.length
-    // Split entityDataArray into chunks of maxItemsPerQuery
-    while shouldContinue() {
-      let chunk =
-        entityDataArray->Js.Array2.slice(~start=i.contents, ~end_=i.contents + maxItemsPerQuery)
-      let response = queryToExecute(sql, chunk)
-      responses->Js.Array2.push(response)->ignore
-      i := i.contents + maxItemsPerQuery
-    }
-    Promise.all(responses)
-  }
-
-  let makeBatchSetFn = (~table, ~schema: S.t<'a>): batchSetFn<'a> => {
-    let batchSetFn: pgFn<array<Js.Json.t>, unit> = table->makeBatchSetFnString->eval
-    let parseOrThrow = S.compile(
-      S.array(schema),
-      ~input=Value,
-      ~output=Json,
-      ~mode=Sync,
-      ~typeValidation=true,
-    )
-    async (sql, rows) => {
-      let rowsJson = rows->parseOrThrow->(Utils.magic: Js.Json.t => array<Js.Json.t>)
-      let _res = await chunkBatchQuery(sql, rowsJson, batchSetFn)
-    }
-  }
 }

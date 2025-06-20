@@ -45,7 +45,7 @@ This document contains the help content for the `envio` command-line program.
 ###### **Options:**
 
 * `-d`, `--directory <DIRECTORY>` — The directory of the project. Defaults to current dir ("./")
-* `-o`, `--output-directory <OUTPUT_DIRECTORY>` — The directory within the project that generated code should output to
+* `-o`, `--output-directory <OUTPUT_DIRECTORY>` — The directory for generated code output. We recommend configuring this using the `output` field in your config.yaml instead
 
   Default value: `generated`
 * `--config <CONFIG>` — The file in the project containing config

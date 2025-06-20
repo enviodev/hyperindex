@@ -127,27 +127,23 @@ pub mod codegen {
         Ok(exit3)
     }
 
-    pub async fn run_codegen(
-        config: &SystemConfig,
-        project_paths: &ParsedProjectPaths,
-    ) -> anyhow::Result<()> {
+    pub async fn run_codegen(config: &SystemConfig) -> anyhow::Result<()> {
         let template_dirs = TemplateDirs::new();
-        fs::create_dir_all(&project_paths.generated).await?;
+        fs::create_dir_all(&config.parsed_project_paths.generated).await?;
 
-        let template =
-            hbs_templating::codegen_templates::ProjectTemplate::from_config(config, project_paths)
-                .context("Failed creating project template")?;
+        let template = hbs_templating::codegen_templates::ProjectTemplate::from_config(config)
+            .context("Failed creating project template")?;
 
         template_dirs
             .get_codegen_static_dir()?
-            .extract(&project_paths.generated)
+            .extract(&config.parsed_project_paths.generated)
             .context("Failed extracting static codegen files")?;
 
         template
-            .generate_templates(project_paths)
+            .generate_templates(&config.parsed_project_paths)
             .context("Failed generating dynamic codegen files")?;
 
-        run_post_codegen_command_sequence(project_paths)
+        run_post_codegen_command_sequence(&config.parsed_project_paths)
             .await
             .context("Failed running post codegen command sequence")?;
 
@@ -157,11 +153,11 @@ pub mod codegen {
 
 pub mod start {
     use super::execute_command;
-    use crate::project_paths::ParsedProjectPaths;
+    use crate::config_parsing::system_config::SystemConfig;
     use anyhow::anyhow;
 
     pub async fn start_indexer(
-        project_paths: &ParsedProjectPaths,
+        config: &SystemConfig,
         should_open_hasura: bool,
     ) -> anyhow::Result<()> {
         if should_open_hasura {
@@ -175,7 +171,7 @@ pub mod start {
         }
         let cmd = "npm";
         let args = vec!["run", "start"];
-        let exit = execute_command(cmd, args, &project_paths.generated).await?;
+        let exit = execute_command(cmd, args, &config.parsed_project_paths.generated).await?;
 
         if !exit.success() {
             return Err(anyhow!(
@@ -192,23 +188,23 @@ pub mod start {
 }
 pub mod docker {
     use super::execute_command;
-    use crate::project_paths::ParsedProjectPaths;
+    use crate::config_parsing::system_config::SystemConfig;
 
     pub async fn docker_compose_up_d(
-        project_paths: &ParsedProjectPaths,
+        config: &SystemConfig,
     ) -> anyhow::Result<std::process::ExitStatus> {
         let cmd = "docker";
         let args = vec!["compose", "up", "-d"];
-        let current_dir = &project_paths.generated;
+        let current_dir = &config.parsed_project_paths.generated;
 
         execute_command(cmd, args, current_dir).await
     }
     pub async fn docker_compose_down_v(
-        project_paths: &ParsedProjectPaths,
+        config: &SystemConfig,
     ) -> anyhow::Result<std::process::ExitStatus> {
         let cmd = "docker";
         let args = vec!["compose", "down", "-v"];
-        let current_dir = &project_paths.generated;
+        let current_dir = &config.parsed_project_paths.generated;
 
         execute_command(cmd, args, current_dir).await
     }
@@ -220,14 +216,14 @@ pub mod db_migrate {
     use std::process::ExitStatus;
 
     use super::execute_command;
-    use crate::{persisted_state::PersistedState, project_paths::ParsedProjectPaths};
+    use crate::{config_parsing::system_config::SystemConfig, persisted_state::PersistedState};
 
     pub async fn run_up_migrations(
-        project_paths: &ParsedProjectPaths,
+        config: &SystemConfig,
         persisted_state: &PersistedState,
     ) -> anyhow::Result<()> {
         let args = vec!["db-up"];
-        let current_dir = &project_paths.generated;
+        let current_dir = &config.parsed_project_paths.generated;
         let exit = execute_command("pnpm", args, current_dir).await?;
 
         if !exit.success() {
@@ -241,18 +237,18 @@ pub mod db_migrate {
         Ok(())
     }
 
-    pub async fn run_drop_schema(project_paths: &ParsedProjectPaths) -> anyhow::Result<ExitStatus> {
+    pub async fn run_drop_schema(config: &SystemConfig) -> anyhow::Result<ExitStatus> {
         let args = vec!["db-down"];
-        let current_dir = &project_paths.generated;
+        let current_dir = &config.parsed_project_paths.generated;
         execute_command("pnpm", args, current_dir).await
     }
 
     pub async fn run_db_setup(
-        project_paths: &ParsedProjectPaths,
+        config: &SystemConfig,
         persisted_state: &PersistedState,
     ) -> anyhow::Result<()> {
         let args = vec!["db-setup"];
-        let current_dir = &project_paths.generated;
+        let current_dir = &config.parsed_project_paths.generated;
         let exit = execute_command("pnpm", args, current_dir).await?;
 
         if !exit.success() {
@@ -269,12 +265,12 @@ pub mod db_migrate {
 
 pub mod benchmark {
     use super::execute_command;
-    use crate::project_paths::ParsedProjectPaths;
+    use crate::config_parsing::system_config::SystemConfig;
     use anyhow::{anyhow, Result};
 
-    pub async fn print_summary(project_paths: &ParsedProjectPaths) -> Result<()> {
+    pub async fn print_summary(config: &SystemConfig) -> Result<()> {
         let args = vec!["print-benchmark-summary"];
-        let current_dir = &project_paths.generated;
+        let current_dir = &config.parsed_project_paths.generated;
         let exit = execute_command("pnpm", args, current_dir).await?;
 
         if !exit.success() {
