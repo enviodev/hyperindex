@@ -256,7 +256,7 @@ pub async fn run_init_args(init_args: InitArgs, project_paths: &ProjectPaths) ->
     let config = SystemConfig::parse_from_project_files(&parsed_project_paths)
         .context("Failed parsing config")?;
 
-    commands::codegen::run_codegen(&config, &parsed_project_paths).await?;
+    commands::codegen::run_codegen(&config).await?;
 
     if init_config.language == Language::ReScript {
         let res_build_exit = commands::rescript::build(&parsed_project_paths.project_root).await?;

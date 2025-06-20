@@ -6,7 +6,6 @@ let make: (
   ~loadEntitiesByIds: (
     array<Types.id>,
     ~entityConfig: Internal.entityConfig,
-    ~logger: Pino.t=?,
   ) => promise<array<Internal.entity>>,
   ~loadEntitiesByField: (
     ~operator: TableIndices.Operator.t,

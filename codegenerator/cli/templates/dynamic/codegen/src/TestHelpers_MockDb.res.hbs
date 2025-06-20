@@ -413,7 +413,7 @@ cloneMockDb = (self: t) => {
   clonedInternalDb->makeWithInMemoryStore
 }
 and makeLoadEntitiesByIds = (mockDb: t) => {
-  (ids, ~entityConfig, ~logger as _=?) => {
+  (ids, ~entityConfig) => {
     let operations = mockDb->getEntityOperations(~entityConfig)
     ids->Array.keepMap(id => operations.get(id))->Promise.resolve
   }

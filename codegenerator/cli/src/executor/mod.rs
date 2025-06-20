@@ -35,7 +35,9 @@ pub async fn execute(command_line_args: CommandLineArgs) -> Result<()> {
         }
 
         CommandType::Stop => {
-            commands::docker::docker_compose_down_v(&parsed_project_paths).await?;
+            let config = SystemConfig::parse_from_project_files(&parsed_project_paths)
+                .context("Failed parsing config")?;
+            commands::docker::docker_compose_down_v(&config).await?;
         }
 
         CommandType::Start(start_args) => {
@@ -65,17 +67,17 @@ pub async fn execute(command_line_args: CommandLineArgs) -> Result<()> {
                 std::env::set_var("ENVIO_SAVE_BENCHMARK_DATA", "true");
             }
 
-            if start_args.restart {
-                let config = SystemConfig::parse_from_project_files(&parsed_project_paths)
-                    .context("Failed parsing config")?;
+            let config = SystemConfig::parse_from_project_files(&parsed_project_paths)
+                .context("Failed parsing config")?;
 
+            if start_args.restart {
                 let persisted_state = PersistedState::get_current_state(&config)
                     .context("Failed constructing persisted state")?;
 
-                commands::db_migrate::run_db_setup(&parsed_project_paths, &persisted_state).await?;
+                commands::db_migrate::run_db_setup(&config, &persisted_state).await?;
             }
             const SHOULD_OPEN_HASURA: bool = false;
-            commands::start::start_indexer(&parsed_project_paths, SHOULD_OPEN_HASURA).await?;
+            commands::start::start_indexer(&config, SHOULD_OPEN_HASURA).await?;
         }
 
         CommandType::Local(local_commands) => {
@@ -83,7 +85,9 @@ pub async fn execute(command_line_args: CommandLineArgs) -> Result<()> {
         }
 
         CommandType::BenchmarkSummary => {
-            commands::benchmark::print_summary(&parsed_project_paths).await?
+            let config = SystemConfig::parse_from_project_files(&parsed_project_paths)
+                .context("Failed parsing config")?;
+            commands::benchmark::print_summary(&config).await?
         }
 
         CommandType::Script(Script::PrintCliHelpMd) => {

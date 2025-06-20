@@ -109,7 +109,7 @@ pub enum Network {
     CeloBaklava = 62320,
 
     #[subenum(HypersyncNetwork)]
-    Chiliz = 8888,
+    Chiliz = 88888,
 
     CitreaDevnet = 62298,
 
