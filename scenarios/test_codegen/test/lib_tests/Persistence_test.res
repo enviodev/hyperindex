@@ -69,7 +69,6 @@ describe("Test Persistence layer init", () => {
       )->Entities.entityModToInternal,
       ~allEnums=[],
       ~storage=storageMock.storage,
-      ~cacheStorage=makeStorageMock().storage,
     )
 
     Assert.deepEqual(
@@ -191,7 +190,6 @@ describe("Test Persistence layer init", () => {
       )->Entities.entityModToInternal,
       ~allEnums=[],
       ~storage=storageMock.storage,
-      ~cacheStorage=makeStorageMock().storage,
     )
 
     let p = persistence->Persistence.init
@@ -228,7 +226,6 @@ describe("Test Persistence layer init", () => {
       )->Entities.entityModToInternal,
       ~allEnums=[],
       ~storage=storageMock.storage,
-      ~cacheStorage=makeStorageMock().storage,
     )
 
     let _ = persistence->Persistence.init(~skipIsInitializedCheck=true)
