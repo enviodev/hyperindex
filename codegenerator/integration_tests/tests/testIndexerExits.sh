@@ -38,7 +38,7 @@ $envio_cmd codegen --config ./$CONFIG_FILE
 
 # clear everything before we start
 echo "Clearing old docker state"
-$envio_cmd stop || true
+$envio_cmd stop --config ./$CONFIG_FILE || true
 
 # start the indexer function, and check if it fails or exits with success
 # will exit the test if failure occurs (expected or not)
@@ -67,7 +67,7 @@ start_indexer() {
 }
 
 # run the setup commands and start indexer
-$envio_cmd local docker up
+$envio_cmd local docker up --config ./$CONFIG_FILE
 sleep 10
 $envio_cmd local db-migrate up --config ./$CONFIG_FILE
 echo "Starting indexer"
