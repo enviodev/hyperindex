@@ -141,6 +141,13 @@ pub mod evm {
         pub schema: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
+            description = "Path where the generated directory will be placed. By default it's \
+                           'generated' relative to the current working directory. If set, it'll \
+                           be a path relative to the config file location."
+        )]
+        pub output: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(
             description = "Global contract definitions that must contain all definitions except \
                            addresses. You can share a single handler/abi/event definitions for \
                            contracts across multiple chains."
@@ -532,6 +539,13 @@ pub mod fuel {
         pub schema: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
+            description = "Path where the generated directory will be placed. By default it's \
+                           'generated' relative to the current working directory. If set, it'll \
+                           be a path relative to the config file location."
+        )]
+        pub output: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(
             description = "Global contract definitions that must contain all definitions except \
                            addresses. You can share a single handler/abi/event definitions for \
                            contracts across multiple chains."
@@ -836,6 +850,7 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
             name: "Fuel indexer".to_string(),
             description: None,
             schema: None,
+            output: None,
             ecosystem: fuel::EcosystemTag::Fuel,
             contracts: None,
             raw_events: None,
@@ -879,9 +894,10 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
             name: "Fuel indexer".to_string(),
             description: None,
             schema: None,
-            raw_events: None,
+            output: None,
             ecosystem: fuel::EcosystemTag::Fuel,
             contracts: None,
+            raw_events: None,
             networks: vec![],
         };
 

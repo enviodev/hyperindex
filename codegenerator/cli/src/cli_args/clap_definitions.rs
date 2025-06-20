@@ -31,7 +31,7 @@ pub struct ProjectPaths {
     #[arg(global = true, short, long)]
     pub directory: Option<String>,
 
-    ///The directory within the project that generated code should output to
+    ///The directory for generated code output. We recommend configuring this using the `output` field in your config.yaml instead
     #[arg(global = true, short, long, default_value_t=String::from(DEFAULT_GENERATED_PATH))]
     pub output_directory: String,
 
