@@ -31,6 +31,8 @@ as MyModule_b
 
 open Belt
 
+let mockEventRegisters = Utils.WeakMap.make()
+
 /**
 A raw js binding to allow deleting from a dict. Used in store delete operation
 */
@@ -55,6 +57,7 @@ type rec t = {
   rawEvents: storeOperations<InMemoryStore.rawEventsKey, TablesStatic.RawEvents.t>,
   eventSyncState: storeOperations<Types.chainId, TablesStatic.EventSyncState.t>,
   dynamicContractRegistry: entityStoreOperations<TablesStatic.DynamicContractRegistry.t>,
+  processEvents: array<Types.eventLog<unknown>> => t,
 }
 
 // Each user defined entity will be in this record with all the store or "mockdb" operators
@@ -178,6 +181,69 @@ let makeStoreOperatorMeta = (
 }
 
 /**
+Accessor function for getting the internal inMemoryStore in the mockDb
+*/
+let getInternalDb = (self: t) => self.__dbInternal__
+
+let getEntityOperations = (mockDb: t, ~entityConfig: Internal.entityConfig): entityStoreOperations<
+  Internal.entity,
+> => {
+  mockDb.entities
+  ->Utils.magic
+  ->Utils.Dict.dangerouslyGetNonOption(entityConfig.name)
+  ->Utils.Option.getExn("Mocked operations for entity " ++ entityConfig.name ++ " not found")
+}
+
+/**
+A function composer for simulating the writing of an inMemoryStore to the external db with a mockDb.
+Runs all set and delete operations currently cached in an inMemory store against the mockDb
+*/
+let executeRowsEntity = (
+  mockDb: t,
+  ~inMemoryStore: InMemoryStore.t,
+  ~entityConfig: Internal.entityConfig,
+) => {
+  let getInMemTable = (inMemoryStore: InMemoryStore.t) =>
+    inMemoryStore.entities->InMemoryStore.EntityTables.get(~entityConfig)
+
+  let inMemTable = getInMemTable(inMemoryStore)
+
+  inMemTable.table
+  ->InMemoryTable.values
+  ->Array.forEach(row => {
+    let mockDbTable = mockDb->getInternalDb->getInMemTable
+    switch row.entityRow {
+    | Updated({latest: {entityUpdateAction: Set(entity)}})
+    | InitialReadFromDb(AlreadySet(entity)) =>
+      let key = (entity: Internal.entity).id
+      mockDbTable->InMemoryTable.Entity.initValue(
+        ~allowOverWriteEntity=true,
+        ~key,
+        ~entity=Some(entity),
+      )
+    | Updated({latest: {entityUpdateAction: Delete, entityId}}) =>
+      mockDbTable.table.dict->deleteDictKey(entityId)
+    | InitialReadFromDb(NotSet) => ()
+    }
+  })
+}
+
+let executeRowsMeta = (
+  mockDb: t,
+  ~inMemoryStore: InMemoryStore.t,
+  ~getInMemTable: InMemoryStore.t => InMemoryTable.t<'key, 'entity>,
+  ~getKey: 'entity => 'key,
+) => {
+  let mockDbTable = mockDb->getInternalDb->getInMemTable
+  inMemoryStore
+  ->getInMemTable
+  ->InMemoryTable.values
+  ->Array.forEach(row => {
+    mockDbTable->InMemoryTable.set(getKey(row), row)
+  })
+}
+
+/**
 The internal make function which can be passed an in memory store and
 instantiate a "MockDb". This is useful for cloning or making a MockDb
 out of an existing inMemoryStore
@@ -226,50 +292,133 @@ let rec makeWithInMemoryStore: InMemoryStore.t => t = (inMemoryStore: InMemorySt
   {{/each}}
   }
 
-  {__dbInternal__: inMemoryStore, entities, rawEvents, eventSyncState, dynamicContractRegistry}
+  let mockDb = {
+    __dbInternal__: inMemoryStore,
+    entities,
+    rawEvents,
+    eventSyncState,
+    dynamicContractRegistry,
+    processEvents: %raw(`null`),
+  }
+  (mockDb->Utils.magic)["processEvents"] = makeProcessEvents(mockDb, ~chainId=?None)
+  mockDb
 }
+and makeProcessEvents = (mockDb: t, ~chainId=?) => async (
+  events: array<Types.eventLog<unknown>>,
+) => {
+  let config = RegisterHandlers.getConfig()
+  let reversedWithContractRegister = []
 
-/**
-The constructor function for a mockDb. Call it and then set up the inital state by calling
-any of the set functions it provides access to. A mockDb will be passed into a processEvent 
-helper. Note, process event helpers will not mutate the mockDb but return a new mockDb with
-new state so you can compare states before and after.
-*/
-//Note: It's called createMockDb over "make" to make it more intuitive in JS and TS
-@genType 
-let createMockDb = () => makeWithInMemoryStore(InMemoryStore.make())
+  let processingChainId = ref(chainId)
+  let eventItems = events->Array.map(event => {
+    let event = event->Internal.fromGenericEvent
+    let eventConfig = switch mockEventRegisters->Utils.WeakMap.get(event) {
+    | Some(register) => register()
+    | None =>
+      Js.Exn.raiseError(
+        "Events must be created using the mock API (e.g. createMockEvent) to be processed by mockDb.processEvents",
+      )
+    }
+    let chainId = switch chainId {
+    | Some(chainId) => chainId
+    | None => event.chainId
+    }
 
-/**
-Accessor function for getting the internal inMemoryStore in the mockDb
-*/
-let getInternalDb = (self: t) => self.__dbInternal__
+    switch processingChainId.contents {
+    | Some(chainId) =>
+      if chainId != event.chainId {
+        Js.Exn.raiseError(
+          `Processing events on multiple chains is not supported yet. Got chainId ${event.chainId->Belt.Int.toString} but expected ${chainId->Belt.Int.toString}`,
+        )
+      }
+    | None => processingChainId.contents = Some(chainId)
+    }
 
-/**
+    let chain = config->Config.getChain(~chainId)
+    let eventItem: Internal.eventItem = {
+      eventConfig,
+      event,
+      chain,
+      logIndex: event.logIndex,
+      timestamp: event.block->Types.Block.getTimestamp,
+      blockNumber: event.block->Types.Block.getNumber,
+    }
+    if eventConfig.contractRegister->Option.isSome {
+      reversedWithContractRegister->Js.Array2.unshift(eventItem)->ignore
+    }
+    eventItem
+  })
+
+  let processingChainId = switch processingChainId.contents {
+  | Some(chainId) => chainId
+  | None =>
+    Js.Exn.raiseError("No events provided to processEvents. Please provide at least one event.")
+  }
+
+  //Deep copy the data in mockDb, mutate the clone and return the clone
+  //So no side effects occur here and state can be compared between process
+  //steps
+  let mockDbClone = mockDb->cloneMockDb
+
+  //Construct a new instance of an in memory store to run for the given event
+  let inMemoryStore = InMemoryStore.make()
+  let loadLayer = LoadLayer.make(
+    ~loadEntitiesByIds=makeLoadEntitiesByIds(mockDbClone),
+    ~loadEntitiesByField=makeLoadEntitiesByField(mockDbClone),
+  )
+
+  //No need to check contract is registered or return anything.
+  //The only purpose is to test the registerContract function and to
+  //add the entity to the in memory store for asserting registrations
+  if reversedWithContractRegister->Utils.Array.notEmpty {
+    let dcs = await ChainFetcher.runContractRegistersOrThrow(~reversedWithContractRegister)
+
+    // TODO: Reuse FetchState logic to clean up duplicate dcs
+    if dcs->Utils.Array.notEmpty {
+      inMemoryStore->InMemoryStore.setDcsToStore(
+        Js.Dict.fromArray([(processingChainId->Belt.Int.toString, dcs)]),
+        ~shouldSaveHistory=false,
+      )
+    }
+  }
+
+  try {
+    await eventItems->EventProcessing.runBatchLoadersOrThrow(~loadLayer, ~inMemoryStore)
+    await eventItems->EventProcessing.runBatchHandlersOrThrow(
+      ~inMemoryStore,
+      ~loadLayer,
+      ~config,
+      ~shouldSaveHistory=false,
+      ~shouldBenchmark=false,
+    )
+  } catch {
+  | EventProcessing.ProcessingError({message, exn, eventItem}) =>
+    exn
+    ->ErrorHandling.make(~msg=message, ~logger=eventItem->Logging.getEventLogger)
+    ->ErrorHandling.logAndRaise
+  }
+
+  //In mem store can still contatin raw events and dynamic contracts for the
+  //testing framework in cases where either contract register or loaderHandler
+  //is None
+  mockDbClone->writeFromMemoryStore(~inMemoryStore)
+  mockDbClone
+}
+and /**
 Deep copies the in memory store data and returns a new mockDb with the same
 state and no references to data from the passed in mockDb
 */
-let cloneMockDb = (self: t) => {
+cloneMockDb = (self: t) => {
   let clonedInternalDb = self->getInternalDb->InMemoryStore.clone
   clonedInternalDb->makeWithInMemoryStore
 }
-
-let getEntityOperations = (mockDb: t, ~entityConfig: Internal.entityConfig): entityStoreOperations<
-  Internal.entity,
-> => {
-  mockDb.entities
-  ->Utils.magic
-  ->Utils.Dict.dangerouslyGetNonOption(entityConfig.name)
-  ->Utils.Option.getExn("Mocked operations for entity " ++ entityConfig.name ++ " not found")
-}
-
-let makeLoadEntitiesByIds = (mockDb: t) => {
+and makeLoadEntitiesByIds = (mockDb: t) => {
   (ids, ~entityConfig) => {
     let operations = mockDb->getEntityOperations(~entityConfig)
     ids->Array.keepMap(id => operations.get(id))->Promise.resolve
   }
 }
-
-let makeLoadEntitiesByField = (mockDb: t) => {
+and makeLoadEntitiesByField = (mockDb: t) => {
   async (
     ~operator,
     ~entityConfig,
@@ -291,63 +440,11 @@ let makeLoadEntitiesByField = (mockDb: t) => {
     })
   }
 }
-
-/**
-A function composer for simulating the writing of an inMemoryStore to the external db with a mockDb.
-Runs all set and delete operations currently cached in an inMemory store against the mockDb
-*/
-let executeRowsEntity = (
-  mockDb: t,
-  ~inMemoryStore: InMemoryStore.t,
-  ~entityConfig: Internal.entityConfig,
-) => {
-  let getInMemTable = (inMemoryStore: InMemoryStore.t) =>
-    inMemoryStore.entities->InMemoryStore.EntityTables.get(
-      ~entityConfig,
-    )
-
-  let inMemTable = getInMemTable(inMemoryStore)
-
-  inMemTable.table
-  ->InMemoryTable.values
-  ->Array.forEach(row => {
-    let mockDbTable = mockDb->getInternalDb->getInMemTable
-    switch row.entityRow {
-    | Updated({latest: {entityUpdateAction: Set(entity)}})
-    | InitialReadFromDb(AlreadySet(entity)) =>
-      let key = (entity: Internal.entity).id
-      mockDbTable->InMemoryTable.Entity.initValue(
-        ~allowOverWriteEntity=true,
-        ~key,
-        ~entity=Some(entity),
-      )
-    | Updated({latest: {entityUpdateAction: Delete, entityId}}) =>
-      mockDbTable.table.dict->deleteDictKey(entityId)
-    | InitialReadFromDb(NotSet) => ()
-    }
-  })
-}
-
-let executeRowsMeta = (
-  mockDb: t,
-  ~inMemoryStore: InMemoryStore.t,
-  ~getInMemTable: InMemoryStore.t => InMemoryTable.t<'key, 'entity>,
-  ~getKey: 'entity => 'key,
-) => {
-  let mockDbTable = mockDb->getInternalDb->getInMemTable
-  inMemoryStore
-  ->getInMemTable
-  ->InMemoryTable.values
-  ->Array.forEach(row => {
-    mockDbTable->InMemoryTable.set(getKey(row), row)
-  })
-}
-
-/**
+and /**
 Simulates the writing of processed data in the inMemoryStore to a mockDb. This function
 executes all the rows on each "store" (or pg table) in the inMemoryStore
 */
-let writeFromMemoryStore = (mockDb: t, ~inMemoryStore: InMemoryStore.t) => {
+writeFromMemoryStore = (mockDb: t, ~inMemoryStore: InMemoryStore.t) => {
   //INTERNAL STORES/TABLES EXECUTION
   mockDb->executeRowsMeta(
     ~inMemoryStore,
@@ -365,9 +462,17 @@ let writeFromMemoryStore = (mockDb: t, ~inMemoryStore: InMemoryStore.t) => {
   )
 
   Config.codegenPersistence.allEntities->Array.forEach(entityConfig => {
-    mockDb->executeRowsEntity(
-      ~inMemoryStore,
-      ~entityConfig,
-    )
+    mockDb->executeRowsEntity(~inMemoryStore, ~entityConfig)
   })
 }
+
+/**
+The constructor function for a mockDb. Call it and then set up the inital state by calling
+any of the set functions it provides access to. A mockDb will be passed into a processEvent 
+helper. Note, process event helpers will not mutate the mockDb but return a new mockDb with
+new state so you can compare states before and after.
+*/
+@genType
+let //Note: It's called createMockDb over "make" to make it more intuitive in JS and TS
+
+createMockDb = () => makeWithInMemoryStore(InMemoryStore.make())

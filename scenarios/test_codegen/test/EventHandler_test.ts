@@ -277,4 +277,33 @@ describe("Use Envio test framework to test event handlers", () => {
       },
     ] satisfies typeof users);
   });
+
+  it("Process multiple events in batch", async () => {
+    const mockDbInitial = MockDb.createMockDb();
+
+    const dcAddress = "0x1234567890123456789012345678901234567890";
+
+    const event1 = Gravatar.FactoryEvent.createMockEvent({
+      contract: dcAddress,
+      testCase: "processMultipleEvents - 1",
+    });
+    const event2 = Gravatar.FactoryEvent.createMockEvent({
+      contract: dcAddress,
+      testCase: "processMultipleEvents - 2",
+    });
+
+    const updatedMockDb = await mockDbInitial.processEvents([event1, event2]);
+
+    const d = updatedMockDb.entities.D.getAll();
+    assert.deepEqual(d, [
+      {
+        id: "1",
+        c: "1",
+      },
+      {
+        id: "2",
+        c: "2",
+      },
+    ] satisfies typeof d);
+  });
 });
