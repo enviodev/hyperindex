@@ -314,47 +314,30 @@ let setOrThrow = async (sql, ~items, ~table: Table.table, ~itemSchema, ~pgSchema
     let sqlQuery = query["sql"]
 
     try {
-      let payload =
-        query["convertOrThrow"](items->(Utils.magic: array<'item> => array<unknown>))->(
-          Utils.magic: unknown => array<unknown>
-        )
-
       if query["isInsertValues"] {
-        let fieldsCount = switch itemSchema->S.classify {
-        | S.Object({items}) => items->Array.length
-        | _ => Js.Exn.raiseError("Expected an object schema for table")
-        }
-
-        // Chunk the items for VALUES-based queries
-        // We need to multiply by fields count,
-        // because we flattened our entity values with S.unnest
-        // to optimize the query execution.
-        let maxChunkSize = maxItemsPerQuery * fieldsCount
-        let chunks = chunkArray(payload, ~chunkSize=maxChunkSize)
+        let chunks = chunkArray(items, ~chunkSize=maxItemsPerQuery)
         let responses = []
         chunks->Js.Array2.forEach(chunk => {
           let chunkSize = chunk->Array.length
-          let isFullChunk = chunkSize === maxChunkSize
+          let isFullChunk = chunkSize === maxItemsPerQuery
 
           let response = sql->Postgres.preparedUnsafe(
             // Either use the sql query for full chunks from cache
             // or create a new one for partial chunks on the fly.
             isFullChunk
               ? sqlQuery
-              : makeInsertValuesSetSql(
-                  ~pgSchema,
-                  ~table,
-                  ~itemSchema,
-                  ~itemsCount=chunkSize / fieldsCount,
-                ),
-            chunk->Utils.magic,
+              : makeInsertValuesSetSql(~pgSchema, ~table, ~itemSchema, ~itemsCount=chunkSize),
+            query["convertOrThrow"](chunk->(Utils.magic: array<'item> => array<unknown>)),
           )
           responses->Js.Array2.push(response)->ignore
         })
         let _ = await Promise.all(responses)
       } else {
         // Use UNNEST approach for single query
-        await sql->Postgres.preparedUnsafe(sqlQuery, payload->Obj.magic)
+        await sql->Postgres.preparedUnsafe(
+          sqlQuery,
+          query["convertOrThrow"](items->(Utils.magic: array<'item> => array<unknown>)),
+        )
       }
     } catch {
     | S.Raised(_) as exn =>
