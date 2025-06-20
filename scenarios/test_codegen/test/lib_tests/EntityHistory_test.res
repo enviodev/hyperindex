@@ -45,7 +45,6 @@ module TestEntity = {
   let rowsSchema = S.array(schema)
   let table = Table.mkTable(
     "TestEntity",
-    ~schemaName="public",
     ~fields=[
       Table.mkField("id", Text, ~fieldSchema=S.string, ~isPrimaryKey=true),
       Table.mkField("fieldA", Integer, ~fieldSchema=S.int),
@@ -53,7 +52,7 @@ module TestEntity = {
     ],
   )
 
-  let entityHistory = table->EntityHistory.fromTable(~schema)
+  let entityHistory = table->EntityHistory.fromTable(~pgSchema="public", ~schema)
 
   external castToInternal: t => Internal.entity = "%identity"
 }
@@ -61,10 +60,14 @@ module TestEntity = {
 type testEntityHistory = EntityHistory.historyRow<TestEntity.t>
 let testEntityHistorySchema = EntityHistory.makeHistoryRowSchema(TestEntity.schema)
 
-let batchSetMockEntity = Table.PostgresInterop.makeBatchSetFn(
-  ~table=TestEntity.table,
-  ~schema=TestEntity.schema,
-)
+let batchSetMockEntity = (sql, items) =>
+  PgStorage.setOrThrow(
+    sql,
+    ~items,
+    ~pgSchema="public",
+    ~table=TestEntity.table,
+    ~itemSchema=TestEntity.schema,
+  )
 
 let getAllMockEntity = sql =>
   sql

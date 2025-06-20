@@ -173,8 +173,9 @@ let batchInsertRows = (self: t<'entity>, ~sql, ~rows: array<historyRow<'entity>>
 type entityInternal
 
 external castInternal: t<'entity> => t<entityInternal> = "%identity"
+external eval: string => 'a = "eval"
 
-let fromTable = (table: table, ~schema: S.t<'entity>): t<'entity> => {
+let fromTable = (table: table, ~pgSchema, ~schema: S.t<'entity>): t<'entity> => {
   let entity_history_block_timestamp = "entity_history_block_timestamp"
   let entity_history_chain_id = "entity_history_chain_id"
   let entity_history_block_number = "entity_history_block_number"
@@ -235,12 +236,10 @@ let fromTable = (table: table, ~schema: S.t<'entity>): t<'entity> => {
   let dataFieldNames = dataFields->Belt.Array.map(field => field->getFieldName)
 
   let originTableName = table.tableName
-  let originSchemaName = table.schemaName
   let historyTableName = originTableName ++ "_history"
   //ignore composite indices
   let table = mkTable(
     historyTableName,
-    ~schemaName=originSchemaName,
     ~fields=Belt.Array.concatMany([
       currentHistoryFields,
       previousHistoryFields,
@@ -251,8 +250,8 @@ let fromTable = (table: table, ~schema: S.t<'entity>): t<'entity> => {
 
   let insertFnName = `"insert_${table.tableName}"`
   let historyRowArg = "history_row"
-  let historyTablePath = `"${originSchemaName}"."${historyTableName}"`
-  let originTablePath = `"${originSchemaName}"."${originTableName}"`
+  let historyTablePath = `"${pgSchema}"."${historyTableName}"`
+  let originTablePath = `"${pgSchema}"."${originTableName}"`
 
   let previousHistoryFieldsAreNullStr =
     previousChangeFieldNames
@@ -335,7 +334,7 @@ let fromTable = (table: table, ~schema: S.t<'entity>): t<'entity> => {
     \${shouldCopyCurrentEntity});\``
 
   let insertFn: (Postgres.sql, Js.Json.t, ~shouldCopyCurrentEntity: bool) => promise<unit> =
-    insertFnString->Table.PostgresInterop.eval
+    insertFnString->eval
 
   let schema = makeHistoryRowSchema(schema)
 
