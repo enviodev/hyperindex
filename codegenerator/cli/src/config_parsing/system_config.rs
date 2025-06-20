@@ -550,7 +550,7 @@ impl SystemConfig {
                     if let Some(Component::ParentDir) =
                         output_relative_path.components().peekable().peek()
                     {
-                        return Err(anyhow!("Output folder must be in project directory"));
+                        anyhow::bail!("Output folder must be in project directory");
                     }
 
                     let output_joined = config_dir.join(output_relative_path);
