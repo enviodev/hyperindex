@@ -72,8 +72,11 @@ let make = (
 ) => {
   let targetBatchesInBuffer = 3
   let targetBufferSize = switch Env.targetBufferSize {
-    | Some(size) => size
-    | None => Env.maxProcessBatchSize * (chainManager.chainFetchers->ChainMap.size > targetBatchesInBuffer ? 1 : targetBatchesInBuffer)
+  | Some(size) => size
+  | None =>
+    Env.maxProcessBatchSize * (
+      chainManager.chainFetchers->ChainMap.size > targetBatchesInBuffer ? 1 : targetBatchesInBuffer
+    )
   }
   Prometheus.ProcessingMaxBatchSize.set(~maxBatchSize=Env.maxProcessBatchSize)
   Prometheus.IndexingTargetBufferSize.set(~targetBufferSize)
@@ -201,15 +204,64 @@ Takes in a chain manager and sets all chains timestamp caught up to head
 when valid state lines up and returns an updated chain manager
 */
 let checkAndSetSyncedChains = (
+  chainManager: ChainManager.t,
   ~nextQueueItemIsKnownNone=false,
   ~shouldSetPrometheusSynced=true,
-  chainManager: ChainManager.t,
+  ~processingMetricsByChainId=?,
 ) => {
   let nextQueueItemIsNone = nextQueueItemIsKnownNone || chainManager->ChainManager.nextItemIsNone
 
   let allChainsAtHead = chainManager->ChainManager.isFetchingAtHead
   //Update the timestampCaughtUpToHeadOrEndblock values
   let chainFetchers = chainManager.chainFetchers->ChainMap.map(cf => {
+    let chain = cf.chainConfig.chain
+
+    // None if the chain wasn't processing.
+    // But we still want to update the latest processed block
+    // when there are no events to precess
+    let maybeMetrics: option<ChainManager.processingChainMetrics> =
+      processingMetricsByChainId->Option.flatMap(map =>
+        map->Utils.Dict.dangerouslyGetNonOption(chain->ChainMap.Chain.toString)
+      )
+
+    // We want to recalculate the prom metrics
+    // even when processingMetricsByChainId is not provided - empty batch
+    let latestProcessedBlock = if cf->ChainFetcher.hasNoMoreEventsToProcess {
+      Pervasives.max(FetchState.getLatestFullyFetchedBlock(cf.fetchState).blockNumber, 0)->Some
+    } else {
+      switch maybeMetrics {
+      | Some(metrics) => Some(metrics.targetBlockNumber)
+      | None => cf.latestProcessedBlock
+      }
+    }
+
+    switch latestProcessedBlock {
+    | Some(latestProcessedBlockNumber) =>
+      Prometheus.ProgressBlockNumber.set(
+        ~blockNumber=latestProcessedBlockNumber,
+        ~chainId=chain->ChainMap.Chain.toChainId,
+      )
+    | None => ()
+    }
+
+    let numEventsProcessed = switch maybeMetrics {
+    | Some(metrics) => {
+        let processedCount = cf.numEventsProcessed + metrics.batchSize
+        Prometheus.ProgressEventsCount.set(
+          ~processedCount,
+          ~chainId=chain->ChainMap.Chain.toChainId,
+        )
+        processedCount
+      }
+    | None => cf.numEventsProcessed
+    }
+
+    let cf = {
+      ...cf,
+      latestProcessedBlock,
+      numEventsProcessed,
+    }
+
     /* strategy for TUI synced status:
      * Firstly -> only update synced status after batch is processed (not on batch creation). But also set when a batch tries to be created and there is no batch
      *
@@ -293,56 +345,12 @@ let updateLatestProcessedBlocks = (
   ~processingMetricsByChainId: dict<ChainManager.processingChainMetrics>,
   ~shouldSetPrometheusSynced=true,
 ) => {
-  let chainManager = {
-    ...state.chainManager,
-    chainFetchers: state.chainManager.chainFetchers->ChainMap.map(cf => {
-      let {chainConfig: {chain}, fetchState} = cf
-      // None if the chain wasn't processing.
-      // But we still want to update the latest processed block
-      // when there are no events to precess
-      let maybeMetrics =
-        processingMetricsByChainId->Utils.Dict.dangerouslyGetNonOption(
-          chain->ChainMap.Chain.toString,
-        )
-
-      let latestProcessedBlock = if cf->ChainFetcher.hasNoMoreEventsToProcess {
-        Pervasives.max(FetchState.getLatestFullyFetchedBlock(fetchState).blockNumber, 0)->Some
-      } else {
-        switch maybeMetrics {
-        | Some(metrics) => Some(metrics.targetBlockNumber)
-        | None => cf.latestProcessedBlock
-        }
-      }
-
-      switch latestProcessedBlock {
-      | Some(latestProcessedBlockNumber) =>
-        Prometheus.ProgressBlockNumber.set(
-          ~blockNumber=latestProcessedBlockNumber,
-          ~chainId=chain->ChainMap.Chain.toChainId,
-        )
-      | None => ()
-      }
-
-      let numEventsProcessed = switch maybeMetrics {
-      | Some(metrics) => cf.numEventsProcessed + metrics.batchSize
-      | None => cf.numEventsProcessed
-      }
-
-      Prometheus.ProgressEventsCount.set(
-        ~processedCount=numEventsProcessed,
-        ~chainId=chain->ChainMap.Chain.toChainId,
-      )
-
-      {
-        ...cf,
-        latestProcessedBlock,
-        numEventsProcessed,
-      }
-    }),
-  }
   {
     ...state,
-    chainManager: chainManager->checkAndSetSyncedChains(~shouldSetPrometheusSynced),
+    chainManager: state.chainManager->checkAndSetSyncedChains(
+      ~shouldSetPrometheusSynced,
+      ~processingMetricsByChainId,
+    ),
     currentlyProcessingBatch: false,
   }
 }
