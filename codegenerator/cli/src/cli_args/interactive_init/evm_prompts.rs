@@ -6,7 +6,7 @@ use super::{
         prompt_abi_file_path, prompt_contract_address, prompt_contract_name,
         prompt_events_selection, prompt_to_continue_adding, Contract, SelectItem,
     },
-    validation::UniqueValueValidator,
+    // validation::UniqueValueValidator,
 };
 use crate::{
     clap_definitions::evm::NetworkOrChainId,
@@ -221,46 +221,92 @@ fn prompt_for_network_id(
     already_selected_ids: Vec<u64>,
 ) -> Result<converters::NetworkKind> {
     //Select one of our supported networks
-    let networks = HypersyncNetwork::iter()
+    let mut networks: Vec<NetworkWithExplorer> = NetworkWithExplorer::iter()
         //Don't allow selection of networks that have been previously
         //selected.
         .filter(|n| {
             let network_id = *n as u64;
             !already_selected_ids.contains(&network_id)
         })
-        .map(NetworkSelection::Network)
-        .collect::<Vec<_>>();
+        .collect();
 
-    //User's options to either enter an id or select a supported network
-    let options = [vec![NetworkSelection::EnterNetworkId], networks].concat();
+    // Sort networks alphabetically by name for default ordering
+    networks.sort_by(|a, b| {
+        let a_name = Network::from(*a).to_string();
+        let b_name = Network::from(*b).to_string();
+        a_name.cmp(&b_name)
+    });
 
-    //Action prompt
-    let choose_from_networks = Select::new("Choose network:", options)
-        .prompt()
-        .context("Failed during prompt for network")?;
-
-    let selected = match choose_from_networks {
-        //If the user's choice evaluates to the enter network id option, prompt them for
-        //a network id
-        NetworkSelection::EnterNetworkId => {
-            let network_id = CustomType::<u64>::new("Enter the network id:")
-                //Validate that this ID is not already selected
-                .with_validator(UniqueValueValidator::new(already_selected_ids))
-                .with_error_message("Invalid network id input, please enter a number")
-                .prompt()?;
-
-            //Convert the id into a supported or unsupported network.
-            //If unsupported, it will use the optional rpc url or prompt
-            //for an rpc url
-            get_converter_network_u64(network_id, opt_rpc_url, opt_start_block)?
+    // Custom scorer that provides dynamic ordering based on input type
+    let network_scorer = |input: &str,
+                          _option: &NetworkWithExplorer,
+                          _option_string: &str,
+                          option_index: usize|
+     -> Option<i64> {
+        if input.trim().is_empty() {
+            // No input: maintain alphabetical order (use negative index for descending order)
+            return Some(100000 - option_index as i64);
         }
-        //If a supported network choice was selected. We should be able to
-        //parse it back to a supported network since it was serialized as a
-        //string
-        NetworkSelection::Network(network) => converters::NetworkKind::Supported(network),
+
+        let chain_id = *_option as u64;
+        let display_name = _option.get_pretty_name().to_lowercase();
+        let input_lower = input.to_lowercase();
+
+        // Check if input is a number
+        if let Ok(input_chain_id) = input.parse::<u64>() {
+            // Numeric input: prioritize by chain ID proximity and exact matches
+            if chain_id == input_chain_id {
+                // Exact chain ID match gets highest priority
+                return Some(1000000);
+            }
+
+            // Chain ID contains the input digits gets high priority
+            if chain_id.to_string().contains(&input) {
+                // Score based on how close the chain ID is to the input number
+                let diff = if chain_id > input_chain_id {
+                    chain_id - input_chain_id
+                } else {
+                    input_chain_id - chain_id
+                };
+                return Some(500000 - diff as i64);
+            }
+
+            // Name matches for numeric input get lower priority
+            if display_name.contains(&input_lower) {
+                return Some(100000);
+            }
+        } else {
+            // Text input: prioritize by name matching, maintain alphabetical sub-ordering
+            if display_name.contains(&input_lower) {
+                // Calculate match quality (earlier matches = higher score)
+                let match_pos = display_name.find(&input_lower).unwrap_or(0);
+                return Some(200000 - match_pos as i64);
+            }
+
+            // Chain ID string contains input (for mixed searches)
+            if chain_id.to_string().contains(&input) {
+                return Some(50000);
+            }
+        }
+
+        // No match
+        None
     };
 
-    Ok(selected)
+    let selected_explorer_network = Select::new(
+        "Which blockchain would you like to import a contract from?",
+        networks,
+    )
+    .with_scorer(&network_scorer)
+    .prompt()?;
+
+    // Convert the NetworkWithExplorer to NetworkKind
+    let network_id = selected_explorer_network as u64;
+    Ok(get_converter_network_u64(
+        network_id,
+        opt_rpc_url,
+        opt_start_block,
+    )?)
 }
 
 //Takes a u64 network ID and turns it into either "Supported" network or
@@ -325,14 +371,116 @@ impl ExplorerImportArgs {
     ///for a user to select one.
     fn get_network_with_explorer(&self) -> Result<NetworkWithExplorer> {
         let chosen_network = match &self.blockchain {
-            Some(chain) => *chain,
+            Some(network_or_chain_id) => {
+                match network_or_chain_id {
+                    NetworkOrChainId::NetworkName(network) => {
+                        // Try to convert Network to NetworkWithExplorer
+                        match NetworkWithExplorer::try_from(*network) {
+                            Ok(network_with_explorer) => network_with_explorer,
+                            Err(_) => {
+                                return Err(anyhow::anyhow!(
+                                    "The selected network does not support explorer-based import"
+                                ));
+                            }
+                        }
+                    }
+                    NetworkOrChainId::ChainId(chain_id) => {
+                        // Try to convert chain_id to Network first
+                        match Network::from_network_id(*chain_id) {
+                            Ok(network) => {
+                                // Then try to convert to NetworkWithExplorer
+                                match NetworkWithExplorer::try_from(network) {
+                                    Ok(network_with_explorer) => network_with_explorer,
+                                    Err(_) => {
+                                        return Err(anyhow::anyhow!(
+                                            "The network with chain ID {} does not support explorer-based import",
+                                            chain_id
+                                        ));
+                                    }
+                                }
+                            }
+                            Err(_) => {
+                                return Err(anyhow::anyhow!(
+                                    "Unsupported chain ID: {}. Network not found",
+                                    chain_id
+                                ));
+                            }
+                        }
+                    }
+                }
+            }
             None => {
-                let options = NetworkWithExplorer::iter().collect();
+                // Filter out already selected networks and show both network name and chain ID
+                let mut networks: Vec<NetworkWithExplorer> = NetworkWithExplorer::iter().collect();
+
+                // Sort networks alphabetically by name for default ordering
+                networks.sort_by(|a, b| {
+                    let a_name = Network::from(*a).to_string();
+                    let b_name = Network::from(*b).to_string();
+                    a_name.cmp(&b_name)
+                });
+
+                // Use the same custom scorer as in prompt_for_network_id for consistency
+                let network_scorer = |input: &str,
+                                      _option: &NetworkWithExplorer,
+                                      _option_string: &str,
+                                      option_index: usize|
+                 -> Option<i64> {
+                    if input.trim().is_empty() {
+                        // No input: maintain alphabetical order (use negative index for descending order)
+                        return Some(100000 - option_index as i64);
+                    }
+
+                    let chain_id = *_option as u64;
+                    let display_name = _option.get_pretty_name().to_lowercase();
+                    let input_lower = input.to_lowercase();
+
+                    // Check if input is a number
+                    if let Ok(input_chain_id) = input.parse::<u64>() {
+                        // Numeric input: prioritize by chain ID proximity and exact matches
+                        if chain_id == input_chain_id {
+                            // Exact chain ID match gets highest priority
+                            return Some(1000000);
+                        }
+
+                        // Chain ID contains the input digits gets high priority
+                        if chain_id.to_string().contains(&input) {
+                            // Score based on how close the chain ID is to the input number
+                            let diff = if chain_id > input_chain_id {
+                                chain_id - input_chain_id
+                            } else {
+                                input_chain_id - chain_id
+                            };
+                            return Some(500000 - diff as i64);
+                        }
+
+                        // Name matches for numeric input get lower priority
+                        if display_name.contains(&input_lower) {
+                            return Some(100000);
+                        }
+                    } else {
+                        // Text input: prioritize by name matching, maintain alphabetical sub-ordering
+                        if display_name.contains(&input_lower) {
+                            // Calculate match quality (earlier matches = higher score)
+                            let match_pos = display_name.find(&input_lower).unwrap_or(0);
+                            return Some(200000 - match_pos as i64);
+                        }
+
+                        // Chain ID string contains input (for mixed searches)
+                        if chain_id.to_string().contains(&input) {
+                            return Some(50000);
+                        }
+                    }
+
+                    // No match
+                    None
+                };
 
                 Select::new(
                     "Which blockchain would you like to import a contract from?",
-                    options,
+                    networks,
                 )
+                .with_scorer(&network_scorer)
                 .prompt()?
             }
         };
