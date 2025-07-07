@@ -1,5 +1,5 @@
 import { deepEqual } from "assert";
-import { experimental_createEffect, Effect, S } from "envio";
+import { experimental_createEffect, Effect, S, Logger } from "envio";
 import { TestEvents } from "generated";
 import { TestHelpers } from "generated";
 import { EventFiltersTest } from "generated";
@@ -409,6 +409,8 @@ EventFiltersTest.WithExcessField.handler(async (_) => {}, {
 });
 
 Gravatar.FactoryEvent.contractRegister(({ event, context }) => {
+  expectType<TypeEqual<typeof context.log, Logger>>(true);
+
   switch (event.params.testCase) {
     case "throwOnHangingRegistration":
       setTimeout(() => {

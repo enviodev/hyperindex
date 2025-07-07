@@ -344,29 +344,33 @@ type contractRegisterParams = {
 let contractRegisterTraps: Utils.Proxy.traps<contractRegisterParams> = {
   get: (~target as params, ~prop: unknown) => {
     let prop = prop->(Utils.magic: unknown => string)
-
-    // Use the pre-built mapping for efficient lookup
-    switch params.config.addContractNameToContractNameMapping->Utils.Dict.dangerouslyGetNonOption(prop) {
-    | Some(contractName) => {
-        let addFunction = (contractAddress: Address.t) => {
-          // For EVM ecosystem, validate the address
-          let validatedAddress = if params.config.ecosystem === Evm {
-            contractAddress->Address.Evm.fromAddressOrThrow
-          } else {
-            contractAddress
+    
+    switch prop {
+    | "log" => params.eventItem->Logging.getUserLogger->Utils.magic
+    | _ =>
+      // Use the pre-built mapping for efficient lookup
+      switch params.config.addContractNameToContractNameMapping->Utils.Dict.dangerouslyGetNonOption(prop) {
+      | Some(contractName) => {
+          let addFunction = (contractAddress: Address.t) => {
+            // For EVM ecosystem, validate the address
+            let validatedAddress = if params.config.ecosystem === Evm {
+              contractAddress->Address.Evm.fromAddressOrThrow
+            } else {
+              contractAddress
+            }
+            
+            params.onRegister(
+              ~eventItem=params.eventItem,
+              ~contractAddress=validatedAddress,
+              ~contractName=contractName->(Utils.magic: string => Enums.ContractType.t),
+            )
           }
-
-          params.onRegister(
-            ~eventItem=params.eventItem,
-            ~contractAddress=validatedAddress,
-            ~contractName=contractName->(Utils.magic: string => Enums.ContractType.t),
-          )
+          
+          addFunction->Utils.magic
         }
-
-        addFunction->Utils.magic
+      | None =>
+        Js.Exn.raiseError(`Invalid context access by '${prop}' property. ${codegenHelpMessage}`)
       }
-    | None =>
-      Js.Exn.raiseError(`Invalid context access by '${prop}' property. ${codegenHelpMessage}`)
     }
   },
 }
