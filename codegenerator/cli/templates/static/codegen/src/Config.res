@@ -117,6 +117,7 @@ type t = {
   ecosystem: ecosystem,
   enableRawEvents: bool,
   persistence: Persistence.t,
+  addContractNameToContractNameMapping: dict<string>,
 }
 
 let make = (
@@ -134,6 +135,16 @@ let make = (
       (n.chain, n)
     })
     ->ChainMap.fromArrayUnsafe
+
+  // Build the contract name mapping for efficient lookup
+  let addContractNameToContractNameMapping = Js.Dict.empty()
+  chains->Array.forEach(chainConfig => {
+    chainConfig.contracts->Array.forEach(contract => {
+      let addKey = "add" ++ contract.name->Utils.String.capitalize
+      addContractNameToContractNameMapping->Js.Dict.set(addKey, contract.name)
+    })
+  })
+
   {
     historyConfig: {
       rollbackFlag: shouldRollbackOnReorg ? RollbackOnReorg : NoRollback,
@@ -149,6 +160,7 @@ let make = (
     enableRawEvents,
     persistence,
     ecosystem,
+    addContractNameToContractNameMapping,
   }
 }
 

@@ -310,6 +310,7 @@ let cleanUpProcessingFilters = (
 
 let runContractRegistersOrThrow = async (
   ~reversedWithContractRegister: array<Internal.eventItem>,
+  ~config: Config.t,
 ) => {
   let dynamicContracts = []
   let isDone = ref(false)
@@ -354,7 +355,7 @@ let runContractRegistersOrThrow = async (
 
     // Catch sync and async errors
     try {
-      let result = contractRegister(eventItem->ContextEnv.getContractRegisterArgs(~onRegister))
+      let result = contractRegister(eventItem->UserContext.getContractRegisterArgs(~onRegister, ~config))
 
       // Even though `contractRegister` always returns a promise,
       // in the ReScript type, but it might return a non-promise value for TS API.
