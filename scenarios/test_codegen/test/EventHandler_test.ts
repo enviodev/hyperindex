@@ -306,4 +306,62 @@ describe("Use Envio test framework to test event handlers", () => {
       },
     ] satisfies typeof d);
   });
+
+  it("Throws when contract registered with invalid address", async () => {
+    const mockDbInitial = MockDb.createMockDb();
+
+    const event = Gravatar.FactoryEvent.createMockEvent({
+      testCase: "validatesAddress",
+    });
+
+    await assert.rejects(
+      Gravatar.FactoryEvent.processEvent({
+        event: event,
+        mockDb: mockDbInitial,
+      }),
+      {
+        message:
+          'Address "invalid-address" is invalid. Expected a 20-byte hex string starting with 0x.',
+      }
+    );
+  });
+
+  it("Checksums address when contract registered with valid address", async () => {
+    const mockDbInitial = MockDb.createMockDb();
+
+    const eventAddress = "0x134";
+    // Use a lowercase address that will be checksummed to proper format
+    const inputAddress = "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266";
+    const expectedChecksummedAddress =
+      "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266";
+
+    const event = Gravatar.FactoryEvent.createMockEvent({
+      contract: inputAddress,
+      testCase: "checksumsAddress",
+      mockEventData: {
+        srcAddress: eventAddress,
+      },
+    });
+
+    const updatedMockDb = await Gravatar.FactoryEvent.processEvent({
+      event: event,
+      mockDb: mockDbInitial,
+    });
+
+    const registeredDcs = updatedMockDb.dynamicContractRegistry.getAll();
+    assert.deepEqual(registeredDcs, [
+      {
+        id: `1-${expectedChecksummedAddress}`,
+        contract_type: "SimpleNft",
+        contract_address: expectedChecksummedAddress,
+        chain_id: 1,
+        registering_event_block_number: 0,
+        registering_event_log_index: 0,
+        registering_event_name: "FactoryEvent",
+        registering_event_src_address: eventAddress,
+        registering_event_block_timestamp: 0,
+        registering_event_contract_name: "Gravatar",
+      },
+    ] satisfies typeof registeredDcs);
+  });
 });

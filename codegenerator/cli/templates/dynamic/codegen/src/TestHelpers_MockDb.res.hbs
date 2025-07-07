@@ -371,7 +371,7 @@ and makeProcessEvents = (mockDb: t, ~chainId=?) => async (
   //The only purpose is to test the registerContract function and to
   //add the entity to the in memory store for asserting registrations
   if reversedWithContractRegister->Utils.Array.notEmpty {
-    let dcs = await ChainFetcher.runContractRegistersOrThrow(~reversedWithContractRegister)
+    let dcs = await ChainFetcher.runContractRegistersOrThrow(~reversedWithContractRegister, ~config)
 
     // TODO: Reuse FetchState logic to clean up duplicate dcs
     if dcs->Utils.Array.notEmpty {
