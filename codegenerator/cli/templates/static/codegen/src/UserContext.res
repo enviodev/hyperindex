@@ -352,10 +352,12 @@ let contractRegisterTraps: Utils.Proxy.traps<contractRegisterParams> = {
       switch params.config.addContractNameToContractNameMapping->Utils.Dict.dangerouslyGetNonOption(prop) {
       | Some(contractName) => {
           let addFunction = (contractAddress: Address.t) => {
-            // For EVM ecosystem, validate the address
             let validatedAddress = if params.config.ecosystem === Evm {
+              // The value is passed from the user-land,
+              // so we need to validate and checksum the address.
               contractAddress->Address.Evm.fromAddressOrThrow
             } else {
+              // TODO: Ideally we should do the same for other ecosystems
               contractAddress
             }
             

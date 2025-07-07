@@ -427,6 +427,14 @@ Gravatar.FactoryEvent.contractRegister(({ event, context }) => {
     case "syncRegistration":
       context.addSimpleNft(event.params.contract);
       break;
+    case "validatesAddress":
+      // This should throw because the address is invalid
+      context.addSimpleNft("invalid-address");
+      break;
+    case "checksumsAddress":
+      // This should work and the address should be checksummed
+      context.addSimpleNft(event.params.contract);
+      break;
   }
 });
 
