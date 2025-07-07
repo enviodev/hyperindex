@@ -33,16 +33,6 @@ let getQueueItemComparitor = (earliestQueueItem: FetchState.queueItem, ~chain) =
   }
 }
 
-let priorityQueueComparitor = (a: Internal.eventItem, b: Internal.eventItem) => {
-  if a->getComparitorFromItem < b->getComparitorFromItem {
-    -1
-  } else {
-    1
-  }
-}
-
-type noActiveChains = NoActiveChains
-
 type isInReorgThresholdRes<'payload> = {
   isInReorgThreshold: bool,
   val: 'payload,
@@ -59,44 +49,27 @@ let isQueueItemEarlier = (a: multiChainEventComparitor, b: multiChainEventCompar
     b.earliestEvent->getQueueItemComparitor(~chain=b.chain)
 }
 
-let determineNextEvent = (fetchStatesMap: ChainMap.t<fetchStateWithData>): result<
-  isInReorgThresholdRes<multiChainEventComparitor>,
-  noActiveChains,
+/**
+ It either returnes an earliest item among all chains, or None if no chains are actively indexing
+ */
+let getOrderedNextItem = (fetchStatesMap: ChainMap.t<fetchStateWithData>): option<
+  multiChainEventComparitor,
 > => {
-  let nextItem =
-    fetchStatesMap
-    ->ChainMap.entries
-    ->Array.reduce({isInReorgThreshold: false, val: None}, (
-      accum,
-      (chain, {fetchState, currentBlockHeight, highestBlockBelowThreshold}),
-    ) => {
-      // If the fetch state has reached the end block we don't need to consider it
-      if fetchState->FetchState.isActivelyIndexing {
-        let earliestEvent = fetchState->FetchState.getEarliestEvent
-        let current: multiChainEventComparitor = {chain, earliestEvent}
-        switch accum.val {
-        | Some(previous) if isQueueItemEarlier(previous, current) => accum
-        | _ =>
-          let isInReorgThreshold =
-            earliestEvent->FetchState.queueItemIsInReorgThreshold(
-              ~currentBlockHeight,
-              ~highestBlockBelowThreshold,
-            )
-
-          {
-            val: Some(current),
-            isInReorgThreshold,
-          }
-        }
-      } else {
-        accum
+  fetchStatesMap
+  ->ChainMap.entries
+  ->Array.reduce(None, (accum, (chain, {fetchState})) => {
+    // If the fetch state has reached the end block we don't need to consider it
+    if fetchState->FetchState.isActivelyIndexing {
+      let earliestEvent = fetchState->FetchState.getEarliestEvent
+      let current: multiChainEventComparitor = {chain, earliestEvent}
+      switch accum {
+      | Some(previous) if isQueueItemEarlier(previous, current) => accum
+      | _ => Some(current)
       }
-    })
-
-  switch nextItem {
-  | {val: None} => Error(NoActiveChains)
-  | {val: Some(item), isInReorgThreshold} => Ok({val: item, isInReorgThreshold})
-  }
+    } else {
+      accum
+    }
+  })
 }
 
 let makeFromConfig = (~config: Config.t, ~maxAddrInPartition=Env.maxAddrInPartition): t => {
@@ -155,26 +128,6 @@ let setChainFetcher = (self: t, chainFetcher: ChainFetcher.t) => {
   }
 }
 
-let popOrderedBatchItem = (~fetchStatesMap: ChainMap.t<fetchStateWithData>): isInReorgThresholdRes<
-  option<FetchState.itemWithPopFn>,
-> => {
-  //Compare the peeked items and determine the next item
-  switch fetchStatesMap->determineNextEvent {
-  | Ok({val: {earliestEvent}, isInReorgThreshold}) =>
-    switch earliestEvent {
-    | NoItem(_) => {
-        isInReorgThreshold,
-        val: None,
-      }
-    | Item(itemWithPopFn) => {
-        isInReorgThreshold,
-        val: Some(itemWithPopFn),
-      }
-    }
-  | Error(NoActiveChains) => {val: None, isInReorgThreshold: false}
-  }
-}
-
 let getFetchStateWithData = (self: t, ~shouldDeepCopy=false): ChainMap.t<fetchStateWithData> => {
   self.chainFetchers->ChainMap.map(cf => {
     {
@@ -186,11 +139,11 @@ let getFetchStateWithData = (self: t, ~shouldDeepCopy=false): ChainMap.t<fetchSt
 }
 
 /**
-Simply calls popOrderedBatchItem in isolation using the chain manager without
+Simply calls getOrderedNextItem in isolation using the chain manager without
 the context of a batch
 */
 let nextItemIsNone = (self: t): bool => {
-  popOrderedBatchItem(~fetchStatesMap=self->getFetchStateWithData).val->Option.isNone
+  self->getFetchStateWithData->getOrderedNextItem === None
 }
 
 type processingChainMetrics = {
@@ -209,32 +162,43 @@ let createOrderedBatch = (
 
   let rec loop = () =>
     if items->Array.length < maxBatchSize {
-      let {val, isInReorgThreshold} = popOrderedBatchItem(~fetchStatesMap)
+      switch fetchStatesMap->getOrderedNextItem {
+      | Some({earliestEvent, chain}) =>
+        isInReorgThresholdRef :=
+          isInReorgThresholdRef.contents || {
+            let {currentBlockHeight, highestBlockBelowThreshold} =
+              fetchStatesMap->ChainMap.get(chain)
+            earliestEvent->FetchState.queueItemIsInReorgThreshold(
+              ~currentBlockHeight,
+              ~highestBlockBelowThreshold,
+            )
+          }
 
-      isInReorgThresholdRef := isInReorgThresholdRef.contents || isInReorgThreshold
-
-      switch val {
-      | None => ()
-      | Some({item, popItemOffQueue}) =>
-        // To ensure history saving only starts when all chains have reached their reorg threshold
-        let shouldNotAddItem = isInReorgThreshold && onlyBelowReorgThreshold
-        if !shouldNotAddItem {
-          popItemOffQueue()
-          items->Js.Array2.push(item)->ignore
-          mutProcessingMetricsByChainId->Js.Dict.set(
-            item.chain->ChainMap.Chain.toChainId->Int.toString,
-            {
-              batchSize: switch mutProcessingMetricsByChainId->Utils.Dict.dangerouslyGetNonOption(
+        switch earliestEvent {
+        | NoItem(_) => ()
+        | Item({item, popItemOffQueue}) => {
+            // To ensure history saving only starts when all chains have reached their reorg threshold
+            let shouldNotAddItem = onlyBelowReorgThreshold && isInReorgThresholdRef.contents
+            if !shouldNotAddItem {
+              popItemOffQueue()
+              items->Js.Array2.push(item)->ignore
+              mutProcessingMetricsByChainId->Js.Dict.set(
                 item.chain->ChainMap.Chain.toChainId->Int.toString,
-              ) {
-              | Some(metrics) => metrics.batchSize + 1
-              | None => 1
-              },
-              targetBlockNumber: item.blockNumber,
-            },
-          )
-          loop()
+                {
+                  batchSize: switch mutProcessingMetricsByChainId->Utils.Dict.dangerouslyGetNonOption(
+                    item.chain->ChainMap.Chain.toChainId->Int.toString,
+                  ) {
+                  | Some(metrics) => metrics.batchSize + 1
+                  | None => 1
+                  },
+                  targetBlockNumber: item.blockNumber,
+                },
+              )
+              loop()
+            }
+          }
         }
+      | _ => ()
       }
     }
   loop()
@@ -251,7 +215,6 @@ let createUnorderedBatch = (
   ~onlyBelowReorgThreshold,
   ~mutProcessingMetricsByChainId: dict<processingChainMetrics>,
 ) => {
-  let isInReorgThresholdRef = ref(false)
   let items = []
 
   let chains = fetchStatesMap->ChainMap.keys
@@ -277,19 +240,16 @@ let createUnorderedBatch = (
           let rec loop = () =>
             if batchSize.contents < maxBatchSize {
               let earliestEvent = fetchState->FetchState.getEarliestEvent
-              let isInReorgThreshold =
-                earliestEvent->FetchState.queueItemIsInReorgThreshold(
-                  ~currentBlockHeight,
-                  ~highestBlockBelowThreshold,
-                )
-
-              isInReorgThresholdRef := isInReorgThresholdRef.contents || isInReorgThreshold
-
               switch earliestEvent {
               | NoItem(_) => ()
               | Item({item, popItemOffQueue}) =>
                 // To ensure history saving only starts when all chains have reached their reorg threshold
-                let shouldNotAddItem = isInReorgThreshold && onlyBelowReorgThreshold
+                let shouldNotAddItem =
+                  onlyBelowReorgThreshold &&
+                  earliestEvent->FetchState.queueItemIsInReorgThreshold(
+                    ~currentBlockHeight,
+                    ~highestBlockBelowThreshold,
+                  )
                 if !shouldNotAddItem {
                   popItemOffQueue()
                   items->Js.Array2.push(item)->ignore
@@ -320,7 +280,20 @@ let createUnorderedBatch = (
     }
   }
 
-  (items, isInReorgThresholdRef.contents)
+  (
+    items,
+    // For unordered mode need to perform the check at the end of the batch
+    // using getOrderedNextItem, so we can determine that all chains reached unordered threshold
+    switch fetchStatesMap->getOrderedNextItem {
+    | None => false
+    | Some({earliestEvent, chain}) =>
+      let {currentBlockHeight, highestBlockBelowThreshold} = fetchStatesMap->ChainMap.get(chain)
+      earliestEvent->FetchState.queueItemIsInReorgThreshold(
+        ~currentBlockHeight,
+        ~highestBlockBelowThreshold,
+      )
+    },
+  )
 }
 
 type batch = {
@@ -428,10 +401,4 @@ let getSafeChainIdAndBlockNumberArray = (self: t): array<
     chainId: cf.chainConfig.chain->ChainMap.Chain.toChainId,
     blockNumber: cf->ChainFetcher.getHighestBlockBelowThreshold,
   })
-}
-
-module ExposedForTesting_Hidden = {
-  let priorityQueueComparitor = priorityQueueComparitor
-  let getComparitorFromItem = getComparitorFromItem
-  let createDetermineNextEventFunction = determineNextEvent
 }

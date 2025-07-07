@@ -176,8 +176,8 @@ describe("ChainManager", () => {
             let firstEventInBlock = items[0]->Option.getExn
 
             Assert.equal(
-              firstEventInBlock->ChainManager.ExposedForTesting_Hidden.getComparitorFromItem >
-                lastEvent->ChainManager.ExposedForTesting_Hidden.getComparitorFromItem,
+              firstEventInBlock->ChainManager.getComparitorFromItem >
+                lastEvent->ChainManager.getComparitorFromItem,
               true,
               ~message="Check that first event in this block group is AFTER the last event before this block group",
             )
@@ -227,9 +227,9 @@ describe("ChainManager", () => {
 })
 
 // NOTE: this is likely a temporary feature - can delete if feature no longer important.
-describe("determineNextEvent", () => {
+describe("getOrderedNextItem", () => {
   describe("optimistic-ordered-mode", () => {
-    let determineNextEvent_ordered = ChainManager.determineNextEvent
+    let getOrderedNextItem_ordered = ChainManager.getOrderedNextItem
 
     let makeNoItem = timestamp => FetchState.NoItem({
       latestFetchedBlock: {blockTimestamp: timestamp, blockNumber: 0},
@@ -301,7 +301,6 @@ describe("determineNextEvent", () => {
       "should always take an event if there is one, even if other chains haven't caught up",
       () => {
         let singleItem = makeMockQItem(654, MockConfig.chain137)
-        let earliestItem = makeNoItem(5) /* earlier timestamp than the test event */
 
         let fetchStatesMap = RegisterHandlers.registerAllHandlers().chainMap->ChainMap.mapWithKey(
           (chain, _) =>
@@ -319,11 +318,12 @@ describe("determineNextEvent", () => {
             },
         )
 
-        let {val: {earliestEvent}} = determineNextEvent_ordered(fetchStatesMap)->Result.getExn
-
         Assert.deepEqual(
-          earliestEvent,
-          earliestItem,
+          getOrderedNextItem_ordered(fetchStatesMap),
+          Some({
+            earliestEvent: makeNoItem(5) /* earlier timestamp than the test event */,
+            chain: MockConfig.chain1,
+          }),
           ~message="Should return the `NoItem` that is earliest since it is earlier than the `Item`",
         )
       },
@@ -358,11 +358,12 @@ describe("determineNextEvent", () => {
             },
         )
 
-        let {val: {earliestEvent}} = determineNextEvent_ordered(fetchStatesMap)->Result.getExn
-
         Assert.deepEqual(
-          earliestEvent,
-          makeNoItem(earliestItemTimestamp),
+          getOrderedNextItem_ordered(fetchStatesMap),
+          Some({
+            earliestEvent: makeNoItem(earliestItemTimestamp),
+            chain: MockConfig.chain1,
+          }),
           ~message="Should return the `NoItem` that is earliest since it is earlier than the `Item`",
         )
       },
