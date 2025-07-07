@@ -57,7 +57,7 @@ type rec t = {
   rawEvents: storeOperations<InMemoryStore.rawEventsKey, TablesStatic.RawEvents.t>,
   eventSyncState: storeOperations<Types.chainId, TablesStatic.EventSyncState.t>,
   dynamicContractRegistry: entityStoreOperations<TablesStatic.DynamicContractRegistry.t>,
-  processEvents: array<Types.eventLog<unknown>> => t,
+  processEvents: array<Types.eventLog<unknown>> => promise<t>,
 }
 
 // Each user defined entity will be in this record with all the store or "mockdb" operators
