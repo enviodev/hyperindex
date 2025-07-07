@@ -329,3 +329,63 @@ let getLoaderArgs = (params: contextParams): Internal.loaderArgs => {
   event: params.eventItem.event,
   context: getLoaderContext(params),
 }
+
+// Contract register context creation
+type contractRegisterParams = {
+  eventItem: Internal.eventItem,
+  onRegister: (
+    ~eventItem: Internal.eventItem,
+    ~contractAddress: Address.t,
+    ~contractName: Enums.ContractType.t,
+  ) => unit,
+  config: Config.t,
+}
+
+let contractRegisterTraps: Utils.Proxy.traps<contractRegisterParams> = {
+  get: (~target as params, ~prop: unknown) => {
+    let prop = prop->(Utils.magic: unknown => string)
+
+    // Use the pre-built mapping for efficient lookup
+    switch params.config.addContractNameToContractNameMapping->Utils.Dict.dangerouslyGetNonOption(prop) {
+    | Some(contractName) => {
+        let addFunction = (contractAddress: Address.t) => {
+          // For EVM ecosystem, validate the address
+          let validatedAddress = if params.config.ecosystem === Evm {
+            contractAddress->Address.Evm.fromAddressOrThrow
+          } else {
+            contractAddress
+          }
+
+          params.onRegister(
+            ~eventItem=params.eventItem,
+            ~contractAddress=validatedAddress,
+            ~contractName=contractName->(Utils.magic: string => Enums.ContractType.t),
+          )
+        }
+
+        addFunction->Utils.magic
+      }
+    | None =>
+      Js.Exn.raiseError(`Invalid context access by '${prop}' property. ${codegenHelpMessage}`)
+    }
+  },
+}
+
+let getContractRegisterContext = (~eventItem, ~onRegister, ~config: Config.t) => {
+  {
+    eventItem,
+    onRegister,
+    config,
+  }
+  ->Utils.Proxy.make(contractRegisterTraps)
+  ->Utils.magic
+}
+
+let getContractRegisterArgs = (
+  eventItem: Internal.eventItem,
+  ~onRegister,
+  ~config: Config.t,
+): Internal.contractRegisterArgs => {
+  event: eventItem.event,
+  context: getContractRegisterContext(~eventItem, ~onRegister, ~config),
+}

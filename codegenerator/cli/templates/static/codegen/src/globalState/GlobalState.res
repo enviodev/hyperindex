@@ -574,7 +574,7 @@ let processPartitionQueryResponse = async (
   | [] as empty =>
     // A small optimisation to not recreate an empty array
     empty->(Utils.magic: array<Internal.eventItem> => array<FetchState.indexingContract>)
-  | _ => await ChainFetcher.runContractRegistersOrThrow(~reversedWithContractRegister)
+  | _ => await ChainFetcher.runContractRegistersOrThrow(~reversedWithContractRegister, ~config=state.config)
   }
 
   dispatchAction(
