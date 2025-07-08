@@ -15,8 +15,6 @@ type storage = {
     ~entities: array<Internal.entityConfig>=?,
     ~generalTables: array<Table.table>=?,
     ~enums: array<Internal.enumConfig<Internal.enum>>=?,
-    // If true, the storage should clear existing data
-    ~cleanRun: bool=?,
   ) => promise<unit>,
   @raises("StorageError")
   loadByIdsOrThrow: 'item. (
@@ -79,14 +77,7 @@ let make = (
   }
 }
 
-let init = async (
-  persistence,
-  // There are not much sense in the option,
-  // but this is how the runUpMigration used to work
-  // and we want to keep the upsert behavior without breaking changes.
-  ~skipIsInitializedCheck=false,
-  ~reset=false,
-) => {
+let init = async (persistence, ~reset=false) => {
   try {
     let shouldRun = switch persistence.storageStatus {
     | Unknown => true
@@ -102,20 +93,19 @@ let init = async (
         resolveRef := resolve
       })
       persistence.storageStatus = Initializing(promise)
-      if !(reset || skipIsInitializedCheck) && (await persistence.storage.isInitialized()) {
-        persistence.storageStatus = Ready({cleanRun: false})
-      } else {
+      if reset || !(await persistence.storage.isInitialized()) {
         let _ = await persistence.storage.initialize(
           ~entities=persistence.allEntities,
           ~generalTables=persistence.staticTables,
           ~enums=persistence.allEnums,
-          ~cleanRun=reset || !skipIsInitializedCheck,
         )
         persistence.storageStatus = Ready({cleanRun: true})
         switch persistence.onStorageInitialize {
         | Some(onStorageInitialize) => await onStorageInitialize()
         | None => ()
         }
+      } else {
+        persistence.storageStatus = Ready({cleanRun: false})
       }
       resolveRef.contents()
     }

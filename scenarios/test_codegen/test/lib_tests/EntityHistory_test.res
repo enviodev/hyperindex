@@ -3,6 +3,10 @@ open RescriptMocha
 //unsafe polymorphic toString binding for any type
 @send external toStringUnsafe: 'a => string = "toString"
 
+// These are mandatory tables that should be created for every schema
+// it allows us to distinguish whether the schema is controlled by Envio
+let generalTables = [TablesStatic.EventSyncState.table]
+
 let stripUndefinedFieldsInPlace = (val: 'a): 'a => {
   let json = val->(Utils.magic: 'a => Js.Json.t)
   //Hot fix for rescript equality check that removes optional fields
@@ -245,8 +249,8 @@ describe("Entity History Codegen", () => {
     try {
       await storage.initialize(
         ~entities=[module(TestEntity)->Entities.entityModToInternal],
+        ~generalTables,
         ~enums=[Persistence.entityHistoryActionEnumConfig->Internal.fromGenericEnumConfig],
-        ~cleanRun=true,
       )
     } catch {
     | exn =>
@@ -594,8 +598,8 @@ describe("Entity history rollbacks", () => {
       let storage = PgStorage.make(~sql=Db.sql, ~pgSchema="public", ~pgUser="postgres")
       await storage.initialize(
         ~entities=[module(TestEntity)->Entities.entityModToInternal],
+        ~generalTables,
         ~enums=[Persistence.entityHistoryActionEnumConfig->Internal.fromGenericEnumConfig],
-        ~cleanRun=true,
       )
 
       let _ = await Db.sql->Postgres.unsafe(TestEntity.entityHistory.createInsertFnQuery)
@@ -760,8 +764,8 @@ describe("Entity history rollbacks", () => {
       let storage = PgStorage.make(~sql=Db.sql, ~pgSchema="public", ~pgUser="postgres")
       await storage.initialize(
         ~entities=[module(TestEntity)->Entities.entityModToInternal],
+        ~generalTables,
         ~enums=[Persistence.entityHistoryActionEnumConfig->Internal.fromGenericEnumConfig],
-        ~cleanRun=true,
       )
 
       let _ = await Db.sql->Postgres.unsafe(TestEntity.entityHistory.createInsertFnQuery)
@@ -1037,8 +1041,8 @@ describe_skip("Prune performance test", () => {
     let storage = PgStorage.make(~sql=Db.sql, ~pgSchema="public", ~pgUser="postgres")
     await storage.initialize(
       ~entities=[module(TestEntity)->Entities.entityModToInternal],
+      ~generalTables,
       ~enums=[Persistence.entityHistoryActionEnumConfig->Internal.fromGenericEnumConfig],
-      ~cleanRun=true,
     )
 
     let _ = await Db.sql->Postgres.unsafe(TestEntity.entityHistory.createInsertFnQuery)

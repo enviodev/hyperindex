@@ -6,7 +6,6 @@ type storageMock = {
     "entities": array<Internal.entityConfig>,
     "generalTables": array<Table.table>,
     "enums": array<Internal.enumConfig<Internal.enum>>,
-    "cleanRun": bool,
   }>,
   resolveIsInitialized: bool => unit,
   resolveInitialize: unit => unit,
@@ -34,13 +33,12 @@ let makeStorageMock = () => {
           isInitializedResolveFns->Js.Array2.push(resolve)->ignore
         })
       },
-      initialize: (~entities=[], ~generalTables=[], ~enums=[], ~cleanRun=true) => {
+      initialize: (~entities=[], ~generalTables=[], ~enums=[]) => {
         initializeCalls
         ->Js.Array2.push({
           "entities": entities,
           "generalTables": generalTables,
           "enums": enums,
-          "cleanRun": cleanRun,
         })
         ->ignore
         Promise.make((resolve, _reject) => {
@@ -132,7 +130,6 @@ describe("Test Persistence layer init", () => {
           "entities": persistence.allEntities,
           "generalTables": persistence.staticTables,
           "enums": persistence.allEnums,
-          "cleanRun": true,
         },
       ],
       ~message=`Should initialize if storage is not initialized`,
@@ -171,7 +168,6 @@ describe("Test Persistence layer init", () => {
           "entities": persistence.allEntities,
           "generalTables": persistence.staticTables,
           "enums": persistence.allEnums,
-          "cleanRun": true,
         },
       ),
       ~message=`Calling init with reset=true should ignore that the storage is already ready.
@@ -213,38 +209,5 @@ describe("Test Persistence layer init", () => {
 
     // Can resolve the promise now
     await p
-  })
-
-  Async.it("Case for `envio local db-up`", async () => {
-    let storageMock = makeStorageMock()
-
-    let persistence = Persistence.make(
-      ~userEntities=[],
-      ~staticTables=[],
-      ~dcRegistryEntityConfig=module(
-        TablesStatic.DynamicContractRegistry
-      )->Entities.entityModToInternal,
-      ~allEnums=[],
-      ~storage=storageMock.storage,
-    )
-
-    let _ = persistence->Persistence.init(~skipIsInitializedCheck=true)
-
-    Assert.deepEqual(
-      (storageMock.isInitializedCalls->Array.length, storageMock.initializeCalls),
-      (
-        0,
-        [
-          {
-            "entities": persistence.allEntities,
-            "generalTables": persistence.staticTables,
-            "enums": persistence.allEnums,
-            "cleanRun": false,
-          },
-        ],
-      ),
-      ~message=`To keep the backward compatibility of the 'envio local db-up' command,
-      we should skip the initialization check if skipIsInitializedCheck is true`,
-    )
   })
 })

@@ -58,7 +58,6 @@ let makeInitializeTransaction = (
   ~generalTables=[],
   ~entities=[],
   ~enums=[],
-  ~cleanRun=false,
 ) => {
   let allTables = generalTables->Array.copy
   let allEntityTables = []
@@ -70,13 +69,9 @@ let makeInitializeTransaction = (
   let derivedSchema = Schema.make(allEntityTables)
 
   let query = ref(
-    (
-      cleanRun
-        ? `DROP SCHEMA IF EXISTS "${pgSchema}" CASCADE;
-CREATE SCHEMA "${pgSchema}";`
-        : `CREATE SCHEMA IF NOT EXISTS "${pgSchema}";`
-    ) ++
-    `GRANT ALL ON SCHEMA "${pgSchema}" TO "${pgUser}";
+    `DROP SCHEMA IF EXISTS "${pgSchema}" CASCADE;
+CREATE SCHEMA "${pgSchema}";
+GRANT ALL ON SCHEMA "${pgSchema}" TO "${pgUser}";
 GRANT ALL ON SCHEMA "${pgSchema}" TO public;`,
   )
 
@@ -87,21 +82,7 @@ GRANT ALL ON SCHEMA "${pgSchema}" TO public;`,
       ->Js.Array2.map(v => `'${v->(Utils.magic: Internal.enum => string)}'`)
       ->Js.Array2.joinWith(", ")});`
 
-    query :=
-      query.contents ++
-      "\n" ++ if cleanRun {
-        // Direct creation when cleanRunting (faster)
-        enumCreateQuery
-      } else {
-        // Wrap with conditional check only when not cleanRunting
-        `IF NOT EXISTS (
-  SELECT 1 FROM pg_type 
-  WHERE typname = '${enumConfig.name->Js.String2.toLowerCase}' 
-  AND typnamespace = (SELECT oid FROM pg_namespace WHERE nspname = '${pgSchema}')
-) THEN 
-    ${enumCreateQuery}
-END IF;`
-      }
+    query := query.contents ++ "\n" ++ enumCreateQuery
   })
 
   // Batch all table creation first (optimal for PostgreSQL)
@@ -139,15 +120,9 @@ END IF;`
     })
   })
 
-  [
-    // Return optimized queries - main DDL in DO block, functions separate
-    // Note: DO $$ BEGIN wrapper is only needed for PL/pgSQL conditionals (IF NOT EXISTS)
-    // Reset case uses direct DDL (faster), non-cleanRun case uses conditionals (safer)
-    cleanRun || enums->Utils.Array.isEmpty
-      ? query.contents
-      : `DO $$ BEGIN ${query.contents} END $$;`,
-    // Functions query (separate as they can't be in DO block)
-  ]->Js.Array2.concat(functionsQuery.contents !== "" ? [functionsQuery.contents] : [])
+  [query.contents]->Js.Array2.concat(
+    functionsQuery.contents !== "" ? [functionsQuery.contents] : [],
+  )
 }
 
 let makeLoadByIdSql = (~pgSchema, ~tableName) => {
@@ -236,6 +211,7 @@ VALUES${placeholders.contents}` ++
 // they are always guaranteed to be an object.
 // FIXME what about Fuel params?
 let rawEventsTableName = "raw_events"
+let eventSyncStateTableName = "event_sync_state"
 
 // Constants for chunking
 let maxItemsPerQuery = 500
@@ -360,22 +336,40 @@ let setOrThrow = async (sql, ~items, ~table: Table.table, ~itemSchema, ~pgSchema
 
 let make = (~sql: Postgres.sql, ~pgSchema, ~pgUser): Persistence.storage => {
   let isInitialized = async () => {
-    let schemas =
+    let envioTables =
       await sql->Postgres.unsafe(
-        `SELECT schema_name FROM information_schema.schemata WHERE schema_name = '${pgSchema}';`,
+        `SELECT table_schema FROM information_schema.tables WHERE table_schema = '${pgSchema}' AND table_name = '${eventSyncStateTableName}';`,
       )
-    schemas->Utils.Array.notEmpty
+    envioTables->Utils.Array.notEmpty
   }
 
-  let initialize = async (~entities=[], ~generalTables=[], ~enums=[], ~cleanRun=false) => {
-    let queries = makeInitializeTransaction(
-      ~pgSchema,
-      ~pgUser,
-      ~generalTables,
-      ~entities,
-      ~enums,
-      ~cleanRun,
-    )
+  let initialize = async (~entities=[], ~generalTables=[], ~enums=[]) => {
+    let schemaTableNames: array<{
+      "table_name": string,
+    }> =
+      await sql->Postgres.unsafe(
+        `SELECT table_name FROM information_schema.tables WHERE table_schema = '${pgSchema}';`,
+      )
+
+    // The initialization query will completely drop the schema and recreate it from scratch.
+    // So we need to check if the schema is not used for anything else than envio.
+    if (
+      // Should pass with existing schema with no tables
+      // This might happen when used with public schema
+      // which is automatically created by postgres.
+      schemaTableNames->Utils.Array.notEmpty &&
+        // Otherwise should throw if there's a table, but no envio specific one
+        // This means that the schema is used for something else than envio.
+        !(
+          schemaTableNames->Js.Array2.some(table => table["table_name"] === eventSyncStateTableName)
+        )
+    ) {
+      Js.Exn.raiseError(
+        `Cannot run Envio migrations on PostgreSQL schema "${pgSchema}" because it contains non-Envio tables. Running migrations would delete all data in this schema. To proceed, either drop the existing schema first with "pnpm envio local db-migrate down" or specify a different schema name using the "ENVIO_PG_PUBLIC_SCHEMA" environment variable.`,
+      )
+    }
+
+    let queries = makeInitializeTransaction(~pgSchema, ~pgUser, ~generalTables, ~entities, ~enums)
     // Execute all queries within a single transaction for integrity
     let _ = await sql->Postgres.beginSql(sql => {
       queries->Js.Array2.map(query => sql->Postgres.unsafe(query))
