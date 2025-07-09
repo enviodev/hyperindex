@@ -243,4 +243,6 @@ module DynamicContractRegistry = {
   )
 
   let entityHistory = table->EntityHistory.fromTable(~pgSchema=Env.Db.publicSchema, ~schema)
+
+  external castToInternal: t => Internal.entity = "%identity"
 }

@@ -18,8 +18,8 @@ module EntityTables = {
     init
   }
 
-  let get = (type entity, self: t, ~entityConfig: Internal.entityConfig) => {
-    switch self->Utils.Dict.dangerouslyGetNonOption(entityConfig.name) {
+  let get = (type entity, self: t, ~entityName: string) => {
+    switch self->Utils.Dict.dangerouslyGetNonOption(entityName) {
     | Some(table) =>
       table->(
         Utils.magic: InMemoryTable.Entity.t<Entities.internalEntity> => InMemoryTable.Entity.t<
@@ -28,7 +28,7 @@ module EntityTables = {
       )
 
     | None =>
-      UndefinedEntity({entityName: entityConfig.name})->ErrorHandling.mkLogAndRaise(
+      UndefinedEntity({entityName: entityName})->ErrorHandling.mkLogAndRaise(
         ~msg="Unexpected, entity InMemoryTable is undefined",
       )
     }
@@ -84,7 +84,7 @@ let getInMemTable = (
   inMemoryStore: t,
   ~entityConfig: Internal.entityConfig,
 ): InMemoryTable.Entity.t<Internal.entity> => {
-  inMemoryStore.entities->EntityTables.get(~entityConfig)
+  inMemoryStore.entities->EntityTables.get(~entityName=entityConfig.name)
 }
 
 let isRollingBack = (inMemoryStore: t) => inMemoryStore.rollBackEventIdentifier->Belt.Option.isSome
@@ -95,7 +95,7 @@ let setDcsToStore = (
   ~shouldSaveHistory,
 ) => {
   let inMemTable =
-    inMemoryStore.entities->EntityTables.get(
+    inMemoryStore->getInMemTable(
       ~entityConfig=module(TablesStatic.DynamicContractRegistry)->Entities.entityModToInternal,
     )
   dcsToStoreByChainId->Utils.Dict.forEachWithKey((chainId, dcs) => {
@@ -125,7 +125,10 @@ let setDcsToStore = (
         logIndex: dcData.registeringEventLogIndex,
       }
       inMemTable->InMemoryTable.Entity.set(
-        Set(entity)->Types.mkEntityUpdate(~eventIdentifier, ~entityId=entity.id),
+        Set(entity->TablesStatic.DynamicContractRegistry.castToInternal)->Types.mkEntityUpdate(
+          ~eventIdentifier,
+          ~entityId=entity.id,
+        ),
         ~shouldSaveHistory,
       )
     })

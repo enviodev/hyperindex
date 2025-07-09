@@ -1,26 +1,6 @@
-type t
-
-type fieldValue
-
-let make: (
-  ~loadEntitiesByIds: (
-    array<Types.id>,
-    ~entityConfig: Internal.entityConfig,
-  ) => promise<array<Internal.entity>>,
-  ~loadEntitiesByField: (
-    ~operator: TableIndices.Operator.t,
-    ~entityConfig: Internal.entityConfig,
-    ~fieldName: string,
-    ~fieldValue: fieldValue,
-    ~fieldValueSchema: S.t<fieldValue>,
-    ~logger: Pino.t=?,
-  ) => promise<array<Internal.entity>>,
-) => t
-
-let makeWithDbConnection: (~persistence: Persistence.t=?) => t
-
 let loadById: (
-  t,
+  ~loadManager: LoadManager.t,
+  ~storage: Persistence.storage,
   ~entityConfig: Internal.entityConfig,
   ~inMemoryStore: InMemoryStore.t,
   ~shouldGroup: bool,
@@ -29,7 +9,8 @@ let loadById: (
 ) => promise<option<Internal.entity>>
 
 let loadByField: (
-  t,
+  ~loadManager: LoadManager.t,
+  ~storage: Persistence.storage,
   ~operator: TableIndices.Operator.t,
   ~entityConfig: Internal.entityConfig,
   ~inMemoryStore: InMemoryStore.t,
@@ -41,7 +22,7 @@ let loadByField: (
 ) => promise<array<Internal.entity>>
 
 let loadEffect: (
-  t,
+  ~loadManager: LoadManager.t,
   ~effect: Internal.effect,
   ~effectArgs: Internal.effectArgs,
   ~inMemoryStore: InMemoryStore.t,

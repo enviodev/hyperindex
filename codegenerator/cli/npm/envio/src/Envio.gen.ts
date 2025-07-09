@@ -21,7 +21,9 @@ export type effectOptions<input,output> = {
   /** The input schema of the effect. */
   readonly input: RescriptSchema_S_t<input>; 
   /** The output schema of the effect. */
-  readonly output: RescriptSchema_S_t<output>
+  readonly output: RescriptSchema_S_t<output>; 
+  /** Whether the effect should be cached. */
+  readonly cache?: boolean
 };
 
 export type effectContext = $$effectContext;

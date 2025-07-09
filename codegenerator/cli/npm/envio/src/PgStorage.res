@@ -1,16 +1,16 @@
-let makeCreateIndexSql = (~tableName, ~indexFields, ~pgSchema) => {
+let makeCreateIndexQuery = (~tableName, ~indexFields, ~pgSchema) => {
   let indexName = tableName ++ "_" ++ indexFields->Js.Array2.joinWith("_")
   let index = indexFields->Belt.Array.map(idx => `"${idx}"`)->Js.Array2.joinWith(", ")
   `CREATE INDEX IF NOT EXISTS "${indexName}" ON "${pgSchema}"."${tableName}"(${index});`
 }
 
-let makeCreateTableIndicesSql = (table: Table.table, ~pgSchema) => {
+let makeCreateTableIndicesQuery = (table: Table.table, ~pgSchema) => {
   open Belt
   let tableName = table.tableName
   let createIndex = indexField =>
-    makeCreateIndexSql(~tableName, ~indexFields=[indexField], ~pgSchema)
+    makeCreateIndexQuery(~tableName, ~indexFields=[indexField], ~pgSchema)
   let createCompositeIndex = indexFields => {
-    makeCreateIndexSql(~tableName, ~indexFields, ~pgSchema)
+    makeCreateIndexQuery(~tableName, ~indexFields, ~pgSchema)
   }
 
   let singleIndices = table->Table.getSingleIndices
@@ -20,7 +20,7 @@ let makeCreateTableIndicesSql = (table: Table.table, ~pgSchema) => {
     compositeIndices->Array.map(createCompositeIndex)->Js.Array2.joinWith("\n")
 }
 
-let makeCreateTableSql = (table: Table.table, ~pgSchema) => {
+let makeCreateTableQuery = (table: Table.table, ~pgSchema) => {
   open Belt
   let fieldsMapped =
     table
@@ -87,12 +87,12 @@ GRANT ALL ON SCHEMA "${pgSchema}" TO public;`,
 
   // Batch all table creation first (optimal for PostgreSQL)
   allTables->Js.Array2.forEach((table: Table.table) => {
-    query := query.contents ++ "\n" ++ makeCreateTableSql(table, ~pgSchema)
+    query := query.contents ++ "\n" ++ makeCreateTableQuery(table, ~pgSchema)
   })
 
   // Then batch all indices (better performance when tables exist)
   allTables->Js.Array2.forEach((table: Table.table) => {
-    let indices = makeCreateTableIndicesSql(table, ~pgSchema)
+    let indices = makeCreateTableIndicesQuery(table, ~pgSchema)
     if indices !== "" {
       query := query.contents ++ "\n" ++ indices
     }
@@ -112,7 +112,7 @@ GRANT ALL ON SCHEMA "${pgSchema}" TO public;`,
       query :=
         query.contents ++
         "\n" ++
-        makeCreateIndexSql(
+        makeCreateIndexQuery(
           ~tableName=derivedFromField.derivedFromEntity,
           ~indexFields=[indexField],
           ~pgSchema,
@@ -125,15 +125,19 @@ GRANT ALL ON SCHEMA "${pgSchema}" TO public;`,
   )
 }
 
-let makeLoadByIdSql = (~pgSchema, ~tableName) => {
+let makeLoadByIdQuery = (~pgSchema, ~tableName) => {
   `SELECT * FROM "${pgSchema}"."${tableName}" WHERE id = $1 LIMIT 1;`
 }
 
-let makeLoadByIdsSql = (~pgSchema, ~tableName) => {
+let makeLoadByFieldQuery = (~pgSchema, ~tableName, ~fieldName, ~operator) => {
+  `SELECT * FROM "${pgSchema}"."${tableName}" WHERE "${fieldName}" ${operator} $1;`
+}
+
+let makeLoadByIdsQuery = (~pgSchema, ~tableName) => {
   `SELECT * FROM "${pgSchema}"."${tableName}" WHERE id = ANY($1::text[]);`
 }
 
-let makeInsertUnnestSetSql = (~pgSchema, ~table: Table.table, ~itemSchema, ~isRawEvents) => {
+let makeInsertUnnestSetQuery = (~pgSchema, ~table: Table.table, ~itemSchema, ~isRawEvents) => {
   let {quotedFieldNames, quotedNonPrimaryFieldNames, arrayFieldTypes} =
     table->Table.toSqlParams(~schema=itemSchema)
 
@@ -163,7 +167,7 @@ SELECT * FROM unnest(${arrayFieldTypes
   } ++ ";"
 }
 
-let makeInsertValuesSetSql = (~pgSchema, ~table: Table.table, ~itemSchema, ~itemsCount) => {
+let makeInsertValuesSetQuery = (~pgSchema, ~table: Table.table, ~itemSchema, ~itemsCount) => {
   let {quotedFieldNames, quotedNonPrimaryFieldNames} = table->Table.toSqlParams(~schema=itemSchema)
 
   let primaryKeyFieldNames = Table.getPrimaryKeyFieldNames(table)
@@ -229,7 +233,7 @@ let makeTableBatchSetQuery = (~pgSchema, ~table: Table.table, ~itemSchema: S.t<'
 
   if isRawEvents || !hasArrayField {
     {
-      "sql": makeInsertUnnestSetSql(~pgSchema, ~table, ~itemSchema, ~isRawEvents),
+      "query": makeInsertUnnestSetQuery(~pgSchema, ~table, ~itemSchema, ~isRawEvents),
       "convertOrThrow": S.compile(
         S.unnest(dbSchema),
         ~input=Value,
@@ -241,7 +245,12 @@ let makeTableBatchSetQuery = (~pgSchema, ~table: Table.table, ~itemSchema: S.t<'
     }
   } else {
     {
-      "sql": makeInsertValuesSetSql(~pgSchema, ~table, ~itemSchema, ~itemsCount=maxItemsPerQuery),
+      "query": makeInsertValuesSetQuery(
+        ~pgSchema,
+        ~table,
+        ~itemSchema,
+        ~itemsCount=maxItemsPerQuery,
+      ),
       "convertOrThrow": S.compile(
         S.unnest(itemSchema)->S.preprocess(_ => {
           serializer: Utils.Array.flatten->Utils.magic,
@@ -274,7 +283,7 @@ let setOrThrow = async (sql, ~items, ~table: Table.table, ~itemSchema, ~pgSchema
     ()
   } else {
     // Get or create cached query for this table
-    let query = switch setQueryCache->Utils.WeakMap.get(table) {
+    let data = switch setQueryCache->Utils.WeakMap.get(table) {
     | Some(cached) => cached
     | None => {
         let newQuery = makeTableBatchSetQuery(
@@ -287,10 +296,8 @@ let setOrThrow = async (sql, ~items, ~table: Table.table, ~itemSchema, ~pgSchema
       }
     }
 
-    let sqlQuery = query["sql"]
-
     try {
-      if query["isInsertValues"] {
+      if data["isInsertValues"] {
         let chunks = chunkArray(items, ~chunkSize=maxItemsPerQuery)
         let responses = []
         chunks->Js.Array2.forEach(chunk => {
@@ -301,9 +308,9 @@ let setOrThrow = async (sql, ~items, ~table: Table.table, ~itemSchema, ~pgSchema
             // Either use the sql query for full chunks from cache
             // or create a new one for partial chunks on the fly.
             isFullChunk
-              ? sqlQuery
-              : makeInsertValuesSetSql(~pgSchema, ~table, ~itemSchema, ~itemsCount=chunkSize),
-            query["convertOrThrow"](chunk->(Utils.magic: array<'item> => array<unknown>)),
+              ? data["query"]
+              : makeInsertValuesSetQuery(~pgSchema, ~table, ~itemSchema, ~itemsCount=chunkSize),
+            data["convertOrThrow"](chunk->(Utils.magic: array<'item> => array<unknown>)),
           )
           responses->Js.Array2.push(response)->ignore
         })
@@ -311,8 +318,8 @@ let setOrThrow = async (sql, ~items, ~table: Table.table, ~itemSchema, ~pgSchema
       } else {
         // Use UNNEST approach for single query
         await sql->Postgres.preparedUnsafe(
-          sqlQuery,
-          query["convertOrThrow"](items->(Utils.magic: array<'item> => array<unknown>)),
+          data["query"],
+          data["convertOrThrow"](items->(Utils.magic: array<'item> => array<unknown>)),
         )
       }
     } catch {
@@ -334,6 +341,15 @@ let setOrThrow = async (sql, ~items, ~table: Table.table, ~itemSchema, ~pgSchema
   }
 }
 
+type schemaTableName = {
+  @as("table_name")
+  tableName: string,
+}
+
+let makeSchemaTableNamesQuery = (~pgSchema) => {
+  `SELECT table_name FROM information_schema.tables WHERE table_schema = '${pgSchema}';`
+}
+
 let make = (~sql: Postgres.sql, ~pgSchema, ~pgUser): Persistence.storage => {
   let isInitialized = async () => {
     let envioTables =
@@ -344,12 +360,8 @@ let make = (~sql: Postgres.sql, ~pgSchema, ~pgUser): Persistence.storage => {
   }
 
   let initialize = async (~entities=[], ~generalTables=[], ~enums=[]) => {
-    let schemaTableNames: array<{
-      "table_name": string,
-    }> =
-      await sql->Postgres.unsafe(
-        `SELECT table_name FROM information_schema.tables WHERE table_schema = '${pgSchema}';`,
-      )
+    let schemaTableNames: array<schemaTableName> =
+      await sql->Postgres.unsafe(makeSchemaTableNamesQuery(~pgSchema))
 
     // The initialization query will completely drop the schema and recreate it from scratch.
     // So we need to check if the schema is not used for anything else than envio.
@@ -360,12 +372,10 @@ let make = (~sql: Postgres.sql, ~pgSchema, ~pgUser): Persistence.storage => {
       schemaTableNames->Utils.Array.notEmpty &&
         // Otherwise should throw if there's a table, but no envio specific one
         // This means that the schema is used for something else than envio.
-        !(
-          schemaTableNames->Js.Array2.some(table => table["table_name"] === eventSyncStateTableName)
-        )
+        !(schemaTableNames->Js.Array2.some(table => table.tableName === eventSyncStateTableName))
     ) {
       Js.Exn.raiseError(
-        `Cannot run Envio migrations on PostgreSQL schema "${pgSchema}" because it contains non-Envio tables. Running migrations would delete all data in this schema. To proceed, either drop the existing schema first with "pnpm envio local db-migrate down" or specify a different schema name using the "ENVIO_PG_PUBLIC_SCHEMA" environment variable.`,
+        `Cannot run Envio migrations on PostgreSQL schema "${pgSchema}" because it contains non-Envio tables. Running migrations would delete all data in this schema.\n\nTo resolve this:\n1. If you want to use this schema, first backup any important data, then drop it with: "pnpm envio local db-migrate down"\n2. Or specify a different schema name by setting the "ENVIO_PG_PUBLIC_SCHEMA" environment variable\n3. Or manually drop the schema in your database if you're certain the data is not needed.`,
       )
     }
 
@@ -376,17 +386,37 @@ let make = (~sql: Postgres.sql, ~pgSchema, ~pgUser): Persistence.storage => {
     })
   }
 
+  let loadEffectCaches = async () => {
+    let schemaTableNames: array<schemaTableName> =
+      await sql->Postgres.unsafe(makeSchemaTableNamesQuery(~pgSchema))
+    schemaTableNames->Belt.Array.keepMapU(schemaTableName => {
+      if schemaTableName.tableName->Js.String2.startsWith("effect_cache_") {
+        Some(
+          (
+            {
+              name: schemaTableName.tableName,
+              size: 0,
+              table: None,
+            }: Persistence.effectCache
+          ),
+        )
+      } else {
+        None
+      }
+    })
+  }
+
   let loadByIdsOrThrow = async (~ids, ~table: Table.table, ~rowsSchema) => {
     switch await (
       switch ids {
       | [_] =>
         sql->Postgres.preparedUnsafe(
-          makeLoadByIdSql(~pgSchema, ~tableName=table.tableName),
+          makeLoadByIdQuery(~pgSchema, ~tableName=table.tableName),
           ids->Obj.magic,
         )
       | _ =>
         sql->Postgres.preparedUnsafe(
-          makeLoadByIdsSql(~pgSchema, ~tableName=table.tableName),
+          makeLoadByIdsQuery(~pgSchema, ~tableName=table.tableName),
           [ids]->Obj.magic,
         )
       }
@@ -395,6 +425,52 @@ let make = (~sql: Postgres.sql, ~pgSchema, ~pgUser): Persistence.storage => {
       raise(
         Persistence.StorageError({
           message: `Failed loading "${table.tableName}" from storage by ids`,
+          reason: exn,
+        }),
+      )
+    | rows =>
+      try rows->S.parseOrThrow(rowsSchema) catch {
+      | exn =>
+        raise(
+          Persistence.StorageError({
+            message: `Failed to parse "${table.tableName}" loaded from storage by ids`,
+            reason: exn,
+          }),
+        )
+      }
+    }
+  }
+
+  let loadByFieldOrThrow = async (
+    ~fieldName: string,
+    ~fieldSchema,
+    ~fieldValue,
+    ~operator: Persistence.operator,
+    ~table: Table.table,
+    ~rowsSchema,
+  ) => {
+    let params = try [fieldValue->S.reverseConvertToJsonOrThrow(fieldSchema)]->Obj.magic catch {
+    | exn =>
+      raise(
+        Persistence.StorageError({
+          message: `Failed loading "${table.tableName}" from storage by field "${fieldName}". Couldn't serialize provided value.`,
+          reason: exn,
+        }),
+      )
+    }
+    switch await sql->Postgres.preparedUnsafe(
+      makeLoadByFieldQuery(
+        ~pgSchema,
+        ~tableName=table.tableName,
+        ~fieldName,
+        ~operator=(operator :> string),
+      ),
+      params,
+    ) {
+    | exception exn =>
+      raise(
+        Persistence.StorageError({
+          message: `Failed loading "${table.tableName}" from storage by field "${fieldName}"`,
           reason: exn,
         }),
       )
@@ -429,6 +505,8 @@ let make = (~sql: Postgres.sql, ~pgSchema, ~pgUser): Persistence.storage => {
   {
     isInitialized,
     initialize,
+    loadByFieldOrThrow,
+    loadEffectCaches,
     loadByIdsOrThrow,
     setOrThrow,
   }

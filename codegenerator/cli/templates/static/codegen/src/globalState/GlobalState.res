@@ -57,19 +57,14 @@ type t = {
   targetBufferSize: int,
   indexerStartTime: Js.Date.t,
   writeThrottlers: WriteThrottlers.t,
-  loadLayer: LoadLayer.t,
+  loadManager: LoadManager.t,
   shouldUseTui: bool,
   //Initialized as 0, increments, when rollbacks occur to invalidate
   //responses based on the wrong stateId
   id: int,
 }
 
-let make = (
-  ~config: Config.t,
-  ~chainManager: ChainManager.t,
-  ~loadLayer: LoadLayer.t,
-  ~shouldUseTui=false,
-) => {
+let make = (~config: Config.t, ~chainManager: ChainManager.t, ~shouldUseTui=false) => {
   let targetBatchesInBuffer = 3
   let targetBufferSize = switch Env.targetBufferSize {
   | Some(size) => size
@@ -89,7 +84,7 @@ let make = (
     indexerStartTime: Js.Date.make(),
     rollbackState: NoRollback,
     writeThrottlers: WriteThrottlers.make(~config),
-    loadLayer,
+    loadManager: LoadManager.make(),
     shouldUseTui,
     id: 0,
   }
@@ -574,7 +569,11 @@ let processPartitionQueryResponse = async (
   | [] as empty =>
     // A small optimisation to not recreate an empty array
     empty->(Utils.magic: array<Internal.eventItem> => array<FetchState.indexingContract>)
-  | _ => await ChainFetcher.runContractRegistersOrThrow(~reversedWithContractRegister, ~config=state.config)
+  | _ =>
+    await ChainFetcher.runContractRegistersOrThrow(
+      ~reversedWithContractRegister,
+      ~config=state.config,
+    )
   }
 
   dispatchAction(
@@ -959,7 +958,7 @@ let injectedTaskReducer = (
             ~processingMetricsByChainId,
             ~inMemoryStore,
             ~isInReorgThreshold,
-            ~loadLayer=state.loadLayer,
+            ~loadManager=state.loadManager,
             ~config=state.config,
           ) {
           | exception exn =>

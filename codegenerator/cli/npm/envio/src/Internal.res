@@ -197,6 +197,7 @@ type effectArgs = {
 type effect = {
   name: string,
   handler: effectArgs => promise<effectOutput>,
+  cache: bool,
   mutable callsCount: int,
 }
 

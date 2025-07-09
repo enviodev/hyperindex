@@ -99,7 +99,8 @@ let runEventHandlerOrThrow = async (
   ~loader,
   ~handler,
   ~inMemoryStore,
-  ~loadLayer,
+  ~loadManager,
+  ~storage,
   ~shouldSaveHistory,
   ~shouldBenchmark,
 ) => {
@@ -109,7 +110,8 @@ let runEventHandlerOrThrow = async (
   let contextParams: UserContext.contextParams = {
     eventItem,
     inMemoryStore,
-    loadLayer,
+    loadManager,
+    storage,
     shouldSaveHistory,
     isPreload: false,
   }
@@ -132,9 +134,7 @@ let runEventHandlerOrThrow = async (
   }
 
   try {
-    await handler(
-      UserContext.getHandlerArgs(contextParams, ~loaderReturn),
-    )
+    await handler(UserContext.getHandlerArgs(contextParams, ~loaderReturn))
   } catch {
   | exn =>
     raise(
@@ -160,7 +160,8 @@ let runEventHandlerOrThrow = async (
 let runHandlerOrThrow = async (
   eventItem: Internal.eventItem,
   ~inMemoryStore,
-  ~loadLayer,
+  ~loadManager,
+  ~storage,
   ~config: Config.t,
   ~shouldSaveHistory,
   ~shouldBenchmark,
@@ -171,7 +172,8 @@ let runHandlerOrThrow = async (
       ~loader=eventItem.eventConfig.loader,
       ~handler,
       ~inMemoryStore,
-      ~loadLayer,
+      ~loadManager,
+      ~storage,
       ~shouldSaveHistory,
       ~shouldBenchmark,
     )
@@ -187,7 +189,8 @@ let runHandlerOrThrow = async (
 
 let runBatchLoadersOrThrow = async (
   eventBatch: array<Internal.eventItem>,
-  ~loadLayer,
+  ~loadManager,
+  ~storage,
   ~inMemoryStore,
 ) => {
   // On the first run of loaders, we don't care about the result,
@@ -204,7 +207,8 @@ let runBatchLoadersOrThrow = async (
               UserContext.getLoaderArgs({
                 eventItem,
                 inMemoryStore,
-                loadLayer,
+                loadManager,
+                storage,
                 isPreload: true,
                 shouldSaveHistory: false,
               }),
@@ -225,7 +229,8 @@ let runBatchLoadersOrThrow = async (
 let runBatchHandlersOrThrow = async (
   eventBatch: array<Internal.eventItem>,
   ~inMemoryStore,
-  ~loadLayer,
+  ~loadManager,
+  ~storage,
   ~config,
   ~shouldSaveHistory,
   ~shouldBenchmark,
@@ -235,7 +240,8 @@ let runBatchHandlersOrThrow = async (
     await runHandlerOrThrow(
       eventItem,
       ~inMemoryStore,
-      ~loadLayer,
+      ~loadManager,
+      ~storage,
       ~config,
       ~shouldSaveHistory,
       ~shouldBenchmark,
@@ -273,8 +279,8 @@ let processEventBatch = async (
   ~processingMetricsByChainId: dict<ChainManager.processingChainMetrics>,
   ~inMemoryStore: InMemoryStore.t,
   ~isInReorgThreshold,
-  ~loadLayer,
-  ~config,
+  ~loadManager,
+  ~config: Config.t,
 ) => {
   let batchSize = items->Array.length
   let logger = Logging.createChildFrom(
@@ -291,16 +297,19 @@ let processEventBatch = async (
   )
   logger->Logging.childTrace("Started processing batch")
 
+  let storage = config.persistence->Persistence.getInitializedStorageOrThrow
+
   try {
     let timeRef = Hrtime.makeTimer()
 
-    await items->runBatchLoadersOrThrow(~loadLayer, ~inMemoryStore)
+    await items->runBatchLoadersOrThrow(~loadManager, ~storage, ~inMemoryStore)
 
     let elapsedTimeAfterLoaders = timeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
 
     await items->runBatchHandlersOrThrow(
       ~inMemoryStore,
-      ~loadLayer,
+      ~loadManager,
+      ~storage,
       ~config,
       ~shouldSaveHistory=config->Config.shouldSaveHistory(~isInReorgThreshold),
       ~shouldBenchmark=Env.Benchmark.shouldSaveData,

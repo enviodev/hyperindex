@@ -32,62 +32,136 @@ module InMemoryStore = {
   }
 }
 
-module LoadLayer = {
-  type loadEntitiesByIdsCall = {
-    entityIds: array<string>,
-    entityName: string,
-  }
-  type loadEntitiesByFieldCall = {
-    entityName: string,
-    fieldName: string,
-    fieldValue: LoadLayer.fieldValue,
-    fieldValueSchema: S.t<LoadLayer.fieldValue>,
-    operator: TableIndices.Operator.t,
-  }
+module Storage = {
+  type method = [
+    | #isInitialized
+    | #initialize
+    | #loadEffectCaches
+    | #loadByIdsOrThrow
+    | #loadByFieldOrThrow
+    | #setOrThrow
+  ]
+
   type t = {
-    loadLayer: LoadLayer.t,
-    loadEntitiesByIdsCalls: array<loadEntitiesByIdsCall>,
-    loadEntitiesByFieldCalls: array<loadEntitiesByFieldCall>,
+    isInitializedCalls: array<bool>,
+    resolveIsInitialized: bool => unit,
+    initializeCalls: array<{
+      "entities": array<Internal.entityConfig>,
+      "generalTables": array<Table.table>,
+      "enums": array<Internal.enumConfig<Internal.enum>>,
+    }>,
+    resolveInitialize: unit => unit,
+    loadByIdsOrThrowCalls: array<{"ids": array<string>, "tableName": string}>,
+    loadByFieldOrThrowCalls: array<{
+      "fieldName": string,
+      "fieldValue": unknown,
+      "tableName": string,
+      "operator": Persistence.operator,
+    }>,
+    loadEffectCachesCalls: ref<int>,
+    storage: Persistence.storage,
   }
 
-  let make = () => {
-    let loadEntitiesByIdsCalls = []
-    let loadEntitiesByFieldCalls = []
-    let loadLayer = LoadLayer.make(
-      ~loadEntitiesByIds=async (entityIds, ~entityConfig) => {
-        loadEntitiesByIdsCalls
-        ->Js.Array2.push({
-          entityIds,
-          entityName: entityConfig.name,
-        })
-        ->ignore
-        []
-      },
-      ~loadEntitiesByField=async (
-        ~operator,
-        ~entityConfig,
-        ~fieldName,
-        ~fieldValue,
-        ~fieldValueSchema,
-        ~logger as _=?,
-      ) => {
-        loadEntitiesByFieldCalls
-        ->Js.Array2.push({
-          operator,
-          entityName: entityConfig.name,
-          fieldName,
-          fieldValue,
-          fieldValueSchema,
-        })
-        ->ignore
-        []
-      },
-    )
+  let make = (methods: array<method>) => {
+    let implement = (method: method, fn) => {
+      if methods->Js.Array2.includes(method) {
+        fn
+      } else {
+        (() => Js.Exn.raiseError(`storage.${(method :> string)} not implemented`))->Obj.magic
+      }
+    }
+
+    let implementBody = (method: method, fn) => {
+      if methods->Js.Array2.includes(method) {
+        fn()
+      } else {
+        Js.Exn.raiseError(`storage.${(method :> string)} not implemented`)
+      }
+    }
+
+    let isInitializedCalls = []
+    let initializeCalls = []
+    let isInitializedResolveFns = []
+    let initializeResolveFns = []
+    let loadByIdsOrThrowCalls = []
+    let loadByFieldOrThrowCalls = []
+    let loadEffectCachesCalls = ref(0)
 
     {
-      loadLayer,
-      loadEntitiesByIdsCalls,
-      loadEntitiesByFieldCalls,
+      isInitializedCalls,
+      initializeCalls,
+      loadByIdsOrThrowCalls,
+      loadByFieldOrThrowCalls,
+      loadEffectCachesCalls,
+      resolveIsInitialized: bool => {
+        isInitializedResolveFns->Js.Array2.forEach(resolve => resolve(bool))
+      },
+      resolveInitialize: () => {
+        initializeResolveFns->Js.Array2.forEach(resolve => resolve())
+      },
+      storage: {
+        isInitialized: implement(#isInitialized, () => {
+          isInitializedCalls->Js.Array2.push(true)->ignore
+          Promise.make((resolve, _reject) => {
+            isInitializedResolveFns->Js.Array2.push(resolve)->ignore
+          })
+        }),
+        initialize: implement(#initialize, (~entities=[], ~generalTables=[], ~enums=[]) => {
+          initializeCalls
+          ->Js.Array2.push({
+            "entities": entities,
+            "generalTables": generalTables,
+            "enums": enums,
+          })
+          ->ignore
+          Promise.make((resolve, _reject) => {
+            initializeResolveFns->Js.Array2.push(resolve)->ignore
+          })
+        }),
+        loadEffectCaches: implement(#loadEffectCaches, () => {
+          loadEffectCachesCalls := loadEffectCachesCalls.contents + 1
+          Promise.resolve([])
+        }),
+        loadByIdsOrThrow: (
+          type item,
+          ~ids,
+          ~table: Table.table,
+          ~rowsSchema as _: S.t<array<item>>,
+        ): promise<array<item>> => {
+          implementBody(#loadByIdsOrThrow, () => {
+            loadByIdsOrThrowCalls
+            ->Js.Array2.push({
+              "ids": ids,
+              "tableName": table.tableName,
+            })
+            ->ignore
+            Promise.resolve([])
+          })
+        },
+        loadByFieldOrThrow: (
+          ~fieldName,
+          ~fieldSchema as _,
+          ~fieldValue,
+          ~operator,
+          ~table: Table.table,
+          ~rowsSchema as _,
+        ) => {
+          implementBody(#loadByFieldOrThrow, () => {
+            loadByFieldOrThrowCalls
+            ->Js.Array2.push({
+              "fieldName": fieldName,
+              "fieldValue": fieldValue->Utils.magic,
+              "tableName": table.tableName,
+              "operator": operator,
+            })
+            ->ignore
+            Promise.resolve([])
+          })
+        },
+        setOrThrow: (~items as _, ~table as _, ~itemSchema as _) => {
+          implementBody(#setOrThrow, () => Js.Exn.raiseError("Not implemented"))
+        },
+      },
     }
   }
 }

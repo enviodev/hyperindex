@@ -27,13 +27,15 @@ describe("Load and save an entity with a Timestamp from DB", () => {
     )
 
     let inMemoryStore = InMemoryStore.make()
-    let loadLayer = LoadLayer.makeWithDbConnection()
+    let loadManager = LoadManager.make()
+    let storage = Config.codegenPersistence.storage
 
     let eventItem = MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem
 
     let loaderContext = UserContext.getLoaderContext({
       eventItem,
-      loadLayer,
+      loadManager,
+      storage,
       inMemoryStore,
       shouldSaveHistory: false,
       isPreload: false,
@@ -44,7 +46,8 @@ describe("Load and save an entity with a Timestamp from DB", () => {
     let handlerContext = UserContext.getHandlerContext({
       eventItem,
       inMemoryStore,
-      loadLayer,
+      loadManager,
+      storage,
       shouldSaveHistory: false,
       isPreload: false,
     })->(Utils.magic: Internal.handlerContext => Types.handlerContext)

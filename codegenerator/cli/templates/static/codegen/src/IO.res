@@ -54,8 +54,8 @@ let executeSetEntityWithHistory = (
   ~entityConfig,
 ): promise<unit> => {
   let rows =
-    inMemoryStore.entities
-    ->InMemoryStore.EntityTables.get(~entityConfig)
+    inMemoryStore
+    ->InMemoryStore.getInMemTable(~entityConfig)
     ->InMemoryTable.Entity.rows
   let (entitiesToSet, idsToDelete, entityHistoryItemsToSet) = rows->Belt.Array.reduce(
     ([], [], []),
@@ -134,8 +134,8 @@ let executeDbFunctionsEntity = (
   ~entityConfig: Internal.entityConfig,
 ): promise<unit> => {
   let rows =
-    inMemoryStore.entities
-    ->InMemoryStore.EntityTables.get(~entityConfig)
+    inMemoryStore
+    ->InMemoryStore.getInMemTable(~entityConfig)
     ->InMemoryTable.Entity.rows
 
   let entitiesToSet = []
@@ -273,7 +273,7 @@ module RollBack = {
           fullDiff->Js.Dict.set(entityConfig.name, diff)
         }
 
-        let entityTable = inMemStore.entities->InMemoryStore.EntityTables.get(~entityConfig)
+        let entityTable = inMemStore->InMemoryStore.getInMemTable(~entityConfig)
 
         diff->Belt.Array.forEach(historyRow => {
           let eventIdentifier: Types.eventIdentifier = {

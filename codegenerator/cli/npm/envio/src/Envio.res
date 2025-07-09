@@ -22,6 +22,8 @@ and effectOptions<'input, 'output> = {
   input: S.t<'input>,
   /** The output schema of the effect. */
   output: S.t<'output>,
+  /** Whether the effect should be cached. */
+  cache?: bool,
 }
 @genType.import(("./Types.ts", "EffectContext"))
 and effectContext = {
@@ -48,5 +50,6 @@ let experimental_createEffect = (
       >
     ),
     callsCount: 0,
+    cache: options.cache->Belt.Option.getWithDefault(false),
   }->(Utils.magic: Internal.effect => effect<'input, 'output>)
 }

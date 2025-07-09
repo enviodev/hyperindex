@@ -8,12 +8,14 @@ describe("E2E Mock Event Batch", () => {
     DbStub.setGravatarDb(~gravatar=MockEntities.gravatarEntity2)
     // EventProcessing.processEventBatch(MockEvents.eventBatch)
 
-    let loadLayer = LoadLayer.makeWithDbConnection()
+    let loadManager = LoadManager.make()
+    let storage = Config.codegenPersistence.storage
 
     try {
       await MockEvents.eventBatchItems->EventProcessing.runBatchHandlersOrThrow(
         ~inMemoryStore,
-        ~loadLayer,
+        ~loadManager,
+        ~storage,
         ~config=RegisterHandlers.getConfig(),
         ~shouldSaveHistory=false,
         ~shouldBenchmark=false,

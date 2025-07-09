@@ -3,8 +3,8 @@ open RescriptMocha
 //unsafe polymorphic toString binding for any type
 @send external toStringUnsafe: 'a => string = "toString"
 
-// These are mandatory tables that should be created for every schema
-// it allows us to distinguish whether the schema is controlled by Envio
+// These are mandatory tables that must be created for every Envio-managed schema.
+// The event_sync_state table is used to distinguish Envio-controlled schemas from others.
 let generalTables = [TablesStatic.EventSyncState.table]
 
 let stripUndefinedFieldsInPlace = (val: 'a): 'a => {
@@ -227,7 +227,7 @@ describe("Entity History Codegen", () => {
   })
   it("Creates an entity history table", () => {
     let createQuery =
-      TestEntity.entityHistory.table->PgStorage.makeCreateTableSql(~pgSchema="public")
+      TestEntity.entityHistory.table->PgStorage.makeCreateTableQuery(~pgSchema="public")
     Assert.equal(
       `CREATE TABLE IF NOT EXISTS "public"."TestEntity_history"("entity_history_block_timestamp" INTEGER NOT NULL, "entity_history_chain_id" INTEGER NOT NULL, "entity_history_block_number" INTEGER NOT NULL, "entity_history_log_index" INTEGER NOT NULL, "previous_entity_history_block_timestamp" INTEGER, "previous_entity_history_chain_id" INTEGER, "previous_entity_history_block_number" INTEGER, "previous_entity_history_log_index" INTEGER, "id" TEXT NOT NULL, "fieldA" INTEGER, "fieldB" TEXT, "action" "public".ENTITY_HISTORY_ROW_ACTION NOT NULL, "serial" SERIAL, PRIMARY KEY("entity_history_block_timestamp", "entity_history_chain_id", "entity_history_block_number", "entity_history_log_index", "id"));`,
       createQuery,

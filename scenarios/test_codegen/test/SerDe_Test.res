@@ -115,12 +115,12 @@ describe("SerDe Test", () => {
 
   it("contains correct query for unnest entity", () => {
     let createQuery =
-      Entities.EntityWithAllNonArrayTypes.table->PgStorage.makeCreateTableSql(~pgSchema="public")
+      Entities.EntityWithAllNonArrayTypes.table->PgStorage.makeCreateTableQuery(~pgSchema="public")
     Assert.equal(
       `CREATE TABLE IF NOT EXISTS "public"."EntityWithAllNonArrayTypes"("bigDecimal" NUMERIC NOT NULL, "bigInt" NUMERIC NOT NULL, "bool" BOOLEAN NOT NULL, "float_" DOUBLE PRECISION NOT NULL, "id" TEXT NOT NULL, "int_" INTEGER NOT NULL, "optBigDecimal" NUMERIC, "optBigInt" NUMERIC, "optBool" BOOLEAN, "optFloat" DOUBLE PRECISION, "optInt" INTEGER, "optString" TEXT, "string" TEXT NOT NULL, "db_write_timestamp" TIMESTAMP DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY("id"));`,
       createQuery,
     )
-    let query = PgStorage.makeInsertUnnestSetSql(
+    let query = PgStorage.makeInsertUnnestSetQuery(
       ~table=Entities.EntityWithAllNonArrayTypes.table,
       ~itemSchema=Entities.EntityWithAllNonArrayTypes.schema,
       ~isRawEvents=false,
