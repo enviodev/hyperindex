@@ -105,6 +105,8 @@ export function experimental_createEffect<
     readonly input: IS;
     /** The output schema of the effect. */
     readonly output: OS;
+    /** Whether the effect should be cached. */
+    readonly cache?: boolean;
   },
   handler: (args: EffectArgs<I>) => Promise<R>
 ): Effect<I, O>;

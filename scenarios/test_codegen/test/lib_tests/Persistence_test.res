@@ -45,6 +45,9 @@ let makeStorageMock = () => {
           initializeResolveFns->Js.Array2.push(resolve)->ignore
         })
       },
+      loadEffectCaches: () => {
+        Js.Exn.raiseError("Not implemented")
+      },
       loadByIdsOrThrow: (~ids as _, ~table as _, ~rowsSchema as _) => {
         Js.Exn.raiseError("Not implemented")
       },
@@ -140,7 +143,7 @@ describe("Test Persistence layer init", () => {
 
     Assert.deepEqual(
       persistence.storageStatus,
-      Persistence.Ready({cleanRun: true}),
+      Persistence.Ready({cleanRun: true, effectCaches: Js.Dict.empty()}),
       ~message=`Storage status should be ready`,
     )
 
@@ -198,7 +201,7 @@ describe("Test Persistence layer init", () => {
 
     Assert.deepEqual(
       persistence.storageStatus,
-      Persistence.Ready({cleanRun: false}),
+      Persistence.Ready({cleanRun: false, effectCaches: Js.Dict.empty()}),
       ~message=`Storage status should be ready`,
     )
     Assert.deepEqual(

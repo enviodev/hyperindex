@@ -1,18 +1,18 @@
 open RescriptMocha
 
 describe("Test PgStorage SQL generation functions", () => {
-  describe("makeCreateIndexSql", () => {
+  describe("makeCreateIndexQuery", () => {
     Async.it(
       "Should create simple index SQL",
       async () => {
-        let sql = PgStorage.makeCreateIndexSql(
+        let query = PgStorage.makeCreateIndexQuery(
           ~tableName="test_table",
           ~indexFields=["field1"],
           ~pgSchema="test_schema",
         )
 
         Assert.equal(
-          sql,
+          query,
           `CREATE INDEX IF NOT EXISTS "test_table_field1" ON "test_schema"."test_table"("field1");`,
           ~message="Should generate correct single field index SQL",
         )
@@ -22,14 +22,14 @@ describe("Test PgStorage SQL generation functions", () => {
     Async.it(
       "Should create composite index SQL",
       async () => {
-        let sql = PgStorage.makeCreateIndexSql(
+        let query = PgStorage.makeCreateIndexQuery(
           ~tableName="test_table",
           ~indexFields=["field1", "field2", "field3"],
           ~pgSchema="test_schema",
         )
 
         Assert.equal(
-          sql,
+          query,
           `CREATE INDEX IF NOT EXISTS "test_table_field1_field2_field3" ON "test_schema"."test_table"("field1", "field2", "field3");`,
           ~message="Should generate correct composite index SQL",
         )
@@ -37,57 +37,57 @@ describe("Test PgStorage SQL generation functions", () => {
     )
   })
 
-  describe("makeCreateTableIndicesSql", () => {
+  describe("makeCreateTableIndicesQuery", () => {
     Async.it(
       "Should create indices for A entity table",
       async () => {
-        let sql = PgStorage.makeCreateTableIndicesSql(Entities.A.table, ~pgSchema="test_schema")
+        let query = PgStorage.makeCreateTableIndicesQuery(Entities.A.table, ~pgSchema="test_schema")
 
         let expectedIndices = `CREATE INDEX IF NOT EXISTS "A_b_id" ON "test_schema"."A"("b_id");`
-        Assert.equal(sql, expectedIndices, ~message="Indices SQL should match exactly")
+        Assert.equal(query, expectedIndices, ~message="Indices SQL should match exactly")
       },
     )
 
     Async.it(
       "Should handle table with no indices",
       async () => {
-        let sql = PgStorage.makeCreateTableIndicesSql(Entities.B.table, ~pgSchema="test_schema")
+        let query = PgStorage.makeCreateTableIndicesQuery(Entities.B.table, ~pgSchema="test_schema")
 
         // B entity has no indexed fields, so should return empty string
-        Assert.equal(sql, "", ~message="Should return empty string for table with no indices")
+        Assert.equal(query, "", ~message="Should return empty string for table with no indices")
       },
     )
   })
 
-  describe("makeCreateTableSql", () => {
+  describe("makeCreateTableQuery", () => {
     Async.it(
       "Should create SQL for A entity table",
       async () => {
-        let sql = PgStorage.makeCreateTableSql(Entities.A.table, ~pgSchema="test_schema")
+        let query = PgStorage.makeCreateTableQuery(Entities.A.table, ~pgSchema="test_schema")
 
         let expectedTableSql = `CREATE TABLE IF NOT EXISTS "test_schema"."A"("b_id" TEXT NOT NULL, "id" TEXT NOT NULL, "optionalStringToTestLinkedEntities" TEXT, "db_write_timestamp" TIMESTAMP DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY("id"));`
-        Assert.equal(sql, expectedTableSql, ~message="A table SQL should match exactly")
+        Assert.equal(query, expectedTableSql, ~message="A table SQL should match exactly")
       },
     )
 
     Async.it(
       "Should create SQL for B entity table with derived fields",
       async () => {
-        let sql = PgStorage.makeCreateTableSql(Entities.B.table, ~pgSchema="test_schema")
+        let query = PgStorage.makeCreateTableQuery(Entities.B.table, ~pgSchema="test_schema")
 
         let expectedBTableSql = `CREATE TABLE IF NOT EXISTS "test_schema"."B"("c_id" TEXT, "id" TEXT NOT NULL, "db_write_timestamp" TIMESTAMP DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY("id"));`
-        Assert.equal(sql, expectedBTableSql, ~message="B table SQL should match exactly")
+        Assert.equal(query, expectedBTableSql, ~message="B table SQL should match exactly")
       },
     )
 
     Async.it(
       "Should handle default values",
       async () => {
-        let sql = PgStorage.makeCreateTableSql(Entities.A.table, ~pgSchema="test_schema")
+        let query = PgStorage.makeCreateTableQuery(Entities.A.table, ~pgSchema="test_schema")
 
         let expectedDefaultTestSql = `CREATE TABLE IF NOT EXISTS "test_schema"."A"("b_id" TEXT NOT NULL, "id" TEXT NOT NULL, "optionalStringToTestLinkedEntities" TEXT, "db_write_timestamp" TIMESTAMP DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY("id"));`
         Assert.equal(
-          sql,
+          query,
           expectedDefaultTestSql,
           ~message="Default value table SQL should match exactly",
         )
@@ -236,14 +236,14 @@ CREATE INDEX IF NOT EXISTS "A_history_serial" ON "public"."A_history"("serial");
     )
   })
 
-  describe("makeLoadByIdSql", () => {
+  describe("makeLoadByIdQuery", () => {
     Async.it(
       "Should create correct SQL for loading single record by ID",
       async () => {
-        let sql = PgStorage.makeLoadByIdSql(~pgSchema="test_schema", ~tableName="users")
+        let query = PgStorage.makeLoadByIdQuery(~pgSchema="test_schema", ~tableName="users")
 
         Assert.equal(
-          sql,
+          query,
           `SELECT * FROM "test_schema"."users" WHERE id = $1 LIMIT 1;`,
           ~message="Should generate correct single ID query SQL",
         )
@@ -253,10 +253,10 @@ CREATE INDEX IF NOT EXISTS "A_history_serial" ON "public"."A_history"("serial");
     Async.it(
       "Should handle different schema and table names",
       async () => {
-        let sql = PgStorage.makeLoadByIdSql(~pgSchema="public", ~tableName="A")
+        let query = PgStorage.makeLoadByIdQuery(~pgSchema="public", ~tableName="A")
 
         Assert.equal(
-          sql,
+          query,
           `SELECT * FROM "public"."A" WHERE id = $1 LIMIT 1;`,
           ~message="Should generate correct SQL with different schema and table names",
         )
@@ -264,14 +264,14 @@ CREATE INDEX IF NOT EXISTS "A_history_serial" ON "public"."A_history"("serial");
     )
   })
 
-  describe("makeLoadByIdsSql", () => {
+  describe("makeLoadByIdsQuery", () => {
     Async.it(
       "Should create correct SQL for loading multiple records by IDs",
       async () => {
-        let sql = PgStorage.makeLoadByIdsSql(~pgSchema="test_schema", ~tableName="users")
+        let query = PgStorage.makeLoadByIdsQuery(~pgSchema="test_schema", ~tableName="users")
 
         Assert.equal(
-          sql,
+          query,
           `SELECT * FROM "test_schema"."users" WHERE id = ANY($1::text[]);`,
           ~message="Should generate correct multiple IDs query SQL",
         )
@@ -281,10 +281,10 @@ CREATE INDEX IF NOT EXISTS "A_history_serial" ON "public"."A_history"("serial");
     Async.it(
       "Should handle different schema and table names",
       async () => {
-        let sql = PgStorage.makeLoadByIdsSql(~pgSchema="production", ~tableName="entities")
+        let query = PgStorage.makeLoadByIdsQuery(~pgSchema="production", ~tableName="entities")
 
         Assert.equal(
-          sql,
+          query,
           `SELECT * FROM "production"."entities" WHERE id = ANY($1::text[]);`,
           ~message="Should generate correct SQL with different schema and table names",
         )
@@ -292,63 +292,63 @@ CREATE INDEX IF NOT EXISTS "A_history_serial" ON "public"."A_history"("serial");
     )
   })
 
-  describe("makeInsertUnnestSetSql", () => {
+  describe("makeInsertUnnestSetQuery", () => {
     Async.it(
       "Should create correct SQL for inserting with unnest",
       async () => {
-        let sql = PgStorage.makeInsertUnnestSetSql(
+        let query = PgStorage.makeInsertUnnestSetQuery(
           ~pgSchema="test_schema",
           ~table=Entities.A.table,
           ~itemSchema=Entities.A.schema,
           ~isRawEvents=false,
         )
 
-        let expectedSql = `INSERT INTO "test_schema"."A" ("b_id", "id", "optionalStringToTestLinkedEntities")
+        let expectedQuery = `INSERT INTO "test_schema"."A" ("b_id", "id", "optionalStringToTestLinkedEntities")
 SELECT * FROM unnest($1::TEXT[],$2::TEXT[],$3::TEXT[])ON CONFLICT("id") DO UPDATE SET "b_id" = EXCLUDED."b_id","optionalStringToTestLinkedEntities" = EXCLUDED."optionalStringToTestLinkedEntities";`
 
-        Assert.equal(sql, expectedSql, ~message="Should generate correct unnest insert SQL")
+        Assert.equal(query, expectedQuery, ~message="Should generate correct unnest insert SQL")
       },
     )
 
     Async.it(
       "Should handle raw events table correctly",
       async () => {
-        let sql = PgStorage.makeInsertUnnestSetSql(
+        let query = PgStorage.makeInsertUnnestSetQuery(
           ~pgSchema="test_schema",
           ~table=Entities.A.table,
           ~itemSchema=Entities.A.schema,
           ~isRawEvents=true,
         )
 
-        let expectedSql = `INSERT INTO "test_schema"."A" ("b_id", "id", "optionalStringToTestLinkedEntities")
+        let expectedQuery = `INSERT INTO "test_schema"."A" ("b_id", "id", "optionalStringToTestLinkedEntities")
 SELECT * FROM unnest($1::TEXT[],$2::TEXT[],$3::TEXT[]);`
 
         Assert.equal(
-          sql,
-          expectedSql,
+          query,
+          expectedQuery,
           ~message="Should generate correct unnest insert SQL for raw events",
         )
       },
     )
   })
 
-  describe("makeInsertValuesSetSql", () => {
+  describe("makeInsertValuesSetQuery", () => {
     Async.it(
       "Should create correct SQL for inserting with values",
       async () => {
-        let sql = PgStorage.makeInsertValuesSetSql(
+        let query = PgStorage.makeInsertValuesSetQuery(
           ~pgSchema="test_schema",
           ~table=Entities.A.table,
           ~itemSchema=Entities.A.schema,
           ~itemsCount=2,
         )
 
-        let expectedSql = `INSERT INTO "test_schema"."A" ("b_id", "id", "optionalStringToTestLinkedEntities")
+        let expectedQuery = `INSERT INTO "test_schema"."A" ("b_id", "id", "optionalStringToTestLinkedEntities")
 VALUES($1,$3,$5),($2,$4,$6)ON CONFLICT("id") DO UPDATE SET "b_id" = EXCLUDED."b_id","optionalStringToTestLinkedEntities" = EXCLUDED."optionalStringToTestLinkedEntities";`
 
         Assert.equal(
-          sql,
-          expectedSql,
+          query,
+          expectedQuery,
           ~message=`Should generate correct values insert SQL.
         The $x in the order, because we flatten unnested entities for the query`,
         )
@@ -358,19 +358,19 @@ VALUES($1,$3,$5),($2,$4,$6)ON CONFLICT("id") DO UPDATE SET "b_id" = EXCLUDED."b_
     Async.it(
       "Should handle table without primary key",
       async () => {
-        let sql = PgStorage.makeInsertValuesSetSql(
+        let query = PgStorage.makeInsertValuesSetQuery(
           ~pgSchema="test_schema",
           ~table=Entities.B.table,
           ~itemSchema=Entities.B.schema,
           ~itemsCount=1,
         )
 
-        let expectedSql = `INSERT INTO "test_schema"."B" ("c_id", "id")
+        let expectedQuery = `INSERT INTO "test_schema"."B" ("c_id", "id")
 VALUES($1,$2)ON CONFLICT("id") DO UPDATE SET "c_id" = EXCLUDED."c_id";`
 
         Assert.equal(
-          sql,
-          expectedSql,
+          query,
+          expectedQuery,
           ~message="Should generate correct values insert SQL for table without primary key",
         )
       },

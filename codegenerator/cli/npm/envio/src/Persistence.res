@@ -5,6 +5,16 @@
 // Currently there are quite many code spread across
 // DbFunctions, Db, Migrations, InMemoryStore modules which use codegen code directly.
 
+// The type reflects an effect cache table in the db
+// It might be present even if the effect is not used in the application
+type effectCache = {
+  name: string,
+  // Number of rows in the table
+  mutable size: int,
+  // Lazily attached table definition when effect is used in the application
+  mutable table: option<Table.table>,
+}
+
 type storage = {
   // Should return true if we already have persisted data
   // and we can skip initialization
@@ -16,6 +26,7 @@ type storage = {
     ~generalTables: array<Table.table>=?,
     ~enums: array<Internal.enumConfig<Internal.enum>>=?,
   ) => promise<unit>,
+  loadEffectCaches: unit => promise<array<effectCache>>,
   @raises("StorageError")
   loadByIdsOrThrow: 'item. (
     ~ids: array<string>,
@@ -35,7 +46,7 @@ exception StorageError({message: string, reason: exn})
 type storageStatus =
   | Unknown
   | Initializing(promise<unit>)
-  | Ready({cleanRun: bool})
+  | Ready({cleanRun: bool, effectCaches: dict<effectCache>})
 
 type t = {
   userEntities: array<Internal.entityConfig>,
@@ -99,13 +110,24 @@ let init = async (persistence, ~reset=false) => {
           ~generalTables=persistence.staticTables,
           ~enums=persistence.allEnums,
         )
-        persistence.storageStatus = Ready({cleanRun: true})
+
+        persistence.storageStatus = Ready({
+          cleanRun: true,
+          effectCaches: Js.Dict.empty(),
+        })
         switch persistence.onStorageInitialize {
         | Some(onStorageInitialize) => await onStorageInitialize()
         | None => ()
         }
       } else {
-        persistence.storageStatus = Ready({cleanRun: false})
+        let effectCaches = Js.Dict.empty()
+        (await persistence.storage.loadEffectCaches())->Js.Array2.forEach(effectCache => {
+          effectCaches->Js.Dict.set(effectCache.name, effectCache)
+        })
+        persistence.storageStatus = Ready({
+          cleanRun: false,
+          effectCaches,
+        })
       }
       resolveRef.contents()
     }
