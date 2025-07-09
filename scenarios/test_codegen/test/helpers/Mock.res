@@ -164,6 +164,18 @@ module Storage = {
       },
     }
   }
+
+  let toPersistence = (storageMock: t) => {
+    {
+      ...Config.codegenPersistence,
+      storage: storageMock.storage,
+      storageStatus: Ready({
+        cleanRun: false,
+        effectCaches: Js.Dict.empty(),
+      }),
+      onStorageInitialize: None,
+    }
+  }
 }
 
 @genType

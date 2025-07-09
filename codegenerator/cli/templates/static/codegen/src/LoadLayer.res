@@ -2,7 +2,7 @@ open Belt
 
 let loadById = (
   ~loadManager,
-  ~storage: Persistence.storage,
+  ~persistence: Persistence.t,
   ~entityConfig: Internal.entityConfig,
   ~inMemoryStore,
   ~shouldGroup,
@@ -16,7 +16,7 @@ let loadById = (
     // Since LoadManager.call prevents registerign entities already existing in the inMemoryStore,
     // we can be sure that we load only the new ones.
     let dbEntities = try {
-      await storage.loadByIdsOrThrow(
+      await (persistence->Persistence.getInitializedStorageOrThrow).loadByIdsOrThrow(
         ~table=entityConfig.table,
         ~rowsSchema=entityConfig.rowsSchema,
         ~ids=idsToLoad,
@@ -90,7 +90,7 @@ let loadEffect = (
 
 let loadByField = (
   ~loadManager,
-  ~storage: Persistence.storage,
+  ~persistence: Persistence.t,
   ~operator: TableIndices.Operator.t,
   ~entityConfig: Internal.entityConfig,
   ~inMemoryStore,
@@ -121,7 +121,7 @@ let loadByField = (
       ->Js.Array2.map(async index => {
         inMemTable->InMemoryTable.Entity.addEmptyIndex(~index)
         let entities = try {
-          await storage.loadByFieldOrThrow(
+          await (persistence->Persistence.getInitializedStorageOrThrow).loadByFieldOrThrow(
             ~operator=switch index {
             | Single({operator: Gt}) => #">"
             | Single({operator: Eq}) => #"="

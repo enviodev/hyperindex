@@ -100,7 +100,7 @@ let runEventHandlerOrThrow = async (
   ~handler,
   ~inMemoryStore,
   ~loadManager,
-  ~storage,
+  ~persistence,
   ~shouldSaveHistory,
   ~shouldBenchmark,
 ) => {
@@ -111,7 +111,7 @@ let runEventHandlerOrThrow = async (
     eventItem,
     inMemoryStore,
     loadManager,
-    storage,
+    persistence,
     shouldSaveHistory,
     isPreload: false,
   }
@@ -161,7 +161,6 @@ let runHandlerOrThrow = async (
   eventItem: Internal.eventItem,
   ~inMemoryStore,
   ~loadManager,
-  ~storage,
   ~config: Config.t,
   ~shouldSaveHistory,
   ~shouldBenchmark,
@@ -173,7 +172,7 @@ let runHandlerOrThrow = async (
       ~handler,
       ~inMemoryStore,
       ~loadManager,
-      ~storage,
+      ~persistence=config.persistence,
       ~shouldSaveHistory,
       ~shouldBenchmark,
     )
@@ -190,7 +189,7 @@ let runHandlerOrThrow = async (
 let runBatchLoadersOrThrow = async (
   eventBatch: array<Internal.eventItem>,
   ~loadManager,
-  ~storage,
+  ~persistence,
   ~inMemoryStore,
 ) => {
   // On the first run of loaders, we don't care about the result,
@@ -208,7 +207,7 @@ let runBatchLoadersOrThrow = async (
                 eventItem,
                 inMemoryStore,
                 loadManager,
-                storage,
+                persistence,
                 isPreload: true,
                 shouldSaveHistory: false,
               }),
@@ -230,7 +229,6 @@ let runBatchHandlersOrThrow = async (
   eventBatch: array<Internal.eventItem>,
   ~inMemoryStore,
   ~loadManager,
-  ~storage,
   ~config,
   ~shouldSaveHistory,
   ~shouldBenchmark,
@@ -241,7 +239,6 @@ let runBatchHandlersOrThrow = async (
       eventItem,
       ~inMemoryStore,
       ~loadManager,
-      ~storage,
       ~config,
       ~shouldSaveHistory,
       ~shouldBenchmark,
@@ -297,19 +294,20 @@ let processEventBatch = async (
   )
   logger->Logging.childTrace("Started processing batch")
 
-  let storage = config.persistence->Persistence.getInitializedStorageOrThrow
-
   try {
     let timeRef = Hrtime.makeTimer()
 
-    await items->runBatchLoadersOrThrow(~loadManager, ~storage, ~inMemoryStore)
+    await items->runBatchLoadersOrThrow(
+      ~loadManager,
+      ~persistence=config.persistence,
+      ~inMemoryStore,
+    )
 
     let elapsedTimeAfterLoaders = timeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
 
     await items->runBatchHandlersOrThrow(
       ~inMemoryStore,
       ~loadManager,
-      ~storage,
       ~config,
       ~shouldSaveHistory=config->Config.shouldSaveHistory(~isInReorgThreshold),
       ~shouldBenchmark=Env.Benchmark.shouldSaveData,

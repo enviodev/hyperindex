@@ -374,7 +374,16 @@ and makeProcessEvents = (mockDb: t, ~chainId=?) => async (
   //Construct a new instance of an in memory store to run for the given event
   let inMemoryStore = InMemoryStore.make()
   let loadManager = LoadManager.make()
-  let storage = makeMockStorage(mockDb)
+  let persistence = {
+    ...config.persistence,
+    storage: makeMockStorage(mockDb),
+    storageStatus: Ready({cleanRun: false, effectCaches: Js.Dict.empty()}),
+    onStorageInitialize: None,
+  }
+  let config = {
+    ...config,
+    persistence,
+  }
 
   //No need to check contract is registered or return anything.
   //The only purpose is to test the registerContract function and to
@@ -392,11 +401,14 @@ and makeProcessEvents = (mockDb: t, ~chainId=?) => async (
   }
 
   try {
-    await eventItems->EventProcessing.runBatchLoadersOrThrow(~loadManager, ~storage, ~inMemoryStore)
+    await eventItems->EventProcessing.runBatchLoadersOrThrow(
+      ~loadManager,
+      ~persistence,
+      ~inMemoryStore,
+    )
     await eventItems->EventProcessing.runBatchHandlersOrThrow(
       ~inMemoryStore,
       ~loadManager,
-      ~storage,
       ~config,
       ~shouldSaveHistory=false,
       ~shouldBenchmark=false,

@@ -9,13 +9,11 @@ describe("E2E Mock Event Batch", () => {
     // EventProcessing.processEventBatch(MockEvents.eventBatch)
 
     let loadManager = LoadManager.make()
-    let storage = Config.codegenPersistence.storage
 
     try {
       await MockEvents.eventBatchItems->EventProcessing.runBatchHandlersOrThrow(
         ~inMemoryStore,
         ~loadManager,
-        ~storage,
         ~config=RegisterHandlers.getConfig(),
         ~shouldSaveHistory=false,
         ~shouldBenchmark=false,
