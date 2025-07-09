@@ -259,7 +259,7 @@ pub enum Network {
     #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     Morph = 2818,
 
-    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
+    #[subenum(NetworkWithExplorer)]
     MorphTestnet = 2810,
 
     MosaicMatrix = 41454,
@@ -282,7 +282,6 @@ pub enum Network {
     #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     OptimismSepolia = 11155420,
 
-    #[subenum(HypersyncNetwork)]
     PharosDevnet = 50002,
 
     #[subenum(GraphNetwork, NetworkWithExplorer)]
@@ -348,6 +347,9 @@ pub enum Network {
 
     #[subenum(NetworkWithExplorer)]
     Tangle = 5845,
+
+    #[subenum(HypersyncNetwork)]
+    Taraxa = 841,
 
     #[subenum(HypersyncNetwork)]
     Unichain = 130,
@@ -526,7 +528,8 @@ impl Network {
             | Network::Curtis
             | Network::Worldchain
             | Network::Sonic
-            | Network::Swell => DEFAULT_CONFIRMED_BLOCK_THRESHOLD,
+            | Network::Swell
+            | Network::Taraxa => DEFAULT_CONFIRMED_BLOCK_THRESHOLD,
         }
     }
 }
@@ -576,17 +579,16 @@ impl HypersyncNetwork {
             Xdc | Polygon | ArbitrumOne => Silver,
 
             Linea | Berachain | Blast | Amoy | Scroll | ZksyncEra | ArbitrumNova | Avalanche
-            | Bsc => Bronze,
+            | Bsc | Taraxa => Bronze,
 
-            Curtis | PolygonZkevm | Lukso | Abstract | PharosDevnet | Zora | Unichain | Aurora
-            | Zeta | Manta | Kroma | Flare | Mantle | ShimmerEvm | Boba | Ink | Metall2
-            | SophonTestnet | MorphTestnet | GaladrielDevnet | CitreaTestnet | BscTestnet
-            | UnichainSepolia | Zircuit | Celo | Opbnb | GnosisChiado | LuksoTestnet
-            | BlastSepolia | Holesky | BerachainBartio | OptimismSepolia | Fuji
-            | ArbitrumSepolia | Fraxtal | Soneium | BaseSepolia | MevCommit | Merlin | Mode
-            | MoonbaseAlpha | XdcTestnet | Morph | Harmony | Saakuru | Cyber | Superseed
-            | MegaethTestnet | Sonic | Worldchain | Sophon | Fantom | Sepolia | Rsk | Chiliz
-            | Lisk | Hyperliquid | Swell | Moonbeam => Stone,
+            Curtis | PolygonZkevm | Lukso | Abstract | Zora | Unichain | Aurora | Zeta | Manta
+            | Kroma | Flare | Mantle | ShimmerEvm | Boba | Ink | Metall2 | SophonTestnet
+            | GaladrielDevnet | CitreaTestnet | BscTestnet | UnichainSepolia | Zircuit | Celo
+            | Opbnb | GnosisChiado | LuksoTestnet | BlastSepolia | Holesky | BerachainBartio
+            | OptimismSepolia | Fuji | ArbitrumSepolia | Fraxtal | Soneium | BaseSepolia
+            | MevCommit | Merlin | Mode | MoonbaseAlpha | XdcTestnet | Morph | Harmony
+            | Saakuru | Cyber | Superseed | MegaethTestnet | Sonic | Worldchain | Sophon
+            | Fantom | Sepolia | Rsk | Chiliz | Lisk | Hyperliquid | Swell | Moonbeam => Stone,
         }
     }
 
