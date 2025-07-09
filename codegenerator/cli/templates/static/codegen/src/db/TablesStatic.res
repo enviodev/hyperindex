@@ -21,7 +21,7 @@ module EventSyncState = {
   }
 
   let table = mkTable(
-    "event_sync_state",
+    PgStorage.eventSyncStateTableName,
     ~fields=[
       mkField("chain_id", Integer, ~fieldSchema=S.int, ~isPrimaryKey),
       mkField(blockNumberFieldName, Integer, ~fieldSchema=S.int),

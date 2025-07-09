@@ -97,7 +97,7 @@ describe("Test PgStorage SQL generation functions", () => {
 
   describe("makeInitializeTransaction", () => {
     Async.it(
-      "Should create complete initialization queries with clean run",
+      "Should create complete initialization queries",
       async () => {
         let entities = [
           module(Entities.A)->Entities.entityModToInternal,
@@ -112,7 +112,6 @@ describe("Test PgStorage SQL generation functions", () => {
           ~generalTables,
           ~entities,
           ~enums,
-          ~cleanRun=true,
         )
 
         // Should return exactly 2 queries: main DDL + functions
@@ -126,7 +125,8 @@ describe("Test PgStorage SQL generation functions", () => {
         let functionsQuery = queries->Belt.Array.get(1)->Belt.Option.getExn
 
         let expectedMainQuery = `DROP SCHEMA IF EXISTS "test_schema" CASCADE;
-CREATE SCHEMA "test_schema";GRANT ALL ON SCHEMA "test_schema" TO "postgres";
+CREATE SCHEMA "test_schema";
+GRANT ALL ON SCHEMA "test_schema" TO "postgres";
 GRANT ALL ON SCHEMA "test_schema" TO public;
 CREATE TYPE "test_schema".ENTITY_TYPE AS ENUM('A', 'B', 'C', 'CustomSelectionTestPass', 'D', 'EntityWithAllNonArrayTypes', 'EntityWithAllTypes', 'EntityWithBigDecimal', 'EntityWithTimestamp', 'Gravatar', 'NftCollection', 'PostgresNumericPrecisionEntityTester', 'Token', 'User', 'dynamic_contract_registry');
 CREATE TABLE IF NOT EXISTS "test_schema"."chain_metadata"("chain_id" INTEGER NOT NULL, "start_block" INTEGER NOT NULL, "end_block" INTEGER, "block_height" INTEGER NOT NULL, "first_event_block_number" INTEGER, "latest_processed_block" INTEGER, "num_events_processed" INTEGER, "is_hyper_sync" BOOLEAN NOT NULL, "num_batches_fetched" INTEGER NOT NULL, "latest_fetched_block_number" INTEGER NOT NULL, "timestamp_caught_up_to_head_or_endblock" TIMESTAMP WITH TIME ZONE NULL, PRIMARY KEY("chain_id"));
@@ -159,57 +159,12 @@ CREATE INDEX IF NOT EXISTS "A_b_id" ON "test_schema"."A"("b_id");`
     )
 
     Async.it(
-      "Should create conditional initialization queries without clean run",
-      async () => {
-        let entities = [module(Entities.A)->Entities.entityModToInternal]
-        let generalTables = [TablesStatic.ChainMetadata.table]
-        let enums = [Enums.EntityType.config->Internal.fromGenericEnumConfig]
-
-        let queries = PgStorage.makeInitializeTransaction(
-          ~pgSchema="test_schema",
-          ~pgUser="postgres",
-          ~generalTables,
-          ~entities,
-          ~enums,
-          ~cleanRun=false,
-        )
-
-        // Should return exactly 2 queries: main DDL + functions
-        Assert.equal(queries->Array.length, 2, ~message="Should return exactly 2 queries")
-
-        let mainQuery = queries->Belt.Array.get(0)->Belt.Option.getExn
-
-        let expectedMainQuery = `DO $$ BEGIN CREATE SCHEMA IF NOT EXISTS "test_schema";GRANT ALL ON SCHEMA "test_schema" TO "postgres";
-GRANT ALL ON SCHEMA "test_schema" TO public;
-IF NOT EXISTS (
-  SELECT 1 FROM pg_type 
-  WHERE typname = 'entity_type' 
-  AND typnamespace = (SELECT oid FROM pg_namespace WHERE nspname = 'test_schema')
-) THEN 
-    CREATE TYPE "test_schema".ENTITY_TYPE AS ENUM('A', 'B', 'C', 'CustomSelectionTestPass', 'D', 'EntityWithAllNonArrayTypes', 'EntityWithAllTypes', 'EntityWithBigDecimal', 'EntityWithTimestamp', 'Gravatar', 'NftCollection', 'PostgresNumericPrecisionEntityTester', 'Token', 'User', 'dynamic_contract_registry');
-END IF;
-CREATE TABLE IF NOT EXISTS "test_schema"."chain_metadata"("chain_id" INTEGER NOT NULL, "start_block" INTEGER NOT NULL, "end_block" INTEGER, "block_height" INTEGER NOT NULL, "first_event_block_number" INTEGER, "latest_processed_block" INTEGER, "num_events_processed" INTEGER, "is_hyper_sync" BOOLEAN NOT NULL, "num_batches_fetched" INTEGER NOT NULL, "latest_fetched_block_number" INTEGER NOT NULL, "timestamp_caught_up_to_head_or_endblock" TIMESTAMP WITH TIME ZONE NULL, PRIMARY KEY("chain_id"));
-CREATE TABLE IF NOT EXISTS "test_schema"."A"("b_id" TEXT NOT NULL, "id" TEXT NOT NULL, "optionalStringToTestLinkedEntities" TEXT, "db_write_timestamp" TIMESTAMP DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY("id"));
-CREATE TABLE IF NOT EXISTS "test_schema"."A_history"("entity_history_block_timestamp" INTEGER NOT NULL, "entity_history_chain_id" INTEGER NOT NULL, "entity_history_block_number" INTEGER NOT NULL, "entity_history_log_index" INTEGER NOT NULL, "previous_entity_history_block_timestamp" INTEGER, "previous_entity_history_chain_id" INTEGER, "previous_entity_history_block_number" INTEGER, "previous_entity_history_log_index" INTEGER, "b_id" TEXT, "id" TEXT NOT NULL, "optionalStringToTestLinkedEntities" TEXT, "action" "test_schema".ENTITY_HISTORY_ROW_ACTION NOT NULL, "serial" SERIAL, PRIMARY KEY("entity_history_block_timestamp", "entity_history_chain_id", "entity_history_block_number", "entity_history_log_index", "id"));
-CREATE INDEX IF NOT EXISTS "A_b_id" ON "test_schema"."A"("b_id");
-CREATE INDEX IF NOT EXISTS "A_history_serial" ON "test_schema"."A_history"("serial"); END $$;`
-
-        Assert.equal(
-          mainQuery,
-          expectedMainQuery,
-          ~message="Main query should match expected conditional SQL exactly",
-        )
-      },
-    )
-
-    Async.it(
       "Should handle minimal configuration correctly",
       async () => {
         let queries = PgStorage.makeInitializeTransaction(
           ~pgSchema="test_schema",
           ~pgUser="postgres",
           ~enums=[],
-          ~cleanRun=true,
         )
 
         // Should return exactly 1 query (just main DDL, no functions)
@@ -222,7 +177,8 @@ CREATE INDEX IF NOT EXISTS "A_history_serial" ON "test_schema"."A_history"("seri
         let mainQuery = queries->Belt.Array.get(0)->Belt.Option.getExn
 
         let expectedMainQuery = `DROP SCHEMA IF EXISTS "test_schema" CASCADE;
-CREATE SCHEMA "test_schema";GRANT ALL ON SCHEMA "test_schema" TO "postgres";
+CREATE SCHEMA "test_schema";
+GRANT ALL ON SCHEMA "test_schema" TO "postgres";
 GRANT ALL ON SCHEMA "test_schema" TO public;`
 
         Assert.equal(
@@ -245,7 +201,6 @@ GRANT ALL ON SCHEMA "test_schema" TO public;`
           ~generalTables=[],
           ~entities,
           ~enums=[],
-          ~cleanRun=true,
         )
 
         Assert.equal(
@@ -258,7 +213,8 @@ GRANT ALL ON SCHEMA "test_schema" TO public;`
         let functionsQuery = queries->Belt.Array.get(1)->Belt.Option.getExn
 
         let expectedMainQuery = `DROP SCHEMA IF EXISTS "public" CASCADE;
-CREATE SCHEMA "public";GRANT ALL ON SCHEMA "public" TO "postgres";
+CREATE SCHEMA "public";
+GRANT ALL ON SCHEMA "public" TO "postgres";
 GRANT ALL ON SCHEMA "public" TO public;
 CREATE TABLE IF NOT EXISTS "public"."A"("b_id" TEXT NOT NULL, "id" TEXT NOT NULL, "optionalStringToTestLinkedEntities" TEXT, "db_write_timestamp" TIMESTAMP DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY("id"));
 CREATE TABLE IF NOT EXISTS "public"."A_history"("entity_history_block_timestamp" INTEGER NOT NULL, "entity_history_chain_id" INTEGER NOT NULL, "entity_history_block_number" INTEGER NOT NULL, "entity_history_log_index" INTEGER NOT NULL, "previous_entity_history_block_timestamp" INTEGER, "previous_entity_history_chain_id" INTEGER, "previous_entity_history_block_number" INTEGER, "previous_entity_history_log_index" INTEGER, "b_id" TEXT, "id" TEXT NOT NULL, "optionalStringToTestLinkedEntities" TEXT, "action" "public".ENTITY_HISTORY_ROW_ACTION NOT NULL, "serial" SERIAL, PRIMARY KEY("entity_history_block_timestamp", "entity_history_chain_id", "entity_history_block_number", "entity_history_log_index", "id"));

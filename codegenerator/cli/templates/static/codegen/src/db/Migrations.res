@@ -27,7 +27,7 @@ let runUpMigrations = async (
   ~reset=false,
 ) => {
   let exitCode = try {
-    await Config.codegenPersistence->Persistence.init(~skipIsInitializedCheck=true, ~reset)
+    await Config.codegenPersistence->Persistence.init(~reset)
     Success
   } catch {
   | _ => Failure
