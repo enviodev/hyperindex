@@ -17,7 +17,8 @@ let getEventId = (eventItem: Internal.eventItem) => {
 type contextParams = {
   eventItem: Internal.eventItem,
   inMemoryStore: InMemoryStore.t,
-  loadLayer: LoadLayer.t,
+  loadManager: LoadManager.t,
+  storage: Persistence.storage,
   isPreload: bool,
   shouldSaveHistory: bool,
 }
@@ -26,7 +27,8 @@ let rec initEffect = (params: contextParams) => (
   effect: Internal.effect,
   input: Internal.effectInput,
 ) =>
-  params.loadLayer->LoadLayer.loadEffect(
+  LoadLayer.loadEffect(
+    ~loadManager=params.loadManager,
     ~effect,
     ~effectArgs={
       input,
@@ -61,7 +63,9 @@ let makeEntityHandlerContext = (
   ~params,
 ): Types.entityHandlerContext<Internal.entity> => {
   let get = entityId =>
-    params.loadLayer->LoadLayer.loadById(
+    LoadLayer.loadById(
+      ~loadManager=params.loadManager,
+      ~storage=params.storage,
       ~entityConfig,
       ~inMemoryStore=params.inMemoryStore,
       ~shouldGroup=false,
@@ -177,7 +181,9 @@ let getWhereTraps: Utils.Proxy.traps<entityContextParams> = {
         }
         {
           Entities.eq: fieldValue =>
-            params.loadLayer->LoadLayer.loadByField(
+            LoadLayer.loadByField(
+              ~loadManager=params.loadManager,
+              ~storage=params.storage,
               ~operator=Eq,
               ~entityConfig,
               ~fieldName=dbFieldName,
@@ -188,7 +194,9 @@ let getWhereTraps: Utils.Proxy.traps<entityContextParams> = {
               ~fieldValue,
             ),
           gt: fieldValue =>
-            params.loadLayer->LoadLayer.loadByField(
+            LoadLayer.loadByField(
+              ~loadManager=params.loadManager,
+              ~storage=params.storage,
               ~operator=Gt,
               ~entityConfig,
               ~fieldName=dbFieldName,
@@ -228,7 +236,9 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
     | "get" =>
       (
         entityId =>
-          params.loadLayer->LoadLayer.loadById(
+          LoadLayer.loadById(
+            ~loadManager=params.loadManager,
+            ~storage=params.storage,
             ~entityConfig=params.entityConfig,
             ~inMemoryStore=params.inMemoryStore,
             ~shouldGroup=params.isPreload,
@@ -240,15 +250,15 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
     | "getOrThrow" =>
       (
         (entityId, ~message=?) =>
-          params.loadLayer
-          ->LoadLayer.loadById(
+          LoadLayer.loadById(
+            ~loadManager=params.loadManager,
+            ~storage=params.storage,
             ~entityConfig=params.entityConfig,
             ~inMemoryStore=params.inMemoryStore,
             ~shouldGroup=params.isPreload,
             ~eventItem=params.eventItem,
             ~entityId,
-          )
-          ->Promise.thenResolve(entity => {
+          )->Promise.thenResolve(entity => {
             switch entity {
             | Some(entity) => entity
             | None =>
@@ -263,15 +273,15 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
     | "getOrCreate" =>
       (
         (entity: Internal.entity) =>
-          params.loadLayer
-          ->LoadLayer.loadById(
+          LoadLayer.loadById(
+            ~loadManager=params.loadManager,
+            ~storage=params.storage,
             ~entityConfig=params.entityConfig,
             ~inMemoryStore=params.inMemoryStore,
             ~shouldGroup=params.isPreload,
             ~eventItem=params.eventItem,
             ~entityId=entity.id,
-          )
-          ->Promise.thenResolve(storageEntity => {
+          )->Promise.thenResolve(storageEntity => {
             switch storageEntity {
             | Some(entity) => entity
             | None => {
@@ -308,7 +318,8 @@ let loaderTraps: Utils.Proxy.traps<contextParams> = {
           eventItem: params.eventItem,
           isPreload: params.isPreload,
           inMemoryStore: params.inMemoryStore,
-          loadLayer: params.loadLayer,
+          loadManager: params.loadManager,
+          storage: params.storage,
           shouldSaveHistory: params.shouldSaveHistory,
           entityConfig,
         }
@@ -344,12 +355,14 @@ type contractRegisterParams = {
 let contractRegisterTraps: Utils.Proxy.traps<contractRegisterParams> = {
   get: (~target as params, ~prop: unknown) => {
     let prop = prop->(Utils.magic: unknown => string)
-    
+
     switch prop {
     | "log" => params.eventItem->Logging.getUserLogger->Utils.magic
     | _ =>
       // Use the pre-built mapping for efficient lookup
-      switch params.config.addContractNameToContractNameMapping->Utils.Dict.dangerouslyGetNonOption(prop) {
+      switch params.config.addContractNameToContractNameMapping->Utils.Dict.dangerouslyGetNonOption(
+        prop,
+      ) {
       | Some(contractName) => {
           let addFunction = (contractAddress: Address.t) => {
             let validatedAddress = if params.config.ecosystem === Evm {
@@ -360,14 +373,14 @@ let contractRegisterTraps: Utils.Proxy.traps<contractRegisterParams> = {
               // TODO: Ideally we should do the same for other ecosystems
               contractAddress
             }
-            
+
             params.onRegister(
               ~eventItem=params.eventItem,
               ~contractAddress=validatedAddress,
               ~contractName=contractName->(Utils.magic: string => Enums.ContractType.t),
             )
           }
-          
+
           addFunction->Utils.magic
         }
       | None =>

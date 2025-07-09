@@ -1,49 +1,8 @@
 open Belt
 
-type fieldValue
-
-type t = {
-  loadManager: LoadManager.t,
-  loadEntitiesByIds: (
-    array<Types.id>,
-    ~entityConfig: Internal.entityConfig,
-  ) => promise<array<Internal.entity>>,
-  loadEntitiesByField: (
-    ~operator: TableIndices.Operator.t,
-    ~entityConfig: Internal.entityConfig,
-    ~fieldName: string,
-    ~fieldValue: fieldValue,
-    ~fieldValueSchema: S.t<fieldValue>,
-    ~logger: Pino.t=?,
-  ) => promise<array<Internal.entity>>,
-}
-
-let make = (~loadEntitiesByIds, ~loadEntitiesByField) => {
-  {
-    loadManager: LoadManager.make(),
-    loadEntitiesByIds,
-    loadEntitiesByField,
-  }
-}
-
-// Ideally it shouldn't be here, but it'll make writing tests easier,
-// until we have a proper mocking solution.
-let makeWithDbConnection = (~persistence=Config.codegenPersistence) => {
-  let storage = Persistence.getInitializedStorageOrThrow(persistence)
-  {
-    loadManager: LoadManager.make(),
-    loadEntitiesByIds: (ids, ~entityConfig) =>
-      storage.loadByIdsOrThrow(
-        ~table=entityConfig.table,
-        ~rowsSchema=entityConfig.rowsSchema,
-        ~ids,
-      ),
-    loadEntitiesByField: DbFunctionsEntities.makeWhereQuery(Db.sql),
-  }
-}
-
 let loadById = (
-  loadLayer,
+  ~loadManager,
+  ~storage: Persistence.storage,
   ~entityConfig: Internal.entityConfig,
   ~inMemoryStore,
   ~shouldGroup,
@@ -57,7 +16,11 @@ let loadById = (
     // Since LoadManager.call prevents registerign entities already existing in the inMemoryStore,
     // we can be sure that we load only the new ones.
     let dbEntities = try {
-      await idsToLoad->loadLayer.loadEntitiesByIds(~entityConfig)
+      await storage.loadByIdsOrThrow(
+        ~table=entityConfig.table,
+        ~rowsSchema=entityConfig.rowsSchema,
+        ~ids=idsToLoad,
+      )
     } catch {
     | Persistence.StorageError({message, reason}) =>
       reason->ErrorHandling.mkLogAndRaise(~logger=eventItem->Logging.getEventLogger, ~msg=message)
@@ -80,7 +43,7 @@ let loadById = (
     })
   }
 
-  loadLayer.loadManager->LoadManager.call(
+  loadManager->LoadManager.call(
     ~key,
     ~load,
     ~shouldGroup,
@@ -92,7 +55,7 @@ let loadById = (
 }
 
 let loadEffect = (
-  loadLayer,
+  ~loadManager,
   ~effect: Internal.effect,
   ~effectArgs,
   ~inMemoryStore,
@@ -114,7 +77,7 @@ let loadEffect = (
     ->(Utils.magic: promise<array<unit>> => promise<unit>)
   }
 
-  loadLayer.loadManager->LoadManager.call(
+  loadManager->LoadManager.call(
     ~key,
     ~load,
     ~shouldGroup,
@@ -126,7 +89,8 @@ let loadEffect = (
 }
 
 let loadByField = (
-  loadLayer,
+  ~loadManager,
+  ~storage: Persistence.storage,
   ~operator: TableIndices.Operator.t,
   ~entityConfig: Internal.entityConfig,
   ~inMemoryStore,
@@ -136,10 +100,11 @@ let loadByField = (
   ~eventItem,
   ~fieldValue,
 ) => {
-  let key = `${entityConfig.name}.getWhere.${fieldName}.${switch operator {
-    | Eq => "eq"
-    | Gt => "gt"
-    }}`
+  let operatorCallName = switch operator {
+  | Eq => "eq"
+  | Gt => "gt"
+  }
+  let key = `${entityConfig.name}.getWhere.${fieldName}.${operatorCallName}`
   let inMemTable = inMemoryStore->InMemoryStore.getInMemTable(~entityConfig)
 
   let load = async (fieldValues: array<'fieldValue>) => {
@@ -155,19 +120,37 @@ let loadByField = (
       await indiciesToLoad
       ->Js.Array2.map(async index => {
         inMemTable->InMemoryTable.Entity.addEmptyIndex(~index)
-        let entities = await loadLayer.loadEntitiesByField(
-          ~operator=switch index {
-          | Single({operator}) => operator
-          },
-          ~entityConfig,
-          ~fieldName=index->TableIndices.Index.getFieldName,
-          ~fieldValue=switch index {
-          | Single({fieldValue}) =>
-            fieldValue->(Utils.magic: TableIndices.FieldValue.t => fieldValue)
-          },
-          ~fieldValueSchema=fieldValueSchema->(Utils.magic: S.t<'fieldValue> => S.t<fieldValue>),
-          ~logger=eventItem->Logging.getEventLogger,
-        )
+        let entities = try {
+          await storage.loadByFieldOrThrow(
+            ~operator=switch index {
+            | Single({operator: Gt}) => #">"
+            | Single({operator: Eq}) => #"="
+            },
+            ~table=entityConfig.table,
+            ~rowsSchema=entityConfig.rowsSchema,
+            ~fieldName=index->TableIndices.Index.getFieldName,
+            ~fieldValue=switch index {
+            | Single({fieldValue}) => fieldValue
+            },
+            ~fieldSchema=fieldValueSchema->(
+              Utils.magic: S.t<'fieldValue> => S.t<TableIndices.FieldValue.t>
+            ),
+          )
+        } catch {
+        | Persistence.StorageError({message, reason}) =>
+          reason->ErrorHandling.mkLogAndRaise(
+            ~logger=Logging.createChildFrom(
+              ~logger=eventItem->Logging.getEventLogger,
+              ~params={
+                "operator": operatorCallName,
+                "tableName": entityConfig.table.tableName,
+                "fieldName": fieldName,
+                "fieldValue": fieldValue,
+              },
+            ),
+            ~msg=message,
+          )
+        }
 
         entities->Array.forEach(entity => {
           //Set the entity in the in memory store
@@ -181,7 +164,7 @@ let loadByField = (
       ->Promise.all
   }
 
-  loadLayer.loadManager->LoadManager.call(
+  loadManager->LoadManager.call(
     ~key,
     ~load,
     ~input=fieldValue,

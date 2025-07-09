@@ -1,66 +1,8 @@
 open RescriptMocha
 
-type storageMock = {
-  isInitializedCalls: array<bool>,
-  initializeCalls: array<{
-    "entities": array<Internal.entityConfig>,
-    "generalTables": array<Table.table>,
-    "enums": array<Internal.enumConfig<Internal.enum>>,
-  }>,
-  resolveIsInitialized: bool => unit,
-  resolveInitialize: unit => unit,
-  storage: Persistence.storage,
-}
-
-let makeStorageMock = () => {
-  let isInitializedCalls = []
-  let initializeCalls = []
-  let isInitializedResolveFns = []
-  let initializeResolveFns = []
-  {
-    isInitializedCalls,
-    initializeCalls,
-    resolveIsInitialized: bool => {
-      isInitializedResolveFns->Js.Array2.forEach(resolve => resolve(bool))
-    },
-    resolveInitialize: () => {
-      initializeResolveFns->Js.Array2.forEach(resolve => resolve())
-    },
-    storage: {
-      isInitialized: () => {
-        isInitializedCalls->Js.Array2.push(true)->ignore
-        Promise.make((resolve, _reject) => {
-          isInitializedResolveFns->Js.Array2.push(resolve)->ignore
-        })
-      },
-      initialize: (~entities=[], ~generalTables=[], ~enums=[]) => {
-        initializeCalls
-        ->Js.Array2.push({
-          "entities": entities,
-          "generalTables": generalTables,
-          "enums": enums,
-        })
-        ->ignore
-        Promise.make((resolve, _reject) => {
-          initializeResolveFns->Js.Array2.push(resolve)->ignore
-        })
-      },
-      loadEffectCaches: () => {
-        Js.Exn.raiseError("Not implemented")
-      },
-      loadByIdsOrThrow: (~ids as _, ~table as _, ~rowsSchema as _) => {
-        Js.Exn.raiseError("Not implemented")
-      },
-      setOrThrow: (~items as _, ~table as _, ~itemSchema as _) => {
-        Js.Exn.raiseError("Not implemented")
-      },
-    },
-  }
-}
-
 describe("Test Persistence layer init", () => {
   Async.it("Should initialize the persistence layer without the user entities", async () => {
-    let storageMock = makeStorageMock()
+    let storageMock = Mock.Storage.make([#isInitialized, #initialize])
 
     let persistence = Persistence.make(
       ~userEntities=[],
@@ -179,7 +121,7 @@ describe("Test Persistence layer init", () => {
   })
 
   Async.it("Should skip initialization when storage is already initialized", async () => {
-    let storageMock = makeStorageMock()
+    let storageMock = Mock.Storage.make([#isInitialized, #loadEffectCaches])
 
     let persistence = Persistence.make(
       ~userEntities=[],
@@ -198,6 +140,7 @@ describe("Test Persistence layer init", () => {
 
     storageMock.resolveIsInitialized(true)
     let _ = await Promise.resolve()
+    let _ = await Promise.resolve()
 
     Assert.deepEqual(
       persistence.storageStatus,
@@ -205,9 +148,14 @@ describe("Test Persistence layer init", () => {
       ~message=`Storage status should be ready`,
     )
     Assert.deepEqual(
-      (storageMock.isInitializedCalls->Array.length, storageMock.initializeCalls->Array.length),
-      (1, 0),
-      ~message=`Storage should be already initialized without additional initialize call`,
+      (
+        storageMock.isInitializedCalls->Array.length,
+        storageMock.initializeCalls->Array.length,
+        storageMock.loadEffectCachesCalls.contents,
+      ),
+      (1, 0, 1),
+      ~message=`Storage should be already initialized without additional initialize calls.
+Although it should load effect caches metadata.`,
     )
 
     // Can resolve the promise now

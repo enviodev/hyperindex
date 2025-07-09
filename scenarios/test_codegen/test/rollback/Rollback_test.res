@@ -141,8 +141,7 @@ describe("Single Chain Simple Rollback", () => {
     await setupDb()
 
     let chainManager = ChainManager.makeFromConfig(~config)
-    let loadLayer = LoadLayer.makeWithDbConnection()
-    let initState = GlobalState.make(~config, ~chainManager, ~loadLayer)
+    let initState = GlobalState.make(~config, ~chainManager)
     let gsManager = initState->GlobalStateManager.make
     let chain = MockConfig.chain1337
     let getState = () => gsManager->GlobalStateManager.getState
@@ -208,8 +207,7 @@ describe("Single Chain Simple Rollback", () => {
       ...ChainManager.makeFromConfig(~config),
       isUnorderedMultichainMode: true,
     }
-    let loadLayer = LoadLayer.makeWithDbConnection()
-    let initState = GlobalState.make(~config, ~chainManager, ~loadLayer)
+    let initState = GlobalState.make(~config, ~chainManager)
     let gsManager = initState->GlobalStateManager.make
     let chain = MockConfig.chain1337
     let getState = () => gsManager->GlobalStateManager.getState

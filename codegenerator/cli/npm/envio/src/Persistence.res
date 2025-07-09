@@ -15,6 +15,8 @@ type effectCache = {
   mutable table: option<Table.table>,
 }
 
+type operator = [#">" | #"="]
+
 type storage = {
   // Should return true if we already have persisted data
   // and we can skip initialization
@@ -30,6 +32,15 @@ type storage = {
   @raises("StorageError")
   loadByIdsOrThrow: 'item. (
     ~ids: array<string>,
+    ~table: Table.table,
+    ~rowsSchema: S.t<array<'item>>,
+  ) => promise<array<'item>>,
+  @raises("StorageError")
+  loadByFieldOrThrow: 'item 'value. (
+    ~fieldName: string,
+    ~fieldSchema: S.t<'value>,
+    ~fieldValue: 'value,
+    ~operator: operator,
     ~table: Table.table,
     ~rowsSchema: S.t<array<'item>>,
   ) => promise<array<'item>>,
@@ -119,7 +130,14 @@ let init = async (persistence, ~reset=false) => {
         | Some(onStorageInitialize) => await onStorageInitialize()
         | None => ()
         }
-      } else {
+      } else if (
+        // In case of a race condition,
+        // we want to set the initial status to Ready only once.
+        switch persistence.storageStatus {
+        | Initializing(_) => true
+        | _ => false
+        }
+      ) {
         let effectCaches = Js.Dict.empty()
         (await persistence.storage.loadEffectCaches())->Js.Array2.forEach(effectCache => {
           effectCaches->Js.Dict.set(effectCache.name, effectCache)

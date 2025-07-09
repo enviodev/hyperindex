@@ -129,6 +129,10 @@ let makeLoadByIdQuery = (~pgSchema, ~tableName) => {
   `SELECT * FROM "${pgSchema}"."${tableName}" WHERE id = $1 LIMIT 1;`
 }
 
+let makeLoadByFieldQuery = (~pgSchema, ~tableName, ~fieldName, ~operator) => {
+  `SELECT * FROM "${pgSchema}"."${tableName}" WHERE "${fieldName}" ${operator} $1;`
+}
+
 let makeLoadByIdsQuery = (~pgSchema, ~tableName) => {
   `SELECT * FROM "${pgSchema}"."${tableName}" WHERE id = ANY($1::text[]);`
 }
@@ -371,7 +375,7 @@ let make = (~sql: Postgres.sql, ~pgSchema, ~pgUser): Persistence.storage => {
         !(schemaTableNames->Js.Array2.some(table => table.tableName === eventSyncStateTableName))
     ) {
       Js.Exn.raiseError(
-        `Cannot run Envio migrations on PostgreSQL schema "${pgSchema}" because it contains non-Envio tables. Running migrations would delete all data in this schema. To proceed, either drop the existing schema first with "pnpm envio local db-migrate down" or specify a different schema name using the "ENVIO_PG_PUBLIC_SCHEMA" environment variable.`,
+        `Cannot run Envio migrations on PostgreSQL schema "${pgSchema}" because it contains non-Envio tables. Running migrations would delete all data in this schema.\n\nTo resolve this:\n1. If you want to use this schema, first backup any important data, then drop it with: "pnpm envio local db-migrate down"\n2. Or specify a different schema name by setting the "ENVIO_PG_PUBLIC_SCHEMA" environment variable\n3. Or manually drop the schema in your database if you're certain the data is not needed.`,
       )
     }
 
@@ -437,6 +441,52 @@ let make = (~sql: Postgres.sql, ~pgSchema, ~pgUser): Persistence.storage => {
     }
   }
 
+  let loadByFieldOrThrow = async (
+    ~fieldName: string,
+    ~fieldSchema,
+    ~fieldValue,
+    ~operator: Persistence.operator,
+    ~table: Table.table,
+    ~rowsSchema,
+  ) => {
+    let params = try [fieldValue->S.reverseConvertToJsonOrThrow(fieldSchema)]->Obj.magic catch {
+    | exn =>
+      raise(
+        Persistence.StorageError({
+          message: `Failed loading "${table.tableName}" from storage by field "${fieldName}". Couldn't serialize provided value.`,
+          reason: exn,
+        }),
+      )
+    }
+    switch await sql->Postgres.preparedUnsafe(
+      makeLoadByFieldQuery(
+        ~pgSchema,
+        ~tableName=table.tableName,
+        ~fieldName,
+        ~operator=(operator :> string),
+      ),
+      params,
+    ) {
+    | exception exn =>
+      raise(
+        Persistence.StorageError({
+          message: `Failed loading "${table.tableName}" from storage by field "${fieldName}"`,
+          reason: exn,
+        }),
+      )
+    | rows =>
+      try rows->S.parseOrThrow(rowsSchema) catch {
+      | exn =>
+        raise(
+          Persistence.StorageError({
+            message: `Failed to parse "${table.tableName}" loaded from storage by ids`,
+            reason: exn,
+          }),
+        )
+      }
+    }
+  }
+
   let setOrThrow = (
     type item,
     ~items: array<item>,
@@ -455,6 +505,7 @@ let make = (~sql: Postgres.sql, ~pgSchema, ~pgUser): Persistence.storage => {
   {
     isInitialized,
     initialize,
+    loadByFieldOrThrow,
     loadEffectCaches,
     loadByIdsOrThrow,
     setOrThrow,

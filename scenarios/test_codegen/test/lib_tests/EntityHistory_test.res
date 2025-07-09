@@ -3,8 +3,8 @@ open RescriptMocha
 //unsafe polymorphic toString binding for any type
 @send external toStringUnsafe: 'a => string = "toString"
 
-// These are mandatory tables that should be created for every schema
-// it allows us to distinguish whether the schema is controlled by Envio
+// These are mandatory tables that must be created for every Envio-managed schema.
+// The event_sync_state table is used to distinguish Envio-controlled schemas from others.
 let generalTables = [TablesStatic.EventSyncState.table]
 
 let stripUndefinedFieldsInPlace = (val: 'a): 'a => {

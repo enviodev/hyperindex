@@ -31,22 +31,6 @@ module.exports.batchDeleteItemsInTable = (table, sql, pkArray) => {
   }
 };
 
-module.exports.whereEqQuery = (table, sql, fieldName, value) => {
-  return sql`
-    SELECT *
-    FROM ${sql(publicSchema)}.${sql(table.tableName)}
-    WHERE ${sql(fieldName)} = ${value};
-    `;
-};
-
-module.exports.whereGtQuery = (table, sql, fieldName, value) => {
-  return sql`
-    SELECT *
-    FROM ${sql(publicSchema)}.${sql(table.tableName)}
-    WHERE ${sql(fieldName)} > ${value};
-    `;
-};
-
 module.exports.readLatestSyncedEventOnChainId = (sql, chainId) => sql`
   SELECT *
   FROM ${sql(publicSchema)}.event_sync_state

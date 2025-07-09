@@ -185,13 +185,13 @@ Accessor function for getting the internal inMemoryStore in the mockDb
 */
 let getInternalDb = (self: t) => self.__dbInternal__
 
-let getEntityOperations = (mockDb: t, ~entityConfig: Internal.entityConfig): entityStoreOperations<
+let getEntityOperations = (mockDb: t, ~entityName: string): entityStoreOperations<
   Internal.entity,
 > => {
   mockDb.entities
   ->Utils.magic
-  ->Utils.Dict.dangerouslyGetNonOption(entityConfig.name)
-  ->Utils.Option.getExn("Mocked operations for entity " ++ entityConfig.name ++ " not found")
+  ->Utils.Dict.dangerouslyGetNonOption(entityName)
+  ->Utils.Option.getExn("Mocked operations for entity " ++ entityName ++ " not found")
 }
 
 /**
@@ -203,8 +203,8 @@ let executeRowsEntity = (
   ~inMemoryStore: InMemoryStore.t,
   ~entityConfig: Internal.entityConfig,
 ) => {
-  let getInMemTable = (inMemoryStore: InMemoryStore.t) =>
-    inMemoryStore.entities->InMemoryStore.EntityTables.get(~entityConfig)
+   let getInMemTable = (inMemoryStore: InMemoryStore.t) =>
+    inMemoryStore->InMemoryStore.getInMemTable(~entityConfig)
 
   let inMemTable = getInMemTable(inMemoryStore)
 
@@ -269,12 +269,19 @@ let rec makeWithInMemoryStore: InMemoryStore.t => t = (inMemoryStore: InMemorySt
   let dynamicContractRegistry = makeStoreOperatorEntity(
     ~inMemoryStore,
     ~getStore=db =>
-      db.entities->InMemoryStore.EntityTables.get(
+      db
+      ->InMemoryStore.getInMemTable(
         ~entityConfig=module(TablesStatic.DynamicContractRegistry)->Entities.entityModToInternal,
+      )
+      ->(
+        Utils.magic: InMemoryTable.Entity.t<Internal.entity> => InMemoryTable.Entity.t<
+          TablesStatic.DynamicContractRegistry.t,
+        >
       ),
     ~makeMockDb=makeWithInMemoryStore,
-    ~getKey=({chainId, contractAddress}: TablesStatic.DynamicContractRegistry.t) =>
-      TablesStatic.DynamicContractRegistry.makeId(~chainId, ~contractAddress),
+    ~getKey=({chainId, contractAddress}) => {
+      TablesStatic.DynamicContractRegistry.makeId(~chainId, ~contractAddress)
+    },
   )
 
   let entities = {
@@ -283,10 +290,14 @@ let rec makeWithInMemoryStore: InMemoryStore.t => t = (inMemoryStore: InMemorySt
         makeStoreOperatorEntity(
           ~inMemoryStore,
           ~makeMockDb=makeWithInMemoryStore,
-          ~getStore=db => db.entities->InMemoryStore.EntityTables.get(
+          ~getStore=db => db->InMemoryStore.getInMemTable(
             ~entityConfig=module(Entities.{{entity.name.capitalized}})->Entities.entityModToInternal,
+          )->(
+            Utils.magic: InMemoryTable.Entity.t<Internal.entity> => InMemoryTable.Entity.t<
+              Entities.{{entity.name.capitalized}}.t,
+            >
           ),
-          ~getKey=({id}: Entities.{{entity.name.capitalized}}.t) => id,
+          ~getKey=({id}) => id,
         )
       },
   {{/each}}
@@ -362,10 +373,8 @@ and makeProcessEvents = (mockDb: t, ~chainId=?) => async (
 
   //Construct a new instance of an in memory store to run for the given event
   let inMemoryStore = InMemoryStore.make()
-  let loadLayer = LoadLayer.make(
-    ~loadEntitiesByIds=makeLoadEntitiesByIds(mockDbClone),
-    ~loadEntitiesByField=makeLoadEntitiesByField(mockDbClone),
-  )
+  let loadManager = LoadManager.make()
+  let storage = makeMockStorage(mockDb)
 
   //No need to check contract is registered or return anything.
   //The only purpose is to test the registerContract function and to
@@ -383,10 +392,11 @@ and makeProcessEvents = (mockDb: t, ~chainId=?) => async (
   }
 
   try {
-    await eventItems->EventProcessing.runBatchLoadersOrThrow(~loadLayer, ~inMemoryStore)
+    await eventItems->EventProcessing.runBatchLoadersOrThrow(~loadManager, ~storage, ~inMemoryStore)
     await eventItems->EventProcessing.runBatchHandlersOrThrow(
       ~inMemoryStore,
-      ~loadLayer,
+      ~loadManager,
+      ~storage,
       ~config,
       ~shouldSaveHistory=false,
       ~shouldBenchmark=false,
@@ -404,6 +414,55 @@ and makeProcessEvents = (mockDb: t, ~chainId=?) => async (
   mockDbClone->writeFromMemoryStore(~inMemoryStore)
   mockDbClone
 }
+and makeMockStorage = (mockDb: t): Persistence.storage => {
+  {
+    isInitialized: () => Js.Exn.raiseError("Not used yet"),
+    initialize: (~entities as _=?, ~generalTables as _=?, ~enums as _=?) =>
+      Js.Exn.raiseError("Not used yet"),
+    loadEffectCaches: () => Js.Exn.raiseError("Not used yet"),
+    loadByIdsOrThrow: (
+      type item,
+      ~ids,
+      ~table: Table.table,
+      ~rowsSchema as _: S.t<array<item>>,
+    ) => {
+      let operations = mockDb->getEntityOperations(~entityName=table.tableName)
+      ids
+      ->Array.keepMap(id => operations.get(id))
+      ->(Utils.magic: array<Internal.entity> => array<item>)
+      ->Promise.resolve
+    },
+    loadByFieldOrThrow: (
+      ~fieldName,
+      ~fieldSchema as _,
+      ~fieldValue,
+      ~operator,
+      ~table,
+      ~rowsSchema as _,
+    ) => {
+      let mockDbTable =
+        mockDb.__dbInternal__.entities->InMemoryStore.EntityTables.get(~entityName=table.tableName)
+      let index = TableIndices.Index.makeSingle(
+        ~fieldName,
+        ~fieldValue,
+        ~operator=switch operator {
+        | #"=" => Eq
+        | #">" => Gt
+        },
+      )
+      mockDbTable
+      ->InMemoryTable.Entity.values
+      ->Array.keep(entity => {
+        index->TableIndices.Index.evaluate(
+          ~fieldName,
+          ~fieldValue=entity->Utils.magic->Js.Dict.unsafeGet(fieldName),
+        )
+      })
+      ->Promise.resolve
+    },
+    setOrThrow: (~items as _, ~table as _, ~itemSchema as _) => Js.Exn.raiseError("Not used yet"),
+  }
+}
 and /**
 Deep copies the in memory store data and returns a new mockDb with the same
 state and no references to data from the passed in mockDb
@@ -411,34 +470,6 @@ state and no references to data from the passed in mockDb
 cloneMockDb = (self: t) => {
   let clonedInternalDb = self->getInternalDb->InMemoryStore.clone
   clonedInternalDb->makeWithInMemoryStore
-}
-and makeLoadEntitiesByIds = (mockDb: t) => {
-  (ids, ~entityConfig) => {
-    let operations = mockDb->getEntityOperations(~entityConfig)
-    ids->Array.keepMap(id => operations.get(id))->Promise.resolve
-  }
-}
-and makeLoadEntitiesByField = (mockDb: t) => {
-  async (
-    ~operator,
-    ~entityConfig,
-    ~fieldName,
-    ~fieldValue,
-    ~fieldValueSchema as _,
-    ~logger as _=?,
-  ) => {
-    let mockDbTable = mockDb.__dbInternal__->InMemoryStore.getInMemTable(~entityConfig)
-    let index = TableIndices.Index.makeSingle(~fieldName, ~fieldValue, ~operator)
-
-    mockDbTable
-    ->InMemoryTable.Entity.values
-    ->Array.keep(entity => {
-      index->TableIndices.Index.evaluate(
-        ~fieldName,
-        ~fieldValue=entity->Utils.magic->Js.Dict.unsafeGet(fieldName),
-      )
-    })
-  }
 }
 and /**
 Simulates the writing of processed data in the inMemoryStore to a mockDb. This function
