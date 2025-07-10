@@ -36,7 +36,7 @@ module Storage = {
   type method = [
     | #isInitialized
     | #initialize
-    | #loadEffectCaches
+    | #loadCaches
     | #loadByIdsOrThrow
     | #loadByFieldOrThrow
     | #setOrThrow
@@ -58,7 +58,7 @@ module Storage = {
       "tableName": string,
       "operator": Persistence.operator,
     }>,
-    loadEffectCachesCalls: ref<int>,
+    loadCachesCalls: ref<int>,
     storage: Persistence.storage,
   }
 
@@ -85,14 +85,14 @@ module Storage = {
     let initializeResolveFns = []
     let loadByIdsOrThrowCalls = []
     let loadByFieldOrThrowCalls = []
-    let loadEffectCachesCalls = ref(0)
+    let loadCachesCalls = ref(0)
 
     {
       isInitializedCalls,
       initializeCalls,
       loadByIdsOrThrowCalls,
       loadByFieldOrThrowCalls,
-      loadEffectCachesCalls,
+      loadCachesCalls,
       resolveIsInitialized: bool => {
         isInitializedResolveFns->Js.Array2.forEach(resolve => resolve(bool))
       },
@@ -118,8 +118,8 @@ module Storage = {
             initializeResolveFns->Js.Array2.push(resolve)->ignore
           })
         }),
-        loadEffectCaches: implement(#loadEffectCaches, () => {
-          loadEffectCachesCalls := loadEffectCachesCalls.contents + 1
+        loadCaches: implement(#loadCaches, () => {
+          loadCachesCalls := loadCachesCalls.contents + 1
           Promise.resolve([])
         }),
         loadByIdsOrThrow: (

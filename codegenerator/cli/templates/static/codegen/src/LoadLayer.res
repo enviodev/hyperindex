@@ -56,25 +56,80 @@ let loadById = (
 
 let loadEffect = (
   ~loadManager,
+  ~persistence: Persistence.t,
   ~effect: Internal.effect,
   ~effectArgs,
   ~inMemoryStore,
   ~shouldGroup,
+  ~eventItem,
 ) => {
   let key = `${effect.name}.effect`
   let inMemTable = inMemoryStore->InMemoryStore.getEffectInMemTable(~effect)
 
-  let load = args => {
+  let load = async args => {
+    let idsToLoad = args->Js.Array2.map((arg: Internal.effectArgs) => arg.cacheKey)
+
+    if (
+      effect.cache &&
+      switch persistence.storageStatus {
+      | Ready({caches}) => caches->Utils.Dict.has(effect.name)
+      | _ => false
+      }
+    ) {
+      let dbEntities = try {
+        await (persistence->Persistence.getInitializedStorageOrThrow).loadByIdsOrThrow(
+          ~table=Table.mkTable(
+            `envio_cache_${effect.name}`,
+            ~fields=[
+              Table.mkField("id", Text, ~fieldSchema=S.string, ~isPrimaryKey=true),
+              Table.mkField("value", JsonB, ~fieldSchema=effect.output),
+            ],
+            ~compositeIndices=[],
+          ),
+          ~rowsSchema=S.array(
+            S.schema(s =>
+              {
+                "id": s.matches(S.string),
+                "value": s.matches(effect.output),
+              }
+            ),
+          ),
+          ~ids=idsToLoad,
+        )
+      } catch {
+      | Persistence.StorageError({message, reason}) =>
+        reason->ErrorHandling.mkLogAndRaise(~logger=eventItem->Logging.getEventLogger, ~msg=message)
+      }
+
+      Js.log2("loaded", dbEntities)
+    }
+
     effect.callsCount = effect.callsCount + args->Array.length
     Prometheus.EffectCallsCount.set(~callsCount=effect.callsCount, ~effectName=effect.name)
-    args
-    ->Js.Array2.map(arg => {
-      effect.handler(arg)->Promise.thenResolve(output => {
-        inMemTable->InMemoryTable.setByHash(arg.cacheKey, output)
+    let promise =
+      args
+      ->Js.Array2.map((arg: Internal.effectArgs) => {
+        effect.handler(arg)->Promise.thenResolve(output => {
+          inMemTable->InMemoryTable.setByHash(arg.cacheKey, output)
+          output
+        })
       })
-    })
-    ->Promise.all
-    ->(Utils.magic: promise<array<unit>> => promise<unit>)
+      ->Promise.all
+
+    await (
+      if effect.cache {
+        promise->Promise.then(outputs => {
+          persistence->Persistence.setCache(
+            ~keys=idsToLoad,
+            ~values=outputs,
+            ~name=effect.name,
+            ~valueSchema=effect.output,
+          )
+        })
+      } else {
+        promise->(Utils.magic: promise<array<Internal.effectOutput>> => promise<unit>)
+      }
+    )
   }
 
   loadManager->LoadManager.call(

@@ -121,7 +121,7 @@ describe("Test Persistence layer init", () => {
   })
 
   Async.it("Should skip initialization when storage is already initialized", async () => {
-    let storageMock = Mock.Storage.make([#isInitialized, #loadEffectCaches])
+    let storageMock = Mock.Storage.make([#isInitialized, #loadCaches])
 
     let persistence = Persistence.make(
       ~userEntities=[],
@@ -151,7 +151,7 @@ describe("Test Persistence layer init", () => {
       (
         storageMock.isInitializedCalls->Array.length,
         storageMock.initializeCalls->Array.length,
-        storageMock.loadEffectCachesCalls.contents,
+        storageMock.loadCachesCalls.contents,
       ),
       (1, 0, 1),
       ~message=`Storage should be already initialized without additional initialize calls.

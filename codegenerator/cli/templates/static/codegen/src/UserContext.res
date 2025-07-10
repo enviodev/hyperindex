@@ -29,6 +29,7 @@ let rec initEffect = (params: contextParams) => (
 ) =>
   LoadLayer.loadEffect(
     ~loadManager=params.loadManager,
+    ~persistence=params.persistence,
     ~effect,
     ~effectArgs={
       input,
@@ -37,6 +38,7 @@ let rec initEffect = (params: contextParams) => (
     },
     ~inMemoryStore=params.inMemoryStore,
     ~shouldGroup=params.isPreload,
+    ~eventItem=params.eventItem,
   )
 and effectTraps: Utils.Proxy.traps<contextParams> = {
   get: (~target as params, ~prop: unknown) => {

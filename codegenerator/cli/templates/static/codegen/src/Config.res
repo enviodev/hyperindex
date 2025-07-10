@@ -107,6 +107,17 @@ let codegenPersistence = Persistence.make(
       )->Promise.resolve
     })
   },
+  ~onTableInitialize=data => {
+    Hasura.trackTables(
+      ~endpoint=Env.Hasura.graphqlEndpoint,
+      ~auth={
+        role: Env.Hasura.role,
+        secret: Env.Hasura.secret,
+      },
+      ~pgSchema=storagePgSchema,
+      ~tableNames=[data["tableName"]],
+    )
+  },
 )
 
 type t = {

@@ -23,8 +23,10 @@ let loadByField: (
 
 let loadEffect: (
   ~loadManager: LoadManager.t,
+  ~persistence: Persistence.t,
   ~effect: Internal.effect,
   ~effectArgs: Internal.effectArgs,
   ~inMemoryStore: InMemoryStore.t,
   ~shouldGroup: bool,
+  ~eventItem: Internal.eventItem,
 ) => promise<Internal.effectOutput>

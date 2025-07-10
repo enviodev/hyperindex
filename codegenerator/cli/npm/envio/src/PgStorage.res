@@ -350,6 +350,9 @@ let makeSchemaTableNamesQuery = (~pgSchema) => {
   `SELECT table_name FROM information_schema.tables WHERE table_schema = '${pgSchema}';`
 }
 
+let cacheTablePrefix = "envio_cache_"
+let cacheTablePrefixLength = cacheTablePrefix->String.length
+
 let make = (~sql: Postgres.sql, ~pgSchema, ~pgUser): Persistence.storage => {
   let isInitialized = async () => {
     let envioTables =
@@ -386,18 +389,18 @@ let make = (~sql: Postgres.sql, ~pgSchema, ~pgUser): Persistence.storage => {
     })
   }
 
-  let loadEffectCaches = async () => {
+  let loadCaches = async () => {
     let schemaTableNames: array<schemaTableName> =
       await sql->Postgres.unsafe(makeSchemaTableNamesQuery(~pgSchema))
     schemaTableNames->Belt.Array.keepMapU(schemaTableName => {
-      if schemaTableName.tableName->Js.String2.startsWith("effect_cache_") {
+      if schemaTableName.tableName->Js.String2.startsWith(cacheTablePrefix) {
         Some(
           (
             {
-              name: schemaTableName.tableName,
+              // Remove the prefix from the table name
+              name: schemaTableName.tableName->Js.String2.sliceToEnd(~from=cacheTablePrefixLength),
               size: 0,
-              table: None,
-            }: Persistence.effectCache
+            }: Persistence.cache
           ),
         )
       } else {
@@ -502,12 +505,56 @@ let make = (~sql: Postgres.sql, ~pgSchema, ~pgUser): Persistence.storage => {
     )
   }
 
+  let setCacheOrThrow = async (
+    type item,
+    ~name: string,
+    ~keys: array<string>,
+    ~values: array<item>,
+    ~valueSchema: S.t<item>,
+    ~initialize: bool,
+  ) => {
+    let table = Table.mkTable(
+      cacheTablePrefix ++ name,
+      ~fields=[
+        Table.mkField("id", Text, ~fieldSchema=S.string, ~isPrimaryKey=true),
+        Table.mkField("value", JsonB, ~fieldSchema=valueSchema),
+      ],
+      ~compositeIndices=[],
+    )
+
+    if initialize {
+      await sql->Postgres.unsafe(makeCreateTableQuery(table, ~pgSchema))
+    }
+
+    let items = []
+    for idx in 0 to values->Array.length - 1 {
+      items
+      ->Js.Array2.push({
+        "id": keys[idx],
+        "value": values[idx],
+      })
+      ->ignore
+    }
+
+    await setOrThrow(
+      ~items,
+      ~table,
+      ~itemSchema=S.schema(s =>
+        {
+          "id": s.matches(S.string),
+          "value": s.matches(valueSchema),
+        }
+      ),
+    )
+  }
+
   {
     isInitialized,
     initialize,
     loadByFieldOrThrow,
-    loadEffectCaches,
+    loadCaches,
     loadByIdsOrThrow,
     setOrThrow,
+    setCacheOrThrow,
   }
 }
