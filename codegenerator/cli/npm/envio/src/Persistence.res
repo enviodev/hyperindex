@@ -57,6 +57,7 @@ type storage = {
     ~valueSchema: S.t<'item>,
     ~initialize: bool,
   ) => promise<unit>,
+  dumpCache: array<string> => promise<unit>,
 }
 
 exception StorageError({message: string, reason: exn})

@@ -660,6 +660,8 @@ let actionReducer = (state: t, action: action) => {
         state.chainManager.chainFetchers,
       )
         ? {
+            let _ = state.config.persistence.storage.dumpCache(["getTokenMetadata"])
+            // state.config.persistence.storage
             Logging.info("All chains are caught up to the endblock.")
             // Keep the indexer process running in TUI mode
             // so the Dev Console server stays working

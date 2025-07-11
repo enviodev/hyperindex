@@ -473,7 +473,8 @@ and makeMockStorage = (mockDb: t): Persistence.storage => {
       ->Promise.resolve
     },
     setOrThrow: (~items as _, ~table as _, ~itemSchema as _) => Js.Exn.raiseError("Not used yet"),
-    setCacheOrThrow: (~name as _, ~keys as _, ~values as _, ~valueSchema as _, ~initialize as _) => Promise.resolve()
+    setCacheOrThrow: (~name as _, ~keys as _, ~values as _, ~valueSchema as _, ~initialize as _) => Promise.resolve(),
+    dumpCache: (_) => Js.Exn.raiseError("Not used yet"),
   }
 }
 and /**

@@ -68,6 +68,7 @@ let loadEffect = (
 
   let load = async args => {
     let idsToLoad = args->Js.Array2.map((arg: Internal.effectArgs) => arg.cacheKey)
+    let idsFromCache = Utils.Set.make()
 
     if (
       effect.cache &&
@@ -101,35 +102,50 @@ let loadEffect = (
         reason->ErrorHandling.mkLogAndRaise(~logger=eventItem->Logging.getEventLogger, ~msg=message)
       }
 
-      Js.log2("loaded", dbEntities)
+      dbEntities->Js.Array2.forEach(entity => {
+        idsFromCache->Utils.Set.add(entity["id"])->ignore
+        inMemTable->InMemoryTable.setByHash(entity["id"], entity["value"])
+      })
     }
 
-    effect.callsCount = effect.callsCount + args->Array.length
-    Prometheus.EffectCallsCount.set(~callsCount=effect.callsCount, ~effectName=effect.name)
-    let promise =
-      args
-      ->Js.Array2.map((arg: Internal.effectArgs) => {
-        effect.handler(arg)->Promise.thenResolve(output => {
-          inMemTable->InMemoryTable.setByHash(arg.cacheKey, output)
-          output
-        })
-      })
-      ->Promise.all
+    let remainingCallsCount = idsToLoad->Array.length - idsFromCache->Utils.Set.size
+    if remainingCallsCount > 0 {
+      effect.callsCount = effect.callsCount + remainingCallsCount
+      Prometheus.EffectCallsCount.set(~callsCount=effect.callsCount, ~effectName=effect.name)
 
-    await (
-      if effect.cache {
-        promise->Promise.then(outputs => {
-          persistence->Persistence.setCache(
-            ~keys=idsToLoad,
-            ~values=outputs,
-            ~name=effect.name,
-            ~valueSchema=effect.output,
-          )
+      let keys = []
+      let promise =
+        args
+        ->Belt.Array.keepMapU((arg: Internal.effectArgs) => {
+          if idsFromCache->Utils.Set.has(arg.cacheKey) {
+            None
+          } else {
+            keys->Array.push(arg.cacheKey)->ignore
+            Some(
+              effect.handler(arg)->Promise.thenResolve(output => {
+                inMemTable->InMemoryTable.setByHash(arg.cacheKey, output)
+                output
+              }),
+            )
+          }
         })
-      } else {
-        promise->(Utils.magic: promise<array<Internal.effectOutput>> => promise<unit>)
-      }
-    )
+        ->Promise.all
+
+      await (
+        if effect.cache {
+          promise->Promise.then(outputs => {
+            persistence->Persistence.setCache(
+              ~keys,
+              ~values=outputs,
+              ~name=effect.name,
+              ~valueSchema=effect.output,
+            )
+          })
+        } else {
+          promise->(Utils.magic: promise<array<Internal.effectOutput>> => promise<unit>)
+        }
+      )
+    }
   }
 
   loadManager->LoadManager.call(

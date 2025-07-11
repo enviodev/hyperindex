@@ -387,6 +387,48 @@ let make = (~sql: Postgres.sql, ~pgSchema, ~pgUser): Persistence.storage => {
     let _ = await sql->Postgres.beginSql(sql => {
       queries->Js.Array2.map(query => sql->Postgres.unsafe(query))
     })
+
+    // Try to restore cache tables from binary files
+    let cacheDir = NodeJs.Path.resolve(["..", ".envio", "cache"])
+
+    let entries = await NodeJs.Fs.Promises.readdir(cacheDir)
+    let cacheFiles = entries->Js.Array2.filter(entry => {
+      entry->Js.String2.endsWith(".bin")
+    })
+
+    let psqlExec = switch NodeJs.Process.process.env->Js.Dict.get("ENVIO_PSQL_EXEC") {
+    | Some(exec) => exec
+    | None => "docker-compose exec -T -u postgres envio-postgres psql"
+    }
+
+    let _ =
+      await cacheFiles
+      ->Js.Array2.map(entry => {
+        let cacheName = entry->Js.String2.slice(~from=0, ~to_=-4) // Remove .bin extension
+        let table = Table.mkTable(
+          cacheTablePrefix ++ cacheName,
+          ~fields=[
+            Table.mkField("id", Text, ~fieldSchema=S.string, ~isPrimaryKey=true),
+            Table.mkField("value", JsonB, ~fieldSchema=S.json(~validate=false)),
+          ],
+          ~compositeIndices=[],
+        )
+
+        sql
+        ->Postgres.unsafe(makeCreateTableQuery(table, ~pgSchema))
+        ->Promise.then(() => {
+          let tableName = cacheTablePrefix ++ cacheName
+          let inputFile = NodeJs.Path.join(cacheDir, entry)->NodeJs.Path.toString
+
+          // We use -d envio-dev to specify the database name
+          // -c specifies the command to run
+          // -T disables pseudo-tty allocation
+          // We use COPY ... FROM STDIN (FORMAT binary) to restore the table from binary format
+          let command = `${psqlExec} -d envio-dev -c 'COPY "${pgSchema}"."${tableName}" FROM STDIN (FORMAT binary);' < ${inputFile}`
+          NodeJs.ChildProcess.exec(command, {})
+        })
+      })
+      ->Promise.all
   }
 
   let loadCaches = async () => {
@@ -548,6 +590,43 @@ let make = (~sql: Postgres.sql, ~pgSchema, ~pgUser): Persistence.storage => {
     )
   }
 
+  let dumpCache = async (cacheNames: array<string>) => {
+    // Create .envio/cache directory if it doesn't exist
+    let cacheDir = NodeJs.Path.resolve(["..", ".envio", "cache"])
+    try {
+      await NodeJs.Fs.Promises.access(cacheDir)
+    } catch {
+    | _ =>
+      // Create directory if it doesn't exist
+      await NodeJs.Fs.Promises.mkdir(~path=cacheDir, ~options={recursive: true})
+    }
+
+    // For development: We run the indexer project locally,
+    //   and there might not be psql installed on the user's machine.
+    //   So we use docker-compose to run psql existing in the postgres container.
+    // For production: We expect indexer to be running in a container,
+    //   with psql installed. So we can call it directly.
+    let psqlExec = switch NodeJs.Process.process.env->Js.Dict.get("ENVIO_PSQL_EXEC") {
+    | Some(exec) => exec
+    | None => "docker-compose exec -T -u postgres envio-postgres psql"
+    }
+
+    let _ =
+      await cacheNames
+      ->Js.Array2.map(cacheName => {
+        let tableName = cacheTablePrefix ++ cacheName
+        let outputFile = NodeJs.Path.join(cacheDir, cacheName ++ ".bin")->NodeJs.Path.toString
+
+        // We use -d envio-dev to specify the database name
+        // -c specifies the command to run
+        // -T disables pseudo-tty allocation
+        // We use COPY ... TO STDOUT (FORMAT binary) to dump the table in binary format
+        let command = `${psqlExec} -d envio-dev -c 'COPY "${pgSchema}"."${tableName}" TO STDOUT (FORMAT binary);' > ${outputFile}`
+        NodeJs.ChildProcess.exec(command, {})
+      })
+      ->Promise.all
+  }
+
   {
     isInitialized,
     initialize,
@@ -556,5 +635,6 @@ let make = (~sql: Postgres.sql, ~pgSchema, ~pgUser): Persistence.storage => {
     loadByIdsOrThrow,
     setOrThrow,
     setCacheOrThrow,
+    dumpCache,
   }
 }
