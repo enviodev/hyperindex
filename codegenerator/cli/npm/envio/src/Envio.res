@@ -50,6 +50,7 @@ let experimental_createEffect = (
       >
     ),
     callsCount: 0,
+    output: options.output,
     cache: options.cache->Belt.Option.getWithDefault(false),
   }->(Utils.magic: Internal.effect => effect<'input, 'output>)
 }

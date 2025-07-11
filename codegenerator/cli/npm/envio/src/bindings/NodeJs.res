@@ -4,6 +4,22 @@ type t
 type exitCode = | @as(0) Success | @as(1) Failure
 @send external exitWithCode: (t, exitCode) => unit = "exit"
 
+module Process = {
+  type t = {env: Js.Dict.t<string>}
+  @module external process: t = "process"
+}
+
+module ChildProcess = {
+  type execOptions = {
+    cwd?: string,
+    env?: Js.Dict.t<string>,
+    shell?: string,
+  }
+
+  @module("child_process")
+  external exec: (string, execOptions) => Js.Promise.t<unit> = "exec"
+}
+
 module Util = {
   @unboxed
   type depth = Int(int) | @as(null) Null
@@ -55,6 +71,11 @@ module Fs = {
     encoding?: string,
   }
 
+  type mkdirOptions = {
+    recursive?: bool,
+    mode?: int,
+  }
+
   module Promises = {
     @module("fs") @scope("promises")
     external writeFile: (
@@ -77,5 +98,11 @@ module Fs = {
 
     @module("fs") @scope("promises")
     external readFile: (~filepath: Path.t, ~encoding: encoding) => promise<string> = "readFile"
+
+    @module("fs") @scope("promises")
+    external mkdir: (~path: Path.t, ~options: mkdirOptions=?) => Js.Promise.t<unit> = "mkdir"
+
+    @module("fs") @scope("promises")
+    external readdir: Path.t => Js.Promise.t<array<string>> = "readdir"
   }
 }

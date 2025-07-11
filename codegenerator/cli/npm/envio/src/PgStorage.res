@@ -350,7 +350,20 @@ let makeSchemaTableNamesQuery = (~pgSchema) => {
   `SELECT table_name FROM information_schema.tables WHERE table_schema = '${pgSchema}';`
 }
 
-let make = (~sql: Postgres.sql, ~pgSchema, ~pgUser): Persistence.storage => {
+let cacheTablePrefix = "envio_cache_"
+let cacheTablePrefixLength = cacheTablePrefix->String.length
+
+let makeSchemaCacheTableNamesQuery = (~pgSchema) => {
+  `SELECT table_name FROM information_schema.tables WHERE table_schema = '${pgSchema}' AND table_name LIKE '${cacheTablePrefix}%';`
+}
+
+let make = (
+  ~sql: Postgres.sql,
+  ~pgSchema,
+  ~pgUser,
+  ~onInitialize=?,
+  ~onNewTables=?,
+): Persistence.storage => {
   let isInitialized = async () => {
     let envioTables =
       await sql->Postgres.unsafe(
@@ -384,26 +397,11 @@ let make = (~sql: Postgres.sql, ~pgSchema, ~pgUser): Persistence.storage => {
     let _ = await sql->Postgres.beginSql(sql => {
       queries->Js.Array2.map(query => sql->Postgres.unsafe(query))
     })
-  }
 
-  let loadEffectCaches = async () => {
-    let schemaTableNames: array<schemaTableName> =
-      await sql->Postgres.unsafe(makeSchemaTableNamesQuery(~pgSchema))
-    schemaTableNames->Belt.Array.keepMapU(schemaTableName => {
-      if schemaTableName.tableName->Js.String2.startsWith("effect_cache_") {
-        Some(
-          (
-            {
-              name: schemaTableName.tableName,
-              size: 0,
-              table: None,
-            }: Persistence.effectCache
-          ),
-        )
-      } else {
-        None
-      }
-    })
+    switch onInitialize {
+    | Some(onInitialize) => await onInitialize()
+    | None => ()
+    }
   }
 
   let loadByIdsOrThrow = async (~ids, ~table: Table.table, ~rowsSchema) => {
@@ -502,12 +500,180 @@ let make = (~sql: Postgres.sql, ~pgSchema, ~pgUser): Persistence.storage => {
     )
   }
 
+  let setCacheOrThrow = async (
+    type item,
+    ~name: string,
+    ~keys: array<string>,
+    ~values: array<item>,
+    ~valueSchema: S.t<item>,
+    ~initialize: bool,
+  ) => {
+    let table = Table.mkTable(
+      cacheTablePrefix ++ name,
+      ~fields=[
+        Table.mkField("id", Text, ~fieldSchema=S.string, ~isPrimaryKey=true),
+        Table.mkField("value", JsonB, ~fieldSchema=valueSchema),
+      ],
+      ~compositeIndices=[],
+    )
+
+    if initialize {
+      let _ = await sql->Postgres.unsafe(makeCreateTableQuery(table, ~pgSchema))
+      switch onNewTables {
+      | Some(onNewTables) => await onNewTables(~tableNames=[table.tableName])
+      | None => ()
+      }
+    }
+
+    let items = []
+    for idx in 0 to values->Array.length - 1 {
+      items
+      ->Js.Array2.push({
+        "id": keys[idx],
+        "value": values[idx],
+      })
+      ->ignore
+    }
+
+    await setOrThrow(
+      ~items,
+      ~table,
+      ~itemSchema=S.schema(s =>
+        {
+          "id": s.matches(S.string),
+          "value": s.matches(valueSchema),
+        }
+      ),
+    )
+  }
+
+  let dumpCache = async () => {
+    let cacheTableNames: array<schemaTableName> =
+      await sql->Postgres.unsafe(makeSchemaCacheTableNamesQuery(~pgSchema))
+
+    if cacheTableNames->Utils.Array.notEmpty {
+      // Create .envio/cache directory if it doesn't exist
+      let cacheDir = NodeJs.Path.resolve(["..", ".envio", "cache"])
+      try {
+        await NodeJs.Fs.Promises.access(cacheDir)
+      } catch {
+      | _ =>
+        // Create directory if it doesn't exist
+        await NodeJs.Fs.Promises.mkdir(~path=cacheDir, ~options={recursive: true})
+      }
+
+      // For development: We run the indexer project locally,
+      //   and there might not be psql installed on the user's machine.
+      //   So we use docker-compose to run psql existing in the postgres container.
+      // For production: We expect indexer to be running in a container,
+      //   with psql installed. So we can call it directly.
+      let psqlExec = switch NodeJs.Process.process.env->Js.Dict.get("ENVIO_PSQL_EXEC") {
+      | Some(exec) => exec
+      | None => "docker-compose exec -T -u postgres envio-postgres psql"
+      }
+
+      let cacheNames = []
+      let promises = cacheTableNames->Js.Array2.map(({tableName}) => {
+        let cacheName = tableName->Js.String2.sliceToEnd(~from=cacheTablePrefixLength)
+        cacheNames->Js.Array2.push(cacheName)->ignore
+        let outputFile = NodeJs.Path.join(cacheDir, cacheName ++ ".bin")->NodeJs.Path.toString
+
+        // We use -d envio-dev to specify the database name
+        // -c specifies the command to run
+        // -T disables pseudo-tty allocation
+        // We use COPY ... TO STDOUT (FORMAT binary) to dump the table in binary format
+        let command = `${psqlExec} -d envio-dev -c 'COPY "${pgSchema}"."${tableName}" TO STDOUT (FORMAT binary);' > ${outputFile}`
+
+        NodeJs.ChildProcess.exec(command, {})
+      })
+
+      Logging.info(`Dumping cache: ${cacheNames->Js.Array2.joinWith(", ")}`)
+      let _ = await promises->Promise.all
+      Logging.info(`Successfully dumped cache to ${cacheDir->NodeJs.Path.toString}`)
+    }
+  }
+
+  let restoreCache = async () => {
+    // Try to restore cache tables from binary files
+    let cacheDir = NodeJs.Path.resolve(["..", ".envio", "cache"])
+
+    let entries = await NodeJs.Fs.Promises.readdir(cacheDir)
+    let cacheFiles = entries->Js.Array2.filter(entry => {
+      entry->Js.String2.endsWith(".bin")
+    })
+
+    let psqlExec = switch NodeJs.Process.process.env->Js.Dict.get("ENVIO_PSQL_EXEC") {
+    | Some(exec) => exec
+    | None => "docker-compose exec -T -u postgres envio-postgres psql"
+    }
+
+    let _ =
+      await cacheFiles
+      ->Js.Array2.map(entry => {
+        let cacheName = entry->Js.String2.slice(~from=0, ~to_=-4) // Remove .bin extension
+        let table = Table.mkTable(
+          cacheTablePrefix ++ cacheName,
+          ~fields=[
+            Table.mkField("id", Text, ~fieldSchema=S.string, ~isPrimaryKey=true),
+            Table.mkField("value", JsonB, ~fieldSchema=S.json(~validate=false)),
+          ],
+          ~compositeIndices=[],
+        )
+
+        sql
+        ->Postgres.unsafe(makeCreateTableQuery(table, ~pgSchema))
+        ->Promise.then(() => {
+          let tableName = cacheTablePrefix ++ cacheName
+          let inputFile = NodeJs.Path.join(cacheDir, entry)->NodeJs.Path.toString
+
+          // We use -d envio-dev to specify the database name
+          // -c specifies the command to run
+          // -T disables pseudo-tty allocation
+          // We use COPY ... FROM STDIN (FORMAT binary) to restore the table from binary format
+          let command = `${psqlExec} -d envio-dev -c 'COPY "${pgSchema}"."${tableName}" FROM STDIN (FORMAT binary);' < ${inputFile}`
+          NodeJs.ChildProcess.exec(command, {})
+        })
+      })
+      ->Promise.all
+
+    let cacheTableNames: array<schemaTableName> =
+      await sql->Postgres.unsafe(makeSchemaCacheTableNamesQuery(~pgSchema))
+
+    switch onNewTables {
+    | Some(onNewTables) =>
+      await onNewTables(
+        ~tableNames=cacheTableNames->Js.Array2.map(schemaTableName => {
+          schemaTableName.tableName
+        }),
+      )
+    | None => ()
+    }
+
+    let cache = Js.Dict.empty()
+    cacheTableNames->Js.Array2.forEach(schemaTableName => {
+      let cacheName = schemaTableName.tableName->Js.String2.sliceToEnd(~from=cacheTablePrefixLength)
+      cache->Js.Dict.set(
+        cacheName,
+        (
+          {
+            // Remove the prefix from the table name
+            name: schemaTableName.tableName->Js.String2.sliceToEnd(~from=cacheTablePrefixLength),
+            size: 0,
+          }: Persistence.cacheRecord
+        ),
+      )
+    })
+    cache
+  }
+
   {
     isInitialized,
     initialize,
     loadByFieldOrThrow,
-    loadEffectCaches,
     loadByIdsOrThrow,
     setOrThrow,
+    setCacheOrThrow,
+    dumpCache,
+    restoreCache,
   }
 }

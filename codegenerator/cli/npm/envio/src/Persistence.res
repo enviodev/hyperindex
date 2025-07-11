@@ -5,14 +5,13 @@
 // Currently there are quite many code spread across
 // DbFunctions, Db, Migrations, InMemoryStore modules which use codegen code directly.
 
-// The type reflects an effect cache table in the db
+// The type reflects an cache table in the db
 // It might be present even if the effect is not used in the application
-type effectCache = {
+type cacheRecord = {
+  // Name of the cache (usuall effect name without "envio_cache_" prefix)
   name: string,
   // Number of rows in the table
   mutable size: int,
-  // Lazily attached table definition when effect is used in the application
-  mutable table: option<Table.table>,
 }
 
 type operator = [#">" | #"="]
@@ -28,7 +27,6 @@ type storage = {
     ~generalTables: array<Table.table>=?,
     ~enums: array<Internal.enumConfig<Internal.enum>>=?,
   ) => promise<unit>,
-  loadEffectCaches: unit => promise<array<effectCache>>,
   @raises("StorageError")
   loadByIdsOrThrow: 'item. (
     ~ids: array<string>,
@@ -50,6 +48,16 @@ type storage = {
     ~table: Table.table,
     ~itemSchema: S.t<'item>,
   ) => promise<unit>,
+  @raises("StorageError")
+  setCacheOrThrow: 'item. (
+    ~name: string,
+    ~keys: array<string>,
+    ~values: array<'item>,
+    ~valueSchema: S.t<'item>,
+    ~initialize: bool,
+  ) => promise<unit>,
+  dumpCache: unit => promise<unit>,
+  restoreCache: unit => promise<dict<cacheRecord>>,
 }
 
 exception StorageError({message: string, reason: exn})
@@ -57,7 +65,7 @@ exception StorageError({message: string, reason: exn})
 type storageStatus =
   | Unknown
   | Initializing(promise<unit>)
-  | Ready({cleanRun: bool, effectCaches: dict<effectCache>})
+  | Ready({cleanRun: bool, cache: dict<cacheRecord>})
 
 type t = {
   userEntities: array<Internal.entityConfig>,
@@ -66,7 +74,6 @@ type t = {
   allEnums: array<Internal.enumConfig<Internal.enum>>,
   mutable storageStatus: storageStatus,
   storage: storage,
-  onStorageInitialize: option<unit => promise<unit>>,
 }
 
 let entityHistoryActionEnumConfig: Internal.enumConfig<EntityHistory.RowAction.t> = {
@@ -83,7 +90,6 @@ let make = (
   ~allEnums,
   ~staticTables,
   ~storage,
-  ~onStorageInitialize=?,
 ) => {
   let allEntities = userEntities->Js.Array2.concat([dcRegistryEntityConfig])
   let allEnums =
@@ -95,7 +101,6 @@ let make = (
     allEnums,
     storageStatus: Unknown,
     storage,
-    onStorageInitialize,
   }
 }
 
@@ -116,20 +121,19 @@ let init = async (persistence, ~reset=false) => {
       })
       persistence.storageStatus = Initializing(promise)
       if reset || !(await persistence.storage.isInitialized()) {
-        let _ = await persistence.storage.initialize(
+        Logging.info(`Initializing the indexer storage...`)
+
+        await persistence.storage.initialize(
           ~entities=persistence.allEntities,
           ~generalTables=persistence.staticTables,
           ~enums=persistence.allEnums,
         )
 
+        Logging.info(`The indexer storage is ready. Restoring cache...`)
         persistence.storageStatus = Ready({
           cleanRun: true,
-          effectCaches: Js.Dict.empty(),
+          cache: await persistence.storage.restoreCache(),
         })
-        switch persistence.onStorageInitialize {
-        | Some(onStorageInitialize) => await onStorageInitialize()
-        | None => ()
-        }
       } else if (
         // In case of a race condition,
         // we want to set the initial status to Ready only once.
@@ -138,13 +142,10 @@ let init = async (persistence, ~reset=false) => {
         | _ => false
         }
       ) {
-        let effectCaches = Js.Dict.empty()
-        (await persistence.storage.loadEffectCaches())->Js.Array2.forEach(effectCache => {
-          effectCaches->Js.Dict.set(effectCache.name, effectCache)
-        })
+        Logging.info(`The indexer storage is ready. Restoring cache...`)
         persistence.storageStatus = Ready({
           cleanRun: false,
-          effectCaches,
+          cache: await persistence.storage.restoreCache(),
         })
       }
       resolveRef.contents()
@@ -160,5 +161,27 @@ let getInitializedStorageOrThrow = persistence => {
   | Initializing(_) =>
     Js.Exn.raiseError(`Failed to access the indexer storage. The Persistence layer is not initialized.`)
   | Ready(_) => persistence.storage
+  }
+}
+
+let setCache = async (persistence, ~keys, ~values, ~valueSchema, ~name) => {
+  switch persistence.storageStatus {
+  | Unknown
+  | Initializing(_) =>
+    Js.Exn.raiseError(`Failed to access the indexer storage. The Persistence layer is not initialized.`)
+  | Ready({cache}) => {
+      let storage = persistence.storage
+      let cacheRecord = switch cache->Utils.Dict.dangerouslyGetNonOption(name) {
+      | Some(c) => c
+      | None => {
+          let c = {name, size: 0}
+          cache->Js.Dict.set(name, c)
+          c
+        }
+      }
+      let initialize = cacheRecord.size === 0
+      await storage.setCacheOrThrow(~name, ~keys, ~values, ~valueSchema, ~initialize)
+      cacheRecord.size = cacheRecord.size + keys->Js.Array2.length
+    }
   }
 }
