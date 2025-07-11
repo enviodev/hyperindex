@@ -173,7 +173,6 @@ module Storage = {
         cleanRun: false,
         effectCaches: Js.Dict.empty(),
       }),
-      onStorageInitialize: None,
     }
   }
 }

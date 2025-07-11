@@ -73,7 +73,7 @@ let loadEffect = (
     if (
       effect.cache &&
       switch persistence.storageStatus {
-      | Ready({caches}) => caches->Utils.Dict.has(effect.name)
+      | Ready({cache}) => cache->Utils.Dict.has(effect.name)
       | _ => false
       }
     ) {

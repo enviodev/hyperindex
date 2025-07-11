@@ -86,38 +86,42 @@ let codegenPersistence = Persistence.make(
     TablesStatic.DynamicContractRegistry
   )->Entities.entityModToInternal,
   ~allEnums=Enums.allEnums,
-  ~storage=PgStorage.make(~sql=Db.sql, ~pgSchema=storagePgSchema, ~pgUser=Env.Db.user),
-  ~onStorageInitialize=() => {
-    Hasura.trackDatabase(
-      ~endpoint=Env.Hasura.graphqlEndpoint,
-      ~auth={
-        role: Env.Hasura.role,
-        secret: Env.Hasura.secret,
-      },
-      ~pgSchema=storagePgSchema,
-      ~allStaticTables=Db.allStaticTables,
-      ~allEntityTables=Db.allEntityTables,
-      ~responseLimit=Env.Hasura.responseLimit,
-      ~schema=Db.schema,
-      ~aggregateEntities=Env.Hasura.aggregateEntities,
-    )->Promise.catch(err => {
-      Logging.errorWithExn(
-        err->Internal.prettifyExn,
-        `EE803: Error tracking tables`,
-      )->Promise.resolve
-    })
-  },
-  ~onTableInitialize=data => {
-    Hasura.trackTables(
-      ~endpoint=Env.Hasura.graphqlEndpoint,
-      ~auth={
-        role: Env.Hasura.role,
-        secret: Env.Hasura.secret,
-      },
-      ~pgSchema=storagePgSchema,
-      ~tableNames=[data["tableName"]],
-    )
-  },
+  ~storage=PgStorage.make(
+    ~sql=Db.sql,
+    ~pgSchema=storagePgSchema,
+    ~pgUser=Env.Db.user,
+    ~onInitialize=() => {
+      Hasura.trackDatabase(
+        ~endpoint=Env.Hasura.graphqlEndpoint,
+        ~auth={
+          role: Env.Hasura.role,
+          secret: Env.Hasura.secret,
+        },
+        ~pgSchema=storagePgSchema,
+        ~allStaticTables=Db.allStaticTables,
+        ~allEntityTables=Db.allEntityTables,
+        ~responseLimit=Env.Hasura.responseLimit,
+        ~schema=Db.schema,
+        ~aggregateEntities=Env.Hasura.aggregateEntities,
+      )->Promise.catch(err => {
+        Logging.errorWithExn(
+          err->Internal.prettifyExn,
+          `EE803: Error tracking tables`,
+        )->Promise.resolve
+      })
+    },
+    ~onNewTables=(~tableNames) => {
+      Hasura.trackTables(
+        ~endpoint=Env.Hasura.graphqlEndpoint,
+        ~auth={
+          role: Env.Hasura.role,
+          secret: Env.Hasura.secret,
+        },
+        ~pgSchema=storagePgSchema,
+        ~tableNames,
+      )
+    },
+  ),
 )
 
 type t = {
