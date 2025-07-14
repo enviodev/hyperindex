@@ -1,15 +1,15 @@
 type t<+'a> = promise<'a>
 
 @new
-external make: ((@uncurry ('a => unit), 'e => unit) => unit) => t<'a> = "Promise"
+external make: ((@uncurry 'a => unit, 'e => unit) => unit) => t<'a> = "Promise"
 
 @val @scope("Promise")
 external resolve: 'a => t<'a> = "resolve"
 
-@send external then: (t<'a>, @uncurry ('a => t<'b>)) => t<'b> = "then"
+@send external then: (t<'a>, @uncurry 'a => t<'b>) => t<'b> = "then"
 
 @send
-external thenResolve: (t<'a>, @uncurry ('a => 'b)) => t<'b> = "then"
+external thenResolve: (t<'a>, @uncurry 'a => 'b) => t<'b> = "then"
 
 @send external finally: (t<'a>, unit => unit) => t<'a> = "finally"
 
@@ -52,7 +52,6 @@ let catch = (promise: promise<'a>, callback: exn => promise<'a>): promise<'a> =>
 external race: array<t<'a>> => t<'a> = "race"
 
 external done: promise<'a> => unit = "%ignore"
-external ignoreResolve: promise<'a> => promise<unit> = "%ignore"
 
 external unsafe_async: 'a => promise<'a> = "%identity"
 external unsafe_await: promise<'a> => 'a = "?await"

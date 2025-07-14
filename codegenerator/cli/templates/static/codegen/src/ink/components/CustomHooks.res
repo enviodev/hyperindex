@@ -101,7 +101,7 @@ let useMessages = (~config) => {
       switch res {
       | Ok(data) => setRequest(_ => Data(data))
       | Error(e) =>
-        Logging.error({"msg": "Failed to load messages from envio server", "err": e})
+        Logging.error({"msg": "Failed to load messages from envio server", "err": e->Internal.prettifyExn})
         setRequest(_ => Err(e))
       }
     )

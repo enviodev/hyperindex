@@ -276,6 +276,29 @@ let chunkArray = (arr: array<'a>, ~chunkSize) => {
   chunks
 }
 
+let removeInvalidUtf8InPlace = entities =>
+  entities->Js.Array2.forEach(item => {
+    let dict = item->(Utils.magic: 'a => dict<unknown>)
+    dict->Utils.Dict.forEachWithKey((key, value) => {
+      if value->Js.typeof === "string" {
+        let value = value->(Utils.magic: unknown => string)
+        // We mutate here, since we don't care
+        // about the original value with \x00 anyways.
+        //
+        // This is unsafe, but we rely that it'll use
+        // the mutated reference on retry.
+        // TODO: Test it properly after we start using
+        // in-memory PGLite for indexer test framework.
+        dict->Js.Dict.set(
+          key,
+          value
+          ->Utils.String.replaceAll("\x00", "")
+          ->(Utils.magic: string => unknown),
+        )
+      }
+    })
+  })
+
 let pgEncodingErrorSchema = S.object(s =>
   s.tag("message", `invalid byte sequence for encoding "UTF8": 0x00`)
 )
@@ -337,34 +360,35 @@ let setOrThrow = async (sql, ~items, ~table: Table.table, ~itemSchema, ~pgSchema
         }),
       )
     | exn =>
-      // Workaround for https://github.com/enviodev/hyperindex/issues/446
-      // We do escaping only when we actually got an error writing for the first time.
-      // This is not perfect, but an optimization to avoid escaping for every single item.
-      switch exn {
-      | JsError(error)
-        if try {
-          error->S.assertOrThrow(pgEncodingErrorSchema)
-          true
-        } catch {
-        | _ => false
-        } =>
-        // Since the transaction is aborted at this point,
-        // we can't simply retry the function with escaped items,
-        // so propagate the error, to restart the whole batch write.
-        // Also, let pass the failing table, to escape only it's items.
-        // TODO: Ideally all this should be done in the file,
-        // so it'll be easier to work on PG specific logic.
-        raise(PgEncodingError({table: table}))
-      | _ =>
-        raise(
-          Persistence.StorageError({
-            message: `Failed to insert items into table "${table.tableName}"`,
-            reason: exn,
-          }),
-        )
-      }
+      raise(
+        Persistence.StorageError({
+          message: `Failed to insert items into table "${table.tableName}"`,
+          reason: exn,
+        }),
+      )
     }
   }
+}
+
+let setEntityHistoryOrThrow = (
+  sql,
+  ~entityHistory: EntityHistory.t<'entity>,
+  ~rows: array<EntityHistory.historyRow<'entity>>,
+  ~shouldRemoveInvalidUtf8=false,
+) => {
+  rows
+  ->Belt.Array.map(historyRow => {
+    let containsRollbackDiffChange =
+      historyRow.containsRollbackDiffChange->Belt.Option.getWithDefault(false)
+    let shouldCopyCurrentEntity = !containsRollbackDiffChange
+    let row = historyRow->S.reverseConvertToJsonOrThrow(entityHistory.schema)
+    if shouldRemoveInvalidUtf8 {
+      [row]->removeInvalidUtf8InPlace
+    }
+    entityHistory.insertFn(sql, row, ~shouldCopyCurrentEntity)
+  })
+  ->Promise.all
+  ->(Utils.magic: promise<array<unit>> => promise<unit>)
 }
 
 type schemaTableName = {

@@ -128,45 +128,26 @@ let executeBatch = async (
       })
     }
 
-    switch escapeTables {
-    | Some(tables) if tables->Utils.Set.has(entityConfig.table) =>
-      entitiesToSet->Js.Array2.forEach(item => {
-        let dict = item->(Utils.magic: 'a => dict<unknown>)
-        dict->Utils.Dict.forEachWithKey(
-          (key, value) => {
-            if value->Js.typeof === "string" {
-              let value = value->(Utils.magic: unknown => string)
-              // We mutate here, since we don't care
-              // about the original value with \x00 anyways.
-              //
-              // This is unsafe, but we rely that it'll use
-              // the mutated reference on retry.
-              // TODO: Test it properly after we start using
-              // in-memory PGLite for indexer test framework.
-              dict->Js.Dict.set(
-                key,
-                value
-                ->Js.String2.replaceByRe(%re("/\x00/g"), "")
-                ->(Utils.magic: string => unknown),
-              )
-            }
-          },
-        )
-      })
-    | _ => ()
+    let shouldRemoveInvalidUtf8 = switch escapeTables {
+    | Some(tables) if tables->Utils.Set.has(entityConfig.table) => true
+    | _ => false
     }
 
     sql => {
       let promises = []
       if entityHistoryItemsToSet->Utils.Array.notEmpty {
         promises->Array.push(
-          entityConfig.entityHistory->EntityHistory.batchInsertRows(
-            ~sql,
+          sql->PgStorage.setEntityHistoryOrThrow(
+            ~entityHistory=entityConfig.entityHistory,
             ~rows=entityHistoryItemsToSet,
+            ~shouldRemoveInvalidUtf8,
           ),
         )
       }
       if entitiesToSet->Utils.Array.notEmpty {
+        if shouldRemoveInvalidUtf8 {
+          entitiesToSet->PgStorage.removeInvalidUtf8InPlace
+        }
         promises->Array.push(
           sql->PgStorage.setOrThrow(
             ~items=entitiesToSet,
@@ -183,18 +164,39 @@ let executeBatch = async (
       promises
       ->Promise.all
       ->Promise.catch(exn => {
+        switch exn {
+        | JsError(error) /* The case is for entity history, which is not handled properly yet */
+        | Persistence.StorageError({reason: JsError(error)})
+        // Workaround for https://github.com/enviodev/hyperindex/issues/446
+        // We do escaping only when we actually got an error writing for the first time.
+        // This is not perfect, but an optimization to avoid escaping for every single item.
+          if try {
+            error->S.assertOrThrow(PgStorage.pgEncodingErrorSchema)
+            true
+          } catch {
+          | _ => false
+          } =>
+          // Since the transaction is aborted at this point,
+          // we can't simply retry the function with escaped items,
+          // so propagate the error, to restart the whole batch write.
+          // Also, let pass the failing table, to escape only it's items.
+          // TODO: Ideally all this should be done in the file,
+          // so it'll be easier to work on PG specific logic.
+          specificError.contents = Some(PgStorage.PgEncodingError({table: entityConfig.table}))
         // There's a race condition that sql->Postgres.beginSql
         // might throw PG error, earlier, than the handled error
         // from setOrThrow will be passed through.
         // This is needed for the utf8 encoding fix.
-        specificError.contents = Some(exn)
+        | exn => specificError.contents = Some(exn)
+        }
+
         // Improtant: Don't rethrow here, since it'll result in
         // an unhandled rejected promise error.
         // That's fine not to throw, since sql->Postgres.beginSql
         // will fail anyways.
         Promise.resolve([])
       })
-      ->Promise.ignoreResolve
+      ->(Utils.magic: promise<array<unit>> => promise<unit>)
     }
   })
 

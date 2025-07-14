@@ -301,6 +301,23 @@ module String = {
     str->Js.String2.slice(~from=0, ~to_=1)->Js.String.toUpperCase ++
       str->Js.String2.sliceToEnd(~from=1)
   }
+
+  /**
+`replaceAll(str, substr, newSubstr)` returns a new `string` which is
+identical to `str` except with all matching instances of `substr` replaced
+by `newSubstr`. `substr` is treated as a verbatim string to match, not a
+regular expression.
+See [`String.replaceAll`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/String/replaceAll) on MDN.
+
+## Examples
+
+```rescript
+String.replaceAll("old old string", "old", "new") == "new new string"
+String.replaceAll("the cat and the dog", "the", "this") == "this cat and this dog"
+```
+*/
+  @send
+  external replaceAll: (string, string, string) => string = "replaceAll"
 }
 
 module Result = {
