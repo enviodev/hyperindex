@@ -374,18 +374,27 @@ let setEntityHistoryOrThrow = (
   sql,
   ~entityHistory: EntityHistory.t<'entity>,
   ~rows: array<EntityHistory.historyRow<'entity>>,
+  ~shouldCopyCurrentEntity=?,
   ~shouldRemoveInvalidUtf8=false,
 ) => {
   rows
   ->Belt.Array.map(historyRow => {
-    let containsRollbackDiffChange =
-      historyRow.containsRollbackDiffChange->Belt.Option.getWithDefault(false)
-    let shouldCopyCurrentEntity = !containsRollbackDiffChange
     let row = historyRow->S.reverseConvertToJsonOrThrow(entityHistory.schema)
     if shouldRemoveInvalidUtf8 {
       [row]->removeInvalidUtf8InPlace
     }
-    entityHistory.insertFn(sql, row, ~shouldCopyCurrentEntity)
+    entityHistory.insertFn(
+      sql,
+      row,
+      ~shouldCopyCurrentEntity=switch shouldCopyCurrentEntity {
+      | Some(v) => v
+      | None => {
+          let containsRollbackDiffChange =
+            historyRow.containsRollbackDiffChange->Belt.Option.getWithDefault(false)
+          !containsRollbackDiffChange
+        }
+      },
+    )
   })
   ->Promise.all
   ->(Utils.magic: promise<array<unit>> => promise<unit>)
