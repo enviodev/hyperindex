@@ -276,6 +276,12 @@ let chunkArray = (arr: array<'a>, ~chunkSize) => {
   chunks
 }
 
+let pgEncodingErrorSchema = S.object(s =>
+  s.tag("message", `invalid byte sequence for encoding "UTF8": 0x00`)
+)
+
+exception PgEncodingError({table: Table.table})
+
 // WeakMap for caching table batch set queries
 let setQueryCache = Utils.WeakMap.make()
 let setOrThrow = async (sql, ~items, ~table: Table.table, ~itemSchema, ~pgSchema) => {
@@ -331,12 +337,32 @@ let setOrThrow = async (sql, ~items, ~table: Table.table, ~itemSchema, ~pgSchema
         }),
       )
     | exn =>
-      raise(
-        Persistence.StorageError({
-          message: `Failed to insert items into table "${table.tableName}"`,
-          reason: exn,
-        }),
-      )
+      // Workaround for https://github.com/enviodev/hyperindex/issues/446
+      // We do escaping only when we actually got an error writing for the first time.
+      // This is not perfect, but an optimization to avoid escaping for every single item.
+      switch exn {
+      | JsError(error)
+        if try {
+          error->S.assertOrThrow(pgEncodingErrorSchema)
+          true
+        } catch {
+        | _ => false
+        } =>
+        // Since the transaction is aborted at this point,
+        // we can't simply retry the function with escaped items,
+        // so propagate the error, to restart the whole batch write.
+        // Also, let pass the failing table, to escape only it's items.
+        // TODO: Ideally all this should be done in the file,
+        // so it'll be easier to work on PG specific logic.
+        raise(PgEncodingError({table: table}))
+      | _ =>
+        raise(
+          Persistence.StorageError({
+            message: `Failed to insert items into table "${table.tableName}"`,
+            reason: exn,
+          }),
+        )
+      }
     }
   }
 }
