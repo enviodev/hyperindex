@@ -298,13 +298,13 @@ CREATE INDEX IF NOT EXISTS "A_history_serial" ON "public"."A_history"("serial");
       async () => {
         let query = PgStorage.makeInsertUnnestSetQuery(
           ~pgSchema="test_schema",
-          ~table=Entities.A.table,
-          ~itemSchema=Entities.A.schema,
+          ~table=Entities.EntityWithAllNonArrayTypes.table,
+          ~itemSchema=Entities.EntityWithAllNonArrayTypes.schema,
           ~isRawEvents=false,
         )
 
-        let expectedQuery = `INSERT INTO "test_schema"."A" ("b_id", "id", "optionalStringToTestLinkedEntities")
-SELECT * FROM unnest($1::TEXT[],$2::TEXT[],$3::TEXT[])ON CONFLICT("id") DO UPDATE SET "b_id" = EXCLUDED."b_id","optionalStringToTestLinkedEntities" = EXCLUDED."optionalStringToTestLinkedEntities";`
+        let expectedQuery = `INSERT INTO "test_schema"."EntityWithAllNonArrayTypes" ("bigDecimal", "bigInt", "bool", "enumField", "float_", "id", "int_", "optBigDecimal", "optBigInt", "optBool", "optEnumField", "optFloat", "optInt", "optString", "string")
+SELECT * FROM unnest($1::NUMERIC[],$2::NUMERIC[],$3::INTEGER[]::BOOLEAN[],$4::TEXT[]::"test_schema".AccountType[],$5::DOUBLE PRECISION[],$6::TEXT[],$7::INTEGER[],$8::NUMERIC[],$9::NUMERIC[],$10::INTEGER[]::BOOLEAN[],$11::TEXT[]::"test_schema".AccountType[],$12::DOUBLE PRECISION[],$13::INTEGER[],$14::TEXT[],$15::TEXT[])ON CONFLICT("id") DO UPDATE SET "bigDecimal" = EXCLUDED."bigDecimal","bigInt" = EXCLUDED."bigInt","bool" = EXCLUDED."bool","enumField" = EXCLUDED."enumField","float_" = EXCLUDED."float_","int_" = EXCLUDED."int_","optBigDecimal" = EXCLUDED."optBigDecimal","optBigInt" = EXCLUDED."optBigInt","optBool" = EXCLUDED."optBool","optEnumField" = EXCLUDED."optEnumField","optFloat" = EXCLUDED."optFloat","optInt" = EXCLUDED."optInt","optString" = EXCLUDED."optString","string" = EXCLUDED."string";`
 
         Assert.equal(query, expectedQuery, ~message="Should generate correct unnest insert SQL")
       },
@@ -315,19 +315,15 @@ SELECT * FROM unnest($1::TEXT[],$2::TEXT[],$3::TEXT[])ON CONFLICT("id") DO UPDAT
       async () => {
         let query = PgStorage.makeInsertUnnestSetQuery(
           ~pgSchema="test_schema",
-          ~table=Entities.A.table,
-          ~itemSchema=Entities.A.schema,
+          ~table=TablesStatic.RawEvents.table,
+          ~itemSchema=TablesStatic.RawEvents.schema,
           ~isRawEvents=true,
         )
 
-        let expectedQuery = `INSERT INTO "test_schema"."A" ("b_id", "id", "optionalStringToTestLinkedEntities")
-SELECT * FROM unnest($1::TEXT[],$2::TEXT[],$3::TEXT[]);`
+        let expectedQuery = `INSERT INTO "test_schema"."raw_events" ("chain_id", "event_id", "event_name", "contract_name", "block_number", "log_index", "src_address", "block_hash", "block_timestamp", "block_fields", "transaction_fields", "params")
+SELECT * FROM unnest($1::INTEGER[],$2::NUMERIC[],$3::TEXT[],$4::TEXT[],$5::INTEGER[],$6::INTEGER[],$7::TEXT[],$8::TEXT[],$9::INTEGER[],$10::JSONB[],$11::JSONB[],$12::JSONB[]);`
 
-        Assert.equal(
-          query,
-          expectedQuery,
-          ~message="Should generate correct unnest insert SQL for raw events",
-        )
+        Assert.equal(query, expectedQuery, ~message="Don't need EXCLUDED for raw events")
       },
     )
   })

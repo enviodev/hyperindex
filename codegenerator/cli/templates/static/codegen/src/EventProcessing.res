@@ -316,35 +316,48 @@ let processEventBatch = async (
     let elapsedTimeAfterProcessing =
       timeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
 
-    switch await Db.sql->IO.executeBatch(~inMemoryStore, ~isInReorgThreshold, ~config) {
-    | exception Persistence.StorageError({message, reason}) =>
-      reason->ErrorHandling.make(~msg=message, ~logger)->Error
-    | exception exn =>
-      exn->ErrorHandling.make(~msg="Failed writing batch to database", ~logger)->Error
-    | () => {
-        let elapsedTimeAfterDbWrite =
-          timeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
-        let loaderDuration = elapsedTimeAfterLoaders
-        let handlerDuration = elapsedTimeAfterProcessing - loaderDuration
-        let dbWriteDuration = elapsedTimeAfterDbWrite - elapsedTimeAfterProcessing
-        registerProcessEventBatchMetrics(
-          ~logger,
-          ~loadDuration=loaderDuration,
-          ~handlerDuration,
-          ~dbWriteDuration,
-        )
-        if Env.Benchmark.shouldSaveData {
-          Benchmark.addEventProcessing(
-            ~batchSize,
+    let rec executeBatch = async (~escapeTables=?) => {
+      switch await Db.sql->IO.executeBatch(~inMemoryStore, ~isInReorgThreshold, ~config, ~escapeTables?) {
+      | exception Persistence.StorageError({message, reason}) =>
+        reason->ErrorHandling.make(~msg=message, ~logger)->Error
+
+      | exception PgStorage.PgEncodingError({table}) =>
+        let escapeTables = switch escapeTables {
+        | Some(set) => set
+        | None => Utils.Set.make()
+        }
+        let _ = escapeTables->Utils.Set.add(table)
+        // Retry with specifying which tables to escape.
+        await executeBatch(~escapeTables)
+      | exception exn =>
+        exn->ErrorHandling.make(~msg="Failed writing batch to database", ~logger)->Error
+      | () => {
+          let elapsedTimeAfterDbWrite =
+            timeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
+          let loaderDuration = elapsedTimeAfterLoaders
+          let handlerDuration = elapsedTimeAfterProcessing - loaderDuration
+          let dbWriteDuration = elapsedTimeAfterDbWrite - elapsedTimeAfterProcessing
+          registerProcessEventBatchMetrics(
+            ~logger,
             ~loadDuration=loaderDuration,
             ~handlerDuration,
             ~dbWriteDuration,
-            ~totalTimeElapsed=elapsedTimeAfterDbWrite,
           )
+          if Env.Benchmark.shouldSaveData {
+            Benchmark.addEventProcessing(
+              ~batchSize,
+              ~loadDuration=loaderDuration,
+              ~handlerDuration,
+              ~dbWriteDuration,
+              ~totalTimeElapsed=elapsedTimeAfterDbWrite,
+            )
+          }
+          Ok()
         }
-        Ok()
       }
     }
+
+    await executeBatch()
   } catch {
   | ProcessingError({message, exn, eventItem}) =>
     exn

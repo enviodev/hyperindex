@@ -139,7 +139,7 @@ let makeLoadByIdsQuery = (~pgSchema, ~tableName) => {
 
 let makeInsertUnnestSetQuery = (~pgSchema, ~table: Table.table, ~itemSchema, ~isRawEvents) => {
   let {quotedFieldNames, quotedNonPrimaryFieldNames, arrayFieldTypes} =
-    table->Table.toSqlParams(~schema=itemSchema)
+    table->Table.toSqlParams(~schema=itemSchema, ~pgSchema)
 
   let primaryKeyFieldNames = Table.getPrimaryKeyFieldNames(table)
 
@@ -168,7 +168,8 @@ SELECT * FROM unnest(${arrayFieldTypes
 }
 
 let makeInsertValuesSetQuery = (~pgSchema, ~table: Table.table, ~itemSchema, ~itemsCount) => {
-  let {quotedFieldNames, quotedNonPrimaryFieldNames} = table->Table.toSqlParams(~schema=itemSchema)
+  let {quotedFieldNames, quotedNonPrimaryFieldNames} =
+    table->Table.toSqlParams(~schema=itemSchema, ~pgSchema)
 
   let primaryKeyFieldNames = Table.getPrimaryKeyFieldNames(table)
   let fieldsCount = quotedFieldNames->Array.length
@@ -221,7 +222,7 @@ let eventSyncStateTableName = "event_sync_state"
 let maxItemsPerQuery = 500
 
 let makeTableBatchSetQuery = (~pgSchema, ~table: Table.table, ~itemSchema: S.t<'item>) => {
-  let {dbSchema, hasArrayField} = table->Table.toSqlParams(~schema=itemSchema)
+  let {dbSchema, hasArrayField} = table->Table.toSqlParams(~schema=itemSchema, ~pgSchema)
   let isRawEvents = table.tableName === rawEventsTableName
 
   // Should experiment how much it'll affect performance
@@ -275,6 +276,35 @@ let chunkArray = (arr: array<'a>, ~chunkSize) => {
   }
   chunks
 }
+
+let removeInvalidUtf8InPlace = entities =>
+  entities->Js.Array2.forEach(item => {
+    let dict = item->(Utils.magic: 'a => dict<unknown>)
+    dict->Utils.Dict.forEachWithKey((key, value) => {
+      if value->Js.typeof === "string" {
+        let value = value->(Utils.magic: unknown => string)
+        // We mutate here, since we don't care
+        // about the original value with \x00 anyways.
+        //
+        // This is unsafe, but we rely that it'll use
+        // the mutated reference on retry.
+        // TODO: Test it properly after we start using
+        // in-memory PGLite for indexer test framework.
+        dict->Js.Dict.set(
+          key,
+          value
+          ->Utils.String.replaceAll("\x00", "")
+          ->(Utils.magic: string => unknown),
+        )
+      }
+    })
+  })
+
+let pgEncodingErrorSchema = S.object(s =>
+  s.tag("message", `invalid byte sequence for encoding "UTF8": 0x00`)
+)
+
+exception PgEncodingError({table: Table.table})
 
 // WeakMap for caching table batch set queries
 let setQueryCache = Utils.WeakMap.make()
@@ -339,6 +369,36 @@ let setOrThrow = async (sql, ~items, ~table: Table.table, ~itemSchema, ~pgSchema
       )
     }
   }
+}
+
+let setEntityHistoryOrThrow = (
+  sql,
+  ~entityHistory: EntityHistory.t<'entity>,
+  ~rows: array<EntityHistory.historyRow<'entity>>,
+  ~shouldCopyCurrentEntity=?,
+  ~shouldRemoveInvalidUtf8=false,
+) => {
+  rows
+  ->Belt.Array.map(historyRow => {
+    let row = historyRow->S.reverseConvertToJsonOrThrow(entityHistory.schema)
+    if shouldRemoveInvalidUtf8 {
+      [row]->removeInvalidUtf8InPlace
+    }
+    entityHistory.insertFn(
+      sql,
+      row,
+      ~shouldCopyCurrentEntity=switch shouldCopyCurrentEntity {
+      | Some(v) => v
+      | None => {
+          let containsRollbackDiffChange =
+            historyRow.containsRollbackDiffChange->Belt.Option.getWithDefault(false)
+          !containsRollbackDiffChange
+        }
+      },
+    )
+  })
+  ->Promise.all
+  ->(Utils.magic: promise<array<unit>> => promise<unit>)
 }
 
 type schemaTableName = {

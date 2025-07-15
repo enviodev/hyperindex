@@ -70,8 +70,7 @@ module Benchmark = {
       | _ => !tuiOffEnvVar
       }
 
-    let shouldSaveData = self =>
-      self->shouldSavePrometheus || self->shouldSaveJsonFile
+    let shouldSaveData = self => self->shouldSavePrometheus || self->shouldSaveJsonFile
   }
 
   let saveDataStrategy =
@@ -95,7 +94,15 @@ module Benchmark = {
 let logStrategy =
   envSafe->EnvSafe.get(
     "LOG_STRATEGY",
-    S.enum([Logging.EcsFile, EcsConsole, EcsConsoleMultistream, FileOnly, ConsoleRaw, ConsolePretty, Both]),
+    S.enum([
+      Logging.EcsFile,
+      EcsConsole,
+      EcsConsoleMultistream,
+      FileOnly,
+      ConsoleRaw,
+      ConsolePretty,
+      Both,
+    ]),
     ~fallback=ConsolePretty,
   )
 
@@ -120,7 +127,10 @@ module Db = {
 }
 
 module Hasura = {
-  let responseLimit = envSafe->EnvSafe.get("HASURA_RESPONSE_LIMIT", S.option(S.int))
+  let responseLimit = switch envSafe->EnvSafe.get("ENVIO_HASURA_RESPONSE_LIMIT", S.option(S.int)) {
+  | Some(_) as s => s
+  | None => envSafe->EnvSafe.get("HASURA_RESPONSE_LIMIT", S.option(S.int))
+  }
 
   let graphqlEndpoint =
     envSafe->EnvSafe.get(
@@ -133,7 +143,8 @@ module Hasura = {
 
   let secret = envSafe->EnvSafe.get("HASURA_GRAPHQL_ADMIN_SECRET", S.string, ~devFallback="testing")
 
-  let aggregateEntities = envSafe->EnvSafe.get("ENVIO_HASURA_PUBLIC_AGGREGATE", S.array(S.string), ~fallback=[])
+  let aggregateEntities =
+    envSafe->EnvSafe.get("ENVIO_HASURA_PUBLIC_AGGREGATE", S.array(S.string), ~fallback=[])
 }
 
 module Configurable = {
