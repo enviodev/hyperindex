@@ -139,7 +139,7 @@ let makeLoadByIdsQuery = (~pgSchema, ~tableName) => {
 
 let makeInsertUnnestSetQuery = (~pgSchema, ~table: Table.table, ~itemSchema, ~isRawEvents) => {
   let {quotedFieldNames, quotedNonPrimaryFieldNames, arrayFieldTypes} =
-    table->Table.toSqlParams(~schema=itemSchema)
+    table->Table.toSqlParams(~schema=itemSchema, ~pgSchema)
 
   let primaryKeyFieldNames = Table.getPrimaryKeyFieldNames(table)
 
@@ -168,7 +168,8 @@ SELECT * FROM unnest(${arrayFieldTypes
 }
 
 let makeInsertValuesSetQuery = (~pgSchema, ~table: Table.table, ~itemSchema, ~itemsCount) => {
-  let {quotedFieldNames, quotedNonPrimaryFieldNames} = table->Table.toSqlParams(~schema=itemSchema)
+  let {quotedFieldNames, quotedNonPrimaryFieldNames} =
+    table->Table.toSqlParams(~schema=itemSchema, ~pgSchema)
 
   let primaryKeyFieldNames = Table.getPrimaryKeyFieldNames(table)
   let fieldsCount = quotedFieldNames->Array.length
@@ -221,7 +222,7 @@ let eventSyncStateTableName = "event_sync_state"
 let maxItemsPerQuery = 500
 
 let makeTableBatchSetQuery = (~pgSchema, ~table: Table.table, ~itemSchema: S.t<'item>) => {
-  let {dbSchema, hasArrayField} = table->Table.toSqlParams(~schema=itemSchema)
+  let {dbSchema, hasArrayField} = table->Table.toSqlParams(~schema=itemSchema, ~pgSchema)
   let isRawEvents = table.tableName === rawEventsTableName
 
   // Should experiment how much it'll affect performance

@@ -185,7 +185,7 @@ type sqlParams<'entity> = {
   hasArrayField: bool,
 }
 
-let toSqlParams = (table: table, ~schema) => {
+let toSqlParams = (table: table, ~schema, ~pgSchema) => {
   let quotedFieldNames = []
   let quotedNonPrimaryFieldNames = []
   let arrayFieldTypes = []
@@ -240,7 +240,7 @@ let toSqlParams = (table: table, ~schema) => {
           switch field {
           | Field(f) =>
             switch f.fieldType {
-            | Custom(fieldType) => `${(Text :> string)}[]::${(fieldType :> string)}`
+            | Custom(fieldType) => `${(Text :> string)}[]::"${pgSchema}".${(fieldType :> string)}`
             | Boolean => `${(Integer :> string)}[]::${(f.fieldType :> string)}`
             | fieldType => (fieldType :> string)
             }
