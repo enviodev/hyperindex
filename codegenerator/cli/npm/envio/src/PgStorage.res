@@ -128,6 +128,20 @@ GRANT ALL ON SCHEMA "${pgSchema}" TO public;`,
     })
   })
 
+  // Add cache row count function
+  functionsQuery :=
+    functionsQuery.contents ++
+    "\n" ++
+    `CREATE OR REPLACE FUNCTION get_cache_row_count(table_name text) 
+   RETURNS integer AS $$
+   DECLARE
+     result integer;
+   BEGIN
+     EXECUTE format('SELECT COUNT(*) FROM "${pgSchema}".%I', table_name) INTO result;
+     RETURN result;
+   END;
+   $$ LANGUAGE plpgsql;`
+
   [query.contents]->Js.Array2.concat(
     functionsQuery.contents !== "" ? [functionsQuery.contents] : [],
   )
@@ -430,11 +444,11 @@ type schemaCacheTableInfo = {
 
 let makeSchemaCacheTableInfoQuery = (~pgSchema) => {
   `SELECT 
-    table_name,
-    (SELECT COUNT(*) FROM "${pgSchema}"."\" || table_name || \"")::integer as count
-   FROM information_schema.tables 
-   WHERE table_schema = '${pgSchema}' 
-   AND table_name LIKE '${cacheTablePrefix}%';`
+    t.table_name,
+    get_cache_row_count(t.table_name) as count
+   FROM information_schema.tables t
+   WHERE t.table_schema = '${pgSchema}' 
+   AND t.table_name LIKE '${cacheTablePrefix}%';`
 }
 
 let make = (
@@ -660,6 +674,8 @@ let make = (
       | None => "docker-compose exec -T -u postgres envio-postgres psql"
       }
 
+      // docker-compose exec -T -u postgres envio-postgres psql -d envio-dev -c 'COPY "public"."envio_effect_getTokenMetadata" TO STDOUT (FORMAT binary);' > ../.envio/cache/getTokenMetadata.bin
+
       let promises = cacheTableInfo->Js.Array2.map(({tableName}) => {
         let cacheName = tableName->Js.String2.sliceToEnd(~from=cacheTablePrefixLength)
         let outputFile = NodeJs.Path.join(cacheDir, cacheName ++ ".bin")->NodeJs.Path.toString
@@ -731,6 +747,7 @@ let make = (
     let cacheTableInfo: array<schemaCacheTableInfo> =
       await sql->Postgres.unsafe(makeSchemaCacheTableInfoQuery(~pgSchema))
 
+    Js.log2("Restored cache", cacheTableInfo)
     switch onNewTables {
     | Some(onNewTables) =>
       await onNewTables(
