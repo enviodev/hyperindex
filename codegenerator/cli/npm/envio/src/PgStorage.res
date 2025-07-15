@@ -70,14 +70,14 @@ let makeInitializeTransaction = (
   let derivedSchema = Schema.make(allEntityTables)
 
   let query = ref(
-    // Hosted Service already have a DB with the created public schema
-    // It also doesn't allow to simply drop it,
-    // so we reuse an existing schema when it's empty (our case)
     (
       reuseExistingPgSchema
+      // Hosted Service already have a DB with the created public schema
+      // It also doesn't allow to simply drop it,
+      // so we reuse an existing schema when it's empty (our case)
         ? ""
         : `DROP SCHEMA IF EXISTS "${pgSchema}" CASCADE;
-CREATE SCHEMA "${pgSchema}";`
+CREATE SCHEMA "${pgSchema}";\n`
     ) ++
     `GRANT ALL ON SCHEMA "${pgSchema}" TO "${pgUser}";
 GRANT ALL ON SCHEMA "${pgSchema}" TO public;`,
