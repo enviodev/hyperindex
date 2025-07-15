@@ -327,7 +327,7 @@ pub enum Network {
     #[subenum(GraphNetwork, NetworkWithExplorer)]
     ScrollSepolia = 534351,
 
-    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
+    #[subenum(HypersyncNetwork, NetworkWithExplorer, GraphNetwork)]
     Sepolia = 11155111,
 
     #[subenum(HypersyncNetwork, NetworkWithExplorer)]
