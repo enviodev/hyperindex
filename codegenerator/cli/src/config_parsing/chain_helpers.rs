@@ -109,6 +109,12 @@ pub enum Network {
     CeloBaklava = 62320,
 
     #[subenum(HypersyncNetwork)]
+    ChainwebTestnet20 = 5920,
+
+    #[subenum(HypersyncNetwork)]
+    ChainwebTestnet21 = 5921,
+
+    #[subenum(HypersyncNetwork)]
     Chiliz = 88888,
 
     CitreaDevnet = 62298,
@@ -284,6 +290,9 @@ pub enum Network {
 
     PharosDevnet = 50002,
 
+    #[subenum(HypersyncNetwork)]
+    Plume = 98866,
+
     #[subenum(GraphNetwork, NetworkWithExplorer)]
     PoaCore = 99,
 
@@ -441,6 +450,8 @@ impl Network {
             | Network::Celo
             | Network::CeloAlfajores
             | Network::CeloBaklava
+            | Network::ChainwebTestnet20
+            | Network::ChainwebTestnet21
             | Network::Chiliz
             | Network::Clover
             | Network::Crab
@@ -483,6 +494,7 @@ impl Network {
             | Network::Polygon
             | Network::PolygonZkevm
             | Network::PolygonZkevmTestnet
+            | Network::Plume
             | Network::Rinkeby
             | Network::Rsk
             | Network::Scroll
@@ -588,7 +600,8 @@ impl HypersyncNetwork {
             | OptimismSepolia | Fuji | ArbitrumSepolia | Fraxtal | Soneium | BaseSepolia
             | MevCommit | Merlin | Mode | MoonbaseAlpha | XdcTestnet | Morph | Harmony
             | Saakuru | Cyber | Superseed | MegaethTestnet | Sonic | Worldchain | Sophon
-            | Fantom | Sepolia | Rsk | Chiliz | Lisk | Hyperliquid | Swell | Moonbeam => Stone,
+            | Fantom | Sepolia | Rsk | Chiliz | Lisk | Hyperliquid | Swell | Moonbeam
+            | ChainwebTestnet20 | ChainwebTestnet21 | Plume => Stone,
         }
     }
 

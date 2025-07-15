@@ -58,6 +58,7 @@ let makeInitializeTransaction = (
   ~generalTables=[],
   ~entities=[],
   ~enums=[],
+  ~reuseExistingPgSchema=false,
 ) => {
   let allTables = generalTables->Array.copy
   let allEntityTables = []
@@ -69,9 +70,16 @@ let makeInitializeTransaction = (
   let derivedSchema = Schema.make(allEntityTables)
 
   let query = ref(
-    `DROP SCHEMA IF EXISTS "${pgSchema}" CASCADE;
-CREATE SCHEMA "${pgSchema}";
-GRANT ALL ON SCHEMA "${pgSchema}" TO "${pgUser}";
+    (
+      reuseExistingPgSchema
+      // Hosted Service already have a DB with the created public schema
+      // It also doesn't allow to simply drop it,
+      // so we reuse an existing schema when it's empty (our case)
+        ? ""
+        : `DROP SCHEMA IF EXISTS "${pgSchema}" CASCADE;
+CREATE SCHEMA "${pgSchema}";\n`
+    ) ++
+    `GRANT ALL ON SCHEMA "${pgSchema}" TO "${pgUser}";
 GRANT ALL ON SCHEMA "${pgSchema}" TO public;`,
   )
 
@@ -452,7 +460,14 @@ let make = (
       )
     }
 
-    let queries = makeInitializeTransaction(~pgSchema, ~pgUser, ~generalTables, ~entities, ~enums)
+    let queries = makeInitializeTransaction(
+      ~pgSchema,
+      ~pgUser,
+      ~generalTables,
+      ~entities,
+      ~enums,
+      ~reuseExistingPgSchema=schemaTableNames->Utils.Array.isEmpty,
+    )
     // Execute all queries within a single transaction for integrity
     let _ = await sql->Postgres.beginSql(sql => {
       queries->Js.Array2.map(query => sql->Postgres.unsafe(query))
