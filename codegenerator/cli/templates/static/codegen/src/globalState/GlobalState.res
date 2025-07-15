@@ -862,13 +862,13 @@ let injectedTaskReducer = (
     switch shouldExit {
     | ExitWithSuccess =>
       updateChainMetadataTable(chainManager, ~throttler=writeThrottlers.chainMetaData)
-      ->Promise.then(_ => state.config.persistence.storage.dumpCache())
+      ->Promise.then(_ => state.config.persistence.storage.dumpEffectCache())
       ->Promise.thenResolve(_ => dispatchAction(SuccessExit))
       ->ignore
     | NoExit | NoExitWithCacheDump =>
       updateChainMetadataTable(chainManager, ~throttler=writeThrottlers.chainMetaData)->ignore
       if shouldExit === NoExitWithCacheDump {
-        await state.config.persistence.storage.dumpCache()
+        await state.config.persistence.storage.dumpEffectCache()
       }
     }
   | NextQuery(chainCheck) =>

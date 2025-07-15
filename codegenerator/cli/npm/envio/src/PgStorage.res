@@ -418,11 +418,23 @@ let makeSchemaTableNamesQuery = (~pgSchema) => {
   `SELECT table_name FROM information_schema.tables WHERE table_schema = '${pgSchema}';`
 }
 
-let cacheTablePrefix = "envio_cache_"
+let cacheTablePrefix = "envio_effect_"
 let cacheTablePrefixLength = cacheTablePrefix->String.length
 
-let makeSchemaCacheTableNamesQuery = (~pgSchema) => {
-  `SELECT table_name FROM information_schema.tables WHERE table_schema = '${pgSchema}' AND table_name LIKE '${cacheTablePrefix}%';`
+type schemaCacheTableInfo = {
+  @as("table_name")
+  tableName: string,
+  @as("count")
+  count: int,
+}
+
+let makeSchemaCacheTableInfoQuery = (~pgSchema) => {
+  `SELECT 
+    table_name,
+    (SELECT COUNT(*) FROM "${pgSchema}"."\" || table_name || \"")::integer as count
+   FROM information_schema.tables 
+   WHERE table_schema = '${pgSchema}' 
+   AND table_name LIKE '${cacheTablePrefix}%';`
 }
 
 let make = (
@@ -575,19 +587,18 @@ let make = (
     )
   }
 
-  let setCacheOrThrow = async (
-    type item,
-    ~name: string,
-    ~keys: array<string>,
-    ~values: array<item>,
-    ~valueSchema: S.t<item>,
+  let setEffectCacheOrThrow = async (
+    ~effectName: string,
+    ~ids: array<string>,
+    ~outputs: array<Internal.effectOutput>,
+    ~outputSchema: S.t<Internal.effectOutput>,
     ~initialize: bool,
   ) => {
     let table = Table.mkTable(
-      cacheTablePrefix ++ name,
+      cacheTablePrefix ++ effectName,
       ~fields=[
         Table.mkField("id", Text, ~fieldSchema=S.string, ~isPrimaryKey=true),
-        Table.mkField("value", JsonB, ~fieldSchema=valueSchema),
+        Table.mkField("output", JsonB, ~fieldSchema=outputSchema),
       ],
       ~compositeIndices=[],
     )
@@ -601,11 +612,11 @@ let make = (
     }
 
     let items = []
-    for idx in 0 to values->Array.length - 1 {
+    for idx in 0 to outputs->Array.length - 1 {
       items
       ->Js.Array2.push({
-        "id": keys[idx],
-        "value": values[idx],
+        "id": ids[idx],
+        "output": outputs[idx],
       })
       ->ignore
     }
@@ -616,17 +627,19 @@ let make = (
       ~itemSchema=S.schema(s =>
         {
           "id": s.matches(S.string),
-          "value": s.matches(valueSchema),
+          "output": s.matches(outputSchema),
         }
       ),
     )
   }
 
-  let dumpCache = async () => {
-    let cacheTableNames: array<schemaTableName> =
-      await sql->Postgres.unsafe(makeSchemaCacheTableNamesQuery(~pgSchema))
+  let dumpEffectCache = async () => {
+    let cacheTableInfo: array<schemaCacheTableInfo> =
+      (await sql
+      ->Postgres.unsafe(makeSchemaCacheTableInfoQuery(~pgSchema)))
+      ->Js.Array2.filter(i => i.count > 0)
 
-    if cacheTableNames->Utils.Array.notEmpty {
+    if cacheTableInfo->Utils.Array.notEmpty {
       // Create .envio/cache directory if it doesn't exist
       let cacheDir = NodeJs.Path.resolve(["..", ".envio", "cache"])
       try {
@@ -647,10 +660,8 @@ let make = (
       | None => "docker-compose exec -T -u postgres envio-postgres psql"
       }
 
-      let cacheNames = []
-      let promises = cacheTableNames->Js.Array2.map(({tableName}) => {
+      let promises = cacheTableInfo->Js.Array2.map(({tableName}) => {
         let cacheName = tableName->Js.String2.sliceToEnd(~from=cacheTablePrefixLength)
-        cacheNames->Js.Array2.push(cacheName)->ignore
         let outputFile = NodeJs.Path.join(cacheDir, cacheName ++ ".bin")->NodeJs.Path.toString
 
         // We use -d envio-dev to specify the database name
@@ -662,13 +673,19 @@ let make = (
         NodeJs.ChildProcess.exec(command, {})
       })
 
-      Logging.info(`Dumping cache: ${cacheNames->Js.Array2.joinWith(", ")}`)
+      Logging.info(
+        `Dumping cache: ${cacheTableInfo
+          ->Js.Array2.map(({tableName, count}) =>
+            tableName ++ " (" ++ count->Belt.Int.toString ++ " rows)"
+          )
+          ->Js.Array2.joinWith(", ")}`,
+      )
       let _ = await promises->Promise.all
       Logging.info(`Successfully dumped cache to ${cacheDir->NodeJs.Path.toString}`)
     }
   }
 
-  let restoreCache = async () => {
+  let restoreEffectCache = async () => {
     // Try to restore cache tables from binary files
     let cacheDir = NodeJs.Path.resolve(["..", ".envio", "cache"])
 
@@ -690,7 +707,7 @@ let make = (
           cacheTablePrefix ++ cacheName,
           ~fields=[
             Table.mkField("id", Text, ~fieldSchema=S.string, ~isPrimaryKey=true),
-            Table.mkField("value", JsonB, ~fieldSchema=S.json(~validate=false)),
+            Table.mkField("output", JsonB, ~fieldSchema=S.json(~validate=false)),
           ],
           ~compositeIndices=[],
         )
@@ -711,34 +728,25 @@ let make = (
       })
       ->Promise.all
 
-    let cacheTableNames: array<schemaTableName> =
-      await sql->Postgres.unsafe(makeSchemaCacheTableNamesQuery(~pgSchema))
+    let cacheTableInfo: array<schemaCacheTableInfo> =
+      await sql->Postgres.unsafe(makeSchemaCacheTableInfoQuery(~pgSchema))
 
     switch onNewTables {
     | Some(onNewTables) =>
       await onNewTables(
-        ~tableNames=cacheTableNames->Js.Array2.map(schemaTableName => {
-          schemaTableName.tableName
+        ~tableNames=cacheTableInfo->Js.Array2.map(info => {
+          info.tableName
         }),
       )
     | None => ()
     }
 
-    let cache = Js.Dict.empty()
-    cacheTableNames->Js.Array2.forEach(schemaTableName => {
-      let cacheName = schemaTableName.tableName->Js.String2.sliceToEnd(~from=cacheTablePrefixLength)
-      cache->Js.Dict.set(
-        cacheName,
-        (
-          {
-            // Remove the prefix from the table name
-            name: schemaTableName.tableName->Js.String2.sliceToEnd(~from=cacheTablePrefixLength),
-            size: 0,
-          }: Persistence.cacheRecord
-        ),
-      )
+    cacheTableInfo->Js.Array2.map((info): Persistence.effectCacheRecord => {
+      {
+        effectName: info.tableName->Js.String2.sliceToEnd(~from=cacheTablePrefixLength),
+        count: info.count,
+      }
     })
-    cache
   }
 
   {
@@ -747,8 +755,8 @@ let make = (
     loadByFieldOrThrow,
     loadByIdsOrThrow,
     setOrThrow,
-    setCacheOrThrow,
-    dumpCache,
-    restoreCache,
+    setEffectCacheOrThrow,
+    dumpEffectCache,
+    restoreEffectCache,
   }
 }

@@ -7,11 +7,10 @@
 
 // The type reflects an cache table in the db
 // It might be present even if the effect is not used in the application
-type cacheRecord = {
-  // Name of the cache (usuall effect name without "envio_cache_" prefix)
-  name: string,
+type effectCacheRecord = {
+  effectName: string,
   // Number of rows in the table
-  mutable size: int,
+  mutable count: int,
 }
 
 type operator = [#">" | #"="]
@@ -49,15 +48,15 @@ type storage = {
     ~itemSchema: S.t<'item>,
   ) => promise<unit>,
   @raises("StorageError")
-  setCacheOrThrow: 'item. (
-    ~name: string,
-    ~keys: array<string>,
-    ~values: array<'item>,
-    ~valueSchema: S.t<'item>,
+  setEffectCacheOrThrow: (
+    ~effectName: string,
+    ~ids: array<string>,
+    ~outputs: array<Internal.effectOutput>,
+    ~outputSchema: S.t<Internal.effectOutput>,
     ~initialize: bool,
   ) => promise<unit>,
-  dumpCache: unit => promise<unit>,
-  restoreCache: unit => promise<dict<cacheRecord>>,
+  dumpEffectCache: unit => promise<unit>,
+  restoreEffectCache: unit => promise<array<effectCacheRecord>>,
 }
 
 exception StorageError({message: string, reason: exn})
@@ -65,7 +64,7 @@ exception StorageError({message: string, reason: exn})
 type storageStatus =
   | Unknown
   | Initializing(promise<unit>)
-  | Ready({cleanRun: bool, cache: dict<cacheRecord>})
+  | Ready({cleanRun: bool, cache: dict<effectCacheRecord>})
 
 type t = {
   userEntities: array<Internal.entityConfig>,
@@ -104,54 +103,67 @@ let make = (
   }
 }
 
-let init = async (persistence, ~reset=false) => {
-  try {
-    let shouldRun = switch persistence.storageStatus {
-    | Unknown => true
-    | Initializing(promise) => {
-        await promise
-        reset
-      }
-    | Ready(_) => reset
-    }
-    if shouldRun {
-      let resolveRef = ref(%raw(`null`))
-      let promise = Promise.make((resolve, _) => {
-        resolveRef := resolve
-      })
-      persistence.storageStatus = Initializing(promise)
-      if reset || !(await persistence.storage.isInitialized()) {
-        Logging.info(`Initializing the indexer storage...`)
+let init = {
+  let loadInitialCache = async persistence => {
+    let effectCacheRecords = await persistence.storage.restoreEffectCache()
+    let cache = Js.Dict.empty()
+    effectCacheRecords->Js.Array2.forEach(record => {
+      Prometheus.EffectCacheCount.set(~count=record.count, ~effectName=record.effectName)
+      cache->Js.Dict.set(record.effectName, record)
+    })
+    cache
+  }
 
-        await persistence.storage.initialize(
-          ~entities=persistence.allEntities,
-          ~generalTables=persistence.staticTables,
-          ~enums=persistence.allEnums,
-        )
-
-        Logging.info(`The indexer storage is ready. Restoring cache...`)
-        persistence.storageStatus = Ready({
-          cleanRun: true,
-          cache: await persistence.storage.restoreCache(),
-        })
-      } else if (
-        // In case of a race condition,
-        // we want to set the initial status to Ready only once.
-        switch persistence.storageStatus {
-        | Initializing(_) => true
-        | _ => false
+  async (persistence, ~reset=false) => {
+    try {
+      let shouldRun = switch persistence.storageStatus {
+      | Unknown => true
+      | Initializing(promise) => {
+          await promise
+          reset
         }
-      ) {
-        Logging.info(`The indexer storage is ready. Restoring cache...`)
-        persistence.storageStatus = Ready({
-          cleanRun: false,
-          cache: await persistence.storage.restoreCache(),
-        })
+      | Ready(_) => reset
       }
-      resolveRef.contents()
+      if shouldRun {
+        let resolveRef = ref(%raw(`null`))
+        let promise = Promise.make((resolve, _) => {
+          resolveRef := resolve
+        })
+        persistence.storageStatus = Initializing(promise)
+        if reset || !(await persistence.storage.isInitialized()) {
+          Logging.info(`Initializing the indexer storage...`)
+
+          await persistence.storage.initialize(
+            ~entities=persistence.allEntities,
+            ~generalTables=persistence.staticTables,
+            ~enums=persistence.allEnums,
+          )
+
+          Logging.info(`The indexer storage is ready. Restoring cache...`)
+          persistence.storageStatus = Ready({
+            cleanRun: true,
+            cache: await loadInitialCache(persistence),
+          })
+        } else if (
+          // In case of a race condition,
+          // we want to set the initial status to Ready only once.
+          switch persistence.storageStatus {
+          | Initializing(_) => true
+          | _ => false
+          }
+        ) {
+          Logging.info(`The indexer storage is ready. Restoring cache...`)
+          persistence.storageStatus = Ready({
+            cleanRun: false,
+            cache: await loadInitialCache(persistence),
+          })
+        }
+        resolveRef.contents()
+      }
+    } catch {
+    | exn =>
+      exn->ErrorHandling.mkLogAndRaise(~msg=`EE800: Failed to initialize the indexer storage.`)
     }
-  } catch {
-  | exn => exn->ErrorHandling.mkLogAndRaise(~msg=`EE800: Failed to initialize the indexer storage.`)
   }
 }
 
@@ -164,24 +176,25 @@ let getInitializedStorageOrThrow = persistence => {
   }
 }
 
-let setCache = async (persistence, ~keys, ~values, ~valueSchema, ~name) => {
+let setEffectCacheOrThrow = async (persistence, ~effectName, ~ids, ~outputs, ~outputSchema) => {
   switch persistence.storageStatus {
   | Unknown
   | Initializing(_) =>
     Js.Exn.raiseError(`Failed to access the indexer storage. The Persistence layer is not initialized.`)
   | Ready({cache}) => {
       let storage = persistence.storage
-      let cacheRecord = switch cache->Utils.Dict.dangerouslyGetNonOption(name) {
+      let effectCacheRecord = switch cache->Utils.Dict.dangerouslyGetNonOption(effectName) {
       | Some(c) => c
       | None => {
-          let c = {name, size: 0}
-          cache->Js.Dict.set(name, c)
+          let c = {effectName, count: 0}
+          cache->Js.Dict.set(effectName, c)
           c
         }
       }
-      let initialize = cacheRecord.size === 0
-      await storage.setCacheOrThrow(~name, ~keys, ~values, ~valueSchema, ~initialize)
-      cacheRecord.size = cacheRecord.size + keys->Js.Array2.length
+      let initialize = effectCacheRecord.count === 0
+      await storage.setEffectCacheOrThrow(~effectName, ~ids, ~outputs, ~outputSchema, ~initialize)
+      effectCacheRecord.count = effectCacheRecord.count + ids->Js.Array2.length
+      Prometheus.EffectCacheCount.set(~count=effectCacheRecord.count, ~effectName)
     }
   }
 }

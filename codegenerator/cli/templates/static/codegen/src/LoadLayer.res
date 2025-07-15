@@ -80,10 +80,10 @@ let loadEffect = (
       let dbEntities = try {
         await (persistence->Persistence.getInitializedStorageOrThrow).loadByIdsOrThrow(
           ~table=Table.mkTable(
-            `envio_cache_${effect.name}`,
+            `envio_effect_${effect.name}`,
             ~fields=[
               Table.mkField("id", Text, ~fieldSchema=S.string, ~isPrimaryKey=true),
-              Table.mkField("value", JsonB, ~fieldSchema=effect.output),
+              Table.mkField("output", JsonB, ~fieldSchema=effect.output),
             ],
             ~compositeIndices=[],
           ),
@@ -91,7 +91,7 @@ let loadEffect = (
             S.schema(s =>
               {
                 "id": s.matches(S.string),
-                "value": s.matches(effect.output),
+                "output": s.matches(effect.output),
               }
             ),
           ),
@@ -104,7 +104,7 @@ let loadEffect = (
 
       dbEntities->Js.Array2.forEach(entity => {
         idsFromCache->Utils.Set.add(entity["id"])->ignore
-        inMemTable->InMemoryTable.setByHash(entity["id"], entity["value"])
+        inMemTable->InMemoryTable.setByHash(entity["id"], entity["output"])
       })
     }
 
@@ -113,14 +113,14 @@ let loadEffect = (
       effect.callsCount = effect.callsCount + remainingCallsCount
       Prometheus.EffectCallsCount.set(~callsCount=effect.callsCount, ~effectName=effect.name)
 
-      let keys = []
+      let ids = []
       let promise =
         args
         ->Belt.Array.keepMapU((arg: Internal.effectArgs) => {
           if idsFromCache->Utils.Set.has(arg.cacheKey) {
             None
           } else {
-            keys->Array.push(arg.cacheKey)->ignore
+            ids->Array.push(arg.cacheKey)->ignore
             Some(
               effect.handler(arg)->Promise.thenResolve(output => {
                 inMemTable->InMemoryTable.setByHash(arg.cacheKey, output)
@@ -134,11 +134,11 @@ let loadEffect = (
       await (
         if effect.cache {
           promise->Promise.then(outputs => {
-            persistence->Persistence.setCache(
-              ~keys,
-              ~values=outputs,
-              ~name=effect.name,
-              ~valueSchema=effect.output,
+            persistence->Persistence.setEffectCacheOrThrow(
+              ~effectName=effect.name,
+              ~ids,
+              ~outputs,
+              ~outputSchema=effect.output,
             )
           })
         } else {

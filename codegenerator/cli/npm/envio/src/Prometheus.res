@@ -590,3 +590,15 @@ module EffectCallsCount = {
     gauge->SafeGauge.handleInt(~labels=effectName, ~value=callsCount)
   }
 }
+
+module EffectCacheCount = {
+  let gauge = SafeGauge.makeOrThrow(
+    ~name="envio_effect_cache_count",
+    ~help="The number of items in the effect cache.",
+    ~labelSchema=effectLabelsSchema,
+  )
+
+  let set = (~count, ~effectName) => {
+    gauge->SafeGauge.handleInt(~labels=effectName, ~value=count)
+  }
+}
