@@ -148,28 +148,6 @@ type t<'entity> = {
   insertFn: (Postgres.sql, Js.Json.t, ~shouldCopyCurrentEntity: bool) => promise<unit>,
 }
 
-let insertRow = (
-  self: t<'entity>,
-  ~sql,
-  ~historyRow: historyRow<'entity>,
-  ~shouldCopyCurrentEntity,
-) => {
-  let row = historyRow->S.reverseConvertToJsonOrThrow(self.schema)
-  self.insertFn(sql, row, ~shouldCopyCurrentEntity)
-}
-
-let batchInsertRows = (self: t<'entity>, ~sql, ~rows: array<historyRow<'entity>>) => {
-  rows
-  ->Belt.Array.map(historyRow => {
-    let containsRollbackDiffChange =
-      historyRow.containsRollbackDiffChange->Belt.Option.getWithDefault(false)
-    let shouldCopyCurrentEntity = !containsRollbackDiffChange
-    self->insertRow(~sql, ~historyRow, ~shouldCopyCurrentEntity)
-  })
-  ->Promise.all
-  ->Promise.thenResolve(_ => ())
-}
-
 type entityInternal
 
 external castInternal: t<'entity> => t<entityInternal> = "%identity"

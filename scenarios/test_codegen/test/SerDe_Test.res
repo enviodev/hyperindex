@@ -75,7 +75,10 @@ describe("SerDe Test", () => {
       )
 
     let setHistory = (sql, row) =>
-      Entities.EntityWithAllTypes.entityHistory->EntityHistory.batchInsertRows(~sql, ~rows=[row])
+      sql->PgStorage.setEntityHistoryOrThrow(
+        ~entityHistory=Entities.EntityWithAllTypes.entityHistory,
+        ~rows=[row],
+      )
 
     try await Db.sql->setHistory(entityHistoryItem) catch {
     | exn =>
@@ -187,8 +190,8 @@ SELECT * FROM unnest($1::NUMERIC[],$2::NUMERIC[],$3::INTEGER[]::BOOLEAN[],$4::TE
       )
 
     let setHistory = (sql, row) =>
-      Entities.EntityWithAllNonArrayTypes.entityHistory->EntityHistory.batchInsertRows(
-        ~sql,
+      sql->PgStorage.setEntityHistoryOrThrow(
+        ~entityHistory=Entities.EntityWithAllNonArrayTypes.entityHistory,
         ~rows=[row],
       )
 

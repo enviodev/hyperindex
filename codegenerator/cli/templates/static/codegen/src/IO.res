@@ -48,133 +48,14 @@ let getEntityHistoryItems = (entityUpdates, ~containsRollbackDiffChange) => {
   entityHistoryItems
 }
 
-let executeSetEntityWithHistory = (
-  sql: Postgres.sql,
+let executeBatch = async (
+  sql,
   ~inMemoryStore: InMemoryStore.t,
-  ~entityConfig,
-): promise<unit> => {
-  let rows =
-    inMemoryStore
-    ->InMemoryStore.getInMemTable(~entityConfig)
-    ->InMemoryTable.Entity.rows
-  let (entitiesToSet, idsToDelete, entityHistoryItemsToSet) = rows->Belt.Array.reduce(
-    ([], [], []),
-    ((entitiesToSet, idsToDelete, entityHistoryItemsToSet), row) => {
-      switch row {
-      | Updated({latest, history, containsRollbackDiffChange}) =>
-        let entityHistoryItems = history->getEntityHistoryItems(~containsRollbackDiffChange)
-
-        switch latest.entityUpdateAction {
-        | Set(entity) => (
-            entitiesToSet->Belt.Array.concat([entity]),
-            idsToDelete,
-            entityHistoryItemsToSet->Belt.Array.concat([entityHistoryItems]),
-          )
-        | Delete => (
-            entitiesToSet,
-            idsToDelete->Belt.Array.concat([latest.entityId]),
-            entityHistoryItemsToSet->Belt.Array.concat([entityHistoryItems]),
-          )
-        }
-      | _ => (entitiesToSet, idsToDelete, entityHistoryItemsToSet)
-      }
-    },
-  )
-  // Keep history items in the order of the events. Without sorting,
-  // they will only be in order per row, but not across the whole entity
-  // table.
-
-  let orderedHistoryItems =
-    entityHistoryItemsToSet
-    ->Array.concatMany
-    ->Js.Array2.sortInPlaceWith((a, b) => {
-      EventUtils.isEarlierEvent(
-        {
-          timestamp: a.current.block_timestamp,
-          chainId: a.current.chain_id,
-          blockNumber: a.current.block_number,
-          logIndex: a.current.log_index,
-        },
-        {
-          timestamp: b.current.block_timestamp,
-          chainId: b.current.chain_id,
-          blockNumber: b.current.block_number,
-          logIndex: b.current.log_index,
-        },
-      )
-        ? -1
-        : 1
-    })
-
-  [
-    entityConfig.entityHistory->EntityHistory.batchInsertRows(~sql, ~rows=orderedHistoryItems),
-    if entitiesToSet->Array.length > 0 {
-      sql->PgStorage.setOrThrow(
-        ~items=entitiesToSet,
-        ~table=entityConfig.table,
-        ~itemSchema=entityConfig.schema,
-        ~pgSchema=Config.storagePgSchema,
-      )
-    } else {
-      Promise.resolve()
-    },
-    if idsToDelete->Array.length > 0 {
-      sql->DbFunctionsEntities.batchDelete(~entityConfig)(idsToDelete)
-    } else {
-      Promise.resolve()
-    },
-  ]
-  ->Promise.all
-  ->Promise.thenResolve(_ => ())
-}
-
-let executeDbFunctionsEntity = (
-  sql: Postgres.sql,
-  ~inMemoryStore: InMemoryStore.t,
-  ~entityConfig: Internal.entityConfig,
-): promise<unit> => {
-  let rows =
-    inMemoryStore
-    ->InMemoryStore.getInMemTable(~entityConfig)
-    ->InMemoryTable.Entity.rows
-
-  let entitiesToSet = []
-  let idsToDelete = []
-
-  rows->Array.forEach(row => {
-    switch row {
-    | Updated({latest: {entityUpdateAction: Set(entity)}}) => entitiesToSet->Array.push(entity)
-    | Updated({latest: {entityUpdateAction: Delete, entityId}}) => idsToDelete->Array.push(entityId)
-    | _ => ()
-    }
-  })
-
-  let promises =
-    (
-      entitiesToSet->Array.length > 0
-        ? [
-            sql->PgStorage.setOrThrow(
-              ~items=entitiesToSet,
-              ~table=entityConfig.table,
-              ~itemSchema=entityConfig.schema,
-              ~pgSchema=Config.storagePgSchema,
-            ),
-          ]
-        : []
-    )->Belt.Array.concat(
-      idsToDelete->Array.length > 0
-        ? [sql->DbFunctionsEntities.batchDelete(~entityConfig)(idsToDelete)]
-        : [],
-    )
-
-  promises->Promise.all->Promise.thenResolve(_ => ())
-}
-
-let executeBatch = async (sql, ~inMemoryStore: InMemoryStore.t, ~isInReorgThreshold, ~config) => {
-  let entityDbExecutionComposer =
-    config->Config.shouldSaveHistory(~isInReorgThreshold)
-      ? executeSetEntityWithHistory
-      : executeDbFunctionsEntity
+  ~isInReorgThreshold,
+  ~config,
+  ~escapeTables=?,
+) => {
+  let specificError = ref(None)
 
   let setEventSyncState = executeSet(
     _,
@@ -196,7 +77,127 @@ let executeBatch = async (sql, ~inMemoryStore: InMemoryStore.t, ~isInReorgThresh
   )
 
   let setEntities = Entities.allEntities->Belt.Array.map(entityConfig => {
-    entityDbExecutionComposer(_, ~entityConfig, ~inMemoryStore)
+    let entitiesToSet = []
+    let idsToDelete = []
+    let entityHistoryItemsToSet = []
+
+    let rows =
+      inMemoryStore
+      ->InMemoryStore.getInMemTable(~entityConfig)
+      ->InMemoryTable.Entity.rows
+
+    rows->Js.Array2.forEach(row => {
+      switch row {
+      | Updated({latest: {entityUpdateAction: Set(entity)}}) => entitiesToSet->Array.push(entity)
+      | Updated({latest: {entityUpdateAction: Delete, entityId}}) =>
+        idsToDelete->Array.push(entityId)
+      | _ => ()
+      }
+    })
+
+    if config->Config.shouldSaveHistory(~isInReorgThreshold) {
+      rows->Js.Array2.forEach(row => {
+        switch row {
+        | Updated({history, containsRollbackDiffChange}) =>
+          let entityHistoryItems = history->getEntityHistoryItems(~containsRollbackDiffChange)
+          entityHistoryItemsToSet->Js.Array2.pushMany(entityHistoryItems)->ignore
+        | _ => ()
+        }
+      })
+
+      // Keep history items in the order of the events. Without sorting,
+      // they will only be in order per row, but not across the whole entity
+      // table.
+      let _ = entityHistoryItemsToSet->Js.Array2.sortInPlaceWith((a, b) => {
+        EventUtils.isEarlierEvent(
+          {
+            timestamp: a.current.block_timestamp,
+            chainId: a.current.chain_id,
+            blockNumber: a.current.block_number,
+            logIndex: a.current.log_index,
+          },
+          {
+            timestamp: b.current.block_timestamp,
+            chainId: b.current.chain_id,
+            blockNumber: b.current.block_number,
+            logIndex: b.current.log_index,
+          },
+        )
+          ? -1
+          : 1
+      })
+    }
+
+    let shouldRemoveInvalidUtf8 = switch escapeTables {
+    | Some(tables) if tables->Utils.Set.has(entityConfig.table) => true
+    | _ => false
+    }
+
+    sql => {
+      let promises = []
+      if entityHistoryItemsToSet->Utils.Array.notEmpty {
+        promises->Array.push(
+          sql->PgStorage.setEntityHistoryOrThrow(
+            ~entityHistory=entityConfig.entityHistory,
+            ~rows=entityHistoryItemsToSet,
+            ~shouldRemoveInvalidUtf8,
+          ),
+        )
+      }
+      if entitiesToSet->Utils.Array.notEmpty {
+        if shouldRemoveInvalidUtf8 {
+          entitiesToSet->PgStorage.removeInvalidUtf8InPlace
+        }
+        promises->Array.push(
+          sql->PgStorage.setOrThrow(
+            ~items=entitiesToSet,
+            ~table=entityConfig.table,
+            ~itemSchema=entityConfig.schema,
+            ~pgSchema=Config.storagePgSchema,
+          ),
+        )
+      }
+      if idsToDelete->Utils.Array.notEmpty {
+        promises->Array.push(sql->DbFunctionsEntities.batchDelete(~entityConfig)(idsToDelete))
+      }
+      // This should have await, to properly propagate errors to the caller.
+      promises
+      ->Promise.all
+      ->Promise.catch(exn => {
+        switch exn {
+        | JsError(error) /* The case is for entity history, which is not handled properly yet */
+        | Persistence.StorageError({reason: JsError(error)})
+        // Workaround for https://github.com/enviodev/hyperindex/issues/446
+        // We do escaping only when we actually got an error writing for the first time.
+        // This is not perfect, but an optimization to avoid escaping for every single item.
+          if try {
+            error->S.assertOrThrow(PgStorage.pgEncodingErrorSchema)
+            true
+          } catch {
+          | _ => false
+          } =>
+          // Since the transaction is aborted at this point,
+          // we can't simply retry the function with escaped items,
+          // so propagate the error, to restart the whole batch write.
+          // Also, let pass the failing table, to escape only it's items.
+          // TODO: Ideally all this should be done in the file,
+          // so it'll be easier to work on PG specific logic.
+          specificError.contents = Some(PgStorage.PgEncodingError({table: entityConfig.table}))
+        // There's a race condition that sql->Postgres.beginSql
+        // might throw PG error, earlier, than the handled error
+        // from setOrThrow will be passed through.
+        // This is needed for the utf8 encoding fix.
+        | exn => specificError.contents = Some(exn)
+        }
+
+        // Improtant: Don't rethrow here, since it'll result in
+        // an unhandled rejected promise error.
+        // That's fine not to throw, since sql->Postgres.beginSql
+        // will fail anyways.
+        Promise.resolve([])
+      })
+      ->(Utils.magic: promise<array<unit>> => promise<unit>)
+    }
   })
 
   //In the event of a rollback, rollback all meta tables based on the given
@@ -218,16 +219,29 @@ let executeBatch = async (sql, ~inMemoryStore: InMemoryStore.t, ~isInReorgThresh
   | None => []
   }
 
-  let res = await sql->Postgres.beginSql(sql => {
-    Belt.Array.concatMany([
-      //Rollback tables need to happen first in the traction
-      rollbackTables,
-      [setEventSyncState, setRawEvents],
-      setEntities,
-    ])->Belt.Array.map(dbFunc => sql->dbFunc)
-  })
-
-  res
+  try {
+    await sql->Postgres.beginSql(sql => {
+      Belt.Array.concatMany([
+        //Rollback tables need to happen first in the traction
+        rollbackTables,
+        [setEventSyncState, setRawEvents],
+        setEntities,
+      ])->Belt.Array.map(dbFunc => sql->dbFunc)
+    })
+    // Just in case, if there's a not PG-specific error.
+    switch specificError.contents {
+    | Some(specificError) => raise(specificError)
+    | None => ()
+    }
+  } catch {
+  | exn =>
+    raise(
+      switch specificError.contents {
+      | Some(specificError) => specificError
+      | None => exn
+      },
+    )
+  }
 }
 
 module RollBack = {
