@@ -121,6 +121,8 @@ type EntityWithAllTypes {
   # NOTE: array of timestamps has the same problem as array of booleans described above
   # arrayOfTimestamps: [Timestamp!]!
   json: Json!
+  enumField: AccountType!
+  optEnumField: AccountType
 }
 
 # We are using insert unnest for the case
@@ -139,6 +141,8 @@ type EntityWithAllNonArrayTypes {
   optBigInt: BigInt
   bigDecimal: BigDecimal!
   optBigDecimal: BigDecimal
+  enumField: AccountType!
+  optEnumField: AccountType
 }
 
 type CustomSelectionTestPass {

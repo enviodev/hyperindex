@@ -515,6 +515,8 @@ Gravatar.FactoryEvent.handlerWithLoader({
           optBigDecimal: new BigDecimal("2.2"),
           arrayOfBigDecimals: [new BigDecimal("3.3"), new BigDecimal("4.4")],
           json: { foo: ["bar"] },
+          enumField: "ADMIN",
+          optEnumField: "ADMIN",
         });
         context.EntityWithAllTypes.set({
           id: "2",
@@ -536,6 +538,8 @@ Gravatar.FactoryEvent.handlerWithLoader({
           optBigDecimal: new BigDecimal("2.2"),
           arrayOfBigDecimals: [new BigDecimal("3.3"), new BigDecimal("4.4")],
           json: { foo: ["bar"] },
+          enumField: "ADMIN",
+          optEnumField: "ADMIN",
         });
         break;
 
