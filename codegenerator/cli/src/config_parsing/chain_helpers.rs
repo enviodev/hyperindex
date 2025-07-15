@@ -290,6 +290,9 @@ pub enum Network {
 
     PharosDevnet = 50002,
 
+    #[subenum(HypersyncNetwork)]
+    Plume = 98866,
+
     #[subenum(GraphNetwork, NetworkWithExplorer)]
     PoaCore = 99,
 
@@ -393,9 +396,6 @@ pub enum Network {
 
     #[subenum(NetworkWithExplorer)]
     ZoraSepolia = 999999999,
-
-    #[subenum(HypersyncNetwork)]
-    Plume = 98866,
 }
 
 impl Network {
