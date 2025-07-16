@@ -56,7 +56,7 @@ type storage = {
     ~initialize: bool,
   ) => promise<unit>,
   dumpEffectCache: unit => promise<unit>,
-  restoreEffectCache: unit => promise<array<effectCacheRecord>>,
+  restoreEffectCache: (~withUpload: bool) => promise<array<effectCacheRecord>>,
 }
 
 exception StorageError({message: string, reason: exn})
@@ -104,8 +104,8 @@ let make = (
 }
 
 let init = {
-  let loadInitialCache = async persistence => {
-    let effectCacheRecords = await persistence.storage.restoreEffectCache()
+  let loadInitialCache = async (persistence, ~withUpload) => {
+    let effectCacheRecords = await persistence.storage.restoreEffectCache(~withUpload)
     let cache = Js.Dict.empty()
     effectCacheRecords->Js.Array2.forEach(record => {
       Prometheus.EffectCacheCount.set(~count=record.count, ~effectName=record.effectName)
@@ -142,7 +142,7 @@ let init = {
           Logging.info(`The indexer storage is ready. Restoring cache...`)
           persistence.storageStatus = Ready({
             cleanRun: true,
-            cache: await loadInitialCache(persistence),
+            cache: await loadInitialCache(persistence, ~withUpload=true),
           })
         } else if (
           // In case of a race condition,
@@ -152,10 +152,10 @@ let init = {
           | _ => false
           }
         ) {
-          Logging.info(`The indexer storage is ready. Restoring cache...`)
+          Logging.info(`The indexer storage is initialized. Restoring cache...`)
           persistence.storageStatus = Ready({
             cleanRun: false,
-            cache: await loadInitialCache(persistence),
+            cache: await loadInitialCache(persistence, ~withUpload=false),
           })
         }
         resolveRef.contents()

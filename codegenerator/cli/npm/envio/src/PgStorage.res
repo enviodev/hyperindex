@@ -654,6 +654,7 @@ let make = (
       ->Js.Array2.filter(i => i.count > 0)
 
     if cacheTableInfo->Utils.Array.notEmpty {
+      // FIXME: Use real path instead of ..
       // Create .envio/cache directory if it doesn't exist
       let cacheDir = NodeJs.Path.resolve(["..", ".envio", "cache"])
       try {
@@ -674,19 +675,31 @@ let make = (
       | None => "docker-compose exec -T -u postgres envio-postgres psql"
       }
 
-      // docker-compose exec -T -u postgres envio-postgres psql -d envio-dev -c 'COPY "public"."envio_effect_getTokenMetadata" TO STDOUT (FORMAT binary);' > ../.envio/cache/getTokenMetadata.bin
+      // Command for testing. Run from generated
+      // docker-compose exec -T -u postgres envio-postgres psql -d envio-dev -c 'COPY "public"."envio_effect_getTokenMetadata" TO STDOUT (FORMAT text, HEADER);' > ../.envio/cache/getTokenMetadata.tsv
 
-      let promises = cacheTableInfo->Js.Array2.map(({tableName}) => {
+      let promises = cacheTableInfo->Js.Array2.map(async ({tableName}) => {
         let cacheName = tableName->Js.String2.sliceToEnd(~from=cacheTablePrefixLength)
-        let outputFile = NodeJs.Path.join(cacheDir, cacheName ++ ".bin")->NodeJs.Path.toString
+        let outputFile = NodeJs.Path.join(cacheDir, cacheName ++ ".tsv")->NodeJs.Path.toString
 
+        // FIXME: Get envio-dev from args
         // We use -d envio-dev to specify the database name
         // -c specifies the command to run
         // -T disables pseudo-tty allocation
-        // We use COPY ... TO STDOUT (FORMAT binary) to dump the table in binary format
-        let command = `${psqlExec} -d envio-dev -c 'COPY "${pgSchema}"."${tableName}" TO STDOUT (FORMAT binary);' > ${outputFile}`
+        // We use COPY ... TO STDOUT WITH (FORMAT text, HEADER) to dump the table in TSV format with headers
+        let command = `${psqlExec} -d envio-dev -c 'COPY "${pgSchema}"."${tableName}" TO STDOUT WITH (FORMAT text, HEADER);' > ${outputFile}`
 
-        NodeJs.ChildProcess.exec(command, {})
+        Promise.make((resolve, reject) => {
+          NodeJs.ChildProcess.exec(
+            command,
+            (~error, ~stdout, ~stderr as _) => {
+              switch error {
+              | Value(error) => reject(error)
+              | Null => resolve(stdout)
+              }
+            },
+          )
+        })
       })
 
       Logging.info(
@@ -701,61 +714,80 @@ let make = (
     }
   }
 
-  let restoreEffectCache = async () => {
-    // Try to restore cache tables from binary files
-    let cacheDir = NodeJs.Path.resolve(["..", ".envio", "cache"])
+  let restoreEffectCache = async (~withUpload) => {
+    if withUpload {
+      // Try to restore cache tables from binary files
+      // FIXME: Use actual path to the project root
+      let cacheDir = NodeJs.Path.resolve(["..", ".envio", "cache"])
 
-    let entries = await NodeJs.Fs.Promises.readdir(cacheDir)
-    let cacheFiles = entries->Js.Array2.filter(entry => {
-      entry->Js.String2.endsWith(".bin")
-    })
-
-    let psqlExec = switch NodeJs.Process.process.env->Js.Dict.get("ENVIO_PSQL_EXEC") {
-    | Some(exec) => exec
-    | None => "docker-compose exec -T -u postgres envio-postgres psql"
-    }
-
-    let _ =
-      await cacheFiles
-      ->Js.Array2.map(entry => {
-        let cacheName = entry->Js.String2.slice(~from=0, ~to_=-4) // Remove .bin extension
-        let table = Table.mkTable(
-          cacheTablePrefix ++ cacheName,
-          ~fields=[
-            Table.mkField("id", Text, ~fieldSchema=S.string, ~isPrimaryKey=true),
-            Table.mkField("output", JsonB, ~fieldSchema=S.json(~validate=false)),
-          ],
-          ~compositeIndices=[],
-        )
-
-        sql
-        ->Postgres.unsafe(makeCreateTableQuery(table, ~pgSchema))
-        ->Promise.then(() => {
-          let tableName = cacheTablePrefix ++ cacheName
-          let inputFile = NodeJs.Path.join(cacheDir, entry)->NodeJs.Path.toString
-
-          // We use -d envio-dev to specify the database name
-          // -c specifies the command to run
-          // -T disables pseudo-tty allocation
-          // We use COPY ... FROM STDIN (FORMAT binary) to restore the table from binary format
-          let command = `${psqlExec} -d envio-dev -c 'COPY "${pgSchema}"."${tableName}" FROM STDIN (FORMAT binary);' < ${inputFile}`
-          NodeJs.ChildProcess.exec(command, {})
-        })
+      let entries = await NodeJs.Fs.Promises.readdir(cacheDir)
+      let cacheFiles = entries->Js.Array2.filter(entry => {
+        entry->Js.String2.endsWith(".tsv")
       })
-      ->Promise.all
+
+      // FIXME: Get it from args
+      let psqlExec = switch NodeJs.Process.process.env->Js.Dict.get("ENVIO_PSQL_EXEC") {
+      | Some(exec) => exec
+      | None => "docker-compose exec -T -u postgres envio-postgres psql"
+      }
+
+      let _ =
+        await cacheFiles
+        ->Js.Array2.map(entry => {
+          let cacheName = entry->Js.String2.slice(~from=0, ~to_=-4) // Remove .tsv extension
+          let table = Table.mkTable(
+            cacheTablePrefix ++ cacheName,
+            ~fields=[
+              Table.mkField("id", Text, ~fieldSchema=S.string, ~isPrimaryKey=true),
+              Table.mkField("output", JsonB, ~fieldSchema=S.json(~validate=false)),
+            ],
+            ~compositeIndices=[],
+          )
+
+          sql
+          ->Postgres.unsafe(makeCreateTableQuery(table, ~pgSchema))
+          ->Promise.then(() => {
+            let tableName = cacheTablePrefix ++ cacheName
+            let inputFile = NodeJs.Path.join(cacheDir, entry)->NodeJs.Path.toString
+
+            // FIXME: Get envio-dev from args
+            // We use -d envio-dev to specify the database name
+            // -c specifies the command to run
+            // -T disables pseudo-tty allocation
+            // We use COPY ... FROM STDIN WITH (FORMAT text, HEADER) to restore the table from TSV format with headers
+            let command = `${psqlExec} -d envio-dev -c 'COPY "${pgSchema}"."${tableName}" FROM STDIN WITH (FORMAT text, HEADER);' < ${inputFile}`
+
+            Promise.make(
+              (resolve, reject) => {
+                NodeJs.ChildProcess.exec(
+                  command,
+                  (~error, ~stdout, ~stderr as _) => {
+                    switch error {
+                    | Value(error) => reject(error)
+                    | Null => resolve(stdout)
+                    }
+                  },
+                )
+              },
+            )
+          })
+        })
+        ->Promise.all
+    }
 
     let cacheTableInfo: array<schemaCacheTableInfo> =
       await sql->Postgres.unsafe(makeSchemaCacheTableInfoQuery(~pgSchema))
 
-    Js.log2("Restored cache", cacheTableInfo)
-    switch onNewTables {
-    | Some(onNewTables) =>
-      await onNewTables(
-        ~tableNames=cacheTableInfo->Js.Array2.map(info => {
-          info.tableName
-        }),
-      )
-    | None => ()
+    if withUpload {
+      switch onNewTables {
+      | Some(onNewTables) =>
+        await onNewTables(
+          ~tableNames=cacheTableInfo->Js.Array2.map(info => {
+            info.tableName
+          }),
+        )
+      | None => ()
+      }
     }
 
     cacheTableInfo->Js.Array2.map((info): Persistence.effectCacheRecord => {
