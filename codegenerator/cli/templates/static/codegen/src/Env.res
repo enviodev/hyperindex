@@ -139,6 +139,8 @@ module Hasura = {
       ~devFallback="http://localhost:8080/v1/metadata",
     )
 
+  let url = graphqlEndpoint->Js.String2.slice(~from=0, ~to_=-("/v1/metadata"->Js.String2.length))
+
   let role = envSafe->EnvSafe.get("HASURA_GRAPHQL_ROLE", S.string, ~devFallback="admin")
 
   let secret = envSafe->EnvSafe.get("HASURA_GRAPHQL_ADMIN_SECRET", S.string, ~devFallback="testing")
