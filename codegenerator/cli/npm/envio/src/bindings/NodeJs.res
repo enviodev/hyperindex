@@ -16,12 +16,13 @@ module ChildProcess = {
     shell?: string,
   }
 
+  type callback = (~error: Js.null<exn>, ~stdout: string, ~stderr: string) => unit
+
   @module("child_process")
-  external exec: (
-    string,
-    (~error: Js.null<exn>, ~stdout: string, ~stderr: string) => unit,
-    ~options: execOptions=?,
-  ) => unit = "exec"
+  external exec: (string, callback) => unit = "exec"
+
+  @module("child_process")
+  external execWithOptions: (string, execOptions, callback) => unit = "exec"
 }
 
 module Path = {

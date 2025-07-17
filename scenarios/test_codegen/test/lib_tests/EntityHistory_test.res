@@ -245,7 +245,13 @@ describe("Entity History Codegen", () => {
   })
 
   Async.it("Creating tables and functions works", async () => {
-    let storage = PgStorage.make(~sql=Db.sql, ~pgSchema="public", ~pgUser="postgres")
+    let storage = PgStorage.make(
+      ~sql=Db.sql,
+      ~pgSchema=Env.Db.publicSchema,
+      ~pgUser=Env.Db.user,
+      ~pgDatabase=Env.Db.database,
+      ~pgPassword=Env.Db.password,
+    )
     try {
       await storage.initialize(
         ~entities=[module(TestEntity)->Entities.entityModToInternal],
@@ -601,7 +607,13 @@ describe("Entity history rollbacks", () => {
   Async.beforeEach(async () => {
     try {
       let _ = DbHelpers.resetPostgresClient()
-      let storage = PgStorage.make(~sql=Db.sql, ~pgSchema="public", ~pgUser="postgres")
+      let storage = PgStorage.make(
+        ~sql=Db.sql,
+        ~pgSchema=Env.Db.publicSchema,
+        ~pgUser=Env.Db.user,
+        ~pgDatabase=Env.Db.database,
+        ~pgPassword=Env.Db.password,
+      )
       await storage.initialize(
         ~entities=[module(TestEntity)->Entities.entityModToInternal],
         ~generalTables,
@@ -767,7 +779,13 @@ describe("Entity history rollbacks", () => {
   Async.beforeEach(async () => {
     try {
       let _ = DbHelpers.resetPostgresClient()
-      let storage = PgStorage.make(~sql=Db.sql, ~pgSchema="public", ~pgUser="postgres")
+      let storage = PgStorage.make(
+        ~sql=Db.sql,
+        ~pgSchema=Env.Db.publicSchema,
+        ~pgUser=Env.Db.user,
+        ~pgDatabase=Env.Db.database,
+        ~pgPassword=Env.Db.password,
+      )
       await storage.initialize(
         ~entities=[module(TestEntity)->Entities.entityModToInternal],
         ~generalTables,
@@ -1047,7 +1065,13 @@ describe("Entity history rollbacks", () => {
 describe_skip("Prune performance test", () => {
   Async.it("Print benchmark of prune function", async () => {
     let _ = DbHelpers.resetPostgresClient()
-    let storage = PgStorage.make(~sql=Db.sql, ~pgSchema="public", ~pgUser="postgres")
+    let storage = PgStorage.make(
+      ~sql=Db.sql,
+      ~pgSchema=Env.Db.publicSchema,
+      ~pgUser=Env.Db.user,
+      ~pgDatabase=Env.Db.database,
+      ~pgPassword=Env.Db.password,
+    )
     await storage.initialize(
       ~entities=[module(TestEntity)->Entities.entityModToInternal],
       ~generalTables,

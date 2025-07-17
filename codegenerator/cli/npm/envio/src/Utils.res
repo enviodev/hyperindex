@@ -561,7 +561,7 @@ module Hash = {
           }
           hash.contents ++ "}"
         } else if constructor["name"] === "BigNumber" {
-          (any->magic)["toString"]()
+          `"${(any->magic)["toString"]()}"`
         } else {
           Js.Exn.raiseError(`Don't know how to serialize ${(constructor->magic)["name"]}`)
         }

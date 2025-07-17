@@ -746,15 +746,15 @@ let make = (
             let command = `${psqlExec} -h ${pgHost} -U ${pgUser} -d ${pgDatabase} -c 'COPY "${pgSchema}"."${tableName}" TO STDOUT WITH (FORMAT text, HEADER);' > ${outputFile}`
 
             Promise.make((resolve, reject) => {
-              NodeJs.ChildProcess.exec(
+              NodeJs.ChildProcess.execWithOptions(
                 command,
+                psqlExecOptions,
                 (~error, ~stdout, ~stderr as _) => {
                   switch error {
                   | Value(error) => reject(error)
                   | Null => resolve(stdout)
                   }
                 },
-                ~options=psqlExecOptions,
               )
             })
           })
@@ -804,15 +804,15 @@ let make = (
 
                 Promise.make(
                   (resolve, reject) => {
-                    NodeJs.ChildProcess.exec(
+                    NodeJs.ChildProcess.execWithOptions(
                       command,
+                      psqlExecOptions,
                       (~error, ~stdout, ~stderr as _) => {
                         switch error {
                         | Value(error) => reject(error)
                         | Null => resolve(stdout)
                         }
                       },
-                      ~options=psqlExecOptions,
                     )
                   },
                 )

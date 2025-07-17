@@ -36,7 +36,9 @@ module Storage = {
   type method = [
     | #isInitialized
     | #initialize
-    | #loadCaches
+    | #dumpEffectCache
+    | #restoreEffectCache
+    | #setEffectCacheOrThrow
     | #loadByIdsOrThrow
     | #loadByFieldOrThrow
     | #setOrThrow
@@ -58,7 +60,8 @@ module Storage = {
       "tableName": string,
       "operator": Persistence.operator,
     }>,
-    loadCachesCalls: ref<int>,
+    dumpEffectCacheCalls: ref<int>,
+    restoreEffectCacheCalls: array<{"withUpload": bool}>,
     storage: Persistence.storage,
   }
 
@@ -85,14 +88,17 @@ module Storage = {
     let initializeResolveFns = []
     let loadByIdsOrThrowCalls = []
     let loadByFieldOrThrowCalls = []
-    let loadCachesCalls = ref(0)
+    let dumpEffectCacheCalls = ref(0)
+    let restoreEffectCacheCalls = []
+    let setEffectCacheOrThrowCalls = ref(0)
 
     {
       isInitializedCalls,
       initializeCalls,
       loadByIdsOrThrowCalls,
       loadByFieldOrThrowCalls,
-      loadCachesCalls,
+      dumpEffectCacheCalls,
+      restoreEffectCacheCalls,
       resolveIsInitialized: bool => {
         isInitializedResolveFns->Js.Array2.forEach(resolve => resolve(bool))
       },
@@ -118,9 +124,23 @@ module Storage = {
             initializeResolveFns->Js.Array2.push(resolve)->ignore
           })
         }),
-        loadCaches: implement(#loadCaches, () => {
-          loadCachesCalls := loadCachesCalls.contents + 1
+        dumpEffectCache: implement(#dumpEffectCache, () => {
+          dumpEffectCacheCalls := dumpEffectCacheCalls.contents + 1
+          Promise.resolve()
+        }),
+        restoreEffectCache: implement(#restoreEffectCache, (~withUpload) => {
+          restoreEffectCacheCalls->Js.Array2.push({"withUpload": withUpload})->ignore
           Promise.resolve([])
+        }),
+        setEffectCacheOrThrow: implement(#setEffectCacheOrThrow, (
+          ~effectName as _,
+          ~ids as _,
+          ~outputs as _,
+          ~outputSchema as _,
+          ~initialize as _,
+        ) => {
+          setEffectCacheOrThrowCalls := setEffectCacheOrThrowCalls.contents + 1
+          Promise.resolve()
         }),
         loadByIdsOrThrow: (
           type item,
@@ -171,7 +191,7 @@ module Storage = {
       storage: storageMock.storage,
       storageStatus: Ready({
         cleanRun: false,
-        effectCaches: Js.Dict.empty(),
+        cache: Js.Dict.empty(),
       }),
     }
   }
