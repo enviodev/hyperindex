@@ -90,6 +90,7 @@ let codegenPersistence = Persistence.make(
     ~sql=Db.sql,
     ~pgSchema=storagePgSchema,
     ~pgUser=Env.Db.user,
+    ~pgDatabase=Env.Db.database,
     ~onInitialize=() => {
       Hasura.trackDatabase(
         ~endpoint=Env.Hasura.graphqlEndpoint,
