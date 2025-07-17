@@ -462,7 +462,7 @@ let getPsqlExec = {
   // For production: We expect indexer to be running in a container,
   //   with psql installed. So we can call it directly.
   let psqlExecState = ref(Unknown)
-  async () => {
+  async (~pgUser, ~pgHost) => {
     switch psqlExecState.contents {
     | Unknown => {
         let promise = Promise.make((resolve, _reject) => {
@@ -470,7 +470,7 @@ let getPsqlExec = {
           NodeJs.ChildProcess.exec(`${binary} --version`, (~error, ~stdout as _, ~stderr as _) => {
             switch error {
             | Value(_) => {
-                let binary = "docker-compose exec -T -u postgres envio-postgres psql"
+                let binary = `docker-compose exec -T -u ${pgUser} ${pgHost} psql`
                 NodeJs.ChildProcess.exec(
                   `${binary} --version`,
                   (~error, ~stdout as _, ~stderr as _) => {
@@ -503,9 +503,16 @@ let make = (
   ~pgSchema,
   ~pgUser,
   ~pgDatabase,
+  ~pgPassword,
   ~onInitialize=?,
   ~onNewTables=?,
 ): Persistence.storage => {
+  let pgHost = "envio-postgres" // Currently hardcoded. Note: There's no reason for this.
+
+  let psqlExecOptions: NodeJs.ChildProcess.execOptions = {
+    env: Js.Dict.fromArray([("PGPASSWORD", pgPassword)]),
+  }
+
   let cacheDirPath = NodeJs.Path.resolve([
     // Right outside of the generated directory
     "..",
@@ -721,7 +728,7 @@ let make = (
       // Command for testing. Run from generated
       // docker-compose exec -T -u postgres envio-postgres psql -d envio-dev -c 'COPY "public"."envio_effect_getTokenMetadata" TO STDOUT (FORMAT text, HEADER);' > ../.envio/cache/getTokenMetadata.tsv
 
-      switch await getPsqlExec() {
+      switch await getPsqlExec(~pgUser, ~pgHost) {
       | Ok(psqlExec) => {
           Logging.info(
             `Dumping cache: ${cacheTableInfo
@@ -736,7 +743,7 @@ let make = (
             let outputFile =
               NodeJs.Path.join(cacheDirPath, cacheName ++ ".tsv")->NodeJs.Path.toString
 
-            let command = `${psqlExec} -d ${pgDatabase} -c 'COPY "${pgSchema}"."${tableName}" TO STDOUT WITH (FORMAT text, HEADER);' > ${outputFile}`
+            let command = `${psqlExec} -h ${pgHost} -U ${pgUser} -d ${pgDatabase} -c 'COPY "${pgSchema}"."${tableName}" TO STDOUT WITH (FORMAT text, HEADER);' > ${outputFile}`
 
             Promise.make((resolve, reject) => {
               NodeJs.ChildProcess.exec(
@@ -747,6 +754,7 @@ let make = (
                   | Null => resolve(stdout)
                   }
                 },
+                ~options=psqlExecOptions,
               )
             })
           })
@@ -764,7 +772,7 @@ let make = (
       // Try to restore cache tables from binary files
       let (entries, psqlExecResult) = await Promise.all2((
         NodeJs.Fs.Promises.readdir(cacheDirPath),
-        getPsqlExec(),
+        getPsqlExec(~pgUser, ~pgHost),
       ))
 
       switch psqlExecResult {
@@ -792,7 +800,7 @@ let make = (
               ->Promise.then(() => {
                 let inputFile = NodeJs.Path.join(cacheDirPath, entry)->NodeJs.Path.toString
 
-                let command = `${psqlExec} -d ${pgDatabase} -c 'COPY "${pgSchema}"."${tableName}" FROM STDIN WITH (FORMAT text, HEADER);' < ${inputFile}`
+                let command = `${psqlExec} -h ${pgHost} -U ${pgUser} -d ${pgDatabase} -c 'COPY "${pgSchema}"."${tableName}" FROM STDIN WITH (FORMAT text, HEADER);' < ${inputFile}`
 
                 Promise.make(
                   (resolve, reject) => {
@@ -804,6 +812,7 @@ let make = (
                         | Null => resolve(stdout)
                         }
                       },
+                      ~options=psqlExecOptions,
                     )
                   },
                 )

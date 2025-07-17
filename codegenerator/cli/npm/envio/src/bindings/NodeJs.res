@@ -12,7 +12,7 @@ module Process = {
 module ChildProcess = {
   type execOptions = {
     cwd?: string,
-    env?: Js.Dict.t<string>,
+    env?: dict<string>,
     shell?: string,
   }
 
@@ -20,6 +20,7 @@ module ChildProcess = {
   external exec: (
     string,
     (~error: Js.null<exn>, ~stdout: string, ~stderr: string) => unit,
+    ~options: execOptions=?,
   ) => unit = "exec"
 }
 
