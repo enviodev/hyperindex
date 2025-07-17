@@ -58,7 +58,7 @@ let makeInitializeTransaction = (
   ~generalTables=[],
   ~entities=[],
   ~enums=[],
-  ~reuseExistingPgSchema=false,
+  ~isEmptyPgSchema=false,
 ) => {
   let allTables = generalTables->Array.copy
   let allEntityTables = []
@@ -71,10 +71,11 @@ let makeInitializeTransaction = (
 
   let query = ref(
     (
-      reuseExistingPgSchema
+      isEmptyPgSchema && pgSchema === "public"
       // Hosted Service already have a DB with the created public schema
       // It also doesn't allow to simply drop it,
-      // so we reuse an existing schema when it's empty (our case)
+      // so we reuse the existing schema when it's empty
+      // (but only for public, since it's usually always exists)
         ? ""
         : `DROP SCHEMA IF EXISTS "${pgSchema}" CASCADE;
 CREATE SCHEMA "${pgSchema}";\n`
@@ -546,7 +547,7 @@ let make = (
       ~generalTables,
       ~entities,
       ~enums,
-      ~reuseExistingPgSchema=schemaTableNames->Utils.Array.isEmpty,
+      ~isEmptyPgSchema=schemaTableNames->Utils.Array.isEmpty,
     )
     // Execute all queries within a single transaction for integrity
     let _ = await sql->Postgres.beginSql(sql => {
