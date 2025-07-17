@@ -139,7 +139,7 @@ let init = {
             ~enums=persistence.allEnums,
           )
 
-          Logging.info(`The indexer storage is ready. Restoring cache...`)
+          Logging.info(`The indexer storage is ready. Uploading cache...`)
           persistence.storageStatus = Ready({
             cleanRun: true,
             cache: await loadInitialCache(persistence, ~withUpload=true),
@@ -152,7 +152,7 @@ let init = {
           | _ => false
           }
         ) {
-          Logging.info(`The indexer storage is initialized. Restoring cache...`)
+          Logging.info(`The indexer storage is ready.`)
           persistence.storageStatus = Ready({
             cleanRun: false,
             cache: await loadInitialCache(persistence, ~withUpload=false),

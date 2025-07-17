@@ -475,7 +475,10 @@ let getPsqlExec = {
                   `${binary} --version`,
                   (~error, ~stdout as _, ~stderr as _) => {
                     switch error {
-                    | Value(_) => resolve(Error("Failed to find psql binary"))
+                    | Value(_) =>
+                      resolve(
+                        Error(`Please check if "psql" binary is installed or docker-compose is running for the local indexer.`),
+                      )
                     | Null => resolve(Ok(binary))
                     }
                   },
@@ -496,12 +499,12 @@ let getPsqlExec = {
     }
   }
 }
-let psqlExecMissingErrorMessage = `Please check if "psql" binary is installed or docker-compose is running for the local indexer.`
 
 let make = (
   ~sql: Postgres.sql,
   ~pgHost,
   ~pgSchema,
+  ~pgPort,
   ~pgUser,
   ~pgDatabase,
   ~pgPassword,
@@ -509,7 +512,7 @@ let make = (
   ~onNewTables=?,
 ): Persistence.storage => {
   let psqlExecOptions: NodeJs.ChildProcess.execOptions = {
-    env: Js.Dict.fromArray([("PGPASSWORD", pgPassword)]),
+    env: Js.Dict.fromArray([("PGPASSWORD", pgPassword), ("PATH", %raw(`process.env.PATH`))]),
   }
 
   let cacheDirPath = NodeJs.Path.resolve([
@@ -709,73 +712,79 @@ let make = (
   }
 
   let dumpEffectCache = async () => {
-    let cacheTableInfo: array<schemaCacheTableInfo> =
-      (await sql
-      ->Postgres.unsafe(makeSchemaCacheTableInfoQuery(~pgSchema)))
-      ->Js.Array2.filter(i => i.count > 0)
+    try {
+      let cacheTableInfo: array<schemaCacheTableInfo> =
+        (await sql
+        ->Postgres.unsafe(makeSchemaCacheTableInfoQuery(~pgSchema)))
+        ->Js.Array2.filter(i => i.count > 0)
 
-    if cacheTableInfo->Utils.Array.notEmpty {
-      // Create .envio/cache directory if it doesn't exist
-      try {
-        await NodeJs.Fs.Promises.access(cacheDirPath)
-      } catch {
-      | _ =>
-        // Create directory if it doesn't exist
-        await NodeJs.Fs.Promises.mkdir(~path=cacheDirPath, ~options={recursive: true})
-      }
-
-      // Command for testing. Run from generated
-      // docker-compose exec -T -u postgres envio-postgres psql -d envio-dev -c 'COPY "public"."envio_effect_getTokenMetadata" TO STDOUT (FORMAT text, HEADER);' > ../.envio/cache/getTokenMetadata.tsv
-
-      switch await getPsqlExec(~pgUser, ~pgHost) {
-      | Ok(psqlExec) => {
-          Logging.info(
-            `Dumping cache: ${cacheTableInfo
-              ->Js.Array2.map(({tableName, count}) =>
-                tableName ++ " (" ++ count->Belt.Int.toString ++ " rows)"
-              )
-              ->Js.Array2.joinWith(", ")}`,
-          )
-
-          let promises = cacheTableInfo->Js.Array2.map(async ({tableName}) => {
-            let cacheName = tableName->Js.String2.sliceToEnd(~from=cacheTablePrefixLength)
-            let outputFile =
-              NodeJs.Path.join(cacheDirPath, cacheName ++ ".tsv")->NodeJs.Path.toString
-
-            let command = `${psqlExec} -h ${pgHost} -U ${pgUser} -d ${pgDatabase} -c 'COPY "${pgSchema}"."${tableName}" TO STDOUT WITH (FORMAT text, HEADER);' > ${outputFile}`
-
-            Promise.make((resolve, reject) => {
-              NodeJs.ChildProcess.execWithOptions(
-                command,
-                psqlExecOptions,
-                (~error, ~stdout, ~stderr as _) => {
-                  switch error {
-                  | Value(error) => reject(error)
-                  | Null => resolve(stdout)
-                  }
-                },
-              )
-            })
-          })
-
-          let _ = await promises->Promise.all
-          Logging.info(`Successfully dumped cache to ${cacheDirPath->NodeJs.Path.toString}`)
+      if cacheTableInfo->Utils.Array.notEmpty {
+        // Create .envio/cache directory if it doesn't exist
+        try {
+          await NodeJs.Fs.Promises.access(cacheDirPath)
+        } catch {
+        | _ =>
+          // Create directory if it doesn't exist
+          await NodeJs.Fs.Promises.mkdir(~path=cacheDirPath, ~options={recursive: true})
         }
-      | Error(_) => Logging.error(`Failed to dump cache. ${psqlExecMissingErrorMessage}`)
+
+        // Command for testing. Run from generated
+        // docker-compose exec -T -u postgres envio-postgres psql -d envio-dev -c 'COPY "public"."envio_effect_getTokenMetadata" TO STDOUT (FORMAT text, HEADER);' > ../.envio/cache/getTokenMetadata.tsv
+
+        switch await getPsqlExec(~pgUser, ~pgHost) {
+        | Ok(psqlExec) => {
+            Logging.info(
+              `Dumping cache: ${cacheTableInfo
+                ->Js.Array2.map(({tableName, count}) =>
+                  tableName ++ " (" ++ count->Belt.Int.toString ++ " rows)"
+                )
+                ->Js.Array2.joinWith(", ")}`,
+            )
+
+            let promises = cacheTableInfo->Js.Array2.map(async ({tableName}) => {
+              let cacheName = tableName->Js.String2.sliceToEnd(~from=cacheTablePrefixLength)
+              let outputFile =
+                NodeJs.Path.join(cacheDirPath, cacheName ++ ".tsv")->NodeJs.Path.toString
+
+              let command = `${psqlExec} -h ${pgHost} -p ${pgPort->Js.Int.toString} -U ${pgUser} -d ${pgDatabase} -c 'COPY "${pgSchema}"."${tableName}" TO STDOUT WITH (FORMAT text, HEADER);' > ${outputFile}`
+
+              Promise.make((resolve, reject) => {
+                NodeJs.ChildProcess.execWithOptions(
+                  command,
+                  psqlExecOptions,
+                  (~error, ~stdout, ~stderr as _) => {
+                    switch error {
+                    | Value(error) => reject(error)
+                    | Null => resolve(stdout)
+                    }
+                  },
+                )
+              })
+            })
+
+            let _ = await promises->Promise.all
+            Logging.info(`Successfully dumped cache to ${cacheDirPath->NodeJs.Path.toString}`)
+          }
+        | Error(message) => Logging.error(`Failed to dump cache. ${message}`)
+        }
       }
+    } catch {
+    | exn => Logging.errorWithExn(exn->Internal.prettifyExn, `Failed to dump cache.`)
     }
   }
 
   let restoreEffectCache = async (~withUpload) => {
     if withUpload {
       // Try to restore cache tables from binary files
-      let (entries, psqlExecResult) = await Promise.all2((
-        NodeJs.Fs.Promises.readdir(cacheDirPath),
-        getPsqlExec(~pgUser, ~pgHost),
-      ))
+      let nothingToUploadErrorMessage = "Nothing to upload."
 
-      switch psqlExecResult {
-      | Ok(psqlExec) => {
+      switch await Promise.all2((
+        NodeJs.Fs.Promises.readdir(cacheDirPath)
+        ->Promise.thenResolve(e => Ok(e))
+        ->Promise.catch(_ => Promise.resolve(Error(nothingToUploadErrorMessage))),
+        getPsqlExec(~pgUser, ~pgHost),
+      )) {
+      | (Ok(entries), Ok(psqlExec)) => {
           let cacheFiles = entries->Js.Array2.filter(entry => {
             entry->Js.String2.endsWith(".tsv")
           })
@@ -799,7 +808,7 @@ let make = (
               ->Promise.then(() => {
                 let inputFile = NodeJs.Path.join(cacheDirPath, entry)->NodeJs.Path.toString
 
-                let command = `${psqlExec} -h ${pgHost} -U ${pgUser} -d ${pgDatabase} -c 'COPY "${pgSchema}"."${tableName}" FROM STDIN WITH (FORMAT text, HEADER);' < ${inputFile}`
+                let command = `${psqlExec} -h ${pgHost} -p ${pgPort->Js.Int.toString} -U ${pgUser} -d ${pgDatabase} -c 'COPY "${pgSchema}"."${tableName}" FROM STDIN WITH (FORMAT text, HEADER);' < ${inputFile}`
 
                 Promise.make(
                   (resolve, reject) => {
@@ -819,17 +828,20 @@ let make = (
             })
             ->Promise.all
         }
-      | Error(_) =>
-        Logging.error(
-          `Failed to restore cache, continuing without it. ${psqlExecMissingErrorMessage}`,
-        )
+      | (Error(message), _)
+      | (_, Error(message)) =>
+        if message === nothingToUploadErrorMessage {
+          Logging.info("No cache found to upload.")
+        } else {
+          Logging.error(`Failed to upload cache, continuing without it. ${message}`)
+        }
       }
     }
 
     let cacheTableInfo: array<schemaCacheTableInfo> =
       await sql->Postgres.unsafe(makeSchemaCacheTableInfoQuery(~pgSchema))
 
-    if withUpload {
+    if withUpload && cacheTableInfo->Utils.Array.notEmpty {
       switch onNewTables {
       | Some(onNewTables) =>
         await onNewTables(

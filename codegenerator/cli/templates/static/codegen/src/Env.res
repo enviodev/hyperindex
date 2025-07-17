@@ -19,6 +19,8 @@ let maxPartitionConcurrency =
   envSafe->EnvSafe.get("ENVIO_MAX_PARTITION_CONCURRENCY", S.int, ~fallback=10)
 let indexingBlockLag = envSafe->EnvSafe.get("ENVIO_INDEXING_BLOCK_LAG", S.option(S.int))
 
+// We want to be able to set it to 0.0.0.0
+// to allow to passthrough the port from a Docker container
 let serverHost = envSafe->EnvSafe.get("ENVIO_INDEXER_HOST", S.string, ~fallback="localhost")
 let serverPort =
   envSafe->EnvSafe.get(
@@ -117,7 +119,7 @@ Logging.setLogger(
 )
 
 module Db = {
-  let host = envSafe->EnvSafe.get("ENVIO_PG_HOST", S.string, ~devFallback="envio-postgres")
+  let host = envSafe->EnvSafe.get("ENVIO_PG_HOST", S.string, ~devFallback="localhost")
   let port = envSafe->EnvSafe.get("ENVIO_PG_PORT", S.int->S.port, ~devFallback=5433)
   let user = envSafe->EnvSafe.get("ENVIO_PG_USER", S.string, ~devFallback="postgres")
   let password = envSafe->EnvSafe.get(
@@ -139,6 +141,8 @@ module Db = {
 }
 
 module Hasura = {
+  // Disable it on HS indexer run, since we don't have Hasura credentials anyways
+  // Also, it might be useful for some users who don't care about Hasura
   let enabled = envSafe->EnvSafe.get("ENVIO_HASURA", S.bool, ~fallback=true)
 
   let responseLimit = switch envSafe->EnvSafe.get("ENVIO_HASURA_RESPONSE_LIMIT", S.option(S.int)) {

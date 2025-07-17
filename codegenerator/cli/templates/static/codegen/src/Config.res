@@ -93,6 +93,7 @@ let codegenPersistence = Persistence.make(
     ~pgUser=Env.Db.user,
     ~pgDatabase=Env.Db.database,
     ~pgPassword=Env.Db.password,
+    ~pgPort=Env.Db.port,
     ~onInitialize=() => {
       if Env.Hasura.enabled {
         Hasura.trackDatabase(

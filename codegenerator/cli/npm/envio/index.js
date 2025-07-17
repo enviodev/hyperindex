@@ -22,6 +22,7 @@ exports.S = {
   // Don't expose recursive for now, since it's too advanced
   // recursive: Sury.recursive,
   transform: Sury.transform,
+  shape: Sury.shape,
   refine: Sury.refine,
   schema: Sury.schema,
   record: Sury.record,
