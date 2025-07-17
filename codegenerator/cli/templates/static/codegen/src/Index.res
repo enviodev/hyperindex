@@ -167,7 +167,7 @@ let startServer = (~getState, ~config: Config.t, ~shouldUseTui as _) => {
       ->Promise.thenResolve(metrics => res->endWithData(metrics))
   })
 
-  let _ = app->listen(Env.metricsPort)
+  let _ = app->listen(~port=Env.serverPort, ~host=Env.serverHost)
 }
 
 type args = {@as("tui-off") tuiOff?: bool}

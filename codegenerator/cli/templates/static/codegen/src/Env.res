@@ -19,7 +19,13 @@ let maxPartitionConcurrency =
   envSafe->EnvSafe.get("ENVIO_MAX_PARTITION_CONCURRENCY", S.int, ~fallback=10)
 let indexingBlockLag = envSafe->EnvSafe.get("ENVIO_INDEXING_BLOCK_LAG", S.option(S.int))
 
-let metricsPort = envSafe->EnvSafe.get("METRICS_PORT", S.int->S.port, ~devFallback=9898)
+let serverHost = envSafe->EnvSafe.get("ENVIO_INDEXER_HOST", S.string, ~fallback="localhost")
+let serverPort =
+  envSafe->EnvSafe.get(
+    "ENVIO_INDEXER_PORT",
+    S.int->S.port,
+    ~fallback=envSafe->EnvSafe.get("METRICS_PORT", S.int->S.port, ~fallback=9898),
+  )
 
 let tuiOffEnvVar = envSafe->EnvSafe.get("TUI_OFF", S.bool, ~fallback=false)
 
@@ -111,10 +117,16 @@ Logging.setLogger(
 )
 
 module Db = {
-  let host = envSafe->EnvSafe.get("ENVIO_PG_HOST", S.string, ~devFallback="localhost")
+  let host = envSafe->EnvSafe.get("ENVIO_PG_HOST", S.string, ~devFallback="envio-postgres")
   let port = envSafe->EnvSafe.get("ENVIO_PG_PORT", S.int->S.port, ~devFallback=5433)
   let user = envSafe->EnvSafe.get("ENVIO_PG_USER", S.string, ~devFallback="postgres")
-  let password = envSafe->EnvSafe.get("ENVIO_POSTGRES_PASSWORD", S.string, ~devFallback="testing")
+  let password = envSafe->EnvSafe.get(
+    "ENVIO_PG_PASSWORD",
+    S.string,
+    ~fallback={
+      envSafe->EnvSafe.get("ENVIO_POSTGRES_PASSWORD", S.string, ~fallback="testing")
+    },
+  )
   let database = envSafe->EnvSafe.get("ENVIO_PG_DATABASE", S.string, ~devFallback="envio-dev")
   let publicSchema = envSafe->EnvSafe.get("ENVIO_PG_PUBLIC_SCHEMA", S.string, ~fallback="public")
   let ssl = envSafe->EnvSafe.get(
@@ -127,6 +139,8 @@ module Db = {
 }
 
 module Hasura = {
+  let enabled = envSafe->EnvSafe.get("ENVIO_HASURA", S.bool, ~fallback=true)
+
   let responseLimit = switch envSafe->EnvSafe.get("ENVIO_HASURA_RESPONSE_LIMIT", S.option(S.int)) {
   | Some(_) as s => s
   | None => envSafe->EnvSafe.get("HASURA_RESPONSE_LIMIT", S.option(S.int))

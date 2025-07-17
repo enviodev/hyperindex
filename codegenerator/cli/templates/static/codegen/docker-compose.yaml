@@ -7,7 +7,7 @@ services:
     volumes:
       - db_data:/var/lib/postgresql/data
     environment:
-      POSTGRES_PASSWORD: ${ENVIO_POSTGRES_PASSWORD:-testing}
+      POSTGRES_PASSWORD: ${ENVIO_PG_PASSWORD:-testing}
       POSTGRES_USER: ${ENVIO_PG_USER:-postgres}
       POSTGRES_DB: ${ENVIO_PG_DATABASE:-envio-dev}
     networks:
@@ -25,7 +25,7 @@ services:
       # See details of this image here: https://hasura.io/docs/latest/graphql/core/migrations/advanced/auto-apply-migrations.html
       # HASURA_GRAPHQL_MIGRATIONS_DIR: /hasura-migrations
       # HASURA_GRAPHQL_METADATA_DIR: /hasura-metadata
-      HASURA_GRAPHQL_DATABASE_URL: postgres://${ENVIO_PG_USER:-postgres}:${ENVIO_POSTGRES_PASSWORD:-testing}@envio-postgres:5432/${ENVIO_PG_DATABASE:-envio-dev}
+      HASURA_GRAPHQL_DATABASE_URL: postgres://${ENVIO_PG_USER:-postgres}:${ENVIO_PG_PASSWORD:-testing}@envio-postgres:5432/${ENVIO_PG_DATABASE:-envio-dev}
       HASURA_GRAPHQL_ENABLE_CONSOLE: ${HASURA_GRAPHQL_ENABLE_CONSOLE:-true} # can make this default to false once we are further in our development.
       HASURA_GRAPHQL_ENABLED_LOG_TYPES:
         startup, http-log, webhook-log, websocket-log,

@@ -500,6 +500,7 @@ let psqlExecMissingErrorMessage = `Please check if "psql" binary is installed or
 
 let make = (
   ~sql: Postgres.sql,
+  ~pgHost,
   ~pgSchema,
   ~pgUser,
   ~pgDatabase,
@@ -507,8 +508,6 @@ let make = (
   ~onInitialize=?,
   ~onNewTables=?,
 ): Persistence.storage => {
-  let pgHost = "envio-postgres" // Currently hardcoded. Note: There's no reason for this.
-
   let psqlExecOptions: NodeJs.ChildProcess.execOptions = {
     env: Js.Dict.fromArray([("PGPASSWORD", pgPassword)]),
   }
