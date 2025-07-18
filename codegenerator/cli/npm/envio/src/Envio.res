@@ -50,8 +50,16 @@ let experimental_createEffect = (
       >
     ),
     callsCount: 0,
-    input: options.input->(Utils.magic: S.t<'input> => S.t<Internal.effectInput>),
-    output: options.output->(Utils.magic: S.t<'output> => S.t<Internal.effectOutput>),
+    // This is the way to make the createEffect API
+    // work without the need for users to call S.schema themselves,
+    // but simply pass the desired object/tuple/etc.
+    // If they pass a schem, it'll also work.
+    input: S.schema(_ => options.input)->(
+      Utils.magic: S.t<S.t<'input>> => S.t<Internal.effectInput>
+    ),
+    output: S.schema(_ => options.output)->(
+      Utils.magic: S.t<S.t<'output>> => S.t<Internal.effectOutput>
+    ),
     cache: options.cache->Belt.Option.getWithDefault(false),
   }->(Utils.magic: Internal.effect => effect<'input, 'output>)
 }
