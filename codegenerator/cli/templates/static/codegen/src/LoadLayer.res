@@ -83,7 +83,7 @@ let loadEffect = (
             `envio_effect_${effect.name}`,
             ~fields=[
               Table.mkField("id", Text, ~fieldSchema=S.string, ~isPrimaryKey=true),
-              Table.mkField("output", JsonB, ~fieldSchema=effect.output),
+              Table.mkField("output", JsonB, ~fieldSchema=S.json(~validate=false)),
             ],
             ~compositeIndices=[],
           ),

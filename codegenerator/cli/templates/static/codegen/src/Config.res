@@ -91,46 +91,54 @@ let codegenPersistence = Persistence.make(
     ~pgSchema=storagePgSchema,
     ~pgHost=Env.Db.host,
     ~pgUser=Env.Db.user,
+    ~pgPort=Env.Db.port,
     ~pgDatabase=Env.Db.database,
     ~pgPassword=Env.Db.password,
-    ~pgPort=Env.Db.port,
-    ~onInitialize=() => {
+    ~onInitialize=?{
       if Env.Hasura.enabled {
-        Hasura.trackDatabase(
-          ~endpoint=Env.Hasura.graphqlEndpoint,
-          ~auth={
-            role: Env.Hasura.role,
-            secret: Env.Hasura.secret,
+        Some(
+          () => {
+            Hasura.trackDatabase(
+              ~endpoint=Env.Hasura.graphqlEndpoint,
+              ~auth={
+                role: Env.Hasura.role,
+                secret: Env.Hasura.secret,
+              },
+              ~pgSchema=storagePgSchema,
+              ~allStaticTables=Db.allStaticTables,
+              ~allEntityTables=Db.allEntityTables,
+              ~responseLimit=Env.Hasura.responseLimit,
+              ~schema=Db.schema,
+              ~aggregateEntities=Env.Hasura.aggregateEntities,
+            )->Promise.catch(err => {
+              Logging.errorWithExn(
+                err->Internal.prettifyExn,
+                `EE803: Error tracking tables`,
+              )->Promise.resolve
+            })
           },
-          ~pgSchema=storagePgSchema,
-          ~allStaticTables=Db.allStaticTables,
-          ~allEntityTables=Db.allEntityTables,
-          ~responseLimit=Env.Hasura.responseLimit,
-          ~schema=Db.schema,
-          ~aggregateEntities=Env.Hasura.aggregateEntities,
-        )->Promise.catch(err => {
-          Logging.errorWithExn(
-            err->Internal.prettifyExn,
-            `EE803: Error tracking tables`,
-          )->Promise.resolve
-        })
-      } else {
-        Promise.resolve()
-      }
-    },
-    ~onNewTables=(~tableNames) => {
-      if Env.Hasura.enabled {
-        Hasura.trackTables(
-          ~endpoint=Env.Hasura.graphqlEndpoint,
-          ~auth={
-            role: Env.Hasura.role,
-            secret: Env.Hasura.secret,
-          },
-          ~pgSchema=storagePgSchema,
-          ~tableNames,
         )
       } else {
-        Promise.resolve()
+        None
+      }
+    },
+    ~onNewTables=?{
+      if Env.Hasura.enabled {
+        Some(
+          (~tableNames) => {
+            Hasura.trackTables(
+              ~endpoint=Env.Hasura.graphqlEndpoint,
+              ~auth={
+                role: Env.Hasura.role,
+                secret: Env.Hasura.secret,
+              },
+              ~pgSchema=storagePgSchema,
+              ~tableNames,
+            )
+          },
+        )
+      } else {
+        None
       }
     },
   ),

@@ -34,7 +34,7 @@ let rec initEffect = (params: contextParams) => (
     ~effectArgs={
       input,
       context: params->Utils.Proxy.make(effectTraps)->Utils.magic,
-      cacheKey: input->Utils.Hash.makeOrThrow,
+      cacheKey: input->S.reverseConvertOrThrow(effect.input)->Utils.Hash.makeOrThrow,
     },
     ~inMemoryStore=params.inMemoryStore,
     ~shouldGroup=params.isPreload,

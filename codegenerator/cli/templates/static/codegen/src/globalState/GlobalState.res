@@ -862,8 +862,6 @@ let injectedTaskReducer = (
     switch shouldExit {
     | ExitWithSuccess =>
       updateChainMetadataTable(chainManager, ~throttler=writeThrottlers.chainMetaData)
-      // Dump cache to disk when we reached the end block with tui off
-      ->Promise.then(_ => state.config.persistence.storage.dumpEffectCache())
       ->Promise.thenResolve(_ => dispatchAction(SuccessExit))
       ->ignore
     | NoExit | NoExitWithCacheDump =>

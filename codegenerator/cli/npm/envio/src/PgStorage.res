@@ -387,7 +387,7 @@ let setOrThrow = async (sql, ~items, ~table: Table.table, ~itemSchema, ~pgSchema
       raise(
         Persistence.StorageError({
           message: `Failed to insert items into table "${table.tableName}"`,
-          reason: exn,
+          reason: exn->Internal.prettifyExn,
         }),
       )
     }
@@ -455,14 +455,19 @@ let makeSchemaCacheTableInfoQuery = (~pgSchema) => {
 type psqlExecState =
   Unknown | Pending(promise<result<string, string>>) | Resolved(result<string, string>)
 
-let getPsqlExec = {
+let getConnectedPsqlExec = {
+  let pgDockerServiceName = "envio-postgres"
+  // Should use the default port, since we're executing the command
+  // from the postgres container's network.
+  let pgDockerServicePort = 5432
+
   // For development: We run the indexer process locally,
   //   and there might not be psql installed on the user's machine.
   //   So we use docker-compose to run psql existing in the postgres container.
   // For production: We expect indexer to be running in a container,
   //   with psql installed. So we can call it directly.
   let psqlExecState = ref(Unknown)
-  async (~pgUser, ~pgHost) => {
+  async (~pgUser, ~pgHost, ~pgDatabase, ~pgPort) => {
     switch psqlExecState.contents {
     | Unknown => {
         let promise = Promise.make((resolve, _reject) => {
@@ -470,7 +475,7 @@ let getPsqlExec = {
           NodeJs.ChildProcess.exec(`${binary} --version`, (~error, ~stdout as _, ~stderr as _) => {
             switch error {
             | Value(_) => {
-                let binary = `docker-compose exec -T -u ${pgUser} ${pgHost} psql`
+                let binary = `docker-compose exec -T -u ${pgUser} ${pgDockerServiceName} psql`
                 NodeJs.ChildProcess.exec(
                   `${binary} --version`,
                   (~error, ~stdout as _, ~stderr as _) => {
@@ -479,12 +484,22 @@ let getPsqlExec = {
                       resolve(
                         Error(`Please check if "psql" binary is installed or docker-compose is running for the local indexer.`),
                       )
-                    | Null => resolve(Ok(binary))
+                    | Null =>
+                      resolve(
+                        Ok(
+                          `${binary} -h ${pgHost} -p ${pgDockerServicePort->Js.Int.toString} -U ${pgUser} -d ${pgDatabase}`,
+                        ),
+                      )
                     }
                   },
                 )
               }
-            | Null => resolve(Ok(binary))
+            | Null =>
+              resolve(
+                Ok(
+                  `${binary} -h ${pgHost} -p ${pgPort->Js.Int.toString} -U ${pgUser} -d ${pgDatabase}`,
+                ),
+              )
             }
           })
         })
@@ -676,7 +691,7 @@ let make = (
       cacheTablePrefix ++ effectName,
       ~fields=[
         Table.mkField("id", Text, ~fieldSchema=S.string, ~isPrimaryKey=true),
-        Table.mkField("output", JsonB, ~fieldSchema=outputSchema),
+        Table.mkField("output", JsonB, ~fieldSchema=S.json(~validate=false)),
       ],
       ~compositeIndices=[],
     )
@@ -731,7 +746,7 @@ let make = (
         // Command for testing. Run from generated
         // docker-compose exec -T -u postgres envio-postgres psql -d envio-dev -c 'COPY "public"."envio_effect_getTokenMetadata" TO STDOUT (FORMAT text, HEADER);' > ../.envio/cache/getTokenMetadata.tsv
 
-        switch await getPsqlExec(~pgUser, ~pgHost) {
+        switch await getConnectedPsqlExec(~pgUser, ~pgHost, ~pgDatabase, ~pgPort) {
         | Ok(psqlExec) => {
             Logging.info(
               `Dumping cache: ${cacheTableInfo
@@ -746,7 +761,7 @@ let make = (
               let outputFile =
                 NodeJs.Path.join(cacheDirPath, cacheName ++ ".tsv")->NodeJs.Path.toString
 
-              let command = `${psqlExec} -h ${pgHost} -p ${pgPort->Js.Int.toString} -U ${pgUser} -d ${pgDatabase} -c 'COPY "${pgSchema}"."${tableName}" TO STDOUT WITH (FORMAT text, HEADER);' > ${outputFile}`
+              let command = `${psqlExec} -c 'COPY "${pgSchema}"."${tableName}" TO STDOUT WITH (FORMAT text, HEADER);' > ${outputFile}`
 
               Promise.make((resolve, reject) => {
                 NodeJs.ChildProcess.execWithOptions(
@@ -782,7 +797,7 @@ let make = (
         NodeJs.Fs.Promises.readdir(cacheDirPath)
         ->Promise.thenResolve(e => Ok(e))
         ->Promise.catch(_ => Promise.resolve(Error(nothingToUploadErrorMessage))),
-        getPsqlExec(~pgUser, ~pgHost),
+        getConnectedPsqlExec(~pgUser, ~pgHost, ~pgDatabase, ~pgPort),
       )) {
       | (Ok(entries), Ok(psqlExec)) => {
           let cacheFiles = entries->Js.Array2.filter(entry => {
@@ -808,7 +823,7 @@ let make = (
               ->Promise.then(() => {
                 let inputFile = NodeJs.Path.join(cacheDirPath, entry)->NodeJs.Path.toString
 
-                let command = `${psqlExec} -h ${pgHost} -p ${pgPort->Js.Int.toString} -U ${pgUser} -d ${pgDatabase} -c 'COPY "${pgSchema}"."${tableName}" FROM STDIN WITH (FORMAT text, HEADER);' < ${inputFile}`
+                let command = `${psqlExec} -c 'COPY "${pgSchema}"."${tableName}" FROM STDIN WITH (FORMAT text, HEADER);' < ${inputFile}`
 
                 Promise.make(
                   (resolve, reject) => {
@@ -827,6 +842,8 @@ let make = (
               })
             })
             ->Promise.all
+
+          Logging.info("Successfully uploaded cache.")
         }
       | (Error(message), _)
       | (_, Error(message)) =>
