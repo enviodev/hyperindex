@@ -2,7 +2,7 @@ open Belt
 
 let loadById = (
   ~loadManager,
-  ~storage: Persistence.storage,
+  ~persistence: Persistence.t,
   ~entityConfig: Internal.entityConfig,
   ~inMemoryStore,
   ~shouldGroup,
@@ -16,7 +16,7 @@ let loadById = (
     // Since LoadManager.call prevents registerign entities already existing in the inMemoryStore,
     // we can be sure that we load only the new ones.
     let dbEntities = try {
-      await storage.loadByIdsOrThrow(
+      await (persistence->Persistence.getInitializedStorageOrThrow).loadByIdsOrThrow(
         ~table=entityConfig.table,
         ~rowsSchema=entityConfig.rowsSchema,
         ~ids=idsToLoad,
@@ -56,25 +56,96 @@ let loadById = (
 
 let loadEffect = (
   ~loadManager,
+  ~persistence: Persistence.t,
   ~effect: Internal.effect,
   ~effectArgs,
   ~inMemoryStore,
   ~shouldGroup,
+  ~eventItem,
 ) => {
   let key = `${effect.name}.effect`
   let inMemTable = inMemoryStore->InMemoryStore.getEffectInMemTable(~effect)
 
-  let load = args => {
-    effect.callsCount = effect.callsCount + args->Array.length
-    Prometheus.EffectCallsCount.set(~callsCount=effect.callsCount, ~effectName=effect.name)
-    args
-    ->Js.Array2.map(arg => {
-      effect.handler(arg)->Promise.thenResolve(output => {
-        inMemTable->InMemoryTable.setByHash(arg.cacheKey, output)
+  let load = async args => {
+    let idsToLoad = args->Js.Array2.map((arg: Internal.effectArgs) => arg.cacheKey)
+    let idsFromCache = Utils.Set.make()
+
+    if (
+      effect.cache &&
+      switch persistence.storageStatus {
+      | Ready({cache}) => cache->Utils.Dict.has(effect.name)
+      | _ => false
+      }
+    ) {
+      let dbEntities = try {
+        await (persistence->Persistence.getInitializedStorageOrThrow).loadByIdsOrThrow(
+          ~table=Table.mkTable(
+            `envio_effect_${effect.name}`,
+            ~fields=[
+              Table.mkField("id", Text, ~fieldSchema=S.string, ~isPrimaryKey=true),
+              Table.mkField("output", JsonB, ~fieldSchema=S.json(~validate=false)),
+            ],
+            ~compositeIndices=[],
+          ),
+          ~rowsSchema=S.array(
+            S.schema(s =>
+              {
+                "id": s.matches(S.string),
+                "output": s.matches(effect.output),
+              }
+            ),
+          ),
+          ~ids=idsToLoad,
+        )
+      } catch {
+      | Persistence.StorageError({message, reason}) =>
+        reason->ErrorHandling.mkLogAndRaise(~logger=eventItem->Logging.getEventLogger, ~msg=message)
+      }
+
+      dbEntities->Js.Array2.forEach(entity => {
+        idsFromCache->Utils.Set.add(entity["id"])->ignore
+        inMemTable->InMemoryTable.setByHash(entity["id"], entity["output"])
       })
-    })
-    ->Promise.all
-    ->(Utils.magic: promise<array<unit>> => promise<unit>)
+    }
+
+    let remainingCallsCount = idsToLoad->Array.length - idsFromCache->Utils.Set.size
+    if remainingCallsCount > 0 {
+      effect.callsCount = effect.callsCount + remainingCallsCount
+      Prometheus.EffectCallsCount.set(~callsCount=effect.callsCount, ~effectName=effect.name)
+
+      let ids = []
+      let promise =
+        args
+        ->Belt.Array.keepMapU((arg: Internal.effectArgs) => {
+          if idsFromCache->Utils.Set.has(arg.cacheKey) {
+            None
+          } else {
+            ids->Array.push(arg.cacheKey)->ignore
+            Some(
+              effect.handler(arg)->Promise.thenResolve(output => {
+                inMemTable->InMemoryTable.setByHash(arg.cacheKey, output)
+                output
+              }),
+            )
+          }
+        })
+        ->Promise.all
+
+      await (
+        if effect.cache {
+          promise->Promise.then(outputs => {
+            persistence->Persistence.setEffectCacheOrThrow(
+              ~effectName=effect.name,
+              ~ids,
+              ~outputs,
+              ~outputSchema=effect.output,
+            )
+          })
+        } else {
+          promise->(Utils.magic: promise<array<Internal.effectOutput>> => promise<unit>)
+        }
+      )
+    }
   }
 
   loadManager->LoadManager.call(
@@ -90,7 +161,7 @@ let loadEffect = (
 
 let loadByField = (
   ~loadManager,
-  ~storage: Persistence.storage,
+  ~persistence: Persistence.t,
   ~operator: TableIndices.Operator.t,
   ~entityConfig: Internal.entityConfig,
   ~inMemoryStore,
@@ -121,7 +192,7 @@ let loadByField = (
       ->Js.Array2.map(async index => {
         inMemTable->InMemoryTable.Entity.addEmptyIndex(~index)
         let entities = try {
-          await storage.loadByFieldOrThrow(
+          await (persistence->Persistence.getInitializedStorageOrThrow).loadByFieldOrThrow(
             ~operator=switch index {
             | Single({operator: Gt}) => #">"
             | Single({operator: Eq}) => #"="

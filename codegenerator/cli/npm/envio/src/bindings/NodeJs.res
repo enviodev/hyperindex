@@ -4,35 +4,25 @@ type t
 type exitCode = | @as(0) Success | @as(1) Failure
 @send external exitWithCode: (t, exitCode) => unit = "exit"
 
-module Util = {
-  @unboxed
-  type depth = Int(int) | @as(null) Null
-  @unboxed
-  type compact = Bool(bool) | Int(int)
-  @unboxed
-  type sorted = Bool(bool) | Fn((string, string) => int)
-  @unboxed
-  type getters = | @as(true) True | @as(false) False | @as("get") Get | @as("set") Set
+module Process = {
+  type t = {env: Js.Dict.t<string>}
+  @module external process: t = "process"
+}
 
-  @unbox
-  type inspectOptions = {
-    showHidden?: bool,
-    depth?: depth,
-    colors?: bool,
-    customInspect?: bool,
-    showProxy?: bool,
-    maxArrayLength?: int,
-    maxStringLength?: int,
-    breakLength?: int,
-    @as("compact") compact?: compact,
-    sorted?: sorted,
-    getters?: string,
-    numericSeparator?: bool,
+module ChildProcess = {
+  type execOptions = {
+    cwd?: string,
+    env?: dict<string>,
+    shell?: string,
   }
 
-  @module("util") external inspect: ('a, inspectOptions) => string = "inspect"
+  type callback = (~error: Js.null<exn>, ~stdout: string, ~stderr: string) => unit
 
-  let inspectObj = a => inspect(a, {showHidden: false, depth: Null, colors: true})
+  @module("child_process")
+  external exec: (string, callback) => unit = "exec"
+
+  @module("child_process")
+  external execWithOptions: (string, execOptions, callback) => unit = "exec"
 }
 
 module Path = {
@@ -53,6 +43,11 @@ module Fs = {
     mode?: int,
     // flag?: Flag.t,
     encoding?: string,
+  }
+
+  type mkdirOptions = {
+    recursive?: bool,
+    mode?: int,
   }
 
   module Promises = {
@@ -77,5 +72,11 @@ module Fs = {
 
     @module("fs") @scope("promises")
     external readFile: (~filepath: Path.t, ~encoding: encoding) => promise<string> = "readFile"
+
+    @module("fs") @scope("promises")
+    external mkdir: (~path: Path.t, ~options: mkdirOptions=?) => Js.Promise.t<unit> = "mkdir"
+
+    @module("fs") @scope("promises")
+    external readdir: Path.t => Js.Promise.t<array<string>> = "readdir"
   }
 }

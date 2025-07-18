@@ -35,26 +35,6 @@ type UnknownToOutput<T> = T extends Sury.Schema<unknown>
     >
   : T;
 
-type UnknownToInput<T> = T extends Sury.Schema<unknown>
-  ? Sury.Input<T>
-  : T extends (...args: any[]) => any
-  ? T
-  : T extends unknown[]
-  ? { [K in keyof T]: UnknownToInput<T[K]> }
-  : T extends { [k in keyof T]: unknown }
-  ? Flatten<
-      {
-        [k in keyof T as HasUndefined<UnknownToInput<T[k]>> extends true
-          ? k
-          : never]?: UnknownToInput<T[k]>;
-      } & {
-        [k in keyof T as HasUndefined<UnknownToInput<T[k]>> extends true
-          ? never
-          : k]: UnknownToInput<T[k]>;
-      }
-    >
-  : T;
-
 type HasUndefined<T> = [T] extends [undefined]
   ? true
   : undefined extends T
@@ -92,7 +72,7 @@ type Flatten<T> = T extends object
 export function experimental_createEffect<
   IS,
   OS,
-  I = UnknownToInput<IS>,
+  I = UnknownToOutput<IS>,
   O = UnknownToOutput<OS>,
   // A hack to enforce that the inferred return type
   // matches the output schema type
@@ -130,6 +110,7 @@ export declare namespace S {
   // Don't expose recursive for now, since it's too advanced
   // export const recursive: typeof Sury.recursive;
   export const transform: typeof Sury.transform;
+  export const shape: typeof Sury.shape;
   export const refine: typeof Sury.refine;
   export const schema: typeof Sury.schema;
   export const record: typeof Sury.record;

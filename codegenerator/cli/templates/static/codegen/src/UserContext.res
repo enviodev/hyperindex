@@ -18,7 +18,7 @@ type contextParams = {
   eventItem: Internal.eventItem,
   inMemoryStore: InMemoryStore.t,
   loadManager: LoadManager.t,
-  storage: Persistence.storage,
+  persistence: Persistence.t,
   isPreload: bool,
   shouldSaveHistory: bool,
 }
@@ -29,14 +29,16 @@ let rec initEffect = (params: contextParams) => (
 ) =>
   LoadLayer.loadEffect(
     ~loadManager=params.loadManager,
+    ~persistence=params.persistence,
     ~effect,
     ~effectArgs={
       input,
       context: params->Utils.Proxy.make(effectTraps)->Utils.magic,
-      cacheKey: input->Utils.Hash.makeOrThrow,
+      cacheKey: input->S.reverseConvertOrThrow(effect.input)->Utils.Hash.makeOrThrow,
     },
     ~inMemoryStore=params.inMemoryStore,
     ~shouldGroup=params.isPreload,
+    ~eventItem=params.eventItem,
   )
 and effectTraps: Utils.Proxy.traps<contextParams> = {
   get: (~target as params, ~prop: unknown) => {
@@ -65,7 +67,7 @@ let makeEntityHandlerContext = (
   let get = entityId =>
     LoadLayer.loadById(
       ~loadManager=params.loadManager,
-      ~storage=params.storage,
+      ~persistence=params.persistence,
       ~entityConfig,
       ~inMemoryStore=params.inMemoryStore,
       ~shouldGroup=false,
@@ -183,7 +185,7 @@ let getWhereTraps: Utils.Proxy.traps<entityContextParams> = {
           Entities.eq: fieldValue =>
             LoadLayer.loadByField(
               ~loadManager=params.loadManager,
-              ~storage=params.storage,
+              ~persistence=params.persistence,
               ~operator=Eq,
               ~entityConfig,
               ~fieldName=dbFieldName,
@@ -196,7 +198,7 @@ let getWhereTraps: Utils.Proxy.traps<entityContextParams> = {
           gt: fieldValue =>
             LoadLayer.loadByField(
               ~loadManager=params.loadManager,
-              ~storage=params.storage,
+              ~persistence=params.persistence,
               ~operator=Gt,
               ~entityConfig,
               ~fieldName=dbFieldName,
@@ -238,7 +240,7 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
         entityId =>
           LoadLayer.loadById(
             ~loadManager=params.loadManager,
-            ~storage=params.storage,
+            ~persistence=params.persistence,
             ~entityConfig=params.entityConfig,
             ~inMemoryStore=params.inMemoryStore,
             ~shouldGroup=params.isPreload,
@@ -252,7 +254,7 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
         (entityId, ~message=?) =>
           LoadLayer.loadById(
             ~loadManager=params.loadManager,
-            ~storage=params.storage,
+            ~persistence=params.persistence,
             ~entityConfig=params.entityConfig,
             ~inMemoryStore=params.inMemoryStore,
             ~shouldGroup=params.isPreload,
@@ -275,7 +277,7 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
         (entity: Internal.entity) =>
           LoadLayer.loadById(
             ~loadManager=params.loadManager,
-            ~storage=params.storage,
+            ~persistence=params.persistence,
             ~entityConfig=params.entityConfig,
             ~inMemoryStore=params.inMemoryStore,
             ~shouldGroup=params.isPreload,
@@ -319,7 +321,7 @@ let loaderTraps: Utils.Proxy.traps<contextParams> = {
           isPreload: params.isPreload,
           inMemoryStore: params.inMemoryStore,
           loadManager: params.loadManager,
-          storage: params.storage,
+          persistence: params.persistence,
           shouldSaveHistory: params.shouldSaveHistory,
           entityConfig,
         }

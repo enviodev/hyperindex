@@ -9,7 +9,7 @@ describe("LoadLayer", () => {
     let getUser = entityId =>
       LoadLayer.loadById(
         ~loadManager,
-        ~storage=storageMock.storage,
+        ~persistence=storageMock->Mock.Storage.toPersistence,
         ~entityConfig=module(Entities.User)->Entities.entityModToInternal,
         ~inMemoryStore,
         ~entityId,
@@ -41,7 +41,7 @@ describe("LoadLayer", () => {
       let getUser = entityId =>
         LoadLayer.loadById(
           ~loadManager,
-          ~storage=storageMock.storage,
+          ~persistence=storageMock->Mock.Storage.toPersistence,
           ~entityConfig=module(Entities.User)->Entities.entityModToInternal,
           ~inMemoryStore,
           ~entityId,
@@ -79,7 +79,7 @@ describe("LoadLayer", () => {
       let getUser = entityId =>
         LoadLayer.loadById(
           ~loadManager,
-          ~storage=storageMock.storage,
+          ~persistence=storageMock->Mock.Storage.toPersistence,
           ~entityConfig=module(Entities.User)->Entities.entityModToInternal,
           ~inMemoryStore,
           ~entityId,
@@ -111,7 +111,7 @@ describe("LoadLayer", () => {
     let getUser = entityId =>
       LoadLayer.loadById(
         ~loadManager,
-        ~storage=storageMock.storage,
+        ~persistence=storageMock->Mock.Storage.toPersistence,
         ~entityConfig=module(Entities.User)->Entities.entityModToInternal,
         ~inMemoryStore,
         ~entityId,
@@ -160,7 +160,7 @@ describe("LoadLayer", () => {
       let getUser = entityId =>
         LoadLayer.loadById(
           ~loadManager,
-          ~storage=storageMock.storage,
+          ~persistence=storageMock->Mock.Storage.toPersistence,
           ~entityConfig=module(Entities.User)->Entities.entityModToInternal,
           ~inMemoryStore,
           ~entityId,
@@ -203,7 +203,7 @@ describe("LoadLayer", () => {
       let getUser = entityId =>
         LoadLayer.loadById(
           ~loadManager,
-          ~storage=storageMock.storage,
+          ~persistence=storageMock->Mock.Storage.toPersistence,
           ~entityConfig=module(Entities.User)->Entities.entityModToInternal,
           ~inMemoryStore,
           ~entityId,
@@ -247,7 +247,7 @@ describe("LoadLayer", () => {
       let getUser = entityId =>
         LoadLayer.loadById(
           ~loadManager,
-          ~storage=storageMock.storage,
+          ~persistence=storageMock->Mock.Storage.toPersistence,
           ~entityConfig=module(Entities.User)->Entities.entityModToInternal,
           ~inMemoryStore,
           ~entityId,
@@ -301,7 +301,7 @@ describe("LoadLayer", () => {
       let getUser = entityId =>
         LoadLayer.loadById(
           ~loadManager,
-          ~storage=storageMock.storage,
+          ~persistence=storageMock->Mock.Storage.toPersistence,
           ~entityConfig=module(Entities.User)->Entities.entityModToInternal,
           ~inMemoryStore,
           ~entityId,
@@ -347,7 +347,7 @@ describe("LoadLayer", () => {
     let getUsersWithId = fieldValue =>
       LoadLayer.loadByField(
         ~loadManager,
-        ~storage=storageMock.storage,
+        ~persistence=storageMock->Mock.Storage.toPersistence,
         ~entityConfig=module(Entities.User)->Entities.entityModToInternal,
         ~operator=Eq,
         ~inMemoryStore,
@@ -360,7 +360,7 @@ describe("LoadLayer", () => {
     let getUsersWithUpdates = fieldValue =>
       LoadLayer.loadByField(
         ~loadManager,
-        ~storage=storageMock.storage,
+        ~persistence=storageMock->Mock.Storage.toPersistence,
         ~entityConfig=module(Entities.User)->Entities.entityModToInternal,
         ~operator=Gt,
         ~inMemoryStore,
@@ -420,7 +420,7 @@ describe("LoadLayer", () => {
     let getUsersWithId = fieldValue =>
       LoadLayer.loadByField(
         ~loadManager,
-        ~storage=storageMock.storage,
+        ~persistence=storageMock->Mock.Storage.toPersistence,
         ~entityConfig=module(Entities.User)->Entities.entityModToInternal,
         ~operator=Eq,
         ~inMemoryStore,
@@ -434,7 +434,7 @@ describe("LoadLayer", () => {
     let getUsersWithUpdates = fieldValue =>
       LoadLayer.loadByField(
         ~loadManager,
-        ~storage=storageMock.storage,
+        ~persistence=storageMock->Mock.Storage.toPersistence,
         ~entityConfig=module(Entities.User)->Entities.entityModToInternal,
         ~operator=Gt,
         ~inMemoryStore,
@@ -519,7 +519,7 @@ describe("LoadLayer", () => {
       let getUsersWithId = fieldValue =>
         LoadLayer.loadByField(
           ~loadManager,
-          ~storage=storageMock.storage,
+          ~persistence=storageMock->Mock.Storage.toPersistence,
           ~entityConfig=module(Entities.User)->Entities.entityModToInternal,
           ~operator=Eq,
           ~inMemoryStore,
