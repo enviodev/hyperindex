@@ -13,6 +13,7 @@ import type {
 } from "./src/Envio.gen.ts";
 
 import { schema as bigDecimalSchema } from "./src/bindings/BigDecimal.gen.ts";
+import { schema as bigintSchema } from "./src/bindings/BigInt.gen.ts";
 import * as Sury from "rescript-schema";
 
 type UnknownToOutput<T> = T extends Sury.Schema<unknown>
@@ -101,7 +102,7 @@ export declare namespace S {
   export const boolean: typeof Sury.boolean;
   export const int32: typeof Sury.int32;
   export const number: typeof Sury.number;
-  export const bigint: typeof Sury.bigint;
+  export const bigint: typeof bigintSchema;
   export const never: typeof Sury.never;
   export const union: typeof Sury.union;
   export const object: typeof Sury.object;

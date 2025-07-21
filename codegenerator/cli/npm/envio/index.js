@@ -13,7 +13,7 @@ exports.S = {
   boolean: Sury.boolean,
   int32: Sury.int32,
   number: Sury.number,
-  bigint: Sury.bigint,
+  bigint: require("./src/bindings/BigInt.res.js").schema,
   never: Sury.never,
   union: Sury.union,
   object: Sury.object,
