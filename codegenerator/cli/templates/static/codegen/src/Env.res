@@ -19,9 +19,10 @@ let maxPartitionConcurrency =
   envSafe->EnvSafe.get("ENVIO_MAX_PARTITION_CONCURRENCY", S.int, ~fallback=10)
 let indexingBlockLag = envSafe->EnvSafe.get("ENVIO_INDEXING_BLOCK_LAG", S.option(S.int))
 
+// FIXME: This broke HS grafana dashboard. Should investigate it later. Maybe we should use :: as a default value?
 // We want to be able to set it to 0.0.0.0
 // to allow to passthrough the port from a Docker container
-let serverHost = envSafe->EnvSafe.get("ENVIO_INDEXER_HOST", S.string, ~fallback="localhost")
+// let serverHost = envSafe->EnvSafe.get("ENVIO_INDEXER_HOST", S.string, ~fallback="localhost")
 let serverPort =
   envSafe->EnvSafe.get(
     "ENVIO_INDEXER_PORT",

@@ -27,7 +27,7 @@ type middleware = (req, res, unit => unit) => unit
 
 type server
 
-@send external listen: (app, ~port: int, ~host: string) => server = "listen"
+@send external listen: (app, int) => server = "listen"
 
 // res methods
 @send external sendStatus: (res, int) => unit = "sendStatus"
