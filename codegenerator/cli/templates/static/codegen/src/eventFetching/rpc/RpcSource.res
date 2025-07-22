@@ -54,6 +54,9 @@ let getSuggestedBlockIntervalFromExn = {
   // Base: "block range too large" - fixed 2000 block limit
   let baseRangeRegExp = %re(`/block range too large/`)
 
+  // evm-rpc.sei-apis.com: "block range too large (2000), maximum allowed is 1000 blocks"
+  let maxAllowedBlocksRegExp = %re(`/maximum allowed is (\d+) blocks/`)
+
   // Blast (paid): "exceeds the range allowed for your plan (5000 > 3000)"
   let blastPaidRegExp = %re(`/exceeds the range allowed for your plan \(\d+ > (\d+)\)/`)
 
@@ -128,24 +131,28 @@ let getSuggestedBlockIntervalFromExn = {
                   switch blockpiRangeRegExp->Js.Re.exec_(message) {
                   | Some(execResult) => extractBlockRange(execResult)
                   | None =>
-                    switch baseRangeRegExp->Js.Re.exec_(message) {
-                    | Some(_) => Some(2000)
+                    switch maxAllowedBlocksRegExp->Js.Re.exec_(message) {
+                    | Some(execResult) => extractBlockRange(execResult)
                     | None =>
-                      switch blastPaidRegExp->Js.Re.exec_(message) {
-                      | Some(execResult) => extractBlockRange(execResult)
+                      switch baseRangeRegExp->Js.Re.exec_(message) {
+                      | Some(_) => Some(2000)
                       | None =>
-                        switch chainstackRegExp->Js.Re.exec_(message) {
-                        | Some(_) => Some(10000)
+                                                switch blastPaidRegExp->Js.Re.exec_(message) {
+                        | Some(execResult) => extractBlockRange(execResult)
                         | None =>
-                          switch coinbaseRegExp->Js.Re.exec_(message) {
-                          | Some(execResult) => extractBlockRange(execResult)
+                          switch chainstackRegExp->Js.Re.exec_(message) {
+                          | Some(_) => Some(10000)
                           | None =>
-                            switch publicNodeRegExp->Js.Re.exec_(message) {
+                            switch coinbaseRegExp->Js.Re.exec_(message) {
                             | Some(execResult) => extractBlockRange(execResult)
                             | None =>
-                              switch hyperliquidRegExp->Js.Re.exec_(message) {
+                              switch publicNodeRegExp->Js.Re.exec_(message) {
                               | Some(execResult) => extractBlockRange(execResult)
-                              | None => None
+                              | None =>
+                                switch hyperliquidRegExp->Js.Re.exec_(message) {
+                                | Some(execResult) => extractBlockRange(execResult)
+                                | None => None
+                                }
                               }
                             }
                           }

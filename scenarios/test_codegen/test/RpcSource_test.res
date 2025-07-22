@@ -423,6 +423,46 @@ describe("RpcSource - getSuggestedBlockIntervalFromExn", () => {
     Assert.deepEqual(getSuggestedBlockIntervalFromExn(error), Some(510))
   })
 
+  it("Shouldn't retry on height not available", () => {
+    let error = JsError(
+      %raw(`{
+        "code": "UNKNOWN_ERROR",
+        "error": {
+          "code": -32000,
+          "message": "height is not available (requested height: 138913957, base height: 155251499)"
+        },
+        "payload": {
+          "method": "eth_getBlockByNumber",
+          "params": [
+            "0x847a8a5",
+            false
+          ],
+          "id": 2,
+          "jsonrpc": "2.0"
+        },
+        "shortMessage": "could not coalesce error"
+      }`),
+    )
+
+    Assert.deepEqual(getSuggestedBlockIntervalFromExn(error), None)
+  })
+
+  it("Should retry on block range too large", () => {
+    let error = JsError(
+      %raw(`{
+        code: 'UNKNOWN_ERROR',
+        error: {
+          code: -32000,
+          message: 'block range too large (2000), maximum allowed is 1000 blocks'
+        },
+        payload: { method: 'eth_getLogs', params: [], id: 4, jsonrpc: '2.0' },
+        shortMessage: 'could not coalesce error'
+      }`),
+    )
+
+    Assert.deepEqual(getSuggestedBlockIntervalFromExn(error), Some(1000))
+  })
+
   it("Should ignore invalid range errors where toBlock is less than fromBlock", () => {
     let error = JsError(
       %raw(`{
