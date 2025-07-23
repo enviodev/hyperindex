@@ -104,7 +104,7 @@ let loadEffect = (
 
       dbEntities->Js.Array2.forEach(entity => {
         idsFromCache->Utils.Set.add(entity["id"])->ignore
-        inMemTable->InMemoryTable.setByHash(entity["id"], entity["output"])
+        inMemTable.dict->Js.Dict.set(entity["id"], entity["output"])
       })
     }
 
@@ -114,37 +114,25 @@ let loadEffect = (
       Prometheus.EffectCallsCount.set(~callsCount=effect.callsCount, ~effectName=effect.name)
 
       let ids = []
-      let promise =
-        args
-        ->Belt.Array.keepMapU((arg: Internal.effectArgs) => {
-          if idsFromCache->Utils.Set.has(arg.cacheKey) {
-            None
-          } else {
-            ids->Array.push(arg.cacheKey)->ignore
-            Some(
-              effect.handler(arg)->Promise.thenResolve(output => {
-                inMemTable->InMemoryTable.setByHash(arg.cacheKey, output)
-                output
-              }),
-            )
-          }
-        })
-        ->Promise.all
 
-      await (
-        if effect.cache {
-          promise->Promise.then(outputs => {
-            persistence->Persistence.setEffectCacheOrThrow(
-              ~effectName=effect.name,
-              ~ids,
-              ~outputs,
-              ~outputSchema=effect.output,
-            )
-          })
+      args
+      ->Belt.Array.keepMapU((arg: Internal.effectArgs) => {
+        if idsFromCache->Utils.Set.has(arg.cacheKey) {
+          None
         } else {
-          promise->(Utils.magic: promise<array<Internal.effectOutput>> => promise<unit>)
+          ids->Array.push(arg.cacheKey)->ignore
+          Some(
+            effect.handler(arg)->Promise.thenResolve(output => {
+              inMemTable.dict->Js.Dict.set(arg.cacheKey, output)
+              if effect.cache {
+                inMemTable.idsToStore->Array.push(arg.cacheKey)->ignore
+              }
+            }),
+          )
         }
-      )
+      })
+      ->Promise.all
+      ->(Utils.magic: promise<array<unit>> => unit)
     }
   }
 
@@ -153,8 +141,8 @@ let loadEffect = (
     ~load,
     ~shouldGroup,
     ~hasher=args => args.cacheKey,
-    ~getUnsafeInMemory=hash => inMemTable->InMemoryTable.getUnsafeByHash(hash),
-    ~hasInMemory=hash => inMemTable->InMemoryTable.hasByHash(hash),
+    ~getUnsafeInMemory=hash => inMemTable.dict->Js.Dict.unsafeGet(hash),
+    ~hasInMemory=hash => inMemTable.dict->Utils.Dict.has(hash),
     ~input=effectArgs,
   )
 }
