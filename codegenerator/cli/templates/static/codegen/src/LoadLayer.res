@@ -2,7 +2,7 @@ open Belt
 
 let loadById = (
   ~loadManager,
-  ~storage: Persistence.storage,
+  ~persistence: Persistence.t,
   ~entityConfig: Internal.entityConfig,
   ~inMemoryStore,
   ~shouldGroup,
@@ -16,7 +16,7 @@ let loadById = (
     // Since LoadManager.call prevents registerign entities already existing in the inMemoryStore,
     // we can be sure that we load only the new ones.
     let dbEntities = try {
-      await storage.loadByIdsOrThrow(
+      await (persistence->Persistence.getInitializedStorageOrThrow).loadByIdsOrThrow(
         ~table=entityConfig.table,
         ~rowsSchema=entityConfig.rowsSchema,
         ~ids=idsToLoad,
@@ -56,25 +56,75 @@ let loadById = (
 
 let loadEffect = (
   ~loadManager,
+  ~persistence: Persistence.t,
   ~effect: Internal.effect,
   ~effectArgs,
   ~inMemoryStore,
   ~shouldGroup,
+  ~eventItem,
 ) => {
   let key = `${effect.name}.effect`
   let inMemTable = inMemoryStore->InMemoryStore.getEffectInMemTable(~effect)
 
-  let load = args => {
-    effect.callsCount = effect.callsCount + args->Array.length
-    Prometheus.EffectCallsCount.set(~callsCount=effect.callsCount, ~effectName=effect.name)
-    args
-    ->Js.Array2.map(arg => {
-      effect.handler(arg)->Promise.thenResolve(output => {
-        inMemTable->InMemoryTable.setByHash(arg.cacheKey, output)
+  let load = async args => {
+    let idsToLoad = args->Js.Array2.map((arg: Internal.effectArgs) => arg.cacheKey)
+    let idsFromCache = Utils.Set.make()
+
+    switch effect.cache {
+    | Some({table, rowsSchema})
+      if switch persistence.storageStatus {
+      | Ready({cache}) => cache->Utils.Dict.has(effect.name)
+      | _ => false
+      } => {
+        let dbEntities = try {
+          await (persistence->Persistence.getInitializedStorageOrThrow).loadByIdsOrThrow(
+            ~table,
+            ~rowsSchema,
+            ~ids=idsToLoad,
+          )
+        } catch {
+        | Persistence.StorageError({message, reason}) =>
+          reason->ErrorHandling.mkLogAndRaise(
+            ~logger=eventItem->Logging.getEventLogger,
+            ~msg=message,
+          )
+        }
+
+        dbEntities->Js.Array2.forEach(entity => {
+          idsFromCache->Utils.Set.add(entity.id)->ignore
+          inMemTable.dict->Js.Dict.set(entity.id, entity.output)
+        })
+      }
+    | _ => ()
+    }
+
+    let remainingCallsCount = idsToLoad->Array.length - idsFromCache->Utils.Set.size
+    if remainingCallsCount > 0 {
+      effect.callsCount = effect.callsCount + remainingCallsCount
+      Prometheus.EffectCallsCount.set(~callsCount=effect.callsCount, ~effectName=effect.name)
+
+      let shouldStoreCache = effect.cache->Option.isSome
+      let ids = []
+
+      args
+      ->Belt.Array.keepMapU((arg: Internal.effectArgs) => {
+        if idsFromCache->Utils.Set.has(arg.cacheKey) {
+          None
+        } else {
+          ids->Array.push(arg.cacheKey)->ignore
+          Some(
+            effect.handler(arg)->Promise.thenResolve(output => {
+              inMemTable.dict->Js.Dict.set(arg.cacheKey, output)
+              if shouldStoreCache {
+                inMemTable.idsToStore->Array.push(arg.cacheKey)->ignore
+              }
+            }),
+          )
+        }
       })
-    })
-    ->Promise.all
-    ->(Utils.magic: promise<array<unit>> => promise<unit>)
+      ->Promise.all
+      ->(Utils.magic: promise<array<unit>> => unit)
+    }
   }
 
   loadManager->LoadManager.call(
@@ -82,15 +132,15 @@ let loadEffect = (
     ~load,
     ~shouldGroup,
     ~hasher=args => args.cacheKey,
-    ~getUnsafeInMemory=hash => inMemTable->InMemoryTable.getUnsafeByHash(hash),
-    ~hasInMemory=hash => inMemTable->InMemoryTable.hasByHash(hash),
+    ~getUnsafeInMemory=hash => inMemTable.dict->Js.Dict.unsafeGet(hash),
+    ~hasInMemory=hash => inMemTable.dict->Utils.Dict.has(hash),
     ~input=effectArgs,
   )
 }
 
 let loadByField = (
   ~loadManager,
-  ~storage: Persistence.storage,
+  ~persistence: Persistence.t,
   ~operator: TableIndices.Operator.t,
   ~entityConfig: Internal.entityConfig,
   ~inMemoryStore,
@@ -121,7 +171,7 @@ let loadByField = (
       ->Js.Array2.map(async index => {
         inMemTable->InMemoryTable.Entity.addEmptyIndex(~index)
         let entities = try {
-          await storage.loadByFieldOrThrow(
+          await (persistence->Persistence.getInitializedStorageOrThrow).loadByFieldOrThrow(
             ~operator=switch index {
             | Single({operator: Gt}) => #">"
             | Single({operator: Eq}) => #"="

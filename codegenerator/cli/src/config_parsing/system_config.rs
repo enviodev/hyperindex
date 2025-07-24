@@ -375,7 +375,7 @@ DefaultForMissingAndEmpty with empty env and empty default: ""
 //Returns false if there are any additional chars as this should imply
 //it is a dev release version or an unstable release
 fn is_valid_release_version_number(version: &str) -> bool {
-    let re_version_pattern = Regex::new(r"^\d+\.\d+\.\d+(-rc\.\d+)?$")
+    let re_version_pattern = Regex::new(r"^\d+\.\d+\.\d+(-(rc|alpha)\.\d+)?$")
         .expect("version regex pattern should be valid regex");
     re_version_pattern.is_match(version) || version.contains("-main-")
 }
@@ -2017,6 +2017,7 @@ mod test {
             "0.0.1",
             "10.2.3",
             "2.0.0-rc.1",
+            "2.26.0-alpha.0",
             "0.0.0-main-20241001144237-a236a894",
         ];
 

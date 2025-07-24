@@ -194,11 +194,30 @@ type effectArgs = {
   context: effectContext,
   cacheKey: string,
 }
+type effectCacheItem = {id: string, output: effectOutput}
+type effectCacheMeta = {
+  itemSchema: S.t<effectCacheItem>,
+  rowsSchema: S.t<array<effectCacheItem>>,
+  table: Table.table,
+}
 type effect = {
   name: string,
   handler: effectArgs => promise<effectOutput>,
-  cache: bool,
+  cache: option<effectCacheMeta>,
+  output: S.t<effectOutput>,
+  input: S.t<effectInput>,
   mutable callsCount: int,
+}
+let cacheTablePrefix = "envio_effect_"
+let makeCacheTable = (~effectName) => {
+  Table.mkTable(
+    cacheTablePrefix ++ effectName,
+    ~fields=[
+      Table.mkField("id", Text, ~fieldSchema=S.string, ~isPrimaryKey=true),
+      Table.mkField("output", JsonB, ~fieldSchema=S.json(~validate=false)),
+    ],
+    ~compositeIndices=[],
+  )
 }
 
 @genType.import(("./Types.ts", "Invalid"))

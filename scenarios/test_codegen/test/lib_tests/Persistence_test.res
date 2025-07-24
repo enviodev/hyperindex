@@ -2,7 +2,7 @@ open RescriptMocha
 
 describe("Test Persistence layer init", () => {
   Async.it("Should initialize the persistence layer without the user entities", async () => {
-    let storageMock = Mock.Storage.make([#isInitialized, #initialize])
+    let storageMock = Mock.Storage.make([#isInitialized, #restoreEffectCache, #initialize])
 
     let persistence = Persistence.make(
       ~userEntities=[],
@@ -82,10 +82,12 @@ describe("Test Persistence layer init", () => {
 
     storageMock.resolveInitialize()
     let _ = await Promise.resolve()
+    let _ = await Promise.resolve()
+    let _ = await Promise.resolve()
 
     Assert.deepEqual(
       persistence.storageStatus,
-      Persistence.Ready({cleanRun: true, effectCaches: Js.Dict.empty()}),
+      Persistence.Ready({cleanRun: true, cache: Js.Dict.empty()}),
       ~message=`Storage status should be ready`,
     )
 
@@ -94,8 +96,12 @@ describe("Test Persistence layer init", () => {
 
     await persistence->Persistence.init
     Assert.deepEqual(
-      (storageMock.isInitializedCalls->Array.length, storageMock.initializeCalls->Array.length),
-      (1, 1),
+      (
+        storageMock.isInitializedCalls->Array.length,
+        storageMock.initializeCalls->Array.length,
+        storageMock.restoreEffectCacheCalls,
+      ),
+      (1, 1, [{"withUpload": true}]),
       ~message=`Calling init the second time shouldn't do anything`,
     )
 
@@ -121,7 +127,7 @@ describe("Test Persistence layer init", () => {
   })
 
   Async.it("Should skip initialization when storage is already initialized", async () => {
-    let storageMock = Mock.Storage.make([#isInitialized, #loadEffectCaches])
+    let storageMock = Mock.Storage.make([#isInitialized, #restoreEffectCache])
 
     let persistence = Persistence.make(
       ~userEntities=[],
@@ -141,19 +147,20 @@ describe("Test Persistence layer init", () => {
     storageMock.resolveIsInitialized(true)
     let _ = await Promise.resolve()
     let _ = await Promise.resolve()
+    let _ = await Promise.resolve()
 
     Assert.deepEqual(
       persistence.storageStatus,
-      Persistence.Ready({cleanRun: false, effectCaches: Js.Dict.empty()}),
+      Persistence.Ready({cleanRun: false, cache: Js.Dict.empty()}),
       ~message=`Storage status should be ready`,
     )
     Assert.deepEqual(
       (
         storageMock.isInitializedCalls->Array.length,
         storageMock.initializeCalls->Array.length,
-        storageMock.loadEffectCachesCalls.contents,
+        storageMock.restoreEffectCacheCalls,
       ),
-      (1, 0, 1),
+      (1, 0, [{"withUpload": false}]),
       ~message=`Storage should be already initialized without additional initialize calls.
 Although it should load effect caches metadata.`,
     )

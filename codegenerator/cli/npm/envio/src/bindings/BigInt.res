@@ -44,6 +44,7 @@ module Bitwise = {
 
 let zero = fromInt(0)
 
+@genType
 let schema =
   S.string
   ->S.setName("BigInt")

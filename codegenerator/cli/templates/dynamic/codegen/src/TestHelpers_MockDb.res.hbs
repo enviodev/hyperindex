@@ -374,7 +374,15 @@ and makeProcessEvents = (mockDb: t, ~chainId=?) => async (
   //Construct a new instance of an in memory store to run for the given event
   let inMemoryStore = InMemoryStore.make()
   let loadManager = LoadManager.make()
-  let storage = makeMockStorage(mockDb)
+  let persistence = {
+    ...config.persistence,
+    storage: makeMockStorage(mockDb),
+    storageStatus: Ready({cleanRun: false, cache: Js.Dict.empty()}),
+  }
+  let config = {
+    ...config,
+    persistence,
+  }
 
   //No need to check contract is registered or return anything.
   //The only purpose is to test the registerContract function and to
@@ -392,11 +400,14 @@ and makeProcessEvents = (mockDb: t, ~chainId=?) => async (
   }
 
   try {
-    await eventItems->EventProcessing.runBatchLoadersOrThrow(~loadManager, ~storage, ~inMemoryStore)
+    await eventItems->EventProcessing.runBatchLoadersOrThrow(
+      ~loadManager,
+      ~persistence,
+      ~inMemoryStore,
+    )
     await eventItems->EventProcessing.runBatchHandlersOrThrow(
       ~inMemoryStore,
       ~loadManager,
-      ~storage,
       ~config,
       ~shouldSaveHistory=false,
       ~shouldBenchmark=false,
@@ -419,7 +430,6 @@ and makeMockStorage = (mockDb: t): Persistence.storage => {
     isInitialized: () => Js.Exn.raiseError("Not used yet"),
     initialize: (~entities as _=?, ~generalTables as _=?, ~enums as _=?) =>
       Js.Exn.raiseError("Not used yet"),
-    loadEffectCaches: () => Js.Exn.raiseError("Not used yet"),
     loadByIdsOrThrow: (
       type item,
       ~ids,
@@ -461,6 +471,9 @@ and makeMockStorage = (mockDb: t): Persistence.storage => {
       ->Promise.resolve
     },
     setOrThrow: (~items as _, ~table as _, ~itemSchema as _) => Js.Exn.raiseError("Not used yet"),
+    setEffectCacheOrThrow: (~effect as _, ~items as _, ~initialize as _) => Promise.resolve(),
+    dumpEffectCache: () => Js.Exn.raiseError("Not used yet"),
+    restoreEffectCache: (~withUpload as _) => Js.Exn.raiseError("Not used yet"),
   }
 }
 and /**

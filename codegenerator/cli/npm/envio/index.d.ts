@@ -13,6 +13,7 @@ import type {
 } from "./src/Envio.gen.ts";
 
 import { schema as bigDecimalSchema } from "./src/bindings/BigDecimal.gen.ts";
+import { schema as bigintSchema } from "./src/bindings/BigInt.gen.ts";
 import * as Sury from "rescript-schema";
 
 type UnknownToOutput<T> = T extends Sury.Schema<unknown>
@@ -31,26 +32,6 @@ type UnknownToOutput<T> = T extends Sury.Schema<unknown>
         [k in keyof T as HasUndefined<UnknownToOutput<T[k]>> extends true
           ? never
           : k]: UnknownToOutput<T[k]>;
-      }
-    >
-  : T;
-
-type UnknownToInput<T> = T extends Sury.Schema<unknown>
-  ? Sury.Input<T>
-  : T extends (...args: any[]) => any
-  ? T
-  : T extends unknown[]
-  ? { [K in keyof T]: UnknownToInput<T[K]> }
-  : T extends { [k in keyof T]: unknown }
-  ? Flatten<
-      {
-        [k in keyof T as HasUndefined<UnknownToInput<T[k]>> extends true
-          ? k
-          : never]?: UnknownToInput<T[k]>;
-      } & {
-        [k in keyof T as HasUndefined<UnknownToInput<T[k]>> extends true
-          ? never
-          : k]: UnknownToInput<T[k]>;
       }
     >
   : T;
@@ -92,7 +73,7 @@ type Flatten<T> = T extends object
 export function experimental_createEffect<
   IS,
   OS,
-  I = UnknownToInput<IS>,
+  I = UnknownToOutput<IS>,
   O = UnknownToOutput<OS>,
   // A hack to enforce that the inferred return type
   // matches the output schema type
@@ -121,7 +102,7 @@ export declare namespace S {
   export const boolean: typeof Sury.boolean;
   export const int32: typeof Sury.int32;
   export const number: typeof Sury.number;
-  export const bigint: typeof Sury.bigint;
+  export const bigint: typeof bigintSchema;
   export const never: typeof Sury.never;
   export const union: typeof Sury.union;
   export const object: typeof Sury.object;
@@ -130,6 +111,7 @@ export declare namespace S {
   // Don't expose recursive for now, since it's too advanced
   // export const recursive: typeof Sury.recursive;
   export const transform: typeof Sury.transform;
+  export const shape: typeof Sury.shape;
   export const refine: typeof Sury.refine;
   export const schema: typeof Sury.schema;
   export const record: typeof Sury.record;

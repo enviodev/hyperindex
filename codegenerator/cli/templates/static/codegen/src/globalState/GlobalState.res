@@ -110,7 +110,7 @@ type partitionQueryResponse = {
   query: FetchState.query,
 }
 
-type shouldExit = ExitWithSuccess | NoExit
+type shouldExit = ExitWithSuccess | NoExit | NoExitWithCacheDump
 
 // Need to dispatch an action for every async operation
 // to get access to the latest state.
@@ -660,10 +660,15 @@ let actionReducer = (state: t, action: action) => {
         state.chainManager.chainFetchers,
       )
         ? {
+            // state.config.persistence.storage
             Logging.info("All chains are caught up to the endblock.")
             // Keep the indexer process running in TUI mode
             // so the Dev Console server stays working
-            state.shouldUseTui ? NoExit : ExitWithSuccess
+            if state.shouldUseTui {
+              NoExitWithCacheDump
+            } else {
+              ExitWithSuccess
+            }
           }
         : NoExit
       (
@@ -859,8 +864,12 @@ let injectedTaskReducer = (
       updateChainMetadataTable(chainManager, ~throttler=writeThrottlers.chainMetaData)
       ->Promise.thenResolve(_ => dispatchAction(SuccessExit))
       ->ignore
-    | NoExit =>
+    | NoExit | NoExitWithCacheDump =>
       updateChainMetadataTable(chainManager, ~throttler=writeThrottlers.chainMetaData)->ignore
+      if shouldExit === NoExitWithCacheDump {
+        // Dump cache to disk when we reached the end block with tui on
+        await state.config.persistence.storage.dumpEffectCache()
+      }
     }
   | NextQuery(chainCheck) =>
     let fetchForChain = checkAndFetchForChain(

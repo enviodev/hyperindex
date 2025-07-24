@@ -364,4 +364,17 @@ describe("Use Envio test framework to test event handlers", () => {
       },
     ] satisfies typeof registeredDcs);
   });
+
+  it("Should be able to run effect with cache", async () => {
+    const mockDbInitial = MockDb.createMockDb();
+
+    const event = Gravatar.FactoryEvent.createMockEvent({
+      testCase: "testEffectWithCache",
+    });
+    const event2 = Gravatar.FactoryEvent.createMockEvent({
+      testCase: "testEffectWithCache2",
+    });
+
+    const _updatedMockDb = await mockDbInitial.processEvents([event, event2]);
+  });
 });
