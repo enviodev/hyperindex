@@ -447,8 +447,8 @@ const testEffectWithCache = experimental_createEffect(
     output: S.string,
     cache: true,
   },
-  async (_) => {
-    return "test";
+  async ({ input }) => {
+    return `test-${input.id}`;
   }
 );
 
@@ -637,7 +637,15 @@ Gravatar.FactoryEvent.handlerWithLoader({
         const result = await context.effect(testEffectWithCache, {
           id: "1",
         });
-        deepEqual(result, "test");
+        deepEqual(result, "test-1");
+        break;
+      }
+
+      case "testEffectWithCache2": {
+        const result = await context.effect(testEffectWithCache, {
+          id: "2",
+        });
+        deepEqual(result, "test-2");
         break;
       }
     }

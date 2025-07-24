@@ -371,7 +371,10 @@ describe("Use Envio test framework to test event handlers", () => {
     const event = Gravatar.FactoryEvent.createMockEvent({
       testCase: "testEffectWithCache",
     });
+    const event2 = Gravatar.FactoryEvent.createMockEvent({
+      testCase: "testEffectWithCache2",
+    });
 
-    const _updatedMockDb = await mockDbInitial.processEvents([event]);
+    const _updatedMockDb = await mockDbInitial.processEvents([event, event2]);
   });
 });
