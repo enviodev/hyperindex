@@ -438,6 +438,20 @@ Gravatar.FactoryEvent.contractRegister(({ event, context }) => {
   }
 });
 
+const testEffectWithCache = experimental_createEffect(
+  {
+    name: "testEffectWithCache",
+    input: {
+      id: S.string,
+    },
+    output: S.string,
+    cache: true,
+  },
+  async (_) => {
+    return "test";
+  }
+);
+
 let getOrThrowInLoaderCount = 0;
 let loaderSetCount = 0;
 
@@ -616,6 +630,14 @@ Gravatar.FactoryEvent.handlerWithLoader({
           id: "2",
           c: "2",
         });
+        break;
+      }
+
+      case "testEffectWithCache": {
+        const result = await context.effect(testEffectWithCache, {
+          id: "1",
+        });
+        deepEqual(result, "test");
         break;
       }
     }

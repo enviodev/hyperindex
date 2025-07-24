@@ -70,42 +70,32 @@ let loadEffect = (
     let idsToLoad = args->Js.Array2.map((arg: Internal.effectArgs) => arg.cacheKey)
     let idsFromCache = Utils.Set.make()
 
-    if (
-      effect.cache &&
-      switch persistence.storageStatus {
+    switch effect.cache {
+    | Some({table, rowsSchema})
+      if switch persistence.storageStatus {
       | Ready({cache}) => cache->Utils.Dict.has(effect.name)
       | _ => false
-      }
-    ) {
-      let dbEntities = try {
-        await (persistence->Persistence.getInitializedStorageOrThrow).loadByIdsOrThrow(
-          ~table=Table.mkTable(
-            `envio_effect_${effect.name}`,
-            ~fields=[
-              Table.mkField("id", Text, ~fieldSchema=S.string, ~isPrimaryKey=true),
-              Table.mkField("output", JsonB, ~fieldSchema=S.json(~validate=false)),
-            ],
-            ~compositeIndices=[],
-          ),
-          ~rowsSchema=S.array(
-            S.schema(s =>
-              {
-                "id": s.matches(S.string),
-                "output": s.matches(effect.output),
-              }
-            ),
-          ),
-          ~ids=idsToLoad,
-        )
-      } catch {
-      | Persistence.StorageError({message, reason}) =>
-        reason->ErrorHandling.mkLogAndRaise(~logger=eventItem->Logging.getEventLogger, ~msg=message)
-      }
+      } => {
+        let dbEntities = try {
+          await (persistence->Persistence.getInitializedStorageOrThrow).loadByIdsOrThrow(
+            ~table,
+            ~rowsSchema,
+            ~ids=idsToLoad,
+          )
+        } catch {
+        | Persistence.StorageError({message, reason}) =>
+          reason->ErrorHandling.mkLogAndRaise(
+            ~logger=eventItem->Logging.getEventLogger,
+            ~msg=message,
+          )
+        }
 
-      dbEntities->Js.Array2.forEach(entity => {
-        idsFromCache->Utils.Set.add(entity["id"])->ignore
-        inMemTable.dict->Js.Dict.set(entity["id"], entity["output"])
-      })
+        dbEntities->Js.Array2.forEach(entity => {
+          idsFromCache->Utils.Set.add(entity.id)->ignore
+          inMemTable.dict->Js.Dict.set(entity.id, entity.output)
+        })
+      }
+    | _ => ()
     }
 
     let remainingCallsCount = idsToLoad->Array.length - idsFromCache->Utils.Set.size
@@ -113,6 +103,7 @@ let loadEffect = (
       effect.callsCount = effect.callsCount + remainingCallsCount
       Prometheus.EffectCallsCount.set(~callsCount=effect.callsCount, ~effectName=effect.name)
 
+      let shouldStoreCache = effect.cache->Option.isSome
       let ids = []
 
       args
@@ -124,7 +115,7 @@ let loadEffect = (
           Some(
             effect.handler(arg)->Promise.thenResolve(output => {
               inMemTable.dict->Js.Dict.set(arg.cacheKey, output)
-              if effect.cache {
+              if shouldStoreCache {
                 inMemTable.idsToStore->Array.push(arg.cacheKey)->ignore
               }
             }),

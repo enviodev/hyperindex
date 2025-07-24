@@ -239,18 +239,19 @@ let executeBatch = async (
         switch idsToStore {
         | [] => None
         | ids => {
-            let outputs = Belt.Array.makeUninitializedUnsafe(ids->Belt.Array.length)
+            let items = Belt.Array.makeUninitializedUnsafe(ids->Belt.Array.length)
             ids->Belt.Array.forEachWithIndex((index, id) => {
-              outputs->Js.Array2.unsafe_set(index, dict->Js.Dict.unsafeGet(id))
+              items->Js.Array2.unsafe_set(
+                index,
+                (
+                  {
+                    id,
+                    output: dict->Js.Dict.unsafeGet(id),
+                  }: Internal.effectCacheItem
+                ),
+              )
             })
-            Some(
-              config.persistence->Persistence.setEffectCacheOrThrow(
-                ~effectName,
-                ~ids,
-                ~outputs,
-                ~outputSchema=effect.output,
-              ),
-            )
+            Some(config.persistence->Persistence.setEffectCacheOrThrow(~effect, ~items))
           }
         }
       })

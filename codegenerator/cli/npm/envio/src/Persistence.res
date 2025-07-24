@@ -49,10 +49,8 @@ type storage = {
   ) => promise<unit>,
   @raises("StorageError")
   setEffectCacheOrThrow: (
-    ~effectName: string,
-    ~ids: array<string>,
-    ~outputs: array<Internal.effectOutput>,
-    ~outputSchema: S.t<Internal.effectOutput>,
+    ~effect: Internal.effect,
+    ~items: array<Internal.effectCacheItem>,
     ~initialize: bool,
   ) => promise<unit>,
   dumpEffectCache: unit => promise<unit>,
@@ -176,13 +174,14 @@ let getInitializedStorageOrThrow = persistence => {
   }
 }
 
-let setEffectCacheOrThrow = async (persistence, ~effectName, ~ids, ~outputs, ~outputSchema) => {
+let setEffectCacheOrThrow = async (persistence, ~effect: Internal.effect, ~items) => {
   switch persistence.storageStatus {
   | Unknown
   | Initializing(_) =>
     Js.Exn.raiseError(`Failed to access the indexer storage. The Persistence layer is not initialized.`)
   | Ready({cache}) => {
       let storage = persistence.storage
+      let effectName = effect.name
       let effectCacheRecord = switch cache->Utils.Dict.dangerouslyGetNonOption(effectName) {
       | Some(c) => c
       | None => {
@@ -192,8 +191,8 @@ let setEffectCacheOrThrow = async (persistence, ~effectName, ~ids, ~outputs, ~ou
         }
       }
       let initialize = effectCacheRecord.count === 0
-      await storage.setEffectCacheOrThrow(~effectName, ~ids, ~outputs, ~outputSchema, ~initialize)
-      effectCacheRecord.count = effectCacheRecord.count + ids->Js.Array2.length
+      await storage.setEffectCacheOrThrow(~effect, ~items, ~initialize)
+      effectCacheRecord.count = effectCacheRecord.count + items->Js.Array2.length
       Prometheus.EffectCacheCount.set(~count=effectCacheRecord.count, ~effectName)
     }
   }

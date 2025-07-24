@@ -433,8 +433,7 @@ let makeSchemaTableNamesQuery = (~pgSchema) => {
   `SELECT table_name FROM information_schema.tables WHERE table_schema = '${pgSchema}';`
 }
 
-let cacheTablePrefix = "envio_effect_"
-let cacheTablePrefixLength = cacheTablePrefix->String.length
+let cacheTablePrefixLength = Internal.cacheTablePrefix->String.length
 
 type schemaCacheTableInfo = {
   @as("table_name")
@@ -449,7 +448,7 @@ let makeSchemaCacheTableInfoQuery = (~pgSchema) => {
     get_cache_row_count(t.table_name) as count
    FROM information_schema.tables t
    WHERE t.table_schema = '${pgSchema}' 
-   AND t.table_name LIKE '${cacheTablePrefix}%';`
+   AND t.table_name LIKE '${Internal.cacheTablePrefix}%';`
 }
 
 type psqlExecState =
@@ -681,20 +680,17 @@ let make = (
   }
 
   let setEffectCacheOrThrow = async (
-    ~effectName: string,
-    ~ids: array<string>,
-    ~outputs: array<Internal.effectOutput>,
-    ~outputSchema: S.t<Internal.effectOutput>,
+    ~effect: Internal.effect,
+    ~items: array<Internal.effectCacheItem>,
     ~initialize: bool,
   ) => {
-    let table = Table.mkTable(
-      cacheTablePrefix ++ effectName,
-      ~fields=[
-        Table.mkField("id", Text, ~fieldSchema=S.string, ~isPrimaryKey=true),
-        Table.mkField("output", JsonB, ~fieldSchema=S.json(~validate=false)),
-      ],
-      ~compositeIndices=[],
-    )
+    let {table, itemSchema} = switch effect.cache {
+    | Some(cacheMeta) => cacheMeta
+    | None =>
+      Js.Exn.raiseError(
+        `Failed to set effect cache for "${effect.name}". Effect has no cache enabled.`,
+      )
+    }
 
     if initialize {
       let _ = await sql->Postgres.unsafe(makeCreateTableQuery(table, ~pgSchema))
@@ -704,26 +700,7 @@ let make = (
       }
     }
 
-    let items = []
-    for idx in 0 to outputs->Array.length - 1 {
-      items
-      ->Js.Array2.push({
-        "id": ids[idx],
-        "output": outputs[idx],
-      })
-      ->ignore
-    }
-
-    await setOrThrow(
-      ~items,
-      ~table,
-      ~itemSchema=S.schema(s =>
-        {
-          "id": s.matches(S.string),
-          "output": s.matches(outputSchema),
-        }
-      ),
-    )
+    await setOrThrow(~items, ~table, ~itemSchema)
   }
 
   let dumpEffectCache = async () => {
@@ -807,23 +784,15 @@ let make = (
           let _ =
             await cacheFiles
             ->Js.Array2.map(entry => {
-              let cacheName = entry->Js.String2.slice(~from=0, ~to_=-4) // Remove .tsv extension
-              let tableName = cacheTablePrefix ++ cacheName
-              let table = Table.mkTable(
-                tableName,
-                ~fields=[
-                  Table.mkField("id", Text, ~fieldSchema=S.string, ~isPrimaryKey=true),
-                  Table.mkField("output", JsonB, ~fieldSchema=S.json(~validate=false)),
-                ],
-                ~compositeIndices=[],
-              )
+              let effectName = entry->Js.String2.slice(~from=0, ~to_=-4) // Remove .tsv extension
+              let table = Internal.makeCacheTable(~effectName)
 
               sql
               ->Postgres.unsafe(makeCreateTableQuery(table, ~pgSchema))
               ->Promise.then(() => {
                 let inputFile = NodeJs.Path.join(cacheDirPath, entry)->NodeJs.Path.toString
 
-                let command = `${psqlExec} -c 'COPY "${pgSchema}"."${tableName}" FROM STDIN WITH (FORMAT text, HEADER);' < ${inputFile}`
+                let command = `${psqlExec} -c 'COPY "${pgSchema}"."${table.tableName}" FROM STDIN WITH (FORMAT text, HEADER);' < ${inputFile}`
 
                 Promise.make(
                   (resolve, reject) => {
