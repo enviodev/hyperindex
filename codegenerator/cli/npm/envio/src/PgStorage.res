@@ -134,14 +134,14 @@ GRANT ALL ON SCHEMA "${pgSchema}" TO public;`,
     functionsQuery.contents ++
     "\n" ++
     `CREATE OR REPLACE FUNCTION get_cache_row_count(table_name text) 
-   RETURNS integer AS $$
-   DECLARE
-     result integer;
-   BEGIN
-     EXECUTE format('SELECT COUNT(*) FROM "${pgSchema}".%I', table_name) INTO result;
-     RETURN result;
-   END;
-   $$ LANGUAGE plpgsql;`
+RETURNS integer AS $$
+DECLARE
+  result integer;
+BEGIN
+  EXECUTE format('SELECT COUNT(*) FROM "${pgSchema}".%I', table_name) INTO result;
+  RETURN result;
+END;
+$$ LANGUAGE plpgsql;`
 
   [query.contents]->Js.Array2.concat(
     functionsQuery.contents !== "" ? [functionsQuery.contents] : [],

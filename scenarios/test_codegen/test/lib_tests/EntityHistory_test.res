@@ -251,6 +251,8 @@ describe("Entity History Codegen", () => {
       ~pgUser=Env.Db.user,
       ~pgDatabase=Env.Db.database,
       ~pgPassword=Env.Db.password,
+      ~pgHost=Env.Db.host,
+      ~pgPort=Env.Db.port,
     )
     try {
       await storage.initialize(
@@ -613,6 +615,8 @@ describe("Entity history rollbacks", () => {
         ~pgUser=Env.Db.user,
         ~pgDatabase=Env.Db.database,
         ~pgPassword=Env.Db.password,
+        ~pgHost=Env.Db.host,
+        ~pgPort=Env.Db.port,
       )
       await storage.initialize(
         ~entities=[module(TestEntity)->Entities.entityModToInternal],
@@ -785,6 +789,8 @@ describe("Entity history rollbacks", () => {
         ~pgUser=Env.Db.user,
         ~pgDatabase=Env.Db.database,
         ~pgPassword=Env.Db.password,
+        ~pgHost=Env.Db.host,
+        ~pgPort=Env.Db.port,
       )
       await storage.initialize(
         ~entities=[module(TestEntity)->Entities.entityModToInternal],
@@ -1071,6 +1077,8 @@ describe_skip("Prune performance test", () => {
       ~pgUser=Env.Db.user,
       ~pgDatabase=Env.Db.database,
       ~pgPassword=Env.Db.password,
+      ~pgHost=Env.Db.host,
+      ~pgPort=Env.Db.port,
     )
     await storage.initialize(
       ~entities=[module(TestEntity)->Entities.entityModToInternal],

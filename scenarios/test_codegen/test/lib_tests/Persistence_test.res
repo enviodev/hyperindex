@@ -2,7 +2,7 @@ open RescriptMocha
 
 describe("Test Persistence layer init", () => {
   Async.it("Should initialize the persistence layer without the user entities", async () => {
-    let storageMock = Mock.Storage.make([#isInitialized, #initialize])
+    let storageMock = Mock.Storage.make([#isInitialized, #restoreEffectCache, #initialize])
 
     let persistence = Persistence.make(
       ~userEntities=[],
@@ -82,6 +82,8 @@ describe("Test Persistence layer init", () => {
 
     storageMock.resolveInitialize()
     let _ = await Promise.resolve()
+    let _ = await Promise.resolve()
+    let _ = await Promise.resolve()
 
     Assert.deepEqual(
       persistence.storageStatus,
@@ -94,8 +96,12 @@ describe("Test Persistence layer init", () => {
 
     await persistence->Persistence.init
     Assert.deepEqual(
-      (storageMock.isInitializedCalls->Array.length, storageMock.initializeCalls->Array.length),
-      (1, 1),
+      (
+        storageMock.isInitializedCalls->Array.length,
+        storageMock.initializeCalls->Array.length,
+        storageMock.restoreEffectCacheCalls,
+      ),
+      (1, 1, [{"withUpload": true}]),
       ~message=`Calling init the second time shouldn't do anything`,
     )
 
@@ -139,6 +145,7 @@ describe("Test Persistence layer init", () => {
     let _ = persistence->Persistence.init
 
     storageMock.resolveIsInitialized(true)
+    let _ = await Promise.resolve()
     let _ = await Promise.resolve()
     let _ = await Promise.resolve()
 

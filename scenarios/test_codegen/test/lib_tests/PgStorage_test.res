@@ -167,11 +167,11 @@ CREATE INDEX IF NOT EXISTS "A_b_id" ON "test_schema"."A"("b_id");`
           ~enums=[],
         )
 
-        // Should return exactly 1 query (just main DDL, no functions)
+        // Should return exactly 2 query (main DDL, and a function for cache)
         Assert.equal(
           queries->Array.length,
-          1,
-          ~message="Should return single query when no entities have functions",
+          2,
+          ~message="Should return single query when no entities have functions. And a function needed for cache.",
         )
 
         let mainQuery = queries->Belt.Array.get(0)->Belt.Option.getExn
@@ -185,6 +185,21 @@ GRANT ALL ON SCHEMA "test_schema" TO public;`
           mainQuery,
           expectedMainQuery,
           ~message="Minimal configuration should match expected SQL exactly",
+        )
+
+        Assert.equal(
+          queries->Belt.Array.get(1)->Belt.Option.getExn,
+          `
+CREATE OR REPLACE FUNCTION get_cache_row_count(table_name text) 
+RETURNS integer AS $$
+DECLARE
+  result integer;
+BEGIN
+  EXECUTE format('SELECT COUNT(*) FROM "test_schema".%I', table_name) INTO result;
+  RETURN result;
+END;
+$$ LANGUAGE plpgsql;`,
+          ~message="A function for cache should be created",
         )
       },
     )

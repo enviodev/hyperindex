@@ -133,10 +133,8 @@ module Storage = {
           Promise.resolve([])
         }),
         setEffectCacheOrThrow: implement(#setEffectCacheOrThrow, (
-          ~effectName as _,
-          ~ids as _,
-          ~outputs as _,
-          ~outputSchema as _,
+          ~effect as _,
+          ~items as _,
           ~initialize as _,
         ) => {
           setEffectCacheOrThrowCalls := setEffectCacheOrThrowCalls.contents + 1
