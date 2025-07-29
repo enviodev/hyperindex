@@ -1,6 +1,6 @@
 let loadById: (
   ~loadManager: LoadManager.t,
-  ~storage: Persistence.storage,
+  ~persistence: Persistence.t,
   ~entityConfig: Internal.entityConfig,
   ~inMemoryStore: InMemoryStore.t,
   ~shouldGroup: bool,
@@ -10,7 +10,7 @@ let loadById: (
 
 let loadByField: (
   ~loadManager: LoadManager.t,
-  ~storage: Persistence.storage,
+  ~persistence: Persistence.t,
   ~operator: TableIndices.Operator.t,
   ~entityConfig: Internal.entityConfig,
   ~inMemoryStore: InMemoryStore.t,
@@ -23,8 +23,10 @@ let loadByField: (
 
 let loadEffect: (
   ~loadManager: LoadManager.t,
+  ~persistence: Persistence.t,
   ~effect: Internal.effect,
   ~effectArgs: Internal.effectArgs,
   ~inMemoryStore: InMemoryStore.t,
   ~shouldGroup: bool,
+  ~eventItem: Internal.eventItem,
 ) => promise<Internal.effectOutput>

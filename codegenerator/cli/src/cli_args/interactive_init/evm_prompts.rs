@@ -479,18 +479,9 @@ async fn prompt_selected_contracts(mut args: ContractImportArgs) -> Result<Vec<S
     }
 
     let should_prompt_to_continue_adding = !args.single_contract;
-    println!(
-        "(prompt contracts) args.single_contract: {:?}",
-        args.single_contract
-    );
-    println!("(prompt contracts) args.all_events: {:?}", args.all_events);
     let first_contract = get_contract_import_selection(args).await?;
     let mut contracts = vec![first_contract];
 
-    println!(
-        "should_prompt_to_continue_adding: {:?}",
-        should_prompt_to_continue_adding
-    );
     if should_prompt_to_continue_adding {
         prompt_to_continue_adding(
             &mut contracts,

@@ -516,13 +516,23 @@ module Proxy = {
 }
 
 module Hash = {
+  let fail = name => {
+    Js.Exn.raiseError(
+      `Failed to get hash for ${name}. If you're using a custom Sury schema make it based on the string type with a decoder: const myTypeSchema = S.transform(S.string, undefined, (yourType) => yourType.toString())`,
+    )
+  }
+
+  // Hash to JSON string. No specific reason for this,
+  // just to stick to at least some sort of spec.
+  // After Sury v11 is out we'll be able to do it with schema
   let rec makeOrThrow = (any: 'a): string => {
     switch any->Js.typeof {
-    | "string" => any->magic
+    | "string" => `"${any->magic}"` // Ideally should escape here,
+    // but since we don't parse it back, it's fine to keep it super simple
     | "number" => any->magic->Js.Int.toString
-    | "bigint" => any->magic->BigInt.toString
+    | "bigint" => `"${any->magic->BigInt.toString}"`
     | "boolean" => any->magic ? "true" : "false"
-    | "undefined" => "undefined"
+    | "undefined" => "null"
     | "object" =>
       if any === %raw(`null`) {
         "null"
@@ -530,7 +540,10 @@ module Hash = {
         let any: array<'a> = any->magic
         let hash = ref("[")
         for i in 0 to any->Js.Array2.length - 1 {
-          hash := hash.contents ++ any->Js.Array2.unsafe_get(i)->makeOrThrow ++ ","
+          if i !== 0 {
+            hash := hash.contents ++ ","
+          }
+          hash := hash.contents ++ any->Js.Array2.unsafe_get(i)->makeOrThrow
         }
         hash.contents ++ "]"
       } else {
@@ -539,24 +552,33 @@ module Hash = {
         if constructor === %raw(`Object`) {
           let hash = ref("{")
           let keys = any->Js.Dict.keys->Js.Array2.sortInPlace
+          let isFirst = ref(true)
           for i in 0 to keys->Js.Array2.length - 1 {
             let key = keys->Js.Array2.unsafe_get(i)
-            // Ideally should escape and wrap the key in double quotes
-            // but since we don't need to decode the hash,
-            // it's fine to keep it super simple
-            hash := hash.contents ++ key ++ ":" ++ any->Js.Dict.unsafeGet(key)->makeOrThrow ++ ","
+            let value = any->Js.Dict.unsafeGet(key)
+            if value !== %raw(`undefined`) {
+              if isFirst.contents {
+                isFirst := false
+              } else {
+                hash := hash.contents ++ ","
+              }
+              // Ideally should escape and wrap the key in double quotes
+              // but since we don't need to decode the hash,
+              // it's fine to keep it super simple
+              hash := hash.contents ++ `"${key}":${any->Js.Dict.unsafeGet(key)->makeOrThrow}`
+            }
           }
           hash.contents ++ "}"
         } else if constructor["name"] === "BigNumber" {
-          (any->magic)["toString"]()
+          `"${(any->magic)["toString"]()}"`
         } else {
-          Js.Exn.raiseError(`Don't know how to serialize ${(constructor->magic)["name"]}`)
+          fail((constructor->magic)["name"])
         }
       }
     | "symbol"
     | "function" =>
       (any->magic)["toString"]()
-    | typeof => Js.Exn.raiseError(`Don't know how to serialize ${typeof}`)
+    | typeof => fail(typeof)
     }
   }
 }

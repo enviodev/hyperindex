@@ -73,41 +73,46 @@ describe("Array removeIndex", () => {
 
 describe("Hash", () => {
   it("string", () => {
-    Assert.deepEqual(Utils.Hash.makeOrThrow("hello"), "hello")
+    Assert.deepEqual(Utils.Hash.makeOrThrow("hello"), `"hello"`)
   })
 
   it("number", () => {
-    Assert.deepEqual(Utils.Hash.makeOrThrow(123), "123")
+    Assert.deepEqual(Utils.Hash.makeOrThrow(123), `123`)
   })
 
   it("boolean", () => {
-    Assert.deepEqual(Utils.Hash.makeOrThrow(true), "true")
-    Assert.deepEqual(Utils.Hash.makeOrThrow(false), "false")
+    Assert.deepEqual(Utils.Hash.makeOrThrow(true), `true`)
+    Assert.deepEqual(Utils.Hash.makeOrThrow(false), `false`)
   })
 
   it("null", () => {
-    Assert.deepEqual(Utils.Hash.makeOrThrow(%raw(`null`)), "null")
+    Assert.deepEqual(Utils.Hash.makeOrThrow(%raw(`null`)), `null`)
   })
 
   it("array", () => {
-    Assert.deepEqual(Utils.Hash.makeOrThrow(%raw(`[1,2,true]`)), "[1,2,true,]")
+    Assert.deepEqual(Utils.Hash.makeOrThrow(%raw(`[1,2,true]`)), `[1,2,true]`)
   })
 
   it("object", () => {
-    Assert.deepEqual(Utils.Hash.makeOrThrow(%raw(`{a:1,b:2,}`)), "{a:1,b:2,}")
+    Assert.deepEqual(Utils.Hash.makeOrThrow(%raw(`{a:1,b:2,}`)), `{"a":1,"b":2}`)
     Assert.deepEqual(
       Utils.Hash.makeOrThrow(%raw(`{b:2,a:1,}`)),
-      "{a:1,b:2,}",
+      `{"a":1,"b":2}`,
       ~message="Order of keys should not matter",
     )
   })
 
+  it("object with undefined field", () => {
+    Assert.deepEqual(Utils.Hash.makeOrThrow(%raw(`{a:1,b:undefined,c:3}`)), `{"a":1,"c":3}`)
+    Assert.deepEqual(Utils.Hash.makeOrThrow(%raw(`{a:undefined,b:2,c:3}`)), `{"b":2,"c":3}`)
+  })
+
   it("bigint", () => {
-    Assert.deepEqual(Utils.Hash.makeOrThrow(%raw(`BigInt(123)`)), "123")
+    Assert.deepEqual(Utils.Hash.makeOrThrow(%raw(`BigInt(123)`)), `"123"`)
   })
 
   it("bigdecimal", () => {
-    Assert.deepEqual(Utils.Hash.makeOrThrow(BigDecimal.fromString("123")), "123")
+    Assert.deepEqual(Utils.Hash.makeOrThrow(BigDecimal.fromString("123")), `"123"`)
   })
 
   it("set", () => {
@@ -116,28 +121,28 @@ describe("Hash", () => {
         Utils.Hash.makeOrThrow(Utils.Set.fromArray(["1", "2"]))
       },
       ~error={
-        "message": "Don't know how to serialize Set",
+        "message": `Failed to get hash for Set. If you're using a custom Sury schema make it based on the string type with a decoder: const myTypeSchema = S.transform(S.string, undefined, (yourType) => yourType.toString())`,
       },
     )
   })
 
   it("symbol", () => {
-    Assert.deepEqual(Utils.Hash.makeOrThrow(%raw(`Symbol("hello")`)), "Symbol(hello)")
+    Assert.deepEqual(Utils.Hash.makeOrThrow(%raw(`Symbol("hello")`)), `Symbol(hello)`)
   })
 
   it("function", () => {
-    Assert.deepEqual(Utils.Hash.makeOrThrow(%raw(`function() {}`)), "function () { }")
+    Assert.deepEqual(Utils.Hash.makeOrThrow(%raw(`function() {}`)), `function () { }`)
   })
 
   it("undefined", () => {
-    Assert.deepEqual(Utils.Hash.makeOrThrow(%raw(`undefined`)), "undefined")
+    Assert.deepEqual(Utils.Hash.makeOrThrow(%raw(`undefined`)), `null`)
   })
 
   it("nested object", () => {
-    Assert.deepEqual(Utils.Hash.makeOrThrow(%raw(`{a: {b: 1}}`)), "{a:{b:1,},}")
+    Assert.deepEqual(Utils.Hash.makeOrThrow(%raw(`{a: {b: 1}}`)), `{"a":{"b":1}}`)
   })
 
   it("nested array", () => {
-    Assert.deepEqual(Utils.Hash.makeOrThrow(%raw(`[1, [2, 3]]`)), "[1,[2,3,],]")
+    Assert.deepEqual(Utils.Hash.makeOrThrow(%raw(`[1, [2, 3]]`)), `[1,[2,3]]`)
   })
 })

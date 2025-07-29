@@ -220,14 +220,44 @@ let executeBatch = async (
   }
 
   try {
-    await sql->Postgres.beginSql(sql => {
-      Belt.Array.concatMany([
-        //Rollback tables need to happen first in the traction
-        rollbackTables,
-        [setEventSyncState, setRawEvents],
-        setEntities,
-      ])->Belt.Array.map(dbFunc => sql->dbFunc)
-    })
+    let _ = await Promise.all2((
+      sql->Postgres.beginSql(sql => {
+        Belt.Array.concatMany([
+          //Rollback tables need to happen first in the traction
+          rollbackTables,
+          [setEventSyncState, setRawEvents],
+          setEntities,
+        ])->Belt.Array.map(dbFunc => sql->dbFunc)
+      }),
+      // Since effect cache currently doesn't support rollback,
+      // we can run it outside of the transaction for simplicity.
+      inMemoryStore.effects
+      ->Js.Dict.keys
+      ->Belt.Array.keepMapU(effectName => {
+        let inMemTable = inMemoryStore.effects->Js.Dict.unsafeGet(effectName)
+        let {idsToStore, dict, effect} = inMemTable
+        switch idsToStore {
+        | [] => None
+        | ids => {
+            let items = Belt.Array.makeUninitializedUnsafe(ids->Belt.Array.length)
+            ids->Belt.Array.forEachWithIndex((index, id) => {
+              items->Js.Array2.unsafe_set(
+                index,
+                (
+                  {
+                    id,
+                    output: dict->Js.Dict.unsafeGet(id),
+                  }: Internal.effectCacheItem
+                ),
+              )
+            })
+            Some(config.persistence->Persistence.setEffectCacheOrThrow(~effect, ~items))
+          }
+        }
+      })
+      ->Promise.all,
+    ))
+
     // Just in case, if there's a not PG-specific error.
     switch specificError.contents {
     | Some(specificError) => raise(specificError)

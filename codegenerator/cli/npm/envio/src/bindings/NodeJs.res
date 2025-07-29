@@ -35,6 +35,27 @@ module Util = {
   let inspectObj = a => inspect(a, {showHidden: false, depth: Null, colors: true})
 }
 
+module Process = {
+  type t = {env: Js.Dict.t<string>}
+  @module external process: t = "process"
+}
+
+module ChildProcess = {
+  type execOptions = {
+    cwd?: string,
+    env?: dict<string>,
+    shell?: string,
+  }
+
+  type callback = (~error: Js.null<exn>, ~stdout: string, ~stderr: string) => unit
+
+  @module("child_process")
+  external exec: (string, callback) => unit = "exec"
+
+  @module("child_process")
+  external execWithOptions: (string, execOptions, callback) => unit = "exec"
+}
+
 module Path = {
   type t
 
@@ -53,6 +74,11 @@ module Fs = {
     mode?: int,
     // flag?: Flag.t,
     encoding?: string,
+  }
+
+  type mkdirOptions = {
+    recursive?: bool,
+    mode?: int,
   }
 
   module Promises = {
@@ -77,5 +103,11 @@ module Fs = {
 
     @module("fs") @scope("promises")
     external readFile: (~filepath: Path.t, ~encoding: encoding) => promise<string> = "readFile"
+
+    @module("fs") @scope("promises")
+    external mkdir: (~path: Path.t, ~options: mkdirOptions=?) => Js.Promise.t<unit> = "mkdir"
+
+    @module("fs") @scope("promises")
+    external readdir: Path.t => Js.Promise.t<array<string>> = "readdir"
   }
 }

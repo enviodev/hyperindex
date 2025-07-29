@@ -36,7 +36,9 @@ module Storage = {
   type method = [
     | #isInitialized
     | #initialize
-    | #loadEffectCaches
+    | #dumpEffectCache
+    | #restoreEffectCache
+    | #setEffectCacheOrThrow
     | #loadByIdsOrThrow
     | #loadByFieldOrThrow
     | #setOrThrow
@@ -58,7 +60,8 @@ module Storage = {
       "tableName": string,
       "operator": Persistence.operator,
     }>,
-    loadEffectCachesCalls: ref<int>,
+    dumpEffectCacheCalls: ref<int>,
+    restoreEffectCacheCalls: array<{"withUpload": bool}>,
     storage: Persistence.storage,
   }
 
@@ -85,14 +88,17 @@ module Storage = {
     let initializeResolveFns = []
     let loadByIdsOrThrowCalls = []
     let loadByFieldOrThrowCalls = []
-    let loadEffectCachesCalls = ref(0)
+    let dumpEffectCacheCalls = ref(0)
+    let restoreEffectCacheCalls = []
+    let setEffectCacheOrThrowCalls = ref(0)
 
     {
       isInitializedCalls,
       initializeCalls,
       loadByIdsOrThrowCalls,
       loadByFieldOrThrowCalls,
-      loadEffectCachesCalls,
+      dumpEffectCacheCalls,
+      restoreEffectCacheCalls,
       resolveIsInitialized: bool => {
         isInitializedResolveFns->Js.Array2.forEach(resolve => resolve(bool))
       },
@@ -118,9 +124,21 @@ module Storage = {
             initializeResolveFns->Js.Array2.push(resolve)->ignore
           })
         }),
-        loadEffectCaches: implement(#loadEffectCaches, () => {
-          loadEffectCachesCalls := loadEffectCachesCalls.contents + 1
+        dumpEffectCache: implement(#dumpEffectCache, () => {
+          dumpEffectCacheCalls := dumpEffectCacheCalls.contents + 1
+          Promise.resolve()
+        }),
+        restoreEffectCache: implement(#restoreEffectCache, (~withUpload) => {
+          restoreEffectCacheCalls->Js.Array2.push({"withUpload": withUpload})->ignore
           Promise.resolve([])
+        }),
+        setEffectCacheOrThrow: implement(#setEffectCacheOrThrow, (
+          ~effect as _,
+          ~items as _,
+          ~initialize as _,
+        ) => {
+          setEffectCacheOrThrowCalls := setEffectCacheOrThrowCalls.contents + 1
+          Promise.resolve()
         }),
         loadByIdsOrThrow: (
           type item,
@@ -162,6 +180,17 @@ module Storage = {
           implementBody(#setOrThrow, () => Js.Exn.raiseError("Not implemented"))
         },
       },
+    }
+  }
+
+  let toPersistence = (storageMock: t) => {
+    {
+      ...Config.codegenPersistence,
+      storage: storageMock.storage,
+      storageStatus: Ready({
+        cleanRun: false,
+        cache: Js.Dict.empty(),
+      }),
     }
   }
 }

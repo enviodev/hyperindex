@@ -1,3 +1,5 @@
+let getCacheRowCountFnName = "get_cache_row_count"
+
 let makeCreateIndexQuery = (~tableName, ~indexFields, ~pgSchema) => {
   let indexName = tableName ++ "_" ++ indexFields->Js.Array2.joinWith("_")
   let index = indexFields->Belt.Array.map(idx => `"${idx}"`)->Js.Array2.joinWith(", ")
@@ -58,7 +60,7 @@ let makeInitializeTransaction = (
   ~generalTables=[],
   ~entities=[],
   ~enums=[],
-  ~reuseExistingPgSchema=false,
+  ~isEmptyPgSchema=false,
 ) => {
   let allTables = generalTables->Array.copy
   let allEntityTables = []
@@ -71,10 +73,11 @@ let makeInitializeTransaction = (
 
   let query = ref(
     (
-      reuseExistingPgSchema
+      isEmptyPgSchema && pgSchema === "public"
       // Hosted Service already have a DB with the created public schema
       // It also doesn't allow to simply drop it,
-      // so we reuse an existing schema when it's empty (our case)
+      // so we reuse the existing schema when it's empty
+      // (but only for public, since it's usually always exists)
         ? ""
         : `DROP SCHEMA IF EXISTS "${pgSchema}" CASCADE;
 CREATE SCHEMA "${pgSchema}";\n`
@@ -127,6 +130,20 @@ GRANT ALL ON SCHEMA "${pgSchema}" TO public;`,
         )
     })
   })
+
+  // Add cache row count function
+  functionsQuery :=
+    functionsQuery.contents ++
+    "\n" ++
+    `CREATE OR REPLACE FUNCTION ${getCacheRowCountFnName}(table_name text) 
+RETURNS integer AS $$
+DECLARE
+  result integer;
+BEGIN
+  EXECUTE format('SELECT COUNT(*) FROM "${pgSchema}".%I', table_name) INTO result;
+  RETURN result;
+END;
+$$ LANGUAGE plpgsql;`
 
   [query.contents]->Js.Array2.concat(
     functionsQuery.contents !== "" ? [functionsQuery.contents] : [],
@@ -372,7 +389,7 @@ let setOrThrow = async (sql, ~items, ~table: Table.table, ~itemSchema, ~pgSchema
       raise(
         Persistence.StorageError({
           message: `Failed to insert items into table "${table.tableName}"`,
-          reason: exn,
+          reason: exn->Internal.prettifyExn,
         }),
       )
     }
@@ -418,7 +435,109 @@ let makeSchemaTableNamesQuery = (~pgSchema) => {
   `SELECT table_name FROM information_schema.tables WHERE table_schema = '${pgSchema}';`
 }
 
-let make = (~sql: Postgres.sql, ~pgSchema, ~pgUser): Persistence.storage => {
+let cacheTablePrefixLength = Internal.cacheTablePrefix->String.length
+
+type schemaCacheTableInfo = {
+  @as("table_name")
+  tableName: string,
+  @as("count")
+  count: int,
+}
+
+let makeSchemaCacheTableInfoQuery = (~pgSchema) => {
+  `SELECT 
+    t.table_name,
+    ${getCacheRowCountFnName}(t.table_name) as count
+   FROM information_schema.tables t
+   WHERE t.table_schema = '${pgSchema}' 
+   AND t.table_name LIKE '${Internal.cacheTablePrefix}%';`
+}
+
+type psqlExecState =
+  Unknown | Pending(promise<result<string, string>>) | Resolved(result<string, string>)
+
+let getConnectedPsqlExec = {
+  let pgDockerServiceName = "envio-postgres"
+  // Should use the default port, since we're executing the command
+  // from the postgres container's network.
+  let pgDockerServicePort = 5432
+
+  // For development: We run the indexer process locally,
+  //   and there might not be psql installed on the user's machine.
+  //   So we use docker-compose to run psql existing in the postgres container.
+  // For production: We expect indexer to be running in a container,
+  //   with psql installed. So we can call it directly.
+  let psqlExecState = ref(Unknown)
+  async (~pgUser, ~pgHost, ~pgDatabase, ~pgPort) => {
+    switch psqlExecState.contents {
+    | Unknown => {
+        let promise = Promise.make((resolve, _reject) => {
+          let binary = "psql"
+          NodeJs.ChildProcess.exec(`${binary} --version`, (~error, ~stdout as _, ~stderr as _) => {
+            switch error {
+            | Value(_) => {
+                let binary = `docker-compose exec -T -u ${pgUser} ${pgDockerServiceName} psql`
+                NodeJs.ChildProcess.exec(
+                  `${binary} --version`,
+                  (~error, ~stdout as _, ~stderr as _) => {
+                    switch error {
+                    | Value(_) =>
+                      resolve(
+                        Error(`Please check if "psql" binary is installed or docker-compose is running for the local indexer.`),
+                      )
+                    | Null =>
+                      resolve(
+                        Ok(
+                          `${binary} -h ${pgHost} -p ${pgDockerServicePort->Js.Int.toString} -U ${pgUser} -d ${pgDatabase}`,
+                        ),
+                      )
+                    }
+                  },
+                )
+              }
+            | Null =>
+              resolve(
+                Ok(
+                  `${binary} -h ${pgHost} -p ${pgPort->Js.Int.toString} -U ${pgUser} -d ${pgDatabase}`,
+                ),
+              )
+            }
+          })
+        })
+
+        psqlExecState := Pending(promise)
+        let result = await promise
+        psqlExecState := Resolved(result)
+        result
+      }
+    | Pending(promise) => await promise
+    | Resolved(result) => result
+    }
+  }
+}
+
+let make = (
+  ~sql: Postgres.sql,
+  ~pgHost,
+  ~pgSchema,
+  ~pgPort,
+  ~pgUser,
+  ~pgDatabase,
+  ~pgPassword,
+  ~onInitialize=?,
+  ~onNewTables=?,
+): Persistence.storage => {
+  let psqlExecOptions: NodeJs.ChildProcess.execOptions = {
+    env: Js.Dict.fromArray([("PGPASSWORD", pgPassword), ("PATH", %raw(`process.env.PATH`))]),
+  }
+
+  let cacheDirPath = NodeJs.Path.resolve([
+    // Right outside of the generated directory
+    "..",
+    ".envio",
+    "cache",
+  ])
+
   let isInitialized = async () => {
     let envioTables =
       await sql->Postgres.unsafe(
@@ -453,32 +572,18 @@ let make = (~sql: Postgres.sql, ~pgSchema, ~pgUser): Persistence.storage => {
       ~generalTables,
       ~entities,
       ~enums,
-      ~reuseExistingPgSchema=schemaTableNames->Utils.Array.isEmpty,
+      ~isEmptyPgSchema=schemaTableNames->Utils.Array.isEmpty,
     )
     // Execute all queries within a single transaction for integrity
     let _ = await sql->Postgres.beginSql(sql => {
       queries->Js.Array2.map(query => sql->Postgres.unsafe(query))
     })
-  }
 
-  let loadEffectCaches = async () => {
-    let schemaTableNames: array<schemaTableName> =
-      await sql->Postgres.unsafe(makeSchemaTableNamesQuery(~pgSchema))
-    schemaTableNames->Belt.Array.keepMapU(schemaTableName => {
-      if schemaTableName.tableName->Js.String2.startsWith("effect_cache_") {
-        Some(
-          (
-            {
-              name: schemaTableName.tableName,
-              size: 0,
-              table: None,
-            }: Persistence.effectCache
-          ),
-        )
-      } else {
-        None
-      }
-    })
+    // Integration with other tools like Hasura
+    switch onInitialize {
+    | Some(onInitialize) => await onInitialize()
+    | None => ()
+    }
   }
 
   let loadByIdsOrThrow = async (~ids, ~table: Table.table, ~rowsSchema) => {
@@ -577,12 +682,184 @@ let make = (~sql: Postgres.sql, ~pgSchema, ~pgUser): Persistence.storage => {
     )
   }
 
+  let setEffectCacheOrThrow = async (
+    ~effect: Internal.effect,
+    ~items: array<Internal.effectCacheItem>,
+    ~initialize: bool,
+  ) => {
+    let {table, itemSchema} = switch effect.cache {
+    | Some(cacheMeta) => cacheMeta
+    | None =>
+      Js.Exn.raiseError(
+        `Failed to set effect cache for "${effect.name}". Effect has no cache enabled.`,
+      )
+    }
+
+    if initialize {
+      let _ = await sql->Postgres.unsafe(makeCreateTableQuery(table, ~pgSchema))
+      // Integration with other tools like Hasura
+      switch onNewTables {
+      | Some(onNewTables) => await onNewTables(~tableNames=[table.tableName])
+      | None => ()
+      }
+    }
+
+    await setOrThrow(~items, ~table, ~itemSchema)
+  }
+
+  let dumpEffectCache = async () => {
+    try {
+      let cacheTableInfo: array<schemaCacheTableInfo> =
+        (await sql
+        ->Postgres.unsafe(makeSchemaCacheTableInfoQuery(~pgSchema)))
+        ->Js.Array2.filter(i => i.count > 0)
+
+      if cacheTableInfo->Utils.Array.notEmpty {
+        // Create .envio/cache directory if it doesn't exist
+        try {
+          await NodeJs.Fs.Promises.access(cacheDirPath)
+        } catch {
+        | _ =>
+          // Create directory if it doesn't exist
+          await NodeJs.Fs.Promises.mkdir(~path=cacheDirPath, ~options={recursive: true})
+        }
+
+        // Command for testing. Run from generated
+        // docker-compose exec -T -u postgres envio-postgres psql -d envio-dev -c 'COPY "public"."envio_effect_getTokenMetadata" TO STDOUT (FORMAT text, HEADER);' > ../.envio/cache/getTokenMetadata.tsv
+
+        switch await getConnectedPsqlExec(~pgUser, ~pgHost, ~pgDatabase, ~pgPort) {
+        | Ok(psqlExec) => {
+            Logging.info(
+              `Dumping cache: ${cacheTableInfo
+                ->Js.Array2.map(({tableName, count}) =>
+                  tableName ++ " (" ++ count->Belt.Int.toString ++ " rows)"
+                )
+                ->Js.Array2.joinWith(", ")}`,
+            )
+
+            let promises = cacheTableInfo->Js.Array2.map(async ({tableName}) => {
+              let cacheName = tableName->Js.String2.sliceToEnd(~from=cacheTablePrefixLength)
+              let outputFile =
+                NodeJs.Path.join(cacheDirPath, cacheName ++ ".tsv")->NodeJs.Path.toString
+
+              let command = `${psqlExec} -c 'COPY "${pgSchema}"."${tableName}" TO STDOUT WITH (FORMAT text, HEADER);' > ${outputFile}`
+
+              Promise.make((resolve, reject) => {
+                NodeJs.ChildProcess.execWithOptions(
+                  command,
+                  psqlExecOptions,
+                  (~error, ~stdout, ~stderr as _) => {
+                    switch error {
+                    | Value(error) => reject(error)
+                    | Null => resolve(stdout)
+                    }
+                  },
+                )
+              })
+            })
+
+            let _ = await promises->Promise.all
+            Logging.info(`Successfully dumped cache to ${cacheDirPath->NodeJs.Path.toString}`)
+          }
+        | Error(message) => Logging.error(`Failed to dump cache. ${message}`)
+        }
+      }
+    } catch {
+    | exn => Logging.errorWithExn(exn->Internal.prettifyExn, `Failed to dump cache.`)
+    }
+  }
+
+  let restoreEffectCache = async (~withUpload) => {
+    if withUpload {
+      // Try to restore cache tables from binary files
+      let nothingToUploadErrorMessage = "Nothing to upload."
+
+      switch await Promise.all2((
+        NodeJs.Fs.Promises.readdir(cacheDirPath)
+        ->Promise.thenResolve(e => Ok(e))
+        ->Promise.catch(_ => Promise.resolve(Error(nothingToUploadErrorMessage))),
+        getConnectedPsqlExec(~pgUser, ~pgHost, ~pgDatabase, ~pgPort),
+      )) {
+      | (Ok(entries), Ok(psqlExec)) => {
+          let cacheFiles = entries->Js.Array2.filter(entry => {
+            entry->Js.String2.endsWith(".tsv")
+          })
+
+          let _ =
+            await cacheFiles
+            ->Js.Array2.map(entry => {
+              let effectName = entry->Js.String2.slice(~from=0, ~to_=-4) // Remove .tsv extension
+              let table = Internal.makeCacheTable(~effectName)
+
+              sql
+              ->Postgres.unsafe(makeCreateTableQuery(table, ~pgSchema))
+              ->Promise.then(() => {
+                let inputFile = NodeJs.Path.join(cacheDirPath, entry)->NodeJs.Path.toString
+
+                let command = `${psqlExec} -c 'COPY "${pgSchema}"."${table.tableName}" FROM STDIN WITH (FORMAT text, HEADER);' < ${inputFile}`
+
+                Promise.make(
+                  (resolve, reject) => {
+                    NodeJs.ChildProcess.execWithOptions(
+                      command,
+                      psqlExecOptions,
+                      (~error, ~stdout, ~stderr as _) => {
+                        switch error {
+                        | Value(error) => reject(error)
+                        | Null => resolve(stdout)
+                        }
+                      },
+                    )
+                  },
+                )
+              })
+            })
+            ->Promise.all
+
+          Logging.info("Successfully uploaded cache.")
+        }
+      | (Error(message), _)
+      | (_, Error(message)) =>
+        if message === nothingToUploadErrorMessage {
+          Logging.info("No cache found to upload.")
+        } else {
+          Logging.error(`Failed to upload cache, continuing without it. ${message}`)
+        }
+      }
+    }
+
+    let cacheTableInfo: array<schemaCacheTableInfo> =
+      await sql->Postgres.unsafe(makeSchemaCacheTableInfoQuery(~pgSchema))
+
+    if withUpload && cacheTableInfo->Utils.Array.notEmpty {
+      // Integration with other tools like Hasura
+      switch onNewTables {
+      | Some(onNewTables) =>
+        await onNewTables(
+          ~tableNames=cacheTableInfo->Js.Array2.map(info => {
+            info.tableName
+          }),
+        )
+      | None => ()
+      }
+    }
+
+    cacheTableInfo->Js.Array2.map((info): Persistence.effectCacheRecord => {
+      {
+        effectName: info.tableName->Js.String2.sliceToEnd(~from=cacheTablePrefixLength),
+        count: info.count,
+      }
+    })
+  }
+
   {
     isInitialized,
     initialize,
     loadByFieldOrThrow,
-    loadEffectCaches,
     loadByIdsOrThrow,
     setOrThrow,
+    setEffectCacheOrThrow,
+    dumpEffectCache,
+    restoreEffectCache,
   }
 }

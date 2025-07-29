@@ -104,7 +104,7 @@ let stateSchema = S.union([
 //   }
 // }
 
-let startServer = (~getState, ~shouldUseTui as _) => {
+let startServer = (~getState, ~config: Config.t, ~shouldUseTui as _) => {
   open Express
 
   let app = makeCjs()
@@ -138,6 +138,12 @@ let startServer = (~getState, ~shouldUseTui as _) => {
     res->json(getState()->S.reverseConvertToJsonOrThrow(stateSchema))
   })
 
+  app->post("/console/syncCache", (_req, res) => {
+    (config.persistence->Persistence.getInitializedStorageOrThrow).dumpEffectCache()
+    ->Promise.thenResolve(_ => res->json(Boolean(true)))
+    ->Promise.done
+  })
+
   // Keep /console/state exposed, so it can return `disabled` status
   // if shouldUseTui {
   //   app->post("/console/api-token", (req, res) => {
@@ -161,7 +167,7 @@ let startServer = (~getState, ~shouldUseTui as _) => {
       ->Promise.thenResolve(metrics => res->endWithData(metrics))
   })
 
-  let _ = app->listen(Env.metricsPort)
+  let _ = app->listen(Env.serverPort)
 }
 
 type args = {@as("tui-off") tuiOff?: bool}
@@ -289,6 +295,7 @@ let main = async () => {
     Prometheus.RollbackEnabled.set(~enabled=config.historyConfig.rollbackFlag === RollbackOnReorg)
 
     startServer(
+      ~config,
       ~shouldUseTui,
       ~getState=if shouldUseTui {
         () =>

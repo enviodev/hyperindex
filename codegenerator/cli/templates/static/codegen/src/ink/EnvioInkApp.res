@@ -42,11 +42,17 @@ module App = {
       <TotalEventsProcessed totalEventsProcessed />
       <SyncETA chains indexerStartTime />
       <Newline />
-      <Box flexDirection={Column}>
+      <Box flexDirection={Row}>
         <Text>
-          {"Track the indexer's progress and access GraphQL Playground at the Development Console:"->React.string}
+          {"Development Console: "->React.string}
         </Text>
         <Text color={Info} underline=true> {`${Env.envioAppUrl}/console`->React.string} </Text>
+      </Box>
+      <Box flexDirection={Row}>
+        <Text>
+          {"GraphQL Endpoint:    "->React.string}
+        </Text>
+        <Text color={Info} underline=true> {`${Env.Hasura.url}/v1/graphql`->React.string} </Text>
       </Box>
       <Messages config />
     </Box>

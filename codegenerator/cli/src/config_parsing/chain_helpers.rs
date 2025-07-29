@@ -55,6 +55,9 @@ pub enum Network {
     #[subenum(GraphNetwork, NetworkWithExplorer)]
     AuroraTestnet = 1313161555,
 
+    #[subenum(HypersyncNetwork)]
+    AuroraTurbo = 1313161567,
+
     #[subenum(HypersyncNetwork, GraphNetwork, NetworkWithExplorer)]
     Avalanche = 43114,
 
@@ -354,7 +357,7 @@ pub enum Network {
     #[subenum(NetworkWithExplorer)]
     Taiko = 167000,
 
-    #[subenum(NetworkWithExplorer)]
+    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     Tangle = 5845,
 
     #[subenum(HypersyncNetwork)]
@@ -433,9 +436,10 @@ impl Network {
             | Network::OptimismSepolia => 0,
             //TODO: research a sufficient threshold for all chains
             Network::Amoy
-            | Network::Avalanche
             | Network::Aurora
             | Network::AuroraTestnet
+            | Network::AuroraTurbo
+            | Network::Avalanche
             | Network::Base
             | Network::BaseGoerli
             | Network::BaseSepolia
@@ -590,8 +594,8 @@ impl HypersyncNetwork {
 
             Xdc | Polygon | ArbitrumOne => Silver,
 
-            Linea | Berachain | Blast | Amoy | Scroll | ZksyncEra | ArbitrumNova | Avalanche
-            | Bsc | Taraxa => Bronze,
+            Linea | Berachain | Blast | Amoy | ZksyncEra | ArbitrumNova | Avalanche | Bsc
+            | Taraxa => Bronze,
 
             Curtis | PolygonZkevm | Lukso | Abstract | Zora | Unichain | Aurora | Zeta | Manta
             | Kroma | Flare | Mantle | ShimmerEvm | Boba | Ink | Metall2 | SophonTestnet
@@ -601,7 +605,9 @@ impl HypersyncNetwork {
             | MevCommit | Merlin | Mode | MoonbaseAlpha | XdcTestnet | Morph | Harmony
             | Saakuru | Cyber | Superseed | MegaethTestnet | Sonic | Worldchain | Sophon
             | Fantom | Sepolia | Rsk | Chiliz | Lisk | Hyperliquid | Swell | Moonbeam
-            | ChainwebTestnet20 | ChainwebTestnet21 | Plume => Stone,
+            | ChainwebTestnet20 | ChainwebTestnet21 | Plume | Scroll | AuroraTurbo | Tangle => {
+                Stone
+            }
         }
     }
 

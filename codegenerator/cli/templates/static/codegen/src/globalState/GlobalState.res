@@ -660,10 +660,15 @@ let actionReducer = (state: t, action: action) => {
         state.chainManager.chainFetchers,
       )
         ? {
+            // state.config.persistence.storage
             Logging.info("All chains are caught up to the endblock.")
             // Keep the indexer process running in TUI mode
             // so the Dev Console server stays working
-            state.shouldUseTui ? NoExit : ExitWithSuccess
+            if state.shouldUseTui {
+              NoExit
+            } else {
+              ExitWithSuccess
+            }
           }
         : NoExit
       (

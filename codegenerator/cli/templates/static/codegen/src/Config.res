@@ -86,27 +86,67 @@ let codegenPersistence = Persistence.make(
     TablesStatic.DynamicContractRegistry
   )->Entities.entityModToInternal,
   ~allEnums=Enums.allEnums,
-  ~storage=PgStorage.make(~sql=Db.sql, ~pgSchema=storagePgSchema, ~pgUser=Env.Db.user),
-  ~onStorageInitialize=() => {
-    Hasura.trackDatabase(
-      ~endpoint=Env.Hasura.graphqlEndpoint,
-      ~auth={
-        role: Env.Hasura.role,
-        secret: Env.Hasura.secret,
-      },
-      ~pgSchema=storagePgSchema,
-      ~allStaticTables=Db.allStaticTables,
-      ~allEntityTables=Db.allEntityTables,
-      ~responseLimit=Env.Hasura.responseLimit,
-      ~schema=Db.schema,
-      ~aggregateEntities=Env.Hasura.aggregateEntities,
-    )->Promise.catch(err => {
-      Logging.errorWithExn(
-        err->Internal.prettifyExn,
-        `EE803: Error tracking tables`,
-      )->Promise.resolve
-    })
-  },
+  ~storage=PgStorage.make(
+    ~sql=Db.sql,
+    ~pgSchema=storagePgSchema,
+    ~pgHost=Env.Db.host,
+    ~pgUser=Env.Db.user,
+    ~pgPort=Env.Db.port,
+    ~pgDatabase=Env.Db.database,
+    ~pgPassword=Env.Db.password,
+    ~onInitialize=?{
+      if Env.Hasura.enabled {
+        Some(
+          () => {
+            Hasura.trackDatabase(
+              ~endpoint=Env.Hasura.graphqlEndpoint,
+              ~auth={
+                role: Env.Hasura.role,
+                secret: Env.Hasura.secret,
+              },
+              ~pgSchema=storagePgSchema,
+              ~allStaticTables=Db.allStaticTables,
+              ~allEntityTables=Db.allEntityTables,
+              ~responseLimit=Env.Hasura.responseLimit,
+              ~schema=Db.schema,
+              ~aggregateEntities=Env.Hasura.aggregateEntities,
+            )->Promise.catch(err => {
+              Logging.errorWithExn(
+                err->Internal.prettifyExn,
+                `EE803: Error tracking tables`,
+              )->Promise.resolve
+            })
+          },
+        )
+      } else {
+        None
+      }
+    },
+    ~onNewTables=?{
+      if Env.Hasura.enabled {
+        Some(
+          (~tableNames) => {
+            Hasura.trackTables(
+              ~endpoint=Env.Hasura.graphqlEndpoint,
+              ~auth={
+                role: Env.Hasura.role,
+                secret: Env.Hasura.secret,
+              },
+              ~pgSchema=storagePgSchema,
+              ~tableNames,
+            )->Promise.catch(err => {
+              Logging.errorWithExn(
+                err->Internal.prettifyExn,
+                `EE804: Error tracking new tables`,
+              )->Promise.resolve
+           })
+          },
+        )
+      } else {
+        None
+      }
+    },
+  ),
 )
 
 type t = {

@@ -1,4 +1,4 @@
-import { expectType, TypeEqual } from "ts-expect";
+import { expectType, type TypeEqual } from "ts-expect";
 import assert from "assert";
 import { it } from "mocha";
 import { TestHelpers } from "generated";
