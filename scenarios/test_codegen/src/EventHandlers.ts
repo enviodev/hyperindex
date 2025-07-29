@@ -1,4 +1,4 @@
-import { deepEqual } from "assert";
+import { deepEqual, fail } from "assert";
 import { experimental_createEffect, Effect, S, Logger } from "envio";
 import { TestEvents } from "generated";
 import { TestHelpers } from "generated";
@@ -452,6 +452,20 @@ const testEffectWithCache = experimental_createEffect(
   }
 );
 
+const throwingEffect = experimental_createEffect(
+  {
+    name: "throwingEffect",
+    input: {
+      id: S.string,
+    },
+    output: S.string,
+    cache: true,
+  },
+  async (_) => {
+    throw new Error("Error from effect");
+  }
+);
+
 let getOrThrowInLoaderCount = 0;
 let loaderSetCount = 0;
 
@@ -647,6 +661,13 @@ Gravatar.FactoryEvent.handlerWithLoader({
         });
         deepEqual(result, "test-2");
         break;
+      }
+
+      case "throwingEffect": {
+        await context.effect(throwingEffect, {
+          id: "1",
+        });
+        fail("Should have thrown");
       }
     }
   },

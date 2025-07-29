@@ -134,7 +134,12 @@ let codegenPersistence = Persistence.make(
               },
               ~pgSchema=storagePgSchema,
               ~tableNames,
-            )
+            )->Promise.catch(err => {
+              Logging.errorWithExn(
+                err->Internal.prettifyExn,
+                `EE804: Error tracking new tables`,
+              )->Promise.resolve
+           })
           },
         )
       } else {

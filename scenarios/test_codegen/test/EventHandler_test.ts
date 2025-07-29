@@ -377,4 +377,16 @@ describe("Use Envio test framework to test event handlers", () => {
 
     const _updatedMockDb = await mockDbInitial.processEvents([event, event2]);
   });
+
+  it("Should throw when effect throws", async () => {
+    const mockDbInitial = MockDb.createMockDb();
+
+    const event = Gravatar.FactoryEvent.createMockEvent({
+      testCase: "throwingEffect",
+    });
+
+    await assert.rejects(mockDbInitial.processEvents([event]), {
+      message: "Error from effect",
+    });
+  });
 });

@@ -53,7 +53,11 @@ type storage = {
     ~items: array<Internal.effectCacheItem>,
     ~initialize: bool,
   ) => promise<unit>,
+  // This is to download cache from the database to .envio/cache
   dumpEffectCache: unit => promise<unit>,
+  // This is not good, but the function does two things:
+  // - Gets info about existing cache tables
+  // - if withUpload is true, it also populates the cache from .envio/cache to the database
   restoreEffectCache: (~withUpload: bool) => promise<array<effectCacheRecord>>,
 }
 

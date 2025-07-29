@@ -102,6 +102,11 @@ describe("Hash", () => {
     )
   })
 
+  it("object with undefined field", () => {
+    Assert.deepEqual(Utils.Hash.makeOrThrow(%raw(`{a:1,b:undefined,c:3}`)), `{"a":1,"c":3}`)
+    Assert.deepEqual(Utils.Hash.makeOrThrow(%raw(`{a:undefined,b:2,c:3}`)), `{"b":2,"c":3}`)
+  })
+
   it("bigint", () => {
     Assert.deepEqual(Utils.Hash.makeOrThrow(%raw(`BigInt(123)`)), `"123"`)
   })

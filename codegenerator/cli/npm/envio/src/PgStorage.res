@@ -1,3 +1,5 @@
+let getCacheRowCountFnName = "get_cache_row_count"
+
 let makeCreateIndexQuery = (~tableName, ~indexFields, ~pgSchema) => {
   let indexName = tableName ++ "_" ++ indexFields->Js.Array2.joinWith("_")
   let index = indexFields->Belt.Array.map(idx => `"${idx}"`)->Js.Array2.joinWith(", ")
@@ -133,7 +135,7 @@ GRANT ALL ON SCHEMA "${pgSchema}" TO public;`,
   functionsQuery :=
     functionsQuery.contents ++
     "\n" ++
-    `CREATE OR REPLACE FUNCTION get_cache_row_count(table_name text) 
+    `CREATE OR REPLACE FUNCTION ${getCacheRowCountFnName}(table_name text) 
 RETURNS integer AS $$
 DECLARE
   result integer;
@@ -445,7 +447,7 @@ type schemaCacheTableInfo = {
 let makeSchemaCacheTableInfoQuery = (~pgSchema) => {
   `SELECT 
     t.table_name,
-    get_cache_row_count(t.table_name) as count
+    ${getCacheRowCountFnName}(t.table_name) as count
    FROM information_schema.tables t
    WHERE t.table_schema = '${pgSchema}' 
    AND t.table_name LIKE '${Internal.cacheTablePrefix}%';`
@@ -577,6 +579,7 @@ let make = (
       queries->Js.Array2.map(query => sql->Postgres.unsafe(query))
     })
 
+    // Integration with other tools like Hasura
     switch onInitialize {
     | Some(onInitialize) => await onInitialize()
     | None => ()
@@ -694,6 +697,7 @@ let make = (
 
     if initialize {
       let _ = await sql->Postgres.unsafe(makeCreateTableQuery(table, ~pgSchema))
+      // Integration with other tools like Hasura
       switch onNewTables {
       | Some(onNewTables) => await onNewTables(~tableNames=[table.tableName])
       | None => ()
@@ -828,6 +832,7 @@ let make = (
       await sql->Postgres.unsafe(makeSchemaCacheTableInfoQuery(~pgSchema))
 
     if withUpload && cacheTableInfo->Utils.Array.notEmpty {
+      // Integration with other tools like Hasura
       switch onNewTables {
       | Some(onNewTables) =>
         await onNewTables(
