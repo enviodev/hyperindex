@@ -155,6 +155,7 @@ let getEventLogger = (eventItem: Internal.eventItem) => {
           "chainId": eventItem.chain->ChainMap.Chain.toChainId,
           "block": eventItem.blockNumber,
           "logIndex": eventItem.logIndex,
+          "address": eventItem.event.srcAddress,
         }->createChildParams,
       )
       eventItem.loggerCache = Some(l)
