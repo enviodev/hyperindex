@@ -1,0 +1,33 @@
+---
+description: Quick project overview for cursor navigation.
+globs: ""
+alwaysApply: true
+---
+
+- The Rust CLI lives in `codegenerator/cli`.
+  - Entry point: `codegenerator/cli/src/lib.rs`.
+  - Command dispatcher: `codegenerator/cli/src/commands.rs`.
+- Config parsing pipeline:
+  - `human_config.rs` → reads user files & JSON schemas.
+  - `system_config.rs` → converts to internal structs.
+  - `hbs_templating/codegen_templates.rs` → feeds templates.
+- Templates live under `codegenerator/cli/templates`:
+  - `dynamic/` – Handlebars (.hbs)
+  - `static/` – raw Rescript files copied verbatim.
+- Generated runtime (inside each project’s `generated/`):
+  - Entry module: `Index.res` (starts HTTP server, loads `Config.res`, calls `RegisterHandlers.res`, spins up `GlobalStateManager.res`).
+  - Config: `Config.res` (env → typed config, sets up persistence).
+  - Persistence stack: `PgStorage.res`, `Hasura.res`, `Persistence.res`, `IO.res`.
+  - Fetch side: `ChainManager.res`, `ChainFetcher.res`, `FetchState.res`, `SourceManager.res`.
+  - Processing: `GlobalStateManager.res`, `EventProcessing.res`, `IO.res`.
+  - Metrics: `Prometheus.res`.
+- Library-fied runtime shared across indexers lives in `codegenerator/cli/npm/envio`.
+  - ReScript sources compile with `pnpm rescript -w` for live reload.
+
+Tips for navigation:
+
+- Start with module names (e.g., `Index.res`, `ChainManager.res`) and let fuzzy search resolve paths.
+- Runtime code lives in each project’s `generated/src`, but template versions (good for editing) are under `codegenerator/cli/templates/static/codegen/src` or `codegenerator/cli/templates/dynamic/codegen/src`.
+- Config parsing & codegen lives in Rust. When tracking how a value reaches templates, follow `human_config.rs` → `system_config.rs` → `codegen_templates.rs`.
+- Prefer reading ReScript `.res` modules directly; compiled `.js` artifacts can be ignored.
+- When suggesting file edits to contributors, reference modules with `.res` extension but drop the long path (e.g., "edit `ChainFetcher.res`").
