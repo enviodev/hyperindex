@@ -149,7 +149,7 @@ importers:
         specifier: 16.4.5
         version: 16.4.5
       envio:
-        specifier: file:/Users/dzakh/code/envio/hyperindex/codegenerator/target/debug/envio/../../../cli/npm/envio
+        specifier: file:/Users/denham/Documents/projects/envio/code/hyperindex/codegenerator/target/debug/envio/../../../cli/npm/envio
         version: file:../../codegenerator/cli/npm/envio(typescript@5.5.4)
       ethers:
         specifier: 6.8.0
