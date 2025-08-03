@@ -311,6 +311,16 @@ let cleanUpProcessingFilters = (
   }
 }
 
+/**
+ * Helper function to get the configured start block for a contract from config
+ */
+let getContractStartBlock = (config: Config.t, ~chain: ChainMap.Chain.t, ~contractName: string): option<int> => {
+  let chainConfig = config.chainMap->ChainMap.get(chain)
+  chainConfig.contracts
+  ->Js.Array2.find(contract => contract.name === contractName)
+  ->Option.flatMap(contract => contract.startBlock)
+}
+
 let runContractRegistersOrThrow = async (
   ~reversedWithContractRegister: array<Internal.eventItem>,
   ~config: Config.t,
@@ -327,10 +337,16 @@ let runContractRegistersOrThrow = async (
     } else {
       let {timestamp, blockNumber, logIndex} = eventItem
 
+      // Use contract-specific start block if configured, otherwise fall back to registration block
+      let contractStartBlock = switch getContractStartBlock(config, ~chain=eventItem.chain, ~contractName=(contractName: Enums.ContractType.t :> string)) {
+      | Some(configuredStartBlock) => configuredStartBlock
+      | None => blockNumber
+      }
+
       let dc: FetchState.indexingContract = {
         address: contractAddress,
         contractName: (contractName: Enums.ContractType.t :> string),
-        startBlock: blockNumber,
+        startBlock: contractStartBlock,
         register: DC({
           registeringEventBlockTimestamp: timestamp,
           registeringEventLogIndex: logIndex,
