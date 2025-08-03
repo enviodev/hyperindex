@@ -25,6 +25,7 @@ describe("E2E Integration Test", () => {
             (Types.Gravatar.NewGravatar.register() :> Internal.eventConfig),
             (Types.Gravatar.UpdatedGravatar.register() :> Internal.eventConfig),
           ],
+          startBlock: None,
         },
       ]
       let evmContracts = contracts->Js.Array2.map(

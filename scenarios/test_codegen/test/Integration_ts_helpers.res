@@ -9,12 +9,14 @@ let getLocalChainConfig = (nftFactoryContractAddress): chainConfig => {
       abi: Types.NftFactory.abi,
       addresses: [nftFactoryContractAddress],
       events: [(Types.NftFactory.SimpleNftCreated.register() :> Internal.eventConfig)],
+      startBlock: None,
     },
     {
       name: "SimpleNft",
       abi: Types.SimpleNft.abi,
       addresses: [],
       events: [(Types.SimpleNft.Transfer.register() :> Internal.eventConfig)],
+      startBlock: None,
     },
   ]
   let evmContracts = contracts->Js.Array2.map((contract): Internal.evmContractConfig => {

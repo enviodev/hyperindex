@@ -967,6 +967,7 @@ let make = (
   ~endBlock,
   ~eventConfigs: array<Internal.eventConfig>,
   ~staticContracts: dict<array<Address.t>>,
+  ~staticContractStartBlocks: dict<option<int>>=Js.Dict.empty(),
   ~dynamicContracts: array<indexingContract>,
   ~maxAddrInPartition,
   ~chainId,
@@ -1056,7 +1057,10 @@ let make = (
           | None => {
               address,
               contractName,
-              startBlock,
+              startBlock: switch staticContractStartBlocks->Js.Dict.get(contractName) {
+              | Some(Some(contractStartBlock)) => contractStartBlock
+              | Some(None) | None => startBlock
+              },
               register: Config,
             }
           },

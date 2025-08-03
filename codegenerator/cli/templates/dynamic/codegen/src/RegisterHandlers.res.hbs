@@ -46,6 +46,7 @@ let registerContractHandlers = (
               (Types.{{contract.name.capitalized}}.{{event.name}}.register() :> Internal.eventConfig),
               {{/each}}
             ],
+            startBlock: {{#if contract.start_block}}Some({{contract.start_block}}){{else}}None{{/if}},
           },
           {{/each}}
         ]

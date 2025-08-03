@@ -12,18 +12,21 @@ let contracts = [
       (Types.Gravatar.NewGravatar.register() :> Internal.eventConfig),
       (Types.Gravatar.UpdatedGravatar.register() :> Internal.eventConfig),
     ],
+    startBlock: None,
   },
   {
     name: "NftFactory",
     abi: Types.NftFactory.abi,
     addresses: ["0xa2F6E6029638cCb484A2ccb6414499aD3e825CaC"->Address.Evm.fromStringOrThrow],
     events: [(Types.NftFactory.SimpleNftCreated.register() :> Internal.eventConfig)],
+    startBlock: None,
   },
   {
     name: "SimpleNft",
     abi: Types.SimpleNft.abi,
     addresses: [],
     events: [(Types.SimpleNft.Transfer.register() :> Internal.eventConfig)],
+    startBlock: None,
   },
 ]
 
