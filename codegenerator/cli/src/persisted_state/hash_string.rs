@@ -52,8 +52,9 @@ impl HashString {
     pub fn from_string(string: String) -> Self {
         let mut hasher = Sha256::new();
         hasher.update(string);
-        let hash = hasher.finalize().to_vec();
-        HashString(format!("{:?}", hash))
+        let hash = hasher.finalize();
+        // Use hexadecimal encoding to match other hash functions
+        HashString(format!("{:x}", hash))
     }
 
     #[cfg(test)]
@@ -104,6 +105,15 @@ mod test {
         assert_eq!(
             hash.inner(),
             "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855".to_string()
+        );
+    }
+
+    #[test]
+    fn string_hash() {
+        let hash = HashString::from_string("config".to_string());
+        assert_eq!(
+            hash.inner(),
+            "b79606fb3afea5bd1609ed40b622142f1c98125abcfe89a76a661b0e8e343910".to_string()
         );
     }
 
