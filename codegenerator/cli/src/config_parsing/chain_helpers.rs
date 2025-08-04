@@ -592,7 +592,7 @@ impl HypersyncNetwork {
         match self {
             EthereumMainnet | Optimism | MonadTestnet | Gnosis | Base => Gold,
 
-            Xdc | Polygon | ArbitrumOne => Silver,
+            Xdc | Polygon | ArbitrumOne | MegaethTestnet => Silver,
 
             Linea | Berachain | Blast | Amoy | ZksyncEra | ArbitrumNova | Avalanche | Bsc
             | Taraxa => Bronze,
@@ -603,11 +603,9 @@ impl HypersyncNetwork {
             | Opbnb | GnosisChiado | LuksoTestnet | BlastSepolia | Holesky | BerachainBartio
             | OptimismSepolia | Fuji | ArbitrumSepolia | Fraxtal | Soneium | BaseSepolia
             | MevCommit | Merlin | Mode | MoonbaseAlpha | XdcTestnet | Morph | Harmony
-            | Saakuru | Cyber | Superseed | MegaethTestnet | Sonic | Worldchain | Sophon
-            | Fantom | Sepolia | Rsk | Chiliz | Lisk | Hyperliquid | Swell | Moonbeam
-            | ChainwebTestnet20 | ChainwebTestnet21 | Plume | Scroll | AuroraTurbo | Tangle => {
-                Stone
-            }
+            | Saakuru | Cyber | Superseed | Sonic | Worldchain | Sophon | Fantom | Sepolia
+            | Rsk | Chiliz | Lisk | Hyperliquid | Swell | Moonbeam | ChainwebTestnet20
+            | ChainwebTestnet21 | Plume | Scroll | AuroraTurbo | Tangle => Stone,
         }
     }
 
