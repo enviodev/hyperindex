@@ -39,26 +39,17 @@ describe("Load and save an entity with a BigDecimal from DB", () => {
 
     let eventItem = MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem
 
-    let loaderContext = UserContext.getLoaderContext({
-      eventItem,
-      loadManager,
-      persistence: Config.codegenPersistence,
-      inMemoryStore,
-      shouldSaveHistory: false,
-      isPreload: false,
-    })->(Utils.magic: Internal.loaderContext => Types.loaderContext)
-
-    let _ = loaderContext.entityWithBigDecimal.get(testEntity1.id)
-    let _ = loaderContext.entityWithBigDecimal.get(testEntity2.id)
-
     let handlerContext = UserContext.getHandlerContext({
       eventItem,
-      inMemoryStore,
       loadManager,
       persistence: Config.codegenPersistence,
+      inMemoryStore,
       shouldSaveHistory: false,
       isPreload: false,
-    })->(Utils.magic: Internal.handlerContext => Types.handlerContext)
+    })->(Utils.magic: Internal.handlerContext => Types.loaderContext)
+
+    let _ = handlerContext.entityWithBigDecimal.get(testEntity1.id)
+    let _ = handlerContext.entityWithBigDecimal.get(testEntity2.id)
 
     switch await handlerContext.entityWithBigDecimal.get(testEntity1.id) {
     | Some(entity) => Assert.equal(entity.bigDecimal.toString(), "123.456")

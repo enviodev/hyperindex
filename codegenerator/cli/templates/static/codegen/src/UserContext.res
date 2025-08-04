@@ -118,6 +118,7 @@ let getWhereTraps: Utils.Proxy.traps<entityContextParams> = {
 }
 
 let noopSet = (_entity: Internal.entity) => ()
+let noopDeleteUnsafe = (_entityId: string) => ()
 
 let entityTraps: Utils.Proxy.traps<entityContextParams> = {
   get: (~target as params, ~prop: unknown) => {
@@ -197,6 +198,22 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
           })
       )->Utils.magic
     | "set" => set->Utils.magic
+    | "deleteUnsafe" =>
+      if params.isPreload {
+        noopDeleteUnsafe
+      } else {
+        entityId => {
+          params.inMemoryStore
+          ->InMemoryStore.getInMemTable(~entityConfig=params.entityConfig)
+          ->InMemoryTable.Entity.set(
+            Delete->Types.mkEntityUpdate(
+              ~eventIdentifier=params.eventItem->makeEventIdentifier,
+              ~entityId,
+            ),
+            ~shouldSaveHistory=params.shouldSaveHistory,
+          )
+        }
+      }->Utils.magic
     | _ => Js.Exn.raiseError(`Invalid context.${params.entityConfig.name}.${prop} operation.`)
     }
   },
