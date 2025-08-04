@@ -214,7 +214,7 @@ let makeCacheTable = (~effectName) => {
     cacheTablePrefix ++ effectName,
     ~fields=[
       Table.mkField("id", Text, ~fieldSchema=S.string, ~isPrimaryKey=true),
-      Table.mkField("output", JsonB, ~fieldSchema=S.json(~validate=false)),
+      Table.mkField("output", JsonB, ~fieldSchema=S.json(~validate=false), ~isNullable=true),
     ],
     ~compositeIndices=[],
   )

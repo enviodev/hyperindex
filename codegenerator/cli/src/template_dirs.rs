@@ -187,6 +187,17 @@ impl<'a> TemplateDirs<'a> {
         self.get_codegen_dir(TemplateType::Dynamic)
     }
 
+    ///Gets the templates/static/shared directory
+    pub fn get_shared_static_dir(&self) -> Result<RelativeDir<'a>> {
+        let template_dir = self
+            .get_template_dir(TemplateType::Static)
+            .context("Failed getting template dir")?;
+
+        template_dir
+            .get_dir("shared")
+            .ok_or_else(|| anyhow!("Unexpected, shared dir does not exist"))
+    }
+
     ///Gets directories within dynamic
     fn get_dynamic_dir<T: Display>(&self, dirname: T) -> Result<RelativeDir<'a>> {
         let template_dir = self
@@ -401,6 +412,14 @@ mod test {
         template_dirs
             .get_codegen_dynamic_dir()
             .expect("codegen dynamic");
+    }
+
+    #[test]
+    fn shared_static_dir_exists() {
+        let template_dirs = TemplateDirs::new();
+        template_dirs
+            .get_shared_static_dir()
+            .expect("shared static dir");
     }
 
     #[test]

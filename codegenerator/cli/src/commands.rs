@@ -139,6 +139,12 @@ pub mod codegen {
             .extract(&config.parsed_project_paths.generated)
             .context("Failed extracting static codegen files")?;
 
+        // Copy shared static content into the project root (not the generated folder)
+        template_dirs
+            .get_shared_static_dir()?
+            .extract(&config.parsed_project_paths.project_root)
+            .context("Failed extracting shared static files")?;
+
         template
             .generate_templates(&config.parsed_project_paths)
             .context("Failed generating dynamic codegen files")?;
