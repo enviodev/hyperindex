@@ -346,6 +346,7 @@ pub struct EventMod {
     pub event_filter_type: String,
     pub custom_field_selection: Option<system_config::FieldSelection>,
     pub fuel_event_kind: Option<FuelEventKind>,
+    pub preload_handlers: bool,
 }
 
 impl Display for EventMod {
@@ -424,10 +425,9 @@ impl EventMod {
             r#"id,
   name,
   contractName,
-  isWildcard: (handlerRegister->HandlerTypes.Register.getEventOptions).isWildcard,
-  loader: handlerRegister->HandlerTypes.Register.getLoader,
-  handler: handlerRegister->HandlerTypes.Register.getHandler,
-  contractRegister: handlerRegister->HandlerTypes.Register.getContractRegister,
+  isWildcard: (handlerRegister->EventRegister.isWildcard),
+  handler: handlerRegister->EventRegister.getHandler,
+  contractRegister: handlerRegister->EventRegister.getContractRegister,
   paramsRawEventSchema: paramsRawEventSchema->(Utils.magic: S.t<eventArgs> => S.t<Internal.eventParams>),"#
         );
 
@@ -439,7 +439,7 @@ let register = (): Internal.evmEventConfig => {{
   {{
     getEventFiltersOrThrow,
     filterByAddresses,
-    dependsOnAddresses: !(handlerRegister->HandlerTypes.Register.getEventOptions).isWildcard || filterByAddresses,
+    dependsOnAddresses: !(handlerRegister->EventRegister.isWildcard) || filterByAddresses,
     blockSchema: blockSchema->(Utils.magic: S.t<block> => S.t<Internal.eventBlock>),
     transactionSchema: transactionSchema->(Utils.magic: S.t<transaction> => S.t<Internal.eventTransaction>),
     convertHyperSyncEventArgs: {convert_hyper_sync_event_args_code},
@@ -452,10 +452,27 @@ let register = (): Internal.evmEventConfig => {{
 let register = (): Internal.fuelEventConfig => {{
   kind: {fuel_event_kind_code},
   filterByAddresses: false,
-  dependsOnAddresses: !(handlerRegister->HandlerTypes.Register.getEventOptions).isWildcard,
+  dependsOnAddresses: !(handlerRegister->EventRegister.isWildcard),
   {base_event_config_code}
 }}"#
             ),
+        };
+
+        let types_code = if self.preload_handlers {
+            "".to_string()
+        } else {
+            format!(
+                r#"@genType
+type loaderArgs = Internal.genericLoaderArgs<event, loaderContext>
+@genType
+type loader<'loaderReturn> = Internal.genericLoader<loaderArgs, 'loaderReturn>
+@genType
+type handlerArgs<'loaderReturn> = Internal.genericHandlerArgs<event, handlerContext, 'loaderReturn>
+@genType
+type handler<'loaderReturn> = Internal.genericHandler<handlerArgs<'loaderReturn>>
+@genType
+type contractRegister = Internal.genericContractRegister<Internal.genericContractRegisterArgs<event, contractRegistrations>>"#
+            )
         };
 
         format!(
@@ -488,22 +505,13 @@ type event = {{
   block: block,
 }}
 
-@genType
-type loaderArgs = Internal.genericLoaderArgs<event, loaderContext>
-@genType
-type loader<'loaderReturn> = Internal.genericLoader<loaderArgs, 'loaderReturn>
-@genType
-type handlerArgs<'loaderReturn> = Internal.genericHandlerArgs<event, handlerContext, 'loaderReturn>
-@genType
-type handler<'loaderReturn> = Internal.genericHandler<handlerArgs<'loaderReturn>>
-@genType
-type contractRegister = Internal.genericContractRegister<Internal.genericContractRegisterArgs<event, contractRegistrations>>
+{types_code}
 
 let paramsRawEventSchema = {params_raw_event_schema}
 let blockSchema = {block_schema}
 let transactionSchema = {transaction_schema}
 
-let handlerRegister: HandlerTypes.Register.t = HandlerTypes.Register.make(
+let handlerRegister: EventRegister.t = EventRegister.make(
   ~contractName,
   ~eventName=name,
 )
@@ -580,7 +588,7 @@ impl EventTemplate {
                 });
 
         format!(
-            "LogSelection.parseEventFiltersOrThrow(~eventFilters=(handlerRegister->HandlerTypes.Register.getEventOptions).eventFilters, ~sighash, ~params=[{params_code}]{topic_filter_calls})"
+            "LogSelection.parseEventFiltersOrThrow(~eventFilters=handlerRegister->EventRegister.getEventFilters, ~sighash, ~params=[{params_code}]{topic_filter_calls})"
         )
     }
 
@@ -627,6 +635,7 @@ impl EventTemplate {
 
     pub fn from_fuel_supply_event(
         config_event: &system_config::Event,
+        preload_handlers: bool,
         fuel_event_kind: FuelEventKind,
     ) -> Self {
         let event_name = config_event.name.capitalize();
@@ -642,6 +651,7 @@ impl EventTemplate {
             event_filter_type: Self::EVENT_FILTER_TYPE_STUB.to_string(),
             custom_field_selection: config_event.field_selection.clone(),
             fuel_event_kind: Some(fuel_event_kind),
+            preload_handlers: preload_handlers,
         };
         EventTemplate {
             name: event_name,
@@ -652,6 +662,7 @@ impl EventTemplate {
 
     pub fn from_fuel_transfer_event(
         config_event: &system_config::Event,
+        preload_handlers: bool,
         fuel_event_kind: FuelEventKind,
     ) -> Self {
         let event_name = config_event.name.capitalize();
@@ -667,6 +678,7 @@ impl EventTemplate {
             event_filter_type: Self::EVENT_FILTER_TYPE_STUB.to_string(),
             custom_field_selection: config_event.field_selection.clone(),
             fuel_event_kind: Some(fuel_event_kind),
+            preload_handlers: preload_handlers,
         };
         EventTemplate {
             name: event_name,
@@ -675,7 +687,10 @@ impl EventTemplate {
         }
     }
 
-    pub fn from_config_event(config_event: &system_config::Event) -> Result<Self> {
+    pub fn from_config_event(
+        config_event: &system_config::Event,
+        preload_handlers: bool,
+    ) -> Result<Self> {
         let event_name = config_event.name.capitalize();
         match &config_event.kind {
             EventKind::Params(params) => {
@@ -726,6 +741,7 @@ impl EventTemplate {
                     event_filter_type: Self::generate_event_filter_type(params),
                     custom_field_selection: config_event.field_selection.clone(),
                     fuel_event_kind: None,
+                    preload_handlers: preload_handlers,
                 };
 
                 Ok(EventTemplate {
@@ -753,6 +769,7 @@ impl EventTemplate {
                             event_filter_type: Self::EVENT_FILTER_TYPE_STUB.to_string(),
                             custom_field_selection: config_event.field_selection.clone(),
                             fuel_event_kind: Some(fuel_event_kind),
+                            preload_handlers: preload_handlers,
                         };
 
                         Ok(EventTemplate {
@@ -761,12 +778,18 @@ impl EventTemplate {
                             params: vec![],
                         })
                     }
-                    FuelEventKind::Mint | FuelEventKind::Burn => {
-                        Ok(Self::from_fuel_supply_event(config_event, fuel_event_kind))
+                    FuelEventKind::Mint | FuelEventKind::Burn => Ok(Self::from_fuel_supply_event(
+                        config_event,
+                        preload_handlers,
+                        fuel_event_kind,
+                    )),
+                    FuelEventKind::Call | FuelEventKind::Transfer => {
+                        Ok(Self::from_fuel_transfer_event(
+                            config_event,
+                            preload_handlers,
+                            fuel_event_kind,
+                        ))
                     }
-                    FuelEventKind::Call | FuelEventKind::Transfer => Ok(
-                        Self::from_fuel_transfer_event(config_event, fuel_event_kind),
-                    ),
                 }
             }
         }
@@ -793,7 +816,7 @@ impl ContractTemplate {
         let codegen_events = contract
             .events
             .iter()
-            .map(EventTemplate::from_config_event)
+            .map(|event| EventTemplate::from_config_event(event, config.preload_handlers))
             .collect::<Result<_>>()?;
 
         let chain_ids = contract.get_chain_ids(config);
@@ -1242,6 +1265,7 @@ pub struct ProjectTemplate {
     aggregated_field_selection: FieldSelection,
     is_evm_ecosystem: bool,
     is_fuel_ecosystem: bool,
+    preload_handlers: bool,
     envio_version: String,
     //Used for the package.json reference to handlers in generated
     relative_path_to_root_from_generated: String,
@@ -1347,6 +1371,7 @@ impl ProjectTemplate {
             aggregated_field_selection,
             is_evm_ecosystem: cfg.get_ecosystem() == Ecosystem::Evm,
             is_fuel_ecosystem: cfg.get_ecosystem() == Ecosystem::Fuel,
+            preload_handlers: cfg.preload_handlers,
             envio_version: get_envio_version()?,
             //Used for the package.json reference to handlers in generated
             relative_path_to_root_from_generated,
@@ -1693,7 +1718,7 @@ let paramsRawEventSchema = S.object((s): eventArgs => {{id: s.field("id", BigInt
 let blockSchema = Block.schema
 let transactionSchema = Transaction.schema
 
-let handlerRegister: HandlerTypes.Register.t = HandlerTypes.Register.make(
+let handlerRegister: EventRegister.t = EventRegister.make(
   ~contractName,
   ~eventName=name,
 )
@@ -1704,21 +1729,20 @@ type eventFilter = {{}}
 @genType type eventFilters = Internal.noEventFilters
 
 let register = (): Internal.evmEventConfig => {{
-  let {{getEventFiltersOrThrow, filterByAddresses}} = LogSelection.parseEventFiltersOrThrow(~eventFilters=(handlerRegister->HandlerTypes.Register.getEventOptions).eventFilters, ~sighash, ~params=[])
+  let {{getEventFiltersOrThrow, filterByAddresses}} = LogSelection.parseEventFiltersOrThrow(~eventFilters=handlerRegister->EventRegister.getEventFilters, ~sighash, ~params=[])
   {{
     getEventFiltersOrThrow,
     filterByAddresses,
-    dependsOnAddresses: !(handlerRegister->HandlerTypes.Register.getEventOptions).isWildcard || filterByAddresses,
+    dependsOnAddresses: !(handlerRegister->EventRegister.isWildcard) || filterByAddresses,
     blockSchema: blockSchema->(Utils.magic: S.t<block> => S.t<Internal.eventBlock>),
     transactionSchema: transactionSchema->(Utils.magic: S.t<transaction> => S.t<Internal.eventTransaction>),
     convertHyperSyncEventArgs: (decodedEvent: HyperSyncClient.Decoder.decodedEvent) => {{id: decodedEvent.body->Js.Array2.unsafe_get(0)->HyperSyncClient.Decoder.toUnderlying->Utils.magic, owner: decodedEvent.body->Js.Array2.unsafe_get(1)->HyperSyncClient.Decoder.toUnderlying->Utils.magic, displayName: decodedEvent.body->Js.Array2.unsafe_get(2)->HyperSyncClient.Decoder.toUnderlying->Utils.magic, imageUrl: decodedEvent.body->Js.Array2.unsafe_get(3)->HyperSyncClient.Decoder.toUnderlying->Utils.magic, }}->(Utils.magic: eventArgs => Internal.eventParams),
     id,
   name,
   contractName,
-  isWildcard: (handlerRegister->HandlerTypes.Register.getEventOptions).isWildcard,
-  loader: handlerRegister->HandlerTypes.Register.getLoader,
-  handler: handlerRegister->HandlerTypes.Register.getHandler,
-  contractRegister: handlerRegister->HandlerTypes.Register.getContractRegister,
+  isWildcard: (handlerRegister->EventRegister.isWildcard),
+  handler: handlerRegister->EventRegister.getHandler,
+  contractRegister: handlerRegister->EventRegister.getContractRegister,
   paramsRawEventSchema: paramsRawEventSchema->(Utils.magic: S.t<eventArgs> => S.t<Internal.eventParams>),
   }}
 }}"#
@@ -1728,13 +1752,16 @@ let register = (): Internal.evmEventConfig => {{
 
     #[test]
     fn event_template_with_empty_params() {
-        let event_template = EventTemplate::from_config_event(&system_config::Event {
-            name: "NewGravatar".to_string(),
-            kind: system_config::EventKind::Params(vec![]),
-            sighash: "0x50f7d27e90d1a5a38aeed4ceced2e8ec1ff185737aca96d15791b470d3f17363"
-                .to_string(),
-            field_selection: None,
-        })
+        let event_template = EventTemplate::from_config_event(
+            &system_config::Event {
+                name: "NewGravatar".to_string(),
+                kind: system_config::EventKind::Params(vec![]),
+                sighash: "0x50f7d27e90d1a5a38aeed4ceced2e8ec1ff185737aca96d15791b470d3f17363"
+                    .to_string(),
+                field_selection: None,
+            },
+            false,
+        )
         .unwrap();
 
         assert_eq!(
@@ -1786,7 +1813,7 @@ let paramsRawEventSchema = S.literal(%raw(`null`))->S.shape(_ => ())
 let blockSchema = Block.schema
 let transactionSchema = Transaction.schema
 
-let handlerRegister: HandlerTypes.Register.t = HandlerTypes.Register.make(
+let handlerRegister: EventRegister.t = EventRegister.make(
   ~contractName,
   ~eventName=name,
 )
@@ -1797,21 +1824,20 @@ type eventFilter = {}
 @genType type eventFilters = Internal.noEventFilters
 
 let register = (): Internal.evmEventConfig => {
-  let {getEventFiltersOrThrow, filterByAddresses} = LogSelection.parseEventFiltersOrThrow(~eventFilters=(handlerRegister->HandlerTypes.Register.getEventOptions).eventFilters, ~sighash, ~params=[])
+  let {getEventFiltersOrThrow, filterByAddresses} = LogSelection.parseEventFiltersOrThrow(~eventFilters=handlerRegister->EventRegister.getEventFilters, ~sighash, ~params=[])
   {
     getEventFiltersOrThrow,
     filterByAddresses,
-    dependsOnAddresses: !(handlerRegister->HandlerTypes.Register.getEventOptions).isWildcard || filterByAddresses,
+    dependsOnAddresses: !(handlerRegister->EventRegister.isWildcard) || filterByAddresses,
     blockSchema: blockSchema->(Utils.magic: S.t<block> => S.t<Internal.eventBlock>),
     transactionSchema: transactionSchema->(Utils.magic: S.t<transaction> => S.t<Internal.eventTransaction>),
     convertHyperSyncEventArgs: _ => ()->(Utils.magic: eventArgs => Internal.eventParams),
     id,
   name,
   contractName,
-  isWildcard: (handlerRegister->HandlerTypes.Register.getEventOptions).isWildcard,
-  loader: handlerRegister->HandlerTypes.Register.getLoader,
-  handler: handlerRegister->HandlerTypes.Register.getHandler,
-  contractRegister: handlerRegister->HandlerTypes.Register.getContractRegister,
+  isWildcard: (handlerRegister->EventRegister.isWildcard),
+  handler: handlerRegister->EventRegister.getHandler,
+  contractRegister: handlerRegister->EventRegister.getContractRegister,
   paramsRawEventSchema: paramsRawEventSchema->(Utils.magic: S.t<eventArgs> => S.t<Internal.eventParams>),
   }
 }"#.to_string(),
@@ -1821,19 +1847,22 @@ let register = (): Internal.evmEventConfig => {
 
     #[test]
     fn event_template_with_custom_field_selection() {
-        let event_template = EventTemplate::from_config_event(&system_config::Event {
-            name: "NewGravatar".to_string(),
-            kind: system_config::EventKind::Params(vec![]),
-            sighash: "0x50f7d27e90d1a5a38aeed4ceced2e8ec1ff185737aca96d15791b470d3f17363"
-                .to_string(),
-            field_selection: Some(FieldSelection {
-                block_fields: vec![],
-                transaction_fields: vec![SelectedField {
-                    name: "from".to_string(),
-                    data_type: RescriptTypeIdent::option(RescriptTypeIdent::Address),
-                }],
-            }),
-        })
+        let event_template = EventTemplate::from_config_event(
+            &system_config::Event {
+                name: "NewGravatar".to_string(),
+                kind: system_config::EventKind::Params(vec![]),
+                sighash: "0x50f7d27e90d1a5a38aeed4ceced2e8ec1ff185737aca96d15791b470d3f17363"
+                    .to_string(),
+                field_selection: Some(FieldSelection {
+                    block_fields: vec![],
+                    transaction_fields: vec![SelectedField {
+                        name: "from".to_string(),
+                        data_type: RescriptTypeIdent::option(RescriptTypeIdent::Address),
+                    }],
+                }),
+            },
+            false,
+        )
         .unwrap();
 
         assert_eq!(
@@ -1885,7 +1914,7 @@ let paramsRawEventSchema = S.literal(%raw(`null`))->S.shape(_ => ())
 let blockSchema = S.object((_): block => {})
 let transactionSchema = S.object((s): transaction => {from: s.field("from", S.nullable(Address.schema))})
 
-let handlerRegister: HandlerTypes.Register.t = HandlerTypes.Register.make(
+let handlerRegister: EventRegister.t = EventRegister.make(
   ~contractName,
   ~eventName=name,
 )
@@ -1896,21 +1925,20 @@ type eventFilter = {}
 @genType type eventFilters = Internal.noEventFilters
 
 let register = (): Internal.evmEventConfig => {
-  let {getEventFiltersOrThrow, filterByAddresses} = LogSelection.parseEventFiltersOrThrow(~eventFilters=(handlerRegister->HandlerTypes.Register.getEventOptions).eventFilters, ~sighash, ~params=[])
+  let {getEventFiltersOrThrow, filterByAddresses} = LogSelection.parseEventFiltersOrThrow(~eventFilters=handlerRegister->EventRegister.getEventFilters, ~sighash, ~params=[])
   {
     getEventFiltersOrThrow,
     filterByAddresses,
-    dependsOnAddresses: !(handlerRegister->HandlerTypes.Register.getEventOptions).isWildcard || filterByAddresses,
+    dependsOnAddresses: !(handlerRegister->EventRegister.isWildcard) || filterByAddresses,
     blockSchema: blockSchema->(Utils.magic: S.t<block> => S.t<Internal.eventBlock>),
     transactionSchema: transactionSchema->(Utils.magic: S.t<transaction> => S.t<Internal.eventTransaction>),
     convertHyperSyncEventArgs: _ => ()->(Utils.magic: eventArgs => Internal.eventParams),
     id,
   name,
   contractName,
-  isWildcard: (handlerRegister->HandlerTypes.Register.getEventOptions).isWildcard,
-  loader: handlerRegister->HandlerTypes.Register.getLoader,
-  handler: handlerRegister->HandlerTypes.Register.getHandler,
-  contractRegister: handlerRegister->HandlerTypes.Register.getContractRegister,
+  isWildcard: (handlerRegister->EventRegister.isWildcard),
+  handler: handlerRegister->EventRegister.getHandler,
+  contractRegister: handlerRegister->EventRegister.getContractRegister,
   paramsRawEventSchema: paramsRawEventSchema->(Utils.magic: S.t<eventArgs> => S.t<Internal.eventParams>),
   }
 }"#.to_string(),

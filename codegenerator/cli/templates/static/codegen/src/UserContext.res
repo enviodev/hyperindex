@@ -60,103 +60,6 @@ and effectTraps: Utils.Proxy.traps<contextParams> = {
   },
 }
 
-let makeEntityHandlerContext = (
-  ~entityConfig: Internal.entityConfig,
-  ~params,
-): Types.entityHandlerContext<Internal.entity> => {
-  let get = entityId =>
-    LoadLayer.loadById(
-      ~loadManager=params.loadManager,
-      ~persistence=params.persistence,
-      ~entityConfig,
-      ~inMemoryStore=params.inMemoryStore,
-      ~shouldGroup=false,
-      ~eventItem=params.eventItem,
-      ~entityId,
-    )
-  let set = (entity: Internal.entity) => {
-    params.inMemoryStore
-    ->InMemoryStore.getInMemTable(~entityConfig)
-    ->InMemoryTable.Entity.set(
-      Set(entity)->Types.mkEntityUpdate(
-        ~eventIdentifier=params.eventItem->makeEventIdentifier,
-        ~entityId=entity.id,
-      ),
-      ~shouldSaveHistory=params.shouldSaveHistory,
-    )
-  }
-  {
-    set,
-    deleteUnsafe: entityId => {
-      params.inMemoryStore
-      ->InMemoryStore.getInMemTable(~entityConfig)
-      ->InMemoryTable.Entity.set(
-        Delete->Types.mkEntityUpdate(
-          ~eventIdentifier=params.eventItem->makeEventIdentifier,
-          ~entityId,
-        ),
-        ~shouldSaveHistory=params.shouldSaveHistory,
-      )
-    },
-    getOrThrow: (entityId, ~message=?) =>
-      get(entityId)->Promise.thenResolve(entity => {
-        switch entity {
-        | Some(entity) => entity
-        | None =>
-          Js.Exn.raiseError(
-            message->Belt.Option.getWithDefault(
-              `Entity '${entityConfig.name}' with ID '${entityId}' is expected to exist.`,
-            ),
-          )
-        }
-      }),
-    getOrCreate: (entity: Internal.entity) => {
-      get(entity.id)->Promise.thenResolve(storageEntity => {
-        switch storageEntity {
-        | Some(entity) => entity
-        | None => {
-            set(entity)
-            entity
-          }
-        }
-      })
-    },
-    get,
-  }
-}
-
-let handlerTraps: Utils.Proxy.traps<contextParams> = {
-  get: (~target as params, ~prop: unknown) => {
-    let prop = prop->(Utils.magic: unknown => string)
-    switch prop {
-    | "log" => params.eventItem->Logging.getUserLogger->Utils.magic
-    | "effect" =>
-      initEffect((params :> contextParams))->(
-        Utils.magic: (
-          (Internal.effect, Internal.effectInput) => promise<Internal.effectOutput>
-        ) => unknown
-      )
-
-    | _ =>
-      switch Entities.byName->Utils.Dict.dangerouslyGetNonOption(prop) {
-      | Some(entityConfig) => makeEntityHandlerContext(~entityConfig, ~params)->Utils.magic
-      | None =>
-        Js.Exn.raiseError(`Invalid context access by '${prop}' property. ${codegenHelpMessage}`)
-      }
-    }
-  },
-}
-
-let getHandlerContext = (params: contextParams): Internal.handlerContext => {
-  params->Utils.Proxy.make(handlerTraps)->Utils.magic
-}
-
-let getHandlerArgs = (params: contextParams, ~loaderReturn): Internal.handlerArgs => {
-  event: params.eventItem.event,
-  context: getHandlerContext(params),
-  loaderReturn,
-}
-
 type entityContextParams = {
   ...contextParams,
   entityConfig: Internal.entityConfig,
@@ -299,7 +202,7 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
   },
 }
 
-let loaderTraps: Utils.Proxy.traps<contextParams> = {
+let handlerTraps: Utils.Proxy.traps<contextParams> = {
   get: (~target as params, ~prop: unknown) => {
     let prop = prop->(Utils.magic: unknown => string)
     switch prop {
@@ -334,13 +237,13 @@ let loaderTraps: Utils.Proxy.traps<contextParams> = {
   },
 }
 
-let getLoaderContext = (params: contextParams): Internal.loaderContext => {
-  params->Utils.Proxy.make(loaderTraps)->Utils.magic
+let getHandlerContext = (params: contextParams): Internal.handlerContext => {
+  params->Utils.Proxy.make(handlerTraps)->Utils.magic
 }
 
-let getLoaderArgs = (params: contextParams): Internal.loaderArgs => {
+let getHandlerArgs = (params: contextParams): Internal.handlerArgs => {
   event: params.eventItem.event,
-  context: getLoaderContext(params),
+  context: getHandlerContext(params),
 }
 
 // Contract register context creation

@@ -5,7 +5,7 @@
 import type { Logger, EffectCaller } from "envio";
 import type * as Entities from "./db/Entities.gen.ts";
 
-export type LoaderContext = {
+export type {{#if preload_handlers}}HandlerContext{{else}}LoaderContext{{/if}} = {
   /**
    * Access the logger instance with event as a context. The logs will be displayed in the console and Envio Hosted Service.
    */
@@ -17,11 +17,11 @@ export type LoaderContext = {
    */
   readonly effect: EffectCaller;
   /**
-   * True when the loaders run in parallel for the whole batch.
-   * Loaders are run twice per batch of events, and the first time is the "preload" run
+   * True when the handlers run in preload mode - in parallel for the whole batch.
+   * Handlers run twice per batch of events, and the first time is the "preload" run
    * During preload entities aren't set, logs are ignored and exceptions are silently swallowed.
    * Preload mode is the best time to populate data to in-memory cache.
-   * After preload the loader will run for the second time before its handler in sequentially order of events.
+   * After preload the handler will run for the second time in sequential order of events.
    */
   readonly isPreload: boolean;
   {{#each entities as | entity |}}
@@ -56,6 +56,7 @@ export type LoaderContext = {
   {{/each}}
 };
 
+{{#unless preload_handlers}}
 export type HandlerContext = {
   /**
    * Access the logger instance with event as a context. The logs will be displayed in the console and Envio Hosted Service.
@@ -97,3 +98,4 @@ export type HandlerContext = {
   }
   {{/each}}
 };
+{{/unless}}

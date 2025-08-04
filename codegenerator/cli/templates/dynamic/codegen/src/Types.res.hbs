@@ -13,6 +13,27 @@ type contractRegistrations = {
   {{/each}}
 }
 
+{{#if preload_handlers}}
+@genType
+type entityHandlerContext<'entity, 'indexedFieldOperations> = {
+  get: id => promise<option<'entity>>,
+  getOrThrow: (id, ~message: string=?) => promise<'entity>,
+  getWhere: 'indexedFieldOperations,
+  getOrCreate: ('entity) => promise<'entity>,
+  set: 'entity => unit,
+  deleteUnsafe: id => unit,
+}
+
+@genType.import(("./Types.ts", "HandlerContext"))
+type handlerContext = {
+  log: Envio.logger,
+  effect: 'input 'output. (Envio.effect<'input, 'output>, 'input) => promise<'output>,
+  isPreload: bool,
+  {{#each entities as | entity |}}
+  @as("{{entity.name.original}}") {{entity.name.uncapitalized}}: entityHandlerContext<Entities.{{entity.name.capitalized}}.t, Entities.{{entity.name.capitalized}}.indexedFieldOperations>,
+  {{/each}}
+}
+{{else}}
 @genType
 type entityLoaderContext<'entity, 'indexedFieldOperations> = {
   get: id => promise<option<'entity>>,
@@ -34,13 +55,7 @@ type loaderContext = {
 }
 
 @genType
-type entityHandlerContext<'entity> = {
-  get: id => promise<option<'entity>>,
-  getOrThrow: (id, ~message: string=?) => promise<'entity>,
-  getOrCreate: ('entity) => promise<'entity>,
-  set: 'entity => unit,
-  deleteUnsafe: id => unit,
-}
+type entityHandlerContext<'entity> = Internal.entityHandlerContext<'entity>
 
 @genType.import(("./Types.ts", "HandlerContext"))
 type handlerContext = {
@@ -50,6 +65,7 @@ type handlerContext = {
   @as("{{entity.name.original}}") {{entity.name.uncapitalized}}: entityHandlerContext<Entities.{{entity.name.capitalized}}.t>,
   {{/each}}
 }
+{{/if}}
 
 //Re-exporting types for backwards compatability
 {{#each entities as | entity |}}
@@ -217,11 +233,13 @@ module HandlerTypes = {
   @genType
   type contractRegister<'eventArgs> = Internal.genericContractRegister<contractRegisterArgs<'eventArgs>>
 
+  {{#if preload_handlers}}
+  {{else}}
   @genType
   type loaderArgs<'eventArgs> = Internal.genericLoaderArgs<eventLog<'eventArgs>, loaderContext>
   @genType
   type loader<'eventArgs, 'loaderReturn> = Internal.genericLoader<loaderArgs<'eventArgs>, 'loaderReturn>
-
+  
   @genType
   type handlerArgs<'eventArgs, 'loaderReturn> = Internal.genericHandlerArgs<eventLog<'eventArgs>, handlerContext, 'loaderReturn>
 
@@ -234,225 +252,35 @@ module HandlerTypes = {
     handler<'eventArgs, 'loaderReturn>,
     'eventFilters
   >
+  {{/if}}
 
   @genType
-  type eventConfig<'eventFilters> = {
-    wildcard?: bool,
-    eventFilters?: 'eventFilters,
-    /**
-      @deprecated The option is removed starting from v2.19 since we made the default mode even faster than pre-registration.
-    */
-    preRegisterDynamicContracts?: bool,
-  }
-
-  module EventOptions = {
-    type t = {
-      isWildcard: bool,
-      eventFilters: option<Js.Json.t>,
-      preRegisterDynamicContracts: bool,
-    }
-
-    let default = {
-      isWildcard: false,
-      eventFilters: None,
-      preRegisterDynamicContracts: false,
-    }
-
-    let make = (
-      ~isWildcard,
-      ~eventFilters,
-      ~preRegisterDynamicContracts,
-    ) => {
-      isWildcard,
-      eventFilters: eventFilters->(Utils.magic: option<'a> => option<Js.Json.t>),
-      preRegisterDynamicContracts,
-    }
-  }
-
-  module Register: {
-    type t
-    let make: (~contractName: string, ~eventName: string) => t
-    let setLoaderHandler: (
-      t,
-      Internal.genericHandlerWithLoader<'loader, 'handler, 'eventFilters>,
-      ~logger: Pino.t=?,
-    ) => unit
-    let setContractRegister: (
-      t,
-      Internal.genericContractRegister<Internal.genericContractRegisterArgs<'event, 'context>>,
-      ~eventOptions: option<EventOptions.t>,
-      ~logger: Pino.t=?,
-    ) => unit
-    let noopLoader: Internal.genericLoader<'event, ()>
-    let getLoader: t => option<Internal.loader>
-    let getHandler: t => option<Internal.handler>
-    let getContractRegister: t => option<Internal.contractRegister>
-    let getEventOptions: t => EventOptions.t
-    let hasRegistration: t => bool
-  } = {
-    open Belt
-
-    type handlerWithLoader = Internal.genericHandlerWithLoader<Internal.loader, Internal.handler, Js.Json.t>
-
-    type t = {
-      contractName: string,
-      eventName: string,
-      mutable loaderHandler: option<handlerWithLoader>,
-      mutable contractRegister: option<Internal.contractRegister>,
-      mutable eventOptions: option<EventOptions.t>,
-    }
-
-    let noopLoader = _ => Promise.resolve()
-
-    let getLoader = (t: t) => 
-      switch t.loaderHandler {
-        | Some({loader}) => {
-          if loader === noopLoader->(Utils.magic: Internal.genericLoader<'event, ()> => Internal.loader) {
-            None
-          } else {
-            Some(loader)
-          }
-        }
-        | None => None
-      }
-
-    let getHandler = (t: t) => 
-      switch t.loaderHandler {
-        | Some({handler}) => Some(handler)
-        | None => None
-      }
-
-    let getContractRegister = (t: t) => t.contractRegister
-
-    let getEventOptions = ({eventOptions}: t): EventOptions.t =>
-      switch eventOptions {
-      | Some(eventOptions) => eventOptions
-      | None => EventOptions.default
-      }
-
-    let hasRegistration = ({loaderHandler, contractRegister}) =>
-      loaderHandler->Belt.Option.isSome || contractRegister->Belt.Option.isSome
-
-    let make = (~contractName, ~eventName) => {
-      contractName,
-      eventName,
-      loaderHandler: None,
-      contractRegister: None,
-      eventOptions: None,
-    }
-
-    type eventNamespace = {contractName: string, eventName: string}
-    exception DuplicateEventRegistration(eventNamespace)
-
-    let setEventOptions = (t: t, value: EventOptions.t, ~logger=Logging.getLogger()) => {
-      switch t.eventOptions {
-      | None => t.eventOptions = Some(value)
-      | Some(_) =>
-        let eventNamespace = {contractName: t.contractName, eventName: t.eventName}
-        DuplicateEventRegistration(eventNamespace)->ErrorHandling.mkLogAndRaise(
-          ~logger=Logging.createChildFrom(~logger, ~params=eventNamespace),
-          ~msg="Duplicate eventOptions in handlers not allowed",
-        )
-      }
-    }
-
-    let setLoaderHandler = (
-      t: t,
-      value,
-      ~logger=Logging.getLogger(),
-    ) => {
-      switch t.loaderHandler {
-      | None =>
-        t.loaderHandler =
-          value
-          ->(Utils.magic: Internal.genericHandlerWithLoader<'loader, 'handler, 'eventFilters> => handlerWithLoader)
-          ->Some
-      | Some(_) =>
-        let eventNamespace = {contractName: t.contractName, eventName: t.eventName}
-        DuplicateEventRegistration(eventNamespace)->ErrorHandling.mkLogAndRaise(
-          ~logger=Logging.createChildFrom(~logger, ~params=eventNamespace),
-          ~msg="Duplicate registration of event handlers not allowed",
-        )
-      }
-
-      switch value {
-        | {wildcard: ?None, eventFilters: ?None, preRegisterDynamicContracts: ?None} => ()
-        | {?wildcard, ?eventFilters, ?preRegisterDynamicContracts} =>
-        t->setEventOptions(
-          EventOptions.make(
-            ~isWildcard=wildcard->Option.getWithDefault(false),
-            ~eventFilters,
-            ~preRegisterDynamicContracts=preRegisterDynamicContracts->Option.getWithDefault(false),
-          ),
-          ~logger
-        )
-      }
-    }
-
-    let setContractRegister = (
-      t: t,
-      value,
-      ~eventOptions,
-      ~logger=Logging.getLogger(),
-    ) => {
-      switch t.contractRegister {
-      | None => t.contractRegister = Some(value->(Utils.magic: Internal.genericContractRegister<Internal.genericContractRegisterArgs<'event, 'context>> => Internal.contractRegister))
-      | Some(_) =>
-        let eventNamespace = {contractName: t.contractName, eventName: t.eventName}
-        DuplicateEventRegistration(eventNamespace)->ErrorHandling.mkLogAndRaise(
-          ~logger=Logging.createChildFrom(~logger, ~params=eventNamespace),
-          ~msg="Duplicate contractRegister handlers not allowed",
-        )
-      }
-      switch eventOptions {
-      | Some(eventOptions) => t->setEventOptions(eventOptions, ~logger)
-      | None => ()
-      }
-    }
-  }
+  type eventConfig<'eventFilters> = Internal.eventOptions<'eventFilters>
 }
 
 module type Event = {
   type event
 
-  type loader<'loaderReturn> = Internal.genericLoader<
-    Internal.genericLoaderArgs<event, loaderContext>,
-    'loaderReturn,
-  >
-  type handler<'loaderReturn> = Internal.genericHandler<
-    Internal.genericHandlerArgs<event, handlerContext, 'loaderReturn>,
-  >
-  type contractRegister = Internal.genericContractRegister<
-    Internal.genericContractRegisterArgs<event, contractRegistrations>,
-  >
-
-  let handlerRegister: HandlerTypes.Register.t
+  let handlerRegister: EventRegister.t
 
   type eventFilters
-}
-
-let makeEventOptions = (
-  type eventFilters,
-  eventConfig: option<HandlerTypes.eventConfig<eventFilters>>,
-) => {
-  open Belt
-  eventConfig->Option.map(({?wildcard, ?eventFilters, ?preRegisterDynamicContracts}) =>
-    HandlerTypes.EventOptions.make(
-      ~isWildcard=wildcard->Option.getWithDefault(false),
-      ~eventFilters,
-      ~preRegisterDynamicContracts=preRegisterDynamicContracts->Option.getWithDefault(false),
-    )
-  )
 }
 
 @genType.import(("./bindings/OpaqueTypes.ts", "HandlerWithOptions"))
 type fnWithEventConfig<'fn, 'eventConfig> = ('fn, ~eventConfig: 'eventConfig=?) => unit
 
+{{#if preload_handlers}}
+type handlerWithOptions<'eventArgs, 'eventFilters> = fnWithEventConfig<
+  Internal.genericHandler<'eventArgs>,
+  HandlerTypes.eventConfig<'eventFilters>,
+>
+{{else}}
 @genType
 type handlerWithOptions<'eventArgs, 'loaderReturn, 'eventFilters> = fnWithEventConfig<
   HandlerTypes.handler<'eventArgs, 'loaderReturn>,
   HandlerTypes.eventConfig<'eventFilters>,
 >
+{{/if}}
 
 @genType
 type contractRegisterWithOptions<'eventArgs, 'eventFilters> = fnWithEventConfig<
@@ -461,46 +289,104 @@ type contractRegisterWithOptions<'eventArgs, 'eventFilters> = fnWithEventConfig<
 >
 
 module MakeRegister = (Event: Event) => {
-  let handler: fnWithEventConfig<
-    Event.handler<unit>,
+  let contractRegister: fnWithEventConfig<
+    Internal.genericContractRegister<
+      Internal.genericContractRegisterArgs<Event.event, contractRegistrations>,
+    >,
     HandlerTypes.eventConfig<Event.eventFilters>,
-  > = (
-    handler,
-    ~eventConfig=?,
+  > = (contractRegister, ~eventConfig=?) =>
+    Event.handlerRegister->EventRegister.setContractRegister(
+      contractRegister,
+      ~eventOptions=eventConfig,
+    )
+
+{{#if preload_handlers}}
+  let handler: fnWithEventConfig<
+    Internal.genericHandler<Internal.genericHandlerArgs<Event.event, handlerContext, unit>>,
+    HandlerTypes.eventConfig<Event.eventFilters>,
+  > = (handler, ~eventConfig=?) => {
+    Event.handlerRegister->EventRegister.setHandler(
+      handler->(
+        Utils.magic: Internal.genericHandler<
+          Internal.genericHandlerArgs<Event.event, handlerContext, unit>,
+        > => Internal.genericHandler<
+          Internal.genericHandlerArgs<Event.event, Internal.handlerContext, 'a>,
+        >
+      ),
+      ~eventOptions=eventConfig,
+    )
+  }
+{{else}}
+  let handler: fnWithEventConfig<
+    Internal.genericHandler<Internal.genericHandlerArgs<Event.event, handlerContext, unit>>,
+    HandlerTypes.eventConfig<Event.eventFilters>,
+  > = (handler, ~eventConfig=?) => {
+    Event.handlerRegister->EventRegister.setHandler(args => {
+      if args.context.isPreload {
+        Promise.resolve()
+      } else {
+        handler(
+          args->(
+            Utils.magic: Internal.genericHandlerArgs<
+              Event.event,
+              Internal.handlerContext,
+              'loaderReturn,
+            > => Internal.genericHandlerArgs<Event.event, handlerContext, unit>
+          ),
+        )
+      }
+    }, ~eventOptions=eventConfig)
+  }
+
+  let handlerWithLoader = (
+    eventConfig: Internal.genericHandlerWithLoader<
+      Internal.genericLoader<Internal.genericLoaderArgs<Event.event, loaderContext>, 'loaderReturn>,
+      Internal.genericHandler<
+        Internal.genericHandlerArgs<Event.event, handlerContext, 'loaderReturn>,
+      >,
+      Event.eventFilters,
+    >,
   ) => {
-    Event.handlerRegister->HandlerTypes.Register.setLoaderHandler(
-      {
-        loader: HandlerTypes.Register.noopLoader,
-        handler,
-        wildcard: ?eventConfig->Belt.Option.flatMap(c => c.wildcard),
-        eventFilters: ?eventConfig->Belt.Option.flatMap(c => c.eventFilters),
-        preRegisterDynamicContracts: ?eventConfig->Belt.Option.flatMap(c =>
-          c.preRegisterDynamicContracts
-        ),
+    Event.handlerRegister->EventRegister.setHandler(
+      args => {
+        let promise = eventConfig.loader(
+          args->(
+            Utils.magic: Internal.genericHandlerArgs<
+              Event.event,
+              Internal.handlerContext,
+              'loaderReturn,
+            > => Internal.genericLoaderArgs<Event.event, loaderContext>
+          ),
+        )
+        if args.context.isPreload {
+          promise->Promise.ignoreValue
+        } else {
+          promise->Promise.then(loaderRetrun => {
+            (args->Obj.magic)["loaderReturn"] = loaderRetrun
+            eventConfig.handler(
+              args->(
+                Utils.magic: Internal.genericHandlerArgs<
+                  Event.event,
+                  Internal.handlerContext,
+                  'loaderReturn,
+                > => Internal.genericHandlerArgs<Event.event, handlerContext, 'loaderReturn>
+              ),
+            )
+          })
+        }
+      },
+      ~eventOptions=switch eventConfig {
+      | {wildcard: ?None, eventFilters: ?None} => None
+      | _ =>
+        Some({
+          wildcard: ?eventConfig.wildcard,
+          eventFilters: eventConfig.eventFilters,
+          preRegisterDynamicContracts: ?eventConfig.preRegisterDynamicContracts,
+        })
       },
     )
   }
-
-  let contractRegister: fnWithEventConfig<
-    Event.contractRegister,
-    HandlerTypes.eventConfig<Event.eventFilters>,
-  > = (
-    contractRegister,
-    ~eventConfig=?,
-  ) =>
-    Event.handlerRegister->HandlerTypes.Register.setContractRegister(
-      contractRegister,
-      ~eventOptions=makeEventOptions(eventConfig),
-    )
-
-  let handlerWithLoader = (args: Internal.genericHandlerWithLoader<
-    Event.loader<'loaderReturn>,
-    Event.handler<'loaderReturn>,
-    Event.eventFilters,
-  >) =>
-    Event.handlerRegister->HandlerTypes.Register.setLoaderHandler(
-      args,
-    )
+{{/if}}
 }
 
 {{#each codegen_contracts as | contract |}}

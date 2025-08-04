@@ -16,8 +16,6 @@ type event = genericEvent<eventParams, eventBlock, eventTransaction>
 
 external fromGenericEvent: genericEvent<'a, 'b, 'c> => event = "%identity"
 
-type loaderReturn
-
 @genType
 type genericLoaderArgs<'event, 'context> = {
   event: 'event,
@@ -25,10 +23,6 @@ type genericLoaderArgs<'event, 'context> = {
 }
 @genType
 type genericLoader<'args, 'loaderReturn> = 'args => promise<'loaderReturn>
-
-type loaderContext
-type loaderArgs = genericLoaderArgs<event, loaderContext>
-type loader = genericLoader<loaderArgs, loaderReturn>
 
 @genType
 type genericContractRegisterArgs<'event, 'context> = {
@@ -51,8 +45,21 @@ type genericHandlerArgs<'event, 'context, 'loaderReturn> = {
 @genType
 type genericHandler<'args> = 'args => promise<unit>
 
-type handlerContext
-type handlerArgs = genericHandlerArgs<event, handlerContext, loaderReturn>
+@genType
+type entityHandlerContext<'entity> = {
+  get: string => promise<option<'entity>>,
+  getOrThrow: (string, ~message: string=?) => promise<'entity>,
+  getOrCreate: 'entity => promise<'entity>,
+  set: 'entity => unit,
+  deleteUnsafe: string => unit,
+}
+
+type loaderReturn
+type handlerContext = private {isPreload: bool}
+type handlerArgs = {
+  event: event,
+  context: handlerContext,
+}
 type handler = genericHandler<handlerArgs>
 
 @genType
@@ -81,7 +88,6 @@ type eventConfig = private {
   // Usually always false for wildcard events
   // But might be true for wildcard event with dynamic event filter by addresses
   dependsOnAddresses: bool,
-  loader: option<loader>,
   handler: option<handler>,
   contractRegister: option<contractRegister>,
   paramsRawEventSchema: S.schema<eventParams>,
@@ -136,6 +142,16 @@ type eventItem = {
   event: event,
   // Reuse logger object for event
   mutable loggerCache?: Pino.t,
+}
+
+@genType
+type eventOptions<'eventFilters> = {
+  wildcard?: bool,
+  eventFilters?: 'eventFilters,
+  /**
+    @deprecated The option is removed starting from v2.19 since we made the default mode even faster than pre-registration.
+  */
+  preRegisterDynamicContracts?: bool,
 }
 
 @genType
