@@ -2015,6 +2015,9 @@ snapshots:
     dependencies:
       '@envio-dev/hypersync-client': 0.6.5
       bignumber.js: 9.1.2
+      pino: 8.16.1
+      pino-pretty: 10.2.3
+      prom-client: 15.0.0
       rescript: 11.1.3
       rescript-schema: 9.3.0(rescript@11.1.3)
       viem: 2.21.0(typescript@5.2.2)
