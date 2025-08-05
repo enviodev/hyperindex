@@ -90,6 +90,14 @@ let make = (
       }
     })
 
+    switch contract.startBlock {
+    | Some(startBlock) if startBlock < chainConfig.startBlock =>
+      Js.Exn.raiseError(
+        `The start block for contract "${contractName}" is less than the chain start block. This is not supported yet.`,
+      )
+    | _ => ()
+    }
+
     contract.addresses->Array.forEach(address => {
       contracts->Array.push({
         FetchState.address,

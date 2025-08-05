@@ -1050,6 +1050,8 @@ let make = (
             pendingPartition.addressesByContractName->addressesByContractNameCount ===
               maxAddrInPartition
           ) {
+            // FIXME: should split into separate partitions
+            // depending on the start block
             partitions->Array.push(pendingPartition)
             pendingNormalPartition := makePendingNormalPartition()
           }
