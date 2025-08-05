@@ -364,6 +364,7 @@ pub async fn generate_config_from_subgraph_id(
                             handler: get_event_handler_directory(language),
                             events,
                         }),
+                        start_block: None,
                     };
 
                     // Pushing contract to network
