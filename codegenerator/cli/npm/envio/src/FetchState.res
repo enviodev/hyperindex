@@ -966,9 +966,7 @@ let make = (
   ~startBlock,
   ~endBlock,
   ~eventConfigs: array<Internal.eventConfig>,
-  ~staticContracts: dict<array<Address.t>>,
-  ~staticContractStartBlocks: dict<option<int>>=Js.Dict.empty(),
-  ~dynamicContracts: array<indexingContract>,
+  ~contracts: array<indexingContract>,
   ~maxAddrInPartition,
   ~chainId,
   ~blockLag=?,
@@ -1042,52 +1040,19 @@ let make = (
 
       let pendingNormalPartition = ref(makePendingNormalPartition())
 
-      let registerAddress = (contractName, address, ~dc: option<indexingContract>=?) => {
-        let pendingPartition = pendingNormalPartition.contents
-        switch pendingPartition.addressesByContractName->Utils.Dict.dangerouslyGetNonOption(
-          contractName,
-        ) {
-        | Some(addresses) => addresses->Array.push(address)
-        | None => pendingPartition.addressesByContractName->Js.Dict.set(contractName, [address])
-        }
-        indexingContracts->Js.Dict.set(
-          address->Address.toString,
-          switch dc {
-          | Some(dc) => dc
-          | None => {
-              address,
-              contractName,
-              startBlock: switch staticContractStartBlocks->Js.Dict.get(contractName) {
-              | Some(Some(contractStartBlock)) => contractStartBlock
-              | Some(None) | None => startBlock
-              },
-              register: Config,
-            }
-          },
-        )
-        if (
-          pendingPartition.addressesByContractName->addressesByContractNameCount ===
-            maxAddrInPartition
-        ) {
-          partitions->Array.push(pendingPartition)
-          pendingNormalPartition := makePendingNormalPartition()
-        }
-      }
-
-      staticContracts
-      ->Js.Dict.entries
-      ->Array.forEach(((contractName, addresses)) => {
+      contracts->Array.forEach(contract => {
+        let contractName = contract.contractName
         if contractNamesWithNormalEvents->Utils.Set.has(contractName) {
-          addresses->Array.forEach(a => {
-            registerAddress(contractName, a)
-          })
-        }
-      })
-
-      dynamicContracts->Array.forEach(dc => {
-        let contractName = dc.contractName
-        if contractNamesWithNormalEvents->Utils.Set.has(contractName) {
-          registerAddress(contractName, dc.address, ~dc)
+          let pendingPartition = pendingNormalPartition.contents
+          pendingPartition.addressesByContractName->Utils.Dict.push(contractName, contract.address)
+          indexingContracts->Js.Dict.set(contract.address->Address.toString, contract)
+          if (
+            pendingPartition.addressesByContractName->addressesByContractNameCount ===
+              maxAddrInPartition
+          ) {
+            partitions->Array.push(pendingPartition)
+            pendingNormalPartition := makePendingNormalPartition()
+          }
         }
       })
 
