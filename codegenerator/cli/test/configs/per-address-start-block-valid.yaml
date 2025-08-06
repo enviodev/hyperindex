@@ -1,0 +1,14 @@
+name: PerAddressStartBlockTest
+
+networks:
+  - id: 1
+    start_block: 1000
+    rpc_config:
+      url: http://localhost:8545
+    contracts:
+      - name: TestContract
+        address: "0x1234567890123456789012345678901234567890"
+        start_block: 500  # Valid: less than network start_block
+        abi_file_path: test.json
+        handler: ./src/EventHandler.js
+        events: []

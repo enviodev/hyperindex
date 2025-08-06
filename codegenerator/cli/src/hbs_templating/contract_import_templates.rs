@@ -407,6 +407,12 @@ impl AutoSchemaHandlerTemplate {
             .get_contract_import_lang_dir(lang)
             .context(format!("Failed getting {} contract import templates", lang))?;
 
+        // Copy shared static content into the project root (not the generated folder)
+        template_dirs
+            .get_shared_static_dir()?
+            .extract(&project_root)
+            .context("Failed extracting shared static files")?;
+
         let hbs = HandleBarsDirGenerator::new(&lang_dir, &self, project_root);
         let hbs_shared = HandleBarsDirGenerator::new(&shared_dir, &self, project_root);
         hbs.generate_hbs_templates().context(format!(

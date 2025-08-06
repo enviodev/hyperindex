@@ -217,6 +217,15 @@
           "description": "A single address or a list of addresses to be indexed. This can be left as null in the case where this contracts addresses will be registered dynamically.",
           "$ref": "#/$defs/Addresses"
         },
+        "start_block": {
+          "description": "The block at which the indexer should start ingesting data for this specific contract. If not specified, uses the network start_block. Can be greater than the network start_block for more specific indexing.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
         "abi_file_path": {
           "description": "Relative path (from config) to a json abi.",
           "type": "string"

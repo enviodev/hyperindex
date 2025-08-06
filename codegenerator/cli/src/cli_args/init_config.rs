@@ -140,6 +140,7 @@ pub mod evm {
                         name: selected_contract.name.clone(),
                         address,
                         config: config.clone(),
+                        start_block: None,
                     };
 
                     network.contracts.push(contract);
@@ -284,6 +285,7 @@ pub mod fuel {
                                     handler: init_config.language.get_event_handler_directory(),
                                     events: selected_contract.selected_events.clone(),
                                 }),
+                                start_block: None,
                             })
                             .collect(),
                     }),

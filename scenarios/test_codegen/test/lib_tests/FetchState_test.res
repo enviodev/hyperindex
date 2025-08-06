@@ -2678,3 +2678,83 @@ describe("FetchState.queueItemIsInReorgThreshold", () => {
     },
   )
 })
+
+describe("Dynamic contracts with start blocks", () => {
+  it("Should respect dynamic contract startBlock even when registered earlier", () => {
+    let fetchState = makeInitial()
+    
+    // Register a dynamic contract with startBlock=200
+    let dynamicContract = makeDynContractRegistration(
+      ~contractAddress=mockAddress1,  // Use a different address from static contracts
+      ~blockNumber=200,  // This is the startBlock - when indexing should actually begin
+      ~contractType=Gravatar,  // Use Gravatar which has event configs in makeInitial
+    )
+    
+    // Register the contract at block 100 (before its startBlock)
+    let updatedFetchState = fetchState->FetchState.registerDynamicContracts(
+      [dynamicContract],
+      ~currentBlockHeight=100,
+    )
+    
+    // The contract should be registered in indexingContracts
+    Assert.ok(
+      updatedFetchState.indexingContracts->Js.Dict.get(mockAddress1->Address.toString)->Option.isSome,
+      ~message="Dynamic contract should be registered in indexingContracts"
+    )
+    
+    // Verify the startBlock is set correctly
+    let registeredContract = updatedFetchState.indexingContracts
+      ->Js.Dict.get(mockAddress1->Address.toString)
+      ->Option.getExn
+    
+    Assert.equal(
+      registeredContract.startBlock,
+      200,
+      ~message="Dynamic contract should have correct startBlock"
+    )
+  })
+  
+  it("Should handle dynamic contract registration with different startBlocks", () => {
+    let fetchState = makeInitial()
+    
+    // Contract 1: startBlock=150
+    let contract1 = makeDynContractRegistration(
+      ~contractAddress=mockAddress1,
+      ~blockNumber=150,
+      ~contractType=Gravatar,
+    )
+    
+    // Contract 2: startBlock=300
+    let contract2 = makeDynContractRegistration(
+      ~contractAddress=mockAddress2,
+      ~blockNumber=300,
+      ~contractType=Gravatar,
+    )
+    
+    let updatedFetchState = fetchState->FetchState.registerDynamicContracts(
+      [contract1, contract2],
+      ~currentBlockHeight=100,
+    )
+    
+    // Verify both contracts are registered with correct startBlocks
+    let contract1Registered = updatedFetchState.indexingContracts
+      ->Js.Dict.get(mockAddress1->Address.toString)
+      ->Option.getExn
+    
+    let contract2Registered = updatedFetchState.indexingContracts
+      ->Js.Dict.get(mockAddress2->Address.toString)
+      ->Option.getExn
+    
+    Assert.equal(
+      contract1Registered.startBlock,
+      150,
+      ~message="Contract1 should have startBlock=150"
+    )
+    
+    Assert.equal(
+      contract2Registered.startBlock,
+      300,
+      ~message="Contract2 should have startBlock=300"
+    )
+  })
+})

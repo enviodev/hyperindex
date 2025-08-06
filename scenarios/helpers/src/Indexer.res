@@ -79,6 +79,7 @@ module type S = {
       abi: Ethers.abi,
       addresses: array<Address.t>,
       events: array<Internal.eventConfig>,
+      startBlock: option<int>,
     }
 
     type chainConfig = {
