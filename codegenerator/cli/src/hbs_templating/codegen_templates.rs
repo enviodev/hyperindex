@@ -898,6 +898,7 @@ pub struct PerNetworkContractTemplate {
     name: CapitalizedOptions,
     addresses: Vec<EthAddress>,
     events: Vec<PerNetworkContractEventTemplate>,
+    start_block: Option<u64>,
 }
 
 impl PerNetworkContractTemplate {
@@ -919,6 +920,7 @@ impl PerNetworkContractTemplate {
             name: network_contract.name.to_capitalized_options(),
             addresses: network_contract.addresses.clone(),
             events,
+            start_block: network_contract.start_block,
         })
     }
 }
@@ -1444,6 +1446,7 @@ mod test {
             name: String::from("Greeter").to_capitalized_options(),
             addresses: vec![address1.clone()],
             events,
+            start_block: None,
         };
 
         let chain_config_1 = super::NetworkConfigTemplate {
@@ -1488,6 +1491,7 @@ mod test {
             name: String::from("Contract1").to_capitalized_options(),
             addresses: vec![address1.clone()],
             events,
+            start_block: None,
         };
 
         let chain_config_1 = super::NetworkConfigTemplate {
@@ -1534,6 +1538,7 @@ mod test {
             name: String::from("Contract1").to_capitalized_options(),
             addresses: vec![address1.clone()],
             events,
+            start_block: None,
         };
 
         let events = get_per_contract_events_vec_helper(vec!["NewGravatar", "UpdatedGravatar"]);
@@ -1541,6 +1546,7 @@ mod test {
             name: String::from("Contract2").to_capitalized_options(),
             addresses: vec![address2.clone()],
             events,
+            start_block: None,
         };
 
         let chain_config_1 = super::NetworkConfigTemplate {
@@ -1580,6 +1586,7 @@ mod test {
             name: String::from("Contract1").to_capitalized_options(),
             addresses: vec![address1.clone()],
             events,
+            start_block: None,
         };
 
         let chain_config_1 = super::NetworkConfigTemplate {

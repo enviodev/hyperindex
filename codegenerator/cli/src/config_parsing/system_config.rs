@@ -674,6 +674,7 @@ impl SystemConfig {
                         .map(|c| NetworkContract {
                             name: c.name,
                             addresses: c.address.into(),
+                            start_block: c.start_block,
                         })
                         .collect();
 
@@ -824,6 +825,7 @@ impl SystemConfig {
                         .map(|c| NetworkContract {
                             name: c.name,
                             addresses: c.address.into(),
+                            start_block: c.start_block,
                         })
                         .collect();
 
@@ -1056,6 +1058,7 @@ pub struct Network {
 pub struct NetworkContract {
     pub name: ContractNameKey,
     pub addresses: Vec<String>,
+    pub start_block: Option<u64>,
 }
 
 impl NetworkContract {

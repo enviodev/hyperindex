@@ -1,0 +1,32 @@
+# yaml-language-server: $schema=../../npm/envio/evm.schema.json
+name: per-address-start-block-test
+schema: ../schemas/schema.graphql
+description: Test config for per-address start blocks
+networks:
+  - id: 1
+    start_block: 1000
+    contracts:
+      - name: Contract1
+        abi_file_path: ../abis/Contract1.json
+        handler: ./src/EventHandler.js
+        address: "0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"
+        start_block: 500  # Earlier than network start_block - should be valid
+        events:
+          - event: "NewGravatar"
+          - event: "UpdatedGravatar"
+      - name: Contract2
+        abi_file_path: ../abis/Contract1.json
+        handler: ./src/EventHandler.js
+        address: "0x3E645469f354BB4F5c8a05B3b30A929361cf77eC"
+        start_block: 1500  # Later than network start_block - should be valid for more specific indexing
+        events:
+          - event: "NewGravatar"
+          - event: "UpdatedGravatar"
+      - name: Contract3
+        abi_file_path: ../abis/Contract1.json
+        handler: ./src/EventHandler.js
+        address: "0x4E645469f354BB4F5c8a05B3b30A929361cf77eC"
+        # No start_block specified - should use network start_block
+        events:
+          - event: "NewGravatar"
+          - event: "UpdatedGravatar"

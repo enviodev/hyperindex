@@ -27,9 +27,8 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
     let fetcherStateInit: FetchState.t = FetchState.make(
       ~maxAddrInPartition=Env.maxAddrInPartition,
       ~endBlock=None,
-      ~staticContracts=Js.Dict.empty(),
       ~eventConfigs,
-      ~dynamicContracts=[],
+      ~contracts=[],
       ~startBlock=0,
       ~chainId=0,
     )

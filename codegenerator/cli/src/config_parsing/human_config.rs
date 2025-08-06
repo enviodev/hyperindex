@@ -82,6 +82,12 @@ pub struct NetworkContract<T> {
                        dynamically."
     )]
     pub address: Addresses,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(
+        description = "The block at which the indexer should start ingesting data for this specific contract. \
+                       If not specified, uses the network start_block. Can be greater than the network start_block for more specific indexing."
+    )]
+    pub start_block: Option<u64>,
     #[serde(flatten)]
     //If this is "None" it should be expected that
     //there is a global config for the contract
@@ -723,6 +729,7 @@ events: []
             address: NormalizedList::from(vec![
                 "0x2E645469f354BB4F5c8a05B3b30A929361cf77eC".to_string()
             ]),
+            start_block: None,
             config: Some(ContractConfig {
                 abi_file_path: None,
                 handler: "./src/EventHandler.js".to_string(),
@@ -745,6 +752,7 @@ events: []
         let expected = NetworkContract {
             name: "Contract1".to_string(),
             address: vec![].into(),
+            start_block: None,
             config: Some(ContractConfig {
                 abi_file_path: None,
                 handler: "./src/EventHandler.js".to_string(),
@@ -768,6 +776,7 @@ events: []
         let expected = NetworkContract {
             name: "Contract1".to_string(),
             address: vec!["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC".to_string()].into(),
+            start_block: None,
             config: Some(ContractConfig {
                 abi_file_path: None,
                 handler: "./src/EventHandler.js".to_string(),
@@ -791,6 +800,7 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
             address: NormalizedList::from(vec![
                 "0x2E645469f354BB4F5c8a05B3b30A929361cf77eC".to_string()
             ]),
+            start_block: None,
             config: None,
         };
 
@@ -875,6 +885,7 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
                     address: "0x4a2ce054e3e94155f7092f7365b212f7f45105b74819c623744ebcc5d065c6ac"
                         .to_string()
                         .into(),
+                    start_block: None,
                     config: Some(fuel::ContractConfig {
                         abi_file_path: "../abis/greeter-abi.json".to_string(),
                         handler: "./src/EventHandlers.js".to_string(),
