@@ -51,8 +51,7 @@ let make = (
   let eventRouter = EventRouter.empty()
 
   // Aggregate events we want to fetch
-  let staticContracts = Js.Dict.empty()
-  let staticContractStartBlocks = Js.Dict.empty()
+  let contracts = []
   let eventConfigs: array<Internal.eventConfig> = []
 
   chainConfig.contracts->Array.forEach(contract => {
@@ -91,15 +90,29 @@ let make = (
       }
     })
 
-    staticContracts->Js.Dict.set(contractName, contract.addresses)
-    staticContractStartBlocks->Js.Dict.set(contractName, contract.startBlock)
+    switch contract.startBlock {
+    | Some(startBlock) if startBlock < chainConfig.startBlock =>
+      Js.Exn.raiseError(
+        `The start block for contract "${contractName}" is less than the chain start block. This is not supported yet.`,
+      )
+    | _ => ()
+    }
+
+    contract.addresses->Array.forEach(address => {
+      contracts->Array.push({
+        FetchState.address,
+        contractName: contract.name,
+        startBlock: switch contract.startBlock {
+        | Some(startBlock) => startBlock
+        | None => chainConfig.startBlock
+        },
+        register: Config,
+      })
+    })
   })
 
-  let fetchState = FetchState.make(
-    ~maxAddrInPartition,
-    ~staticContracts,
-    ~staticContractStartBlocks,
-    ~dynamicContracts=dynamicContracts->Array.map(dc => {
+  dynamicContracts->Array.forEach(dc =>
+    contracts->Array.push({
       FetchState.address: dc.contractAddress,
       contractName: (dc.contractType :> string),
       startBlock: dc.registeringEventBlockNumber,
@@ -110,7 +123,12 @@ let make = (
         registeringEventName: dc.registeringEventName,
         registeringEventSrcAddress: dc.registeringEventSrcAddress,
       }),
-    }),
+    })
+  )
+
+  let fetchState = FetchState.make(
+    ~maxAddrInPartition,
+    ~contracts,
     ~startBlock,
     ~endBlock,
     ~eventConfigs,
@@ -314,7 +332,11 @@ let cleanUpProcessingFilters = (
 /**
  * Helper function to get the configured start block for a contract from config
  */
-let getContractStartBlock = (config: Config.t, ~chain: ChainMap.Chain.t, ~contractName: string): option<int> => {
+let getContractStartBlock = (
+  config: Config.t,
+  ~chain: ChainMap.Chain.t,
+  ~contractName: string,
+): option<int> => {
   let chainConfig = config.chainMap->ChainMap.get(chain)
   chainConfig.contracts
   ->Js.Array2.find(contract => contract.name === contractName)
@@ -338,7 +360,11 @@ let runContractRegistersOrThrow = async (
       let {timestamp, blockNumber, logIndex} = eventItem
 
       // Use contract-specific start block if configured, otherwise fall back to registration block
-      let contractStartBlock = switch getContractStartBlock(config, ~chain=eventItem.chain, ~contractName=(contractName: Enums.ContractType.t :> string)) {
+      let contractStartBlock = switch getContractStartBlock(
+        config,
+        ~chain=eventItem.chain,
+        ~contractName=(contractName: Enums.ContractType.t :> string),
+      ) {
       | Some(configuredStartBlock) => configuredStartBlock
       | None => blockNumber
       }
@@ -374,7 +400,9 @@ let runContractRegistersOrThrow = async (
 
     // Catch sync and async errors
     try {
-      let result = contractRegister(eventItem->UserContext.getContractRegisterArgs(~onRegister, ~config))
+      let result = contractRegister(
+        eventItem->UserContext.getContractRegisterArgs(~onRegister, ~config),
+      )
 
       // Even though `contractRegister` always returns a promise,
       // in the ReScript type, but it might return a non-promise value for TS API.

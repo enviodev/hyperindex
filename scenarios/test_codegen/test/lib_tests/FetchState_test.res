@@ -48,6 +48,15 @@ let makeDynContractRegistration = (
   }
 }
 
+let makeConfigContract = (contractName, address): FetchState.indexingContract => {
+  {
+    address,
+    contractName,
+    startBlock: 0,
+    register: Config,
+  }
+}
+
 let mockEvent = (~blockNumber, ~logIndex=0, ~chainId=1): Internal.eventItem => {
   timestamp: blockNumber * 15,
   chain: ChainMap.Chain.makeUnsafe(~chainId),
@@ -70,8 +79,14 @@ let baseEventConfig2 = (Mock.evmEventConfig(
 let makeInitial = (~startBlock=0, ~blockLag=?) => {
   FetchState.make(
     ~eventConfigs=[baseEventConfig, baseEventConfig2],
-    ~staticContracts=Js.Dict.fromArray([("Gravatar", [mockAddress0])]),
-    ~dynamicContracts=[],
+    ~contracts=[
+      {
+        FetchState.address: mockAddress0,
+        contractName: "Gravatar",
+        startBlock,
+        register: Config,
+      },
+    ],
     ~startBlock,
     ~endBlock=None,
     ~maxAddrInPartition=3,
@@ -149,8 +164,7 @@ describe("FetchState.make", () => {
       () => {
         FetchState.make(
           ~eventConfigs=[baseEventConfig],
-          ~staticContracts=Js.Dict.empty(),
-          ~dynamicContracts=[],
+          ~contracts=[],
           ~startBlock=0,
           ~endBlock=None,
           ~maxAddrInPartition=2,
@@ -170,8 +184,7 @@ describe("FetchState.make", () => {
       let dc = makeDynContractRegistration(~blockNumber=0, ~contractAddress=mockAddress2)
       let fetchState = FetchState.make(
         ~eventConfigs=[baseEventConfig],
-        ~staticContracts=Js.Dict.fromArray([("Gravatar", [mockAddress1])]),
-        ~dynamicContracts=[dc],
+        ~contracts=[makeConfigContract("Gravatar", mockAddress1), dc],
         ~startBlock=0,
         ~endBlock=None,
         ~maxAddrInPartition=2,
@@ -226,8 +239,7 @@ describe("FetchState.make", () => {
           (Mock.evmEventConfig(~id="0", ~contractName="ContractA") :> Internal.eventConfig),
           baseEventConfig,
         ],
-        ~staticContracts=Js.Dict.fromArray([("ContractA", [mockAddress1])]),
-        ~dynamicContracts=[dc],
+        ~contracts=[makeConfigContract("ContractA", mockAddress1), dc],
         ~startBlock=0,
         ~endBlock=None,
         ~maxAddrInPartition=1,
@@ -297,8 +309,12 @@ describe("FetchState.make", () => {
           (Mock.evmEventConfig(~id="0", ~contractName="ContractA") :> Internal.eventConfig),
           baseEventConfig,
         ],
-        ~staticContracts=Js.Dict.fromArray([("ContractA", [mockAddress1, mockAddress2])]),
-        ~dynamicContracts=[dc1, dc2],
+        ~contracts=[
+          makeConfigContract("ContractA", mockAddress1),
+          makeConfigContract("ContractA", mockAddress2),
+          dc1,
+          dc2,
+        ],
         ~startBlock=0,
         ~endBlock=None,
         ~maxAddrInPartition=1,
@@ -538,8 +554,7 @@ describe("FetchState.registerDynamicContracts", () => {
             ~filterByAddresses=true,
           ) :> Internal.eventConfig),
         ],
-        ~staticContracts=Js.Dict.fromArray([("Gravatar", [mockAddress0])]),
-        ~dynamicContracts=[],
+        ~contracts=[makeConfigContract("Gravatar", mockAddress0)],
         ~startBlock=10,
         ~endBlock=None,
         ~maxAddrInPartition=3,
@@ -776,11 +791,11 @@ describe("FetchState.registerDynamicContracts", () => {
 
       let fetchState = FetchState.make(
         ~eventConfigs=[wildcard1, wildcard2, normal1, normal2],
-        ~staticContracts=Js.Dict.fromArray([
-          ("NftFactory", [mockAddress0, mockAddress1]),
-          ("Gravatar", [mockAddress2, mockAddress3]),
-        ]),
-        ~dynamicContracts=[
+        ~contracts=[
+          makeConfigContract("NftFactory", mockAddress0),
+          makeConfigContract("NftFactory", mockAddress1),
+          makeConfigContract("Gravatar", mockAddress2),
+          makeConfigContract("Gravatar", mockAddress3),
           makeDynContractRegistration(
             ~contractType=Gravatar,
             ~blockNumber=0,
@@ -1591,8 +1606,7 @@ describe("FetchState.getNextQuery & integration", () => {
           (Mock.evmEventConfig(~id="0", ~contractName="ContractA") :> Internal.eventConfig),
           wildcard,
         ],
-        ~staticContracts=Js.Dict.fromArray([("ContractA", [mockAddress1])]),
-        ~dynamicContracts=[],
+        ~contracts=[makeConfigContract("ContractA", mockAddress1)],
         ~startBlock=0,
         ~endBlock=None,
         ~maxAddrInPartition=2,
@@ -1731,8 +1745,7 @@ describe("FetchState.getNextQuery & integration", () => {
     let fetchState =
       FetchState.make(
         ~eventConfigs,
-        ~staticContracts=Js.Dict.empty(),
-        ~dynamicContracts=[],
+        ~contracts=[],
         ~startBlock=0,
         ~endBlock=None,
         ~maxAddrInPartition=3,
@@ -1928,8 +1941,7 @@ describe("FetchState unit tests for specific cases", () => {
         (Mock.evmEventConfig(~id="0", ~contractName="ContractA") :> Internal.eventConfig),
         wildcard,
       ],
-      ~staticContracts=Js.Dict.fromArray([("ContractA", [mockAddress0])]),
-      ~dynamicContracts=[],
+      ~contracts=[makeConfigContract("ContractA", mockAddress0)],
       ~startBlock=0,
       ~endBlock=None,
       ~maxAddrInPartition=2,
@@ -2069,8 +2081,10 @@ describe("FetchState unit tests for specific cases", () => {
       ~eventConfigs=[
         (Mock.evmEventConfig(~id="0", ~contractName="ContractA") :> Internal.eventConfig),
       ],
-      ~staticContracts=Js.Dict.fromArray([("ContractA", [mockAddress1, mockAddress2])]),
-      ~dynamicContracts=[],
+      ~contracts=[
+        makeConfigContract("ContractA", mockAddress1),
+        makeConfigContract("ContractA", mockAddress2),
+      ],
       ~startBlock=0,
       ~endBlock=None,
       ~maxAddrInPartition=1,
@@ -2195,11 +2209,10 @@ describe("FetchState unit tests for specific cases", () => {
         (Mock.evmEventConfig(~id="0", ~contractName="ContractA") :> Internal.eventConfig),
         (Mock.evmEventConfig(~id="0", ~contractName="ContractB") :> Internal.eventConfig),
       ],
-      ~staticContracts=Js.Dict.fromArray([
-        ("ContractA", [mockAddress1]),
-        ("ContractB", [mockAddress2]),
-      ]),
-      ~dynamicContracts=[],
+      ~contracts=[
+        makeConfigContract("ContractA", mockAddress1),
+        makeConfigContract("ContractB", mockAddress2),
+      ],
       ~startBlock=0,
       ~endBlock=None,
       ~maxAddrInPartition=1,
@@ -2411,8 +2424,7 @@ describe("FetchState unit tests for specific cases", () => {
 
       let fetchState = FetchState.make(
         ~eventConfigs=[baseEventConfig],
-        ~staticContracts=Js.Dict.fromArray([("Gravatar", [mockAddress1])]),
-        ~dynamicContracts=[],
+        ~contracts=[makeConfigContract("Gravatar", mockAddress1)],
         ~startBlock=0,
         ~endBlock=None,
         ~maxAddrInPartition=2,
@@ -2682,79 +2694,83 @@ describe("FetchState.queueItemIsInReorgThreshold", () => {
 describe("Dynamic contracts with start blocks", () => {
   it("Should respect dynamic contract startBlock even when registered earlier", () => {
     let fetchState = makeInitial()
-    
+
     // Register a dynamic contract with startBlock=200
     let dynamicContract = makeDynContractRegistration(
-      ~contractAddress=mockAddress1,  // Use a different address from static contracts
-      ~blockNumber=200,  // This is the startBlock - when indexing should actually begin
-      ~contractType=Gravatar,  // Use Gravatar which has event configs in makeInitial
+      ~contractAddress=mockAddress1, // Use a different address from static contracts
+      ~blockNumber=200, // This is the startBlock - when indexing should actually begin
+      ~contractType=Gravatar, // Use Gravatar which has event configs in makeInitial
     )
-    
+
     // Register the contract at block 100 (before its startBlock)
-    let updatedFetchState = fetchState->FetchState.registerDynamicContracts(
-      [dynamicContract],
-      ~currentBlockHeight=100,
-    )
-    
+    let updatedFetchState =
+      fetchState->FetchState.registerDynamicContracts([dynamicContract], ~currentBlockHeight=100)
+
     // The contract should be registered in indexingContracts
     Assert.ok(
-      updatedFetchState.indexingContracts->Js.Dict.get(mockAddress1->Address.toString)->Option.isSome,
-      ~message="Dynamic contract should be registered in indexingContracts"
+      updatedFetchState.indexingContracts
+      ->Js.Dict.get(mockAddress1->Address.toString)
+      ->Option.isSome,
+      ~message="Dynamic contract should be registered in indexingContracts",
     )
-    
+
     // Verify the startBlock is set correctly
-    let registeredContract = updatedFetchState.indexingContracts
+    let registeredContract =
+      updatedFetchState.indexingContracts
       ->Js.Dict.get(mockAddress1->Address.toString)
       ->Option.getExn
-    
+
     Assert.equal(
       registeredContract.startBlock,
       200,
-      ~message="Dynamic contract should have correct startBlock"
+      ~message="Dynamic contract should have correct startBlock",
     )
   })
-  
+
   it("Should handle dynamic contract registration with different startBlocks", () => {
     let fetchState = makeInitial()
-    
+
     // Contract 1: startBlock=150
     let contract1 = makeDynContractRegistration(
       ~contractAddress=mockAddress1,
       ~blockNumber=150,
       ~contractType=Gravatar,
     )
-    
+
     // Contract 2: startBlock=300
     let contract2 = makeDynContractRegistration(
       ~contractAddress=mockAddress2,
       ~blockNumber=300,
       ~contractType=Gravatar,
     )
-    
-    let updatedFetchState = fetchState->FetchState.registerDynamicContracts(
-      [contract1, contract2],
-      ~currentBlockHeight=100,
-    )
-    
+
+    let updatedFetchState =
+      fetchState->FetchState.registerDynamicContracts(
+        [contract1, contract2],
+        ~currentBlockHeight=100,
+      )
+
     // Verify both contracts are registered with correct startBlocks
-    let contract1Registered = updatedFetchState.indexingContracts
+    let contract1Registered =
+      updatedFetchState.indexingContracts
       ->Js.Dict.get(mockAddress1->Address.toString)
       ->Option.getExn
-    
-    let contract2Registered = updatedFetchState.indexingContracts
+
+    let contract2Registered =
+      updatedFetchState.indexingContracts
       ->Js.Dict.get(mockAddress2->Address.toString)
       ->Option.getExn
-    
+
     Assert.equal(
       contract1Registered.startBlock,
       150,
-      ~message="Contract1 should have startBlock=150"
+      ~message="Contract1 should have startBlock=150",
     )
-    
+
     Assert.equal(
       contract2Registered.startBlock,
       300,
-      ~message="Contract2 should have startBlock=300"
+      ~message="Contract2 should have startBlock=300",
     )
   })
 })
