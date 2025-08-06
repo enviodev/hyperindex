@@ -193,6 +193,7 @@ impl<'a> TemplateDirs<'a> {
             .get_template_dir(TemplateType::Static)
             .context("Failed getting template dir")?;
 
+        // These are files with cursor rules and additional helpers
         template_dir
             .get_dir("shared")
             .ok_or_else(|| anyhow!("Unexpected, shared dir does not exist"))
@@ -352,6 +353,11 @@ impl<'a> TemplateDirs<'a> {
             "Failed getting shared static files for template {}",
             template
         ))?;
+
+        // Copy shared static content into the project root (not the generated folder)
+        self.get_shared_static_dir()?
+            .extract(&project_root)
+            .context("Failed extracting shared static files")?;
 
         lang_files.extract(project_root).context(format!(
             "Failed extracting static files for template {} with language {}",
