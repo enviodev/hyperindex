@@ -95,6 +95,7 @@ export function experimental_createEffect<
 // Important! Should match the index.js file
 export declare namespace S {
   export type Output<T> = Sury.Output<T>;
+  export type Infer<T> = Sury.Output<T>;
   export type Input<T> = Sury.Input<T>;
   export type Schema<Output, Input = unknown> = Sury.Schema<Output, Input>;
   export const string: typeof Sury.string;

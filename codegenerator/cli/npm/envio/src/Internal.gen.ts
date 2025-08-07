@@ -34,9 +34,24 @@ export type genericHandlerArgs<event,context,loaderReturn> = {
 
 export type genericHandler<args> = (_1:args) => Promise<void>;
 
+export type entityHandlerContext<entity> = {
+  readonly get: (_1:string) => Promise<(undefined | entity)>; 
+  readonly getOrThrow: (_1:string, message:(undefined | string)) => Promise<entity>; 
+  readonly getOrCreate: (_1:entity) => Promise<entity>; 
+  readonly set: (_1:entity) => void; 
+  readonly deleteUnsafe: (_1:string) => void
+};
+
 export type genericHandlerWithLoader<loader,handler,eventFilters> = {
   readonly loader: loader; 
   readonly handler: handler; 
+  readonly wildcard?: boolean; 
+  readonly eventFilters?: eventFilters; 
+  /** @deprecated The option is removed starting from v2.19 since we made the default mode even faster than pre-registration. */
+  readonly preRegisterDynamicContracts?: boolean
+};
+
+export type eventOptions<eventFilters> = {
   readonly wildcard?: boolean; 
   readonly eventFilters?: eventFilters; 
   /** @deprecated The option is removed starting from v2.19 since we made the default mode even faster than pre-registration. */

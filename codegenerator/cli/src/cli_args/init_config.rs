@@ -170,6 +170,7 @@ pub mod evm {
                 save_full_history: None,
                 field_selection: None,
                 raw_events: None,
+                preload_handlers: Some(true),
             })
         }
 
@@ -300,6 +301,7 @@ pub mod fuel {
                 output: None,
                 contracts: None,
                 raw_events: None,
+                preload_handlers: Some(true),
                 networks: network_configs,
             }
         }

@@ -12,3 +12,7 @@ networks:
         events:
           - name: NewGreeting
           - name: ClearGreeting
+# Preload optimisation makes your indexer much faster.
+# But be aware that your handlers will run twice,
+# so make sure to use Effect API for external calls.
+preload_handlers: true

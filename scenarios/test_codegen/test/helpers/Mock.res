@@ -239,7 +239,6 @@ let evmEventConfig = (
     filterByAddresses,
     dependsOnAddresses: filterByAddresses ||
     dependsOnAddresses->Belt.Option.getWithDefault(!isWildcard),
-    loader: None,
     handler: None,
     contractRegister: None,
     paramsRawEventSchema: S.literal(%raw(`null`))

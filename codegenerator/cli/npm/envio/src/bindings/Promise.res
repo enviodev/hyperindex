@@ -53,6 +53,8 @@ external race: array<t<'a>> => t<'a> = "race"
 
 external done: promise<'a> => unit = "%ignore"
 
+external ignoreValue: promise<'a> => promise<unit> = "%identity"
+
 external unsafe_async: 'a => promise<'a> = "%identity"
 external unsafe_await: promise<'a> => 'a = "?await"
 

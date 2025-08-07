@@ -400,7 +400,7 @@ and makeProcessEvents = (mockDb: t, ~chainId=?) => async (
   }
 
   try {
-    await eventItems->EventProcessing.runBatchLoadersOrThrow(
+    await eventItems->EventProcessing.preloadBatchOrThrow(
       ~loadManager,
       ~persistence,
       ~inMemoryStore,

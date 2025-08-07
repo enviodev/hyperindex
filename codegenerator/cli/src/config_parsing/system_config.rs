@@ -412,6 +412,7 @@ pub struct SystemConfig {
     pub schema: Schema,
     pub field_selection: FieldSelection,
     pub enable_raw_events: bool,
+    pub preload_handlers: bool,
     pub human_config: HumanConfig,
 }
 
@@ -719,6 +720,7 @@ impl SystemConfig {
                     schema,
                     field_selection,
                     enable_raw_events: evm_config.raw_events.unwrap_or(false),
+                    preload_handlers: evm_config.preload_handlers.unwrap_or(false),
                     human_config,
                 })
             }
@@ -855,6 +857,7 @@ impl SystemConfig {
                     schema,
                     field_selection: FieldSelection::fuel(),
                     enable_raw_events: fuel_config.raw_events.unwrap_or(false),
+                    preload_handlers: fuel_config.preload_handlers.unwrap_or(false),
                     human_config,
                 })
             }
@@ -2080,6 +2083,7 @@ mod test {
             save_full_history: None,
             field_selection: None,
             raw_events: None,
+            preload_handlers: None,
         };
 
         let project_paths = ParsedProjectPaths::new(".", "generated", "config.yaml").unwrap();
@@ -2125,6 +2129,7 @@ mod test {
             save_full_history: None,
             field_selection: None,
             raw_events: None,
+            preload_handlers: None,
         };
 
         let system_config_with_output = SystemConfig::from_human_config(

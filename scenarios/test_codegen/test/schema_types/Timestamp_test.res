@@ -31,25 +31,16 @@ describe("Load and save an entity with a Timestamp from DB", () => {
 
     let eventItem = MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem
 
-    let loaderContext = UserContext.getLoaderContext({
-      eventItem,
-      loadManager,
-      persistence: Config.codegenPersistence,
-      inMemoryStore,
-      shouldSaveHistory: false,
-      isPreload: false,
-    })->(Utils.magic: Internal.loaderContext => Types.loaderContext)
-
-    let _ = loaderContext.entityWithTimestamp.get(testEntity.id)
-
     let handlerContext = UserContext.getHandlerContext({
       eventItem,
-      inMemoryStore,
       loadManager,
       persistence: Config.codegenPersistence,
+      inMemoryStore,
       shouldSaveHistory: false,
       isPreload: false,
-    })->(Utils.magic: Internal.handlerContext => Types.handlerContext)
+    })->(Utils.magic: Internal.handlerContext => Types.loaderContext)
+
+    let _ = handlerContext.entityWithTimestamp.get(testEntity.id)
 
     switch await handlerContext.entityWithTimestamp.get(testEntity.id) {
     | Some(entity) =>

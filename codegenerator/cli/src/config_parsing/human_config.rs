@@ -204,6 +204,11 @@ pub mod evm {
                            false)"
         )]
         pub raw_events: Option<bool>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(
+            description = "Makes handlers run twice to enable preload optimisations. Removes handlerWithLoader API, since it's not needed. (recommended, default: false)"
+        )]
+        pub preload_handlers: Option<bool>,
     }
 
     impl Display for HumanConfig {
@@ -570,6 +575,11 @@ pub mod fuel {
                            false)"
         )]
         pub raw_events: Option<bool>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(
+            description = "Makes handlers run twice to enable preload optimisations. Removes handlerWithLoader API, since it's not needed. (recommended, default: false)"
+        )]
+        pub preload_handlers: Option<bool>,
     }
 
     impl Display for HumanConfig {
@@ -864,6 +874,7 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
             ecosystem: fuel::EcosystemTag::Fuel,
             contracts: None,
             raw_events: None,
+            preload_handlers: None,
             networks: vec![fuel::Network {
                 id: 0,
                 start_block: 0,
@@ -909,6 +920,7 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
             ecosystem: fuel::EcosystemTag::Fuel,
             contracts: None,
             raw_events: None,
+            preload_handlers: None,
             networks: vec![],
         };
 

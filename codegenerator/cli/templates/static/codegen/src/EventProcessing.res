@@ -96,7 +96,6 @@ exception ProcessingError({message: string, exn: exn, eventItem: Internal.eventI
 
 let runEventHandlerOrThrow = async (
   eventItem: Internal.eventItem,
-  ~loader,
   ~handler,
   ~inMemoryStore,
   ~loadManager,
@@ -116,25 +115,8 @@ let runEventHandlerOrThrow = async (
     isPreload: false,
   }
 
-  let loaderReturn = switch loader {
-  | Some(loader) =>
-    try {
-      await loader(UserContext.getLoaderArgs(contextParams))
-    } catch {
-    | exn =>
-      raise(
-        ProcessingError({
-          message: "Unexpected error in the event loader. Please handle the error to keep the indexer running smoothly.",
-          eventItem,
-          exn,
-        }),
-      )
-    }
-  | None => (%raw(`undefined`): Internal.loaderReturn)
-  }
-
   try {
-    await handler(UserContext.getHandlerArgs(contextParams, ~loaderReturn))
+    await handler(UserContext.getHandlerArgs(contextParams))
   } catch {
   | exn =>
     raise(
@@ -168,7 +150,6 @@ let runHandlerOrThrow = async (
   switch eventItem.eventConfig.handler {
   | Some(handler) =>
     await eventItem->runEventHandlerOrThrow(
-      ~loader=eventItem.eventConfig.loader,
       ~handler,
       ~inMemoryStore,
       ~loadManager,
@@ -186,7 +167,7 @@ let runHandlerOrThrow = async (
   }
 }
 
-let runBatchLoadersOrThrow = async (
+let preloadBatchOrThrow = async (
   eventBatch: array<Internal.eventItem>,
   ~loadManager,
   ~persistence,
@@ -199,11 +180,11 @@ let runBatchLoadersOrThrow = async (
   let _ = await Promise.all(
     eventBatch->Array.keepMap(eventItem => {
       switch eventItem.eventConfig {
-      | {loader: Some(loader)} =>
+      | {handler: Some(handler)} =>
         try {
           Some(
-            loader(
-              UserContext.getLoaderArgs({
+            handler(
+              UserContext.getHandlerArgs({
                 eventItem,
                 inMemoryStore,
                 loadManager,
@@ -297,11 +278,7 @@ let processEventBatch = async (
   try {
     let timeRef = Hrtime.makeTimer()
 
-    await items->runBatchLoadersOrThrow(
-      ~loadManager,
-      ~persistence=config.persistence,
-      ~inMemoryStore,
-    )
+    await items->preloadBatchOrThrow(~loadManager, ~persistence=config.persistence, ~inMemoryStore)
 
     let elapsedTimeAfterLoaders = timeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
 
@@ -317,7 +294,12 @@ let processEventBatch = async (
       timeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
 
     let rec executeBatch = async (~escapeTables=?) => {
-      switch await Db.sql->IO.executeBatch(~inMemoryStore, ~isInReorgThreshold, ~config, ~escapeTables?) {
+      switch await Db.sql->IO.executeBatch(
+        ~inMemoryStore,
+        ~isInReorgThreshold,
+        ~config,
+        ~escapeTables?,
+      ) {
       | exception Persistence.StorageError({message, reason}) =>
         reason->ErrorHandling.make(~msg=message, ~logger)->Error
 
