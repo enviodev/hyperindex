@@ -164,8 +164,24 @@ module Hasura = {
 
   let secret = envSafe->EnvSafe.get("HASURA_GRAPHQL_ADMIN_SECRET", S.string, ~devFallback="testing")
 
-  let aggregateEntities =
-    envSafe->EnvSafe.get("ENVIO_HASURA_PUBLIC_AGGREGATE", S.array(S.string), ~fallback=[])
+  let aggregateEntities = envSafe->EnvSafe.get(
+    "ENVIO_HASURA_PUBLIC_AGGREGATE",
+    S.union([
+      S.array(S.string),
+      // Temporary workaround: Hosted Service can't use commas in env vars for multiple entities.
+      // Will be removed once comma support is added — don't rely on this.
+      S.string->S.transform(s => {
+        parser: string =>
+          switch string->Js.String2.split("&") {
+          | []
+          | [_] =>
+            s.fail(`Provide an array of entities in the JSON format.`)
+          | entities => entities
+          },
+      }),
+    ]),
+    ~fallback=[],
+  )
 }
 
 module Configurable = {
