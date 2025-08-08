@@ -126,4 +126,5 @@ export declare namespace S {
   // Nullish type will change in "sury@10"
   // export const nullish: typeof Sury.nullish;
   export const assertOrThrow: typeof Sury.assertOrThrow;
+  export const parseOrThrow: typeof Sury.parseOrThrow;
 }
