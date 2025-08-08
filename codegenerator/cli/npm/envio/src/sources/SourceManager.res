@@ -76,7 +76,7 @@ let make = (
 }
 
 let trackNewStatus = (sourceManager: t, ~newStatus) => {
-  let promCounter = switch newStatus {
+  let promCounter = switch sourceManager.status {
   | Idle => Prometheus.IndexingIdleTime.counter
   | WaitingForNewBlock => Prometheus.IndexingSourceWaitingTime.counter
   | Querieng => Prometheus.IndexingQueryTime.counter
