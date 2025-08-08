@@ -1,7 +1,7 @@
 import assert from "assert";
 import { it } from "mocha";
 import { TestHelpers, User } from "generated";
-const { MockDb, Gravatar } = TestHelpers;
+const { MockDb, Gravatar, EventFiltersTest } = TestHelpers;
 
 describe("Use Envio test framework to test event handlers", () => {
   it("Runs contract register handler", async () => {
@@ -354,7 +354,7 @@ describe("Use Envio test framework to test event handlers", () => {
   it("Currently filters are ignored by the test framework", async () => {
     const mockDbInitial = MockDb.createMockDb();
 
-    const event = Gravatar.FilterTestEvent.createMockEvent({
+    const event = EventFiltersTest.FilterTestEvent.createMockEvent({
       addr: "0x000",
     });
 
@@ -366,7 +366,9 @@ describe("Use Envio test framework to test event handlers", () => {
   it("Can initialize the handlerWithLoader using wildcard", async () => {
     const mockDbInitial = MockDb.createMockDb();
 
-    const event = Gravatar.WildcardHandlerWithLoader.createMockEvent({});
+    const event = EventFiltersTest.WildcardHandlerWithLoader.createMockEvent(
+      {}
+    );
 
     const _updatedMockDb = await mockDbInitial.processEvents([event]);
 

@@ -673,7 +673,7 @@ Gravatar.FactoryEvent.handlerWithLoader({
   },
 });
 
-Gravatar.FilterTestEvent.handlerWithLoader({
+EventFiltersTest.FilterTestEvent.handlerWithLoader({
   loader: async (_) => undefined,
   handler: async ({ event }) => {
     if (event.params.addr === "0x000") {
@@ -685,7 +685,7 @@ Gravatar.FilterTestEvent.handlerWithLoader({
   },
 });
 
-Gravatar.WildcardHandlerWithLoader.handlerWithLoader({
+EventFiltersTest.WildcardHandlerWithLoader.handlerWithLoader({
   loader: async (_) => undefined,
   handler: async (_) => {},
   wildcard: true,

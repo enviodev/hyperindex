@@ -361,8 +361,8 @@ module MakeRegister = (Event: Event) => {
         if args.context.isPreload {
           promise->Promise.ignoreValue
         } else {
-          promise->Promise.then(loaderRetrun => {
-            (args->Obj.magic)["loaderReturn"] = loaderRetrun
+          promise->Promise.then(loaderReturn => {
+            (args->Obj.magic)["loaderReturn"] = loaderReturn
             eventConfig.handler(
               args->(
                 Utils.magic: Internal.genericHandlerArgs<
