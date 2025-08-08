@@ -15,10 +15,7 @@ describe("Use Envio test framework to test event handlers", () => {
       testCase: "syncRegistration",
     });
 
-    const updatedMockDb = await Gravatar.FactoryEvent.processEvent({
-      event: event,
-      mockDb: mockDbInitial,
-    });
+    const updatedMockDb = await mockDbInitial.processEvents([event]);
 
     const registeredDcs = updatedMockDb.dynamicContractRegistry.getAll();
     assert.deepEqual(registeredDcs, [
@@ -48,10 +45,7 @@ describe("Use Envio test framework to test event handlers", () => {
       testCase: "asyncRegistration",
     });
 
-    const updatedMockDb = await Gravatar.FactoryEvent.processEvent({
-      event: event,
-      mockDb: mockDbInitial,
-    });
+    const updatedMockDb = await mockDbInitial.processEvents([event]);
 
     const registeredDcs = updatedMockDb.dynamicContractRegistry.getAll();
     assert.deepEqual(registeredDcs, [
@@ -81,10 +75,7 @@ describe("Use Envio test framework to test event handlers", () => {
       testCase: "throwOnHangingRegistration",
     });
 
-    const updatedMockDb = await Gravatar.FactoryEvent.processEvent({
-      event: event,
-      mockDb: mockDbInitial,
-    });
+    const updatedMockDb = await mockDbInitial.processEvents([event]);
     const registeredDcs = updatedMockDb.dynamicContractRegistry.getAll();
     assert.deepEqual(
       registeredDcs,
@@ -112,10 +103,7 @@ describe("Use Envio test framework to test event handlers", () => {
       testCase: "getOrCreate - creates",
     });
 
-    const updatedMockDb = await Gravatar.FactoryEvent.processEvent({
-      event: event,
-      mockDb: mockDbInitial,
-    });
+    const updatedMockDb = await mockDbInitial.processEvents([event]);
 
     const users = updatedMockDb.entities.User.getAll();
     assert.deepEqual(users, [
@@ -148,10 +136,7 @@ describe("Use Envio test framework to test event handlers", () => {
     };
     mockDb = mockDb.entities.User.set(existingUser);
 
-    mockDb = await Gravatar.FactoryEvent.processEvent({
-      event: event,
-      mockDb: mockDb,
-    });
+    mockDb = await mockDb.processEvents([event]);
 
     const users = mockDb.entities.User.getAll();
     assert.deepEqual(users, [existingUser] satisfies typeof users);
@@ -176,10 +161,7 @@ describe("Use Envio test framework to test event handlers", () => {
     };
     mockDb = mockDb.entities.User.set(existingUser);
 
-    mockDb = await Gravatar.FactoryEvent.processEvent({
-      event: event,
-      mockDb: mockDb,
-    });
+    mockDb = await mockDb.processEvents([event]);
 
     const users = mockDb.entities.User.getAll();
     assert.deepEqual(users, [existingUser] satisfies typeof users);
@@ -196,10 +178,7 @@ describe("Use Envio test framework to test event handlers", () => {
     });
 
     await assert.rejects(
-      Gravatar.FactoryEvent.processEvent({
-        event: event,
-        mockDb: mockDb,
-      }),
+      mockDb.processEvents([event]),
       // It also logs to the console.
       {
         message: `Entity 'User' with ID '0' is expected to exist.`,
@@ -218,10 +197,7 @@ describe("Use Envio test framework to test event handlers", () => {
     });
 
     await assert.rejects(
-      Gravatar.FactoryEvent.processEvent({
-        event: event,
-        mockDb: mockDb,
-      }),
+      mockDb.processEvents([event]),
       // It also logs to the console.
       {
         message: `User should always exist`,
@@ -240,10 +216,7 @@ describe("Use Envio test framework to test event handlers", () => {
     });
 
     await assert.rejects(
-      Gravatar.FactoryEvent.processEvent({
-        event: event,
-        mockDb: mockDb,
-      }),
+      mockDb.processEvents([event]),
       // It also logs to the console.
       {
         message: `Second loader failure should abort processing`,
@@ -261,10 +234,7 @@ describe("Use Envio test framework to test event handlers", () => {
       testCase: "loaderSetCount",
     });
 
-    const updatedMockDb = await Gravatar.FactoryEvent.processEvent({
-      event: event,
-      mockDb: mockDbInitial,
-    });
+    const updatedMockDb = await mockDbInitial.processEvents([event]);
 
     const users = updatedMockDb.entities.User.getAll();
     assert.deepEqual(users, [
@@ -314,16 +284,10 @@ describe("Use Envio test framework to test event handlers", () => {
       testCase: "validatesAddress",
     });
 
-    await assert.rejects(
-      Gravatar.FactoryEvent.processEvent({
-        event: event,
-        mockDb: mockDbInitial,
-      }),
-      {
-        message:
-          'Address "invalid-address" is invalid. Expected a 20-byte hex string starting with 0x.',
-      }
-    );
+    await assert.rejects(mockDbInitial.processEvents([event]), {
+      message:
+        'Address "invalid-address" is invalid. Expected a 20-byte hex string starting with 0x.',
+    });
   });
 
   it("Checksums address when contract registered with valid address", async () => {
@@ -343,10 +307,7 @@ describe("Use Envio test framework to test event handlers", () => {
       },
     });
 
-    const updatedMockDb = await Gravatar.FactoryEvent.processEvent({
-      event: event,
-      mockDb: mockDbInitial,
-    });
+    const updatedMockDb = await mockDbInitial.processEvents([event]);
 
     const registeredDcs = updatedMockDb.dynamicContractRegistry.getAll();
     assert.deepEqual(registeredDcs, [
@@ -388,5 +349,28 @@ describe("Use Envio test framework to test event handlers", () => {
     await assert.rejects(mockDbInitial.processEvents([event]), {
       message: "Error from effect",
     });
+  });
+
+  it("Currently filters are ignored by the test framework", async () => {
+    const mockDbInitial = MockDb.createMockDb();
+
+    const event = Gravatar.FilterTestEvent.createMockEvent({
+      addr: "0x000",
+    });
+
+    await assert.rejects(mockDbInitial.processEvents([event]), {
+      message: "This should not be called",
+    });
+  });
+
+  it("Can initialize the handlerWithLoader using wildcard", async () => {
+    const mockDbInitial = MockDb.createMockDb();
+
+    const event = Gravatar.WildcardHandlerWithLoader.createMockEvent({});
+
+    const _updatedMockDb = await mockDbInitial.processEvents([event]);
+
+    // Nothing to check here. There was a regression caused by Caml_option.some
+    // So we just want to make sure that the handler is initialized correctly.
   });
 });

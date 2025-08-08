@@ -380,7 +380,7 @@ module MakeRegister = (Event: Event) => {
       | _ =>
         Some({
           wildcard: ?eventConfig.wildcard,
-          eventFilters: eventConfig.eventFilters,
+          eventFilters: ?eventConfig.eventFilters,
           preRegisterDynamicContracts: ?eventConfig.preRegisterDynamicContracts,
         })
       },

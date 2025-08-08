@@ -54,6 +54,8 @@ networks:
           - event: "NewGravatar"
           - event: "UpdatedGravatar"
           - event: "FactoryEvent(address indexed contract, string testCase)"
+          - event: "FilterTestEvent(address indexed addr)"
+          - event: "WildcardHandlerWithLoader()"
       - name: NftFactory
         abi_file_path: abis/NftFactory.json
         address: "0xa2F6E6029638cCb484A2ccb6414499aD3e825CaC"

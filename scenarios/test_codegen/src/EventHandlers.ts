@@ -672,3 +672,21 @@ Gravatar.FactoryEvent.handlerWithLoader({
     }
   },
 });
+
+Gravatar.FilterTestEvent.handlerWithLoader({
+  loader: async (_) => undefined,
+  handler: async ({ event }) => {
+    if (event.params.addr === "0x000") {
+      throw new Error("This should not be called");
+    }
+  },
+  eventFilters: {
+    addr: ["0x000"],
+  },
+});
+
+Gravatar.WildcardHandlerWithLoader.handlerWithLoader({
+  loader: async (_) => undefined,
+  handler: async (_) => {},
+  wildcard: true,
+});
