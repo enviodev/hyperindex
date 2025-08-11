@@ -75,6 +75,7 @@ let make = (~config: Config.t, ~chainManager: ChainManager.t, ~shouldUseTui=fals
   }
   Prometheus.ProcessingMaxBatchSize.set(~maxBatchSize=Env.maxProcessBatchSize)
   Prometheus.IndexingTargetBufferSize.set(~targetBufferSize)
+  Prometheus.ReorgThreshold.set(~isInReorgThreshold=chainManager.isInReorgThreshold)
   {
     config,
     currentlyProcessingBatch: false,
@@ -654,6 +655,7 @@ let actionReducer = (state: t, action: action) => {
     if isInReorgThreshold {
       Logging.info("Reorg threshold reached")
     }
+    Prometheus.ReorgThreshold.set(~isInReorgThreshold)
     ({...state, chainManager: {...state.chainManager, isInReorgThreshold}}, [])
   | SetSyncedChains => {
       let shouldExit = EventProcessing.allChainsEventsProcessedToEndblock(
