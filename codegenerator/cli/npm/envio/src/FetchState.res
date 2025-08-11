@@ -68,8 +68,8 @@ type t = {
   // Fields computed by updateInternal
   latestFullyFetchedBlock: blockNumberAndTimestamp,
   // How much blocks behind the head we should query
-  // Added for the purpose of avoiding reorg handling
-  blockLag: option<int>,
+  // Needed to query before entering reorg threshold
+  blockLag: int,
   //Items ordered from latest to earliest
   queue: array<Internal.eventItem>,
 }
@@ -722,7 +722,7 @@ let getNextQuery = (
   } else if concurrencyLimit === 0 {
     ReachedMaxConcurrency
   } else {
-    let headBlock = currentBlockHeight - blockLag->Option.getWithDefault(0)
+    let headBlock = currentBlockHeight - blockLag
 
     let fullPartitions = []
     let mergingPartitions = []
@@ -823,14 +823,14 @@ let getNextQuery = (
         switch p->makePartitionQuery(
           ~indexingContracts,
           ~endBlock=switch blockLag {
-          | Some(_) =>
+          | 0 => endBlock
+          | _ =>
             switch endBlock {
             | Some(endBlock) => Some(Pervasives.min(headBlock, endBlock))
             // Force head block as an endBlock when blockLag is set
             // because otherwise HyperSync might return bigger range
             | None => Some(headBlock)
             }
-          | None => endBlock
           },
           ~mergeTarget,
         ) {
@@ -969,7 +969,7 @@ let make = (
   ~contracts: array<indexingContract>,
   ~maxAddrInPartition,
   ~chainId,
-  ~blockLag=?,
+  ~blockLag=0,
 ): t => {
   let latestFetchedBlock = {
     blockTimestamp: 0,

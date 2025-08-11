@@ -85,6 +85,16 @@ let makeFromConfig = (~config: Config.t, ~maxAddrInPartition=Env.maxAddrInPartit
 }
 
 let makeFromDbState = async (~config: Config.t, ~maxAddrInPartition=Env.maxAddrInPartition): t => {
+  // Since now it's possible not to have rows in the history table
+  // even after the indexer started saving history (entered reorg threshold),
+  // This rows check might incorrectly return false for recovering the isInReorgThreshold option.
+  // But this is not a problem. There's no history anyways, and the indexer will be able to
+  // correctly calculate isInReorgThreshold as it starts.
+  let hasStartedSavingHistory = await Db.sql->DbFunctions.EntityHistory.hasRows
+  //If we have started saving history, continue to save history
+  //as regardless of whether we are still in a reorg threshold
+  let isInReorgThreshold = hasStartedSavingHistory
+
   let chainFetchersArr =
     await config.chainMap
     ->ChainMap.entries
@@ -94,6 +104,7 @@ let makeFromDbState = async (~config: Config.t, ~maxAddrInPartition=Env.maxAddrI
         await chainConfig->ChainFetcher.makeFromDbState(
           ~maxAddrInPartition,
           ~enableRawEvents=config.enableRawEvents,
+          ~isInReorgThreshold,
         ),
       )
     })
@@ -101,19 +112,10 @@ let makeFromDbState = async (~config: Config.t, ~maxAddrInPartition=Env.maxAddrI
 
   let chainFetchers = ChainMap.fromArrayUnsafe(chainFetchersArr)
 
-  // Since now it's possible not to have rows in the history table
-  // even after the indexer started saving history (entered reorg threshold),
-  // This rows check might incorrectly return false for recovering the isInReorgThreshold option.
-  // But this is not a problem. There's no history anyways, and the indexer will be able to
-  // correctly calculate isInReorgThreshold as it starts.
-  let hasStartedSavingHistory = await Db.sql->DbFunctions.EntityHistory.hasRows
-
   {
     isUnorderedMultichainMode: config.isUnorderedMultichainMode,
     chainFetchers,
-    //If we have started saving history, continue to save history
-    //as regardless of whether we are still in a reorg threshold
-    isInReorgThreshold: hasStartedSavingHistory,
+    isInReorgThreshold,
   }
 }
 

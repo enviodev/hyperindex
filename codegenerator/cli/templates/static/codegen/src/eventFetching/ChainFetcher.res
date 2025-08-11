@@ -43,6 +43,7 @@ let make = (
   ~processingFilters,
   ~maxAddrInPartition,
   ~enableRawEvents,
+  ~isInReorgThreshold,
 ): t => {
   // We don't need the router itself, but only validation logic,
   // since now event router is created for selection of events
@@ -133,7 +134,10 @@ let make = (
     ~endBlock,
     ~eventConfigs,
     ~chainId=chainConfig.chain->ChainMap.Chain.toChainId,
-    ~blockLag=?Env.indexingBlockLag,
+    ~blockLag=Pervasives.max(
+      isInReorgThreshold ? 0 : chainConfig.confirmedBlockThreshold,
+      Env.indexingBlockLag->Option.getWithDefault(0),
+    ),
   )
 
   {
@@ -177,6 +181,7 @@ let makeFromConfig = (chainConfig: Config.chainConfig, ~maxAddrInPartition, ~ena
     ~dynamicContracts=[],
     ~maxAddrInPartition,
     ~enableRawEvents,
+    ~isInReorgThreshold=false,
   )
 }
 
@@ -187,6 +192,7 @@ let makeFromDbState = async (
   chainConfig: Config.chainConfig,
   ~maxAddrInPartition,
   ~enableRawEvents,
+  ~isInReorgThreshold,
   ~sql=Db.sql,
 ) => {
   let logger = Logging.createChild(~params={"chainId": chainConfig.chain->ChainMap.Chain.toChainId})
@@ -298,6 +304,7 @@ let makeFromDbState = async (
     ~processingFilters,
     ~maxAddrInPartition,
     ~enableRawEvents,
+    ~isInReorgThreshold,
   )
 }
 
