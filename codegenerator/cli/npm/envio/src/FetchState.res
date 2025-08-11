@@ -229,6 +229,7 @@ let updateInternal = (
   ~dcsToStore=fetchState.dcsToStore,
   ~currentBlockHeight=?,
   ~queue=fetchState.queue,
+  ~blockLag=fetchState.blockLag,
 ): t => {
   let firstPartition = partitions->Js.Array2.unsafe_get(0)
   let latestFullyFetchedBlock = ref(firstPartition.latestFetchedBlock)
@@ -284,7 +285,7 @@ let updateInternal = (
     latestFullyFetchedBlock,
     indexingContracts,
     dcsToStore,
-    blockLag: fetchState.blockLag,
+    blockLag,
     queue,
   }
 }
@@ -893,18 +894,6 @@ let queueItemBlockNumber = (queueItem: queueItem) => {
   }
 }
 
-let queueItemIsInReorgThreshold = (
-  queueItem: queueItem,
-  ~currentBlockHeight,
-  ~highestBlockBelowThreshold,
-) => {
-  if currentBlockHeight === 0 {
-    false
-  } else {
-    queueItem->queueItemBlockNumber > highestBlockBelowThreshold
-  }
-}
-
 /**
 Simple constructor for no item from partition
 */
@@ -1225,4 +1214,16 @@ let isActivelyIndexing = ({latestFullyFetchedBlock, endBlock} as fetchState: t) 
     }
   | None => true
   }
+}
+
+let isReadyToEnterReorgThreshold = (
+  {latestFullyFetchedBlock, endBlock, blockLag, queue}: t,
+  ~currentBlockHeight,
+) => {
+  currentBlockHeight !== 0 &&
+  switch endBlock {
+  | Some(endBlock) if latestFullyFetchedBlock.blockNumber >= endBlock => true
+  | _ => latestFullyFetchedBlock.blockNumber >= currentBlockHeight - blockLag
+  } &&
+  queue->Utils.Array.isEmpty
 }
