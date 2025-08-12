@@ -718,13 +718,12 @@ let getNextQuery = (
   ~currentBlockHeight,
   ~stateId,
 ) => {
-  if currentBlockHeight === 0 {
+  let headBlock = currentBlockHeight - blockLag
+  if headBlock <= 0 {
     WaitingForNewBlock
   } else if concurrencyLimit === 0 {
     ReachedMaxConcurrency
   } else {
-    let headBlock = currentBlockHeight - blockLag
-
     let fullPartitions = []
     let mergingPartitions = []
     let areMergingPartitionsFetching = ref(false)
