@@ -143,7 +143,8 @@ describe("Dynamic contract restart resistance test", () => {
     let chainFetcher = await ChainFetcher.makeFromDbState(
       config.chainMap->ChainMap.get(ChainMap.Chain.makeUnsafe(~chainId)),
       ~maxAddrInPartition=Env.maxAddrInPartition,
-      ~enableRawEvents=config.enableRawEvents,
+      ~config,
+      ~isInReorgThreshold=true,
       ~sql?,
     )
 
@@ -158,7 +159,6 @@ describe("Dynamic contract restart resistance test", () => {
       let chainManager = {
         ...ChainManager.makeFromConfig(~config),
         isUnorderedMultichainMode: true,
-        isInReorgThreshold: true,
       }
 
       //Setup initial state stub that will be used for both

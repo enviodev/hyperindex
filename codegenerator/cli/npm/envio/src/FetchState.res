@@ -68,8 +68,8 @@ type t = {
   // Fields computed by updateInternal
   latestFullyFetchedBlock: blockNumberAndTimestamp,
   // How much blocks behind the head we should query
-  // Added for the purpose of avoiding reorg handling
-  blockLag: option<int>,
+  // Needed to query before entering reorg threshold
+  blockLag: int,
   //Items ordered from latest to earliest
   queue: array<Internal.eventItem>,
 }
@@ -229,6 +229,7 @@ let updateInternal = (
   ~dcsToStore=fetchState.dcsToStore,
   ~currentBlockHeight=?,
   ~queue=fetchState.queue,
+  ~blockLag=fetchState.blockLag,
 ): t => {
   let firstPartition = partitions->Js.Array2.unsafe_get(0)
   let latestFullyFetchedBlock = ref(firstPartition.latestFetchedBlock)
@@ -284,7 +285,7 @@ let updateInternal = (
     latestFullyFetchedBlock,
     indexingContracts,
     dcsToStore,
-    blockLag: fetchState.blockLag,
+    blockLag,
     queue,
   }
 }
@@ -717,13 +718,12 @@ let getNextQuery = (
   ~currentBlockHeight,
   ~stateId,
 ) => {
-  if currentBlockHeight === 0 {
+  let headBlock = currentBlockHeight - blockLag
+  if headBlock <= 0 {
     WaitingForNewBlock
   } else if concurrencyLimit === 0 {
     ReachedMaxConcurrency
   } else {
-    let headBlock = currentBlockHeight - blockLag->Option.getWithDefault(0)
-
     let fullPartitions = []
     let mergingPartitions = []
     let areMergingPartitionsFetching = ref(false)
@@ -823,14 +823,14 @@ let getNextQuery = (
         switch p->makePartitionQuery(
           ~indexingContracts,
           ~endBlock=switch blockLag {
-          | Some(_) =>
+          | 0 => endBlock
+          | _ =>
             switch endBlock {
             | Some(endBlock) => Some(Pervasives.min(headBlock, endBlock))
             // Force head block as an endBlock when blockLag is set
             // because otherwise HyperSync might return bigger range
             | None => Some(headBlock)
             }
-          | None => endBlock
           },
           ~mergeTarget,
         ) {
@@ -890,18 +890,6 @@ let queueItemBlockNumber = (queueItem: queueItem) => {
   switch queueItem {
   | Item({item}) => item.blockNumber
   | NoItem({latestFetchedBlock: {blockNumber}}) => blockNumber === 0 ? 0 : blockNumber + 1
-  }
-}
-
-let queueItemIsInReorgThreshold = (
-  queueItem: queueItem,
-  ~currentBlockHeight,
-  ~highestBlockBelowThreshold,
-) => {
-  if currentBlockHeight === 0 {
-    false
-  } else {
-    queueItem->queueItemBlockNumber > highestBlockBelowThreshold
   }
 }
 
@@ -969,7 +957,7 @@ let make = (
   ~contracts: array<indexingContract>,
   ~maxAddrInPartition,
   ~chainId,
-  ~blockLag=?,
+  ~blockLag=0,
 ): t => {
   let latestFetchedBlock = {
     blockTimestamp: 0,
@@ -1225,4 +1213,16 @@ let isActivelyIndexing = ({latestFullyFetchedBlock, endBlock} as fetchState: t) 
     }
   | None => true
   }
+}
+
+let isReadyToEnterReorgThreshold = (
+  {latestFullyFetchedBlock, endBlock, blockLag, queue}: t,
+  ~currentBlockHeight,
+) => {
+  currentBlockHeight !== 0 &&
+  switch endBlock {
+  | Some(endBlock) if latestFullyFetchedBlock.blockNumber >= endBlock => true
+  | _ => latestFullyFetchedBlock.blockNumber >= currentBlockHeight - blockLag
+  } &&
+  queue->Utils.Array.isEmpty
 }

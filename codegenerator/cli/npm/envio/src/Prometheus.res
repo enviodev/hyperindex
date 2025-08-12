@@ -472,6 +472,17 @@ module ReorgDetectionBlockNumber = {
   }
 }
 
+module ReorgThreshold = {
+  let gauge = PromClient.Gauge.makeGauge({
+    "name": "envio_reorg_threshold",
+    "help": "Whether indexing is currently within the reorg threshold",
+  })
+
+  let set = (~isInReorgThreshold) => {
+    gauge->PromClient.Gauge.set(isInReorgThreshold ? 1 : 0)
+  }
+}
+
 module RollbackEnabled = {
   let gauge = PromClient.Gauge.makeGauge({
     "name": "envio_rollback_enabled",

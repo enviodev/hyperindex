@@ -154,7 +154,7 @@ describe("FetchState.make", () => {
         indexingContracts: fetchState.indexingContracts,
         contractConfigs: fetchState.contractConfigs,
         dcsToStore: None,
-        blockLag: None,
+        blockLag: 0,
       },
     )
   })
@@ -223,7 +223,7 @@ describe("FetchState.make", () => {
           indexingContracts: fetchState.indexingContracts,
           contractConfigs: fetchState.contractConfigs,
           dcsToStore: None,
-          blockLag: None,
+          blockLag: 0,
         },
         ~message=`Should create only one partition`,
       )
@@ -286,7 +286,7 @@ describe("FetchState.make", () => {
           indexingContracts: fetchState.indexingContracts,
           contractConfigs: fetchState.contractConfigs,
           dcsToStore: None,
-          blockLag: None,
+          blockLag: 0,
         },
       )
 
@@ -381,7 +381,7 @@ describe("FetchState.make", () => {
           indexingContracts: fetchState.indexingContracts,
           contractConfigs: fetchState.contractConfigs,
           dcsToStore: None,
-          blockLag: None,
+          blockLag: 0,
         },
       )
     },
@@ -863,7 +863,7 @@ describe("FetchState.registerDynamicContracts", () => {
           indexingContracts: fetchState.indexingContracts,
           contractConfigs: fetchState.contractConfigs,
           dcsToStore: None,
-          blockLag: None,
+          blockLag: 0,
         },
         ~message=`The static addresses for the Gravatar contract should be skipped, since they don't have non-wildcard event configs`,
       )
@@ -902,7 +902,7 @@ describe("FetchState.getNextQuery & integration", () => {
       firstEventBlockNumber: Some(1),
       endBlock: None,
       dcsToStore: None,
-      blockLag: None,
+      blockLag: 0,
       normalSelection,
       chainId,
       indexingContracts: Js.Dict.fromArray([
@@ -962,7 +962,7 @@ describe("FetchState.getNextQuery & integration", () => {
       chainId,
       indexingContracts: makeIndexingContractsWithDynamics([dc3, dc2, dc1], ~static=[mockAddress0]),
       contractConfigs: makeInitial().contractConfigs,
-      blockLag: undefined,
+      blockLag: 0,
     }
   }
 
@@ -1122,6 +1122,12 @@ describe("FetchState.getNextQuery & integration", () => {
     let fetchState = makeInitial(~blockLag=2)
 
     Assert.deepEqual(fetchState->getNextQuery(~currentBlockHeight=0), WaitingForNewBlock)
+
+    Assert.deepEqual(
+      fetchState->getNextQuery(~currentBlockHeight=1),
+      WaitingForNewBlock,
+      ~message="Should wait for new block when current block height - block lag is less than 0",
+    )
 
     let nextQuery = fetchState->getNextQuery(~endBlock=Some(8), ~currentBlockHeight=10)
     Assert.deepEqual(
@@ -1863,7 +1869,7 @@ describe("FetchState unit tests for specific cases", () => {
         ("NftFactory", {FetchState.filterByAddresses: false}),
       ]),
       dcsToStore: None,
-      blockLag: None,
+      blockLag: 0,
     }
 
     let updatedFetchState =
@@ -2177,7 +2183,7 @@ describe("FetchState unit tests for specific cases", () => {
         ("NftFactory", {FetchState.filterByAddresses: false}),
       ]),
       dcsToStore: None,
-      blockLag: None,
+      blockLag: 0,
     }
 
     Assert.deepEqual(
@@ -2660,18 +2666,10 @@ describe("Test queue item", () => {
   })
 })
 
-describe("FetchState.queueItemIsInReorgThreshold", () => {
+describe("FetchState.isReadyToEnterReorgThreshold", () => {
   it("Returns false when we just started the indexer and it has currentBlockHeight=0", () => {
     let fetchState = makeInitial()
-    Assert.equal(
-      fetchState
-      ->FetchState.getEarliestEvent
-      ->FetchState.queueItemIsInReorgThreshold(
-        ~currentBlockHeight=0,
-        ~highestBlockBelowThreshold=0,
-      ),
-      false,
-    )
+    Assert.equal(fetchState->FetchState.isReadyToEnterReorgThreshold(~currentBlockHeight=0), false)
   })
 
   it(
@@ -2679,16 +2677,161 @@ describe("FetchState.queueItemIsInReorgThreshold", () => {
     () => {
       let fetchState = makeInitial(~startBlock=6000)
       Assert.equal(
-        fetchState
-        ->FetchState.getEarliestEvent
-        ->FetchState.queueItemIsInReorgThreshold(
-          ~currentBlockHeight=0,
-          ~highestBlockBelowThreshold=0,
-        ),
+        fetchState->FetchState.isReadyToEnterReorgThreshold(~currentBlockHeight=0),
         false,
       )
     },
   )
+
+  it("Returns true when endBlock is reached and queue is empty", () => {
+    // latestFullyFetchedBlock = startBlock - 1 = 5, endBlock = 5
+    let fs = FetchState.make(
+      ~eventConfigs=[baseEventConfig, baseEventConfig2],
+      ~contracts=[
+        {
+          FetchState.address: mockAddress0,
+          contractName: "Gravatar",
+          startBlock: 6,
+          register: Config,
+        },
+      ],
+      ~startBlock=6,
+      ~endBlock=Some(5),
+      ~maxAddrInPartition=3,
+      ~chainId,
+      ~blockLag=0,
+    )
+    Assert.equal(fs->FetchState.isReadyToEnterReorgThreshold(~currentBlockHeight=10), true)
+  })
+
+  it("Returns false when endBlock not reached and below head - blockLag", () => {
+    // latestFullyFetchedBlock = 49, endBlock = 100, head - lag = 50
+    let fs = FetchState.make(
+      ~eventConfigs=[baseEventConfig, baseEventConfig2],
+      ~contracts=[
+        {
+          FetchState.address: mockAddress0,
+          contractName: "Gravatar",
+          startBlock: 50,
+          register: Config,
+        },
+      ],
+      ~startBlock=50,
+      ~endBlock=Some(100),
+      ~maxAddrInPartition=3,
+      ~chainId,
+      ~blockLag=10,
+    )
+    Assert.equal(fs->FetchState.isReadyToEnterReorgThreshold(~currentBlockHeight=60), false)
+  })
+
+  it("Returns true when endBlock not reached but latest >= head - blockLag", () => {
+    // latestFullyFetchedBlock = 49, head - lag = 49
+    let fs = FetchState.make(
+      ~eventConfigs=[baseEventConfig, baseEventConfig2],
+      ~contracts=[
+        {
+          FetchState.address: mockAddress0,
+          contractName: "Gravatar",
+          startBlock: 50,
+          register: Config,
+        },
+      ],
+      ~startBlock=50,
+      ~endBlock=Some(100),
+      ~maxAddrInPartition=3,
+      ~chainId,
+      ~blockLag=10,
+    )
+    Assert.equal(fs->FetchState.isReadyToEnterReorgThreshold(~currentBlockHeight=59), true)
+  })
+
+  it("Returns true when no endBlock and latest >= head - blockLag (boundary)", () => {
+    // latestFullyFetchedBlock = 50, head - lag = 50
+    let fs = FetchState.make(
+      ~eventConfigs=[baseEventConfig, baseEventConfig2],
+      ~contracts=[
+        {
+          FetchState.address: mockAddress0,
+          contractName: "Gravatar",
+          startBlock: 51,
+          register: Config,
+        },
+      ],
+      ~startBlock=51,
+      ~endBlock=None,
+      ~maxAddrInPartition=3,
+      ~chainId,
+      ~blockLag=10,
+    )
+    Assert.equal(fs->FetchState.isReadyToEnterReorgThreshold(~currentBlockHeight=60), true)
+  })
+
+  it("Returns false when no endBlock and latest < head - blockLag", () => {
+    // latestFullyFetchedBlock = 49, head - lag = 50
+    let fs = FetchState.make(
+      ~eventConfigs=[baseEventConfig, baseEventConfig2],
+      ~contracts=[
+        {
+          FetchState.address: mockAddress0,
+          contractName: "Gravatar",
+          startBlock: 50,
+          register: Config,
+        },
+      ],
+      ~startBlock=50,
+      ~endBlock=None,
+      ~maxAddrInPartition=3,
+      ~chainId,
+      ~blockLag=10,
+    )
+    Assert.equal(fs->FetchState.isReadyToEnterReorgThreshold(~currentBlockHeight=60), false)
+  })
+
+  it("Returns false when queue is not empty even if thresholds are met", () => {
+    // EndBlock reached but queue has items
+    let fs = FetchState.make(
+      ~eventConfigs=[baseEventConfig, baseEventConfig2],
+      ~contracts=[
+        {
+          FetchState.address: mockAddress0,
+          contractName: "Gravatar",
+          startBlock: 6,
+          register: Config,
+        },
+      ],
+      ~startBlock=6,
+      ~endBlock=Some(5),
+      ~maxAddrInPartition=3,
+      ~chainId,
+      ~blockLag=0,
+    )
+    let fsWithQueue = fs->FetchState.updateInternal(~queue=[mockEvent(~blockNumber=6)])
+    Assert.equal(
+      fsWithQueue->FetchState.isReadyToEnterReorgThreshold(~currentBlockHeight=10),
+      false,
+    )
+  })
+
+  it("Returns true when the queue is empty and threshold is more than current block height", () => {
+    let fs = FetchState.make(
+      ~eventConfigs=[baseEventConfig, baseEventConfig2],
+      ~contracts=[
+        {
+          FetchState.address: mockAddress0,
+          contractName: "Gravatar",
+          startBlock: 6,
+          register: Config,
+        },
+      ],
+      ~startBlock=6,
+      ~endBlock=Some(5),
+      ~maxAddrInPartition=3,
+      ~chainId,
+      ~blockLag=200,
+    )
+    Assert.equal(fs->FetchState.isReadyToEnterReorgThreshold(~currentBlockHeight=10), true)
+  })
 })
 
 describe("Dynamic contracts with start blocks", () => {

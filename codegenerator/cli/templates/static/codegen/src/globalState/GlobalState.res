@@ -75,6 +75,7 @@ let make = (~config: Config.t, ~chainManager: ChainManager.t, ~shouldUseTui=fals
   }
   Prometheus.ProcessingMaxBatchSize.set(~maxBatchSize=Env.maxProcessBatchSize)
   Prometheus.IndexingTargetBufferSize.set(~targetBufferSize)
+  Prometheus.ReorgThreshold.set(~isInReorgThreshold=chainManager.isInReorgThreshold)
   {
     config,
     currentlyProcessingBatch: false,
@@ -132,8 +133,8 @@ type action =
   | FinishWaitingForNewBlock({chain: chain, currentBlockHeight: int})
   | EventBatchProcessed({processingMetricsByChainId: dict<ChainManager.processingChainMetrics>})
   | SetCurrentlyProcessing(bool)
-  | SetIsInReorgThreshold(bool)
-  | UpdateQueues(ChainMap.t<ChainManager.fetchStateWithData>)
+  | EnterReorgThreshold
+  | UpdateQueues(ChainMap.t<FetchState.t>)
   | SetSyncedChains
   | SuccessExit
   | ErrorExit(ErrorHandling.t)
@@ -606,18 +607,44 @@ let updateChainFetcher = (chainFetcherUpdate, ~state, ~chain) => {
 
 let actionReducer = (state: t, action: action) => {
   switch action {
-  | FinishWaitingForNewBlock({chain, currentBlockHeight}) => (
-      {
-        ...state,
-        chainManager: {
-          ...state.chainManager,
-          chainFetchers: state.chainManager.chainFetchers->ChainMap.update(chain, chainFetcher => {
-            chainFetcher->updateChainFetcherCurrentBlockHeight(~currentBlockHeight)
-          }),
+  | FinishWaitingForNewBlock({chain, currentBlockHeight}) => {
+      let isInReorgThreshold = state.chainManager.isInReorgThreshold
+      let isBelowReorgThreshold = !isInReorgThreshold && state.config->Config.shouldRollbackOnReorg
+      let shouldEnterReorgThreshold =
+        isBelowReorgThreshold &&
+        state.chainManager.chainFetchers
+        ->ChainMap.values
+        ->Array.every(chainFetcher => {
+          chainFetcher.fetchState->FetchState.isReadyToEnterReorgThreshold(~currentBlockHeight)
+        })
+
+      (
+        {
+          ...state,
+          chainManager: {
+            ...state.chainManager,
+            isInReorgThreshold: isInReorgThreshold || shouldEnterReorgThreshold,
+            chainFetchers: state.chainManager.chainFetchers->ChainMap.update(
+              chain,
+              chainFetcher => {
+                let cf = chainFetcher->updateChainFetcherCurrentBlockHeight(~currentBlockHeight)
+                if shouldEnterReorgThreshold {
+                  {
+                    ...cf,
+                    fetchState: cf.fetchState->FetchState.updateInternal(
+                      ~blockLag=Env.indexingBlockLag->Option.getWithDefault(0),
+                    ),
+                  }
+                } else {
+                  cf
+                }
+              },
+            ),
+          },
         },
-      },
-      [NextQuery(Chain(chain))],
-    )
+        [NextQuery(Chain(chain))],
+      )
+    }
   | ValidatePartitionQueryResponse(partitionQueryResponse) =>
     state->validatePartitionQueryResponse(partitionQueryResponse)
   | SubmitPartitionQueryResponse({
@@ -650,11 +677,30 @@ let actionReducer = (state: t, action: action) => {
       ),
     )
   | SetCurrentlyProcessing(currentlyProcessingBatch) => ({...state, currentlyProcessingBatch}, [])
-  | SetIsInReorgThreshold(isInReorgThreshold) =>
-    if isInReorgThreshold {
-      Logging.info("Reorg threshold reached")
-    }
-    ({...state, chainManager: {...state.chainManager, isInReorgThreshold}}, [])
+  | EnterReorgThreshold =>
+    Logging.info("Reorg threshold reached")
+    Prometheus.ReorgThreshold.set(~isInReorgThreshold=true)
+
+    let chainFetchers = state.chainManager.chainFetchers->ChainMap.map(chainFetcher => {
+      {
+        ...chainFetcher,
+        fetchState: chainFetcher.fetchState->FetchState.updateInternal(
+          ~blockLag=Env.indexingBlockLag->Option.getWithDefault(0),
+        ),
+      }
+    })
+
+    (
+      {
+        ...state,
+        chainManager: {
+          ...state.chainManager,
+          chainFetchers,
+          isInReorgThreshold: true,
+        },
+      },
+      [NextQuery(CheckAllChains)],
+    )
   | SetSyncedChains => {
       let shouldExit = EventProcessing.allChainsEventsProcessedToEndblock(
         state.chainManager.chainFetchers,
@@ -662,6 +708,7 @@ let actionReducer = (state: t, action: action) => {
         ? {
             // state.config.persistence.storage
             Logging.info("All chains are caught up to the endblock.")
+
             // Keep the indexer process running in TUI mode
             // so the Dev Console server stays working
             if state.shouldUseTui {
@@ -683,7 +730,7 @@ let actionReducer = (state: t, action: action) => {
     let chainFetchers = state.chainManager.chainFetchers->ChainMap.mapWithKey((chain, cf) => {
       {
         ...cf,
-        fetchState: ChainMap.get(fetchStatesMap, chain).fetchState,
+        fetchState: ChainMap.get(fetchStatesMap, chain),
       }
     })
 
@@ -888,119 +935,96 @@ let injectedTaskReducer = (
     }
   | ProcessEventBatch =>
     if !state.currentlyProcessingBatch && !isRollingBack(state) {
-      //Allows us to process events all the way up until we hit the reorg threshold
-      //across all chains before starting to capture entity history
-      let onlyBelowReorgThreshold = if state.config->Config.shouldRollbackOnReorg {
-        state.chainManager.isInReorgThreshold ? false : true
-      } else {
-        false
-      }
+      let batch = state.chainManager->ChainManager.createBatch(~maxBatchSize=state.maxBatchSize)
 
-      let batch =
-        state.chainManager->ChainManager.createBatch(
-          ~maxBatchSize=state.maxBatchSize,
-          ~onlyBelowReorgThreshold,
-        )
+      let updatedFetchStates = batch.fetchStates
 
-      let handleBatch = async (batch: ChainManager.batch) => {
-        switch batch {
-        | {items: []} => dispatchAction(SetSyncedChains) //Known that there are no items available on the queue so safely call this action
-        | {
-            isInReorgThreshold,
-            items,
-            processingMetricsByChainId,
-            fetchStatesMap,
-            dcsToStoreByChainId,
-          } =>
-          dispatchAction(SetCurrentlyProcessing(true))
-          dispatchAction(UpdateQueues(fetchStatesMap))
-          if (
-            state.config->Config.shouldRollbackOnReorg &&
-            isInReorgThreshold &&
-            !state.chainManager.isInReorgThreshold
-          ) {
-            //On the first time we enter the reorg threshold, copy all entities to entity history
-            //And set the isInReorgThreshold isInReorgThreshold state to true
-            dispatchAction(SetIsInReorgThreshold(true))
-          }
-
-          let isInReorgThreshold = state.chainManager.isInReorgThreshold || isInReorgThreshold
-
-          //In the case of a rollback, use the provided in memory store
-          //With rolled back values
-          let rollbackInMemStore = switch state.rollbackState {
-          | RollbackInMemStore(inMemoryStore) => Some(inMemoryStore)
-          | NoRollback
-          | RollingBack(
-            _,
-          ) /* This is an impossible case due to the surrounding if statement check */ =>
-            None
-          }
-
-          let inMemoryStore = rollbackInMemStore->Option.getWithDefault(InMemoryStore.make())
-
-          if dcsToStoreByChainId->Utils.Dict.size > 0 {
-            let shouldSaveHistory = state.config->Config.shouldSaveHistory(~isInReorgThreshold)
-            inMemoryStore->InMemoryStore.setDcsToStore(dcsToStoreByChainId, ~shouldSaveHistory)
-          }
-
-          state.chainManager.chainFetchers
-          ->ChainMap.keys
-          ->Array.forEach(chain => {
-            let chainId = chain->ChainMap.Chain.toChainId
-            switch processingMetricsByChainId->Utils.Dict.dangerouslyGetNonOption(
-              chain->ChainMap.Chain.toString,
-            ) {
-            | Some(metrics) =>
-              Prometheus.ProcessingBatchSize.set(~batchSize=metrics.batchSize, ~chainId)
-              Prometheus.ProcessingBlockNumber.set(~blockNumber=metrics.targetBlockNumber, ~chainId)
-            | None => Prometheus.ProcessingBatchSize.set(~batchSize=0, ~chainId)
-            }
-          })
-
-          switch await EventProcessing.processEventBatch(
-            ~items,
-            ~processingMetricsByChainId,
-            ~inMemoryStore,
-            ~isInReorgThreshold,
-            ~loadManager=state.loadManager,
-            ~config=state.config,
-          ) {
-          | exception exn =>
-            //All casese should be handled/caught before this with better user messaging.
-            //This is just a safety in case something unexpected happens
-            let errHandler =
-              exn->ErrorHandling.make(
-                ~msg="A top level unexpected error occurred during processing",
-              )
-            dispatchAction(ErrorExit(errHandler))
-          | res =>
-            if rollbackInMemStore->Option.isSome {
-              //if the batch was executed with a rollback inMemoryStore
-              //reset the rollback state once the batch has been processed
-              dispatchAction(ResetRollbackState)
-            }
-            switch res {
-            | Ok() =>
-              dispatchAction(
-                EventBatchProcessed({processingMetricsByChainId: processingMetricsByChainId}),
-              )
-            | Error(errHandler) => dispatchAction(ErrorExit(errHandler))
-            }
-          }
-        }
+      let isInReorgThreshold = state.chainManager.isInReorgThreshold
+      let isBelowReorgThreshold =
+        !state.chainManager.isInReorgThreshold && state.config->Config.shouldRollbackOnReorg
+      if (
+        isBelowReorgThreshold &&
+        updatedFetchStates
+        ->ChainMap.keys
+        ->Array.every(chain => {
+          updatedFetchStates
+          ->ChainMap.get(chain)
+          ->FetchState.isReadyToEnterReorgThreshold(
+            ~currentBlockHeight=(
+              state.chainManager.chainFetchers->ChainMap.get(chain)
+            ).currentBlockHeight,
+          )
+        })
+      ) {
+        dispatchAction(EnterReorgThreshold)
       }
 
       switch batch {
-      | {isInReorgThreshold: true, items: []} if onlyBelowReorgThreshold =>
-        dispatchAction(SetIsInReorgThreshold(true))
-        let batch =
-          state.chainManager->ChainManager.createBatch(
-            ~maxBatchSize=state.maxBatchSize,
-            ~onlyBelowReorgThreshold=false,
-          )
-        await handleBatch(batch)
-      | _ => await handleBatch(batch)
+      | {items: []} => dispatchAction(SetSyncedChains) //Known that there are no items available on the queue so safely call this action
+      | {items, processingMetricsByChainId, fetchStates, dcsToStoreByChainId} =>
+        dispatchAction(SetCurrentlyProcessing(true))
+        dispatchAction(UpdateQueues(fetchStates))
+
+        //In the case of a rollback, use the provided in memory store
+        //With rolled back values
+        let rollbackInMemStore = switch state.rollbackState {
+        | RollbackInMemStore(inMemoryStore) => Some(inMemoryStore)
+        | NoRollback
+        | RollingBack(
+          _,
+        ) /* This is an impossible case due to the surrounding if statement check */ =>
+          None
+        }
+
+        let inMemoryStore = rollbackInMemStore->Option.getWithDefault(InMemoryStore.make())
+
+        if dcsToStoreByChainId->Utils.Dict.size > 0 {
+          let shouldSaveHistory = state.config->Config.shouldSaveHistory(~isInReorgThreshold)
+          inMemoryStore->InMemoryStore.setDcsToStore(dcsToStoreByChainId, ~shouldSaveHistory)
+        }
+
+        state.chainManager.chainFetchers
+        ->ChainMap.keys
+        ->Array.forEach(chain => {
+          let chainId = chain->ChainMap.Chain.toChainId
+          switch processingMetricsByChainId->Utils.Dict.dangerouslyGetNonOption(
+            chain->ChainMap.Chain.toString,
+          ) {
+          | Some(metrics) =>
+            Prometheus.ProcessingBatchSize.set(~batchSize=metrics.batchSize, ~chainId)
+            Prometheus.ProcessingBlockNumber.set(~blockNumber=metrics.targetBlockNumber, ~chainId)
+          | None => Prometheus.ProcessingBatchSize.set(~batchSize=0, ~chainId)
+          }
+        })
+
+        switch await EventProcessing.processEventBatch(
+          ~items,
+          ~processingMetricsByChainId,
+          ~inMemoryStore,
+          ~isInReorgThreshold,
+          ~loadManager=state.loadManager,
+          ~config=state.config,
+        ) {
+        | exception exn =>
+          //All casese should be handled/caught before this with better user messaging.
+          //This is just a safety in case something unexpected happens
+          let errHandler =
+            exn->ErrorHandling.make(~msg="A top level unexpected error occurred during processing")
+          dispatchAction(ErrorExit(errHandler))
+        | res =>
+          if rollbackInMemStore->Option.isSome {
+            //if the batch was executed with a rollback inMemoryStore
+            //reset the rollback state once the batch has been processed
+            dispatchAction(ResetRollbackState)
+          }
+          switch res {
+          | Ok() =>
+            dispatchAction(
+              EventBatchProcessed({processingMetricsByChainId: processingMetricsByChainId}),
+            )
+          | Error(errHandler) => dispatchAction(ErrorExit(errHandler))
+          }
+        }
       }
     }
   | Rollback =>

@@ -153,16 +153,12 @@ describe("ChainManager", () => {
         let numberOfMockEventsReadFromQueues = ref(0)
         let allEventsRead = []
         let rec testThatCreatedEventsAreOrderedCorrectly = (chainManager, lastEvent) => {
-          let eventsInBlock = ChainManager.createBatch(
-            chainManager,
-            ~maxBatchSize=10000,
-            ~onlyBelowReorgThreshold=false,
-          )
+          let eventsInBlock = ChainManager.createBatch(chainManager, ~maxBatchSize=10000)
 
           // ensure that the events are ordered correctly
           switch eventsInBlock {
           | {items: []} => chainManager
-          | {items, fetchStatesMap} =>
+          | {items, fetchStates} =>
             items->Belt.Array.forEach(
               i => {
                 let _ = allEventsRead->Js.Array2.push(i)
@@ -183,7 +179,7 @@ describe("ChainManager", () => {
 
             let nextChainFetchers = chainManager.chainFetchers->ChainMap.mapWithKey(
               (chain, fetcher) => {
-                let {fetchState} = fetchStatesMap->ChainMap.get(chain)
+                let fetchState = fetchStates->ChainMap.get(chain)
                 {
                   ...fetcher,
                   fetchState,
@@ -281,20 +277,12 @@ describe("getOrderedNextItem", () => {
         indexingContracts: Js.Dict.empty(),
         contractConfigs: Js.Dict.fromArray([("Gravatar", {FetchState.filterByAddresses: false})]),
         dcsToStore: None,
-        blockLag: None,
+        blockLag: 0,
       }
     }
 
-    let makeMockPartitionedFetchState = (
-      ~latestFetchedBlockTimestamp,
-      ~item,
-    ): ChainManager.fetchStateWithData => {
-      {
-        fetchState: makeMockFetchState(~latestFetchedBlockTimestamp, ~item),
-        currentBlockHeight: 700,
-        highestBlockBelowThreshold: 500,
-      }
-    }
+    let makeMockPartitionedFetchState = (~latestFetchedBlockTimestamp, ~item) =>
+      makeMockFetchState(~latestFetchedBlockTimestamp, ~item)
 
     it(
       "should always take an event if there is one, even if other chains haven't caught up",

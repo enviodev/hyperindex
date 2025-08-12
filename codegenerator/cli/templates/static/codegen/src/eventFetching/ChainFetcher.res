@@ -36,13 +36,14 @@ let make = (
   ~endBlock,
   ~dbFirstEventBlockNumber,
   ~latestProcessedBlock,
+  ~config: Config.t,
   ~logger,
   ~timestampCaughtUpToHeadOrEndblock,
   ~numEventsProcessed,
   ~numBatchesFetched,
   ~processingFilters,
   ~maxAddrInPartition,
-  ~enableRawEvents,
+  ~isInReorgThreshold,
 ): t => {
   // We don't need the router itself, but only validation logic,
   // since now event router is created for selection of events
@@ -73,7 +74,7 @@ let make = (
 
       // Filter out non-preRegistration events on preRegistration phase
       // so we don't care about it in fetch state and workers anymore
-      let shouldBeIncluded = if enableRawEvents {
+      let shouldBeIncluded = if config.enableRawEvents {
         true
       } else {
         let isRegistered = hasContractRegister || eventConfig.handler->Option.isSome
@@ -133,7 +134,12 @@ let make = (
     ~endBlock,
     ~eventConfigs,
     ~chainId=chainConfig.chain->ChainMap.Chain.toChainId,
-    ~blockLag=?Env.indexingBlockLag,
+    ~blockLag=Pervasives.max(
+      !(config->Config.shouldRollbackOnReorg) || isInReorgThreshold
+        ? 0
+        : chainConfig.confirmedBlockThreshold,
+      Env.indexingBlockLag->Option.getWithDefault(0),
+    ),
   )
 
   {
@@ -156,7 +162,7 @@ let make = (
   }
 }
 
-let makeFromConfig = (chainConfig: Config.chainConfig, ~maxAddrInPartition, ~enableRawEvents) => {
+let makeFromConfig = (chainConfig: Config.chainConfig, ~config, ~maxAddrInPartition) => {
   let logger = Logging.createChild(~params={"chainId": chainConfig.chain->ChainMap.Chain.toChainId})
   let lastBlockScannedHashes = ReorgDetection.LastBlockScannedHashes.empty(
     ~confirmedBlockThreshold=chainConfig.confirmedBlockThreshold,
@@ -164,6 +170,7 @@ let makeFromConfig = (chainConfig: Config.chainConfig, ~maxAddrInPartition, ~ena
 
   make(
     ~chainConfig,
+    ~config,
     ~startBlock=chainConfig.startBlock,
     ~endBlock=chainConfig.endBlock,
     ~lastBlockScannedHashes,
@@ -176,7 +183,7 @@ let makeFromConfig = (chainConfig: Config.chainConfig, ~maxAddrInPartition, ~ena
     ~processingFilters=None,
     ~dynamicContracts=[],
     ~maxAddrInPartition,
-    ~enableRawEvents,
+    ~isInReorgThreshold=false,
   )
 }
 
@@ -186,7 +193,8 @@ let makeFromConfig = (chainConfig: Config.chainConfig, ~maxAddrInPartition, ~ena
 let makeFromDbState = async (
   chainConfig: Config.chainConfig,
   ~maxAddrInPartition,
-  ~enableRawEvents,
+  ~isInReorgThreshold,
+  ~config,
   ~sql=Db.sql,
 ) => {
   let logger = Logging.createChild(~params={"chainId": chainConfig.chain->ChainMap.Chain.toChainId})
@@ -288,6 +296,7 @@ let makeFromDbState = async (
     ~chainConfig,
     ~startBlock=restartBlockNumber,
     ~endBlock=chainConfig.endBlock,
+    ~config,
     ~lastBlockScannedHashes,
     ~dbFirstEventBlockNumber=firstEventBlockNumber,
     ~latestProcessedBlock=latestProcessedBlockChainMetadata,
@@ -297,7 +306,7 @@ let makeFromDbState = async (
     ~logger,
     ~processingFilters,
     ~maxAddrInPartition,
-    ~enableRawEvents,
+    ~isInReorgThreshold,
   )
 }
 
