@@ -2791,6 +2791,24 @@ describe("FetchState.isReadyToEnterReorgThreshold", () => {
     let fsWithQueue = fs->FetchState.updateInternal(~queue=[mockEvent(~blockNumber=6)])
     Assert.equal(fsWithQueue->FetchState.isReadyToEnterReorgThreshold(~currentBlockHeight=10), false)
   })
+
+   it("Returns true when the queue is empty and threshold is more than current block height", () => {
+    let fs = FetchState.make(
+      ~eventConfigs=[baseEventConfig, baseEventConfig2],
+      ~contracts=[{
+        FetchState.address: mockAddress0,
+        contractName: "Gravatar",
+        startBlock: 6,
+        register: Config,
+      }],
+      ~startBlock=6,
+      ~endBlock=Some(5),
+      ~maxAddrInPartition=3,
+      ~chainId,
+      ~blockLag=200,
+    )
+    Assert.equal(fs->FetchState.isReadyToEnterReorgThreshold(~currentBlockHeight=10), true)
+  })
 })
 
 describe("Dynamic contracts with start blocks", () => {

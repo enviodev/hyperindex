@@ -607,18 +607,44 @@ let updateChainFetcher = (chainFetcherUpdate, ~state, ~chain) => {
 
 let actionReducer = (state: t, action: action) => {
   switch action {
-  | FinishWaitingForNewBlock({chain, currentBlockHeight}) => (
-      {
-        ...state,
-        chainManager: {
-          ...state.chainManager,
-          chainFetchers: state.chainManager.chainFetchers->ChainMap.update(chain, chainFetcher => {
-            chainFetcher->updateChainFetcherCurrentBlockHeight(~currentBlockHeight)
-          }),
+  | FinishWaitingForNewBlock({chain, currentBlockHeight}) => {
+      let isInReorgThreshold = state.chainManager.isInReorgThreshold
+      let isBelowReorgThreshold = !isInReorgThreshold && state.config->Config.shouldRollbackOnReorg
+      let shouldEnterReorgThreshold =
+        isBelowReorgThreshold &&
+        state.chainManager.chainFetchers
+        ->ChainMap.values
+        ->Array.every(chainFetcher => {
+          chainFetcher.fetchState->FetchState.isReadyToEnterReorgThreshold(~currentBlockHeight)
+        })
+
+      (
+        {
+          ...state,
+          chainManager: {
+            ...state.chainManager,
+            isInReorgThreshold: isInReorgThreshold || shouldEnterReorgThreshold,
+            chainFetchers: state.chainManager.chainFetchers->ChainMap.update(
+              chain,
+              chainFetcher => {
+                let cf = chainFetcher->updateChainFetcherCurrentBlockHeight(~currentBlockHeight)
+                if shouldEnterReorgThreshold {
+                  {
+                    ...cf,
+                    fetchState: cf.fetchState->FetchState.updateInternal(
+                      ~blockLag=Env.indexingBlockLag->Option.getWithDefault(0),
+                    ),
+                  }
+                } else {
+                  cf
+                }
+              },
+            ),
+          },
         },
-      },
-      [NextQuery(Chain(chain))],
-    )
+        [NextQuery(Chain(chain))],
+      )
+    }
   | ValidatePartitionQueryResponse(partitionQueryResponse) =>
     state->validatePartitionQueryResponse(partitionQueryResponse)
   | SubmitPartitionQueryResponse({
@@ -673,7 +699,7 @@ let actionReducer = (state: t, action: action) => {
           isInReorgThreshold: true,
         },
       },
-      [],
+      [NextQuery(CheckAllChains)],
     )
   | SetSyncedChains => {
       let shouldExit = EventProcessing.allChainsEventsProcessedToEndblock(
@@ -914,11 +940,8 @@ let injectedTaskReducer = (
       let updatedFetchStates = batch.fetchStates
 
       let isInReorgThreshold = state.chainManager.isInReorgThreshold
-      let isBelowReorgThreshold = if state.config->Config.shouldRollbackOnReorg {
-        isInReorgThreshold ? false : true
-      } else {
-        false
-      }
+      let isBelowReorgThreshold =
+        !state.chainManager.isInReorgThreshold && state.config->Config.shouldRollbackOnReorg
       if (
         isBelowReorgThreshold &&
         updatedFetchStates
