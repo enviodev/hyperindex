@@ -28,7 +28,7 @@ use crate::constants::DEFAULT_CONFIRMED_BLOCK_THRESHOLD;
 #[strum(serialize_all = "kebab-case")]
 #[repr(u64)]
 pub enum Network {
-    #[subenum(HypersyncNetwork)]
+    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     Abstract = 2741,
 
     #[subenum(HypersyncNetwork, NetworkWithExplorer)]
@@ -73,7 +73,7 @@ pub enum Network {
     #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     BaseSepolia = 84532,
 
-    #[subenum(HypersyncNetwork)]
+    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     Berachain = 80094,
 
     #[subenum(HypersyncNetwork)]
@@ -131,7 +131,7 @@ pub enum Network {
     #[subenum(NetworkWithExplorer)]
     Crab = 44,
 
-    #[subenum(HypersyncNetwork)]
+    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     Curtis = 33111,
 
     #[subenum(HypersyncNetwork)]
@@ -163,7 +163,7 @@ pub enum Network {
     #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     Flare = 14,
 
-    #[subenum(HypersyncNetwork)]
+    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     Fraxtal = 252,
 
     #[subenum(HypersyncNetwork, GraphNetwork, NetworkWithExplorer)]
@@ -249,7 +249,7 @@ pub enum Network {
     #[subenum(NetworkWithExplorer)]
     ModeSepolia = 919,
 
-    #[subenum(HypersyncNetwork)]
+    #[subenum(NetworkWithExplorer, HypersyncNetwork)]
     MonadTestnet = 10143,
 
     #[subenum(
@@ -339,19 +339,19 @@ pub enum Network {
     #[subenum(HypersyncNetwork)]
     Soneium = 1868,
 
-    #[subenum(HypersyncNetwork)]
+    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     Sonic = 146,
 
-    #[subenum(HypersyncNetwork)]
+    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     Sophon = 50104,
 
-    #[subenum(HypersyncNetwork)]
+    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     SophonTestnet = 531050104,
 
     #[subenum(HypersyncNetwork)]
     Superseed = 5330,
 
-    #[subenum(HypersyncNetwork)]
+    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     Swell = 1923,
 
     #[subenum(NetworkWithExplorer)]
@@ -363,23 +363,23 @@ pub enum Network {
     #[subenum(HypersyncNetwork)]
     Taraxa = 841,
 
-    #[subenum(HypersyncNetwork)]
+    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     Unichain = 130,
 
     #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     UnichainSepolia = 1301,
 
-    #[subenum(HypersyncNetwork)]
+    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     Worldchain = 480,
 
     XLayer = 196,
 
     XLayerTestnet = 195,
 
-    #[subenum(HypersyncNetwork)]
+    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     Xdc = 50,
 
-    #[subenum(HypersyncNetwork)]
+    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     XdcTestnet = 51,
 
     #[subenum(HypersyncNetwork, NetworkWithExplorer)]
@@ -388,7 +388,7 @@ pub enum Network {
     #[subenum(HypersyncNetwork)]
     Zircuit = 48900,
 
-    #[subenum(HypersyncNetwork, GraphNetwork)]
+    #[subenum(HypersyncNetwork, NetworkWithExplorer, GraphNetwork)]
     ZksyncEra = 324,
 
     #[subenum(GraphNetwork)]
