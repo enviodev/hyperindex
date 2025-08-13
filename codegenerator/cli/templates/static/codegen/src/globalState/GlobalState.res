@@ -134,7 +134,12 @@ type action =
   | EventBatchProcessed({processingMetricsByChainId: dict<ChainManager.processingChainMetrics>})
   | SetCurrentlyProcessing(bool)
   | EnterReorgThreshold
-  | UpdateQueues(ChainMap.t<FetchState.t>)
+  | UpdateQueues({
+      updatedFetchStates: ChainMap.t<FetchState.t>,
+      // Needed to prevent overwriting the blockLag
+      // set by EnterReorgThreshold
+      shouldEnterReorgThreshold: bool,
+    })
   | SetSyncedChains
   | SuccessExit
   | ErrorExit(ErrorHandling.t)
@@ -726,11 +731,14 @@ let actionReducer = (state: t, action: action) => {
         [UpdateChainMetaDataAndCheckForExit(shouldExit)],
       )
     }
-  | UpdateQueues(fetchStatesMap) =>
+  | UpdateQueues({updatedFetchStates, shouldEnterReorgThreshold}) =>
     let chainFetchers = state.chainManager.chainFetchers->ChainMap.mapWithKey((chain, cf) => {
+      let fs = ChainMap.get(updatedFetchStates, chain)
       {
         ...cf,
-        fetchState: ChainMap.get(fetchStatesMap, chain),
+        fetchState: shouldEnterReorgThreshold
+          ? fs->FetchState.updateInternal(~blockLag=Env.indexingBlockLag->Option.getWithDefault(0))
+          : fs,
       }
     })
 
@@ -942,7 +950,7 @@ let injectedTaskReducer = (
       let isInReorgThreshold = state.chainManager.isInReorgThreshold
       let isBelowReorgThreshold =
         !state.chainManager.isInReorgThreshold && state.config->Config.shouldRollbackOnReorg
-      if (
+      let shouldEnterReorgThreshold =
         isBelowReorgThreshold &&
         updatedFetchStates
         ->ChainMap.keys
@@ -955,7 +963,7 @@ let injectedTaskReducer = (
             ).currentBlockHeight,
           )
         })
-      ) {
+      if shouldEnterReorgThreshold {
         dispatchAction(EnterReorgThreshold)
       }
 
@@ -963,7 +971,7 @@ let injectedTaskReducer = (
       | {items: []} => dispatchAction(SetSyncedChains) //Known that there are no items available on the queue so safely call this action
       | {items, processingMetricsByChainId, fetchStates, dcsToStoreByChainId} =>
         dispatchAction(SetCurrentlyProcessing(true))
-        dispatchAction(UpdateQueues(fetchStates))
+        dispatchAction(UpdateQueues({updatedFetchStates: fetchStates, shouldEnterReorgThreshold}))
 
         //In the case of a rollback, use the provided in memory store
         //With rolled back values
