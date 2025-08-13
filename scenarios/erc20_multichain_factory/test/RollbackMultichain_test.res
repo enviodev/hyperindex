@@ -272,7 +272,7 @@ let setupDb = async () => {
 //       ->ChainMap.values
 //       ->Array.reduce(
 //         0,
-//         (accum, chainFetcher) => accum + chainFetcher.fetchState->FetchState.queueSize,
+//         (accum, chainFetcher) => accum + chainFetcher.fetchState->FetchState.bufferSize,
 //       )
 //     }
 

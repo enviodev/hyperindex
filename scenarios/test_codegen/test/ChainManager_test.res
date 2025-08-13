@@ -207,7 +207,7 @@ describe("ChainManager", () => {
           ->Belt.Array.reduce(
             0,
             (accum, val) => {
-              accum + val.fetchState->FetchState.queueSize
+              accum + val.fetchState->FetchState.bufferSize
             },
           )
 
