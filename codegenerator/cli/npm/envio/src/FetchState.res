@@ -258,12 +258,12 @@ let updateInternal = (
     }
   }
 
-  let queueSize = queue->Array.length
+  let bufferSize = queue->Array.length
   Prometheus.IndexingPartitions.set(
     ~partitionsCount=partitions->Array.length,
     ~chainId=fetchState.chainId,
   )
-  Prometheus.IndexingBufferSize.set(~bufferSize=queueSize, ~chainId=fetchState.chainId)
+  Prometheus.IndexingBufferSize.set(~bufferSize, ~chainId=fetchState.chainId)
   Prometheus.IndexingBufferBlockNumber.set(
     ~blockNumber=latestFullyFetchedBlock.blockNumber,
     ~chainId=fetchState.chainId,
@@ -1086,7 +1086,7 @@ let make = (
   }
 }
 
-let queueSize = ({queue}: t) => queue->Array.length
+let bufferSize = ({queue}: t) => queue->Array.length
 
 /**
 * Returns the latest block number fetched for the lowest fetcher queue (ie the earliest un-fetched dynamic contract)
@@ -1207,7 +1207,7 @@ let isActivelyIndexing = ({latestFullyFetchedBlock, endBlock} as fetchState: t) 
   | Some(endBlock) =>
     let isPastEndblock = latestFullyFetchedBlock.blockNumber >= endBlock
     if isPastEndblock {
-      fetchState->queueSize > 0
+      fetchState->bufferSize > 0
     } else {
       true
     }
@@ -1225,4 +1225,22 @@ let isReadyToEnterReorgThreshold = (
   | _ => latestFullyFetchedBlock.blockNumber >= currentBlockHeight - blockLag
   } &&
   queue->Utils.Array.isEmpty
+}
+
+let hasBatchItem = ({queue, latestFullyFetchedBlock}: t) => {
+  switch queue->Utils.Array.last {
+  | Some(item) => item.blockNumber <= latestFullyFetchedBlock.blockNumber
+  | None => false
+  }
+}
+
+let compareUnorderedBatchChainPriority = (a: t, b: t) => {
+  // Use unsafe since we filtered out all queues without batch items
+  (a.queue->Utils.Array.lastUnsafe).timestamp - (b.queue->Utils.Array.lastUnsafe).timestamp
+}
+
+let filterAndSortForUnorderedBatch = (fetchStates: array<t>) => {
+  fetchStates
+  ->Array.keepU(hasBatchItem)
+  ->Js.Array2.sortInPlaceWith(compareUnorderedBatchChainPriority)
 }
