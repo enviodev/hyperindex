@@ -2669,7 +2669,7 @@ describe("Test queue item", () => {
 describe("FetchState.filterAndSortForUnorderedBatch", () => {
   it("Filters out states without eligible items and sorts by earliest timestamp (public API)", () => {
     let mk = () => makeInitial()
-    let mkQuery = fetchState => {
+    let mkQuery = (fetchState: FetchState.t) => {
       {
         FetchState.partitionId: "0",
         target: Head,
