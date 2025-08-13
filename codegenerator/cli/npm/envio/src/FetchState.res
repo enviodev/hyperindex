@@ -1227,20 +1227,22 @@ let isReadyToEnterReorgThreshold = (
   queue->Utils.Array.isEmpty
 }
 
-let hasBatchItem = ({queue, latestFullyFetchedBlock}: t) => {
-  switch queue->Utils.Array.last {
-  | Some(item) => item.blockNumber <= latestFullyFetchedBlock.blockNumber
-  | None => false
+let filterAndSortForUnorderedBatch = {
+  let hasBatchItem = ({queue, latestFullyFetchedBlock}: t) => {
+    switch queue->Utils.Array.last {
+    | Some(item) => item.blockNumber <= latestFullyFetchedBlock.blockNumber
+    | None => false
+    }
   }
-}
 
-let compareUnorderedBatchChainPriority = (a: t, b: t) => {
-  // Use unsafe since we filtered out all queues without batch items
-  (a.queue->Utils.Array.lastUnsafe).timestamp - (b.queue->Utils.Array.lastUnsafe).timestamp
-}
+  let compareUnorderedBatchChainPriority = (a: t, b: t) => {
+    // Use unsafe since we filtered out all queues without batch items
+    (a.queue->Utils.Array.lastUnsafe).timestamp - (b.queue->Utils.Array.lastUnsafe).timestamp
+  }
 
-let filterAndSortForUnorderedBatch = (fetchStates: array<t>) => {
-  fetchStates
-  ->Array.keepU(hasBatchItem)
-  ->Js.Array2.sortInPlaceWith(compareUnorderedBatchChainPriority)
+  (fetchStates: array<t>) => {
+    fetchStates
+    ->Array.keepU(hasBatchItem)
+    ->Js.Array2.sortInPlaceWith(compareUnorderedBatchChainPriority)
+  }
 }
