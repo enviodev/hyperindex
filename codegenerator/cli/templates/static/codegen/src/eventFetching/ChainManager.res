@@ -195,7 +195,7 @@ let createUnorderedBatch = (
   // the way to group as many items from a single chain as possible
   // This way the loaders optimisations will hit more often
   while batchSize.contents < maxBatchSize && idx.contents < preparedNumber {
-    let fetchState = sortedFetchStates->Array.getUnsafe(idx.contents)
+    let fetchState = preparedFetchStates->Array.getUnsafe(idx.contents)
     let batchSizeBeforeTheChain = batchSize.contents
 
     let rec loop = () =>
