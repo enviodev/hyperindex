@@ -175,9 +175,6 @@ let createOrderedBatch = (
   items
 }
 
-// Use a global pointer to spread the processing across chains
-let nextChainIdx = ref(0)
-
 let createUnorderedBatch = (
   ~maxBatchSize,
   ~fetchStates: ChainMap.t<FetchState.t>,
@@ -185,57 +182,51 @@ let createUnorderedBatch = (
 ) => {
   let items = []
 
-  let chains = fetchStates->ChainMap.keys
-  let unprocessedChains = ref(chains->Array.length) // Prevent entering the same chain twice
-  let batchSize = ref(0) // Faster than Array.length
+  let preparedFetchStates =
+    fetchStates
+    ->ChainMap.values
+    ->FetchState.filterAndSortForUnorderedBatch
+
+  let idx = ref(0)
+  let preparedNumber = preparedFetchStates->Array.length
+  let batchSize = ref(0)
 
   // Accumulate items for all actively indexing chains
   // the way to group as many items from a single chain as possible
   // This way the loaders optimisations will hit more often
-  // Also, keep the nextChainIdx global, so we start with a new chain every batch
-  while batchSize.contents < maxBatchSize && unprocessedChains.contents > 0 {
-    let chainIdx = nextChainIdx.contents
-    switch chains->Array.get(chainIdx) {
-    | None => nextChainIdx := 0
-    | Some(chain) => {
-        let fetchState = fetchStates->ChainMap.get(chain)
+  while batchSize.contents < maxBatchSize && idx.contents < preparedNumber {
+    let fetchState = preparedFetchStates->Array.getUnsafe(idx.contents)
+    let batchSizeBeforeTheChain = batchSize.contents
 
-        // If the fetch state has reached the end block we don't need to consider it
-        if fetchState->FetchState.isActivelyIndexing {
-          let batchSizeBeforeTheChain = batchSize.contents
-
-          let rec loop = () =>
-            if batchSize.contents < maxBatchSize {
-              let earliestEvent = fetchState->FetchState.getEarliestEvent
-              switch earliestEvent {
-              | NoItem(_) => ()
-              | Item({item, popItemOffQueue}) =>
-                popItemOffQueue()
-                items->Js.Array2.push(item)->ignore
-                batchSize := batchSize.contents + 1
-                loop()
-              }
-            }
-          loop()
-
-          let chainBatchSize = batchSize.contents - batchSizeBeforeTheChain
-          if chainBatchSize > 0 {
-            mutProcessingMetricsByChainId->Js.Dict.set(
-              chain->ChainMap.Chain.toChainId->Int.toString,
-              {
-                batchSize: chainBatchSize,
-                // If there's the chainBatchSize,
-                // then it's guaranteed that the last item belongs to the chain
-                targetBlockNumber: (items->Utils.Array.last->Option.getUnsafe).blockNumber,
-              },
-            )
+    let rec loop = () =>
+      if batchSize.contents < maxBatchSize {
+        let earliestEvent = fetchState->FetchState.getEarliestEvent
+        switch earliestEvent {
+        | NoItem(_) => ()
+        | Item({item, popItemOffQueue}) => {
+            popItemOffQueue()
+            items->Js.Array2.push(item)->ignore
+            batchSize := batchSize.contents + 1
+            loop()
           }
         }
-
-        nextChainIdx := nextChainIdx.contents + 1
-        unprocessedChains := unprocessedChains.contents - 1
       }
+    loop()
+
+    let chainBatchSize = batchSize.contents - batchSizeBeforeTheChain
+    if chainBatchSize > 0 {
+      mutProcessingMetricsByChainId->Js.Dict.set(
+        fetchState.chainId->Int.toString,
+        {
+          batchSize: chainBatchSize,
+          // If there's the chainBatchSize,
+          // then it's guaranteed that the last item belongs to the chain
+          targetBlockNumber: (items->Utils.Array.last->Option.getUnsafe).blockNumber,
+        },
+      )
     }
+
+    idx := idx.contents + 1
   }
 
   items
@@ -278,7 +269,7 @@ let createBatch = (self: t, ~maxBatchSize: int) => {
       ->ChainMap.entries
       ->Array.map(((chain, fetchState)) => (
         chain->ChainMap.Chain.toString,
-        fetchState->FetchState.queueSize,
+        fetchState->FetchState.bufferSize,
       ))
       ->Js.Dict.fromArray
 

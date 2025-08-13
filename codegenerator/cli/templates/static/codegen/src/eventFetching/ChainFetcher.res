@@ -497,7 +497,7 @@ let hasProcessedToEndblock = (self: t) => {
 }
 
 let hasNoMoreEventsToProcess = (self: t) => {
-  self.fetchState->FetchState.queueSize === 0
+  self.fetchState->FetchState.bufferSize === 0
 }
 
 let getHighestBlockBelowThreshold = (cf: t): int => {
