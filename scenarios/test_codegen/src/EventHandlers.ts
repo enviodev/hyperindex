@@ -13,6 +13,7 @@ import {
   eventLog,
   NftFactory_SimpleNftCreated_eventArgs,
   NftFactory_SimpleNftCreated_event,
+  onBlock,
 } from "generated";
 import { expectType, TypeEqual } from "ts-expect";
 import { bytesToHex } from "viem";
@@ -638,6 +639,16 @@ Gravatar.FactoryEvent.handlerWithLoader({
           id: "1",
           c: "1",
         });
+        break;
+      }
+
+      case "handlerInHandler": {
+        Gravatar.FactoryEvent.handler(async ({ event, context }) => {});
+        break;
+      }
+
+      case "onBlockInHandler": {
+        onBlock(async () => {}, { chain: 1 });
         break;
       }
 

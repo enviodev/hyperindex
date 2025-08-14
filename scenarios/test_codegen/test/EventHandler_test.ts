@@ -351,6 +351,32 @@ describe("Use Envio test framework to test event handlers", () => {
     });
   });
 
+  it("Should throw when registering a handler after the indexer has finished initializing", async () => {
+    const mockDbInitial = MockDb.createMockDb();
+
+    const event = Gravatar.FactoryEvent.createMockEvent({
+      testCase: "handlerInHandler",
+    });
+
+    await assert.rejects(mockDbInitial.processEvents([event]), {
+      message:
+        "The indexer finished initializing, so no more handlers can be registered. Make sure the handlers are registered on the top level of the file.",
+    });
+  });
+
+  it("Shouldn't allow to call onBlock without preload_handlers", async () => {
+    const mockDbInitial = MockDb.createMockDb();
+
+    const event = Gravatar.FactoryEvent.createMockEvent({
+      testCase: "onBlockInHandler",
+    });
+
+    await assert.rejects(mockDbInitial.processEvents([event]), {
+      message:
+        "The onBlock handler requires the Preload Optimization. Enable it by setting the `preload_handlers` option to `true` in the Envio config.",
+    });
+  });
+
   it("Currently filters are ignored by the test framework", async () => {
     const mockDbInitial = MockDb.createMockDb();
 

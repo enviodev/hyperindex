@@ -91,6 +91,7 @@ let registerAllHandlers = () => {
 
   let generatedConfig = makeGeneratedConfig()
   config := Some(generatedConfig)
+  EventRegister.closeRegistration()
   generatedConfig
 }
 

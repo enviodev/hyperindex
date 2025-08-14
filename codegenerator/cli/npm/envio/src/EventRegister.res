@@ -1,3 +1,26 @@
+let isInitialized = ref(false)
+let preventInitialized = () => {
+  if isInitialized.contents {
+    Js.Exn.raiseError(
+      "The indexer finished initializing, so no more handlers can be registered. Make sure the handlers are registered on the top level of the file.",
+    )
+  }
+}
+
+let closeRegistration = () => {
+  isInitialized.contents = true
+}
+
+let onBlockRegistrations = []
+
+let onBlock = (
+  handler: Envio.onBlockArgs<unknown> => promise<unit>,
+  options: Envio.onBlockOptions,
+) => {
+  preventInitialized()
+  onBlockRegistrations->Js.Array2.push((handler, options))->ignore
+}
+
 type t = {
   contractName: string,
   eventName: string,
@@ -54,6 +77,7 @@ let setEventOptions = (t: t, ~eventOptions, ~logger=Logging.getLogger()) => {
 }
 
 let setHandler = (t: t, handler, ~eventOptions, ~logger=Logging.getLogger()) => {
+  preventInitialized()
   switch t.handler {
   | None =>
     t.handler =
@@ -72,6 +96,7 @@ let setHandler = (t: t, handler, ~eventOptions, ~logger=Logging.getLogger()) => 
 }
 
 let setContractRegister = (t: t, contractRegister, ~eventOptions, ~logger=Logging.getLogger()) => {
+  preventInitialized()
   switch t.contractRegister {
   | None =>
     t.contractRegister = Some(
