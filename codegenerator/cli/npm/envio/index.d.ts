@@ -4,6 +4,9 @@ export type {
   effectContext as EffectContext,
   effectArgs as EffectArgs,
   effectOptions as EffectOptions,
+  blockEvent as BlockEvent,
+  onBlockArgs as OnBlockArgs,
+  onBlockOptions as OnBlockOptions,
 } from "./src/Envio.gen.ts";
 export type { EffectCaller } from "./src/Types.ts";
 
