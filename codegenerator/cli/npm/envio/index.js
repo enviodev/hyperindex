@@ -35,4 +35,5 @@ exports.S = {
   // Nullish type will change in "sury@10"
   // nullish: Sury.nullish,
   assertOrThrow: Sury.assertOrThrow,
+  parseOrThrow: Sury.parseOrThrow,
 };
