@@ -9,6 +9,8 @@ pub mod project_paths {
 
 pub mod links {
     pub const DOC_CONFIGURATION_FILE: &str = "https://docs.envio.dev/docs/configuration-file";
+    pub const DOC_CONFIGURATION_SCHEMA_HYPERSYNC_CONFIG: &str =
+        "https://docs.envio.dev/docs/HyperIndex/config-schema-reference#hypersyncconfig";
 }
 
 pub mod reserved_keywords {

@@ -7,7 +7,7 @@ let mockDate = (~year=2024, ~month=1, ~day=1) => {
   Js.Date.fromString(`${year->padInt}-${month->padInt}-${day->padInt}T00:00:00Z`)
 }
 
-describe_only("SerDe Test", () => {
+describe("SerDe Test", () => {
   Async.before(async () => {
     await DbHelpers.runUpDownMigration()
   })
@@ -27,7 +27,7 @@ describe_only("SerDe Test", () => {
       optFloat: Some(2.2),
       arrayOfFloats: [3.3, 4.4],
       bool: true,
-      optBool: Some(true),
+      optBool: Some(false),
       //TODO: get array of bools working
       // arrayOfBool: [true, false],
       bigInt: BigInt.fromInt(1),
@@ -151,7 +151,7 @@ SELECT * FROM unnest($1::NUMERIC[],$2::NUMERIC[],$3::INTEGER[]::BOOLEAN[],$4::TE
       float_: 1.1,
       optFloat: Some(2.2),
       bool: true,
-      optBool: Some(true),
+      optBool: Some(false),
       bigInt: BigInt.fromInt(1),
       optBigInt: Some(BigInt.fromInt(2)),
       bigDecimal: BigDecimal.fromStringUnsafe("1.1"),
