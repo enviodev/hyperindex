@@ -1014,15 +1014,16 @@ impl DataSource {
         let main = match rpc_for_sync {
             Some(rpc) => {
                 if network.hypersync_config.is_some() {
-                    Err(anyhow!("EE106: Cannot define both hypersync_config and rpc as a data-source for historical sync at the same time, please choose only one option or set RPC to be a fallback. Read more in our docs https://docs.envio.dev/docs/configuration-file"))?
+                    Err(anyhow!("EE106: Cannot define both hypersync_config and rpc as a data-source for historical sync at the same time, please choose only one option or set RPC to be a fallback. Read more in our docs {}", links::DOC_CONFIGURATION_FILE))?
                 };
 
                 MainEvmDataSource::Rpc(rpc.clone())
             }
             None => {
                 let url = hypersync_endpoint_url.ok_or(anyhow!(
-                  "EE106: Failed to automatically find HyperSync endpoint for the network {}. Please provide it manually via the hypersync_config option, or provide an RPC URL for historical sync. Read more in our docs: https://docs.envio.dev/docs/configuration-file",
-                  network.id
+                  "EE106: Failed to automatically find HyperSync endpoint for the network {}. Please provide it manually via the hypersync_config option, or provide an RPC URL for historical sync. Read more in our docs: {}",
+                  network.id,
+                  links::DOC_CONFIGURATION_SCHEMA_HYPERSYNC_CONFIG
                 ))?;
 
                 let parsed_url = parse_url(&url).ok_or(anyhow!(
