@@ -1039,7 +1039,7 @@ let injectedTaskReducer = (
     //If it isn't processing a batch currently continue with rollback otherwise wait for current batch to finish processing
     switch state {
     | {currentlyProcessingBatch: false, rollbackState: RollingBack(reorgChain)} =>
-      let endTimer = Prometheus.RollbackDuration.startTimer()
+      let startTime = Hrtime.makeTimer()
 
       let chainFetcher = state.chainManager.chainFetchers->ChainMap.get(reorgChain)
 
@@ -1153,7 +1153,7 @@ let injectedTaskReducer = (
         "msg": "Initial diff of rollback entity history",
         "diff": rollbackResult["fullDiff"],
       })
-      endTimer()
+      Prometheus.RollbackSuccess.increment(~timeMillis=Hrtime.timeSince(startTime)->Hrtime.toMillis)
 
       dispatchAction(SetRollbackState(rollbackResult["inMemStore"], chainManager))
 

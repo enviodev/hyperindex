@@ -494,15 +494,44 @@ module RollbackEnabled = {
   }
 }
 
-module RollbackDuration = {
-  let histogram = PromClient.Histogram.make({
-    "name": "envio_rollback_duration",
-    "help": "Rollback on reorg duration in seconds",
-    "buckets": [0.5, 1., 5., 10.],
+module RollbackSuccess = {
+  let timeCounter = PromClient.Counter.makeCounter({
+    "name": "envio_rollback_time",
+    "help": "Rollback on reorg total time in milliseconds",
   })
 
-  let startTimer = () => {
-    histogram->PromClient.Histogram.startTimer
+  let counter = PromClient.Counter.makeCounter({
+    "name": "envio_rollback_count",
+    "help": "Number of successful rollbacks on reorg",
+  })
+
+  let increment = (~timeMillis: Hrtime.milliseconds) => {
+    timeCounter->PromClient.Counter.incMany(timeMillis->Hrtime.intFromMillis)
+    counter->PromClient.Counter.inc
+  }
+}
+
+module RollbackHistoryPrune = {
+  let entityNameLabelsSchema = S.object(s => s.field("entity", S.string))
+
+  let timeCounter = SafeCounter.makeOrThrow(
+    ~name="envio_rollback_history_prune_time",
+    ~help="The total time spent pruning entity history which is not in the reorg threshold. (milliseconds)",
+    ~labelSchema=entityNameLabelsSchema,
+  )
+
+  let counter = SafeCounter.makeOrThrow(
+    ~name="envio_rollback_history_prune_count",
+    ~help="Number of successful entity history prunes",
+    ~labelSchema=entityNameLabelsSchema,
+  )
+
+  let increment = (~timeMillis, ~entityName) => {
+    timeCounter->SafeCounter.handleInt(
+      ~labels={entityName},
+      ~value=timeMillis->Hrtime.intFromMillis,
+    )
+    counter->SafeCounter.increment(~labels={entityName})
   }
 }
 
