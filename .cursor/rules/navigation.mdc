@@ -31,3 +31,9 @@ Tips for navigation:
 - Config parsing & codegen lives in Rust. When tracking how a value reaches templates, follow `human_config.rs` → `system_config.rs` → `codegen_templates.rs`.
 - Prefer reading ReScript `.res` modules directly; compiled `.js` artifacts can be ignored.
 - When suggesting file edits to contributors, reference modules with `.res` extension but drop the long path (e.g., "edit `ChainFetcher.res`").
+
+## Testing
+
+Prefer Public module API for testing.
+
+Verify that tests pass by running a compiler `pnpm rescript` and tests `pnpm mocha`. Use `_only` to specify which tests to run.
