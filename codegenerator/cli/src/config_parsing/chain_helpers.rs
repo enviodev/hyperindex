@@ -194,7 +194,7 @@ pub enum Network {
     Holesky = 17000,
 
     #[subenum(HypersyncNetwork)]
-    Hyperliquid = 645749,
+    Hyperliquid = 999,
 
     IncoGentryTestnet = 9090,
 
