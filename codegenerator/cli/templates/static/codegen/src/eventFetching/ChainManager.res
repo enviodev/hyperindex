@@ -185,7 +185,7 @@ let createUnorderedBatch = (
   let preparedFetchStates =
     fetchStates
     ->ChainMap.values
-    ->FetchState.filterAndSortForUnorderedBatch
+    ->FetchState.filterAndSortForUnorderedBatch(~maxBatchSize)
 
   let idx = ref(0)
   let preparedNumber = preparedFetchStates->Array.length
