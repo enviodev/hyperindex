@@ -539,6 +539,8 @@ let make = (
 
   let jsonApiClient = Rest.client(endpointUrl)
 
+  let malformedTokenMessage = `Your token is malformed. For more info: https://docs.envio.dev/docs/HyperSync/api-tokens.`
+
   {
     name,
     sourceFor: Sync,
@@ -546,8 +548,17 @@ let make = (
     pollingInterval: 100,
     poweredByHyperSync: true,
     getBlockHashes,
-    getHeightOrThrow: () =>
-      HyperSyncJsonApi.heightRoute->Rest.fetch(apiToken, ~client=jsonApiClient),
+    getHeightOrThrow: async () =>
+      switch await HyperSyncJsonApi.heightRoute->Rest.fetch(apiToken, ~client=jsonApiClient) {
+      | Value(height) => height
+      | ErrorMessage(m) if m === malformedTokenMessage =>
+        Logging.error(`Your ENVIO_API_TOKEN is malformed. The indexer will not be able to fetch events. Update the token and restart the indexer using 'pnpm envio start'. For more info: https://docs.envio.dev/docs/HyperSync/api-tokens`)
+        // Don't want to retry if the token is malformed
+        // So just block forever
+        let _ = await Promise.make((_, _) => ())
+        0
+      | ErrorMessage(m) => Js.Exn.raiseError(m)
+      },
     getItemsOrThrow,
   }
 }

@@ -163,31 +163,38 @@ let executeBatch = async (
       // This should have await, to properly propagate errors to the caller.
       promises
       ->Promise.all
+      // There's a race condition that sql->Postgres.beginSql
+      // might throw PG error, earlier, than the handled error
+      // from setOrThrow will be passed through.
+      // This is needed for the utf8 encoding fix.
       ->Promise.catch(exn => {
-        switch exn {
-        | JsError(error) /* The case is for entity history, which is not handled properly yet */
-        | Persistence.StorageError({reason: JsError(error)})
-        // Workaround for https://github.com/enviodev/hyperindex/issues/446
-        // We do escaping only when we actually got an error writing for the first time.
-        // This is not perfect, but an optimization to avoid escaping for every single item.
-          if try {
-            error->S.assertOrThrow(PgStorage.pgEncodingErrorSchema)
-            true
-          } catch {
-          | _ => false
-          } =>
-          // Since the transaction is aborted at this point,
-          // we can't simply retry the function with escaped items,
-          // so propagate the error, to restart the whole batch write.
-          // Also, let pass the failing table, to escape only it's items.
-          // TODO: Ideally all this should be done in the file,
-          // so it'll be easier to work on PG specific logic.
-          specificError.contents = Some(PgStorage.PgEncodingError({table: entityConfig.table}))
-        // There's a race condition that sql->Postgres.beginSql
-        // might throw PG error, earlier, than the handled error
-        // from setOrThrow will be passed through.
-        // This is needed for the utf8 encoding fix.
-        | exn => specificError.contents = Some(exn)
+        /* Note: Entity History doesn't return StorageError yet, and directly throws JsError */
+        let normalizedExn = switch exn {
+        | JsError(_) => exn
+        | Persistence.StorageError({reason: exn}) => exn
+        | _ => exn
+        }->Js.Exn.anyToExnInternal
+
+        switch normalizedExn {
+        | JsError(error) =>
+          // Workaround for https://github.com/enviodev/hyperindex/issues/446
+          // We do escaping only when we actually got an error writing for the first time.
+          // This is not perfect, but an optimization to avoid escaping for every single item.
+
+          switch error->S.parseOrThrow(PgStorage.pgErrorMessageSchema) {
+          | `current transaction is aborted, commands ignored until end of transaction block` => ()
+          | `invalid byte sequence for encoding "UTF8": 0x00` =>
+            // Since the transaction is aborted at this point,
+            // we can't simply retry the function with escaped items,
+            // so propagate the error, to restart the whole batch write.
+            // Also, pass the failing table, to escape only its items.
+            // TODO: Ideally all this should be done in the file,
+            // so it'll be easier to work on PG specific logic.
+            specificError.contents = Some(PgStorage.PgEncodingError({table: entityConfig.table}))
+          | _ => specificError.contents = Some(exn->Internal.prettifyExn)
+          | exception _ => ()
+          }
+        | _ => ()
         }
 
         // Improtant: Don't rethrow here, since it'll result in
