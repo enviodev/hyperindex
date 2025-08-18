@@ -368,9 +368,20 @@ let queryRoute = Rest.route(() => {
   responses: [s => s.data(ResponseTypes.queryResponseSchema)],
 })
 
+@unboxed
+type heightResult = Value(int) | ErrorMessage(string)
+
 let heightRoute = Rest.route(() => {
   path: "/height",
   method: Get,
   input: s => s.auth(Bearer),
-  responses: [s => s.field("height", S.int)],
+  responses: [
+    s =>
+      s.data(
+        S.union([
+          S.object(s => Value(s.field("height", S.int))),
+          S.string->S.shape(s => ErrorMessage(s)),
+        ]),
+      ),
+  ],
 })
