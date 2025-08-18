@@ -2627,7 +2627,7 @@ describe("Test queue item", () => {
   })
 })
 
-describe_only("FetchState.filterAndSortForUnorderedBatch", () => {
+describe("FetchState.filterAndSortForUnorderedBatch", () => {
   it(
     "Filters out states without eligible items and sorts by earliest timestamp (public API)",
     () => {
