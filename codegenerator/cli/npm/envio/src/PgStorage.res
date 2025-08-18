@@ -325,8 +325,8 @@ let removeInvalidUtf8InPlace = entities =>
     })
   })
 
-let pgEncodingErrorSchema = S.object(s =>
-  s.tag("message", `invalid byte sequence for encoding "UTF8": 0x00`)
+let pgErrorMessageSchema = S.object(s =>
+  s.field("message", S.string)
 )
 
 exception PgEncodingError({table: Table.table})
