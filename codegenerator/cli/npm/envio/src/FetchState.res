@@ -1236,10 +1236,16 @@ let filterAndSortForUnorderedBatch = {
   }
 
   let hasFullBatch = ({queue, latestFullyFetchedBlock}: t, ~maxBatchSize) => {
-    let targetBlockIdx = queue->Array.length - maxBatchSize - 1
+    // Queue is ordered from latest to earliest, so the earliest eligible
+    // item for a full batch of size B is at index (length - B).
+    // Do NOT subtract an extra 1 here; when length === B we should still
+    // classify the queue as full and probe index 0.
+    let targetBlockIdx = queue->Array.length - maxBatchSize
     if targetBlockIdx < 0 {
       false
     } else {
+      // Unsafe can fail when maxBatchSize is 0,
+      // but we ignore the case
       (queue->Js.Array2.unsafe_get(targetBlockIdx)).blockNumber <=
       latestFullyFetchedBlock.blockNumber
     }

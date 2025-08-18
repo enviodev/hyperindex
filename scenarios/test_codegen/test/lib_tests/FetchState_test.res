@@ -2664,8 +2664,10 @@ describe("FetchState.filterAndSortForUnorderedBatch", () => {
       // Excluded: last queue item at block 11 (> latestFullyFetchedBlock = 10)
       let fsExcluded = makeFsWith(~latestBlock=10, ~queueBlocks=[11])
 
-      let prepared =
-        [fsLate, fsExcluded, fsEarly]->FetchState.filterAndSortForUnorderedBatch(~maxBatchSize=3)
+      let prepared = FetchState.filterAndSortForUnorderedBatch(
+        [fsLate, fsExcluded, fsEarly],
+        ~maxBatchSize=3,
+      )
 
       Assert.deepEqual(
         prepared->Array.map(fs => (fs.queue->Utils.Array.last->Option.getUnsafe).blockNumber),
@@ -2705,12 +2707,57 @@ describe("FetchState.filterAndSortForUnorderedBatch", () => {
     // Half-full batch (1 item) but earlier earliest item (block 1)
     let fsHalfEarlier = makeFsWith(~latestBlock=10, ~queueBlocks=[1])
 
-    let prepared =
-      [fsHalfEarlier, fsFullLater]->FetchState.filterAndSortForUnorderedBatch(~maxBatchSize=2)
+    let prepared = FetchState.filterAndSortForUnorderedBatch(
+      [fsHalfEarlier, fsFullLater],
+      ~maxBatchSize=2,
+    )
 
     Assert.deepEqual(
       prepared->Array.map(fs => (fs.queue->Utils.Array.last->Option.getUnsafe).blockNumber),
       [7, 1],
+    )
+  })
+
+  it("Treats exactly-full batches as full", () => {
+    let mk = () => makeInitial()
+    let mkQuery = (fetchState: FetchState.t) => {
+      {
+        FetchState.partitionId: "0",
+        target: Head,
+        selection: fetchState.normalSelection,
+        addressesByContractName: Js.Dict.empty(),
+        fromBlock: 0,
+        indexingContracts: fetchState.indexingContracts,
+      }
+    }
+
+    let makeFsWith = (~latestBlock: int, ~queueBlocks: array<int>): FetchState.t => {
+      let fs0 = mk()
+      let query = mkQuery(fs0)
+      fs0
+      ->FetchState.handleQueryResult(
+        ~query,
+        ~latestFetchedBlock={blockNumber: latestBlock, blockTimestamp: latestBlock},
+        ~reversedNewItems=queueBlocks->Array.map(b => mockEvent(~blockNumber=b)),
+        ~currentBlockHeight=latestBlock,
+      )
+      ->Result.getExn
+    }
+
+    // Exactly full (== maxBatchSize items)
+    let fsExactFull = makeFsWith(~latestBlock=10, ~queueBlocks=[3, 2])
+    // Half-full (1 item) but earlier earliest item
+    let fsHalfEarlier = makeFsWith(~latestBlock=10, ~queueBlocks=[1])
+
+    let prepared = FetchState.filterAndSortForUnorderedBatch(
+      [fsHalfEarlier, fsExactFull],
+      ~maxBatchSize=2,
+    )
+
+    // Full batch should take priority regardless of earlier timestamp of half batch
+    Assert.deepEqual(
+      prepared->Array.map(fs => (fs.queue->Utils.Array.last->Option.getUnsafe).blockNumber),
+      [2, 1],
     )
   })
 })
