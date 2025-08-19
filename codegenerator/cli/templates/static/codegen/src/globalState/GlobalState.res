@@ -876,24 +876,23 @@ let injectedTaskReducer = (
           state.writeThrottlers.deepCleanCount = state.writeThrottlers.deepCleanCount + 1
           false
         }
-        let timeRef = Hrtime.makeTimer()
-        let _ = await Promise.all(
-          Entities.allEntities->Belt.Array.map(entityConfig => {
-            Db.sql->DbFunctions.EntityHistory.pruneStaleEntityHistory(
-              ~entityName=entityConfig.name,
-              ~safeChainIdAndBlockNumberArray,
-              ~shouldDeepClean,
-            )
-          }),
-        )
 
-        if Env.Benchmark.shouldSaveData {
-          let elapsedTimeMillis = Hrtime.timeSince(timeRef)->Hrtime.toMillis->Hrtime.floatFromMillis
-
-          Benchmark.addSummaryData(
-            ~group="Other",
-            ~label="Prune Stale History Time (ms)",
-            ~value=elapsedTimeMillis,
+        for idx in 0 to Entities.allEntities->Array.length - 1 {
+          if idx !== 0 {
+            // Add some delay between entities
+            // To unblock the pg client if it's needed for something else
+            await Utils.delay(400)
+          }
+          let entityConfig = Entities.allEntities->Array.getUnsafe(idx)
+          let timeRef = Hrtime.makeTimer()
+          await Db.sql->DbFunctions.EntityHistory.pruneStaleEntityHistory(
+            ~entityName=entityConfig.name,
+            ~safeChainIdAndBlockNumberArray,
+            ~shouldDeepClean,
+          )
+          Prometheus.RollbackHistoryPrune.increment(
+            ~timeMillis=Hrtime.timeSince(timeRef)->Hrtime.toMillis,
+            ~entityName=entityConfig.name,
           )
         }
       }
