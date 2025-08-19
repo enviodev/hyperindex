@@ -241,25 +241,6 @@ module BenchmarkCounters = {
   }
 }
 
-module PartitionBlockFetched = {
-  type labels = {chainId: int, partitionId: string}
-
-  let labelSchema = S.schema(s => {
-    chainId: s.matches(S.string->S.coerce(S.int)),
-    partitionId: s.matches(S.string),
-  })
-
-  let counter = SafeGauge.makeOrThrow(
-    ~name="partition_block_fetched",
-    ~help="The latest fetched block number for each partition",
-    ~labelSchema,
-  )
-
-  let set = (~blockNumber, ~partitionId, ~chainId) => {
-    counter->SafeGauge.handleInt(~labels={chainId, partitionId}, ~value=blockNumber)
-  }
-}
-
 let chainIdLabelsSchema = S.object(s => {
   s.field("chainId", S.string->S.coerce(S.int))
 })
@@ -440,12 +421,6 @@ module SourceGetHeightDuration = {
 }
 
 module ReorgCount = {
-  let deprecatedCounter = PromClient.Counter.makeCounter({
-    "name": "reorgs_detected",
-    "help": "Total number of reorgs detected",
-    "labelNames": ["chainId"],
-  })
-
   let gauge = SafeGauge.makeOrThrow(
     ~name="envio_reorg_count",
     ~help="Total number of reorgs detected",
@@ -453,9 +428,6 @@ module ReorgCount = {
   )
 
   let increment = (~chain) => {
-    deprecatedCounter
-    ->PromClient.Counter.labels({"chainId": chain->ChainMap.Chain.toString})
-    ->PromClient.Counter.inc
     gauge->SafeGauge.increment(~labels=chain->ChainMap.Chain.toChainId)
   }
 }
@@ -640,5 +612,81 @@ module EffectCacheCount = {
 
   let set = (~count, ~effectName) => {
     gauge->SafeGauge.handleInt(~labels=effectName, ~value=count)
+  }
+}
+
+module StorageLoad = {
+  let operationLabelsSchema = S.object(s => s.field("operation", S.string))
+
+  let timeCounter = SafeCounter.makeOrThrow(
+    ~name="envio_storage_load_time",
+    ~help="Processing time taken to load data from storage. (milliseconds)",
+    ~labelSchema=operationLabelsSchema,
+  )
+
+  let totalTimeCounter = SafeCounter.makeOrThrow(
+    ~name="envio_storage_load_total_time",
+    ~help="Cumulative time spent loading data from storage during the indexing process. (milliseconds)",
+    ~labelSchema=operationLabelsSchema,
+  )
+
+  let counter = SafeCounter.makeOrThrow(
+    ~name="envio_storage_load_count",
+    ~help="Cumulative number of successful storage load operations during the indexing process.",
+    ~labelSchema=operationLabelsSchema,
+  )
+
+  let whereSizeCounter = SafeCounter.makeOrThrow(
+    ~name="envio_storage_load_where_size",
+    ~help="Cumulative number of filter conditions ('where' items) used in storage load operations during the indexing process.",
+    ~labelSchema=operationLabelsSchema,
+  )
+
+  let sizeCounter = SafeCounter.makeOrThrow(
+    ~name="envio_storage_load_size",
+    ~help="Cumulative number of records loaded from storage during the indexing process.",
+    ~labelSchema=operationLabelsSchema,
+  )
+
+  type operationRef = {
+    mutable pendingCount: int,
+    timerRef: Hrtime.timeRef,
+  }
+  let operations = Js.Dict.empty()
+
+  let startOperation = (~operation) => {
+    switch operations->Utils.Dict.dangerouslyGetNonOption(operation) {
+    | Some(operationRef) => operationRef.pendingCount = operationRef.pendingCount + 1
+    | None =>
+      operations->Js.Dict.set(
+        operation,
+        (
+          {
+            pendingCount: 1,
+            timerRef: Hrtime.makeTimer(),
+          }: operationRef
+        ),
+      )
+    }
+    Hrtime.makeTimer()
+  }
+
+  let endOperation = (timerRef, ~operation, ~whereSize, ~size) => {
+    let operationRef = operations->Js.Dict.unsafeGet(operation)
+    operationRef.pendingCount = operationRef.pendingCount - 1
+    if operationRef.pendingCount === 0 {
+      timeCounter->SafeCounter.handleInt(
+        ~labels={operation},
+        ~value=operationRef.timerRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis,
+      )
+      operations->Utils.Dict.deleteInPlace(operation)
+    }
+    totalTimeCounter->SafeCounter.handleInt(
+      ~labels={operation},
+      ~value=timerRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis,
+    )
+    counter->SafeCounter.increment(~labels={operation})
+    whereSizeCounter->SafeCounter.handleInt(~labels={operation}, ~value=whereSize)
+    sizeCounter->SafeCounter.handleInt(~labels={operation}, ~value=size)
   }
 }
