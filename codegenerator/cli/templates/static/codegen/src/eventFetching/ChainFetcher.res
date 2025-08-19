@@ -353,7 +353,7 @@ let getContractStartBlock = (
 }
 
 let runContractRegistersOrThrow = async (
-  ~reversedWithContractRegister: array<Internal.eventItem>,
+  ~itemsWithContractRegister: array<Internal.eventItem>,
   ~config: Config.t,
 ) => {
   let dynamicContracts = []
@@ -396,8 +396,8 @@ let runContractRegistersOrThrow = async (
   }
 
   let promises = []
-  for idx in reversedWithContractRegister->Array.length - 1 downto 0 {
-    let eventItem = reversedWithContractRegister->Array.getUnsafe(idx)
+  for idx in 0 to itemsWithContractRegister->Array.length - 1 {
+    let eventItem = itemsWithContractRegister->Array.getUnsafe(idx)
     let contractRegister = switch eventItem.eventConfig.contractRegister {
     | Some(contractRegister) => contractRegister
     | None =>
@@ -452,7 +452,7 @@ Returns Error if the node with given id cannot be found (unexpected)
 let handleQueryResult = (
   chainFetcher: t,
   ~query: FetchState.query,
-  ~reversedNewItems,
+  ~newItems,
   ~dynamicContracts,
   ~latestFetchedBlock,
   ~currentBlockHeight,
@@ -470,7 +470,7 @@ let handleQueryResult = (
   ->FetchState.handleQueryResult(
     ~query,
     ~latestFetchedBlock,
-    ~reversedNewItems,
+    ~newItems,
     ~currentBlockHeight,
   )
   ->Result.map(fetchState => {
