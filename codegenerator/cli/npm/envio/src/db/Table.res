@@ -240,6 +240,7 @@ let toSqlParams = (table: table, ~schema, ~pgSchema) => {
           switch field {
           | Field(f) =>
             switch f.fieldType {
+            | Custom(fieldType) if fieldType->Js.String2.startsWith("NUMERIC(") => fieldType
             | Custom(fieldType) => `${(Text :> string)}[]::"${pgSchema}".${(fieldType :> string)}`
             | Boolean => `${(Integer :> string)}[]::${(f.fieldType :> string)}`
             | fieldType => (fieldType :> string)
