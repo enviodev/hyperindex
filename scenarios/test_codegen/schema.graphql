@@ -114,6 +114,7 @@ type EntityWithAllTypes {
   arrayOfBigInts: [BigInt!]!
   bigDecimal: BigDecimal!
   optBigDecimal: BigDecimal
+  bigDecimalWithConfig: BigDecimal! @config(precision: 10, scale: 8)
   arrayOfBigDecimals: [BigDecimal!]!
   # NOTE: Timestamp serialization is currently just a type cast and so testing is non deterministic
   # timestamp: Timestamp!
@@ -141,6 +142,7 @@ type EntityWithAllNonArrayTypes {
   optBigInt: BigInt
   bigDecimal: BigDecimal!
   optBigDecimal: BigDecimal
+  bigDecimalWithConfig: BigDecimal! @config(precision: 10, scale: 8)
   enumField: AccountType!
   optEnumField: AccountType
 }
