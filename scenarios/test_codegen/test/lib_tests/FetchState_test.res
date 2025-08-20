@@ -1048,7 +1048,7 @@ describe("FetchState.getNextQuery & integration", () => {
           blockNumber: 10,
           blockTimestamp: 10,
         },
-        ~reversedNewItems=[mockEvent(~blockNumber=2), mockEvent(~blockNumber=1)],
+        ~newItems=[mockEvent(~blockNumber=2), mockEvent(~blockNumber=1)],
         ~currentBlockHeight=10,
       )
       ->Result.getExn
@@ -1183,7 +1183,7 @@ describe("FetchState.getNextQuery & integration", () => {
           blockNumber: 8,
           blockTimestamp: 8,
         },
-        ~reversedNewItems=[mockEvent(~blockNumber=2), mockEvent(~blockNumber=1)],
+        ~newItems=[mockEvent(~blockNumber=2), mockEvent(~blockNumber=1)],
         ~currentBlockHeight=10,
       )
       ->Result.getExn
@@ -1299,7 +1299,7 @@ describe("FetchState.getNextQuery & integration", () => {
           blockNumber: 1,
           blockTimestamp: 1,
         },
-        ~reversedNewItems=[],
+        ~newItems=[],
         ~currentBlockHeight=11,
       )
       ->Result.getExn
@@ -1418,10 +1418,7 @@ describe("FetchState.getNextQuery & integration", () => {
           blockNumber: 9,
           blockTimestamp: 9,
         },
-        ~reversedNewItems=[
-          mockEvent(~blockNumber=4, ~logIndex=6),
-          mockEvent(~blockNumber=4, ~logIndex=2),
-        ],
+        ~newItems=[mockEvent(~blockNumber=4, ~logIndex=6), mockEvent(~blockNumber=4, ~logIndex=2)],
         ~currentBlockHeight=11,
       )
       ->Result.getExn
@@ -1500,7 +1497,7 @@ describe("FetchState.getNextQuery & integration", () => {
           blockNumber: 10,
           blockTimestamp: 10,
         },
-        ~reversedNewItems=[],
+        ~newItems=[],
         ~currentBlockHeight=11,
       )
       ->Result.getExn
@@ -1548,7 +1545,7 @@ describe("FetchState.getNextQuery & integration", () => {
           blockNumber: 10,
           blockTimestamp: 10,
         },
-        ~reversedNewItems=[],
+        ~newItems=[],
         ~currentBlockHeight=11,
       )
       ->Result.getExn
@@ -1872,10 +1869,7 @@ describe("FetchState unit tests for specific cases", () => {
           blockTimestamp: 10,
         },
         ~currentBlockHeight=11,
-        ~reversedNewItems=[
-          mockEvent(~blockNumber=4, ~logIndex=1),
-          mockEvent(~blockNumber=4, ~logIndex=1),
-        ],
+        ~newItems=[mockEvent(~blockNumber=4, ~logIndex=1), mockEvent(~blockNumber=4, ~logIndex=1)],
       )
       ->Result.getExn
 
@@ -1914,6 +1908,46 @@ describe("FetchState unit tests for specific cases", () => {
     )
   })
 
+  it("Sorts newItems when source returns them unsorted", () => {
+    let base = makeInitial()
+    let fetchState = base
+
+    let unsorted = [
+      mockEvent(~blockNumber=5, ~logIndex=1),
+      mockEvent(~blockNumber=6, ~logIndex=0),
+      mockEvent(~blockNumber=6, ~logIndex=2),
+      mockEvent(~blockNumber=5, ~logIndex=0),
+    ]
+
+    let updatedFetchState =
+      fetchState
+      ->FetchState.handleQueryResult(
+        ~query={
+          partitionId: "0",
+          target: Head,
+          selection: fetchState.normalSelection,
+          addressesByContractName: Js.Dict.empty(),
+          fromBlock: 0,
+          indexingContracts: fetchState.indexingContracts,
+        },
+        ~latestFetchedBlock=getBlockData(~blockNumber=10),
+        ~newItems=unsorted,
+        ~currentBlockHeight=10,
+      )
+      ->Result.getExn
+
+    Assert.deepEqual(
+      updatedFetchState.queue,
+      [
+        mockEvent(~blockNumber=6, ~logIndex=2),
+        mockEvent(~blockNumber=6, ~logIndex=0),
+        mockEvent(~blockNumber=5, ~logIndex=1),
+        mockEvent(~blockNumber=5, ~logIndex=0),
+      ],
+      ~message="Queue must be sorted DESC by (blockNumber, logIndex) regardless of input order",
+    )
+  })
+
   it("Shouldn't wait for new block until all partitions reached the head", () => {
     let wildcard = (Mock.evmEventConfig(
       ~id="wildcard",
@@ -1949,7 +1983,7 @@ describe("FetchState unit tests for specific cases", () => {
           indexingContracts: fetchState.indexingContracts,
         },
         ~latestFetchedBlock=getBlockData(~blockNumber=1),
-        ~reversedNewItems=[mockEvent(~blockNumber=1), mockEvent(~blockNumber=0)],
+        ~newItems=[mockEvent(~blockNumber=1), mockEvent(~blockNumber=0)],
         ~currentBlockHeight=2,
       )
       ->Result.getExn
@@ -1963,7 +1997,7 @@ describe("FetchState unit tests for specific cases", () => {
           indexingContracts: fetchState.indexingContracts,
         },
         ~latestFetchedBlock=getBlockData(~blockNumber=2),
-        ~reversedNewItems=[],
+        ~newItems=[],
         ~currentBlockHeight=2,
       )
       ->Result.getExn
@@ -2030,7 +2064,7 @@ describe("FetchState unit tests for specific cases", () => {
           fromBlock: 0,
           indexingContracts: fetchState.indexingContracts,
         },
-        ~reversedNewItems=[
+        ~newItems=[
           mockEvent(~blockNumber=6, ~logIndex=2),
           mockEvent(~blockNumber=registeringBlockNumber),
           mockEvent(~blockNumber=registeringBlockNumber - 1, ~logIndex=1),
@@ -2099,7 +2133,7 @@ describe("FetchState unit tests for specific cases", () => {
           fromBlock: 0,
           indexingContracts: fetchState.indexingContracts,
         },
-        ~reversedNewItems=[mockEvent(~blockNumber=0, ~logIndex=1)],
+        ~newItems=[mockEvent(~blockNumber=0, ~logIndex=1)],
         ~currentBlockHeight=10,
         ~latestFetchedBlock=getBlockData(~blockNumber=1),
       )
@@ -2209,7 +2243,7 @@ describe("FetchState unit tests for specific cases", () => {
       fetchState
       ->FetchState.handleQueryResult(
         ~query=q0,
-        ~reversedNewItems=[],
+        ~newItems=[],
         ~currentBlockHeight=10,
         ~latestFetchedBlock=getBlockData(~blockNumber=10),
       )
@@ -2226,7 +2260,7 @@ describe("FetchState unit tests for specific cases", () => {
       fetchStateWithResponse1
       ->FetchState.handleQueryResult(
         ~query=q1,
-        ~reversedNewItems=[],
+        ~newItems=[],
         ~currentBlockHeight=10,
         ~latestFetchedBlock=getBlockData(~blockNumber=10),
       )
@@ -2242,7 +2276,7 @@ describe("FetchState unit tests for specific cases", () => {
       fetchStateWithResponse2
       ->FetchState.handleQueryResult(
         ~query=q0,
-        ~reversedNewItems=[],
+        ~newItems=[],
         ~currentBlockHeight=11,
         ~latestFetchedBlock=getBlockData(~blockNumber=11),
       )
@@ -2259,14 +2293,14 @@ describe("FetchState unit tests for specific cases", () => {
       fetchState
       ->FetchState.handleQueryResult(
         ~query=q0,
-        ~reversedNewItems=[],
+        ~newItems=[],
         ~currentBlockHeight=999,
         ~latestFetchedBlock=getBlockData(~blockNumber=999),
       )
       ->Result.getExn
       ->FetchState.handleQueryResult(
         ~query=q1,
-        ~reversedNewItems=[],
+        ~newItems=[],
         ~currentBlockHeight=999,
         ~latestFetchedBlock=getBlockData(~blockNumber=999),
       )
@@ -2282,7 +2316,7 @@ describe("FetchState unit tests for specific cases", () => {
       fetchStateAt999
       ->FetchState.handleQueryResult(
         ~query=q0,
-        ~reversedNewItems=[],
+        ~newItems=[],
         ~currentBlockHeight=1000,
         ~latestFetchedBlock=getBlockData(~blockNumber=1000),
       )
@@ -2299,7 +2333,7 @@ describe("FetchState unit tests for specific cases", () => {
       fetchStateAt999
       ->FetchState.handleQueryResult(
         ~query=q0,
-        ~reversedNewItems=[],
+        ~newItems=[],
         ~currentBlockHeight=1001,
         ~latestFetchedBlock=getBlockData(~blockNumber=1001),
       )
@@ -2373,7 +2407,7 @@ describe("FetchState unit tests for specific cases", () => {
           addressesByContractName: Js.Dict.empty(),
           indexingContracts: fetchState.indexingContracts,
         },
-        ~reversedNewItems=[mockEvent(~blockNumber=0)],
+        ~newItems=[mockEvent(~blockNumber=0)],
         ~latestFetchedBlock={blockNumber: -1, blockTimestamp: 0},
         ~currentBlockHeight=1,
       )
@@ -2408,7 +2442,7 @@ describe("FetchState unit tests for specific cases", () => {
             indexingContracts: fetchState.indexingContracts,
             fromBlock: 0,
           },
-          ~reversedNewItems=[
+          ~newItems=[
             mockEvent(~blockNumber=6, ~logIndex=2),
             mockEvent(~blockNumber=4),
             mockEvent(~blockNumber=1, ~logIndex=1),
@@ -2481,7 +2515,7 @@ describe("FetchState unit tests for specific cases", () => {
           ~query=queryA,
           ~latestFetchedBlock=getBlockData(~blockNumber=400),
           ~currentBlockHeight,
-          ~reversedNewItems=[],
+          ~newItems=[],
         )
         ->Utils.unwrapResultExn
 
@@ -2651,7 +2685,7 @@ describe("FetchState.filterAndSortForUnorderedBatch", () => {
         ->FetchState.handleQueryResult(
           ~query,
           ~latestFetchedBlock={blockNumber: latestBlock, blockTimestamp: latestBlock},
-          ~reversedNewItems=queueBlocks->Array.map(b => mockEvent(~blockNumber=b)),
+          ~newItems=queueBlocks->Array.map(b => mockEvent(~blockNumber=b)),
           ~currentBlockHeight=latestBlock,
         )
         ->Result.getExn
@@ -2696,7 +2730,7 @@ describe("FetchState.filterAndSortForUnorderedBatch", () => {
       ->FetchState.handleQueryResult(
         ~query,
         ~latestFetchedBlock={blockNumber: latestBlock, blockTimestamp: latestBlock},
-        ~reversedNewItems=queueBlocks->Array.map(b => mockEvent(~blockNumber=b)),
+        ~newItems=queueBlocks->Array.map(b => mockEvent(~blockNumber=b)),
         ~currentBlockHeight=latestBlock,
       )
       ->Result.getExn
@@ -2738,7 +2772,7 @@ describe("FetchState.filterAndSortForUnorderedBatch", () => {
       ->FetchState.handleQueryResult(
         ~query,
         ~latestFetchedBlock={blockNumber: latestBlock, blockTimestamp: latestBlock},
-        ~reversedNewItems=queueBlocks->Array.map(b => mockEvent(~blockNumber=b)),
+        ~newItems=queueBlocks->Array.map(b => mockEvent(~blockNumber=b)),
         ~currentBlockHeight=latestBlock,
       )
       ->Result.getExn

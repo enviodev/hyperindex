@@ -34,6 +34,7 @@ describe("SerDe Test", () => {
       optBigInt: Some(BigInt.fromInt(2)),
       arrayOfBigInts: [BigInt.fromInt(3), BigInt.fromInt(4)],
       bigDecimal: BigDecimal.fromStringUnsafe("1.1"),
+      bigDecimalWithConfig: BigDecimal.fromStringUnsafe("1.1"),
       optBigDecimal: Some(BigDecimal.fromStringUnsafe("2.2")),
       arrayOfBigDecimals: [BigDecimal.fromStringUnsafe("3.3"), BigDecimal.fromStringUnsafe("4.4")],
       //TODO: get timestamp working
@@ -123,7 +124,7 @@ describe("SerDe Test", () => {
       Entities.EntityWithAllNonArrayTypes.table->PgStorage.makeCreateTableQuery(~pgSchema="public")
     Assert.equal(
       createQuery,
-      `CREATE TABLE IF NOT EXISTS "public"."EntityWithAllNonArrayTypes"("bigDecimal" NUMERIC NOT NULL, "bigInt" NUMERIC NOT NULL, "bool" BOOLEAN NOT NULL, "enumField" "public".AccountType NOT NULL, "float_" DOUBLE PRECISION NOT NULL, "id" TEXT NOT NULL, "int_" INTEGER NOT NULL, "optBigDecimal" NUMERIC, "optBigInt" NUMERIC, "optBool" BOOLEAN, "optEnumField" "public".AccountType, "optFloat" DOUBLE PRECISION, "optInt" INTEGER, "optString" TEXT, "string" TEXT NOT NULL, "db_write_timestamp" TIMESTAMP DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY("id"));`,
+      `CREATE TABLE IF NOT EXISTS "public"."EntityWithAllNonArrayTypes"("bigDecimal" NUMERIC NOT NULL, "bigDecimalWithConfig" NUMERIC(10, 8) NOT NULL, "bigInt" NUMERIC NOT NULL, "bool" BOOLEAN NOT NULL, "enumField" "public".AccountType NOT NULL, "float_" DOUBLE PRECISION NOT NULL, "id" TEXT NOT NULL, "int_" INTEGER NOT NULL, "optBigDecimal" NUMERIC, "optBigInt" NUMERIC, "optBool" BOOLEAN, "optEnumField" "public".AccountType, "optFloat" DOUBLE PRECISION, "optInt" INTEGER, "optString" TEXT, "string" TEXT NOT NULL, "db_write_timestamp" TIMESTAMP DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY("id"));`,
     )
     let query = PgStorage.makeInsertUnnestSetQuery(
       ~table=Entities.EntityWithAllNonArrayTypes.table,
@@ -134,8 +135,8 @@ describe("SerDe Test", () => {
 
     Assert.equal(
       query,
-      `INSERT INTO "public"."EntityWithAllNonArrayTypes" ("bigDecimal", "bigInt", "bool", "enumField", "float_", "id", "int_", "optBigDecimal", "optBigInt", "optBool", "optEnumField", "optFloat", "optInt", "optString", "string")
-SELECT * FROM unnest($1::NUMERIC[],$2::NUMERIC[],$3::INTEGER[]::BOOLEAN[],$4::TEXT[]::"public".AccountType[],$5::DOUBLE PRECISION[],$6::TEXT[],$7::INTEGER[],$8::NUMERIC[],$9::NUMERIC[],$10::INTEGER[]::BOOLEAN[],$11::TEXT[]::"public".AccountType[],$12::DOUBLE PRECISION[],$13::INTEGER[],$14::TEXT[],$15::TEXT[])ON CONFLICT("id") DO UPDATE SET "bigDecimal" = EXCLUDED."bigDecimal","bigInt" = EXCLUDED."bigInt","bool" = EXCLUDED."bool","enumField" = EXCLUDED."enumField","float_" = EXCLUDED."float_","int_" = EXCLUDED."int_","optBigDecimal" = EXCLUDED."optBigDecimal","optBigInt" = EXCLUDED."optBigInt","optBool" = EXCLUDED."optBool","optEnumField" = EXCLUDED."optEnumField","optFloat" = EXCLUDED."optFloat","optInt" = EXCLUDED."optInt","optString" = EXCLUDED."optString","string" = EXCLUDED."string";`,
+      `INSERT INTO "public"."EntityWithAllNonArrayTypes" ("bigDecimal", "bigDecimalWithConfig", "bigInt", "bool", "enumField", "float_", "id", "int_", "optBigDecimal", "optBigInt", "optBool", "optEnumField", "optFloat", "optInt", "optString", "string")
+SELECT * FROM unnest($1::NUMERIC[],$2::NUMERIC(10, 8)[],$3::NUMERIC[],$4::INTEGER[]::BOOLEAN[],$5::TEXT[]::"public".AccountType[],$6::DOUBLE PRECISION[],$7::TEXT[],$8::INTEGER[],$9::NUMERIC[],$10::NUMERIC[],$11::INTEGER[]::BOOLEAN[],$12::TEXT[]::"public".AccountType[],$13::DOUBLE PRECISION[],$14::INTEGER[],$15::TEXT[],$16::TEXT[])ON CONFLICT("id") DO UPDATE SET "bigDecimal" = EXCLUDED."bigDecimal","bigDecimalWithConfig" = EXCLUDED."bigDecimalWithConfig","bigInt" = EXCLUDED."bigInt","bool" = EXCLUDED."bool","enumField" = EXCLUDED."enumField","float_" = EXCLUDED."float_","int_" = EXCLUDED."int_","optBigDecimal" = EXCLUDED."optBigDecimal","optBigInt" = EXCLUDED."optBigInt","optBool" = EXCLUDED."optBool","optEnumField" = EXCLUDED."optEnumField","optFloat" = EXCLUDED."optFloat","optInt" = EXCLUDED."optInt","optString" = EXCLUDED."optString","string" = EXCLUDED."string";`,
     )
   })
 
@@ -156,6 +157,7 @@ SELECT * FROM unnest($1::NUMERIC[],$2::NUMERIC[],$3::INTEGER[]::BOOLEAN[],$4::TE
       optBigInt: Some(BigInt.fromInt(2)),
       bigDecimal: BigDecimal.fromStringUnsafe("1.1"),
       optBigDecimal: Some(BigDecimal.fromStringUnsafe("2.2")),
+      bigDecimalWithConfig: BigDecimal.fromStringUnsafe("1.1"),
       enumField: ADMIN,
       optEnumField: Some(ADMIN),
     }
