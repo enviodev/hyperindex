@@ -80,7 +80,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
               blockNumber: batchItem.blockNumber,
               blockTimestamp: batchItem.timestamp,
             },
-            ~reversedNewItems=[batchItem],
+            ~newItems=[batchItem],
             ~currentBlockHeight=currentBlockNumber.contents,
           )
           ->Result.getExn

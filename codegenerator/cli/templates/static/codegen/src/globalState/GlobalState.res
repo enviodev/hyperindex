@@ -123,7 +123,7 @@ type action =
   // because when processing the response, there might be an async contract registration.
   // So after it's finished we dispatch the  submit action to get the latest fetch state.
   | SubmitPartitionQueryResponse({
-      reversedNewItems: array<Internal.eventItem>,
+      newItems: array<Internal.eventItem>,
       dynamicContracts: array<FetchState.indexingContract>,
       currentBlockHeight: int,
       latestFetchedBlock: FetchState.blockNumberAndTimestamp,
@@ -383,16 +383,6 @@ let validatePartitionQueryResponse = (
   }
 
   if Env.Benchmark.shouldSaveData {
-    switch query.target {
-    | Merge(_) => ()
-    | Head
-    | EndBlock(_) =>
-      Prometheus.PartitionBlockFetched.set(
-        ~blockNumber=latestFetchedBlockNumber,
-        ~partitionId=query.partitionId,
-        ~chainId=chain->ChainMap.Chain.toChainId,
-      )
-    }
     Benchmark.addBlockRangeFetched(
       ~totalTimeElapsed=stats.totalTimeElapsed,
       ~parsingTimeElapsed=stats.parsingTimeElapsed->Belt.Option.getWithDefault(0),
@@ -479,7 +469,7 @@ let validatePartitionQueryResponse = (
 
 let submitPartitionQueryResponse = (
   state,
-  ~reversedNewItems,
+  ~newItems,
   ~dynamicContracts,
   ~currentBlockHeight,
   ~latestFetchedBlock,
@@ -494,7 +484,7 @@ let submitPartitionQueryResponse = (
       ~query,
       ~currentBlockHeight,
       ~latestFetchedBlock,
-      ~reversedNewItems,
+      ~newItems,
       ~dynamicContracts,
     )
     ->Utils.unwrapResultExn
@@ -548,12 +538,10 @@ let processPartitionQueryResponse = async (
     latestFetchedBlockTimestamp,
   } = response
 
-  let reversedWithContractRegister = []
-  let reversedNewItems = []
+  let itemsWithContractRegister = []
+  let newItems = []
 
-  // It's cheaper to reverse only items with contract register
-  // Then all items. That's why we use downto loop
-  for idx in parsedQueueItems->Array.length - 1 downto 0 {
+  for idx in 0 to parsedQueueItems->Array.length - 1 {
     let item = parsedQueueItems->Array.getUnsafe(idx)
     if (
       switch chainFetcher.processingFilters {
@@ -562,29 +550,29 @@ let processPartitionQueryResponse = async (
       }
     ) {
       if item.eventConfig.contractRegister !== None {
-        reversedWithContractRegister->Array.push(item)
+        itemsWithContractRegister->Array.push(item)
       }
 
       // TODO: Don't really need to keep it in the queue
       // when there's no handler (besides raw_events, processed counter, and dcsToStore consuming)
-      reversedNewItems->Array.push(item)
+      newItems->Array.push(item)
     }
   }
 
-  let dynamicContracts = switch reversedWithContractRegister {
+  let dynamicContracts = switch itemsWithContractRegister {
   | [] as empty =>
     // A small optimisation to not recreate an empty array
     empty->(Utils.magic: array<Internal.eventItem> => array<FetchState.indexingContract>)
   | _ =>
     await ChainFetcher.runContractRegistersOrThrow(
-      ~reversedWithContractRegister,
+      ~itemsWithContractRegister,
       ~config=state.config,
     )
   }
 
   dispatchAction(
     SubmitPartitionQueryResponse({
-      reversedNewItems,
+      newItems,
       dynamicContracts,
       currentBlockHeight,
       latestFetchedBlock: {
@@ -653,7 +641,7 @@ let actionReducer = (state: t, action: action) => {
   | ValidatePartitionQueryResponse(partitionQueryResponse) =>
     state->validatePartitionQueryResponse(partitionQueryResponse)
   | SubmitPartitionQueryResponse({
-      reversedNewItems,
+      newItems,
       dynamicContracts,
       currentBlockHeight,
       latestFetchedBlock,
@@ -661,7 +649,7 @@ let actionReducer = (state: t, action: action) => {
       chain,
     }) =>
     state->submitPartitionQueryResponse(
-      ~reversedNewItems,
+      ~newItems,
       ~dynamicContracts,
       ~currentBlockHeight,
       ~latestFetchedBlock,
@@ -888,24 +876,23 @@ let injectedTaskReducer = (
           state.writeThrottlers.deepCleanCount = state.writeThrottlers.deepCleanCount + 1
           false
         }
-        let timeRef = Hrtime.makeTimer()
-        let _ = await Promise.all(
-          Entities.allEntities->Belt.Array.map(entityConfig => {
-            Db.sql->DbFunctions.EntityHistory.pruneStaleEntityHistory(
-              ~entityName=entityConfig.name,
-              ~safeChainIdAndBlockNumberArray,
-              ~shouldDeepClean,
-            )
-          }),
-        )
 
-        if Env.Benchmark.shouldSaveData {
-          let elapsedTimeMillis = Hrtime.timeSince(timeRef)->Hrtime.toMillis->Hrtime.floatFromMillis
-
-          Benchmark.addSummaryData(
-            ~group="Other",
-            ~label="Prune Stale History Time (ms)",
-            ~value=elapsedTimeMillis,
+        for idx in 0 to Entities.allEntities->Array.length - 1 {
+          if idx !== 0 {
+            // Add some delay between entities
+            // To unblock the pg client if it's needed for something else
+            await Utils.delay(400)
+          }
+          let entityConfig = Entities.allEntities->Array.getUnsafe(idx)
+          let timeRef = Hrtime.makeTimer()
+          await Db.sql->DbFunctions.EntityHistory.pruneStaleEntityHistory(
+            ~entityName=entityConfig.name,
+            ~safeChainIdAndBlockNumberArray,
+            ~shouldDeepClean,
+          )
+          Prometheus.RollbackHistoryPrune.increment(
+            ~timeMillis=Hrtime.timeSince(timeRef)->Hrtime.toMillis,
+            ~entityName=entityConfig.name,
           )
         }
       }
