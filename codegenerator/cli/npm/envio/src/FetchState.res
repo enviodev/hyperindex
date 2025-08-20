@@ -93,25 +93,6 @@ let copy = (fetchState: t) => {
   }
 }
 
-/*
-Comapritor for two events from the same chain. No need for chain id or timestamp
-*/
-let eventItemGt = (a: Internal.eventItem, b: Internal.eventItem) =>
-  if a.blockNumber > b.blockNumber {
-    true
-  } else if a.blockNumber === b.blockNumber {
-    a.logIndex > b.logIndex
-  } else {
-    false
-  }
-
-/*
-Merges two event queues on a single event fetcher
-
-Pass the shorter list into A for better performance
-*/
-let mergeSortedEventList = (a, b) => Utils.Array.mergeSorted(eventItemGt, a, b)
-
 let mergeIntoPartition = (p: partition, ~target: partition, ~maxAddrInPartition) => {
   switch (p, target) {
   | ({selection: {dependsOnAddresses: true}}, {selection: {dependsOnAddresses: true}}) => {
@@ -566,6 +547,18 @@ exception UnexpectedPartitionNotFound({partitionId: string})
 exception UnexpectedMergeQueryResponse({message: string})
 
 /*
+Comparitor for two events from the same chain. No need for chain id or timestamp
+*/
+let compareBufferItem = (a: Internal.eventItem, b: Internal.eventItem) => {
+  let blockDiff = b.blockNumber - a.blockNumber
+  if blockDiff === 0 {
+    b.logIndex - a.logIndex
+  } else {
+    blockDiff
+  }
+}
+
+/*
 Updates fetchState with a response for a given query.
 Returns Error if the partition with given query cannot be found (unexpected)
 If MergeQuery caught up to the target partition, it triggers the merge of the partitions.
@@ -576,7 +569,7 @@ let handleQueryResult = (
   {partitions} as fetchState: t,
   ~query: query,
   ~latestFetchedBlock: blockNumberAndTimestamp,
-  ~reversedNewItems,
+  ~newItems,
   ~currentBlockHeight,
 ): result<t, exn> =>
   {
@@ -633,7 +626,12 @@ let handleQueryResult = (
     fetchState->updateInternal(
       ~partitions,
       ~currentBlockHeight,
-      ~queue=mergeSortedEventList(reversedNewItems, fetchState.queue),
+      ~queue=fetchState.queue
+      ->Array.concat(newItems)
+      // Theoretically it could be faster to asume that
+      // the items are sorted, but there are cases
+      // when the data source returns them unsorted
+      ->Js.Array2.sortInPlaceWith(compareBufferItem),
     )
   })
 
