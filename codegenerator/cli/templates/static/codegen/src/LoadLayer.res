@@ -13,6 +13,8 @@ let loadById = (
   let inMemTable = inMemoryStore->InMemoryStore.getInMemTable(~entityConfig)
 
   let load = async idsToLoad => {
+    let timerRef = Prometheus.StorageLoad.startOperation(~operation=key)
+
     // Since LoadManager.call prevents registerign entities already existing in the inMemoryStore,
     // we can be sure that we load only the new ones.
     let dbEntities = try {
@@ -41,6 +43,12 @@ let loadById = (
         ~entity=entitiesMap->Utils.Dict.dangerouslyGetNonOption(entityId),
       )
     })
+
+    timerRef->Prometheus.StorageLoad.endOperation(
+      ~operation=key,
+      ~whereSize=idsToLoad->Array.length,
+      ~size=dbEntities->Array.length,
+    )
   }
 
   loadManager->LoadManager.call(
@@ -158,6 +166,10 @@ let loadByField = (
   let inMemTable = inMemoryStore->InMemoryStore.getInMemTable(~entityConfig)
 
   let load = async (fieldValues: array<'fieldValue>) => {
+    let timerRef = Prometheus.StorageLoad.startOperation(~operation=key)
+
+    let size = ref(0)
+
     let indiciesToLoad = fieldValues->Js.Array2.map((fieldValue): TableIndices.Index.t => {
       Single({
         fieldName,
@@ -210,8 +222,16 @@ let loadByField = (
             ~entity=Some(entity),
           )
         })
+
+        size := size.contents + entities->Array.length
       })
       ->Promise.all
+
+    timerRef->Prometheus.StorageLoad.endOperation(
+      ~operation=key,
+      ~whereSize=fieldValues->Array.length,
+      ~size=size.contents,
+    )
   }
 
   loadManager->LoadManager.call(

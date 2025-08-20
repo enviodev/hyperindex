@@ -383,16 +383,6 @@ let validatePartitionQueryResponse = (
   }
 
   if Env.Benchmark.shouldSaveData {
-    switch query.target {
-    | Merge(_) => ()
-    | Head
-    | EndBlock(_) =>
-      Prometheus.PartitionBlockFetched.set(
-        ~blockNumber=latestFetchedBlockNumber,
-        ~partitionId=query.partitionId,
-        ~chainId=chain->ChainMap.Chain.toChainId,
-      )
-    }
     Benchmark.addBlockRangeFetched(
       ~totalTimeElapsed=stats.totalTimeElapsed,
       ~parsingTimeElapsed=stats.parsingTimeElapsed->Belt.Option.getWithDefault(0),
