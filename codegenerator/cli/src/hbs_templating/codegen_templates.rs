@@ -459,7 +459,14 @@ let register = (): Internal.fuelEventConfig => {{
         };
 
         let types_code = if self.preload_handlers {
-            "".to_string()
+            format!(
+                r#"@genType
+type handlerArgs = Internal.genericHandlerArgs<event, handlerContext, unit>
+@genType
+type handler = Internal.genericHandler<handlerArgs>
+@genType
+type contractRegister = Internal.genericContractRegister<Internal.genericContractRegisterArgs<event, contractRegistrations>>"#
+            )
         } else {
             format!(
                 r#"@genType
