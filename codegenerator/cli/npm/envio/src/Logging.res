@@ -183,5 +183,5 @@ let getUserLogger = (eventItem): Envio.logger => {
   warn: (message: string, ~params=?) => eventItem->logForItem(#uwarn, message, ~params?),
   error: (message: string, ~params=?) => eventItem->logForItem(#uerror, message, ~params?),
   errorWithExn: (message: string, exn) =>
-    eventItem->logForItem(#uerror, message, ~params={"err": exn->Internal.prettifyExn}),
+    eventItem->logForItem(#uerror, message, ~params={"err": exn->Utils.prettifyExn}),
 }

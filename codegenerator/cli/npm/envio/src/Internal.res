@@ -238,10 +238,3 @@ let makeCacheTable = (~effectName) => {
 
 @genType.import(("./Types.ts", "Invalid"))
 type noEventFilters
-
-let prettifyExn = exn => {
-  switch exn->Js.Exn.anyToExnInternal {
-  | Js.Exn.Error(e) => e->(Utils.magic: Js.Exn.t => exn)
-  | exn => exn
-  }
-}

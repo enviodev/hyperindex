@@ -113,7 +113,7 @@ let codegenPersistence = Persistence.make(
               ~aggregateEntities=Env.Hasura.aggregateEntities,
             )->Promise.catch(err => {
               Logging.errorWithExn(
-                err->Internal.prettifyExn,
+                err->Utils.prettifyExn,
                 `EE803: Error tracking tables`,
               )->Promise.resolve
             })
@@ -137,7 +137,7 @@ let codegenPersistence = Persistence.make(
               ~tableNames,
             )->Promise.catch(err => {
               Logging.errorWithExn(
-                err->Internal.prettifyExn,
+                err->Utils.prettifyExn,
                 `EE804: Error tracking new tables`,
               )->Promise.resolve
            })

@@ -325,9 +325,7 @@ let removeInvalidUtf8InPlace = entities =>
     })
   })
 
-let pgErrorMessageSchema = S.object(s =>
-  s.field("message", S.string)
-)
+let pgErrorMessageSchema = S.object(s => s.field("message", S.string))
 
 exception PgEncodingError({table: Table.table})
 
@@ -389,7 +387,7 @@ let setOrThrow = async (sql, ~items, ~table: Table.table, ~itemSchema, ~pgSchema
       raise(
         Persistence.StorageError({
           message: `Failed to insert items into table "${table.tableName}"`,
-          reason: exn->Internal.prettifyExn,
+          reason: exn->Utils.prettifyExn,
         }),
       )
     }
@@ -765,7 +763,7 @@ let make = (
         }
       }
     } catch {
-    | exn => Logging.errorWithExn(exn->Internal.prettifyExn, `Failed to dump cache.`)
+    | exn => Logging.errorWithExn(exn->Utils.prettifyExn, `Failed to dump cache.`)
     }
   }
 

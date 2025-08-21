@@ -198,7 +198,7 @@ let getSourceNewHeight = async (
       logger->Logging.childTrace({
         "msg": `Height retrieval from ${source.name} source failed. Retrying in ${retryInterval->Int.toString}ms.`,
         "source": source.name,
-        "err": exn->Internal.prettifyExn,
+        "err": exn->Utils.prettifyExn,
       })
       retry := retry.contents + 1
       await Utils.delay(retryInterval)
@@ -410,7 +410,7 @@ let executeQuery = async (sourceManager: t, ~query: FetchState.query, ~currentBl
             | FailedParsingItems({exn, message, blockNumber, logIndex}) =>
               logger->Logging.childError({
                 "msg": message,
-                "err": exn->Internal.prettifyExn,
+                "err": exn->Utils.prettifyExn,
                 "blockNumber": blockNumber,
                 "logIndex": logIndex,
               })
@@ -469,7 +469,7 @@ let executeQuery = async (sourceManager: t, ~query: FetchState.query, ~currentBl
           "toBlock": attemptedToBlock,
           "backOffMilliseconds": backoffMillis,
           "retry": retry,
-          "err": exn->Internal.prettifyExn,
+          "err": exn->Utils.prettifyExn,
         })
 
         let shouldSwitch = nextSource !== source

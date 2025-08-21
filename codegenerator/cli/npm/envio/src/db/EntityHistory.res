@@ -251,58 +251,57 @@ let fromTable = (table: table, ~pgSchema, ~schema: S.t<'entity>): t<'entity> => 
 
   let createInsertFnQuery = {
     `CREATE OR REPLACE FUNCTION ${insertFnName}(${historyRowArg} ${historyTablePath}, should_copy_current_entity BOOLEAN)
-      RETURNS void AS $$
-      DECLARE
-        v_previous_record RECORD;
-        v_origin_record RECORD;
-      BEGIN
-        -- Check if previous values are not provided
-        IF ${previousHistoryFieldsAreNullStr} THEN
-          -- Find the most recent record for the same id
-          SELECT ${currentChangeFieldNamesCommaSeparated} INTO v_previous_record
-          FROM ${historyTablePath}
-          WHERE ${id} = ${historyRowArg}.${id}
-          ORDER BY ${currentChangeFieldNames
+RETURNS void AS $$
+DECLARE
+  v_previous_record RECORD;
+  v_origin_record RECORD;
+BEGIN
+  -- Check if previous values are not provided
+  IF ${previousHistoryFieldsAreNullStr} THEN
+    -- Find the most recent record for the same id
+    SELECT ${currentChangeFieldNamesCommaSeparated} INTO v_previous_record
+    FROM ${historyTablePath}
+    WHERE ${id} = ${historyRowArg}.${id}
+    ORDER BY ${currentChangeFieldNames
       ->Belt.Array.map(fieldName => fieldName ++ " DESC")
       ->Js.Array2.joinWith(", ")}
-          LIMIT 1;
+    LIMIT 1;
 
-          -- If a previous record exists, use its values
-          IF FOUND THEN
-            ${Belt.Array.zip(currentChangeFieldNames, previousChangeFieldNames)
+    -- If a previous record exists, use its values
+    IF FOUND THEN
+      ${Belt.Array.zip(currentChangeFieldNames, previousChangeFieldNames)
       ->Belt.Array.map(((currentFieldName, previousFieldName)) => {
         `${historyRowArg}.${previousFieldName} := v_previous_record.${currentFieldName};`
       })
       ->Js.Array2.joinWith(" ")}
-            ElSIF should_copy_current_entity THEN
-            -- Check if a value for the id exists in the origin table and if so, insert a history row for it.
-            SELECT ${dataFieldNamesCommaSeparated} FROM ${originTablePath} WHERE id = ${historyRowArg}.${id} INTO v_origin_record;
-            IF FOUND THEN
-              INSERT INTO ${historyTablePath} (${currentChangeFieldNamesCommaSeparated}, ${dataFieldNamesCommaSeparated}, "${actionFieldName}")
-              -- SET the current change data fields to 0 since we don't know what they were
-              -- and it doesn't matter provided they are less than any new values
-              VALUES (${currentChangeFieldNames
+      ElSIF should_copy_current_entity THEN
+      -- Check if a value for the id exists in the origin table and if so, insert a history row for it.
+      SELECT ${dataFieldNamesCommaSeparated} FROM ${originTablePath} WHERE id = ${historyRowArg}.${id} INTO v_origin_record;
+      IF FOUND THEN
+        INSERT INTO ${historyTablePath} (${currentChangeFieldNamesCommaSeparated}, ${dataFieldNamesCommaSeparated}, "${actionFieldName}")
+        -- SET the current change data fields to 0 since we don't know what they were
+        -- and it doesn't matter provided they are less than any new values
+        VALUES (${currentChangeFieldNames
       ->Belt.Array.map(_ => "0")
       ->Js.Array2.joinWith(", ")}, ${dataFieldNames
       ->Belt.Array.map(fieldName => `v_origin_record."${fieldName}"`)
       ->Js.Array2.joinWith(", ")}, 'SET');
 
-              ${previousChangeFieldNames
+        ${previousChangeFieldNames
       ->Belt.Array.map(previousFieldName => {
         `${historyRowArg}.${previousFieldName} := 0;`
       })
       ->Js.Array2.joinWith(" ")}
-            END IF;
-          END IF;
-        END IF;
+      END IF;
+    END IF;
+  END IF;
 
-        INSERT INTO ${historyTablePath} (${allFieldNamesDoubleQuoted->Js.Array2.joinWith(", ")})
-        VALUES (${allFieldNamesDoubleQuoted
+  INSERT INTO ${historyTablePath} (${allFieldNamesDoubleQuoted->Js.Array2.joinWith(", ")})
+  VALUES (${allFieldNamesDoubleQuoted
       ->Belt.Array.map(fieldName => `${historyRowArg}.${fieldName}`)
       ->Js.Array2.joinWith(", ")});
-      END;
-      $$ LANGUAGE plpgsql;
-      `
+END;
+$$ LANGUAGE plpgsql;`
   }
 
   let insertFnString = `(sql, rowArgs, shouldCopyCurrentEntity) =>
@@ -317,4 +316,49 @@ let fromTable = (table: table, ~pgSchema, ~schema: S.t<'entity>): t<'entity> => 
   let schema = makeHistoryRowSchema(schema)
 
   {table, createInsertFnQuery, schema, schemaRows: S.array(schema), insertFn}
+}
+
+type safeReorgBlocks = {
+  chainIds: array<int>,
+  blockNumbers: array<int>,
+}
+
+let makePruneStaleEntityHistoryQuery = (~entityName, ~pgSchema) => {
+  let historyTableName = entityName ++ "_history"
+  let historyTableRef = `"${pgSchema}"."${historyTableName}"`
+
+  `WITH safe AS (
+  SELECT s.chain_id, s.block_number
+  FROM unnest($1::int[], $2::bigint[]) AS s(chain_id, block_number)
+),
+max_before_safe AS (
+  SELECT t.id, MAX(t.serial) AS keep_serial
+  FROM ${historyTableRef} t
+  JOIN safe s
+    ON s.chain_id = t.entity_history_chain_id
+   AND t.entity_history_block_number <= s.block_number
+  GROUP BY t.id
+),
+post_safe AS (
+  SELECT DISTINCT t.id
+  FROM ${historyTableRef} t
+  JOIN safe s
+    ON s.chain_id = t.entity_history_chain_id
+   AND t.entity_history_block_number > s.block_number
+)
+DELETE FROM ${historyTableRef} d
+USING max_before_safe m
+LEFT JOIN post_safe p ON p.id = m.id
+WHERE d.id = m.id
+  AND (
+    d.serial < m.keep_serial
+    OR (p.id IS NULL AND d.serial = m.keep_serial)
+  );`
+}
+
+let pruneStaleEntityHistory = (sql, ~entityName, ~pgSchema, ~safeReorgBlocks) => {
+  sql->Postgres.preparedUnsafe(
+    makePruneStaleEntityHistoryQuery(~entityName, ~pgSchema),
+    (safeReorgBlocks.chainIds, safeReorgBlocks.blockNumbers)->Utils.magic,
+  )
 }

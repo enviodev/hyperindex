@@ -6,18 +6,17 @@ let make = (exn, ~logger=Logging.getLogger(), ~msg=?) => {
 
 let log = (self: t) => {
   switch self {
-  | {exn, msg: Some(msg), logger} =>
-    logger->Logging.childErrorWithExn(exn->Internal.prettifyExn, msg)
-  | {exn, msg: None, logger} => logger->Logging.childError(exn->Internal.prettifyExn)
+  | {exn, msg: Some(msg), logger} => logger->Logging.childErrorWithExn(exn->Utils.prettifyExn, msg)
+  | {exn, msg: None, logger} => logger->Logging.childError(exn->Utils.prettifyExn)
   }
 }
 
 let raiseExn = (self: t) => {
-  self.exn->Internal.prettifyExn->raise
+  self.exn->Utils.prettifyExn->raise
 }
 
 let mkLogAndRaise = (~logger=?, ~msg=?, exn) => {
-  let exn = exn->Internal.prettifyExn
+  let exn = exn->Utils.prettifyExn
   exn->make(~logger?, ~msg?)->log
   exn->raise
 }

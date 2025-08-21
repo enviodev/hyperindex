@@ -311,13 +311,17 @@ let isActivelyIndexing = self =>
   ->ChainMap.values
   ->Js.Array2.every(ChainFetcher.isActivelyIndexing)
 
-let getSafeChainIdAndBlockNumberArray = (self: t): array<
-  DbFunctions.EntityHistory.chainIdAndBlockNumber,
-> => {
+let getSafeReorgBlocks = (self: t): EntityHistory.safeReorgBlocks => {
+  let chainIds = []
+  let blockNumbers = []
   self.chainFetchers
   ->ChainMap.values
-  ->Array.map((cf): DbFunctions.EntityHistory.chainIdAndBlockNumber => {
-    chainId: cf.chainConfig.chain->ChainMap.Chain.toChainId,
-    blockNumber: cf->ChainFetcher.getHighestBlockBelowThreshold,
+  ->Array.forEach((cf) => {
+    chainIds->Js.Array2.push(cf.chainConfig.chain->ChainMap.Chain.toChainId)->ignore
+    blockNumbers->Js.Array2.push(cf->ChainFetcher.getHighestBlockBelowThreshold)->ignore
   })
+  {
+    chainIds,
+    blockNumbers,
+  }
 }

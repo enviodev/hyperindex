@@ -191,7 +191,7 @@ let executeBatch = async (
             // TODO: Ideally all this should be done in the file,
             // so it'll be easier to work on PG specific logic.
             specificError.contents = Some(PgStorage.PgEncodingError({table: entityConfig.table}))
-          | _ => specificError.contents = Some(exn->Internal.prettifyExn)
+          | _ => specificError.contents = Some(exn->Utils.prettifyExn)
           | exception _ => ()
           }
         | _ => ()

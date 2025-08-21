@@ -71,7 +71,7 @@ let schedule = async loadManager => {
         await group.load(inputsToLoad)
       } catch {
       | exn => {
-          let exn = exn->Internal.prettifyExn
+          let exn = exn->Utils.prettifyExn
           currentInputKeys->Array.forEach(inputKey => {
             let call = calls->Js.Dict.unsafeGet(inputKey)
             call.reject(exn)

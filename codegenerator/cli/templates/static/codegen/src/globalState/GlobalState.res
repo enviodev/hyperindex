@@ -8,7 +8,6 @@ module WriteThrottlers = {
     chainMetaData: Throttler.t,
     pruneStaleEndBlockData: ChainMap.t<Throttler.t>,
     pruneStaleEntityHistory: Throttler.t,
-    mutable deepCleanCount: int,
   }
   let make = (~config: Config.t): t => {
     let chainMetaData = {
@@ -44,7 +43,7 @@ module WriteThrottlers = {
       )
       Throttler.make(~intervalMillis, ~logger)
     }
-    {chainMetaData, pruneStaleEndBlockData, pruneStaleEntityHistory, deepCleanCount: 0}
+    {chainMetaData, pruneStaleEndBlockData, pruneStaleEntityHistory}
   }
 }
 
@@ -564,10 +563,7 @@ let processPartitionQueryResponse = async (
     // A small optimisation to not recreate an empty array
     empty->(Utils.magic: array<Internal.eventItem> => array<FetchState.indexingContract>)
   | _ =>
-    await ChainFetcher.runContractRegistersOrThrow(
-      ~itemsWithContractRegister,
-      ~config=state.config,
-    )
+    await ChainFetcher.runContractRegistersOrThrow(~itemsWithContractRegister, ~config=state.config)
   }
 
   dispatchAction(
@@ -862,34 +858,41 @@ let injectedTaskReducer = (
     throttler->Throttler.schedule(runPrune)
   | PruneStaleEntityHistory =>
     let runPrune = async () => {
-      let safeChainIdAndBlockNumberArray =
-        state.chainManager->ChainManager.getSafeChainIdAndBlockNumberArray
+      let safeReorgBlocks = state.chainManager->ChainManager.getSafeReorgBlocks
 
-      if safeChainIdAndBlockNumberArray->Belt.Array.length > 0 {
-        let shouldDeepClean = if (
-          state.writeThrottlers.deepCleanCount ==
-            Env.ThrottleWrites.deepCleanEntityHistoryCycleCount
-        ) {
-          state.writeThrottlers.deepCleanCount = 0
-          true
-        } else {
-          state.writeThrottlers.deepCleanCount = state.writeThrottlers.deepCleanCount + 1
-          false
-        }
-
+      if safeReorgBlocks.chainIds->Utils.Array.notEmpty {
         for idx in 0 to Entities.allEntities->Array.length - 1 {
           if idx !== 0 {
             // Add some delay between entities
             // To unblock the pg client if it's needed for something else
-            await Utils.delay(400)
+            await Utils.delay(1000)
           }
           let entityConfig = Entities.allEntities->Array.getUnsafe(idx)
           let timeRef = Hrtime.makeTimer()
-          await Db.sql->DbFunctions.EntityHistory.pruneStaleEntityHistory(
-            ~entityName=entityConfig.name,
-            ~safeChainIdAndBlockNumberArray,
-            ~shouldDeepClean,
-          )
+          try {
+            let () =
+              await Db.sql->EntityHistory.pruneStaleEntityHistory(
+                ~entityName=entityConfig.name,
+                ~pgSchema=Env.Db.publicSchema,
+                ~safeReorgBlocks,
+              )
+          } catch {
+          | exn =>
+            exn->ErrorHandling.mkLogAndRaise(
+              ~msg=`Failed to prune stale entity history`,
+              ~logger=Logging.createChild(
+                ~params={
+                  "entityName": entityConfig.name,
+                  "safeBlockNumbers": safeReorgBlocks.chainIds
+                  ->Js.Array2.mapi((chainId, idx) => (
+                    chainId->Belt.Int.toString,
+                    safeReorgBlocks.blockNumbers->Js.Array2.unsafe_get(idx),
+                  ))
+                  ->Js.Dict.fromArray,
+                },
+              ),
+            )
+          }
           Prometheus.RollbackHistoryPrune.increment(
             ~timeMillis=Hrtime.timeSince(timeRef)->Hrtime.toMillis,
             ~entityName=entityConfig.name,
