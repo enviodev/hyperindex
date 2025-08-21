@@ -83,7 +83,7 @@ let clearHasuraMetadata = async (~endpoint, ~auth) => {
   | exn =>
     Logging.error({
       "msg": `EE806: There was an issue clearing metadata in hasura - indexing may still work - but you may have issues querying the data in hasura.`,
-      "err": exn->Internal.prettifyExn,
+      "err": exn->Utils.prettifyExn,
     })
   }
 }
@@ -125,7 +125,7 @@ let trackTables = async (~endpoint, ~auth, ~pgSchema, ~tableNames: array<string>
     Logging.error({
       "msg": `EE807: There was an issue tracking tables in hasura - indexing may still work - but you may have issues querying the data in hasura.`,
       "tableNames": tableNames,
-      "err": exn->Internal.prettifyExn,
+      "err": exn->Utils.prettifyExn,
     })
   }
 }
@@ -172,7 +172,7 @@ let createSelectPermissions = async (
     Logging.error({
       "msg": `EE808: There was an issue setting up view permissions for the ${tableName} table in hasura - indexing may still work - but you may have issues querying the data in hasura.`,
       "tableName": tableName,
-      "err": exn->Internal.prettifyExn,
+      "err": exn->Utils.prettifyExn,
     })
   }
 }
@@ -213,7 +213,7 @@ let createEntityRelationship = async (
     Logging.error({
       "msg": `EE808: There was an issue setting up ${relationshipType} relationship for the ${tableName} table in hasura - indexing may still work - but you may have issues querying the data in hasura.`,
       "tableName": tableName,
-      "err": exn->Internal.prettifyExn,
+      "err": exn->Utils.prettifyExn,
     })
   }
 }

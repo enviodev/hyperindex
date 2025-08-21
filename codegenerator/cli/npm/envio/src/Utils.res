@@ -584,3 +584,10 @@ module Hash = {
     }
   }
 }
+
+let prettifyExn = exn => {
+  switch exn->Js.Exn.anyToExnInternal {
+  | Js.Exn.Error(e) => e->(magic: Js.Exn.t => exn)
+  | exn => exn
+  }
+}

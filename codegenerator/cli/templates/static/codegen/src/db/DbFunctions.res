@@ -192,47 +192,7 @@ module EntityHistory = {
     ~getFirstChangeSerial: Postgres.sql => dynamicSqlQuery,
   ) => promise<unit> = "deleteRolledBackEntityHistory"
 
-  type chainIdAndBlockNumber = {
-    chainId: int,
-    blockNumber: int,
-  }
-
-  @module("./DbFunctionsImplementation.js")
-  external pruneStaleEntityHistoryInternal: (
-    Postgres.sql,
-    ~entityName: string,
-    ~safeChainIdAndBlockNumberArray: array<chainIdAndBlockNumber>,
-    // shouldDeepClean is a boolean that determines whether to delete stale history
-    // items of entities that are in the reorg threshold (expensive to calculate)
-    // or to do a shallow clean (only deletes history items of entities that are not in the reorg threshold)
-    ~shouldDeepClean: bool,
-  ) => promise<unit> = "pruneStaleEntityHistory"
-
   let rollbacksGroup = "Rollbacks"
-
-  let pruneStaleEntityHistory = async (
-    sql,
-    ~entityName,
-    ~safeChainIdAndBlockNumberArray,
-    ~shouldDeepClean,
-  ) => {
-    try await sql->pruneStaleEntityHistoryInternal(
-      ~entityName,
-      ~safeChainIdAndBlockNumberArray,
-      ~shouldDeepClean,
-    ) catch {
-    | exn =>
-      exn->ErrorHandling.mkLogAndRaise(
-        ~msg=`Failed to prune stale entity history`,
-        ~logger=Logging.createChild(
-          ~params={
-            "entityName": entityName,
-            "safeChainIdAndBlockNumberArray": safeChainIdAndBlockNumberArray,
-          },
-        ),
-      )
-    }
-  }
 
   module Args = {
     type t =
