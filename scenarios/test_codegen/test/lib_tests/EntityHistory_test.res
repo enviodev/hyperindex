@@ -186,42 +186,41 @@ describe("Entity history serde", () => {
 describe("Entity History Codegen", () => {
   it("Creates a postgres insert function", () => {
     let expected = `CREATE OR REPLACE FUNCTION "insert_TestEntity_history"(history_row "public"."TestEntity_history", should_copy_current_entity BOOLEAN)
-      RETURNS void AS $$
-      DECLARE
-        v_previous_record RECORD;
-        v_origin_record RECORD;
-      BEGIN
-        -- Check if previous values are not provided
-        IF history_row.previous_entity_history_block_timestamp IS NULL OR history_row.previous_entity_history_chain_id IS NULL OR history_row.previous_entity_history_block_number IS NULL OR history_row.previous_entity_history_log_index IS NULL THEN
-          -- Find the most recent record for the same id
-          SELECT entity_history_block_timestamp, entity_history_chain_id, entity_history_block_number, entity_history_log_index INTO v_previous_record
-          FROM "public"."TestEntity_history"
-          WHERE id = history_row.id
-          ORDER BY entity_history_block_timestamp DESC, entity_history_chain_id DESC, entity_history_block_number DESC, entity_history_log_index DESC
-          LIMIT 1;
+RETURNS void AS $$
+DECLARE
+  v_previous_record RECORD;
+  v_origin_record RECORD;
+BEGIN
+  -- Check if previous values are not provided
+  IF history_row.previous_entity_history_block_timestamp IS NULL OR history_row.previous_entity_history_chain_id IS NULL OR history_row.previous_entity_history_block_number IS NULL OR history_row.previous_entity_history_log_index IS NULL THEN
+    -- Find the most recent record for the same id
+    SELECT entity_history_block_timestamp, entity_history_chain_id, entity_history_block_number, entity_history_log_index INTO v_previous_record
+    FROM "public"."TestEntity_history"
+    WHERE id = history_row.id
+    ORDER BY entity_history_block_timestamp DESC, entity_history_chain_id DESC, entity_history_block_number DESC, entity_history_log_index DESC
+    LIMIT 1;
 
-          -- If a previous record exists, use its values
-          IF FOUND THEN
-            history_row.previous_entity_history_block_timestamp := v_previous_record.entity_history_block_timestamp; history_row.previous_entity_history_chain_id := v_previous_record.entity_history_chain_id; history_row.previous_entity_history_block_number := v_previous_record.entity_history_block_number; history_row.previous_entity_history_log_index := v_previous_record.entity_history_log_index;
-            ElSIF should_copy_current_entity THEN
-            -- Check if a value for the id exists in the origin table and if so, insert a history row for it.
-            SELECT "id", "fieldA", "fieldB" FROM "public"."TestEntity" WHERE id = history_row.id INTO v_origin_record;
-            IF FOUND THEN
-              INSERT INTO "public"."TestEntity_history" (entity_history_block_timestamp, entity_history_chain_id, entity_history_block_number, entity_history_log_index, "id", "fieldA", "fieldB", "action")
-              -- SET the current change data fields to 0 since we don't know what they were
-              -- and it doesn't matter provided they are less than any new values
-              VALUES (0, 0, 0, 0, v_origin_record."id", v_origin_record."fieldA", v_origin_record."fieldB", 'SET');
+    -- If a previous record exists, use its values
+    IF FOUND THEN
+      history_row.previous_entity_history_block_timestamp := v_previous_record.entity_history_block_timestamp; history_row.previous_entity_history_chain_id := v_previous_record.entity_history_chain_id; history_row.previous_entity_history_block_number := v_previous_record.entity_history_block_number; history_row.previous_entity_history_log_index := v_previous_record.entity_history_log_index;
+      ElSIF should_copy_current_entity THEN
+      -- Check if a value for the id exists in the origin table and if so, insert a history row for it.
+      SELECT "id", "fieldA", "fieldB" FROM "public"."TestEntity" WHERE id = history_row.id INTO v_origin_record;
+      IF FOUND THEN
+        INSERT INTO "public"."TestEntity_history" (entity_history_block_timestamp, entity_history_chain_id, entity_history_block_number, entity_history_log_index, "id", "fieldA", "fieldB", "action")
+        -- SET the current change data fields to 0 since we don't know what they were
+        -- and it doesn't matter provided they are less than any new values
+        VALUES (0, 0, 0, 0, v_origin_record."id", v_origin_record."fieldA", v_origin_record."fieldB", 'SET');
 
-              history_row.previous_entity_history_block_timestamp := 0; history_row.previous_entity_history_chain_id := 0; history_row.previous_entity_history_block_number := 0; history_row.previous_entity_history_log_index := 0;
-            END IF;
-          END IF;
-        END IF;
+        history_row.previous_entity_history_block_timestamp := 0; history_row.previous_entity_history_chain_id := 0; history_row.previous_entity_history_block_number := 0; history_row.previous_entity_history_log_index := 0;
+      END IF;
+    END IF;
+  END IF;
 
-        INSERT INTO "public"."TestEntity_history" ("entity_history_block_timestamp", "entity_history_chain_id", "entity_history_block_number", "entity_history_log_index", "previous_entity_history_block_timestamp", "previous_entity_history_chain_id", "previous_entity_history_block_number", "previous_entity_history_log_index", "id", "fieldA", "fieldB", "action")
-        VALUES (history_row."entity_history_block_timestamp", history_row."entity_history_chain_id", history_row."entity_history_block_number", history_row."entity_history_log_index", history_row."previous_entity_history_block_timestamp", history_row."previous_entity_history_chain_id", history_row."previous_entity_history_block_number", history_row."previous_entity_history_log_index", history_row."id", history_row."fieldA", history_row."fieldB", history_row."action");
-      END;
-      $$ LANGUAGE plpgsql;
-      `
+  INSERT INTO "public"."TestEntity_history" ("entity_history_block_timestamp", "entity_history_chain_id", "entity_history_block_number", "entity_history_log_index", "previous_entity_history_block_timestamp", "previous_entity_history_chain_id", "previous_entity_history_block_number", "previous_entity_history_log_index", "id", "fieldA", "fieldB", "action")
+  VALUES (history_row."entity_history_block_timestamp", history_row."entity_history_chain_id", history_row."entity_history_block_number", history_row."entity_history_log_index", history_row."previous_entity_history_block_timestamp", history_row."previous_entity_history_chain_id", history_row."previous_entity_history_block_number", history_row."previous_entity_history_log_index", history_row."id", history_row."fieldA", history_row."fieldB", history_row."action");
+END;
+$$ LANGUAGE plpgsql;`
 
     Assert.equal(expected, TestEntity.entityHistory.createInsertFnQuery)
   })
@@ -414,6 +413,43 @@ describe("Entity History Codegen", () => {
         },
       ],
       ~shouldCopyCurrentEntity=true,
+    )
+  })
+
+  it("Creates prune stale entity history query", () => {
+    let query = EntityHistory.makePruneStaleEntityHistoryQuery(
+      ~entityName="TestEntity",
+      ~pgSchema="foo",
+    )
+    Assert.equal(
+      query,
+      `WITH safe AS (
+  SELECT s.chain_id, s.block_number
+  FROM unnest($1::int[], $2::bigint[]) AS s(chain_id, block_number)
+),
+max_before_safe AS (
+  SELECT t.id, MAX(t.serial) AS keep_serial
+  FROM "foo"."TestEntity_history" t
+  JOIN safe s
+    ON s.chain_id = t.entity_history_chain_id
+   AND t.entity_history_block_number <= s.block_number
+  GROUP BY t.id
+),
+post_safe AS (
+  SELECT DISTINCT t.id
+  FROM "foo"."TestEntity_history" t
+  JOIN safe s
+    ON s.chain_id = t.entity_history_chain_id
+   AND t.entity_history_block_number > s.block_number
+)
+DELETE FROM "foo"."TestEntity_history" d
+USING max_before_safe m
+LEFT JOIN post_safe p ON p.id = m.id
+WHERE d.id = m.id
+  AND (
+    d.serial < m.keep_serial
+    OR (p.id IS NULL AND d.serial = m.keep_serial)
+  );`,
     )
   })
 })
@@ -759,10 +795,13 @@ describe("Entity history rollbacks", () => {
     //   items->S.parseJsonOrThrow(TestEntity.entityHistory.schemaRows)
     // }
 
-    await Db.sql->DbFunctions.EntityHistory.pruneStaleEntityHistory(
+    let () = await Db.sql->EntityHistory.pruneStaleEntityHistory(
       ~entityName=(module(TestEntity)->Entities.entityModToInternal).name,
-      ~safeChainIdAndBlockNumberArray=[{chainId: Mocks.GnosisBug.chain_id, blockNumber: 11}],
-      ~shouldDeepClean=true,
+      ~pgSchema=Env.Db.publicSchema,
+      ~safeReorgBlocks={
+        chainIds: [Mocks.GnosisBug.chain_id],
+        blockNumbers: [11],
+      },
     )
 
     let historyItemsAfter = {
@@ -996,10 +1035,13 @@ describe("Entity history rollbacks", () => {
   })
 
   Async.it("Prunes history correctly with items in reorg threshold", async () => {
-    await Db.sql->DbFunctions.EntityHistory.pruneStaleEntityHistory(
+    let () = await Db.sql->EntityHistory.pruneStaleEntityHistory(
       ~entityName=(module(TestEntity)->Entities.entityModToInternal).name,
-      ~safeChainIdAndBlockNumberArray=[{chainId: 1, blockNumber: 3}, {chainId: 2, blockNumber: 2}],
-      ~shouldDeepClean=true,
+      ~pgSchema=Env.Db.publicSchema,
+      ~safeReorgBlocks={
+        chainIds: [1, 2],
+        blockNumbers: [3, 2],
+      },
     )
     let currentHistoryItems = await Db.sql->getAllMockEntityHistory
 
@@ -1025,39 +1067,45 @@ describe("Entity history rollbacks", () => {
     )
   })
 
-  Async.it(
-    "Deep clean prunes history correctly with items in reorg threshold without checking for stale history entities in threshold",
-    async () => {
-      await Db.sql->DbFunctions.EntityHistory.pruneStaleEntityHistory(
-        ~entityName=(module(TestEntity)->Entities.entityModToInternal).name,
-        ~safeChainIdAndBlockNumberArray=[
-          {chainId: 1, blockNumber: 3},
-          {chainId: 2, blockNumber: 2},
-        ],
-        ~shouldDeepClean=false,
-      )
-      let currentHistoryItems = await Db.sql->getAllMockEntityHistory
-
-      let parsedHistoryItems =
-        currentHistoryItems->S.parseJsonOrThrow(TestEntity.entityHistory.schemaRows)
-
-      let sort = arr =>
-        arr->Js.Array2.sortInPlaceWith(
-          (a, b) => a.EntityHistory.current.block_number - b.current.block_number,
-        )
-
-      Assert.deepEqual(
-        parsedHistoryItems->sort->stripUndefinedFieldsInPlace,
-        Mocks.historyRows,
-        ~message="Should have deleted the unneeded first items in history",
-      )
-    },
-  )
-  Async.it("Prunes history correctly with no items in reorg threshold", async () => {
-    await Db.sql->DbFunctions.EntityHistory.pruneStaleEntityHistory(
+  Async.it("Prunes history correctly with items in reorg threshold", async () => {
+    let () = await Db.sql->EntityHistory.pruneStaleEntityHistory(
       ~entityName=(module(TestEntity)->Entities.entityModToInternal).name,
-      ~safeChainIdAndBlockNumberArray=[{chainId: 1, blockNumber: 4}, {chainId: 2, blockNumber: 3}],
-      ~shouldDeepClean=true,
+      ~pgSchema=Env.Db.publicSchema,
+      ~safeReorgBlocks={
+        chainIds: [1, 2],
+        blockNumbers: [3, 2],
+      },
+    )
+    let currentHistoryItems = await Db.sql->getAllMockEntityHistory
+
+    let parsedHistoryItems =
+      currentHistoryItems->S.parseJsonOrThrow(TestEntity.entityHistory.schemaRows)
+
+    let sort = arr =>
+      arr->Js.Array2.sortInPlaceWith(
+        (a, b) => a.EntityHistory.current.block_number - b.current.block_number,
+      )
+
+    Assert.deepEqual(
+      parsedHistoryItems->sort->stripUndefinedFieldsInPlace,
+      [
+        Mocks.Chain1.historyRow2,
+        Mocks.Chain2.historyRow2,
+        Mocks.Chain2.historyRow3,
+        Mocks.Chain1.historyRow3,
+      ]->stripUndefinedFieldsInPlace,
+      ~message="Should have deleted the unneeded first items in history",
+    )
+  })
+
+  Async.it("Prunes history correctly with no items in reorg threshold", async () => {
+    let () = await Db.sql->EntityHistory.pruneStaleEntityHistory(
+      ~entityName=(module(TestEntity)->Entities.entityModToInternal).name,
+      ~pgSchema=Env.Db.publicSchema,
+      ~safeReorgBlocks={
+        chainIds: [1, 2],
+        blockNumbers: [4, 3],
+      },
     )
     let currentHistoryItems = await Db.sql->getAllMockEntityHistory
 
@@ -1121,11 +1169,16 @@ describe_skip("Prune performance test", () => {
 
     let startTime = Hrtime.makeTimer()
 
-    try await Db.sql->DbFunctions.EntityHistory.pruneStaleEntityHistory(
-      ~entityName=(module(TestEntity)->Entities.entityModToInternal).name,
-      ~safeChainIdAndBlockNumberArray=[{chainId: 1, blockNumber: 500}],
-      ~shouldDeepClean=false,
-    ) catch {
+    try {
+      let () = await Db.sql->EntityHistory.pruneStaleEntityHistory(
+        ~entityName=(module(TestEntity)->Entities.entityModToInternal).name,
+        ~pgSchema=Env.Db.publicSchema,
+        ~safeReorgBlocks={
+          chainIds: [1],
+          blockNumbers: [500],
+        },
+      )
+    } catch {
     | exn =>
       Js.log2("prune stale entity history exn", exn)
       Assert.fail("Failed to prune stale entity history")

@@ -356,7 +356,7 @@ WHERE d.id = m.id
   );`
 }
 
-let pruneStaleEntityHistory = (sql, ~entityName, ~pgSchema, ~safeReorgBlocks) => {
+let pruneStaleEntityHistory = (sql, ~entityName, ~pgSchema, ~safeReorgBlocks): promise<unit> => {
   sql->Postgres.preparedUnsafe(
     makePruneStaleEntityHistoryQuery(~entityName, ~pgSchema),
     (safeReorgBlocks.chainIds, safeReorgBlocks.blockNumbers)->Utils.magic,
