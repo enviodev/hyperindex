@@ -323,6 +323,26 @@ type safeReorgBlocks = {
   blockNumbers: array<int>,
 }
 
+// We want to keep only the minimum history needed to survive chain reorgs and delete everything older.
+// Each chain gives us a "safe block": we assume reorgs will never happen at that block.
+//
+// What we keep per entity id:
+// - The latest history row at or before the safe block (the "anchor"). This is the last state that could
+//   ever be relevant during a rollback.
+// - If there are history rows in reorg threshold (after the safe block), we keep the anchor and delete all older rows.
+// - If there are no history rows in reorg threshold (after the safe block), even the anchor is redundant, so we delete it too.
+//
+// Why this is safe:
+// - Rollbacks will not cross the safe block, so rows older than the anchor can never be referenced again.
+// - If nothing changed in reorg threshold (after the safe block), the current state for that id can be reconstructed from the
+//   origin table; we do not need a pre-safe anchor for it.
+//
+// Performance notes:
+// - Multi-chain batching: inputs are expanded with unnest, letting one prepared statement prune many chains and
+//   enabling the planner to use indexes per chain_id efficiently.
+// - Minimal row touches: we only compute keep_serial per id and delete strictly older rows; this reduces write
+//   amplification and vacuum pressure compared to broad time-based purges.
+// - Contention-awareness: the DELETE joins on ids first, narrowing target rows early to limit locking and buffer churn.
 let makePruneStaleEntityHistoryQuery = (~entityName, ~pgSchema) => {
   let historyTableName = entityName ++ "_history"
   let historyTableRef = `"${pgSchema}"."${historyTableName}"`
