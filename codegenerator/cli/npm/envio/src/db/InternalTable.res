@@ -12,7 +12,6 @@ module EventSyncState = {
   let logIndexFieldName = "log_index"
   let isPreRegisteringDynamicContractsFieldName = "is_pre_registering_dynamic_contracts"
 
-  @genType
   type t = {
     @as("chain_id") chainId: int,
     @as("block_number") blockNumber: int,
@@ -47,48 +46,54 @@ module EventSyncState = {
         ${isPreRegisteringDynamicContractsFieldName} = false;`
 }
 
-module ChainMetadata = {
-  @genType
+module Chains = {
   type t = {
-    chain_id: int,
-    start_block: int,
-    end_block: option<int>,
-    block_height: int,
-    first_event_block_number: option<int>,
-    latest_processed_block: option<int>,
-    num_events_processed: option<int>,
-    is_hyper_sync: bool,
-    num_batches_fetched: int,
-    latest_fetched_block_number: int,
-    timestamp_caught_up_to_head_or_endblock: Js.Date.t,
+    @as("chain_id") chainId: int,
+    @as("start_block") startBlock: int,
+    @as("end_block") endBlock: option<int>,
+    @as("source_block") blockHeight: int,
+    @as("first_event_block") firstEventBlockNumber: option<int>,
+    @as("buffer_block") latestFetchedBlockNumber: int,
+    @as("ready_at")
+    timestampCaughtUpToHeadOrEndblock: Js.Date.t,
+    @as("_latest_processed_block") latestProcessedBlock: option<int>,
+    @as("_num_events_processed") numEventsProcessed: option<int>,
+    @as("_is_hyper_sync") isHyperSync: bool,
+    @as("_num_batches_fetched") numBatchesFetched: int,
   }
 
   let table = mkTable(
-    "chain_metadata",
+    "envio_chains",
     ~fields=[
       mkField("chain_id", Integer, ~fieldSchema=S.int, ~isPrimaryKey),
+      // Values populated from config
       mkField("start_block", Integer, ~fieldSchema=S.int),
       mkField("end_block", Integer, ~fieldSchema=S.null(S.int), ~isNullable),
-      mkField("block_height", Integer, ~fieldSchema=S.int),
-      mkField("first_event_block_number", Integer, ~fieldSchema=S.null(S.int), ~isNullable),
-      mkField("latest_processed_block", Integer, ~fieldSchema=S.null(S.int), ~isNullable),
-      mkField("num_events_processed", Integer, ~fieldSchema=S.null(S.int), ~isNullable),
-      mkField("is_hyper_sync", Boolean, ~fieldSchema=S.bool),
-      mkField("num_batches_fetched", Integer, ~fieldSchema=S.int),
-      mkField("latest_fetched_block_number", Integer, ~fieldSchema=S.int),
+      // Block number of the latest block that was fetched from the source
+      mkField("buffer_block", Integer, ~fieldSchema=S.int),
+      // Block number of the currently active source
+      mkField("source_block", Integer, ~fieldSchema=S.int),
+      // Block number of the first event that was processed for this chain
+      mkField("first_event_block", Integer, ~fieldSchema=S.null(S.int), ~isNullable),
       // Used to show how much time historical sync has taken, so we need a timezone here (TUI and Hosted Service)
+      // null during historical sync, set to current time when sync is complete
       mkField(
-        "timestamp_caught_up_to_head_or_endblock",
+        "ready_at",
         TimestampWithNullTimezone,
         ~fieldSchema=S.null(Utils.Schema.dbDate),
         ~isNullable,
       ),
+      // TODO: In the future it should reference a table with sources
+      mkField("_is_hyper_sync", Boolean, ~fieldSchema=S.bool),
+      // TODO: Make the data more public facing
+      mkField("_latest_processed_block", Integer, ~fieldSchema=S.null(S.int), ~isNullable),
+      mkField("_num_events_processed", Integer, ~fieldSchema=S.null(S.int), ~isNullable),
+      mkField("_num_batches_fetched", Integer, ~fieldSchema=S.int),
     ],
   )
 }
 
 module PersistedState = {
-  @genType
   type t = {
     id: int,
     envio_version: string,
@@ -112,7 +117,6 @@ module PersistedState = {
 }
 
 module EndOfBlockRangeScannedData = {
-  @genType
   type t = {
     chain_id: int,
     block_number: int,
@@ -130,7 +134,6 @@ module EndOfBlockRangeScannedData = {
 }
 
 module RawEvents = {
-  @genType
   type t = {
     @as("chain_id") chainId: int,
     @as("event_id") eventId: bigint,
@@ -194,7 +197,6 @@ module DynamicContractRegistry = {
     chainId->Belt.Int.toString ++ "-" ++ contractAddress->Address.toString
   }
 
-  @genType
   type t = {
     id: string,
     @as("chain_id") chainId: int,

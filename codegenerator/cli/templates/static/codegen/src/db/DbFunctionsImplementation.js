@@ -59,12 +59,12 @@ module.exports.batchSetEventSyncState = (sql, entityDataArray) => {
 
 module.exports.readLatestChainMetadataState = (sql, chainId) => sql`
   SELECT *
-  FROM ${sql(publicSchema)}.chain_metadata
+  FROM ${sql(publicSchema)}.envio_chains
   WHERE chain_id = ${chainId}`;
 
 module.exports.batchSetChainMetadata = (sql, entityDataArray) => {
   return sql`
-    INSERT INTO ${sql(publicSchema)}.chain_metadata
+    INSERT INTO ${sql(publicSchema)}.envio_chains
   ${sql(
     entityDataArray,
     "chain_id",

@@ -70,7 +70,7 @@ type storageStatus =
 
 type t = {
   userEntities: array<Internal.entityConfig>,
-  staticTables: array<Table.table>,
+  internalTables: array<Table.table>,
   allEntities: array<Internal.entityConfig>,
   allEnums: array<Internal.enumConfig<Internal.enum>>,
   mutable storageStatus: storageStatus,
@@ -88,7 +88,6 @@ let make = (
   ~userEntities,
   // TODO: Should only pass userEnums and create internal config in runtime
   ~allEnums,
-  ~staticTables,
   ~storage,
 ) => {
   let allEntities = userEntities->Js.Array2.concat([InternalTable.DynamicContractRegistry.config])
@@ -96,7 +95,13 @@ let make = (
     allEnums->Js.Array2.concat([entityHistoryActionEnumConfig->Internal.fromGenericEnumConfig])
   {
     userEntities,
-    staticTables,
+    internalTables: [
+      InternalTable.EventSyncState.table,
+      InternalTable.Chains.table,
+      InternalTable.PersistedState.table,
+      InternalTable.EndOfBlockRangeScannedData.table,
+      InternalTable.RawEvents.table,
+    ],
     allEntities,
     allEnums,
     storageStatus: Unknown,
@@ -136,7 +141,7 @@ let init = {
 
           await persistence.storage.initialize(
             ~entities=persistence.allEntities,
-            ~generalTables=persistence.staticTables,
+            ~generalTables=persistence.internalTables,
             ~enums=persistence.allEnums,
           )
 

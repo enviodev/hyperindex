@@ -240,7 +240,7 @@ let trackMeta = async (~auth, ~endpoint, ~pgSchema) => {
     let result = await rawBodyRoute->Rest.fetch(
       {
         "auth": auth,
-        "bodyString": `{"type":"pg_track_native_query","args":{"type":"query","source":"default","root_field_name":"_meta","arguments":{},"returns":"EnvioChainMeta","code":"SELECT \\\"chain_id\\\" AS \\\"chainId\\\", \\\"start_block\\\" AS \\\"startBlock\\\", \\\"end_block\\\" AS \\\"endBlock\\\", \\\"latest_fetched_block_number\\\" AS \\\"bufferBlock\\\" FROM \\\"${pgSchema}\\\".\\\"chain_metadata\\\" ORDER BY \\\"chain_id\\\""}}`,
+        "bodyString": `{"type":"pg_track_native_query","args":{"type":"query","source":"default","root_field_name":"_meta","arguments":{},"returns":"EnvioChainMeta","code":"SELECT \\\"chain_id\\\" AS \\\"chainId\\\", \\\"start_block\\\" AS \\\"startBlock\\\", \\\"end_block\\\" AS \\\"endBlock\\\", \\\"buffer_block\\\" AS \\\"bufferBlock\\\" FROM \\\"${pgSchema}\\\".\\\"${InternalTable.Chains.table.tableName}\\\" ORDER BY \\\"chain_id\\\""}}`,
       },
       ~client=Rest.client(endpoint),
     )
@@ -272,7 +272,7 @@ let trackMeta = async (~auth, ~endpoint, ~pgSchema) => {
     let result = await rawBodyRoute->Rest.fetch(
       {
         "auth": auth,
-        "bodyString": `{"type":"pg_track_native_query","args":{"type":"query","source":"default","root_field_name":"chain_metadata","arguments":{},"returns":"chain_metadata","code":"SELECT \\\"block_height\\\", \\\"chain_id\\\", \\\"end_block\\\", \\\"first_event_block_number\\\", \\\"is_hyper_sync\\\", \\\"latest_fetched_block_number\\\", \\\"latest_processed_block\\\", \\\"num_batches_fetched\\\", \\\"num_events_processed\\\", \\\"start_block\\\", \\\"timestamp_caught_up_to_head_or_endblock\\\" FROM \\\"${pgSchema}\\\".\\\"chain_metadata\\\""}}`,
+        "bodyString": `{"type":"pg_track_native_query","args":{"type":"query","source":"default","root_field_name":"chain_metadata","arguments":{},"returns":"chain_metadata","code":"SELECT \\\"source_block\\\" AS \\\"block_height\\\", \\\"chain_id\\\", \\\"end_block\\\", \\\"first_event_block\\\" AS \\\"first_event_block_number\\\", \\\"_is_hyper_sync\\\" AS \\\"is_hyper_sync\\\", \\\"buffer_block\\\" AS \\\"latest_fetched_block_number\\\", \\\"_latest_processed_block\\\" AS \\\"latest_processed_block\\\", \\\"_num_batches_fetched\\\" AS \\\"num_batches_fetched\\\", \\\"_num_events_processed\\\" AS \\\"num_events_processed\\\", \\\"start_block\\\", \\\"ready_at\\\" AS \\\"timestamp_caught_up_to_head_or_endblock\\\" FROM \\\"${pgSchema}\\\".\\\"${InternalTable.Chains.table.tableName}\\\""}}`,
       },
       ~client=Rest.client(endpoint),
     )
@@ -296,28 +296,39 @@ let trackDatabase = async (
   ~endpoint,
   ~auth,
   ~pgSchema,
-  ~staticTables: array<Table.table>,
-  ~allEntityTables,
+  ~userEntities: array<Internal.entityConfig>,
   ~aggregateEntities,
   ~responseLimit,
   ~schema,
 ) => {
-  // Filter out chain_metadata table from automatic tracking,
-  // since we manually create a native query for it.
-  let staticTables = staticTables->Js.Array2.filter(table => table.tableName != "chain_metadata")
+  let trackOnlyInternalTableNames = [
+    InternalTable.Chains.table.tableName,
+    InternalTable.EventSyncState.table.tableName,
+    InternalTable.PersistedState.table.tableName,
+    InternalTable.EndOfBlockRangeScannedData.table.tableName,
+    InternalTable.DynamicContractRegistry.table.tableName,
+  ]
+  let exposedInternalTableNames = [InternalTable.RawEvents.table.tableName]
+  let userTableNames = userEntities->Js.Array2.map(entity => entity.table.tableName)
 
   Logging.info("Tracking tables in Hasura")
 
   let _ = await clearHasuraMetadata(~endpoint, ~auth)
-  let tableNames =
-    [staticTables, allEntityTables]
-    ->Belt.Array.concatMany
-    ->Js.Array2.map(({tableName}: Table.table) => tableName)
 
-  await trackTables(~endpoint, ~auth, ~pgSchema, ~tableNames)
+  await trackTables(
+    ~endpoint,
+    ~auth,
+    ~pgSchema,
+    ~tableNames=[
+      exposedInternalTableNames,
+      trackOnlyInternalTableNames,
+      userTableNames,
+    ]->Belt.Array.concatMany,
+  )
 
   let _ =
-    await tableNames
+    await [exposedInternalTableNames, userTableNames]
+    ->Belt.Array.concatMany
     ->Js.Array2.map(tableName =>
       createSelectPermissions(
         ~endpoint,
@@ -329,11 +340,11 @@ let trackDatabase = async (
       )
     )
     ->Js.Array2.concatMany(
-      allEntityTables->Js.Array2.map(table => {
-        let {tableName} = table
+      userEntities->Js.Array2.map(entityConfig => {
+        let {tableName} = entityConfig.table
         [
           //Set array relationships
-          table
+          entityConfig.table
           ->Table.getDerivedFromFields
           ->Js.Array2.map(derivedFromField => {
             //determines the actual name of the underlying relational field (if it's an entity mapping then suffixes _id for eg.)
@@ -353,7 +364,7 @@ let trackDatabase = async (
             )
           }),
           //Set object relationships
-          table
+          entityConfig.table
           ->Table.getLinkedEntityFields
           ->Js.Array2.map(((field, linkedEntityName)) => {
             createEntityRelationship(

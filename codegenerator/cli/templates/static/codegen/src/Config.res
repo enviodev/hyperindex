@@ -82,7 +82,6 @@ let getSyncConfig = (
 let storagePgSchema = Env.Db.publicSchema
 let codegenPersistence = Persistence.make(
   ~userEntities=Entities.userEntities,
-  ~staticTables=Db.allStaticTables,
   ~allEnums=Enums.allEnums,
   ~storage=PgStorage.make(
     ~sql=Db.sql,
@@ -103,8 +102,7 @@ let codegenPersistence = Persistence.make(
                 secret: Env.Hasura.secret,
               },
               ~pgSchema=storagePgSchema,
-              ~staticTables=Db.allStaticTables,
-              ~allEntityTables=Db.allEntityTables,
+              ~userEntities=Entities.userEntities,
               ~responseLimit=Env.Hasura.responseLimit,
               ~schema=Db.schema,
               ~aggregateEntities=Env.Hasura.aggregateEntities,

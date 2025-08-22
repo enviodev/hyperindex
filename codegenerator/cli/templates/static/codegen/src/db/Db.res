@@ -20,12 +20,4 @@ let allEntityTables: array<Table.table> = Entities.allEntities->Belt.Array.map(e
   entityConfig.table
 })
 
-let allStaticTables: array<Table.table> = [
-  InternalTable.EventSyncState.table,
-  InternalTable.ChainMetadata.table,
-  InternalTable.PersistedState.table,
-  InternalTable.EndOfBlockRangeScannedData.table,
-  InternalTable.RawEvents.table,
-]
-
 let schema = Schema.make(allEntityTables)
