@@ -218,21 +218,99 @@ let createEntityRelationship = async (
   }
 }
 
+let trackMeta = async (~auth, ~endpoint, ~pgSchema) => {
+  try {
+    // Track EnvioChainMeta logical model with scalar fields
+    let result = await rawBodyRoute->Rest.fetch(
+      {
+        "auth": auth,
+        "bodyString": `{"type": "pg_track_logical_model","args": {"source": "default","name":"EnvioChainMeta","fields":[{"name":"chainId","type":"int"},{"name":"startBlock","type":"int"},{"name":"endBlock","type":"int","nullable":true},{"name":"bufferBlock","type":"int"}]}}`,
+      },
+      ~client=Rest.client(endpoint),
+    )
+    let msg = switch result {
+    | QuerySucceeded => `Hasura EnvioChainMeta logical model created`
+    | AlreadyDone => `Hasura EnvioChainMeta logical model already created`
+    }
+    Logging.trace({
+      "msg": msg,
+    })
+
+    // Update _meta native query to return hardcoded block object
+    let result = await rawBodyRoute->Rest.fetch(
+      {
+        "auth": auth,
+        "bodyString": `{"type":"pg_track_native_query","args":{"type":"query","source":"default","root_field_name":"_meta","arguments":{},"returns":"EnvioChainMeta","code":"SELECT \\\"chain_id\\\" AS \\\"chainId\\\", \\\"start_block\\\" AS \\\"startBlock\\\", \\\"end_block\\\" AS \\\"endBlock\\\", \\\"latest_fetched_block_number\\\" AS \\\"bufferBlock\\\" FROM \\\"${pgSchema}\\\".\\\"chain_metadata\\\" ORDER BY \\\"chain_id\\\""}}`,
+      },
+      ~client=Rest.client(endpoint),
+    )
+    let msg = switch result {
+    | QuerySucceeded => `Hasura _meta native query created`
+    | AlreadyDone => `Hasura _meta native query already created`
+    }
+    Logging.trace({
+      "msg": msg,
+    })
+
+    let result = await rawBodyRoute->Rest.fetch(
+      {
+        "auth": auth,
+        "bodyString": `{"type": "pg_track_logical_model","args": {"source": "default","name":"chain_metadata","fields":[{"name":"block_height","type":"int"},{"name":"chain_id","type":"int"},{"name":"end_block","type":"int"},{"name":"first_event_block_number","type":"int"},{"name":"is_hyper_sync","type":"boolean"},{"name":"latest_fetched_block_number","type":"int"},{"name":"latest_processed_block","type":"int"},{"name":"num_batches_fetched","type":"int"},{"name":"num_events_processed","type":"int"},{"name":"start_block","type":"int"},{"name":"timestamp_caught_up_to_head_or_endblock","type":"timestamptz"}]}}`,
+      },
+      ~client=Rest.client(endpoint),
+    )
+    let msg = switch result {
+    | QuerySucceeded => `Hasura chain_metadata logical model created`
+    | AlreadyDone => `Hasura chain_metadata logical model already created`
+    }
+    Logging.trace({
+      "msg": msg,
+    })
+
+    // Need this to keep backwards compatibility,
+    // since it's used on Hosted Service
+    let result = await rawBodyRoute->Rest.fetch(
+      {
+        "auth": auth,
+        "bodyString": `{"type":"pg_track_native_query","args":{"type":"query","source":"default","root_field_name":"chain_metadata","arguments":{},"returns":"chain_metadata","code":"SELECT \\\"block_height\\\", \\\"chain_id\\\", \\\"end_block\\\", \\\"first_event_block_number\\\", \\\"is_hyper_sync\\\", \\\"latest_fetched_block_number\\\", \\\"latest_processed_block\\\", \\\"num_batches_fetched\\\", \\\"num_events_processed\\\", \\\"start_block\\\", \\\"timestamp_caught_up_to_head_or_endblock\\\" FROM \\\"${pgSchema}\\\".\\\"chain_metadata\\\""}}`,
+      },
+      ~client=Rest.client(endpoint),
+    )
+    let msg = switch result {
+    | QuerySucceeded => `Hasura chain_metadata native query created`
+    | AlreadyDone => `Hasura chain_metadata native query already created`
+    }
+    Logging.trace({
+      "msg": msg,
+    })
+  } catch {
+  | exn =>
+    Logging.error({
+      "msg": `EE808: There was an issue setting up _meta field in hasura - indexing may still work - but you may have issues querying the data in hasura.`,
+      "err": exn->Utils.prettifyExn,
+    })
+  }
+}
+
 let trackDatabase = async (
   ~endpoint,
   ~auth,
   ~pgSchema,
-  ~allStaticTables,
+  ~staticTables: array<Table.table>,
   ~allEntityTables,
   ~aggregateEntities,
   ~responseLimit,
   ~schema,
 ) => {
+  // Filter out chain_metadata table from automatic tracking,
+  // since we manually create a native query for it.
+  let staticTables = staticTables->Js.Array2.filter(table => table.tableName != "chain_metadata")
+
   Logging.info("Tracking tables in Hasura")
 
   let _ = await clearHasuraMetadata(~endpoint, ~auth)
   let tableNames =
-    [allStaticTables, allEntityTables]
+    [staticTables, allEntityTables]
     ->Belt.Array.concatMany
     ->Js.Array2.map(({tableName}: Table.table) => tableName)
 
@@ -294,4 +372,6 @@ let trackDatabase = async (
       }),
     )
     ->Promise.all
+
+  await trackMeta(~auth, ~endpoint, ~pgSchema)
 }

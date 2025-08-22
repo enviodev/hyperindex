@@ -44,8 +44,14 @@ module Dict = {
   }
 }
 
-@inline
-let panic = message => Exn.raiseError(Exn.makeError(`[rescript-rest] ${message}`))
+let panic = (message, ~params: option<{..}>=?) => {
+  let error = Exn.makeError(`[rescript-rest] ${message}`)
+  switch params {
+  | Some(params) => (error->Obj.magic)["params"] = params
+  | None => ()
+  }
+  Exn.raiseError(error)
+}
 
 @val
 external encodeURIComponent: string => string = "encodeURIComponent"
@@ -808,6 +814,9 @@ let fetch = (type input response, route: route<input, response>, input, ~client=
       | S.Raised(error) =>
         panic(
           `Failed parsing response at ${error.path->S.Path.toString}. Reason: ${error->S.Error.reason}`,
+          ~params={
+            "response": fetcherResponse,
+          },
         )
       }
     }

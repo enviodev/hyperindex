@@ -106,7 +106,7 @@ let codegenPersistence = Persistence.make(
                 secret: Env.Hasura.secret,
               },
               ~pgSchema=storagePgSchema,
-              ~allStaticTables=Db.allStaticTables,
+              ~staticTables=Db.allStaticTables,
               ~allEntityTables=Db.allEntityTables,
               ~responseLimit=Env.Hasura.responseLimit,
               ~schema=Db.schema,
