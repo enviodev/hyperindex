@@ -83,9 +83,6 @@ let storagePgSchema = Env.Db.publicSchema
 let codegenPersistence = Persistence.make(
   ~userEntities=Entities.userEntities,
   ~staticTables=Db.allStaticTables,
-  ~dcRegistryEntityConfig=module(
-    TablesStatic.DynamicContractRegistry
-  )->Entities.entityModToInternal,
   ~allEnums=Enums.allEnums,
   ~storage=PgStorage.make(
     ~sql=Db.sql,
@@ -140,7 +137,7 @@ let codegenPersistence = Persistence.make(
                 err->Utils.prettifyExn,
                 `EE804: Error tracking new tables`,
               )->Promise.resolve
-           })
+            })
           },
         )
       } else {

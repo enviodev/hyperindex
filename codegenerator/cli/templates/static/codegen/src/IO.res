@@ -68,8 +68,8 @@ let executeBatch = async (
     ~dbFunction=(sql, items) => {
       sql->PgStorage.setOrThrow(
         ~items,
-        ~table=TablesStatic.RawEvents.table,
-        ~itemSchema=TablesStatic.RawEvents.schema,
+        ~table=InternalTable.RawEvents.table,
+        ~itemSchema=InternalTable.RawEvents.schema,
         ~pgSchema=Config.storagePgSchema,
       )
     },

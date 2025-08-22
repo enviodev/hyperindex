@@ -141,7 +141,7 @@ let makeHistoryRowSchema: S.t<'entity> => S.t<historyRow<'entity>> = entitySchem
 
 type t<'entity> = {
   table: table,
-  createInsertFnQuery: string,
+  makeInsertFnQuery: (~pgSchema: string) => string,
   schema: S.t<historyRow<'entity>>,
   // Used for parsing
   schemaRows: S.t<array<historyRow<'entity>>>,
@@ -153,7 +153,7 @@ type entityInternal
 external castInternal: t<'entity> => t<entityInternal> = "%identity"
 external eval: string => 'a = "eval"
 
-let fromTable = (table: table, ~pgSchema, ~schema: S.t<'entity>): t<'entity> => {
+let fromTable = (table: table, ~schema: S.t<'entity>): t<'entity> => {
   let entity_history_block_timestamp = "entity_history_block_timestamp"
   let entity_history_chain_id = "entity_history_chain_id"
   let entity_history_block_number = "entity_history_block_number"
@@ -227,19 +227,6 @@ let fromTable = (table: table, ~pgSchema, ~schema: S.t<'entity>): t<'entity> => 
   )
 
   let insertFnName = `"insert_${table.tableName}"`
-  let historyRowArg = "history_row"
-  let historyTablePath = `"${pgSchema}"."${historyTableName}"`
-  let originTablePath = `"${pgSchema}"."${originTableName}"`
-
-  let previousHistoryFieldsAreNullStr =
-    previousChangeFieldNames
-    ->Belt.Array.map(fieldName => `${historyRowArg}.${fieldName} IS NULL`)
-    ->Js.Array2.joinWith(" OR ")
-
-  let currentChangeFieldNamesCommaSeparated = currentChangeFieldNames->Js.Array2.joinWith(", ")
-
-  let dataFieldNamesDoubleQuoted = dataFieldNames->Belt.Array.map(fieldName => `"${fieldName}"`)
-  let dataFieldNamesCommaSeparated = dataFieldNamesDoubleQuoted->Js.Array2.joinWith(", ")
 
   let allFieldNamesDoubleQuoted =
     Belt.Array.concatMany([
@@ -249,7 +236,21 @@ let fromTable = (table: table, ~pgSchema, ~schema: S.t<'entity>): t<'entity> => 
       [actionFieldName],
     ])->Belt.Array.map(fieldName => `"${fieldName}"`)
 
-  let createInsertFnQuery = {
+  let makeInsertFnQuery = (~pgSchema) => {
+    let historyRowArg = "history_row"
+    let historyTablePath = `"${pgSchema}"."${historyTableName}"`
+    let originTablePath = `"${pgSchema}"."${originTableName}"`
+
+    let previousHistoryFieldsAreNullStr =
+      previousChangeFieldNames
+      ->Belt.Array.map(fieldName => `${historyRowArg}.${fieldName} IS NULL`)
+      ->Js.Array2.joinWith(" OR ")
+
+    let currentChangeFieldNamesCommaSeparated = currentChangeFieldNames->Js.Array2.joinWith(", ")
+
+    let dataFieldNamesDoubleQuoted = dataFieldNames->Belt.Array.map(fieldName => `"${fieldName}"`)
+    let dataFieldNamesCommaSeparated = dataFieldNamesDoubleQuoted->Js.Array2.joinWith(", ")
+
     `CREATE OR REPLACE FUNCTION ${insertFnName}(${historyRowArg} ${historyTablePath}, should_copy_current_entity BOOLEAN)
 RETURNS void AS $$
 DECLARE
@@ -315,7 +316,7 @@ $$ LANGUAGE plpgsql;`
 
   let schema = makeHistoryRowSchema(schema)
 
-  {table, createInsertFnQuery, schema, schemaRows: S.array(schema), insertFn}
+  {table, makeInsertFnQuery, schema, schemaRows: S.array(schema), insertFn}
 }
 
 type safeReorgBlocks = {

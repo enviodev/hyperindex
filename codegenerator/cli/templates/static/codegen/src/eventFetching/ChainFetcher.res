@@ -7,7 +7,6 @@ type processingFilter = {
   isValid: (~fetchState: FetchState.t) => bool,
 }
 
-type addressToDynContractLookup = dict<TablesStatic.DynamicContractRegistry.t>
 type t = {
   logger: Pino.t,
   fetchState: FetchState.t,
@@ -31,7 +30,7 @@ type t = {
 let make = (
   ~chainConfig: Config.chainConfig,
   ~lastBlockScannedHashes,
-  ~dynamicContracts: array<TablesStatic.DynamicContractRegistry.t>,
+  ~dynamicContracts: array<InternalTable.DynamicContractRegistry.t>,
   ~startBlock,
   ~endBlock,
   ~dbFirstEventBlockNumber,
@@ -115,7 +114,7 @@ let make = (
   dynamicContracts->Array.forEach(dc =>
     contracts->Array.push({
       FetchState.address: dc.contractAddress,
-      contractName: (dc.contractType :> string),
+      contractName: dc.contractName,
       startBlock: dc.registeringEventBlockNumber,
       register: DC({
         registeringEventLogIndex: dc.registeringEventLogIndex,
@@ -467,12 +466,7 @@ let handleQueryResult = (
   }
 
   fs
-  ->FetchState.handleQueryResult(
-    ~query,
-    ~latestFetchedBlock,
-    ~newItems,
-    ~currentBlockHeight,
-  )
+  ->FetchState.handleQueryResult(~query, ~latestFetchedBlock, ~newItems, ~currentBlockHeight)
   ->Result.map(fetchState => {
     {
       ...chainFetcher,

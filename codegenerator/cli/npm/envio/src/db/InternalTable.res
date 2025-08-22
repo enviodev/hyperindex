@@ -21,7 +21,7 @@ module EventSyncState = {
   }
 
   let table = mkTable(
-    PgStorage.eventSyncStateTableName,
+    "event_sync_state",
     ~fields=[
       mkField("chain_id", Integer, ~fieldSchema=S.int, ~isPrimaryKey),
       mkField(blockNumberFieldName, Integer, ~fieldSchema=S.int),
@@ -39,7 +39,8 @@ module EventSyncState = {
 
   //We need to update values here not delet the rows, since restarting without a row
   //has a different behaviour to restarting with an initialised row with zero values
-  let resetCurrentCurrentSyncStateQuery = `UPDATE "${Env.Db.publicSchema}"."${table.tableName}"
+  let resetCurrentCurrentSyncStateQuery = (~pgSchema) =>
+    `UPDATE "${pgSchema}"."${table.tableName}"
     SET ${blockNumberFieldName} = 0, 
         ${logIndexFieldName} = 0, 
         ${blockTimestampFieldName} = 0, 
@@ -161,7 +162,7 @@ module RawEvents = {
   })
 
   let table = mkTable(
-    PgStorage.rawEventsTableName,
+    "raw_events",
     ~fields=[
       mkField("chain_id", Integer, ~fieldSchema=S.int),
       mkField("event_id", Numeric, ~fieldSchema=S.bigint),
@@ -187,7 +188,7 @@ module RawEvents = {
 }
 
 module DynamicContractRegistry = {
-  let name = Enums.EntityType.DynamicContractRegistry
+  let name = "dynamic_contract_registry"
 
   let makeId = (~chainId, ~contractAddress) => {
     chainId->Belt.Int.toString ++ "-" ++ contractAddress->Address.toString
@@ -204,7 +205,7 @@ module DynamicContractRegistry = {
     @as("registering_event_name") registeringEventName: string,
     @as("registering_event_src_address") registeringEventSrcAddress: Address.t,
     @as("contract_address") contractAddress: Address.t,
-    @as("contract_type") contractType: Enums.ContractType.t,
+    @as("contract_name") contractName: string,
   }
 
   let schema = S.schema(s => {
@@ -217,13 +218,13 @@ module DynamicContractRegistry = {
     registeringEventSrcAddress: s.matches(Address.schema),
     registeringEventBlockTimestamp: s.matches(S.int),
     contractAddress: s.matches(Address.schema),
-    contractType: s.matches(Enums.ContractType.config.schema),
+    contractName: s.matches(S.string),
   })
 
   let rowsSchema = S.array(schema)
 
   let table = mkTable(
-    "dynamic_contract_registry",
+    name,
     ~fields=[
       mkField("id", Text, ~isPrimaryKey, ~fieldSchema=S.string),
       mkField("chain_id", Integer, ~fieldSchema=S.int),
@@ -234,15 +235,19 @@ module DynamicContractRegistry = {
       mkField("registering_event_name", Text, ~fieldSchema=S.string),
       mkField("registering_event_src_address", Text, ~fieldSchema=Address.schema),
       mkField("contract_address", Text, ~fieldSchema=Address.schema),
-      mkField(
-        "contract_type",
-        Custom(Enums.ContractType.config.name),
-        ~fieldSchema=Enums.ContractType.config.schema,
-      ),
+      mkField("contract_name", Text, ~fieldSchema=S.string),
     ],
   )
 
-  let entityHistory = table->EntityHistory.fromTable(~pgSchema=Env.Db.publicSchema, ~schema)
+  let entityHistory = table->EntityHistory.fromTable(~schema)
 
   external castToInternal: t => Internal.entity = "%identity"
+
+  let config = {
+    name,
+    schema,
+    rowsSchema,
+    table,
+    entityHistory,
+  }->Internal.fromGenericEntityConfig
 }

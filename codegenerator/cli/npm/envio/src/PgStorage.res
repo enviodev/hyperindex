@@ -113,7 +113,8 @@ GRANT ALL ON SCHEMA "${pgSchema}" TO public;`,
 
   // Add derived indices
   entities->Js.Array2.forEach((entity: Internal.entityConfig) => {
-    functionsQuery := functionsQuery.contents ++ "\n" ++ entity.entityHistory.createInsertFnQuery
+    functionsQuery :=
+      functionsQuery.contents ++ "\n" ++ entity.entityHistory.makeInsertFnQuery(~pgSchema)
 
     entity.table
     ->Table.getDerivedFromFields
@@ -234,21 +235,19 @@ VALUES${placeholders.contents}` ++
   } ++ ";"
 }
 
-// Should move this to a better place
-// We need it for the isRawEvents check in makeTableBatchSet
-// to always apply the unnest optimization.
-// This is needed, because even though it has JSON fields,
-// they are always guaranteed to be an object.
-// FIXME what about Fuel params?
-let rawEventsTableName = "raw_events"
-let eventSyncStateTableName = "event_sync_state"
-
 // Constants for chunking
 let maxItemsPerQuery = 500
 
 let makeTableBatchSetQuery = (~pgSchema, ~table: Table.table, ~itemSchema: S.t<'item>) => {
   let {dbSchema, hasArrayField} = table->Table.toSqlParams(~schema=itemSchema, ~pgSchema)
-  let isRawEvents = table.tableName === rawEventsTableName
+
+  // Should move this to a better place
+  // We need it for the isRawEvents check in makeTableBatchSet
+  // to always apply the unnest optimization.
+  // This is needed, because even though it has JSON fields,
+  // they are always guaranteed to be an object.
+  // FIXME what about Fuel params?
+  let isRawEvents = table.tableName === InternalTable.RawEvents.table.tableName
 
   // Should experiment how much it'll affect performance
   // Although, it should be fine not to perform the validation check,
@@ -539,7 +538,7 @@ let make = (
   let isInitialized = async () => {
     let envioTables =
       await sql->Postgres.unsafe(
-        `SELECT table_schema FROM information_schema.tables WHERE table_schema = '${pgSchema}' AND table_name = '${eventSyncStateTableName}';`,
+        `SELECT table_schema FROM information_schema.tables WHERE table_schema = '${pgSchema}' AND table_name = '${InternalTable.EventSyncState.table.tableName}';`,
       )
     envioTables->Utils.Array.notEmpty
   }
@@ -557,7 +556,11 @@ let make = (
       schemaTableNames->Utils.Array.notEmpty &&
         // Otherwise should throw if there's a table, but no envio specific one
         // This means that the schema is used for something else than envio.
-        !(schemaTableNames->Js.Array2.some(table => table.tableName === eventSyncStateTableName))
+        !(
+          schemaTableNames->Js.Array2.some(table =>
+            table.tableName === InternalTable.EventSyncState.table.tableName
+          )
+        )
     ) {
       Js.Exn.raiseError(
         `Cannot run Envio migrations on PostgreSQL schema "${pgSchema}" because it contains non-Envio tables. Running migrations would delete all data in this schema.\n\nTo resolve this:\n1. If you want to use this schema, first backup any important data, then drop it with: "pnpm envio local db-migrate down"\n2. Or specify a different schema name by setting the "ENVIO_PG_PUBLIC_SCHEMA" environment variable\n3. Or manually drop the schema in your database if you're certain the data is not needed.`,

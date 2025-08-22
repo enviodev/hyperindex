@@ -86,13 +86,12 @@ let entityHistoryActionEnumConfig: Internal.enumConfig<EntityHistory.RowAction.t
 
 let make = (
   ~userEntities,
-  ~dcRegistryEntityConfig,
   // TODO: Should only pass userEnums and create internal config in runtime
   ~allEnums,
   ~staticTables,
   ~storage,
 ) => {
-  let allEntities = userEntities->Js.Array2.concat([dcRegistryEntityConfig])
+  let allEntities = userEntities->Js.Array2.concat([InternalTable.DynamicContractRegistry.config])
   let allEnums =
     allEnums->Js.Array2.concat([entityHistoryActionEnumConfig->Internal.fromGenericEnumConfig])
   {

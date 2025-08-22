@@ -20,21 +20,12 @@ let allEntityTables: array<Table.table> = Entities.allEntities->Belt.Array.map(e
   entityConfig.table
 })
 
-let allEntityHistoryTables: array<Table.table> = []
-let allEntityHistory: array<
-  EntityHistory.t<EntityHistory.entityInternal>,
-> = Entities.allEntities->Belt.Array.map(entityConfig => {
-  let entityHistory = entityConfig.entityHistory->EntityHistory.castInternal
-  allEntityHistoryTables->Js.Array2.push(entityHistory.table)->ignore
-  entityHistory
-})
-
 let allStaticTables: array<Table.table> = [
-  TablesStatic.EventSyncState.table,
-  TablesStatic.ChainMetadata.table,
-  TablesStatic.PersistedState.table,
-  TablesStatic.EndOfBlockRangeScannedData.table,
-  TablesStatic.RawEvents.table,
+  InternalTable.EventSyncState.table,
+  InternalTable.ChainMetadata.table,
+  InternalTable.PersistedState.table,
+  InternalTable.EndOfBlockRangeScannedData.table,
+  InternalTable.RawEvents.table,
 ]
 
 let schema = Schema.make(allEntityTables)

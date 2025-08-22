@@ -91,7 +91,7 @@ module EndOfBlockRangeScannedData = {
 
 module EventSyncState = {
   @genType
-  type eventSyncState = TablesStatic.EventSyncState.t
+  type eventSyncState = InternalTable.EventSyncState.t
 
   @module("./DbFunctionsImplementation.js")
   external readLatestSyncedEventOnChainIdArr: (
@@ -109,11 +109,13 @@ module EventSyncState = {
   }
 
   @module("./DbFunctionsImplementation.js")
-  external batchSet: (Postgres.sql, array<TablesStatic.EventSyncState.t>) => promise<unit> =
+  external batchSet: (Postgres.sql, array<InternalTable.EventSyncState.t>) => promise<unit> =
     "batchSetEventSyncState"
 
   let resetEventSyncState = async (): unit => {
-    let query = TablesStatic.EventSyncState.resetCurrentCurrentSyncStateQuery
+    let query = InternalTable.EventSyncState.resetCurrentCurrentSyncStateQuery(
+      ~pgSchema=Db.publicSchema,
+    )
     try await Db.sql->Postgres.unsafe(query) catch {
     | exn => exn->ErrorHandling.mkLogAndRaise(~msg="Failed reset query: " ++ query)
     }
@@ -143,7 +145,7 @@ module DynamicContractRegistry = {
 
   let readAllDynamicContracts = async (sql: Postgres.sql, ~chainId: chainId) => {
     let json = await sql->readAllDynamicContractsRaw(~chainId)
-    json->S.parseJsonOrThrow(TablesStatic.DynamicContractRegistry.rowsSchema)
+    json->S.parseJsonOrThrow(InternalTable.DynamicContractRegistry.rowsSchema)
   }
 }
 

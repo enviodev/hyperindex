@@ -54,9 +54,9 @@ type inMemoryStore = InMemoryStore.t
 type rec t = {
   __dbInternal__: inMemoryStore,
   entities: entities,
-  rawEvents: storeOperations<InMemoryStore.rawEventsKey, TablesStatic.RawEvents.t>,
-  eventSyncState: storeOperations<Types.chainId, TablesStatic.EventSyncState.t>,
-  dynamicContractRegistry: entityStoreOperations<TablesStatic.DynamicContractRegistry.t>,
+  rawEvents: storeOperations<InMemoryStore.rawEventsKey, InternalTable.RawEvents.t>,
+  eventSyncState: storeOperations<Types.chainId, InternalTable.EventSyncState.t>,
+  dynamicContractRegistry: entityStoreOperations<InternalTable.DynamicContractRegistry.t>,
   processEvents: array<Types.eventLog<unknown>> => promise<t>,
 }
 
@@ -271,16 +271,16 @@ let rec makeWithInMemoryStore: InMemoryStore.t => t = (inMemoryStore: InMemorySt
     ~getStore=db =>
       db
       ->InMemoryStore.getInMemTable(
-        ~entityConfig=module(TablesStatic.DynamicContractRegistry)->Entities.entityModToInternal,
+        ~entityConfig=module(InternalTable.DynamicContractRegistry)->Entities.entityModToInternal,
       )
       ->(
         Utils.magic: InMemoryTable.Entity.t<Internal.entity> => InMemoryTable.Entity.t<
-          TablesStatic.DynamicContractRegistry.t,
+          InternalTable.DynamicContractRegistry.t,
         >
       ),
     ~makeMockDb=makeWithInMemoryStore,
     ~getKey=({chainId, contractAddress}) => {
-      TablesStatic.DynamicContractRegistry.makeId(~chainId, ~contractAddress)
+      InternalTable.DynamicContractRegistry.makeId(~chainId, ~contractAddress)
     },
   )
 

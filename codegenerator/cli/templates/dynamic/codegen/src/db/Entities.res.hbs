@@ -5,7 +5,7 @@ type id = string
 type internalEntity = Internal.entity
 module type Entity = {
   type t
-  let name: Enums.EntityType.t
+  let name: string
   let schema: S.t<t>
   let rowsSchema: S.t<array<t>>
   let table: Table.table
@@ -42,7 +42,7 @@ type whereOperations<'entity, 'fieldType> = {
 {{#each entities as |entity|}}
 
 module {{entity.name.capitalized}} = {
-  let name = {{entity.name.capitalized}}
+  let name = ({{entity.name.capitalized}} :> string)
   @genType
   type t = {
     {{#each entity.params as | param |}}
@@ -104,7 +104,7 @@ module {{entity.name.capitalized}} = {
   {{/if}}
   )
 
-  let entityHistory = table->EntityHistory.fromTable(~pgSchema=Env.Db.publicSchema, ~schema)
+  let entityHistory = table->EntityHistory.fromTable(~schema)
 
   external castToInternal: t => Internal.entity = "%identity"
 }
@@ -118,7 +118,7 @@ let userEntities = [
 
 let allEntities =
   userEntities->Js.Array2.concat(
-    [module(TablesStatic.DynamicContractRegistry)]->entityModsToInternal,
+    [module(InternalTable.DynamicContractRegistry)]->entityModsToInternal,
   )
 
 let byName =
