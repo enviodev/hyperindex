@@ -57,11 +57,19 @@ let makeCreateTableQuery = (table: Table.table, ~pgSchema) => {
 let makeInitializeTransaction = (
   ~pgSchema,
   ~pgUser,
-  ~generalTables=[],
+  ~chainConfigs=[],
   ~entities=[],
   ~enums=[],
   ~isEmptyPgSchema=false,
 ) => {
+  let generalTables = [
+    InternalTable.EventSyncState.table,
+    InternalTable.Chains.table,
+    InternalTable.PersistedState.table,
+    InternalTable.EndOfBlockRangeScannedData.table,
+    InternalTable.RawEvents.table,
+  ]
+
   let allTables = generalTables->Array.copy
   let allEntityTables = []
   entities->Js.Array2.forEach((entity: Internal.entityConfig) => {
@@ -132,6 +140,12 @@ GRANT ALL ON SCHEMA "${pgSchema}" TO public;`,
     })
   })
 
+  // Populate initial chain data
+  switch InternalTable.Chains.makeInitialValuesQuery(~pgSchema, ~chainConfigs) {
+  | Some(initialChainsValuesQuery) => query := query.contents ++ "\n" ++ initialChainsValuesQuery
+  | None => ()
+  }
+
   // Add cache row count function
   functionsQuery :=
     functionsQuery.contents ++
@@ -161,6 +175,10 @@ let makeLoadByFieldQuery = (~pgSchema, ~tableName, ~fieldName, ~operator) => {
 
 let makeLoadByIdsQuery = (~pgSchema, ~tableName) => {
   `SELECT * FROM "${pgSchema}"."${tableName}" WHERE id = ANY($1::text[]);`
+}
+
+let makeLoadAllQuery = (~pgSchema, ~tableName) => {
+  `SELECT * FROM "${pgSchema}"."${tableName}";`
 }
 
 let makeInsertUnnestSetQuery = (~pgSchema, ~table: Table.table, ~itemSchema, ~isRawEvents) => {
@@ -543,7 +561,90 @@ let make = (
     envioTables->Utils.Array.notEmpty
   }
 
-  let initialize = async (~entities=[], ~generalTables=[], ~enums=[]) => {
+  let restoreEffectCache = async (~withUpload) => {
+    if withUpload {
+      // Try to restore cache tables from binary files
+      let nothingToUploadErrorMessage = "Nothing to upload."
+
+      switch await Promise.all2((
+        NodeJs.Fs.Promises.readdir(cacheDirPath)
+        ->Promise.thenResolve(e => Ok(e))
+        ->Promise.catch(_ => Promise.resolve(Error(nothingToUploadErrorMessage))),
+        getConnectedPsqlExec(~pgUser, ~pgHost, ~pgDatabase, ~pgPort),
+      )) {
+      | (Ok(entries), Ok(psqlExec)) => {
+          let cacheFiles = entries->Js.Array2.filter(entry => {
+            entry->Js.String2.endsWith(".tsv")
+          })
+
+          let _ =
+            await cacheFiles
+            ->Js.Array2.map(entry => {
+              let effectName = entry->Js.String2.slice(~from=0, ~to_=-4) // Remove .tsv extension
+              let table = Internal.makeCacheTable(~effectName)
+
+              sql
+              ->Postgres.unsafe(makeCreateTableQuery(table, ~pgSchema))
+              ->Promise.then(() => {
+                let inputFile = NodeJs.Path.join(cacheDirPath, entry)->NodeJs.Path.toString
+
+                let command = `${psqlExec} -c 'COPY "${pgSchema}"."${table.tableName}" FROM STDIN WITH (FORMAT text, HEADER);' < ${inputFile}`
+
+                Promise.make(
+                  (resolve, reject) => {
+                    NodeJs.ChildProcess.execWithOptions(
+                      command,
+                      psqlExecOptions,
+                      (~error, ~stdout, ~stderr as _) => {
+                        switch error {
+                        | Value(error) => reject(error)
+                        | Null => resolve(stdout)
+                        }
+                      },
+                    )
+                  },
+                )
+              })
+            })
+            ->Promise.all
+
+          Logging.info("Successfully uploaded cache.")
+        }
+      | (Error(message), _)
+      | (_, Error(message)) =>
+        if message === nothingToUploadErrorMessage {
+          Logging.info("No cache found to upload.")
+        } else {
+          Logging.error(`Failed to upload cache, continuing without it. ${message}`)
+        }
+      }
+    }
+
+    let cacheTableInfo: array<schemaCacheTableInfo> =
+      await sql->Postgres.unsafe(makeSchemaCacheTableInfoQuery(~pgSchema))
+
+    if withUpload && cacheTableInfo->Utils.Array.notEmpty {
+      // Integration with other tools like Hasura
+      switch onNewTables {
+      | Some(onNewTables) =>
+        await onNewTables(
+          ~tableNames=cacheTableInfo->Js.Array2.map(info => {
+            info.tableName
+          }),
+        )
+      | None => ()
+      }
+    }
+
+    let cache = Js.Dict.empty()
+    cacheTableInfo->Js.Array2.forEach(({tableName, count}) => {
+      let effectName = tableName->Js.String2.sliceToEnd(~from=cacheTablePrefixLength)
+      cache->Js.Dict.set(effectName, ({effectName, count}: Persistence.effectCacheRecord))
+    })
+    cache
+  }
+
+  let initialize = async (~chainConfigs=[], ~entities=[], ~enums=[]): Persistence.initialState => {
     let schemaTableNames: array<schemaTableName> =
       await sql->Postgres.unsafe(makeSchemaTableNamesQuery(~pgSchema))
 
@@ -570,9 +671,9 @@ let make = (
     let queries = makeInitializeTransaction(
       ~pgSchema,
       ~pgUser,
-      ~generalTables,
       ~entities,
       ~enums,
+      ~chainConfigs,
       ~isEmptyPgSchema=schemaTableNames->Utils.Array.isEmpty,
     )
     // Execute all queries within a single transaction for integrity
@@ -580,10 +681,18 @@ let make = (
       queries->Js.Array2.map(query => sql->Postgres.unsafe(query))
     })
 
+    let cache = await restoreEffectCache(~withUpload=true)
+
     // Integration with other tools like Hasura
     switch onInitialize {
     | Some(onInitialize) => await onInitialize()
     | None => ()
+    }
+
+    {
+      cleanRun: true,
+      cache,
+      chains: chainConfigs->Js.Array2.map(InternalTable.Chains.initialFromConfig),
     }
   }
 
@@ -770,97 +879,31 @@ let make = (
     }
   }
 
-  let restoreEffectCache = async (~withUpload) => {
-    if withUpload {
-      // Try to restore cache tables from binary files
-      let nothingToUploadErrorMessage = "Nothing to upload."
+  let loadInitialState = async (): Persistence.initialState => {
+    let (cache, chains) = await Promise.all2((
+      restoreEffectCache(~withUpload=false),
+      sql
+      ->Postgres.unsafe(
+        makeLoadAllQuery(~pgSchema, ~tableName=InternalTable.Chains.table.tableName),
+      )
+      ->(Utils.magic: promise<array<unknown>> => promise<array<InternalTable.Chains.t>>),
+    ))
 
-      switch await Promise.all2((
-        NodeJs.Fs.Promises.readdir(cacheDirPath)
-        ->Promise.thenResolve(e => Ok(e))
-        ->Promise.catch(_ => Promise.resolve(Error(nothingToUploadErrorMessage))),
-        getConnectedPsqlExec(~pgUser, ~pgHost, ~pgDatabase, ~pgPort),
-      )) {
-      | (Ok(entries), Ok(psqlExec)) => {
-          let cacheFiles = entries->Js.Array2.filter(entry => {
-            entry->Js.String2.endsWith(".tsv")
-          })
-
-          let _ =
-            await cacheFiles
-            ->Js.Array2.map(entry => {
-              let effectName = entry->Js.String2.slice(~from=0, ~to_=-4) // Remove .tsv extension
-              let table = Internal.makeCacheTable(~effectName)
-
-              sql
-              ->Postgres.unsafe(makeCreateTableQuery(table, ~pgSchema))
-              ->Promise.then(() => {
-                let inputFile = NodeJs.Path.join(cacheDirPath, entry)->NodeJs.Path.toString
-
-                let command = `${psqlExec} -c 'COPY "${pgSchema}"."${table.tableName}" FROM STDIN WITH (FORMAT text, HEADER);' < ${inputFile}`
-
-                Promise.make(
-                  (resolve, reject) => {
-                    NodeJs.ChildProcess.execWithOptions(
-                      command,
-                      psqlExecOptions,
-                      (~error, ~stdout, ~stderr as _) => {
-                        switch error {
-                        | Value(error) => reject(error)
-                        | Null => resolve(stdout)
-                        }
-                      },
-                    )
-                  },
-                )
-              })
-            })
-            ->Promise.all
-
-          Logging.info("Successfully uploaded cache.")
-        }
-      | (Error(message), _)
-      | (_, Error(message)) =>
-        if message === nothingToUploadErrorMessage {
-          Logging.info("No cache found to upload.")
-        } else {
-          Logging.error(`Failed to upload cache, continuing without it. ${message}`)
-        }
-      }
+    {
+      cleanRun: false,
+      cache,
+      chains,
     }
-
-    let cacheTableInfo: array<schemaCacheTableInfo> =
-      await sql->Postgres.unsafe(makeSchemaCacheTableInfoQuery(~pgSchema))
-
-    if withUpload && cacheTableInfo->Utils.Array.notEmpty {
-      // Integration with other tools like Hasura
-      switch onNewTables {
-      | Some(onNewTables) =>
-        await onNewTables(
-          ~tableNames=cacheTableInfo->Js.Array2.map(info => {
-            info.tableName
-          }),
-        )
-      | None => ()
-      }
-    }
-
-    cacheTableInfo->Js.Array2.map((info): Persistence.effectCacheRecord => {
-      {
-        effectName: info.tableName->Js.String2.sliceToEnd(~from=cacheTablePrefixLength),
-        count: info.count,
-      }
-    })
   }
 
   {
     isInitialized,
     initialize,
+    loadInitialState,
     loadByFieldOrThrow,
     loadByIdsOrThrow,
     setOrThrow,
     setEffectCacheOrThrow,
     dumpEffectCache,
-    restoreEffectCache,
   }
 }

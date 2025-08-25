@@ -22,12 +22,12 @@ module InitApi = {
     let rpcNetworks = []
     config.chainMap
     ->ChainMap.values
-    ->Array.forEach(({sources, chain}) => {
+    ->Array.forEach(({sources, id}) => {
       switch sources->Js.Array2.some(s => s.poweredByHyperSync) {
       | true => hyperSyncNetworks
       | false => rpcNetworks
       }
-      ->Js.Array2.push(chain->ChainMap.Chain.toChainId)
+      ->Js.Array2.push(id)
       ->ignore
     })
 
@@ -101,7 +101,10 @@ let useMessages = (~config) => {
       switch res {
       | Ok(data) => setRequest(_ => Data(data))
       | Error(e) =>
-        Logging.error({"msg": "Failed to load messages from envio server", "err": e->Utils.prettifyExn})
+        Logging.error({
+          "msg": "Failed to load messages from envio server",
+          "err": e->Utils.prettifyExn,
+        })
         setRequest(_ => Err(e))
       }
     )

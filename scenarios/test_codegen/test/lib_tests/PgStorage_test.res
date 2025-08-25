@@ -387,4 +387,149 @@ VALUES($1,$2)ON CONFLICT("id") DO UPDATE SET "c_id" = EXCLUDED."c_id";`
       },
     )
   })
+
+  describe("InternalTable.Chains.makeInitialValuesQuery", () => {
+    Async.it(
+      "Should return empty string for empty chain configs",
+      async () => {
+        let query = InternalTable.Chains.makeInitialValuesQuery(
+          ~pgSchema="test_schema",
+          ~chainConfigs=[],
+        )
+
+        Assert.equal(
+          query,
+          "",
+          ~message="Should return empty string when no chain configs provided",
+        )
+      },
+    )
+
+    Async.it(
+      "Should create correct SQL for single chain config",
+      async () => {
+        let chainConfig: InternalConfig.chain = {
+          id: 1,
+          startBlock: 100,
+          endBlock: Some(200),
+          confirmedBlockThreshold: Some(5),
+          contracts: [],
+          sources: [],
+        }
+
+        let query = InternalTable.Chains.makeInitialValuesQuery(
+          ~pgSchema="test_schema",
+          ~chainConfigs=[chainConfig],
+        )
+
+        let expectedQuery = `INSERT INTO "test_schema"."envio_chains" ("id", "start_block", "end_block", "source_block", "first_event_block", "buffer_block", "ready_at", "_is_hyper_sync", "_latest_processed_block", "_num_events_processed", "_num_batches_fetched")
+VALUES (1, 100, 200, -1, NULL, -1, NULL, false, NULL, 0, 0);`
+
+        Assert.equal(
+          query,
+          expectedQuery,
+          ~message="Should generate correct INSERT VALUES SQL for single chain",
+        )
+      },
+    )
+
+    Async.it(
+      "Should create correct SQL for single chain config with no end block",
+      async () => {
+        let chainConfig: InternalConfig.chain = {
+          id: 1,
+          startBlock: 100,
+          endBlock: None,
+          confirmedBlockThreshold: Some(5),
+          contracts: [],
+          sources: [],
+        }
+
+        let query = InternalTable.Chains.makeInitialValuesQuery(
+          ~pgSchema="public",
+          ~chainConfigs=[chainConfig],
+        )
+
+        let expectedQuery = `INSERT INTO "public"."envio_chains" ("id", "start_block", "end_block", "source_block", "first_event_block", "buffer_block", "ready_at", "_is_hyper_sync", "_latest_processed_block", "_num_events_processed", "_num_batches_fetched")
+VALUES (1, 100, NULL, -1, NULL, -1, NULL, false, NULL, 0, 0);`
+
+        Assert.equal(
+          query,
+          expectedQuery,
+          ~message="Should generate correct INSERT VALUES SQL with NULL end_block",
+        )
+      },
+    )
+
+    Async.it(
+      "Should create correct SQL for multiple chain configs",
+      async () => {
+        let chainConfig1: InternalConfig.chain = {
+          id: 1,
+          startBlock: 100,
+          endBlock: Some(200),
+          confirmedBlockThreshold: Some(5),
+          contracts: [],
+          sources: [],
+        }
+
+        let chainConfig2: InternalConfig.chain = {
+          id: 42,
+          startBlock: 500,
+          endBlock: None,
+          confirmedBlockThreshold: None,
+          contracts: [],
+          sources: [],
+        }
+
+        let query = InternalTable.Chains.makeInitialValuesQuery(
+          ~pgSchema="production",
+          ~chainConfigs=[chainConfig1, chainConfig2],
+        )
+
+        let expectedQuery = `INSERT INTO "production"."envio_chains" ("id", "start_block", "end_block", "source_block", "first_event_block", "buffer_block", "ready_at", "_is_hyper_sync", "_latest_processed_block", "_num_events_processed", "_num_batches_fetched")
+VALUES (1, 100, 200, -1, NULL, -1, NULL, false, NULL, 0, 0),
+       (42, 500, NULL, -1, NULL, -1, NULL, false, NULL, 0, 0);`
+
+        Assert.equal(
+          query,
+          expectedQuery,
+          ~message="Should generate correct INSERT VALUES SQL for multiple chains",
+        )
+      },
+    )
+
+    Async.it(
+      "Should use hardcoded values as specified",
+      async () => {
+        let chainConfig: InternalConfig.chain = {
+          id: 1,
+          startBlock: 1000,
+          endBlock: Some(2000),
+          confirmedBlockThreshold: Some(10),
+          contracts: [],
+          sources: [],
+        }
+
+        let query = InternalTable.Chains.makeInitialValuesQuery(
+          ~pgSchema="test_schema",
+          ~chainConfigs=[chainConfig],
+        )
+
+        // Verify the hardcoded values are correct:
+        // source_block: -1
+        // buffer_block: -1
+        // _is_hyper_sync: false
+        // _num_events_processed: 0
+        // _num_batches_fetched: 0
+        // first_event_block: NULL
+        // ready_at: NULL
+        // _latest_processed_block: NULL
+        Assert.ok(
+          query->Js.String2.includes("-1, NULL, -1, NULL, false, NULL, 0, 0"),
+          ~message="Should contain all hardcoded values as specified",
+        )
+      },
+    )
+  })
 })

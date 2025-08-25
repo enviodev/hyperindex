@@ -38,7 +38,7 @@ let evmContracts = contracts->Js.Array2.map((contract): Internal.evmContractConf
   ),
 })
 
-let mockChainConfig: Config.chainConfig = {
+let mockChainConfig: InternalConfig.chain = {
   confirmedBlockThreshold: 200,
   startBlock: 1,
   endBlock: None,

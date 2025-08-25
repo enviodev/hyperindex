@@ -113,7 +113,10 @@ let getChainFetcher = (self: t, ~chain: ChainMap.Chain.t): ChainFetcher.t => {
 let setChainFetcher = (self: t, chainFetcher: ChainFetcher.t) => {
   {
     ...self,
-    chainFetchers: self.chainFetchers->ChainMap.set(chainFetcher.chainConfig.chain, chainFetcher),
+    chainFetchers: self.chainFetchers->ChainMap.set(
+      ChainMap.Chain.makeUnsafe(~chainId=chainFetcher.chainConfig.id),
+      chainFetcher,
+    ),
   }
 }
 
@@ -316,8 +319,8 @@ let getSafeReorgBlocks = (self: t): EntityHistory.safeReorgBlocks => {
   let blockNumbers = []
   self.chainFetchers
   ->ChainMap.values
-  ->Array.forEach((cf) => {
-    chainIds->Js.Array2.push(cf.chainConfig.chain->ChainMap.Chain.toChainId)->ignore
+  ->Array.forEach(cf => {
+    chainIds->Js.Array2.push(cf.chainConfig.id)->ignore
     blockNumbers->Js.Array2.push(cf->ChainFetcher.getHighestBlockBelowThreshold)->ignore
   })
   {

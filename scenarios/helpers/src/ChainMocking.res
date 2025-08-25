@@ -115,7 +115,7 @@ module Make = (Indexer: Indexer.S) => {
   }
 
   type t = {
-    chainConfig: Config.chainConfig,
+    chainConfig: InternalConfig.chain,
     blocks: array<block>,
     maxBlocksReturned: int,
     blockTimestampInterval: int,

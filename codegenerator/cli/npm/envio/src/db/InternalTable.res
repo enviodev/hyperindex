@@ -47,50 +47,135 @@ module EventSyncState = {
 }
 
 module Chains = {
+  type field = [
+    | #id
+    | #start_block
+    | #end_block
+    | #source_block
+    | #first_event_block
+    | #buffer_block
+    | #ready_at
+    | #_is_hyper_sync
+    | #_latest_processed_block
+    | #_num_events_processed
+    | #_num_batches_fetched
+  ]
+
+  let fields: array<field> = [
+    #id,
+    #start_block,
+    #end_block,
+    #source_block,
+    #first_event_block,
+    #buffer_block,
+    #ready_at,
+    #_is_hyper_sync,
+    #_latest_processed_block,
+    #_num_events_processed,
+    #_num_batches_fetched,
+  ]
+
   type t = {
-    @as("chain_id") chainId: int,
+    @as("id") id: int,
     @as("start_block") startBlock: int,
-    @as("end_block") endBlock: option<int>,
+    @as("end_block") endBlock: Js.null<int>,
     @as("source_block") blockHeight: int,
-    @as("first_event_block") firstEventBlockNumber: option<int>,
+    @as("first_event_block") firstEventBlockNumber: Js.null<int>,
     @as("buffer_block") latestFetchedBlockNumber: int,
     @as("ready_at")
-    timestampCaughtUpToHeadOrEndblock: Js.Date.t,
-    @as("_latest_processed_block") latestProcessedBlock: option<int>,
-    @as("_num_events_processed") numEventsProcessed: option<int>,
+    timestampCaughtUpToHeadOrEndblock: Js.null<Js.Date.t>,
+    @as("_latest_processed_block") latestProcessedBlock: Js.null<int>,
     @as("_is_hyper_sync") isHyperSync: bool,
+    @as("_num_events_processed") numEventsProcessed: int,
     @as("_num_batches_fetched") numBatchesFetched: int,
   }
 
   let table = mkTable(
     "envio_chains",
     ~fields=[
-      mkField("chain_id", Integer, ~fieldSchema=S.int, ~isPrimaryKey),
+      mkField((#id: field :> string), Integer, ~fieldSchema=S.int, ~isPrimaryKey),
       // Values populated from config
-      mkField("start_block", Integer, ~fieldSchema=S.int),
-      mkField("end_block", Integer, ~fieldSchema=S.null(S.int), ~isNullable),
+      mkField((#start_block: field :> string), Integer, ~fieldSchema=S.int),
+      mkField((#end_block: field :> string), Integer, ~fieldSchema=S.null(S.int), ~isNullable),
       // Block number of the latest block that was fetched from the source
-      mkField("buffer_block", Integer, ~fieldSchema=S.int),
+      mkField((#buffer_block: field :> string), Integer, ~fieldSchema=S.int),
       // Block number of the currently active source
-      mkField("source_block", Integer, ~fieldSchema=S.int),
+      mkField((#source_block: field :> string), Integer, ~fieldSchema=S.int),
       // Block number of the first event that was processed for this chain
-      mkField("first_event_block", Integer, ~fieldSchema=S.null(S.int), ~isNullable),
+      mkField(
+        (#first_event_block: field :> string),
+        Integer,
+        ~fieldSchema=S.null(S.int),
+        ~isNullable,
+      ),
       // Used to show how much time historical sync has taken, so we need a timezone here (TUI and Hosted Service)
       // null during historical sync, set to current time when sync is complete
       mkField(
-        "ready_at",
+        (#ready_at: field :> string),
         TimestampWithNullTimezone,
         ~fieldSchema=S.null(Utils.Schema.dbDate),
         ~isNullable,
       ),
       // TODO: In the future it should reference a table with sources
-      mkField("_is_hyper_sync", Boolean, ~fieldSchema=S.bool),
+      mkField((#_is_hyper_sync: field :> string), Boolean, ~fieldSchema=S.bool),
       // TODO: Make the data more public facing
-      mkField("_latest_processed_block", Integer, ~fieldSchema=S.null(S.int), ~isNullable),
-      mkField("_num_events_processed", Integer, ~fieldSchema=S.null(S.int), ~isNullable),
-      mkField("_num_batches_fetched", Integer, ~fieldSchema=S.int),
+      mkField(
+        (#_latest_processed_block: field :> string),
+        Integer,
+        ~fieldSchema=S.null(S.int),
+        ~isNullable,
+      ),
+      mkField((#_num_events_processed: field :> string), Integer, ~fieldSchema=S.int),
+      mkField((#_num_batches_fetched: field :> string), Integer, ~fieldSchema=S.int),
     ],
   )
+
+  let initialFromConfig = (chainConfig: InternalConfig.chain) => {
+    {
+      id: chainConfig.id,
+      startBlock: chainConfig.startBlock,
+      endBlock: chainConfig.endBlock->Js.Null.fromOption,
+      blockHeight: 0,
+      firstEventBlockNumber: Js.Null.empty,
+      latestFetchedBlockNumber: -1,
+      timestampCaughtUpToHeadOrEndblock: Js.Null.empty,
+      latestProcessedBlock: Js.Null.empty,
+      isHyperSync: false,
+      numEventsProcessed: 0,
+      numBatchesFetched: 0,
+    }
+  }
+
+  let makeInitialValuesQuery = (~pgSchema, ~chainConfigs: array<InternalConfig.chain>) => {
+    if chainConfigs->Array.length === 0 {
+      None
+    } else {
+      // Create column names list
+      let columnNames = fields->Belt.Array.map(field => `"${(field :> string)}"`)
+
+      // Create VALUES rows for each chain config
+      let valuesRows = chainConfigs->Belt.Array.map(chainConfig => {
+        let initialValues = initialFromConfig(chainConfig)
+        let values = fields->Belt.Array.map((field: field) => {
+          let value =
+            initialValues->(Utils.magic: t => dict<unknown>)->Js.Dict.get((field :> string))
+          switch Js.typeof(value) {
+          | "object" => "NULL"
+          | "number" => value->Utils.magic->Belt.Int.toString
+          | "boolean" => value->Utils.magic ? "true" : "false"
+          | _ => Js.Exn.raiseError("Invalid envio_chains value type")
+          }
+        })
+
+        `(${values->Js.Array2.joinWith(", ")})`
+      })
+
+      Some(
+        `INSERT INTO "${pgSchema}"."${table.tableName}" (${columnNames->Js.Array2.joinWith(", ")})
+VALUES ${valuesRows->Js.Array2.joinWith(",\n       ")};`,
+      )
+    }
+  }
 }
 
 module PersistedState = {

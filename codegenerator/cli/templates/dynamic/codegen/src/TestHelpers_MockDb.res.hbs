@@ -377,7 +377,7 @@ and makeProcessEvents = (mockDb: t, ~chainId=?) => async (
   let persistence = {
     ...config.persistence,
     storage: makeMockStorage(mockDb),
-    storageStatus: Ready({cleanRun: false, cache: Js.Dict.empty()}),
+    storageStatus: Ready({cleanRun: false, cache: Js.Dict.empty(), chains: []}),
   }
   let config = {
     ...config,
@@ -428,8 +428,9 @@ and makeProcessEvents = (mockDb: t, ~chainId=?) => async (
 and makeMockStorage = (mockDb: t): Persistence.storage => {
   {
     isInitialized: () => Js.Exn.raiseError("Not used yet"),
-    initialize: (~entities as _=?, ~generalTables as _=?, ~enums as _=?) =>
+    initialize: (~chainConfigs as _=?, ~entities as _=?, ~enums as _=?) =>
       Js.Exn.raiseError("Not used yet"),
+    loadInitialState: () => Js.Exn.raiseError("Not used yet"),
     loadByIdsOrThrow: (
       type item,
       ~ids,
@@ -473,7 +474,6 @@ and makeMockStorage = (mockDb: t): Persistence.storage => {
     setOrThrow: (~items as _, ~table as _, ~itemSchema as _) => Js.Exn.raiseError("Not used yet"),
     setEffectCacheOrThrow: (~effect as _, ~items as _, ~initialize as _) => Promise.resolve(),
     dumpEffectCache: () => Js.Exn.raiseError("Not used yet"),
-    restoreEffectCache: (~withUpload as _) => Js.Exn.raiseError("Not used yet"),
   }
 }
 and /**

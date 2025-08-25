@@ -2,14 +2,6 @@ open Belt
 
 type ecosystem = | @as("evm") Evm | @as("fuel") Fuel
 
-type contract = {
-  name: string,
-  abi: Ethers.abi,
-  addresses: array<Address.t>,
-  events: array<Internal.eventConfig>,
-  startBlock: option<int>,
-}
-
 type syncConfigOptions = {
   initialBlockInterval?: int,
   backoffMultiplicative?: float,
@@ -28,15 +20,6 @@ type syncConfig = {
   backoffMillis: int,
   queryTimeoutMillis: int,
   fallbackStallTimeout: int,
-}
-
-type chainConfig = {
-  startBlock: int,
-  endBlock: option<int>,
-  confirmedBlockThreshold: int,
-  chain: ChainMap.Chain.t,
-  contracts: array<contract>,
-  sources: array<Source.t>,
 }
 
 type historyFlag = FullHistory | MinHistory
@@ -148,8 +131,8 @@ let codegenPersistence = Persistence.make(
 type t = {
   historyConfig: historyConfig,
   isUnorderedMultichainMode: bool,
-  chainMap: ChainMap.t<chainConfig>,
-  defaultChain: option<chainConfig>,
+  chainMap: ChainMap.t<InternalConfig.chain>,
+  defaultChain: option<InternalConfig.chain>,
   ecosystem: ecosystem,
   enableRawEvents: bool,
   persistence: Persistence.t,
@@ -160,7 +143,7 @@ let make = (
   ~shouldRollbackOnReorg=true,
   ~shouldSaveFullHistory=false,
   ~isUnorderedMultichainMode=false,
-  ~chains=[],
+  ~chains: array<InternalConfig.chain>=[],
   ~enableRawEvents=false,
   ~persistence=codegenPersistence,
   ~ecosystem=Evm,
@@ -168,7 +151,7 @@ let make = (
   let chainMap =
     chains
     ->Js.Array2.map(n => {
-      (n.chain, n)
+      (ChainMap.Chain.makeUnsafe(~chainId=n.id), n)
     })
     ->ChainMap.fromArrayUnsafe
 

@@ -129,7 +129,7 @@ module EventFunctions = {
       | Some(chainId) => chainId
       | None =>
         switch config.defaultChain {
-        | Some(chainConfig) => chainConfig.chain->ChainMap.Chain.toChainId
+        | Some(chainConfig) => chainConfig.id
         | None =>
           Js.Exn.raiseError(
             "No default chain Id found, please add at least 1 chain to your config.yaml",

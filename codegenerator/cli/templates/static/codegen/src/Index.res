@@ -249,7 +249,7 @@ let makeAppState = (globalState: GlobalState.t): EnvioInkApp.appState => {
           currentBlockHeight,
           latestFetchedBlockNumber,
           numBatchesFetched,
-          chain: cf.chainConfig.chain,
+          chain: ChainMap.Chain.makeUnsafe(~chainId=cf.chainConfig.id),
           endBlock: cf.chainConfig.endBlock,
           poweredByHyperSync: (cf.sourceManager->SourceManager.getActiveSource).poweredByHyperSync,
         }: EnvioInkApp.chainData
@@ -352,7 +352,7 @@ let main = async () => {
       },
     )
 
-    await config.persistence->Persistence.init
+    await config.persistence->Persistence.init(~chainConfigs=config.chainMap->ChainMap.values)
 
     let chainManager = await ChainManager.makeFromDbState(~config)
     let globalState = GlobalState.make(~config, ~chainManager, ~shouldUseTui)

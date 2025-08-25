@@ -11,7 +11,7 @@ type t = {
   logger: Pino.t,
   fetchState: FetchState.t,
   sourceManager: SourceManager.t,
-  chainConfig: Config.chainConfig,
+  chainConfig: InternalConfig.chain,
   startBlock: int,
   //The latest known block of the chain
   currentBlockHeight: int,
@@ -28,7 +28,7 @@ type t = {
 
 //CONSTRUCTION
 let make = (
-  ~chainConfig: Config.chainConfig,
+  ~chainConfig: InternalConfig.chain,
   ~lastBlockScannedHashes,
   ~dynamicContracts: array<InternalTable.DynamicContractRegistry.t>,
   ~startBlock,
@@ -66,7 +66,7 @@ let make = (
         eventConfig.id,
         (),
         ~contractName,
-        ~chain=chainConfig.chain,
+        ~chain=ChainMap.Chain.makeUnsafe(~chainId=chainConfig.id),
         ~eventName=eventConfig.name,
         ~isWildcard,
       )
@@ -132,7 +132,7 @@ let make = (
     ~startBlock,
     ~endBlock,
     ~eventConfigs,
-    ~chainId=chainConfig.chain->ChainMap.Chain.toChainId,
+    ~chainId=chainConfig.id,
     ~blockLag=Pervasives.max(
       !(config->Config.shouldRollbackOnReorg) || isInReorgThreshold
         ? 0
@@ -161,8 +161,8 @@ let make = (
   }
 }
 
-let makeFromConfig = (chainConfig: Config.chainConfig, ~config, ~maxAddrInPartition) => {
-  let logger = Logging.createChild(~params={"chainId": chainConfig.chain->ChainMap.Chain.toChainId})
+let makeFromConfig = (chainConfig: InternalConfig.chain, ~config, ~maxAddrInPartition) => {
+  let logger = Logging.createChild(~params={"chainId": chainConfig.id})
   let lastBlockScannedHashes = ReorgDetection.LastBlockScannedHashes.empty(
     ~confirmedBlockThreshold=chainConfig.confirmedBlockThreshold,
   )
@@ -190,14 +190,14 @@ let makeFromConfig = (chainConfig: Config.chainConfig, ~config, ~maxAddrInPartit
  * This function allows a chain fetcher to be created from metadata, in particular this is useful for restarting an indexer and making sure it fetches blocks from the same place.
  */
 let makeFromDbState = async (
-  chainConfig: Config.chainConfig,
+  chainConfig: InternalConfig.chain,
   ~maxAddrInPartition,
   ~isInReorgThreshold,
   ~config,
   ~sql=Db.sql,
 ) => {
-  let logger = Logging.createChild(~params={"chainId": chainConfig.chain->ChainMap.Chain.toChainId})
-  let chainId = chainConfig.chain->ChainMap.Chain.toChainId
+  let chainId = chainConfig.id
+  let logger = Logging.createChild(~params={"chainId": chainId})
   let latestProcessedEvent = await sql->DbFunctions.EventSyncState.getLatestProcessedEvent(~chainId)
 
   let chainMetadata = await sql->DbFunctions.ChainMetadata.getLatestChainMetadataState(~chainId)
@@ -483,7 +483,7 @@ let handleQueryResult = (
 Gets the latest item on the front of the queue and returns updated fetcher
 */
 let hasProcessedToEndblock = (self: t) => {
-  let {latestProcessedBlock, chainConfig: {endBlock}} = self
+  let {latestProcessedBlock, chainConfig: {?endBlock}} = self
   switch (latestProcessedBlock, endBlock) {
   | (Some(latestProcessedBlock), Some(endBlock)) => latestProcessedBlock >= endBlock
   | _ => false

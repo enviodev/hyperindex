@@ -15,7 +15,7 @@ describe("E2E Integration Test", () => {
 
     let contracts = await SetupRpcNode.deployContracts()
     await SetupRpcNode.runBasicGravatarTransactions(contracts.gravatar)
-    let localChainConfig: Config.chainConfig = {
+    let localChainConfig: InternalConfig.chain = {
       let contracts = [
         {
           Config.name: "Gravatar",

@@ -1,5 +1,5 @@
 @genType.opaque
-type chainConfig = Config.chainConfig
+type chainConfig = InternalConfig.chain
 
 @genType
 let getLocalChainConfig = (nftFactoryContractAddress): chainConfig => {

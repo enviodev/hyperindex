@@ -13,6 +13,12 @@ type effectCacheRecord = {
   mutable count: int,
 }
 
+type initialState = {
+  cleanRun: bool,
+  cache: dict<effectCacheRecord>,
+  chains: array<InternalTable.Chains.t>,
+}
+
 type operator = [#">" | #"="]
 
 type storage = {
@@ -22,10 +28,11 @@ type storage = {
   // Should initialize the storage so we can start interacting with it
   // Eg create connection, schema, tables, etc.
   initialize: (
+    ~chainConfigs: array<InternalConfig.chain>=?,
     ~entities: array<Internal.entityConfig>=?,
-    ~generalTables: array<Table.table>=?,
     ~enums: array<Internal.enumConfig<Internal.enum>>=?,
-  ) => promise<unit>,
+  ) => promise<initialState>,
+  loadInitialState: unit => promise<initialState>,
   @raises("StorageError")
   loadByIdsOrThrow: 'item. (
     ~ids: array<string>,
@@ -55,10 +62,6 @@ type storage = {
   ) => promise<unit>,
   // This is to download cache from the database to .envio/cache
   dumpEffectCache: unit => promise<unit>,
-  // This is not good, but the function does two things:
-  // - Gets info about existing cache tables
-  // - if withUpload is true, it also populates the cache from .envio/cache to the database
-  restoreEffectCache: (~withUpload: bool) => promise<array<effectCacheRecord>>,
 }
 
 exception StorageError({message: string, reason: exn})
@@ -66,11 +69,10 @@ exception StorageError({message: string, reason: exn})
 type storageStatus =
   | Unknown
   | Initializing(promise<unit>)
-  | Ready({cleanRun: bool, cache: dict<effectCacheRecord>})
+  | Ready(initialState)
 
 type t = {
   userEntities: array<Internal.entityConfig>,
-  internalTables: array<Table.table>,
   allEntities: array<Internal.entityConfig>,
   allEnums: array<Internal.enumConfig<Internal.enum>>,
   mutable storageStatus: storageStatus,
@@ -95,13 +97,6 @@ let make = (
     allEnums->Js.Array2.concat([entityHistoryActionEnumConfig->Internal.fromGenericEnumConfig])
   {
     userEntities,
-    internalTables: [
-      InternalTable.EventSyncState.table,
-      InternalTable.Chains.table,
-      InternalTable.PersistedState.table,
-      InternalTable.EndOfBlockRangeScannedData.table,
-      InternalTable.RawEvents.table,
-    ],
     allEntities,
     allEnums,
     storageStatus: Unknown,
@@ -110,17 +105,7 @@ let make = (
 }
 
 let init = {
-  let loadInitialCache = async (persistence, ~withUpload) => {
-    let effectCacheRecords = await persistence.storage.restoreEffectCache(~withUpload)
-    let cache = Js.Dict.empty()
-    effectCacheRecords->Js.Array2.forEach(record => {
-      Prometheus.EffectCacheCount.set(~count=record.count, ~effectName=record.effectName)
-      cache->Js.Dict.set(record.effectName, record)
-    })
-    cache
-  }
-
-  async (persistence, ~reset=false) => {
+  async (persistence, ~chainConfigs, ~reset=false) => {
     try {
       let shouldRun = switch persistence.storageStatus {
       | Unknown => true
@@ -139,17 +124,14 @@ let init = {
         if reset || !(await persistence.storage.isInitialized()) {
           Logging.info(`Initializing the indexer storage...`)
 
-          await persistence.storage.initialize(
+          let initialState = await persistence.storage.initialize(
             ~entities=persistence.allEntities,
-            ~generalTables=persistence.internalTables,
             ~enums=persistence.allEnums,
+            ~chainConfigs,
           )
 
           Logging.info(`The indexer storage is ready. Uploading cache...`)
-          persistence.storageStatus = Ready({
-            cleanRun: true,
-            cache: await loadInitialCache(persistence, ~withUpload=true),
-          })
+          persistence.storageStatus = Ready(initialState)
         } else if (
           // In case of a race condition,
           // we want to set the initial status to Ready only once.
@@ -159,10 +141,7 @@ let init = {
           }
         ) {
           Logging.info(`The indexer storage is ready.`)
-          persistence.storageStatus = Ready({
-            cleanRun: false,
-            cache: await loadInitialCache(persistence, ~withUpload=false),
-          })
+          persistence.storageStatus = Ready(await persistence.storage.loadInitialState())
         }
         resolveRef.contents()
       }

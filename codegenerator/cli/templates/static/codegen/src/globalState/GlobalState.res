@@ -27,7 +27,7 @@ module WriteThrottlers = {
         ~params={
           "context": "Throttler for pruning stale endblock data",
           "intervalMillis": intervalMillis,
-          "chain": cfg.chain,
+          "chain": cfg.id,
         },
       )
       Throttler.make(~intervalMillis, ~logger)
@@ -163,7 +163,7 @@ let updateChainFetcherCurrentBlockHeight = (chainFetcher: ChainFetcher.t, ~curre
   if currentBlockHeight > chainFetcher.currentBlockHeight {
     Prometheus.setSourceChainHeight(
       ~blockNumber=currentBlockHeight,
-      ~chain=chainFetcher.chainConfig.chain,
+      ~chainId=chainFetcher.chainConfig.id,
     )
     {...chainFetcher, currentBlockHeight}
   } else {
@@ -178,7 +178,7 @@ let updateChainMetadataTable = async (cm: ChainManager.t, ~throttler: Throttler.
     ->Belt.Array.map(cf => {
       let latestFetchedBlock = cf.fetchState->FetchState.getLatestFullyFetchedBlock
       let chainMetadata: DbFunctions.ChainMetadata.chainMetadata = {
-        chainId: cf.chainConfig.chain->ChainMap.Chain.toChainId,
+        chainId: cf.chainConfig.id,
         startBlock: cf.chainConfig.startBlock,
         blockHeight: cf.currentBlockHeight,
         //optional fields
@@ -214,7 +214,7 @@ let checkAndSetSyncedChains = (
   let allChainsAtHead = chainManager->ChainManager.isFetchingAtHead
   //Update the timestampCaughtUpToHeadOrEndblock values
   let chainFetchers = chainManager.chainFetchers->ChainMap.map(cf => {
-    let chain = cf.chainConfig.chain
+    let chain = ChainMap.Chain.makeUnsafe(~chainId=cf.chainConfig.id)
 
     // None if the chain wasn't processing.
     // But we still want to update the latest processed block
@@ -373,7 +373,7 @@ let validatePartitionQueryResponse = (
   if currentBlockHeight > chainFetcher.currentBlockHeight {
     Prometheus.SourceHeight.set(
       ~blockNumber=currentBlockHeight,
-      ~chainId=chainFetcher.chainConfig.chain->ChainMap.Chain.toChainId,
+      ~chainId=chainFetcher.chainConfig.id,
       // The currentBlockHeight from response won't necessarily
       // belong to the currently active source.
       // But for simplicity, assume it does.
