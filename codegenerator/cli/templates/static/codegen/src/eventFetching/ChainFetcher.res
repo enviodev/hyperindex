@@ -41,7 +41,6 @@ let make = (
   ~numEventsProcessed,
   ~numBatchesFetched,
   ~processingFilters,
-  ~maxAddrInPartition,
   ~isInReorgThreshold,
 ): t => {
   // We don't need the router itself, but only validation logic,
@@ -127,7 +126,7 @@ let make = (
   )
 
   let fetchState = FetchState.make(
-    ~maxAddrInPartition,
+    ~maxAddrInPartition=config.maxAddrInPartition,
     ~contracts,
     ~startBlock,
     ~endBlock,
@@ -161,7 +160,7 @@ let make = (
   }
 }
 
-let makeFromConfig = (chainConfig: InternalConfig.chain, ~config, ~maxAddrInPartition) => {
+let makeFromConfig = (chainConfig: InternalConfig.chain, ~config) => {
   let logger = Logging.createChild(~params={"chainId": chainConfig.id})
   let lastBlockScannedHashes = ReorgDetection.LastBlockScannedHashes.empty(
     ~confirmedBlockThreshold=chainConfig.confirmedBlockThreshold,
@@ -181,7 +180,6 @@ let makeFromConfig = (chainConfig: InternalConfig.chain, ~config, ~maxAddrInPart
     ~logger,
     ~processingFilters=None,
     ~dynamicContracts=[],
-    ~maxAddrInPartition,
     ~isInReorgThreshold=false,
   )
 }
@@ -191,7 +189,7 @@ let makeFromConfig = (chainConfig: InternalConfig.chain, ~config, ~maxAddrInPart
  */
 let makeFromDbState = async (
   chainConfig: InternalConfig.chain,
-  ~maxAddrInPartition,
+  ~initialChainState: InternalTable.Chains.t,
   ~isInReorgThreshold,
   ~config,
   ~sql=Db.sql,
@@ -199,8 +197,6 @@ let makeFromDbState = async (
   let chainId = chainConfig.id
   let logger = Logging.createChild(~params={"chainId": chainId})
   let latestProcessedEvent = await sql->DbFunctions.EventSyncState.getLatestProcessedEvent(~chainId)
-
-  let chainMetadata = await sql->DbFunctions.ChainMetadata.getLatestChainMetadataState(~chainId)
 
   let (
     restartBlockNumber: int,
@@ -245,36 +241,6 @@ let makeFromDbState = async (
   let dbRecoveredDynamicContracts =
     await sql->DbFunctions.DynamicContractRegistry.readAllDynamicContracts(~chainId)
 
-  let (
-    firstEventBlockNumber,
-    latestProcessedBlockChainMetadata,
-    numEventsProcessed,
-    timestampCaughtUpToHeadOrEndblock,
-  ) = switch chainMetadata {
-  | Some({
-      firstEventBlockNumber,
-      latestProcessedBlock,
-      numEventsProcessed,
-      timestampCaughtUpToHeadOrEndblock,
-    }) => {
-      // on restart, reset the events_processed gauge to the previous state
-      switch numEventsProcessed {
-      | Value(numEventsProcessed) =>
-        Prometheus.ProgressEventsCount.set(~processedCount=numEventsProcessed, ~chainId)
-      | Null | Undefined => () // do nothing if no events have been processed yet for this chain
-      }
-      (
-        firstEventBlockNumber->Js.Nullable.toOption,
-        latestProcessedBlock->Js.Nullable.toOption,
-        numEventsProcessed->Js.Nullable.toOption,
-        Env.updateSyncTimeOnRestart
-          ? None
-          : timestampCaughtUpToHeadOrEndblock->Js.Nullable.toOption,
-      )
-    }
-  | None => (None, None, None, None)
-  }
-
   let endOfBlockRangeScannedData =
     await sql->DbFunctions.EndOfBlockRangeScannedData.readEndOfBlockRangeScannedDataForChain(
       ~chainId,
@@ -290,21 +256,24 @@ let makeFromDbState = async (
       ~confirmedBlockThreshold=chainConfig.confirmedBlockThreshold,
     )
 
+  Prometheus.ProgressEventsCount.set(~processedCount=initialChainState.numEventsProcessed, ~chainId)
+
   make(
     ~dynamicContracts=dbRecoveredDynamicContracts,
     ~chainConfig,
     ~startBlock=restartBlockNumber,
-    ~endBlock=chainConfig.endBlock,
+    ~endBlock=initialChainState.endBlock->Js.Null.toOption,
     ~config,
     ~lastBlockScannedHashes,
-    ~dbFirstEventBlockNumber=firstEventBlockNumber,
-    ~latestProcessedBlock=latestProcessedBlockChainMetadata,
-    ~timestampCaughtUpToHeadOrEndblock,
-    ~numEventsProcessed=numEventsProcessed->Option.getWithDefault(0),
+    ~dbFirstEventBlockNumber=initialChainState.firstEventBlockNumber->Js.Null.toOption,
+    ~latestProcessedBlock=initialChainState.latestProcessedBlock->Js.Null.toOption,
+    ~timestampCaughtUpToHeadOrEndblock=Env.updateSyncTimeOnRestart
+      ? None
+      : initialChainState.timestampCaughtUpToHeadOrEndblock->Js.Null.toOption,
+    ~numEventsProcessed=initialChainState.numEventsProcessed,
     ~numBatchesFetched=0,
     ~logger,
     ~processingFilters,
-    ~maxAddrInPartition,
     ~isInReorgThreshold,
   )
 }

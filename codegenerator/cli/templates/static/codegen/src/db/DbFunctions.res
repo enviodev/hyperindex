@@ -36,19 +36,8 @@ module ChainMetadata = {
   external batchSetChainMetadata: (Postgres.sql, array<chainMetadata>) => promise<unit> =
     "batchSetChainMetadata"
 
-  @module("./DbFunctionsImplementation.js")
-  external readLatestChainMetadataState: (
-    Postgres.sql,
-    ~chainId: int,
-  ) => promise<array<chainMetadata>> = "readLatestChainMetadataState"
-
   let batchSetChainMetadataRow = (sql, ~chainMetadataArray: array<chainMetadata>) => {
     sql->batchSetChainMetadata(chainMetadataArray)
-  }
-
-  let getLatestChainMetadataState = async (sql, ~chainId) => {
-    let arr = await sql->readLatestChainMetadataState(~chainId)
-    arr->Belt.Array.get(0)
   }
 }
 

@@ -161,6 +161,15 @@ let getInitializedStorageOrThrow = persistence => {
   }
 }
 
+let getInitializedState = persistence => {
+  switch persistence.storageStatus {
+  | Unknown
+  | Initializing(_) =>
+    Js.Exn.raiseError(`Failed to access the initial state. The Persistence layer is not initialized.`)
+  | Ready(initialState) => initialState
+  }
+}
+
 let setEffectCacheOrThrow = async (persistence, ~effect: Internal.effect, ~items) => {
   switch persistence.storageStatus {
   | Unknown

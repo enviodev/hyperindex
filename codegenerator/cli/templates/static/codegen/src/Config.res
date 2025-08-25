@@ -137,6 +137,7 @@ type t = {
   enableRawEvents: bool,
   persistence: Persistence.t,
   addContractNameToContractNameMapping: dict<string>,
+  maxAddrInPartition: int,
 }
 
 let make = (
@@ -180,6 +181,7 @@ let make = (
     persistence,
     ecosystem,
     addContractNameToContractNameMapping,
+    maxAddrInPartition: Env.maxAddrInPartition,
   }
 }
 

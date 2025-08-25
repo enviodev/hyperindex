@@ -61,9 +61,8 @@ let getOrderedNextItem = (fetchStates: ChainMap.t<FetchState.t>): option<
   })
 }
 
-let makeFromConfig = (~config: Config.t, ~maxAddrInPartition=Env.maxAddrInPartition): t => {
-  let chainFetchers =
-    config.chainMap->ChainMap.map(ChainFetcher.makeFromConfig(_, ~maxAddrInPartition, ~config))
+let makeFromConfig = (~config: Config.t): t => {
+  let chainFetchers = config.chainMap->ChainMap.map(ChainFetcher.makeFromConfig(_, ~config))
   {
     chainFetchers,
     isUnorderedMultichainMode: config.isUnorderedMultichainMode,
@@ -71,25 +70,32 @@ let makeFromConfig = (~config: Config.t, ~maxAddrInPartition=Env.maxAddrInPartit
   }
 }
 
-let makeFromDbState = async (~config: Config.t, ~maxAddrInPartition=Env.maxAddrInPartition): t => {
-  // Since now it's possible not to have rows in the history table
-  // even after the indexer started saving history (entered reorg threshold),
-  // This rows check might incorrectly return false for recovering the isInReorgThreshold option.
-  // But this is not a problem. There's no history anyways, and the indexer will be able to
-  // correctly calculate isInReorgThreshold as it starts.
-  let hasStartedSavingHistory = await Db.sql->DbFunctions.EntityHistory.hasRows
-  //If we have started saving history, continue to save history
-  //as regardless of whether we are still in a reorg threshold
-  let isInReorgThreshold = hasStartedSavingHistory
+let makeFromDbState = async (~initialState: Persistence.initialState, ~config: Config.t): t => {
+  let isInReorgThreshold = if initialState.cleanRun {
+    false
+  } else {
+    // TODO: Move to Persistence.initialState
+    // Since now it's possible not to have rows in the history table
+    // even after the indexer started saving history (entered reorg threshold),
+    // This rows check might incorrectly return false for recovering the isInReorgThreshold option.
+    // But this is not a problem. There's no history anyways, and the indexer will be able to
+    // correctly calculate isInReorgThreshold as it starts.
+    let hasStartedSavingHistory = await Db.sql->DbFunctions.EntityHistory.hasRows
+
+    //If we have started saving history, continue to save history
+    //as regardless of whether we are still in a reorg threshold
+    hasStartedSavingHistory
+  }
 
   let chainFetchersArr =
-    await config.chainMap
-    ->ChainMap.entries
-    ->Array.map(async ((chain, chainConfig)) => {
+    await initialState.chains
+    ->Array.map(async (initialChainState: InternalTable.Chains.t) => {
+      let chain = Config.getChain(config, ~chainId=initialChainState.id)
+      let chainConfig = config.chainMap->ChainMap.get(chain)
       (
         chain,
         await chainConfig->ChainFetcher.makeFromDbState(
-          ~maxAddrInPartition,
+          ~initialChainState,
           ~isInReorgThreshold,
           ~config,
         ),

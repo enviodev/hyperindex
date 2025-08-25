@@ -354,7 +354,10 @@ let main = async () => {
 
     await config.persistence->Persistence.init(~chainConfigs=config.chainMap->ChainMap.values)
 
-    let chainManager = await ChainManager.makeFromDbState(~config)
+    let chainManager = await ChainManager.makeFromDbState(
+      ~initialState=config.persistence->Persistence.getInitializedState,
+      ~config,
+    )
     let globalState = GlobalState.make(~config, ~chainManager, ~shouldUseTui)
     let stateUpdatedHook = if shouldUseTui {
       let rerender = EnvioInkApp.startApp(makeAppState(globalState))

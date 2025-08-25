@@ -57,11 +57,6 @@ module.exports.batchSetEventSyncState = (sql, entityDataArray) => {
     `;
 };
 
-module.exports.readLatestChainMetadataState = (sql, chainId) => sql`
-  SELECT *
-  FROM ${sql(publicSchema)}.envio_chains
-  WHERE chain_id = ${chainId}`;
-
 module.exports.batchSetChainMetadata = (sql, entityDataArray) => {
   return sql`
     INSERT INTO ${sql(publicSchema)}.envio_chains
