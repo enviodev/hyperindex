@@ -12,6 +12,8 @@ module EventSyncState = {
   let logIndexFieldName = "log_index"
   let isPreRegisteringDynamicContractsFieldName = "is_pre_registering_dynamic_contracts"
 
+  // @genType Used for Test DB
+  @genType
   type t = {
     @as("chain_id") chainId: int,
     @as("block_number") blockNumber: int,
@@ -265,7 +267,7 @@ module EndOfBlockRangeScannedData = {
 }
 
 module RawEvents = {
-  // The @genType is only used for testing
+  // @genType Used for Test DB and internal tests
   @genType
   type t = {
     @as("chain_id") chainId: int,
@@ -330,6 +332,8 @@ module DynamicContractRegistry = {
     chainId->Belt.Int.toString ++ "-" ++ contractAddress->Address.toString
   }
 
+  // @genType Used for Test DB
+  @genType
   type t = {
     id: string,
     @as("chain_id") chainId: int,
