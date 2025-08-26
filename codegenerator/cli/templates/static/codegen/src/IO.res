@@ -140,9 +140,7 @@ let executeBatch = async (
         ->Js.Array2.pushMany(
           sql->PgStorage.setEntityHistoryOrThrow(
             ~entityHistory=entityConfig.entityHistory,
-            ~rows=entityHistoryItemsToSet->Array.concat([
-              entityHistoryItemsToSet->Js.Array2.unsafe_get(0),
-            ]),
+            ~rows=entityHistoryItemsToSet,
             ~shouldRemoveInvalidUtf8,
           ),
         )
