@@ -181,7 +181,7 @@ let updateChainMetadataTable = (cm: ChainManager.t, ~throttler: Throttler.t) => 
         id: cf.chainConfig.id,
         startBlock: cf.chainConfig.startBlock,
         blockHeight: cf.currentBlockHeight,
-        endBlock: cf.chainConfig.endBlock->Js.Null.fromOption,
+        endBlock: cf.endBlock->Js.Null.fromOption,
         firstEventBlockNumber: cf->ChainFetcher.getFirstEventBlockNumber->Js.Null.fromOption,
         latestProcessedBlock: cf.latestProcessedBlock->Js.Null.fromOption,
         numEventsProcessed: cf.numEventsProcessed,

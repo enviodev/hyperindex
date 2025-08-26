@@ -13,6 +13,7 @@ type t = {
   sourceManager: SourceManager.t,
   chainConfig: InternalConfig.chain,
   startBlock: int,
+  endBlock: option<int>,
   //The latest known block of the chain
   currentBlockHeight: int,
   timestampCaughtUpToHeadOrEndblock: option<Js.Date.t>,
@@ -144,6 +145,7 @@ let make = (
     logger,
     chainConfig,
     startBlock,
+    endBlock,
     sourceManager: SourceManager.make(
       ~sources=chainConfig.sources,
       ~maxPartitionConcurrency=Env.maxPartitionConcurrency,

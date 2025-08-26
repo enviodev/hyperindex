@@ -191,7 +191,7 @@ let makeAppState = (globalState: GlobalState.t): EnvioInkApp.appState => {
       let hasProcessedToEndblock = cf->ChainFetcher.hasProcessedToEndblock
       let currentBlockHeight =
         cf->ChainFetcher.hasProcessedToEndblock
-          ? cf.chainConfig.endBlock->Option.getWithDefault(cf.currentBlockHeight)
+          ? cf.endBlock->Option.getWithDefault(cf.currentBlockHeight)
           : cf.currentBlockHeight
 
       let progress: ChainData.progress = if hasProcessedToEndblock {
@@ -250,7 +250,7 @@ let makeAppState = (globalState: GlobalState.t): EnvioInkApp.appState => {
           latestFetchedBlockNumber,
           numBatchesFetched,
           chain: ChainMap.Chain.makeUnsafe(~chainId=cf.chainConfig.id),
-          endBlock: cf.chainConfig.endBlock,
+          endBlock: cf.endBlock,
           poweredByHyperSync: (cf.sourceManager->SourceManager.getActiveSource).poweredByHyperSync,
         }: EnvioInkApp.chainData
       )

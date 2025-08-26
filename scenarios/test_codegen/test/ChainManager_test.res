@@ -100,6 +100,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
       numEventsProcessed: 0,
       numBatchesFetched: 0,
       startBlock: 0,
+      endBlock: None,
       fetchState: fetchState.contents,
       logger: Logging.getLogger(),
       sourceManager: SourceManager.make(
