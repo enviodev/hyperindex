@@ -252,6 +252,22 @@ let trackMeta = async (~auth, ~endpoint, ~pgSchema) => {
       "msg": msg,
     })
 
+    // Add public select permissions for EnvioMeta logical model
+    let result = await rawBodyRoute->Rest.fetch(
+      {
+        "auth": auth,
+        "bodyString": `{"type": "pg_create_logical_model_select_permission", "args": {"source": "default", "name": "EnvioMeta", "role": "public", "permission": {"columns": "*", "filter": {}}}}`,
+      },
+      ~client=Rest.client(endpoint),
+    )
+    let msg = switch result {
+    | QuerySucceeded => `Hasura _meta public select permission created`
+    | AlreadyDone => `Hasura _meta public select permission already exists`
+    }
+    Logging.trace({
+      "msg": msg,
+    })
+
     let result = await rawBodyRoute->Rest.fetch(
       {
         "auth": auth,
@@ -279,6 +295,22 @@ let trackMeta = async (~auth, ~endpoint, ~pgSchema) => {
     let msg = switch result {
     | QuerySucceeded => `Hasura chain_metadata native query created`
     | AlreadyDone => `Hasura chain_metadata native query already created`
+    }
+    Logging.trace({
+      "msg": msg,
+    })
+
+    // Add public select permissions for chain_metadata logical model
+    let result = await rawBodyRoute->Rest.fetch(
+      {
+        "auth": auth,
+        "bodyString": `{"type": "pg_create_logical_model_select_permission", "args": {"source": "default", "name": "chain_metadata", "role": "public", "permission": {"columns": "*", "filter": {}}}}`,
+      },
+      ~client=Rest.client(endpoint),
+    )
+    let msg = switch result {
+    | QuerySucceeded => `Hasura chain_metadata public select permission created`
+    | AlreadyDone => `Hasura chain_metadata public select permission already exists`
     }
     Logging.trace({
       "msg": msg,
