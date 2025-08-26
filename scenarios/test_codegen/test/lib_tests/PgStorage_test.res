@@ -103,15 +103,30 @@ describe("Test PgStorage SQL generation functions", () => {
           module(Entities.A)->Entities.entityModToInternal,
           module(Entities.B)->Entities.entityModToInternal,
         ]
-        let generalTables = [TablesStatic.ChainMetadata.table]
         let enums = [Enums.EntityType.config->Internal.fromGenericEnumConfig]
 
         let queries = PgStorage.makeInitializeTransaction(
           ~pgSchema="test_schema",
           ~pgUser="postgres",
-          ~generalTables,
           ~entities,
           ~enums,
+          ~chainConfigs=[
+            {
+              id: 1,
+              startBlock: 100,
+              endBlock: 200,
+              confirmedBlockThreshold: 10,
+              contracts: [],
+              sources: [],
+            },
+            {
+              id: 137,
+              startBlock: 0,
+              confirmedBlockThreshold: 200,
+              contracts: [],
+              sources: [],
+            },
+          ],
         )
 
         // Should return exactly 2 queries: main DDL + functions
@@ -129,7 +144,11 @@ CREATE SCHEMA "test_schema";
 GRANT ALL ON SCHEMA "test_schema" TO "postgres";
 GRANT ALL ON SCHEMA "test_schema" TO public;
 CREATE TYPE "test_schema".ENTITY_TYPE AS ENUM('A', 'B', 'C', 'CustomSelectionTestPass', 'D', 'EntityWithAllNonArrayTypes', 'EntityWithAllTypes', 'EntityWithBigDecimal', 'EntityWithTimestamp', 'Gravatar', 'NftCollection', 'PostgresNumericPrecisionEntityTester', 'Token', 'User', 'dynamic_contract_registry');
-CREATE TABLE IF NOT EXISTS "test_schema"."envio_chains"("chain_id" INTEGER NOT NULL, "start_block" INTEGER NOT NULL, "end_block" INTEGER, "block_height" INTEGER NOT NULL, "first_event_block_number" INTEGER, "latest_processed_block" INTEGER, "num_events_processed" INTEGER, "is_hyper_sync" BOOLEAN NOT NULL, "num_batches_fetched" INTEGER NOT NULL, "latest_fetched_block_number" INTEGER NOT NULL, "timestamp_caught_up_to_head_or_endblock" TIMESTAMP WITH TIME ZONE NULL, PRIMARY KEY("chain_id"));
+CREATE TABLE IF NOT EXISTS "test_schema"."event_sync_state"("chain_id" INTEGER NOT NULL, "block_number" INTEGER NOT NULL, "log_index" INTEGER NOT NULL, "block_timestamp" INTEGER NOT NULL, "is_pre_registering_dynamic_contracts" BOOLEAN DEFAULT false, PRIMARY KEY("chain_id"));
+CREATE TABLE IF NOT EXISTS "test_schema"."envio_chains"("id" INTEGER NOT NULL, "start_block" INTEGER NOT NULL, "end_block" INTEGER, "buffer_block" INTEGER NOT NULL, "source_block" INTEGER NOT NULL, "first_event_block" INTEGER, "ready_at" TIMESTAMP WITH TIME ZONE NULL, "events_processed" INTEGER NOT NULL, "_is_hyper_sync" BOOLEAN NOT NULL, "_latest_processed_block" INTEGER, "_num_batches_fetched" INTEGER NOT NULL, PRIMARY KEY("id"));
+CREATE TABLE IF NOT EXISTS "test_schema"."persisted_state"("id" SERIAL NOT NULL, "envio_version" TEXT NOT NULL, "config_hash" TEXT NOT NULL, "schema_hash" TEXT NOT NULL, "handler_files_hash" TEXT NOT NULL, "abi_files_hash" TEXT NOT NULL, PRIMARY KEY("id"));
+CREATE TABLE IF NOT EXISTS "test_schema"."end_of_block_range_scanned_data"("chain_id" INTEGER NOT NULL, "block_number" INTEGER NOT NULL, "block_hash" TEXT NOT NULL, PRIMARY KEY("chain_id", "block_number"));
+CREATE TABLE IF NOT EXISTS "test_schema"."raw_events"("chain_id" INTEGER NOT NULL, "event_id" NUMERIC NOT NULL, "event_name" TEXT NOT NULL, "contract_name" TEXT NOT NULL, "block_number" INTEGER NOT NULL, "log_index" INTEGER NOT NULL, "src_address" TEXT NOT NULL, "block_hash" TEXT NOT NULL, "block_timestamp" INTEGER NOT NULL, "block_fields" JSONB NOT NULL, "transaction_fields" JSONB NOT NULL, "params" JSONB NOT NULL, "db_write_timestamp" TIMESTAMP DEFAULT CURRENT_TIMESTAMP, "serial" SERIAL, PRIMARY KEY("serial"));
 CREATE TABLE IF NOT EXISTS "test_schema"."A"("b_id" TEXT NOT NULL, "id" TEXT NOT NULL, "optionalStringToTestLinkedEntities" TEXT, "db_write_timestamp" TIMESTAMP DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY("id"));
 CREATE TABLE IF NOT EXISTS "test_schema"."A_history"("entity_history_block_timestamp" INTEGER NOT NULL, "entity_history_chain_id" INTEGER NOT NULL, "entity_history_block_number" INTEGER NOT NULL, "entity_history_log_index" INTEGER NOT NULL, "previous_entity_history_block_timestamp" INTEGER, "previous_entity_history_chain_id" INTEGER, "previous_entity_history_block_number" INTEGER, "previous_entity_history_log_index" INTEGER, "b_id" TEXT, "id" TEXT NOT NULL, "optionalStringToTestLinkedEntities" TEXT, "action" "test_schema".ENTITY_HISTORY_ROW_ACTION NOT NULL, "serial" SERIAL, PRIMARY KEY("entity_history_block_timestamp", "entity_history_chain_id", "entity_history_block_number", "entity_history_log_index", "id"));
 CREATE TABLE IF NOT EXISTS "test_schema"."B"("c_id" TEXT, "id" TEXT NOT NULL, "db_write_timestamp" TIMESTAMP DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY("id"));
@@ -137,7 +156,10 @@ CREATE TABLE IF NOT EXISTS "test_schema"."B_history"("entity_history_block_times
 CREATE INDEX IF NOT EXISTS "A_b_id" ON "test_schema"."A"("b_id");
 CREATE INDEX IF NOT EXISTS "A_history_serial" ON "test_schema"."A_history"("serial");
 CREATE INDEX IF NOT EXISTS "B_history_serial" ON "test_schema"."B_history"("serial");
-CREATE INDEX IF NOT EXISTS "A_b_id" ON "test_schema"."A"("b_id");`
+CREATE INDEX IF NOT EXISTS "A_b_id" ON "test_schema"."A"("b_id");
+INSERT INTO "test_schema"."envio_chains" ("id", "start_block", "end_block", "source_block", "first_event_block", "buffer_block", "ready_at", "events_processed", "_is_hyper_sync", "_latest_processed_block", "_num_batches_fetched")
+VALUES (1, 100, 200, 0, NULL, -1, NULL, 0, false, NULL, 0),
+       (137, 0, NULL, 0, NULL, -1, NULL, 0, false, NULL, 0);`
 
         Assert.equal(
           mainQuery,
@@ -179,7 +201,12 @@ CREATE INDEX IF NOT EXISTS "A_b_id" ON "test_schema"."A"("b_id");`
         let expectedMainQuery = `DROP SCHEMA IF EXISTS "test_schema" CASCADE;
 CREATE SCHEMA "test_schema";
 GRANT ALL ON SCHEMA "test_schema" TO "postgres";
-GRANT ALL ON SCHEMA "test_schema" TO public;`
+GRANT ALL ON SCHEMA "test_schema" TO public;
+CREATE TABLE IF NOT EXISTS "test_schema"."event_sync_state"("chain_id" INTEGER NOT NULL, "block_number" INTEGER NOT NULL, "log_index" INTEGER NOT NULL, "block_timestamp" INTEGER NOT NULL, "is_pre_registering_dynamic_contracts" BOOLEAN DEFAULT false, PRIMARY KEY("chain_id"));
+CREATE TABLE IF NOT EXISTS "test_schema"."envio_chains"("id" INTEGER NOT NULL, "start_block" INTEGER NOT NULL, "end_block" INTEGER, "buffer_block" INTEGER NOT NULL, "source_block" INTEGER NOT NULL, "first_event_block" INTEGER, "ready_at" TIMESTAMP WITH TIME ZONE NULL, "events_processed" INTEGER NOT NULL, "_is_hyper_sync" BOOLEAN NOT NULL, "_latest_processed_block" INTEGER, "_num_batches_fetched" INTEGER NOT NULL, PRIMARY KEY("id"));
+CREATE TABLE IF NOT EXISTS "test_schema"."persisted_state"("id" SERIAL NOT NULL, "envio_version" TEXT NOT NULL, "config_hash" TEXT NOT NULL, "schema_hash" TEXT NOT NULL, "handler_files_hash" TEXT NOT NULL, "abi_files_hash" TEXT NOT NULL, PRIMARY KEY("id"));
+CREATE TABLE IF NOT EXISTS "test_schema"."end_of_block_range_scanned_data"("chain_id" INTEGER NOT NULL, "block_number" INTEGER NOT NULL, "block_hash" TEXT NOT NULL, PRIMARY KEY("chain_id", "block_number"));
+CREATE TABLE IF NOT EXISTS "test_schema"."raw_events"("chain_id" INTEGER NOT NULL, "event_id" NUMERIC NOT NULL, "event_name" TEXT NOT NULL, "contract_name" TEXT NOT NULL, "block_number" INTEGER NOT NULL, "log_index" INTEGER NOT NULL, "src_address" TEXT NOT NULL, "block_hash" TEXT NOT NULL, "block_timestamp" INTEGER NOT NULL, "block_fields" JSONB NOT NULL, "transaction_fields" JSONB NOT NULL, "params" JSONB NOT NULL, "db_write_timestamp" TIMESTAMP DEFAULT CURRENT_TIMESTAMP, "serial" SERIAL, PRIMARY KEY("serial"));`
 
         Assert.equal(
           mainQuery,
@@ -213,7 +240,6 @@ $$ LANGUAGE plpgsql;`,
         let queries = PgStorage.makeInitializeTransaction(
           ~pgSchema="public",
           ~pgUser="postgres",
-          ~generalTables=[],
           ~entities,
           ~enums=[],
         )
@@ -231,6 +257,11 @@ $$ LANGUAGE plpgsql;`,
 CREATE SCHEMA "public";
 GRANT ALL ON SCHEMA "public" TO "postgres";
 GRANT ALL ON SCHEMA "public" TO public;
+CREATE TABLE IF NOT EXISTS "public"."event_sync_state"("chain_id" INTEGER NOT NULL, "block_number" INTEGER NOT NULL, "log_index" INTEGER NOT NULL, "block_timestamp" INTEGER NOT NULL, "is_pre_registering_dynamic_contracts" BOOLEAN DEFAULT false, PRIMARY KEY("chain_id"));
+CREATE TABLE IF NOT EXISTS "public"."envio_chains"("id" INTEGER NOT NULL, "start_block" INTEGER NOT NULL, "end_block" INTEGER, "buffer_block" INTEGER NOT NULL, "source_block" INTEGER NOT NULL, "first_event_block" INTEGER, "ready_at" TIMESTAMP WITH TIME ZONE NULL, "events_processed" INTEGER NOT NULL, "_is_hyper_sync" BOOLEAN NOT NULL, "_latest_processed_block" INTEGER, "_num_batches_fetched" INTEGER NOT NULL, PRIMARY KEY("id"));
+CREATE TABLE IF NOT EXISTS "public"."persisted_state"("id" SERIAL NOT NULL, "envio_version" TEXT NOT NULL, "config_hash" TEXT NOT NULL, "schema_hash" TEXT NOT NULL, "handler_files_hash" TEXT NOT NULL, "abi_files_hash" TEXT NOT NULL, PRIMARY KEY("id"));
+CREATE TABLE IF NOT EXISTS "public"."end_of_block_range_scanned_data"("chain_id" INTEGER NOT NULL, "block_number" INTEGER NOT NULL, "block_hash" TEXT NOT NULL, PRIMARY KEY("chain_id", "block_number"));
+CREATE TABLE IF NOT EXISTS "public"."raw_events"("chain_id" INTEGER NOT NULL, "event_id" NUMERIC NOT NULL, "event_name" TEXT NOT NULL, "contract_name" TEXT NOT NULL, "block_number" INTEGER NOT NULL, "log_index" INTEGER NOT NULL, "src_address" TEXT NOT NULL, "block_hash" TEXT NOT NULL, "block_timestamp" INTEGER NOT NULL, "block_fields" JSONB NOT NULL, "transaction_fields" JSONB NOT NULL, "params" JSONB NOT NULL, "db_write_timestamp" TIMESTAMP DEFAULT CURRENT_TIMESTAMP, "serial" SERIAL, PRIMARY KEY("serial"));
 CREATE TABLE IF NOT EXISTS "public"."A"("b_id" TEXT NOT NULL, "id" TEXT NOT NULL, "optionalStringToTestLinkedEntities" TEXT, "db_write_timestamp" TIMESTAMP DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY("id"));
 CREATE TABLE IF NOT EXISTS "public"."A_history"("entity_history_block_timestamp" INTEGER NOT NULL, "entity_history_chain_id" INTEGER NOT NULL, "entity_history_block_number" INTEGER NOT NULL, "entity_history_log_index" INTEGER NOT NULL, "previous_entity_history_block_timestamp" INTEGER, "previous_entity_history_chain_id" INTEGER, "previous_entity_history_block_number" INTEGER, "previous_entity_history_log_index" INTEGER, "b_id" TEXT, "id" TEXT NOT NULL, "optionalStringToTestLinkedEntities" TEXT, "action" "public".ENTITY_HISTORY_ROW_ACTION NOT NULL, "serial" SERIAL, PRIMARY KEY("entity_history_block_timestamp", "entity_history_chain_id", "entity_history_block_number", "entity_history_log_index", "id"));
 CREATE INDEX IF NOT EXISTS "A_b_id" ON "public"."A"("b_id");
@@ -330,8 +361,8 @@ SELECT * FROM unnest($1::NUMERIC[],$2::NUMERIC(10, 8)[],$3::NUMERIC[],$4::INTEGE
       async () => {
         let query = PgStorage.makeInsertUnnestSetQuery(
           ~pgSchema="test_schema",
-          ~table=TablesStatic.RawEvents.table,
-          ~itemSchema=TablesStatic.RawEvents.schema,
+          ~table=InternalTable.RawEvents.table,
+          ~itemSchema=InternalTable.RawEvents.schema,
           ~isRawEvents=true,
         )
 
@@ -388,6 +419,32 @@ VALUES($1,$2)ON CONFLICT("id") DO UPDATE SET "c_id" = EXCLUDED."c_id";`
     )
   })
 
+  describe("InternalTable.Chains.makeSingleUpdateQuery", () => {
+    Async.it(
+      "Should create correct SQL for updating chain state",
+      async () => {
+        let query = InternalTable.Chains.makeSingleUpdateQuery(~pgSchema="test_schema")
+
+        let expectedQuery = `UPDATE "test_schema"."envio_chains"
+SET "source_block" = $2,
+    "first_event_block" = $3,
+    "buffer_block" = $4,
+    "ready_at" = $5,
+    "events_processed" = $6,
+    "_is_hyper_sync" = $7,
+    "_latest_processed_block" = $8,
+    "_num_batches_fetched" = $9
+WHERE "id" = $1;`
+
+        Assert.equal(
+          query,
+          expectedQuery,
+          ~message="Should generate correct UPDATE SQL with parameter placeholders",
+        )
+      },
+    )
+  })
+
   describe("InternalTable.Chains.makeInitialValuesQuery", () => {
     Async.it(
       "Should return empty string for empty chain configs",
@@ -399,7 +456,7 @@ VALUES($1,$2)ON CONFLICT("id") DO UPDATE SET "c_id" = EXCLUDED."c_id";`
 
         Assert.equal(
           query,
-          "",
+          None,
           ~message="Should return empty string when no chain configs provided",
         )
       },
@@ -411,8 +468,8 @@ VALUES($1,$2)ON CONFLICT("id") DO UPDATE SET "c_id" = EXCLUDED."c_id";`
         let chainConfig: InternalConfig.chain = {
           id: 1,
           startBlock: 100,
-          endBlock: Some(200),
-          confirmedBlockThreshold: Some(5),
+          endBlock: 200,
+          confirmedBlockThreshold: 5,
           contracts: [],
           sources: [],
         }
@@ -422,12 +479,12 @@ VALUES($1,$2)ON CONFLICT("id") DO UPDATE SET "c_id" = EXCLUDED."c_id";`
           ~chainConfigs=[chainConfig],
         )
 
-        let expectedQuery = `INSERT INTO "test_schema"."envio_chains" ("id", "start_block", "end_block", "source_block", "first_event_block", "buffer_block", "ready_at", "_is_hyper_sync", "_latest_processed_block", "events_processed", "_num_batches_fetched")
-VALUES (1, 100, 200, -1, NULL, -1, NULL, false, NULL, 0, 0);`
+        let expectedQuery = `INSERT INTO "test_schema"."envio_chains" ("id", "start_block", "end_block", "source_block", "first_event_block", "buffer_block", "ready_at", "events_processed", "_is_hyper_sync", "_latest_processed_block", "_num_batches_fetched")
+VALUES (1, 100, 200, 0, NULL, -1, NULL, 0, false, NULL, 0);`
 
         Assert.equal(
           query,
-          expectedQuery,
+          Some(expectedQuery),
           ~message="Should generate correct INSERT VALUES SQL for single chain",
         )
       },
@@ -439,8 +496,7 @@ VALUES (1, 100, 200, -1, NULL, -1, NULL, false, NULL, 0, 0);`
         let chainConfig: InternalConfig.chain = {
           id: 1,
           startBlock: 100,
-          endBlock: None,
-          confirmedBlockThreshold: Some(5),
+          confirmedBlockThreshold: 5,
           contracts: [],
           sources: [],
         }
@@ -450,12 +506,12 @@ VALUES (1, 100, 200, -1, NULL, -1, NULL, false, NULL, 0, 0);`
           ~chainConfigs=[chainConfig],
         )
 
-        let expectedQuery = `INSERT INTO "public"."envio_chains" ("id", "start_block", "end_block", "source_block", "first_event_block", "buffer_block", "ready_at", "_is_hyper_sync", "_latest_processed_block", "events_processed", "_num_batches_fetched")
-VALUES (1, 100, NULL, -1, NULL, -1, NULL, false, NULL, 0, 0);`
+        let expectedQuery = `INSERT INTO "public"."envio_chains" ("id", "start_block", "end_block", "source_block", "first_event_block", "buffer_block", "ready_at", "events_processed", "_is_hyper_sync", "_latest_processed_block", "_num_batches_fetched")
+VALUES (1, 100, NULL, 0, NULL, -1, NULL, 0, false, NULL, 0);`
 
         Assert.equal(
           query,
-          expectedQuery,
+          Some(expectedQuery),
           ~message="Should generate correct INSERT VALUES SQL with NULL end_block",
         )
       },
@@ -467,8 +523,8 @@ VALUES (1, 100, NULL, -1, NULL, -1, NULL, false, NULL, 0, 0);`
         let chainConfig1: InternalConfig.chain = {
           id: 1,
           startBlock: 100,
-          endBlock: Some(200),
-          confirmedBlockThreshold: Some(5),
+          endBlock: 200,
+          confirmedBlockThreshold: 5,
           contracts: [],
           sources: [],
         }
@@ -476,8 +532,7 @@ VALUES (1, 100, NULL, -1, NULL, -1, NULL, false, NULL, 0, 0);`
         let chainConfig2: InternalConfig.chain = {
           id: 42,
           startBlock: 500,
-          endBlock: None,
-          confirmedBlockThreshold: None,
+          confirmedBlockThreshold: 0,
           contracts: [],
           sources: [],
         }
@@ -487,13 +542,13 @@ VALUES (1, 100, NULL, -1, NULL, -1, NULL, false, NULL, 0, 0);`
           ~chainConfigs=[chainConfig1, chainConfig2],
         )
 
-        let expectedQuery = `INSERT INTO "production"."envio_chains" ("id", "start_block", "end_block", "source_block", "first_event_block", "buffer_block", "ready_at", "_is_hyper_sync", "_latest_processed_block", "events_processed", "_num_batches_fetched")
-VALUES (1, 100, 200, -1, NULL, -1, NULL, false, NULL, 0, 0),
-       (42, 500, NULL, -1, NULL, -1, NULL, false, NULL, 0, 0);`
+        let expectedQuery = `INSERT INTO "production"."envio_chains" ("id", "start_block", "end_block", "source_block", "first_event_block", "buffer_block", "ready_at", "events_processed", "_is_hyper_sync", "_latest_processed_block", "_num_batches_fetched")
+VALUES (1, 100, 200, 0, NULL, -1, NULL, 0, false, NULL, 0),
+       (42, 500, NULL, 0, NULL, -1, NULL, 0, false, NULL, 0);`
 
         Assert.equal(
           query,
-          expectedQuery,
+          Some(expectedQuery),
           ~message="Should generate correct INSERT VALUES SQL for multiple chains",
         )
       },
@@ -505,28 +560,31 @@ VALUES (1, 100, 200, -1, NULL, -1, NULL, false, NULL, 0, 0),
         let chainConfig: InternalConfig.chain = {
           id: 1,
           startBlock: 1000,
-          endBlock: Some(2000),
-          confirmedBlockThreshold: Some(10),
+          endBlock: 2000,
+          confirmedBlockThreshold: 10,
           contracts: [],
           sources: [],
         }
 
-        let query = InternalTable.Chains.makeInitialValuesQuery(
-          ~pgSchema="test_schema",
-          ~chainConfigs=[chainConfig],
-        )
+        let query =
+          InternalTable.Chains.makeInitialValuesQuery(
+            ~pgSchema="test_schema",
+            ~chainConfigs=[chainConfig],
+          )->Belt.Option.getExn
 
         // Verify the hardcoded values are correct:
         // source_block: -1
         // buffer_block: -1
-        // _is_hyper_sync: false
         // events_processed: 0
-        // _num_batches_fetched: 0
         // first_event_block: NULL
         // ready_at: NULL
+        // _is_hyper_sync: false
+        // _num_batches_fetched: 0
         // _latest_processed_block: NULL
         Assert.ok(
-          query->Js.String2.includes("-1, NULL, -1, NULL, false, NULL, 0, 0"),
+          query->Js.String2.includes(
+            "VALUES (1, 1000, 2000, 0, NULL, -1, NULL, 0, false, NULL, 0)",
+          ),
           ~message="Should contain all hardcoded values as specified",
         )
       },

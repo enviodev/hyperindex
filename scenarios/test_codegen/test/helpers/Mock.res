@@ -36,8 +36,8 @@ module Storage = {
   type method = [
     | #isInitialized
     | #initialize
+    | #loadInitialState
     | #dumpEffectCache
-    | #restoreEffectCache
     | #setEffectCacheOrThrow
     | #loadByIdsOrThrow
     | #loadByFieldOrThrow
@@ -49,10 +49,12 @@ module Storage = {
     resolveIsInitialized: bool => unit,
     initializeCalls: array<{
       "entities": array<Internal.entityConfig>,
-      "generalTables": array<Table.table>,
+      "chainConfigs": array<InternalConfig.chain>,
       "enums": array<Internal.enumConfig<Internal.enum>>,
     }>,
-    resolveInitialize: unit => unit,
+    resolveInitialize: Persistence.initialState => unit,
+    loadInitialStateCalls: array<bool>,
+    resolveLoadInitialState: Persistence.initialState => unit,
     loadByIdsOrThrowCalls: array<{"ids": array<string>, "tableName": string}>,
     loadByFieldOrThrowCalls: array<{
       "fieldName": string,
@@ -61,7 +63,6 @@ module Storage = {
       "operator": Persistence.operator,
     }>,
     dumpEffectCacheCalls: ref<int>,
-    restoreEffectCacheCalls: array<{"withUpload": bool}>,
     storage: Persistence.storage,
   }
 
@@ -89,8 +90,9 @@ module Storage = {
     let loadByIdsOrThrowCalls = []
     let loadByFieldOrThrowCalls = []
     let dumpEffectCacheCalls = ref(0)
-    let restoreEffectCacheCalls = []
     let setEffectCacheOrThrowCalls = ref(0)
+    let loadInitialStateCalls = []
+    let loadInitialStateResolveFns = []
 
     {
       isInitializedCalls,
@@ -98,12 +100,15 @@ module Storage = {
       loadByIdsOrThrowCalls,
       loadByFieldOrThrowCalls,
       dumpEffectCacheCalls,
-      restoreEffectCacheCalls,
+      loadInitialStateCalls,
+      resolveLoadInitialState: (initialState: Persistence.initialState) => {
+        loadInitialStateResolveFns->Js.Array2.forEach(resolve => resolve(initialState))
+      },
       resolveIsInitialized: bool => {
         isInitializedResolveFns->Js.Array2.forEach(resolve => resolve(bool))
       },
-      resolveInitialize: () => {
-        initializeResolveFns->Js.Array2.forEach(resolve => resolve())
+      resolveInitialize: (initialState: Persistence.initialState) => {
+        initializeResolveFns->Js.Array2.forEach(resolve => resolve(initialState))
       },
       storage: {
         isInitialized: implement(#isInitialized, () => {
@@ -112,11 +117,11 @@ module Storage = {
             isInitializedResolveFns->Js.Array2.push(resolve)->ignore
           })
         }),
-        initialize: implement(#initialize, (~entities=[], ~generalTables=[], ~enums=[]) => {
+        initialize: implement(#initialize, (~chainConfigs=[], ~entities=[], ~enums=[]) => {
           initializeCalls
           ->Js.Array2.push({
             "entities": entities,
-            "generalTables": generalTables,
+            "chainConfigs": chainConfigs,
             "enums": enums,
           })
           ->ignore
@@ -124,13 +129,15 @@ module Storage = {
             initializeResolveFns->Js.Array2.push(resolve)->ignore
           })
         }),
+        loadInitialState: implement(#loadInitialState, () => {
+          loadInitialStateCalls->Js.Array2.push(true)->ignore
+          Promise.make((resolve, _reject) => {
+            loadInitialStateResolveFns->Js.Array2.push(resolve)->ignore
+          })
+        }),
         dumpEffectCache: implement(#dumpEffectCache, () => {
           dumpEffectCacheCalls := dumpEffectCacheCalls.contents + 1
           Promise.resolve()
-        }),
-        restoreEffectCache: implement(#restoreEffectCache, (~withUpload) => {
-          restoreEffectCacheCalls->Js.Array2.push({"withUpload": withUpload})->ignore
-          Promise.resolve([])
         }),
         setEffectCacheOrThrow: implement(#setEffectCacheOrThrow, (
           ~effect as _,
@@ -190,13 +197,14 @@ module Storage = {
       storageStatus: Ready({
         cleanRun: false,
         cache: Js.Dict.empty(),
+        chains: [],
       }),
     }
   }
 }
 
 @genType
-let mockRawEventRow: TablesStatic.RawEvents.t = {
+let mockRawEventRow: InternalTable.RawEvents.t = {
   chainId: 1,
   eventId: 1234567890n,
   contractName: "NftFactory",

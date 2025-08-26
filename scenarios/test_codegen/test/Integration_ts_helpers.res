@@ -5,7 +5,7 @@ type chainConfig = InternalConfig.chain
 let getLocalChainConfig = (nftFactoryContractAddress): chainConfig => {
   let contracts = [
     {
-      Config.name: "NftFactory",
+      InternalConfig.name: "NftFactory",
       abi: Types.NftFactory.abi,
       addresses: [nftFactoryContractAddress],
       events: [(Types.NftFactory.SimpleNftCreated.register() :> Internal.eventConfig)],
@@ -30,8 +30,7 @@ let getLocalChainConfig = (nftFactoryContractAddress): chainConfig => {
   {
     confirmedBlockThreshold: 200,
     startBlock: 1,
-    endBlock: None,
-    chain,
+    id: 1337,
     contracts,
     sources: [
       RpcSource.make({
@@ -77,5 +76,7 @@ let startProcessing = (config, cfg: chainConfig, chainManager: chainManager) => 
 
   let gsManager = globalState->GlobalStateManager.make
 
-  gsManager->GlobalStateManager.dispatchTask(NextQuery(Chain(cfg.chain)))
+  gsManager->GlobalStateManager.dispatchTask(
+    NextQuery(Chain(ChainMap.Chain.makeUnsafe(~chainId=cfg.id))),
+  )
 }

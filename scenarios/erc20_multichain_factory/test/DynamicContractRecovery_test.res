@@ -140,9 +140,13 @@ describe("Dynamic contract restart resistance test", () => {
   }
 
   let getFetchingDcAddressesFromDbState = async (~chainId=1, ~sql=?) => {
+    let chainConfig = config.chainMap->ChainMap.get(ChainMap.Chain.makeUnsafe(~chainId))
+    await config.persistence->Persistence.init(~chainConfigs=[chainConfig])
     let chainFetcher = await ChainFetcher.makeFromDbState(
-      config.chainMap->ChainMap.get(ChainMap.Chain.makeUnsafe(~chainId)),
-      ~maxAddrInPartition=Env.maxAddrInPartition,
+      chainConfig,
+      ~initialChainState=(config.persistence->Persistence.getInitializedState).chains
+      ->Js.Array2.find(chainState => chainState.id === chainId)
+      ->Option.getExn,
       ~config,
       ~isInReorgThreshold=true,
       ~sql?,

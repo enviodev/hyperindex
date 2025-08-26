@@ -265,6 +265,8 @@ module EndOfBlockRangeScannedData = {
 }
 
 module RawEvents = {
+  // The @genType is only used for testing
+  @genType
   type t = {
     @as("chain_id") chainId: int,
     @as("event_id") eventId: bigint,

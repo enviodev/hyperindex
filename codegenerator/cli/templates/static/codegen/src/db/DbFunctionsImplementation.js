@@ -314,32 +314,3 @@ module.exports.getRollbackDiff = (sql, entityName, getFirstChangeSerial) => sql`
     AND before.entity_history_block_number = after.previous_entity_history_block_number
     AND before.entity_history_log_index = after.previous_entity_history_log_index;
 `;
-
-module.exports.batchSetChainMetadata = (sql, entityDataArray) => {
-  return sql`
-    INSERT INTO ${sql(publicSchema)}.envio_chains
-  ${sql(
-    entityDataArray,
-    "chain_id",
-    "start_block",
-    "end_block",
-    "block_height",
-    "first_event_block_number",
-    "latest_processed_block",
-    "num_events_processed",
-    "is_hyper_sync",
-    "num_batches_fetched",
-    "latest_fetched_block_number",
-    "timestamp_caught_up_to_head_or_endblock"
-  )}
-  ON CONFLICT(chain_id) DO UPDATE
-  SET
-  "chain_id" = EXCLUDED."chain_id",
-  "first_event_block_number" = EXCLUDED."first_event_block_number",
-  "latest_processed_block" = EXCLUDED."latest_processed_block",
-  "num_events_processed" = EXCLUDED."num_events_processed",
-  "num_batches_fetched" = EXCLUDED."num_batches_fetched",
-  "latest_fetched_block_number" = EXCLUDED."latest_fetched_block_number",
-  "timestamp_caught_up_to_head_or_endblock" = EXCLUDED."timestamp_caught_up_to_head_or_endblock",
-  "block_height" = EXCLUDED."block_height";`;
-};

@@ -556,7 +556,7 @@ let make = (
   let isInitialized = async () => {
     let envioTables =
       await sql->Postgres.unsafe(
-        `SELECT table_schema FROM information_schema.tables WHERE table_schema = '${pgSchema}' AND table_name = '${InternalTable.EventSyncState.table.tableName}';`,
+        `SELECT table_schema FROM information_schema.tables WHERE table_schema = '${pgSchema}' AND table_name = '${InternalTable.EventSyncState.table.tableName}' OR table_name = '${InternalTable.Chains.table.tableName}';`,
       )
     envioTables->Utils.Array.notEmpty
   }

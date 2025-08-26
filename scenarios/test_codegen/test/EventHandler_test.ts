@@ -21,7 +21,7 @@ describe("Use Envio test framework to test event handlers", () => {
     assert.deepEqual(registeredDcs, [
       {
         id: `1-${dcAddress}`,
-        contract_type: "SimpleNft",
+        contract_name: "SimpleNft",
         contract_address: dcAddress,
         chain_id: 1,
         registering_event_block_number: 0,
@@ -51,7 +51,7 @@ describe("Use Envio test framework to test event handlers", () => {
     assert.deepEqual(registeredDcs, [
       {
         id: `1-${dcAddress}`,
-        contract_type: "SimpleNft",
+        contract_name: "SimpleNft",
         contract_address: dcAddress,
         chain_id: 1,
         registering_event_block_number: 0,
@@ -313,7 +313,7 @@ describe("Use Envio test framework to test event handlers", () => {
     assert.deepEqual(registeredDcs, [
       {
         id: `1-${expectedChecksummedAddress}`,
-        contract_type: "SimpleNft",
+        contract_name: "SimpleNft",
         contract_address: expectedChecksummedAddress,
         chain_id: 1,
         registering_event_block_number: 0,

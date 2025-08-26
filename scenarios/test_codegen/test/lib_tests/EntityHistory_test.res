@@ -3,10 +3,6 @@ open RescriptMocha
 //unsafe polymorphic toString binding for any type
 @send external toStringUnsafe: 'a => string = "toString"
 
-// These are mandatory tables that must be created for every Envio-managed schema.
-// The event_sync_state table is used to distinguish Envio-controlled schemas from others.
-let generalTables = [TablesStatic.EventSyncState.table]
-
 let stripUndefinedFieldsInPlace = (val: 'a): 'a => {
   let json = val->(Utils.magic: 'a => Js.Json.t)
   //Hot fix for rescript equality check that removes optional fields
@@ -39,7 +35,7 @@ module TestEntity = {
     fieldB: option<string>,
   }
 
-  let name = "TestEntity"->(Utils.magic: string => Enums.EntityType.t)
+  let name = "TestEntity"
   let schema = S.schema(s => {
     id: s.matches(S.string),
     fieldA: s.matches(S.int),
@@ -56,7 +52,7 @@ module TestEntity = {
     ],
   )
 
-  let entityHistory = table->EntityHistory.fromTable(~pgSchema="public", ~schema)
+  let entityHistory = table->EntityHistory.fromTable(~schema)
 
   external castToInternal: t => Internal.entity = "%identity"
 }
@@ -222,7 +218,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;`
 
-    Assert.equal(expected, TestEntity.entityHistory.createInsertFnQuery)
+    Assert.equal(expected, TestEntity.entityHistory.makeInsertFnQuery(~pgSchema="public"))
   })
   it("Creates an entity history table", () => {
     let createQuery =
@@ -254,9 +250,9 @@ $$ LANGUAGE plpgsql;`
       ~pgPort=Env.Db.port,
     )
     try {
-      await storage.initialize(
+      let _ = await storage.initialize(
+        ~chainConfigs=[],
         ~entities=[module(TestEntity)->Entities.entityModToInternal],
-        ~generalTables,
         ~enums=[Persistence.entityHistoryActionEnumConfig->Internal.fromGenericEnumConfig],
       )
     } catch {
@@ -265,7 +261,9 @@ $$ LANGUAGE plpgsql;`
       Assert.fail("Failed setting up tables")
     }
 
-    switch await Db.sql->Postgres.unsafe(TestEntity.entityHistory.createInsertFnQuery) {
+    switch await Db.sql->Postgres.unsafe(
+      TestEntity.entityHistory.makeInsertFnQuery(~pgSchema="public"),
+    ) {
     | exception exn =>
       Js.log2("createInsertFnQuery exn", exn)
       Assert.fail("Failed creating insert function")
@@ -654,13 +652,16 @@ describe("Entity history rollbacks", () => {
         ~pgHost=Env.Db.host,
         ~pgPort=Env.Db.port,
       )
-      await storage.initialize(
+      let _ = await storage.initialize(
+        ~chainConfigs=[],
         ~entities=[module(TestEntity)->Entities.entityModToInternal],
-        ~generalTables,
         ~enums=[Persistence.entityHistoryActionEnumConfig->Internal.fromGenericEnumConfig],
       )
 
-      let _ = await Db.sql->Postgres.unsafe(TestEntity.entityHistory.createInsertFnQuery)
+      let _ =
+        await Db.sql->Postgres.unsafe(
+          TestEntity.entityHistory.makeInsertFnQuery(~pgSchema="public"),
+        )
 
       try await Db.sql->PgStorage.setOrThrow(
         ~items=[
@@ -831,13 +832,16 @@ describe("Entity history rollbacks", () => {
         ~pgHost=Env.Db.host,
         ~pgPort=Env.Db.port,
       )
-      await storage.initialize(
+      let _ = await storage.initialize(
+        ~chainConfigs=[],
         ~entities=[module(TestEntity)->Entities.entityModToInternal],
-        ~generalTables,
         ~enums=[Persistence.entityHistoryActionEnumConfig->Internal.fromGenericEnumConfig],
       )
 
-      let _ = await Db.sql->Postgres.unsafe(TestEntity.entityHistory.createInsertFnQuery)
+      let _ =
+        await Db.sql->Postgres.unsafe(
+          TestEntity.entityHistory.makeInsertFnQuery(~pgSchema="public"),
+        )
 
       try await Db.sql->Postgres.beginSql(
         sql => [
@@ -1128,13 +1132,14 @@ describe_skip("Prune performance test", () => {
       ~pgHost=Env.Db.host,
       ~pgPort=Env.Db.port,
     )
-    await storage.initialize(
+    let _ = await storage.initialize(
       ~entities=[module(TestEntity)->Entities.entityModToInternal],
-      ~generalTables,
+      ~chainConfigs=[],
       ~enums=[Persistence.entityHistoryActionEnumConfig->Internal.fromGenericEnumConfig],
     )
 
-    let _ = await Db.sql->Postgres.unsafe(TestEntity.entityHistory.createInsertFnQuery)
+    let _ =
+      await Db.sql->Postgres.unsafe(TestEntity.entityHistory.makeInsertFnQuery(~pgSchema="public"))
 
     let rows: array<testEntityHistory> = []
     for i in 0 to 1000 {
