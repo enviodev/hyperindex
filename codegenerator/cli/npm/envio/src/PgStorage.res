@@ -418,8 +418,7 @@ let setEntityHistoryOrThrow = (
   ~shouldCopyCurrentEntity=?,
   ~shouldRemoveInvalidUtf8=false,
 ) => {
-  rows
-  ->Belt.Array.map(historyRow => {
+  rows->Belt.Array.map(historyRow => {
     let row = historyRow->S.reverseConvertToJsonOrThrow(entityHistory.schema)
     if shouldRemoveInvalidUtf8 {
       [row]->removeInvalidUtf8InPlace
@@ -435,10 +434,19 @@ let setEntityHistoryOrThrow = (
           !containsRollbackDiffChange
         }
       },
-    )
+    )->Promise.catch(exn => {
+      let reason = exn->Utils.prettifyExn
+      let detail = %raw(`reason?.detail || ""`)
+      raise(
+        Persistence.StorageError({
+          message: `Failed to insert history item into table "${entityHistory.table.tableName}".${detail !== ""
+              ? ` Details: ${detail}`
+              : ""}`,
+          reason,
+        }),
+      )
+    })
   })
-  ->Promise.all
-  ->(Utils.magic: promise<array<unit>> => promise<unit>)
 }
 
 type schemaTableName = {

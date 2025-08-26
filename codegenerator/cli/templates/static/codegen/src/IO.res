@@ -136,13 +136,17 @@ let executeBatch = async (
     sql => {
       let promises = []
       if entityHistoryItemsToSet->Utils.Array.notEmpty {
-        promises->Array.push(
+        promises
+        ->Js.Array2.pushMany(
           sql->PgStorage.setEntityHistoryOrThrow(
             ~entityHistory=entityConfig.entityHistory,
-            ~rows=entityHistoryItemsToSet,
+            ~rows=entityHistoryItemsToSet->Array.concat([
+              entityHistoryItemsToSet->Js.Array2.unsafe_get(0),
+            ]),
             ~shouldRemoveInvalidUtf8,
           ),
         )
+        ->ignore
       }
       if entitiesToSet->Utils.Array.notEmpty {
         if shouldRemoveInvalidUtf8 {
