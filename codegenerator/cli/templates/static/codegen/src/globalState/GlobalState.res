@@ -171,31 +171,31 @@ let updateChainFetcherCurrentBlockHeight = (chainFetcher: ChainFetcher.t, ~curre
   }
 }
 
-let updateChainMetadataTable = async (cm: ChainManager.t, ~throttler: Throttler.t) => {
-  let chainMetadataArray: array<DbFunctions.ChainMetadata.chainMetadata> =
+let updateChainMetadataTable = (cm: ChainManager.t, ~throttler: Throttler.t) => {
+  let chainsData: array<InternalTable.Chains.t> =
     cm.chainFetchers
     ->ChainMap.values
-    ->Belt.Array.map(cf => {
+    ->Belt.Array.map((cf): InternalTable.Chains.t => {
       let latestFetchedBlock = cf.fetchState->FetchState.getLatestFullyFetchedBlock
-      let chainMetadata: DbFunctions.ChainMetadata.chainMetadata = {
-        chainId: cf.chainConfig.id,
+      {
+        id: cf.chainConfig.id,
         startBlock: cf.chainConfig.startBlock,
         blockHeight: cf.currentBlockHeight,
-        //optional fields
-        endBlock: cf.chainConfig.endBlock->Js.Nullable.fromOption, //this is already optional
-        firstEventBlockNumber: cf->ChainFetcher.getFirstEventBlockNumber->Js.Nullable.fromOption,
-        latestProcessedBlock: cf.latestProcessedBlock->Js.Nullable.fromOption, // this is already optional
-        numEventsProcessed: Value(cf.numEventsProcessed),
-        poweredByHyperSync: (cf.sourceManager->SourceManager.getActiveSource).poweredByHyperSync,
+        endBlock: cf.chainConfig.endBlock->Js.Null.fromOption,
+        firstEventBlockNumber: cf->ChainFetcher.getFirstEventBlockNumber->Js.Null.fromOption,
+        latestProcessedBlock: cf.latestProcessedBlock->Js.Null.fromOption,
+        numEventsProcessed: cf.numEventsProcessed,
+        isHyperSync: (cf.sourceManager->SourceManager.getActiveSource).poweredByHyperSync,
         numBatchesFetched: cf.numBatchesFetched,
         latestFetchedBlockNumber: latestFetchedBlock.blockNumber,
-        timestampCaughtUpToHeadOrEndblock: cf.timestampCaughtUpToHeadOrEndblock->Js.Nullable.fromOption,
+        timestampCaughtUpToHeadOrEndblock: cf.timestampCaughtUpToHeadOrEndblock->Js.Null.fromOption,
       }
-      chainMetadata
     })
   //Don't await this set, it can happen in its own time
   throttler->Throttler.schedule(() =>
-    Db.sql->DbFunctions.ChainMetadata.batchSetChainMetadataRow(~chainMetadataArray)
+    Db.sql
+    ->InternalTable.Chains.setValues(~pgSchema=Db.publicSchema, ~chainsData)
+    ->Promise.ignoreValue
   )
 }
 
@@ -907,8 +907,7 @@ let injectedTaskReducer = (
     switch shouldExit {
     | ExitWithSuccess =>
       updateChainMetadataTable(chainManager, ~throttler=writeThrottlers.chainMetaData)
-      ->Promise.thenResolve(_ => dispatchAction(SuccessExit))
-      ->ignore
+      dispatchAction(SuccessExit)
     | NoExit =>
       updateChainMetadataTable(chainManager, ~throttler=writeThrottlers.chainMetaData)->ignore
     }

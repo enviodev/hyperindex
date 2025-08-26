@@ -55,9 +55,9 @@ module Chains = {
     | #first_event_block
     | #buffer_block
     | #ready_at
+    | #events_processed
     | #_is_hyper_sync
     | #_latest_processed_block
-    | #_num_events_processed
     | #_num_batches_fetched
   ]
 
@@ -69,9 +69,9 @@ module Chains = {
     #first_event_block,
     #buffer_block,
     #ready_at,
+    #events_processed,
     #_is_hyper_sync,
     #_latest_processed_block,
-    #_num_events_processed,
     #_num_batches_fetched,
   ]
 
@@ -84,9 +84,9 @@ module Chains = {
     @as("buffer_block") latestFetchedBlockNumber: int,
     @as("ready_at")
     timestampCaughtUpToHeadOrEndblock: Js.null<Js.Date.t>,
+    @as("events_processed") numEventsProcessed: int,
     @as("_latest_processed_block") latestProcessedBlock: Js.null<int>,
     @as("_is_hyper_sync") isHyperSync: bool,
-    @as("_num_events_processed") numEventsProcessed: int,
     @as("_num_batches_fetched") numBatchesFetched: int,
   }
 
@@ -116,7 +116,7 @@ module Chains = {
         ~fieldSchema=S.null(Utils.Schema.dbDate),
         ~isNullable,
       ),
-      // TODO: In the future it should reference a table with sources
+      mkField((#events_processed: field :> string), Integer, ~fieldSchema=S.int), // TODO: In the future it should reference a table with sources
       mkField((#_is_hyper_sync: field :> string), Boolean, ~fieldSchema=S.bool),
       // TODO: Make the data more public facing
       mkField(
@@ -125,7 +125,6 @@ module Chains = {
         ~fieldSchema=S.null(S.int),
         ~isNullable,
       ),
-      mkField((#_num_events_processed: field :> string), Integer, ~fieldSchema=S.int),
       mkField((#_num_batches_fetched: field :> string), Integer, ~fieldSchema=S.int),
     ],
   )
@@ -175,6 +174,53 @@ module Chains = {
 VALUES ${valuesRows->Js.Array2.joinWith(",\n       ")};`,
       )
     }
+  }
+
+  // Fields that should be updated on conflict (excluding static config fields)
+  let updateFields: array<field> = [
+    #source_block,
+    #first_event_block,
+    #buffer_block,
+    #ready_at,
+    #events_processed,
+    #_is_hyper_sync,
+    #_latest_processed_block,
+    #_num_batches_fetched,
+  ]
+
+  let makeSingleUpdateQuery = (~pgSchema) => {
+    // Generate SET clauses with parameter placeholders
+    let setClauses = Belt.Array.mapWithIndex(updateFields, (index, field) => {
+      let fieldName = (field :> string)
+      let paramIndex = index + 2 // +2 because $1 is for id in WHERE clause
+      `"${fieldName}" = $${Belt.Int.toString(paramIndex)}`
+    })
+
+    `UPDATE "${pgSchema}"."${table.tableName}"
+SET ${setClauses->Js.Array2.joinWith(",\n    ")}
+WHERE "id" = $1;`
+  }
+
+  let setValues = (sql, ~pgSchema, ~chainsData: array<t>) => {
+    let query = makeSingleUpdateQuery(~pgSchema)
+
+    let promises = chainsData->Belt.Array.map(chain => {
+      let params = []
+
+      // Push id first (for WHERE clause)
+      let idValue = chain->(Utils.magic: t => dict<unknown>)->Js.Dict.get("id")
+      params->Js.Array2.push(idValue)->ignore
+
+      // Then push all updateable field values (for SET clause)
+      updateFields->Js.Array2.forEach(field => {
+        let value = chain->(Utils.magic: t => dict<unknown>)->Js.Dict.get((field :> string))
+        params->Js.Array2.push(value)->ignore
+      })
+
+      sql->Postgres.preparedUnsafe(query, params->Obj.magic)
+    })
+
+    Promise.all(promises)
   }
 }
 

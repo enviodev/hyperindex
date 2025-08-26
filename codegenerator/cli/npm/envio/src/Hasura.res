@@ -220,17 +220,17 @@ let createEntityRelationship = async (
 
 let trackMeta = async (~auth, ~endpoint, ~pgSchema) => {
   try {
-    // Track EnvioChainMeta logical model with scalar fields
+    // Track EnvioMeta logical model with scalar fields
     let result = await rawBodyRoute->Rest.fetch(
       {
         "auth": auth,
-        "bodyString": `{"type": "pg_track_logical_model","args": {"source": "default","name":"EnvioChainMeta","fields":[{"name":"chainId","type":"int"},{"name":"startBlock","type":"int"},{"name":"endBlock","type":"int","nullable":true},{"name":"bufferBlock","type":"int"}]}}`,
+        "bodyString": `{"type": "pg_track_logical_model","args": {"source": "default","name":"EnvioMeta","fields":[{"name":"chainId","type":"int"},{"name":"startBlock","type":"int"},{"name":"endBlock","type":"int","nullable":true},{"name":"bufferBlock","type":"int"},{"name":"readyAt","type":"timestamptz","nullable":true},{"name":"firstEventBlock","type":"int","nullable":true},{"name":"eventsProcessed","type":"int"},{"name":"isReady","type":"bool"}]}}`,
       },
       ~client=Rest.client(endpoint),
     )
     let msg = switch result {
-    | QuerySucceeded => `Hasura EnvioChainMeta logical model created`
-    | AlreadyDone => `Hasura EnvioChainMeta logical model already created`
+    | QuerySucceeded => `Hasura EnvioMeta logical model created`
+    | AlreadyDone => `Hasura EnvioMeta logical model already created`
     }
     Logging.trace({
       "msg": msg,
@@ -240,7 +240,7 @@ let trackMeta = async (~auth, ~endpoint, ~pgSchema) => {
     let result = await rawBodyRoute->Rest.fetch(
       {
         "auth": auth,
-        "bodyString": `{"type":"pg_track_native_query","args":{"type":"query","source":"default","root_field_name":"_meta","arguments":{},"returns":"EnvioChainMeta","code":"SELECT \\\"id\\\" AS \\\"chainId\\\", \\\"start_block\\\" AS \\\"startBlock\\\", \\\"end_block\\\" AS \\\"endBlock\\\", \\\"buffer_block\\\" AS \\\"bufferBlock\\\" FROM \\\"${pgSchema}\\\".\\\"${InternalTable.Chains.table.tableName}\\\" ORDER BY \\\"id\\\""}}`,
+        "bodyString": `{"type":"pg_track_native_query","args":{"type":"query","source":"default","root_field_name":"_meta","arguments":{},"returns":"EnvioMeta","code":"SELECT \\\"${(#id: InternalTable.Chains.field :> string)}\\\" AS \\\"chainId\\\", \\\"${(#start_block: InternalTable.Chains.field :> string)}\\\" AS \\\"startBlock\\\", \\\"${(#end_block: InternalTable.Chains.field :> string)}\\\" AS \\\"endBlock\\\", \\\"${(#buffer_block: InternalTable.Chains.field :> string)}\\\" AS \\\"bufferBlock\\\", \\\"${(#ready_at: InternalTable.Chains.field :> string)}\\\" AS \\\"readyAt\\\", \\\"${(#first_event_block: InternalTable.Chains.field :> string)}\\\" AS \\\"firstEventBlock\\\", \\\"${(#events_processed: InternalTable.Chains.field :> string)}\\\" AS \\\"eventsProcessed\\\", (\\\"${(#ready_at: InternalTable.Chains.field :> string)}\\\" IS NOT NULL) AS \\\"isReady\\\" FROM \\\"${pgSchema}\\\".\\\"${InternalTable.Chains.table.tableName}\\\" ORDER BY \\\"id\\\""}}`,
       },
       ~client=Rest.client(endpoint),
     )
@@ -272,7 +272,7 @@ let trackMeta = async (~auth, ~endpoint, ~pgSchema) => {
     let result = await rawBodyRoute->Rest.fetch(
       {
         "auth": auth,
-        "bodyString": `{"type":"pg_track_native_query","args":{"type":"query","source":"default","root_field_name":"chain_metadata","arguments":{},"returns":"chain_metadata","code":"SELECT \\\"source_block\\\" AS \\\"block_height\\\", \\\"id\\\" AS \\\"chain_id\\\", \\\"end_block\\\", \\\"first_event_block\\\" AS \\\"first_event_block_number\\\", \\\"_is_hyper_sync\\\" AS \\\"is_hyper_sync\\\", \\\"buffer_block\\\" AS \\\"latest_fetched_block_number\\\", \\\"_latest_processed_block\\\" AS \\\"latest_processed_block\\\", \\\"_num_batches_fetched\\\" AS \\\"num_batches_fetched\\\", \\\"_num_events_processed\\\" AS \\\"num_events_processed\\\", \\\"start_block\\\", \\\"ready_at\\\" AS \\\"timestamp_caught_up_to_head_or_endblock\\\" FROM \\\"${pgSchema}\\\".\\\"${InternalTable.Chains.table.tableName}\\\""}}`,
+        "bodyString": `{"type":"pg_track_native_query","args":{"type":"query","source":"default","root_field_name":"chain_metadata","arguments":{},"returns":"chain_metadata","code":"SELECT \\\"${(#source_block: InternalTable.Chains.field :> string)}\\\" AS \\\"block_height\\\", \\\"${(#id: InternalTable.Chains.field :> string)}\\\" AS \\\"chain_id\\\", \\\"${(#end_block: InternalTable.Chains.field :> string)}\\\", \\\"${(#first_event_block: InternalTable.Chains.field :> string)}\\\" AS \\\"first_event_block_number\\\", \\\"${(#_is_hyper_sync: InternalTable.Chains.field :> string)}\\\" AS \\\"is_hyper_sync\\\", \\\"${(#buffer_block: InternalTable.Chains.field :> string)}\\\" AS \\\"latest_fetched_block_number\\\", \\\"${(#_latest_processed_block: InternalTable.Chains.field :> string)}\\\" AS \\\"latest_processed_block\\\", \\\"${(#_num_batches_fetched: InternalTable.Chains.field :> string)}\\\" AS \\\"num_batches_fetched\\\", \\\"${(#events_processed: InternalTable.Chains.field :> string)}\\\" AS \\\"num_events_processed\\\", \\\"${(#start_block: InternalTable.Chains.field :> string)}\\\", \\\"${(#ready_at: InternalTable.Chains.field :> string)}\\\" AS \\\"timestamp_caught_up_to_head_or_endblock\\\" FROM \\\"${pgSchema}\\\".\\\"${InternalTable.Chains.table.tableName}\\\""}}`,
       },
       ~client=Rest.client(endpoint),
     )

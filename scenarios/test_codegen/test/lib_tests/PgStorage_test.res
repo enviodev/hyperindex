@@ -422,7 +422,7 @@ VALUES($1,$2)ON CONFLICT("id") DO UPDATE SET "c_id" = EXCLUDED."c_id";`
           ~chainConfigs=[chainConfig],
         )
 
-        let expectedQuery = `INSERT INTO "test_schema"."envio_chains" ("id", "start_block", "end_block", "source_block", "first_event_block", "buffer_block", "ready_at", "_is_hyper_sync", "_latest_processed_block", "_num_events_processed", "_num_batches_fetched")
+        let expectedQuery = `INSERT INTO "test_schema"."envio_chains" ("id", "start_block", "end_block", "source_block", "first_event_block", "buffer_block", "ready_at", "_is_hyper_sync", "_latest_processed_block", "events_processed", "_num_batches_fetched")
 VALUES (1, 100, 200, -1, NULL, -1, NULL, false, NULL, 0, 0);`
 
         Assert.equal(
@@ -450,7 +450,7 @@ VALUES (1, 100, 200, -1, NULL, -1, NULL, false, NULL, 0, 0);`
           ~chainConfigs=[chainConfig],
         )
 
-        let expectedQuery = `INSERT INTO "public"."envio_chains" ("id", "start_block", "end_block", "source_block", "first_event_block", "buffer_block", "ready_at", "_is_hyper_sync", "_latest_processed_block", "_num_events_processed", "_num_batches_fetched")
+        let expectedQuery = `INSERT INTO "public"."envio_chains" ("id", "start_block", "end_block", "source_block", "first_event_block", "buffer_block", "ready_at", "_is_hyper_sync", "_latest_processed_block", "events_processed", "_num_batches_fetched")
 VALUES (1, 100, NULL, -1, NULL, -1, NULL, false, NULL, 0, 0);`
 
         Assert.equal(
@@ -487,7 +487,7 @@ VALUES (1, 100, NULL, -1, NULL, -1, NULL, false, NULL, 0, 0);`
           ~chainConfigs=[chainConfig1, chainConfig2],
         )
 
-        let expectedQuery = `INSERT INTO "production"."envio_chains" ("id", "start_block", "end_block", "source_block", "first_event_block", "buffer_block", "ready_at", "_is_hyper_sync", "_latest_processed_block", "_num_events_processed", "_num_batches_fetched")
+        let expectedQuery = `INSERT INTO "production"."envio_chains" ("id", "start_block", "end_block", "source_block", "first_event_block", "buffer_block", "ready_at", "_is_hyper_sync", "_latest_processed_block", "events_processed", "_num_batches_fetched")
 VALUES (1, 100, 200, -1, NULL, -1, NULL, false, NULL, 0, 0),
        (42, 500, NULL, -1, NULL, -1, NULL, false, NULL, 0, 0);`
 
@@ -520,7 +520,7 @@ VALUES (1, 100, 200, -1, NULL, -1, NULL, false, NULL, 0, 0),
         // source_block: -1
         // buffer_block: -1
         // _is_hyper_sync: false
-        // _num_events_processed: 0
+        // events_processed: 0
         // _num_batches_fetched: 0
         // first_event_block: NULL
         // ready_at: NULL
