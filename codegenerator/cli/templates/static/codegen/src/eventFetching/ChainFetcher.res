@@ -454,7 +454,7 @@ let handleQueryResult = (
 Gets the latest item on the front of the queue and returns updated fetcher
 */
 let hasProcessedToEndblock = (self: t) => {
-  let {latestProcessedBlock, chainConfig: {?endBlock}} = self
+  let {latestProcessedBlock, endBlock} = self
   switch (latestProcessedBlock, endBlock) {
   | (Some(latestProcessedBlock), Some(endBlock)) => latestProcessedBlock >= endBlock
   | _ => false
