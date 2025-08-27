@@ -16,19 +16,21 @@ let getKnownBlock = (provider, blockNumber) =>
     }
   )
 
-let rec getKnownBlockWithBackoff = async (~provider, ~blockNumber, ~backoffMsOnFailure) =>
+let rec getKnownBlockWithBackoff = async (~provider, ~sourceName, ~chain, ~blockNumber, ~backoffMsOnFailure) =>
   switch await getKnownBlock(provider, blockNumber) {
   | exception err =>
     Logging.warn({
       "err": err,
       "msg": `Issue while running fetching batch of events from the RPC. Will wait ${backoffMsOnFailure->Belt.Int.toString}ms and try again.`,
-      "source": name,
+      "source": sourceName,
       "chainId": chain->ChainMap.Chain.toChainId,
       "type": "EXPONENTIAL_BACKOFF",
     })
     await Time.resolvePromiseAfterDelay(~delayMilliseconds=backoffMsOnFailure)
     await getKnownBlockWithBackoff(
       ~provider,
+      ~sourceName,
+      ~chain,
       ~blockNumber,
       ~backoffMsOnFailure=backoffMsOnFailure * 2,
     )
@@ -476,7 +478,7 @@ let make = ({sourceFor, syncConfig, url, chain, contracts, eventRouter}: options
 
   let blockLoader = LazyLoader.make(
     ~loaderFn=blockNumber =>
-      getKnownBlockWithBackoff(~provider, ~backoffMsOnFailure=1000, ~blockNumber),
+      getKnownBlockWithBackoff(~provider, ~sourceName=name, ~chain, ~backoffMsOnFailure=1000, ~blockNumber),
     ~onError=(am, ~exn) => {
       Logging.error({
         "err": exn,
