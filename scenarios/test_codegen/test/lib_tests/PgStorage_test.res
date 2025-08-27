@@ -157,6 +157,32 @@ CREATE INDEX IF NOT EXISTS "A_b_id" ON "test_schema"."A"("b_id");
 CREATE INDEX IF NOT EXISTS "A_history_serial" ON "test_schema"."A_history"("serial");
 CREATE INDEX IF NOT EXISTS "B_history_serial" ON "test_schema"."B_history"("serial");
 CREATE INDEX IF NOT EXISTS "A_b_id" ON "test_schema"."A"("b_id");
+CREATE VIEW "test_schema"."_meta" AS 
+     SELECT 
+       "id" AS "chainId",
+       "start_block" AS "startBlock", 
+       "end_block" AS "endBlock",
+       "buffer_block" AS "bufferBlock",
+       "ready_at" AS "readyAt",
+       "first_event_block" AS "firstEventBlock",
+       "events_processed" AS "eventsProcessed",
+       ("ready_at" IS NOT NULL) AS "isReady"
+     FROM "test_schema"."envio_chains"
+     ORDER BY "id";
+CREATE VIEW "test_schema"."chain_metadata" AS 
+     SELECT 
+       "source_block" AS "block_height",
+       "id" AS "chain_id",
+       "end_block" AS "end_block", 
+       "first_event_block" AS "first_event_block_number",
+       "_is_hyper_sync" AS "is_hyper_sync",
+       "buffer_block" AS "latest_fetched_block_number",
+       "_latest_processed_block" AS "latest_processed_block",
+       "_num_batches_fetched" AS "num_batches_fetched",
+       "events_processed" AS "num_events_processed",
+       "start_block" AS "start_block",
+       "ready_at" AS "timestamp_caught_up_to_head_or_endblock"
+     FROM "test_schema"."envio_chains";
 INSERT INTO "test_schema"."envio_chains" ("id", "start_block", "end_block", "source_block", "first_event_block", "buffer_block", "ready_at", "events_processed", "_is_hyper_sync", "_latest_processed_block", "_num_batches_fetched")
 VALUES (1, 100, 200, 0, NULL, -1, NULL, 0, false, NULL, 0),
        (137, 0, NULL, 0, NULL, -1, NULL, 0, false, NULL, 0);`
@@ -206,7 +232,33 @@ CREATE TABLE IF NOT EXISTS "test_schema"."event_sync_state"("chain_id" INTEGER N
 CREATE TABLE IF NOT EXISTS "test_schema"."envio_chains"("id" INTEGER NOT NULL, "start_block" INTEGER NOT NULL, "end_block" INTEGER, "buffer_block" INTEGER NOT NULL, "source_block" INTEGER NOT NULL, "first_event_block" INTEGER, "ready_at" TIMESTAMP WITH TIME ZONE NULL, "events_processed" INTEGER NOT NULL, "_is_hyper_sync" BOOLEAN NOT NULL, "_latest_processed_block" INTEGER, "_num_batches_fetched" INTEGER NOT NULL, PRIMARY KEY("id"));
 CREATE TABLE IF NOT EXISTS "test_schema"."persisted_state"("id" SERIAL NOT NULL, "envio_version" TEXT NOT NULL, "config_hash" TEXT NOT NULL, "schema_hash" TEXT NOT NULL, "handler_files_hash" TEXT NOT NULL, "abi_files_hash" TEXT NOT NULL, PRIMARY KEY("id"));
 CREATE TABLE IF NOT EXISTS "test_schema"."end_of_block_range_scanned_data"("chain_id" INTEGER NOT NULL, "block_number" INTEGER NOT NULL, "block_hash" TEXT NOT NULL, PRIMARY KEY("chain_id", "block_number"));
-CREATE TABLE IF NOT EXISTS "test_schema"."raw_events"("chain_id" INTEGER NOT NULL, "event_id" NUMERIC NOT NULL, "event_name" TEXT NOT NULL, "contract_name" TEXT NOT NULL, "block_number" INTEGER NOT NULL, "log_index" INTEGER NOT NULL, "src_address" TEXT NOT NULL, "block_hash" TEXT NOT NULL, "block_timestamp" INTEGER NOT NULL, "block_fields" JSONB NOT NULL, "transaction_fields" JSONB NOT NULL, "params" JSONB NOT NULL, "db_write_timestamp" TIMESTAMP DEFAULT CURRENT_TIMESTAMP, "serial" SERIAL, PRIMARY KEY("serial"));`
+CREATE TABLE IF NOT EXISTS "test_schema"."raw_events"("chain_id" INTEGER NOT NULL, "event_id" NUMERIC NOT NULL, "event_name" TEXT NOT NULL, "contract_name" TEXT NOT NULL, "block_number" INTEGER NOT NULL, "log_index" INTEGER NOT NULL, "src_address" TEXT NOT NULL, "block_hash" TEXT NOT NULL, "block_timestamp" INTEGER NOT NULL, "block_fields" JSONB NOT NULL, "transaction_fields" JSONB NOT NULL, "params" JSONB NOT NULL, "db_write_timestamp" TIMESTAMP DEFAULT CURRENT_TIMESTAMP, "serial" SERIAL, PRIMARY KEY("serial"));
+CREATE VIEW "test_schema"."_meta" AS 
+     SELECT 
+       "id" AS "chainId",
+       "start_block" AS "startBlock", 
+       "end_block" AS "endBlock",
+       "buffer_block" AS "bufferBlock",
+       "ready_at" AS "readyAt",
+       "first_event_block" AS "firstEventBlock",
+       "events_processed" AS "eventsProcessed",
+       ("ready_at" IS NOT NULL) AS "isReady"
+     FROM "test_schema"."envio_chains"
+     ORDER BY "id";
+CREATE VIEW "test_schema"."chain_metadata" AS 
+     SELECT 
+       "source_block" AS "block_height",
+       "id" AS "chain_id",
+       "end_block" AS "end_block", 
+       "first_event_block" AS "first_event_block_number",
+       "_is_hyper_sync" AS "is_hyper_sync",
+       "buffer_block" AS "latest_fetched_block_number",
+       "_latest_processed_block" AS "latest_processed_block",
+       "_num_batches_fetched" AS "num_batches_fetched",
+       "events_processed" AS "num_events_processed",
+       "start_block" AS "start_block",
+       "ready_at" AS "timestamp_caught_up_to_head_or_endblock"
+     FROM "test_schema"."envio_chains";`
 
         Assert.equal(
           mainQuery,
@@ -265,7 +317,33 @@ CREATE TABLE IF NOT EXISTS "public"."raw_events"("chain_id" INTEGER NOT NULL, "e
 CREATE TABLE IF NOT EXISTS "public"."A"("b_id" TEXT NOT NULL, "id" TEXT NOT NULL, "optionalStringToTestLinkedEntities" TEXT, "db_write_timestamp" TIMESTAMP DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY("id"));
 CREATE TABLE IF NOT EXISTS "public"."A_history"("entity_history_block_timestamp" INTEGER NOT NULL, "entity_history_chain_id" INTEGER NOT NULL, "entity_history_block_number" INTEGER NOT NULL, "entity_history_log_index" INTEGER NOT NULL, "previous_entity_history_block_timestamp" INTEGER, "previous_entity_history_chain_id" INTEGER, "previous_entity_history_block_number" INTEGER, "previous_entity_history_log_index" INTEGER, "b_id" TEXT, "id" TEXT NOT NULL, "optionalStringToTestLinkedEntities" TEXT, "action" "public".ENTITY_HISTORY_ROW_ACTION NOT NULL, "serial" SERIAL, PRIMARY KEY("entity_history_block_timestamp", "entity_history_chain_id", "entity_history_block_number", "entity_history_log_index", "id"));
 CREATE INDEX IF NOT EXISTS "A_b_id" ON "public"."A"("b_id");
-CREATE INDEX IF NOT EXISTS "A_history_serial" ON "public"."A_history"("serial");`
+CREATE INDEX IF NOT EXISTS "A_history_serial" ON "public"."A_history"("serial");
+CREATE VIEW "public"."_meta" AS 
+     SELECT 
+       "id" AS "chainId",
+       "start_block" AS "startBlock", 
+       "end_block" AS "endBlock",
+       "buffer_block" AS "bufferBlock",
+       "ready_at" AS "readyAt",
+       "first_event_block" AS "firstEventBlock",
+       "events_processed" AS "eventsProcessed",
+       ("ready_at" IS NOT NULL) AS "isReady"
+     FROM "public"."envio_chains"
+     ORDER BY "id";
+CREATE VIEW "public"."chain_metadata" AS 
+     SELECT 
+       "source_block" AS "block_height",
+       "id" AS "chain_id",
+       "end_block" AS "end_block", 
+       "first_event_block" AS "first_event_block_number",
+       "_is_hyper_sync" AS "is_hyper_sync",
+       "buffer_block" AS "latest_fetched_block_number",
+       "_latest_processed_block" AS "latest_processed_block",
+       "_num_batches_fetched" AS "num_batches_fetched",
+       "events_processed" AS "num_events_processed",
+       "start_block" AS "start_block",
+       "ready_at" AS "timestamp_caught_up_to_head_or_endblock"
+     FROM "public"."envio_chains";`
 
         Assert.equal(
           mainQuery,

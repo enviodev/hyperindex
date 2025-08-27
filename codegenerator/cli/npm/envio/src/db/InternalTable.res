@@ -325,6 +325,44 @@ module RawEvents = {
   )
 }
 
+// View names for Hasura integration
+module Views = {
+  let metaViewName = "_meta"
+  let chainMetadataViewName = "chain_metadata"
+
+  let makeMetaViewQuery = (~pgSchema) => {
+    `CREATE VIEW "${pgSchema}"."${metaViewName}" AS 
+     SELECT 
+       "${(#id: Chains.field :> string)}" AS "chainId",
+       "${(#start_block: Chains.field :> string)}" AS "startBlock", 
+       "${(#end_block: Chains.field :> string)}" AS "endBlock",
+       "${(#buffer_block: Chains.field :> string)}" AS "bufferBlock",
+       "${(#ready_at: Chains.field :> string)}" AS "readyAt",
+       "${(#first_event_block: Chains.field :> string)}" AS "firstEventBlock",
+       "${(#events_processed: Chains.field :> string)}" AS "eventsProcessed",
+       ("${(#ready_at: Chains.field :> string)}" IS NOT NULL) AS "isReady"
+     FROM "${pgSchema}"."${Chains.table.tableName}"
+     ORDER BY "${(#id: Chains.field :> string)}";`
+  }
+
+  let makeChainMetadataViewQuery = (~pgSchema) => {
+    `CREATE VIEW "${pgSchema}"."${chainMetadataViewName}" AS 
+     SELECT 
+       "${(#source_block: Chains.field :> string)}" AS "block_height",
+       "${(#id: Chains.field :> string)}" AS "chain_id",
+       "${(#end_block: Chains.field :> string)}" AS "end_block", 
+       "${(#first_event_block: Chains.field :> string)}" AS "first_event_block_number",
+       "${(#_is_hyper_sync: Chains.field :> string)}" AS "is_hyper_sync",
+       "${(#buffer_block: Chains.field :> string)}" AS "latest_fetched_block_number",
+       "${(#_latest_processed_block: Chains.field :> string)}" AS "latest_processed_block",
+       "${(#_num_batches_fetched: Chains.field :> string)}" AS "num_batches_fetched",
+       "${(#events_processed: Chains.field :> string)}" AS "num_events_processed",
+       "${(#start_block: Chains.field :> string)}" AS "start_block",
+       "${(#ready_at: Chains.field :> string)}" AS "timestamp_caught_up_to_head_or_endblock"
+     FROM "${pgSchema}"."${Chains.table.tableName}";`
+  }
+}
+
 module DynamicContractRegistry = {
   let name = "dynamic_contract_registry"
 

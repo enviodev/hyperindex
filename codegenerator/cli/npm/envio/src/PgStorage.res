@@ -140,6 +140,10 @@ GRANT ALL ON SCHEMA "${pgSchema}" TO public;`,
     })
   })
 
+  // Create views for Hasura integration
+  query := query.contents ++ "\n" ++ InternalTable.Views.makeMetaViewQuery(~pgSchema)
+  query := query.contents ++ "\n" ++ InternalTable.Views.makeChainMetadataViewQuery(~pgSchema)
+
   // Populate initial chain data
   switch InternalTable.Chains.makeInitialValuesQuery(~pgSchema, ~chainConfigs) {
   | Some(initialChainsValuesQuery) => query := query.contents ++ "\n" ++ initialChainsValuesQuery
