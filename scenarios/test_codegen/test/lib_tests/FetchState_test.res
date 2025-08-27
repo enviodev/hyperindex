@@ -3047,3 +3047,136 @@ describe("Dynamic contracts with start blocks", () => {
     )
   })
 })
+
+describe("FetchState buffer overflow prevention", () => {
+  it(
+    "Should limit endBlock when maxQueryBlockNumber < currentBlockHeight to prevent buffer overflow",
+    () => {
+      let fetchState = makeInitial()
+
+      // Build up a large queue using public API (handleQueryResult)
+      // queue.length = 15, targetBufferSize = 10
+      // targetBlockIdx = 15 - 10 = 5
+      // maxQueryBlockNumber should be the blockNumber at index 5 (which is 15)
+      let largeQueueEvents = [
+        mockEvent(~blockNumber=20), // index 0
+        mockEvent(~blockNumber=19), // index 1
+        mockEvent(~blockNumber=18), // index 2
+        mockEvent(~blockNumber=17), // index 3
+        mockEvent(~blockNumber=16), // index 4
+        mockEvent(~blockNumber=15), // index 5 <- this should be maxQueryBlockNumber
+        mockEvent(~blockNumber=14), // index 6
+        mockEvent(~blockNumber=13), // index 7
+        mockEvent(~blockNumber=12), // index 8
+        mockEvent(~blockNumber=11), // index 9
+        mockEvent(~blockNumber=10), // index 10
+        mockEvent(~blockNumber=9), // index 11
+        mockEvent(~blockNumber=8), // index 12
+        mockEvent(~blockNumber=7), // index 13
+        mockEvent(~blockNumber=6), // index 14
+      ]
+
+      let fetchStateWithLargeQueue =
+        fetchState
+        ->FetchState.handleQueryResult(
+          ~query={
+            partitionId: "0",
+            target: Head,
+            selection: fetchState.normalSelection,
+            addressesByContractName: Js.Dict.fromArray([("Gravatar", [mockAddress0])]),
+            fromBlock: 0,
+            indexingContracts: fetchState.indexingContracts,
+          },
+          ~latestFetchedBlock={blockNumber: 30, blockTimestamp: 30 * 15},
+          ~newItems=largeQueueEvents,
+          ~currentBlockHeight=30,
+        )
+        ->Result.getExn
+
+      // Test case 1: With endBlock set, should be limited by maxQueryBlockNumber
+      let fetchStateWithEndBlock = {...fetchStateWithLargeQueue, endBlock: Some(25)}
+      let query1 =
+        fetchStateWithEndBlock->FetchState.getNextQuery(
+          ~currentBlockHeight=30,
+          ~concurrencyLimit=10,
+          ~targetBufferSize=10,
+          ~stateId=0,
+        )
+
+      switch query1 {
+      | Ready([q]) =>
+        // The query should have endBlock limited to maxQueryBlockNumber (15)
+        switch q.target {
+        | EndBlock({toBlock}) =>
+          Assert.equal(
+            toBlock,
+            15,
+            ~message="Should limit endBlock to maxQueryBlockNumber (15) when both endBlock and maxQueryBlockNumber are present",
+          )
+        | _ => Assert.fail("Expected EndBlock target when buffer is limited")
+        }
+      | _ => Assert.fail("Expected Ready query when buffer limiting is active")
+      }
+
+      // Test case 2: endBlock=None, maxQueryBlockNumber=15 -> Should use Some(15)
+      let fetchStateNoEndBlock = {...fetchStateWithLargeQueue, endBlock: None}
+      let query2 =
+        fetchStateNoEndBlock->FetchState.getNextQuery(
+          ~currentBlockHeight=30,
+          ~concurrencyLimit=10,
+          ~targetBufferSize=10,
+          ~stateId=0,
+        )
+
+      switch query2 {
+      | Ready([q]) =>
+        switch q.target {
+        | EndBlock({toBlock}) =>
+          Assert.equal(
+            toBlock,
+            15,
+            ~message="Should set endBlock to maxQueryBlockNumber (15) when no endBlock was specified",
+          )
+        | _ =>
+          Assert.fail("Expected EndBlock target when buffer limiting is active and no endBlock set")
+        }
+      | _ => Assert.fail("Expected Ready query when buffer limiting is active")
+      }
+
+      // Test case 3: Small queue, no buffer limiting -> Should use Head target
+      let fetchStateSmallQueue =
+        fetchState
+        ->FetchState.handleQueryResult(
+          ~query={
+            partitionId: "0",
+            target: Head,
+            selection: fetchState.normalSelection,
+            addressesByContractName: Js.Dict.fromArray([("Gravatar", [mockAddress0])]),
+            fromBlock: 0,
+            indexingContracts: fetchState.indexingContracts,
+          },
+          ~latestFetchedBlock={blockNumber: 10, blockTimestamp: 10 * 15},
+          ~newItems=[mockEvent(~blockNumber=5)],
+          ~currentBlockHeight=10,
+        )
+        ->Result.getExn
+
+      let query3 =
+        fetchStateSmallQueue->FetchState.getNextQuery(
+          ~currentBlockHeight=30,
+          ~concurrencyLimit=10,
+          ~targetBufferSize=10,
+          ~stateId=0,
+        )
+
+      switch query3 {
+      | Ready([q]) =>
+        switch q.target {
+        | Head => Assert.ok(true, ~message="Should use Head target when buffer is not limited")
+        | _ => Assert.fail("Expected Head target when buffer is not limited")
+        }
+      | _ => Assert.fail("Expected Ready query")
+      }
+    },
+  )
+})
