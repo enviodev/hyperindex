@@ -52,7 +52,12 @@ module App = {
         <Text>
           {"GraphQL Interface:    "->React.string}
         </Text>
-        <Text color={Info} underline=true> {`${Env.Hasura.url}`->React.string} </Text>
+        <Text color={Info} underline=true>
+          {`${Env.Hasura.url}`->React.string}
+        </Text>
+        <Text color={Info}>
+          {" (password: testing)"->React.string}
+        </Text>
       </Box>
       <Messages config />
     </Box>
