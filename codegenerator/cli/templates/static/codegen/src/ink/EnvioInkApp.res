@@ -50,9 +50,9 @@ module App = {
       </Box>
       <Box flexDirection={Row}>
         <Text>
-          {"GraphQL Endpoint:    "->React.string}
+          {"GraphQL Interface:    "->React.string}
         </Text>
-        <Text color={Info} underline=true> {`${Env.Hasura.url}/v1/graphql`->React.string} </Text>
+        <Text color={Info} underline=true> {`${Env.Hasura.url}`->React.string} </Text>
       </Box>
       <Messages config />
     </Box>
