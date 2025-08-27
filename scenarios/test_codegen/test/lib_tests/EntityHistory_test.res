@@ -689,10 +689,13 @@ describe("Entity history rollbacks", () => {
 
       try await Db.sql->Postgres.beginSql(
         sql =>
-          sql->PgStorage.setEntityHistoryOrThrow(
+          sql
+          ->PgStorage.setEntityHistoryOrThrow(
             ~entityHistory=TestEntity.entityHistory,
             ~rows=Mocks.GnosisBug.historyRows,
-          ),
+          )
+          ->Promise.all
+          ->Promise.ignoreValue,
       ) catch {
       | exn =>
         Js.log2("insert mock rows exn", exn)
@@ -788,10 +791,13 @@ describe("Entity history rollbacks", () => {
     // set an updated version of its row to get a copied entity history
     try await Db.sql->Postgres.beginSql(
       sql =>
-        sql->PgStorage.setEntityHistoryOrThrow(
+        sql
+        ->PgStorage.setEntityHistoryOrThrow(
           ~entityHistory=TestEntity.entityHistory,
           ~rows=Mocks.GnosisBug.historyRowsForPrune,
-        ),
+        )
+        ->Promise.all
+        ->Promise.ignoreValue,
     ) catch {
     | exn =>
       Js.log2("insert mock rows exn", exn)
@@ -853,10 +859,13 @@ describe("Entity history rollbacks", () => {
 
       try await Db.sql->Postgres.beginSql(
         sql =>
-          sql->PgStorage.setEntityHistoryOrThrow(
+          sql
+          ->PgStorage.setEntityHistoryOrThrow(
             ~entityHistory=TestEntity.entityHistory,
             ~rows=Mocks.historyRows,
-          ),
+          )
+          ->Promise.all
+          ->Promise.ignoreValue,
       ) catch {
       | exn =>
         Js.log2("insert mock rows exn", exn)
@@ -1170,7 +1179,11 @@ describe_skip("Prune performance test", () => {
     }
 
     try await Db.sql->Postgres.beginSql(
-      sql => sql->PgStorage.setEntityHistoryOrThrow(~entityHistory=TestEntity.entityHistory, ~rows),
+      sql =>
+        sql
+        ->PgStorage.setEntityHistoryOrThrow(~entityHistory=TestEntity.entityHistory, ~rows)
+        ->Promise.all
+        ->Promise.ignoreValue,
     ) catch {
     | exn =>
       Js.log2("insert mock rows exn", exn)

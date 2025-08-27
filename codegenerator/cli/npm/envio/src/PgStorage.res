@@ -686,7 +686,9 @@ let make = (
     )
     // Execute all queries within a single transaction for integrity
     let _ = await sql->Postgres.beginSql(sql => {
-      queries->Js.Array2.map(query => sql->Postgres.unsafe(query))
+      // Promise.all might be not safe to use here,
+      // but it's just how it worked before.
+      Promise.all(queries->Js.Array2.map(query => sql->Postgres.unsafe(query)))
     })
 
     let cache = await restoreEffectCache(~withUpload=true)
