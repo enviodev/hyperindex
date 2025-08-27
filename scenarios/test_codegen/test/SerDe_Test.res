@@ -76,10 +76,12 @@ describe("SerDe Test", () => {
       )
 
     let setHistory = (sql, row) =>
-      sql->PgStorage.setEntityHistoryOrThrow(
-        ~entityHistory=Entities.EntityWithAllTypes.entityHistory,
-        ~rows=[row],
-      )
+      Promise.all(
+        sql->PgStorage.setEntityHistoryOrThrow(
+          ~entityHistory=Entities.EntityWithAllTypes.entityHistory,
+          ~rows=[row],
+        ),
+      )->Promise.ignoreValue
 
     try await Db.sql->setHistory(entityHistoryItem) catch {
     | exn =>
@@ -192,10 +194,12 @@ SELECT * FROM unnest($1::NUMERIC[],$2::NUMERIC(10, 8)[],$3::NUMERIC[],$4::INTEGE
       )
 
     let setHistory = (sql, row) =>
-      sql->PgStorage.setEntityHistoryOrThrow(
-        ~entityHistory=Entities.EntityWithAllNonArrayTypes.entityHistory,
-        ~rows=[row],
-      )
+      Promise.all(
+        sql->PgStorage.setEntityHistoryOrThrow(
+          ~entityHistory=Entities.EntityWithAllNonArrayTypes.entityHistory,
+          ~rows=[row],
+        ),
+      )->Promise.ignoreValue
 
     try await Db.sql->setHistory(entityHistoryItem) catch {
     | exn =>

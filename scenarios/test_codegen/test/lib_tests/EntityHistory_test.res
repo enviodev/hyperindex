@@ -306,11 +306,15 @@ $$ LANGUAGE plpgsql;`
       }),
     }
 
-    switch await Db.sql->PgStorage.setEntityHistoryOrThrow(
-      ~entityHistory=TestEntity.entityHistory,
-      ~rows=[entityHistoryItem],
-      ~shouldCopyCurrentEntity=true,
-    ) {
+    switch {
+      await Promise.all(
+        Db.sql->PgStorage.setEntityHistoryOrThrow(
+          ~entityHistory=TestEntity.entityHistory,
+          ~rows=[entityHistoryItem],
+          ~shouldCopyCurrentEntity=true,
+        ),
+      )
+    } {
     | exception exn =>
       Js.log2("insertRow exn", exn)
       Assert.fail("Failed to insert mock entity history")
@@ -353,42 +357,46 @@ $$ LANGUAGE plpgsql;`
     let currentHistoryItems = await Db.sql->getAllMockEntityHistory
     Assert.deepEqual(currentHistoryItems, expectedResult)
 
-    switch await Db.sql->PgStorage.setEntityHistoryOrThrow(
-      ~entityHistory=TestEntity.entityHistory,
-      ~rows=[
-        {
-          entityData: Set({id: "2", fieldA: 1, fieldB: None}),
-          previous: None,
-          current: {
-            chain_id: 1,
-            block_timestamp: 4,
-            block_number: 4,
-            log_index: 6,
+    switch await Promise.all(
+      Db.sql->PgStorage.setEntityHistoryOrThrow(
+        ~entityHistory=TestEntity.entityHistory,
+        ~rows=[
+          {
+            entityData: Set({id: "2", fieldA: 1, fieldB: None}),
+            previous: None,
+            current: {
+              chain_id: 1,
+              block_timestamp: 4,
+              block_number: 4,
+              log_index: 6,
+            },
           },
-        },
-      ],
-      ~shouldCopyCurrentEntity=true,
+        ],
+        ~shouldCopyCurrentEntity=true,
+      ),
     ) {
     | exception exn =>
       Js.log2("insertRow exn", exn)
       Assert.fail("Failed to insert mock entity history")
     | _ => ()
     }
-    switch await Db.sql->PgStorage.setEntityHistoryOrThrow(
-      ~entityHistory=TestEntity.entityHistory,
-      ~rows=[
-        {
-          entityData: Set({id: "2", fieldA: 3, fieldB: None}),
-          previous: None,
-          current: {
-            chain_id: 1,
-            block_timestamp: 4,
-            block_number: 10,
-            log_index: 6,
+    switch await Promise.all(
+      Db.sql->PgStorage.setEntityHistoryOrThrow(
+        ~entityHistory=TestEntity.entityHistory,
+        ~rows=[
+          {
+            entityData: Set({id: "2", fieldA: 3, fieldB: None}),
+            previous: None,
+            current: {
+              chain_id: 1,
+              block_timestamp: 4,
+              block_number: 10,
+              log_index: 6,
+            },
           },
-        },
-      ],
-      ~shouldCopyCurrentEntity=true,
+        ],
+        ~shouldCopyCurrentEntity=true,
+      ),
     ) {
     | exception exn =>
       Js.log2("insertRow exn", exn)
@@ -396,21 +404,23 @@ $$ LANGUAGE plpgsql;`
     | _ => ()
     }
 
-    await Db.sql->PgStorage.setEntityHistoryOrThrow(
-      ~entityHistory=TestEntity.entityHistory,
-      ~rows=[
-        {
-          entityData: Set({id: "3", fieldA: 4, fieldB: None}),
-          previous: None,
-          current: {
-            chain_id: 137,
-            block_timestamp: 4,
-            block_number: 7,
-            log_index: 6,
+    let _ = await Promise.all(
+      Db.sql->PgStorage.setEntityHistoryOrThrow(
+        ~entityHistory=TestEntity.entityHistory,
+        ~rows=[
+          {
+            entityData: Set({id: "3", fieldA: 4, fieldB: None}),
+            previous: None,
+            current: {
+              chain_id: 137,
+              block_timestamp: 4,
+              block_number: 7,
+              log_index: 6,
+            },
           },
-        },
-      ],
-      ~shouldCopyCurrentEntity=true,
+        ],
+        ~shouldCopyCurrentEntity=true,
+      ),
     )
   })
 
@@ -678,12 +688,11 @@ describe("Entity history rollbacks", () => {
       }
 
       try await Db.sql->Postgres.beginSql(
-        sql => [
+        sql =>
           sql->PgStorage.setEntityHistoryOrThrow(
             ~entityHistory=TestEntity.entityHistory,
             ~rows=Mocks.GnosisBug.historyRows,
           ),
-        ],
       ) catch {
       | exn =>
         Js.log2("insert mock rows exn", exn)
@@ -778,12 +787,11 @@ describe("Entity history rollbacks", () => {
 
     // set an updated version of its row to get a copied entity history
     try await Db.sql->Postgres.beginSql(
-      sql => [
+      sql =>
         sql->PgStorage.setEntityHistoryOrThrow(
           ~entityHistory=TestEntity.entityHistory,
           ~rows=Mocks.GnosisBug.historyRowsForPrune,
         ),
-      ],
     ) catch {
     | exn =>
       Js.log2("insert mock rows exn", exn)
@@ -844,12 +852,11 @@ describe("Entity history rollbacks", () => {
         )
 
       try await Db.sql->Postgres.beginSql(
-        sql => [
+        sql =>
           sql->PgStorage.setEntityHistoryOrThrow(
             ~entityHistory=TestEntity.entityHistory,
             ~rows=Mocks.historyRows,
           ),
-        ],
       ) catch {
       | exn =>
         Js.log2("insert mock rows exn", exn)
@@ -1163,9 +1170,7 @@ describe_skip("Prune performance test", () => {
     }
 
     try await Db.sql->Postgres.beginSql(
-      sql => [
-        sql->PgStorage.setEntityHistoryOrThrow(~entityHistory=TestEntity.entityHistory, ~rows),
-      ],
+      sql => sql->PgStorage.setEntityHistoryOrThrow(~entityHistory=TestEntity.entityHistory, ~rows),
     ) catch {
     | exn =>
       Js.log2("insert mock rows exn", exn)
