@@ -18,6 +18,9 @@
     },
     "generatedFileExtension": ".gen.ts"
   },
-  "bs-dependencies": ["rescript-schema"],
+  "jsx": {
+    "version": 4
+  },
+  "bs-dependencies": ["rescript-schema", "@rescript/react"],
   "bsc-flags": ["-open RescriptSchema"]
 }

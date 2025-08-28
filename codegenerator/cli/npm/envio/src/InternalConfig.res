@@ -18,3 +18,5 @@ type chain = {
   contracts: array<contract>,
   sources: array<Source.t>,
 }
+
+type ecosystem = | @as("evm") Evm | @as("fuel") Fuel

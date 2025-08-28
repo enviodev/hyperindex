@@ -21,8 +21,14 @@ module Notifications = {
 }
 
 @react.component
-let make = (~config) => {
-  let messages = CustomHooks.useMessages(~config)
+let make = (~envioAppUrl, ~envioApiToken, ~envioVersion, ~chains, ~ecosystem) => {
+  let messages = CustomHooks.useMessages(
+    ~envioAppUrl,
+    ~envioApiToken,
+    ~envioVersion,
+    ~chains,
+    ~ecosystem,
+  )
   <>
     {switch messages {
     | Data([]) | Loading => React.null //Don't show anything while loading or no messages

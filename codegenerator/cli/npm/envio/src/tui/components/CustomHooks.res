@@ -1,4 +1,5 @@
 open Belt
+
 module InitApi = {
   type ecosystem = | @as("evm") Evm | @as("fuel") Fuel
   type body = {
@@ -17,24 +18,27 @@ module InitApi = {
     rpcNetworks: s.field("rpcNetworks", S.array(S.int)),
   })
 
-  let makeBody = (~envioVersion, ~envioApiToken, ~config: Config.t) => {
+  let makeBody = (
+    ~envioVersion,
+    ~envioApiToken,
+    ~ecosystem,
+    ~chains: array<ChainData.chainData>,
+  ) => {
     let hyperSyncNetworks = []
     let rpcNetworks = []
-    config.chainMap
-    ->ChainMap.values
-    ->Array.forEach(({sources, id}) => {
-      switch sources->Js.Array2.some(s => s.poweredByHyperSync) {
+    chains->Array.forEach(({poweredByHyperSync, chain}) => {
+      switch poweredByHyperSync {
       | true => hyperSyncNetworks
       | false => rpcNetworks
       }
-      ->Js.Array2.push(id)
+      ->Js.Array2.push(chain->ChainMap.Chain.toChainId)
       ->ignore
     })
 
     {
       envioVersion,
       envioApiToken,
-      ecosystem: (config.ecosystem :> ecosystem),
+      ecosystem: (ecosystem: InternalConfig.ecosystem :> ecosystem),
       hyperSyncNetworks,
       rpcNetworks,
     }
@@ -70,8 +74,6 @@ module InitApi = {
     content: s.field("content", S.string),
   })
 
-  let client = Rest.client(Env.envioAppUrl ++ "/api")
-
   let route = Rest.route(() => {
     method: Post,
     path: "/hyperindex/init",
@@ -79,12 +81,10 @@ module InitApi = {
     responses: [s => s.field("messages", S.array(messageSchema))],
   })
 
-  let getMessages = async (~config) => {
-    let envioVersion =
-      PersistedState.getPersistedState()->Result.mapWithDefault(None, p => Some(p.envioVersion))
-    let body = makeBody(~envioVersion, ~envioApiToken=Env.envioApiToken, ~config)
+  let getMessages = async (~envioAppUrl, ~envioApiToken, ~envioVersion, ~chains, ~ecosystem) => {
+    let body = makeBody(~envioVersion, ~envioApiToken, ~chains, ~ecosystem)
 
-    switch await route->Rest.fetch(body, ~client) {
+    switch await route->Rest.fetch(body, ~client=Rest.client(envioAppUrl ++ "/api")) {
     | exception exn => Error(exn->Obj.magic)
     | messages => Ok(messages)
     }
@@ -93,15 +93,15 @@ module InitApi = {
 
 type request<'ok, 'err> = Data('ok) | Loading | Err('err)
 
-let useMessages = (~config) => {
+let useMessages = (~envioAppUrl, ~envioApiToken, ~envioVersion, ~chains, ~ecosystem) => {
   let (request, setRequest) = React.useState(_ => Loading)
   React.useEffect0(() => {
-    InitApi.getMessages(~config)
+    InitApi.getMessages(~envioAppUrl, ~envioApiToken, ~envioVersion, ~chains, ~ecosystem)
     ->Promise.thenResolve(res =>
       switch res {
       | Ok(data) => setRequest(_ => Data(data))
       | Error(e) =>
-        Logging.error({
+        Logging.warn({
           "msg": "Failed to load messages from envio server",
           "err": e->Utils.prettifyExn,
         })

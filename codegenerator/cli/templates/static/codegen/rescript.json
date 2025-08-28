@@ -21,15 +21,7 @@
     "module": "commonjs",
     "in-source": true
   },
-  "jsx": {
-    "version": 4
-  },
   "suffix": ".res.js",
-  "bs-dependencies": [
-    "rescript-envsafe",
-    "rescript-schema",
-    "@rescript/react",
-    "envio"
-  ],
+  "bs-dependencies": ["rescript-envsafe", "rescript-schema", "envio"],
   "bsc-flags": ["-open RescriptSchema"]
 }

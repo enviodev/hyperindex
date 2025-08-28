@@ -5,7 +5,10 @@ type chainData = ChainData.chainData
 type appState = {
   chains: array<ChainData.chainData>,
   indexerStartTime: Js.Date.t,
-  config: Config.t,
+  envioAppUrl: string,
+  envioApiToken: option<string>,
+  envioVersion: option<string>,
+  ecosystem: InternalConfig.ecosystem,
 }
 
 let getTotalNumEventsProcessed = (~chains: array<ChainData.chainData>) => {
@@ -30,7 +33,7 @@ module TotalEventsProcessed = {
 module App = {
   @react.component
   let make = (~appState: appState) => {
-    let {chains, indexerStartTime, config} = appState
+    let {chains, indexerStartTime, envioAppUrl, envioApiToken, envioVersion, ecosystem} = appState
     let totalEventsProcessed = getTotalNumEventsProcessed(~chains)
     <Box flexDirection={Column}>
       <BigText text="envio" colors=[Secondary, Primary] font={Block} />
@@ -43,18 +46,14 @@ module App = {
       <SyncETA chains indexerStartTime />
       <Newline />
       <Box flexDirection={Row}>
-        <Text>
-          {"Development Console: "->React.string}
-        </Text>
-        <Text color={Info} underline=true> {`${Env.envioAppUrl}/console`->React.string} </Text>
+        <Text> {"Development Console: "->React.string} </Text>
+        <Text color={Info} underline=true> {`${envioAppUrl}/console`->React.string} </Text>
       </Box>
-      <Box flexDirection={Row}>
-        <Text>
-          {"GraphQL Endpoint:    "->React.string}
-        </Text>
-        <Text color={Info} underline=true> {`${Env.Hasura.url}/v1/graphql`->React.string} </Text>
-      </Box>
-      <Messages config />
+      // <Box flexDirection={Row}>
+      //   <Text> {"GraphQL Endpoint:    "->React.string} </Text>
+      //   <Text color={Info} underline=true> {`${Env.Hasura.url}/v1/graphql`->React.string} </Text>
+      // </Box>
+      <Messages envioAppUrl envioApiToken envioVersion chains ecosystem />
     </Box>
   }
 }
