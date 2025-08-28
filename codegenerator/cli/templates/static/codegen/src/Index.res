@@ -178,7 +178,7 @@ type process
 
 type mainArgs = Yargs.parsedArgs<args>
 
-let makeAppState = (globalState: GlobalState.t): EnvioInkApp.appState => {
+let makeAppState = (globalState: GlobalState.t, ~envioVersion): EnvioInkApp.appState => {
   let chains =
     globalState.chainManager.chainFetchers
     ->ChainMap.values
@@ -256,7 +256,10 @@ let makeAppState = (globalState: GlobalState.t): EnvioInkApp.appState => {
       )
     })
   {
-    config: globalState.config,
+    envioVersion,
+    envioAppUrl: Env.envioAppUrl,
+    envioApiToken: Env.envioApiToken,
+    ecosystem: globalState.config.ecosystem,
     indexerStartTime: globalState.indexerStartTime,
     chains,
   }
@@ -303,7 +306,7 @@ let main = async () => {
           | None => Initializing({})
           | Some(gsManager) => {
               let state = gsManager->GlobalStateManager.getState
-              let appState = state->makeAppState
+              let appState = state->makeAppState(~envioVersion)
               Active({
                 envioVersion,
                 chains: appState.chains->Js.Array2.map(c => {
@@ -360,8 +363,8 @@ let main = async () => {
     )
     let globalState = GlobalState.make(~config, ~chainManager, ~shouldUseTui)
     let stateUpdatedHook = if shouldUseTui {
-      let rerender = EnvioInkApp.startApp(makeAppState(globalState))
-      Some(globalState => globalState->makeAppState->rerender)
+      let rerender = EnvioInkApp.startApp(makeAppState(globalState, ~envioVersion))
+      Some(globalState => globalState->makeAppState(~envioVersion)->rerender)
     } else {
       None
     }
