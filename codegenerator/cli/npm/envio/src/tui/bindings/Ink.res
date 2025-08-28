@@ -107,9 +107,8 @@ module Newline = {
   Adds one or more newline characters. Must be used within <Text> components.
 
   */
-  @module("ink")
   @react.component
-  external make: (~count: int=?) => React.element = "Newline"
+  let make = () => <Text> {" "->React.string} </Text>
 }
 
 module Spacer = {
@@ -352,4 +351,9 @@ module Spinner = {
     | @as("dwarfFortress") DwarfFortress
   @module("ink-spinner") @react.component
   external make: (@as("type") ~type_: typeOption=?) => React.element = "default"
+}
+
+module Table = {
+  @module("ink-table") @react.component
+  external make: (~head: array<string>, ~rows: array<array<string>>) => React.element = "Table"
 }

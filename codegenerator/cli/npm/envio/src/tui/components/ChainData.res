@@ -45,15 +45,11 @@ module BlocksDisplay = {
   @react.component
   let make = (~latestProcessedBlock, ~currentBlockHeight) => {
     <Box flexDirection={Row}>
-      <Text> {"blocks: "->React.string} </Text>
-      <Box flexDirection={Column} alignItems={FlexEnd}>
-        <Box>
-          <Text> {latestProcessedBlock->formatLocaleString->React.string} </Text>
-        </Box>
-        <Box>
-          <Text> {"/"->React.string} </Text>
-          <Text> {currentBlockHeight->formatLocaleString->React.string} </Text>
-        </Box>
+      <Text color={Gray}> {"Blocks: "->React.string} </Text>
+      <Box>
+        <Text color={Gray}> {latestProcessedBlock->formatLocaleString->React.string} </Text>
+        <Text color={Gray}> {" / "->React.string} </Text>
+        <Text color={Gray}> {currentBlockHeight->formatLocaleString->React.string} </Text>
       </Box>
     </Box>
   }
@@ -72,10 +68,10 @@ module SyncBar = {
   ) => {
     <Box flexDirection=Row width=Str("80%")>
       <Box width={Num(20)}>
-        {poweredByHyperSync ? <Text color=Secondary> {"⚡"->React.string} </Text> : React.null}
-        <Text> {"Chain ID: "->React.string} </Text>
-        <Text> {chainId->React.int} </Text>
+        <Text> {"Chain: "->React.string} </Text>
+        <Text bold=true> {chainId->React.int} </Text>
         <Text> {" "->React.string} </Text>
+        {poweredByHyperSync ? <Text color=Secondary> {"⚡"->React.string} </Text> : React.null}
       </Box>
       {isSearching
         ? <Text color={Primary}>
@@ -103,10 +99,6 @@ let make = (~chainData: chainData) => {
   switch progress {
   | SearchingForEvents =>
     <Box flexDirection={Column}>
-      <Box flexDirection={Row} justifyContent={SpaceBetween} width=Num(57)>
-        <Text> {"Searching for events..."->React.string} </Text>
-        <BlocksDisplay latestProcessedBlock=latestFetchedBlockNumber currentBlockHeight=toBlock />
-      </Box>
       <SyncBar
         chainId
         loaded={latestFetchedBlockNumber}
@@ -115,19 +107,14 @@ let make = (~chainData: chainData) => {
         poweredByHyperSync
         isSearching=true
       />
+      <Box flexDirection={Row} justifyContent={SpaceBetween} width=Num(57)>
+        <Text> {"Searching for events..."->React.string} </Text>
+        <BlocksDisplay latestProcessedBlock=latestFetchedBlockNumber currentBlockHeight=toBlock />
+      </Box>
       <Newline />
     </Box>
-  | Syncing({firstEventBlockNumber, latestProcessedBlock, numEventsProcessed}) =>
+  | Syncing({firstEventBlockNumber, latestProcessedBlock}) =>
     <Box flexDirection={Column}>
-      <Box flexDirection={Row} justifyContent={SpaceBetween} width=Num(57)>
-        <Box>
-          <Text>
-            {"Events Processed: "->React.string}
-          </Text>
-          <Text bold=true> {numEventsProcessed->formatLocaleString->React.string} </Text>
-        </Box>
-        <BlocksDisplay latestProcessedBlock currentBlockHeight=toBlock />
-      </Box>
       <SyncBar
         chainId
         loaded={latestProcessedBlock - firstEventBlockNumber}
@@ -136,17 +123,13 @@ let make = (~chainData: chainData) => {
         loadingColor={Secondary}
         poweredByHyperSync
       />
-      <Newline />
-    </Box>
-  | Synced({firstEventBlockNumber, latestProcessedBlock, numEventsProcessed}) =>
-    <Box flexDirection={Column}>
-      <Box flexDirection={Row} justifyContent={SpaceBetween} width=Num(57)>
-        <Box>
-          <Text> {"Events Processed: "->React.string} </Text>
-          <Text bold=true> {numEventsProcessed->React.int} </Text>
-        </Box>
+      <Box flexDirection={RowReverse} width=Num(57)>
         <BlocksDisplay latestProcessedBlock currentBlockHeight=toBlock />
       </Box>
+      <Newline />
+    </Box>
+  | Synced({firstEventBlockNumber, latestProcessedBlock}) =>
+    <Box flexDirection={Column}>
       <SyncBar
         chainId
         loaded={latestProcessedBlock - firstEventBlockNumber}
@@ -155,6 +138,9 @@ let make = (~chainData: chainData) => {
         loadingColor=Success
         poweredByHyperSync
       />
+      <Box flexDirection={RowReverse} width=Num(57)>
+        <BlocksDisplay latestProcessedBlock currentBlockHeight=toBlock />
+      </Box>
       <Newline />
     </Box>
   }

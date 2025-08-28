@@ -178,7 +178,7 @@ type process
 
 type mainArgs = Yargs.parsedArgs<args>
 
-let makeAppState = (globalState: GlobalState.t, ~envioVersion): EnvioInkApp.appState => {
+let makeAppState = (globalState: GlobalState.t, ~envioVersion): Tui.params => {
   let chains =
     globalState.chainManager.chainFetchers
     ->ChainMap.values
@@ -252,13 +252,18 @@ let makeAppState = (globalState: GlobalState.t, ~envioVersion): EnvioInkApp.appS
           chain: ChainMap.Chain.makeUnsafe(~chainId=cf.chainConfig.id),
           endBlock: cf.endBlock,
           poweredByHyperSync: (cf.sourceManager->SourceManager.getActiveSource).poweredByHyperSync,
-        }: EnvioInkApp.chainData
+        }: Tui.chainData
       )
     })
   {
+    getMetrics: () => {
+      PromClient.defaultRegister->PromClient.metrics
+    },
     envioVersion,
     envioAppUrl: Env.envioAppUrl,
     envioApiToken: Env.envioApiToken,
+    hasuraUrl: Env.Hasura.url,
+    hasuraPassword: Env.Hasura.secret,
     ecosystem: globalState.config.ecosystem,
     indexerStartTime: globalState.indexerStartTime,
     chains,
@@ -362,13 +367,10 @@ let main = async () => {
       ~config,
     )
     let globalState = GlobalState.make(~config, ~chainManager, ~shouldUseTui)
-    let stateUpdatedHook = if shouldUseTui {
-      let rerender = EnvioInkApp.startApp(makeAppState(globalState, ~envioVersion))
-      Some(globalState => globalState->makeAppState(~envioVersion)->rerender)
-    } else {
-      None
+    if shouldUseTui {
+      let _rerender = Tui.start(makeAppState(globalState, ~envioVersion))
     }
-    let gsManager = globalState->GlobalStateManager.make(~stateUpdatedHook?)
+    let gsManager = globalState->GlobalStateManager.make
     gsManagerRef := Some(gsManager)
     gsManager->GlobalStateManager.dispatchTask(NextQuery(CheckAllChains))
     /*

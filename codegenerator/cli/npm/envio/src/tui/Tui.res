@@ -2,13 +2,16 @@ open Ink
 open Belt
 
 type chainData = ChainData.chainData
-type appState = {
+type params = {
+  getMetrics: unit => promise<string>,
   chains: array<ChainData.chainData>,
   indexerStartTime: Js.Date.t,
   envioAppUrl: string,
   envioApiToken: option<string>,
   envioVersion: option<string>,
   ecosystem: InternalConfig.ecosystem,
+  hasuraUrl: string,
+  hasuraPassword: string,
 }
 
 let getTotalNumEventsProcessed = (~chains: array<ChainData.chainData>) => {
@@ -20,7 +23,7 @@ let getTotalNumEventsProcessed = (~chains: array<ChainData.chainData>) => {
 module TotalEventsProcessed = {
   @react.component
   let make = (~totalEventsProcessed) => {
-    let label = "Total Events Processed: "
+    let label = "Events Processed: "
     <Text>
       <Text bold=true> {label->React.string} </Text>
       <Text color={Secondary}>
@@ -32,11 +35,17 @@ module TotalEventsProcessed = {
 
 module App = {
   @react.component
-  let make = (~appState: appState) => {
-    let {chains, indexerStartTime, envioAppUrl, envioApiToken, envioVersion, ecosystem} = appState
+  let make = (~params: params) => {
+    let {chains, indexerStartTime, envioAppUrl, envioApiToken, envioVersion, ecosystem} = params
     let totalEventsProcessed = getTotalNumEventsProcessed(~chains)
     <Box flexDirection={Column}>
-      <BigText text="envio" colors=[Secondary, Primary] font={Block} />
+      <BigText
+        text="envio"
+        colors=[Secondary, Primary]
+        font={chains->Array.length > 5 ? Tiny : Block}
+        space=false
+      />
+      <Newline />
       {chains
       ->Array.mapWithIndex((i, chainData) => {
         <ChainData key={i->Int.toString} chainData />
@@ -49,18 +58,19 @@ module App = {
         <Text> {"Development Console: "->React.string} </Text>
         <Text color={Info} underline=true> {`${envioAppUrl}/console`->React.string} </Text>
       </Box>
-      // <Box flexDirection={Row}>
-      //   <Text> {"GraphQL Endpoint:    "->React.string} </Text>
-      //   <Text color={Info} underline=true> {`${Env.Hasura.url}/v1/graphql`->React.string} </Text>
-      // </Box>
+      <Box flexDirection={Row}>
+        <Text> {"GraphQL Interface:   "->React.string} </Text>
+        <Text color={Info} underline=true> {params.hasuraUrl->React.string} </Text>
+        <Text color={Gray}> {` (password: ${params.hasuraPassword})`->React.string} </Text>
+      </Box>
       <Messages envioAppUrl envioApiToken envioVersion chains ecosystem />
     </Box>
   }
 }
 
-let startApp = appState => {
-  let {rerender} = render(<App appState />)
-  appState => {
-    rerender(<App appState />)
+let start = params => {
+  let {rerender} = render(<App params />)
+  params => {
+    rerender(<App params />)
   }
 }
