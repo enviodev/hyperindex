@@ -12,7 +12,6 @@ type t = {
   fetchState: FetchState.t,
   sourceManager: SourceManager.t,
   chainConfig: InternalConfig.chain,
-  startBlock: int,
   endBlock: option<int>,
   //The latest known block of the chain
   currentBlockHeight: int,
@@ -32,6 +31,7 @@ let make = (
   ~chainConfig: InternalConfig.chain,
   ~lastBlockScannedHashes,
   ~dynamicContracts: array<InternalTable.DynamicContractRegistry.t>,
+  ~resumeBlock,
   ~startBlock,
   ~endBlock,
   ~dbFirstEventBlockNumber,
@@ -126,10 +126,18 @@ let make = (
     })
   )
 
+  switch endBlock {
+  | Some(endBlock) => Prometheus.IndexingEndBlock.set(~endBlock, ~chainId=chainConfig.id)
+  | None => ()
+  }
+  if startBlock !== 0 {
+    Prometheus.IndexingStartBlock.set(~startBlock, ~chainId=chainConfig.id)
+  }
+
   let fetchState = FetchState.make(
     ~maxAddrInPartition=config.maxAddrInPartition,
     ~contracts,
-    ~startBlock,
+    ~startBlock=resumeBlock,
     ~endBlock,
     ~eventConfigs,
     ~chainId=chainConfig.id,
@@ -144,7 +152,6 @@ let make = (
   {
     logger,
     chainConfig,
-    startBlock,
     endBlock,
     sourceManager: SourceManager.make(
       ~sources=chainConfig.sources,
@@ -172,6 +179,7 @@ let makeFromConfig = (chainConfig: InternalConfig.chain, ~config) => {
     ~chainConfig,
     ~config,
     ~startBlock=chainConfig.startBlock,
+    ~resumeBlock=chainConfig.startBlock,
     ~endBlock=chainConfig.endBlock,
     ~lastBlockScannedHashes,
     ~dbFirstEventBlockNumber=None,
@@ -263,7 +271,8 @@ let makeFromDbState = async (
   make(
     ~dynamicContracts=dbRecoveredDynamicContracts,
     ~chainConfig,
-    ~startBlock=restartBlockNumber,
+    ~resumeBlock=restartBlockNumber,
+    ~startBlock=initialChainState.startBlock,
     ~endBlock=initialChainState.endBlock->Js.Null.toOption,
     ~config,
     ~lastBlockScannedHashes,

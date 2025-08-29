@@ -1,7 +1,5 @@
 open Belt
 
-type ecosystem = | @as("evm") Evm | @as("fuel") Fuel
-
 type syncConfigOptions = {
   initialBlockInterval?: int,
   backoffMultiplicative?: float,
@@ -133,7 +131,7 @@ type t = {
   isUnorderedMultichainMode: bool,
   chainMap: ChainMap.t<InternalConfig.chain>,
   defaultChain: option<InternalConfig.chain>,
-  ecosystem: ecosystem,
+  ecosystem: InternalConfig.ecosystem,
   enableRawEvents: bool,
   persistence: Persistence.t,
   addContractNameToContractNameMapping: dict<string>,
@@ -147,7 +145,7 @@ let make = (
   ~chains: array<InternalConfig.chain>=[],
   ~enableRawEvents=false,
   ~persistence=codegenPersistence,
-  ~ecosystem=Evm,
+  ~ecosystem=InternalConfig.Evm,
 ) => {
   let chainMap =
     chains

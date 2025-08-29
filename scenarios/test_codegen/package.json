@@ -48,7 +48,6 @@
     "ts-node": "^10.9.1"
   },
   "dependencies": {
-    "@rescript/react": "0.12.1",
     "bignumber.js": "^9.1.2",
     "hardhat-abi-exporter": "^2.10.1",
     "helpers": "workspace:*",
