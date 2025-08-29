@@ -18,20 +18,15 @@ module InitApi = {
     rpcNetworks: s.field("rpcNetworks", S.array(S.int)),
   })
 
-  let makeBody = (
-    ~envioVersion,
-    ~envioApiToken,
-    ~ecosystem,
-    ~chains: array<ChainData.chainData>,
-  ) => {
+  let makeBody = (~envioVersion, ~envioApiToken, ~ecosystem, ~chains: array<TuiData.chain>) => {
     let hyperSyncNetworks = []
     let rpcNetworks = []
-    chains->Array.forEach(({poweredByHyperSync, chain}) => {
+    chains->Array.forEach(({poweredByHyperSync, chainId}) => {
       switch poweredByHyperSync {
       | true => hyperSyncNetworks
       | false => rpcNetworks
       }
-      ->Js.Array2.push(chain->ChainMap.Chain.toChainId)
+      ->Js.Array2.push(chainId->Belt.Int.fromString->Belt.Option.getExn)
       ->ignore
     })
 

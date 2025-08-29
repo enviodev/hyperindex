@@ -179,82 +179,6 @@ type process
 type mainArgs = Yargs.parsedArgs<args>
 
 let makeAppState = (globalState: GlobalState.t, ~envioVersion): Tui.params => {
-  let chains =
-    globalState.chainManager.chainFetchers
-    ->ChainMap.values
-    ->Array.map(cf => {
-      let {numEventsProcessed, fetchState, numBatchesFetched} = cf
-      let latestFetchedBlockNumber = Pervasives.max(
-        FetchState.getLatestFullyFetchedBlock(fetchState).blockNumber,
-        0,
-      )
-      let hasProcessedToEndblock = cf->ChainFetcher.hasProcessedToEndblock
-      let currentBlockHeight =
-        cf->ChainFetcher.hasProcessedToEndblock
-          ? cf.endBlock->Option.getWithDefault(cf.currentBlockHeight)
-          : cf.currentBlockHeight
-
-      let progress: ChainData.progress = if hasProcessedToEndblock {
-        // If the endblock has been reached then set the progress to synced.
-        // if there's chains that have no events in the block range start->end,
-        // it's possible there are no events in that block  range (ie firstEventBlockNumber = None)
-        // This ensures TUI still displays synced in this case
-        let {latestProcessedBlock, timestampCaughtUpToHeadOrEndblock, numEventsProcessed} = cf
-
-        let firstEventBlockNumber = cf->ChainFetcher.getFirstEventBlockNumber
-
-        Synced({
-          firstEventBlockNumber: firstEventBlockNumber->Option.getWithDefault(0),
-          latestProcessedBlock: latestProcessedBlock->Option.getWithDefault(currentBlockHeight),
-          timestampCaughtUpToHeadOrEndblock: timestampCaughtUpToHeadOrEndblock->Option.getWithDefault(
-            Js.Date.now()->Js.Date.fromFloat,
-          ),
-          numEventsProcessed,
-        })
-      } else {
-        switch (cf, cf->ChainFetcher.getFirstEventBlockNumber) {
-        | (
-            {
-              latestProcessedBlock,
-              timestampCaughtUpToHeadOrEndblock: Some(timestampCaughtUpToHeadOrEndblock),
-            },
-            Some(firstEventBlockNumber),
-          ) =>
-          let latestProcessedBlock =
-            latestProcessedBlock->Option.getWithDefault(firstEventBlockNumber)
-          Synced({
-            firstEventBlockNumber,
-            latestProcessedBlock,
-            timestampCaughtUpToHeadOrEndblock,
-            numEventsProcessed,
-          })
-        | (
-            {latestProcessedBlock, timestampCaughtUpToHeadOrEndblock: None},
-            Some(firstEventBlockNumber),
-          ) =>
-          let latestProcessedBlock =
-            latestProcessedBlock->Option.getWithDefault(firstEventBlockNumber)
-          Syncing({
-            firstEventBlockNumber,
-            latestProcessedBlock,
-            numEventsProcessed,
-          })
-        | (_, None) => SearchingForEvents
-        }
-      }
-
-      (
-        {
-          progress,
-          currentBlockHeight,
-          latestFetchedBlockNumber,
-          numBatchesFetched,
-          chain: ChainMap.Chain.makeUnsafe(~chainId=cf.chainConfig.id),
-          endBlock: cf.endBlock,
-          poweredByHyperSync: (cf.sourceManager->SourceManager.getActiveSource).poweredByHyperSync,
-        }: Tui.chainData
-      )
-    })
   {
     getMetrics: () => {
       PromClient.defaultRegister->PromClient.metrics
@@ -266,7 +190,6 @@ let makeAppState = (globalState: GlobalState.t, ~envioVersion): Tui.params => {
     hasuraPassword: Env.Hasura.secret,
     ecosystem: globalState.config.ecosystem,
     indexerStartTime: globalState.indexerStartTime,
-    chains,
   }
 }
 
@@ -311,44 +234,40 @@ let main = async () => {
           | None => Initializing({})
           | Some(gsManager) => {
               let state = gsManager->GlobalStateManager.getState
-              let appState = state->makeAppState(~envioVersion)
-              Active({
-                envioVersion,
-                chains: appState.chains->Js.Array2.map(c => {
-                  let cf = state.chainManager.chainFetchers->ChainMap.get(c.chain)
+              let chains =
+                state.chainManager.chainFetchers
+                ->ChainMap.values
+                ->Array.map(cf => {
+                  let {fetchState} = cf
+                  let latestFetchedBlockNumber = Pervasives.max(
+                    FetchState.getLatestFullyFetchedBlock(fetchState).blockNumber,
+                    0,
+                  )
+                  let currentBlockHeight =
+                    cf->ChainFetcher.hasProcessedToEndblock
+                      ? cf.endBlock->Option.getWithDefault(cf.currentBlockHeight)
+                      : cf.currentBlockHeight
+
                   {
-                    chainId: c.chain->ChainMap.Chain.toChainId->Js.Int.toFloat,
-                    poweredByHyperSync: c.poweredByHyperSync,
-                    latestFetchedBlockNumber: c.latestFetchedBlockNumber,
-                    currentBlockHeight: c.currentBlockHeight,
-                    numBatchesFetched: c.numBatchesFetched,
-                    endBlock: c.endBlock,
-                    firstEventBlockNumber: switch c.progress {
-                    | SearchingForEvents => None
-                    | Syncing({firstEventBlockNumber}) | Synced({firstEventBlockNumber}) =>
-                      Some(firstEventBlockNumber)
-                    },
-                    latestProcessedBlock: switch c.progress {
-                    | SearchingForEvents => None
-                    | Syncing({latestProcessedBlock}) | Synced({latestProcessedBlock}) =>
-                      Some(latestProcessedBlock)
-                    },
-                    timestampCaughtUpToHeadOrEndblock: switch c.progress {
-                    | SearchingForEvents
-                    | Syncing(_) =>
-                      None
-                    | Synced({timestampCaughtUpToHeadOrEndblock}) =>
-                      Some(timestampCaughtUpToHeadOrEndblock)
-                    },
-                    numEventsProcessed: switch c.progress {
-                    | SearchingForEvents => 0
-                    | Syncing({numEventsProcessed})
-                    | Synced({numEventsProcessed}) => numEventsProcessed
-                    },
+                    chainId: cf.chainConfig.id->Js.Int.toFloat,
+                    poweredByHyperSync: (
+                      cf.sourceManager->SourceManager.getActiveSource
+                    ).poweredByHyperSync,
+                    latestFetchedBlockNumber,
+                    currentBlockHeight,
+                    numBatchesFetched: cf.numBatchesFetched,
+                    endBlock: cf.endBlock,
+                    firstEventBlockNumber: cf->ChainFetcher.getFirstEventBlockNumber,
+                    latestProcessedBlock: cf.latestProcessedBlock,
+                    timestampCaughtUpToHeadOrEndblock: cf.timestampCaughtUpToHeadOrEndblock,
+                    numEventsProcessed: cf.numEventsProcessed,
                     numAddresses: cf.fetchState->FetchState.numAddresses,
                   }
-                }),
-                indexerStartTime: appState.indexerStartTime,
+                })
+              Active({
+                envioVersion,
+                chains,
+                indexerStartTime: state.indexerStartTime,
                 isPreRegisteringDynamicContracts: false,
                 rollbackOnReorg: config.historyConfig.rollbackFlag === RollbackOnReorg,
                 isUnorderedMultichainMode: config.isUnorderedMultichainMode,

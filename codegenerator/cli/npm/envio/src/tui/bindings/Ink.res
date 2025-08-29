@@ -215,6 +215,15 @@ module Hooks = {
   }
   @module("ink")
   external useFocusManager: unit => focusManager = "useFocusManager"
+
+  type dimensions = {
+    @as("0")
+    columns: int,
+    @as("1")
+    rows: int,
+  }
+  // It doesn't have .default export
+  let useStdoutDimensions: unit => dimensions = %raw(`require("ink-use-stdout-dimensions")`)
 }
 
 module BigText = {

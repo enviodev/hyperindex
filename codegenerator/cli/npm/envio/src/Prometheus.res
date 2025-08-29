@@ -389,6 +389,18 @@ module IndexingEndBlock = {
   }
 }
 
+module IndexingStartBlock = {
+  let gauge = SafeGauge.makeOrThrow(
+    ~name="envio_indexing_start_block",
+    ~help="The block number to start indexing at. (inclusive)",
+    ~labelSchema=chainIdLabelsSchema,
+  )
+
+  let set = (~startBlock, ~chainId) => {
+    gauge->SafeGauge.handleInt(~labels=chainId, ~value=startBlock)
+  }
+}
+
 let sourceLabelsSchema = S.schema(s =>
   {
     "source": s.matches(S.string),
@@ -574,7 +586,7 @@ module ProgressEventsCount = {
   })
 
   let gauge = SafeGauge.makeOrThrow(
-    ~name="envio_progress_events_count",
+    ~name="envio_events_processed_count",
     ~help="The number of events processed and reflected in the database.",
     ~labelSchema=chainIdLabelsSchema,
   )

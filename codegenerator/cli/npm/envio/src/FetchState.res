@@ -1068,10 +1068,6 @@ let make = (
   Prometheus.IndexingPartitions.set(~partitionsCount=partitions->Array.length, ~chainId)
   Prometheus.IndexingBufferSize.set(~bufferSize=0, ~chainId)
   Prometheus.IndexingBufferBlockNumber.set(~blockNumber=latestFetchedBlock.blockNumber, ~chainId)
-  switch endBlock {
-  | Some(endBlock) => Prometheus.IndexingEndBlock.set(~endBlock, ~chainId)
-  | None => ()
-  }
 
   {
     partitions,

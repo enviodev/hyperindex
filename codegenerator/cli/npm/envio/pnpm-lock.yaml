@@ -26,6 +26,9 @@ importers:
       ink-spinner:
         specifier: 4.0.3
         version: 4.0.3(ink@3.2.0(react@19.1.1))(react@19.1.1)
+      ink-use-stdout-dimensions:
+        specifier: 1.0.5
+        version: 1.0.5(ink@3.2.0(react@19.1.1))(react@19.1.1)
       pino:
         specifier: 8.16.1
         version: 8.16.1
@@ -306,6 +309,12 @@ packages:
     peerDependencies:
       ink: '>=3.0.5'
       react: '>=16.8.2'
+
+  ink-use-stdout-dimensions@1.0.5:
+    resolution: {integrity: sha512-rVsqnw4tQEAJUoknU09+zHdDf30GJdkumkHr0iz/TOYMYEZJkYqziQSGJAM+Z+M603EDfO89+Nxyn/Ko2Zknfw==}
+    peerDependencies:
+      ink: '>=2.0.0'
+      react: '>=16.0.0'
 
   ink@3.2.0:
     resolution: {integrity: sha512-firNp1q3xxTzoItj/eOOSZQnYSlyrWks5llCTVX37nJ59K3eXbQ8PtzCguqo8YI19EELo5QxaKnJd4VxzhU8tg==}
@@ -818,6 +827,11 @@ snapshots:
   ink-spinner@4.0.3(ink@3.2.0(react@19.1.1))(react@19.1.1):
     dependencies:
       cli-spinners: 2.9.2
+      ink: 3.2.0(react@19.1.1)
+      react: 19.1.1
+
+  ink-use-stdout-dimensions@1.0.5(ink@3.2.0(react@19.1.1))(react@19.1.1):
+    dependencies:
       ink: 3.2.0(react@19.1.1)
       react: 19.1.1
 
