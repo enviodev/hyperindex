@@ -195,6 +195,10 @@ let updateChainMetadataTable = (cm: ChainManager.t, ~throttler: Throttler.t) => 
   throttler->Throttler.schedule(() =>
     Db.sql
     ->InternalTable.Chains.setValues(~pgSchema=Db.publicSchema, ~chainsData)
+    ->Promise.catch(err => {
+      Logging.error(err->Utils.prettifyExn)
+      Promise.resolve(%raw(`null`))
+    })
     ->Promise.ignoreValue
   )
 }

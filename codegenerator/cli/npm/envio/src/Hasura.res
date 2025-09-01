@@ -227,38 +227,22 @@ let trackDatabase = async (
   ~responseLimit,
   ~schema,
 ) => {
-  let trackOnlyInternalTableNames = [
-    InternalTable.Chains.table.tableName,
-    InternalTable.EventSyncState.table.tableName,
-    InternalTable.PersistedState.table.tableName,
-    InternalTable.EndOfBlockRangeScannedData.table.tableName,
-    InternalTable.DynamicContractRegistry.table.tableName,
-  ]
   let exposedInternalTableNames = [
     InternalTable.RawEvents.table.tableName,
     InternalTable.Views.metaViewName,
     InternalTable.Views.chainMetadataViewName,
   ]
   let userTableNames = userEntities->Js.Array2.map(entity => entity.table.tableName)
+  let tableNames = [exposedInternalTableNames, userTableNames]->Belt.Array.concatMany
 
   Logging.info("Tracking tables in Hasura")
 
   let _ = await clearHasuraMetadata(~endpoint, ~auth)
 
-  await trackTables(
-    ~endpoint,
-    ~auth,
-    ~pgSchema,
-    ~tableNames=[
-      exposedInternalTableNames,
-      trackOnlyInternalTableNames,
-      userTableNames,
-    ]->Belt.Array.concatMany,
-  )
+  await trackTables(~endpoint, ~auth, ~pgSchema, ~tableNames)
 
   let _ =
-    await [exposedInternalTableNames, userTableNames]
-    ->Belt.Array.concatMany
+    await tableNames
     ->Js.Array2.map(tableName =>
       createSelectPermissions(
         ~endpoint,

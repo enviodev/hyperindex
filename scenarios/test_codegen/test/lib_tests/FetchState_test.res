@@ -76,7 +76,7 @@ let baseEventConfig2 = (Mock.evmEventConfig(
   ~contractName="NftFactory",
 ) :> Internal.eventConfig)
 
-let makeInitial = (~startBlock=0, ~blockLag=?) => {
+let makeInitial = (~startBlock=0, ~blockLag=?, ~maxAddrInPartition=3) => {
   FetchState.make(
     ~eventConfigs=[baseEventConfig, baseEventConfig2],
     ~contracts=[
@@ -89,7 +89,7 @@ let makeInitial = (~startBlock=0, ~blockLag=?) => {
     ],
     ~startBlock,
     ~endBlock=None,
-    ~maxAddrInPartition=3,
+    ~maxAddrInPartition,
     ~chainId,
     ~blockLag?,
   )
@@ -3052,7 +3052,13 @@ describe("FetchState buffer overflow prevention", () => {
   it(
     "Should limit endBlock when maxQueryBlockNumber < currentBlockHeight to prevent buffer overflow",
     () => {
-      let fetchState = makeInitial()
+      let fetchState = makeInitial(~maxAddrInPartition=1)
+
+      // Create a second partition to ensure buffer limiting logic is exercised across partitions
+      // Register at a later block, so partition "0" remains the earliest and is selected
+      let dc = makeDynContractRegistration(~blockNumber=0, ~contractAddress=mockAddress1)
+      let fetchStateWithTwoPartitions =
+        fetchState->FetchState.registerDynamicContracts([dc], ~currentBlockHeight=30)
 
       // Build up a large queue using public API (handleQueryResult)
       // queue.length = 15, targetBufferSize = 10
@@ -3077,15 +3083,15 @@ describe("FetchState buffer overflow prevention", () => {
       ]
 
       let fetchStateWithLargeQueue =
-        fetchState
+        fetchStateWithTwoPartitions
         ->FetchState.handleQueryResult(
           ~query={
             partitionId: "0",
             target: Head,
-            selection: fetchState.normalSelection,
+            selection: fetchStateWithTwoPartitions.normalSelection,
             addressesByContractName: Js.Dict.fromArray([("Gravatar", [mockAddress0])]),
             fromBlock: 0,
-            indexingContracts: fetchState.indexingContracts,
+            indexingContracts: fetchStateWithTwoPartitions.indexingContracts,
           },
           ~latestFetchedBlock={blockNumber: 30, blockTimestamp: 30 * 15},
           ~newItems=largeQueueEvents,
