@@ -66,9 +66,10 @@ let schedule = async loadManager => {
       }
     })
 
-    if inputsToLoad->Utils.Array.isEmpty->not {
+    let isSuccess = if inputsToLoad->Utils.Array.isEmpty->not {
       try {
         await group.load(inputsToLoad)
+        true
       } catch {
       | exn => {
           let exn = exn->Utils.prettifyExn
@@ -76,16 +77,21 @@ let schedule = async loadManager => {
             let call = calls->Js.Dict.unsafeGet(inputKey)
             call.reject(exn)
           })
+          false
         }
       }
+    } else {
+      true
     }
 
     if currentInputKeys->Utils.Array.isEmpty->not {
-      currentInputKeys->Js.Array2.forEach(inputKey => {
-        let call = calls->Js.Dict.unsafeGet(inputKey)
-        calls->Utils.Dict.deleteInPlace(inputKey)
-        call.resolve(group.getUnsafeInMemory(inputKey))
-      })
+      if isSuccess {
+        currentInputKeys->Js.Array2.forEach(inputKey => {
+          let call = calls->Js.Dict.unsafeGet(inputKey)
+          calls->Utils.Dict.deleteInPlace(inputKey)
+          call.resolve(group.getUnsafeInMemory(inputKey))
+        })
+      }
 
       // Clean up executed batch to reset
       // provided load function which

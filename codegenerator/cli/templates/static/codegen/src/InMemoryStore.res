@@ -49,8 +49,8 @@ type effectCacheInMemTable = {
 }
 
 type t = {
-  eventSyncState: InMemoryTable.t<int, TablesStatic.EventSyncState.t>,
-  rawEvents: InMemoryTable.t<rawEventsKey, TablesStatic.RawEvents.t>,
+  eventSyncState: InMemoryTable.t<int, InternalTable.EventSyncState.t>,
+  rawEvents: InMemoryTable.t<rawEventsKey, InternalTable.RawEvents.t>,
   entities: dict<InMemoryTable.Entity.t<Entities.internalEntity>>,
   effects: dict<effectCacheInMemTable>,
   rollBackEventIdentifier: option<Types.eventIdentifier>,
@@ -110,7 +110,7 @@ let setDcsToStore = (
 ) => {
   let inMemTable =
     inMemoryStore->getInMemTable(
-      ~entityConfig=module(TablesStatic.DynamicContractRegistry)->Entities.entityModToInternal,
+      ~entityConfig=module(InternalTable.DynamicContractRegistry)->Entities.entityModToInternal,
     )
   dcsToStoreByChainId->Utils.Dict.forEachWithKey((chainId, dcs) => {
     let chainId = chainId->Belt.Int.fromString->Belt.Option.getExn
@@ -119,11 +119,11 @@ let setDcsToStore = (
       | Config => Js.Exn.raiseError("Config contract should not be in dcsToStore")
       | DC(data) => data
       }
-      let entity: TablesStatic.DynamicContractRegistry.t = {
-        id: TablesStatic.DynamicContractRegistry.makeId(~chainId, ~contractAddress=dc.address),
+      let entity: InternalTable.DynamicContractRegistry.t = {
+        id: InternalTable.DynamicContractRegistry.makeId(~chainId, ~contractAddress=dc.address),
         chainId,
         contractAddress: dc.address,
-        contractType: dc.contractName->(Utils.magic: string => Enums.ContractType.t),
+        contractName: dc.contractName,
         registeringEventBlockNumber: dc.startBlock,
         registeringEventBlockTimestamp: dcData.registeringEventBlockTimestamp,
         registeringEventLogIndex: dcData.registeringEventLogIndex,
@@ -139,7 +139,7 @@ let setDcsToStore = (
         logIndex: dcData.registeringEventLogIndex,
       }
       inMemTable->InMemoryTable.Entity.set(
-        Set(entity->TablesStatic.DynamicContractRegistry.castToInternal)->Types.mkEntityUpdate(
+        Set(entity->InternalTable.DynamicContractRegistry.castToInternal)->Types.mkEntityUpdate(
           ~eventIdentifier,
           ~entityId=entity.id,
         ),

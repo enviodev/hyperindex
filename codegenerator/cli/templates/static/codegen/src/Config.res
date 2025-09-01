@@ -2,14 +2,6 @@ open Belt
 
 type ecosystem = | @as("evm") Evm | @as("fuel") Fuel
 
-type contract = {
-  name: string,
-  abi: Ethers.abi,
-  addresses: array<Address.t>,
-  events: array<Internal.eventConfig>,
-  startBlock: option<int>,
-}
-
 type syncConfigOptions = {
   initialBlockInterval?: int,
   backoffMultiplicative?: float,
@@ -28,15 +20,6 @@ type syncConfig = {
   backoffMillis: int,
   queryTimeoutMillis: int,
   fallbackStallTimeout: int,
-}
-
-type chainConfig = {
-  startBlock: int,
-  endBlock: option<int>,
-  confirmedBlockThreshold: int,
-  chain: ChainMap.Chain.t,
-  contracts: array<contract>,
-  sources: array<Source.t>,
 }
 
 type historyFlag = FullHistory | MinHistory
@@ -82,10 +65,6 @@ let getSyncConfig = (
 let storagePgSchema = Env.Db.publicSchema
 let codegenPersistence = Persistence.make(
   ~userEntities=Entities.userEntities,
-  ~staticTables=Db.allStaticTables,
-  ~dcRegistryEntityConfig=module(
-    TablesStatic.DynamicContractRegistry
-  )->Entities.entityModToInternal,
   ~allEnums=Enums.allEnums,
   ~storage=PgStorage.make(
     ~sql=Db.sql,
@@ -106,8 +85,7 @@ let codegenPersistence = Persistence.make(
                 secret: Env.Hasura.secret,
               },
               ~pgSchema=storagePgSchema,
-              ~allStaticTables=Db.allStaticTables,
-              ~allEntityTables=Db.allEntityTables,
+              ~userEntities=Entities.userEntities,
               ~responseLimit=Env.Hasura.responseLimit,
               ~schema=Db.schema,
               ~aggregateEntities=Env.Hasura.aggregateEntities,
@@ -140,7 +118,7 @@ let codegenPersistence = Persistence.make(
                 err->Utils.prettifyExn,
                 `EE804: Error tracking new tables`,
               )->Promise.resolve
-           })
+            })
           },
         )
       } else {
@@ -153,19 +131,20 @@ let codegenPersistence = Persistence.make(
 type t = {
   historyConfig: historyConfig,
   isUnorderedMultichainMode: bool,
-  chainMap: ChainMap.t<chainConfig>,
-  defaultChain: option<chainConfig>,
+  chainMap: ChainMap.t<InternalConfig.chain>,
+  defaultChain: option<InternalConfig.chain>,
   ecosystem: ecosystem,
   enableRawEvents: bool,
   persistence: Persistence.t,
   addContractNameToContractNameMapping: dict<string>,
+  maxAddrInPartition: int,
 }
 
 let make = (
   ~shouldRollbackOnReorg=true,
   ~shouldSaveFullHistory=false,
   ~isUnorderedMultichainMode=false,
-  ~chains=[],
+  ~chains: array<InternalConfig.chain>=[],
   ~enableRawEvents=false,
   ~persistence=codegenPersistence,
   ~ecosystem=Evm,
@@ -173,7 +152,7 @@ let make = (
   let chainMap =
     chains
     ->Js.Array2.map(n => {
-      (n.chain, n)
+      (ChainMap.Chain.makeUnsafe(~chainId=n.id), n)
     })
     ->ChainMap.fromArrayUnsafe
 
@@ -202,6 +181,7 @@ let make = (
     persistence,
     ecosystem,
     addContractNameToContractNameMapping,
+    maxAddrInPartition: Env.maxAddrInPartition,
   }
 }
 

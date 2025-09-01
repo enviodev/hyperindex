@@ -19,7 +19,7 @@ HyperIndex is a fast, developer-friendly multichain indexer, optimized for both 
 - **[Reorg support](https://docs.envio.dev/docs/HyperIndex/reorgs-support)** – Graceful handling of blockchain reorganizations
 - **GraphQL API** – Easy-to-query indexed data
 - **Flexible language support** – JavaScript, TypeScript, and ReScript
-- **Factory contract support** – Index data from 100,000+ factory contracts seamlessly
+- **Factory contract support** – Index data from 1M+ dynamically registered contracts seamlessly
 - **On-chain & off-chain data integration** – Easily combine multiple data sources
 - **[Self-hosted & managed options](https://docs.envio.dev/docs/HyperIndex/hosted-service)** – Run your own setup or use HyperIndex hosted services
 - **Detailed logging & error reporting** – Debug and optimize with clarity

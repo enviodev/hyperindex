@@ -27,7 +27,7 @@ module WriteThrottlers = {
         ~params={
           "context": "Throttler for pruning stale endblock data",
           "intervalMillis": intervalMillis,
-          "chain": cfg.chain,
+          "chain": cfg.id,
         },
       )
       Throttler.make(~intervalMillis, ~logger)
@@ -163,7 +163,7 @@ let updateChainFetcherCurrentBlockHeight = (chainFetcher: ChainFetcher.t, ~curre
   if currentBlockHeight > chainFetcher.currentBlockHeight {
     Prometheus.setSourceChainHeight(
       ~blockNumber=currentBlockHeight,
-      ~chain=chainFetcher.chainConfig.chain,
+      ~chainId=chainFetcher.chainConfig.id,
     )
     {...chainFetcher, currentBlockHeight}
   } else {
@@ -171,31 +171,35 @@ let updateChainFetcherCurrentBlockHeight = (chainFetcher: ChainFetcher.t, ~curre
   }
 }
 
-let updateChainMetadataTable = async (cm: ChainManager.t, ~throttler: Throttler.t) => {
-  let chainMetadataArray: array<DbFunctions.ChainMetadata.chainMetadata> =
+let updateChainMetadataTable = (cm: ChainManager.t, ~throttler: Throttler.t) => {
+  let chainsData: array<InternalTable.Chains.t> =
     cm.chainFetchers
     ->ChainMap.values
-    ->Belt.Array.map(cf => {
+    ->Belt.Array.map((cf): InternalTable.Chains.t => {
       let latestFetchedBlock = cf.fetchState->FetchState.getLatestFullyFetchedBlock
-      let chainMetadata: DbFunctions.ChainMetadata.chainMetadata = {
-        chainId: cf.chainConfig.chain->ChainMap.Chain.toChainId,
+      {
+        id: cf.chainConfig.id,
         startBlock: cf.chainConfig.startBlock,
         blockHeight: cf.currentBlockHeight,
-        //optional fields
-        endBlock: cf.chainConfig.endBlock->Js.Nullable.fromOption, //this is already optional
-        firstEventBlockNumber: cf->ChainFetcher.getFirstEventBlockNumber->Js.Nullable.fromOption,
-        latestProcessedBlock: cf.latestProcessedBlock->Js.Nullable.fromOption, // this is already optional
-        numEventsProcessed: Value(cf.numEventsProcessed),
-        poweredByHyperSync: (cf.sourceManager->SourceManager.getActiveSource).poweredByHyperSync,
+        endBlock: cf.endBlock->Js.Null.fromOption,
+        firstEventBlockNumber: cf->ChainFetcher.getFirstEventBlockNumber->Js.Null.fromOption,
+        latestProcessedBlock: cf.latestProcessedBlock->Js.Null.fromOption,
+        numEventsProcessed: cf.numEventsProcessed,
+        isHyperSync: (cf.sourceManager->SourceManager.getActiveSource).poweredByHyperSync,
         numBatchesFetched: cf.numBatchesFetched,
         latestFetchedBlockNumber: latestFetchedBlock.blockNumber,
-        timestampCaughtUpToHeadOrEndblock: cf.timestampCaughtUpToHeadOrEndblock->Js.Nullable.fromOption,
+        timestampCaughtUpToHeadOrEndblock: cf.timestampCaughtUpToHeadOrEndblock->Js.Null.fromOption,
       }
-      chainMetadata
     })
   //Don't await this set, it can happen in its own time
   throttler->Throttler.schedule(() =>
-    Db.sql->DbFunctions.ChainMetadata.batchSetChainMetadataRow(~chainMetadataArray)
+    Db.sql
+    ->InternalTable.Chains.setValues(~pgSchema=Db.publicSchema, ~chainsData)
+    ->Promise.catch(err => {
+      Logging.error(err->Utils.prettifyExn)
+      Promise.resolve(%raw(`null`))
+    })
+    ->Promise.ignoreValue
   )
 }
 
@@ -214,7 +218,7 @@ let checkAndSetSyncedChains = (
   let allChainsAtHead = chainManager->ChainManager.isFetchingAtHead
   //Update the timestampCaughtUpToHeadOrEndblock values
   let chainFetchers = chainManager.chainFetchers->ChainMap.map(cf => {
-    let chain = cf.chainConfig.chain
+    let chain = ChainMap.Chain.makeUnsafe(~chainId=cf.chainConfig.id)
 
     // None if the chain wasn't processing.
     // But we still want to update the latest processed block
@@ -373,7 +377,7 @@ let validatePartitionQueryResponse = (
   if currentBlockHeight > chainFetcher.currentBlockHeight {
     Prometheus.SourceHeight.set(
       ~blockNumber=currentBlockHeight,
-      ~chainId=chainFetcher.chainConfig.chain->ChainMap.Chain.toChainId,
+      ~chainId=chainFetcher.chainConfig.id,
       // The currentBlockHeight from response won't necessarily
       // belong to the currently active source.
       // But for simplicity, assume it does.
@@ -907,8 +911,7 @@ let injectedTaskReducer = (
     switch shouldExit {
     | ExitWithSuccess =>
       updateChainMetadataTable(chainManager, ~throttler=writeThrottlers.chainMetaData)
-      ->Promise.thenResolve(_ => dispatchAction(SuccessExit))
-      ->ignore
+      dispatchAction(SuccessExit)
     | NoExit =>
       updateChainMetadataTable(chainManager, ~throttler=writeThrottlers.chainMetaData)->ignore
     }

@@ -6,7 +6,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
   let allEvents = []
   let numberOfMockEventsCreated = ref(0)
 
-  let chainFetchers = config.chainMap->ChainMap.map(({chain}) => {
+  let chainFetchers = config.chainMap->ChainMap.map(({id}) => {
     let getCurrentTimestamp = () => {
       let timestampMillis = Js.Date.now()
       // Convert milliseconds to seconds
@@ -53,11 +53,11 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
       for logIndex in 0 to numberOfEventsInBatch {
         let batchItem: Internal.eventItem = {
           timestamp: currentTime.contents,
-          chain,
+          chain: ChainMap.Chain.makeUnsafe(~chainId=id),
           blockNumber: currentBlockNumber.contents,
           logIndex,
           eventConfig: Utils.magic("Mock eventConfig in ChainManager test"),
-          event: `mock event (chainId)${chain->ChainMap.Chain.toString} - (blockNumber)${currentBlockNumber.contents->string_of_int} - (logIndex)${logIndex->string_of_int} - (timestamp)${currentTime.contents->string_of_int}`->Utils.magic,
+          event: `mock event (chainId)${id->Int.toString} - (blockNumber)${currentBlockNumber.contents->string_of_int} - (logIndex)${logIndex->string_of_int} - (timestamp)${currentTime.contents->string_of_int}`->Utils.magic,
         }
 
         allEvents->Js.Array2.push(batchItem)->ignore
@@ -100,6 +100,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
       numEventsProcessed: 0,
       numBatchesFetched: 0,
       startBlock: 0,
+      endBlock: None,
       fetchState: fetchState.contents,
       logger: Logging.getLogger(),
       sourceManager: SourceManager.make(

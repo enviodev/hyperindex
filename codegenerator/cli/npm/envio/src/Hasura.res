@@ -222,19 +222,22 @@ let trackDatabase = async (
   ~endpoint,
   ~auth,
   ~pgSchema,
-  ~allStaticTables,
-  ~allEntityTables,
+  ~userEntities: array<Internal.entityConfig>,
   ~aggregateEntities,
   ~responseLimit,
   ~schema,
 ) => {
+  let exposedInternalTableNames = [
+    InternalTable.RawEvents.table.tableName,
+    InternalTable.Views.metaViewName,
+    InternalTable.Views.chainMetadataViewName,
+  ]
+  let userTableNames = userEntities->Js.Array2.map(entity => entity.table.tableName)
+  let tableNames = [exposedInternalTableNames, userTableNames]->Belt.Array.concatMany
+
   Logging.info("Tracking tables in Hasura")
 
   let _ = await clearHasuraMetadata(~endpoint, ~auth)
-  let tableNames =
-    [allStaticTables, allEntityTables]
-    ->Belt.Array.concatMany
-    ->Js.Array2.map(({tableName}: Table.table) => tableName)
 
   await trackTables(~endpoint, ~auth, ~pgSchema, ~tableNames)
 
@@ -251,11 +254,11 @@ let trackDatabase = async (
       )
     )
     ->Js.Array2.concatMany(
-      allEntityTables->Js.Array2.map(table => {
-        let {tableName} = table
+      userEntities->Js.Array2.map(entityConfig => {
+        let {tableName} = entityConfig.table
         [
           //Set array relationships
-          table
+          entityConfig.table
           ->Table.getDerivedFromFields
           ->Js.Array2.map(derivedFromField => {
             //determines the actual name of the underlying relational field (if it's an entity mapping then suffixes _id for eg.)
@@ -275,7 +278,7 @@ let trackDatabase = async (
             )
           }),
           //Set object relationships
-          table
+          entityConfig.table
           ->Table.getLinkedEntityFields
           ->Js.Array2.map(((field, linkedEntityName)) => {
             createEntityRelationship(

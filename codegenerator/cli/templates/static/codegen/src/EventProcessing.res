@@ -72,7 +72,7 @@ let addEventToRawEvents = (eventItem: Internal.eventItem, ~inMemoryStore: InMemo
     params
   }
 
-  let rawEvent: TablesStatic.RawEvents.t = {
+  let rawEvent: InternalTable.RawEvents.t = {
     chainId,
     eventId,
     eventName: eventConfig.name,

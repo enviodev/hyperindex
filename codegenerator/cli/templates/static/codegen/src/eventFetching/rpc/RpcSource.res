@@ -16,17 +16,21 @@ let getKnownBlock = (provider, blockNumber) =>
     }
   )
 
-let rec getKnownBlockWithBackoff = async (~provider, ~blockNumber, ~backoffMsOnFailure) =>
+let rec getKnownBlockWithBackoff = async (~provider, ~sourceName, ~chain, ~blockNumber, ~backoffMsOnFailure) =>
   switch await getKnownBlock(provider, blockNumber) {
   | exception err =>
     Logging.warn({
       "err": err,
       "msg": `Issue while running fetching batch of events from the RPC. Will wait ${backoffMsOnFailure->Belt.Int.toString}ms and try again.`,
+      "source": sourceName,
+      "chainId": chain->ChainMap.Chain.toChainId,
       "type": "EXPONENTIAL_BACKOFF",
     })
     await Time.resolvePromiseAfterDelay(~delayMilliseconds=backoffMsOnFailure)
     await getKnownBlockWithBackoff(
       ~provider,
+      ~sourceName,
+      ~chain,
       ~blockNumber,
       ~backoffMsOnFailure=backoffMsOnFailure * 2,
     )
@@ -460,10 +464,11 @@ let make = ({sourceFor, syncConfig, url, chain, contracts, eventRouter}: options
         "err": exn,
         "msg": `EE1100: Top level promise timeout reached. Please review other errors or warnings in the code. This function will retry in ${(am._retryDelayMillis / 1000)
             ->Belt.Int.toString} seconds. It is highly likely that your indexer isn't syncing on one or more chains currently. Also take a look at the "suggestedFix" in the metadata of this command`,
+        "source": name,
+        "chainId": chain->ChainMap.Chain.toChainId,
         "metadata": {
           {
             "asyncTaskName": "transactionLoader: fetching transaction data - `getTransaction` rpc call",
-            "caller": "RPC Source",
             "suggestedFix": "This likely means the RPC url you are using is not responding correctly. Please try another RPC endipoint.",
           }
         },
@@ -473,16 +478,17 @@ let make = ({sourceFor, syncConfig, url, chain, contracts, eventRouter}: options
 
   let blockLoader = LazyLoader.make(
     ~loaderFn=blockNumber =>
-      getKnownBlockWithBackoff(~provider, ~backoffMsOnFailure=1000, ~blockNumber),
+      getKnownBlockWithBackoff(~provider, ~sourceName=name, ~chain, ~backoffMsOnFailure=1000, ~blockNumber),
     ~onError=(am, ~exn) => {
       Logging.error({
         "err": exn,
         "msg": `EE1100: Top level promise timeout reached. Please review other errors or warnings in the code. This function will retry in ${(am._retryDelayMillis / 1000)
             ->Belt.Int.toString} seconds. It is highly likely that your indexer isn't syncing on one or more chains currently. Also take a look at the "suggestedFix" in the metadata of this command`,
+        "source": name,
+        "chainId": chain->ChainMap.Chain.toChainId,
         "metadata": {
           {
             "asyncTaskName": "blockLoader: fetching block data - `getBlock` rpc call",
-            "caller": "RPC Source",
             "suggestedFix": "This likely means the RPC url you are using is not responding correctly. Please try another RPC endipoint.",
           }
         },

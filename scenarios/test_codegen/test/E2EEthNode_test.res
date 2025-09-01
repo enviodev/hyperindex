@@ -15,10 +15,10 @@ describe("E2E Integration Test", () => {
 
     let contracts = await SetupRpcNode.deployContracts()
     await SetupRpcNode.runBasicGravatarTransactions(contracts.gravatar)
-    let localChainConfig: Config.chainConfig = {
+    let localChainConfig: InternalConfig.chain = {
       let contracts = [
         {
-          Config.name: "Gravatar",
+          InternalConfig.name: "Gravatar",
           abi: Types.Gravatar.abi,
           addresses: ["0x5FbDB2315678afecb367f032d93F642f64180aa3"->Address.Evm.fromStringOrThrow],
           events: [
@@ -41,8 +41,7 @@ describe("E2E Integration Test", () => {
       {
         confirmedBlockThreshold: 200,
         startBlock: 0,
-        endBlock: None,
-        chain,
+        id: 1337,
         contracts,
         sources: [
           RpcSource.make({

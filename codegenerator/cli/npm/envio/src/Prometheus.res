@@ -213,9 +213,9 @@ let incrementExecuteBatchDurationCounter = (~duration) => {
   executeBatchDurationCounter->PromClient.Counter.incMany(duration)
 }
 
-let setSourceChainHeight = (~blockNumber, ~chain) => {
+let setSourceChainHeight = (~blockNumber, ~chainId) => {
   sourceChainHeight
-  ->PromClient.Gauge.labels({"chainId": chain->ChainMap.Chain.toString})
+  ->PromClient.Gauge.labels({"chainId": chainId})
   ->PromClient.Gauge.set(blockNumber)
 }
 

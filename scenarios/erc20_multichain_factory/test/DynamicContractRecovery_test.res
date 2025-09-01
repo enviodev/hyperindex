@@ -140,9 +140,13 @@ describe("Dynamic contract restart resistance test", () => {
   }
 
   let getFetchingDcAddressesFromDbState = async (~chainId=1, ~sql=?) => {
+    let chainConfig = config.chainMap->ChainMap.get(ChainMap.Chain.makeUnsafe(~chainId))
+    await config.persistence->Persistence.init(~chainConfigs=[chainConfig])
     let chainFetcher = await ChainFetcher.makeFromDbState(
-      config.chainMap->ChainMap.get(ChainMap.Chain.makeUnsafe(~chainId)),
-      ~maxAddrInPartition=Env.maxAddrInPartition,
+      chainConfig,
+      ~initialChainState=(config.persistence->Persistence.getInitializedState).chains
+      ->Js.Array2.find(chainState => chainState.id === chainId)
+      ->Option.getExn,
       ~config,
       ~isInReorgThreshold=true,
       ~sql?,
@@ -233,51 +237,47 @@ describe("Dynamic contract restart resistance test", () => {
       )
 
       try await Db.sql->Postgres.beginSql(
-        sql => [
-          (
-            async () => {
-              Assert.deepEqual(
-                await getFetchingDcAddressesFromDbState(~sql),
-                dcsBeforeRestart->Js.Array2.map(dc => dc["contract_address"]),
-                ~message="Should get all addresses on restart",
-              )
+        async sql => {
+          Assert.deepEqual(
+            await getFetchingDcAddressesFromDbState(~sql),
+            dcsBeforeRestart->Js.Array2.map(dc => dc["contract_address"]),
+            ~message="Should get all addresses on restart",
+          )
 
-              // But let's say the indexer crashed before
-              // the processing of events catch up to the dcs we stored in the db
-              // In this case on restart we should prune contracts after event_sync_state
-              let _ =
-                await sql->Postgres.unsafe(`UPDATE public.event_sync_state SET block_number = 0 WHERE chain_id = 1;`)
+          // But let's say the indexer crashed before
+          // the processing of events catch up to the dcs we stored in the db
+          // In this case on restart we should prune contracts after event_sync_state
+          let _ =
+            await sql->Postgres.unsafe(`UPDATE public.event_sync_state SET block_number = 0 WHERE chain_id = 1;`)
 
-              Assert.deepEqual(
-                await getFetchingDcAddressesFromDbState(~sql),
-                // This one has
-                // registering_event_block_number: 0
-                // registering_event_log_index: 0
-                // So it's not pruned
-                [Mock.mockDynamicToken1],
-                ~message="Should keep only the dc up to the event_sync_state",
-              )
+          Assert.deepEqual(
+            await getFetchingDcAddressesFromDbState(~sql),
+            // This one has
+            // registering_event_block_number: 0
+            // registering_event_log_index: 0
+            // So it's not pruned
+            [Mock.mockDynamicToken1],
+            ~message="Should keep only the dc up to the event_sync_state",
+          )
 
-              Assert.equal(
-                (await sql
-                ->Postgres.unsafe(`SELECT * FROM public.dynamic_contract_registry;`))
-                ->Array.length,
-                1,
-                ~message="Should clean up pruned dc from db on restart",
-              )
-              Assert.equal(
-                (await sql
-                ->Postgres.unsafe(`SELECT * FROM public.dynamic_contract_registry_history;`))
-                ->Array.length,
-                1,
-                ~message=`Should clean up pruned dc history from db on restart.
+          Assert.equal(
+            (await sql
+            ->Postgres.unsafe(`SELECT * FROM public.dynamic_contract_registry;`))
+            ->Array.length,
+            1,
+            ~message="Should clean up pruned dc from db on restart",
+          )
+          Assert.equal(
+            (await sql
+            ->Postgres.unsafe(`SELECT * FROM public.dynamic_contract_registry_history;`))
+            ->Array.length,
+            1,
+            ~message=`Should clean up pruned dc history from db on restart.
               Note: Without it there's a case when the indexer might crash because of a conflict`,
-              )
+          )
 
-              raise(RollbackTransaction)
-            }
-          )(),
-        ],
+          raise(RollbackTransaction)
+        },
       ) catch {
       | RollbackTransaction => ()
       }

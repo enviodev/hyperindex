@@ -13,45 +13,6 @@ module General = {
   }
 }
 
-module ChainMetadata = {
-  type chainMetadata = {
-    @as("chain_id") chainId: int,
-    @as("block_height") blockHeight: int,
-    @as("start_block") startBlock: int,
-    // The values below could use `Js.Null.t` instead of `Js.Nullable.t`
-    // It just needs to be confiremed that the postgres lib never returns
-    // undefined.
-    @as("end_block") endBlock: Js.Nullable.t<int>,
-    @as("first_event_block_number") firstEventBlockNumber: Js.Nullable.t<int>,
-    @as("latest_processed_block") latestProcessedBlock: Js.Nullable.t<int>,
-    @as("num_events_processed") numEventsProcessed: Js.Nullable.t<int>,
-    @as("is_hyper_sync") poweredByHyperSync: bool,
-    @as("num_batches_fetched") numBatchesFetched: int,
-    @as("latest_fetched_block_number") latestFetchedBlockNumber: int,
-    @as("timestamp_caught_up_to_head_or_endblock")
-    timestampCaughtUpToHeadOrEndblock: Js.Nullable.t<Js.Date.t>,
-  }
-
-  @module("./DbFunctionsImplementation.js")
-  external batchSetChainMetadata: (Postgres.sql, array<chainMetadata>) => promise<unit> =
-    "batchSetChainMetadata"
-
-  @module("./DbFunctionsImplementation.js")
-  external readLatestChainMetadataState: (
-    Postgres.sql,
-    ~chainId: int,
-  ) => promise<array<chainMetadata>> = "readLatestChainMetadataState"
-
-  let batchSetChainMetadataRow = (sql, ~chainMetadataArray: array<chainMetadata>) => {
-    sql->batchSetChainMetadata(chainMetadataArray)
-  }
-
-  let getLatestChainMetadataState = async (sql, ~chainId) => {
-    let arr = await sql->readLatestChainMetadataState(~chainId)
-    arr->Belt.Array.get(0)
-  }
-}
-
 module EndOfBlockRangeScannedData = {
   type endOfBlockRangeScannedData = {
     @as("chain_id") chainId: int,
@@ -91,7 +52,7 @@ module EndOfBlockRangeScannedData = {
 
 module EventSyncState = {
   @genType
-  type eventSyncState = TablesStatic.EventSyncState.t
+  type eventSyncState = InternalTable.EventSyncState.t
 
   @module("./DbFunctionsImplementation.js")
   external readLatestSyncedEventOnChainIdArr: (
@@ -109,11 +70,13 @@ module EventSyncState = {
   }
 
   @module("./DbFunctionsImplementation.js")
-  external batchSet: (Postgres.sql, array<TablesStatic.EventSyncState.t>) => promise<unit> =
+  external batchSet: (Postgres.sql, array<InternalTable.EventSyncState.t>) => promise<unit> =
     "batchSetEventSyncState"
 
   let resetEventSyncState = async (): unit => {
-    let query = TablesStatic.EventSyncState.resetCurrentCurrentSyncStateQuery
+    let query = InternalTable.EventSyncState.resetCurrentCurrentSyncStateQuery(
+      ~pgSchema=Db.publicSchema,
+    )
     try await Db.sql->Postgres.unsafe(query) catch {
     | exn => exn->ErrorHandling.mkLogAndRaise(~msg="Failed reset query: " ++ query)
     }
@@ -143,7 +106,7 @@ module DynamicContractRegistry = {
 
   let readAllDynamicContracts = async (sql: Postgres.sql, ~chainId: chainId) => {
     let json = await sql->readAllDynamicContractsRaw(~chainId)
-    json->S.parseJsonOrThrow(TablesStatic.DynamicContractRegistry.rowsSchema)
+    json->S.parseJsonOrThrow(InternalTable.DynamicContractRegistry.rowsSchema)
   }
 }
 

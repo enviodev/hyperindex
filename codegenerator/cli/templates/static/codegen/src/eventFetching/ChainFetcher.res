@@ -7,13 +7,13 @@ type processingFilter = {
   isValid: (~fetchState: FetchState.t) => bool,
 }
 
-type addressToDynContractLookup = dict<TablesStatic.DynamicContractRegistry.t>
 type t = {
   logger: Pino.t,
   fetchState: FetchState.t,
   sourceManager: SourceManager.t,
-  chainConfig: Config.chainConfig,
+  chainConfig: InternalConfig.chain,
   startBlock: int,
+  endBlock: option<int>,
   //The latest known block of the chain
   currentBlockHeight: int,
   timestampCaughtUpToHeadOrEndblock: option<Js.Date.t>,
@@ -29,9 +29,9 @@ type t = {
 
 //CONSTRUCTION
 let make = (
-  ~chainConfig: Config.chainConfig,
+  ~chainConfig: InternalConfig.chain,
   ~lastBlockScannedHashes,
-  ~dynamicContracts: array<TablesStatic.DynamicContractRegistry.t>,
+  ~dynamicContracts: array<InternalTable.DynamicContractRegistry.t>,
   ~startBlock,
   ~endBlock,
   ~dbFirstEventBlockNumber,
@@ -42,7 +42,6 @@ let make = (
   ~numEventsProcessed,
   ~numBatchesFetched,
   ~processingFilters,
-  ~maxAddrInPartition,
   ~isInReorgThreshold,
 ): t => {
   // We don't need the router itself, but only validation logic,
@@ -67,7 +66,7 @@ let make = (
         eventConfig.id,
         (),
         ~contractName,
-        ~chain=chainConfig.chain,
+        ~chain=ChainMap.Chain.makeUnsafe(~chainId=chainConfig.id),
         ~eventName=eventConfig.name,
         ~isWildcard,
       )
@@ -115,7 +114,7 @@ let make = (
   dynamicContracts->Array.forEach(dc =>
     contracts->Array.push({
       FetchState.address: dc.contractAddress,
-      contractName: (dc.contractType :> string),
+      contractName: dc.contractName,
       startBlock: dc.registeringEventBlockNumber,
       register: DC({
         registeringEventLogIndex: dc.registeringEventLogIndex,
@@ -128,12 +127,12 @@ let make = (
   )
 
   let fetchState = FetchState.make(
-    ~maxAddrInPartition,
+    ~maxAddrInPartition=config.maxAddrInPartition,
     ~contracts,
     ~startBlock,
     ~endBlock,
     ~eventConfigs,
-    ~chainId=chainConfig.chain->ChainMap.Chain.toChainId,
+    ~chainId=chainConfig.id,
     ~blockLag=Pervasives.max(
       !(config->Config.shouldRollbackOnReorg) || isInReorgThreshold
         ? 0
@@ -146,6 +145,7 @@ let make = (
     logger,
     chainConfig,
     startBlock,
+    endBlock,
     sourceManager: SourceManager.make(
       ~sources=chainConfig.sources,
       ~maxPartitionConcurrency=Env.maxPartitionConcurrency,
@@ -162,8 +162,8 @@ let make = (
   }
 }
 
-let makeFromConfig = (chainConfig: Config.chainConfig, ~config, ~maxAddrInPartition) => {
-  let logger = Logging.createChild(~params={"chainId": chainConfig.chain->ChainMap.Chain.toChainId})
+let makeFromConfig = (chainConfig: InternalConfig.chain, ~config) => {
+  let logger = Logging.createChild(~params={"chainId": chainConfig.id})
   let lastBlockScannedHashes = ReorgDetection.LastBlockScannedHashes.empty(
     ~confirmedBlockThreshold=chainConfig.confirmedBlockThreshold,
   )
@@ -182,7 +182,6 @@ let makeFromConfig = (chainConfig: Config.chainConfig, ~config, ~maxAddrInPartit
     ~logger,
     ~processingFilters=None,
     ~dynamicContracts=[],
-    ~maxAddrInPartition,
     ~isInReorgThreshold=false,
   )
 }
@@ -191,17 +190,15 @@ let makeFromConfig = (chainConfig: Config.chainConfig, ~config, ~maxAddrInPartit
  * This function allows a chain fetcher to be created from metadata, in particular this is useful for restarting an indexer and making sure it fetches blocks from the same place.
  */
 let makeFromDbState = async (
-  chainConfig: Config.chainConfig,
-  ~maxAddrInPartition,
+  chainConfig: InternalConfig.chain,
+  ~initialChainState: InternalTable.Chains.t,
   ~isInReorgThreshold,
   ~config,
   ~sql=Db.sql,
 ) => {
-  let logger = Logging.createChild(~params={"chainId": chainConfig.chain->ChainMap.Chain.toChainId})
-  let chainId = chainConfig.chain->ChainMap.Chain.toChainId
+  let chainId = chainConfig.id
+  let logger = Logging.createChild(~params={"chainId": chainId})
   let latestProcessedEvent = await sql->DbFunctions.EventSyncState.getLatestProcessedEvent(~chainId)
-
-  let chainMetadata = await sql->DbFunctions.ChainMetadata.getLatestChainMetadataState(~chainId)
 
   let (
     restartBlockNumber: int,
@@ -246,36 +243,6 @@ let makeFromDbState = async (
   let dbRecoveredDynamicContracts =
     await sql->DbFunctions.DynamicContractRegistry.readAllDynamicContracts(~chainId)
 
-  let (
-    firstEventBlockNumber,
-    latestProcessedBlockChainMetadata,
-    numEventsProcessed,
-    timestampCaughtUpToHeadOrEndblock,
-  ) = switch chainMetadata {
-  | Some({
-      firstEventBlockNumber,
-      latestProcessedBlock,
-      numEventsProcessed,
-      timestampCaughtUpToHeadOrEndblock,
-    }) => {
-      // on restart, reset the events_processed gauge to the previous state
-      switch numEventsProcessed {
-      | Value(numEventsProcessed) =>
-        Prometheus.ProgressEventsCount.set(~processedCount=numEventsProcessed, ~chainId)
-      | Null | Undefined => () // do nothing if no events have been processed yet for this chain
-      }
-      (
-        firstEventBlockNumber->Js.Nullable.toOption,
-        latestProcessedBlock->Js.Nullable.toOption,
-        numEventsProcessed->Js.Nullable.toOption,
-        Env.updateSyncTimeOnRestart
-          ? None
-          : timestampCaughtUpToHeadOrEndblock->Js.Nullable.toOption,
-      )
-    }
-  | None => (None, None, None, None)
-  }
-
   let endOfBlockRangeScannedData =
     await sql->DbFunctions.EndOfBlockRangeScannedData.readEndOfBlockRangeScannedDataForChain(
       ~chainId,
@@ -291,21 +258,24 @@ let makeFromDbState = async (
       ~confirmedBlockThreshold=chainConfig.confirmedBlockThreshold,
     )
 
+  Prometheus.ProgressEventsCount.set(~processedCount=initialChainState.numEventsProcessed, ~chainId)
+
   make(
     ~dynamicContracts=dbRecoveredDynamicContracts,
     ~chainConfig,
     ~startBlock=restartBlockNumber,
-    ~endBlock=chainConfig.endBlock,
+    ~endBlock=initialChainState.endBlock->Js.Null.toOption,
     ~config,
     ~lastBlockScannedHashes,
-    ~dbFirstEventBlockNumber=firstEventBlockNumber,
-    ~latestProcessedBlock=latestProcessedBlockChainMetadata,
-    ~timestampCaughtUpToHeadOrEndblock,
-    ~numEventsProcessed=numEventsProcessed->Option.getWithDefault(0),
+    ~dbFirstEventBlockNumber=initialChainState.firstEventBlockNumber->Js.Null.toOption,
+    ~latestProcessedBlock=initialChainState.latestProcessedBlock->Js.Null.toOption,
+    ~timestampCaughtUpToHeadOrEndblock=Env.updateSyncTimeOnRestart
+      ? None
+      : initialChainState.timestampCaughtUpToHeadOrEndblock->Js.Null.toOption,
+    ~numEventsProcessed=initialChainState.numEventsProcessed,
     ~numBatchesFetched=0,
     ~logger,
     ~processingFilters,
-    ~maxAddrInPartition,
     ~isInReorgThreshold,
   )
 }
@@ -467,12 +437,7 @@ let handleQueryResult = (
   }
 
   fs
-  ->FetchState.handleQueryResult(
-    ~query,
-    ~latestFetchedBlock,
-    ~newItems,
-    ~currentBlockHeight,
-  )
+  ->FetchState.handleQueryResult(~query, ~latestFetchedBlock, ~newItems, ~currentBlockHeight)
   ->Result.map(fetchState => {
     {
       ...chainFetcher,
@@ -489,7 +454,7 @@ let handleQueryResult = (
 Gets the latest item on the front of the queue and returns updated fetcher
 */
 let hasProcessedToEndblock = (self: t) => {
-  let {latestProcessedBlock, chainConfig: {endBlock}} = self
+  let {latestProcessedBlock, endBlock} = self
   switch (latestProcessedBlock, endBlock) {
   | (Some(latestProcessedBlock), Some(endBlock)) => latestProcessedBlock >= endBlock
   | _ => false

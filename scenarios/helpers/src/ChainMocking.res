@@ -115,7 +115,7 @@ module Make = (Indexer: Indexer.S) => {
   }
 
   type t = {
-    chainConfig: Config.chainConfig,
+    chainConfig: InternalConfig.chain,
     blocks: array<block>,
     maxBlocksReturned: int,
     blockTimestampInterval: int,
@@ -151,7 +151,7 @@ module Make = (Indexer: Indexer.S) => {
         x(
           ~transactionIndex=i,
           ~logIndex=i,
-          ~chainId=self.chainConfig.chain->ChainMap.Chain.toChainId,
+          ~chainId=self.chainConfig.id,
           ~blockNumber,
           ~blockTimestamp,
         )
@@ -169,7 +169,7 @@ module Make = (Indexer: Indexer.S) => {
       let log: Internal.eventItem = {
         eventConfig: (eventConfig :> Internal.eventConfig),
         event: makeEvent(~blockHash),
-        chain: self.chainConfig.chain,
+        chain: ChainMap.Chain.makeUnsafe(~chainId=self.chainConfig.id),
         timestamp: blockTimestamp,
         blockNumber,
         logIndex,

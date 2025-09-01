@@ -191,7 +191,7 @@ let makeAppState = (globalState: GlobalState.t): EnvioInkApp.appState => {
       let hasProcessedToEndblock = cf->ChainFetcher.hasProcessedToEndblock
       let currentBlockHeight =
         cf->ChainFetcher.hasProcessedToEndblock
-          ? cf.chainConfig.endBlock->Option.getWithDefault(cf.currentBlockHeight)
+          ? cf.endBlock->Option.getWithDefault(cf.currentBlockHeight)
           : cf.currentBlockHeight
 
       let progress: ChainData.progress = if hasProcessedToEndblock {
@@ -249,8 +249,8 @@ let makeAppState = (globalState: GlobalState.t): EnvioInkApp.appState => {
           currentBlockHeight,
           latestFetchedBlockNumber,
           numBatchesFetched,
-          chain: cf.chainConfig.chain,
-          endBlock: cf.chainConfig.endBlock,
+          chain: ChainMap.Chain.makeUnsafe(~chainId=cf.chainConfig.id),
+          endBlock: cf.endBlock,
           poweredByHyperSync: (cf.sourceManager->SourceManager.getActiveSource).poweredByHyperSync,
         }: EnvioInkApp.chainData
       )
@@ -352,9 +352,12 @@ let main = async () => {
       },
     )
 
-    await config.persistence->Persistence.init
+    await config.persistence->Persistence.init(~chainConfigs=config.chainMap->ChainMap.values)
 
-    let chainManager = await ChainManager.makeFromDbState(~config)
+    let chainManager = await ChainManager.makeFromDbState(
+      ~initialState=config.persistence->Persistence.getInitializedState,
+      ~config,
+    )
     let globalState = GlobalState.make(~config, ~chainManager, ~shouldUseTui)
     let stateUpdatedHook = if shouldUseTui {
       let rerender = EnvioInkApp.startApp(makeAppState(globalState))

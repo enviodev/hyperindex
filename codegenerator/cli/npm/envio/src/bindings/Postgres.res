@@ -89,7 +89,7 @@ type poolConfig = {
 @module
 external makeSql: (~config: poolConfig) => sql = "postgres"
 
-@send external beginSql: (sql, sql => array<promise<unit>>) => promise<unit> = "begin"
+@send external beginSql: (sql, sql => promise<'result>) => promise<'result> = "begin"
 
 // TODO: can explore this approach (https://forum.rescript-lang.org/t/rfc-support-for-tagged-template-literals/3744)
 // @send @variadic

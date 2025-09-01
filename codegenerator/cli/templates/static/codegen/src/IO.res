@@ -68,8 +68,8 @@ let executeBatch = async (
     ~dbFunction=(sql, items) => {
       sql->PgStorage.setOrThrow(
         ~items,
-        ~table=TablesStatic.RawEvents.table,
-        ~itemSchema=TablesStatic.RawEvents.schema,
+        ~table=InternalTable.RawEvents.table,
+        ~itemSchema=InternalTable.RawEvents.schema,
         ~pgSchema=Config.storagePgSchema,
       )
     },
@@ -136,13 +136,15 @@ let executeBatch = async (
     sql => {
       let promises = []
       if entityHistoryItemsToSet->Utils.Array.notEmpty {
-        promises->Array.push(
+        promises
+        ->Js.Array2.pushMany(
           sql->PgStorage.setEntityHistoryOrThrow(
             ~entityHistory=entityConfig.entityHistory,
             ~rows=entityHistoryItemsToSet,
             ~shouldRemoveInvalidUtf8,
           ),
         )
+        ->ignore
       }
       if entitiesToSet->Utils.Array.notEmpty {
         if shouldRemoveInvalidUtf8 {
@@ -211,30 +213,36 @@ let executeBatch = async (
   //valid event identifier, where all rows created after this eventIdentifier should
   //be deleted
   let rollbackTables = switch inMemoryStore.rollBackEventIdentifier {
-  | Some(eventIdentifier) => [
-      DbFunctions.EntityHistory.deleteAllEntityHistoryAfterEventIdentifier(
-        _,
-        ~isUnorderedMultichainMode=config.isUnorderedMultichainMode,
-        ~eventIdentifier,
-      ),
-      DbFunctions.EndOfBlockRangeScannedData.rollbackEndOfBlockRangeScannedDataForChain(
-        _,
-        ~chainId=eventIdentifier.chainId,
-        ~knownBlockNumber=eventIdentifier.blockNumber,
-      ),
-    ]
-  | None => []
+  | Some(eventIdentifier) =>
+    Some(
+      sql =>
+        Promise.all2((
+          sql->DbFunctions.EntityHistory.deleteAllEntityHistoryAfterEventIdentifier(
+            ~isUnorderedMultichainMode=config.isUnorderedMultichainMode,
+            ~eventIdentifier,
+          ),
+          sql->DbFunctions.EndOfBlockRangeScannedData.rollbackEndOfBlockRangeScannedDataForChain(
+            ~chainId=eventIdentifier.chainId,
+            ~knownBlockNumber=eventIdentifier.blockNumber,
+          ),
+        )),
+    )
+  | None => None
   }
 
   try {
     let _ = await Promise.all2((
-      sql->Postgres.beginSql(sql => {
-        Belt.Array.concatMany([
-          //Rollback tables need to happen first in the traction
-          rollbackTables,
-          [setEventSyncState, setRawEvents],
-          setEntities,
-        ])->Belt.Array.map(dbFunc => sql->dbFunc)
+      sql->Postgres.beginSql(async sql => {
+        //Rollback tables need to happen first in the traction
+        switch rollbackTables {
+        | Some(rollbackTables) =>
+          let _ = await rollbackTables(sql)
+        | None => ()
+        }
+
+        await Belt.Array.concatMany([[setEventSyncState, setRawEvents], setEntities])
+        ->Belt.Array.map(dbFunc => sql->dbFunc)
+        ->Promise.all
       }),
       // Since effect cache currently doesn't support rollback,
       // we can run it outside of the transaction for simplicity.

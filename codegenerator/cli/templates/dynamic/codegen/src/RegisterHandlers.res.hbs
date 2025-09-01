@@ -30,7 +30,7 @@ let registerContractHandlers = (
         let contracts = [
           {{#each chain_config.codegen_contracts as | contract |}}
           {
-            Config.name: "{{contract.name.capitalized}}",
+            InternalConfig.name: "{{contract.name.capitalized}}",
             abi: Types.{{contract.name.capitalized}}.abi,
             addresses: [
               {{#each contract.addresses as | address |}}
@@ -52,10 +52,12 @@ let registerContractHandlers = (
         ]
         let chain = ChainMap.Chain.makeUnsafe(~chainId={{chain_config.network_config.id}})
         {
-          Config.confirmedBlockThreshold: {{chain_config.network_config.confirmed_block_threshold}},
+          InternalConfig.confirmedBlockThreshold: {{chain_config.network_config.confirmed_block_threshold}},
           startBlock: {{chain_config.network_config.start_block}},
-          endBlock: {{#if chain_config.network_config.end_block}}Some({{chain_config.network_config.end_block}}){{else}}None{{/if}},
-          chain,
+          {{#if chain_config.network_config.end_block}}
+          endBlock: {{chain_config.network_config.end_block}},
+          {{/if}}
+          id: {{chain_config.network_config.id}},
           contracts,
           sources: {{chain_config.sources_code}}
         }
@@ -98,3 +100,5 @@ let getConfig = () => {
   | None => registerAllHandlers()
   }
 }
+
+let getConfigWithoutRegisteringHandlers = makeGeneratedConfig

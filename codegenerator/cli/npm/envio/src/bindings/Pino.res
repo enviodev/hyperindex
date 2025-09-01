@@ -46,7 +46,7 @@ let createPinoMessageWithError = (message, err): pinoMessageBlobWithError => {
   // serializers type below: `type serializers = {err: Js.Json.t => Js.Json.t}`
   Utils.magic({
     "msg": message,
-    "err": err,
+    "err": err->Utils.prettifyExn,
   })
 }
 

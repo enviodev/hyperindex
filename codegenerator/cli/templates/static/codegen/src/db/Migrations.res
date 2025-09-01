@@ -26,8 +26,13 @@ let runUpMigrations = async (
   // Reset is used for db-setup
   ~reset=false,
 ) => {
+  let config = RegisterHandlers.getConfigWithoutRegisteringHandlers()
+
   let exitCode = try {
-    await Config.codegenPersistence->Persistence.init(~reset)
+    await config.persistence->Persistence.init(
+      ~reset,
+      ~chainConfigs=config.chainMap->ChainMap.values,
+    )
     Success
   } catch {
   | _ => Failure

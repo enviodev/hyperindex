@@ -176,13 +176,16 @@ let fuelTransferParamsSchema = S.schema(s => {
 })
 
 type entity = private {id: string}
-type entityConfig = {
+type genericEntityConfig<'entity> = {
   name: string,
-  schema: S.t<entity>,
-  rowsSchema: S.t<array<entity>>,
+  schema: S.t<'entity>,
+  rowsSchema: S.t<array<'entity>>,
   table: Table.table,
-  entityHistory: EntityHistory.t<entity>,
+  entityHistory: EntityHistory.t<'entity>,
 }
+type entityConfig = genericEntityConfig<entity>
+external fromGenericEntityConfig: genericEntityConfig<'entity> => entityConfig = "%identity"
+
 type enum
 type enumConfig<'enum> = {
   name: string,

@@ -818,20 +818,27 @@ let getNextQuery = (
       if (
         p->checkIsFetchingPartition->not && p.latestFetchedBlock.blockNumber < maxQueryBlockNumber
       ) {
-        switch p->makePartitionQuery(
-          ~indexingContracts,
-          ~endBlock=switch blockLag {
-          | 0 => endBlock
-          | _ =>
-            switch endBlock {
-            | Some(endBlock) => Some(Pervasives.min(headBlock, endBlock))
-            // Force head block as an endBlock when blockLag is set
-            // because otherwise HyperSync might return bigger range
-            | None => Some(headBlock)
-            }
-          },
-          ~mergeTarget,
-        ) {
+        let endBlock = switch blockLag {
+        | 0 => endBlock
+        | _ =>
+          switch endBlock {
+          | Some(endBlock) => Some(Pervasives.min(headBlock, endBlock))
+          // Force head block as an endBlock when blockLag is set
+          // because otherwise HyperSync might return bigger range
+          | None => Some(headBlock)
+          }
+        }
+        // Enforce the respose range up until target block
+        // Otherwise for indexers with 100+ partitions
+        // we might blow up the buffer size to more than 600k events
+        // simply because of HyperSync returning extra blocks
+        let endBlock = switch (endBlock, maxQueryBlockNumber < currentBlockHeight) {
+        | (Some(endBlock), true) => Some(Pervasives.min(maxQueryBlockNumber, endBlock))
+        | (None, true) => Some(maxQueryBlockNumber)
+        | (_, false) => endBlock
+        }
+
+        switch p->makePartitionQuery(~indexingContracts, ~endBlock, ~mergeTarget) {
         | Some(q) => queries->Array.push(q)
         | None => ()
         }

@@ -72,23 +72,4 @@ module type S = {
       ) => promise<blockRangeFetchResponse>,
     }
   }
-
-  module Config: {
-    type contract = {
-      name: string,
-      abi: Ethers.abi,
-      addresses: array<Address.t>,
-      events: array<Internal.eventConfig>,
-      startBlock: option<int>,
-    }
-
-    type chainConfig = {
-      startBlock: int,
-      endBlock: option<int>,
-      confirmedBlockThreshold: int,
-      chain: ChainMap.Chain.t,
-      contracts: array<contract>,
-      sources: array<Source.t>,
-    }
-  }
 }

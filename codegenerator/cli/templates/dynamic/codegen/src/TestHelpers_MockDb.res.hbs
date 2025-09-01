@@ -54,9 +54,9 @@ type inMemoryStore = InMemoryStore.t
 type rec t = {
   __dbInternal__: inMemoryStore,
   entities: entities,
-  rawEvents: storeOperations<InMemoryStore.rawEventsKey, TablesStatic.RawEvents.t>,
-  eventSyncState: storeOperations<Types.chainId, TablesStatic.EventSyncState.t>,
-  dynamicContractRegistry: entityStoreOperations<TablesStatic.DynamicContractRegistry.t>,
+  rawEvents: storeOperations<InMemoryStore.rawEventsKey, InternalTable.RawEvents.t>,
+  eventSyncState: storeOperations<Types.chainId, InternalTable.EventSyncState.t>,
+  dynamicContractRegistry: entityStoreOperations<InternalTable.DynamicContractRegistry.t>,
   processEvents: array<Types.eventLog<unknown>> => promise<t>,
 }
 
@@ -271,16 +271,16 @@ let rec makeWithInMemoryStore: InMemoryStore.t => t = (inMemoryStore: InMemorySt
     ~getStore=db =>
       db
       ->InMemoryStore.getInMemTable(
-        ~entityConfig=module(TablesStatic.DynamicContractRegistry)->Entities.entityModToInternal,
+        ~entityConfig=module(InternalTable.DynamicContractRegistry)->Entities.entityModToInternal,
       )
       ->(
         Utils.magic: InMemoryTable.Entity.t<Internal.entity> => InMemoryTable.Entity.t<
-          TablesStatic.DynamicContractRegistry.t,
+          InternalTable.DynamicContractRegistry.t,
         >
       ),
     ~makeMockDb=makeWithInMemoryStore,
     ~getKey=({chainId, contractAddress}) => {
-      TablesStatic.DynamicContractRegistry.makeId(~chainId, ~contractAddress)
+      InternalTable.DynamicContractRegistry.makeId(~chainId, ~contractAddress)
     },
   )
 
@@ -377,7 +377,7 @@ and makeProcessEvents = (mockDb: t, ~chainId=?) => async (
   let persistence = {
     ...config.persistence,
     storage: makeMockStorage(mockDb),
-    storageStatus: Ready({cleanRun: false, cache: Js.Dict.empty()}),
+    storageStatus: Ready({cleanRun: false, cache: Js.Dict.empty(), chains: []}),
   }
   let config = {
     ...config,
@@ -428,8 +428,9 @@ and makeProcessEvents = (mockDb: t, ~chainId=?) => async (
 and makeMockStorage = (mockDb: t): Persistence.storage => {
   {
     isInitialized: () => Js.Exn.raiseError("Not used yet"),
-    initialize: (~entities as _=?, ~generalTables as _=?, ~enums as _=?) =>
+    initialize: (~chainConfigs as _=?, ~entities as _=?, ~enums as _=?) =>
       Js.Exn.raiseError("Not used yet"),
+    loadInitialState: () => Js.Exn.raiseError("Not used yet"),
     loadByIdsOrThrow: (
       type item,
       ~ids,
@@ -473,7 +474,6 @@ and makeMockStorage = (mockDb: t): Persistence.storage => {
     setOrThrow: (~items as _, ~table as _, ~itemSchema as _) => Js.Exn.raiseError("Not used yet"),
     setEffectCacheOrThrow: (~effect as _, ~items as _, ~initialize as _) => Promise.resolve(),
     dumpEffectCache: () => Js.Exn.raiseError("Not used yet"),
-    restoreEffectCache: (~withUpload as _) => Js.Exn.raiseError("Not used yet"),
   }
 }
 and /**

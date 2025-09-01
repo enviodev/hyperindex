@@ -114,10 +114,7 @@ describe("Tests where eq queries", () => {
   Async.it("Where Eq query returns values and removes after inmemory delete", async () => {
     //Setup a chainManager with unordered multichain mode to make processing happen
     //without blocking for the purposes of this test
-    let chainManager = ChainManager.makeFromConfig(
-      ~config,
-      ~maxAddrInPartition=Env.maxAddrInPartition,
-    )
+    let chainManager = ChainManager.makeFromConfig(~config)
 
     //Setup initial state stub that will be used for both
     //initial chain data and reorg chain data

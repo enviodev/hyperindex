@@ -2,28 +2,14 @@ open RescriptMocha
 
 describe("Test Persistence layer init", () => {
   Async.it("Should initialize the persistence layer without the user entities", async () => {
-    let storageMock = Mock.Storage.make([#isInitialized, #restoreEffectCache, #initialize])
+    let storageMock = Mock.Storage.make([#isInitialized, #loadInitialState, #initialize])
 
-    let persistence = Persistence.make(
-      ~userEntities=[],
-      ~staticTables=[],
-      ~dcRegistryEntityConfig=module(
-        TablesStatic.DynamicContractRegistry
-      )->Entities.entityModToInternal,
-      ~allEnums=[],
-      ~storage=storageMock.storage,
-    )
+    let persistence = Persistence.make(~userEntities=[], ~allEnums=[], ~storage=storageMock.storage)
 
     Assert.deepEqual(
       persistence.allEntities,
-      [module(TablesStatic.DynamicContractRegistry)->Entities.entityModToInternal],
+      [module(InternalTable.DynamicContractRegistry)->Entities.entityModToInternal],
       ~message=`All entities should automatically include the indexer core ones`,
-    )
-    Assert.deepEqual(
-      persistence.staticTables,
-      [],
-      // This is not implemented yet and passed via dependencies
-      ~message=`All static tables should automatically include the indexer core ones`,
     )
     Assert.deepEqual(
       persistence.allEnums,
@@ -43,7 +29,7 @@ describe("Test Persistence layer init", () => {
     )
     Assert.deepEqual(storageMock.initializeCalls, [], ~message=`Storage should not be initialized`)
 
-    let p = persistence->Persistence.init
+    let p = persistence->Persistence.init(~chainConfigs=[])
 
     Assert.deepEqual(
       storageMock.isInitializedCalls,
@@ -69,43 +55,56 @@ describe("Test Persistence layer init", () => {
     )
 
     Assert.deepEqual(
-      storageMock.initializeCalls,
-      [
-        {
-          "entities": persistence.allEntities,
-          "generalTables": persistence.staticTables,
-          "enums": persistence.allEnums,
-        },
-      ],
+      (
+        storageMock.isInitializedCalls->Array.length,
+        storageMock.initializeCalls,
+        storageMock.loadInitialStateCalls->Array.length,
+      ),
+      (
+        1,
+        [
+          {
+            "entities": persistence.allEntities,
+            "chainConfigs": [],
+            "enums": persistence.allEnums,
+          },
+        ],
+        0,
+      ),
       ~message=`Should initialize if storage is not initialized`,
     )
 
-    storageMock.resolveInitialize()
+    let initialState: Persistence.initialState = {
+      cleanRun: true,
+      chains: [],
+      cache: Js.Dict.empty(),
+    }
+    storageMock.resolveInitialize(initialState)
     let _ = await Promise.resolve()
     let _ = await Promise.resolve()
     let _ = await Promise.resolve()
 
     Assert.deepEqual(
       persistence.storageStatus,
-      Persistence.Ready({cleanRun: true, cache: Js.Dict.empty()}),
+      Persistence.Ready(initialState),
       ~message=`Storage status should be ready`,
     )
 
     // Can resolve the promise now
     await p
 
-    await persistence->Persistence.init
+    await persistence->Persistence.init(~chainConfigs=[])
     Assert.deepEqual(
       (
         storageMock.isInitializedCalls->Array.length,
         storageMock.initializeCalls->Array.length,
-        storageMock.restoreEffectCacheCalls,
+        storageMock.loadInitialStateCalls->Array.length,
       ),
-      (1, 1, [{"withUpload": true}]),
+      (1, 1, 0),
       ~message=`Calling init the second time shouldn't do anything`,
     )
 
-    let _p2 = persistence->Persistence.init(~reset=true)
+    let _p2 = persistence->Persistence.init(~reset=true, ~chainConfigs=[])
     Assert.deepEqual(
       (
         storageMock.isInitializedCalls->Array.length,
@@ -117,7 +116,7 @@ describe("Test Persistence layer init", () => {
         2,
         {
           "entities": persistence.allEntities,
-          "generalTables": persistence.staticTables,
+          "chainConfigs": [],
           "enums": persistence.allEnums,
         },
       ),
@@ -127,40 +126,38 @@ describe("Test Persistence layer init", () => {
   })
 
   Async.it("Should skip initialization when storage is already initialized", async () => {
-    let storageMock = Mock.Storage.make([#isInitialized, #restoreEffectCache])
+    let storageMock = Mock.Storage.make([#isInitialized, #loadInitialState])
 
-    let persistence = Persistence.make(
-      ~userEntities=[],
-      ~staticTables=[],
-      ~dcRegistryEntityConfig=module(
-        TablesStatic.DynamicContractRegistry
-      )->Entities.entityModToInternal,
-      ~allEnums=[],
-      ~storage=storageMock.storage,
-    )
+    let persistence = Persistence.make(~userEntities=[], ~allEnums=[], ~storage=storageMock.storage)
 
-    let p = persistence->Persistence.init
+    let p = persistence->Persistence.init(~chainConfigs=[])
     // Additional calls to init should not do anything
-    let _ = persistence->Persistence.init
-    let _ = persistence->Persistence.init
+    let _ = persistence->Persistence.init(~chainConfigs=[])
+    let _ = persistence->Persistence.init(~chainConfigs=[])
 
     storageMock.resolveIsInitialized(true)
     let _ = await Promise.resolve()
-    let _ = await Promise.resolve()
+
+    let initialState: Persistence.initialState = {
+      cleanRun: false,
+      chains: [],
+      cache: Js.Dict.empty(),
+    }
+    storageMock.resolveLoadInitialState(initialState)
     let _ = await Promise.resolve()
 
     Assert.deepEqual(
       persistence.storageStatus,
-      Persistence.Ready({cleanRun: false, cache: Js.Dict.empty()}),
+      Persistence.Ready(initialState),
       ~message=`Storage status should be ready`,
     )
     Assert.deepEqual(
       (
         storageMock.isInitializedCalls->Array.length,
         storageMock.initializeCalls->Array.length,
-        storageMock.restoreEffectCacheCalls,
+        storageMock.loadInitialStateCalls->Array.length,
       ),
-      (1, 0, [{"withUpload": false}]),
+      (1, 0, 1),
       ~message=`Storage should be already initialized without additional initialize calls.
 Although it should load effect caches metadata.`,
     )
