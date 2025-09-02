@@ -1271,3 +1271,17 @@ let filterAndSortForUnorderedBatch = {
     })
   }
 }
+
+let getProgressBlockNumber = ({latestFullyFetchedBlock, queue}: t) => {
+  switch queue->Utils.Array.last {
+  | Some(item) => item.blockNumber - 1
+  | None => latestFullyFetchedBlock.blockNumber
+  }
+}
+
+let getProgressNextBlockLogIndex = ({queue}: t) => {
+  switch queue->Utils.Array.last {
+  | Some(item) => Some(item.logIndex - 1)
+  | None => None
+  }
+}

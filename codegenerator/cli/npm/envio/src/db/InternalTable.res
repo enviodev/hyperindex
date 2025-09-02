@@ -46,13 +46,17 @@ module Chains = {
     @as("_num_batches_fetched") numBatchesFetched: int,
   }
 
+  type progressFields = {
+    @as("progress_block") progressBlockNumber: int,
+    @as("events_processed") numEventsProcessed: int,
+    @as("_progress_log_index") progressNextBlockLogIndex: Js.null<int>,
+  }
+
   type t = {
     @as("id") id: int,
     @as("start_block") startBlock: int,
     @as("end_block") endBlock: Js.null<int>,
-    @as("progress_block") progressBlockNumber: int,
-    @as("_progress_log_index") progressNextBlockLogIndex: Js.null<int>,
-    @as("events_processed") numEventsProcessed: int,
+    ...progressFields,
     ...metaFields,
   }
 
@@ -171,7 +175,21 @@ SET ${setClauses->Js.Array2.joinWith(",\n    ")}
 WHERE "id" = $1;`
   }
 
-  let setValues = (sql, ~pgSchema, ~chainsData: dict<metaFields>) => {
+  let progressFields: array<field> = [#progress_block, #_progress_log_index, #events_processed]
+
+  let makeProgressFieldsUpdateQuery = (~pgSchema) => {
+    let setClauses = Belt.Array.mapWithIndex(progressFields, (index, field) => {
+      let fieldName = (field :> string)
+      let paramIndex = index + 2 // +2 because $1 is for id in WHERE clause
+      `"${fieldName}" = $${Belt.Int.toString(paramIndex)}`
+    })
+
+    `UPDATE "${pgSchema}"."${table.tableName}"
+SET ${setClauses->Js.Array2.joinWith(",\n    ")}
+WHERE "id" = $1;`
+  }
+
+  let setMeta = (sql, ~pgSchema, ~chainsData: dict<metaFields>) => {
     let query = makeMetaFieldsUpdateQuery(~pgSchema)
 
     let promises = []

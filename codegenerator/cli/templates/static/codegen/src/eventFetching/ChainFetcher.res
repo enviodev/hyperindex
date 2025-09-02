@@ -18,7 +18,7 @@ type t = {
   currentBlockHeight: int,
   timestampCaughtUpToHeadOrEndblock: option<Js.Date.t>,
   dbFirstEventBlockNumber: option<int>,
-  progressBlockNumber: int,
+  committedProgressBlockNumber: int,
   numEventsProcessed: int,
   numBatchesFetched: int,
   lastBlockScannedHashes: ReorgDetection.LastBlockScannedHashes.t,
@@ -154,7 +154,7 @@ let make = (
     currentBlockHeight: 0,
     fetchState,
     dbFirstEventBlockNumber,
-    progressBlockNumber,
+    committedProgressBlockNumber: progressBlockNumber,
     timestampCaughtUpToHeadOrEndblock,
     numEventsProcessed,
     numBatchesFetched,
@@ -439,9 +439,9 @@ let handleQueryResult = (
 Gets the latest item on the front of the queue and returns updated fetcher
 */
 let hasProcessedToEndblock = (self: t) => {
-  let {progressBlockNumber, endBlock} = self
+  let {committedProgressBlockNumber, endBlock} = self
   switch endBlock {
-  | Some(endBlock) => progressBlockNumber >= endBlock
+  | Some(endBlock) => committedProgressBlockNumber >= endBlock
   | None => false
   }
 }

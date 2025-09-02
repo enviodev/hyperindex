@@ -199,13 +199,17 @@ let makeAppState = (globalState: GlobalState.t): EnvioInkApp.appState => {
         // if there's chains that have no events in the block range start->end,
         // it's possible there are no events in that block  range (ie firstEventBlockNumber = None)
         // This ensures TUI still displays synced in this case
-        let {progressBlockNumber, timestampCaughtUpToHeadOrEndblock, numEventsProcessed} = cf
+        let {
+          committedProgressBlockNumber,
+          timestampCaughtUpToHeadOrEndblock,
+          numEventsProcessed,
+        } = cf
 
         let firstEventBlockNumber = cf->ChainFetcher.getFirstEventBlockNumber
 
         Synced({
           firstEventBlockNumber: firstEventBlockNumber->Option.getWithDefault(0),
-          latestProcessedBlock: progressBlockNumber,
+          latestProcessedBlock: committedProgressBlockNumber,
           timestampCaughtUpToHeadOrEndblock: timestampCaughtUpToHeadOrEndblock->Option.getWithDefault(
             Js.Date.now()->Js.Date.fromFloat,
           ),
@@ -215,24 +219,24 @@ let makeAppState = (globalState: GlobalState.t): EnvioInkApp.appState => {
         switch (cf, cf->ChainFetcher.getFirstEventBlockNumber) {
         | (
             {
-              progressBlockNumber,
+              committedProgressBlockNumber,
               timestampCaughtUpToHeadOrEndblock: Some(timestampCaughtUpToHeadOrEndblock),
             },
             Some(firstEventBlockNumber),
           ) =>
           Synced({
             firstEventBlockNumber,
-            latestProcessedBlock: progressBlockNumber,
+            latestProcessedBlock: committedProgressBlockNumber,
             timestampCaughtUpToHeadOrEndblock,
             numEventsProcessed,
           })
         | (
-            {progressBlockNumber, timestampCaughtUpToHeadOrEndblock: None},
+            {committedProgressBlockNumber, timestampCaughtUpToHeadOrEndblock: None},
             Some(firstEventBlockNumber),
           ) =>
           Syncing({
             firstEventBlockNumber,
-            latestProcessedBlock: progressBlockNumber,
+            latestProcessedBlock: committedProgressBlockNumber,
             numEventsProcessed,
           })
         | (_, None) => SearchingForEvents

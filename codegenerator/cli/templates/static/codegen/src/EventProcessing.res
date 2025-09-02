@@ -237,23 +237,30 @@ type logPartitionInfo = {
 
 let processEventBatch = async (
   ~items: array<Internal.eventItem>,
-  ~processingMetricsByChainId: dict<ChainManager.processingChainMetrics>,
+  ~progressedChains: array<Batch.progressedChain>,
   ~inMemoryStore: InMemoryStore.t,
   ~isInReorgThreshold,
   ~loadManager,
   ~config: Config.t,
 ) => {
   let batchSize = items->Array.length
+  let byChain = Js.Dict.empty()
+  progressedChains->Js.Array2.forEach(data => {
+    if data.batchSize > 0 {
+      byChain->Utils.Dict.setByInt(
+        data.chainId,
+        {
+          "batchSize": data.batchSize,
+          "toBlockNumber": data.progressBlockNumber,
+        },
+      )
+    }
+  })
   let logger = Logging.createChildFrom(
     ~logger=Logging.getLogger(),
     ~params={
       "totalBatchSize": batchSize,
-      "byChain": processingMetricsByChainId->Utils.Dict.map(v => {
-        {
-          "batchSize": v.batchSize,
-          "toBlockNumber": v.targetBlockNumber,
-        }
-      }),
+      "byChain": byChain,
     },
   )
   logger->Logging.childTrace("Started processing batch")
