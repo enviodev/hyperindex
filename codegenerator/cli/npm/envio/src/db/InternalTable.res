@@ -6,19 +6,23 @@ let isNullable = true
 let isIndex = true
 
 module Chains = {
+  type progressFields = [
+    | #progress_block
+    | #_progress_log_index
+    | #events_processed
+  ]
+
   type field = [
+    | progressFields
     | #id
     | #start_block
     | #end_block
     | #source_block
     | #first_event_block
     | #buffer_block
-    | #progress_block
     | #ready_at
-    | #events_processed
-    | #_progress_log_index
-    | #_is_hyper_sync
     | #_num_batches_fetched
+    | #_is_hyper_sync
   ]
 
   let fields: array<field> = [
@@ -46,17 +50,13 @@ module Chains = {
     @as("_num_batches_fetched") numBatchesFetched: int,
   }
 
-  type progressFields = {
-    @as("progress_block") progressBlockNumber: int,
-    @as("events_processed") numEventsProcessed: int,
-    @as("_progress_log_index") progressNextBlockLogIndex: Js.null<int>,
-  }
-
   type t = {
     @as("id") id: int,
     @as("start_block") startBlock: int,
     @as("end_block") endBlock: Js.null<int>,
-    ...progressFields,
+    @as("progress_block") progressBlockNumber: int,
+    @as("_progress_log_index") progressNextBlockLogIndex: Js.null<int>,
+    @as("events_processed") numEventsProcessed: int,
     ...metaFields,
   }
 
@@ -175,7 +175,11 @@ SET ${setClauses->Js.Array2.joinWith(",\n    ")}
 WHERE "id" = $1;`
   }
 
-  let progressFields: array<field> = [#progress_block, #_progress_log_index, #events_processed]
+  let progressFields: array<progressFields> = [
+    #progress_block,
+    #_progress_log_index,
+    #events_processed,
+  ]
 
   let makeProgressFieldsUpdateQuery = (~pgSchema) => {
     let setClauses = Belt.Array.mapWithIndex(progressFields, (index, field) => {
@@ -211,6 +215,39 @@ WHERE "id" = $1;`
     })
 
     Promise.all(promises)
+  }
+
+  let setProgressedChains = (sql, ~pgSchema, ~progressedChains: array<Batch.progressedChain>) => {
+    let query = makeProgressFieldsUpdateQuery(~pgSchema)
+
+    let promises = []
+
+    progressedChains->Js.Array2.forEach(data => {
+      let params = []
+
+      // Push id first (for WHERE clause)
+      params->Js.Array2.push(data.chainId->(Utils.magic: int => unknown))->ignore
+
+      // Then push all updateable field values (for SET clause)
+      progressFields->Js.Array2.forEach(field => {
+        params
+        ->Js.Array2.push(
+          switch field {
+          | #progress_block => data.progressBlockNumber->(Utils.magic: int => unknown)
+          | #_progress_log_index =>
+            data.progressNextBlockLogIndex
+            ->Js.Null.fromOption
+            ->(Utils.magic: Js.null<int> => unknown)
+          | #events_processed => data.totalEventsProcessed->(Utils.magic: int => unknown)
+          },
+        )
+        ->ignore
+      })
+
+      promises->Js.Array2.push(sql->Postgres.preparedUnsafe(query, params->Obj.magic))->ignore
+    })
+
+    Promise.all(promises)->Promise.ignoreValue
   }
 }
 

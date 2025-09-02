@@ -915,6 +915,13 @@ let injectedTaskReducer = (
       switch batch {
       | {progressedChains: []} => ()
       | {items: [], progressedChains} =>
+        dispatchAction(SetCurrentlyProcessing(true))
+        // For this case there shouldn't be any FetchState changes
+        // so we don't dispatch UpdateQueues - only update the progress for chains without events
+        await Db.sql->InternalTable.Chains.setProgressedChains(
+          ~pgSchema=Db.publicSchema,
+          ~progressedChains,
+        )
         dispatchAction(EventBatchProcessed({progressedChains: progressedChains}))
       | {items, progressedChains, fetchStates, dcsToStoreByChainId} =>
         dispatchAction(SetCurrentlyProcessing(true))
