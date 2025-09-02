@@ -18,7 +18,7 @@ type t = {
   currentBlockHeight: int,
   timestampCaughtUpToHeadOrEndblock: option<Js.Date.t>,
   dbFirstEventBlockNumber: option<int>,
-  latestProcessedBlock: option<int>,
+  progressBlockNumber: int,
   numEventsProcessed: int,
   numBatchesFetched: int,
   lastBlockScannedHashes: ReorgDetection.LastBlockScannedHashes.t,
@@ -35,7 +35,7 @@ let make = (
   ~startBlock,
   ~endBlock,
   ~dbFirstEventBlockNumber,
-  ~latestProcessedBlock,
+  ~progressBlockNumber,
   ~config: Config.t,
   ~logger,
   ~timestampCaughtUpToHeadOrEndblock,
@@ -154,7 +154,7 @@ let make = (
     currentBlockHeight: 0,
     fetchState,
     dbFirstEventBlockNumber,
-    latestProcessedBlock,
+    progressBlockNumber,
     timestampCaughtUpToHeadOrEndblock,
     numEventsProcessed,
     numBatchesFetched,
@@ -175,7 +175,7 @@ let makeFromConfig = (chainConfig: InternalConfig.chain, ~config) => {
     ~endBlock=chainConfig.endBlock,
     ~lastBlockScannedHashes,
     ~dbFirstEventBlockNumber=None,
-    ~latestProcessedBlock=None,
+    ~progressBlockNumber=-1,
     ~timestampCaughtUpToHeadOrEndblock=None,
     ~numEventsProcessed=0,
     ~numBatchesFetched=0,
@@ -198,45 +198,30 @@ let makeFromDbState = async (
 ) => {
   let chainId = chainConfig.id
   let logger = Logging.createChild(~params={"chainId": chainId})
-  let latestProcessedEvent = await sql->DbFunctions.EventSyncState.getLatestProcessedEvent(~chainId)
 
-  let (
-    restartBlockNumber: int,
-    restartLogIndex: int,
-    processingFilters: option<array<processingFilter>>,
-  ) = switch latestProcessedEvent {
-  | Some(event) =>
+  let restartBlockNumber =
+    // Can be -1 when not set
+    initialChainState.progressBlockNumber >= 0
+      ? initialChainState.progressBlockNumber + 1
+      : initialChainState.startBlock
+
+  let processingFilters = switch initialChainState.progressNextBlockLogIndex {
+  | Value(progressNextBlockLogIndex) =>
     // Start from the same block but filter out any events already processed
-    let processingFilters = [
+    Some([
       {
         filter: qItem => {
           //Only keep events greater than the last processed event
-          (qItem.chain->ChainMap.Chain.toChainId, qItem.blockNumber, qItem.logIndex) >
-          (event.chainId, event.blockNumber, event.logIndex)
+          (qItem.blockNumber, qItem.logIndex) > (restartBlockNumber, progressNextBlockLogIndex)
         },
         isValid: (~fetchState) => {
           //the filter can be cleaned up as soon as the fetch state block is ahead of the latestProcessedEvent blockNumber
-          FetchState.getLatestFullyFetchedBlock(fetchState).blockNumber <= event.blockNumber
+          FetchState.getLatestFullyFetchedBlock(fetchState).blockNumber <= restartBlockNumber
         },
       },
-    ]
-
-    (event.blockNumber, event.logIndex, Some(processingFilters))
-  | None => (chainConfig.startBlock, 0, None)
+    ])
+  | Null => None
   }
-
-  let _ = await Promise.all([
-    sql->DbFunctions.DynamicContractRegistry.deleteInvalidDynamicContractsOnRestart(
-      ~chainId,
-      ~restartBlockNumber,
-      ~restartLogIndex,
-    ),
-    sql->DbFunctions.DynamicContractRegistry.deleteInvalidDynamicContractsHistoryOnRestart(
-      ~chainId,
-      ~restartBlockNumber,
-      ~restartLogIndex,
-    ),
-  ])
 
   // Since we deleted all contracts after the restart point,
   // we can simply query all dcs we have in db
@@ -268,7 +253,7 @@ let makeFromDbState = async (
     ~config,
     ~lastBlockScannedHashes,
     ~dbFirstEventBlockNumber=initialChainState.firstEventBlockNumber->Js.Null.toOption,
-    ~latestProcessedBlock=initialChainState.latestProcessedBlock->Js.Null.toOption,
+    ~progressBlockNumber=initialChainState.progressBlockNumber,
     ~timestampCaughtUpToHeadOrEndblock=Env.updateSyncTimeOnRestart
       ? None
       : initialChainState.timestampCaughtUpToHeadOrEndblock->Js.Null.toOption,
@@ -454,10 +439,10 @@ let handleQueryResult = (
 Gets the latest item on the front of the queue and returns updated fetcher
 */
 let hasProcessedToEndblock = (self: t) => {
-  let {latestProcessedBlock, endBlock} = self
-  switch (latestProcessedBlock, endBlock) {
-  | (Some(latestProcessedBlock), Some(endBlock)) => latestProcessedBlock >= endBlock
-  | _ => false
+  let {progressBlockNumber, endBlock} = self
+  switch endBlock {
+  | Some(endBlock) => progressBlockNumber >= endBlock
+  | None => false
   }
 }
 

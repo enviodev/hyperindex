@@ -199,13 +199,13 @@ let makeAppState = (globalState: GlobalState.t): EnvioInkApp.appState => {
         // if there's chains that have no events in the block range start->end,
         // it's possible there are no events in that block  range (ie firstEventBlockNumber = None)
         // This ensures TUI still displays synced in this case
-        let {latestProcessedBlock, timestampCaughtUpToHeadOrEndblock, numEventsProcessed} = cf
+        let {progressBlockNumber, timestampCaughtUpToHeadOrEndblock, numEventsProcessed} = cf
 
         let firstEventBlockNumber = cf->ChainFetcher.getFirstEventBlockNumber
 
         Synced({
           firstEventBlockNumber: firstEventBlockNumber->Option.getWithDefault(0),
-          latestProcessedBlock: latestProcessedBlock->Option.getWithDefault(currentBlockHeight),
+          latestProcessedBlock: progressBlockNumber,
           timestampCaughtUpToHeadOrEndblock: timestampCaughtUpToHeadOrEndblock->Option.getWithDefault(
             Js.Date.now()->Js.Date.fromFloat,
           ),
@@ -215,28 +215,24 @@ let makeAppState = (globalState: GlobalState.t): EnvioInkApp.appState => {
         switch (cf, cf->ChainFetcher.getFirstEventBlockNumber) {
         | (
             {
-              latestProcessedBlock,
+              progressBlockNumber,
               timestampCaughtUpToHeadOrEndblock: Some(timestampCaughtUpToHeadOrEndblock),
             },
             Some(firstEventBlockNumber),
           ) =>
-          let latestProcessedBlock =
-            latestProcessedBlock->Option.getWithDefault(firstEventBlockNumber)
           Synced({
             firstEventBlockNumber,
-            latestProcessedBlock,
+            latestProcessedBlock: progressBlockNumber,
             timestampCaughtUpToHeadOrEndblock,
             numEventsProcessed,
           })
         | (
-            {latestProcessedBlock, timestampCaughtUpToHeadOrEndblock: None},
+            {progressBlockNumber, timestampCaughtUpToHeadOrEndblock: None},
             Some(firstEventBlockNumber),
           ) =>
-          let latestProcessedBlock =
-            latestProcessedBlock->Option.getWithDefault(firstEventBlockNumber)
           Syncing({
             firstEventBlockNumber,
-            latestProcessedBlock,
+            latestProcessedBlock: progressBlockNumber,
             numEventsProcessed,
           })
         | (_, None) => SearchingForEvents

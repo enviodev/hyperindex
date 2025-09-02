@@ -31,38 +31,6 @@ module.exports.batchDeleteItemsInTable = (table, sql, pkArray) => {
   }
 };
 
-module.exports.readLatestSyncedEventOnChainId = (sql, chainId) => sql`
-  SELECT *
-  FROM ${sql(publicSchema)}.event_sync_state
-  WHERE chain_id = ${chainId}`;
-
-module.exports.batchSetEventSyncState = (sql, entityDataArray) => {
-  return sql`
-    INSERT INTO ${sql(publicSchema)}.event_sync_state
-  ${sql(
-    entityDataArray,
-    "chain_id",
-    "block_number",
-    "log_index",
-    "block_timestamp",
-    "is_pre_registering_dynamic_contracts"
-  )}
-    ON CONFLICT(chain_id) DO UPDATE
-    SET
-    "chain_id" = EXCLUDED."chain_id",
-    "block_number" = EXCLUDED."block_number",
-    "log_index" = EXCLUDED."log_index",
-    "block_timestamp" = EXCLUDED."block_timestamp",
-    "is_pre_registering_dynamic_contracts" = EXCLUDED."is_pre_registering_dynamic_contracts";
-    `;
-};
-
-module.exports.batchDeleteRawEvents = (sql, entityIdArray) => sql`
-  DELETE
-  FROM ${sql(publicSchema)}."raw_events"
-  WHERE (chain_id, event_id) IN ${sql(entityIdArray)};`;
-// end db operations for raw_events
-
 const batchSetEndOfBlockRangeScannedDataCore = (sql, rowDataArray) => {
   return sql`
     INSERT INTO ${sql(publicSchema)}."end_of_block_range_scanned_data"
@@ -108,40 +76,6 @@ module.exports.rollbackEndOfBlockRangeScannedDataForChain = (
     FROM ${sql(publicSchema)}."end_of_block_range_scanned_data"
     WHERE chain_id = ${chainId}
     AND block_number > ${knownBlockNumber};`;
-};
-
-module.exports.deleteInvalidDynamicContractsOnRestart = (
-  sql,
-  chainId,
-  restartBlockNumber,
-  restartLogIndex
-) => {
-  return sql`
-    DELETE
-    FROM ${sql(publicSchema)}."dynamic_contract_registry"
-    WHERE chain_id = ${chainId}
-    AND (
-      registering_event_block_number > ${restartBlockNumber} 
-      OR registering_event_block_number = ${restartBlockNumber}
-      AND registering_event_log_index > ${restartLogIndex}
-    );`;
-};
-
-module.exports.deleteInvalidDynamicContractsHistoryOnRestart = (
-  sql,
-  chainId,
-  restartBlockNumber,
-  restartLogIndex
-) => {
-  return sql`
-    DELETE
-    FROM ${sql(publicSchema)}."dynamic_contract_registry_history"
-    WHERE entity_history_chain_id = ${chainId}
-    AND (
-      entity_history_block_number > ${restartBlockNumber} 
-      OR entity_history_block_number = ${restartBlockNumber}
-      AND entity_history_log_index > ${restartLogIndex}
-    );`;
 };
 
 module.exports.readAllDynamicContracts = (sql, chainId) => sql`

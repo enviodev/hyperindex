@@ -5,49 +5,6 @@ let isPrimaryKey = true
 let isNullable = true
 let isIndex = true
 
-module EventSyncState = {
-  //Used unsafely in DbFunctions.res so just enforcing the naming here
-  let blockTimestampFieldName = "block_timestamp"
-  let blockNumberFieldName = "block_number"
-  let logIndexFieldName = "log_index"
-  let isPreRegisteringDynamicContractsFieldName = "is_pre_registering_dynamic_contracts"
-
-  // @genType Used for Test DB
-  @genType
-  type t = {
-    @as("chain_id") chainId: int,
-    @as("block_number") blockNumber: int,
-    @as("log_index") logIndex: int,
-    @as("block_timestamp") blockTimestamp: int,
-  }
-
-  let table = mkTable(
-    "event_sync_state",
-    ~fields=[
-      mkField("chain_id", Integer, ~fieldSchema=S.int, ~isPrimaryKey),
-      mkField(blockNumberFieldName, Integer, ~fieldSchema=S.int),
-      mkField(logIndexFieldName, Integer, ~fieldSchema=S.int),
-      mkField(blockTimestampFieldName, Integer, ~fieldSchema=S.int),
-      // Keep it in case Hosted Service relies on it to prevent a breaking changes
-      mkField(
-        isPreRegisteringDynamicContractsFieldName,
-        Boolean,
-        ~default="false",
-        ~fieldSchema=S.bool,
-      ),
-    ],
-  )
-
-  //We need to update values here not delet the rows, since restarting without a row
-  //has a different behaviour to restarting with an initialised row with zero values
-  let resetCurrentCurrentSyncStateQuery = (~pgSchema) =>
-    `UPDATE "${pgSchema}"."${table.tableName}"
-    SET ${blockNumberFieldName} = 0, 
-        ${logIndexFieldName} = 0, 
-        ${blockTimestampFieldName} = 0, 
-        ${isPreRegisteringDynamicContractsFieldName} = false;`
-}
-
 module Chains = {
   type field = [
     | #id
@@ -56,10 +13,11 @@ module Chains = {
     | #source_block
     | #first_event_block
     | #buffer_block
+    | #progress_block
     | #ready_at
     | #events_processed
+    | #_progress_log_index
     | #_is_hyper_sync
-    | #_latest_processed_block
     | #_num_batches_fetched
   ]
 
@@ -70,26 +28,32 @@ module Chains = {
     #source_block,
     #first_event_block,
     #buffer_block,
+    #progress_block,
     #ready_at,
     #events_processed,
+    #_progress_log_index,
     #_is_hyper_sync,
-    #_latest_processed_block,
     #_num_batches_fetched,
   ]
+
+  type metaFields = {
+    @as("first_event_block") firstEventBlockNumber: Js.null<int>,
+    @as("buffer_block") latestFetchedBlockNumber: int,
+    @as("source_block") blockHeight: int,
+    @as("ready_at")
+    timestampCaughtUpToHeadOrEndblock: Js.null<Js.Date.t>,
+    @as("_is_hyper_sync") isHyperSync: bool,
+    @as("_num_batches_fetched") numBatchesFetched: int,
+  }
 
   type t = {
     @as("id") id: int,
     @as("start_block") startBlock: int,
     @as("end_block") endBlock: Js.null<int>,
-    @as("source_block") blockHeight: int,
-    @as("first_event_block") firstEventBlockNumber: Js.null<int>,
-    @as("buffer_block") latestFetchedBlockNumber: int,
-    @as("ready_at")
-    timestampCaughtUpToHeadOrEndblock: Js.null<Js.Date.t>,
+    @as("progress_block") progressBlockNumber: int,
+    @as("_progress_log_index") progressNextBlockLogIndex: Js.null<int>,
     @as("events_processed") numEventsProcessed: int,
-    @as("_latest_processed_block") latestProcessedBlock: Js.null<int>,
-    @as("_is_hyper_sync") isHyperSync: bool,
-    @as("_num_batches_fetched") numBatchesFetched: int,
+    ...metaFields,
   }
 
   let table = mkTable(
@@ -118,15 +82,20 @@ module Chains = {
         ~fieldSchema=S.null(Utils.Schema.dbDate),
         ~isNullable,
       ),
-      mkField((#events_processed: field :> string), Integer, ~fieldSchema=S.int), // TODO: In the future it should reference a table with sources
+      mkField((#events_processed: field :> string), Integer, ~fieldSchema=S.int),
+      // TODO: In the future it should reference a table with sources
       mkField((#_is_hyper_sync: field :> string), Boolean, ~fieldSchema=S.bool),
-      // TODO: Make the data more public facing
+      // Fully processed block number
+      mkField((#progress_block: field :> string), Integer, ~fieldSchema=S.int),
+      // Optional log index of the next block after progress block
+      // To correctly resume indexing when we processed half of the block.
       mkField(
-        (#_latest_processed_block: field :> string),
+        (#_progress_log_index: field :> string),
         Integer,
         ~fieldSchema=S.null(S.int),
         ~isNullable,
       ),
+      // TODO: Should deprecate after changing the ETA calculation logic
       mkField((#_num_batches_fetched: field :> string), Integer, ~fieldSchema=S.int),
     ],
   )
@@ -140,7 +109,8 @@ module Chains = {
       firstEventBlockNumber: Js.Null.empty,
       latestFetchedBlockNumber: -1,
       timestampCaughtUpToHeadOrEndblock: Js.Null.empty,
-      latestProcessedBlock: Js.Null.empty,
+      progressBlockNumber: -1,
+      progressNextBlockLogIndex: Js.Null.empty,
       isHyperSync: false,
       numEventsProcessed: 0,
       numBatchesFetched: 0,
@@ -178,21 +148,19 @@ VALUES ${valuesRows->Js.Array2.joinWith(",\n       ")};`,
     }
   }
 
-  // Fields that should be updated on conflict (excluding static config fields)
-  let updateFields: array<field> = [
+  // Fields that can be updated outside of the batch transaction
+  let metaFields: array<field> = [
     #source_block,
-    #first_event_block,
     #buffer_block,
+    #first_event_block,
     #ready_at,
-    #events_processed,
     #_is_hyper_sync,
-    #_latest_processed_block,
     #_num_batches_fetched,
   ]
 
-  let makeSingleUpdateQuery = (~pgSchema) => {
+  let makeMetaFieldsUpdateQuery = (~pgSchema) => {
     // Generate SET clauses with parameter placeholders
-    let setClauses = Belt.Array.mapWithIndex(updateFields, (index, field) => {
+    let setClauses = Belt.Array.mapWithIndex(metaFields, (index, field) => {
       let fieldName = (field :> string)
       let paramIndex = index + 2 // +2 because $1 is for id in WHERE clause
       `"${fieldName}" = $${Belt.Int.toString(paramIndex)}`
@@ -203,23 +171,25 @@ SET ${setClauses->Js.Array2.joinWith(",\n    ")}
 WHERE "id" = $1;`
   }
 
-  let setValues = (sql, ~pgSchema, ~chainsData: array<t>) => {
-    let query = makeSingleUpdateQuery(~pgSchema)
+  let setValues = (sql, ~pgSchema, ~chainsData: dict<metaFields>) => {
+    let query = makeMetaFieldsUpdateQuery(~pgSchema)
 
-    let promises = chainsData->Belt.Array.map(chain => {
+    let promises = []
+
+    chainsData->Utils.Dict.forEachWithKey((chainId, data) => {
       let params = []
 
       // Push id first (for WHERE clause)
-      let idValue = chain->(Utils.magic: t => dict<unknown>)->Js.Dict.get("id")
-      params->Js.Array2.push(idValue)->ignore
+      params->Js.Array2.push(chainId->(Utils.magic: string => unknown))->ignore
 
       // Then push all updateable field values (for SET clause)
-      updateFields->Js.Array2.forEach(field => {
-        let value = chain->(Utils.magic: t => dict<unknown>)->Js.Dict.get((field :> string))
+      metaFields->Js.Array2.forEach(field => {
+        let value =
+          data->(Utils.magic: metaFields => dict<unknown>)->Js.Dict.unsafeGet((field :> string))
         params->Js.Array2.push(value)->ignore
       })
 
-      sql->Postgres.preparedUnsafe(query, params->Obj.magic)
+      promises->Js.Array2.push(sql->Postgres.preparedUnsafe(query, params->Obj.magic))->ignore
     })
 
     Promise.all(promises)
@@ -336,10 +306,11 @@ module Views = {
        "${(#id: Chains.field :> string)}" AS "chainId",
        "${(#start_block: Chains.field :> string)}" AS "startBlock", 
        "${(#end_block: Chains.field :> string)}" AS "endBlock",
+       "${(#progress_block: Chains.field :> string)}" AS "progressBlock",
        "${(#buffer_block: Chains.field :> string)}" AS "bufferBlock",
-       "${(#ready_at: Chains.field :> string)}" AS "readyAt",
        "${(#first_event_block: Chains.field :> string)}" AS "firstEventBlock",
        "${(#events_processed: Chains.field :> string)}" AS "eventsProcessed",
+       "${(#ready_at: Chains.field :> string)}" AS "readyAt",
        ("${(#ready_at: Chains.field :> string)}" IS NOT NULL) AS "isReady"
      FROM "${pgSchema}"."${Chains.table.tableName}"
      ORDER BY "${(#id: Chains.field :> string)}";`
@@ -354,7 +325,7 @@ module Views = {
        "${(#first_event_block: Chains.field :> string)}" AS "first_event_block_number",
        "${(#_is_hyper_sync: Chains.field :> string)}" AS "is_hyper_sync",
        "${(#buffer_block: Chains.field :> string)}" AS "latest_fetched_block_number",
-       "${(#_latest_processed_block: Chains.field :> string)}" AS "latest_processed_block",
+       "${(#progress_block: Chains.field :> string)}" AS "latest_processed_block",
        "${(#_num_batches_fetched: Chains.field :> string)}" AS "num_batches_fetched",
        "${(#events_processed: Chains.field :> string)}" AS "num_events_processed",
        "${(#start_block: Chains.field :> string)}" AS "start_block",
@@ -427,4 +398,41 @@ module DynamicContractRegistry = {
     table,
     entityHistory,
   }->Internal.fromGenericEntityConfig
+
+  let makeCleanUpOnRestartQuery = (~pgSchema, ~chains: array<Chains.t>) => {
+    let query = ref(``)
+
+    chains->Js.Array2.forEach(chain => {
+      query :=
+        query.contents ++
+        `DELETE FROM "${pgSchema}"."${table.tableName}"
+WHERE chain_id = ${chain.id->Belt.Int.toString}${switch chain {
+          | {progressBlockNumber: -1} => ``
+          | {progressBlockNumber, progressNextBlockLogIndex: Null} =>
+            ` AND registering_event_block_number > ${progressBlockNumber->Belt.Int.toString}`
+          | {progressBlockNumber, progressNextBlockLogIndex: Value(progressNextBlockLogIndex)} =>
+            ` AND (
+  registering_event_block_number > ${(progressBlockNumber + 1)->Belt.Int.toString}
+  OR registering_event_block_number = ${(progressBlockNumber + 1)->Belt.Int.toString}
+  AND registering_event_log_index > ${progressNextBlockLogIndex->Belt.Int.toString}
+)`
+          }};`
+      query :=
+        query.contents ++
+        `DELETE FROM "${pgSchema}"."${table.tableName}_history"
+WHERE entity_history_chain_id = ${chain.id->Belt.Int.toString}${switch chain {
+          | {progressBlockNumber: -1} => ``
+          | {progressBlockNumber, progressNextBlockLogIndex: Null} =>
+            ` AND entity_history_block_number > ${progressBlockNumber->Belt.Int.toString}`
+          | {progressBlockNumber, progressNextBlockLogIndex: Value(progressNextBlockLogIndex)} =>
+            ` AND (
+  entity_history_block_number > ${(progressBlockNumber + 1)->Belt.Int.toString}
+  OR entity_history_block_number = ${(progressBlockNumber + 1)->Belt.Int.toString}
+  AND entity_history_log_index > ${progressNextBlockLogIndex->Belt.Int.toString}
+)`
+          }};`
+    })
+
+    query.contents
+  }
 }

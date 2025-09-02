@@ -6,21 +6,6 @@ let allChainsEventsProcessedToEndblock = (chainFetchers: ChainMap.t<ChainFetcher
   ->Array.every(cf => cf->ChainFetcher.hasProcessedToEndblock)
 }
 
-let updateEventSyncState = (eventItem: Internal.eventItem, ~inMemoryStore: InMemoryStore.t) => {
-  let {event, chain, blockNumber, timestamp: blockTimestamp} = eventItem
-  let {logIndex} = event
-  let chainId = chain->ChainMap.Chain.toChainId
-  let _ = inMemoryStore.eventSyncState->InMemoryTable.set(
-    chainId,
-    {
-      chainId,
-      blockTimestamp,
-      blockNumber,
-      logIndex,
-    },
-  )
-}
-
 let convertFieldsToJson = (fields: option<dict<unknown>>) => {
   switch fields {
   | None => %raw(`{}`)
@@ -159,8 +144,6 @@ let runHandlerOrThrow = async (
     )
   | None => ()
   }
-
-  eventItem->updateEventSyncState(~inMemoryStore)
 
   if config.enableRawEvents {
     eventItem->addEventToRawEvents(~inMemoryStore)

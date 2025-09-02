@@ -57,11 +57,12 @@ let executeBatch = async (
 ) => {
   let specificError = ref(None)
 
-  let setEventSyncState = executeSet(
-    _,
-    ~dbFunction=DbFunctions.EventSyncState.batchSet,
-    ~items=inMemoryStore.eventSyncState->InMemoryTable.values,
-  )
+  // FIXME:
+  // let setEventSyncState = executeSet(
+  //   _,
+  //   ~dbFunction=DbFunctions.EventSyncState.batchSet,
+  //   ~items=inMemoryStore.eventSyncState->InMemoryTable.values,
+  // )
 
   let setRawEvents = executeSet(
     _,
@@ -240,7 +241,7 @@ let executeBatch = async (
         | None => ()
         }
 
-        await Belt.Array.concatMany([[setEventSyncState, setRawEvents], setEntities])
+        await Belt.Array.concatMany([[setRawEvents], setEntities])
         ->Belt.Array.map(dbFunc => sql->dbFunc)
         ->Promise.all
       }),

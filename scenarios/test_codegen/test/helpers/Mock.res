@@ -36,7 +36,7 @@ module Storage = {
   type method = [
     | #isInitialized
     | #initialize
-    | #loadInitialState
+    | #resumeInitialState
     | #dumpEffectCache
     | #setEffectCacheOrThrow
     | #loadByIdsOrThrow
@@ -53,7 +53,7 @@ module Storage = {
       "enums": array<Internal.enumConfig<Internal.enum>>,
     }>,
     resolveInitialize: Persistence.initialState => unit,
-    loadInitialStateCalls: array<bool>,
+    resumeInitialStateCalls: array<bool>,
     resolveLoadInitialState: Persistence.initialState => unit,
     loadByIdsOrThrowCalls: array<{"ids": array<string>, "tableName": string}>,
     loadByFieldOrThrowCalls: array<{
@@ -91,8 +91,8 @@ module Storage = {
     let loadByFieldOrThrowCalls = []
     let dumpEffectCacheCalls = ref(0)
     let setEffectCacheOrThrowCalls = ref(0)
-    let loadInitialStateCalls = []
-    let loadInitialStateResolveFns = []
+    let resumeInitialStateCalls = []
+    let resumeInitialStateResolveFns = []
 
     {
       isInitializedCalls,
@@ -100,9 +100,9 @@ module Storage = {
       loadByIdsOrThrowCalls,
       loadByFieldOrThrowCalls,
       dumpEffectCacheCalls,
-      loadInitialStateCalls,
+      resumeInitialStateCalls,
       resolveLoadInitialState: (initialState: Persistence.initialState) => {
-        loadInitialStateResolveFns->Js.Array2.forEach(resolve => resolve(initialState))
+        resumeInitialStateResolveFns->Js.Array2.forEach(resolve => resolve(initialState))
       },
       resolveIsInitialized: bool => {
         isInitializedResolveFns->Js.Array2.forEach(resolve => resolve(bool))
@@ -129,10 +129,10 @@ module Storage = {
             initializeResolveFns->Js.Array2.push(resolve)->ignore
           })
         }),
-        loadInitialState: implement(#loadInitialState, () => {
-          loadInitialStateCalls->Js.Array2.push(true)->ignore
+        resumeInitialState: implement(#resumeInitialState, () => {
+          resumeInitialStateCalls->Js.Array2.push(true)->ignore
           Promise.make((resolve, _reject) => {
-            loadInitialStateResolveFns->Js.Array2.push(resolve)->ignore
+            resumeInitialStateResolveFns->Js.Array2.push(resolve)->ignore
           })
         }),
         dumpEffectCache: implement(#dumpEffectCache, () => {

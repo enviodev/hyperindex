@@ -32,7 +32,7 @@ type storage = {
     ~entities: array<Internal.entityConfig>=?,
     ~enums: array<Internal.enumConfig<Internal.enum>>=?,
   ) => promise<initialState>,
-  loadInitialState: unit => promise<initialState>,
+  resumeInitialState: unit => promise<initialState>,
   @raises("StorageError")
   loadByIdsOrThrow: 'item. (
     ~ids: array<string>,
@@ -141,7 +141,7 @@ let init = {
           }
         ) {
           Logging.info(`The indexer storage is ready.`)
-          persistence.storageStatus = Ready(await persistence.storage.loadInitialState())
+          persistence.storageStatus = Ready(await persistence.storage.resumeInitialState())
         }
         resolveRef.contents()
       }

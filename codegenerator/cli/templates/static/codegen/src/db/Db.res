@@ -12,6 +12,7 @@ let config: Postgres.poolConfig = {
   onnotice: ?(Env.userLogLevel == #warn || Env.userLogLevel == #error ? None : Some(_str => ())),
   transform: {undefined: Null},
   max: 2,
+  // debug: (~connection, ~query, ~params as _, ~types as _) => Js.log2(connection, query),
 }
 let sql = Postgres.makeSql(~config)
 let publicSchema = Env.Db.publicSchema

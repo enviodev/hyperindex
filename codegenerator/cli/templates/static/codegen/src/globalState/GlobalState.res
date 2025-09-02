@@ -172,33 +172,29 @@ let updateChainFetcherCurrentBlockHeight = (chainFetcher: ChainFetcher.t, ~curre
 }
 
 let updateChainMetadataTable = (cm: ChainManager.t, ~throttler: Throttler.t) => {
-  let chainsData: array<InternalTable.Chains.t> =
-    cm.chainFetchers
-    ->ChainMap.values
-    ->Belt.Array.map((cf): InternalTable.Chains.t => {
-      let latestFetchedBlock = cf.fetchState->FetchState.getLatestFullyFetchedBlock
+  let chainsData: dict<InternalTable.Chains.metaFields> = Js.Dict.empty()
+
+  cm.chainFetchers
+  ->ChainMap.values
+  ->Belt.Array.forEach(cf => {
+    let latestFetchedBlock = cf.fetchState->FetchState.getLatestFullyFetchedBlock
+    chainsData->Js.Dict.set(
+      cf.chainConfig.id->Belt.Int.toString,
       {
-        id: cf.chainConfig.id,
-        startBlock: cf.chainConfig.startBlock,
         blockHeight: cf.currentBlockHeight,
-        endBlock: cf.endBlock->Js.Null.fromOption,
         firstEventBlockNumber: cf->ChainFetcher.getFirstEventBlockNumber->Js.Null.fromOption,
-        latestProcessedBlock: cf.latestProcessedBlock->Js.Null.fromOption,
-        numEventsProcessed: cf.numEventsProcessed,
         isHyperSync: (cf.sourceManager->SourceManager.getActiveSource).poweredByHyperSync,
-        numBatchesFetched: cf.numBatchesFetched,
         latestFetchedBlockNumber: latestFetchedBlock.blockNumber,
         timestampCaughtUpToHeadOrEndblock: cf.timestampCaughtUpToHeadOrEndblock->Js.Null.fromOption,
-      }
-    })
+        numBatchesFetched: cf.numBatchesFetched,
+      },
+    )
+  })
+
   //Don't await this set, it can happen in its own time
   throttler->Throttler.schedule(() =>
     Db.sql
     ->InternalTable.Chains.setValues(~pgSchema=Db.publicSchema, ~chainsData)
-    ->Promise.catch(err => {
-      Logging.error(err->Utils.prettifyExn)
-      Promise.resolve(%raw(`null`))
-    })
     ->Promise.ignoreValue
   )
 }
@@ -230,22 +226,20 @@ let checkAndSetSyncedChains = (
 
     // We want to recalculate the prom metrics
     // even when processingMetricsByChainId is not provided - empty batch
-    let latestProcessedBlock = if cf->ChainFetcher.hasNoMoreEventsToProcess {
-      Pervasives.max(FetchState.getLatestFullyFetchedBlock(cf.fetchState).blockNumber, 0)->Some
+    let progressBlockNumber = if cf->ChainFetcher.hasNoMoreEventsToProcess {
+      FetchState.getLatestFullyFetchedBlock(cf.fetchState).blockNumber
     } else {
       switch maybeMetrics {
-      | Some(metrics) => Some(metrics.targetBlockNumber)
-      | None => cf.latestProcessedBlock
+      | Some(metrics) => metrics.targetBlockNumber
+      | None => cf.progressBlockNumber
       }
     }
 
-    switch latestProcessedBlock {
-    | Some(latestProcessedBlockNumber) =>
+    if progressBlockNumber !== cf.progressBlockNumber {
       Prometheus.ProgressBlockNumber.set(
-        ~blockNumber=latestProcessedBlockNumber,
+        ~blockNumber=progressBlockNumber,
         ~chainId=chain->ChainMap.Chain.toChainId,
       )
-    | None => ()
     }
 
     let numEventsProcessed = switch maybeMetrics {
@@ -262,7 +256,7 @@ let checkAndSetSyncedChains = (
 
     let cf = {
       ...cf,
-      latestProcessedBlock,
+      progressBlockNumber,
       numEventsProcessed,
     }
 
@@ -495,15 +489,15 @@ let submitPartitionQueryResponse = (
 
   let hasNoMoreEventsToProcess = updatedChainFetcher->ChainFetcher.hasNoMoreEventsToProcess
 
-  let latestProcessedBlock = if hasNoMoreEventsToProcess {
-    FetchState.getLatestFullyFetchedBlock(updatedChainFetcher.fetchState).blockNumber->Some
+  let progressBlockNumber = if hasNoMoreEventsToProcess {
+    FetchState.getLatestFullyFetchedBlock(updatedChainFetcher.fetchState).blockNumber
   } else {
-    updatedChainFetcher.latestProcessedBlock
+    updatedChainFetcher.progressBlockNumber
   }
 
   let updatedChainFetcher = {
     ...updatedChainFetcher,
-    latestProcessedBlock,
+    progressBlockNumber,
     numBatchesFetched: updatedChainFetcher.numBatchesFetched + 1,
   }
 
