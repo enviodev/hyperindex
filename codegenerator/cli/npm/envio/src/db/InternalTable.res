@@ -365,6 +365,7 @@ module Views = {
        "${(#buffer_block: Chains.field :> string)}" AS "bufferBlock",
        "${(#first_event_block: Chains.field :> string)}" AS "firstEventBlock",
        "${(#events_processed: Chains.field :> string)}" AS "eventsProcessed",
+       "${(#source_block: Chains.field :> string)}" AS "sourceBlock",
        "${(#ready_at: Chains.field :> string)}" AS "readyAt",
        ("${(#ready_at: Chains.field :> string)}" IS NOT NULL) AS "isReady"
      FROM "${pgSchema}"."${Chains.table.tableName}"

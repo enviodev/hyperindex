@@ -285,6 +285,7 @@ let processEventBatch = async (
 
     let rec executeBatch = async (~escapeTables=?) => {
       switch await Db.sql->IO.executeBatch(
+        ~progressedChains,
         ~inMemoryStore,
         ~isInReorgThreshold,
         ~config,
