@@ -327,14 +327,10 @@ describe("Single Chain Simple Rollback", () => {
 
     Assert.deepEqual(
       tasks.contents->Utils.getVariantsTags,
-      [
-        "UpdateChainMetaDataAndCheckForExit",
-        "UpdateEndOfBlockRangeScannedData",
-        "ProcessPartitionQueryResponse",
-      ],
+      ["UpdateEndOfBlockRangeScannedData", "ProcessPartitionQueryResponse"],
     )
     Assert.deepEqual(
-      tasks.contents->Js.Array2.unsafe_get(1),
+      tasks.contents->Js.Array2.unsafe_get(0),
       GlobalState.UpdateEndOfBlockRangeScannedData({
         blockNumberThreshold: -198,
         chain: MockConfig.chain1337,

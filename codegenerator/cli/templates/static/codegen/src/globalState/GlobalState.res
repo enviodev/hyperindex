@@ -626,7 +626,7 @@ let actionReducer = (state: t, action: action) => {
     )
       ? {
           // state.config.persistence.storage
-          Logging.info("All chains are caught up to the endblock.")
+          Logging.info("All chains are caught up to end blocks.")
 
           // Keep the indexer process running in TUI mode
           // so the Dev Console server stays working
@@ -640,7 +640,6 @@ let actionReducer = (state: t, action: action) => {
 
     (
       state,
-      // FIXME: Update Chain metadata only on fetchState updates
       [UpdateChainMetaDataAndCheckForExit(shouldExit), ProcessEventBatch]->Array.concat(
         maybePruneEntityHistory,
       ),

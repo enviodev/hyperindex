@@ -459,33 +459,34 @@ module DynamicContractRegistry = {
     let query = ref(``)
 
     chains->Js.Array2.forEach(chain => {
+      if query.contents !== "" {
+        query := query.contents ++ "\n"
+      }
       query :=
         query.contents ++
         `DELETE FROM "${pgSchema}"."${table.tableName}"
 WHERE chain_id = ${chain.id->Belt.Int.toString}${switch chain {
-          | {progressBlockNumber: -1} => ``
-          | {progressBlockNumber, progressNextBlockLogIndex: Null} =>
-            ` AND registering_event_block_number > ${progressBlockNumber->Belt.Int.toString}`
           | {progressBlockNumber, progressNextBlockLogIndex: Value(progressNextBlockLogIndex)} =>
             ` AND (
   registering_event_block_number > ${(progressBlockNumber + 1)->Belt.Int.toString}
   OR registering_event_block_number = ${(progressBlockNumber + 1)->Belt.Int.toString}
   AND registering_event_log_index > ${progressNextBlockLogIndex->Belt.Int.toString}
 )`
-          }};`
-      query :=
-        query.contents ++
-        `DELETE FROM "${pgSchema}"."${table.tableName}_history"
-WHERE entity_history_chain_id = ${chain.id->Belt.Int.toString}${switch chain {
-          | {progressBlockNumber: -1} => ``
+          | {progressBlockNumber: -1, progressNextBlockLogIndex: Null} => ``
           | {progressBlockNumber, progressNextBlockLogIndex: Null} =>
-            ` AND entity_history_block_number > ${progressBlockNumber->Belt.Int.toString}`
+            ` AND registering_event_block_number > ${progressBlockNumber->Belt.Int.toString}`
+          }};
+DELETE FROM "${pgSchema}"."${table.tableName}_history"
+WHERE entity_history_chain_id = ${chain.id->Belt.Int.toString}${switch chain {
           | {progressBlockNumber, progressNextBlockLogIndex: Value(progressNextBlockLogIndex)} =>
             ` AND (
   entity_history_block_number > ${(progressBlockNumber + 1)->Belt.Int.toString}
   OR entity_history_block_number = ${(progressBlockNumber + 1)->Belt.Int.toString}
   AND entity_history_log_index > ${progressNextBlockLogIndex->Belt.Int.toString}
 )`
+          | {progressBlockNumber: -1, progressNextBlockLogIndex: Null} => ``
+          | {progressBlockNumber, progressNextBlockLogIndex: Null} =>
+            ` AND entity_history_block_number > ${progressBlockNumber->Belt.Int.toString}`
           }};`
     })
 

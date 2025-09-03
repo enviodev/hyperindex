@@ -3048,6 +3048,86 @@ describe("Dynamic contracts with start blocks", () => {
   })
 })
 
+describe("FetchState progress tracking", () => {
+  let makeFetchStateWith = (~latestBlock: int, ~queueBlocks: array<(int, int)>): FetchState.t => {
+    let fs0 = makeInitial()
+    fs0
+    ->FetchState.handleQueryResult(
+      ~query={
+        FetchState.partitionId: "0",
+        target: Head,
+        selection: fs0.normalSelection,
+        addressesByContractName: Js.Dict.empty(),
+        fromBlock: 0,
+        indexingContracts: fs0.indexingContracts,
+      },
+      ~latestFetchedBlock={blockNumber: latestBlock, blockTimestamp: latestBlock},
+      ~newItems=queueBlocks->Array.map(((b, l)) => mockEvent(~blockNumber=b, ~logIndex=l)),
+      ~currentBlockHeight=latestBlock,
+    )
+    ->Result.getExn
+  }
+
+  it("When queue is empty", () => {
+    let fetchStateEmpty = makeFetchStateWith(~latestBlock=100, ~queueBlocks=[])
+
+    Assert.equal(
+      fetchStateEmpty->FetchState.getProgressBlockNumber,
+      100,
+      ~message="Should return latestFullyFetchedBlock.blockNumber when queue is empty",
+    )
+    Assert.equal(
+      fetchStateEmpty->FetchState.getProgressNextBlockLogIndex,
+      None,
+      ~message="Should return None when queue is empty",
+    )
+  })
+
+  it("When queue has a single item with log index 0", () => {
+    let fetchStateSingleItem = makeFetchStateWith(~latestBlock=55, ~queueBlocks=[(55, 0)])
+
+    Assert.equal(
+      fetchStateSingleItem->FetchState.getProgressBlockNumber,
+      54,
+      ~message="Should return single queue item blockNumber - 1",
+    )
+    Assert.equal(
+      fetchStateSingleItem->FetchState.getProgressNextBlockLogIndex,
+      None,
+      ~message="Should return None when queue has a single item",
+    )
+  })
+
+  it("When queue has a single item with non 0 log index", () => {
+    let fetchStateSingleItem = makeFetchStateWith(~latestBlock=55, ~queueBlocks=[(55, 5)])
+
+    Assert.equal(
+      fetchStateSingleItem->FetchState.getProgressBlockNumber,
+      54,
+      ~message="Should return single queue item blockNumber - 1",
+    )
+    Assert.equal(
+      fetchStateSingleItem->FetchState.getProgressNextBlockLogIndex,
+      Some(4),
+      ~message="Should return None when queue has a single item",
+    )
+  })
+
+  it("When queue items are later than latest fetched block", () => {
+    let fetchStateWithQueue = makeFetchStateWith(
+      ~latestBlock=90,
+      ~queueBlocks=[(105, 2), (103, 1), (101, 2)], // Last item has blockNumber=101
+    )
+
+    Assert.equal(
+      fetchStateWithQueue->FetchState.getProgressBlockNumber,
+      90,
+      ~message="Should return latest fetched block number",
+    )
+    Assert.equal(fetchStateWithQueue->FetchState.getProgressNextBlockLogIndex, None)
+  })
+})
+
 describe("FetchState buffer overflow prevention", () => {
   it(
     "Should limit endBlock when maxQueryBlockNumber < currentBlockHeight to prevent buffer overflow",

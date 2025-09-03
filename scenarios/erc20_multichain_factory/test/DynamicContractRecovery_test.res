@@ -139,17 +139,36 @@ describe("Dynamic contract restart resistance test", () => {
     )
   }
 
-  let getFetchingDcAddressesFromDbState = async (~chainId=1, ~sql=?) => {
+  let getFetchingDcAddressesFromDbState = async (~chainId=1, ~sql) => {
     let chainConfig = config.chainMap->ChainMap.get(ChainMap.Chain.makeUnsafe(~chainId))
-    await config.persistence->Persistence.init(~chainConfigs=[chainConfig])
+    // Use the sql client from the test transaction, so we can rollback the changes
+    let storage = PgStorage.make(
+      ~sql,
+      ~pgSchema=Env.Db.publicSchema,
+      ~pgHost=Env.Db.host,
+      ~pgUser=Env.Db.user,
+      ~pgPort=Env.Db.port,
+      ~pgDatabase=Env.Db.database,
+      ~pgPassword=Env.Db.password,
+    )
+    let persistence = {
+      ...config.persistence,
+      storageStatus: Persistence.Unknown,
+      storage,
+    }
+    let config = {
+      ...config,
+      persistence,
+    }
+    await persistence->Persistence.init(~chainConfigs=[chainConfig])
     let chainFetcher = await ChainFetcher.makeFromDbState(
       chainConfig,
-      ~initialChainState=(config.persistence->Persistence.getInitializedState).chains
+      ~initialChainState=(persistence->Persistence.getInitializedState).chains
       ->Js.Array2.find(chainState => chainState.id === chainId)
       ->Option.getExn,
       ~config,
       ~isInReorgThreshold=true,
-      ~sql?,
+      ~sql,
     )
 
     chainFetcher->getChainFetcherDcs
@@ -246,9 +265,11 @@ describe("Dynamic contract restart resistance test", () => {
 
           // But let's say the indexer crashed before
           // the processing of events catch up to the dcs we stored in the db
-          // In this case on restart we should prune contracts after event_sync_state
+          // In this case on restart we should prune contracts after progress_block
           let _ =
-            await sql->Postgres.unsafe(`UPDATE public.event_sync_state SET block_number = 0 WHERE chain_id = 1;`)
+            await sql->Postgres.unsafe(
+              `UPDATE public.${InternalTable.Chains.table.tableName} SET ${(#progress_block: InternalTable.Chains.field :> string)} = -1, ${(#_progress_log_index: InternalTable.Chains.field :> string)} = 0 WHERE ${(#id: InternalTable.Chains.field :> string)} = 1;`,
+            )
 
           Assert.deepEqual(
             await getFetchingDcAddressesFromDbState(~sql),
@@ -280,6 +301,7 @@ describe("Dynamic contract restart resistance test", () => {
         },
       ) catch {
       | RollbackTransaction => ()
+      | exn => raise(exn->Utils.prettifyExn)
       }
 
       Assert.deepEqual(
