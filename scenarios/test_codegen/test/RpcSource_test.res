@@ -420,7 +420,7 @@ describe("RpcSource - getSuggestedBlockIntervalFromExn", () => {
       }`),
     )
 
-    Assert.deepEqual(getSuggestedBlockIntervalFromExn(error), Some(510))
+    Assert.deepEqual(getSuggestedBlockIntervalFromExn(error), Some((510, false)))
   })
 
   it("Shouldn't retry on height not available", () => {
@@ -460,7 +460,7 @@ describe("RpcSource - getSuggestedBlockIntervalFromExn", () => {
       }`),
     )
 
-    Assert.deepEqual(getSuggestedBlockIntervalFromExn(error), Some(1000))
+    Assert.deepEqual(getSuggestedBlockIntervalFromExn(error), Some((1000, true)))
   })
 
   it("Should ignore invalid range errors where toBlock is less than fromBlock", () => {
@@ -525,7 +525,7 @@ describe("RpcSource - getSuggestedBlockIntervalFromExn", () => {
       }`),
     )
 
-    Assert.deepEqual(getSuggestedBlockIntervalFromExn(error), Some(1000))
+    Assert.deepEqual(getSuggestedBlockIntervalFromExn(error), Some((1000, true)))
   })
 
   it("Should handle block range limit from Alchemy", () => {
@@ -555,6 +555,6 @@ describe("RpcSource - getSuggestedBlockIntervalFromExn", () => {
       }`),
     )
 
-    Assert.deepEqual(getSuggestedBlockIntervalFromExn(error), Some(500))
+    Assert.deepEqual(getSuggestedBlockIntervalFromExn(error), Some((500, true)))
   })
 })

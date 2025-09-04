@@ -12,16 +12,6 @@ type syncConfigOptions = {
   fallbackStallTimeout?: int,
 }
 
-type syncConfig = {
-  initialBlockInterval: int,
-  backoffMultiplicative: float,
-  accelerationAdditive: int,
-  intervalCeiling: int,
-  backoffMillis: int,
-  queryTimeoutMillis: int,
-  fallbackStallTimeout: int,
-}
-
 type historyFlag = FullHistory | MinHistory
 type rollbackFlag = RollbackOnReorg | NoRollback
 type historyConfig = {rollbackFlag: rollbackFlag, historyFlag: historyFlag}
@@ -36,7 +26,7 @@ let getSyncConfig = (
     ?queryTimeoutMillis,
     ?fallbackStallTimeout,
   }: syncConfigOptions,
-): syncConfig => {
+): InternalConfig.sourceSync => {
   let queryTimeoutMillis = queryTimeoutMillis->Option.getWithDefault(20_000)
   {
     initialBlockInterval: Env.Configurable.SyncConfig.initialBlockInterval->Option.getWithDefault(

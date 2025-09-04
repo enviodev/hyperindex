@@ -18,3 +18,13 @@ type chain = {
   contracts: array<contract>,
   sources: array<Source.t>,
 }
+
+type sourceSync = {
+  initialBlockInterval: int,
+  backoffMultiplicative: float,
+  accelerationAdditive: int,
+  intervalCeiling: int,
+  backoffMillis: int,
+  queryTimeoutMillis: int,
+  fallbackStallTimeout: int,
+}

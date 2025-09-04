@@ -76,15 +76,23 @@ module GetLogs = {
     fieldSelection,
   }
 
+  @inline
   let addMissingParams = (acc, fieldNames, returnedObj, ~prefix) => {
-    fieldNames->Array.forEach(fieldName => {
-      switch returnedObj
-      ->(Utils.magic: 'a => Js.Dict.t<unknown>)
-      ->Utils.Dict.dangerouslyGetNonOption(fieldName) {
-      | Some(_) => ()
-      | None => acc->Array.push(prefix ++ "." ++ fieldName)->ignore
+    if fieldNames->Utils.Array.notEmpty {
+      if !(returnedObj->Obj.magic) {
+        acc->Array.push(prefix)->ignore
+      } else {
+        for idx in 0 to fieldNames->Array.length - 1 {
+          let fieldName = fieldNames->Array.getUnsafe(idx)
+          switch returnedObj
+          ->(Utils.magic: 'a => Js.Dict.t<unknown>)
+          ->Utils.Dict.dangerouslyGetNonOption(fieldName) {
+          | Some(_) => ()
+          | None => acc->Array.push(prefix ++ "." ++ fieldName)->ignore
+          }
+        }
       }
-    })
+    }
   }
 
   //Note this function can throw an error
