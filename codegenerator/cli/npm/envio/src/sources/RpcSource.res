@@ -94,7 +94,12 @@ let getSuggestedBlockIntervalFromExn = {
   // - Optimism: "backend response too large" or "Block range is too large"
   // - Arbitrum: "logs matched by query exceeds limit of 10000"
 
-  exn =>
+  (exn): option<(
+    // The suggested block range
+    int,
+    // Whether it's the max range that the provider allows
+    bool,
+  )> =>
     switch exn {
     | Js.Exn.Error(error) =>
       try {
@@ -102,11 +107,11 @@ let getSuggestedBlockIntervalFromExn = {
         message->S.assertOrThrow(S.string)
 
         // Helper to extract block range from regex match
-        let extractBlockRange = execResult =>
+        let extractBlockRange = (execResult, ~isMaxRange) =>
           switch execResult->Js.Re.captures {
           | [_, Js.Nullable.Value(blockRangeLimit)] =>
             switch blockRangeLimit->Int.fromString {
-            | Some(blockRangeLimit) if blockRangeLimit > 0 => Some(blockRangeLimit)
+            | Some(blockRangeLimit) if blockRangeLimit > 0 => Some(blockRangeLimit, isMaxRange)
             | _ => None
             }
           | _ => None
@@ -119,7 +124,7 @@ let getSuggestedBlockIntervalFromExn = {
           | [_, Js.Nullable.Value(fromBlock), Js.Nullable.Value(toBlock)] =>
             switch (fromBlock->Int.fromString, toBlock->Int.fromString) {
             | (Some(fromBlock), Some(toBlock)) if toBlock >= fromBlock =>
-              Some(toBlock - fromBlock + 1)
+              Some(toBlock - fromBlock + 1, false)
             | _ => None
             }
           | _ => None
@@ -127,40 +132,41 @@ let getSuggestedBlockIntervalFromExn = {
         | None =>
           // Try each provider's specific error pattern
           switch blockRangeLimitRegExp->Js.Re.exec_(message) {
-          | Some(execResult) => extractBlockRange(execResult)
+          | Some(execResult) => extractBlockRange(execResult, ~isMaxRange=true)
           | None =>
             switch alchemyRangeRegExp->Js.Re.exec_(message) {
-            | Some(execResult) => extractBlockRange(execResult)
+            | Some(execResult) => extractBlockRange(execResult, ~isMaxRange=true)
             | None =>
               switch cloudflareRangeRegExp->Js.Re.exec_(message) {
-              | Some(execResult) => extractBlockRange(execResult)
+              | Some(execResult) => extractBlockRange(execResult, ~isMaxRange=true)
               | None =>
                 switch thirdwebRangeRegExp->Js.Re.exec_(message) {
-                | Some(execResult) => extractBlockRange(execResult)
+                | Some(execResult) => extractBlockRange(execResult, ~isMaxRange=true)
                 | None =>
                   switch blockpiRangeRegExp->Js.Re.exec_(message) {
-                  | Some(execResult) => extractBlockRange(execResult)
+                  | Some(execResult) => extractBlockRange(execResult, ~isMaxRange=true)
                   | None =>
                     switch maxAllowedBlocksRegExp->Js.Re.exec_(message) {
-                    | Some(execResult) => extractBlockRange(execResult)
+                    | Some(execResult) => extractBlockRange(execResult, ~isMaxRange=true)
                     | None =>
                       switch baseRangeRegExp->Js.Re.exec_(message) {
-                      | Some(_) => Some(2000)
+                      | Some(_) => Some(2000, true)
                       | None =>
                         switch blastPaidRegExp->Js.Re.exec_(message) {
-                        | Some(execResult) => extractBlockRange(execResult)
+                        | Some(execResult) => extractBlockRange(execResult, ~isMaxRange=true)
                         | None =>
                           switch chainstackRegExp->Js.Re.exec_(message) {
-                          | Some(_) => Some(10000)
+                          | Some(_) => Some(10000, true)
                           | None =>
                             switch coinbaseRegExp->Js.Re.exec_(message) {
-                            | Some(execResult) => extractBlockRange(execResult)
+                            | Some(execResult) => extractBlockRange(execResult, ~isMaxRange=true)
                             | None =>
                               switch publicNodeRegExp->Js.Re.exec_(message) {
-                              | Some(execResult) => extractBlockRange(execResult)
+                              | Some(execResult) => extractBlockRange(execResult, ~isMaxRange=true)
                               | None =>
                                 switch hyperliquidRegExp->Js.Re.exec_(message) {
-                                | Some(execResult) => extractBlockRange(execResult)
+                                | Some(execResult) =>
+                                  extractBlockRange(execResult, ~isMaxRange=true)
                                 | None => None
                                 }
                               }
@@ -187,6 +193,8 @@ type eventBatchQuery = {
   latestFetchedBlock: Ethers.JsonRpcProvider.block,
 }
 
+let maxSuggestedBlockIntervalKey = "max"
+
 let getNextPage = (
   ~fromBlock,
   ~toBlock,
@@ -195,7 +203,7 @@ let getNextPage = (
   ~loadBlock,
   ~syncConfig as sc: InternalConfig.sourceSync,
   ~provider,
-  ~suggestedBlockIntervals,
+  ~mutSuggestedBlockIntervals,
   ~partitionId,
 ): promise<eventBatchQuery> => {
   //If the query hangs for longer than this, reject this promise to reduce the block interval
@@ -230,8 +238,11 @@ let getNextPage = (
   ->Promise.race
   ->Promise.catch(err => {
     switch getSuggestedBlockIntervalFromExn(err) {
-    | Some(nextBlockIntervalTry) =>
-      suggestedBlockIntervals->Js.Dict.set(partitionId, nextBlockIntervalTry)
+    | Some((nextBlockIntervalTry, isMaxRange)) =>
+      mutSuggestedBlockIntervals->Js.Dict.set(
+        isMaxRange ? maxSuggestedBlockIntervalKey : partitionId,
+        nextBlockIntervalTry,
+      )
       raise(
         Source.GetItemsError(
           FailedGettingItems({
@@ -247,7 +258,7 @@ let getNextPage = (
       let executedBlockInterval = toBlock - fromBlock + 1
       let nextBlockIntervalTry =
         (executedBlockInterval->Belt.Int.toFloat *. sc.backoffMultiplicative)->Belt.Int.fromFloat
-      suggestedBlockIntervals->Js.Dict.set(partitionId, nextBlockIntervalTry)
+      mutSuggestedBlockIntervals->Js.Dict.set(partitionId, nextBlockIntervalTry)
       raise(
         Source.GetItemsError(
           Source.FailedGettingItems({
@@ -357,11 +368,8 @@ let memoGetSelectionConfig = (~chain) => {
 }
 
 let makeThrowingGetEventBlock = (~getBlock) => {
-  // The block fields type is a subset of Ethers.JsonRpcProvider.block so we can safely cast
-  let blockFieldsFromBlock: Ethers.JsonRpcProvider.block => Internal.eventBlock = Utils.magic
-
-  async (log: Ethers.log): Internal.eventBlock => {
-    (await getBlock(log.blockNumber))->blockFieldsFromBlock
+  async (log: Ethers.log) => {
+    await getBlock(log.blockNumber)
   }
 }
 
@@ -461,7 +469,7 @@ let make = ({sourceFor, syncConfig, url, chain, contracts, eventRouter}: options
 
   let getSelectionConfig = memoGetSelectionConfig(~chain)
 
-  let suggestedBlockIntervals = Js.Dict.empty()
+  let mutSuggestedBlockIntervals = Js.Dict.empty()
 
   let transactionLoader = LazyLoader.make(
     ~loaderFn=transactionHash => provider->Ethers.JsonRpcProvider.getTransaction(~transactionHash),
@@ -535,10 +543,15 @@ let make = ({sourceFor, syncConfig, url, chain, contracts, eventRouter}: options
   ) => {
     let startFetchingBatchTimeRef = Hrtime.makeTimer()
 
-    let suggestedBlockInterval =
-      suggestedBlockIntervals
+    let suggestedBlockInterval = switch mutSuggestedBlockIntervals->Utils.Dict.dangerouslyGetNonOption(
+      maxSuggestedBlockIntervalKey,
+    ) {
+    | Some(maxSuggestedBlockInterval) => maxSuggestedBlockInterval
+    | None =>
+      mutSuggestedBlockIntervals
       ->Utils.Dict.dangerouslyGetNonOption(partitionId)
       ->Belt.Option.getWithDefault(syncConfig.initialBlockInterval)
+    }
 
     // Always have a toBlock for an RPC worker
     let toBlock = switch toBlock {
@@ -566,7 +579,7 @@ let make = ({sourceFor, syncConfig, url, chain, contracts, eventRouter}: options
       ~loadBlock=blockNumber => blockLoader->LazyLoader.get(blockNumber),
       ~syncConfig,
       ~provider,
-      ~suggestedBlockIntervals,
+      ~mutSuggestedBlockIntervals,
       ~partitionId,
     )
 
@@ -577,7 +590,7 @@ let make = ({sourceFor, syncConfig, url, chain, contracts, eventRouter}: options
     if executedBlockInterval >= suggestedBlockInterval {
       // Increase batch size going forward, but do not increase past a configured maximum
       // See: https://en.wikipedia.org/wiki/Additive_increase/multiplicative_decrease
-      suggestedBlockIntervals->Js.Dict.set(
+      mutSuggestedBlockIntervals->Js.Dict.set(
         partitionId,
         Pervasives.min(
           executedBlockInterval + syncConfig.accelerationAdditive,
@@ -646,15 +659,19 @@ let make = ({sourceFor, syncConfig, url, chain, contracts, eventRouter}: options
                 (
                   {
                     eventConfig: (eventConfig :> Internal.eventConfig),
-                    timestamp: (block->Utils.magic)["timestamp"],
+                    timestamp: block.timestamp,
+                    blockNumber: block.number,
                     chain,
-                    blockNumber: (block->Utils.magic)["number"],
                     logIndex: log.logIndex,
                     event: {
                       chainId: chain->ChainMap.Chain.toChainId,
                       params: decodedEvent.args,
                       transaction,
-                      block,
+                      // Unreliably expect that the Ethers block fields match the types in HyperIndex
+                      // I assume this is wrong in some cases, so we need to fix it in the future
+                      block: block->(
+                        Utils.magic: Ethers.JsonRpcProvider.block => Internal.eventBlock
+                      ),
                       srcAddress: log.address,
                       logIndex: log.logIndex,
                     }->Internal.fromGenericEvent,
