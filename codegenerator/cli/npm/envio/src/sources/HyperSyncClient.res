@@ -447,10 +447,9 @@ type t = {
   streamEvents: (~query: query, ~config: streamConfig) => promise<eventStream>,
 }
 
-@module("@envio-dev/hypersync-client") @scope("HypersyncClient") external new: cfg => t = "new"
-
+@module("@envio-dev/hypersync-client") @scope("HypersyncClient") external make: cfg => t = "new"
 let make = (~url, ~apiToken, ~httpReqTimeoutMillis, ~maxNumRetries) =>
-  new({
+  make({
     url,
     enableChecksumAddresses: true,
     bearerToken: apiToken,
@@ -503,4 +502,6 @@ module Decoder = {
 
   @module("@envio-dev/hypersync-client") @scope("Decoder")
   external fromSignatures: array<string> => t = "fromSignatures"
+  // Keep the @envio-dev/hypersync-client import inside of the package
+  let fromSignatures = fromSignatures
 }
