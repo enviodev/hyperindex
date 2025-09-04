@@ -943,12 +943,18 @@ entity.save();
 
 // NEW ENVIO PATTERN:
 const entity: EventEntity = {
-  id: `${event.chainId}_${event.transaction.hash}_${event.logIndex}`,
+  id: `${event.chainId}-${event.transaction.hash}-${event.logIndex}`,
   field1: event.params.field1,
   blockNumber: BigInt(event.block.number),
   blockTimestamp: BigInt(event.block.timestamp),
   transactionHash: event.transaction.hash,
 };
+
+// ⚠️ REMINDER: transaction.hash requires field_selection in config.yaml:
+// - event: EventName(...)
+//   field_selection:
+//     transaction_fields:
+//       - hash
 
 context.EventEntity.set(entity);
 ```
@@ -1208,15 +1214,17 @@ const publicClient = createPublicClient({
     },
     rpcUrls: {
       default: {
-        http: [process.env.RPC_URL || 'https://rpc.ankr.com/megaeth_testnet'],
+        http: [process.env.RPC_URL],
       },
       public: {
-        http: [process.env.RPC_URL || 'https://rpc.ankr.com/megaeth_testnet'],
+        http: [process.env.RPC_URL],
       },
     },
   },
   transport: http(process.env.RPC_URL),
 });
+
+// Note: Pass chain-specific RPC via env per network or keep a registry keyed by event.chainId
 
 // Define the effect to fetch token metadata
 export const getTokenMetadata = experimental_createEffect(
@@ -1300,7 +1308,7 @@ Contract.EventName.handler(async ({ event, context }) => {
     
     // Create entity with fetched data
     const entity: Entity = {
-      id: `${event.chainId}_${event.transaction.hash}_${event.logIndex}`,
+      id: `${event.chainId}-${event.transaction.hash}-${event.logIndex}`,
       name: tokenMetadata.name,
       symbol: tokenMetadata.symbol,
       decimals: BigInt(tokenMetadata.decimals),
@@ -1370,7 +1378,7 @@ ContractFactory.ContractCreated.handler(async ({ event, context }) => {
         symbol: tokenMetadata.symbol,
         decimals: BigInt(tokenMetadata.decimals),
         totalSupply: BigInt(tokenMetadata.totalSupply),
-        rate: ZERO_BD as any,
+        rate: ZERO_BD,
         dataFeedId: event.params.token,
         updatedAt: BigInt(event.block.timestamp),
         blockNumber: BigInt(event.block.number),
@@ -1382,7 +1390,7 @@ ContractFactory.ContractCreated.handler(async ({ event, context }) => {
     }
 
     // Calculate derived values
-    let convertToAssetsMultiplier = ONE_BD as any;
+    let convertToAssetsMultiplier = ONE_BD;
     // In a real implementation, you would calculate this based on contract state
     // For now, use ONE_BD to match the original subgraph logic
 
