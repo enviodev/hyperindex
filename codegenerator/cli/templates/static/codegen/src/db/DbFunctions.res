@@ -50,56 +50,7 @@ module EndOfBlockRangeScannedData = {
   ) => promise<unit> = "rollbackEndOfBlockRangeScannedDataForChain"
 }
 
-module EventSyncState = {
-  @genType
-  type eventSyncState = InternalTable.EventSyncState.t
-
-  @module("./DbFunctionsImplementation.js")
-  external readLatestSyncedEventOnChainIdArr: (
-    Postgres.sql,
-    ~chainId: int,
-  ) => promise<array<eventSyncState>> = "readLatestSyncedEventOnChainId"
-
-  let readLatestSyncedEventOnChainId = async (sql, ~chainId) => {
-    let arr = await sql->readLatestSyncedEventOnChainIdArr(~chainId)
-    arr->Belt.Array.get(0)
-  }
-
-  let getLatestProcessedEvent = (sql, ~chainId) => {
-    sql->readLatestSyncedEventOnChainId(~chainId)
-  }
-
-  @module("./DbFunctionsImplementation.js")
-  external batchSet: (Postgres.sql, array<InternalTable.EventSyncState.t>) => promise<unit> =
-    "batchSetEventSyncState"
-
-  let resetEventSyncState = async (): unit => {
-    let query = InternalTable.EventSyncState.resetCurrentCurrentSyncStateQuery(
-      ~pgSchema=Db.publicSchema,
-    )
-    try await Db.sql->Postgres.unsafe(query) catch {
-    | exn => exn->ErrorHandling.mkLogAndRaise(~msg="Failed reset query: " ++ query)
-    }
-  }
-}
-
 module DynamicContractRegistry = {
-  @module("./DbFunctionsImplementation.js")
-  external deleteInvalidDynamicContractsOnRestart: (
-    Postgres.sql,
-    ~chainId: chainId,
-    ~restartBlockNumber: int,
-    ~restartLogIndex: int,
-  ) => promise<unit> = "deleteInvalidDynamicContractsOnRestart"
-
-  @module("./DbFunctionsImplementation.js")
-  external deleteInvalidDynamicContractsHistoryOnRestart: (
-    Postgres.sql,
-    ~chainId: chainId,
-    ~restartBlockNumber: int,
-    ~restartLogIndex: int,
-  ) => promise<unit> = "deleteInvalidDynamicContractsHistoryOnRestart"
-
   @module("./DbFunctionsImplementation.js")
   external readAllDynamicContractsRaw: (Postgres.sql, ~chainId: chainId) => promise<Js.Json.t> =
     "readAllDynamicContracts"

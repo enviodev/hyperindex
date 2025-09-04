@@ -6,21 +6,6 @@ let allChainsEventsProcessedToEndblock = (chainFetchers: ChainMap.t<ChainFetcher
   ->Array.every(cf => cf->ChainFetcher.hasProcessedToEndblock)
 }
 
-let updateEventSyncState = (eventItem: Internal.eventItem, ~inMemoryStore: InMemoryStore.t) => {
-  let {event, chain, blockNumber, timestamp: blockTimestamp} = eventItem
-  let {logIndex} = event
-  let chainId = chain->ChainMap.Chain.toChainId
-  let _ = inMemoryStore.eventSyncState->InMemoryTable.set(
-    chainId,
-    {
-      chainId,
-      blockTimestamp,
-      blockNumber,
-      logIndex,
-    },
-  )
-}
-
 let convertFieldsToJson = (fields: option<dict<unknown>>) => {
   switch fields {
   | None => %raw(`{}`)
@@ -160,8 +145,6 @@ let runHandlerOrThrow = async (
   | None => ()
   }
 
-  eventItem->updateEventSyncState(~inMemoryStore)
-
   if config.enableRawEvents {
     eventItem->addEventToRawEvents(~inMemoryStore)
   }
@@ -254,23 +237,30 @@ type logPartitionInfo = {
 
 let processEventBatch = async (
   ~items: array<Internal.eventItem>,
-  ~processingMetricsByChainId: dict<ChainManager.processingChainMetrics>,
+  ~progressedChains: array<Batch.progressedChain>,
   ~inMemoryStore: InMemoryStore.t,
   ~isInReorgThreshold,
   ~loadManager,
   ~config: Config.t,
 ) => {
   let batchSize = items->Array.length
+  let byChain = Js.Dict.empty()
+  progressedChains->Js.Array2.forEach(data => {
+    if data.batchSize > 0 {
+      byChain->Utils.Dict.setByInt(
+        data.chainId,
+        {
+          "batchSize": data.batchSize,
+          "toBlockNumber": data.progressBlockNumber,
+        },
+      )
+    }
+  })
   let logger = Logging.createChildFrom(
     ~logger=Logging.getLogger(),
     ~params={
       "totalBatchSize": batchSize,
-      "byChain": processingMetricsByChainId->Utils.Dict.map(v => {
-        {
-          "batchSize": v.batchSize,
-          "toBlockNumber": v.targetBlockNumber,
-        }
-      }),
+      "byChain": byChain,
     },
   )
   logger->Logging.childTrace("Started processing batch")
@@ -295,6 +285,7 @@ let processEventBatch = async (
 
     let rec executeBatch = async (~escapeTables=?) => {
       switch await Db.sql->IO.executeBatch(
+        ~progressedChains,
         ~inMemoryStore,
         ~isInReorgThreshold,
         ~config,

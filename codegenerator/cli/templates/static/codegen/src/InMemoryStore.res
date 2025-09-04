@@ -49,7 +49,6 @@ type effectCacheInMemTable = {
 }
 
 type t = {
-  eventSyncState: InMemoryTable.t<int, InternalTable.EventSyncState.t>,
   rawEvents: InMemoryTable.t<rawEventsKey, InternalTable.RawEvents.t>,
   entities: dict<InMemoryTable.Entity.t<Entities.internalEntity>>,
   effects: dict<effectCacheInMemTable>,
@@ -60,7 +59,6 @@ let make = (
   ~entities: array<Internal.entityConfig>=Entities.allEntities,
   ~rollBackEventIdentifier=?,
 ): t => {
-  eventSyncState: InMemoryTable.make(~hash=v => v->Belt.Int.toString),
   rawEvents: InMemoryTable.make(~hash=hashRawEventsKey),
   entities: EntityTables.make(entities),
   effects: Js.Dict.empty(),
@@ -68,7 +66,6 @@ let make = (
 }
 
 let clone = (self: t) => {
-  eventSyncState: self.eventSyncState->InMemoryTable.clone,
   rawEvents: self.rawEvents->InMemoryTable.clone,
   entities: self.entities->EntityTables.clone,
   effects: Js.Dict.map(table => {

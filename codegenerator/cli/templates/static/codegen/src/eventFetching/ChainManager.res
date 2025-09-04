@@ -6,61 +6,6 @@ type t = {
   isInReorgThreshold: bool,
 }
 
-let getComparitorFromItem = (queueItem: Internal.eventItem) => {
-  let {timestamp, chain, blockNumber, logIndex} = queueItem
-  EventUtils.getEventComparator({
-    timestamp,
-    chainId: chain->ChainMap.Chain.toChainId,
-    blockNumber,
-    logIndex,
-  })
-}
-
-type multiChainEventComparitor = {
-  chain: ChainMap.Chain.t,
-  earliestEvent: FetchState.queueItem,
-}
-
-let getQueueItemComparitor = (earliestQueueItem: FetchState.queueItem, ~chain) => {
-  switch earliestQueueItem {
-  | Item({item}) => item->getComparitorFromItem
-  | NoItem({latestFetchedBlock: {blockTimestamp, blockNumber}}) => (
-      blockTimestamp,
-      chain->ChainMap.Chain.toChainId,
-      blockNumber,
-      0,
-    )
-  }
-}
-
-let isQueueItemEarlier = (a: multiChainEventComparitor, b: multiChainEventComparitor): bool => {
-  a.earliestEvent->getQueueItemComparitor(~chain=a.chain) <
-    b.earliestEvent->getQueueItemComparitor(~chain=b.chain)
-}
-
-/**
- It either returnes an earliest item among all chains, or None if no chains are actively indexing
- */
-let getOrderedNextItem = (fetchStates: ChainMap.t<FetchState.t>): option<
-  multiChainEventComparitor,
-> => {
-  fetchStates
-  ->ChainMap.entries
-  ->Array.reduce(None, (accum, (chain, fetchState)) => {
-    // If the fetch state has reached the end block we don't need to consider it
-    if fetchState->FetchState.isActivelyIndexing {
-      let earliestEvent = fetchState->FetchState.getEarliestEvent
-      let current: multiChainEventComparitor = {chain, earliestEvent}
-      switch accum {
-      | Some(previous) if isQueueItemEarlier(previous, current) => accum
-      | _ => Some(current)
-      }
-    } else {
-      accum
-    }
-  })
-}
-
 let makeFromConfig = (~config: Config.t): t => {
   let chainFetchers = config.chainMap->ChainMap.map(ChainFetcher.makeFromConfig(_, ~config))
   {
@@ -112,22 +57,22 @@ let makeFromDbState = async (~initialState: Persistence.initialState, ~config: C
   }
 }
 
-let getChainFetcher = (self: t, ~chain: ChainMap.Chain.t): ChainFetcher.t => {
-  self.chainFetchers->ChainMap.get(chain)
+let getChainFetcher = (chainManager: t, ~chain: ChainMap.Chain.t): ChainFetcher.t => {
+  chainManager.chainFetchers->ChainMap.get(chain)
 }
 
-let setChainFetcher = (self: t, chainFetcher: ChainFetcher.t) => {
+let setChainFetcher = (chainManager: t, chainFetcher: ChainFetcher.t) => {
   {
-    ...self,
-    chainFetchers: self.chainFetchers->ChainMap.set(
+    ...chainManager,
+    chainFetchers: chainManager.chainFetchers->ChainMap.set(
       ChainMap.Chain.makeUnsafe(~chainId=chainFetcher.chainConfig.id),
       chainFetcher,
     ),
   }
 }
 
-let getFetchStateWithData = (self: t, ~shouldDeepCopy=false): ChainMap.t<FetchState.t> => {
-  self.chainFetchers->ChainMap.map(cf => {
+let getFetchStateWithData = (chainManager: t, ~shouldDeepCopy=false): ChainMap.t<FetchState.t> => {
+  chainManager.chainFetchers->ChainMap.map(cf => {
     shouldDeepCopy ? cf.fetchState->FetchState.copy : cf.fetchState
   })
 }
@@ -136,129 +81,21 @@ let getFetchStateWithData = (self: t, ~shouldDeepCopy=false): ChainMap.t<FetchSt
 Simply calls getOrderedNextItem in isolation using the chain manager without
 the context of a batch
 */
-let nextItemIsNone = (self: t): bool => {
-  self->getFetchStateWithData->getOrderedNextItem === None
+let nextItemIsNone = (chainManager: t): bool => {
+  chainManager->getFetchStateWithData->Batch.getOrderedNextItem === None
 }
 
-type processingChainMetrics = {
-  batchSize: int,
-  targetBlockNumber: int,
-}
-
-let createOrderedBatch = (
-  ~maxBatchSize,
-  ~fetchStates: ChainMap.t<FetchState.t>,
-  ~mutProcessingMetricsByChainId: dict<processingChainMetrics>,
-) => {
-  let items = []
-
-  let rec loop = () =>
-    if items->Array.length < maxBatchSize {
-      switch fetchStates->getOrderedNextItem {
-      | Some({earliestEvent}) =>
-        switch earliestEvent {
-        | NoItem(_) => ()
-        | Item({item, popItemOffQueue}) => {
-            popItemOffQueue()
-            items->Js.Array2.push(item)->ignore
-            mutProcessingMetricsByChainId->Js.Dict.set(
-              item.chain->ChainMap.Chain.toChainId->Int.toString,
-              {
-                batchSize: switch mutProcessingMetricsByChainId->Utils.Dict.dangerouslyGetNonOption(
-                  item.chain->ChainMap.Chain.toChainId->Int.toString,
-                ) {
-                | Some(metrics) => metrics.batchSize + 1
-                | None => 1
-                },
-                targetBlockNumber: item.blockNumber,
-              },
-            )
-            loop()
-          }
-        }
-      | _ => ()
-      }
-    }
-  loop()
-
-  items
-}
-
-let createUnorderedBatch = (
-  ~maxBatchSize,
-  ~fetchStates: ChainMap.t<FetchState.t>,
-  ~mutProcessingMetricsByChainId: dict<processingChainMetrics>,
-) => {
-  let items = []
-
-  let preparedFetchStates =
-    fetchStates
-    ->ChainMap.values
-    ->FetchState.filterAndSortForUnorderedBatch(~maxBatchSize)
-
-  let idx = ref(0)
-  let preparedNumber = preparedFetchStates->Array.length
-  let batchSize = ref(0)
-
-  // Accumulate items for all actively indexing chains
-  // the way to group as many items from a single chain as possible
-  // This way the loaders optimisations will hit more often
-  while batchSize.contents < maxBatchSize && idx.contents < preparedNumber {
-    let fetchState = preparedFetchStates->Array.getUnsafe(idx.contents)
-    let batchSizeBeforeTheChain = batchSize.contents
-
-    let rec loop = () =>
-      if batchSize.contents < maxBatchSize {
-        let earliestEvent = fetchState->FetchState.getEarliestEvent
-        switch earliestEvent {
-        | NoItem(_) => ()
-        | Item({item, popItemOffQueue}) => {
-            popItemOffQueue()
-            items->Js.Array2.push(item)->ignore
-            batchSize := batchSize.contents + 1
-            loop()
-          }
-        }
-      }
-    loop()
-
-    let chainBatchSize = batchSize.contents - batchSizeBeforeTheChain
-    if chainBatchSize > 0 {
-      mutProcessingMetricsByChainId->Js.Dict.set(
-        fetchState.chainId->Int.toString,
-        {
-          batchSize: chainBatchSize,
-          // If there's the chainBatchSize,
-          // then it's guaranteed that the last item belongs to the chain
-          targetBlockNumber: (items->Utils.Array.last->Option.getUnsafe).blockNumber,
-        },
-      )
-    }
-
-    idx := idx.contents + 1
-  }
-
-  items
-}
-
-type batch = {
-  items: array<Internal.eventItem>,
-  processingMetricsByChainId: dict<processingChainMetrics>,
-  fetchStates: ChainMap.t<FetchState.t>,
-  dcsToStoreByChainId: dict<array<FetchState.indexingContract>>,
-}
-
-let createBatch = (self: t, ~maxBatchSize: int) => {
+let createBatch = (chainManager: t, ~maxBatchSize: int): Batch.t => {
   let refTime = Hrtime.makeTimer()
 
   //Make a copy of the queues and fetch states since we are going to mutate them
-  let fetchStates = self->getFetchStateWithData(~shouldDeepCopy=true)
+  let fetchStates = chainManager->getFetchStateWithData(~shouldDeepCopy=true)
 
-  let mutProcessingMetricsByChainId = Js.Dict.empty()
-  let items = if self.isUnorderedMultichainMode || fetchStates->ChainMap.size === 1 {
-    createUnorderedBatch(~maxBatchSize, ~fetchStates, ~mutProcessingMetricsByChainId)
+  let sizePerChain = Js.Dict.empty()
+  let items = if chainManager.isUnorderedMultichainMode || fetchStates->ChainMap.size === 1 {
+    Batch.popUnorderedBatchItems(~maxBatchSize, ~fetchStates, ~sizePerChain)
   } else {
-    createOrderedBatch(~maxBatchSize, ~fetchStates, ~mutProcessingMetricsByChainId)
+    Batch.popOrderedBatchItems(~maxBatchSize, ~fetchStates, ~sizePerChain)
   }
 
   let dcsToStoreByChainId = Js.Dict.empty()
@@ -269,6 +106,38 @@ let createBatch = (self: t, ~maxBatchSize: int) => {
     | None => ()
     }
     fetchState->FetchState.updateInternal(~dcsToStore=None)
+  })
+
+  let progressedChains = []
+  chainManager.chainFetchers
+  ->ChainMap.entries
+  ->Array.forEach(((chain, chainFetcher)) => {
+    let updatedFetchState = fetchStates->ChainMap.get(chain)
+    let nextProgressBlockNumber = updatedFetchState->FetchState.getProgressBlockNumber
+    let maybeItemsCountInBatch =
+      sizePerChain->Utils.Dict.dangerouslyGetNonOption(
+        chain->ChainMap.Chain.toChainId->Int.toString,
+      )
+    if (
+      chainFetcher.committedProgressBlockNumber < nextProgressBlockNumber ||
+        // It should never be 0
+        maybeItemsCountInBatch->Option.isSome
+    ) {
+      let chainBatchSize = maybeItemsCountInBatch->Option.getWithDefault(0)
+      progressedChains
+      ->Js.Array2.push(
+        (
+          {
+            chainId: chain->ChainMap.Chain.toChainId,
+            batchSize: chainBatchSize,
+            progressBlockNumber: nextProgressBlockNumber,
+            progressNextBlockLogIndex: updatedFetchState->FetchState.getProgressNextBlockLogIndex,
+            totalEventsProcessed: chainFetcher.numEventsProcessed + chainBatchSize,
+          }: Batch.progressedChain
+        ),
+      )
+      ->ignore
+    }
   })
 
   let batchSize = items->Array.length
@@ -304,26 +173,26 @@ let createBatch = (self: t, ~maxBatchSize: int) => {
 
   {
     items,
-    processingMetricsByChainId: mutProcessingMetricsByChainId,
+    progressedChains,
     fetchStates,
     dcsToStoreByChainId,
   }
 }
 
-let isFetchingAtHead = self =>
-  self.chainFetchers
+let isFetchingAtHead = chainManager =>
+  chainManager.chainFetchers
   ->ChainMap.values
   ->Js.Array2.every(ChainFetcher.isFetchingAtHead)
 
-let isActivelyIndexing = self =>
-  self.chainFetchers
+let isActivelyIndexing = chainManager =>
+  chainManager.chainFetchers
   ->ChainMap.values
   ->Js.Array2.every(ChainFetcher.isActivelyIndexing)
 
-let getSafeReorgBlocks = (self: t): EntityHistory.safeReorgBlocks => {
+let getSafeReorgBlocks = (chainManager: t): EntityHistory.safeReorgBlocks => {
   let chainIds = []
   let blockNumbers = []
-  self.chainFetchers
+  chainManager.chainFetchers
   ->ChainMap.values
   ->Array.forEach(cf => {
     chainIds->Js.Array2.push(cf.chainConfig.id)->ignore

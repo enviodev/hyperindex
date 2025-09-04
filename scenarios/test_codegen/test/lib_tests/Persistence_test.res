@@ -2,7 +2,7 @@ open RescriptMocha
 
 describe("Test Persistence layer init", () => {
   Async.it("Should initialize the persistence layer without the user entities", async () => {
-    let storageMock = Mock.Storage.make([#isInitialized, #loadInitialState, #initialize])
+    let storageMock = Mock.Storage.make([#isInitialized, #resumeInitialState, #initialize])
 
     let persistence = Persistence.make(~userEntities=[], ~allEnums=[], ~storage=storageMock.storage)
 
@@ -58,7 +58,7 @@ describe("Test Persistence layer init", () => {
       (
         storageMock.isInitializedCalls->Array.length,
         storageMock.initializeCalls,
-        storageMock.loadInitialStateCalls->Array.length,
+        storageMock.resumeInitialStateCalls->Array.length,
       ),
       (
         1,
@@ -98,7 +98,7 @@ describe("Test Persistence layer init", () => {
       (
         storageMock.isInitializedCalls->Array.length,
         storageMock.initializeCalls->Array.length,
-        storageMock.loadInitialStateCalls->Array.length,
+        storageMock.resumeInitialStateCalls->Array.length,
       ),
       (1, 1, 0),
       ~message=`Calling init the second time shouldn't do anything`,
@@ -126,7 +126,7 @@ describe("Test Persistence layer init", () => {
   })
 
   Async.it("Should skip initialization when storage is already initialized", async () => {
-    let storageMock = Mock.Storage.make([#isInitialized, #loadInitialState])
+    let storageMock = Mock.Storage.make([#isInitialized, #resumeInitialState])
 
     let persistence = Persistence.make(~userEntities=[], ~allEnums=[], ~storage=storageMock.storage)
 
@@ -155,7 +155,7 @@ describe("Test Persistence layer init", () => {
       (
         storageMock.isInitializedCalls->Array.length,
         storageMock.initializeCalls->Array.length,
-        storageMock.loadInitialStateCalls->Array.length,
+        storageMock.resumeInitialStateCalls->Array.length,
       ),
       (1, 0, 1),
       ~message=`Storage should be already initialized without additional initialize calls.

@@ -30,7 +30,10 @@ let rec startInternal = async (throttler: t) => {
       switch await fn() {
       | exception exn =>
         throttler.logger->Pino.errorExn(
-          Pino.createPinoMessageWithError("Scheduled action failed in throttler", exn),
+          Pino.createPinoMessageWithError(
+            "Scheduled action failed in throttler",
+            exn->Utils.prettifyExn,
+          ),
         )
       | _ => ()
       }

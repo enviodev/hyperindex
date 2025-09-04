@@ -96,7 +96,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
     let mockChainFetcher: ChainFetcher.t = {
       timestampCaughtUpToHeadOrEndblock: None,
       dbFirstEventBlockNumber: None,
-      latestProcessedBlock: None,
+      committedProgressBlockNumber: -1,
       numEventsProcessed: 0,
       numBatchesFetched: 0,
       startBlock: 0,
@@ -172,8 +172,8 @@ describe("ChainManager", () => {
             let firstEventInBlock = items[0]->Option.getExn
 
             Assert.equal(
-              firstEventInBlock->ChainManager.getComparitorFromItem >
-                lastEvent->ChainManager.getComparitorFromItem,
+              firstEventInBlock->Batch.getComparitorFromItem >
+                lastEvent->Batch.getComparitorFromItem,
               true,
               ~message="Check that first event in this block group is AFTER the last event before this block group",
             )
@@ -225,7 +225,7 @@ describe("ChainManager", () => {
 // NOTE: this is likely a temporary feature - can delete if feature no longer important.
 describe("getOrderedNextItem", () => {
   describe("optimistic-ordered-mode", () => {
-    let getOrderedNextItem_ordered = ChainManager.getOrderedNextItem
+    let getOrderedNextItem_ordered = Batch.getOrderedNextItem
 
     let makeNoItem = timestamp => FetchState.NoItem({
       latestFetchedBlock: {blockTimestamp: timestamp, blockNumber: 0},

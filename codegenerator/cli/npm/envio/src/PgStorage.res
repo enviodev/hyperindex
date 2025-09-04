@@ -63,7 +63,6 @@ let makeInitializeTransaction = (
   ~isEmptyPgSchema=false,
 ) => {
   let generalTables = [
-    InternalTable.EventSyncState.table,
     InternalTable.Chains.table,
     InternalTable.PersistedState.table,
     InternalTable.EndOfBlockRangeScannedData.table,
@@ -566,10 +565,10 @@ let make = (
   ])
 
   let isInitialized = async () => {
-    let envioTables =
-      await sql->Postgres.unsafe(
-        `SELECT table_schema FROM information_schema.tables WHERE table_schema = '${pgSchema}' AND table_name = '${InternalTable.EventSyncState.table.tableName}' OR table_name = '${InternalTable.Chains.table.tableName}';`,
-      )
+    let envioTables = await sql->Postgres.unsafe(
+      `SELECT table_schema FROM information_schema.tables WHERE table_schema = '${pgSchema}' AND table_name = '${// This is for indexer before envio@2.28
+        "event_sync_state"}' OR table_name = '${InternalTable.Chains.table.tableName}';`,
+    )
     envioTables->Utils.Array.notEmpty
   }
 
@@ -671,7 +670,9 @@ let make = (
         // This means that the schema is used for something else than envio.
         !(
           schemaTableNames->Js.Array2.some(table =>
-            table.tableName === InternalTable.EventSyncState.table.tableName
+            table.tableName === InternalTable.Chains.table.tableName ||
+              // Case for indexer before envio@2.28
+              table.tableName === "event_sync_state"
           )
         )
     ) {
@@ -893,7 +894,7 @@ let make = (
     }
   }
 
-  let loadInitialState = async (): Persistence.initialState => {
+  let resumeInitialState = async (): Persistence.initialState => {
     let (cache, chains) = await Promise.all2((
       restoreEffectCache(~withUpload=false),
       sql
@@ -902,6 +903,13 @@ let make = (
       )
       ->(Utils.magic: promise<array<unknown>> => promise<array<InternalTable.Chains.t>>),
     ))
+
+    if chains->Utils.Array.notEmpty {
+      let () =
+        await sql->Postgres.unsafe(
+          InternalTable.DynamicContractRegistry.makeCleanUpOnRestartQuery(~pgSchema, ~chains),
+        )
+    }
 
     {
       cleanRun: false,
@@ -913,7 +921,7 @@ let make = (
   {
     isInitialized,
     initialize,
-    loadInitialState,
+    resumeInitialState,
     loadByFieldOrThrow,
     loadByIdsOrThrow,
     setOrThrow,

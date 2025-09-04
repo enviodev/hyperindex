@@ -7,13 +7,6 @@ import type {Json_t as Js_Json_t} from '../../src/Js.shim';
 
 import type {t as Address_t} from '../../src/Address.gen';
 
-export type EventSyncState_t = {
-  readonly chain_id: number; 
-  readonly block_number: number; 
-  readonly log_index: number; 
-  readonly block_timestamp: number
-};
-
 export type RawEvents_t = {
   readonly chain_id: number; 
   readonly event_id: bigint; 

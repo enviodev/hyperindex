@@ -50,18 +50,13 @@ let getEntityHistoryItems = (entityUpdates, ~containsRollbackDiffChange) => {
 
 let executeBatch = async (
   sql,
+  ~progressedChains: array<Batch.progressedChain>,
   ~inMemoryStore: InMemoryStore.t,
   ~isInReorgThreshold,
   ~config,
   ~escapeTables=?,
 ) => {
   let specificError = ref(None)
-
-  let setEventSyncState = executeSet(
-    _,
-    ~dbFunction=DbFunctions.EventSyncState.batchSet,
-    ~items=inMemoryStore.eventSyncState->InMemoryTable.values,
-  )
 
   let setRawEvents = executeSet(
     _,
@@ -240,7 +235,17 @@ let executeBatch = async (
         | None => ()
         }
 
-        await Belt.Array.concatMany([[setEventSyncState, setRawEvents], setEntities])
+        await Belt.Array.concatMany([
+          [
+            sql =>
+              sql->InternalTable.Chains.setProgressedChains(
+                ~pgSchema=Db.publicSchema,
+                ~progressedChains,
+              ),
+            setRawEvents,
+          ],
+          setEntities,
+        ])
         ->Belt.Array.map(dbFunc => sql->dbFunc)
         ->Promise.all
       }),

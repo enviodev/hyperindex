@@ -130,7 +130,7 @@ type action =
       chain: chain,
     })
   | FinishWaitingForNewBlock({chain: chain, currentBlockHeight: int})
-  | EventBatchProcessed({processingMetricsByChainId: dict<ChainManager.processingChainMetrics>})
+  | EventBatchProcessed({progressedChains: array<Batch.progressedChain>})
   | SetCurrentlyProcessing(bool)
   | EnterReorgThreshold
   | UpdateQueues({
@@ -139,7 +139,6 @@ type action =
       // set by EnterReorgThreshold
       shouldEnterReorgThreshold: bool,
     })
-  | SetSyncedChains
   | SuccessExit
   | ErrorExit(ErrorHandling.t)
   | SetRollbackState(InMemoryStore.t, ChainManager.t)
@@ -172,33 +171,29 @@ let updateChainFetcherCurrentBlockHeight = (chainFetcher: ChainFetcher.t, ~curre
 }
 
 let updateChainMetadataTable = (cm: ChainManager.t, ~throttler: Throttler.t) => {
-  let chainsData: array<InternalTable.Chains.t> =
-    cm.chainFetchers
-    ->ChainMap.values
-    ->Belt.Array.map((cf): InternalTable.Chains.t => {
-      let latestFetchedBlock = cf.fetchState->FetchState.getLatestFullyFetchedBlock
+  let chainsData: dict<InternalTable.Chains.metaFields> = Js.Dict.empty()
+
+  cm.chainFetchers
+  ->ChainMap.values
+  ->Belt.Array.forEach(cf => {
+    let latestFetchedBlock = cf.fetchState->FetchState.getLatestFullyFetchedBlock
+    chainsData->Js.Dict.set(
+      cf.chainConfig.id->Belt.Int.toString,
       {
-        id: cf.chainConfig.id,
-        startBlock: cf.chainConfig.startBlock,
         blockHeight: cf.currentBlockHeight,
-        endBlock: cf.endBlock->Js.Null.fromOption,
         firstEventBlockNumber: cf->ChainFetcher.getFirstEventBlockNumber->Js.Null.fromOption,
-        latestProcessedBlock: cf.latestProcessedBlock->Js.Null.fromOption,
-        numEventsProcessed: cf.numEventsProcessed,
         isHyperSync: (cf.sourceManager->SourceManager.getActiveSource).poweredByHyperSync,
-        numBatchesFetched: cf.numBatchesFetched,
         latestFetchedBlockNumber: latestFetchedBlock.blockNumber,
         timestampCaughtUpToHeadOrEndblock: cf.timestampCaughtUpToHeadOrEndblock->Js.Null.fromOption,
-      }
-    })
+        numBatchesFetched: cf.numBatchesFetched,
+      },
+    )
+  })
+
   //Don't await this set, it can happen in its own time
   throttler->Throttler.schedule(() =>
     Db.sql
-    ->InternalTable.Chains.setValues(~pgSchema=Db.publicSchema, ~chainsData)
-    ->Promise.catch(err => {
-      Logging.error(err->Utils.prettifyExn)
-      Promise.resolve(%raw(`null`))
-    })
+    ->InternalTable.Chains.setMeta(~pgSchema=Db.publicSchema, ~chainsData)
     ->Promise.ignoreValue
   )
 }
@@ -207,63 +202,43 @@ let updateChainMetadataTable = (cm: ChainManager.t, ~throttler: Throttler.t) => 
 Takes in a chain manager and sets all chains timestamp caught up to head
 when valid state lines up and returns an updated chain manager
 */
-let checkAndSetSyncedChains = (
+let updateProgressedChains = (
   chainManager: ChainManager.t,
-  ~nextQueueItemIsKnownNone=false,
-  ~shouldSetPrometheusSynced=true,
-  ~processingMetricsByChainId=?,
+  ~progressedChains: array<Batch.progressedChain>,
 ) => {
-  let nextQueueItemIsNone = nextQueueItemIsKnownNone || chainManager->ChainManager.nextItemIsNone
+  let nextQueueItemIsNone = chainManager->ChainManager.nextItemIsNone
 
   let allChainsAtHead = chainManager->ChainManager.isFetchingAtHead
   //Update the timestampCaughtUpToHeadOrEndblock values
   let chainFetchers = chainManager.chainFetchers->ChainMap.map(cf => {
     let chain = ChainMap.Chain.makeUnsafe(~chainId=cf.chainConfig.id)
 
-    // None if the chain wasn't processing.
-    // But we still want to update the latest processed block
-    // when there are no events to precess
-    let maybeMetrics: option<ChainManager.processingChainMetrics> =
-      processingMetricsByChainId->Option.flatMap(map =>
-        map->Utils.Dict.dangerouslyGetNonOption(chain->ChainMap.Chain.toString)
+    let maybeProgressData =
+      progressedChains->Js.Array2.find(progressedChain =>
+        progressedChain.chainId === chain->ChainMap.Chain.toChainId
       )
 
-    // We want to recalculate the prom metrics
-    // even when processingMetricsByChainId is not provided - empty batch
-    let latestProcessedBlock = if cf->ChainFetcher.hasNoMoreEventsToProcess {
-      Pervasives.max(FetchState.getLatestFullyFetchedBlock(cf.fetchState).blockNumber, 0)->Some
-    } else {
-      switch maybeMetrics {
-      | Some(metrics) => Some(metrics.targetBlockNumber)
-      | None => cf.latestProcessedBlock
+    let cf = switch maybeProgressData {
+    | Some(progressData) => {
+        if cf.committedProgressBlockNumber !== progressData.progressBlockNumber {
+          Prometheus.ProgressBlockNumber.set(
+            ~blockNumber=progressData.progressBlockNumber,
+            ~chainId=chain->ChainMap.Chain.toChainId,
+          )
+        }
+        if cf.numEventsProcessed !== progressData.totalEventsProcessed {
+          Prometheus.ProgressEventsCount.set(
+            ~processedCount=progressData.totalEventsProcessed,
+            ~chainId=chain->ChainMap.Chain.toChainId,
+          )
+        }
+        {
+          ...cf,
+          committedProgressBlockNumber: progressData.progressBlockNumber,
+          numEventsProcessed: progressData.totalEventsProcessed,
+        }
       }
-    }
-
-    switch latestProcessedBlock {
-    | Some(latestProcessedBlockNumber) =>
-      Prometheus.ProgressBlockNumber.set(
-        ~blockNumber=latestProcessedBlockNumber,
-        ~chainId=chain->ChainMap.Chain.toChainId,
-      )
-    | None => ()
-    }
-
-    let numEventsProcessed = switch maybeMetrics {
-    | Some(metrics) => {
-        let processedCount = cf.numEventsProcessed + metrics.batchSize
-        Prometheus.ProgressEventsCount.set(
-          ~processedCount,
-          ~chainId=chain->ChainMap.Chain.toChainId,
-        )
-        processedCount
-      }
-    | None => cf.numEventsProcessed
-    }
-
-    let cf = {
-      ...cf,
-      latestProcessedBlock,
-      numEventsProcessed,
+    | None => cf
     }
 
     /* strategy for TUI synced status:
@@ -334,28 +309,13 @@ let checkAndSetSyncedChains = (
     ->ChainMap.values
     ->Array.every(cf => cf.timestampCaughtUpToHeadOrEndblock->Option.isSome)
 
-  if allChainsSyncedAtHead && shouldSetPrometheusSynced {
+  if allChainsSyncedAtHead {
     Prometheus.setAllChainsSyncedToHead()
   }
 
   {
     ...chainManager,
     chainFetchers,
-  }
-}
-
-let updateLatestProcessedBlocks = (
-  ~state: t,
-  ~processingMetricsByChainId: dict<ChainManager.processingChainMetrics>,
-  ~shouldSetPrometheusSynced=true,
-) => {
-  {
-    ...state,
-    chainManager: state.chainManager->checkAndSetSyncedChains(
-      ~shouldSetPrometheusSynced,
-      ~processingMetricsByChainId,
-    ),
-    currentlyProcessingBatch: false,
   }
 }
 
@@ -493,17 +453,8 @@ let submitPartitionQueryResponse = (
     ->Utils.unwrapResultExn
     ->updateChainFetcherCurrentBlockHeight(~currentBlockHeight)
 
-  let hasNoMoreEventsToProcess = updatedChainFetcher->ChainFetcher.hasNoMoreEventsToProcess
-
-  let latestProcessedBlock = if hasNoMoreEventsToProcess {
-    FetchState.getLatestFullyFetchedBlock(updatedChainFetcher.fetchState).blockNumber->Some
-  } else {
-    updatedChainFetcher.latestProcessedBlock
-  }
-
   let updatedChainFetcher = {
     ...updatedChainFetcher,
-    latestProcessedBlock,
     numBatchesFetched: updatedChainFetcher.numBatchesFetched + 1,
   }
 
@@ -656,19 +607,44 @@ let actionReducer = (state: t, action: action) => {
       ~query,
       ~chain,
     )
-  | EventBatchProcessed({processingMetricsByChainId}) =>
+  | EventBatchProcessed({progressedChains}) =>
     let maybePruneEntityHistory =
       state.config->Config.shouldPruneHistory(
         ~isInReorgThreshold=state.chainManager.isInReorgThreshold,
       )
         ? [PruneStaleEntityHistory]
         : []
+
+    let state = {
+      ...state,
+      chainManager: state.chainManager->updateProgressedChains(~progressedChains),
+      currentlyProcessingBatch: false,
+    }
+
+    let shouldExit = EventProcessing.allChainsEventsProcessedToEndblock(
+      state.chainManager.chainFetchers,
+    )
+      ? {
+          // state.config.persistence.storage
+          Logging.info("All chains are caught up to end blocks.")
+
+          // Keep the indexer process running in TUI mode
+          // so the Dev Console server stays working
+          if state.shouldUseTui {
+            NoExit
+          } else {
+            ExitWithSuccess
+          }
+        }
+      : NoExit
+
     (
-      updateLatestProcessedBlocks(~state, ~processingMetricsByChainId),
-      [UpdateChainMetaDataAndCheckForExit(NoExit), ProcessEventBatch]->Array.concat(
+      state,
+      [UpdateChainMetaDataAndCheckForExit(shouldExit), ProcessEventBatch]->Array.concat(
         maybePruneEntityHistory,
       ),
     )
+
   | SetCurrentlyProcessing(currentlyProcessingBatch) => ({...state, currentlyProcessingBatch}, [])
   | EnterReorgThreshold =>
     Logging.info("Reorg threshold reached")
@@ -694,31 +670,6 @@ let actionReducer = (state: t, action: action) => {
       },
       [NextQuery(CheckAllChains)],
     )
-  | SetSyncedChains => {
-      let shouldExit = EventProcessing.allChainsEventsProcessedToEndblock(
-        state.chainManager.chainFetchers,
-      )
-        ? {
-            // state.config.persistence.storage
-            Logging.info("All chains are caught up to the endblock.")
-
-            // Keep the indexer process running in TUI mode
-            // so the Dev Console server stays working
-            if state.shouldUseTui {
-              NoExit
-            } else {
-              ExitWithSuccess
-            }
-          }
-        : NoExit
-      (
-        {
-          ...state,
-          chainManager: state.chainManager->checkAndSetSyncedChains(~nextQueueItemIsKnownNone=true),
-        },
-        [UpdateChainMetaDataAndCheckForExit(shouldExit)],
-      )
-    }
   | UpdateQueues({updatedFetchStates, shouldEnterReorgThreshold}) =>
     let chainFetchers = state.chainManager.chainFetchers->ChainMap.mapWithKey((chain, cf) => {
       let fs = ChainMap.get(updatedFetchStates, chain)
@@ -961,8 +912,17 @@ let injectedTaskReducer = (
       }
 
       switch batch {
-      | {items: []} => dispatchAction(SetSyncedChains) //Known that there are no items available on the queue so safely call this action
-      | {items, processingMetricsByChainId, fetchStates, dcsToStoreByChainId} =>
+      | {progressedChains: []} => ()
+      | {items: [], progressedChains} =>
+        dispatchAction(SetCurrentlyProcessing(true))
+        // For this case there shouldn't be any FetchState changes
+        // so we don't dispatch UpdateQueues - only update the progress for chains without events
+        await Db.sql->InternalTable.Chains.setProgressedChains(
+          ~pgSchema=Db.publicSchema,
+          ~progressedChains,
+        )
+        dispatchAction(EventBatchProcessed({progressedChains: progressedChains}))
+      | {items, progressedChains, fetchStates, dcsToStoreByChainId} =>
         dispatchAction(SetCurrentlyProcessing(true))
         dispatchAction(UpdateQueues({updatedFetchStates: fetchStates, shouldEnterReorgThreshold}))
 
@@ -988,19 +948,22 @@ let injectedTaskReducer = (
         ->ChainMap.keys
         ->Array.forEach(chain => {
           let chainId = chain->ChainMap.Chain.toChainId
-          switch processingMetricsByChainId->Utils.Dict.dangerouslyGetNonOption(
-            chain->ChainMap.Chain.toString,
+          switch progressedChains->Js.Array2.find(progressedChain =>
+            progressedChain.chainId === chainId
           ) {
-          | Some(metrics) =>
-            Prometheus.ProcessingBatchSize.set(~batchSize=metrics.batchSize, ~chainId)
-            Prometheus.ProcessingBlockNumber.set(~blockNumber=metrics.targetBlockNumber, ~chainId)
+          | Some(progressData) =>
+            Prometheus.ProcessingBatchSize.set(~batchSize=progressData.batchSize, ~chainId)
+            Prometheus.ProcessingBlockNumber.set(
+              ~blockNumber=progressData.progressBlockNumber,
+              ~chainId,
+            )
           | None => Prometheus.ProcessingBatchSize.set(~batchSize=0, ~chainId)
           }
         })
 
         switch await EventProcessing.processEventBatch(
           ~items,
-          ~processingMetricsByChainId,
+          ~progressedChains,
           ~inMemoryStore,
           ~isInReorgThreshold,
           ~loadManager=state.loadManager,
@@ -1019,10 +982,7 @@ let injectedTaskReducer = (
             dispatchAction(ResetRollbackState)
           }
           switch res {
-          | Ok() =>
-            dispatchAction(
-              EventBatchProcessed({processingMetricsByChainId: processingMetricsByChainId}),
-            )
+          | Ok() => dispatchAction(EventBatchProcessed({progressedChains: progressedChains}))
           | Error(errHandler) => dispatchAction(ErrorExit(errHandler))
           }
         }

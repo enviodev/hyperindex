@@ -130,6 +130,13 @@ module Dict = {
   let shallowCopy: dict<'a> => dict<'a> = %raw(`(dict) => ({...dict})`)
 
   let size = dict => dict->Js.Dict.keys->Js.Array2.length
+
+  @set_index
+  external setByInt: (dict<'a>, int, 'a) => unit = ""
+
+  let incrementByInt: (dict<int>, int) => unit = %raw(`(dict, key) => {
+    dict[key]++
+  }`)
 }
 
 module Math = {

@@ -78,7 +78,7 @@ type poolConfig = {
   // types?: array<'a>, // Array of custom types, see more below (default: [])
   onnotice?: string => unit, // Default console.log, set false to silence NOTICE (default: fn)
   onParameter?: (string, string) => unit, // (key, value) when server param change (default: fn)
-  debug?: 'a. 'a => unit, //(connection, query, params, types) => unit, // Is called with (connection, query, params, types) (default: fn)
+  debug?: (~connection: unknown, ~query: unknown, ~params: unknown, ~types: unknown) => unit, // Is called with (connection, query, params, types)
   socket?: unit => unit, // fn returning custom socket to use (default: fn)
   transform?: transformConfig,
   connection?: connectionConfig,

@@ -32,7 +32,7 @@ type storage = {
     ~entities: array<Internal.entityConfig>=?,
     ~enums: array<Internal.enumConfig<Internal.enum>>=?,
   ) => promise<initialState>,
-  loadInitialState: unit => promise<initialState>,
+  resumeInitialState: unit => promise<initialState>,
   @raises("StorageError")
   loadByIdsOrThrow: 'item. (
     ~ids: array<string>,
@@ -123,14 +123,12 @@ let init = {
         persistence.storageStatus = Initializing(promise)
         if reset || !(await persistence.storage.isInitialized()) {
           Logging.info(`Initializing the indexer storage...`)
-
           let initialState = await persistence.storage.initialize(
             ~entities=persistence.allEntities,
             ~enums=persistence.allEnums,
             ~chainConfigs,
           )
-
-          Logging.info(`The indexer storage is ready. Uploading cache...`)
+          Logging.info(`The indexer storage is ready. Starting indexing!`)
           persistence.storageStatus = Ready(initialState)
         } else if (
           // In case of a race condition,
@@ -140,8 +138,29 @@ let init = {
           | _ => false
           }
         ) {
-          Logging.info(`The indexer storage is ready.`)
-          persistence.storageStatus = Ready(await persistence.storage.loadInitialState())
+          Logging.info(`Found existing indexer storage. Resuming indexing state...`)
+          let initialState = await persistence.storage.resumeInitialState()
+          persistence.storageStatus = Ready(initialState)
+          let checkpoints = Js.Dict.empty()
+          initialState.chains->Js.Array2.forEach(c => {
+            let checkpoint = switch c.progressNextBlockLogIndex {
+            | Value(
+                logIndex,
+              ) => // Latest processed log index (not necessarily processed by the indexer)
+              {
+                "blockNumber": c.progressBlockNumber + 1,
+                "logIndex": logIndex,
+              }
+            | Null =>
+              // Or simply the latest processed block number (might be -1 if not set)
+              c.progressBlockNumber->Utils.magic
+            }
+            checkpoints->Utils.Dict.setByInt(c.id, checkpoint)
+          })
+          Logging.info({
+            "msg": `Successfully resumed indexing state! Continuing from the last checkpoint.`,
+            "checkpoints": checkpoints,
+          })
         }
         resolveRef.contents()
       }
