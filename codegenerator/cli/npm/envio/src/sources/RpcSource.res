@@ -16,7 +16,13 @@ let getKnownBlock = (provider, blockNumber) =>
     }
   )
 
-let rec getKnownBlockWithBackoff = async (~provider, ~sourceName, ~chain, ~blockNumber, ~backoffMsOnFailure) =>
+let rec getKnownBlockWithBackoff = async (
+  ~provider,
+  ~sourceName,
+  ~chain,
+  ~blockNumber,
+  ~backoffMsOnFailure,
+) =>
   switch await getKnownBlock(provider, blockNumber) {
   | exception err =>
     Logging.warn({
@@ -141,7 +147,7 @@ let getSuggestedBlockIntervalFromExn = {
                       switch baseRangeRegExp->Js.Re.exec_(message) {
                       | Some(_) => Some(2000)
                       | None =>
-                                                switch blastPaidRegExp->Js.Re.exec_(message) {
+                        switch blastPaidRegExp->Js.Re.exec_(message) {
                         | Some(execResult) => extractBlockRange(execResult)
                         | None =>
                           switch chainstackRegExp->Js.Re.exec_(message) {
@@ -187,7 +193,7 @@ let getNextPage = (
   ~addresses,
   ~topicQuery,
   ~loadBlock,
-  ~syncConfig as sc: Config.syncConfig,
+  ~syncConfig as sc: InternalConfig.sourceSync,
   ~provider,
   ~suggestedBlockIntervals,
   ~partitionId,
@@ -434,7 +440,7 @@ let sanitizeUrl = (url: string) => {
 
 type options = {
   sourceFor: Source.sourceFor,
-  syncConfig: Config.syncConfig,
+  syncConfig: InternalConfig.sourceSync,
   url: string,
   chain: ChainMap.Chain.t,
   contracts: array<Internal.evmContractConfig>,
@@ -478,7 +484,13 @@ let make = ({sourceFor, syncConfig, url, chain, contracts, eventRouter}: options
 
   let blockLoader = LazyLoader.make(
     ~loaderFn=blockNumber =>
-      getKnownBlockWithBackoff(~provider, ~sourceName=name, ~chain, ~backoffMsOnFailure=1000, ~blockNumber),
+      getKnownBlockWithBackoff(
+        ~provider,
+        ~sourceName=name,
+        ~chain,
+        ~backoffMsOnFailure=1000,
+        ~blockNumber,
+      ),
     ~onError=(am, ~exn) => {
       Logging.error({
         "err": exn,
@@ -634,9 +646,9 @@ let make = ({sourceFor, syncConfig, url, chain, contracts, eventRouter}: options
                 (
                   {
                     eventConfig: (eventConfig :> Internal.eventConfig),
-                    timestamp: block->Types.Block.getTimestamp,
+                    timestamp: (block->Utils.magic)["timestamp"],
                     chain,
-                    blockNumber: block->Types.Block.getNumber,
+                    blockNumber: (block->Utils.magic)["number"],
                     logIndex: log.logIndex,
                     event: {
                       chainId: chain->ChainMap.Chain.toChainId,
