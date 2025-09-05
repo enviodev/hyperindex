@@ -57,14 +57,14 @@ let makeConfigContract = (contractName, address): FetchState.indexingContract =>
   }
 }
 
-let mockEvent = (~blockNumber, ~logIndex=0, ~chainId=1): Internal.item => {
+let mockEvent = (~blockNumber, ~logIndex=0, ~chainId=1): Internal.item => Internal.Event({
   timestamp: blockNumber * 15,
   chain: ChainMap.Chain.makeUnsafe(~chainId),
   blockNumber,
   eventConfig: Utils.magic("Mock eventConfig in fetchstate test"),
   logIndex,
   event: Utils.magic("Mock event in fetchstate test"),
-}
+})
 
 let baseEventConfig = (Mock.evmEventConfig(
   ~id="0",
@@ -148,7 +148,6 @@ describe("FetchState.make", () => {
           blockTimestamp: 0,
         },
         queue: [],
-        firstEventBlockNumber: None,
         normalSelection: fetchState.normalSelection,
         chainId: 0,
         indexingContracts: fetchState.indexingContracts,
@@ -217,7 +216,6 @@ describe("FetchState.make", () => {
           },
           queue: [],
           endBlock: undefined,
-          firstEventBlockNumber: None,
           normalSelection: fetchState.normalSelection,
           chainId,
           indexingContracts: fetchState.indexingContracts,
@@ -280,7 +278,6 @@ describe("FetchState.make", () => {
           },
           queue: [],
           endBlock: undefined,
-          firstEventBlockNumber: None,
           normalSelection: fetchState.normalSelection,
           chainId,
           indexingContracts: fetchState.indexingContracts,
@@ -374,7 +371,6 @@ describe("FetchState.make", () => {
             blockTimestamp: 0,
           },
           queue: [],
-          firstEventBlockNumber: None,
           endBlock: undefined,
           normalSelection: fetchState.normalSelection,
           chainId,
@@ -744,7 +740,6 @@ describe("FetchState.registerDynamicContracts", () => {
       {
         ...fetchState,
         dcsToStore: Some([dc1, dc3, dc2]),
-        firstEventBlockNumber: undefined,
         indexingContracts: updatedFetchState.indexingContracts,
         nextPartitionIndex: 2,
         partitions: fetchState.partitions->Array.concat([
@@ -857,7 +852,6 @@ describe("FetchState.registerDynamicContracts", () => {
             blockTimestamp: 0,
           },
           queue: [],
-          firstEventBlockNumber: None,
           normalSelection: fetchState.normalSelection,
           chainId,
           indexingContracts: fetchState.indexingContracts,
@@ -899,7 +893,6 @@ describe("FetchState.getNextQuery & integration", () => {
         blockTimestamp: 10,
       },
       queue: [mockEvent(~blockNumber=2), mockEvent(~blockNumber=1)],
-      firstEventBlockNumber: Some(1),
       endBlock: None,
       dcsToStore: None,
       blockLag: 0,
@@ -956,7 +949,6 @@ describe("FetchState.getNextQuery & integration", () => {
         blockTimestamp: 0,
       },
       queue: [mockEvent(~blockNumber=2), mockEvent(~blockNumber=1)],
-      firstEventBlockNumber: Some(1),
       endBlock: undefined,
       normalSelection,
       chainId,
@@ -2545,122 +2537,6 @@ describe("FetchState unit tests for specific cases", () => {
   )
 })
 
-describe("Test queue item", () => {
-  it("Correctly compares queue items", () => {
-    Assert.deepEqual(
-      FetchState.NoItem({
-        latestFetchedBlock: getBlockData(~blockNumber=0),
-      })->FetchState.qItemLt(
-        NoItem({
-          latestFetchedBlock: getBlockData(~blockNumber=0),
-        }),
-      ),
-      false,
-      ~message=`Both NoItem with the same block`,
-    )
-    Assert.deepEqual(
-      FetchState.NoItem({
-        latestFetchedBlock: getBlockData(~blockNumber=0),
-      })->FetchState.qItemLt(
-        NoItem({
-          latestFetchedBlock: getBlockData(~blockNumber=1),
-        }),
-      ),
-      true,
-      ~message=`NoItem with the earlier block, than NoItem`,
-    )
-
-    let mockQueueItem = (~blockNumber, ~logIndex=0) => {
-      FetchState.Item({
-        item: mockEvent(~blockNumber, ~logIndex),
-        popItemOffQueue: () => Assert.fail("Shouldn't be called"),
-      })
-    }
-
-    Assert.deepEqual(
-      FetchState.NoItem({
-        latestFetchedBlock: getBlockData(~blockNumber=0),
-      })->FetchState.qItemLt(mockQueueItem(~blockNumber=0)),
-      true,
-      ~message=`NoItem with 0 block should be lower than Item with 0 block`,
-    )
-    Assert.deepEqual(
-      mockQueueItem(~blockNumber=0)->FetchState.qItemLt(
-        FetchState.NoItem({
-          latestFetchedBlock: getBlockData(~blockNumber=0),
-        }),
-      ),
-      false,
-      ~message=`1. Above reversed`,
-    )
-
-    Assert.deepEqual(
-      mockQueueItem(~blockNumber=1)->FetchState.qItemLt(
-        FetchState.NoItem({
-          latestFetchedBlock: getBlockData(~blockNumber=1),
-        }),
-      ),
-      true,
-      ~message=`Item with 1 block should be lower than NoItem with 1 block`,
-    )
-    Assert.deepEqual(
-      FetchState.NoItem({
-        latestFetchedBlock: getBlockData(~blockNumber=1),
-      })->FetchState.qItemLt(mockQueueItem(~blockNumber=1)),
-      false,
-      ~message=`2. Above reversed`,
-    )
-
-    Assert.deepEqual(
-      mockQueueItem(~blockNumber=1)->FetchState.qItemLt(mockQueueItem(~blockNumber=2)),
-      true,
-      ~message=`Item with 1 block should be lower than Item with 2 block`,
-    )
-    Assert.deepEqual(
-      mockQueueItem(~blockNumber=2)->FetchState.qItemLt(mockQueueItem(~blockNumber=1)),
-      false,
-      ~message=`3. Above reversed`,
-    )
-
-    Assert.deepEqual(
-      mockQueueItem(~blockNumber=0)->FetchState.qItemLt(
-        FetchState.NoItem({
-          latestFetchedBlock: getBlockData(~blockNumber=1),
-        }),
-      ),
-      true,
-      ~message=`Item with 0 block should be lower than NoItem with 1 block`,
-    )
-    Assert.deepEqual(
-      FetchState.NoItem({
-        latestFetchedBlock: getBlockData(~blockNumber=1),
-      })->FetchState.qItemLt(mockQueueItem(~blockNumber=0)),
-      false,
-      ~message=`4. Above reversed`,
-    )
-
-    Assert.deepEqual(
-      mockQueueItem(~blockNumber=1)->FetchState.qItemLt(mockQueueItem(~blockNumber=1)),
-      false,
-      ~message=`Item shouldn't be lower than Item with the same`,
-    )
-    Assert.deepEqual(
-      mockQueueItem(~blockNumber=1, ~logIndex=0)->FetchState.qItemLt(
-        mockQueueItem(~blockNumber=1, ~logIndex=1),
-      ),
-      true,
-      ~message=`Item should be lower than Item with the same, when it has lower logIndex`,
-    )
-    Assert.deepEqual(
-      mockQueueItem(~blockNumber=1, ~logIndex=1)->FetchState.qItemLt(
-        mockQueueItem(~blockNumber=1, ~logIndex=0),
-      ),
-      false,
-      ~message=`5. Above reversed`,
-    )
-  })
-})
-
 describe("FetchState.filterAndSortForUnorderedBatch", () => {
   it(
     "Filters out states without eligible items and sorts by earliest timestamp (public API)",
@@ -2704,7 +2580,9 @@ describe("FetchState.filterAndSortForUnorderedBatch", () => {
       )
 
       Assert.deepEqual(
-        prepared->Array.map(fs => (fs.queue->Utils.Array.last->Option.getUnsafe).blockNumber),
+        prepared->Array.map(
+          fs => fs.queue->Utils.Array.last->Option.getUnsafe->Internal.getItemBlockNumber,
+        ),
         [1, 5],
       )
     },
@@ -2747,7 +2625,9 @@ describe("FetchState.filterAndSortForUnorderedBatch", () => {
     )
 
     Assert.deepEqual(
-      prepared->Array.map(fs => (fs.queue->Utils.Array.last->Option.getUnsafe).blockNumber),
+      prepared->Array.map(
+        fs => fs.queue->Utils.Array.last->Option.getUnsafe->Internal.getItemBlockNumber,
+      ),
       [7, 1],
     )
   })
@@ -2790,7 +2670,9 @@ describe("FetchState.filterAndSortForUnorderedBatch", () => {
 
     // Full batch should take priority regardless of earlier timestamp of half batch
     Assert.deepEqual(
-      prepared->Array.map(fs => (fs.queue->Utils.Array.last->Option.getUnsafe).blockNumber),
+      prepared->Array.map(
+        fs => fs.queue->Utils.Array.last->Option.getUnsafe->Internal.getItemBlockNumber,
+      ),
       [2, 1],
     )
   })

@@ -166,14 +166,14 @@ module Make = (Indexer: Indexer.S) => {
       transactionHash,
       eventConfig,
     }): log => {
-      let log: Internal.item = {
+      let log = Internal.Event({
         eventConfig: (eventConfig :> Internal.eventConfig),
         event: makeEvent(~blockHash),
         chain: ChainMap.Chain.makeUnsafe(~chainId=self.chainConfig.id),
         timestamp: blockTimestamp,
         blockNumber,
         logIndex,
-      }
+      })
       {item: log, srcAddress, transactionHash}
     })
 
@@ -224,7 +224,7 @@ module Make = (Indexer: Indexer.S) => {
           (prev, {addresses, eventKeys}) => {
             prev ||
             (addresses->arrayHas(l.srcAddress) &&
-              eventKeys->arrayHas(getEventKey(l.item.eventConfig)))
+              eventKeys->arrayHas(getEventKey((l.item->Internal.castUnsafeEventItem).eventConfig)))
           },
         )
         if isLogInConfig {

@@ -1,17 +1,14 @@
 let codegenHelpMessage = `Rerun 'pnpm dev' to update generated code after schema.graphql changes.`
 
 let makeEventIdentifier = (item: Internal.item): Types.eventIdentifier => {
-  let {event, blockNumber, timestamp} = item
-  {
-    chainId: event.chainId,
-    blockTimestamp: timestamp,
-    blockNumber,
-    logIndex: event.logIndex,
+  switch item {
+  | Internal.Event({chain, blockNumber, logIndex, timestamp}) => {
+      chainId: chain->ChainMap.Chain.toChainId,
+      blockTimestamp: timestamp,
+      blockNumber,
+      logIndex,
+    }
   }
-}
-
-let getEventId = (item: Internal.item) => {
-  EventUtils.packEventIndex(~blockNumber=item.blockNumber, ~logIndex=item.event.logIndex)
 }
 
 type contextParams = {
@@ -258,10 +255,13 @@ let getHandlerContext = (params: contextParams): Internal.handlerContext => {
   params->Utils.Proxy.make(handlerTraps)->Utils.magic
 }
 
-let getHandlerArgs = (params: contextParams): Internal.handlerArgs => {
-  event: params.item.event,
-  context: getHandlerContext(params),
-}
+let getHandlerArgs = (params: contextParams): Internal.handlerArgs =>
+  switch params.item {
+  | Internal.Event({event}) => {
+      event,
+      context: getHandlerContext(params),
+    }
+  }
 
 // Contract register context creation
 type contractRegisterParams = {
@@ -326,7 +326,10 @@ let getContractRegisterArgs = (
   item: Internal.item,
   ~onRegister,
   ~config: Config.t,
-): Internal.contractRegisterArgs => {
-  event: item.event,
-  context: getContractRegisterContext(~item, ~onRegister, ~config),
-}
+): Internal.contractRegisterArgs =>
+  switch item {
+  | Internal.Event({event}) => {
+      event,
+      context: getContractRegisterContext(~item, ~onRegister, ~config),
+    }
+  }

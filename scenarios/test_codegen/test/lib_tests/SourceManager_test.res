@@ -285,7 +285,6 @@ describe("SourceManager fetchNext", () => {
       endBlock,
       nextPartitionIndex: partitions->Array.length,
       maxAddrInPartition: 2,
-      firstEventBlockNumber: None,
       queue,
       normalSelection,
       latestFullyFetchedBlock: latestFullyFetchedBlock.contents,

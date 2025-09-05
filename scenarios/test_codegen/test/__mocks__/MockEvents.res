@@ -138,29 +138,25 @@ let setGravatarLog4: Types.eventLog<Types.Gravatar.UpdatedGravatar.eventArgs> = 
 
 let newGravatarEventToBatchItem = (
   event: Types.eventLog<Types.Gravatar.NewGravatar.eventArgs>,
-): Internal.item => {
-  {
-    timestamp: event.block.timestamp,
-    chain: MockConfig.chain1337,
-    blockNumber: event.block.number,
-    logIndex: event.logIndex,
-    eventConfig: (Types.Gravatar.NewGravatar.register() :> Internal.eventConfig),
-    event: event->Internal.fromGenericEvent,
-  }
-}
+): Internal.item => Internal.Event({
+  timestamp: event.block.timestamp,
+  chain: MockConfig.chain1337,
+  blockNumber: event.block.number,
+  logIndex: event.logIndex,
+  eventConfig: (Types.Gravatar.NewGravatar.register() :> Internal.eventConfig),
+  event: event->Internal.fromGenericEvent,
+})
 
 let updatedGravatarEventToBatchItem = (
   event: Types.eventLog<Types.Gravatar.UpdatedGravatar.eventArgs>,
-): Internal.item => {
-  {
-    timestamp: event.block.timestamp,
-    chain: MockConfig.chain1337,
-    blockNumber: event.block.number,
-    logIndex: event.logIndex,
-    eventConfig: (Types.Gravatar.UpdatedGravatar.register() :> Internal.eventConfig),
-    event: event->Internal.fromGenericEvent,
-  }
-}
+): Internal.item => Internal.Event({
+  timestamp: event.block.timestamp,
+  chain: MockConfig.chain1337,
+  blockNumber: event.block.number,
+  logIndex: event.logIndex,
+  eventConfig: (Types.Gravatar.UpdatedGravatar.register() :> Internal.eventConfig),
+  event: event->Internal.fromGenericEvent,
+})
 
 let eventBatchItems = [
   newGravatarLog1->newGravatarEventToBatchItem,

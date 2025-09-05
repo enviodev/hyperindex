@@ -27,8 +27,8 @@ let convertFieldsToJson = (fields: option<dict<unknown>>) => {
   }
 }
 
-let addEventToRawEvents = (item: Internal.item, ~inMemoryStore: InMemoryStore.t) => {
-  let {event, eventConfig, chain, blockNumber, timestamp: blockTimestamp} = item
+let addItemToRawEvents = (eventItem: Internal.eventItem, ~inMemoryStore: InMemoryStore.t) => {
+  let {event, eventConfig, chain, blockNumber, timestamp: blockTimestamp} = eventItem
   let {block, transaction, params, logIndex, srcAddress} = event
   let chainId = chain->ChainMap.Chain.toChainId
   let eventId = EventUtils.packEventIndex(~logIndex, ~blockNumber)
@@ -113,14 +113,17 @@ let runEventHandlerOrThrow = async (
     )
   }
   if shouldBenchmark {
-    let timeEnd = timeBeforeHandler->Hrtime.timeSince->Hrtime.toMillis->Hrtime.floatFromMillis
-
-    Benchmark.addSummaryData(
-      ~group="Handlers Per Event",
-      ~label=`${item.eventConfig.contractName} ${item.eventConfig.name} Handler (ms)`,
-      ~value=timeEnd,
-      ~decimalPlaces=4,
-    )
+    switch item {
+    | Event({eventConfig}) => {
+        let timeEnd = timeBeforeHandler->Hrtime.timeSince->Hrtime.toMillis->Hrtime.floatFromMillis
+        Benchmark.addSummaryData(
+          ~group="Handlers Per Event",
+          ~label=`${eventConfig.contractName} ${eventConfig.name} Handler (ms)`,
+          ~value=timeEnd,
+          ~decimalPlaces=4,
+        )
+      }
+    }
   }
 }
 
@@ -132,21 +135,25 @@ let runHandlerOrThrow = async (
   ~shouldSaveHistory,
   ~shouldBenchmark,
 ) => {
-  switch item.eventConfig.handler {
-  | Some(handler) =>
-    await item->runEventHandlerOrThrow(
-      ~handler,
-      ~inMemoryStore,
-      ~loadManager,
-      ~persistence=config.persistence,
-      ~shouldSaveHistory,
-      ~shouldBenchmark,
-    )
-  | None => ()
-  }
+  switch item {
+  | Event({eventConfig}) => {
+      switch eventConfig.handler {
+      | Some(handler) =>
+        await item->runEventHandlerOrThrow(
+          ~handler,
+          ~inMemoryStore,
+          ~loadManager,
+          ~persistence=config.persistence,
+          ~shouldSaveHistory,
+          ~shouldBenchmark,
+        )
+      | None => ()
+      }
 
-  if config.enableRawEvents {
-    item->addEventToRawEvents(~inMemoryStore)
+      if config.enableRawEvents {
+        item->Internal.castUnsafeEventItem->addItemToRawEvents(~inMemoryStore)
+      }
+    }
   }
 }
 
@@ -162,8 +169,8 @@ let preloadBatchOrThrow = async (
   // to avoid having a stale data returned from the loader.
   let _ = await Promise.all(
     eventBatch->Array.keepMap(item => {
-      switch item.eventConfig {
-      | {handler: Some(handler)} =>
+      switch item {
+      | Event({eventConfig: {handler: Some(handler)}}) =>
         try {
           Some(
             handler(
@@ -334,7 +341,7 @@ let processEventBatch = async (
   } catch {
   | ProcessingError({message, exn, item}) =>
     exn
-    ->ErrorHandling.make(~msg=message, ~logger=item->Logging.getEventLogger)
+    ->ErrorHandling.make(~msg=message, ~logger=item->Logging.getItemLogger)
     ->Error
   }
 }

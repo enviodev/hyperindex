@@ -25,7 +25,7 @@ let loadById = (
       )
     } catch {
     | Persistence.StorageError({message, reason}) =>
-      reason->ErrorHandling.mkLogAndRaise(~logger=item->Logging.getEventLogger, ~msg=message)
+      reason->ErrorHandling.mkLogAndRaise(~logger=item->Logging.getItemLogger, ~msg=message)
     }
 
     let entitiesMap = Js.Dict.empty()
@@ -93,7 +93,7 @@ let loadEffect = (
         } catch {
         | Persistence.StorageError({message, reason}) =>
           reason->ErrorHandling.mkLogAndRaise(
-            ~logger=item->Logging.getEventLogger,
+            ~logger=item->Logging.getItemLogger,
             ~msg=message,
           )
         }
@@ -202,7 +202,7 @@ let loadByField = (
         | Persistence.StorageError({message, reason}) =>
           reason->ErrorHandling.mkLogAndRaise(
             ~logger=Logging.createChildFrom(
-              ~logger=item->Logging.getEventLogger,
+              ~logger=item->Logging.getItemLogger,
               ~params={
                 "operator": operatorCallName,
                 "tableName": entityConfig.table.tableName,

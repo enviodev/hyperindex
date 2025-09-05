@@ -17,8 +17,8 @@ type t = {
   //The latest known block of the chain
   currentBlockHeight: int,
   timestampCaughtUpToHeadOrEndblock: option<Js.Date.t>,
-  dbFirstEventBlockNumber: option<int>,
   committedProgressBlockNumber: int,
+  firstEventBlockNumber: option<int>,
   numEventsProcessed: int,
   numBatchesFetched: int,
   lastBlockScannedHashes: ReorgDetection.LastBlockScannedHashes.t,
@@ -34,7 +34,7 @@ let make = (
   ~dynamicContracts: array<InternalTable.DynamicContractRegistry.t>,
   ~startBlock,
   ~endBlock,
-  ~dbFirstEventBlockNumber,
+  ~firstEventBlockNumber,
   ~progressBlockNumber,
   ~config: Config.t,
   ~logger,
@@ -153,7 +153,7 @@ let make = (
     lastBlockScannedHashes,
     currentBlockHeight: 0,
     fetchState,
-    dbFirstEventBlockNumber,
+    firstEventBlockNumber,
     committedProgressBlockNumber: progressBlockNumber,
     timestampCaughtUpToHeadOrEndblock,
     numEventsProcessed,
@@ -174,7 +174,7 @@ let makeFromConfig = (chainConfig: InternalConfig.chain, ~config) => {
     ~startBlock=chainConfig.startBlock,
     ~endBlock=chainConfig.endBlock,
     ~lastBlockScannedHashes,
-    ~dbFirstEventBlockNumber=None,
+    ~firstEventBlockNumber=None,
     ~progressBlockNumber=-1,
     ~timestampCaughtUpToHeadOrEndblock=None,
     ~numEventsProcessed=0,
@@ -191,7 +191,7 @@ let makeFromConfig = (chainConfig: InternalConfig.chain, ~config) => {
  */
 let makeFromDbState = async (
   chainConfig: InternalConfig.chain,
-  ~initialChainState: InternalTable.Chains.t,
+  ~resumedChainState: InternalTable.Chains.t,
   ~isInReorgThreshold,
   ~config,
   ~sql=Db.sql,
@@ -201,18 +201,21 @@ let makeFromDbState = async (
 
   let restartBlockNumber =
     // Can be -1 when not set
-    initialChainState.progressBlockNumber >= 0
-      ? initialChainState.progressBlockNumber + 1
-      : initialChainState.startBlock
+    resumedChainState.progressBlockNumber >= 0
+      ? resumedChainState.progressBlockNumber + 1
+      : resumedChainState.startBlock
 
-  let processingFilters = switch initialChainState.progressNextBlockLogIndex {
+  let processingFilters = switch resumedChainState.progressNextBlockLogIndex {
   | Value(progressNextBlockLogIndex) =>
     // Start from the same block but filter out any events already processed
     Some([
       {
         filter: qItem => {
-          //Only keep events greater than the last processed event
-          (qItem.blockNumber, qItem.logIndex) > (restartBlockNumber, progressNextBlockLogIndex)
+          switch qItem {
+          | Internal.Event({blockNumber, logIndex}) =>
+            //Only keep events greater than the last processed event
+            (blockNumber, logIndex) > (restartBlockNumber, progressNextBlockLogIndex)
+          }
         },
         isValid: (~fetchState) => {
           //the filter can be cleaned up as soon as the fetch state block is ahead of the latestProcessedEvent blockNumber
@@ -243,21 +246,21 @@ let makeFromDbState = async (
       ~confirmedBlockThreshold=chainConfig.confirmedBlockThreshold,
     )
 
-  Prometheus.ProgressEventsCount.set(~processedCount=initialChainState.numEventsProcessed, ~chainId)
+  Prometheus.ProgressEventsCount.set(~processedCount=resumedChainState.numEventsProcessed, ~chainId)
 
   make(
     ~dynamicContracts=dbRecoveredDynamicContracts,
     ~chainConfig,
     ~startBlock=restartBlockNumber,
-    ~endBlock=initialChainState.endBlock->Js.Null.toOption,
+    ~endBlock=resumedChainState.endBlock->Js.Null.toOption,
     ~config,
     ~lastBlockScannedHashes,
-    ~dbFirstEventBlockNumber=initialChainState.firstEventBlockNumber->Js.Null.toOption,
-    ~progressBlockNumber=initialChainState.progressBlockNumber,
+    ~firstEventBlockNumber=resumedChainState.firstEventBlockNumber->Js.Null.toOption,
+    ~progressBlockNumber=resumedChainState.progressBlockNumber,
     ~timestampCaughtUpToHeadOrEndblock=Env.updateSyncTimeOnRestart
       ? None
-      : initialChainState.timestampCaughtUpToHeadOrEndblock->Js.Null.toOption,
-    ~numEventsProcessed=initialChainState.numEventsProcessed,
+      : resumedChainState.timestampCaughtUpToHeadOrEndblock->Js.Null.toOption,
+    ~numEventsProcessed=resumedChainState.numEventsProcessed,
     ~numBatchesFetched=0,
     ~logger,
     ~processingFilters,
@@ -309,6 +312,7 @@ let getContractStartBlock = (
 
 let runContractRegistersOrThrow = async (
   ~itemsWithContractRegister: array<Internal.item>,
+  ~chain: ChainMap.Chain.t,
   ~config: Config.t,
 ) => {
   let dynamicContracts = []
@@ -321,12 +325,20 @@ let runContractRegistersOrThrow = async (
         `Skipping contract registration: The context.add${(contractName: Enums.ContractType.t :> string)} was called after the contract register resolved. Use await or return a promise from the contract register handler to avoid this error.`,
       )
     } else {
-      let {timestamp, blockNumber, logIndex} = item
+      let (timestamp, blockNumber, logIndex, eventConfig, event) = switch item {
+      | Internal.Event({timestamp, blockNumber, logIndex, eventConfig, event}) => (
+          timestamp,
+          blockNumber,
+          logIndex,
+          eventConfig,
+          event,
+        )
+      }
 
       // Use contract-specific start block if configured, otherwise fall back to registration block
       let contractStartBlock = switch getContractStartBlock(
         config,
-        ~chain=item.chain,
+        ~chain,
         ~contractName=(contractName: Enums.ContractType.t :> string),
       ) {
       | Some(configuredStartBlock) => configuredStartBlock
@@ -340,9 +352,9 @@ let runContractRegistersOrThrow = async (
         register: DC({
           registeringEventBlockTimestamp: timestamp,
           registeringEventLogIndex: logIndex,
-          registeringEventName: item.eventConfig.name,
-          registeringEventContractName: item.eventConfig.contractName,
-          registeringEventSrcAddress: item.event.srcAddress,
+          registeringEventName: eventConfig.name,
+          registeringEventContractName: eventConfig.contractName,
+          registeringEventSrcAddress: event.srcAddress,
         }),
       }
 
@@ -353,36 +365,31 @@ let runContractRegistersOrThrow = async (
   let promises = []
   for idx in 0 to itemsWithContractRegister->Array.length - 1 {
     let item = itemsWithContractRegister->Array.getUnsafe(idx)
-    let contractRegister = switch item.eventConfig.contractRegister {
-    | Some(contractRegister) => contractRegister
-    | None =>
+    let contractRegister = switch item {
+    | Internal.Event({eventConfig: {contractRegister: Some(contractRegister)}}) => contractRegister
+    | Internal.Event({eventConfig: {contractRegister: None, name: eventName}}) =>
       // Unexpected case, since we should pass only events with contract register to this function
-      Js.Exn.raiseError("Contract register is not set for event " ++ item.eventConfig.name)
+      Js.Exn.raiseError("Contract register is not set for event " ++ eventName)
     }
 
     let errorMessage = "Event contractRegister failed, please fix the error to keep the indexer running smoothly"
 
     // Catch sync and async errors
     try {
-      let result = contractRegister(
-        item->UserContext.getContractRegisterArgs(~onRegister, ~config),
-      )
+      let result = contractRegister(item->UserContext.getContractRegisterArgs(~onRegister, ~config))
 
       // Even though `contractRegister` always returns a promise,
       // in the ReScript type, but it might return a non-promise value for TS API.
       if result->Promise.isCatchable {
         promises->Array.push(
           result->Promise.catch(exn => {
-            exn->ErrorHandling.mkLogAndRaise(
-              ~msg=errorMessage,
-              ~logger=item->Logging.getEventLogger,
-            )
+            exn->ErrorHandling.mkLogAndRaise(~msg=errorMessage, ~logger=item->Logging.getItemLogger)
           }),
         )
       }
     } catch {
     | exn =>
-      exn->ErrorHandling.mkLogAndRaise(~msg=errorMessage, ~logger=item->Logging.getEventLogger)
+      exn->ErrorHandling.mkLogAndRaise(~msg=errorMessage, ~logger=item->Logging.getItemLogger)
     }
   }
 
@@ -525,9 +532,3 @@ let getLastKnownValidBlock = async (
 let isFetchingAtHead = (chainFetcher: t) => chainFetcher.fetchState.isFetchingAtHead
 
 let isActivelyIndexing = (chainFetcher: t) => chainFetcher.fetchState->FetchState.isActivelyIndexing
-
-let getFirstEventBlockNumber = (chainFetcher: t) =>
-  Utils.Math.minOptInt(
-    chainFetcher.dbFirstEventBlockNumber,
-    chainFetcher.fetchState.firstEventBlockNumber,
-  )

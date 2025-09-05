@@ -30,6 +30,9 @@ let evm = (
         shouldUseHypersyncClientDecoder: Env.Configurable.shouldUseHypersyncClientDecoder->Option.getWithDefault(
           shouldUseHypersyncClientDecoder,
         ),
+        apiToken: Env.envioApiToken,
+        clientMaxRetries: Env.hyperSyncClientMaxRetries,
+        clientTimeoutMillis: Env.hyperSyncClientTimeoutMillis,
       }),
     ]
   | _ => []

@@ -144,29 +144,34 @@ let createChildFrom = (~logger: t, ~params: 'a) => {
   logger->child(params->createChildParams)
 }
 
-let getEventLogger = (item: Internal.item) => {
-  switch item.loggerCache {
-  | Some(l) => l
-  | None => {
-      let l = getLogger()->child(
-        {
-          "contractName": item.eventConfig.contractName,
-          "eventName": item.eventConfig.name,
-          "chainId": item.chain->ChainMap.Chain.toChainId,
-          "block": item.blockNumber,
-          "logIndex": item.logIndex,
-          "address": item.event.srcAddress,
-        }->createChildParams,
-      )
-      item.loggerCache = Some(l)
-      l
+let getItemLogger = {
+  let cacheKey = "_logger"
+  (item: Internal.item) => {
+    switch item->Utils.magic->Utils.Dict.dangerouslyGetNonOption(cacheKey) {
+    | Some(l) => l
+    | None => {
+        let l = getLogger()->child(
+          switch item {
+          | Event({eventConfig, chain, blockNumber, logIndex, event}) => {
+              "contractName": eventConfig.contractName,
+              "eventName": eventConfig.name,
+              "chainId": chain->ChainMap.Chain.toChainId,
+              "block": blockNumber,
+              "logIndex": logIndex,
+              "address": event.srcAddress,
+            }
+          }->createChildParams,
+        )
+        item->Utils.magic->Js.Dict.set(cacheKey, l)
+        l
+      }
     }
   }
 }
 
 @inline
 let logForItem = (item, level: Pino.logLevel, message: string, ~params=?) => {
-  (item->getEventLogger->Utils.magic->Js.Dict.unsafeGet((level :> string)))(params, message)
+  (item->getItemLogger->Utils.magic->Js.Dict.unsafeGet((level :> string)))(params, message)
 }
 
 let noopLogger: Envio.logger = {

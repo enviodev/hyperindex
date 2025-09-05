@@ -18,19 +18,9 @@ type multiChainEventComparitor = {
   earliestEvent: FetchState.queueItem,
 }
 
-let getComparitorFromItem = (queueItem: Internal.item) => {
-  let {timestamp, chain, blockNumber, logIndex} = queueItem
-  EventUtils.getEventComparator({
-    timestamp,
-    chainId: chain->ChainMap.Chain.toChainId,
-    blockNumber,
-    logIndex,
-  })
-}
-
 let getQueueItemComparitor = (earliestQueueItem: FetchState.queueItem, ~chain) => {
   switch earliestQueueItem {
-  | Item({item}) => item->getComparitorFromItem
+  | Item({item}) => item->EventUtils.getOrderedBatchItemComparator
   | NoItem({latestFetchedBlock: {blockTimestamp, blockNumber}}) => (
       blockTimestamp,
       chain->ChainMap.Chain.toChainId,
@@ -78,13 +68,13 @@ let popOrderedBatchItems = (
   let rec loop = () =>
     if items->Array.length < maxBatchSize {
       switch fetchStates->getOrderedNextItem {
-      | Some({earliestEvent}) =>
+      | Some({earliestEvent, chain}) =>
         switch earliestEvent {
         | NoItem(_) => ()
         | Item({item, popItemOffQueue}) => {
             popItemOffQueue()
             items->Js.Array2.push(item)->ignore
-            sizePerChain->Utils.Dict.incrementByInt(item.chain->ChainMap.Chain.toChainId)
+            sizePerChain->Utils.Dict.incrementByInt(chain->ChainMap.Chain.toChainId)
             loop()
           }
         }

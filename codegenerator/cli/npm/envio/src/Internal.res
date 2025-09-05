@@ -133,16 +133,36 @@ type evmContractConfig = {
   events: array<evmEventConfig>,
 }
 
-type item = {
+// Duplicate the type from item
+// to make item properly unboxed
+type eventItem = private {
+  kind: [#0],
   eventConfig: eventConfig,
   timestamp: int,
   chain: ChainMap.Chain.t,
   blockNumber: int,
   logIndex: int,
   event: event,
-  // Reuse logger object for event
-  mutable loggerCache?: Pino.t,
 }
+
+@tag("kind")
+type item =
+  | @as(0)
+  Event({
+      eventConfig: eventConfig,
+      timestamp: int,
+      chain: ChainMap.Chain.t,
+      blockNumber: int,
+      logIndex: int,
+      event: event,
+    })
+
+external castUnsafeEventItem: item => eventItem = "%identity"
+
+@get
+external getItemBlockNumber: item => int = "blockNumber"
+@get
+external getItemChain: item => ChainMap.Chain.t = "chain"
 
 @genType
 type eventOptions<'eventFilters> = {

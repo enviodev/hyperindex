@@ -163,7 +163,7 @@ describe("Dynamic contract restart resistance test", () => {
     await persistence->Persistence.init(~chainConfigs=[chainConfig])
     let chainFetcher = await ChainFetcher.makeFromDbState(
       chainConfig,
-      ~initialChainState=(persistence->Persistence.getInitializedState).chains
+      ~resumedChainState=(persistence->Persistence.getInitializedState).chains
       ->Js.Array2.find(chainState => chainState.id === chainId)
       ->Option.getExn,
       ~config,

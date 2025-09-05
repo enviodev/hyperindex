@@ -337,14 +337,14 @@ and makeProcessEvents = (mockDb: t, ~chainId=?) => async (
     }
 
     let chain = config->Config.getChain(~chainId)
-    let item: Internal.item = {
+    let item = Internal.Event({
       eventConfig,
       event,
       chain,
       logIndex: event.logIndex,
       timestamp: event.block->Types.Block.getTimestamp,
       blockNumber: event.block->Types.Block.getNumber,
-    }
+    })
     if eventConfig.contractRegister->Option.isSome {
       itemsWithContractRegister->Js.Array2.push(item)->ignore
     }
@@ -379,7 +379,11 @@ and makeProcessEvents = (mockDb: t, ~chainId=?) => async (
   //The only purpose is to test the registerContract function and to
   //add the entity to the in memory store for asserting registrations
   if itemsWithContractRegister->Utils.Array.notEmpty {
-    let dcs = await ChainFetcher.runContractRegistersOrThrow(~itemsWithContractRegister, ~config)
+    let dcs = await ChainFetcher.runContractRegistersOrThrow(
+      ~itemsWithContractRegister,
+      ~chain=ChainMap.Chain.makeUnsafe(~chainId=processingChainId),
+      ~config,
+    )
 
     // TODO: Reuse FetchState logic to clean up duplicate dcs
     if dcs->Utils.Array.notEmpty {
@@ -406,7 +410,7 @@ and makeProcessEvents = (mockDb: t, ~chainId=?) => async (
   } catch {
   | EventProcessing.ProcessingError({message, exn, item}) =>
     exn
-    ->ErrorHandling.make(~msg=message, ~logger=item->Logging.getEventLogger)
+    ->ErrorHandling.make(~msg=message, ~logger=item->Logging.getItemLogger)
     ->ErrorHandling.logAndRaise
   }
 
