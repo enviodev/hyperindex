@@ -104,19 +104,19 @@ let executeBatch = async (
       // they will only be in order per row, but not across the whole entity
       // table.
       let _ = entityHistoryItemsToSet->Js.Array2.sortInPlaceWith((a, b) => {
-        EventUtils.isEarlierEvent(
-          {
-            timestamp: a.current.block_timestamp,
-            chainId: a.current.chain_id,
-            blockNumber: a.current.block_number,
-            logIndex: a.current.log_index,
-          },
-          {
-            timestamp: b.current.block_timestamp,
-            chainId: b.current.chain_id,
-            blockNumber: b.current.block_number,
-            logIndex: b.current.log_index,
-          },
+        EventUtils.isEarlier(
+          (
+            a.current.block_timestamp,
+            a.current.chain_id,
+            a.current.block_number,
+            a.current.log_index,
+          ),
+          (
+            b.current.block_timestamp,
+            b.current.chain_id,
+            b.current.block_number,
+            b.current.log_index,
+          ),
         )
           ? -1
           : 1

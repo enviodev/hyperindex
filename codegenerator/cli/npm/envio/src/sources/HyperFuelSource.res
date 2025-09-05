@@ -441,25 +441,23 @@ let make = ({chain, endpointUrl}: options): t => {
       | _ => Js.Exn.raiseError("Unexpected bug in the event routing logic")
       }
 
-      (
-        {
-          eventConfig: (eventConfig :> Internal.eventConfig),
-          timestamp: block.time,
-          chain,
-          blockNumber: block.height,
+      Internal.Event({
+        eventConfig: (eventConfig :> Internal.eventConfig),
+        timestamp: block.time,
+        chain,
+        blockNumber: block.height,
+        logIndex: receiptIndex,
+        event: {
+          chainId,
+          params,
+          transaction: {
+            "id": item.transactionId,
+          }->Obj.magic, // TODO: Obj.magic needed until the field selection types are not configurable for Fuel and Evm separately
+          block: block->Obj.magic,
+          srcAddress: contractAddress,
           logIndex: receiptIndex,
-          event: {
-            chainId,
-            params,
-            transaction: {
-              "id": item.transactionId,
-            }->Obj.magic, // TODO: Obj.magic needed until the field selection types are not configurable for Fuel and Evm separately
-            block: block->Obj.magic,
-            srcAddress: contractAddress,
-            logIndex: receiptIndex,
-          },
-        }: Internal.eventItem
-      )
+        },
+      })
     })
 
     let parsingTimeElapsed = parsingTimeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis

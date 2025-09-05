@@ -29,10 +29,10 @@ describe("Load and save an entity with a Timestamp from DB", () => {
     let inMemoryStore = InMemoryStore.make()
     let loadManager = LoadManager.make()
 
-    let eventItem = MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem
+    let item = MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem
 
     let handlerContext = UserContext.getHandlerContext({
-      eventItem,
+      item,
       loadManager,
       persistence: Config.codegenPersistence,
       inMemoryStore,

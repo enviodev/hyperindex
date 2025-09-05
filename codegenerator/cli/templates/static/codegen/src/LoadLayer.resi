@@ -4,7 +4,7 @@ let loadById: (
   ~entityConfig: Internal.entityConfig,
   ~inMemoryStore: InMemoryStore.t,
   ~shouldGroup: bool,
-  ~eventItem: Internal.eventItem,
+  ~item: Internal.item,
   ~entityId: string,
 ) => promise<option<Internal.entity>>
 
@@ -17,7 +17,7 @@ let loadByField: (
   ~fieldName: string,
   ~fieldValueSchema: RescriptSchema.S.t<'fieldValue>,
   ~shouldGroup: bool,
-  ~eventItem: Internal.eventItem,
+  ~item: Internal.item,
   ~fieldValue: 'fieldValue,
 ) => promise<array<Internal.entity>>
 
@@ -28,5 +28,5 @@ let loadEffect: (
   ~effectArgs: Internal.effectArgs,
   ~inMemoryStore: InMemoryStore.t,
   ~shouldGroup: bool,
-  ~eventItem: Internal.eventItem,
+  ~item: Internal.item,
 ) => promise<Internal.effectOutput>

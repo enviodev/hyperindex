@@ -203,9 +203,8 @@ let makeAppState = (globalState: GlobalState.t): EnvioInkApp.appState => {
           committedProgressBlockNumber,
           timestampCaughtUpToHeadOrEndblock,
           numEventsProcessed,
+          firstEventBlockNumber,
         } = cf
-
-        let firstEventBlockNumber = cf->ChainFetcher.getFirstEventBlockNumber
 
         Synced({
           firstEventBlockNumber: firstEventBlockNumber->Option.getWithDefault(0),
@@ -216,30 +215,29 @@ let makeAppState = (globalState: GlobalState.t): EnvioInkApp.appState => {
           numEventsProcessed,
         })
       } else {
-        switch (cf, cf->ChainFetcher.getFirstEventBlockNumber) {
-        | (
-            {
-              committedProgressBlockNumber,
-              timestampCaughtUpToHeadOrEndblock: Some(timestampCaughtUpToHeadOrEndblock),
-            },
-            Some(firstEventBlockNumber),
-          ) =>
+        switch cf {
+        | {
+            committedProgressBlockNumber,
+            timestampCaughtUpToHeadOrEndblock: Some(timestampCaughtUpToHeadOrEndblock),
+            firstEventBlockNumber: Some(firstEventBlockNumber),
+          } =>
           Synced({
             firstEventBlockNumber,
             latestProcessedBlock: committedProgressBlockNumber,
             timestampCaughtUpToHeadOrEndblock,
             numEventsProcessed,
           })
-        | (
-            {committedProgressBlockNumber, timestampCaughtUpToHeadOrEndblock: None},
-            Some(firstEventBlockNumber),
-          ) =>
+        | {
+            committedProgressBlockNumber,
+            timestampCaughtUpToHeadOrEndblock: None,
+            firstEventBlockNumber: Some(firstEventBlockNumber),
+          } =>
           Syncing({
             firstEventBlockNumber,
             latestProcessedBlock: committedProgressBlockNumber,
             numEventsProcessed,
           })
-        | (_, None) => SearchingForEvents
+        | {firstEventBlockNumber: None} => SearchingForEvents
         }
       }
 

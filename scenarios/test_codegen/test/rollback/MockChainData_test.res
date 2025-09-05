@@ -76,12 +76,13 @@ describe("Check that MockChainData works as expected", () => {
         ->Array.reduce(
           -1,
           (accum, next) => {
+            let eventItem = next.item->Internal.castUnsafeEventItem
             Assert.equal(
-              next.eventItem.logIndex,
+              eventItem.logIndex,
               accum + 1,
               ~message="Log indexes should increment in each block",
             )
-            next.eventItem.logIndex
+            eventItem.logIndex
           },
         )
         ->ignore

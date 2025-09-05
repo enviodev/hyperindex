@@ -2,6 +2,30 @@
 // Should be an entry point after we get rid of the generated project.
 // Don't forget to keep index.d.ts in sync with this file.
 
+@genType
+type blockEvent = {
+  number: int,
+  chainId: int,
+}
+
+@genType
+type onBlockArgs<'context> = {
+  block: blockEvent,
+  context: 'context,
+}
+
+@unboxed
+type chainReference = Id(int) // | Name(string)
+
+@genType
+type onBlockOptions = {
+  chain: chainReference,
+  // name?: string,
+  // interval?: int,
+  // startBlock?: int,
+  // endBlock?: int,
+}
+
 @genType.import(("./Types.ts", "Logger"))
 type logger = {
   debug: 'params. (string, ~params: {..} as 'params=?) => unit,

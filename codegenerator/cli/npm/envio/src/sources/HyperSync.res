@@ -21,7 +21,7 @@ type hyperSyncPage<'item> = {
 
 type logsQueryPageItem = {
   log: Log.t,
-  block: Internal.eventBlock,
+  block: HyperSyncClient.ResponseTypes.block,
   transaction: Internal.eventTransaction,
 }
 
