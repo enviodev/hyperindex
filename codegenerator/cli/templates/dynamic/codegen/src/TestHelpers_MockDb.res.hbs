@@ -312,7 +312,7 @@ and makeProcessEvents = (mockDb: t, ~chainId=?) => async (
   let itemsWithContractRegister = []
 
   let processingChainId = ref(chainId)
-  let eventItems = events->Array.map(event => {
+  let items = events->Array.map(event => {
     let event = event->Internal.fromGenericEvent
     let eventConfig = switch mockEventRegisters->Utils.WeakMap.get(event) {
     | Some(register) => register()
@@ -337,7 +337,7 @@ and makeProcessEvents = (mockDb: t, ~chainId=?) => async (
     }
 
     let chain = config->Config.getChain(~chainId)
-    let eventItem: Internal.eventItem = {
+    let item: Internal.item = {
       eventConfig,
       event,
       chain,
@@ -346,9 +346,9 @@ and makeProcessEvents = (mockDb: t, ~chainId=?) => async (
       blockNumber: event.block->Types.Block.getNumber,
     }
     if eventConfig.contractRegister->Option.isSome {
-      itemsWithContractRegister->Js.Array2.push(eventItem)->ignore
+      itemsWithContractRegister->Js.Array2.push(item)->ignore
     }
-    eventItem
+    item
   })
 
   let processingChainId = switch processingChainId.contents {
@@ -391,12 +391,12 @@ and makeProcessEvents = (mockDb: t, ~chainId=?) => async (
   }
 
   try {
-    await eventItems->EventProcessing.preloadBatchOrThrow(
+    await items->EventProcessing.preloadBatchOrThrow(
       ~loadManager,
       ~persistence,
       ~inMemoryStore,
     )
-    await eventItems->EventProcessing.runBatchHandlersOrThrow(
+    await items->EventProcessing.runBatchHandlersOrThrow(
       ~inMemoryStore,
       ~loadManager,
       ~config,
@@ -404,9 +404,9 @@ and makeProcessEvents = (mockDb: t, ~chainId=?) => async (
       ~shouldBenchmark=false,
     )
   } catch {
-  | EventProcessing.ProcessingError({message, exn, eventItem}) =>
+  | EventProcessing.ProcessingError({message, exn, item}) =>
     exn
-    ->ErrorHandling.make(~msg=message, ~logger=eventItem->Logging.getEventLogger)
+    ->ErrorHandling.make(~msg=message, ~logger=item->Logging.getEventLogger)
     ->ErrorHandling.logAndRaise
   }
 

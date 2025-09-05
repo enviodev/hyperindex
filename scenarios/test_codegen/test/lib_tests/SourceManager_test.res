@@ -9,7 +9,7 @@ type sourceMock = {
   resolveGetHeightOrThrow: int => unit,
   rejectGetHeightOrThrow: 'exn. 'exn => unit,
   getItemsOrThrowCalls: array<{"toBlock": option<int>, "retry": int}>,
-  resolveGetItemsOrThrow: array<Internal.eventItem> => unit,
+  resolveGetItemsOrThrow: array<Internal.item> => unit,
   rejectGetItemsOrThrow: 'exn. 'exn => unit,
 }
 

@@ -71,7 +71,7 @@ type t = {
   // Needed to query before entering reorg threshold
   blockLag: int,
   //Items ordered from latest to earliest
-  queue: array<Internal.eventItem>,
+  queue: array<Internal.item>,
 }
 
 let copy = (fetchState: t) => {
@@ -549,7 +549,7 @@ exception UnexpectedMergeQueryResponse({message: string})
 /*
 Comparitor for two events from the same chain. No need for chain id or timestamp
 */
-let compareBufferItem = (a: Internal.eventItem, b: Internal.eventItem) => {
+let compareBufferItem = (a: Internal.item, b: Internal.item) => {
   let blockDiff = b.blockNumber - a.blockNumber
   if blockDiff === 0 {
     b.logIndex - a.logIndex
@@ -881,7 +881,7 @@ let getNextQuery = (
   }
 }
 
-type itemWithPopFn = {item: Internal.eventItem, popItemOffQueue: unit => unit}
+type itemWithPopFn = {item: Internal.item, popItemOffQueue: unit => unit}
 
 /**
 Represents a fetchState partitions head of the  fetchedEventQueue as either
@@ -1099,7 +1099,7 @@ let bufferSize = ({queue}: t) => queue->Array.length
 let getLatestFullyFetchedBlock = ({latestFullyFetchedBlock}: t) => latestFullyFetchedBlock
 
 let pruneQueueFromFirstChangeEvent = (
-  queue: array<Internal.eventItem>,
+  queue: array<Internal.item>,
   ~firstChangeEvent: blockNumberAndLogIndex,
 ) => {
   queue->Array.keep(item =>

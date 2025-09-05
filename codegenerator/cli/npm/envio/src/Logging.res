@@ -144,29 +144,29 @@ let createChildFrom = (~logger: t, ~params: 'a) => {
   logger->child(params->createChildParams)
 }
 
-let getEventLogger = (eventItem: Internal.eventItem) => {
-  switch eventItem.loggerCache {
+let getEventLogger = (item: Internal.item) => {
+  switch item.loggerCache {
   | Some(l) => l
   | None => {
       let l = getLogger()->child(
         {
-          "contractName": eventItem.eventConfig.contractName,
-          "eventName": eventItem.eventConfig.name,
-          "chainId": eventItem.chain->ChainMap.Chain.toChainId,
-          "block": eventItem.blockNumber,
-          "logIndex": eventItem.logIndex,
-          "address": eventItem.event.srcAddress,
+          "contractName": item.eventConfig.contractName,
+          "eventName": item.eventConfig.name,
+          "chainId": item.chain->ChainMap.Chain.toChainId,
+          "block": item.blockNumber,
+          "logIndex": item.logIndex,
+          "address": item.event.srcAddress,
         }->createChildParams,
       )
-      eventItem.loggerCache = Some(l)
+      item.loggerCache = Some(l)
       l
     }
   }
 }
 
 @inline
-let logForItem = (eventItem, level: Pino.logLevel, message: string, ~params=?) => {
-  (eventItem->getEventLogger->Utils.magic->Js.Dict.unsafeGet((level :> string)))(params, message)
+let logForItem = (item, level: Pino.logLevel, message: string, ~params=?) => {
+  (item->getEventLogger->Utils.magic->Js.Dict.unsafeGet((level :> string)))(params, message)
 }
 
 let noopLogger: Envio.logger = {
@@ -177,11 +177,11 @@ let noopLogger: Envio.logger = {
   errorWithExn: (_message: string, _exn) => (),
 }
 
-let getUserLogger = (eventItem): Envio.logger => {
-  info: (message: string, ~params=?) => eventItem->logForItem(#uinfo, message, ~params?),
-  debug: (message: string, ~params=?) => eventItem->logForItem(#udebug, message, ~params?),
-  warn: (message: string, ~params=?) => eventItem->logForItem(#uwarn, message, ~params?),
-  error: (message: string, ~params=?) => eventItem->logForItem(#uerror, message, ~params?),
+let getUserLogger = (item): Envio.logger => {
+  info: (message: string, ~params=?) => item->logForItem(#uinfo, message, ~params?),
+  debug: (message: string, ~params=?) => item->logForItem(#udebug, message, ~params?),
+  warn: (message: string, ~params=?) => item->logForItem(#uwarn, message, ~params?),
+  error: (message: string, ~params=?) => item->logForItem(#uerror, message, ~params?),
   errorWithExn: (message: string, exn) =>
-    eventItem->logForItem(#uerror, message, ~params={"err": exn->Utils.prettifyExn}),
+    item->logForItem(#uerror, message, ~params={"err": exn->Utils.prettifyExn}),
 }

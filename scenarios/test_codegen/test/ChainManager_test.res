@@ -51,7 +51,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
       let numberOfEventsInBatch = getRandomInt(0, 2 * averageEventsPerBlock)
 
       for logIndex in 0 to numberOfEventsInBatch {
-        let batchItem: Internal.eventItem = {
+        let batchItem: Internal.item = {
           timestamp: currentTime.contents,
           chain: ChainMap.Chain.makeUnsafe(~chainId=id),
           blockNumber: currentBlockNumber.contents,
@@ -142,7 +142,7 @@ describe("ChainManager", () => {
           _allEvents,
         ) = populateChainQueuesWithRandomEvents()
 
-        let defaultFirstEvent: Internal.eventItem = {
+        let defaultFirstEvent: Internal.item = {
           timestamp: 0,
           chain: MockConfig.chain1,
           blockNumber: 0,
@@ -230,7 +230,7 @@ describe("getOrderedNextItem", () => {
     let makeNoItem = timestamp => FetchState.NoItem({
       latestFetchedBlock: {blockTimestamp: timestamp, blockNumber: 0},
     })
-    let makeMockQItem = (timestamp, chain): Internal.eventItem => {
+    let makeMockQItem = (timestamp, chain): Internal.item => {
       {
         timestamp,
         chain,
@@ -243,7 +243,7 @@ describe("getOrderedNextItem", () => {
 
     let makeMockFetchState = (
       ~latestFetchedBlockTimestamp,
-      ~item: option<Internal.eventItem>,
+      ~item: option<Internal.item>,
     ): FetchState.t => {
       let normalSelection: FetchState.selection = {
         dependsOnAddresses: true,

@@ -3,7 +3,7 @@ open Belt
 //A filter should return true if the event should be kept and isValid should return
 //false when the filter should be removed/cleaned up
 type processingFilter = {
-  filter: Internal.eventItem => bool,
+  filter: Internal.item => bool,
   isValid: (~fetchState: FetchState.t) => bool,
 }
 
@@ -308,25 +308,25 @@ let getContractStartBlock = (
 }
 
 let runContractRegistersOrThrow = async (
-  ~itemsWithContractRegister: array<Internal.eventItem>,
+  ~itemsWithContractRegister: array<Internal.item>,
   ~config: Config.t,
 ) => {
   let dynamicContracts = []
   let isDone = ref(false)
 
-  let onRegister = (~eventItem: Internal.eventItem, ~contractAddress, ~contractName) => {
+  let onRegister = (~item: Internal.item, ~contractAddress, ~contractName) => {
     if isDone.contents {
-      eventItem->Logging.logForItem(
+      item->Logging.logForItem(
         #warn,
         `Skipping contract registration: The context.add${(contractName: Enums.ContractType.t :> string)} was called after the contract register resolved. Use await or return a promise from the contract register handler to avoid this error.`,
       )
     } else {
-      let {timestamp, blockNumber, logIndex} = eventItem
+      let {timestamp, blockNumber, logIndex} = item
 
       // Use contract-specific start block if configured, otherwise fall back to registration block
       let contractStartBlock = switch getContractStartBlock(
         config,
-        ~chain=eventItem.chain,
+        ~chain=item.chain,
         ~contractName=(contractName: Enums.ContractType.t :> string),
       ) {
       | Some(configuredStartBlock) => configuredStartBlock
@@ -340,9 +340,9 @@ let runContractRegistersOrThrow = async (
         register: DC({
           registeringEventBlockTimestamp: timestamp,
           registeringEventLogIndex: logIndex,
-          registeringEventName: eventItem.eventConfig.name,
-          registeringEventContractName: eventItem.eventConfig.contractName,
-          registeringEventSrcAddress: eventItem.event.srcAddress,
+          registeringEventName: item.eventConfig.name,
+          registeringEventContractName: item.eventConfig.contractName,
+          registeringEventSrcAddress: item.event.srcAddress,
         }),
       }
 
@@ -352,12 +352,12 @@ let runContractRegistersOrThrow = async (
 
   let promises = []
   for idx in 0 to itemsWithContractRegister->Array.length - 1 {
-    let eventItem = itemsWithContractRegister->Array.getUnsafe(idx)
-    let contractRegister = switch eventItem.eventConfig.contractRegister {
+    let item = itemsWithContractRegister->Array.getUnsafe(idx)
+    let contractRegister = switch item.eventConfig.contractRegister {
     | Some(contractRegister) => contractRegister
     | None =>
       // Unexpected case, since we should pass only events with contract register to this function
-      Js.Exn.raiseError("Contract register is not set for event " ++ eventItem.eventConfig.name)
+      Js.Exn.raiseError("Contract register is not set for event " ++ item.eventConfig.name)
     }
 
     let errorMessage = "Event contractRegister failed, please fix the error to keep the indexer running smoothly"
@@ -365,7 +365,7 @@ let runContractRegistersOrThrow = async (
     // Catch sync and async errors
     try {
       let result = contractRegister(
-        eventItem->UserContext.getContractRegisterArgs(~onRegister, ~config),
+        item->UserContext.getContractRegisterArgs(~onRegister, ~config),
       )
 
       // Even though `contractRegister` always returns a promise,
@@ -375,14 +375,14 @@ let runContractRegistersOrThrow = async (
           result->Promise.catch(exn => {
             exn->ErrorHandling.mkLogAndRaise(
               ~msg=errorMessage,
-              ~logger=eventItem->Logging.getEventLogger,
+              ~logger=item->Logging.getEventLogger,
             )
           }),
         )
       }
     } catch {
     | exn =>
-      exn->ErrorHandling.mkLogAndRaise(~msg=errorMessage, ~logger=eventItem->Logging.getEventLogger)
+      exn->ErrorHandling.mkLogAndRaise(~msg=errorMessage, ~logger=item->Logging.getEventLogger)
     }
   }
 
@@ -395,7 +395,7 @@ let runContractRegistersOrThrow = async (
 }
 
 @inline
-let applyProcessingFilters = (~item: Internal.eventItem, ~processingFilters) => {
+let applyProcessingFilters = (~item: Internal.item, ~processingFilters) => {
   processingFilters->Js.Array2.every(processingFilter => processingFilter.filter(item))
 }
 

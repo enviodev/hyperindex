@@ -200,7 +200,7 @@ let make = (
     item: HyperSync.logsQueryPageItem,
     ~params: Internal.eventParams,
     ~eventConfig: Internal.evmEventConfig,
-  ): Internal.eventItem => {
+  ): Internal.item => {
     let {block, log, transaction} = item
     let chainId = chain->ChainMap.Chain.toChainId
 

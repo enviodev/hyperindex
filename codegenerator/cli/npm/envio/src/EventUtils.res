@@ -12,7 +12,7 @@ let getEventComparator = (multiChainEventIndex: multiChainEventIndex) => {
 }
 
 let getEventComparatorFromQueueItem = (
-  {chain, timestamp, blockNumber, logIndex}: Internal.eventItem,
+  {chain, timestamp, blockNumber, logIndex}: Internal.item,
 ) => {
   let chainId = chain->ChainMap.Chain.toChainId
   (timestamp, chainId, blockNumber, logIndex)

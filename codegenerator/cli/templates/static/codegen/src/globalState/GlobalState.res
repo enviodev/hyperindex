@@ -122,7 +122,7 @@ type action =
   // because when processing the response, there might be an async contract registration.
   // So after it's finished we dispatch the  submit action to get the latest fetch state.
   | SubmitPartitionQueryResponse({
-      newItems: array<Internal.eventItem>,
+      newItems: array<Internal.item>,
       dynamicContracts: array<FetchState.indexingContract>,
       currentBlockHeight: int,
       latestFetchedBlock: FetchState.blockNumberAndTimestamp,
@@ -516,7 +516,7 @@ let processPartitionQueryResponse = async (
   let dynamicContracts = switch itemsWithContractRegister {
   | [] as empty =>
     // A small optimisation to not recreate an empty array
-    empty->(Utils.magic: array<Internal.eventItem> => array<FetchState.indexingContract>)
+    empty->(Utils.magic: array<Internal.item> => array<FetchState.indexingContract>)
   | _ =>
     await ChainFetcher.runContractRegistersOrThrow(~itemsWithContractRegister, ~config=state.config)
   }
@@ -1063,10 +1063,10 @@ let injectedTaskReducer = (
           }
           //On other chains, filter out evennts based on the first change present on the chain after the reorg
           rolledBackCf->ChainFetcher.addProcessingFilter(
-            ~filter=eventItem => {
+            ~filter=item => {
               //Filter out events that occur passed the block where the query starts but
               //are lower than the timestamp where we rolled back to
-              (eventItem.blockNumber, eventItem.logIndex) >=
+              (item.blockNumber, item.logIndex) >=
               (firstChangeEvent.blockNumber, firstChangeEvent.logIndex)
             },
             ~isValid=(~fetchState) => {

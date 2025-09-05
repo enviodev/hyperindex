@@ -458,7 +458,7 @@ let make = ({chain, endpointUrl}: options): t => {
             srcAddress: contractAddress,
             logIndex: receiptIndex,
           },
-        }: Internal.eventItem
+        }: Internal.item
       )
     })
 

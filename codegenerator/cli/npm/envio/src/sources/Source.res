@@ -13,7 +13,7 @@ Thes response returned from a block range fetch
 type blockRangeFetchResponse = {
   currentBlockHeight: int,
   reorgGuard: ReorgDetection.reorgGuard,
-  parsedQueueItems: array<Internal.eventItem>,
+  parsedQueueItems: array<Internal.item>,
   fromBlockQueried: int,
   latestFetchedBlockNumber: int,
   latestFetchedBlockTimestamp: int,

@@ -133,7 +133,7 @@ type evmContractConfig = {
   events: array<evmEventConfig>,
 }
 
-type eventItem = {
+type item = {
   eventConfig: eventConfig,
   timestamp: int,
   chain: ChainMap.Chain.t,

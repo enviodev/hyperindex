@@ -43,9 +43,9 @@ fatal("This is a fatal message.")
 setLogLevel(#udebug)
 info(`##Current log level: ${(getLogger()->getLevel :> string)}`)
 
-let eventItem = MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem
+let item = MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem
 
-let userLogger = Logging.getUserLogger(eventItem)
+let userLogger = Logging.getUserLogger(item)
 userLogger.debug("This is a user debug message.", ~params={"child": "userLogs debug"})
 userLogger.info("This is a user info message.", ~params={"child": "userLogs debug"})
 userLogger.warn("This is a user warn message.", ~params={"child": "userLogs debug"})

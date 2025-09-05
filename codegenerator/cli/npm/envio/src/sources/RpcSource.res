@@ -679,7 +679,7 @@ let make = ({sourceFor, syncConfig, url, chain, contracts, eventRouter}: options
                       srcAddress: log.address,
                       logIndex: log.logIndex,
                     }->Internal.fromGenericEvent,
-                  }: Internal.eventItem
+                  }: Internal.item
                 )
               }
             )(),

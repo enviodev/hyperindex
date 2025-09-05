@@ -6,7 +6,7 @@ let loadById = (
   ~entityConfig: Internal.entityConfig,
   ~inMemoryStore,
   ~shouldGroup,
-  ~eventItem,
+  ~item,
   ~entityId,
 ) => {
   let key = `${entityConfig.name}.get`
@@ -25,7 +25,7 @@ let loadById = (
       )
     } catch {
     | Persistence.StorageError({message, reason}) =>
-      reason->ErrorHandling.mkLogAndRaise(~logger=eventItem->Logging.getEventLogger, ~msg=message)
+      reason->ErrorHandling.mkLogAndRaise(~logger=item->Logging.getEventLogger, ~msg=message)
     }
 
     let entitiesMap = Js.Dict.empty()
@@ -69,7 +69,7 @@ let loadEffect = (
   ~effectArgs,
   ~inMemoryStore,
   ~shouldGroup,
-  ~eventItem,
+  ~item,
 ) => {
   let key = `${effect.name}.effect`
   let inMemTable = inMemoryStore->InMemoryStore.getEffectInMemTable(~effect)
@@ -93,7 +93,7 @@ let loadEffect = (
         } catch {
         | Persistence.StorageError({message, reason}) =>
           reason->ErrorHandling.mkLogAndRaise(
-            ~logger=eventItem->Logging.getEventLogger,
+            ~logger=item->Logging.getEventLogger,
             ~msg=message,
           )
         }
@@ -155,7 +155,7 @@ let loadByField = (
   ~fieldName,
   ~fieldValueSchema,
   ~shouldGroup,
-  ~eventItem,
+  ~item,
   ~fieldValue,
 ) => {
   let operatorCallName = switch operator {
@@ -202,7 +202,7 @@ let loadByField = (
         | Persistence.StorageError({message, reason}) =>
           reason->ErrorHandling.mkLogAndRaise(
             ~logger=Logging.createChildFrom(
-              ~logger=eventItem->Logging.getEventLogger,
+              ~logger=item->Logging.getEventLogger,
               ~params={
                 "operator": operatorCallName,
                 "tableName": entityConfig.table.tableName,

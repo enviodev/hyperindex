@@ -57,7 +57,7 @@ let makeConfigContract = (contractName, address): FetchState.indexingContract =>
   }
 }
 
-let mockEvent = (~blockNumber, ~logIndex=0, ~chainId=1): Internal.eventItem => {
+let mockEvent = (~blockNumber, ~logIndex=0, ~chainId=1): Internal.item => {
   timestamp: blockNumber * 15,
   chain: ChainMap.Chain.makeUnsafe(~chainId),
   blockNumber,

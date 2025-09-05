@@ -19,9 +19,9 @@ describe("E2E Mock Event Batch", () => {
         ~shouldBenchmark=false,
       )
     } catch {
-    | EventProcessing.ProcessingError({message, exn, eventItem}) =>
+    | EventProcessing.ProcessingError({message, exn, item}) =>
       exn
-      ->ErrorHandling.make(~msg=message, ~logger=eventItem->Logging.getEventLogger)
+      ->ErrorHandling.make(~msg=message, ~logger=item->Logging.getEventLogger)
       ->ErrorHandling.logAndRaise
     }
   })

@@ -7,7 +7,7 @@ type progressedChain = {
 }
 
 type t = {
-  items: array<Internal.eventItem>,
+  items: array<Internal.item>,
   progressedChains: array<progressedChain>,
   fetchStates: ChainMap.t<FetchState.t>,
   dcsToStoreByChainId: dict<array<FetchState.indexingContract>>,
@@ -18,7 +18,7 @@ type multiChainEventComparitor = {
   earliestEvent: FetchState.queueItem,
 }
 
-let getComparitorFromItem = (queueItem: Internal.eventItem) => {
+let getComparitorFromItem = (queueItem: Internal.item) => {
   let {timestamp, chain, blockNumber, logIndex} = queueItem
   EventUtils.getEventComparator({
     timestamp,
