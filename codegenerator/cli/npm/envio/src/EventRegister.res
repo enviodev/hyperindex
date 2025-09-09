@@ -63,8 +63,8 @@ let onBlock = (options: Envio.onBlockOptions, handler: Internal.onBlockArgs => p
   // So we encourage users to upgrade to preload optimization
   // otherwise block handlers will be extremely slow
   switch registration.preloadHandlers {
-  | false => ()
-  | true =>
+  | true => ()
+  | false =>
     Js.Exn.raiseError(
       "Block Handlers require the Preload Optimization feature. Enable it by setting the `preload_handlers` option to `true` in your config.",
     )

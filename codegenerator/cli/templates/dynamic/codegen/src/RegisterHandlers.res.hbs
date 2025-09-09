@@ -97,10 +97,9 @@ let registerAllHandlers = () => {
   )
   {{/each}}
 
-  let registrations = EventRegister.finishRegistration()
   let generatedConfig = {
-    ...configWithoutRegistrations,
-    registrations: Some(registrations),
+    ...makeGeneratedConfig(),
+    registrations: Some(EventRegister.finishRegistration()),
   }
   config := Some(generatedConfig)
   generatedConfig

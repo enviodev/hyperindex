@@ -555,6 +555,9 @@ let compareBufferItem = (a: Internal.item, b: Internal.item) => {
   }
 }
 
+// Some big number which should be bigger than any log index
+let blockItemLogIndex = 16777216
+
 /*
 Updates fetchState with a response for a given query.
 Returns Error if the partition with given query cannot be found (unexpected)
@@ -620,11 +623,39 @@ let handleQueryResult = (
       )
     }
   }->Result.map(partitions => {
+    let newQueue = fetchState.queue->Array.concat(newItems)
+
+    switch fetchState.onBlockConfigs {
+    | Some(onBlockConfigs) => {
+        let prevLatestFetchedBlockNumber = fetchState.latestFullyFetchedBlock.blockNumber
+        let nextLatestFullyFetchedBlockNumber = {
+          let nextLatestFullyFetchedBlockNumber = ref(latestFetchedBlock.blockNumber)
+          for idx in 0 to partitions->Array.length - 1 {
+            let p = partitions->Js.Array2.unsafe_get(idx)
+            if nextLatestFullyFetchedBlockNumber.contents > p.latestFetchedBlock.blockNumber {
+              nextLatestFullyFetchedBlockNumber := p.latestFetchedBlock.blockNumber
+            }
+          }
+          nextLatestFullyFetchedBlockNumber.contents
+        }
+
+        if nextLatestFullyFetchedBlockNumber > prevLatestFetchedBlockNumber {
+          for blockNumber in prevLatestFetchedBlockNumber + 1 to nextLatestFullyFetchedBlockNumber {
+            for configIdx in 0 to onBlockConfigs->Array.length - 1 {
+              let onBlockConfig = onBlockConfigs->Js.Array2.unsafe_get(configIdx)
+              newQueue->Array.push(Block({onBlockConfig, blockNumber, logIndex: blockItemLogIndex}))
+            }
+          }
+        }
+      }
+
+    | None => ()
+    }
+
     fetchState->updateInternal(
       ~partitions,
       ~currentBlockHeight,
-      ~queue=fetchState.queue
-      ->Array.concat(newItems)
+      ~queue=newQueue
       // Theoretically it could be faster to asume that
       // the items are sorted, but there are cases
       // when the data source returns them unsorted
