@@ -245,7 +245,7 @@ let updateProgressedChains = (
           | None =>
             switch items->Js.Array2.find(item =>
               switch item {
-              | Internal.Event({chain}) => chain === chain
+              | Internal.Event({chain: eventChain}) => eventChain === chain
               | Internal.Block({onBlockConfig: {chainId}}) =>
                 chainId === chain->ChainMap.Chain.toChainId
               }
