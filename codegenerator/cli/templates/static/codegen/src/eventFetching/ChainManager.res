@@ -2,7 +2,7 @@ open Belt
 
 type t = {
   chainFetchers: ChainMap.t<ChainFetcher.t>,
-  isUnorderedMultichainMode: bool,
+  multichain: InternalConfig.multichain,
   isInReorgThreshold: bool,
 }
 
@@ -10,7 +10,7 @@ let makeFromConfig = (~config: Config.t): t => {
   let chainFetchers = config.chainMap->ChainMap.map(ChainFetcher.makeFromConfig(_, ~config))
   {
     chainFetchers,
-    isUnorderedMultichainMode: config.isUnorderedMultichainMode,
+    multichain: config.multichain,
     isInReorgThreshold: false,
   }
 }
@@ -37,6 +37,7 @@ let makeFromDbState = async (~initialState: Persistence.initialState, ~config: C
     ->Array.map(async (resumedChainState: InternalTable.Chains.t) => {
       let chain = Config.getChain(config, ~chainId=resumedChainState.id)
       let chainConfig = config.chainMap->ChainMap.get(chain)
+
       (
         chain,
         await chainConfig->ChainFetcher.makeFromDbState(
@@ -51,7 +52,7 @@ let makeFromDbState = async (~initialState: Persistence.initialState, ~config: C
   let chainFetchers = ChainMap.fromArrayUnsafe(chainFetchersArr)
 
   {
-    isUnorderedMultichainMode: config.isUnorderedMultichainMode,
+    multichain: config.multichain,
     chainFetchers,
     isInReorgThreshold,
   }
@@ -92,7 +93,12 @@ let createBatch = (chainManager: t, ~maxBatchSize: int): Batch.t => {
   let fetchStates = chainManager->getFetchStateWithData(~shouldDeepCopy=true)
 
   let sizePerChain = Js.Dict.empty()
-  let items = if chainManager.isUnorderedMultichainMode || fetchStates->ChainMap.size === 1 {
+  let items = if (
+    switch chainManager.multichain {
+    | Unordered => true
+    | Ordered => fetchStates->ChainMap.size === 1
+    }
+  ) {
     Batch.popUnorderedBatchItems(~maxBatchSize, ~fetchStates, ~sizePerChain)
   } else {
     Batch.popOrderedBatchItems(~maxBatchSize, ~fetchStates, ~sizePerChain)

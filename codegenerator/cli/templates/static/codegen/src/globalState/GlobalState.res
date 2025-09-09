@@ -1042,24 +1042,25 @@ let injectedTaskReducer = (
         ~chain=reorgChain,
       )
 
-      let isUnorderedMultichainMode = state.config.isUnorderedMultichainMode
-
       let reorgChainId = reorgChain->ChainMap.Chain.toChainId
 
       //Get the first change event that occurred on each chain after the last known valid block
       //Uses a different method depending on if the reorg chain is ordered or unordered
       let firstChangeEventIdentifierPerChain =
         await Db.sql->DbFunctions.EntityHistory.getFirstChangeEventPerChain(
-          isUnorderedMultichainMode
-            ? UnorderedMultichain({
-                reorgChainId,
-                safeBlockNumber: lastKnownValidBlockNumber,
-              })
-            : OrderedMultichain({
-                safeBlockTimestamp: lastKnownValidBlockTimestamp,
-                reorgChainId,
-                safeBlockNumber: lastKnownValidBlockNumber,
-              }),
+          switch state.config.multichain {
+          | Unordered =>
+            UnorderedMultichain({
+              reorgChainId,
+              safeBlockNumber: lastKnownValidBlockNumber,
+            })
+          | Ordered =>
+            OrderedMultichain({
+              safeBlockTimestamp: lastKnownValidBlockTimestamp,
+              reorgChainId,
+              safeBlockNumber: lastKnownValidBlockNumber,
+            })
+          },
         )
 
       firstChangeEventIdentifierPerChain->DbFunctions.EntityHistory.FirstChangeEventPerChain.setIfEarlier(
@@ -1115,7 +1116,10 @@ let injectedTaskReducer = (
         ~blockTimestamp=lastKnownValidBlockTimestamp,
         ~blockNumber=lastKnownValidBlockNumber,
         ~logIndex=0,
-        ~isUnorderedMultichainMode,
+        ~isUnorderedMultichainMode=switch state.config.multichain {
+        | Unordered => true
+        | Ordered => false
+        },
       )
 
       let chainManager = {

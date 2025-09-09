@@ -1,17 +1,40 @@
-let isInitialized = ref(false)
-let preventInitialized = () => {
-  if isInitialized.contents {
+type registrations = {onBlockByChainId: dict<array<Internal.onBlockConfig>>}
+
+type activeRegistration = {
+  ecosystem: InternalConfig.ecosystem,
+  multichain: InternalConfig.multichain,
+  preloadHandlers: bool,
+  registrations: registrations,
+}
+
+let activeRegistration = ref(None)
+
+let getRegistration = () => {
+  switch activeRegistration.contents {
+  | None =>
     Js.Exn.raiseError(
       "The indexer finished initializing, so no more handlers can be registered. Make sure the handlers are registered on the top level of the file.",
     )
+  | Some(r) => r
   }
 }
 
-let closeRegistration = () => {
-  isInitialized.contents = true
+let startRegistration = (~ecosystem, ~multichain, ~preloadHandlers) => {
+  activeRegistration.contents = Some({
+    ecosystem,
+    multichain,
+    preloadHandlers,
+    registrations: {
+      onBlockByChainId: Js.Dict.empty(),
+    },
+  })
 }
 
-let onBlockByChainId = Js.Dict.empty()
+let finishRegistration = () => {
+  let r = getRegistration()
+  activeRegistration.contents = None
+  r.registrations
+}
 
 let onBlockOptionsSchema = S.schema((s): Envio.onBlockOptions => {
   name: s.matches(S.string),
@@ -19,7 +42,34 @@ let onBlockOptionsSchema = S.schema((s): Envio.onBlockOptions => {
 })
 
 let onBlock = (options: Envio.onBlockOptions, handler: Internal.onBlockArgs => promise<unit>) => {
-  preventInitialized()
+  let registration = getRegistration()
+
+  // There's no big reason for this. It's just more work
+  switch registration.ecosystem {
+  | Evm => ()
+  | Fuel =>
+    Js.Exn.raiseError(
+      "Block Handlers are not supported for non-EVM ecosystems. Please reach out to the Envio team if you need this feature.",
+    )
+  }
+  // We need to get timestamp for ordered multichain mode
+  switch registration.multichain {
+  | Unordered => ()
+  | Ordered =>
+    Js.Exn.raiseError(
+      "Block Handlers are not supported for ordered multichain mode. Please reach out to the Envio team if you need this feature or enable unordered multichain mode with `unordered_multichain_mode: true` in your config.",
+    )
+  }
+  // So we encourage users to upgrade to preload optimization
+  // otherwise block handlers will be extremely slow
+  switch registration.preloadHandlers {
+  | false => ()
+  | true =>
+    Js.Exn.raiseError(
+      "Block Handlers require the Preload Optimization feature. Enable it by setting the `preload_handlers` option to `true` in your config.",
+    )
+  }
+
   options->S.assertOrThrow(onBlockOptionsSchema)
   let chainId = switch options.chain {
   | Id(chainId) => chainId
@@ -28,6 +78,8 @@ let onBlock = (options: Envio.onBlockOptions, handler: Internal.onBlockArgs => p
   // To do so, we'll need to pass a config during reigstration
   // instead of isInitialized check.
   }
+
+  let onBlockByChainId = registration.registrations.onBlockByChainId
 
   switch onBlockByChainId->Utils.Dict.dangerouslyGetNonOption(chainId->Belt.Int.toString) {
   | None =>
@@ -104,7 +156,7 @@ let setEventOptions = (t: t, ~eventOptions, ~logger=Logging.getLogger()) => {
 }
 
 let setHandler = (t: t, handler, ~eventOptions, ~logger=Logging.getLogger()) => {
-  preventInitialized()
+  let _ = getRegistration()
   switch t.handler {
   | None =>
     t.handler =
@@ -123,7 +175,7 @@ let setHandler = (t: t, handler, ~eventOptions, ~logger=Logging.getLogger()) => 
 }
 
 let setContractRegister = (t: t, contractRegister, ~eventOptions, ~logger=Logging.getLogger()) => {
-  preventInitialized()
+  let _ = getRegistration()
   switch t.contractRegister {
   | None =>
     t.contractRegister = Some(

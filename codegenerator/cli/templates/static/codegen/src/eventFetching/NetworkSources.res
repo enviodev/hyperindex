@@ -3,7 +3,7 @@ open Belt
 type rpc = {
   url: string,
   sourceFor: Source.sourceFor,
-  syncConfig?: Config.syncConfigOptions,
+  syncConfig?: InternalConfig.sourceSyncOptions,
 }
 
 let evm = (

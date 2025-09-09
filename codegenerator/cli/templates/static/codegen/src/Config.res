@@ -1,21 +1,5 @@
 open Belt
 
-type ecosystem = | @as("evm") Evm | @as("fuel") Fuel
-
-type syncConfigOptions = {
-  initialBlockInterval?: int,
-  backoffMultiplicative?: float,
-  accelerationAdditive?: int,
-  intervalCeiling?: int,
-  backoffMillis?: int,
-  queryTimeoutMillis?: int,
-  fallbackStallTimeout?: int,
-}
-
-type historyFlag = FullHistory | MinHistory
-type rollbackFlag = RollbackOnReorg | NoRollback
-type historyConfig = {rollbackFlag: rollbackFlag, historyFlag: historyFlag}
-
 let getSyncConfig = (
   {
     ?initialBlockInterval,
@@ -25,7 +9,7 @@ let getSyncConfig = (
     ?backoffMillis,
     ?queryTimeoutMillis,
     ?fallbackStallTimeout,
-  }: syncConfigOptions,
+  }: InternalConfig.sourceSyncOptions,
 ): InternalConfig.sourceSync => {
   let queryTimeoutMillis = queryTimeoutMillis->Option.getWithDefault(20_000)
   {
@@ -119,15 +103,17 @@ let codegenPersistence = Persistence.make(
 )
 
 type t = {
-  historyConfig: historyConfig,
-  isUnorderedMultichainMode: bool,
+  historyConfig: InternalConfig.historyConfig,
+  multichain: InternalConfig.multichain,
   chainMap: ChainMap.t<InternalConfig.chain>,
   defaultChain: option<InternalConfig.chain>,
-  ecosystem: ecosystem,
+  ecosystem: InternalConfig.ecosystem,
   enableRawEvents: bool,
+  preloadHandlers: bool,
   persistence: Persistence.t,
   addContractNameToContractNameMapping: dict<string>,
   maxAddrInPartition: int,
+  registrations: option<EventRegister.registrations>,
 }
 
 let make = (
@@ -136,8 +122,9 @@ let make = (
   ~isUnorderedMultichainMode=false,
   ~chains: array<InternalConfig.chain>=[],
   ~enableRawEvents=false,
+  ~preloadHandlers=false,
   ~persistence=codegenPersistence,
-  ~ecosystem=Evm,
+  ~ecosystem=InternalConfig.Evm,
 ) => {
   let chainMap =
     chains
@@ -160,11 +147,17 @@ let make = (
       rollbackFlag: shouldRollbackOnReorg ? RollbackOnReorg : NoRollback,
       historyFlag: shouldSaveFullHistory ? FullHistory : MinHistory,
     },
-    isUnorderedMultichainMode: Env.Configurable.isUnorderedMultichainMode->Option.getWithDefault(
-      Env.Configurable.unstable__temp_unordered_head_mode->Option.getWithDefault(
-        isUnorderedMultichainMode,
-      ),
-    ),
+    multichain: if (
+      Env.Configurable.isUnorderedMultichainMode->Option.getWithDefault(
+        Env.Configurable.unstable__temp_unordered_head_mode->Option.getWithDefault(
+          isUnorderedMultichainMode,
+        ),
+      )
+    ) {
+      Unordered
+    } else {
+      Ordered
+    },
     chainMap,
     defaultChain: chains->Array.get(0),
     enableRawEvents,
@@ -172,6 +165,8 @@ let make = (
     ecosystem,
     addContractNameToContractNameMapping,
     maxAddrInPartition: Env.maxAddrInPartition,
+    registrations: None,
+    preloadHandlers,
   }
 }
 

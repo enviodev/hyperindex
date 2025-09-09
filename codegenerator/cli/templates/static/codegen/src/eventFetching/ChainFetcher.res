@@ -54,6 +54,8 @@ let make = (
   let contracts = []
   let eventConfigs: array<Internal.eventConfig> = []
 
+  let notRegisteredEvents = []
+
   chainConfig.contracts->Array.forEach(contract => {
     let contractName = contract.name
 
@@ -78,9 +80,7 @@ let make = (
       } else {
         let isRegistered = hasContractRegister || eventConfig.handler->Option.isSome
         if !isRegistered {
-          logger->Logging.childInfo(
-            `The event "${eventConfig.name}" for contract "${contractName}" is not going to be indexed, because it doesn't have either a contract register or a handler.`,
-          )
+          notRegisteredEvents->Array.push(eventConfig)
         }
         isRegistered
       }
@@ -126,6 +126,24 @@ let make = (
     })
   )
 
+  if notRegisteredEvents->Utils.Array.notEmpty {
+    logger->Logging.childInfo(
+      `The event${if notRegisteredEvents->Array.length > 1 {
+          "s"
+        } else {
+          ""
+        }} ${notRegisteredEvents
+        ->Array.map(eventConfig => `${eventConfig.contractName}.${eventConfig.name}`)
+        ->Js.Array2.joinWith(", ")} don't have an event handler and skipped for indexing.`,
+    )
+  }
+
+  let onBlockConfigs = switch config.registrations {
+  | None => Js.Exn.raiseError("Indexer must be initialized with event registration finished.")
+  | Some(registrations) =>
+    registrations.onBlockByChainId->Utils.Dict.dangerouslyGetNonOption(chainConfig.id->Int.toString)
+  }
+
   let fetchState = FetchState.make(
     ~maxAddrInPartition=config.maxAddrInPartition,
     ~contracts,
@@ -139,6 +157,7 @@ let make = (
         : chainConfig.confirmedBlockThreshold,
       Env.indexingBlockLag->Option.getWithDefault(0),
     ),
+    ~onBlockConfigs?,
   )
 
   {

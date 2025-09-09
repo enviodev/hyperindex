@@ -2,6 +2,22 @@
 // And turn it into PublicConfig instead
 // For internal use we should create Indexer.res with a stateful type
 
+type ecosystem = | @as("evm") Evm | @as("fuel") Fuel
+
+type sourceSyncOptions = {
+  initialBlockInterval?: int,
+  backoffMultiplicative?: float,
+  accelerationAdditive?: int,
+  intervalCeiling?: int,
+  backoffMillis?: int,
+  queryTimeoutMillis?: int,
+  fallbackStallTimeout?: int,
+}
+
+type historyFlag = FullHistory | MinHistory
+type rollbackFlag = RollbackOnReorg | NoRollback
+type historyConfig = {rollbackFlag: rollbackFlag, historyFlag: historyFlag}
+
 type contract = {
   name: string,
   abi: EvmTypes.Abi.t,
@@ -28,3 +44,5 @@ type sourceSync = {
   queryTimeoutMillis: int,
   fallbackStallTimeout: int,
 }
+
+type multichain = | @as("ordered") Ordered | @as("unordered") Unordered

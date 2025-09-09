@@ -7,22 +7,6 @@ module {{contract.name.capitalized}} = {
 }
 
 {{/each}}  
-{{#if preload_handlers}}
-{{#if is_evm_ecosystem}}
 @genType
 /** Register a Block Handler. It'll be called for every block by default. Use the `options` argument to set a custom interval. */
-let onBlock: (Envio.onBlockArgs<Types.handlerContext> => promise<unit>, Envio.onBlockOptions) => unit = EventRegister.onBlock
-{{else}}
-@genType
-/** @deprecated Block Handlers are not supported for non-EVM ecosystems. Please reach out to the Envio team if you need this feature. */
-let onBlock = ((_handler: Envio.onBlockArgs<Types.handlerContext> => promise<unit>, _options: Envio.onBlockOptions) => {
-  Js.Exn.raiseError("Block Handlers are not supported for non-EVM ecosystems. Please reach out to the Envio team if you need this feature.")
-})
-{{/if}}
-{{else}}
-@genType
-/** @deprecated Block Handlers require the Preload Optimization feature. Enable it by setting the `preload_handlers` option to `true` in the Envio config. */
-let onBlock = ((_handler: Envio.onBlockArgs<Types.handlerContext> => promise<unit>, _options: Envio.onBlockOptions) => {
-  Js.Exn.raiseError("Block Handlers require the Preload Optimization feature. Enable it by setting the `preload_handlers` option to `true` in the Envio config.")
-})
-{{/if}}
+let onBlock: (Envio.onBlockOptions, Envio.onBlockArgs<Types.handlerContext> => promise<unit>) => unit = (EventRegister.onBlock: (Envio.onBlockOptions, Internal.onBlockArgs => promise<unit>) => unit)->Utils.magic

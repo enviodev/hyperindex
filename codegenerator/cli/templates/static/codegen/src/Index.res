@@ -341,7 +341,10 @@ let main = async () => {
                 indexerStartTime: appState.indexerStartTime,
                 isPreRegisteringDynamicContracts: false,
                 rollbackOnReorg: config.historyConfig.rollbackFlag === RollbackOnReorg,
-                isUnorderedMultichainMode: config.isUnorderedMultichainMode,
+                isUnorderedMultichainMode: switch config.multichain {
+                | Unordered => true
+                | Ordered => false
+                },
               })
             }
           }

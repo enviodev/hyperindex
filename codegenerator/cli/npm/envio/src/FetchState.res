@@ -71,6 +71,7 @@ type t = {
   blockLag: int,
   //Items ordered from latest to earliest
   queue: array<Internal.item>,
+  onBlockConfigs: option<array<Internal.onBlockConfig>>,
 }
 
 let copy = (fetchState: t) => {
@@ -88,6 +89,7 @@ let copy = (fetchState: t) => {
     dcsToStore: fetchState.dcsToStore,
     blockLag: fetchState.blockLag,
     queue: fetchState.queue->Array.copy,
+    onBlockConfigs: fetchState.onBlockConfigs,
   }
 }
 
@@ -254,6 +256,7 @@ let updateInternal = (
     contractConfigs: fetchState.contractConfigs,
     normalSelection: fetchState.normalSelection,
     chainId: fetchState.chainId,
+    onBlockConfigs: fetchState.onBlockConfigs,
     nextPartitionIndex,
     partitions,
     isFetchingAtHead,
@@ -925,6 +928,7 @@ let make = (
   ~contracts: array<indexingContract>,
   ~maxAddrInPartition,
   ~chainId,
+  ~onBlockConfigs=?,
   ~blockLag=0,
 ): t => {
   let latestFetchedBlock = {
@@ -1049,6 +1053,7 @@ let make = (
     indexingContracts,
     dcsToStore: None,
     blockLag,
+    onBlockConfigs,
     queue: [],
   }
 }

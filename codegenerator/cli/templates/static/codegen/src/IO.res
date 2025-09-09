@@ -213,7 +213,10 @@ let executeBatch = async (
       sql =>
         Promise.all2((
           sql->DbFunctions.EntityHistory.deleteAllEntityHistoryAfterEventIdentifier(
-            ~isUnorderedMultichainMode=config.isUnorderedMultichainMode,
+            ~isUnorderedMultichainMode=switch config.multichain {
+            | Unordered => true
+            | Ordered => false
+            },
             ~eventIdentifier,
           ),
           sql->DbFunctions.EndOfBlockRangeScannedData.rollbackEndOfBlockRangeScannedDataForChain(
