@@ -8,5 +8,5 @@ module {{contract.name.capitalized}} = {
 
 {{/each}}  
 @genType
-/** Register a Block Handler. It'll be called for every block by default. Use the `options` argument to set a custom interval. */
+/** Register a Block Handler. It'll be called for every block by default. */
 let onBlock: (Envio.onBlockOptions, Envio.onBlockArgs<Types.handlerContext> => promise<unit>) => unit = (EventRegister.onBlock: (Envio.onBlockOptions, Internal.onBlockArgs => promise<unit>) => unit)->Utils.magic

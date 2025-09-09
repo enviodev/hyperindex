@@ -98,6 +98,9 @@ let registerAllHandlers = () => {
   {{/each}}
 
   let generatedConfig = {
+    // Need to recreate initial config one more time,
+    // since configWithoutRegistrations called register for event
+    // before they were ready
     ...makeGeneratedConfig(),
     registrations: Some(EventRegister.finishRegistration()),
   }

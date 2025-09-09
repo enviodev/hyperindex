@@ -648,7 +648,7 @@ Gravatar.FactoryEvent.handlerWithLoader({
       }
 
       case "onBlockInHandler": {
-        onBlock(async () => {}, { chain: 1 });
+        onBlock({ name: "test", chain: 1 }, async () => {});
         break;
       }
 

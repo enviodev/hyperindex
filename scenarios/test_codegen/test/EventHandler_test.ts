@@ -373,7 +373,7 @@ describe("Use Envio test framework to test event handlers", () => {
 
     await assert.rejects(mockDbInitial.processEvents([event]), {
       message:
-        "Block Handlers require the Preload Optimization feature. Enable it by setting the `preload_handlers` option to `true` in the Envio config.",
+        "The indexer finished initializing, so no more handlers can be registered. Make sure the handlers are registered on the top level of the file.",
     });
   });
 

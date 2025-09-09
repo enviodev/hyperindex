@@ -154,6 +154,7 @@ describe("FetchState.make", () => {
         contractConfigs: fetchState.contractConfigs,
         dcsToStore: None,
         blockLag: 0,
+        onBlockConfigs: None,
       },
     )
   })
@@ -222,6 +223,7 @@ describe("FetchState.make", () => {
           contractConfigs: fetchState.contractConfigs,
           dcsToStore: None,
           blockLag: 0,
+          onBlockConfigs: None,
         },
         ~message=`Should create only one partition`,
       )
@@ -284,6 +286,7 @@ describe("FetchState.make", () => {
           contractConfigs: fetchState.contractConfigs,
           dcsToStore: None,
           blockLag: 0,
+          onBlockConfigs: None,
         },
       )
 
@@ -378,6 +381,7 @@ describe("FetchState.make", () => {
           contractConfigs: fetchState.contractConfigs,
           dcsToStore: None,
           blockLag: 0,
+          onBlockConfigs: None,
         },
       )
     },
@@ -858,6 +862,7 @@ describe("FetchState.registerDynamicContracts", () => {
           contractConfigs: fetchState.contractConfigs,
           dcsToStore: None,
           blockLag: 0,
+          onBlockConfigs: None,
         },
         ~message=`The static addresses for the Gravatar contract should be skipped, since they don't have non-wildcard event configs`,
       )
@@ -910,6 +915,7 @@ describe("FetchState.getNextQuery & integration", () => {
         ),
       ]),
       contractConfigs: makeInitial().contractConfigs,
+      onBlockConfigs: None,
     }
   }
 
@@ -955,6 +961,7 @@ describe("FetchState.getNextQuery & integration", () => {
       indexingContracts: makeIndexingContractsWithDynamics([dc3, dc2, dc1], ~static=[mockAddress0]),
       contractConfigs: makeInitial().contractConfigs,
       blockLag: 0,
+      onBlockConfigs: None,
     }
   }
 

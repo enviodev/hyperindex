@@ -123,7 +123,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
   (
     {
       ChainManager.chainFetchers,
-      isUnorderedMultichainMode: false,
+      multichain: Ordered,
       isInReorgThreshold: false,
     },
     numberOfMockEventsCreated.contents,
@@ -277,6 +277,7 @@ describe("getOrderedNextItem", () => {
         contractConfigs: Js.Dict.fromArray([("Gravatar", {FetchState.filterByAddresses: false})]),
         dcsToStore: None,
         blockLag: 0,
+        onBlockConfigs: None,
       }
     }
 

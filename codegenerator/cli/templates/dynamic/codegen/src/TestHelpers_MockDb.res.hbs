@@ -42,6 +42,13 @@ let deleteDictKey: (dict<'a>, string) => unit = %raw(`
     }
   `)
 
+let config = RegisterHandlers.getConfigWithoutRegistrations()
+EventRegister.startRegistration(
+  ~ecosystem=config.ecosystem,
+  ~multichain=config.multichain,
+  ~preloadHandlers=config.preloadHandlers,
+)
+
 /**
 The mockDb type is simply an InMemoryStore internally. __dbInternal__ holds a reference
 to an inMemoryStore and all the the accessor methods point to the reference of that inMemory
@@ -308,8 +315,12 @@ let rec makeWithInMemoryStore: InMemoryStore.t => t = (inMemoryStore: InMemorySt
 and makeProcessEvents = (mockDb: t, ~chainId=?) => async (
   events: array<Types.eventLog<unknown>>,
 ) => {
-  let config = RegisterHandlers.getConfig()
   let itemsWithContractRegister = []
+
+  let config = {
+    ...config,
+    registrations: Some(EventRegister.finishRegistration()),
+  }
 
   let processingChainId = ref(chainId)
   let items = events->Array.map(event => {
