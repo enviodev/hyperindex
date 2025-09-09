@@ -11,14 +11,41 @@ let closeRegistration = () => {
   isInitialized.contents = true
 }
 
-let onBlockRegistrations = []
+let onBlockByChainId = Js.Dict.empty()
 
-let onBlock = (
-  handler: Envio.onBlockArgs<unknown> => promise<unit>,
-  options: Envio.onBlockOptions,
-) => {
+let onBlockOptionsSchema = S.schema((s): Envio.onBlockOptions => {
+  name: s.matches(S.string),
+  chain: Id(s.matches(S.int)),
+})
+
+let onBlock = (options: Envio.onBlockOptions, handler: Internal.onBlockArgs => promise<unit>) => {
   preventInitialized()
-  onBlockRegistrations->Js.Array2.push((handler, options))->ignore
+  options->S.assertOrThrow(onBlockOptionsSchema)
+  let chainId = switch options.chain {
+  | Id(chainId) => chainId
+  // Dmitry: I want to add names for chains in the future
+  // and to be able to use them as a lookup.
+  // To do so, we'll need to pass a config during reigstration
+  // instead of isInitialized check.
+  }
+
+  switch onBlockByChainId->Utils.Dict.dangerouslyGetNonOption(chainId->Belt.Int.toString) {
+  | None =>
+    onBlockByChainId->Utils.Dict.setByInt(
+      chainId,
+      [
+        (
+          {
+            index: 0,
+            name: options.name,
+            chainId,
+            handler,
+          }: Internal.onBlockConfig
+        ),
+      ],
+    )
+  | Some(_) => Js.Exn.raiseError("Currently only one onBlock handler per chain is supported")
+  }
 }
 
 type t = {

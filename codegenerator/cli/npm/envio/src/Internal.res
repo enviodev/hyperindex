@@ -145,6 +145,26 @@ type eventItem = private {
   event: event,
 }
 
+@genType
+type blockEvent = {
+  number: int,
+  chainId: int,
+}
+
+type onBlockArgs = {
+  block: blockEvent,
+  context: handlerContext,
+}
+
+type onBlockConfig = {
+  // When there are multiple onBlock handlers per chain,
+  // we want to use the order they are defined for sorting
+  index: int,
+  name: string,
+  chainId: int,
+  handler: onBlockArgs => promise<unit>,
+}
+
 @tag("kind")
 type item =
   | @as(0)
@@ -156,13 +176,14 @@ type item =
       logIndex: int,
       event: event,
     })
+  | @as(1) Block({onBlockConfig: onBlockConfig, blockNumber: int, logIndex: int})
 
 external castUnsafeEventItem: item => eventItem = "%identity"
 
 @get
 external getItemBlockNumber: item => int = "blockNumber"
 @get
-external getItemChain: item => ChainMap.Chain.t = "chain"
+external getItemLogIndex: item => int = "logIndex"
 
 @genType
 type eventOptions<'eventFilters> = {

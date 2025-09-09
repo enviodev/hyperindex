@@ -152,15 +152,22 @@ let getItemLogger = {
     | None => {
         let l = getLogger()->child(
           switch item {
-          | Event({eventConfig, chain, blockNumber, logIndex, event}) => {
+          | Event({eventConfig, chain, blockNumber, logIndex, event}) =>
+            {
               "contractName": eventConfig.contractName,
               "eventName": eventConfig.name,
               "chainId": chain->ChainMap.Chain.toChainId,
               "block": blockNumber,
               "logIndex": logIndex,
               "address": event.srcAddress,
-            }
-          }->createChildParams,
+            }->createChildParams
+          | Block({blockNumber, onBlockConfig}) =>
+            {
+              "onBlock": onBlockConfig.name,
+              "chainId": onBlockConfig.chainId,
+              "block": blockNumber,
+            }->createChildParams
+          },
         )
         item->Utils.magic->Js.Dict.set(cacheKey, l)
         l

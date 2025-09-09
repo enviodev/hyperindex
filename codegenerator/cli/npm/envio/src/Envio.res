@@ -3,10 +3,7 @@
 // Don't forget to keep index.d.ts in sync with this file.
 
 @genType
-type blockEvent = {
-  number: int,
-  chainId: int,
-}
+type blockEvent = Internal.blockEvent
 
 @genType
 type onBlockArgs<'context> = {
@@ -19,8 +16,8 @@ type chainReference = Id(int) // | Name(string)
 
 @genType
 type onBlockOptions = {
+  name: string,
   chain: chainReference,
-  // name?: string,
   // interval?: int,
   // startBlock?: int,
   // endBlock?: int,

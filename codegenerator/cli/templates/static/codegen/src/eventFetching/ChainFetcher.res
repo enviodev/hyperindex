@@ -212,7 +212,8 @@ let makeFromDbState = async (
       {
         filter: qItem => {
           switch qItem {
-          | Internal.Event({blockNumber, logIndex}) =>
+          | Internal.Event({blockNumber, logIndex})
+          | Internal.Block({blockNumber, logIndex}) =>
             //Only keep events greater than the last processed event
             (blockNumber, logIndex) > (restartBlockNumber, progressNextBlockLogIndex)
           }
@@ -319,21 +320,14 @@ let runContractRegistersOrThrow = async (
   let isDone = ref(false)
 
   let onRegister = (~item: Internal.item, ~contractAddress, ~contractName) => {
+    let eventItem = item->Internal.castUnsafeEventItem
     if isDone.contents {
       item->Logging.logForItem(
         #warn,
         `Skipping contract registration: The context.add${(contractName: Enums.ContractType.t :> string)} was called after the contract register resolved. Use await or return a promise from the contract register handler to avoid this error.`,
       )
     } else {
-      let (timestamp, blockNumber, logIndex, eventConfig, event) = switch item {
-      | Internal.Event({timestamp, blockNumber, logIndex, eventConfig, event}) => (
-          timestamp,
-          blockNumber,
-          logIndex,
-          eventConfig,
-          event,
-        )
-      }
+      let {timestamp, blockNumber, logIndex, eventConfig, event} = eventItem
 
       // Use contract-specific start block if configured, otherwise fall back to registration block
       let contractStartBlock = switch getContractStartBlock(
@@ -365,9 +359,10 @@ let runContractRegistersOrThrow = async (
   let promises = []
   for idx in 0 to itemsWithContractRegister->Array.length - 1 {
     let item = itemsWithContractRegister->Array.getUnsafe(idx)
-    let contractRegister = switch item {
-    | Internal.Event({eventConfig: {contractRegister: Some(contractRegister)}}) => contractRegister
-    | Internal.Event({eventConfig: {contractRegister: None, name: eventName}}) =>
+    let eventItem = item->Internal.castUnsafeEventItem
+    let contractRegister = switch eventItem {
+    | {eventConfig: {contractRegister: Some(contractRegister)}} => contractRegister
+    | {eventConfig: {contractRegister: None, name: eventName}} =>
       // Unexpected case, since we should pass only events with contract register to this function
       Js.Exn.raiseError("Contract register is not set for event " ++ eventName)
     }
@@ -376,7 +371,9 @@ let runContractRegistersOrThrow = async (
 
     // Catch sync and async errors
     try {
-      let result = contractRegister(item->UserContext.getContractRegisterArgs(~onRegister, ~config))
+      let result = contractRegister(
+        item->UserContext.getContractRegisterArgs(~eventItem, ~onRegister, ~config),
+      )
 
       // Even though `contractRegister` always returns a promise,
       // in the ReScript type, but it might return a non-promise value for TS API.

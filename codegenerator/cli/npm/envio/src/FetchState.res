@@ -546,12 +546,7 @@ Comparitor for two events from the same chain. No need for chain id or timestamp
 let compareBufferItem = (a: Internal.item, b: Internal.item) => {
   let blockDiff = b->Internal.getItemBlockNumber - a->Internal.getItemBlockNumber
   if blockDiff === 0 {
-    switch b {
-    | Event({logIndex}) => logIndex
-    } -
-    switch a {
-    | Event({logIndex}) => logIndex
-    }
+    b->Internal.getItemLogIndex - a->Internal.getItemLogIndex
   } else {
     blockDiff
   }
@@ -1071,7 +1066,8 @@ let pruneQueueFromFirstChangeEvent = (
 ) => {
   queue->Array.keep(item =>
     switch item {
-    | Event({blockNumber, logIndex}) => (blockNumber, logIndex)
+    | Event({blockNumber, logIndex})
+    | Block({blockNumber, logIndex}) => (blockNumber, logIndex)
     } <
     (firstChangeEvent.blockNumber, firstChangeEvent.logIndex)
   )
@@ -1237,6 +1233,11 @@ let filterAndSortForUnorderedBatch = {
         switch (a.queue->Utils.Array.lastUnsafe, b.queue->Utils.Array.lastUnsafe) {
         | (Event({timestamp: aTimestamp}), Event({timestamp: bTimestamp})) =>
           aTimestamp - bTimestamp
+        | (Block(_), _)
+        | (_, Block(_)) =>
+          // Currently block items don't have a timestamp,
+          // so we sort chains with them in a random order
+          Js.Math.random_int(-1, 1)
         }
       | (true, false) => -1
       | (false, true) => 1

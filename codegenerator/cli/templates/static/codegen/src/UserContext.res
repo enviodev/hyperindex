@@ -8,6 +8,12 @@ let makeEventIdentifier = (item: Internal.item): Types.eventIdentifier => {
       blockNumber,
       logIndex,
     }
+  | Internal.Block({onBlockConfig: {chainId}, blockNumber, logIndex}) => {
+      chainId,
+      blockTimestamp: 0,
+      blockNumber,
+      logIndex,
+    }
   }
 }
 
@@ -255,14 +261,6 @@ let getHandlerContext = (params: contextParams): Internal.handlerContext => {
   params->Utils.Proxy.make(handlerTraps)->Utils.magic
 }
 
-let getHandlerArgs = (params: contextParams): Internal.handlerArgs =>
-  switch params.item {
-  | Internal.Event({event}) => {
-      event,
-      context: getHandlerContext(params),
-    }
-  }
-
 // Contract register context creation
 type contractRegisterParams = {
   item: Internal.item,
@@ -324,12 +322,10 @@ let getContractRegisterContext = (~item, ~onRegister, ~config: Config.t) => {
 
 let getContractRegisterArgs = (
   item: Internal.item,
+  ~eventItem: Internal.eventItem,
   ~onRegister,
   ~config: Config.t,
-): Internal.contractRegisterArgs =>
-  switch item {
-  | Internal.Event({event}) => {
-      event,
-      context: getContractRegisterContext(~item, ~onRegister, ~config),
-    }
-  }
+): Internal.contractRegisterArgs => {
+  event: eventItem.event,
+  context: getContractRegisterContext(~item, ~onRegister, ~config),
+}

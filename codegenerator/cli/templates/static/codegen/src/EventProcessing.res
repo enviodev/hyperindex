@@ -88,20 +88,27 @@ let runEventHandlerOrThrow = async (
   ~shouldSaveHistory,
   ~shouldBenchmark,
 ) => {
+  let eventItem = item->Internal.castUnsafeEventItem
+
   //Include the load in time before handler
   let timeBeforeHandler = Hrtime.makeTimer()
 
-  let contextParams: UserContext.contextParams = {
-    item,
-    inMemoryStore,
-    loadManager,
-    persistence,
-    shouldSaveHistory,
-    isPreload: false,
-  }
-
   try {
-    await handler(UserContext.getHandlerArgs(contextParams))
+    await handler(
+      (
+        {
+          event: eventItem.event,
+          context: UserContext.getHandlerContext({
+            item,
+            inMemoryStore,
+            loadManager,
+            persistence,
+            shouldSaveHistory,
+            isPreload: false,
+          }),
+        }: Internal.handlerArgs
+      ),
+    )
   } catch {
   | exn =>
     raise(
@@ -113,17 +120,13 @@ let runEventHandlerOrThrow = async (
     )
   }
   if shouldBenchmark {
-    switch item {
-    | Event({eventConfig}) => {
-        let timeEnd = timeBeforeHandler->Hrtime.timeSince->Hrtime.toMillis->Hrtime.floatFromMillis
-        Benchmark.addSummaryData(
-          ~group="Handlers Per Event",
-          ~label=`${eventConfig.contractName} ${eventConfig.name} Handler (ms)`,
-          ~value=timeEnd,
-          ~decimalPlaces=4,
-        )
-      }
-    }
+    let timeEnd = timeBeforeHandler->Hrtime.timeSince->Hrtime.toMillis->Hrtime.floatFromMillis
+    Benchmark.addSummaryData(
+      ~group="Handlers Per Event",
+      ~label=`${eventItem.eventConfig.contractName} ${eventItem.eventConfig.name} Handler (ms)`,
+      ~value=timeEnd,
+      ~decimalPlaces=4,
+    )
   }
 }
 
@@ -136,6 +139,36 @@ let runHandlerOrThrow = async (
   ~shouldBenchmark,
 ) => {
   switch item {
+  | Block({onBlockConfig: {handler, chainId}, blockNumber}) =>
+    try {
+      await handler(
+        (
+          {
+            block: {
+              number: blockNumber,
+              chainId,
+            },
+            context: UserContext.getHandlerContext({
+              item,
+              inMemoryStore,
+              loadManager,
+              persistence: config.persistence,
+              shouldSaveHistory,
+              isPreload: false,
+            }),
+          }: Internal.onBlockArgs
+        ),
+      )
+    } catch {
+    | exn =>
+      raise(
+        ProcessingError({
+          message: "Unexpected error in the event handler. Please handle the error to keep the indexer running smoothly.",
+          item,
+          exn,
+        }),
+      )
+    }
   | Event({eventConfig}) => {
       switch eventConfig.handler {
       | Some(handler) =>
@@ -170,11 +203,40 @@ let preloadBatchOrThrow = async (
   let _ = await Promise.all(
     eventBatch->Array.keepMap(item => {
       switch item {
-      | Event({eventConfig: {handler: Some(handler)}}) =>
+      | Event({eventConfig: {handler}, event}) =>
+        switch handler {
+        | None => None
+        | Some(handler) =>
+          try {
+            Some(
+              handler({
+                event,
+                context: UserContext.getHandlerContext({
+                  item,
+                  inMemoryStore,
+                  loadManager,
+                  persistence,
+                  isPreload: true,
+                  shouldSaveHistory: false,
+                }),
+              })->Promise.silentCatch,
+              // Must have Promise.catch as well as normal catch,
+              // because if user throws an error before await in the handler,
+              // it won't create a rejected promise
+            )
+          } catch {
+          | _ => None
+          }
+        }
+      | Block({onBlockConfig: {handler, chainId}, blockNumber}) =>
         try {
           Some(
-            handler(
-              UserContext.getHandlerArgs({
+            handler({
+              block: {
+                number: blockNumber,
+                chainId,
+              },
+              context: UserContext.getHandlerContext({
                 item,
                 inMemoryStore,
                 loadManager,
@@ -182,15 +244,11 @@ let preloadBatchOrThrow = async (
                 isPreload: true,
                 shouldSaveHistory: false,
               }),
-              // Must have Promise.catch as well as normal catch,
-              // because if user throws an error before await in the handler,
-              // it won't create a rejected promise
-            )->Promise.silentCatch,
+            })->Promise.silentCatch,
           )
         } catch {
         | _ => None
         }
-      | _ => None
       }
     }),
   )

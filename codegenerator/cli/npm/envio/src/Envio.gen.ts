@@ -11,13 +11,15 @@ import type {Logger as $$logger} from './Types.ts';
 
 import type {S_t as RescriptSchema_S_t} from 'rescript-schema/RescriptSchema.gen';
 
-export type blockEvent = { readonly number: number; readonly chainId: number };
+import type {blockEvent as Internal_blockEvent} from './Internal.gen';
+
+export type blockEvent = Internal_blockEvent;
 
 export type onBlockArgs<context> = { readonly block: blockEvent; readonly context: context };
 
 export type chainReference = number;
 
-export type onBlockOptions = { readonly chain: chainReference };
+export type onBlockOptions = { readonly name: string; readonly chain: chainReference };
 
 export type logger = $$logger;
 

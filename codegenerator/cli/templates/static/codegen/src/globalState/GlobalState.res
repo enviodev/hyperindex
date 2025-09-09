@@ -243,7 +243,13 @@ let updateProgressedChains = (
           firstEventBlockNumber: switch cf.firstEventBlockNumber {
           | Some(_) => cf.firstEventBlockNumber
           | None =>
-            switch items->Js.Array2.find(item => item->Internal.getItemChain === chain) {
+            switch items->Js.Array2.find(item =>
+              switch item {
+              | Internal.Event({chain}) => chain === chain
+              | Internal.Block({onBlockConfig: {chainId}}) =>
+                chainId === chain->ChainMap.Chain.toChainId
+              }
+            ) {
             | Some(item) => Some(item->Internal.getItemBlockNumber)
             | None => None
             }
@@ -1084,7 +1090,8 @@ let injectedTaskReducer = (
           rolledBackCf->ChainFetcher.addProcessingFilter(
             ~filter=item => {
               switch item {
-              | Internal.Event({blockNumber, logIndex}) =>
+              | Internal.Event({blockNumber, logIndex})
+              | Internal.Block({blockNumber, logIndex}) =>
                 //Filter out events that occur passed the block where the query starts but
                 //are lower than the timestamp where we rolled back to
                 (blockNumber, logIndex) >= (firstChangeEvent.blockNumber, firstChangeEvent.logIndex)

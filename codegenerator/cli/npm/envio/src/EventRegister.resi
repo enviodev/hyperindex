@@ -22,4 +22,4 @@ let hasRegistration: t => bool
 
 let closeRegistration: unit => unit
 
-let onBlock: (Envio.onBlockArgs<unknown> => promise<unit>, Envio.onBlockOptions) => unit
+let onBlock: (Envio.onBlockOptions, Internal.onBlockArgs => promise<unit>) => unit
