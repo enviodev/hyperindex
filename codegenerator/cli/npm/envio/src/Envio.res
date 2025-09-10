@@ -18,9 +18,9 @@ type chainReference = Id(int) // | Name(string)
 type onBlockOptions = {
   name: string,
   chain: chainReference,
-  // interval?: int,
-  // startBlock?: int,
-  // endBlock?: int,
+  interval?: int,
+  startBlock?: int,
+  endBlock?: int,
 }
 
 @genType.import(("./Types.ts", "Logger"))

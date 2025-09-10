@@ -12,8 +12,6 @@ type t = {
   fetchState: FetchState.t,
   sourceManager: SourceManager.t,
   chainConfig: InternalConfig.chain,
-  startBlock: int,
-  endBlock: option<int>,
   //The latest known block of the chain
   currentBlockHeight: int,
   timestampCaughtUpToHeadOrEndblock: option<Js.Date.t>,
@@ -147,6 +145,7 @@ let make = (
   let fetchState = FetchState.make(
     ~maxAddrInPartition=config.maxAddrInPartition,
     ~contracts,
+    ~progressBlockNumber,
     ~startBlock,
     ~endBlock,
     ~eventConfigs,
@@ -163,8 +162,6 @@ let make = (
   {
     logger,
     chainConfig,
-    startBlock,
-    endBlock,
     sourceManager: SourceManager.make(
       ~sources=chainConfig.sources,
       ~maxPartitionConcurrency=Env.maxPartitionConcurrency,
@@ -194,7 +191,7 @@ let makeFromConfig = (chainConfig: InternalConfig.chain, ~config) => {
     ~endBlock=chainConfig.endBlock,
     ~lastBlockScannedHashes,
     ~firstEventBlockNumber=None,
-    ~progressBlockNumber=-1,
+    ~progressBlockNumber=chainConfig.startBlock - 1,
     ~timestampCaughtUpToHeadOrEndblock=None,
     ~numEventsProcessed=0,
     ~numBatchesFetched=0,
@@ -271,7 +268,7 @@ let makeFromDbState = async (
   make(
     ~dynamicContracts=dbRecoveredDynamicContracts,
     ~chainConfig,
-    ~startBlock=restartBlockNumber,
+    ~startBlock=resumedChainState.startBlock,
     ~endBlock=resumedChainState.endBlock->Js.Null.toOption,
     ~config,
     ~lastBlockScannedHashes,
@@ -462,8 +459,8 @@ let handleQueryResult = (
 Gets the latest item on the front of the queue and returns updated fetcher
 */
 let hasProcessedToEndblock = (self: t) => {
-  let {committedProgressBlockNumber, endBlock} = self
-  switch endBlock {
+  let {committedProgressBlockNumber, fetchState} = self
+  switch fetchState.endBlock {
   | Some(endBlock) => committedProgressBlockNumber >= endBlock
   | None => false
   }

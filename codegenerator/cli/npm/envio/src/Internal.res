@@ -162,6 +162,9 @@ type onBlockConfig = {
   index: int,
   name: string,
   chainId: int,
+  startBlock: option<int>,
+  endBlock: option<int>,
+  interval: int,
   handler: onBlockArgs => promise<unit>,
 }
 

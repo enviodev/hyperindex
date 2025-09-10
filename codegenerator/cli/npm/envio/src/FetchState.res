@@ -52,6 +52,7 @@ type t = {
   // since partitions might be deleted on merge or cleaned up
   nextPartitionIndex: int,
   isFetchingAtHead: bool,
+  startBlock: int,
   endBlock: option<int>,
   maxAddrInPartition: int,
   normalSelection: selection,
@@ -78,6 +79,7 @@ let copy = (fetchState: t) => {
   {
     maxAddrInPartition: fetchState.maxAddrInPartition,
     partitions: fetchState.partitions,
+    startBlock: fetchState.startBlock,
     endBlock: fetchState.endBlock,
     nextPartitionIndex: fetchState.nextPartitionIndex,
     isFetchingAtHead: fetchState.isFetchingAtHead,
@@ -252,6 +254,7 @@ let updateInternal = (
 
   {
     maxAddrInPartition: fetchState.maxAddrInPartition,
+    startBlock: fetchState.startBlock,
     endBlock: fetchState.endBlock,
     contractConfigs: fetchState.contractConfigs,
     normalSelection: fetchState.normalSelection,
@@ -640,10 +643,26 @@ let handleQueryResult = (
         }
 
         if nextLatestFullyFetchedBlockNumber > prevLatestFetchedBlockNumber {
-          for blockNumber in prevLatestFetchedBlockNumber + 1 to nextLatestFullyFetchedBlockNumber {
-            for configIdx in 0 to onBlockConfigs->Array.length - 1 {
-              let onBlockConfig = onBlockConfigs->Js.Array2.unsafe_get(configIdx)
-              newQueue->Array.push(Block({onBlockConfig, blockNumber, logIndex: blockItemLogIndex}))
+          for configIdx in 0 to onBlockConfigs->Array.length - 1 {
+            let onBlockConfig = onBlockConfigs->Js.Array2.unsafe_get(configIdx)
+
+            let handlerStartBlock = switch onBlockConfig.startBlock {
+            | Some(startBlock) => startBlock
+            | None => fetchState.startBlock
+            }
+            let rangeStart = Pervasives.max(handlerStartBlock, prevLatestFetchedBlockNumber + 1)
+            let rangeEnd = switch onBlockConfig.endBlock {
+            | Some(endBlock) => Pervasives.min(endBlock, nextLatestFullyFetchedBlockNumber)
+            | None => nextLatestFullyFetchedBlockNumber
+            }
+            if rangeStart <= rangeEnd {
+              for blockNumber in rangeStart to rangeEnd {
+                if (blockNumber - handlerStartBlock)->Pervasives.mod(onBlockConfig.interval) === 0 {
+                  newQueue->Array.push(
+                    Block({onBlockConfig, blockNumber, logIndex: blockItemLogIndex}),
+                  )
+                }
+              }
             }
           }
         }
@@ -959,12 +978,13 @@ let make = (
   ~contracts: array<indexingContract>,
   ~maxAddrInPartition,
   ~chainId,
+  ~progressBlockNumber=startBlock - 1,
   ~onBlockConfigs=?,
   ~blockLag=0,
 ): t => {
   let latestFetchedBlock = {
     blockTimestamp: 0,
-    blockNumber: startBlock - 1,
+    blockNumber: progressBlockNumber,
   }
 
   let notDependingOnAddresses = []
@@ -1078,6 +1098,7 @@ let make = (
     isFetchingAtHead: false,
     maxAddrInPartition,
     chainId,
+    startBlock,
     endBlock,
     latestFullyFetchedBlock: latestFetchedBlock,
     normalSelection,

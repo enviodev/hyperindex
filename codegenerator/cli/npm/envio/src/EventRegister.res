@@ -64,12 +64,20 @@ let finishRegistration = () => {
   }
 }
 
-let onBlockOptionsSchema = S.schema((s): Envio.onBlockOptions => {
-  name: s.matches(S.string),
-  chain: Id(s.matches(S.int)),
-})
+let onBlockOptionsSchema = S.schema(s =>
+  {
+    "name": s.matches(S.string),
+    "chain": s.matches(S.int),
+    "interval": s.matches(S.option(S.int->S.intMin(1))->S.Option.getOr(1)),
+    "startBlock": s.matches(S.option(S.int)),
+    "endBlock": s.matches(S.option(S.int)),
+  }
+)
 
-let onBlock = (options: Envio.onBlockOptions, handler: Internal.onBlockArgs => promise<unit>) => {
+let onBlock = (
+  rawOptions: Envio.onBlockOptions,
+  handler: Internal.onBlockArgs => promise<unit>,
+) => {
   withRegistration(registration => {
     // There's no big reason for this. It's just more work
     switch registration.ecosystem {
@@ -97,9 +105,9 @@ let onBlock = (options: Envio.onBlockOptions, handler: Internal.onBlockArgs => p
       )
     }
 
-    options->S.assertOrThrow(onBlockOptionsSchema)
-    let chainId = switch options.chain {
-    | Id(chainId) => chainId
+    let options = rawOptions->S.parseOrThrow(onBlockOptionsSchema)
+    let chainId = switch options["chain"] {
+    | chainId => chainId
     // Dmitry: I want to add names for chains in the future
     // and to be able to use them as a lookup.
     // To do so, we'll need to pass a config during reigstration
@@ -116,7 +124,10 @@ let onBlock = (options: Envio.onBlockOptions, handler: Internal.onBlockArgs => p
           (
             {
               index: 0,
-              name: options.name,
+              name: options["name"],
+              startBlock: options["startBlock"],
+              endBlock: options["endBlock"],
+              interval: options["interval"],
               chainId,
               handler,
             }: Internal.onBlockConfig

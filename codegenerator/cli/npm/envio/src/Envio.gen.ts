@@ -19,7 +19,13 @@ export type onBlockArgs<context> = { readonly block: blockEvent; readonly contex
 
 export type chainReference = number;
 
-export type onBlockOptions = { readonly name: string; readonly chain: chainReference };
+export type onBlockOptions = {
+  readonly name: string; 
+  readonly chain: chainReference; 
+  readonly interval?: number; 
+  readonly startBlock?: number; 
+  readonly endBlock?: number
+};
 
 export type logger = $$logger;
 
