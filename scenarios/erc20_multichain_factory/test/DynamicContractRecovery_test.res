@@ -181,7 +181,7 @@ describe("Dynamic contract restart resistance test", () => {
       //without blocking for the purposes of this test
       let chainManager = {
         ...ChainManager.makeFromConfig(~config),
-        isUnorderedMultichainMode: true,
+        multichain: Unordered,
       }
 
       //Setup initial state stub that will be used for both

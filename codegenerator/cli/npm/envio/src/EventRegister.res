@@ -10,11 +10,18 @@ type activeRegistration = {
 
 let activeRegistration = ref(None)
 
+// Might happen for tests when the handler file
+// is imported by a non-envio process (eg mocha)
+// and initialized before we started registration.
+// So we track them here to register when the startRegistration is called.
+// Theoretically we could keep preRegistration without an explicit start
+// but I want it to be this way, so for the actual indexer run
+// an error is thrown with the exact stack trace where the handler was registered.
+let preRegistered = []
+
 let withRegistration = (fn: activeRegistration => unit) => {
   switch activeRegistration.contents {
-  | None => // The file with handlers might run by a non-envio process (eg mocha)
-    // So we just ignore handlers in this case
-    ()
+  | None => preRegistered->Belt.Array.push(fn)
   | Some(r) =>
     if r.finished {
       Js.Exn.raiseError(
@@ -27,7 +34,7 @@ let withRegistration = (fn: activeRegistration => unit) => {
 }
 
 let startRegistration = (~ecosystem, ~multichain, ~preloadHandlers) => {
-  activeRegistration.contents = Some({
+  let r = {
     ecosystem,
     multichain,
     preloadHandlers,
@@ -35,7 +42,15 @@ let startRegistration = (~ecosystem, ~multichain, ~preloadHandlers) => {
       onBlockByChainId: Js.Dict.empty(),
     },
     finished: false,
-  })
+  }
+  activeRegistration.contents = Some(r)
+  while preRegistered->Js.Array2.length > 0 {
+    // Loop + cleanup in one go
+    switch preRegistered->Js.Array2.pop {
+    | Some(fn) => fn(r)
+    | None => ()
+    }
+  }
 }
 
 let finishRegistration = () => {

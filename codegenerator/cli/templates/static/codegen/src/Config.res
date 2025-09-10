@@ -125,6 +125,7 @@ let make = (
   ~preloadHandlers=false,
   ~persistence=codegenPersistence,
   ~ecosystem=InternalConfig.Evm,
+  ~registrations=?,
 ) => {
   let chainMap =
     chains
@@ -165,7 +166,7 @@ let make = (
     ecosystem,
     addContractNameToContractNameMapping,
     maxAddrInPartition: Env.maxAddrInPartition,
-    registrations: None,
+    registrations,
     preloadHandlers,
   }
 }
