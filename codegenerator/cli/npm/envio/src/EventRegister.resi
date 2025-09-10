@@ -29,4 +29,4 @@ let getEventFilters: t => option<Js.Json.t>
 let isWildcard: t => bool
 let hasRegistration: t => bool
 
-let onBlock: (Envio.onBlockOptions, Internal.onBlockArgs => promise<unit>) => unit
+let onBlock: (unknown, Internal.onBlockArgs => promise<unit>) => unit

@@ -74,10 +74,7 @@ let onBlockOptionsSchema = S.schema(s =>
   }
 )
 
-let onBlock = (
-  rawOptions: Envio.onBlockOptions,
-  handler: Internal.onBlockArgs => promise<unit>,
-) => {
+let onBlock = (rawOptions: unknown, handler: Internal.onBlockArgs => promise<unit>) => {
   withRegistration(registration => {
     // There's no big reason for this. It's just more work
     switch registration.ecosystem {

@@ -17,11 +17,9 @@ export type blockEvent = Internal_blockEvent;
 
 export type onBlockArgs<context> = { readonly block: blockEvent; readonly context: context };
 
-export type chainReference = number;
-
-export type onBlockOptions = {
+export type onBlockOptions<chain> = {
   readonly name: string; 
-  readonly chain: chainReference; 
+  readonly chain: chain; 
   readonly interval?: number; 
   readonly startBlock?: number; 
   readonly endBlock?: number

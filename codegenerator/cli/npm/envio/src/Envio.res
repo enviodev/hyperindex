@@ -11,13 +11,10 @@ type onBlockArgs<'context> = {
   context: 'context,
 }
 
-@unboxed
-type chainReference = Id(int) // | Name(string)
-
 @genType
-type onBlockOptions = {
+type onBlockOptions<'chain> = {
   name: string,
-  chain: chainReference,
+  chain: 'chain,
   interval?: int,
   startBlock?: int,
   endBlock?: int,
