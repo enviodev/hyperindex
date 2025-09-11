@@ -168,10 +168,7 @@ pub enum InitFlow {
 }
 
 pub mod evm {
-    use crate::{
-        config_parsing::chain_helpers::{Network, NetworkWithExplorer},
-        evm, init_config,
-    };
+    use crate::{config_parsing::chain_helpers::Network, evm, init_config};
 
     use anyhow::Context;
     use clap::{Args, Subcommand};
@@ -238,7 +235,7 @@ pub mod evm {
     pub struct ExplorerImportArgs {
         ///Network to import the contract from
         #[arg(short, long)]
-        pub blockchain: Option<NetworkWithExplorer>,
+        pub blockchain: Option<NetworkOrChainId>,
 
         ///API token for the block explorer
         #[arg(long)]
