@@ -1123,7 +1123,8 @@ impl NetworkConfigTemplate {
                     format!(
                         "NetworkSources.evm(~chain, ~contracts=[{contracts_code}], ~hyperSync={hyper_sync_code}, \
                          ~allEventSignatures=[{all_event_signatures}]->Belt.Array.concatMany, \
-                         ~shouldUseHypersyncClientDecoder={is_client_decoder}, ~rpcs=[{rpcs}])"
+                         ~shouldUseHypersyncClientDecoder={is_client_decoder}, ~rpcs=[{rpcs}], ~lowercaseAddresses={})",
+                        if config.lowercase_addresses { "true" } else { "false" }
                     ),
                     deprecated_sync_source_code,
                 )
@@ -1279,6 +1280,7 @@ pub struct ProjectTemplate {
     types_code: String,
     //Used for the package.json reference to handlers in generated
     relative_path_to_root_from_generated: String,
+    lowercase_addresses: bool,
 }
 
 impl ProjectTemplate {
@@ -1399,6 +1401,7 @@ type chain = [{chain_id_type}]"#,
             types_code,
             //Used for the package.json reference to handlers in generated
             relative_path_to_root_from_generated,
+            lowercase_addresses: cfg.lowercase_addresses,
         })
     }
 }

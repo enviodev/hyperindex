@@ -114,6 +114,7 @@ type t = {
   addContractNameToContractNameMapping: dict<string>,
   maxAddrInPartition: int,
   registrations: option<EventRegister.registrations>,
+  lowercaseAddresses: bool,
 }
 
 let make = (
@@ -126,6 +127,8 @@ let make = (
   ~persistence=codegenPersistence,
   ~ecosystem=InternalConfig.Evm,
   ~registrations=?,
+  ~ecosystem=Evm,
+  ~lowercaseAddresses=false,
 ) => {
   let chainMap =
     chains
@@ -168,6 +171,7 @@ let make = (
     maxAddrInPartition: Env.maxAddrInPartition,
     registrations,
     preloadHandlers,
+    lowercaseAddresses,
   }
 }
 
