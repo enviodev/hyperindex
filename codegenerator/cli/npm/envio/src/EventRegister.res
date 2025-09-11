@@ -131,7 +131,20 @@ let onBlock = (rawOptions: unknown, handler: Internal.onBlockArgs => promise<uni
           ),
         ],
       )
-    | Some(_) => Js.Exn.raiseError("Currently only one onBlock handler per chain is supported")
+    | Some(onBlockConfigs) =>
+      onBlockConfigs->Belt.Array.push(
+        (
+          {
+            index: onBlockConfigs->Belt.Array.length,
+            name: options["name"],
+            startBlock: options["startBlock"],
+            endBlock: options["endBlock"],
+            interval: options["interval"],
+            chainId,
+            handler,
+          }: Internal.onBlockConfig
+        ),
+      )
     }
   })
 }

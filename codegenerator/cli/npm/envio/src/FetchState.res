@@ -659,7 +659,11 @@ let handleQueryResult = (
               for blockNumber in rangeStart to rangeEnd {
                 if (blockNumber - handlerStartBlock)->Pervasives.mod(onBlockConfig.interval) === 0 {
                   newQueue->Array.push(
-                    Block({onBlockConfig, blockNumber, logIndex: blockItemLogIndex}),
+                    Block({
+                      onBlockConfig,
+                      blockNumber,
+                      logIndex: blockItemLogIndex + onBlockConfig.index,
+                    }),
                   )
                 }
               }
