@@ -177,24 +177,13 @@ let make = (
 
   let apiToken = apiToken->Belt.Option.getWithDefault("3dc856dd-b0ea-494f-b27e-017b8b6b7e07")
 
-  let client =
-    if lowercaseAddresses {
-      HyperSyncClient.make(
-        ~url=endpointUrl,
-        ~apiToken,
-        ~maxNumRetries=clientMaxRetries,
-        ~httpReqTimeoutMillis=clientTimeoutMillis, 
-        ~enableChecksumAddresses=false,
-      )
-    } else {
-      HyperSyncClient.make(
-        ~url=endpointUrl,
-        ~apiToken,
-        ~maxNumRetries=clientMaxRetries,
-        ~httpReqTimeoutMillis=clientTimeoutMillis,
-        ~enableChecksumAddresses=true,
-      )
-    }
+  let client = HyperSyncClient.make(
+    ~url=endpointUrl,
+    ~apiToken,
+    ~maxNumRetries=clientMaxRetries,
+    ~httpReqTimeoutMillis=clientTimeoutMillis, 
+    ~enableChecksumAddresses=!lowercaseAddresses,
+  )
 
   let hscDecoder: ref<option<HyperSyncClient.Decoder.t>> = ref(None)
   let getHscDecoder = () => {
