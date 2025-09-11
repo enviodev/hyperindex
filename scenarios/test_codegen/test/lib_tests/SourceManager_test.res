@@ -282,6 +282,7 @@ describe("SourceManager fetchNext", () => {
 
     {
       partitions,
+      startBlock: 0,
       endBlock,
       nextPartitionIndex: partitions->Array.length,
       maxAddrInPartition: 2,

@@ -100,8 +100,6 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
       committedProgressBlockNumber: -1,
       numEventsProcessed: 0,
       numBatchesFetched: 0,
-      startBlock: 0,
-      endBlock: None,
       fetchState: fetchState.contents,
       logger: Logging.getLogger(),
       sourceManager: SourceManager.make(
@@ -269,6 +267,7 @@ describe("getOrderedNextItem", () => {
         nextPartitionIndex: 1,
         queue: item->Option.mapWithDefault([], v => [v]),
         latestFullyFetchedBlock: latestFetchedBlock,
+        startBlock: 0,
         endBlock: None,
         isFetchingAtHead: false,
         normalSelection,
