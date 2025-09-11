@@ -1,3 +1,12 @@
+type registrations = {onBlockByChainId: dict<array<Internal.onBlockConfig>>}
+
+let startRegistration: (
+  ~ecosystem: InternalConfig.ecosystem,
+  ~multichain: InternalConfig.multichain,
+  ~preloadHandlers: bool,
+) => unit
+let finishRegistration: unit => registrations
+
 type t
 let make: (~contractName: string, ~eventName: string) => t
 let setHandler: (
@@ -19,3 +28,5 @@ let getContractRegister: t => option<Internal.contractRegister>
 let getEventFilters: t => option<Js.Json.t>
 let isWildcard: t => bool
 let hasRegistration: t => bool
+
+let onBlock: (unknown, Internal.onBlockArgs => promise<unit>) => unit

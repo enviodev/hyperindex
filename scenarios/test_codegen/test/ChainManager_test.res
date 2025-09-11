@@ -51,14 +51,15 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
       let numberOfEventsInBatch = getRandomInt(0, 2 * averageEventsPerBlock)
 
       for logIndex in 0 to numberOfEventsInBatch {
-        let batchItem: Internal.eventItem = {
+        let batchItem = Internal.Event({
           timestamp: currentTime.contents,
           chain: ChainMap.Chain.makeUnsafe(~chainId=id),
           blockNumber: currentBlockNumber.contents,
           logIndex,
           eventConfig: Utils.magic("Mock eventConfig in ChainManager test"),
           event: `mock event (chainId)${id->Int.toString} - (blockNumber)${currentBlockNumber.contents->string_of_int} - (logIndex)${logIndex->string_of_int} - (timestamp)${currentTime.contents->string_of_int}`->Utils.magic,
-        }
+        })
+        let eventItem = batchItem->Internal.castUnsafeEventItem
 
         allEvents->Js.Array2.push(batchItem)->ignore
 
@@ -77,8 +78,8 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
               indexingContracts: fetchState.contents.indexingContracts,
             },
             ~latestFetchedBlock={
-              blockNumber: batchItem.blockNumber,
-              blockTimestamp: batchItem.timestamp,
+              blockNumber: eventItem.blockNumber,
+              blockTimestamp: eventItem.timestamp,
             },
             ~newItems=[batchItem],
             ~currentBlockHeight=currentBlockNumber.contents,
@@ -95,12 +96,10 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
     let chainConfig = config.defaultChain->Option.getUnsafe
     let mockChainFetcher: ChainFetcher.t = {
       timestampCaughtUpToHeadOrEndblock: None,
-      dbFirstEventBlockNumber: None,
+      firstEventBlockNumber: None,
       committedProgressBlockNumber: -1,
       numEventsProcessed: 0,
       numBatchesFetched: 0,
-      startBlock: 0,
-      endBlock: None,
       fetchState: fetchState.contents,
       logger: Logging.getLogger(),
       sourceManager: SourceManager.make(
@@ -122,7 +121,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
   (
     {
       ChainManager.chainFetchers,
-      isUnorderedMultichainMode: false,
+      multichain: Ordered,
       isInReorgThreshold: false,
     },
     numberOfMockEventsCreated.contents,
@@ -142,14 +141,14 @@ describe("ChainManager", () => {
           _allEvents,
         ) = populateChainQueuesWithRandomEvents()
 
-        let defaultFirstEvent: Internal.eventItem = {
+        let defaultFirstEvent = Internal.Event({
           timestamp: 0,
           chain: MockConfig.chain1,
           blockNumber: 0,
           logIndex: 0,
           eventConfig: Utils.magic("Mock eventConfig in ChainManager test"),
           event: `mock initial event`->Utils.magic,
-        }
+        })
 
         let numberOfMockEventsReadFromQueues = ref(0)
         let allEventsRead = []
@@ -172,8 +171,8 @@ describe("ChainManager", () => {
             let firstEventInBlock = items[0]->Option.getExn
 
             Assert.equal(
-              firstEventInBlock->Batch.getComparitorFromItem >
-                lastEvent->Batch.getComparitorFromItem,
+              firstEventInBlock->EventUtils.getOrderedBatchItemComparator >
+                lastEvent->EventUtils.getOrderedBatchItemComparator,
               true,
               ~message="Check that first event in this block group is AFTER the last event before this block group",
             )
@@ -230,20 +229,18 @@ describe("getOrderedNextItem", () => {
     let makeNoItem = timestamp => FetchState.NoItem({
       latestFetchedBlock: {blockTimestamp: timestamp, blockNumber: 0},
     })
-    let makeMockQItem = (timestamp, chain): Internal.eventItem => {
-      {
-        timestamp,
-        chain,
-        blockNumber: 987654,
-        logIndex: 123456,
-        eventConfig: Utils.magic("Mock eventConfig in ChainManager test"),
-        event: "SINGLE TEST EVENT"->Utils.magic,
-      }
-    }
+    let makeMockQItem = (timestamp, chain): Internal.item => Internal.Event({
+      timestamp,
+      chain,
+      blockNumber: 987654,
+      logIndex: 123456,
+      eventConfig: Utils.magic("Mock eventConfig in ChainManager test"),
+      event: "SINGLE TEST EVENT"->Utils.magic,
+    })
 
     let makeMockFetchState = (
       ~latestFetchedBlockTimestamp,
-      ~item: option<Internal.eventItem>,
+      ~item: option<Internal.item>,
     ): FetchState.t => {
       let normalSelection: FetchState.selection = {
         dependsOnAddresses: true,
@@ -253,7 +250,7 @@ describe("getOrderedNextItem", () => {
       }
       let latestFetchedBlock: FetchState.blockNumberAndTimestamp = {
         blockTimestamp: latestFetchedBlockTimestamp,
-        blockNumber: item->Option.mapWithDefault(0, v => v.blockNumber),
+        blockNumber: item->Option.mapWithDefault(0, v => v->Internal.getItemBlockNumber),
       }
       let partition: FetchState.partition = {
         id: "0",
@@ -270,15 +267,16 @@ describe("getOrderedNextItem", () => {
         nextPartitionIndex: 1,
         queue: item->Option.mapWithDefault([], v => [v]),
         latestFullyFetchedBlock: latestFetchedBlock,
+        startBlock: 0,
         endBlock: None,
         isFetchingAtHead: false,
-        firstEventBlockNumber: item->Option.map(v => v.blockNumber),
         normalSelection,
         chainId: 0,
         indexingContracts: Js.Dict.empty(),
         contractConfigs: Js.Dict.fromArray([("Gravatar", {FetchState.filterByAddresses: false})]),
         dcsToStore: None,
         blockLag: 0,
+        onBlockConfigs: None,
       }
     }
 

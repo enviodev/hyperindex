@@ -2,6 +2,7 @@ export {
 {{#each codegen_contracts as |contract|}}
   {{contract.name.capitalized}},
 {{/each}}
+  onBlock
 } from "./src/Handlers.gen";
 export type * from "./src/Types.gen";
 import {
@@ -27,4 +28,3 @@ export {
 } from "./src/Enum.gen";
 
 export {default as BigDecimal} from 'bignumber.js';
-export type {LoaderContext, HandlerContext} from './src/Types.ts';

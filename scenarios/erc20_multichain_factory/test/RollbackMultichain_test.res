@@ -3,7 +3,7 @@ open Belt
 
 let config = {
   ...RegisterHandlers.registerAllHandlers(),
-  isUnorderedMultichainMode: true,
+  multichain: Unordered,
 }
 
 module Mock = {

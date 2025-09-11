@@ -9,7 +9,7 @@ type sourceMock = {
   resolveGetHeightOrThrow: int => unit,
   rejectGetHeightOrThrow: 'exn. 'exn => unit,
   getItemsOrThrowCalls: array<{"toBlock": option<int>, "retry": int}>,
-  resolveGetItemsOrThrow: array<Internal.eventItem> => unit,
+  resolveGetItemsOrThrow: array<Internal.item> => unit,
   rejectGetItemsOrThrow: 'exn. 'exn => unit,
 }
 
@@ -282,10 +282,10 @@ describe("SourceManager fetchNext", () => {
 
     {
       partitions,
+      startBlock: 0,
       endBlock,
       nextPartitionIndex: partitions->Array.length,
       maxAddrInPartition: 2,
-      firstEventBlockNumber: None,
       queue,
       normalSelection,
       latestFullyFetchedBlock: latestFullyFetchedBlock.contents,
@@ -295,6 +295,7 @@ describe("SourceManager fetchNext", () => {
       contractConfigs: Js.Dict.empty(),
       dcsToStore: None,
       blockLag: 0,
+      onBlockConfigs: None,
       // All the null values should be computed during updateInternal
     }->FetchState.updateInternal
   }

@@ -11,6 +11,20 @@ import type {Logger as $$logger} from './Types.ts';
 
 import type {S_t as RescriptSchema_S_t} from 'rescript-schema/RescriptSchema.gen';
 
+import type {blockEvent as Internal_blockEvent} from './Internal.gen';
+
+export type blockEvent = Internal_blockEvent;
+
+export type onBlockArgs<context> = { readonly block: blockEvent; readonly context: context };
+
+export type onBlockOptions<chain> = {
+  readonly name: string; 
+  readonly chain: chain; 
+  readonly interval?: number; 
+  readonly startBlock?: number; 
+  readonly endBlock?: number
+};
+
 export type logger = $$logger;
 
 export type effect<input,output> = $$effect<input,output>;

@@ -130,9 +130,6 @@ importers:
 
   generated:
     dependencies:
-      '@elastic/ecs-pino-format':
-        specifier: 1.4.0
-        version: 1.4.0
       '@rescript/react':
         specifier: 0.12.1
         version: 0.12.1(react-dom@18.3.1(react@18.2.0))(react@18.2.0)
@@ -380,6 +377,46 @@ packages:
   '@elastic/ecs-pino-format@1.4.0':
     resolution: {integrity: sha512-eCSBUTgl8KbPyxky8cecDRLCYu2C1oFV4AZ72bEsI+TxXEvaljaL2kgttfzfu7gW+M89eCz55s49uF2t+YMTWA==}
     engines: {node: '>=10'}
+
+  '@envio-dev/hyperfuel-client-darwin-arm64@1.2.2':
+    resolution: {integrity: sha512-eQyd9kJCIz/4WCTjkjpQg80DA3pdneHP7qhJIVQ2ZG+Jew9o5XDG+uI0Y16AgGzZ6KGmJSJF6wyUaaAjJfbO1Q==}
+    engines: {node: '>= 10'}
+    cpu: [arm64]
+    os: [darwin]
+
+  '@envio-dev/hyperfuel-client-darwin-x64@1.2.2':
+    resolution: {integrity: sha512-l7lRMSoyIiIvKZgQPfgqg7H1xnrQ37A8yUp4S2ys47R8f/wSCSrmMaY1u7n6CxVYCpR9fajwy0/356UgwwhVKw==}
+    engines: {node: '>= 10'}
+    cpu: [x64]
+    os: [darwin]
+
+  '@envio-dev/hyperfuel-client-linux-arm64-gnu@1.2.2':
+    resolution: {integrity: sha512-kNiC/1fKuXnoSxp8yEsloDw4Ot/mIcNoYYGLl2CipSIpBtSuiBH5nb6eBcxnRZdKOwf5dKZtZ7MVPL9qJocNJw==}
+    engines: {node: '>= 10'}
+    cpu: [arm64]
+    os: [linux]
+
+  '@envio-dev/hyperfuel-client-linux-x64-gnu@1.2.2':
+    resolution: {integrity: sha512-XDkvkBG/frS+xiZkJdY4KqOaoAwyxPdi2MysDQgF8NmZdssi32SWch0r4LTqKWLLlCBg9/R55POeXL5UAjg2wQ==}
+    engines: {node: '>= 10'}
+    cpu: [x64]
+    os: [linux]
+
+  '@envio-dev/hyperfuel-client-linux-x64-musl@1.2.2':
+    resolution: {integrity: sha512-DKnKJJSwsYtA7YT0EFGhFB5Eqoo42X0l0vZBv4lDuxngEXiiNjeLemXoKQVDzhcbILD7eyXNa5jWUc+2hpmkEg==}
+    engines: {node: '>= 10'}
+    cpu: [x64]
+    os: [linux]
+
+  '@envio-dev/hyperfuel-client-win32-x64-msvc@1.2.2':
+    resolution: {integrity: sha512-SwIgTAVM9QhCFPyHwL+e1yQ6o3paV6q25klESkXw+r/KW9QPhOOyA6Yr8nfnur3uqMTLJHAKHTLUnkyi/Nh7Aw==}
+    engines: {node: '>= 10'}
+    cpu: [x64]
+    os: [win32]
+
+  '@envio-dev/hyperfuel-client@1.2.2':
+    resolution: {integrity: sha512-raKA6DshYSle0sAOHBV1OkSRFMN+Mkz8sFiMmS3k+m5nP6pP56E17CRRePBL5qmR6ZgSEvGOz/44QUiKNkK9Pg==}
+    engines: {node: '>= 10'}
 
   '@envio-dev/hypersync-client-darwin-arm64@0.6.6':
     resolution: {integrity: sha512-5uAwSNrnekbHiZBLipUPM0blfO0TS2svyuMmDVE+xbT3M+ODuQl4BFoINd9VY6jC5EoKt8xKCO2K/DHHSeRV4A==}
@@ -3774,6 +3811,33 @@ snapshots:
     dependencies:
       '@elastic/ecs-helpers': 1.1.0
 
+  '@envio-dev/hyperfuel-client-darwin-arm64@1.2.2':
+    optional: true
+
+  '@envio-dev/hyperfuel-client-darwin-x64@1.2.2':
+    optional: true
+
+  '@envio-dev/hyperfuel-client-linux-arm64-gnu@1.2.2':
+    optional: true
+
+  '@envio-dev/hyperfuel-client-linux-x64-gnu@1.2.2':
+    optional: true
+
+  '@envio-dev/hyperfuel-client-linux-x64-musl@1.2.2':
+    optional: true
+
+  '@envio-dev/hyperfuel-client-win32-x64-msvc@1.2.2':
+    optional: true
+
+  '@envio-dev/hyperfuel-client@1.2.2':
+    optionalDependencies:
+      '@envio-dev/hyperfuel-client-darwin-arm64': 1.2.2
+      '@envio-dev/hyperfuel-client-darwin-x64': 1.2.2
+      '@envio-dev/hyperfuel-client-linux-arm64-gnu': 1.2.2
+      '@envio-dev/hyperfuel-client-linux-x64-gnu': 1.2.2
+      '@envio-dev/hyperfuel-client-linux-x64-musl': 1.2.2
+      '@envio-dev/hyperfuel-client-win32-x64-msvc': 1.2.2
+
   '@envio-dev/hypersync-client-darwin-arm64@0.6.6':
     optional: true
 
@@ -5388,6 +5452,8 @@ snapshots:
 
   envio@file:../../codegenerator/cli/npm/envio(typescript@5.5.4):
     dependencies:
+      '@elastic/ecs-pino-format': 1.4.0
+      '@envio-dev/hyperfuel-client': 1.2.2
       '@envio-dev/hypersync-client': 0.6.6
       bignumber.js: 9.1.2
       pino: 8.16.1

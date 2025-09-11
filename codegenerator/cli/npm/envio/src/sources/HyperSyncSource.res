@@ -151,6 +151,9 @@ type options = {
   allEventSignatures: array<string>,
   shouldUseHypersyncClientDecoder: bool,
   eventRouter: EventRouter.t<Internal.evmEventConfig>,
+  apiToken: option<string>,
+  clientMaxRetries: int,
+  clientTimeoutMillis: int,
 }
 
 let make = (
@@ -161,20 +164,22 @@ let make = (
     allEventSignatures,
     shouldUseHypersyncClientDecoder,
     eventRouter,
+    apiToken,
+    clientMaxRetries,
+    clientTimeoutMillis,
   }: options,
 ): t => {
   let name = "HyperSync"
 
   let getSelectionConfig = memoGetSelectionConfig(~chain)
 
-  let apiToken =
-    Env.envioApiToken->Belt.Option.getWithDefault("3dc856dd-b0ea-494f-b27e-017b8b6b7e07")
+  let apiToken = apiToken->Belt.Option.getWithDefault("3dc856dd-b0ea-494f-b27e-017b8b6b7e07")
 
   let client = HyperSyncClient.make(
     ~url=endpointUrl,
     ~apiToken,
-    ~maxNumRetries=Env.hyperSyncClientMaxRetries,
-    ~httpReqTimeoutMillis=Env.hyperSyncClientTimeoutMillis,
+    ~maxNumRetries=clientMaxRetries,
+    ~httpReqTimeoutMillis=clientTimeoutMillis,
   )
 
   let hscDecoder: ref<option<HyperSyncClient.Decoder.t>> = ref(None)
@@ -200,25 +205,25 @@ let make = (
     item: HyperSync.logsQueryPageItem,
     ~params: Internal.eventParams,
     ~eventConfig: Internal.evmEventConfig,
-  ): Internal.eventItem => {
+  ): Internal.item => {
     let {block, log, transaction} = item
     let chainId = chain->ChainMap.Chain.toChainId
 
-    {
+    Internal.Event({
       eventConfig: (eventConfig :> Internal.eventConfig),
-      timestamp: block->Types.Block.getTimestamp,
+      timestamp: block.timestamp->Belt.Option.getUnsafe,
       chain,
-      blockNumber: block->Types.Block.getNumber,
+      blockNumber: block.number->Belt.Option.getUnsafe,
       logIndex: log.logIndex,
       event: {
         chainId,
         params,
         transaction,
-        block,
+        block: block->(Utils.magic: HyperSyncClient.ResponseTypes.block => Internal.eventBlock),
         srcAddress: log.address,
         logIndex: log.logIndex,
       }->Internal.fromGenericEvent,
-    }
+    })
   }
 
   let contractNameAbiMapping = Js.Dict.empty()
@@ -333,16 +338,16 @@ let make = (
       //The optional block and timestamp of the last item returned by the query
       //(Optional in the case that there are no logs returned in the query)
       switch pageUnsafe.items->Belt.Array.get(pageUnsafe.items->Belt.Array.length - 1) {
-      | Some({block}) if block->Types.Block.getNumber == heighestBlockQueried =>
+      | Some({block}) if block.number->Belt.Option.getUnsafe == heighestBlockQueried =>
         //If the last log item in the current page is equal to the
         //heighest block acounted for in the query. Simply return this
         //value without making an extra query
 
         (
           {
-            blockNumber: block->Types.Block.getNumber,
-            blockTimestamp: block->Types.Block.getTimestamp,
-            blockHash: block->Types.Block.getId,
+            blockNumber: block.number->Belt.Option.getUnsafe,
+            blockTimestamp: block.timestamp->Belt.Option.getUnsafe,
+            blockHash: block.hash->Belt.Option.getUnsafe,
           }: ReorgDetection.blockDataWithTimestamp
         )->Promise.resolve
       //If it does not match it means that there were no matching logs in the last
@@ -430,7 +435,7 @@ let make = (
             ),
             ~indexingContracts,
             ~contractAddress=log.address,
-            ~blockNumber=block->Types.Block.getNumber,
+            ~blockNumber=block.number->Belt.Option.getUnsafe,
           )
         let maybeDecodedEvent = parsedEvents->Js.Array2.unsafe_get(index)
 
@@ -450,7 +455,7 @@ let make = (
             ~eventConfig,
             ~decoder="hypersync-client",
             ~logIndex=log.logIndex,
-            ~blockNumber=block->Types.Block.getNumber,
+            ~blockNumber=block.number->Belt.Option.getUnsafe,
             ~chainId,
             ~exn=UndefinedValue,
           )
@@ -471,7 +476,7 @@ let make = (
           ),
           ~indexingContracts,
           ~contractAddress=log.address,
-          ~blockNumber=block->Types.Block.getNumber,
+          ~blockNumber=block.number->Belt.Option.getUnsafe,
         ) {
         | Some(eventConfig) =>
           switch contractNameAbiMapping->Viem.parseLogOrThrow(
@@ -484,7 +489,7 @@ let make = (
               ~eventConfig,
               ~decoder="viem",
               ~logIndex=log.logIndex,
-              ~blockNumber=block->Types.Block.getNumber,
+              ~blockNumber=block.number->Belt.Option.getUnsafe,
               ~chainId,
               ~exn,
             )

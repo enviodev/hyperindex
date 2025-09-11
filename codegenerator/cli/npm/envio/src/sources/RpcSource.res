@@ -660,27 +660,25 @@ let make = ({sourceFor, syncConfig, url, chain, contracts, eventRouter}: options
                   )
                 }
 
-                (
-                  {
-                    eventConfig: (eventConfig :> Internal.eventConfig),
-                    timestamp: block.timestamp,
-                    blockNumber: block.number,
-                    chain,
+                Internal.Event({
+                  eventConfig: (eventConfig :> Internal.eventConfig),
+                  timestamp: block.timestamp,
+                  blockNumber: block.number,
+                  chain,
+                  logIndex: log.logIndex,
+                  event: {
+                    chainId: chain->ChainMap.Chain.toChainId,
+                    params: decodedEvent.args,
+                    transaction,
+                    // Unreliably expect that the Ethers block fields match the types in HyperIndex
+                    // I assume this is wrong in some cases, so we need to fix it in the future
+                    block: block->(
+                      Utils.magic: Ethers.JsonRpcProvider.block => Internal.eventBlock
+                    ),
+                    srcAddress: log.address,
                     logIndex: log.logIndex,
-                    event: {
-                      chainId: chain->ChainMap.Chain.toChainId,
-                      params: decodedEvent.args,
-                      transaction,
-                      // Unreliably expect that the Ethers block fields match the types in HyperIndex
-                      // I assume this is wrong in some cases, so we need to fix it in the future
-                      block: block->(
-                        Utils.magic: Ethers.JsonRpcProvider.block => Internal.eventBlock
-                      ),
-                      srcAddress: log.address,
-                      logIndex: log.logIndex,
-                    }->Internal.fromGenericEvent,
-                  }: Internal.eventItem
-                )
+                  }->Internal.fromGenericEvent,
+                })
               }
             )(),
           )

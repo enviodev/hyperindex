@@ -3,7 +3,7 @@ open Belt
 type rpc = {
   url: string,
   sourceFor: Source.sourceFor,
-  syncConfig?: Config.syncConfigOptions,
+  syncConfig?: InternalConfig.sourceSyncOptions,
 }
 
 let evm = (
@@ -30,6 +30,9 @@ let evm = (
         shouldUseHypersyncClientDecoder: Env.Configurable.shouldUseHypersyncClientDecoder->Option.getWithDefault(
           shouldUseHypersyncClientDecoder,
         ),
+        apiToken: Env.envioApiToken,
+        clientMaxRetries: Env.hyperSyncClientMaxRetries,
+        clientTimeoutMillis: Env.hyperSyncClientTimeoutMillis,
       }),
     ]
   | _ => []

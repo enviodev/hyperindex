@@ -11,6 +11,7 @@ let config = Config.make(
   ->ChainMap.entries
   ->Array.keepMap(((chain, config)) => chain == MockConfig.chain1337 ? Some(config) : None),
   ~enableRawEvents=false,
+  ~registrations=?config.registrations,
 )
 
 module Mock = {
@@ -205,7 +206,7 @@ describe("Single Chain Simple Rollback", () => {
 
     let chainManager = {
       ...ChainManager.makeFromConfig(~config),
-      isUnorderedMultichainMode: true,
+      multichain: Unordered,
     }
     let initState = GlobalState.make(~config, ~chainManager)
     let gsManager = initState->GlobalStateManager.make

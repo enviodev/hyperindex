@@ -37,7 +37,7 @@ module Crypto = {
 module Make = (Indexer: Indexer.S) => {
   open Indexer
   type log = {
-    eventItem: Internal.eventItem,
+    item: Internal.item,
     srcAddress: Address.t,
     transactionHash: string,
   }
@@ -166,15 +166,15 @@ module Make = (Indexer: Indexer.S) => {
       transactionHash,
       eventConfig,
     }): log => {
-      let log: Internal.eventItem = {
+      let log = Internal.Event({
         eventConfig: (eventConfig :> Internal.eventConfig),
         event: makeEvent(~blockHash),
         chain: ChainMap.Chain.makeUnsafe(~chainId=self.chainConfig.id),
         timestamp: blockTimestamp,
         blockNumber,
         logIndex,
-      }
-      {eventItem: log, srcAddress, transactionHash}
+      })
+      {item: log, srcAddress, transactionHash}
     })
 
     let block = {blockNumber, blockTimestamp, blockHash, logs}
@@ -224,11 +224,11 @@ module Make = (Indexer: Indexer.S) => {
           (prev, {addresses, eventKeys}) => {
             prev ||
             (addresses->arrayHas(l.srcAddress) &&
-              eventKeys->arrayHas(getEventKey(l.eventItem.eventConfig)))
+              eventKeys->arrayHas(getEventKey((l.item->Internal.castUnsafeEventItem).eventConfig)))
           },
         )
         if isLogInConfig {
-          Some(l.eventItem)
+          Some(l.item)
         } else {
           None
         }

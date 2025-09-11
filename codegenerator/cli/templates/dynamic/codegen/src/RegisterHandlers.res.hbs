@@ -71,6 +71,7 @@ let registerContractHandlers = (
       ~isUnorderedMultichainMode={{is_unordered_multichain_mode}},
       ~chains,
       ~enableRawEvents={{enable_raw_events}},
+      ~preloadHandlers={{preload_handlers}},
       {{#if chain_config.is_fuel}}
       ~ecosystem=Fuel,
       {{/if}}
@@ -81,15 +82,28 @@ let registerContractHandlers = (
 )
 
 let registerAllHandlers = () => {
-{{#each codegen_contracts as |contract|}}
+  let configWithoutRegistrations = makeGeneratedConfig()
+  EventRegister.startRegistration(
+    ~ecosystem=configWithoutRegistrations.ecosystem,
+    ~multichain=configWithoutRegistrations.multichain,
+    ~preloadHandlers=configWithoutRegistrations.preloadHandlers,
+  )
+
+  {{#each codegen_contracts as |contract|}}
   registerContractHandlers(
     ~contractName="{{contract.name.capitalized}}",
     ~handlerPathRelativeToRoot="{{contract.handler.relative_to_project_root}}",
     ~handlerPathRelativeToConfig="{{contract.handler.relative_to_config}}",
   )
-{{/each}}
+  {{/each}}
 
-  let generatedConfig = makeGeneratedConfig()
+  let generatedConfig = {
+    // Need to recreate initial config one more time,
+    // since configWithoutRegistrations called register for event
+    // before they were ready
+    ...makeGeneratedConfig(),
+    registrations: Some(EventRegister.finishRegistration()),
+  }
   config := Some(generatedConfig)
   generatedConfig
 }
@@ -101,4 +115,4 @@ let getConfig = () => {
   }
 }
 
-let getConfigWithoutRegisteringHandlers = makeGeneratedConfig
+let getConfigWithoutRegistrations = makeGeneratedConfig

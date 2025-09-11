@@ -13,7 +13,7 @@ describe("LoadLayer", () => {
         ~entityConfig=module(Entities.User)->Entities.entityModToInternal,
         ~inMemoryStore,
         ~entityId,
-        ~eventItem=MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem,
+        ~item=MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem,
         ~shouldGroup=true,
       )
 
@@ -45,7 +45,7 @@ describe("LoadLayer", () => {
           ~entityConfig=module(Entities.User)->Entities.entityModToInternal,
           ~inMemoryStore,
           ~entityId,
-          ~eventItem=MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem,
+          ~item=MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem,
           ~shouldGroup=true,
         )
 
@@ -83,7 +83,7 @@ describe("LoadLayer", () => {
           ~entityConfig=module(Entities.User)->Entities.entityModToInternal,
           ~inMemoryStore,
           ~entityId,
-          ~eventItem=MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem,
+          ~item=MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem,
           ~shouldGroup=true,
         )
 
@@ -115,7 +115,7 @@ describe("LoadLayer", () => {
         ~entityConfig=module(Entities.User)->Entities.entityModToInternal,
         ~inMemoryStore,
         ~entityId,
-        ~eventItem=MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem,
+        ~item=MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem,
         ~shouldGroup=true,
       )
 
@@ -164,7 +164,7 @@ describe("LoadLayer", () => {
           ~entityConfig=module(Entities.User)->Entities.entityModToInternal,
           ~inMemoryStore,
           ~entityId,
-          ~eventItem=MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem,
+          ~item=MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem,
           ~shouldGroup=true,
         )
 
@@ -207,7 +207,7 @@ describe("LoadLayer", () => {
           ~entityConfig=module(Entities.User)->Entities.entityModToInternal,
           ~inMemoryStore,
           ~entityId,
-          ~eventItem=MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem,
+          ~item=MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem,
           ~shouldGroup=true,
         )
 
@@ -251,7 +251,7 @@ describe("LoadLayer", () => {
           ~entityConfig=module(Entities.User)->Entities.entityModToInternal,
           ~inMemoryStore,
           ~entityId,
-          ~eventItem=MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem,
+          ~item=MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem,
           ~shouldGroup=true,
         )
 
@@ -305,7 +305,7 @@ describe("LoadLayer", () => {
           ~entityConfig=module(Entities.User)->Entities.entityModToInternal,
           ~inMemoryStore,
           ~entityId,
-          ~eventItem=MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem,
+          ~item=MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem,
           ~shouldGroup=true,
         )
 
@@ -343,7 +343,7 @@ describe("LoadLayer", () => {
     let loadManager = LoadManager.make()
     let inMemoryStore = Mock.InMemoryStore.make()
 
-    let eventItem = MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem
+    let item = MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem
     let getUsersWithId = fieldValue =>
       LoadLayer.loadByField(
         ~loadManager,
@@ -353,7 +353,7 @@ describe("LoadLayer", () => {
         ~inMemoryStore,
         ~fieldName="id",
         ~fieldValueSchema=S.string,
-        ~eventItem,
+        ~item,
         ~fieldValue,
         ~shouldGroup=true,
       )
@@ -366,7 +366,7 @@ describe("LoadLayer", () => {
         ~inMemoryStore,
         ~fieldName="updatesCountOnUserForTesting",
         ~fieldValueSchema=S.int,
-        ~eventItem,
+        ~item,
         ~fieldValue,
         ~shouldGroup=true,
       )
@@ -416,7 +416,7 @@ describe("LoadLayer", () => {
 
     let inMemoryStore = Mock.InMemoryStore.make(~entities=[(module(Entities.User), [user1, user2])])
 
-    let eventItem = MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem
+    let item = MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem
     let getUsersWithId = fieldValue =>
       LoadLayer.loadByField(
         ~loadManager,
@@ -426,7 +426,7 @@ describe("LoadLayer", () => {
         ~inMemoryStore,
         ~fieldName="id",
         ~fieldValueSchema=S.string,
-        ~eventItem,
+        ~item,
         ~fieldValue,
         ~shouldGroup=true,
       )
@@ -440,7 +440,7 @@ describe("LoadLayer", () => {
         ~inMemoryStore,
         ~fieldName="updatesCountOnUserForTesting",
         ~fieldValueSchema=S.int,
-        ~eventItem,
+        ~item,
         ~fieldValue,
         ~shouldGroup=true,
       )
@@ -515,7 +515,7 @@ describe("LoadLayer", () => {
         }: Entities.User.t
       )
 
-      let eventItem = MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem
+      let item = MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem
       let getUsersWithId = fieldValue =>
         LoadLayer.loadByField(
           ~loadManager,
@@ -525,7 +525,7 @@ describe("LoadLayer", () => {
           ~inMemoryStore,
           ~fieldName="id",
           ~fieldValueSchema=S.string,
-          ~eventItem,
+          ~item,
           ~fieldValue,
           ~shouldGroup=true,
         )

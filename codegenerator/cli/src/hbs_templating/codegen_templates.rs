@@ -1276,6 +1276,7 @@ pub struct ProjectTemplate {
     is_fuel_ecosystem: bool,
     preload_handlers: bool,
     envio_version: String,
+    types_code: String,
     //Used for the package.json reference to handlers in generated
     relative_path_to_root_from_generated: String,
 }
@@ -1363,6 +1364,19 @@ impl ProjectTemplate {
             .iter()
             .any(|contract| contract.handler.relative_to_config.ends_with(".ts"));
 
+        let types_code = format!(
+            r#"@genType
+type chainId = int
+
+@genType
+type chain = [{chain_id_type}]"#,
+            chain_id_type = chain_configs
+                .iter()
+                .map(|chain_config| format!("#{}", chain_config.network_config.id))
+                .collect::<Vec<_>>()
+                .join(" | ")
+        );
+
         Ok(ProjectTemplate {
             project_name: cfg.name.clone(),
             has_typescript,
@@ -1382,6 +1396,7 @@ impl ProjectTemplate {
             is_fuel_ecosystem: cfg.get_ecosystem() == Ecosystem::Fuel,
             preload_handlers: cfg.preload_handlers,
             envio_version: get_envio_version()?,
+            types_code,
             //Used for the package.json reference to handlers in generated
             relative_path_to_root_from_generated,
         })

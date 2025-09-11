@@ -61,7 +61,13 @@ type chainManager = ChainManager.t
 @genType
 let makeChainManager = (cfg: chainConfig): chainManager => {
   // FIXME: Should fork from the main ChainMap?
-  ChainManager.makeFromConfig(~config=Config.make(~isUnorderedMultichainMode=true, ~chains=[cfg]))
+  ChainManager.makeFromConfig(
+    ~config=Config.make(
+      ~isUnorderedMultichainMode=true,
+      ~chains=[cfg],
+      ~registrations={onBlockByChainId: Js.Dict.empty()},
+    ),
+  )
 }
 
 @genType

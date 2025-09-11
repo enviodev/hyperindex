@@ -133,16 +133,60 @@ type evmContractConfig = {
   events: array<evmEventConfig>,
 }
 
-type eventItem = {
+// Duplicate the type from item
+// to make item properly unboxed
+type eventItem = private {
+  kind: [#0],
   eventConfig: eventConfig,
   timestamp: int,
   chain: ChainMap.Chain.t,
   blockNumber: int,
   logIndex: int,
   event: event,
-  // Reuse logger object for event
-  mutable loggerCache?: Pino.t,
 }
+
+@genType
+type blockEvent = {
+  number: int,
+  chainId: int,
+}
+
+type onBlockArgs = {
+  block: blockEvent,
+  context: handlerContext,
+}
+
+type onBlockConfig = {
+  // When there are multiple onBlock handlers per chain,
+  // we want to use the order they are defined for sorting
+  index: int,
+  name: string,
+  chainId: int,
+  startBlock: option<int>,
+  endBlock: option<int>,
+  interval: int,
+  handler: onBlockArgs => promise<unit>,
+}
+
+@tag("kind")
+type item =
+  | @as(0)
+  Event({
+      eventConfig: eventConfig,
+      timestamp: int,
+      chain: ChainMap.Chain.t,
+      blockNumber: int,
+      logIndex: int,
+      event: event,
+    })
+  | @as(1) Block({onBlockConfig: onBlockConfig, blockNumber: int, logIndex: int})
+
+external castUnsafeEventItem: item => eventItem = "%identity"
+
+@get
+external getItemBlockNumber: item => int = "blockNumber"
+@get
+external getItemLogIndex: item => int = "logIndex"
 
 @genType
 type eventOptions<'eventFilters> = {

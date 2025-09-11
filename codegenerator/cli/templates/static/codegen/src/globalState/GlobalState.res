@@ -122,7 +122,7 @@ type action =
   // because when processing the response, there might be an async contract registration.
   // So after it's finished we dispatch the  submit action to get the latest fetch state.
   | SubmitPartitionQueryResponse({
-      newItems: array<Internal.eventItem>,
+      newItems: array<Internal.item>,
       dynamicContracts: array<FetchState.indexingContract>,
       currentBlockHeight: int,
       latestFetchedBlock: FetchState.blockNumberAndTimestamp,
@@ -130,7 +130,10 @@ type action =
       chain: chain,
     })
   | FinishWaitingForNewBlock({chain: chain, currentBlockHeight: int})
-  | EventBatchProcessed({progressedChains: array<Batch.progressedChain>})
+  | EventBatchProcessed({
+      progressedChains: array<Batch.progressedChain>,
+      items: array<Internal.item>,
+    })
   | SetCurrentlyProcessing(bool)
   | EnterReorgThreshold
   | UpdateQueues({
@@ -181,7 +184,7 @@ let updateChainMetadataTable = (cm: ChainManager.t, ~throttler: Throttler.t) => 
       cf.chainConfig.id->Belt.Int.toString,
       {
         blockHeight: cf.currentBlockHeight,
-        firstEventBlockNumber: cf->ChainFetcher.getFirstEventBlockNumber->Js.Null.fromOption,
+        firstEventBlockNumber: cf.firstEventBlockNumber->Js.Null.fromOption,
         isHyperSync: (cf.sourceManager->SourceManager.getActiveSource).poweredByHyperSync,
         latestFetchedBlockNumber: latestFetchedBlock.blockNumber,
         timestampCaughtUpToHeadOrEndblock: cf.timestampCaughtUpToHeadOrEndblock->Js.Null.fromOption,
@@ -205,6 +208,7 @@ when valid state lines up and returns an updated chain manager
 let updateProgressedChains = (
   chainManager: ChainManager.t,
   ~progressedChains: array<Batch.progressedChain>,
+  ~items: array<Internal.item>,
 ) => {
   let nextQueueItemIsNone = chainManager->ChainManager.nextItemIsNone
 
@@ -234,6 +238,22 @@ let updateProgressedChains = (
         }
         {
           ...cf,
+          // Since we process per chain always in order,
+          // we need to calculate it once, by using the first item in a batch
+          firstEventBlockNumber: switch cf.firstEventBlockNumber {
+          | Some(_) => cf.firstEventBlockNumber
+          | None =>
+            switch items->Js.Array2.find(item =>
+              switch item {
+              | Internal.Event({chain: eventChain}) => eventChain === chain
+              | Internal.Block({onBlockConfig: {chainId}}) =>
+                chainId === chain->ChainMap.Chain.toChainId
+              }
+            ) {
+            | Some(item) => Some(item->Internal.getItemBlockNumber)
+            | None => None
+            }
+          },
           committedProgressBlockNumber: progressData.progressBlockNumber,
           numEventsProcessed: progressData.totalEventsProcessed,
         }
@@ -497,13 +517,14 @@ let processPartitionQueryResponse = async (
 
   for idx in 0 to parsedQueueItems->Array.length - 1 {
     let item = parsedQueueItems->Array.getUnsafe(idx)
+    let eventItem = item->Internal.castUnsafeEventItem
     if (
       switch chainFetcher.processingFilters {
       | None => true
       | Some(processingFilters) => ChainFetcher.applyProcessingFilters(~item, ~processingFilters)
       }
     ) {
-      if item.eventConfig.contractRegister !== None {
+      if eventItem.eventConfig.contractRegister !== None {
         itemsWithContractRegister->Array.push(item)
       }
 
@@ -516,9 +537,13 @@ let processPartitionQueryResponse = async (
   let dynamicContracts = switch itemsWithContractRegister {
   | [] as empty =>
     // A small optimisation to not recreate an empty array
-    empty->(Utils.magic: array<Internal.eventItem> => array<FetchState.indexingContract>)
+    empty->(Utils.magic: array<Internal.item> => array<FetchState.indexingContract>)
   | _ =>
-    await ChainFetcher.runContractRegistersOrThrow(~itemsWithContractRegister, ~config=state.config)
+    await ChainFetcher.runContractRegistersOrThrow(
+      ~itemsWithContractRegister,
+      ~chain,
+      ~config=state.config,
+    )
   }
 
   dispatchAction(
@@ -607,7 +632,7 @@ let actionReducer = (state: t, action: action) => {
       ~query,
       ~chain,
     )
-  | EventBatchProcessed({progressedChains}) =>
+  | EventBatchProcessed({progressedChains, items}) =>
     let maybePruneEntityHistory =
       state.config->Config.shouldPruneHistory(
         ~isInReorgThreshold=state.chainManager.isInReorgThreshold,
@@ -617,7 +642,7 @@ let actionReducer = (state: t, action: action) => {
 
     let state = {
       ...state,
-      chainManager: state.chainManager->updateProgressedChains(~progressedChains),
+      chainManager: state.chainManager->updateProgressedChains(~progressedChains, ~items),
       currentlyProcessingBatch: false,
     }
 
@@ -921,7 +946,7 @@ let injectedTaskReducer = (
           ~pgSchema=Db.publicSchema,
           ~progressedChains,
         )
-        dispatchAction(EventBatchProcessed({progressedChains: progressedChains}))
+        dispatchAction(EventBatchProcessed({progressedChains, items: batch.items}))
       | {items, progressedChains, fetchStates, dcsToStoreByChainId} =>
         dispatchAction(SetCurrentlyProcessing(true))
         dispatchAction(UpdateQueues({updatedFetchStates: fetchStates, shouldEnterReorgThreshold}))
@@ -982,7 +1007,7 @@ let injectedTaskReducer = (
             dispatchAction(ResetRollbackState)
           }
           switch res {
-          | Ok() => dispatchAction(EventBatchProcessed({progressedChains: progressedChains}))
+          | Ok() => dispatchAction(EventBatchProcessed({progressedChains, items}))
           | Error(errHandler) => dispatchAction(ErrorExit(errHandler))
           }
         }
@@ -1017,24 +1042,25 @@ let injectedTaskReducer = (
         ~chain=reorgChain,
       )
 
-      let isUnorderedMultichainMode = state.config.isUnorderedMultichainMode
-
       let reorgChainId = reorgChain->ChainMap.Chain.toChainId
 
       //Get the first change event that occurred on each chain after the last known valid block
       //Uses a different method depending on if the reorg chain is ordered or unordered
       let firstChangeEventIdentifierPerChain =
         await Db.sql->DbFunctions.EntityHistory.getFirstChangeEventPerChain(
-          isUnorderedMultichainMode
-            ? UnorderedMultichain({
-                reorgChainId,
-                safeBlockNumber: lastKnownValidBlockNumber,
-              })
-            : OrderedMultichain({
-                safeBlockTimestamp: lastKnownValidBlockTimestamp,
-                reorgChainId,
-                safeBlockNumber: lastKnownValidBlockNumber,
-              }),
+          switch state.config.multichain {
+          | Unordered =>
+            UnorderedMultichain({
+              reorgChainId,
+              safeBlockNumber: lastKnownValidBlockNumber,
+            })
+          | Ordered =>
+            OrderedMultichain({
+              safeBlockTimestamp: lastKnownValidBlockTimestamp,
+              reorgChainId,
+              safeBlockNumber: lastKnownValidBlockNumber,
+            })
+          },
         )
 
       firstChangeEventIdentifierPerChain->DbFunctions.EntityHistory.FirstChangeEventPerChain.setIfEarlier(
@@ -1063,11 +1089,14 @@ let injectedTaskReducer = (
           }
           //On other chains, filter out evennts based on the first change present on the chain after the reorg
           rolledBackCf->ChainFetcher.addProcessingFilter(
-            ~filter=eventItem => {
-              //Filter out events that occur passed the block where the query starts but
-              //are lower than the timestamp where we rolled back to
-              (eventItem.blockNumber, eventItem.logIndex) >=
-              (firstChangeEvent.blockNumber, firstChangeEvent.logIndex)
+            ~filter=item => {
+              switch item {
+              | Internal.Event({blockNumber, logIndex})
+              | Internal.Block({blockNumber, logIndex}) =>
+                //Filter out events that occur passed the block where the query starts but
+                //are lower than the timestamp where we rolled back to
+                (blockNumber, logIndex) >= (firstChangeEvent.blockNumber, firstChangeEvent.logIndex)
+              }
             },
             ~isValid=(~fetchState) => {
               //Remove the event filter once the fetchState has fetched passed the
@@ -1087,7 +1116,10 @@ let injectedTaskReducer = (
         ~blockTimestamp=lastKnownValidBlockTimestamp,
         ~blockNumber=lastKnownValidBlockNumber,
         ~logIndex=0,
-        ~isUnorderedMultichainMode,
+        ~isUnorderedMultichainMode=switch state.config.multichain {
+        | Unordered => true
+        | Ordered => false
+        },
       )
 
       let chainManager = {

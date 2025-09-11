@@ -1,21 +1,24 @@
 let codegenHelpMessage = `Rerun 'pnpm dev' to update generated code after schema.graphql changes.`
 
-let makeEventIdentifier = (eventItem: Internal.eventItem): Types.eventIdentifier => {
-  let {event, blockNumber, timestamp} = eventItem
-  {
-    chainId: event.chainId,
-    blockTimestamp: timestamp,
-    blockNumber,
-    logIndex: event.logIndex,
+let makeEventIdentifier = (item: Internal.item): Types.eventIdentifier => {
+  switch item {
+  | Internal.Event({chain, blockNumber, logIndex, timestamp}) => {
+      chainId: chain->ChainMap.Chain.toChainId,
+      blockTimestamp: timestamp,
+      blockNumber,
+      logIndex,
+    }
+  | Internal.Block({onBlockConfig: {chainId}, blockNumber, logIndex}) => {
+      chainId,
+      blockTimestamp: 0,
+      blockNumber,
+      logIndex,
+    }
   }
 }
 
-let getEventId = (eventItem: Internal.eventItem) => {
-  EventUtils.packEventIndex(~blockNumber=eventItem.blockNumber, ~logIndex=eventItem.event.logIndex)
-}
-
 type contextParams = {
-  eventItem: Internal.eventItem,
+  item: Internal.item,
   inMemoryStore: InMemoryStore.t,
   loadManager: LoadManager.t,
   persistence: Persistence.t,
@@ -38,13 +41,13 @@ let rec initEffect = (params: contextParams) => (
     },
     ~inMemoryStore=params.inMemoryStore,
     ~shouldGroup=params.isPreload,
-    ~eventItem=params.eventItem,
+    ~item=params.item,
   )
 and effectTraps: Utils.Proxy.traps<contextParams> = {
   get: (~target as params, ~prop: unknown) => {
     let prop = prop->(Utils.magic: unknown => string)
     switch prop {
-    | "log" => params.eventItem->Logging.getUserLogger->Utils.magic
+    | "log" => params.item->Logging.getUserLogger->Utils.magic
     | "effect" =>
       initEffect(params)->(
         Utils.magic: (
@@ -95,7 +98,7 @@ let getWhereTraps: Utils.Proxy.traps<entityContextParams> = {
               ~fieldValueSchema,
               ~inMemoryStore=params.inMemoryStore,
               ~shouldGroup=params.isPreload,
-              ~eventItem=params.eventItem,
+              ~item=params.item,
               ~fieldValue,
             ),
           gt: fieldValue =>
@@ -108,7 +111,7 @@ let getWhereTraps: Utils.Proxy.traps<entityContextParams> = {
               ~fieldValueSchema,
               ~inMemoryStore=params.inMemoryStore,
               ~shouldGroup=params.isPreload,
-              ~eventItem=params.eventItem,
+              ~item=params.item,
               ~fieldValue,
             ),
         }->Utils.magic
@@ -131,7 +134,7 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
           ->InMemoryStore.getInMemTable(~entityConfig=params.entityConfig)
           ->InMemoryTable.Entity.set(
             Set(entity)->Types.mkEntityUpdate(
-              ~eventIdentifier=params.eventItem->makeEventIdentifier,
+              ~eventIdentifier=params.item->makeEventIdentifier,
               ~entityId=entity.id,
             ),
             ~shouldSaveHistory=params.shouldSaveHistory,
@@ -148,7 +151,7 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
             ~entityConfig=params.entityConfig,
             ~inMemoryStore=params.inMemoryStore,
             ~shouldGroup=params.isPreload,
-            ~eventItem=params.eventItem,
+            ~item=params.item,
             ~entityId,
           )
       )->Utils.magic
@@ -162,7 +165,7 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
             ~entityConfig=params.entityConfig,
             ~inMemoryStore=params.inMemoryStore,
             ~shouldGroup=params.isPreload,
-            ~eventItem=params.eventItem,
+            ~item=params.item,
             ~entityId,
           )->Promise.thenResolve(entity => {
             switch entity {
@@ -185,7 +188,7 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
             ~entityConfig=params.entityConfig,
             ~inMemoryStore=params.inMemoryStore,
             ~shouldGroup=params.isPreload,
-            ~eventItem=params.eventItem,
+            ~item=params.item,
             ~entityId=entity.id,
           )->Promise.thenResolve(storageEntity => {
             switch storageEntity {
@@ -207,7 +210,7 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
           ->InMemoryStore.getInMemTable(~entityConfig=params.entityConfig)
           ->InMemoryTable.Entity.set(
             Delete->Types.mkEntityUpdate(
-              ~eventIdentifier=params.eventItem->makeEventIdentifier,
+              ~eventIdentifier=params.item->makeEventIdentifier,
               ~entityId,
             ),
             ~shouldSaveHistory=params.shouldSaveHistory,
@@ -224,7 +227,7 @@ let handlerTraps: Utils.Proxy.traps<contextParams> = {
     let prop = prop->(Utils.magic: unknown => string)
     switch prop {
     | "log" =>
-      (params.isPreload ? Logging.noopLogger : params.eventItem->Logging.getUserLogger)->Utils.magic
+      (params.isPreload ? Logging.noopLogger : params.item->Logging.getUserLogger)->Utils.magic
     | "effect" =>
       initEffect((params :> contextParams))->(
         Utils.magic: (
@@ -237,7 +240,7 @@ let handlerTraps: Utils.Proxy.traps<contextParams> = {
       switch Entities.byName->Utils.Dict.dangerouslyGetNonOption(prop) {
       | Some(entityConfig) =>
         {
-          eventItem: params.eventItem,
+          item: params.item,
           isPreload: params.isPreload,
           inMemoryStore: params.inMemoryStore,
           loadManager: params.loadManager,
@@ -258,16 +261,11 @@ let getHandlerContext = (params: contextParams): Internal.handlerContext => {
   params->Utils.Proxy.make(handlerTraps)->Utils.magic
 }
 
-let getHandlerArgs = (params: contextParams): Internal.handlerArgs => {
-  event: params.eventItem.event,
-  context: getHandlerContext(params),
-}
-
 // Contract register context creation
 type contractRegisterParams = {
-  eventItem: Internal.eventItem,
+  item: Internal.item,
   onRegister: (
-    ~eventItem: Internal.eventItem,
+    ~item: Internal.item,
     ~contractAddress: Address.t,
     ~contractName: Enums.ContractType.t,
   ) => unit,
@@ -279,7 +277,7 @@ let contractRegisterTraps: Utils.Proxy.traps<contractRegisterParams> = {
     let prop = prop->(Utils.magic: unknown => string)
 
     switch prop {
-    | "log" => params.eventItem->Logging.getUserLogger->Utils.magic
+    | "log" => params.item->Logging.getUserLogger->Utils.magic
     | _ =>
       // Use the pre-built mapping for efficient lookup
       switch params.config.addContractNameToContractNameMapping->Utils.Dict.dangerouslyGetNonOption(
@@ -297,7 +295,7 @@ let contractRegisterTraps: Utils.Proxy.traps<contractRegisterParams> = {
             }
 
             params.onRegister(
-              ~eventItem=params.eventItem,
+              ~item=params.item,
               ~contractAddress=validatedAddress,
               ~contractName=contractName->(Utils.magic: string => Enums.ContractType.t),
             )
@@ -312,9 +310,9 @@ let contractRegisterTraps: Utils.Proxy.traps<contractRegisterParams> = {
   },
 }
 
-let getContractRegisterContext = (~eventItem, ~onRegister, ~config: Config.t) => {
+let getContractRegisterContext = (~item, ~onRegister, ~config: Config.t) => {
   {
-    eventItem,
+    item,
     onRegister,
     config,
   }
@@ -323,10 +321,11 @@ let getContractRegisterContext = (~eventItem, ~onRegister, ~config: Config.t) =>
 }
 
 let getContractRegisterArgs = (
-  eventItem: Internal.eventItem,
+  item: Internal.item,
+  ~eventItem: Internal.eventItem,
   ~onRegister,
   ~config: Config.t,
 ): Internal.contractRegisterArgs => {
   event: eventItem.event,
-  context: getContractRegisterContext(~eventItem, ~onRegister, ~config),
+  context: getContractRegisterContext(~item, ~onRegister, ~config),
 }
