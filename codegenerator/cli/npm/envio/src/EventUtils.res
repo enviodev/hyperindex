@@ -16,6 +16,10 @@ let isEarlier = (item1: (int, int, int, int), item2: (int, int, int, int)) => {
   item1 < item2
 }
 
+let isEarlierUnordered = (item1: (int, int, int), item2: (int, int, int)) => {
+  item1 < item2
+}
+
 // type eventIndex = {
 //   blockNumber: int,
 //   logIndex: int,

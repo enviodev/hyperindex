@@ -103,24 +103,37 @@ let executeBatch = async (
       // Keep history items in the order of the events. Without sorting,
       // they will only be in order per row, but not across the whole entity
       // table.
-      let _ = entityHistoryItemsToSet->Js.Array2.sortInPlaceWith((a, b) => {
-        EventUtils.isEarlier(
-          (
-            a.current.block_timestamp,
-            a.current.chain_id,
-            a.current.block_number,
-            a.current.log_index,
-          ),
-          (
-            b.current.block_timestamp,
-            b.current.chain_id,
-            b.current.block_number,
-            b.current.log_index,
-          ),
-        )
-          ? -1
-          : 1
-      })
+
+      switch config.multichain {
+      | Ordered =>
+        let _ = entityHistoryItemsToSet->Js.Array2.sortInPlaceWith((a, b) => {
+          EventUtils.isEarlier(
+            (
+              a.current.block_timestamp,
+              a.current.chain_id,
+              a.current.block_number,
+              a.current.log_index,
+            ),
+            (
+              b.current.block_timestamp,
+              b.current.chain_id,
+              b.current.block_number,
+              b.current.log_index,
+            ),
+          )
+            ? -1
+            : 1
+        })
+      | Unordered =>
+        let _ = entityHistoryItemsToSet->Js.Array2.sortInPlaceWith((a, b) => {
+          EventUtils.isEarlierUnordered(
+            (a.current.chain_id, a.current.block_number, a.current.log_index),
+            (b.current.chain_id, b.current.block_number, b.current.log_index),
+          )
+            ? -1
+            : 1
+        })
+      }
     }
 
     let shouldRemoveInvalidUtf8 = switch escapeTables {
