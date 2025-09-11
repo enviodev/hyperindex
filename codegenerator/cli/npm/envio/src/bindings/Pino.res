@@ -110,6 +110,7 @@ let createChildParams: 'a => childParams = Utils.magic
 module ECS = {
   @module
   external make: 'a => options = "@elastic/ecs-pino-format"
+  let make = make
 }
 
 /**
