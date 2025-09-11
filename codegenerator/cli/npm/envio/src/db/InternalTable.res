@@ -339,12 +339,6 @@ module RawEvents = {
       mkField("block_fields", JsonB, ~fieldSchema=S.json(~validate=false)),
       mkField("transaction_fields", JsonB, ~fieldSchema=S.json(~validate=false)),
       mkField("params", JsonB, ~fieldSchema=S.json(~validate=false)),
-      mkField(
-        "db_write_timestamp",
-        TimestampWithoutTimezone,
-        ~default="CURRENT_TIMESTAMP",
-        ~fieldSchema=S.int,
-      ),
       mkField("serial", Serial, ~isNullable, ~isPrimaryKey, ~fieldSchema=S.null(S.int)),
     ],
   )
