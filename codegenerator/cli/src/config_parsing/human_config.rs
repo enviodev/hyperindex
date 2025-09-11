@@ -209,6 +209,11 @@ pub mod evm {
             description = "Makes handlers run twice to enable preload optimisations. Removes handlerWithLoader API, since it's not needed. (recommended, default: false)"
         )]
         pub preload_handlers: Option<bool>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(
+            description = "If true, Ethereum addresses are kept lowercase (no checksum) across the indexer (default: false)"
+        )]
+        pub lowercase_addresses: Option<bool>,
     }
 
     impl Display for HumanConfig {

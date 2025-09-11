@@ -414,6 +414,7 @@ pub struct SystemConfig {
     pub enable_raw_events: bool,
     pub preload_handlers: bool,
     pub human_config: HumanConfig,
+    pub lowercase_addresses: bool,
 }
 
 //Getter methods for system config
@@ -721,6 +722,7 @@ impl SystemConfig {
                     field_selection,
                     enable_raw_events: evm_config.raw_events.unwrap_or(false),
                     preload_handlers: evm_config.preload_handlers.unwrap_or(false),
+                    lowercase_addresses: evm_config.lowercase_addresses.unwrap_or(false),
                     human_config,
                 })
             }
@@ -858,6 +860,7 @@ impl SystemConfig {
                     field_selection: FieldSelection::fuel(),
                     enable_raw_events: fuel_config.raw_events.unwrap_or(false),
                     preload_handlers: fuel_config.preload_handlers.unwrap_or(false),
+                    lowercase_addresses: false,
                     human_config,
                 })
             }
@@ -2085,6 +2088,7 @@ mod test {
             field_selection: None,
             raw_events: None,
             preload_handlers: None,
+            lowercase_addresses: None,
         };
 
         let project_paths = ParsedProjectPaths::new(".", "generated", "config.yaml").unwrap();
@@ -2131,6 +2135,7 @@ mod test {
             field_selection: None,
             raw_events: None,
             preload_handlers: None,
+            lowercase_addresses: None,
         };
 
         let system_config_with_output = SystemConfig::from_human_config(

@@ -115,6 +115,7 @@ type t = {
   maxAddrInPartition: int,
   registrations: option<EventRegister.registrations>,
   batchSize: int,
+  lowercaseAddresses: bool,
 }
 
 let make = (
@@ -128,6 +129,8 @@ let make = (
   ~ecosystem=InternalConfig.Evm,
   ~registrations=?,
   ~batchSize=5000,
+  ~ecosystem=Evm,
+  ~lowercaseAddresses=false,
 ) => {
   let chainMap =
     chains
@@ -171,6 +174,7 @@ let make = (
     registrations,
     preloadHandlers,
     batchSize,
+    lowercaseAddresses,
   }
 }
 
