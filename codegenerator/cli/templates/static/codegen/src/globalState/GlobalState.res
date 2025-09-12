@@ -53,7 +53,6 @@ type t = {
   currentlyProcessingBatch: bool,
   rollbackState: rollbackState,
   maxBatchSize: int,
-  targetBufferSize: int,
   indexerStartTime: Js.Date.t,
   writeThrottlers: WriteThrottlers.t,
   loadManager: LoadManager.t,
@@ -64,23 +63,11 @@ type t = {
 }
 
 let make = (~config: Config.t, ~chainManager: ChainManager.t, ~shouldUseTui=false) => {
-  let targetBatchesInBuffer = 3
-  let targetBufferSize = switch Env.targetBufferSize {
-  | Some(size) => size
-  | None =>
-    Env.maxProcessBatchSize * (
-      chainManager.chainFetchers->ChainMap.size > targetBatchesInBuffer ? 1 : targetBatchesInBuffer
-    )
-  }
-  Prometheus.ProcessingMaxBatchSize.set(~maxBatchSize=Env.maxProcessBatchSize)
-  Prometheus.IndexingTargetBufferSize.set(~targetBufferSize)
-  Prometheus.ReorgThreshold.set(~isInReorgThreshold=chainManager.isInReorgThreshold)
   {
     config,
     currentlyProcessingBatch: false,
     chainManager,
     maxBatchSize: Env.maxProcessBatchSize,
-    targetBufferSize,
     indexerStartTime: Js.Date.make(),
     rollbackState: NoRollback,
     writeThrottlers: WriteThrottlers.make(~config),
@@ -167,7 +154,13 @@ let updateChainFetcherCurrentBlockHeight = (chainFetcher: ChainFetcher.t, ~curre
       ~blockNumber=currentBlockHeight,
       ~chainId=chainFetcher.chainConfig.id,
     )
-    {...chainFetcher, currentBlockHeight}
+
+    {
+      ...chainFetcher,
+      isFetchingAtHead: chainFetcher.isFetchingAtHead ||
+      chainFetcher.fetchState->FetchState.bufferBlockNumber >= currentBlockHeight,
+      currentBlockHeight,
+    }
   } else {
     chainFetcher
   }
@@ -179,14 +172,13 @@ let updateChainMetadataTable = (cm: ChainManager.t, ~throttler: Throttler.t) => 
   cm.chainFetchers
   ->ChainMap.values
   ->Belt.Array.forEach(cf => {
-    let latestFetchedBlock = cf.fetchState->FetchState.getLatestFullyFetchedBlock
     chainsData->Js.Dict.set(
       cf.chainConfig.id->Belt.Int.toString,
       {
         blockHeight: cf.currentBlockHeight,
         firstEventBlockNumber: cf.firstEventBlockNumber->Js.Null.fromOption,
         isHyperSync: (cf.sourceManager->SourceManager.getActiveSource).poweredByHyperSync,
-        latestFetchedBlockNumber: latestFetchedBlock.blockNumber,
+        latestFetchedBlockNumber: cf.fetchState->FetchState.bufferBlockNumber,
         timestampCaughtUpToHeadOrEndblock: cf.timestampCaughtUpToHeadOrEndblock->Js.Null.fromOption,
         numBatchesFetched: cf.numBatchesFetched,
       },
@@ -289,9 +281,7 @@ let updateProgressedChains = (
         ...cf,
         timestampCaughtUpToHeadOrEndblock,
       }
-    } else if (
-      cf.timestampCaughtUpToHeadOrEndblock->Option.isNone && cf->ChainFetcher.isFetchingAtHead
-    ) {
+    } else if cf.timestampCaughtUpToHeadOrEndblock->Option.isNone && cf.isFetchingAtHead {
       //Only calculate and set timestampCaughtUpToHeadOrEndblock if chain fetcher is at the head and
       //its not already set
       //CASE1
@@ -463,13 +453,7 @@ let submitPartitionQueryResponse = (
 
   let updatedChainFetcher =
     chainFetcher
-    ->ChainFetcher.handleQueryResult(
-      ~query,
-      ~currentBlockHeight,
-      ~latestFetchedBlock,
-      ~newItems,
-      ~dynamicContracts,
-    )
+    ->ChainFetcher.handleQueryResult(~query, ~latestFetchedBlock, ~newItems, ~dynamicContracts)
     ->Utils.unwrapResultExn
     ->updateChainFetcherCurrentBlockHeight(~currentBlockHeight)
 
@@ -478,8 +462,8 @@ let submitPartitionQueryResponse = (
     numBatchesFetched: updatedChainFetcher.numBatchesFetched + 1,
   }
 
-  let wasFetchingAtHead = ChainFetcher.isFetchingAtHead(chainFetcher)
-  let isCurrentlyFetchingAtHead = ChainFetcher.isFetchingAtHead(updatedChainFetcher)
+  let wasFetchingAtHead = chainFetcher.isFetchingAtHead
+  let isCurrentlyFetchingAtHead = updatedChainFetcher.isFetchingAtHead
 
   if !wasFetchingAtHead && isCurrentlyFetchingAtHead {
     updatedChainFetcher.logger->Logging.childInfo("All events have been fetched")
@@ -596,17 +580,16 @@ let actionReducer = (state: t, action: action) => {
             chainFetchers: state.chainManager.chainFetchers->ChainMap.update(
               chain,
               chainFetcher => {
-                let cf = chainFetcher->updateChainFetcherCurrentBlockHeight(~currentBlockHeight)
                 if shouldEnterReorgThreshold {
                   {
-                    ...cf,
-                    fetchState: cf.fetchState->FetchState.updateInternal(
+                    ...chainFetcher,
+                    fetchState: chainFetcher.fetchState->FetchState.updateInternal(
                       ~blockLag=Env.indexingBlockLag->Option.getWithDefault(0),
                     ),
                   }
                 } else {
-                  cf
-                }
+                  chainFetcher
+                }->updateChainFetcherCurrentBlockHeight(~currentBlockHeight)
               },
             ),
           },
@@ -776,7 +759,6 @@ let checkAndFetchForChain = (
         | exn => dispatchAction(ErrorExit(exn->ErrorHandling.make))
         }
       },
-      ~targetBufferSize=state.targetBufferSize,
       ~stateId=state.id,
     )
   }
@@ -1101,8 +1083,7 @@ let injectedTaskReducer = (
             ~isValid=(~fetchState) => {
               //Remove the event filter once the fetchState has fetched passed the
               //blockNumber of the valid first change event
-              let {blockNumber} = FetchState.getLatestFullyFetchedBlock(fetchState)
-              blockNumber <= firstChangeEvent.blockNumber
+              fetchState->FetchState.bufferBlockNumber <= firstChangeEvent.blockNumber
             },
           )
         | None => //If no change was produced on the given chain after the reorged chain, no need to rollback anything

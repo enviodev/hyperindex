@@ -17,7 +17,6 @@ let fetchNext: (
   ~executeQuery: FetchState.query => promise<unit>,
   ~waitForNewBlock: (~currentBlockHeight: int) => promise<int>,
   ~onNewBlock: (~currentBlockHeight: int) => unit,
-  ~targetBufferSize: int,
   ~stateId: int,
 ) => promise<unit>
 
