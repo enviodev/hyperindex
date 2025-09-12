@@ -184,9 +184,9 @@ let mergeIntoPartition = (p: partition, ~target: partition, ~maxAddrInPartition)
 
 @inline
 let bufferBlockNumber = ({latestFullyFetchedBlock, latestOnBlockBlockNumber}: t) => {
-  latestFullyFetchedBlock.blockNumber < latestOnBlockBlockNumber
-    ? latestFullyFetchedBlock.blockNumber
-    : latestOnBlockBlockNumber
+  latestOnBlockBlockNumber < latestFullyFetchedBlock.blockNumber
+    ? latestOnBlockBlockNumber
+    : latestFullyFetchedBlock.blockNumber
 }
 
 /**
@@ -194,12 +194,12 @@ let bufferBlockNumber = ({latestFullyFetchedBlock, latestOnBlockBlockNumber}: t)
 */
 @inline
 let bufferBlock = ({latestFullyFetchedBlock, latestOnBlockBlockNumber}: t) => {
-  latestFullyFetchedBlock.blockNumber < latestOnBlockBlockNumber
-    ? latestFullyFetchedBlock
-    : {
+  latestOnBlockBlockNumber < latestFullyFetchedBlock.blockNumber
+    ? {
         blockNumber: latestOnBlockBlockNumber,
         blockTimestamp: 0,
       }
+    : latestFullyFetchedBlock
 }
 
 /*
@@ -288,7 +288,7 @@ let updateInternal = (
           }
 
           if (
-            handlerStartBlock >= handlerStartBlock &&
+            blockNumber >= handlerStartBlock &&
             switch onBlockConfig.endBlock {
             | Some(endBlock) => blockNumber <= endBlock
             | None => true

@@ -47,6 +47,7 @@ let makeInitialWithOnBlock = (~startBlock=0, ~onBlockConfigs) => {
     ~startBlock,
     ~endBlock=None,
     ~maxAddrInPartition=3,
+    ~targetBufferSize=5000,
     ~chainId,
     ~onBlockConfigs?,
   )
@@ -61,7 +62,7 @@ let mockEvent = (~blockNumber, ~logIndex=0): Internal.item => Internal.Event({
   event: Utils.magic("Mock event in fetchstate test"),
 })
 
-describe_only("FetchState onBlock functionality", () => {
+describe("FetchState onBlock functionality", () => {
   it("should add block items to queue when processing first batch with onBlock config", () => {
     // Create a fetch state with onBlock config
     let onBlockConfig = makeOnBlockConfig(~interval=2, ~startBlock=Some(0))
@@ -85,7 +86,6 @@ describe_only("FetchState onBlock functionality", () => {
         },
         ~latestFetchedBlock={blockNumber: 10, blockTimestamp: 10 * 15},
         ~newItems=[mockEvent(~blockNumber=5)],
-        ~currentBlockHeight=10,
       )
       ->Result.getExn
 
@@ -133,7 +133,6 @@ describe_only("FetchState onBlock functionality", () => {
         },
         ~latestFetchedBlock={blockNumber: 10, blockTimestamp: 10 * 15},
         ~newItems=[mockEvent(~blockNumber=5)],
-        ~currentBlockHeight=10,
       )
       ->Result.getExn
 
@@ -182,7 +181,6 @@ describe_only("FetchState onBlock functionality", () => {
         },
         ~latestFetchedBlock={blockNumber: 10, blockTimestamp: 10 * 15},
         ~newItems=[mockEvent(~blockNumber=5)],
-        ~currentBlockHeight=10,
       )
       ->Result.getExn
 
@@ -235,7 +233,6 @@ describe_only("FetchState onBlock functionality", () => {
         },
         ~latestFetchedBlock={blockNumber: 12, blockTimestamp: 12 * 15},
         ~newItems=[mockEvent(~blockNumber=5)],
-        ~currentBlockHeight=12,
       )
       ->Result.getExn
 
@@ -291,7 +288,6 @@ describe_only("FetchState onBlock functionality", () => {
         },
         ~latestFetchedBlock={blockNumber: 10, blockTimestamp: 10 * 15},
         ~newItems=[mockEvent(~blockNumber=5)],
-        ~currentBlockHeight=10,
       )
       ->Result.getExn
 
