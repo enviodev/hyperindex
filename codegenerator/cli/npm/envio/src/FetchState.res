@@ -1165,6 +1165,7 @@ let rollbackPartition = (
   | {selection: {dependsOnAddresses: false}} =>
     Some({
       ...p,
+      // FIXME: Should rollback latestFetchedBlock???
       status: {
         fetchingStateId: None,
       },
@@ -1232,7 +1233,10 @@ let rollback = (fetchState: t, ~firstChangeEvent) => {
       p->rollbackPartition(~firstChangeEvent, ~addressesToRemove)
     )
 
-  fetchState->updateInternal(
+  {
+    ...fetchState,
+    latestOnBlockBlockNumber: firstChangeEvent.blockNumber - 1, // TODO: This is not tested
+  }->updateInternal(
     ~partitions,
     ~indexingContracts,
     ~mutItems=fetchState.queue->pruneQueueFromFirstChangeEvent(~firstChangeEvent),
