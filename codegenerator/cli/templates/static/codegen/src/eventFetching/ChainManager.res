@@ -102,7 +102,10 @@ Simply calls getOrderedNextItem in isolation using the chain manager without
 the context of a batch
 */
 let nextItemIsNone = (chainManager: t): bool => {
-  chainManager->getFetchStateWithData->Batch.getOrderedNextItem === None
+  switch chainManager.multichain {
+  | Ordered => chainManager->getFetchStateWithData->Batch.getOrderedNextItem === None
+  | Unordered => chainManager->getFetchStateWithData->Batch.hasUnorderedNextItem
+  }
 }
 
 let createBatch = (chainManager: t, ~maxBatchSize: int): Batch.t => {
