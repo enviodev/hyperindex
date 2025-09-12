@@ -127,7 +127,6 @@ let make = (
   ~persistence=codegenPersistence,
   ~ecosystem=InternalConfig.Evm,
   ~registrations=?,
-  ~ecosystem=Evm,
   ~lowercaseAddresses=false,
 ) => {
   let chainMap =
