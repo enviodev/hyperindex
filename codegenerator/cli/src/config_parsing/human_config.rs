@@ -211,9 +211,16 @@ pub mod evm {
         pub preload_handlers: Option<bool>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
-            description = "If true, Ethereum addresses are kept lowercase (no checksum) across the indexer (default: false)"
+            description = "Address format for Ethereum addresses: 'checksum' or 'lowercase' (default: checksum)"
         )]
-        pub lowercase_addresses: Option<bool>,
+        pub address_format: Option<AddressFormat>,
+    }
+
+    #[derive(Debug, Serialize, Deserialize, PartialEq, Clone, JsonSchema)]
+    #[serde(rename_all = "lowercase")]
+    pub enum AddressFormat {
+        Checksum,
+        Lowercase,
     }
 
     impl Display for HumanConfig {

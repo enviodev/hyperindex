@@ -722,7 +722,10 @@ impl SystemConfig {
                     field_selection,
                     enable_raw_events: evm_config.raw_events.unwrap_or(false),
                     preload_handlers: evm_config.preload_handlers.unwrap_or(false),
-                    lowercase_addresses: evm_config.lowercase_addresses.unwrap_or(false),
+                    lowercase_addresses: match evm_config.address_format {
+                        Some(super::human_config::evm::AddressFormat::Lowercase) => true,
+                        _ => false,
+                    },
                     human_config,
                 })
             }
