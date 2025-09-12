@@ -17,6 +17,3 @@ describe("Address lowercase helpers", () => {
     Assert.strictEqual(out, "0x2c169dfe5fbba12957bdd0ba47d9cedbfe260ca7")
   })
 })
-
-
-
