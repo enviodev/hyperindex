@@ -303,6 +303,8 @@ Helper to check if a value exists in an array
 
   @send
   external copy: array<'a> => array<'a> = "slice"
+
+  @send external at: (array<'a>, int) => option<'a> = "at"
 }
 
 module String = {

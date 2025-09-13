@@ -6,8 +6,21 @@ type t = {
   isInReorgThreshold: bool,
 }
 
+let calculateTargetBufferSize = activeChainsCount => {
+  let targetBatchesInBuffer = 3
+  switch Env.targetBufferSize {
+  | Some(size) => size
+  | None =>
+    Env.maxProcessBatchSize * (
+      activeChainsCount > targetBatchesInBuffer ? 1 : targetBatchesInBuffer
+    )
+  }
+}
+
 let makeFromConfig = (~config: Config.t): t => {
-  let chainFetchers = config.chainMap->ChainMap.map(ChainFetcher.makeFromConfig(_, ~config))
+  let targetBufferSize = calculateTargetBufferSize(config.chainMap->ChainMap.size)
+  let chainFetchers =
+    config.chainMap->ChainMap.map(ChainFetcher.makeFromConfig(_, ~config, ~targetBufferSize))
   {
     chainFetchers,
     multichain: config.multichain,
@@ -32,6 +45,11 @@ let makeFromDbState = async (~initialState: Persistence.initialState, ~config: C
     hasStartedSavingHistory
   }
 
+  let targetBufferSize = calculateTargetBufferSize(initialState.chains->Array.length)
+  Prometheus.ProcessingMaxBatchSize.set(~maxBatchSize=Env.maxProcessBatchSize)
+  Prometheus.IndexingTargetBufferSize.set(~targetBufferSize)
+  Prometheus.ReorgThreshold.set(~isInReorgThreshold)
+
   let chainFetchersArr =
     await initialState.chains
     ->Array.map(async (resumedChainState: InternalTable.Chains.t) => {
@@ -43,6 +61,7 @@ let makeFromDbState = async (~initialState: Persistence.initialState, ~config: C
         await chainConfig->ChainFetcher.makeFromDbState(
           ~resumedChainState,
           ~isInReorgThreshold,
+          ~targetBufferSize,
           ~config,
         ),
       )
@@ -83,7 +102,10 @@ Simply calls getOrderedNextItem in isolation using the chain manager without
 the context of a batch
 */
 let nextItemIsNone = (chainManager: t): bool => {
-  chainManager->getFetchStateWithData->Batch.getOrderedNextItem === None
+  switch chainManager.multichain {
+  | Ordered => chainManager->getFetchStateWithData->Batch.getOrderedNextItem === None
+  | Unordered => !(chainManager->getFetchStateWithData->Batch.hasUnorderedNextItem)
+  }
 }
 
 let createBatch = (chainManager: t, ~maxBatchSize: int): Batch.t => {
@@ -188,7 +210,7 @@ let createBatch = (chainManager: t, ~maxBatchSize: int): Batch.t => {
 let isFetchingAtHead = chainManager =>
   chainManager.chainFetchers
   ->ChainMap.values
-  ->Js.Array2.every(ChainFetcher.isFetchingAtHead)
+  ->Js.Array2.every(cf => cf.isFetchingAtHead)
 
 let isActivelyIndexing = chainManager =>
   chainManager.chainFetchers

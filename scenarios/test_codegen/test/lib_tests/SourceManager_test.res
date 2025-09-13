@@ -251,6 +251,7 @@ describe("SourceManager fetchNext", () => {
     partitions: array<FetchState.partition>,
     ~endBlock=None,
     ~queue=[],
+    ~targetBufferSize=5000,
   ): FetchState.t => {
     let indexingContracts = Js.Dict.empty()
 
@@ -289,13 +290,14 @@ describe("SourceManager fetchNext", () => {
       queue,
       normalSelection,
       latestFullyFetchedBlock: latestFullyFetchedBlock.contents,
-      isFetchingAtHead: false,
+      latestOnBlockBlockNumber: latestFullyFetchedBlock.contents.blockNumber,
+      targetBufferSize,
       chainId: 0,
       indexingContracts,
       contractConfigs: Js.Dict.empty(),
       dcsToStore: None,
       blockLag: 0,
-      onBlockConfigs: None,
+      onBlockConfigs: [],
       // All the null values should be computed during updateInternal
     }->FetchState.updateInternal
   }
@@ -327,7 +329,6 @@ describe("SourceManager fetchNext", () => {
       let fetchNextPromise =
         sourceManager->SourceManager.fetchNext(
           ~fetchState,
-          ~targetBufferSize=1000,
           ~currentBlockHeight=10,
           ~executeQuery=executeQueryMock.fn,
           ~waitForNewBlock=neverWaitForNewBlock,
@@ -393,7 +394,6 @@ describe("SourceManager fetchNext", () => {
       let fetchNextPromise =
         sourceManager->SourceManager.fetchNext(
           ~fetchState,
-          ~targetBufferSize=1000,
           ~currentBlockHeight=10,
           ~executeQuery=executeQueryMock.fn,
           ~waitForNewBlock=neverWaitForNewBlock,
@@ -450,7 +450,6 @@ describe("SourceManager fetchNext", () => {
       let fetchNextPromise =
         sourceManager->SourceManager.fetchNext(
           ~fetchState=mockFetchState([p0, p1, p2, p3], ~endBlock=Some(5)),
-          ~targetBufferSize=1000,
           ~currentBlockHeight=4,
           ~executeQuery=executeQueryMock.fn,
           ~waitForNewBlock=neverWaitForNewBlock,
@@ -483,7 +482,6 @@ describe("SourceManager fetchNext", () => {
         ~fetchState=mockFetchState([
           mockFullPartition(~partitionIndex=0, ~latestFetchedBlockNumber=0),
         ]),
-        ~targetBufferSize=1000,
         ~currentBlockHeight=0,
         ~executeQuery=neverExecutePartitionQuery,
         ~waitForNewBlock=waitForNewBlockMock.fn,
@@ -504,7 +502,6 @@ describe("SourceManager fetchNext", () => {
         ~fetchState=mockFetchState([
           mockFullPartition(~partitionIndex=0, ~latestFetchedBlockNumber=20),
         ]),
-        ~targetBufferSize=1000,
         ~currentBlockHeight=20,
         ~executeQuery=neverExecutePartitionQuery,
         ~waitForNewBlock=waitForNewBlockMock.fn,
@@ -534,7 +531,6 @@ describe("SourceManager fetchNext", () => {
             [mockFullPartition(~partitionIndex=0, ~latestFetchedBlockNumber=5)],
             ~endBlock=Some(5),
           ),
-          ~targetBufferSize=1000,
           ~currentBlockHeight=0,
           ~executeQuery=neverExecutePartitionQuery,
           ~waitForNewBlock=waitForNewBlockMock.fn,
@@ -563,7 +559,6 @@ describe("SourceManager fetchNext", () => {
     let fetchNextPromise =
       sourceManager->SourceManager.fetchNext(
         ~fetchState=mockFetchState([p0, p1]),
-        ~targetBufferSize=1000,
         ~currentBlockHeight=5,
         ~executeQuery=neverExecutePartitionQuery,
         ~waitForNewBlock=waitForNewBlockMock.fn,
@@ -576,7 +571,6 @@ describe("SourceManager fetchNext", () => {
     // Should do nothing on the second call with the same data
     await sourceManager->SourceManager.fetchNext(
       ~fetchState=mockFetchState([p0, p1]),
-      ~targetBufferSize=1000,
       ~currentBlockHeight=5,
       ~executeQuery=neverExecutePartitionQuery,
       ~waitForNewBlock=neverWaitForNewBlock,
@@ -607,7 +601,6 @@ describe("SourceManager fetchNext", () => {
     let fetchNextPromise =
       sourceManager->SourceManager.fetchNext(
         ~fetchState=mockFetchState([p0]),
-        ~targetBufferSize=1000,
         ~currentBlockHeight=5,
         ~executeQuery=neverExecutePartitionQuery,
         ~waitForNewBlock=waitForNewBlockMock.fn,
@@ -620,7 +613,6 @@ describe("SourceManager fetchNext", () => {
     // Should do nothing on the second call with the same data
     await sourceManager->SourceManager.fetchNext(
       ~fetchState=mockFetchState([p0]),
-      ~targetBufferSize=1000,
       ~currentBlockHeight=5,
       ~executeQuery=neverExecutePartitionQuery,
       ~waitForNewBlock=neverWaitForNewBlock,
@@ -636,7 +628,6 @@ describe("SourceManager fetchNext", () => {
     let fetchNextPromise2 =
       sourceManager->SourceManager.fetchNext(
         ~fetchState=mockFetchState([p0]),
-        ~targetBufferSize=1000,
         ~currentBlockHeight=5,
         ~executeQuery=neverExecutePartitionQuery,
         ~waitForNewBlock=waitForNewBlockMock.fn,
@@ -675,7 +666,6 @@ describe("SourceManager fetchNext", () => {
     let fetchNextPromise1 =
       sourceManager->SourceManager.fetchNext(
         ~fetchState=mockFetchState([p0, p1]),
-        ~targetBufferSize=1000,
         ~currentBlockHeight=10,
         ~executeQuery=executeQueryMock.fn,
         ~waitForNewBlock=neverWaitForNewBlock,
@@ -688,7 +678,6 @@ describe("SourceManager fetchNext", () => {
     let fetchNextPromise2 =
       sourceManager->SourceManager.fetchNext(
         ~fetchState=mockFetchState([p0, p1, p2, p3]),
-        ~targetBufferSize=1000,
         ~currentBlockHeight=10,
         ~executeQuery=executeQueryMock.fn,
         ~waitForNewBlock=neverWaitForNewBlock,
@@ -707,7 +696,6 @@ describe("SourceManager fetchNext", () => {
     // The third call won't do anything, because the concurrency is reached
     await sourceManager->SourceManager.fetchNext(
       ~fetchState=mockFetchState([p0, p1, p2, p3]),
-      ~targetBufferSize=1000,
       ~currentBlockHeight=10,
       ~executeQuery=neverExecutePartitionQuery,
       ~waitForNewBlock=neverWaitForNewBlock,
@@ -719,7 +707,6 @@ describe("SourceManager fetchNext", () => {
     // for running fetches from the prev state
     await sourceManager->SourceManager.fetchNext(
       ~fetchState=mockFetchState([p0, p1, p2, p3]),
-      ~targetBufferSize=1000,
       ~currentBlockHeight=10,
       ~executeQuery=neverExecutePartitionQuery,
       ~waitForNewBlock=neverWaitForNewBlock,
@@ -733,7 +720,6 @@ describe("SourceManager fetchNext", () => {
     // After resolving one the call with prev stateId won't do anything
     await sourceManager->SourceManager.fetchNext(
       ~fetchState=mockFetchState([p0, p1, p2, p3]),
-      ~targetBufferSize=1000,
       ~currentBlockHeight=10,
       ~executeQuery=neverExecutePartitionQuery,
       ~waitForNewBlock=neverWaitForNewBlock,
@@ -745,7 +731,6 @@ describe("SourceManager fetchNext", () => {
     let fetchNextPromise3 =
       sourceManager->SourceManager.fetchNext(
         ~fetchState=mockFetchState([p0, p1, p2, p3]),
-        ~targetBufferSize=1000,
         ~currentBlockHeight=10,
         ~executeQuery=executeQueryMock.fn,
         ~waitForNewBlock=neverWaitForNewBlock,
@@ -771,7 +756,6 @@ describe("SourceManager fetchNext", () => {
         p2,
         p3,
       ]),
-      ~targetBufferSize=1000,
       ~currentBlockHeight=10,
       ~executeQuery=neverExecutePartitionQuery,
       ~waitForNewBlock=neverWaitForNewBlock,
@@ -812,8 +796,8 @@ describe("SourceManager fetchNext", () => {
             FetchState_test.mockEvent(~blockNumber=2),
             FetchState_test.mockEvent(~blockNumber=1),
           ],
+          ~targetBufferSize=4,
         ),
-        ~targetBufferSize=4,
         ~currentBlockHeight=10,
         ~executeQuery=executeQueryMock.fn,
         ~waitForNewBlock=neverWaitForNewBlock,
@@ -849,7 +833,6 @@ describe("SourceManager fetchNext", () => {
         ],
         ~endBlock=Some(11),
       ),
-      ~targetBufferSize=10,
       ~currentBlockHeight=10,
       ~executeQuery=executeQueryMock.fn,
       ~waitForNewBlock=neverWaitForNewBlock,

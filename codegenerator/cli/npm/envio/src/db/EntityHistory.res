@@ -188,9 +188,6 @@ let fromTable = (table: table, ~schema: S.t<'entity>): t<'entity> => {
       switch field.fieldName {
       //id is not nullable and should be part of the pk
       | "id" => {...field, fieldName: id, isPrimaryKey: true}->Field->Some
-      //db_write_timestamp can be removed for this. TODO: remove this when we depracate
-      //automatic db_write_timestamp creation
-      | "db_write_timestamp" => None
       | _ =>
         {
           ...field,
