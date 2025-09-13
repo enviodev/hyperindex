@@ -104,7 +104,7 @@ the context of a batch
 let nextItemIsNone = (chainManager: t): bool => {
   switch chainManager.multichain {
   | Ordered => chainManager->getFetchStateWithData->Batch.getOrderedNextItem === None
-  | Unordered => chainManager->getFetchStateWithData->Batch.hasUnorderedNextItem
+  | Unordered => !(chainManager->getFetchStateWithData->Batch.hasUnorderedNextItem)
   }
 }
 
