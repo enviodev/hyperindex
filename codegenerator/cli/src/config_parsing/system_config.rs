@@ -2091,7 +2091,7 @@ mod test {
             field_selection: None,
             raw_events: None,
             preload_handlers: None,
-            lowercase_addresses: None,
+            address_format: None,
         };
 
         let project_paths = ParsedProjectPaths::new(".", "generated", "config.yaml").unwrap();
@@ -2138,7 +2138,7 @@ mod test {
             field_selection: None,
             raw_events: None,
             preload_handlers: None,
-            lowercase_addresses: None,
+            address_format: None,
         };
 
         let system_config_with_output = SystemConfig::from_human_config(

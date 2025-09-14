@@ -113,6 +113,17 @@
         "boolean",
         "null"
       ]
+    },
+    "address_format": {
+      "description": "Address format for Ethereum addresses: 'checksum' or 'lowercase' (default: checksum)",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/AddressFormat"
+        },
+        {
+          "type": "null"
+        }
+      ]
     }
   },
   "additionalProperties": false,
@@ -652,6 +663,13 @@
       "enum": [
         "viem",
         "hypersync-client"
+      ]
+    },
+    "AddressFormat": {
+      "type": "string",
+      "enum": [
+        "checksum",
+        "lowercase"
       ]
     }
   }
