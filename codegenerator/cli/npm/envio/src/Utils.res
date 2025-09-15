@@ -57,12 +57,6 @@ module Option = {
   }
 }
 
-module Tuple = {
-  /**Access a tuple value by its index*/
-  @warning("-27")
-  let get = (tuple: 'a, index: int): option<'b> => %raw(`tuple[index]`)
-}
-
 module Dict = {
   @get_index
   /**
@@ -147,6 +141,33 @@ module Math = {
     | (None, Some(b)) => Some(b)
     | (None, None) => None
     }
+}
+
+module Cmp = {
+  type cmpFn<'a> = ('a, 'a) => int
+  type boolFn<'a> = ('a, 'a) => bool
+
+  type t<'a> = {
+    cmp: cmpFn<'a>,
+    eq: boolFn<'a>,
+    lt: boolFn<'a>,
+    lte: boolFn<'a>,
+    gt: boolFn<'a>,
+    gte: boolFn<'a>,
+  }
+
+  let make = (~cmp: cmpFn<'a>, ~eq: boolFn<'a>): t<'a> => {
+    cmp,
+    eq,
+    lt: (a, b) => cmp(a, b) < 0,
+    lte: (a, b) => cmp(a, b) <= 0,
+    gt: (a, b) => cmp(a, b) > 0,
+    gte: (a, b) => cmp(a, b) >= 0,
+  }
+
+  let int: t<int> = make(~cmp=(a, b) => a - b, ~eq=(a, b) => a === b)
+  let float: t<float> = make(~cmp=(a, b) => (a -. b)->Belt.Float.toInt, ~eq=(a, b) => a === b)
+  let string: t<string> = make(~cmp=(a, b) => String.compare(a, b), ~eq=(a, b) => a === b)
 }
 
 module Array = {
@@ -303,7 +324,129 @@ Helper to check if a value exists in an array
 
   @send
   external copy: array<'a> => array<'a> = "slice"
+
+  /**
+  Assumes that the arrays have items from idx up to maxIdx
+  */
+  let rec cmpInternalUnsafe = (a, b, ~cmpInner, ~idx, ~maxIdx) => {
+    let itemA = a->Js.Array2.unsafe_get(idx)
+    let itemB = b->Js.Array2.unsafe_get(idx)
+    let val = cmpInner(itemA, itemB)
+    if val == 0 && idx < maxIdx {
+      cmpInternalUnsafe(a, b, ~cmpInner, ~idx=idx + 1, ~maxIdx)
+    } else {
+      val
+    }
+  }
+
+  let cmp = (a: array<'a>, b: array<'a>, ~cmp) => {
+    let aLen = a->Array.length
+    let bLen = b->Array.length
+    let lenDiff = aLen - bLen
+
+    // If either of them are empty, return the difference
+    if aLen == 0 || bLen == 0 {
+      lenDiff
+    } else if lenDiff == 0 {
+      // If they are not empty and have the same length, compare them
+      // unsafely up to their length and return
+      cmpInternalUnsafe(a, b, ~cmpInner=cmp, ~idx=0, ~maxIdx=aLen)
+    } else {
+      // If they are not the same length, compare them up to the length
+      // of the shortest one. If they are equal up to that length, return
+      // the difference
+      let maxIdx = Pervasives.min(aLen, bLen) - 1
+      let val = cmpInternalUnsafe(a, b, ~cmpInner=cmp, ~idx=0, ~maxIdx)
+      if val == 0 {
+        lenDiff
+      } else {
+        val
+      }
+    }
+  }
+
+  /**
+  Assumes that the arrays have items from idx up to maxIdx
+  */
+  let rec eqInternalUnsafe = (a, b, ~eqInner, ~idx, ~maxIdx) => {
+    let itemA = a->Js.Array2.unsafe_get(idx)
+    let itemB = b->Js.Array2.unsafe_get(idx)
+    let val = eqInner(itemA, itemB)
+    if val && idx < maxIdx {
+      eqInternalUnsafe(a, b, ~eqInner, ~idx=idx + 1, ~maxIdx)
+    } else {
+      val
+    }
+  }
+
+  let eq = (a: array<'a>, b: array<'a>, ~eq) => {
+    let aLen = a->Array.length
+    let lenDiff = aLen - b->Array.length
+
+    // If they are not the same length, return false
+    if lenDiff != 0 {
+      false
+    } else if aLen == 0 {
+      // They are the same length, if empty return true
+      true
+    } else {
+      // If they are not empty and have the same length, compare them
+      // unsafely up to their length and return
+      eqInternalUnsafe(a, b, ~eqInner=eq, ~idx=0, ~maxIdx=aLen - 1)
+    }
+  }
+
+  let makeArrayCmp = (c: Cmp.t<'a>): Cmp.t<array<'a>> => {
+    let cmp = (a: array<'a>, b: array<'a>) => cmp(a, b, ~cmp=c.cmp)
+    let eq = (a: array<'a>, b: array<'a>) => eq(a, b, ~eq=c.eq)
+    Cmp.make(~cmp, ~eq)
+  }
+
+  let int = makeArrayCmp(Cmp.int)
+  let float = makeArrayCmp(Cmp.float)
+  let string = makeArrayCmp(Cmp.string)
 }
+
+module Tuple = {
+  /**Access a tuple value by its index*/
+  @warning("-27")
+  let get = (tuple: 'a, index: int): option<'b> => %raw(`tuple[index]`)
+
+  %%private(
+    /**
+  For tuples of ints
+  */
+    let makeTupleIntCmp = (~tupleLen: int): Cmp.t<'a> => {
+      let toArray = (tuple: 'a) => tuple->(magic: 'a => array<int>)
+      Cmp.make(
+        ~cmp=(a, b) =>
+          // Can directly use unsafe comparison since tuples
+          // will have the same length enforced (and won't be empty)
+          Array.cmpInternalUnsafe(
+            a->toArray,
+            b->toArray,
+            ~cmpInner=Cmp.int.cmp,
+            ~maxIdx=tupleLen - 1,
+            ~idx=0,
+          ),
+        ~eq=(a, b) =>
+          Array.eqInternalUnsafe(
+            a->toArray,
+            b->toArray,
+            ~eqInner=Cmp.int.eq,
+            ~maxIdx=tupleLen - 1,
+            ~idx=0,
+          ),
+      )
+    }
+  )
+
+  let int2: Cmp.t<(int, int)> = makeTupleIntCmp(~tupleLen=2)
+  let int3: Cmp.t<(int, int, int)> = makeTupleIntCmp(~tupleLen=3)
+  let int4: Cmp.t<(int, int, int, int)> = makeTupleIntCmp(~tupleLen=4)
+}
+
+let check = Tuple.int4.lte((1, 2, 3, 4), (1, 2, 3, 5))
 
 module String = {
   let capitalize = str => {
