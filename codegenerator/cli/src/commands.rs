@@ -288,13 +288,22 @@ pub mod auth {
     use serde::{Deserialize, Serialize};
     use std::time::Duration;
     use tokio::time::sleep;
-
+    use crate::utils::token_manager::{TokenManager, HYPERSYNC_ACCOUNT, JWT_ACCOUNT, SERVICE_NAME};
+    
     /// Default UI/API base URL. Change this constant to point to your deployment.
     pub const AUTH_BASE_URL: &str = "http://localhost:3000";
 
     fn get_api_base_url() -> String {
         // Allow override via ENVIO_API_URL, otherwise use the constant above.
         std::env::var("ENVIO_API_URL").unwrap_or_else(|_| AUTH_BASE_URL.to_string())
+    }
+
+    /// Default UI/API base URL. Change this constant to point to your deployment.
+    pub const HYPERSYNC_TOKEN_API_URL: &str = "https://hypersync-tokens.hyperquery.xyz";
+
+    fn get_hypersync_token_api_url() -> String {
+        // Allow override via ENVIO_API_URL, otherwise use the constant above.
+        std::env::var("ENVIO_API_URL").unwrap_or_else(|_| HYPERSYNC_TOKEN_API_URL.to_string())
     }
 
     #[derive(Debug, Deserialize)]
@@ -404,6 +413,10 @@ pub mod auth {
 
                 if status.completed {
                     if let Some(token) = status.token {
+                        let tm = TokenManager::new(SERVICE_NAME, JWT_ACCOUNT);
+                        if let Err(e) = tm.store_token(&token) {
+                            eprintln!("Warning: failed to store token in keyring: {}", e);
+                        }
                         println!("{}", token);
                         return Ok(());
                     }
@@ -412,5 +425,147 @@ pub mod auth {
         }
 
         Err(anyhow!("authentication timed out"))
+    }
+
+    pub fn get_stored_jwt() -> Result<Option<String>> {
+        TokenManager::new(SERVICE_NAME, JWT_ACCOUNT).get_token()
+    }
+}
+
+pub mod hypersync {
+    use super::auth::{get_stored_jwt, HYPERSYNC_TOKEN_API_URL};
+    use anyhow::{anyhow, Context, Result};
+    use crate::utils::token_manager::{TokenManager, HYPERSYNC_ACCOUNT, SERVICE_NAME};
+    use reqwest::StatusCode;
+    use serde::{Deserialize, Serialize};
+    use std::fs;
+    use std::path::Path;
+
+    fn get_hypersync_tokens_base_url() -> String {
+        // Allow override specific for tokens service; else fall back to the constant
+        std::env::var("ENVIO_HYPERSYNC_TOKENS_URL")
+            .unwrap_or_else(|_| HYPERSYNC_TOKEN_API_URL.to_string())
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct TokenResponse {
+        #[serde(rename = "user_token")]
+        user_token: String,
+    }
+
+    #[derive(Debug, Serialize)]
+    struct ModifyNetworksReq<'a> {
+        #[serde(rename = "add_networks")]
+        add_networks: &'a [i32],
+        #[serde(rename = "remove_networks")]
+        remove_networks: &'a [i32],
+        #[serde(rename = "user_token")]
+        user_token: &'a str,
+    }
+
+    async fn create_user_if_needed(client: &reqwest::Client, base: &str, jwt: &str) -> Result<()> {
+        let url = format!("{}/user/create", base);
+        let resp = client
+            .post(&url)
+            .header("authorization", format!("Bearer {}", jwt))
+            .header("content-type", "application/json")
+            .send()
+            .await
+            .with_context(|| format!("POST {} failed", url))?;
+        if resp.status() == StatusCode::OK || resp.status() == StatusCode::CONFLICT {
+            Ok(())
+        } else {
+            Err(anyhow!("Failed to create user: {}", resp.status()))
+        }
+    }
+
+    async fn create_api_token(client: &reqwest::Client, base: &str, jwt: &str) -> Result<String> {
+        #[derive(Serialize)]
+        struct Body {
+            enable_active_networks: bool,
+        }
+        let url = format!("{}/token/create", base);
+        let resp = client
+            .post(&url)
+            .header("authorization", format!("Bearer {}", jwt))
+            .header("content-type", "application/json")
+            .json(&Body {
+                enable_active_networks: true,
+            })
+            .send()
+            .await
+            .with_context(|| format!("POST {} failed", url))?;
+        if resp.status().is_success() || resp.status() == StatusCode::CONFLICT {
+            let json = resp.json::<TokenResponse>().await.context("Decode token response")?;
+            Ok(json.user_token)
+        } else {
+            Err(anyhow!("Failed to create token: {}", resp.status()))
+        }
+    }
+
+    fn store_api_token(token: &str) -> Result<()> {
+        TokenManager::new(SERVICE_NAME, HYPERSYNC_ACCOUNT).store_token(token)
+    }
+
+    fn project_has_envio_dependency(project_root: &Path) -> bool {
+        let pkg = project_root.join("package.json");
+        if let Ok(contents) = fs::read_to_string(pkg) {
+            contents.contains("\"envio\"")
+        } else {
+            false
+        }
+    }
+
+    fn write_env_token(project_root: &Path, token: &str) -> Result<()> {
+        let env_path = project_root.join(".env");
+        let mut content = String::new();
+        if let Ok(existing) = fs::read_to_string(&env_path) {
+            content = existing;
+            if content.contains("ENVIO_API_TOKEN=") {
+                // replace existing line
+                let new_content = content
+                    .lines()
+                    .map(|l| if l.starts_with("ENVIO_API_TOKEN=") { format!("ENVIO_API_TOKEN=\"{}\"", token) } else { l.to_string() })
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                fs::write(env_path, new_content).context("Failed writing .env")?;
+                return Ok(());
+            }
+        }
+        if !content.is_empty() && !content.ends_with('\n') {
+            content.push('\n');
+        }
+        content.push_str(&format!("ENVIO_API_TOKEN=\"{}\"\n", token));
+        fs::write(env_path, content).context("Failed writing .env")
+    }
+
+    pub async fn provision_and_get_token() -> Result<String> {
+        let base = get_hypersync_tokens_base_url();
+        let jwt = match get_stored_jwt()? {
+            Some(t) => t,
+            None => super::auth::run_auth().await.and_then(|_| super::auth::get_stored_jwt()?.ok_or_else(|| anyhow!("JWT missing after login")))?,
+        };
+
+        let client = reqwest::Client::new();
+        create_user_if_needed(&client, &base, &jwt).await?;
+        let api_token = create_api_token(&client, &base, &jwt).await?;
+        store_api_token(&api_token)?;
+        Ok(api_token)
+    }
+
+    pub async fn connect() -> Result<()> {
+        let api_token = provision_and_get_token().await?;
+        // If project has envio dependency, write .env
+        // If project has envio dependency, write .env
+        let cwd = std::env::current_dir().context("Get current dir failed")?;
+        if project_has_envio_dependency(&cwd) {
+            if let Err(e) = write_env_token(&cwd, &api_token) {
+                eprintln!("Warning: failed to write .env: {}", e);
+            }
+        }
+
+        println!("{}", api_token);
+        Ok(())
     }
 }
