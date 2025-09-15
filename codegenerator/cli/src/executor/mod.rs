@@ -121,6 +121,11 @@ pub async fn execute(command_line_args: CommandLineArgs) -> Result<()> {
                 .await
                 .context("Failed running auth flow")?;
         }
+        CommandType::HypersyncConnect => {
+            commands::hypersync::connect()
+                .await
+                .context("Failed connecting HyperSync")?;
+        }
     };
 
     Ok(())

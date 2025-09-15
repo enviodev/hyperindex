@@ -69,6 +69,9 @@ pub enum CommandType {
     ///Authenticate with envio hosted services and print a JWT
     Auth,
 
+    ///Connect HyperSync: create user (idempotent), create API token, store it
+    HypersyncConnect,
+
     #[clap(hide = true)]
     #[command(subcommand)]
     Script(Script),

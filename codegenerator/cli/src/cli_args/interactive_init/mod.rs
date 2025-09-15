@@ -162,38 +162,23 @@ pub async fn prompt_missing_init_args(
     let api_token: Option<String> = match init_args.api_token {
         Some(k) => Ok::<_, anyhow::Error>(Some(k)),
         None if ecosystem.uses_hypersync() => {
-            let select = Select::new(
-                "Add an API token for HyperSync to your .env file?",
-                ApiTokenInput::iter().collect(),
-            )
-            .prompt()
-            .context("Prompting for add API token")?;
-
-            let token_prompt = Text::new("Add your API token: ")
-                .with_help_message("See tokens at: https://envio.dev/app/api-tokens");
-
-            match select {
-                ApiTokenInput::Create => {
-                    open::that_detached("https://envio.dev/app/api-tokens")?;
+            // New flow: try keyring vault first; if not present, provision via API using JWT
+            match crate::commands::hypersync::provision_and_get_token().await {
+                Ok(token) => Ok(Some(token)),
+                Err(e) => {
+                    eprintln!("Warning: automatic HyperSync token provision failed: {}", e);
+                    // Fallback to manual prompt without opening browser
+                    let token_prompt = Text::new("Add your API token: ")
+                        .with_help_message("You can create/manage tokens later in the UI");
                     Ok(token_prompt
                         .prompt_skippable()
-                        .context("Prompting for create token")?)
-                }
-                ApiTokenInput::AddExisting => Ok(token_prompt
-                    .prompt_skippable()
-                    .context("Prompting for add existing token")?),
-                ApiTokenInput::Skip => {
-                    println!(
-                        "You can always visit 'https://envio.dev/app/api-tokens' and add a token \
-                         later to your .env file."
-                    );
-                    Ok(None)
+                        .context("Prompting for API token after provision failure")?)
                 }
             }
         }
         None => Ok(None),
     }
-    .context("Prompting for API Token")?;
+    .context("Resolving API Token for init flow")?;
 
     Ok(InitConfig {
         name,
