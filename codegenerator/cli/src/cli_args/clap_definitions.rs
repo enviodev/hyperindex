@@ -66,8 +66,8 @@ pub enum CommandType {
     ///Start the indexer without any automatic codegen
     Start(StartArgs),
 
-    ///Authenticate with envio hosted services and print a JWT
-    Auth,
+    ///Authenticate/Login with envio hosted services and print a JWT
+    Login,
 
     ///Connect HyperSync: create user (idempotent), create API token, store it
     HypersyncConnect,
