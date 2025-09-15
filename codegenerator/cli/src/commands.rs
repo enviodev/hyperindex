@@ -281,15 +281,15 @@ pub mod benchmark {
     }
 }
 
-pub mod auth {
+pub mod login {
+    use crate::utils::token_manager::{TokenManager, HYPERSYNC_ACCOUNT, JWT_ACCOUNT, SERVICE_NAME};
     use anyhow::{anyhow, Context, Result};
     use open;
     use reqwest::StatusCode;
     use serde::{Deserialize, Serialize};
     use std::time::Duration;
     use tokio::time::sleep;
-    use crate::utils::token_manager::{TokenManager, HYPERSYNC_ACCOUNT, JWT_ACCOUNT, SERVICE_NAME};
-    
+
     /// Default UI/API base URL. Change this constant to point to your deployment.
     pub const AUTH_BASE_URL: &str = "http://localhost:3000";
 
@@ -343,7 +343,7 @@ pub mod auth {
     #[derive(Debug, Serialize)]
     struct EmptyBody {}
 
-    pub async fn run_auth() -> Result<()> {
+    pub async fn run_login() -> Result<()> {
         let base = get_api_base_url();
         let client = reqwest::Client::new();
 
@@ -361,7 +361,10 @@ pub mod auth {
             .await
             .context("Failed to decode CLI session response")?;
 
-        println!("Opening browser for authentication...\nIf it doesn't open, visit: {}", session.auth_url);
+        println!(
+            "Opening browser for authentication...\nIf it doesn't open, visit: {}",
+            session.auth_url
+        );
         let _ = open::that_detached(&session.auth_url);
 
         // 2) Poll for completion
@@ -433,9 +436,9 @@ pub mod auth {
 }
 
 pub mod hypersync {
-    use super::auth::{get_stored_jwt, HYPERSYNC_TOKEN_API_URL};
-    use anyhow::{anyhow, Context, Result};
+    use super::login::{get_stored_jwt, HYPERSYNC_TOKEN_API_URL};
     use crate::utils::token_manager::{TokenManager, HYPERSYNC_ACCOUNT, SERVICE_NAME};
+    use anyhow::{anyhow, Context, Result};
     use reqwest::StatusCode;
     use serde::{Deserialize, Serialize};
     use std::fs;
@@ -497,7 +500,10 @@ pub mod hypersync {
             .await
             .with_context(|| format!("POST {} failed", url))?;
         if resp.status().is_success() || resp.status() == StatusCode::CONFLICT {
-            let json = resp.json::<TokenResponse>().await.context("Decode token response")?;
+            let json = resp
+                .json::<TokenResponse>()
+                .await
+                .context("Decode token response")?;
             Ok(json.user_token)
         } else {
             Err(anyhow!("Failed to create token: {}", resp.status()))
@@ -518,33 +524,42 @@ pub mod hypersync {
     }
 
     fn write_env_token(project_root: &Path, token: &str) -> Result<()> {
+        // New rule: Do NOT create .env if missing. Only update when it already exists.
         let env_path = project_root.join(".env");
-        let mut content = String::new();
-        if let Ok(existing) = fs::read_to_string(&env_path) {
-            content = existing;
-            if content.contains("ENVIO_API_TOKEN=") {
-                // replace existing line
-                let new_content = content
-                    .lines()
-                    .map(|l| if l.starts_with("ENVIO_API_TOKEN=") { format!("ENVIO_API_TOKEN=\"{}\"", token) } else { l.to_string() })
-                    .collect::<Vec<_>>()
-                    .join("\n");
-                fs::write(env_path, new_content).context("Failed writing .env")?;
-                return Ok(());
+        let existing = match fs::read_to_string(&env_path) {
+            Ok(s) => s,
+            Err(_) => return Ok(()), // .env absent: do nothing
+        };
+        let new_content = if existing.contains("ENVIO_API_TOKEN=") {
+            existing
+                .lines()
+                .map(|l| {
+                    if l.starts_with("ENVIO_API_TOKEN=") {
+                        format!("ENVIO_API_TOKEN=\"{}\"", token)
+                    } else {
+                        l.to_string()
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+        } else {
+            let mut s = existing;
+            if !s.ends_with('\n') {
+                s.push('\n');
             }
-        }
-        if !content.is_empty() && !content.ends_with('\n') {
-            content.push('\n');
-        }
-        content.push_str(&format!("ENVIO_API_TOKEN=\"{}\"\n", token));
-        fs::write(env_path, content).context("Failed writing .env")
+            s.push_str(&format!("ENVIO_API_TOKEN=\"{}\"\n", token));
+            s
+        };
+        fs::write(env_path, new_content).context("Failed writing .env")
     }
 
     pub async fn provision_and_get_token() -> Result<String> {
         let base = get_hypersync_tokens_base_url();
         let jwt = match get_stored_jwt()? {
             Some(t) => t,
-            None => super::auth::run_auth().await.and_then(|_| super::auth::get_stored_jwt()?.ok_or_else(|| anyhow!("JWT missing after login")))?,
+            None => super::login::run_login().await.and_then(|_| {
+                super::login::get_stored_jwt()?.ok_or_else(|| anyhow!("JWT missing after login"))
+            })?,
         };
 
         let client = reqwest::Client::new();

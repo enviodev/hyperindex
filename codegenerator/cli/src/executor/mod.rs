@@ -76,6 +76,26 @@ pub async fn execute(command_line_args: CommandLineArgs) -> Result<()> {
 
                 commands::db_migrate::run_db_setup(&config, &persisted_state).await?;
             }
+            // Populate HyperSync API token from vault unless .env overrides
+            {
+                use crate::config_parsing::system_config::{DataSource, MainEvmDataSource};
+                let uses_hypersync = config.get_networks().iter().any(|n| match &n.sync_source {
+                    DataSource::Evm { main, .. } => {
+                        matches!(main, MainEvmDataSource::HyperSync { .. })
+                    }
+                    DataSource::Fuel { .. } => true,
+                });
+                if uses_hypersync {
+                    // Do not prompt login for start; best-effort provision if possible
+                    if let Err(e) = commands::hypersync::provision_and_get_token().await {
+                        eprintln!(
+                            "Warning: could not provision HyperSync token automatically: {}",
+                            e
+                        );
+                    }
+                }
+            }
+
             const SHOULD_OPEN_HASURA: bool = false;
             commands::start::start_indexer(&config, SHOULD_OPEN_HASURA).await?;
         }
@@ -116,10 +136,10 @@ pub async fn execute(command_line_args: CommandLineArgs) -> Result<()> {
                 .await
                 .context("Failed print missing networks script")?;
         }
-        CommandType::Auth => {
-            commands::auth::run_auth()
+        CommandType::Login => {
+            commands::login::run_login()
                 .await
-                .context("Failed running auth flow")?;
+                .context("Failed running login flow")?;
         }
         CommandType::HypersyncConnect => {
             commands::hypersync::connect()

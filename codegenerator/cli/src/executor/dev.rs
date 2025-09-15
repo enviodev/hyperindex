@@ -6,6 +6,7 @@ use crate::{
     service_health::{self, EndpointHealth},
 };
 use anyhow::{anyhow, Context, Result};
+use crate::config_parsing::system_config::{DataSource, MainEvmDataSource};
 
 pub async fn run_dev(project_paths: ParsedProjectPaths) -> Result<()> {
     let config =
@@ -63,6 +64,20 @@ pub async fn run_dev(project_paths: ParsedProjectPaths) -> Result<()> {
         commands::codegen::run_codegen(&config)
             .await
             .context("Failed running codegen")?;
+    }
+
+    // If any network uses HyperSync as the main sync source, ensure a HyperSync API token exists
+    let uses_hypersync = config.get_networks().iter().any(|n| match &n.sync_source {
+        DataSource::Evm { main, .. } => matches!(main, MainEvmDataSource::HyperSync { .. }),
+        DataSource::Fuel { .. } => true,
+    });
+
+    if uses_hypersync {
+        // Provision token silently if missing; do NOT prompt login here per requirement
+        if let Err(e) = crate::commands::hypersync::provision_and_get_token().await {
+            // Best-effort: log and continue; start can still run if RPC fallback exists
+            eprintln!("Warning: could not provision HyperSync token automatically: {}", e);
+        }
     }
     // if hasura healhz check returns not found assume docker isnt running and start it up {
     let hasura_health_check_is_error = service_health::fetch_hasura_healthz().await.is_err();
