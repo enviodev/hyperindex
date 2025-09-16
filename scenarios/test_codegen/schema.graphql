@@ -149,3 +149,8 @@ type EntityWithAllNonArrayTypes {
 type CustomSelectionTestPass {
   id: ID!
 }
+
+type SimpleEntity {
+  id: ID!
+  value: String!
+}

@@ -1,107 +1,6 @@
 open Belt
 open RescriptMocha
 
-type sourceMock = {
-  source: Source.t,
-  // Use array of bool instead of array of unit,
-  // for better logging during debugging
-  getHeightOrThrowCalls: array<bool>,
-  resolveGetHeightOrThrow: int => unit,
-  rejectGetHeightOrThrow: 'exn. 'exn => unit,
-  getItemsOrThrowCalls: array<{"toBlock": option<int>, "retry": int}>,
-  resolveGetItemsOrThrow: array<Internal.item> => unit,
-  rejectGetItemsOrThrow: 'exn. 'exn => unit,
-}
-
-let sourceMock = (
-  ~sourceFor=Source.Sync,
-  ~mockGetHeightOrThrow=false,
-  ~mockGetItemsOrThrow=false,
-  ~pollingInterval=1000,
-) => {
-  let getHeightOrThrowCalls = []
-  let getHeightOrThrowResolveFns = []
-  let getHeightOrThrowRejectFns = []
-  let getItemsOrThrowCalls = []
-  let getItemsOrThrowResolveFns = []
-  let getItemsOrThrowRejectFns = []
-  {
-    getHeightOrThrowCalls,
-    resolveGetHeightOrThrow: height => {
-      getHeightOrThrowResolveFns->Array.forEach(resolve => resolve(height))
-    },
-    rejectGetHeightOrThrow: exn => {
-      getHeightOrThrowRejectFns->Array.forEach(reject => reject(exn->Obj.magic))
-    },
-    getItemsOrThrowCalls,
-    resolveGetItemsOrThrow: query => {
-      getItemsOrThrowResolveFns->Array.forEach(resolve => resolve(query))
-    },
-    rejectGetItemsOrThrow: exn => {
-      getItemsOrThrowRejectFns->Array.forEach(reject => reject(exn->Obj.magic))
-    },
-    source: {
-      {
-        name: "MockSource",
-        sourceFor,
-        poweredByHyperSync: false,
-        chain: ChainMap.Chain.makeUnsafe(~chainId=0),
-        pollingInterval,
-        getBlockHashes: (~blockNumbers as _, ~logger as _) =>
-          Js.Exn.raiseError("The getBlockHashes not implemented"),
-        getHeightOrThrow: if mockGetHeightOrThrow {
-          () => {
-            getHeightOrThrowCalls->Js.Array2.push(true)->ignore
-            Promise.make((resolve, reject) => {
-              getHeightOrThrowResolveFns->Js.Array2.push(resolve)->ignore
-              getHeightOrThrowRejectFns->Js.Array2.push(reject)->ignore
-            })
-          }
-        } else {
-          _ => Js.Exn.raiseError("The getHeightOrThrow not implemented")
-        },
-        getItemsOrThrow: (
-          ~fromBlock,
-          ~toBlock,
-          ~addressesByContractName as _,
-          ~indexingContracts as _,
-          ~currentBlockHeight,
-          ~partitionId as _,
-          ~selection as _,
-          ~retry,
-          ~logger as _,
-        ) =>
-          if mockGetItemsOrThrow {
-            getItemsOrThrowCalls
-            ->Js.Array2.push({
-              "toBlock": toBlock,
-              "retry": retry,
-            })
-            ->ignore
-            Promise.make((resolve, reject) => {
-              getItemsOrThrowResolveFns
-              ->Js.Array2.push(items =>
-                resolve({
-                  Source.currentBlockHeight,
-                  reorgGuard: %raw(`null`),
-                  parsedQueueItems: items,
-                  fromBlockQueried: fromBlock,
-                  latestFetchedBlockNumber: fromBlock + 1,
-                  latestFetchedBlockTimestamp: fromBlock + 1,
-                  stats: %raw(`null`),
-                })
-              )
-              ->ignore
-              getItemsOrThrowRejectFns->Js.Array2.push(reject)->ignore
-            })
-          } else {
-            Js.Exn.raiseError("The getItemsOrThrow not implemented")
-          },
-      }
-    },
-  }
-}
-
 type executeQueryMock = {
   fn: FetchState.query => Promise.t<unit>,
   calls: array<FetchState.query>,
@@ -176,15 +75,15 @@ let onNewBlockMock = () => {
 
 describe("SourceManager creation", () => {
   it("Successfully creates with a sync source", () => {
-    let source = sourceMock().source
+    let source = Mock.Source.make([]).source
     let sourceManager = SourceManager.make(~sources=[source], ~maxPartitionConcurrency=10)
     Assert.equal(sourceManager->SourceManager.getActiveSource, source)
   })
 
   it("Uses first sync source as initial active source", () => {
-    let fallback = sourceMock(~sourceFor=Fallback).source
-    let sync0 = sourceMock().source
-    let sync1 = sourceMock().source
+    let fallback = Mock.Source.make([], ~sourceFor=Fallback).source
+    let sync0 = Mock.Source.make([]).source
+    let sync1 = Mock.Source.make([]).source
     let sourceManager = SourceManager.make(
       ~sources=[fallback, sync0, sync1],
       ~maxPartitionConcurrency=10,
@@ -204,7 +103,7 @@ describe("SourceManager creation", () => {
     Assert.throws(
       () => {
         SourceManager.make(
-          ~sources=[sourceMock(~sourceFor=Fallback).source],
+          ~sources=[Mock.Source.make([], ~sourceFor=Fallback).source],
           ~maxPartitionConcurrency=10,
         )
       },
@@ -311,7 +210,7 @@ describe("SourceManager fetchNext", () => {
   let neverExecutePartitionQuery = _ =>
     Assert.fail("The executeQuery shouldn't be called for the test")
 
-  let source: Source.t = sourceMock().source
+  let source: Source.t = Mock.Source.make([]).source
 
   Async.it(
     "Executes full partitions in any order when we didn't reach concurency limit",
@@ -852,9 +751,9 @@ describe("SourceManager wait for new blocks", () => {
   Async.it(
     "Immediately resolves when the source height is higher than the current height",
     async () => {
-      let {source, getHeightOrThrowCalls, resolveGetHeightOrThrow} = sourceMock(
-        ~mockGetHeightOrThrow=true,
-      )
+      let {source, getHeightOrThrowCalls, resolveGetHeightOrThrow} = Mock.Source.make([
+        #getHeightOrThrow,
+      ])
       let sourceManager = SourceManager.make(~sources=[source], ~maxPartitionConcurrency=10)
 
       let p = sourceManager->SourceManager.waitForNewBlock(~currentBlockHeight=0)
@@ -869,8 +768,8 @@ describe("SourceManager wait for new blocks", () => {
   Async.it(
     "Calls all sync sources in parallel. Resolves the first one with valid response",
     async () => {
-      let mock0 = sourceMock(~mockGetHeightOrThrow=true)
-      let mock1 = sourceMock(~mockGetHeightOrThrow=true)
+      let mock0 = Mock.Source.make([#getHeightOrThrow])
+      let mock1 = Mock.Source.make([#getHeightOrThrow])
       let sourceManager = SourceManager.make(
         ~sources=[mock0.source, mock1.source],
         ~maxPartitionConcurrency=10,
@@ -908,8 +807,8 @@ describe("SourceManager wait for new blocks", () => {
   Async.it("Start polling all sources with it's own rates if new block isn't found", async () => {
     let pollingInterval0 = 1
     let pollingInterval1 = 2
-    let mock0 = sourceMock(~mockGetHeightOrThrow=true, ~pollingInterval=pollingInterval0)
-    let mock1 = sourceMock(~mockGetHeightOrThrow=true, ~pollingInterval=pollingInterval1)
+    let mock0 = Mock.Source.make([#getHeightOrThrow], ~pollingInterval=pollingInterval0)
+    let mock1 = Mock.Source.make([#getHeightOrThrow], ~pollingInterval=pollingInterval1)
     let sourceManager = SourceManager.make(
       ~sources=[mock0.source, mock1.source],
       ~maxPartitionConcurrency=10,
@@ -999,8 +898,8 @@ describe("SourceManager wait for new blocks", () => {
     let pollingInterval0 = 1
     let pollingInterval1 = 2
     let initialRetryInterval = 4
-    let mock0 = sourceMock(~mockGetHeightOrThrow=true, ~pollingInterval=pollingInterval0)
-    let mock1 = sourceMock(~mockGetHeightOrThrow=true, ~pollingInterval=pollingInterval1)
+    let mock0 = Mock.Source.make([#getHeightOrThrow], ~pollingInterval=pollingInterval0)
+    let mock1 = Mock.Source.make([#getHeightOrThrow], ~pollingInterval=pollingInterval1)
     let sourceManager = SourceManager.make(
       ~sources=[mock0.source, mock1.source],
       ~maxPartitionConcurrency=10,
@@ -1144,8 +1043,8 @@ describe("SourceManager wait for new blocks", () => {
       let pollingInterval = 1
       let stalledPollingInterval = 2
       let newBlockFallbackStallTimeout = 8
-      let sync = sourceMock(~mockGetHeightOrThrow=true, ~pollingInterval)
-      let fallback = sourceMock(~sourceFor=Fallback, ~mockGetHeightOrThrow=true, ~pollingInterval)
+      let sync = Mock.Source.make([#getHeightOrThrow], ~pollingInterval)
+      let fallback = Mock.Source.make(~sourceFor=Fallback, [#getHeightOrThrow], ~pollingInterval)
       let sourceManager = SourceManager.make(
         ~sources=[sync.source, fallback.source],
         ~maxPartitionConcurrency=10,
@@ -1285,7 +1184,7 @@ describe("SourceManager wait for new blocks", () => {
       let pollingInterval = 1
       let stalledPollingInterval = 2
       let newBlockFallbackStallTimeout = 8
-      let sync = sourceMock(~mockGetHeightOrThrow=true, ~pollingInterval)
+      let sync = Mock.Source.make([#getHeightOrThrow], ~pollingInterval)
 
       let sourceManager = SourceManager.make(
         ~sources=[sync.source],
@@ -1339,7 +1238,6 @@ describe("SourceManager wait for new blocks", () => {
 describe("SourceManager.executeQuery", () => {
   let selection = {FetchState.dependsOnAddresses: false, eventConfigs: []}
   let addressesByContractName = Js.Dict.empty()
-  let items = []
 
   let mockQuery = (): FetchState.query => {
     partitionId: "0",
@@ -1351,18 +1249,18 @@ describe("SourceManager.executeQuery", () => {
   }
 
   Async.it("Successfully executes the query", async () => {
-    let {source, getItemsOrThrowCalls, resolveGetItemsOrThrow} = sourceMock(
-      ~mockGetItemsOrThrow=true,
-    )
+    let {source, getItemsOrThrowCalls, resolveGetItemsOrThrow} = Mock.Source.make([
+      #getItemsOrThrow,
+    ])
     let sourceManager = SourceManager.make(~sources=[source], ~maxPartitionConcurrency=10)
     let p = sourceManager->SourceManager.executeQuery(~query=mockQuery(), ~currentBlockHeight=100)
-    Assert.deepEqual(getItemsOrThrowCalls, [{"toBlock": None, "retry": 0}])
-    resolveGetItemsOrThrow(items)
-    Assert.equal((await p).parsedQueueItems, items)
+    Assert.deepEqual(getItemsOrThrowCalls, [{"fromBlock": 0, "toBlock": None, "retry": 0}])
+    resolveGetItemsOrThrow([])
+    Assert.equal((await p).parsedQueueItems, [])
   })
 
   Async.it("Rethrows unknown errors", async () => {
-    let {source, rejectGetItemsOrThrow} = sourceMock(~mockGetItemsOrThrow=true)
+    let {source, rejectGetItemsOrThrow} = Mock.Source.make([#getItemsOrThrow])
     let sourceManager = SourceManager.make(~sources=[source], ~maxPartitionConcurrency=10)
     let p = sourceManager->SourceManager.executeQuery(~query=mockQuery(), ~currentBlockHeight=100)
     let error = {
@@ -1373,15 +1271,18 @@ describe("SourceManager.executeQuery", () => {
   })
 
   Async.it("Immediately retries with the suggested toBlock", async () => {
-    let {source, resolveGetItemsOrThrow, getItemsOrThrowCalls, rejectGetItemsOrThrow} = sourceMock(
-      ~mockGetItemsOrThrow=true,
-    )
+    let {
+      source,
+      resolveGetItemsOrThrow,
+      getItemsOrThrowCalls,
+      rejectGetItemsOrThrow,
+    } = Mock.Source.make([#getItemsOrThrow])
     let sourceManager = SourceManager.make(
       ~sources=[
         source,
         // Added second source without mock to the test,
         // to verify that we don't switch to it
-        sourceMock().source,
+        Mock.Source.make([]).source,
       ],
       ~maxPartitionConcurrency=10,
     )
@@ -1403,23 +1304,22 @@ describe("SourceManager.executeQuery", () => {
     await Promise.resolve() // Wait for microtask, so the rejection is caught
     Assert.deepEqual(
       getItemsOrThrowCalls,
-      [{"toBlock": None, "retry": 0}, {"toBlock": Some(10), "retry": 0}],
+      [
+        {"fromBlock": 0, "toBlock": None, "retry": 0},
+        {"fromBlock": 0, "toBlock": Some(10), "retry": 0},
+      ],
       ~message="Should reset retry count on WithSuggestedToBlock error",
     )
 
-    resolveGetItemsOrThrow(items)
-    Assert.equal((await p).parsedQueueItems, items)
+    resolveGetItemsOrThrow([])
+    Assert.equal((await p).parsedQueueItems, [])
   })
 
   Async.it(
     "When there are multiple sync sources, it retries 2 times and then immediately switches to another source without waiting for backoff. After that it switches every second retry",
     async () => {
-      let mock0 = sourceMock(~mockGetHeightOrThrow=true, ~mockGetItemsOrThrow=true)
-      let mock1 = sourceMock(
-        ~sourceFor=Fallback,
-        ~mockGetHeightOrThrow=true,
-        ~mockGetItemsOrThrow=true,
-      )
+      let mock0 = Mock.Source.make([#getHeightOrThrow, #getItemsOrThrow])
+      let mock1 = Mock.Source.make([#getHeightOrThrow, #getItemsOrThrow], ~sourceFor=Fallback)
       let newBlockFallbackStallTimeout = 0
       let sourceManager = SourceManager.make(
         ~newBlockFallbackStallTimeout,
@@ -1427,7 +1327,7 @@ describe("SourceManager.executeQuery", () => {
           mock0.source,
           // Should be skipped until the 10th retry,
           // but we won't test it here
-          sourceMock(~sourceFor=Fallback).source,
+          Mock.Source.make([], ~sourceFor=Fallback).source,
           mock1.source,
         ],
         ~maxPartitionConcurrency=10,
@@ -1494,12 +1394,15 @@ describe("SourceManager.executeQuery", () => {
       Assert.deepEqual(
         (mock0.getItemsOrThrowCalls, mock1.getItemsOrThrowCalls),
         (
-          [{"toBlock": None, "retry": 3}, {"toBlock": None, "retry": 4}],
           [
-            {"toBlock": None, "retry": 0},
-            {"toBlock": None, "retry": 1},
-            {"toBlock": None, "retry": 2},
-            {"toBlock": None, "retry": 5},
+            {"fromBlock": 0, "toBlock": None, "retry": 3},
+            {"fromBlock": 0, "toBlock": None, "retry": 4},
+          ],
+          [
+            {"fromBlock": 0, "toBlock": None, "retry": 0},
+            {"fromBlock": 0, "toBlock": None, "retry": 1},
+            {"fromBlock": 0, "toBlock": None, "retry": 2},
+            {"fromBlock": 0, "toBlock": None, "retry": 5},
           ],
         ),
         ~message=`Should start with the initial active source and perform 3 tries.
@@ -1511,9 +1414,8 @@ describe("SourceManager.executeQuery", () => {
         `,
       )
 
-      mock1.resolveGetItemsOrThrow(items)
-
-      Assert.equal((await p).parsedQueueItems, items)
+      mock1.resolveGetItemsOrThrow([])
+      Assert.equal((await p).parsedQueueItems, [])
     },
   )
 })

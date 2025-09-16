@@ -1,6 +1,8 @@
 open Belt
 open RescriptMocha
 
+module M = Mock
+
 let config = RegisterHandlers.registerAllHandlers()
 // Keep only chain1337
 let config = Config.make(
@@ -406,6 +408,323 @@ describe("Single Chain Simple Rollback", () => {
       gravatars,
       expectedGravatars,
       ~message="First gravatar should roll back and change and second should have received an update",
+    )
+  })
+})
+
+// A workaround for ReScript v11 issue, where it makes the field optional
+// instead of setting a value to undefined. It's fixed in v12.
+let undefined = (%raw(`undefined`): option<'a>)
+
+describe("E2E rollback tests", () => {
+  Async.it_only("Successfully rolls back single chain indexer to expected values", async () => {
+    let sourceMock = M.Source.make(
+      [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
+      ~chain=#1337,
+    )
+    let indexerMock = await M.Indexer.make(~chains=[sourceMock])
+    await Utils.delay(0)
+
+    Assert.deepEqual(
+      sourceMock.getHeightOrThrowCalls->Array.length,
+      1,
+      ~message="should have called getHeightOrThrow to get initial height",
+    )
+    sourceMock.resolveGetHeightOrThrow(300)
+    await Utils.delay(0)
+    await Utils.delay(0)
+
+    let expectedGetItemsCall1 = {"fromBlock": 0, "toBlock": Some(100), "retry": 0}
+
+    Assert.deepEqual(
+      sourceMock.getItemsOrThrowCalls,
+      [expectedGetItemsCall1],
+      ~message="Should request items until reorg threshold",
+    )
+    sourceMock.resolveGetItemsOrThrow([])
+    await Utils.delay(0)
+    await Utils.delay(0)
+    await Utils.delay(0)
+
+    Assert.deepEqual(
+      sourceMock.getItemsOrThrowCalls,
+      [
+        expectedGetItemsCall1,
+        {
+          "fromBlock": 101,
+          "toBlock": None,
+          "retry": 0,
+        },
+      ],
+      ~message="Should enter reorg threshold and request now to the latest block",
+    )
+
+    sourceMock.resolveGetItemsOrThrow(
+      [
+        {
+          blockNumber: 101,
+          logIndex: 0,
+          handler: async ({context}) => {
+            // This shouldn't be written to the db at all
+            // and deduped on the in-memory store level
+            context.simpleEntity.set({
+              id: "1",
+              value: "value-1",
+            })
+            context.simpleEntity.set({
+              id: "1",
+              value: "value-2",
+            })
+
+            context.simpleEntity.set({
+              id: "2",
+              value: "value-1",
+            })
+          },
+        },
+        {
+          blockNumber: 101,
+          logIndex: 1,
+          handler: async ({context}) => {
+            // This should create a new history row
+            context.simpleEntity.set({
+              id: "2",
+              value: "value-2",
+            })
+          },
+        },
+        {
+          blockNumber: 102,
+          logIndex: 0,
+          handler: async ({context}) => {
+            // This should create a new history row
+            context.simpleEntity.set({
+              id: "3",
+              value: "value-1",
+            })
+          },
+        },
+        {
+          blockNumber: 103,
+          logIndex: 0,
+          handler: async ({context}) => {
+            // This should be ignored, since it's after the latest fetch block
+            // The case is invalid, but this is good
+            context.simpleEntity.set({
+              id: "3",
+              value: "value-2",
+            })
+          },
+        },
+      ],
+      ~latestFetchedBlockNumber=102,
+    )
+
+    await indexerMock.getBatchWritePromise()
+    Assert.deepEqual(
+      await Promise.all2((
+        indexerMock.load(module(Entities.SimpleEntity)),
+        indexerMock.loadHistory(module(Entities.SimpleEntity)),
+      )),
+      (
+        [
+          {
+            Entities.SimpleEntity.id: "1",
+            value: "value-2",
+          },
+          {
+            Entities.SimpleEntity.id: "2",
+            value: "value-2",
+          },
+          {
+            Entities.SimpleEntity.id: "3",
+            value: "value-1",
+          },
+        ],
+        [
+          {
+            current: {
+              chain_id: 1337,
+              block_timestamp: 101,
+              block_number: 101,
+              log_index: 0,
+            },
+            previous: undefined,
+            entityData: Set({
+              Entities.SimpleEntity.id: "1",
+              value: "value-2",
+            }),
+          },
+          {
+            current: {
+              chain_id: 1337,
+              block_timestamp: 101,
+              block_number: 101,
+              log_index: 0,
+            },
+            previous: undefined,
+            entityData: Set({
+              Entities.SimpleEntity.id: "2",
+              value: "value-1",
+            }),
+          },
+          {
+            current: {
+              chain_id: 1337,
+              block_timestamp: 101,
+              block_number: 101,
+              log_index: 1,
+            },
+            previous: Some({
+              chain_id: 1337,
+              block_timestamp: 101,
+              block_number: 101,
+              log_index: 0,
+            }),
+            entityData: Set({
+              Entities.SimpleEntity.id: "2",
+              value: "value-2",
+            }),
+          },
+          {
+            current: {
+              chain_id: 1337,
+              block_timestamp: 102,
+              block_number: 102,
+              log_index: 0,
+            },
+            previous: undefined,
+            entityData: Set({
+              Entities.SimpleEntity.id: "3",
+              value: "value-1",
+            }),
+          },
+        ],
+      ),
+      ~message="Should have two entities in the db",
+    )
+
+    Assert.deepEqual(
+      sourceMock.getItemsOrThrowCalls->Utils.Array.last,
+      Some({
+        "fromBlock": 103,
+        "toBlock": None,
+        "retry": 0,
+      }),
+    )
+
+    // Should trigger rollback
+    sourceMock.resolveGetItemsOrThrow(
+      [
+        {
+          blockNumber: 103,
+          logIndex: 0,
+          handler: async ({context}) => {
+            // The value is not used, since we reset fetch state
+            // for rollback
+            context.simpleEntity.set({
+              id: "3",
+              value: "value-1",
+            })
+          },
+        },
+      ],
+      ~prevRangeLastBlock={
+        blockNumber: 102,
+        blockHash: "0x102-reorged",
+      },
+    )
+    await Utils.delay(0)
+    await Utils.delay(0)
+
+    Assert.deepEqual(
+      sourceMock.getBlockHashesCalls,
+      [[100, 102]],
+      ~message="Should have called getBlockHashes to find rollback depth",
+    )
+    sourceMock.resolveGetBlockHashes([
+      // The block 100 is untouched so we can rollback to it
+      {blockNumber: 100, blockHash: "0x100", blockTimestamp: 100},
+      {blockNumber: 102, blockHash: "0x102-reorged", blockTimestamp: 102},
+    ])
+
+    await indexerMock.getRollbackReadyPromise()
+
+    Assert.deepEqual(
+      sourceMock.getItemsOrThrowCalls->Utils.Array.last,
+      Some({
+        "fromBlock": 101,
+        "toBlock": None,
+        "retry": 0,
+      }),
+      ~message="Should rollback fetch state",
+    )
+    sourceMock.resolveGetItemsOrThrow([
+      {
+        blockNumber: 101,
+        logIndex: 1,
+        handler: async ({context}) => {
+          // From value-2 to value-1
+          context.simpleEntity.set({
+            id: "1",
+            value: "value-1",
+          })
+          // The same value as before rollback
+          context.simpleEntity.set({
+            id: "2",
+            value: "value-2",
+          })
+        },
+      },
+    ])
+
+    await indexerMock.getBatchWritePromise()
+    Assert.deepEqual(
+      await Promise.all2((
+        indexerMock.load(module(Entities.SimpleEntity)),
+        indexerMock.loadHistory(module(Entities.SimpleEntity)),
+      )),
+      (
+        [
+          {
+            Entities.SimpleEntity.id: "1",
+            value: "value-1",
+          },
+          {
+            Entities.SimpleEntity.id: "2",
+            value: "value-2",
+          },
+        ],
+        [
+          {
+            current: {
+              chain_id: 1337,
+              block_timestamp: 101,
+              block_number: 101,
+              log_index: 1,
+            },
+            previous: undefined,
+            entityData: Set({
+              Entities.SimpleEntity.id: "1",
+              value: "value-1",
+            }),
+          },
+          {
+            current: {
+              chain_id: 1337,
+              block_timestamp: 101,
+              block_number: 101,
+              log_index: 1,
+            },
+            previous: undefined,
+            entityData: Set({
+              Entities.SimpleEntity.id: "2",
+              value: "value-2",
+            }),
+          },
+        ],
+      ),
+      ~message="Should correctly rollback entities",
     )
   })
 })
