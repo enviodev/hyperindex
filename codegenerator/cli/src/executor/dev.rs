@@ -1,3 +1,4 @@
+use crate::config_parsing::system_config::{DataSource, MainEvmDataSource};
 use crate::{
     commands,
     config_parsing::system_config::SystemConfig,
@@ -6,7 +7,6 @@ use crate::{
     service_health::{self, EndpointHealth},
 };
 use anyhow::{anyhow, Context, Result};
-use crate::config_parsing::system_config::{DataSource, MainEvmDataSource};
 
 pub async fn run_dev(project_paths: ParsedProjectPaths) -> Result<()> {
     let config =
@@ -76,7 +76,10 @@ pub async fn run_dev(project_paths: ParsedProjectPaths) -> Result<()> {
         // Provision token silently if missing; do NOT prompt login here per requirement
         if let Err(e) = crate::commands::hypersync::provision_and_get_token().await {
             // Best-effort: log and continue; start can still run if RPC fallback exists
-            eprintln!("Warning: could not provision HyperSync token automatically: {}", e);
+            eprintln!(
+                "Warning: could not provision HyperSync token automatically: {}",
+                e
+            );
         }
     }
     // if hasura healhz check returns not found assume docker isnt running and start it up {
