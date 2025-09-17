@@ -432,8 +432,6 @@ describe("E2E rollback tests", () => {
     )
     await Utils.delay(0)
 
-    Js.log("foo")
-
     Assert.deepEqual(
       sourceMock.getHeightOrThrowCalls->Array.length,
       1,
@@ -442,8 +440,6 @@ describe("E2E rollback tests", () => {
     sourceMock.resolveGetHeightOrThrow(300)
     await Utils.delay(0)
     await Utils.delay(0)
-
-    Js.log("bar")
 
     let expectedGetItemsCall1 = {"fromBlock": 0, "toBlock": Some(100), "retry": 0}
 
@@ -456,8 +452,6 @@ describe("E2E rollback tests", () => {
     await Utils.delay(0)
     await Utils.delay(0)
     await Utils.delay(0)
-
-    Js.log("baz")
 
     Assert.deepEqual(
       sourceMock.getItemsOrThrowCalls,
@@ -532,8 +526,6 @@ describe("E2E rollback tests", () => {
       ],
       ~latestFetchedBlockNumber=102,
     )
-
-    Js.log("qux")
 
     await indexerMock.getBatchWritePromise()
     Assert.deepEqual(
@@ -652,8 +644,6 @@ describe("E2E rollback tests", () => {
     await Utils.delay(0)
     await Utils.delay(0)
 
-    Js.log("quux")
-
     Assert.deepEqual(
       sourceMock.getBlockHashesCalls,
       [[100, 102]],
@@ -666,8 +656,6 @@ describe("E2E rollback tests", () => {
     ])
 
     await indexerMock.getRollbackReadyPromise()
-
-    Js.log("corge")
 
     Assert.deepEqual(
       sourceMock.getItemsOrThrowCalls->Utils.Array.last,
@@ -698,8 +686,6 @@ describe("E2E rollback tests", () => {
     ])
 
     await indexerMock.getBatchWritePromise()
-
-    Js.log("grault")
 
     Assert.deepEqual(
       await Promise.all2((
