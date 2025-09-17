@@ -141,6 +141,16 @@ pub async fn execute(command_line_args: CommandLineArgs) -> Result<()> {
                 .await
                 .context("Failed running login flow")?;
         }
+        CommandType::LoginDevice => {
+            commands::login::run_login_device()
+                .await
+                .context("Failed running device login flow")?;
+        }
+        CommandType::LoginToken => {
+            commands::login::run_login_token()
+                .await
+                .context("Failed running token login flow")?;
+        }
         CommandType::Logout => {
             commands::logout::run_logout().await?;
         }
