@@ -1256,7 +1256,7 @@ describe("SourceManager.executeQuery", () => {
     let p = sourceManager->SourceManager.executeQuery(~query=mockQuery(), ~currentBlockHeight=100)
     Assert.deepEqual(getItemsOrThrowCalls, [{"fromBlock": 0, "toBlock": None, "retry": 0}])
     resolveGetItemsOrThrow([])
-    Assert.equal((await p).parsedQueueItems, [])
+    Assert.deepEqual((await p).parsedQueueItems, [])
   })
 
   Async.it("Rethrows unknown errors", async () => {
@@ -1312,7 +1312,7 @@ describe("SourceManager.executeQuery", () => {
     )
 
     resolveGetItemsOrThrow([])
-    Assert.equal((await p).parsedQueueItems, [])
+    Assert.deepEqual((await p).parsedQueueItems, [])
   })
 
   Async.it(
@@ -1415,7 +1415,7 @@ describe("SourceManager.executeQuery", () => {
       )
 
       mock1.resolveGetItemsOrThrow([])
-      Assert.equal((await p).parsedQueueItems, [])
+      Assert.deepEqual((await p).parsedQueueItems, [])
     },
   )
 })

@@ -143,7 +143,7 @@ describe("Test PgStorage SQL generation functions", () => {
 CREATE SCHEMA "test_schema";
 GRANT ALL ON SCHEMA "test_schema" TO "postgres";
 GRANT ALL ON SCHEMA "test_schema" TO public;
-CREATE TYPE "test_schema".ENTITY_TYPE AS ENUM('A', 'B', 'C', 'CustomSelectionTestPass', 'D', 'EntityWithAllNonArrayTypes', 'EntityWithAllTypes', 'EntityWithBigDecimal', 'EntityWithTimestamp', 'Gravatar', 'NftCollection', 'PostgresNumericPrecisionEntityTester', 'Token', 'User', 'dynamic_contract_registry');
+CREATE TYPE "test_schema".ENTITY_TYPE AS ENUM('A', 'B', 'C', 'CustomSelectionTestPass', 'D', 'EntityWithAllNonArrayTypes', 'EntityWithAllTypes', 'EntityWithBigDecimal', 'EntityWithTimestamp', 'Gravatar', 'NftCollection', 'PostgresNumericPrecisionEntityTester', 'SimpleEntity', 'Token', 'User', 'dynamic_contract_registry');
 CREATE TABLE IF NOT EXISTS "test_schema"."envio_chains"("id" INTEGER NOT NULL, "start_block" INTEGER NOT NULL, "end_block" INTEGER, "buffer_block" INTEGER NOT NULL, "source_block" INTEGER NOT NULL, "first_event_block" INTEGER, "ready_at" TIMESTAMP WITH TIME ZONE NULL, "events_processed" INTEGER NOT NULL, "_is_hyper_sync" BOOLEAN NOT NULL, "progress_block" INTEGER NOT NULL, "_progress_log_index" INTEGER, "_num_batches_fetched" INTEGER NOT NULL, PRIMARY KEY("id"));
 CREATE TABLE IF NOT EXISTS "test_schema"."persisted_state"("id" SERIAL NOT NULL, "envio_version" TEXT NOT NULL, "config_hash" TEXT NOT NULL, "schema_hash" TEXT NOT NULL, "handler_files_hash" TEXT NOT NULL, "abi_files_hash" TEXT NOT NULL, PRIMARY KEY("id"));
 CREATE TABLE IF NOT EXISTS "test_schema"."end_of_block_range_scanned_data"("chain_id" INTEGER NOT NULL, "block_number" INTEGER NOT NULL, "block_hash" TEXT NOT NULL, PRIMARY KEY("chain_id", "block_number"));

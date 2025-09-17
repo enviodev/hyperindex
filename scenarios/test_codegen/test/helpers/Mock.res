@@ -205,6 +205,147 @@ module Storage = {
   }
 }
 
+module Indexer = {
+  type t = {
+    getBatchWritePromise: unit => promise<unit>,
+    getRollbackReadyPromise: unit => promise<unit>,
+    query: 'entity. module(Entities.Entity with type t = 'entity) => promise<array<'entity>>,
+    queryHistory: 'entity. module(Entities.Entity with type t = 'entity) => promise<
+      array<EntityHistory.historyRow<'entity>>,
+    >,
+  }
+
+  type chainConfig = {chain: Types.chain, sources: array<Source.t>, startBlock?: int}
+
+  let make = async (~chains: array<chainConfig>) => {
+    DbHelpers.resetPostgresClient()
+
+    let config = RegisterHandlers.registerAllHandlers()
+
+    let chainMap =
+      chains
+      ->Js.Array2.map(chainConfig => {
+        let chain = ChainMap.Chain.makeUnsafe(~chainId=(chainConfig.chain :> int))
+        let originalChainConfig = config.chainMap->ChainMap.get(chain)
+        (
+          chain,
+          {
+            ...originalChainConfig,
+            sources: chainConfig.sources,
+            startBlock: chainConfig.startBlock->Option.getWithDefault(
+              originalChainConfig.startBlock,
+            ),
+          },
+        )
+      })
+      ->ChainMap.fromArrayUnsafe
+
+    let sql = Db.sql
+    let pgSchema = Env.Db.publicSchema
+    // Reinit storage without Hasura
+    // This made the test 1.9 seconds faster
+    // TODO: Improve indexer initialization time
+    // by parallizing hasura (at least for dev)
+    let storage = PgStorage.make(
+      ~sql,
+      ~pgSchema,
+      ~pgHost=Env.Db.host,
+      ~pgUser=Env.Db.user,
+      ~pgPort=Env.Db.port,
+      ~pgDatabase=Env.Db.database,
+      ~pgPassword=Env.Db.password,
+    )
+    let persistence = {
+      ...config.persistence,
+      storageStatus: Persistence.Unknown,
+      storage,
+    }
+    let config: Config.t = {
+      ...config,
+      persistence,
+      enableRawEvents: false,
+      chainMap,
+    }
+
+    let gsManagerRef = ref(None)
+
+    await config.persistence->Persistence.init(
+      ~chainConfigs=config.chainMap->ChainMap.values,
+      ~reset=true,
+    )
+
+    let chainManager = await ChainManager.makeFromDbState(
+      ~initialState=config.persistence->Persistence.getInitializedState,
+      ~config,
+    )
+    let globalState = GlobalState.make(~config, ~chainManager, ~shouldUseTui=false)
+    let gsManager = globalState->GlobalStateManager.make
+    gsManagerRef := Some(gsManager)
+    gsManager->GlobalStateManager.dispatchTask(NextQuery(CheckAllChains))
+    /*
+        NOTE:
+          This `ProcessEventBatch` dispatch shouldn't be necessary but we are adding for safety, it should immediately return doing 
+          nothing since there is no events on the queues.
+ */
+    gsManager->GlobalStateManager.dispatchTask(ProcessEventBatch)
+
+    {
+      getBatchWritePromise: () => {
+        Promise.makeAsync(async (resolve, _reject) => {
+          let before = (gsManager->GlobalStateManager.getState).processedBatches
+          while before >= (gsManager->GlobalStateManager.getState).processedBatches {
+            await Utils.delay(50)
+          }
+          resolve()
+        })
+      },
+      getRollbackReadyPromise: () => {
+        Promise.makeAsync(async (resolve, _reject) => {
+          while (
+            switch (gsManager->GlobalStateManager.getState).rollbackState {
+            | RollbackInMemStore(_) => false
+            | RollingBack(_)
+            | NoRollback => true
+            }
+          ) {
+            await Utils.delay(50)
+          }
+          resolve()
+        })
+      },
+      query: (type entity, entityMod) => {
+        let entityConfig = entityMod->Entities.entityModToInternal
+        Db.sql
+        ->Postgres.unsafe(
+          PgStorage.makeLoadAllQuery(~pgSchema, ~tableName=entityConfig.table.tableName),
+        )
+        ->Promise.thenResolve(items => {
+          items->S.parseOrThrow(entityConfig.rowsSchema)
+        })
+        ->(Utils.magic: promise<array<Internal.entity>> => promise<array<entity>>)
+      },
+      queryHistory: (type entity, entityMod) => {
+        let entityConfig = entityMod->Entities.entityModToInternal
+        Db.sql
+        ->Postgres.unsafe(
+          PgStorage.makeLoadAllQuery(
+            ~pgSchema,
+            ~tableName=entityConfig.entityHistory.table.tableName,
+          ),
+        )
+        ->Promise.thenResolve(items => {
+          items->S.parseOrThrow(S.array(entityConfig.entityHistory.schema))
+        })
+        ->(
+          Utils.magic: promise<array<EntityHistory.historyRow<Internal.entity>>> => promise<
+            array<EntityHistory.historyRow<entity>>,
+          >
+        )
+      },
+    }
+  }
+}
+
 module Source = {
   type method = [
     | #getBlockHashes
@@ -403,138 +544,6 @@ module Source = {
             })
           }),
         }
-      },
-    }
-  }
-}
-
-module Indexer = {
-  type t = {
-    getBatchWritePromise: unit => promise<unit>,
-    getRollbackReadyPromise: unit => promise<unit>,
-    load: 'entity. module(Entities.Entity with type t = 'entity) => promise<array<'entity>>,
-    loadHistory: 'entity. module(Entities.Entity with type t = 'entity) => promise<
-      array<EntityHistory.historyRow<'entity>>,
-    >,
-  }
-
-  let make = async (~chains: array<Source.t>) => {
-    let config = RegisterHandlers.registerAllHandlers()
-
-    let chainMap =
-      chains
-      ->Js.Array2.map(sourceMock => {
-        (
-          sourceMock.source.chain,
-          {
-            ...config.chainMap->ChainMap.get(sourceMock.source.chain),
-            sources: [sourceMock.source],
-          },
-        )
-      })
-      ->ChainMap.fromArrayUnsafe
-
-    let sql = Db.sql
-    let pgSchema = Env.Db.publicSchema
-    // Reinit storage without Hasura
-    // This made the test 1.9 seconds faster
-    // TODO: Improve indexer initialization time
-    // by parallizing hasura (at least for dev)
-    let storage = PgStorage.make(
-      ~sql,
-      ~pgSchema,
-      ~pgHost=Env.Db.host,
-      ~pgUser=Env.Db.user,
-      ~pgPort=Env.Db.port,
-      ~pgDatabase=Env.Db.database,
-      ~pgPassword=Env.Db.password,
-    )
-    let persistence = {
-      ...config.persistence,
-      storageStatus: Persistence.Unknown,
-      storage,
-    }
-    let config: Config.t = {
-      ...config,
-      persistence,
-      enableRawEvents: false,
-      chainMap,
-    }
-
-    let gsManagerRef = ref(None)
-
-    await config.persistence->Persistence.init(
-      ~chainConfigs=config.chainMap->ChainMap.values,
-      ~reset=true,
-    )
-
-    let chainManager = await ChainManager.makeFromDbState(
-      ~initialState=config.persistence->Persistence.getInitializedState,
-      ~config,
-    )
-    let globalState = GlobalState.make(~config, ~chainManager, ~shouldUseTui=false)
-    let gsManager = globalState->GlobalStateManager.make
-    gsManagerRef := Some(gsManager)
-    gsManager->GlobalStateManager.dispatchTask(NextQuery(CheckAllChains))
-    /*
-        NOTE:
-          This `ProcessEventBatch` dispatch shouldn't be necessary but we are adding for safety, it should immediately return doing 
-          nothing since there is no events on the queues.
- */
-    gsManager->GlobalStateManager.dispatchTask(ProcessEventBatch)
-
-    {
-      getBatchWritePromise: () => {
-        Promise.makeAsync(async (resolve, _reject) => {
-          let before = (gsManager->GlobalStateManager.getState).processedBatches
-          while before >= (gsManager->GlobalStateManager.getState).processedBatches {
-            await Utils.delay(50)
-          }
-          resolve()
-        })
-      },
-      getRollbackReadyPromise: () => {
-        Promise.makeAsync(async (resolve, _reject) => {
-          while (
-            switch (gsManager->GlobalStateManager.getState).rollbackState {
-            | RollbackInMemStore(_) => false
-            | RollingBack(_)
-            | NoRollback => true
-            }
-          ) {
-            await Utils.delay(50)
-          }
-          resolve()
-        })
-      },
-      load: (type entity, entityMod) => {
-        let entityConfig = entityMod->Entities.entityModToInternal
-        Db.sql
-        ->Postgres.unsafe(
-          PgStorage.makeLoadAllQuery(~pgSchema, ~tableName=entityConfig.table.tableName),
-        )
-        ->Promise.thenResolve(items => {
-          items->S.parseOrThrow(entityConfig.rowsSchema)
-        })
-        ->(Utils.magic: promise<array<Internal.entity>> => promise<array<entity>>)
-      },
-      loadHistory: (type entity, entityMod) => {
-        let entityConfig = entityMod->Entities.entityModToInternal
-        Db.sql
-        ->Postgres.unsafe(
-          PgStorage.makeLoadAllQuery(
-            ~pgSchema,
-            ~tableName=entityConfig.entityHistory.table.tableName,
-          ),
-        )
-        ->Promise.thenResolve(items => {
-          items->S.parseOrThrow(S.array(entityConfig.entityHistory.schema))
-        })
-        ->(
-          Utils.magic: promise<array<EntityHistory.historyRow<Internal.entity>>> => promise<
-            array<EntityHistory.historyRow<entity>>,
-          >
-        )
       },
     }
   }

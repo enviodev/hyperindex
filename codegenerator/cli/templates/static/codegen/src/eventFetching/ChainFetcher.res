@@ -306,7 +306,7 @@ let makeFromDbState = async (
     ~config,
     ~lastBlockScannedHashes,
     ~firstEventBlockNumber=resumedChainState.firstEventBlockNumber->Js.Null.toOption,
-    ~progressBlockNumber=resumedChainState.progressBlockNumber,
+    ~progressBlockNumber=restartBlockNumber - 1,
     ~timestampCaughtUpToHeadOrEndblock=Env.updateSyncTimeOnRestart
       ? None
       : resumedChainState.timestampCaughtUpToHeadOrEndblock->Js.Null.toOption,
