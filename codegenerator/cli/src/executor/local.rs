@@ -1,5 +1,7 @@
 use crate::{
-    cli_args::clap_definitions::{DbMigrateSubcommands, LocalCommandTypes, LocalDockerSubcommands},
+    cli_args::clap_definitions::{
+        DbMigrateSubcommands, HypersyncLocalSubcommands, LocalCommandTypes, LocalDockerSubcommands,
+    },
     commands,
     config_parsing::system_config::SystemConfig,
     persisted_state::PersistedState,
@@ -48,6 +50,13 @@ pub async fn run_local(
                 }
             }
         }
+        LocalCommandTypes::Hypersync(subcommand) => match subcommand {
+            HypersyncLocalSubcommands::Connect => {
+                commands::hypersync::connect()
+                    .await
+                    .context("Failed connecting HyperSync")?;
+            }
+        },
     }
     Ok(())
 }

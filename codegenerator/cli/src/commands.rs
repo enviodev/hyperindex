@@ -584,3 +584,17 @@ pub mod hypersync {
         Ok(())
     }
 }
+
+pub mod logout {
+    use crate::utils::token_manager::{TokenManager, HYPERSYNC_ACCOUNT, JWT_ACCOUNT, SERVICE_NAME};
+    use anyhow::Result;
+
+    pub async fn run_logout() -> Result<()> {
+        let jwt_tm = TokenManager::new(SERVICE_NAME, JWT_ACCOUNT);
+        let hs_tm = TokenManager::new(SERVICE_NAME, HYPERSYNC_ACCOUNT);
+        let _ = jwt_tm.clear_token();
+        let _ = hs_tm.clear_token();
+        println!("Logged out and cleared stored credentials.");
+        Ok(())
+    }
+}

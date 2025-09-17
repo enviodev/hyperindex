@@ -141,10 +141,8 @@ pub async fn execute(command_line_args: CommandLineArgs) -> Result<()> {
                 .await
                 .context("Failed running login flow")?;
         }
-        CommandType::HypersyncConnect => {
-            commands::hypersync::connect()
-                .await
-                .context("Failed connecting HyperSync")?;
+        CommandType::Logout => {
+            commands::logout::run_logout().await?;
         }
     };
 
