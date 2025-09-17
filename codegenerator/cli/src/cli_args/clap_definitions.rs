@@ -66,7 +66,7 @@ pub enum CommandType {
     ///Start the indexer without any automatic codegen
     Start(StartArgs),
 
-    ///Authenticate/Login with envio hosted services and print a JWT
+    ///Authenticate with envio hosted services and save credentials for authenticated actions
     Login,
 
     ///Logout and clear stored credentials

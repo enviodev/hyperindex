@@ -282,7 +282,7 @@ pub mod benchmark {
 }
 
 pub mod login {
-    use crate::utils::token_manager::{TokenManager, HYPERSYNC_ACCOUNT, JWT_ACCOUNT, SERVICE_NAME};
+    use crate::utils::token_manager::{TokenManager, JWT_ACCOUNT, SERVICE_NAME};
     use anyhow::{anyhow, Context, Result};
     use open;
     use reqwest::StatusCode;
@@ -300,11 +300,6 @@ pub mod login {
 
     /// Default UI/API base URL. Change this constant to point to your deployment.
     pub const HYPERSYNC_TOKEN_API_URL: &str = "https://hypersync-tokens.hyperquery.xyz";
-
-    fn get_hypersync_token_api_url() -> String {
-        // Allow override via ENVIO_API_URL, otherwise use the constant above.
-        std::env::var("ENVIO_API_URL").unwrap_or_else(|_| HYPERSYNC_TOKEN_API_URL.to_string())
-    }
 
     #[derive(Debug, Deserialize)]
     #[serde(rename_all = "camelCase")]
@@ -420,7 +415,9 @@ pub mod login {
                         if let Err(e) = tm.store_token(&token) {
                             eprintln!("Warning: failed to store token in keyring: {}", e);
                         }
-                        println!("{}", token);
+
+                        println!("Successfully logged in to Envio.");
+
                         return Ok(());
                     }
                 }
@@ -457,16 +454,6 @@ pub mod hypersync {
         user_token: String,
     }
 
-    #[derive(Debug, Serialize)]
-    struct ModifyNetworksReq<'a> {
-        #[serde(rename = "add_networks")]
-        add_networks: &'a [i32],
-        #[serde(rename = "remove_networks")]
-        remove_networks: &'a [i32],
-        #[serde(rename = "user_token")]
-        user_token: &'a str,
-    }
-
     async fn create_user_if_needed(client: &reqwest::Client, base: &str, jwt: &str) -> Result<()> {
         let url = format!("{}/user/create", base);
         let resp = client
@@ -500,11 +487,18 @@ pub mod hypersync {
             .await
             .with_context(|| format!("POST {} failed", url))?;
         if resp.status().is_success() || resp.status() == StatusCode::CONFLICT {
-            let json = resp
-                .json::<TokenResponse>()
-                .await
-                .context("Decode token response")?;
-            Ok(json.user_token)
+            // Accept JSON or plain text
+            let bytes = resp.bytes().await.context("Read token response body")?;
+            let body_str = std::str::from_utf8(&bytes).unwrap_or("").trim();
+            if body_str.starts_with('{') {
+                let json: TokenResponse =
+                    serde_json::from_slice(&bytes).context("Decode token response")?;
+                Ok(json.user_token)
+            } else if !body_str.is_empty() {
+                Ok(body_str.to_string())
+            } else {
+                Err(anyhow!("Empty token response"))
+            }
         } else {
             Err(anyhow!("Failed to create token: {}", resp.status()))
         }
@@ -580,7 +574,8 @@ pub mod hypersync {
             }
         }
 
-        println!("{}", api_token);
+        println!("Successfully authenticated with HyperSync");
+
         Ok(())
     }
 }

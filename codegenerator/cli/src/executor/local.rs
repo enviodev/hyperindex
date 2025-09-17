@@ -13,19 +13,22 @@ pub async fn run_local(
     local_commands: &LocalCommandTypes,
     project_paths: &ParsedProjectPaths,
 ) -> Result<()> {
-    let config =
-        SystemConfig::parse_from_project_files(project_paths).context("Failed parsing config")?;
-
     match local_commands {
-        LocalCommandTypes::Docker(subcommand) => match subcommand {
-            LocalDockerSubcommands::Up => {
-                commands::docker::docker_compose_up_d(&config).await?;
+        LocalCommandTypes::Docker(subcommand) => {
+            let config = SystemConfig::parse_from_project_files(project_paths)
+                .context("Failed parsing config")?;
+            match subcommand {
+                LocalDockerSubcommands::Up => {
+                    commands::docker::docker_compose_up_d(&config).await?;
+                }
+                LocalDockerSubcommands::Down => {
+                    commands::docker::docker_compose_down_v(&config).await?;
+                }
             }
-            LocalDockerSubcommands::Down => {
-                commands::docker::docker_compose_down_v(&config).await?;
-            }
-        },
+        }
         LocalCommandTypes::DbMigrate(subcommand) => {
+            let config = SystemConfig::parse_from_project_files(project_paths)
+                .context("Failed parsing config")?;
             //Use a closure just so running local dow doesn't need to construct persisted state
             let get_persisted_state = || -> Result<PersistedState> {
                 let persisted_state = PersistedState::get_current_state(&config)
