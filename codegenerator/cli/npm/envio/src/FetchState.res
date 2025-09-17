@@ -1161,11 +1161,18 @@ let rollbackPartition = (
   ~firstChangeEvent: blockNumberAndLogIndex,
   ~addressesToRemove,
 ) => {
+  let shouldRollbackFetched = p.latestFetchedBlock.blockNumber >= firstChangeEvent.blockNumber
+  let latestFetchedBlock = shouldRollbackFetched
+    ? {
+        blockNumber: firstChangeEvent.blockNumber - 1,
+        blockTimestamp: 0,
+      }
+    : p.latestFetchedBlock
   switch p {
   | {selection: {dependsOnAddresses: false}} =>
     Some({
       ...p,
-      // FIXME: Should rollback latestFetchedBlock???
+      latestFetchedBlock,
       status: {
         fetchingStateId: None,
       },
@@ -1183,8 +1190,6 @@ let rollbackPartition = (
     if rollbackedAddressesByContractName->Js.Dict.keys->Array.length === 0 {
       None
     } else {
-      let shouldRollbackFetched = p.latestFetchedBlock.blockNumber >= firstChangeEvent.blockNumber
-
       Some({
         id: p.id,
         selection: p.selection,
@@ -1192,12 +1197,7 @@ let rollbackPartition = (
           fetchingStateId: None,
         },
         addressesByContractName: rollbackedAddressesByContractName,
-        latestFetchedBlock: shouldRollbackFetched
-          ? {
-              blockNumber: firstChangeEvent.blockNumber - 1,
-              blockTimestamp: 0,
-            }
-          : p.latestFetchedBlock,
+        latestFetchedBlock,
       })
     }
   }

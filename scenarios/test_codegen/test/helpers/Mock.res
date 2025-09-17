@@ -217,7 +217,7 @@ module Indexer = {
 
   type chainConfig = {chain: Types.chain, sources: array<Source.t>, startBlock?: int}
 
-  let make = async (~chains: array<chainConfig>) => {
+  let make = async (~chains: array<chainConfig>, ~multichain=InternalConfig.Unordered) => {
     DbHelpers.resetPostgresClient()
 
     let config = RegisterHandlers.registerAllHandlers()
@@ -265,6 +265,7 @@ module Indexer = {
       persistence,
       enableRawEvents: false,
       chainMap,
+      multichain,
     }
 
     let gsManagerRef = ref(None)
@@ -398,6 +399,9 @@ module Source = {
     {
       getHeightOrThrowCalls,
       resolveGetHeightOrThrow: height => {
+        if getHeightOrThrowResolveFns->Utils.Array.isEmpty {
+          Js.Exn.raiseError("getHeightOrThrowResolveFns is empty")
+        }
         getHeightOrThrowResolveFns->Array.forEach(resolve => resolve(height))
       },
       rejectGetHeightOrThrow: exn => {
@@ -497,7 +501,16 @@ module Source = {
                             isWildcard: false,
                             filterByAddresses: false,
                             dependsOnAddresses: false,
-                            handler: item.handler->(
+                            handler: (
+                              ({context} as args) => {
+                                // We don't want preload optimization for the tests
+                                if context.isPreload {
+                                  Promise.resolve()
+                                } else {
+                                  item.handler(args)
+                                }
+                              }
+                            )->(
                               Utils.magic: Types.HandlerTypes.loader<unit, unit> => option<
                                 Internal.handler,
                               >
