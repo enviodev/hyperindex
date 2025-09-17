@@ -69,6 +69,12 @@ pub enum CommandType {
     ///Authenticate with envio hosted services and save credentials for authenticated actions
     Login,
 
+    ///Authenticate via GitHub Device Flow (terminal-only)
+    LoginDevice,
+
+    ///Authenticate by pasting an API token
+    LoginToken,
+
     ///Logout and clear stored credentials
     Logout,
 

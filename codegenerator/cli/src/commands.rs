@@ -430,6 +430,128 @@ pub mod login {
     pub fn get_stored_jwt() -> Result<Option<String>> {
         TokenManager::new(SERVICE_NAME, JWT_ACCOUNT).get_token()
     }
+
+    // --- Device Flow ---
+    #[derive(Debug, Deserialize)]
+    struct GitHubDeviceAuth {
+        device_code: String,
+        user_code: String,
+        verification_uri: String,
+        expires_in: i32,
+        interval: i32,
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct GitHubTokenResponse {
+        access_token: Option<String>,
+        token_type: Option<String>,
+        scope: Option<String>,
+        error: Option<String>,
+        error_description: Option<String>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct AppTokenResponse {
+        token: String,
+    }
+
+    fn github_client_id() -> Result<String> {
+        std::env::var("ENVIO_CLI_GITHUB_CLIENT_ID")
+            .map_err(|_| anyhow!("ENVIO_CLI_GITHUB_CLIENT_ID not set"))
+    }
+
+    pub async fn run_login_device() -> Result<()> {
+        let client = reqwest::Client::new();
+        let client_id = github_client_id()?;
+
+        // 1) Get device code
+        let device = client
+            .post("https://github.com/login/device/code")
+            .header("accept", "application/json")
+            .header("content-type", "application/x-www-form-urlencoded")
+            .body(format!("client_id={}&scope=user%20read:orgs", client_id))
+            .send()
+            .await?
+            .error_for_status()?
+            .json::<GitHubDeviceAuth>()
+            .await?;
+
+        println!("Visit: {}", device.verification_uri);
+        println!("Code: {}", device.user_code);
+
+        // 2) Poll for GH access token
+        let poll_interval = std::cmp::max(device.interval, 5) as u64;
+        let expires_at = std::time::Instant::now() + Duration::from_secs(device.expires_in as u64);
+        let gh_token = loop {
+            if std::time::Instant::now() > expires_at {
+                return Err(anyhow!("device flow expired"));
+            }
+            sleep(Duration::from_secs(poll_interval)).await;
+            let resp = client
+                .post("https://github.com/login/oauth/access_token")
+                .header("accept", "application/json")
+                .header("content-type", "application/x-www-form-urlencoded")
+                .body(format!(
+                    "client_id={}&device_code={}&grant_type=urn:ietf:params:oauth:grant-type:device_code",
+                    client_id, device.device_code
+                ))
+                .send()
+                .await?;
+            let body = resp.json::<GitHubTokenResponse>().await?;
+            if let Some(token) = body.access_token {
+                break token;
+            }
+            if let Some(ref err) = body.error {
+                if err != "authorization_pending" && err != "slow_down" {
+                    return Err(anyhow!(format!("GitHub error: {:?}", body)));
+                }
+            }
+        };
+
+        // 3) Exchange GH token for app JWT
+        let base = get_api_base_url();
+        let exchange_url = format!("{}/api/auth/cli-exchange", base);
+        let res = client
+            .post(&exchange_url)
+            .header("content-type", "application/json")
+            .body(format!("{{\"github_access_token\":\"{}\"}}", gh_token))
+            .send()
+            .await?
+            .error_for_status()?;
+
+        // Accept either JSON object {token} or raw string
+        let bytes = res.bytes().await?;
+        let s = std::str::from_utf8(&bytes).unwrap_or("").trim();
+        let jwt = if s.starts_with('{') {
+            let parsed: AppTokenResponse = serde_json::from_slice(&bytes)?;
+            parsed.token
+        } else {
+            s.to_string()
+        };
+
+        TokenManager::new(SERVICE_NAME, JWT_ACCOUNT)
+            .store_token(&jwt)
+            .ok();
+        println!("Successfully logged in via device flow.");
+        Ok(())
+    }
+
+    pub async fn run_login_token() -> Result<()> {
+        use std::io::{self, Write};
+        print!("Enter your Envio API token: ");
+        io::stdout().flush().ok();
+        let mut token = String::new();
+        io::stdin().read_line(&mut token).ok();
+        let token = token.trim();
+        if token.is_empty() {
+            return Err(anyhow!("Token is required"));
+        }
+        TokenManager::new(SERVICE_NAME, JWT_ACCOUNT)
+            .store_token(token)
+            .ok();
+        println!("Token saved.");
+        Ok(())
+    }
 }
 
 pub mod hypersync {
