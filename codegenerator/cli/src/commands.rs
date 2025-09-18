@@ -29,6 +29,41 @@ async fn execute_command(
         ))
 }
 
+async fn execute_command_with_env(
+    cmd: &str,
+    args: Vec<&str>,
+    current_dir: &Path,
+    envs: Vec<(&str, String)>,
+) -> anyhow::Result<std::process::ExitStatus> {
+    let mut command = tokio::process::Command::new(cmd);
+    command
+        .args(&args)
+        .current_dir(current_dir)
+        .stdin(std::process::Stdio::null())
+        .kill_on_drop(true);
+
+    for (key, val) in envs {
+        command.env(key, val);
+    }
+
+    command
+        .spawn()
+        .context(format!(
+            "Failed to spawn command {} {} at {} as child process",
+            cmd,
+            args.join(" "),
+            current_dir.to_str().unwrap_or("bad_path")
+        ))?
+        .wait()
+        .await
+        .context(format!(
+            "Failed to exit command {} {} at {} from child process",
+            cmd,
+            args.join(" "),
+            current_dir.to_str().unwrap_or("bad_path")
+        ))
+}
+
 pub mod rescript {
     use super::execute_command;
     use anyhow::Result;
@@ -152,9 +187,11 @@ pub mod codegen {
 }
 
 pub mod start {
-    use super::execute_command;
+    use super::{execute_command, execute_command_with_env};
     use crate::config_parsing::system_config::SystemConfig;
+    use crate::utils::token_manager::{TokenManager, HYPERSYNC_ACCOUNT, SERVICE_NAME};
     use anyhow::anyhow;
+    use std::fs;
 
     pub async fn start_indexer(
         config: &SystemConfig,
@@ -171,7 +208,43 @@ pub mod start {
         }
         let cmd = "npm";
         let args = vec!["run", "start"];
-        let exit = execute_command(cmd, args, &config.parsed_project_paths.generated).await?;
+
+        // Determine whether to inject ENVIO_API_TOKEN from vault
+        let project_root = &config.parsed_project_paths.project_root;
+        let env_path = project_root.join(".env");
+        let mut should_inject_token = true;
+
+        if let Ok(contents) = fs::read_to_string(&env_path) {
+            // If .env contains an ENVIO_API_TOKEN definition, do not inject
+            if contents
+                .lines()
+                .any(|l| l.trim_start().starts_with("ENVIO_API_TOKEN="))
+            {
+                should_inject_token = false;
+            }
+        }
+
+        let exit = if should_inject_token {
+            // Attempt to load HyperSync token from vault and inject if present
+            match TokenManager::new(SERVICE_NAME, HYPERSYNC_ACCOUNT).get_token() {
+                Ok(Some(token)) => {
+                    execute_command_with_env(
+                        cmd,
+                        args,
+                        &config.parsed_project_paths.generated,
+                        vec![("ENVIO_API_TOKEN", token)],
+                    )
+                    .await?
+                }
+                _ => {
+                    // No token available; run without injection
+                    execute_command(cmd, args, &config.parsed_project_paths.generated).await?
+                }
+            }
+        } else {
+            // .env already defines ENVIO_API_TOKEN; run without injection
+            execute_command(cmd, args, &config.parsed_project_paths.generated).await?
+        };
 
         if !exit.success() {
             return Err(anyhow!(
