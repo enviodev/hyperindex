@@ -1143,4 +1143,447 @@ Different batches for block number 102`,
       ),
     )
   })
+
+  Async.it_only(
+    "Rollback of unordered multichain indexer (single entity id change + another entity on non-reorg chain)",
+    async () => {
+      let sourceMock1337 = M.Source.make(
+        [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
+        ~chain=#1337,
+      )
+      let sourceMock100 = M.Source.make(
+        [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
+        ~chain=#100,
+      )
+      let indexerMock = await M.Indexer.make(
+        ~chains=[
+          {
+            chain: #1337,
+            sources: [sourceMock1337.source],
+          },
+          {
+            chain: #100,
+            sources: [sourceMock100.source],
+          },
+        ],
+      )
+      await Utils.delay(0)
+
+      let _ = await Promise.all2((
+        initialEnterReorgThreshold(~sourceMock=sourceMock1337),
+        initialEnterReorgThreshold(~sourceMock=sourceMock100),
+      ))
+
+      let callCount = ref(0)
+      let getCallCount = () => {
+        let count = callCount.contents
+        callCount := count + 1
+        count
+      }
+
+      // For this test only work with a single changing entity
+      // with the same id. Use call counter to see how it's different to entity history order
+      let handler: Types.HandlerTypes.loader<unit, unit> = async ({context}) => {
+        context.simpleEntity.set({
+          id: "1",
+          value: `call-${getCallCount()->Int.toString}`,
+        })
+      }
+
+      sourceMock1337.resolveGetItemsOrThrow([
+        {
+          blockNumber: 101,
+          logIndex: 1,
+          handler,
+        },
+        {
+          blockNumber: 101,
+          logIndex: 2,
+          handler,
+        },
+      ])
+      sourceMock100.resolveGetItemsOrThrow([
+        {
+          blockNumber: 101,
+          logIndex: 2,
+          handler,
+        },
+      ])
+      await indexerMock.getBatchWritePromise()
+      sourceMock1337.resolveGetItemsOrThrow([
+        {
+          blockNumber: 102,
+          logIndex: 2,
+          handler,
+        },
+      ])
+      await indexerMock.getBatchWritePromise()
+      sourceMock100.resolveGetItemsOrThrow([
+        {
+          blockNumber: 102,
+          logIndex: 2,
+          handler,
+        },
+        {
+          blockNumber: 102,
+          logIndex: 3,
+          handler: async ({context}) => {
+            context.entityWithBigDecimal.set({
+              id: "foo",
+              bigDecimal: BigDecimal.fromFloat(0.),
+            })
+          },
+        },
+      ])
+      await indexerMock.getBatchWritePromise()
+      sourceMock1337.resolveGetItemsOrThrow([
+        {
+          blockNumber: 102,
+          logIndex: 4,
+          handler,
+        },
+      ])
+      await indexerMock.getBatchWritePromise()
+
+      Assert.deepEqual(
+        await Promise.all2((
+          indexerMock.query(module(Entities.SimpleEntity)),
+          indexerMock.queryHistory(module(Entities.SimpleEntity)),
+        )),
+        (
+          [
+            {
+              Entities.SimpleEntity.id: "1",
+              value: "call-5",
+            },
+          ],
+          [
+            {
+              current: {
+                chain_id: 100,
+                block_timestamp: 101,
+                block_number: 101,
+                log_index: 2,
+              },
+              previous: undefined,
+              entityData: Set({
+                Entities.SimpleEntity.id: "1",
+                value: "call-0",
+              }),
+            },
+            {
+              current: {
+                chain_id: 1337,
+                block_timestamp: 101,
+                block_number: 101,
+                log_index: 1,
+              },
+              previous: Some({
+                chain_id: 100,
+                block_timestamp: 101,
+                block_number: 101,
+                log_index: 2,
+              }),
+              entityData: Set({
+                Entities.SimpleEntity.id: "1",
+                value: "call-1",
+              }),
+            },
+            {
+              current: {
+                chain_id: 1337,
+                block_timestamp: 101,
+                block_number: 101,
+                log_index: 2,
+              },
+              previous: Some({
+                chain_id: 1337,
+                block_timestamp: 101,
+                block_number: 101,
+                log_index: 1,
+              }),
+              entityData: Set({
+                Entities.SimpleEntity.id: "1",
+                value: "call-2",
+              }),
+            },
+            {
+              current: {
+                chain_id: 1337,
+                block_timestamp: 102,
+                block_number: 102,
+                log_index: 2,
+              },
+              previous: Some({
+                chain_id: 1337,
+                block_timestamp: 101,
+                block_number: 101,
+                log_index: 2,
+              }),
+              entityData: Set({
+                Entities.SimpleEntity.id: "1",
+                value: "call-3",
+              }),
+            },
+            {
+              current: {
+                chain_id: 100,
+                block_timestamp: 102,
+                block_number: 102,
+                log_index: 2,
+              },
+              previous: Some({
+                chain_id: 1337,
+                block_timestamp: 102,
+                block_number: 102,
+                log_index: 2,
+              }),
+              entityData: Set({
+                Entities.SimpleEntity.id: "1",
+                value: "call-4",
+              }),
+            },
+            {
+              current: {
+                chain_id: 1337,
+                block_timestamp: 102,
+                block_number: 102,
+                log_index: 4,
+              },
+              // FIXME: This looks wrong
+              previous: Some({
+                chain_id: 1337,
+                block_timestamp: 102,
+                block_number: 102,
+                log_index: 2,
+              }),
+              entityData: Set({
+                Entities.SimpleEntity.id: "1",
+                value: "call-5",
+              }),
+            },
+          ],
+        ),
+        ~message=`Should create multiple history rows:
+Sorted for the batch for block number 101
+Different batches for block number 102`,
+      )
+      Assert.deepEqual(
+        await Promise.all2((
+          indexerMock.query(module(Entities.EntityWithBigDecimal)),
+          indexerMock.queryHistory(module(Entities.EntityWithBigDecimal)),
+        )),
+        (
+          [
+            {
+              id: "foo",
+              bigDecimal: BigDecimal.fromFloat(0.),
+            },
+          ],
+          [
+            {
+              current: {
+                chain_id: 100,
+                block_timestamp: 102,
+                block_number: 102,
+                log_index: 3,
+              },
+              previous: undefined,
+              entityData: Set({
+                Entities.EntityWithBigDecimal.id: "foo",
+                bigDecimal: BigDecimal.fromFloat(0.),
+              }),
+            },
+          ],
+        ),
+        ~message="Should also add another entity for a non-reorg chain, which should also be rollbacked (theoretically)",
+      )
+
+      // Should trigger rollback
+      sourceMock1337.resolveGetItemsOrThrow(
+        [],
+        ~prevRangeLastBlock={
+          blockNumber: 102,
+          blockHash: "0x102-reorged",
+        },
+      )
+      await Utils.delay(0)
+      await Utils.delay(0)
+
+      Assert.deepEqual(
+        sourceMock1337.getBlockHashesCalls,
+        [[100, 101, 102, 103]],
+        ~message="Should have called getBlockHashes to find rollback depth",
+      )
+      sourceMock1337.resolveGetBlockHashes([
+        // The block 101 is untouched so we can rollback to it
+        {blockNumber: 100, blockHash: "0x100", blockTimestamp: 100},
+        {blockNumber: 101, blockHash: "0x101", blockTimestamp: 101},
+        {blockNumber: 102, blockHash: "0x102-reorged", blockTimestamp: 102},
+        {blockNumber: 103, blockHash: "0x103-reorged", blockTimestamp: 103},
+      ])
+
+      await indexerMock.getRollbackReadyPromise()
+
+      Assert.deepEqual(
+        (
+          sourceMock1337.getItemsOrThrowCalls->Utils.Array.last,
+          sourceMock100.getItemsOrThrowCalls->Utils.Array.last,
+        ),
+        (
+          Some({
+            "fromBlock": 102,
+            "toBlock": None,
+            "retry": 0,
+          }),
+          Some({
+            "fromBlock": 102,
+            "toBlock": None,
+            "retry": 0,
+          }),
+        ),
+        ~message="Should rollback fetch state and re-request items for both chains (since chain 100 was touching the same entity as chain 1337)",
+      )
+
+      // Set the same value as before rollback
+      sourceMock100.resolveGetItemsOrThrow([
+        {
+          blockNumber: 102,
+          logIndex: 2,
+          handler: async ({context}) => {
+            context.simpleEntity.set({
+              id: "1",
+              value: `call-4`,
+            })
+          },
+        },
+        {
+          blockNumber: 102,
+          logIndex: 3,
+          handler: async ({context}) => {
+            context.entityWithBigDecimal.set({
+              id: "foo",
+              bigDecimal: BigDecimal.fromFloat(0.),
+            })
+          },
+        },
+      ])
+
+      await indexerMock.getBatchWritePromise()
+
+      Assert.deepEqual(
+        await Promise.all2((
+          indexerMock.query(module(Entities.SimpleEntity)),
+          indexerMock.queryHistory(module(Entities.SimpleEntity)),
+        )),
+        (
+          [
+            {
+              Entities.SimpleEntity.id: "1",
+              value: "call-4",
+            },
+          ],
+          [
+            {
+              current: {
+                chain_id: 100,
+                block_timestamp: 101,
+                block_number: 101,
+                log_index: 2,
+              },
+              previous: undefined,
+              entityData: Set({
+                Entities.SimpleEntity.id: "1",
+                value: "call-0",
+              }),
+            },
+            {
+              current: {
+                chain_id: 1337,
+                block_timestamp: 101,
+                block_number: 101,
+                log_index: 1,
+              },
+              previous: Some({
+                chain_id: 100,
+                block_timestamp: 101,
+                block_number: 101,
+                log_index: 2,
+              }),
+              entityData: Set({
+                Entities.SimpleEntity.id: "1",
+                value: "call-1",
+              }),
+            },
+            {
+              current: {
+                chain_id: 1337,
+                block_timestamp: 101,
+                block_number: 101,
+                log_index: 2,
+              },
+              previous: Some({
+                chain_id: 1337,
+                block_timestamp: 101,
+                block_number: 101,
+                log_index: 1,
+              }),
+              entityData: Set({
+                Entities.SimpleEntity.id: "1",
+                value: "call-2",
+              }),
+            },
+            {
+              current: {
+                chain_id: 100,
+                block_timestamp: 102,
+                block_number: 102,
+                log_index: 2,
+              },
+              previous: Some({
+                chain_id: 1337,
+                block_timestamp: 101,
+                block_number: 101,
+                log_index: 2,
+              }),
+              entityData: Set({
+                Entities.SimpleEntity.id: "1",
+                value: "call-4",
+              }),
+            },
+          ],
+        ),
+      )
+      Assert.deepEqual(
+        await Promise.all2((
+          indexerMock.query(module(Entities.EntityWithBigDecimal)),
+          indexerMock.queryHistory(module(Entities.EntityWithBigDecimal)),
+        )),
+        (
+          [
+            {
+              id: "foo",
+              bigDecimal: BigDecimal.fromFloat(0.),
+            },
+          ],
+          [
+            {
+              current: {
+                chain_id: 100,
+                block_timestamp: 102,
+                block_number: 102,
+                log_index: 3,
+              },
+              previous: undefined,
+              entityData: Set({
+                Entities.EntityWithBigDecimal.id: "foo",
+                bigDecimal: BigDecimal.fromFloat(0.),
+              }),
+            },
+          ],
+        ),
+        ~message="Should also add another entity for a non-reorg chain, which should also be rollbacked (theoretically)",
+      )
+    },
+  )
 })
