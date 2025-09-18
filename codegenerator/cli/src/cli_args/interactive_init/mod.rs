@@ -169,7 +169,7 @@ pub async fn prompt_missing_init_args(
                     eprintln!("Warning: automatic HyperSync token provision failed: {}", e);
                     // Fallback to manual prompt without opening browser
                     let token_prompt = Text::new("Add your API token: ")
-                        .with_help_message("You can create/manage tokens later in the UI");
+                        .with_help_message("See tokens at: https://envio.dev/app/api-tokens");
                     Ok(token_prompt
                         .prompt_skippable()
                         .context("Prompting for API token after provision failure")?)
