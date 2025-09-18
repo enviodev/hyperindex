@@ -511,8 +511,6 @@ pub mod hypersync {
     use anyhow::{anyhow, Context, Result};
     use reqwest::StatusCode;
     use serde::{Deserialize, Serialize};
-    use std::fs;
-    use std::path::Path;
 
     fn get_hypersync_tokens_base_url() -> String {
         // Allow override specific for tokens service; else fall back to the constant
@@ -577,47 +575,36 @@ pub mod hypersync {
         }
     }
 
-    fn store_api_token(token: &str) -> Result<()> {
-        TokenManager::new(SERVICE_NAME, HYPERSYNC_ACCOUNT).store_token(token)
-    }
+    async fn list_api_tokens(
+        client: &reqwest::Client,
+        base: &str,
+        jwt: &str,
+    ) -> Result<Vec<String>> {
+        #[derive(Debug, serde::Deserialize)]
+        struct UserTokensResponse {
+            tokens: Vec<String>,
+        }
 
-    fn project_has_envio_dependency(project_root: &Path) -> bool {
-        let pkg = project_root.join("package.json");
-        if let Ok(contents) = fs::read_to_string(pkg) {
-            contents.contains("\"envio\"")
+        let url = format!("{}/token/get-user-tokens", base);
+        let resp = client
+            .get(&url)
+            .header("authorization", format!("Bearer {}", jwt))
+            .header("content-type", "application/json")
+            .send()
+            .await
+            .with_context(|| format!("GET {} failed", url))?;
+
+        if resp.status().is_success() {
+            let body: UserTokensResponse =
+                resp.json().await.context("Decode user tokens response")?;
+            Ok(body.tokens)
         } else {
-            false
+            Ok(vec![])
         }
     }
 
-    fn write_env_token(project_root: &Path, token: &str) -> Result<()> {
-        // New rule: Do NOT create .env if missing. Only update when it already exists.
-        let env_path = project_root.join(".env");
-        let existing = match fs::read_to_string(&env_path) {
-            Ok(s) => s,
-            Err(_) => return Ok(()), // .env absent: do nothing
-        };
-        let new_content = if existing.contains("ENVIO_API_TOKEN=") {
-            existing
-                .lines()
-                .map(|l| {
-                    if l.starts_with("ENVIO_API_TOKEN=") {
-                        format!("ENVIO_API_TOKEN=\"{}\"", token)
-                    } else {
-                        l.to_string()
-                    }
-                })
-                .collect::<Vec<_>>()
-                .join("\n")
-        } else {
-            let mut s = existing;
-            if !s.ends_with('\n') {
-                s.push('\n');
-            }
-            s.push_str(&format!("ENVIO_API_TOKEN=\"{}\"\n", token));
-            s
-        };
-        fs::write(env_path, new_content).context("Failed writing .env")
+    fn store_api_token(token: &str) -> Result<()> {
+        TokenManager::new(SERVICE_NAME, HYPERSYNC_ACCOUNT).store_token(token)
     }
 
     pub async fn provision_and_get_token() -> Result<String> {
@@ -631,23 +618,34 @@ pub mod hypersync {
 
         let client = reqwest::Client::new();
         create_user_if_needed(&client, &base, &jwt).await?;
-        let api_token = create_api_token(&client, &base, &jwt).await?;
+
+        // Prefer existing tokens; create only if none exist
+        let mut selected: Option<String> = match list_api_tokens(&client, &base, &jwt).await {
+            Ok(tokens) if !tokens.is_empty() => Some(tokens[0].clone()),
+            _ => None,
+        };
+
+        if selected.is_none() {
+            selected = Some(create_api_token(&client, &base, &jwt).await?);
+        }
+
+        let api_token = selected.expect("token must be set");
         store_api_token(&api_token)?;
         Ok(api_token)
     }
 
     pub async fn connect() -> Result<()> {
-        let api_token = provision_and_get_token().await?;
-        // If project has envio dependency, write .env
-        // If project has envio dependency, write .env
-        let cwd = std::env::current_dir().context("Get current dir failed")?;
-        if project_has_envio_dependency(&cwd) {
-            if let Err(e) = write_env_token(&cwd, &api_token) {
-                eprintln!("Warning: failed to write .env: {}", e);
+        let api_token = provision_and_get_token().await;
+
+        match api_token {
+            Ok(_token) => {
+                println!("Token: {}", _token);
+                println!("Successfully authenticated with HyperSync");
+            }
+            Err(e) => {
+                eprintln!("Failed to authenticate with HyperSync: {}", e);
             }
         }
-
-        println!("Successfully authenticated with HyperSync");
 
         Ok(())
     }

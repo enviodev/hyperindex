@@ -190,7 +190,7 @@ impl Schema {
         }
     }
 
-    fn try_get_type_def(&self, name: &String) -> anyhow::Result<TypeDef> {
+    fn try_get_type_def(&self, name: &String) -> anyhow::Result<TypeDef<'_>> {
         match (self.entities.get(name), self.enums.get(name)) {
             (None, None) => Err(anyhow!("No type definition '{}' exists in schema", name)),
             (Some(_), Some(_)) => Err(anyhow!(
