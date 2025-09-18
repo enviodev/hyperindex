@@ -76,7 +76,7 @@ pub async fn execute(command_line_args: CommandLineArgs) -> Result<()> {
 
                 commands::db_migrate::run_db_setup(&config, &persisted_state).await?;
             }
-            // Populate HyperSync API token from vault unless .env overrides
+            // During `start`, attempt to retrieve an existing HyperSync token without logging in or creating one.
             {
                 use crate::config_parsing::system_config::{DataSource, MainEvmDataSource};
                 let uses_hypersync = config.get_networks().iter().any(|n| match &n.sync_source {
@@ -86,13 +86,7 @@ pub async fn execute(command_line_args: CommandLineArgs) -> Result<()> {
                     DataSource::Fuel { .. } => true,
                 });
                 if uses_hypersync {
-                    // Do not prompt login for start; best-effort provision if possible
-                    if let Err(e) = commands::hypersync::provision_and_get_token().await {
-                        eprintln!(
-                            "Warning: could not provision HyperSync token automatically: {}",
-                            e
-                        );
-                    }
+                    let _ = commands::hypersync::get_hypersync_token().await;
                 }
             }
 

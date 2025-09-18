@@ -354,6 +354,7 @@ pub mod benchmark {
     }
 }
 
+/// manages the login flow to Envio via GitHub OAuth.
 pub mod login {
     use crate::utils::token_manager::{TokenManager, JWT_ACCOUNT, SERVICE_NAME};
     use anyhow::{anyhow, Context, Result};
@@ -364,7 +365,7 @@ pub mod login {
     use tokio::time::sleep;
 
     /// Default UI/API base URL. Change this constant to point to your deployment.
-    pub const AUTH_BASE_URL: &str = "http://localhost:3000";
+    pub const AUTH_BASE_URL: &str = "https://envio.dev";
 
     fn get_api_base_url() -> String {
         // Allow override via ENVIO_API_URL, otherwise use the constant above.
@@ -383,27 +384,8 @@ pub mod login {
     }
 
     #[derive(Debug, Deserialize)]
-    struct User {
-        #[allow(dead_code)]
-        id: Option<String>,
-        #[allow(dead_code)]
-        name: Option<String>,
-        #[allow(dead_code)]
-        email: Option<String>,
-        #[allow(dead_code)]
-        #[serde(rename = "githubId")]
-        github_id: Option<String>,
-        #[allow(dead_code)]
-        #[serde(rename = "githubLogin")]
-        github_login: Option<String>,
-    }
-
-    #[derive(Debug, Deserialize)]
     struct CliAuthStatus {
         completed: bool,
-        #[allow(dead_code)]
-        user: Option<User>,
-        #[allow(dead_code)]
         error: Option<String>,
         token: Option<String>,
     }
@@ -437,13 +419,15 @@ pub mod login {
 
         // 2) Poll for completion
         let poll_url = format!("{}/api/auth/cli-session?code={}", base, session.code);
-        let poll_interval = Duration::from_secs(2);
+        let poll_time_seconds = 2;
+        let poll_interval = Duration::from_secs(poll_time_seconds);
         // Add a small grace window to handle cold starts or UI recompiles wiping in-memory state
         let extra_grace_attempts = 15; // ~30s grace
-        let max_attempts = (session.expires_in.max(0) as u64) / 2 + extra_grace_attempts;
+        let max_attempts =
+            (session.expires_in.max(0) as u64) / poll_time_seconds + extra_grace_attempts;
 
         // Give the UI a brief warm-up before first poll
-        sleep(Duration::from_secs(2)).await;
+        sleep(Duration::from_secs(poll_time_seconds)).await;
 
         let mut consecutive_not_found = 0u32;
 
@@ -505,6 +489,7 @@ pub mod login {
     }
 }
 
+/// manages the flow of getting hypersync api tokens
 pub mod hypersync {
     use super::login::{get_stored_jwt, HYPERSYNC_TOKEN_API_URL};
     use crate::utils::token_manager::{TokenManager, HYPERSYNC_ACCOUNT, SERVICE_NAME};
@@ -607,6 +592,35 @@ pub mod hypersync {
         TokenManager::new(SERVICE_NAME, HYPERSYNC_ACCOUNT).store_token(token)
     }
 
+    /// get the hypersync api token from the keyring or the api
+    ///     doesn't perform any login actions if the user is not logged in.
+    pub async fn get_hypersync_token() -> Result<Option<String>> {
+        // 1) If we already have a token in keyring, use it
+        if let Some(existing) = TokenManager::new(SERVICE_NAME, HYPERSYNC_ACCOUNT).get_token()? {
+            return Ok(Some(existing));
+        }
+
+        // 2) If we have a JWT, try to list existing tokens without creating a new one
+        let jwt = match get_stored_jwt()? {
+            Some(t) => t,
+            None => return Ok(None), // Not logged in; do not login or provision
+        };
+
+        let base = get_hypersync_tokens_base_url();
+        let client = reqwest::Client::new();
+        let tokens = list_api_tokens(&client, &base, &jwt)
+            .await
+            .unwrap_or_default();
+        if let Some(token) = tokens.get(0) {
+            store_api_token(token)?;
+            return Ok(Some(token.clone()));
+        }
+        Ok(None)
+    }
+
+    /// provision a new hypersync api token
+    ///     this will create a new user if needed and create a new token
+    ///     this will also store the token in the keyring
     pub async fn provision_and_get_token() -> Result<String> {
         let base = get_hypersync_tokens_base_url();
         let jwt = match get_stored_jwt()? {
