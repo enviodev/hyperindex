@@ -7,6 +7,7 @@ use crate::{
     service_health::{self, EndpointHealth},
 };
 use anyhow::{anyhow, Context, Result};
+use std::fs;
 
 pub async fn run_dev(project_paths: ParsedProjectPaths) -> Result<()> {
     let config =
@@ -72,14 +73,32 @@ pub async fn run_dev(project_paths: ParsedProjectPaths) -> Result<()> {
         DataSource::Fuel { .. } => true,
     });
 
+    // If the current indexer uses HyperSync and there is no token present and it is not logged in, then prompt the user to log in to get a token.
     if uses_hypersync {
-        // Provision token silently if missing; do NOT prompt login here per requirement
-        if let Err(e) = crate::commands::hypersync::provision_and_get_token().await {
-            // Best-effort: log and continue; start can still run if RPC fallback exists
-            eprintln!(
-                "Warning: could not provision HyperSync token automatically: {}",
-                e
+        let env_token_present = {
+            let env_path = config.parsed_project_paths.project_root.join(".env");
+            if let Ok(contents) = fs::read_to_string(&env_path) {
+                contents
+                    .lines()
+                    .any(|l| l.trim_start().starts_with("ENVIO_API_TOKEN="))
+            } else {
+                false
+            }
+        };
+
+        if env_token_present {
+            println!("HyperSync is enabled. Detected ENVIO_API_TOKEN in .env; skipping login.");
+        } else {
+            println!(
+                "HyperSync is enabled but no ENVIO_API_TOKEN was found. Attempting to log in to provision or retrieve a HyperSync API token..."
             );
+            if let Err(e) = crate::commands::hypersync::provision_and_get_token().await {
+                // Best-effort: log and continue; start can still run if RPC fallback exists
+                eprintln!(
+                    "Warning: could not obtain HyperSync token automatically: {}",
+                    e
+                );
+            }
         }
     }
     // if hasura healhz check returns not found assume docker isnt running and start it up {
