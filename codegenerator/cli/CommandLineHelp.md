@@ -45,7 +45,7 @@ This document contains the help content for the `envio` command-line program.
 * `benchmark-summary` — Prints a summary of the benchmark data after running the indexer with envio start --bench flag or setting 'ENVIO_SAVE_BENCHMARK_DATA=true'
 * `local` — Prepare local environment for envio testing
 * `start` — Start the indexer without any automatic codegen
-* `login` — Authenticate/Login with envio hosted services and print a JWT
+* `login` — Authenticate with envio hosted services and save credentials for authenticated actions
 * `logout` — Logout and clear stored credentials
 
 ###### **Options:**
@@ -360,7 +360,7 @@ Start the indexer without any automatic codegen
 
 ## `envio login`
 
-Authenticate/Login with envio hosted services and print a JWT
+Authenticate with envio hosted services and save credentials for authenticated actions
 
 **Usage:** `envio login`
 
