@@ -14,6 +14,7 @@ type t = {
   chainConfig: InternalConfig.chain,
   //The latest known block of the chain
   currentBlockHeight: int,
+  isFetchingAtHead: bool,
   timestampCaughtUpToHeadOrEndblock: option<Js.Date.t>,
   committedProgressBlockNumber: int,
   firstEventBlockNumber: option<int>,
@@ -35,6 +36,7 @@ let make = (
   ~firstEventBlockNumber,
   ~progressBlockNumber,
   ~config: Config.t,
+  ~targetBufferSize,
   ~logger,
   ~timestampCaughtUpToHeadOrEndblock,
   ~numEventsProcessed,
@@ -176,6 +178,7 @@ let make = (
     ~startBlock,
     ~endBlock,
     ~eventConfigs,
+    ~targetBufferSize,
     ~chainId=chainConfig.id,
     ~blockLag=Pervasives.max(
       !(config->Config.shouldRollbackOnReorg) || isInReorgThreshold
@@ -195,6 +198,7 @@ let make = (
     ),
     lastBlockScannedHashes,
     currentBlockHeight: 0,
+    isFetchingAtHead: false,
     fetchState,
     firstEventBlockNumber,
     committedProgressBlockNumber: progressBlockNumber,
@@ -205,7 +209,7 @@ let make = (
   }
 }
 
-let makeFromConfig = (chainConfig: InternalConfig.chain, ~config) => {
+let makeFromConfig = (chainConfig: InternalConfig.chain, ~config, ~targetBufferSize) => {
   let logger = Logging.createChild(~params={"chainId": chainConfig.id})
   let lastBlockScannedHashes = ReorgDetection.LastBlockScannedHashes.empty(
     ~confirmedBlockThreshold=chainConfig.confirmedBlockThreshold,
@@ -222,6 +226,7 @@ let makeFromConfig = (chainConfig: InternalConfig.chain, ~config) => {
     ~timestampCaughtUpToHeadOrEndblock=None,
     ~numEventsProcessed=0,
     ~numBatchesFetched=0,
+    ~targetBufferSize,
     ~logger,
     ~processingFilters=None,
     ~dynamicContracts=[],
@@ -237,6 +242,7 @@ let makeFromDbState = async (
   ~resumedChainState: InternalTable.Chains.t,
   ~isInReorgThreshold,
   ~config,
+  ~targetBufferSize,
   ~sql=Db.sql,
 ) => {
   let chainId = chainConfig.id
@@ -263,7 +269,7 @@ let makeFromDbState = async (
         },
         isValid: (~fetchState) => {
           //the filter can be cleaned up as soon as the fetch state block is ahead of the latestProcessedEvent blockNumber
-          FetchState.getLatestFullyFetchedBlock(fetchState).blockNumber <= restartBlockNumber
+          fetchState->FetchState.bufferBlockNumber <= restartBlockNumber
         },
       },
     ])
@@ -308,6 +314,7 @@ let makeFromDbState = async (
     ~numBatchesFetched=0,
     ~logger,
     ~processingFilters,
+    ~targetBufferSize,
     ~isInReorgThreshold,
   )
 }
@@ -457,19 +464,14 @@ let handleQueryResult = (
   ~newItems,
   ~dynamicContracts,
   ~latestFetchedBlock,
-  ~currentBlockHeight,
 ) => {
   let fs = switch dynamicContracts {
   | [] => chainFetcher.fetchState
-  | _ =>
-    chainFetcher.fetchState->FetchState.registerDynamicContracts(
-      dynamicContracts,
-      ~currentBlockHeight,
-    )
+  | _ => chainFetcher.fetchState->FetchState.registerDynamicContracts(dynamicContracts)
   }
 
   fs
-  ->FetchState.handleQueryResult(~query, ~latestFetchedBlock, ~newItems, ~currentBlockHeight)
+  ->FetchState.handleQueryResult(~query, ~latestFetchedBlock, ~newItems)
   ->Result.map(fetchState => {
     {
       ...chainFetcher,
@@ -568,7 +570,5 @@ let getLastKnownValidBlock = async (
     }
   }
 }
-
-let isFetchingAtHead = (chainFetcher: t) => chainFetcher.fetchState.isFetchingAtHead
 
 let isActivelyIndexing = (chainFetcher: t) => chainFetcher.fetchState->FetchState.isActivelyIndexing

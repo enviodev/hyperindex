@@ -96,7 +96,6 @@ let fetchNext = async (
   ~executeQuery,
   ~waitForNewBlock,
   ~onNewBlock,
-  ~targetBufferSize,
   ~stateId,
 ) => {
   let {maxPartitionConcurrency} = sourceManager
@@ -105,7 +104,6 @@ let fetchNext = async (
     ~concurrencyLimit={
       maxPartitionConcurrency - sourceManager.fetchingPartitionsCount
     },
-    ~targetBufferSize,
     ~currentBlockHeight,
     ~stateId,
   ) {

@@ -168,6 +168,7 @@ describe("Dynamic contract restart resistance test", () => {
       ->Option.getExn,
       ~config,
       ~isInReorgThreshold=true,
+      ~targetBufferSize=5000,
       ~sql,
     )
 
