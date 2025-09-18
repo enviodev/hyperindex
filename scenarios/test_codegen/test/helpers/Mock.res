@@ -1,3 +1,5 @@
+open Belt
+
 module InMemoryStore = {
   let setEntity = (inMemoryStore, ~entityMod, entity) => {
     let inMemTable =
@@ -199,6 +201,363 @@ module Storage = {
         cache: Js.Dict.empty(),
         chains: [],
       }),
+    }
+  }
+}
+
+module Indexer = {
+  type t = {
+    getBatchWritePromise: unit => promise<unit>,
+    getRollbackReadyPromise: unit => promise<unit>,
+    query: 'entity. module(Entities.Entity with type t = 'entity) => promise<array<'entity>>,
+    queryHistory: 'entity. module(Entities.Entity with type t = 'entity) => promise<
+      array<EntityHistory.historyRow<'entity>>,
+    >,
+  }
+
+  type chainConfig = {chain: Types.chain, sources: array<Source.t>, startBlock?: int}
+
+  let make = async (~chains: array<chainConfig>, ~multichain=InternalConfig.Unordered) => {
+    DbHelpers.resetPostgresClient()
+
+    let config = RegisterHandlers.registerAllHandlers()
+
+    let chainMap =
+      chains
+      ->Js.Array2.map(chainConfig => {
+        let chain = ChainMap.Chain.makeUnsafe(~chainId=(chainConfig.chain :> int))
+        let originalChainConfig = config.chainMap->ChainMap.get(chain)
+        (
+          chain,
+          {
+            ...originalChainConfig,
+            sources: chainConfig.sources,
+            startBlock: chainConfig.startBlock->Option.getWithDefault(
+              originalChainConfig.startBlock,
+            ),
+          },
+        )
+      })
+      ->ChainMap.fromArrayUnsafe
+
+    let sql = Db.sql
+    let pgSchema = Env.Db.publicSchema
+    // Reinit storage without Hasura
+    // This made the test 1.9 seconds faster
+    // TODO: Improve indexer initialization time
+    // by parallizing hasura (at least for dev)
+    let storage = PgStorage.make(
+      ~sql,
+      ~pgSchema,
+      ~pgHost=Env.Db.host,
+      ~pgUser=Env.Db.user,
+      ~pgPort=Env.Db.port,
+      ~pgDatabase=Env.Db.database,
+      ~pgPassword=Env.Db.password,
+    )
+    let persistence = {
+      ...config.persistence,
+      storageStatus: Persistence.Unknown,
+      storage,
+    }
+    let config: Config.t = {
+      ...config,
+      persistence,
+      enableRawEvents: false,
+      chainMap,
+      multichain,
+    }
+
+    let gsManagerRef = ref(None)
+
+    await config.persistence->Persistence.init(
+      ~chainConfigs=config.chainMap->ChainMap.values,
+      ~reset=true,
+    )
+
+    let chainManager = await ChainManager.makeFromDbState(
+      ~initialState=config.persistence->Persistence.getInitializedState,
+      ~config,
+    )
+    let globalState = GlobalState.make(~config, ~chainManager, ~shouldUseTui=false)
+    let gsManager = globalState->GlobalStateManager.make
+    gsManagerRef := Some(gsManager)
+    gsManager->GlobalStateManager.dispatchTask(NextQuery(CheckAllChains))
+    /*
+        NOTE:
+          This `ProcessEventBatch` dispatch shouldn't be necessary but we are adding for safety, it should immediately return doing 
+          nothing since there is no events on the queues.
+ */
+    gsManager->GlobalStateManager.dispatchTask(ProcessEventBatch)
+
+    {
+      getBatchWritePromise: () => {
+        Promise.makeAsync(async (resolve, _reject) => {
+          let before = (gsManager->GlobalStateManager.getState).processedBatches
+          while before >= (gsManager->GlobalStateManager.getState).processedBatches {
+            await Utils.delay(50)
+          }
+          resolve()
+        })
+      },
+      getRollbackReadyPromise: () => {
+        Promise.makeAsync(async (resolve, _reject) => {
+          while (
+            switch (gsManager->GlobalStateManager.getState).rollbackState {
+            | RollbackInMemStore(_) => false
+            | RollingBack(_)
+            | NoRollback => true
+            }
+          ) {
+            await Utils.delay(50)
+          }
+          resolve()
+        })
+      },
+      query: (type entity, entityMod) => {
+        let entityConfig = entityMod->Entities.entityModToInternal
+        Db.sql
+        ->Postgres.unsafe(
+          PgStorage.makeLoadAllQuery(~pgSchema, ~tableName=entityConfig.table.tableName),
+        )
+        ->Promise.thenResolve(items => {
+          items->S.parseOrThrow(entityConfig.rowsSchema)
+        })
+        ->(Utils.magic: promise<array<Internal.entity>> => promise<array<entity>>)
+      },
+      queryHistory: (type entity, entityMod) => {
+        let entityConfig = entityMod->Entities.entityModToInternal
+        Db.sql
+        ->Postgres.unsafe(
+          PgStorage.makeLoadAllQuery(
+            ~pgSchema,
+            ~tableName=entityConfig.entityHistory.table.tableName,
+          ),
+        )
+        ->Promise.thenResolve(items => {
+          items->S.parseOrThrow(S.array(entityConfig.entityHistory.schema))
+        })
+        ->(
+          Utils.magic: promise<array<EntityHistory.historyRow<Internal.entity>>> => promise<
+            array<EntityHistory.historyRow<entity>>,
+          >
+        )
+      },
+    }
+  }
+}
+
+module Source = {
+  type method = [
+    | #getBlockHashes
+    | #getHeightOrThrow
+    | #getItemsOrThrow
+  ]
+
+  type itemMock = {
+    blockNumber: int,
+    logIndex: int,
+    handler: Types.HandlerTypes.loader<unit, unit>,
+  }
+
+  type t = {
+    source: Source.t,
+    // Use array of bool instead of array of unit,
+    // for better logging during debugging
+    getHeightOrThrowCalls: array<bool>,
+    resolveGetHeightOrThrow: int => unit,
+    rejectGetHeightOrThrow: 'exn. 'exn => unit,
+    getItemsOrThrowCalls: array<{"fromBlock": int, "toBlock": option<int>, "retry": int}>,
+    resolveGetItemsOrThrow: (
+      array<itemMock>,
+      ~latestFetchedBlockNumber: int=?,
+      ~prevRangeLastBlock: ReorgDetection.blockData=?,
+    ) => unit,
+    rejectGetItemsOrThrow: 'exn. 'exn => unit,
+    getBlockHashesCalls: array<array<int>>,
+    resolveGetBlockHashes: array<ReorgDetection.blockDataWithTimestamp> => unit,
+  }
+
+  let make = (methods, ~chain=#1: Types.chain, ~sourceFor=Source.Sync, ~pollingInterval=1000) => {
+    let implement = (method: method, fn) => {
+      if methods->Js.Array2.includes(method) {
+        fn
+      } else {
+        (() => Js.Exn.raiseError(`source.${(method :> string)} not implemented`))->Obj.magic
+      }
+    }
+
+    let chain = ChainMap.Chain.makeUnsafe(~chainId=(chain :> int))
+    let getHeightOrThrowCalls = []
+    let getHeightOrThrowResolveFns = []
+    let getHeightOrThrowRejectFns = []
+    let getItemsOrThrowCalls = []
+    let getItemsOrThrowResolveFns = []
+    let getItemsOrThrowRejectFns = []
+    let getBlockHashesCalls = []
+    let getBlockHashesResolveFns = []
+    {
+      getHeightOrThrowCalls,
+      resolveGetHeightOrThrow: height => {
+        if getHeightOrThrowResolveFns->Utils.Array.isEmpty {
+          Js.Exn.raiseError("getHeightOrThrowResolveFns is empty")
+        }
+        getHeightOrThrowResolveFns->Array.forEach(resolve => resolve(height))
+      },
+      rejectGetHeightOrThrow: exn => {
+        getHeightOrThrowRejectFns->Array.forEach(reject => reject(exn->Obj.magic))
+      },
+      getItemsOrThrowCalls,
+      resolveGetItemsOrThrow: (items, ~latestFetchedBlockNumber=?, ~prevRangeLastBlock=?) => {
+        getItemsOrThrowResolveFns->Array.forEach(resolve =>
+          resolve({
+            "items": items,
+            "latestFetchedBlockNumber": latestFetchedBlockNumber,
+            "prevRangeLastBlock": prevRangeLastBlock,
+          })
+        )
+      },
+      rejectGetItemsOrThrow: exn => {
+        getItemsOrThrowRejectFns->Array.forEach(reject => reject(exn->Obj.magic))
+      },
+      getBlockHashesCalls,
+      resolveGetBlockHashes: blockHashes => {
+        getBlockHashesResolveFns->Array.forEach(resolve => resolve(Ok(blockHashes)))
+      },
+      source: {
+        {
+          name: "MockSource",
+          sourceFor,
+          poweredByHyperSync: false,
+          chain,
+          pollingInterval,
+          getBlockHashes: implement(#getBlockHashes, (~blockNumbers, ~logger as _) => {
+            getBlockHashesCalls->Js.Array2.push(blockNumbers)->ignore
+            Promise.make((resolve, _reject) => {
+              getBlockHashesResolveFns->Js.Array2.push(resolve)->ignore
+            })
+          }),
+          getHeightOrThrow: implement(#getHeightOrThrow, () => {
+            getHeightOrThrowCalls->Js.Array2.push(true)->ignore
+            Promise.make((resolve, reject) => {
+              getHeightOrThrowResolveFns->Js.Array2.push(resolve)->ignore
+              getHeightOrThrowRejectFns->Js.Array2.push(reject)->ignore
+            })
+          }),
+          getItemsOrThrow: implement(#getItemsOrThrow, (
+            ~fromBlock,
+            ~toBlock,
+            ~addressesByContractName as _,
+            ~indexingContracts as _,
+            ~currentBlockHeight,
+            ~partitionId as _,
+            ~selection as _,
+            ~retry,
+            ~logger as _,
+          ) => {
+            getItemsOrThrowCalls
+            ->Js.Array2.push({
+              "fromBlock": fromBlock,
+              "toBlock": toBlock,
+              "retry": retry,
+            })
+            ->ignore
+            Promise.make((resolve, reject) => {
+              getItemsOrThrowResolveFns
+              ->Js.Array2.push(
+                data => {
+                  let latestFetchedBlockNumber =
+                    data["latestFetchedBlockNumber"]->Option.getWithDefault(
+                      toBlock->Option.getWithDefault(fromBlock),
+                    )
+
+                  resolve({
+                    Source.currentBlockHeight,
+                    reorgGuard: {
+                      rangeLastBlock: {
+                        blockNumber: latestFetchedBlockNumber,
+                        blockHash: `0x${latestFetchedBlockNumber->Int.toString}`,
+                      },
+                      prevRangeLastBlock: switch data["prevRangeLastBlock"] {
+                      | Some(prevRangeLastBlock) => Some(prevRangeLastBlock)
+                      | None =>
+                        if fromBlock > 0 {
+                          Some({
+                            blockNumber: fromBlock - 1,
+                            blockHash: `0x${(fromBlock - 1)->Int.toString}`,
+                          })
+                        } else {
+                          None
+                        }
+                      },
+                    },
+                    parsedQueueItems: data["items"]->Array.map(
+                      item => {
+                        Internal.Event({
+                          eventConfig: ({
+                            id: "MockEvent",
+                            contractName: "MockContract",
+                            name: "MockEvent",
+                            isWildcard: false,
+                            filterByAddresses: false,
+                            dependsOnAddresses: false,
+                            handler: (
+                              ({context} as args) => {
+                                // We don't want preload optimization for the tests
+                                if context.isPreload {
+                                  Promise.resolve()
+                                } else {
+                                  item.handler(args)
+                                }
+                              }
+                            )->(
+                              Utils.magic: Types.HandlerTypes.loader<unit, unit> => option<
+                                Internal.handler,
+                              >
+                            ),
+                            contractRegister: None,
+                            paramsRawEventSchema: S.literal(%raw(`null`))
+                            ->S.shape(_ => ())
+                            ->(Utils.magic: S.t<unit> => S.t<Internal.eventParams>),
+                            getEventFiltersOrThrow: _ => Js.Exn.raiseError("Not implemented"),
+                            blockSchema: S.object(_ => ())->Utils.magic,
+                            transactionSchema: S.object(_ => ())->Utils.magic,
+                            convertHyperSyncEventArgs: _ => Js.Exn.raiseError("Not implemented"),
+                          }: Internal.evmEventConfig :> Internal.eventConfig),
+                          timestamp: item.blockNumber,
+                          chain,
+                          blockNumber: item.blockNumber,
+                          logIndex: item.logIndex,
+                          event: {
+                            params: %raw(`{}`),
+                            chainId: chain->ChainMap.Chain.toChainId,
+                            srcAddress: "0x0000000000000000000000000000000000000000"->Address.unsafeFromString,
+                            logIndex: item.logIndex,
+                            transaction: %raw(`null`),
+                            block: {
+                              "number": item.blockNumber,
+                              "timestamp": item.blockNumber,
+                              "hash": `0x${item.blockNumber->Int.toString}`,
+                            }->Utils.magic,
+                          },
+                        })
+                      },
+                    ),
+                    fromBlockQueried: fromBlock,
+                    latestFetchedBlockNumber,
+                    latestFetchedBlockTimestamp: latestFetchedBlockNumber,
+                    stats: {
+                      totalTimeElapsed: 0,
+                    },
+                  })
+                },
+              )
+              ->ignore
+              getItemsOrThrowRejectFns->Js.Array2.push(reject)->ignore
+            })
+          }),
+        }
+      },
     }
   }
 }

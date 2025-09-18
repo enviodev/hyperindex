@@ -50,6 +50,7 @@ module WriteThrottlers = {
 type t = {
   config: Config.t,
   chainManager: ChainManager.t,
+  processedBatches: int,
   currentlyProcessingBatch: bool,
   rollbackState: rollbackState,
   maxBatchSize: int,
@@ -66,6 +67,7 @@ let make = (~config: Config.t, ~chainManager: ChainManager.t, ~shouldUseTui=fals
   {
     config,
     currentlyProcessingBatch: false,
+    processedBatches: 0,
     chainManager,
     maxBatchSize: Env.maxProcessBatchSize,
     indexerStartTime: Js.Date.make(),
@@ -121,7 +123,7 @@ type action =
       progressedChains: array<Batch.progressedChain>,
       items: array<Internal.item>,
     })
-  | SetCurrentlyProcessing(bool)
+  | StartProcessingBatch
   | EnterReorgThreshold
   | UpdateQueues({
       updatedFetchStates: ChainMap.t<FetchState.t>,
@@ -627,6 +629,7 @@ let actionReducer = (state: t, action: action) => {
       ...state,
       chainManager: state.chainManager->updateProgressedChains(~progressedChains, ~items),
       currentlyProcessingBatch: false,
+      processedBatches: state.processedBatches + 1,
     }
 
     let shouldExit = EventProcessing.allChainsEventsProcessedToEndblock(
@@ -653,7 +656,7 @@ let actionReducer = (state: t, action: action) => {
       ),
     )
 
-  | SetCurrentlyProcessing(currentlyProcessingBatch) => ({...state, currentlyProcessingBatch}, [])
+  | StartProcessingBatch => ({...state, currentlyProcessingBatch: true}, [])
   | EnterReorgThreshold =>
     Logging.info("Reorg threshold reached")
     Prometheus.ReorgThreshold.set(~isInReorgThreshold=true)
@@ -722,7 +725,10 @@ let invalidatedActionReducer = (state: t, action: action) =>
   switch (state, action) {
   | ({rollbackState: RollingBack(_)}, EventBatchProcessed(_)) =>
     Logging.info("Finished processing batch before rollback, actioning rollback")
-    ({...state, currentlyProcessingBatch: false}, [Rollback])
+    (
+      {...state, currentlyProcessingBatch: false, processedBatches: state.processedBatches + 1},
+      [Rollback],
+    )
   | (_, ErrorExit(_)) => actionReducer(state, action)
   | _ =>
     Logging.info({
@@ -921,7 +927,7 @@ let injectedTaskReducer = (
       switch batch {
       | {progressedChains: []} => ()
       | {items: [], progressedChains} =>
-        dispatchAction(SetCurrentlyProcessing(true))
+        dispatchAction(StartProcessingBatch)
         // For this case there shouldn't be any FetchState changes
         // so we don't dispatch UpdateQueues - only update the progress for chains without events
         await Db.sql->InternalTable.Chains.setProgressedChains(
@@ -930,7 +936,7 @@ let injectedTaskReducer = (
         )
         dispatchAction(EventBatchProcessed({progressedChains, items: batch.items}))
       | {items, progressedChains, fetchStates, dcsToStoreByChainId} =>
-        dispatchAction(SetCurrentlyProcessing(true))
+        dispatchAction(StartProcessingBatch)
         dispatchAction(UpdateQueues({updatedFetchStates: fetchStates, shouldEnterReorgThreshold}))
 
         //In the case of a rollback, use the provided in memory store
