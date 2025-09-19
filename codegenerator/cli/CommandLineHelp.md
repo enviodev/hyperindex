@@ -26,7 +26,11 @@ This document contains the help content for the `envio` command-line program.
 * [`envio local db-migrate up`↴](#envio-local-db-migrate-up)
 * [`envio local db-migrate down`↴](#envio-local-db-migrate-down)
 * [`envio local db-migrate setup`↴](#envio-local-db-migrate-setup)
+* [`envio local hypersync`↴](#envio-local-hypersync)
+* [`envio local hypersync connect`↴](#envio-local-hypersync-connect)
 * [`envio start`↴](#envio-start)
+* [`envio login`↴](#envio-login)
+* [`envio logout`↴](#envio-logout)
 
 ## `envio`
 
@@ -41,6 +45,8 @@ This document contains the help content for the `envio` command-line program.
 * `benchmark-summary` — Prints a summary of the benchmark data after running the indexer with envio start --bench flag or setting 'ENVIO_SAVE_BENCHMARK_DATA=true'
 * `local` — Prepare local environment for envio testing
 * `start` — Start the indexer without any automatic codegen
+* `login` — Authenticate with envio hosted services and save credentials for authenticated actions
+* `logout` — Logout and clear stored credentials
 
 ###### **Options:**
 
@@ -248,6 +254,7 @@ Prepare local environment for envio testing
 
 * `docker` — Local Envio environment commands
 * `db-migrate` — Local Envio database commands
+* `hypersync` — Internal: HyperSync utilities
 
 
 
@@ -318,6 +325,26 @@ Setup database by dropping schema and then running migrations
 
 
 
+## `envio local hypersync`
+
+Internal: HyperSync utilities
+
+**Usage:** `envio local hypersync <COMMAND>`
+
+###### **Subcommands:**
+
+* `connect` — Connect HyperSync: create user (idempotent), create API token, store it
+
+
+
+## `envio local hypersync connect`
+
+Connect HyperSync: create user (idempotent), create API token, store it
+
+**Usage:** `envio local hypersync connect`
+
+
+
 ## `envio start`
 
 Start the indexer without any automatic codegen
@@ -328,6 +355,22 @@ Start the indexer without any automatic codegen
 
 * `-r`, `--restart` — Clear your database and restart indexing from scratch
 * `-b`, `--bench` — Saves benchmark data to a file during indexing
+
+
+
+## `envio login`
+
+Authenticate with envio hosted services and save credentials for authenticated actions
+
+**Usage:** `envio login`
+
+
+
+## `envio logout`
+
+Logout and clear stored credentials
+
+**Usage:** `envio logout`
 
 
 

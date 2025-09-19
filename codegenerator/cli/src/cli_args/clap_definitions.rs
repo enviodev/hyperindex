@@ -66,6 +66,12 @@ pub enum CommandType {
     ///Start the indexer without any automatic codegen
     Start(StartArgs),
 
+    ///Authenticate with envio hosted services and save credentials for authenticated actions
+    Login,
+
+    ///Logout and clear stored credentials
+    Logout,
+
     #[clap(hide = true)]
     #[command(subcommand)]
     Script(Script),
@@ -106,6 +112,10 @@ pub enum LocalCommandTypes {
     /// Local Envio database commands
     #[command(subcommand)]
     DbMigrate(DbMigrateSubcommands),
+
+    /// Internal: HyperSync utilities
+    #[command(subcommand)]
+    Hypersync(HypersyncLocalSubcommands),
 }
 
 #[derive(Subcommand, Debug, Clone)]
@@ -124,6 +134,12 @@ pub enum DbMigrateSubcommands {
     Down,
     ///Setup database by dropping schema and then running migrations
     Setup,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum HypersyncLocalSubcommands {
+    ///Connect HyperSync: create user (idempotent), create API token, store it
+    Connect,
 }
 
 #[derive(Args, Debug, Clone)]
