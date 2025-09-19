@@ -30,6 +30,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
       ~eventConfigs,
       ~contracts=[],
       ~startBlock=0,
+      ~targetBufferSize=5000,
       ~chainId=0,
     )
 
@@ -82,7 +83,6 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
               blockTimestamp: eventItem.timestamp,
             },
             ~newItems=[batchItem],
-            ~currentBlockHeight=currentBlockNumber.contents,
           )
           ->Result.getExn
 
@@ -111,6 +111,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
       lastBlockScannedHashes: ReorgDetection.LastBlockScannedHashes.empty(
         ~confirmedBlockThreshold=200,
       ),
+      isFetchingAtHead: false,
       currentBlockHeight: 0,
       processingFilters: None,
     }
@@ -267,16 +268,17 @@ describe("getOrderedNextItem", () => {
         nextPartitionIndex: 1,
         queue: item->Option.mapWithDefault([], v => [v]),
         latestFullyFetchedBlock: latestFetchedBlock,
+        targetBufferSize: 5000,
+        latestOnBlockBlockNumber: latestFetchedBlock.blockNumber,
         startBlock: 0,
         endBlock: None,
-        isFetchingAtHead: false,
         normalSelection,
         chainId: 0,
         indexingContracts: Js.Dict.empty(),
         contractConfigs: Js.Dict.fromArray([("Gravatar", {FetchState.filterByAddresses: false})]),
         dcsToStore: None,
         blockLag: 0,
-        onBlockConfigs: None,
+        onBlockConfigs: [],
       }
     }
 

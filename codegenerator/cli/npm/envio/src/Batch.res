@@ -58,6 +58,18 @@ let getOrderedNextItem = (fetchStates: ChainMap.t<FetchState.t>): option<
   })
 }
 
+let hasUnorderedNextItem = (fetchStates: ChainMap.t<FetchState.t>) => {
+  fetchStates
+  ->ChainMap.values
+  ->Js.Array2.some(fetchState => {
+    fetchState->FetchState.isActivelyIndexing &&
+      switch fetchState->FetchState.getEarliestEvent {
+      | Item(_) => true
+      | NoItem(_) => false
+      }
+  })
+}
+
 let popOrderedBatchItems = (
   ~maxBatchSize,
   ~fetchStates: ChainMap.t<FetchState.t>,

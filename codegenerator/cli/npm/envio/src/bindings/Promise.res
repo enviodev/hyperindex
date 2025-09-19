@@ -3,6 +3,9 @@ type t<+'a> = promise<'a>
 @new
 external make: ((@uncurry 'a => unit, 'e => unit) => unit) => t<'a> = "Promise"
 
+@new
+external makeAsync: ((@uncurry 'a => unit, 'e => unit) => promise<unit>) => t<'a> = "Promise"
+
 @val @scope("Promise")
 external resolve: 'a => t<'a> = "resolve"
 
