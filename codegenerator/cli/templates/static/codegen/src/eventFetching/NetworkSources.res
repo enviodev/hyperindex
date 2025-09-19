@@ -13,6 +13,7 @@ let evm = (
   ~allEventSignatures,
   ~shouldUseHypersyncClientDecoder,
   ~rpcs: array<rpc>,
+  ~lowercaseAddresses,
 ) => {
   let eventRouter =
     contracts
@@ -33,6 +34,7 @@ let evm = (
         apiToken: Env.envioApiToken,
         clientMaxRetries: Env.hyperSyncClientMaxRetries,
         clientTimeoutMillis: Env.hyperSyncClientTimeoutMillis,
+        lowercaseAddresses,
       }),
     ]
   | _ => []
