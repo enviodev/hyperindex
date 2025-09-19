@@ -16,7 +16,9 @@ pub mod evm {
             chain_helpers,
             contract_import::converters::{NetworkKind, SelectedContract},
             human_config::{
-                evm::{ContractConfig, EventConfig, HumanConfig, Network, NetworkRpc},
+                evm::{
+                    AddressFormat, ContractConfig, EventConfig, HumanConfig, Network, NetworkRpc,
+                },
                 GlobalContract, NetworkContract,
             },
             system_config::EvmAbi,
@@ -171,7 +173,7 @@ pub mod evm {
                 field_selection: None,
                 raw_events: None,
                 preload_handlers: Some(true),
-                address_format: None,
+                address_format: Some(AddressFormat::Lowercase),
             })
         }
 
