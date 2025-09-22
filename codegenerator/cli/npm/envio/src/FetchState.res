@@ -61,7 +61,7 @@ type t = {
   contractConfigs: dict<contractConfig>,
   // Registered dynamic contracts that need to be stored in the db
   // Should read them at the same time when getting items for the batch
-  dcsToStore: option<array<indexingContract>>,
+  dcsToStore: array<indexingContract>,
   // Not used for logic - only metadata
   chainId: int,
   // The block number of the latest block fetched
@@ -590,8 +590,8 @@ let registerDynamicContracts = (
       fetchState->updateInternal(
         ~partitions=fetchState.partitions->Js.Array2.concat(newPartitions),
         ~dcsToStore=switch fetchState.dcsToStore {
-        | Some(existingDcs) => Some(Array.concat(existingDcs, dcsToStore))
-        | None => Some(dcsToStore)
+        | [] => dcsToStore
+        | existingDcs => Array.concat(existingDcs, dcsToStore)
         },
         ~indexingContracts=// We don't need registeringContracts anymore,
         // so we can safely mixin indexingContracts in it
@@ -1130,7 +1130,7 @@ let make = (
     latestOnBlockBlockNumber: progressBlockNumber,
     normalSelection,
     indexingContracts,
-    dcsToStore: None,
+    dcsToStore: [],
     blockLag,
     onBlockConfigs,
     targetBufferSize,
@@ -1241,14 +1241,9 @@ let rollback = (fetchState: t, ~firstChangeEvent) => {
     ~indexingContracts,
     ~mutItems=fetchState.queue->pruneQueueFromFirstChangeEvent(~firstChangeEvent),
     ~dcsToStore=switch fetchState.dcsToStore {
-    | Some(dcsToStore) =>
-      let filtered =
-        dcsToStore->Js.Array2.filter(dc => !(addressesToRemove->Utils.Set.has(dc.address)))
-      switch filtered {
-      | [] => None
-      | _ => Some(filtered)
-      }
-    | None => None
+    | [] as empty => empty
+    | dcsToStore =>
+      dcsToStore->Js.Array2.filter(dc => !(addressesToRemove->Utils.Set.has(dc.address)))
     },
   )
 }

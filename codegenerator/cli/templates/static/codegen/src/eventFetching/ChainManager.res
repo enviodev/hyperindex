@@ -127,20 +127,56 @@ let createBatch = (chainManager: t, ~maxBatchSize: int): Batch.t => {
   }
 
   let dcsToStoreByChainId = Js.Dict.empty()
-  // Needed to recalculate the computed queue sizes
-  let fetchStates = fetchStates->ChainMap.map(fetchState => {
-    switch fetchState.dcsToStore {
-    | Some(dcs) => dcsToStoreByChainId->Js.Dict.set(fetchState.chainId->Int.toString, dcs)
-    | None => ()
+  // Needed to:
+  // - Recalculate the computed queue sizes
+  // - Accumulate registered dynamic contracts to store in the db
+  // - Trigger onBlock pointer update
+  let updatedFetchStates = fetchStates->ChainMap.map(fetchState => {
+    switch sizePerChain->Utils.Dict.dangerouslyGetNonOption(fetchState.chainId->Int.toString) {
+    | Some(_) =>
+      switch fetchState.dcsToStore {
+      | [] => fetchState->FetchState.updateInternal
+      | dcs => {
+          let leftDcsToStore = []
+          let batchDcs = []
+          let updatedFetchState = fetchState->FetchState.updateInternal(~dcsToStore=leftDcsToStore)
+          let nextProgressBlockNumber = updatedFetchState->FetchState.getProgressBlockNumber
+          let nextProgressNextBlockLogIndex =
+            updatedFetchState->FetchState.getProgressNextBlockLogIndex
+
+          dcs->Array.forEach(dc => {
+            // Important: This should be a registering block number.
+            // This works for now since dc.startBlock is a registering block number.
+            if (
+              dc.startBlock <= nextProgressBlockNumber ||
+                switch (nextProgressNextBlockLogIndex, dc.register) {
+                | (Some(nextProgressNextBlockLogIndex), DC(dcData)) =>
+                  dc.startBlock === nextProgressBlockNumber + 1 &&
+                    dcData.registeringEventLogIndex <= nextProgressNextBlockLogIndex
+                | _ => false
+                }
+            ) {
+              batchDcs->Array.push(dc)
+            } else {
+              // Mutate the array we passed to the updateInternal beforehand
+              leftDcsToStore->Array.push(dc)
+            }
+          })
+
+          dcsToStoreByChainId->Js.Dict.set(fetchState.chainId->Int.toString, batchDcs)
+          updatedFetchState
+        }
+      }
+    // Skip not affected chains
+    | None => fetchState
     }
-    fetchState->FetchState.updateInternal(~dcsToStore=None)
   })
 
   let progressedChains = []
   chainManager.chainFetchers
   ->ChainMap.entries
   ->Array.forEach(((chain, chainFetcher)) => {
-    let updatedFetchState = fetchStates->ChainMap.get(chain)
+    let updatedFetchState = updatedFetchStates->ChainMap.get(chain)
     let nextProgressBlockNumber = updatedFetchState->FetchState.getProgressBlockNumber
     let maybeItemsCountInBatch =
       sizePerChain->Utils.Dict.dangerouslyGetNonOption(
@@ -171,7 +207,7 @@ let createBatch = (chainManager: t, ~maxBatchSize: int): Batch.t => {
   let batchSize = items->Array.length
   if batchSize > 0 {
     let fetchedEventsBuffer =
-      fetchStates
+      updatedFetchStates
       ->ChainMap.entries
       ->Array.map(((chain, fetchState)) => (
         chain->ChainMap.Chain.toString,
@@ -202,7 +238,7 @@ let createBatch = (chainManager: t, ~maxBatchSize: int): Batch.t => {
   {
     items,
     progressedChains,
-    fetchStates,
+    updatedFetchStates,
     dcsToStoreByChainId,
   }
 }

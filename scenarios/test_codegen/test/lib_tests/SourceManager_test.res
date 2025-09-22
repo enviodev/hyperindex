@@ -194,7 +194,7 @@ describe("SourceManager fetchNext", () => {
       chainId: 0,
       indexingContracts,
       contractConfigs: Js.Dict.empty(),
-      dcsToStore: None,
+      dcsToStore: [],
       blockLag: 0,
       onBlockConfigs: [],
       // All the null values should be computed during updateInternal

@@ -161,7 +161,7 @@ describe("FetchState.make", () => {
         chainId: 0,
         indexingContracts: fetchState.indexingContracts,
         contractConfigs: fetchState.contractConfigs,
-        dcsToStore: None,
+        dcsToStore: [],
         blockLag: 0,
         onBlockConfigs: [],
       },
@@ -234,7 +234,7 @@ describe("FetchState.make", () => {
           chainId,
           indexingContracts: fetchState.indexingContracts,
           contractConfigs: fetchState.contractConfigs,
-          dcsToStore: None,
+          dcsToStore: [],
           blockLag: 0,
           onBlockConfigs: [],
         },
@@ -300,7 +300,7 @@ describe("FetchState.make", () => {
           chainId,
           indexingContracts: fetchState.indexingContracts,
           contractConfigs: fetchState.contractConfigs,
-          dcsToStore: None,
+          dcsToStore: [],
           blockLag: 0,
           onBlockConfigs: [],
         },
@@ -398,7 +398,7 @@ describe("FetchState.make", () => {
           chainId,
           indexingContracts: fetchState.indexingContracts,
           contractConfigs: fetchState.contractConfigs,
-          dcsToStore: None,
+          dcsToStore: [],
           blockLag: 0,
           onBlockConfigs: [],
         },
@@ -704,7 +704,7 @@ describe("FetchState.registerDynamicContracts", () => {
 
     Assert.deepEqual(
       updatedFetchState.dcsToStore,
-      Some([dc2]),
+      [dc2],
       ~message="Should choose the earliest dc from the batch",
     )
     Assert.deepEqual(
@@ -754,7 +754,7 @@ describe("FetchState.registerDynamicContracts", () => {
       updatedFetchState,
       {
         ...fetchState,
-        dcsToStore: Some([dc1, dc3, dc2]),
+        dcsToStore: [dc1, dc3, dc2],
         indexingContracts: updatedFetchState.indexingContracts,
         nextPartitionIndex: 2,
         partitions: fetchState.partitions->Array.concat([
@@ -874,7 +874,7 @@ describe("FetchState.registerDynamicContracts", () => {
           chainId,
           indexingContracts: fetchState.indexingContracts,
           contractConfigs: fetchState.contractConfigs,
-          dcsToStore: None,
+          dcsToStore: [],
           blockLag: 0,
           onBlockConfigs: [],
         },
@@ -915,7 +915,7 @@ describe("FetchState.getNextQuery & integration", () => {
       queue: [mockEvent(~blockNumber=2), mockEvent(~blockNumber=1)],
       startBlock: 0,
       endBlock: None,
-      dcsToStore: None,
+      dcsToStore: [],
       blockLag: 0,
       normalSelection,
       chainId,
@@ -938,7 +938,7 @@ describe("FetchState.getNextQuery & integration", () => {
   let makeIntermidiateDcMerge = (): FetchState.t => {
     let normalSelection = makeInitial().normalSelection
     {
-      dcsToStore: Some([dc2, dc1, dc3]),
+      dcsToStore: [dc2, dc1, dc3],
       partitions: [
         {
           id: "0",
@@ -1222,7 +1222,7 @@ describe("FetchState.getNextQuery & integration", () => {
       fetchStateWithDcs,
       {
         ...fetchState,
-        dcsToStore: Some([dc2, dc1, dc3]),
+        dcsToStore: [dc2, dc1, dc3],
         indexingContracts: makeIndexingContractsWithDynamics(
           [dc2, dc1, dc3],
           ~static=[mockAddress0],
@@ -1658,7 +1658,7 @@ describe("FetchState.getNextQuery & integration", () => {
       fetchStateAfterRollback1,
       {
         ...fetchState,
-        dcsToStore: Some([dc1]),
+        dcsToStore: [dc1],
         indexingContracts: makeIndexingContractsWithDynamics([dc1], ~static=[mockAddress0]),
         partitions: [
           {
@@ -1698,7 +1698,7 @@ describe("FetchState.getNextQuery & integration", () => {
       fetchStateAfterRollback2,
       {
         ...fetchStateAfterRollback1,
-        dcsToStore: None,
+        dcsToStore: [],
         indexingContracts: makeIndexingContractsWithDynamics([], ~static=[mockAddress0]),
         partitions: [
           {
@@ -1779,7 +1779,7 @@ describe("FetchState.getNextQuery & integration", () => {
       fetchStateAfterRollback,
       {
         ...fetchState,
-        dcsToStore: None,
+        dcsToStore: [],
         indexingContracts: Js.Dict.empty(),
         partitions: [
           {
@@ -1866,7 +1866,7 @@ describe("FetchState unit tests for specific cases", () => {
       updatedFetchState,
       {
         ...fetchState,
-        dcsToStore: None,
+        dcsToStore: [],
         partitions: [
           {
             id: "0",

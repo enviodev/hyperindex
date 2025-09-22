@@ -774,6 +774,258 @@ describe("E2E rollback tests", () => {
     },
   )
 
+  Async.it("Rollback Dynamic Contract", async () => {
+    let sourceMock = M.Source.make(
+      [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
+      ~chain=#1337,
+    )
+    let indexerMock = await M.Indexer.make(
+      ~chains=[
+        {
+          chain: #1337,
+          sources: [sourceMock.source],
+        },
+      ],
+    )
+    await Utils.delay(0)
+
+    await initialEnterReorgThreshold(~sourceMock)
+
+    let calls = []
+    let handler: Types.HandlerTypes.loader<unit, unit> = async ({event}) => {
+      calls->Array.push(event.block.number->Int.toString ++ "-" ++ event.logIndex->Int.toString)
+    }
+
+    sourceMock.resolveGetItemsOrThrow(
+      [
+        {
+          blockNumber: 101,
+          logIndex: 0,
+          handler,
+        },
+        {
+          blockNumber: 102,
+          logIndex: 0,
+          handler,
+        },
+        {
+          blockNumber: 102,
+          logIndex: 2,
+          contractRegister: async ({context}) => {
+            context.addSimpleNft(TestHelpers.Addresses.mockAddresses->Array.getUnsafe(0))
+          },
+          handler,
+        },
+        {
+          blockNumber: 103,
+          logIndex: 2,
+          contractRegister: async ({context}) => {
+            context.addSimpleNft(TestHelpers.Addresses.mockAddresses->Array.getUnsafe(1))
+          },
+          handler,
+        },
+        {
+          blockNumber: 104,
+          logIndex: 2,
+          contractRegister: async ({context}) => {
+            context.addSimpleNft(TestHelpers.Addresses.mockAddresses->Array.getUnsafe(2))
+          },
+          handler,
+        },
+      ],
+      ~latestFetchedBlockNumber=104,
+    )
+    await indexerMock.getBatchWritePromise()
+
+    let expectedGetItemsCallsAfterFirstBatch = [
+      {
+        "fromBlock": 0,
+        "toBlock": Some(100),
+        "retry": 0,
+      },
+      {
+        "fromBlock": 101,
+        "toBlock": None,
+        "retry": 0,
+      },
+      {
+        "fromBlock": 102,
+        "toBlock": Some(104),
+        "retry": 0,
+      },
+    ]
+    Assert.deepEqual(
+      (calls, sourceMock.getItemsOrThrowCalls),
+      (["101-0"], expectedGetItemsCallsAfterFirstBatch),
+      ~message=`Should query newly registered contracts first,
+      before processing the blocks 102 and 104
+      (since they might add new events with lower log index)`,
+    )
+    Assert.deepEqual(
+      await indexerMock.query(module(InternalTable.DynamicContractRegistry)),
+      [],
+      ~message="Shouldn't store dynamic contracts at this point",
+    )
+
+    sourceMock.resolveGetItemsOrThrow(
+      [
+        {
+          blockNumber: 102,
+          logIndex: 1,
+          handler,
+        },
+      ],
+      ~latestFetchedBlockNumber=102,
+    )
+    await indexerMock.getBatchWritePromise()
+    Assert.deepEqual(
+      (calls, sourceMock.getItemsOrThrowCalls),
+      (
+        ["101-0", "102-0", "102-1", "102-2"],
+        expectedGetItemsCallsAfterFirstBatch->Array.concat([
+          {
+            "fromBlock": 103,
+            "toBlock": Some(104),
+            "retry": 0,
+          },
+        ]),
+      ),
+      ~message=`Should process the block 102 after all dynamic contracts finished fetching it`,
+    )
+    Assert.deepEqual(
+      await indexerMock.query(module(InternalTable.DynamicContractRegistry)),
+      [
+        {
+          id: `1337-${TestHelpers.Addresses.mockAddresses->Array.getUnsafe(0)->Address.toString}`,
+          chainId: 1337,
+          registeringEventBlockNumber: 102,
+          registeringEventLogIndex: 2,
+          registeringEventBlockTimestamp: 102,
+          registeringEventContractName: "MockContract",
+          registeringEventName: "MockEvent",
+          registeringEventSrcAddress: "0x0000000000000000000000000000000000000000"->Address.unsafeFromString,
+          contractAddress: TestHelpers.Addresses.mockAddresses->Array.getUnsafe(0),
+          contractName: "SimpleNft",
+        },
+      ],
+      ~message="Added the processed dynamic contract to the db",
+    )
+
+    sourceMock.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=103)
+    await indexerMock.getBatchWritePromise()
+    Assert.deepEqual(
+      (await indexerMock.query(module(InternalTable.DynamicContractRegistry)))->Array.length,
+      2,
+      ~message="Should add the processed dynamic contracts to the db",
+    )
+
+    // Should trigger rollback
+    sourceMock.resolveGetItemsOrThrow(
+      [],
+      ~prevRangeLastBlock={
+        blockNumber: 103,
+        blockHash: "0x103-reorged",
+      },
+    )
+    await Utils.delay(0)
+    await Utils.delay(0)
+
+    Assert.deepEqual(
+      sourceMock.getBlockHashesCalls,
+      [[100, 101, 102, 103, 104]],
+      ~message="Should have called getBlockHashes to find rollback depth",
+    )
+    sourceMock.resolveGetBlockHashes([
+      // The block 102 is untouched so we can rollback to it
+      {blockNumber: 100, blockHash: "0x100", blockTimestamp: 100},
+      {blockNumber: 101, blockHash: "0x101", blockTimestamp: 101},
+      {blockNumber: 102, blockHash: "0x102", blockTimestamp: 102},
+      {blockNumber: 103, blockHash: "0x103-reorged", blockTimestamp: 103},
+      {blockNumber: 104, blockHash: "0x104-reorged", blockTimestamp: 104},
+    ])
+
+    sourceMock.getItemsOrThrowCalls->Utils.Array.clearInPlace
+
+    await indexerMock.getRollbackReadyPromise()
+    Assert.deepEqual(
+      sourceMock.getItemsOrThrowCalls,
+      [
+        {
+          "fromBlock": 103,
+          "toBlock": None,
+          "retry": 0,
+        },
+      ],
+      ~message="Should rollback fetch state and re-request items",
+    )
+    sourceMock.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=104)
+    await Utils.delay(0)
+    await Utils.delay(0)
+    await Utils.delay(0)
+    Assert.deepEqual(
+      (await indexerMock.query(module(InternalTable.DynamicContractRegistry)))->Array.length,
+      2,
+      ~message=`Nothing won't be rollbacked at this point. Since we need to process an event for this (rollback db only on batch write).
+This might be wrong after we start exposing a block hash for progress block.`,
+    )
+
+    sourceMock.resolveGetItemsOrThrow(
+      [
+        {
+          blockNumber: 104,
+          logIndex: 0,
+          handler,
+        },
+      ],
+      ~latestFetchedBlockNumber=104,
+    )
+
+    await indexerMock.getBatchWritePromise()
+
+    Assert.deepEqual(
+      await indexerMock.query(module(InternalTable.DynamicContractRegistry)),
+      [
+        {
+          id: `1337-${TestHelpers.Addresses.mockAddresses->Array.getUnsafe(0)->Address.toString}`,
+          chainId: 1337,
+          registeringEventBlockNumber: 102,
+          registeringEventLogIndex: 2,
+          registeringEventBlockTimestamp: 102,
+          registeringEventContractName: "MockContract",
+          registeringEventName: "MockEvent",
+          registeringEventSrcAddress: "0x0000000000000000000000000000000000000000"->Address.unsafeFromString,
+          contractAddress: TestHelpers.Addresses.mockAddresses->Array.getUnsafe(0),
+          contractName: "SimpleNft",
+        },
+      ],
+      ~message="Should have only one dynamic contract in the db. The second one rollbacked from db, the third one rollbacked from fetch state",
+    )
+    Assert.deepEqual(
+      sourceMock.getItemsOrThrowCalls,
+      [
+        {
+          "fromBlock": 103,
+          "toBlock": None,
+          "retry": 0,
+        },
+        {
+          "fromBlock": 103,
+          // We rollback fetch state when we have two partitions.
+          // It should be possible to merge them during rollback,
+          // which we should ideally do.
+          "toBlock": Some(104),
+          "retry": 0,
+        },
+        {
+          "fromBlock": 105,
+          "toBlock": None,
+          "retry": 0,
+        },
+      ],
+      ~message="Should correctly continue fetching from block 105 after rolling back the db",
+    )
+  })
+
   Async.it("Rollback of unordered multichain indexer (single entity id change)", async () => {
     let sourceMock1337 = M.Source.make(
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],

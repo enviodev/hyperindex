@@ -902,7 +902,7 @@ let injectedTaskReducer = (
     if !state.currentlyProcessingBatch && !isRollingBack(state) {
       let batch = state.chainManager->ChainManager.createBatch(~maxBatchSize=state.maxBatchSize)
 
-      let updatedFetchStates = batch.fetchStates
+      let updatedFetchStates = batch.updatedFetchStates
 
       let isInReorgThreshold = state.chainManager.isInReorgThreshold
       let isBelowReorgThreshold =
@@ -935,9 +935,9 @@ let injectedTaskReducer = (
           ~progressedChains,
         )
         dispatchAction(EventBatchProcessed({progressedChains, items: batch.items}))
-      | {items, progressedChains, fetchStates, dcsToStoreByChainId} =>
+      | {items, progressedChains, updatedFetchStates, dcsToStoreByChainId} =>
         dispatchAction(StartProcessingBatch)
-        dispatchAction(UpdateQueues({updatedFetchStates: fetchStates, shouldEnterReorgThreshold}))
+        dispatchAction(UpdateQueues({updatedFetchStates, shouldEnterReorgThreshold}))
 
         //In the case of a rollback, use the provided in memory store
         //With rolled back values

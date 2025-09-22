@@ -188,6 +188,10 @@ module Array = {
     }
   }
 
+  let clearInPlace: array<'a> => unit = %raw(`(arr) => {
+    arr.length = 0
+  }`)
+
   /**
   Creates a shallow copy of the array and sets the value at the given index
   */

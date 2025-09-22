@@ -159,7 +159,7 @@ describe("ChainManager", () => {
           // ensure that the events are ordered correctly
           switch eventsInBlock {
           | {items: []} => chainManager
-          | {items, fetchStates} =>
+          | {items, updatedFetchStates} =>
             items->Belt.Array.forEach(
               i => {
                 let _ = allEventsRead->Js.Array2.push(i)
@@ -180,7 +180,7 @@ describe("ChainManager", () => {
 
             let nextChainFetchers = chainManager.chainFetchers->ChainMap.mapWithKey(
               (chain, fetcher) => {
-                let fetchState = fetchStates->ChainMap.get(chain)
+                let fetchState = updatedFetchStates->ChainMap.get(chain)
                 {
                   ...fetcher,
                   fetchState,
@@ -276,7 +276,7 @@ describe("getOrderedNextItem", () => {
         chainId: 0,
         indexingContracts: Js.Dict.empty(),
         contractConfigs: Js.Dict.fromArray([("Gravatar", {FetchState.filterByAddresses: false})]),
-        dcsToStore: None,
+        dcsToStore: [],
         blockLag: 0,
         onBlockConfigs: [],
       }

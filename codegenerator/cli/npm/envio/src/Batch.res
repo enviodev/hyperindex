@@ -9,7 +9,7 @@ type progressedChain = {
 type t = {
   items: array<Internal.item>,
   progressedChains: array<progressedChain>,
-  fetchStates: ChainMap.t<FetchState.t>,
+  updatedFetchStates: ChainMap.t<FetchState.t>,
   dcsToStoreByChainId: dict<array<FetchState.indexingContract>>,
 }
 
