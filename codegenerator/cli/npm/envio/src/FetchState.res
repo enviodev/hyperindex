@@ -1286,27 +1286,27 @@ let filterAndSortForUnorderedBatch = {
     }
   }
 
-  let hasFullBatch = ({queue} as fetchState: t, ~maxBatchSize) => {
+  let hasFullBatch = ({queue} as fetchState: t, ~batchSizeTarget) => {
     // Queue is ordered from latest to earliest, so the earliest eligible
     // item for a full batch of size B is at index (length - B).
     // Do NOT subtract an extra 1 here; when length === B we should still
     // classify the queue as full and probe index 0.
-    let targetBlockIdx = queue->Array.length - maxBatchSize
+    let targetBlockIdx = queue->Array.length - batchSizeTarget
     if targetBlockIdx < 0 {
       false
     } else {
-      // Unsafe can fail when maxBatchSize is 0,
+      // Unsafe can fail when batchSizeTarget is 0,
       // but we ignore the case
       queue->Js.Array2.unsafe_get(targetBlockIdx)->Internal.getItemBlockNumber <=
         fetchState->bufferBlockNumber
     }
   }
 
-  (fetchStates: array<t>, ~maxBatchSize: int) => {
+  (fetchStates: array<t>, ~batchSizeTarget: int) => {
     fetchStates
     ->Array.keepU(hasBatchItem)
     ->Js.Array2.sortInPlaceWith((a: t, b: t) => {
-      switch (a->hasFullBatch(~maxBatchSize), b->hasFullBatch(~maxBatchSize)) {
+      switch (a->hasFullBatch(~batchSizeTarget), b->hasFullBatch(~batchSizeTarget)) {
       | (true, true)
       | (false, false) =>
         // Use unsafe since we filtered out all queues without batch items

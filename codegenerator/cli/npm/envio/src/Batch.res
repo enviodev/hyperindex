@@ -71,14 +71,14 @@ let hasUnorderedNextItem = (fetchStates: ChainMap.t<FetchState.t>) => {
 }
 
 let popOrderedBatchItems = (
-  ~maxBatchSize,
+  ~batchSizeTarget,
   ~fetchStates: ChainMap.t<FetchState.t>,
   ~sizePerChain: dict<int>,
 ) => {
   let items = []
 
   let rec loop = () =>
-    if items->Array.length < maxBatchSize {
+    if items->Array.length < batchSizeTarget {
       switch fetchStates->getOrderedNextItem {
       | Some({earliestEvent, chain}) =>
         switch earliestEvent {
@@ -99,7 +99,7 @@ let popOrderedBatchItems = (
 }
 
 let popUnorderedBatchItems = (
-  ~maxBatchSize,
+  ~batchSizeTarget,
   ~fetchStates: ChainMap.t<FetchState.t>,
   ~sizePerChain: dict<int>,
 ) => {
@@ -108,7 +108,7 @@ let popUnorderedBatchItems = (
   let preparedFetchStates =
     fetchStates
     ->ChainMap.values
-    ->FetchState.filterAndSortForUnorderedBatch(~maxBatchSize)
+    ->FetchState.filterAndSortForUnorderedBatch(~batchSizeTarget)
 
   let idx = ref(0)
   let preparedNumber = preparedFetchStates->Array.length
@@ -117,12 +117,12 @@ let popUnorderedBatchItems = (
   // Accumulate items for all actively indexing chains
   // the way to group as many items from a single chain as possible
   // This way the loaders optimisations will hit more often
-  while batchSize.contents < maxBatchSize && idx.contents < preparedNumber {
+  while batchSize.contents < batchSizeTarget && idx.contents < preparedNumber {
     let fetchState = preparedFetchStates->Js.Array2.unsafe_get(idx.contents)
     let batchSizeBeforeTheChain = batchSize.contents
 
     let rec loop = () =>
-      if batchSize.contents < maxBatchSize {
+      if batchSize.contents < batchSizeTarget {
         let earliestEvent = fetchState->FetchState.getEarliestEvent
         switch earliestEvent {
         | NoItem(_) => ()

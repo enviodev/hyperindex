@@ -6,19 +6,20 @@ type t = {
   isInReorgThreshold: bool,
 }
 
-let calculateTargetBufferSize = activeChainsCount => {
+let calculateTargetBufferSize = (~activeChainsCount, ~config: Config.t) => {
   let targetBatchesInBuffer = 3
   switch Env.targetBufferSize {
   | Some(size) => size
   | None =>
-    Env.maxProcessBatchSize * (
-      activeChainsCount > targetBatchesInBuffer ? 1 : targetBatchesInBuffer
-    )
+    config.batchSize * (activeChainsCount > targetBatchesInBuffer ? 1 : targetBatchesInBuffer)
   }
 }
 
 let makeFromConfig = (~config: Config.t): t => {
-  let targetBufferSize = calculateTargetBufferSize(config.chainMap->ChainMap.size)
+  let targetBufferSize = calculateTargetBufferSize(
+    ~activeChainsCount=config.chainMap->ChainMap.size,
+    ~config,
+  )
   let chainFetchers =
     config.chainMap->ChainMap.map(ChainFetcher.makeFromConfig(_, ~config, ~targetBufferSize))
   {
@@ -45,8 +46,11 @@ let makeFromDbState = async (~initialState: Persistence.initialState, ~config: C
     hasStartedSavingHistory
   }
 
-  let targetBufferSize = calculateTargetBufferSize(initialState.chains->Array.length)
-  Prometheus.ProcessingMaxBatchSize.set(~maxBatchSize=Env.maxProcessBatchSize)
+  let targetBufferSize = calculateTargetBufferSize(
+    ~activeChainsCount=initialState.chains->Array.length,
+    ~config,
+  )
+  Prometheus.ProcessingMaxBatchSize.set(~maxBatchSize=config.batchSize)
   Prometheus.IndexingTargetBufferSize.set(~targetBufferSize)
   Prometheus.ReorgThreshold.set(~isInReorgThreshold)
 
@@ -108,7 +112,7 @@ let nextItemIsNone = (chainManager: t): bool => {
   }
 }
 
-let createBatch = (chainManager: t, ~maxBatchSize: int): Batch.t => {
+let createBatch = (chainManager: t, ~batchSizeTarget: int): Batch.t => {
   let refTime = Hrtime.makeTimer()
 
   //Make a copy of the queues and fetch states since we are going to mutate them
@@ -121,9 +125,9 @@ let createBatch = (chainManager: t, ~maxBatchSize: int): Batch.t => {
     | Ordered => fetchStates->ChainMap.size === 1
     }
   ) {
-    Batch.popUnorderedBatchItems(~maxBatchSize, ~fetchStates, ~sizePerChain)
+    Batch.popUnorderedBatchItems(~batchSizeTarget, ~fetchStates, ~sizePerChain)
   } else {
-    Batch.popOrderedBatchItems(~maxBatchSize, ~fetchStates, ~sizePerChain)
+    Batch.popOrderedBatchItems(~batchSizeTarget, ~fetchStates, ~sizePerChain)
   }
 
   let dcsToStoreByChainId = Js.Dict.empty()
