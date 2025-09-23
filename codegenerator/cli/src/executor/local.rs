@@ -1,5 +1,7 @@
 use crate::{
-    cli_args::clap_definitions::{DbMigrateSubcommands, LocalCommandTypes, LocalDockerSubcommands},
+    cli_args::clap_definitions::{
+        DbMigrateSubcommands, LocalCommandTypes, LocalDockerSubcommands, LocalPodmanSubcommands,
+    },
     commands,
     config_parsing::system_config::SystemConfig,
     persisted_state::PersistedState,
@@ -23,6 +25,15 @@ pub async fn run_local(
                 commands::docker::docker_compose_down_v(&config).await?;
             }
         },
+        LocalCommandTypes::Podman(subcommand) => match subcommand {
+            LocalPodmanSubcommands::Up => {
+                commands::podman::podman_compose_up_d(&config).await?;
+            }
+            LocalPodmanSubcommands::Down => {
+                commands::podman::podman_compose_down_v(&config).await?;
+            }
+        },
+
         LocalCommandTypes::DbMigrate(subcommand) => {
             //Use a closure just so running local dow doesn't need to construct persisted state
             let get_persisted_state = || -> Result<PersistedState> {

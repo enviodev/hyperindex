@@ -106,6 +106,9 @@ pub enum LocalCommandTypes {
     /// Local Envio database commands
     #[command(subcommand)]
     DbMigrate(DbMigrateSubcommands),
+    /// Local Envio environment commands
+    #[command(subcommand)]
+    Podman(LocalPodmanSubcommands),
 }
 
 #[derive(Subcommand, Debug, Clone)]
@@ -113,6 +116,14 @@ pub enum LocalDockerSubcommands {
     ///Create docker images required for local environment
     Up,
     ///Delete existing docker images on local environment
+    Down,
+}
+
+#[derive(Subcommand, Debug, Clone)]
+pub enum LocalPodmanSubcommands {
+    ///Create podman containers required for local environment
+    Up,
+    ///Delete existing podman containers on local environment
     Down,
 }
 

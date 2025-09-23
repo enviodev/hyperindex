@@ -210,6 +210,34 @@ pub mod docker {
     }
 }
 
+pub mod podman {
+
+    use super::execute_command;
+    use crate::config_parsing::system_config::SystemConfig;
+
+    pub async fn podman_compose_up_d(
+        config: &SystemConfig,
+    ) -> anyhow::Result<std::process::ExitStatus> {
+        println!("Podman Start");
+        let cmd = "podman";
+        let args = vec!["compose", "up", "-d"];
+        let current_dir = &config.parsed_project_paths.generated;
+
+        execute_command(cmd, args, current_dir).await
+    }
+    pub async fn podman_compose_down_v(
+        config: &SystemConfig,
+    ) -> anyhow::Result<std::process::ExitStatus> {
+        println!("Podman Down");
+
+        let cmd = "podman";
+        let args = vec!["compose", "down", "-v"];
+        let current_dir = &config.parsed_project_paths.generated;
+
+        execute_command(cmd, args, current_dir).await
+    }
+}
+
 pub mod db_migrate {
     use anyhow::{anyhow, Context};
 
