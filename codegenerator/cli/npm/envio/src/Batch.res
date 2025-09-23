@@ -101,7 +101,7 @@ let prepareOrderedBatch = (
 
         if newItemsCount > 0 {
           for idx in itemsCountBefore to itemsCountBefore + newItemsCount - 1 {
-            items->Js.Array2.push(fetchState->FetchState.getUnsafeItemAt(~index=idx))->ignore
+            items->Js.Array2.push(fetchState.buffer->Belt.Array.getUnsafe(idx))->ignore
           }
           batchSize := batchSize.contents + newItemsCount
           mutBatchSizePerChain->Utils.Dict.setByInt(
@@ -148,7 +148,7 @@ let prepareUnorderedBatch = (
       )
     if chainBatchSize > 0 {
       for idx in 0 to chainBatchSize - 1 {
-        items->Js.Array2.push(fetchState->FetchState.getUnsafeItemAt(~index=idx))->ignore
+        items->Js.Array2.push(fetchState.buffer->Belt.Array.getUnsafe(idx))->ignore
       }
       batchSize := batchSize.contents + chainBatchSize
       mutBatchSizePerChain->Utils.Dict.setByInt(fetchState.chainId, chainBatchSize)

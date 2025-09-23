@@ -130,7 +130,7 @@ let createBatch = (chainManager: t, ~batchSizeTarget: int): Batch.t => {
   let updatedFetchStates = fetchStates->ChainMap.map(fetchState => {
     switch batchSizePerChain->Utils.Dict.dangerouslyGetNonOption(fetchState.chainId->Int.toString) {
     | Some(batchSize) =>
-      let leftItems = fetchState.queue->Js.Array2.slice(~start=0, ~end_=-batchSize)
+      let leftItems = fetchState.buffer->Js.Array2.sliceFrom(batchSize)
       switch fetchState.dcsToStore {
       | [] => fetchState->FetchState.updateInternal(~mutItems=leftItems)
       | dcs => {
