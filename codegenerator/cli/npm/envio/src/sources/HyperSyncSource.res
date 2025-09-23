@@ -181,7 +181,7 @@ let make = (
     ~url=endpointUrl,
     ~apiToken,
     ~maxNumRetries=clientMaxRetries,
-    ~httpReqTimeoutMillis=clientTimeoutMillis, 
+    ~httpReqTimeoutMillis=clientTimeoutMillis,
     ~enableChecksumAddresses=!lowercaseAddresses,
   )
 
