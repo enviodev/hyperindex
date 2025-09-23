@@ -723,7 +723,17 @@ impl SystemConfig {
                     enable_raw_events: evm_config.raw_events.unwrap_or(false),
                     preload_handlers: evm_config.preload_handlers.unwrap_or(false),
                     lowercase_addresses: match evm_config.address_format {
-                        Some(super::human_config::evm::AddressFormat::Lowercase) => true,
+                        Some(super::human_config::evm::AddressFormat::Lowercase) => {
+                            // Validate that USE_HYPERSYNC_CLIENT_DECODER is not set to false when address_format is lowercase
+                            if let Ok(use_hypersync_decoder) =
+                                std::env::var("USE_HYPERSYNC_CLIENT_DECODER")
+                            {
+                                if use_hypersync_decoder.to_lowercase() == "false" {
+                                    panic!("Error: address_format 'lowercase' is not supported when USE_HYPERSYNC_CLIENT_DECODER is set to false. Please either set USE_HYPERSYNC_CLIENT_DECODER to true or change address_format to 'checksum'.");
+                                }
+                            }
+                            true
+                        }
                         _ => false,
                     },
                     human_config,
