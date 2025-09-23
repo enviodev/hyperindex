@@ -22,6 +22,7 @@ let rec getKnownBlockWithBackoff = async (
   ~chain,
   ~blockNumber,
   ~backoffMsOnFailure,
+  ~lowercaseAddresses: bool,
 ) =>
   switch await getKnownBlock(provider, blockNumber) {
   | exception err =>
@@ -39,8 +40,20 @@ let rec getKnownBlockWithBackoff = async (
       ~chain,
       ~blockNumber,
       ~backoffMsOnFailure=backoffMsOnFailure * 2,
+      ~lowercaseAddresses,
     )
-  | result => result
+  | result =>
+    if lowercaseAddresses {
+      // NOTE: this is wasteful if these fields are not selected in the users config.
+      //       There might be a better way to do this based on the block schema.
+      //       However this is not extremely expensive and good enough for now (only on rpc sync also).
+      {
+        ...result,
+        miner: result.miner->Address.Evm.fromAddressLowercaseOrThrow,
+      }
+    } else {
+      result
+    }
   }
 let getSuggestedBlockIntervalFromExn = {
   // Unknown provider: "retry with the range 123-456"
@@ -446,24 +459,6 @@ let sanitizeUrl = (url: string) => {
   }
 }
 
-let convertEthersLogToHyperSyncEvent = (log: Ethers.log): HyperSyncClient.ResponseTypes.event => {
-  let hyperSyncLog: HyperSyncClient.ResponseTypes.log = {
-    removed: log.removed->Option.getWithDefault(false),
-    index: log.logIndex,
-    transactionIndex: log.transactionIndex,
-    transactionHash: log.transactionHash,
-    blockHash: log.blockHash,
-    blockNumber: log.blockNumber,
-    address: log.address,
-    data: log.data,
-    topics: log.topics->Array.map(topic => Js.Nullable.return(topic)),
-  }
-
-  {
-    log: hyperSyncLog,
-  }
-}
-
 type options = {
   sourceFor: Source.sourceFor,
   syncConfig: InternalConfig.sourceSync,
@@ -473,6 +468,7 @@ type options = {
   eventRouter: EventRouter.t<Internal.evmEventConfig>,
   allEventSignatures: array<string>,
   shouldUseHypersyncClientDecoder: bool,
+  lowercaseAddresses: bool,
 }
 
 let make = (
@@ -485,6 +481,7 @@ let make = (
     eventRouter,
     allEventSignatures,
     shouldUseHypersyncClientDecoder,
+    lowercaseAddresses,
   }: options,
 ): t => {
   let urlHost = switch sanitizeUrl(url) {
@@ -529,6 +526,7 @@ let make = (
         ~chain,
         ~backoffMsOnFailure=1000,
         ~blockNumber,
+        ~lowercaseAddresses,
       ),
     ~onError=(am, ~exn) => {
       Logging.error({
@@ -553,6 +551,7 @@ let make = (
   let getEventTransactionOrThrow = makeThrowingGetEventTransaction(
     ~getTransactionFields=Ethers.JsonRpcProvider.makeGetTransactionFields(
       ~getTransactionByHash=LazyLoader.get(transactionLoader, _),
+      ~lowercaseAddresses,
     ),
   )
 
@@ -560,6 +559,28 @@ let make = (
   contracts->Belt.Array.forEach(contract => {
     contractNameAbiMapping->Js.Dict.set(contract.name, contract.abi)
   })
+
+  let convertEthersLogToHyperSyncEvent = (
+    log: Ethers.log,
+    ~lowercaseAddresses: bool,
+  ): HyperSyncClient.ResponseTypes.event => {
+    let hyperSyncLog: HyperSyncClient.ResponseTypes.log = {
+      removed: log.removed->Option.getWithDefault(false),
+      index: log.logIndex,
+      transactionIndex: log.transactionIndex,
+      transactionHash: log.transactionHash,
+      blockHash: log.blockHash,
+      blockNumber: log.blockNumber,
+      address: if lowercaseAddresses {
+        log.address->Address.Evm.fromAddressLowercaseOrThrow
+      } else {
+        log.address
+      },
+      data: log.data,
+      topics: log.topics->Array.map(topic => Js.Nullable.return(topic)),
+    }
+    {log: hyperSyncLog}
+  }
 
   let hscDecoder: ref<option<HyperSyncClient.Decoder.t>> = ref(None)
   let getHscDecoder = () => {
@@ -647,7 +668,8 @@ let make = (
 
     let parsedQueueItems = if shouldUseHypersyncClientDecoder {
       // Convert Ethers logs to HyperSync events
-      let hyperSyncEvents = logs->Array.map(convertEthersLogToHyperSyncEvent)
+      let hyperSyncEvents =
+        logs->Belt.Array.map(log => convertEthersLogToHyperSyncEvent(log, ~lowercaseAddresses))
 
       // Decode using HyperSyncClient decoder
       let parsedEvents = try await getHscDecoder().decodeEvents(hyperSyncEvents) catch {
@@ -665,32 +687,34 @@ let make = (
       }
 
       await logs
-      ->Array.mapWithIndex((idx, etherLog) => {
-        let topic0 = etherLog.topics->Js.Array2.unsafe_get(0)
+      ->Array.mapWithIndex((idx, log: Ethers.log) => {
+        let topic0 = log.topics->Js.Array2.unsafe_get(0)
+        let routedAddress = if lowercaseAddresses {
+          log.address->Address.Evm.fromAddressLowercaseOrThrow
+        } else {
+          log.address
+        }
+
         switch eventRouter->EventRouter.get(
           ~tag=EventRouter.getEvmEventId(
             ~sighash=topic0->EvmTypes.Hex.toString,
-            ~topicCount=etherLog.topics->Array.length,
+            ~topicCount=log.topics->Array.length,
           ),
           ~indexingContracts,
-          ~contractAddress=etherLog.address,
-          ~blockNumber=etherLog.blockNumber,
+          ~contractAddress=routedAddress,
+          ~blockNumber=log.blockNumber,
         ) {
         | None => None
         | Some(eventConfig) =>
-          let blockNumber = etherLog.blockNumber
-          let logIndex = etherLog.logIndex
           let maybeDecodedEvent = parsedEvents->Js.Array2.unsafe_get(idx)
           switch maybeDecodedEvent {
-          | Js.Nullable.Undefined => None
-          | Js.Nullable.Null => None
           | Js.Nullable.Value(decoded) =>
             Some(
               (
                 async () => {
                   let (block, transaction) = try await Promise.all2((
-                    etherLog->getEventBlockOrThrow,
-                    etherLog->getEventTransactionOrThrow(
+                    log->getEventBlockOrThrow,
+                    log->getEventTransactionOrThrow(
                       ~transactionSchema=eventConfig.transactionSchema,
                     ),
                   )) catch {
@@ -700,8 +724,8 @@ let make = (
                         FailedGettingFieldSelection({
                           message: "Failed getting selected fields. Please double-check your RPC provider returns correct data.",
                           exn,
-                          blockNumber,
-                          logIndex,
+                          blockNumber: log.blockNumber,
+                          logIndex: log.logIndex,
                         }),
                       ),
                     )
@@ -712,7 +736,7 @@ let make = (
                     timestamp: block.timestamp,
                     blockNumber: block.number,
                     chain,
-                    logIndex: etherLog.logIndex,
+                    logIndex: log.logIndex,
                     event: {
                       chainId: chain->ChainMap.Chain.toChainId,
                       params: decoded->eventConfig.convertHyperSyncEventArgs,
@@ -720,13 +744,16 @@ let make = (
                       block: block->(
                         Utils.magic: Ethers.JsonRpcProvider.block => Internal.eventBlock
                       ),
-                      srcAddress: etherLog.address,
-                      logIndex: etherLog.logIndex,
+                      srcAddress: routedAddress,
+                      logIndex: log.logIndex,
                     }->Internal.fromGenericEvent,
                   })
                 }
               )(),
             )
+          | Js.Nullable.Null
+          | Js.Nullable.Undefined =>
+            None
           }
         }
       })
@@ -737,6 +764,7 @@ let make = (
       await logs
       ->Belt.Array.keepMap(log => {
         let topic0 = log.topics->Js.Array2.unsafe_get(0)
+
         switch eventRouter->EventRouter.get(
           ~tag=EventRouter.getEvmEventId(
             ~sighash=topic0->EvmTypes.Hex.toString,

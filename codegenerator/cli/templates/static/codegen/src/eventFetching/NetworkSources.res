@@ -52,6 +52,7 @@ let evm = (
         shouldUseHypersyncClientDecoder: Env.Configurable.shouldUseHypersyncClientDecoder->Option.getWithDefault(
           shouldUseHypersyncClientDecoder,
         ),
+        lowercaseAddresses,
       }),
     )
   })
