@@ -83,27 +83,6 @@ type t = {
   onBlockConfigs: array<Internal.onBlockConfig>,
 }
 
-let copy = (fetchState: t) => {
-  {
-    maxAddrInPartition: fetchState.maxAddrInPartition,
-    partitions: fetchState.partitions,
-    startBlock: fetchState.startBlock,
-    endBlock: fetchState.endBlock,
-    nextPartitionIndex: fetchState.nextPartitionIndex,
-    latestFullyFetchedBlock: fetchState.latestFullyFetchedBlock,
-    latestOnBlockBlockNumber: fetchState.latestOnBlockBlockNumber,
-    normalSelection: fetchState.normalSelection,
-    chainId: fetchState.chainId,
-    contractConfigs: fetchState.contractConfigs,
-    indexingContracts: fetchState.indexingContracts,
-    dcsToStore: fetchState.dcsToStore,
-    blockLag: fetchState.blockLag,
-    queue: fetchState.queue->Array.copy,
-    onBlockConfigs: fetchState.onBlockConfigs,
-    targetBufferSize: fetchState.targetBufferSize,
-  }
-}
-
 let mergeIntoPartition = (p: partition, ~target: partition, ~maxAddrInPartition) => {
   switch (p, target) {
   | ({selection: {dependsOnAddresses: true}}, {selection: {dependsOnAddresses: true}}) => {
@@ -953,45 +932,53 @@ let getNextQuery = (
   }
 }
 
-type itemWithPopFn = {item: Internal.item, popItemOffQueue: unit => unit}
-
-/**
-Represents a fetchState partitions head of the  fetchedEventQueue as either
-an existing item, or no item with latest fetched block data
-*/
-type queueItem =
-  | Item(itemWithPopFn)
-  | NoItem({latestFetchedBlock: blockNumberAndTimestamp})
-
-/**
-Simple constructor for no item from partition
-*/
-let makeNoItem = ({latestFetchedBlock}: partition) => NoItem({
-  latestFetchedBlock: latestFetchedBlock,
-})
-
-/**
-Gets the earliest queueItem from thgetNodeEarliestEventWithUpdatedQueue.
-
-Finds the earliest queue item across all partitions and then returns that
-queue item with an update fetch state.
-*/
-let getEarliestEvent = (fetchState: t) => {
-  let {queue} = fetchState
-  switch fetchState.queue->Utils.Array.last {
-  | Some(item) =>
-    if item->Internal.getItemBlockNumber <= fetchState->bufferBlockNumber {
-      Item({item, popItemOffQueue: () => queue->Js.Array2.pop->ignore})
-    } else {
-      NoItem({
-        latestFetchedBlock: fetchState->bufferBlock,
-      })
-    }
-  | None =>
-    NoItem({
-      latestFetchedBlock: fetchState->bufferBlock,
-    })
+let getTimestampAt = (fetchState: t, ~index) => {
+  switch fetchState.queue->Utils.Array.at(
+    -1 - index,
+    // negative .at starts from -1
+  ) {
+  | Some(Event({timestamp})) => timestamp
+  | Some(Block(_)) =>
+    Js.Exn.raiseError("Block handlers are not supported for ordered multichain mode.")
+  | None => (fetchState->bufferBlock).blockTimestamp
   }
+}
+
+let hasReadyItem = ({queue} as fetchState: t) => {
+  switch queue->Utils.Array.last {
+  | Some(item) => item->Internal.getItemBlockNumber <= fetchState->bufferBlockNumber
+  | None => false
+  }
+}
+
+let getReadyItemsCount = (fetchState: t, ~targetSize: int, ~fromItem) => {
+  let readyBlockNumber = ref(fetchState->bufferBlockNumber)
+  let acc = ref(0)
+  let isFinished = ref(false)
+  while !isFinished.contents {
+    switch fetchState.queue->Utils.Array.at(
+      -1 - fromItem - acc.contents,
+      // negative .at starts from -1
+    ) {
+    | Some(item) =>
+      let itemBlockNumber = item->Internal.getItemBlockNumber
+      if itemBlockNumber <= readyBlockNumber.contents {
+        acc := acc.contents + 1
+        if acc.contents === targetSize {
+          // Should finish accumulating items from the same block
+          readyBlockNumber := itemBlockNumber
+        }
+      } else {
+        isFinished := true
+      }
+    | None => isFinished := true
+    }
+  }
+  acc.contents
+}
+
+let getUnsafeItemAt = (fetchState: t, ~index) => {
+  fetchState.queue->Utils.Array.at(-1 - index)->Option.getUnsafe
 }
 
 /**
@@ -1279,13 +1266,6 @@ let isReadyToEnterReorgThreshold = (
 }
 
 let filterAndSortForUnorderedBatch = {
-  let hasBatchItem = ({queue} as fetchState: t) => {
-    switch queue->Utils.Array.last {
-    | Some(item) => item->Internal.getItemBlockNumber <= fetchState->bufferBlockNumber
-    | None => false
-    }
-  }
-
   let hasFullBatch = ({queue} as fetchState: t, ~batchSizeTarget) => {
     // Queue is ordered from latest to earliest, so the earliest eligible
     // item for a full batch of size B is at index (length - B).
@@ -1304,7 +1284,7 @@ let filterAndSortForUnorderedBatch = {
 
   (fetchStates: array<t>, ~batchSizeTarget: int) => {
     fetchStates
-    ->Array.keepU(hasBatchItem)
+    ->Array.keepU(hasReadyItem)
     ->Js.Array2.sortInPlaceWith((a: t, b: t) => {
       switch (a->hasFullBatch(~batchSizeTarget), b->hasFullBatch(~batchSizeTarget)) {
       | (true, true)

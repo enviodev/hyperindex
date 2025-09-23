@@ -5,11 +5,27 @@ open Enums.ContractType
 let chainId = 0
 let targetBufferSize = 5000
 
-let getItem = (item: FetchState.queueItem) =>
+// Keep for backward compatibility of tests
+type oldQueueItem =
+  | Item(Internal.item)
+  | NoItem({latestFetchedBlock: FetchState.blockNumberAndTimestamp})
+
+let getItem = (item: oldQueueItem) =>
   switch item {
-  | Item({item}) => item->Some
+  | Item(item) => item->Some
   | NoItem(_) => None
   }
+
+let getEarliestEvent = (fetchState: FetchState.t) => {
+  let readyItemsCount = fetchState->FetchState.getReadyItemsCount(~targetSize=1, ~fromItem=0)
+  if readyItemsCount > 0 {
+    Item(fetchState->FetchState.getUnsafeItemAt(~index=0))
+  } else {
+    NoItem({
+      latestFetchedBlock: fetchState->FetchState.bufferBlock,
+    })
+  }
+}
 
 let mockAddress0 = TestHelpers.Addresses.mockAddresses[0]->Option.getExn
 let mockAddress1 = TestHelpers.Addresses.mockAddresses[1]->Option.getExn
@@ -2023,7 +2039,7 @@ describe("FetchState unit tests for specific cases", () => {
     let fetchState = makeInitial()
 
     Assert.deepEqual(
-      fetchState->FetchState.getEarliestEvent,
+      fetchState->getEarliestEvent,
       NoItem({
         latestFetchedBlock: {
           blockNumber: -1,
@@ -2055,7 +2071,7 @@ describe("FetchState unit tests for specific cases", () => {
       ->Result.getExn
 
     Assert.deepEqual(
-      fetchStateWithEvents->FetchState.getEarliestEvent->getItem,
+      fetchStateWithEvents->getEarliestEvent->getItem,
       Some(mockEvent(~blockNumber=2, ~logIndex=1)),
     )
 
@@ -2068,7 +2084,7 @@ describe("FetchState unit tests for specific cases", () => {
       ])
 
     Assert.deepEqual(
-      fetchStateWithDc->FetchState.getEarliestEvent->getItem,
+      fetchStateWithDc->getEarliestEvent->getItem,
       Some(mockEvent(~blockNumber=2, ~logIndex=1)),
       ~message=`Should allow to get event before the dc registration`,
     )
@@ -2091,7 +2107,7 @@ describe("FetchState unit tests for specific cases", () => {
     )
 
     Assert.deepEqual(
-      fetchState->FetchState.getEarliestEvent,
+      fetchState->getEarliestEvent,
       NoItem({
         latestFetchedBlock: {
           blockNumber: -1,
@@ -2119,7 +2135,7 @@ describe("FetchState unit tests for specific cases", () => {
     Js.log(updatedFetchState)
 
     Assert.deepEqual(
-      updatedFetchState->FetchState.getEarliestEvent,
+      updatedFetchState->getEarliestEvent,
       NoItem({
         latestFetchedBlock: {
           blockNumber: -1,
@@ -2159,7 +2175,7 @@ describe("FetchState unit tests for specific cases", () => {
     )
 
     Assert.deepEqual(
-      fetchState->FetchState.getEarliestEvent->getItem,
+      fetchState->getEarliestEvent->getItem,
       Some(mockEvent(~blockNumber=2, ~logIndex=1)),
     )
 
@@ -2168,7 +2184,7 @@ describe("FetchState unit tests for specific cases", () => {
       ->FetchState.registerDynamicContracts([
         makeDynContractRegistration(~contractAddress=mockAddress1, ~blockNumber=2),
       ])
-      ->FetchState.getEarliestEvent,
+      ->getEarliestEvent,
       NoItem({
         latestFetchedBlock: {
           blockNumber: 1,
@@ -2384,7 +2400,7 @@ describe("FetchState.filterAndSortForUnorderedBatch", () => {
 
       let prepared = FetchState.filterAndSortForUnorderedBatch(
         [fsLate, fsExcluded, fsEarly],
-        ~maxBatchSize=3,
+        ~batchSizeTarget=3,
       )
 
       Assert.deepEqual(
@@ -2428,7 +2444,7 @@ describe("FetchState.filterAndSortForUnorderedBatch", () => {
 
     let prepared = FetchState.filterAndSortForUnorderedBatch(
       [fsHalfEarlier, fsFullLater],
-      ~maxBatchSize=2,
+      ~batchSizeTarget=2,
     )
 
     Assert.deepEqual(
@@ -2471,7 +2487,7 @@ describe("FetchState.filterAndSortForUnorderedBatch", () => {
 
     let prepared = FetchState.filterAndSortForUnorderedBatch(
       [fsHalfEarlier, fsExactFull],
-      ~maxBatchSize=2,
+      ~batchSizeTarget=2,
     )
 
     // Full batch should take priority regardless of earlier timestamp of half batch

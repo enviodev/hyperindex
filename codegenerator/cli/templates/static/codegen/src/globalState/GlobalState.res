@@ -933,8 +933,26 @@ let injectedTaskReducer = (
           ~pgSchema=Db.publicSchema,
           ~progressedChains,
         )
+        // FIXME: When state.rollbackState is RollbackInMemStore
+        // If we increase progress in this case (no items)
+        // and then indexer restarts - there's a high chance of missing
+        // the rollback. This should be tested and fixed.
         dispatchAction(EventBatchProcessed({progressedChains, items: batch.items}))
       | {items, progressedChains, updatedFetchStates, dcsToStoreByChainId} =>
+        if Env.Benchmark.shouldSaveData {
+          let group = "Other"
+          Benchmark.addSummaryData(
+            ~group,
+            ~label=`Batch Creation Time (ms)`,
+            ~value=batch.creationTimeMs->Belt.Int.toFloat,
+          )
+          Benchmark.addSummaryData(
+            ~group,
+            ~label=`Batch Size`,
+            ~value=items->Array.length->Belt.Int.toFloat,
+          )
+        }
+
         dispatchAction(StartProcessingBatch)
         dispatchAction(UpdateQueues({updatedFetchStates, shouldEnterReorgThreshold}))
 
