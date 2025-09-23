@@ -246,8 +246,6 @@ let makeFromDbState = async (
   let chainId = chainConfig.id
   let logger = Logging.createChild(~params={"chainId": chainId})
 
-  // Since we deleted all contracts after the restart point,
-  // we can simply query all dcs we have in db
   let dbRecoveredDynamicContracts =
     await sql->DbFunctions.DynamicContractRegistry.readAllDynamicContracts(~chainId)
 

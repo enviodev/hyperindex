@@ -254,19 +254,22 @@ module PersistedState = {
   )
 }
 
-module EndOfBlockRangeScannedData = {
+module Blocks = {
   type t = {
-    chain_id: int,
-    block_number: int,
-    block_hash: string,
+    id: bigint,
+    @as("chain_id")
+    chainId: int,
+    number: int,
+    hash: string,
   }
 
   let table = mkTable(
-    "end_of_block_range_scanned_data",
+    "envio_blocks",
     ~fields=[
-      mkField("chain_id", Integer, ~fieldSchema=S.int, ~isPrimaryKey),
-      mkField("block_number", Integer, ~fieldSchema=S.int, ~isPrimaryKey),
-      mkField("block_hash", Text, ~fieldSchema=S.string),
+      mkField("id", Numeric, ~fieldSchema=S.bigint, ~isPrimaryKey),
+      mkField("chain_id", Integer, ~fieldSchema=S.int),
+      mkField("number", Integer, ~fieldSchema=S.int),
+      mkField("hash", Text, ~fieldSchema=S.string),
     ],
   )
 }
