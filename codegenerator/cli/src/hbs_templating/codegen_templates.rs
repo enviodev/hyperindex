@@ -44,12 +44,6 @@ pub struct EventParamTypeTemplate {
 }
 
 #[derive(Serialize, Debug, PartialEq, Clone)]
-pub struct EventRecordTypeTemplate {
-    pub name: CapitalizedOptions,
-    pub params: Vec<EventParamTypeTemplate>,
-}
-
-#[derive(Serialize, Debug, PartialEq, Clone)]
 pub struct GraphQlEnumTypeTemplate {
     pub name: CapitalizedOptions,
     pub params: Vec<CapitalizedOptions>,

@@ -147,18 +147,29 @@ module JsonRpcProvider = {
   @send
   external getTransaction: (t, ~transactionHash: string) => promise<transaction> = "getTransaction"
 
-  let makeGetTransactionFields = (~getTransactionByHash) =>
-    async (log: log): promise<unknown> => {
-      let transaction = await getTransactionByHash(log.transactionHash)
-      // Mutating should be fine, since the transaction isn't used anywhere else outside the function
-      let fields: {..} = transaction->Obj.magic
+  let makeGetTransactionFields = (~getTransactionByHash, ~lowercaseAddresses: bool) => async (
+    log: log,
+  ): promise<unknown> => {
+    let transaction = await getTransactionByHash(log.transactionHash)
+    // Mutating should be fine, since the transaction isn't used anywhere else outside the function
+    let fields: {..} = transaction->Obj.magic
 
-      // Make it compatible with HyperSync transaction fields
-      fields["transactionIndex"] = log.transactionIndex
-      fields["input"] = fields["data"]
+    // Make it compatible with HyperSync transaction fields
+    fields["transactionIndex"] = log.transactionIndex
+    fields["input"] = fields["data"]
 
-      fields->Obj.magic
+    // NOTE: this is wasteful if these fields are not selected in the users config.
+    //       There might be a better way to do this in the `makeThrowingGetEventTransaction` function rather based on the schema.
+    //       However this is not extremely expensive and good enough for now (only on rpc sync also).
+    if lowercaseAddresses {
+      fields["from"] = fields["from"]->Js.Nullable.toOption->Belt.Option.map(Js.String2.toLowerCase)
+      fields["to"] = fields["to"]->Js.Nullable.toOption->Belt.Option.map(Js.String2.toLowerCase)
+      fields["contractAddress"] =
+        fields["contractAddress"]->Js.Nullable.toOption->Belt.Option.map(Js.String2.toLowerCase)
     }
+
+    fields->Obj.magic
+  }
 
   type block = {
     _difficulty: bigint,
