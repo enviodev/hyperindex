@@ -357,7 +357,8 @@ module Source = {
   type itemMock = {
     blockNumber: int,
     logIndex: int,
-    handler: Types.HandlerTypes.loader<unit, unit>,
+    handler?: Types.HandlerTypes.loader<unit, unit>,
+    contractRegister?: Types.HandlerTypes.contractRegister<unit>,
   }
 
   type t = {
@@ -501,21 +502,30 @@ module Source = {
                             isWildcard: false,
                             filterByAddresses: false,
                             dependsOnAddresses: false,
-                            handler: (
-                              ({context} as args) => {
-                                // We don't want preload optimization for the tests
-                                if context.isPreload {
-                                  Promise.resolve()
-                                } else {
-                                  item.handler(args)
+                            handler: switch item.handler {
+                            | Some(handler) =>
+                              (
+                                ({context} as args) => {
+                                  // We don't want preload optimization for the tests
+                                  if context.isPreload {
+                                    Promise.resolve()
+                                  } else {
+                                    handler(args)
+                                  }
                                 }
-                              }
-                            )->(
-                              Utils.magic: Types.HandlerTypes.loader<unit, unit> => option<
-                                Internal.handler,
-                              >
+                              )->(
+                                Utils.magic: Types.HandlerTypes.loader<unit, unit> => option<
+                                  Internal.handler,
+                                >
+                              )
+
+                            | None => None
+                            },
+                            contractRegister: item.contractRegister->(
+                              Utils.magic: option<
+                                Types.HandlerTypes.contractRegister<unit>,
+                              > => option<Internal.contractRegister>
                             ),
-                            contractRegister: None,
                             paramsRawEventSchema: S.literal(%raw(`null`))
                             ->S.shape(_ => ())
                             ->(Utils.magic: S.t<unit> => S.t<Internal.eventParams>),
