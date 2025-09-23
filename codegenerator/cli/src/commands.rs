@@ -218,7 +218,6 @@ pub mod podman {
     pub async fn podman_compose_up_d(
         config: &SystemConfig,
     ) -> anyhow::Result<std::process::ExitStatus> {
-        println!("Podman Start");
         let cmd = "podman";
         let args = vec!["compose", "up", "-d"];
         let current_dir = &config.parsed_project_paths.generated;
@@ -228,8 +227,6 @@ pub mod podman {
     pub async fn podman_compose_down_v(
         config: &SystemConfig,
     ) -> anyhow::Result<std::process::ExitStatus> {
-        println!("Podman Down");
-
         let cmd = "podman";
         let args = vec!["compose", "down", "-v"];
         let current_dir = &config.parsed_project_paths.generated;
