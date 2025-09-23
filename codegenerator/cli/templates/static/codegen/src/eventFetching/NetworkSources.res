@@ -48,6 +48,10 @@ let evm = (
         syncConfig: Config.getSyncConfig(syncConfig->Option.getWithDefault({})),
         url,
         eventRouter,
+        allEventSignatures,
+        shouldUseHypersyncClientDecoder: Env.Configurable.shouldUseHypersyncClientDecoder->Option.getWithDefault(
+          shouldUseHypersyncClientDecoder,
+        ),
       }),
     )
   })
