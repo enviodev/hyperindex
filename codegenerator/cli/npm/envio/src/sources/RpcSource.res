@@ -560,10 +560,7 @@ let make = (
     contractNameAbiMapping->Js.Dict.set(contract.name, contract.abi)
   })
 
-  let convertEthersLogToHyperSyncEvent = (
-    log: Ethers.log,
-    ~lowercaseAddresses: bool,
-  ): HyperSyncClient.ResponseTypes.event => {
+  let convertEthersLogToHyperSyncEvent = (log: Ethers.log): HyperSyncClient.ResponseTypes.event => {
     let hyperSyncLog: HyperSyncClient.ResponseTypes.log = {
       removed: log.removed->Option.getWithDefault(false),
       index: log.logIndex,
@@ -571,11 +568,7 @@ let make = (
       transactionHash: log.transactionHash,
       blockHash: log.blockHash,
       blockNumber: log.blockNumber,
-      address: if lowercaseAddresses {
-        log.address->Address.Evm.fromAddressLowercaseOrThrow
-      } else {
-        log.address
-      },
+      address: log.address,
       data: log.data,
       topics: log.topics->Array.map(topic => Js.Nullable.return(topic)),
     }
@@ -668,8 +661,7 @@ let make = (
 
     let parsedQueueItems = if shouldUseHypersyncClientDecoder {
       // Convert Ethers logs to HyperSync events
-      let hyperSyncEvents =
-        logs->Belt.Array.map(log => convertEthersLogToHyperSyncEvent(log, ~lowercaseAddresses))
+      let hyperSyncEvents = logs->Belt.Array.map(convertEthersLogToHyperSyncEvent)
 
       // Decode using HyperSyncClient decoder
       let parsedEvents = try await getHscDecoder().decodeEvents(hyperSyncEvents) catch {
@@ -687,8 +679,12 @@ let make = (
       }
 
       await logs
-      ->Array.mapWithIndex((idx, log: Ethers.log) => {
-        let topic0 = log.topics->Js.Array2.unsafe_get(0)
+      ->Array.zip(parsedEvents)
+      ->Array.map(((
+        log: Ethers.log,
+        maybeDecodedEvent: Js.Nullable.t<HyperSyncClient.Decoder.decodedEvent>,
+      )) => {
+        let topic0 = log.topics[0]->Option.getWithDefault("0x0"->EvmTypes.Hex.fromStringUnsafe)
         let routedAddress = if lowercaseAddresses {
           log.address->Address.Evm.fromAddressLowercaseOrThrow
         } else {
@@ -706,7 +702,6 @@ let make = (
         ) {
         | None => None
         | Some(eventConfig) =>
-          let maybeDecodedEvent = parsedEvents->Js.Array2.unsafe_get(idx)
           switch maybeDecodedEvent {
           | Js.Nullable.Value(decoded) =>
             Some(
