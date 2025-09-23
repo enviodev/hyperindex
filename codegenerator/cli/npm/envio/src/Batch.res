@@ -2,7 +2,6 @@ type progressedChain = {
   chainId: int,
   batchSize: int,
   progressBlockNumber: int,
-  progressNextBlockLogIndex: option<int>,
   totalEventsProcessed: int,
 }
 

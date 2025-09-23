@@ -2775,11 +2775,6 @@ describe("FetchState progress tracking", () => {
       100,
       ~message="Should return latestFullyFetchedBlock.blockNumber when queue is empty",
     )
-    Assert.equal(
-      fetchStateEmpty->FetchState.getProgressNextBlockLogIndex,
-      None,
-      ~message="Should return None when queue is empty",
-    )
   })
 
   it("When queue has a single item with log index 0", () => {
@@ -2790,11 +2785,6 @@ describe("FetchState progress tracking", () => {
       54,
       ~message="Should return single queue item blockNumber - 1",
     )
-    Assert.equal(
-      fetchStateSingleItem->FetchState.getProgressNextBlockLogIndex,
-      None,
-      ~message="Should return None when queue has a single item",
-    )
   })
 
   it("When queue has a single item with non 0 log index", () => {
@@ -2804,11 +2794,6 @@ describe("FetchState progress tracking", () => {
       fetchStateSingleItem->FetchState.getProgressBlockNumber,
       54,
       ~message="Should return single queue item blockNumber - 1",
-    )
-    Assert.equal(
-      fetchStateSingleItem->FetchState.getProgressNextBlockLogIndex,
-      Some(4),
-      ~message="Should return None when queue has a single item",
     )
   })
 
@@ -2823,7 +2808,6 @@ describe("FetchState progress tracking", () => {
       90,
       ~message="Should return latest fetched block number",
     )
-    Assert.equal(fetchStateWithQueue->FetchState.getProgressNextBlockLogIndex, None)
   })
 })
 

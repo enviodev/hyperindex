@@ -139,21 +139,11 @@ let createBatch = (chainManager: t, ~batchSizeTarget: int): Batch.t => {
           let updatedFetchState =
             fetchState->FetchState.updateInternal(~mutItems=leftItems, ~dcsToStore=leftDcsToStore)
           let nextProgressBlockNumber = updatedFetchState->FetchState.getProgressBlockNumber
-          let nextProgressNextBlockLogIndex =
-            updatedFetchState->FetchState.getProgressNextBlockLogIndex
 
           dcs->Array.forEach(dc => {
             // Important: This should be a registering block number.
             // This works for now since dc.startBlock is a registering block number.
-            if (
-              dc.startBlock <= nextProgressBlockNumber ||
-                switch (nextProgressNextBlockLogIndex, dc.register) {
-                | (Some(nextProgressNextBlockLogIndex), DC(dcData)) =>
-                  dc.startBlock === nextProgressBlockNumber + 1 &&
-                    dcData.registeringEventLogIndex <= nextProgressNextBlockLogIndex
-                | _ => false
-                }
-            ) {
+            if dc.startBlock <= nextProgressBlockNumber {
               batchDcs->Array.push(dc)
             } else {
               // Mutate the array we passed to the updateInternal beforehand
@@ -193,7 +183,6 @@ let createBatch = (chainManager: t, ~batchSizeTarget: int): Batch.t => {
             chainId: chain->ChainMap.Chain.toChainId,
             batchSize: chainBatchSize,
             progressBlockNumber: nextProgressBlockNumber,
-            progressNextBlockLogIndex: updatedFetchState->FetchState.getProgressNextBlockLogIndex,
             totalEventsProcessed: chainFetcher.numEventsProcessed + chainBatchSize,
           }: Batch.progressedChain
         ),

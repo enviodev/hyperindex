@@ -1292,12 +1292,3 @@ let getProgressBlockNumber = ({buffer} as fetchState: t) => {
   | _ => bufferBlockNumber
   }
 }
-
-let getProgressNextBlockLogIndex = ({buffer} as fetchState: t) => {
-  switch buffer->Belt.Array.get(0) {
-  | Some(Event({logIndex, blockNumber}))
-    if fetchState->bufferBlockNumber >= blockNumber && logIndex > 0 =>
-    Some(logIndex - 1)
-  | _ => None
-  }
-}
