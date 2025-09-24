@@ -224,7 +224,7 @@ let executeBatch = async (
   | Some(eventIdentifier) =>
     Some(
       sql =>
-        Promise.all2((
+        Promise.all([
           sql->DbFunctions.EntityHistory.deleteAllEntityHistoryAfterEventIdentifier(
             ~isUnorderedMultichainMode=switch config.multichain {
             | Unordered => true
@@ -232,11 +232,12 @@ let executeBatch = async (
             },
             ~eventIdentifier,
           ),
-          sql->DbFunctions.EndOfBlockRangeScannedData.rollbackEndOfBlockRangeScannedDataForChain(
-            ~chainId=eventIdentifier.chainId,
-            ~knownBlockNumber=eventIdentifier.blockNumber,
-          ),
-        )),
+          // FIXME: Add rollback for blocks table
+          // sql->DbFunctions.EndOfBlockRangeScannedData.rollbackEndOfBlockRangeScannedDataForChain(
+          //   ~chainId=eventIdentifier.chainId,
+          //   ~knownBlockNumber=eventIdentifier.blockNumber,
+          // ),
+        ]),
     )
   | None => None
   }

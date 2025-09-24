@@ -6,7 +6,6 @@ type rollbackState = NoRollback | RollingBack(chain) | RollbackInMemStore(InMemo
 module WriteThrottlers = {
   type t = {
     chainMetaData: Throttler.t,
-    pruneStaleEndBlockData: ChainMap.t<Throttler.t>,
     pruneStaleEntityHistory: Throttler.t,
   }
   let make = (~config: Config.t): t => {
@@ -21,18 +20,6 @@ module WriteThrottlers = {
       Throttler.make(~intervalMillis, ~logger)
     }
 
-    let pruneStaleEndBlockData = config.chainMap->ChainMap.map(cfg => {
-      let intervalMillis = Env.ThrottleWrites.pruneStaleDataIntervalMillis
-      let logger = Logging.createChild(
-        ~params={
-          "context": "Throttler for pruning stale endblock data",
-          "intervalMillis": intervalMillis,
-          "chain": cfg.id,
-        },
-      )
-      Throttler.make(~intervalMillis, ~logger)
-    })
-
     let pruneStaleEntityHistory = {
       let intervalMillis = Env.ThrottleWrites.pruneStaleDataIntervalMillis
       let logger = Logging.createChild(
@@ -43,7 +30,7 @@ module WriteThrottlers = {
       )
       Throttler.make(~intervalMillis, ~logger)
     }
-    {chainMetaData, pruneStaleEndBlockData, pruneStaleEntityHistory}
+    {chainMetaData, pruneStaleEntityHistory}
   }
 }
 
@@ -137,11 +124,6 @@ type action =
 type queryChain = CheckAllChains | Chain(chain)
 type task =
   | NextQuery(queryChain)
-  | UpdateEndOfBlockRangeScannedData({
-      chain: chain,
-      blockNumberThreshold: int,
-      nextEndOfBlockRangeScannedData: DbFunctions.EndOfBlockRangeScannedData.endOfBlockRangeScannedData,
-    })
   | ProcessPartitionQueryResponse(partitionQueryResponse)
   | ProcessEventBatch
   | UpdateChainMetaDataAndCheckForExit(shouldExit)
@@ -373,17 +355,18 @@ let validatePartitionQueryResponse = (
     )
   }
 
-  let (updatedLastBlockScannedHashes, reorgResult) =
-    chainFetcher.lastBlockScannedHashes->ReorgDetection.LastBlockScannedHashes.registerReorgGuard(
-      ~reorgGuard,
-      ~currentBlockHeight,
-      ~shouldRollbackOnReorg=state.config->Config.shouldRollbackOnReorg,
-    )
+  let (updatedLastBlockScannedHashes, reorgResult: ReorgDetection.reorgResult) = %raw(`null`) // FIXME:
+  // chainFetcher.lastBlockScannedHashes->ReorgDetection.LastBlockScannedHashes.registerReorgGuard(
+  //   ~reorgGuard,
+  //   ~currentBlockHeight,
+  //   ~shouldRollbackOnReorg=state.config->Config.shouldRollbackOnReorg,
+  // )
 
-  let updatedChainFetcher = {
-    ...chainFetcher,
-    lastBlockScannedHashes: updatedLastBlockScannedHashes,
-  }
+  // let updatedChainFetcher = {
+  //   ...chainFetcher,
+  //   lastBlockScannedHashes: updatedLastBlockScannedHashes,
+  // }
+  let updatedChainFetcher = chainFetcher
 
   let nextState = {
     ...state,
@@ -413,30 +396,7 @@ let validatePartitionQueryResponse = (
   if isRollback {
     (nextState->incrementId->setRollingBack(chain), [Rollback])
   } else {
-    let updateEndOfBlockRangeScannedDataArr =
-      //Only update endOfBlockRangeScannedData if rollbacks are enabled
-      state.config->Config.shouldRollbackOnReorg
-        ? [
-            UpdateEndOfBlockRangeScannedData({
-              chain,
-              blockNumberThreshold: rangeLastBlock.blockNumber -
-              updatedChainFetcher.chainConfig.confirmedBlockThreshold,
-              nextEndOfBlockRangeScannedData: {
-                chainId: chain->ChainMap.Chain.toChainId,
-                blockNumber: rangeLastBlock.blockNumber,
-                blockHash: rangeLastBlock.blockHash,
-              },
-            }),
-          ]
-        : []
-
-    (
-      nextState,
-      Array.concat(
-        updateEndOfBlockRangeScannedDataArr,
-        [ProcessPartitionQueryResponse(partitionQueryResponse)],
-      ),
-    )
+    (nextState, [ProcessPartitionQueryResponse(partitionQueryResponse)])
   }
 }
 
@@ -782,46 +742,6 @@ let injectedTaskReducer = (
   switch task {
   | ProcessPartitionQueryResponse(partitionQueryResponse) =>
     state->processPartitionQueryResponse(partitionQueryResponse, ~dispatchAction)->Promise.done
-  | UpdateEndOfBlockRangeScannedData({
-      chain,
-      blockNumberThreshold,
-      nextEndOfBlockRangeScannedData,
-    }) =>
-    let timeRef = Hrtime.makeTimer()
-    await Db.sql->DbFunctions.EndOfBlockRangeScannedData.setEndOfBlockRangeScannedData(
-      nextEndOfBlockRangeScannedData,
-    )
-
-    if Env.Benchmark.shouldSaveData {
-      let elapsedTimeMillis = Hrtime.timeSince(timeRef)->Hrtime.toMillis->Hrtime.intFromMillis
-      Benchmark.addSummaryData(
-        ~group="Other",
-        ~label=`Chain ${chain->ChainMap.Chain.toString} UpdateEndOfBlockRangeScannedData (ms)`,
-        ~value=elapsedTimeMillis->Belt.Int.toFloat,
-      )
-    }
-
-    //These prune functions can be scheduled and throttled if a more recent prune function gets called
-    //before the current one is executed
-    let runPrune = async () => {
-      let timeRef = Hrtime.makeTimer()
-      await Db.sql->DbFunctions.EndOfBlockRangeScannedData.deleteStaleEndOfBlockRangeScannedDataForChain(
-        ~chainId=chain->ChainMap.Chain.toChainId,
-        ~blockNumberThreshold,
-      )
-
-      if Env.Benchmark.shouldSaveData {
-        let elapsedTimeMillis = Hrtime.timeSince(timeRef)->Hrtime.toMillis->Hrtime.intFromMillis
-        Benchmark.addSummaryData(
-          ~group="Other",
-          ~label=`Chain ${chain->ChainMap.Chain.toString} PruneStaleData (ms)`,
-          ~value=elapsedTimeMillis->Belt.Int.toFloat,
-        )
-      }
-    }
-
-    let throttler = state.writeThrottlers.pruneStaleEndBlockData->ChainMap.get(chain)
-    throttler->Throttler.schedule(runPrune)
   | PruneStaleEntityHistory =>
     let runPrune = async () => {
       let safeReorgBlocks = state.chainManager->ChainManager.getSafeReorgBlocks
@@ -1085,11 +1005,12 @@ let injectedTaskReducer = (
 
           let rolledBackCf = {
             ...cf,
-            lastBlockScannedHashes: chain == reorgChain
-              ? cf.lastBlockScannedHashes->ReorgDetection.LastBlockScannedHashes.rollbackToValidBlockNumber(
-                  ~blockNumber=lastKnownValidBlockNumber,
-                )
-              : cf.lastBlockScannedHashes,
+            // FIXME:
+            // lastBlockScannedHashes: chain == reorgChain
+            //   ? cf.lastBlockScannedHashes->ReorgDetection.LastBlockScannedHashes.rollbackToValidBlockNumber(
+            //       ~blockNumber=lastKnownValidBlockNumber,
+            //     )
+            //   : cf.lastBlockScannedHashes,
             fetchState,
           }
           //On other chains, filter out evennts based on the first change present on the chain after the reorg
