@@ -115,14 +115,14 @@ describe("Test PgStorage SQL generation functions", () => {
               id: 1,
               startBlock: 100,
               endBlock: 200,
-              confirmedBlockThreshold: 10,
+              maxReorgDepth: 10,
               contracts: [],
               sources: [],
             },
             {
               id: 137,
               startBlock: 0,
-              confirmedBlockThreshold: 200,
+              maxReorgDepth: 200,
               contracts: [],
               sources: [],
             },
@@ -568,7 +568,7 @@ WHERE "id" = $1;`
           id: 1,
           startBlock: 100,
           endBlock: 200,
-          confirmedBlockThreshold: 5,
+          maxReorgDepth: 5,
           contracts: [],
           sources: [],
         }
@@ -595,7 +595,7 @@ VALUES (1, 100, 200, 0, NULL, -1, -1, NULL, 0, false, 0);`
         let chainConfig: InternalConfig.chain = {
           id: 1,
           startBlock: 100,
-          confirmedBlockThreshold: 5,
+          maxReorgDepth: 5,
           contracts: [],
           sources: [],
         }
@@ -623,7 +623,7 @@ VALUES (1, 100, NULL, 0, NULL, -1, -1, NULL, 0, false, 0);`
           id: 1,
           startBlock: 100,
           endBlock: 200,
-          confirmedBlockThreshold: 5,
+          maxReorgDepth: 5,
           contracts: [],
           sources: [],
         }
@@ -631,7 +631,7 @@ VALUES (1, 100, NULL, 0, NULL, -1, -1, NULL, 0, false, 0);`
         let chainConfig2: InternalConfig.chain = {
           id: 42,
           startBlock: 500,
-          confirmedBlockThreshold: 0,
+          maxReorgDepth: 0,
           contracts: [],
           sources: [],
         }

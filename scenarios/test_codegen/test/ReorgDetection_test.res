@@ -14,20 +14,20 @@ describe("Validate reorg detection functions", () => {
     }
   }
 
-  let mock = (arr, ~confirmedBlockThreshold=200, ~detectedReorgBlock=?) => {
+  let mock = (arr, ~maxReorgDepth=200, ~detectedReorgBlock=?) => {
     arr
     ->Array.map(((blockNumber, blockHash)) => {
       blockNumber,
       blockHash,
     })
-    ->LastBlockScannedHashes.makeWithData(~confirmedBlockThreshold, ~detectedReorgBlock?)
+    ->LastBlockScannedHashes.makeWithData(~maxReorgDepth, ~detectedReorgBlock?)
   }
 
   it("getThresholdBlockNumbers works as expected", () => {
     Assert.deepEqual(
       mock(
         scannedHashesFixture,
-        ~confirmedBlockThreshold=200,
+        ~maxReorgDepth=200,
       )->ReorgDetection.LastBlockScannedHashes.getThresholdBlockNumbers(~currentBlockHeight=500),
       [300, 500],
       ~message="Both 300 and 500 should be included in the threshold",
@@ -35,7 +35,7 @@ describe("Validate reorg detection functions", () => {
     Assert.deepEqual(
       mock(
         scannedHashesFixture,
-        ~confirmedBlockThreshold=200,
+        ~maxReorgDepth=200,
       )->ReorgDetection.LastBlockScannedHashes.getThresholdBlockNumbers(~currentBlockHeight=501),
       [500],
       ~message="If chain progresses one more block, 300 is not included in the threshold anymore",
@@ -43,7 +43,7 @@ describe("Validate reorg detection functions", () => {
     Assert.deepEqual(
       mock(
         scannedHashesFixture,
-        ~confirmedBlockThreshold=200,
+        ~maxReorgDepth=200,
       )->ReorgDetection.LastBlockScannedHashes.getThresholdBlockNumbers(~currentBlockHeight=499),
       [300, 500],
       ~message="We don't prevent blocks higher than currentBlockHeight from being included in the threshold, since the case is not possible",
@@ -51,7 +51,7 @@ describe("Validate reorg detection functions", () => {
     Assert.deepEqual(
       mock(
         [(300, "0x789"), (50, "0x456"), (500, "0x5432"), (1, "0x123")],
-        ~confirmedBlockThreshold=200,
+        ~maxReorgDepth=200,
       )->ReorgDetection.LastBlockScannedHashes.getThresholdBlockNumbers(~currentBlockHeight=500),
       [300, 500],
       ~message="The order of blocks doesn't matter when we create reorg detection object",
@@ -59,18 +59,18 @@ describe("Validate reorg detection functions", () => {
     Assert.deepEqual(
       mock(
         scannedHashesFixture,
-        ~confirmedBlockThreshold=199,
+        ~maxReorgDepth=199,
       )->ReorgDetection.LastBlockScannedHashes.getThresholdBlockNumbers(~currentBlockHeight=500),
       [500],
-      ~message="Possible to shrink confirmedBlockThreshold",
+      ~message="Possible to shrink maxReorgDepth",
     )
     Assert.deepEqual(
       mock(
         scannedHashesFixture,
-        ~confirmedBlockThreshold=450,
+        ~maxReorgDepth=450,
       )->ReorgDetection.LastBlockScannedHashes.getThresholdBlockNumbers(~currentBlockHeight=500),
       [50, 300, 500],
-      ~message="Possible to increase confirmedBlockThreshold",
+      ~message="Possible to increase maxReorgDepth",
     )
   })
 
@@ -78,7 +78,7 @@ describe("Validate reorg detection functions", () => {
     let currentBlockHeight = 500
 
     let reorgDetection =
-      ReorgDetection.LastBlockScannedHashes.empty(~confirmedBlockThreshold=500)
+      ReorgDetection.LastBlockScannedHashes.empty(~maxReorgDepth=500)
       ->ReorgDetection.LastBlockScannedHashes.registerReorgGuard(
         ~reorgGuard={
           rangeLastBlock: {
@@ -139,7 +139,7 @@ describe("Validate reorg detection functions", () => {
 
     Assert.deepEqual(
       reorgDetection,
-      mock(scannedHashesFixture, ~confirmedBlockThreshold=500),
+      mock(scannedHashesFixture, ~maxReorgDepth=500),
       ~message="Should have the same data as the mock",
     )
   })
@@ -149,7 +149,7 @@ describe("Validate reorg detection functions", () => {
     () => {
       let currentBlockHeight = 500
       let reorgDetection =
-        ReorgDetection.LastBlockScannedHashes.empty(~confirmedBlockThreshold=200)
+        ReorgDetection.LastBlockScannedHashes.empty(~maxReorgDepth=200)
         ->ReorgDetection.LastBlockScannedHashes.registerReorgGuard(
           ~reorgGuard={
             rangeLastBlock: {
@@ -168,7 +168,7 @@ describe("Validate reorg detection functions", () => {
 
       Assert.deepEqual(
         reorgDetection,
-        mock([(1, "0x123"), (50, "0x456")], ~confirmedBlockThreshold=200),
+        mock([(1, "0x123"), (50, "0x456")], ~maxReorgDepth=200),
         ~message="Should add two records. One for rangeLastBlock and one for prevRangeLastBlock",
       )
     },
@@ -176,7 +176,7 @@ describe("Validate reorg detection functions", () => {
 
   it("Should prune records outside of the reorg threshold on registering new data", () => {
     let reorgDetection =
-      mock([(1, "0x1"), (2, "0x2"), (3, "0x3")], ~confirmedBlockThreshold=2)
+      mock([(1, "0x1"), (2, "0x2"), (3, "0x3")], ~maxReorgDepth=2)
       ->ReorgDetection.LastBlockScannedHashes.registerReorgGuard(
         ~reorgGuard={
           rangeLastBlock: {
@@ -195,14 +195,14 @@ describe("Validate reorg detection functions", () => {
 
     Assert.deepEqual(
       reorgDetection,
-      mock([(2, "0x2"), (3, "0x3"), (4, "0x4")], ~confirmedBlockThreshold=2),
+      mock([(2, "0x2"), (3, "0x3"), (4, "0x4")], ~maxReorgDepth=2),
       ~message="Should prune 1 since it's outside of reorg threshold", // Keeping block n 2 is questionable
     )
   })
 
   it("Shouldn't validate reorg detection if it's outside of the reorg threshold", () => {
     let reorgDetection =
-      mock(scannedHashesFixture, ~confirmedBlockThreshold=200)
+      mock(scannedHashesFixture, ~maxReorgDepth=200)
       ->ReorgDetection.LastBlockScannedHashes.registerReorgGuard(
         ~reorgGuard={
           rangeLastBlock: {
@@ -223,7 +223,7 @@ describe("Validate reorg detection functions", () => {
       reorgDetection,
       mock(
         [(20, "0x20-invalid"), (50, "0x50-invalid"), (300, "0x789"), (500, "0x5432")],
-        ~confirmedBlockThreshold=200,
+        ~maxReorgDepth=200,
       ),
       ~message="Prunes original blocks at 1 and 50. It writes invalid data for block 20 and 50, but they are outside of the reorg thershold, so we don't care",
     )
@@ -387,7 +387,7 @@ describe("Validate reorg detection functions", () => {
       }),
     }
 
-    let hashes = mock([(10, "0x10-invalid")], ~confirmedBlockThreshold=2)
+    let hashes = mock([(10, "0x10-invalid")], ~maxReorgDepth=2)
 
     let reorgDetectionResult =
       hashes->ReorgDetection.LastBlockScannedHashes.registerReorgGuard(
@@ -401,7 +401,7 @@ describe("Validate reorg detection functions", () => {
       (
         mock(
           [(10, "0x10-invalid")],
-          ~confirmedBlockThreshold=2,
+          ~maxReorgDepth=2,
           ~detectedReorgBlock={
             blockNumber: 10,
             blockHash: "0x10-invalid",
@@ -422,7 +422,7 @@ describe("Validate reorg detection functions", () => {
   })
 
   it("rollbackToValidBlockNumber works as expected", () => {
-    let reorgDetection = mock(scannedHashesFixture, ~confirmedBlockThreshold=200)
+    let reorgDetection = mock(scannedHashesFixture, ~maxReorgDepth=200)
 
     Assert.deepEqual(
       reorgDetection->LastBlockScannedHashes.rollbackToValidBlockNumber(~blockNumber=500),
@@ -431,7 +431,7 @@ describe("Validate reorg detection functions", () => {
     )
     Assert.deepEqual(
       reorgDetection->LastBlockScannedHashes.rollbackToValidBlockNumber(~blockNumber=499),
-      mock([(1, "0x123"), (50, "0x456"), (300, "0x789")], ~confirmedBlockThreshold=200),
+      mock([(1, "0x123"), (50, "0x456"), (300, "0x789")], ~maxReorgDepth=200),
       ~message="Shouldn't prune blocks outside of the threshold. Would be nice, but it doesn't matter",
     )
   })
@@ -454,7 +454,7 @@ describe("Validate reorg detection functions", () => {
     Assert.deepEqual(
       mock(
         scannedHashesFixture,
-        ~confirmedBlockThreshold=500,
+        ~maxReorgDepth=500,
       )->LastBlockScannedHashes.getLatestValidScannedBlock(
         ~blockNumbersAndHashes,
         ~currentBlockHeight=500,
@@ -469,7 +469,7 @@ describe("Validate reorg detection functions", () => {
     Assert.deepEqual(
       mock(
         scannedHashesFixture,
-        ~confirmedBlockThreshold=200,
+        ~maxReorgDepth=200,
       )->LastBlockScannedHashes.getLatestValidScannedBlock(
         ~blockNumbersAndHashes,
         ~currentBlockHeight=500,
@@ -493,7 +493,7 @@ describe("Validate reorg detection functions", () => {
     Assert.deepEqual(
       mock(
         scannedHashesFixture,
-        ~confirmedBlockThreshold=500,
+        ~maxReorgDepth=500,
       )->LastBlockScannedHashes.getLatestValidScannedBlock(
         ~blockNumbersAndHashes,
         ~currentBlockHeight=500,
@@ -508,7 +508,7 @@ describe("Validate reorg detection functions", () => {
     Assert.deepEqual(
       mock(
         scannedHashesFixture,
-        ~confirmedBlockThreshold=200,
+        ~maxReorgDepth=200,
       )->LastBlockScannedHashes.getLatestValidScannedBlock(
         ~blockNumbersAndHashes,
         ~currentBlockHeight=500,
@@ -519,7 +519,7 @@ describe("Validate reorg detection functions", () => {
     Assert.deepEqual(
       mock(
         scannedHashesFixture,
-        ~confirmedBlockThreshold=200,
+        ~maxReorgDepth=200,
       )->LastBlockScannedHashes.getLatestValidScannedBlock(
         ~blockNumbersAndHashes,
         ~currentBlockHeight=501,

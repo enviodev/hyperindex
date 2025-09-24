@@ -31,53 +31,6 @@ module.exports.batchDeleteItemsInTable = (table, sql, pkArray) => {
   }
 };
 
-const batchSetEndOfBlockRangeScannedDataCore = (sql, rowDataArray) => {
-  return sql`
-    INSERT INTO ${sql(publicSchema)}."end_of_block_range_scanned_data"
-  ${sql(rowDataArray, "chain_id", "block_number", "block_hash")}
-    ON CONFLICT(chain_id, block_number) DO UPDATE
-    SET
-    "chain_id" = EXCLUDED."chain_id",
-    "block_number" = EXCLUDED."block_number",
-    "block_hash" = EXCLUDED."block_hash";`;
-};
-
-module.exports.batchSetEndOfBlockRangeScannedData = chunkBatchQuery(
-  batchSetEndOfBlockRangeScannedDataCore
-);
-
-module.exports.readEndOfBlockRangeScannedDataForChain = (sql, chainId) => {
-  return sql`
-    SELECT * FROM ${sql(publicSchema)}."end_of_block_range_scanned_data"
-    WHERE
-      chain_id = ${chainId}
-      ORDER BY block_number ASC;`;
-};
-
-module.exports.deleteStaleEndOfBlockRangeScannedDataForChain = (
-  sql,
-  chainId,
-  blockNumberThreshold
-) => {
-  return sql`
-    DELETE
-    FROM ${sql(publicSchema)}."end_of_block_range_scanned_data"
-    WHERE chain_id = ${chainId}
-    AND block_number < ${blockNumberThreshold};`;
-};
-
-module.exports.rollbackEndOfBlockRangeScannedDataForChain = (
-  sql,
-  chainId,
-  knownBlockNumber
-) => {
-  return sql`
-    DELETE
-    FROM ${sql(publicSchema)}."end_of_block_range_scanned_data"
-    WHERE chain_id = ${chainId}
-    AND block_number > ${knownBlockNumber};`;
-};
-
 module.exports.readAllDynamicContracts = (sql, chainId) => sql`
   SELECT *
   FROM ${sql(publicSchema)}."dynamic_contract_registry"

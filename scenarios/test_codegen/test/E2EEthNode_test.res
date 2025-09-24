@@ -39,7 +39,7 @@ describe("E2E Integration Test", () => {
       )
       let chain = MockConfig.chain1337
       {
-        confirmedBlockThreshold: 200,
+        maxReorgDepth: 200,
         startBlock: 0,
         id: 1337,
         contracts,

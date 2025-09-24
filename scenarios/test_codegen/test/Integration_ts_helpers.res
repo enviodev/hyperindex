@@ -28,7 +28,7 @@ let getLocalChainConfig = (nftFactoryContractAddress): chainConfig => {
   })
   let chain = MockConfig.chain1337
   {
-    confirmedBlockThreshold: 200,
+    maxReorgDepth: 200,
     startBlock: 1,
     id: 1337,
     contracts,

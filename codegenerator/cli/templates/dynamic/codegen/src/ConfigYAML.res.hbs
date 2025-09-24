@@ -25,7 +25,7 @@ type contract = {
 type configYaml = {
   syncSource,
   startBlock: int,
-  confirmedBlockThreshold: int,
+  maxReorgDepth: int,
   contracts: dict<contract>,
   lowercaseAddresses: bool,
 }
@@ -58,7 +58,7 @@ let publicConfig = ChainMap.fromArrayUnsafe([
     (
       chain,
       {
-        confirmedBlockThreshold: {{chain_config.network_config.confirmed_block_threshold}},
+        maxReorgDepth: {{chain_config.network_config.confirmed_block_threshold}},
         syncSource: {{chain_config.deprecated_sync_source_code}},
         startBlock: {{chain_config.network_config.start_block}},
         contracts,

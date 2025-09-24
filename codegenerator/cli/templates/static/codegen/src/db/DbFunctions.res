@@ -13,43 +13,6 @@ module General = {
   }
 }
 
-module EndOfBlockRangeScannedData = {
-  type endOfBlockRangeScannedData = {
-    @as("chain_id") chainId: int,
-    @as("block_number") blockNumber: int,
-    @as("block_hash") blockHash: string,
-  }
-
-  @module("./DbFunctionsImplementation.js")
-  external batchSet: (Postgres.sql, array<endOfBlockRangeScannedData>) => promise<unit> =
-    "batchSetEndOfBlockRangeScannedData"
-
-  let setEndOfBlockRangeScannedData = (sql, endOfBlockRangeScannedData) =>
-    batchSet(sql, [endOfBlockRangeScannedData])
-
-  @module("./DbFunctionsImplementation.js")
-  external readEndOfBlockRangeScannedDataForChain: (
-    Postgres.sql,
-    ~chainId: int,
-  ) => promise<array<endOfBlockRangeScannedData>> = "readEndOfBlockRangeScannedDataForChain"
-
-  @module("./DbFunctionsImplementation.js")
-  external deleteStaleEndOfBlockRangeScannedDataForChain: (
-    Postgres.sql,
-    ~chainId: int,
-    //minimum blockNumber that should be kept in db
-    ~blockNumberThreshold: int,
-  ) => promise<unit> = "deleteStaleEndOfBlockRangeScannedDataForChain"
-
-  @module("./DbFunctionsImplementation.js")
-  external rollbackEndOfBlockRangeScannedDataForChain: (
-    Postgres.sql,
-    ~chainId: int,
-    //The known block number we are rollbacking to
-    ~knownBlockNumber: int,
-  ) => promise<unit> = "rollbackEndOfBlockRangeScannedDataForChain"
-}
-
 module DynamicContractRegistry = {
   @module("./DbFunctionsImplementation.js")
   external readAllDynamicContractsRaw: (Postgres.sql, ~chainId: chainId) => promise<Js.Json.t> =

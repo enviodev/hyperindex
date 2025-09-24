@@ -43,14 +43,10 @@ type validBlockResult = result<blockDataWithTimestamp, validBlockError>
 module LastBlockScannedHashes: {
   type t
   /**Instantiat t with existing data*/
-  let makeWithData: (
-    array<blockData>,
-    ~confirmedBlockThreshold: int,
-    ~detectedReorgBlock: blockData=?,
-  ) => t
+  let makeWithData: (array<blockData>, ~maxReorgDepth: int, ~detectedReorgBlock: blockData=?) => t
 
   /**Instantiat empty t with no block data*/
-  let empty: (~confirmedBlockThreshold: int) => t
+  let empty: (~maxReorgDepth: int) => t
 
   /** Registers a new reorg guard, prunes unneeded data, and returns the updated state.
    * Resets internal state if shouldRollbackOnReorg is false (detect-only mode)
@@ -82,7 +78,7 @@ module LastBlockScannedHashes: {
     // as a threshold for reorgs. If for eg. this is 200,
     // it means we are accounting for reorgs up to 200 blocks
     // behind the head
-    confirmedBlockThreshold: int,
+    maxReorgDepth: int,
     // A hash map of recent blockdata by block number to make comparison checks
     // for reorgs.
     dataByBlockNumber: dict<blockData>,
@@ -93,7 +89,7 @@ module LastBlockScannedHashes: {
     detectedReorgBlock: option<blockData>,
   }
 
-  let makeWithData = (blocks, ~confirmedBlockThreshold, ~detectedReorgBlock=?) => {
+  let makeWithData = (blocks, ~maxReorgDepth, ~detectedReorgBlock=?) => {
     let dataByBlockNumber = Js.Dict.empty()
 
     blocks->Belt.Array.forEach(block => {
@@ -101,25 +97,25 @@ module LastBlockScannedHashes: {
     })
 
     {
-      confirmedBlockThreshold,
+      maxReorgDepth,
       dataByBlockNumber,
       detectedReorgBlock,
     }
   }
   //Instantiates empty LastBlockHashes
-  let empty = (~confirmedBlockThreshold) => {
-    confirmedBlockThreshold,
+  let empty = (~maxReorgDepth) => {
+    maxReorgDepth,
     dataByBlockNumber: Js.Dict.empty(),
     detectedReorgBlock: None,
   }
 
   let getDataByBlockNumberCopyInThreshold = (
-    {dataByBlockNumber, confirmedBlockThreshold}: t,
+    {dataByBlockNumber, maxReorgDepth}: t,
     ~currentBlockHeight,
   ) => {
     // Js engine automatically orders numeric object keys
     let ascBlockNumberKeys = dataByBlockNumber->Js.Dict.keys
-    let thresholdBlockNumber = currentBlockHeight - confirmedBlockThreshold
+    let thresholdBlockNumber = currentBlockHeight - maxReorgDepth
 
     let copy = Js.Dict.empty()
 
@@ -136,7 +132,7 @@ module LastBlockScannedHashes: {
   }
 
   let registerReorgGuard = (
-    {confirmedBlockThreshold} as self: t,
+    {maxReorgDepth} as self: t,
     ~reorgGuard: reorgGuard,
     ~currentBlockHeight,
     ~shouldRollbackOnReorg,
@@ -180,7 +176,7 @@ module LastBlockScannedHashes: {
               ...self,
               detectedReorgBlock: Some(reorgDetected.scannedBlock),
             }
-          : empty(~confirmedBlockThreshold),
+          : empty(~maxReorgDepth),
         ReorgDetected(reorgDetected),
       )
     | None => {
@@ -199,7 +195,7 @@ module LastBlockScannedHashes: {
 
         (
           {
-            confirmedBlockThreshold,
+            maxReorgDepth,
             dataByBlockNumber: dataByBlockNumberCopyInThreshold,
             detectedReorgBlock: None,
           },
@@ -289,10 +285,7 @@ module LastBlockScannedHashes: {
   Return a BlockNumbersAndHashes.t rolled back to where blockData is less
   than the provided blockNumber
   */
-  let rollbackToValidBlockNumber = (
-    {dataByBlockNumber, confirmedBlockThreshold}: t,
-    ~blockNumber: int,
-  ) => {
+  let rollbackToValidBlockNumber = ({dataByBlockNumber, maxReorgDepth}: t, ~blockNumber: int) => {
     // Js engine automatically orders numeric object keys
     let ascBlockNumberKeys = dataByBlockNumber->Js.Dict.keys
 
@@ -316,7 +309,7 @@ module LastBlockScannedHashes: {
     loop(0)
 
     {
-      confirmedBlockThreshold,
+      maxReorgDepth,
       dataByBlockNumber: newDataByBlockNumber,
       detectedReorgBlock: None,
     }

@@ -16,6 +16,7 @@ module Chains = {
     | #id
     | #start_block
     | #end_block
+    | #max_reorg_depth
     | #source_block
     | #first_event_block
     | #buffer_block
@@ -28,6 +29,7 @@ module Chains = {
     #id,
     #start_block,
     #end_block,
+    #max_reorg_depth,
     #source_block,
     #first_event_block,
     #buffer_block,
@@ -52,6 +54,7 @@ module Chains = {
     @as("id") id: int,
     @as("start_block") startBlock: int,
     @as("end_block") endBlock: Js.null<int>,
+    @as("max_reorg_depth") maxReorgDepth: int,
     @as("progress_block") progressBlockNumber: int,
     @as("events_processed") numEventsProcessed: int,
     ...metaFields,
@@ -64,6 +67,7 @@ module Chains = {
       // Values populated from config
       mkField((#start_block: field :> string), Integer, ~fieldSchema=S.int),
       mkField((#end_block: field :> string), Integer, ~fieldSchema=S.null(S.int), ~isNullable),
+      mkField((#max_reorg_depth: field :> string), Integer, ~fieldSchema=S.int),
       // Block number of the latest block that was fetched from the source
       mkField((#buffer_block: field :> string), Integer, ~fieldSchema=S.int),
       // Block number of the currently active source
@@ -98,6 +102,7 @@ module Chains = {
       id: chainConfig.id,
       startBlock: chainConfig.startBlock,
       endBlock: chainConfig.endBlock->Js.Null.fromOption,
+      maxReorgDepth: chainConfig.maxReorgDepth,
       blockHeight: 0,
       firstEventBlockNumber: Js.Null.empty,
       latestFetchedBlockNumber: -1,
@@ -254,22 +259,24 @@ module PersistedState = {
   )
 }
 
-module Blocks = {
+module ReorgCheckpoints = {
   type t = {
     id: bigint,
     @as("chain_id")
     chainId: int,
-    number: int,
-    hash: string,
+    @as("block_number")
+    blockNumber: int,
+    @as("block_hash")
+    blockHash: string,
   }
 
   let table = mkTable(
-    "envio_blocks",
+    "envio_reorg_checkpoints",
     ~fields=[
       mkField("id", Numeric, ~fieldSchema=S.bigint, ~isPrimaryKey),
       mkField("chain_id", Integer, ~fieldSchema=S.int),
-      mkField("number", Integer, ~fieldSchema=S.int),
-      mkField("hash", Text, ~fieldSchema=S.string),
+      mkField("block_number", Integer, ~fieldSchema=S.int),
+      mkField("block_hash", Text, ~fieldSchema=S.string),
     ],
   )
 }
