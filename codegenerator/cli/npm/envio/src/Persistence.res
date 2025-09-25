@@ -143,19 +143,7 @@ let init = {
           persistence.storageStatus = Ready(initialState)
           let checkpoints = Js.Dict.empty()
           initialState.chains->Js.Array2.forEach(c => {
-            let checkpoint = switch c.progressNextBlockLogIndex {
-            | Value(
-                logIndex,
-              ) => // Latest processed log index (not necessarily processed by the indexer)
-              {
-                "blockNumber": c.progressBlockNumber + 1,
-                "logIndex": logIndex,
-              }
-            | Null =>
-              // Or simply the latest processed block number (might be -1 if not set)
-              c.progressBlockNumber->Utils.magic
-            }
-            checkpoints->Utils.Dict.setByInt(c.id, checkpoint)
+            checkpoints->Utils.Dict.setByInt(c.id, c.progressBlockNumber)
           })
           Logging.info({
             "msg": `Successfully resumed indexing state! Continuing from the last checkpoint.`,

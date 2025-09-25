@@ -5,11 +5,27 @@ open Enums.ContractType
 let chainId = 0
 let targetBufferSize = 5000
 
-let getItem = (item: FetchState.queueItem) =>
+// Keep for backward compatibility of tests
+type oldQueueItem =
+  | Item(Internal.item)
+  | NoItem({latestFetchedBlock: FetchState.blockNumberAndTimestamp})
+
+let getItem = (item: oldQueueItem) =>
   switch item {
-  | Item({item}) => item->Some
+  | Item(item) => item->Some
   | NoItem(_) => None
   }
+
+let getEarliestEvent = (fetchState: FetchState.t) => {
+  let readyItemsCount = fetchState->FetchState.getReadyItemsCount(~targetSize=1, ~fromItem=0)
+  if readyItemsCount > 0 {
+    Item(fetchState.buffer->Belt.Array.getUnsafe(0))
+  } else {
+    NoItem({
+      latestFetchedBlock: fetchState->FetchState.bufferBlock,
+    })
+  }
+}
 
 let mockAddress0 = TestHelpers.Addresses.mockAddresses[0]->Option.getExn
 let mockAddress1 = TestHelpers.Addresses.mockAddresses[1]->Option.getExn
@@ -156,7 +172,7 @@ describe("FetchState.make", () => {
         },
         latestOnBlockBlockNumber: -1,
         targetBufferSize: 5000,
-        queue: [],
+        buffer: [],
         normalSelection: fetchState.normalSelection,
         chainId: 0,
         indexingContracts: fetchState.indexingContracts,
@@ -227,7 +243,7 @@ describe("FetchState.make", () => {
           },
           targetBufferSize,
           latestOnBlockBlockNumber: -1,
-          queue: [],
+          buffer: [],
           startBlock: 0,
           endBlock: undefined,
           normalSelection: fetchState.normalSelection,
@@ -293,7 +309,7 @@ describe("FetchState.make", () => {
           },
           targetBufferSize,
           latestOnBlockBlockNumber: -1,
-          queue: [],
+          buffer: [],
           startBlock: 0,
           endBlock: undefined,
           normalSelection: fetchState.normalSelection,
@@ -391,7 +407,7 @@ describe("FetchState.make", () => {
           },
           targetBufferSize,
           latestOnBlockBlockNumber: -1,
-          queue: [],
+          buffer: [],
           startBlock: 0,
           endBlock: undefined,
           normalSelection: fetchState.normalSelection,
@@ -869,7 +885,7 @@ describe("FetchState.registerDynamicContracts", () => {
           },
           latestOnBlockBlockNumber: -1,
           targetBufferSize,
-          queue: [],
+          buffer: [],
           normalSelection: fetchState.normalSelection,
           chainId,
           indexingContracts: fetchState.indexingContracts,
@@ -912,7 +928,7 @@ describe("FetchState.getNextQuery & integration", () => {
       },
       latestOnBlockBlockNumber: 10,
       targetBufferSize,
-      queue: [mockEvent(~blockNumber=2), mockEvent(~blockNumber=1)],
+      buffer: [mockEvent(~blockNumber=1), mockEvent(~blockNumber=2)],
       startBlock: 0,
       endBlock: None,
       dcsToStore: [],
@@ -971,7 +987,7 @@ describe("FetchState.getNextQuery & integration", () => {
       },
       latestOnBlockBlockNumber: 1,
       targetBufferSize,
-      queue: [mockEvent(~blockNumber=2), mockEvent(~blockNumber=1)],
+      buffer: [mockEvent(~blockNumber=1), mockEvent(~blockNumber=2)],
       startBlock: 0,
       endBlock: undefined,
       normalSelection,
@@ -1449,11 +1465,11 @@ describe("FetchState.getNextQuery & integration", () => {
           blockTimestamp: 9,
         },
         latestOnBlockBlockNumber: 9,
-        queue: [
-          mockEvent(~blockNumber=4, ~logIndex=6),
-          mockEvent(~blockNumber=4, ~logIndex=2),
-          mockEvent(~blockNumber=2),
+        buffer: [
           mockEvent(~blockNumber=1),
+          mockEvent(~blockNumber=2),
+          mockEvent(~blockNumber=4, ~logIndex=2),
+          mockEvent(~blockNumber=4, ~logIndex=6),
         ],
       },
     )
@@ -1517,11 +1533,11 @@ describe("FetchState.getNextQuery & integration", () => {
           blockTimestamp: 10,
         },
         latestOnBlockBlockNumber: 10,
-        queue: [
-          mockEvent(~blockNumber=4, ~logIndex=6),
-          mockEvent(~blockNumber=4, ~logIndex=2),
-          mockEvent(~blockNumber=2),
+        buffer: [
           mockEvent(~blockNumber=1),
+          mockEvent(~blockNumber=2),
+          mockEvent(~blockNumber=4, ~logIndex=2),
+          mockEvent(~blockNumber=4, ~logIndex=6),
         ],
       },
     )
@@ -1578,11 +1594,11 @@ describe("FetchState.getNextQuery & integration", () => {
           blockTimestamp: 10,
         },
         latestOnBlockBlockNumber: 10,
-        queue: [
-          mockEvent(~blockNumber=4, ~logIndex=6),
-          mockEvent(~blockNumber=4, ~logIndex=2),
-          mockEvent(~blockNumber=2),
+        buffer: [
           mockEvent(~blockNumber=1),
+          mockEvent(~blockNumber=2),
+          mockEvent(~blockNumber=4, ~logIndex=2),
+          mockEvent(~blockNumber=4, ~logIndex=6),
         ],
       },
       ~message=`If on merge the target partition exceeds maxAddrsInPartition,
@@ -1685,7 +1701,7 @@ describe("FetchState.getNextQuery & integration", () => {
           },
         ],
         // Removed an item here, but kept the partition.
-        queue: [mockEvent(~blockNumber=1)],
+        buffer: [mockEvent(~blockNumber=1)],
       },
       ~message=`Should rollback the partition state, but keep them`,
     )
@@ -1717,7 +1733,7 @@ describe("FetchState.getNextQuery & integration", () => {
           blockTimestamp: 0,
         },
         latestOnBlockBlockNumber: -1,
-        queue: [],
+        buffer: [],
       },
       ~message=`Partition "2" should be removed, but the partition "0" should be kept`,
     )
@@ -1796,7 +1812,7 @@ describe("FetchState.getNextQuery & integration", () => {
             addressesByContractName: Js.Dict.empty(),
           },
         ],
-        queue: [],
+        buffer: [],
       },
       ~message=`Should keep Wildcard partition even if it's empty`,
     )
@@ -1884,14 +1900,14 @@ describe("FetchState unit tests for specific cases", () => {
           blockTimestamp: 10,
         },
         latestOnBlockBlockNumber: 10,
-        queue: [
-          mockEvent(~blockNumber=4, ~logIndex=2),
-          mockEvent(~blockNumber=4, ~logIndex=1),
-          mockEvent(~blockNumber=4, ~logIndex=1),
-          mockEvent(~blockNumber=4),
-          mockEvent(~blockNumber=3),
-          mockEvent(~blockNumber=2),
+        buffer: [
           mockEvent(~blockNumber=1),
+          mockEvent(~blockNumber=2),
+          mockEvent(~blockNumber=3),
+          mockEvent(~blockNumber=4),
+          mockEvent(~blockNumber=4, ~logIndex=1),
+          mockEvent(~blockNumber=4, ~logIndex=1),
+          mockEvent(~blockNumber=4, ~logIndex=2),
         ],
       },
       ~message="Should merge events in correct order",
@@ -1926,12 +1942,12 @@ describe("FetchState unit tests for specific cases", () => {
       ->Result.getExn
 
     Assert.deepEqual(
-      updatedFetchState.queue,
+      updatedFetchState.buffer,
       [
-        mockEvent(~blockNumber=6, ~logIndex=2),
-        mockEvent(~blockNumber=6, ~logIndex=0),
-        mockEvent(~blockNumber=5, ~logIndex=1),
         mockEvent(~blockNumber=5, ~logIndex=0),
+        mockEvent(~blockNumber=5, ~logIndex=1),
+        mockEvent(~blockNumber=6, ~logIndex=0),
+        mockEvent(~blockNumber=6, ~logIndex=2),
       ],
       ~message="Queue must be sorted DESC by (blockNumber, logIndex) regardless of input order",
     )
@@ -2023,7 +2039,7 @@ describe("FetchState unit tests for specific cases", () => {
     let fetchState = makeInitial()
 
     Assert.deepEqual(
-      fetchState->FetchState.getEarliestEvent,
+      fetchState->getEarliestEvent,
       NoItem({
         latestFetchedBlock: {
           blockNumber: -1,
@@ -2055,7 +2071,7 @@ describe("FetchState unit tests for specific cases", () => {
       ->Result.getExn
 
     Assert.deepEqual(
-      fetchStateWithEvents->FetchState.getEarliestEvent->getItem,
+      fetchStateWithEvents->getEarliestEvent->getItem,
       Some(mockEvent(~blockNumber=2, ~logIndex=1)),
     )
 
@@ -2068,7 +2084,7 @@ describe("FetchState unit tests for specific cases", () => {
       ])
 
     Assert.deepEqual(
-      fetchStateWithDc->FetchState.getEarliestEvent->getItem,
+      fetchStateWithDc->getEarliestEvent->getItem,
       Some(mockEvent(~blockNumber=2, ~logIndex=1)),
       ~message=`Should allow to get event before the dc registration`,
     )
@@ -2091,7 +2107,7 @@ describe("FetchState unit tests for specific cases", () => {
     )
 
     Assert.deepEqual(
-      fetchState->FetchState.getEarliestEvent,
+      fetchState->getEarliestEvent,
       NoItem({
         latestFetchedBlock: {
           blockNumber: -1,
@@ -2119,7 +2135,7 @@ describe("FetchState unit tests for specific cases", () => {
     Js.log(updatedFetchState)
 
     Assert.deepEqual(
-      updatedFetchState->FetchState.getEarliestEvent,
+      updatedFetchState->getEarliestEvent,
       NoItem({
         latestFetchedBlock: {
           blockNumber: -1,
@@ -2159,7 +2175,7 @@ describe("FetchState unit tests for specific cases", () => {
     )
 
     Assert.deepEqual(
-      fetchState->FetchState.getEarliestEvent->getItem,
+      fetchState->getEarliestEvent->getItem,
       Some(mockEvent(~blockNumber=2, ~logIndex=1)),
     )
 
@@ -2168,7 +2184,7 @@ describe("FetchState unit tests for specific cases", () => {
       ->FetchState.registerDynamicContracts([
         makeDynContractRegistration(~contractAddress=mockAddress1, ~blockNumber=2),
       ])
-      ->FetchState.getEarliestEvent,
+      ->getEarliestEvent,
       NoItem({
         latestFetchedBlock: {
           blockNumber: 1,
@@ -2384,13 +2400,11 @@ describe("FetchState.filterAndSortForUnorderedBatch", () => {
 
       let prepared = FetchState.filterAndSortForUnorderedBatch(
         [fsLate, fsExcluded, fsEarly],
-        ~maxBatchSize=3,
+        ~batchSizeTarget=3,
       )
 
       Assert.deepEqual(
-        prepared->Array.map(
-          fs => fs.queue->Utils.Array.last->Option.getUnsafe->Internal.getItemBlockNumber,
-        ),
+        prepared->Array.map(fs => fs.buffer->Belt.Array.getUnsafe(0)->Internal.getItemBlockNumber),
         [1, 5],
       )
     },
@@ -2428,13 +2442,11 @@ describe("FetchState.filterAndSortForUnorderedBatch", () => {
 
     let prepared = FetchState.filterAndSortForUnorderedBatch(
       [fsHalfEarlier, fsFullLater],
-      ~maxBatchSize=2,
+      ~batchSizeTarget=2,
     )
 
     Assert.deepEqual(
-      prepared->Array.map(
-        fs => fs.queue->Utils.Array.last->Option.getUnsafe->Internal.getItemBlockNumber,
-      ),
+      prepared->Array.map(fs => fs.buffer->Belt.Array.getUnsafe(0)->Internal.getItemBlockNumber),
       [7, 1],
     )
   })
@@ -2471,14 +2483,12 @@ describe("FetchState.filterAndSortForUnorderedBatch", () => {
 
     let prepared = FetchState.filterAndSortForUnorderedBatch(
       [fsHalfEarlier, fsExactFull],
-      ~maxBatchSize=2,
+      ~batchSizeTarget=2,
     )
 
     // Full batch should take priority regardless of earlier timestamp of half batch
     Assert.deepEqual(
-      prepared->Array.map(
-        fs => fs.queue->Utils.Array.last->Option.getUnsafe->Internal.getItemBlockNumber,
-      ),
+      prepared->Array.map(fs => fs.buffer->Belt.Array.getUnsafe(0)->Internal.getItemBlockNumber),
       [2, 1],
     )
   })
@@ -2765,11 +2775,6 @@ describe("FetchState progress tracking", () => {
       100,
       ~message="Should return latestFullyFetchedBlock.blockNumber when queue is empty",
     )
-    Assert.equal(
-      fetchStateEmpty->FetchState.getProgressNextBlockLogIndex,
-      None,
-      ~message="Should return None when queue is empty",
-    )
   })
 
   it("When queue has a single item with log index 0", () => {
@@ -2780,11 +2785,6 @@ describe("FetchState progress tracking", () => {
       54,
       ~message="Should return single queue item blockNumber - 1",
     )
-    Assert.equal(
-      fetchStateSingleItem->FetchState.getProgressNextBlockLogIndex,
-      None,
-      ~message="Should return None when queue has a single item",
-    )
   })
 
   it("When queue has a single item with non 0 log index", () => {
@@ -2794,11 +2794,6 @@ describe("FetchState progress tracking", () => {
       fetchStateSingleItem->FetchState.getProgressBlockNumber,
       54,
       ~message="Should return single queue item blockNumber - 1",
-    )
-    Assert.equal(
-      fetchStateSingleItem->FetchState.getProgressNextBlockLogIndex,
-      Some(4),
-      ~message="Should return None when queue has a single item",
     )
   })
 
@@ -2813,7 +2808,6 @@ describe("FetchState progress tracking", () => {
       90,
       ~message="Should return latest fetched block number",
     )
-    Assert.equal(fetchStateWithQueue->FetchState.getProgressNextBlockLogIndex, None)
   })
 })
 

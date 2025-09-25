@@ -114,6 +114,7 @@ type t = {
   addContractNameToContractNameMapping: dict<string>,
   maxAddrInPartition: int,
   registrations: option<EventRegister.registrations>,
+  batchSize: int,
 }
 
 let make = (
@@ -126,6 +127,7 @@ let make = (
   ~persistence=codegenPersistence,
   ~ecosystem=InternalConfig.Evm,
   ~registrations=?,
+  ~batchSize=5000,
 ) => {
   let chainMap =
     chains
@@ -168,6 +170,7 @@ let make = (
     maxAddrInPartition: Env.maxAddrInPartition,
     registrations,
     preloadHandlers,
+    batchSize,
   }
 }
 

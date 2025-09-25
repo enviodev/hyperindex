@@ -144,7 +144,7 @@ CREATE SCHEMA "test_schema";
 GRANT ALL ON SCHEMA "test_schema" TO "postgres";
 GRANT ALL ON SCHEMA "test_schema" TO public;
 CREATE TYPE "test_schema".ENTITY_TYPE AS ENUM('A', 'B', 'C', 'CustomSelectionTestPass', 'D', 'EntityWithAllNonArrayTypes', 'EntityWithAllTypes', 'EntityWithBigDecimal', 'EntityWithTimestamp', 'Gravatar', 'NftCollection', 'PostgresNumericPrecisionEntityTester', 'SimpleEntity', 'Token', 'User', 'dynamic_contract_registry');
-CREATE TABLE IF NOT EXISTS "test_schema"."envio_chains"("id" INTEGER NOT NULL, "start_block" INTEGER NOT NULL, "end_block" INTEGER, "buffer_block" INTEGER NOT NULL, "source_block" INTEGER NOT NULL, "first_event_block" INTEGER, "ready_at" TIMESTAMP WITH TIME ZONE NULL, "events_processed" INTEGER NOT NULL, "_is_hyper_sync" BOOLEAN NOT NULL, "progress_block" INTEGER NOT NULL, "_progress_log_index" INTEGER, "_num_batches_fetched" INTEGER NOT NULL, PRIMARY KEY("id"));
+CREATE TABLE IF NOT EXISTS "test_schema"."envio_chains"("id" INTEGER NOT NULL, "start_block" INTEGER NOT NULL, "end_block" INTEGER, "buffer_block" INTEGER NOT NULL, "source_block" INTEGER NOT NULL, "first_event_block" INTEGER, "ready_at" TIMESTAMP WITH TIME ZONE NULL, "events_processed" INTEGER NOT NULL, "_is_hyper_sync" BOOLEAN NOT NULL, "progress_block" INTEGER NOT NULL, "_num_batches_fetched" INTEGER NOT NULL, PRIMARY KEY("id"));
 CREATE TABLE IF NOT EXISTS "test_schema"."persisted_state"("id" SERIAL NOT NULL, "envio_version" TEXT NOT NULL, "config_hash" TEXT NOT NULL, "schema_hash" TEXT NOT NULL, "handler_files_hash" TEXT NOT NULL, "abi_files_hash" TEXT NOT NULL, PRIMARY KEY("id"));
 CREATE TABLE IF NOT EXISTS "test_schema"."end_of_block_range_scanned_data"("chain_id" INTEGER NOT NULL, "block_number" INTEGER NOT NULL, "block_hash" TEXT NOT NULL, PRIMARY KEY("chain_id", "block_number"));
 CREATE TABLE IF NOT EXISTS "test_schema"."raw_events"("chain_id" INTEGER NOT NULL, "event_id" NUMERIC NOT NULL, "event_name" TEXT NOT NULL, "contract_name" TEXT NOT NULL, "block_number" INTEGER NOT NULL, "log_index" INTEGER NOT NULL, "src_address" TEXT NOT NULL, "block_hash" TEXT NOT NULL, "block_timestamp" INTEGER NOT NULL, "block_fields" JSONB NOT NULL, "transaction_fields" JSONB NOT NULL, "params" JSONB NOT NULL, "serial" SERIAL, PRIMARY KEY("serial"));
@@ -184,9 +184,9 @@ CREATE VIEW "test_schema"."chain_metadata" AS
        "start_block" AS "start_block",
        "ready_at" AS "timestamp_caught_up_to_head_or_endblock"
      FROM "test_schema"."envio_chains";
-INSERT INTO "test_schema"."envio_chains" ("id", "start_block", "end_block", "source_block", "first_event_block", "buffer_block", "progress_block", "ready_at", "events_processed", "_progress_log_index", "_is_hyper_sync", "_num_batches_fetched")
-VALUES (1, 100, 200, 0, NULL, -1, -1, NULL, 0, NULL, false, 0),
-       (137, 0, NULL, 0, NULL, -1, -1, NULL, 0, NULL, false, 0);`
+INSERT INTO "test_schema"."envio_chains" ("id", "start_block", "end_block", "source_block", "first_event_block", "buffer_block", "progress_block", "ready_at", "events_processed", "_is_hyper_sync", "_num_batches_fetched")
+VALUES (1, 100, 200, 0, NULL, -1, -1, NULL, 0, false, 0),
+       (137, 0, NULL, 0, NULL, -1, -1, NULL, 0, false, 0);`
 
         Assert.equal(
           mainQuery,
@@ -229,7 +229,7 @@ VALUES (1, 100, 200, 0, NULL, -1, -1, NULL, 0, NULL, false, 0),
 CREATE SCHEMA "test_schema";
 GRANT ALL ON SCHEMA "test_schema" TO "postgres";
 GRANT ALL ON SCHEMA "test_schema" TO public;
-CREATE TABLE IF NOT EXISTS "test_schema"."envio_chains"("id" INTEGER NOT NULL, "start_block" INTEGER NOT NULL, "end_block" INTEGER, "buffer_block" INTEGER NOT NULL, "source_block" INTEGER NOT NULL, "first_event_block" INTEGER, "ready_at" TIMESTAMP WITH TIME ZONE NULL, "events_processed" INTEGER NOT NULL, "_is_hyper_sync" BOOLEAN NOT NULL, "progress_block" INTEGER NOT NULL, "_progress_log_index" INTEGER, "_num_batches_fetched" INTEGER NOT NULL, PRIMARY KEY("id"));
+CREATE TABLE IF NOT EXISTS "test_schema"."envio_chains"("id" INTEGER NOT NULL, "start_block" INTEGER NOT NULL, "end_block" INTEGER, "buffer_block" INTEGER NOT NULL, "source_block" INTEGER NOT NULL, "first_event_block" INTEGER, "ready_at" TIMESTAMP WITH TIME ZONE NULL, "events_processed" INTEGER NOT NULL, "_is_hyper_sync" BOOLEAN NOT NULL, "progress_block" INTEGER NOT NULL, "_num_batches_fetched" INTEGER NOT NULL, PRIMARY KEY("id"));
 CREATE TABLE IF NOT EXISTS "test_schema"."persisted_state"("id" SERIAL NOT NULL, "envio_version" TEXT NOT NULL, "config_hash" TEXT NOT NULL, "schema_hash" TEXT NOT NULL, "handler_files_hash" TEXT NOT NULL, "abi_files_hash" TEXT NOT NULL, PRIMARY KEY("id"));
 CREATE TABLE IF NOT EXISTS "test_schema"."end_of_block_range_scanned_data"("chain_id" INTEGER NOT NULL, "block_number" INTEGER NOT NULL, "block_hash" TEXT NOT NULL, PRIMARY KEY("chain_id", "block_number"));
 CREATE TABLE IF NOT EXISTS "test_schema"."raw_events"("chain_id" INTEGER NOT NULL, "event_id" NUMERIC NOT NULL, "event_name" TEXT NOT NULL, "contract_name" TEXT NOT NULL, "block_number" INTEGER NOT NULL, "log_index" INTEGER NOT NULL, "src_address" TEXT NOT NULL, "block_hash" TEXT NOT NULL, "block_timestamp" INTEGER NOT NULL, "block_fields" JSONB NOT NULL, "transaction_fields" JSONB NOT NULL, "params" JSONB NOT NULL, "serial" SERIAL, PRIMARY KEY("serial"));
@@ -311,7 +311,7 @@ $$ LANGUAGE plpgsql;`,
 CREATE SCHEMA "public";
 GRANT ALL ON SCHEMA "public" TO "postgres";
 GRANT ALL ON SCHEMA "public" TO public;
-CREATE TABLE IF NOT EXISTS "public"."envio_chains"("id" INTEGER NOT NULL, "start_block" INTEGER NOT NULL, "end_block" INTEGER, "buffer_block" INTEGER NOT NULL, "source_block" INTEGER NOT NULL, "first_event_block" INTEGER, "ready_at" TIMESTAMP WITH TIME ZONE NULL, "events_processed" INTEGER NOT NULL, "_is_hyper_sync" BOOLEAN NOT NULL, "progress_block" INTEGER NOT NULL, "_progress_log_index" INTEGER, "_num_batches_fetched" INTEGER NOT NULL, PRIMARY KEY("id"));
+CREATE TABLE IF NOT EXISTS "public"."envio_chains"("id" INTEGER NOT NULL, "start_block" INTEGER NOT NULL, "end_block" INTEGER, "buffer_block" INTEGER NOT NULL, "source_block" INTEGER NOT NULL, "first_event_block" INTEGER, "ready_at" TIMESTAMP WITH TIME ZONE NULL, "events_processed" INTEGER NOT NULL, "_is_hyper_sync" BOOLEAN NOT NULL, "progress_block" INTEGER NOT NULL, "_num_batches_fetched" INTEGER NOT NULL, PRIMARY KEY("id"));
 CREATE TABLE IF NOT EXISTS "public"."persisted_state"("id" SERIAL NOT NULL, "envio_version" TEXT NOT NULL, "config_hash" TEXT NOT NULL, "schema_hash" TEXT NOT NULL, "handler_files_hash" TEXT NOT NULL, "abi_files_hash" TEXT NOT NULL, PRIMARY KEY("id"));
 CREATE TABLE IF NOT EXISTS "public"."end_of_block_range_scanned_data"("chain_id" INTEGER NOT NULL, "block_number" INTEGER NOT NULL, "block_hash" TEXT NOT NULL, PRIMARY KEY("chain_id", "block_number"));
 CREATE TABLE IF NOT EXISTS "public"."raw_events"("chain_id" INTEGER NOT NULL, "event_id" NUMERIC NOT NULL, "event_name" TEXT NOT NULL, "contract_name" TEXT NOT NULL, "block_number" INTEGER NOT NULL, "log_index" INTEGER NOT NULL, "src_address" TEXT NOT NULL, "block_hash" TEXT NOT NULL, "block_timestamp" INTEGER NOT NULL, "block_fields" JSONB NOT NULL, "transaction_fields" JSONB NOT NULL, "params" JSONB NOT NULL, "serial" SERIAL, PRIMARY KEY("serial"));
@@ -532,8 +532,7 @@ WHERE "id" = $1;`
 
         let expectedQuery = `UPDATE "test_schema"."envio_chains"
 SET "progress_block" = $2,
-    "_progress_log_index" = $3,
-    "events_processed" = $4
+    "events_processed" = $3
 WHERE "id" = $1;`
 
         Assert.equal(
@@ -579,8 +578,8 @@ WHERE "id" = $1;`
           ~chainConfigs=[chainConfig],
         )
 
-        let expectedQuery = `INSERT INTO "test_schema"."envio_chains" ("id", "start_block", "end_block", "source_block", "first_event_block", "buffer_block", "progress_block", "ready_at", "events_processed", "_progress_log_index", "_is_hyper_sync", "_num_batches_fetched")
-VALUES (1, 100, 200, 0, NULL, -1, -1, NULL, 0, NULL, false, 0);`
+        let expectedQuery = `INSERT INTO "test_schema"."envio_chains" ("id", "start_block", "end_block", "source_block", "first_event_block", "buffer_block", "progress_block", "ready_at", "events_processed", "_is_hyper_sync", "_num_batches_fetched")
+VALUES (1, 100, 200, 0, NULL, -1, -1, NULL, 0, false, 0);`
 
         Assert.equal(
           query,
@@ -606,8 +605,8 @@ VALUES (1, 100, 200, 0, NULL, -1, -1, NULL, 0, NULL, false, 0);`
           ~chainConfigs=[chainConfig],
         )
 
-        let expectedQuery = `INSERT INTO "public"."envio_chains" ("id", "start_block", "end_block", "source_block", "first_event_block", "buffer_block", "progress_block", "ready_at", "events_processed", "_progress_log_index", "_is_hyper_sync", "_num_batches_fetched")
-VALUES (1, 100, NULL, 0, NULL, -1, -1, NULL, 0, NULL, false, 0);`
+        let expectedQuery = `INSERT INTO "public"."envio_chains" ("id", "start_block", "end_block", "source_block", "first_event_block", "buffer_block", "progress_block", "ready_at", "events_processed", "_is_hyper_sync", "_num_batches_fetched")
+VALUES (1, 100, NULL, 0, NULL, -1, -1, NULL, 0, false, 0);`
 
         Assert.equal(
           query,
@@ -642,9 +641,9 @@ VALUES (1, 100, NULL, 0, NULL, -1, -1, NULL, 0, NULL, false, 0);`
           ~chainConfigs=[chainConfig1, chainConfig2],
         )
 
-        let expectedQuery = `INSERT INTO "production"."envio_chains" ("id", "start_block", "end_block", "source_block", "first_event_block", "buffer_block", "progress_block", "ready_at", "events_processed", "_progress_log_index", "_is_hyper_sync", "_num_batches_fetched")
-VALUES (1, 100, 200, 0, NULL, -1, -1, NULL, 0, NULL, false, 0),
-       (42, 500, NULL, 0, NULL, -1, -1, NULL, 0, NULL, false, 0);`
+        let expectedQuery = `INSERT INTO "production"."envio_chains" ("id", "start_block", "end_block", "source_block", "first_event_block", "buffer_block", "progress_block", "ready_at", "events_processed", "_is_hyper_sync", "_num_batches_fetched")
+VALUES (1, 100, 200, 0, NULL, -1, -1, NULL, 0, false, 0),
+       (42, 500, NULL, 0, NULL, -1, -1, NULL, 0, false, 0);`
 
         Assert.equal(
           query,

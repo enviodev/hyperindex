@@ -70,6 +70,12 @@ module Dict = {
    */
   external dangerouslyGetNonOption: (dict<'a>, string) => option<'a> = ""
 
+  @get_index
+  /**
+    It's the same as `Js.Dict.get` but it doesn't have runtime overhead to check if the key exists.
+   */
+  external dangerouslyGetByIntNonOption: (dict<'a>, int) => option<'a> = ""
+
   let has: (dict<'a>, string) => bool = %raw(`(dict, key) => key in dict`)
 
   let push = (dict, key, value) => {

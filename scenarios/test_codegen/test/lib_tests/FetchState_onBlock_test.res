@@ -90,20 +90,20 @@ describe("FetchState onBlock functionality", () => {
       ->Result.getExn
 
     // Get all (blockNumber, logIndex) tuples from the queue (including event items)
-    let queue = updatedFetchState.queue
+    let queue = updatedFetchState.buffer
     let blockNumberLogIndexTuples =
       queue->Array.map(item => (item->Internal.getItemBlockNumber, item->Internal.getItemLogIndex))
 
     // Should have block items for blocks 0, 2, 4, 6, 8, 10 (interval=2, startBlock=0) plus event at block 5
     // Expected in reverse order (latest to earliest): block items have logIndex=16777216, event has logIndex=0
     let expectedTuples = [
-      (10, 16777216),
-      (8, 16777216),
-      (6, 16777216),
-      (5, 0),
-      (4, 16777216),
-      (2, 16777216),
       (0, 16777216),
+      (2, 16777216),
+      (4, 16777216),
+      (5, 0),
+      (6, 16777216),
+      (8, 16777216),
+      (10, 16777216),
     ]
 
     // Check that we have the exact expected tuples
@@ -137,7 +137,7 @@ describe("FetchState onBlock functionality", () => {
       ->Result.getExn
 
     // Get all (blockNumber, logIndex) tuples from the queue (including event items)
-    let queue = updatedFetchState.queue
+    let queue = updatedFetchState.buffer
     let blockNumberLogIndexTuples =
       queue->Array.map(item => (item->Internal.getItemBlockNumber, item->Internal.getItemLogIndex))
 
@@ -145,13 +145,13 @@ describe("FetchState onBlock functionality", () => {
     // The event at block 5 is NOT deduplicated with the block item at block 5
     // Expected in reverse order (latest to earliest): block items have higher priority than events at same block
     let expectedTuples = [
-      (10, 16777216),
-      (9, 16777216),
-      (8, 16777216),
-      (7, 16777216),
-      (6, 16777216),
-      (5, 16777216),
       (5, 0),
+      (5, 16777216),
+      (6, 16777216),
+      (7, 16777216),
+      (8, 16777216),
+      (9, 16777216),
+      (10, 16777216),
     ]
 
     // Check that we have the exact expected tuples
@@ -185,7 +185,7 @@ describe("FetchState onBlock functionality", () => {
       ->Result.getExn
 
     // Get all (blockNumber, logIndex) tuples from the queue (including event items)
-    let queue = updatedFetchState.queue
+    let queue = updatedFetchState.buffer
     let blockNumberLogIndexTuples =
       queue->Array.map(item => (item->Internal.getItemBlockNumber, item->Internal.getItemLogIndex))
 
@@ -193,16 +193,16 @@ describe("FetchState onBlock functionality", () => {
     // The event at block 5 is NOT deduplicated with the block item at block 5
     // Expected in reverse order (latest to earliest): block items have higher priority than events at same block
     let expectedTuples = [
-      (8, 16777216),
-      (7, 16777216),
-      (6, 16777216),
-      (5, 16777216),
-      (5, 0),
-      (4, 16777216),
-      (3, 16777216),
-      (2, 16777216),
-      (1, 16777216),
       (0, 16777216),
+      (1, 16777216),
+      (2, 16777216),
+      (3, 16777216),
+      (4, 16777216),
+      (5, 0),
+      (5, 16777216),
+      (6, 16777216),
+      (7, 16777216),
+      (8, 16777216),
     ]
 
     // Check that we have the exact expected tuples
@@ -237,7 +237,7 @@ describe("FetchState onBlock functionality", () => {
       ->Result.getExn
 
     // Get all (blockNumber, logIndex) tuples from the queue (including event items)
-    let queue = updatedFetchState.queue
+    let queue = updatedFetchState.buffer
     let blockNumberLogIndexTuples =
       queue->Array.map(item => (item->Internal.getItemBlockNumber, item->Internal.getItemLogIndex))
 
@@ -247,19 +247,19 @@ describe("FetchState onBlock functionality", () => {
     // Combined: 0(c1),0(c2),2(c1),3(c2),4(c1),5(event),6(c1),6(c2),8(c1),9(c2),10(c1),12(c1),12(c2)
     // Expected in reverse order (latest to earliest): [12(c2),12(c1),10(c1),9(c2),8(c1),6(c2),6(c1),5(event),4(c1),3(c2),2(c1),0(c2),0(c1)]
     let expectedTuples = [
-      (12, 16777217),
-      (12, 16777216),
-      (10, 16777216),
-      (9, 16777217),
-      (8, 16777216),
-      (6, 16777217),
-      (6, 16777216),
-      (5, 0),
-      (4, 16777216),
-      (3, 16777217),
-      (2, 16777216),
-      (0, 16777217),
       (0, 16777216),
+      (0, 16777217),
+      (2, 16777216),
+      (3, 16777217),
+      (4, 16777216),
+      (5, 0),
+      (6, 16777216),
+      (6, 16777217),
+      (8, 16777216),
+      (9, 16777217),
+      (10, 16777216),
+      (12, 16777216),
+      (12, 16777217),
     ]
 
     // Check that we have the exact expected tuples
@@ -292,7 +292,7 @@ describe("FetchState onBlock functionality", () => {
       ->Result.getExn
 
     // Verify that no block items were added when onBlock configs are not provided
-    let queue = updatedFetchState.queue
+    let queue = updatedFetchState.buffer
     let blockNumberLogIndexTuples =
       queue->Array.map(item => (item->Internal.getItemBlockNumber, item->Internal.getItemLogIndex))
 

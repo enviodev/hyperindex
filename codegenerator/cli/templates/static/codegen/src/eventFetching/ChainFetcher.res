@@ -41,7 +41,6 @@ let make = (
   ~timestampCaughtUpToHeadOrEndblock,
   ~numEventsProcessed,
   ~numBatchesFetched,
-  ~processingFilters,
   ~isInReorgThreshold,
 ): t => {
   // We don't need the router itself, but only validation logic,
@@ -205,7 +204,7 @@ let make = (
     timestampCaughtUpToHeadOrEndblock,
     numEventsProcessed,
     numBatchesFetched,
-    processingFilters,
+    processingFilters: None,
   }
 }
 
@@ -228,7 +227,6 @@ let makeFromConfig = (chainConfig: InternalConfig.chain, ~config, ~targetBufferS
     ~numBatchesFetched=0,
     ~targetBufferSize,
     ~logger,
-    ~processingFilters=None,
     ~dynamicContracts=[],
     ~isInReorgThreshold=false,
   )
@@ -247,34 +245,6 @@ let makeFromDbState = async (
 ) => {
   let chainId = chainConfig.id
   let logger = Logging.createChild(~params={"chainId": chainId})
-
-  let restartBlockNumber =
-    // Can be -1 when not set
-    resumedChainState.progressBlockNumber >= 0
-      ? resumedChainState.progressBlockNumber + 1
-      : resumedChainState.startBlock
-
-  let processingFilters = switch resumedChainState.progressNextBlockLogIndex {
-  | Value(progressNextBlockLogIndex) =>
-    // Start from the same block but filter out any events already processed
-    Some([
-      {
-        filter: qItem => {
-          switch qItem {
-          | Internal.Event({blockNumber, logIndex})
-          | Internal.Block({blockNumber, logIndex}) =>
-            //Only keep events greater than the last processed event
-            (blockNumber, logIndex) > (restartBlockNumber, progressNextBlockLogIndex)
-          }
-        },
-        isValid: (~fetchState) => {
-          //the filter can be cleaned up as soon as the fetch state block is ahead of the latestProcessedEvent blockNumber
-          fetchState->FetchState.bufferBlockNumber <= restartBlockNumber
-        },
-      },
-    ])
-  | Null => None
-  }
 
   // Since we deleted all contracts after the restart point,
   // we can simply query all dcs we have in db
@@ -298,6 +268,12 @@ let makeFromDbState = async (
 
   Prometheus.ProgressEventsCount.set(~processedCount=resumedChainState.numEventsProcessed, ~chainId)
 
+  let progressBlockNumber =
+    // Can be -1 when not set
+    resumedChainState.progressBlockNumber >= 0
+      ? resumedChainState.progressBlockNumber
+      : resumedChainState.startBlock - 1
+
   make(
     ~dynamicContracts=dbRecoveredDynamicContracts,
     ~chainConfig,
@@ -306,14 +282,13 @@ let makeFromDbState = async (
     ~config,
     ~lastBlockScannedHashes,
     ~firstEventBlockNumber=resumedChainState.firstEventBlockNumber->Js.Null.toOption,
-    ~progressBlockNumber=restartBlockNumber - 1,
+    ~progressBlockNumber,
     ~timestampCaughtUpToHeadOrEndblock=Env.updateSyncTimeOnRestart
       ? None
       : resumedChainState.timestampCaughtUpToHeadOrEndblock->Js.Null.toOption,
     ~numEventsProcessed=resumedChainState.numEventsProcessed,
     ~numBatchesFetched=0,
     ~logger,
-    ~processingFilters,
     ~targetBufferSize,
     ~isInReorgThreshold,
   )

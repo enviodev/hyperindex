@@ -53,7 +53,6 @@ type t = {
   processedBatches: int,
   currentlyProcessingBatch: bool,
   rollbackState: rollbackState,
-  maxBatchSize: int,
   indexerStartTime: Js.Date.t,
   writeThrottlers: WriteThrottlers.t,
   loadManager: LoadManager.t,
@@ -69,7 +68,6 @@ let make = (~config: Config.t, ~chainManager: ChainManager.t, ~shouldUseTui=fals
     currentlyProcessingBatch: false,
     processedBatches: 0,
     chainManager,
-    maxBatchSize: Env.maxProcessBatchSize,
     indexerStartTime: Js.Date.make(),
     rollbackState: NoRollback,
     writeThrottlers: WriteThrottlers.make(~config),
@@ -900,7 +898,8 @@ let injectedTaskReducer = (
     }
   | ProcessEventBatch =>
     if !state.currentlyProcessingBatch && !isRollingBack(state) {
-      let batch = state.chainManager->ChainManager.createBatch(~maxBatchSize=state.maxBatchSize)
+      let batch =
+        state.chainManager->ChainManager.createBatch(~batchSizeTarget=state.config.batchSize)
 
       let updatedFetchStates = batch.updatedFetchStates
 
@@ -934,8 +933,26 @@ let injectedTaskReducer = (
           ~pgSchema=Db.publicSchema,
           ~progressedChains,
         )
+        // FIXME: When state.rollbackState is RollbackInMemStore
+        // If we increase progress in this case (no items)
+        // and then indexer restarts - there's a high chance of missing
+        // the rollback. This should be tested and fixed.
         dispatchAction(EventBatchProcessed({progressedChains, items: batch.items}))
       | {items, progressedChains, updatedFetchStates, dcsToStoreByChainId} =>
+        if Env.Benchmark.shouldSaveData {
+          let group = "Other"
+          Benchmark.addSummaryData(
+            ~group,
+            ~label=`Batch Creation Time (ms)`,
+            ~value=batch.creationTimeMs->Belt.Int.toFloat,
+          )
+          Benchmark.addSummaryData(
+            ~group,
+            ~label=`Batch Size`,
+            ~value=items->Array.length->Belt.Int.toFloat,
+          )
+        }
+
         dispatchAction(StartProcessingBatch)
         dispatchAction(UpdateQueues({updatedFetchStates, shouldEnterReorgThreshold}))
 
