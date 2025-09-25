@@ -448,10 +448,16 @@ type t = {
 }
 
 @module("@envio-dev/hypersync-client") @scope("HypersyncClient") external make: cfg => t = "new"
-let make = (~url, ~apiToken, ~httpReqTimeoutMillis, ~maxNumRetries) =>
+let make = (
+  ~url,
+  ~apiToken,
+  ~httpReqTimeoutMillis,
+  ~maxNumRetries,
+  ~enableChecksumAddresses=true,
+) =>
   make({
     url,
-    enableChecksumAddresses: true,
+    enableChecksumAddresses,
     bearerToken: apiToken,
     httpReqTimeoutMillis,
     maxNumRetries,

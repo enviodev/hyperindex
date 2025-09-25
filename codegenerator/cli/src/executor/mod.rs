@@ -116,6 +116,11 @@ pub async fn execute(command_line_args: CommandLineArgs) -> Result<()> {
                 .await
                 .context("Failed print missing networks script")?;
         }
+        CommandType::Auth => {
+            commands::auth::run_auth()
+                .await
+                .context("Failed running auth flow")?;
+        }
     };
 
     Ok(())

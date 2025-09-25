@@ -171,6 +171,7 @@ pub mod evm {
                 field_selection: None,
                 raw_events: None,
                 preload_handlers: Some(true),
+                address_format: None,
             })
         }
 

@@ -66,6 +66,9 @@ pub enum CommandType {
     ///Start the indexer without any automatic codegen
     Start(StartArgs),
 
+    ///Authenticate with envio hosted services and print a JWT
+    Auth,
+
     #[clap(hide = true)]
     #[command(subcommand)]
     Script(Script),

@@ -280,3 +280,137 @@ pub mod benchmark {
         Ok(())
     }
 }
+
+pub mod auth {
+    use anyhow::{anyhow, Context, Result};
+    use open;
+    use reqwest::StatusCode;
+    use serde::{Deserialize, Serialize};
+    use std::time::Duration;
+    use tokio::time::sleep;
+
+    /// Default UI/API base URL. Change this constant to point to your deployment.
+    pub const AUTH_BASE_URL: &str = "http://localhost:3000";
+
+    fn get_api_base_url() -> String {
+        // Allow override via ENVIO_API_URL, otherwise use the constant above.
+        std::env::var("ENVIO_API_URL").unwrap_or_else(|_| AUTH_BASE_URL.to_string())
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct CliAuthSession {
+        code: String,
+        auth_url: String,
+        expires_in: i32,
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct User {
+        #[allow(dead_code)]
+        id: Option<String>,
+        #[allow(dead_code)]
+        name: Option<String>,
+        #[allow(dead_code)]
+        email: Option<String>,
+        #[allow(dead_code)]
+        #[serde(rename = "githubId")]
+        github_id: Option<String>,
+        #[allow(dead_code)]
+        #[serde(rename = "githubLogin")]
+        github_login: Option<String>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct CliAuthStatus {
+        completed: bool,
+        #[allow(dead_code)]
+        user: Option<User>,
+        #[allow(dead_code)]
+        error: Option<String>,
+        token: Option<String>,
+    }
+
+    #[derive(Debug, Serialize)]
+    struct EmptyBody {}
+
+    pub async fn run_auth() -> Result<()> {
+        let base = get_api_base_url();
+        let client = reqwest::Client::new();
+
+        // 1) Create a CLI auth session
+        let create_url = format!("{}/api/auth/cli-session", base);
+        let session: CliAuthSession = client
+            .post(&create_url)
+            .json(&EmptyBody {})
+            .send()
+            .await
+            .with_context(|| format!("Failed to POST {}", create_url))?
+            .error_for_status()
+            .with_context(|| format!("Non-200 from {}", create_url))?
+            .json()
+            .await
+            .context("Failed to decode CLI session response")?;
+
+        println!("Opening browser for authentication...\nIf it doesn't open, visit: {}", session.auth_url);
+        let _ = open::that_detached(&session.auth_url);
+
+        // 2) Poll for completion
+        let poll_url = format!("{}/api/auth/cli-session?code={}", base, session.code);
+        let poll_interval = Duration::from_secs(2);
+        // Add a small grace window to handle cold starts or UI recompiles wiping in-memory state
+        let extra_grace_attempts = 15; // ~30s grace
+        let max_attempts = (session.expires_in.max(0) as u64) / 2 + extra_grace_attempts;
+
+        // Give the UI a brief warm-up before first poll
+        sleep(Duration::from_secs(2)).await;
+
+        let mut consecutive_not_found = 0u32;
+
+        for _ in 0..max_attempts {
+            sleep(poll_interval).await;
+
+            let resp = match client.get(&poll_url).send().await {
+                Ok(r) => r,
+                Err(_) => {
+                    // transient network error; try again
+                    continue;
+                }
+            };
+
+            if resp.status() == StatusCode::NOT_FOUND {
+                consecutive_not_found += 1;
+                // Keep polling; in-memory session store may not be ready yet
+                if consecutive_not_found % 10 == 1 {
+                    // Print a lightweight status occasionally
+                    eprintln!("Waiting for session to become available...");
+                }
+                continue;
+            } else {
+                consecutive_not_found = 0;
+            }
+
+            if resp.status().is_success() {
+                let status: CliAuthStatus = match resp.json().await {
+                    Ok(s) => s,
+                    Err(_) => continue,
+                };
+
+                if let Some(err) = status.error {
+                    if !err.is_empty() {
+                        return Err(anyhow!("authentication error: {}", err));
+                    }
+                }
+
+                if status.completed {
+                    if let Some(token) = status.token {
+                        println!("{}", token);
+                        return Ok(());
+                    }
+                }
+            }
+        }
+
+        Err(anyhow!("authentication timed out"))
+    }
+}
