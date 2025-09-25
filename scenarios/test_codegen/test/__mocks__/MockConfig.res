@@ -40,7 +40,7 @@ let evmContracts = contracts->Js.Array2.map((contract): Internal.evmContractConf
 
 let mockChainConfig: InternalConfig.chain = {
   id: 1337,
-  confirmedBlockThreshold: 200,
+  maxReorgDepth: 200,
   startBlock: 1,
   contracts,
   sources: [

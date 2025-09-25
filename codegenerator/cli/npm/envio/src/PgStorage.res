@@ -65,7 +65,7 @@ let makeInitializeTransaction = (
   let generalTables = [
     InternalTable.Chains.table,
     InternalTable.PersistedState.table,
-    InternalTable.EndOfBlockRangeScannedData.table,
+    InternalTable.ReorgCheckpoints.table,
     InternalTable.RawEvents.table,
   ]
 

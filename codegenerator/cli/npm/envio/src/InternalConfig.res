@@ -30,7 +30,7 @@ type chain = {
   id: int,
   startBlock: int,
   endBlock?: int,
-  confirmedBlockThreshold: int,
+  maxReorgDepth: int,
   contracts: array<contract>,
   sources: array<Source.t>,
 }
