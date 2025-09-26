@@ -185,8 +185,6 @@ module Hasura = {
 }
 
 module Configurable = {
-  let shouldUseHypersyncClientDecoder =
-    envSafe->EnvSafe.get("USE_HYPERSYNC_CLIENT_DECODER", S.option(S.bool))
 
   /**
     Used for backwards compatability
