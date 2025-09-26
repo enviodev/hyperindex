@@ -415,6 +415,7 @@ pub struct SystemConfig {
     pub preload_handlers: bool,
     pub human_config: HumanConfig,
     pub lowercase_addresses: bool,
+    pub should_use_hypersync_client_decoder: bool,
 }
 
 //Getter methods for system config
@@ -723,18 +724,14 @@ impl SystemConfig {
                     enable_raw_events: evm_config.raw_events.unwrap_or(false),
                     preload_handlers: evm_config.preload_handlers.unwrap_or(false),
                     lowercase_addresses: match evm_config.address_format {
-                        Some(super::human_config::evm::AddressFormat::Lowercase) => {
-                            // Validate that USE_HYPERSYNC_CLIENT_DECODER is not set to false when address_format is lowercase
-                            if let Ok(use_hypersync_decoder) =
-                                std::env::var("USE_HYPERSYNC_CLIENT_DECODER")
-                            {
-                                if use_hypersync_decoder.to_lowercase() == "false" {
-                                    panic!("Error: address_format 'lowercase' is not supported when USE_HYPERSYNC_CLIENT_DECODER is set to false. Please either set USE_HYPERSYNC_CLIENT_DECODER to true or change address_format to 'checksum'.");
-                                }
-                            }
+                        Some(super::human_config::evm::AddressFormat::Lowercase) => true,
+                        _ => false,
+                    },
+                    should_use_hypersync_client_decoder: match evm_config.event_decoder {
+                        Some(super::human_config::evm::EventDecoder::Viem) => false,
+                        Some(super::human_config::evm::EventDecoder::HypersyncClient) | None => {
                             true
                         }
-                        _ => false,
                     },
                     human_config,
                 })
@@ -874,6 +871,7 @@ impl SystemConfig {
                     enable_raw_events: fuel_config.raw_events.unwrap_or(false),
                     preload_handlers: fuel_config.preload_handlers.unwrap_or(false),
                     lowercase_addresses: false,
+                    should_use_hypersync_client_decoder: true,
                     human_config,
                 })
             }
@@ -884,7 +882,8 @@ impl SystemConfig {
         let human_config_string =
             std::fs::read_to_string(&project_paths.config).context(format!(
                 "EE104: Failed to resolve config path {0}. Make sure you're in the correct \
-                 directory and that a config file with the name {0} exists. I can configure another path by using the --config flag.",
+                 directory and that a config file with the name {0} exists. I can configure \
+                 another path by using the --config flag.",
                 &project_paths.config.to_str().unwrap_or("{unknown}"),
             ))?;
 
@@ -1030,16 +1029,23 @@ impl DataSource {
         let main = match rpc_for_sync {
             Some(rpc) => {
                 if network.hypersync_config.is_some() {
-                    Err(anyhow!("EE106: Cannot define both hypersync_config and rpc as a data-source for historical sync at the same time, please choose only one option or set RPC to be a fallback. Read more in our docs {}", links::DOC_CONFIGURATION_FILE))?
+                    Err(anyhow!(
+                        "EE106: Cannot define both hypersync_config and rpc as a data-source for \
+                         historical sync at the same time, please choose only one option or set \
+                         RPC to be a fallback. Read more in our docs {}",
+                        links::DOC_CONFIGURATION_FILE
+                    ))?
                 };
 
                 MainEvmDataSource::Rpc(rpc.clone())
             }
             None => {
                 let url = hypersync_endpoint_url.ok_or(anyhow!(
-                  "EE106: Failed to automatically find HyperSync endpoint for the network {}. Please provide it manually via the hypersync_config option, or provide an RPC URL for historical sync. Read more in our docs: {}",
-                  network.id,
-                  links::DOC_CONFIGURATION_SCHEMA_HYPERSYNC_CONFIG
+                    "EE106: Failed to automatically find HyperSync endpoint for the network {}. \
+                     Please provide it manually via the hypersync_config option, or provide an \
+                     RPC URL for historical sync. Read more in our docs: {}",
+                    network.id,
+                    links::DOC_CONFIGURATION_SCHEMA_HYPERSYNC_CONFIG
                 ))?;
 
                 let parsed_url = parse_url(&url).ok_or(anyhow!(
