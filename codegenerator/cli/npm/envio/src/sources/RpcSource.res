@@ -47,13 +47,10 @@ let rec getKnownBlockWithBackoff = async (
       // NOTE: this is wasteful if these fields are not selected in the users config.
       //       There might be a better way to do this based on the block schema.
       //       However this is not extremely expensive and good enough for now (only on rpc sync also).
-      {
-        ...result,
-        miner: result.miner->Address.Evm.fromAddressLowercaseOrThrow,
-      }
-    } else {
-      result
+      // The in place mutation is cheapest.
+      (result->Obj.magic)["miner"] = result.miner->Address.Evm.fromAddressLowercaseOrThrow
     }
+    result
   }
 let getSuggestedBlockIntervalFromExn = {
   // Unknown provider: "retry with the range 123-456"
@@ -680,7 +677,7 @@ let make = (
 
       await logs
       ->Array.zip(parsedEvents)
-      ->Array.map(((
+      ->Array.keepMap(((
         log: Ethers.log,
         maybeDecodedEvent: Js.Nullable.t<HyperSyncClient.Decoder.decodedEvent>,
       )) => {
@@ -752,7 +749,6 @@ let make = (
           }
         }
       })
-      ->Array.keepMap(item => item)
       ->Promise.all
     } else {
       // Decode using Viem

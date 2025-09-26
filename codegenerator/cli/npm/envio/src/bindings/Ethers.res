@@ -162,10 +162,23 @@ module JsonRpcProvider = {
     //       There might be a better way to do this in the `makeThrowingGetEventTransaction` function rather based on the schema.
     //       However this is not extremely expensive and good enough for now (only on rpc sync also).
     if lowercaseAddresses {
-      fields["from"] = fields["from"]->Js.Nullable.toOption->Belt.Option.map(Js.String2.toLowerCase)
-      fields["to"] = fields["to"]->Js.Nullable.toOption->Belt.Option.map(Js.String2.toLowerCase)
-      fields["contractAddress"] =
-        fields["contractAddress"]->Js.Nullable.toOption->Belt.Option.map(Js.String2.toLowerCase)
+      open Js.Nullable
+      switch fields["from"] {
+      | Value(from) => fields["from"] = from->Js.String2.toLowerCase
+      | Undefined => ()
+      | Null => ()
+      }
+      switch fields["to"] {
+      | Value(to) => fields["to"] = to->Js.String2.toLowerCase
+      | Undefined => ()
+      | Null => ()
+      }
+      switch fields["contractAddress"] {
+      | Value(contractAddress) =>
+        fields["contractAddress"] = contractAddress->Js.String2.toLowerCase
+      | Undefined => ()
+      | Null => ()
+      }
     }
 
     fields->Obj.magic
