@@ -28,9 +28,7 @@ let evm = (
         endpointUrl,
         allEventSignatures,
         eventRouter,
-        shouldUseHypersyncClientDecoder: Env.Configurable.shouldUseHypersyncClientDecoder->Option.getWithDefault(
-          shouldUseHypersyncClientDecoder,
-        ),
+        shouldUseHypersyncClientDecoder,
         apiToken: Env.envioApiToken,
         clientMaxRetries: Env.hyperSyncClientMaxRetries,
         clientTimeoutMillis: Env.hyperSyncClientTimeoutMillis,
@@ -49,9 +47,7 @@ let evm = (
         url,
         eventRouter,
         allEventSignatures,
-        shouldUseHypersyncClientDecoder: Env.Configurable.shouldUseHypersyncClientDecoder->Option.getWithDefault(
-          shouldUseHypersyncClientDecoder,
-        ),
+        shouldUseHypersyncClientDecoder,
         lowercaseAddresses,
       }),
     )

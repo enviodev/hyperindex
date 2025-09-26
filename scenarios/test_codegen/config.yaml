@@ -21,6 +21,7 @@ contracts:
       - event: EmptyFiltersArray(address indexed from)
       - event: "WildcardHandlerWithLoader()"
       - event: "FilterTestEvent(address indexed addr)"
+event_decoder: "hypersync-client" # default
 networks:
   - id: 1337
     rpc_config:

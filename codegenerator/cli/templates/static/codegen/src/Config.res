@@ -128,16 +128,19 @@ let make = (
   ~ecosystem=InternalConfig.Evm,
   ~registrations=?,
   ~lowercaseAddresses=false,
+  ~shouldUseHypersyncClientDecoder=true,
 ) => {
-  // NOTE: the `envio` cli also does this check on `envio dev` and `envio start`, here for redundancy.
-  if (
-    lowercaseAddresses &&
-    !(Env.Configurable.shouldUseHypersyncClientDecoder->Option.getWithDefault(true))
-  ) {
-    Js.Exn.raiseError(
-      "lowercase addresses is not supported when USE_HYPERSYNC_CLIENT_DECODER is false. Please set USE_HYPERSYNC_CLIENT_DECODER to true or change address_format to 'checksum'.",
-    )
-  }
+  // Validate that lowercase addresses is not used with viem decoder
+  chains->Array.forEach(chain => {
+    if (
+      lowercaseAddresses &&
+      !shouldUseHypersyncClientDecoder
+    ) {
+      Js.Exn.raiseError(
+        "lowercase addresses is not supported when event_decoder is 'viem'. Please set event_decoder to 'hypersync-client' or change address_format to 'checksum'.",
+      )
+    }
+  })
 
   let chainMap =
     chains

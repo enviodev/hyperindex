@@ -352,7 +352,10 @@ pub mod auth {
             .await
             .context("Failed to decode CLI session response")?;
 
-        println!("Opening browser for authentication...\nIf it doesn't open, visit: {}", session.auth_url);
+        println!(
+            "Opening browser for authentication...\nIf it doesn't open, visit: {}",
+            session.auth_url
+        );
         let _ = open::that_detached(&session.auth_url);
 
         // 2) Poll for completion
