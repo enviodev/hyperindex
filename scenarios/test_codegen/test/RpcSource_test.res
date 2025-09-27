@@ -30,6 +30,9 @@ describe("RpcSource - name", () => {
       eventRouter: EventRouter.empty(),
       sourceFor: Sync,
       syncConfig: Config.getSyncConfig({}),
+      allEventSignatures: [],
+      shouldUseHypersyncClientDecoder: false,
+      lowercaseAddresses: false,
     })
     Assert.equal(source.name, "RPC (eth.rpc.hypersync.xyz)")
   })
@@ -44,6 +47,9 @@ describe("RpcSource - getHeightOrThrow", () => {
       eventRouter: EventRouter.empty(),
       sourceFor: Sync,
       syncConfig: Config.getSyncConfig({}),
+      allEventSignatures: ["a", "b", "c"],
+      shouldUseHypersyncClientDecoder: true,
+      lowercaseAddresses: false,
     })
     let height = await source.getHeightOrThrow()
     Assert.equal(height > 21994218, true)
@@ -167,6 +173,7 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
     let getTransactionFields = Ethers.JsonRpcProvider.makeGetTransactionFields(
       ~getTransactionByHash=transactionHash =>
         provider->Ethers.JsonRpcProvider.getTransaction(~transactionHash),
+      ~lowercaseAddresses=false,
     )
 
     let getEventTransactionOrThrow = RpcSource.makeThrowingGetEventTransaction(
