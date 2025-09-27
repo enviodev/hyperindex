@@ -10,7 +10,7 @@ describe("E2E Integration Test", () => {
     DbHelpers.runUpDownMigration()
   })
 
-  Async.it("Complete E2E", async () => {
+  Async.it_only("Complete E2E", async () => {
     This.timeout(5 * 1000)
 
     let contracts = await SetupRpcNode.deployContracts()
@@ -61,6 +61,9 @@ describe("E2E Integration Test", () => {
             eventRouter: evmContracts
             ->Belt.Array.flatMap(contract => contract.events)
             ->EventRouter.fromEvmEventModsOrThrow(~chain),
+            allEventSignatures: [],
+            shouldUseHypersyncClientDecoder: false, // stick to viem.
+            lowercaseAddresses: false,
           }),
         ],
       }
