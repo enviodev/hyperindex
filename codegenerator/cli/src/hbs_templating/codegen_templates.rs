@@ -1144,12 +1144,6 @@ impl NetworkConfigTemplate {
             is_fuel: matches!(network.sync_source, system_config::DataSource::Fuel { .. }),
             sources_code,
             deprecated_sync_source_code,
-            // event_decoder: config.event_decoder.as_ref().map(|decoder| match decoder {
-            //     crate::config_parsing::human_config::evm::EventDecoder::Viem => "viem".to_string(),
-            //     crate::config_parsing::human_config::evm::EventDecoder::HypersyncClient => {
-            //         "hypersync-client".to_string()
-            //     }
-            // }),
         })
     }
 }
