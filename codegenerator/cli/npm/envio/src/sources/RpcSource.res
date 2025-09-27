@@ -22,6 +22,7 @@ let rec getKnownBlockWithBackoff = async (
   ~chain,
   ~blockNumber,
   ~backoffMsOnFailure,
+  ~lowercaseAddresses: bool,
 ) =>
   switch await getKnownBlock(provider, blockNumber) {
   | exception err =>
@@ -39,8 +40,17 @@ let rec getKnownBlockWithBackoff = async (
       ~chain,
       ~blockNumber,
       ~backoffMsOnFailure=backoffMsOnFailure * 2,
+      ~lowercaseAddresses,
     )
-  | result => result
+  | result =>
+    if lowercaseAddresses {
+      // NOTE: this is wasteful if these fields are not selected in the users config.
+      //       There might be a better way to do this based on the block schema.
+      //       However this is not extremely expensive and good enough for now (only on rpc sync also).
+      // The in place mutation is cheapest.
+      (result->Obj.magic)["miner"] = result.miner->Address.Evm.fromAddressLowercaseOrThrow
+    }
+    result
   }
 let getSuggestedBlockIntervalFromExn = {
   // Unknown provider: "retry with the range 123-456"
@@ -453,9 +463,24 @@ type options = {
   chain: ChainMap.Chain.t,
   contracts: array<Internal.evmContractConfig>,
   eventRouter: EventRouter.t<Internal.evmEventConfig>,
+  allEventSignatures: array<string>,
+  shouldUseHypersyncClientDecoder: bool,
+  lowercaseAddresses: bool,
 }
 
-let make = ({sourceFor, syncConfig, url, chain, contracts, eventRouter}: options): t => {
+let make = (
+  {
+    sourceFor,
+    syncConfig,
+    url,
+    chain,
+    contracts,
+    eventRouter,
+    allEventSignatures,
+    shouldUseHypersyncClientDecoder,
+    lowercaseAddresses,
+  }: options,
+): t => {
   let urlHost = switch sanitizeUrl(url) {
   | None =>
     Js.Exn.raiseError(
@@ -498,6 +523,7 @@ let make = ({sourceFor, syncConfig, url, chain, contracts, eventRouter}: options
         ~chain,
         ~backoffMsOnFailure=1000,
         ~blockNumber,
+        ~lowercaseAddresses,
       ),
     ~onError=(am, ~exn) => {
       Logging.error({
@@ -522,6 +548,7 @@ let make = ({sourceFor, syncConfig, url, chain, contracts, eventRouter}: options
   let getEventTransactionOrThrow = makeThrowingGetEventTransaction(
     ~getTransactionFields=Ethers.JsonRpcProvider.makeGetTransactionFields(
       ~getTransactionByHash=LazyLoader.get(transactionLoader, _),
+      ~lowercaseAddresses,
     ),
   )
 
@@ -529,6 +556,32 @@ let make = ({sourceFor, syncConfig, url, chain, contracts, eventRouter}: options
   contracts->Belt.Array.forEach(contract => {
     contractNameAbiMapping->Js.Dict.set(contract.name, contract.abi)
   })
+
+  let convertEthersLogToHyperSyncEvent = (log: Ethers.log): HyperSyncClient.ResponseTypes.event => {
+    let hyperSyncLog: HyperSyncClient.ResponseTypes.log = {
+      removed: log.removed->Option.getWithDefault(false),
+      index: log.logIndex,
+      transactionIndex: log.transactionIndex,
+      transactionHash: log.transactionHash,
+      blockHash: log.blockHash,
+      blockNumber: log.blockNumber,
+      address: log.address,
+      data: log.data,
+      topics: log.topics->Array.map(topic => Js.Nullable.return(topic)),
+    }
+    {log: hyperSyncLog}
+  }
+
+  let hscDecoder: ref<option<HyperSyncClient.Decoder.t>> = ref(None)
+  let getHscDecoder = () => {
+    switch hscDecoder.contents {
+    | Some(decoder) => decoder
+    | None => {
+        let decoder = HyperSyncClient.Decoder.fromSignatures(allEventSignatures)
+        decoder
+      }
+    }
+  }
 
   let getItemsOrThrow = async (
     ~fromBlock,
@@ -603,10 +656,106 @@ let make = ({sourceFor, syncConfig, url, chain, contracts, eventRouter}: options
       )
     }
 
-    let parsedQueueItems =
+    let parsedQueueItems = if shouldUseHypersyncClientDecoder {
+      // Convert Ethers logs to HyperSync events
+      let hyperSyncEvents = logs->Belt.Array.map(convertEthersLogToHyperSyncEvent)
+
+      // Decode using HyperSyncClient decoder
+      let parsedEvents = try await getHscDecoder().decodeEvents(hyperSyncEvents) catch {
+      | exn =>
+        raise(
+          Source.GetItemsError(
+            FailedParsingItems({
+              message: "Failed to parse events using hypersync client decoder. Please double-check your ABI.",
+              exn,
+              blockNumber: fromBlock,
+              logIndex: 0,
+            }),
+          ),
+        )
+      }
+
+      await logs
+      ->Array.zip(parsedEvents)
+      ->Array.keepMap(((
+        log: Ethers.log,
+        maybeDecodedEvent: Js.Nullable.t<HyperSyncClient.Decoder.decodedEvent>,
+      )) => {
+        let topic0 = log.topics[0]->Option.getWithDefault("0x0"->EvmTypes.Hex.fromStringUnsafe)
+        let routedAddress = if lowercaseAddresses {
+          log.address->Address.Evm.fromAddressLowercaseOrThrow
+        } else {
+          log.address
+        }
+
+        switch eventRouter->EventRouter.get(
+          ~tag=EventRouter.getEvmEventId(
+            ~sighash=topic0->EvmTypes.Hex.toString,
+            ~topicCount=log.topics->Array.length,
+          ),
+          ~indexingContracts,
+          ~contractAddress=routedAddress,
+          ~blockNumber=log.blockNumber,
+        ) {
+        | None => None
+        | Some(eventConfig) =>
+          switch maybeDecodedEvent {
+          | Js.Nullable.Value(decoded) =>
+            Some(
+              (
+                async () => {
+                  let (block, transaction) = try await Promise.all2((
+                    log->getEventBlockOrThrow,
+                    log->getEventTransactionOrThrow(
+                      ~transactionSchema=eventConfig.transactionSchema,
+                    ),
+                  )) catch {
+                  | exn =>
+                    raise(
+                      Source.GetItemsError(
+                        FailedGettingFieldSelection({
+                          message: "Failed getting selected fields. Please double-check your RPC provider returns correct data.",
+                          exn,
+                          blockNumber: log.blockNumber,
+                          logIndex: log.logIndex,
+                        }),
+                      ),
+                    )
+                  }
+
+                  Internal.Event({
+                    eventConfig: (eventConfig :> Internal.eventConfig),
+                    timestamp: block.timestamp,
+                    blockNumber: block.number,
+                    chain,
+                    logIndex: log.logIndex,
+                    event: {
+                      chainId: chain->ChainMap.Chain.toChainId,
+                      params: decoded->eventConfig.convertHyperSyncEventArgs,
+                      transaction,
+                      block: block->(
+                        Utils.magic: Ethers.JsonRpcProvider.block => Internal.eventBlock
+                      ),
+                      srcAddress: routedAddress,
+                      logIndex: log.logIndex,
+                    }->Internal.fromGenericEvent,
+                  })
+                }
+              )(),
+            )
+          | Js.Nullable.Null
+          | Js.Nullable.Undefined =>
+            None
+          }
+        }
+      })
+      ->Promise.all
+    } else {
+      // Decode using Viem
       await logs
       ->Belt.Array.keepMap(log => {
         let topic0 = log.topics->Js.Array2.unsafe_get(0)
+
         switch eventRouter->EventRouter.get(
           ~tag=EventRouter.getEvmEventId(
             ~sighash=topic0->EvmTypes.Hex.toString,
@@ -685,6 +834,7 @@ let make = ({sourceFor, syncConfig, url, chain, contracts, eventRouter}: options
         }
       })
       ->Promise.all
+    }
 
     let optFirstBlockParent = await firstBlockParentPromise
 

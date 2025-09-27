@@ -44,12 +44,6 @@ pub struct EventParamTypeTemplate {
 }
 
 #[derive(Serialize, Debug, PartialEq, Clone)]
-pub struct EventRecordTypeTemplate {
-    pub name: CapitalizedOptions,
-    pub params: Vec<EventParamTypeTemplate>,
-}
-
-#[derive(Serialize, Debug, PartialEq, Clone)]
 pub struct GraphQlEnumTypeTemplate {
     pub name: CapitalizedOptions,
     pub params: Vec<CapitalizedOptions>,
@@ -368,9 +362,14 @@ impl EventMod {
 
         let event_filters_type_code = match self.event_filter_type.as_str() {
             "{}" => "@genType type eventFilters = Internal.noEventFilters".to_string(),
-            _ => "@genType type eventFiltersArgs = {/** The unique identifier of the blockchain network where this event occurred. */ chainId: chainId, /** Addresses of the contracts indexing the event. */ addresses: array<Address.t>}\n
-@genType @unboxed type eventFiltersDefinition = Single(eventFilter) | Multiple(array<eventFilter>)\n
-@genType @unboxed type eventFilters = | ...eventFiltersDefinition | Dynamic(eventFiltersArgs => eventFiltersDefinition)".to_string(),
+            _ => "@genType type eventFiltersArgs = {/** The unique identifier of the blockchain \
+                  network where this event occurred. */ chainId: chainId, /** Addresses of the \
+                  contracts indexing the event. */ addresses: array<Address.t>}\n
+@genType @unboxed type eventFiltersDefinition = Single(eventFilter) | \
+                  Multiple(array<eventFilter>)\n
+@genType @unboxed type eventFilters = | ...eventFiltersDefinition | Dynamic(eventFiltersArgs => \
+                  eventFiltersDefinition)"
+                .to_string(),
         };
 
         let fuel_event_kind_code = match self.fuel_event_kind {
@@ -586,16 +585,18 @@ impl EventTemplate {
                     params_code = format!("{params_code}\"{param_name}\",");
                     let _ = write!(
                         output,
-                        ", ~topic{topic_number}=({event_filter_arg}) => {event_filter_arg}->Utils.Dict.dangerouslyGetNonOption(\"{param_name}\")->Belt.Option.\
-                         mapWithDefault([], topicFilters => \
-                         topicFilters->Obj.magic->SingleOrMultiple.normalizeOrThrow{nested_type_flags}->Belt.\
-                         Array.map({topic_encoder}))"
+                        ", ~topic{topic_number}=({event_filter_arg}) => \
+                         {event_filter_arg}->Utils.Dict.dangerouslyGetNonOption(\"{param_name}\"\
+                         )->Belt.Option.mapWithDefault([], topicFilters => \
+                         topicFilters->Obj.magic->SingleOrMultiple.\
+                         normalizeOrThrow{nested_type_flags}->Belt.Array.map({topic_encoder}))"
                     );
                     output
                 });
 
         format!(
-            "LogSelection.parseEventFiltersOrThrow(~eventFilters=handlerRegister->EventRegister.getEventFilters, ~sighash, ~params=[{params_code}]{topic_filter_calls})"
+            "LogSelection.parseEventFiltersOrThrow(~eventFilters=handlerRegister->EventRegister.\
+             getEventFilters, ~sighash, ~params=[{params_code}]{topic_filter_calls})"
         )
     }
 
@@ -617,8 +618,7 @@ impl EventTemplate {
 
         for (index, param) in indexed_params.into_iter().enumerate() {
             code.push_str(&format!(
-                "{}: \
-                 decodedEvent.indexed->Js.Array2.unsafe_get({})->HyperSyncClient.Decoder.\
+                "{}: decodedEvent.indexed->Js.Array2.unsafe_get({})->HyperSyncClient.Decoder.\
                  toUnderlying->Utils.magic, ",
                 RescriptRecordField::to_valid_res_name(&param.name),
                 index
@@ -627,8 +627,7 @@ impl EventTemplate {
 
         for (index, param) in body_params.into_iter().enumerate() {
             code.push_str(&format!(
-                "{}: \
-                 decodedEvent.body->Js.Array2.unsafe_get({})->HyperSyncClient.Decoder.\
+                "{}: decodedEvent.body->Js.Array2.unsafe_get({})->HyperSyncClient.Decoder.\
                  toUnderlying->Utils.magic, ",
                 RescriptRecordField::to_valid_res_name(&param.name),
                 index
@@ -868,7 +867,8 @@ let eventSignatures = [{}]
                     ))?;
 
                 format!(
-                    "let abi = Fuel.transpileAbi(%raw(`require`)(`../${{Path.relativePathToRootFromGenerated}}/{}`))\n{}\n{}\n{chain_id_type_code}",
+                    "let abi = Fuel.transpileAbi(%raw(`require`)(`../${{Path.\
+                     relativePathToRootFromGenerated}}/{}`))\n{}\n{}\n{chain_id_type_code}",
                     // If we decide to inline the abi, instead of using require
                     // we need to remember that abi might contain ` and we should escape it
                     abi.path_buf.to_string_lossy(),
@@ -961,6 +961,7 @@ pub struct NetworkConfigTemplate {
     sources_code: String,
     // This is only used to prevent ConfigYAML free from breaking changes
     deprecated_sync_source_code: String,
+    // event_decoder: Option<String>,
 }
 
 impl NetworkConfigTemplate {
@@ -1014,13 +1015,13 @@ impl NetworkConfigTemplate {
             } => (
                 format!(
                     "[HyperFuelSource.make({{chain: chain, endpointUrl: \
-                         \"{hypersync_endpoint_url}\"}})]",
+                     \"{hypersync_endpoint_url}\"}})]",
                 ),
                 format!("HyperFuel({{endpointUrl: \"{hypersync_endpoint_url}\"}})"),
             ),
             system_config::DataSource::Evm {
                 main,
-                is_client_decoder,
+                is_client_decoder: _,
                 rpcs,
             } => {
                 let all_event_signatures = codegen_contracts
@@ -1121,10 +1122,16 @@ impl NetworkConfigTemplate {
 
                 (
                     format!(
-                        "NetworkSources.evm(~chain, ~contracts=[{contracts_code}], ~hyperSync={hyper_sync_code}, \
+                        "NetworkSources.evm(~chain, ~contracts=[{contracts_code}], \
+                         ~hyperSync={hyper_sync_code}, \
                          ~allEventSignatures=[{all_event_signatures}]->Belt.Array.concatMany, \
-                         ~shouldUseHypersyncClientDecoder={is_client_decoder}, ~rpcs=[{rpcs}], ~lowercaseAddresses={})",
-                        if config.lowercase_addresses { "true" } else { "false" }
+                         ~shouldUseHypersyncClientDecoder=true, ~rpcs=[{rpcs}], \
+                         ~lowercaseAddresses={})",
+                        if config.lowercase_addresses {
+                            "true"
+                        } else {
+                            "false"
+                        }
                     ),
                     deprecated_sync_source_code,
                 )
@@ -1281,6 +1288,7 @@ pub struct ProjectTemplate {
     //Used for the package.json reference to handlers in generated
     relative_path_to_root_from_generated: String,
     lowercase_addresses: bool,
+    should_use_hypersync_client_decoder: bool,
 }
 
 impl ProjectTemplate {
@@ -1402,6 +1410,7 @@ type chain = [{chain_id_type}]"#,
             //Used for the package.json reference to handlers in generated
             relative_path_to_root_from_generated,
             lowercase_addresses: cfg.lowercase_addresses,
+            should_use_hypersync_client_decoder: cfg.should_use_hypersync_client_decoder,
         })
     }
 }

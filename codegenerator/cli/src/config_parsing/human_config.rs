@@ -84,8 +84,9 @@ pub struct NetworkContract<T> {
     pub address: Addresses,
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schemars(
-        description = "The block at which the indexer should start ingesting data for this specific contract. \
-                       If not specified, uses the network start_block. Can be greater than the network start_block for more specific indexing."
+        description = "The block at which the indexer should start ingesting data for this \
+                       specific contract. If not specified, uses the network start_block. Can be \
+                       greater than the network start_block for more specific indexing."
     )]
     pub start_block: Option<u64>,
     #[serde(flatten)]
@@ -206,13 +207,14 @@ pub mod evm {
         pub raw_events: Option<bool>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
-            description = "Makes handlers run twice to enable preload optimisations. Removes handlerWithLoader API, since it's not needed. (recommended, default: false)"
+            description = "Makes handlers run twice to enable preload optimisations. Removes \
+                           handlerWithLoader API, since it's not needed. (recommended, default: \
+                           false)"
         )]
         pub preload_handlers: Option<bool>,
         #[serde(skip_serializing_if = "Option::is_none")]
-        #[schemars(
-            description = "Address format for Ethereum addresses: 'checksum' or 'lowercase' (default: checksum)"
-        )]
+        #[schemars(description = "Address format for Ethereum addresses: 'checksum' or \
+                                  'lowercase' (default: checksum)")]
         pub address_format: Option<AddressFormat>,
     }
 
@@ -589,7 +591,9 @@ pub mod fuel {
         pub raw_events: Option<bool>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
-            description = "Makes handlers run twice to enable preload optimisations. Removes handlerWithLoader API, since it's not needed. (recommended, default: false)"
+            description = "Makes handlers run twice to enable preload optimisations. Removes \
+                           handlerWithLoader API, since it's not needed. (recommended, default: \
+                           false)"
         )]
         pub preload_handlers: Option<bool>,
     }
