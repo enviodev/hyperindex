@@ -29,6 +29,41 @@ async fn execute_command(
         ))
 }
 
+async fn execute_command_with_env(
+    cmd: &str,
+    args: Vec<&str>,
+    current_dir: &Path,
+    envs: Vec<(&str, String)>,
+) -> anyhow::Result<std::process::ExitStatus> {
+    let mut command = tokio::process::Command::new(cmd);
+    command
+        .args(&args)
+        .current_dir(current_dir)
+        .stdin(std::process::Stdio::null())
+        .kill_on_drop(true);
+
+    for (key, val) in envs {
+        command.env(key, val);
+    }
+
+    command
+        .spawn()
+        .context(format!(
+            "Failed to spawn command {} {} at {} as child process",
+            cmd,
+            args.join(" "),
+            current_dir.to_str().unwrap_or("bad_path")
+        ))?
+        .wait()
+        .await
+        .context(format!(
+            "Failed to exit command {} {} at {} from child process",
+            cmd,
+            args.join(" "),
+            current_dir.to_str().unwrap_or("bad_path")
+        ))
+}
+
 pub mod rescript {
     use super::execute_command;
     use anyhow::Result;
@@ -152,9 +187,11 @@ pub mod codegen {
 }
 
 pub mod start {
-    use super::execute_command;
+    use super::{execute_command, execute_command_with_env};
     use crate::config_parsing::system_config::SystemConfig;
+    use crate::utils::token_manager::{TokenManager, HYPERSYNC_ACCOUNT, SERVICE_NAME};
     use anyhow::anyhow;
+    use std::fs;
 
     pub async fn start_indexer(
         config: &SystemConfig,
@@ -171,7 +208,43 @@ pub mod start {
         }
         let cmd = "npm";
         let args = vec!["run", "start"];
-        let exit = execute_command(cmd, args, &config.parsed_project_paths.generated).await?;
+
+        // Determine whether to inject ENVIO_API_TOKEN from vault
+        let project_root = &config.parsed_project_paths.project_root;
+        let env_path = project_root.join(".env");
+        let mut should_inject_token = true;
+
+        if let Ok(contents) = fs::read_to_string(&env_path) {
+            // If .env contains an ENVIO_API_TOKEN definition, do not inject
+            if contents
+                .lines()
+                .any(|l| l.trim_start().starts_with("ENVIO_API_TOKEN="))
+            {
+                should_inject_token = false;
+            }
+        }
+
+        let exit = if should_inject_token {
+            // Attempt to load HyperSync token from vault and inject if present
+            match TokenManager::new(SERVICE_NAME, HYPERSYNC_ACCOUNT).get_token() {
+                Ok(Some(token)) => {
+                    execute_command_with_env(
+                        cmd,
+                        args,
+                        &config.parsed_project_paths.generated,
+                        vec![("ENVIO_API_TOKEN", token)],
+                    )
+                    .await?
+                }
+                _ => {
+                    // No token available; run without injection
+                    execute_command(cmd, args, &config.parsed_project_paths.generated).await?
+                }
+            }
+        } else {
+            // .env already defines ENVIO_API_TOKEN; run without injection
+            execute_command(cmd, args, &config.parsed_project_paths.generated).await?
+        };
 
         if !exit.success() {
             return Err(anyhow!(
@@ -277,6 +350,331 @@ pub mod benchmark {
             return Err(anyhow!("Failed printing benchmark summary"));
         }
 
+        Ok(())
+    }
+}
+
+/// manages the login flow to Envio via GitHub OAuth.
+pub mod login {
+    use crate::utils::token_manager::{TokenManager, JWT_ACCOUNT, SERVICE_NAME};
+    use anyhow::{anyhow, Context, Result};
+    use open;
+    use reqwest::StatusCode;
+    use serde::{Deserialize, Serialize};
+    use std::time::Duration;
+    use tokio::time::sleep;
+
+    /// Default UI/API base URL. Change this constant to point to your deployment.
+    pub const AUTH_BASE_URL: &str = "https://envio.dev";
+
+    fn get_api_base_url() -> String {
+        // Allow override via ENVIO_API_URL, otherwise use the constant above.
+        std::env::var("ENVIO_API_URL").unwrap_or_else(|_| AUTH_BASE_URL.to_string())
+    }
+
+    /// Default UI/API base URL. Change this constant to point to your deployment.
+    pub const HYPERSYNC_TOKEN_API_URL: &str = "https://hypersync-tokens.hyperquery.xyz";
+
+    #[derive(Debug, Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct CliAuthSession {
+        code: String,
+        auth_url: String,
+        expires_in: i32,
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct CliAuthStatus {
+        completed: bool,
+        error: Option<String>,
+        token: Option<String>,
+    }
+
+    #[derive(Debug, Serialize)]
+    struct EmptyBody {}
+
+    pub async fn run_login() -> Result<()> {
+        let base = get_api_base_url();
+        let client = reqwest::Client::new();
+
+        // 1) Create a CLI auth session
+        let create_url = format!("{}/api/auth/cli-session", base);
+        let session: CliAuthSession = client
+            .post(&create_url)
+            .json(&EmptyBody {})
+            .send()
+            .await
+            .with_context(|| format!("Failed to POST {}", create_url))?
+            .error_for_status()
+            .with_context(|| format!("Non-200 from {}", create_url))?
+            .json()
+            .await
+            .context("Failed to decode CLI session response")?;
+
+        println!(
+            "Opening browser for authentication...\nIf it doesn't open, visit: {}",
+            session.auth_url
+        );
+        let _ = open::that_detached(&session.auth_url);
+
+        // 2) Poll for completion
+        let poll_url = format!("{}/api/auth/cli-session?code={}", base, session.code);
+        let poll_time_seconds = 2;
+        let poll_interval = Duration::from_secs(poll_time_seconds);
+        // Add a small grace window to handle cold starts or UI recompiles wiping in-memory state
+        let extra_grace_attempts = 15; // ~30s grace
+        let max_attempts =
+            (session.expires_in.max(0) as u64) / poll_time_seconds + extra_grace_attempts;
+
+        // Give the UI a brief warm-up before first poll
+        sleep(Duration::from_secs(poll_time_seconds)).await;
+
+        let mut consecutive_not_found = 0u32;
+
+        for _ in 0..max_attempts {
+            sleep(poll_interval).await;
+
+            let resp = match client.get(&poll_url).send().await {
+                Ok(r) => r,
+                Err(_) => {
+                    // transient network error; try again
+                    continue;
+                }
+            };
+
+            if resp.status() == StatusCode::NOT_FOUND {
+                consecutive_not_found += 1;
+                // Keep polling; in-memory session store may not be ready yet
+                if consecutive_not_found % 10 == 1 {
+                    // Print a lightweight status occasionally
+                    eprintln!("Waiting for session to become available...");
+                }
+                continue;
+            } else {
+                consecutive_not_found = 0;
+            }
+
+            if resp.status().is_success() {
+                let status: CliAuthStatus = match resp.json().await {
+                    Ok(s) => s,
+                    Err(_) => continue,
+                };
+
+                if let Some(err) = status.error {
+                    if !err.is_empty() {
+                        return Err(anyhow!("authentication error: {}", err));
+                    }
+                }
+
+                if status.completed {
+                    if let Some(token) = status.token {
+                        let tm = TokenManager::new(SERVICE_NAME, JWT_ACCOUNT);
+                        if let Err(e) = tm.store_token(&token) {
+                            eprintln!("Warning: failed to store token in keyring: {}", e);
+                        }
+
+                        println!("Successfully logged in to Envio.");
+
+                        return Ok(());
+                    }
+                }
+            }
+        }
+
+        Err(anyhow!("authentication timed out"))
+    }
+
+    pub fn get_stored_jwt() -> Result<Option<String>> {
+        TokenManager::new(SERVICE_NAME, JWT_ACCOUNT).get_token()
+    }
+}
+
+/// manages the flow of getting hypersync api tokens
+pub mod hypersync {
+    use super::login::{get_stored_jwt, HYPERSYNC_TOKEN_API_URL};
+    use crate::utils::token_manager::{TokenManager, HYPERSYNC_ACCOUNT, SERVICE_NAME};
+    use anyhow::{anyhow, Context, Result};
+    use reqwest::StatusCode;
+    use serde::{Deserialize, Serialize};
+
+    fn get_hypersync_tokens_base_url() -> String {
+        // Allow override specific for tokens service; else fall back to the constant
+        std::env::var("ENVIO_HYPERSYNC_TOKENS_URL")
+            .unwrap_or_else(|_| HYPERSYNC_TOKEN_API_URL.to_string())
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct TokenResponse {
+        #[serde(rename = "user_token")]
+        user_token: String,
+    }
+
+    async fn create_user_if_needed(client: &reqwest::Client, base: &str, jwt: &str) -> Result<()> {
+        let url = format!("{}/user/create", base);
+        let resp = client
+            .post(&url)
+            .header("authorization", format!("Bearer {}", jwt))
+            .header("content-type", "application/json")
+            .send()
+            .await
+            .with_context(|| format!("POST {} failed", url))?;
+        if resp.status() == StatusCode::OK || resp.status() == StatusCode::CONFLICT {
+            Ok(())
+        } else {
+            Err(anyhow!("Failed to create user: {}", resp.status()))
+        }
+    }
+
+    async fn create_api_token(client: &reqwest::Client, base: &str, jwt: &str) -> Result<String> {
+        #[derive(Serialize)]
+        struct Body {
+            enable_active_networks: bool,
+        }
+        let url = format!("{}/token/create", base);
+        let resp = client
+            .post(&url)
+            .header("authorization", format!("Bearer {}", jwt))
+            .header("content-type", "application/json")
+            .json(&Body {
+                enable_active_networks: true,
+            })
+            .send()
+            .await
+            .with_context(|| format!("POST {} failed", url))?;
+        if resp.status().is_success() || resp.status() == StatusCode::CONFLICT {
+            // Accept JSON or plain text
+            let bytes = resp.bytes().await.context("Read token response body")?;
+            let body_str = std::str::from_utf8(&bytes).unwrap_or("").trim();
+            if body_str.starts_with('{') {
+                let json: TokenResponse =
+                    serde_json::from_slice(&bytes).context("Decode token response")?;
+                Ok(json.user_token)
+            } else if !body_str.is_empty() {
+                Ok(body_str.to_string())
+            } else {
+                Err(anyhow!("Empty token response"))
+            }
+        } else {
+            Err(anyhow!("Failed to create token: {}", resp.status()))
+        }
+    }
+
+    async fn list_api_tokens(
+        client: &reqwest::Client,
+        base: &str,
+        jwt: &str,
+    ) -> Result<Vec<String>> {
+        #[derive(Debug, serde::Deserialize)]
+        struct UserTokensResponse {
+            tokens: Vec<String>,
+        }
+
+        let url = format!("{}/token/get-user-tokens", base);
+        let resp = client
+            .get(&url)
+            .header("authorization", format!("Bearer {}", jwt))
+            .header("content-type", "application/json")
+            .send()
+            .await
+            .with_context(|| format!("GET {} failed", url))?;
+
+        if resp.status().is_success() {
+            let body: UserTokensResponse =
+                resp.json().await.context("Decode user tokens response")?;
+            Ok(body.tokens)
+        } else {
+            Ok(vec![])
+        }
+    }
+
+    fn store_api_token(token: &str) -> Result<()> {
+        TokenManager::new(SERVICE_NAME, HYPERSYNC_ACCOUNT).store_token(token)
+    }
+
+    /// get the hypersync api token from the keyring or the api
+    ///     doesn't perform any login actions if the user is not logged in.
+    pub async fn get_hypersync_token() -> Result<Option<String>> {
+        // 1) If we already have a token in keyring, use it
+        if let Some(existing) = TokenManager::new(SERVICE_NAME, HYPERSYNC_ACCOUNT).get_token()? {
+            return Ok(Some(existing));
+        }
+
+        // 2) If we have a JWT, try to list existing tokens without creating a new one
+        let jwt = match get_stored_jwt()? {
+            Some(t) => t,
+            None => return Ok(None), // Not logged in; do not login or provision
+        };
+
+        let base = get_hypersync_tokens_base_url();
+        let client = reqwest::Client::new();
+        let tokens = list_api_tokens(&client, &base, &jwt)
+            .await
+            .unwrap_or_default();
+        if let Some(token) = tokens.get(0) {
+            store_api_token(token)?;
+            return Ok(Some(token.clone()));
+        }
+        Ok(None)
+    }
+
+    /// provision a new hypersync api token
+    ///     this will create a new user if needed and create a new token
+    ///     this will also store the token in the keyring
+    pub async fn provision_and_get_token() -> Result<String> {
+        let base = get_hypersync_tokens_base_url();
+        let jwt = match get_stored_jwt()? {
+            Some(t) => t,
+            None => super::login::run_login().await.and_then(|_| {
+                super::login::get_stored_jwt()?.ok_or_else(|| anyhow!("JWT missing after login"))
+            })?,
+        };
+
+        let client = reqwest::Client::new();
+        create_user_if_needed(&client, &base, &jwt).await?;
+
+        // Prefer existing tokens; create only if none exist
+        let mut selected: Option<String> = match list_api_tokens(&client, &base, &jwt).await {
+            Ok(tokens) if !tokens.is_empty() => Some(tokens[0].clone()),
+            _ => None,
+        };
+
+        if selected.is_none() {
+            selected = Some(create_api_token(&client, &base, &jwt).await?);
+        }
+
+        let api_token = selected.expect("token must be set");
+        store_api_token(&api_token)?;
+        Ok(api_token)
+    }
+
+    pub async fn connect() -> Result<()> {
+        let api_token = provision_and_get_token().await;
+
+        match api_token {
+            Ok(_token) => {
+                println!("Token: {}", _token);
+                println!("Successfully authenticated with HyperSync");
+            }
+            Err(e) => {
+                eprintln!("Failed to authenticate with HyperSync: {}", e);
+            }
+        }
+
+        Ok(())
+    }
+}
+
+pub mod logout {
+    use crate::utils::token_manager::{TokenManager, HYPERSYNC_ACCOUNT, JWT_ACCOUNT, SERVICE_NAME};
+    use anyhow::Result;
+
+    pub async fn run_logout() -> Result<()> {
+        let jwt_tm = TokenManager::new(SERVICE_NAME, JWT_ACCOUNT);
+        let hs_tm = TokenManager::new(SERVICE_NAME, HYPERSYNC_ACCOUNT);
+        let _ = jwt_tm.clear_token();
+        let _ = hs_tm.clear_token();
+        println!("Logged out and cleared stored credentials.");
         Ok(())
     }
 }

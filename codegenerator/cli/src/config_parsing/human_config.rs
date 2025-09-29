@@ -209,6 +209,18 @@ pub mod evm {
             description = "Makes handlers run twice to enable preload optimisations. Removes handlerWithLoader API, since it's not needed. (recommended, default: false)"
         )]
         pub preload_handlers: Option<bool>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(
+            description = "Address format for Ethereum addresses: 'checksum' or 'lowercase' (default: checksum)"
+        )]
+        pub address_format: Option<AddressFormat>,
+    }
+
+    #[derive(Debug, Serialize, Deserialize, PartialEq, Clone, JsonSchema)]
+    #[serde(rename_all = "lowercase")]
+    pub enum AddressFormat {
+        Checksum,
+        Lowercase,
     }
 
     impl Display for HumanConfig {

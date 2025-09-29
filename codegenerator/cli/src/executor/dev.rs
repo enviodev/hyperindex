@@ -1,3 +1,4 @@
+use crate::config_parsing::system_config::{DataSource, MainEvmDataSource};
 use crate::{
     commands,
     config_parsing::system_config::SystemConfig,
@@ -6,6 +7,7 @@ use crate::{
     service_health::{self, EndpointHealth},
 };
 use anyhow::{anyhow, Context, Result};
+use std::fs;
 
 pub async fn run_dev(project_paths: ParsedProjectPaths) -> Result<()> {
     let config =
@@ -63,6 +65,41 @@ pub async fn run_dev(project_paths: ParsedProjectPaths) -> Result<()> {
         commands::codegen::run_codegen(&config)
             .await
             .context("Failed running codegen")?;
+    }
+
+    // If any network uses HyperSync as the main sync source, ensure a HyperSync API token exists
+    let uses_hypersync = config.get_networks().iter().any(|n| match &n.sync_source {
+        DataSource::Evm { main, .. } => matches!(main, MainEvmDataSource::HyperSync { .. }),
+        DataSource::Fuel { .. } => true,
+    });
+
+    // If the current indexer uses HyperSync and there is no token present and it is not logged in, then prompt the user to log in to get a token.
+    if uses_hypersync {
+        let env_token_present = {
+            let env_path = config.parsed_project_paths.project_root.join(".env");
+            if let Ok(contents) = fs::read_to_string(&env_path) {
+                contents
+                    .lines()
+                    .any(|l| l.trim_start().starts_with("ENVIO_API_TOKEN="))
+            } else {
+                false
+            }
+        };
+
+        if env_token_present {
+            println!("HyperSync is enabled. Detected ENVIO_API_TOKEN in .env; skipping login.");
+        } else {
+            println!(
+                "HyperSync is enabled but no ENVIO_API_TOKEN was found. Attempting to log in to provision or retrieve a HyperSync API token..."
+            );
+            if let Err(e) = crate::commands::hypersync::provision_and_get_token().await {
+                // Best-effort: log and continue; start can still run if RPC fallback exists
+                eprintln!(
+                    "Warning: could not obtain HyperSync token automatically: {}",
+                    e
+                );
+            }
+        }
     }
     // if hasura healhz check returns not found assume docker isnt running and start it up {
     let hasura_health_check_is_error = service_health::fetch_hasura_healthz().await.is_err();

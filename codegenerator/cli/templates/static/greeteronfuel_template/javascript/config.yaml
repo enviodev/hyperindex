@@ -16,3 +16,6 @@ networks:
 # But be aware that your handlers will run twice,
 # so make sure to use Effect API for external calls.
 preload_handlers: true
+# Address format for Ethereum addresses: 'checksum' or 'lowercase'
+# using lowercase addresses is slightly faster
+address_format: lowercase

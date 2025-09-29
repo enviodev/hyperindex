@@ -27,6 +27,7 @@ type configYaml = {
   startBlock: int,
   confirmedBlockThreshold: int,
   contracts: dict<contract>,
+  lowercaseAddresses: bool,
 }
 
 let publicConfig = ChainMap.fromArrayUnsafe([
@@ -60,7 +61,8 @@ let publicConfig = ChainMap.fromArrayUnsafe([
         confirmedBlockThreshold: {{chain_config.network_config.confirmed_block_threshold}},
         syncSource: {{chain_config.deprecated_sync_source_code}},
         startBlock: {{chain_config.network_config.start_block}},
-        contracts
+        contracts,
+        lowercaseAddresses: {{#if ../lowercase_addresses}}true{{else}}false{{/if}}
       }
     )
   },

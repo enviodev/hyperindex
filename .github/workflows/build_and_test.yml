@@ -12,6 +12,7 @@ defaults:
 
 env:
   CARGO_TERM_COLOR: always
+  ENVIO_API_TOKEN: ${{ secrets.ENVIO_API_TOKEN }}
 
 jobs:
   build_and_test:

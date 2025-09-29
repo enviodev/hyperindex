@@ -151,9 +151,10 @@ type options = {
   allEventSignatures: array<string>,
   shouldUseHypersyncClientDecoder: bool,
   eventRouter: EventRouter.t<Internal.evmEventConfig>,
-  apiToken: option<string>,
+  apiToken: string,
   clientMaxRetries: int,
   clientTimeoutMillis: int,
+  lowercaseAddresses: bool,
 }
 
 let make = (
@@ -167,19 +168,19 @@ let make = (
     apiToken,
     clientMaxRetries,
     clientTimeoutMillis,
+    lowercaseAddresses,
   }: options,
 ): t => {
   let name = "HyperSync"
 
   let getSelectionConfig = memoGetSelectionConfig(~chain)
 
-  let apiToken = apiToken->Belt.Option.getWithDefault("3dc856dd-b0ea-494f-b27e-017b8b6b7e07")
-
   let client = HyperSyncClient.make(
     ~url=endpointUrl,
     ~apiToken,
     ~maxNumRetries=clientMaxRetries,
     ~httpReqTimeoutMillis=clientTimeoutMillis,
+    ~enableChecksumAddresses=!lowercaseAddresses,
   )
 
   let hscDecoder: ref<option<HyperSyncClient.Decoder.t>> = ref(None)
@@ -193,7 +194,11 @@ let make = (
           ~msg="Failed to instantiate a decoder from hypersync client, please double check your ABI or try using 'event_decoder: viem' config option",
         )
       | decoder =>
-        decoder.enableChecksummedAddresses()
+        if lowercaseAddresses {
+          decoder.disableChecksummedAddresses()
+        } else {
+          decoder.enableChecksummedAddresses()
+        }
         decoder
       }
     }

@@ -76,6 +76,20 @@ pub async fn execute(command_line_args: CommandLineArgs) -> Result<()> {
 
                 commands::db_migrate::run_db_setup(&config, &persisted_state).await?;
             }
+            // During `start`, attempt to retrieve an existing HyperSync token without logging in or creating one.
+            {
+                use crate::config_parsing::system_config::{DataSource, MainEvmDataSource};
+                let uses_hypersync = config.get_networks().iter().any(|n| match &n.sync_source {
+                    DataSource::Evm { main, .. } => {
+                        matches!(main, MainEvmDataSource::HyperSync { .. })
+                    }
+                    DataSource::Fuel { .. } => true,
+                });
+                if uses_hypersync {
+                    let _ = commands::hypersync::get_hypersync_token().await;
+                }
+            }
+
             const SHOULD_OPEN_HASURA: bool = false;
             commands::start::start_indexer(&config, SHOULD_OPEN_HASURA).await?;
         }
@@ -115,6 +129,14 @@ pub async fn execute(command_line_args: CommandLineArgs) -> Result<()> {
             scripts::print_missing_networks::run()
                 .await
                 .context("Failed print missing networks script")?;
+        }
+        CommandType::Login => {
+            commands::login::run_login()
+                .await
+                .context("Failed running login flow")?;
+        }
+        CommandType::Logout => {
+            commands::logout::run_logout().await?;
         }
     };
 
