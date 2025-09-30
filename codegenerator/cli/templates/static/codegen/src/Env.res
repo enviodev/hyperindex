@@ -12,10 +12,7 @@ Dotenv.initialize()
 // resets the timestampCaughtUpToHeadOrEndblock after a restart when true
 let updateSyncTimeOnRestart =
   envSafe->EnvSafe.get("UPDATE_SYNC_TIME_ON_RESTART", S.bool, ~fallback=true)
-let batchSize = switch envSafe->EnvSafe.get("ENVIO_BATCH_SIZE", S.option(S.int)) {
-| Some(_) as size => size
-| None => envSafe->EnvSafe.get("MAX_BATCH_SIZE", S.option(S.int))
-}
+let batchSize = envSafe->EnvSafe.get("MAX_BATCH_SIZE", S.option(S.int))
 let targetBufferSize = envSafe->EnvSafe.get("ENVIO_INDEXING_MAX_BUFFER_SIZE", S.option(S.int))
 let maxAddrInPartition = envSafe->EnvSafe.get("MAX_PARTITION_SIZE", S.int, ~fallback=5_000)
 let maxPartitionConcurrency =

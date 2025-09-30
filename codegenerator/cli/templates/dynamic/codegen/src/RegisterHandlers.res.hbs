@@ -71,6 +71,7 @@ let registerContractHandlers = (
       ~isUnorderedMultichainMode={{is_unordered_multichain_mode}},
       ~chains,
       ~enableRawEvents={{enable_raw_events}},
+      ~batchSize=?Env.batchSize,
       ~preloadHandlers={{preload_handlers}},
       {{#if chain_config.is_fuel}}
       ~ecosystem=Fuel,
