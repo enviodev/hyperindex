@@ -544,6 +544,114 @@ WHERE "id" = $1;`
     )
   })
 
+  describe("InternalTable.Checkpoints.makeGetReorgCheckpointsQuery", () => {
+    Async.it(
+      "Should skip chains with maxReorgDepth of 0 or negative reorg threshold",
+      async () => {
+        let chains: array<InternalTable.Chains.t> = [
+          {
+            id: 1,
+            startBlock: 100,
+            endBlock: Js.Null.return(200),
+            maxReorgDepth: 10,
+            blockHeight: 150,
+            firstEventBlockNumber: Js.Null.return(100),
+            latestFetchedBlockNumber: 150,
+            timestampCaughtUpToHeadOrEndblock: Js.Null.empty,
+            progressBlockNumber: 145,
+            isHyperSync: true,
+            numEventsProcessed: 100,
+            numBatchesFetched: 5,
+          },
+          {
+            id: 2,
+            startBlock: 0,
+            endBlock: Js.Null.empty,
+            maxReorgDepth: 0,
+            blockHeight: 1000,
+            firstEventBlockNumber: Js.Null.return(0),
+            latestFetchedBlockNumber: 1000,
+            timestampCaughtUpToHeadOrEndblock: Js.Null.empty,
+            progressBlockNumber: 990,
+            isHyperSync: true,
+            numEventsProcessed: 500,
+            numBatchesFetched: 10,
+          },
+          {
+            id: 3,
+            startBlock: 0,
+            endBlock: Js.Null.empty,
+            maxReorgDepth: 100,
+            blockHeight: 50,
+            firstEventBlockNumber: Js.Null.return(0),
+            latestFetchedBlockNumber: 50,
+            timestampCaughtUpToHeadOrEndblock: Js.Null.empty,
+            progressBlockNumber: 45,
+            isHyperSync: true,
+            numEventsProcessed: 50,
+            numBatchesFetched: 2,
+          },
+        ]
+
+        let query = InternalTable.Checkpoints.makeGetReorgCheckpointsQuery(
+          ~pgSchema="test_schema",
+          ~chains,
+        )
+
+        let expectedQuery = `SELECT "id", "chain_id", "block_number", "block_hash" FROM "test_schema"."envio_checkpoints" WHERE "block_hash" IS NOT NULL AND (("chain_id" = 1 AND "block_number" > 140));`
+
+        Assert.equal(
+          query,
+          Some(expectedQuery),
+          ~message="Should only include chain 1, skipping chain 2 (maxReorgDepth=0) and chain 3 (negative threshold)",
+        )
+      },
+    )
+
+    Async.it(
+      "Should return None when all chains are filtered out",
+      async () => {
+        let chains: array<InternalTable.Chains.t> = [
+          {
+            id: 1,
+            startBlock: 0,
+            endBlock: Js.Null.empty,
+            maxReorgDepth: 0,
+            blockHeight: 1000,
+            firstEventBlockNumber: Js.Null.return(0),
+            latestFetchedBlockNumber: 1000,
+            timestampCaughtUpToHeadOrEndblock: Js.Null.empty,
+            progressBlockNumber: 990,
+            isHyperSync: true,
+            numEventsProcessed: 500,
+            numBatchesFetched: 10,
+          },
+          {
+            id: 2,
+            startBlock: 0,
+            endBlock: Js.Null.empty,
+            maxReorgDepth: 100,
+            blockHeight: 50,
+            firstEventBlockNumber: Js.Null.return(0),
+            latestFetchedBlockNumber: 50,
+            timestampCaughtUpToHeadOrEndblock: Js.Null.empty,
+            progressBlockNumber: 45,
+            isHyperSync: true,
+            numEventsProcessed: 50,
+            numBatchesFetched: 2,
+          },
+        ]
+
+        let query = InternalTable.Checkpoints.makeGetReorgCheckpointsQuery(
+          ~pgSchema="test_schema",
+          ~chains,
+        )
+
+        Assert.equal(query, None, ~message="Should return None when all chains are filtered out")
+      },
+    )
+  })
+
   describe("InternalTable.Chains.makeInitialValuesQuery", () => {
     Async.it(
       "Should return empty string for empty chain configs",

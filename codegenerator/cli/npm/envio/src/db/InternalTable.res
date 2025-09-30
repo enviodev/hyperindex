@@ -266,6 +266,14 @@ module PersistedState = {
 }
 
 module Checkpoints = {
+  type field = [
+    | #id
+    | #chain_id
+    | #block_number
+    | #block_hash
+    | #events_processed
+  ]
+
   type t = {
     id: bigint,
     @as("chain_id")
@@ -277,17 +285,54 @@ module Checkpoints = {
     @as("events_processed")
     eventsProcessed: int,
   }
+  type reorgCheckpoint = {
+    @as("id")
+    checkpointId: bigint,
+    @as("chain_id")
+    chainId: int,
+    @as("block_number")
+    blockNumber: int,
+    @as("block_hash")
+    blockHash: string,
+  }
 
   let table = mkTable(
     "envio_checkpoints",
     ~fields=[
-      mkField("id", Numeric, ~fieldSchema=S.bigint, ~isPrimaryKey),
-      mkField("chain_id", Integer, ~fieldSchema=S.int),
-      mkField("block_number", Integer, ~fieldSchema=S.int),
-      mkField("block_hash", Text, ~fieldSchema=S.null(S.string), ~isNullable),
-      mkField("events_processed", Integer, ~fieldSchema=S.int),
+      mkField((#id: field :> string), Numeric, ~fieldSchema=S.bigint, ~isPrimaryKey),
+      mkField((#chain_id: field :> string), Integer, ~fieldSchema=S.int),
+      mkField((#block_number: field :> string), Integer, ~fieldSchema=S.int),
+      mkField((#block_hash: field :> string), Text, ~fieldSchema=S.null(S.string), ~isNullable),
+      mkField((#events_processed: field :> string), Integer, ~fieldSchema=S.int),
     ],
   )
+
+  let makeGetReorgCheckpointsQuery = (~pgSchema, ~chains: array<Chains.t>): option<string> => {
+    // Build chain-specific conditions: (chain_id = X AND block_number > threshold)
+    // Skip chains where maxReorgDepth is 0 or reorgThreshold would be negative
+    let chainConditions =
+      chains
+      ->Belt.Array.keepMap(chain => {
+        let reorgThreshold = chain.blockHeight - chain.maxReorgDepth
+        if chain.maxReorgDepth === 0 || reorgThreshold < 0 {
+          None
+        } else {
+          Some(
+            `("${(#chain_id: field :> string)}" = ${chain.id->Belt.Int.toString} AND "${(#block_number: field :> string)}" > ${reorgThreshold->Belt.Int.toString})`,
+          )
+        }
+      })
+      ->Js.Array2.joinWith(" OR ")
+
+    if chainConditions === "" {
+      // No valid chains to check, don't run query
+      None
+    } else {
+      Some(
+        `SELECT "${(#id: field :> string)}", "${(#chain_id: field :> string)}", "${(#block_number: field :> string)}", "${(#block_hash: field :> string)}" FROM "${pgSchema}"."${table.tableName}" WHERE "${(#block_hash: field :> string)}" IS NOT NULL AND (${chainConditions});`,
+      )
+    }
+  }
 }
 
 module RawEvents = {

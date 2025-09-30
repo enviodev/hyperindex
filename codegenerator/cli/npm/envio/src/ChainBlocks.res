@@ -9,7 +9,7 @@ let make = (
   ~chainId,
   ~maxReorgDepth,
   ~shouldRollbackOnReorg,
-  ~reorgCheckpoints: array<InternalTable.Checkpoints.t>,
+  ~reorgCheckpoints: array<InternalTable.Checkpoints.reorgCheckpoint>,
 ) => {
   {
     shouldRollbackOnReorg,

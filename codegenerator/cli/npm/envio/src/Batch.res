@@ -1,28 +1,3 @@
-open Belt
-
-type batchCheckpoint = {
-  checkpointId: bigint,
-  chainId: int,
-  blockNumber: int,
-  // Might be empty if we are not in reorg threshold
-  // or rollback on reorg is disabled
-  blockHash?: string,
-  // Might be empty if we it's a reorg guard block
-  items?: array<Internal.item>,
-}
-
-type chainBeforeBatch = {
-  chainId: int,
-  fetchState: FetchState.t,
-  blocks: ChainBlocks.t,
-  totalEventsProcessed: int,
-}
-
-type mutChainAcc = {
-  mutable batchSize: int,
-  mutable lastCheckpoint: batchCheckpoint,
-}
-
 type progressedChain = {
   chainId: int,
   batchSize: int,
@@ -31,12 +6,11 @@ type progressedChain = {
 }
 
 type t = {
-  checkpoints: array<batchCheckpoint>,
+  items: array<Internal.item>,
   progressedChains: array<progressedChain>,
-  totalBatchSize: int,
-  // updatedFetchStates: ChainMap.t<FetchState.t>,
-  // dcsToStoreByChainId: dict<array<FetchState.indexingContract>>,
-  // creationTimeMs: int,
+  updatedFetchStates: ChainMap.t<FetchState.t>,
+  dcsToStoreByChainId: dict<array<FetchState.indexingContract>>,
+  creationTimeMs: int,
 }
 
 /**
@@ -47,7 +21,7 @@ let getOrderedNextChain = (fetchStates: ChainMap.t<FetchState.t>, ~batchSizePerC
   let earliestChainTimestamp = ref(0)
   let chainKeys = fetchStates->ChainMap.keys
   for idx in 0 to chainKeys->Array.length - 1 {
-    let chain = chainKeys->Array.getUnsafe(idx)
+    let chain = chainKeys->Array.get(idx)
     let fetchState = fetchStates->ChainMap.get(chain)
     if fetchState->FetchState.isActivelyIndexing {
       let timestamp = fetchState->FetchState.getTimestampAt(
@@ -146,59 +120,41 @@ let prepareOrderedBatch = (
 }
 
 let prepareUnorderedBatch = (
-  ~chains: array<chainBeforeBatch>,
   ~batchSizeTarget,
-  ~progressCheckpointId,
-): t => {
-  let progressCheckpointId = ref(progressCheckpointId)
-  let accPerChain = Js.Dict.empty()
-
+  ~fetchStates: ChainMap.t<FetchState.t>,
+  ~mutBatchSizePerChain: dict<int>,
+) => {
   let preparedFetchStates =
-    chains
-    ->Array.map(chain => chain.fetchState)
+    fetchStates
+    ->ChainMap.values
     ->FetchState.filterAndSortForUnorderedBatch(~batchSizeTarget)
 
   let chainIdx = ref(0)
   let preparedNumber = preparedFetchStates->Array.length
-  let totalBatchSize = ref(0)
+  let batchSize = ref(0)
 
   let items = []
 
   // Accumulate items for all actively indexing chains
   // the way to group as many items from a single chain as possible
   // This way the loaders optimisations will hit more often
-  while totalBatchSize.contents < batchSizeTarget && chainIdx.contents < preparedNumber {
+  while batchSize.contents < batchSizeTarget && chainIdx.contents < preparedNumber {
     let fetchState = preparedFetchStates->Js.Array2.unsafe_get(chainIdx.contents)
-    let chainAcc = switch accPerChain->Utils.Dict.dangerouslyGetByIntNonOption(fetchState.chainId) {
-    | Some(chainAcc) => chainAcc
-    | None =>
-      let acc = {
-        batchSize: 0,
-        lastCheckpoint: %raw(`null`),
-      }
-      accPerChain->Utils.Dict.setByInt(fetchState.chainId, acc)
-      acc
-    }
-
     let chainBatchSize =
       fetchState->FetchState.getReadyItemsCount(
-        ~targetSize=batchSizeTarget - totalBatchSize.contents,
+        ~targetSize=batchSizeTarget - batchSize.contents,
         ~fromItem=0,
       )
     if chainBatchSize > 0 {
       for idx in 0 to chainBatchSize - 1 {
         items->Js.Array2.push(fetchState.buffer->Belt.Array.getUnsafe(idx))->ignore
       }
-      totalBatchSize := totalBatchSize.contents + chainBatchSize
-      chainAcc.batchSize = chainBatchSize
+      batchSize := batchSize.contents + chainBatchSize
+      mutBatchSizePerChain->Utils.Dict.setByInt(fetchState.chainId, chainBatchSize)
     }
 
     chainIdx := chainIdx.contents + 1
   }
 
-  {
-    totalBatchSize: totalBatchSize.contents,
-    progressedChains: [],
-    checkpoints: [],
-  }
+  items
 }

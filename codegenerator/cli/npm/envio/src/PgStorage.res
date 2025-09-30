@@ -896,19 +896,29 @@ let make = (
   }
 
   let resumeInitialState = async (): Persistence.initialState => {
-    let (cache, chains, reorgCheckpoints) = await Promise.all3((
+    let (cache, chains) = await Promise.all2((
       restoreEffectCache(~withUpload=false),
       sql
       ->Postgres.unsafe(
         makeLoadAllQuery(~pgSchema, ~tableName=InternalTable.Chains.table.tableName),
       )
       ->(Utils.magic: promise<array<unknown>> => promise<array<InternalTable.Chains.t>>),
-      sql
-      ->Postgres.unsafe(
-        makeLoadAllQuery(~pgSchema, ~tableName=InternalTable.Checkpoints.table.tableName),
-      )
-      ->(Utils.magic: promise<array<unknown>> => promise<array<InternalTable.Checkpoints.t>>),
     ))
+
+    let reorgCheckpoints = switch InternalTable.Checkpoints.makeGetReorgCheckpointsQuery(
+      ~pgSchema,
+      ~chains,
+    ) {
+    | None => []
+    | Some(query) =>
+      await sql
+      ->Postgres.unsafe(query)
+      ->(
+        Utils.magic: promise<array<unknown>> => promise<
+          array<InternalTable.Checkpoints.reorgCheckpoint>,
+        >
+      )
+    }
 
     {
       cleanRun: false,
