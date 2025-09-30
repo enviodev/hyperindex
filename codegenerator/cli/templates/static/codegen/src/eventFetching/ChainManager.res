@@ -6,19 +6,20 @@ type t = {
   isInReorgThreshold: bool,
 }
 
-let calculateTargetBufferSize = activeChainsCount => {
+let calculateTargetBufferSize = (~activeChainsCount, ~config: Config.t) => {
   let targetBatchesInBuffer = 3
   switch Env.targetBufferSize {
   | Some(size) => size
   | None =>
-    Env.maxProcessBatchSize * (
-      activeChainsCount > targetBatchesInBuffer ? 1 : targetBatchesInBuffer
-    )
+    config.batchSize * (activeChainsCount > targetBatchesInBuffer ? 1 : targetBatchesInBuffer)
   }
 }
 
 let makeFromConfig = (~config: Config.t): t => {
-  let targetBufferSize = calculateTargetBufferSize(config.chainMap->ChainMap.size)
+  let targetBufferSize = calculateTargetBufferSize(
+    ~activeChainsCount=config.chainMap->ChainMap.size,
+    ~config,
+  )
   let chainFetchers =
     config.chainMap->ChainMap.map(ChainFetcher.makeFromConfig(_, ~config, ~targetBufferSize))
   {
@@ -45,8 +46,11 @@ let makeFromDbState = async (~initialState: Persistence.initialState, ~config: C
     hasStartedSavingHistory
   }
 
-  let targetBufferSize = calculateTargetBufferSize(initialState.chains->Array.length)
-  Prometheus.ProcessingMaxBatchSize.set(~maxBatchSize=Env.maxProcessBatchSize)
+  let targetBufferSize = calculateTargetBufferSize(
+    ~activeChainsCount=initialState.chains->Array.length,
+    ~config,
+  )
+  Prometheus.ProcessingMaxBatchSize.set(~maxBatchSize=config.batchSize)
   Prometheus.IndexingTargetBufferSize.set(~targetBufferSize)
   Prometheus.ReorgThreshold.set(~isInReorgThreshold)
 
@@ -91,40 +95,32 @@ let setChainFetcher = (chainManager: t, chainFetcher: ChainFetcher.t) => {
   }
 }
 
-let getFetchStateWithData = (chainManager: t, ~shouldDeepCopy=false): ChainMap.t<FetchState.t> => {
+let getFetchStates = (chainManager: t): ChainMap.t<FetchState.t> => {
   chainManager.chainFetchers->ChainMap.map(cf => {
-    shouldDeepCopy ? cf.fetchState->FetchState.copy : cf.fetchState
+    cf.fetchState
   })
 }
 
-/**
-Simply calls getOrderedNextItem in isolation using the chain manager without
-the context of a batch
-*/
 let nextItemIsNone = (chainManager: t): bool => {
-  switch chainManager.multichain {
-  | Ordered => chainManager->getFetchStateWithData->Batch.getOrderedNextItem === None
-  | Unordered => !(chainManager->getFetchStateWithData->Batch.hasUnorderedNextItem)
-  }
+  !Batch.hasMultichainReadyItem(chainManager->getFetchStates, ~multichain=chainManager.multichain)
 }
 
-let createBatch = (chainManager: t, ~maxBatchSize: int): Batch.t => {
+let createBatch = (chainManager: t, ~batchSizeTarget: int): Batch.t => {
   let refTime = Hrtime.makeTimer()
+  let fetchStates = chainManager->getFetchStates
 
-  //Make a copy of the queues and fetch states since we are going to mutate them
-  let fetchStates = chainManager->getFetchStateWithData(~shouldDeepCopy=true)
-
-  let sizePerChain = Js.Dict.empty()
+  let mutBatchSizePerChain = Js.Dict.empty()
   let items = if (
     switch chainManager.multichain {
     | Unordered => true
     | Ordered => fetchStates->ChainMap.size === 1
     }
   ) {
-    Batch.popUnorderedBatchItems(~maxBatchSize, ~fetchStates, ~sizePerChain)
+    Batch.prepareUnorderedBatch(~batchSizeTarget, ~fetchStates, ~mutBatchSizePerChain)
   } else {
-    Batch.popOrderedBatchItems(~maxBatchSize, ~fetchStates, ~sizePerChain)
+    Batch.prepareOrderedBatch(~batchSizeTarget, ~fetchStates, ~mutBatchSizePerChain)
   }
+  let batchSizePerChain = mutBatchSizePerChain
 
   let dcsToStoreByChainId = Js.Dict.empty()
   // Needed to:
@@ -132,30 +128,22 @@ let createBatch = (chainManager: t, ~maxBatchSize: int): Batch.t => {
   // - Accumulate registered dynamic contracts to store in the db
   // - Trigger onBlock pointer update
   let updatedFetchStates = fetchStates->ChainMap.map(fetchState => {
-    switch sizePerChain->Utils.Dict.dangerouslyGetNonOption(fetchState.chainId->Int.toString) {
-    | Some(_) =>
+    switch batchSizePerChain->Utils.Dict.dangerouslyGetNonOption(fetchState.chainId->Int.toString) {
+    | Some(batchSize) =>
+      let leftItems = fetchState.buffer->Js.Array2.sliceFrom(batchSize)
       switch fetchState.dcsToStore {
-      | [] => fetchState->FetchState.updateInternal
+      | [] => fetchState->FetchState.updateInternal(~mutItems=leftItems)
       | dcs => {
           let leftDcsToStore = []
           let batchDcs = []
-          let updatedFetchState = fetchState->FetchState.updateInternal(~dcsToStore=leftDcsToStore)
+          let updatedFetchState =
+            fetchState->FetchState.updateInternal(~mutItems=leftItems, ~dcsToStore=leftDcsToStore)
           let nextProgressBlockNumber = updatedFetchState->FetchState.getProgressBlockNumber
-          let nextProgressNextBlockLogIndex =
-            updatedFetchState->FetchState.getProgressNextBlockLogIndex
 
           dcs->Array.forEach(dc => {
             // Important: This should be a registering block number.
             // This works for now since dc.startBlock is a registering block number.
-            if (
-              dc.startBlock <= nextProgressBlockNumber ||
-                switch (nextProgressNextBlockLogIndex, dc.register) {
-                | (Some(nextProgressNextBlockLogIndex), DC(dcData)) =>
-                  dc.startBlock === nextProgressBlockNumber + 1 &&
-                    dcData.registeringEventLogIndex <= nextProgressNextBlockLogIndex
-                | _ => false
-                }
-            ) {
+            if dc.startBlock <= nextProgressBlockNumber {
               batchDcs->Array.push(dc)
             } else {
               // Mutate the array we passed to the updateInternal beforehand
@@ -179,7 +167,7 @@ let createBatch = (chainManager: t, ~maxBatchSize: int): Batch.t => {
     let updatedFetchState = updatedFetchStates->ChainMap.get(chain)
     let nextProgressBlockNumber = updatedFetchState->FetchState.getProgressBlockNumber
     let maybeItemsCountInBatch =
-      sizePerChain->Utils.Dict.dangerouslyGetNonOption(
+      batchSizePerChain->Utils.Dict.dangerouslyGetNonOption(
         chain->ChainMap.Chain.toChainId->Int.toString,
       )
     if (
@@ -195,7 +183,6 @@ let createBatch = (chainManager: t, ~maxBatchSize: int): Batch.t => {
             chainId: chain->ChainMap.Chain.toChainId,
             batchSize: chainBatchSize,
             progressBlockNumber: nextProgressBlockNumber,
-            progressNextBlockLogIndex: updatedFetchState->FetchState.getProgressNextBlockLogIndex,
             totalEventsProcessed: chainFetcher.numEventsProcessed + chainBatchSize,
           }: Batch.progressedChain
         ),
@@ -204,42 +191,12 @@ let createBatch = (chainManager: t, ~maxBatchSize: int): Batch.t => {
     }
   })
 
-  let batchSize = items->Array.length
-  if batchSize > 0 {
-    let fetchedEventsBuffer =
-      updatedFetchStates
-      ->ChainMap.entries
-      ->Array.map(((chain, fetchState)) => (
-        chain->ChainMap.Chain.toString,
-        fetchState->FetchState.bufferSize,
-      ))
-      ->Js.Dict.fromArray
-
-    let timeElapsed = refTime->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
-
-    Logging.trace({
-      "msg": "New batch created for processing",
-      "batchSize": batchSize,
-      "buffers": fetchedEventsBuffer,
-      "time taken (ms)": timeElapsed,
-    })
-
-    if Env.Benchmark.shouldSaveData {
-      let group = "Other"
-      Benchmark.addSummaryData(
-        ~group,
-        ~label=`Batch Creation Time (ms)`,
-        ~value=timeElapsed->Belt.Int.toFloat,
-      )
-      Benchmark.addSummaryData(~group, ~label=`Batch Size`, ~value=batchSize->Belt.Int.toFloat)
-    }
-  }
-
   {
     items,
     progressedChains,
     updatedFetchStates,
     dcsToStoreByChainId,
+    creationTimeMs: refTime->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis,
   }
 }
 
