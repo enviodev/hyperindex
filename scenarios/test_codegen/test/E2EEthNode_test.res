@@ -10,7 +10,7 @@ describe("E2E Integration Test", () => {
     DbHelpers.runUpDownMigration()
   })
 
-  Async.it_only("Complete E2E", async () => {
+  Async.it("Complete E2E", async () => {
     This.timeout(5 * 1000)
 
     let contracts = await SetupRpcNode.deployContracts()
