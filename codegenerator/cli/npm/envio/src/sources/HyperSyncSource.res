@@ -154,6 +154,7 @@ type options = {
   apiToken: option<string>,
   clientMaxRetries: int,
   clientTimeoutMillis: int,
+  lowercaseAddresses: bool,
 }
 
 let make = (
@@ -167,6 +168,7 @@ let make = (
     apiToken,
     clientMaxRetries,
     clientTimeoutMillis,
+    lowercaseAddresses,
   }: options,
 ): t => {
   let name = "HyperSync"
@@ -180,6 +182,7 @@ let make = (
     ~apiToken,
     ~maxNumRetries=clientMaxRetries,
     ~httpReqTimeoutMillis=clientTimeoutMillis,
+    ~enableChecksumAddresses=!lowercaseAddresses,
   )
 
   let hscDecoder: ref<option<HyperSyncClient.Decoder.t>> = ref(None)
@@ -193,7 +196,11 @@ let make = (
           ~msg="Failed to instantiate a decoder from hypersync client, please double check your ABI or try using 'event_decoder: viem' config option",
         )
       | decoder =>
-        decoder.enableChecksummedAddresses()
+        if lowercaseAddresses {
+          decoder.disableChecksummedAddresses()
+        } else {
+          decoder.enableChecksummedAddresses()
+        }
         decoder
       }
     }

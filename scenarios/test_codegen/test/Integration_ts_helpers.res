@@ -50,6 +50,9 @@ let getLocalChainConfig = (nftFactoryContractAddress): chainConfig => {
         eventRouter: evmContracts
         ->Belt.Array.flatMap(contract => contract.events)
         ->EventRouter.fromEvmEventModsOrThrow(~chain),
+        allEventSignatures: [], // Not used by viem.
+        shouldUseHypersyncClientDecoder: false, // stick to viem.
+        lowercaseAddresses: false,
       }),
     ],
   }
