@@ -5,6 +5,7 @@ type derived
 @unboxed
 type fieldType =
   | @as("INTEGER") Integer
+  | @as("BIGINT") BigInt
   | @as("BOOLEAN") Boolean
   | @as("NUMERIC") Numeric
   | @as("DOUBLE PRECISION") DoublePrecision

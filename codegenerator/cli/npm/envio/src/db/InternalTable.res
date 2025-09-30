@@ -206,7 +206,13 @@ WHERE "id" = $1;`
     Promise.all(promises)
   }
 
-  let setProgressedChains = (sql, ~pgSchema, ~progressedChains: array<Batch.progressedChain>) => {
+  type progressedChain = {
+    chainId: int,
+    progressBlockNumber: int,
+    totalEventsProcessed: int,
+  }
+
+  let setProgressedChains = (sql, ~pgSchema, ~progressedChains: array<progressedChain>) => {
     let query = makeProgressFieldsUpdateQuery(~pgSchema)
 
     let promises = []
@@ -259,7 +265,7 @@ module PersistedState = {
   )
 }
 
-module ReorgCheckpoints = {
+module Checkpoints = {
   type t = {
     id: bigint,
     @as("chain_id")
@@ -267,16 +273,19 @@ module ReorgCheckpoints = {
     @as("block_number")
     blockNumber: int,
     @as("block_hash")
-    blockHash: string,
+    blockHash: Js.null<string>,
+    @as("events_processed")
+    eventsProcessed: int,
   }
 
   let table = mkTable(
-    "envio_reorg_checkpoints",
+    "envio_checkpoints",
     ~fields=[
       mkField("id", Numeric, ~fieldSchema=S.bigint, ~isPrimaryKey),
       mkField("chain_id", Integer, ~fieldSchema=S.int),
       mkField("block_number", Integer, ~fieldSchema=S.int),
-      mkField("block_hash", Text, ~fieldSchema=S.string),
+      mkField("block_hash", Text, ~fieldSchema=S.null(S.string), ~isNullable),
+      mkField("events_processed", Integer, ~fieldSchema=S.int),
     ],
   )
 }

@@ -324,7 +324,6 @@ let validatePartitionQueryResponse = (
     reorgGuard,
     fromBlockQueried,
   } = response
-  let {rangeLastBlock} = reorgGuard
 
   if currentBlockHeight > chainFetcher.currentBlockHeight {
     Prometheus.SourceHeight.set(
@@ -355,18 +354,13 @@ let validatePartitionQueryResponse = (
     )
   }
 
-  let (updatedLastBlockScannedHashes, reorgResult: ReorgDetection.reorgResult) = %raw(`null`) // FIXME:
-  // chainFetcher.lastBlockScannedHashes->ReorgDetection.LastBlockScannedHashes.registerReorgGuard(
-  //   ~reorgGuard,
-  //   ~currentBlockHeight,
-  //   ~shouldRollbackOnReorg=state.config->Config.shouldRollbackOnReorg,
-  // )
+  let (updatedBlocks, reorgResult: ReorgDetection.reorgResult) =
+    chainFetcher.blocks->ChainBlocks.registerReorgGuard(~reorgGuard, ~currentBlockHeight)
 
-  // let updatedChainFetcher = {
-  //   ...chainFetcher,
-  //   lastBlockScannedHashes: updatedLastBlockScannedHashes,
-  // }
-  let updatedChainFetcher = chainFetcher
+  let updatedChainFetcher = {
+    ...chainFetcher,
+    blocks: updatedBlocks,
+  }
 
   let nextState = {
     ...state,

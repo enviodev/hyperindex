@@ -65,7 +65,7 @@ let makeInitializeTransaction = (
   let generalTables = [
     InternalTable.Chains.table,
     InternalTable.PersistedState.table,
-    InternalTable.ReorgCheckpoints.table,
+    InternalTable.Checkpoints.table,
     InternalTable.RawEvents.table,
   ]
 
@@ -707,6 +707,7 @@ let make = (
     {
       cleanRun: true,
       cache,
+      reorgCheckpoints: [],
       chains: chainConfigs->Js.Array2.map(InternalTable.Chains.initialFromConfig),
     }
   }
@@ -895,17 +896,23 @@ let make = (
   }
 
   let resumeInitialState = async (): Persistence.initialState => {
-    let (cache, chains) = await Promise.all2((
+    let (cache, chains, reorgCheckpoints) = await Promise.all3((
       restoreEffectCache(~withUpload=false),
       sql
       ->Postgres.unsafe(
         makeLoadAllQuery(~pgSchema, ~tableName=InternalTable.Chains.table.tableName),
       )
       ->(Utils.magic: promise<array<unknown>> => promise<array<InternalTable.Chains.t>>),
+      sql
+      ->Postgres.unsafe(
+        makeLoadAllQuery(~pgSchema, ~tableName=InternalTable.Checkpoints.table.tableName),
+      )
+      ->(Utils.magic: promise<array<unknown>> => promise<array<InternalTable.Checkpoints.t>>),
     ))
 
     {
       cleanRun: false,
+      reorgCheckpoints,
       cache,
       chains,
     }

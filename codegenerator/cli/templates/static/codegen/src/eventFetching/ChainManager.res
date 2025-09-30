@@ -3,6 +3,11 @@ open Belt
 type t = {
   chainFetchers: ChainMap.t<ChainFetcher.t>,
   multichain: InternalConfig.multichain,
+  // This is an in-memory pointer for checkpoints
+  // Checkpiont references a block in the order it was processed
+  // On restart we should use the last checkpoint id used for entity history
+  // or it's fine to reset it to 0 when there's no history yet
+  progressCheckpointId: bigint,
   isInReorgThreshold: bool,
 }
 
@@ -25,6 +30,7 @@ let makeFromConfig = (~config: Config.t): t => {
   {
     chainFetchers,
     multichain: config.multichain,
+    progressCheckpointId: 0n,
     isInReorgThreshold: false,
   }
 }
@@ -65,6 +71,7 @@ let makeFromDbState = async (~initialState: Persistence.initialState, ~config: C
         await chainConfig->ChainFetcher.makeFromDbState(
           ~resumedChainState,
           ~isInReorgThreshold,
+          ~reorgCheckpoints=initialState.reorgCheckpoints,
           ~targetBufferSize,
           ~config,
         ),
@@ -78,6 +85,7 @@ let makeFromDbState = async (~initialState: Persistence.initialState, ~config: C
     multichain: config.multichain,
     chainFetchers,
     isInReorgThreshold,
+    progressCheckpointId: 0n, // FIXME: get from initialState
   }
 }
 

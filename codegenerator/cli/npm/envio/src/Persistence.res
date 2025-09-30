@@ -17,6 +17,7 @@ type initialState = {
   cleanRun: bool,
   cache: dict<effectCacheRecord>,
   chains: array<InternalTable.Chains.t>,
+  reorgCheckpoints: array<InternalTable.Checkpoints.t>,
 }
 
 type operator = [#">" | #"="]

@@ -21,6 +21,7 @@ type t = {
   firstEventBlockNumber: option<int>,
   numEventsProcessed: int,
   numBatchesFetched: int,
+  blocks: ChainBlocks.t,
   //An optional list of filters to apply on event queries
   //Used for reorgs and restarts
   processingFilters: option<array<processingFilter>>,
@@ -42,6 +43,7 @@ let make = (
   ~numBatchesFetched,
   ~isInReorgThreshold,
   ~maxReorgDepth,
+  ~reorgCheckpoints,
 ): t => {
   // We don't need the router itself, but only validation logic,
   // since now event router is created for selection of events
@@ -202,6 +204,12 @@ let make = (
     timestampCaughtUpToHeadOrEndblock,
     numEventsProcessed,
     numBatchesFetched,
+    blocks: ChainBlocks.make(
+      ~chainId=chainConfig.id,
+      ~maxReorgDepth,
+      ~reorgCheckpoints,
+      ~shouldRollbackOnReorg=config->Config.shouldRollbackOnReorg,
+    ),
     processingFilters: None,
   }
 }
@@ -224,6 +232,7 @@ let makeFromConfig = (chainConfig: InternalConfig.chain, ~config, ~targetBufferS
     ~dynamicContracts=[],
     ~isInReorgThreshold=false,
     ~maxReorgDepth=chainConfig.maxReorgDepth,
+    ~reorgCheckpoints=[],
   )
 }
 
@@ -233,6 +242,7 @@ let makeFromConfig = (chainConfig: InternalConfig.chain, ~config, ~targetBufferS
 let makeFromDbState = async (
   chainConfig: InternalConfig.chain,
   ~resumedChainState: InternalTable.Chains.t,
+  ~reorgCheckpoints: array<InternalTable.Checkpoints.t>,
   ~isInReorgThreshold,
   ~config,
   ~targetBufferSize,
@@ -271,6 +281,7 @@ let makeFromDbState = async (
     ~logger,
     ~targetBufferSize,
     ~isInReorgThreshold,
+    ~reorgCheckpoints,
   )
 }
 
