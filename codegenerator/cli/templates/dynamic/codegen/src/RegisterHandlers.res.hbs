@@ -35,7 +35,11 @@ let registerContractHandlers = (
             addresses: [
               {{#each contract.addresses as | address |}}
               {{#if ../../../is_evm_ecosystem}}
+              {{#if ../../../lowercase_addresses}}
+              "{{address}}"->Address.Evm.fromStringLowercaseOrThrow
+              {{else}}
               "{{address}}"->Address.Evm.fromStringOrThrow
+              {{/if}}
               {{else}}
               "{{address}}"->Address.unsafeFromString
               {{/if}},
@@ -73,6 +77,8 @@ let registerContractHandlers = (
       ~enableRawEvents={{enable_raw_events}},
       ~batchSize=?Env.batchSize,
       ~preloadHandlers={{preload_handlers}},
+      ~lowercaseAddresses={{lowercase_addresses}},
+      ~shouldUseHypersyncClientDecoder={{should_use_hypersync_client_decoder}},
       {{#if chain_config.is_fuel}}
       ~ecosystem=Fuel,
       {{/if}}

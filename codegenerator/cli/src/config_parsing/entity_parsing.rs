@@ -190,7 +190,7 @@ impl Schema {
         }
     }
 
-    fn try_get_type_def(&self, name: &String) -> anyhow::Result<TypeDef> {
+    fn try_get_type_def(&self, name: &String) -> anyhow::Result<TypeDef<'_>> {
         match (self.entities.get(name), self.enums.get(name)) {
             (None, None) => Err(anyhow!("No type definition '{}' exists in schema", name)),
             (Some(_), Some(_)) => Err(anyhow!(
@@ -1469,7 +1469,7 @@ mod tests {
     use crate::config_parsing::postgres_types::Primitive as PGPrimitive;
     use graphql_parser::schema::{parse_schema, Definition, Document, ObjectType, TypeDefinition};
 
-    fn setup_document(schema: &str) -> anyhow::Result<Document<String>> {
+    fn setup_document(schema: &str) -> anyhow::Result<Document<'_, String>> {
         parse_schema::<String>(schema)
             .map_err(|e| anyhow!("EE201: Failed to parse schema: {:?}", e))
     }
@@ -1488,7 +1488,7 @@ mod tests {
             .collect()
     }
 
-    fn get_first_entity_from_string(schema_str: &str) -> ObjectType<String> {
+    fn get_first_entity_from_string(schema_str: &str) -> ObjectType<'_, String> {
         let gql_doc = setup_document(schema_str).unwrap();
         let entities = get_entities_from_document(gql_doc);
         entities.first().unwrap().clone()
