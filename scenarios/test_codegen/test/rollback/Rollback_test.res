@@ -417,29 +417,6 @@ describe("Single Chain Simple Rollback", () => {
 let undefined = (%raw(`undefined`): option<'a>)
 
 describe("E2E rollback tests", () => {
-  let initialEnterReorgThreshold = async (~sourceMock: M.Source.t) => {
-    Assert.deepEqual(
-      sourceMock.getHeightOrThrowCalls->Array.length,
-      1,
-      ~message="should have called getHeightOrThrow to get initial height",
-    )
-    sourceMock.resolveGetHeightOrThrow(300)
-    await Utils.delay(0)
-    await Utils.delay(0)
-
-    let expectedGetItemsCall1 = {"fromBlock": 0, "toBlock": Some(100), "retry": 0}
-
-    Assert.deepEqual(
-      sourceMock.getItemsOrThrowCalls,
-      [expectedGetItemsCall1],
-      ~message="Should request items until reorg threshold",
-    )
-    sourceMock.resolveGetItemsOrThrow([])
-    await Utils.delay(0)
-    await Utils.delay(0)
-    await Utils.delay(0)
-  }
-
   let testSingleChainRollback = async (~sourceMock: M.Source.t, ~indexerMock: M.Indexer.t) => {
     Assert.deepEqual(
       sourceMock.getItemsOrThrowCalls->Utils.Array.last,
@@ -736,7 +713,7 @@ describe("E2E rollback tests", () => {
     )
     await Utils.delay(0)
 
-    await initialEnterReorgThreshold(~sourceMock)
+    await M.Helper.initialEnterReorgThreshold(~sourceMock)
     await testSingleChainRollback(~sourceMock, ~indexerMock)
   })
 
@@ -766,8 +743,8 @@ describe("E2E rollback tests", () => {
       await Utils.delay(0)
 
       let _ = await Promise.all2((
-        initialEnterReorgThreshold(~sourceMock=sourceMock1),
-        initialEnterReorgThreshold(~sourceMock=sourceMock2),
+        M.Helper.initialEnterReorgThreshold(~sourceMock=sourceMock1),
+        M.Helper.initialEnterReorgThreshold(~sourceMock=sourceMock2),
       ))
 
       await testSingleChainRollback(~sourceMock=sourceMock1, ~indexerMock)
@@ -789,7 +766,7 @@ describe("E2E rollback tests", () => {
     )
     await Utils.delay(0)
 
-    await initialEnterReorgThreshold(~sourceMock)
+    await M.Helper.initialEnterReorgThreshold(~sourceMock)
 
     let calls = []
     let handler: Types.HandlerTypes.loader<unit, unit> = async ({event}) => {
@@ -1050,8 +1027,8 @@ This might be wrong after we start exposing a block hash for progress block.`,
     await Utils.delay(0)
 
     let _ = await Promise.all2((
-      initialEnterReorgThreshold(~sourceMock=sourceMock1337),
-      initialEnterReorgThreshold(~sourceMock=sourceMock100),
+      M.Helper.initialEnterReorgThreshold(~sourceMock=sourceMock1337),
+      M.Helper.initialEnterReorgThreshold(~sourceMock=sourceMock100),
     ))
 
     let callCount = ref(0)

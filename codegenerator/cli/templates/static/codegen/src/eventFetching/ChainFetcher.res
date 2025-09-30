@@ -14,7 +14,7 @@ type t = {
   chainConfig: InternalConfig.chain,
   //The latest known block of the chain
   currentBlockHeight: int,
-  isFetchingAtHead: bool,
+  isProgressAtHead: bool,
   timestampCaughtUpToHeadOrEndblock: option<Js.Date.t>,
   committedProgressBlockNumber: int,
   firstEventBlockNumber: option<int>,
@@ -197,7 +197,7 @@ let make = (
     ),
     lastBlockScannedHashes,
     currentBlockHeight: 0,
-    isFetchingAtHead: false,
+    isProgressAtHead: false,
     fetchState,
     firstEventBlockNumber,
     committedProgressBlockNumber: progressBlockNumber,

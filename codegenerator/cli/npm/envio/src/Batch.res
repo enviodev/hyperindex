@@ -2,6 +2,7 @@ type progressedChain = {
   chainId: int,
   batchSize: int,
   progressBlockNumber: int,
+  isProgressAtHead: bool,
   totalEventsProcessed: int,
 }
 

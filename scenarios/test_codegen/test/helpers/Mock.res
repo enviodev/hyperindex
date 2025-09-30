@@ -206,6 +206,10 @@ module Storage = {
 }
 
 module Indexer = {
+  type metric = {
+    value: string,
+    labels: dict<string>,
+  }
   type t = {
     getBatchWritePromise: unit => promise<unit>,
     getRollbackReadyPromise: unit => promise<unit>,
@@ -213,12 +217,15 @@ module Indexer = {
     queryHistory: 'entity. module(Entities.Entity with type t = 'entity) => promise<
       array<EntityHistory.historyRow<'entity>>,
     >,
+    metric: string => promise<array<metric>>,
   }
 
   type chainConfig = {chain: Types.chain, sources: array<Source.t>, startBlock?: int}
 
   let make = async (~chains: array<chainConfig>, ~multichain=InternalConfig.Unordered) => {
     DbHelpers.resetPostgresClient()
+    // TODO: Should stop using global client
+    PromClient.defaultRegister->PromClient.resetMetrics
 
     let config = RegisterHandlers.registerAllHandlers()
 
@@ -342,6 +349,16 @@ module Indexer = {
             array<EntityHistory.historyRow<entity>>,
           >
         )
+      },
+      metric: async name => {
+        switch PromClient.defaultRegister->PromClient.getSingleMetric(name) {
+        | Some(m) =>
+          (await m.get())["values"]->Js.Array2.map(v => {
+            value: v.value->Belt.Int.toString,
+            labels: v.labels,
+          })
+        | None => []
+        }
       },
     }
   }
@@ -569,6 +586,33 @@ module Source = {
         }
       },
     }
+  }
+}
+
+module Helper = {
+  let initialEnterReorgThreshold = async (~sourceMock: Source.t) => {
+    open RescriptMocha
+
+    Assert.deepEqual(
+      sourceMock.getHeightOrThrowCalls->Array.length,
+      1,
+      ~message="should have called getHeightOrThrow to get initial height",
+    )
+    sourceMock.resolveGetHeightOrThrow(300)
+    await Utils.delay(0)
+    await Utils.delay(0)
+
+    let expectedGetItemsCall1 = {"fromBlock": 0, "toBlock": Some(100), "retry": 0}
+
+    Assert.deepEqual(
+      sourceMock.getItemsOrThrowCalls,
+      [expectedGetItemsCall1],
+      ~message="Should request items until reorg threshold",
+    )
+    sourceMock.resolveGetItemsOrThrow([])
+    await Utils.delay(0)
+    await Utils.delay(0)
+    await Utils.delay(0)
   }
 }
 
