@@ -129,21 +129,18 @@ let make = (
   ~ecosystem=InternalConfig.Evm,
   ~registrations=?,
   ~batchSize=5000,
-  ~ecosystem=Evm,
   ~lowercaseAddresses=false,
   ~shouldUseHypersyncClientDecoder=true,
 ) => {
   // Validate that lowercase addresses is not used with viem decoder
-  chains->Array.forEach(chain => {
-    if (
-      lowercaseAddresses &&
-      !shouldUseHypersyncClientDecoder
-    ) {
-      Js.Exn.raiseError(
-        "lowercase addresses is not supported when event_decoder is 'viem'. Please set event_decoder to 'hypersync-client' or change address_format to 'checksum'.",
-      )
-    }
-  })
+  if (
+    lowercaseAddresses &&
+    !shouldUseHypersyncClientDecoder
+  ) {
+    Js.Exn.raiseError(
+      "lowercase addresses is not supported when event_decoder is 'viem'. Please set event_decoder to 'hypersync-client' or change address_format to 'checksum'.",
+    )
+  }
 
   let chainMap =
     chains
