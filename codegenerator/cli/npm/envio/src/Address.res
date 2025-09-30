@@ -31,7 +31,7 @@ module Evm = {
   }
 
   let fromAddressLowercaseOrThrow = address =>
-    address->toString->fromStringLowercaseOrThrow
+    address->toString->Js.String2.toLowerCase
 
   // Reassign since the function might be used in the handler code
   // and we don't want to have a "viem" import there. It's needed to keep "viem" a dependency
