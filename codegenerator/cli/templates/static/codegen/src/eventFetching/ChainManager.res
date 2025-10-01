@@ -64,6 +64,7 @@ let makeFromDbState = async (~initialState: Persistence.initialState, ~config: C
         chain,
         await chainConfig->ChainFetcher.makeFromDbState(
           ~resumedChainState,
+          ~reorgCheckpoints=initialState.reorgCheckpoints,
           ~isInReorgThreshold,
           ~targetBufferSize,
           ~config,

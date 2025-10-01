@@ -346,16 +346,12 @@ let validatePartitionQueryResponse = (
     )
   }
 
-  let (updatedLastBlockScannedHashes, reorgResult: ReorgDetection.reorgResult) =
-    chainFetcher.lastBlockScannedHashes->ReorgDetection.LastBlockScannedHashes.registerReorgGuard(
-      ~reorgGuard,
-      ~currentBlockHeight,
-      ~shouldRollbackOnReorg=state.config->Config.shouldRollbackOnReorg,
-    )
+  let (updatedReorgDetection, reorgResult: ReorgDetection.reorgResult) =
+    chainFetcher.reorgDetection->ReorgDetection.registerReorgGuard(~reorgGuard, ~currentBlockHeight)
 
   let updatedChainFetcher = {
     ...chainFetcher,
-    lastBlockScannedHashes: updatedLastBlockScannedHashes,
+    reorgDetection: updatedReorgDetection,
   }
 
   let nextState = {

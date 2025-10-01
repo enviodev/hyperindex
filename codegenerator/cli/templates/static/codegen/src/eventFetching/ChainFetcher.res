@@ -20,7 +20,7 @@ type t = {
   firstEventBlockNumber: option<int>,
   numEventsProcessed: int,
   numBatchesFetched: int,
-  lastBlockScannedHashes: ReorgDetection.LastBlockScannedHashes.t,
+  reorgDetection: ReorgDetection.t,
   //An optional list of filters to apply on event queries
   //Used for reorgs and restarts
   processingFilters: option<array<processingFilter>>,
@@ -29,7 +29,6 @@ type t = {
 //CONSTRUCTION
 let make = (
   ~chainConfig: InternalConfig.chain,
-  ~lastBlockScannedHashes,
   ~dynamicContracts: array<InternalTable.DynamicContractRegistry.t>,
   ~startBlock,
   ~endBlock,
@@ -42,6 +41,8 @@ let make = (
   ~numEventsProcessed,
   ~numBatchesFetched,
   ~isInReorgThreshold,
+  ~reorgCheckpoints: array<InternalTable.Checkpoints.reorgCheckpoint>,
+  ~maxReorgDepth,
 ): t => {
   // We don't need the router itself, but only validation logic,
   // since now event router is created for selection of events
@@ -193,7 +194,20 @@ let make = (
       ~sources=chainConfig.sources,
       ~maxPartitionConcurrency=Env.maxPartitionConcurrency,
     ),
-    lastBlockScannedHashes,
+    reorgDetection: ReorgDetection.make(
+      ~blocks=reorgCheckpoints->Array.keepMapU(reorgCheckpoint => {
+        if reorgCheckpoint.chainId === chainConfig.id {
+          Some({
+            ReorgDetection.blockNumber: reorgCheckpoint.blockNumber,
+            blockHash: reorgCheckpoint.blockHash,
+          })
+        } else {
+          None
+        }
+      }),
+      ~maxReorgDepth,
+      ~shouldRollbackOnReorg=config->Config.shouldRollbackOnReorg,
+    ),
     currentBlockHeight: 0,
     isProgressAtHead: false,
     fetchState,
@@ -208,16 +222,14 @@ let make = (
 
 let makeFromConfig = (chainConfig: InternalConfig.chain, ~config, ~targetBufferSize) => {
   let logger = Logging.createChild(~params={"chainId": chainConfig.id})
-  let lastBlockScannedHashes = ReorgDetection.LastBlockScannedHashes.empty(
-    ~maxReorgDepth=chainConfig.maxReorgDepth,
-  )
 
   make(
     ~chainConfig,
     ~config,
     ~startBlock=chainConfig.startBlock,
     ~endBlock=chainConfig.endBlock,
-    ~lastBlockScannedHashes,
+    ~reorgCheckpoints=[],
+    ~maxReorgDepth=chainConfig.maxReorgDepth,
     ~firstEventBlockNumber=None,
     ~progressBlockNumber=chainConfig.startBlock - 1,
     ~timestampCaughtUpToHeadOrEndblock=None,
@@ -236,6 +248,7 @@ let makeFromConfig = (chainConfig: InternalConfig.chain, ~config, ~targetBufferS
 let makeFromDbState = async (
   chainConfig: InternalConfig.chain,
   ~resumedChainState: InternalTable.Chains.t,
+  ~reorgCheckpoints,
   ~isInReorgThreshold,
   ~config,
   ~targetBufferSize,
@@ -248,19 +261,6 @@ let makeFromDbState = async (
   // we can simply query all dcs we have in db
   let dbRecoveredDynamicContracts =
     await sql->DbFunctions.DynamicContractRegistry.readAllDynamicContracts(~chainId)
-
-  let endOfBlockRangeScannedData =
-    await sql->DbFunctions.EndOfBlockRangeScannedData.readEndOfBlockRangeScannedDataForChain(
-      ~chainId,
-    )
-
-  let lastBlockScannedHashes =
-    endOfBlockRangeScannedData
-    ->Array.map(({blockNumber, blockHash}) => {
-      ReorgDetection.blockNumber,
-      blockHash,
-    })
-    ->ReorgDetection.LastBlockScannedHashes.makeWithData(~maxReorgDepth=chainConfig.maxReorgDepth)
 
   Prometheus.ProgressEventsCount.set(~processedCount=resumedChainState.numEventsProcessed, ~chainId)
 
@@ -276,7 +276,8 @@ let makeFromDbState = async (
     ~startBlock=resumedChainState.startBlock,
     ~endBlock=resumedChainState.endBlock->Js.Null.toOption,
     ~config,
-    ~lastBlockScannedHashes,
+    ~reorgCheckpoints,
+    ~maxReorgDepth=resumedChainState.maxReorgDepth,
     ~firstEventBlockNumber=resumedChainState.firstEventBlockNumber->Js.Null.toOption,
     ~progressBlockNumber,
     ~timestampCaughtUpToHeadOrEndblock=Env.updateSyncTimeOnRestart
@@ -485,7 +486,7 @@ let getLastKnownValidBlock = async (
   ~getBlockHashes=(chainFetcher.sourceManager->SourceManager.getActiveSource).getBlockHashes,
 ) => {
   let scannedBlockNumbers =
-    chainFetcher.lastBlockScannedHashes->ReorgDetection.LastBlockScannedHashes.getThresholdBlockNumbers(
+    chainFetcher.reorgDetection->ReorgDetection.getThresholdBlockNumbers(
       ~currentBlockHeight=chainFetcher.currentBlockHeight,
     )
 
@@ -520,7 +521,7 @@ let getLastKnownValidBlock = async (
       while blockRef.contents->Option.isNone {
         let blockNumbersAndHashes = await getBlockHashes(scannedBlockNumbers)
 
-        switch chainFetcher.lastBlockScannedHashes->ReorgDetection.LastBlockScannedHashes.getLatestValidScannedBlock(
+        switch chainFetcher.reorgDetection->ReorgDetection.getLatestValidScannedBlock(
           ~blockNumbersAndHashes,
           ~currentBlockHeight=chainFetcher.currentBlockHeight,
           ~skipReorgDuplicationCheck=retryCount.contents > 2,
