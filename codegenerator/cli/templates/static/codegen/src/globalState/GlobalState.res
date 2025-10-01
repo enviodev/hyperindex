@@ -157,8 +157,6 @@ let updateChainFetcherCurrentBlockHeight = (chainFetcher: ChainFetcher.t, ~curre
 
     {
       ...chainFetcher,
-      isFetchingAtHead: chainFetcher.isFetchingAtHead ||
-      chainFetcher.fetchState->FetchState.bufferBlockNumber >= currentBlockHeight,
       currentBlockHeight,
     }
   } else {
@@ -204,7 +202,7 @@ let updateProgressedChains = (
 ) => {
   let nextQueueItemIsNone = chainManager->ChainManager.nextItemIsNone
 
-  let allChainsAtHead = chainManager->ChainManager.isFetchingAtHead
+  let allChainsAtHead = chainManager->ChainManager.isProgressAtHead
   //Update the timestampCaughtUpToHeadOrEndblock values
   let chainFetchers = chainManager.chainFetchers->ChainMap.map(cf => {
     let chain = ChainMap.Chain.makeUnsafe(~chainId=cf.chainConfig.id)
@@ -246,6 +244,7 @@ let updateProgressedChains = (
             | None => None
             }
           },
+          isProgressAtHead: cf.isProgressAtHead || progressData.isProgressAtHead,
           committedProgressBlockNumber: progressData.progressBlockNumber,
           numEventsProcessed: progressData.totalEventsProcessed,
         }
@@ -281,7 +280,7 @@ let updateProgressedChains = (
         ...cf,
         timestampCaughtUpToHeadOrEndblock,
       }
-    } else if cf.timestampCaughtUpToHeadOrEndblock->Option.isNone && cf.isFetchingAtHead {
+    } else if cf.timestampCaughtUpToHeadOrEndblock->Option.isNone && cf.isProgressAtHead {
       //Only calculate and set timestampCaughtUpToHeadOrEndblock if chain fetcher is at the head and
       //its not already set
       //CASE1
@@ -462,8 +461,8 @@ let submitPartitionQueryResponse = (
     numBatchesFetched: updatedChainFetcher.numBatchesFetched + 1,
   }
 
-  let wasFetchingAtHead = chainFetcher.isFetchingAtHead
-  let isCurrentlyFetchingAtHead = updatedChainFetcher.isFetchingAtHead
+  let wasFetchingAtHead = chainFetcher.isProgressAtHead
+  let isCurrentlyFetchingAtHead = updatedChainFetcher.isProgressAtHead
 
   if !wasFetchingAtHead && isCurrentlyFetchingAtHead {
     updatedChainFetcher.logger->Logging.childInfo("All events have been fetched")

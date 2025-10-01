@@ -111,7 +111,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
       lastBlockScannedHashes: ReorgDetection.LastBlockScannedHashes.empty(
         ~confirmedBlockThreshold=200,
       ),
-      isFetchingAtHead: false,
+      isProgressAtHead: false,
       currentBlockHeight: 0,
       processingFilters: None,
     }

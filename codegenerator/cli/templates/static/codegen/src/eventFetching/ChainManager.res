@@ -184,6 +184,10 @@ let createBatch = (chainManager: t, ~batchSizeTarget: int): Batch.t => {
             batchSize: chainBatchSize,
             progressBlockNumber: nextProgressBlockNumber,
             totalEventsProcessed: chainFetcher.numEventsProcessed + chainBatchSize,
+            // Snapshot the value at the moment of batch creation
+            // so we don't have a case where we can't catch up the head because of the
+            // defference between processing and new blocks
+            isProgressAtHead: nextProgressBlockNumber >= chainFetcher.currentBlockHeight,
           }: Batch.progressedChain
         ),
       )
@@ -200,10 +204,10 @@ let createBatch = (chainManager: t, ~batchSizeTarget: int): Batch.t => {
   }
 }
 
-let isFetchingAtHead = chainManager =>
+let isProgressAtHead = chainManager =>
   chainManager.chainFetchers
   ->ChainMap.values
-  ->Js.Array2.every(cf => cf.isFetchingAtHead)
+  ->Js.Array2.every(cf => cf.isProgressAtHead)
 
 let isActivelyIndexing = chainManager =>
   chainManager.chainFetchers

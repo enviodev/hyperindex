@@ -37,4 +37,49 @@ describe("E2E tests", () => {
       ~message="Should request items from start block to reorg threshold",
     )
   })
+
+  Async.it("Correctly sets Prom metrics", async () => {
+    let sourceMock = Mock.Source.make(
+      [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
+      ~chain=#1337,
+    )
+    let indexerMock = await Mock.Indexer.make(
+      ~chains=[
+        {
+          chain: #1337,
+          sources: [sourceMock.source],
+        },
+      ],
+    )
+    await Utils.delay(0)
+
+    Assert.deepEqual(
+      await indexerMock.metric("envio_reorg_threshold"),
+      [{value: "0", labels: Js.Dict.empty()}],
+    )
+    Assert.deepEqual(
+      await indexerMock.metric("hyperindex_synced_to_head"),
+      [{value: "0", labels: Js.Dict.empty()}],
+    )
+
+    await Mock.Helper.initialEnterReorgThreshold(~sourceMock)
+
+    Assert.deepEqual(
+      await indexerMock.metric("envio_reorg_threshold"),
+      [{value: "1", labels: Js.Dict.empty()}],
+    )
+    Assert.deepEqual(
+      await indexerMock.metric("hyperindex_synced_to_head"),
+      [{value: "0", labels: Js.Dict.empty()}],
+    )
+
+    sourceMock.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=300)
+    await indexerMock.getBatchWritePromise()
+
+    Assert.deepEqual(
+      await indexerMock.metric("hyperindex_synced_to_head"),
+      [{value: "1", labels: Js.Dict.empty()}],
+      ~message="should have set hyperindex_synced_to_head metric to 1",
+    )
+  })
 })

@@ -11,6 +11,14 @@ type registry
 @send external metrics: registry => Promise.t<string> = "metrics"
 @get external getContentType: registry => string = "contentType"
 
+type metricValue = {
+  value: int,
+  labels: dict<string>,
+}
+type metricInstance = {get: unit => promise<{"values": array<metricValue>}>}
+@send external getSingleMetric: (registry, string) => option<metricInstance> = "getSingleMetric"
+@send external resetMetrics: registry => unit = "resetMetrics"
+
 module Counter = {
   type counter
   @new @module("prom-client") external makeCounter: customMetric<'a> => counter = "Counter"
@@ -36,6 +44,8 @@ module Gauge = {
   @send external setFloat: (gauge, float) => unit = "set"
 
   @send external labels: (gauge, 'labelsObject) => gauge = "labels"
+
+  @send external get: gauge => promise<{"values": array<dict<string>>}> = "get"
 }
 
 module Histogram = {
