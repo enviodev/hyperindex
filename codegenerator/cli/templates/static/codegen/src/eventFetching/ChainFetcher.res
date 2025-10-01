@@ -12,16 +12,15 @@ type t = {
   fetchState: FetchState.t,
   sourceManager: SourceManager.t,
   chainConfig: InternalConfig.chain,
-  maxReorgDepth: int,
   //The latest known block of the chain
   currentBlockHeight: int,
-  isFetchingAtHead: bool,
+  isProgressAtHead: bool,
   timestampCaughtUpToHeadOrEndblock: option<Js.Date.t>,
   committedProgressBlockNumber: int,
   firstEventBlockNumber: option<int>,
   numEventsProcessed: int,
   numBatchesFetched: int,
-  blocks: ChainBlocks.t,
+  lastBlockScannedHashes: ReorgDetection.LastBlockScannedHashes.t,
   //An optional list of filters to apply on event queries
   //Used for reorgs and restarts
   processingFilters: option<array<processingFilter>>,
@@ -30,6 +29,7 @@ type t = {
 //CONSTRUCTION
 let make = (
   ~chainConfig: InternalConfig.chain,
+  ~lastBlockScannedHashes,
   ~dynamicContracts: array<InternalTable.DynamicContractRegistry.t>,
   ~startBlock,
   ~endBlock,
@@ -42,8 +42,6 @@ let make = (
   ~numEventsProcessed,
   ~numBatchesFetched,
   ~isInReorgThreshold,
-  ~maxReorgDepth,
-  ~reorgCheckpoints,
 ): t => {
   // We don't need the router itself, but only validation logic,
   // since now event router is created for selection of events
@@ -182,7 +180,7 @@ let make = (
     ~targetBufferSize,
     ~chainId=chainConfig.id,
     ~blockLag=Pervasives.max(
-      !(config->Config.shouldRollbackOnReorg) || isInReorgThreshold ? 0 : maxReorgDepth,
+      !(config->Config.shouldRollbackOnReorg) || isInReorgThreshold ? 0 : chainConfig.maxReorgDepth,
       Env.indexingBlockLag->Option.getWithDefault(0),
     ),
     ~onBlockConfigs?,
@@ -195,33 +193,31 @@ let make = (
       ~sources=chainConfig.sources,
       ~maxPartitionConcurrency=Env.maxPartitionConcurrency,
     ),
+    lastBlockScannedHashes,
     currentBlockHeight: 0,
-    isFetchingAtHead: false,
+    isProgressAtHead: false,
     fetchState,
     firstEventBlockNumber,
-    maxReorgDepth,
     committedProgressBlockNumber: progressBlockNumber,
     timestampCaughtUpToHeadOrEndblock,
     numEventsProcessed,
     numBatchesFetched,
-    blocks: ChainBlocks.make(
-      ~chainId=chainConfig.id,
-      ~maxReorgDepth,
-      ~reorgCheckpoints,
-      ~shouldRollbackOnReorg=config->Config.shouldRollbackOnReorg,
-    ),
     processingFilters: None,
   }
 }
 
 let makeFromConfig = (chainConfig: InternalConfig.chain, ~config, ~targetBufferSize) => {
   let logger = Logging.createChild(~params={"chainId": chainConfig.id})
+  let lastBlockScannedHashes = ReorgDetection.LastBlockScannedHashes.empty(
+    ~maxReorgDepth=chainConfig.maxReorgDepth,
+  )
 
   make(
     ~chainConfig,
     ~config,
     ~startBlock=chainConfig.startBlock,
     ~endBlock=chainConfig.endBlock,
+    ~lastBlockScannedHashes,
     ~firstEventBlockNumber=None,
     ~progressBlockNumber=chainConfig.startBlock - 1,
     ~timestampCaughtUpToHeadOrEndblock=None,
@@ -231,8 +227,6 @@ let makeFromConfig = (chainConfig: InternalConfig.chain, ~config, ~targetBufferS
     ~logger,
     ~dynamicContracts=[],
     ~isInReorgThreshold=false,
-    ~maxReorgDepth=chainConfig.maxReorgDepth,
-    ~reorgCheckpoints=[],
   )
 }
 
@@ -242,7 +236,6 @@ let makeFromConfig = (chainConfig: InternalConfig.chain, ~config, ~targetBufferS
 let makeFromDbState = async (
   chainConfig: InternalConfig.chain,
   ~resumedChainState: InternalTable.Chains.t,
-  ~reorgCheckpoints: array<InternalTable.Checkpoints.t>,
   ~isInReorgThreshold,
   ~config,
   ~targetBufferSize,
@@ -255,6 +248,19 @@ let makeFromDbState = async (
   // we can simply query all dcs we have in db
   let dbRecoveredDynamicContracts =
     await sql->DbFunctions.DynamicContractRegistry.readAllDynamicContracts(~chainId)
+
+  let endOfBlockRangeScannedData =
+    await sql->DbFunctions.EndOfBlockRangeScannedData.readEndOfBlockRangeScannedDataForChain(
+      ~chainId,
+    )
+
+  let lastBlockScannedHashes =
+    endOfBlockRangeScannedData
+    ->Array.map(({blockNumber, blockHash}) => {
+      ReorgDetection.blockNumber,
+      blockHash,
+    })
+    ->ReorgDetection.LastBlockScannedHashes.makeWithData(~maxReorgDepth=chainConfig.maxReorgDepth)
 
   Prometheus.ProgressEventsCount.set(~processedCount=resumedChainState.numEventsProcessed, ~chainId)
 
@@ -270,18 +276,17 @@ let makeFromDbState = async (
     ~startBlock=resumedChainState.startBlock,
     ~endBlock=resumedChainState.endBlock->Js.Null.toOption,
     ~config,
+    ~lastBlockScannedHashes,
     ~firstEventBlockNumber=resumedChainState.firstEventBlockNumber->Js.Null.toOption,
     ~progressBlockNumber,
     ~timestampCaughtUpToHeadOrEndblock=Env.updateSyncTimeOnRestart
       ? None
       : resumedChainState.timestampCaughtUpToHeadOrEndblock->Js.Null.toOption,
     ~numEventsProcessed=resumedChainState.numEventsProcessed,
-    ~maxReorgDepth=resumedChainState.maxReorgDepth,
     ~numBatchesFetched=0,
     ~logger,
     ~targetBufferSize,
     ~isInReorgThreshold,
-    ~reorgCheckpoints,
   )
 }
 
@@ -466,7 +471,7 @@ let hasNoMoreEventsToProcess = (self: t) => {
 }
 
 let getHighestBlockBelowThreshold = (cf: t): int => {
-  let highestBlockBelowThreshold = cf.currentBlockHeight - cf.maxReorgDepth
+  let highestBlockBelowThreshold = cf.currentBlockHeight - cf.chainConfig.maxReorgDepth
   highestBlockBelowThreshold < 0 ? 0 : highestBlockBelowThreshold
 }
 
@@ -479,10 +484,10 @@ let getLastKnownValidBlock = async (
   //Parameter used for dependency injecting in tests
   ~getBlockHashes=(chainFetcher.sourceManager->SourceManager.getActiveSource).getBlockHashes,
 ) => {
-  let scannedBlockNumbers = [] // FIXME
-  // chainFetcher.lastBlockScannedHashes->ReorgDetection.LastBlockScannedHashes.getThresholdBlockNumbers(
-  //   ~currentBlockHeight=chainFetcher.currentBlockHeight,
-  // )
+  let scannedBlockNumbers =
+    chainFetcher.lastBlockScannedHashes->ReorgDetection.LastBlockScannedHashes.getThresholdBlockNumbers(
+      ~currentBlockHeight=chainFetcher.currentBlockHeight,
+    )
 
   let getBlockHashes = blockNumbers => {
     getBlockHashes(~blockNumbers, ~logger=chainFetcher.logger)->Promise.thenResolve(res =>
@@ -510,28 +515,27 @@ let getLastKnownValidBlock = async (
   | [] => await fallback()
   | _ => {
       let blockRef = ref(None)
-      // let retryCount = ref(0)
+      let retryCount = ref(0)
 
-      // FIXME:
-      // while blockRef.contents->Option.isNone {
-      //   let blockNumbersAndHashes = await getBlockHashes(scannedBlockNumbers)
+      while blockRef.contents->Option.isNone {
+        let blockNumbersAndHashes = await getBlockHashes(scannedBlockNumbers)
 
-      //   switch chainFetcher.lastBlockScannedHashes->ReorgDetection.LastBlockScannedHashes.getLatestValidScannedBlock(
-      //     ~blockNumbersAndHashes,
-      //     ~currentBlockHeight=chainFetcher.currentBlockHeight,
-      //     ~skipReorgDuplicationCheck=retryCount.contents > 2,
-      //   ) {
-      //   | Ok(block) => blockRef := Some(block)
-      //   | Error(NotFound) => blockRef := Some(await fallback())
-      //   | Error(AlreadyReorgedHashes) =>
-      //     let delayMilliseconds = 100
-      //     chainFetcher.logger->Logging.childTrace(
-      //       `Failed to find a valid block to rollback to, since received already reorged hashes from another HyperSync instance. HyperSync has multiple instances and it's possible that they drift independently slightly from the head. Indexing should continue correctly after retrying the query in ${delayMilliseconds->Int.toString}ms.`,
-      //     )
-      //     await Utils.delay(delayMilliseconds)
-      //     retryCount := retryCount.contents + 1
-      //   }
-      // }
+        switch chainFetcher.lastBlockScannedHashes->ReorgDetection.LastBlockScannedHashes.getLatestValidScannedBlock(
+          ~blockNumbersAndHashes,
+          ~currentBlockHeight=chainFetcher.currentBlockHeight,
+          ~skipReorgDuplicationCheck=retryCount.contents > 2,
+        ) {
+        | Ok(block) => blockRef := Some(block)
+        | Error(NotFound) => blockRef := Some(await fallback())
+        | Error(AlreadyReorgedHashes) =>
+          let delayMilliseconds = 100
+          chainFetcher.logger->Logging.childTrace(
+            `Failed to find a valid block to rollback to, since received already reorged hashes from another HyperSync instance. HyperSync has multiple instances and it's possible that they drift independently slightly from the head. Indexing should continue correctly after retrying the query in ${delayMilliseconds->Int.toString}ms.`,
+          )
+          await Utils.delay(delayMilliseconds)
+          retryCount := retryCount.contents + 1
+        }
+      }
 
       blockRef.contents->Option.getUnsafe
     }

@@ -50,7 +50,7 @@ let getEntityHistoryItems = (entityUpdates, ~containsRollbackDiffChange) => {
 
 let executeBatch = async (
   sql,
-  ~progressedChains: array<Batch.progressedChain>,
+  ~batch: Batch.t,
   ~inMemoryStore: InMemoryStore.t,
   ~isInReorgThreshold,
   ~config,
@@ -224,7 +224,7 @@ let executeBatch = async (
   | Some(eventIdentifier) =>
     Some(
       sql =>
-        Promise.all([
+        Promise.all2((
           sql->DbFunctions.EntityHistory.deleteAllEntityHistoryAfterEventIdentifier(
             ~isUnorderedMultichainMode=switch config.multichain {
             | Unordered => true
@@ -232,12 +232,11 @@ let executeBatch = async (
             },
             ~eventIdentifier,
           ),
-          // FIXME: Add rollback for blocks table
-          // sql->DbFunctions.EndOfBlockRangeScannedData.rollbackEndOfBlockRangeScannedDataForChain(
-          //   ~chainId=eventIdentifier.chainId,
-          //   ~knownBlockNumber=eventIdentifier.blockNumber,
-          // ),
-        ]),
+          sql->DbFunctions.EndOfBlockRangeScannedData.rollbackEndOfBlockRangeScannedDataForChain(
+            ~chainId=eventIdentifier.chainId,
+            ~knownBlockNumber=eventIdentifier.blockNumber,
+          ),
+        )),
     )
   | None => None
   }
@@ -257,7 +256,13 @@ let executeBatch = async (
             sql =>
               sql->InternalTable.Chains.setProgressedChains(
                 ~pgSchema=Db.publicSchema,
-                ~progressedChains,
+                ~progressedChains=batch.progressedChainsById->Utils.Dict.mapValuesToArray((
+                  chainAfterBatch
+                ): InternalTable.Chains.progressedChain => {
+                  chainId: chainAfterBatch.fetchState.chainId,
+                  progressBlockNumber: chainAfterBatch.progressBlockNumber,
+                  totalEventsProcessed: chainAfterBatch.totalEventsProcessed,
+                }),
               ),
             setRawEvents,
           ],

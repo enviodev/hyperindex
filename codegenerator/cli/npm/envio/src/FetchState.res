@@ -92,7 +92,7 @@ let mergeIntoPartition = (p: partition, ~target: partition, ~maxAddrInPartition)
 
       let allowedAddressesNumber = ref(maxAddrInPartition)
 
-      target.addressesByContractName->Utils.Dict.forEachWithKey((contractName, addresses) => {
+      target.addressesByContractName->Utils.Dict.forEachWithKey((addresses, contractName) => {
         allowedAddressesNumber := allowedAddressesNumber.contents - addresses->Array.length
         mergedAddresses->Js.Dict.set(contractName, addresses)
       })
@@ -100,7 +100,7 @@ let mergeIntoPartition = (p: partition, ~target: partition, ~maxAddrInPartition)
       // Start with putting all addresses to the merging dict
       // And if they exceed the limit, start removing from the merging dict
       // and putting into the rest dict
-      p.addressesByContractName->Utils.Dict.forEachWithKey((contractName, addresses) => {
+      p.addressesByContractName->Utils.Dict.forEachWithKey((addresses, contractName) => {
         allowedAddressesNumber := allowedAddressesNumber.contents - addresses->Array.length
         switch mergedAddresses->Utils.Dict.dangerouslyGetNonOption(contractName) {
         | Some(targetAddresses) =>
@@ -112,7 +112,7 @@ let mergeIntoPartition = (p: partition, ~target: partition, ~maxAddrInPartition)
       let rest = if allowedAddressesNumber.contents < 0 {
         let restAddresses = Js.Dict.empty()
 
-        mergedAddresses->Utils.Dict.forEachWithKey((contractName, addresses) => {
+        mergedAddresses->Utils.Dict.forEachWithKey((addresses, contractName) => {
           if allowedAddressesNumber.contents === 0 {
             ()
           } else if addresses->Array.length <= -allowedAddressesNumber.contents {
@@ -1153,7 +1153,7 @@ let rollbackPartition = (
     })
   | {addressesByContractName} =>
     let rollbackedAddressesByContractName = Js.Dict.empty()
-    addressesByContractName->Utils.Dict.forEachWithKey((contractName, addresses) => {
+    addressesByContractName->Utils.Dict.forEachWithKey((addresses, contractName) => {
       let keptAddresses =
         addresses->Array.keep(address => !(addressesToRemove->Utils.Set.has(address)))
       if keptAddresses->Array.length > 0 {

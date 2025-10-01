@@ -301,31 +301,28 @@ type logPartitionInfo = {
 }
 
 let processEventBatch = async (
-  ~items: array<Internal.item>,
-  ~progressedChains: array<Batch.progressedChain>,
+  ~batch: Batch.t,
   ~inMemoryStore: InMemoryStore.t,
   ~isInReorgThreshold,
   ~loadManager,
   ~config: Config.t,
 ) => {
-  let batchSize = items->Array.length
-  let byChain = Js.Dict.empty()
-  progressedChains->Js.Array2.forEach(data => {
-    if data.batchSize > 0 {
-      byChain->Utils.Dict.setByInt(
-        data.chainId,
-        {
-          "batchSize": data.batchSize,
-          "toBlockNumber": data.progressBlockNumber,
-        },
-      )
-    }
-  })
+  let batchSize = batch.items->Array.length
+
   let logger = Logging.createChildFrom(
     ~logger=Logging.getLogger(),
     ~params={
       "totalBatchSize": batchSize,
-      "byChain": byChain,
+      "byChain": batch.progressedChainsById->Utils.Dict.filterMapValues(chainAfterBatch =>
+        if chainAfterBatch.batchSize > 0 {
+          Some({
+            "batchSize": chainAfterBatch.batchSize,
+            "toBlockNumber": chainAfterBatch.progressBlockNumber,
+          })
+        } else {
+          None
+        }
+      ),
     },
   )
   logger->Logging.childTrace("Started processing batch")
@@ -333,11 +330,15 @@ let processEventBatch = async (
   try {
     let timeRef = Hrtime.makeTimer()
 
-    await items->preloadBatchOrThrow(~loadManager, ~persistence=config.persistence, ~inMemoryStore)
+    await batch.items->preloadBatchOrThrow(
+      ~loadManager,
+      ~persistence=config.persistence,
+      ~inMemoryStore,
+    )
 
     let elapsedTimeAfterLoaders = timeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
 
-    await items->runBatchHandlersOrThrow(
+    await batch.items->runBatchHandlersOrThrow(
       ~inMemoryStore,
       ~loadManager,
       ~config,
@@ -350,7 +351,7 @@ let processEventBatch = async (
 
     let rec executeBatch = async (~escapeTables=?) => {
       switch await Db.sql->IO.executeBatch(
-        ~progressedChains,
+        ~batch,
         ~inMemoryStore,
         ~isInReorgThreshold,
         ~config,

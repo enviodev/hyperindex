@@ -187,7 +187,7 @@ WHERE "id" = $1;`
 
     let promises = []
 
-    chainsData->Utils.Dict.forEachWithKey((chainId, data) => {
+    chainsData->Utils.Dict.forEachWithKey((data, chainId) => {
       let params = []
 
       // Push id first (for WHERE clause)
@@ -275,7 +275,7 @@ module Checkpoints = {
   ]
 
   type t = {
-    id: bigint,
+    id: int,
     @as("chain_id")
     chainId: int,
     @as("block_number")
@@ -287,7 +287,7 @@ module Checkpoints = {
   }
   type reorgCheckpoint = {
     @as("id")
-    checkpointId: bigint,
+    checkpointId: int,
     @as("chain_id")
     chainId: int,
     @as("block_number")
@@ -299,7 +299,7 @@ module Checkpoints = {
   let table = mkTable(
     "envio_checkpoints",
     ~fields=[
-      mkField((#id: field :> string), Numeric, ~fieldSchema=S.bigint, ~isPrimaryKey),
+      mkField((#id: field :> string), Integer, ~fieldSchema=S.bigint, ~isPrimaryKey),
       mkField((#chain_id: field :> string), Integer, ~fieldSchema=S.int),
       mkField((#block_number: field :> string), Integer, ~fieldSchema=S.int),
       mkField((#block_hash: field :> string), Text, ~fieldSchema=S.null(S.string), ~isNullable),

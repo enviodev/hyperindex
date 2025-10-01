@@ -325,7 +325,7 @@ let chunkArray = (arr: array<'a>, ~chunkSize) => {
 let removeInvalidUtf8InPlace = entities =>
   entities->Js.Array2.forEach(item => {
     let dict = item->(Utils.magic: 'a => dict<unknown>)
-    dict->Utils.Dict.forEachWithKey((key, value) => {
+    dict->Utils.Dict.forEachWithKey((value, key) => {
       if value->Js.typeof === "string" {
         let value = value->(Utils.magic: unknown => string)
         // We mutate here, since we don't care
