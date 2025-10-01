@@ -109,7 +109,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
       chainConfig,
       // This is quite a hack - but it works!
       lastBlockScannedHashes: ReorgDetection.LastBlockScannedHashes.empty(~maxReorgDepth=200),
-      isFetchingAtHead: false,
+      isProgressAtHead: false,
       currentBlockHeight: 0,
       processingFilters: None,
     }
@@ -157,7 +157,7 @@ describe("ChainManager", () => {
           // ensure that the events are ordered correctly
           switch eventsInBlock {
           | {items: []} => chainManager
-          | {items, updatedFetchStates} =>
+          | {items, progressedChainsById} =>
             items->Belt.Array.forEach(
               i => {
                 let _ = allEventsRead->Js.Array2.push(i)
@@ -178,7 +178,12 @@ describe("ChainManager", () => {
 
             let nextChainFetchers = chainManager.chainFetchers->ChainMap.mapWithKey(
               (chain, fetcher) => {
-                let fetchState = updatedFetchStates->ChainMap.get(chain)
+                let fetchState = switch progressedChainsById->Utils.Dict.dangerouslyGetByIntNonOption(
+                  chain->ChainMap.Chain.toChainId,
+                ) {
+                | Some(chainAfterBatch) => chainAfterBatch.fetchState
+                | None => fetcher.fetchState
+                }
                 {
                   ...fetcher,
                   fetchState,

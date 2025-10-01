@@ -8,7 +8,7 @@ describe("getGeneratedByChainId Test", () => {
       {
         syncSource: HyperSync({endpointUrl: "https://1.hypersync.xyz"}),
         startBlock: 1,
-        maxReorgDepth: 200,
+        confirmedBlockThreshold: 200,
         lowercaseAddresses: false,
         contracts: Js.Dict.fromArray([
           (
