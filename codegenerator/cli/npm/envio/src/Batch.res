@@ -3,6 +3,7 @@ open Belt
 type chainAfterBatch = {
   batchSize: int,
   progressBlockNumber: int,
+  isProgressAtHead: bool,
   totalEventsProcessed: int,
   fetchState: FetchState.t,
   dcsToStore: option<array<FetchState.indexingContract>>,
