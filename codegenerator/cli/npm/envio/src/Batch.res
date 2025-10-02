@@ -94,10 +94,7 @@ let prepareOrderedBatch = (
         | None => 0
         }
         let newItemsCount =
-          fetchState->FetchState.getReadyItemsCount(
-            ~targetSize=batchSizeTarget - batchSize.contents,
-            ~fromItem=itemsCountBefore,
-          )
+          fetchState->FetchState.getReadyItemsCount(~targetSize=1, ~fromItem=itemsCountBefore)
 
         if newItemsCount > 0 {
           for idx in itemsCountBefore to itemsCountBefore + newItemsCount - 1 {

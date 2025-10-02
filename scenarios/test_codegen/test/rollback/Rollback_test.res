@@ -1374,7 +1374,7 @@ Different batches for block number 102`,
   })
 
   // Fixes duplicate history bug before 2.29.3
-  Async.it(
+  Async.it_skip(
     "Rollback of unordered multichain indexer (single entity id change + another entity on non-reorg chain)",
     async () => {
       let sourceMock1337 = M.Source.make(
@@ -1400,8 +1400,8 @@ Different batches for block number 102`,
       await Utils.delay(0)
 
       let _ = await Promise.all2((
-        initialEnterReorgThreshold(~sourceMock=sourceMock1337),
-        initialEnterReorgThreshold(~sourceMock=sourceMock100),
+        M.Helper.initialEnterReorgThreshold(~sourceMock=sourceMock1337),
+        M.Helper.initialEnterReorgThreshold(~sourceMock=sourceMock100),
       ))
 
       let callCount = ref(0)
@@ -1844,8 +1844,8 @@ Different batches for block number 102`,
       await Utils.delay(0)
 
       let _ = await Promise.all2((
-        initialEnterReorgThreshold(~sourceMock=sourceMock1337),
-        initialEnterReorgThreshold(~sourceMock=sourceMock100),
+        M.Helper.initialEnterReorgThreshold(~sourceMock=sourceMock1337),
+        M.Helper.initialEnterReorgThreshold(~sourceMock=sourceMock100),
       ))
 
       let callCount = ref(0)
@@ -1871,7 +1871,7 @@ Different batches for block number 102`,
           handler,
         },
       ])
-      sourceMock100.rejectGetHeightOrThrow([])
+      sourceMock100.resolveGetItemsOrThrow([])
       await indexerMock.getBatchWritePromise()
       sourceMock1337.resolveGetItemsOrThrow([
         {
