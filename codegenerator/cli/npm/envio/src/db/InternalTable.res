@@ -285,16 +285,6 @@ module Checkpoints = {
     @as("events_processed")
     eventsProcessed: int,
   }
-  type reorgCheckpoint = {
-    @as("id")
-    checkpointId: int,
-    @as("chain_id")
-    chainId: int,
-    @as("block_number")
-    blockNumber: int,
-    @as("block_hash")
-    blockHash: string,
-  }
 
   let table = mkTable(
     "envio_checkpoints",

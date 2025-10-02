@@ -3,7 +3,6 @@ open Belt
 type chainAfterBatch = {
   batchSize: int,
   progressBlockNumber: int,
-  isProgressAtHead: bool,
   totalEventsProcessed: int,
   fetchState: FetchState.t,
   dcsToStore: option<array<FetchState.indexingContract>>,
@@ -12,6 +11,7 @@ type chainAfterBatch = {
 
 type chainBeforeBatch = {
   fetchState: FetchState.t,
+  reorgDetection: ReorgDetection.t,
   progressBlockNumber: int,
   sourceBlockNumber: int,
   totalEventsProcessed: int,
@@ -19,6 +19,8 @@ type chainBeforeBatch = {
 
 type t = {
   items: array<Internal.item>,
+  checkpointIdAfterBatch: int,
+  reorgCheckpointsToStore: array<Internal.reorgCheckpoint>,
   progressedChainsById: dict<chainAfterBatch>,
 }
 
@@ -86,25 +88,24 @@ let hasMultichainReadyItem = (
 let getProgressedChainsById = {
   let getChainAfterBatchIfProgressed = (
     ~chainBeforeBatch: chainBeforeBatch,
-    ~updatedFetchState,
+    ~progressBlockNumberAfterBatch,
+    ~fetchStateAfterBatch,
     ~batchSize,
     ~dcsToStore,
   ) => {
-    let nextProgressBlockNumber = updatedFetchState->FetchState.getProgressBlockNumber
-
     // The check is sufficient, since we guarantee to include a full block in a batch
     // Also, this might be true even if batchSize is 0,
     // eg when indexing at the head and chain doesn't have items in a block
-    if chainBeforeBatch.progressBlockNumber < nextProgressBlockNumber {
+    if chainBeforeBatch.progressBlockNumber < progressBlockNumberAfterBatch {
       Some(
         (
           {
             batchSize,
-            progressBlockNumber: nextProgressBlockNumber,
+            progressBlockNumber: progressBlockNumberAfterBatch,
             totalEventsProcessed: chainBeforeBatch.totalEventsProcessed + batchSize,
             dcsToStore,
-            fetchState: updatedFetchState,
-            isProgressAtHeadWhenBatchCreated: nextProgressBlockNumber >=
+            fetchState: fetchStateAfterBatch,
+            isProgressAtHeadWhenBatchCreated: progressBlockNumberAfterBatch >=
             chainBeforeBatch.sourceBlockNumber,
           }: chainAfterBatch
         ),
@@ -114,7 +115,11 @@ let getProgressedChainsById = {
     }
   }
 
-  (~chainsBeforeBatch: ChainMap.t<chainBeforeBatch>, ~batchSizePerChain: dict<int>) => {
+  (
+    ~chainsBeforeBatch: ChainMap.t<chainBeforeBatch>,
+    ~batchSizePerChain: dict<int>,
+    ~progressBlockNumberPerChain: dict<int>,
+  ) => {
     let progressedChainsById = Js.Dict.empty()
 
     // Needed to:
@@ -125,6 +130,14 @@ let getProgressedChainsById = {
     ->ChainMap.values
     ->Array.forEachU(chainBeforeBatch => {
       let fetchState = chainBeforeBatch.fetchState
+
+      let progressBlockNumberAfterBatch = switch progressBlockNumberPerChain->Utils.Dict.dangerouslyGetNonOption(
+        fetchState.chainId->Int.toString,
+      ) {
+      | Some(progressBlockNumber) => progressBlockNumber
+      | None => chainBeforeBatch.progressBlockNumber
+      }
+
       switch switch batchSizePerChain->Utils.Dict.dangerouslyGetNonOption(
         fetchState.chainId->Int.toString,
       ) {
@@ -136,20 +149,20 @@ let getProgressedChainsById = {
             ~chainBeforeBatch,
             ~batchSize,
             ~dcsToStore=None,
-            ~updatedFetchState=fetchState->FetchState.updateInternal(~mutItems=leftItems),
+            ~fetchStateAfterBatch=fetchState->FetchState.updateInternal(~mutItems=leftItems),
+            ~progressBlockNumberAfterBatch,
           )
 
         | dcs => {
             let leftDcsToStore = []
             let batchDcs = []
-            let updatedFetchState =
+            let fetchStateAfterBatch =
               fetchState->FetchState.updateInternal(~mutItems=leftItems, ~dcsToStore=leftDcsToStore)
-            let nextProgressBlockNumber = updatedFetchState->FetchState.getProgressBlockNumber
 
             dcs->Array.forEach(dc => {
               // Important: This should be a registering block number.
               // This works for now since dc.startBlock is a registering block number.
-              if dc.startBlock <= nextProgressBlockNumber {
+              if dc.startBlock <= progressBlockNumberAfterBatch {
                 batchDcs->Array.push(dc)
               } else {
                 // Mutate the array we passed to the updateInternal beforehand
@@ -161,7 +174,8 @@ let getProgressedChainsById = {
               ~chainBeforeBatch,
               ~batchSize,
               ~dcsToStore=Some(batchDcs),
-              ~updatedFetchState,
+              ~fetchStateAfterBatch,
+              ~progressBlockNumberAfterBatch,
             )
           }
         }
@@ -171,7 +185,8 @@ let getProgressedChainsById = {
           ~chainBeforeBatch,
           ~batchSize=0,
           ~dcsToStore=None,
-          ~updatedFetchState=chainBeforeBatch.fetchState,
+          ~fetchStateAfterBatch=chainBeforeBatch.fetchState,
+          ~progressBlockNumberAfterBatch,
         )
       } {
       | Some(progressedChain) =>
@@ -187,11 +202,18 @@ let getProgressedChainsById = {
   }
 }
 
-let prepareOrderedBatch = (~chainsBeforeBatch: ChainMap.t<chainBeforeBatch>, ~batchSizeTarget) => {
+let prepareOrderedBatch = (
+  ~checkpointIdBeforeBatch,
+  ~chainsBeforeBatch: ChainMap.t<chainBeforeBatch>,
+  ~batchSizeTarget,
+) => {
   let batchSize = ref(0)
   let isFinished = ref(false)
   let mutBatchSizePerChain = Js.Dict.empty()
+  let mutReorgCheckpointsToStore = []
+  let mutProgressBlockNumberPerChain = Js.Dict.empty()
   let items = []
+  let checkpointIdAfterBatch = ref(checkpointIdBeforeBatch)
   let fetchStates = chainsBeforeBatch->ChainMap.map(chainBeforeBatch => chainBeforeBatch.fetchState)
 
   while batchSize.contents < batchSizeTarget && !isFinished.contents {
@@ -203,11 +225,11 @@ let prepareOrderedBatch = (~chainsBeforeBatch: ChainMap.t<chainBeforeBatch>, ~ba
         | Some(batchSize) => batchSize
         | None => 0
         }
-        let newItemsCount =
-          fetchState->FetchState.getReadyItemsCount(
-            ~targetSize=batchSizeTarget - batchSize.contents,
-            ~fromItem=itemsCountBefore,
-          )
+        let newItemsCount = fetchState->FetchState.getReadyItemsCount(
+          // We should get items only for a single block
+          ~targetSize=1,
+          ~fromItem=itemsCountBefore,
+        )
 
         if newItemsCount > 0 {
           for idx in itemsCountBefore to itemsCountBefore + newItemsCount - 1 {
@@ -218,7 +240,17 @@ let prepareOrderedBatch = (~chainsBeforeBatch: ChainMap.t<chainBeforeBatch>, ~ba
             fetchState.chainId,
             itemsCountBefore + newItemsCount,
           )
+          mutProgressBlockNumberPerChain->Utils.Dict.setByInt(
+            fetchState.chainId,
+            fetchState.buffer->Array.getUnsafe(itemsCountBefore)->Internal.getItemBlockNumber,
+          )
         } else {
+          // Since the chain was chosen as next
+          // the fact that it doesn't have new items means that it reached the buffer block number
+          mutProgressBlockNumberPerChain->Utils.Dict.setByInt(
+            fetchState.chainId,
+            fetchState->FetchState.bufferBlockNumber,
+          )
           isFinished := true
         }
       }
@@ -229,14 +261,18 @@ let prepareOrderedBatch = (~chainsBeforeBatch: ChainMap.t<chainBeforeBatch>, ~ba
 
   {
     items,
+    checkpointIdAfterBatch: checkpointIdAfterBatch.contents,
+    reorgCheckpointsToStore: mutReorgCheckpointsToStore,
     progressedChainsById: getProgressedChainsById(
       ~chainsBeforeBatch,
       ~batchSizePerChain=mutBatchSizePerChain,
+      ~progressBlockNumberPerChain=mutProgressBlockNumberPerChain,
     ),
   }
 }
 
 let prepareUnorderedBatch = (
+  ~checkpointIdBeforeBatch,
   ~chainsBeforeBatch: ChainMap.t<chainBeforeBatch>,
   ~batchSizeTarget,
 ) => {
@@ -250,7 +286,10 @@ let prepareUnorderedBatch = (
   let preparedNumber = preparedFetchStates->Array.length
   let batchSize = ref(0)
 
+  let checkpointIdAfterBatch = ref(checkpointIdBeforeBatch)
   let mutBatchSizePerChain = Js.Dict.empty()
+  let mutProgressBlockNumberPerChain = Js.Dict.empty()
+  let mutReorgCheckpointsToStore = []
   let items = []
 
   // Accumulate items for all actively indexing chains
@@ -271,19 +310,28 @@ let prepareUnorderedBatch = (
       mutBatchSizePerChain->Utils.Dict.setByInt(fetchState.chainId, chainBatchSize)
     }
 
+    mutProgressBlockNumberPerChain->Utils.Dict.setByInt(
+      fetchState.chainId,
+      fetchState->FetchState.getProgressBlockNumberAt(~index=chainBatchSize),
+    )
+
     chainIdx := chainIdx.contents + 1
   }
 
   {
     items,
+    checkpointIdAfterBatch: checkpointIdAfterBatch.contents,
+    reorgCheckpointsToStore: mutReorgCheckpointsToStore,
     progressedChainsById: getProgressedChainsById(
       ~chainsBeforeBatch,
       ~batchSizePerChain=mutBatchSizePerChain,
+      ~progressBlockNumberPerChain=mutProgressBlockNumberPerChain,
     ),
   }
 }
 
 let make = (
+  ~checkpointIdBeforeBatch,
   ~chainsBeforeBatch: ChainMap.t<chainBeforeBatch>,
   ~multichain: InternalConfig.multichain,
   ~batchSizeTarget,
@@ -294,8 +342,8 @@ let make = (
     | Ordered => chainsBeforeBatch->ChainMap.size === 1
     }
   ) {
-    prepareUnorderedBatch(~chainsBeforeBatch, ~batchSizeTarget)
+    prepareUnorderedBatch(~checkpointIdBeforeBatch, ~chainsBeforeBatch, ~batchSizeTarget)
   } else {
-    prepareOrderedBatch(~chainsBeforeBatch, ~batchSizeTarget)
+    prepareOrderedBatch(~checkpointIdBeforeBatch, ~chainsBeforeBatch, ~batchSizeTarget)
   }
 }

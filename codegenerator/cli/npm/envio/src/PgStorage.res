@@ -913,11 +913,7 @@ let make = (
     | Some(query) =>
       await sql
       ->Postgres.unsafe(query)
-      ->(
-        Utils.magic: promise<array<unknown>> => promise<
-          array<InternalTable.Checkpoints.reorgCheckpoint>,
-        >
-      )
+      ->(Utils.magic: promise<array<unknown>> => promise<array<Internal.reorgCheckpoint>>)
     }
 
     {

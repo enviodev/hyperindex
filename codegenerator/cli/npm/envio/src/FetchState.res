@@ -1284,9 +1284,9 @@ let filterAndSortForUnorderedBatch = {
   }
 }
 
-let getProgressBlockNumber = ({buffer} as fetchState: t) => {
+let getProgressBlockNumberAt = ({buffer} as fetchState: t, ~index) => {
   let bufferBlockNumber = fetchState->bufferBlockNumber
-  switch buffer->Belt.Array.get(0) {
+  switch buffer->Belt.Array.get(index) {
   | Some(item) if bufferBlockNumber >= item->Internal.getItemBlockNumber =>
     item->Internal.getItemBlockNumber - 1
   | _ => bufferBlockNumber
