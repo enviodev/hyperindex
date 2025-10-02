@@ -904,13 +904,6 @@ let make = (
       ->(Utils.magic: promise<array<unknown>> => promise<array<InternalTable.Chains.t>>),
     ))
 
-    if chains->Utils.Array.notEmpty {
-      let () =
-        await sql->Postgres.unsafe(
-          InternalTable.DynamicContractRegistry.makeCleanUpOnRestartQuery(~pgSchema, ~chains),
-        )
-    }
-
     {
       cleanRun: false,
       cache,

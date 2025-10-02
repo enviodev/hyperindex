@@ -12,7 +12,7 @@ Dotenv.initialize()
 // resets the timestampCaughtUpToHeadOrEndblock after a restart when true
 let updateSyncTimeOnRestart =
   envSafe->EnvSafe.get("UPDATE_SYNC_TIME_ON_RESTART", S.bool, ~fallback=true)
-let maxProcessBatchSize = envSafe->EnvSafe.get("MAX_BATCH_SIZE", S.int, ~fallback=5_000)
+let batchSize = envSafe->EnvSafe.get("MAX_BATCH_SIZE", S.option(S.int))
 let targetBufferSize = envSafe->EnvSafe.get("ENVIO_INDEXING_MAX_BUFFER_SIZE", S.option(S.int))
 let maxAddrInPartition = envSafe->EnvSafe.get("MAX_PARTITION_SIZE", S.int, ~fallback=5_000)
 let maxPartitionConcurrency =
@@ -185,8 +185,6 @@ module Hasura = {
 }
 
 module Configurable = {
-  let shouldUseHypersyncClientDecoder =
-    envSafe->EnvSafe.get("USE_HYPERSYNC_CLIENT_DECODER", S.option(S.bool))
 
   /**
     Used for backwards compatability

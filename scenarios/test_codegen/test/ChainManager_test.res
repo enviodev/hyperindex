@@ -111,7 +111,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
       lastBlockScannedHashes: ReorgDetection.LastBlockScannedHashes.empty(
         ~confirmedBlockThreshold=200,
       ),
-      isFetchingAtHead: false,
+      isProgressAtHead: false,
       currentBlockHeight: 0,
       processingFilters: None,
     }
@@ -154,12 +154,12 @@ describe("ChainManager", () => {
         let numberOfMockEventsReadFromQueues = ref(0)
         let allEventsRead = []
         let rec testThatCreatedEventsAreOrderedCorrectly = (chainManager, lastEvent) => {
-          let eventsInBlock = ChainManager.createBatch(chainManager, ~maxBatchSize=10000)
+          let eventsInBlock = ChainManager.createBatch(chainManager, ~batchSizeTarget=10000)
 
           // ensure that the events are ordered correctly
           switch eventsInBlock {
           | {items: []} => chainManager
-          | {items, fetchStates} =>
+          | {items, updatedFetchStates} =>
             items->Belt.Array.forEach(
               i => {
                 let _ = allEventsRead->Js.Array2.push(i)
@@ -180,7 +180,7 @@ describe("ChainManager", () => {
 
             let nextChainFetchers = chainManager.chainFetchers->ChainMap.mapWithKey(
               (chain, fetcher) => {
-                let fetchState = fetchStates->ChainMap.get(chain)
+                let fetchState = updatedFetchStates->ChainMap.get(chain)
                 {
                   ...fetcher,
                   fetchState,
@@ -216,143 +216,6 @@ describe("ChainManager", () => {
           amountStillOnQueues + numberOfMockEventsReadFromQueues.contents,
           numberOfMockEventsCreated,
           ~message="There were a different number of events created to what was recieved from the queues.",
-        )
-      },
-    )
-  })
-})
-
-// NOTE: this is likely a temporary feature - can delete if feature no longer important.
-describe("getOrderedNextItem", () => {
-  describe("optimistic-ordered-mode", () => {
-    let getOrderedNextItem_ordered = Batch.getOrderedNextItem
-
-    let makeNoItem = timestamp => FetchState.NoItem({
-      latestFetchedBlock: {blockTimestamp: timestamp, blockNumber: 0},
-    })
-    let makeMockQItem = (timestamp, chain): Internal.item => Internal.Event({
-      timestamp,
-      chain,
-      blockNumber: 987654,
-      logIndex: 123456,
-      eventConfig: Utils.magic("Mock eventConfig in ChainManager test"),
-      event: "SINGLE TEST EVENT"->Utils.magic,
-    })
-
-    let makeMockFetchState = (
-      ~latestFetchedBlockTimestamp,
-      ~item: option<Internal.item>,
-    ): FetchState.t => {
-      let normalSelection: FetchState.selection = {
-        dependsOnAddresses: true,
-        eventConfigs: [
-          (Mock.evmEventConfig(~id="0", ~contractName="MockContract") :> Internal.eventConfig),
-        ],
-      }
-      let latestFetchedBlock: FetchState.blockNumberAndTimestamp = {
-        blockTimestamp: latestFetchedBlockTimestamp,
-        blockNumber: item->Option.mapWithDefault(0, v => v->Internal.getItemBlockNumber),
-      }
-      let partition: FetchState.partition = {
-        id: "0",
-        latestFetchedBlock,
-        status: {
-          fetchingStateId: None,
-        },
-        selection: normalSelection,
-        addressesByContractName: Js.Dict.empty(),
-      }
-      {
-        partitions: [partition],
-        maxAddrInPartition: 5,
-        nextPartitionIndex: 1,
-        queue: item->Option.mapWithDefault([], v => [v]),
-        latestFullyFetchedBlock: latestFetchedBlock,
-        targetBufferSize: 5000,
-        latestOnBlockBlockNumber: latestFetchedBlock.blockNumber,
-        startBlock: 0,
-        endBlock: None,
-        normalSelection,
-        chainId: 0,
-        indexingContracts: Js.Dict.empty(),
-        contractConfigs: Js.Dict.fromArray([("Gravatar", {FetchState.filterByAddresses: false})]),
-        dcsToStore: None,
-        blockLag: 0,
-        onBlockConfigs: [],
-      }
-    }
-
-    let makeMockPartitionedFetchState = (~latestFetchedBlockTimestamp, ~item) =>
-      makeMockFetchState(~latestFetchedBlockTimestamp, ~item)
-
-    it(
-      "should always take an event if there is one, even if other chains haven't caught up",
-      () => {
-        let singleItem = makeMockQItem(654, MockConfig.chain137)
-
-        let fetchStatesMap = RegisterHandlers.registerAllHandlers().chainMap->ChainMap.mapWithKey(
-          (chain, _) =>
-            switch chain->ChainMap.Chain.toChainId {
-            | 1 =>
-              makeMockPartitionedFetchState(
-                ~latestFetchedBlockTimestamp=5,
-                ~item=None,
-              ) /* earlier timestamp than the test event */
-            | 137 =>
-              makeMockPartitionedFetchState(~latestFetchedBlockTimestamp=5, ~item=Some(singleItem))
-            | 1337 | 100 =>
-              makeMockPartitionedFetchState(~latestFetchedBlockTimestamp=655, ~item=None)
-            | _ => Js.Exn.raiseError("Unexpected chain")
-            },
-        )
-
-        Assert.deepEqual(
-          getOrderedNextItem_ordered(fetchStatesMap),
-          Some({
-            earliestEvent: makeNoItem(5) /* earlier timestamp than the test event */,
-            chain: MockConfig.chain1,
-          }),
-          ~message="Should return the `NoItem` that is earliest since it is earlier than the `Item`",
-        )
-      },
-    )
-    it(
-      "should always take the lower of two events if there are any, even if other chains haven't caught up",
-      () => {
-        let earliestItemTimestamp = 653
-        let singleItemTimestamp = 654
-        let singleItem = makeMockQItem(singleItemTimestamp, MockConfig.chain137)
-
-        let fetchStatesMap = RegisterHandlers.registerAllHandlers().chainMap->ChainMap.mapWithKey(
-          (chain, _) =>
-            switch chain->ChainMap.Chain.toChainId {
-            | 1 =>
-              makeMockPartitionedFetchState(
-                ~latestFetchedBlockTimestamp=earliestItemTimestamp,
-                ~item=None,
-              ) /* earlier timestamp than the test event */
-            | 137 =>
-              makeMockPartitionedFetchState(
-                ~latestFetchedBlockTimestamp=singleItemTimestamp,
-                ~item=Some(singleItem),
-              )
-            | 1337 | 100 =>
-              let higherTS = singleItemTimestamp + 1
-              makeMockPartitionedFetchState(
-                ~latestFetchedBlockTimestamp=higherTS,
-                ~item=Some(makeMockQItem(higherTS, chain)),
-              )
-            | _ => Js.Exn.raiseError("Unexpected chain")
-            },
-        )
-
-        Assert.deepEqual(
-          getOrderedNextItem_ordered(fetchStatesMap),
-          Some({
-            earliestEvent: makeNoItem(earliestItemTimestamp),
-            chain: MockConfig.chain1,
-          }),
-          ~message="Should return the `NoItem` that is earliest since it is earlier than the `Item`",
         )
       },
     )

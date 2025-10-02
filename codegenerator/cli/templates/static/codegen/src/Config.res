@@ -114,6 +114,8 @@ type t = {
   addContractNameToContractNameMapping: dict<string>,
   maxAddrInPartition: int,
   registrations: option<EventRegister.registrations>,
+  batchSize: int,
+  lowercaseAddresses: bool,
 }
 
 let make = (
@@ -126,7 +128,20 @@ let make = (
   ~persistence=codegenPersistence,
   ~ecosystem=InternalConfig.Evm,
   ~registrations=?,
+  ~batchSize=5000,
+  ~lowercaseAddresses=false,
+  ~shouldUseHypersyncClientDecoder=true,
 ) => {
+  // Validate that lowercase addresses is not used with viem decoder
+  if (
+    lowercaseAddresses &&
+    !shouldUseHypersyncClientDecoder
+  ) {
+    Js.Exn.raiseError(
+      "lowercase addresses is not supported when event_decoder is 'viem'. Please set event_decoder to 'hypersync-client' or change address_format to 'checksum'.",
+    )
+  }
+
   let chainMap =
     chains
     ->Js.Array2.map(n => {
@@ -168,6 +183,8 @@ let make = (
     maxAddrInPartition: Env.maxAddrInPartition,
     registrations,
     preloadHandlers,
+    batchSize,
+    lowercaseAddresses,
   }
 }
 

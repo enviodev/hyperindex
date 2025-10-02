@@ -149,7 +149,7 @@ describe("SourceManager fetchNext", () => {
   let mockFetchState = (
     partitions: array<FetchState.partition>,
     ~endBlock=None,
-    ~queue=[],
+    ~buffer=[],
     ~targetBufferSize=5000,
   ): FetchState.t => {
     let indexingContracts = Js.Dict.empty()
@@ -186,7 +186,7 @@ describe("SourceManager fetchNext", () => {
       endBlock,
       nextPartitionIndex: partitions->Array.length,
       maxAddrInPartition: 2,
-      queue,
+      buffer,
       normalSelection,
       latestFullyFetchedBlock: latestFullyFetchedBlock.contents,
       latestOnBlockBlockNumber: latestFullyFetchedBlock.contents.blockNumber,
@@ -194,7 +194,7 @@ describe("SourceManager fetchNext", () => {
       chainId: 0,
       indexingContracts,
       contractConfigs: Js.Dict.empty(),
-      dcsToStore: None,
+      dcsToStore: [],
       blockLag: 0,
       onBlockConfigs: [],
       // All the null values should be computed during updateInternal
@@ -688,12 +688,12 @@ describe("SourceManager fetchNext", () => {
             mockFullPartition(~partitionIndex=3, ~latestFetchedBlockNumber=2),
             mockFullPartition(~partitionIndex=4, ~latestFetchedBlockNumber=3),
           ],
-          ~queue=[
-            FetchState_test.mockEvent(~blockNumber=5),
-            FetchState_test.mockEvent(~blockNumber=4),
-            FetchState_test.mockEvent(~blockNumber=3),
-            FetchState_test.mockEvent(~blockNumber=2),
+          ~buffer=[
             FetchState_test.mockEvent(~blockNumber=1),
+            FetchState_test.mockEvent(~blockNumber=2),
+            FetchState_test.mockEvent(~blockNumber=3),
+            FetchState_test.mockEvent(~blockNumber=4),
+            FetchState_test.mockEvent(~blockNumber=5),
           ],
           ~targetBufferSize=4,
         ),

@@ -61,7 +61,7 @@ type t = {
   contractConfigs: dict<contractConfig>,
   // Registered dynamic contracts that need to be stored in the db
   // Should read them at the same time when getting items for the batch
-  dcsToStore: option<array<indexingContract>>,
+  dcsToStore: array<indexingContract>,
   // Not used for logic - only metadata
   chainId: int,
   // The block number of the latest block fetched
@@ -75,33 +75,12 @@ type t = {
   // How much blocks behind the head we should query
   // Needed to query before entering reorg threshold
   blockLag: int,
-  //Items ordered from latest to earliest
-  queue: array<Internal.item>,
+  // Buffer of items ordered from earliest to latest
+  buffer: array<Internal.item>,
   // How many items we should aim to have in the buffer
   // ready for processing
   targetBufferSize: int,
   onBlockConfigs: array<Internal.onBlockConfig>,
-}
-
-let copy = (fetchState: t) => {
-  {
-    maxAddrInPartition: fetchState.maxAddrInPartition,
-    partitions: fetchState.partitions,
-    startBlock: fetchState.startBlock,
-    endBlock: fetchState.endBlock,
-    nextPartitionIndex: fetchState.nextPartitionIndex,
-    latestFullyFetchedBlock: fetchState.latestFullyFetchedBlock,
-    latestOnBlockBlockNumber: fetchState.latestOnBlockBlockNumber,
-    normalSelection: fetchState.normalSelection,
-    chainId: fetchState.chainId,
-    contractConfigs: fetchState.contractConfigs,
-    indexingContracts: fetchState.indexingContracts,
-    dcsToStore: fetchState.dcsToStore,
-    blockLag: fetchState.blockLag,
-    queue: fetchState.queue->Array.copy,
-    onBlockConfigs: fetchState.onBlockConfigs,
-    targetBufferSize: fetchState.targetBufferSize,
-  }
 }
 
 let mergeIntoPartition = (p: partition, ~target: partition, ~maxAddrInPartition) => {
@@ -206,9 +185,9 @@ let bufferBlock = ({latestFullyFetchedBlock, latestOnBlockBlockNumber}: t) => {
 Comparitor for two events from the same chain. No need for chain id or timestamp
 */
 let compareBufferItem = (a: Internal.item, b: Internal.item) => {
-  let blockDiff = b->Internal.getItemBlockNumber - a->Internal.getItemBlockNumber
+  let blockDiff = a->Internal.getItemBlockNumber - b->Internal.getItemBlockNumber
   if blockDiff === 0 {
-    b->Internal.getItemLogIndex - a->Internal.getItemLogIndex
+    a->Internal.getItemLogIndex - b->Internal.getItemLogIndex
   } else {
     blockDiff
   }
@@ -245,7 +224,7 @@ let updateInternal = (
   | [] => latestFullyFetchedBlock.blockNumber
   | onBlockConfigs => {
       // Calculate the max block number we are going to create items for
-      // Use -targetBufferSize to get the last target item in the queue (which is reversed)
+      // Use targetBufferSize to get the last target item in the buffer
       //
       // mutItems is not very reliable, since it might not be sorted,
       // but the chances for it happen are very low and not critical
@@ -253,15 +232,15 @@ let updateInternal = (
       // All this needed to prevent OOM when adding too many block items to the queue
       let maxBlockNumber = switch switch mutItemsRef.contents {
       | Some(mutItems) => mutItems
-      | None => fetchState.queue
-      }->Utils.Array.at(-fetchState.targetBufferSize) {
+      | None => fetchState.buffer
+      }->Belt.Array.get(fetchState.targetBufferSize - 1) {
       | Some(item) => item->Internal.getItemBlockNumber
       | None => latestFullyFetchedBlock.blockNumber
       }
 
       let mutItems = switch mutItemsRef.contents {
       | Some(mutItems) => mutItems
-      | None => fetchState.queue->Array.copy
+      | None => fetchState.buffer->Array.copy
       }
       mutItemsRef := Some(mutItems)
 
@@ -327,12 +306,12 @@ let updateInternal = (
     indexingContracts,
     dcsToStore,
     blockLag,
-    queue: switch mutItemsRef.contents {
+    buffer: switch mutItemsRef.contents {
     // Theoretically it could be faster to asume that
     // the items are sorted, but there are cases
     // when the data source returns them unsorted
     | Some(mutItems) => mutItems->Js.Array2.sortInPlaceWith(compareBufferItem)
-    | None => fetchState.queue
+    | None => fetchState.buffer
     },
   }
 
@@ -341,7 +320,7 @@ let updateInternal = (
     ~chainId=fetchState.chainId,
   )
   Prometheus.IndexingBufferSize.set(
-    ~bufferSize=updatedFetchState.queue->Array.length,
+    ~bufferSize=updatedFetchState.buffer->Array.length,
     ~chainId=fetchState.chainId,
   )
   Prometheus.IndexingBufferBlockNumber.set(
@@ -590,8 +569,8 @@ let registerDynamicContracts = (
       fetchState->updateInternal(
         ~partitions=fetchState.partitions->Js.Array2.concat(newPartitions),
         ~dcsToStore=switch fetchState.dcsToStore {
-        | Some(existingDcs) => Some(Array.concat(existingDcs, dcsToStore))
-        | None => Some(dcsToStore)
+        | [] => dcsToStore
+        | existingDcs => Array.concat(existingDcs, dcsToStore)
         },
         ~indexingContracts=// We don't need registeringContracts anymore,
         // so we can safely mixin indexingContracts in it
@@ -694,7 +673,7 @@ let handleQueryResult = (
       ~mutItems=?{
         switch newItems {
         | [] => None
-        | _ => Some(fetchState.queue->Array.concat(newItems))
+        | _ => Some(fetchState.buffer->Array.concat(newItems))
         }
       },
     )
@@ -776,7 +755,7 @@ let isFullPartition = (p: partition, ~maxAddrInPartition) => {
 
 let getNextQuery = (
   {
-    queue,
+    buffer,
     partitions,
     targetBufferSize,
     maxAddrInPartition,
@@ -874,14 +853,11 @@ let getNextQuery = (
     // If a partition fetched further than 3 * batchSize,
     // it should be skipped until the buffer is consumed
     let maxQueryBlockNumber = {
-      let targetBlockIdx = queue->Array.length - targetBufferSize
-      if targetBlockIdx < 0 {
-        currentBlockHeight
-      } else {
-        switch queue->Array.get(targetBlockIdx) {
-        | Some(item) => Pervasives.min(item->Internal.getItemBlockNumber, currentBlockHeight) // Just in case check that we don't query beyond the current block
-        | None => currentBlockHeight
-        }
+      switch buffer->Array.get(targetBufferSize - 1) {
+      | Some(item) =>
+        // Just in case check that we don't query beyond the current block
+        Pervasives.min(item->Internal.getItemBlockNumber, currentBlockHeight)
+      | None => currentBlockHeight
       }
     }
     let queries = []
@@ -953,45 +929,43 @@ let getNextQuery = (
   }
 }
 
-type itemWithPopFn = {item: Internal.item, popItemOffQueue: unit => unit}
-
-/**
-Represents a fetchState partitions head of the  fetchedEventQueue as either
-an existing item, or no item with latest fetched block data
-*/
-type queueItem =
-  | Item(itemWithPopFn)
-  | NoItem({latestFetchedBlock: blockNumberAndTimestamp})
-
-/**
-Simple constructor for no item from partition
-*/
-let makeNoItem = ({latestFetchedBlock}: partition) => NoItem({
-  latestFetchedBlock: latestFetchedBlock,
-})
-
-/**
-Gets the earliest queueItem from thgetNodeEarliestEventWithUpdatedQueue.
-
-Finds the earliest queue item across all partitions and then returns that
-queue item with an update fetch state.
-*/
-let getEarliestEvent = (fetchState: t) => {
-  let {queue} = fetchState
-  switch fetchState.queue->Utils.Array.last {
-  | Some(item) =>
-    if item->Internal.getItemBlockNumber <= fetchState->bufferBlockNumber {
-      Item({item, popItemOffQueue: () => queue->Js.Array2.pop->ignore})
-    } else {
-      NoItem({
-        latestFetchedBlock: fetchState->bufferBlock,
-      })
-    }
-  | None =>
-    NoItem({
-      latestFetchedBlock: fetchState->bufferBlock,
-    })
+let getTimestampAt = (fetchState: t, ~index) => {
+  switch fetchState.buffer->Belt.Array.get(index) {
+  | Some(Event({timestamp})) => timestamp
+  | Some(Block(_)) =>
+    Js.Exn.raiseError("Block handlers are not supported for ordered multichain mode.")
+  | None => (fetchState->bufferBlock).blockTimestamp
   }
+}
+
+let hasReadyItem = ({buffer} as fetchState: t) => {
+  switch buffer->Belt.Array.get(0) {
+  | Some(item) => item->Internal.getItemBlockNumber <= fetchState->bufferBlockNumber
+  | None => false
+  }
+}
+
+let getReadyItemsCount = (fetchState: t, ~targetSize: int, ~fromItem) => {
+  let readyBlockNumber = ref(fetchState->bufferBlockNumber)
+  let acc = ref(0)
+  let isFinished = ref(false)
+  while !isFinished.contents {
+    switch fetchState.buffer->Belt.Array.get(fromItem + acc.contents) {
+    | Some(item) =>
+      let itemBlockNumber = item->Internal.getItemBlockNumber
+      if itemBlockNumber <= readyBlockNumber.contents {
+        acc := acc.contents + 1
+        if acc.contents === targetSize {
+          // Should finish accumulating items from the same block
+          readyBlockNumber := itemBlockNumber
+        }
+      } else {
+        isFinished := true
+      }
+    | None => isFinished := true
+    }
+  }
+  acc.contents
 }
 
 /**
@@ -1130,21 +1104,21 @@ let make = (
     latestOnBlockBlockNumber: progressBlockNumber,
     normalSelection,
     indexingContracts,
-    dcsToStore: None,
+    dcsToStore: [],
     blockLag,
     onBlockConfigs,
     targetBufferSize,
-    queue: [],
+    buffer: [],
   }
 }
 
-let bufferSize = ({queue}: t) => queue->Array.length
+let bufferSize = ({buffer}: t) => buffer->Array.length
 
 let pruneQueueFromFirstChangeEvent = (
-  queue: array<Internal.item>,
+  buffer: array<Internal.item>,
   ~firstChangeEvent: blockNumberAndLogIndex,
 ) => {
-  queue->Array.keep(item =>
+  buffer->Array.keep(item =>
     switch item {
     | Event({blockNumber, logIndex})
     | Block({blockNumber, logIndex}) => (blockNumber, logIndex)
@@ -1239,16 +1213,11 @@ let rollback = (fetchState: t, ~firstChangeEvent) => {
   }->updateInternal(
     ~partitions,
     ~indexingContracts,
-    ~mutItems=fetchState.queue->pruneQueueFromFirstChangeEvent(~firstChangeEvent),
+    ~mutItems=fetchState.buffer->pruneQueueFromFirstChangeEvent(~firstChangeEvent),
     ~dcsToStore=switch fetchState.dcsToStore {
-    | Some(dcsToStore) =>
-      let filtered =
-        dcsToStore->Js.Array2.filter(dc => !(addressesToRemove->Utils.Set.has(dc.address)))
-      switch filtered {
-      | [] => None
-      | _ => Some(filtered)
-      }
-    | None => None
+    | [] as empty => empty
+    | dcsToStore =>
+      dcsToStore->Js.Array2.filter(dc => !(addressesToRemove->Utils.Set.has(dc.address)))
     },
   )
 }
@@ -1271,7 +1240,7 @@ let isActivelyIndexing = ({endBlock} as fetchState: t) => {
 }
 
 let isReadyToEnterReorgThreshold = (
-  {endBlock, blockLag, queue} as fetchState: t,
+  {endBlock, blockLag, buffer} as fetchState: t,
   ~currentBlockHeight,
 ) => {
   let bufferBlockNumber = fetchState->bufferBlockNumber
@@ -1280,42 +1249,26 @@ let isReadyToEnterReorgThreshold = (
   | Some(endBlock) if bufferBlockNumber >= endBlock => true
   | _ => bufferBlockNumber >= currentBlockHeight - blockLag
   } &&
-  queue->Utils.Array.isEmpty
+  buffer->Utils.Array.isEmpty
 }
 
 let filterAndSortForUnorderedBatch = {
-  let hasBatchItem = ({queue} as fetchState: t) => {
-    switch queue->Utils.Array.last {
+  let hasFullBatch = ({buffer} as fetchState: t, ~batchSizeTarget) => {
+    switch buffer->Belt.Array.get(batchSizeTarget - 1) {
     | Some(item) => item->Internal.getItemBlockNumber <= fetchState->bufferBlockNumber
     | None => false
     }
   }
 
-  let hasFullBatch = ({queue} as fetchState: t, ~maxBatchSize) => {
-    // Queue is ordered from latest to earliest, so the earliest eligible
-    // item for a full batch of size B is at index (length - B).
-    // Do NOT subtract an extra 1 here; when length === B we should still
-    // classify the queue as full and probe index 0.
-    let targetBlockIdx = queue->Array.length - maxBatchSize
-    if targetBlockIdx < 0 {
-      false
-    } else {
-      // Unsafe can fail when maxBatchSize is 0,
-      // but we ignore the case
-      queue->Js.Array2.unsafe_get(targetBlockIdx)->Internal.getItemBlockNumber <=
-        fetchState->bufferBlockNumber
-    }
-  }
-
-  (fetchStates: array<t>, ~maxBatchSize: int) => {
+  (fetchStates: array<t>, ~batchSizeTarget: int) => {
     fetchStates
-    ->Array.keepU(hasBatchItem)
+    ->Array.keepU(hasReadyItem)
     ->Js.Array2.sortInPlaceWith((a: t, b: t) => {
-      switch (a->hasFullBatch(~maxBatchSize), b->hasFullBatch(~maxBatchSize)) {
+      switch (a->hasFullBatch(~batchSizeTarget), b->hasFullBatch(~batchSizeTarget)) {
       | (true, true)
       | (false, false) =>
         // Use unsafe since we filtered out all queues without batch items
-        switch (a.queue->Utils.Array.lastUnsafe, b.queue->Utils.Array.lastUnsafe) {
+        switch (a.buffer->Belt.Array.getUnsafe(0), b.buffer->Belt.Array.getUnsafe(0)) {
         | (Event({timestamp: aTimestamp}), Event({timestamp: bTimestamp})) =>
           aTimestamp - bTimestamp
         | (Block(_), _)
@@ -1331,20 +1284,11 @@ let filterAndSortForUnorderedBatch = {
   }
 }
 
-let getProgressBlockNumber = ({queue} as fetchState: t) => {
+let getProgressBlockNumber = ({buffer} as fetchState: t) => {
   let bufferBlockNumber = fetchState->bufferBlockNumber
-  switch queue->Utils.Array.last {
+  switch buffer->Belt.Array.get(0) {
   | Some(item) if bufferBlockNumber >= item->Internal.getItemBlockNumber =>
     item->Internal.getItemBlockNumber - 1
   | _ => bufferBlockNumber
-  }
-}
-
-let getProgressNextBlockLogIndex = ({queue} as fetchState: t) => {
-  switch queue->Utils.Array.last {
-  | Some(Event({logIndex, blockNumber}))
-    if fetchState->bufferBlockNumber >= blockNumber && logIndex > 0 =>
-    Some(logIndex - 1)
-  | _ => None
   }
 }

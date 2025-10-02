@@ -8,7 +8,6 @@ let isIndex = true
 module Chains = {
   type progressFields = [
     | #progress_block
-    | #_progress_log_index
     | #events_processed
   ]
 
@@ -35,7 +34,6 @@ module Chains = {
     #progress_block,
     #ready_at,
     #events_processed,
-    #_progress_log_index,
     #_is_hyper_sync,
     #_num_batches_fetched,
   ]
@@ -55,7 +53,6 @@ module Chains = {
     @as("start_block") startBlock: int,
     @as("end_block") endBlock: Js.null<int>,
     @as("progress_block") progressBlockNumber: int,
-    @as("_progress_log_index") progressNextBlockLogIndex: Js.null<int>,
     @as("events_processed") numEventsProcessed: int,
     ...metaFields,
   }
@@ -91,14 +88,6 @@ module Chains = {
       mkField((#_is_hyper_sync: field :> string), Boolean, ~fieldSchema=S.bool),
       // Fully processed block number
       mkField((#progress_block: field :> string), Integer, ~fieldSchema=S.int),
-      // Optional log index of the next block after progress block
-      // To correctly resume indexing when we processed half of the block.
-      mkField(
-        (#_progress_log_index: field :> string),
-        Integer,
-        ~fieldSchema=S.null(S.int),
-        ~isNullable,
-      ),
       // TODO: Should deprecate after changing the ETA calculation logic
       mkField((#_num_batches_fetched: field :> string), Integer, ~fieldSchema=S.int),
     ],
@@ -114,7 +103,6 @@ module Chains = {
       latestFetchedBlockNumber: -1,
       timestampCaughtUpToHeadOrEndblock: Js.Null.empty,
       progressBlockNumber: -1,
-      progressNextBlockLogIndex: Js.Null.empty,
       isHyperSync: false,
       numEventsProcessed: 0,
       numBatchesFetched: 0,
@@ -175,11 +163,7 @@ SET ${setClauses->Js.Array2.joinWith(",\n    ")}
 WHERE "id" = $1;`
   }
 
-  let progressFields: array<progressFields> = [
-    #progress_block,
-    #_progress_log_index,
-    #events_processed,
-  ]
+  let progressFields: array<progressFields> = [#progress_block, #events_processed]
 
   let makeProgressFieldsUpdateQuery = (~pgSchema) => {
     let setClauses = Belt.Array.mapWithIndex(progressFields, (index, field) => {
@@ -234,10 +218,6 @@ WHERE "id" = $1;`
         ->Js.Array2.push(
           switch field {
           | #progress_block => data.progressBlockNumber->(Utils.magic: int => unknown)
-          | #_progress_log_index =>
-            data.progressNextBlockLogIndex
-            ->Js.Null.fromOption
-            ->(Utils.magic: Js.null<int> => unknown)
           | #events_processed => data.totalEventsProcessed->(Utils.magic: int => unknown)
           },
         )
@@ -448,42 +428,4 @@ module DynamicContractRegistry = {
     table,
     entityHistory,
   }->Internal.fromGenericEntityConfig
-
-  let makeCleanUpOnRestartQuery = (~pgSchema, ~chains: array<Chains.t>) => {
-    let query = ref(``)
-
-    chains->Js.Array2.forEach(chain => {
-      if query.contents !== "" {
-        query := query.contents ++ "\n"
-      }
-      query :=
-        query.contents ++
-        `DELETE FROM "${pgSchema}"."${table.tableName}"
-WHERE chain_id = ${chain.id->Belt.Int.toString}${switch chain {
-          | {progressBlockNumber, progressNextBlockLogIndex: Value(progressNextBlockLogIndex)} =>
-            ` AND (
-  registering_event_block_number > ${(progressBlockNumber + 1)->Belt.Int.toString}
-  OR registering_event_block_number = ${(progressBlockNumber + 1)->Belt.Int.toString}
-  AND registering_event_log_index > ${progressNextBlockLogIndex->Belt.Int.toString}
-)`
-          | {progressBlockNumber: -1, progressNextBlockLogIndex: Null} => ``
-          | {progressBlockNumber, progressNextBlockLogIndex: Null} =>
-            ` AND registering_event_block_number > ${progressBlockNumber->Belt.Int.toString}`
-          }};
-DELETE FROM "${pgSchema}"."${table.tableName}_history"
-WHERE entity_history_chain_id = ${chain.id->Belt.Int.toString}${switch chain {
-          | {progressBlockNumber, progressNextBlockLogIndex: Value(progressNextBlockLogIndex)} =>
-            ` AND (
-  entity_history_block_number > ${(progressBlockNumber + 1)->Belt.Int.toString}
-  OR entity_history_block_number = ${(progressBlockNumber + 1)->Belt.Int.toString}
-  AND entity_history_log_index > ${progressNextBlockLogIndex->Belt.Int.toString}
-)`
-          | {progressBlockNumber: -1, progressNextBlockLogIndex: Null} => ``
-          | {progressBlockNumber, progressNextBlockLogIndex: Null} =>
-            ` AND entity_history_block_number > ${progressBlockNumber->Belt.Int.toString}`
-          }};`
-    })
-
-    query.contents
-  }
 }

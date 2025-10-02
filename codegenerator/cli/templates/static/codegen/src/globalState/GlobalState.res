@@ -53,7 +53,6 @@ type t = {
   processedBatches: int,
   currentlyProcessingBatch: bool,
   rollbackState: rollbackState,
-  maxBatchSize: int,
   indexerStartTime: Js.Date.t,
   writeThrottlers: WriteThrottlers.t,
   loadManager: LoadManager.t,
@@ -69,7 +68,6 @@ let make = (~config: Config.t, ~chainManager: ChainManager.t, ~shouldUseTui=fals
     currentlyProcessingBatch: false,
     processedBatches: 0,
     chainManager,
-    maxBatchSize: Env.maxProcessBatchSize,
     indexerStartTime: Js.Date.make(),
     rollbackState: NoRollback,
     writeThrottlers: WriteThrottlers.make(~config),
@@ -159,8 +157,6 @@ let updateChainFetcherCurrentBlockHeight = (chainFetcher: ChainFetcher.t, ~curre
 
     {
       ...chainFetcher,
-      isFetchingAtHead: chainFetcher.isFetchingAtHead ||
-      chainFetcher.fetchState->FetchState.bufferBlockNumber >= currentBlockHeight,
       currentBlockHeight,
     }
   } else {
@@ -206,7 +202,7 @@ let updateProgressedChains = (
 ) => {
   let nextQueueItemIsNone = chainManager->ChainManager.nextItemIsNone
 
-  let allChainsAtHead = chainManager->ChainManager.isFetchingAtHead
+  let allChainsAtHead = chainManager->ChainManager.isProgressAtHead
   //Update the timestampCaughtUpToHeadOrEndblock values
   let chainFetchers = chainManager.chainFetchers->ChainMap.map(cf => {
     let chain = ChainMap.Chain.makeUnsafe(~chainId=cf.chainConfig.id)
@@ -248,6 +244,7 @@ let updateProgressedChains = (
             | None => None
             }
           },
+          isProgressAtHead: cf.isProgressAtHead || progressData.isProgressAtHead,
           committedProgressBlockNumber: progressData.progressBlockNumber,
           numEventsProcessed: progressData.totalEventsProcessed,
         }
@@ -283,7 +280,7 @@ let updateProgressedChains = (
         ...cf,
         timestampCaughtUpToHeadOrEndblock,
       }
-    } else if cf.timestampCaughtUpToHeadOrEndblock->Option.isNone && cf.isFetchingAtHead {
+    } else if cf.timestampCaughtUpToHeadOrEndblock->Option.isNone && cf.isProgressAtHead {
       //Only calculate and set timestampCaughtUpToHeadOrEndblock if chain fetcher is at the head and
       //its not already set
       //CASE1
@@ -464,8 +461,8 @@ let submitPartitionQueryResponse = (
     numBatchesFetched: updatedChainFetcher.numBatchesFetched + 1,
   }
 
-  let wasFetchingAtHead = chainFetcher.isFetchingAtHead
-  let isCurrentlyFetchingAtHead = updatedChainFetcher.isFetchingAtHead
+  let wasFetchingAtHead = chainFetcher.isProgressAtHead
+  let isCurrentlyFetchingAtHead = updatedChainFetcher.isProgressAtHead
 
   if !wasFetchingAtHead && isCurrentlyFetchingAtHead {
     updatedChainFetcher.logger->Logging.childInfo("All events have been fetched")
@@ -900,9 +897,10 @@ let injectedTaskReducer = (
     }
   | ProcessEventBatch =>
     if !state.currentlyProcessingBatch && !isRollingBack(state) {
-      let batch = state.chainManager->ChainManager.createBatch(~maxBatchSize=state.maxBatchSize)
+      let batch =
+        state.chainManager->ChainManager.createBatch(~batchSizeTarget=state.config.batchSize)
 
-      let updatedFetchStates = batch.fetchStates
+      let updatedFetchStates = batch.updatedFetchStates
 
       let isInReorgThreshold = state.chainManager.isInReorgThreshold
       let isBelowReorgThreshold =
@@ -934,10 +932,28 @@ let injectedTaskReducer = (
           ~pgSchema=Db.publicSchema,
           ~progressedChains,
         )
+        // FIXME: When state.rollbackState is RollbackInMemStore
+        // If we increase progress in this case (no items)
+        // and then indexer restarts - there's a high chance of missing
+        // the rollback. This should be tested and fixed.
         dispatchAction(EventBatchProcessed({progressedChains, items: batch.items}))
-      | {items, progressedChains, fetchStates, dcsToStoreByChainId} =>
+      | {items, progressedChains, updatedFetchStates, dcsToStoreByChainId} =>
+        if Env.Benchmark.shouldSaveData {
+          let group = "Other"
+          Benchmark.addSummaryData(
+            ~group,
+            ~label=`Batch Creation Time (ms)`,
+            ~value=batch.creationTimeMs->Belt.Int.toFloat,
+          )
+          Benchmark.addSummaryData(
+            ~group,
+            ~label=`Batch Size`,
+            ~value=items->Array.length->Belt.Int.toFloat,
+          )
+        }
+
         dispatchAction(StartProcessingBatch)
-        dispatchAction(UpdateQueues({updatedFetchStates: fetchStates, shouldEnterReorgThreshold}))
+        dispatchAction(UpdateQueues({updatedFetchStates, shouldEnterReorgThreshold}))
 
         //In the case of a rollback, use the provided in memory store
         //With rolled back values
