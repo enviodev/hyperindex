@@ -1,6 +1,7 @@
 open Belt
 
 type t = {
+  commitedCheckpointId: int,
   chainFetchers: ChainMap.t<ChainFetcher.t>,
   multichain: InternalConfig.multichain,
   isInReorgThreshold: bool,
@@ -23,6 +24,7 @@ let makeFromConfig = (~config: Config.t): t => {
   let chainFetchers =
     config.chainMap->ChainMap.map(ChainFetcher.makeFromConfig(_, ~config, ~targetBufferSize))
   {
+    commitedCheckpointId: 0,
     chainFetchers,
     multichain: config.multichain,
     isInReorgThreshold: false,
@@ -76,6 +78,7 @@ let makeFromDbState = async (~initialState: Persistence.initialState, ~config: C
   let chainFetchers = ChainMap.fromArrayUnsafe(chainFetchersArr)
 
   {
+    commitedCheckpointId: 0, // FIXME: provide value from db
     multichain: config.multichain,
     chainFetchers,
     isInReorgThreshold,
@@ -107,11 +110,13 @@ let nextItemIsNone = (chainManager: t): bool => {
 
 let createBatch = (chainManager: t, ~batchSizeTarget: int): Batch.t => {
   Batch.make(
+    ~checkpointIdBeforeBatch=chainManager.commitedCheckpointId,
     ~chainsBeforeBatch=chainManager.chainFetchers->ChainMap.map((cf): Batch.chainBeforeBatch => {
       fetchState: cf.fetchState,
       progressBlockNumber: cf.committedProgressBlockNumber,
       totalEventsProcessed: cf.numEventsProcessed,
       sourceBlockNumber: cf.currentBlockHeight,
+      reorgDetection: cf.reorgDetection,
     }),
     ~multichain=chainManager.multichain,
     ~batchSizeTarget,

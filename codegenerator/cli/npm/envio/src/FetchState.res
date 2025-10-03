@@ -1284,7 +1284,8 @@ let filterAndSortForUnorderedBatch = {
   }
 }
 
-let getProgressBlockNumberAt = ({buffer} as fetchState: t, ~index) => {
+// Ordered multichain mode can't skip blocks, even if there are no items.
+let getUnorderedMultichainProgressBlockNumberAt = ({buffer} as fetchState: t, ~index) => {
   let bufferBlockNumber = fetchState->bufferBlockNumber
   switch buffer->Belt.Array.get(index) {
   | Some(item) if bufferBlockNumber >= item->Internal.getItemBlockNumber =>

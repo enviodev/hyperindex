@@ -2771,7 +2771,7 @@ describe("FetchState progress tracking", () => {
     let fetchStateEmpty = makeFetchStateWith(~latestBlock=100, ~queueBlocks=[])
 
     Assert.equal(
-      fetchStateEmpty->FetchState.getProgressBlockNumber,
+      fetchStateEmpty->FetchState.getUnorderedMultichainProgressBlockNumberAt(~index=0),
       100,
       ~message="Should return latestFullyFetchedBlock.blockNumber when queue is empty",
     )
@@ -2781,7 +2781,7 @@ describe("FetchState progress tracking", () => {
     let fetchStateSingleItem = makeFetchStateWith(~latestBlock=55, ~queueBlocks=[(55, 0)])
 
     Assert.equal(
-      fetchStateSingleItem->FetchState.getProgressBlockNumber,
+      fetchStateSingleItem->FetchState.getUnorderedMultichainProgressBlockNumberAt(~index=0),
       54,
       ~message="Should return single queue item blockNumber - 1",
     )
@@ -2791,7 +2791,7 @@ describe("FetchState progress tracking", () => {
     let fetchStateSingleItem = makeFetchStateWith(~latestBlock=55, ~queueBlocks=[(55, 5)])
 
     Assert.equal(
-      fetchStateSingleItem->FetchState.getProgressBlockNumber,
+      fetchStateSingleItem->FetchState.getUnorderedMultichainProgressBlockNumberAt(~index=0),
       54,
       ~message="Should return single queue item blockNumber - 1",
     )
@@ -2804,7 +2804,7 @@ describe("FetchState progress tracking", () => {
     )
 
     Assert.equal(
-      fetchStateWithQueue->FetchState.getProgressBlockNumber,
+      fetchStateWithQueue->FetchState.getUnorderedMultichainProgressBlockNumberAt(~index=0),
       90,
       ~message="Should return latest fetched block number",
     )

@@ -189,6 +189,15 @@ module Math = {
     }
 }
 
+// This is a microoptimization to avoid int32 safeguards
+module UnsafeIntOperators = {
+  external \"*": (int, int) => int = "%mulfloat"
+
+  external \"+": (int, int) => int = "%addfloat"
+
+  external \"-": (int, int) => int = "%subfloat"
+}
+
 module Array = {
   @send
   external forEachAsync: (array<'a>, 'a => promise<unit>) => unit = "forEach"

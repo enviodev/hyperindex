@@ -315,127 +315,179 @@ let rec makeWithInMemoryStore: InMemoryStore.t => t = (inMemoryStore: InMemorySt
 and makeProcessEvents = (mockDb: t, ~chainId=?) => async (
   events: array<Types.eventLog<unknown>>,
 ) => {
-  let itemsWithContractRegister = []
+  if events->Utils.Array.isEmpty {
+    mockDb
+  } else {
+    let itemsWithContractRegister = []
 
-  let config = {
-    ...config,
-    registrations: Some(EventRegister.finishRegistration()),
-  }
-
-  let processingChainId = ref(chainId)
-  let items = events->Array.map(event => {
-    let event = event->Internal.fromGenericEvent
-    let eventConfig = switch mockEventRegisters->Utils.WeakMap.get(event) {
-    | Some(register) => register()
-    | None =>
-      Js.Exn.raiseError(
-        "Events must be created using the mock API (e.g. createMockEvent) to be processed by mockDb.processEvents",
-      )
-    }
-    let chainId = switch chainId {
-    | Some(chainId) => chainId
-    | None => event.chainId
+    let config = {
+      ...config,
+      registrations: Some(EventRegister.finishRegistration()),
     }
 
-    switch processingChainId.contents {
-    | Some(chainId) =>
-      if chainId != event.chainId {
+    let processingChainId = ref(chainId)
+    let latestFetchedBlockNumber = ref(0)
+    let newItems = events->Array.map(event => {
+      let event = event->Internal.fromGenericEvent
+      let eventConfig = switch mockEventRegisters->Utils.WeakMap.get(event) {
+      | Some(register) => register()
+      | None =>
         Js.Exn.raiseError(
-          `Processing events on multiple chains is not supported yet. Got chainId ${event.chainId->Belt.Int.toString} but expected ${chainId->Belt.Int.toString}`,
+          "Events must be created using the mock API (e.g. createMockEvent) to be processed by mockDb.processEvents",
         )
       }
-    | None => processingChainId.contents = Some(chainId)
-    }
+      let chainId = switch chainId {
+      | Some(chainId) => chainId
+      | None => event.chainId
+      }
 
-    let chain = config->Config.getChain(~chainId)
-    let item = Internal.Event({
-      eventConfig,
-      event,
-      chain,
-      logIndex: event.logIndex,
-      timestamp: event.block->Types.Block.getTimestamp,
-      blockNumber: event.block->Types.Block.getNumber,
-    })
-    if eventConfig.contractRegister->Option.isSome {
-      itemsWithContractRegister->Js.Array2.push(item)->ignore
-    }
-    item
-  })
+      switch processingChainId.contents {
+      | Some(chainId) =>
+        if chainId != event.chainId {
+          Js.Exn.raiseError(
+            `Processing events on multiple chains is not supported yet. Got chainId ${event.chainId->Belt.Int.toString} but expected ${chainId->Belt.Int.toString}`,
+          )
+        }
+      | None => processingChainId.contents = Some(chainId)
+      }
 
-  let processingChainId = switch processingChainId.contents {
-  | Some(chainId) => chainId
-  | None =>
-    Js.Exn.raiseError("No events provided to processEvents. Please provide at least one event.")
-  }
-
-  //Deep copy the data in mockDb, mutate the clone and return the clone
-  //So no side effects occur here and state can be compared between process
-  //steps
-  let mockDbClone = mockDb->cloneMockDb
-
-  //Construct a new instance of an in memory store to run for the given event
-  let inMemoryStore = InMemoryStore.make()
-  let loadManager = LoadManager.make()
-  let persistence = {
-    ...config.persistence,
-    storage: makeMockStorage(mockDb),
-    storageStatus: Ready({
-      cleanRun: false,
-      cache: Js.Dict.empty(),
-      chains: [],
-      reorgCheckpoints: [],
-    }),
-  }
-  let config = {
-    ...config,
-    persistence,
-  }
-
-  //No need to check contract is registered or return anything.
-  //The only purpose is to test the registerContract function and to
-  //add the entity to the in memory store for asserting registrations
-  if itemsWithContractRegister->Utils.Array.notEmpty {
-    let dcs = await ChainFetcher.runContractRegistersOrThrow(
-      ~itemsWithContractRegister,
-      ~chain=ChainMap.Chain.makeUnsafe(~chainId=processingChainId),
-      ~config,
-    )
-
-    // TODO: Reuse FetchState logic to clean up duplicate dcs
-    if dcs->Utils.Array.notEmpty {
-      inMemoryStore->InMemoryStore.setDcsToStore(
-        ~chainId=processingChainId,
-        ~dcs,
-        ~shouldSaveHistory=false,
+      let chain = config->Config.getChain(~chainId)
+      let item = Internal.Event({
+        eventConfig,
+        event,
+        chain,
+        logIndex: event.logIndex,
+        timestamp: event.block->Types.Block.getTimestamp,
+        blockNumber: event.block->Types.Block.getNumber,
+      })
+      latestFetchedBlockNumber.contents = Pervasives.max(
+        latestFetchedBlockNumber.contents,
+        event.block->Types.Block.getNumber,
       )
+      if eventConfig.contractRegister->Option.isSome {
+        itemsWithContractRegister->Js.Array2.push(item)->ignore
+      }
+      item
+    })
+
+    let processingChainId = switch processingChainId.contents {
+    | Some(chainId) => chainId
+    | None =>
+      Js.Exn.raiseError("No events provided to processEvents. Please provide at least one event.")
     }
-  }
 
-  try {
-    await items->EventProcessing.preloadBatchOrThrow(
-      ~loadManager,
-      ~persistence,
-      ~inMemoryStore,
-    )
-    await items->EventProcessing.runBatchHandlersOrThrow(
-      ~inMemoryStore,
-      ~loadManager,
-      ~config,
-      ~shouldSaveHistory=false,
-      ~shouldBenchmark=false,
-    )
-  } catch {
-  | EventProcessing.ProcessingError({message, exn, item}) =>
-    exn
-    ->ErrorHandling.make(~msg=message, ~logger=item->Logging.getItemLogger)
-    ->ErrorHandling.logAndRaise
-  }
+    //Deep copy the data in mockDb, mutate the clone and return the clone
+    //So no side effects occur here and state can be compared between process
+    //steps
+    let mockDbClone = mockDb->cloneMockDb
 
-  //In mem store can still contatin raw events and dynamic contracts for the
-  //testing framework in cases where either contract register or loaderHandler
-  //is None
-  mockDbClone->writeFromMemoryStore(~inMemoryStore)
-  mockDbClone
+    //Construct a new instance of an in memory store to run for the given event
+    let inMemoryStore = InMemoryStore.make()
+    let loadManager = LoadManager.make()
+    let persistence = {
+      ...config.persistence,
+      storage: makeMockStorage(mockDb),
+      storageStatus: Ready({
+        cleanRun: false,
+        cache: Js.Dict.empty(),
+        chains: [],
+        reorgCheckpoints: [],
+      }),
+    }
+    let config = {
+      ...config,
+      persistence,
+    }
+
+    //No need to check contract is registered or return anything.
+    //The only purpose is to test the registerContract function and to
+    //add the entity to the in memory store for asserting registrations
+    if itemsWithContractRegister->Utils.Array.notEmpty {
+      let dcs = await ChainFetcher.runContractRegistersOrThrow(
+        ~itemsWithContractRegister,
+        ~chain=ChainMap.Chain.makeUnsafe(~chainId=processingChainId),
+        ~config,
+      )
+
+      // TODO: Reuse FetchState logic to clean up duplicate dcs
+      if dcs->Utils.Array.notEmpty {
+        inMemoryStore->InMemoryStore.setDcsToStore(
+          ~chainId=processingChainId,
+          ~dcs,
+          ~shouldSaveHistory=false,
+        )
+      }
+    }
+
+    let batch = Batch.prepareUnorderedBatch(
+      ~checkpointIdBeforeBatch=0,
+      ~chainsBeforeBatch=ChainMap.fromArrayUnsafe([
+        (
+          ChainMap.Chain.makeUnsafe(~chainId=processingChainId),
+          (
+            {
+              fetchState: FetchState.make(
+                ~chainId=processingChainId,
+                ~startBlock=0,
+                ~endBlock=None,
+                ~eventConfigs=[],
+                ~contracts=[],
+                ~maxAddrInPartition=0,
+                ~targetBufferSize=0,
+              )
+              ->FetchState.handleQueryResult(
+                ~latestFetchedBlock={
+                  blockNumber: latestFetchedBlockNumber.contents,
+                  blockTimestamp: 0,
+                },
+                ~query={
+                  partitionId: "0",
+                  fromBlock: 0,
+                  selection: {eventConfigs: [], dependsOnAddresses: false},
+                  addressesByContractName: Js.Dict.empty(),
+                  target: FetchState.Head,
+                  indexingContracts: Js.Dict.empty(),
+                },
+                ~newItems,
+              )
+              ->Result.getExn,
+              reorgDetection: ReorgDetection.make(
+                ~blocks=[],
+                ~maxReorgDepth=0,
+                ~shouldRollbackOnReorg=false,
+              ),
+              progressBlockNumber: 0,
+              sourceBlockNumber: 0,
+              totalEventsProcessed: 0,
+            }: Batch.chainBeforeBatch
+          ),
+        ),
+      ]),
+      ~batchSizeTarget=newItems->Array.length,
+    )
+
+    try {
+      await batch->EventProcessing.preloadBatchOrThrow(~loadManager, ~persistence, ~inMemoryStore)
+      await batch->EventProcessing.runBatchHandlersOrThrow(
+        ~inMemoryStore,
+        ~loadManager,
+        ~config,
+        ~shouldSaveHistory=false,
+        ~shouldBenchmark=false,
+      )
+    } catch {
+    | EventProcessing.ProcessingError({message, exn, item}) =>
+      exn
+      ->ErrorHandling.make(~msg=message, ~logger=item->Logging.getItemLogger)
+      ->ErrorHandling.logAndRaise
+    }
+
+    //In mem store can still contatin raw events and dynamic contracts for the
+    //testing framework in cases where either contract register or loaderHandler
+    //is None
+    mockDbClone->writeFromMemoryStore(~inMemoryStore)
+    mockDbClone
+  }
 }
 and makeMockStorage = (mockDb: t): Persistence.storage => {
   {

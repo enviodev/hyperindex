@@ -232,10 +232,11 @@ let executeBatch = async (
             },
             ~eventIdentifier,
           ),
-          sql->DbFunctions.EndOfBlockRangeScannedData.rollbackEndOfBlockRangeScannedDataForChain(
-            ~chainId=eventIdentifier.chainId,
-            ~knownBlockNumber=eventIdentifier.blockNumber,
-          ),
+          Promise.resolve(),
+          // sql->DbFunctions.EndOfBlockRangeScannedData.rollbackEndOfBlockRangeScannedDataForChain(
+          //   ~chainId=eventIdentifier.chainId,
+          //   ~knownBlockNumber=eventIdentifier.blockNumber,
+          // ),
         )),
     )
   | None => None
@@ -256,7 +257,9 @@ let executeBatch = async (
             sql =>
               sql->InternalTable.Chains.setProgressedChains(
                 ~pgSchema=Db.publicSchema,
-                ~progressedChains=batch.progressedChainsById->Utils.Dict.mapValuesToArray((
+                ~progressedChains=batch
+                ->Batch.progressedChainsById
+                ->Utils.Dict.mapValuesToArray((
                   chainAfterBatch
                 ): InternalTable.Chains.progressedChain => {
                   chainId: chainAfterBatch.fetchState.chainId,

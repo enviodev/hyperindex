@@ -41,7 +41,7 @@ let make = (
   ~numEventsProcessed,
   ~numBatchesFetched,
   ~isInReorgThreshold,
-  ~reorgCheckpoints: array<InternalTable.Checkpoints.reorgCheckpoint>,
+  ~reorgCheckpoints: array<Internal.reorgCheckpoint>,
   ~maxReorgDepth,
 ): t => {
   // We don't need the router itself, but only validation logic,

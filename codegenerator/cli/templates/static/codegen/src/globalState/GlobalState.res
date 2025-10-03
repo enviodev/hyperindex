@@ -183,9 +183,9 @@ let updateProgressedChains = (chainManager: ChainManager.t, ~batch: Batch.t) => 
     let chain = ChainMap.Chain.makeUnsafe(~chainId=cf.chainConfig.id)
 
     let maybeChainAfterBatch =
-      batch.progressedChainsById->Utils.Dict.dangerouslyGetByIntNonOption(
-        chain->ChainMap.Chain.toChainId,
-      )
+      batch
+      ->Batch.progressedChainsById
+      ->Utils.Dict.dangerouslyGetByIntNonOption(chain->ChainMap.Chain.toChainId)
 
     let cf = switch maybeChainAfterBatch {
     | Some(chainAfterBatch) => {
@@ -207,17 +207,7 @@ let updateProgressedChains = (chainManager: ChainManager.t, ~batch: Batch.t) => 
           // we need to calculate it once, by using the first item in a batch
           firstEventBlockNumber: switch cf.firstEventBlockNumber {
           | Some(_) => cf.firstEventBlockNumber
-          | None =>
-            switch batch.items->Js.Array2.find(item =>
-              switch item {
-              | Internal.Event({chain: eventChain}) => eventChain === chain
-              | Internal.Block({onBlockConfig: {chainId}}) =>
-                chainId === chain->ChainMap.Chain.toChainId
-              }
-            ) {
-            | Some(item) => Some(item->Internal.getItemBlockNumber)
-            | None => None
-            }
+          | None => batch->Batch.findFirstEventBlockNumber(~chainId=chain->ChainMap.Chain.toChainId)
           },
           committedProgressBlockNumber: chainAfterBatch.progressBlockNumber,
           numEventsProcessed: chainAfterBatch.totalEventsProcessed,
@@ -808,6 +798,8 @@ let injectedTaskReducer = (
     if !state.currentlyProcessingBatch && !isRollingBack(state) {
       let batch =
         state.chainManager->ChainManager.createBatch(~batchSizeTarget=state.config.batchSize)
+      let progressedChainsById = batch->Batch.progressedChainsById
+      let totalBatchSize = batch->Batch.totalBatchSize
 
       let isInReorgThreshold = state.chainManager.isInReorgThreshold
       let shouldSaveHistory = state.config->Config.shouldSaveHistory(~isInReorgThreshold)
@@ -819,7 +811,7 @@ let injectedTaskReducer = (
         state.chainManager.chainFetchers
         ->ChainMap.values
         ->Array.every(chainFetcher => {
-          let fetchState = switch batch.progressedChainsById->Utils.Dict.dangerouslyGetByIntNonOption(
+          let fetchState = switch progressedChainsById->Utils.Dict.dangerouslyGetByIntNonOption(
             chainFetcher.fetchState.chainId,
           ) {
           | Some(chainAfterBatch) => chainAfterBatch.fetchState
@@ -833,9 +825,9 @@ let injectedTaskReducer = (
         dispatchAction(EnterReorgThreshold)
       }
 
-      switch batch {
-      | {progressedChainsById} if progressedChainsById->Utils.Dict.isEmpty => ()
-      | {items: [], progressedChainsById} =>
+      if progressedChainsById->Utils.Dict.isEmpty {
+        ()
+      } else if totalBatchSize === 0 {
         dispatchAction(StartProcessingBatch)
         // For this case there shouldn't be any FetchState changes
         // so we don't dispatch UpdateQueues - only update the progress for chains without events
@@ -854,13 +846,13 @@ let injectedTaskReducer = (
         // and then indexer restarts - there's a high chance of missing
         // the rollback. This should be tested and fixed.
         dispatchAction(EventBatchProcessed({batch: batch}))
-      | {items, progressedChainsById} =>
+      } else {
         if Env.Benchmark.shouldSaveData {
           let group = "Other"
           Benchmark.addSummaryData(
             ~group,
             ~label=`Batch Size`,
-            ~value=items->Array.length->Belt.Int.toFloat,
+            ~value=totalBatchSize->Belt.Int.toFloat,
           )
         }
 

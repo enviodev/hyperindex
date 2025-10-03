@@ -190,18 +190,14 @@ let runHandlerOrThrow = async (
   }
 }
 
-let preloadBatchOrThrow = async (
-  eventBatch: array<Internal.item>,
-  ~loadManager,
-  ~persistence,
-  ~inMemoryStore,
-) => {
+let preloadBatchOrThrow = async (batch: Batch.t, ~loadManager, ~persistence, ~inMemoryStore) => {
   // On the first run of loaders, we don't care about the result,
   // whether it's an error or a return type.
   // We'll rerun the loader again right before the handler run,
   // to avoid having a stale data returned from the loader.
+
   let _ = await Promise.all(
-    eventBatch->Array.keepMap(item => {
+    batch->Batch.keepMap(item => {
       switch item {
       | Event({eventConfig: {handler}, event}) =>
         switch handler {
@@ -255,23 +251,36 @@ let preloadBatchOrThrow = async (
 }
 
 let runBatchHandlersOrThrow = async (
-  eventBatch: array<Internal.item>,
+  batch: Batch.t,
   ~inMemoryStore,
   ~loadManager,
   ~config,
   ~shouldSaveHistory,
   ~shouldBenchmark,
 ) => {
-  for i in 0 to eventBatch->Array.length - 1 {
-    let item = eventBatch->Js.Array2.unsafe_get(i)
-    await runHandlerOrThrow(
-      item,
-      ~inMemoryStore,
-      ~loadManager,
-      ~config,
-      ~shouldSaveHistory,
-      ~shouldBenchmark,
-    )
+  let length = batch->Array.length
+  let checkpointIndex = ref(Batch.checkpointsStartIndex)
+
+  while checkpointIndex.contents < length {
+    let eventsProcessed =
+      batch
+      ->Array.getUnsafe(checkpointIndex.contents + Batch.eventsProcessedOffset)
+      ->(Utils.magic: unknown => int)
+    for idx in 0 to eventsProcessed - 1 {
+      let item =
+        batch
+        ->Array.getUnsafe(checkpointIndex.contents + Batch.itemsStartOffset + idx)
+        ->(Utils.magic: unknown => Internal.item)
+      await runHandlerOrThrow(
+        item,
+        ~inMemoryStore,
+        ~loadManager,
+        ~config,
+        ~shouldSaveHistory,
+        ~shouldBenchmark,
+      )
+    }
+    checkpointIndex := checkpointIndex.contents + Batch.fixedCheckpointFields + eventsProcessed
   }
 }
 
@@ -307,13 +316,15 @@ let processEventBatch = async (
   ~loadManager,
   ~config: Config.t,
 ) => {
-  let batchSize = batch.items->Array.length
+  let totalBatchSize = batch->Batch.totalBatchSize
 
   let logger = Logging.createChildFrom(
     ~logger=Logging.getLogger(),
     ~params={
-      "totalBatchSize": batchSize,
-      "byChain": batch.progressedChainsById->Utils.Dict.filterMapValues(chainAfterBatch =>
+      "totalBatchSize": totalBatchSize,
+      "byChain": batch
+      ->Batch.progressedChainsById
+      ->Utils.Dict.filterMapValues(chainAfterBatch =>
         if chainAfterBatch.batchSize > 0 {
           Some({
             "batchSize": chainAfterBatch.batchSize,
@@ -330,15 +341,11 @@ let processEventBatch = async (
   try {
     let timeRef = Hrtime.makeTimer()
 
-    await batch.items->preloadBatchOrThrow(
-      ~loadManager,
-      ~persistence=config.persistence,
-      ~inMemoryStore,
-    )
+    await batch->preloadBatchOrThrow(~loadManager, ~persistence=config.persistence, ~inMemoryStore)
 
     let elapsedTimeAfterLoaders = timeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
 
-    await batch.items->runBatchHandlersOrThrow(
+    await batch->runBatchHandlersOrThrow(
       ~inMemoryStore,
       ~loadManager,
       ~config,
@@ -384,7 +391,7 @@ let processEventBatch = async (
           )
           if Env.Benchmark.shouldSaveData {
             Benchmark.addEventProcessing(
-              ~batchSize,
+              ~batchSize=totalBatchSize,
               ~loadDuration=loaderDuration,
               ~handlerDuration,
               ~dbWriteDuration,
