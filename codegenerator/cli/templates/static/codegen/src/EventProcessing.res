@@ -197,7 +197,7 @@ let preloadBatchOrThrow = async (batch: Batch.t, ~loadManager, ~persistence, ~in
   // to avoid having a stale data returned from the loader.
 
   let _ = await Promise.all(
-    batch->Batch.keepMap(item => {
+    batch.items->Array.keepMap(item => {
       switch item {
       | Event({eventConfig: {handler}, event}) =>
         switch handler {
@@ -251,36 +251,23 @@ let preloadBatchOrThrow = async (batch: Batch.t, ~loadManager, ~persistence, ~in
 }
 
 let runBatchHandlersOrThrow = async (
-  batch: Batch.t,
+  {items}: Batch.t,
   ~inMemoryStore,
   ~loadManager,
   ~config,
   ~shouldSaveHistory,
   ~shouldBenchmark,
 ) => {
-  let length = batch->Array.length
-  let checkpointIndex = ref(Batch.checkpointsStartIndex)
-
-  while checkpointIndex.contents < length {
-    let eventsProcessed =
-      batch
-      ->Array.getUnsafe(checkpointIndex.contents + Batch.eventsProcessedOffset)
-      ->(Utils.magic: unknown => int)
-    for idx in 0 to eventsProcessed - 1 {
-      let item =
-        batch
-        ->Array.getUnsafe(checkpointIndex.contents + Batch.itemsStartOffset + idx)
-        ->(Utils.magic: unknown => Internal.item)
-      await runHandlerOrThrow(
-        item,
-        ~inMemoryStore,
-        ~loadManager,
-        ~config,
-        ~shouldSaveHistory,
-        ~shouldBenchmark,
-      )
-    }
-    checkpointIndex := checkpointIndex.contents + Batch.fixedCheckpointFields + eventsProcessed
+  for i in 0 to items->Array.length - 1 {
+    let item = items->Js.Array2.unsafe_get(i)
+    await runHandlerOrThrow(
+      item,
+      ~inMemoryStore,
+      ~loadManager,
+      ~config,
+      ~shouldSaveHistory,
+      ~shouldBenchmark,
+    )
   }
 }
 
@@ -316,15 +303,13 @@ let processEventBatch = async (
   ~loadManager,
   ~config: Config.t,
 ) => {
-  let totalBatchSize = batch->Batch.totalBatchSize
+  let totalBatchSize = batch.totalBatchSize
 
   let logger = Logging.createChildFrom(
     ~logger=Logging.getLogger(),
     ~params={
       "totalBatchSize": totalBatchSize,
-      "byChain": batch
-      ->Batch.progressedChainsById
-      ->Utils.Dict.filterMapValues(chainAfterBatch =>
+      "byChain": batch.progressedChainsById->Utils.Dict.filterMapValues(chainAfterBatch =>
         if chainAfterBatch.batchSize > 0 {
           Some({
             "batchSize": chainAfterBatch.batchSize,

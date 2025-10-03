@@ -183,9 +183,9 @@ let updateProgressedChains = (chainManager: ChainManager.t, ~batch: Batch.t) => 
     let chain = ChainMap.Chain.makeUnsafe(~chainId=cf.chainConfig.id)
 
     let maybeChainAfterBatch =
-      batch
-      ->Batch.progressedChainsById
-      ->Utils.Dict.dangerouslyGetByIntNonOption(chain->ChainMap.Chain.toChainId)
+      batch.progressedChainsById->Utils.Dict.dangerouslyGetByIntNonOption(
+        chain->ChainMap.Chain.toChainId,
+      )
 
     let cf = switch maybeChainAfterBatch {
     | Some(chainAfterBatch) => {
@@ -798,8 +798,8 @@ let injectedTaskReducer = (
     if !state.currentlyProcessingBatch && !isRollingBack(state) {
       let batch =
         state.chainManager->ChainManager.createBatch(~batchSizeTarget=state.config.batchSize)
-      let progressedChainsById = batch->Batch.progressedChainsById
-      let totalBatchSize = batch->Batch.totalBatchSize
+      let progressedChainsById = batch.progressedChainsById
+      let totalBatchSize = batch.totalBatchSize
 
       let isInReorgThreshold = state.chainManager.isInReorgThreshold
       let shouldSaveHistory = state.config->Config.shouldSaveHistory(~isInReorgThreshold)

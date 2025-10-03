@@ -157,20 +157,20 @@ describe("ChainManager", () => {
         let numberOfMockEventsReadFromQueues = ref(0)
         let allEventsRead = []
         let rec testThatCreatedEventsAreOrderedCorrectly = (chainManager, lastEvent) => {
-          let batch = ChainManager.createBatch(chainManager, ~batchSizeTarget=10000)
-          let totalBatchSize = batch->Batch.totalBatchSize
+          let {items, totalBatchSize, progressedChainsById} = ChainManager.createBatch(
+            chainManager,
+            ~batchSizeTarget=10000,
+          )
 
           // ensure that the events are ordered correctly
           if totalBatchSize === 0 {
             chainManager
           } else {
-            let items = batch->Batch.keepMap(
+            items->Array.forEach(
               item => {
-                let _ = allEventsRead->Js.Array2.push(item)
-                Some(item)
+                allEventsRead->Js.Array2.push(item)->ignore
               },
             )
-
             numberOfMockEventsReadFromQueues :=
               numberOfMockEventsReadFromQueues.contents + totalBatchSize
 
@@ -185,9 +185,9 @@ describe("ChainManager", () => {
 
             let nextChainFetchers = chainManager.chainFetchers->ChainMap.mapWithKey(
               (chain, fetcher) => {
-                let fetchState = switch batch
-                ->Batch.progressedChainsById
-                ->Utils.Dict.dangerouslyGetByIntNonOption(chain->ChainMap.Chain.toChainId) {
+                let fetchState = switch progressedChainsById->Utils.Dict.dangerouslyGetByIntNonOption(
+                  chain->ChainMap.Chain.toChainId,
+                ) {
                 | Some(chainAfterBatch) => chainAfterBatch.fetchState
                 | None => fetcher.fetchState
                 }

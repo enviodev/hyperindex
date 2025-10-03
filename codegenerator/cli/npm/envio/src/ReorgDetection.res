@@ -298,3 +298,10 @@ let getThresholdBlockNumbers = (self: t, ~currentBlockHeight) => {
 
   dataByBlockNumberCopyInThreshold->Js.Dict.values->Js.Array2.map(v => v.blockNumber)
 }
+
+let getHashByBlockNumber = (reorgDetection: t, ~blockNumber) => {
+  switch reorgDetection.dataByBlockNumber->Utils.Dict.dangerouslyGetByIntNonOption(blockNumber) {
+  | Some(v) => Js.Null.Value(v.blockHash)
+  | None => Js.Null.Null
+  }
+}

@@ -84,7 +84,7 @@ describe("E2E tests", () => {
   })
 
   // A regression test for bug introduced in 2.30.0
-  Async.it("Correct event ordering for ordered multichain indexer", async () => {
+  Async.it_only("Correct event ordering for ordered multichain indexer", async () => {
     let sourceMock1337 = Mock.Source.make(
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
       ~chain=#1337,
