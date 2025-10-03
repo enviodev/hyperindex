@@ -82,4 +82,134 @@ describe("E2E tests", () => {
       ~message="should have set hyperindex_synced_to_head metric to 1",
     )
   })
+
+  // A regression test for bug introduced in 2.30.0
+  Async.it("Correct event ordering for ordered multichain indexer", async () => {
+    let sourceMock1337 = Mock.Source.make(
+      [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
+      ~chain=#1337,
+    )
+    let sourceMock100 = Mock.Source.make(
+      [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
+      ~chain=#100,
+    )
+    let indexerMock = await Mock.Indexer.make(
+      ~chains=[
+        {
+          chain: #1337,
+          sources: [sourceMock1337.source],
+        },
+        {
+          chain: #100,
+          sources: [sourceMock100.source],
+        },
+      ],
+      ~multichain=Ordered,
+    )
+    await Utils.delay(0)
+
+    // Test inside of reorg threshold, so we can check the history order
+    let _ = await Promise.all2((
+      Mock.Helper.initialEnterReorgThreshold(~sourceMock=sourceMock1337),
+      Mock.Helper.initialEnterReorgThreshold(~sourceMock=sourceMock100),
+    ))
+
+    let callCount = ref(0)
+    let getCallCount = () => {
+      let count = callCount.contents
+      callCount := count + 1
+      count
+    }
+
+    // For this test only work with a single changing entity
+    // with the same id. Use call counter to see how it's different to entity history order
+    let handler: Types.HandlerTypes.loader<unit, unit> = async ({context}) => {
+      context.simpleEntity.set({
+        id: "1",
+        value: `call-${getCallCount()->Int.toString}`,
+      })
+    }
+
+    sourceMock1337.resolveGetItemsOrThrow(
+      [
+        {
+          blockNumber: 150,
+          logIndex: 2,
+          handler,
+        },
+      ],
+      ~latestFetchedBlockNumber=160,
+    )
+    sourceMock100.resolveGetItemsOrThrow(
+      [
+        {
+          blockNumber: 150,
+          logIndex: 0,
+          handler,
+        },
+        {
+          blockNumber: 151,
+          logIndex: 0,
+          handler,
+        },
+      ],
+      ~latestFetchedBlockNumber=160,
+    )
+    await indexerMock.getBatchWritePromise()
+
+    Assert.deepEqual(
+      await indexerMock.queryHistory(module(Entities.SimpleEntity)),
+      [
+        {
+          current: {
+            chain_id: 100,
+            block_timestamp: 150,
+            block_number: 150,
+            log_index: 0,
+          },
+          previous: undefined,
+          entityData: Set({
+            Entities.SimpleEntity.id: "1",
+            value: "call-0",
+          }),
+        },
+        {
+          current: {
+            chain_id: 1337,
+            block_timestamp: 150,
+            block_number: 150,
+            log_index: 2,
+          },
+          previous: Some({
+            chain_id: 100,
+            block_timestamp: 150,
+            block_number: 150,
+            log_index: 0,
+          }),
+          entityData: Set({
+            Entities.SimpleEntity.id: "1",
+            value: "call-1",
+          }),
+        },
+        {
+          current: {
+            chain_id: 100,
+            block_timestamp: 151,
+            block_number: 151,
+            log_index: 0,
+          },
+          previous: Some({
+            chain_id: 1337,
+            block_timestamp: 150,
+            block_number: 150,
+            log_index: 2,
+          }),
+          entityData: Set({
+            Entities.SimpleEntity.id: "1",
+            value: "call-2",
+          }),
+        },
+      ],
+    )
+  })
 })
