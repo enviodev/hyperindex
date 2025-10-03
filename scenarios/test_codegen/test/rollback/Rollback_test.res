@@ -1003,7 +1003,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
     )
   })
 
-  Async.it("Rollback of unordered multichain indexer (single entity id change)", async () => {
+  Async.it_only("Rollback of unordered multichain indexer (single entity id change)", async () => {
     let sourceMock1337 = M.Source.make(
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
       ~chain=#1337,
@@ -1025,6 +1025,8 @@ This might be wrong after we start exposing a block hash for progress block.`,
       ],
     )
     await Utils.delay(0)
+
+    Js.log("1")
 
     let _ = await Promise.all2((
       M.Helper.initialEnterReorgThreshold(~sourceMock=sourceMock1337),
@@ -1216,6 +1218,8 @@ Sorted for the batch for block number 101
 Different batches for block number 102`,
     )
 
+    Js.log("2")
+
     // Should trigger rollback
     sourceMock1337.resolveGetItemsOrThrow(
       [],
@@ -1226,6 +1230,8 @@ Different batches for block number 102`,
     )
     await Utils.delay(0)
     await Utils.delay(0)
+
+    Js.log("3")
 
     Assert.deepEqual(
       sourceMock1337.getBlockHashesCalls,
@@ -1241,6 +1247,8 @@ Different batches for block number 102`,
     ])
 
     await indexerMock.getRollbackReadyPromise()
+
+    Js.log("4")
 
     Assert.deepEqual(
       (
@@ -1287,6 +1295,8 @@ Different batches for block number 102`,
     ])
 
     await indexerMock.getBatchWritePromise()
+
+    Js.log("5")
 
     Assert.deepEqual(
       await Promise.all2((

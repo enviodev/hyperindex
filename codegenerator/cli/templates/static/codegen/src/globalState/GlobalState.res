@@ -878,13 +878,14 @@ let injectedTaskReducer = (
           let chainId = chain->ChainMap.Chain.toChainId
           switch progressedChainsById->Utils.Dict.dangerouslyGetByIntNonOption(chainId) {
           | Some(chainAfterBatch) =>
-            let dcsToStore = chainAfterBatch.fetchState.dcsToStore
-            if dcsToStore->Utils.Array.notEmpty {
+            switch chainAfterBatch.dcsToStore {
+            | Some(dcsToStore) =>
               inMemoryStore->InMemoryStore.setDcsToStore(
                 ~chainId,
                 ~dcs=dcsToStore,
                 ~shouldSaveHistory,
               )
+            | None => ()
             }
 
             Prometheus.ProcessingBatchSize.set(~batchSize=chainAfterBatch.batchSize, ~chainId)
@@ -989,12 +990,11 @@ let injectedTaskReducer = (
 
           let rolledBackCf = {
             ...cf,
-            // FIXME:
-            // lastBlockScannedHashes: chain == reorgChain
-            //   ? cf.lastBlockScannedHashes->ReorgDetection.LastBlockScannedHashes.rollbackToValidBlockNumber(
-            //       ~blockNumber=lastKnownValidBlockNumber,
-            //     )
-            //   : cf.lastBlockScannedHashes,
+            reorgDetection: chain == reorgChain
+              ? cf.reorgDetection->ReorgDetection.rollbackToValidBlockNumber(
+                  ~blockNumber=lastKnownValidBlockNumber,
+                )
+              : cf.reorgDetection,
             fetchState,
           }
           //On other chains, filter out evennts based on the first change present on the chain after the reorg
