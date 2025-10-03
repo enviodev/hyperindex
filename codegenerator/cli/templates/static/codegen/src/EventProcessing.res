@@ -190,18 +190,14 @@ let runHandlerOrThrow = async (
   }
 }
 
-let preloadBatchOrThrow = async (
-  eventBatch: array<Internal.item>,
-  ~loadManager,
-  ~persistence,
-  ~inMemoryStore,
-) => {
+let preloadBatchOrThrow = async (batch: Batch.t, ~loadManager, ~persistence, ~inMemoryStore) => {
   // On the first run of loaders, we don't care about the result,
   // whether it's an error or a return type.
   // We'll rerun the loader again right before the handler run,
   // to avoid having a stale data returned from the loader.
+
   let _ = await Promise.all(
-    eventBatch->Array.keepMap(item => {
+    batch.items->Array.keepMap(item => {
       switch item {
       | Event({eventConfig: {handler}, event}) =>
         switch handler {
@@ -255,15 +251,15 @@ let preloadBatchOrThrow = async (
 }
 
 let runBatchHandlersOrThrow = async (
-  eventBatch: array<Internal.item>,
+  {items}: Batch.t,
   ~inMemoryStore,
   ~loadManager,
   ~config,
   ~shouldSaveHistory,
   ~shouldBenchmark,
 ) => {
-  for i in 0 to eventBatch->Array.length - 1 {
-    let item = eventBatch->Js.Array2.unsafe_get(i)
+  for i in 0 to items->Array.length - 1 {
+    let item = items->Js.Array2.unsafe_get(i)
     await runHandlerOrThrow(
       item,
       ~inMemoryStore,
@@ -301,31 +297,28 @@ type logPartitionInfo = {
 }
 
 let processEventBatch = async (
-  ~items: array<Internal.item>,
-  ~progressedChains: array<Batch.progressedChain>,
+  ~batch: Batch.t,
   ~inMemoryStore: InMemoryStore.t,
   ~isInReorgThreshold,
   ~loadManager,
   ~config: Config.t,
 ) => {
-  let batchSize = items->Array.length
-  let byChain = Js.Dict.empty()
-  progressedChains->Js.Array2.forEach(data => {
-    if data.batchSize > 0 {
-      byChain->Utils.Dict.setByInt(
-        data.chainId,
-        {
-          "batchSize": data.batchSize,
-          "toBlockNumber": data.progressBlockNumber,
-        },
-      )
-    }
-  })
+  let totalBatchSize = batch.totalBatchSize
+
   let logger = Logging.createChildFrom(
     ~logger=Logging.getLogger(),
     ~params={
-      "totalBatchSize": batchSize,
-      "byChain": byChain,
+      "totalBatchSize": totalBatchSize,
+      "byChain": batch.progressedChainsById->Utils.Dict.filterMapValues(chainAfterBatch =>
+        if chainAfterBatch.batchSize > 0 {
+          Some({
+            "batchSize": chainAfterBatch.batchSize,
+            "toBlockNumber": chainAfterBatch.progressBlockNumber,
+          })
+        } else {
+          None
+        }
+      ),
     },
   )
   logger->Logging.childTrace("Started processing batch")
@@ -333,11 +326,11 @@ let processEventBatch = async (
   try {
     let timeRef = Hrtime.makeTimer()
 
-    await items->preloadBatchOrThrow(~loadManager, ~persistence=config.persistence, ~inMemoryStore)
+    await batch->preloadBatchOrThrow(~loadManager, ~persistence=config.persistence, ~inMemoryStore)
 
     let elapsedTimeAfterLoaders = timeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
 
-    await items->runBatchHandlersOrThrow(
+    await batch->runBatchHandlersOrThrow(
       ~inMemoryStore,
       ~loadManager,
       ~config,
@@ -350,7 +343,7 @@ let processEventBatch = async (
 
     let rec executeBatch = async (~escapeTables=?) => {
       switch await Db.sql->IO.executeBatch(
-        ~progressedChains,
+        ~batch,
         ~inMemoryStore,
         ~isInReorgThreshold,
         ~config,
@@ -383,7 +376,7 @@ let processEventBatch = async (
           )
           if Env.Benchmark.shouldSaveData {
             Benchmark.addEventProcessing(
-              ~batchSize,
+              ~batchSize=totalBatchSize,
               ~loadDuration=loaderDuration,
               ~handlerDuration,
               ~dbWriteDuration,

@@ -200,6 +200,7 @@ module Storage = {
         cleanRun: false,
         cache: Js.Dict.empty(),
         chains: [],
+        reorgCheckpoints: [],
       }),
     }
   }

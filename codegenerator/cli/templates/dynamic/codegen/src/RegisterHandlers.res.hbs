@@ -56,7 +56,7 @@ let registerContractHandlers = (
         ]
         let chain = ChainMap.Chain.makeUnsafe(~chainId={{chain_config.network_config.id}})
         {
-          InternalConfig.confirmedBlockThreshold: {{chain_config.network_config.confirmed_block_threshold}},
+          InternalConfig.maxReorgDepth: {{chain_config.network_config.confirmed_block_threshold}},
           startBlock: {{chain_config.network_config.start_block}},
           {{#if chain_config.network_config.end_block}}
           endBlock: {{chain_config.network_config.end_block}},

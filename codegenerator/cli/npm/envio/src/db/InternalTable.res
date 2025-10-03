@@ -16,6 +16,7 @@ module Chains = {
     | #id
     | #start_block
     | #end_block
+    | #max_reorg_depth
     | #source_block
     | #first_event_block
     | #buffer_block
@@ -28,6 +29,7 @@ module Chains = {
     #id,
     #start_block,
     #end_block,
+    #max_reorg_depth,
     #source_block,
     #first_event_block,
     #buffer_block,
@@ -52,6 +54,7 @@ module Chains = {
     @as("id") id: int,
     @as("start_block") startBlock: int,
     @as("end_block") endBlock: Js.null<int>,
+    @as("max_reorg_depth") maxReorgDepth: int,
     @as("progress_block") progressBlockNumber: int,
     @as("events_processed") numEventsProcessed: int,
     ...metaFields,
@@ -64,6 +67,7 @@ module Chains = {
       // Values populated from config
       mkField((#start_block: field :> string), Integer, ~fieldSchema=S.int),
       mkField((#end_block: field :> string), Integer, ~fieldSchema=S.null(S.int), ~isNullable),
+      mkField((#max_reorg_depth: field :> string), Integer, ~fieldSchema=S.int),
       // Block number of the latest block that was fetched from the source
       mkField((#buffer_block: field :> string), Integer, ~fieldSchema=S.int),
       // Block number of the currently active source
@@ -98,6 +102,7 @@ module Chains = {
       id: chainConfig.id,
       startBlock: chainConfig.startBlock,
       endBlock: chainConfig.endBlock->Js.Null.fromOption,
+      maxReorgDepth: chainConfig.maxReorgDepth,
       blockHeight: 0,
       firstEventBlockNumber: Js.Null.empty,
       latestFetchedBlockNumber: -1,
@@ -182,7 +187,7 @@ WHERE "id" = $1;`
 
     let promises = []
 
-    chainsData->Utils.Dict.forEachWithKey((chainId, data) => {
+    chainsData->Utils.Dict.forEachWithKey((data, chainId) => {
       let params = []
 
       // Push id first (for WHERE clause)
@@ -201,7 +206,13 @@ WHERE "id" = $1;`
     Promise.all(promises)
   }
 
-  let setProgressedChains = (sql, ~pgSchema, ~progressedChains: array<Batch.progressedChain>) => {
+  type progressedChain = {
+    chainId: int,
+    progressBlockNumber: int,
+    totalEventsProcessed: int,
+  }
+
+  let setProgressedChains = (sql, ~pgSchema, ~progressedChains: array<progressedChain>) => {
     let query = makeProgressFieldsUpdateQuery(~pgSchema)
 
     let promises = []
@@ -254,21 +265,64 @@ module PersistedState = {
   )
 }
 
-module EndOfBlockRangeScannedData = {
+module Checkpoints = {
+  type field = [
+    | #id
+    | #chain_id
+    | #block_number
+    | #block_hash
+    | #events_processed
+  ]
+
   type t = {
-    chain_id: int,
-    block_number: int,
-    block_hash: string,
+    id: int,
+    @as("chain_id")
+    chainId: int,
+    @as("block_number")
+    blockNumber: int,
+    @as("block_hash")
+    blockHash: Js.null<string>,
+    @as("events_processed")
+    eventsProcessed: int,
   }
 
   let table = mkTable(
-    "end_of_block_range_scanned_data",
+    "envio_checkpoints",
     ~fields=[
-      mkField("chain_id", Integer, ~fieldSchema=S.int, ~isPrimaryKey),
-      mkField("block_number", Integer, ~fieldSchema=S.int, ~isPrimaryKey),
-      mkField("block_hash", Text, ~fieldSchema=S.string),
+      mkField((#id: field :> string), Integer, ~fieldSchema=S.bigint, ~isPrimaryKey),
+      mkField((#chain_id: field :> string), Integer, ~fieldSchema=S.int),
+      mkField((#block_number: field :> string), Integer, ~fieldSchema=S.int),
+      mkField((#block_hash: field :> string), Text, ~fieldSchema=S.null(S.string), ~isNullable),
+      mkField((#events_processed: field :> string), Integer, ~fieldSchema=S.int),
     ],
   )
+
+  let makeGetReorgCheckpointsQuery = (~pgSchema, ~chains: array<Chains.t>): option<string> => {
+    // Build chain-specific conditions: (chain_id = X AND block_number > threshold)
+    // Skip chains where maxReorgDepth is 0 or reorgThreshold would be negative
+    let chainConditions =
+      chains
+      ->Belt.Array.keepMap(chain => {
+        let reorgThreshold = chain.blockHeight - chain.maxReorgDepth
+        if chain.maxReorgDepth === 0 || reorgThreshold < 0 {
+          None
+        } else {
+          Some(
+            `("${(#chain_id: field :> string)}" = ${chain.id->Belt.Int.toString} AND "${(#block_number: field :> string)}" > ${reorgThreshold->Belt.Int.toString})`,
+          )
+        }
+      })
+      ->Js.Array2.joinWith(" OR ")
+
+    if chainConditions === "" {
+      // No valid chains to check, don't run query
+      None
+    } else {
+      Some(
+        `SELECT "${(#id: field :> string)}", "${(#chain_id: field :> string)}", "${(#block_number: field :> string)}", "${(#block_hash: field :> string)}" FROM "${pgSchema}"."${table.tableName}" WHERE "${(#block_hash: field :> string)}" IS NOT NULL AND (${chainConditions});`,
+      )
+    }
+  }
 }
 
 module RawEvents = {

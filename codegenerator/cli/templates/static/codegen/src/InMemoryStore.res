@@ -102,46 +102,44 @@ let isRollingBack = (inMemoryStore: t) => inMemoryStore.rollBackEventIdentifier-
 
 let setDcsToStore = (
   inMemoryStore: t,
-  dcsToStoreByChainId: dict<array<FetchState.indexingContract>>,
+  ~chainId: int,
+  ~dcs: array<FetchState.indexingContract>,
   ~shouldSaveHistory,
 ) => {
   let inMemTable =
     inMemoryStore->getInMemTable(
       ~entityConfig=module(InternalTable.DynamicContractRegistry)->Entities.entityModToInternal,
     )
-  dcsToStoreByChainId->Utils.Dict.forEachWithKey((chainId, dcs) => {
-    let chainId = chainId->Belt.Int.fromString->Belt.Option.getExn
-    dcs->Belt.Array.forEach(dc => {
-      let dcData = switch dc.register {
-      | Config => Js.Exn.raiseError("Config contract should not be in dcsToStore")
-      | DC(data) => data
-      }
-      let entity: InternalTable.DynamicContractRegistry.t = {
-        id: InternalTable.DynamicContractRegistry.makeId(~chainId, ~contractAddress=dc.address),
-        chainId,
-        contractAddress: dc.address,
-        contractName: dc.contractName,
-        registeringEventBlockNumber: dc.startBlock,
-        registeringEventBlockTimestamp: dcData.registeringEventBlockTimestamp,
-        registeringEventLogIndex: dcData.registeringEventLogIndex,
-        registeringEventContractName: dcData.registeringEventContractName,
-        registeringEventName: dcData.registeringEventName,
-        registeringEventSrcAddress: dcData.registeringEventSrcAddress,
-      }
+  dcs->Belt.Array.forEach(dc => {
+    let dcData = switch dc.register {
+    | Config => Js.Exn.raiseError("Config contract should not be in dcsToStore")
+    | DC(data) => data
+    }
+    let entity: InternalTable.DynamicContractRegistry.t = {
+      id: InternalTable.DynamicContractRegistry.makeId(~chainId, ~contractAddress=dc.address),
+      chainId,
+      contractAddress: dc.address,
+      contractName: dc.contractName,
+      registeringEventBlockNumber: dc.startBlock,
+      registeringEventBlockTimestamp: dcData.registeringEventBlockTimestamp,
+      registeringEventLogIndex: dcData.registeringEventLogIndex,
+      registeringEventContractName: dcData.registeringEventContractName,
+      registeringEventName: dcData.registeringEventName,
+      registeringEventSrcAddress: dcData.registeringEventSrcAddress,
+    }
 
-      let eventIdentifier: Types.eventIdentifier = {
-        chainId,
-        blockTimestamp: dcData.registeringEventBlockTimestamp,
-        blockNumber: dc.startBlock,
-        logIndex: dcData.registeringEventLogIndex,
-      }
-      inMemTable->InMemoryTable.Entity.set(
-        Set(entity->InternalTable.DynamicContractRegistry.castToInternal)->Types.mkEntityUpdate(
-          ~eventIdentifier,
-          ~entityId=entity.id,
-        ),
-        ~shouldSaveHistory,
-      )
-    })
+    let eventIdentifier: Types.eventIdentifier = {
+      chainId,
+      blockTimestamp: dcData.registeringEventBlockTimestamp,
+      blockNumber: dc.startBlock,
+      logIndex: dcData.registeringEventLogIndex,
+    }
+    inMemTable->InMemoryTable.Entity.set(
+      Set(entity->InternalTable.DynamicContractRegistry.castToInternal)->Types.mkEntityUpdate(
+        ~eventIdentifier,
+        ~entityId=entity.id,
+      ),
+      ~shouldSaveHistory,
+    )
   })
 }
