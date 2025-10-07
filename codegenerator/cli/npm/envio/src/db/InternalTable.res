@@ -291,7 +291,7 @@ module Checkpoints = {
   let table = mkTable(
     "envio_checkpoints",
     ~fields=[
-      mkField((#id: field :> string), Integer, ~fieldSchema=S.bigint, ~isPrimaryKey),
+      mkField((#id: field :> string), Integer, ~fieldSchema=S.int, ~isPrimaryKey),
       mkField((#chain_id: field :> string), Integer, ~fieldSchema=S.int),
       mkField((#block_number: field :> string), Integer, ~fieldSchema=S.int),
       mkField((#block_hash: field :> string), Text, ~fieldSchema=S.null(S.string), ~isNullable),
@@ -328,6 +328,40 @@ module Checkpoints = {
 
   let makeCommitedCheckpointIdQuery = (~pgSchema) => {
     `SELECT COALESCE(MAX(${(#id: field :> string)}), ${initialCheckpointId->Belt.Int.toString}) AS id FROM "${pgSchema}"."${table.tableName}";`
+  }
+
+  let makeInsertCheckpointQuery = (~pgSchema) => {
+    `INSERT INTO "${pgSchema}"."${table.tableName}" ("${(#id: field :> string)}", "${(#chain_id: field :> string)}", "${(#block_number: field :> string)}", "${(#block_hash: field :> string)}", "${(#events_processed: field :> string)}")
+SELECT * FROM unnest($1::${(Integer :> string)}[],$2::${(Integer :> string)}[],$3::${(Integer :> string)}[],$4::${(Text :> string)}[],$5::${(Integer :> string)}[]);`
+  }
+
+  let insert = (
+    sql,
+    ~pgSchema,
+    ~checkpointIds,
+    ~checkpointChainIds,
+    ~checkpointBlockNumbers,
+    ~checkpointBlockHashes,
+    ~checkpointEventsProcessed,
+  ) => {
+    let query = makeInsertCheckpointQuery(~pgSchema)
+
+    sql
+    ->Postgres.preparedUnsafe(
+      query,
+      (
+        checkpointIds,
+        checkpointChainIds,
+        checkpointBlockNumbers,
+        checkpointBlockHashes,
+        checkpointEventsProcessed,
+      )->(
+        Utils.magic: (
+          (array<int>, array<int>, array<int>, array<Js.Null.t<string>>, array<int>)
+        ) => unknown
+      ),
+    )
+    ->Promise.ignoreValue
   }
 }
 

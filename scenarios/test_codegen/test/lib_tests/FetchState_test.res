@@ -2362,7 +2362,7 @@ describe("FetchState unit tests for specific cases", () => {
   )
 })
 
-describe("FetchState.filterAndSortForUnorderedBatch", () => {
+describe("FetchState.sortForUnorderedBatch", () => {
   it(
     "Filters out states without eligible items and sorts by earliest timestamp (public API)",
     () => {
@@ -2398,7 +2398,7 @@ describe("FetchState.filterAndSortForUnorderedBatch", () => {
       // Excluded: last queue item at block 11 (> latestFullyFetchedBlock = 10)
       let fsExcluded = makeFsWith(~latestBlock=10, ~queueBlocks=[11])
 
-      let prepared = FetchState.filterAndSortForUnorderedBatch(
+      let prepared = FetchState.sortForUnorderedBatch(
         [fsLate, fsExcluded, fsEarly],
         ~batchSizeTarget=3,
       )
@@ -2440,7 +2440,7 @@ describe("FetchState.filterAndSortForUnorderedBatch", () => {
     // Half-full batch (1 item) but earlier earliest item (block 1)
     let fsHalfEarlier = makeFsWith(~latestBlock=10, ~queueBlocks=[1])
 
-    let prepared = FetchState.filterAndSortForUnorderedBatch(
+    let prepared = FetchState.sortForUnorderedBatch(
       [fsHalfEarlier, fsFullLater],
       ~batchSizeTarget=2,
     )
@@ -2481,7 +2481,7 @@ describe("FetchState.filterAndSortForUnorderedBatch", () => {
     // Half-full (1 item) but earlier earliest item
     let fsHalfEarlier = makeFsWith(~latestBlock=10, ~queueBlocks=[1])
 
-    let prepared = FetchState.filterAndSortForUnorderedBatch(
+    let prepared = FetchState.sortForUnorderedBatch(
       [fsHalfEarlier, fsExactFull],
       ~batchSizeTarget=2,
     )

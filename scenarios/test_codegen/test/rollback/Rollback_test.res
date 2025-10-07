@@ -698,7 +698,7 @@ describe("E2E rollback tests", () => {
     )
   }
 
-  Async.it_only("Should re-enter reorg threshold on restart", async () => {
+  Async.it("Should re-enter reorg threshold on restart", async () => {
     let sourceMock1337 = M.Source.make(
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
       ~chain=#1337,
@@ -795,7 +795,7 @@ describe("E2E rollback tests", () => {
     )
   })
 
-  Async.it("Rollback of a single chain indexer", async () => {
+  Async.it_only("Rollback of a single chain indexer", async () => {
     let sourceMock = M.Source.make(
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
       ~chain=#1337,
