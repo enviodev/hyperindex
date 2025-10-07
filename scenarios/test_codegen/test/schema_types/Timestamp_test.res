@@ -38,6 +38,7 @@ describe("Load and save an entity with a Timestamp from DB", () => {
       inMemoryStore,
       shouldSaveHistory: false,
       isPreload: false,
+      eventOrigin: Internal.Historical,
     })->(Utils.magic: Internal.handlerContext => Types.loaderContext)
 
     let _ = handlerContext.entityWithTimestamp.get(testEntity.id)

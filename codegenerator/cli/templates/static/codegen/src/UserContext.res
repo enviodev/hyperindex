@@ -24,6 +24,7 @@ type contextParams = {
   persistence: Persistence.t,
   isPreload: bool,
   shouldSaveHistory: bool,
+  eventOrigin: Internal.eventOrigin,
 }
 
 let rec initEffect = (params: contextParams) => (
@@ -236,6 +237,7 @@ let handlerTraps: Utils.Proxy.traps<contextParams> = {
       )
 
     | "isPreload" => params.isPreload->Utils.magic
+    | "eventOrigin" => params.eventOrigin->Utils.magic
     | _ =>
       switch Entities.byName->Utils.Dict.dangerouslyGetNonOption(prop) {
       | Some(entityConfig) =>
@@ -246,6 +248,7 @@ let handlerTraps: Utils.Proxy.traps<contextParams> = {
           loadManager: params.loadManager,
           persistence: params.persistence,
           shouldSaveHistory: params.shouldSaveHistory,
+          eventOrigin: params.eventOrigin,
           entityConfig,
         }
         ->Utils.Proxy.make(entityTraps)
