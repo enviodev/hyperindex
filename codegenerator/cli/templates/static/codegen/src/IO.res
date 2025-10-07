@@ -234,11 +234,11 @@ let executeBatch = async (
             },
             ~eventIdentifier,
           ),
-          Promise.resolve(),
-          // sql->DbFunctions.EndOfBlockRangeScannedData.rollbackEndOfBlockRangeScannedDataForChain(
-          //   ~chainId=eventIdentifier.chainId,
-          //   ~knownBlockNumber=eventIdentifier.blockNumber,
-          // ),
+          sql->InternalTable.Checkpoints.deprecated_rollbackReorgedChainCheckpoints(
+            ~pgSchema=Db.publicSchema,
+            ~chainId=eventIdentifier.chainId,
+            ~knownBlockNumber=eventIdentifier.blockNumber,
+          ),
         )),
     )
   | None => None

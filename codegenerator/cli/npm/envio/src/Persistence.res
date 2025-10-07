@@ -18,6 +18,7 @@ type initialState = {
   cache: dict<effectCacheRecord>,
   chains: array<InternalTable.Chains.t>,
   checkpointId: int,
+  // Needed to keep reorg detection logic between restarts
   reorgCheckpoints: array<Internal.reorgCheckpoint>,
 }
 

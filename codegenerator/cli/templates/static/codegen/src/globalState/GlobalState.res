@@ -725,6 +725,10 @@ let injectedTaskReducer = (
       let safeReorgBlocks = state.chainManager->ChainManager.getSafeReorgBlocks
 
       if safeReorgBlocks.chainIds->Utils.Array.notEmpty {
+        await Db.sql->InternalTable.Checkpoints.deprecated_pruneStaleCheckpoints(
+          ~pgSchema=Env.Db.publicSchema,
+        )
+
         for idx in 0 to Entities.allEntities->Array.length - 1 {
           if idx !== 0 {
             // Add some delay between entities

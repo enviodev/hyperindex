@@ -299,31 +299,30 @@ module Checkpoints = {
     ],
   )
 
-  let makeGetReorgCheckpointsQuery = (~pgSchema, ~chains: array<Chains.t>): option<string> => {
-    // Build chain-specific conditions: (chain_id = X AND block_number > threshold)
-    // Skip chains where maxReorgDepth is 0 or reorgThreshold would be negative
-    let chainConditions =
-      chains
-      ->Belt.Array.keepMap(chain => {
-        let reorgThreshold = chain.blockHeight - chain.maxReorgDepth
-        if chain.maxReorgDepth === 0 || reorgThreshold < 0 {
-          None
-        } else {
-          Some(
-            `("${(#chain_id: field :> string)}" = ${chain.id->Belt.Int.toString} AND "${(#block_number: field :> string)}" > ${reorgThreshold->Belt.Int.toString})`,
-          )
-        }
-      })
-      ->Js.Array2.joinWith(" OR ")
-
-    if chainConditions === "" {
-      // No valid chains to check, don't run query
-      None
-    } else {
-      Some(
-        `SELECT "${(#id: field :> string)}", "${(#chain_id: field :> string)}", "${(#block_number: field :> string)}", "${(#block_hash: field :> string)}" FROM "${pgSchema}"."${table.tableName}" WHERE "${(#block_hash: field :> string)}" IS NOT NULL AND (${chainConditions});`,
-      )
-    }
+  let makeGetReorgCheckpointsQuery = (~pgSchema): string => {
+    // Use CTE to pre-filter chains and compute safe_block once per chain
+    // This is faster because:
+    // 1. Chains table is small, so filtering it first is cheap
+    // 2. safe_block is computed once per chain, not per checkpoint
+    // 3. Query planner can materialize the small CTE result before joining
+    `WITH reorg_chains AS (
+   SELECT 
+     "${(#id: Chains.field :> string)}" as id,
+     "${(#source_block: Chains.field :> string)}" - "${(#max_reorg_depth: Chains.field :> string)}" AS safe_block
+   FROM "${pgSchema}"."${Chains.table.tableName}"
+   WHERE "${(#max_reorg_depth: Chains.field :> string)}" > 0
+     AND "${(#progress_block: Chains.field :> string)}" > "${(#source_block: Chains.field :> string)}" - "${(#max_reorg_depth: Chains.field :> string)}"
+ )
+SELECT 
+  cp."${(#id: field :> string)}", 
+  cp."${(#chain_id: field :> string)}", 
+  cp."${(#block_number: field :> string)}", 
+  cp."${(#block_hash: field :> string)}"
+FROM "${pgSchema}"."${table.tableName}" cp
+INNER JOIN reorg_chains rc 
+  ON cp."${(#chain_id: field :> string)}" = rc.id
+WHERE cp."${(#block_hash: field :> string)}" IS NOT NULL
+  AND cp."${(#block_number: field :> string)}" > rc.safe_block;`
   }
 
   let makeCommitedCheckpointIdQuery = (~pgSchema) => {
@@ -360,6 +359,51 @@ SELECT * FROM unnest($1::${(Integer :> string)}[],$2::${(Integer :> string)}[],$
           (array<int>, array<int>, array<int>, array<Js.Null.t<string>>, array<int>)
         ) => unknown
       ),
+    )
+    ->Promise.ignoreValue
+  }
+
+  // This is how it used to work before checkpoints
+  // To make it correct, we need to delete checkpoints of all chains
+  let deprecated_rollbackReorgedChainCheckpoints = (
+    sql,
+    ~pgSchema,
+    ~chainId,
+    ~knownBlockNumber,
+  ) => {
+    sql
+    ->Postgres.preparedUnsafe(
+      `DELETE FROM "${pgSchema}"."${table.tableName}" WHERE "${(#chain_id: field :> string)}" = $1 AND "${(#block_number: field :> string)}" > $2;`,
+      (chainId, knownBlockNumber)->(Utils.magic: ((int, int)) => unknown),
+    )
+    ->Promise.ignoreValue
+  }
+
+
+  // This is how it used to work before checkpoints
+  // To make it correct, we need to first find
+  // a safe checkpoint - which is the min checkpoint outside all chains
+  // And then delete everything below it - the same for history items
+  let deprecated_pruneStaleCheckpoints = (sql, ~pgSchema) => {
+    // Delete checkpoints that are outside the reorg window:
+    // 1. All checkpoints for chains with max_reorg_depth = 0 (no reorg protection)
+    // 2. Checkpoints at or below safe_block for chains with max_reorg_depth > 0
+    sql
+    ->Postgres.unsafe(
+      `WITH chain_safe_blocks AS (
+     SELECT 
+       "${(#id: Chains.field :> string)}" as id,
+       "${(#max_reorg_depth: Chains.field :> string)}" as max_reorg_depth,
+       "${(#source_block: Chains.field :> string)}" - "${(#max_reorg_depth: Chains.field :> string)}" AS safe_block
+     FROM "${pgSchema}"."${Chains.table.tableName}"
+   )
+   DELETE FROM "${pgSchema}"."${table.tableName}" cp
+   USING chain_safe_blocks csb
+   WHERE cp."${(#chain_id: field :> string)}" = csb.id
+     AND (
+       csb.max_reorg_depth = 0
+       OR cp."${(#block_number: field :> string)}" <= csb.safe_block
+     );`,
     )
     ->Promise.ignoreValue
   }

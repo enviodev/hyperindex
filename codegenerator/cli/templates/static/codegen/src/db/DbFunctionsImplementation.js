@@ -1,20 +1,5 @@
 const TableModule = require("envio/src/db/Table.res.js");
-const Utils = require("envio/src/Utils.res.js");
 const { publicSchema } = require("./Db.res.js");
-
-// db operations for raw_events:
-const MAX_ITEMS_PER_QUERY = 500;
-
-const chunkBatchQuery = (queryToExecute) => async (sql, entityDataArray) => {
-  const responses = [];
-  // Split entityDataArray into chunks of MAX_ITEMS_PER_QUERY
-  for (let i = 0; i < entityDataArray.length; i += MAX_ITEMS_PER_QUERY) {
-    const chunk = entityDataArray.slice(i, i + MAX_ITEMS_PER_QUERY);
-    const pendingRes = queryToExecute(sql, chunk);
-    responses.push(pendingRes);
-  }
-  return Promise.all(responses);
-};
 
 module.exports.batchDeleteItemsInTable = (table, sql, pkArray) => {
   const primaryKeyFieldNames = TableModule.getPrimaryKeyFieldNames(table);
