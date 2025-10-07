@@ -2363,52 +2363,50 @@ describe("FetchState unit tests for specific cases", () => {
 })
 
 describe("FetchState.sortForUnorderedBatch", () => {
-  it(
-    "Filters out states without eligible items and sorts by earliest timestamp (public API)",
-    () => {
-      let mk = () => makeInitial()
-      let mkQuery = (fetchState: FetchState.t) => {
-        {
-          FetchState.partitionId: "0",
-          target: Head,
-          selection: fetchState.normalSelection,
-          addressesByContractName: Js.Dict.empty(),
-          fromBlock: 0,
-          indexingContracts: fetchState.indexingContracts,
-        }
+  it("Sorts by earliest timestamp. Chains without eligible items should go last", () => {
+    let mk = () => makeInitial()
+    let mkQuery = (fetchState: FetchState.t) => {
+      {
+        FetchState.partitionId: "0",
+        target: Head,
+        selection: fetchState.normalSelection,
+        addressesByContractName: Js.Dict.empty(),
+        fromBlock: 0,
+        indexingContracts: fetchState.indexingContracts,
       }
+    }
 
-      // Helper: create a fetch state with desired latestFetchedBlock and queue items via public API
-      let makeFsWith = (~latestBlock: int, ~queueBlocks: array<int>): FetchState.t => {
-        let fs0 = mk()
-        let query = mkQuery(fs0)
-        fs0
-        ->FetchState.handleQueryResult(
-          ~query,
-          ~latestFetchedBlock={blockNumber: latestBlock, blockTimestamp: latestBlock},
-          ~newItems=queueBlocks->Array.map(b => mockEvent(~blockNumber=b)),
-        )
-        ->Result.getExn
-      }
-
-      // Included: last queue item at block 1, latestFullyFetchedBlock = 10
-      let fsEarly = makeFsWith(~latestBlock=10, ~queueBlocks=[2, 1])
-      // Included: last queue item at block 5, latestFullyFetchedBlock = 10
-      let fsLate = makeFsWith(~latestBlock=10, ~queueBlocks=[5])
-      // Excluded: last queue item at block 11 (> latestFullyFetchedBlock = 10)
-      let fsExcluded = makeFsWith(~latestBlock=10, ~queueBlocks=[11])
-
-      let prepared = FetchState.sortForUnorderedBatch(
-        [fsLate, fsExcluded, fsEarly],
-        ~batchSizeTarget=3,
+    // Helper: create a fetch state with desired latestFetchedBlock and queue items via public API
+    let makeFsWith = (~latestBlock: int, ~queueBlocks: array<int>): FetchState.t => {
+      let fs0 = mk()
+      let query = mkQuery(fs0)
+      fs0
+      ->FetchState.handleQueryResult(
+        ~query,
+        ~latestFetchedBlock={blockNumber: latestBlock, blockTimestamp: latestBlock},
+        ~newItems=queueBlocks->Array.map(b => mockEvent(~blockNumber=b)),
       )
+      ->Result.getExn
+    }
 
-      Assert.deepEqual(
-        prepared->Array.map(fs => fs.buffer->Belt.Array.getUnsafe(0)->Internal.getItemBlockNumber),
-        [1, 5],
-      )
-    },
-  )
+    // Included: last queue item at block 1, latestFullyFetchedBlock = 10
+    let fsEarly = makeFsWith(~latestBlock=10, ~queueBlocks=[2, 1])
+    // Included: last queue item at block 5, latestFullyFetchedBlock = 10
+    let fsLate = makeFsWith(~latestBlock=10, ~queueBlocks=[5])
+    // Excluded: last queue item at block 11 (> latestFullyFetchedBlock = 10)
+    // UPD: Starting from 2.30.1+ it should go last instead of filtered
+    let fsExcluded = makeFsWith(~latestBlock=10, ~queueBlocks=[11])
+
+    let prepared = FetchState.sortForUnorderedBatch(
+      [fsLate, fsExcluded, fsEarly],
+      ~batchSizeTarget=3,
+    )
+
+    Assert.deepEqual(
+      prepared->Array.map(fs => fs.buffer->Belt.Array.getUnsafe(0)->Internal.getItemBlockNumber),
+      [1, 5, 11],
+    )
+  })
 
   it("Prioritizes full batches over half full ones", () => {
     let mk = () => makeInitial()

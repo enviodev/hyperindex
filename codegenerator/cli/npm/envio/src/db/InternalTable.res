@@ -306,13 +306,13 @@ module Checkpoints = {
     // 2. safe_block is computed once per chain, not per checkpoint
     // 3. Query planner can materialize the small CTE result before joining
     `WITH reorg_chains AS (
-   SELECT 
-     "${(#id: Chains.field :> string)}" as id,
-     "${(#source_block: Chains.field :> string)}" - "${(#max_reorg_depth: Chains.field :> string)}" AS safe_block
-   FROM "${pgSchema}"."${Chains.table.tableName}"
-   WHERE "${(#max_reorg_depth: Chains.field :> string)}" > 0
-     AND "${(#progress_block: Chains.field :> string)}" > "${(#source_block: Chains.field :> string)}" - "${(#max_reorg_depth: Chains.field :> string)}"
- )
+  SELECT 
+    "${(#id: Chains.field :> string)}" as id,
+    "${(#source_block: Chains.field :> string)}" - "${(#max_reorg_depth: Chains.field :> string)}" AS safe_block
+  FROM "${pgSchema}"."${Chains.table.tableName}"
+  WHERE "${(#max_reorg_depth: Chains.field :> string)}" > 0
+    AND "${(#progress_block: Chains.field :> string)}" > "${(#source_block: Chains.field :> string)}" - "${(#max_reorg_depth: Chains.field :> string)}"
+)
 SELECT 
   cp."${(#id: field :> string)}", 
   cp."${(#chain_id: field :> string)}", 
@@ -378,7 +378,6 @@ SELECT * FROM unnest($1::${(Integer :> string)}[],$2::${(Integer :> string)}[],$
     )
     ->Promise.ignoreValue
   }
-
 
   // This is how it used to work before checkpoints
   // To make it correct, we need to first find

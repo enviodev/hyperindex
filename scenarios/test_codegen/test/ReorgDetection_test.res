@@ -325,10 +325,11 @@ describe("Validate reorg detection functions", () => {
       blockHash: "0x10-invalid",
     }
 
-    let hashes = mock([(10, "0x10-invalid")], ~shouldRollbackOnReorg=false)
-
     Assert.deepEqual(
-      hashes->ReorgDetection.registerReorgGuard(~reorgGuard, ~currentBlockHeight=10),
+      mock([(10, "0x10-invalid")], ~shouldRollbackOnReorg=true)->ReorgDetection.registerReorgGuard(
+        ~reorgGuard,
+        ~currentBlockHeight=10,
+      ),
       (
         mock([(10, "0x10-invalid")], ~detectedReorgBlock=scannedBlock),
         ReorgDetected({
@@ -339,9 +340,12 @@ describe("Validate reorg detection functions", () => {
     )
 
     Assert.deepEqual(
-      hashes->ReorgDetection.registerReorgGuard(~reorgGuard, ~currentBlockHeight=10),
+      mock([(10, "0x10-invalid")], ~shouldRollbackOnReorg=false)->ReorgDetection.registerReorgGuard(
+        ~reorgGuard,
+        ~currentBlockHeight=10,
+      ),
       (
-        mock([]),
+        mock([], ~shouldRollbackOnReorg=false),
         ReorgDetected({
           scannedBlock,
           receivedBlock: reorgGuard.rangeLastBlock,

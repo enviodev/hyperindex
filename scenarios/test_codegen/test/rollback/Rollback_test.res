@@ -165,12 +165,8 @@ describe("Single Chain Simple Rollback", () => {
     )
 
     await dispatchAllTasksInitalChain()
-    // let block2 = Mock.mockChainData->MockChainData.getBlock(~blockNumber=2)->Option.getUnsafe
 
-    Assert.deepEqual(
-      tasks.contents->Utils.getVariantsTags,
-      ["UpdateEndOfBlockRangeScannedData", "ProcessPartitionQueryResponse"],
-    )
+    Assert.deepEqual(tasks.contents->Utils.getVariantsTags, ["ProcessPartitionQueryResponse"])
     // Assert.deepEqual(
     //   tasks.contents->Js.Array2.unsafe_get(0),
     //   UpdateEndOfBlockRangeScannedData({
@@ -232,11 +228,7 @@ describe("Single Chain Simple Rollback", () => {
 
     await dispatchAllTasksInitalChain()
 
-    // let block2 = Mock.mockChainData->MockChainData.getBlock(~blockNumber=2)->Option.getUnsafe
-    Assert.deepEqual(
-      tasks.contents->Utils.getVariantsTags,
-      ["UpdateEndOfBlockRangeScannedData", "ProcessPartitionQueryResponse"],
-    )
+    Assert.deepEqual(tasks.contents->Utils.getVariantsTags, ["ProcessPartitionQueryResponse"])
     // Assert.deepEqual(
     //   tasks.contents->Js.Array2.unsafe_get(0),
     //   UpdateEndOfBlockRangeScannedData({
@@ -323,15 +315,7 @@ describe("Single Chain Simple Rollback", () => {
 
     await dispatchAllTasksReorgChain()
 
-    // let block2 =
-    //   Mock.mockChainDataReorg
-    //   ->MockChainData.getBlock(~blockNumber=2)
-    //   ->Option.getUnsafe
-
-    Assert.deepEqual(
-      tasks.contents->Utils.getVariantsTags,
-      ["UpdateEndOfBlockRangeScannedData", "ProcessPartitionQueryResponse"],
-    )
+    Assert.deepEqual(tasks.contents->Utils.getVariantsTags, ["ProcessPartitionQueryResponse"])
     // Assert.deepEqual(
     //   tasks.contents->Js.Array2.unsafe_get(0),
     //   GlobalState.UpdateEndOfBlockRangeScannedData({
@@ -355,16 +339,10 @@ describe("Single Chain Simple Rollback", () => {
 
     await dispatchAllTasksReorgChain()
 
-    // let block4 =
-    //   Mock.mockChainDataReorg
-    //   ->MockChainData.getBlock(~blockNumber=4)
-    //   ->Option.getUnsafe
-
     Assert.deepEqual(
       tasks.contents->Utils.getVariantsTags,
       [
         "NextQuery",
-        "UpdateEndOfBlockRangeScannedData",
         "ProcessPartitionQueryResponse",
         "UpdateChainMetaDataAndCheckForExit",
         "ProcessEventBatch",
