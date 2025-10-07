@@ -1,7 +1,8 @@
 open Belt
 
 type chain = ChainMap.Chain.t
-type rollbackState = NoRollback | RollingBack(chain) | RollbackInMemStore(InMemoryStore.t)
+type rollbackState =
+  NoRollback | PreparingRollback(chain) | PreparedRollback({diffInMemoryStore: InMemoryStore.t})
 
 module WriteThrottlers = {
   type t = {
@@ -66,7 +67,7 @@ let make = (~config: Config.t, ~chainManager: ChainManager.t, ~shouldUseTui=fals
 
 let getId = self => self.id
 let incrementId = self => {...self, id: self.id + 1}
-let setRollingBack = (self, chain) => {...self, rollbackState: RollingBack(chain)}
+let setRollingBack = (self, chain) => {...self, rollbackState: PreparingRollback(chain)}
 let setChainManager = (self, chainManager) => {
   ...self,
   chainManager,
@@ -74,7 +75,7 @@ let setChainManager = (self, chainManager) => {
 
 let isRollingBack = state =>
   switch state.rollbackState {
-  | RollingBack(_) => true
+  | PreparingRollback(_) => true
   | _ => false
   }
 
@@ -289,6 +290,10 @@ let updateProgressedChains = (chainManager: ChainManager.t, ~batch: Batch.t) => 
 
   {
     ...chainManager,
+    commitedCheckpointId: switch batch.checkpointIds->Utils.Array.last {
+    | Some(checkpointId) => checkpointId
+    | None => chainManager.commitedCheckpointId
+    },
     chainFetchers,
   }
 }
@@ -641,7 +646,7 @@ let actionReducer = (state: t, action: action) => {
       [NextQuery(CheckAllChains)],
     )
   | SetRollbackState(inMemoryStore, chainManager) => (
-      {...state, rollbackState: RollbackInMemStore(inMemoryStore), chainManager},
+      {...state, rollbackState: PreparedRollback({diffInMemoryStore: inMemoryStore}), chainManager},
       [NextQuery(CheckAllChains), ProcessEventBatch],
     )
   | ResetRollbackState => ({...state, rollbackState: NoRollback}, [])
@@ -659,7 +664,7 @@ let actionReducer = (state: t, action: action) => {
 
 let invalidatedActionReducer = (state: t, action: action) =>
   switch (state, action) {
-  | ({rollbackState: RollingBack(_)}, EventBatchProcessed(_)) =>
+  | ({rollbackState: PreparingRollback(_)}, EventBatchProcessed(_)) =>
     Logging.info("Finished processing batch before rollback, actioning rollback")
     (
       {...state, currentlyProcessingBatch: false, processedBatches: state.processedBatches + 1},
@@ -845,7 +850,7 @@ let injectedTaskReducer = (
             totalEventsProcessed: chainAfterBatch.totalEventsProcessed,
           }),
         )
-        // FIXME: When state.rollbackState is RollbackInMemStore
+        // FIXME: When state.rollbackState is PreparedRollback
         // If we increase progress in this case (no items)
         // and then indexer restarts - there's a high chance of missing
         // the rollback. This should be tested and fixed.
@@ -866,9 +871,9 @@ let injectedTaskReducer = (
         //In the case of a rollback, use the provided in memory store
         //With rolled back values
         let rollbackInMemStore = switch state.rollbackState {
-        | RollbackInMemStore(inMemoryStore) => Some(inMemoryStore)
+        | PreparedRollback({diffInMemoryStore}) => Some(diffInMemoryStore)
         | NoRollback
-        | RollingBack(
+        | PreparingRollback(
           _,
         ) /* This is an impossible case due to the surrounding if statement check */ =>
           None
@@ -930,7 +935,7 @@ let injectedTaskReducer = (
   | Rollback =>
     //If it isn't processing a batch currently continue with rollback otherwise wait for current batch to finish processing
     switch state {
-    | {currentlyProcessingBatch: false, rollbackState: RollingBack(reorgChain)} =>
+    | {currentlyProcessingBatch: false, rollbackState: PreparingRollback(reorgChain)} =>
       let startTime = Hrtime.makeTimer()
 
       let chainFetcher = state.chainManager.chainFetchers->ChainMap.get(reorgChain)
@@ -1000,6 +1005,10 @@ let injectedTaskReducer = (
                 )
               : cf.reorgDetection,
             fetchState,
+            committedProgressBlockNumber: PervasivesU.min(
+              cf.committedProgressBlockNumber,
+              firstChangeEvent.blockNumber - 1,
+            ),
           }
           //On other chains, filter out evennts based on the first change present on the chain after the reorg
           rolledBackCf->ChainFetcher.addProcessingFilter(

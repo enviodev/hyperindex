@@ -795,7 +795,7 @@ describe("E2E rollback tests", () => {
     )
   })
 
-  Async.it_only("Rollback of a single chain indexer", async () => {
+  Async.it("Rollback of a single chain indexer", async () => {
     let sourceMock = M.Source.make(
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
       ~chain=#1337,

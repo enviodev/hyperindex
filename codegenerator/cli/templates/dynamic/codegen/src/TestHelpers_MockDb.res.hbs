@@ -431,7 +431,15 @@ and makeProcessEvents = (mockDb: t, ~chainId=?) => async (
                 ~chainId=processingChainId,
                 ~startBlock=0,
                 ~endBlock=None,
-                ~eventConfigs=[],
+                ~eventConfigs=[
+                ~eventConfigs=[
+                  // We don't care about the actual config here,
+                  // just a reference, so FetchState doesn't complain
+                  // about nothing to fetch
+                  {
+                    "id": "test",
+                  }->Obj.magic,
+                ],
                 ~contracts=[],
                 ~maxAddrInPartition=0,
                 ~targetBufferSize=0,

@@ -317,8 +317,8 @@ module Indexer = {
         Promise.makeAsync(async (resolve, _reject) => {
           while (
             switch (gsManager->GlobalStateManager.getState).rollbackState {
-            | RollbackInMemStore(_) => false
-            | RollingBack(_)
+            | PreparedRollback(_) => false
+            | PreparingRollback(_)
             | NoRollback => true
             }
           ) {
