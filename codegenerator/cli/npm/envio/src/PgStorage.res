@@ -709,6 +709,7 @@ let make = (
       cache,
       reorgCheckpoints: [],
       chains: chainConfigs->Js.Array2.map(InternalTable.Chains.initialFromConfig),
+      checkpointId: InternalTable.Checkpoints.initialCheckpointId,
     }
   }
 
@@ -896,14 +897,18 @@ let make = (
   }
 
   let resumeInitialState = async (): Persistence.initialState => {
-    let (cache, chains) = await Promise.all2((
+    let (cache, chains, checkpointIdResult) = await Promise.all3((
       restoreEffectCache(~withUpload=false),
       sql
       ->Postgres.unsafe(
         makeLoadAllQuery(~pgSchema, ~tableName=InternalTable.Chains.table.tableName),
       )
       ->(Utils.magic: promise<array<unknown>> => promise<array<InternalTable.Chains.t>>),
+      sql
+      ->Postgres.unsafe(InternalTable.Checkpoints.makeCommitedCheckpointIdQuery(~pgSchema))
+      ->(Utils.magic: promise<array<unknown>> => promise<array<{"id": int}>>),
     ))
+    let checkpointId = (checkpointIdResult->Belt.Array.getUnsafe(0))["id"]
 
     let reorgCheckpoints = switch InternalTable.Checkpoints.makeGetReorgCheckpointsQuery(
       ~pgSchema,
@@ -921,6 +926,7 @@ let make = (
       reorgCheckpoints,
       cache,
       chains,
+      checkpointId,
     }
   }
 

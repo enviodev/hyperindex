@@ -1252,7 +1252,7 @@ let isReadyToEnterReorgThreshold = (
   buffer->Utils.Array.isEmpty
 }
 
-let filterAndSortForUnorderedBatch = {
+let sortForUnorderedBatch = {
   let hasFullBatch = ({buffer} as fetchState: t, ~batchSizeTarget) => {
     switch buffer->Belt.Array.get(batchSizeTarget - 1) {
     | Some(item) => item->Internal.getItemBlockNumber <= fetchState->bufferBlockNumber
@@ -1262,20 +1262,24 @@ let filterAndSortForUnorderedBatch = {
 
   (fetchStates: array<t>, ~batchSizeTarget: int) => {
     fetchStates
-    ->Array.keepU(hasReadyItem)
+    ->Array.copy
     ->Js.Array2.sortInPlaceWith((a: t, b: t) => {
       switch (a->hasFullBatch(~batchSizeTarget), b->hasFullBatch(~batchSizeTarget)) {
       | (true, true)
       | (false, false) =>
-        // Use unsafe since we filtered out all queues without batch items
-        switch (a.buffer->Belt.Array.getUnsafe(0), b.buffer->Belt.Array.getUnsafe(0)) {
-        | (Event({timestamp: aTimestamp}), Event({timestamp: bTimestamp})) =>
+        switch (a.buffer->Belt.Array.get(0), b.buffer->Belt.Array.get(0)) {
+        | (Some(Event({timestamp: aTimestamp})), Some(Event({timestamp: bTimestamp}))) =>
           aTimestamp - bTimestamp
-        | (Block(_), _)
-        | (_, Block(_)) =>
+        | (Some(Block(_)), _)
+        | (_, Some(Block(_))) =>
           // Currently block items don't have a timestamp,
           // so we sort chains with them in a random order
           Js.Math.random_int(-1, 1)
+        // We don't care about the order of chains with no items
+        // Just keep them to increase the progress block number when relevant
+        | (Some(_), None) => -1
+        | (None, Some(_)) => 1
+        | (None, None) => 0
         }
       | (true, false) => -1
       | (false, true) => 1

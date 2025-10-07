@@ -17,6 +17,7 @@ type initialState = {
   cleanRun: bool,
   cache: dict<effectCacheRecord>,
   chains: array<InternalTable.Chains.t>,
+  checkpointId: int,
   reorgCheckpoints: array<Internal.reorgCheckpoint>,
 }
 

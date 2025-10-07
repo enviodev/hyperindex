@@ -392,6 +392,7 @@ and makeProcessEvents = (mockDb: t, ~chainId=?) => async (
         cache: Js.Dict.empty(),
         chains: [],
         reorgCheckpoints: [],
+        checkpointId: 0,
       }),
     }
     let config = {

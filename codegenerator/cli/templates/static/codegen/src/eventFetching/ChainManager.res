@@ -78,7 +78,7 @@ let makeFromDbState = async (~initialState: Persistence.initialState, ~config: C
   let chainFetchers = ChainMap.fromArrayUnsafe(chainFetchersArr)
 
   {
-    commitedCheckpointId: 0, // FIXME: provide value from db
+    commitedCheckpointId: initialState.checkpointId,
     multichain: config.multichain,
     chainFetchers,
     isInReorgThreshold,

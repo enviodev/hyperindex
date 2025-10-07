@@ -698,6 +698,103 @@ describe("E2E rollback tests", () => {
     )
   }
 
+  Async.it_only("Should re-enter reorg threshold on restart", async () => {
+    let sourceMock1337 = M.Source.make(
+      [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
+      ~chain=#1337,
+    )
+    let sourceMock100 = M.Source.make(
+      [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
+      ~chain=#100,
+    )
+    let chains = [
+      {
+        M.Indexer.chain: #1337,
+        sources: [sourceMock1337.source],
+      },
+      {
+        M.Indexer.chain: #100,
+        sources: [sourceMock100.source],
+      },
+    ]
+    let indexerMock = await M.Indexer.make(~chains)
+    await Utils.delay(0)
+
+    let _ = await Promise.all2((
+      M.Helper.initialEnterReorgThreshold(~sourceMock=sourceMock1337),
+      M.Helper.initialEnterReorgThreshold(~sourceMock=sourceMock100),
+    ))
+
+    Assert.deepEqual(
+      sourceMock1337.getItemsOrThrowCalls->Utils.Array.last,
+      Some({
+        "fromBlock": 101,
+        "toBlock": None,
+        "retry": 0,
+      }),
+      ~message="Should enter reorg threshold and request now to the latest block",
+    )
+    sourceMock1337.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=110)
+    await indexerMock.getBatchWritePromise()
+
+    Assert.deepEqual(
+      await indexerMock.metric("envio_reorg_threshold"),
+      [{value: "1", labels: Js.Dict.empty()}],
+    )
+
+    let indexerMock = await M.Indexer.make(~chains, ~reset=false)
+
+    sourceMock1337.getHeightOrThrowCalls->Utils.Array.clearInPlace
+    sourceMock1337.getItemsOrThrowCalls->Utils.Array.clearInPlace
+
+    await Utils.delay(0)
+
+    Assert.deepEqual(
+      await indexerMock.metric("envio_reorg_threshold"),
+      [{value: "0", labels: Js.Dict.empty()}],
+    )
+
+    Assert.deepEqual(
+      sourceMock1337.getHeightOrThrowCalls->Array.length,
+      1,
+      ~message="should have called getHeightOrThrow on restart",
+    )
+    sourceMock1337.resolveGetHeightOrThrow(300)
+    await Utils.delay(0)
+    await Utils.delay(0)
+
+    Assert.deepEqual(
+      sourceMock1337.getItemsOrThrowCalls->Utils.Array.last,
+      Some({
+        "fromBlock": 111,
+        "toBlock": None,
+        "retry": 0,
+      }),
+      ~message="Should enter reorg threshold for the second time and request now to the latest block",
+    )
+    sourceMock1337.resolveGetItemsOrThrow(
+      [],
+      ~latestFetchedBlockNumber=200,
+      ~currentBlockHeight=320,
+    )
+    await indexerMock.getBatchWritePromise()
+
+    Assert.deepEqual(
+      sourceMock1337.getItemsOrThrowCalls->Utils.Array.last,
+      Some({
+        "fromBlock": 201,
+        "toBlock": None,
+        "retry": 0,
+      }),
+      ~message="Should enter reorg threshold for the second time and request now to the latest block",
+    )
+
+    Assert.deepEqual(
+      await indexerMock.metric("envio_reorg_threshold"),
+      [{value: "0", labels: Js.Dict.empty()}],
+    )
+  })
+
   Async.it("Rollback of a single chain indexer", async () => {
     let sourceMock = M.Source.make(
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
@@ -1003,7 +1100,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
     )
   })
 
-  Async.it_only("Rollback of unordered multichain indexer (single entity id change)", async () => {
+  Async.it("Rollback of unordered multichain indexer (single entity id change)", async () => {
     let sourceMock1337 = M.Source.make(
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
       ~chain=#1337,
@@ -1025,8 +1122,6 @@ This might be wrong after we start exposing a block hash for progress block.`,
       ],
     )
     await Utils.delay(0)
-
-    Js.log("1")
 
     let _ = await Promise.all2((
       M.Helper.initialEnterReorgThreshold(~sourceMock=sourceMock1337),
@@ -1218,8 +1313,6 @@ Sorted for the batch for block number 101
 Different batches for block number 102`,
     )
 
-    Js.log("2")
-
     // Should trigger rollback
     sourceMock1337.resolveGetItemsOrThrow(
       [],
@@ -1230,8 +1323,6 @@ Different batches for block number 102`,
     )
     await Utils.delay(0)
     await Utils.delay(0)
-
-    Js.log("3")
 
     Assert.deepEqual(
       sourceMock1337.getBlockHashesCalls,
@@ -1247,8 +1338,6 @@ Different batches for block number 102`,
     ])
 
     await indexerMock.getRollbackReadyPromise()
-
-    Js.log("4")
 
     Assert.deepEqual(
       (
@@ -1295,8 +1384,6 @@ Different batches for block number 102`,
     ])
 
     await indexerMock.getBatchWritePromise()
-
-    Js.log("5")
 
     Assert.deepEqual(
       await Promise.all2((

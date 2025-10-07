@@ -405,7 +405,7 @@ let prepareUnorderedBatch = (
     chainsBeforeBatch
     ->ChainMap.values
     ->Js.Array2.map(chainBeforeBatch => chainBeforeBatch.fetchState)
-    ->FetchState.filterAndSortForUnorderedBatch(~batchSizeTarget)
+    ->FetchState.sortForUnorderedBatch(~batchSizeTarget)
 
   let chainIdx = ref(0)
   let preparedNumber = preparedFetchStates->Array.length

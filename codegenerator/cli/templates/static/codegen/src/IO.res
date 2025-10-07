@@ -257,9 +257,7 @@ let executeBatch = async (
             sql =>
               sql->InternalTable.Chains.setProgressedChains(
                 ~pgSchema=Db.publicSchema,
-                ~progressedChains=batch
-                ->Batch.progressedChainsById
-                ->Utils.Dict.mapValuesToArray((
+                ~progressedChains=batch.progressedChainsById->Utils.Dict.mapValuesToArray((
                   chainAfterBatch
                 ): InternalTable.Chains.progressedChain => {
                   chainId: chainAfterBatch.fetchState.chainId,

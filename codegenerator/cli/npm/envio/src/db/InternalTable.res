@@ -286,6 +286,8 @@ module Checkpoints = {
     eventsProcessed: int,
   }
 
+  let initialCheckpointId = 0
+
   let table = mkTable(
     "envio_checkpoints",
     ~fields=[
@@ -322,6 +324,10 @@ module Checkpoints = {
         `SELECT "${(#id: field :> string)}", "${(#chain_id: field :> string)}", "${(#block_number: field :> string)}", "${(#block_hash: field :> string)}" FROM "${pgSchema}"."${table.tableName}" WHERE "${(#block_hash: field :> string)}" IS NOT NULL AND (${chainConditions});`,
       )
     }
+  }
+
+  let makeCommitedCheckpointIdQuery = (~pgSchema) => {
+    `SELECT COALESCE(MAX(${(#id: field :> string)}), ${initialCheckpointId->Belt.Int.toString}) AS id FROM "${pgSchema}"."${table.tableName}";`
   }
 }
 
