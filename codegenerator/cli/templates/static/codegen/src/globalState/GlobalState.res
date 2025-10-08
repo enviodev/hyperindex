@@ -2,7 +2,15 @@ open Belt
 
 type chain = ChainMap.Chain.t
 type rollbackState =
-  NoRollback | PreparingRollback(chain) | PreparedRollback({diffInMemoryStore: InMemoryStore.t})
+  | NoRollback
+  | ReorgDetected({chain: chain})
+  | FindingReorgDepth
+  | FoundReorgDepth({
+      chain: chain,
+      lastKnownValidBlockNumber: int,
+      lastKnownValidBlockTimestamp: int,
+    })
+  | RollbackReady({diffInMemoryStore: InMemoryStore.t})
 
 module WriteThrottlers = {
   type t = {
@@ -67,16 +75,20 @@ let make = (~config: Config.t, ~chainManager: ChainManager.t, ~shouldUseTui=fals
 
 let getId = self => self.id
 let incrementId = self => {...self, id: self.id + 1}
-let setRollingBack = (self, chain) => {...self, rollbackState: PreparingRollback(chain)}
 let setChainManager = (self, chainManager) => {
   ...self,
   chainManager,
 }
 
-let isRollingBack = state =>
+let isPreparingRollback = state =>
   switch state.rollbackState {
-  | PreparingRollback(_) => true
-  | _ => false
+  | NoRollback
+  | // We already updated fetch states here
+  // so we treat it as not rolling back
+  RollbackReady(_) => false
+  | FindingReorgDepth
+  | ReorgDetected(_)
+  | FoundReorgDepth(_) => true
   }
 
 type partitionQueryResponse = {
@@ -107,6 +119,12 @@ type action =
   | FinishWaitingForNewBlock({chain: chain, currentBlockHeight: int})
   | EventBatchProcessed({batch: Batch.t})
   | StartProcessingBatch
+  | StartFindingReorgDepth
+  | FindReorgDepth({
+      chain: chain,
+      lastKnownValidBlockNumber: int,
+      lastKnownValidBlockTimestamp: int,
+    })
   | EnterReorgThreshold
   | UpdateQueues({
       progressedChainsById: dict<Batch.chainAfterBatch>,
@@ -117,7 +135,6 @@ type action =
   | SuccessExit
   | ErrorExit(ErrorHandling.t)
   | SetRollbackState(InMemoryStore.t, ChainManager.t)
-  | ResetRollbackState
 
 type queryChain = CheckAllChains | Chain(chain)
 type task =
@@ -357,7 +374,7 @@ let validatePartitionQueryResponse = (
     },
   }
 
-  let isRollback = switch reorgResult {
+  let isRollbackOnReorg = switch reorgResult {
   | ReorgDetected(reorgDetected) => {
       chainFetcher.logger->Logging.childInfo(
         reorgDetected->ReorgDetection.reorgDetectedToLogParams(
@@ -374,8 +391,14 @@ let validatePartitionQueryResponse = (
   | NoReorg => false
   }
 
-  if isRollback {
-    (nextState->incrementId->setRollingBack(chain), [Rollback])
+  if isRollbackOnReorg {
+    (
+      {
+        ...nextState->incrementId,
+        rollbackState: ReorgDetected({chain: chain}),
+      },
+      [Rollback],
+    )
   } else {
     (nextState, [ProcessPartitionQueryResponse(partitionQueryResponse)])
   }
@@ -563,6 +586,9 @@ let actionReducer = (state: t, action: action) => {
 
     let state = {
       ...state,
+      // Can safely reset rollback state, since overwrite is not possible.
+      // If rollback is pending, the EventBatchProcessed will be handled by the invalid action reducer instead.
+      rollbackState: NoRollback,
       chainManager: state.chainManager->updateProgressedChains(~batch),
       currentlyProcessingBatch: false,
       processedBatches: state.processedBatches + 1,
@@ -593,6 +619,18 @@ let actionReducer = (state: t, action: action) => {
     )
 
   | StartProcessingBatch => ({...state, currentlyProcessingBatch: true}, [])
+  | StartFindingReorgDepth => ({...state, rollbackState: FindingReorgDepth}, [])
+  | FindReorgDepth({chain, lastKnownValidBlockNumber, lastKnownValidBlockTimestamp}) => (
+      {
+        ...state,
+        rollbackState: FoundReorgDepth({
+          chain,
+          lastKnownValidBlockNumber,
+          lastKnownValidBlockTimestamp,
+        }),
+      },
+      [Rollback],
+    )
   | EnterReorgThreshold =>
     Logging.info("Reorg threshold reached")
     Prometheus.ReorgThreshold.set(~isInReorgThreshold=true)
@@ -646,10 +684,9 @@ let actionReducer = (state: t, action: action) => {
       [NextQuery(CheckAllChains)],
     )
   | SetRollbackState(inMemoryStore, chainManager) => (
-      {...state, rollbackState: PreparedRollback({diffInMemoryStore: inMemoryStore}), chainManager},
+      {...state, rollbackState: RollbackReady({diffInMemoryStore: inMemoryStore}), chainManager},
       [NextQuery(CheckAllChains), ProcessEventBatch],
     )
-  | ResetRollbackState => ({...state, rollbackState: NoRollback}, [])
   | SuccessExit => {
       Logging.info("Exiting with success")
       NodeJs.process->NodeJs.exitWithCode(Success)
@@ -663,14 +700,18 @@ let actionReducer = (state: t, action: action) => {
 }
 
 let invalidatedActionReducer = (state: t, action: action) =>
-  switch (state, action) {
-  | ({rollbackState: PreparingRollback(_)}, EventBatchProcessed(_)) =>
+  switch action {
+  | EventBatchProcessed(_) if state->isPreparingRollback =>
     Logging.info("Finished processing batch before rollback, actioning rollback")
     (
-      {...state, currentlyProcessingBatch: false, processedBatches: state.processedBatches + 1},
+      {
+        ...state,
+        currentlyProcessingBatch: false,
+        processedBatches: state.processedBatches + 1,
+      },
       [Rollback],
     )
-  | (_, ErrorExit(_)) => actionReducer(state, action)
+  | ErrorExit(_) => actionReducer(state, action)
   | _ =>
     Logging.info({
       "msg": "Invalidated action discarded",
@@ -688,7 +729,7 @@ let checkAndFetchForChain = (
   ~dispatchAction,
 ) => async chain => {
   let chainFetcher = state.chainManager.chainFetchers->ChainMap.get(chain)
-  if !isRollingBack(state) {
+  if !isPreparingRollback(state) {
     let {currentBlockHeight, fetchState} = chainFetcher
 
     await chainFetcher.sourceManager->SourceManager.fetchNext(
@@ -804,9 +845,10 @@ let injectedTaskReducer = (
         ->Promise.all
     }
   | ProcessEventBatch =>
-    if !state.currentlyProcessingBatch && !isRollingBack(state) {
+    if !state.currentlyProcessingBatch && !isPreparingRollback(state) {
       let batch =
         state.chainManager->ChainManager.createBatch(~batchSizeTarget=state.config.batchSize)
+
       let progressedChainsById = batch.progressedChainsById
       let totalBatchSize = batch.totalBatchSize
 
@@ -871,12 +913,8 @@ let injectedTaskReducer = (
         //In the case of a rollback, use the provided in memory store
         //With rolled back values
         let rollbackInMemStore = switch state.rollbackState {
-        | PreparedRollback({diffInMemoryStore}) => Some(diffInMemoryStore)
-        | NoRollback
-        | PreparingRollback(
-          _,
-        ) /* This is an impossible case due to the surrounding if statement check */ =>
-          None
+        | RollbackReady({diffInMemoryStore}) => Some(diffInMemoryStore)
+        | _ => None
         }
 
         let inMemoryStore = rollbackInMemStore->Option.getWithDefault(InMemoryStore.make())
@@ -920,11 +958,6 @@ let injectedTaskReducer = (
             exn->ErrorHandling.make(~msg="A top level unexpected error occurred during processing")
           dispatchAction(ErrorExit(errHandler))
         | res =>
-          if rollbackInMemStore->Option.isSome {
-            //if the batch was executed with a rollback inMemoryStore
-            //reset the rollback state once the batch has been processed
-            dispatchAction(ResetRollbackState)
-          }
           switch res {
           | Ok() => dispatchAction(EventBatchProcessed({batch: batch}))
           | Error(errHandler) => dispatchAction(ErrorExit(errHandler))
@@ -935,16 +968,38 @@ let injectedTaskReducer = (
   | Rollback =>
     //If it isn't processing a batch currently continue with rollback otherwise wait for current batch to finish processing
     switch state {
-    | {currentlyProcessingBatch: false, rollbackState: PreparingRollback(reorgChain)} =>
+    | {rollbackState: NoRollback | RollbackReady(_)} =>
+      Js.Exn.raiseError("Internal error: Rollback initiated with invalid state")
+    | {rollbackState: ReorgDetected({chain})} => {
+        let chainFetcher = state.chainManager.chainFetchers->ChainMap.get(chain)
+
+        dispatchAction(StartFindingReorgDepth)
+        let {
+          blockNumber: lastKnownValidBlockNumber,
+          blockTimestamp: lastKnownValidBlockTimestamp,
+        }: ReorgDetection.blockDataWithTimestamp =
+          await chainFetcher->getLastKnownValidBlock
+
+        dispatchAction(
+          FindReorgDepth({chain, lastKnownValidBlockNumber, lastKnownValidBlockTimestamp}),
+        )
+      }
+    // We can come to this case when event batch finished processing
+    // while we are still finding the reorg depth
+    // Do nothing here, just wait for reorg depth to be found
+    | {rollbackState: FindingReorgDepth} => ()
+    | {rollbackState: FoundReorgDepth(_), currentlyProcessingBatch: true} =>
+      Logging.info("Waiting for batch to finish processing before executing rollback")
+    | {
+        rollbackState: FoundReorgDepth({
+          chain: reorgChain,
+          lastKnownValidBlockNumber,
+          lastKnownValidBlockTimestamp,
+        }),
+      } =>
       let startTime = Hrtime.makeTimer()
 
       let chainFetcher = state.chainManager.chainFetchers->ChainMap.get(reorgChain)
-
-      let {
-        blockNumber: lastKnownValidBlockNumber,
-        blockTimestamp: lastKnownValidBlockTimestamp,
-      }: ReorgDetection.blockDataWithTimestamp =
-        await chainFetcher->getLastKnownValidBlock
 
       let logger = Logging.createChildFrom(
         ~logger=chainFetcher.logger,
@@ -1063,8 +1118,6 @@ let injectedTaskReducer = (
       Prometheus.RollbackSuccess.increment(~timeMillis=Hrtime.timeSince(startTime)->Hrtime.toMillis)
 
       dispatchAction(SetRollbackState(rollbackResult["inMemStore"], chainManager))
-
-    | _ => Logging.info("Waiting for batch to finish processing before executing rollback") //wait for batch to finish processing
     }
   }
 }

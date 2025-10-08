@@ -62,7 +62,7 @@ describe("E2E tests", () => {
       [{value: "0", labels: Js.Dict.empty()}],
     )
 
-    await Mock.Helper.initialEnterReorgThreshold(~sourceMock)
+    await Mock.Helper.initialEnterReorgThreshold(~indexerMock, ~sourceMock)
 
     Assert.deepEqual(
       await indexerMock.metric("envio_reorg_threshold"),
@@ -110,8 +110,8 @@ describe("E2E tests", () => {
 
     // Test inside of reorg threshold, so we can check the history order
     let _ = await Promise.all2((
-      Mock.Helper.initialEnterReorgThreshold(~sourceMock=sourceMock1337),
-      Mock.Helper.initialEnterReorgThreshold(~sourceMock=sourceMock100),
+      Mock.Helper.initialEnterReorgThreshold(~indexerMock, ~sourceMock=sourceMock1337),
+      Mock.Helper.initialEnterReorgThreshold(~indexerMock, ~sourceMock=sourceMock100),
     ))
 
     let callCount = ref(0)
