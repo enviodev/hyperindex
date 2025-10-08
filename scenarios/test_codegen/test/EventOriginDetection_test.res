@@ -315,7 +315,7 @@ describe("EventOrigin Detection Logic", () => {
 
       let emptyEventLog: Types.eventLog<Types.Gravatar.EmptyEvent.eventArgs> = {
         params: (),
-        chainId: 54321,
+        chainId: 1,
         srcAddress: "0xabc0000000000000000000000000000000000000"->Address.Evm.fromStringOrThrow,
         logIndex: 1,
         transaction: MockEvents.tx1,
@@ -324,7 +324,7 @@ describe("EventOrigin Detection Logic", () => {
 
       let item = Internal.Event({
         timestamp: emptyEventLog.block.timestamp,
-        chain: MockConfig.chain1337,
+        chain: ChainMap.Chain.makeUnsafe(~chainId=1),
         blockNumber: emptyEventLog.block.number,
         logIndex: emptyEventLog.logIndex,
         eventConfig: (Types.Gravatar.EmptyEvent.register() :> Internal.eventConfig),
@@ -335,7 +335,7 @@ describe("EventOrigin Detection Logic", () => {
       let _ = (await EventProcessing.processEventBatch(
         ~items=[item],
         ~progressedChains=[{
-          chainId: 54321,
+          chainId: 1,
           batchSize: 1,
           progressBlockNumber: 1000,
           isProgressAtHead: false,
