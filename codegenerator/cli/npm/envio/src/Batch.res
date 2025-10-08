@@ -238,8 +238,6 @@ let addReorgCheckpoints = (
         mutCheckpointBlockNumbers->Js.Array2.push(blockNumber)->ignore
         mutCheckpointBlockHashes->Js.Array2.push(Js.Null.Value(hash))->ignore
         mutCheckpointEventsProcessed->Js.Array2.push(0)->ignore
-
-        prevCheckpointId := checkpointId
       | Js.Null.Null => ()
       }
     }

@@ -373,7 +373,8 @@ and makeProcessEvents = (mockDb: t, ~chainId=?) => async (
     let processingChainId = switch processingChainId.contents {
     | Some(chainId) => chainId
     | None =>
-      Js.Exn.raiseError("No events provided to processEvents. Please provide at least one event.")
+      // Should never happen due to early return at line 318
+      Js.Exn.raiseError("Internal error: processingChainId not set despite non-empty events array")
     }
 
     //Deep copy the data in mockDb, mutate the clone and return the clone
