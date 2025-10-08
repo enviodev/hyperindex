@@ -203,7 +203,7 @@ describe("EventOrigin Detection Logic", () => {
 
       let item = Internal.Event({
         timestamp: emptyEventLog.block.timestamp,
-        chain: MockConfig.chain1337,
+        chain: ChainMap.Chain.makeUnsafe(~chainId=54321),
         blockNumber: emptyEventLog.block.number,
         logIndex: emptyEventLog.logIndex,
         eventConfig: (Types.Gravatar.EmptyEvent.register() :> Internal.eventConfig),
@@ -260,7 +260,7 @@ describe("EventOrigin Detection Logic", () => {
 
       let item = Internal.Event({
         timestamp: emptyEventLog.block.timestamp,
-        chain: MockConfig.chain1337,
+        chain: ChainMap.Chain.makeUnsafe(~chainId=54321),
         blockNumber: emptyEventLog.block.number,
         logIndex: emptyEventLog.logIndex,
         eventConfig: (Types.Gravatar.EmptyEvent.register() :> Internal.eventConfig),
