@@ -31,7 +31,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
       ~contracts=[],
       ~startBlock=0,
       ~targetBufferSize=5000,
-      ~chainId=0,
+      ~chainId=1,
     )
 
     let fetchState = ref(fetcherStateInit)
