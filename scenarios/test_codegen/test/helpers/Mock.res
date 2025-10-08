@@ -308,7 +308,7 @@ module Indexer = {
         Promise.makeAsync(async (resolve, _reject) => {
           let before = (gsManager->GlobalStateManager.getState).processedBatches
           while before >= (gsManager->GlobalStateManager.getState).processedBatches {
-            await Utils.delay(50)
+            await Utils.delay(1)
           }
           resolve()
         })
@@ -317,13 +317,14 @@ module Indexer = {
         Promise.makeAsync(async (resolve, _reject) => {
           while (
             switch (gsManager->GlobalStateManager.getState).rollbackState {
-            | PreparedRollback(_) => false
-            | PreparingRollback(_)
-            | NoRollback => true
+            | RollbackReady(_) => false
+            | _ => true
             }
           ) {
-            await Utils.delay(50)
+            await Utils.delay(1)
           }
+          // Skip an extra microtask for indexer to fire actions
+          await Utils.delay(0)
           resolve()
         })
       },
@@ -605,7 +606,7 @@ module Source = {
 }
 
 module Helper = {
-  let initialEnterReorgThreshold = async (~sourceMock: Source.t) => {
+  let initialEnterReorgThreshold = async (~indexerMock: Indexer.t, ~sourceMock: Source.t) => {
     open RescriptMocha
 
     Assert.deepEqual(
@@ -625,9 +626,7 @@ module Helper = {
       ~message="Should request items until reorg threshold",
     )
     sourceMock.resolveGetItemsOrThrow([])
-    await Utils.delay(0)
-    await Utils.delay(0)
-    await Utils.delay(0)
+    await indexerMock.getBatchWritePromise()
   }
 }
 

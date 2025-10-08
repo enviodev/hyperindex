@@ -112,10 +112,10 @@ module Stubs = {
   let dispatchAllTasks = async (gsManager, mockChainData) => {
     let tasksToRun = tasks.contents
     tasks := []
-    let _ =
-      await tasksToRun
-      ->Array.map(task => dispatchTask(gsManager, mockChainData, task))
-      ->Js.Promise.all
+    for idx in 0 to tasksToRun->Array.length - 1 {
+      let taskToRun = tasksToRun->Array.getUnsafe(idx)
+      await dispatchTask(gsManager, mockChainData, taskToRun)
+    }
   }
 }
 
@@ -297,12 +297,20 @@ describe("Single Chain Simple Rollback", () => {
       tasks.contents,
       [
         GlobalState.NextQuery(CheckAllChains),
-        Rollback,
         UpdateChainMetaDataAndCheckForExit(NoExit),
         ProcessEventBatch,
         PruneStaleEntityHistory,
+        Rollback,
       ],
       ~message="should detect rollback with reorg chain",
+    )
+
+    await dispatchAllTasksReorgChain()
+
+    Assert.deepEqual(
+      tasks.contents,
+      [Rollback],
+      ~message="Should finishe processing current batch and fire rollback again",
     )
 
     await dispatchAllTasksReorgChain()
@@ -343,10 +351,10 @@ describe("Single Chain Simple Rollback", () => {
       tasks.contents->Utils.getVariantsTags,
       [
         "NextQuery",
-        "ProcessPartitionQueryResponse",
         "UpdateChainMetaDataAndCheckForExit",
         "ProcessEventBatch",
         "PruneStaleEntityHistory",
+        "ProcessPartitionQueryResponse",
       ],
     )
     // Assert.deepEqual(
@@ -468,6 +476,7 @@ describe("E2E rollback tests", () => {
     )
 
     await indexerMock.getBatchWritePromise()
+
     Assert.deepEqual(
       await Promise.all2((
         indexerMock.query(module(Entities.SimpleEntity)),
@@ -699,8 +708,8 @@ describe("E2E rollback tests", () => {
     await Utils.delay(0)
 
     let _ = await Promise.all2((
-      M.Helper.initialEnterReorgThreshold(~sourceMock=sourceMock1337),
-      M.Helper.initialEnterReorgThreshold(~sourceMock=sourceMock100),
+      M.Helper.initialEnterReorgThreshold(~indexerMock, ~sourceMock=sourceMock1337),
+      M.Helper.initialEnterReorgThreshold(~indexerMock, ~sourceMock=sourceMock100),
     ))
 
     Assert.deepEqual(
@@ -788,7 +797,7 @@ describe("E2E rollback tests", () => {
     )
     await Utils.delay(0)
 
-    await M.Helper.initialEnterReorgThreshold(~sourceMock)
+    await M.Helper.initialEnterReorgThreshold(~indexerMock, ~sourceMock)
     await testSingleChainRollback(~sourceMock, ~indexerMock)
   })
 
@@ -818,8 +827,8 @@ describe("E2E rollback tests", () => {
       await Utils.delay(0)
 
       let _ = await Promise.all2((
-        M.Helper.initialEnterReorgThreshold(~sourceMock=sourceMock1),
-        M.Helper.initialEnterReorgThreshold(~sourceMock=sourceMock2),
+        M.Helper.initialEnterReorgThreshold(~indexerMock, ~sourceMock=sourceMock1),
+        M.Helper.initialEnterReorgThreshold(~indexerMock, ~sourceMock=sourceMock2),
       ))
 
       await testSingleChainRollback(~sourceMock=sourceMock1, ~indexerMock)
@@ -841,7 +850,7 @@ describe("E2E rollback tests", () => {
     )
     await Utils.delay(0)
 
-    await M.Helper.initialEnterReorgThreshold(~sourceMock)
+    await M.Helper.initialEnterReorgThreshold(~indexerMock, ~sourceMock)
 
     let calls = []
     let handler: Types.HandlerTypes.loader<unit, unit> = async ({event}) => {
@@ -1102,8 +1111,8 @@ This might be wrong after we start exposing a block hash for progress block.`,
     await Utils.delay(0)
 
     let _ = await Promise.all2((
-      M.Helper.initialEnterReorgThreshold(~sourceMock=sourceMock1337),
-      M.Helper.initialEnterReorgThreshold(~sourceMock=sourceMock100),
+      M.Helper.initialEnterReorgThreshold(~indexerMock, ~sourceMock=sourceMock1337),
+      M.Helper.initialEnterReorgThreshold(~indexerMock, ~sourceMock=sourceMock100),
     ))
 
     let callCount = ref(0)
@@ -1475,8 +1484,8 @@ Different batches for block number 102`,
       await Utils.delay(0)
 
       let _ = await Promise.all2((
-        M.Helper.initialEnterReorgThreshold(~sourceMock=sourceMock1337),
-        M.Helper.initialEnterReorgThreshold(~sourceMock=sourceMock100),
+        M.Helper.initialEnterReorgThreshold(~indexerMock, ~sourceMock=sourceMock1337),
+        M.Helper.initialEnterReorgThreshold(~indexerMock, ~sourceMock=sourceMock100),
       ))
 
       let callCount = ref(0)
@@ -1919,8 +1928,8 @@ Different batches for block number 102`,
       await Utils.delay(0)
 
       let _ = await Promise.all2((
-        M.Helper.initialEnterReorgThreshold(~sourceMock=sourceMock1337),
-        M.Helper.initialEnterReorgThreshold(~sourceMock=sourceMock100),
+        M.Helper.initialEnterReorgThreshold(~indexerMock, ~sourceMock=sourceMock1337),
+        M.Helper.initialEnterReorgThreshold(~indexerMock, ~sourceMock=sourceMock100),
       ))
 
       let callCount = ref(0)
