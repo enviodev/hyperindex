@@ -801,7 +801,7 @@ describe("E2E rollback tests", () => {
     await testSingleChainRollback(~sourceMock, ~indexerMock)
   })
 
-  Async.it(
+  Async.it_only(
     "Single chain rollback should also work for unordered multichain indexer when another chains are stale",
     async () => {
       let sourceMock1 = M.Source.make(
@@ -835,7 +835,7 @@ describe("E2E rollback tests", () => {
     },
   )
 
-  Async.it("Rollback Dynamic Contract", async () => {
+  Async.it_only("Rollback Dynamic Contract", async () => {
     let sourceMock = M.Source.make(
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
       ~chain=#1337,

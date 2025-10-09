@@ -363,18 +363,11 @@ SELECT * FROM unnest($1::${(Integer :> string)}[],$2::${(Integer :> string)}[],$
     ->Promise.ignoreValue
   }
 
-  // This is how it used to work before checkpoints
-  // To make it correct, we need to delete checkpoints of all chains
-  let deprecated_rollbackReorgedChainCheckpoints = (
-    sql,
-    ~pgSchema,
-    ~chainId,
-    ~knownBlockNumber,
-  ) => {
+  let rollback = (sql, ~pgSchema, ~rollbackTargetCheckpointId: int) => {
     sql
     ->Postgres.preparedUnsafe(
-      `DELETE FROM "${pgSchema}"."${table.tableName}" WHERE "${(#chain_id: field :> string)}" = $1 AND "${(#block_number: field :> string)}" > $2;`,
-      (chainId, knownBlockNumber)->(Utils.magic: ((int, int)) => unknown),
+      `DELETE FROM "${pgSchema}"."${table.tableName}" WHERE "${(#id: field :> string)}" > $1;`,
+      [rollbackTargetCheckpointId]->Utils.magic,
     )
     ->Promise.ignoreValue
   }

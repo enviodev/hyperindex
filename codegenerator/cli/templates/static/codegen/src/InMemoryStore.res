@@ -53,16 +53,19 @@ type t = {
   entities: dict<InMemoryTable.Entity.t<Entities.internalEntity>>,
   effects: dict<effectCacheInMemTable>,
   rollBackEventIdentifier: option<Types.eventIdentifier>,
+  rollbackTargetCheckpointId: option<int>,
 }
 
 let make = (
   ~entities: array<Internal.entityConfig>=Entities.allEntities,
   ~rollBackEventIdentifier=?,
+  ~rollbackTargetCheckpointId=?,
 ): t => {
   rawEvents: InMemoryTable.make(~hash=hashRawEventsKey),
   entities: EntityTables.make(entities),
   effects: Js.Dict.empty(),
   rollBackEventIdentifier,
+  rollbackTargetCheckpointId,
 }
 
 let clone = (self: t) => {
@@ -74,6 +77,7 @@ let clone = (self: t) => {
     effect: table.effect,
   }, self.effects),
   rollBackEventIdentifier: self.rollBackEventIdentifier->Lodash.cloneDeep,
+  rollbackTargetCheckpointId: self.rollbackTargetCheckpointId,
 }
 
 let getEffectInMemTable = (inMemoryStore: t, ~effect: Internal.effect) => {

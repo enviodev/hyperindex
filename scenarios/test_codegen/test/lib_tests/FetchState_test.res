@@ -1667,8 +1667,7 @@ describe("FetchState.getNextQuery & integration", () => {
   it("Correctly rollbacks fetch state", () => {
     let fetchState = makeIntermidiateDcMerge()
 
-    let fetchStateAfterRollback1 =
-      fetchState->FetchState.rollback(~firstChangeEvent={blockNumber: 2, logIndex: 0})
+    let fetchStateAfterRollback1 = fetchState->FetchState.rollback(~targetBlockNumber=1)
 
     Assert.deepEqual(
       fetchStateAfterRollback1,
@@ -1708,7 +1707,7 @@ describe("FetchState.getNextQuery & integration", () => {
 
     // Rollback even more to see the removal of partition "2"
     let fetchStateAfterRollback2 =
-      fetchStateAfterRollback1->FetchState.rollback(~firstChangeEvent={blockNumber: 0, logIndex: 0})
+      fetchStateAfterRollback1->FetchState.rollback(~targetBlockNumber=-1)
 
     Assert.deepEqual(
       fetchStateAfterRollback2,
@@ -1788,8 +1787,7 @@ describe("FetchState.getNextQuery & integration", () => {
       ~message=`Should have 2 partitions before rollback`,
     )
 
-    let fetchStateAfterRollback =
-      fetchState->FetchState.rollback(~firstChangeEvent={blockNumber: 2, logIndex: 0})
+    let fetchStateAfterRollback = fetchState->FetchState.rollback(~targetBlockNumber=1)
 
     Assert.deepEqual(
       fetchStateAfterRollback,

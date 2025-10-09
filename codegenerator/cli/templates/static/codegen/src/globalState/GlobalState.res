@@ -134,7 +134,7 @@ type action =
     })
   | SuccessExit
   | ErrorExit(ErrorHandling.t)
-  | SetRollbackState(InMemoryStore.t, ChainManager.t)
+  | SetRollbackState({diffInMemoryStore: InMemoryStore.t, rollbackedChainManager: ChainManager.t})
 
 type queryChain = CheckAllChains | Chain(chain)
 type task =
@@ -688,8 +688,14 @@ let actionReducer = (state: t, action: action) => {
       },
       [NextQuery(CheckAllChains)],
     )
-  | SetRollbackState(inMemoryStore, chainManager) => (
-      {...state, rollbackState: RollbackReady({diffInMemoryStore: inMemoryStore}), chainManager},
+  | SetRollbackState({diffInMemoryStore, rollbackedChainManager}) => (
+      {
+        ...state,
+        rollbackState: RollbackReady({
+          diffInMemoryStore: diffInMemoryStore,
+        }),
+        chainManager: rollbackedChainManager,
+      },
       [NextQuery(CheckAllChains), ProcessEventBatch],
     )
   | SuccessExit => {
@@ -1114,6 +1120,7 @@ let injectedTaskReducer = (
         | Unordered => true
         | Ordered => false
         },
+        ~rollbackTargetCheckpointId,
       )
 
       let chainManager = {
@@ -1133,7 +1140,12 @@ let injectedTaskReducer = (
       })
       Prometheus.RollbackSuccess.increment(~timeMillis=Hrtime.timeSince(startTime)->Hrtime.toMillis)
 
-      dispatchAction(SetRollbackState(rollbackResult["inMemStore"], chainManager))
+      dispatchAction(
+        SetRollbackState({
+          diffInMemoryStore: rollbackResult["inMemStore"],
+          rollbackedChainManager: chainManager,
+        }),
+      )
     }
   }
 }

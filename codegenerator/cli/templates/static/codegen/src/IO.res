@@ -222,8 +222,11 @@ let executeBatch = async (
   //In the event of a rollback, rollback all meta tables based on the given
   //valid event identifier, where all rows created after this eventIdentifier should
   //be deleted
-  let rollbackTables = switch inMemoryStore.rollBackEventIdentifier {
-  | Some(eventIdentifier) =>
+  let rollbackTables = switch inMemoryStore {
+  | {
+      rollbackTargetCheckpointId: Some(rollbackTargetCheckpointId),
+      rollBackEventIdentifier: Some(eventIdentifier),
+    } =>
     Some(
       sql =>
         Promise.all2((
@@ -234,14 +237,13 @@ let executeBatch = async (
             },
             ~eventIdentifier,
           ),
-          sql->InternalTable.Checkpoints.deprecated_rollbackReorgedChainCheckpoints(
+          sql->InternalTable.Checkpoints.rollback(
             ~pgSchema=Db.publicSchema,
-            ~chainId=eventIdentifier.chainId,
-            ~knownBlockNumber=eventIdentifier.blockNumber,
+            ~rollbackTargetCheckpointId,
           ),
         )),
     )
-  | None => None
+  | _ => None
   }
 
   try {
@@ -339,6 +341,7 @@ module RollBack = {
     ~blockNumber,
     ~logIndex,
     ~isUnorderedMultichainMode,
+    ~rollbackTargetCheckpointId,
   ) => {
     let rollBackEventIdentifier: Types.eventIdentifier = {
       chainId,
@@ -347,7 +350,7 @@ module RollBack = {
       logIndex,
     }
 
-    let inMemStore = InMemoryStore.make(~rollBackEventIdentifier)
+    let inMemStore = InMemoryStore.make(~rollBackEventIdentifier, ~rollbackTargetCheckpointId)
 
     let deletedEntities = Js.Dict.empty()
     let setEntities = Js.Dict.empty()

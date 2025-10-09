@@ -116,7 +116,6 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
       safeCheckpointTracking: None,
       isProgressAtHead: false,
       currentBlockHeight: 0,
-      processingFilters: None,
     }
 
     mockChainFetcher
