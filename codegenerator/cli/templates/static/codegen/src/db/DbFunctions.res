@@ -48,13 +48,6 @@ module EntityHistory = {
   }
 
   @module("./DbFunctionsImplementation.js")
-  external getFirstChangeEntityHistoryPerChain: (
-    Postgres.sql,
-    ~entityName: string,
-    ~getFirstChangeSerial: Postgres.sql => dynamicSqlQuery,
-  ) => promise<Js.Json.t> = "getFirstChangeEntityHistoryPerChain"
-
-  @module("./DbFunctionsImplementation.js")
   external getRollbackDiffInternal: (
     Postgres.sql,
     ~entityName: string,
@@ -213,84 +206,6 @@ module EntityHistory = {
       )
     | diffRows => diffRows
     }
-  }
-
-  module FirstChangeEventPerChain = {
-    type t = Js.Dict.t<FetchState.blockNumberAndLogIndex>
-    let getKey = chainId => chainId->Belt.Int.toString
-    let make = () => Js.Dict.empty()
-    let get = (self: t, ~chainId) => self->Utils.Dict.dangerouslyGetNonOption(getKey(chainId))
-
-    let setIfEarlier = (self: t, ~chainId, ~event: FetchState.blockNumberAndLogIndex) => {
-      let chainKey = chainId->Belt.Int.toString
-      switch self->Utils.Dict.dangerouslyGetNonOption(chainKey) {
-      | Some(existingEvent) =>
-        if (
-          (event.blockNumber, event.logIndex) < (existingEvent.blockNumber, existingEvent.logIndex)
-        ) {
-          self->Js.Dict.set(chainKey, event)
-        }
-      | None => self->Js.Dict.set(chainKey, event)
-      }
-    }
-  }
-
-  let getFirstChangeEventPerChain = async (
-    sql,
-    args: Args.t,
-    ~allEntities=Entities.allEntities,
-  ) => {
-    let startTime = Hrtime.makeTimer()
-    let firstChangeEventPerChain = FirstChangeEventPerChain.make()
-
-    let _ =
-      await allEntities
-      ->Belt.Array.map(async entityConfig => {
-        let res = try await getFirstChangeEntityHistoryPerChain(
-          sql,
-          ~entityName=entityConfig.name,
-          ~getFirstChangeSerial=args->Args.makeGetFirstChangeSerial(~entityName=entityConfig.name),
-        ) catch {
-        | exn =>
-          exn->ErrorHandling.mkLogAndRaise(
-            ~msg=`Failed to get first change entity history per chain for entity`,
-            ~logger=args->Args.getLogger(~entityName=entityConfig.name),
-          )
-        }
-
-        let chainHistoryRows = try res->S.parseOrThrow(
-          entityConfig.entityHistory.schemaRows,
-        ) catch {
-        | exn =>
-          exn->ErrorHandling.mkLogAndRaise(
-            ~msg=`Failed to parse entity history rows from db on getFirstChangeEntityHistoryPerChain`,
-            ~logger=args->Args.getLogger(~entityName=entityConfig.name),
-          )
-        }
-
-        chainHistoryRows->Belt.Array.forEach(chainHistoryRow => {
-          firstChangeEventPerChain->FirstChangeEventPerChain.setIfEarlier(
-            ~chainId=chainHistoryRow.current.chain_id,
-            ~event={
-              blockNumber: chainHistoryRow.current.block_number,
-              logIndex: chainHistoryRow.current.log_index,
-            },
-          )
-        })
-      })
-      ->Promise.all
-
-    if Env.Benchmark.shouldSaveData {
-      let elapsedTimeMillis = Hrtime.timeSince(startTime)->Hrtime.toMillis->Hrtime.floatFromMillis
-
-      Benchmark.addSummaryData(
-        ~group=rollbacksGroup,
-        ~label=`Get First Change Event Per Chain Time (ms)`,
-        ~value=elapsedTimeMillis,
-      )
-    }
-
-    firstChangeEventPerChain
   }
 
   let hasRows = async sql => {

@@ -391,6 +391,56 @@ SELECT * FROM unnest($1::${(Integer :> string)}[],$2::${(Integer :> string)}[],$
     )
     ->Promise.ignoreValue
   }
+
+  let makeGetRollbackTargetCheckpointQuery = (~pgSchema) => {
+    `SELECT "${(#id: field :> string)}" FROM "${pgSchema}"."${table.tableName}"
+WHERE 
+  "${(#chain_id: field :> string)}" = $1 AND
+  "${(#block_number: field :> string)}" <= $2
+ORDER BY "${(#id: field :> string)}" DESC
+LIMIT 1;`
+  }
+
+  let getRollbackTargetCheckpoint = (
+    sql,
+    ~pgSchema,
+    ~reorgChainId: int,
+    ~lastKnownValidBlockNumber: int,
+  ) => {
+    sql
+    ->Postgres.preparedUnsafe(
+      makeGetRollbackTargetCheckpointQuery(~pgSchema),
+      (reorgChainId, lastKnownValidBlockNumber)->Obj.magic,
+    )
+    ->(Utils.magic: promise<unknown> => promise<array<{"id": int}>>)
+  }
+
+  let makeGetRollbackProgressDiffQuery = (~pgSchema) => {
+    `SELECT 
+  "${(#chain_id: field :> string)}",
+  SUM("${(#events_processed: field :> string)}") as events_processed_diff,
+  MIN("${(#block_number: field :> string)}") - 1 as new_progress_block_number
+FROM "${pgSchema}"."${table.tableName}"
+WHERE "${(#id: field :> string)}" > $1
+GROUP BY "${(#chain_id: field :> string)}";`
+  }
+
+  let getRollbackProgressDiff = (sql, ~pgSchema, ~rollbackTargetCheckpointId: int) => {
+    sql
+    ->Postgres.preparedUnsafe(
+      makeGetRollbackProgressDiffQuery(~pgSchema),
+      [rollbackTargetCheckpointId]->Obj.magic,
+    )
+    ->(
+      Utils.magic: promise<unknown> => promise<
+        array<{
+          "chain_id": int,
+          "events_processed_diff": string,
+          "new_progress_block_number": int,
+        }>,
+      >
+    )
+  }
 }
 
 module RawEvents = {

@@ -22,9 +22,6 @@ type t = {
   numBatchesFetched: int,
   reorgDetection: ReorgDetection.t,
   safeCheckpointTracking: option<SafeCheckpointTracking.t>,
-  //An optional list of filters to apply on event queries
-  //Used for reorgs and restarts
-  processingFilters: option<array<processingFilter>>,
 }
 
 //CONSTRUCTION
@@ -221,7 +218,6 @@ let make = (
     timestampCaughtUpToHeadOrEndblock,
     numEventsProcessed,
     numBatchesFetched,
-    processingFilters: None,
   }
 }
 
@@ -294,34 +290,6 @@ let makeFromDbState = async (
     ~targetBufferSize,
     ~isInReorgThreshold,
   )
-}
-
-/**
-Adds an event filter that will be passed to worker on query
-isValid is a function that determines when the filter
-should be cleaned up
-*/
-let addProcessingFilter = (self: t, ~filter, ~isValid) => {
-  let processingFilter: processingFilter = {filter, isValid}
-  {
-    ...self,
-    processingFilters: switch self.processingFilters {
-    | Some(processingFilters) => Some(processingFilters->Array.concat([processingFilter]))
-    | None => Some([processingFilter])
-    },
-  }
-}
-
-//Run the clean up condition "isNoLongerValid" against fetchState on each eventFilter and remove
-//any that meet the cleanup condition
-let cleanUpProcessingFilters = (
-  processingFilters: array<processingFilter>,
-  ~fetchState: FetchState.t,
-) => {
-  switch processingFilters->Array.keep(processingFilter => processingFilter.isValid(~fetchState)) {
-  | [] => None
-  | filters => Some(filters)
-  }
 }
 
 /**
@@ -425,16 +393,6 @@ let runContractRegistersOrThrow = async (
   dynamicContracts
 }
 
-@inline
-let applyProcessingFilters = (~item: Internal.item, ~processingFilters) => {
-  processingFilters->Js.Array2.every(processingFilter => processingFilter.filter(item))
-}
-
-/**
-Updates of fetchState and cleans up event filters. Should be used whenever updating fetchState
-to ensure processingFilters are always valid.
-Returns Error if the node with given id cannot be found (unexpected)
-*/
 let handleQueryResult = (
   chainFetcher: t,
   ~query: FetchState.query,
@@ -449,15 +407,9 @@ let handleQueryResult = (
 
   fs
   ->FetchState.handleQueryResult(~query, ~latestFetchedBlock, ~newItems)
-  ->Result.map(fetchState => {
-    {
-      ...chainFetcher,
-      fetchState,
-      processingFilters: switch chainFetcher.processingFilters {
-      | Some(processingFilters) => processingFilters->cleanUpProcessingFilters(~fetchState)
-      | None => None
-      },
-    }
+  ->Result.map(fs => {
+    ...chainFetcher,
+    fetchState: fs,
   })
 }
 

@@ -1114,31 +1114,14 @@ let make = (
 
 let bufferSize = ({buffer}: t) => buffer->Array.length
 
-let pruneQueueFromFirstChangeEvent = (
-  buffer: array<Internal.item>,
-  ~firstChangeEvent: blockNumberAndLogIndex,
-) => {
-  buffer->Array.keep(item =>
-    switch item {
-    | Event({blockNumber, logIndex})
-    | Block({blockNumber, logIndex}) => (blockNumber, logIndex)
-    } <
-    (firstChangeEvent.blockNumber, firstChangeEvent.logIndex)
-  )
-}
-
 /**
 Rolls back partitions to the given valid block
 */
-let rollbackPartition = (
-  p: partition,
-  ~firstChangeEvent: blockNumberAndLogIndex,
-  ~addressesToRemove,
-) => {
-  let shouldRollbackFetched = p.latestFetchedBlock.blockNumber >= firstChangeEvent.blockNumber
+let rollbackPartition = (p: partition, ~targetBlockNumber, ~addressesToRemove) => {
+  let shouldRollbackFetched = p.latestFetchedBlock.blockNumber > targetBlockNumber
   let latestFetchedBlock = shouldRollbackFetched
     ? {
-        blockNumber: firstChangeEvent.blockNumber - 1,
+        blockNumber: targetBlockNumber,
         blockTimestamp: 0,
       }
     : p.latestFetchedBlock
@@ -1177,7 +1160,7 @@ let rollbackPartition = (
   }
 }
 
-let rollback = (fetchState: t, ~firstChangeEvent) => {
+let rollback = (fetchState: t, ~targetBlockNumber) => {
   let addressesToRemove = Utils.Set.make()
   let indexingContracts = Js.Dict.empty()
 
@@ -1188,10 +1171,7 @@ let rollback = (fetchState: t, ~firstChangeEvent) => {
     if (
       switch indexingContract {
       | {register: Config} => true
-      | {register: DC(dc)} =>
-        indexingContract.startBlock < firstChangeEvent.blockNumber ||
-          (indexingContract.startBlock === firstChangeEvent.blockNumber &&
-            dc.registeringEventLogIndex < firstChangeEvent.logIndex)
+      | {register: DC(_)} => indexingContract.startBlock <= targetBlockNumber
       }
     ) {
       indexingContracts->Js.Dict.set(address, indexingContract)
@@ -1204,16 +1184,22 @@ let rollback = (fetchState: t, ~firstChangeEvent) => {
 
   let partitions =
     fetchState.partitions->Array.keepMap(p =>
-      p->rollbackPartition(~firstChangeEvent, ~addressesToRemove)
+      p->rollbackPartition(~targetBlockNumber, ~addressesToRemove)
     )
 
   {
     ...fetchState,
-    latestOnBlockBlockNumber: firstChangeEvent.blockNumber - 1, // TODO: This is not tested
+    latestOnBlockBlockNumber: targetBlockNumber, // TODO: This is not tested
   }->updateInternal(
     ~partitions,
     ~indexingContracts,
-    ~mutItems=fetchState.buffer->pruneQueueFromFirstChangeEvent(~firstChangeEvent),
+    ~mutItems=fetchState.buffer->Array.keep(item =>
+      switch item {
+      | Event({blockNumber})
+      | Block({blockNumber}) => blockNumber
+      } <=
+      targetBlockNumber
+    ),
     ~dcsToStore=switch fetchState.dcsToStore {
     | [] as empty => empty
     | dcsToStore =>

@@ -108,13 +108,13 @@ let updateOnNewBatch = (
   }
 }
 
-let updateOnRollback = (safeCheckpointTracking: t, ~newProgressBlockNumber: int) => {
+let rollback = (safeCheckpointTracking: t, ~targetBlockNumber: int) => {
   let mutCheckpointIds = []
   let mutCheckpointBlockNumbers = []
 
   for idx in 0 to safeCheckpointTracking.checkpointIds->Array.length - 1 {
     let blockNumber = safeCheckpointTracking.checkpointBlockNumbers->Belt.Array.getUnsafe(idx)
-    if blockNumber <= newProgressBlockNumber {
+    if blockNumber <= targetBlockNumber {
       mutCheckpointIds
       ->Js.Array2.push(safeCheckpointTracking.checkpointIds->Belt.Array.getUnsafe(idx))
       ->ignore

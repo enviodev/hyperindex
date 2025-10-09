@@ -75,36 +75,6 @@ module.exports.getFirstChangeSerial_OrderedMultichain = (
       (entity_history_block_timestamp = ${safeBlockTimestamp} AND entity_history_chain_id = ${reorgChainId} AND entity_history_block_number > ${safeBlockNumber})
   `;
 
-module.exports.getFirstChangeEntityHistoryPerChain = (
-  sql,
-  entityName,
-  getFirstChangeSerial
-) => sql`
-  WITH
-    first_change AS (
-      -- Step 1: Find the "first change" serial originating from the reorg chain above the safe block number 
-      -- (Using serial to account for unordered multi chain reorgs, where an earier event on another chain could be rolled back)
-      ${getFirstChangeSerial(sql)}
-    )
-  -- Step 2: Distinct on entity_history_chain_id, get the entity_history_block_number of the row with the 
-  -- lowest serial >= the first change serial
-  SELECT DISTINCT
-    ON (entity_history_chain_id) *
-  FROM
-    ${sql(publicSchema)}.${sql(makeHistoryTableName(entityName))}
-  WHERE
-    serial >= (
-      SELECT
-        first_change_serial
-      FROM
-        first_change
-    )
-  ORDER BY
-    entity_history_chain_id,
-    serial
-    ASC; -- Select the row with the lowest serial per id
-`;
-
 module.exports.deleteRolledBackEntityHistory = (
   sql,
   entityName,
