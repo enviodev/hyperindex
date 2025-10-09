@@ -230,6 +230,19 @@ let updateProgressedChains = (chainManager: ChainManager.t, ~batch: Batch.t) => 
           committedProgressBlockNumber: chainAfterBatch.progressBlockNumber,
           numEventsProcessed: chainAfterBatch.totalEventsProcessed,
           isProgressAtHead: cf.isProgressAtHead || chainAfterBatch.isProgressAtHeadWhenBatchCreated,
+          safeCheckpointTracking: switch cf.safeCheckpointTracking {
+          | Some(safeCheckpointTracking) =>
+            Some(
+              safeCheckpointTracking->SafeCheckpointTracking.updateOnNewBatch(
+                ~sourceBlockNumber=cf.currentBlockHeight,
+                ~chainId=chain->ChainMap.Chain.toChainId,
+                ~batchCheckpointIds=batch.checkpointIds,
+                ~batchCheckpointBlockNumbers=batch.checkpointBlockNumbers,
+                ~batchCheckpointChainIds=batch.checkpointChainIds,
+              ),
+            )
+          | None => None
+          },
         }
       }
     | None => cf
@@ -771,9 +784,14 @@ let injectedTaskReducer = (
       let safeReorgBlocks = state.chainManager->ChainManager.getSafeReorgBlocks
 
       if safeReorgBlocks.chainIds->Utils.Array.notEmpty {
-        await Db.sql->InternalTable.Checkpoints.deprecated_pruneStaleCheckpoints(
-          ~pgSchema=Env.Db.publicSchema,
-        )
+        switch state.chainManager->ChainManager.getSafeCheckpointId {
+        | None => ()
+        | Some(safeCheckpointId) =>
+          await Db.sql->InternalTable.Checkpoints.pruneStaleCheckpoints(
+            ~pgSchema=Env.Db.publicSchema,
+            ~safeCheckpointId,
+          )
+        }
 
         for idx in 0 to Entities.allEntities->Array.length - 1 {
           if idx !== 0 {
@@ -968,7 +986,8 @@ let injectedTaskReducer = (
   | Rollback =>
     //If it isn't processing a batch currently continue with rollback otherwise wait for current batch to finish processing
     switch state {
-    | {rollbackState: NoRollback | RollbackReady(_)} =>
+    | {rollbackState: (NoRollback | RollbackReady(_)) as rollbackState} =>
+      Js.log(rollbackState)
       Js.Exn.raiseError("Internal error: Rollback initiated with invalid state")
     | {rollbackState: ReorgDetected({chain})} => {
         let chainFetcher = state.chainManager.chainFetchers->ChainMap.get(chain)
@@ -1051,19 +1070,29 @@ let injectedTaskReducer = (
         ) {
         | Some(firstChangeEvent) =>
           let fetchState = cf.fetchState->FetchState.rollback(~firstChangeEvent)
+          let newProgressBlockNumber = PervasivesU.min(
+            cf.committedProgressBlockNumber,
+            firstChangeEvent.blockNumber - 1,
+          )
 
-          let rolledBackCf = {
+          let rolledBackCf: ChainFetcher.t = {
             ...cf,
             reorgDetection: chain == reorgChain
               ? cf.reorgDetection->ReorgDetection.rollbackToValidBlockNumber(
                   ~blockNumber=lastKnownValidBlockNumber,
                 )
               : cf.reorgDetection,
+            safeCheckpointTracking: switch cf.safeCheckpointTracking {
+            | Some(safeCheckpointTracking) =>
+              Some(
+                safeCheckpointTracking->SafeCheckpointTracking.updateOnRollback(
+                  ~newProgressBlockNumber,
+                ),
+              )
+            | None => None
+            },
             fetchState,
-            committedProgressBlockNumber: PervasivesU.min(
-              cf.committedProgressBlockNumber,
-              firstChangeEvent.blockNumber - 1,
-            ),
+            committedProgressBlockNumber: newProgressBlockNumber,
           }
           //On other chains, filter out evennts based on the first change present on the chain after the reorg
           rolledBackCf->ChainFetcher.addProcessingFilter(

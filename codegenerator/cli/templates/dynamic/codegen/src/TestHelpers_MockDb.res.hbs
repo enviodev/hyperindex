@@ -461,7 +461,7 @@ and makeProcessEvents = (mockDb: t, ~chainId=?) => async (
               )
               ->Result.getExn,
               reorgDetection: ReorgDetection.make(
-                ~blocks=[],
+                ~chainReorgCheckpoints=[],
                 ~maxReorgDepth=0,
                 ~shouldRollbackOnReorg=false,
               ),

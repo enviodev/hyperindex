@@ -568,7 +568,7 @@ FROM "test_schema"."envio_checkpoints" cp
 INNER JOIN reorg_chains rc 
   ON cp."chain_id" = rc.id
 WHERE cp."block_hash" IS NOT NULL
-  AND cp."block_number" > rc.safe_block;`
+  AND cp."block_number" >= rc.safe_block;`
 
         Assert.equal(
           query,

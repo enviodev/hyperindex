@@ -322,7 +322,7 @@ FROM "${pgSchema}"."${table.tableName}" cp
 INNER JOIN reorg_chains rc 
   ON cp."${(#chain_id: field :> string)}" = rc.id
 WHERE cp."${(#block_hash: field :> string)}" IS NOT NULL
-  AND cp."${(#block_number: field :> string)}" > rc.safe_block;`
+  AND cp."${(#block_number: field :> string)}" >= rc.safe_block;` // Include safe_block checkpoint to use it for safe checkpoint tracking
   }
 
   let makeCommitedCheckpointIdQuery = (~pgSchema) => {
@@ -379,30 +379,15 @@ SELECT * FROM unnest($1::${(Integer :> string)}[],$2::${(Integer :> string)}[],$
     ->Promise.ignoreValue
   }
 
-  // This is how it used to work before checkpoints
-  // To make it correct, we need to first find
-  // a safe checkpoint - which is the min checkpoint outside all chains
-  // And then delete everything below it - the same for history items
-  let deprecated_pruneStaleCheckpoints = (sql, ~pgSchema) => {
-    // Delete checkpoints that are outside the reorg window:
-    // 1. All checkpoints for chains with max_reorg_depth = 0 (no reorg protection)
-    // 2. Checkpoints at or below safe_block for chains with max_reorg_depth > 0
+  let makePruneStaleCheckpointsQuery = (~pgSchema) => {
+    `DELETE FROM "${pgSchema}"."${table.tableName}" WHERE "${(#id: field :> string)}" < $1;`
+  }
+
+  let pruneStaleCheckpoints = (sql, ~pgSchema, ~safeCheckpointId: int) => {
     sql
-    ->Postgres.unsafe(
-      `WITH chain_safe_blocks AS (
-     SELECT 
-       "${(#id: Chains.field :> string)}" as id,
-       "${(#max_reorg_depth: Chains.field :> string)}" as max_reorg_depth,
-       "${(#source_block: Chains.field :> string)}" - "${(#max_reorg_depth: Chains.field :> string)}" AS safe_block
-     FROM "${pgSchema}"."${Chains.table.tableName}"
-   )
-   DELETE FROM "${pgSchema}"."${table.tableName}" cp
-   USING chain_safe_blocks csb
-   WHERE cp."${(#chain_id: field :> string)}" = csb.id
-     AND (
-       csb.max_reorg_depth = 0
-       OR cp."${(#block_number: field :> string)}" <= csb.safe_block
-     );`,
+    ->Postgres.preparedUnsafe(
+      makePruneStaleCheckpointsQuery(~pgSchema),
+      [safeCheckpointId]->Obj.magic,
     )
     ->Promise.ignoreValue
   }

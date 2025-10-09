@@ -21,6 +21,7 @@ type t = {
   numEventsProcessed: int,
   numBatchesFetched: int,
   reorgDetection: ReorgDetection.t,
+  safeCheckpointTracking: option<SafeCheckpointTracking.t>,
   //An optional list of filters to apply on event queries
   //Used for reorgs and restarts
   processingFilters: option<array<processingFilter>>,
@@ -187,6 +188,14 @@ let make = (
     ~onBlockConfigs?,
   )
 
+  let chainReorgCheckpoints = reorgCheckpoints->Array.keepMapU(reorgCheckpoint => {
+    if reorgCheckpoint.chainId === chainConfig.id {
+      Some(reorgCheckpoint)
+    } else {
+      None
+    }
+  })
+
   {
     logger,
     chainConfig,
@@ -195,18 +204,14 @@ let make = (
       ~maxPartitionConcurrency=Env.maxPartitionConcurrency,
     ),
     reorgDetection: ReorgDetection.make(
-      ~blocks=reorgCheckpoints->Array.keepMapU(reorgCheckpoint => {
-        if reorgCheckpoint.chainId === chainConfig.id {
-          Some({
-            ReorgDetection.blockNumber: reorgCheckpoint.blockNumber,
-            blockHash: reorgCheckpoint.blockHash,
-          })
-        } else {
-          None
-        }
-      }),
+      ~chainReorgCheckpoints,
       ~maxReorgDepth,
       ~shouldRollbackOnReorg=config->Config.shouldRollbackOnReorg,
+    ),
+    safeCheckpointTracking: SafeCheckpointTracking.make(
+      ~maxReorgDepth,
+      ~shouldRollbackOnReorg=config->Config.shouldRollbackOnReorg,
+      ~chainReorgCheckpoints,
     ),
     currentBlockHeight: 0,
     isProgressAtHead: false,

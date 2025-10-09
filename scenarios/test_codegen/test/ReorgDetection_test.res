@@ -14,8 +14,13 @@ describe("Validate reorg detection functions", () => {
 
   let mock = (arr, ~maxReorgDepth=200, ~shouldRollbackOnReorg=true, ~detectedReorgBlock=?) => {
     ReorgDetection.make(
-      ~blocks=arr->Array.map(((blockNumber, blockHash)) => {
-        ReorgDetection.blockNumber,
+      ~chainReorgCheckpoints=arr->Array.map(((
+        blockNumber,
+        blockHash,
+      )): Internal.reorgCheckpoint => {
+        chainId: 0, // It's not used
+        checkpointId: 0, // It's not used
+        blockNumber,
         blockHash,
       }),
       ~maxReorgDepth,
