@@ -209,7 +209,7 @@ let preloadBatchOrThrow = async (batch: Batch.t, ~loadManager, ~persistence, ~in
     let checkpointEventsProcessed =
       batch.checkpointEventsProcessed->Js.Array2.unsafe_get(checkpointIdx)
 
-    for idx in 0 to checkpointEventsProcessed {
+    for idx in 0 to checkpointEventsProcessed - 1 {
       let item = batch.items->Js.Array2.unsafe_get(itemIdx.contents + idx)
       switch item {
       | Event({eventConfig: {handler}, event}) =>
@@ -284,7 +284,7 @@ let runBatchHandlersOrThrow = async (
     let checkpointEventsProcessed =
       batch.checkpointEventsProcessed->Js.Array2.unsafe_get(checkpointIdx)
 
-    for idx in 0 to checkpointEventsProcessed {
+    for idx in 0 to checkpointEventsProcessed - 1 {
       let item = batch.items->Js.Array2.unsafe_get(itemIdx.contents + idx)
 
       await runHandlerOrThrow(
