@@ -73,31 +73,6 @@ type handlerContext = {
 type {{entity.name.uncapitalized}} = Entities.{{entity.name.capitalized}}.t
 {{/each}}
 
-type eventIdentifier = {
-  chainId: int,
-  blockTimestamp: int,
-  blockNumber: int,
-  logIndex: int,
-}
-
-type entityUpdateAction<'entityType> =
-  | Set('entityType)
-  | Delete
-
-type entityUpdate<'entityType> = {
-  eventIdentifier: eventIdentifier,
-  entityId: id,
-  entityUpdateAction: entityUpdateAction<'entityType>,
-  checkpointId: int,
-}
-
-let mkEntityUpdate = (~eventIdentifier, ~entityId, ~checkpointId, entityUpdateAction) => {
-  entityId,
-  eventIdentifier,
-  entityUpdateAction,
-  checkpointId,
-}
-
 type entityValueAtStartOfBatch<'entityType> =
   | NotSet // The entity isn't in the DB yet
   | AlreadySet('entityType)

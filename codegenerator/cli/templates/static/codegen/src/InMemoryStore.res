@@ -52,7 +52,7 @@ type t = {
   rawEvents: InMemoryTable.t<rawEventsKey, InternalTable.RawEvents.t>,
   entities: dict<InMemoryTable.Entity.t<Entities.internalEntity>>,
   effects: dict<effectCacheInMemTable>,
-  rollBackEventIdentifier: option<Types.eventIdentifier>,
+  rollBackEventIdentifier: option<Internal.eventIdentifier>,
   rollbackTargetCheckpointId: option<int>,
 }
 
@@ -140,18 +140,16 @@ let setBatchDcs = (inMemoryStore: t, ~batch: Batch.t, ~shouldSaveHistory) => {
             registeringEventSrcAddress: eventItem.event.srcAddress,
           }
 
-          let eventIdentifier: Types.eventIdentifier = {
+          let eventIdentifier: Internal.eventIdentifier = {
             chainId,
             blockTimestamp: 0,
             blockNumber: dc.startBlock,
             logIndex: eventItem.logIndex,
           }
           inMemTable->InMemoryTable.Entity.set(
-            Set(entity->InternalTable.DynamicContractRegistry.castToInternal)->Types.mkEntityUpdate(
-              ~eventIdentifier,
-              ~entityId=entity.id,
-              ~checkpointId,
-            ),
+            Set(
+              entity->InternalTable.DynamicContractRegistry.castToInternal,
+            )->Internal.mkEntityUpdate(~eventIdentifier, ~entityId=entity.id, ~checkpointId),
             ~shouldSaveHistory,
           )
         }

@@ -14,8 +14,8 @@ let executeSet = (
 
 let getEntityHistoryItems = (entityUpdates, ~containsRollbackDiffChange) => {
   let (_, entityHistoryItems) = entityUpdates->Belt.Array.reduce((None, []), (
-    prev: (option<Types.eventIdentifier>, array<EntityHistory.historyRow<_>>),
-    entityUpdate: Types.entityUpdate<'a>,
+    prev: (option<Internal.eventIdentifier>, array<EntityHistory.historyRow<_>>),
+    entityUpdate: Internal.entityUpdate<'a>,
   ) => {
     let (optPreviousEventIdentifier, entityHistoryItems) = prev
 
@@ -343,7 +343,7 @@ module RollBack = {
     ~isUnorderedMultichainMode,
     ~rollbackTargetCheckpointId,
   ) => {
-    let rollBackEventIdentifier: Types.eventIdentifier = {
+    let rollBackEventIdentifier: Internal.eventIdentifier = {
       chainId,
       blockTimestamp,
       blockNumber,
@@ -380,7 +380,7 @@ module RollBack = {
         let entityTable = inMemStore->InMemoryStore.getInMemTable(~entityConfig)
 
         diff->Belt.Array.forEach(historyRow => {
-          let eventIdentifier: Types.eventIdentifier = {
+          let eventIdentifier: Internal.eventIdentifier = {
             chainId: historyRow.current.chain_id,
             blockNumber: historyRow.current.block_number,
             logIndex: historyRow.current.log_index,
@@ -390,7 +390,7 @@ module RollBack = {
           | Set(entity: Entities.internalEntity) =>
             setEntities->Utils.Dict.push(entityConfig.name, entity.id)
             entityTable->InMemoryTable.Entity.set(
-              Set(entity)->Types.mkEntityUpdate(
+              Set(entity)->Internal.mkEntityUpdate(
                 ~eventIdentifier,
                 ~entityId=entity.id,
                 // Having checkpointId as 0 here is fine,
@@ -404,7 +404,7 @@ module RollBack = {
           | Delete({id}) =>
             deletedEntities->Utils.Dict.push(entityConfig.name, id)
             entityTable->InMemoryTable.Entity.set(
-              Delete->Types.mkEntityUpdate(
+              Delete->Internal.mkEntityUpdate(
                 ~eventIdentifier,
                 ~entityId=id,
                 // Having checkpointId as 0 here is fine,
