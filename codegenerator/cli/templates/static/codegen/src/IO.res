@@ -390,14 +390,28 @@ module RollBack = {
           | Set(entity: Entities.internalEntity) =>
             setEntities->Utils.Dict.push(entityConfig.name, entity.id)
             entityTable->InMemoryTable.Entity.set(
-              Set(entity)->Types.mkEntityUpdate(~eventIdentifier, ~entityId=entity.id),
+              Set(entity)->Types.mkEntityUpdate(
+                ~eventIdentifier,
+                ~entityId=entity.id,
+                // Having checkpointId as 0 here is fine,
+                // since we don't write a history for the item
+                // and it's guaranteed to detect a change on update in handler
+                ~checkpointId=0,
+              ),
               ~shouldSaveHistory=false,
               ~containsRollbackDiffChange=true,
             )
           | Delete({id}) =>
             deletedEntities->Utils.Dict.push(entityConfig.name, id)
             entityTable->InMemoryTable.Entity.set(
-              Delete->Types.mkEntityUpdate(~eventIdentifier, ~entityId=id),
+              Delete->Types.mkEntityUpdate(
+                ~eventIdentifier,
+                ~entityId=id,
+                // Having checkpointId as 0 here is fine,
+                // since we don't write a history for the item
+                // and it's guaranteed to detect a change on update in handler
+                ~checkpointId=0,
+              ),
               ~shouldSaveHistory=false,
               ~containsRollbackDiffChange=true,
             )

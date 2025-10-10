@@ -34,7 +34,7 @@ module Group = {
     group: t<'a>,
     ~contractAddress,
     ~blockNumber,
-    ~indexingContracts: dict<FetchState.indexingContract>,
+    ~indexingContracts: dict<Internal.indexingContract>,
   ) =>
     switch group {
     | {wildcard, byContractName} =>

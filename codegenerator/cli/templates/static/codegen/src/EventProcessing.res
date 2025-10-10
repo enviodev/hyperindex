@@ -81,6 +81,7 @@ exception ProcessingError({message: string, exn: exn, item: Internal.item})
 
 let runEventHandlerOrThrow = async (
   item: Internal.item,
+  ~checkpointId,
   ~handler,
   ~inMemoryStore,
   ~loadManager,
@@ -100,6 +101,7 @@ let runEventHandlerOrThrow = async (
           event: eventItem.event,
           context: UserContext.getHandlerContext({
             item,
+            checkpointId,
             inMemoryStore,
             loadManager,
             persistence,
@@ -132,6 +134,7 @@ let runEventHandlerOrThrow = async (
 
 let runHandlerOrThrow = async (
   item: Internal.item,
+  ~checkpointId,
   ~inMemoryStore,
   ~loadManager,
   ~config: Config.t,
@@ -154,6 +157,7 @@ let runHandlerOrThrow = async (
               loadManager,
               persistence: config.persistence,
               shouldSaveHistory,
+              checkpointId,
               isPreload: false,
             }),
           }: Internal.onBlockArgs
@@ -163,7 +167,7 @@ let runHandlerOrThrow = async (
     | exn =>
       raise(
         ProcessingError({
-          message: "Unexpected error in the event handler. Please handle the error to keep the indexer running smoothly.",
+          message: "Unexpected error in the block handler. Please handle the error to keep the indexer running smoothly.",
           item,
           exn,
         }),
@@ -174,6 +178,7 @@ let runHandlerOrThrow = async (
       | Some(handler) =>
         await item->runEventHandlerOrThrow(
           ~handler,
+          ~checkpointId,
           ~inMemoryStore,
           ~loadManager,
           ~persistence=config.persistence,
@@ -196,15 +201,23 @@ let preloadBatchOrThrow = async (batch: Batch.t, ~loadManager, ~persistence, ~in
   // We'll rerun the loader again right before the handler run,
   // to avoid having a stale data returned from the loader.
 
-  let _ = await Promise.all(
-    batch.items->Array.keepMap(item => {
+  let promises = []
+  let itemIdx = ref(0)
+
+  for checkpointIdx in 0 to batch.checkpointIds->Array.length - 1 {
+    let checkpointId = batch.checkpointIds->Js.Array2.unsafe_get(checkpointIdx)
+    let checkpointEventsProcessed =
+      batch.checkpointEventsProcessed->Js.Array2.unsafe_get(checkpointIdx)
+
+    for idx in 0 to checkpointEventsProcessed {
+      let item = batch.items->Js.Array2.unsafe_get(itemIdx.contents + idx)
       switch item {
       | Event({eventConfig: {handler}, event}) =>
         switch handler {
-        | None => None
+        | None => ()
         | Some(handler) =>
           try {
-            Some(
+            promises->Array.push(
               handler({
                 event,
                 context: UserContext.getHandlerContext({
@@ -212,6 +225,7 @@ let preloadBatchOrThrow = async (batch: Batch.t, ~loadManager, ~persistence, ~in
                   inMemoryStore,
                   loadManager,
                   persistence,
+                  checkpointId,
                   isPreload: true,
                   shouldSaveHistory: false,
                 }),
@@ -221,12 +235,12 @@ let preloadBatchOrThrow = async (batch: Batch.t, ~loadManager, ~persistence, ~in
               // it won't create a rejected promise
             )
           } catch {
-          | _ => None
+          | _ => ()
           }
         }
       | Block({onBlockConfig: {handler, chainId}, blockNumber}) =>
         try {
-          Some(
+          promises->Array.push(
             handler({
               block: {
                 number: blockNumber,
@@ -237,37 +251,53 @@ let preloadBatchOrThrow = async (batch: Batch.t, ~loadManager, ~persistence, ~in
                 inMemoryStore,
                 loadManager,
                 persistence,
+                checkpointId,
                 isPreload: true,
                 shouldSaveHistory: false,
               }),
             })->Promise.silentCatch,
           )
         } catch {
-        | _ => None
+        | _ => ()
         }
       }
-    }),
-  )
+    }
+
+    itemIdx := itemIdx.contents + checkpointEventsProcessed
+  }
+
+  let _ = await Promise.all(promises)
 }
 
 let runBatchHandlersOrThrow = async (
-  {items}: Batch.t,
+  batch: Batch.t,
   ~inMemoryStore,
   ~loadManager,
   ~config,
   ~shouldSaveHistory,
   ~shouldBenchmark,
 ) => {
-  for i in 0 to items->Array.length - 1 {
-    let item = items->Js.Array2.unsafe_get(i)
-    await runHandlerOrThrow(
-      item,
-      ~inMemoryStore,
-      ~loadManager,
-      ~config,
-      ~shouldSaveHistory,
-      ~shouldBenchmark,
-    )
+  let itemIdx = ref(0)
+
+  for checkpointIdx in 0 to batch.checkpointIds->Array.length - 1 {
+    let checkpointId = batch.checkpointIds->Js.Array2.unsafe_get(checkpointIdx)
+    let checkpointEventsProcessed =
+      batch.checkpointEventsProcessed->Js.Array2.unsafe_get(checkpointIdx)
+
+    for idx in 0 to checkpointEventsProcessed {
+      let item = batch.items->Js.Array2.unsafe_get(itemIdx.contents + idx)
+
+      await runHandlerOrThrow(
+        item,
+        ~checkpointId,
+        ~inMemoryStore,
+        ~loadManager,
+        ~config,
+        ~shouldSaveHistory,
+        ~shouldBenchmark,
+      )
+    }
+    itemIdx := itemIdx.contents + checkpointEventsProcessed
   }
 }
 

@@ -16,6 +16,7 @@ module InMemoryStore = {
           logIndex: 0,
         },
         ~entityId=entity->Entities.getEntityId,
+        ~checkpointId=0,
       ),
       ~shouldSaveHistory=RegisterHandlers.getConfig()->Config.shouldSaveHistory(
         ~isInReorgThreshold=false,

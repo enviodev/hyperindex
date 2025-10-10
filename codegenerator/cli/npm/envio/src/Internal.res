@@ -133,6 +133,14 @@ type evmContractConfig = {
   events: array<evmEventConfig>,
 }
 
+type indexingContract = {
+  address: Address.t,
+  contractName: string,
+  startBlock: int,
+}
+
+type dcs = array<indexingContract>
+
 // Duplicate the type from item
 // to make item properly unboxed
 type eventItem = private {
@@ -187,6 +195,11 @@ external castUnsafeEventItem: item => eventItem = "%identity"
 external getItemBlockNumber: item => int = "blockNumber"
 @get
 external getItemLogIndex: item => int = "logIndex"
+
+@get
+external getItemDcs: item => option<dcs> = "dcs"
+@set
+external setItemDcs: (item, dcs) => unit = "dcs"
 
 @genType
 type eventOptions<'eventFilters> = {

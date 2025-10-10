@@ -34,8 +34,7 @@ module Crypto = {
     input->hashKeccak256(~toString=v => anyToString(v) ++ previousHash)
 }
 
-module Make = (Indexer: Indexer.S) => {
-  open Indexer
+module Make = () => {
   type log = {
     item: Internal.item,
     srcAddress: Address.t,

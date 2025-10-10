@@ -19,6 +19,7 @@ let makeEventIdentifier = (item: Internal.item): Types.eventIdentifier => {
 
 type contextParams = {
   item: Internal.item,
+  checkpointId: int,
   inMemoryStore: InMemoryStore.t,
   loadManager: LoadManager.t,
   persistence: Persistence.t,
@@ -136,6 +137,7 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
             Set(entity)->Types.mkEntityUpdate(
               ~eventIdentifier=params.item->makeEventIdentifier,
               ~entityId=entity.id,
+              ~checkpointId=params.checkpointId,
             ),
             ~shouldSaveHistory=params.shouldSaveHistory,
           )
@@ -212,6 +214,7 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
             Delete->Types.mkEntityUpdate(
               ~eventIdentifier=params.item->makeEventIdentifier,
               ~entityId,
+              ~checkpointId=params.checkpointId,
             ),
             ~shouldSaveHistory=params.shouldSaveHistory,
           )
@@ -246,6 +249,7 @@ let handlerTraps: Utils.Proxy.traps<contextParams> = {
           loadManager: params.loadManager,
           persistence: params.persistence,
           shouldSaveHistory: params.shouldSaveHistory,
+          checkpointId: params.checkpointId,
           entityConfig,
         }
         ->Utils.Proxy.make(entityTraps)

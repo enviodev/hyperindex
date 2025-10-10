@@ -16,11 +16,6 @@ module.exports.batchDeleteItemsInTable = (table, sql, pkArray) => {
   }
 };
 
-module.exports.readAllDynamicContracts = (sql, chainId) => sql`
-  SELECT *
-  FROM ${sql(publicSchema)}."dynamic_contract_registry"
-  WHERE chain_id = ${chainId};`;
-
 const makeHistoryTableName = (entityName) => entityName + "_history";
 
 /**

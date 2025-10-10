@@ -45,32 +45,20 @@ let getBlockData = (~blockNumber): FetchState.blockNumberAndTimestamp => {
 let makeDynContractRegistration = (
   ~contractAddress,
   ~blockNumber,
-  ~logIndex=0,
   ~contractType=Gravatar,
-  ~registeringEventContractName="MockGravatarFactory",
-  ~registeringEventName="MockCreateGravatar",
-  ~registeringEventSrcAddress=mockFactoryAddress,
-): FetchState.indexingContract => {
+): Internal.indexingContract => {
   {
     address: contractAddress,
     contractName: (contractType :> string),
     startBlock: blockNumber,
-    register: DC({
-      registeringEventLogIndex: logIndex,
-      registeringEventBlockTimestamp: getTimestamp(~blockNumber),
-      registeringEventContractName,
-      registeringEventName,
-      registeringEventSrcAddress,
-    }),
   }
 }
 
-let makeConfigContract = (contractName, address): FetchState.indexingContract => {
+let makeConfigContract = (contractName, address): Internal.indexingContract => {
   {
     address,
     contractName,
     startBlock: 0,
-    register: Config,
   }
 }
 
@@ -82,6 +70,12 @@ let mockEvent = (~blockNumber, ~logIndex=0, ~chainId=1): Internal.item => Intern
   logIndex,
   event: Utils.magic("Mock event in fetchstate test"),
 })
+
+let dcToItem = (dc: Internal.indexingContract) => {
+  let item = mockEvent(~blockNumber=dc.startBlock)
+  item->Internal.setItemDcs([dc])
+  item
+}
 
 let baseEventConfig = (Mock.evmEventConfig(
   ~id="0",
@@ -103,10 +97,9 @@ let makeInitial = (
     ~eventConfigs=[baseEventConfig, baseEventConfig2],
     ~contracts=[
       {
-        FetchState.address: mockAddress0,
+        Internal.address: mockAddress0,
         contractName: "Gravatar",
         startBlock,
-        register: Config,
       },
     ],
     ~startBlock,
@@ -120,7 +113,7 @@ let makeInitial = (
 
 // Helper to build indexingContracts dict for test expectations
 // Note: dynamic contract info is now only tracked by the register field (DC variant)
-let makeIndexingContractsWithDynamics = (dcs: array<FetchState.indexingContract>, ~static=[]) => {
+let makeIndexingContractsWithDynamics = (dcs: array<Internal.indexingContract>, ~static=[]) => {
   let dict = Js.Dict.empty()
   dcs->Array.forEach(dc => {
     dict->Js.Dict.set(dc.address->Address.toString, dc)
@@ -132,7 +125,6 @@ let makeIndexingContractsWithDynamics = (dcs: array<FetchState.indexingContract>
         address,
         contractName: (Gravatar :> string),
         startBlock: 0,
-        register: Config,
       },
     )
   })
@@ -177,7 +169,6 @@ describe("FetchState.make", () => {
         chainId: 0,
         indexingContracts: fetchState.indexingContracts,
         contractConfigs: fetchState.contractConfigs,
-        dcsToStore: [],
         blockLag: 0,
         onBlockConfigs: [],
       },
@@ -250,7 +241,6 @@ describe("FetchState.make", () => {
           chainId,
           indexingContracts: fetchState.indexingContracts,
           contractConfigs: fetchState.contractConfigs,
-          dcsToStore: [],
           blockLag: 0,
           onBlockConfigs: [],
         },
@@ -316,7 +306,6 @@ describe("FetchState.make", () => {
           chainId,
           indexingContracts: fetchState.indexingContracts,
           contractConfigs: fetchState.contractConfigs,
-          dcsToStore: [],
           blockLag: 0,
           onBlockConfigs: [],
         },
@@ -414,7 +403,6 @@ describe("FetchState.make", () => {
           chainId,
           indexingContracts: fetchState.indexingContracts,
           contractConfigs: fetchState.contractConfigs,
-          dcsToStore: [],
           blockLag: 0,
           onBlockConfigs: [],
         },
@@ -440,7 +428,7 @@ describe("FetchState.registerDynamicContracts", () => {
 
     Assert.equal(
       fetchState->FetchState.registerDynamicContracts([
-        makeDynContractRegistration(~blockNumber=0, ~contractAddress=mockAddress0),
+        makeDynContractRegistration(~blockNumber=0, ~contractAddress=mockAddress0)->dcToItem,
       ]),
       fetchState,
       ~message="Should return fetchState without updating it",
@@ -454,7 +442,7 @@ describe("FetchState.registerDynamicContracts", () => {
 
       let dc1 = makeDynContractRegistration(~blockNumber=2, ~contractAddress=mockAddress1)
 
-      let fetchStateWithDc1 = fetchState->FetchState.registerDynamicContracts([dc1])
+      let fetchStateWithDc1 = fetchState->FetchState.registerDynamicContracts([dc1->dcToItem])
 
       Assert.deepEqual(
         (fetchState.partitions->Array.length, fetchStateWithDc1.partitions->Array.length),
@@ -463,14 +451,14 @@ describe("FetchState.registerDynamicContracts", () => {
       )
 
       Assert.equal(
-        fetchStateWithDc1->FetchState.registerDynamicContracts([dc1]),
+        fetchStateWithDc1->FetchState.registerDynamicContracts([dc1->dcToItem]),
         fetchStateWithDc1,
         ~message="Calling it with the same dc for the second time shouldn't change anything",
       )
 
       Assert.equal(
         fetchStateWithDc1->FetchState.registerDynamicContracts([
-          makeDynContractRegistration(~blockNumber=0, ~contractAddress=mockAddress1),
+          makeDynContractRegistration(~blockNumber=0, ~contractAddress=mockAddress1)->dcToItem,
         ]),
         fetchStateWithDc1,
         ~message=`BROKEN: Calling it with the same dc
@@ -490,7 +478,13 @@ describe("FetchState.registerDynamicContracts", () => {
     let dc3 = makeDynContractRegistration(~blockNumber=2, ~contractAddress=mockAddress3)
     let dc4 = makeDynContractRegistration(~blockNumber=2, ~contractAddress=mockAddress4)
 
-    let updatedFetchState = fetchState->FetchState.registerDynamicContracts([dc1, dc2, dc3, dc4])
+    let updatedFetchState =
+      fetchState->FetchState.registerDynamicContracts([
+        dc1->dcToItem,
+        dc2->dcToItem,
+        dc3->dcToItem,
+        dc4->dcToItem,
+      ])
 
     Assert.deepEqual(
       updatedFetchState.partitions,
@@ -533,10 +527,10 @@ describe("FetchState.registerDynamicContracts", () => {
     )
     let updatedFetchState =
       fetchState->FetchState.registerDynamicContracts([
-        dc1FromAnotherContract,
-        dc2,
-        dc3,
-        dc4FromAnotherContract,
+        dc1FromAnotherContract->dcToItem,
+        dc2->dcToItem,
+        dc3->dcToItem,
+        dc4FromAnotherContract->dcToItem,
       ])
 
     Assert.deepEqual(
@@ -634,7 +628,13 @@ describe("FetchState.registerDynamicContracts", () => {
       )
 
       let updatedFetchState =
-        fetchState->FetchState.registerDynamicContracts([dc1, dc2, dc3, dc4, dc5])
+        fetchState->FetchState.registerDynamicContracts([
+          dc1->dcToItem,
+          dc2->dcToItem,
+          dc3->dcToItem,
+          dc4->dcToItem,
+          dc5->dcToItem,
+        ])
 
       Assert.deepEqual(
         updatedFetchState.partitions,
@@ -715,12 +715,14 @@ describe("FetchState.registerDynamicContracts", () => {
 
     let dc1 = makeDynContractRegistration(~blockNumber=20, ~contractAddress=mockAddress1)
     let dc2 = makeDynContractRegistration(~blockNumber=10, ~contractAddress=mockAddress1)
+    let dcItem1 = dc1->dcToItem
+    let dcItem2 = dc2->dcToItem
 
-    let updatedFetchState = fetchState->FetchState.registerDynamicContracts([dc1, dc2])
+    let updatedFetchState = fetchState->FetchState.registerDynamicContracts([dcItem1, dcItem2])
 
     Assert.deepEqual(
-      updatedFetchState.dcsToStore,
-      [dc2],
+      (dcItem1->Internal.getItemDcs, dcItem2->Internal.getItemDcs),
+      (None, Some([dc2])),
       ~message="Should choose the earliest dc from the batch",
     )
     Assert.deepEqual(
@@ -764,13 +766,12 @@ describe("FetchState.registerDynamicContracts", () => {
     let updatedFetchState =
       fetchState->FetchState.registerDynamicContracts(// Order of dcs doesn't matter
       // but they are not sorted in fetch state
-      [dc1, dc3, dc2])
+      [dc1->dcToItem, dc3->dcToItem, dc2->dcToItem])
     Assert.equal(updatedFetchState.indexingContracts->Utils.Dict.size, 4)
     Assert.deepEqual(
       updatedFetchState,
       {
         ...fetchState,
-        dcsToStore: [dc1, dc3, dc2],
         indexingContracts: updatedFetchState.indexingContracts,
         nextPartitionIndex: 2,
         partitions: fetchState.partitions->Array.concat([
@@ -890,7 +891,6 @@ describe("FetchState.registerDynamicContracts", () => {
           chainId,
           indexingContracts: fetchState.indexingContracts,
           contractConfigs: fetchState.contractConfigs,
-          dcsToStore: [],
           blockLag: 0,
           onBlockConfigs: [],
         },
@@ -931,7 +931,6 @@ describe("FetchState.getNextQuery & integration", () => {
       buffer: [mockEvent(~blockNumber=1), mockEvent(~blockNumber=2)],
       startBlock: 0,
       endBlock: None,
-      dcsToStore: [],
       blockLag: 0,
       normalSelection,
       chainId,
@@ -939,10 +938,9 @@ describe("FetchState.getNextQuery & integration", () => {
         (
           mockAddress0->Address.toString,
           {
-            FetchState.contractName: (Gravatar :> string),
+            Internal.contractName: (Gravatar :> string),
             startBlock: 0,
             address: mockAddress0,
-            register: Config,
           },
         ),
       ]),
@@ -954,7 +952,6 @@ describe("FetchState.getNextQuery & integration", () => {
   let makeIntermidiateDcMerge = (): FetchState.t => {
     let normalSelection = makeInitial().normalSelection
     {
-      dcsToStore: [dc2, dc1, dc3],
       partitions: [
         {
           id: "0",
@@ -1231,14 +1228,13 @@ describe("FetchState.getNextQuery & integration", () => {
 
     let fetchStateWithDcs =
       fetchState
-      ->FetchState.registerDynamicContracts([dc2, dc1])
-      ->FetchState.registerDynamicContracts([dc3])
+      ->FetchState.registerDynamicContracts([dc2->dcToItem, dc1->dcToItem])
+      ->FetchState.registerDynamicContracts([dc3->dcToItem])
 
     Assert.deepEqual(
       fetchStateWithDcs,
       {
         ...fetchState,
-        dcsToStore: [dc2, dc1, dc3],
         indexingContracts: makeIndexingContractsWithDynamics(
           [dc2, dc1, dc3],
           ~static=[mockAddress0],
@@ -1626,7 +1622,7 @@ describe("FetchState.getNextQuery & integration", () => {
         ~targetBufferSize=10,
         ~chainId,
       )->FetchState.registerDynamicContracts([
-        makeDynContractRegistration(~blockNumber=2, ~contractAddress=mockAddress2),
+        makeDynContractRegistration(~blockNumber=2, ~contractAddress=mockAddress2)->dcToItem,
       ])
 
     Assert.deepEqual(fetchState.partitions->Array.length, 3)
@@ -1673,7 +1669,6 @@ describe("FetchState.getNextQuery & integration", () => {
       fetchStateAfterRollback1,
       {
         ...fetchState,
-        dcsToStore: [dc1],
         indexingContracts: makeIndexingContractsWithDynamics([dc1], ~static=[mockAddress0]),
         partitions: [
           {
@@ -1713,7 +1708,6 @@ describe("FetchState.getNextQuery & integration", () => {
       fetchStateAfterRollback2,
       {
         ...fetchStateAfterRollback1,
-        dcsToStore: [],
         indexingContracts: makeIndexingContractsWithDynamics([], ~static=[mockAddress0]),
         partitions: [
           {
@@ -1760,7 +1754,7 @@ describe("FetchState.getNextQuery & integration", () => {
         ~targetBufferSize=10,
         ~chainId,
       )->FetchState.registerDynamicContracts([
-        makeDynContractRegistration(~blockNumber=2, ~contractAddress=mockAddress2),
+        makeDynContractRegistration(~blockNumber=2, ~contractAddress=mockAddress2)->dcToItem,
       ])
 
     // Additionally test that state being reset
@@ -1793,7 +1787,6 @@ describe("FetchState.getNextQuery & integration", () => {
       fetchStateAfterRollback,
       {
         ...fetchState,
-        dcsToStore: [],
         indexingContracts: Js.Dict.empty(),
         partitions: [
           {
@@ -1880,7 +1873,6 @@ describe("FetchState unit tests for specific cases", () => {
       updatedFetchState,
       {
         ...fetchState,
-        dcsToStore: [],
         partitions: [
           {
             id: "0",
@@ -2078,7 +2070,7 @@ describe("FetchState unit tests for specific cases", () => {
         makeDynContractRegistration(
           ~contractAddress=mockAddress1,
           ~blockNumber=registeringBlockNumber,
-        ),
+        )->dcToItem,
       ])
 
     Assert.deepEqual(
@@ -2180,7 +2172,7 @@ describe("FetchState unit tests for specific cases", () => {
     Assert.deepEqual(
       fetchState
       ->FetchState.registerDynamicContracts([
-        makeDynContractRegistration(~contractAddress=mockAddress1, ~blockNumber=2),
+        makeDynContractRegistration(~contractAddress=mockAddress1, ~blockNumber=2)->dcToItem,
       ])
       ->getEarliestEvent,
       NoItem({
@@ -2275,7 +2267,7 @@ describe("FetchState unit tests for specific cases", () => {
 
       //Dynamic contract A registered at block 100
       let dcA = makeDynContractRegistration(~contractAddress=mockAddress2, ~blockNumber=100)
-      let fetchStateWithDcA = fetchState->FetchState.registerDynamicContracts([dcA])
+      let fetchStateWithDcA = fetchState->FetchState.registerDynamicContracts([dcA->dcToItem])
 
       let queryA = switch fetchStateWithDcA->FetchState.getNextQuery(
         ~concurrencyLimit=10,
@@ -2312,7 +2304,7 @@ describe("FetchState unit tests for specific cases", () => {
       //Next registration happens at block 200, between the first register and the upperbound of it's query
       let fetchStateWithDcB =
         fetchStateWithDcA->FetchState.registerDynamicContracts([
-          makeDynContractRegistration(~contractAddress=mockAddress3, ~blockNumber=200),
+          makeDynContractRegistration(~contractAddress=mockAddress3, ~blockNumber=200)->dcToItem,
         ])
 
       Assert.deepEqual(
@@ -2513,10 +2505,9 @@ describe("FetchState.isReadyToEnterReorgThreshold", () => {
       ~eventConfigs=[baseEventConfig, baseEventConfig2],
       ~contracts=[
         {
-          FetchState.address: mockAddress0,
+          Internal.address: mockAddress0,
           contractName: "Gravatar",
           startBlock: 6,
-          register: Config,
         },
       ],
       ~startBlock=6,
@@ -2535,10 +2526,9 @@ describe("FetchState.isReadyToEnterReorgThreshold", () => {
       ~eventConfigs=[baseEventConfig, baseEventConfig2],
       ~contracts=[
         {
-          FetchState.address: mockAddress0,
+          Internal.address: mockAddress0,
           contractName: "Gravatar",
           startBlock: 50,
-          register: Config,
         },
       ],
       ~startBlock=50,
@@ -2557,10 +2547,9 @@ describe("FetchState.isReadyToEnterReorgThreshold", () => {
       ~eventConfigs=[baseEventConfig, baseEventConfig2],
       ~contracts=[
         {
-          FetchState.address: mockAddress0,
+          Internal.address: mockAddress0,
           contractName: "Gravatar",
           startBlock: 50,
-          register: Config,
         },
       ],
       ~startBlock=50,
@@ -2579,10 +2568,9 @@ describe("FetchState.isReadyToEnterReorgThreshold", () => {
       ~eventConfigs=[baseEventConfig, baseEventConfig2],
       ~contracts=[
         {
-          FetchState.address: mockAddress0,
+          Internal.address: mockAddress0,
           contractName: "Gravatar",
           startBlock: 51,
-          register: Config,
         },
       ],
       ~startBlock=51,
@@ -2601,10 +2589,9 @@ describe("FetchState.isReadyToEnterReorgThreshold", () => {
       ~eventConfigs=[baseEventConfig, baseEventConfig2],
       ~contracts=[
         {
-          FetchState.address: mockAddress0,
+          Internal.address: mockAddress0,
           contractName: "Gravatar",
           startBlock: 50,
-          register: Config,
         },
       ],
       ~startBlock=50,
@@ -2623,10 +2610,9 @@ describe("FetchState.isReadyToEnterReorgThreshold", () => {
       ~eventConfigs=[baseEventConfig, baseEventConfig2],
       ~contracts=[
         {
-          FetchState.address: mockAddress0,
+          Internal.address: mockAddress0,
           contractName: "Gravatar",
           startBlock: 6,
-          register: Config,
         },
       ],
       ~startBlock=6,
@@ -2648,10 +2634,9 @@ describe("FetchState.isReadyToEnterReorgThreshold", () => {
       ~eventConfigs=[baseEventConfig, baseEventConfig2],
       ~contracts=[
         {
-          FetchState.address: mockAddress0,
+          Internal.address: mockAddress0,
           contractName: "Gravatar",
           startBlock: 6,
-          register: Config,
         },
       ],
       ~startBlock=6,
@@ -2677,7 +2662,8 @@ describe("Dynamic contracts with start blocks", () => {
     )
 
     // Register the contract at block 100 (before its startBlock)
-    let updatedFetchState = fetchState->FetchState.registerDynamicContracts([dynamicContract])
+    let updatedFetchState =
+      fetchState->FetchState.registerDynamicContracts([dynamicContract->dcToItem])
 
     // The contract should be registered in indexingContracts
     Assert.ok(
@@ -2717,7 +2703,8 @@ describe("Dynamic contracts with start blocks", () => {
       ~contractType=Gravatar,
     )
 
-    let updatedFetchState = fetchState->FetchState.registerDynamicContracts([contract1, contract2])
+    let updatedFetchState =
+      fetchState->FetchState.registerDynamicContracts([contract1->dcToItem, contract2->dcToItem])
 
     // Verify both contracts are registered with correct startBlocks
     let contract1Registered =
@@ -2816,7 +2803,8 @@ describe("FetchState buffer overflow prevention", () => {
       // Create a second partition to ensure buffer limiting logic is exercised across partitions
       // Register at a later block, so partition "0" remains the earliest and is selected
       let dc = makeDynContractRegistration(~blockNumber=0, ~contractAddress=mockAddress1)
-      let fetchStateWithTwoPartitions = fetchState->FetchState.registerDynamicContracts([dc])
+      let fetchStateWithTwoPartitions =
+        fetchState->FetchState.registerDynamicContracts([dc->dcToItem])
 
       // Build up a large queue using public API (handleQueryResult)
       // queue.length = 15, targetBufferSize = 10

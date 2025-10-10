@@ -5,6 +5,72 @@ let isPrimaryKey = true
 let isNullable = true
 let isIndex = true
 
+module DynamicContractRegistry = {
+  let name = "dynamic_contract_registry"
+
+  let makeId = (~chainId, ~contractAddress) => {
+    chainId->Belt.Int.toString ++ "-" ++ contractAddress->Address.toString
+  }
+
+  // @genType Used for Test DB
+  @genType
+  type t = {
+    id: string,
+    @as("chain_id") chainId: int,
+    @as("registering_event_block_number") registeringEventBlockNumber: int,
+    @as("registering_event_log_index") registeringEventLogIndex: int,
+    @as("registering_event_block_timestamp") registeringEventBlockTimestamp: int,
+    @as("registering_event_contract_name") registeringEventContractName: string,
+    @as("registering_event_name") registeringEventName: string,
+    @as("registering_event_src_address") registeringEventSrcAddress: Address.t,
+    @as("contract_address") contractAddress: Address.t,
+    @as("contract_name") contractName: string,
+  }
+
+  let schema = S.schema(s => {
+    id: s.matches(S.string),
+    chainId: s.matches(S.int),
+    registeringEventBlockNumber: s.matches(S.int),
+    registeringEventLogIndex: s.matches(S.int),
+    registeringEventContractName: s.matches(S.string),
+    registeringEventName: s.matches(S.string),
+    registeringEventSrcAddress: s.matches(Address.schema),
+    registeringEventBlockTimestamp: s.matches(S.int),
+    contractAddress: s.matches(Address.schema),
+    contractName: s.matches(S.string),
+  })
+
+  let rowsSchema = S.array(schema)
+
+  let table = mkTable(
+    name,
+    ~fields=[
+      mkField("id", Text, ~isPrimaryKey, ~fieldSchema=S.string),
+      mkField("chain_id", Integer, ~fieldSchema=S.int),
+      mkField("registering_event_block_number", Integer, ~fieldSchema=S.int),
+      mkField("registering_event_log_index", Integer, ~fieldSchema=S.int),
+      mkField("registering_event_block_timestamp", Integer, ~fieldSchema=S.int),
+      mkField("registering_event_contract_name", Text, ~fieldSchema=S.string),
+      mkField("registering_event_name", Text, ~fieldSchema=S.string),
+      mkField("registering_event_src_address", Text, ~fieldSchema=Address.schema),
+      mkField("contract_address", Text, ~fieldSchema=Address.schema),
+      mkField("contract_name", Text, ~fieldSchema=S.string),
+    ],
+  )
+
+  let entityHistory = table->EntityHistory.fromTable(~schema)
+
+  external castToInternal: t => Internal.entity = "%identity"
+
+  let config = {
+    name,
+    schema,
+    rowsSchema,
+    table,
+    entityHistory,
+  }->Internal.fromGenericEntityConfig
+}
+
 module Chains = {
   type progressFields = [
     | #progress_block
@@ -165,7 +231,46 @@ VALUES ${valuesRows->Js.Array2.joinWith(",\n       ")};`,
 
     `UPDATE "${pgSchema}"."${table.tableName}"
 SET ${setClauses->Js.Array2.joinWith(",\n    ")}
-WHERE "id" = $1;`
+WHERE "${(#id: field :> string)}" = $1;`
+  }
+
+  type rawInitialState = {
+    id: int,
+    startBlock: int,
+    endBlock: Js.Null.t<int>,
+    maxReorgDepth: int,
+    firstEventBlockNumber: Js.Null.t<int>,
+    timestampCaughtUpToHeadOrEndblock: Js.Null.t<Js.Date.t>,
+    numEventsProcessed: int,
+    progressBlockNumber: int,
+    dynamicContracts: array<Internal.indexingContract>,
+  }
+
+  let makeGetInitialStateQuery = (~pgSchema) => {
+    `SELECT "${(#id: field :> string)}" as "id",
+"${(#start_block: field :> string)}" as "startBlock",
+"${(#end_block: field :> string)}" as "endBlock",
+"${(#max_reorg_depth: field :> string)}" as "maxReorgDepth",
+"${(#first_event_block: field :> string)}" as "firstEventBlockNumber",
+"${(#ready_at: field :> string)}" as "timestampCaughtUpToHeadOrEndblock",
+"${(#events_processed: field :> string)}" as "numEventsProcessed",
+"${(#progress_block: field :> string)}" as "progressBlockNumber",
+(
+  SELECT COALESCE(json_agg(json_build_object(
+    'address', "contract_address",
+    'contractName', "contract_name",
+    'startBlock', "registering_event_block_number"
+  )), '[]'::json)
+  FROM "${pgSchema}"."${DynamicContractRegistry.table.tableName}"
+  WHERE "chain_id" = chains."${(#id: field :> string)}"
+) as "dynamicContracts"
+FROM "${pgSchema}"."${table.tableName}" as chains;`
+  }
+
+  let getInitialState = (sql, ~pgSchema) => {
+    sql
+    ->Postgres.unsafe(makeGetInitialStateQuery(~pgSchema))
+    ->(Utils.magic: promise<array<unknown>> => promise<array<rawInitialState>>)
   }
 
   let progressFields: array<progressFields> = [#progress_block, #events_processed]
@@ -527,70 +632,4 @@ module Views = {
        "${(#ready_at: Chains.field :> string)}" AS "timestamp_caught_up_to_head_or_endblock"
      FROM "${pgSchema}"."${Chains.table.tableName}";`
   }
-}
-
-module DynamicContractRegistry = {
-  let name = "dynamic_contract_registry"
-
-  let makeId = (~chainId, ~contractAddress) => {
-    chainId->Belt.Int.toString ++ "-" ++ contractAddress->Address.toString
-  }
-
-  // @genType Used for Test DB
-  @genType
-  type t = {
-    id: string,
-    @as("chain_id") chainId: int,
-    @as("registering_event_block_number") registeringEventBlockNumber: int,
-    @as("registering_event_log_index") registeringEventLogIndex: int,
-    @as("registering_event_block_timestamp") registeringEventBlockTimestamp: int,
-    @as("registering_event_contract_name") registeringEventContractName: string,
-    @as("registering_event_name") registeringEventName: string,
-    @as("registering_event_src_address") registeringEventSrcAddress: Address.t,
-    @as("contract_address") contractAddress: Address.t,
-    @as("contract_name") contractName: string,
-  }
-
-  let schema = S.schema(s => {
-    id: s.matches(S.string),
-    chainId: s.matches(S.int),
-    registeringEventBlockNumber: s.matches(S.int),
-    registeringEventLogIndex: s.matches(S.int),
-    registeringEventContractName: s.matches(S.string),
-    registeringEventName: s.matches(S.string),
-    registeringEventSrcAddress: s.matches(Address.schema),
-    registeringEventBlockTimestamp: s.matches(S.int),
-    contractAddress: s.matches(Address.schema),
-    contractName: s.matches(S.string),
-  })
-
-  let rowsSchema = S.array(schema)
-
-  let table = mkTable(
-    name,
-    ~fields=[
-      mkField("id", Text, ~isPrimaryKey, ~fieldSchema=S.string),
-      mkField("chain_id", Integer, ~fieldSchema=S.int),
-      mkField("registering_event_block_number", Integer, ~fieldSchema=S.int),
-      mkField("registering_event_log_index", Integer, ~fieldSchema=S.int),
-      mkField("registering_event_block_timestamp", Integer, ~fieldSchema=S.int),
-      mkField("registering_event_contract_name", Text, ~fieldSchema=S.string),
-      mkField("registering_event_name", Text, ~fieldSchema=S.string),
-      mkField("registering_event_src_address", Text, ~fieldSchema=Address.schema),
-      mkField("contract_address", Text, ~fieldSchema=Address.schema),
-      mkField("contract_name", Text, ~fieldSchema=S.string),
-    ],
-  )
-
-  let entityHistory = table->EntityHistory.fromTable(~schema)
-
-  external castToInternal: t => Internal.entity = "%identity"
-
-  let config = {
-    name,
-    schema,
-    rowsSchema,
-    table,
-    entityHistory,
-  }->Internal.fromGenericEntityConfig
 }

@@ -104,46 +104,60 @@ let getInMemTable = (
 
 let isRollingBack = (inMemoryStore: t) => inMemoryStore.rollBackEventIdentifier->Belt.Option.isSome
 
-let setDcsToStore = (
-  inMemoryStore: t,
-  ~chainId: int,
-  ~dcs: array<FetchState.indexingContract>,
-  ~shouldSaveHistory,
-) => {
+let setBatchDcs = (inMemoryStore: t, ~batch: Batch.t, ~shouldSaveHistory) => {
   let inMemTable =
     inMemoryStore->getInMemTable(
       ~entityConfig=module(InternalTable.DynamicContractRegistry)->Entities.entityModToInternal,
     )
-  dcs->Belt.Array.forEach(dc => {
-    let dcData = switch dc.register {
-    | Config => Js.Exn.raiseError("Config contract should not be in dcsToStore")
-    | DC(data) => data
-    }
-    let entity: InternalTable.DynamicContractRegistry.t = {
-      id: InternalTable.DynamicContractRegistry.makeId(~chainId, ~contractAddress=dc.address),
-      chainId,
-      contractAddress: dc.address,
-      contractName: dc.contractName,
-      registeringEventBlockNumber: dc.startBlock,
-      registeringEventBlockTimestamp: dcData.registeringEventBlockTimestamp,
-      registeringEventLogIndex: dcData.registeringEventLogIndex,
-      registeringEventContractName: dcData.registeringEventContractName,
-      registeringEventName: dcData.registeringEventName,
-      registeringEventSrcAddress: dcData.registeringEventSrcAddress,
+
+  let itemIdx = ref(0)
+
+  for checkpoint in 0 to batch.checkpointIds->Array.length - 1 {
+    let checkpointId = batch.checkpointIds->Js.Array2.unsafe_get(checkpoint)
+    let chainId = batch.checkpointChainIds->Js.Array2.unsafe_get(checkpoint)
+    let checkpointEventsProcessed =
+      batch.checkpointEventsProcessed->Js.Array2.unsafe_get(checkpoint)
+
+    for itemIdx in 0 to batch.items->Array.length - 1 {
+      let item = batch.items->Js.Array2.unsafe_get(itemIdx)
+      switch item->Internal.getItemDcs {
+      | None => ()
+      | Some(dcs) =>
+        // Currently only events support contract registration, so we can cast to event item
+        let eventItem = item->Internal.castUnsafeEventItem
+        for dcIdx in 0 to dcs->Array.length - 1 {
+          let dc = dcs->Js.Array2.unsafe_get(dcIdx)
+          let entity: InternalTable.DynamicContractRegistry.t = {
+            id: InternalTable.DynamicContractRegistry.makeId(~chainId, ~contractAddress=dc.address),
+            chainId,
+            contractAddress: dc.address,
+            contractName: dc.contractName,
+            registeringEventBlockNumber: eventItem.blockNumber,
+            registeringEventLogIndex: eventItem.logIndex,
+            registeringEventBlockTimestamp: eventItem.timestamp,
+            registeringEventContractName: eventItem.eventConfig.contractName,
+            registeringEventName: eventItem.eventConfig.name,
+            registeringEventSrcAddress: eventItem.event.srcAddress,
+          }
+
+          let eventIdentifier: Types.eventIdentifier = {
+            chainId,
+            blockTimestamp: 0,
+            blockNumber: dc.startBlock,
+            logIndex: eventItem.logIndex,
+          }
+          inMemTable->InMemoryTable.Entity.set(
+            Set(entity->InternalTable.DynamicContractRegistry.castToInternal)->Types.mkEntityUpdate(
+              ~eventIdentifier,
+              ~entityId=entity.id,
+              ~checkpointId,
+            ),
+            ~shouldSaveHistory,
+          )
+        }
+      }
     }
 
-    let eventIdentifier: Types.eventIdentifier = {
-      chainId,
-      blockTimestamp: dcData.registeringEventBlockTimestamp,
-      blockNumber: dc.startBlock,
-      logIndex: dcData.registeringEventLogIndex,
-    }
-    inMemTable->InMemoryTable.Entity.set(
-      Set(entity->InternalTable.DynamicContractRegistry.castToInternal)->Types.mkEntityUpdate(
-        ~eventIdentifier,
-        ~entityId=entity.id,
-      ),
-      ~shouldSaveHistory,
-    )
-  })
+    itemIdx := itemIdx.contents + checkpointEventsProcessed
+  }
 }

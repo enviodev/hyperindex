@@ -13,17 +13,6 @@ module General = {
   }
 }
 
-module DynamicContractRegistry = {
-  @module("./DbFunctionsImplementation.js")
-  external readAllDynamicContractsRaw: (Postgres.sql, ~chainId: chainId) => promise<Js.Json.t> =
-    "readAllDynamicContracts"
-
-  let readAllDynamicContracts = async (sql: Postgres.sql, ~chainId: chainId) => {
-    let json = await sql->readAllDynamicContractsRaw(~chainId)
-    json->S.parseJsonOrThrow(InternalTable.DynamicContractRegistry.rowsSchema)
-  }
-}
-
 module EntityHistory = {
   type dynamicSqlQuery
   module UnorderedMultichain = {

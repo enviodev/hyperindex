@@ -110,7 +110,7 @@ type action =
   // So after it's finished we dispatch the  submit action to get the latest fetch state.
   | SubmitPartitionQueryResponse({
       newItems: array<Internal.item>,
-      dynamicContracts: array<FetchState.indexingContract>,
+      newItemsWithDcs: array<Internal.item>,
       currentBlockHeight: int,
       latestFetchedBlock: FetchState.blockNumberAndTimestamp,
       query: FetchState.query,
@@ -420,7 +420,7 @@ let validatePartitionQueryResponse = (
 let submitPartitionQueryResponse = (
   state,
   ~newItems,
-  ~dynamicContracts,
+  ~newItemsWithDcs,
   ~currentBlockHeight,
   ~latestFetchedBlock,
   ~query,
@@ -430,7 +430,7 @@ let submitPartitionQueryResponse = (
 
   let updatedChainFetcher =
     chainFetcher
-    ->ChainFetcher.handleQueryResult(~query, ~latestFetchedBlock, ~newItems, ~dynamicContracts)
+    ->ChainFetcher.handleQueryResult(~query, ~latestFetchedBlock, ~newItems, ~newItemsWithDcs)
     ->Utils.unwrapResultExn
     ->updateChainFetcherCurrentBlockHeight(~currentBlockHeight)
 
@@ -484,10 +484,8 @@ let processPartitionQueryResponse = async (
     newItems->Array.push(item)
   }
 
-  let dynamicContracts = switch itemsWithContractRegister {
-  | [] as empty =>
-    // A small optimisation to not recreate an empty array
-    empty->(Utils.magic: array<Internal.item> => array<FetchState.indexingContract>)
+  let newItemsWithDcs = switch itemsWithContractRegister {
+  | [] as empty => empty
   | _ =>
     await ChainFetcher.runContractRegistersOrThrow(
       ~itemsWithContractRegister,
@@ -499,7 +497,7 @@ let processPartitionQueryResponse = async (
   dispatchAction(
     SubmitPartitionQueryResponse({
       newItems,
-      dynamicContracts,
+      newItemsWithDcs,
       currentBlockHeight,
       latestFetchedBlock: {
         blockNumber: latestFetchedBlockNumber,
@@ -567,7 +565,7 @@ let actionReducer = (state: t, action: action) => {
     state->validatePartitionQueryResponse(partitionQueryResponse)
   | SubmitPartitionQueryResponse({
       newItems,
-      dynamicContracts,
+      newItemsWithDcs,
       currentBlockHeight,
       latestFetchedBlock,
       query,
@@ -575,7 +573,7 @@ let actionReducer = (state: t, action: action) => {
     }) =>
     state->submitPartitionQueryResponse(
       ~newItems,
-      ~dynamicContracts,
+      ~newItemsWithDcs,
       ~currentBlockHeight,
       ~latestFetchedBlock,
       ~query,
@@ -936,22 +934,14 @@ let injectedTaskReducer = (
 
         let inMemoryStore = rollbackInMemStore->Option.getWithDefault(InMemoryStore.make())
 
+        inMemoryStore->InMemoryStore.setBatchDcs(~batch, ~shouldSaveHistory)
+
         state.chainManager.chainFetchers
         ->ChainMap.keys
         ->Array.forEach(chain => {
           let chainId = chain->ChainMap.Chain.toChainId
           switch progressedChainsById->Utils.Dict.dangerouslyGetByIntNonOption(chainId) {
           | Some(chainAfterBatch) =>
-            switch chainAfterBatch.dcsToStore {
-            | Some(dcsToStore) =>
-              inMemoryStore->InMemoryStore.setDcsToStore(
-                ~chainId,
-                ~dcs=dcsToStore,
-                ~shouldSaveHistory,
-              )
-            | None => ()
-            }
-
             Prometheus.ProcessingBatchSize.set(~batchSize=chainAfterBatch.batchSize, ~chainId)
             Prometheus.ProcessingBlockNumber.set(
               ~blockNumber=chainAfterBatch.progressBlockNumber,

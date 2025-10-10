@@ -708,7 +708,17 @@ let make = (
       cleanRun: true,
       cache,
       reorgCheckpoints: [],
-      chains: chainConfigs->Js.Array2.map(InternalTable.Chains.initialFromConfig),
+      chains: chainConfigs->Js.Array2.map((chainConfig): Persistence.initialChainState => {
+        id: chainConfig.id,
+        startBlock: chainConfig.startBlock,
+        endBlock: chainConfig.endBlock,
+        maxReorgDepth: chainConfig.maxReorgDepth,
+        progressBlockNumber: -1,
+        numEventsProcessed: 0,
+        firstEventBlockNumber: None,
+        timestampCaughtUpToHeadOrEndblock: None,
+        dynamicContracts: [],
+      }),
       checkpointId: InternalTable.Checkpoints.initialCheckpointId,
     }
   }
@@ -899,11 +909,22 @@ let make = (
   let resumeInitialState = async (): Persistence.initialState => {
     let (cache, chains, checkpointIdResult, reorgCheckpoints) = await Promise.all4((
       restoreEffectCache(~withUpload=false),
-      sql
-      ->Postgres.unsafe(
-        makeLoadAllQuery(~pgSchema, ~tableName=InternalTable.Chains.table.tableName),
-      )
-      ->(Utils.magic: promise<array<unknown>> => promise<array<InternalTable.Chains.t>>),
+      InternalTable.Chains.getInitialState(
+        sql,
+        ~pgSchema,
+      )->Promise.thenResolve(rawInitialStates => {
+        rawInitialStates->Belt.Array.map((rawInitialState): Persistence.initialChainState => {
+          id: rawInitialState.id,
+          startBlock: rawInitialState.startBlock,
+          endBlock: rawInitialState.endBlock->Js.Null.toOption,
+          maxReorgDepth: rawInitialState.maxReorgDepth,
+          firstEventBlockNumber: rawInitialState.firstEventBlockNumber->Js.Null.toOption,
+          timestampCaughtUpToHeadOrEndblock: rawInitialState.timestampCaughtUpToHeadOrEndblock->Js.Null.toOption,
+          numEventsProcessed: rawInitialState.numEventsProcessed,
+          progressBlockNumber: rawInitialState.progressBlockNumber,
+          dynamicContracts: rawInitialState.dynamicContracts,
+        })
+      }),
       sql
       ->Postgres.unsafe(InternalTable.Checkpoints.makeCommitedCheckpointIdQuery(~pgSchema))
       ->(Utils.magic: promise<array<unknown>> => promise<array<{"id": int}>>),

@@ -88,12 +88,14 @@ type entityUpdate<'entityType> = {
   eventIdentifier: eventIdentifier,
   entityId: id,
   entityUpdateAction: entityUpdateAction<'entityType>,
+  checkpointId: int,
 }
 
-let mkEntityUpdate = (~eventIdentifier, ~entityId, entityUpdateAction) => {
+let mkEntityUpdate = (~eventIdentifier, ~entityId, ~checkpointId, entityUpdateAction) => {
   entityId,
   eventIdentifier,
   entityUpdateAction,
+  checkpointId,
 }
 
 type entityValueAtStartOfBatch<'entityType> =

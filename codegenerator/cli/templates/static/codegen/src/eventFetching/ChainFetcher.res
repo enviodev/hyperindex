@@ -27,7 +27,7 @@ type t = {
 //CONSTRUCTION
 let make = (
   ~chainConfig: InternalConfig.chain,
-  ~dynamicContracts: array<InternalTable.DynamicContractRegistry.t>,
+  ~dynamicContracts: array<Internal.indexingContract>,
   ~startBlock,
   ~endBlock,
   ~firstEventBlockNumber,
@@ -98,31 +98,17 @@ let make = (
 
     contract.addresses->Array.forEach(address => {
       contracts->Array.push({
-        FetchState.address,
+        Internal.address,
         contractName: contract.name,
         startBlock: switch contract.startBlock {
         | Some(startBlock) => startBlock
         | None => chainConfig.startBlock
         },
-        register: Config,
       })
     })
   })
 
-  dynamicContracts->Array.forEach(dc =>
-    contracts->Array.push({
-      FetchState.address: dc.contractAddress,
-      contractName: dc.contractName,
-      startBlock: dc.registeringEventBlockNumber,
-      register: DC({
-        registeringEventLogIndex: dc.registeringEventLogIndex,
-        registeringEventBlockTimestamp: dc.registeringEventBlockTimestamp,
-        registeringEventContractName: dc.registeringEventContractName,
-        registeringEventName: dc.registeringEventName,
-        registeringEventSrcAddress: dc.registeringEventSrcAddress,
-      }),
-    })
-  )
+  dynamicContracts->Array.forEach(dc => contracts->Array.push(dc))
 
   if notRegisteredEvents->Utils.Array.notEmpty {
     logger->Logging.childInfo(
@@ -248,20 +234,14 @@ let makeFromConfig = (chainConfig: InternalConfig.chain, ~config, ~targetBufferS
  */
 let makeFromDbState = async (
   chainConfig: InternalConfig.chain,
-  ~resumedChainState: InternalTable.Chains.t,
+  ~resumedChainState: Persistence.initialChainState,
   ~reorgCheckpoints,
   ~isInReorgThreshold,
   ~config,
   ~targetBufferSize,
-  ~sql=Db.sql,
 ) => {
   let chainId = chainConfig.id
   let logger = Logging.createChild(~params={"chainId": chainId})
-
-  // Since we deleted all contracts after the restart point,
-  // we can simply query all dcs we have in db
-  let dbRecoveredDynamicContracts =
-    await sql->DbFunctions.DynamicContractRegistry.readAllDynamicContracts(~chainId)
 
   Prometheus.ProgressEventsCount.set(~processedCount=resumedChainState.numEventsProcessed, ~chainId)
 
@@ -272,18 +252,18 @@ let makeFromDbState = async (
       : resumedChainState.startBlock - 1
 
   make(
-    ~dynamicContracts=dbRecoveredDynamicContracts,
+    ~dynamicContracts=resumedChainState.dynamicContracts,
     ~chainConfig,
     ~startBlock=resumedChainState.startBlock,
-    ~endBlock=resumedChainState.endBlock->Js.Null.toOption,
+    ~endBlock=resumedChainState.endBlock,
     ~config,
     ~reorgCheckpoints,
     ~maxReorgDepth=resumedChainState.maxReorgDepth,
-    ~firstEventBlockNumber=resumedChainState.firstEventBlockNumber->Js.Null.toOption,
+    ~firstEventBlockNumber=resumedChainState.firstEventBlockNumber,
     ~progressBlockNumber,
     ~timestampCaughtUpToHeadOrEndblock=Env.updateSyncTimeOnRestart
       ? None
-      : resumedChainState.timestampCaughtUpToHeadOrEndblock->Js.Null.toOption,
+      : resumedChainState.timestampCaughtUpToHeadOrEndblock,
     ~numEventsProcessed=resumedChainState.numEventsProcessed,
     ~numBatchesFetched=0,
     ~logger,
@@ -311,7 +291,7 @@ let runContractRegistersOrThrow = async (
   ~chain: ChainMap.Chain.t,
   ~config: Config.t,
 ) => {
-  let dynamicContracts = []
+  let itemsWithDcs = []
   let isDone = ref(false)
 
   let onRegister = (~item: Internal.item, ~contractAddress, ~contractName) => {
@@ -322,7 +302,7 @@ let runContractRegistersOrThrow = async (
         `Skipping contract registration: The context.add${(contractName: Enums.ContractType.t :> string)} was called after the contract register resolved. Use await or return a promise from the contract register handler to avoid this error.`,
       )
     } else {
-      let {timestamp, blockNumber, logIndex, eventConfig, event} = eventItem
+      let {blockNumber} = eventItem
 
       // Use contract-specific start block if configured, otherwise fall back to registration block
       let contractStartBlock = switch getContractStartBlock(
@@ -334,20 +314,19 @@ let runContractRegistersOrThrow = async (
       | None => blockNumber
       }
 
-      let dc: FetchState.indexingContract = {
+      let dc: Internal.indexingContract = {
         address: contractAddress,
         contractName: (contractName: Enums.ContractType.t :> string),
         startBlock: contractStartBlock,
-        register: DC({
-          registeringEventBlockTimestamp: timestamp,
-          registeringEventLogIndex: logIndex,
-          registeringEventName: eventConfig.name,
-          registeringEventContractName: eventConfig.contractName,
-          registeringEventSrcAddress: event.srcAddress,
-        }),
       }
 
-      dynamicContracts->Array.push(dc)
+      switch item->Internal.getItemDcs {
+      | None => {
+          item->Internal.setItemDcs([dc])
+          itemsWithDcs->Array.push(item)
+        }
+      | Some(dcs) => dcs->Array.push(dc)
+      }
     }
   }
 
@@ -390,19 +369,19 @@ let runContractRegistersOrThrow = async (
   }
 
   isDone.contents = true
-  dynamicContracts
+  itemsWithDcs
 }
 
 let handleQueryResult = (
   chainFetcher: t,
   ~query: FetchState.query,
   ~newItems,
-  ~dynamicContracts,
+  ~newItemsWithDcs,
   ~latestFetchedBlock,
 ) => {
-  let fs = switch dynamicContracts {
+  let fs = switch newItemsWithDcs {
   | [] => chainFetcher.fetchState
-  | _ => chainFetcher.fetchState->FetchState.registerDynamicContracts(dynamicContracts)
+  | _ => chainFetcher.fetchState->FetchState.registerDynamicContracts(newItemsWithDcs)
   }
 
   fs

@@ -121,6 +121,7 @@ let makeStoreOperatorEntity = (
       Delete->Types.mkEntityUpdate(
         ~entityId,
         ~eventIdentifier={chainId: -1, blockNumber: -1, blockTimestamp: 0, logIndex: -1},
+        ~checkpointId=0,
       ),
       ~shouldSaveHistory=false,
     )
@@ -137,6 +138,7 @@ let makeStoreOperatorEntity = (
       Set(entity)->Types.mkEntityUpdate(
         ~entityId,
         ~eventIdentifier={chainId: -1, blockNumber: -1, blockTimestamp: 0, logIndex: -1},
+        ~checkpointId=0,
       ),
       ~shouldSaveHistory=false,
     )
@@ -373,8 +375,7 @@ and makeProcessEvents = (mockDb: t, ~chainId=?) => async (
     let processingChainId = switch processingChainId.contents {
     | Some(chainId) => chainId
     | None =>
-      // Should never happen due to early return at line 318
-      Js.Exn.raiseError("Internal error: processingChainId not set despite non-empty events array")
+      Js.Exn.raiseError("No events provided to processEvents. Please provide at least one event.")
     }
 
     //Deep copy the data in mockDb, mutate the clone and return the clone
@@ -401,25 +402,11 @@ and makeProcessEvents = (mockDb: t, ~chainId=?) => async (
       persistence,
     }
 
-    //No need to check contract is registered or return anything.
-    //The only purpose is to test the registerContract function and to
-    //add the entity to the in memory store for asserting registrations
-    if itemsWithContractRegister->Utils.Array.notEmpty {
-      let dcs = await ChainFetcher.runContractRegistersOrThrow(
-        ~itemsWithContractRegister,
-        ~chain=ChainMap.Chain.makeUnsafe(~chainId=processingChainId),
-        ~config,
-      )
-
-      // TODO: Reuse FetchState logic to clean up duplicate dcs
-      if dcs->Utils.Array.notEmpty {
-        inMemoryStore->InMemoryStore.setDcsToStore(
-          ~chainId=processingChainId,
-          ~dcs,
-          ~shouldSaveHistory=false,
-        )
-      }
-    }
+    let newItemsWithDcs = await ChainFetcher.runContractRegistersOrThrow(
+      ~itemsWithContractRegister,
+      ~chain=ChainMap.Chain.makeUnsafe(~chainId=processingChainId),
+      ~config,
+    )
 
     let batch = Batch.prepareUnorderedBatch(
       ~checkpointIdBeforeBatch=0,
@@ -433,9 +420,6 @@ and makeProcessEvents = (mockDb: t, ~chainId=?) => async (
                 ~startBlock=0,
                 ~endBlock=None,
                 ~eventConfigs=[
-                  // We don't care about the actual config here,
-                  // just a reference, so FetchState doesn't complain
-                  // about nothing to fetch
                   {
                     "id": "test",
                   }->Obj.magic,
@@ -444,6 +428,11 @@ and makeProcessEvents = (mockDb: t, ~chainId=?) => async (
                 ~maxAddrInPartition=0,
                 ~targetBufferSize=0,
               )
+              ->(fetchState =>
+                switch newItemsWithDcs {
+                | [] => fetchState
+                | _ => fetchState->FetchState.registerDynamicContracts(newItemsWithDcs)
+                })
               ->FetchState.handleQueryResult(
                 ~latestFetchedBlock={
                   blockNumber: latestFetchedBlockNumber.contents,
@@ -474,6 +463,8 @@ and makeProcessEvents = (mockDb: t, ~chainId=?) => async (
       ]),
       ~batchSizeTarget=newItems->Array.length,
     )
+
+    inMemoryStore->InMemoryStore.setBatchDcs(~batch, ~shouldSaveHistory=false)
 
     try {
       await batch->EventProcessing.preloadBatchOrThrow(~loadManager, ~persistence, ~inMemoryStore)

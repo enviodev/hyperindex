@@ -58,7 +58,7 @@ let makeFromDbState = async (~initialState: Persistence.initialState, ~config: C
 
   let chainFetchersArr =
     await initialState.chains
-    ->Array.map(async (resumedChainState: InternalTable.Chains.t) => {
+    ->Array.map(async (resumedChainState: Persistence.initialChainState) => {
       let chain = Config.getChain(config, ~chainId=resumedChainState.id)
       let chainConfig = config.chainMap->ChainMap.get(chain)
 
