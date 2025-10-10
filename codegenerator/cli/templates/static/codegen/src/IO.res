@@ -50,12 +50,14 @@ let getEntityHistoryItems = (entityUpdates, ~containsRollbackDiffChange) => {
 
 let executeBatch = async (
   sql,
-  ~progressedChains: array<Batch.progressedChain>,
+  ~batch: Batch.t,
   ~inMemoryStore: InMemoryStore.t,
   ~isInReorgThreshold,
   ~config,
   ~escapeTables=?,
 ) => {
+  let shouldSaveHistory = config->Config.shouldSaveHistory(~isInReorgThreshold)
+
   let specificError = ref(None)
 
   let setRawEvents = executeSet(
@@ -90,7 +92,7 @@ let executeBatch = async (
       }
     })
 
-    if config->Config.shouldSaveHistory(~isInReorgThreshold) {
+    if shouldSaveHistory {
       rows->Js.Array2.forEach(row => {
         switch row {
         | Updated({history, containsRollbackDiffChange}) =>
@@ -232,7 +234,8 @@ let executeBatch = async (
             },
             ~eventIdentifier,
           ),
-          sql->DbFunctions.EndOfBlockRangeScannedData.rollbackEndOfBlockRangeScannedDataForChain(
+          sql->InternalTable.Checkpoints.deprecated_rollbackReorgedChainCheckpoints(
+            ~pgSchema=Db.publicSchema,
             ~chainId=eventIdentifier.chainId,
             ~knownBlockNumber=eventIdentifier.blockNumber,
           ),
@@ -251,17 +254,35 @@ let executeBatch = async (
         | None => ()
         }
 
-        await Belt.Array.concatMany([
-          [
-            sql =>
-              sql->InternalTable.Chains.setProgressedChains(
-                ~pgSchema=Db.publicSchema,
-                ~progressedChains,
-              ),
-            setRawEvents,
-          ],
-          setEntities,
-        ])
+        let setOperations = [
+          sql =>
+            sql->InternalTable.Chains.setProgressedChains(
+              ~pgSchema=Db.publicSchema,
+              ~progressedChains=batch.progressedChainsById->Utils.Dict.mapValuesToArray((
+                chainAfterBatch
+              ): InternalTable.Chains.progressedChain => {
+                chainId: chainAfterBatch.fetchState.chainId,
+                progressBlockNumber: chainAfterBatch.progressBlockNumber,
+                totalEventsProcessed: chainAfterBatch.totalEventsProcessed,
+              }),
+            ),
+          setRawEvents,
+        ]->Belt.Array.concat(setEntities)
+
+        if shouldSaveHistory {
+          setOperations->Array.push(sql =>
+            sql->InternalTable.Checkpoints.insert(
+              ~pgSchema=Db.publicSchema,
+              ~checkpointIds=batch.checkpointIds,
+              ~checkpointChainIds=batch.checkpointChainIds,
+              ~checkpointBlockNumbers=batch.checkpointBlockNumbers,
+              ~checkpointBlockHashes=batch.checkpointBlockHashes,
+              ~checkpointEventsProcessed=batch.checkpointEventsProcessed,
+            )
+          )
+        }
+
+        await setOperations
         ->Belt.Array.map(dbFunc => sql->dbFunc)
         ->Promise.all
       }),

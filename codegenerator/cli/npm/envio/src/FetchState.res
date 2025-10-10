@@ -92,7 +92,7 @@ let mergeIntoPartition = (p: partition, ~target: partition, ~maxAddrInPartition)
 
       let allowedAddressesNumber = ref(maxAddrInPartition)
 
-      target.addressesByContractName->Utils.Dict.forEachWithKey((contractName, addresses) => {
+      target.addressesByContractName->Utils.Dict.forEachWithKey((addresses, contractName) => {
         allowedAddressesNumber := allowedAddressesNumber.contents - addresses->Array.length
         mergedAddresses->Js.Dict.set(contractName, addresses)
       })
@@ -100,7 +100,7 @@ let mergeIntoPartition = (p: partition, ~target: partition, ~maxAddrInPartition)
       // Start with putting all addresses to the merging dict
       // And if they exceed the limit, start removing from the merging dict
       // and putting into the rest dict
-      p.addressesByContractName->Utils.Dict.forEachWithKey((contractName, addresses) => {
+      p.addressesByContractName->Utils.Dict.forEachWithKey((addresses, contractName) => {
         allowedAddressesNumber := allowedAddressesNumber.contents - addresses->Array.length
         switch mergedAddresses->Utils.Dict.dangerouslyGetNonOption(contractName) {
         | Some(targetAddresses) =>
@@ -112,7 +112,7 @@ let mergeIntoPartition = (p: partition, ~target: partition, ~maxAddrInPartition)
       let rest = if allowedAddressesNumber.contents < 0 {
         let restAddresses = Js.Dict.empty()
 
-        mergedAddresses->Utils.Dict.forEachWithKey((contractName, addresses) => {
+        mergedAddresses->Utils.Dict.forEachWithKey((addresses, contractName) => {
           if allowedAddressesNumber.contents === 0 {
             ()
           } else if addresses->Array.length <= -allowedAddressesNumber.contents {
@@ -1153,7 +1153,7 @@ let rollbackPartition = (
     })
   | {addressesByContractName} =>
     let rollbackedAddressesByContractName = Js.Dict.empty()
-    addressesByContractName->Utils.Dict.forEachWithKey((contractName, addresses) => {
+    addressesByContractName->Utils.Dict.forEachWithKey((addresses, contractName) => {
       let keptAddresses =
         addresses->Array.keep(address => !(addressesToRemove->Utils.Set.has(address)))
       if keptAddresses->Array.length > 0 {
@@ -1252,7 +1252,7 @@ let isReadyToEnterReorgThreshold = (
   buffer->Utils.Array.isEmpty
 }
 
-let filterAndSortForUnorderedBatch = {
+let sortForUnorderedBatch = {
   let hasFullBatch = ({buffer} as fetchState: t, ~batchSizeTarget) => {
     switch buffer->Belt.Array.get(batchSizeTarget - 1) {
     | Some(item) => item->Internal.getItemBlockNumber <= fetchState->bufferBlockNumber
@@ -1262,20 +1262,24 @@ let filterAndSortForUnorderedBatch = {
 
   (fetchStates: array<t>, ~batchSizeTarget: int) => {
     fetchStates
-    ->Array.keepU(hasReadyItem)
+    ->Array.copy
     ->Js.Array2.sortInPlaceWith((a: t, b: t) => {
       switch (a->hasFullBatch(~batchSizeTarget), b->hasFullBatch(~batchSizeTarget)) {
       | (true, true)
       | (false, false) =>
-        // Use unsafe since we filtered out all queues without batch items
-        switch (a.buffer->Belt.Array.getUnsafe(0), b.buffer->Belt.Array.getUnsafe(0)) {
-        | (Event({timestamp: aTimestamp}), Event({timestamp: bTimestamp})) =>
+        switch (a.buffer->Belt.Array.get(0), b.buffer->Belt.Array.get(0)) {
+        | (Some(Event({timestamp: aTimestamp})), Some(Event({timestamp: bTimestamp}))) =>
           aTimestamp - bTimestamp
-        | (Block(_), _)
-        | (_, Block(_)) =>
+        | (Some(Block(_)), _)
+        | (_, Some(Block(_))) =>
           // Currently block items don't have a timestamp,
           // so we sort chains with them in a random order
           Js.Math.random_int(-1, 1)
+        // We don't care about the order of chains with no items
+        // Just keep them to increase the progress block number when relevant
+        | (Some(_), None) => -1
+        | (None, Some(_)) => 1
+        | (None, None) => 0
         }
       | (true, false) => -1
       | (false, true) => 1
@@ -1284,9 +1288,10 @@ let filterAndSortForUnorderedBatch = {
   }
 }
 
-let getProgressBlockNumber = ({buffer} as fetchState: t) => {
+// Ordered multichain mode can't skip blocks, even if there are no items.
+let getUnorderedMultichainProgressBlockNumberAt = ({buffer} as fetchState: t, ~index) => {
   let bufferBlockNumber = fetchState->bufferBlockNumber
-  switch buffer->Belt.Array.get(0) {
+  switch buffer->Belt.Array.get(index) {
   | Some(item) if bufferBlockNumber >= item->Internal.getItemBlockNumber =>
     item->Internal.getItemBlockNumber - 1
   | _ => bufferBlockNumber

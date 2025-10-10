@@ -200,6 +200,8 @@ module Storage = {
         cleanRun: false,
         cache: Js.Dict.empty(),
         chains: [],
+        reorgCheckpoints: [],
+        checkpointId: 0,
       }),
     }
   }
@@ -222,7 +224,11 @@ module Indexer = {
 
   type chainConfig = {chain: Types.chain, sources: array<Source.t>, startBlock?: int}
 
-  let make = async (~chains: array<chainConfig>, ~multichain=InternalConfig.Unordered) => {
+  let make = async (
+    ~chains: array<chainConfig>,
+    ~multichain=InternalConfig.Unordered,
+    ~reset=true,
+  ) => {
     DbHelpers.resetPostgresClient()
     // TODO: Should stop using global client
     PromClient.defaultRegister->PromClient.resetMetrics
@@ -279,7 +285,7 @@ module Indexer = {
 
     await config.persistence->Persistence.init(
       ~chainConfigs=config.chainMap->ChainMap.values,
-      ~reset=true,
+      ~reset,
     )
 
     let chainManager = await ChainManager.makeFromDbState(
@@ -311,8 +317,8 @@ module Indexer = {
         Promise.makeAsync(async (resolve, _reject) => {
           while (
             switch (gsManager->GlobalStateManager.getState).rollbackState {
-            | RollbackInMemStore(_) => false
-            | RollingBack(_)
+            | PreparedRollback(_) => false
+            | PreparingRollback(_)
             | NoRollback => true
             }
           ) {
@@ -389,6 +395,7 @@ module Source = {
     resolveGetItemsOrThrow: (
       array<itemMock>,
       ~latestFetchedBlockNumber: int=?,
+      ~currentBlockHeight: int=?,
       ~prevRangeLastBlock: ReorgDetection.blockData=?,
     ) => unit,
     rejectGetItemsOrThrow: 'exn. 'exn => unit,
@@ -426,12 +433,18 @@ module Source = {
         getHeightOrThrowRejectFns->Array.forEach(reject => reject(exn->Obj.magic))
       },
       getItemsOrThrowCalls,
-      resolveGetItemsOrThrow: (items, ~latestFetchedBlockNumber=?, ~prevRangeLastBlock=?) => {
+      resolveGetItemsOrThrow: (
+        items,
+        ~latestFetchedBlockNumber=?,
+        ~currentBlockHeight=?,
+        ~prevRangeLastBlock=?,
+      ) => {
         getItemsOrThrowResolveFns->Array.forEach(resolve =>
           resolve({
             "items": items,
             "latestFetchedBlockNumber": latestFetchedBlockNumber,
             "prevRangeLastBlock": prevRangeLastBlock,
+            "currentBlockHeight": currentBlockHeight,
           })
         )
       },
@@ -490,7 +503,9 @@ module Source = {
                     )
 
                   resolve({
-                    Source.currentBlockHeight,
+                    Source.currentBlockHeight: data["currentBlockHeight"]->Option.getWithDefault(
+                      currentBlockHeight,
+                    ),
                     reorgGuard: {
                       rangeLastBlock: {
                         blockNumber: latestFetchedBlockNumber,

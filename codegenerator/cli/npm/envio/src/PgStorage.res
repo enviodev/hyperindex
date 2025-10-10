@@ -65,7 +65,7 @@ let makeInitializeTransaction = (
   let generalTables = [
     InternalTable.Chains.table,
     InternalTable.PersistedState.table,
-    InternalTable.EndOfBlockRangeScannedData.table,
+    InternalTable.Checkpoints.table,
     InternalTable.RawEvents.table,
   ]
 
@@ -325,7 +325,7 @@ let chunkArray = (arr: array<'a>, ~chunkSize) => {
 let removeInvalidUtf8InPlace = entities =>
   entities->Js.Array2.forEach(item => {
     let dict = item->(Utils.magic: 'a => dict<unknown>)
-    dict->Utils.Dict.forEachWithKey((key, value) => {
+    dict->Utils.Dict.forEachWithKey((value, key) => {
       if value->Js.typeof === "string" {
         let value = value->(Utils.magic: unknown => string)
         // We mutate here, since we don't care
@@ -707,7 +707,9 @@ let make = (
     {
       cleanRun: true,
       cache,
+      reorgCheckpoints: [],
       chains: chainConfigs->Js.Array2.map(InternalTable.Chains.initialFromConfig),
+      checkpointId: InternalTable.Checkpoints.initialCheckpointId,
     }
   }
 
@@ -895,19 +897,27 @@ let make = (
   }
 
   let resumeInitialState = async (): Persistence.initialState => {
-    let (cache, chains) = await Promise.all2((
+    let (cache, chains, checkpointIdResult, reorgCheckpoints) = await Promise.all4((
       restoreEffectCache(~withUpload=false),
       sql
       ->Postgres.unsafe(
         makeLoadAllQuery(~pgSchema, ~tableName=InternalTable.Chains.table.tableName),
       )
       ->(Utils.magic: promise<array<unknown>> => promise<array<InternalTable.Chains.t>>),
+      sql
+      ->Postgres.unsafe(InternalTable.Checkpoints.makeCommitedCheckpointIdQuery(~pgSchema))
+      ->(Utils.magic: promise<array<unknown>> => promise<array<{"id": int}>>),
+      sql
+      ->Postgres.unsafe(InternalTable.Checkpoints.makeGetReorgCheckpointsQuery(~pgSchema))
+      ->(Utils.magic: promise<array<unknown>> => promise<array<Internal.reorgCheckpoint>>),
     ))
 
     {
       cleanRun: false,
+      reorgCheckpoints,
       cache,
       chains,
+      checkpointId: (checkpointIdResult->Belt.Array.getUnsafe(0))["id"],
     }
   }
 

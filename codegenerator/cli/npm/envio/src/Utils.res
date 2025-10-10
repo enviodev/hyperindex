@@ -97,30 +97,66 @@ module Dict = {
   @val
   external mergeInPlace: (dict<'a>, dict<'a>) => dict<'a> = "Object.assign"
 
-  let map = (dict, fn) => {
-    let newDict = Js.Dict.empty()
-    let keys = dict->Js.Dict.keys
-    for idx in 0 to keys->Js.Array2.length - 1 {
-      let key = keys->Js.Array2.unsafe_get(idx)
-      newDict->Js.Dict.set(key, fn(dict->Js.Dict.unsafeGet(key)))
+  // Use %raw to support for..in which is a ~10% faster than .forEach
+  let mapValues: (dict<'a>, 'a => 'b) => dict<'b> = %raw(`(dict, f) => {
+    var target = {}, i;
+    for (i in dict) {
+      target[i] = f(dict[i]);
     }
-    newDict
-  }
+    return target;
+  }`)
 
-  let forEach = (dict, fn) => {
-    let keys = dict->Js.Dict.keys
-    for idx in 0 to keys->Js.Array2.length - 1 {
-      fn(dict->Js.Dict.unsafeGet(keys->Js.Array2.unsafe_get(idx)))
+  // Use %raw to support for..in which is a ~10% faster than .forEach
+  let filterMapValues: (dict<'a>, 'a => option<'b>) => dict<'b> = %raw(`(dict, f) => {
+    var target = {}, i, v;
+    for (i in dict) {
+      v = f(dict[i]);
+      if (v !== undefined) {
+        target[i] = v;
+      }
     }
-  }
+    return target;
+  }`)
 
-  let forEachWithKey = (dict, fn) => {
-    let keys = dict->Js.Dict.keys
-    for idx in 0 to keys->Js.Array2.length - 1 {
-      let key = keys->Js.Array2.unsafe_get(idx)
-      fn(key, dict->Js.Dict.unsafeGet(key))
+  // Use %raw to support for..in which is a ~10% faster than .forEach
+  let mapValuesToArray: (dict<'a>, 'a => 'b) => array<'b> = %raw(`(dict, f) => {
+    var target = [], i;
+    for (i in dict) {
+      target.push(f(dict[i]));
     }
-  }
+    return target;
+  }`)
+
+  // Use %raw to support for..in which is a ~10% faster than .forEach
+  let forEach: (dict<'a>, 'a => unit) => unit = %raw(`(dict, f) => {
+    for (var i in dict) {
+      f(dict[i]);
+    }
+  }`)
+
+  // Use %raw to support for..in which is a ~10% faster than .forEach
+  let forEachWithKey: (dict<'a>, ('a, string) => unit) => unit = %raw(`(dict, f) => {
+    for (var i in dict) {
+      f(dict[i], i);
+    }
+  }`)
+
+  // Use %raw to support for..in which is a ~10% faster than Object.keys
+  let size: dict<'a> => int = %raw(`(dict) => {
+    var size = 0, i;
+    for (i in dict) {
+      size++;
+    }
+    return size;
+  }`)
+
+  // Use %raw to support for..in which is a 2x faster than Object.keys
+  let isEmpty: dict<'a> => bool = %raw(`(dict) => {
+    for (var _ in dict) {
+      return false
+    }
+    return true
+  }`)
 
   let deleteInPlace: (dict<'a>, string) => unit = %raw(`(dict, key) => {
       delete dict[key];
@@ -134,8 +170,6 @@ module Dict = {
   ) => dict<'a> = %raw(`(dict, key, value) => ({...dict, [key]: value})`)
 
   let shallowCopy: dict<'a> => dict<'a> = %raw(`(dict) => ({...dict})`)
-
-  let size = dict => dict->Js.Dict.keys->Js.Array2.length
 
   @set_index
   external setByInt: (dict<'a>, int, 'a) => unit = ""
@@ -153,6 +187,15 @@ module Math = {
     | (None, Some(b)) => Some(b)
     | (None, None) => None
     }
+}
+
+// This is a microoptimization to avoid int32 safeguards
+module UnsafeIntOperators = {
+  external \"*": (int, int) => int = "%mulfloat"
+
+  external \"+": (int, int) => int = "%addfloat"
+
+  external \"-": (int, int) => int = "%subfloat"
 }
 
 module Array = {

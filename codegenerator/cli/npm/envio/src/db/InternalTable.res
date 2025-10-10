@@ -16,6 +16,7 @@ module Chains = {
     | #id
     | #start_block
     | #end_block
+    | #max_reorg_depth
     | #source_block
     | #first_event_block
     | #buffer_block
@@ -28,6 +29,7 @@ module Chains = {
     #id,
     #start_block,
     #end_block,
+    #max_reorg_depth,
     #source_block,
     #first_event_block,
     #buffer_block,
@@ -52,6 +54,7 @@ module Chains = {
     @as("id") id: int,
     @as("start_block") startBlock: int,
     @as("end_block") endBlock: Js.null<int>,
+    @as("max_reorg_depth") maxReorgDepth: int,
     @as("progress_block") progressBlockNumber: int,
     @as("events_processed") numEventsProcessed: int,
     ...metaFields,
@@ -64,6 +67,7 @@ module Chains = {
       // Values populated from config
       mkField((#start_block: field :> string), Integer, ~fieldSchema=S.int),
       mkField((#end_block: field :> string), Integer, ~fieldSchema=S.null(S.int), ~isNullable),
+      mkField((#max_reorg_depth: field :> string), Integer, ~fieldSchema=S.int),
       // Block number of the latest block that was fetched from the source
       mkField((#buffer_block: field :> string), Integer, ~fieldSchema=S.int),
       // Block number of the currently active source
@@ -98,6 +102,7 @@ module Chains = {
       id: chainConfig.id,
       startBlock: chainConfig.startBlock,
       endBlock: chainConfig.endBlock->Js.Null.fromOption,
+      maxReorgDepth: chainConfig.maxReorgDepth,
       blockHeight: 0,
       firstEventBlockNumber: Js.Null.empty,
       latestFetchedBlockNumber: -1,
@@ -182,7 +187,7 @@ WHERE "id" = $1;`
 
     let promises = []
 
-    chainsData->Utils.Dict.forEachWithKey((chainId, data) => {
+    chainsData->Utils.Dict.forEachWithKey((data, chainId) => {
       let params = []
 
       // Push id first (for WHERE clause)
@@ -201,7 +206,13 @@ WHERE "id" = $1;`
     Promise.all(promises)
   }
 
-  let setProgressedChains = (sql, ~pgSchema, ~progressedChains: array<Batch.progressedChain>) => {
+  type progressedChain = {
+    chainId: int,
+    progressBlockNumber: int,
+    totalEventsProcessed: int,
+  }
+
+  let setProgressedChains = (sql, ~pgSchema, ~progressedChains: array<progressedChain>) => {
     let query = makeProgressFieldsUpdateQuery(~pgSchema)
 
     let promises = []
@@ -254,21 +265,147 @@ module PersistedState = {
   )
 }
 
-module EndOfBlockRangeScannedData = {
+module Checkpoints = {
+  type field = [
+    | #id
+    | #chain_id
+    | #block_number
+    | #block_hash
+    | #events_processed
+  ]
+
   type t = {
-    chain_id: int,
-    block_number: int,
-    block_hash: string,
+    id: int,
+    @as("chain_id")
+    chainId: int,
+    @as("block_number")
+    blockNumber: int,
+    @as("block_hash")
+    blockHash: Js.null<string>,
+    @as("events_processed")
+    eventsProcessed: int,
   }
 
+  let initialCheckpointId = 0
+
   let table = mkTable(
-    "end_of_block_range_scanned_data",
+    "envio_checkpoints",
     ~fields=[
-      mkField("chain_id", Integer, ~fieldSchema=S.int, ~isPrimaryKey),
-      mkField("block_number", Integer, ~fieldSchema=S.int, ~isPrimaryKey),
-      mkField("block_hash", Text, ~fieldSchema=S.string),
+      mkField((#id: field :> string), Integer, ~fieldSchema=S.int, ~isPrimaryKey),
+      mkField((#chain_id: field :> string), Integer, ~fieldSchema=S.int),
+      mkField((#block_number: field :> string), Integer, ~fieldSchema=S.int),
+      mkField((#block_hash: field :> string), Text, ~fieldSchema=S.null(S.string), ~isNullable),
+      mkField((#events_processed: field :> string), Integer, ~fieldSchema=S.int),
     ],
   )
+
+  let makeGetReorgCheckpointsQuery = (~pgSchema): string => {
+    // Use CTE to pre-filter chains and compute safe_block once per chain
+    // This is faster because:
+    // 1. Chains table is small, so filtering it first is cheap
+    // 2. safe_block is computed once per chain, not per checkpoint
+    // 3. Query planner can materialize the small CTE result before joining
+    `WITH reorg_chains AS (
+  SELECT 
+    "${(#id: Chains.field :> string)}" as id,
+    "${(#source_block: Chains.field :> string)}" - "${(#max_reorg_depth: Chains.field :> string)}" AS safe_block
+  FROM "${pgSchema}"."${Chains.table.tableName}"
+  WHERE "${(#max_reorg_depth: Chains.field :> string)}" > 0
+    AND "${(#progress_block: Chains.field :> string)}" > "${(#source_block: Chains.field :> string)}" - "${(#max_reorg_depth: Chains.field :> string)}"
+)
+SELECT 
+  cp."${(#id: field :> string)}", 
+  cp."${(#chain_id: field :> string)}", 
+  cp."${(#block_number: field :> string)}", 
+  cp."${(#block_hash: field :> string)}"
+FROM "${pgSchema}"."${table.tableName}" cp
+INNER JOIN reorg_chains rc 
+  ON cp."${(#chain_id: field :> string)}" = rc.id
+WHERE cp."${(#block_hash: field :> string)}" IS NOT NULL
+  AND cp."${(#block_number: field :> string)}" > rc.safe_block;`
+  }
+
+  let makeCommitedCheckpointIdQuery = (~pgSchema) => {
+    `SELECT COALESCE(MAX(${(#id: field :> string)}), ${initialCheckpointId->Belt.Int.toString}) AS id FROM "${pgSchema}"."${table.tableName}";`
+  }
+
+  let makeInsertCheckpointQuery = (~pgSchema) => {
+    `INSERT INTO "${pgSchema}"."${table.tableName}" ("${(#id: field :> string)}", "${(#chain_id: field :> string)}", "${(#block_number: field :> string)}", "${(#block_hash: field :> string)}", "${(#events_processed: field :> string)}")
+SELECT * FROM unnest($1::${(Integer :> string)}[],$2::${(Integer :> string)}[],$3::${(Integer :> string)}[],$4::${(Text :> string)}[],$5::${(Integer :> string)}[]);`
+  }
+
+  let insert = (
+    sql,
+    ~pgSchema,
+    ~checkpointIds,
+    ~checkpointChainIds,
+    ~checkpointBlockNumbers,
+    ~checkpointBlockHashes,
+    ~checkpointEventsProcessed,
+  ) => {
+    let query = makeInsertCheckpointQuery(~pgSchema)
+
+    sql
+    ->Postgres.preparedUnsafe(
+      query,
+      (
+        checkpointIds,
+        checkpointChainIds,
+        checkpointBlockNumbers,
+        checkpointBlockHashes,
+        checkpointEventsProcessed,
+      )->(
+        Utils.magic: (
+          (array<int>, array<int>, array<int>, array<Js.Null.t<string>>, array<int>)
+        ) => unknown
+      ),
+    )
+    ->Promise.ignoreValue
+  }
+
+  // This is how it used to work before checkpoints
+  // To make it correct, we need to delete checkpoints of all chains
+  let deprecated_rollbackReorgedChainCheckpoints = (
+    sql,
+    ~pgSchema,
+    ~chainId,
+    ~knownBlockNumber,
+  ) => {
+    sql
+    ->Postgres.preparedUnsafe(
+      `DELETE FROM "${pgSchema}"."${table.tableName}" WHERE "${(#chain_id: field :> string)}" = $1 AND "${(#block_number: field :> string)}" > $2;`,
+      (chainId, knownBlockNumber)->(Utils.magic: ((int, int)) => unknown),
+    )
+    ->Promise.ignoreValue
+  }
+
+  // This is how it used to work before checkpoints
+  // To make it correct, we need to first find
+  // a safe checkpoint - which is the min checkpoint outside all chains
+  // And then delete everything below it - the same for history items
+  let deprecated_pruneStaleCheckpoints = (sql, ~pgSchema) => {
+    // Delete checkpoints that are outside the reorg window:
+    // 1. All checkpoints for chains with max_reorg_depth = 0 (no reorg protection)
+    // 2. Checkpoints at or below safe_block for chains with max_reorg_depth > 0
+    sql
+    ->Postgres.unsafe(
+      `WITH chain_safe_blocks AS (
+     SELECT 
+       "${(#id: Chains.field :> string)}" as id,
+       "${(#max_reorg_depth: Chains.field :> string)}" as max_reorg_depth,
+       "${(#source_block: Chains.field :> string)}" - "${(#max_reorg_depth: Chains.field :> string)}" AS safe_block
+     FROM "${pgSchema}"."${Chains.table.tableName}"
+   )
+   DELETE FROM "${pgSchema}"."${table.tableName}" cp
+   USING chain_safe_blocks csb
+   WHERE cp."${(#chain_id: field :> string)}" = csb.id
+     AND (
+       csb.max_reorg_depth = 0
+       OR cp."${(#block_number: field :> string)}" <= csb.safe_block
+     );`,
+    )
+    ->Promise.ignoreValue
+  }
 }
 
 module RawEvents = {

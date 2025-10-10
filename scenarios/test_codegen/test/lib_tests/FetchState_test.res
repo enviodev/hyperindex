@@ -2362,53 +2362,51 @@ describe("FetchState unit tests for specific cases", () => {
   )
 })
 
-describe("FetchState.filterAndSortForUnorderedBatch", () => {
-  it(
-    "Filters out states without eligible items and sorts by earliest timestamp (public API)",
-    () => {
-      let mk = () => makeInitial()
-      let mkQuery = (fetchState: FetchState.t) => {
-        {
-          FetchState.partitionId: "0",
-          target: Head,
-          selection: fetchState.normalSelection,
-          addressesByContractName: Js.Dict.empty(),
-          fromBlock: 0,
-          indexingContracts: fetchState.indexingContracts,
-        }
+describe("FetchState.sortForUnorderedBatch", () => {
+  it("Sorts by earliest timestamp. Chains without eligible items should go last", () => {
+    let mk = () => makeInitial()
+    let mkQuery = (fetchState: FetchState.t) => {
+      {
+        FetchState.partitionId: "0",
+        target: Head,
+        selection: fetchState.normalSelection,
+        addressesByContractName: Js.Dict.empty(),
+        fromBlock: 0,
+        indexingContracts: fetchState.indexingContracts,
       }
+    }
 
-      // Helper: create a fetch state with desired latestFetchedBlock and queue items via public API
-      let makeFsWith = (~latestBlock: int, ~queueBlocks: array<int>): FetchState.t => {
-        let fs0 = mk()
-        let query = mkQuery(fs0)
-        fs0
-        ->FetchState.handleQueryResult(
-          ~query,
-          ~latestFetchedBlock={blockNumber: latestBlock, blockTimestamp: latestBlock},
-          ~newItems=queueBlocks->Array.map(b => mockEvent(~blockNumber=b)),
-        )
-        ->Result.getExn
-      }
-
-      // Included: last queue item at block 1, latestFullyFetchedBlock = 10
-      let fsEarly = makeFsWith(~latestBlock=10, ~queueBlocks=[2, 1])
-      // Included: last queue item at block 5, latestFullyFetchedBlock = 10
-      let fsLate = makeFsWith(~latestBlock=10, ~queueBlocks=[5])
-      // Excluded: last queue item at block 11 (> latestFullyFetchedBlock = 10)
-      let fsExcluded = makeFsWith(~latestBlock=10, ~queueBlocks=[11])
-
-      let prepared = FetchState.filterAndSortForUnorderedBatch(
-        [fsLate, fsExcluded, fsEarly],
-        ~batchSizeTarget=3,
+    // Helper: create a fetch state with desired latestFetchedBlock and queue items via public API
+    let makeFsWith = (~latestBlock: int, ~queueBlocks: array<int>): FetchState.t => {
+      let fs0 = mk()
+      let query = mkQuery(fs0)
+      fs0
+      ->FetchState.handleQueryResult(
+        ~query,
+        ~latestFetchedBlock={blockNumber: latestBlock, blockTimestamp: latestBlock},
+        ~newItems=queueBlocks->Array.map(b => mockEvent(~blockNumber=b)),
       )
+      ->Result.getExn
+    }
 
-      Assert.deepEqual(
-        prepared->Array.map(fs => fs.buffer->Belt.Array.getUnsafe(0)->Internal.getItemBlockNumber),
-        [1, 5],
-      )
-    },
-  )
+    // Included: last queue item at block 1, latestFullyFetchedBlock = 10
+    let fsEarly = makeFsWith(~latestBlock=10, ~queueBlocks=[2, 1])
+    // Included: last queue item at block 5, latestFullyFetchedBlock = 10
+    let fsLate = makeFsWith(~latestBlock=10, ~queueBlocks=[5])
+    // Excluded: last queue item at block 11 (> latestFullyFetchedBlock = 10)
+    // UPD: Starting from 2.30.1+ it should go last instead of filtered
+    let fsExcluded = makeFsWith(~latestBlock=10, ~queueBlocks=[11])
+
+    let prepared = FetchState.sortForUnorderedBatch(
+      [fsLate, fsExcluded, fsEarly],
+      ~batchSizeTarget=3,
+    )
+
+    Assert.deepEqual(
+      prepared->Array.map(fs => fs.buffer->Belt.Array.getUnsafe(0)->Internal.getItemBlockNumber),
+      [1, 5, 11],
+    )
+  })
 
   it("Prioritizes full batches over half full ones", () => {
     let mk = () => makeInitial()
@@ -2440,7 +2438,7 @@ describe("FetchState.filterAndSortForUnorderedBatch", () => {
     // Half-full batch (1 item) but earlier earliest item (block 1)
     let fsHalfEarlier = makeFsWith(~latestBlock=10, ~queueBlocks=[1])
 
-    let prepared = FetchState.filterAndSortForUnorderedBatch(
+    let prepared = FetchState.sortForUnorderedBatch(
       [fsHalfEarlier, fsFullLater],
       ~batchSizeTarget=2,
     )
@@ -2481,7 +2479,7 @@ describe("FetchState.filterAndSortForUnorderedBatch", () => {
     // Half-full (1 item) but earlier earliest item
     let fsHalfEarlier = makeFsWith(~latestBlock=10, ~queueBlocks=[1])
 
-    let prepared = FetchState.filterAndSortForUnorderedBatch(
+    let prepared = FetchState.sortForUnorderedBatch(
       [fsHalfEarlier, fsExactFull],
       ~batchSizeTarget=2,
     )
@@ -2771,7 +2769,7 @@ describe("FetchState progress tracking", () => {
     let fetchStateEmpty = makeFetchStateWith(~latestBlock=100, ~queueBlocks=[])
 
     Assert.equal(
-      fetchStateEmpty->FetchState.getProgressBlockNumber,
+      fetchStateEmpty->FetchState.getUnorderedMultichainProgressBlockNumberAt(~index=0),
       100,
       ~message="Should return latestFullyFetchedBlock.blockNumber when queue is empty",
     )
@@ -2781,7 +2779,7 @@ describe("FetchState progress tracking", () => {
     let fetchStateSingleItem = makeFetchStateWith(~latestBlock=55, ~queueBlocks=[(55, 0)])
 
     Assert.equal(
-      fetchStateSingleItem->FetchState.getProgressBlockNumber,
+      fetchStateSingleItem->FetchState.getUnorderedMultichainProgressBlockNumberAt(~index=0),
       54,
       ~message="Should return single queue item blockNumber - 1",
     )
@@ -2791,7 +2789,7 @@ describe("FetchState progress tracking", () => {
     let fetchStateSingleItem = makeFetchStateWith(~latestBlock=55, ~queueBlocks=[(55, 5)])
 
     Assert.equal(
-      fetchStateSingleItem->FetchState.getProgressBlockNumber,
+      fetchStateSingleItem->FetchState.getUnorderedMultichainProgressBlockNumberAt(~index=0),
       54,
       ~message="Should return single queue item blockNumber - 1",
     )
@@ -2804,7 +2802,7 @@ describe("FetchState progress tracking", () => {
     )
 
     Assert.equal(
-      fetchStateWithQueue->FetchState.getProgressBlockNumber,
+      fetchStateWithQueue->FetchState.getUnorderedMultichainProgressBlockNumberAt(~index=0),
       90,
       ~message="Should return latest fetched block number",
     )

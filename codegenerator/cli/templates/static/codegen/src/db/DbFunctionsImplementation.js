@@ -1,20 +1,5 @@
 const TableModule = require("envio/src/db/Table.res.js");
-const Utils = require("envio/src/Utils.res.js");
 const { publicSchema } = require("./Db.res.js");
-
-// db operations for raw_events:
-const MAX_ITEMS_PER_QUERY = 500;
-
-const chunkBatchQuery = (queryToExecute) => async (sql, entityDataArray) => {
-  const responses = [];
-  // Split entityDataArray into chunks of MAX_ITEMS_PER_QUERY
-  for (let i = 0; i < entityDataArray.length; i += MAX_ITEMS_PER_QUERY) {
-    const chunk = entityDataArray.slice(i, i + MAX_ITEMS_PER_QUERY);
-    const pendingRes = queryToExecute(sql, chunk);
-    responses.push(pendingRes);
-  }
-  return Promise.all(responses);
-};
 
 module.exports.batchDeleteItemsInTable = (table, sql, pkArray) => {
   const primaryKeyFieldNames = TableModule.getPrimaryKeyFieldNames(table);
@@ -29,53 +14,6 @@ module.exports.batchDeleteItemsInTable = (table, sql, pkArray) => {
     //TODO, if needed create a delete query for multiple field matches
     //May be best to make pkArray an array of objects with fieldName -> value
   }
-};
-
-const batchSetEndOfBlockRangeScannedDataCore = (sql, rowDataArray) => {
-  return sql`
-    INSERT INTO ${sql(publicSchema)}."end_of_block_range_scanned_data"
-  ${sql(rowDataArray, "chain_id", "block_number", "block_hash")}
-    ON CONFLICT(chain_id, block_number) DO UPDATE
-    SET
-    "chain_id" = EXCLUDED."chain_id",
-    "block_number" = EXCLUDED."block_number",
-    "block_hash" = EXCLUDED."block_hash";`;
-};
-
-module.exports.batchSetEndOfBlockRangeScannedData = chunkBatchQuery(
-  batchSetEndOfBlockRangeScannedDataCore
-);
-
-module.exports.readEndOfBlockRangeScannedDataForChain = (sql, chainId) => {
-  return sql`
-    SELECT * FROM ${sql(publicSchema)}."end_of_block_range_scanned_data"
-    WHERE
-      chain_id = ${chainId}
-      ORDER BY block_number ASC;`;
-};
-
-module.exports.deleteStaleEndOfBlockRangeScannedDataForChain = (
-  sql,
-  chainId,
-  blockNumberThreshold
-) => {
-  return sql`
-    DELETE
-    FROM ${sql(publicSchema)}."end_of_block_range_scanned_data"
-    WHERE chain_id = ${chainId}
-    AND block_number < ${blockNumberThreshold};`;
-};
-
-module.exports.rollbackEndOfBlockRangeScannedDataForChain = (
-  sql,
-  chainId,
-  knownBlockNumber
-) => {
-  return sql`
-    DELETE
-    FROM ${sql(publicSchema)}."end_of_block_range_scanned_data"
-    WHERE chain_id = ${chainId}
-    AND block_number > ${knownBlockNumber};`;
 };
 
 module.exports.readAllDynamicContracts = (sql, chainId) => sql`

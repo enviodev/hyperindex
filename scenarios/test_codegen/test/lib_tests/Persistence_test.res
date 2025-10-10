@@ -78,6 +78,8 @@ describe("Test Persistence layer init", () => {
       cleanRun: true,
       chains: [],
       cache: Js.Dict.empty(),
+      reorgCheckpoints: [],
+      checkpointId: 0,
     }
     storageMock.resolveInitialize(initialState)
     let _ = await Promise.resolve()
@@ -142,6 +144,8 @@ describe("Test Persistence layer init", () => {
       cleanRun: false,
       chains: [],
       cache: Js.Dict.empty(),
+      reorgCheckpoints: [],
+      checkpointId: 0,
     }
     storageMock.resolveLoadInitialState(initialState)
     let _ = await Promise.resolve()
