@@ -58,7 +58,7 @@ let makeFromDbState = async (~initialState: Persistence.initialState, ~config: C
 
   let chainFetchersArr =
     await initialState.chains
-    ->Array.map(async (resumedChainState: InternalTable.Chains.t) => {
+    ->Array.map(async (resumedChainState: Persistence.initialChainState) => {
       let chain = Config.getChain(config, ~chainId=resumedChainState.id)
       let chainConfig = config.chainMap->ChainMap.get(chain)
 
@@ -145,5 +145,34 @@ let getSafeReorgBlocks = (chainManager: t): EntityHistory.safeReorgBlocks => {
   {
     chainIds,
     blockNumbers,
+  }
+}
+
+let getSafeCheckpointId = (chainManager: t) => {
+  let chainFetchers = chainManager.chainFetchers->ChainMap.values
+
+  let infinity = (%raw(`Infinity`): int)
+  let result = ref(infinity)
+
+  for idx in 0 to chainFetchers->Array.length - 1 {
+    let chainFetcher = chainFetchers->Array.getUnsafe(idx)
+    switch chainFetcher.safeCheckpointTracking {
+    | None => () // Skip chains with maxReorgDepth = 0
+    | Some(safeCheckpointTracking) => {
+        let safeCheckpointId =
+          safeCheckpointTracking->SafeCheckpointTracking.getSafeCheckpointId(
+            ~sourceBlockNumber=chainFetcher.currentBlockHeight,
+          )
+        if safeCheckpointId < result.contents {
+          result := safeCheckpointId
+        }
+      }
+    }
+  }
+
+  if result.contents === infinity || result.contents === 0 {
+    None // No safe checkpoint found
+  } else {
+    Some(result.contents)
   }
 }

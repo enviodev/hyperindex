@@ -1,6 +1,6 @@
 let codegenHelpMessage = `Rerun 'pnpm dev' to update generated code after schema.graphql changes.`
 
-let makeEventIdentifier = (item: Internal.item): Types.eventIdentifier => {
+let makeEventIdentifier = (item: Internal.item): Internal.eventIdentifier => {
   switch item {
   | Internal.Event({chain, blockNumber, logIndex, timestamp}) => {
       chainId: chain->ChainMap.Chain.toChainId,
@@ -19,6 +19,7 @@ let makeEventIdentifier = (item: Internal.item): Types.eventIdentifier => {
 
 type contextParams = {
   item: Internal.item,
+  checkpointId: int,
   inMemoryStore: InMemoryStore.t,
   loadManager: LoadManager.t,
   persistence: Persistence.t,
@@ -133,9 +134,10 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
           params.inMemoryStore
           ->InMemoryStore.getInMemTable(~entityConfig=params.entityConfig)
           ->InMemoryTable.Entity.set(
-            Set(entity)->Types.mkEntityUpdate(
+            Set(entity)->Internal.mkEntityUpdate(
               ~eventIdentifier=params.item->makeEventIdentifier,
               ~entityId=entity.id,
+              ~checkpointId=params.checkpointId,
             ),
             ~shouldSaveHistory=params.shouldSaveHistory,
           )
@@ -209,9 +211,10 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
           params.inMemoryStore
           ->InMemoryStore.getInMemTable(~entityConfig=params.entityConfig)
           ->InMemoryTable.Entity.set(
-            Delete->Types.mkEntityUpdate(
+            Delete->Internal.mkEntityUpdate(
               ~eventIdentifier=params.item->makeEventIdentifier,
               ~entityId,
+              ~checkpointId=params.checkpointId,
             ),
             ~shouldSaveHistory=params.shouldSaveHistory,
           )
@@ -246,6 +249,7 @@ let handlerTraps: Utils.Proxy.traps<contextParams> = {
           loadManager: params.loadManager,
           persistence: params.persistence,
           shouldSaveHistory: params.shouldSaveHistory,
+          checkpointId: params.checkpointId,
           entityConfig,
         }
         ->Utils.Proxy.make(entityTraps)

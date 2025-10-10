@@ -13,10 +13,22 @@ type effectCacheRecord = {
   mutable count: int,
 }
 
+type initialChainState = {
+  id: int,
+  startBlock: int,
+  endBlock: option<int>,
+  maxReorgDepth: int,
+  progressBlockNumber: int,
+  numEventsProcessed: int,
+  firstEventBlockNumber: option<int>,
+  timestampCaughtUpToHeadOrEndblock: option<Js.Date.t>,
+  dynamicContracts: array<Internal.indexingContract>,
+}
+
 type initialState = {
   cleanRun: bool,
   cache: dict<effectCacheRecord>,
-  chains: array<InternalTable.Chains.t>,
+  chains: array<initialChainState>,
   checkpointId: int,
   // Needed to keep reorg detection logic between restarts
   reorgCheckpoints: array<Internal.reorgCheckpoint>,

@@ -60,11 +60,22 @@ type t = {
   detectedReorgBlock: option<blockData>,
 }
 
-let make = (~blocks, ~maxReorgDepth, ~shouldRollbackOnReorg, ~detectedReorgBlock=?) => {
+let make = (
+  ~chainReorgCheckpoints: array<Internal.reorgCheckpoint>,
+  ~maxReorgDepth,
+  ~shouldRollbackOnReorg,
+  ~detectedReorgBlock=?,
+) => {
   let dataByBlockNumber = Js.Dict.empty()
 
-  blocks->Belt.Array.forEach(block => {
-    dataByBlockNumber->Js.Dict.set(block.blockNumber->Js.Int.toString, block)
+  chainReorgCheckpoints->Belt.Array.forEach(block => {
+    dataByBlockNumber->Utils.Dict.setByInt(
+      block.blockNumber,
+      {
+        blockHash: block.blockHash,
+        blockNumber: block.blockNumber,
+      },
+    )
   })
 
   {
@@ -144,7 +155,7 @@ let registerReorgGuard = (
             ...self,
             detectedReorgBlock: Some(reorgDetected.scannedBlock),
           }
-        : make(~blocks=[], ~maxReorgDepth, ~shouldRollbackOnReorg),
+        : make(~chainReorgCheckpoints=[], ~maxReorgDepth, ~shouldRollbackOnReorg),
       ReorgDetected(reorgDetected),
     )
   | None => {

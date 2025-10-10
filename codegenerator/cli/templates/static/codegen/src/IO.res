@@ -14,8 +14,8 @@ let executeSet = (
 
 let getEntityHistoryItems = (entityUpdates, ~containsRollbackDiffChange) => {
   let (_, entityHistoryItems) = entityUpdates->Belt.Array.reduce((None, []), (
-    prev: (option<Types.eventIdentifier>, array<EntityHistory.historyRow<_>>),
-    entityUpdate: Types.entityUpdate<'a>,
+    prev: (option<Internal.eventIdentifier>, array<EntityHistory.historyRow<_>>),
+    entityUpdate: Internal.entityUpdate<'a>,
   ) => {
     let (optPreviousEventIdentifier, entityHistoryItems) = prev
 
@@ -222,8 +222,11 @@ let executeBatch = async (
   //In the event of a rollback, rollback all meta tables based on the given
   //valid event identifier, where all rows created after this eventIdentifier should
   //be deleted
-  let rollbackTables = switch inMemoryStore.rollBackEventIdentifier {
-  | Some(eventIdentifier) =>
+  let rollbackTables = switch inMemoryStore {
+  | {
+      rollbackTargetCheckpointId: Some(rollbackTargetCheckpointId),
+      rollBackEventIdentifier: Some(eventIdentifier),
+    } =>
     Some(
       sql =>
         Promise.all2((
@@ -234,14 +237,13 @@ let executeBatch = async (
             },
             ~eventIdentifier,
           ),
-          sql->InternalTable.Checkpoints.deprecated_rollbackReorgedChainCheckpoints(
+          sql->InternalTable.Checkpoints.rollback(
             ~pgSchema=Db.publicSchema,
-            ~chainId=eventIdentifier.chainId,
-            ~knownBlockNumber=eventIdentifier.blockNumber,
+            ~rollbackTargetCheckpointId,
           ),
         )),
     )
-  | None => None
+  | _ => None
   }
 
   try {
@@ -339,15 +341,16 @@ module RollBack = {
     ~blockNumber,
     ~logIndex,
     ~isUnorderedMultichainMode,
+    ~rollbackTargetCheckpointId,
   ) => {
-    let rollBackEventIdentifier: Types.eventIdentifier = {
+    let rollBackEventIdentifier: Internal.eventIdentifier = {
       chainId,
       blockTimestamp,
       blockNumber,
       logIndex,
     }
 
-    let inMemStore = InMemoryStore.make(~rollBackEventIdentifier)
+    let inMemStore = InMemoryStore.make(~rollBackEventIdentifier, ~rollbackTargetCheckpointId)
 
     let deletedEntities = Js.Dict.empty()
     let setEntities = Js.Dict.empty()
@@ -377,7 +380,7 @@ module RollBack = {
         let entityTable = inMemStore->InMemoryStore.getInMemTable(~entityConfig)
 
         diff->Belt.Array.forEach(historyRow => {
-          let eventIdentifier: Types.eventIdentifier = {
+          let eventIdentifier: Internal.eventIdentifier = {
             chainId: historyRow.current.chain_id,
             blockNumber: historyRow.current.block_number,
             logIndex: historyRow.current.log_index,
@@ -387,14 +390,28 @@ module RollBack = {
           | Set(entity: Entities.internalEntity) =>
             setEntities->Utils.Dict.push(entityConfig.name, entity.id)
             entityTable->InMemoryTable.Entity.set(
-              Set(entity)->Types.mkEntityUpdate(~eventIdentifier, ~entityId=entity.id),
+              Set(entity)->Internal.mkEntityUpdate(
+                ~eventIdentifier,
+                ~entityId=entity.id,
+                // Having checkpointId as 0 here is fine,
+                // since we don't write a history for the item
+                // and it's guaranteed to detect a change on update in handler
+                ~checkpointId=0,
+              ),
               ~shouldSaveHistory=false,
               ~containsRollbackDiffChange=true,
             )
           | Delete({id}) =>
             deletedEntities->Utils.Dict.push(entityConfig.name, id)
             entityTable->InMemoryTable.Entity.set(
-              Delete->Types.mkEntityUpdate(~eventIdentifier, ~entityId=id),
+              Delete->Internal.mkEntityUpdate(
+                ~eventIdentifier,
+                ~entityId=id,
+                // Having checkpointId as 0 here is fine,
+                // since we don't write a history for the item
+                // and it's guaranteed to detect a change on update in handler
+                ~checkpointId=0,
+              ),
               ~shouldSaveHistory=false,
               ~containsRollbackDiffChange=true,
             )

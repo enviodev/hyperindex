@@ -38,10 +38,9 @@ let makeInitialWithOnBlock = (~startBlock=0, ~onBlockConfigs) => {
     ~eventConfigs=[baseEventConfig],
     ~contracts=[
       {
-        FetchState.address: mockAddress0,
+        Internal.address: mockAddress0,
         contractName: "Gravatar",
         startBlock,
-        register: Config,
       },
     ],
     ~startBlock,

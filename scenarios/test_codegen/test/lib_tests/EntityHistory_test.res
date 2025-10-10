@@ -953,65 +953,6 @@ describe("Entity history rollbacks", () => {
     }
   })
 
-  Async.it("Gets first event change per chain ordered mode", async () => {
-    let firstChangeEventPerChain = try await Db.sql->DbFunctions.EntityHistory.getFirstChangeEventPerChain(
-      Mocks.Chain1.orderedMultichainArg,
-      ~allEntities=[module(TestEntity)->Entities.entityModToInternal],
-    ) catch {
-    | exn =>
-      Js.log2("getFirstChangeEventPerChain exn", exn)
-      Assert.fail("Failed to get rollback diff")
-    }
-
-    let expected = DbFunctions.EntityHistory.FirstChangeEventPerChain.make()
-    expected->DbFunctions.EntityHistory.FirstChangeEventPerChain.setIfEarlier(
-      ~chainId=Mocks.Chain1.chain_id,
-      ~event={
-        blockNumber: Mocks.Chain1.event3.block_number,
-        logIndex: Mocks.Chain1.event3.log_index,
-      },
-    )
-    expected->DbFunctions.EntityHistory.FirstChangeEventPerChain.setIfEarlier(
-      ~chainId=Mocks.Chain2.chain_id,
-      ~event={
-        blockNumber: Mocks.Chain2.event3.block_number,
-        logIndex: Mocks.Chain2.event3.log_index,
-      },
-    )
-
-    Assert.deepEqual(
-      firstChangeEventPerChain,
-      expected,
-      ~message="Should have chain 1 and 2 first change events",
-    )
-  })
-
-  Async.it("Gets first event change per chain unordered mode", async () => {
-    let firstChangeEventPerChain = try await Db.sql->DbFunctions.EntityHistory.getFirstChangeEventPerChain(
-      Mocks.Chain1.unorderedMultichainArg,
-      ~allEntities=[module(TestEntity)->Entities.entityModToInternal],
-    ) catch {
-    | exn =>
-      Js.log2("getFirstChangeEventPerChain exn", exn)
-      Assert.fail("Failed to get rollback diff")
-    }
-
-    let expected = DbFunctions.EntityHistory.FirstChangeEventPerChain.make()
-    expected->DbFunctions.EntityHistory.FirstChangeEventPerChain.setIfEarlier(
-      ~chainId=Mocks.Chain1.chain_id,
-      ~event={
-        blockNumber: Mocks.Chain1.event3.block_number,
-        logIndex: Mocks.Chain1.event3.log_index,
-      },
-    )
-
-    Assert.deepEqual(
-      firstChangeEventPerChain,
-      expected,
-      ~message="Should only have chain 1 first change event",
-    )
-  })
-
   Async.it("Deletes current history after rollback ordered", async () => {
     let _ =
       await Db.sql->DbFunctions.EntityHistory.deleteAllEntityHistoryAfterEventIdentifier(

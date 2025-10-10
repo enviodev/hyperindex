@@ -8,7 +8,6 @@ type chainAfterBatch = {
   progressBlockNumber: int,
   totalEventsProcessed: int,
   fetchState: FetchState.t,
-  dcsToStore: option<array<FetchState.indexingContract>>,
   isProgressAtHeadWhenBatchCreated: bool,
 }
 
@@ -99,7 +98,6 @@ let getProgressedChainsById = {
     ~progressBlockNumberAfterBatch,
     ~fetchStateAfterBatch,
     ~batchSize,
-    ~dcsToStore,
   ) => {
     // The check is sufficient, since we guarantee to include a full block in a batch
     // Also, this might be true even if batchSize is 0,
@@ -111,7 +109,6 @@ let getProgressedChainsById = {
             batchSize,
             progressBlockNumber: progressBlockNumberAfterBatch,
             totalEventsProcessed: chainBeforeBatch.totalEventsProcessed + batchSize,
-            dcsToStore,
             fetchState: fetchStateAfterBatch,
             isProgressAtHeadWhenBatchCreated: progressBlockNumberAfterBatch >=
             chainBeforeBatch.sourceBlockNumber,
@@ -151,48 +148,17 @@ let getProgressedChainsById = {
       ) {
       | Some(batchSize) =>
         let leftItems = fetchState.buffer->Js.Array2.sliceFrom(batchSize)
-        switch fetchState.dcsToStore {
-        | [] =>
-          getChainAfterBatchIfProgressed(
-            ~chainBeforeBatch,
-            ~batchSize,
-            ~dcsToStore=None,
-            ~fetchStateAfterBatch=fetchState->FetchState.updateInternal(~mutItems=leftItems),
-            ~progressBlockNumberAfterBatch,
-          )
-
-        | dcs => {
-            let leftDcsToStore = []
-            let batchDcs = []
-            let fetchStateAfterBatch =
-              fetchState->FetchState.updateInternal(~mutItems=leftItems, ~dcsToStore=leftDcsToStore)
-
-            dcs->Array.forEach(dc => {
-              // Important: This should be a registering block number.
-              // This works for now since dc.startBlock is a registering block number.
-              if dc.startBlock <= progressBlockNumberAfterBatch {
-                batchDcs->Array.push(dc)
-              } else {
-                // Mutate the array we passed to the updateInternal beforehand
-                leftDcsToStore->Array.push(dc)
-              }
-            })
-
-            getChainAfterBatchIfProgressed(
-              ~chainBeforeBatch,
-              ~batchSize,
-              ~dcsToStore=Some(batchDcs),
-              ~fetchStateAfterBatch,
-              ~progressBlockNumberAfterBatch,
-            )
-          }
-        }
+        getChainAfterBatchIfProgressed(
+          ~chainBeforeBatch,
+          ~batchSize,
+          ~fetchStateAfterBatch=fetchState->FetchState.updateInternal(~mutItems=leftItems),
+          ~progressBlockNumberAfterBatch,
+        )
       // Skip not affected chains
       | None =>
         getChainAfterBatchIfProgressed(
           ~chainBeforeBatch,
           ~batchSize=0,
-          ~dcsToStore=None,
           ~fetchStateAfterBatch=chainBeforeBatch.fetchState,
           ~progressBlockNumberAfterBatch,
         )

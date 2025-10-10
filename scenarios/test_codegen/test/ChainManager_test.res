@@ -109,13 +109,13 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
       chainConfig,
       // This is quite a hack - but it works!
       reorgDetection: ReorgDetection.make(
-        ~blocks=[],
+        ~chainReorgCheckpoints=[],
         ~maxReorgDepth=200,
         ~shouldRollbackOnReorg=false,
       ),
+      safeCheckpointTracking: None,
       isProgressAtHead: false,
       currentBlockHeight: 0,
-      processingFilters: None,
     }
 
     mockChainFetcher

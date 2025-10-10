@@ -10,6 +10,11 @@ module type State = {
   let getId: t => int
 }
 
+let handleFatalError = e => {
+  e->ErrorHandling.make(~msg="Indexer has failed with an unxpected error")->ErrorHandling.log
+  NodeJs.process->NodeJs.exitWithCode(Failure)
+}
+
 module MakeManager = (S: State) => {
   type t = {mutable state: S.t, stateUpdatedHook: option<S.t => unit>}
 
@@ -32,9 +37,7 @@ module MakeManager = (S: State) => {
       self.state = nextState
       nextTasks->Array.forEach(task => dispatchTask(self, task))
     } catch {
-    | e =>
-      e->ErrorHandling.make(~msg="Indexer has failed with an unxpected error")->ErrorHandling.log
-      NodeJs.process->NodeJs.exitWithCode(Failure)
+    | e => e->handleFatalError
     }
   }
   and dispatchTask = (self, task: S.task) => {
@@ -43,9 +46,18 @@ module MakeManager = (S: State) => {
       if stateId !== self.state->S.getId {
         Logging.info("Invalidated task discarded")
       } else {
-        S.taskReducer(self.state, task, ~dispatchAction=action =>
-          dispatchAction(~stateId, self, action)
-        )->ignore
+        try {
+          S.taskReducer(self.state, task, ~dispatchAction=action =>
+            dispatchAction(~stateId, self, action)
+          )
+          ->Promise.catch(e => {
+            e->handleFatalError
+            Promise.resolve()
+          })
+          ->ignore
+        } catch {
+        | e => e->handleFatalError
+        }
       }
     }, 0)->ignore
   }

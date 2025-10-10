@@ -5,6 +5,72 @@ let isPrimaryKey = true
 let isNullable = true
 let isIndex = true
 
+module DynamicContractRegistry = {
+  let name = "dynamic_contract_registry"
+
+  let makeId = (~chainId, ~contractAddress) => {
+    chainId->Belt.Int.toString ++ "-" ++ contractAddress->Address.toString
+  }
+
+  // @genType Used for Test DB
+  @genType
+  type t = {
+    id: string,
+    @as("chain_id") chainId: int,
+    @as("registering_event_block_number") registeringEventBlockNumber: int,
+    @as("registering_event_log_index") registeringEventLogIndex: int,
+    @as("registering_event_block_timestamp") registeringEventBlockTimestamp: int,
+    @as("registering_event_contract_name") registeringEventContractName: string,
+    @as("registering_event_name") registeringEventName: string,
+    @as("registering_event_src_address") registeringEventSrcAddress: Address.t,
+    @as("contract_address") contractAddress: Address.t,
+    @as("contract_name") contractName: string,
+  }
+
+  let schema = S.schema(s => {
+    id: s.matches(S.string),
+    chainId: s.matches(S.int),
+    registeringEventBlockNumber: s.matches(S.int),
+    registeringEventLogIndex: s.matches(S.int),
+    registeringEventContractName: s.matches(S.string),
+    registeringEventName: s.matches(S.string),
+    registeringEventSrcAddress: s.matches(Address.schema),
+    registeringEventBlockTimestamp: s.matches(S.int),
+    contractAddress: s.matches(Address.schema),
+    contractName: s.matches(S.string),
+  })
+
+  let rowsSchema = S.array(schema)
+
+  let table = mkTable(
+    name,
+    ~fields=[
+      mkField("id", Text, ~isPrimaryKey, ~fieldSchema=S.string),
+      mkField("chain_id", Integer, ~fieldSchema=S.int),
+      mkField("registering_event_block_number", Integer, ~fieldSchema=S.int),
+      mkField("registering_event_log_index", Integer, ~fieldSchema=S.int),
+      mkField("registering_event_block_timestamp", Integer, ~fieldSchema=S.int),
+      mkField("registering_event_contract_name", Text, ~fieldSchema=S.string),
+      mkField("registering_event_name", Text, ~fieldSchema=S.string),
+      mkField("registering_event_src_address", Text, ~fieldSchema=Address.schema),
+      mkField("contract_address", Text, ~fieldSchema=Address.schema),
+      mkField("contract_name", Text, ~fieldSchema=S.string),
+    ],
+  )
+
+  let entityHistory = table->EntityHistory.fromTable(~schema)
+
+  external castToInternal: t => Internal.entity = "%identity"
+
+  let config = {
+    name,
+    schema,
+    rowsSchema,
+    table,
+    entityHistory,
+  }->Internal.fromGenericEntityConfig
+}
+
 module Chains = {
   type progressFields = [
     | #progress_block
@@ -165,7 +231,46 @@ VALUES ${valuesRows->Js.Array2.joinWith(",\n       ")};`,
 
     `UPDATE "${pgSchema}"."${table.tableName}"
 SET ${setClauses->Js.Array2.joinWith(",\n    ")}
-WHERE "id" = $1;`
+WHERE "${(#id: field :> string)}" = $1;`
+  }
+
+  type rawInitialState = {
+    id: int,
+    startBlock: int,
+    endBlock: Js.Null.t<int>,
+    maxReorgDepth: int,
+    firstEventBlockNumber: Js.Null.t<int>,
+    timestampCaughtUpToHeadOrEndblock: Js.Null.t<Js.Date.t>,
+    numEventsProcessed: int,
+    progressBlockNumber: int,
+    dynamicContracts: array<Internal.indexingContract>,
+  }
+
+  let makeGetInitialStateQuery = (~pgSchema) => {
+    `SELECT "${(#id: field :> string)}" as "id",
+"${(#start_block: field :> string)}" as "startBlock",
+"${(#end_block: field :> string)}" as "endBlock",
+"${(#max_reorg_depth: field :> string)}" as "maxReorgDepth",
+"${(#first_event_block: field :> string)}" as "firstEventBlockNumber",
+"${(#ready_at: field :> string)}" as "timestampCaughtUpToHeadOrEndblock",
+"${(#events_processed: field :> string)}" as "numEventsProcessed",
+"${(#progress_block: field :> string)}" as "progressBlockNumber",
+(
+  SELECT COALESCE(json_agg(json_build_object(
+    'address', "contract_address",
+    'contractName', "contract_name",
+    'startBlock', "registering_event_block_number"
+  )), '[]'::json)
+  FROM "${pgSchema}"."${DynamicContractRegistry.table.tableName}"
+  WHERE "chain_id" = chains."${(#id: field :> string)}"
+) as "dynamicContracts"
+FROM "${pgSchema}"."${table.tableName}" as chains;`
+  }
+
+  let getInitialState = (sql, ~pgSchema) => {
+    sql
+    ->Postgres.unsafe(makeGetInitialStateQuery(~pgSchema))
+    ->(Utils.magic: promise<array<unknown>> => promise<array<rawInitialState>>)
   }
 
   let progressFields: array<progressFields> = [#progress_block, #events_processed]
@@ -322,7 +427,7 @@ FROM "${pgSchema}"."${table.tableName}" cp
 INNER JOIN reorg_chains rc 
   ON cp."${(#chain_id: field :> string)}" = rc.id
 WHERE cp."${(#block_hash: field :> string)}" IS NOT NULL
-  AND cp."${(#block_number: field :> string)}" > rc.safe_block;`
+  AND cp."${(#block_number: field :> string)}" >= rc.safe_block;` // Include safe_block checkpoint to use it for safe checkpoint tracking
   }
 
   let makeCommitedCheckpointIdQuery = (~pgSchema) => {
@@ -363,48 +468,76 @@ SELECT * FROM unnest($1::${(Integer :> string)}[],$2::${(Integer :> string)}[],$
     ->Promise.ignoreValue
   }
 
-  // This is how it used to work before checkpoints
-  // To make it correct, we need to delete checkpoints of all chains
-  let deprecated_rollbackReorgedChainCheckpoints = (
-    sql,
-    ~pgSchema,
-    ~chainId,
-    ~knownBlockNumber,
-  ) => {
+  let rollback = (sql, ~pgSchema, ~rollbackTargetCheckpointId: int) => {
     sql
     ->Postgres.preparedUnsafe(
-      `DELETE FROM "${pgSchema}"."${table.tableName}" WHERE "${(#chain_id: field :> string)}" = $1 AND "${(#block_number: field :> string)}" > $2;`,
-      (chainId, knownBlockNumber)->(Utils.magic: ((int, int)) => unknown),
+      `DELETE FROM "${pgSchema}"."${table.tableName}" WHERE "${(#id: field :> string)}" > $1;`,
+      [rollbackTargetCheckpointId]->Utils.magic,
     )
     ->Promise.ignoreValue
   }
 
-  // This is how it used to work before checkpoints
-  // To make it correct, we need to first find
-  // a safe checkpoint - which is the min checkpoint outside all chains
-  // And then delete everything below it - the same for history items
-  let deprecated_pruneStaleCheckpoints = (sql, ~pgSchema) => {
-    // Delete checkpoints that are outside the reorg window:
-    // 1. All checkpoints for chains with max_reorg_depth = 0 (no reorg protection)
-    // 2. Checkpoints at or below safe_block for chains with max_reorg_depth > 0
+  let makePruneStaleCheckpointsQuery = (~pgSchema) => {
+    `DELETE FROM "${pgSchema}"."${table.tableName}" WHERE "${(#id: field :> string)}" < $1;`
+  }
+
+  let pruneStaleCheckpoints = (sql, ~pgSchema, ~safeCheckpointId: int) => {
     sql
-    ->Postgres.unsafe(
-      `WITH chain_safe_blocks AS (
-     SELECT 
-       "${(#id: Chains.field :> string)}" as id,
-       "${(#max_reorg_depth: Chains.field :> string)}" as max_reorg_depth,
-       "${(#source_block: Chains.field :> string)}" - "${(#max_reorg_depth: Chains.field :> string)}" AS safe_block
-     FROM "${pgSchema}"."${Chains.table.tableName}"
-   )
-   DELETE FROM "${pgSchema}"."${table.tableName}" cp
-   USING chain_safe_blocks csb
-   WHERE cp."${(#chain_id: field :> string)}" = csb.id
-     AND (
-       csb.max_reorg_depth = 0
-       OR cp."${(#block_number: field :> string)}" <= csb.safe_block
-     );`,
+    ->Postgres.preparedUnsafe(
+      makePruneStaleCheckpointsQuery(~pgSchema),
+      [safeCheckpointId]->Obj.magic,
     )
     ->Promise.ignoreValue
+  }
+
+  let makeGetRollbackTargetCheckpointQuery = (~pgSchema) => {
+    `SELECT "${(#id: field :> string)}" FROM "${pgSchema}"."${table.tableName}"
+WHERE 
+  "${(#chain_id: field :> string)}" = $1 AND
+  "${(#block_number: field :> string)}" <= $2
+ORDER BY "${(#id: field :> string)}" DESC
+LIMIT 1;`
+  }
+
+  let getRollbackTargetCheckpoint = (
+    sql,
+    ~pgSchema,
+    ~reorgChainId: int,
+    ~lastKnownValidBlockNumber: int,
+  ) => {
+    sql
+    ->Postgres.preparedUnsafe(
+      makeGetRollbackTargetCheckpointQuery(~pgSchema),
+      (reorgChainId, lastKnownValidBlockNumber)->Obj.magic,
+    )
+    ->(Utils.magic: promise<unknown> => promise<array<{"id": int}>>)
+  }
+
+  let makeGetRollbackProgressDiffQuery = (~pgSchema) => {
+    `SELECT 
+  "${(#chain_id: field :> string)}",
+  SUM("${(#events_processed: field :> string)}") as events_processed_diff,
+  MIN("${(#block_number: field :> string)}") - 1 as new_progress_block_number
+FROM "${pgSchema}"."${table.tableName}"
+WHERE "${(#id: field :> string)}" > $1
+GROUP BY "${(#chain_id: field :> string)}";`
+  }
+
+  let getRollbackProgressDiff = (sql, ~pgSchema, ~rollbackTargetCheckpointId: int) => {
+    sql
+    ->Postgres.preparedUnsafe(
+      makeGetRollbackProgressDiffQuery(~pgSchema),
+      [rollbackTargetCheckpointId]->Obj.magic,
+    )
+    ->(
+      Utils.magic: promise<unknown> => promise<
+        array<{
+          "chain_id": int,
+          "events_processed_diff": string,
+          "new_progress_block_number": int,
+        }>,
+      >
+    )
   }
 }
 
@@ -499,70 +632,4 @@ module Views = {
        "${(#ready_at: Chains.field :> string)}" AS "timestamp_caught_up_to_head_or_endblock"
      FROM "${pgSchema}"."${Chains.table.tableName}";`
   }
-}
-
-module DynamicContractRegistry = {
-  let name = "dynamic_contract_registry"
-
-  let makeId = (~chainId, ~contractAddress) => {
-    chainId->Belt.Int.toString ++ "-" ++ contractAddress->Address.toString
-  }
-
-  // @genType Used for Test DB
-  @genType
-  type t = {
-    id: string,
-    @as("chain_id") chainId: int,
-    @as("registering_event_block_number") registeringEventBlockNumber: int,
-    @as("registering_event_log_index") registeringEventLogIndex: int,
-    @as("registering_event_block_timestamp") registeringEventBlockTimestamp: int,
-    @as("registering_event_contract_name") registeringEventContractName: string,
-    @as("registering_event_name") registeringEventName: string,
-    @as("registering_event_src_address") registeringEventSrcAddress: Address.t,
-    @as("contract_address") contractAddress: Address.t,
-    @as("contract_name") contractName: string,
-  }
-
-  let schema = S.schema(s => {
-    id: s.matches(S.string),
-    chainId: s.matches(S.int),
-    registeringEventBlockNumber: s.matches(S.int),
-    registeringEventLogIndex: s.matches(S.int),
-    registeringEventContractName: s.matches(S.string),
-    registeringEventName: s.matches(S.string),
-    registeringEventSrcAddress: s.matches(Address.schema),
-    registeringEventBlockTimestamp: s.matches(S.int),
-    contractAddress: s.matches(Address.schema),
-    contractName: s.matches(S.string),
-  })
-
-  let rowsSchema = S.array(schema)
-
-  let table = mkTable(
-    name,
-    ~fields=[
-      mkField("id", Text, ~isPrimaryKey, ~fieldSchema=S.string),
-      mkField("chain_id", Integer, ~fieldSchema=S.int),
-      mkField("registering_event_block_number", Integer, ~fieldSchema=S.int),
-      mkField("registering_event_log_index", Integer, ~fieldSchema=S.int),
-      mkField("registering_event_block_timestamp", Integer, ~fieldSchema=S.int),
-      mkField("registering_event_contract_name", Text, ~fieldSchema=S.string),
-      mkField("registering_event_name", Text, ~fieldSchema=S.string),
-      mkField("registering_event_src_address", Text, ~fieldSchema=Address.schema),
-      mkField("contract_address", Text, ~fieldSchema=Address.schema),
-      mkField("contract_name", Text, ~fieldSchema=S.string),
-    ],
-  )
-
-  let entityHistory = table->EntityHistory.fromTable(~schema)
-
-  external castToInternal: t => Internal.entity = "%identity"
-
-  let config = {
-    name,
-    schema,
-    rowsSchema,
-    table,
-    entityHistory,
-  }->Internal.fromGenericEntityConfig
 }
