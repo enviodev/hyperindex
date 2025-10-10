@@ -140,3 +140,17 @@ Handlers.Gravatar.TestEventWithCustomName.handler(async _ => {
 Handlers.Gravatar.TestEvent.handler(async _ => {
   ()
 })
+
+// Test eventOrigin accessibility - exposed for testing
+let lastEmptyEventOrigin: ref<option<Internal.eventOrigin>> = ref(None)
+
+Handlers.Gravatar.EmptyEvent.handler(async ({context}) => {
+  // This handler tests that eventOrigin is accessible in the context
+  // It will be Historical during sync and Live during live indexing
+  lastEmptyEventOrigin := Some(context.eventOrigin)
+  // Log it so we can verify it's working
+  switch context.eventOrigin {
+  | Historical => context.log.debug("Processing historical event")
+  | Live => context.log.debug("Processing live event")
+  }
+})

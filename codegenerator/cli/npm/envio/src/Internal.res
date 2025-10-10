@@ -54,8 +54,14 @@ type entityHandlerContext<'entity> = {
   deleteUnsafe: string => unit,
 }
 
+@genType
+type eventOrigin = Historical | Live
+
 type loaderReturn
-type handlerContext = private {isPreload: bool}
+type handlerContext = private {
+  isPreload: bool,
+  eventOrigin: eventOrigin,
+}
 type handlerArgs = {
   event: event,
   context: handlerContext,

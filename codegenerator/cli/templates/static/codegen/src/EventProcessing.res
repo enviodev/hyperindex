@@ -87,6 +87,7 @@ let runEventHandlerOrThrow = async (
   ~persistence,
   ~shouldSaveHistory,
   ~shouldBenchmark,
+  ~eventOrigin: Internal.eventOrigin,
 ) => {
   let eventItem = item->Internal.castUnsafeEventItem
 
@@ -105,6 +106,7 @@ let runEventHandlerOrThrow = async (
             persistence,
             shouldSaveHistory,
             isPreload: false,
+            eventOrigin,
           }),
         }: Internal.handlerArgs
       ),
@@ -137,6 +139,7 @@ let runHandlerOrThrow = async (
   ~config: Config.t,
   ~shouldSaveHistory,
   ~shouldBenchmark,
+  ~eventOrigin: Internal.eventOrigin,
 ) => {
   switch item {
   | Block({onBlockConfig: {handler, chainId}, blockNumber}) =>
@@ -155,6 +158,7 @@ let runHandlerOrThrow = async (
               persistence: config.persistence,
               shouldSaveHistory,
               isPreload: false,
+              eventOrigin,
             }),
           }: Internal.onBlockArgs
         ),
@@ -179,6 +183,7 @@ let runHandlerOrThrow = async (
           ~persistence=config.persistence,
           ~shouldSaveHistory,
           ~shouldBenchmark,
+          ~eventOrigin,
         )
       | None => ()
       }
@@ -195,6 +200,7 @@ let preloadBatchOrThrow = async (
   ~loadManager,
   ~persistence,
   ~inMemoryStore,
+  ~eventOrigin: Internal.eventOrigin,
 ) => {
   // On the first run of loaders, we don't care about the result,
   // whether it's an error or a return type.
@@ -218,6 +224,7 @@ let preloadBatchOrThrow = async (
                   persistence,
                   isPreload: true,
                   shouldSaveHistory: false,
+                  eventOrigin,
                 }),
               })->Promise.silentCatch,
               // Must have Promise.catch as well as normal catch,
@@ -243,6 +250,7 @@ let preloadBatchOrThrow = async (
                 persistence,
                 isPreload: true,
                 shouldSaveHistory: false,
+                eventOrigin,
               }),
             })->Promise.silentCatch,
           )
@@ -261,6 +269,7 @@ let runBatchHandlersOrThrow = async (
   ~config,
   ~shouldSaveHistory,
   ~shouldBenchmark,
+  ~eventOrigin: Internal.eventOrigin,
 ) => {
   for i in 0 to eventBatch->Array.length - 1 {
     let item = eventBatch->Js.Array2.unsafe_get(i)
@@ -271,6 +280,7 @@ let runBatchHandlersOrThrow = async (
       ~config,
       ~shouldSaveHistory,
       ~shouldBenchmark,
+      ~eventOrigin,
     )
   }
 }
@@ -307,7 +317,14 @@ let processEventBatch = async (
   ~isInReorgThreshold,
   ~loadManager,
   ~config: Config.t,
+  ~chainFetchers: ChainMap.t<ChainFetcher.t>,
 ) => {
+  // Determine event origin based on whether all chains have caught up
+  let eventOrigin: Internal.eventOrigin = if chainFetchers->allChainsEventsProcessedToEndblock {
+    Live
+  } else {
+    Historical
+  }
   let batchSize = items->Array.length
   let byChain = Js.Dict.empty()
   progressedChains->Js.Array2.forEach(data => {
@@ -333,7 +350,7 @@ let processEventBatch = async (
   try {
     let timeRef = Hrtime.makeTimer()
 
-    await items->preloadBatchOrThrow(~loadManager, ~persistence=config.persistence, ~inMemoryStore)
+    await items->preloadBatchOrThrow(~loadManager, ~persistence=config.persistence, ~inMemoryStore, ~eventOrigin)
 
     let elapsedTimeAfterLoaders = timeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
 
@@ -343,6 +360,7 @@ let processEventBatch = async (
       ~config,
       ~shouldSaveHistory=config->Config.shouldSaveHistory(~isInReorgThreshold),
       ~shouldBenchmark=Env.Benchmark.shouldSaveData,
+      ~eventOrigin,
     )
 
     let elapsedTimeAfterProcessing =

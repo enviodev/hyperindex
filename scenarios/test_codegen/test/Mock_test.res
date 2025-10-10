@@ -17,6 +17,7 @@ describe("E2E Mock Event Batch", () => {
         ~config=RegisterHandlers.getConfig(),
         ~shouldSaveHistory=false,
         ~shouldBenchmark=false,
+        ~eventOrigin=Internal.Historical,
       )
     } catch {
     | EventProcessing.ProcessingError({message, exn, item}) =>
