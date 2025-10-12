@@ -27,7 +27,7 @@ let rec getKnownBlockWithBackoff = async (
   switch await getKnownBlock(provider, blockNumber) {
   | exception err =>
     Logging.warn({
-      "err": err,
+      "err": err->Utils.prettifyExn,
       "msg": `Issue while running fetching batch of events from the RPC. Will wait ${backoffMsOnFailure->Belt.Int.toString}ms and try again.`,
       "source": sourceName,
       "chainId": chain->ChainMap.Chain.toChainId,
@@ -47,10 +47,17 @@ let rec getKnownBlockWithBackoff = async (
       // NOTE: this is wasteful if these fields are not selected in the users config.
       //       There might be a better way to do this based on the block schema.
       //       However this is not extremely expensive and good enough for now (only on rpc sync also).
-      // The in place mutation is cheapest.
-      (result->Obj.magic)["miner"] = result.miner->Address.Evm.fromAddressLowercaseOrThrow
+
+      {
+        ...result,
+        // Mutation would be cheaper,
+        // BUT "result" is an Ethers.js Block object,
+        // which has the fields as readonly.
+        miner: result.miner->Address.Evm.fromAddressLowercaseOrThrow,
+      }
+    } else {
+      result
     }
-    result
   }
 let getSuggestedBlockIntervalFromExn = {
   // Unknown provider: "retry with the range 123-456"
@@ -500,7 +507,7 @@ let make = (
     ~loaderFn=transactionHash => provider->Ethers.JsonRpcProvider.getTransaction(~transactionHash),
     ~onError=(am, ~exn) => {
       Logging.error({
-        "err": exn,
+        "err": exn->Utils.prettifyExn,
         "msg": `EE1100: Top level promise timeout reached. Please review other errors or warnings in the code. This function will retry in ${(am._retryDelayMillis / 1000)
             ->Belt.Int.toString} seconds. It is highly likely that your indexer isn't syncing on one or more chains currently. Also take a look at the "suggestedFix" in the metadata of this command`,
         "source": name,
@@ -527,7 +534,7 @@ let make = (
       ),
     ~onError=(am, ~exn) => {
       Logging.error({
-        "err": exn,
+        "err": exn->Utils.prettifyExn,
         "msg": `EE1100: Top level promise timeout reached. Please review other errors or warnings in the code. This function will retry in ${(am._retryDelayMillis / 1000)
             ->Belt.Int.toString} seconds. It is highly likely that your indexer isn't syncing on one or more chains currently. Also take a look at the "suggestedFix" in the metadata of this command`,
         "source": name,
