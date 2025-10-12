@@ -55,12 +55,16 @@ type entityHandlerContext<'entity> = {
 }
 
 @genType
-type eventOrigin = Historical | Live
+type chainInfo = {
+  isReady: bool,
+}
+
+type chains = dict<chainInfo>
 
 type loaderReturn
 type handlerContext = private {
   isPreload: bool,
-  eventOrigin: eventOrigin,
+  chains: chains,
 }
 type handlerArgs = {
   event: event,

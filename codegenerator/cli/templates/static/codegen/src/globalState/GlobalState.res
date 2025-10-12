@@ -629,9 +629,11 @@ let actionReducer = (state: t, action: action) => {
       processedBatches: state.processedBatches + 1,
     }
 
-    let shouldExit = EventProcessing.allChainsEventsProcessedToEndblock(
-      state.chainManager.chainFetchers,
-    )
+    // Check if all chains have reached their end blocks
+    let chains = EventProcessing.computeChainsState(state.chainManager.chainFetchers)
+    let allChainsReady = chains->Js.Dict.values->Array.every(chainInfo => chainInfo.isReady)
+
+    let shouldExit = allChainsReady
       ? {
           // state.config.persistence.storage
           Logging.info("All chains are caught up to end blocks.")

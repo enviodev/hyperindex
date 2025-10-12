@@ -141,16 +141,20 @@ Handlers.Gravatar.TestEvent.handler(async _ => {
   ()
 })
 
-// Test eventOrigin accessibility - exposed for testing
-let lastEmptyEventOrigin: ref<option<Internal.eventOrigin>> = ref(None)
+// Test chains accessibility - exposed for testing
+// Instead of a single eventOrigin enum, we store the entire chains dict
+let lastEmptyEventChains: ref<option<Internal.chains>> = ref(None)
 
 Handlers.Gravatar.EmptyEvent.handler(async ({context}) => {
-  // This handler tests that eventOrigin is accessible in the context
-  // It will be Historical during sync and Live during live indexing
-  lastEmptyEventOrigin := Some(context.eventOrigin)
-  // Log it so we can verify it's working
-  switch context.eventOrigin {
-  | Historical => context.log.debug("Processing historical event")
-  | Live => context.log.debug("Processing live event")
-  }
+  // This handler tests that chains state is accessible in the context
+  // Chains will have isReady: false during sync and isReady: true during live indexing
+  lastEmptyEventChains := Some(context.chains)
+
+  // Log chain states for verification
+  context.chains
+  ->Js.Dict.entries
+  ->Belt.Array.forEach(((chainId, chainInfo)) => {
+    let status = chainInfo.isReady ? "ready (live)" : "syncing (historical)"
+    context.log.debug(`Chain ${chainId} status: ${status}`)
+  })
 })

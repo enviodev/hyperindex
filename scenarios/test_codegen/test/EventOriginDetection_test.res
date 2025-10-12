@@ -1,8 +1,15 @@
 open RescriptMocha
 
+// Helper function to check if all chains are ready (equivalent to the old "Live" state)
+let allChainsReady = (chains: Internal.chains): bool => {
+  chains
+  ->Js.Dict.values
+  ->Belt.Array.every(chainInfo => chainInfo.isReady)
+}
+
 describe("EventOrigin Detection Logic", () => {
-  describe("allChainsEventsProcessedToEndblock", () => {
-    it("should return true when all chains have reached their end block", () => {
+  describe("computeChainsState", () => {
+    it("should set isReady=true when all chains have reached their end block", () => {
       // Create mock chain fetchers that have all reached end block
       let chainFetcher1 = {
         "committedProgressBlockNumber": 1000,
@@ -24,11 +31,15 @@ describe("EventOrigin Detection Logic", () => {
           (ChainMap.Chain.makeUnsafe(~chainId=2), chainFetcher2),
         ])
 
-      let result = EventProcessing.allChainsEventsProcessedToEndblock(chainFetchers)
-      Assert.equal(result, true)
+      let chains = EventProcessing.computeChainsState(chainFetchers)
+
+      // Verify that both chains are marked as ready
+      Assert.equal(chains->Js.Dict.get("1")->Belt.Option.map(c => c.isReady), Some(true))
+      Assert.equal(chains->Js.Dict.get("2")->Belt.Option.map(c => c.isReady), Some(true))
+      Assert.equal(allChainsReady(chains), true)
     })
 
-    it("should return false when at least one chain has not reached end block", () => {
+    it("should set isReady=false when at least one chain has not reached end block", () => {
       // Chain 1 has reached end block, but chain 2 has not
       let chainFetcher1 = {
         "committedProgressBlockNumber": 1000,
@@ -50,11 +61,15 @@ describe("EventOrigin Detection Logic", () => {
           (ChainMap.Chain.makeUnsafe(~chainId=2), chainFetcher2),
         ])
 
-      let result = EventProcessing.allChainsEventsProcessedToEndblock(chainFetchers)
-      Assert.equal(result, false)
+      let chains = EventProcessing.computeChainsState(chainFetchers)
+
+      // Chain 1 should be ready, chain 2 should not be ready
+      Assert.equal(chains->Js.Dict.get("1")->Belt.Option.map(c => c.isReady), Some(true))
+      Assert.equal(chains->Js.Dict.get("2")->Belt.Option.map(c => c.isReady), Some(false))
+      Assert.equal(allChainsReady(chains), false)
     })
 
-    it("should return false when a chain has no end block (live mode)", () => {
+    it("should set isReady=false when a chain has no end block (live mode)", () => {
       // Chain with no end block set (continuous live indexing)
       let chainFetcher1 = {
         "committedProgressBlockNumber": 1000,
@@ -65,11 +80,13 @@ describe("EventOrigin Detection Logic", () => {
 
       let chainFetchers = ChainMap.fromArrayUnsafe([(ChainMap.Chain.makeUnsafe(~chainId=1), chainFetcher1)])
 
-      let result = EventProcessing.allChainsEventsProcessedToEndblock(chainFetchers)
-      Assert.equal(result, false)
+      let chains = EventProcessing.computeChainsState(chainFetchers)
+
+      Assert.equal(chains->Js.Dict.get("1")->Belt.Option.map(c => c.isReady), Some(false))
+      Assert.equal(allChainsReady(chains), false)
     })
 
-    it("should return false when committedProgressBlockNumber is below endBlock", () => {
+    it("should set isReady=false when committedProgressBlockNumber is below endBlock", () => {
       let chainFetcher1 = {
         "committedProgressBlockNumber": 500,
         "fetchState": {
@@ -79,11 +96,13 @@ describe("EventOrigin Detection Logic", () => {
 
       let chainFetchers = ChainMap.fromArrayUnsafe([(ChainMap.Chain.makeUnsafe(~chainId=1), chainFetcher1)])
 
-      let result = EventProcessing.allChainsEventsProcessedToEndblock(chainFetchers)
-      Assert.equal(result, false)
+      let chains = EventProcessing.computeChainsState(chainFetchers)
+
+      Assert.equal(chains->Js.Dict.get("1")->Belt.Option.map(c => c.isReady), Some(false))
+      Assert.equal(allChainsReady(chains), false)
     })
 
-    it("should return true when committedProgressBlockNumber exceeds endBlock", () => {
+    it("should set isReady=true when committedProgressBlockNumber exceeds endBlock", () => {
       // Progress can go beyond end block in some edge cases
       let chainFetcher1 = {
         "committedProgressBlockNumber": 1500,
@@ -94,19 +113,23 @@ describe("EventOrigin Detection Logic", () => {
 
       let chainFetchers = ChainMap.fromArrayUnsafe([(ChainMap.Chain.makeUnsafe(~chainId=1), chainFetcher1)])
 
-      let result = EventProcessing.allChainsEventsProcessedToEndblock(chainFetchers)
-      Assert.equal(result, true)
+      let chains = EventProcessing.computeChainsState(chainFetchers)
+
+      Assert.equal(chains->Js.Dict.get("1")->Belt.Option.map(c => c.isReady), Some(true))
+      Assert.equal(allChainsReady(chains), true)
     })
 
     it("should handle empty chainFetchers map (edge case)", () => {
       let chainFetchers = ChainMap.fromArrayUnsafe([])
 
-      let result = EventProcessing.allChainsEventsProcessedToEndblock(chainFetchers)
-      // Array.every returns true for empty array
-      Assert.equal(result, true)
+      let chains = EventProcessing.computeChainsState(chainFetchers)
+
+      // Empty dict means no chains, which technically means "all chains are ready" (vacuous truth)
+      Assert.equal(chains->Js.Dict.keys->Belt.Array.length, 0)
+      Assert.equal(allChainsReady(chains), true)
     })
 
-    it("should return false in multi-chain scenario when only some chains reached end", () => {
+    it("should correctly track each chain state in multi-chain scenario when only some reached end", () => {
       let chainFetcher1 = {
         "committedProgressBlockNumber": 1000,
         "fetchState": {
@@ -135,11 +158,16 @@ describe("EventOrigin Detection Logic", () => {
           (ChainMap.Chain.makeUnsafe(~chainId=3), chainFetcher3),
         ])
 
-      let result = EventProcessing.allChainsEventsProcessedToEndblock(chainFetchers)
-      Assert.equal(result, false)
+      let chains = EventProcessing.computeChainsState(chainFetchers)
+
+      // Verify individual chain states
+      Assert.equal(chains->Js.Dict.get("1")->Belt.Option.map(c => c.isReady), Some(true))
+      Assert.equal(chains->Js.Dict.get("2")->Belt.Option.map(c => c.isReady), Some(false))
+      Assert.equal(chains->Js.Dict.get("3")->Belt.Option.map(c => c.isReady), Some(true))
+      Assert.equal(allChainsReady(chains), false)
     })
 
-    it("should return true only when ALL chains in multi-chain scenario reached end", () => {
+    it("should mark all chains as ready only when ALL chains in multi-chain scenario reached end", () => {
       let chainFetcher1 = {
         "committedProgressBlockNumber": 1000,
         "fetchState": {
@@ -168,17 +196,22 @@ describe("EventOrigin Detection Logic", () => {
           (ChainMap.Chain.makeUnsafe(~chainId=3), chainFetcher3),
         ])
 
-      let result = EventProcessing.allChainsEventsProcessedToEndblock(chainFetchers)
-      Assert.equal(result, true)
+      let chains = EventProcessing.computeChainsState(chainFetchers)
+
+      // All chains should be ready
+      Assert.equal(chains->Js.Dict.get("1")->Belt.Option.map(c => c.isReady), Some(true))
+      Assert.equal(chains->Js.Dict.get("2")->Belt.Option.map(c => c.isReady), Some(true))
+      Assert.equal(chains->Js.Dict.get("3")->Belt.Option.map(c => c.isReady), Some(true))
+      Assert.equal(allChainsReady(chains), true)
     })
   })
 
-  describe("eventOrigin determination in processEventBatch", () => {
+  describe("chains state in processEventBatch", () => {
     // These tests actually invoke EventProcessing.processEventBatch and verify
-    // that it correctly passes eventOrigin to handlers based on chainFetchers state
+    // that it correctly passes chains state to handlers based on chainFetchers state
 
-    Async.it("should pass Historical when chains have not reached end block", async () => {
-      EventHandlers.lastEmptyEventOrigin := None
+    Async.it("should pass chains with isReady=false when chains have not reached end block", async () => {
+      EventHandlers.lastEmptyEventChains := None
 
       // Setup: chain has NOT reached its end block (500 < 1000)
       let chainFetcher = {
@@ -227,16 +260,19 @@ describe("EventOrigin Detection Logic", () => {
         ~chainFetchers,
       ))->Belt.Result.getExn
 
-      // Assert on the eventOrigin that processEventBatch passed to the handler
-      switch EventHandlers.lastEmptyEventOrigin.contents {
-      | Some(Historical) => Assert.ok(true)
-      | Some(Live) => Assert.fail("Expected Historical but processEventBatch passed Live")
+      // Assert on the chains state that processEventBatch passed to the handler
+      switch EventHandlers.lastEmptyEventChains.contents {
+      | Some(chains) => {
+          // Verify chain 54321 exists and is not ready
+          Assert.equal(chains->Js.Dict.get("54321")->Belt.Option.map(c => c.isReady), Some(false))
+          Assert.equal(allChainsReady(chains), false)
+        }
       | None => Assert.fail("Handler was not called - processEventBatch didn't execute handler")
       }
     })
 
-    Async.it("should pass Live when all chains have reached end block", async () => {
-      EventHandlers.lastEmptyEventOrigin := None
+    Async.it("should pass chains with isReady=true when all chains have reached end block", async () => {
+      EventHandlers.lastEmptyEventChains := None
 
       // Setup: chain HAS reached its end block (1000 >= 1000)
       let chainFetcher = {
@@ -285,15 +321,18 @@ describe("EventOrigin Detection Logic", () => {
       ))->Belt.Result.getExn
 
       // Assert on what processEventBatch actually passed to the handler
-      switch EventHandlers.lastEmptyEventOrigin.contents {
-      | Some(Live) => Assert.ok(true)
-      | Some(Historical) => Assert.fail("Expected Live but processEventBatch passed Historical")
+      switch EventHandlers.lastEmptyEventChains.contents {
+      | Some(chains) => {
+          // Verify chain 54321 exists and is ready
+          Assert.equal(chains->Js.Dict.get("54321")->Belt.Option.map(c => c.isReady), Some(true))
+          Assert.equal(allChainsReady(chains), true)
+        }
       | None => Assert.fail("Handler was not called")
       }
     })
 
-    Async.it("should pass Historical in multi-chain when not all reached end", async () => {
-      EventHandlers.lastEmptyEventOrigin := None
+    Async.it("should pass correct per-chain state in multi-chain when not all reached end", async () => {
+      EventHandlers.lastEmptyEventChains := None
 
       // Setup: chain 1 reached end, chain 2 has not
       let chainFetcher1 = {
@@ -348,10 +387,14 @@ describe("EventOrigin Detection Logic", () => {
         ~chainFetchers,
       ))->Belt.Result.getExn
 
-      // Verify processEventBatch correctly determined Historical
-      switch EventHandlers.lastEmptyEventOrigin.contents {
-      | Some(Historical) => Assert.ok(true)
-      | Some(Live) => Assert.fail("Expected Historical but got Live")
+      // Verify processEventBatch correctly computed chain states
+      switch EventHandlers.lastEmptyEventChains.contents {
+      | Some(chains) => {
+          // Chain 1 should be ready, chain 2 should not be ready
+          Assert.equal(chains->Js.Dict.get("1")->Belt.Option.map(c => c.isReady), Some(true))
+          Assert.equal(chains->Js.Dict.get("2")->Belt.Option.map(c => c.isReady), Some(false))
+          Assert.equal(allChainsReady(chains), false)
+        }
       | None => Assert.fail("Handler was not called")
       }
     })

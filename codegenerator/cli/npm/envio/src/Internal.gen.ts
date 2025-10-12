@@ -42,7 +42,7 @@ export type entityHandlerContext<entity> = {
   readonly deleteUnsafe: (_1:string) => void
 };
 
-export type eventOrigin = "Historical" | "Live";
+export type chainInfo = { readonly isReady: boolean };
 
 export type genericHandlerWithLoader<loader,handler,eventFilters> = {
   readonly loader: loader; 
