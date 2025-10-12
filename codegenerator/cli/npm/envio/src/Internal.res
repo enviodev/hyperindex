@@ -56,6 +56,8 @@ type entityHandlerContext<'entity> = {
 
 @genType
 type chainInfo = {
+  // true when the chain has completed initial sync and is processing live events
+  // false during historical synchronization
   isReady: bool,
 }
 
