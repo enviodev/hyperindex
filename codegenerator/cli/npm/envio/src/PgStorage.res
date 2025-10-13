@@ -120,9 +120,6 @@ GRANT ALL ON SCHEMA "${pgSchema}" TO public;`,
 
   // Add derived indices
   entities->Js.Array2.forEach((entity: Internal.entityConfig) => {
-    functionsQuery :=
-      functionsQuery.contents ++ "\n" ++ entity.entityHistory.makeInsertFnQuery(~pgSchema)
-
     entity.table
     ->Table.getDerivedFromFields
     ->Js.Array2.forEach(derivedFromField => {
@@ -270,6 +267,11 @@ let makeTableBatchSetQuery = (~pgSchema, ~table: Table.table, ~itemSchema: S.t<'
   // FIXME what about Fuel params?
   let isRawEvents = table.tableName === InternalTable.RawEvents.table.tableName
 
+  // Currently history update table uses S.object with transformation for schema,
+  // which is being lossed during conversion to dbSchema.
+  // So use simple insert values for now.
+  let isHistoryUpdate = table.tableName->Js.String2.startsWith("envio_history_")
+
   // Should experiment how much it'll affect performance
   // Although, it should be fine not to perform the validation check,
   // since the values are validated by type system.
@@ -277,7 +279,7 @@ let makeTableBatchSetQuery = (~pgSchema, ~table: Table.table, ~itemSchema: S.t<'
   // db write fails to show a better user error.
   let typeValidation = false
 
-  if isRawEvents || !hasArrayField {
+  if (isRawEvents || !hasArrayField) && !isHistoryUpdate {
     {
       "query": makeInsertUnnestSetQuery(~pgSchema, ~table, ~itemSchema, ~isRawEvents),
       "convertOrThrow": S.compile(
@@ -412,44 +414,6 @@ let setOrThrow = async (sql, ~items, ~table: Table.table, ~itemSchema, ~pgSchema
       )
     }
   }
-}
-
-let setEntityHistoryOrThrow = (
-  sql,
-  ~entityHistory: EntityHistory.t<'entity>,
-  ~rows: array<EntityHistory.historyRow<'entity>>,
-  ~shouldCopyCurrentEntity=?,
-  ~shouldRemoveInvalidUtf8=false,
-) => {
-  rows->Belt.Array.map(historyRow => {
-    let row = historyRow->S.reverseConvertToJsonOrThrow(entityHistory.schema)
-    if shouldRemoveInvalidUtf8 {
-      [row]->removeInvalidUtf8InPlace
-    }
-    entityHistory.insertFn(
-      sql,
-      row,
-      ~shouldCopyCurrentEntity=switch shouldCopyCurrentEntity {
-      | Some(v) => v
-      | None => {
-          let containsRollbackDiffChange =
-            historyRow.containsRollbackDiffChange->Belt.Option.getWithDefault(false)
-          !containsRollbackDiffChange
-        }
-      },
-    )->Promise.catch(exn => {
-      let reason = exn->Utils.prettifyExn
-      let detail = %raw(`reason?.detail || ""`)
-      raise(
-        Persistence.StorageError({
-          message: `Failed to insert history item into table "${entityHistory.table.tableName}".${detail !== ""
-              ? ` Details: ${detail}`
-              : ""}`,
-          reason,
-        }),
-      )
-    })
-  })
 }
 
 type schemaTableName = {

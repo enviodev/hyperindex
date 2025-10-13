@@ -133,21 +133,6 @@ let isActivelyIndexing = chainManager =>
   ->ChainMap.values
   ->Js.Array2.every(ChainFetcher.isActivelyIndexing)
 
-let getSafeReorgBlocks = (chainManager: t): EntityHistory.safeReorgBlocks => {
-  let chainIds = []
-  let blockNumbers = []
-  chainManager.chainFetchers
-  ->ChainMap.values
-  ->Array.forEach(cf => {
-    chainIds->Js.Array2.push(cf.chainConfig.id)->ignore
-    blockNumbers->Js.Array2.push(cf->ChainFetcher.getHighestBlockBelowThreshold)->ignore
-  })
-  {
-    chainIds,
-    blockNumbers,
-  }
-}
-
 let getSafeCheckpointId = (chainManager: t) => {
   let chainFetchers = chainManager.chainFetchers->ChainMap.values
 

@@ -118,11 +118,11 @@ let makeStoreOperatorEntity = (
     let table = cloned->getStore
 
     table->set(
-      Delete->Internal.mkEntityUpdate(
-        ~entityId,
-        ~eventIdentifier={chainId: -1, blockNumber: -1, blockTimestamp: 0, logIndex: -1},
-        ~checkpointId=0,
-      ),
+      {
+        entityId,
+        entityUpdateAction: Delete,
+        checkpointId: 0,
+      },
       ~shouldSaveHistory=false,
     )
 
@@ -135,11 +135,11 @@ let makeStoreOperatorEntity = (
     let entityId = entity->getKey
 
     table->set(
-      Set(entity)->Internal.mkEntityUpdate(
-        ~entityId,
-        ~eventIdentifier={chainId: -1, blockNumber: -1, blockTimestamp: 0, logIndex: -1},
-        ~checkpointId=0,
-      ),
+      {
+        entityId,
+        entityUpdateAction: Set(entity),
+        checkpointId: 0,
+      },
       ~shouldSaveHistory=false,
     )
 

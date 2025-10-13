@@ -1,22 +1,5 @@
 let codegenHelpMessage = `Rerun 'pnpm dev' to update generated code after schema.graphql changes.`
 
-let makeEventIdentifier = (item: Internal.item): Internal.eventIdentifier => {
-  switch item {
-  | Internal.Event({chain, blockNumber, logIndex, timestamp}) => {
-      chainId: chain->ChainMap.Chain.toChainId,
-      blockTimestamp: timestamp,
-      blockNumber,
-      logIndex,
-    }
-  | Internal.Block({onBlockConfig: {chainId}, blockNumber, logIndex}) => {
-      chainId,
-      blockTimestamp: 0,
-      blockNumber,
-      logIndex,
-    }
-  }
-}
-
 type contextParams = {
   item: Internal.item,
   checkpointId: int,
@@ -134,11 +117,11 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
           params.inMemoryStore
           ->InMemoryStore.getInMemTable(~entityConfig=params.entityConfig)
           ->InMemoryTable.Entity.set(
-            Set(entity)->Internal.mkEntityUpdate(
-              ~eventIdentifier=params.item->makeEventIdentifier,
-              ~entityId=entity.id,
-              ~checkpointId=params.checkpointId,
-            ),
+            {
+              entityId: entity.id,
+              checkpointId: params.checkpointId,
+              entityUpdateAction: Set(entity),
+            },
             ~shouldSaveHistory=params.shouldSaveHistory,
           )
         }
@@ -211,11 +194,11 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
           params.inMemoryStore
           ->InMemoryStore.getInMemTable(~entityConfig=params.entityConfig)
           ->InMemoryTable.Entity.set(
-            Delete->Internal.mkEntityUpdate(
-              ~eventIdentifier=params.item->makeEventIdentifier,
-              ~entityId,
-              ~checkpointId=params.checkpointId,
-            ),
+            {
+              entityId,
+              checkpointId: params.checkpointId,
+              entityUpdateAction: Delete,
+            },
             ~shouldSaveHistory=params.shouldSaveHistory,
           )
         }

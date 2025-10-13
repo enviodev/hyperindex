@@ -39,7 +39,7 @@ module Entity = {
   type indexFieldNameToIndices = t<TableIndices.Index.t, indicesSerializedToValue>
 
   type entityWithIndices<'entity> = {
-    entityRow: Types.inMemoryStoreRowEntity<'entity>,
+    entityRow: Internal.inMemoryStoreRowEntity<'entity>,
     entityIndices: Utils.Set.t<TableIndices.Index.t>,
   }
   type t<'entity> = {
@@ -136,7 +136,7 @@ module Entity = {
     //or if allowOverWriteEntity is true (used for mockDb in test helpers)
     if shouldWriteEntity {
       let entityIndices = Utils.Set.make()
-      let initialStoreRow: Types.inMemoryStoreRowEntity<'entity> = switch entity {
+      let initialStoreRow: Internal.inMemoryStoreRowEntity<'entity> = switch entity {
       | Some(entity) =>
         //update table indices in the case where there
         //is an already set entity
@@ -155,17 +155,14 @@ module Entity = {
   let setRow = set
   let set = (
     inMemTable: t<'entity>,
-    entityUpdate: Types.entityUpdate<'entity>,
+    entityUpdate: EntityHistory.entityUpdate<'entity>,
     ~shouldSaveHistory,
-    ~containsRollbackDiffChange=false,
   ) => {
     //New entity row with only the latest update
     @inline
-    let newEntityRow = () => Types.Updated({
+    let newEntityRow = () => Internal.Updated({
       latest: entityUpdate,
       history: shouldSaveHistory ? [entityUpdate] : [],
-      // For new entities, apply "containsRollbackDiffChange" from param
-      containsRollbackDiffChange,
     })
 
     let {entityRow, entityIndices} = switch inMemTable.table->get(entityUpdate.entityId) {
@@ -176,28 +173,21 @@ module Entity = {
       }
     | Some({entityRow: Updated(previous_values), entityIndices})
       // This prevents two db actions in the same event on the same entity from being recorded to the history table.
-      if shouldSaveHistory &&
-      previous_values.latest.eventIdentifier == entityUpdate.eventIdentifier =>
-      let entityRow = Types.Updated({
+      if shouldSaveHistory && previous_values.latest.checkpointId === entityUpdate.checkpointId =>
+      let entityRow = Internal.Updated({
         latest: entityUpdate,
         history: previous_values.history->Utils.Array.setIndexImmutable(
           previous_values.history->Array.length - 1,
           entityUpdate,
         ),
-        // For updated entities, apply "containsRollbackDiffChange" from previous values
-        // (so that the first change if from a rollback diff applies throughout the batch)
-        containsRollbackDiffChange: previous_values.containsRollbackDiffChange,
       })
       {entityRow, entityIndices}
     | Some({entityRow: Updated(previous_values), entityIndices}) =>
-      let entityRow = Types.Updated({
+      let entityRow = Internal.Updated({
         latest: entityUpdate,
         history: shouldSaveHistory
           ? [...previous_values.history, entityUpdate]
           : previous_values.history,
-        // For updated entities, apply "containsRollbackDiffChange" from previous values
-        // (so that the first change if from a rollback diff applies throughout the batch)
-        containsRollbackDiffChange: previous_values.containsRollbackDiffChange,
       })
       {entityRow, entityIndices}
     }
@@ -211,7 +201,7 @@ module Entity = {
 
   let rowToEntity = row =>
     switch row.entityRow {
-    | Types.Updated({latest: {entityUpdateAction: Set(entity)}}) => Some(entity)
+    | Internal.Updated({latest: {entityUpdateAction: Set(entity)}}) => Some(entity)
     | Updated({latest: {entityUpdateAction: Delete}}) => None
     | InitialReadFromDb(AlreadySet(entity)) => Some(entity)
     | InitialReadFromDb(NotSet) => None

@@ -52,19 +52,16 @@ type t = {
   rawEvents: InMemoryTable.t<rawEventsKey, InternalTable.RawEvents.t>,
   entities: dict<InMemoryTable.Entity.t<Entities.internalEntity>>,
   effects: dict<effectCacheInMemTable>,
-  rollBackEventIdentifier: option<Internal.eventIdentifier>,
   rollbackTargetCheckpointId: option<int>,
 }
 
 let make = (
   ~entities: array<Internal.entityConfig>=Entities.allEntities,
-  ~rollBackEventIdentifier=?,
   ~rollbackTargetCheckpointId=?,
 ): t => {
   rawEvents: InMemoryTable.make(~hash=hashRawEventsKey),
   entities: EntityTables.make(entities),
   effects: Js.Dict.empty(),
-  rollBackEventIdentifier,
   rollbackTargetCheckpointId,
 }
 
@@ -76,7 +73,6 @@ let clone = (self: t) => {
     dict: table.dict->Utils.Dict.shallowCopy,
     effect: table.effect,
   }, self.effects),
-  rollBackEventIdentifier: self.rollBackEventIdentifier->Lodash.cloneDeep,
   rollbackTargetCheckpointId: self.rollbackTargetCheckpointId,
 }
 
@@ -102,7 +98,7 @@ let getInMemTable = (
   inMemoryStore.entities->EntityTables.get(~entityName=entityConfig.name)
 }
 
-let isRollingBack = (inMemoryStore: t) => inMemoryStore.rollBackEventIdentifier->Belt.Option.isSome
+let isRollingBack = (inMemoryStore: t) => inMemoryStore.rollbackTargetCheckpointId !== None
 
 let setBatchDcs = (inMemoryStore: t, ~batch: Batch.t, ~shouldSaveHistory) => {
   let inMemTable =
@@ -140,16 +136,12 @@ let setBatchDcs = (inMemoryStore: t, ~batch: Batch.t, ~shouldSaveHistory) => {
             registeringEventSrcAddress: eventItem.event.srcAddress,
           }
 
-          let eventIdentifier: Internal.eventIdentifier = {
-            chainId,
-            blockTimestamp: 0,
-            blockNumber: dc.startBlock,
-            logIndex: eventItem.logIndex,
-          }
           inMemTable->InMemoryTable.Entity.set(
-            Set(
-              entity->InternalTable.DynamicContractRegistry.castToInternal,
-            )->Internal.mkEntityUpdate(~eventIdentifier, ~entityId=entity.id, ~checkpointId),
+            {
+              entityId: entity.id,
+              checkpointId,
+              entityUpdateAction: Set(entity->InternalTable.DynamicContractRegistry.castToInternal),
+            },
             ~shouldSaveHistory,
           )
         }

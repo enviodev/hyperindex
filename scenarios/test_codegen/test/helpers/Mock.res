@@ -8,16 +8,11 @@ module InMemoryStore = {
       )
     let entity = entity->(Utils.magic: 'a => Entities.internalEntity)
     inMemTable->InMemoryTable.Entity.set(
-      Set(entity)->Types.mkEntityUpdate(
-        ~eventIdentifier={
-          chainId: 0,
-          blockTimestamp: 0,
-          blockNumber: 0,
-          logIndex: 0,
-        },
-        ~entityId=entity->Entities.getEntityId,
-        ~checkpointId=0,
-      ),
+      {
+        entityId: entity->Entities.getEntityId,
+        checkpointId: 0,
+        entityUpdateAction: Set(entity),
+      },
       ~shouldSaveHistory=RegisterHandlers.getConfig()->Config.shouldSaveHistory(
         ~isInReorgThreshold=false,
       ),
@@ -218,7 +213,7 @@ module Indexer = {
     getRollbackReadyPromise: unit => promise<unit>,
     query: 'entity. module(Entities.Entity with type t = 'entity) => promise<array<'entity>>,
     queryHistory: 'entity. module(Entities.Entity with type t = 'entity) => promise<
-      array<EntityHistory.historyRow<'entity>>,
+      array<EntityHistory.entityUpdate<'entity>>,
     >,
     metric: string => promise<array<metric>>,
   }
@@ -350,11 +345,25 @@ module Indexer = {
           ),
         )
         ->Promise.thenResolve(items => {
-          items->S.parseOrThrow(S.array(entityConfig.entityHistory.schema))
+          items->S.parseOrThrow(
+            S.array(
+              S.union([
+                entityConfig.entityHistory.setUpdateSchema,
+                S.object((s): EntityHistory.entityUpdate<'entity> => {
+                  s.tag(EntityHistory.changeFieldName, EntityHistory.RowAction.DELETE)
+                  {
+                    entityId: s.field("id", S.string),
+                    checkpointId: s.field(EntityHistory.checkpointIdFieldName, S.int),
+                    entityUpdateAction: Delete,
+                  }
+                }),
+              ]),
+            ),
+          )
         })
         ->(
-          Utils.magic: promise<array<EntityHistory.historyRow<Internal.entity>>> => promise<
-            array<EntityHistory.historyRow<entity>>,
+          Utils.magic: promise<array<EntityHistory.entityUpdate<Internal.entity>>> => promise<
+            array<EntityHistory.entityUpdate<entity>>,
           >
         )
       },

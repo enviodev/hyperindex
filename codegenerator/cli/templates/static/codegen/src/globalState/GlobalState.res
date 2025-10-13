@@ -778,17 +778,13 @@ let injectedTaskReducer = (
     state->processPartitionQueryResponse(partitionQueryResponse, ~dispatchAction)->Promise.done
   | PruneStaleEntityHistory =>
     let runPrune = async () => {
-      let safeReorgBlocks = state.chainManager->ChainManager.getSafeReorgBlocks
-
-      if safeReorgBlocks.chainIds->Utils.Array.notEmpty {
-        switch state.chainManager->ChainManager.getSafeCheckpointId {
-        | None => ()
-        | Some(safeCheckpointId) =>
-          await Db.sql->InternalTable.Checkpoints.pruneStaleCheckpoints(
-            ~pgSchema=Env.Db.publicSchema,
-            ~safeCheckpointId,
-          )
-        }
+      switch state.chainManager->ChainManager.getSafeCheckpointId {
+      | None => ()
+      | Some(safeCheckpointId) =>
+        await Db.sql->InternalTable.Checkpoints.pruneStaleCheckpoints(
+          ~pgSchema=Env.Db.publicSchema,
+          ~safeCheckpointId,
+        )
 
         for idx in 0 to Entities.allEntities->Array.length - 1 {
           if idx !== 0 {
@@ -803,7 +799,7 @@ let injectedTaskReducer = (
               await Db.sql->EntityHistory.pruneStaleEntityHistory(
                 ~entityName=entityConfig.name,
                 ~pgSchema=Env.Db.publicSchema,
-                ~safeReorgBlocks,
+                ~safeCheckpointId,
               )
           } catch {
           | exn =>
@@ -812,12 +808,7 @@ let injectedTaskReducer = (
               ~logger=Logging.createChild(
                 ~params={
                   "entityName": entityConfig.name,
-                  "safeBlockNumbers": safeReorgBlocks.chainIds
-                  ->Js.Array2.mapi((chainId, idx) => (
-                    chainId->Belt.Int.toString,
-                    safeReorgBlocks.blockNumbers->Js.Array2.unsafe_get(idx),
-                  ))
-                  ->Js.Dict.fromArray,
+                  "safeCheckpointId": safeCheckpointId,
                 },
               ),
             )
@@ -1100,18 +1091,8 @@ let injectedTaskReducer = (
         }
       })
 
-      //Construct a rolledback in Memory store
-      let rollbackResult = await IO.RollBack.rollBack(
-        ~chainId=reorgChain->ChainMap.Chain.toChainId,
-        ~blockTimestamp=lastKnownValidBlockTimestamp,
-        ~blockNumber=lastKnownValidBlockNumber,
-        ~logIndex=0,
-        ~isUnorderedMultichainMode=switch state.config.multichain {
-        | Unordered => true
-        | Ordered => false
-        },
-        ~rollbackTargetCheckpointId,
-      )
+      // Construct in Memory store with rollback diff
+      let diff = await IO.prepareRollbackDiff(~rollbackTargetCheckpointId)
 
       let chainManager = {
         ...state.chainManager,
@@ -1122,17 +1103,17 @@ let injectedTaskReducer = (
       logger->Logging.childTrace({
         "msg": "Finished rollback on reorg",
         "entityChanges": {
-          "deleted": rollbackResult["deletedEntities"],
-          "upserted": rollbackResult["setEntities"],
+          "deleted": diff["deletedEntities"],
+          "upserted": diff["setEntities"],
         },
-        "prevCheckpointId": state.chainManager.commitedCheckpointId,
-        "rollbackTargetCheckpointId": rollbackTargetCheckpointId,
+        "beforeCheckpointId": state.chainManager.commitedCheckpointId,
+        "targetCheckpointId": rollbackTargetCheckpointId,
       })
       Prometheus.RollbackSuccess.increment(~timeMillis=Hrtime.timeSince(startTime)->Hrtime.toMillis)
 
       dispatchAction(
         SetRollbackState({
-          diffInMemoryStore: rollbackResult["inMemStore"],
+          diffInMemoryStore: diff["inMemStore"],
           rollbackedChainManager: chainManager,
         }),
       )

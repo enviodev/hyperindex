@@ -310,46 +310,13 @@ type reorgCheckpoint = {
   blockHash: string,
 }
 
-type eventIdentifier = {
-  chainId: int,
-  blockTimestamp: int,
-  blockNumber: int,
-  logIndex: int,
-}
-
-type entityUpdateAction<'entityType> =
-  | Set('entityType)
-  | Delete
-
-type entityUpdate<'entityType> = {
-  eventIdentifier: eventIdentifier,
-  entityId: string,
-  entityUpdateAction: entityUpdateAction<'entityType>,
-  checkpointId: int,
-}
-
-let mkEntityUpdate = (~eventIdentifier, ~entityId, ~checkpointId, entityUpdateAction) => {
-  entityId,
-  eventIdentifier,
-  entityUpdateAction,
-  checkpointId,
-}
-
 type entityValueAtStartOfBatch<'entityType> =
   | NotSet // The entity isn't in the DB yet
   | AlreadySet('entityType)
 
 type updatedValue<'entityType> = {
-  latest: entityUpdate<'entityType>,
-  history: array<entityUpdate<'entityType>>,
-  // In the event of a rollback, some entity updates may have been
-  // been affected by a rollback diff. If there was no rollback diff
-  // this will always be false.
-  // If there was a rollback diff, this will be false in the case of a
-  // new entity update (where entity affected is not present in the diff) b
-  // but true if the update is related to an entity that is
-  // currently present in the diff
-  containsRollbackDiffChange: bool,
+  latest: EntityHistory.entityUpdate<'entityType>,
+  history: array<EntityHistory.entityUpdate<'entityType>>,
 }
 
 type inMemoryStoreRowEntity<'entityType> =

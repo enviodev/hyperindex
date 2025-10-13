@@ -12,42 +12,6 @@ let executeSet = (
   }
 }
 
-let getEntityHistoryItems = (entityUpdates, ~containsRollbackDiffChange) => {
-  let (_, entityHistoryItems) = entityUpdates->Belt.Array.reduce((None, []), (
-    prev: (option<Internal.eventIdentifier>, array<EntityHistory.historyRow<_>>),
-    entityUpdate: Internal.entityUpdate<'a>,
-  ) => {
-    let (optPreviousEventIdentifier, entityHistoryItems) = prev
-
-    let {eventIdentifier, entityUpdateAction, entityId} = entityUpdate
-    let entityHistoryItems = {
-      let historyItem: EntityHistory.historyRow<_> = {
-        current: {
-          chain_id: eventIdentifier.chainId,
-          block_timestamp: eventIdentifier.blockTimestamp,
-          block_number: eventIdentifier.blockNumber,
-          log_index: eventIdentifier.logIndex,
-        },
-        previous: optPreviousEventIdentifier->Belt.Option.map(prev => {
-          EntityHistory.chain_id: prev.chainId,
-          block_timestamp: prev.blockTimestamp,
-          block_number: prev.blockNumber,
-          log_index: prev.logIndex,
-        }),
-        entityData: switch entityUpdateAction {
-        | Set(entity) => Set(entity)
-        | Delete => Delete({id: entityId})
-        },
-        containsRollbackDiffChange,
-      }
-      entityHistoryItems->Belt.Array.concat([historyItem])
-    }
-    (Some(eventIdentifier), entityHistoryItems)
-  })
-
-  entityHistoryItems
-}
-
 let executeBatch = async (
   sql,
   ~batch: Batch.t,
@@ -76,7 +40,6 @@ let executeBatch = async (
   let setEntities = Entities.allEntities->Belt.Array.map(entityConfig => {
     let entitiesToSet = []
     let idsToDelete = []
-    let entityHistoryItemsToSet = []
 
     let rows =
       inMemoryStore
@@ -92,130 +55,145 @@ let executeBatch = async (
       }
     })
 
-    if shouldSaveHistory {
-      rows->Js.Array2.forEach(row => {
-        switch row {
-        | Updated({history, containsRollbackDiffChange}) =>
-          let entityHistoryItems = history->getEntityHistoryItems(~containsRollbackDiffChange)
-          entityHistoryItemsToSet->Js.Array2.pushMany(entityHistoryItems)->ignore
-        | _ => ()
-        }
-      })
-
-      // Keep history items in the order of the events. Without sorting,
-      // they will only be in order per row, but not across the whole entity
-      // table.
-
-      switch config.multichain {
-      | Ordered =>
-        let _ = entityHistoryItemsToSet->Js.Array2.sortInPlaceWith((a, b) => {
-          EventUtils.isEarlier(
-            (
-              a.current.block_timestamp,
-              a.current.chain_id,
-              a.current.block_number,
-              a.current.log_index,
-            ),
-            (
-              b.current.block_timestamp,
-              b.current.chain_id,
-              b.current.block_number,
-              b.current.log_index,
-            ),
-          )
-            ? -1
-            : 1
-        })
-      | Unordered =>
-        let _ = entityHistoryItemsToSet->Js.Array2.sortInPlaceWith((a, b) => {
-          EventUtils.isEarlierUnordered(
-            (a.current.chain_id, a.current.block_number, a.current.log_index),
-            (b.current.chain_id, b.current.block_number, b.current.log_index),
-          )
-            ? -1
-            : 1
-        })
-      }
-    }
-
     let shouldRemoveInvalidUtf8 = switch escapeTables {
     | Some(tables) if tables->Utils.Set.has(entityConfig.table) => true
     | _ => false
     }
 
-    sql => {
-      let promises = []
-      if entityHistoryItemsToSet->Utils.Array.notEmpty {
-        promises
-        ->Js.Array2.pushMany(
-          sql->PgStorage.setEntityHistoryOrThrow(
-            ~entityHistory=entityConfig.entityHistory,
-            ~rows=entityHistoryItemsToSet,
-            ~shouldRemoveInvalidUtf8,
-          ),
-        )
-        ->ignore
-      }
-      if entitiesToSet->Utils.Array.notEmpty {
-        if shouldRemoveInvalidUtf8 {
-          entitiesToSet->PgStorage.removeInvalidUtf8InPlace
+    async sql => {
+      try {
+        let promises = []
+
+        if shouldSaveHistory {
+          let backfillHistoryIds = Utils.Set.make()
+          let batchSetUpdates = []
+          // Use unnest approach
+          let batchDeleteCheckpointIds = []
+          let batchDeleteEntityIds = []
+
+          rows->Js.Array2.forEach(row => {
+            switch row {
+            | Updated({history}) =>
+              history->Js.Array2.forEach(
+                (entityUpdate: EntityHistory.entityUpdate<'a>) => {
+                  backfillHistoryIds->Utils.Set.add(entityUpdate.entityId)->ignore
+                  switch entityUpdate.entityUpdateAction {
+                  | Delete => {
+                      batchDeleteEntityIds->Array.push(entityUpdate.entityId)->ignore
+                      batchDeleteCheckpointIds->Array.push(entityUpdate.checkpointId)->ignore
+                    }
+                  | Set(_) => batchSetUpdates->Js.Array2.push(entityUpdate)->ignore
+                  }
+                },
+              )
+            | _ => ()
+            }
+          })
+
+          if backfillHistoryIds->Utils.Set.size !== 0 {
+            // This must run before updating entity or entity history tables
+            await EntityHistory.backfillHistory(
+              sql,
+              ~pgSchema=Db.publicSchema,
+              ~entityName=entityConfig.name,
+              ~ids=backfillHistoryIds->Utils.Set.toArray,
+            )
+          }
+
+          if batchDeleteCheckpointIds->Utils.Array.notEmpty {
+            promises->Array.push(
+              sql->EntityHistory.insertDeleteUpdates(
+                ~pgSchema=Db.publicSchema,
+                ~entityHistory=entityConfig.entityHistory,
+                ~batchDeleteEntityIds,
+                ~batchDeleteCheckpointIds,
+              ),
+            )
+          }
+
+          if batchSetUpdates->Utils.Array.notEmpty {
+            if shouldRemoveInvalidUtf8 {
+              let entities = batchSetUpdates->Js.Array2.map(batchSetUpdate => {
+                switch batchSetUpdate.entityUpdateAction {
+                | Set(entity) => entity
+                | _ => Js.Exn.raiseError("Expected Set action")
+                }
+              })
+              entities->PgStorage.removeInvalidUtf8InPlace
+            }
+
+            promises
+            ->Js.Array2.push(
+              sql->PgStorage.setOrThrow(
+                ~items=batchSetUpdates,
+                ~itemSchema=entityConfig.entityHistory.setUpdateSchema,
+                ~table=entityConfig.entityHistory.table,
+                ~pgSchema=Db.publicSchema,
+              ),
+            )
+            ->ignore
+          }
         }
-        promises->Array.push(
-          sql->PgStorage.setOrThrow(
-            ~items=entitiesToSet,
-            ~table=entityConfig.table,
-            ~itemSchema=entityConfig.schema,
-            ~pgSchema=Config.storagePgSchema,
-          ),
-        )
-      }
-      if idsToDelete->Utils.Array.notEmpty {
-        promises->Array.push(sql->DbFunctionsEntities.batchDelete(~entityConfig)(idsToDelete))
-      }
-      // This should have await, to properly propagate errors to the caller.
-      promises
-      ->Promise.all
+
+        if entitiesToSet->Utils.Array.notEmpty {
+          if shouldRemoveInvalidUtf8 {
+            entitiesToSet->PgStorage.removeInvalidUtf8InPlace
+          }
+          promises->Array.push(
+            sql->PgStorage.setOrThrow(
+              ~items=entitiesToSet,
+              ~table=entityConfig.table,
+              ~itemSchema=entityConfig.schema,
+              ~pgSchema=Config.storagePgSchema,
+            ),
+          )
+        }
+        if idsToDelete->Utils.Array.notEmpty {
+          promises->Array.push(sql->DbFunctionsEntities.batchDelete(~entityConfig)(idsToDelete))
+        }
+
+        let _ = await promises->Promise.all
+      } catch {
       // There's a race condition that sql->Postgres.beginSql
       // might throw PG error, earlier, than the handled error
       // from setOrThrow will be passed through.
       // This is needed for the utf8 encoding fix.
-      ->Promise.catch(exn => {
-        /* Note: Entity History doesn't return StorageError yet, and directly throws JsError */
-        let normalizedExn = switch exn {
-        | JsError(_) => exn
-        | Persistence.StorageError({reason: exn}) => exn
-        | _ => exn
-        }->Js.Exn.anyToExnInternal
+      | exn => {
+          /* Note: Entity History doesn't return StorageError yet, and directly throws JsError */
+          let normalizedExn = switch exn {
+          | JsError(_) => exn
+          | Persistence.StorageError({reason: exn}) => exn
+          | _ => exn
+          }->Js.Exn.anyToExnInternal
 
-        switch normalizedExn {
-        | JsError(error) =>
-          // Workaround for https://github.com/enviodev/hyperindex/issues/446
-          // We do escaping only when we actually got an error writing for the first time.
-          // This is not perfect, but an optimization to avoid escaping for every single item.
+          switch normalizedExn {
+          | JsError(error) =>
+            // Workaround for https://github.com/enviodev/hyperindex/issues/446
+            // We do escaping only when we actually got an error writing for the first time.
+            // This is not perfect, but an optimization to avoid escaping for every single item.
 
-          switch error->S.parseOrThrow(PgStorage.pgErrorMessageSchema) {
-          | `current transaction is aborted, commands ignored until end of transaction block` => ()
-          | `invalid byte sequence for encoding "UTF8": 0x00` =>
-            // Since the transaction is aborted at this point,
-            // we can't simply retry the function with escaped items,
-            // so propagate the error, to restart the whole batch write.
-            // Also, pass the failing table, to escape only its items.
-            // TODO: Ideally all this should be done in the file,
-            // so it'll be easier to work on PG specific logic.
-            specificError.contents = Some(PgStorage.PgEncodingError({table: entityConfig.table}))
-          | _ => specificError.contents = Some(exn->Utils.prettifyExn)
-          | exception _ => ()
+            switch error->S.parseOrThrow(PgStorage.pgErrorMessageSchema) {
+            | `current transaction is aborted, commands ignored until end of transaction block` => ()
+            | `invalid byte sequence for encoding "UTF8": 0x00` =>
+              // Since the transaction is aborted at this point,
+              // we can't simply retry the function with escaped items,
+              // so propagate the error, to restart the whole batch write.
+              // Also, pass the failing table, to escape only its items.
+              // TODO: Ideally all this should be done in the file,
+              // so it'll be easier to work on PG specific logic.
+              specificError.contents = Some(PgStorage.PgEncodingError({table: entityConfig.table}))
+            | _ => specificError.contents = Some(exn->Utils.prettifyExn)
+            | exception _ => ()
+            }
+          | _ => ()
           }
-        | _ => ()
-        }
 
-        // Improtant: Don't rethrow here, since it'll result in
-        // an unhandled rejected promise error.
-        // That's fine not to throw, since sql->Postgres.beginSql
-        // will fail anyways.
-        Promise.resolve([])
-      })
-      ->(Utils.magic: promise<array<unit>> => promise<unit>)
+          // Improtant: Don't rethrow here, since it'll result in
+          // an unhandled rejected promise error.
+          // That's fine not to throw, since sql->Postgres.beginSql
+          // will fail anyways.
+        }
+      }
     }
   })
 
@@ -223,25 +201,26 @@ let executeBatch = async (
   //valid event identifier, where all rows created after this eventIdentifier should
   //be deleted
   let rollbackTables = switch inMemoryStore {
-  | {
-      rollbackTargetCheckpointId: Some(rollbackTargetCheckpointId),
-      rollBackEventIdentifier: Some(eventIdentifier),
-    } =>
+  | {rollbackTargetCheckpointId: Some(rollbackTargetCheckpointId)} =>
     Some(
-      sql =>
-        Promise.all2((
-          sql->DbFunctions.EntityHistory.deleteAllEntityHistoryAfterEventIdentifier(
-            ~isUnorderedMultichainMode=switch config.multichain {
-            | Unordered => true
-            | Ordered => false
-            },
-            ~eventIdentifier,
-          ),
+      sql => {
+        let promises = Entities.allEntities->Js.Array2.map(entityConfig => {
+          sql->EntityHistory.rollback(
+            ~pgSchema=Db.publicSchema,
+            ~entityName=entityConfig.name,
+            ~rollbackTargetCheckpointId,
+          )
+        })
+        promises
+        ->Js.Array2.push(
           sql->InternalTable.Checkpoints.rollback(
             ~pgSchema=Db.publicSchema,
             ~rollbackTargetCheckpointId,
           ),
-        )),
+        )
+        ->ignore
+        Promise.all(promises)
+      },
     )
   | _ => None
   }
@@ -333,98 +312,69 @@ let executeBatch = async (
   }
 }
 
-module RollBack = {
-  exception DecodeError(S.error)
-  let rollBack = async (
-    ~chainId,
-    ~blockTimestamp,
-    ~blockNumber,
-    ~logIndex,
-    ~isUnorderedMultichainMode,
-    ~rollbackTargetCheckpointId,
-  ) => {
-    let rollBackEventIdentifier: Internal.eventIdentifier = {
-      chainId,
-      blockTimestamp,
-      blockNumber,
-      logIndex,
-    }
+let prepareRollbackDiff = async (~rollbackTargetCheckpointId) => {
+  let inMemStore = InMemoryStore.make(~rollbackTargetCheckpointId)
 
-    let inMemStore = InMemoryStore.make(~rollBackEventIdentifier, ~rollbackTargetCheckpointId)
+  let deletedEntities = Js.Dict.empty()
+  let setEntities = Js.Dict.empty()
 
-    let deletedEntities = Js.Dict.empty()
-    let setEntities = Js.Dict.empty()
+  let _ =
+    await Entities.allEntities
+    ->Belt.Array.map(async entityConfig => {
+      let entityTable = inMemStore->InMemoryStore.getInMemTable(~entityConfig)
 
-    let fullDiff: dict<array<EntityHistory.historyRow<Entities.internalEntity>>> = Js.Dict.empty()
-
-    let _ =
-      await Entities.allEntities
-      ->Belt.Array.map(async entityConfig => {
-        let diff = await Db.sql->DbFunctions.EntityHistory.getRollbackDiff(
-          isUnorderedMultichainMode
-            ? UnorderedMultichain({
-                reorgChainId: chainId,
-                safeBlockNumber: blockNumber,
-              })
-            : OrderedMultichain({
-                safeBlockTimestamp: blockTimestamp,
-                reorgChainId: chainId,
-                safeBlockNumber: blockNumber,
-              }),
-          ~entityConfig,
+      let (removedIdsResult, restoredEntitiesResult) = await Promise.all2((
+        // Get IDs of entities that should be deleted (created after rollback target with no prior history)
+        Db.sql
+        ->Postgres.preparedUnsafe(
+          entityConfig.entityHistory.makeGetRollbackRemovedIdsQuery(~pgSchema=Db.publicSchema),
+          [rollbackTargetCheckpointId]->Utils.magic,
         )
-        if diff->Utils.Array.notEmpty {
-          fullDiff->Js.Dict.set(entityConfig.name, diff)
-        }
+        ->(Utils.magic: promise<unknown> => promise<array<{"id": string}>>),
+        // Get entities that should be restored to their state at or before rollback target
+        Db.sql
+        ->Postgres.preparedUnsafe(
+          entityConfig.entityHistory.makeGetRollbackRestoredEntitiesQuery(
+            ~pgSchema=Db.publicSchema,
+          ),
+          [rollbackTargetCheckpointId]->Utils.magic,
+        )
+        ->(Utils.magic: promise<unknown> => promise<array<unknown>>),
+      ))
 
-        let entityTable = inMemStore->InMemoryStore.getInMemTable(~entityConfig)
-
-        diff->Belt.Array.forEach(historyRow => {
-          let eventIdentifier: Internal.eventIdentifier = {
-            chainId: historyRow.current.chain_id,
-            blockNumber: historyRow.current.block_number,
-            logIndex: historyRow.current.log_index,
-            blockTimestamp: historyRow.current.block_timestamp,
-          }
-          switch historyRow.entityData {
-          | Set(entity: Entities.internalEntity) =>
-            setEntities->Utils.Dict.push(entityConfig.name, entity.id)
-            entityTable->InMemoryTable.Entity.set(
-              Set(entity)->Internal.mkEntityUpdate(
-                ~eventIdentifier,
-                ~entityId=entity.id,
-                // Having checkpointId as 0 here is fine,
-                // since we don't write a history for the item
-                // and it's guaranteed to detect a change on update in handler
-                ~checkpointId=0,
-              ),
-              ~shouldSaveHistory=false,
-              ~containsRollbackDiffChange=true,
-            )
-          | Delete({id}) =>
-            deletedEntities->Utils.Dict.push(entityConfig.name, id)
-            entityTable->InMemoryTable.Entity.set(
-              Delete->Internal.mkEntityUpdate(
-                ~eventIdentifier,
-                ~entityId=id,
-                // Having checkpointId as 0 here is fine,
-                // since we don't write a history for the item
-                // and it's guaranteed to detect a change on update in handler
-                ~checkpointId=0,
-              ),
-              ~shouldSaveHistory=false,
-              ~containsRollbackDiffChange=true,
-            )
-          }
-        })
+      // Process removed IDs
+      removedIdsResult->Js.Array2.forEach(data => {
+        deletedEntities->Utils.Dict.push(entityConfig.name, data["id"])
+        entityTable->InMemoryTable.Entity.set(
+          {
+            entityId: data["id"],
+            checkpointId: 0,
+            entityUpdateAction: Delete,
+          },
+          ~shouldSaveHistory=false,
+        )
       })
-      ->Promise.all
 
-    {
-      "inMemStore": inMemStore,
-      "deletedEntities": deletedEntities,
-      "setEntities": setEntities,
-      "fullDiff": fullDiff,
-    }
+      let restoredEntities = restoredEntitiesResult->S.parseOrThrow(entityConfig.rowsSchema)
+
+      // Process restored entities
+      restoredEntities->Belt.Array.forEach((entity: Entities.internalEntity) => {
+        setEntities->Utils.Dict.push(entityConfig.name, entity.id)
+        entityTable->InMemoryTable.Entity.set(
+          {
+            entityId: entity.id,
+            checkpointId: 0,
+            entityUpdateAction: Set(entity),
+          },
+          ~shouldSaveHistory=false,
+        )
+      })
+    })
+    ->Promise.all
+
+  {
+    "inMemStore": inMemStore,
+    "deletedEntities": deletedEntities,
+    "setEntities": setEntities,
   }
 }

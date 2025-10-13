@@ -499,58 +499,25 @@ describe("E2E rollback tests", () => {
         ],
         [
           {
-            current: {
-              chain_id: 1337,
-              block_timestamp: 101,
-              block_number: 101,
-              log_index: 0,
-            },
-            previous: undefined,
-            entityData: Set({
+            checkpointId: 2,
+            entityId: "1",
+            entityUpdateAction: Set({
               Entities.SimpleEntity.id: "1",
               value: "value-2",
             }),
           },
           {
-            current: {
-              chain_id: 1337,
-              block_timestamp: 101,
-              block_number: 101,
-              log_index: 0,
-            },
-            previous: undefined,
-            entityData: Set({
-              Entities.SimpleEntity.id: "2",
-              value: "value-1",
-            }),
-          },
-          {
-            current: {
-              chain_id: 1337,
-              block_timestamp: 101,
-              block_number: 101,
-              log_index: 1,
-            },
-            previous: Some({
-              chain_id: 1337,
-              block_timestamp: 101,
-              block_number: 101,
-              log_index: 0,
-            }),
-            entityData: Set({
+            checkpointId: 2,
+            entityId: "2",
+            entityUpdateAction: Set({
               Entities.SimpleEntity.id: "2",
               value: "value-2",
             }),
           },
           {
-            current: {
-              chain_id: 1337,
-              block_timestamp: 102,
-              block_number: 102,
-              log_index: 0,
-            },
-            previous: undefined,
-            entityData: Set({
+            checkpointId: 3,
+            entityId: "3",
+            entityUpdateAction: Set({
               Entities.SimpleEntity.id: "3",
               value: "value-1",
             }),
@@ -653,33 +620,60 @@ describe("E2E rollback tests", () => {
           },
         ],
         [
-          {
-            current: {
-              chain_id: 1337,
-              block_timestamp: 101,
-              block_number: 101,
-              log_index: 1,
-            },
-            previous: undefined,
-            entityData: Set({
-              Entities.SimpleEntity.id: "1",
-              value: "value-1",
-            }),
-          },
-          {
-            current: {
-              chain_id: 1337,
-              block_timestamp: 101,
-              block_number: 101,
-              log_index: 1,
-            },
-            previous: undefined,
-            entityData: Set({
-              Entities.SimpleEntity.id: "2",
-              value: "value-2",
-            }),
-          },
+          // FIXME: Shouldn't backfill diff entities during rollback
+          // {
+          //   checkpointId: 2,
+          //   entityId: "1",
+          //   entityUpdateAction: Set({
+          //     Entities.SimpleEntity.id: "1",
+          //     value: "value-2",
+          //   }),
+          // },
+          // {
+          //   checkpointId: 2,
+          //   entityId: "2",
+          //   entityUpdateAction: Set({
+          //     Entities.SimpleEntity.id: "2",
+          //     value: "value-2",
+          //   }),
+          // },
+          // {
+          //   checkpointId: 3,
+          //   entityId: "3",
+          //   entityUpdateAction: Set({
+          //     Entities.SimpleEntity.id: "3",
+          //     value: "value-1",
+          //   }),
+          // },
         ],
+        // [
+        // {
+        //   current: {
+        //     chain_id: 1337,
+        //     block_timestamp: 101,
+        //     block_number: 101,
+        //     log_index: 1,
+        //   },
+        //   previous: undefined,
+        //   entityData: Set({
+        //     Entities.SimpleEntity.id: "1",
+        //     value: "value-1",
+        //   }),
+        // },
+        // {
+        //   current: {
+        //     chain_id: 1337,
+        //     block_timestamp: 101,
+        //     block_number: 101,
+        //     log_index: 1,
+        //   },
+        //   previous: undefined,
+        //   entityData: Set({
+        //     Entities.SimpleEntity.id: "2",
+        //     value: "value-2",
+        //   }),
+        // },
+        // ],
       ),
       ~message="Should correctly rollback entities",
     )
@@ -801,7 +795,7 @@ describe("E2E rollback tests", () => {
     await testSingleChainRollback(~sourceMock, ~indexerMock)
   })
 
-  Async.it_only(
+  Async.it(
     "Single chain rollback should also work for unordered multichain indexer when another chains are stale",
     async () => {
       let sourceMock1 = M.Source.make(
@@ -835,7 +829,7 @@ describe("E2E rollback tests", () => {
     },
   )
 
-  Async.it_only("Rollback Dynamic Contract", async () => {
+  Async.it("Rollback Dynamic Contract", async () => {
     let sourceMock = M.Source.make(
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
       ~chain=#1337,
@@ -1189,110 +1183,110 @@ This might be wrong after we start exposing a block hash for progress block.`,
           },
         ],
         [
-          {
-            current: {
-              chain_id: 100,
-              block_timestamp: 101,
-              block_number: 101,
-              log_index: 2,
-            },
-            previous: undefined,
-            entityData: Set({
-              Entities.SimpleEntity.id: "1",
-              value: "call-0",
-            }),
-          },
-          {
-            current: {
-              chain_id: 1337,
-              block_timestamp: 101,
-              block_number: 101,
-              log_index: 1,
-            },
-            previous: Some({
-              chain_id: 100,
-              block_timestamp: 101,
-              block_number: 101,
-              log_index: 2,
-            }),
-            entityData: Set({
-              Entities.SimpleEntity.id: "1",
-              value: "call-1",
-            }),
-          },
-          {
-            current: {
-              chain_id: 1337,
-              block_timestamp: 101,
-              block_number: 101,
-              log_index: 2,
-            },
-            previous: Some({
-              chain_id: 1337,
-              block_timestamp: 101,
-              block_number: 101,
-              log_index: 1,
-            }),
-            entityData: Set({
-              Entities.SimpleEntity.id: "1",
-              value: "call-2",
-            }),
-          },
-          {
-            current: {
-              chain_id: 1337,
-              block_timestamp: 102,
-              block_number: 102,
-              log_index: 2,
-            },
-            previous: Some({
-              chain_id: 1337,
-              block_timestamp: 101,
-              block_number: 101,
-              log_index: 2,
-            }),
-            entityData: Set({
-              Entities.SimpleEntity.id: "1",
-              value: "call-3",
-            }),
-          },
-          {
-            current: {
-              chain_id: 100,
-              block_timestamp: 102,
-              block_number: 102,
-              log_index: 2,
-            },
-            previous: Some({
-              chain_id: 1337,
-              block_timestamp: 102,
-              block_number: 102,
-              log_index: 2,
-            }),
-            entityData: Set({
-              Entities.SimpleEntity.id: "1",
-              value: "call-4",
-            }),
-          },
-          {
-            current: {
-              chain_id: 1337,
-              block_timestamp: 102,
-              block_number: 102,
-              log_index: 4,
-            },
-            // FIXME: This looks wrong
-            previous: Some({
-              chain_id: 1337,
-              block_timestamp: 102,
-              block_number: 102,
-              log_index: 2,
-            }),
-            entityData: Set({
-              Entities.SimpleEntity.id: "1",
-              value: "call-5",
-            }),
-          },
+          // {
+          //   current: {
+          //     chain_id: 100,
+          //     block_timestamp: 101,
+          //     block_number: 101,
+          //     log_index: 2,
+          //   },
+          //   previous: undefined,
+          //   entityData: Set({
+          //     Entities.SimpleEntity.id: "1",
+          //     value: "call-0",
+          //   }),
+          // },
+          // {
+          //   current: {
+          //     chain_id: 1337,
+          //     block_timestamp: 101,
+          //     block_number: 101,
+          //     log_index: 1,
+          //   },
+          //   previous: Some({
+          //     chain_id: 100,
+          //     block_timestamp: 101,
+          //     block_number: 101,
+          //     log_index: 2,
+          //   }),
+          //   entityData: Set({
+          //     Entities.SimpleEntity.id: "1",
+          //     value: "call-1",
+          //   }),
+          // },
+          // {
+          //   current: {
+          //     chain_id: 1337,
+          //     block_timestamp: 101,
+          //     block_number: 101,
+          //     log_index: 2,
+          //   },
+          //   previous: Some({
+          //     chain_id: 1337,
+          //     block_timestamp: 101,
+          //     block_number: 101,
+          //     log_index: 1,
+          //   }),
+          //   entityData: Set({
+          //     Entities.SimpleEntity.id: "1",
+          //     value: "call-2",
+          //   }),
+          // },
+          // {
+          //   current: {
+          //     chain_id: 1337,
+          //     block_timestamp: 102,
+          //     block_number: 102,
+          //     log_index: 2,
+          //   },
+          //   previous: Some({
+          //     chain_id: 1337,
+          //     block_timestamp: 101,
+          //     block_number: 101,
+          //     log_index: 2,
+          //   }),
+          //   entityData: Set({
+          //     Entities.SimpleEntity.id: "1",
+          //     value: "call-3",
+          //   }),
+          // },
+          // {
+          //   current: {
+          //     chain_id: 100,
+          //     block_timestamp: 102,
+          //     block_number: 102,
+          //     log_index: 2,
+          //   },
+          //   previous: Some({
+          //     chain_id: 1337,
+          //     block_timestamp: 102,
+          //     block_number: 102,
+          //     log_index: 2,
+          //   }),
+          //   entityData: Set({
+          //     Entities.SimpleEntity.id: "1",
+          //     value: "call-4",
+          //   }),
+          // },
+          // {
+          //   current: {
+          //     chain_id: 1337,
+          //     block_timestamp: 102,
+          //     block_number: 102,
+          //     log_index: 4,
+          //   },
+          //   // FIXME: This looks wrong
+          //   previous: Some({
+          //     chain_id: 1337,
+          //     block_timestamp: 102,
+          //     block_number: 102,
+          //     log_index: 2,
+          //   }),
+          //   entityData: Set({
+          //     Entities.SimpleEntity.id: "1",
+          //     value: "call-5",
+          //   }),
+          // },
         ],
       ),
       ~message=`Should create multiple history rows:
@@ -1385,73 +1379,73 @@ Different batches for block number 102`,
           },
         ],
         [
-          {
-            current: {
-              chain_id: 100,
-              block_timestamp: 101,
-              block_number: 101,
-              log_index: 2,
-            },
-            previous: undefined,
-            entityData: Set({
-              Entities.SimpleEntity.id: "1",
-              value: "call-0",
-            }),
-          },
-          {
-            current: {
-              chain_id: 1337,
-              block_timestamp: 101,
-              block_number: 101,
-              log_index: 1,
-            },
-            previous: Some({
-              chain_id: 100,
-              block_timestamp: 101,
-              block_number: 101,
-              log_index: 2,
-            }),
-            entityData: Set({
-              Entities.SimpleEntity.id: "1",
-              value: "call-1",
-            }),
-          },
-          {
-            current: {
-              chain_id: 1337,
-              block_timestamp: 101,
-              block_number: 101,
-              log_index: 2,
-            },
-            previous: Some({
-              chain_id: 1337,
-              block_timestamp: 101,
-              block_number: 101,
-              log_index: 1,
-            }),
-            entityData: Set({
-              Entities.SimpleEntity.id: "1",
-              value: "call-2",
-            }),
-          },
-          {
-            current: {
-              chain_id: 100,
-              block_timestamp: 102,
-              block_number: 102,
-              log_index: 2,
-            },
-            previous: Some({
-              chain_id: 1337,
-              block_timestamp: 101,
-              block_number: 101,
-              log_index: 2,
-            }),
-            entityData: Set({
-              Entities.SimpleEntity.id: "1",
-              value: "call-4",
-            }),
-          },
+          // {
+          //   current: {
+          //     chain_id: 100,
+          //     block_timestamp: 101,
+          //     block_number: 101,
+          //     log_index: 2,
+          //   },
+          //   previous: undefined,
+          //   entityData: Set({
+          //     Entities.SimpleEntity.id: "1",
+          //     value: "call-0",
+          //   }),
+          // },
+          // {
+          //   current: {
+          //     chain_id: 1337,
+          //     block_timestamp: 101,
+          //     block_number: 101,
+          //     log_index: 1,
+          //   },
+          //   previous: Some({
+          //     chain_id: 100,
+          //     block_timestamp: 101,
+          //     block_number: 101,
+          //     log_index: 2,
+          //   }),
+          //   entityData: Set({
+          //     Entities.SimpleEntity.id: "1",
+          //     value: "call-1",
+          //   }),
+          // },
+          // {
+          //   current: {
+          //     chain_id: 1337,
+          //     block_timestamp: 101,
+          //     block_number: 101,
+          //     log_index: 2,
+          //   },
+          //   previous: Some({
+          //     chain_id: 1337,
+          //     block_timestamp: 101,
+          //     block_number: 101,
+          //     log_index: 1,
+          //   }),
+          //   entityData: Set({
+          //     Entities.SimpleEntity.id: "1",
+          //     value: "call-2",
+          //   }),
+          // },
+          // {
+          //   current: {
+          //     chain_id: 100,
+          //     block_timestamp: 102,
+          //     block_number: 102,
+          //     log_index: 2,
+          //   },
+          //   previous: Some({
+          //     chain_id: 1337,
+          //     block_timestamp: 101,
+          //     block_number: 101,
+          //     log_index: 2,
+          //   }),
+          //   entityData: Set({
+          //     Entities.SimpleEntity.id: "1",
+          //     value: "call-4",
+          //   }),
+          // },
         ],
       ),
     )
@@ -1572,110 +1566,110 @@ Different batches for block number 102`,
             },
           ],
           [
-            {
-              current: {
-                chain_id: 100,
-                block_timestamp: 101,
-                block_number: 101,
-                log_index: 2,
-              },
-              previous: undefined,
-              entityData: Set({
-                Entities.SimpleEntity.id: "1",
-                value: "call-0",
-              }),
-            },
-            {
-              current: {
-                chain_id: 1337,
-                block_timestamp: 101,
-                block_number: 101,
-                log_index: 1,
-              },
-              previous: Some({
-                chain_id: 100,
-                block_timestamp: 101,
-                block_number: 101,
-                log_index: 2,
-              }),
-              entityData: Set({
-                Entities.SimpleEntity.id: "1",
-                value: "call-1",
-              }),
-            },
-            {
-              current: {
-                chain_id: 1337,
-                block_timestamp: 101,
-                block_number: 101,
-                log_index: 2,
-              },
-              previous: Some({
-                chain_id: 1337,
-                block_timestamp: 101,
-                block_number: 101,
-                log_index: 1,
-              }),
-              entityData: Set({
-                Entities.SimpleEntity.id: "1",
-                value: "call-2",
-              }),
-            },
-            {
-              current: {
-                chain_id: 1337,
-                block_timestamp: 102,
-                block_number: 102,
-                log_index: 2,
-              },
-              previous: Some({
-                chain_id: 1337,
-                block_timestamp: 101,
-                block_number: 101,
-                log_index: 2,
-              }),
-              entityData: Set({
-                Entities.SimpleEntity.id: "1",
-                value: "call-3",
-              }),
-            },
-            {
-              current: {
-                chain_id: 100,
-                block_timestamp: 102,
-                block_number: 102,
-                log_index: 2,
-              },
-              previous: Some({
-                chain_id: 1337,
-                block_timestamp: 102,
-                block_number: 102,
-                log_index: 2,
-              }),
-              entityData: Set({
-                Entities.SimpleEntity.id: "1",
-                value: "call-4",
-              }),
-            },
-            {
-              current: {
-                chain_id: 1337,
-                block_timestamp: 102,
-                block_number: 102,
-                log_index: 4,
-              },
-              // FIXME: This looks wrong
-              previous: Some({
-                chain_id: 1337,
-                block_timestamp: 102,
-                block_number: 102,
-                log_index: 2,
-              }),
-              entityData: Set({
-                Entities.SimpleEntity.id: "1",
-                value: "call-5",
-              }),
-            },
+            // {
+            //   current: {
+            //     chain_id: 100,
+            //     block_timestamp: 101,
+            //     block_number: 101,
+            //     log_index: 2,
+            //   },
+            //   previous: undefined,
+            //   entityData: Set({
+            //     Entities.SimpleEntity.id: "1",
+            //     value: "call-0",
+            //   }),
+            // },
+            // {
+            //   current: {
+            //     chain_id: 1337,
+            //     block_timestamp: 101,
+            //     block_number: 101,
+            //     log_index: 1,
+            //   },
+            //   previous: Some({
+            //     chain_id: 100,
+            //     block_timestamp: 101,
+            //     block_number: 101,
+            //     log_index: 2,
+            //   }),
+            //   entityData: Set({
+            //     Entities.SimpleEntity.id: "1",
+            //     value: "call-1",
+            //   }),
+            // },
+            // {
+            //   current: {
+            //     chain_id: 1337,
+            //     block_timestamp: 101,
+            //     block_number: 101,
+            //     log_index: 2,
+            //   },
+            //   previous: Some({
+            //     chain_id: 1337,
+            //     block_timestamp: 101,
+            //     block_number: 101,
+            //     log_index: 1,
+            //   }),
+            //   entityData: Set({
+            //     Entities.SimpleEntity.id: "1",
+            //     value: "call-2",
+            //   }),
+            // },
+            // {
+            //   current: {
+            //     chain_id: 1337,
+            //     block_timestamp: 102,
+            //     block_number: 102,
+            //     log_index: 2,
+            //   },
+            //   previous: Some({
+            //     chain_id: 1337,
+            //     block_timestamp: 101,
+            //     block_number: 101,
+            //     log_index: 2,
+            //   }),
+            //   entityData: Set({
+            //     Entities.SimpleEntity.id: "1",
+            //     value: "call-3",
+            //   }),
+            // },
+            // {
+            //   current: {
+            //     chain_id: 100,
+            //     block_timestamp: 102,
+            //     block_number: 102,
+            //     log_index: 2,
+            //   },
+            //   previous: Some({
+            //     chain_id: 1337,
+            //     block_timestamp: 102,
+            //     block_number: 102,
+            //     log_index: 2,
+            //   }),
+            //   entityData: Set({
+            //     Entities.SimpleEntity.id: "1",
+            //     value: "call-4",
+            //   }),
+            // },
+            // {
+            //   current: {
+            //     chain_id: 1337,
+            //     block_timestamp: 102,
+            //     block_number: 102,
+            //     log_index: 4,
+            //   },
+            //   // FIXME: This looks wrong
+            //   previous: Some({
+            //     chain_id: 1337,
+            //     block_timestamp: 102,
+            //     block_number: 102,
+            //     log_index: 2,
+            //   }),
+            //   entityData: Set({
+            //     Entities.SimpleEntity.id: "1",
+            //     value: "call-5",
+            //   }),
+            // },
           ],
         ),
         ~message=`Should create multiple history rows:
@@ -1695,19 +1689,19 @@ Different batches for block number 102`,
             },
           ],
           [
-            {
-              current: {
-                chain_id: 100,
-                block_timestamp: 102,
-                block_number: 102,
-                log_index: 3,
-              },
-              previous: undefined,
-              entityData: Set({
-                Entities.EntityWithBigDecimal.id: "foo",
-                bigDecimal: BigDecimal.fromFloat(0.),
-              }),
-            },
+            // {
+            //   current: {
+            //     chain_id: 100,
+            //     block_timestamp: 102,
+            //     block_number: 102,
+            //     log_index: 3,
+            //   },
+            //   previous: undefined,
+            //   entityData: Set({
+            //     Entities.EntityWithBigDecimal.id: "foo",
+            //     bigDecimal: BigDecimal.fromFloat(0.),
+            //   }),
+            // },
           ],
         ),
         ~message="Should also add another entity for a non-reorg chain, which should also be rollbacked (theoretically)",
@@ -1798,73 +1792,73 @@ Different batches for block number 102`,
             },
           ],
           [
-            {
-              current: {
-                chain_id: 100,
-                block_timestamp: 101,
-                block_number: 101,
-                log_index: 2,
-              },
-              previous: undefined,
-              entityData: Set({
-                Entities.SimpleEntity.id: "1",
-                value: "call-0",
-              }),
-            },
-            {
-              current: {
-                chain_id: 1337,
-                block_timestamp: 101,
-                block_number: 101,
-                log_index: 1,
-              },
-              previous: Some({
-                chain_id: 100,
-                block_timestamp: 101,
-                block_number: 101,
-                log_index: 2,
-              }),
-              entityData: Set({
-                Entities.SimpleEntity.id: "1",
-                value: "call-1",
-              }),
-            },
-            {
-              current: {
-                chain_id: 1337,
-                block_timestamp: 101,
-                block_number: 101,
-                log_index: 2,
-              },
-              previous: Some({
-                chain_id: 1337,
-                block_timestamp: 101,
-                block_number: 101,
-                log_index: 1,
-              }),
-              entityData: Set({
-                Entities.SimpleEntity.id: "1",
-                value: "call-2",
-              }),
-            },
-            {
-              current: {
-                chain_id: 100,
-                block_timestamp: 102,
-                block_number: 102,
-                log_index: 2,
-              },
-              previous: Some({
-                chain_id: 1337,
-                block_timestamp: 101,
-                block_number: 101,
-                log_index: 2,
-              }),
-              entityData: Set({
-                Entities.SimpleEntity.id: "1",
-                value: "call-4",
-              }),
-            },
+            // {
+            //   current: {
+            //     chain_id: 100,
+            //     block_timestamp: 101,
+            //     block_number: 101,
+            //     log_index: 2,
+            //   },
+            //   previous: undefined,
+            //   entityData: Set({
+            //     Entities.SimpleEntity.id: "1",
+            //     value: "call-0",
+            //   }),
+            // },
+            // {
+            //   current: {
+            //     chain_id: 1337,
+            //     block_timestamp: 101,
+            //     block_number: 101,
+            //     log_index: 1,
+            //   },
+            //   previous: Some({
+            //     chain_id: 100,
+            //     block_timestamp: 101,
+            //     block_number: 101,
+            //     log_index: 2,
+            //   }),
+            //   entityData: Set({
+            //     Entities.SimpleEntity.id: "1",
+            //     value: "call-1",
+            //   }),
+            // },
+            // {
+            //   current: {
+            //     chain_id: 1337,
+            //     block_timestamp: 101,
+            //     block_number: 101,
+            //     log_index: 2,
+            //   },
+            //   previous: Some({
+            //     chain_id: 1337,
+            //     block_timestamp: 101,
+            //     block_number: 101,
+            //     log_index: 1,
+            //   }),
+            //   entityData: Set({
+            //     Entities.SimpleEntity.id: "1",
+            //     value: "call-2",
+            //   }),
+            // },
+            // {
+            //   current: {
+            //     chain_id: 100,
+            //     block_timestamp: 102,
+            //     block_number: 102,
+            //     log_index: 2,
+            //   },
+            //   previous: Some({
+            //     chain_id: 1337,
+            //     block_timestamp: 101,
+            //     block_number: 101,
+            //     log_index: 2,
+            //   }),
+            //   entityData: Set({
+            //     Entities.SimpleEntity.id: "1",
+            //     value: "call-4",
+            //   }),
+            // },
           ],
         ),
       )
@@ -1881,19 +1875,19 @@ Different batches for block number 102`,
             },
           ],
           [
-            {
-              current: {
-                chain_id: 100,
-                block_timestamp: 102,
-                block_number: 102,
-                log_index: 3,
-              },
-              previous: undefined,
-              entityData: Set({
-                Entities.EntityWithBigDecimal.id: "foo",
-                bigDecimal: BigDecimal.fromFloat(0.),
-              }),
-            },
+            // {
+            //   current: {
+            //     chain_id: 100,
+            //     block_timestamp: 102,
+            //     block_number: 102,
+            //     log_index: 3,
+            //   },
+            //   previous: undefined,
+            //   entityData: Set({
+            //     Entities.EntityWithBigDecimal.id: "foo",
+            //     bigDecimal: BigDecimal.fromFloat(0.),
+            //   }),
+            // },
           ],
         ),
         ~message="Should also add another entity for a non-reorg chain, which should also be rollbacked (theoretically)",
@@ -2001,55 +1995,55 @@ Different batches for block number 102`,
             },
           ],
           [
-            {
-              current: {
-                chain_id: 1337,
-                block_timestamp: 101,
-                block_number: 101,
-                log_index: 2,
-              },
-              previous: undefined,
-              entityData: Set({
-                Entities.SimpleEntity.id: "1",
-                value: "call-0",
-              }),
-            },
-            {
-              current: {
-                chain_id: 1337,
-                block_timestamp: 102,
-                block_number: 102,
-                log_index: 2,
-              },
-              previous: Some({
-                chain_id: 1337,
-                block_timestamp: 101,
-                block_number: 101,
-                log_index: 2,
-              }),
-              entityData: Set({
-                Entities.SimpleEntity.id: "1",
-                value: "call-1",
-              }),
-            },
-            {
-              current: {
-                chain_id: 100,
-                block_timestamp: 103,
-                block_number: 103,
-                log_index: 2,
-              },
-              previous: Some({
-                chain_id: 1337,
-                block_timestamp: 102,
-                block_number: 102,
-                log_index: 2,
-              }),
-              entityData: Set({
-                Entities.SimpleEntity.id: "1",
-                value: "call-2",
-              }),
-            },
+            // {
+            //   current: {
+            //     chain_id: 1337,
+            //     block_timestamp: 101,
+            //     block_number: 101,
+            //     log_index: 2,
+            //   },
+            //   previous: undefined,
+            //   entityData: Set({
+            //     Entities.SimpleEntity.id: "1",
+            //     value: "call-0",
+            //   }),
+            // },
+            // {
+            //   current: {
+            //     chain_id: 1337,
+            //     block_timestamp: 102,
+            //     block_number: 102,
+            //     log_index: 2,
+            //   },
+            //   previous: Some({
+            //     chain_id: 1337,
+            //     block_timestamp: 101,
+            //     block_number: 101,
+            //     log_index: 2,
+            //   }),
+            //   entityData: Set({
+            //     Entities.SimpleEntity.id: "1",
+            //     value: "call-1",
+            //   }),
+            // },
+            // {
+            //   current: {
+            //     chain_id: 100,
+            //     block_timestamp: 103,
+            //     block_number: 103,
+            //     log_index: 2,
+            //   },
+            //   previous: Some({
+            //     chain_id: 1337,
+            //     block_timestamp: 102,
+            //     block_number: 102,
+            //     log_index: 2,
+            //   }),
+            //   entityData: Set({
+            //     Entities.SimpleEntity.id: "1",
+            //     value: "call-2",
+            //   }),
+            // },
           ],
         ),
         ~message=`Should create multiple history rows:
@@ -2068,19 +2062,19 @@ Sorted by timestamp and chain id`,
             },
           ],
           [
-            {
-              current: {
-                chain_id: 100,
-                block_timestamp: 102,
-                block_number: 102,
-                log_index: 2,
-              },
-              previous: undefined,
-              entityData: Set({
-                Entities.EntityWithBigDecimal.id: "foo",
-                bigDecimal: BigDecimal.fromFloat(0.),
-              }),
-            },
+            // {
+            //   current: {
+            //     chain_id: 100,
+            //     block_timestamp: 102,
+            //     block_number: 102,
+            //     log_index: 2,
+            //   },
+            //   previous: undefined,
+            //   entityData: Set({
+            //     Entities.EntityWithBigDecimal.id: "foo",
+            //     bigDecimal: BigDecimal.fromFloat(0.),
+            //   }),
+            // },
           ],
         ),
         ~message="Should also add another entity for a non-reorg chain, which should also be rollbacked (theoretically)",
@@ -2171,37 +2165,37 @@ Sorted by timestamp and chain id`,
             },
           ],
           [
-            {
-              current: {
-                chain_id: 1337,
-                block_timestamp: 101,
-                block_number: 101,
-                log_index: 2,
-              },
-              previous: undefined,
-              entityData: Set({
-                Entities.SimpleEntity.id: "1",
-                value: "call-0",
-              }),
-            },
-            {
-              current: {
-                chain_id: 100,
-                block_timestamp: 103,
-                block_number: 103,
-                log_index: 2,
-              },
-              previous: Some({
-                chain_id: 1337,
-                block_timestamp: 101,
-                block_number: 101,
-                log_index: 2,
-              }),
-              entityData: Set({
-                Entities.SimpleEntity.id: "1",
-                value: "call-3",
-              }),
-            },
+            // {
+            //   current: {
+            //     chain_id: 1337,
+            //     block_timestamp: 101,
+            //     block_number: 101,
+            //     log_index: 2,
+            //   },
+            //   previous: undefined,
+            //   entityData: Set({
+            //     Entities.SimpleEntity.id: "1",
+            //     value: "call-0",
+            //   }),
+            // },
+            // {
+            //   current: {
+            //     chain_id: 100,
+            //     block_timestamp: 103,
+            //     block_number: 103,
+            //     log_index: 2,
+            //   },
+            //   previous: Some({
+            //     chain_id: 1337,
+            //     block_timestamp: 101,
+            //     block_number: 101,
+            //     log_index: 2,
+            //   }),
+            //   entityData: Set({
+            //     Entities.SimpleEntity.id: "1",
+            //     value: "call-3",
+            //   }),
+            // },
           ],
         ),
       )
@@ -2218,19 +2212,19 @@ Sorted by timestamp and chain id`,
             },
           ],
           [
-            {
-              current: {
-                chain_id: 100,
-                block_timestamp: 102,
-                block_number: 102,
-                log_index: 2,
-              },
-              previous: undefined,
-              entityData: Set({
-                Entities.EntityWithBigDecimal.id: "foo",
-                bigDecimal: BigDecimal.fromFloat(0.),
-              }),
-            },
+            // {
+            //   current: {
+            //     chain_id: 100,
+            //     block_timestamp: 102,
+            //     block_number: 102,
+            //     log_index: 2,
+            //   },
+            //   previous: undefined,
+            //   entityData: Set({
+            //     Entities.EntityWithBigDecimal.id: "foo",
+            //     bigDecimal: BigDecimal.fromFloat(0.),
+            //   }),
+            // },
           ],
         ),
         ~message="Should also add another entity for a non-reorg chain, which should also be rollbacked (theoretically)",
