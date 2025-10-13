@@ -1,13 +1,13 @@
 open RescriptMocha
 
-// Helper function to check if all chains are ready (equivalent to the old "Live" state)
+// Helper function to check if all chains are ready (synced/caught up to head or endblock)
 let allChainsReady = (chains: Internal.chains): bool => {
   chains
   ->Js.Dict.values
   ->Belt.Array.every(chainInfo => chainInfo.isReady)
 }
 
-describe("EventOrigin Detection Logic", () => {
+describe("Chains State Computation", () => {
   describe("computeChainsState", () => {
     it("should set isReady=true when all chains have reached their end block", () => {
       // Create mock chain fetchers that have all reached end block
@@ -16,6 +16,7 @@ describe("EventOrigin Detection Logic", () => {
         "fetchState": {
           "endBlock": Some(1000),
         },
+        "timestampCaughtUpToHeadOrEndblock": Some(123456),
       }->Utils.magic
 
       let chainFetcher2 = {
@@ -23,6 +24,7 @@ describe("EventOrigin Detection Logic", () => {
         "fetchState": {
           "endBlock": Some(2000),
         },
+        "timestampCaughtUpToHeadOrEndblock": Some(123456),
       }->Utils.magic
 
       let chainFetchers =
@@ -46,6 +48,7 @@ describe("EventOrigin Detection Logic", () => {
         "fetchState": {
           "endBlock": Some(1000),
         },
+        "timestampCaughtUpToHeadOrEndblock": Some(123456),
       }->Utils.magic
 
       let chainFetcher2 = {
@@ -53,6 +56,7 @@ describe("EventOrigin Detection Logic", () => {
         "fetchState": {
           "endBlock": Some(2000), // Not yet reached
         },
+        "timestampCaughtUpToHeadOrEndblock": None,
       }->Utils.magic
 
       let chainFetchers =
@@ -76,6 +80,7 @@ describe("EventOrigin Detection Logic", () => {
         "fetchState": {
           "endBlock": None, // Live mode, no end block
         },
+        "timestampCaughtUpToHeadOrEndblock": None,
       }->Utils.magic
 
       let chainFetchers = ChainMap.fromArrayUnsafe([(ChainMap.Chain.makeUnsafe(~chainId=1), chainFetcher1)])
@@ -92,6 +97,7 @@ describe("EventOrigin Detection Logic", () => {
         "fetchState": {
           "endBlock": Some(1000),
         },
+        "timestampCaughtUpToHeadOrEndblock": None,
       }->Utils.magic
 
       let chainFetchers = ChainMap.fromArrayUnsafe([(ChainMap.Chain.makeUnsafe(~chainId=1), chainFetcher1)])
@@ -109,6 +115,7 @@ describe("EventOrigin Detection Logic", () => {
         "fetchState": {
           "endBlock": Some(1000),
         },
+        "timestampCaughtUpToHeadOrEndblock": Some(123456),
       }->Utils.magic
 
       let chainFetchers = ChainMap.fromArrayUnsafe([(ChainMap.Chain.makeUnsafe(~chainId=1), chainFetcher1)])
@@ -135,6 +142,7 @@ describe("EventOrigin Detection Logic", () => {
         "fetchState": {
           "endBlock": Some(1000), // Reached
         },
+        "timestampCaughtUpToHeadOrEndblock": Some(123456),
       }->Utils.magic
 
       let chainFetcher2 = {
@@ -142,6 +150,7 @@ describe("EventOrigin Detection Logic", () => {
         "fetchState": {
           "endBlock": Some(2000), // Not reached (1 block away)
         },
+        "timestampCaughtUpToHeadOrEndblock": None,
       }->Utils.magic
 
       let chainFetcher3 = {
@@ -149,6 +158,7 @@ describe("EventOrigin Detection Logic", () => {
         "fetchState": {
           "endBlock": Some(3000), // Reached
         },
+        "timestampCaughtUpToHeadOrEndblock": Some(123456),
       }->Utils.magic
 
       let chainFetchers =
@@ -173,6 +183,7 @@ describe("EventOrigin Detection Logic", () => {
         "fetchState": {
           "endBlock": Some(1000),
         },
+        "timestampCaughtUpToHeadOrEndblock": Some(123456),
       }->Utils.magic
 
       let chainFetcher2 = {
@@ -180,6 +191,7 @@ describe("EventOrigin Detection Logic", () => {
         "fetchState": {
           "endBlock": Some(2000),
         },
+        "timestampCaughtUpToHeadOrEndblock": Some(123456),
       }->Utils.magic
 
       let chainFetcher3 = {
@@ -187,6 +199,7 @@ describe("EventOrigin Detection Logic", () => {
         "fetchState": {
           "endBlock": Some(3000),
         },
+        "timestampCaughtUpToHeadOrEndblock": Some(123456),
       }->Utils.magic
 
       let chainFetchers =
@@ -217,6 +230,7 @@ describe("EventOrigin Detection Logic", () => {
       let chainFetcher = {
         "committedProgressBlockNumber": 500,
         "fetchState": {"endBlock": Some(1000)},
+        "timestampCaughtUpToHeadOrEndblock": None,
       }->Utils.magic
       let chainFetchers = ChainMap.fromArrayUnsafe([(ChainMap.Chain.makeUnsafe(~chainId=54321), chainFetcher)])
 
@@ -278,6 +292,7 @@ describe("EventOrigin Detection Logic", () => {
       let chainFetcher = {
         "committedProgressBlockNumber": 1000,
         "fetchState": {"endBlock": Some(1000)},
+        "timestampCaughtUpToHeadOrEndblock": Some(123456),
       }->Utils.magic
       let chainFetchers = ChainMap.fromArrayUnsafe([(ChainMap.Chain.makeUnsafe(~chainId=54321), chainFetcher)])
 
@@ -338,10 +353,12 @@ describe("EventOrigin Detection Logic", () => {
       let chainFetcher1 = {
         "committedProgressBlockNumber": 1000,
         "fetchState": {"endBlock": Some(1000)},
+        "timestampCaughtUpToHeadOrEndblock": Some(123456),
       }->Utils.magic
       let chainFetcher2 = {
         "committedProgressBlockNumber": 1500,
         "fetchState": {"endBlock": Some(2000)},
+        "timestampCaughtUpToHeadOrEndblock": None,
       }->Utils.magic
       let chainFetchers = ChainMap.fromArrayUnsafe([
         (ChainMap.Chain.makeUnsafe(~chainId=1), chainFetcher1),
