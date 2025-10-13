@@ -10,6 +10,10 @@ describe("E2E Mock Event Batch", () => {
 
     let loadManager = LoadManager.make()
 
+    // Create mock chains state (simulating historical indexing)
+    let chains = Js.Dict.empty()
+    chains->Js.Dict.set("1", {Internal.isReady: false})
+
     try {
       await MockEvents.eventBatchItems->EventProcessing.runBatchHandlersOrThrow(
         ~inMemoryStore,
@@ -17,6 +21,7 @@ describe("E2E Mock Event Batch", () => {
         ~config=RegisterHandlers.getConfig(),
         ~shouldSaveHistory=false,
         ~shouldBenchmark=false,
+        ~chains,
       )
     } catch {
     | EventProcessing.ProcessingError({message, exn, item}) =>

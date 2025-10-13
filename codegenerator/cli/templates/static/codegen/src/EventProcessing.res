@@ -6,6 +6,23 @@ let allChainsEventsProcessedToEndblock = (chainFetchers: ChainMap.t<ChainFetcher
   ->Array.every(cf => cf->ChainFetcher.hasProcessedToEndblock)
 }
 
+let computeChainsState = (chainFetchers: ChainMap.t<ChainFetcher.t>): Internal.chains => {
+  let chains = Js.Dict.empty()
+
+  chainFetchers
+  ->ChainMap.entries
+  ->Array.forEach(((chain, chainFetcher)) => {
+    let chainId = chain->ChainMap.Chain.toChainId->Int.toString
+    let isReady = chainFetcher.timestampCaughtUpToHeadOrEndblock !== None
+
+    chains->Js.Dict.set(chainId, {
+      Internal.isReady: isReady,
+    })
+  })
+
+  chains
+}
+
 let convertFieldsToJson = (fields: option<dict<unknown>>) => {
   switch fields {
   | None => %raw(`{}`)
@@ -87,6 +104,7 @@ let runEventHandlerOrThrow = async (
   ~persistence,
   ~shouldSaveHistory,
   ~shouldBenchmark,
+  ~chains: Internal.chains,
 ) => {
   let eventItem = item->Internal.castUnsafeEventItem
 
@@ -105,6 +123,7 @@ let runEventHandlerOrThrow = async (
             persistence,
             shouldSaveHistory,
             isPreload: false,
+            chains,
           }),
         }: Internal.handlerArgs
       ),
@@ -137,6 +156,7 @@ let runHandlerOrThrow = async (
   ~config: Config.t,
   ~shouldSaveHistory,
   ~shouldBenchmark,
+  ~chains: Internal.chains,
 ) => {
   switch item {
   | Block({onBlockConfig: {handler, chainId}, blockNumber}) =>
@@ -155,6 +175,7 @@ let runHandlerOrThrow = async (
               persistence: config.persistence,
               shouldSaveHistory,
               isPreload: false,
+              chains,
             }),
           }: Internal.onBlockArgs
         ),
@@ -179,6 +200,7 @@ let runHandlerOrThrow = async (
           ~persistence=config.persistence,
           ~shouldSaveHistory,
           ~shouldBenchmark,
+          ~chains,
         )
       | None => ()
       }
@@ -195,6 +217,7 @@ let preloadBatchOrThrow = async (
   ~loadManager,
   ~persistence,
   ~inMemoryStore,
+  ~chains: Internal.chains,
 ) => {
   // On the first run of loaders, we don't care about the result,
   // whether it's an error or a return type.
@@ -218,6 +241,7 @@ let preloadBatchOrThrow = async (
                   persistence,
                   isPreload: true,
                   shouldSaveHistory: false,
+                  chains,
                 }),
               })->Promise.silentCatch,
               // Must have Promise.catch as well as normal catch,
@@ -243,6 +267,7 @@ let preloadBatchOrThrow = async (
                 persistence,
                 isPreload: true,
                 shouldSaveHistory: false,
+                chains,
               }),
             })->Promise.silentCatch,
           )
@@ -261,6 +286,7 @@ let runBatchHandlersOrThrow = async (
   ~config,
   ~shouldSaveHistory,
   ~shouldBenchmark,
+  ~chains: Internal.chains,
 ) => {
   for i in 0 to eventBatch->Array.length - 1 {
     let item = eventBatch->Js.Array2.unsafe_get(i)
@@ -271,6 +297,7 @@ let runBatchHandlersOrThrow = async (
       ~config,
       ~shouldSaveHistory,
       ~shouldBenchmark,
+      ~chains,
     )
   }
 }
@@ -307,7 +334,10 @@ let processEventBatch = async (
   ~isInReorgThreshold,
   ~loadManager,
   ~config: Config.t,
+  ~chainFetchers: ChainMap.t<ChainFetcher.t>,
 ) => {
+  // Compute chains state for this batch
+  let chains: Internal.chains = chainFetchers->computeChainsState
   let batchSize = items->Array.length
   let byChain = Js.Dict.empty()
   progressedChains->Js.Array2.forEach(data => {
@@ -333,7 +363,7 @@ let processEventBatch = async (
   try {
     let timeRef = Hrtime.makeTimer()
 
-    await items->preloadBatchOrThrow(~loadManager, ~persistence=config.persistence, ~inMemoryStore)
+    await items->preloadBatchOrThrow(~loadManager, ~persistence=config.persistence, ~inMemoryStore, ~chains)
 
     let elapsedTimeAfterLoaders = timeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
 
@@ -343,6 +373,7 @@ let processEventBatch = async (
       ~config,
       ~shouldSaveHistory=config->Config.shouldSaveHistory(~isInReorgThreshold),
       ~shouldBenchmark=Env.Benchmark.shouldSaveData,
+      ~chains,
     )
 
     let elapsedTimeAfterProcessing =
