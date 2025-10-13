@@ -171,6 +171,18 @@ Gravatar.CustomSelection.handler(async ({ event, context }) => {
     >
   >(true);
 
+  // Test chains field accessibility in TypeScript
+  expectType<
+    TypeEqual<
+      typeof context.chains,
+      {
+        [chainId: string]: {
+          readonly isReady: boolean;
+        };
+      }
+    >
+  >(true);
+
   context.CustomSelectionTestPass.set({
     id: event.transaction.hash,
   });

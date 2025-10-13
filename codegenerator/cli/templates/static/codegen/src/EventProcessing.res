@@ -1,5 +1,11 @@
 open Belt
 
+let allChainsEventsProcessedToEndblock = (chainFetchers: ChainMap.t<ChainFetcher.t>) => {
+  chainFetchers
+  ->ChainMap.values
+  ->Array.every(cf => cf.timestampCaughtUpToHeadOrEndblock !== None)
+}
+
 let computeChainsState = (chainFetchers: ChainMap.t<ChainFetcher.t>): Internal.chains => {
   let chains = Js.Dict.empty()
 
@@ -7,7 +13,7 @@ let computeChainsState = (chainFetchers: ChainMap.t<ChainFetcher.t>): Internal.c
   ->ChainMap.entries
   ->Array.forEach(((chain, chainFetcher)) => {
     let chainId = chain->ChainMap.Chain.toChainId->Int.toString
-    let isReady = chainFetcher->ChainFetcher.hasProcessedToEndblock
+    let isReady = chainFetcher.timestampCaughtUpToHeadOrEndblock !== None
 
     chains->Js.Dict.set(chainId, {
       Internal.isReady: isReady,
