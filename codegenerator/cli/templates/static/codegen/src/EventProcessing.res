@@ -3,7 +3,7 @@ open Belt
 let allChainsEventsProcessedToEndblock = (chainFetchers: ChainMap.t<ChainFetcher.t>) => {
   chainFetchers
   ->ChainMap.values
-  ->Array.every(cf => cf.timestampCaughtUpToHeadOrEndblock !== None)
+  ->Array.every(cf => cf->ChainFetcher.hasProcessedToEndblock)
 }
 
 let computeChainsState = (chainFetchers: ChainMap.t<ChainFetcher.t>): Internal.chains => {
