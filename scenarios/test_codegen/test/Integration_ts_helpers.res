@@ -68,7 +68,7 @@ let makeChainManager = (cfg: chainConfig): chainManager => {
     ~config=Config.make(
       ~isUnorderedMultichainMode=true,
       ~chains=[cfg],
-      ~registrations={onBlockByChainId: Js.Dict.empty()},
+      ~registrations={onBlockByChainId: Js.Dict.empty(), hasEvents: false},
     ),
   )
 }

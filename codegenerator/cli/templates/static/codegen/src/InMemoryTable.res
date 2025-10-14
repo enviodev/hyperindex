@@ -157,12 +157,14 @@ module Entity = {
     inMemTable: t<'entity>,
     entityUpdate: EntityHistory.entityUpdate<'entity>,
     ~shouldSaveHistory,
+    ~containsRollbackDiffChange=false,
   ) => {
     //New entity row with only the latest update
     @inline
     let newEntityRow = () => Internal.Updated({
       latest: entityUpdate,
       history: shouldSaveHistory ? [entityUpdate] : [],
+      containsRollbackDiffChange,
     })
 
     let {entityRow, entityIndices} = switch inMemTable.table->get(entityUpdate.entityId) {
@@ -180,6 +182,7 @@ module Entity = {
           previous_values.history->Array.length - 1,
           entityUpdate,
         ),
+        containsRollbackDiffChange: previous_values.containsRollbackDiffChange,
       })
       {entityRow, entityIndices}
     | Some({entityRow: Updated(previous_values), entityIndices}) =>
@@ -188,6 +191,7 @@ module Entity = {
         history: shouldSaveHistory
           ? [...previous_values.history, entityUpdate]
           : previous_values.history,
+        containsRollbackDiffChange: previous_values.containsRollbackDiffChange,
       })
       {entityRow, entityIndices}
     }

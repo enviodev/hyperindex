@@ -158,6 +158,7 @@ describe("EventRouter", () => {
           Internal.startBlock: 0,
           contractName: nonWildcardContractName,
           address: nonWildcardContractAddress,
+          registrationBlock: None,
         },
       )
 

@@ -8,14 +8,24 @@ let mockDate = (~year=2024, ~month=1, ~day=1) => {
 }
 
 describe("SerDe Test", () => {
-  Async.before(async () => {
-    await DbHelpers.runUpDownMigration()
-  })
-
   Async.it("All type entity", async () => {
-    let storage = Config.codegenPersistence->Persistence.getInitializedStorageOrThrow
+    let sourceMock = Mock.Source.make(~chain=#1337, [#getHeightOrThrow, #getItemsOrThrow])
+    let indexerMock = await Mock.Indexer.make(
+      ~chains=[{chain: #1337, sources: [sourceMock.source]}],
+      ~saveFullHistory=true,
+    )
+    await Utils.delay(0)
 
-    let entity: Entities.EntityWithAllTypes.t = {
+    Assert.deepEqual(
+      sourceMock.getHeightOrThrowCalls->Array.length,
+      1,
+      ~message="should have called getHeightOrThrow to get initial height",
+    )
+    sourceMock.resolveGetHeightOrThrow(300)
+    await Utils.delay(0)
+    await Utils.delay(0)
+
+    let entityWithAllTypes: Entities.EntityWithAllTypes.t = {
       id: "1",
       string: "string",
       optString: Some("optString"),
@@ -46,106 +56,7 @@ describe("SerDe Test", () => {
       enumField: ADMIN,
       optEnumField: Some(ADMIN),
     }
-
-    let entityHistoryItem: EntityHistory.historyRow<_> = {
-      current: {
-        chain_id: 1,
-        block_timestamp: 1,
-        block_number: 1,
-        log_index: 1,
-      },
-      previous: None,
-      entityData: Set(entity),
-    }
-
-    //Fails if serialziation does not work
-    let set = (sql, items) =>
-      sql->PgStorage.setOrThrow(
-        ~items,
-        ~table=Entities.EntityWithAllTypes.table,
-        ~itemSchema=Entities.EntityWithAllTypes.schema,
-        ~pgSchema=Config.storagePgSchema,
-      )
-
-    //Fails if parsing does not work
-    let read = ids =>
-      storage.loadByIdsOrThrow(
-        ~ids,
-        ~table=Entities.EntityWithAllTypes.table,
-        ~rowsSchema=Entities.EntityWithAllTypes.rowsSchema,
-      )
-
-    let setHistory = (sql, row) =>
-      Promise.all(
-        sql->PgStorage.setEntityHistoryOrThrow(
-          ~entityHistory=Entities.EntityWithAllTypes.entityHistory,
-          ~rows=[row],
-        ),
-      )->Promise.ignoreValue
-
-    try await Db.sql->setHistory(entityHistoryItem) catch {
-    | exn =>
-      Js.log2("setHistory exn", exn)
-      Assert.fail("Failed to set entity history in table")
-    }
-
-    //set the entity
-    try await Db.sql->set([entity->Entities.EntityWithAllTypes.castToInternal]) catch {
-    | exn =>
-      Js.log(exn)
-      Assert.fail("Failed to set entity in table")
-    }
-
-    switch await read([entity.id]) {
-    | exception exn =>
-      Js.log(exn)
-      Assert.fail("Failed to read entity from table")
-    | [_entity] => Assert.deepEqual(_entity, entity)
-    | _ => Assert.fail("Should have returned a row on batch read fn")
-    }
-
-    //The copy function will do it's custom postgres serialization of the entity
-    // await Db.sql->DbFunctions.EntityHistory.copyAllEntitiesToEntityHistory
-
-    let res = await Db.sql->Postgres.unsafe(`SELECT * FROM public."EntityWithAllTypes_history";`)
-
-    switch res {
-    | [row] =>
-      let parsed = row->S.parseJsonOrThrow(Entities.EntityWithAllTypes.entityHistory.schema)
-      Assert.deepEqual(
-        parsed.entityData,
-        Set(entity),
-        ~message="Postgres json serialization should be compatable with our schema",
-      )
-    | _ => Assert.fail("Should have returned a row")
-    }
-  })
-
-  it("contains correct query for unnest entity", () => {
-    let createQuery =
-      Entities.EntityWithAllNonArrayTypes.table->PgStorage.makeCreateTableQuery(~pgSchema="public")
-    Assert.equal(
-      createQuery,
-      `CREATE TABLE IF NOT EXISTS "public"."EntityWithAllNonArrayTypes"("bigDecimal" NUMERIC NOT NULL, "bigDecimalWithConfig" NUMERIC(10, 8) NOT NULL, "bigInt" NUMERIC NOT NULL, "bool" BOOLEAN NOT NULL, "enumField" "public".AccountType NOT NULL, "float_" DOUBLE PRECISION NOT NULL, "id" TEXT NOT NULL, "int_" INTEGER NOT NULL, "optBigDecimal" NUMERIC, "optBigInt" NUMERIC, "optBool" BOOLEAN, "optEnumField" "public".AccountType, "optFloat" DOUBLE PRECISION, "optInt" INTEGER, "optString" TEXT, "string" TEXT NOT NULL, PRIMARY KEY("id"));`,
-    )
-    let query = PgStorage.makeInsertUnnestSetQuery(
-      ~table=Entities.EntityWithAllNonArrayTypes.table,
-      ~itemSchema=Entities.EntityWithAllNonArrayTypes.schema,
-      ~isRawEvents=false,
-      ~pgSchema="public",
-    )
-
-    Assert.equal(
-      query,
-      `INSERT INTO "public"."EntityWithAllNonArrayTypes" ("bigDecimal", "bigDecimalWithConfig", "bigInt", "bool", "enumField", "float_", "id", "int_", "optBigDecimal", "optBigInt", "optBool", "optEnumField", "optFloat", "optInt", "optString", "string")
-SELECT * FROM unnest($1::NUMERIC[],$2::NUMERIC(10, 8)[],$3::NUMERIC[],$4::INTEGER[]::BOOLEAN[],$5::TEXT[]::"public".AccountType[],$6::DOUBLE PRECISION[],$7::TEXT[],$8::INTEGER[],$9::NUMERIC[],$10::NUMERIC[],$11::INTEGER[]::BOOLEAN[],$12::TEXT[]::"public".AccountType[],$13::DOUBLE PRECISION[],$14::INTEGER[],$15::TEXT[],$16::TEXT[])ON CONFLICT("id") DO UPDATE SET "bigDecimal" = EXCLUDED."bigDecimal","bigDecimalWithConfig" = EXCLUDED."bigDecimalWithConfig","bigInt" = EXCLUDED."bigInt","bool" = EXCLUDED."bool","enumField" = EXCLUDED."enumField","float_" = EXCLUDED."float_","int_" = EXCLUDED."int_","optBigDecimal" = EXCLUDED."optBigDecimal","optBigInt" = EXCLUDED."optBigInt","optBool" = EXCLUDED."optBool","optEnumField" = EXCLUDED."optEnumField","optFloat" = EXCLUDED."optFloat","optInt" = EXCLUDED."optInt","optString" = EXCLUDED."optString","string" = EXCLUDED."string";`,
-    )
-  })
-
-  Async.it("All type entity without array types for unnest case", async () => {
-    let storage = Config.codegenPersistence->Persistence.getInitializedStorageOrThrow
-
-    let entity: Entities.EntityWithAllNonArrayTypes.t = {
+    let entityWithAllNonArrayTypes: Entities.EntityWithAllNonArrayTypes.t = {
       id: "1",
       string: "string",
       optString: Some("optString"),
@@ -164,79 +75,45 @@ SELECT * FROM unnest($1::NUMERIC[],$2::NUMERIC(10, 8)[],$3::NUMERIC[],$4::INTEGE
       optEnumField: Some(ADMIN),
     }
 
-    let entityHistoryItem: EntityHistory.historyRow<_> = {
-      current: {
-        chain_id: 1,
-        block_timestamp: 1,
-        block_number: 1,
-        log_index: 1,
+    sourceMock.resolveGetItemsOrThrow([
+      {
+        blockNumber: 50,
+        logIndex: 1,
+        handler: async ({context}) => {
+          context.entityWithAllTypes.set(entityWithAllTypes)
+          context.entityWithAllNonArrayTypes.set(entityWithAllNonArrayTypes)
+        },
       },
-      previous: None,
-      entityData: Set(entity),
-    }
+    ])
+    await indexerMock.getBatchWritePromise()
 
-    //Fails if serialziation does not work
-    let set = (sql, items) => {
-      sql->PgStorage.setOrThrow(
-        ~items,
-        ~table=Entities.EntityWithAllNonArrayTypes.table,
-        ~itemSchema=Entities.EntityWithAllNonArrayTypes.schema,
-        ~pgSchema="public",
-      )
-    }
-
-    //Fails if parsing does not work
-    let read = ids =>
-      storage.loadByIdsOrThrow(
-        ~ids,
-        ~table=Entities.EntityWithAllNonArrayTypes.table,
-        ~rowsSchema=Entities.EntityWithAllNonArrayTypes.rowsSchema,
-      )
-
-    let setHistory = (sql, row) =>
-      Promise.all(
-        sql->PgStorage.setEntityHistoryOrThrow(
-          ~entityHistory=Entities.EntityWithAllNonArrayTypes.entityHistory,
-          ~rows=[row],
-        ),
-      )->Promise.ignoreValue
-
-    try await Db.sql->setHistory(entityHistoryItem) catch {
-    | exn =>
-      Js.log2("setHistory exn", exn)
-      Assert.fail("Failed to set entity history in table")
-    }
-
-    //set the entity
-    try await Db.sql->set([entity->Entities.EntityWithAllNonArrayTypes.castToInternal]) catch {
-    | exn =>
-      Js.log(exn)
-      Assert.fail("Failed to set entity in table")
-    }
-
-    switch await read([entity.id]) {
-    | exception exn =>
-      Js.log(exn)
-      Assert.fail("Failed to read entity from table")
-    | [_entity] => Assert.deepEqual(_entity, entity)
-    | _ => Assert.fail("Should have returned a row on batch read fn")
-    }
-
-    //The copy function will do it's custom postgres serialization of the entity
-    // await Db.sql->DbFunctions.EntityHistory.copyAllEntitiesToEntityHistory
-
-    let res =
-      await Db.sql->Postgres.unsafe(`SELECT * FROM public."EntityWithAllNonArrayTypes_history";`)
-
-    switch res {
-    | [row] =>
-      let parsed = row->S.parseJsonOrThrow(Entities.EntityWithAllNonArrayTypes.entityHistory.schema)
-      Assert.deepEqual(
-        parsed.entityData,
-        Set(entity),
-        ~message="Postgres json serialization should be compatable with our schema",
-      )
-    | _ => Assert.fail("Should have returned a row")
-    }
+    Assert.deepEqual(
+      await indexerMock.query(module(Entities.EntityWithAllTypes)),
+      [entityWithAllTypes],
+    )
+    Assert.deepEqual(
+      await indexerMock.queryHistory(module(Entities.EntityWithAllTypes)),
+      [
+        {
+          checkpointId: 1,
+          entityId: "1",
+          entityUpdateAction: Set(entityWithAllTypes),
+        },
+      ],
+    )
+    Assert.deepEqual(
+      await indexerMock.query(module(Entities.EntityWithAllNonArrayTypes)),
+      [entityWithAllNonArrayTypes],
+    )
+    Assert.deepEqual(
+      await indexerMock.queryHistory(module(Entities.EntityWithAllNonArrayTypes)),
+      [
+        {
+          checkpointId: 1,
+          entityId: "1",
+          entityUpdateAction: Set(entityWithAllNonArrayTypes),
+        },
+      ],
+    )
   })
 })

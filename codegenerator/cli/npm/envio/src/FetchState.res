@@ -388,6 +388,8 @@ let registerDynamicContracts = (
               fetchState->warnDifferentContractType(~existingContract=registeringContract, ~dc)
               false
             | Some(_) => // Since the DC is registered by an earlier item in the query
+              // FIXME: This unsafely relies on the asc order of the items
+              // which is 99% true, but there were cases when the source ordering was wrong
               false
             | None =>
               hasDCWithFilterByAddresses := hasDCWithFilterByAddresses.contents || filterByAddresses
@@ -1145,12 +1147,13 @@ let rollback = (fetchState: t, ~targetBlockNumber) => {
   ->Js.Dict.keys
   ->Array.forEach(address => {
     let indexingContract = fetchState.indexingContracts->Js.Dict.unsafeGet(address)
-    if indexingContract.startBlock <= targetBlockNumber {
-      indexingContracts->Js.Dict.set(address, indexingContract)
-    } else {
-      //If the registration block is later than the first change event,
-      //Do not keep it and add to the removed addresses
-      let _ = addressesToRemove->Utils.Set.add(address->Address.unsafeFromString)
+    switch indexingContract.registrationBlock {
+    | Some(registrationBlock) if registrationBlock > targetBlockNumber => {
+        //If the registration block is later than the first change event,
+        //Do not keep it and add to the removed addresses
+        let _ = addressesToRemove->Utils.Set.add(address->Address.unsafeFromString)
+      }
+    | _ => indexingContracts->Js.Dict.set(address, indexingContract)
     }
   })
 

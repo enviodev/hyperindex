@@ -1,4 +1,7 @@
-type registrations = {onBlockByChainId: dict<array<Internal.onBlockConfig>>}
+type registrations = {
+  onBlockByChainId: dict<array<Internal.onBlockConfig>>,
+  mutable hasEvents: bool,
+}
 
 let startRegistration: (
   ~ecosystem: InternalConfig.ecosystem,

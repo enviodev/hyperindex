@@ -137,6 +137,10 @@ type indexingContract = {
   address: Address.t,
   contractName: string,
   startBlock: int,
+  // Needed for rollback
+  // If not set, assume the contract comes from config
+  // and shouldn't be rolled back
+  registrationBlock: option<int>,
 }
 
 type dcs = array<indexingContract>
@@ -317,6 +321,14 @@ type entityValueAtStartOfBatch<'entityType> =
 type updatedValue<'entityType> = {
   latest: EntityHistory.entityUpdate<'entityType>,
   history: array<EntityHistory.entityUpdate<'entityType>>,
+  // In the event of a rollback, some entity updates may have been
+  // been affected by a rollback diff. If there was no rollback diff
+  // this will always be false.
+  // If there was a rollback diff, this will be false in the case of a
+  // new entity update (where entity affected is not present in the diff) b
+  // but true if the update is related to an entity that is
+  // currently present in the diff
+  containsRollbackDiffChange: bool,
 }
 
 type inMemoryStoreRowEntity<'entityType> =

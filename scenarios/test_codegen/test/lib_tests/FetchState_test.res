@@ -51,6 +51,7 @@ let makeDynContractRegistration = (
     address: contractAddress,
     contractName: (contractType :> string),
     startBlock: blockNumber,
+    registrationBlock: Some(blockNumber),
   }
 }
 
@@ -59,6 +60,7 @@ let makeConfigContract = (contractName, address): Internal.indexingContract => {
     address,
     contractName,
     startBlock: 0,
+    registrationBlock: None,
   }
 }
 
@@ -100,6 +102,7 @@ let makeInitial = (
         Internal.address: mockAddress0,
         contractName: "Gravatar",
         startBlock,
+        registrationBlock: None,
       },
     ],
     ~startBlock,
@@ -125,6 +128,7 @@ let makeIndexingContractsWithDynamics = (dcs: array<Internal.indexingContract>, 
         address,
         contractName: (Gravatar :> string),
         startBlock: 0,
+        registrationBlock: None,
       },
     )
   })
@@ -718,12 +722,13 @@ describe("FetchState.registerDynamicContracts", () => {
     let dcItem1 = dc1->dcToItem
     let dcItem2 = dc2->dcToItem
 
-    let updatedFetchState = fetchState->FetchState.registerDynamicContracts([dcItem1, dcItem2])
+    let updatedFetchState = fetchState->FetchState.registerDynamicContracts([dcItem2, dcItem1])
 
     Assert.deepEqual(
       (dcItem1->Internal.getItemDcs, dcItem2->Internal.getItemDcs),
-      (None, Some([dc2])),
-      ~message="Should choose the earliest dc from the batch",
+      (Some([]), Some([dc2])),
+      ~message=`Should choose the earliest dc from the batch
+End remove the dc from the later one, so they are not duplicated in the db`,
     )
     Assert.deepEqual(
       updatedFetchState.indexingContracts,
@@ -941,6 +946,7 @@ describe("FetchState.getNextQuery & integration", () => {
             Internal.contractName: (Gravatar :> string),
             startBlock: 0,
             address: mockAddress0,
+            registrationBlock: None,
           },
         ),
       ]),
@@ -2508,6 +2514,7 @@ describe("FetchState.isReadyToEnterReorgThreshold", () => {
           Internal.address: mockAddress0,
           contractName: "Gravatar",
           startBlock: 6,
+          registrationBlock: None,
         },
       ],
       ~startBlock=6,
@@ -2529,6 +2536,7 @@ describe("FetchState.isReadyToEnterReorgThreshold", () => {
           Internal.address: mockAddress0,
           contractName: "Gravatar",
           startBlock: 50,
+          registrationBlock: None,
         },
       ],
       ~startBlock=50,
@@ -2550,6 +2558,7 @@ describe("FetchState.isReadyToEnterReorgThreshold", () => {
           Internal.address: mockAddress0,
           contractName: "Gravatar",
           startBlock: 50,
+          registrationBlock: None,
         },
       ],
       ~startBlock=50,
@@ -2571,6 +2580,7 @@ describe("FetchState.isReadyToEnterReorgThreshold", () => {
           Internal.address: mockAddress0,
           contractName: "Gravatar",
           startBlock: 51,
+          registrationBlock: None,
         },
       ],
       ~startBlock=51,
@@ -2592,6 +2602,7 @@ describe("FetchState.isReadyToEnterReorgThreshold", () => {
           Internal.address: mockAddress0,
           contractName: "Gravatar",
           startBlock: 50,
+          registrationBlock: None,
         },
       ],
       ~startBlock=50,
@@ -2613,6 +2624,7 @@ describe("FetchState.isReadyToEnterReorgThreshold", () => {
           Internal.address: mockAddress0,
           contractName: "Gravatar",
           startBlock: 6,
+          registrationBlock: None,
         },
       ],
       ~startBlock=6,
@@ -2637,6 +2649,7 @@ describe("FetchState.isReadyToEnterReorgThreshold", () => {
           Internal.address: mockAddress0,
           contractName: "Gravatar",
           startBlock: 6,
+          registrationBlock: None,
         },
       ],
       ~startBlock=6,

@@ -73,10 +73,15 @@ let executeBatch = async (
 
           rows->Js.Array2.forEach(row => {
             switch row {
-            | Updated({history}) =>
+            | Updated({history, containsRollbackDiffChange}) =>
               history->Js.Array2.forEach(
                 (entityUpdate: EntityHistory.entityUpdate<'a>) => {
-                  backfillHistoryIds->Utils.Set.add(entityUpdate.entityId)->ignore
+                  if !containsRollbackDiffChange {
+                    // For every update we want to make sure that there's an existing history item
+                    // with the current entity state. So we backfill history with checkpoint id 0,
+                    // before writing updates. Don't do this if the update has a rollback diff change.
+                    backfillHistoryIds->Utils.Set.add(entityUpdate.entityId)->ignore
+                  }
                   switch entityUpdate.entityUpdateAction {
                   | Delete => {
                       batchDeleteEntityIds->Array.push(entityUpdate.entityId)->ignore
@@ -185,6 +190,7 @@ let executeBatch = async (
             | _ => specificError.contents = Some(exn->Utils.prettifyExn)
             | exception _ => ()
             }
+          | S.Raised(_) => raise(normalizedExn) // But rethrow this one, since it's not a PG error
           | _ => ()
           }
 
@@ -352,6 +358,7 @@ let prepareRollbackDiff = async (~rollbackTargetCheckpointId) => {
             entityUpdateAction: Delete,
           },
           ~shouldSaveHistory=false,
+          ~containsRollbackDiffChange=true,
         )
       })
 
@@ -367,6 +374,7 @@ let prepareRollbackDiff = async (~rollbackTargetCheckpointId) => {
             entityUpdateAction: Set(entity),
           },
           ~shouldSaveHistory=false,
+          ~containsRollbackDiffChange=true,
         )
       })
     })

@@ -116,8 +116,6 @@ GRANT ALL ON SCHEMA "${pgSchema}" TO public;`,
     }
   })
 
-  let functionsQuery = ref("")
-
   // Add derived indices
   entities->Js.Array2.forEach((entity: Internal.entityConfig) => {
     entity.table
@@ -146,10 +144,8 @@ GRANT ALL ON SCHEMA "${pgSchema}" TO public;`,
   | None => ()
   }
 
-  // Add cache row count function
-  functionsQuery :=
-    functionsQuery.contents ++
-    "\n" ++
+  [
+    query.contents,
     `CREATE OR REPLACE FUNCTION ${getCacheRowCountFnName}(table_name text) 
 RETURNS integer AS $$
 DECLARE
@@ -158,11 +154,8 @@ BEGIN
   EXECUTE format('SELECT COUNT(*) FROM "${pgSchema}".%I', table_name) INTO result;
   RETURN result;
 END;
-$$ LANGUAGE plpgsql;`
-
-  [query.contents]->Js.Array2.concat(
-    functionsQuery.contents !== "" ? [functionsQuery.contents] : [],
-  )
+$$ LANGUAGE plpgsql;`,
+  ]
 }
 
 let makeLoadByIdQuery = (~pgSchema, ~tableName) => {

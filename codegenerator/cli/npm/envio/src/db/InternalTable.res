@@ -246,6 +246,10 @@ WHERE "${(#id: field :> string)}" = $1;`
     dynamicContracts: array<Internal.indexingContract>,
   }
 
+  // FIXME: Using registering_event_block_number for startBlock
+  // seems incorrect, since there might be a custom start block
+  // for the contract.
+  // TODO: Write a repro test where it might break something and fix
   let makeGetInitialStateQuery = (~pgSchema) => {
     `SELECT "${(#id: field :> string)}" as "id",
 "${(#start_block: field :> string)}" as "startBlock",
@@ -259,7 +263,8 @@ WHERE "${(#id: field :> string)}" = $1;`
   SELECT COALESCE(json_agg(json_build_object(
     'address', "contract_address",
     'contractName', "contract_name",
-    'startBlock', "registering_event_block_number"
+    'startBlock', "registering_event_block_number",
+    'registrationBlock', "registering_event_block_number"
   )), '[]'::json)
   FROM "${pgSchema}"."${DynamicContractRegistry.table.tableName}"
   WHERE "chain_id" = chains."${(#id: field :> string)}"

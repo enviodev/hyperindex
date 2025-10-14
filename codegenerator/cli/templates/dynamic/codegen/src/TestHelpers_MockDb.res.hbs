@@ -322,9 +322,17 @@ and makeProcessEvents = (mockDb: t, ~chainId=?) => async (
   } else {
     let itemsWithContractRegister = []
 
-    let config = {
-      ...config,
-      registrations: Some(EventRegister.finishRegistration()),
+     let registrations = EventRegister.finishRegistration()
+
+    let config = if (
+      registrations.hasEvents || !(registrations.onBlockByChainId->Utils.Dict.isEmpty)
+    ) {
+      {
+        ...config,
+        registrations: Some(registrations),
+      }
+    } else {
+      RegisterHandlers.registerAllHandlers()
     }
 
     let processingChainId = ref(chainId)
@@ -344,8 +352,8 @@ and makeProcessEvents = (mockDb: t, ~chainId=?) => async (
       }
 
       switch processingChainId.contents {
-      | Some(chainId) =>
-        if chainId != event.chainId {
+      | Some(prevItemChainId) =>
+        if prevItemChainId !== chainId {
           Js.Exn.raiseError(
             `Processing events on multiple chains is not supported yet. Got chainId ${event.chainId->Belt.Int.toString} but expected ${chainId->Belt.Int.toString}`,
           )
@@ -377,6 +385,13 @@ and makeProcessEvents = (mockDb: t, ~chainId=?) => async (
     | None =>
       Js.Exn.raiseError("No events provided to processEvents. Please provide at least one event.")
     }
+    let processingChain = config->Config.getChain(~chainId=processingChainId)
+
+    let chainFetcher = ChainFetcher.makeFromConfig(
+      config.chainMap->ChainMap.get(processingChain),
+      ~config,
+      ~targetBufferSize=5000,
+    )
 
     //Deep copy the data in mockDb, mutate the clone and return the clone
     //So no side effects occur here and state can be compared between process
@@ -402,61 +417,80 @@ and makeProcessEvents = (mockDb: t, ~chainId=?) => async (
       persistence,
     }
 
-    let newItemsWithDcs = await ChainFetcher.runContractRegistersOrThrow(
-      ~itemsWithContractRegister,
-      ~chain=ChainMap.Chain.makeUnsafe(~chainId=processingChainId),
-      ~config,
-    )
+    let newItemsWithDcs = if itemsWithContractRegister->Utils.Array.notEmpty {
+      await ChainFetcher.runContractRegistersOrThrow(
+        ~itemsWithContractRegister,
+        ~chain=processingChain,
+        ~config,
+      )
+    } else {
+      itemsWithContractRegister
+    }
+
+    let updatedFetchState = ref(chainFetcher.fetchState)
+
+    switch newItemsWithDcs {
+    | [] => ()
+    | _ =>
+      updatedFetchState :=
+        updatedFetchState.contents->FetchState.registerDynamicContracts(newItemsWithDcs)
+    }
+
+    updatedFetchState :=
+      updatedFetchState.contents
+      ->FetchState.handleQueryResult(
+        ~latestFetchedBlock={
+          blockNumber: latestFetchedBlockNumber.contents,
+          blockTimestamp: 0,
+        },
+        ~query={
+          partitionId: (updatedFetchState.contents.partitions->Array.getUnsafe(0)).id,
+          fromBlock: 0,
+          selection: {eventConfigs: [], dependsOnAddresses: false},
+          addressesByContractName: Js.Dict.empty(),
+          target: FetchState.Head,
+          indexingContracts: Js.Dict.empty(),
+        },
+        ~newItems,
+      )
+      ->Result.getExn
+
+    // Handle query for the rest partitions without items
+    // to catch up the latest fully fetched block
+    for idx in 1 to updatedFetchState.contents.partitions->Array.length - 1 {
+      let partition = updatedFetchState.contents.partitions->Array.getUnsafe(idx)
+      updatedFetchState :=
+        updatedFetchState.contents
+        ->FetchState.handleQueryResult(
+          ~latestFetchedBlock={
+            blockNumber: latestFetchedBlockNumber.contents,
+            blockTimestamp: 0,
+          },
+          ~query={
+            partitionId: partition.id,
+            fromBlock: 0,
+            selection: {eventConfigs: [], dependsOnAddresses: false},
+            addressesByContractName: Js.Dict.empty(),
+            target: FetchState.Head,
+            indexingContracts: Js.Dict.empty(),
+          },
+          ~newItems=[],
+        )
+        ->Result.getExn
+    }
 
     let batch = Batch.prepareUnorderedBatch(
       ~checkpointIdBeforeBatch=0,
       ~chainsBeforeBatch=ChainMap.fromArrayUnsafe([
         (
-          ChainMap.Chain.makeUnsafe(~chainId=processingChainId),
+          processingChain,
           (
             {
-              fetchState: FetchState.make(
-                ~chainId=processingChainId,
-                ~startBlock=0,
-                ~endBlock=None,
-                ~eventConfigs=[
-                  {
-                    "id": "test",
-                  }->Obj.magic,
-                ],
-                ~contracts=[],
-                ~maxAddrInPartition=0,
-                ~targetBufferSize=0,
-              )
-              ->(fetchState =>
-                switch newItemsWithDcs {
-                | [] => fetchState
-                | _ => fetchState->FetchState.registerDynamicContracts(newItemsWithDcs)
-                })
-              ->FetchState.handleQueryResult(
-                ~latestFetchedBlock={
-                  blockNumber: latestFetchedBlockNumber.contents,
-                  blockTimestamp: 0,
-                },
-                ~query={
-                  partitionId: "0",
-                  fromBlock: 0,
-                  selection: {eventConfigs: [], dependsOnAddresses: false},
-                  addressesByContractName: Js.Dict.empty(),
-                  target: FetchState.Head,
-                  indexingContracts: Js.Dict.empty(),
-                },
-                ~newItems,
-              )
-              ->Result.getExn,
-              reorgDetection: ReorgDetection.make(
-                ~chainReorgCheckpoints=[],
-                ~maxReorgDepth=0,
-                ~shouldRollbackOnReorg=false,
-              ),
-              progressBlockNumber: 0,
-              sourceBlockNumber: 0,
-              totalEventsProcessed: 0,
+              fetchState: updatedFetchState.contents,
+              reorgDetection: chainFetcher.reorgDetection,
+              progressBlockNumber: chainFetcher.committedProgressBlockNumber,
+              sourceBlockNumber: chainFetcher.currentBlockHeight,
+              totalEventsProcessed: chainFetcher.numEventsProcessed,
             }: Batch.chainBeforeBatch
           ),
         ),

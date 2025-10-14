@@ -104,6 +104,7 @@ let make = (
         | Some(startBlock) => startBlock
         | None => chainConfig.startBlock
         },
+        registrationBlock: None,
       })
     })
   })
@@ -218,7 +219,7 @@ let makeFromConfig = (chainConfig: InternalConfig.chain, ~config, ~targetBufferS
     ~reorgCheckpoints=[],
     ~maxReorgDepth=chainConfig.maxReorgDepth,
     ~firstEventBlockNumber=None,
-    ~progressBlockNumber=chainConfig.startBlock - 1,
+    ~progressBlockNumber=-1,
     ~timestampCaughtUpToHeadOrEndblock=None,
     ~numEventsProcessed=0,
     ~numBatchesFetched=0,
@@ -318,6 +319,7 @@ let runContractRegistersOrThrow = async (
         address: contractAddress,
         contractName: (contractName: Enums.ContractType.t :> string),
         startBlock: contractStartBlock,
+        registrationBlock: Some(blockNumber),
       }
 
       switch item->Internal.getItemDcs {

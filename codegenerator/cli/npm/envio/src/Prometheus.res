@@ -477,9 +477,15 @@ module RollbackSuccess = {
     "help": "Number of successful rollbacks on reorg",
   })
 
-  let increment = (~timeMillis: Hrtime.milliseconds) => {
+  let eventsCounter = PromClient.Counter.makeCounter({
+    "name": "envio_rollback_events_count",
+    "help": "Number of events rollbacked on reorg",
+  })
+
+  let increment = (~timeMillis: Hrtime.milliseconds, ~rollbackedProcessedEvents) => {
     timeCounter->PromClient.Counter.incMany(timeMillis->Hrtime.intFromMillis)
     counter->PromClient.Counter.inc
+    eventsCounter->PromClient.Counter.incMany(rollbackedProcessedEvents)
   }
 }
 

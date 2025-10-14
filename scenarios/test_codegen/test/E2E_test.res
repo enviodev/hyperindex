@@ -83,7 +83,7 @@ describe("E2E tests", () => {
     )
   })
 
-  // A regression test for bug introduced in 2.30.0
+  // A regression test for a bug introduced in 2.30.0
   Async.it("Correct event ordering for ordered multichain indexer", async () => {
     let sourceMock1337 = Mock.Source.make(
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
@@ -158,58 +158,75 @@ describe("E2E tests", () => {
     await indexerMock.getBatchWritePromise()
 
     Assert.deepEqual(
-      await indexerMock.queryHistory(module(Entities.SimpleEntity)),
-      [
-        {
-          current: {
-            chain_id: 100,
-            block_timestamp: 150,
-            block_number: 150,
-            log_index: 0,
+      await Promise.all2((
+        indexerMock.queryCheckpoints(),
+        indexerMock.queryHistory(module(Entities.SimpleEntity)),
+      )),
+      (
+        [
+          {
+            id: 2,
+            chainId: 100,
+            blockNumber: 150,
+            blockHash: Js.Null.Null,
+            eventsProcessed: 1,
           },
-          previous: undefined,
-          entityData: Set({
-            Entities.SimpleEntity.id: "1",
-            value: "call-0",
-          }),
-        },
-        {
-          current: {
-            chain_id: 1337,
-            block_timestamp: 150,
-            block_number: 150,
-            log_index: 2,
+          {
+            id: 3,
+            chainId: 1337,
+            blockNumber: 100,
+            blockHash: Js.Null.Value("0x100"),
+            eventsProcessed: 0,
           },
-          previous: Some({
-            chain_id: 100,
-            block_timestamp: 150,
-            block_number: 150,
-            log_index: 0,
-          }),
-          entityData: Set({
-            Entities.SimpleEntity.id: "1",
-            value: "call-1",
-          }),
-        },
-        {
-          current: {
-            chain_id: 100,
-            block_timestamp: 151,
-            block_number: 151,
-            log_index: 0,
+          {
+            id: 4,
+            chainId: 1337,
+            blockNumber: 150,
+            blockHash: Js.Null.Null,
+            eventsProcessed: 1,
           },
-          previous: Some({
-            chain_id: 1337,
-            block_timestamp: 150,
-            block_number: 150,
-            log_index: 2,
-          }),
-          entityData: Set({
-            Entities.SimpleEntity.id: "1",
-            value: "call-2",
-          }),
-        },
-      ],
+          {
+            id: 5,
+            chainId: 100,
+            blockNumber: 151,
+            blockHash: Js.Null.Null,
+            eventsProcessed: 1,
+          },
+          {
+            id: 6,
+            chainId: 100,
+            blockNumber: 160,
+            blockHash: Js.Null.Value("0x160"),
+            eventsProcessed: 0,
+          },
+        ],
+        [
+          {
+            checkpointId: 2,
+            entityId: "1",
+            entityUpdateAction: Set({
+              Entities.SimpleEntity.id: "1",
+              value: "call-0",
+            }),
+          },
+          {
+            checkpointId: 4,
+            entityId: "1",
+            entityUpdateAction: Set({
+              Entities.SimpleEntity.id: "1",
+              value: "call-1",
+            }),
+          },
+          {
+            checkpointId: 5,
+            entityId: "1",
+            entityUpdateAction: Set({
+              Entities.SimpleEntity.id: "1",
+              value: "call-2",
+            }),
+          },
+        ],
+      ),
     )
   })
 })

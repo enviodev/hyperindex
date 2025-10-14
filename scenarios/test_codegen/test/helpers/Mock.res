@@ -215,6 +215,7 @@ module Indexer = {
     queryHistory: 'entity. module(Entities.Entity with type t = 'entity) => promise<
       array<EntityHistory.entityUpdate<'entity>>,
     >,
+    queryCheckpoints: unit => promise<array<InternalTable.Checkpoints.t>>,
     metric: string => promise<array<metric>>,
   }
 
@@ -223,6 +224,7 @@ module Indexer = {
   let make = async (
     ~chains: array<chainConfig>,
     ~multichain=InternalConfig.Unordered,
+    ~saveFullHistory=false,
     ~reset=true,
   ) => {
     DbHelpers.resetPostgresClient()
@@ -271,6 +273,10 @@ module Indexer = {
     }
     let config: Config.t = {
       ...config,
+      historyConfig: {
+        rollbackFlag: RollbackOnReorg,
+        historyFlag: saveFullHistory ? FullHistory : MinHistory,
+      },
       persistence,
       enableRawEvents: false,
       chainMap,
@@ -366,6 +372,16 @@ module Indexer = {
             array<EntityHistory.entityUpdate<entity>>,
           >
         )
+      },
+      queryCheckpoints: () => {
+        Db.sql
+        ->Postgres.unsafe(
+          PgStorage.makeLoadAllQuery(
+            ~pgSchema,
+            ~tableName=InternalTable.Checkpoints.table.tableName,
+          ),
+        )
+        ->(Utils.magic: promise<unknown> => promise<array<InternalTable.Checkpoints.t>>)
       },
       metric: async name => {
         switch PromClient.defaultRegister->PromClient.getSingleMetric(name) {

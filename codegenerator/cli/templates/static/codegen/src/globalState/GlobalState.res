@@ -1029,6 +1029,7 @@ let injectedTaskReducer = (
 
       let eventsProcessedDiffPerChain = Js.Dict.empty()
       let newProgressBlockNumberPerChain = Js.Dict.empty()
+      let rollbackedProcessedEvents = ref(0)
 
       {
         let rollbackProgressDiff =
@@ -1036,11 +1037,16 @@ let injectedTaskReducer = (
             ~pgSchema=Env.Db.publicSchema,
             ~rollbackTargetCheckpointId,
           )
-        rollbackProgressDiff->Js.Array2.forEach(diff => {
+        for idx in 0 to rollbackProgressDiff->Js.Array2.length - 1 {
+          let diff = rollbackProgressDiff->Js.Array2.unsafe_get(idx)
           eventsProcessedDiffPerChain->Utils.Dict.setByInt(
             diff["chain_id"],
             switch diff["events_processed_diff"]->Int.fromString {
-            | Some(eventsProcessedDiff) => eventsProcessedDiff
+            | Some(eventsProcessedDiff) => {
+                rollbackedProcessedEvents :=
+                  rollbackedProcessedEvents.contents + eventsProcessedDiff
+                eventsProcessedDiff
+              }
             | None =>
               Js.Exn.raiseError(
                 `Unexpedted case: Invalid events processed diff ${diff["events_processed_diff"]}`,
@@ -1051,7 +1057,7 @@ let injectedTaskReducer = (
             diff["chain_id"],
             diff["new_progress_block_number"],
           )
-        })
+        }
       }
 
       let chainFetchers = state.chainManager.chainFetchers->ChainMap.mapWithKey((chain, cf) => {
@@ -1061,6 +1067,24 @@ let injectedTaskReducer = (
         | Some(newProgressBlockNumber) =>
           let fetchState =
             cf.fetchState->FetchState.rollback(~targetBlockNumber=newProgressBlockNumber)
+          let newTotalEventsProcessed =
+            cf.numEventsProcessed -
+            eventsProcessedDiffPerChain
+            ->Utils.Dict.dangerouslyGetByIntNonOption(chain->ChainMap.Chain.toChainId)
+            ->Option.getUnsafe
+
+          if cf.committedProgressBlockNumber !== newProgressBlockNumber {
+            Prometheus.ProgressBlockNumber.set(
+              ~blockNumber=newProgressBlockNumber,
+              ~chainId=chain->ChainMap.Chain.toChainId,
+            )
+          }
+          if cf.numEventsProcessed !== newTotalEventsProcessed {
+            Prometheus.ProgressEventsCount.set(
+              ~processedCount=newTotalEventsProcessed,
+              ~chainId=chain->ChainMap.Chain.toChainId,
+            )
+          }
 
           {
             ...cf,
@@ -1080,10 +1104,7 @@ let injectedTaskReducer = (
             },
             fetchState,
             committedProgressBlockNumber: newProgressBlockNumber,
-            numEventsProcessed: cf.numEventsProcessed -
-            eventsProcessedDiffPerChain
-            ->Utils.Dict.dangerouslyGetByIntNonOption(chain->ChainMap.Chain.toChainId)
-            ->Option.getUnsafe,
+            numEventsProcessed: newTotalEventsProcessed,
           }
 
         | None => //If no change was produced on the given chain after the reorged chain, no need to rollback anything
@@ -1106,10 +1127,14 @@ let injectedTaskReducer = (
           "deleted": diff["deletedEntities"],
           "upserted": diff["setEntities"],
         },
+        "rollbackedEvents": rollbackedProcessedEvents.contents,
         "beforeCheckpointId": state.chainManager.commitedCheckpointId,
         "targetCheckpointId": rollbackTargetCheckpointId,
       })
-      Prometheus.RollbackSuccess.increment(~timeMillis=Hrtime.timeSince(startTime)->Hrtime.toMillis)
+      Prometheus.RollbackSuccess.increment(
+        ~timeMillis=Hrtime.timeSince(startTime)->Hrtime.toMillis,
+        ~rollbackedProcessedEvents=rollbackedProcessedEvents.contents,
+      )
 
       dispatchAction(
         SetRollbackState({
