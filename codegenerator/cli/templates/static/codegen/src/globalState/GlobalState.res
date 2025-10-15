@@ -948,6 +948,7 @@ let injectedTaskReducer = (
           ~isInReorgThreshold,
           ~loadManager=state.loadManager,
           ~config=state.config,
+          ~chainFetchers=state.chainManager.chainFetchers,
         ) {
         | exception exn =>
           //All casese should be handled/caught before this with better user messaging.

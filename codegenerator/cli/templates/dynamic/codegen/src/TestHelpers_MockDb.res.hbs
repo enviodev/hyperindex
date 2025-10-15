@@ -500,14 +500,19 @@ and makeProcessEvents = (mockDb: t, ~chainId=?) => async (
 
     inMemoryStore->InMemoryStore.setBatchDcs(~batch, ~shouldSaveHistory=false)
 
+    // Create a mock chains state where the processing chain is ready (simulating "Live" mode)
+    let chains = Js.Dict.empty()
+    chains->Js.Dict.set(processingChainId->Int.toString, {Internal.isReady: true})
+
     try {
-      await batch->EventProcessing.preloadBatchOrThrow(~loadManager, ~persistence, ~inMemoryStore)
+      await batch->EventProcessing.preloadBatchOrThrow(~loadManager, ~persistence, ~inMemoryStore, ~chains)
       await batch->EventProcessing.runBatchHandlersOrThrow(
         ~inMemoryStore,
         ~loadManager,
         ~config,
         ~shouldSaveHistory=false,
         ~shouldBenchmark=false,
+        ~chains,
       )
     } catch {
     | EventProcessing.ProcessingError({message, exn, item}) =>

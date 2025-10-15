@@ -31,6 +31,9 @@ describe("Load and save an entity with a Timestamp from DB", () => {
 
     let item = MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem
 
+    let chains = Js.Dict.empty()
+    chains->Js.Dict.set("1", {Internal.isReady: false})
+
     let handlerContext = UserContext.getHandlerContext({
       item,
       loadManager,
@@ -39,6 +42,7 @@ describe("Load and save an entity with a Timestamp from DB", () => {
       shouldSaveHistory: false,
       isPreload: false,
       checkpointId: 0,
+      chains,
     })->(Utils.magic: Internal.handlerContext => Types.loaderContext)
 
     let _ = handlerContext.entityWithTimestamp.get(testEntity.id)

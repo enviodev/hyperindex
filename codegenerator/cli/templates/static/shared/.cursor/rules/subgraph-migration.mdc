@@ -1,3 +1,9 @@
+---
+description: Made to assist in migrating from subgraph to HyperIndex. Includes both step by step instructions for cursor based migration as well as common migration patters. (Note: if doing a full migration using cursor ensure subgraph folder is in workspace before starting as the steps rely on this. Would also make sense to set alwaysApply to true in this situation.)
+globs: "**/*.{ts,js,res,graphql,yaml}"
+alwaysApply: false
+---
+
 # 🚨 MANDATORY: READ THIS FIRST 🚨
 
 **BEFORE implementing ANY code changes, you MUST check this MDC file for existing solutions!**
