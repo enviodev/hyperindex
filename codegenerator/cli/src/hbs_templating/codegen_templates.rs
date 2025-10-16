@@ -10,7 +10,7 @@ use crate::{
     config_parsing::{
         entity_parsing::{Entity, Field, GraphQLEnum, MultiFieldIndex, Schema},
         event_parsing::{abi_to_rescript_type, EthereumEventParam},
-        human_config::evm::{For, Rpc, RpcSyncConfig},
+        human_config::{evm::{For, Rpc, RpcSyncConfig}, StartBlock},
         postgres_types,
         system_config::{
             self, get_envio_version, Abi, Ecosystem, EventKind, FuelEventKind, MainEvmDataSource,
@@ -905,7 +905,7 @@ pub struct PerNetworkContractTemplate {
     name: CapitalizedOptions,
     addresses: Vec<EthAddress>,
     events: Vec<PerNetworkContractEventTemplate>,
-    start_block: Option<u64>,
+    start_block: Option<StartBlock>,
 }
 
 impl PerNetworkContractTemplate {
@@ -938,7 +938,7 @@ type EthAddress = String;
 struct NetworkTemplate {
     pub id: u64,
     confirmed_block_threshold: i32,
-    start_block: u64,
+    start_block: StartBlock,
     end_block: Option<u64>,
 }
 

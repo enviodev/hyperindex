@@ -1,4 +1,4 @@
-use crate::{config_parsing::chain_helpers::HypersyncNetwork, evm::address::Address};
+use crate::{config_parsing::{chain_helpers::HypersyncNetwork, human_config::StartBlock}, evm::address::Address};
 use anyhow::{Context, Result};
 use std::fmt::{self, Display};
 
@@ -65,10 +65,10 @@ impl NetworkKind {
             Self::Unsupported { network_id, .. } => *network_id,
         }
     }
-    pub fn get_start_block(&self) -> u64 {
+    pub fn get_start_block(&self) -> StartBlock {
         match self {
-            Self::Supported(_) => 0,
-            Self::Unsupported { start_block, .. } => *start_block,
+            Self::Supported(_) => StartBlock::Block(0),
+            Self::Unsupported { start_block, .. } => StartBlock::Block(*start_block),
         }
     }
     pub fn uses_hypersync(&self) -> bool {

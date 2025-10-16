@@ -32,7 +32,7 @@ networks:
       interval_ceiling: 10000
       backoff_millis: 5000
       query_timeout_millis: 20000
-    start_block: 1
+    start_block: 0
     contracts:
       - name: Gravatar
         abi_file_path: abis/gravatar-abi.json

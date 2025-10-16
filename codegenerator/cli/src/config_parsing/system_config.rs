@@ -5,7 +5,7 @@ use super::{
         self,
         evm::{
             EventConfig as EvmEventConfig, EventDecoder, For, HumanConfig as EvmConfig,
-            Network as EvmNetwork, NetworkRpc, Rpc,
+            Network as EvmNetwork, NetworkRpc, Rpc
         },
         fuel::{EventConfig as FuelEventConfig, HumanConfig as FuelConfig},
         HumanConfig,
@@ -14,6 +14,7 @@ use super::{
     validation::{self, validate_names_valid_rescript},
 };
 use crate::{
+    config_parsing::human_config::StartBlock,
     config_parsing::human_config::evm::{RpcBlockField, RpcTransactionField},
     constants::{links, project_paths::DEFAULT_SCHEMA_PATH},
     evm::abi::AbiOrNestedAbi,
@@ -1071,7 +1072,7 @@ impl DataSource {
 pub struct Network {
     pub id: u64,
     pub sync_source: DataSource,
-    pub start_block: u64,
+    pub start_block: StartBlock,
     pub end_block: Option<u64>,
     pub confirmed_block_threshold: i32,
     pub contracts: Vec<NetworkContract>,
@@ -1081,7 +1082,7 @@ pub struct Network {
 pub struct NetworkContract {
     pub name: ContractNameKey,
     pub addresses: Vec<String>,
-    pub start_block: Option<u64>,
+    pub start_block: Option<StartBlock>,
 }
 
 impl NetworkContract {

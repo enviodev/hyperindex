@@ -213,6 +213,7 @@ pub mod fuel {
                 ContractConfig, EcosystemTag, EventConfig, HumanConfig, Network as NetworkConfig,
             },
             NetworkContract,
+            StartBlock,
         },
         fuel::{abi::FuelAbi, address::Address},
     };
@@ -269,7 +270,7 @@ pub mod fuel {
                     None => (),
                     Some(contracts) => network_configs.push(NetworkConfig {
                         id: network as u64,
-                        start_block: 0,
+                        start_block: StartBlock::Block(0),
                         end_block: None,
                         hyperfuel_config: None,
                         contracts: contracts

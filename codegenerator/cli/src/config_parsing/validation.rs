@@ -2,9 +2,12 @@ use super::{
     chain_helpers,
     human_config::{self, evm::HumanConfig},
 };
-use crate::constants::reserved_keywords::{
-    ENVIO_INTERNAL_RESERVED_POSTGRES_TYPES, JAVASCRIPT_RESERVED_WORDS, RESCRIPT_RESERVED_WORDS,
-    TYPESCRIPT_RESERVED_WORDS,
+use crate::{
+    config_parsing::human_config::StartBlock,
+    constants::reserved_keywords::{
+        ENVIO_INTERNAL_RESERVED_POSTGRES_TYPES, JAVASCRIPT_RESERVED_WORDS, RESCRIPT_RESERVED_WORDS,
+        TYPESCRIPT_RESERVED_WORDS,
+    }
 };
 use anyhow::anyhow;
 use regex::Regex;
@@ -160,12 +163,17 @@ impl human_config::evm::Network {
 
     pub fn validate_endblock_lte_startblock(&self) -> anyhow::Result<()> {
         if let Some(network_endblock) = self.end_block {
-            if network_endblock < self.start_block {
-                return Err(anyhow!(
-                    "EE110: The config file has an endBlock that is less than the startBlock for \
-                     network id: {}. The endBlock must be greater than the startBlock.",
-                    &self.id.to_string()
-                ));
+            match self.start_block {
+                StartBlock::Block(start_block) => {
+                    if network_endblock < start_block {
+                        return Err(anyhow!(
+                            "EE110: The config file has an endBlock that is less than the startBlock for \
+                             network id: {}. The endBlock must be greater than the startBlock.",
+                            &self.id.to_string()
+                        ));
+                    }
+                },
+                StartBlock::Latest(_) => (),
             }
         }
         Ok(())

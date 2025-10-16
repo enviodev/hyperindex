@@ -88,7 +88,7 @@ pub struct NetworkContract<T> {
                        specific contract. If not specified, uses the network start_block. Can be \
                        greater than the network start_block for more specific indexing."
     )]
-    pub start_block: Option<u64>,
+    pub start_block: Option<StartBlock>,
     #[serde(flatten)]
     //If this is "None" it should be expected that
     //there is a global config for the contract
@@ -106,6 +106,21 @@ pub enum HumanConfig {
     Fuel(fuel::HumanConfig),
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum LatestKeyword {
+    Latest
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, JsonSchema)]
+#[serde(untagged)]
+pub enum StartBlock {
+    Block(u64),
+    Latest(LatestKeyword),
+}
+
+
+
 impl Display for HumanConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
@@ -120,7 +135,7 @@ impl Display for HumanConfig {
 }
 
 pub mod evm {
-    use super::{GlobalContract, NetworkContract, NetworkId};
+    use super::{GlobalContract, NetworkContract, NetworkId, StartBlock};
     use crate::utils::normalized_list::SingleOrList;
     use schemars::JsonSchema;
     use serde::{Deserialize, Serialize};
@@ -487,7 +502,7 @@ pub mod evm {
         )]
         pub confirmed_block_threshold: Option<i32>,
         #[schemars(description = "The block at which the indexer should start ingesting data")]
-        pub start_block: u64,
+        pub start_block: StartBlock,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(description = "The block at which the indexer should terminate.")]
         pub end_block: Option<u64>,
@@ -540,7 +555,7 @@ pub mod evm {
 pub mod fuel {
     use std::fmt::Display;
 
-    use super::{GlobalContract, NetworkContract, NetworkId};
+    use super::{GlobalContract, NetworkContract, NetworkId, StartBlock};
     use schemars::JsonSchema;
     use serde::{Deserialize, Serialize};
     use strum::Display;
@@ -631,7 +646,7 @@ pub mod fuel {
         #[schemars(description = "Public chain/network id")]
         pub id: NetworkId,
         #[schemars(description = "The block at which the indexer should start ingesting data")]
-        pub start_block: u64,
+        pub start_block: StartBlock,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(description = "The block at which the indexer should terminate.")]
         pub end_block: Option<u64>,

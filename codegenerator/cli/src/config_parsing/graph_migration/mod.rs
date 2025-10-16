@@ -5,6 +5,7 @@ use crate::{
         human_config::{
             evm::{ContractConfig, EventConfig, HumanConfig, Network},
             NetworkContract,
+            StartBlock,
         },
     },
     constants::project_paths::DEFAULT_SCHEMA_PATH,
@@ -313,7 +314,7 @@ pub async fn generate_config_from_subgraph_id(
             // TODO: update to the final rpc url
             rpc_config: None,
             rpc: None,
-            start_block: 0,
+            start_block: StartBlock::Block(0),
             end_block: None,
             confirmed_block_threshold: None,
             contracts: vec![],
