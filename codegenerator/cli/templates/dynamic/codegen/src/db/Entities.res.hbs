@@ -5,6 +5,7 @@ type id = string
 type internalEntity = Internal.entity
 module type Entity = {
   type t
+  let index: int
   let name: string
   let schema: S.t<t>
   let rowsSchema: S.t<array<t>>
@@ -43,6 +44,7 @@ type whereOperations<'entity, 'fieldType> = {
 
 module {{entity.name.capitalized}} = {
   let name = ({{entity.name.capitalized}} :> string)
+  let index = {{@index}}
   @genType
   type t = {
     {{#each entity.params as | param |}}
@@ -103,7 +105,7 @@ module {{entity.name.capitalized}} = {
   {{/if}}
   )
 
-  let entityHistory = table->EntityHistory.fromTable(~schema)
+  let entityHistory = table->EntityHistory.fromTable(~schema, ~entityIndex=index)
 
   external castToInternal: t => Internal.entity = "%identity"
 }

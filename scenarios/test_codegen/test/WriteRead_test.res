@@ -7,8 +7,8 @@ let mockDate = (~year=2024, ~month=1, ~day=1) => {
   Js.Date.fromString(`${year->padInt}-${month->padInt}-${day->padInt}T00:00:00Z`)
 }
 
-describe("SerDe Test", () => {
-  Async.it("All type entity", async () => {
+describe("Write/read tests", () => {
+  Async.it("Test writing and reading entities with special cases", async () => {
     let sourceMock = Mock.Source.make(~chain=#1337, [#getHeightOrThrow, #getItemsOrThrow])
     let indexerMock = await Mock.Indexer.make(
       ~chains=[{chain: #1337, sources: [sourceMock.source]}],
@@ -82,6 +82,14 @@ describe("SerDe Test", () => {
         handler: async ({context}) => {
           context.entityWithAllTypes.set(entityWithAllTypes)
           context.entityWithAllNonArrayTypes.set(entityWithAllNonArrayTypes)
+
+          // Test that for entities of max length, we can correctly save history (envio_history_<entityName>) is truncated correctly.
+          context.entityWith63LenghtName______________________________________one.set({
+            id: "1",
+          })
+          context.entityWith63LenghtName______________________________________two.set({
+            id: "2",
+          })
         },
       },
     ])
@@ -112,6 +120,55 @@ describe("SerDe Test", () => {
           checkpointId: 1,
           entityId: "1",
           entityUpdateAction: Set(entityWithAllNonArrayTypes),
+        },
+      ],
+    )
+
+    Assert.deepEqual(
+      await indexerMock.query(
+        module(Entities.EntityWith63LenghtName______________________________________one),
+      ),
+      [
+        {
+          id: "1",
+        },
+      ],
+    )
+    Assert.deepEqual(
+      await indexerMock.queryHistory(
+        module(Entities.EntityWith63LenghtName______________________________________one),
+      ),
+      [
+        {
+          checkpointId: 1,
+          entityId: "1",
+          entityUpdateAction: Set({
+            id: "1",
+          }),
+        },
+      ],
+    )
+    Assert.deepEqual(
+      await indexerMock.query(
+        module(Entities.EntityWith63LenghtName______________________________________two),
+      ),
+      [
+        {
+          id: "2",
+        },
+      ],
+    )
+    Assert.deepEqual(
+      await indexerMock.queryHistory(
+        module(Entities.EntityWith63LenghtName______________________________________two),
+      ),
+      [
+        {
+          checkpointId: 1,
+          entityId: "2",
+          entityUpdateAction: Set({
+            id: "2",
+          }),
         },
       ],
     )

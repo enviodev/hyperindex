@@ -251,6 +251,7 @@ let fuelTransferParamsSchema = S.schema(s => {
 type entity = private {id: string}
 type genericEntityConfig<'entity> = {
   name: string,
+  index: int,
   schema: S.t<'entity>,
   rowsSchema: S.t<array<'entity>>,
   table: Table.table,

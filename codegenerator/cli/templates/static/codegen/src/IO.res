@@ -101,6 +101,7 @@ let executeBatch = async (
               sql,
               ~pgSchema=Db.publicSchema,
               ~entityName=entityConfig.name,
+              ~entityIndex=entityConfig.index,
               ~ids=backfillHistoryIds->Utils.Set.toArray,
             )
           }
@@ -214,6 +215,7 @@ let executeBatch = async (
           sql->EntityHistory.rollback(
             ~pgSchema=Db.publicSchema,
             ~entityName=entityConfig.name,
+            ~entityIndex=entityConfig.index,
             ~rollbackTargetCheckpointId,
           )
         })

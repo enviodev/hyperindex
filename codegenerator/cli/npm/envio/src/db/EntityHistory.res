@@ -42,9 +42,19 @@ type t<'entity> = {
   makeGetRollbackRestoredEntitiesQuery: (~pgSchema: string) => string,
 }
 
-let historyTableName = (~entityName) => "envio_history_" ++ entityName
+let maxPgTableNameLength = 63
+let historyTableName = (~entityName, ~entityIndex) => {
+  let fullName = "envio_history_" ++ entityName
+  if fullName->String.length > maxPgTableNameLength {
+    let entityIndexStr = entityIndex->Belt.Int.toString
+    fullName->Js.String.slice(~from=0, ~to_=maxPgTableNameLength - entityIndexStr->String.length) ++
+      entityIndexStr
+  } else {
+    fullName
+  }
+}
 
-let fromTable = (table: table, ~schema: S.t<'entity>): t<'entity> => {
+let fromTable = (table: table, ~schema: S.t<'entity>, ~entityIndex): t<'entity> => {
   let id = "id"
 
   let dataFields = table.fields->Belt.Array.keepMap(field =>
@@ -79,7 +89,7 @@ let fromTable = (table: table, ~schema: S.t<'entity>): t<'entity> => {
   // let dataFieldNames = dataFields->Belt.Array.map(field => field->getFieldName)
 
   let entityTableName = table.tableName
-  let historyTableName = historyTableName(~entityName=entityTableName)
+  let historyTableName = historyTableName(~entityName=entityTableName, ~entityIndex)
   //ignore composite indices
   let table = mkTable(
     historyTableName,
@@ -179,8 +189,8 @@ type safeReorgBlocks = {
 // - Rollbacks will not cross the safe checkpoint id, so rows older than the anchor can never be referenced again.
 // - If nothing changed in reorg threshold (after the safe checkpoint), the current state for that id can be reconstructed from the
 //   origin table; we do not need a pre-safe anchor for it.
-let makePruneStaleEntityHistoryQuery = (~entityName, ~pgSchema) => {
-  let historyTableRef = `"${pgSchema}"."${historyTableName(~entityName)}"`
+let makePruneStaleEntityHistoryQuery = (~entityName, ~entityIndex, ~pgSchema) => {
+  let historyTableRef = `"${pgSchema}"."${historyTableName(~entityName, ~entityIndex)}"`
 
   `WITH anchors AS (
   SELECT t.id, MAX(t.${checkpointIdFieldName}) AS keep_checkpoint_id
@@ -202,16 +212,23 @@ WHERE d.id = a.id
   );`
 }
 
-let pruneStaleEntityHistory = (sql, ~entityName, ~pgSchema, ~safeCheckpointId): promise<unit> => {
+let pruneStaleEntityHistory = (
+  sql,
+  ~entityName,
+  ~entityIndex,
+  ~pgSchema,
+  ~safeCheckpointId,
+): promise<unit> => {
   sql->Postgres.preparedUnsafe(
-    makePruneStaleEntityHistoryQuery(~entityName, ~pgSchema),
+    makePruneStaleEntityHistoryQuery(~entityName, ~entityIndex, ~pgSchema),
     [safeCheckpointId]->Utils.magic,
   )
 }
 
 // If an entity doesn't have a history before the update
 // we create it automatically with checkpoint_id 0
-let makeBackfillHistoryQuery = (~pgSchema, ~entityName) => {
+let makeBackfillHistoryQuery = (~pgSchema, ~entityName, ~entityIndex) => {
+  let historyTableRef = `"${pgSchema}"."${historyTableName(~entityName, ~entityIndex)}"`
   `WITH target_ids AS (
   SELECT UNNEST($1::${(Text: Table.fieldType :> string)}[]) AS id
 ),
@@ -219,17 +236,20 @@ missing_history AS (
   SELECT e.*
   FROM "${pgSchema}"."${entityName}" e
   JOIN target_ids t ON e.id = t.id
-  LEFT JOIN "${pgSchema}"."${historyTableName(~entityName)}" h ON h.id = e.id
+  LEFT JOIN ${historyTableRef} h ON h.id = e.id
   WHERE h.id IS NULL
 )
-INSERT INTO "${pgSchema}"."${historyTableName(~entityName)}"
+INSERT INTO ${historyTableRef}
 SELECT *, 0 AS ${checkpointIdFieldName}, '${(RowAction.SET :> string)}' as ${changeFieldName}
 FROM missing_history;`
 }
 
-let backfillHistory = (sql, ~pgSchema, ~entityName, ~ids: array<string>) => {
+let backfillHistory = (sql, ~pgSchema, ~entityName, ~entityIndex, ~ids: array<string>) => {
   sql
-  ->Postgres.preparedUnsafe(makeBackfillHistoryQuery(~entityName, ~pgSchema), [ids]->Obj.magic)
+  ->Postgres.preparedUnsafe(
+    makeBackfillHistoryQuery(~entityName, ~entityIndex, ~pgSchema),
+    [ids]->Obj.magic,
+  )
   ->Promise.ignoreValue
 }
 
@@ -248,11 +268,12 @@ let insertDeleteUpdates = (
   ->Promise.ignoreValue
 }
 
-let rollback = (sql, ~pgSchema, ~entityName, ~rollbackTargetCheckpointId: int) => {
+let rollback = (sql, ~pgSchema, ~entityName, ~entityIndex, ~rollbackTargetCheckpointId: int) => {
   sql
   ->Postgres.preparedUnsafe(
     `DELETE FROM "${pgSchema}"."${historyTableName(
         ~entityName,
+        ~entityIndex,
       )}" WHERE "${checkpointIdFieldName}" > $1;`,
     [rollbackTargetCheckpointId]->Utils.magic,
   )

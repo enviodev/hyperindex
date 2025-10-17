@@ -15,9 +15,12 @@ let computeChainsState = (chainFetchers: ChainMap.t<ChainFetcher.t>): Internal.c
     let chainId = chain->ChainMap.Chain.toChainId->Int.toString
     let isReady = chainFetcher.timestampCaughtUpToHeadOrEndblock !== None
 
-    chains->Js.Dict.set(chainId, {
-      Internal.isReady: isReady,
-    })
+    chains->Js.Dict.set(
+      chainId,
+      {
+        Internal.isReady: isReady,
+      },
+    )
   })
 
   chains
@@ -391,18 +394,27 @@ let processEventBatch = async (
   try {
     let timeRef = Hrtime.makeTimer()
 
-    await batch->preloadBatchOrThrow(~loadManager, ~persistence=config.persistence, ~inMemoryStore, ~chains)
+    if batch.items->Utils.Array.notEmpty {
+      await batch->preloadBatchOrThrow(
+        ~loadManager,
+        ~persistence=config.persistence,
+        ~inMemoryStore,
+        ~chains,
+      )
+    }
 
     let elapsedTimeAfterLoaders = timeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
 
-    await batch->runBatchHandlersOrThrow(
-      ~inMemoryStore,
-      ~loadManager,
-      ~config,
-      ~shouldSaveHistory=config->Config.shouldSaveHistory(~isInReorgThreshold),
-      ~shouldBenchmark=Env.Benchmark.shouldSaveData,
-      ~chains,
-    )
+    if batch.items->Utils.Array.notEmpty {
+      await batch->runBatchHandlersOrThrow(
+        ~inMemoryStore,
+        ~loadManager,
+        ~config,
+        ~shouldSaveHistory=config->Config.shouldSaveHistory(~isInReorgThreshold),
+        ~shouldBenchmark=Env.Benchmark.shouldSaveData,
+        ~chains,
+      )
+    }
 
     let elapsedTimeAfterProcessing =
       timeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis

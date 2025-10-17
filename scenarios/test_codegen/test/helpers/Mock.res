@@ -208,7 +208,7 @@ module Indexer = {
     value: string,
     labels: dict<string>,
   }
-  type t = {
+  type rec t = {
     getBatchWritePromise: unit => promise<unit>,
     getRollbackReadyPromise: unit => promise<unit>,
     query: 'entity. module(Entities.Entity with type t = 'entity) => promise<array<'entity>>,
@@ -217,11 +217,12 @@ module Indexer = {
     >,
     queryCheckpoints: unit => promise<array<InternalTable.Checkpoints.t>>,
     metric: string => promise<array<metric>>,
+    restart: unit => promise<t>,
   }
 
   type chainConfig = {chain: Types.chain, sources: array<Source.t>, startBlock?: int}
 
-  let make = async (
+  let rec make = async (
     ~chains: array<chainConfig>,
     ~multichain=InternalConfig.Unordered,
     ~saveFullHistory=false,
@@ -393,6 +394,14 @@ module Indexer = {
         | None => []
         }
       },
+      restart: () => {
+        let state = gsManager->GlobalStateManager.getState
+        gsManager->GlobalStateManager.setState({
+          ...gsManager->GlobalStateManager.getState,
+          id: state.id + 1,
+        })
+        make(~chains, ~multichain, ~saveFullHistory, ~reset=false)
+      },
     }
   }
 }
@@ -422,6 +431,7 @@ module Source = {
     resolveGetItemsOrThrow: (
       array<itemMock>,
       ~latestFetchedBlockNumber: int=?,
+      ~latestFetchedBlockHash: string=?,
       ~currentBlockHeight: int=?,
       ~prevRangeLastBlock: ReorgDetection.blockData=?,
     ) => unit,
@@ -463,6 +473,7 @@ module Source = {
       resolveGetItemsOrThrow: (
         items,
         ~latestFetchedBlockNumber=?,
+        ~latestFetchedBlockHash=?,
         ~currentBlockHeight=?,
         ~prevRangeLastBlock=?,
       ) => {
@@ -470,6 +481,7 @@ module Source = {
           resolve({
             "items": items,
             "latestFetchedBlockNumber": latestFetchedBlockNumber,
+            "latestFetchedBlockHash": latestFetchedBlockHash,
             "prevRangeLastBlock": prevRangeLastBlock,
             "currentBlockHeight": currentBlockHeight,
           })
@@ -536,7 +548,10 @@ module Source = {
                     reorgGuard: {
                       rangeLastBlock: {
                         blockNumber: latestFetchedBlockNumber,
-                        blockHash: `0x${latestFetchedBlockNumber->Int.toString}`,
+                        blockHash: switch data["latestFetchedBlockHash"] {
+                        | Some(latestFetchedBlockHash) => latestFetchedBlockHash
+                        | None => `0x${latestFetchedBlockNumber->Int.toString}`
+                        },
                       },
                       prevRangeLastBlock: switch data["prevRangeLastBlock"] {
                       | Some(prevRangeLastBlock) => Some(prevRangeLastBlock)

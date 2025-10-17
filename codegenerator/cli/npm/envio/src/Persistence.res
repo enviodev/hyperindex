@@ -156,13 +156,13 @@ let init = {
           Logging.info(`Found existing indexer storage. Resuming indexing state...`)
           let initialState = await persistence.storage.resumeInitialState()
           persistence.storageStatus = Ready(initialState)
-          let checkpoints = Js.Dict.empty()
+          let progress = Js.Dict.empty()
           initialState.chains->Js.Array2.forEach(c => {
-            checkpoints->Utils.Dict.setByInt(c.id, c.progressBlockNumber)
+            progress->Utils.Dict.setByInt(c.id, c.progressBlockNumber)
           })
           Logging.info({
             "msg": `Successfully resumed indexing state! Continuing from the last checkpoint.`,
-            "checkpoints": checkpoints,
+            "progress": progress,
           })
         }
         resolveRef.contents()

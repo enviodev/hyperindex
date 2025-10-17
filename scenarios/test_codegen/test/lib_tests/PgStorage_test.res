@@ -102,6 +102,12 @@ describe("Test PgStorage SQL generation functions", () => {
         let entities = [
           module(Entities.A)->Entities.entityModToInternal,
           module(Entities.B)->Entities.entityModToInternal,
+          module(
+            Entities.EntityWith63LenghtName______________________________________one
+          )->Entities.entityModToInternal,
+          module(
+            Entities.EntityWith63LenghtName______________________________________two
+          )->Entities.entityModToInternal,
         ]
         let enums = [Enums.EntityType.config->Internal.fromGenericEnumConfig]
 
@@ -142,7 +148,7 @@ describe("Test PgStorage SQL generation functions", () => {
 CREATE SCHEMA "test_schema";
 GRANT ALL ON SCHEMA "test_schema" TO "postgres";
 GRANT ALL ON SCHEMA "test_schema" TO public;
-CREATE TYPE "test_schema".ENTITY_TYPE AS ENUM('A', 'B', 'C', 'CustomSelectionTestPass', 'D', 'EntityWithAllNonArrayTypes', 'EntityWithAllTypes', 'EntityWithBigDecimal', 'EntityWithTimestamp', 'Gravatar', 'NftCollection', 'PostgresNumericPrecisionEntityTester', 'SimpleEntity', 'Token', 'User', 'dynamic_contract_registry');
+CREATE TYPE "test_schema".ENTITY_TYPE AS ENUM('A', 'B', 'C', 'CustomSelectionTestPass', 'D', 'EntityWith63LenghtName______________________________________one', 'EntityWith63LenghtName______________________________________two', 'EntityWithAllNonArrayTypes', 'EntityWithAllTypes', 'EntityWithBigDecimal', 'EntityWithTimestamp', 'Gravatar', 'NftCollection', 'PostgresNumericPrecisionEntityTester', 'SimpleEntity', 'Token', 'User', 'dynamic_contract_registry');
 CREATE TABLE IF NOT EXISTS "test_schema"."envio_chains"("id" INTEGER NOT NULL, "start_block" INTEGER NOT NULL, "end_block" INTEGER, "max_reorg_depth" INTEGER NOT NULL, "buffer_block" INTEGER NOT NULL, "source_block" INTEGER NOT NULL, "first_event_block" INTEGER, "ready_at" TIMESTAMP WITH TIME ZONE NULL, "events_processed" INTEGER NOT NULL, "_is_hyper_sync" BOOLEAN NOT NULL, "progress_block" INTEGER NOT NULL, "_num_batches_fetched" INTEGER NOT NULL, PRIMARY KEY("id"));
 CREATE TABLE IF NOT EXISTS "test_schema"."persisted_state"("id" SERIAL NOT NULL, "envio_version" TEXT NOT NULL, "config_hash" TEXT NOT NULL, "schema_hash" TEXT NOT NULL, "handler_files_hash" TEXT NOT NULL, "abi_files_hash" TEXT NOT NULL, PRIMARY KEY("id"));
 CREATE TABLE IF NOT EXISTS "test_schema"."envio_checkpoints"("id" INTEGER NOT NULL, "chain_id" INTEGER NOT NULL, "block_number" INTEGER NOT NULL, "block_hash" TEXT, "events_processed" INTEGER NOT NULL, PRIMARY KEY("id"));
@@ -151,36 +157,40 @@ CREATE TABLE IF NOT EXISTS "test_schema"."A"("b_id" TEXT NOT NULL, "id" TEXT NOT
 CREATE TABLE IF NOT EXISTS "test_schema"."envio_history_A"("b_id" TEXT, "id" TEXT NOT NULL, "optionalStringToTestLinkedEntities" TEXT, "checkpoint_id" INTEGER NOT NULL, "envio_change" "test_schema".ENVIO_HISTORY_CHANGE NOT NULL, PRIMARY KEY("id", "checkpoint_id"));
 CREATE TABLE IF NOT EXISTS "test_schema"."B"("c_id" TEXT, "id" TEXT NOT NULL, PRIMARY KEY("id"));
 CREATE TABLE IF NOT EXISTS "test_schema"."envio_history_B"("c_id" TEXT, "id" TEXT NOT NULL, "checkpoint_id" INTEGER NOT NULL, "envio_change" "test_schema".ENVIO_HISTORY_CHANGE NOT NULL, PRIMARY KEY("id", "checkpoint_id"));
+CREATE TABLE IF NOT EXISTS "test_schema"."EntityWith63LenghtName______________________________________one"("id" TEXT NOT NULL, PRIMARY KEY("id"));
+CREATE TABLE IF NOT EXISTS "test_schema"."envio_history_EntityWith63LenghtName__________________________5"("id" TEXT NOT NULL, "checkpoint_id" INTEGER NOT NULL, "envio_change" "test_schema".ENVIO_HISTORY_CHANGE NOT NULL, PRIMARY KEY("id", "checkpoint_id"));
+CREATE TABLE IF NOT EXISTS "test_schema"."EntityWith63LenghtName______________________________________two"("id" TEXT NOT NULL, PRIMARY KEY("id"));
+CREATE TABLE IF NOT EXISTS "test_schema"."envio_history_EntityWith63LenghtName__________________________6"("id" TEXT NOT NULL, "checkpoint_id" INTEGER NOT NULL, "envio_change" "test_schema".ENVIO_HISTORY_CHANGE NOT NULL, PRIMARY KEY("id", "checkpoint_id"));
 CREATE INDEX IF NOT EXISTS "A_b_id" ON "test_schema"."A"("b_id");
 CREATE INDEX IF NOT EXISTS "A_b_id" ON "test_schema"."A"("b_id");
 CREATE VIEW "test_schema"."_meta" AS 
-     SELECT 
-       "id" AS "chainId",
-       "start_block" AS "startBlock", 
-       "end_block" AS "endBlock",
-       "progress_block" AS "progressBlock",
-       "buffer_block" AS "bufferBlock",
-       "first_event_block" AS "firstEventBlock",
-       "events_processed" AS "eventsProcessed",
-       "source_block" AS "sourceBlock",
-       "ready_at" AS "readyAt",
-       ("ready_at" IS NOT NULL) AS "isReady"
-     FROM "test_schema"."envio_chains"
-     ORDER BY "id";
+SELECT 
+  "id" AS "chainId",
+  "start_block" AS "startBlock", 
+  "end_block" AS "endBlock",
+  "progress_block" AS "progressBlock",
+  "buffer_block" AS "bufferBlock",
+  "first_event_block" AS "firstEventBlock",
+  "events_processed" AS "eventsProcessed",
+  "source_block" AS "sourceBlock",
+  "ready_at" AS "readyAt",
+  ("ready_at" IS NOT NULL) AS "isReady"
+FROM "test_schema"."envio_chains"
+ORDER BY "id";
 CREATE VIEW "test_schema"."chain_metadata" AS 
-     SELECT 
-       "source_block" AS "block_height",
-       "id" AS "chain_id",
-       "end_block" AS "end_block", 
-       "first_event_block" AS "first_event_block_number",
-       "_is_hyper_sync" AS "is_hyper_sync",
-       "buffer_block" AS "latest_fetched_block_number",
-       "progress_block" AS "latest_processed_block",
-       "_num_batches_fetched" AS "num_batches_fetched",
-       "events_processed" AS "num_events_processed",
-       "start_block" AS "start_block",
-       "ready_at" AS "timestamp_caught_up_to_head_or_endblock"
-     FROM "test_schema"."envio_chains";
+SELECT 
+  "source_block" AS "block_height",
+  "id" AS "chain_id",
+  "end_block" AS "end_block", 
+  "first_event_block" AS "first_event_block_number",
+  "_is_hyper_sync" AS "is_hyper_sync",
+  "buffer_block" AS "latest_fetched_block_number",
+  "progress_block" AS "latest_processed_block",
+  "_num_batches_fetched" AS "num_batches_fetched",
+  "events_processed" AS "num_events_processed",
+  "start_block" AS "start_block",
+  "ready_at" AS "timestamp_caught_up_to_head_or_endblock"
+FROM "test_schema"."envio_chains";
 INSERT INTO "test_schema"."envio_chains" ("id", "start_block", "end_block", "max_reorg_depth", "source_block", "first_event_block", "buffer_block", "progress_block", "ready_at", "events_processed", "_is_hyper_sync", "_num_batches_fetched")
 VALUES (1, 100, 200, 10, 0, NULL, -1, -1, NULL, 0, false, 0),
        (137, 0, NULL, 200, 0, NULL, -1, -1, NULL, 0, false, 0);`
@@ -220,33 +230,33 @@ CREATE TABLE IF NOT EXISTS "test_schema"."persisted_state"("id" SERIAL NOT NULL,
 CREATE TABLE IF NOT EXISTS "test_schema"."envio_checkpoints"("id" INTEGER NOT NULL, "chain_id" INTEGER NOT NULL, "block_number" INTEGER NOT NULL, "block_hash" TEXT, "events_processed" INTEGER NOT NULL, PRIMARY KEY("id"));
 CREATE TABLE IF NOT EXISTS "test_schema"."raw_events"("chain_id" INTEGER NOT NULL, "event_id" NUMERIC NOT NULL, "event_name" TEXT NOT NULL, "contract_name" TEXT NOT NULL, "block_number" INTEGER NOT NULL, "log_index" INTEGER NOT NULL, "src_address" TEXT NOT NULL, "block_hash" TEXT NOT NULL, "block_timestamp" INTEGER NOT NULL, "block_fields" JSONB NOT NULL, "transaction_fields" JSONB NOT NULL, "params" JSONB NOT NULL, "serial" SERIAL, PRIMARY KEY("serial"));
 CREATE VIEW "test_schema"."_meta" AS 
-     SELECT 
-       "id" AS "chainId",
-       "start_block" AS "startBlock", 
-       "end_block" AS "endBlock",
-       "progress_block" AS "progressBlock",
-       "buffer_block" AS "bufferBlock",
-       "first_event_block" AS "firstEventBlock",
-       "events_processed" AS "eventsProcessed",
-       "source_block" AS "sourceBlock",
-       "ready_at" AS "readyAt",
-       ("ready_at" IS NOT NULL) AS "isReady"
-     FROM "test_schema"."envio_chains"
-     ORDER BY "id";
+SELECT 
+  "id" AS "chainId",
+  "start_block" AS "startBlock", 
+  "end_block" AS "endBlock",
+  "progress_block" AS "progressBlock",
+  "buffer_block" AS "bufferBlock",
+  "first_event_block" AS "firstEventBlock",
+  "events_processed" AS "eventsProcessed",
+  "source_block" AS "sourceBlock",
+  "ready_at" AS "readyAt",
+  ("ready_at" IS NOT NULL) AS "isReady"
+FROM "test_schema"."envio_chains"
+ORDER BY "id";
 CREATE VIEW "test_schema"."chain_metadata" AS 
-     SELECT 
-       "source_block" AS "block_height",
-       "id" AS "chain_id",
-       "end_block" AS "end_block", 
-       "first_event_block" AS "first_event_block_number",
-       "_is_hyper_sync" AS "is_hyper_sync",
-       "buffer_block" AS "latest_fetched_block_number",
-       "progress_block" AS "latest_processed_block",
-       "_num_batches_fetched" AS "num_batches_fetched",
-       "events_processed" AS "num_events_processed",
-       "start_block" AS "start_block",
-       "ready_at" AS "timestamp_caught_up_to_head_or_endblock"
-     FROM "test_schema"."envio_chains";`
+SELECT 
+  "source_block" AS "block_height",
+  "id" AS "chain_id",
+  "end_block" AS "end_block", 
+  "first_event_block" AS "first_event_block_number",
+  "_is_hyper_sync" AS "is_hyper_sync",
+  "buffer_block" AS "latest_fetched_block_number",
+  "progress_block" AS "latest_processed_block",
+  "_num_batches_fetched" AS "num_batches_fetched",
+  "events_processed" AS "num_events_processed",
+  "start_block" AS "start_block",
+  "ready_at" AS "timestamp_caught_up_to_head_or_endblock"
+FROM "test_schema"."envio_chains";`
 
         Assert.equal(
           mainQuery,
@@ -304,33 +314,33 @@ CREATE TABLE IF NOT EXISTS "public"."A"("b_id" TEXT NOT NULL, "id" TEXT NOT NULL
 CREATE TABLE IF NOT EXISTS "public"."envio_history_A"("b_id" TEXT, "id" TEXT NOT NULL, "optionalStringToTestLinkedEntities" TEXT, "checkpoint_id" INTEGER NOT NULL, "envio_change" "public".ENVIO_HISTORY_CHANGE NOT NULL, PRIMARY KEY("id", "checkpoint_id"));
 CREATE INDEX IF NOT EXISTS "A_b_id" ON "public"."A"("b_id");
 CREATE VIEW "public"."_meta" AS 
-     SELECT 
-       "id" AS "chainId",
-       "start_block" AS "startBlock", 
-       "end_block" AS "endBlock",
-       "progress_block" AS "progressBlock",
-       "buffer_block" AS "bufferBlock",
-       "first_event_block" AS "firstEventBlock",
-       "events_processed" AS "eventsProcessed",
-       "source_block" AS "sourceBlock",
-       "ready_at" AS "readyAt",
-       ("ready_at" IS NOT NULL) AS "isReady"
-     FROM "public"."envio_chains"
-     ORDER BY "id";
+SELECT 
+  "id" AS "chainId",
+  "start_block" AS "startBlock", 
+  "end_block" AS "endBlock",
+  "progress_block" AS "progressBlock",
+  "buffer_block" AS "bufferBlock",
+  "first_event_block" AS "firstEventBlock",
+  "events_processed" AS "eventsProcessed",
+  "source_block" AS "sourceBlock",
+  "ready_at" AS "readyAt",
+  ("ready_at" IS NOT NULL) AS "isReady"
+FROM "public"."envio_chains"
+ORDER BY "id";
 CREATE VIEW "public"."chain_metadata" AS 
-     SELECT 
-       "source_block" AS "block_height",
-       "id" AS "chain_id",
-       "end_block" AS "end_block", 
-       "first_event_block" AS "first_event_block_number",
-       "_is_hyper_sync" AS "is_hyper_sync",
-       "buffer_block" AS "latest_fetched_block_number",
-       "progress_block" AS "latest_processed_block",
-       "_num_batches_fetched" AS "num_batches_fetched",
-       "events_processed" AS "num_events_processed",
-       "start_block" AS "start_block",
-       "ready_at" AS "timestamp_caught_up_to_head_or_endblock"
-     FROM "public"."envio_chains";`
+SELECT 
+  "source_block" AS "block_height",
+  "id" AS "chain_id",
+  "end_block" AS "end_block", 
+  "first_event_block" AS "first_event_block_number",
+  "_is_hyper_sync" AS "is_hyper_sync",
+  "buffer_block" AS "latest_fetched_block_number",
+  "progress_block" AS "latest_processed_block",
+  "_num_batches_fetched" AS "num_batches_fetched",
+  "events_processed" AS "num_events_processed",
+  "start_block" AS "start_block",
+  "ready_at" AS "timestamp_caught_up_to_head_or_endblock"
+FROM "public"."envio_chains";`
 
         Assert.equal(
           mainQuery,
@@ -677,6 +687,132 @@ VALUES (1, 100, 200, 5, 0, NULL, -1, -1, NULL, 0, false, 0),
           query,
           Some(expectedQuery),
           ~message="Should generate correct INSERT VALUES SQL for multiple chains",
+        )
+      },
+    )
+  })
+
+  describe("InternalTable.Chains.makeGetInitialStateQuery", () => {
+    Async.it(
+      "Should create correct SQL for initial state query",
+      async () => {
+        let query = InternalTable.Chains.makeGetInitialStateQuery(~pgSchema="test_schema")
+
+        let expectedQuery = `SELECT "id" as "id",
+"start_block" as "startBlock",
+"end_block" as "endBlock",
+"max_reorg_depth" as "maxReorgDepth",
+"first_event_block" as "firstEventBlockNumber",
+"ready_at" as "timestampCaughtUpToHeadOrEndblock",
+"events_processed" as "numEventsProcessed",
+"progress_block" as "progressBlockNumber",
+(
+  SELECT COALESCE(json_agg(json_build_object(
+    'address', "contract_address",
+    'contractName', "contract_name",
+    'startBlock', "registering_event_block_number",
+    'registrationBlock', "registering_event_block_number"
+  )), '[]'::json)
+  FROM "test_schema"."dynamic_contract_registry"
+  WHERE "chain_id" = chains."id"
+) as "dynamicContracts"
+FROM "test_schema"."envio_chains" as chains;`
+
+        Assert.equal(query, expectedQuery, ~message="Initial state SQL should match exactly")
+      },
+    )
+  })
+
+  describe("InternalTable.Checkpoints.makeCommitedCheckpointIdQuery", () => {
+    Async.it(
+      "Should create correct SQL to get committed checkpoint id",
+      async () => {
+        let query = InternalTable.Checkpoints.makeCommitedCheckpointIdQuery(~pgSchema="test_schema")
+
+        Assert.equal(
+          query,
+          `SELECT COALESCE(MAX(id), 0) AS id FROM "test_schema"."envio_checkpoints";`,
+          ~message="Committed checkpoint id SQL should match exactly",
+        )
+      },
+    )
+  })
+
+  describe("InternalTable.Checkpoints.makeInsertCheckpointQuery", () => {
+    Async.it(
+      "Should create correct SQL for inserting checkpoints with unnest",
+      async () => {
+        let query = InternalTable.Checkpoints.makeInsertCheckpointQuery(~pgSchema="test_schema")
+
+        let expectedQuery = `INSERT INTO "test_schema"."envio_checkpoints" ("id", "chain_id", "block_number", "block_hash", "events_processed")
+SELECT * FROM unnest($1::INTEGER[],$2::INTEGER[],$3::INTEGER[],$4::TEXT[],$5::INTEGER[]);`
+
+        Assert.equal(query, expectedQuery, ~message="Insert checkpoints SQL should match exactly")
+      },
+    )
+  })
+
+  describe("InternalTable.Checkpoints.makePruneStaleCheckpointsQuery", () => {
+    Async.it(
+      "Should create correct SQL for pruning stale checkpoints",
+      async () => {
+        let query = InternalTable.Checkpoints.makePruneStaleCheckpointsQuery(
+          ~pgSchema="test_schema",
+        )
+
+        Assert.equal(
+          query,
+          `DELETE FROM "test_schema"."envio_checkpoints" WHERE "id" < $1;`,
+          ~message="Prune stale checkpoints SQL should match exactly",
+        )
+      },
+    )
+  })
+
+  describe("InternalTable.Checkpoints.makeGetRollbackTargetCheckpointQuery", () => {
+    Async.it(
+      "Should create correct SQL for rollback target checkpoint",
+      async () => {
+        let query = InternalTable.Checkpoints.makeGetRollbackTargetCheckpointQuery(
+          ~pgSchema="test_schema",
+        )
+
+        let expectedQuery = `SELECT "id" FROM "test_schema"."envio_checkpoints"
+WHERE 
+  "chain_id" = $1 AND
+  "block_number" <= $2
+ORDER BY "id" DESC
+LIMIT 1;`
+
+        Assert.equal(
+          query,
+          expectedQuery,
+          ~message="Rollback target checkpoint SQL should match exactly",
+        )
+      },
+    )
+  })
+
+  describe("InternalTable.Checkpoints.makeGetRollbackProgressDiffQuery", () => {
+    Async.it(
+      "Should create correct SQL for rollback progress diff",
+      async () => {
+        let query = InternalTable.Checkpoints.makeGetRollbackProgressDiffQuery(
+          ~pgSchema="test_schema",
+        )
+
+        let expectedQuery = `SELECT 
+  "chain_id",
+  SUM("events_processed") as events_processed_diff,
+  MIN("block_number") - 1 as new_progress_block_number
+FROM "test_schema"."envio_checkpoints"
+WHERE "id" > $1
+GROUP BY "chain_id";`
+
+        Assert.equal(
+          query,
+          expectedQuery,
+          ~message="Rollback progress diff SQL should match exactly",
         )
       },
     )

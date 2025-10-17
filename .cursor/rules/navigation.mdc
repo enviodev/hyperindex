@@ -4,6 +4,13 @@ globs: ""
 alwaysApply: true
 ---
 
+# Always
+
+- Sacrifice grammar for the sake of concision
+- List any unresolved questions at the end, if any
+
+## Navigation
+
 - The Rust CLI lives in `codegenerator/cli`.
   - Entry point: `codegenerator/cli/src/lib.rs`.
   - Command dispatcher: `codegenerator/cli/src/commands.rs`.

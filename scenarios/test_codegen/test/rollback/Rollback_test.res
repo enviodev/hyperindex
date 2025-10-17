@@ -158,11 +158,7 @@ describe("Single Chain Simple Rollback", () => {
 
     await dispatchTaskInitalChain(NextQuery(Chain(chain)))
 
-    Assert.deepEqual(
-      tasks.contents,
-      [NextQuery(Chain(chain))],
-      ~message="should only be one task of next query now that currentBlockHeight is set",
-    )
+    Assert.deepEqual(tasks.contents, [NextQuery(CheckAllChains)])
 
     await dispatchAllTasksInitalChain()
 
@@ -220,11 +216,7 @@ describe("Single Chain Simple Rollback", () => {
 
     await dispatchTaskInitalChain(NextQuery(Chain(chain)))
 
-    Assert.deepEqual(
-      tasks.contents,
-      [NextQuery(Chain(chain))],
-      ~message="should only be one task of next query now that currentBlockHeight is set",
-    )
+    Assert.deepEqual(tasks.contents, [NextQuery(CheckAllChains)])
 
     await dispatchAllTasksInitalChain()
 
@@ -445,10 +437,17 @@ describe("E2E rollback tests", () => {
           blockNumber: 101,
           logIndex: 1,
           handler: async ({context}) => {
-            // This should create a new history row
+            // This should overwrite the previous value
+            // set on log index 0. No history rows should be created
+            // since they are per batch now.
             context.simpleEntity.set({
               id: "2",
               value: "value-2",
+            })
+
+            context.simpleEntity.set({
+              id: "4",
+              value: "value-1",
             })
           },
         },
@@ -461,6 +460,9 @@ describe("E2E rollback tests", () => {
               id: "3",
               value: "value-1",
             })
+
+            // Test rollback of creating + deleting an entity
+            context.simpleEntity.deleteUnsafe("4")
           },
         },
         {
@@ -542,6 +544,19 @@ describe("E2E rollback tests", () => {
               Entities.SimpleEntity.id: "3",
               value: "value-1",
             }),
+          },
+          {
+            checkpointId: firstHistoryCheckpointId,
+            entityId: "4",
+            entityUpdateAction: Set({
+              Entities.SimpleEntity.id: "4",
+              value: "value-1",
+            }),
+          },
+          {
+            checkpointId: firstHistoryCheckpointId + 1,
+            entityId: "4",
+            entityUpdateAction: Delete,
           },
         ],
       ),
@@ -717,7 +732,7 @@ describe("E2E rollback tests", () => {
       [{value: "1", labels: Js.Dict.empty()}],
     )
 
-    let indexerMock = await M.Indexer.make(~chains, ~reset=false)
+    let indexerMock = await indexerMock.restart()
 
     sourceMock1337.getHeightOrThrowCalls->Utils.Array.clearInPlace
     sourceMock1337.getItemsOrThrowCalls->Utils.Array.clearInPlace
@@ -747,11 +762,13 @@ describe("E2E rollback tests", () => {
       }),
       ~message="Should enter reorg threshold for the second time and request now to the latest block",
     )
+
     sourceMock1337.resolveGetItemsOrThrow(
       [],
       ~latestFetchedBlockNumber=200,
       ~currentBlockHeight=320,
     )
+
     await indexerMock.getBatchWritePromise()
 
     Assert.deepEqual(
@@ -766,7 +783,7 @@ describe("E2E rollback tests", () => {
 
     Assert.deepEqual(
       await indexerMock.metric("envio_reorg_threshold"),
-      [{value: "0", labels: Js.Dict.empty()}],
+      [{value: "1", labels: Js.Dict.empty()}],
     )
   })
 
@@ -787,6 +804,124 @@ describe("E2E rollback tests", () => {
 
     await M.Helper.initialEnterReorgThreshold(~indexerMock, ~sourceMock)
     await testSingleChainRollback(~sourceMock, ~indexerMock)
+  })
+
+  Async.it(
+    "Stores checkpoints inside of the reorg threshold for batches without items",
+    async () => {
+      let sourceMock = M.Source.make(
+        [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
+        ~chain=#1337,
+      )
+      let indexerMock = await M.Indexer.make(
+        ~chains=[
+          {
+            chain: #1337,
+            sources: [sourceMock.source],
+          },
+        ],
+      )
+      await Utils.delay(0)
+
+      await M.Helper.initialEnterReorgThreshold(~indexerMock, ~sourceMock)
+
+      sourceMock.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=102)
+
+      await indexerMock.getBatchWritePromise()
+
+      Assert.deepEqual(
+        await indexerMock.queryCheckpoints(),
+        [
+          {
+            id: 2,
+            eventsProcessed: 0,
+            chainId: 1337,
+            blockNumber: 102,
+            blockHash: Js.Null.Value("0x102"),
+          },
+        ],
+        ~message="Should have added a checkpoint even though there are no items in the batch",
+      )
+    },
+  )
+
+  Async.it("Shouldn't detect reorg for rollbacked block", async () => {
+    let sourceMock = M.Source.make(
+      [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
+      ~chain=#1337,
+    )
+    let indexerMock = await M.Indexer.make(
+      ~chains=[
+        {
+          chain: #1337,
+          sources: [sourceMock.source],
+        },
+      ],
+    )
+    await Utils.delay(0)
+
+    await M.Helper.initialEnterReorgThreshold(~indexerMock, ~sourceMock)
+
+    sourceMock.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=102)
+    await indexerMock.getBatchWritePromise()
+
+    sourceMock.resolveGetItemsOrThrow(
+      [],
+      ~latestFetchedBlockNumber=103,
+      ~prevRangeLastBlock={
+        blockNumber: 102,
+        blockHash: "0x102-reorged",
+      },
+    )
+    await Utils.delay(0)
+    await Utils.delay(0)
+
+    Assert.deepEqual(
+      sourceMock.getBlockHashesCalls,
+      [[100, 102]],
+      ~message="Should have called getBlockHashes to find rollback depth",
+    )
+    sourceMock.resolveGetBlockHashes([
+      // The block 100 is untouched so we can rollback to it
+      {blockNumber: 100, blockHash: "0x100", blockTimestamp: 100},
+      {blockNumber: 102, blockHash: "0x102-reorged", blockTimestamp: 102},
+    ])
+
+    sourceMock.getItemsOrThrowCalls->Utils.Array.clearInPlace
+
+    await indexerMock.getRollbackReadyPromise()
+    Assert.deepEqual(
+      sourceMock.getItemsOrThrowCalls,
+      [
+        {
+          "fromBlock": 101,
+          "toBlock": None,
+          "retry": 0,
+        },
+      ],
+      ~message="Should rollback fetch state and re-request items",
+    )
+
+    sourceMock.resolveGetItemsOrThrow(
+      [],
+      ~latestFetchedBlockNumber=102,
+      ~latestFetchedBlockHash="0x102-reorged",
+    )
+    await indexerMock.getBatchWritePromise()
+
+    Assert.deepEqual(
+      await indexerMock.queryCheckpoints(),
+      [
+        {
+          id: 1,
+          eventsProcessed: 0,
+          chainId: 1337,
+          blockNumber: 102,
+          blockHash: Js.Null.Value("0x102-reorged"),
+        },
+      ],
+      ~message="Should update the checkpoint without retriggering a reorg",
+    )
   })
 
   Async.it(
@@ -1969,6 +2104,13 @@ This might be wrong after we start exposing a block hash for progress block.`,
         (
           [
             {
+              id: 2,
+              eventsProcessed: 0,
+              chainId: 100,
+              blockNumber: 101,
+              blockHash: Js.Null.Value("0x101"),
+            },
+            {
               id: 3,
               eventsProcessed: 0,
               chainId: 1337,
@@ -2180,6 +2322,13 @@ Sorted by timestamp and chain id`,
         )),
         (
           [
+            {
+              id: 2,
+              eventsProcessed: 0,
+              chainId: 100,
+              blockNumber: 101,
+              blockHash: Js.Null.Value("0x101"),
+            },
             {
               id: 3,
               eventsProcessed: 0,

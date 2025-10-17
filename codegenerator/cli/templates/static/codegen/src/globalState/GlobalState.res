@@ -522,11 +522,34 @@ let updateChainFetcher = (chainFetcherUpdate, ~state, ~chain) => {
   )
 }
 
+let onEnterReorgThreshold = (~state: t) => {
+  Logging.info("Reorg threshold reached")
+  Prometheus.ReorgThreshold.set(~isInReorgThreshold=true)
+
+  let chainFetchers = state.chainManager.chainFetchers->ChainMap.map(chainFetcher => {
+    {
+      ...chainFetcher,
+      fetchState: chainFetcher.fetchState->FetchState.updateInternal(
+        ~blockLag=Env.indexingBlockLag->Option.getWithDefault(0),
+      ),
+    }
+  })
+
+  {
+    ...state,
+    chainManager: {
+      ...state.chainManager,
+      chainFetchers,
+      isInReorgThreshold: true,
+    },
+  }
+}
+
 let actionReducer = (state: t, action: action) => {
   switch action {
   | FinishWaitingForNewBlock({chain, currentBlockHeight}) => {
-      let isInReorgThreshold = state.chainManager.isInReorgThreshold
-      let isBelowReorgThreshold = !isInReorgThreshold && state.config->Config.shouldRollbackOnReorg
+      let isBelowReorgThreshold =
+        !state.chainManager.isInReorgThreshold && state.config->Config.shouldRollbackOnReorg
       let shouldEnterReorgThreshold =
         isBelowReorgThreshold &&
         state.chainManager.chainFetchers
@@ -535,31 +558,21 @@ let actionReducer = (state: t, action: action) => {
           chainFetcher.fetchState->FetchState.isReadyToEnterReorgThreshold(~currentBlockHeight)
         })
 
-      (
-        {
-          ...state,
-          chainManager: {
-            ...state.chainManager,
-            isInReorgThreshold: isInReorgThreshold || shouldEnterReorgThreshold,
-            chainFetchers: state.chainManager.chainFetchers->ChainMap.update(
-              chain,
-              chainFetcher => {
-                if shouldEnterReorgThreshold {
-                  {
-                    ...chainFetcher,
-                    fetchState: chainFetcher.fetchState->FetchState.updateInternal(
-                      ~blockLag=Env.indexingBlockLag->Option.getWithDefault(0),
-                    ),
-                  }
-                } else {
-                  chainFetcher
-                }->updateChainFetcherCurrentBlockHeight(~currentBlockHeight)
-              },
-            ),
-          },
+      let state = {
+        ...state,
+        chainManager: {
+          ...state.chainManager,
+          chainFetchers: state.chainManager.chainFetchers->ChainMap.update(chain, chainFetcher => {
+            chainFetcher->updateChainFetcherCurrentBlockHeight(~currentBlockHeight)
+          }),
         },
-        [NextQuery(Chain(chain))],
-      )
+      }
+
+      if shouldEnterReorgThreshold {
+        (onEnterReorgThreshold(~state), [NextQuery(CheckAllChains)])
+      } else {
+        (state, [NextQuery(Chain(chain))])
+      }
     }
   | ValidatePartitionQueryResponse(partitionQueryResponse) =>
     state->validatePartitionQueryResponse(partitionQueryResponse)
@@ -634,30 +647,7 @@ let actionReducer = (state: t, action: action) => {
       },
       [Rollback],
     )
-  | EnterReorgThreshold =>
-    Logging.info("Reorg threshold reached")
-    Prometheus.ReorgThreshold.set(~isInReorgThreshold=true)
-
-    let chainFetchers = state.chainManager.chainFetchers->ChainMap.map(chainFetcher => {
-      {
-        ...chainFetcher,
-        fetchState: chainFetcher.fetchState->FetchState.updateInternal(
-          ~blockLag=Env.indexingBlockLag->Option.getWithDefault(0),
-        ),
-      }
-    })
-
-    (
-      {
-        ...state,
-        chainManager: {
-          ...state.chainManager,
-          chainFetchers,
-          isInReorgThreshold: true,
-        },
-      },
-      [NextQuery(CheckAllChains)],
-    )
+  | EnterReorgThreshold => (onEnterReorgThreshold(~state), [NextQuery(CheckAllChains)])
   | UpdateQueues({progressedChainsById, shouldEnterReorgThreshold}) =>
     let chainFetchers = state.chainManager.chainFetchers->ChainMap.mapWithKey((chain, cf) => {
       let fs = switch progressedChainsById->Utils.Dict.dangerouslyGetByIntNonOption(
@@ -798,6 +788,7 @@ let injectedTaskReducer = (
             let () =
               await Db.sql->EntityHistory.pruneStaleEntityHistory(
                 ~entityName=entityConfig.name,
+                ~entityIndex=entityConfig.index,
                 ~pgSchema=Env.Db.publicSchema,
                 ~safeCheckpointId,
               )
@@ -878,31 +869,13 @@ let injectedTaskReducer = (
             ~currentBlockHeight=chainFetcher.currentBlockHeight,
           )
         })
+
       if shouldEnterReorgThreshold {
         dispatchAction(EnterReorgThreshold)
       }
 
       if progressedChainsById->Utils.Dict.isEmpty {
         ()
-      } else if totalBatchSize === 0 {
-        dispatchAction(StartProcessingBatch)
-        // For this case there shouldn't be any FetchState changes
-        // so we don't dispatch UpdateQueues - only update the progress for chains without events
-        await Db.sql->InternalTable.Chains.setProgressedChains(
-          ~pgSchema=Db.publicSchema,
-          ~progressedChains=progressedChainsById->Utils.Dict.mapValuesToArray((
-            chainAfterBatch
-          ): InternalTable.Chains.progressedChain => {
-            chainId: chainAfterBatch.fetchState.chainId,
-            progressBlockNumber: chainAfterBatch.progressBlockNumber,
-            totalEventsProcessed: chainAfterBatch.totalEventsProcessed,
-          }),
-        )
-        // FIXME: When state.rollbackState is PreparedRollback
-        // If we increase progress in this case (no items)
-        // and then indexer restarts - there's a high chance of missing
-        // the rollback. This should be tested and fixed.
-        dispatchAction(EventBatchProcessed({batch: batch}))
       } else {
         if Env.Benchmark.shouldSaveData {
           let group = "Other"
@@ -1056,7 +1029,11 @@ let injectedTaskReducer = (
           )
           newProgressBlockNumberPerChain->Utils.Dict.setByInt(
             diff["chain_id"],
-            diff["new_progress_block_number"],
+            if rollbackTargetCheckpointId === 0 && diff["chain_id"] === reorgChainId {
+              Pervasives.min(diff["new_progress_block_number"], lastKnownValidBlockNumber)
+            } else {
+              diff["new_progress_block_number"]
+            },
           )
         }
       }

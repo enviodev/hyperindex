@@ -7,6 +7,7 @@ let isIndex = true
 
 module DynamicContractRegistry = {
   let name = "dynamic_contract_registry"
+  let index = -1
 
   let makeId = (~chainId, ~contractAddress) => {
     chainId->Belt.Int.toString ++ "-" ++ contractAddress->Address.toString
@@ -58,12 +59,13 @@ module DynamicContractRegistry = {
     ],
   )
 
-  let entityHistory = table->EntityHistory.fromTable(~schema)
+  let entityHistory = table->EntityHistory.fromTable(~schema, ~entityIndex=index)
 
   external castToInternal: t => Internal.entity = "%identity"
 
   let config = {
     name,
+    index,
     schema,
     rowsSchema,
     table,
@@ -606,35 +608,35 @@ module Views = {
 
   let makeMetaViewQuery = (~pgSchema) => {
     `CREATE VIEW "${pgSchema}"."${metaViewName}" AS 
-     SELECT 
-       "${(#id: Chains.field :> string)}" AS "chainId",
-       "${(#start_block: Chains.field :> string)}" AS "startBlock", 
-       "${(#end_block: Chains.field :> string)}" AS "endBlock",
-       "${(#progress_block: Chains.field :> string)}" AS "progressBlock",
-       "${(#buffer_block: Chains.field :> string)}" AS "bufferBlock",
-       "${(#first_event_block: Chains.field :> string)}" AS "firstEventBlock",
-       "${(#events_processed: Chains.field :> string)}" AS "eventsProcessed",
-       "${(#source_block: Chains.field :> string)}" AS "sourceBlock",
-       "${(#ready_at: Chains.field :> string)}" AS "readyAt",
-       ("${(#ready_at: Chains.field :> string)}" IS NOT NULL) AS "isReady"
-     FROM "${pgSchema}"."${Chains.table.tableName}"
-     ORDER BY "${(#id: Chains.field :> string)}";`
+SELECT 
+  "${(#id: Chains.field :> string)}" AS "chainId",
+  "${(#start_block: Chains.field :> string)}" AS "startBlock", 
+  "${(#end_block: Chains.field :> string)}" AS "endBlock",
+  "${(#progress_block: Chains.field :> string)}" AS "progressBlock",
+  "${(#buffer_block: Chains.field :> string)}" AS "bufferBlock",
+  "${(#first_event_block: Chains.field :> string)}" AS "firstEventBlock",
+  "${(#events_processed: Chains.field :> string)}" AS "eventsProcessed",
+  "${(#source_block: Chains.field :> string)}" AS "sourceBlock",
+  "${(#ready_at: Chains.field :> string)}" AS "readyAt",
+  ("${(#ready_at: Chains.field :> string)}" IS NOT NULL) AS "isReady"
+FROM "${pgSchema}"."${Chains.table.tableName}"
+ORDER BY "${(#id: Chains.field :> string)}";`
   }
 
   let makeChainMetadataViewQuery = (~pgSchema) => {
     `CREATE VIEW "${pgSchema}"."${chainMetadataViewName}" AS 
-     SELECT 
-       "${(#source_block: Chains.field :> string)}" AS "block_height",
-       "${(#id: Chains.field :> string)}" AS "chain_id",
-       "${(#end_block: Chains.field :> string)}" AS "end_block", 
-       "${(#first_event_block: Chains.field :> string)}" AS "first_event_block_number",
-       "${(#_is_hyper_sync: Chains.field :> string)}" AS "is_hyper_sync",
-       "${(#buffer_block: Chains.field :> string)}" AS "latest_fetched_block_number",
-       "${(#progress_block: Chains.field :> string)}" AS "latest_processed_block",
-       "${(#_num_batches_fetched: Chains.field :> string)}" AS "num_batches_fetched",
-       "${(#events_processed: Chains.field :> string)}" AS "num_events_processed",
-       "${(#start_block: Chains.field :> string)}" AS "start_block",
-       "${(#ready_at: Chains.field :> string)}" AS "timestamp_caught_up_to_head_or_endblock"
-     FROM "${pgSchema}"."${Chains.table.tableName}";`
+SELECT 
+  "${(#source_block: Chains.field :> string)}" AS "block_height",
+  "${(#id: Chains.field :> string)}" AS "chain_id",
+  "${(#end_block: Chains.field :> string)}" AS "end_block", 
+  "${(#first_event_block: Chains.field :> string)}" AS "first_event_block_number",
+  "${(#_is_hyper_sync: Chains.field :> string)}" AS "is_hyper_sync",
+  "${(#buffer_block: Chains.field :> string)}" AS "latest_fetched_block_number",
+  "${(#progress_block: Chains.field :> string)}" AS "latest_processed_block",
+  "${(#_num_batches_fetched: Chains.field :> string)}" AS "num_batches_fetched",
+  "${(#events_processed: Chains.field :> string)}" AS "num_events_processed",
+  "${(#start_block: Chains.field :> string)}" AS "start_block",
+  "${(#ready_at: Chains.field :> string)}" AS "timestamp_caught_up_to_head_or_endblock"
+FROM "${pgSchema}"."${Chains.table.tableName}";`
   }
 }
