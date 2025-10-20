@@ -63,7 +63,11 @@ describe("Test PgStorage SQL generation functions", () => {
     Async.it(
       "Should create SQL for A entity table",
       async () => {
-        let query = PgStorage.makeCreateTableQuery(Entities.A.table, ~pgSchema="test_schema")
+        let query = PgStorage.makeCreateTableQuery(
+          Entities.A.table,
+          ~pgSchema="test_schema",
+          ~isNumericArrayAsText=false,
+        )
 
         let expectedTableSql = `CREATE TABLE IF NOT EXISTS "test_schema"."A"("b_id" TEXT NOT NULL, "id" TEXT NOT NULL, "optionalStringToTestLinkedEntities" TEXT, PRIMARY KEY("id"));`
         Assert.equal(query, expectedTableSql, ~message="A table SQL should match exactly")
@@ -73,7 +77,11 @@ describe("Test PgStorage SQL generation functions", () => {
     Async.it(
       "Should create SQL for B entity table with derived fields",
       async () => {
-        let query = PgStorage.makeCreateTableQuery(Entities.B.table, ~pgSchema="test_schema")
+        let query = PgStorage.makeCreateTableQuery(
+          Entities.B.table,
+          ~pgSchema="test_schema",
+          ~isNumericArrayAsText=false,
+        )
 
         let expectedBTableSql = `CREATE TABLE IF NOT EXISTS "test_schema"."B"("c_id" TEXT, "id" TEXT NOT NULL, PRIMARY KEY("id"));`
         Assert.equal(query, expectedBTableSql, ~message="B table SQL should match exactly")
@@ -83,7 +91,11 @@ describe("Test PgStorage SQL generation functions", () => {
     Async.it(
       "Should handle default values",
       async () => {
-        let query = PgStorage.makeCreateTableQuery(Entities.A.table, ~pgSchema="test_schema")
+        let query = PgStorage.makeCreateTableQuery(
+          Entities.A.table,
+          ~pgSchema="test_schema",
+          ~isNumericArrayAsText=false,
+        )
 
         let expectedDefaultTestSql = `CREATE TABLE IF NOT EXISTS "test_schema"."A"("b_id" TEXT NOT NULL, "id" TEXT NOT NULL, "optionalStringToTestLinkedEntities" TEXT, PRIMARY KEY("id"));`
         Assert.equal(
@@ -108,6 +120,7 @@ describe("Test PgStorage SQL generation functions", () => {
           module(
             Entities.EntityWith63LenghtName______________________________________two
           )->Entities.entityModToInternal,
+          module(Entities.EntityWithAllTypes)->Entities.entityModToInternal,
         ]
         let enums = [Enums.EntityType.config->Internal.fromGenericEnumConfig]
 
@@ -133,6 +146,9 @@ describe("Test PgStorage SQL generation functions", () => {
               sources: [],
             },
           ],
+          // Because of the line arrayOfBigInts and arrayOfBigDecimals should become TEXT[] instead of NUMERIC[]
+          // Related to https://github.com/enviodev/hyperindex/issues/788
+          ~isHasuraEnabled=true,
         )
 
         // Should return exactly 2 queries: main DDL + functions
@@ -161,6 +177,8 @@ CREATE TABLE IF NOT EXISTS "test_schema"."EntityWith63LenghtName________________
 CREATE TABLE IF NOT EXISTS "test_schema"."envio_history_EntityWith63LenghtName__________________________5"("id" TEXT NOT NULL, "checkpoint_id" INTEGER NOT NULL, "envio_change" "test_schema".ENVIO_HISTORY_CHANGE NOT NULL, PRIMARY KEY("id", "checkpoint_id"));
 CREATE TABLE IF NOT EXISTS "test_schema"."EntityWith63LenghtName______________________________________two"("id" TEXT NOT NULL, PRIMARY KEY("id"));
 CREATE TABLE IF NOT EXISTS "test_schema"."envio_history_EntityWith63LenghtName__________________________6"("id" TEXT NOT NULL, "checkpoint_id" INTEGER NOT NULL, "envio_change" "test_schema".ENVIO_HISTORY_CHANGE NOT NULL, PRIMARY KEY("id", "checkpoint_id"));
+CREATE TABLE IF NOT EXISTS "test_schema"."EntityWithAllTypes"("arrayOfBigDecimals" TEXT[] NOT NULL, "arrayOfBigInts" TEXT[] NOT NULL, "arrayOfFloats" DOUBLE PRECISION[] NOT NULL, "arrayOfInts" INTEGER[] NOT NULL, "arrayOfStrings" TEXT[] NOT NULL, "bigDecimal" NUMERIC NOT NULL, "bigDecimalWithConfig" NUMERIC(10, 8) NOT NULL, "bigInt" NUMERIC NOT NULL, "bool" BOOLEAN NOT NULL, "enumField" "test_schema".AccountType NOT NULL, "float_" DOUBLE PRECISION NOT NULL, "id" TEXT NOT NULL, "int_" INTEGER NOT NULL, "json" JSONB NOT NULL, "optBigDecimal" NUMERIC, "optBigInt" NUMERIC, "optBool" BOOLEAN, "optEnumField" "test_schema".AccountType, "optFloat" DOUBLE PRECISION, "optInt" INTEGER, "optString" TEXT, "string" TEXT NOT NULL, PRIMARY KEY("id"));
+CREATE TABLE IF NOT EXISTS "test_schema"."envio_history_EntityWithAllTypes"("arrayOfBigDecimals" TEXT[], "arrayOfBigInts" TEXT[], "arrayOfFloats" DOUBLE PRECISION[], "arrayOfInts" INTEGER[], "arrayOfStrings" TEXT[], "bigDecimal" NUMERIC, "bigDecimalWithConfig" NUMERIC(10, 8), "bigInt" NUMERIC, "bool" BOOLEAN, "enumField" "test_schema".AccountType, "float_" DOUBLE PRECISION, "id" TEXT NOT NULL, "int_" INTEGER, "json" JSONB, "optBigDecimal" NUMERIC, "optBigInt" NUMERIC, "optBool" BOOLEAN, "optEnumField" "test_schema".AccountType, "optFloat" DOUBLE PRECISION, "optInt" INTEGER, "optString" TEXT, "string" TEXT, "checkpoint_id" INTEGER NOT NULL, "envio_change" "test_schema".ENVIO_HISTORY_CHANGE NOT NULL, PRIMARY KEY("id", "checkpoint_id"));
 CREATE INDEX IF NOT EXISTS "A_b_id" ON "test_schema"."A"("b_id");
 CREATE INDEX IF NOT EXISTS "A_b_id" ON "test_schema"."A"("b_id");
 CREATE VIEW "test_schema"."_meta" AS 
@@ -210,6 +228,7 @@ VALUES (1, 100, 200, 10, 0, NULL, -1, -1, NULL, 0, false, 0),
           ~pgSchema="test_schema",
           ~pgUser="postgres",
           ~enums=[],
+          ~isHasuraEnabled=false,
         )
 
         // Should return exactly 2 query (main DDL, and a function for cache)
@@ -291,6 +310,7 @@ $$ LANGUAGE plpgsql;`,
           ~pgUser="postgres",
           ~entities,
           ~enums=[],
+          ~isHasuraEnabled=false,
         )
 
         Assert.equal(

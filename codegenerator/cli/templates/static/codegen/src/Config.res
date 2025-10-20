@@ -37,19 +37,17 @@ let getSyncConfig = (
 }
 
 let storagePgSchema = Env.Db.publicSchema
-let codegenPersistence = Persistence.make(
-  ~userEntities=Entities.userEntities,
-  ~allEnums=Enums.allEnums,
-  ~storage=PgStorage.make(
-    ~sql=Db.sql,
-    ~pgSchema=storagePgSchema,
+let makeStorage = (~sql=Db.sql, ~pgSchema=storagePgSchema, ~isHasuraEnabled=Env.Hasura.enabled) => {
+  PgStorage.make(
+    ~sql,
+    ~pgSchema,
     ~pgHost=Env.Db.host,
     ~pgUser=Env.Db.user,
     ~pgPort=Env.Db.port,
     ~pgDatabase=Env.Db.database,
     ~pgPassword=Env.Db.password,
     ~onInitialize=?{
-      if Env.Hasura.enabled {
+      if isHasuraEnabled {
         Some(
           () => {
             Hasura.trackDatabase(
@@ -76,7 +74,7 @@ let codegenPersistence = Persistence.make(
       }
     },
     ~onNewTables=?{
-      if Env.Hasura.enabled {
+      if isHasuraEnabled {
         Some(
           (~tableNames) => {
             Hasura.trackTables(
@@ -99,7 +97,14 @@ let codegenPersistence = Persistence.make(
         None
       }
     },
-  ),
+    ~isHasuraEnabled,
+  )
+}
+
+let codegenPersistence = Persistence.make(
+  ~userEntities=Entities.userEntities,
+  ~allEnums=Enums.allEnums,
+  ~storage=makeStorage(),
 )
 
 type t = {
@@ -133,10 +138,7 @@ let make = (
   ~shouldUseHypersyncClientDecoder=true,
 ) => {
   // Validate that lowercase addresses is not used with viem decoder
-  if (
-    lowercaseAddresses &&
-    !shouldUseHypersyncClientDecoder
-  ) {
+  if lowercaseAddresses && !shouldUseHypersyncClientDecoder {
     Js.Exn.raiseError(
       "lowercase addresses is not supported when event_decoder is 'viem'. Please set event_decoder to 'hypersync-client' or change address_format to 'checksum'.",
     )

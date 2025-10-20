@@ -22,7 +22,7 @@ let makeCreateTableIndicesQuery = (table: Table.table, ~pgSchema) => {
     compositeIndices->Array.map(createCompositeIndex)->Js.Array2.joinWith("\n")
 }
 
-let makeCreateTableQuery = (table: Table.table, ~pgSchema) => {
+let makeCreateTableQuery = (table: Table.table, ~pgSchema, ~isNumericArrayAsText) => {
   open Belt
   let fieldsMapped =
     table
@@ -34,6 +34,8 @@ let makeCreateTableQuery = (table: Table.table, ~pgSchema) => {
       {
         `"${fieldName}" ${switch fieldType {
           | Custom(name) if !(name->Js.String2.startsWith("NUMERIC(")) => `"${pgSchema}".${name}`
+          // Workaround for Hasura bug https://github.com/enviodev/hyperindex/issues/788
+          | Numeric if isArray && isNumericArrayAsText => (Table.Text :> string)
           | _ => (fieldType :> string)
           }}${isArray ? "[]" : ""}${switch defaultValue {
           | Some(defaultValue) => ` DEFAULT ${defaultValue}`
@@ -57,6 +59,7 @@ let makeCreateTableQuery = (table: Table.table, ~pgSchema) => {
 let makeInitializeTransaction = (
   ~pgSchema,
   ~pgUser,
+  ~isHasuraEnabled,
   ~chainConfigs=[],
   ~entities=[],
   ~enums=[],
@@ -105,7 +108,10 @@ GRANT ALL ON SCHEMA "${pgSchema}" TO public;`,
 
   // Batch all table creation first (optimal for PostgreSQL)
   allTables->Js.Array2.forEach((table: Table.table) => {
-    query := query.contents ++ "\n" ++ makeCreateTableQuery(table, ~pgSchema)
+    query :=
+      query.contents ++
+      "\n" ++
+      makeCreateTableQuery(table, ~pgSchema, ~isNumericArrayAsText=isHasuraEnabled)
   })
 
   // Then batch all indices (better performance when tables exist)
@@ -507,6 +513,7 @@ let make = (
   ~pgUser,
   ~pgDatabase,
   ~pgPassword,
+  ~isHasuraEnabled,
   ~onInitialize=?,
   ~onNewTables=?,
 ): Persistence.storage => {
@@ -552,7 +559,7 @@ let make = (
               let table = Internal.makeCacheTable(~effectName)
 
               sql
-              ->Postgres.unsafe(makeCreateTableQuery(table, ~pgSchema))
+              ->Postgres.unsafe(makeCreateTableQuery(table, ~pgSchema, ~isNumericArrayAsText=false))
               ->Promise.then(() => {
                 let inputFile = NodeJs.Path.join(cacheDirPath, entry)->NodeJs.Path.toString
 
@@ -645,6 +652,7 @@ let make = (
       ~enums,
       ~chainConfigs,
       ~isEmptyPgSchema=schemaTableNames->Utils.Array.isEmpty,
+      ~isHasuraEnabled,
     )
     // Execute all queries within a single transaction for integrity
     let _ = await sql->Postgres.beginSql(sql => {
@@ -790,7 +798,10 @@ let make = (
     }
 
     if initialize {
-      let _ = await sql->Postgres.unsafe(makeCreateTableQuery(table, ~pgSchema))
+      let _ =
+        await sql->Postgres.unsafe(
+          makeCreateTableQuery(table, ~pgSchema, ~isNumericArrayAsText=false),
+        )
       // Integration with other tools like Hasura
       switch onNewTables {
       | Some(onNewTables) => await onNewTables(~tableNames=[table.tableName])

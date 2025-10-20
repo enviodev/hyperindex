@@ -13,6 +13,7 @@ describe("Write/read tests", () => {
     let indexerMock = await Mock.Indexer.make(
       ~chains=[{chain: #1337, sources: [sourceMock.source]}],
       ~saveFullHistory=true,
+      ~enableHasura=true,
     )
     await Utils.delay(0)
 
@@ -171,6 +172,28 @@ describe("Write/read tests", () => {
           }),
         },
       ],
+    )
+
+    Assert.deepEqual(
+      await indexerMock.graphql(`query {
+  EntityWithAllTypes {
+    arrayOfBigInts
+    arrayOfBigDecimals
+  }
+}`),
+      {
+        data: {
+          "EntityWithAllTypes": [
+            {
+              "arrayOfBigInts": ["3", "4"],
+              "arrayOfBigDecimals": ["3.3", "4.4"],
+            },
+          ],
+        },
+      },
+      ~message=`We internally turn NUMERIC[] to TEXT[] when Hasura is enabled,
+to workaround a bug, when the values returned as number[] instead of string[],
+breaking precicion on big values. https://github.com/enviodev/hyperindex/issues/788`,
     )
   })
 })

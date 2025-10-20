@@ -208,6 +208,7 @@ module Indexer = {
     value: string,
     labels: dict<string>,
   }
+  type graphqlResponse<'a> = {data?: {..} as 'a}
   type rec t = {
     getBatchWritePromise: unit => promise<unit>,
     getRollbackReadyPromise: unit => promise<unit>,
@@ -218,6 +219,7 @@ module Indexer = {
     queryCheckpoints: unit => promise<array<InternalTable.Checkpoints.t>>,
     metric: string => promise<array<metric>>,
     restart: unit => promise<t>,
+    graphql: 'data. string => promise<graphqlResponse<'data>>,
   }
 
   type chainConfig = {chain: Types.chain, sources: array<Source.t>, startBlock?: int}
@@ -226,6 +228,9 @@ module Indexer = {
     ~chains: array<chainConfig>,
     ~multichain=InternalConfig.Unordered,
     ~saveFullHistory=false,
+    // Reinit storage without Hasura
+    // makes tests ~1.9 seconds faster
+    ~enableHasura=false,
     ~reset=true,
   ) => {
     DbHelpers.resetPostgresClient()
@@ -252,21 +257,17 @@ module Indexer = {
       })
       ->ChainMap.fromArrayUnsafe
 
+    let graphqlClient = Rest.client(`${Env.Hasura.url}/v1/graphql`)
+    let graphqlRoute = Rest.route(() => {
+      method: Post,
+      path: "",
+      input: s => s.field("query", S.string),
+      responses: [s => s.data(S.unknown)],
+    })
+
     let sql = Db.sql
     let pgSchema = Env.Db.publicSchema
-    // Reinit storage without Hasura
-    // This made the test 1.9 seconds faster
-    // TODO: Improve indexer initialization time
-    // by parallizing hasura (at least for dev)
-    let storage = PgStorage.make(
-      ~sql,
-      ~pgSchema,
-      ~pgHost=Env.Db.host,
-      ~pgUser=Env.Db.user,
-      ~pgPort=Env.Db.port,
-      ~pgDatabase=Env.Db.database,
-      ~pgPassword=Env.Db.password,
-    )
+    let storage = Config.makeStorage(~sql, ~pgSchema, ~isHasuraEnabled=enableHasura)
     let persistence = {
       ...config.persistence,
       storageStatus: Persistence.Unknown,
@@ -400,7 +401,18 @@ module Indexer = {
           ...gsManager->GlobalStateManager.getState,
           id: state.id + 1,
         })
-        make(~chains, ~multichain, ~saveFullHistory, ~reset=false)
+        make(~chains, ~enableHasura, ~multichain, ~saveFullHistory, ~reset=false)
+      },
+      graphql: query => {
+        if !enableHasura {
+          Js.Exn.raiseError(
+            "It's require to set ~enableHasura=true during indexer mock creation to access this feature.",
+          )
+        }
+
+        graphqlRoute
+        ->Rest.fetch(query, ~client=graphqlClient)
+        ->(Utils.magic: promise<unknown> => promise<graphqlResponse<{..}>>)
       },
     }
   }
