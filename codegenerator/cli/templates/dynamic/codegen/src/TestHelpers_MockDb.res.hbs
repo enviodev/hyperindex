@@ -328,7 +328,7 @@ and makeProcessEvents = (mockDb: t, ~chainId=?) => async (
       registrations.hasEvents || !(registrations.onBlockByChainId->Utils.Dict.isEmpty)
     ) {
       {
-        ...config,
+        ...RegisterHandlers.makeGeneratedConfig(),
         registrations: Some(registrations),
       }
     } else {

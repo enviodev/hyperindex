@@ -43,8 +43,9 @@ type t<'entity> = {
 }
 
 let maxPgTableNameLength = 63
+let historyTablePrefix = "envio_history_"
 let historyTableName = (~entityName, ~entityIndex) => {
-  let fullName = "envio_history_" ++ entityName
+  let fullName = historyTablePrefix ++ entityName
   if fullName->String.length > maxPgTableNameLength {
     let entityIndexStr = entityIndex->Belt.Int.toString
     fullName->Js.String.slice(~from=0, ~to_=maxPgTableNameLength - entityIndexStr->String.length) ++
@@ -85,8 +86,6 @@ let fromTable = (table: table, ~schema: S.t<'entity>, ~entityIndex): t<'entity> 
     ~fieldSchema=S.int,
     ~isPrimaryKey=true,
   )
-
-  // let dataFieldNames = dataFields->Belt.Array.map(field => field->getFieldName)
 
   let entityTableName = table.tableName
   let historyTableName = historyTableName(~entityName=entityTableName, ~entityIndex)

@@ -36,32 +36,31 @@ let make = (
 let getSafeCheckpointId = (safeCheckpointTracking: t, ~sourceBlockNumber: int) => {
   let safeBlockNumber = sourceBlockNumber - safeCheckpointTracking.maxReorgDepth
 
-  if safeCheckpointTracking.checkpointBlockNumbers->Belt.Array.getUnsafe(0) > safeBlockNumber {
-    0
-  } else {
-    let trackingCheckpointsCount = safeCheckpointTracking.checkpointBlockNumbers->Array.length
-    switch trackingCheckpointsCount {
-    | 1 => safeCheckpointTracking.checkpointIds->Belt.Array.getUnsafe(0)
-    | _ => {
-        let result = ref(None)
-        let idx = ref(1)
+  switch safeCheckpointTracking.checkpointIds {
+  | [] => 0
+  | _
+    if safeCheckpointTracking.checkpointBlockNumbers->Belt.Array.getUnsafe(0) > safeBlockNumber => 0
+  | [checkpointId] => checkpointId
+  | _ => {
+      let trackingCheckpointsCount = safeCheckpointTracking.checkpointIds->Array.length
+      let result = ref(None)
+      let idx = ref(1)
 
-        while idx.contents < trackingCheckpointsCount && result.contents === None {
-          if (
-            safeCheckpointTracking.checkpointBlockNumbers->Belt.Array.getUnsafe(idx.contents) >
-              safeBlockNumber
-          ) {
-            result :=
-              Some(safeCheckpointTracking.checkpointIds->Belt.Array.getUnsafe(idx.contents - 1))
-          }
-          idx := idx.contents + 1
+      while idx.contents < trackingCheckpointsCount && result.contents === None {
+        if (
+          safeCheckpointTracking.checkpointBlockNumbers->Belt.Array.getUnsafe(idx.contents) >
+            safeBlockNumber
+        ) {
+          result :=
+            Some(safeCheckpointTracking.checkpointIds->Belt.Array.getUnsafe(idx.contents - 1))
         }
+        idx := idx.contents + 1
+      }
 
-        switch result.contents {
-        | Some(checkpointId) => checkpointId
-        | None =>
-          safeCheckpointTracking.checkpointIds->Belt.Array.getUnsafe(trackingCheckpointsCount - 1)
-        }
+      switch result.contents {
+      | Some(checkpointId) => checkpointId
+      | None =>
+        safeCheckpointTracking.checkpointIds->Belt.Array.getUnsafe(trackingCheckpointsCount - 1)
       }
     }
   }

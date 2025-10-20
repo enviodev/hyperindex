@@ -263,7 +263,7 @@ let makeTableBatchSetQuery = (~pgSchema, ~table: Table.table, ~itemSchema: S.t<'
   // Currently history update table uses S.object with transformation for schema,
   // which is being lossed during conversion to dbSchema.
   // So use simple insert values for now.
-  let isHistoryUpdate = table.tableName->Js.String2.startsWith("envio_history_")
+  let isHistoryUpdate = table.tableName->Js.String2.startsWith(EntityHistory.historyTablePrefix)
 
   // Should experiment how much it'll affect performance
   // Although, it should be fine not to perform the validation check,
