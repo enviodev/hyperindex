@@ -373,23 +373,17 @@ let processEventBatch = async (
   // Compute chains state for this batch
   let chains: Internal.chains = chainFetchers->computeChainsState
 
-  let logger = Logging.createChildFrom(
-    ~logger=Logging.getLogger(),
-    ~params={
-      "totalBatchSize": totalBatchSize,
-      "byChain": batch.progressedChainsById->Utils.Dict.filterMapValues(chainAfterBatch =>
-        if chainAfterBatch.batchSize > 0 {
-          Some({
-            "batchSize": chainAfterBatch.batchSize,
-            "toBlockNumber": chainAfterBatch.progressBlockNumber,
-          })
-        } else {
-          None
-        }
-      ),
-    },
-  )
-  logger->Logging.childTrace("Started processing batch")
+  let logger = Logging.getLogger()
+  logger->Logging.childTrace({
+    "msg": "Started processing batch",
+    "totalBatchSize": totalBatchSize,
+    "chains": batch.progressedChainsById->Utils.Dict.mapValues(chainAfterBatch => {
+      {
+        "batchSize": chainAfterBatch.batchSize,
+        "progress": chainAfterBatch.progressBlockNumber,
+      }
+    }),
+  })
 
   try {
     let timeRef = Hrtime.makeTimer()
