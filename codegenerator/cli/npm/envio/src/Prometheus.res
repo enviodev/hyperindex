@@ -525,30 +525,6 @@ module RollbackTargetBlockNumber = {
   }
 }
 
-module ProcessingBlockNumber = {
-  let gauge = SafeGauge.makeOrThrow(
-    ~name="envio_processing_block_number",
-    ~help="The latest item block number included in the currently processing batch for the chain.",
-    ~labelSchema=chainIdLabelsSchema,
-  )
-
-  let set = (~blockNumber, ~chainId) => {
-    gauge->SafeGauge.handleInt(~labels=chainId, ~value=blockNumber)
-  }
-}
-
-module ProcessingBatchSize = {
-  let gauge = SafeGauge.makeOrThrow(
-    ~name="envio_processing_batch_size",
-    ~help="The number of items included in the currently processing batch for the chain.",
-    ~labelSchema=chainIdLabelsSchema,
-  )
-
-  let set = (~batchSize, ~chainId) => {
-    gauge->SafeGauge.handleInt(~labels=chainId, ~value=batchSize)
-  }
-}
-
 module ProcessingMaxBatchSize = {
   let gauge = PromClient.Gauge.makeGauge({
     "name": "envio_processing_max_batch_size",
@@ -590,6 +566,17 @@ module ProgressEventsCount = {
     ->PromClient.Gauge.labels({"chainId": chainId})
     ->PromClient.Gauge.set(processedCount)
     gauge->SafeGauge.handleInt(~labels=chainId, ~value=processedCount)
+  }
+}
+
+module ProgressBatchCount = {
+  let counter = PromClient.Counter.makeCounter({
+    "name": "envio_progress_batches_count",
+    "help": "The number of batches processed and reflected in the database.",
+  })
+
+  let increment = () => {
+    counter->PromClient.Counter.inc
   }
 }
 

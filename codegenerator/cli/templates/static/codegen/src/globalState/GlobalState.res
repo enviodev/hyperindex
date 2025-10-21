@@ -193,6 +193,8 @@ Takes in a chain manager and sets all chains timestamp caught up to head
 when valid state lines up and returns an updated chain manager
 */
 let updateProgressedChains = (chainManager: ChainManager.t, ~batch: Batch.t) => {
+  Prometheus.ProgressBatchCount.increment()
+
   let nextQueueItemIsNone = chainManager->ChainManager.nextItemIsNone
 
   let allChainsAtHead = chainManager->ChainManager.isProgressAtHead
@@ -899,21 +901,6 @@ let injectedTaskReducer = (
         let inMemoryStore = rollbackInMemStore->Option.getWithDefault(InMemoryStore.make())
 
         inMemoryStore->InMemoryStore.setBatchDcs(~batch, ~shouldSaveHistory)
-
-        state.chainManager.chainFetchers
-        ->ChainMap.keys
-        ->Array.forEach(chain => {
-          let chainId = chain->ChainMap.Chain.toChainId
-          switch progressedChainsById->Utils.Dict.dangerouslyGetByIntNonOption(chainId) {
-          | Some(chainAfterBatch) =>
-            Prometheus.ProcessingBatchSize.set(~batchSize=chainAfterBatch.batchSize, ~chainId)
-            Prometheus.ProcessingBlockNumber.set(
-              ~blockNumber=chainAfterBatch.progressBlockNumber,
-              ~chainId,
-            )
-          | None => Prometheus.ProcessingBatchSize.set(~batchSize=0, ~chainId)
-          }
-        })
 
         switch await EventProcessing.processEventBatch(
           ~batch,
