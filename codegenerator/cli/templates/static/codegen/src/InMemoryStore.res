@@ -44,6 +44,7 @@ module EntityTables = {
 
 type effectCacheInMemTable = {
   idsToStore: array<string>,
+  mutable invalidationsCount: int,
   dict: dict<Internal.effectOutput>,
   effect: Internal.effect,
 }
@@ -70,6 +71,7 @@ let clone = (self: t) => {
   entities: self.entities->EntityTables.clone,
   effects: Js.Dict.map(table => {
     idsToStore: table.idsToStore->Array.copy,
+    invalidationsCount: table.invalidationsCount,
     dict: table.dict->Utils.Dict.shallowCopy,
     effect: table.effect,
   }, self.effects),
@@ -84,6 +86,7 @@ let getEffectInMemTable = (inMemoryStore: t, ~effect: Internal.effect) => {
     let table = {
       idsToStore: [],
       dict: Js.Dict.empty(),
+      invalidationsCount: 0,
       effect,
     }
     inMemoryStore.effects->Js.Dict.set(key, table)

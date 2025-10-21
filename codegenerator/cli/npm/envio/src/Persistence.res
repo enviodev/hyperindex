@@ -192,7 +192,12 @@ let getInitializedState = persistence => {
   }
 }
 
-let setEffectCacheOrThrow = async (persistence, ~effect: Internal.effect, ~items) => {
+let setEffectCacheOrThrow = async (
+  persistence,
+  ~effect: Internal.effect,
+  ~items,
+  ~invalidationsCount,
+) => {
   switch persistence.storageStatus {
   | Unknown
   | Initializing(_) =>
@@ -210,7 +215,8 @@ let setEffectCacheOrThrow = async (persistence, ~effect: Internal.effect, ~items
       }
       let initialize = effectCacheRecord.count === 0
       await storage.setEffectCacheOrThrow(~effect, ~items, ~initialize)
-      effectCacheRecord.count = effectCacheRecord.count + items->Js.Array2.length
+      effectCacheRecord.count =
+        effectCacheRecord.count + items->Js.Array2.length - invalidationsCount
       Prometheus.EffectCacheCount.set(~count=effectCacheRecord.count, ~effectName)
     }
   }

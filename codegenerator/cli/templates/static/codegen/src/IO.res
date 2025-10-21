@@ -281,7 +281,7 @@ let executeBatch = async (
       ->Js.Dict.keys
       ->Belt.Array.keepMapU(effectName => {
         let inMemTable = inMemoryStore.effects->Js.Dict.unsafeGet(effectName)
-        let {idsToStore, dict, effect} = inMemTable
+        let {idsToStore, dict, effect, invalidationsCount} = inMemTable
         switch idsToStore {
         | [] => None
         | ids => {
@@ -297,7 +297,13 @@ let executeBatch = async (
                 ),
               )
             })
-            Some(config.persistence->Persistence.setEffectCacheOrThrow(~effect, ~items))
+            Some(
+              config.persistence->Persistence.setEffectCacheOrThrow(
+                ~effect,
+                ~items,
+                ~invalidationsCount,
+              ),
+            )
           }
         }
       })

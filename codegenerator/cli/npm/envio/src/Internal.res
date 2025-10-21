@@ -290,7 +290,7 @@ type effectArgs = {
 type effectCacheItem = {id: string, output: effectOutput}
 type effectCacheMeta = {
   itemSchema: S.t<effectCacheItem>,
-  rowsSchema: S.t<array<effectCacheItem>>,
+  outputSchema: S.t<effectOutput>,
   table: Table.table,
 }
 type effect = {
@@ -302,14 +302,17 @@ type effect = {
   mutable callsCount: int,
 }
 let cacheTablePrefix = "envio_effect_"
+let cacheOutputSchema = S.json(~validate=false)->(Utils.magic: S.t<Js.Json.t> => S.t<effectOutput>)
+let effectCacheItemRowsSchema = S.array(
+  S.schema(s => {id: s.matches(S.string), output: s.matches(cacheOutputSchema)}),
+)
 let makeCacheTable = (~effectName) => {
   Table.mkTable(
     cacheTablePrefix ++ effectName,
     ~fields=[
       Table.mkField("id", Text, ~fieldSchema=S.string, ~isPrimaryKey=true),
-      Table.mkField("output", JsonB, ~fieldSchema=S.json(~validate=false), ~isNullable=true),
+      Table.mkField("output", JsonB, ~fieldSchema=cacheOutputSchema, ~isNullable=true),
     ],
-    ~compositeIndices=[],
   )
 }
 

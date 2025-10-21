@@ -419,5 +419,61 @@ describe("E2E tests", () => {
       ),
       ~message="Should increment effect calls count and cache count",
     )
+
+    let testEffectWithCacheV2 = Envio.experimental_createEffect(
+      {
+        name: "testEffectWithCache",
+        input: S.string,
+        output: S.string->S.refine(
+          s => v =>
+            if !(v->Js.String2.includes("2")) {
+              s.fail(`Expected to include '2', got ${v}`)
+            },
+        ),
+        cache: true,
+      },
+      async ({input}) => {
+        input ++ "-output-v2"
+      },
+    )
+
+    sourceMock.resolveGetItemsOrThrow(
+      [
+        {
+          blockNumber: 102,
+          logIndex: 0,
+          handler: async ({context}) => {
+            Assert.deepEqual(
+              await Promise.all2((
+                context.effect(testEffectWithCacheV2, "test"),
+                context.effect(testEffectWithCacheV2, "test-2"),
+              )),
+              ("test-output-v2", "test-2-output"),
+            )
+          },
+        },
+      ],
+      ~latestFetchedBlockNumber=102,
+    )
+    await indexerMock.getBatchWritePromise()
+
+    Assert.deepEqual(
+      await indexerMock.queryEffectCache("testEffectWithCache"),
+      [
+        {"id": `"test-2"`, "output": %raw(`"test-2-output"`)},
+        {"id": `"test"`, "output": %raw(`"test-output-v2"`)},
+      ],
+      ~message="Should invalidate loaded cache and store new one",
+    )
+    Assert.deepEqual(
+      await indexerMock.metric("envio_effect_cache_count"),
+      [
+        {
+          value: "2",
+          labels: Js.Dict.fromArray([("effect", "testEffectWithCache")]),
+        },
+      ],
+      ~message="Shouldn't increment on invalidation",
+    )
   })
 })

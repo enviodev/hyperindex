@@ -608,6 +608,18 @@ module EffectCacheCount = {
   }
 }
 
+module EffectCacheInvalidationsCount = {
+  let counter = SafeCounter.makeOrThrow(
+    ~name="envio_effect_cache_invalidations_count",
+    ~help="The number of effect cache invalidations.",
+    ~labelSchema=effectLabelsSchema,
+  )
+
+  let increment = (~effectName) => {
+    counter->SafeCounter.increment(~labels=effectName)
+  }
+}
+
 module StorageLoad = {
   let operationLabelsSchema = S.object(s => s.field("operation", S.string))
 

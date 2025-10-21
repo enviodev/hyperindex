@@ -335,7 +335,7 @@ let removeInvalidUtf8InPlace = entities =>
         // This is unsafe, but we rely that it'll use
         // the mutated reference on retry.
         // TODO: Test it properly after we start using
-        // in-memory PGLite for indexer test framework.
+        // real pg for indexer test framework.
         dict->Js.Dict.set(
           key,
           value

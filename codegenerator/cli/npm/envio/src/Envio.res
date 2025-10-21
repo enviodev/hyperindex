@@ -85,7 +85,7 @@ let experimental_createEffect = (
       })
       Some({
         table: Internal.makeCacheTable(~effectName=options.name),
-        rowsSchema: S.array(itemSchema),
+        outputSchema,
         itemSchema,
       })
     | None
