@@ -145,6 +145,18 @@ type evmContractConfig = {
   events: array<evmEventConfig>,
 }
 
+type indexingContract = {
+  address: Address.t,
+  contractName: string,
+  startBlock: int,
+  // Needed for rollback
+  // If not set, assume the contract comes from config
+  // and shouldn't be rolled back
+  registrationBlock: option<int>,
+}
+
+type dcs = array<indexingContract>
+
 // Duplicate the type from item
 // to make item properly unboxed
 type eventItem = private {
@@ -200,6 +212,11 @@ external getItemBlockNumber: item => int = "blockNumber"
 @get
 external getItemLogIndex: item => int = "logIndex"
 
+@get
+external getItemDcs: item => option<dcs> = "dcs"
+@set
+external setItemDcs: (item, dcs) => unit = "dcs"
+
 @genType
 type eventOptions<'eventFilters> = {
   wildcard?: bool,
@@ -234,6 +251,7 @@ let fuelTransferParamsSchema = S.schema(s => {
 type entity = private {id: string}
 type genericEntityConfig<'entity> = {
   name: string,
+  index: int,
   schema: S.t<'entity>,
   rowsSchema: S.t<array<'entity>>,
   table: Table.table,
@@ -272,7 +290,7 @@ type effectArgs = {
 type effectCacheItem = {id: string, output: effectOutput}
 type effectCacheMeta = {
   itemSchema: S.t<effectCacheItem>,
-  rowsSchema: S.t<array<effectCacheItem>>,
+  outputSchema: S.t<effectOutput>,
   table: Table.table,
 }
 type effect = {
@@ -284,16 +302,51 @@ type effect = {
   mutable callsCount: int,
 }
 let cacheTablePrefix = "envio_effect_"
+let cacheOutputSchema = S.json(~validate=false)->(Utils.magic: S.t<Js.Json.t> => S.t<effectOutput>)
+let effectCacheItemRowsSchema = S.array(
+  S.schema(s => {id: s.matches(S.string), output: s.matches(cacheOutputSchema)}),
+)
 let makeCacheTable = (~effectName) => {
   Table.mkTable(
     cacheTablePrefix ++ effectName,
     ~fields=[
       Table.mkField("id", Text, ~fieldSchema=S.string, ~isPrimaryKey=true),
-      Table.mkField("output", JsonB, ~fieldSchema=S.json(~validate=false), ~isNullable=true),
+      Table.mkField("output", JsonB, ~fieldSchema=cacheOutputSchema, ~isNullable=true),
     ],
-    ~compositeIndices=[],
   )
 }
 
 @genType.import(("./Types.ts", "Invalid"))
 type noEventFilters
+
+type reorgCheckpoint = {
+  @as("id")
+  checkpointId: int,
+  @as("chain_id")
+  chainId: int,
+  @as("block_number")
+  blockNumber: int,
+  @as("block_hash")
+  blockHash: string,
+}
+
+type entityValueAtStartOfBatch<'entityType> =
+  | NotSet // The entity isn't in the DB yet
+  | AlreadySet('entityType)
+
+type updatedValue<'entityType> = {
+  latest: EntityHistory.entityUpdate<'entityType>,
+  history: array<EntityHistory.entityUpdate<'entityType>>,
+  // In the event of a rollback, some entity updates may have been
+  // been affected by a rollback diff. If there was no rollback diff
+  // this will always be false.
+  // If there was a rollback diff, this will be false in the case of a
+  // new entity update (where entity affected is not present in the diff) b
+  // but true if the update is related to an entity that is
+  // currently present in the diff
+  containsRollbackDiffChange: bool,
+}
+
+type inMemoryStoreRowEntity<'entityType> =
+  | Updated(updatedValue<'entityType>)
+  | InitialReadFromDb(entityValueAtStartOfBatch<'entityType>) // This means there is no change from the db.

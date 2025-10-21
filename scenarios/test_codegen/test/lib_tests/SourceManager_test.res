@@ -168,10 +168,10 @@ describe("SourceManager fetchNext", () => {
               indexingContracts->Js.Dict.set(
                 address->Address.toString,
                 {
-                  FetchState.contractName,
+                  Internal.contractName,
                   startBlock: 0,
                   address,
-                  register: Config,
+                  registrationBlock: None,
                 },
               )
             },
@@ -194,7 +194,6 @@ describe("SourceManager fetchNext", () => {
       chainId: 0,
       indexingContracts,
       contractConfigs: Js.Dict.empty(),
-      dcsToStore: [],
       blockLag: 0,
       onBlockConfigs: [],
       // All the null values should be computed during updateInternal

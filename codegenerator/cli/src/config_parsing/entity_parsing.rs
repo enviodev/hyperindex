@@ -373,6 +373,13 @@ impl Entity {
             }
         }
 
+        if name.len() > 63 {
+            return Err(anyhow!(
+                "Entity name '{}' is too long. It must be less than 64 characters.",
+                name
+            ));
+        }
+
         Ok(Self {
             name: name.to_string(),
             fields,

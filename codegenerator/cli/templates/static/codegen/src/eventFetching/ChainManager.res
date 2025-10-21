@@ -1,6 +1,7 @@
 open Belt
 
 type t = {
+  commitedCheckpointId: int,
   chainFetchers: ChainMap.t<ChainFetcher.t>,
   multichain: InternalConfig.multichain,
   isInReorgThreshold: bool,
@@ -23,6 +24,7 @@ let makeFromConfig = (~config: Config.t): t => {
   let chainFetchers =
     config.chainMap->ChainMap.map(ChainFetcher.makeFromConfig(_, ~config, ~targetBufferSize))
   {
+    commitedCheckpointId: 0,
     chainFetchers,
     multichain: config.multichain,
     isInReorgThreshold: false,
@@ -53,10 +55,13 @@ let makeFromDbState = async (~initialState: Persistence.initialState, ~config: C
   Prometheus.ProcessingMaxBatchSize.set(~maxBatchSize=config.batchSize)
   Prometheus.IndexingTargetBufferSize.set(~targetBufferSize)
   Prometheus.ReorgThreshold.set(~isInReorgThreshold)
+  initialState.cache->Utils.Dict.forEach(({effectName, count}) => {
+    Prometheus.EffectCacheCount.set(~count, ~effectName)
+  })
 
   let chainFetchersArr =
     await initialState.chains
-    ->Array.map(async (resumedChainState: InternalTable.Chains.t) => {
+    ->Array.map(async (resumedChainState: Persistence.initialChainState) => {
       let chain = Config.getChain(config, ~chainId=resumedChainState.id)
       let chainConfig = config.chainMap->ChainMap.get(chain)
 
@@ -64,6 +69,7 @@ let makeFromDbState = async (~initialState: Persistence.initialState, ~config: C
         chain,
         await chainConfig->ChainFetcher.makeFromDbState(
           ~resumedChainState,
+          ~reorgCheckpoints=initialState.reorgCheckpoints,
           ~isInReorgThreshold,
           ~targetBufferSize,
           ~config,
@@ -75,6 +81,7 @@ let makeFromDbState = async (~initialState: Persistence.initialState, ~config: C
   let chainFetchers = ChainMap.fromArrayUnsafe(chainFetchersArr)
 
   {
+    commitedCheckpointId: initialState.checkpointId,
     multichain: config.multichain,
     chainFetchers,
     isInReorgThreshold,
@@ -95,113 +102,28 @@ let setChainFetcher = (chainManager: t, chainFetcher: ChainFetcher.t) => {
   }
 }
 
-let getFetchStates = (chainManager: t): ChainMap.t<FetchState.t> => {
-  chainManager.chainFetchers->ChainMap.map(cf => {
-    cf.fetchState
-  })
-}
-
 let nextItemIsNone = (chainManager: t): bool => {
-  !Batch.hasMultichainReadyItem(chainManager->getFetchStates, ~multichain=chainManager.multichain)
+  !Batch.hasMultichainReadyItem(
+    chainManager.chainFetchers->ChainMap.map(cf => {
+      cf.fetchState
+    }),
+    ~multichain=chainManager.multichain,
+  )
 }
 
 let createBatch = (chainManager: t, ~batchSizeTarget: int): Batch.t => {
-  let refTime = Hrtime.makeTimer()
-  let fetchStates = chainManager->getFetchStates
-
-  let mutBatchSizePerChain = Js.Dict.empty()
-  let items = if (
-    switch chainManager.multichain {
-    | Unordered => true
-    | Ordered => fetchStates->ChainMap.size === 1
-    }
-  ) {
-    Batch.prepareUnorderedBatch(~batchSizeTarget, ~fetchStates, ~mutBatchSizePerChain)
-  } else {
-    Batch.prepareOrderedBatch(~batchSizeTarget, ~fetchStates, ~mutBatchSizePerChain)
-  }
-  let batchSizePerChain = mutBatchSizePerChain
-
-  let dcsToStoreByChainId = Js.Dict.empty()
-  // Needed to:
-  // - Recalculate the computed queue sizes
-  // - Accumulate registered dynamic contracts to store in the db
-  // - Trigger onBlock pointer update
-  let updatedFetchStates = fetchStates->ChainMap.map(fetchState => {
-    switch batchSizePerChain->Utils.Dict.dangerouslyGetNonOption(fetchState.chainId->Int.toString) {
-    | Some(batchSize) =>
-      let leftItems = fetchState.buffer->Js.Array2.sliceFrom(batchSize)
-      switch fetchState.dcsToStore {
-      | [] => fetchState->FetchState.updateInternal(~mutItems=leftItems)
-      | dcs => {
-          let leftDcsToStore = []
-          let batchDcs = []
-          let updatedFetchState =
-            fetchState->FetchState.updateInternal(~mutItems=leftItems, ~dcsToStore=leftDcsToStore)
-          let nextProgressBlockNumber = updatedFetchState->FetchState.getProgressBlockNumber
-
-          dcs->Array.forEach(dc => {
-            // Important: This should be a registering block number.
-            // This works for now since dc.startBlock is a registering block number.
-            if dc.startBlock <= nextProgressBlockNumber {
-              batchDcs->Array.push(dc)
-            } else {
-              // Mutate the array we passed to the updateInternal beforehand
-              leftDcsToStore->Array.push(dc)
-            }
-          })
-
-          dcsToStoreByChainId->Js.Dict.set(fetchState.chainId->Int.toString, batchDcs)
-          updatedFetchState
-        }
-      }
-    // Skip not affected chains
-    | None => fetchState
-    }
-  })
-
-  let progressedChains = []
-  chainManager.chainFetchers
-  ->ChainMap.entries
-  ->Array.forEach(((chain, chainFetcher)) => {
-    let updatedFetchState = updatedFetchStates->ChainMap.get(chain)
-    let nextProgressBlockNumber = updatedFetchState->FetchState.getProgressBlockNumber
-    let maybeItemsCountInBatch =
-      batchSizePerChain->Utils.Dict.dangerouslyGetNonOption(
-        chain->ChainMap.Chain.toChainId->Int.toString,
-      )
-    if (
-      chainFetcher.committedProgressBlockNumber < nextProgressBlockNumber ||
-        // It should never be 0
-        maybeItemsCountInBatch->Option.isSome
-    ) {
-      let chainBatchSize = maybeItemsCountInBatch->Option.getWithDefault(0)
-      progressedChains
-      ->Js.Array2.push(
-        (
-          {
-            chainId: chain->ChainMap.Chain.toChainId,
-            batchSize: chainBatchSize,
-            progressBlockNumber: nextProgressBlockNumber,
-            totalEventsProcessed: chainFetcher.numEventsProcessed + chainBatchSize,
-            // Snapshot the value at the moment of batch creation
-            // so we don't have a case where we can't catch up the head because of the
-            // defference between processing and new blocks
-            isProgressAtHead: nextProgressBlockNumber >= chainFetcher.currentBlockHeight,
-          }: Batch.progressedChain
-        ),
-      )
-      ->ignore
-    }
-  })
-
-  {
-    items,
-    progressedChains,
-    updatedFetchStates,
-    dcsToStoreByChainId,
-    creationTimeMs: refTime->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis,
-  }
+  Batch.make(
+    ~checkpointIdBeforeBatch=chainManager.commitedCheckpointId,
+    ~chainsBeforeBatch=chainManager.chainFetchers->ChainMap.map((cf): Batch.chainBeforeBatch => {
+      fetchState: cf.fetchState,
+      progressBlockNumber: cf.committedProgressBlockNumber,
+      totalEventsProcessed: cf.numEventsProcessed,
+      sourceBlockNumber: cf.currentBlockHeight,
+      reorgDetection: cf.reorgDetection,
+    }),
+    ~multichain=chainManager.multichain,
+    ~batchSizeTarget,
+  )
 }
 
 let isProgressAtHead = chainManager =>
@@ -214,17 +136,31 @@ let isActivelyIndexing = chainManager =>
   ->ChainMap.values
   ->Js.Array2.every(ChainFetcher.isActivelyIndexing)
 
-let getSafeReorgBlocks = (chainManager: t): EntityHistory.safeReorgBlocks => {
-  let chainIds = []
-  let blockNumbers = []
-  chainManager.chainFetchers
-  ->ChainMap.values
-  ->Array.forEach(cf => {
-    chainIds->Js.Array2.push(cf.chainConfig.id)->ignore
-    blockNumbers->Js.Array2.push(cf->ChainFetcher.getHighestBlockBelowThreshold)->ignore
-  })
-  {
-    chainIds,
-    blockNumbers,
+let getSafeCheckpointId = (chainManager: t) => {
+  let chainFetchers = chainManager.chainFetchers->ChainMap.values
+
+  let infinity = (%raw(`Infinity`): int)
+  let result = ref(infinity)
+
+  for idx in 0 to chainFetchers->Array.length - 1 {
+    let chainFetcher = chainFetchers->Array.getUnsafe(idx)
+    switch chainFetcher.safeCheckpointTracking {
+    | None => () // Skip chains with maxReorgDepth = 0
+    | Some(safeCheckpointTracking) => {
+        let safeCheckpointId =
+          safeCheckpointTracking->SafeCheckpointTracking.getSafeCheckpointId(
+            ~sourceBlockNumber=chainFetcher.currentBlockHeight,
+          )
+        if safeCheckpointId < result.contents {
+          result := safeCheckpointId
+        }
+      }
+    }
+  }
+
+  if result.contents === infinity || result.contents === 0 {
+    None // No safe checkpoint found
+  } else {
+    Some(result.contents)
   }
 }

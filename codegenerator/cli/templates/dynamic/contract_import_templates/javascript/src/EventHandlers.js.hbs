@@ -13,7 +13,7 @@ const {
   const entity = {
     id: {{event.entity_id_from_event_code}},
     {{#each event.params as |param|}}
-    {{param.entity_key.uncapitalized}}: event.params.{{param.event_key.uncapitalized}}{{#if param.tuple_param_accessor_indexes}}
+    {{param.entity_key.uncapitalized}}: event.params.{{param.event_key.original}}{{#if param.tuple_param_accessor_indexes}}
       {{#each param.tuple_param_accessor_indexes as |index|}}
         [{{index}}]
       {{/each}}

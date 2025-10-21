@@ -3,183 +3,59 @@ open Table
 module RowAction = {
   type t = SET | DELETE
   let variants = [SET, DELETE]
-  let name = "ENTITY_HISTORY_ROW_ACTION"
+  let name = "ENVIO_HISTORY_CHANGE"
   let schema = S.enum(variants)
 }
 
-type historyFieldsGeneral<'a> = {
-  chain_id: 'a,
-  block_timestamp: 'a,
-  block_number: 'a,
-  log_index: 'a,
+type entityUpdateAction<'entityType> =
+  | Set('entityType)
+  | Delete
+
+type entityUpdate<'entityType> = {
+  entityId: string,
+  entityUpdateAction: entityUpdateAction<'entityType>,
+  checkpointId: int,
 }
 
-type historyFields = historyFieldsGeneral<int>
+// Prefix with envio_ to avoid colleasions
+let changeFieldName = "envio_change"
+let checkpointIdFieldName = "checkpoint_id"
 
-type entityIdOnly = {id: string}
-let entityIdOnlySchema = S.schema(s => {id: s.matches(S.string)})
-type entityData<'entity> = Delete(entityIdOnly) | Set('entity)
-
-type historyRow<'entity> = {
-  current: historyFields,
-  previous: option<historyFields>,
-  entityData: entityData<'entity>,
-  // In the event of a rollback, some entity updates may have been
-  // been affected by a rollback diff. If there was no rollback diff
-  // this will always be false.
-  // If there was a rollback diff, this will be false in the case of a
-  // new entity update (where entity affected is not present in the diff) b
-  // but true if the update is related to an entity that is
-  // currently present in the diff
-  // Optional since it's discarded during parsing/serialization
-  containsRollbackDiffChange?: bool,
-}
-
-type previousHistoryFields = historyFieldsGeneral<option<int>>
-
-//For flattening the optional previous fields into their own individual nullable fields
-let previousHistoryFieldsSchema = S.object(s => {
-  chain_id: s.field("previous_entity_history_chain_id", S.null(S.int)),
-  block_timestamp: s.field("previous_entity_history_block_timestamp", S.null(S.int)),
-  block_number: s.field("previous_entity_history_block_number", S.null(S.int)),
-  log_index: s.field("previous_entity_history_log_index", S.null(S.int)),
-})
-
-let currentHistoryFieldsSchema = S.object(s => {
-  chain_id: s.field("entity_history_chain_id", S.int),
-  block_timestamp: s.field("entity_history_block_timestamp", S.int),
-  block_number: s.field("entity_history_block_number", S.int),
-  log_index: s.field("entity_history_log_index", S.int),
-})
-
-let makeHistoryRowSchema: S.t<'entity> => S.t<historyRow<'entity>> = entitySchema => {
-  //Maps a schema object for the given entity with all fields nullable except for the id field
-  //Keeps any original nullable fields
-  let nullableEntitySchema: S.t<Js.Dict.t<unknown>> = S.schema(s =>
-    switch entitySchema->S.classify {
-    | Object({items}) =>
-      let nulldict = Js.Dict.empty()
-      items->Belt.Array.forEach(({location, schema}) => {
-        let nullableFieldSchema = switch (location, schema->S.classify) {
-        | ("id", _)
-        | (_, Null(_)) => schema //TODO double check this works for array types
-        | _ => S.null(schema)->S.toUnknown
-        }
-
-        nulldict->Js.Dict.set(location, s.matches(nullableFieldSchema))
-      })
-      nulldict
-    | _ =>
-      Js.Exn.raiseError(
-        "Failed creating nullableEntitySchema. Expected an object schema for entity",
-      )
-    }
-  )
-
-  let previousWithNullFields = {
-    chain_id: None,
-    block_timestamp: None,
-    block_number: None,
-    log_index: None,
-  }
-
+let makeSetUpdateSchema: S.t<'entity> => S.t<entityUpdate<'entity>> = entitySchema => {
   S.object(s => {
+    s.tag(changeFieldName, RowAction.SET)
     {
-      "current": s.flatten(currentHistoryFieldsSchema),
-      "previous": s.flatten(previousHistoryFieldsSchema),
-      "entityData": s.flatten(nullableEntitySchema),
-      "action": s.field("action", RowAction.schema),
+      checkpointId: s.field(checkpointIdFieldName, S.int),
+      entityId: s.field("id", S.string),
+      entityUpdateAction: Set(s.flatten(entitySchema)),
     }
-  })->S.transform(s => {
-    parser: v => {
-      current: v["current"],
-      previous: switch v["previous"] {
-      | {
-          chain_id: Some(chain_id),
-          block_timestamp: Some(block_timestamp),
-          block_number: Some(block_number),
-          log_index: Some(log_index),
-        } =>
-        Some({
-          chain_id,
-          block_timestamp,
-          block_number,
-          log_index,
-        })
-      | {chain_id: None, block_timestamp: None, block_number: None, log_index: None} => None
-      | _ => s.fail("Unexpected mix of null and non-null values in previous history fields")
-      },
-      entityData: switch v["action"] {
-      | SET => v["entityData"]->(Utils.magic: Js.Dict.t<unknown> => 'entity)->Set
-      | DELETE =>
-        let {id} = v["entityData"]->(Utils.magic: Js.Dict.t<unknown> => entityIdOnly)
-        Delete({id: id})
-      },
-    },
-    serializer: v => {
-      let (entityData, action) = switch v.entityData {
-      | Set(entityData) => (entityData->(Utils.magic: 'entity => Js.Dict.t<unknown>), RowAction.SET)
-      | Delete(entityIdOnly) => (
-          entityIdOnly->(Utils.magic: entityIdOnly => Js.Dict.t<unknown>),
-          DELETE,
-        )
-      }
-
-      {
-        "current": v.current,
-        "entityData": entityData,
-        "action": action,
-        "previous": switch v.previous {
-        | Some(historyFields) =>
-          historyFields->(Utils.magic: historyFields => previousHistoryFields) //Cast to previousHistoryFields (with "Some" field values)
-        | None => previousWithNullFields
-        },
-      }
-    },
   })
 }
 
 type t<'entity> = {
   table: table,
-  makeInsertFnQuery: (~pgSchema: string) => string,
-  schema: S.t<historyRow<'entity>>,
+  setUpdateSchema: S.t<entityUpdate<'entity>>,
   // Used for parsing
-  schemaRows: S.t<array<historyRow<'entity>>>,
-  insertFn: (Postgres.sql, Js.Json.t, ~shouldCopyCurrentEntity: bool) => promise<unit>,
+  setUpdateSchemaRows: S.t<array<entityUpdate<'entity>>>,
+  makeInsertDeleteUpdatesQuery: (~pgSchema: string) => string,
+  makeGetRollbackRemovedIdsQuery: (~pgSchema: string) => string,
+  makeGetRollbackRestoredEntitiesQuery: (~pgSchema: string) => string,
 }
 
-type entityInternal
+let maxPgTableNameLength = 63
+let historyTablePrefix = "envio_history_"
+let historyTableName = (~entityName, ~entityIndex) => {
+  let fullName = historyTablePrefix ++ entityName
+  if fullName->String.length > maxPgTableNameLength {
+    let entityIndexStr = entityIndex->Belt.Int.toString
+    fullName->Js.String.slice(~from=0, ~to_=maxPgTableNameLength - entityIndexStr->String.length) ++
+      entityIndexStr
+  } else {
+    fullName
+  }
+}
 
-external castInternal: t<'entity> => t<entityInternal> = "%identity"
-external eval: string => 'a = "eval"
-
-let fromTable = (table: table, ~schema: S.t<'entity>): t<'entity> => {
-  let entity_history_block_timestamp = "entity_history_block_timestamp"
-  let entity_history_chain_id = "entity_history_chain_id"
-  let entity_history_block_number = "entity_history_block_number"
-  let entity_history_log_index = "entity_history_log_index"
-
-  //NB: Ordered by hirarchy of event ordering
-  let currentChangeFieldNames = [
-    entity_history_block_timestamp,
-    entity_history_chain_id,
-    entity_history_block_number,
-    entity_history_log_index,
-  ]
-
-  let currentHistoryFields =
-    currentChangeFieldNames->Belt.Array.map(fieldName =>
-      mkField(fieldName, Integer, ~fieldSchema=S.never, ~isPrimaryKey=true)
-    )
-
-  let previousChangeFieldNames =
-    currentChangeFieldNames->Belt.Array.map(fieldName => "previous_" ++ fieldName)
-
-  let previousHistoryFields =
-    previousChangeFieldNames->Belt.Array.map(fieldName =>
-      mkField(fieldName, Integer, ~fieldSchema=S.never, ~isNullable=true)
-    )
-
+let fromTable = (table: table, ~schema: S.t<'entity>, ~entityIndex): t<'entity> => {
   let id = "id"
 
   let dataFields = table.fields->Belt.Array.keepMap(field =>
@@ -202,118 +78,95 @@ let fromTable = (table: table, ~schema: S.t<'entity>): t<'entity> => {
     }
   )
 
-  let actionFieldName = "action"
+  let actionField = mkField(changeFieldName, Custom(RowAction.name), ~fieldSchema=S.never)
 
-  let actionField = mkField(actionFieldName, Custom(RowAction.name), ~fieldSchema=S.never)
+  let checkpointIdField = mkField(
+    checkpointIdFieldName,
+    Integer,
+    ~fieldSchema=S.int,
+    ~isPrimaryKey=true,
+  )
 
-  let serialField = mkField("serial", Serial, ~fieldSchema=S.never, ~isNullable=true, ~isIndex=true)
-
-  let dataFieldNames = dataFields->Belt.Array.map(field => field->getFieldName)
-
-  let originTableName = table.tableName
-  let historyTableName = originTableName ++ "_history"
+  let entityTableName = table.tableName
+  let historyTableName = historyTableName(~entityName=entityTableName, ~entityIndex)
   //ignore composite indices
   let table = mkTable(
     historyTableName,
-    ~fields=Belt.Array.concatMany([
-      currentHistoryFields,
-      previousHistoryFields,
-      dataFields,
-      [actionField, serialField],
-    ]),
+    ~fields=dataFields->Belt.Array.concat([checkpointIdField, actionField]),
   )
 
-  let insertFnName = `"insert_${table.tableName}"`
+  let setUpdateSchema = makeSetUpdateSchema(schema)
 
-  let allFieldNamesDoubleQuoted =
-    Belt.Array.concatMany([
-      currentChangeFieldNames,
-      previousChangeFieldNames,
-      dataFieldNames,
-      [actionFieldName],
-    ])->Belt.Array.map(fieldName => `"${fieldName}"`)
+  let makeInsertDeleteUpdatesQuery = {
+    // Get all field names for the INSERT statement
+    let allFieldNames = table.fields->Belt.Array.map(field => field->getFieldName)
+    let allFieldNamesStr =
+      allFieldNames->Belt.Array.map(name => `"${name}"`)->Js.Array2.joinWith(", ")
 
-  let makeInsertFnQuery = (~pgSchema) => {
-    let historyRowArg = "history_row"
-    let historyTablePath = `"${pgSchema}"."${historyTableName}"`
-    let originTablePath = `"${pgSchema}"."${originTableName}"`
-
-    let previousHistoryFieldsAreNullStr =
-      previousChangeFieldNames
-      ->Belt.Array.map(fieldName => `${historyRowArg}.${fieldName} IS NULL`)
-      ->Js.Array2.joinWith(" OR ")
-
-    let currentChangeFieldNamesCommaSeparated = currentChangeFieldNames->Js.Array2.joinWith(", ")
-
-    let dataFieldNamesDoubleQuoted = dataFieldNames->Belt.Array.map(fieldName => `"${fieldName}"`)
-    let dataFieldNamesCommaSeparated = dataFieldNamesDoubleQuoted->Js.Array2.joinWith(", ")
-
-    `CREATE OR REPLACE FUNCTION ${insertFnName}(${historyRowArg} ${historyTablePath}, should_copy_current_entity BOOLEAN)
-RETURNS void AS $$
-DECLARE
-  v_previous_record RECORD;
-  v_origin_record RECORD;
-BEGIN
-  -- Check if previous values are not provided
-  IF ${previousHistoryFieldsAreNullStr} THEN
-    -- Find the most recent record for the same id
-    SELECT ${currentChangeFieldNamesCommaSeparated} INTO v_previous_record
-    FROM ${historyTablePath}
-    WHERE ${id} = ${historyRowArg}.${id}
-    ORDER BY ${currentChangeFieldNames
-      ->Belt.Array.map(fieldName => fieldName ++ " DESC")
-      ->Js.Array2.joinWith(", ")}
-    LIMIT 1;
-
-    -- If a previous record exists, use its values
-    IF FOUND THEN
-      ${Belt.Array.zip(currentChangeFieldNames, previousChangeFieldNames)
-      ->Belt.Array.map(((currentFieldName, previousFieldName)) => {
-        `${historyRowArg}.${previousFieldName} := v_previous_record.${currentFieldName};`
-      })
-      ->Js.Array2.joinWith(" ")}
-      ElSIF should_copy_current_entity THEN
-      -- Check if a value for the id exists in the origin table and if so, insert a history row for it.
-      SELECT ${dataFieldNamesCommaSeparated} FROM ${originTablePath} WHERE id = ${historyRowArg}.${id} INTO v_origin_record;
-      IF FOUND THEN
-        INSERT INTO ${historyTablePath} (${currentChangeFieldNamesCommaSeparated}, ${dataFieldNamesCommaSeparated}, "${actionFieldName}")
-        -- SET the current change data fields to 0 since we don't know what they were
-        -- and it doesn't matter provided they are less than any new values
-        VALUES (${currentChangeFieldNames
-      ->Belt.Array.map(_ => "0")
-      ->Js.Array2.joinWith(", ")}, ${dataFieldNames
-      ->Belt.Array.map(fieldName => `v_origin_record."${fieldName}"`)
-      ->Js.Array2.joinWith(", ")}, 'SET');
-
-        ${previousChangeFieldNames
-      ->Belt.Array.map(previousFieldName => {
-        `${historyRowArg}.${previousFieldName} := 0;`
-      })
-      ->Js.Array2.joinWith(" ")}
-      END IF;
-    END IF;
-  END IF;
-
-  INSERT INTO ${historyTablePath} (${allFieldNamesDoubleQuoted->Js.Array2.joinWith(", ")})
-  VALUES (${allFieldNamesDoubleQuoted
-      ->Belt.Array.map(fieldName => `${historyRowArg}.${fieldName}`)
-      ->Js.Array2.joinWith(", ")});
-END;
-$$ LANGUAGE plpgsql;`
+    // Build the SELECT part: id from unnest, checkpoint_id from unnest, 'DELETE' for action, NULL for all other fields
+    let selectParts = allFieldNames->Belt.Array.map(fieldName => {
+      switch fieldName {
+      | "id" => "u.id"
+      | field if field == checkpointIdFieldName => "u.checkpoint_id"
+      | field if field == changeFieldName => "'DELETE'"
+      | _ => "NULL"
+      }
+    })
+    let selectPartsStr = selectParts->Js.Array2.joinWith(", ")
+    (~pgSchema) => {
+      `INSERT INTO "${pgSchema}"."${historyTableName}" (${allFieldNamesStr})
+SELECT ${selectPartsStr}
+FROM UNNEST($1::text[], $2::int[]) AS u(id, checkpoint_id)`
+    }
   }
 
-  let insertFnString = `(sql, rowArgs, shouldCopyCurrentEntity) =>
-      sql\`select ${insertFnName}(ROW(${allFieldNamesDoubleQuoted
-    ->Belt.Array.map(fieldNameDoubleQuoted => `\${rowArgs[${fieldNameDoubleQuoted}]\}`)
-    ->Js.Array2.joinWith(", ")}, NULL),  --NULL argument for SERIAL field
-    \${shouldCopyCurrentEntity});\``
+  // Get data field names for rollback queries (exclude changeFieldName and checkpointIdFieldName)
+  let dataFieldNames =
+    table.fields
+    ->Belt.Array.map(field => field->getFieldName)
+    ->Belt.Array.keep(fieldName =>
+      fieldName != changeFieldName && fieldName != checkpointIdFieldName
+    )
+  let dataFieldsCommaSeparated =
+    dataFieldNames->Belt.Array.map(name => `"${name}"`)->Js.Array2.joinWith(", ")
 
-  let insertFn: (Postgres.sql, Js.Json.t, ~shouldCopyCurrentEntity: bool) => promise<unit> =
-    insertFnString->eval
+  // Returns entity IDs that were created after the rollback target and have no history before it.
+  // These entities should be deleted during rollback.
+  let makeGetRollbackRemovedIdsQuery = (~pgSchema) => {
+    `SELECT DISTINCT id
+FROM "${pgSchema}"."${historyTableName}"
+WHERE "${checkpointIdFieldName}" > $1
+  AND NOT EXISTS (
+    SELECT 1
+    FROM "${pgSchema}"."${historyTableName}" h
+    WHERE h.id = "${historyTableName}".id
+      AND h."${checkpointIdFieldName}" <= $1
+  )`
+  }
 
-  let schema = makeHistoryRowSchema(schema)
+  // Returns the most recent entity state for IDs that need to be restored during rollback.
+  // For each ID modified after the rollback target, retrieves its latest state at or before the target.
+  let makeGetRollbackRestoredEntitiesQuery = (~pgSchema) => {
+    `SELECT DISTINCT ON (id) ${dataFieldsCommaSeparated}
+FROM "${pgSchema}"."${historyTableName}"
+WHERE "${checkpointIdFieldName}" <= $1
+  AND EXISTS (
+    SELECT 1
+    FROM "${pgSchema}"."${historyTableName}" h
+    WHERE h.id = "${historyTableName}".id
+      AND h."${checkpointIdFieldName}" > $1
+  )
+ORDER BY id, "${checkpointIdFieldName}" DESC`
+  }
 
-  {table, makeInsertFnQuery, schema, schemaRows: S.array(schema), insertFn}
+  {
+    table,
+    setUpdateSchema,
+    setUpdateSchemaRows: S.array(setUpdateSchema),
+    makeInsertDeleteUpdatesQuery,
+    makeGetRollbackRemovedIdsQuery,
+    makeGetRollbackRestoredEntitiesQuery,
+  }
 }
 
 type safeReorgBlocks = {
@@ -323,60 +176,105 @@ type safeReorgBlocks = {
 
 // We want to keep only the minimum history needed to survive chain reorgs and delete everything older.
 // Each chain gives us a "safe block": we assume reorgs will never happen at that block.
+// The latest checkpoint belonging to safe blocks of all chains is the safe checkpoint id.
 //
 // What we keep per entity id:
-// - The latest history row at or before the safe block (the "anchor"). This is the last state that could
-//   ever be relevant during a rollback.
 // - If there are history rows in reorg threshold (after the safe block), we keep the anchor and delete all older rows.
 // - If there are no history rows in reorg threshold (after the safe block), even the anchor is redundant, so we delete it too.
+// Anchor is the latest history row at or before the safe checkpoint id.
+// This is the last state that could ever be relevant during a rollback.
 //
 // Why this is safe:
-// - Rollbacks will not cross the safe block, so rows older than the anchor can never be referenced again.
-// - If nothing changed in reorg threshold (after the safe block), the current state for that id can be reconstructed from the
+// - Rollbacks will not cross the safe checkpoint id, so rows older than the anchor can never be referenced again.
+// - If nothing changed in reorg threshold (after the safe checkpoint), the current state for that id can be reconstructed from the
 //   origin table; we do not need a pre-safe anchor for it.
-//
-// Performance notes:
-// - Multi-chain batching: inputs are expanded with unnest, letting one prepared statement prune many chains and
-//   enabling the planner to use indexes per chain_id efficiently.
-// - Minimal row touches: we only compute keep_serial per id and delete strictly older rows; this reduces write
-//   amplification and vacuum pressure compared to broad time-based purges.
-// - Contention-awareness: the DELETE joins on ids first, narrowing target rows early to limit locking and buffer churn.
-let makePruneStaleEntityHistoryQuery = (~entityName, ~pgSchema) => {
-  let historyTableName = entityName ++ "_history"
-  let historyTableRef = `"${pgSchema}"."${historyTableName}"`
+let makePruneStaleEntityHistoryQuery = (~entityName, ~entityIndex, ~pgSchema) => {
+  let historyTableRef = `"${pgSchema}"."${historyTableName(~entityName, ~entityIndex)}"`
 
-  `WITH safe AS (
-  SELECT s.chain_id, s.block_number
-  FROM unnest($1::int[], $2::bigint[]) AS s(chain_id, block_number)
-),
-max_before_safe AS (
-  SELECT t.id, MAX(t.serial) AS keep_serial
-  FROM ${historyTableRef} t
-  JOIN safe s
-    ON s.chain_id = t.entity_history_chain_id
-   AND t.entity_history_block_number <= s.block_number
+  `WITH anchors AS (
+  SELECT t.id, MAX(t.${checkpointIdFieldName}) AS keep_checkpoint_id
+  FROM ${historyTableRef} t WHERE t.${checkpointIdFieldName} <= $1
   GROUP BY t.id
-),
-post_safe AS (
-  SELECT DISTINCT t.id
-  FROM ${historyTableRef} t
-  JOIN safe s
-    ON s.chain_id = t.entity_history_chain_id
-   AND t.entity_history_block_number > s.block_number
 )
 DELETE FROM ${historyTableRef} d
-USING max_before_safe m
-LEFT JOIN post_safe p ON p.id = m.id
-WHERE d.id = m.id
+USING anchors a
+WHERE d.id = a.id
   AND (
-    d.serial < m.keep_serial
-    OR (p.id IS NULL AND d.serial = m.keep_serial)
+    d.${checkpointIdFieldName} < a.keep_checkpoint_id
+    OR (
+      d.${checkpointIdFieldName} = a.keep_checkpoint_id AND
+      NOT EXISTS (
+        SELECT 1 FROM ${historyTableRef} ps 
+        WHERE ps.id = d.id AND ps.${checkpointIdFieldName} > $1
+      ) 
+    )
   );`
 }
 
-let pruneStaleEntityHistory = (sql, ~entityName, ~pgSchema, ~safeReorgBlocks): promise<unit> => {
+let pruneStaleEntityHistory = (
+  sql,
+  ~entityName,
+  ~entityIndex,
+  ~pgSchema,
+  ~safeCheckpointId,
+): promise<unit> => {
   sql->Postgres.preparedUnsafe(
-    makePruneStaleEntityHistoryQuery(~entityName, ~pgSchema),
-    (safeReorgBlocks.chainIds, safeReorgBlocks.blockNumbers)->Utils.magic,
+    makePruneStaleEntityHistoryQuery(~entityName, ~entityIndex, ~pgSchema),
+    [safeCheckpointId]->Utils.magic,
   )
+}
+
+// If an entity doesn't have a history before the update
+// we create it automatically with checkpoint_id 0
+let makeBackfillHistoryQuery = (~pgSchema, ~entityName, ~entityIndex) => {
+  let historyTableRef = `"${pgSchema}"."${historyTableName(~entityName, ~entityIndex)}"`
+  `WITH target_ids AS (
+  SELECT UNNEST($1::${(Text: Table.fieldType :> string)}[]) AS id
+),
+missing_history AS (
+  SELECT e.*
+  FROM "${pgSchema}"."${entityName}" e
+  JOIN target_ids t ON e.id = t.id
+  LEFT JOIN ${historyTableRef} h ON h.id = e.id
+  WHERE h.id IS NULL
+)
+INSERT INTO ${historyTableRef}
+SELECT *, 0 AS ${checkpointIdFieldName}, '${(RowAction.SET :> string)}' as ${changeFieldName}
+FROM missing_history;`
+}
+
+let backfillHistory = (sql, ~pgSchema, ~entityName, ~entityIndex, ~ids: array<string>) => {
+  sql
+  ->Postgres.preparedUnsafe(
+    makeBackfillHistoryQuery(~entityName, ~entityIndex, ~pgSchema),
+    [ids]->Obj.magic,
+  )
+  ->Promise.ignoreValue
+}
+
+let insertDeleteUpdates = (
+  sql,
+  ~pgSchema,
+  ~entityHistory,
+  ~batchDeleteEntityIds,
+  ~batchDeleteCheckpointIds,
+) => {
+  sql
+  ->Postgres.preparedUnsafe(
+    entityHistory.makeInsertDeleteUpdatesQuery(~pgSchema),
+    (batchDeleteEntityIds, batchDeleteCheckpointIds)->Obj.magic,
+  )
+  ->Promise.ignoreValue
+}
+
+let rollback = (sql, ~pgSchema, ~entityName, ~entityIndex, ~rollbackTargetCheckpointId: int) => {
+  sql
+  ->Postgres.preparedUnsafe(
+    `DELETE FROM "${pgSchema}"."${historyTableName(
+        ~entityName,
+        ~entityIndex,
+      )}" WHERE "${checkpointIdFieldName}" > $1;`,
+    [rollbackTargetCheckpointId]->Utils.magic,
+  )
+  ->Promise.ignoreValue
 }

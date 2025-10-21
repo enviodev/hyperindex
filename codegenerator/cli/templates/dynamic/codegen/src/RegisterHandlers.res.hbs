@@ -22,69 +22,69 @@ let registerContractHandlers = (
   }
 }
 
-%%private(
-  let makeGeneratedConfig = () => {
-    let chains = [
-      {{#each chain_configs as | chain_config |}}
-      {
-        let contracts = [
-          {{#each chain_config.codegen_contracts as | contract |}}
-          {
-            InternalConfig.name: "{{contract.name.capitalized}}",
-            abi: Types.{{contract.name.capitalized}}.abi,
-            addresses: [
-              {{#each contract.addresses as | address |}}
-              {{#if ../../../is_evm_ecosystem}}
-              {{#if ../../../lowercase_addresses}}
-              "{{address}}"->Address.Evm.fromStringLowercaseOrThrow
-              {{else}}
-              "{{address}}"->Address.Evm.fromStringOrThrow
-              {{/if}}
-              {{else}}
-              "{{address}}"->Address.unsafeFromString
-              {{/if}},
-              {{/each}}
-            ],
-            events: [
-              {{#each contract.events as | event |}}
-              (Types.{{contract.name.capitalized}}.{{event.name}}.register() :> Internal.eventConfig),
-              {{/each}}
-            ],
-            startBlock: {{#if contract.start_block}}Some({{contract.start_block}}){{else}}None{{/if}},
-          },
-          {{/each}}
-        ]
-        let chain = ChainMap.Chain.makeUnsafe(~chainId={{chain_config.network_config.id}})
+let makeGeneratedConfig = () => {
+  let chains = [
+    {{#each chain_configs as | chain_config |}}
+    {
+      let contracts = [
+        {{#each chain_config.codegen_contracts as | contract |}}
         {
-          InternalConfig.confirmedBlockThreshold: {{chain_config.network_config.confirmed_block_threshold}},
-          startBlock: {{chain_config.network_config.start_block}},
-          {{#if chain_config.network_config.end_block}}
-          endBlock: {{chain_config.network_config.end_block}},
-          {{/if}}
-          id: {{chain_config.network_config.id}},
-          contracts,
-          sources: {{chain_config.sources_code}}
-        }
-      },
-      {{/each}}
-    ]
+          InternalConfig.name: "{{contract.name.capitalized}}",
+          abi: Types.{{contract.name.capitalized}}.abi,
+          addresses: [
+            {{#each contract.addresses as | address |}}
+            {{#if ../../../is_evm_ecosystem}}
+            {{#if ../../../lowercase_addresses}}
+            "{{address}}"->Address.Evm.fromStringLowercaseOrThrow
+            {{else}}
+            "{{address}}"->Address.Evm.fromStringOrThrow
+            {{/if}}
+            {{else}}
+            "{{address}}"->Address.unsafeFromString
+            {{/if}},
+            {{/each}}
+          ],
+          events: [
+            {{#each contract.events as | event |}}
+            (Types.{{contract.name.capitalized}}.{{event.name}}.register() :> Internal.eventConfig),
+            {{/each}}
+          ],
+          startBlock: {{#if contract.start_block}}Some({{contract.start_block}}){{else}}None{{/if}},
+        },
+        {{/each}}
+      ]
+      let chain = ChainMap.Chain.makeUnsafe(~chainId={{chain_config.network_config.id}})
+      {
+        InternalConfig.maxReorgDepth: {{chain_config.network_config.confirmed_block_threshold}},
+        startBlock: {{chain_config.network_config.start_block}},
+        {{#if chain_config.network_config.end_block}}
+        endBlock: {{chain_config.network_config.end_block}},
+        {{/if}}
+        id: {{chain_config.network_config.id}},
+        contracts,
+        sources: {{chain_config.sources_code}}
+      }
+    },
+    {{/each}}
+  ]
 
-    Config.make(
-      ~shouldRollbackOnReorg={{should_rollback_on_reorg}},
-      ~shouldSaveFullHistory={{should_save_full_history}},
-      ~isUnorderedMultichainMode={{is_unordered_multichain_mode}},
-      ~chains,
-      ~enableRawEvents={{enable_raw_events}},
-      ~batchSize=?Env.batchSize,
-      ~preloadHandlers={{preload_handlers}},
-      ~lowercaseAddresses={{lowercase_addresses}},
-      ~shouldUseHypersyncClientDecoder={{should_use_hypersync_client_decoder}},
-      {{#if chain_config.is_fuel}}
-      ~ecosystem=Fuel,
-      {{/if}}
-    )
-  }
+  Config.make(
+    ~shouldRollbackOnReorg={{should_rollback_on_reorg}},
+    ~shouldSaveFullHistory={{should_save_full_history}},
+    ~isUnorderedMultichainMode={{is_unordered_multichain_mode}},
+    ~chains,
+    ~enableRawEvents={{enable_raw_events}},
+    ~batchSize=?Env.batchSize,
+    ~preloadHandlers={{preload_handlers}},
+    ~lowercaseAddresses={{lowercase_addresses}},
+    ~shouldUseHypersyncClientDecoder={{should_use_hypersync_client_decoder}},
+    {{#if chain_config.is_fuel}}
+    ~ecosystem=Fuel,
+    {{/if}}
+  )
+}
 
+%%private(
   let config: ref<option<Config.t>> = ref(None)
 )
 

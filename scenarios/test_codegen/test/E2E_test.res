@@ -62,7 +62,7 @@ describe("E2E tests", () => {
       [{value: "0", labels: Js.Dict.empty()}],
     )
 
-    await Mock.Helper.initialEnterReorgThreshold(~sourceMock)
+    await Mock.Helper.initialEnterReorgThreshold(~indexerMock, ~sourceMock)
 
     Assert.deepEqual(
       await indexerMock.metric("envio_reorg_threshold"),
@@ -83,7 +83,7 @@ describe("E2E tests", () => {
     )
   })
 
-  // A regression test for bug introduced in 2.30.0
+  // A regression test for a bug introduced in 2.30.0
   Async.it("Correct event ordering for ordered multichain indexer", async () => {
     let sourceMock1337 = Mock.Source.make(
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
@@ -110,8 +110,8 @@ describe("E2E tests", () => {
 
     // Test inside of reorg threshold, so we can check the history order
     let _ = await Promise.all2((
-      Mock.Helper.initialEnterReorgThreshold(~sourceMock=sourceMock1337),
-      Mock.Helper.initialEnterReorgThreshold(~sourceMock=sourceMock100),
+      Mock.Helper.initialEnterReorgThreshold(~indexerMock, ~sourceMock=sourceMock1337),
+      Mock.Helper.initialEnterReorgThreshold(~indexerMock, ~sourceMock=sourceMock100),
     ))
 
     let callCount = ref(0)
@@ -158,58 +158,322 @@ describe("E2E tests", () => {
     await indexerMock.getBatchWritePromise()
 
     Assert.deepEqual(
-      await indexerMock.queryHistory(module(Entities.SimpleEntity)),
-      [
-        {
-          current: {
-            chain_id: 100,
-            block_timestamp: 150,
-            block_number: 150,
-            log_index: 0,
+      await Promise.all2((
+        indexerMock.queryCheckpoints(),
+        indexerMock.queryHistory(module(Entities.SimpleEntity)),
+      )),
+      (
+        [
+          {
+            id: 2,
+            chainId: 100,
+            blockNumber: 150,
+            blockHash: Js.Null.Null,
+            eventsProcessed: 1,
           },
-          previous: undefined,
-          entityData: Set({
-            Entities.SimpleEntity.id: "1",
-            value: "call-0",
-          }),
-        },
-        {
-          current: {
-            chain_id: 1337,
-            block_timestamp: 150,
-            block_number: 150,
-            log_index: 2,
+          {
+            id: 3,
+            chainId: 1337,
+            blockNumber: 100,
+            blockHash: Js.Null.Value("0x100"),
+            eventsProcessed: 0,
           },
-          previous: Some({
-            chain_id: 100,
-            block_timestamp: 150,
-            block_number: 150,
-            log_index: 0,
-          }),
-          entityData: Set({
-            Entities.SimpleEntity.id: "1",
-            value: "call-1",
-          }),
-        },
-        {
-          current: {
-            chain_id: 100,
-            block_timestamp: 151,
-            block_number: 151,
-            log_index: 0,
+          {
+            id: 4,
+            chainId: 1337,
+            blockNumber: 150,
+            blockHash: Js.Null.Null,
+            eventsProcessed: 1,
           },
-          previous: Some({
-            chain_id: 1337,
-            block_timestamp: 150,
-            block_number: 150,
-            log_index: 2,
-          }),
-          entityData: Set({
-            Entities.SimpleEntity.id: "1",
-            value: "call-2",
-          }),
+          {
+            id: 5,
+            chainId: 100,
+            blockNumber: 151,
+            blockHash: Js.Null.Null,
+            eventsProcessed: 1,
+          },
+          {
+            id: 6,
+            chainId: 100,
+            blockNumber: 160,
+            blockHash: Js.Null.Value("0x160"),
+            eventsProcessed: 0,
+          },
+        ],
+        [
+          {
+            checkpointId: 2,
+            entityId: "1",
+            entityUpdateAction: Set({
+              Entities.SimpleEntity.id: "1",
+              value: "call-0",
+            }),
+          },
+          {
+            checkpointId: 4,
+            entityId: "1",
+            entityUpdateAction: Set({
+              Entities.SimpleEntity.id: "1",
+              value: "call-1",
+            }),
+          },
+          {
+            checkpointId: 5,
+            entityId: "1",
+            entityUpdateAction: Set({
+              Entities.SimpleEntity.id: "1",
+              value: "call-2",
+            }),
+          },
+        ],
+      ),
+    )
+  })
+
+  Async.it("Track effects in prom metrics", async () => {
+    let sourceMock = Mock.Source.make(
+      [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
+      ~chain=#1337,
+    )
+    let indexerMock = await Mock.Indexer.make(
+      ~chains=[
+        {
+          chain: #1337,
+          sources: [sourceMock.source],
         },
       ],
+    )
+    await Utils.delay(0)
+
+    let testEffectWithCache = Envio.experimental_createEffect(
+      {
+        name: "testEffectWithCache",
+        input: S.string,
+        output: S.string,
+        cache: true,
+      },
+      async ({input}) => {
+        input ++ "-output"
+      },
+    )
+    let testEffect = Envio.experimental_createEffect(
+      {
+        name: "testEffect",
+        input: S.string,
+        output: S.string,
+      },
+      async ({input}) => {
+        input ++ "-output"
+      },
+    )
+
+    Assert.deepEqual(
+      await indexerMock.metric("envio_effect_calls_count"),
+      [],
+      ~message="should have no effect calls in the beginning",
+    )
+    Assert.deepEqual(
+      await indexerMock.metric("envio_effect_cache_count"),
+      [],
+      ~message="should have no effect cache in the beginning",
+    )
+
+    sourceMock.resolveGetHeightOrThrow(300)
+    await Utils.delay(0)
+    await Utils.delay(0)
+    sourceMock.resolveGetItemsOrThrow(
+      [
+        {
+          blockNumber: 100,
+          logIndex: 0,
+          handler: async ({context}) => {
+            Assert.deepEqual(await context.effect(testEffect, "test"), "test-output")
+            Assert.deepEqual(await context.effect(testEffectWithCache, "test"), "test-output")
+          },
+        },
+      ],
+      ~latestFetchedBlockNumber=100,
+    )
+    await indexerMock.getBatchWritePromise()
+
+    Assert.deepEqual(
+      await indexerMock.metric("envio_effect_calls_count"),
+      [
+        {
+          value: "1",
+          labels: Js.Dict.fromArray([("effect", "testEffect")]),
+        },
+        {
+          value: "1",
+          labels: Js.Dict.fromArray([("effect", "testEffectWithCache")]),
+        },
+      ],
+      ~message="should increment effect calls count",
+    )
+    Assert.deepEqual(
+      await indexerMock.metric("envio_effect_cache_count"),
+      [
+        {
+          value: "1",
+          labels: Js.Dict.fromArray([("effect", "testEffectWithCache")]),
+        },
+      ],
+      ~message="should increment effect cache count",
+    )
+    Assert.deepEqual(
+      await indexerMock.metric("envio_storage_load_count"),
+      [],
+      ~message="Shouldn't load anything from storage at this point",
+    )
+    Assert.deepEqual(
+      await indexerMock.queryEffectCache("testEffectWithCache"),
+      [{"id": `"test"`, "output": %raw(`"test-output"`)}],
+      ~message="should have the cache entry in db",
+    )
+
+    let indexerMock = await indexerMock.restart()
+    await Utils.delay(0)
+
+    Assert.deepEqual(
+      await indexerMock.metric("envio_effect_cache_count"),
+      [
+        {
+          value: "1",
+          labels: Js.Dict.fromArray([("effect", "testEffectWithCache")]),
+        },
+      ],
+      ~message="should resume effect cache count on restart",
+    )
+
+    sourceMock.resolveGetHeightOrThrow(300)
+    await Utils.delay(0)
+    await Utils.delay(0)
+    sourceMock.resolveGetItemsOrThrow(
+      [
+        {
+          blockNumber: 101,
+          logIndex: 0,
+          handler: async ({context}) => {
+            Assert.deepEqual(
+              await Promise.all2((
+                context.effect(testEffectWithCache, "test"),
+                context.effect(testEffectWithCache, "test-2"),
+              )),
+              ("test-output", "test-2-output"),
+            )
+          },
+        },
+      ],
+      ~latestFetchedBlockNumber=101,
+    )
+    await indexerMock.getBatchWritePromise()
+
+    Assert.deepEqual(
+      await Promise.all3((
+        indexerMock.metric("envio_storage_load_where_size"),
+        indexerMock.metric("envio_storage_load_size"),
+        indexerMock.metric("envio_storage_load_count"),
+      )),
+      (
+        [
+          {
+            value: "2",
+            labels: Js.Dict.fromArray([("operation", "testEffectWithCache.effect")]),
+          },
+        ],
+        [
+          {
+            value: "1",
+            labels: Js.Dict.fromArray([("operation", "testEffectWithCache.effect")]),
+          },
+        ],
+        [
+          {
+            value: "1",
+            labels: Js.Dict.fromArray([("operation", "testEffectWithCache.effect")]),
+          },
+        ],
+      ),
+      ~message="Time to load cache from storage now",
+    )
+    Assert.deepEqual(
+      await Promise.all2((
+        indexerMock.metric("envio_effect_calls_count"),
+        indexerMock.metric("envio_effect_cache_count"),
+      )),
+      (
+        [
+          {
+            // It resumes in-memory during test, but it'll reset on process restart
+            // In the real-world it'll be 1
+            value: "2",
+            labels: Js.Dict.fromArray([("effect", "testEffectWithCache")]),
+          },
+        ],
+        [
+          {
+            value: "2",
+            labels: Js.Dict.fromArray([("effect", "testEffectWithCache")]),
+          },
+        ],
+      ),
+      ~message="Should increment effect calls count and cache count",
+    )
+
+    let testEffectWithCacheV2 = Envio.experimental_createEffect(
+      {
+        name: "testEffectWithCache",
+        input: S.string,
+        output: S.string->S.refine(
+          s => v =>
+            if !(v->Js.String2.includes("2")) {
+              s.fail(`Expected to include '2', got ${v}`)
+            },
+        ),
+        cache: true,
+      },
+      async ({input}) => {
+        input ++ "-output-v2"
+      },
+    )
+
+    sourceMock.resolveGetItemsOrThrow(
+      [
+        {
+          blockNumber: 102,
+          logIndex: 0,
+          handler: async ({context}) => {
+            Assert.deepEqual(
+              await Promise.all2((
+                context.effect(testEffectWithCacheV2, "test"),
+                context.effect(testEffectWithCacheV2, "test-2"),
+              )),
+              ("test-output-v2", "test-2-output"),
+            )
+          },
+        },
+      ],
+      ~latestFetchedBlockNumber=102,
+    )
+    await indexerMock.getBatchWritePromise()
+
+    Assert.deepEqual(
+      await indexerMock.queryEffectCache("testEffectWithCache"),
+      [
+        {"id": `"test-2"`, "output": %raw(`"test-2-output"`)},
+        {"id": `"test"`, "output": %raw(`"test-output-v2"`)},
+      ],
+      ~message="Should invalidate loaded cache and store new one",
+    )
+    Assert.deepEqual(
+      await indexerMock.metric("envio_effect_cache_count"),
+      [
+        {
+          value: "2",
+          labels: Js.Dict.fromArray([("effect", "testEffectWithCache")]),
+        },
+      ],
+      ~message="Shouldn't increment on invalidation",
     )
   })
 })

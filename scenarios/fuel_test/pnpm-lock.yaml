@@ -2013,6 +2013,8 @@ snapshots:
 
   envio@file:../../codegenerator/cli/npm/envio(typescript@5.2.2):
     dependencies:
+      '@elastic/ecs-pino-format': 1.4.0
+      '@envio-dev/hyperfuel-client': 1.2.2
       '@envio-dev/hypersync-client': 0.6.6
       bignumber.js: 9.1.2
       pino: 8.16.1

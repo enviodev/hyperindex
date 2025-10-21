@@ -49,6 +49,7 @@ describe("Load and save an entity with a BigDecimal from DB", () => {
       inMemoryStore,
       shouldSaveHistory: false,
       isPreload: false,
+      checkpointId: 0,
       chains,
     })->(Utils.magic: Internal.handlerContext => Types.loaderContext)
 

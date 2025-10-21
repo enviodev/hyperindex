@@ -44,6 +44,7 @@ module EntityTables = {
 
 type effectCacheInMemTable = {
   idsToStore: array<string>,
+  mutable invalidationsCount: int,
   dict: dict<Internal.effectOutput>,
   effect: Internal.effect,
 }
@@ -52,17 +53,17 @@ type t = {
   rawEvents: InMemoryTable.t<rawEventsKey, InternalTable.RawEvents.t>,
   entities: dict<InMemoryTable.Entity.t<Entities.internalEntity>>,
   effects: dict<effectCacheInMemTable>,
-  rollBackEventIdentifier: option<Types.eventIdentifier>,
+  rollbackTargetCheckpointId: option<int>,
 }
 
 let make = (
   ~entities: array<Internal.entityConfig>=Entities.allEntities,
-  ~rollBackEventIdentifier=?,
+  ~rollbackTargetCheckpointId=?,
 ): t => {
   rawEvents: InMemoryTable.make(~hash=hashRawEventsKey),
   entities: EntityTables.make(entities),
   effects: Js.Dict.empty(),
-  rollBackEventIdentifier,
+  rollbackTargetCheckpointId,
 }
 
 let clone = (self: t) => {
@@ -70,10 +71,11 @@ let clone = (self: t) => {
   entities: self.entities->EntityTables.clone,
   effects: Js.Dict.map(table => {
     idsToStore: table.idsToStore->Array.copy,
+    invalidationsCount: table.invalidationsCount,
     dict: table.dict->Utils.Dict.shallowCopy,
     effect: table.effect,
   }, self.effects),
-  rollBackEventIdentifier: self.rollBackEventIdentifier->Lodash.cloneDeep,
+  rollbackTargetCheckpointId: self.rollbackTargetCheckpointId,
 }
 
 let getEffectInMemTable = (inMemoryStore: t, ~effect: Internal.effect) => {
@@ -84,6 +86,7 @@ let getEffectInMemTable = (inMemoryStore: t, ~effect: Internal.effect) => {
     let table = {
       idsToStore: [],
       dict: Js.Dict.empty(),
+      invalidationsCount: 0,
       effect,
     }
     inMemoryStore.effects->Js.Dict.set(key, table)
@@ -98,50 +101,56 @@ let getInMemTable = (
   inMemoryStore.entities->EntityTables.get(~entityName=entityConfig.name)
 }
 
-let isRollingBack = (inMemoryStore: t) => inMemoryStore.rollBackEventIdentifier->Belt.Option.isSome
+let isRollingBack = (inMemoryStore: t) => inMemoryStore.rollbackTargetCheckpointId !== None
 
-let setDcsToStore = (
-  inMemoryStore: t,
-  dcsToStoreByChainId: dict<array<FetchState.indexingContract>>,
-  ~shouldSaveHistory,
-) => {
+let setBatchDcs = (inMemoryStore: t, ~batch: Batch.t, ~shouldSaveHistory) => {
   let inMemTable =
     inMemoryStore->getInMemTable(
       ~entityConfig=module(InternalTable.DynamicContractRegistry)->Entities.entityModToInternal,
     )
-  dcsToStoreByChainId->Utils.Dict.forEachWithKey((chainId, dcs) => {
-    let chainId = chainId->Belt.Int.fromString->Belt.Option.getExn
-    dcs->Belt.Array.forEach(dc => {
-      let dcData = switch dc.register {
-      | Config => Js.Exn.raiseError("Config contract should not be in dcsToStore")
-      | DC(data) => data
-      }
-      let entity: InternalTable.DynamicContractRegistry.t = {
-        id: InternalTable.DynamicContractRegistry.makeId(~chainId, ~contractAddress=dc.address),
-        chainId,
-        contractAddress: dc.address,
-        contractName: dc.contractName,
-        registeringEventBlockNumber: dc.startBlock,
-        registeringEventBlockTimestamp: dcData.registeringEventBlockTimestamp,
-        registeringEventLogIndex: dcData.registeringEventLogIndex,
-        registeringEventContractName: dcData.registeringEventContractName,
-        registeringEventName: dcData.registeringEventName,
-        registeringEventSrcAddress: dcData.registeringEventSrcAddress,
-      }
 
-      let eventIdentifier: Types.eventIdentifier = {
-        chainId,
-        blockTimestamp: dcData.registeringEventBlockTimestamp,
-        blockNumber: dc.startBlock,
-        logIndex: dcData.registeringEventLogIndex,
+  let itemIdx = ref(0)
+
+  for checkpoint in 0 to batch.checkpointIds->Array.length - 1 {
+    let checkpointId = batch.checkpointIds->Js.Array2.unsafe_get(checkpoint)
+    let chainId = batch.checkpointChainIds->Js.Array2.unsafe_get(checkpoint)
+    let checkpointEventsProcessed =
+      batch.checkpointEventsProcessed->Js.Array2.unsafe_get(checkpoint)
+
+    for idx in 0 to checkpointEventsProcessed - 1 {
+      let item = batch.items->Js.Array2.unsafe_get(itemIdx.contents + idx)
+      switch item->Internal.getItemDcs {
+      | None => ()
+      | Some(dcs) =>
+        // Currently only events support contract registration, so we can cast to event item
+        let eventItem = item->Internal.castUnsafeEventItem
+        for dcIdx in 0 to dcs->Array.length - 1 {
+          let dc = dcs->Js.Array2.unsafe_get(dcIdx)
+          let entity: InternalTable.DynamicContractRegistry.t = {
+            id: InternalTable.DynamicContractRegistry.makeId(~chainId, ~contractAddress=dc.address),
+            chainId,
+            contractAddress: dc.address,
+            contractName: dc.contractName,
+            registeringEventBlockNumber: eventItem.blockNumber,
+            registeringEventLogIndex: eventItem.logIndex,
+            registeringEventBlockTimestamp: eventItem.timestamp,
+            registeringEventContractName: eventItem.eventConfig.contractName,
+            registeringEventName: eventItem.eventConfig.name,
+            registeringEventSrcAddress: eventItem.event.srcAddress,
+          }
+
+          inMemTable->InMemoryTable.Entity.set(
+            {
+              entityId: entity.id,
+              checkpointId,
+              entityUpdateAction: Set(entity->InternalTable.DynamicContractRegistry.castToInternal),
+            },
+            ~shouldSaveHistory,
+          )
+        }
       }
-      inMemTable->InMemoryTable.Entity.set(
-        Set(entity->InternalTable.DynamicContractRegistry.castToInternal)->Types.mkEntityUpdate(
-          ~eventIdentifier,
-          ~entityId=entity.id,
-        ),
-        ~shouldSaveHistory,
-      )
-    })
-  })
+    }
+
+    itemIdx := itemIdx.contents + checkpointEventsProcessed
+  }
 }

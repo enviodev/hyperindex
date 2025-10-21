@@ -125,6 +125,14 @@ type EntityWithAllTypes {
   optEnumField: AccountType
 }
 
+type EntityWith63LenghtName______________________________________one {
+  id: ID!
+}
+
+type EntityWith63LenghtName______________________________________two {
+  id: ID!
+}
+
 # We are using insert unnest for the case
 # So test it as well
 type EntityWithAllNonArrayTypes {

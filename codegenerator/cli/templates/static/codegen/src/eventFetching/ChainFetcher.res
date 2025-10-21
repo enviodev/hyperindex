@@ -20,17 +20,14 @@ type t = {
   firstEventBlockNumber: option<int>,
   numEventsProcessed: int,
   numBatchesFetched: int,
-  lastBlockScannedHashes: ReorgDetection.LastBlockScannedHashes.t,
-  //An optional list of filters to apply on event queries
-  //Used for reorgs and restarts
-  processingFilters: option<array<processingFilter>>,
+  reorgDetection: ReorgDetection.t,
+  safeCheckpointTracking: option<SafeCheckpointTracking.t>,
 }
 
 //CONSTRUCTION
 let make = (
   ~chainConfig: InternalConfig.chain,
-  ~lastBlockScannedHashes,
-  ~dynamicContracts: array<InternalTable.DynamicContractRegistry.t>,
+  ~dynamicContracts: array<Internal.indexingContract>,
   ~startBlock,
   ~endBlock,
   ~firstEventBlockNumber,
@@ -42,6 +39,8 @@ let make = (
   ~numEventsProcessed,
   ~numBatchesFetched,
   ~isInReorgThreshold,
+  ~reorgCheckpoints: array<Internal.reorgCheckpoint>,
+  ~maxReorgDepth,
 ): t => {
   // We don't need the router itself, but only validation logic,
   // since now event router is created for selection of events
@@ -99,31 +98,18 @@ let make = (
 
     contract.addresses->Array.forEach(address => {
       contracts->Array.push({
-        FetchState.address,
+        Internal.address,
         contractName: contract.name,
         startBlock: switch contract.startBlock {
         | Some(startBlock) => startBlock
         | None => chainConfig.startBlock
         },
-        register: Config,
+        registrationBlock: None,
       })
     })
   })
 
-  dynamicContracts->Array.forEach(dc =>
-    contracts->Array.push({
-      FetchState.address: dc.contractAddress,
-      contractName: dc.contractName,
-      startBlock: dc.registeringEventBlockNumber,
-      register: DC({
-        registeringEventLogIndex: dc.registeringEventLogIndex,
-        registeringEventBlockTimestamp: dc.registeringEventBlockTimestamp,
-        registeringEventContractName: dc.registeringEventContractName,
-        registeringEventName: dc.registeringEventName,
-        registeringEventSrcAddress: dc.registeringEventSrcAddress,
-      }),
-    })
-  )
+  dynamicContracts->Array.forEach(dc => contracts->Array.push(dc))
 
   if notRegisteredEvents->Utils.Array.notEmpty {
     logger->Logging.childInfo(
@@ -180,13 +166,19 @@ let make = (
     ~targetBufferSize,
     ~chainId=chainConfig.id,
     ~blockLag=Pervasives.max(
-      !(config->Config.shouldRollbackOnReorg) || isInReorgThreshold
-        ? 0
-        : chainConfig.confirmedBlockThreshold,
+      !(config->Config.shouldRollbackOnReorg) || isInReorgThreshold ? 0 : chainConfig.maxReorgDepth,
       Env.indexingBlockLag->Option.getWithDefault(0),
     ),
     ~onBlockConfigs?,
   )
+
+  let chainReorgCheckpoints = reorgCheckpoints->Array.keepMapU(reorgCheckpoint => {
+    if reorgCheckpoint.chainId === chainConfig.id {
+      Some(reorgCheckpoint)
+    } else {
+      None
+    }
+  })
 
   {
     logger,
@@ -195,7 +187,16 @@ let make = (
       ~sources=chainConfig.sources,
       ~maxPartitionConcurrency=Env.maxPartitionConcurrency,
     ),
-    lastBlockScannedHashes,
+    reorgDetection: ReorgDetection.make(
+      ~chainReorgCheckpoints,
+      ~maxReorgDepth,
+      ~shouldRollbackOnReorg=config->Config.shouldRollbackOnReorg,
+    ),
+    safeCheckpointTracking: SafeCheckpointTracking.make(
+      ~maxReorgDepth,
+      ~shouldRollbackOnReorg=config->Config.shouldRollbackOnReorg,
+      ~chainReorgCheckpoints,
+    ),
     currentBlockHeight: 0,
     isProgressAtHead: false,
     fetchState,
@@ -204,24 +205,21 @@ let make = (
     timestampCaughtUpToHeadOrEndblock,
     numEventsProcessed,
     numBatchesFetched,
-    processingFilters: None,
   }
 }
 
 let makeFromConfig = (chainConfig: InternalConfig.chain, ~config, ~targetBufferSize) => {
   let logger = Logging.createChild(~params={"chainId": chainConfig.id})
-  let lastBlockScannedHashes = ReorgDetection.LastBlockScannedHashes.empty(
-    ~confirmedBlockThreshold=chainConfig.confirmedBlockThreshold,
-  )
 
   make(
     ~chainConfig,
     ~config,
     ~startBlock=chainConfig.startBlock,
     ~endBlock=chainConfig.endBlock,
-    ~lastBlockScannedHashes,
+    ~reorgCheckpoints=[],
+    ~maxReorgDepth=chainConfig.maxReorgDepth,
     ~firstEventBlockNumber=None,
-    ~progressBlockNumber=chainConfig.startBlock - 1,
+    ~progressBlockNumber=-1,
     ~timestampCaughtUpToHeadOrEndblock=None,
     ~numEventsProcessed=0,
     ~numBatchesFetched=0,
@@ -237,34 +235,14 @@ let makeFromConfig = (chainConfig: InternalConfig.chain, ~config, ~targetBufferS
  */
 let makeFromDbState = async (
   chainConfig: InternalConfig.chain,
-  ~resumedChainState: InternalTable.Chains.t,
+  ~resumedChainState: Persistence.initialChainState,
+  ~reorgCheckpoints,
   ~isInReorgThreshold,
   ~config,
   ~targetBufferSize,
-  ~sql=Db.sql,
 ) => {
   let chainId = chainConfig.id
   let logger = Logging.createChild(~params={"chainId": chainId})
-
-  // Since we deleted all contracts after the restart point,
-  // we can simply query all dcs we have in db
-  let dbRecoveredDynamicContracts =
-    await sql->DbFunctions.DynamicContractRegistry.readAllDynamicContracts(~chainId)
-
-  let endOfBlockRangeScannedData =
-    await sql->DbFunctions.EndOfBlockRangeScannedData.readEndOfBlockRangeScannedDataForChain(
-      ~chainId,
-    )
-
-  let lastBlockScannedHashes =
-    endOfBlockRangeScannedData
-    ->Array.map(({blockNumber, blockHash}) => {
-      ReorgDetection.blockNumber,
-      blockHash,
-    })
-    ->ReorgDetection.LastBlockScannedHashes.makeWithData(
-      ~confirmedBlockThreshold=chainConfig.confirmedBlockThreshold,
-    )
 
   Prometheus.ProgressEventsCount.set(~processedCount=resumedChainState.numEventsProcessed, ~chainId)
 
@@ -275,51 +253,24 @@ let makeFromDbState = async (
       : resumedChainState.startBlock - 1
 
   make(
-    ~dynamicContracts=dbRecoveredDynamicContracts,
+    ~dynamicContracts=resumedChainState.dynamicContracts,
     ~chainConfig,
     ~startBlock=resumedChainState.startBlock,
-    ~endBlock=resumedChainState.endBlock->Js.Null.toOption,
+    ~endBlock=resumedChainState.endBlock,
     ~config,
-    ~lastBlockScannedHashes,
-    ~firstEventBlockNumber=resumedChainState.firstEventBlockNumber->Js.Null.toOption,
+    ~reorgCheckpoints,
+    ~maxReorgDepth=resumedChainState.maxReorgDepth,
+    ~firstEventBlockNumber=resumedChainState.firstEventBlockNumber,
     ~progressBlockNumber,
     ~timestampCaughtUpToHeadOrEndblock=Env.updateSyncTimeOnRestart
       ? None
-      : resumedChainState.timestampCaughtUpToHeadOrEndblock->Js.Null.toOption,
+      : resumedChainState.timestampCaughtUpToHeadOrEndblock,
     ~numEventsProcessed=resumedChainState.numEventsProcessed,
     ~numBatchesFetched=0,
     ~logger,
     ~targetBufferSize,
     ~isInReorgThreshold,
   )
-}
-
-/**
-Adds an event filter that will be passed to worker on query
-isValid is a function that determines when the filter
-should be cleaned up
-*/
-let addProcessingFilter = (self: t, ~filter, ~isValid) => {
-  let processingFilter: processingFilter = {filter, isValid}
-  {
-    ...self,
-    processingFilters: switch self.processingFilters {
-    | Some(processingFilters) => Some(processingFilters->Array.concat([processingFilter]))
-    | None => Some([processingFilter])
-    },
-  }
-}
-
-//Run the clean up condition "isNoLongerValid" against fetchState on each eventFilter and remove
-//any that meet the cleanup condition
-let cleanUpProcessingFilters = (
-  processingFilters: array<processingFilter>,
-  ~fetchState: FetchState.t,
-) => {
-  switch processingFilters->Array.keep(processingFilter => processingFilter.isValid(~fetchState)) {
-  | [] => None
-  | filters => Some(filters)
-  }
 }
 
 /**
@@ -341,7 +292,7 @@ let runContractRegistersOrThrow = async (
   ~chain: ChainMap.Chain.t,
   ~config: Config.t,
 ) => {
-  let dynamicContracts = []
+  let itemsWithDcs = []
   let isDone = ref(false)
 
   let onRegister = (~item: Internal.item, ~contractAddress, ~contractName) => {
@@ -352,7 +303,7 @@ let runContractRegistersOrThrow = async (
         `Skipping contract registration: The context.add${(contractName: Enums.ContractType.t :> string)} was called after the contract register resolved. Use await or return a promise from the contract register handler to avoid this error.`,
       )
     } else {
-      let {timestamp, blockNumber, logIndex, eventConfig, event} = eventItem
+      let {blockNumber} = eventItem
 
       // Use contract-specific start block if configured, otherwise fall back to registration block
       let contractStartBlock = switch getContractStartBlock(
@@ -364,20 +315,20 @@ let runContractRegistersOrThrow = async (
       | None => blockNumber
       }
 
-      let dc: FetchState.indexingContract = {
+      let dc: Internal.indexingContract = {
         address: contractAddress,
         contractName: (contractName: Enums.ContractType.t :> string),
         startBlock: contractStartBlock,
-        register: DC({
-          registeringEventBlockTimestamp: timestamp,
-          registeringEventLogIndex: logIndex,
-          registeringEventName: eventConfig.name,
-          registeringEventContractName: eventConfig.contractName,
-          registeringEventSrcAddress: event.srcAddress,
-        }),
+        registrationBlock: Some(blockNumber),
       }
 
-      dynamicContracts->Array.push(dc)
+      switch item->Internal.getItemDcs {
+      | None => {
+          item->Internal.setItemDcs([dc])
+          itemsWithDcs->Array.push(item)
+        }
+      | Some(dcs) => dcs->Array.push(dc)
+      }
     }
   }
 
@@ -420,42 +371,26 @@ let runContractRegistersOrThrow = async (
   }
 
   isDone.contents = true
-  dynamicContracts
+  itemsWithDcs
 }
 
-@inline
-let applyProcessingFilters = (~item: Internal.item, ~processingFilters) => {
-  processingFilters->Js.Array2.every(processingFilter => processingFilter.filter(item))
-}
-
-/**
-Updates of fetchState and cleans up event filters. Should be used whenever updating fetchState
-to ensure processingFilters are always valid.
-Returns Error if the node with given id cannot be found (unexpected)
-*/
 let handleQueryResult = (
   chainFetcher: t,
   ~query: FetchState.query,
   ~newItems,
-  ~dynamicContracts,
+  ~newItemsWithDcs,
   ~latestFetchedBlock,
 ) => {
-  let fs = switch dynamicContracts {
+  let fs = switch newItemsWithDcs {
   | [] => chainFetcher.fetchState
-  | _ => chainFetcher.fetchState->FetchState.registerDynamicContracts(dynamicContracts)
+  | _ => chainFetcher.fetchState->FetchState.registerDynamicContracts(newItemsWithDcs)
   }
 
   fs
   ->FetchState.handleQueryResult(~query, ~latestFetchedBlock, ~newItems)
-  ->Result.map(fetchState => {
-    {
-      ...chainFetcher,
-      fetchState,
-      processingFilters: switch chainFetcher.processingFilters {
-      | Some(processingFilters) => processingFilters->cleanUpProcessingFilters(~fetchState)
-      | None => None
-      },
-    }
+  ->Result.map(fs => {
+    ...chainFetcher,
+    fetchState: fs,
   })
 }
 
@@ -475,7 +410,7 @@ let hasNoMoreEventsToProcess = (self: t) => {
 }
 
 let getHighestBlockBelowThreshold = (cf: t): int => {
-  let highestBlockBelowThreshold = cf.currentBlockHeight - cf.chainConfig.confirmedBlockThreshold
+  let highestBlockBelowThreshold = cf.currentBlockHeight - cf.chainConfig.maxReorgDepth
   highestBlockBelowThreshold < 0 ? 0 : highestBlockBelowThreshold
 }
 
@@ -489,7 +424,7 @@ let getLastKnownValidBlock = async (
   ~getBlockHashes=(chainFetcher.sourceManager->SourceManager.getActiveSource).getBlockHashes,
 ) => {
   let scannedBlockNumbers =
-    chainFetcher.lastBlockScannedHashes->ReorgDetection.LastBlockScannedHashes.getThresholdBlockNumbers(
+    chainFetcher.reorgDetection->ReorgDetection.getThresholdBlockNumbers(
       ~currentBlockHeight=chainFetcher.currentBlockHeight,
     )
 
@@ -524,7 +459,7 @@ let getLastKnownValidBlock = async (
       while blockRef.contents->Option.isNone {
         let blockNumbersAndHashes = await getBlockHashes(scannedBlockNumbers)
 
-        switch chainFetcher.lastBlockScannedHashes->ReorgDetection.LastBlockScannedHashes.getLatestValidScannedBlock(
+        switch chainFetcher.reorgDetection->ReorgDetection.getLatestValidScannedBlock(
           ~blockNumbersAndHashes,
           ~currentBlockHeight=chainFetcher.currentBlockHeight,
           ~skipReorgDuplicationCheck=retryCount.contents > 2,

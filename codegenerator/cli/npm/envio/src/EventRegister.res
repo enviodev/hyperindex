@@ -1,4 +1,7 @@
-type registrations = {onBlockByChainId: dict<array<Internal.onBlockConfig>>}
+type registrations = {
+  onBlockByChainId: dict<array<Internal.onBlockConfig>>,
+  mutable hasEvents: bool,
+}
 
 type activeRegistration = {
   ecosystem: InternalConfig.ecosystem,
@@ -40,6 +43,7 @@ let startRegistration = (~ecosystem, ~multichain, ~preloadHandlers) => {
     preloadHandlers,
     registrations: {
       onBlockByChainId: Js.Dict.empty(),
+      hasEvents: false,
     },
     finished: false,
   }
@@ -205,7 +209,8 @@ let setEventOptions = (t: t, ~eventOptions, ~logger=Logging.getLogger()) => {
 }
 
 let setHandler = (t: t, handler, ~eventOptions, ~logger=Logging.getLogger()) => {
-  withRegistration(_ => {
+  withRegistration(registration => {
+    registration.registrations.hasEvents = true
     switch t.handler {
     | None =>
       t.handler =
@@ -225,7 +230,8 @@ let setHandler = (t: t, handler, ~eventOptions, ~logger=Logging.getLogger()) => 
 }
 
 let setContractRegister = (t: t, contractRegister, ~eventOptions, ~logger=Logging.getLogger()) => {
-  withRegistration(_ => {
+  withRegistration(registration => {
+    registration.registrations.hasEvents = true
     switch t.contractRegister {
     | None =>
       t.contractRegister = Some(

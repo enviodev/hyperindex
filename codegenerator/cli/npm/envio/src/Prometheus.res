@@ -477,9 +477,15 @@ module RollbackSuccess = {
     "help": "Number of successful rollbacks on reorg",
   })
 
-  let increment = (~timeMillis: Hrtime.milliseconds) => {
+  let eventsCounter = PromClient.Counter.makeCounter({
+    "name": "envio_rollback_events_count",
+    "help": "Number of events rollbacked on reorg",
+  })
+
+  let increment = (~timeMillis: Hrtime.milliseconds, ~rollbackedProcessedEvents) => {
     timeCounter->PromClient.Counter.incMany(timeMillis->Hrtime.intFromMillis)
     counter->PromClient.Counter.inc
+    eventsCounter->PromClient.Counter.incMany(rollbackedProcessedEvents)
   }
 }
 
@@ -516,30 +522,6 @@ module RollbackTargetBlockNumber = {
 
   let set = (~blockNumber, ~chain) => {
     gauge->SafeGauge.handleInt(~labels=chain->ChainMap.Chain.toChainId, ~value=blockNumber)
-  }
-}
-
-module ProcessingBlockNumber = {
-  let gauge = SafeGauge.makeOrThrow(
-    ~name="envio_processing_block_number",
-    ~help="The latest item block number included in the currently processing batch for the chain.",
-    ~labelSchema=chainIdLabelsSchema,
-  )
-
-  let set = (~blockNumber, ~chainId) => {
-    gauge->SafeGauge.handleInt(~labels=chainId, ~value=blockNumber)
-  }
-}
-
-module ProcessingBatchSize = {
-  let gauge = SafeGauge.makeOrThrow(
-    ~name="envio_processing_batch_size",
-    ~help="The number of items included in the currently processing batch for the chain.",
-    ~labelSchema=chainIdLabelsSchema,
-  )
-
-  let set = (~batchSize, ~chainId) => {
-    gauge->SafeGauge.handleInt(~labels=chainId, ~value=batchSize)
   }
 }
 
@@ -587,6 +569,17 @@ module ProgressEventsCount = {
   }
 }
 
+module ProgressBatchCount = {
+  let counter = PromClient.Counter.makeCounter({
+    "name": "envio_progress_batches_count",
+    "help": "The number of batches processed and reflected in the database.",
+  })
+
+  let increment = () => {
+    counter->PromClient.Counter.inc
+  }
+}
+
 let effectLabelsSchema = S.object(s => {
   s.field("effect", S.string)
 })
@@ -612,6 +605,18 @@ module EffectCacheCount = {
 
   let set = (~count, ~effectName) => {
     gauge->SafeGauge.handleInt(~labels=effectName, ~value=count)
+  }
+}
+
+module EffectCacheInvalidationsCount = {
+  let counter = SafeCounter.makeOrThrow(
+    ~name="envio_effect_cache_invalidations_count",
+    ~help="The number of effect cache invalidations.",
+    ~labelSchema=effectLabelsSchema,
+  )
+
+  let increment = (~effectName) => {
+    counter->SafeCounter.increment(~labels=effectName)
   }
 }
 

@@ -100,26 +100,6 @@ ensure that this doesn't trigger a reorg
     | _ => Js.Exn.raiseError("Unexpected chain")
     }
   )
-
-  let getUpdateEndofBlockRangeScannedData = (
-    mcdMap,
-    ~chain,
-    ~blockNumber,
-    ~blockNumberThreshold,
-  ) => {
-    let {blockNumber, blockHash} =
-      mcdMap->ChainMap.get(chain)->MockChainData.getBlock(~blockNumber)->Option.getUnsafe
-
-    GlobalState.UpdateEndOfBlockRangeScannedData({
-      blockNumberThreshold,
-      chain,
-      nextEndOfBlockRangeScannedData: {
-        blockNumber,
-        blockHash,
-        chainId: chain->ChainMap.Chain.toChainId,
-      },
-    })
-  }
 }
 
 module Sql = RollbackMultichain_test.Sql

@@ -31,7 +31,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
       ~contracts=[],
       ~startBlock=0,
       ~targetBufferSize=5000,
-      ~chainId=0,
+      ~chainId=1,
     )
 
     let fetchState = ref(fetcherStateInit)
@@ -108,12 +108,14 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
       ),
       chainConfig,
       // This is quite a hack - but it works!
-      lastBlockScannedHashes: ReorgDetection.LastBlockScannedHashes.empty(
-        ~confirmedBlockThreshold=200,
+      reorgDetection: ReorgDetection.make(
+        ~chainReorgCheckpoints=[],
+        ~maxReorgDepth=200,
+        ~shouldRollbackOnReorg=false,
       ),
+      safeCheckpointTracking: None,
       isProgressAtHead: false,
       currentBlockHeight: 0,
-      processingFilters: None,
     }
 
     mockChainFetcher
@@ -123,6 +125,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
     {
       ChainManager.chainFetchers,
       multichain: Ordered,
+      commitedCheckpointId: 0,
       isInReorgThreshold: false,
     },
     numberOfMockEventsCreated.contents,
@@ -154,20 +157,22 @@ describe("ChainManager", () => {
         let numberOfMockEventsReadFromQueues = ref(0)
         let allEventsRead = []
         let rec testThatCreatedEventsAreOrderedCorrectly = (chainManager, lastEvent) => {
-          let eventsInBlock = ChainManager.createBatch(chainManager, ~batchSizeTarget=10000)
+          let {items, totalBatchSize, progressedChainsById} = ChainManager.createBatch(
+            chainManager,
+            ~batchSizeTarget=10000,
+          )
 
           // ensure that the events are ordered correctly
-          switch eventsInBlock {
-          | {items: []} => chainManager
-          | {items, updatedFetchStates} =>
-            items->Belt.Array.forEach(
-              i => {
-                let _ = allEventsRead->Js.Array2.push(i)
+          if totalBatchSize === 0 {
+            chainManager
+          } else {
+            items->Array.forEach(
+              item => {
+                allEventsRead->Js.Array2.push(item)->ignore
               },
             )
-            let batchSize = items->Array.length
             numberOfMockEventsReadFromQueues :=
-              numberOfMockEventsReadFromQueues.contents + batchSize
+              numberOfMockEventsReadFromQueues.contents + totalBatchSize
 
             let firstEventInBlock = items[0]->Option.getExn
 
@@ -180,7 +185,12 @@ describe("ChainManager", () => {
 
             let nextChainFetchers = chainManager.chainFetchers->ChainMap.mapWithKey(
               (chain, fetcher) => {
-                let fetchState = updatedFetchStates->ChainMap.get(chain)
+                let fetchState = switch progressedChainsById->Utils.Dict.dangerouslyGetByIntNonOption(
+                  chain->ChainMap.Chain.toChainId,
+                ) {
+                | Some(chainAfterBatch) => chainAfterBatch.fetchState
+                | None => fetcher.fetchState
+                }
                 {
                   ...fetcher,
                   fetchState,

@@ -155,10 +155,10 @@ describe("EventRouter", () => {
       indexingContracts->Js.Dict.set(
         nonWildcardContractAddress->Address.toString,
         {
-          FetchState.startBlock: 0,
+          Internal.startBlock: 0,
           contractName: nonWildcardContractName,
           address: nonWildcardContractAddress,
-          register: Config,
+          registrationBlock: None,
         },
       )
 

@@ -13,10 +13,25 @@ type effectCacheRecord = {
   mutable count: int,
 }
 
+type initialChainState = {
+  id: int,
+  startBlock: int,
+  endBlock: option<int>,
+  maxReorgDepth: int,
+  progressBlockNumber: int,
+  numEventsProcessed: int,
+  firstEventBlockNumber: option<int>,
+  timestampCaughtUpToHeadOrEndblock: option<Js.Date.t>,
+  dynamicContracts: array<Internal.indexingContract>,
+}
+
 type initialState = {
   cleanRun: bool,
   cache: dict<effectCacheRecord>,
-  chains: array<InternalTable.Chains.t>,
+  chains: array<initialChainState>,
+  checkpointId: int,
+  // Needed to keep reorg detection logic between restarts
+  reorgCheckpoints: array<Internal.reorgCheckpoint>,
 }
 
 type operator = [#">" | #"="]
@@ -141,13 +156,13 @@ let init = {
           Logging.info(`Found existing indexer storage. Resuming indexing state...`)
           let initialState = await persistence.storage.resumeInitialState()
           persistence.storageStatus = Ready(initialState)
-          let checkpoints = Js.Dict.empty()
+          let progress = Js.Dict.empty()
           initialState.chains->Js.Array2.forEach(c => {
-            checkpoints->Utils.Dict.setByInt(c.id, c.progressBlockNumber)
+            progress->Utils.Dict.setByInt(c.id, c.progressBlockNumber)
           })
           Logging.info({
             "msg": `Successfully resumed indexing state! Continuing from the last checkpoint.`,
-            "checkpoints": checkpoints,
+            "progress": progress,
           })
         }
         resolveRef.contents()
@@ -177,7 +192,12 @@ let getInitializedState = persistence => {
   }
 }
 
-let setEffectCacheOrThrow = async (persistence, ~effect: Internal.effect, ~items) => {
+let setEffectCacheOrThrow = async (
+  persistence,
+  ~effect: Internal.effect,
+  ~items,
+  ~invalidationsCount,
+) => {
   switch persistence.storageStatus {
   | Unknown
   | Initializing(_) =>
@@ -195,7 +215,8 @@ let setEffectCacheOrThrow = async (persistence, ~effect: Internal.effect, ~items
       }
       let initialize = effectCacheRecord.count === 0
       await storage.setEffectCacheOrThrow(~effect, ~items, ~initialize)
-      effectCacheRecord.count = effectCacheRecord.count + items->Js.Array2.length
+      effectCacheRecord.count =
+        effectCacheRecord.count + items->Js.Array2.length - invalidationsCount
       Prometheus.EffectCacheCount.set(~count=effectCacheRecord.count, ~effectName)
     }
   }

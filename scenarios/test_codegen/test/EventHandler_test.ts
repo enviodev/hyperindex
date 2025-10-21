@@ -13,6 +13,12 @@ describe("Use Envio test framework to test event handlers", () => {
     const event = Gravatar.FactoryEvent.createMockEvent({
       contract: dcAddress,
       testCase: "syncRegistration",
+      mockEventData: {
+        chainId: 1337,
+        block: {
+          number: 2,
+        },
+      },
     });
 
     const updatedMockDb = await mockDbInitial.processEvents([event]);
@@ -20,11 +26,11 @@ describe("Use Envio test framework to test event handlers", () => {
     const registeredDcs = updatedMockDb.dynamicContractRegistry.getAll();
     assert.deepEqual(registeredDcs, [
       {
-        id: `1-${dcAddress}`,
+        id: `1337-${dcAddress}`,
         contract_name: "SimpleNft",
         contract_address: dcAddress,
-        chain_id: 1,
-        registering_event_block_number: 0,
+        chain_id: 1337,
+        registering_event_block_number: 2,
         registering_event_log_index: 0,
         registering_event_name: "FactoryEvent",
         registering_event_src_address: `0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266`,
@@ -43,6 +49,9 @@ describe("Use Envio test framework to test event handlers", () => {
     const event = Gravatar.FactoryEvent.createMockEvent({
       contract: dcAddress,
       testCase: "asyncRegistration",
+      mockEventData: {
+        chainId: 1337,
+      },
     });
 
     const updatedMockDb = await mockDbInitial.processEvents([event]);
@@ -50,10 +59,10 @@ describe("Use Envio test framework to test event handlers", () => {
     const registeredDcs = updatedMockDb.dynamicContractRegistry.getAll();
     assert.deepEqual(registeredDcs, [
       {
-        id: `1-${dcAddress}`,
+        id: `1337-${dcAddress}`,
         contract_name: "SimpleNft",
         contract_address: dcAddress,
-        chain_id: 1,
+        chain_id: 1337,
         registering_event_block_number: 0,
         registering_event_log_index: 0,
         registering_event_name: "FactoryEvent",
@@ -304,6 +313,7 @@ describe("Use Envio test framework to test event handlers", () => {
       testCase: "checksumsAddress",
       mockEventData: {
         srcAddress: eventAddress,
+        chainId: 1337,
       },
     });
 
@@ -312,10 +322,10 @@ describe("Use Envio test framework to test event handlers", () => {
     const registeredDcs = updatedMockDb.dynamicContractRegistry.getAll();
     assert.deepEqual(registeredDcs, [
       {
-        id: `1-${expectedChecksummedAddress}`,
+        id: `1337-${expectedChecksummedAddress}`,
         contract_name: "SimpleNft",
         contract_address: expectedChecksummedAddress,
-        chain_id: 1,
+        chain_id: 1337,
         registering_event_block_number: 0,
         registering_event_log_index: 0,
         registering_event_name: "FactoryEvent",

@@ -79,29 +79,49 @@ let loadEffect = (
     let idsFromCache = Utils.Set.make()
 
     switch effect.cache {
-    | Some({table, rowsSchema})
+    | Some({table, outputSchema})
       if switch persistence.storageStatus {
       | Ready({cache}) => cache->Utils.Dict.has(effect.name)
       | _ => false
       } => {
+        let timerRef = Prometheus.StorageLoad.startOperation(~operation=key)
+
         let dbEntities = try {
           await (persistence->Persistence.getInitializedStorageOrThrow).loadByIdsOrThrow(
             ~table,
-            ~rowsSchema,
+            ~rowsSchema=Internal.effectCacheItemRowsSchema,
             ~ids=idsToLoad,
           )
         } catch {
         | Persistence.StorageError({message, reason}) =>
-          reason->ErrorHandling.mkLogAndRaise(
-            ~logger=item->Logging.getItemLogger,
-            ~msg=message,
-          )
+          reason->ErrorHandling.mkLogAndRaise(~logger=item->Logging.getItemLogger, ~msg=message)
         }
 
-        dbEntities->Js.Array2.forEach(entity => {
-          idsFromCache->Utils.Set.add(entity.id)->ignore
-          inMemTable.dict->Js.Dict.set(entity.id, entity.output)
+        dbEntities->Js.Array2.forEach(dbEntity => {
+          try {
+            let output = dbEntity.output->S.parseOrThrow(outputSchema)
+            idsFromCache->Utils.Set.add(dbEntity.id)->ignore
+            inMemTable.dict->Js.Dict.set(dbEntity.id, output)
+          } catch {
+          | S.Raised(error) =>
+            inMemTable.invalidationsCount = inMemTable.invalidationsCount + 1
+            Prometheus.EffectCacheInvalidationsCount.increment(~effectName=effect.name)
+            item
+            ->Logging.getItemLogger
+            ->Logging.childTrace({
+              "msg": "Invalidated effect cache",
+              "input": dbEntity.id,
+              "effect": effect.name,
+              "err": error->S.Error.message,
+            })
+          }
         })
+
+        timerRef->Prometheus.StorageLoad.endOperation(
+          ~operation=key,
+          ~whereSize=idsToLoad->Array.length,
+          ~size=dbEntities->Array.length,
+        )
       }
     | _ => ()
     }

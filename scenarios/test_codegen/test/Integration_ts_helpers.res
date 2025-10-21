@@ -28,7 +28,7 @@ let getLocalChainConfig = (nftFactoryContractAddress): chainConfig => {
   })
   let chain = MockConfig.chain1337
   {
-    confirmedBlockThreshold: 200,
+    maxReorgDepth: 200,
     startBlock: 1,
     id: 1337,
     contracts,
@@ -68,7 +68,7 @@ let makeChainManager = (cfg: chainConfig): chainManager => {
     ~config=Config.make(
       ~isUnorderedMultichainMode=true,
       ~chains=[cfg],
-      ~registrations={onBlockByChainId: Js.Dict.empty()},
+      ~registrations={onBlockByChainId: Js.Dict.empty(), hasEvents: false},
     ),
   )
 }

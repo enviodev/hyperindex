@@ -8,15 +8,11 @@ module InMemoryStore = {
       )
     let entity = entity->(Utils.magic: 'a => Entities.internalEntity)
     inMemTable->InMemoryTable.Entity.set(
-      Set(entity)->Types.mkEntityUpdate(
-        ~eventIdentifier={
-          chainId: 0,
-          blockTimestamp: 0,
-          blockNumber: 0,
-          logIndex: 0,
-        },
-        ~entityId=entity->Entities.getEntityId,
-      ),
+      {
+        entityId: entity->Entities.getEntityId,
+        checkpointId: 0,
+        entityUpdateAction: Set(entity),
+      },
       ~shouldSaveHistory=RegisterHandlers.getConfig()->Config.shouldSaveHistory(
         ~isInReorgThreshold=false,
       ),
@@ -200,6 +196,8 @@ module Storage = {
         cleanRun: false,
         cache: Js.Dict.empty(),
         chains: [],
+        reorgCheckpoints: [],
+        checkpointId: 0,
       }),
     }
   }
@@ -210,19 +208,32 @@ module Indexer = {
     value: string,
     labels: dict<string>,
   }
-  type t = {
+  type graphqlResponse<'a> = {data?: {..} as 'a}
+  type rec t = {
     getBatchWritePromise: unit => promise<unit>,
     getRollbackReadyPromise: unit => promise<unit>,
     query: 'entity. module(Entities.Entity with type t = 'entity) => promise<array<'entity>>,
     queryHistory: 'entity. module(Entities.Entity with type t = 'entity) => promise<
-      array<EntityHistory.historyRow<'entity>>,
+      array<EntityHistory.entityUpdate<'entity>>,
     >,
+    queryCheckpoints: unit => promise<array<InternalTable.Checkpoints.t>>,
+    queryEffectCache: string => promise<array<{"id": string, "output": Js.Json.t}>>,
     metric: string => promise<array<metric>>,
+    restart: unit => promise<t>,
+    graphql: 'data. string => promise<graphqlResponse<'data>>,
   }
 
   type chainConfig = {chain: Types.chain, sources: array<Source.t>, startBlock?: int}
 
-  let make = async (~chains: array<chainConfig>, ~multichain=InternalConfig.Unordered) => {
+  let rec make = async (
+    ~chains: array<chainConfig>,
+    ~multichain=InternalConfig.Unordered,
+    ~saveFullHistory=false,
+    // Reinit storage without Hasura
+    // makes tests ~1.9 seconds faster
+    ~enableHasura=false,
+    ~reset=true,
+  ) => {
     DbHelpers.resetPostgresClient()
     // TODO: Should stop using global client
     PromClient.defaultRegister->PromClient.resetMetrics
@@ -247,21 +258,17 @@ module Indexer = {
       })
       ->ChainMap.fromArrayUnsafe
 
+    let graphqlClient = Rest.client(`${Env.Hasura.url}/v1/graphql`)
+    let graphqlRoute = Rest.route(() => {
+      method: Post,
+      path: "",
+      input: s => s.field("query", S.string),
+      responses: [s => s.data(S.unknown)],
+    })
+
     let sql = Db.sql
     let pgSchema = Env.Db.publicSchema
-    // Reinit storage without Hasura
-    // This made the test 1.9 seconds faster
-    // TODO: Improve indexer initialization time
-    // by parallizing hasura (at least for dev)
-    let storage = PgStorage.make(
-      ~sql,
-      ~pgSchema,
-      ~pgHost=Env.Db.host,
-      ~pgUser=Env.Db.user,
-      ~pgPort=Env.Db.port,
-      ~pgDatabase=Env.Db.database,
-      ~pgPassword=Env.Db.password,
-    )
+    let storage = Config.makeStorage(~sql, ~pgSchema, ~isHasuraEnabled=enableHasura)
     let persistence = {
       ...config.persistence,
       storageStatus: Persistence.Unknown,
@@ -269,6 +276,10 @@ module Indexer = {
     }
     let config: Config.t = {
       ...config,
+      historyConfig: {
+        rollbackFlag: RollbackOnReorg,
+        historyFlag: saveFullHistory ? FullHistory : MinHistory,
+      },
       persistence,
       enableRawEvents: false,
       chainMap,
@@ -279,7 +290,7 @@ module Indexer = {
 
     await config.persistence->Persistence.init(
       ~chainConfigs=config.chainMap->ChainMap.values,
-      ~reset=true,
+      ~reset,
     )
 
     let chainManager = await ChainManager.makeFromDbState(
@@ -302,7 +313,7 @@ module Indexer = {
         Promise.makeAsync(async (resolve, _reject) => {
           let before = (gsManager->GlobalStateManager.getState).processedBatches
           while before >= (gsManager->GlobalStateManager.getState).processedBatches {
-            await Utils.delay(50)
+            await Utils.delay(1)
           }
           resolve()
         })
@@ -311,13 +322,14 @@ module Indexer = {
         Promise.makeAsync(async (resolve, _reject) => {
           while (
             switch (gsManager->GlobalStateManager.getState).rollbackState {
-            | RollbackInMemStore(_) => false
-            | RollingBack(_)
-            | NoRollback => true
+            | RollbackReady(_) => false
+            | _ => true
             }
           ) {
-            await Utils.delay(50)
+            await Utils.delay(1)
           }
+          // Skip an extra microtask for indexer to fire actions
+          await Utils.delay(0)
           resolve()
         })
       },
@@ -342,13 +354,44 @@ module Indexer = {
           ),
         )
         ->Promise.thenResolve(items => {
-          items->S.parseOrThrow(S.array(entityConfig.entityHistory.schema))
+          items->S.parseOrThrow(
+            S.array(
+              S.union([
+                entityConfig.entityHistory.setUpdateSchema,
+                S.object((s): EntityHistory.entityUpdate<'entity> => {
+                  s.tag(EntityHistory.changeFieldName, EntityHistory.RowAction.DELETE)
+                  {
+                    entityId: s.field("id", S.string),
+                    checkpointId: s.field(EntityHistory.checkpointIdFieldName, S.int),
+                    entityUpdateAction: Delete,
+                  }
+                }),
+              ]),
+            ),
+          )
         })
         ->(
-          Utils.magic: promise<array<EntityHistory.historyRow<Internal.entity>>> => promise<
-            array<EntityHistory.historyRow<entity>>,
+          Utils.magic: promise<array<EntityHistory.entityUpdate<Internal.entity>>> => promise<
+            array<EntityHistory.entityUpdate<entity>>,
           >
         )
+      },
+      queryCheckpoints: () => {
+        Db.sql
+        ->Postgres.unsafe(
+          PgStorage.makeLoadAllQuery(
+            ~pgSchema,
+            ~tableName=InternalTable.Checkpoints.table.tableName,
+          ),
+        )
+        ->(Utils.magic: promise<unknown> => promise<array<InternalTable.Checkpoints.t>>)
+      },
+      queryEffectCache: (effectName: string) => {
+        Db.sql
+        ->Postgres.unsafe(
+          PgStorage.makeLoadAllQuery(~pgSchema, ~tableName=Internal.cacheTablePrefix ++ effectName),
+        )
+        ->(Utils.magic: promise<unknown> => promise<array<{"id": string, "output": Js.Json.t}>>)
       },
       metric: async name => {
         switch PromClient.defaultRegister->PromClient.getSingleMetric(name) {
@@ -359,6 +402,25 @@ module Indexer = {
           })
         | None => []
         }
+      },
+      restart: () => {
+        let state = gsManager->GlobalStateManager.getState
+        gsManager->GlobalStateManager.setState({
+          ...gsManager->GlobalStateManager.getState,
+          id: state.id + 1,
+        })
+        make(~chains, ~enableHasura, ~multichain, ~saveFullHistory, ~reset=false)
+      },
+      graphql: query => {
+        if !enableHasura {
+          Js.Exn.raiseError(
+            "It's require to set ~enableHasura=true during indexer mock creation to access this feature.",
+          )
+        }
+
+        graphqlRoute
+        ->Rest.fetch(query, ~client=graphqlClient)
+        ->(Utils.magic: promise<unknown> => promise<graphqlResponse<{..}>>)
       },
     }
   }
@@ -389,6 +451,8 @@ module Source = {
     resolveGetItemsOrThrow: (
       array<itemMock>,
       ~latestFetchedBlockNumber: int=?,
+      ~latestFetchedBlockHash: string=?,
+      ~currentBlockHeight: int=?,
       ~prevRangeLastBlock: ReorgDetection.blockData=?,
     ) => unit,
     rejectGetItemsOrThrow: 'exn. 'exn => unit,
@@ -426,12 +490,20 @@ module Source = {
         getHeightOrThrowRejectFns->Array.forEach(reject => reject(exn->Obj.magic))
       },
       getItemsOrThrowCalls,
-      resolveGetItemsOrThrow: (items, ~latestFetchedBlockNumber=?, ~prevRangeLastBlock=?) => {
+      resolveGetItemsOrThrow: (
+        items,
+        ~latestFetchedBlockNumber=?,
+        ~latestFetchedBlockHash=?,
+        ~currentBlockHeight=?,
+        ~prevRangeLastBlock=?,
+      ) => {
         getItemsOrThrowResolveFns->Array.forEach(resolve =>
           resolve({
             "items": items,
             "latestFetchedBlockNumber": latestFetchedBlockNumber,
+            "latestFetchedBlockHash": latestFetchedBlockHash,
             "prevRangeLastBlock": prevRangeLastBlock,
+            "currentBlockHeight": currentBlockHeight,
           })
         )
       },
@@ -490,11 +562,16 @@ module Source = {
                     )
 
                   resolve({
-                    Source.currentBlockHeight,
+                    Source.currentBlockHeight: data["currentBlockHeight"]->Option.getWithDefault(
+                      currentBlockHeight,
+                    ),
                     reorgGuard: {
                       rangeLastBlock: {
                         blockNumber: latestFetchedBlockNumber,
-                        blockHash: `0x${latestFetchedBlockNumber->Int.toString}`,
+                        blockHash: switch data["latestFetchedBlockHash"] {
+                        | Some(latestFetchedBlockHash) => latestFetchedBlockHash
+                        | None => `0x${latestFetchedBlockNumber->Int.toString}`
+                        },
                       },
                       prevRangeLastBlock: switch data["prevRangeLastBlock"] {
                       | Some(prevRangeLastBlock) => Some(prevRangeLastBlock)
@@ -590,7 +667,7 @@ module Source = {
 }
 
 module Helper = {
-  let initialEnterReorgThreshold = async (~sourceMock: Source.t) => {
+  let initialEnterReorgThreshold = async (~indexerMock: Indexer.t, ~sourceMock: Source.t) => {
     open RescriptMocha
 
     Assert.deepEqual(
@@ -610,9 +687,7 @@ module Helper = {
       ~message="Should request items until reorg threshold",
     )
     sourceMock.resolveGetItemsOrThrow([])
-    await Utils.delay(0)
-    await Utils.delay(0)
-    await Utils.delay(0)
+    await indexerMock.getBatchWritePromise()
   }
 }
 

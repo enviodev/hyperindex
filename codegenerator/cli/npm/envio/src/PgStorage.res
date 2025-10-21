@@ -22,7 +22,7 @@ let makeCreateTableIndicesQuery = (table: Table.table, ~pgSchema) => {
     compositeIndices->Array.map(createCompositeIndex)->Js.Array2.joinWith("\n")
 }
 
-let makeCreateTableQuery = (table: Table.table, ~pgSchema) => {
+let makeCreateTableQuery = (table: Table.table, ~pgSchema, ~isNumericArrayAsText) => {
   open Belt
   let fieldsMapped =
     table
@@ -34,6 +34,8 @@ let makeCreateTableQuery = (table: Table.table, ~pgSchema) => {
       {
         `"${fieldName}" ${switch fieldType {
           | Custom(name) if !(name->Js.String2.startsWith("NUMERIC(")) => `"${pgSchema}".${name}`
+          // Workaround for Hasura bug https://github.com/enviodev/hyperindex/issues/788
+          | Numeric if isArray && isNumericArrayAsText => (Table.Text :> string)
           | _ => (fieldType :> string)
           }}${isArray ? "[]" : ""}${switch defaultValue {
           | Some(defaultValue) => ` DEFAULT ${defaultValue}`
@@ -57,6 +59,7 @@ let makeCreateTableQuery = (table: Table.table, ~pgSchema) => {
 let makeInitializeTransaction = (
   ~pgSchema,
   ~pgUser,
+  ~isHasuraEnabled,
   ~chainConfigs=[],
   ~entities=[],
   ~enums=[],
@@ -65,7 +68,7 @@ let makeInitializeTransaction = (
   let generalTables = [
     InternalTable.Chains.table,
     InternalTable.PersistedState.table,
-    InternalTable.EndOfBlockRangeScannedData.table,
+    InternalTable.Checkpoints.table,
     InternalTable.RawEvents.table,
   ]
 
@@ -105,7 +108,10 @@ GRANT ALL ON SCHEMA "${pgSchema}" TO public;`,
 
   // Batch all table creation first (optimal for PostgreSQL)
   allTables->Js.Array2.forEach((table: Table.table) => {
-    query := query.contents ++ "\n" ++ makeCreateTableQuery(table, ~pgSchema)
+    query :=
+      query.contents ++
+      "\n" ++
+      makeCreateTableQuery(table, ~pgSchema, ~isNumericArrayAsText=isHasuraEnabled)
   })
 
   // Then batch all indices (better performance when tables exist)
@@ -116,13 +122,8 @@ GRANT ALL ON SCHEMA "${pgSchema}" TO public;`,
     }
   })
 
-  let functionsQuery = ref("")
-
   // Add derived indices
   entities->Js.Array2.forEach((entity: Internal.entityConfig) => {
-    functionsQuery :=
-      functionsQuery.contents ++ "\n" ++ entity.entityHistory.makeInsertFnQuery(~pgSchema)
-
     entity.table
     ->Table.getDerivedFromFields
     ->Js.Array2.forEach(derivedFromField => {
@@ -149,10 +150,8 @@ GRANT ALL ON SCHEMA "${pgSchema}" TO public;`,
   | None => ()
   }
 
-  // Add cache row count function
-  functionsQuery :=
-    functionsQuery.contents ++
-    "\n" ++
+  [
+    query.contents,
     `CREATE OR REPLACE FUNCTION ${getCacheRowCountFnName}(table_name text) 
 RETURNS integer AS $$
 DECLARE
@@ -161,11 +160,8 @@ BEGIN
   EXECUTE format('SELECT COUNT(*) FROM "${pgSchema}".%I', table_name) INTO result;
   RETURN result;
 END;
-$$ LANGUAGE plpgsql;`
-
-  [query.contents]->Js.Array2.concat(
-    functionsQuery.contents !== "" ? [functionsQuery.contents] : [],
-  )
+$$ LANGUAGE plpgsql;`,
+  ]
 }
 
 let makeLoadByIdQuery = (~pgSchema, ~tableName) => {
@@ -270,6 +266,11 @@ let makeTableBatchSetQuery = (~pgSchema, ~table: Table.table, ~itemSchema: S.t<'
   // FIXME what about Fuel params?
   let isRawEvents = table.tableName === InternalTable.RawEvents.table.tableName
 
+  // Currently history update table uses S.object with transformation for schema,
+  // which is being lossed during conversion to dbSchema.
+  // So use simple insert values for now.
+  let isHistoryUpdate = table.tableName->Js.String2.startsWith(EntityHistory.historyTablePrefix)
+
   // Should experiment how much it'll affect performance
   // Although, it should be fine not to perform the validation check,
   // since the values are validated by type system.
@@ -277,7 +278,7 @@ let makeTableBatchSetQuery = (~pgSchema, ~table: Table.table, ~itemSchema: S.t<'
   // db write fails to show a better user error.
   let typeValidation = false
 
-  if isRawEvents || !hasArrayField {
+  if (isRawEvents || !hasArrayField) && !isHistoryUpdate {
     {
       "query": makeInsertUnnestSetQuery(~pgSchema, ~table, ~itemSchema, ~isRawEvents),
       "convertOrThrow": S.compile(
@@ -325,7 +326,7 @@ let chunkArray = (arr: array<'a>, ~chunkSize) => {
 let removeInvalidUtf8InPlace = entities =>
   entities->Js.Array2.forEach(item => {
     let dict = item->(Utils.magic: 'a => dict<unknown>)
-    dict->Utils.Dict.forEachWithKey((key, value) => {
+    dict->Utils.Dict.forEachWithKey((value, key) => {
       if value->Js.typeof === "string" {
         let value = value->(Utils.magic: unknown => string)
         // We mutate here, since we don't care
@@ -334,7 +335,7 @@ let removeInvalidUtf8InPlace = entities =>
         // This is unsafe, but we rely that it'll use
         // the mutated reference on retry.
         // TODO: Test it properly after we start using
-        // in-memory PGLite for indexer test framework.
+        // real pg for indexer test framework.
         dict->Js.Dict.set(
           key,
           value
@@ -412,44 +413,6 @@ let setOrThrow = async (sql, ~items, ~table: Table.table, ~itemSchema, ~pgSchema
       )
     }
   }
-}
-
-let setEntityHistoryOrThrow = (
-  sql,
-  ~entityHistory: EntityHistory.t<'entity>,
-  ~rows: array<EntityHistory.historyRow<'entity>>,
-  ~shouldCopyCurrentEntity=?,
-  ~shouldRemoveInvalidUtf8=false,
-) => {
-  rows->Belt.Array.map(historyRow => {
-    let row = historyRow->S.reverseConvertToJsonOrThrow(entityHistory.schema)
-    if shouldRemoveInvalidUtf8 {
-      [row]->removeInvalidUtf8InPlace
-    }
-    entityHistory.insertFn(
-      sql,
-      row,
-      ~shouldCopyCurrentEntity=switch shouldCopyCurrentEntity {
-      | Some(v) => v
-      | None => {
-          let containsRollbackDiffChange =
-            historyRow.containsRollbackDiffChange->Belt.Option.getWithDefault(false)
-          !containsRollbackDiffChange
-        }
-      },
-    )->Promise.catch(exn => {
-      let reason = exn->Utils.prettifyExn
-      let detail = %raw(`reason?.detail || ""`)
-      raise(
-        Persistence.StorageError({
-          message: `Failed to insert history item into table "${entityHistory.table.tableName}".${detail !== ""
-              ? ` Details: ${detail}`
-              : ""}`,
-          reason,
-        }),
-      )
-    })
-  })
 }
 
 type schemaTableName = {
@@ -550,6 +513,7 @@ let make = (
   ~pgUser,
   ~pgDatabase,
   ~pgPassword,
+  ~isHasuraEnabled,
   ~onInitialize=?,
   ~onNewTables=?,
 ): Persistence.storage => {
@@ -595,7 +559,7 @@ let make = (
               let table = Internal.makeCacheTable(~effectName)
 
               sql
-              ->Postgres.unsafe(makeCreateTableQuery(table, ~pgSchema))
+              ->Postgres.unsafe(makeCreateTableQuery(table, ~pgSchema, ~isNumericArrayAsText=false))
               ->Promise.then(() => {
                 let inputFile = NodeJs.Path.join(cacheDirPath, entry)->NodeJs.Path.toString
 
@@ -688,6 +652,7 @@ let make = (
       ~enums,
       ~chainConfigs,
       ~isEmptyPgSchema=schemaTableNames->Utils.Array.isEmpty,
+      ~isHasuraEnabled,
     )
     // Execute all queries within a single transaction for integrity
     let _ = await sql->Postgres.beginSql(sql => {
@@ -707,7 +672,19 @@ let make = (
     {
       cleanRun: true,
       cache,
-      chains: chainConfigs->Js.Array2.map(InternalTable.Chains.initialFromConfig),
+      reorgCheckpoints: [],
+      chains: chainConfigs->Js.Array2.map((chainConfig): Persistence.initialChainState => {
+        id: chainConfig.id,
+        startBlock: chainConfig.startBlock,
+        endBlock: chainConfig.endBlock,
+        maxReorgDepth: chainConfig.maxReorgDepth,
+        progressBlockNumber: -1,
+        numEventsProcessed: 0,
+        firstEventBlockNumber: None,
+        timestampCaughtUpToHeadOrEndblock: None,
+        dynamicContracts: [],
+      }),
+      checkpointId: InternalTable.Checkpoints.initialCheckpointId,
     }
   }
 
@@ -821,7 +798,10 @@ let make = (
     }
 
     if initialize {
-      let _ = await sql->Postgres.unsafe(makeCreateTableQuery(table, ~pgSchema))
+      let _ =
+        await sql->Postgres.unsafe(
+          makeCreateTableQuery(table, ~pgSchema, ~isNumericArrayAsText=false),
+        )
       // Integration with other tools like Hasura
       switch onNewTables {
       | Some(onNewTables) => await onNewTables(~tableNames=[table.tableName])
@@ -895,19 +875,38 @@ let make = (
   }
 
   let resumeInitialState = async (): Persistence.initialState => {
-    let (cache, chains) = await Promise.all2((
+    let (cache, chains, checkpointIdResult, reorgCheckpoints) = await Promise.all4((
       restoreEffectCache(~withUpload=false),
+      InternalTable.Chains.getInitialState(
+        sql,
+        ~pgSchema,
+      )->Promise.thenResolve(rawInitialStates => {
+        rawInitialStates->Belt.Array.map((rawInitialState): Persistence.initialChainState => {
+          id: rawInitialState.id,
+          startBlock: rawInitialState.startBlock,
+          endBlock: rawInitialState.endBlock->Js.Null.toOption,
+          maxReorgDepth: rawInitialState.maxReorgDepth,
+          firstEventBlockNumber: rawInitialState.firstEventBlockNumber->Js.Null.toOption,
+          timestampCaughtUpToHeadOrEndblock: rawInitialState.timestampCaughtUpToHeadOrEndblock->Js.Null.toOption,
+          numEventsProcessed: rawInitialState.numEventsProcessed,
+          progressBlockNumber: rawInitialState.progressBlockNumber,
+          dynamicContracts: rawInitialState.dynamicContracts,
+        })
+      }),
       sql
-      ->Postgres.unsafe(
-        makeLoadAllQuery(~pgSchema, ~tableName=InternalTable.Chains.table.tableName),
-      )
-      ->(Utils.magic: promise<array<unknown>> => promise<array<InternalTable.Chains.t>>),
+      ->Postgres.unsafe(InternalTable.Checkpoints.makeCommitedCheckpointIdQuery(~pgSchema))
+      ->(Utils.magic: promise<array<unknown>> => promise<array<{"id": int}>>),
+      sql
+      ->Postgres.unsafe(InternalTable.Checkpoints.makeGetReorgCheckpointsQuery(~pgSchema))
+      ->(Utils.magic: promise<array<unknown>> => promise<array<Internal.reorgCheckpoint>>),
     ))
 
     {
       cleanRun: false,
+      reorgCheckpoints,
       cache,
       chains,
+      checkpointId: (checkpointIdResult->Belt.Array.getUnsafe(0))["id"],
     }
   }
 
