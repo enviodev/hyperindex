@@ -76,7 +76,6 @@ pub enum Network {
     #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     Berachain = 80094,
 
-    #[subenum(HypersyncNetwork)]
     BerachainBartio = 80084,
 
     #[subenum(HypersyncNetwork, NetworkWithExplorer)]
@@ -118,6 +117,15 @@ pub enum Network {
     ChainwebTestnet21 = 5921,
 
     #[subenum(HypersyncNetwork)]
+    ChainwebTestnet22 = 5922,
+
+    #[subenum(HypersyncNetwork)]
+    ChainwebTestnet23 = 5923,
+
+    #[subenum(HypersyncNetwork)]
+    ChainwebTestnet24 = 5924,
+
+    #[subenum(HypersyncNetwork)]
     Chiliz = 88888,
 
     CitreaDevnet = 62298,
@@ -138,6 +146,9 @@ pub enum Network {
     Cyber = 7560,
 
     Darwinia = 46,
+
+    #[subenum(HypersyncNetwork)]
+    Damon = 341,
 
     #[subenum(
         HypersyncNetwork,
@@ -172,10 +183,7 @@ pub enum Network {
     #[subenum(GraphNetwork)]
     Fuse = 122,
 
-    #[subenum(
-        HypersyncNetwork(serde(rename = "galadriel-devnet (Stone)")),
-        NetworkWithExplorer
-    )]
+    #[subenum(NetworkWithExplorer)]
     GaladrielDevnet = 696969,
 
     #[subenum(HypersyncNetwork, NetworkWithExplorer, GraphNetwork)]
@@ -294,6 +302,9 @@ pub enum Network {
     PharosDevnet = 50002,
 
     #[subenum(HypersyncNetwork)]
+    Plasma = 9745,
+
+    #[subenum(HypersyncNetwork)]
     Plume = 98866,
 
     #[subenum(GraphNetwork, NetworkWithExplorer)]
@@ -333,6 +344,9 @@ pub enum Network {
     #[subenum(HypersyncNetwork, NetworkWithExplorer, GraphNetwork)]
     Sepolia = 11155111,
 
+    #[subenum(HypersyncNetwork)]
+    SentientTestnet = 1184075182,
+
     #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     ShimmerEvm = 148,
 
@@ -366,7 +380,7 @@ pub enum Network {
     #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     Unichain = 130,
 
-    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
+    #[subenum(NetworkWithExplorer)]
     UnichainSepolia = 1301,
 
     #[subenum(HypersyncNetwork, NetworkWithExplorer)]
@@ -456,10 +470,14 @@ impl Network {
             | Network::CeloBaklava
             | Network::ChainwebTestnet20
             | Network::ChainwebTestnet21
+            | Network::ChainwebTestnet22
+            | Network::ChainwebTestnet23
+            | Network::ChainwebTestnet24
             | Network::Chiliz
             | Network::Clover
             | Network::Crab
             | Network::Cyber
+            | Network::Damon
             | Network::Darwinia
             | Network::Evmos
             | Network::EthereumMainnet
@@ -498,12 +516,14 @@ impl Network {
             | Network::Polygon
             | Network::PolygonZkevm
             | Network::PolygonZkevmTestnet
+            | Network::Plasma
             | Network::Plume
             | Network::Rinkeby
             | Network::Rsk
             | Network::Scroll
             | Network::ScrollSepolia
             | Network::Sepolia
+            | Network::SentientTestnet
             | Network::ShimmerEvm
             | Network::Sophon
             | Network::SophonTestnet
@@ -595,17 +615,18 @@ impl HypersyncNetwork {
             Xdc | Polygon | ArbitrumOne | MegaethTestnet => Silver,
 
             Linea | Berachain | Blast | Amoy | ZksyncEra | ArbitrumNova | Avalanche | Bsc
-            | Taraxa => Bronze,
+            | Taraxa | Plasma => Bronze,
 
             Curtis | PolygonZkevm | Lukso | Abstract | Zora | Unichain | Aurora | Zeta | Manta
             | Kroma | Flare | Mantle | ShimmerEvm | Boba | Ink | Metall2 | SophonTestnet
-            | GaladrielDevnet | CitreaTestnet | BscTestnet | UnichainSepolia | Zircuit | Celo
-            | Opbnb | GnosisChiado | LuksoTestnet | BlastSepolia | Holesky | BerachainBartio
-            | OptimismSepolia | Fuji | ArbitrumSepolia | Fraxtal | Soneium | BaseSepolia
-            | MevCommit | Merlin | Mode | MoonbaseAlpha | XdcTestnet | Morph | Harmony
-            | Saakuru | Cyber | Superseed | Sonic | Worldchain | Sophon | Fantom | Sepolia
-            | Rsk | Chiliz | Lisk | Hyperliquid | Swell | Moonbeam | ChainwebTestnet20
-            | ChainwebTestnet21 | Plume | Scroll | AuroraTurbo | Tangle => Stone,
+            | CitreaTestnet | BscTestnet | Zircuit | Celo | Opbnb | GnosisChiado | LuksoTestnet
+            | BlastSepolia | Holesky | OptimismSepolia | Fuji | ArbitrumSepolia | Fraxtal
+            | Soneium | BaseSepolia | MevCommit | Merlin | Mode | MoonbaseAlpha | XdcTestnet
+            | Morph | Harmony | Saakuru | Cyber | Superseed | Sonic | Worldchain | Sophon
+            | Fantom | Sepolia | Rsk | Chiliz | Lisk | Hyperliquid | Swell | Moonbeam
+            | ChainwebTestnet20 | ChainwebTestnet21 | ChainwebTestnet22 | ChainwebTestnet23
+            | ChainwebTestnet24 | Plume | Scroll | AuroraTurbo | Tangle | Damon
+            | SentientTestnet => Stone,
         }
     }
 
