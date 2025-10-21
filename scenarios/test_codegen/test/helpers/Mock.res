@@ -217,6 +217,7 @@ module Indexer = {
       array<EntityHistory.entityUpdate<'entity>>,
     >,
     queryCheckpoints: unit => promise<array<InternalTable.Checkpoints.t>>,
+    queryEffectCache: string => promise<array<{"id": string, "output": Js.Json.t}>>,
     metric: string => promise<array<metric>>,
     restart: unit => promise<t>,
     graphql: 'data. string => promise<graphqlResponse<'data>>,
@@ -384,6 +385,13 @@ module Indexer = {
           ),
         )
         ->(Utils.magic: promise<unknown> => promise<array<InternalTable.Checkpoints.t>>)
+      },
+      queryEffectCache: (effectName: string) => {
+        Db.sql
+        ->Postgres.unsafe(
+          PgStorage.makeLoadAllQuery(~pgSchema, ~tableName=Internal.cacheTablePrefix ++ effectName),
+        )
+        ->(Utils.magic: promise<unknown> => promise<array<{"id": string, "output": Js.Json.t}>>)
       },
       metric: async name => {
         switch PromClient.defaultRegister->PromClient.getSingleMetric(name) {

@@ -55,6 +55,9 @@ let makeFromDbState = async (~initialState: Persistence.initialState, ~config: C
   Prometheus.ProcessingMaxBatchSize.set(~maxBatchSize=config.batchSize)
   Prometheus.IndexingTargetBufferSize.set(~targetBufferSize)
   Prometheus.ReorgThreshold.set(~isInReorgThreshold)
+  initialState.cache->Utils.Dict.forEach(({effectName, count}) => {
+    Prometheus.EffectCacheCount.set(~count, ~effectName)
+  })
 
   let chainFetchersArr =
     await initialState.chains

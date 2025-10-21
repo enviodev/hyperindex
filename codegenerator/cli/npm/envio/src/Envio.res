@@ -59,7 +59,6 @@ let experimental_createEffect = (
   options: effectOptions<'input, 'output>,
   handler: effectArgs<'input> => promise<'output>,
 ) => {
-  Prometheus.EffectCallsCount.set(~callsCount=0, ~effectName=options.name)
   let outputSchema =
     S.schema(_ => options.output)->(Utils.magic: S.t<S.t<'output>> => S.t<Internal.effectOutput>)
   {
