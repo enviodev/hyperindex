@@ -84,6 +84,8 @@ let loadEffect = (
       | Ready({cache}) => cache->Utils.Dict.has(effect.name)
       | _ => false
       } => {
+        let timerRef = Prometheus.StorageLoad.startOperation(~operation=key)
+
         let dbEntities = try {
           await (persistence->Persistence.getInitializedStorageOrThrow).loadByIdsOrThrow(
             ~table,
@@ -92,16 +94,19 @@ let loadEffect = (
           )
         } catch {
         | Persistence.StorageError({message, reason}) =>
-          reason->ErrorHandling.mkLogAndRaise(
-            ~logger=item->Logging.getItemLogger,
-            ~msg=message,
-          )
+          reason->ErrorHandling.mkLogAndRaise(~logger=item->Logging.getItemLogger, ~msg=message)
         }
 
         dbEntities->Js.Array2.forEach(entity => {
           idsFromCache->Utils.Set.add(entity.id)->ignore
           inMemTable.dict->Js.Dict.set(entity.id, entity.output)
         })
+
+        timerRef->Prometheus.StorageLoad.endOperation(
+          ~operation=key,
+          ~whereSize=idsToLoad->Array.length,
+          ~size=dbEntities->Array.length,
+        )
       }
     | _ => ()
     }

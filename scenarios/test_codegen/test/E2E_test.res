@@ -230,7 +230,7 @@ describe("E2E tests", () => {
     )
   })
 
-  Async.it("Tracks effect calls and can resume cache count on restart", async () => {
+  Async.it("Track effects in prom metrics", async () => {
     let sourceMock = Mock.Source.make(
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
       ~chain=#1337,
@@ -281,16 +281,19 @@ describe("E2E tests", () => {
     sourceMock.resolveGetHeightOrThrow(300)
     await Utils.delay(0)
     await Utils.delay(0)
-    sourceMock.resolveGetItemsOrThrow([
-      {
-        blockNumber: 100,
-        logIndex: 0,
-        handler: async ({context}) => {
-          Assert.deepEqual(await context.effect(testEffect, "test"), "test-output")
-          Assert.deepEqual(await context.effect(testEffectWithCache, "test"), "test-output")
+    sourceMock.resolveGetItemsOrThrow(
+      [
+        {
+          blockNumber: 100,
+          logIndex: 0,
+          handler: async ({context}) => {
+            Assert.deepEqual(await context.effect(testEffect, "test"), "test-output")
+            Assert.deepEqual(await context.effect(testEffectWithCache, "test"), "test-output")
+          },
         },
-      },
-    ])
+      ],
+      ~latestFetchedBlockNumber=100,
+    )
     await indexerMock.getBatchWritePromise()
 
     Assert.deepEqual(
@@ -318,12 +321,19 @@ describe("E2E tests", () => {
       ~message="should increment effect cache count",
     )
     Assert.deepEqual(
+      await indexerMock.metric("envio_storage_load_count"),
+      [],
+      ~message="Shouldn't load anything from storage at this point",
+    )
+    Assert.deepEqual(
       await indexerMock.queryEffectCache("testEffectWithCache"),
       [{"id": `"test"`, "output": %raw(`"test-output"`)}],
       ~message="should have the cache entry in db",
     )
 
     let indexerMock = await indexerMock.restart()
+    await Utils.delay(0)
+
     Assert.deepEqual(
       await indexerMock.metric("envio_effect_cache_count"),
       [
@@ -333,6 +343,81 @@ describe("E2E tests", () => {
         },
       ],
       ~message="should resume effect cache count on restart",
+    )
+
+    sourceMock.resolveGetHeightOrThrow(300)
+    await Utils.delay(0)
+    await Utils.delay(0)
+    sourceMock.resolveGetItemsOrThrow(
+      [
+        {
+          blockNumber: 101,
+          logIndex: 0,
+          handler: async ({context}) => {
+            Assert.deepEqual(
+              await Promise.all2((
+                context.effect(testEffectWithCache, "test"),
+                context.effect(testEffectWithCache, "test-2"),
+              )),
+              ("test-output", "test-2-output"),
+            )
+          },
+        },
+      ],
+      ~latestFetchedBlockNumber=101,
+    )
+    await indexerMock.getBatchWritePromise()
+
+    Assert.deepEqual(
+      await Promise.all3((
+        indexerMock.metric("envio_storage_load_where_size"),
+        indexerMock.metric("envio_storage_load_size"),
+        indexerMock.metric("envio_storage_load_count"),
+      )),
+      (
+        [
+          {
+            value: "2",
+            labels: Js.Dict.fromArray([("operation", "testEffectWithCache.effect")]),
+          },
+        ],
+        [
+          {
+            value: "1",
+            labels: Js.Dict.fromArray([("operation", "testEffectWithCache.effect")]),
+          },
+        ],
+        [
+          {
+            value: "1",
+            labels: Js.Dict.fromArray([("operation", "testEffectWithCache.effect")]),
+          },
+        ],
+      ),
+      ~message="Time to load cache from storage now",
+    )
+    Assert.deepEqual(
+      await Promise.all2((
+        indexerMock.metric("envio_effect_calls_count"),
+        indexerMock.metric("envio_effect_cache_count"),
+      )),
+      (
+        [
+          {
+            // It resumes in-memory during test, but it'll reset on process restart
+            // In the real-world it'll be 1
+            value: "2",
+            labels: Js.Dict.fromArray([("effect", "testEffectWithCache")]),
+          },
+        ],
+        [
+          {
+            value: "2",
+            labels: Js.Dict.fromArray([("effect", "testEffectWithCache")]),
+          },
+        ],
+      ),
+      ~message="Should increment effect calls count and cache count",
     )
   })
 })
