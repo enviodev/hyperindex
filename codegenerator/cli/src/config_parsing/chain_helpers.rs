@@ -145,10 +145,10 @@ pub enum Network {
     #[subenum(HypersyncNetwork)]
     Cyber = 7560,
 
-    Darwinia = 46,
-
     #[subenum(HypersyncNetwork)]
     Damon = 341,
+
+    Darwinia = 46,
 
     #[subenum(
         HypersyncNetwork,
@@ -341,11 +341,11 @@ pub enum Network {
     #[subenum(GraphNetwork, NetworkWithExplorer)]
     ScrollSepolia = 534351,
 
-    #[subenum(HypersyncNetwork, NetworkWithExplorer, GraphNetwork)]
-    Sepolia = 11155111,
-
     #[subenum(HypersyncNetwork)]
     SentientTestnet = 1184075182,
+
+    #[subenum(HypersyncNetwork, NetworkWithExplorer, GraphNetwork)]
+    Sepolia = 11155111,
 
     #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     ShimmerEvm = 148,
