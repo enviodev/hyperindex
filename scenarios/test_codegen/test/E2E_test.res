@@ -83,6 +83,88 @@ describe("E2E tests", () => {
     )
   })
 
+  Async.it("Shouldn't allow context access after hander is resolved", async () => {
+    let errors = []
+
+    let sourceMock = Mock.Source.make(
+      [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
+      ~chain=#1337,
+    )
+    let indexerMock = await Mock.Indexer.make(
+      ~chains=[
+        {
+          chain: #1337,
+          sources: [sourceMock.source],
+        },
+      ],
+    )
+    await Utils.delay(0)
+    sourceMock.resolveGetHeightOrThrow(300)
+    await Utils.delay(0)
+    await Utils.delay(0)
+    sourceMock.resolveGetItemsOrThrow([
+      {
+        blockNumber: 10,
+        logIndex: 0,
+        contractRegister: async ({context}) => {
+          let _ = Js.Global.setTimeout(
+            () => {
+              try {
+                context.addGravatar(
+                  "0x1234567890123456789012345678901234567890"->Address.Evm.fromStringOrThrow,
+                )
+              } catch {
+              | exn => errors->Array.push(exn->Utils.prettifyExn)
+              }
+            },
+            0,
+          )
+        },
+        handler: async ({context}) => {
+          let _ = Js.Global.setTimeout(
+            () => {
+              try {
+                context.simpleEntity.set({
+                  id: "1",
+                  value: "value-1",
+                })
+              } catch {
+              | exn => errors->Array.push(exn->Utils.prettifyExn)
+              }
+            },
+            1,
+          )
+        },
+      },
+      {
+        blockNumber: 11,
+        logIndex: 0,
+        handler: async ({context}) => {
+          context.simpleEntity.set({
+            id: "1",
+            value: "value-2",
+          })
+          // Wait to see what will happen when timeout finishes during the batch
+          await Utils.delay(1)
+        },
+      },
+    ])
+    await indexerMock.getBatchWritePromise()
+
+    Assert.deepEqual(
+      await indexerMock.query(module(Entities.SimpleEntity)),
+      [{Entities.SimpleEntity.id: "1", value: "value-2"}],
+    )
+    Assert.deepEqual(
+      errors,
+      [
+        Utils.Error.make(`Impossible to access context.addGravatar after the contract register is resolved. Make sure you didn't miss an await in the handler.`)->Utils.prettifyExn,
+        Utils.Error.make(`Impossible to access context.SimpleEntity after the handler is resolved. Make sure you didn't miss an await in the handler.`)->Utils.prettifyExn,
+      ],
+      ~message="should have an error thrown during set",
+    )
+  })
+
   // A regression test for a bug introduced in 2.30.0
   Async.it("Correct event ordering for ordered multichain indexer", async () => {
     let sourceMock1337 = Mock.Source.make(

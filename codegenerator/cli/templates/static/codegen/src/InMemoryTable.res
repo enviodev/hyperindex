@@ -173,24 +173,19 @@ module Entity = {
         entityRow: newEntityRow(),
         entityIndices,
       }
-    | Some({entityRow: Updated(previous_values), entityIndices})
-      // This prevents two db actions in the same event on the same entity from being recorded to the history table.
-      if shouldSaveHistory && previous_values.latest.checkpointId === entityUpdate.checkpointId =>
-      let entityRow = Internal.Updated({
-        latest: entityUpdate,
-        history: previous_values.history->Utils.Array.setIndexImmutable(
-          previous_values.history->Array.length - 1,
-          entityUpdate,
-        ),
-        containsRollbackDiffChange: previous_values.containsRollbackDiffChange,
-      })
-      {entityRow, entityIndices}
     | Some({entityRow: Updated(previous_values), entityIndices}) =>
       let entityRow = Internal.Updated({
         latest: entityUpdate,
-        history: shouldSaveHistory
-          ? [...previous_values.history, entityUpdate]
-          : previous_values.history,
+        history: switch shouldSaveHistory {
+        // This prevents two db actions in the same event on the same entity from being recorded to the history table.
+        | true if previous_values.latest.checkpointId === entityUpdate.checkpointId =>
+          previous_values.history->Utils.Array.setIndexImmutable(
+            previous_values.history->Array.length - 1,
+            entityUpdate,
+          )
+        | true => [...previous_values.history, entityUpdate]
+        | false => previous_values.history
+        },
         containsRollbackDiffChange: previous_values.containsRollbackDiffChange,
       })
       {entityRow, entityIndices}

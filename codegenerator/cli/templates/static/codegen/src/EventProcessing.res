@@ -116,23 +116,26 @@ let runEventHandlerOrThrow = async (
   let timeBeforeHandler = Hrtime.makeTimer()
 
   try {
+    let contextParams: UserContext.contextParams = {
+      item,
+      checkpointId,
+      inMemoryStore,
+      loadManager,
+      persistence,
+      shouldSaveHistory,
+      isPreload: false,
+      chains,
+      isResolved: false,
+    }
     await handler(
       (
         {
           event: eventItem.event,
-          context: UserContext.getHandlerContext({
-            item,
-            checkpointId,
-            inMemoryStore,
-            loadManager,
-            persistence,
-            shouldSaveHistory,
-            isPreload: false,
-            chains,
-          }),
+          context: UserContext.getHandlerContext(contextParams),
         }: Internal.handlerArgs
       ),
     )
+    contextParams.isResolved = true
   } catch {
   | exn =>
     raise(
@@ -167,6 +170,17 @@ let runHandlerOrThrow = async (
   switch item {
   | Block({onBlockConfig: {handler, chainId}, blockNumber}) =>
     try {
+      let contextParams: UserContext.contextParams = {
+        item,
+        inMemoryStore,
+        loadManager,
+        persistence: config.persistence,
+        shouldSaveHistory,
+        checkpointId,
+        isPreload: false,
+        chains,
+        isResolved: false,
+      }
       await handler(
         (
           {
@@ -174,19 +188,11 @@ let runHandlerOrThrow = async (
               number: blockNumber,
               chainId,
             },
-            context: UserContext.getHandlerContext({
-              item,
-              inMemoryStore,
-              loadManager,
-              persistence: config.persistence,
-              shouldSaveHistory,
-              checkpointId,
-              isPreload: false,
-              chains,
-            }),
+            context: UserContext.getHandlerContext(contextParams),
           }: Internal.onBlockArgs
         ),
       )
+      contextParams.isResolved = true
     } catch {
     | exn =>
       raise(
@@ -260,6 +266,7 @@ let preloadBatchOrThrow = async (
                   isPreload: true,
                   shouldSaveHistory: false,
                   chains,
+                  isResolved: false,
                 }),
               })->Promise.silentCatch,
               // Must have Promise.catch as well as normal catch,
@@ -287,6 +294,7 @@ let preloadBatchOrThrow = async (
                 isPreload: true,
                 shouldSaveHistory: false,
                 chains,
+                isResolved: false,
               }),
             })->Promise.silentCatch,
           )

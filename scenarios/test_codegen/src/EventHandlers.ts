@@ -15,6 +15,7 @@ import {
   NftFactory_SimpleNftCreated_event,
   onBlock,
 } from "generated";
+import { Assert } from "generated/src/bindings/RescriptMocha.res";
 import { expectType, TypeEqual } from "ts-expect";
 import { bytesToHex } from "viem";
 
@@ -427,7 +428,16 @@ Gravatar.FactoryEvent.contractRegister(({ event, context }) => {
   switch (event.params.testCase) {
     case "throwOnHangingRegistration":
       setTimeout(() => {
-        context.addSimpleNft(event.params.contract);
+        try {
+          context.addSimpleNft(event.params.contract);
+        } catch (error) {
+          deepEqual(
+            error,
+            new Error(
+              `Impossible to access context.addSimpleNft after the contract register is resolved. Make sure you didn't miss an await in the handler.`
+            )
+          );
+        }
       }, 0);
       break;
     case "asyncRegistration":

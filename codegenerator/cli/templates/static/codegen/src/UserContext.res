@@ -9,6 +9,7 @@ type contextParams = {
   isPreload: bool,
   shouldSaveHistory: bool,
   chains: Internal.chains,
+  mutable isResolved: bool,
 }
 
 let rec initEffect = (params: contextParams) => (
@@ -212,6 +213,11 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
 let handlerTraps: Utils.Proxy.traps<contextParams> = {
   get: (~target as params, ~prop: unknown) => {
     let prop = prop->(Utils.magic: unknown => string)
+    if params.isResolved {
+      Utils.Error.make(
+        `Impossible to access context.${prop} after the handler is resolved. Make sure you didn't miss an await in the handler.`,
+      )->ErrorHandling.mkLogAndRaise(~logger=params.item->Logging.getItemLogger)
+    }
     switch prop {
     | "log" =>
       (params.isPreload ? Logging.noopLogger : params.item->Logging.getUserLogger)->Utils.magic
@@ -236,6 +242,7 @@ let handlerTraps: Utils.Proxy.traps<contextParams> = {
           shouldSaveHistory: params.shouldSaveHistory,
           checkpointId: params.checkpointId,
           chains: params.chains,
+          isResolved: params.isResolved,
           entityConfig,
         }
         ->Utils.Proxy.make(entityTraps)
@@ -260,12 +267,17 @@ type contractRegisterParams = {
     ~contractName: Enums.ContractType.t,
   ) => unit,
   config: Config.t,
+  mutable isResolved: bool,
 }
 
 let contractRegisterTraps: Utils.Proxy.traps<contractRegisterParams> = {
   get: (~target as params, ~prop: unknown) => {
     let prop = prop->(Utils.magic: unknown => string)
-
+    if params.isResolved {
+      Utils.Error.make(
+        `Impossible to access context.${prop} after the contract register is resolved. Make sure you didn't miss an await in the handler.`,
+      )->ErrorHandling.mkLogAndRaise(~logger=params.item->Logging.getItemLogger)
+    }
     switch prop {
     | "log" => params.item->Logging.getUserLogger->Utils.magic
     | _ =>
@@ -304,22 +316,13 @@ let contractRegisterTraps: Utils.Proxy.traps<contractRegisterParams> = {
   },
 }
 
-let getContractRegisterContext = (~item, ~onRegister, ~config: Config.t) => {
-  {
-    item,
-    onRegister,
-    config,
-  }
+let getContractRegisterContext = (params: contractRegisterParams) => {
+  params
   ->Utils.Proxy.make(contractRegisterTraps)
   ->Utils.magic
 }
 
-let getContractRegisterArgs = (
-  item: Internal.item,
-  ~eventItem: Internal.eventItem,
-  ~onRegister,
-  ~config: Config.t,
-): Internal.contractRegisterArgs => {
-  event: eventItem.event,
-  context: getContractRegisterContext(~item, ~onRegister, ~config),
+let getContractRegisterArgs = (params: contractRegisterParams): Internal.contractRegisterArgs => {
+  event: (params.item->Internal.castUnsafeEventItem).event,
+  context: getContractRegisterContext(params),
 }
