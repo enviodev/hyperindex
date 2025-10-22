@@ -28,8 +28,16 @@ pub mod evm {
 
     #[derive(Clone, Debug, ValueEnum, Serialize, Deserialize, EnumIter, EnumString, Display)]
     pub enum Template {
+        #[strum(serialize = "Greeter")]
         Greeter,
+        #[strum(serialize = "ERC20")]
         Erc20,
+        #[strum(serialize = "Feature: Topic Filtering")]
+        TopicFiltering,
+        #[strum(serialize = "Feature: Wildcard Indexing")]
+        WildcardIndexing,
+        #[strum(serialize = "Feature: On-Block Handler")]
+        OnBlockHandler,
     }
 
     ///A an object that holds all the values a user can select during
