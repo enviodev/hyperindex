@@ -1,0 +1,20 @@
+type UniswapV3Factory_FeeAmountEnabled {
+  id: ID!
+  fee: BigInt!
+  tickSpacing: BigInt!
+}
+
+type UniswapV3Factory_OwnerChanged {
+  id: ID!
+  oldOwner: String!
+  newOwner: String!
+}
+
+type UniswapV3Factory_PoolCreated {
+  id: ID!
+  token0: String!
+  token1: String!
+  fee: BigInt!
+  tickSpacing: BigInt!
+  pool: String!
+}

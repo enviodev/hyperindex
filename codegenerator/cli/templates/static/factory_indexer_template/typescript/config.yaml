@@ -1,0 +1,23 @@
+# yaml-language-server: $schema=./node_modules/envio/evm.schema.json
+name: effects-api
+description: Example indexer showing how to use HyperIndex's Effects API.
+contracts:
+    - name: UniswapV3Factory
+      handler: src/EventHandlers.ts
+      events:
+          - event: PoolCreated(address indexed token0, address indexed token1, uint24 indexed fee, int24 tickSpacing, address pool)
+    - name: UniswapV3Pool
+      handler: src/EventHandlers.ts
+      events:
+          - event: Initialize(uint160 sqrtPriceX96, int24 tick)
+
+networks:
+    - id: 1
+      start_block: 23581204
+      contracts:
+          - name: UniswapV3Factory
+            address:
+                - 0x1F98431c8aD98523631AE4a59f267346ea31F984
+          - name: UniswapV3Pool
+unordered_multichain_mode: true
+preload_handlers: true
