@@ -11,7 +11,7 @@ module type State = {
 }
 
 let handleFatalError = e => {
-  e->ErrorHandling.make(~msg="Indexer has failed with an unxpected error")->ErrorHandling.log
+  e->ErrorHandling.make(~msg="Indexer has failed with an unexpected error")->ErrorHandling.log
   NodeJs.process->NodeJs.exitWithCode(Failure)
 }
 

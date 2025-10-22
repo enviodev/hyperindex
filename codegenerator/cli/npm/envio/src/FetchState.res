@@ -351,8 +351,11 @@ let registerDynamicContracts = (
     switch item->Internal.getItemDcs {
     | None => ()
     | Some(dcs) =>
-      for idx in 0 to dcs->Array.length - 1 {
-        let dc = dcs->Js.Array2.unsafe_get(idx)
+      let idx = ref(0)
+      while idx.contents < dcs->Array.length {
+        let dc = dcs->Js.Array2.unsafe_get(idx.contents)
+
+        let shouldRemove = ref(false)
 
         switch fetchState.contractConfigs->Utils.Dict.dangerouslyGetNonOption(dc.contractName) {
         | Some({filterByAddresses}) =>
@@ -378,8 +381,7 @@ let registerDynamicContracts = (
               )
               logger->Logging.childWarn(`Skipping contract registration: Contract address is already registered at a later block number. Currently registration of the same contract address is not supported by Envio. Reach out to us if it's a problem for you.`)
             }
-            // Remove the DC from item to prevent it from saving to the db
-            let _ = dcs->Js.Array2.removeCountInPlace(~count=1, ~pos=idx)
+            shouldRemove := true
           | None =>
             let shouldUpdate = switch registeringContracts->Utils.Dict.dangerouslyGetNonOption(
               dc.address->Address.toString,
@@ -401,8 +403,7 @@ let registerDynamicContracts = (
                 Pervasives.min(earliestRegisteringEventBlockNumber.contents, dc.startBlock)
               registeringContracts->Js.Dict.set(dc.address->Address.toString, dc)
             } else {
-              // Remove the DC from item to prevent it from saving to the db
-              let _ = dcs->Js.Array2.removeCountInPlace(~count=1, ~pos=idx)
+              shouldRemove := true
             }
           }
         | None => {
@@ -414,8 +415,16 @@ let registerDynamicContracts = (
               },
             )
             logger->Logging.childWarn(`Skipping contract registration: Contract doesn't have any events to fetch.`)
-            let _ = dcs->Js.Array2.removeCountInPlace(~count=1, ~pos=idx)
+            shouldRemove := true
           }
+        }
+
+        if shouldRemove.contents {
+          // Remove the DC from item to prevent it from saving to the db
+          let _ = dcs->Js.Array2.removeCountInPlace(~count=1, ~pos=idx.contents)
+          // Don't increment idx - next element shifted into current position
+        } else {
+          idx := idx.contents + 1
         }
       }
     }
