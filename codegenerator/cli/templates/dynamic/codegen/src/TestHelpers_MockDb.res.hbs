@@ -355,7 +355,7 @@ and makeProcessEvents = (mockDb: t, ~chainId=?) => async (
       | Some(prevItemChainId) =>
         if prevItemChainId !== chainId {
           Js.Exn.raiseError(
-            `Processing events on multiple chains is not supported yet. Got chainId ${event.chainId->Belt.Int.toString} but expected ${chainId->Belt.Int.toString}`,
+            `Processing events on multiple chains is not supported yet. Got chainId ${chainId->Belt.Int.toString} but expected ${prevItemChainId->Belt.Int.toString}`,
           )
         }
       | None => processingChainId.contents = Some(chainId)

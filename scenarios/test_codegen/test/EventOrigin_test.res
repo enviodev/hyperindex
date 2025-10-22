@@ -56,6 +56,7 @@ describe("Chains State", () => {
           isPreload: false,
           checkpointId: 0,
           chains,
+          isResolved: false,
         })
 
         // Verify we can access chains

@@ -439,6 +439,39 @@ describe("FetchState.registerDynamicContracts", () => {
     )
   })
 
+  it("Correctly registers all valid contracts even when some are skipped in the middle", () => {
+    let fetchState = makeInitial()
+
+    // Create a single event with 3 DCs:
+    // - First DC should be skipped (already exists in config at mockAddress0)
+    // - Second and third DCs should both be registered
+    let dc1 = makeDynContractRegistration(~blockNumber=10, ~contractAddress=mockAddress0)
+    let dc2 = makeDynContractRegistration(~blockNumber=10, ~contractAddress=mockAddress1)
+    let dc3 = makeDynContractRegistration(~blockNumber=10, ~contractAddress=mockAddress2)
+
+    let event = mockEvent(~blockNumber=10)
+    event->Internal.setItemDcs([dc1, dc2, dc3])
+
+    let updatedFetchState = fetchState->FetchState.registerDynamicContracts([event])
+
+    // Verify that both DC2 and DC3 were registered correctly
+    let hasAddress1 =
+      updatedFetchState.indexingContracts
+      ->Js.Dict.get(mockAddress1->Address.toString)
+      ->Option.isSome
+    let hasAddress2 =
+      updatedFetchState.indexingContracts
+      ->Js.Dict.get(mockAddress2->Address.toString)
+      ->Option.isSome
+
+    Assert.equal(hasAddress1, true, ~message="Address1 should be registered")
+    Assert.equal(
+      hasAddress2,
+      true,
+      ~message="Address2 should be registered even though Address1 (which came before it) was skipped",
+    )
+  })
+
   it(
     "Should create a new partition for an already registered dc if it has an earlier start block",
     () => {

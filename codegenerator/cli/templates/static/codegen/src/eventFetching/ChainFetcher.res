@@ -293,42 +293,34 @@ let runContractRegistersOrThrow = async (
   ~config: Config.t,
 ) => {
   let itemsWithDcs = []
-  let isDone = ref(false)
 
   let onRegister = (~item: Internal.item, ~contractAddress, ~contractName) => {
     let eventItem = item->Internal.castUnsafeEventItem
-    if isDone.contents {
-      item->Logging.logForItem(
-        #warn,
-        `Skipping contract registration: The context.add${(contractName: Enums.ContractType.t :> string)} was called after the contract register resolved. Use await or return a promise from the contract register handler to avoid this error.`,
-      )
-    } else {
-      let {blockNumber} = eventItem
+    let {blockNumber} = eventItem
 
-      // Use contract-specific start block if configured, otherwise fall back to registration block
-      let contractStartBlock = switch getContractStartBlock(
-        config,
-        ~chain,
-        ~contractName=(contractName: Enums.ContractType.t :> string),
-      ) {
-      | Some(configuredStartBlock) => configuredStartBlock
-      | None => blockNumber
-      }
+    // Use contract-specific start block if configured, otherwise fall back to registration block
+    let contractStartBlock = switch getContractStartBlock(
+      config,
+      ~chain,
+      ~contractName=(contractName: Enums.ContractType.t :> string),
+    ) {
+    | Some(configuredStartBlock) => configuredStartBlock
+    | None => blockNumber
+    }
 
-      let dc: Internal.indexingContract = {
-        address: contractAddress,
-        contractName: (contractName: Enums.ContractType.t :> string),
-        startBlock: contractStartBlock,
-        registrationBlock: Some(blockNumber),
-      }
+    let dc: Internal.indexingContract = {
+      address: contractAddress,
+      contractName: (contractName: Enums.ContractType.t :> string),
+      startBlock: contractStartBlock,
+      registrationBlock: Some(blockNumber),
+    }
 
-      switch item->Internal.getItemDcs {
-      | None => {
-          item->Internal.setItemDcs([dc])
-          itemsWithDcs->Array.push(item)
-        }
-      | Some(dcs) => dcs->Array.push(dc)
+    switch item->Internal.getItemDcs {
+    | None => {
+        item->Internal.setItemDcs([dc])
+        itemsWithDcs->Array.push(item)
       }
+    | Some(dcs) => dcs->Array.push(dc)
     }
   }
 
@@ -347,18 +339,30 @@ let runContractRegistersOrThrow = async (
 
     // Catch sync and async errors
     try {
-      let result = contractRegister(
-        item->UserContext.getContractRegisterArgs(~eventItem, ~onRegister, ~config),
-      )
+      let params: UserContext.contractRegisterParams = {
+        item,
+        onRegister,
+        config,
+        isResolved: false,
+      }
+      let result = contractRegister(UserContext.getContractRegisterArgs(params))
 
       // Even though `contractRegister` always returns a promise,
       // in the ReScript type, but it might return a non-promise value for TS API.
       if result->Promise.isCatchable {
         promises->Array.push(
-          result->Promise.catch(exn => {
+          result
+          ->Promise.thenResolve(r => {
+            params.isResolved = true
+            r
+          })
+          ->Promise.catch(exn => {
+            params.isResolved = true
             exn->ErrorHandling.mkLogAndRaise(~msg=errorMessage, ~logger=item->Logging.getItemLogger)
           }),
         )
+      } else {
+        params.isResolved = true
       }
     } catch {
     | exn =>
@@ -370,7 +374,6 @@ let runContractRegistersOrThrow = async (
     let _ = await Promise.all(promises)
   }
 
-  isDone.contents = true
   itemsWithDcs
 }
 

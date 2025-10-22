@@ -322,9 +322,9 @@ let updateProgressedChains = (chainManager: ChainManager.t, ~batch: Batch.t) => 
 
   {
     ...chainManager,
-    commitedCheckpointId: switch batch.checkpointIds->Utils.Array.last {
+    committedCheckpointId: switch batch.checkpointIds->Utils.Array.last {
     | Some(checkpointId) => checkpointId
-    | None => chainManager.commitedCheckpointId
+    | None => chainManager.committedCheckpointId
     },
     chainFetchers,
   }
@@ -1082,7 +1082,7 @@ let injectedTaskReducer = (
 
       let chainManager = {
         ...state.chainManager,
-        commitedCheckpointId: rollbackTargetCheckpointId,
+        committedCheckpointId: rollbackTargetCheckpointId,
         chainFetchers,
       }
 
@@ -1093,7 +1093,7 @@ let injectedTaskReducer = (
           "upserted": diff["setEntities"],
         },
         "rollbackedEvents": rollbackedProcessedEvents.contents,
-        "beforeCheckpointId": state.chainManager.commitedCheckpointId,
+        "beforeCheckpointId": state.chainManager.committedCheckpointId,
         "targetCheckpointId": rollbackTargetCheckpointId,
       })
       Prometheus.RollbackSuccess.increment(
