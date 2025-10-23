@@ -36,8 +36,14 @@ pub mod evm {
         TopicFiltering,
         #[strum(serialize = "Feature: Wildcard Indexing")]
         WildcardIndexing,
-        #[strum(serialize = "Feature: On-Block Handler")]
+        #[strum(serialize = "Feature: onBlock Handler")]
         OnBlockHandler,
+        #[strum(serialize = "Feature: Effects API")]
+        EffectsAPI,
+        #[strum(serialize = "Feature: Factory Indexer")]
+        FactoryIndexer,
+        #[strum(serialize = "Feature: Multichain Indexer")]
+        MultichainIndexer,
     }
 
     ///A an object that holds all the values a user can select during

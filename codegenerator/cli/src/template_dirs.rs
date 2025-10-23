@@ -22,6 +22,9 @@ impl Template for evm::Template {
             evm::Template::TopicFiltering => "topic_filtering",
             evm::Template::WildcardIndexing => "wildcard_indexing",
             evm::Template::OnBlockHandler => "onblock_handler",
+            evm::Template::EffectsAPI => "effects_api",
+            evm::Template::FactoryIndexer => "factory_indexer",
+            evm::Template::MultichainIndexer => "multichain_indexer",
         }
         .to_string()
     }
@@ -42,6 +45,9 @@ impl Template for evm::Template {
             evm::Template::TopicFiltering => vec![Language::TypeScript],
             evm::Template::WildcardIndexing => vec![Language::TypeScript],
             evm::Template::OnBlockHandler => vec![Language::TypeScript],
+            evm::Template::EffectsAPI => vec![Language::TypeScript],
+            evm::Template::FactoryIndexer => vec![Language::TypeScript],
+            evm::Template::MultichainIndexer => vec![Language::TypeScript],
         }
     }
 }
