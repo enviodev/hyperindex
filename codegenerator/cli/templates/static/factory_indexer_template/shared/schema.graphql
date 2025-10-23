@@ -1,0 +1,20 @@
+type UniswapV3Factory_PoolCreated {
+    id: ID!
+    token0: String!
+    token1: String!
+    fee: BigInt!
+    tickSpacing: BigInt!
+    pool: String!
+    swaps: [UniswapV3Pool_Swap!]! @derivedFrom(field: "pool")
+}
+
+type UniswapV3Pool_Swap {
+    id: ID!
+    sender: String!
+    recipient: String!
+    amount0: BigInt!
+    amount1: BigInt!
+    sqrtPriceX96: BigInt!
+    liquidity: BigInt!
+    pool: String!
+}

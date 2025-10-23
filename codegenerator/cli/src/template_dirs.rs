@@ -10,6 +10,8 @@ use std::{
 
 pub trait Template: Display {
     fn to_dir_name(&self) -> String;
+
+    fn supported_languages(&self) -> Vec<Language>;
 }
 
 impl Template for evm::Template {
@@ -17,8 +19,36 @@ impl Template for evm::Template {
         match self {
             evm::Template::Greeter => "greeter",
             evm::Template::Erc20 => "erc20",
+            evm::Template::TopicFiltering => "topic_filtering",
+            evm::Template::WildcardIndexing => "wildcard_indexing",
+            evm::Template::OnBlockHandler => "onblock_handler",
+            evm::Template::EffectsAPI => "effects_api",
+            evm::Template::FactoryIndexer => "factory_indexer",
+            evm::Template::MultichainIndexer => "multichain_indexer",
         }
         .to_string()
+    }
+
+    fn supported_languages(&self) -> Vec<Language> {
+        match self {
+            // Example mappings — adjust based on what your actual templates support
+            evm::Template::Greeter => vec![
+                Language::JavaScript,
+                Language::TypeScript,
+                Language::ReScript,
+            ],
+            evm::Template::Erc20 => vec![
+                Language::JavaScript,
+                Language::TypeScript,
+                Language::ReScript,
+            ],
+            evm::Template::TopicFiltering => vec![Language::TypeScript],
+            evm::Template::WildcardIndexing => vec![Language::TypeScript],
+            evm::Template::OnBlockHandler => vec![Language::TypeScript],
+            evm::Template::EffectsAPI => vec![Language::TypeScript],
+            evm::Template::FactoryIndexer => vec![Language::TypeScript],
+            evm::Template::MultichainIndexer => vec![Language::TypeScript],
+        }
     }
 }
 
@@ -28,6 +58,16 @@ impl Template for fuel::Template {
             fuel::Template::Greeter => "greeteronfuel",
         }
         .to_string()
+    }
+
+    fn supported_languages(&self) -> Vec<Language> {
+        match self {
+            fuel::Template::Greeter => vec![
+                Language::JavaScript,
+                Language::TypeScript,
+                Language::ReScript,
+            ],
+        }
     }
 }
 
@@ -432,58 +472,89 @@ mod test {
     fn all_init_templates_exist() {
         let template_dirs = TemplateDirs::new();
 
+        // EVM templates
         for template in evm::Template::iter() {
-            for lang in Language::iter() {
+            for lang in template.supported_languages() {
                 template_dirs
                     .get_template_lang_dir(&template, &lang)
-                    .expect("static lang");
+                    .expect(&format!(
+                        "Expected static language dir for EVM template {:?} and language {:?}",
+                        template, lang
+                    ));
             }
             template_dirs
                 .get_template_shared_dir(&template)
-                .expect("static templte shared");
-        }
-        for template in fuel::Template::iter() {
-            for lang in Language::iter() {
-                template_dirs
-                    .get_template_lang_dir(&template, &lang)
-                    .expect("static lang");
-            }
-            template_dirs
-                .get_template_shared_dir(&template)
-                .expect("static templte shared");
+                .expect(&format!(
+                    "Expected shared static dir for EVM template {:?}",
+                    template
+                ));
         }
 
+        // FUEL templates
+        for template in fuel::Template::iter() {
+            for lang in template.supported_languages() {
+                template_dirs
+                    .get_template_lang_dir(&template, &lang)
+                    .expect(&format!(
+                        "Expected static language dir for FUEL template {:?} and language {:?}",
+                        template, lang
+                    ));
+            }
+            template_dirs
+                .get_template_shared_dir(&template)
+                .expect(&format!(
+                    "Expected shared static dir for FUEL template {:?}",
+                    template
+                ));
+        }
+
+        // Shared dynamic init template
         template_dirs
             .get_init_template_dynamic_shared()
-            .expect("dynami shared init template");
+            .expect("Expected dynamic shared init template dir to exist");
     }
 
     #[test]
     fn all_init_templates_extract_succesfully() {
         let template_dirs = TemplateDirs::new();
-        let temp_dir =
-            TempDir::new("init_extract_lang_test").expect("Failed creating tempdir init template");
+        let temp_dir = TempDir::new("init_extract_lang_test")
+            .expect("Failed creating tempdir for init template");
 
+        // EVM templates
         for template in evm::Template::iter() {
-            for lang in Language::iter() {
+            for lang in template.supported_languages() {
                 template_dirs
-                    .get_and_extract_template(&template, &lang, &(PathBuf::from(temp_dir.path())))
-                    .expect("static lang");
+                    .get_and_extract_template(&template, &lang, &PathBuf::from(temp_dir.path()))
+                    .expect(&format!(
+                        "Failed extracting EVM template {:?} for language {:?}",
+                        template, lang
+                    ));
             }
         }
+
+        // FUEL templates
         for template in fuel::Template::iter() {
-            for lang in Language::iter() {
+            for lang in template.supported_languages() {
                 template_dirs
-                    .get_and_extract_template(&template, &lang, &(PathBuf::from(temp_dir.path())))
-                    .expect("static lang");
+                    .get_and_extract_template(&template, &lang, &PathBuf::from(temp_dir.path()))
+                    .expect(&format!(
+                        "Failed extracting FUEL template {:?} for language {:?}",
+                        template, lang
+                    ));
             }
         }
-        let temp_dir =
-            TempDir::new("init_extract_blank_lang_test").expect("Failed creating tempdir blank");
+
+        // Blank template extraction
+        let blank_temp_dir = TempDir::new("init_extract_blank_lang_test")
+            .expect("Failed creating tempdir for blank template");
+
         for lang in Language::iter() {
             template_dirs
-                .get_and_extract_blank_template(&lang, &temp_dir.path().into())
-                .expect("static blank");
+                .get_and_extract_blank_template(&lang, &PathBuf::from(blank_temp_dir.path()))
+                .expect(&format!(
+                    "Failed extracting blank template for language {:?}",
+                    lang
+                ));
         }
     }
 

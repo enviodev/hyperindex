@@ -1,0 +1,16 @@
+# yaml-language-server: $schema=./node_modules/envio/evm.schema.json
+name: onblock-template
+contracts:
+  - name: ERC20
+    handler: src/EventHandlers.ts
+    events:
+      - event: Transfer(address indexed from, address indexed to, uint256 amount)
+networks:
+  - id: 1
+    start_block: 0
+    contracts:
+      - name: ERC20
+        address:
+          - 0xA1290d69c65A6Fe4DF752f95823fae25cB99e5A7 # rsETH token    handler: src/EventHandlers.ts
+unordered_multichain_mode: true
+preload_handlers: true

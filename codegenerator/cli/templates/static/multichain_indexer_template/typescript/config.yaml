@@ -1,0 +1,30 @@
+# yaml-language-server: $schema=./node_modules/envio/evm.schema.json
+name: multichain-indexer
+contracts:
+- name: UniswapV3Factory
+  handler: src/EventHandlers.ts
+  events:
+  - event: FeeAmountEnabled(uint24 indexed fee, int24 indexed tickSpacing)
+  - event: OwnerChanged(address indexed oldOwner, address indexed newOwner)
+  - event: PoolCreated(address indexed token0, address indexed token1, uint24 indexed fee, int24 tickSpacing, address pool)
+networks:
+- id: 1
+  start_block: 0
+  contracts:
+  - name: UniswapV3Factory
+    address:
+    - 0x1F98431c8aD98523631AE4a59f267346ea31F984
+- id: 130
+  start_block: 0
+  contracts:
+  - name: UniswapV3Factory
+    address:
+    - 0x1F98400000000000000000000000000000000003
+- id: 42161
+  start_block: 0
+  contracts:
+  - name: UniswapV3Factory
+    address:
+    - 0x1F98431c8aD98523631AE4a59f267346ea31F984
+unordered_multichain_mode: true
+preload_handlers: true
