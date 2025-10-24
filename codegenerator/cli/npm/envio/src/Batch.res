@@ -528,3 +528,23 @@ let findFirstEventBlockNumber = (batch: t, ~chainId) => {
   }
   result.contents
 }
+
+let findLastEventItem = (batch: t, ~chainId) => {
+  let idx = ref(batch.items->Array.length - 1)
+  let result = ref(None)
+  while idx.contents >= 0 && result.contents === None {
+    let item = batch.items->Array.getUnsafe(idx.contents)
+    switch item {
+    | Internal.Event(_) as eventItem => {
+        let eventItem = eventItem->Internal.castUnsafeEventItem
+        if eventItem.chain->ChainMap.Chain.toChainId === chainId {
+          result := Some(eventItem)
+        } else {
+          idx := idx.contents - 1
+        }
+      }
+    | Internal.Block(_) => idx := idx.contents - 1
+    }
+  }
+  result.contents
+}

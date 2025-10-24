@@ -580,6 +580,32 @@ module ProgressBatchCount = {
   }
 }
 
+module ProgressLatency = {
+  let gauge = SafeGauge.makeOrThrow(
+    ~name="envio_progress_latency",
+    ~help="The latency in milliseconds between the processed event block timestamp and the time it was written to storage.",
+    ~labelSchema=chainIdLabelsSchema,
+  )
+
+  let sumCounter = SafeCounter.makeOrThrow(
+    ~name="envio_progress_latency_sum",
+    ~help="Cumulative sum of latency in milliseconds between processed event block timestamps and when they were written to storage.",
+    ~labelSchema=chainIdLabelsSchema,
+  )
+
+  let countCounter = SafeCounter.makeOrThrow(
+    ~name="envio_progress_latency_count",
+    ~help="Number of times latency has been recorded for processed events written to storage.",
+    ~labelSchema=chainIdLabelsSchema,
+  )
+
+  let set = (~latencyMs, ~chainId) => {
+    gauge->SafeGauge.handleInt(~labels=chainId, ~value=latencyMs)
+    sumCounter->SafeCounter.handleInt(~labels=chainId, ~value=latencyMs)
+    countCounter->SafeCounter.increment(~labels=chainId)
+  }
+}
+
 let effectLabelsSchema = S.object(s => {
   s.field("effect", S.string)
 })
