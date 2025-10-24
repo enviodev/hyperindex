@@ -68,7 +68,8 @@ let experimental_createEffect = (
         Internal.effectOutput,
       >
     ),
-    callsCount: 0,
+    activeCallsCount: 0,
+    prevCallStartTimerRef: %raw(`null`),
     // This is the way to make the createEffect API
     // work without the need for users to call S.schema themselves,
     // but simply pass the desired object/tuple/etc.

@@ -70,14 +70,7 @@ module Benchmark = {
       | _ => false
       }
 
-    let shouldSavePrometheus = self =>
-      switch self {
-      | Prometheus => true
-      // Always save benchmarks in Prometheus in TUI mode
-      // This is needed for Dev Console profiler
-      // FIXME: This doesn't take into account the arg from the CLI
-      | _ => !tuiOffEnvVar
-      }
+    let shouldSavePrometheus = _ => true
 
     let shouldSaveData = self => self->shouldSavePrometheus || self->shouldSaveJsonFile
   }
