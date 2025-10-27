@@ -98,8 +98,9 @@ module Stubs = {
     GlobalState.injectedTaskReducer(
       ~executeQuery=executePartitionQueryWithMockChainData(mockChainData),
       ~waitForNewBlock,
-      ~getLastKnownValidBlock=chainFetcher =>
+      ~getLastKnownValidBlock=(chainFetcher, ~reorgBlockNumber) =>
         chainFetcher->ChainFetcher.getLastKnownValidBlock(
+          ~reorgBlockNumber,
           ~getBlockHashes=getBlockHashes(mockChainData),
         ),
     )(
@@ -598,13 +599,12 @@ describe("E2E rollback tests", () => {
 
     Assert.deepEqual(
       sourceMock.getBlockHashesCalls,
-      [[100, 102]],
+      [[100]],
       ~message="Should have called getBlockHashes to find rollback depth",
     )
     sourceMock.resolveGetBlockHashes([
       // The block 100 is untouched so we can rollback to it
       {blockNumber: 100, blockHash: "0x100", blockTimestamp: 100},
-      {blockNumber: 102, blockHash: "0x102-reorged", blockTimestamp: 102},
     ])
 
     await indexerMock.getRollbackReadyPromise()
@@ -878,13 +878,12 @@ describe("E2E rollback tests", () => {
 
     Assert.deepEqual(
       sourceMock.getBlockHashesCalls,
-      [[100, 102]],
+      [[100]],
       ~message="Should have called getBlockHashes to find rollback depth",
     )
     sourceMock.resolveGetBlockHashes([
       // The block 100 is untouched so we can rollback to it
       {blockNumber: 100, blockHash: "0x100", blockTimestamp: 100},
-      {blockNumber: 102, blockHash: "0x102-reorged", blockTimestamp: 102},
     ])
 
     sourceMock.getItemsOrThrowCalls->Utils.Array.clearInPlace
@@ -1120,7 +1119,7 @@ describe("E2E rollback tests", () => {
 
     Assert.deepEqual(
       sourceMock.getBlockHashesCalls,
-      [[100, 101, 102, 103, 104]],
+      [[100, 101, 102]],
       ~message="Should have called getBlockHashes to find rollback depth",
     )
     sourceMock.resolveGetBlockHashes([
@@ -1128,8 +1127,6 @@ describe("E2E rollback tests", () => {
       {blockNumber: 100, blockHash: "0x100", blockTimestamp: 100},
       {blockNumber: 101, blockHash: "0x101", blockTimestamp: 101},
       {blockNumber: 102, blockHash: "0x102", blockTimestamp: 102},
-      {blockNumber: 103, blockHash: "0x103-reorged", blockTimestamp: 103},
-      {blockNumber: 104, blockHash: "0x104-reorged", blockTimestamp: 104},
     ])
 
     sourceMock.getItemsOrThrowCalls->Utils.Array.clearInPlace
@@ -1451,15 +1448,13 @@ This might be wrong after we start exposing a block hash for progress block.`,
 
     Assert.deepEqual(
       sourceMock1337.getBlockHashesCalls,
-      [[100, 101, 102, 105]],
+      [[100, 101]],
       ~message="Should have called getBlockHashes to find rollback depth",
     )
     sourceMock1337.resolveGetBlockHashes([
       // The block 101 is untouched so we can rollback to it
       {blockNumber: 100, blockHash: "0x100", blockTimestamp: 100},
       {blockNumber: 101, blockHash: "0x101", blockTimestamp: 101},
-      {blockNumber: 102, blockHash: "0x102-reorged", blockTimestamp: 102},
-      {blockNumber: 105, blockHash: "0x105-reorged", blockTimestamp: 105},
     ])
 
     await indexerMock.getRollbackReadyPromise()
@@ -1854,15 +1849,13 @@ This might be wrong after we start exposing a block hash for progress block.`,
 
       Assert.deepEqual(
         sourceMock1337.getBlockHashesCalls,
-        [[100, 101, 102, 105]],
+        [[100, 101]],
         ~message="Should have called getBlockHashes to find rollback depth",
       )
       sourceMock1337.resolveGetBlockHashes([
         // The block 101 is untouched so we can rollback to it
         {blockNumber: 100, blockHash: "0x100", blockTimestamp: 100},
         {blockNumber: 101, blockHash: "0x101", blockTimestamp: 101},
-        {blockNumber: 102, blockHash: "0x102-reorged", blockTimestamp: 102},
-        {blockNumber: 105, blockHash: "0x105-reorged", blockTimestamp: 105},
       ])
 
       await indexerMock.getRollbackReadyPromise()
@@ -2238,7 +2231,7 @@ Sorted by timestamp and chain id`,
 
       Assert.deepEqual(
         sourceMock1337.getBlockHashesCalls,
-        [[100, 101, 102, 103]],
+        [[100, 101, 102]],
         ~message="Should have called getBlockHashes to find rollback depth",
       )
       sourceMock1337.resolveGetBlockHashes([
@@ -2246,7 +2239,6 @@ Sorted by timestamp and chain id`,
         {blockNumber: 100, blockHash: "0x100", blockTimestamp: 100},
         {blockNumber: 101, blockHash: "0x101", blockTimestamp: 101},
         {blockNumber: 102, blockHash: "0x102-reorged", blockTimestamp: 102},
-        {blockNumber: 103, blockHash: "0x103-reorged", blockTimestamp: 103},
       ])
 
       await indexerMock.getRollbackReadyPromise()
