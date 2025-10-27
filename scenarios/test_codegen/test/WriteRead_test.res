@@ -196,4 +196,108 @@ to workaround a bug, when the values returned as number[] instead of string[],
 breaking precicion on big values. https://github.com/enviodev/hyperindex/issues/788`,
     )
   })
+
+  Async.it("Test getWhere queries with eq and gt operators", async () => {
+    let sourceMock = Mock.Source.make(~chain=#1337, [#getHeightOrThrow, #getItemsOrThrow])
+    let indexerMock = await Mock.Indexer.make(
+      ~chains=[{chain: #1337, sources: [sourceMock.source]}],
+    )
+    await Utils.delay(0)
+
+    sourceMock.resolveGetHeightOrThrow(300)
+    await Utils.delay(0)
+    await Utils.delay(0)
+
+    // Local refs to capture getWhere query results
+    let whereEqOwnerTest = ref([])
+    let whereEqTokenIdTest = ref([])
+    let whereTokenIdGt50Test = ref([])
+    let whereTokenIdGt49Test = ref([])
+
+    let testUserId = "test-user-1"
+    let testCollectionId = "test-collection-1"
+
+    sourceMock.resolveGetItemsOrThrow([
+      {
+        blockNumber: 50,
+        logIndex: 1,
+        handler: async ({context}) => {
+          // Set up test entities
+          context.user.set({
+            id: testUserId,
+            address: "0x1234567890123456789012345678901234567890"->Utils.magic,
+            gravatar_id: None,
+            updatesCountOnUserForTesting: 0,
+            accountType: USER,
+          })
+
+          context.nftCollection.set({
+            id: testCollectionId,
+            contractAddress: "0xabcdef0123456789abcdef0123456789abcdef01"->Utils.magic,
+            name: "Test Collection",
+            symbol: "TEST",
+            maxSupply: BigInt.fromInt(100),
+            currentSupply: 1,
+          })
+
+          context.token.set({
+            id: "token-1",
+            tokenId: BigInt.fromInt(50),
+            collection_id: testCollectionId,
+            owner_id: testUserId,
+          })
+
+          // Execute getWhere queries
+          whereEqOwnerTest := (await context.token.getWhere.owner_id.eq(testUserId))
+          whereEqTokenIdTest := (await context.token.getWhere.tokenId.eq(BigInt.fromInt(50)))
+          whereTokenIdGt50Test := (await context.token.getWhere.tokenId.gt(BigInt.fromInt(50)))
+          whereTokenIdGt49Test := (await context.token.getWhere.tokenId.gt(BigInt.fromInt(49)))
+        },
+      },
+    ])
+    await indexerMock.getBatchWritePromise()
+
+    // Assert getWhere results
+    Assert.equal(
+      whereEqOwnerTest.contents->Array.length,
+      1,
+      ~message="should have successfully loaded values on where eq owner_id query",
+    )
+    Assert.equal(
+      whereEqTokenIdTest.contents->Array.length,
+      1,
+      ~message="should have successfully loaded values on where eq tokenId query",
+    )
+    Assert.equal(
+      whereTokenIdGt50Test.contents->Array.length,
+      0,
+      ~message="Shouldn't have any value with tokenId > 50",
+    )
+    Assert.deepEqual(
+      whereEqTokenIdTest.contents,
+      whereTokenIdGt49Test.contents,
+      ~message="Where gt 49 and eq 50 should return the same result",
+    )
+
+    // Test deletion and index cleanup
+    sourceMock.resolveGetItemsOrThrow([
+      {
+        blockNumber: 51,
+        logIndex: 1,
+        handler: async ({context}) => {
+          context.token.deleteUnsafe("token-1")
+
+          // Execute getWhere query after deletion
+          whereEqOwnerTest := (await context.token.getWhere.owner_id.eq(testUserId))
+        },
+      },
+    ])
+    await indexerMock.getBatchWritePromise()
+
+    Assert.equal(
+      whereEqOwnerTest.contents->Array.length,
+      0,
+      ~message="should have removed index on deleted token",
+    )
+  })
 })
