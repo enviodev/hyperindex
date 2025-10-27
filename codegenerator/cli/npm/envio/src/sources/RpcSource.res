@@ -522,35 +522,38 @@ let make = (
     },
   )
 
-  let blockLoader = LazyLoader.make(
-    ~loaderFn=blockNumber =>
-      getKnownBlockWithBackoff(
-        ~provider,
-        ~sourceName=name,
-        ~chain,
-        ~backoffMsOnFailure=1000,
-        ~blockNumber,
-        ~lowercaseAddresses,
-      ),
-    ~onError=(am, ~exn) => {
-      Logging.error({
-        "err": exn->Utils.prettifyExn,
-        "msg": `EE1100: Top level promise timeout reached. Please review other errors or warnings in the code. This function will retry in ${(am._retryDelayMillis / 1000)
-            ->Belt.Int.toString} seconds. It is highly likely that your indexer isn't syncing on one or more chains currently. Also take a look at the "suggestedFix" in the metadata of this command`,
-        "source": name,
-        "chainId": chain->ChainMap.Chain.toChainId,
-        "metadata": {
-          {
-            "asyncTaskName": "blockLoader: fetching block data - `getBlock` rpc call",
-            "suggestedFix": "This likely means the RPC url you are using is not responding correctly. Please try another RPC endipoint.",
-          }
-        },
-      })
-    },
-  )
+  let makeBlockLoader = () =>
+    LazyLoader.make(
+      ~loaderFn=blockNumber =>
+        getKnownBlockWithBackoff(
+          ~provider,
+          ~sourceName=name,
+          ~chain,
+          ~backoffMsOnFailure=1000,
+          ~blockNumber,
+          ~lowercaseAddresses,
+        ),
+      ~onError=(am, ~exn) => {
+        Logging.error({
+          "err": exn->Utils.prettifyExn,
+          "msg": `EE1100: Top level promise timeout reached. Please review other errors or warnings in the code. This function will retry in ${(am._retryDelayMillis / 1000)
+              ->Belt.Int.toString} seconds. It is highly likely that your indexer isn't syncing on one or more chains currently. Also take a look at the "suggestedFix" in the metadata of this command`,
+          "source": name,
+          "chainId": chain->ChainMap.Chain.toChainId,
+          "metadata": {
+            {
+              "asyncTaskName": "blockLoader: fetching block data - `getBlock` rpc call",
+              "suggestedFix": "This likely means the RPC url you are using is not responding correctly. Please try another RPC endipoint.",
+            }
+          },
+        })
+      },
+    )
+
+  let blockLoader = ref(makeBlockLoader())
 
   let getEventBlockOrThrow = makeThrowingGetEventBlock(~getBlock=blockNumber =>
-    blockLoader->LazyLoader.get(blockNumber)
+    blockLoader.contents->LazyLoader.get(blockNumber)
   )
   let getEventTransactionOrThrow = makeThrowingGetEventTransaction(
     ~getTransactionFields=Ethers.JsonRpcProvider.makeGetTransactionFields(
@@ -625,7 +628,7 @@ let make = (
 
     let firstBlockParentPromise =
       fromBlock > 0
-        ? blockLoader->LazyLoader.get(fromBlock - 1)->Promise.thenResolve(res => res->Some)
+        ? blockLoader.contents->LazyLoader.get(fromBlock - 1)->Promise.thenResolve(res => res->Some)
         : Promise.resolve(None)
 
     let {getLogSelectionOrThrow} = getSelectionConfig(selection)
@@ -636,7 +639,7 @@ let make = (
       ~toBlock=suggestedToBlock,
       ~addresses,
       ~topicQuery,
-      ~loadBlock=blockNumber => blockLoader->LazyLoader.get(blockNumber),
+      ~loadBlock=blockNumber => blockLoader.contents->LazyLoader.get(blockNumber),
       ~syncConfig,
       ~provider,
       ~mutSuggestedBlockIntervals,
@@ -873,8 +876,13 @@ let make = (
   }
 
   let getBlockHashes = (~blockNumbers, ~logger as _currentlyUnusedLogger) => {
+    // Clear cache by creating a fresh LazyLoader
+    // This is important, since we call this
+    // function when a reorg is detected
+    blockLoader := makeBlockLoader()
+
     blockNumbers
-    ->Array.map(blockNum => blockLoader->LazyLoader.get(blockNum))
+    ->Array.map(blockNum => blockLoader.contents->LazyLoader.get(blockNum))
     ->Promise.all
     ->Promise.thenResolve(blocks => {
       blocks
