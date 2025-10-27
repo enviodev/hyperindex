@@ -213,6 +213,8 @@ breaking precicion on big values. https://github.com/enviodev/hyperindex/issues/
     let whereEqTokenIdTest = ref([])
     let whereTokenIdGt50Test = ref([])
     let whereTokenIdGt49Test = ref([])
+    let whereTokenIdLt50Test = ref([])
+    let whereTokenIdLt51Test = ref([])
 
     let testUserId = "test-user-1"
     let testCollectionId = "test-collection-1"
@@ -252,6 +254,8 @@ breaking precicion on big values. https://github.com/enviodev/hyperindex/issues/
           whereEqTokenIdTest := (await context.token.getWhere.tokenId.eq(BigInt.fromInt(50)))
           whereTokenIdGt50Test := (await context.token.getWhere.tokenId.gt(BigInt.fromInt(50)))
           whereTokenIdGt49Test := (await context.token.getWhere.tokenId.gt(BigInt.fromInt(49)))
+          whereTokenIdLt50Test := (await context.token.getWhere.tokenId.lt(BigInt.fromInt(50)))
+          whereTokenIdLt51Test := (await context.token.getWhere.tokenId.lt(BigInt.fromInt(51)))
         },
       },
     ])
@@ -277,6 +281,16 @@ breaking precicion on big values. https://github.com/enviodev/hyperindex/issues/
       whereEqTokenIdTest.contents,
       whereTokenIdGt49Test.contents,
       ~message="Where gt 49 and eq 50 should return the same result",
+    )
+    Assert.equal(
+      whereTokenIdLt50Test.contents->Array.length,
+      0,
+      ~message="Shouldn't have any value with tokenId < 50",
+    )
+    Assert.deepEqual(
+      whereEqTokenIdTest.contents,
+      whereTokenIdLt51Test.contents,
+      ~message="Where lt 51 and eq 50 should return the same result",
     )
 
     // Test deletion and index cleanup

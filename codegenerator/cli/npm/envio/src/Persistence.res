@@ -34,7 +34,7 @@ type initialState = {
   reorgCheckpoints: array<Internal.reorgCheckpoint>,
 }
 
-type operator = [#">" | #"="]
+type operator = [#">" | #"=" | #"<"]
 
 type storage = {
   // Should return true if we already have persisted data

@@ -38,7 +38,8 @@ let isIndex = true
 @genType
 type whereOperations<'entity, 'fieldType> = {
   eq: 'fieldType => promise<array<'entity>>,
-  gt: 'fieldType => promise<array<'entity>>
+  gt: 'fieldType => promise<array<'entity>>,
+  lt: 'fieldType => promise<array<'entity>>
 }
 {{#each entities as |entity|}}
 
