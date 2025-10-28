@@ -456,7 +456,6 @@ let getLastKnownValidBlock = async (
 
       switch chainFetcher.reorgDetection->ReorgDetection.getLatestValidScannedBlock(
         ~blockNumbersAndHashes,
-        ~currentBlockHeight=chainFetcher.currentBlockHeight,
       ) {
       | Some(blockNumber) => blockNumber
       | None => chainFetcher->getHighestBlockBelowThreshold

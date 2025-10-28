@@ -365,15 +365,13 @@ describe("Validate reorg detection functions", () => {
     Assert.deepEqual(
       mock(scannedHashesFixture, ~maxReorgDepth=500)->ReorgDetection.getLatestValidScannedBlock(
         ~blockNumbersAndHashes,
-        ~currentBlockHeight=500,
       ),
       Some(50),
       ~message="Should return the latest non-different block if we assume that all blocks are in the threshold",
     )
     Assert.deepEqual(
       mock(scannedHashesFixture, ~maxReorgDepth=200)->ReorgDetection.getLatestValidScannedBlock(
-        ~blockNumbersAndHashes,
-        ~currentBlockHeight=500,
+        ~blockNumbersAndHashes=blockNumbersAndHashes->Js.Array2.sliceFrom(2),
       ),
       None,
       ~message="Returns None if there's no valid block in threshold",
@@ -394,26 +392,22 @@ describe("Validate reorg detection functions", () => {
     Assert.deepEqual(
       mock(scannedHashesFixture, ~maxReorgDepth=500)->ReorgDetection.getLatestValidScannedBlock(
         ~blockNumbersAndHashes,
-        ~currentBlockHeight=500,
       ),
       Some(50),
       ~message="Case when the different block is in between of valid ones",
     )
     Assert.deepEqual(
       mock(scannedHashesFixture, ~maxReorgDepth=200)->ReorgDetection.getLatestValidScannedBlock(
-        ~blockNumbersAndHashes,
-        ~currentBlockHeight=500,
+        ~blockNumbersAndHashes=[(500, "0x5432-different")]->Array.map(
+          ((blockNumber, blockHash)): ReorgDetection.blockDataWithTimestamp => {
+            blockNumber,
+            blockHash,
+            blockTimestamp: unusedBlockTimestamp,
+          },
+        ),
       ),
       None,
-      ~message="Returns Error(NotFound) if the different block is the last one in the threshold",
-    )
-    Assert.deepEqual(
-      mock(scannedHashesFixture, ~maxReorgDepth=200)->ReorgDetection.getLatestValidScannedBlock(
-        ~blockNumbersAndHashes,
-        ~currentBlockHeight=501,
-      ),
-      Some(500),
-      ~message="Ignores invalid blocks outside of the threshold",
+      ~message="Returns None if the different block is the last one in the threshold",
     )
   })
 })

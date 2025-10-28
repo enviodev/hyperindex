@@ -188,19 +188,16 @@ Returns the latest block number which matches block number and hashes in the pro
 If it doesn't exist in the reorg threshold it returns NotFound
 */
 let getLatestValidScannedBlock = (
-  self: t,
+  reorgDetection: t,
   ~blockNumbersAndHashes: array<blockDataWithTimestamp>,
-  ~currentBlockHeight,
 ) => {
   let verifiedDataByBlockNumber = Js.Dict.empty()
   for idx in 0 to blockNumbersAndHashes->Array.length - 1 {
     let blockData = blockNumbersAndHashes->Array.getUnsafe(idx)
     verifiedDataByBlockNumber->Js.Dict.set(blockData.blockNumber->Int.toString, blockData)
   }
-
-  let dataByBlockNumber = self->getDataByBlockNumberCopyInThreshold(~currentBlockHeight)
   // Js engine automatically orders numeric object keys
-  let ascBlockNumberKeys = dataByBlockNumber->Js.Dict.keys
+  let ascBlockNumberKeys = verifiedDataByBlockNumber->Js.Dict.keys
 
   let getPrevScannedBlockNumber = idx =>
     ascBlockNumberKeys
@@ -216,15 +213,10 @@ let getLatestValidScannedBlock = (
   let rec loop = idx => {
     switch ascBlockNumberKeys->Belt.Array.get(idx) {
     | Some(blockNumberKey) =>
-      let scannedBlock = dataByBlockNumber->Js.Dict.unsafeGet(blockNumberKey)
-      switch verifiedDataByBlockNumber->Utils.Dict.dangerouslyGetNonOption(blockNumberKey) {
-      | None =>
-        Js.Exn.raiseError(
-          `Unexpected case. Couldn't find verified hash for block number ${blockNumberKey}`,
-        )
-      | Some(verifiedBlockData) if verifiedBlockData.blockHash === scannedBlock.blockHash =>
-        loop(idx + 1)
-      | Some(_) => getPrevScannedBlockNumber(idx)
+      let scannedBlock = reorgDetection.dataByBlockNumber->Js.Dict.unsafeGet(blockNumberKey)
+      switch verifiedDataByBlockNumber->Js.Dict.unsafeGet(blockNumberKey) {
+      | verifiedBlockData if verifiedBlockData.blockHash === scannedBlock.blockHash => loop(idx + 1)
+      | _ => getPrevScannedBlockNumber(idx)
       }
     | None => getPrevScannedBlockNumber(idx)
     }
