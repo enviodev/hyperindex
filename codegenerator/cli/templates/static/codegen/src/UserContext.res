@@ -100,6 +100,19 @@ let getWhereTraps: Utils.Proxy.traps<entityContextParams> = {
               ~item=params.item,
               ~fieldValue,
             ),
+          lt: fieldValue =>
+            LoadLayer.loadByField(
+              ~loadManager=params.loadManager,
+              ~persistence=params.persistence,
+              ~operator=Lt,
+              ~entityConfig,
+              ~fieldName=dbFieldName,
+              ~fieldValueSchema,
+              ~inMemoryStore=params.inMemoryStore,
+              ~shouldGroup=params.isPreload,
+              ~item=params.item,
+              ~fieldValue,
+            ),
         }->Utils.magic
       }
     }

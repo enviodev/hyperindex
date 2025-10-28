@@ -393,6 +393,38 @@ describe("LoadLayer", () => {
         },
       ],
     )
+
+    // Test Lt operator
+    let getUsersWithUpdatesLt = fieldValue =>
+      LoadLayer.loadByField(
+        ~loadManager,
+        ~persistence=storageMock->Mock.Storage.toPersistence,
+        ~entityConfig=module(Entities.User)->Entities.entityModToInternal,
+        ~operator=Lt,
+        ~inMemoryStore,
+        ~fieldName="updatesCountOnUserForTesting",
+        ~fieldValueSchema=S.int,
+        ~item,
+        ~fieldValue,
+        ~shouldGroup=true,
+      )
+
+    let users3 = await getUsersWithUpdatesLt(5)
+    Assert.deepEqual(users3, [])
+    Assert.deepEqual(
+      storageMock.loadByFieldOrThrowCalls->Array.length,
+      3,
+      ~message="Should have added Lt operator call",
+    )
+    Assert.deepEqual(
+      storageMock.loadByFieldOrThrowCalls->Belt.Array.get(2),
+      Some({
+        "fieldName": "updatesCountOnUserForTesting",
+        "fieldValue": 5->Utils.magic,
+        "tableName": "User",
+        "operator": #"<",
+      }),
+    )
   })
 
   Async.it("Gets entity from inMemoryStore by index if it exists", async () => {

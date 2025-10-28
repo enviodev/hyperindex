@@ -46,12 +46,19 @@ module FieldValue = {
     | (Some(BigDecimal(bdA)), Some(BigDecimal(bdB))) => BigDecimal.gt(bdA, bdB)
     | (a, b) => a > b
     }
+
+  let lt = (a, b) =>
+    switch (a, b) {
+    //For big decimal use custom equals operator otherwise let Caml_obj.equal do its magic
+    | (Some(BigDecimal(bdA)), Some(BigDecimal(bdB))) => BigDecimal.lt(bdA, bdB)
+    | (a, b) => a < b
+    }
 }
 
 module Operator = {
-  type t = Eq | Gt
+  type t = Eq | Gt | Lt
 
-  let values = [Eq, Gt]
+  let values = [Eq, Gt, Lt]
 }
 
 module SingleIndex = {
@@ -72,6 +79,7 @@ module SingleIndex = {
       switch self.operator {
       | Eq => fieldValue->FieldValue.eq(self.fieldValue)
       | Gt => fieldValue->FieldValue.gt(self.fieldValue)
+      | Lt => fieldValue->FieldValue.lt(self.fieldValue)
       }
 }
 

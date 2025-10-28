@@ -54,57 +54,7 @@ let stateSchema = S.union([
   })),
 ])
 
-// let setApiTokenEnv = {
-//   let initialted = ref(None)
-//   let envPath = NodeJs.Path.resolve([".env"])
-//   async apiToken => {
-//     // Execute once even with multiple calls
-//     if initialted.contents !== Some(apiToken) {
-//       initialted := Some(apiToken)
-
-//       let tokenLine = `ENVIO_API_TOKEN="${apiToken}"`
-
-//       try {
-//         // Check if file exists
-//         let exists = try {
-//           await NodeJs.Fs.Promises.access(envPath)
-//           true
-//         } catch {
-//         | _ => false
-//         }
-
-//         if !exists {
-//           // Create new file if it doesn't exist
-//           await NodeJs.Fs.Promises.writeFile(
-//             ~filepath=envPath,
-//             ~content=tokenLine ++ "\n",
-//             ~options={encoding: "utf8"},
-//           )
-//         } else {
-//           // Read existing file
-//           let content = await NodeJs.Fs.Promises.readFile(~filepath=envPath, ~encoding=Utf8)
-
-//           // Check if token is already set
-//           if !Js.String.includes(content, "ENVIO_API_TOKEN=") {
-//             // Append token line if not present
-//             await NodeJs.Fs.Promises.appendFile(
-//               ~filepath=envPath,
-//               ~content="\n" ++ tokenLine ++ "\n",
-//               ~options={encoding: "utf8"},
-//             )
-//           }
-//         }
-//       } catch {
-//       | Js.Exn.Error(err) => {
-//           Js.Console.error("Error setting up ENVIO_API_TOKEN to the .env file:")
-//           Js.Console.error(err)
-//         }
-//       }
-//     }
-//   }
-// }
-
-let startServer = (~getState, ~config: Config.t, ~shouldUseTui as _) => {
+let startServer = (~getState, ~config: Config.t, ~consoleBearerToken: option<string>) => {
   open Express
 
   let app = makeCjs()
@@ -117,7 +67,10 @@ let startServer = (~getState, ~config: Config.t, ~shouldUseTui as _) => {
     }
 
     res->setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-    res->setHeader("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept")
+    res->setHeader(
+      "Access-Control-Allow-Headers",
+      "Origin, X-Requested-With, Content-Type, Accept, Authorization",
+    )
 
     if req.method === Options {
       res->sendStatus(200)
@@ -134,28 +87,36 @@ let startServer = (~getState, ~config: Config.t, ~shouldUseTui as _) => {
     res->sendStatus(200)
   })
 
-  app->get("/console/state", (_req, res) => {
-    res->json(getState()->S.reverseConvertToJsonOrThrow(stateSchema))
+  let checkIsAuthorizedConsole = req => {
+    switch consoleBearerToken {
+    | None => false
+    | Some(token) =>
+      switch req.headers->Js.Dict.get("authorization") {
+      | Some(authorization) if authorization === `Bearer ${token}` => true
+      | _ => false
+      }
+    }
+  }
+
+  app->get("/console/state", (req, res) => {
+    let state = if req->checkIsAuthorizedConsole {
+      getState()
+    } else {
+      Disabled({})
+    }
+
+    res->json(state->S.reverseConvertToJsonOrThrow(stateSchema))
   })
 
-  app->post("/console/syncCache", (_req, res) => {
-    (config.persistence->Persistence.getInitializedStorageOrThrow).dumpEffectCache()
-    ->Promise.thenResolve(_ => res->json(Boolean(true)))
-    ->Promise.done
+  app->post("/console/syncCache", (req, res) => {
+    if req->checkIsAuthorizedConsole {
+      (config.persistence->Persistence.getInitializedStorageOrThrow).dumpEffectCache()
+      ->Promise.thenResolve(_ => res->json(Boolean(true)))
+      ->Promise.done
+    } else {
+      res->json(Boolean(false))
+    }
   })
-
-  // Keep /console/state exposed, so it can return `disabled` status
-  // if shouldUseTui {
-  //   app->post("/console/api-token", (req, res) => {
-  //     switch req.query->Utils.Dict.dangerouslyGetNonOption("value") {
-  //     | Some(apiToken) if Some(apiToken) !== Env.envioApiToken =>
-  //       setApiTokenEnv(apiToken)->Promise.done
-  //     | _ => ()
-  //     }
-
-  //     res->sendStatus(200)
-  //   })
-  // }
 
   PromClient.collectDefaultMetrics()
 
@@ -291,63 +252,67 @@ let main = async () => {
 
     startServer(
       ~config,
-      ~shouldUseTui,
-      ~getState=if shouldUseTui {
-        () =>
-          switch gsManagerRef.contents {
-          | None => Initializing({})
-          | Some(gsManager) => {
-              let state = gsManager->GlobalStateManager.getState
-              let appState = state->makeAppState
-              Active({
-                envioVersion,
-                chains: appState.chains->Js.Array2.map(c => {
-                  let cf = state.chainManager.chainFetchers->ChainMap.get(c.chain)
-                  {
-                    chainId: c.chain->ChainMap.Chain.toChainId->Js.Int.toFloat,
-                    poweredByHyperSync: c.poweredByHyperSync,
-                    latestFetchedBlockNumber: c.latestFetchedBlockNumber,
-                    currentBlockHeight: c.currentBlockHeight,
-                    numBatchesFetched: c.numBatchesFetched,
-                    endBlock: c.endBlock,
-                    firstEventBlockNumber: switch c.progress {
-                    | SearchingForEvents => None
-                    | Syncing({firstEventBlockNumber}) | Synced({firstEventBlockNumber}) =>
-                      Some(firstEventBlockNumber)
-                    },
-                    latestProcessedBlock: switch c.progress {
-                    | SearchingForEvents => None
-                    | Syncing({latestProcessedBlock}) | Synced({latestProcessedBlock}) =>
-                      Some(latestProcessedBlock)
-                    },
-                    timestampCaughtUpToHeadOrEndblock: switch c.progress {
-                    | SearchingForEvents
-                    | Syncing(_) =>
-                      None
-                    | Synced({timestampCaughtUpToHeadOrEndblock}) =>
-                      Some(timestampCaughtUpToHeadOrEndblock)
-                    },
-                    numEventsProcessed: switch c.progress {
-                    | SearchingForEvents => 0
-                    | Syncing({numEventsProcessed})
-                    | Synced({numEventsProcessed}) => numEventsProcessed
-                    },
-                    numAddresses: cf.fetchState->FetchState.numAddresses,
-                  }
-                }),
-                indexerStartTime: appState.indexerStartTime,
-                isPreRegisteringDynamicContracts: false,
-                rollbackOnReorg: config.historyConfig.rollbackFlag === RollbackOnReorg,
-                isUnorderedMultichainMode: switch config.multichain {
-                | Unordered => true
-                | Ordered => false
-                },
-              })
-            }
-          }
-      } else {
-        () => Disabled({})
+      ~consoleBearerToken={
+        // The most simple check to verify whether we are running in development mode
+        // and prevent exposing the console to public, when creating a real deployment.
+        if Env.Db.password === "testing" {
+          Some("testing")
+        } else {
+          None
+        }
       },
+      ~getState=() =>
+        switch gsManagerRef.contents {
+        | None => Initializing({})
+        | Some(gsManager) => {
+            let state = gsManager->GlobalStateManager.getState
+            let appState = state->makeAppState
+            Active({
+              envioVersion,
+              chains: appState.chains->Js.Array2.map(c => {
+                let cf = state.chainManager.chainFetchers->ChainMap.get(c.chain)
+                {
+                  chainId: c.chain->ChainMap.Chain.toChainId->Js.Int.toFloat,
+                  poweredByHyperSync: c.poweredByHyperSync,
+                  latestFetchedBlockNumber: c.latestFetchedBlockNumber,
+                  currentBlockHeight: c.currentBlockHeight,
+                  numBatchesFetched: c.numBatchesFetched,
+                  endBlock: c.endBlock,
+                  firstEventBlockNumber: switch c.progress {
+                  | SearchingForEvents => None
+                  | Syncing({firstEventBlockNumber}) | Synced({firstEventBlockNumber}) =>
+                    Some(firstEventBlockNumber)
+                  },
+                  latestProcessedBlock: switch c.progress {
+                  | SearchingForEvents => None
+                  | Syncing({latestProcessedBlock}) | Synced({latestProcessedBlock}) =>
+                    Some(latestProcessedBlock)
+                  },
+                  timestampCaughtUpToHeadOrEndblock: switch c.progress {
+                  | SearchingForEvents
+                  | Syncing(_) =>
+                    None
+                  | Synced({timestampCaughtUpToHeadOrEndblock}) =>
+                    Some(timestampCaughtUpToHeadOrEndblock)
+                  },
+                  numEventsProcessed: switch c.progress {
+                  | SearchingForEvents => 0
+                  | Syncing({numEventsProcessed})
+                  | Synced({numEventsProcessed}) => numEventsProcessed
+                  },
+                  numAddresses: cf.fetchState->FetchState.numAddresses,
+                }
+              }),
+              indexerStartTime: appState.indexerStartTime,
+              isPreRegisteringDynamicContracts: false,
+              rollbackOnReorg: config.historyConfig.rollbackFlag === RollbackOnReorg,
+              isUnorderedMultichainMode: switch config.multichain {
+              | Unordered => true
+              | Ordered => false
+              },
+            })
+          }
+        },
     )
 
     await config.persistence->Persistence.init(~chainConfigs=config.chainMap->ChainMap.values)

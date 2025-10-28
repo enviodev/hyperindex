@@ -217,6 +217,20 @@ let updateProgressedChains = (chainManager: ChainManager.t, ~batch: Batch.t) => 
             ~chainId=chain->ChainMap.Chain.toChainId,
           )
         }
+        
+        // Calculate and set latency metrics
+        switch batch->Batch.findLastEventItem(~chainId=chain->ChainMap.Chain.toChainId) {
+        | Some(eventItem) => {
+            let blockTimestamp = eventItem.event.block->Types.Block.getTimestamp
+            let currentTimeMs = Js.Date.now()->Float.toInt
+            let blockTimestampMs = blockTimestamp * 1000
+            let latencyMs = currentTimeMs - blockTimestampMs
+            
+            Prometheus.ProgressLatency.set(~latencyMs, ~chainId=chain->ChainMap.Chain.toChainId)
+          }
+        | None => ()
+        }
+        
         {
           ...cf,
           // Since we process per chain always in order,
