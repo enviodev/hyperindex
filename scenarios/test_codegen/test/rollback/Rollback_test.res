@@ -2405,4 +2405,117 @@ Sorted by timestamp and chain id`,
       )
     },
   )
+
+  Async.it("Double reorg should NOT cause negative event counter (regression test)", async () => {
+    let sourceMock = M.Source.make(
+      [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
+      ~chain=#1337,
+    )
+    let indexerMock = await M.Indexer.make(
+      ~chains=[
+        {
+          chain: #1337,
+          sources: [sourceMock.source],
+        },
+      ],
+    )
+    await Utils.delay(0)
+
+    await M.Helper.initialEnterReorgThreshold(~indexerMock, ~sourceMock)
+
+    sourceMock.resolveGetItemsOrThrow([])
+    await indexerMock.getBatchWritePromise()
+
+    // Process initial events - 1 event across block 102
+    sourceMock.resolveGetItemsOrThrow([
+      {
+        blockNumber: 102,
+        logIndex: 0,
+        handler: async ({context}) => {
+          context.simpleEntity.set({
+            id: "1",
+            value: "value-1",
+          })
+        },
+      },
+    ])
+    await indexerMock.getBatchWritePromise()
+
+    // Check initial metrics - should have 3 events processed
+    Assert.deepEqual(
+      await indexerMock.metric("envio_progress_events_count"),
+      [{value: "1", labels: Js.Dict.fromArray([("chainId", "1337")])}],
+      ~message="Should have 1 event processed initially",
+    )
+
+    // Trigger first reorg
+    sourceMock.resolveGetItemsOrThrow(
+      [],
+      ~prevRangeLastBlock={
+        blockNumber: 102,
+        blockHash: "0x102-reorged",
+      },
+    )
+    await Utils.delay(0)
+    await Utils.delay(0)
+
+    Assert.deepEqual(
+      sourceMock.getBlockHashesCalls,
+      [[100, 101]],
+      ~message="Should have called getBlockHashes for first reorg",
+    )
+
+    // Rollback to block 100 - blocks 101-103 are reorged
+    sourceMock.resolveGetBlockHashes([
+      {blockNumber: 100, blockHash: "0x100", blockTimestamp: 100},
+      {blockNumber: 101, blockHash: "0x101", blockTimestamp: 101},
+    ])
+
+    await indexerMock.getRollbackReadyPromise()
+
+    // Check metrics after first rollback - should have rolled back all 3 events
+    Assert.deepEqual(
+      await indexerMock.metric("envio_progress_events_count"),
+      [{value: "0", labels: Js.Dict.fromArray([("chainId", "1337")])}],
+      ~message="Should have 0 events after first rollback",
+    )
+
+    // Detects second reorg
+    sourceMock.resolveGetItemsOrThrow(
+      [],
+      ~prevRangeLastBlock={
+        blockNumber: 101,
+        blockHash: "0x101-reorged",
+      },
+    )
+
+    await Utils.delay(0)
+    await Utils.delay(0)
+
+    Assert.deepEqual(
+      sourceMock.getBlockHashesCalls,
+      [[100, 101], [100]],
+      ~message="Should have called getBlockHashes for second reorg",
+    )
+    // Rollback to block 100 - blocks 101-103 are reorged
+    sourceMock.resolveGetBlockHashes([{blockNumber: 100, blockHash: "0x100", blockTimestamp: 100}])
+    await indexerMock.getRollbackReadyPromise()
+
+    // Check metrics after processing - should have 2 events
+    Assert.deepEqual(
+      await indexerMock.metric("envio_progress_events_count"),
+      [{value: "-1", labels: Js.Dict.fromArray([("chainId", "1337")])}],
+      ~message="Shouldn't go to negative with the counter",
+    )
+
+    // Process batch after rollback
+    sourceMock.resolveGetItemsOrThrow([])
+    await indexerMock.getBatchWritePromise()
+
+    Assert.deepEqual(
+      await indexerMock.query(module(Entities.SimpleEntity)),
+      [],
+      ~message="Should have all entities rolled back",
+    )
+  })
 })
