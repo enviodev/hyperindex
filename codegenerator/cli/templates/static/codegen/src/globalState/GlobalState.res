@@ -6,7 +6,7 @@ type rollbackState =
   | ReorgDetected({chain: chain, blockNumber: int})
   | FindingReorgDepth
   | FoundReorgDepth({chain: chain, rollbackTargetBlockNumber: int})
-  | RollbackReady({diffInMemoryStore: InMemoryStore.t})
+  | RollbackReady({diffInMemoryStore: InMemoryStore.t, eventsProcessedDiffByChain: dict<int>})
 
 module WriteThrottlers = {
   type t = {
@@ -126,7 +126,11 @@ type action =
     })
   | SuccessExit
   | ErrorExit(ErrorHandling.t)
-  | SetRollbackState({diffInMemoryStore: InMemoryStore.t, rollbackedChainManager: ChainManager.t})
+  | SetRollbackState({
+      diffInMemoryStore: InMemoryStore.t,
+      rollbackedChainManager: ChainManager.t,
+      eventsProcessedDiffByChain: dict<int>,
+    })
 
 type queryChain = CheckAllChains | Chain(chain)
 type task =
@@ -404,16 +408,39 @@ let validatePartitionQueryResponse = (
 
   switch rollbackWithReorgDetectedBlockNumber {
   | None => (nextState, [ProcessPartitionQueryResponse(partitionQueryResponse)])
-  | Some(reorgDetectedBlockNumber) => (
-      {
-        ...nextState->incrementId,
-        rollbackState: ReorgDetected({
-          chain,
-          blockNumber: reorgDetectedBlockNumber,
-        }),
-      },
-      [Rollback],
-    )
+  | Some(reorgDetectedBlockNumber) => {
+      let chainManager = switch state.rollbackState {
+      | RollbackReady({eventsProcessedDiffByChain}) => {
+          ...state.chainManager,
+          chainFetchers: state.chainManager.chainFetchers->ChainMap.update(chain, chainFetcher => {
+            switch eventsProcessedDiffByChain->Utils.Dict.dangerouslyGetByIntNonOption(
+              chain->ChainMap.Chain.toChainId,
+            ) {
+            | Some(eventsProcessedDiff) => {
+                ...chainFetcher,
+                // Since we detected a reorg, until rollback wasn't completed in the db
+                // We return the events processed counter to the pre-rollback value,
+                // to decrease it once more for the new rollback.
+                numEventsProcessed: chainFetcher.numEventsProcessed + eventsProcessedDiff,
+              }
+            | None => chainFetcher
+            }
+          }),
+        }
+      | _ => state.chainManager
+      }
+      (
+        {
+          ...nextState->incrementId,
+          chainManager,
+          rollbackState: ReorgDetected({
+            chain,
+            blockNumber: reorgDetectedBlockNumber,
+          }),
+        },
+        [Rollback],
+      )
+    }
   }
 }
 
@@ -675,11 +702,12 @@ let actionReducer = (state: t, action: action) => {
       },
       [NextQuery(CheckAllChains)],
     )
-  | SetRollbackState({diffInMemoryStore, rollbackedChainManager}) => (
+  | SetRollbackState({diffInMemoryStore, rollbackedChainManager, eventsProcessedDiffByChain}) => (
       {
         ...state,
         rollbackState: RollbackReady({
-          diffInMemoryStore: diffInMemoryStore,
+          diffInMemoryStore,
+          eventsProcessedDiffByChain,
         }),
         chainManager: rollbackedChainManager,
       },
@@ -973,7 +1001,7 @@ let injectedTaskReducer = (
         }
       }
 
-      let eventsProcessedDiffPerChain = Js.Dict.empty()
+      let eventsProcessedDiffByChain = Js.Dict.empty()
       let newProgressBlockNumberPerChain = Js.Dict.empty()
       let rollbackedProcessedEvents = ref(0)
 
@@ -985,7 +1013,7 @@ let injectedTaskReducer = (
           )
         for idx in 0 to rollbackProgressDiff->Js.Array2.length - 1 {
           let diff = rollbackProgressDiff->Js.Array2.unsafe_get(idx)
-          eventsProcessedDiffPerChain->Utils.Dict.setByInt(
+          eventsProcessedDiffByChain->Utils.Dict.setByInt(
             diff["chain_id"],
             switch diff["events_processed_diff"]->Int.fromString {
             | Some(eventsProcessedDiff) => {
@@ -1019,7 +1047,7 @@ let injectedTaskReducer = (
             cf.fetchState->FetchState.rollback(~targetBlockNumber=newProgressBlockNumber)
           let newTotalEventsProcessed =
             cf.numEventsProcessed -
-            eventsProcessedDiffPerChain
+            eventsProcessedDiffByChain
             ->Utils.Dict.dangerouslyGetByIntNonOption(chain->ChainMap.Chain.toChainId)
             ->Option.getUnsafe
 
@@ -1090,6 +1118,7 @@ let injectedTaskReducer = (
         SetRollbackState({
           diffInMemoryStore: diff["inMemStore"],
           rollbackedChainManager: chainManager,
+          eventsProcessedDiffByChain,
         }),
       )
     }

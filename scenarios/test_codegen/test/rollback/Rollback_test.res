@@ -2504,7 +2504,7 @@ Sorted by timestamp and chain id`,
     // Check metrics after processing - should have 2 events
     Assert.deepEqual(
       await indexerMock.metric("envio_progress_events_count"),
-      [{value: "-1", labels: Js.Dict.fromArray([("chainId", "1337")])}],
+      [{value: "0", labels: Js.Dict.fromArray([("chainId", "1337")])}],
       ~message="Shouldn't go to negative with the counter",
     )
 
