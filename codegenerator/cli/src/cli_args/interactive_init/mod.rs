@@ -17,7 +17,6 @@ use crate::{
 use anyhow::{Context, Result};
 use inquire::{Select, Text};
 use shared_prompts::prompt_template;
-use std::str::FromStr;
 use strum;
 use strum::{Display, EnumIter, IntoEnumIterator};
 use validation::{
@@ -146,22 +145,7 @@ pub async fn prompt_missing_init_args(
         }
     };
 
-    let language = match init_args.language {
-        Some(args_language) => args_language,
-        None => {
-            let options = Language::iter()
-                .map(|language| language.to_string())
-                .collect::<Vec<String>>();
-
-            let input_language = Select::new("Which language would you like to use?", options)
-                .with_starting_cursor(1)
-                .prompt()
-                .context("prompting user to select language")?;
-
-            Language::from_str(&input_language)
-                .context("parsing user input for language selection")?
-        }
-    };
+    let language = Language::TypeScript;
 
     let ecosystem = prompt_ecosystem(init_args.init_commands, language.clone())
         .await
