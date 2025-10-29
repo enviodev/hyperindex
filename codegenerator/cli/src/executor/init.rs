@@ -1,7 +1,7 @@
 use crate::{
     cli_args::{
         clap_definitions::{InitArgs, ProjectPaths},
-        init_config::{self, Ecosystem, Language},
+        init_config::{self, Ecosystem},
         interactive_init::prompt_missing_init_args,
     },
     commands,
@@ -19,7 +19,7 @@ use crate::{
     template_dirs::TemplateDirs,
     utils::file_system,
 };
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result};
 
 use std::path::PathBuf;
 
@@ -257,13 +257,6 @@ pub async fn run_init_args(init_args: InitArgs, project_paths: &ProjectPaths) ->
         .context("Failed parsing config")?;
 
     commands::codegen::run_codegen(&config).await?;
-
-    if init_config.language == Language::ReScript {
-        let res_build_exit = commands::rescript::build(&parsed_project_paths.project_root).await?;
-        if !res_build_exit.success() {
-            return Err(anyhow!("Failed to build rescript"))?;
-        }
-    }
 
     // If the project directory is not the current directory, print a message for user to cd into it
     if parsed_project_paths.project_root != PathBuf::from(".") {

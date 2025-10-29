@@ -71,7 +71,7 @@ Initialize an indexer with one of the initialization options
 * `-n`, `--name <NAME>` — The name of your project
 * `-l`, `--language <LANGUAGE>` — The language used to write handlers
 
-  Possible values: `javascript`, `typescript`, `rescript`
+  Possible values: `typescript`
 
 * `--api-token <API_TOKEN>` — The hypersync API key to be initialized in your templates .env file
 
@@ -142,7 +142,7 @@ Initialize Evm indexer from an example template
 
 * `-t`, `--template <TEMPLATE>` — Name of the template to be used in initialization
 
-  Possible values: `greeter`, `erc20`, `topic-filtering`, `wildcard-indexing`, `on-block-handler`
+  Possible values: `greeter`, `erc20`, `topic-filtering`, `wildcard-indexing`, `on-block-handler`, `effects-api`, `factory-indexer`, `multichain-indexer`
 
 
 

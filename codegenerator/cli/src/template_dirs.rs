@@ -33,14 +33,10 @@ impl Template for evm::Template {
         match self {
             // Example mappings — adjust based on what your actual templates support
             evm::Template::Greeter => vec![
-                Language::JavaScript,
                 Language::TypeScript,
-                Language::ReScript,
             ],
             evm::Template::Erc20 => vec![
-                Language::JavaScript,
                 Language::TypeScript,
-                Language::ReScript,
             ],
             evm::Template::TopicFiltering => vec![Language::TypeScript],
             evm::Template::WildcardIndexing => vec![Language::TypeScript],
@@ -63,9 +59,7 @@ impl Template for fuel::Template {
     fn supported_languages(&self) -> Vec<Language> {
         match self {
             fuel::Template::Greeter => vec![
-                Language::JavaScript,
                 Language::TypeScript,
-                Language::ReScript,
             ],
         }
     }
