@@ -418,16 +418,22 @@ let getHighestBlockBelowThreshold = (cf: t): int => {
 }
 
 /**
-Finds the last known block where hashes are valid
-If not found, returns the higehest block below threshold
+Finds the last known valid block number below the reorg block
+If not found, returns the highest block below threshold
 */
 let getLastKnownValidBlock = async (
   chainFetcher: t,
+  ~reorgBlockNumber: int,
   //Parameter used for dependency injecting in tests
   ~getBlockHashes=(chainFetcher.sourceManager->SourceManager.getActiveSource).getBlockHashes,
 ) => {
+  // Improtant: It's important to not include the reorg detection block number
+  // because there might be different instances of the source
+  // with mismatching hashes between them.
+  // So we MUST always rollback the block number where we detected a reorg.  
   let scannedBlockNumbers =
-    chainFetcher.reorgDetection->ReorgDetection.getThresholdBlockNumbers(
+    chainFetcher.reorgDetection->ReorgDetection.getThresholdBlockNumbersBelowBlock(
+      ~blockNumber=reorgBlockNumber,
       ~currentBlockHeight=chainFetcher.currentBlockHeight,
     )
 
@@ -443,43 +449,17 @@ let getLastKnownValidBlock = async (
     )
   }
 
-  let fallback = async () => {
-    switch await getBlockHashes([chainFetcher->getHighestBlockBelowThreshold]) {
-    | [block] => block
-    | _ =>
-      Js.Exn.raiseError(
-        "Unexpected case. Failed to fetch block data for the last block outside of reorg threshold during reorg rollback",
-      )
-    }
-  }
-
   switch scannedBlockNumbers {
-  | [] => await fallback()
+  | [] => chainFetcher->getHighestBlockBelowThreshold
   | _ => {
-      let blockRef = ref(None)
-      let retryCount = ref(0)
+      let blockNumbersAndHashes = await getBlockHashes(scannedBlockNumbers)
 
-      while blockRef.contents->Option.isNone {
-        let blockNumbersAndHashes = await getBlockHashes(scannedBlockNumbers)
-
-        switch chainFetcher.reorgDetection->ReorgDetection.getLatestValidScannedBlock(
-          ~blockNumbersAndHashes,
-          ~currentBlockHeight=chainFetcher.currentBlockHeight,
-          ~skipReorgDuplicationCheck=retryCount.contents > 2,
-        ) {
-        | Ok(block) => blockRef := Some(block)
-        | Error(NotFound) => blockRef := Some(await fallback())
-        | Error(AlreadyReorgedHashes) =>
-          let delayMilliseconds = 100
-          chainFetcher.logger->Logging.childTrace(
-            `Failed to find a valid block to rollback to, since received already reorged hashes from another HyperSync instance. HyperSync has multiple instances and it's possible that they drift independently slightly from the head. Indexing should continue correctly after retrying the query in ${delayMilliseconds->Int.toString}ms.`,
-          )
-          await Utils.delay(delayMilliseconds)
-          retryCount := retryCount.contents + 1
-        }
+      switch chainFetcher.reorgDetection->ReorgDetection.getLatestValidScannedBlock(
+        ~blockNumbersAndHashes,
+      ) {
+      | Some(blockNumber) => blockNumber
+      | None => chainFetcher->getHighestBlockBelowThreshold
       }
-
-      blockRef.contents->Option.getUnsafe
     }
   }
 }
