@@ -497,6 +497,9 @@ module Source = {
         ~currentBlockHeight=?,
         ~prevRangeLastBlock=?,
       ) => {
+        if getItemsOrThrowResolveFns->Utils.Array.isEmpty {
+          Js.Exn.raiseError("getItemsOrThrowResolveFns is empty")
+        }
         getItemsOrThrowResolveFns->Array.forEach(resolve =>
           resolve({
             "items": items,
@@ -506,13 +509,18 @@ module Source = {
             "currentBlockHeight": currentBlockHeight,
           })
         )
+        getItemsOrThrowResolveFns->Utils.Array.clearInPlace
       },
       rejectGetItemsOrThrow: exn => {
         getItemsOrThrowRejectFns->Array.forEach(reject => reject(exn->Obj.magic))
       },
       getBlockHashesCalls,
       resolveGetBlockHashes: blockHashes => {
+        if getBlockHashesResolveFns->Utils.Array.isEmpty {
+          Js.Exn.raiseError("getBlockHashesResolveFns is empty")
+        }
         getBlockHashesResolveFns->Array.forEach(resolve => resolve(Ok(blockHashes)))
+        getBlockHashesResolveFns->Utils.Array.clearInPlace
       },
       source: {
         {

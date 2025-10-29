@@ -304,6 +304,7 @@ let getNextSyncSource = (
   sourceManager,
   // This is needed to include the Fallback source to rotation
   ~initialSource,
+  ~currentSource,
   // After multiple failures start returning fallback sources as well
   // But don't try it when main sync sources fail because of invalid configuration
   // note: The logic might be changed in the future
@@ -315,7 +316,7 @@ let getNextSyncSource = (
   let hasActive = ref(false)
 
   sourceManager.sources->Utils.Set.forEach(source => {
-    if source === sourceManager.activeSource {
+    if source === currentSource {
       hasActive := true
     } else if (
       switch source.sourceFor {
@@ -332,7 +333,7 @@ let getNextSyncSource = (
   | None =>
     switch before->Array.get(0) {
     | Some(s) => s
-    | None => sourceManager.activeSource
+    | None => currentSource
     }
   }
 }
@@ -349,9 +350,11 @@ let executeQuery = async (sourceManager: t, ~query: FetchState.query, ~currentBl
   let responseRef = ref(None)
   let retryRef = ref(0)
   let initialSource = sourceManager.activeSource
+  let sourceRef = ref(initialSource)
+  let shouldUpdateActiveSource = ref(false)
 
   while responseRef.contents->Option.isNone {
-    let source = sourceManager.activeSource
+    let source = sourceRef.contents
     let toBlock = toBlockRef.contents
     let retry = retryRef.contents
 
@@ -391,9 +394,8 @@ let executeQuery = async (sourceManager: t, ~query: FetchState.query, ~currentBl
     | Source.GetItemsError(error) =>
       switch error {
       | UnsupportedSelection(_)
-      | FailedGettingFieldSelection(_)
-      | FailedParsingItems(_) => {
-          let nextSource = sourceManager->getNextSyncSource(~initialSource)
+      | FailedGettingFieldSelection(_) => {
+          let nextSource = sourceManager->getNextSyncSource(~initialSource, ~currentSource=source)
 
           // These errors are impossible to recover, so we delete the source
           // from sourceManager so it's not attempted anymore
@@ -404,8 +406,7 @@ let executeQuery = async (sourceManager: t, ~query: FetchState.query, ~currentBl
           if notAlreadyDeleted {
             switch error {
             | UnsupportedSelection({message}) => logger->Logging.childError(message)
-            | FailedGettingFieldSelection({exn, message, blockNumber, logIndex})
-            | FailedParsingItems({exn, message, blockNumber, logIndex}) =>
+            | FailedGettingFieldSelection({exn, message, blockNumber, logIndex}) =>
               logger->Logging.childError({
                 "msg": message,
                 "err": exn->Utils.prettifyExn,
@@ -426,7 +427,8 @@ let executeQuery = async (sourceManager: t, ~query: FetchState.query, ~currentBl
               "msg": "Switching to another data-source",
               "source": nextSource.name,
             })
-            sourceManager.activeSource = nextSource
+            sourceRef := nextSource
+            shouldUpdateActiveSource := true
             retryRef := 0
           }
         }
@@ -438,6 +440,33 @@ let executeQuery = async (sourceManager: t, ~query: FetchState.query, ~currentBl
         })
         toBlockRef := Some(toBlock)
         retryRef := 0
+      | FailedGettingItems({exn, attemptedToBlock, retry: ImpossibleForTheQuery({message})}) =>
+        let nextSource =
+          sourceManager->getNextSyncSource(
+            ~initialSource,
+            ~currentSource=source,
+            ~attemptFallbacks=true,
+          )
+
+        let hasAnotherSource = nextSource !== initialSource
+
+        logger->Logging.childWarn({
+          "msg": message ++ (hasAnotherSource ? " - Attempting to another source" : ""),
+          "toBlock": attemptedToBlock,
+          "err": exn->Utils.prettifyExn,
+        })
+
+        if !hasAnotherSource {
+          %raw(`null`)->ErrorHandling.mkLogAndRaise(
+            ~logger,
+            ~msg="The indexer doesn't have data-sources which can continue fetching. Please, check the error logs or reach out to the Envio team.",
+          )
+        } else {
+          sourceRef := nextSource
+          shouldUpdateActiveSource := false
+          retryRef := 0
+        }
+
       | FailedGettingItems({exn, attemptedToBlock, retry: WithBackoff({message, backoffMillis})}) =>
         // Starting from the 11th failure (retry=10)
         // include fallback sources for switch
@@ -454,7 +483,11 @@ let executeQuery = async (sourceManager: t, ~query: FetchState.query, ~currentBl
         | _ =>
           // Then try to switch every second failure
           if retry->mod(2) === 0 {
-            sourceManager->getNextSyncSource(~initialSource, ~attemptFallbacks)
+            sourceManager->getNextSyncSource(
+              ~initialSource,
+              ~attemptFallbacks,
+              ~currentSource=source,
+            )
           } else {
             source
           }
@@ -476,15 +509,21 @@ let executeQuery = async (sourceManager: t, ~query: FetchState.query, ~currentBl
             "msg": "Switching to another data-source",
             "source": nextSource.name,
           })
-          sourceManager.activeSource = nextSource
+          sourceRef := nextSource
+          shouldUpdateActiveSource := true
         } else {
           await Utils.delay(Pervasives.min(backoffMillis, 60_000))
         }
         retryRef := retryRef.contents + 1
       }
+
     // TODO: Handle more error cases and hang/retry instead of throwing
     | exn => exn->ErrorHandling.mkLogAndRaise(~logger, ~msg="Failed to fetch block Range")
     }
+  }
+
+  if shouldUpdateActiveSource.contents {
+    sourceManager.activeSource = sourceRef.contents
   }
 
   responseRef.contents->Option.getUnsafe

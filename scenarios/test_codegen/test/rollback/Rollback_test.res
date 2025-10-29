@@ -98,8 +98,9 @@ module Stubs = {
     GlobalState.injectedTaskReducer(
       ~executeQuery=executePartitionQueryWithMockChainData(mockChainData),
       ~waitForNewBlock,
-      ~getLastKnownValidBlock=chainFetcher =>
+      ~getLastKnownValidBlock=(chainFetcher, ~reorgBlockNumber) =>
         chainFetcher->ChainFetcher.getLastKnownValidBlock(
+          ~reorgBlockNumber,
           ~getBlockHashes=getBlockHashes(mockChainData),
         ),
     )(
@@ -598,13 +599,12 @@ describe("E2E rollback tests", () => {
 
     Assert.deepEqual(
       sourceMock.getBlockHashesCalls,
-      [[100, 102]],
+      [[100]],
       ~message="Should have called getBlockHashes to find rollback depth",
     )
     sourceMock.resolveGetBlockHashes([
       // The block 100 is untouched so we can rollback to it
       {blockNumber: 100, blockHash: "0x100", blockTimestamp: 100},
-      {blockNumber: 102, blockHash: "0x102-reorged", blockTimestamp: 102},
     ])
 
     await indexerMock.getRollbackReadyPromise()
@@ -878,13 +878,12 @@ describe("E2E rollback tests", () => {
 
     Assert.deepEqual(
       sourceMock.getBlockHashesCalls,
-      [[100, 102]],
+      [[100]],
       ~message="Should have called getBlockHashes to find rollback depth",
     )
     sourceMock.resolveGetBlockHashes([
       // The block 100 is untouched so we can rollback to it
       {blockNumber: 100, blockHash: "0x100", blockTimestamp: 100},
-      {blockNumber: 102, blockHash: "0x102-reorged", blockTimestamp: 102},
     ])
 
     sourceMock.getItemsOrThrowCalls->Utils.Array.clearInPlace
@@ -1120,7 +1119,7 @@ describe("E2E rollback tests", () => {
 
     Assert.deepEqual(
       sourceMock.getBlockHashesCalls,
-      [[100, 101, 102, 103, 104]],
+      [[100, 101, 102]],
       ~message="Should have called getBlockHashes to find rollback depth",
     )
     sourceMock.resolveGetBlockHashes([
@@ -1128,8 +1127,6 @@ describe("E2E rollback tests", () => {
       {blockNumber: 100, blockHash: "0x100", blockTimestamp: 100},
       {blockNumber: 101, blockHash: "0x101", blockTimestamp: 101},
       {blockNumber: 102, blockHash: "0x102", blockTimestamp: 102},
-      {blockNumber: 103, blockHash: "0x103-reorged", blockTimestamp: 103},
-      {blockNumber: 104, blockHash: "0x104-reorged", blockTimestamp: 104},
     ])
 
     sourceMock.getItemsOrThrowCalls->Utils.Array.clearInPlace
@@ -1451,15 +1448,13 @@ This might be wrong after we start exposing a block hash for progress block.`,
 
     Assert.deepEqual(
       sourceMock1337.getBlockHashesCalls,
-      [[100, 101, 102, 105]],
+      [[100, 101]],
       ~message="Should have called getBlockHashes to find rollback depth",
     )
     sourceMock1337.resolveGetBlockHashes([
       // The block 101 is untouched so we can rollback to it
       {blockNumber: 100, blockHash: "0x100", blockTimestamp: 100},
       {blockNumber: 101, blockHash: "0x101", blockTimestamp: 101},
-      {blockNumber: 102, blockHash: "0x102-reorged", blockTimestamp: 102},
-      {blockNumber: 105, blockHash: "0x105-reorged", blockTimestamp: 105},
     ])
 
     await indexerMock.getRollbackReadyPromise()
@@ -1854,15 +1849,13 @@ This might be wrong after we start exposing a block hash for progress block.`,
 
       Assert.deepEqual(
         sourceMock1337.getBlockHashesCalls,
-        [[100, 101, 102, 105]],
+        [[100, 101]],
         ~message="Should have called getBlockHashes to find rollback depth",
       )
       sourceMock1337.resolveGetBlockHashes([
         // The block 101 is untouched so we can rollback to it
         {blockNumber: 100, blockHash: "0x100", blockTimestamp: 100},
         {blockNumber: 101, blockHash: "0x101", blockTimestamp: 101},
-        {blockNumber: 102, blockHash: "0x102-reorged", blockTimestamp: 102},
-        {blockNumber: 105, blockHash: "0x105-reorged", blockTimestamp: 105},
       ])
 
       await indexerMock.getRollbackReadyPromise()
@@ -2238,7 +2231,7 @@ Sorted by timestamp and chain id`,
 
       Assert.deepEqual(
         sourceMock1337.getBlockHashesCalls,
-        [[100, 101, 102, 103]],
+        [[100, 101, 102]],
         ~message="Should have called getBlockHashes to find rollback depth",
       )
       sourceMock1337.resolveGetBlockHashes([
@@ -2246,7 +2239,6 @@ Sorted by timestamp and chain id`,
         {blockNumber: 100, blockHash: "0x100", blockTimestamp: 100},
         {blockNumber: 101, blockHash: "0x101", blockTimestamp: 101},
         {blockNumber: 102, blockHash: "0x102-reorged", blockTimestamp: 102},
-        {blockNumber: 103, blockHash: "0x103-reorged", blockTimestamp: 103},
       ])
 
       await indexerMock.getRollbackReadyPromise()
@@ -2413,4 +2405,117 @@ Sorted by timestamp and chain id`,
       )
     },
   )
+
+  Async.it("Double reorg should NOT cause negative event counter (regression test)", async () => {
+    let sourceMock = M.Source.make(
+      [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
+      ~chain=#1337,
+    )
+    let indexerMock = await M.Indexer.make(
+      ~chains=[
+        {
+          chain: #1337,
+          sources: [sourceMock.source],
+        },
+      ],
+    )
+    await Utils.delay(0)
+
+    await M.Helper.initialEnterReorgThreshold(~indexerMock, ~sourceMock)
+
+    sourceMock.resolveGetItemsOrThrow([])
+    await indexerMock.getBatchWritePromise()
+
+    // Process initial events - 1 event across block 102
+    sourceMock.resolveGetItemsOrThrow([
+      {
+        blockNumber: 102,
+        logIndex: 0,
+        handler: async ({context}) => {
+          context.simpleEntity.set({
+            id: "1",
+            value: "value-1",
+          })
+        },
+      },
+    ])
+    await indexerMock.getBatchWritePromise()
+
+    // Check initial metrics - should have 3 events processed
+    Assert.deepEqual(
+      await indexerMock.metric("envio_progress_events_count"),
+      [{value: "1", labels: Js.Dict.fromArray([("chainId", "1337")])}],
+      ~message="Should have 1 event processed initially",
+    )
+
+    // Trigger first reorg
+    sourceMock.resolveGetItemsOrThrow(
+      [],
+      ~prevRangeLastBlock={
+        blockNumber: 102,
+        blockHash: "0x102-reorged",
+      },
+    )
+    await Utils.delay(0)
+    await Utils.delay(0)
+
+    Assert.deepEqual(
+      sourceMock.getBlockHashesCalls,
+      [[100, 101]],
+      ~message="Should have called getBlockHashes for first reorg",
+    )
+
+    // Rollback to block 100 - blocks 101-103 are reorged
+    sourceMock.resolveGetBlockHashes([
+      {blockNumber: 100, blockHash: "0x100", blockTimestamp: 100},
+      {blockNumber: 101, blockHash: "0x101", blockTimestamp: 101},
+    ])
+
+    await indexerMock.getRollbackReadyPromise()
+
+    // Check metrics after first rollback - should have rolled back all 3 events
+    Assert.deepEqual(
+      await indexerMock.metric("envio_progress_events_count"),
+      [{value: "0", labels: Js.Dict.fromArray([("chainId", "1337")])}],
+      ~message="Should have 0 events after first rollback",
+    )
+
+    // Detects second reorg
+    sourceMock.resolveGetItemsOrThrow(
+      [],
+      ~prevRangeLastBlock={
+        blockNumber: 101,
+        blockHash: "0x101-reorged",
+      },
+    )
+
+    await Utils.delay(0)
+    await Utils.delay(0)
+
+    Assert.deepEqual(
+      sourceMock.getBlockHashesCalls,
+      [[100, 101], [100]],
+      ~message="Should have called getBlockHashes for second reorg",
+    )
+    // Rollback to block 100 - blocks 101-103 are reorged
+    sourceMock.resolveGetBlockHashes([{blockNumber: 100, blockHash: "0x100", blockTimestamp: 100}])
+    await indexerMock.getRollbackReadyPromise()
+
+    // Check metrics after processing - should have 2 events
+    Assert.deepEqual(
+      await indexerMock.metric("envio_progress_events_count"),
+      [{value: "0", labels: Js.Dict.fromArray([("chainId", "1337")])}],
+      ~message="Shouldn't go to negative with the counter",
+    )
+
+    // Process batch after rollback
+    sourceMock.resolveGetItemsOrThrow([])
+    await indexerMock.getBatchWritePromise()
+
+    Assert.deepEqual(
+      await indexerMock.query(module(Entities.SimpleEntity)),
+      [],
+      ~message="Should have all entities rolled back",
+    )
+  })
 })

@@ -258,14 +258,10 @@ let make = ({chain, endpointUrl}: options): t => {
                 backoffMillis,
               })
             | UnexpectedMissingParams({missingParams}) =>
-              WithBackoff({
-                message: `Received page response with invalid data. Attempt a retry. Missing params: ${missingParams->Js.Array2.joinWith(
-                    ",",
+              ImpossibleForTheQuery({
+                message: `Source returned invalid data with missing required fields: ${missingParams->Js.Array2.joinWith(
+                    ", ",
                   )}`,
-                backoffMillis: switch retry {
-                | 0 => 1000
-                | _ => 4000 * retry
-                },
               })
             },
           }),
