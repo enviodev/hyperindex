@@ -417,6 +417,11 @@ describe("E2E tests", () => {
     await Utils.delay(0)
 
     Assert.deepEqual(
+      await indexerMock.metric("envio_effect_calls_count"),
+      [],
+      ~message="Should reset the calls metric on restart",
+    )
+    Assert.deepEqual(
       await indexerMock.metric("envio_effect_cache_count"),
       [
         {
@@ -486,9 +491,7 @@ describe("E2E tests", () => {
       (
         [
           {
-            // It resumes in-memory during test, but it'll reset on process restart
-            // In the real-world it'll be 1
-            value: "2",
+            value: "1",
             labels: Js.Dict.fromArray([("effect", "testEffectWithCache")]),
           },
         ],
@@ -558,4 +561,79 @@ describe("E2E tests", () => {
       ~message="Shouldn't increment on invalidation",
     )
   })
+
+  Async.it(
+    "Should attempt fallback source when primary source fails with missing params",
+    async () => {
+      let sourceMockPrimary = Mock.Source.make(
+        [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
+        ~chain=#1337,
+      )
+      let sourceMockFallback = Mock.Source.make(
+        [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
+        ~chain=#1337,
+      )
+      let indexerMock = await Mock.Indexer.make(
+        ~chains=[
+          {
+            chain: #1337,
+            sources: [sourceMockPrimary.source, sourceMockFallback.source],
+          },
+        ],
+      )
+      await Utils.delay(0)
+
+      // Resolve initial height request from primary source
+      Assert.deepEqual(
+        sourceMockPrimary.getHeightOrThrowCalls->Array.length,
+        1,
+        ~message="should have called getHeightOrThrow on primary source",
+      )
+      sourceMockPrimary.resolveGetHeightOrThrow(300)
+      await Utils.delay(0)
+      await Utils.delay(0)
+
+      // Primary source should now attempt to fetch items
+      Assert.deepEqual(
+        sourceMockPrimary.getItemsOrThrowCalls->Array.length,
+        1,
+        ~message="should have called getItemsOrThrow on primary source",
+      )
+
+      // Simulate missing params error from HyperSync (converted to InvalidData by the source)
+      sourceMockPrimary.rejectGetItemsOrThrow(
+        Source.GetItemsError(
+          FailedGettingItems({
+            exn: %raw(`null`),
+            attemptedToBlock: 100,
+            retry: ImpossibleForTheQuery({
+              message: "Source returned invalid data with missing required fields: log.address",
+            }),
+          }),
+        ),
+      )
+      await Utils.delay(0)
+      await Utils.delay(0)
+
+      // The fallback source should now be called immediately
+      Assert.deepEqual(
+        sourceMockFallback.getItemsOrThrowCalls->Array.length,
+        1,
+        ~message="fallback source should be called after primary fails with invalid data",
+      )
+
+      // Resolve the fallback source successfully
+      sourceMockFallback.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
+      await indexerMock.getBatchWritePromise()
+
+      Assert.deepEqual(
+        (
+          sourceMockPrimary.getItemsOrThrowCalls->Array.length,
+          sourceMockFallback.getItemsOrThrowCalls->Array.length,
+        ),
+        (2, 1),
+        ~message="Shouldn't switch to fallback source for the next query",
+      )
+    },
+  )
 })
