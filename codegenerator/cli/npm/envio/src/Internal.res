@@ -299,7 +299,9 @@ type effect = {
   cache: option<effectCacheMeta>,
   output: S.t<effectOutput>,
   input: S.t<effectInput>,
-  mutable callsCount: int,
+  // The number of functions that are currently running.
+  mutable activeCallsCount: int,
+  mutable prevCallStartTimerRef: Hrtime.timeRef,
 }
 let cacheTablePrefix = "envio_effect_"
 let cacheOutputSchema = S.json(~validate=false)->(Utils.magic: S.t<Js.Json.t> => S.t<effectOutput>)

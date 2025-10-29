@@ -580,20 +580,46 @@ module ProgressBatchCount = {
   }
 }
 
+module ProgressLatency = {
+  let gauge = SafeGauge.makeOrThrow(
+    ~name="envio_progress_latency",
+    ~help="The latency in milliseconds between the latest processed event creation and the time it was written to storage.",
+    ~labelSchema=chainIdLabelsSchema,
+  )
+
+  let set = (~latencyMs, ~chainId) => {
+    gauge->SafeGauge.handleInt(~labels=chainId, ~value=latencyMs)
+  }
+}
+
 let effectLabelsSchema = S.object(s => {
   s.field("effect", S.string)
 })
 
-module EffectCallsCount = {
-  let gauge = SafeGauge.makeOrThrow(
-    ~name="envio_effect_calls_count",
-    ~help="The number of calls to the effect. Including both handler execution and cache hits.",
+module EffectCalls = {
+  let timeCounter = SafeCounter.makeOrThrow(
+    ~name="envio_effect_calls_time",
+    ~help="Processing time taken to call the Effect function. (milliseconds)",
     ~labelSchema=effectLabelsSchema,
   )
 
-  let set = (~callsCount, ~effectName) => {
-    gauge->SafeGauge.handleInt(~labels=effectName, ~value=callsCount)
-  }
+  let sumTimeCounter = SafeCounter.makeOrThrow(
+    ~name="envio_effect_calls_sum_time",
+    ~help="Cumulative time spent calling the Effect function during the indexing process. (milliseconds)",
+    ~labelSchema=effectLabelsSchema,
+  )
+
+  let totalCallsCount = SafeCounter.makeOrThrow(
+    ~name="envio_effect_calls_count",
+    ~help="Cumulative number of resolved Effect function calls during the indexing process.",
+    ~labelSchema=effectLabelsSchema,
+  )
+
+  let activeCallsCount = SafeGauge.makeOrThrow(
+    ~name="envio_effect_active_calls_count",
+    ~help="The number of Effect function calls that are currently running.",
+    ~labelSchema=effectLabelsSchema,
+  )
 }
 
 module EffectCacheCount = {
@@ -629,8 +655,8 @@ module StorageLoad = {
     ~labelSchema=operationLabelsSchema,
   )
 
-  let totalTimeCounter = SafeCounter.makeOrThrow(
-    ~name="envio_storage_load_total_time",
+  let sumTimeCounter = SafeCounter.makeOrThrow(
+    ~name="envio_storage_load_sum_time",
     ~help="Cumulative time spent loading data from storage during the indexing process. (milliseconds)",
     ~labelSchema=operationLabelsSchema,
   )
@@ -686,7 +712,7 @@ module StorageLoad = {
       )
       operations->Utils.Dict.deleteInPlace(operation)
     }
-    totalTimeCounter->SafeCounter.handleInt(
+    sumTimeCounter->SafeCounter.handleInt(
       ~labels={operation},
       ~value=timerRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis,
     )

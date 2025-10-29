@@ -71,7 +71,8 @@ let loadEffect = (
   ~shouldGroup,
   ~item,
 ) => {
-  let key = `${effect.name}.effect`
+  let effectName = effect.name
+  let key = `${effectName}.effect`
   let inMemTable = inMemoryStore->InMemoryStore.getEffectInMemTable(~effect)
 
   let load = async args => {
@@ -81,7 +82,7 @@ let loadEffect = (
     switch effect.cache {
     | Some({table, outputSchema})
       if switch persistence.storageStatus {
-      | Ready({cache}) => cache->Utils.Dict.has(effect.name)
+      | Ready({cache}) => cache->Utils.Dict.has(effectName)
       | _ => false
       } => {
         let timerRef = Prometheus.StorageLoad.startOperation(~operation=key)
@@ -105,13 +106,13 @@ let loadEffect = (
           } catch {
           | S.Raised(error) =>
             inMemTable.invalidationsCount = inMemTable.invalidationsCount + 1
-            Prometheus.EffectCacheInvalidationsCount.increment(~effectName=effect.name)
+            Prometheus.EffectCacheInvalidationsCount.increment(~effectName)
             item
             ->Logging.getItemLogger
             ->Logging.childTrace({
               "msg": "Invalidated effect cache",
               "input": dbEntity.id,
-              "effect": effect.name,
+              "effect": effectName,
               "err": error->S.Error.message,
             })
           }
@@ -128,24 +129,62 @@ let loadEffect = (
 
     let remainingCallsCount = idsToLoad->Array.length - idsFromCache->Utils.Set.size
     if remainingCallsCount > 0 {
-      effect.callsCount = effect.callsCount + remainingCallsCount
-      Prometheus.EffectCallsCount.set(~callsCount=effect.callsCount, ~effectName=effect.name)
-
       let shouldStoreCache = effect.cache->Option.isSome
-      let ids = []
+
+      let hadActiveCalls = effect.activeCallsCount > 0
+      effect.activeCallsCount = effect.activeCallsCount + remainingCallsCount
+      Prometheus.EffectCalls.activeCallsCount->Prometheus.SafeGauge.handleInt(
+        ~labels=effectName,
+        ~value=effect.activeCallsCount,
+      )
+
+      if hadActiveCalls {
+        Prometheus.EffectCalls.timeCounter->Prometheus.SafeCounter.incrementMany(
+          ~labels=effectName,
+          ~value=effect.prevCallStartTimerRef
+          ->Hrtime.timeSince
+          ->Hrtime.toMillis
+          ->Hrtime.intFromMillis,
+        )
+      }
+      let timerRef = Hrtime.makeTimer()
+      effect.prevCallStartTimerRef = timerRef
 
       args
       ->Belt.Array.keepMapU((arg: Internal.effectArgs) => {
         if idsFromCache->Utils.Set.has(arg.cacheKey) {
           None
         } else {
-          ids->Array.push(arg.cacheKey)->ignore
           Some(
-            effect.handler(arg)->Promise.thenResolve(output => {
+            effect.handler(arg)
+            ->Promise.thenResolve(output => {
               inMemTable.dict->Js.Dict.set(arg.cacheKey, output)
               if shouldStoreCache {
                 inMemTable.idsToStore->Array.push(arg.cacheKey)->ignore
               }
+            })
+            ->Promise.finally(() => {
+              effect.activeCallsCount = effect.activeCallsCount - 1
+              Prometheus.EffectCalls.activeCallsCount->Prometheus.SafeGauge.handleInt(
+                ~labels=effectName,
+                ~value=effect.activeCallsCount,
+              )
+              Prometheus.EffectCalls.timeCounter->Prometheus.SafeCounter.incrementMany(
+                ~labels=effectName,
+                ~value=effect.prevCallStartTimerRef
+                ->Hrtime.timeSince
+                ->Hrtime.toMillis
+                ->Hrtime.intFromMillis,
+              )
+              effect.prevCallStartTimerRef = Hrtime.makeTimer()
+
+              Prometheus.EffectCalls.totalCallsCount->Prometheus.SafeCounter.increment(
+                ~labels=effectName,
+              )
+              Prometheus.EffectCalls.sumTimeCounter->Prometheus.SafeCounter.incrementMany(
+                ~labels=effectName,
+                ~value=timerRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis,
+              )
             }),
           )
         }
