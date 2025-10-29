@@ -151,12 +151,13 @@ module Stubs = {
     GlobalState.injectedTaskReducer(
       ~executeQuery=makeExecutePartitionQuery(stubData),
       ~waitForNewBlock=makeWaitForNewBlock(stubData),
-      ~getLastKnownValidBlock=chainFetcher =>
+      ~getLastKnownValidBlock=(chainFetcher, ~reorgBlockNumber) =>
         chainFetcher->ChainFetcher.getLastKnownValidBlock(
           ~getBlockHashes=makeGetBlockHashes(
             ~stubData,
             ~source=chainFetcher.sourceManager->SourceManager.getActiveSource,
           ),
+          ~reorgBlockNumber,
         ),
     )(
       ~dispatchAction=makeDispatchAction(stubData, _),
