@@ -12,7 +12,7 @@ describe("Validate reorg detection functions", () => {
     }
   }
 
-  let mock = (arr, ~maxReorgDepth=200, ~shouldRollbackOnReorg=true, ~detectedReorgBlock=?) => {
+  let mock = (arr, ~maxReorgDepth=200, ~shouldRollbackOnReorg=true) => {
     ReorgDetection.make(
       ~chainReorgCheckpoints=arr->Array.map(((
         blockNumber,
@@ -24,7 +24,6 @@ describe("Validate reorg detection functions", () => {
         blockHash,
       }),
       ~maxReorgDepth,
-      ~detectedReorgBlock?,
       ~shouldRollbackOnReorg,
     )
   }
@@ -265,7 +264,7 @@ describe("Validate reorg detection functions", () => {
         ~currentBlockHeight=10,
       ),
       (
-        mock([(10, "0x10-invalid")], ~detectedReorgBlock=scannedBlock),
+        mock([(10, "0x10-invalid")]),
         ReorgDetected({
           scannedBlock,
           receivedBlock: reorgGuard.rangeLastBlock,
@@ -310,14 +309,7 @@ describe("Validate reorg detection functions", () => {
     Assert.deepEqual(
       reorgDetectionResult,
       (
-        mock(
-          [(10, "0x10-invalid")],
-          ~maxReorgDepth=2,
-          ~detectedReorgBlock={
-            blockNumber: 10,
-            blockHash: "0x10-invalid",
-          },
-        ),
+        mock([(10, "0x10-invalid")], ~maxReorgDepth=2),
         ReorgDetected({
           scannedBlock: {
             blockNumber: 10,

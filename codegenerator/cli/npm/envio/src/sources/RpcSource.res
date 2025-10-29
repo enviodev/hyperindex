@@ -503,24 +503,26 @@ let make = (
 
   let mutSuggestedBlockIntervals = Js.Dict.empty()
 
-  let transactionLoader = LazyLoader.make(
-    ~loaderFn=transactionHash => provider->Ethers.JsonRpcProvider.getTransaction(~transactionHash),
-    ~onError=(am, ~exn) => {
-      Logging.error({
-        "err": exn->Utils.prettifyExn,
-        "msg": `EE1100: Top level promise timeout reached. Please review other errors or warnings in the code. This function will retry in ${(am._retryDelayMillis / 1000)
-            ->Belt.Int.toString} seconds. It is highly likely that your indexer isn't syncing on one or more chains currently. Also take a look at the "suggestedFix" in the metadata of this command`,
-        "source": name,
-        "chainId": chain->ChainMap.Chain.toChainId,
-        "metadata": {
-          {
-            "asyncTaskName": "transactionLoader: fetching transaction data - `getTransaction` rpc call",
-            "suggestedFix": "This likely means the RPC url you are using is not responding correctly. Please try another RPC endipoint.",
-          }
-        },
-      })
-    },
-  )
+  let makeTransactionLoader = () =>
+    LazyLoader.make(
+      ~loaderFn=transactionHash =>
+        provider->Ethers.JsonRpcProvider.getTransaction(~transactionHash),
+      ~onError=(am, ~exn) => {
+        Logging.error({
+          "err": exn->Utils.prettifyExn,
+          "msg": `EE1100: Top level promise timeout reached. Please review other errors or warnings in the code. This function will retry in ${(am._retryDelayMillis / 1000)
+              ->Belt.Int.toString} seconds. It is highly likely that your indexer isn't syncing on one or more chains currently. Also take a look at the "suggestedFix" in the metadata of this command`,
+          "source": name,
+          "chainId": chain->ChainMap.Chain.toChainId,
+          "metadata": {
+            {
+              "asyncTaskName": "transactionLoader: fetching transaction data - `getTransaction` rpc call",
+              "suggestedFix": "This likely means the RPC url you are using is not responding correctly. Please try another RPC endipoint.",
+            }
+          },
+        })
+      },
+    )
 
   let makeBlockLoader = () =>
     LazyLoader.make(
@@ -551,13 +553,14 @@ let make = (
     )
 
   let blockLoader = ref(makeBlockLoader())
+  let transactionLoader = ref(makeTransactionLoader())
 
   let getEventBlockOrThrow = makeThrowingGetEventBlock(~getBlock=blockNumber =>
     blockLoader.contents->LazyLoader.get(blockNumber)
   )
   let getEventTransactionOrThrow = makeThrowingGetEventTransaction(
     ~getTransactionFields=Ethers.JsonRpcProvider.makeGetTransactionFields(
-      ~getTransactionByHash=LazyLoader.get(transactionLoader, _),
+      ~getTransactionByHash=LazyLoader.get(transactionLoader.contents, _),
       ~lowercaseAddresses,
     ),
   )
@@ -880,6 +883,7 @@ let make = (
     // This is important, since we call this
     // function when a reorg is detected
     blockLoader := makeBlockLoader()
+    transactionLoader := makeTransactionLoader()
 
     blockNumbers
     ->Array.map(blockNum => blockLoader.contents->LazyLoader.get(blockNum))

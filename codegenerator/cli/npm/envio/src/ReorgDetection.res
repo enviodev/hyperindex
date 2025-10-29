@@ -51,18 +51,12 @@ type t = {
   // A hash map of recent blockdata by block number to make comparison checks
   // for reorgs.
   dataByBlockNumber: dict<blockData>,
-  // The latest block which detected a reorg
-  // and should never be valid.
-  // We keep track of this to avoid responses
-  // with the stale data from other data-source instances.
-  detectedReorgBlock: option<blockData>,
 }
 
 let make = (
   ~chainReorgCheckpoints: array<Internal.reorgCheckpoint>,
   ~maxReorgDepth,
   ~shouldRollbackOnReorg,
-  ~detectedReorgBlock=?,
 ) => {
   let dataByBlockNumber = Js.Dict.empty()
 
@@ -80,7 +74,6 @@ let make = (
     shouldRollbackOnReorg,
     maxReorgDepth,
     dataByBlockNumber,
-    detectedReorgBlock,
   }
 }
 
@@ -149,10 +142,7 @@ let registerReorgGuard = (
   switch maybeReorgDetected {
   | Some(reorgDetected) => (
       shouldRollbackOnReorg
-        ? {
-            ...self,
-            detectedReorgBlock: Some(reorgDetected.scannedBlock),
-          }
+        ? self
         : make(~chainReorgCheckpoints=[], ~maxReorgDepth, ~shouldRollbackOnReorg),
       ReorgDetected(reorgDetected),
     )
@@ -174,7 +164,6 @@ let registerReorgGuard = (
         {
           maxReorgDepth,
           dataByBlockNumber: dataByBlockNumberCopyInThreshold,
-          detectedReorgBlock: None,
           shouldRollbackOnReorg,
         },
         NoReorg,
@@ -202,20 +191,18 @@ let getLatestValidScannedBlock = (
   let getPrevScannedBlockNumber = idx =>
     ascBlockNumberKeys
     ->Belt.Array.get(idx - 1)
-    ->Option.flatMap(key => {
-      // We should already validate that the block number is verified at the point
-      switch verifiedDataByBlockNumber->Utils.Dict.dangerouslyGetNonOption(key) {
-      | Some(v) => Some(v.blockNumber)
-      | None => None
-      }
+    ->Option.map(key => {
+      (verifiedDataByBlockNumber->Js.Dict.unsafeGet(key)).blockNumber
     })
 
   let rec loop = idx => {
     switch ascBlockNumberKeys->Belt.Array.get(idx) {
     | Some(blockNumberKey) =>
-      let scannedBlock = reorgDetection.dataByBlockNumber->Js.Dict.unsafeGet(blockNumberKey)
-      switch verifiedDataByBlockNumber->Js.Dict.unsafeGet(blockNumberKey) {
-      | verifiedBlockData if verifiedBlockData.blockHash === scannedBlock.blockHash => loop(idx + 1)
+      switch reorgDetection.dataByBlockNumber->Utils.Dict.dangerouslyGetNonOption(blockNumberKey) {
+      | Some(scannedBlock)
+        if (verifiedDataByBlockNumber->Js.Dict.unsafeGet(blockNumberKey)).blockHash ===
+          scannedBlock.blockHash =>
+        loop(idx + 1)
       | _ => getPrevScannedBlockNumber(idx)
       }
     | None => getPrevScannedBlockNumber(idx)
@@ -257,7 +244,6 @@ let rollbackToValidBlockNumber = (
   {
     maxReorgDepth,
     dataByBlockNumber: newDataByBlockNumber,
-    detectedReorgBlock: None,
     shouldRollbackOnReorg,
   }
 }
