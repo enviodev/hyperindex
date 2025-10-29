@@ -417,6 +417,11 @@ describe("E2E tests", () => {
     await Utils.delay(0)
 
     Assert.deepEqual(
+      await indexerMock.metric("envio_effect_calls_count"),
+      [],
+      ~message="Should reset the calls metric on restart",
+    )
+    Assert.deepEqual(
       await indexerMock.metric("envio_effect_cache_count"),
       [
         {
@@ -486,9 +491,7 @@ describe("E2E tests", () => {
       (
         [
           {
-            // It resumes in-memory during test, but it'll reset on process restart
-            // In the real-world it'll be 1
-            value: "2",
+            value: "1",
             labels: Js.Dict.fromArray([("effect", "testEffectWithCache")]),
           },
         ],
