@@ -23,11 +23,11 @@ type blockRangeFetchResponse = {
 type getItemsRetry =
   | WithSuggestedToBlock({toBlock: int})
   | WithBackoff({message: string, backoffMillis: int})
+  | ImpossibleForTheQuery({message: string})
 
 type getItemsError =
   | UnsupportedSelection({message: string})
   | FailedGettingFieldSelection({exn: exn, blockNumber: int, logIndex: int, message: string})
-  | FailedParsingItems({exn: exn, blockNumber: int, logIndex: int, message: string})
   | FailedGettingItems({exn: exn, attemptedToBlock: int, retry: getItemsRetry})
 
 exception GetItemsError(getItemsError)

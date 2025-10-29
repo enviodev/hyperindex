@@ -678,11 +678,12 @@ let make = (
       | exn =>
         raise(
           Source.GetItemsError(
-            FailedParsingItems({
-              message: "Failed to parse events using hypersync client decoder. Please double-check your ABI.",
+            FailedGettingItems({
               exn,
-              blockNumber: fromBlock,
-              logIndex: 0,
+              attemptedToBlock: toBlock,
+              retry: ImpossibleForTheQuery({
+                message: "Failed to parse events using hypersync client decoder. Please double-check your ABI.",
+              }),
             }),
           ),
         )
@@ -812,11 +813,12 @@ let make = (
                 | exn =>
                   raise(
                     Source.GetItemsError(
-                      FailedParsingItems({
-                        message: "Failed to parse event with viem, please double-check your ABI.",
+                      FailedGettingItems({
                         exn,
-                        blockNumber,
-                        logIndex,
+                        attemptedToBlock: toBlock,
+                        retry: ImpossibleForTheQuery({
+                          message: `Failed to parse event with viem, please double-check your ABI. Block number: ${blockNumber->Int.toString}, log index: ${logIndex->Int.toString}`,
+                        }),
                       }),
                     ),
                   )
