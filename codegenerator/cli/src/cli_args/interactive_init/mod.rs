@@ -8,7 +8,6 @@ use super::{
     clap_definitions::{self, InitArgs, ProjectPaths},
     init_config::{InitConfig, Language},
 };
-use crate::template_dirs::Template;
 use crate::{
     clap_definitions::InitFlow,
     constants::project_paths::DEFAULT_PROJECT_ROOT_PATH,
@@ -32,7 +31,6 @@ enum EcosystemOption {
 
 async fn prompt_ecosystem(
     cli_init_flow: Option<InitFlow>,
-    selected_language: Language,
 ) -> Result<Ecosystem> {
     let init_flow = match cli_init_flow {
         Some(v) => v,
@@ -75,11 +73,7 @@ async fn prompt_ecosystem(
             let chosen_template = match args.template {
                 Some(template) => template,
                 None => {
-                    // ✅ Filter templates based on selected language
-                    let options: Vec<_> = evm::Template::iter()
-                        .filter(|t| t.supported_languages().contains(&selected_language))
-                        .collect();
-
+                    let options = evm::Template::iter().collect();
                     prompt_template(options)?
                 }
             };
@@ -147,7 +141,7 @@ pub async fn prompt_missing_init_args(
 
     let language = Language::TypeScript;
 
-    let ecosystem = prompt_ecosystem(init_args.init_commands, language.clone())
+    let ecosystem = prompt_ecosystem(init_args.init_commands)
         .await
         .context("Failed getting template")?;
 

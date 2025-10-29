@@ -11,7 +11,6 @@ use std::{
 pub trait Template: Display {
     fn to_dir_name(&self) -> String;
 
-    fn supported_languages(&self) -> Vec<Language>;
 }
 
 impl Template for evm::Template {
@@ -28,24 +27,6 @@ impl Template for evm::Template {
         }
         .to_string()
     }
-
-    fn supported_languages(&self) -> Vec<Language> {
-        match self {
-            // Example mappings — adjust based on what your actual templates support
-            evm::Template::Greeter => vec![
-                Language::TypeScript,
-            ],
-            evm::Template::Erc20 => vec![
-                Language::TypeScript,
-            ],
-            evm::Template::TopicFiltering => vec![Language::TypeScript],
-            evm::Template::WildcardIndexing => vec![Language::TypeScript],
-            evm::Template::OnBlockHandler => vec![Language::TypeScript],
-            evm::Template::EffectsAPI => vec![Language::TypeScript],
-            evm::Template::FactoryIndexer => vec![Language::TypeScript],
-            evm::Template::MultichainIndexer => vec![Language::TypeScript],
-        }
-    }
 }
 
 impl Template for fuel::Template {
@@ -54,14 +35,6 @@ impl Template for fuel::Template {
             fuel::Template::Greeter => "greeteronfuel",
         }
         .to_string()
-    }
-
-    fn supported_languages(&self) -> Vec<Language> {
-        match self {
-            fuel::Template::Greeter => vec![
-                Language::TypeScript,
-            ],
-        }
     }
 }
 
@@ -465,17 +438,18 @@ mod test {
     #[test]
     fn all_init_templates_exist() {
         let template_dirs = TemplateDirs::new();
+        let lang = &Language::TypeScript;
 
         // EVM templates
         for template in evm::Template::iter() {
-            for lang in template.supported_languages() {
                 template_dirs
                     .get_template_lang_dir(&template, &lang)
                     .expect(&format!(
                         "Expected static language dir for EVM template {:?} and language {:?}",
-                        template, lang
+                        template, &lang
                     ));
-            }
+            
+
             template_dirs
                 .get_template_shared_dir(&template)
                 .expect(&format!(
@@ -486,14 +460,13 @@ mod test {
 
         // FUEL templates
         for template in fuel::Template::iter() {
-            for lang in template.supported_languages() {
                 template_dirs
                     .get_template_lang_dir(&template, &lang)
                     .expect(&format!(
                         "Expected static language dir for FUEL template {:?} and language {:?}",
-                        template, lang
+                        template, &lang
                     ));
-            }
+            
             template_dirs
                 .get_template_shared_dir(&template)
                 .expect(&format!(
@@ -513,29 +486,27 @@ mod test {
         let template_dirs = TemplateDirs::new();
         let temp_dir = TempDir::new("init_extract_lang_test")
             .expect("Failed creating tempdir for init template");
+        let lang = &Language::TypeScript;
 
         // EVM templates
         for template in evm::Template::iter() {
-            for lang in template.supported_languages() {
                 template_dirs
                     .get_and_extract_template(&template, &lang, &PathBuf::from(temp_dir.path()))
                     .expect(&format!(
                         "Failed extracting EVM template {:?} for language {:?}",
-                        template, lang
+                        template, &lang
                     ));
-            }
+            
         }
 
         // FUEL templates
         for template in fuel::Template::iter() {
-            for lang in template.supported_languages() {
                 template_dirs
                     .get_and_extract_template(&template, &lang, &PathBuf::from(temp_dir.path()))
                     .expect(&format!(
                         "Failed extracting FUEL template {:?} for language {:?}",
-                        template, lang
+                        template, &lang
                     ));
-            }
         }
 
         // Blank template extraction
