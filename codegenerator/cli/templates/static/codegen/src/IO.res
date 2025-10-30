@@ -17,10 +17,10 @@ let executeBatch = async (
   ~batch: Batch.t,
   ~inMemoryStore: InMemoryStore.t,
   ~isInReorgThreshold,
-  ~config,
+  ~indexer: Indexer.t,
   ~escapeTables=?,
 ) => {
-  let shouldSaveHistory = config->Config.shouldSaveHistory(~isInReorgThreshold)
+  let shouldSaveHistory = indexer.config->Config.shouldSaveHistory(~isInReorgThreshold)
 
   let specificError = ref(None)
 
@@ -31,7 +31,7 @@ let executeBatch = async (
         ~items,
         ~table=InternalTable.RawEvents.table,
         ~itemSchema=InternalTable.RawEvents.schema,
-        ~pgSchema=Config.storagePgSchema,
+        ~pgSchema=Generated.storagePgSchema,
       )
     },
     ~items=inMemoryStore.rawEvents->InMemoryTable.values,
@@ -150,7 +150,7 @@ let executeBatch = async (
               ~items=entitiesToSet,
               ~table=entityConfig.table,
               ~itemSchema=entityConfig.schema,
-              ~pgSchema=Config.storagePgSchema,
+              ~pgSchema=Generated.storagePgSchema,
             ),
           )
         }
@@ -298,7 +298,7 @@ let executeBatch = async (
               )
             })
             Some(
-              config.persistence->Persistence.setEffectCacheOrThrow(
+              indexer.persistence->Persistence.setEffectCacheOrThrow(
                 ~effect,
                 ~items,
                 ~invalidationsCount,

@@ -31,7 +31,7 @@ describe("Load and save an entity with a BigDecimal from DB", () => {
       ],
       ~table=Entities.EntityWithBigDecimal.table,
       ~itemSchema=Entities.EntityWithBigDecimal.schema,
-      ~pgSchema=Config.storagePgSchema,
+      ~pgSchema=Generated.storagePgSchema,
     )
 
     let inMemoryStore = InMemoryStore.make()
@@ -45,7 +45,7 @@ describe("Load and save an entity with a BigDecimal from DB", () => {
     let handlerContext = UserContext.getHandlerContext({
       item,
       loadManager,
-      persistence: Config.codegenPersistence,
+      persistence: Generated.codegenPersistence,
       inMemoryStore,
       shouldSaveHistory: false,
       isPreload: false,

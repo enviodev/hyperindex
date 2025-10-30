@@ -4,8 +4,8 @@ type registrations = {
 }
 
 type activeRegistration = {
-  ecosystem: InternalConfig.ecosystem,
-  multichain: InternalConfig.multichain,
+  ecosystem: Config.ecosystem,
+  multichain: Config.multichain,
   preloadHandlers: bool,
   registrations: registrations,
   mutable finished: bool,

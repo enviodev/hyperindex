@@ -114,7 +114,7 @@ module Make = () => {
   }
 
   type t = {
-    chainConfig: InternalConfig.chain,
+    chainConfig: Config.chain,
     blocks: array<block>,
     maxBlocksReturned: int,
     blockTimestampInterval: int,

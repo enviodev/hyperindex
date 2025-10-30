@@ -42,7 +42,7 @@ let deleteDictKey: (dict<'a>, string) => unit = %raw(`
     }
   `)
 
-let config = RegisterHandlers.getConfigWithoutRegistrations()
+let config = Generated.configWithoutRegistrations
 EventRegister.startRegistration(
   ~ecosystem=config.ecosystem,
   ~multichain=config.multichain,
@@ -322,17 +322,19 @@ and makeProcessEvents = (mockDb: t, ~chainId=?) => async (
   } else {
     let itemsWithContractRegister = []
 
-     let registrations = EventRegister.finishRegistration()
+    let registrations = EventRegister.finishRegistration()
 
-    let config = if (
+    let generatedIndexer = Generated.getIndexer()
+    let indexer: Indexer.t = if (
       registrations.hasEvents || !(registrations.onBlockByChainId->Utils.Dict.isEmpty)
     ) {
       {
-        ...RegisterHandlers.makeGeneratedConfig(),
-        registrations: Some(registrations),
+        ...generatedIndexer,
+        config: Generated.makeGeneratedConfig(),
+        registrations,
       }
     } else {
-      RegisterHandlers.registerAllHandlers()
+      generatedIndexer
     }
 
     let processingChainId = ref(chainId)
@@ -390,6 +392,7 @@ and makeProcessEvents = (mockDb: t, ~chainId=?) => async (
     let chainFetcher = ChainFetcher.makeFromConfig(
       config.chainMap->ChainMap.get(processingChain),
       ~config,
+      ~registrations=Some(indexer.registrations),
       ~targetBufferSize=5000,
     )
 
@@ -402,7 +405,7 @@ and makeProcessEvents = (mockDb: t, ~chainId=?) => async (
     let inMemoryStore = InMemoryStore.make()
     let loadManager = LoadManager.make()
     let persistence = {
-      ...config.persistence,
+      ...indexer.persistence,
       storage: makeMockStorage(mockDb),
       storageStatus: Ready({
         cleanRun: false,
@@ -412,8 +415,8 @@ and makeProcessEvents = (mockDb: t, ~chainId=?) => async (
         checkpointId: 0,
       }),
     }
-    let config = {
-      ...config,
+    let indexer = {
+      ...indexer,
       persistence,
     }
 
@@ -505,11 +508,16 @@ and makeProcessEvents = (mockDb: t, ~chainId=?) => async (
     chains->Js.Dict.set(processingChainId->Int.toString, {Internal.isReady: true})
 
     try {
-      await batch->EventProcessing.preloadBatchOrThrow(~loadManager, ~persistence, ~inMemoryStore, ~chains)
+      await batch->EventProcessing.preloadBatchOrThrow(
+        ~loadManager,
+        ~persistence,
+        ~inMemoryStore,
+        ~chains,
+      )
       await batch->EventProcessing.runBatchHandlersOrThrow(
         ~inMemoryStore,
         ~loadManager,
-        ~config,
+        ~indexer,
         ~shouldSaveHistory=false,
         ~shouldBenchmark=false,
         ~chains,
@@ -602,7 +610,7 @@ writeFromMemoryStore = (mockDb: t, ~inMemoryStore: InMemoryStore.t) => {
     },
   )
 
-  Config.codegenPersistence.allEntities->Array.forEach(entityConfig => {
+  Generated.codegenPersistence.allEntities->Array.forEach(entityConfig => {
     mockDb->executeRowsEntity(~inMemoryStore, ~entityConfig)
   })
 }

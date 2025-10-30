@@ -3,7 +3,7 @@ open Belt
 type t = {
   committedCheckpointId: int,
   chainFetchers: ChainMap.t<ChainFetcher.t>,
-  multichain: InternalConfig.multichain,
+  multichain: Config.multichain,
   isInReorgThreshold: bool,
 }
 
@@ -16,13 +16,15 @@ let calculateTargetBufferSize = (~activeChainsCount, ~config: Config.t) => {
   }
 }
 
-let makeFromConfig = (~config: Config.t): t => {
+let makeFromConfig = (~config: Config.t, ~registrations): t => {
   let targetBufferSize = calculateTargetBufferSize(
     ~activeChainsCount=config.chainMap->ChainMap.size,
     ~config,
   )
   let chainFetchers =
-    config.chainMap->ChainMap.map(ChainFetcher.makeFromConfig(_, ~config, ~targetBufferSize))
+    config.chainMap->ChainMap.map(
+      ChainFetcher.makeFromConfig(_, ~config, ~registrations, ~targetBufferSize),
+    )
   {
     committedCheckpointId: 0,
     chainFetchers,
@@ -31,7 +33,11 @@ let makeFromConfig = (~config: Config.t): t => {
   }
 }
 
-let makeFromDbState = async (~initialState: Persistence.initialState, ~config: Config.t): t => {
+let makeFromDbState = async (
+  ~initialState: Persistence.initialState,
+  ~config: Config.t,
+  ~registrations,
+): t => {
   let isInReorgThreshold = if initialState.cleanRun {
     false
   } else {
@@ -73,6 +79,7 @@ let makeFromDbState = async (~initialState: Persistence.initialState, ~config: C
           ~isInReorgThreshold,
           ~targetBufferSize,
           ~config,
+          ~registrations,
         ),
       )
     })

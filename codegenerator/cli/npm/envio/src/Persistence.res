@@ -43,7 +43,7 @@ type storage = {
   // Should initialize the storage so we can start interacting with it
   // Eg create connection, schema, tables, etc.
   initialize: (
-    ~chainConfigs: array<InternalConfig.chain>=?,
+    ~chainConfigs: array<Config.chain>=?,
     ~entities: array<Internal.entityConfig>=?,
     ~enums: array<Internal.enumConfig<Internal.enum>>=?,
   ) => promise<initialState>,

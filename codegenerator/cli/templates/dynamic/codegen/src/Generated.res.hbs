@@ -1,5 +1,7 @@
 @val external require: string => unit = "require"
 
+let relativePathToRootFromGenerated = "{{relative_path_to_root_from_generated}}"
+
 let registerContractHandlers = (
   ~contractName,
   ~handlerPathRelativeToRoot,
@@ -29,7 +31,7 @@ let makeGeneratedConfig = () => {
       let contracts = [
         {{#each chain_config.codegen_contracts as | contract |}}
         {
-          InternalConfig.name: "{{contract.name.capitalized}}",
+          Config.name: "{{contract.name.capitalized}}",
           abi: Types.{{contract.name.capitalized}}.abi,
           addresses: [
             {{#each contract.addresses as | address |}}
@@ -55,7 +57,7 @@ let makeGeneratedConfig = () => {
       ]
       let chain = ChainMap.Chain.makeUnsafe(~chainId={{chain_config.network_config.id}})
       {
-        InternalConfig.maxReorgDepth: {{chain_config.network_config.confirmed_block_threshold}},
+        Config.maxReorgDepth: {{chain_config.network_config.confirmed_block_threshold}},
         startBlock: {{chain_config.network_config.start_block}},
         {{#if chain_config.network_config.end_block}}
         endBlock: {{chain_config.network_config.end_block}},
@@ -71,7 +73,17 @@ let makeGeneratedConfig = () => {
   Config.make(
     ~shouldRollbackOnReorg={{should_rollback_on_reorg}},
     ~shouldSaveFullHistory={{should_save_full_history}},
-    ~isUnorderedMultichainMode={{is_unordered_multichain_mode}},
+    ~multichain=if (
+      Env.Configurable.isUnorderedMultichainMode->Belt.Option.getWithDefault(
+        Env.Configurable.unstable__temp_unordered_head_mode->Belt.Option.getWithDefault(
+          {{is_unordered_multichain_mode}},
+        ),
+      )
+    ) {
+      Unordered
+    } else {
+      Ordered
+    },
     ~chains,
     ~enableRawEvents={{enable_raw_events}},
     ~batchSize=?Env.batchSize,
@@ -84,12 +96,9 @@ let makeGeneratedConfig = () => {
   )
 }
 
-%%private(
-  let config: ref<option<Config.t>> = ref(None)
-)
+let configWithoutRegistrations = makeGeneratedConfig()
 
 let registerAllHandlers = () => {
-  let configWithoutRegistrations = makeGeneratedConfig()
   EventRegister.startRegistration(
     ~ecosystem=configWithoutRegistrations.ecosystem,
     ~multichain=configWithoutRegistrations.multichain,
@@ -104,22 +113,94 @@ let registerAllHandlers = () => {
   )
   {{/each}}
 
-  let generatedConfig = {
-    // Need to recreate initial config one more time,
-    // since configWithoutRegistrations called register for event
-    // before they were ready
-    ...makeGeneratedConfig(),
-    registrations: Some(EventRegister.finishRegistration()),
-  }
-  config := Some(generatedConfig)
-  generatedConfig
+  EventRegister.finishRegistration()
 }
 
-let getConfig = () => {
-  switch config.contents {
-  | Some(config) => config
-  | None => registerAllHandlers()
-  }
+let storagePgSchema = Env.Db.publicSchema
+let makeStorage = (~sql=Db.sql, ~pgSchema=storagePgSchema, ~isHasuraEnabled=Env.Hasura.enabled) => {
+  PgStorage.make(
+    ~sql,
+    ~pgSchema,
+    ~pgHost=Env.Db.host,
+    ~pgUser=Env.Db.user,
+    ~pgPort=Env.Db.port,
+    ~pgDatabase=Env.Db.database,
+    ~pgPassword=Env.Db.password,
+    ~onInitialize=?{
+      if isHasuraEnabled {
+        Some(
+          () => {
+            Hasura.trackDatabase(
+              ~endpoint=Env.Hasura.graphqlEndpoint,
+              ~auth={
+                role: Env.Hasura.role,
+                secret: Env.Hasura.secret,
+              },
+              ~pgSchema=storagePgSchema,
+              ~userEntities=Entities.userEntities,
+              ~responseLimit=Env.Hasura.responseLimit,
+              ~schema=Db.schema,
+              ~aggregateEntities=Env.Hasura.aggregateEntities,
+            )->Promise.catch(err => {
+              Logging.errorWithExn(
+                err->Utils.prettifyExn,
+                `EE803: Error tracking tables`,
+              )->Promise.resolve
+            })
+          },
+        )
+      } else {
+        None
+      }
+    },
+    ~onNewTables=?{
+      if isHasuraEnabled {
+        Some(
+          (~tableNames) => {
+            Hasura.trackTables(
+              ~endpoint=Env.Hasura.graphqlEndpoint,
+              ~auth={
+                role: Env.Hasura.role,
+                secret: Env.Hasura.secret,
+              },
+              ~pgSchema=storagePgSchema,
+              ~tableNames,
+            )->Promise.catch(err => {
+              Logging.errorWithExn(
+                err->Utils.prettifyExn,
+                `EE804: Error tracking new tables`,
+              )->Promise.resolve
+            })
+          },
+        )
+      } else {
+        None
+      }
+    },
+    ~isHasuraEnabled,
+  )
 }
 
-let getConfigWithoutRegistrations = makeGeneratedConfig
+let codegenPersistence = Persistence.make(
+  ~userEntities=Entities.userEntities,
+  ~allEnums=Enums.allEnums,
+  ~storage=makeStorage(),
+)
+
+%%private(let indexer: ref<option<Indexer.t>> = ref(None))
+let getIndexer = () => {
+  switch indexer.contents {
+  | Some(indexer) => indexer
+  | None =>
+    let i = {
+      Indexer.registrations: registerAllHandlers(),
+      // Need to recreate initial config one more time,
+      // since configWithoutRegistrations called register for event
+      // before they were ready
+      config: makeGeneratedConfig(),
+      persistence: codegenPersistence,
+    }
+    indexer := Some(i)
+    i
+  }
+}

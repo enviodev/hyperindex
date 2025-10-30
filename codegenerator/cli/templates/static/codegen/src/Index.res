@@ -54,7 +54,7 @@ let stateSchema = S.union([
   })),
 ])
 
-let startServer = (~getState, ~config: Config.t, ~consoleBearerToken: option<string>) => {
+let startServer = (~getState, ~indexer: Indexer.t, ~consoleBearerToken: option<string>) => {
   open Express
 
   let app = makeCjs()
@@ -110,7 +110,7 @@ let startServer = (~getState, ~config: Config.t, ~consoleBearerToken: option<str
 
   app->post("/console/syncCache", (req, res) => {
     if req->checkIsAuthorizedConsole {
-      (config.persistence->Persistence.getInitializedStorageOrThrow).dumpEffectCache()
+      (indexer.persistence->Persistence.getInitializedStorageOrThrow).dumpEffectCache()
       ->Promise.thenResolve(_ => res->json(Boolean(true)))
       ->Promise.done
     } else {
@@ -212,7 +212,7 @@ let makeAppState = (globalState: GlobalState.t): EnvioInkApp.appState => {
       )
     })
   {
-    config: globalState.config,
+    config: globalState.indexer.config,
     indexerStartTime: globalState.indexerStartTime,
     chains,
   }
@@ -237,7 +237,7 @@ let main = async () => {
     let mainArgs: mainArgs = process->argv->Yargs.hideBin->Yargs.yargs->Yargs.argv
     let shouldUseTui = !(mainArgs.tuiOff->Belt.Option.getWithDefault(Env.tuiOffEnvVar))
 
-    let config = RegisterHandlers.registerAllHandlers()
+    let indexer = Generated.getIndexer()
 
     let gsManagerRef = ref(None)
 
@@ -248,10 +248,10 @@ let main = async () => {
     | Some(version) => Prometheus.Info.set(~version)
     | None => ()
     }
-    Prometheus.RollbackEnabled.set(~enabled=config.historyConfig.rollbackFlag === RollbackOnReorg)
+    Prometheus.RollbackEnabled.set(~enabled=indexer.config.shouldRollbackOnReorg)
 
     startServer(
-      ~config,
+      ~indexer,
       ~consoleBearerToken={
         // The most simple check to verify whether we are running in development mode
         // and prevent exposing the console to public, when creating a real deployment.
@@ -305,8 +305,8 @@ let main = async () => {
               }),
               indexerStartTime: appState.indexerStartTime,
               isPreRegisteringDynamicContracts: false,
-              rollbackOnReorg: config.historyConfig.rollbackFlag === RollbackOnReorg,
-              isUnorderedMultichainMode: switch config.multichain {
+              rollbackOnReorg: indexer.config.shouldRollbackOnReorg,
+              isUnorderedMultichainMode: switch indexer.config.multichain {
               | Unordered => true
               | Ordered => false
               },
@@ -315,13 +315,16 @@ let main = async () => {
         },
     )
 
-    await config.persistence->Persistence.init(~chainConfigs=config.chainMap->ChainMap.values)
+    await indexer.persistence->Persistence.init(
+      ~chainConfigs=indexer.config.chainMap->ChainMap.values,
+    )
 
     let chainManager = await ChainManager.makeFromDbState(
-      ~initialState=config.persistence->Persistence.getInitializedState,
-      ~config,
+      ~initialState=indexer.persistence->Persistence.getInitializedState,
+      ~config=indexer.config,
+      ~registrations=Some(indexer.registrations),
     )
-    let globalState = GlobalState.make(~config, ~chainManager, ~shouldUseTui)
+    let globalState = GlobalState.make(~indexer, ~chainManager, ~shouldUseTui)
     let stateUpdatedHook = if shouldUseTui {
       let rerender = EnvioInkApp.startApp(makeAppState(globalState))
       Some(globalState => globalState->makeAppState->rerender)

@@ -26,10 +26,9 @@ let runUpMigrations = async (
   // Reset is used for db-setup
   ~reset=false,
 ) => {
-  let config = RegisterHandlers.getConfigWithoutRegistrations()
-
+  let config = Generated.configWithoutRegistrations
   let exitCode = try {
-    await config.persistence->Persistence.init(
+    await Generated.codegenPersistence->Persistence.init(
       ~reset,
       ~chainConfigs=config.chainMap->ChainMap.values,
     )

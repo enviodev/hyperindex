@@ -4,8 +4,8 @@ type registrations = {
 }
 
 let startRegistration: (
-  ~ecosystem: InternalConfig.ecosystem,
-  ~multichain: InternalConfig.multichain,
+  ~ecosystem: Config.ecosystem,
+  ~multichain: Config.multichain,
   ~preloadHandlers: bool,
 ) => unit
 let finishRegistration: unit => registrations

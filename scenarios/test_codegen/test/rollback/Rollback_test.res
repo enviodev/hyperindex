@@ -1,404 +1,14 @@
 open Belt
 open RescriptMocha
 
-module M = Mock
-
-let config = RegisterHandlers.registerAllHandlers()
-// Keep only chain1337
-let config = Config.make(
-  ~shouldRollbackOnReorg=true,
-  ~shouldSaveFullHistory=false,
-  ~isUnorderedMultichainMode=false,
-  ~chains=config.chainMap
-  ->ChainMap.entries
-  ->Array.keepMap(((chain, config)) => chain == MockConfig.chain1337 ? Some(config) : None),
-  ~enableRawEvents=false,
-  ~registrations=?config.registrations,
-)
-
-module Mock = {
-  let mockChainDataEmpty = MockChainData.make(
-    ~chainConfig=config.chainMap->ChainMap.get(MockConfig.chain1337),
-    ~maxBlocksReturned=3,
-    ~blockTimestampInterval=25,
-  )
-
-  open ChainDataHelpers.Gravatar
-  let blocksBase = [
-    [],
-    [
-      NewGravatar.mkEventConstr(MockEvents.newGravatar1),
-      NewGravatar.mkEventConstr(MockEvents.newGravatar2),
-    ],
-  ]
-  let blocksInitial =
-    blocksBase->Array.concat([
-      [UpdatedGravatar.mkEventConstr(MockEvents.setGravatar1)],
-      [UpdatedGravatar.mkEventConstr(MockEvents.setGravatar2)],
-      [
-        NewGravatar.mkEventConstr(MockEvents.newGravatar3),
-        UpdatedGravatar.mkEventConstr(MockEvents.setGravatar3),
-      ],
-    ])
-
-  let blocksReorg =
-    blocksBase->Array.concat([
-      [UpdatedGravatar.mkEventConstr(MockEvents.setGravatar2)],
-      [UpdatedGravatar.mkEventConstr(MockEvents.setGravatar1)],
-      [
-        NewGravatar.mkEventConstr(MockEvents.newGravatar3),
-        UpdatedGravatar.mkEventConstr(MockEvents.setGravatar3),
-      ],
-    ])
-
-  let applyBlocks = mcd =>
-    mcd->Array.reduce(mockChainDataEmpty, (accum, next) => {
-      accum->MockChainData.addBlock(~makeLogConstructors=next)
-    })
-
-  let mockChainData = blocksInitial->applyBlocks
-  let mockChainDataReorg = blocksReorg->applyBlocks
-}
-
-module Stubs = {
-  //Stub wait for new block
-  let waitForNewBlock = async (_sourceManager, ~currentBlockHeight) => {
-    currentBlockHeight->ignore
-    Mock.mockChainData->MockChainData.getHeight
-  }
-
-  //Stub executePartitionQuery with mock data
-  let executePartitionQueryWithMockChainData = mockChainData => async (
-    _,
-    ~query,
-    ~currentBlockHeight as _,
-  ) => {
-    mockChainData->MockChainData.executeQuery(query)
-  }
-
-  //Stub for getting block hashes instead of the worker
-  let getBlockHashes = mockChainData => async (~blockNumbers, ~logger as _) =>
-    mockChainData->MockChainData.getBlockHashes(~blockNumbers)->Ok
-
-  //Hold next tasks temporarily here so they do not get actioned off automatically
-  let tasks = ref([])
-
-  //Stub dispatch action to set state and not dispatch task but store in
-  //the tasks ref
-  let dispatchAction = (gsManager, action) => {
-    let (nextState, nextTasks) = GlobalState.actionReducer(
-      gsManager->GlobalStateManager.getState,
-      action,
-    )
-    gsManager->GlobalStateManager.setState(nextState)
-    tasks := tasks.contents->Array.concat(nextTasks)
-  }
-
-  let dispatchTask = (gsManager, mockChainData, task) => {
-    GlobalState.injectedTaskReducer(
-      ~executeQuery=executePartitionQueryWithMockChainData(mockChainData),
-      ~waitForNewBlock,
-      ~getLastKnownValidBlock=(chainFetcher, ~reorgBlockNumber) =>
-        chainFetcher->ChainFetcher.getLastKnownValidBlock(
-          ~reorgBlockNumber,
-          ~getBlockHashes=getBlockHashes(mockChainData),
-        ),
-    )(
-      ~dispatchAction=action => dispatchAction(gsManager, action),
-      gsManager->GlobalStateManager.getState,
-      task,
-    )
-  }
-
-  let dispatchAllTasks = async (gsManager, mockChainData) => {
-    let tasksToRun = tasks.contents
-    tasks := []
-    for idx in 0 to tasksToRun->Array.length - 1 {
-      let taskToRun = tasksToRun->Array.getUnsafe(idx)
-      await dispatchTask(gsManager, mockChainData, taskToRun)
-    }
-  }
-}
-
-module Sql = {
-  /**
-NOTE: Do not use this for queries in the indexer
-
-Exposing
-*/
-  @send
-  external unsafe: (Postgres.sql, string) => promise<'a> = "unsafe"
-
-  let query = unsafe(Db.sql, _)
-
-  let getAllRowsInTable = tableName => query(`SELECT * FROM public."${tableName}";`)
-}
-
-let setupDb = async () => {
-  open Migrations
-  Logging.info("Provisioning Database")
-  let _exitCodeUp = await runUpMigrations(~shouldExit=false, ~reset=true)
-}
-
-describe("Single Chain Simple Rollback", () => {
-  Async.it("Detects reorgs and actions a rollback", async () => {
-    await setupDb()
-
-    let chainManager = ChainManager.makeFromConfig(~config)
-    let initState = GlobalState.make(~config, ~chainManager)
-    let gsManager = initState->GlobalStateManager.make
-    let chain = MockConfig.chain1337
-    let getState = () => gsManager->GlobalStateManager.getState
-    let getChainFetcher = () => getState().chainManager.chainFetchers->ChainMap.get(chain)
-
-    open Stubs
-    let dispatchTaskInitalChain = dispatchTask(gsManager, Mock.mockChainData, ...)
-    let dispatchTaskReorgChain = dispatchTask(gsManager, Mock.mockChainDataReorg, ...)
-    let dispatchAllTasksInitalChain = () => dispatchAllTasks(gsManager, Mock.mockChainData)
-    tasks := []
-
-    await dispatchTaskInitalChain(NextQuery(Chain(chain)))
-
-    Assert.deepEqual(tasks.contents, [NextQuery(CheckAllChains)])
-
-    await dispatchAllTasksInitalChain()
-
-    Assert.deepEqual(tasks.contents->Utils.getVariantsTags, ["ProcessPartitionQueryResponse"])
-    // Assert.deepEqual(
-    //   tasks.contents->Js.Array2.unsafe_get(0),
-    //   UpdateEndOfBlockRangeScannedData({
-    //     blockNumberThreshold: -198,
-    //     chain: MockConfig.chain1337,
-    //     nextEndOfBlockRangeScannedData: {
-    //       blockHash: block2.blockHash,
-    //       blockNumber: block2.blockNumber,
-    //       chainId: 1337,
-    //     },
-    //   }),
-    // )
-
-    await dispatchAllTasksInitalChain()
-
-    Assert.deepEqual(
-      tasks.contents,
-      [UpdateChainMetaDataAndCheckForExit(NoExit), ProcessEventBatch, NextQuery(Chain(chain))],
-      ~message="should successfully have actioned batch",
-    )
-
-    Assert.equal(
-      getChainFetcher().fetchState->FetchState.bufferSize,
-      3,
-      ~message="should have 3 events on the queue from the first 3 blocks of inital chainData",
-    )
-
-    tasks := []
-    await dispatchTaskReorgChain(NextQuery(Chain(chain)))
-    Assert.deepEqual(tasks.contents, [Rollback], ~message="should detect rollback with reorg chain")
-  })
-
-  Async.it("Successfully rolls back single chain indexer to expected values", async () => {
-    await setupDb()
-
-    let chainManager = {
-      ...ChainManager.makeFromConfig(~config),
-      multichain: Unordered,
-    }
-    let initState = GlobalState.make(~config, ~chainManager)
-    let gsManager = initState->GlobalStateManager.make
-    let chain = MockConfig.chain1337
-    let getState = () => gsManager->GlobalStateManager.getState
-    let getChainFetcher = () => getState().chainManager.chainFetchers->ChainMap.get(chain)
-
-    open Stubs
-    let dispatchTaskInitalChain = dispatchTask(gsManager, Mock.mockChainData, ...)
-    let dispatchAllTasksInitalChain = () => dispatchAllTasks(gsManager, Mock.mockChainData, ...)
-    let dispatchAllTasksReorgChain = () => dispatchAllTasks(gsManager, Mock.mockChainDataReorg, ...)
-    tasks := []
-
-    await dispatchTaskInitalChain(NextQuery(Chain(chain)))
-
-    Assert.deepEqual(tasks.contents, [NextQuery(CheckAllChains)])
-
-    await dispatchAllTasksInitalChain()
-
-    Assert.deepEqual(tasks.contents->Utils.getVariantsTags, ["ProcessPartitionQueryResponse"])
-    // Assert.deepEqual(
-    //   tasks.contents->Js.Array2.unsafe_get(0),
-    //   UpdateEndOfBlockRangeScannedData({
-    //     blockNumberThreshold: -198,
-    //     chain: MockConfig.chain1337,
-    //     nextEndOfBlockRangeScannedData: {
-    //       blockHash: block2.blockHash,
-    //       blockNumber: block2.blockNumber,
-    //       chainId: 1337,
-    //     },
-    //   }),
-    // )
-
-    await dispatchAllTasksInitalChain()
-
-    Assert.deepEqual(
-      tasks.contents,
-      [UpdateChainMetaDataAndCheckForExit(NoExit), ProcessEventBatch, NextQuery(Chain(chain))],
-      ~message="should successfully have processed batch",
-    )
-
-    Assert.equal(
-      getChainFetcher().fetchState->FetchState.bufferSize,
-      3,
-      ~message="should have 3 events on the queue from the first 3 blocks of inital chainData",
-    )
-
-    await dispatchAllTasksReorgChain()
-
-    let getAllGravatars = async () =>
-      (await Sql.getAllRowsInTable("Gravatar"))->Array.map(
-        S.parseJsonOrThrow(_, Entities.Gravatar.schema),
-      )
-
-    let gravatars = await getAllGravatars()
-
-    let toBigInt = BigInt.fromInt
-    let toString = BigInt.toString
-
-    let expectedGravatars: array<Entities.Gravatar.t> = [
-      {
-        displayName: MockEvents.setGravatar1.displayName,
-        id: MockEvents.setGravatar1.id->toString,
-        imageUrl: MockEvents.setGravatar1.imageUrl,
-        owner_id: MockEvents.setGravatar1.owner->Utils.magic,
-        size: MEDIUM,
-        updatesCount: 2->toBigInt,
-      },
-      {
-        displayName: MockEvents.newGravatar2.displayName,
-        id: MockEvents.newGravatar2.id->toString,
-        imageUrl: MockEvents.newGravatar2.imageUrl,
-        owner_id: MockEvents.newGravatar2.owner->Utils.magic,
-        size: SMALL,
-        updatesCount: 1->toBigInt,
-      },
-    ]
-
-    Assert.deepEqual(
-      gravatars,
-      expectedGravatars,
-      ~message="2 Gravatars should have been set and the first one updated in the first 3 events",
-    )
-
-    Assert.deepEqual(
-      tasks.contents,
-      [
-        GlobalState.NextQuery(CheckAllChains),
-        UpdateChainMetaDataAndCheckForExit(NoExit),
-        ProcessEventBatch,
-        PruneStaleEntityHistory,
-        Rollback,
-      ],
-      ~message="should detect rollback with reorg chain",
-    )
-
-    await dispatchAllTasksReorgChain()
-
-    Assert.deepEqual(
-      tasks.contents,
-      [Rollback],
-      ~message="Should finishe processing current batch and fire rollback again",
-    )
-
-    await dispatchAllTasksReorgChain()
-
-    Assert.deepEqual(
-      tasks.contents,
-      [GlobalState.NextQuery(CheckAllChains), ProcessEventBatch],
-      ~message="Rollback should have actioned, and now next queries and process event batch should action",
-    )
-
-    await dispatchAllTasksReorgChain()
-
-    Assert.deepEqual(tasks.contents->Utils.getVariantsTags, ["ProcessPartitionQueryResponse"])
-    // Assert.deepEqual(
-    //   tasks.contents->Js.Array2.unsafe_get(0),
-    //   GlobalState.UpdateEndOfBlockRangeScannedData({
-    //     blockNumberThreshold: -198,
-    //     chain: MockConfig.chain1337,
-    //     nextEndOfBlockRangeScannedData: {
-    //       blockHash: block2.blockHash,
-    //       blockNumber: block2.blockNumber,
-    //       chainId: 1337,
-    //     },
-    //   }),
-    // )
-
-    await dispatchAllTasksReorgChain()
-
-    Assert.deepEqual(
-      tasks.contents,
-      [UpdateChainMetaDataAndCheckForExit(NoExit), ProcessEventBatch, NextQuery(Chain(chain))],
-      ~message="Query should have returned with batch to process",
-    )
-
-    await dispatchAllTasksReorgChain()
-
-    Assert.deepEqual(
-      tasks.contents->Utils.getVariantsTags,
-      [
-        "NextQuery",
-        "UpdateChainMetaDataAndCheckForExit",
-        "ProcessEventBatch",
-        "PruneStaleEntityHistory",
-        "ProcessPartitionQueryResponse",
-      ],
-    )
-    // Assert.deepEqual(
-    //   tasks.contents->Js.Array2.unsafe_get(1),
-    //   GlobalState.UpdateEndOfBlockRangeScannedData({
-    //     blockNumberThreshold: -196,
-    //     chain: MockConfig.chain1337,
-    //     nextEndOfBlockRangeScannedData: {
-    //       blockHash: block4.blockHash,
-    //       blockNumber: block4.blockNumber,
-    //       chainId: 1337,
-    //     },
-    //   }),
-    // )
-
-    let expectedGravatars: array<Entities.Gravatar.t> = [
-      {
-        displayName: MockEvents.newGravatar1.displayName,
-        id: MockEvents.newGravatar1.id->toString,
-        imageUrl: MockEvents.newGravatar1.imageUrl,
-        owner_id: MockEvents.newGravatar1.owner->Utils.magic,
-        size: SMALL,
-        updatesCount: 1->toBigInt,
-      },
-      {
-        displayName: MockEvents.setGravatar2.displayName,
-        id: MockEvents.setGravatar2.id->toString,
-        imageUrl: MockEvents.setGravatar2.imageUrl,
-        owner_id: MockEvents.setGravatar2.owner->Utils.magic,
-        size: MEDIUM,
-        updatesCount: 2->toBigInt,
-      },
-    ]
-
-    let gravatars = await getAllGravatars()
-    Assert.deepEqual(
-      gravatars,
-      expectedGravatars,
-      ~message="First gravatar should roll back and change and second should have received an update",
-    )
-  })
-})
-
 // A workaround for ReScript v11 issue, where it makes the field optional
 // instead of setting a value to undefined. It's fixed in v12.
 let undefined = (%raw(`undefined`): option<'a>)
 
 describe("E2E rollback tests", () => {
   let testSingleChainRollback = async (
-    ~sourceMock: M.Source.t,
-    ~indexerMock: M.Indexer.t,
+    ~sourceMock: Mock.Source.t,
+    ~indexerMock: Mock.Indexer.t,
     ~firstHistoryCheckpointId=2,
   ) => {
     Assert.deepEqual(
@@ -689,30 +299,30 @@ describe("E2E rollback tests", () => {
   }
 
   Async.it("Should re-enter reorg threshold on restart", async () => {
-    let sourceMock1337 = M.Source.make(
+    let sourceMock1337 = Mock.Source.make(
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
       ~chain=#1337,
     )
-    let sourceMock100 = M.Source.make(
+    let sourceMock100 = Mock.Source.make(
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
       ~chain=#100,
     )
     let chains = [
       {
-        M.Indexer.chain: #1337,
+        Mock.Indexer.chain: #1337,
         sources: [sourceMock1337.source],
       },
       {
-        M.Indexer.chain: #100,
+        Mock.Indexer.chain: #100,
         sources: [sourceMock100.source],
       },
     ]
-    let indexerMock = await M.Indexer.make(~chains)
+    let indexerMock = await Mock.Indexer.make(~chains)
     await Utils.delay(0)
 
     let _ = await Promise.all2((
-      M.Helper.initialEnterReorgThreshold(~indexerMock, ~sourceMock=sourceMock1337),
-      M.Helper.initialEnterReorgThreshold(~indexerMock, ~sourceMock=sourceMock100),
+      Mock.Helper.initialEnterReorgThreshold(~indexerMock, ~sourceMock=sourceMock1337),
+      Mock.Helper.initialEnterReorgThreshold(~indexerMock, ~sourceMock=sourceMock100),
     ))
 
     Assert.deepEqual(
@@ -788,11 +398,11 @@ describe("E2E rollback tests", () => {
   })
 
   Async.it("Rollback of a single chain indexer", async () => {
-    let sourceMock = M.Source.make(
+    let sourceMock = Mock.Source.make(
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
       ~chain=#1337,
     )
-    let indexerMock = await M.Indexer.make(
+    let indexerMock = await Mock.Indexer.make(
       ~chains=[
         {
           chain: #1337,
@@ -802,18 +412,18 @@ describe("E2E rollback tests", () => {
     )
     await Utils.delay(0)
 
-    await M.Helper.initialEnterReorgThreshold(~indexerMock, ~sourceMock)
+    await Mock.Helper.initialEnterReorgThreshold(~indexerMock, ~sourceMock)
     await testSingleChainRollback(~sourceMock, ~indexerMock)
   })
 
   Async.it(
     "Stores checkpoints inside of the reorg threshold for batches without items",
     async () => {
-      let sourceMock = M.Source.make(
+      let sourceMock = Mock.Source.make(
         [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
         ~chain=#1337,
       )
-      let indexerMock = await M.Indexer.make(
+      let indexerMock = await Mock.Indexer.make(
         ~chains=[
           {
             chain: #1337,
@@ -823,7 +433,7 @@ describe("E2E rollback tests", () => {
       )
       await Utils.delay(0)
 
-      await M.Helper.initialEnterReorgThreshold(~indexerMock, ~sourceMock)
+      await Mock.Helper.initialEnterReorgThreshold(~indexerMock, ~sourceMock)
 
       sourceMock.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=102)
 
@@ -846,11 +456,11 @@ describe("E2E rollback tests", () => {
   )
 
   Async.it("Shouldn't detect reorg for rollbacked block", async () => {
-    let sourceMock = M.Source.make(
+    let sourceMock = Mock.Source.make(
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
       ~chain=#1337,
     )
-    let indexerMock = await M.Indexer.make(
+    let indexerMock = await Mock.Indexer.make(
       ~chains=[
         {
           chain: #1337,
@@ -860,7 +470,7 @@ describe("E2E rollback tests", () => {
     )
     await Utils.delay(0)
 
-    await M.Helper.initialEnterReorgThreshold(~indexerMock, ~sourceMock)
+    await Mock.Helper.initialEnterReorgThreshold(~indexerMock, ~sourceMock)
 
     sourceMock.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=102)
     await indexerMock.getBatchWritePromise()
@@ -926,15 +536,15 @@ describe("E2E rollback tests", () => {
   Async.it(
     "Single chain rollback should also work for unordered multichain indexer when another chains are stale",
     async () => {
-      let sourceMock1 = M.Source.make(
+      let sourceMock1 = Mock.Source.make(
         [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
         ~chain=#1337,
       )
-      let sourceMock2 = M.Source.make(
+      let sourceMock2 = Mock.Source.make(
         [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
         ~chain=#100,
       )
-      let indexerMock = await M.Indexer.make(
+      let indexerMock = await Mock.Indexer.make(
         ~chains=[
           {
             chain: #1337,
@@ -949,8 +559,8 @@ describe("E2E rollback tests", () => {
       await Utils.delay(0)
 
       let _ = await Promise.all2((
-        M.Helper.initialEnterReorgThreshold(~indexerMock, ~sourceMock=sourceMock1),
-        M.Helper.initialEnterReorgThreshold(~indexerMock, ~sourceMock=sourceMock2),
+        Mock.Helper.initialEnterReorgThreshold(~indexerMock, ~sourceMock=sourceMock1),
+        Mock.Helper.initialEnterReorgThreshold(~indexerMock, ~sourceMock=sourceMock2),
       ))
 
       await testSingleChainRollback(
@@ -962,11 +572,11 @@ describe("E2E rollback tests", () => {
   )
 
   Async.it("Rollback Dynamic Contract", async () => {
-    let sourceMock = M.Source.make(
+    let sourceMock = Mock.Source.make(
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
       ~chain=#1337,
     )
-    let indexerMock = await M.Indexer.make(
+    let indexerMock = await Mock.Indexer.make(
       ~chains=[
         {
           chain: #1337,
@@ -976,7 +586,7 @@ describe("E2E rollback tests", () => {
     )
     await Utils.delay(0)
 
-    await M.Helper.initialEnterReorgThreshold(~indexerMock, ~sourceMock)
+    await Mock.Helper.initialEnterReorgThreshold(~indexerMock, ~sourceMock)
 
     let calls = []
     let handler: Types.HandlerTypes.loader<unit, unit> = async ({event}) => {
@@ -1212,15 +822,15 @@ This might be wrong after we start exposing a block hash for progress block.`,
   })
 
   Async.it("Rollback of unordered multichain indexer (single entity id change)", async () => {
-    let sourceMock1337 = M.Source.make(
+    let sourceMock1337 = Mock.Source.make(
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
       ~chain=#1337,
     )
-    let sourceMock100 = M.Source.make(
+    let sourceMock100 = Mock.Source.make(
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
       ~chain=#100,
     )
-    let indexerMock = await M.Indexer.make(
+    let indexerMock = await Mock.Indexer.make(
       ~chains=[
         {
           chain: #1337,
@@ -1235,8 +845,8 @@ This might be wrong after we start exposing a block hash for progress block.`,
     await Utils.delay(0)
 
     let _ = await Promise.all2((
-      M.Helper.initialEnterReorgThreshold(~indexerMock, ~sourceMock=sourceMock1337),
-      M.Helper.initialEnterReorgThreshold(~indexerMock, ~sourceMock=sourceMock100),
+      Mock.Helper.initialEnterReorgThreshold(~indexerMock, ~sourceMock=sourceMock1337),
+      Mock.Helper.initialEnterReorgThreshold(~indexerMock, ~sourceMock=sourceMock100),
     ))
 
     let callCount = ref(0)
@@ -1605,15 +1215,15 @@ This might be wrong after we start exposing a block hash for progress block.`,
   Async.it(
     "Rollback of unordered multichain indexer (single entity id change + another entity on non-reorg chain)",
     async () => {
-      let sourceMock1337 = M.Source.make(
+      let sourceMock1337 = Mock.Source.make(
         [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
         ~chain=#1337,
       )
-      let sourceMock100 = M.Source.make(
+      let sourceMock100 = Mock.Source.make(
         [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
         ~chain=#100,
       )
-      let indexerMock = await M.Indexer.make(
+      let indexerMock = await Mock.Indexer.make(
         ~chains=[
           {
             chain: #1337,
@@ -1628,8 +1238,8 @@ This might be wrong after we start exposing a block hash for progress block.`,
       await Utils.delay(0)
 
       let _ = await Promise.all2((
-        M.Helper.initialEnterReorgThreshold(~indexerMock, ~sourceMock=sourceMock1337),
-        M.Helper.initialEnterReorgThreshold(~indexerMock, ~sourceMock=sourceMock100),
+        Mock.Helper.initialEnterReorgThreshold(~indexerMock, ~sourceMock=sourceMock1337),
+        Mock.Helper.initialEnterReorgThreshold(~indexerMock, ~sourceMock=sourceMock100),
       ))
 
       let callCount = ref(0)
@@ -2004,15 +1614,15 @@ This might be wrong after we start exposing a block hash for progress block.`,
   Async.it(
     "Rollback of ordered multichain indexer (single entity id change + another entity on non-reorg chain)",
     async () => {
-      let sourceMock1337 = M.Source.make(
+      let sourceMock1337 = Mock.Source.make(
         [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
         ~chain=#1337,
       )
-      let sourceMock100 = M.Source.make(
+      let sourceMock100 = Mock.Source.make(
         [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
         ~chain=#100,
       )
-      let indexerMock = await M.Indexer.make(
+      let indexerMock = await Mock.Indexer.make(
         ~chains=[
           {
             chain: #1337,
@@ -2028,8 +1638,8 @@ This might be wrong after we start exposing a block hash for progress block.`,
       await Utils.delay(0)
 
       let _ = await Promise.all2((
-        M.Helper.initialEnterReorgThreshold(~indexerMock, ~sourceMock=sourceMock1337),
-        M.Helper.initialEnterReorgThreshold(~indexerMock, ~sourceMock=sourceMock100),
+        Mock.Helper.initialEnterReorgThreshold(~indexerMock, ~sourceMock=sourceMock1337),
+        Mock.Helper.initialEnterReorgThreshold(~indexerMock, ~sourceMock=sourceMock100),
       ))
 
       let callCount = ref(0)
@@ -2407,11 +2017,11 @@ Sorted by timestamp and chain id`,
   )
 
   Async.it("Double reorg should NOT cause negative event counter (regression test)", async () => {
-    let sourceMock = M.Source.make(
+    let sourceMock = Mock.Source.make(
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
       ~chain=#1337,
     )
-    let indexerMock = await M.Indexer.make(
+    let indexerMock = await Mock.Indexer.make(
       ~chains=[
         {
           chain: #1337,
@@ -2421,7 +2031,7 @@ Sorted by timestamp and chain id`,
     )
     await Utils.delay(0)
 
-    await M.Helper.initialEnterReorgThreshold(~indexerMock, ~sourceMock)
+    await Mock.Helper.initialEnterReorgThreshold(~indexerMock, ~sourceMock)
 
     sourceMock.resolveGetItemsOrThrow([])
     await indexerMock.getBatchWritePromise()

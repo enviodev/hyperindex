@@ -1,11 +1,11 @@
 @genType.opaque
-type chainConfig = InternalConfig.chain
+type chainConfig = Config.chain
 
 @genType
 let getLocalChainConfig = (nftFactoryContractAddress): chainConfig => {
   let contracts = [
     {
-      InternalConfig.name: "NftFactory",
+      Config.name: "NftFactory",
       abi: Types.NftFactory.abi,
       addresses: [nftFactoryContractAddress],
       events: [(Types.NftFactory.SimpleNftCreated.register() :> Internal.eventConfig)],
@@ -65,27 +65,23 @@ type chainManager = ChainManager.t
 let makeChainManager = (cfg: chainConfig): chainManager => {
   // FIXME: Should fork from the main ChainMap?
   ChainManager.makeFromConfig(
-    ~config=Config.make(
-      ~isUnorderedMultichainMode=true,
-      ~chains=[cfg],
-      ~registrations={onBlockByChainId: Js.Dict.empty(), hasEvents: false},
-    ),
+    ~config=Config.make(~multichain=Unordered, ~chains=[cfg]),
+    ~registrations=Some({onBlockByChainId: Js.Dict.empty(), hasEvents: false}),
   )
 }
 
 @genType
-let startProcessing = (config, cfg: chainConfig, chainManager: chainManager) => {
-  let globalState = GlobalState.make(
-    ~config=config->(
-      // Workaround for genType to treat the type as unknown, since we don't want to expose Config.t to TS users
-      Utils.magic: unknown => Config.t
-    ),
-    ~chainManager,
-  )
-
-  let gsManager = globalState->GlobalStateManager.make
-
-  gsManager->GlobalStateManager.dispatchTask(
-    NextQuery(Chain(ChainMap.Chain.makeUnsafe(~chainId=cfg.id))),
-  )
+let startProcessing = (_config, _cfg: chainConfig, _chainManager: chainManager) => {
+  // let globalState = GlobalState.make(
+  //   ~indexer=indexer->(
+  //     // Workaround for genType to treat the type as unknown, since we don't want to expose Config.t to TS users
+  //     Utils.magic: unknown => Config.t
+  //   ),
+  //   ~chainManager,
+  // )
+  // let gsManager = globalState->GlobalStateManager.make
+  // gsManager->GlobalStateManager.dispatchTask(
+  //   NextQuery(Chain(ChainMap.Chain.makeUnsafe(~chainId=cfg.id))),
+  // )
+  ()
 }

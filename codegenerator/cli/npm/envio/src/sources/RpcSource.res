@@ -218,7 +218,7 @@ let getNextPage = (
   ~addresses,
   ~topicQuery,
   ~loadBlock,
-  ~syncConfig as sc: InternalConfig.sourceSync,
+  ~syncConfig as sc: Config.sourceSync,
   ~provider,
   ~mutSuggestedBlockIntervals,
   ~partitionId,
@@ -465,7 +465,7 @@ let sanitizeUrl = (url: string) => {
 
 type options = {
   sourceFor: Source.sourceFor,
-  syncConfig: InternalConfig.sourceSync,
+  syncConfig: Config.sourceSync,
   url: string,
   chain: ChainMap.Chain.t,
   contracts: array<Internal.evmContractConfig>,

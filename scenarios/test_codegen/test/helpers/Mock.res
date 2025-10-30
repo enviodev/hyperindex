@@ -13,7 +13,7 @@ module InMemoryStore = {
         checkpointId: 0,
         entityUpdateAction: Set(entity),
       },
-      ~shouldSaveHistory=RegisterHandlers.getConfig()->Config.shouldSaveHistory(
+      ~shouldSaveHistory=Generated.configWithoutRegistrations->Config.shouldSaveHistory(
         ~isInReorgThreshold=false,
       ),
     )
@@ -47,7 +47,7 @@ module Storage = {
     resolveIsInitialized: bool => unit,
     initializeCalls: array<{
       "entities": array<Internal.entityConfig>,
-      "chainConfigs": array<InternalConfig.chain>,
+      "chainConfigs": array<Config.chain>,
       "enums": array<Internal.enumConfig<Internal.enum>>,
     }>,
     resolveInitialize: Persistence.initialState => unit,
@@ -190,7 +190,7 @@ module Storage = {
 
   let toPersistence = (storageMock: t) => {
     {
-      ...Config.codegenPersistence,
+      ...Generated.codegenPersistence,
       storage: storageMock.storage,
       storageStatus: Ready({
         cleanRun: false,
@@ -227,7 +227,7 @@ module Indexer = {
 
   let rec make = async (
     ~chains: array<chainConfig>,
-    ~multichain=InternalConfig.Unordered,
+    ~multichain=Config.Unordered,
     ~saveFullHistory=false,
     // Reinit storage without Hasura
     // makes tests ~1.9 seconds faster
@@ -238,25 +238,53 @@ module Indexer = {
     // TODO: Should stop using global client
     PromClient.defaultRegister->PromClient.resetMetrics
 
-    let config = RegisterHandlers.registerAllHandlers()
+    let registrations = Generated.registerAllHandlers()
 
-    let chainMap =
-      chains
-      ->Js.Array2.map(chainConfig => {
-        let chain = ChainMap.Chain.makeUnsafe(~chainId=(chainConfig.chain :> int))
-        let originalChainConfig = config.chainMap->ChainMap.get(chain)
-        (
-          chain,
-          {
-            ...originalChainConfig,
-            sources: chainConfig.sources,
-            startBlock: chainConfig.startBlock->Option.getWithDefault(
-              originalChainConfig.startBlock,
-            ),
-          },
-        )
-      })
-      ->ChainMap.fromArrayUnsafe
+    let config = {
+      let config = Generated.makeGeneratedConfig()
+
+      let chainMap =
+        chains
+        ->Js.Array2.map(chainConfig => {
+          let chain = ChainMap.Chain.makeUnsafe(~chainId=(chainConfig.chain :> int))
+          let originalChainConfig = config.chainMap->ChainMap.get(chain)
+          (
+            chain,
+            {
+              ...originalChainConfig,
+              sources: chainConfig.sources,
+              startBlock: chainConfig.startBlock->Option.getWithDefault(
+                originalChainConfig.startBlock,
+              ),
+            },
+          )
+        })
+        ->ChainMap.fromArrayUnsafe
+
+      {
+        ...config,
+        shouldRollbackOnReorg: true,
+        shouldSaveFullHistory: saveFullHistory,
+        enableRawEvents: false,
+        chainMap,
+        multichain,
+      }
+    }
+
+    let sql = Db.sql
+    let pgSchema = Env.Db.publicSchema
+    let storage = Generated.makeStorage(~sql, ~pgSchema, ~isHasuraEnabled=enableHasura)
+    let persistence = {
+      ...Generated.codegenPersistence,
+      storageStatus: Persistence.Unknown,
+      storage,
+    }
+
+    let indexer = {
+      Indexer.registrations,
+      config,
+      persistence,
+    }
 
     let graphqlClient = Rest.client(`${Env.Hasura.url}/v1/graphql`)
     let graphqlRoute = Rest.route(() => {
@@ -266,38 +294,16 @@ module Indexer = {
       responses: [s => s.data(S.unknown)],
     })
 
-    let sql = Db.sql
-    let pgSchema = Env.Db.publicSchema
-    let storage = Config.makeStorage(~sql, ~pgSchema, ~isHasuraEnabled=enableHasura)
-    let persistence = {
-      ...config.persistence,
-      storageStatus: Persistence.Unknown,
-      storage,
-    }
-    let config: Config.t = {
-      ...config,
-      historyConfig: {
-        rollbackFlag: RollbackOnReorg,
-        historyFlag: saveFullHistory ? FullHistory : MinHistory,
-      },
-      persistence,
-      enableRawEvents: false,
-      chainMap,
-      multichain,
-    }
-
     let gsManagerRef = ref(None)
 
-    await config.persistence->Persistence.init(
-      ~chainConfigs=config.chainMap->ChainMap.values,
-      ~reset,
-    )
+    await persistence->Persistence.init(~chainConfigs=config.chainMap->ChainMap.values, ~reset)
 
     let chainManager = await ChainManager.makeFromDbState(
-      ~initialState=config.persistence->Persistence.getInitializedState,
+      ~initialState=persistence->Persistence.getInitializedState,
       ~config,
+      ~registrations=Some(registrations),
     )
-    let globalState = GlobalState.make(~config, ~chainManager, ~shouldUseTui=false)
+    let globalState = GlobalState.make(~indexer, ~chainManager, ~shouldUseTui=false) // FIXME: Should Use TUI
     let gsManager = globalState->GlobalStateManager.make
     gsManagerRef := Some(gsManager)
     gsManager->GlobalStateManager.dispatchTask(NextQuery(CheckAllChains))

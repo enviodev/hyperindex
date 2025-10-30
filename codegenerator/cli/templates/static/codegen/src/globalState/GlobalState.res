@@ -40,7 +40,7 @@ module WriteThrottlers = {
 }
 
 type t = {
-  config: Config.t,
+  indexer: Indexer.t,
   chainManager: ChainManager.t,
   processedBatches: int,
   currentlyProcessingBatch: bool,
@@ -54,9 +54,9 @@ type t = {
   id: int,
 }
 
-let make = (~config: Config.t, ~chainManager: ChainManager.t, ~shouldUseTui=false) => {
+let make = (~indexer: Indexer.t, ~chainManager: ChainManager.t, ~shouldUseTui=false) => {
   {
-    config,
+    indexer,
     currentlyProcessingBatch: false,
     processedBatches: 0,
     chainManager,
@@ -217,7 +217,7 @@ let updateProgressedChains = (chainManager: ChainManager.t, ~batch: Batch.t) => 
             ~chainId=chain->ChainMap.Chain.toChainId,
           )
         }
-        
+
         // Calculate and set latency metrics
         switch batch->Batch.findLastEventItem(~chainId=chain->ChainMap.Chain.toChainId) {
         | Some(eventItem) => {
@@ -225,12 +225,12 @@ let updateProgressedChains = (chainManager: ChainManager.t, ~batch: Batch.t) => 
             let currentTimeMs = Js.Date.now()->Float.toInt
             let blockTimestampMs = blockTimestamp * 1000
             let latencyMs = currentTimeMs - blockTimestampMs
-            
+
             Prometheus.ProgressLatency.set(~latencyMs, ~chainId=chain->ChainMap.Chain.toChainId)
           }
         | None => ()
         }
-        
+
         {
           ...cf,
           // Since we process per chain always in order,
@@ -403,7 +403,7 @@ let validatePartitionQueryResponse = (
   | ReorgDetected(reorgDetected) => {
       chainFetcher.logger->Logging.childInfo(
         reorgDetected->ReorgDetection.reorgDetectedToLogParams(
-          ~shouldRollbackOnReorg=state.config->Config.shouldRollbackOnReorg,
+          ~shouldRollbackOnReorg=state.indexer.config.shouldRollbackOnReorg,
         ),
       )
       Prometheus.ReorgCount.increment(~chain)
@@ -411,7 +411,7 @@ let validatePartitionQueryResponse = (
         ~blockNumber=reorgDetected.scannedBlock.blockNumber,
         ~chain,
       )
-      if state.config->Config.shouldRollbackOnReorg {
+      if state.indexer.config.shouldRollbackOnReorg {
         Some(reorgDetected.scannedBlock.blockNumber)
       } else {
         None
@@ -531,7 +531,7 @@ let processPartitionQueryResponse = async (
     await ChainFetcher.runContractRegistersOrThrow(
       ~itemsWithContractRegister,
       ~chain,
-      ~config=state.config,
+      ~config=state.indexer.config,
     )
   }
 
@@ -590,7 +590,7 @@ let actionReducer = (state: t, action: action) => {
   switch action {
   | FinishWaitingForNewBlock({chain, currentBlockHeight}) => {
       let isBelowReorgThreshold =
-        !state.chainManager.isInReorgThreshold && state.config->Config.shouldRollbackOnReorg
+        !state.chainManager.isInReorgThreshold && state.indexer.config.shouldRollbackOnReorg
       let shouldEnterReorgThreshold =
         isBelowReorgThreshold &&
         state.chainManager.chainFetchers
@@ -635,7 +635,7 @@ let actionReducer = (state: t, action: action) => {
     )
   | EventBatchProcessed({batch}) =>
     let maybePruneEntityHistory =
-      state.config->Config.shouldPruneHistory(
+      state.indexer.config->Config.shouldPruneHistory(
         ~isInReorgThreshold=state.chainManager.isInReorgThreshold,
       )
         ? [PruneStaleEntityHistory]
@@ -655,7 +655,6 @@ let actionReducer = (state: t, action: action) => {
       state.chainManager.chainFetchers,
     )
       ? {
-          // state.config.persistence.storage
           Logging.info("All chains are caught up to end blocks.")
 
           // Keep the indexer process running in TUI mode
@@ -885,16 +884,18 @@ let injectedTaskReducer = (
   | ProcessEventBatch =>
     if !state.currentlyProcessingBatch && !isPreparingRollback(state) {
       let batch =
-        state.chainManager->ChainManager.createBatch(~batchSizeTarget=state.config.batchSize)
+        state.chainManager->ChainManager.createBatch(
+          ~batchSizeTarget=state.indexer.config.batchSize,
+        )
 
       let progressedChainsById = batch.progressedChainsById
       let totalBatchSize = batch.totalBatchSize
 
       let isInReorgThreshold = state.chainManager.isInReorgThreshold
-      let shouldSaveHistory = state.config->Config.shouldSaveHistory(~isInReorgThreshold)
+      let shouldSaveHistory = state.indexer.config->Config.shouldSaveHistory(~isInReorgThreshold)
 
       let isBelowReorgThreshold =
-        !state.chainManager.isInReorgThreshold && state.config->Config.shouldRollbackOnReorg
+        !state.chainManager.isInReorgThreshold && state.indexer.config.shouldRollbackOnReorg
       let shouldEnterReorgThreshold =
         isBelowReorgThreshold &&
         state.chainManager.chainFetchers
@@ -946,7 +947,7 @@ let injectedTaskReducer = (
           ~inMemoryStore,
           ~isInReorgThreshold,
           ~loadManager=state.loadManager,
-          ~config=state.config,
+          ~indexer=state.indexer,
           ~chainFetchers=state.chainManager.chainFetchers,
         ) {
         | exception exn =>
