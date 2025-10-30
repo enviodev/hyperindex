@@ -304,7 +304,7 @@ module Indexer = {
       ~registrations,
       ~persistence,
     )
-    let globalState = GlobalState.make(~indexer, ~chainManager, ~shouldUseTui=false) // FIXME: Should Use TUI
+    let globalState = GlobalState.make(~indexer, ~chainManager, ~shouldUseTui=false) // FIXME: Should replace use TUI with keep alive on finish
     let gsManager = globalState->GlobalStateManager.make
     gsManagerRef := Some(gsManager)
     gsManager->GlobalStateManager.dispatchTask(NextQuery(CheckAllChains))

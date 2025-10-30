@@ -158,6 +158,7 @@ let make = (
     ~eventConfigs,
     ~targetBufferSize,
     ~chainId=chainConfig.id,
+    // FIXME: Shouldn't set with full history
     ~blockLag=Pervasives.max(
       !config.shouldRollbackOnReorg || isInReorgThreshold ? 0 : chainConfig.maxReorgDepth,
       Env.indexingBlockLag->Option.getWithDefault(0),

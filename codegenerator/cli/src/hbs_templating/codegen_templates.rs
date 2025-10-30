@@ -1285,6 +1285,7 @@ pub struct ProjectTemplate {
     preload_handlers: bool,
     envio_version: String,
     types_code: String,
+    ts_types_code: String,
     //Used for the package.json reference to handlers in generated
     relative_path_to_root_from_generated: String,
     lowercase_addresses: bool,
@@ -1379,12 +1380,43 @@ impl ProjectTemplate {
 type chainId = int
 
 @genType
-type chain = [{chain_id_type}]"#,
+type chain = [{chain_id_type}]
+
+@genType.import(("./Types.ts", "TestIndexerRunOptions"))
+type testIndexerRunOptions = dict<TestIndexer.chainRange>
+
+@genType
+type rec testIndexer = {{
+  run: testIndexerRunOptions => promise<unit>,
+  history: unit => promise<dict<array<unknown>>>,
+}}
+"#,
             chain_id_type = chain_configs
                 .iter()
                 .map(|chain_config| format!("#{}", chain_config.network_config.id))
                 .collect::<Vec<_>>()
-                .join(" | ")
+                .join(" | "),
+        );
+
+        let ts_types_code = format!(
+            r#"
+export type TestIndexerChainRunRange = {{
+  startBlock: number,
+  endBlock: number,
+}}
+
+export type TestIndexerRunOptions = {{
+{test_indexer_run_options_body}
+}}
+"#,
+            test_indexer_run_options_body = chain_configs
+                .iter()
+                .map(|chain_config| format!(
+                    "  {}?: TestIndexerChainRunRange",
+                    chain_config.network_config.id
+                ))
+                .collect::<Vec<_>>()
+                .join(",\n"),
         );
 
         Ok(ProjectTemplate {
@@ -1407,6 +1439,7 @@ type chain = [{chain_id_type}]"#,
             preload_handlers: cfg.preload_handlers,
             envio_version: get_envio_version()?,
             types_code,
+            ts_types_code,
             //Used for the package.json reference to handlers in generated
             relative_path_to_root_from_generated,
             lowercase_addresses: cfg.lowercase_addresses,
