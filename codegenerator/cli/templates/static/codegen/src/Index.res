@@ -322,7 +322,7 @@ let main = async () => {
     let chainManager = await ChainManager.makeFromDbState(
       ~initialState=indexer.persistence->Persistence.getInitializedState,
       ~config=indexer.config,
-      ~registrations=Some(indexer.registrations),
+      ~registrations=indexer.registrations,
     )
     let globalState = GlobalState.make(~indexer, ~chainManager, ~shouldUseTui)
     let stateUpdatedHook = if shouldUseTui {

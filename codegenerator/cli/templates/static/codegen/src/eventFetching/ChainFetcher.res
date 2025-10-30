@@ -33,7 +33,7 @@ let make = (
   ~firstEventBlockNumber,
   ~progressBlockNumber,
   ~config: Config.t,
-  ~registrations: option<EventRegister.registrations>,
+  ~registrations: EventRegister.registrations,
   ~targetBufferSize,
   ~logger,
   ~timestampCaughtUpToHeadOrEndblock,
@@ -124,37 +124,29 @@ let make = (
     )
   }
 
-  let onBlockConfigs = switch registrations {
-  | None => Js.Exn.raiseError("Indexer must be initialized with event registration finished.")
-  | Some(registrations) =>
-    let onBlockConfigs =
-      registrations.onBlockByChainId->Utils.Dict.dangerouslyGetNonOption(
-        chainConfig.id->Int.toString,
-      )
-    switch onBlockConfigs {
-    | Some(onBlockConfigs) =>
-      // TODO: Move it to the EventRegister module
-      // so the error is thrown with better stack trace
-      onBlockConfigs->Array.forEach(onBlockConfig => {
-        if onBlockConfig.startBlock->Option.getWithDefault(startBlock) < startBlock {
+  let onBlockConfigs =
+    registrations.onBlockByChainId->Utils.Dict.dangerouslyGetNonOption(chainConfig.id->Int.toString)
+  switch onBlockConfigs {
+  | Some(onBlockConfigs) =>
+    // TODO: Move it to the EventRegister module
+    // so the error is thrown with better stack trace
+    onBlockConfigs->Array.forEach(onBlockConfig => {
+      if onBlockConfig.startBlock->Option.getWithDefault(startBlock) < startBlock {
+        Js.Exn.raiseError(
+          `The start block for onBlock handler "${onBlockConfig.name}" is less than the chain start block (${startBlock->Belt.Int.toString}). This is not supported yet.`,
+        )
+      }
+      switch endBlock {
+      | Some(chainEndBlock) =>
+        if onBlockConfig.endBlock->Option.getWithDefault(chainEndBlock) > chainEndBlock {
           Js.Exn.raiseError(
-            `The start block for onBlock handler "${onBlockConfig.name}" is less than the chain start block (${startBlock->Belt.Int.toString}). This is not supported yet.`,
+            `The end block for onBlock handler "${onBlockConfig.name}" is greater than the chain end block (${chainEndBlock->Belt.Int.toString}). This is not supported yet.`,
           )
         }
-        switch endBlock {
-        | Some(chainEndBlock) =>
-          if onBlockConfig.endBlock->Option.getWithDefault(chainEndBlock) > chainEndBlock {
-            Js.Exn.raiseError(
-              `The end block for onBlock handler "${onBlockConfig.name}" is greater than the chain end block (${chainEndBlock->Belt.Int.toString}). This is not supported yet.`,
-            )
-          }
-        | None => ()
-        }
-      })
-    | None => ()
-    }
-
-    onBlockConfigs
+      | None => ()
+      }
+    })
+  | None => ()
   }
 
   let fetchState = FetchState.make(
