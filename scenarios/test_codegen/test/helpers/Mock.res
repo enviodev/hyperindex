@@ -234,7 +234,6 @@ module Indexer = {
     ~enableHasura=false,
     ~reset=true,
   ) => {
-    DbHelpers.resetPostgresClient()
     // TODO: Should stop using global client
     PromClient.defaultRegister->PromClient.resetMetrics
 
@@ -278,6 +277,7 @@ module Indexer = {
       ...Generated.codegenPersistence,
       storageStatus: Persistence.Unknown,
       storage,
+      sql,
     }
 
     let indexer = {
