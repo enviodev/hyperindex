@@ -157,7 +157,11 @@ let updateChainFetcherCurrentBlockHeight = (chainFetcher: ChainFetcher.t, ~curre
   }
 }
 
-let updateChainMetadataTable = (cm: ChainManager.t, ~throttler: Throttler.t) => {
+let updateChainMetadataTable = (
+  cm: ChainManager.t,
+  ~persistence: Persistence.t,
+  ~throttler: Throttler.t,
+) => {
   let chainsData: dict<InternalTable.Chains.metaFields> = Js.Dict.empty()
 
   cm.chainFetchers
@@ -178,7 +182,7 @@ let updateChainMetadataTable = (cm: ChainManager.t, ~throttler: Throttler.t) => 
 
   //Don't await this set, it can happen in its own time
   throttler->Throttler.schedule(() =>
-    Db.sql
+    persistence.sql
     ->InternalTable.Chains.setMeta(~pgSchema=Db.publicSchema, ~chainsData)
     ->Promise.ignoreValue
   )
@@ -811,7 +815,7 @@ let injectedTaskReducer = (
       switch state.chainManager->ChainManager.getSafeCheckpointId {
       | None => ()
       | Some(safeCheckpointId) =>
-        await Db.sql->InternalTable.Checkpoints.pruneStaleCheckpoints(
+        await state.indexer.persistence.sql->InternalTable.Checkpoints.pruneStaleCheckpoints(
           ~pgSchema=Env.Db.publicSchema,
           ~safeCheckpointId,
         )
@@ -826,7 +830,7 @@ let injectedTaskReducer = (
           let timeRef = Hrtime.makeTimer()
           try {
             let () =
-              await Db.sql->EntityHistory.pruneStaleEntityHistory(
+              await state.indexer.persistence.sql->EntityHistory.pruneStaleEntityHistory(
                 ~entityName=entityConfig.name,
                 ~entityIndex=entityConfig.index,
                 ~pgSchema=Env.Db.publicSchema,
@@ -857,10 +861,18 @@ let injectedTaskReducer = (
     let {chainManager, writeThrottlers} = state
     switch shouldExit {
     | ExitWithSuccess =>
-      updateChainMetadataTable(chainManager, ~throttler=writeThrottlers.chainMetaData)
+      updateChainMetadataTable(
+        chainManager,
+        ~throttler=writeThrottlers.chainMetaData,
+        ~persistence=state.indexer.persistence,
+      )
       dispatchAction(SuccessExit)
     | NoExit =>
-      updateChainMetadataTable(chainManager, ~throttler=writeThrottlers.chainMetaData)->ignore
+      updateChainMetadataTable(
+        chainManager,
+        ~throttler=writeThrottlers.chainMetaData,
+        ~persistence=state.indexer.persistence,
+      )->ignore
     }
   | NextQuery(chainCheck) =>
     let fetchForChain = checkAndFetchForChain(
@@ -1006,7 +1018,7 @@ let injectedTaskReducer = (
       let reorgChainId = reorgChain->ChainMap.Chain.toChainId
 
       let rollbackTargetCheckpointId = {
-        switch await Db.sql->InternalTable.Checkpoints.getRollbackTargetCheckpoint(
+        switch await state.indexer.persistence.sql->InternalTable.Checkpoints.getRollbackTargetCheckpoint(
           ~pgSchema=Env.Db.publicSchema,
           ~reorgChainId,
           ~lastKnownValidBlockNumber=rollbackTargetBlockNumber,
@@ -1022,7 +1034,7 @@ let injectedTaskReducer = (
 
       {
         let rollbackProgressDiff =
-          await Db.sql->InternalTable.Checkpoints.getRollbackProgressDiff(
+          await state.indexer.persistence.sql->InternalTable.Checkpoints.getRollbackProgressDiff(
             ~pgSchema=Env.Db.publicSchema,
             ~rollbackTargetCheckpointId,
           )
@@ -1106,7 +1118,10 @@ let injectedTaskReducer = (
       })
 
       // Construct in Memory store with rollback diff
-      let diff = await IO.prepareRollbackDiff(~rollbackTargetCheckpointId)
+      let diff = await IO.prepareRollbackDiff(
+        ~rollbackTargetCheckpointId,
+        ~persistence=state.indexer.persistence,
+      )
 
       let chainManager = {
         ...state.chainManager,

@@ -422,7 +422,7 @@ let processEventBatch = async (
       timeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
 
     let rec executeBatch = async (~escapeTables=?) => {
-      switch await Db.sql->IO.executeBatch(
+      switch await indexer.persistence.sql->IO.executeBatch(
         ~batch,
         ~inMemoryStore,
         ~isInReorgThreshold,

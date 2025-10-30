@@ -323,6 +323,7 @@ let main = async () => {
       ~initialState=indexer.persistence->Persistence.getInitializedState,
       ~config=indexer.config,
       ~registrations=indexer.registrations,
+      ~persistence=indexer.persistence,
     )
     let globalState = GlobalState.make(~indexer, ~chainManager, ~shouldUseTui)
     let stateUpdatedHook = if shouldUseTui {

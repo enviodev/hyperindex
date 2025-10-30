@@ -271,7 +271,7 @@ module Indexer = {
       }
     }
 
-    let sql = Db.sql
+    let sql = Db.makeClient()
     let pgSchema = Env.Db.publicSchema
     let storage = Generated.makeStorage(~sql, ~pgSchema, ~isHasuraEnabled=enableHasura)
     let persistence = {
@@ -301,7 +301,8 @@ module Indexer = {
     let chainManager = await ChainManager.makeFromDbState(
       ~initialState=persistence->Persistence.getInitializedState,
       ~config,
-      ~registrations=Some(registrations),
+      ~registrations,
+      ~persistence,
     )
     let globalState = GlobalState.make(~indexer, ~chainManager, ~shouldUseTui=false) // FIXME: Should Use TUI
     let gsManager = globalState->GlobalStateManager.make
@@ -341,7 +342,7 @@ module Indexer = {
       },
       query: (type entity, entityMod) => {
         let entityConfig = entityMod->Entities.entityModToInternal
-        Db.sql
+        sql
         ->Postgres.unsafe(
           PgStorage.makeLoadAllQuery(~pgSchema, ~tableName=entityConfig.table.tableName),
         )
@@ -352,7 +353,7 @@ module Indexer = {
       },
       queryHistory: (type entity, entityMod) => {
         let entityConfig = entityMod->Entities.entityModToInternal
-        Db.sql
+        sql
         ->Postgres.unsafe(
           PgStorage.makeLoadAllQuery(
             ~pgSchema,
@@ -383,7 +384,7 @@ module Indexer = {
         )
       },
       queryCheckpoints: () => {
-        Db.sql
+        sql
         ->Postgres.unsafe(
           PgStorage.makeLoadAllQuery(
             ~pgSchema,
@@ -393,7 +394,7 @@ module Indexer = {
         ->(Utils.magic: promise<unknown> => promise<array<InternalTable.Checkpoints.t>>)
       },
       queryEffectCache: (effectName: string) => {
-        Db.sql
+        sql
         ->Postgres.unsafe(
           PgStorage.makeLoadAllQuery(~pgSchema, ~tableName=Internal.cacheTablePrefix ++ effectName),
         )

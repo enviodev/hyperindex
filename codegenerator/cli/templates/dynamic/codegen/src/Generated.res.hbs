@@ -116,8 +116,9 @@ let registerAllHandlers = () => {
   EventRegister.finishRegistration()
 }
 
+let initialSql = Db.makeClient()
 let storagePgSchema = Env.Db.publicSchema
-let makeStorage = (~sql=Db.sql, ~pgSchema=storagePgSchema, ~isHasuraEnabled=Env.Hasura.enabled) => {
+let makeStorage = (~sql, ~pgSchema=storagePgSchema, ~isHasuraEnabled=Env.Hasura.enabled) => {
   PgStorage.make(
     ~sql,
     ~pgSchema,
@@ -184,7 +185,8 @@ let makeStorage = (~sql=Db.sql, ~pgSchema=storagePgSchema, ~isHasuraEnabled=Env.
 let codegenPersistence = Persistence.make(
   ~userEntities=Entities.userEntities,
   ~allEnums=Enums.allEnums,
-  ~storage=makeStorage(),
+  ~storage=makeStorage(~sql=initialSql),
+  ~sql=initialSql,
 )
 
 %%private(let indexer: ref<option<Indexer.t>> = ref(None))

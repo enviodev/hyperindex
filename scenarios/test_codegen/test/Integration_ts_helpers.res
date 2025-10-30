@@ -66,7 +66,7 @@ let makeChainManager = (cfg: chainConfig): chainManager => {
   // FIXME: Should fork from the main ChainMap?
   ChainManager.makeFromConfig(
     ~config=Config.make(~multichain=Unordered, ~chains=[cfg]),
-    ~registrations=Some({onBlockByChainId: Js.Dict.empty(), hasEvents: false}),
+    ~registrations={onBlockByChainId: Js.Dict.empty(), hasEvents: false},
   )
 }
 

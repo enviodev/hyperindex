@@ -326,7 +326,7 @@ let executeBatch = async (
   }
 }
 
-let prepareRollbackDiff = async (~rollbackTargetCheckpointId) => {
+let prepareRollbackDiff = async (~persistence: Persistence.t, ~rollbackTargetCheckpointId) => {
   let inMemStore = InMemoryStore.make(~rollbackTargetCheckpointId)
 
   let deletedEntities = Js.Dict.empty()
@@ -339,14 +339,14 @@ let prepareRollbackDiff = async (~rollbackTargetCheckpointId) => {
 
       let (removedIdsResult, restoredEntitiesResult) = await Promise.all2((
         // Get IDs of entities that should be deleted (created after rollback target with no prior history)
-        Db.sql
+        persistence.sql
         ->Postgres.preparedUnsafe(
           entityConfig.entityHistory.makeGetRollbackRemovedIdsQuery(~pgSchema=Db.publicSchema),
           [rollbackTargetCheckpointId]->Utils.magic,
         )
         ->(Utils.magic: promise<unknown> => promise<array<{"id": string}>>),
         // Get entities that should be restored to their state at or before rollback target
-        Db.sql
+        persistence.sql
         ->Postgres.preparedUnsafe(
           entityConfig.entityHistory.makeGetRollbackRestoredEntitiesQuery(
             ~pgSchema=Db.publicSchema,

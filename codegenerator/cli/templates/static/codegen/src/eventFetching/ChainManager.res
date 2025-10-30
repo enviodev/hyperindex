@@ -37,6 +37,7 @@ let makeFromDbState = async (
   ~initialState: Persistence.initialState,
   ~config: Config.t,
   ~registrations,
+  ~persistence: Persistence.t,
 ): t => {
   let isInReorgThreshold = if initialState.cleanRun {
     false
@@ -47,7 +48,7 @@ let makeFromDbState = async (
     // This rows check might incorrectly return false for recovering the isInReorgThreshold option.
     // But this is not a problem. There's no history anyways, and the indexer will be able to
     // correctly calculate isInReorgThreshold as it starts.
-    let hasStartedSavingHistory = await Db.sql->DbFunctions.EntityHistory.hasRows
+    let hasStartedSavingHistory = await persistence.sql->DbFunctions.EntityHistory.hasRows
 
     //If we have started saving history, continue to save history
     //as regardless of whether we are still in a reorg threshold
