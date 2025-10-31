@@ -323,18 +323,19 @@ and makeProcessEvents = (mockDb: t, ~chainId=?) => async (
     let itemsWithContractRegister = []
 
     let registrations = EventRegister.finishRegistration()
-
-    let generatedIndexer = Generated.getIndexer()
-    let indexer: Indexer.t = if (
+    let registrations = if (
       registrations.hasEvents || !(registrations.onBlockByChainId->Utils.Dict.isEmpty)
     ) {
-      {
-        ...generatedIndexer,
-        config: Generated.makeGeneratedConfig(),
-        registrations,
-      }
+      registrations
     } else {
-      generatedIndexer
+      Generated.registerAllHandlers()
+    }
+
+    let config = Generated.makeGeneratedConfig()
+    let indexer: Indexer.t = {
+      registrations,
+      config,
+      persistence: Generated.codegenPersistence,
     }
 
     let processingChainId = ref(chainId)

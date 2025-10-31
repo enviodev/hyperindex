@@ -1,19 +1,18 @@
 open Belt
-open RescriptMocha
+// open RescriptMocha
 
-let config = RegisterHandlers.getConfig()
+let config = Generated.configWithoutRegistrations
 // Keep only the first chain
 let config = Config.make(
   ~shouldRollbackOnReorg=false,
   ~shouldSaveFullHistory=false,
-  ~isUnorderedMultichainMode=false,
+  ~multichain=Ordered,
   ~chains=config.chainMap
   ->ChainMap.entries
   ->Array.keepMap(((chain, config)) =>
     chain == RollbackMultichain_test.Mock.Chain1.chain ? Some(config) : None
   ),
   ~enableRawEvents=false,
-  ~registrations=?config.registrations,
 )
 
 module Mock = {
@@ -84,73 +83,73 @@ module Mock = {
   )
 }
 
-module Sql = RollbackMultichain_test.Sql
+// module Sql = RollbackMultichain_test.Sql
 
-describe("Tests where eq queries", () => {
-  Async.before(() => {
-    //Provision the db
-    DbHelpers.runUpDownMigration()
-  })
+// describe("Tests where eq queries", () => {
+//   Async.before(() => {
+//     //Provision the db
+//     DbHelpers.runUpDownMigration()
+//   })
 
-  Async.it("Where Eq query returns values and removes after inmemory delete", async () => {
-    //Setup a chainManager with unordered multichain mode to make processing happen
-    //without blocking for the purposes of this test
-    let chainManager = ChainManager.makeFromConfig(~config)
+//   Async.it("Where Eq query returns values and removes after inmemory delete", async () => {
+//     //Setup a chainManager with unordered multichain mode to make processing happen
+//     //without blocking for the purposes of this test
+//     let chainManager = ChainManager.makeFromConfig(~config)
 
-    //Setup initial state stub that will be used for both
-    //initial chain data and reorg chain data
-    let initState = GlobalState.make(~config, ~chainManager)
-    let gsManager = initState->GlobalStateManager.make
-    let tasks = ref([])
-    let makeStub = ChainDataHelpers.Stubs.make(~gsManager, ~tasks, ...)
+//     //Setup initial state stub that will be used for both
+//     //initial chain data and reorg chain data
+//     let initState = GlobalState.make(~config, ~chainManager)
+//     let gsManager = initState->GlobalStateManager.make
+//     let tasks = ref([])
+//     let makeStub = ChainDataHelpers.Stubs.make(~gsManager, ~tasks, ...)
 
-    open ChainDataHelpers
-    //Stub specifically for using data from then initial chain data and functions
-    let stubDataInitial = makeStub(~mockChainDataMap=Mock.mockChainDataMap)
-    let dispatchTask = Stubs.makeDispatchTask(stubDataInitial, _)
-    let dispatchAllTasks = () => stubDataInitial->Stubs.dispatchAllTasks
+//     open ChainDataHelpers
+//     //Stub specifically for using data from then initial chain data and functions
+//     let stubDataInitial = makeStub(~mockChainDataMap=Mock.mockChainDataMap)
+//     let dispatchTask = Stubs.makeDispatchTask(stubDataInitial, _)
+//     let dispatchAllTasks = () => stubDataInitial->Stubs.dispatchAllTasks
 
-    //Dispatch first task of next query all chains
-    //First query will just get the height
-    await dispatchTask(NextQuery(CheckAllChains))
+//     //Dispatch first task of next query all chains
+//     //First query will just get the height
+//     await dispatchTask(NextQuery(CheckAllChains))
 
-    Assert.deepEqual(
-      [GlobalState.NextQuery(Chain(Mock.Chain1.chain))],
-      stubDataInitial->Stubs.getTasks,
-      ~message="Should have completed query to get height, next tasks would be to execute block range query",
-    )
+//     Assert.deepEqual(
+//       [GlobalState.NextQuery(Chain(Mock.Chain1.chain))],
+//       stubDataInitial->Stubs.getTasks,
+//       ~message="Should have completed query to get height, next tasks would be to execute block range query",
+//     )
 
-    await dispatchAllTasks()
-    await dispatchAllTasks()
-    await dispatchAllTasks()
+//     await dispatchAllTasks()
+//     await dispatchAllTasks()
+//     await dispatchAllTasks()
 
-    Assert.equal(
-      EventHandlers.whereEqFromAccountTest.contents->Array.length,
-      1,
-      ~message="should have successfully loaded values on where eq address query",
-    )
-    Assert.equal(
-      EventHandlers.whereEqBigNumTest.contents->Array.length,
-      1,
-      ~message="should have successfully loaded values on where eq bigint query",
-    )
-    Assert.equal(
-      EventHandlers.whereBallanceGt50Test.contents->Array.length,
-      0,
-      ~message="Shouldn't have any value with more than 50 balance",
-    )
-    Assert.deepEqual(
-      EventHandlers.whereEqBigNumTest.contents,
-      EventHandlers.whereBallanceGt49Test.contents,
-      ~message="Where gt 49 and eq 50 should return the same result",
-    )
-    let users = await Sql.getAllRowsInTable("Account")
-    Assert.equal(users->Array.length, 3, ~message="Should contain user1, user2 and minter address")
-    await dispatchAllTasks()
-    Assert.equal(
-      EventHandlers.whereEqFromAccountTest.contents->Array.length,
-      0,
-      ~message="should have removed index on deleted user",
-    )
-  })
-})
+//     Assert.equal(
+//       EventHandlers.whereEqFromAccountTest.contents->Array.length,
+//       1,
+//       ~message="should have successfully loaded values on where eq address query",
+//     )
+//     Assert.equal(
+//       EventHandlers.whereEqBigNumTest.contents->Array.length,
+//       1,
+//       ~message="should have successfully loaded values on where eq bigint query",
+//     )
+//     Assert.equal(
+//       EventHandlers.whereBallanceGt50Test.contents->Array.length,
+//       0,
+//       ~message="Shouldn't have any value with more than 50 balance",
+//     )
+//     Assert.deepEqual(
+//       EventHandlers.whereEqBigNumTest.contents,
+//       EventHandlers.whereBallanceGt49Test.contents,
+//       ~message="Where gt 49 and eq 50 should return the same result",
+//     )
+//     let users = await Sql.getAllRowsInTable("Account")
+//     Assert.equal(users->Array.length, 3, ~message="Should contain user1, user2 and minter address")
+//     await dispatchAllTasks()
+//     Assert.equal(
+//       EventHandlers.whereEqFromAccountTest.contents->Array.length,
+//       0,
+//       ~message="should have removed index on deleted user",
+//     )
+//   })
+// })

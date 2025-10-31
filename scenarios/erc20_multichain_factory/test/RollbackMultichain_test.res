@@ -1,12 +1,14 @@
 open Belt
 // open RescriptMocha
 
-let config = {
-  ...RegisterHandlers.registerAllHandlers(),
-  multichain: Unordered,
-}
+// let config = {
+//   ...RegisterHandlers.registerAllHandlers(),
+//   multichain: Unordered,
+// }
+let config = Generated.configWithoutRegistrations
 
 module Mock = {
+  // TODO: TODO: TODO: Use the spec to rebuild the test using new testing util
   /*
   Chain 1 has 6 blocks in 25s intervals and getting batches of 2 blocks at a time
   Chain 2 has 9 blocks at 16s intervals and getting bathes of 3 blocks at a time
@@ -168,35 +170,35 @@ module Mock = {
   )
 }
 
-module Sql = {
-  @send
-  external unsafe: (Postgres.sql, string) => promise<'a> = "unsafe"
+// module Sql = {
+//   @send
+//   external unsafe: (Postgres.sql, string) => promise<'a> = "unsafe"
 
-  let query = unsafe(Db.sql, _)
+//   let query = unsafe(Db.sql, _)
 
-  let getAllRowsInTable = tableName => query(`SELECT * FROM public."${tableName}";`)
+//   let getAllRowsInTable = tableName => query(`SELECT * FROM public."${tableName}";`)
 
-  let getAccountTokenBalance = async (~tokenAddress, ~accountAddress) => {
-    let tokenAddress = tokenAddress->Address.toString
-    let account_id = accountAddress->Address.toString
-    let accountTokenId = EventHandlers.makeAccountTokenId(~tokenAddress, ~account_id)
-    let res = await query(
-      `
-    SELECT * FROM public."AccountToken"
-    WHERE id = '${accountTokenId}';
-    `,
-    )
+//   let getAccountTokenBalance = async (~tokenAddress, ~accountAddress) => {
+//     let tokenAddress = tokenAddress->Address.toString
+//     let account_id = accountAddress->Address.toString
+//     let accountTokenId = EventHandlers.makeAccountTokenId(~tokenAddress, ~account_id)
+//     let res = await query(
+//       `
+//     SELECT * FROM public."AccountToken"
+//     WHERE id = '${accountTokenId}';
+//     `,
+//     )
 
-    res[0]
-    ->Option.map(v => v->S.parseJsonOrThrow(Entities.AccountToken.schema))
-    ->Option.map(a => a.balance)
-  }
-}
-let setupDb = async () => {
-  open Migrations
-  Logging.info("Provisioning Database")
-  let _exitCodeUp = await runUpMigrations(~shouldExit=false, ~reset=true)
-}
+//     res[0]
+//     ->Option.map(v => v->S.parseJsonOrThrow(Entities.AccountToken.schema))
+//     ->Option.map(a => a.balance)
+//   }
+// }
+// let setupDb = async () => {
+//   open Migrations
+//   Logging.info("Provisioning Database")
+//   let _exitCodeUp = await runUpMigrations(~shouldExit=false, ~reset=true)
+// }
 
 // The test is too difficult to maintain
 // describe("Multichain rollback test", () => {

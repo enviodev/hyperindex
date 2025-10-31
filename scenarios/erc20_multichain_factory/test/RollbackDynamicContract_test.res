@@ -1,7 +1,8 @@
 open Belt
 // open RescriptMocha
 
-let config = RegisterHandlers.getConfig()
+// let config = RegisterHandlers.getConfig()
+let config = Generated.configWithoutRegistrations
 
 module Mock = {
   /*
@@ -102,7 +103,7 @@ ensure that this doesn't trigger a reorg
   )
 }
 
-module Sql = RollbackMultichain_test.Sql
+// module Sql = RollbackMultichain_test.Sql
 
 // The test is too difficult to maintain
 // describe("Dynamic contract rollback test", () => {
