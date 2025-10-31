@@ -1380,17 +1380,7 @@ impl ProjectTemplate {
 type chainId = int
 
 @genType
-type chain = [{chain_id_type}]
-
-@genType.import(("./Types.ts", "TestIndexerProcessOptions"))
-type testIndexerProcessOptions = dict<TestIndexer.chainRange>
-
-@genType
-type rec testIndexer = {{
-  process: testIndexerProcessOptions => promise<unit>,
-  history: unit => promise<dict<array<unknown>>>,
-}}
-"#,
+type chain = [{chain_id_type}]"#,
             chain_id_type = chain_configs
                 .iter()
                 .map(|chain_config| format!("#{}", chain_config.network_config.id))
@@ -1398,26 +1388,7 @@ type rec testIndexer = {{
                 .join(" | "),
         );
 
-        let ts_types_code = format!(
-            r#"
-export type TestIndexerChainRange = {{
-  startBlock: number,
-  endBlock: number,
-}}
-
-export type TestIndexerProcessOptions = {{
-{test_indexer_process_options_body}
-}}
-"#,
-            test_indexer_process_options_body = chain_configs
-                .iter()
-                .map(|chain_config| format!(
-                    "  {}?: TestIndexerChainRange",
-                    chain_config.network_config.id
-                ))
-                .collect::<Vec<_>>()
-                .join(",\n"),
-        );
+        let ts_types_code = "".to_string();
 
         Ok(ProjectTemplate {
             project_name: cfg.name.clone(),

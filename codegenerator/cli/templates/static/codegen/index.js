@@ -8,7 +8,6 @@ const BigDecimal = require("bignumber.js");
 
 module.exports = {
   ...handlers,
-  createTestIndexer: TestHelpers.createTestIndexer,
   BigDecimal,
   TestHelpers,
 };
