@@ -220,6 +220,7 @@ let loadByField = (
   let operatorCallName = switch operator {
   | Eq => "eq"
   | Gt => "gt"
+  | Lt => "lt"
   }
   let key = `${entityConfig.name}.getWhere.${fieldName}.${operatorCallName}`
   let inMemTable = inMemoryStore->InMemoryStore.getInMemTable(~entityConfig)
@@ -246,6 +247,7 @@ let loadByField = (
             ~operator=switch index {
             | Single({operator: Gt}) => #">"
             | Single({operator: Eq}) => #"="
+            | Single({operator: Lt}) => #"<"
             },
             ~table=entityConfig.table,
             ~rowsSchema=entityConfig.rowsSchema,
