@@ -562,6 +562,7 @@ and makeMockStorage = (mockDb: t): Persistence.storage => {
         ~operator=switch operator {
         | #"=" => Eq
         | #">" => Gt
+        | #"<" => Lt
         },
       )
       mockDbTable

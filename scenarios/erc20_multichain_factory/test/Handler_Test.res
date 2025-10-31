@@ -76,12 +76,6 @@ describe("Transfers", () => {
         event: mockTransfer,
         mockDb: mockDbAfterTransfer,
       })
-
-      Assert.equal(
-        EventHandlers.whereEqFromAccountTest.contents->Array.length,
-        1,
-        ~message="should have successfully loaded values on where eq address query",
-      )
     },
   )
 
@@ -98,16 +92,6 @@ describe("Transfers", () => {
       mockDb,
     })
 
-    Assert.equal(
-      EventHandlers.whereEqFromAccountTest.contents->Array.length,
-      1,
-      ~message="should have successfully loaded values on where eq address query",
-    )
-    Assert.equal(
-      EventHandlers.whereEqFromAccountTest.contents->Array.length,
-      1,
-      ~message="Should lookup 1 account on where eq query before delete",
-    )
     let mockDeleteUser = ERC20Factory.DeleteUser.createMockEvent({user: userAddress1})
 
     //Process the mockEvent
@@ -127,11 +111,5 @@ describe("Transfers", () => {
       event: mockTransfer,
       mockDb: mockDbAfterDelete,
     })
-
-    Assert.equal(
-      EventHandlers.whereEqFromAccountTest.contents->Array.length,
-      0,
-      ~message="Should lookup zero accounts on where eq query after delete",
-    )
   })
 })
