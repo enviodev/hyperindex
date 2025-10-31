@@ -3,7 +3,7 @@ type chainRange = {startBlock: int, endBlock: int}
 type state = Unititialized | Running | Finished
 
 type t = {
-  run: dict<chainRange> => promise<unit>,
+  process: dict<chainRange> => promise<unit>,
   history: unit => promise<dict<array<unknown>>>,
 }
 
@@ -39,7 +39,7 @@ let factory = (
       sql,
     }
 
-    let run = async chainsToRun => {
+    let process = async chainsToRun => {
       switch state.contents {
       | Unititialized =>
         state.contents = Running
@@ -201,7 +201,7 @@ let factory = (
       }
     }
     {
-      run,
+      process,
       history,
     }
   }

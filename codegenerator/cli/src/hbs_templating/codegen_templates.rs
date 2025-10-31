@@ -1382,12 +1382,12 @@ type chainId = int
 @genType
 type chain = [{chain_id_type}]
 
-@genType.import(("./Types.ts", "TestIndexerRunOptions"))
-type testIndexerRunOptions = dict<TestIndexer.chainRange>
+@genType.import(("./Types.ts", "TestIndexerProcessOptions"))
+type testIndexerProcessOptions = dict<TestIndexer.chainRange>
 
 @genType
 type rec testIndexer = {{
-  run: testIndexerRunOptions => promise<unit>,
+  process: testIndexerProcessOptions => promise<unit>,
   history: unit => promise<dict<array<unknown>>>,
 }}
 "#,
@@ -1400,19 +1400,19 @@ type rec testIndexer = {{
 
         let ts_types_code = format!(
             r#"
-export type TestIndexerChainRunRange = {{
+export type TestIndexerChainRange = {{
   startBlock: number,
   endBlock: number,
 }}
 
-export type TestIndexerRunOptions = {{
-{test_indexer_run_options_body}
+export type TestIndexerProcessOptions = {{
+{test_indexer_process_options_body}
 }}
 "#,
-            test_indexer_run_options_body = chain_configs
+            test_indexer_process_options_body = chain_configs
                 .iter()
                 .map(|chain_config| format!(
-                    "  {}?: TestIndexerChainRunRange",
+                    "  {}?: TestIndexerChainRange",
                     chain_config.network_config.id
                 ))
                 .collect::<Vec<_>>()
