@@ -43,7 +43,7 @@ type storage = {
   // Should initialize the storage so we can start interacting with it
   // Eg create connection, schema, tables, etc.
   initialize: (
-    ~chainConfigs: array<InternalConfig.chain>=?,
+    ~chainConfigs: array<Config.chain>=?,
     ~entities: array<Internal.entityConfig>=?,
     ~enums: array<Internal.enumConfig<Internal.enum>>=?,
   ) => promise<initialState>,
@@ -91,7 +91,10 @@ type t = {
   allEntities: array<Internal.entityConfig>,
   allEnums: array<Internal.enumConfig<Internal.enum>>,
   mutable storageStatus: storageStatus,
-  storage: storage,
+  mutable storage: storage,
+  // FIXME: This is temporary to move it library
+  // Should be a part of the storage interface and db agnostic
+  mutable sql: Postgres.sql,
 }
 
 let entityHistoryActionEnumConfig: Internal.enumConfig<EntityHistory.RowAction.t> = {
@@ -106,6 +109,7 @@ let make = (
   // TODO: Should only pass userEnums and create internal config in runtime
   ~allEnums,
   ~storage,
+  ~sql,
 ) => {
   let allEntities = userEntities->Js.Array2.concat([InternalTable.DynamicContractRegistry.config])
   let allEnums =
@@ -116,6 +120,7 @@ let make = (
     allEnums,
     storageStatus: Unknown,
     storage,
+    sql,
   }
 }
 

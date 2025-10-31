@@ -4,7 +4,7 @@ type hyperFuelConfig = {endpointUrl: string}
 
 @genType.opaque
 type rpcConfig = {
-  syncConfig: InternalConfig.sourceSync,
+  syncConfig: Config.sourceSync,
 }
 
 @genType

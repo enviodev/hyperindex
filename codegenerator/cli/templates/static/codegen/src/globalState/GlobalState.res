@@ -40,7 +40,7 @@ module WriteThrottlers = {
 }
 
 type t = {
-  config: Config.t,
+  indexer: Indexer.t,
   chainManager: ChainManager.t,
   processedBatches: int,
   currentlyProcessingBatch: bool,
@@ -54,9 +54,9 @@ type t = {
   id: int,
 }
 
-let make = (~config: Config.t, ~chainManager: ChainManager.t, ~shouldUseTui=false) => {
+let make = (~indexer: Indexer.t, ~chainManager: ChainManager.t, ~shouldUseTui=false) => {
   {
-    config,
+    indexer,
     currentlyProcessingBatch: false,
     processedBatches: 0,
     chainManager,
@@ -157,7 +157,11 @@ let updateChainFetcherCurrentBlockHeight = (chainFetcher: ChainFetcher.t, ~curre
   }
 }
 
-let updateChainMetadataTable = (cm: ChainManager.t, ~throttler: Throttler.t) => {
+let updateChainMetadataTable = (
+  cm: ChainManager.t,
+  ~persistence: Persistence.t,
+  ~throttler: Throttler.t,
+) => {
   let chainsData: dict<InternalTable.Chains.metaFields> = Js.Dict.empty()
 
   cm.chainFetchers
@@ -178,7 +182,7 @@ let updateChainMetadataTable = (cm: ChainManager.t, ~throttler: Throttler.t) => 
 
   //Don't await this set, it can happen in its own time
   throttler->Throttler.schedule(() =>
-    Db.sql
+    persistence.sql
     ->InternalTable.Chains.setMeta(~pgSchema=Db.publicSchema, ~chainsData)
     ->Promise.ignoreValue
   )
@@ -217,7 +221,7 @@ let updateProgressedChains = (chainManager: ChainManager.t, ~batch: Batch.t) => 
             ~chainId=chain->ChainMap.Chain.toChainId,
           )
         }
-        
+
         // Calculate and set latency metrics
         switch batch->Batch.findLastEventItem(~chainId=chain->ChainMap.Chain.toChainId) {
         | Some(eventItem) => {
@@ -225,12 +229,12 @@ let updateProgressedChains = (chainManager: ChainManager.t, ~batch: Batch.t) => 
             let currentTimeMs = Js.Date.now()->Float.toInt
             let blockTimestampMs = blockTimestamp * 1000
             let latencyMs = currentTimeMs - blockTimestampMs
-            
+
             Prometheus.ProgressLatency.set(~latencyMs, ~chainId=chain->ChainMap.Chain.toChainId)
           }
         | None => ()
         }
-        
+
         {
           ...cf,
           // Since we process per chain always in order,
@@ -403,7 +407,7 @@ let validatePartitionQueryResponse = (
   | ReorgDetected(reorgDetected) => {
       chainFetcher.logger->Logging.childInfo(
         reorgDetected->ReorgDetection.reorgDetectedToLogParams(
-          ~shouldRollbackOnReorg=state.config->Config.shouldRollbackOnReorg,
+          ~shouldRollbackOnReorg=state.indexer.config.shouldRollbackOnReorg,
         ),
       )
       Prometheus.ReorgCount.increment(~chain)
@@ -411,7 +415,7 @@ let validatePartitionQueryResponse = (
         ~blockNumber=reorgDetected.scannedBlock.blockNumber,
         ~chain,
       )
-      if state.config->Config.shouldRollbackOnReorg {
+      if state.indexer.config.shouldRollbackOnReorg {
         Some(reorgDetected.scannedBlock.blockNumber)
       } else {
         None
@@ -531,7 +535,7 @@ let processPartitionQueryResponse = async (
     await ChainFetcher.runContractRegistersOrThrow(
       ~itemsWithContractRegister,
       ~chain,
-      ~config=state.config,
+      ~config=state.indexer.config,
     )
   }
 
@@ -590,7 +594,7 @@ let actionReducer = (state: t, action: action) => {
   switch action {
   | FinishWaitingForNewBlock({chain, currentBlockHeight}) => {
       let isBelowReorgThreshold =
-        !state.chainManager.isInReorgThreshold && state.config->Config.shouldRollbackOnReorg
+        !state.chainManager.isInReorgThreshold && state.indexer.config.shouldRollbackOnReorg
       let shouldEnterReorgThreshold =
         isBelowReorgThreshold &&
         state.chainManager.chainFetchers
@@ -635,7 +639,7 @@ let actionReducer = (state: t, action: action) => {
     )
   | EventBatchProcessed({batch}) =>
     let maybePruneEntityHistory =
-      state.config->Config.shouldPruneHistory(
+      state.indexer.config->Config.shouldPruneHistory(
         ~isInReorgThreshold=state.chainManager.isInReorgThreshold,
       )
         ? [PruneStaleEntityHistory]
@@ -655,7 +659,6 @@ let actionReducer = (state: t, action: action) => {
       state.chainManager.chainFetchers,
     )
       ? {
-          // state.config.persistence.storage
           Logging.info("All chains are caught up to end blocks.")
 
           // Keep the indexer process running in TUI mode
@@ -812,7 +815,7 @@ let injectedTaskReducer = (
       switch state.chainManager->ChainManager.getSafeCheckpointId {
       | None => ()
       | Some(safeCheckpointId) =>
-        await Db.sql->InternalTable.Checkpoints.pruneStaleCheckpoints(
+        await state.indexer.persistence.sql->InternalTable.Checkpoints.pruneStaleCheckpoints(
           ~pgSchema=Env.Db.publicSchema,
           ~safeCheckpointId,
         )
@@ -827,7 +830,7 @@ let injectedTaskReducer = (
           let timeRef = Hrtime.makeTimer()
           try {
             let () =
-              await Db.sql->EntityHistory.pruneStaleEntityHistory(
+              await state.indexer.persistence.sql->EntityHistory.pruneStaleEntityHistory(
                 ~entityName=entityConfig.name,
                 ~entityIndex=entityConfig.index,
                 ~pgSchema=Env.Db.publicSchema,
@@ -858,10 +861,18 @@ let injectedTaskReducer = (
     let {chainManager, writeThrottlers} = state
     switch shouldExit {
     | ExitWithSuccess =>
-      updateChainMetadataTable(chainManager, ~throttler=writeThrottlers.chainMetaData)
+      updateChainMetadataTable(
+        chainManager,
+        ~throttler=writeThrottlers.chainMetaData,
+        ~persistence=state.indexer.persistence,
+      )
       dispatchAction(SuccessExit)
     | NoExit =>
-      updateChainMetadataTable(chainManager, ~throttler=writeThrottlers.chainMetaData)->ignore
+      updateChainMetadataTable(
+        chainManager,
+        ~throttler=writeThrottlers.chainMetaData,
+        ~persistence=state.indexer.persistence,
+      )->ignore
     }
   | NextQuery(chainCheck) =>
     let fetchForChain = checkAndFetchForChain(
@@ -885,16 +896,18 @@ let injectedTaskReducer = (
   | ProcessEventBatch =>
     if !state.currentlyProcessingBatch && !isPreparingRollback(state) {
       let batch =
-        state.chainManager->ChainManager.createBatch(~batchSizeTarget=state.config.batchSize)
+        state.chainManager->ChainManager.createBatch(
+          ~batchSizeTarget=state.indexer.config.batchSize,
+        )
 
       let progressedChainsById = batch.progressedChainsById
       let totalBatchSize = batch.totalBatchSize
 
       let isInReorgThreshold = state.chainManager.isInReorgThreshold
-      let shouldSaveHistory = state.config->Config.shouldSaveHistory(~isInReorgThreshold)
+      let shouldSaveHistory = state.indexer.config->Config.shouldSaveHistory(~isInReorgThreshold)
 
       let isBelowReorgThreshold =
-        !state.chainManager.isInReorgThreshold && state.config->Config.shouldRollbackOnReorg
+        !state.chainManager.isInReorgThreshold && state.indexer.config.shouldRollbackOnReorg
       let shouldEnterReorgThreshold =
         isBelowReorgThreshold &&
         state.chainManager.chainFetchers
@@ -946,7 +959,7 @@ let injectedTaskReducer = (
           ~inMemoryStore,
           ~isInReorgThreshold,
           ~loadManager=state.loadManager,
-          ~config=state.config,
+          ~indexer=state.indexer,
           ~chainFetchers=state.chainManager.chainFetchers,
         ) {
         | exception exn =>
@@ -1005,7 +1018,7 @@ let injectedTaskReducer = (
       let reorgChainId = reorgChain->ChainMap.Chain.toChainId
 
       let rollbackTargetCheckpointId = {
-        switch await Db.sql->InternalTable.Checkpoints.getRollbackTargetCheckpoint(
+        switch await state.indexer.persistence.sql->InternalTable.Checkpoints.getRollbackTargetCheckpoint(
           ~pgSchema=Env.Db.publicSchema,
           ~reorgChainId,
           ~lastKnownValidBlockNumber=rollbackTargetBlockNumber,
@@ -1021,7 +1034,7 @@ let injectedTaskReducer = (
 
       {
         let rollbackProgressDiff =
-          await Db.sql->InternalTable.Checkpoints.getRollbackProgressDiff(
+          await state.indexer.persistence.sql->InternalTable.Checkpoints.getRollbackProgressDiff(
             ~pgSchema=Env.Db.publicSchema,
             ~rollbackTargetCheckpointId,
           )
@@ -1105,7 +1118,10 @@ let injectedTaskReducer = (
       })
 
       // Construct in Memory store with rollback diff
-      let diff = await IO.prepareRollbackDiff(~rollbackTargetCheckpointId)
+      let diff = await IO.prepareRollbackDiff(
+        ~rollbackTargetCheckpointId,
+        ~persistence=state.indexer.persistence,
+      )
 
       let chainManager = {
         ...state.chainManager,

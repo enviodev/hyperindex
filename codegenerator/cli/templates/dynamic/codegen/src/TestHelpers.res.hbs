@@ -121,14 +121,13 @@ module EventFunctions = {
       mockEventData->Belt.Option.getWithDefault({})
     let block = block->Belt.Option.getWithDefault({})->MockBlock.toBlock
     let transaction = transaction->Belt.Option.getWithDefault({})->MockTransaction.toTransaction
-    let config = RegisterHandlers.getConfig()
     let event: Internal.event = {
       params,
       transaction,
       chainId: switch chainId {
       | Some(chainId) => chainId
       | None =>
-        switch config.defaultChain {
+        switch Generated.configWithoutRegistrations.defaultChain {
         | Some(chainConfig) => chainConfig.id
         | None =>
           Js.Exn.raiseError(

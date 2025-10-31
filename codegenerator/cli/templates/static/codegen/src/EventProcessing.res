@@ -162,7 +162,7 @@ let runHandlerOrThrow = async (
   ~checkpointId,
   ~inMemoryStore,
   ~loadManager,
-  ~config: Config.t,
+  ~indexer: Indexer.t,
   ~shouldSaveHistory,
   ~shouldBenchmark,
   ~chains: Internal.chains,
@@ -174,7 +174,7 @@ let runHandlerOrThrow = async (
         item,
         inMemoryStore,
         loadManager,
-        persistence: config.persistence,
+        persistence: indexer.persistence,
         shouldSaveHistory,
         checkpointId,
         isPreload: false,
@@ -211,7 +211,7 @@ let runHandlerOrThrow = async (
           ~checkpointId,
           ~inMemoryStore,
           ~loadManager,
-          ~persistence=config.persistence,
+          ~persistence=indexer.persistence,
           ~shouldSaveHistory,
           ~shouldBenchmark,
           ~chains,
@@ -219,7 +219,7 @@ let runHandlerOrThrow = async (
       | None => ()
       }
 
-      if config.enableRawEvents {
+      if indexer.config.enableRawEvents {
         item->Internal.castUnsafeEventItem->addItemToRawEvents(~inMemoryStore)
       }
     }
@@ -314,7 +314,7 @@ let runBatchHandlersOrThrow = async (
   batch: Batch.t,
   ~inMemoryStore,
   ~loadManager,
-  ~config,
+  ~indexer,
   ~shouldSaveHistory,
   ~shouldBenchmark,
   ~chains: Internal.chains,
@@ -334,7 +334,7 @@ let runBatchHandlersOrThrow = async (
         ~checkpointId,
         ~inMemoryStore,
         ~loadManager,
-        ~config,
+        ~indexer,
         ~shouldSaveHistory,
         ~shouldBenchmark,
         ~chains,
@@ -374,7 +374,7 @@ let processEventBatch = async (
   ~inMemoryStore: InMemoryStore.t,
   ~isInReorgThreshold,
   ~loadManager,
-  ~config: Config.t,
+  ~indexer: Indexer.t,
   ~chainFetchers: ChainMap.t<ChainFetcher.t>,
 ) => {
   let totalBatchSize = batch.totalBatchSize
@@ -399,7 +399,7 @@ let processEventBatch = async (
     if batch.items->Utils.Array.notEmpty {
       await batch->preloadBatchOrThrow(
         ~loadManager,
-        ~persistence=config.persistence,
+        ~persistence=indexer.persistence,
         ~inMemoryStore,
         ~chains,
       )
@@ -411,8 +411,8 @@ let processEventBatch = async (
       await batch->runBatchHandlersOrThrow(
         ~inMemoryStore,
         ~loadManager,
-        ~config,
-        ~shouldSaveHistory=config->Config.shouldSaveHistory(~isInReorgThreshold),
+        ~indexer,
+        ~shouldSaveHistory=indexer.config->Config.shouldSaveHistory(~isInReorgThreshold),
         ~shouldBenchmark=Env.Benchmark.shouldSaveData,
         ~chains,
       )
@@ -422,11 +422,11 @@ let processEventBatch = async (
       timeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
 
     let rec executeBatch = async (~escapeTables=?) => {
-      switch await Db.sql->IO.executeBatch(
+      switch await indexer.persistence.sql->IO.executeBatch(
         ~batch,
         ~inMemoryStore,
         ~isInReorgThreshold,
-        ~config,
+        ~indexer,
         ~escapeTables?,
       ) {
       | exception Persistence.StorageError({message, reason}) =>

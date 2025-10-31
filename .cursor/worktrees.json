@@ -1,0 +1,3 @@
+{
+  "setup-worktree": ["cd scenarios/test_codegen && pnpm install"]
+}

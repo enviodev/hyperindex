@@ -4,7 +4,7 @@ let chain1337 = ChainMap.Chain.makeUnsafe(~chainId=1337)
 
 let contracts = [
   {
-    InternalConfig.name: "Gravatar",
+    Config.name: "Gravatar",
     abi: Types.Gravatar.abi,
     addresses: ["0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3"->Address.Evm.fromStringOrThrow],
     events: [
@@ -38,7 +38,7 @@ let evmContracts = contracts->Js.Array2.map((contract): Internal.evmContractConf
   ),
 })
 
-let mockChainConfig: InternalConfig.chain = {
+let mockChainConfig: Config.chain = {
   id: 1337,
   maxReorgDepth: 200,
   startBlock: 1,
@@ -48,7 +48,7 @@ let mockChainConfig: InternalConfig.chain = {
       chain: chain1337,
       contracts: evmContracts,
       sourceFor: Sync,
-      syncConfig: Config.getSyncConfig({
+      syncConfig: NetworkSources.getSyncConfig({
         initialBlockInterval: 10000,
         backoffMultiplicative: 10000.0,
         accelerationAdditive: 10000,

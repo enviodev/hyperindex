@@ -1,4 +1,3 @@
-let sql = Db.sql
 let unsafe = Postgres.unsafe
 
 let deleteAllTables: unit => promise<unit> = async () => {
@@ -12,7 +11,7 @@ let deleteAllTables: unit => promise<unit> = async () => {
       GRANT ALL ON SCHEMA ${Env.Db.publicSchema} TO public;
     END $$;`
 
-  await sql->unsafe(query)
+  await Generated.codegenPersistence.sql->unsafe(query)
 }
 
 type t
@@ -26,10 +25,9 @@ let runUpMigrations = async (
   // Reset is used for db-setup
   ~reset=false,
 ) => {
-  let config = RegisterHandlers.getConfigWithoutRegistrations()
-
+  let config = Generated.configWithoutRegistrations
   let exitCode = try {
-    await config.persistence->Persistence.init(
+    await Generated.codegenPersistence->Persistence.init(
       ~reset,
       ~chainConfigs=config.chainMap->ChainMap.values,
     )
