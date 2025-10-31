@@ -13,7 +13,7 @@ describe("Load and save an entity with a Timestamp from DB", () => {
   Async.it("be able to set and read entities with Timestamp from DB", async () => {
     This.timeout(5 * 1000)
 
-    let sql = Db.sql
+    let sql = Generated.codegenPersistence.sql
     /// Setup DB
     let testEntity: Entities.EntityWithTimestamp.t = {
       id: "testEntity",
@@ -23,7 +23,7 @@ describe("Load and save an entity with a Timestamp from DB", () => {
       ~items=[testEntity->Entities.EntityWithTimestamp.castToInternal],
       ~table=Entities.EntityWithTimestamp.table,
       ~itemSchema=Entities.EntityWithTimestamp.schema,
-      ~pgSchema=Config.storagePgSchema,
+      ~pgSchema=Generated.storagePgSchema,
     )
 
     let inMemoryStore = InMemoryStore.make()
@@ -37,7 +37,7 @@ describe("Load and save an entity with a Timestamp from DB", () => {
     let handlerContext = UserContext.getHandlerContext({
       item,
       loadManager,
-      persistence: Config.codegenPersistence,
+      persistence: Generated.codegenPersistence,
       inMemoryStore,
       shouldSaveHistory: false,
       isPreload: false,

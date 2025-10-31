@@ -13,7 +13,7 @@ describe("Load and save an entity with a BigDecimal from DB", () => {
   Async.it("be able to set and read entities with BigDecimal from DB", async () => {
     This.timeout(5 * 1000)
 
-    let sql = Db.sql
+    let sql = Generated.codegenPersistence.sql
     /// Setup DB
     let testEntity1: Entities.EntityWithBigDecimal.t = {
       id: "testEntity",
@@ -31,7 +31,7 @@ describe("Load and save an entity with a BigDecimal from DB", () => {
       ],
       ~table=Entities.EntityWithBigDecimal.table,
       ~itemSchema=Entities.EntityWithBigDecimal.schema,
-      ~pgSchema=Config.storagePgSchema,
+      ~pgSchema=Generated.storagePgSchema,
     )
 
     let inMemoryStore = InMemoryStore.make()
@@ -45,7 +45,7 @@ describe("Load and save an entity with a BigDecimal from DB", () => {
     let handlerContext = UserContext.getHandlerContext({
       item,
       loadManager,
-      persistence: Config.codegenPersistence,
+      persistence: Generated.codegenPersistence,
       inMemoryStore,
       shouldSaveHistory: false,
       isPreload: false,

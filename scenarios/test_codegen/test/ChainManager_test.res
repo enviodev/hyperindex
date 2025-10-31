@@ -2,7 +2,7 @@ open Belt
 open RescriptMocha
 
 let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) => {
-  let config = RegisterHandlers.registerAllHandlers()
+  let config = Generated.configWithoutRegistrations
   let allEvents = []
   let numberOfMockEventsCreated = ref(0)
 

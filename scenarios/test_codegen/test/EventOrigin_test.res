@@ -50,7 +50,7 @@ describe("Chains State", () => {
         let handlerContext = UserContext.getHandlerContext({
           item,
           loadManager,
-          persistence: Config.codegenPersistence,
+          persistence: Generated.codegenPersistence,
           inMemoryStore,
           shouldSaveHistory: false,
           isPreload: false,

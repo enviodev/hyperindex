@@ -10,15 +10,16 @@ import {
   {{contract.name.capitalized}},
 {{/each}}
   MockDb,
-  Addresses 
+  Addresses
 } from "./src/TestHelpers.gen";
+export { createTestIndexer } from "./src/TestHelpers.gen";
 
 export const TestHelpers = {
 {{#each codegen_contracts as |contract|}}
   {{contract.name.capitalized}},
 {{/each}}
   MockDb,
-  Addresses 
+  Addresses
 };
 
 export {

@@ -15,4 +15,4 @@ export const getLocalChainConfig: (nftFactoryContractAddress:Address_t) => chain
 
 export const makeChainManager: (cfg:chainConfig) => chainManager = Integration_ts_helpersJS.makeChainManager as any;
 
-export const startProcessing: (config:unknown, cfg:chainConfig, chainManager:chainManager) => void = Integration_ts_helpersJS.startProcessing as any;
+export const startProcessing: <T1>(_config:T1, _cfg:chainConfig, _chainManager:chainManager) => void = Integration_ts_helpersJS.startProcessing as any;

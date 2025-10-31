@@ -15,10 +15,10 @@ describe("E2E Integration Test", () => {
 
     let contracts = await SetupRpcNode.deployContracts()
     await SetupRpcNode.runBasicGravatarTransactions(contracts.gravatar)
-    let localChainConfig: InternalConfig.chain = {
+    let localChainConfig: Config.chain = {
       let contracts = [
         {
-          InternalConfig.name: "Gravatar",
+          Config.name: "Gravatar",
           abi: Types.Gravatar.abi,
           addresses: ["0x5FbDB2315678afecb367f032d93F642f64180aa3"->Address.Evm.fromStringOrThrow],
           events: [
@@ -69,11 +69,11 @@ describe("E2E Integration Test", () => {
       }
     }
 
-    let config = RegisterHandlers.registerAllHandlers()
+    let indexer = Generated.getIndexer()
 
     let chainManager = Integration_ts_helpers.makeChainManager(localChainConfig)
 
-    let globalState = GlobalState.make(~config, ~chainManager)
+    let globalState = GlobalState.make(~indexer, ~chainManager)
 
     let gsManager = globalState->GlobalStateManager.make
 

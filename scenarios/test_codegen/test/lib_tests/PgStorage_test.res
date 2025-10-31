@@ -622,7 +622,7 @@ WHERE cp."block_hash" IS NOT NULL
     Async.it(
       "Should create correct SQL for single chain config",
       async () => {
-        let chainConfig: InternalConfig.chain = {
+        let chainConfig: Config.chain = {
           id: 1,
           startBlock: 100,
           endBlock: 200,
@@ -650,7 +650,7 @@ VALUES (1, 100, 200, 5, 0, NULL, -1, -1, NULL, 0, false, 0);`
     Async.it(
       "Should create correct SQL for single chain config with no end block",
       async () => {
-        let chainConfig: InternalConfig.chain = {
+        let chainConfig: Config.chain = {
           id: 1,
           startBlock: 100,
           maxReorgDepth: 5,
@@ -677,7 +677,7 @@ VALUES (1, 100, NULL, 5, 0, NULL, -1, -1, NULL, 0, false, 0);`
     Async.it(
       "Should create correct SQL for multiple chain configs",
       async () => {
-        let chainConfig1: InternalConfig.chain = {
+        let chainConfig1: Config.chain = {
           id: 1,
           startBlock: 100,
           endBlock: 200,
@@ -686,7 +686,7 @@ VALUES (1, 100, NULL, 5, 0, NULL, -1, -1, NULL, 0, false, 0);`
           sources: [],
         }
 
-        let chainConfig2: InternalConfig.chain = {
+        let chainConfig2: Config.chain = {
           id: 42,
           startBlock: 500,
           maxReorgDepth: 0,

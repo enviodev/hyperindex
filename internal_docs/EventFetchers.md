@@ -32,7 +32,7 @@ TODO: currently the ChainManager is passed directly to the `EventProcessor` as d
 classDiagram
   class ChainFetcher {
     fetchedEventQueue: ChainEventQueue.t,
-    chainConfig: InternalConfig.chain,
+    chainConfig: Config.chain,
     source: Source.source,
 
     startFetchingEvents(): promise

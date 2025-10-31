@@ -84,7 +84,7 @@ let hasUnorderedReadyItem = (fetchStates: ChainMap.t<FetchState.t>) => {
 
 let hasMultichainReadyItem = (
   fetchStates: ChainMap.t<FetchState.t>,
-  ~multichain: InternalConfig.multichain,
+  ~multichain: Config.multichain,
 ) => {
   switch multichain {
   | Ordered => hasOrderedReadyItem(fetchStates)
@@ -496,7 +496,7 @@ let prepareUnorderedBatch = (
 let make = (
   ~checkpointIdBeforeBatch,
   ~chainsBeforeBatch: ChainMap.t<chainBeforeBatch>,
-  ~multichain: InternalConfig.multichain,
+  ~multichain: Config.multichain,
   ~batchSizeTarget,
 ) => {
   if (

@@ -11,7 +11,7 @@ type t = {
   logger: Pino.t,
   fetchState: FetchState.t,
   sourceManager: SourceManager.t,
-  chainConfig: InternalConfig.chain,
+  chainConfig: Config.chain,
   //The latest known block of the chain
   currentBlockHeight: int,
   isProgressAtHead: bool,
@@ -26,13 +26,14 @@ type t = {
 
 //CONSTRUCTION
 let make = (
-  ~chainConfig: InternalConfig.chain,
+  ~chainConfig: Config.chain,
   ~dynamicContracts: array<Internal.indexingContract>,
   ~startBlock,
   ~endBlock,
   ~firstEventBlockNumber,
   ~progressBlockNumber,
   ~config: Config.t,
+  ~registrations: EventRegister.registrations,
   ~targetBufferSize,
   ~logger,
   ~timestampCaughtUpToHeadOrEndblock,
@@ -123,37 +124,29 @@ let make = (
     )
   }
 
-  let onBlockConfigs = switch config.registrations {
-  | None => Js.Exn.raiseError("Indexer must be initialized with event registration finished.")
-  | Some(registrations) =>
-    let onBlockConfigs =
-      registrations.onBlockByChainId->Utils.Dict.dangerouslyGetNonOption(
-        chainConfig.id->Int.toString,
-      )
-    switch onBlockConfigs {
-    | Some(onBlockConfigs) =>
-      // TODO: Move it to the EventRegister module
-      // so the error is thrown with better stack trace
-      onBlockConfigs->Array.forEach(onBlockConfig => {
-        if onBlockConfig.startBlock->Option.getWithDefault(startBlock) < startBlock {
+  let onBlockConfigs =
+    registrations.onBlockByChainId->Utils.Dict.dangerouslyGetNonOption(chainConfig.id->Int.toString)
+  switch onBlockConfigs {
+  | Some(onBlockConfigs) =>
+    // TODO: Move it to the EventRegister module
+    // so the error is thrown with better stack trace
+    onBlockConfigs->Array.forEach(onBlockConfig => {
+      if onBlockConfig.startBlock->Option.getWithDefault(startBlock) < startBlock {
+        Js.Exn.raiseError(
+          `The start block for onBlock handler "${onBlockConfig.name}" is less than the chain start block (${startBlock->Belt.Int.toString}). This is not supported yet.`,
+        )
+      }
+      switch endBlock {
+      | Some(chainEndBlock) =>
+        if onBlockConfig.endBlock->Option.getWithDefault(chainEndBlock) > chainEndBlock {
           Js.Exn.raiseError(
-            `The start block for onBlock handler "${onBlockConfig.name}" is less than the chain start block (${startBlock->Belt.Int.toString}). This is not supported yet.`,
+            `The end block for onBlock handler "${onBlockConfig.name}" is greater than the chain end block (${chainEndBlock->Belt.Int.toString}). This is not supported yet.`,
           )
         }
-        switch endBlock {
-        | Some(chainEndBlock) =>
-          if onBlockConfig.endBlock->Option.getWithDefault(chainEndBlock) > chainEndBlock {
-            Js.Exn.raiseError(
-              `The end block for onBlock handler "${onBlockConfig.name}" is greater than the chain end block (${chainEndBlock->Belt.Int.toString}). This is not supported yet.`,
-            )
-          }
-        | None => ()
-        }
-      })
-    | None => ()
-    }
-
-    onBlockConfigs
+      | None => ()
+      }
+    })
+  | None => ()
   }
 
   let fetchState = FetchState.make(
@@ -165,8 +158,9 @@ let make = (
     ~eventConfigs,
     ~targetBufferSize,
     ~chainId=chainConfig.id,
+    // FIXME: Shouldn't set with full history
     ~blockLag=Pervasives.max(
-      !(config->Config.shouldRollbackOnReorg) || isInReorgThreshold ? 0 : chainConfig.maxReorgDepth,
+      !config.shouldRollbackOnReorg || isInReorgThreshold ? 0 : chainConfig.maxReorgDepth,
       Env.indexingBlockLag->Option.getWithDefault(0),
     ),
     ~onBlockConfigs?,
@@ -190,11 +184,11 @@ let make = (
     reorgDetection: ReorgDetection.make(
       ~chainReorgCheckpoints,
       ~maxReorgDepth,
-      ~shouldRollbackOnReorg=config->Config.shouldRollbackOnReorg,
+      ~shouldRollbackOnReorg=config.shouldRollbackOnReorg,
     ),
     safeCheckpointTracking: SafeCheckpointTracking.make(
       ~maxReorgDepth,
-      ~shouldRollbackOnReorg=config->Config.shouldRollbackOnReorg,
+      ~shouldRollbackOnReorg=config.shouldRollbackOnReorg,
       ~chainReorgCheckpoints,
     ),
     currentBlockHeight: 0,
@@ -208,12 +202,13 @@ let make = (
   }
 }
 
-let makeFromConfig = (chainConfig: InternalConfig.chain, ~config, ~targetBufferSize) => {
+let makeFromConfig = (chainConfig: Config.chain, ~config, ~registrations, ~targetBufferSize) => {
   let logger = Logging.createChild(~params={"chainId": chainConfig.id})
 
   make(
     ~chainConfig,
     ~config,
+    ~registrations,
     ~startBlock=chainConfig.startBlock,
     ~endBlock=chainConfig.endBlock,
     ~reorgCheckpoints=[],
@@ -234,11 +229,12 @@ let makeFromConfig = (chainConfig: InternalConfig.chain, ~config, ~targetBufferS
  * This function allows a chain fetcher to be created from metadata, in particular this is useful for restarting an indexer and making sure it fetches blocks from the same place.
  */
 let makeFromDbState = async (
-  chainConfig: InternalConfig.chain,
+  chainConfig: Config.chain,
   ~resumedChainState: Persistence.initialChainState,
   ~reorgCheckpoints,
   ~isInReorgThreshold,
   ~config,
+  ~registrations,
   ~targetBufferSize,
 ) => {
   let chainId = chainConfig.id
@@ -258,6 +254,7 @@ let makeFromDbState = async (
     ~startBlock=resumedChainState.startBlock,
     ~endBlock=resumedChainState.endBlock,
     ~config,
+    ~registrations,
     ~reorgCheckpoints,
     ~maxReorgDepth=resumedChainState.maxReorgDepth,
     ~firstEventBlockNumber=resumedChainState.firstEventBlockNumber,
@@ -430,7 +427,7 @@ let getLastKnownValidBlock = async (
   // Improtant: It's important to not include the reorg detection block number
   // because there might be different instances of the source
   // with mismatching hashes between them.
-  // So we MUST always rollback the block number where we detected a reorg.  
+  // So we MUST always rollback the block number where we detected a reorg.
   let scannedBlockNumbers =
     chainFetcher.reorgDetection->ReorgDetection.getThresholdBlockNumbersBelowBlock(
       ~blockNumber=reorgBlockNumber,

@@ -165,7 +165,7 @@ module Chains = {
     ],
   )
 
-  let initialFromConfig = (chainConfig: InternalConfig.chain) => {
+  let initialFromConfig = (chainConfig: Config.chain) => {
     {
       id: chainConfig.id,
       startBlock: chainConfig.startBlock,
@@ -182,7 +182,7 @@ module Chains = {
     }
   }
 
-  let makeInitialValuesQuery = (~pgSchema, ~chainConfigs: array<InternalConfig.chain>) => {
+  let makeInitialValuesQuery = (~pgSchema, ~chainConfigs: array<Config.chain>) => {
     if chainConfigs->Array.length === 0 {
       None
     } else {

@@ -1,8 +1,7 @@
 import { runUpMigrations } from "../../generated/src/db/Migrations.res.js";
-import Postgres from "postgres";
-import { config } from "../../generated/src/db/Db.res.js";
+import { makeClient } from "../../generated/src/db/Db.res.js";
 
-export const createSql = () => Postgres(config);
+export const createSql = makeClient;
 
 const originalConsoleLog = console.log;
 
