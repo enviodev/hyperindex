@@ -19,15 +19,8 @@ external entitiesToInternal: array<'a> => array<Internal.entity> = "%identity"
 @get
 external getEntityId: internalEntity => string = "id"
 
-exception UnexpectedIdNotDefinedOnEntity
-let getEntityIdUnsafe = (entity: 'entity): id =>
-  switch Utils.magic(entity)["id"] {
-  | Some(id) => id
-  | None =>
-    UnexpectedIdNotDefinedOnEntity->ErrorHandling.mkLogAndRaise(
-      ~msg="Property 'id' does not exist on expected entity object",
-    )
-  }
+// Use InMemoryTable.Entity.getEntityIdUnsafe instead of duplicating the logic
+let getEntityIdUnsafe = InMemoryTable.Entity.getEntityIdUnsafe
 
 //shorthand for punning
 let isPrimaryKey = true
