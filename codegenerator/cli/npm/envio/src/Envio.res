@@ -32,6 +32,15 @@ type logger = {
 @@warning("-30") // Duplicated type names (input)
 @genType.import(("./Types.ts", "Effect"))
 type rec effect<'input, 'output>
+@genType @unboxed
+and rateLimitDuration =
+  | @as("second") Second
+  | @as("minute") Minute
+  | Milliseconds(int)
+@genType @unboxed
+and rateLimit =
+  | @as(false) Disable
+  | Enable({calls: int, per: rateLimitDuration})
 @genType
 and effectOptions<'input, 'output> = {
   /** The name of the effect. Used for logging and debugging. */
@@ -40,6 +49,8 @@ and effectOptions<'input, 'output> = {
   input: S.t<'input>,
   /** The output schema of the effect. */
   output: S.t<'output>,
+  /** Rate limit for the effect. Set to false to disable or provide {calls: number, per: "second" | "minute"} to enable. */
+  rateLimit: rateLimit,
   /** Whether the effect should be cached. */
   cache?: bool,
 }
@@ -54,6 +65,13 @@ and effectArgs<'input> = {
   context: effectContext,
 }
 @@warning("+30")
+
+let durationToMs = (duration: rateLimitDuration) =>
+  switch duration {
+  | Second => 1000
+  | Minute => 60000
+  | Milliseconds(ms) => ms
+  }
 
 let experimental_createEffect = (
   options: effectOptions<'input, 'output>,
@@ -92,6 +110,18 @@ let experimental_createEffect = (
     | None
     | Some(false) =>
       None
+    },
+    rateLimit: switch options.rateLimit {
+    | Disable => None
+    | Enable({calls, per}) =>
+      Some({
+        callsPerDuration: calls,
+        durationMs: per->durationToMs,
+        availableCalls: calls,
+        windowStartTime: Js.Date.now(),
+        queueCount: 0,
+        nextWindowPromise: None,
+      })
     },
   }->(Utils.magic: Internal.effect => effect<'input, 'output>)
 }

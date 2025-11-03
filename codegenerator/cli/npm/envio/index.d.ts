@@ -4,6 +4,8 @@ export type {
   effectContext as EffectContext,
   effectArgs as EffectArgs,
   effectOptions as EffectOptions,
+  rateLimitDuration as RateLimitDuration,
+  rateLimit as RateLimit,
   blockEvent as BlockEvent,
   onBlockArgs as OnBlockArgs,
   onBlockOptions as OnBlockOptions,
@@ -13,6 +15,7 @@ export type { EffectCaller } from "./src/Types.ts";
 import type {
   effect as Effect,
   effectArgs as EffectArgs,
+  rateLimit as RateLimit,
 } from "./src/Envio.gen.ts";
 
 import { schema as bigDecimalSchema } from "./src/bindings/BigDecimal.gen.ts";
@@ -89,6 +92,8 @@ export function experimental_createEffect<
     readonly input: IS;
     /** The output schema of the effect. */
     readonly output: OS;
+    /** Rate limit for the effect. Set to false to disable or provide {calls: number, per: "second" | "minute"} to enable. */
+    readonly rateLimit: RateLimit;
     /** Whether the effect should be cached. */
     readonly cache?: boolean;
   },

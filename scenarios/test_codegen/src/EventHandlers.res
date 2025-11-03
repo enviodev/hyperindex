@@ -5,6 +5,7 @@ let noopEffect = Envio.experimental_createEffect(
     name: "noopEffect",
     input: S.literal(),
     output: S.literal(),
+    rateLimit: Disable,
   },
   async ({input}) => {
     let () = input

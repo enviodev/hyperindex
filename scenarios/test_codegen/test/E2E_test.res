@@ -332,6 +332,7 @@ describe("E2E tests", () => {
         name: "testEffectWithCache",
         input: S.string,
         output: S.string,
+        rateLimit: Disable,
         cache: true,
       },
       async ({input}) => {
@@ -343,6 +344,7 @@ describe("E2E tests", () => {
         name: "testEffect",
         input: S.string,
         output: S.string,
+        rateLimit: Disable,
       },
       async ({input}) => {
         input ++ "-output"
@@ -515,6 +517,7 @@ describe("E2E tests", () => {
               s.fail(`Expected to include '2', got ${v}`)
             },
         ),
+        rateLimit: Disable,
         cache: true,
       },
       async ({input}) => {
@@ -636,4 +639,223 @@ describe("E2E tests", () => {
       )
     },
   )
+
+  Async.it("Effect rate limiting across multiple windows", async () => {
+    let sourceMock = Mock.Source.make(
+      [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
+      ~chain=#1337,
+    )
+    let indexerMock = await Mock.Indexer.make(
+      ~chains=[
+        {
+          chain: #1337,
+          sources: [sourceMock.source],
+        },
+      ],
+    )
+    await Utils.delay(0)
+
+    let queueMetricDuringExecution = ref(None)
+    let activeMetricDuringExecution = ref(None)
+
+    let testEffectMultiWindow = Envio.experimental_createEffect(
+      {
+        name: "testEffectMultiWindow",
+        input: S.string,
+        output: S.string,
+        rateLimit: Enable({calls: 2, per: Milliseconds(15)}),
+      },
+      async ({input}) => {
+        // Add delay to ensure effects take time (longer than metric check delay)
+        await Utils.delay(10)
+        input ++ "-output"
+      },
+    )
+
+    sourceMock.resolveGetHeightOrThrow(300)
+    await Utils.delay(0)
+    await Utils.delay(0)
+    sourceMock.resolveGetItemsOrThrow(
+      [
+        {
+          blockNumber: 100,
+          logIndex: 0,
+          handler: async ({context}) => {
+            // Call effect 6 times - should span 3 windows (2+2+2)
+            let resultsPromise = Promise.all([
+              context.effect(testEffectMultiWindow, "1"),
+              context.effect(testEffectMultiWindow, "2"),
+              context.effect(testEffectMultiWindow, "3"),
+              context.effect(testEffectMultiWindow, "4"),
+              context.effect(testEffectMultiWindow, "5"),
+              context.effect(testEffectMultiWindow, "6"),
+            ])
+
+            // Check metrics while effects are executing
+            await Utils.delay(3)
+            let (queueMetric, activeMetric) = await Promise.all2((
+              indexerMock.metric("envio_effect_queue_count"),
+              indexerMock.metric("envio_effect_active_calls_count"),
+            ))
+            queueMetricDuringExecution := Some(queueMetric)
+            activeMetricDuringExecution := Some(activeMetric)
+
+            let results = await resultsPromise
+            Assert.deepEqual(
+              results,
+              ["1-output", "2-output", "3-output", "4-output", "5-output", "6-output"],
+            )
+          },
+        },
+      ],
+      ~latestFetchedBlockNumber=100,
+    )
+
+    await indexerMock.getBatchWritePromise()
+
+    // All effects should complete successfully - verify via calls count metric
+    Assert.deepEqual(
+      await indexerMock.metric("envio_effect_calls_count"),
+      [{value: "6", labels: Js.Dict.fromArray([("effect", "testEffectMultiWindow")])}],
+      ~message="should have called effect 6 times total",
+    )
+
+    // Check that we captured metrics during execution
+    // With 2 calls per window and 6 total calls: 4 items queued, max 2 active
+    Assert.deepEqual(
+      queueMetricDuringExecution.contents->Option.getExn,
+      [{value: "4", labels: Js.Dict.fromArray([("effect", "testEffectMultiWindow")])}],
+      ~message="queue should have 4 items during execution",
+    )
+    Assert.deepEqual(
+      activeMetricDuringExecution.contents->Option.getExn,
+      [{value: "2", labels: Js.Dict.fromArray([("effect", "testEffectMultiWindow")])}],
+      ~message="active calls should be at rate limit (2)",
+    )
+
+    // Final check - queue should be empty
+    Assert.deepEqual(
+      await indexerMock.metric("envio_effect_queue_count"),
+      [{value: "0", labels: Js.Dict.fromArray([("effect", "testEffectMultiWindow")])}],
+      ~message="queue should be empty after all windows complete",
+    )
+  })
+
+  Async.it("Effect rate limiting with single call per window", async () => {
+    let sourceMock = Mock.Source.make(
+      [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
+      ~chain=#1337,
+    )
+    let indexerMock = await Mock.Indexer.make(
+      ~chains=[
+        {
+          chain: #1337,
+          sources: [sourceMock.source],
+        },
+      ],
+    )
+    await Utils.delay(0)
+
+    let executionOrder = []
+    let queueMetricDuringExecution = ref(None)
+    let activeMetricDuringExecution = ref(None)
+    let queueMetricAfterFirstWindow = ref(None)
+
+    let testEffectNested = Envio.experimental_createEffect(
+      {
+        name: "testEffectNested",
+        input: S.string,
+        output: S.string,
+        rateLimit: Enable({calls: 1, per: Milliseconds(15)}),
+      },
+      async ({input}) => {
+        executionOrder->Array.push(input)->ignore
+        // Add delay to ensure effects take time (longer than metric check delay)
+        await Utils.delay(10)
+        input ++ "-output"
+      },
+    )
+
+    sourceMock.resolveGetHeightOrThrow(300)
+    await Utils.delay(0)
+    await Utils.delay(0)
+
+    // Single batch with 4 calls that will be rate limited
+    sourceMock.resolveGetItemsOrThrow(
+      [
+        {
+          blockNumber: 100,
+          logIndex: 0,
+          handler: async ({context}) => {
+            let resultsPromise = Promise.all([
+              context.effect(testEffectNested, "call-1"),
+              context.effect(testEffectNested, "call-2"),
+              context.effect(testEffectNested, "call-3"),
+              context.effect(testEffectNested, "call-4"),
+            ])
+
+            // Check metrics while effects are executing (shortly after trigger)
+            await Utils.delay(3)
+            let (queueMetric1, activeMetric1) = await Promise.all2((
+              indexerMock.metric("envio_effect_queue_count"),
+              indexerMock.metric("envio_effect_active_calls_count"),
+            ))
+            queueMetricDuringExecution := Some(queueMetric1)
+            activeMetricDuringExecution := Some(activeMetric1)
+
+            // Check again after first window should complete
+            await Utils.delay(14)
+            queueMetricAfterFirstWindow :=
+              Some(await indexerMock.metric("envio_effect_queue_count"))
+
+            let _ = await resultsPromise
+          },
+        },
+      ],
+      ~latestFetchedBlockNumber=100,
+    )
+
+    await indexerMock.getBatchWritePromise()
+
+    // All 4 effects should complete successfully despite rate limiting
+    Assert.deepEqual(executionOrder->Array.length, 4, ~message="should have executed all 4 calls")
+
+    // Verify via calls count metric
+    Assert.deepEqual(
+      await indexerMock.metric("envio_effect_calls_count"),
+      [{value: "4", labels: Js.Dict.fromArray([("effect", "testEffectNested")])}],
+      ~message="should have called effect 4 times total",
+    )
+
+    // Check that we captured metrics during execution
+    // With 1 call per window and 4 total calls: 3 items queued, max 1 active
+    Assert.deepEqual(
+      queueMetricDuringExecution.contents->Option.getExn,
+      [{value: "3", labels: Js.Dict.fromArray([("effect", "testEffectNested")])}],
+      ~message="queue should have 3 items during execution",
+    )
+    Assert.deepEqual(
+      activeMetricDuringExecution.contents->Option.getExn,
+      [{value: "1", labels: Js.Dict.fromArray([("effect", "testEffectNested")])}],
+      ~message="active calls should be at rate limit (1)",
+    )
+
+    // Check metrics after first window
+    let queueMetric2 = queueMetricAfterFirstWindow.contents->Option.getExn
+    let queueValue2 =
+      queueMetric2->Array.get(0)->Option.map(m => m.value)->Option.getWithDefault("0")
+    Assert.ok(
+      queueValue2 != "0" || executionOrder->Array.length == 4,
+      ~message=`queue should have items or all should be done, queue: ${queueValue2}, executed: ${executionOrder
+        ->Array.length
+        ->Int.toString}`,
+    )
+
+    // Final check - queue should be empty
+    Assert.deepEqual(
+      await indexerMock.metric("envio_effect_queue_count"),
+      [{value: "0", labels: Js.Dict.fromArray([("effect", "testEffectNested")])}],
+      ~message="queue should be empty after all batches complete",
+    )
+  })
 })

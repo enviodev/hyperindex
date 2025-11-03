@@ -646,6 +646,18 @@ module EffectCacheInvalidationsCount = {
   }
 }
 
+module EffectQueueCount = {
+  let gauge = SafeGauge.makeOrThrow(
+    ~name="envio_effect_queue_count",
+    ~help="The number of effect calls waiting in the rate limit queue.",
+    ~labelSchema=effectLabelsSchema,
+  )
+
+  let set = (~count, ~effectName) => {
+    gauge->SafeGauge.handleInt(~labels=effectName, ~value=count)
+  }
+}
+
 module StorageLoad = {
   let operationLabelsSchema = S.object(s => s.field("operation", S.string))
 

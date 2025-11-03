@@ -25,6 +25,7 @@ const noopEffect = experimental_createEffect(
     name: "noopEffect",
     input: undefined,
     output: undefined,
+    rateLimit: false,
   },
   async ({ context, input }) => {
     expectType<TypeEqual<typeof input, undefined>>(true);
@@ -46,6 +47,7 @@ const getFiles = experimental_createEffect(
       bar: S.optional(S.string),
     },
     output: S.union(["foo", "files"]),
+    rateLimit: false,
   },
   async ({ context, input }) => {
     if (Math.random() > 0.5) {
@@ -90,6 +92,7 @@ const getBalance = experimental_createEffect(
       blockNumber: S.optional(S.bigint),
     },
     output: S.bigDecimal,
+    rateLimit: false,
   },
   async ({ context, input: { address, blockNumber } }) => {
     try {
@@ -468,6 +471,7 @@ const testEffectWithCache = experimental_createEffect(
       id: S.string,
     },
     output: S.string,
+    rateLimit: false,
     cache: true,
   },
   async ({ input }) => {
@@ -482,6 +486,7 @@ const throwingEffect = experimental_createEffect(
       id: S.string,
     },
     output: S.string,
+    rateLimit: false,
     cache: true,
   },
   async (_) => {

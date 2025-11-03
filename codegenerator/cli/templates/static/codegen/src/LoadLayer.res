@@ -62,6 +62,160 @@ let loadById = (
   )
 }
 
+let callEffect = (
+  ~effect: Internal.effect,
+  ~arg: Internal.effectArgs,
+  ~inMemTable: InMemoryStore.effectCacheInMemTable,
+  ~timerRef,
+) => {
+  let effectName = effect.name
+  let hadActiveCalls = effect.activeCallsCount > 0
+  effect.activeCallsCount = effect.activeCallsCount + 1
+  Prometheus.EffectCalls.activeCallsCount->Prometheus.SafeGauge.handleInt(
+    ~labels=effectName,
+    ~value=effect.activeCallsCount,
+  )
+
+  if hadActiveCalls {
+    Prometheus.EffectCalls.timeCounter->Prometheus.SafeCounter.incrementMany(
+      ~labels=effectName,
+      ~value=effect.prevCallStartTimerRef
+      ->Hrtime.timeSince
+      ->Hrtime.toMillis
+      ->Hrtime.intFromMillis,
+    )
+  }
+  effect.prevCallStartTimerRef = timerRef
+
+  effect.handler(arg)
+  ->Promise.thenResolve(output => {
+    inMemTable.dict->Js.Dict.set(arg.cacheKey, output)
+    if arg.cache {
+      inMemTable.idsToStore->Array.push(arg.cacheKey)->ignore
+    }
+  })
+  ->Promise.finally(() => {
+    effect.activeCallsCount = effect.activeCallsCount - 1
+    Prometheus.EffectCalls.activeCallsCount->Prometheus.SafeGauge.handleInt(
+      ~labels=effectName,
+      ~value=effect.activeCallsCount,
+    )
+    Prometheus.EffectCalls.timeCounter->Prometheus.SafeCounter.incrementMany(
+      ~labels=effectName,
+      ~value=effect.prevCallStartTimerRef
+      ->Hrtime.timeSince
+      ->Hrtime.toMillis
+      ->Hrtime.intFromMillis,
+    )
+    effect.prevCallStartTimerRef = Hrtime.makeTimer()
+
+    Prometheus.EffectCalls.totalCallsCount->Prometheus.SafeCounter.increment(~labels=effectName)
+    Prometheus.EffectCalls.sumTimeCounter->Prometheus.SafeCounter.incrementMany(
+      ~labels=effectName,
+      ~value=timerRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis,
+    )
+  })
+}
+
+let rec executeWithRateLimit = (
+  ~effect: Internal.effect,
+  ~effectArgs: array<Internal.effectArgs>,
+  ~inMemTable,
+  ~isFromQueue: bool,
+) => {
+  let effectName = effect.name
+
+  let timerRef = Hrtime.makeTimer()
+  let promises = []
+
+  switch effect.rateLimit {
+  | None =>
+    // No rate limiting - execute all immediately
+    for idx in 0 to effectArgs->Array.length - 1 {
+      promises
+      ->Array.push(
+        callEffect(
+          ~effect,
+          ~arg=effectArgs->Array.getUnsafe(idx),
+          ~inMemTable,
+          ~timerRef,
+        )->Promise.ignoreValue,
+      )
+      ->ignore
+    }
+
+  | Some(state) =>
+    let now = Js.Date.now()
+
+    // Check if we need to reset the window
+    if now >= state.windowStartTime +. state.durationMs->Int.toFloat {
+      state.availableCalls = state.callsPerDuration
+      state.windowStartTime = now
+      state.nextWindowPromise = None
+    }
+
+    // Split into immediate and queued
+    let immediateCount = Js.Math.min_int(state.availableCalls, effectArgs->Array.length)
+    let immediateArgs = effectArgs->Array.slice(~offset=0, ~len=immediateCount)
+    let queuedArgs = effectArgs->Array.sliceToEnd(immediateCount)
+
+    // Update available calls
+    state.availableCalls = state.availableCalls - immediateCount
+
+    // Call immediate effects
+    for idx in 0 to immediateArgs->Array.length - 1 {
+      promises
+      ->Array.push(
+        callEffect(
+          ~effect,
+          ~arg=immediateArgs->Array.getUnsafe(idx),
+          ~inMemTable,
+          ~timerRef,
+        )->Promise.ignoreValue,
+      )
+      ->ignore
+    }
+
+    if immediateCount > 0 && isFromQueue {
+      // Update queue count metric
+      state.queueCount = state.queueCount - immediateCount
+      Prometheus.EffectQueueCount.set(~count=state.queueCount, ~effectName)
+    }
+
+    // Handle queued items
+    if queuedArgs->Utils.Array.notEmpty {
+      if !isFromQueue {
+        // Update queue count metric
+        state.queueCount = state.queueCount + queuedArgs->Array.length
+        Prometheus.EffectQueueCount.set(~count=state.queueCount, ~effectName)
+      }
+
+      let nextWindowPromise = switch state.nextWindowPromise {
+      | Some(p) => p
+      | None =>
+        let timeUntilReset = state.windowStartTime +. state.durationMs->Int.toFloat -. now
+        let p = Utils.delay(timeUntilReset->Float.toInt)
+        state.nextWindowPromise = Some(p)
+        p
+      }
+
+      // Wait for next window and recursively process queue
+      promises
+      ->Array.push(
+        nextWindowPromise
+        ->Promise.then(() => {
+          executeWithRateLimit(~effect, ~effectArgs=queuedArgs, ~inMemTable, ~isFromQueue=true)
+        })
+        ->Promise.ignoreValue,
+      )
+      ->ignore
+    }
+  }
+
+  // Wait for all to complete
+  promises->Promise.all
+}
+
 let loadEffect = (
   ~loadManager,
   ~persistence: Persistence.t,
@@ -129,68 +283,22 @@ let loadEffect = (
 
     let remainingCallsCount = idsToLoad->Array.length - idsFromCache->Utils.Set.size
     if remainingCallsCount > 0 {
-      let shouldStoreCache = effect.cache->Option.isSome
-
-      let hadActiveCalls = effect.activeCallsCount > 0
-      effect.activeCallsCount = effect.activeCallsCount + remainingCallsCount
-      Prometheus.EffectCalls.activeCallsCount->Prometheus.SafeGauge.handleInt(
-        ~labels=effectName,
-        ~value=effect.activeCallsCount,
-      )
-
-      if hadActiveCalls {
-        Prometheus.EffectCalls.timeCounter->Prometheus.SafeCounter.incrementMany(
-          ~labels=effectName,
-          ~value=effect.prevCallStartTimerRef
-          ->Hrtime.timeSince
-          ->Hrtime.toMillis
-          ->Hrtime.intFromMillis,
-        )
-      }
-      let timerRef = Hrtime.makeTimer()
-      effect.prevCallStartTimerRef = timerRef
-
-      args
-      ->Belt.Array.keepMapU((arg: Internal.effectArgs) => {
-        if idsFromCache->Utils.Set.has(arg.cacheKey) {
-          None
-        } else {
-          Some(
-            effect.handler(arg)
-            ->Promise.thenResolve(output => {
-              inMemTable.dict->Js.Dict.set(arg.cacheKey, output)
-              if shouldStoreCache {
-                inMemTable.idsToStore->Array.push(arg.cacheKey)->ignore
-              }
-            })
-            ->Promise.finally(() => {
-              effect.activeCallsCount = effect.activeCallsCount - 1
-              Prometheus.EffectCalls.activeCallsCount->Prometheus.SafeGauge.handleInt(
-                ~labels=effectName,
-                ~value=effect.activeCallsCount,
-              )
-              Prometheus.EffectCalls.timeCounter->Prometheus.SafeCounter.incrementMany(
-                ~labels=effectName,
-                ~value=effect.prevCallStartTimerRef
-                ->Hrtime.timeSince
-                ->Hrtime.toMillis
-                ->Hrtime.intFromMillis,
-              )
-              effect.prevCallStartTimerRef = Hrtime.makeTimer()
-
-              Prometheus.EffectCalls.totalCallsCount->Prometheus.SafeCounter.increment(
-                ~labels=effectName,
-              )
-              Prometheus.EffectCalls.sumTimeCounter->Prometheus.SafeCounter.incrementMany(
-                ~labels=effectName,
-                ~value=timerRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis,
-              )
-            }),
-          )
+      let argsToCall = []
+      for idx in 0 to args->Array.length - 1 {
+        let arg = args->Array.getUnsafe(idx)
+        if !(idsFromCache->Utils.Set.has(arg.cacheKey)) {
+          argsToCall->Array.push(arg)->ignore
         }
-      })
-      ->Promise.all
-      ->(Utils.magic: promise<array<unit>> => unit)
+      }
+
+      if argsToCall->Utils.Array.notEmpty {
+        await executeWithRateLimit(
+          ~effect,
+          ~effectArgs=argsToCall,
+          ~inMemTable,
+          ~isFromQueue=false,
+        )->Promise.ignoreValue
+      }
     }
   }
 
