@@ -236,3 +236,22 @@ pnpm start
 To view the data in the database open http://localhost:8080/console.
 
 Admin-secret for local Hasura is `testing`.
+
+## Testing
+
+### Running Tests in test_codegen
+
+**Prerequisites:**
+- Compile contracts to generate typechain types: `cd scenarios/test_codegen && npx hardhat compile`
+
+**Commands:**
+```sh
+cd scenarios/test_codegen
+pnpm codegen  # Generate indexer code (only needed after config/schema changes)
+pnpm test     # Run all tests
+pnpm mocha --grep "test name pattern"  # Run specific tests
+```
+
+**Development workflow:**
+- Changes to library code (`codegenerator/cli/npm/envio`): Run `pnpm rescript -w` for live compilation
+- Changes to templates or config: Run `pnpm codegen` then `pnpm test` in `scenarios/test_codegen`
