@@ -237,7 +237,7 @@ let main = async () => {
     let mainArgs: mainArgs = process->argv->Yargs.hideBin->Yargs.yargs->Yargs.argv
     let shouldUseTui = !(mainArgs.tuiOff->Belt.Option.getWithDefault(Env.tuiOffEnvVar))
 
-    let indexer = Generated.getIndexer()
+    let indexer = await Generated.getIndexer()
 
     let gsManagerRef = ref(None)
 

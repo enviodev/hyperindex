@@ -328,7 +328,7 @@ and makeProcessEvents = (mockDb: t, ~chainId=?) => async (
     ) {
       registrations
     } else {
-      Generated.registerAllHandlers()
+      await Generated.registerAllHandlers()
     }
 
     let config = Generated.makeGeneratedConfig()
