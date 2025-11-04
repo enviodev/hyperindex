@@ -33,7 +33,7 @@ let clone = (self: t<'key, 'val>) => {
 }
 
 module Entity = {
-  type relatedEntityId = Types.id
+  type relatedEntityId = string
   type indexWithRelatedIds = (TableIndices.Index.t, Utils.Set.t<relatedEntityId>)
   type indicesSerializedToValue = t<TableIndices.Index.t, indexWithRelatedIds>
   type indexFieldNameToIndices = t<TableIndices.Index.t, indicesSerializedToValue>
@@ -43,9 +43,20 @@ module Entity = {
     entityIndices: Utils.Set.t<TableIndices.Index.t>,
   }
   type t<'entity> = {
-    table: t<Types.id, entityWithIndices<'entity>>,
+    table: t<string, entityWithIndices<'entity>>,
     fieldNameIndices: indexFieldNameToIndices,
   }
+
+  // Helper to extract entity ID from any entity
+  exception UnexpectedIdNotDefinedOnEntity
+  let getEntityIdUnsafe = (entity: 'entity): string =>
+    switch Utils.magic(entity)["id"] {
+    | Some(id) => id
+    | None =>
+      UnexpectedIdNotDefinedOnEntity->ErrorHandling.mkLogAndRaise(
+        ~msg="Property 'id' does not exist on expected entity object",
+      )
+    }
 
   let makeIndicesSerializedToValue = (
     ~index,
@@ -95,10 +106,10 @@ module Entity = {
         ->Array.forEach(((index, relatedEntityIds)) => {
           if index->TableIndices.Index.evaluate(~fieldName, ~fieldValue) {
             //Add entity id to indices and add index to entity indicies
-            relatedEntityIds->Utils.Set.add(Entities.getEntityIdUnsafe(entity))->ignore
+            relatedEntityIds->Utils.Set.add(getEntityIdUnsafe(entity))->ignore
             entityIndices->Utils.Set.add(index)->ignore
           } else {
-            relatedEntityIds->Utils.Set.delete(Entities.getEntityIdUnsafe(entity))->ignore
+            relatedEntityIds->Utils.Set.delete(getEntityIdUnsafe(entity))->ignore
           }
         })
       | _ =>
@@ -109,7 +120,7 @@ module Entity = {
     })
   }
 
-  let deleteEntityFromIndices = (self: t<'entity>, ~entityId: Entities.id, ~entityIndices) =>
+  let deleteEntityFromIndices = (self: t<'entity>, ~entityId: string, ~entityIndices) =>
     entityIndices->Utils.Set.forEach(index => {
       switch self.fieldNameIndices
       ->get(index)
@@ -123,7 +134,7 @@ module Entity = {
 
   let initValue = (
     inMemTable: t<'entity>,
-    ~key: Types.id,
+    ~key: string,
     ~entity: option<'entity>,
     // NOTE: This value is only set to true in the internals of the test framework to create the mockDb.
     ~allowOverWriteEntity=false,
@@ -212,7 +223,7 @@ module Entity = {
   that the entity is not set to the in memory store,
   and the second option means that the entity doesn't esist/deleted.
   It's needed to prevent an additional round trips to the database for deleted entities. */
-  let getUnsafe = (inMemTable: t<'entity>) => (key: Types.id) =>
+  let getUnsafe = (inMemTable: t<'entity>) => (key: string) =>
     inMemTable.table.dict
     ->Js.Dict.unsafeGet(key)
     ->rowToEntity
@@ -282,7 +293,7 @@ module Entity = {
           ->Js.Dict.unsafeGet(fieldName)
         if index->TableIndices.Index.evaluate(~fieldName, ~fieldValue) {
           let _ = row.entityIndices->Utils.Set.add(index)
-          let _ = relatedEntityIds->Utils.Set.add(entity->Entities.getEntityIdUnsafe)
+          let _ = relatedEntityIds->Utils.Set.add(entity->getEntityIdUnsafe)
         }
       | None => ()
       }
@@ -342,3 +353,4 @@ module Entity = {
     },
   }
 }
+
