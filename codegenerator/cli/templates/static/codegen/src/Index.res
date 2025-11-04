@@ -54,7 +54,7 @@ let stateSchema = S.union([
   })),
 ])
 
-let startServer = (~getState, ~indexer: Indexer.t, ~consoleBearerToken: option<string>) => {
+let startServer = (~getState, ~indexer: Indexer.t, ~isDevelopmentMode: bool) => {
   open Express
 
   let app = makeCjs()
@@ -69,7 +69,7 @@ let startServer = (~getState, ~indexer: Indexer.t, ~consoleBearerToken: option<s
     res->setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
     res->setHeader(
       "Access-Control-Allow-Headers",
-      "Origin, X-Requested-With, Content-Type, Accept, Authorization",
+      "Origin, X-Requested-With, Content-Type, Accept",
     )
 
     if req.method === Options {
@@ -87,19 +87,8 @@ let startServer = (~getState, ~indexer: Indexer.t, ~consoleBearerToken: option<s
     res->sendStatus(200)
   })
 
-  let checkIsAuthorizedConsole = req => {
-    switch consoleBearerToken {
-    | None => false
-    | Some(token) =>
-      switch req.headers->Js.Dict.get("authorization") {
-      | Some(authorization) if authorization === `Bearer ${token}` => true
-      | _ => false
-      }
-    }
-  }
-
-  app->get("/console/state", (req, res) => {
-    let state = if req->checkIsAuthorizedConsole {
+  app->get("/console/state", (_req, res) => {
+    let state = if isDevelopmentMode {
       getState()
     } else {
       Disabled({})
@@ -108,8 +97,8 @@ let startServer = (~getState, ~indexer: Indexer.t, ~consoleBearerToken: option<s
     res->json(state->S.reverseConvertToJsonOrThrow(stateSchema))
   })
 
-  app->post("/console/syncCache", (req, res) => {
-    if req->checkIsAuthorizedConsole {
+  app->post("/console/syncCache", (_req, res) => {
+    if isDevelopmentMode {
       (indexer.persistence->Persistence.getInitializedStorageOrThrow).dumpEffectCache()
       ->Promise.thenResolve(_ => res->json(Boolean(true)))
       ->Promise.done
@@ -236,6 +225,9 @@ let main = async () => {
   try {
     let mainArgs: mainArgs = process->argv->Yargs.hideBin->Yargs.yargs->Yargs.argv
     let shouldUseTui = !(mainArgs.tuiOff->Belt.Option.getWithDefault(Env.tuiOffEnvVar))
+    // The most simple check to verify whether we are running in development mode
+    // and prevent exposing the console to public, when creating a real deployment.
+    let isDevelopmentMode = Env.Db.password === "testing"
 
     let indexer = Generated.getIndexer()
 
@@ -252,15 +244,7 @@ let main = async () => {
 
     startServer(
       ~indexer,
-      ~consoleBearerToken={
-        // The most simple check to verify whether we are running in development mode
-        // and prevent exposing the console to public, when creating a real deployment.
-        if Env.Db.password === "testing" {
-          Some("testing")
-        } else {
-          None
-        }
-      },
+      ~isDevelopmentMode,
       ~getState=() =>
         switch gsManagerRef.contents {
         | None => Initializing({})
@@ -325,7 +309,7 @@ let main = async () => {
       ~registrations=indexer.registrations,
       ~persistence=indexer.persistence,
     )
-    let globalState = GlobalState.make(~indexer, ~chainManager, ~shouldUseTui)
+    let globalState = GlobalState.make(~indexer, ~chainManager, ~isDevelopmentMode, ~shouldUseTui)
     let stateUpdatedHook = if shouldUseTui {
       let rerender = EnvioInkApp.startApp(makeAppState(globalState))
       Some(globalState => globalState->makeAppState->rerender)
