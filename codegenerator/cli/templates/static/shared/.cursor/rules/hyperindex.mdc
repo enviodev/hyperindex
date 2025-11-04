@@ -69,10 +69,10 @@ So if there's an external call, you MUST use the Effect API to make it.
 
 ```ts
 // Import the Effect API from "envio"
-import { S, experimental_createEffect } from "envio";
+import { S, createEffect } from "envio";
 
 // Define an effect. It can have any name you want.
-export const getSomething = experimental_createEffect(
+export const getSomething = createEffect(
   {
     // The name for debugging purposes
     name: "getSomething",
@@ -82,6 +82,8 @@ export const getSomething = experimental_createEffect(
       blockNumber: S.number,
     },
     output: S.union([S.string, null]),
+    rateLimit: false,
+    cache: true,
   },
   async ({ input, context }) => {
     // Fetch or other external calls MUST always be done in an effect.

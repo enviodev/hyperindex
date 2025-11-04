@@ -42,6 +42,19 @@ and rateLimit =
   | @as(false) Disable
   | Enable({calls: int, per: rateLimitDuration})
 @genType
+and experimental_effectOptions<'input, 'output> = {
+  /** The name of the effect. Used for logging and debugging. */
+  name: string,
+  /** The input schema of the effect. */
+  input: S.t<'input>,
+  /** The output schema of the effect. */
+  output: S.t<'output>,
+  /** Rate limit for the effect. Set to false to disable or provide {calls: number, per: "second" | "minute"} to enable. */
+  rateLimit?: rateLimit,
+  /** Whether the effect should be cached. */
+  cache?: bool,
+}
+@genType
 and effectOptions<'input, 'output> = {
   /** The name of the effect. Used for logging and debugging. */
   name: string,
@@ -74,7 +87,7 @@ let durationToMs = (duration: rateLimitDuration) =>
   | Milliseconds(ms) => ms
   }
 
-let experimental_createEffect = (
+let createEffect = (
   options: effectOptions<'input, 'output>,
   handler: effectArgs<'input> => promise<'output>,
 ) => {
@@ -123,4 +136,26 @@ let experimental_createEffect = (
       })
     },
   }->(Utils.magic: Internal.effect => effect<'input, 'output>)
+}
+
+@deprecated(
+  "Use createEffect instead. The only difference is that rateLimit option becomes required. Set it to false to keep the same behaviour."
+)
+let experimental_createEffect = (
+  options: experimental_effectOptions<'input, 'output>,
+  handler: effectArgs<'input> => promise<'output>,
+) => {
+  createEffect(
+    {
+      name: options.name,
+      input: options.input,
+      output: options.output,
+      rateLimit: switch options.rateLimit {
+      | Some(rateLimit) => rateLimit
+      | None => Disable
+      },
+      cache: ?options.cache,
+    },
+    handler,
+  )
 }

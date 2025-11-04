@@ -1,6 +1,6 @@
 // Test types
 
-let noopEffect = Envio.experimental_createEffect(
+let noopEffect = Envio.createEffect(
   {
     name: "noopEffect",
     input: S.literal(),

@@ -1,11 +1,5 @@
 import { deepEqual, fail } from "assert";
-import {
-  experimental_createEffect,
-  Effect,
-  S,
-  Logger,
-  EffectCaller,
-} from "envio";
+import { createEffect, Effect, S, Logger, EffectCaller } from "envio";
 import { TestEvents } from "generated";
 import { TestHelpers } from "generated";
 import { EventFiltersTest } from "generated";
@@ -26,7 +20,7 @@ import { expectType, TypeEqual } from "ts-expect";
 import { bytesToHex } from "viem";
 
 // Test effects type inference
-const noopEffect = experimental_createEffect(
+const noopEffect = createEffect(
   {
     name: "noopEffect",
     input: undefined,
@@ -45,7 +39,7 @@ const noopEffect = experimental_createEffect(
     return undefined;
   }
 );
-const getFiles = experimental_createEffect(
+const getFiles = createEffect(
   {
     name: "getFiles",
     input: {
@@ -90,7 +84,7 @@ const getFiles = experimental_createEffect(
     return "foo";
   }
 );
-const getBalance = experimental_createEffect(
+const getBalance = createEffect(
   {
     name: "getBalance",
     input: {
@@ -470,7 +464,7 @@ Gravatar.FactoryEvent.contractRegister(({ event, context }) => {
   }
 });
 
-const testEffectWithCache = experimental_createEffect(
+const testEffectWithCache = createEffect(
   {
     name: "testEffectWithCache",
     input: {
@@ -502,7 +496,7 @@ const testEffectWithCache = experimental_createEffect(
   }
 );
 
-const throwingEffect = experimental_createEffect(
+const throwingEffect = createEffect(
   {
     name: "throwingEffect",
     input: {

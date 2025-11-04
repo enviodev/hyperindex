@@ -76,7 +76,7 @@ type Flatten<T> = T extends object
 // })
 // The behaviour is inspired by Sury code:
 // https://github.com/DZakh/sury/blob/551f8ee32c1af95320936d00c086e5fb337f59fa/packages/sury/src/S.d.ts#L344C1-L355C50
-export function experimental_createEffect<
+export function createEffect<
   IS,
   OS,
   I = UnknownToOutput<IS>,
@@ -94,6 +94,33 @@ export function experimental_createEffect<
     readonly output: OS;
     /** Rate limit for the effect. Set to false to disable or provide {calls: number, per: "second" | "minute"} to enable. */
     readonly rateLimit: RateLimit;
+    /** Whether the effect should be cached. */
+    readonly cache?: boolean;
+  },
+  handler: (args: EffectArgs<I>) => Promise<R>
+): Effect<I, O>;
+
+/**
+ * @deprecated Use createEffect instead. The only difference is that rateLimit option becomes required. Set it to false to keep the same behaviour.
+ */
+export function experimental_createEffect<
+  IS,
+  OS,
+  I = UnknownToOutput<IS>,
+  O = UnknownToOutput<OS>,
+  // A hack to enforce that the inferred return type
+  // matches the output schema type
+  R extends O = O
+>(
+  options: {
+    /** The name of the effect. Used for logging and debugging. */
+    readonly name: string;
+    /** The input schema of the effect. */
+    readonly input: IS;
+    /** The output schema of the effect. */
+    readonly output: OS;
+    /** Rate limit for the effect. Set to false to disable or provide {calls: number, per: "second" | "minute"} to enable. */
+    readonly rateLimit?: RateLimit;
     /** Whether the effect should be cached. */
     readonly cache?: boolean;
   },

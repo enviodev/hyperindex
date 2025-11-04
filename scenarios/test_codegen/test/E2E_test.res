@@ -327,7 +327,7 @@ describe("E2E tests", () => {
     )
     await Utils.delay(0)
 
-    let testEffectWithCache = Envio.experimental_createEffect(
+    let testEffectWithCache = Envio.createEffect(
       {
         name: "testEffectWithCache",
         input: S.string,
@@ -339,7 +339,7 @@ describe("E2E tests", () => {
         input ++ "-output"
       },
     )
-    let testEffect = Envio.experimental_createEffect(
+    let testEffect = Envio.createEffect(
       {
         name: "testEffect",
         input: S.string,
@@ -507,7 +507,7 @@ describe("E2E tests", () => {
       ~message="Should increment effect calls count and cache count",
     )
 
-    let testEffectWithCacheV2 = Envio.experimental_createEffect(
+    let testEffectWithCacheV2 = Envio.createEffect(
       {
         name: "testEffectWithCache",
         input: S.string,
@@ -658,7 +658,7 @@ describe("E2E tests", () => {
     let queueMetricDuringExecution = ref(None)
     let activeMetricDuringExecution = ref(None)
 
-    let testEffectMultiWindow = Envio.experimental_createEffect(
+    let testEffectMultiWindow = Envio.createEffect(
       {
         name: "testEffectMultiWindow",
         input: S.string,
@@ -761,7 +761,7 @@ describe("E2E tests", () => {
     let activeMetricDuringExecution = ref(None)
     let queueMetricAfterFirstWindow = ref(None)
 
-    let testEffectNested = Envio.experimental_createEffect(
+    let testEffectNested = Envio.createEffect(
       {
         name: "testEffectNested",
         input: S.string,
@@ -875,7 +875,7 @@ describe("E2E tests", () => {
     await Utils.delay(0)
 
     let callCount = ref(0)
-    let testEffectWithCacheControl = Envio.experimental_createEffect(
+    let testEffectWithCacheControl = Envio.createEffect(
       {
         name: "testEffectWithCacheControl",
         input: S.string,
