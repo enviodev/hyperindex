@@ -48,13 +48,18 @@ type t = {
   indexerStartTime: Js.Date.t,
   writeThrottlers: WriteThrottlers.t,
   loadManager: LoadManager.t,
-  shouldUseTui: bool,
+  keepProcessAlive: bool,
   //Initialized as 0, increments, when rollbacks occur to invalidate
   //responses based on the wrong stateId
   id: int,
 }
 
-let make = (~indexer: Indexer.t, ~chainManager: ChainManager.t, ~shouldUseTui=false) => {
+let make = (
+  ~indexer: Indexer.t,
+  ~chainManager: ChainManager.t,
+  ~isDevelopmentMode=false,
+  ~shouldUseTui=false,
+) => {
   {
     indexer,
     currentlyProcessingBatch: false,
@@ -64,7 +69,7 @@ let make = (~indexer: Indexer.t, ~chainManager: ChainManager.t, ~shouldUseTui=fa
     rollbackState: NoRollback,
     writeThrottlers: WriteThrottlers.make(),
     loadManager: LoadManager.make(),
-    shouldUseTui,
+    keepProcessAlive: isDevelopmentMode || shouldUseTui,
     id: 0,
   }
 }
@@ -661,9 +666,9 @@ let actionReducer = (state: t, action: action) => {
       ? {
           Logging.info("All chains are caught up to end blocks.")
 
-          // Keep the indexer process running in TUI mode
-          // so the Dev Console server stays working
-          if state.shouldUseTui {
+          // Keep the indexer process running when in development mode (for Dev Console)
+          // or when TUI is enabled (for display)
+          if state.keepProcessAlive {
             NoExit
           } else {
             ExitWithSuccess
