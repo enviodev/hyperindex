@@ -858,4 +858,84 @@ describe("E2E tests", () => {
       ~message="queue should be empty after all batches complete",
     )
   })
+
+  Async.it("Effect cache can be disabled per-call via context.cache", async () => {
+    let sourceMock = Mock.Source.make(
+      [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
+      ~chain=#1337,
+    )
+    let indexerMock = await Mock.Indexer.make(
+      ~chains=[
+        {
+          chain: #1337,
+          sources: [sourceMock.source],
+        },
+      ],
+    )
+    await Utils.delay(0)
+
+    let callCount = ref(0)
+    let testEffectWithCacheControl = Envio.experimental_createEffect(
+      {
+        name: "testEffectWithCacheControl",
+        input: S.string,
+        output: S.string,
+        rateLimit: Disable,
+        cache: true,
+      },
+      async ({input, context}) => {
+        callCount := callCount.contents + 1
+        if input === "test1" {
+          context.cache = false
+        }
+        input ++ "-output"
+      },
+    )
+
+    sourceMock.resolveGetHeightOrThrow(300)
+    await Utils.delay(0)
+    await Utils.delay(0)
+    sourceMock.resolveGetItemsOrThrow(
+      [
+        {
+          blockNumber: 100,
+          logIndex: 0,
+          handler: async ({context}) => {
+            // Call 1: Disable cache persistence for this specific call
+            Assert.deepEqual(
+              await context.effect(testEffectWithCacheControl, "test1"),
+              "test1-output",
+            )
+
+            // Call 2: Same input as call 1, uses in-memory cache from call 1
+            // Shouldn't do anything, since memoization
+            Assert.deepEqual(
+              await context.effect(testEffectWithCacheControl, "test1"),
+              "test1-output",
+            )
+
+            // Call 3: Different input with default cache behavior (should cache in memory and DB)
+            Assert.deepEqual(
+              await context.effect(testEffectWithCacheControl, "test2"),
+              "test2-output",
+            )
+          },
+        },
+      ],
+      ~latestFetchedBlockNumber=100,
+    )
+    await indexerMock.getBatchWritePromise()
+
+    Assert.deepEqual(
+      callCount.contents,
+      2,
+      ~message="Effect should be called 2 times (test1 once with cache=false, test2 once)",
+    )
+
+    Assert.deepEqual(
+      await indexerMock.queryEffectCache("testEffectWithCacheControl"),
+      [{"id": `"test2"`, "output": %raw(`"test2-output"`)}],
+      ~message="Should only have test2 in DB (test1 was called with cache=false and subsequent calls used in-memory cache)",
+    )
+  })
 })

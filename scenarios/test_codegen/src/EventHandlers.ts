@@ -1,5 +1,11 @@
 import { deepEqual, fail } from "assert";
-import { experimental_createEffect, Effect, S, Logger } from "envio";
+import {
+  experimental_createEffect,
+  Effect,
+  S,
+  Logger,
+  EffectCaller,
+} from "envio";
 import { TestEvents } from "generated";
 import { TestHelpers } from "generated";
 import { EventFiltersTest } from "generated";
@@ -474,7 +480,24 @@ const testEffectWithCache = experimental_createEffect(
     rateLimit: false,
     cache: true,
   },
-  async ({ input }) => {
+  async ({ context, input }) => {
+    deepEqual(
+      Object.keys(context),
+      ["effect", "cache"],
+      "Logger is on prototype and not included in Object.keys"
+    );
+    deepEqual(context.cache, true);
+    expectType<
+      TypeEqual<
+        typeof context,
+        {
+          readonly log: Logger;
+          readonly effect: EffectCaller;
+          cache: boolean;
+        }
+      >
+    >(true);
+
     return `test-${input.id}`;
   }
 );

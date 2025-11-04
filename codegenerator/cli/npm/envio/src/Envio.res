@@ -58,6 +58,7 @@ and effectOptions<'input, 'output> = {
 and effectContext = {
   log: logger,
   effect: 'input 'output. (effect<'input, 'output>, 'input) => promise<'output>,
+  mutable cache: bool,
 }
 @genType
 and effectArgs<'input> = {
@@ -79,6 +80,10 @@ let experimental_createEffect = (
 ) => {
   let outputSchema =
     S.schema(_ => options.output)->(Utils.magic: S.t<S.t<'output>> => S.t<Internal.effectOutput>)
+  let itemSchema = S.schema((s): Internal.effectCacheItem => {
+    id: s.matches(S.string),
+    output: s.matches(outputSchema),
+  })
   {
     name: options.name,
     handler: handler->(
@@ -96,20 +101,14 @@ let experimental_createEffect = (
       Utils.magic: S.t<S.t<'input>> => S.t<Internal.effectInput>
     ),
     output: outputSchema,
-    cache: switch options.cache {
-    | Some(true) =>
-      let itemSchema = S.schema((s): Internal.effectCacheItem => {
-        id: s.matches(S.string),
-        output: s.matches(outputSchema),
-      })
-      Some({
-        table: Internal.makeCacheTable(~effectName=options.name),
-        outputSchema,
-        itemSchema,
-      })
-    | None
-    | Some(false) =>
-      None
+    storageMeta: {
+      table: Internal.makeCacheTable(~effectName=options.name),
+      outputSchema,
+      itemSchema,
+    },
+    defaultShouldCache: switch options.cache {
+    | Some(true) => true
+    | _ => false
     },
     rateLimit: switch options.rateLimit {
     | Disable => None

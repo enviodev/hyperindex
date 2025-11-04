@@ -281,15 +281,14 @@ let makeEnumConfig = (~name, ~variants) => {
 
 type effectInput
 type effectOutput
-type effectContext
+type effectContext = private {mutable cache: bool}
 type effectArgs = {
   input: effectInput,
   context: effectContext,
   cacheKey: string,
-  mutable cache: bool,
 }
 type effectCacheItem = {id: string, output: effectOutput}
-type effectCacheMeta = {
+type effectCacheStorageMeta = {
   itemSchema: S.t<effectCacheItem>,
   outputSchema: S.t<effectOutput>,
   table: Table.table,
@@ -305,7 +304,8 @@ type rateLimitState = {
 type effect = {
   name: string,
   handler: effectArgs => promise<effectOutput>,
-  cache: option<effectCacheMeta>,
+  storageMeta: effectCacheStorageMeta,
+  defaultShouldCache: bool,
   output: S.t<effectOutput>,
   input: S.t<effectInput>,
   // The number of functions that are currently running.

@@ -12,42 +12,60 @@ type contextParams = {
   mutable isResolved: bool,
 }
 
-let rec initEffect = (params: contextParams) => (
-  effect: Internal.effect,
-  input: Internal.effectInput,
-) =>
-  LoadLayer.loadEffect(
-    ~loadManager=params.loadManager,
-    ~persistence=params.persistence,
-    ~effect,
-    ~effectArgs={
-      input,
-      context: params->Utils.Proxy.make(effectTraps)->Utils.magic,
-      cacheKey: input->S.reverseConvertOrThrow(effect.input)->Utils.Hash.makeOrThrow,
-      cache: effect.cache !== None,
-    },
-    ~inMemoryStore=params.inMemoryStore,
-    ~shouldGroup=params.isPreload,
-    ~item=params.item,
-  )
-and effectTraps: Utils.Proxy.traps<contextParams> = {
-  get: (~target as params, ~prop: unknown) => {
-    let prop = prop->(Utils.magic: unknown => string)
-    switch prop {
-    | "log" => params.item->Logging.getUserLogger->Utils.magic
-    | "effect" =>
-      initEffect(params)->(
-        Utils.magic: (
-          (Internal.effect, Internal.effectInput) => promise<Internal.effectOutput>
-        ) => unknown
-      )
+// We don't want to expose the params to the user
+// so instead of storing _params on the context object,
+// we use an external WeakMap
+let paramsByThis: Utils.WeakMap.t<unknown, contextParams> = Utils.WeakMap.make()
 
-    | _ =>
-      Js.Exn.raiseError(
-        `Invalid context access by '${prop}' property. Effect context doesn't allow access to storage.`,
-      )
-    }
+let effectContextPrototype = %raw(`Object.create(null)`)
+Utils.Object.defineProperty(
+  effectContextPrototype,
+  "log",
+  {
+    get: () => {
+      (paramsByThis->Utils.WeakMap.unsafeGet(%raw(`this`))).item->Logging.getUserLogger
+    },
   },
+)
+%%raw(`
+var EffectContext = function(params, defaultShouldCache, callEffect) {
+  paramsByThis.set(this, params);
+  this.effect = callEffect;
+  this.cache = defaultShouldCache;
+};
+EffectContext.prototype = effectContextPrototype;
+`)
+
+@new
+external makeEffectContext: (
+  contextParams,
+  ~defaultShouldCache: bool,
+  ~callEffect: (Internal.effect, Internal.effectInput) => promise<Internal.effectOutput>,
+) => Internal.effectContext = "EffectContext"
+
+let initEffect = (params: contextParams) => {
+  let rec callEffect = (effect: Internal.effect, input: Internal.effectInput) => {
+    let effectContext = makeEffectContext(
+      params,
+      ~defaultShouldCache=effect.defaultShouldCache,
+      ~callEffect,
+    )
+    let effectArgs: Internal.effectArgs = {
+      input,
+      context: effectContext,
+      cacheKey: input->S.reverseConvertOrThrow(effect.input)->Utils.Hash.makeOrThrow,
+    }
+    LoadLayer.loadEffect(
+      ~loadManager=params.loadManager,
+      ~persistence=params.persistence,
+      ~effect,
+      ~effectArgs,
+      ~inMemoryStore=params.inMemoryStore,
+      ~shouldGroup=params.isPreload,
+      ~item=params.item,
+    )
+  }
+  callEffect
 }
 
 type entityContextParams = {

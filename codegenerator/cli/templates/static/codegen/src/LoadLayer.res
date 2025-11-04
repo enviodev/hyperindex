@@ -90,7 +90,7 @@ let callEffect = (
   effect.handler(arg)
   ->Promise.thenResolve(output => {
     inMemTable.dict->Js.Dict.set(arg.cacheKey, output)
-    if arg.cache {
+    if arg.context.cache {
       inMemTable.idsToStore->Array.push(arg.cacheKey)->ignore
     }
   })
@@ -233,52 +233,51 @@ let loadEffect = (
     let idsToLoad = args->Js.Array2.map((arg: Internal.effectArgs) => arg.cacheKey)
     let idsFromCache = Utils.Set.make()
 
-    switch effect.cache {
-    | Some({table, outputSchema})
-      if switch persistence.storageStatus {
+    if (
+      switch persistence.storageStatus {
       | Ready({cache}) => cache->Utils.Dict.has(effectName)
       | _ => false
-      } => {
-        let timerRef = Prometheus.StorageLoad.startOperation(~operation=key)
-
-        let dbEntities = try {
-          await (persistence->Persistence.getInitializedStorageOrThrow).loadByIdsOrThrow(
-            ~table,
-            ~rowsSchema=Internal.effectCacheItemRowsSchema,
-            ~ids=idsToLoad,
-          )
-        } catch {
-        | Persistence.StorageError({message, reason}) =>
-          reason->ErrorHandling.mkLogAndRaise(~logger=item->Logging.getItemLogger, ~msg=message)
-        }
-
-        dbEntities->Js.Array2.forEach(dbEntity => {
-          try {
-            let output = dbEntity.output->S.parseOrThrow(outputSchema)
-            idsFromCache->Utils.Set.add(dbEntity.id)->ignore
-            inMemTable.dict->Js.Dict.set(dbEntity.id, output)
-          } catch {
-          | S.Raised(error) =>
-            inMemTable.invalidationsCount = inMemTable.invalidationsCount + 1
-            Prometheus.EffectCacheInvalidationsCount.increment(~effectName)
-            item
-            ->Logging.getItemLogger
-            ->Logging.childTrace({
-              "msg": "Invalidated effect cache",
-              "input": dbEntity.id,
-              "effect": effectName,
-              "err": error->S.Error.message,
-            })
-          }
-        })
-
-        timerRef->Prometheus.StorageLoad.endOperation(
-          ~operation=key,
-          ~whereSize=idsToLoad->Array.length,
-          ~size=dbEntities->Array.length,
-        )
       }
-    | _ => ()
+    ) {
+      let timerRef = Prometheus.StorageLoad.startOperation(~operation=key)
+      let {table, outputSchema} = effect.storageMeta
+
+      let dbEntities = try {
+        await (persistence->Persistence.getInitializedStorageOrThrow).loadByIdsOrThrow(
+          ~table,
+          ~rowsSchema=Internal.effectCacheItemRowsSchema,
+          ~ids=idsToLoad,
+        )
+      } catch {
+      | Persistence.StorageError({message, reason}) =>
+        reason->ErrorHandling.mkLogAndRaise(~logger=item->Logging.getItemLogger, ~msg=message)
+      }
+
+      dbEntities->Js.Array2.forEach(dbEntity => {
+        try {
+          let output = dbEntity.output->S.parseOrThrow(outputSchema)
+          idsFromCache->Utils.Set.add(dbEntity.id)->ignore
+          inMemTable.dict->Js.Dict.set(dbEntity.id, output)
+        } catch {
+        | S.Raised(error) =>
+          inMemTable.invalidationsCount = inMemTable.invalidationsCount + 1
+          Prometheus.EffectCacheInvalidationsCount.increment(~effectName)
+          item
+          ->Logging.getItemLogger
+          ->Logging.childTrace({
+            "msg": "Invalidated effect cache",
+            "input": dbEntity.id,
+            "effect": effectName,
+            "err": error->S.Error.message,
+          })
+        }
+      })
+
+      timerRef->Prometheus.StorageLoad.endOperation(
+        ~operation=key,
+        ~whereSize=idsToLoad->Array.length,
+        ~size=dbEntities->Array.length,
+      )
     }
 
     let remainingCallsCount = idsToLoad->Array.length - idsFromCache->Utils.Set.size
