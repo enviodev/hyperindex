@@ -1,5 +1,5 @@
 import { deepEqual, fail } from "assert";
-import { experimental_createEffect, Effect, S, Logger } from "envio";
+import { createEffect, Effect, S, Logger, EffectCaller } from "envio";
 import { TestEvents } from "generated";
 import { TestHelpers } from "generated";
 import { EventFiltersTest } from "generated";
@@ -20,11 +20,12 @@ import { expectType, TypeEqual } from "ts-expect";
 import { bytesToHex } from "viem";
 
 // Test effects type inference
-const noopEffect = experimental_createEffect(
+const noopEffect = createEffect(
   {
     name: "noopEffect",
     input: undefined,
     output: undefined,
+    rateLimit: false,
   },
   async ({ context, input }) => {
     expectType<TypeEqual<typeof input, undefined>>(true);
@@ -38,7 +39,7 @@ const noopEffect = experimental_createEffect(
     return undefined;
   }
 );
-const getFiles = experimental_createEffect(
+const getFiles = createEffect(
   {
     name: "getFiles",
     input: {
@@ -46,6 +47,7 @@ const getFiles = experimental_createEffect(
       bar: S.optional(S.string),
     },
     output: S.union(["foo", "files"]),
+    rateLimit: false,
   },
   async ({ context, input }) => {
     if (Math.random() > 0.5) {
@@ -82,7 +84,7 @@ const getFiles = experimental_createEffect(
     return "foo";
   }
 );
-const getBalance = experimental_createEffect(
+const getBalance = createEffect(
   {
     name: "getBalance",
     input: {
@@ -90,6 +92,7 @@ const getBalance = experimental_createEffect(
       blockNumber: S.optional(S.bigint),
     },
     output: S.bigDecimal,
+    rateLimit: false,
   },
   async ({ context, input: { address, blockNumber } }) => {
     try {
@@ -461,27 +464,46 @@ Gravatar.FactoryEvent.contractRegister(({ event, context }) => {
   }
 });
 
-const testEffectWithCache = experimental_createEffect(
+const testEffectWithCache = createEffect(
   {
     name: "testEffectWithCache",
     input: {
       id: S.string,
     },
     output: S.string,
+    rateLimit: false,
     cache: true,
   },
-  async ({ input }) => {
+  async ({ context, input }) => {
+    deepEqual(
+      Object.keys(context),
+      ["effect", "cache"],
+      "Logger is on prototype and not included in Object.keys"
+    );
+    deepEqual(context.cache, true);
+    expectType<
+      TypeEqual<
+        typeof context,
+        {
+          readonly log: Logger;
+          readonly effect: EffectCaller;
+          cache: boolean;
+        }
+      >
+    >(true);
+
     return `test-${input.id}`;
   }
 );
 
-const throwingEffect = experimental_createEffect(
+const throwingEffect = createEffect(
   {
     name: "throwingEffect",
     input: {
       id: S.string,
     },
     output: S.string,
+    rateLimit: false,
     cache: true,
   },
   async (_) => {

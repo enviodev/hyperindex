@@ -29,6 +29,25 @@ export type logger = $$logger;
 
 export type effect<input,output> = $$effect<input,output>;
 
+export type rateLimitDuration = "second" | "minute" | number;
+
+export type rateLimit = 
+    false
+  | { readonly calls: number; readonly per: rateLimitDuration };
+
+export type experimental_effectOptions<input,output> = {
+  /** The name of the effect. Used for logging and debugging. */
+  readonly name: string; 
+  /** The input schema of the effect. */
+  readonly input: RescriptSchema_S_t<input>; 
+  /** The output schema of the effect. */
+  readonly output: RescriptSchema_S_t<output>; 
+  /** Rate limit for the effect. Set to false to disable or provide {calls: number, per: "second" | "minute"} to enable. */
+  readonly rateLimit?: rateLimit; 
+  /** Whether the effect should be cached. */
+  readonly cache?: boolean
+};
+
 export type effectOptions<input,output> = {
   /** The name of the effect. Used for logging and debugging. */
   readonly name: string; 
@@ -36,6 +55,8 @@ export type effectOptions<input,output> = {
   readonly input: RescriptSchema_S_t<input>; 
   /** The output schema of the effect. */
   readonly output: RescriptSchema_S_t<output>; 
+  /** Rate limit for the effect. Set to false to disable or provide {calls: number, per: "second" | "minute"} to enable. */
+  readonly rateLimit: rateLimit; 
   /** Whether the effect should be cached. */
   readonly cache?: boolean
 };

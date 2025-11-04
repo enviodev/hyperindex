@@ -9,6 +9,7 @@ alwaysApply: false
 **BEFORE implementing ANY code changes, you MUST check this MDC file for existing solutions!**
 
 **This file contains:**
+
 - **Solutions to problems** that have already been solved in previous migrations
 - **Quality check checklists** to prevent common mistakes
 - **Examples of correct implementations** that you can reference
@@ -20,6 +21,7 @@ alwaysApply: false
 ## ⚠️ CRITICAL: MDC FILE MUST BE CHECKED AT EVERY STEP ⚠️
 
 **BEFORE implementing ANY code changes, you MUST:**
+
 1. **Read the relevant section of this MDC file**
 2. **Check if there are existing solutions** for the problem you're facing
 3. **Reference the quality check checklist** to avoid common mistakes
@@ -31,6 +33,7 @@ alwaysApply: false
 ## 🚀 MULTICHAIN INDEXING
 
 **For multichain support:**
+
 - **Prefix all entity IDs with `event.chainId`**: `${event.chainId}-${originalId}`
 - **Never hardcode `chainId = 1`** - always use `event.chainId`
 - **Update helper functions** to accept `chainId` parameter
@@ -77,6 +80,7 @@ TUI_OFF=true pnpm dev
 **This is NOT optional - it's mandatory to catch runtime errors early!**
 
 **Why this is critical:**
+
 - **TypeScript compilation (`tsc --noEmit`) only catches syntax and type errors**
 - **Runtime errors (database issues, missing entities, logic errors) only appear when running the indexer**
 - **Many errors we encountered could have been caught immediately if we tested after every step**
@@ -84,6 +88,7 @@ TUI_OFF=true pnpm dev
 
 **Runtime Testing Checklist:**
 **⚠️ IMPORTANT: Read all steps in this checklist before beginning so you know to wait and check output, not get stuck indefinitely**
+
 - [ ] **After every code change**, run `TUI_OFF=true pnpm dev` in background mode
 - [ ] **Wait ~30 seconds** for the indexer to start and process initial events
 - [ ] **Watch the output** for any error messages or warnings
@@ -92,6 +97,7 @@ TUI_OFF=true pnpm dev
 - [ ] **Only proceed to the next step** after confirming the indexer runs without errors
 
 **Common Runtime Errors to Watch For:**s
+
 - Database connection issues
 - Missing entity lookups returning `{}` instead of `undefined`
 - Logic errors in calculations
@@ -104,6 +110,7 @@ TUI_OFF=true pnpm dev
 **⚠️ CRITICAL: BEFORE starting ANY step, you MUST read the relevant sections of this MDC file! ⚠️**
 
 **This MDC file contains:**
+
 - **Solutions to common problems** that have already been solved
 - **Quality check checklists** to prevent mistakes
 - **Examples of correct implementations** from previous migrations
@@ -142,19 +149,22 @@ Contract.EventName.handler(async ({ event, context }) => {
 **✅ Step 1 Quality Check:**
 
 #### **1.1: Review Migration Patterns and Quality Checks**
+
 - **Read the "Migration Patterns and Quality Checks" section**
 - **Ensure your code follows all documented patterns** (entity creation, updates, BigDecimal precision, etc.)
 - **Check compliance with Effect API requirements** for external calls
 - **Verify all quality check issues are addressed** (imports, types, precision, etc.)
 
 #### **1.2: Run Technical Validation**
+
 ```bash
 # Run these commands to verify Step 1 completion
 pnpm codegen
 pnpm tsc --noEmit
 TUI_OFF=true pnpm dev
 ```
-*Note: Some failures are expected if subsequent steps aren't complete yet - that's okay!*
+
+_Note: Some failures are expected if subsequent steps aren't complete yet - that's okay!_
 
 ### Step 2: Migrate Schema from Raw Events to Business Logic
 
@@ -183,6 +193,7 @@ type EventEntity {
 ```
 
 **KEEP all entities from the original subgraph** but convert them to Envio format:
+
 - Remove `@entity` decorators
 - Change `Bytes!` to `String!`
 - Change `ID!` to `ID!` (keep as is)
@@ -192,16 +203,19 @@ type EventEntity {
 After migrating the schema, **VERIFY that it is IDENTICAL** to the original subgraph schema (apart from Envio vs TheGraph syntax):
 
 **Check for Missing Derived Fields:**
+
 - Ensure all `@derivedFrom` relationships are preserved
 - Verify all entity arrays are maintained (e.g., `[TokenDayData!]! @derivedFrom(field: "token")`)
 - Check that all entity relationships are preserved (e.g., `token0: Token!`, not `token0_id: String!`)
 
 **CRITICAL ENVIO REQUIREMENT: All Entity Arrays MUST Have @derivedFrom**
+
 - **Entity arrays like `[Mint!]!` are ONLY valid with `@derivedFrom`**
 - **Arrays without `@derivedFrom` will cause codegen to fail** with error "EE211: Arrays of entities is unsupported"
 - **The `@derivedFrom(field: "fieldName")` syntax tells Envio how to establish relationships**
 
 **Validation Steps:**
+
 1. Run `pnpm codegen` to ensure schema compiles
 2. Compare line-by-line with original subgraph schema
 3. Verify no business logic entities or fields are missing
@@ -209,18 +223,20 @@ After migrating the schema, **VERIFY that it is IDENTICAL** to the original subg
 5. **Ensure ALL entity arrays have `@derivedFrom` directives**
 
 **Only Acceptable Differences:**
+
 - `@entity` decorators removed
 - `Bytes!` → `String!`
 - **IMPORTANT:** Check Envio documentation for other potential syntax differences
 - **IMPORTANT:** When in doubt about syntax differences, refer to Envio docs: https://docs.envio.dev
 
 **CRITICAL ENVIO REQUIREMENT - Entity Arrays Must Have @derivedFrom:**
+
 ```graphql
 # ❌ WRONG - Will cause codegen to fail with "EE211: Arrays of entities is unsupported"
 type Transaction {
-  mints: [Mint!]!        # Missing @derivedFrom
-  burns: [Burn!]!        # Missing @derivedFrom
-  swaps: [Swap!]!        # Missing @derivedFrom
+  mints: [Mint!]! # Missing @derivedFrom
+  burns: [Burn!]! # Missing @derivedFrom
+  swaps: [Swap!]! # Missing @derivedFrom
 }
 
 # ✅ CORRECT - All arrays have @derivedFrom directives
@@ -240,6 +256,7 @@ According to [Envio documentation](https://docs.envio.dev/docs/HyperIndex/schema
 - **The correct approach is to use `_id` fields** to establish relationships
 
 **Example of Correct Implementation:**
+
 ```typescript
 // ❌ WRONG - Trying to access virtual arrays in handlers
 const mints = transaction.mints; // This will NOT work - arrays don't exist in types
@@ -251,6 +268,7 @@ const mint = await context.Mint.get(mintId); // Query by ID
 ```
 
 **Why This Matters:**
+
 - **Envio requires explicit relationship definitions** via `@derivedFrom
 - **But the arrays are virtual** - they exist only in the API, not in handlers
 - **This is fundamentally different from TheGraph** where arrays are actual properties
@@ -259,19 +277,22 @@ const mint = await context.Mint.get(mintId); // Query by ID
 **✅ Step 2 Quality Check:**
 
 #### **2.1: Review Migration Patterns and Quality Checks**
+
 - **Read the "Migration Patterns and Quality Checks" section**
 - **Ensure your code follows all documented patterns** (entity creation, updates, BigDecimal precision, etc.)
 - **Check compliance with Effect API requirements** for external calls
 - **Verify all quality check issues are addressed** (imports, types, precision, etc.)
 
 #### **2.2: Run Technical Validation**
+
 ```bash
 # Run these commands to verify Step 2 completion
 pnpm codegen
 pnpm tsc --noEmit
 TUI_OFF=true pnpm dev
 ```
-*Note: Some failures are expected if subsequent steps aren't complete yet - that's okay!*
+
+_Note: Some failures are expected if subsequent steps aren't complete yet - that's okay!_
 
 ### Step 3: Refactor File Structure to Mirror Subgraph
 
@@ -328,13 +349,19 @@ src/
 
 ```typescript
 // ✅ CORRECT - Skeleton handler for this step
-export function handleEventName(event: Contract_EventName_event, context: any): void {
+export function handleEventName(
+  event: Contract_EventName_event,
+  context: any
+): void {
   // TODO: Implement business logic from subgraph
   // Reference: original-subgraph/src/mappings/contract.ts
 }
 
 // ❌ WRONG - Don't implement business logic in this step
-export function handleEventName(event: Contract_EventName_event, context: any): void {
+export function handleEventName(
+  event: Contract_EventName_event,
+  context: any
+): void {
   // Implementation details here...
   let entity = context.Entity.get(id);
   // ... more implementation
@@ -349,7 +376,7 @@ export function handleEventName(event: Contract_EventName_event, context: any): 
 // TODO: Add helper functions from original subgraph
 // Reference: original-subgraph/src/utils/file1.ts
 
-// src/utils/file2.ts  
+// src/utils/file2.ts
 // TODO: Add helper functions from original subgraph
 // Reference: original-subgraph/src/utils/file2.ts
 
@@ -365,45 +392,47 @@ export function handleEventName(event: Contract_EventName_event, context: any): 
 ```yaml
 # ✅ CORRECT - Global contract definitions with network-specific addresses
 contracts:
-- name: Factory
-  handler: src/factory.ts
-  events:
-    - event: ContractCreated(...)
+  - name: Factory
+    handler: src/factory.ts
+    events:
+      - event: ContractCreated(...)
 
 networks:
-- id: 1
-  start_block: 0
-  contracts:
-    - name: Factory
-      address:
-        - 0xFactoryAddress1
-- id: 10
-  start_block: 0
-  contracts:
-    - name: Factory
-      address:
-        - 0xFactoryAddress2
+  - id: 1
+    start_block: 0
+    contracts:
+      - name: Factory
+        address:
+          - 0xFactoryAddress1
+  - id: 10
+    start_block: 0
+    contracts:
+      - name: Factory
+        address:
+          - 0xFactoryAddress2
 ```
 
 **❌ WRONG - Don't duplicate contract definitions in network sections:**
+
 ```yaml
 # ❌ WRONG - This will cause "Duplicate contract names detected" error
 networks:
-- id: 1
-  contracts:
-    - name: Factory
-      handler: src/factory.ts  # Don't repeat handler/events here
-      events: [...]
-      address: [...]
-- id: 10
-  contracts:
-    - name: Factory
-      handler: src/factory.ts  # Don't repeat handler/events here
-      events: [...]
-      address: [...]
+  - id: 1
+    contracts:
+      - name: Factory
+        handler: src/factory.ts # Don't repeat handler/events here
+        events: [...]
+        address: [...]
+  - id: 10
+    contracts:
+      - name: Factory
+        handler: src/factory.ts # Don't repeat handler/events here
+        events: [...]
+        address: [...]
 ```
 
 **Key Points:**
+
 - **Global contracts section** defines handlers and events
 - **Network sections** only define addresses for those contracts
 - **Never repeat** handler, events, or other contract configuration in network sections
@@ -412,19 +441,22 @@ networks:
 **✅ Step 3 Quality Check:**
 
 #### **3.1: Review Migration Patterns and Quality Checks**
+
 - **Read the "Migration Patterns and Quality Checks" section**
 - **Ensure your code follows all documented patterns** (entity creation, updates, BigDecimal precision, etc.)
 - **Check compliance with Effect API requirements** for external calls
 - **Verify all quality check issues are addressed** (imports, types, precision, etc.)
 
 #### **3.2: Run Technical Validation**
+
 ```bash
 # Run these commands to verify Step 3 completion
 pnpm codegen
 pnpm tsc --noEmit
 TUI_OFF=true pnpm dev
 ```
-*Note: Some failures are expected if subsequent steps aren't complete yet - that's okay!*
+
+_Note: Some failures are expected if subsequent steps aren't complete yet - that's okay!_
 
 ### Step 4: Register Dynamic Contracts with Factory Events
 
@@ -434,6 +466,7 @@ TUI_OFF=true pnpm dev
 Look for contracts that have **NO address** - these are created by factory contracts and need to be registered with Envio.
 
 **EXAMPLE from subgraph.yaml:**
+
 ```yaml
 # Factory contract (has address)
 - kind: ethereum/contract
@@ -477,29 +510,31 @@ Remove the `address` field from contracts that are created dynamically by factor
 
 # ✅ CORRECT - Dynamic contract (no address - created by factory)
 - name: Pair
-  handler: src/core.ts  # No address field!
+  handler: src/core.ts # No address field!
   events:
     - event: Mint(...)
       handler: handleMint
 ```
 
 **❌ WRONG - Don't include addresses for dynamic contracts:**
+
 ```yaml
 # ❌ WRONG - Dynamic contract should not have address
 - name: Pair
-  address:  # This should be removed!
+  address: # This should be removed!
     - 0xSomeAddress
   handler: src/core.ts
 ```
 
 **COMMON PATTERNS:**
+
 ```typescript
 // For Pair contracts
 Factory.PairCreated.contractRegister(({ event, context }) => {
   context.addPair(event.params.pair);
 });
 
-// For Vault contracts  
+// For Vault contracts
 VaultFactory.VaultCreated.contractRegister(({ event, context }) => {
   context.addVault(event.params.vault);
 });
@@ -516,6 +551,7 @@ PoolFactory.PoolCreated.contractRegister(({ event, context }) => {
 ```
 
 **IMPORTANT NOTES:**
+
 - **MUST be placed above the handler** for the same event
 - **MUST use the exact contract name** from your config.yaml (e.g., `addPair` for `Pair` contracts)
 - **MUST reference the correct event parameter** that contains the new contract address
@@ -524,26 +560,29 @@ PoolFactory.PoolCreated.contractRegister(({ event, context }) => {
 **✅ Step 4 Quality Check:**
 
 #### **4.1: Review Migration Patterns and Quality Checks**
+
 - **Read the "Migration Patterns and Quality Checks" section**
 - **Ensure your code follows all documented patterns** (entity creation, updates, BigDecimal precision, etc.)
 - **Check compliance with Effect API requirements** for external calls
 - **Verify all quality check issues are addressed** (imports, types, precision, etc.)
 
 #### **4.2: Run Technical Validation**
+
 ```bash
 # Run these commands to verify Step 4 completion
 pnpm codegen
 pnpm tsc --noEmit
 TUI_OFF=true pnpm dev
 ```
-*Note: Some failures are expected if subsequent steps aren't complete yet - that's okay!*
+
+_Note: Some failures are expected if subsequent steps aren't complete yet - that's okay!_
 
 ### Step 5: Reference Original Subgraph Logic
 
 For each handler, examine the corresponding subgraph file:
 
 - `original-subgraph/src/contract1.ts` → Contract1 handlers
-- `original-subgraph/src/contract2.ts` → Contract2 handlers  
+- `original-subgraph/src/contract2.ts` → Contract2 handlers
 - `original-subgraph/src/contract3.ts` → Contract3 handlers
 
 ## Step 5a: Implement Helper Functions with No Dependencies
@@ -551,17 +590,21 @@ For each handler, examine the corresponding subgraph file:
 **🚨 MANDATORY: When implementing helper functions, you MUST implement the COMPLETE logic, not just placeholders! 🚨**
 
 ### What Are "Dependencies"?
+
 **Dependencies** are functions, entities, or handlers that your helper function needs to work properly:
+
 - **Entity dependencies**: Functions that need to load/update entities (e.g., `context.Entity.get()`)
 - **Handler dependencies**: Functions that depend on other event handlers being complete
 - **Function dependencies**: Functions that call other helper functions
 
 ### Implement Helper Functions IMMEDIATELY If:
+
 - **No dependencies on incomplete entities/handlers**
 - **Only depends on constants, basic math, or already implemented pieces**
 - **Required for the current handler to function properly**
 
 ### 🚨 CRITICAL IMPLEMENTATION REQUIREMENT:
+
 **When implementing helper functions that have no dependencies, you MUST:**
 
 1. **Read the MDC file** for existing implementation patterns and solutions
@@ -572,6 +615,7 @@ For each handler, examine the corresponding subgraph file:
 6. **Implement ALL function dependencies** that have no entity/handler dependencies
 
 ### 🚨 CRITICAL: External Calls MUST Use Effect API
+
 **When implementing helper functions that make external calls (RPC calls, API calls, etc.), you MUST:**
 
 1. **Use the Effect API** for ALL external calls - see "External Calls and Effect API" section below
@@ -582,15 +626,17 @@ For each handler, examine the corresponding subgraph file:
 6. **Enable caching** in effects when appropriate for performance
 
 **❌ WRONG - Just adding TODO comments:**
+
 ```typescript
 export function fetchTokenSymbol(tokenAddress: string): string {
   // TODO: Implement using Envio's RPC calls to ERC20 contracts
-  return 'UNKNOWN'; // This is NOT acceptable!
+  return "UNKNOWN"; // This is NOT acceptable!
 }
 ```
 
 **✅ CORRECT - Complete implementation:**
-```typescript
+
+````typescript
 export function fetchTokenSymbol(tokenAddress: string): string {
   // Implement complete logic using documented Envio patterns
   // Include all fallback logic and error handling
@@ -617,12 +663,13 @@ export function getStaticDefinition(address: string): StaticDefinition | null {
     { address: '0x6b175474e89094c44da98b954eedeac495271d0f', symbol: 'DAI', name: 'Dai Stablecoin' },
     { address: '0xa0b86a33e6441b8c4c8c0e4c0e4c0e4c0e4c0e4c', symbol: 'USDC', name: 'USD Coin' },
   ];
-  
+
   return staticDefinitions.find(def => def.address.toLowerCase() === address.toLowerCase()) || null;
 }
-```
+````
 
 **Why these have no dependencies:**
+
 - **No `context.Entity.get()` calls** - don't need to load entities
 - **No other helper function calls** - self-contained logic
 - **Only use constants, math, or static data** - no dynamic dependencies
@@ -637,17 +684,19 @@ export function getStaticDefinition(address: string): StaticDefinition | null {
 3. **If NO dependencies exist, implement them immediately** - don't skip them!
 
 **❌ WRONG - Missing dependency implementation:**
+
 ```typescript
 export function fetchTokenSymbol(tokenAddress: string): string {
   // Missing: const staticDefinition = getStaticDefinition(tokenAddress);
   // Missing: if (staticDefinition !== null) return staticDefinition.symbol;
-  
+
   // Only implementing the RPC call part
-  return 'unknown';
+  return "unknown";
 }
 ```
 
 **✅ CORRECT - Complete dependency implementation:**
+
 ```typescript
 export function fetchTokenSymbol(tokenAddress: string): string {
   // ✅ IMPLEMENTED: Static definition check
@@ -655,7 +704,7 @@ export function fetchTokenSymbol(tokenAddress: string): string {
   if (staticDefinition !== null) {
     return staticDefinition.symbol;
   }
-  
+
   // ✅ IMPLEMENTED: RPC call logic
   // ... rest of implementation
 }
@@ -664,23 +713,27 @@ export function fetchTokenSymbol(tokenAddress: string): string {
 **✅ Step 5a Quality Check:**
 
 #### **5a.1: Review Migration Patterns and Quality Checks**
+
 - **Read the "Migration Patterns and Quality Checks" section**
 - **Ensure your code follows all documented patterns** (entity creation, updates, BigDecimal precision, etc.)
 - **Check compliance with Effect API requirements** for external calls
 - **Verify all quality check issues are addressed** (imports, types, precision, etc.)
 
 #### **5a.2: Run Technical Validation**
+
 ```bash
 # Run these commands to verify Step 5a completion
 pnpm codegen
 pnpm tsc --noEmit
 TUI_OFF=true pnpm dev
 ```
-*Note: Some failures are expected if subsequent steps aren't complete yet - that's okay!*
+
+_Note: Some failures are expected if subsequent steps aren't complete yet - that's okay!_
 
 ## Step 5b: Implement Simple Handlers
 
 **Handlers that only set parameter values with minimal processing:**
+
 - **Handlers that only set parameter values** with minimal processing
 - **Handlers that load existing entities** and update them with new data
 - **Basic event handlers** with no complex business logic or helper function calls
@@ -688,29 +741,35 @@ TUI_OFF=true pnpm dev
 **✅ Step 5b Quality Check:**
 
 #### **5b.1: Review Migration Patterns and Quality Checks**
+
 - **Read the "Migration Patterns and Quality Checks" section**
 - **Ensure your code follows all documented patterns** (entity creation, updates, BigDecimal precision, etc.)
 - **Check compliance with Effect API requirements** for external calls
 - **Verify all quality check issues are addressed** (imports, types, precision, etc.)
 
 #### **5b.2: Run Technical Validation**
+
 ```bash
 # Run these commands to verify Step 5b completion
 pnpm codegen
 pnpm tsc --noEmit
 TUI_OFF=true pnpm dev
 ```
-*Note: Some failures are expected if subsequent steps aren't complete yet - that's okay!*
+
+_Note: Some failures are expected if subsequent steps aren't complete yet - that's okay!_
 
 ## Step 5c: Implement Moderate Complexity Handlers + Required Helper Functions
 
 **Handlers that call helper functions but don't create complex entity relationships:**
+
 - **Handlers that call helper functions** but don't create complex entity relationships
 - **Handlers that update multiple entities** but with straightforward logic
 - **Event handlers with some business logic** but clear, simple dependencies
 
 ### Helper Function Implementation Strategy for This Step:
+
 **As you implement each moderate complexity handler, implement any helper functions it calls along the way:**
+
 1. **Identify helper functions** called by the current handler
 2. **Check if they have dependencies** on incomplete entities/handlers
 3. **If NO dependencies exist, implement them immediately**
@@ -720,23 +779,27 @@ TUI_OFF=true pnpm dev
 **✅ Step 5c Quality Check:**
 
 #### **5c.1: Review Migration Patterns and Quality Checks**
+
 - **Read the "Migration Patterns and Quality Checks" section**
 - **Ensure your code follows all documented patterns** (entity creation, updates, BigDecimal precision, etc.)
 - **Check compliance with Effect API requirements** for external calls
 - **Verify all quality check issues are addressed** (imports, types, precision, etc.)
 
 #### **5c.2: Run Technical Validation**
+
 ```bash
 # Run these commands to verify Step 5c completion
 pnpm codegen
 pnpm tsc --noEmit
 TUI_OFF=true pnpm dev
 ```
-*Note: Some failures are expected if subsequent steps aren't complete yet - that's okay!*
+
+_Note: Some failures are expected if subsequent steps aren't complete yet - that's okay!_
 
 ## Step 5d: Implement Complex Handlers (One at a Time)
 
 **Handlers that call multiple helper functions or other handlers:**
+
 - **Handlers that call multiple helper functions** or other handlers
 - **Handlers with complex business logic** and multiple entity relationships
 - **Handlers that require extensive data processing** or calculations
@@ -744,6 +807,7 @@ TUI_OFF=true pnpm dev
 - **Handlers that depend on multiple other handlers** being complete
 
 ### Implementation Strategy for Complex Handlers:
+
 1. **Implement ONE complex handler at a time**
 2. **Identify all helper functions** it calls
 3. **Implement any missing helper functions** (following dependency rules)
@@ -752,6 +816,7 @@ TUI_OFF=true pnpm dev
 6. **Move to the next complex handler** only after the current one is complete
 
 **✅ Quality Check After Each Helper Function:**
+
 ```bash
 # Run these commands after implementing EACH helper function
 pnpm codegen
@@ -760,15 +825,18 @@ TUI_OFF=true pnpm dev
 ```
 
 **✅ Quality Check After Each Handler:**
+
 ```bash
 # Run these commands after implementing EACH complex handler
 pnpm codegen
 pnpm tsc --noEmit
 TUI_OFF=true pnpm dev
 ```
-*Note: Each handler and its helper functions should be fully functional before moving to the next one!*
+
+_Note: Each handler and its helper functions should be fully functional before moving to the next one!_
 
 ### Why This Order Matters:
+
 - Prevents "entity not found" errors during development
 - Ensures required entities exist before complex handlers try to use them
 - Allows incremental testing and validation
@@ -778,25 +846,29 @@ TUI_OFF=true pnpm dev
 **✅ Step 5 Quality Check:**
 
 #### **5.1: Review Migration Patterns and Quality Checks**
+
 - **Read the "Migration Patterns and Quality Checks" section**
 - **Ensure your code follows all documented patterns** (entity creation, updates, BigDecimal precision, etc.)
 - **Check compliance with Effect API requirements** for external calls
 - **Verify all quality check issues are addressed** (imports, types, precision, etc.)
 
 #### **5.2: Run Technical Validation**
+
 ```bash
 # Run these commands to verify Step 5 completion
 pnpm codegen
 pnpm tsc --noEmit
 TUI_OFF=true pnpm dev
 ```
-*Note: Some failures are expected if subsequent steps aren't complete yet - that's okay!*
+
+_Note: Some failures are expected if subsequent steps aren't complete yet - that's okay!_
 
 ## **Step 6: Final Migration Verification**
 
 **🚨 CRITICAL: This is the final step to ensure complete migration accuracy. NO TODOs should remain - absolutely everything must be implemented, regardless of complexity.**
 
 ### **6.1: Systematic Handler Logic Review**
+
 **Go through each handler in each file one by one:**
 
 1. **For each handler, compare the logic to the subgraph implementation**
@@ -807,12 +879,14 @@ TUI_OFF=true pnpm dev
 6. **Do this slowly, one by one, for every handler**
 
 **Why this iterative approach is critical:**
+
 - **First pass** often misses subtle logic differences
 - **Second pass** reveals issues introduced by the first pass
 - **Multiple iterations** ensure complete accuracy
 - **Slow, methodical review** prevents missing critical details
 
 ### **6.2: Systematic Helper Function Logic Review**
+
 **Go through each helper function in every file one by one:**
 
 1. **For each helper function, compare the logic to the subgraph implementation**
@@ -823,6 +897,7 @@ TUI_OFF=true pnpm dev
 6. **Do this slowly, one by one, for every helper function**
 
 ### **6.3: MDC File Consultation**
+
 **When uncertain about something, ALWAYS consult the MDC file:**
 
 - **Check existing solutions** for similar problems
@@ -831,6 +906,7 @@ TUI_OFF=true pnpm dev
 - **Use documented Envio patterns** instead of guessing
 
 ### **6.4: Implementation Order**
+
 **Follow this order for maximum efficiency:**
 
 1. **Start with simple handlers** - those with minimal business logic
@@ -839,6 +915,7 @@ TUI_OFF=true pnpm dev
 4. **Final integration check** - ensure all pieces work together
 
 ### **6.5: Verification Checklist**
+
 **After each handler/function review, verify:**
 
 - [ ] **Logic matches subgraph exactly** - no missing or extra logic
@@ -849,6 +926,7 @@ TUI_OFF=true pnpm dev
 - [ ] **Calculations identical** - same mathematical operations and precision
 
 ### **Example of Complete Logic Review:**
+
 ```typescript
 // ❌ BEFORE - Missing logic from subgraph
 export async function handleMint(event: any, context: any) {
@@ -864,8 +942,10 @@ export async function handleMint(event: any, context: any) {
 // ✅ AFTER - Complete logic matching subgraph
 export async function handleMint(event: any, context: any) {
   // Load existing mint entity (created by Transfer handler)
-  const existingMint = await context.Mint.getWhere.transaction_id.eq(transactionId);
-  
+  const existingMint = await context.Mint.getWhere.transaction_id.eq(
+    transactionId
+  );
+
   if (existingMint) {
     // Update existing mint with complete data
     const updatedMint: Mint = {
@@ -881,13 +961,14 @@ export async function handleMint(event: any, context: any) {
     };
     context.Mint.set(updatedMint);
   }
-  
+
   // Update all related entities (token0, token1, pair, factory)
   // ... complete implementation matching subgraph
 }
 ```
 
 ### **Why This Step is Critical:**
+
 - **Ensures complete migration** - no functionality is lost
 - **Maintains data accuracy** - same business logic as original
 - **Prevents runtime errors** - all edge cases are handled
@@ -898,12 +979,14 @@ export async function handleMint(event: any, context: any) {
 **✅ Step 6 Quality Check:**
 
 #### **6.1: Review Migration Patterns and Quality Checks**
+
 - **Read the "Migration Patterns and Quality Checks" section**
 - **Ensure your code follows all documented patterns** (entity creation, updates, BigDecimal precision, etc.)
 - **Check compliance with Effect API requirements** for external calls
 - **Verify all quality check issues are addressed** (imports, types, precision, etc.)
 
 #### **6.2: Run Technical Validation**
+
 ```bash
 # Run these commands to verify Step 6 completion
 pnpm codegen
@@ -916,6 +999,7 @@ TUI_OFF=true pnpm dev
 **Search the codebase for all environment variables and update the example env file.**
 
 ### **7.1: Find Environment Variables**
+
 ```bash
 # Search for all env variables in the codebase
 grep -r "process.env\." src/
@@ -923,50 +1007,17 @@ grep -r "process.env\[" src/
 ```
 
 ### **7.2: Update Example Environment File**
+
 - **Add all found environment variables** to `.env.example`
 - **Include descriptive comments** for each variable
 - **Set appropriate example values** (not real secrets)
 
 **✅ Step 7 Quality Check:**
+
 ```bash
 # Verify all env variables are documented
 cat .env.example
 ```
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 ## Migration Patterns and Quality Checks
 
@@ -1041,17 +1092,22 @@ Contract.EventCreated.contractRegister(({ event, context }) => {
 **IMPORTANT: When migrating from TheGraph to Envio, you MUST maintain the same mathematical precision used in the original subgraph.**
 
 **❌ WRONG - Don't simplify to basic JavaScript types:**
+
 ```typescript
 // ❌ WRONG - Loses precision for financial calculations
 export const ZERO_BD = 0;
 export const ONE_BD = 1;
 
-export function convertTokenToDecimal(tokenAmount: bigint, exchangeDecimals: bigint): number {
+export function convertTokenToDecimal(
+  tokenAmount: bigint,
+  exchangeDecimals: bigint
+): number {
   return Number(tokenAmount) / Math.pow(10, Number(exchangeDecimals));
 }
 ```
 
 **✅ CORRECT - Maintain BigDecimal precision:**
+
 ```typescript
 // ✅ CORRECT - Maintains precision like original subgraph
 import { BigDecimal } from "generated";
@@ -1059,77 +1115,94 @@ import { BigDecimal } from "generated";
 export const ZERO_BD = new BigDecimal(0);
 export const ONE_BD = new BigDecimal(1);
 
-export function convertTokenToDecimal(tokenAmount: bigint, exchangeDecimals: bigint): BigDecimal {
+export function convertTokenToDecimal(
+  tokenAmount: bigint,
+  exchangeDecimals: bigint
+): BigDecimal {
   if (exchangeDecimals == ZERO_BI) {
     return new BigDecimal(tokenAmount.toString());
   }
-  return new BigDecimal(tokenAmount.toString()).div(exponentToBigDecimal(exchangeDecimals));
+  return new BigDecimal(tokenAmount.toString()).div(
+    exponentToBigDecimal(exchangeDecimals)
+  );
 }
 ```
 
 **Why This Matters:**
+
 - **Financial Precision**: Token amounts, prices, and volumes require exact decimal arithmetic
 - **Avoid Floating-Point Errors**: JavaScript numbers can introduce precision errors in financial calculations
 - **Consistency**: Maintains the same mathematical behavior as the original subgraph
 - **Regulatory Compliance**: Financial applications often require exact precision
 
 **Required Dependencies:**
+
 ```bash
 # Install bignumber.js for BigDecimal support
 pnpm add bignumber.js
 ```
 
 **Constants to Always Preserve:**
+
 ```typescript
 // These constants MUST be maintained from original subgraph
 export const ZERO_BI = BigInt(0);
 export const ONE_BI = BigInt(1);
 export const ZERO_BD = new BigDecimal(0);
 export const ONE_BD = new BigDecimal(1);
-export const ADDRESS_ZERO = '0x0000000000000000000000000000000000000000';
+export const ADDRESS_ZERO = "0x0000000000000000000000000000000000000000";
 export const BI_18 = BigInt(18);
-export const ALMOST_ZERO_BD = new BigDecimal('0.000001');
+export const ALMOST_ZERO_BD = new BigDecimal("0.000001");
 ```
 
 **Helper Function Return Types:**
+
 ```typescript
 // ✅ CORRECT - Return BigDecimal for financial calculations
-export function exponentToBigDecimal(decimals: bigint): BigDecimal
-export function convertTokenToDecimal(tokenAmount: bigint, exchangeDecimals: bigint): BigDecimal
-export function fetchTokenTotalSupply(tokenAddress: string): BigDecimal
-export function equalToZero(value: BigDecimal): boolean
+export function exponentToBigDecimal(decimals: bigint): BigDecimal;
+export function convertTokenToDecimal(
+  tokenAmount: bigint,
+  exchangeDecimals: bigint
+): BigDecimal;
+export function fetchTokenTotalSupply(tokenAddress: string): BigDecimal;
+export function equalToZero(value: BigDecimal): boolean;
 
 // ❌ WRONG - Don't return number for financial calculations
-export function convertTokenToDecimal(tokenAmount: bigint, exchangeDecimals: bigint): number
-export function fetchTokenTotalSupply(tokenAddress: string): number
+export function convertTokenToDecimal(
+  tokenAmount: bigint,
+  exchangeDecimals: bigint
+): number;
+export function fetchTokenTotalSupply(tokenAddress: string): number;
 ```
 
 **Entity Field Initialization:**
+
 ```typescript
 // ✅ CORRECT - Use constants for initialization
 const pair: Pair = {
   id: event.params.pair,
-  reserve0: ZERO_BD,        // Use ZERO_BD, not 0
-  reserve1: ZERO_BD,        // Use ZERO_BD, not 0
-  totalSupply: ZERO_BD,     // Use ZERO_BD, not 0
-  volumeUSD: ZERO_BD,       // Use ZERO_BD, not 0
-  txCount: ZERO_BI,         // Use ZERO_BI, not 0
+  reserve0: ZERO_BD, // Use ZERO_BD, not 0
+  reserve1: ZERO_BD, // Use ZERO_BD, not 0
+  totalSupply: ZERO_BD, // Use ZERO_BD, not 0
+  volumeUSD: ZERO_BD, // Use ZERO_BD, not 0
+  txCount: ZERO_BI, // Use ZERO_BI, not 0
   // ... other fields
 };
 
 // ❌ WRONG - Don't use hardcoded 0 values
 const pair: Pair = {
   id: event.params.pair,
-  reserve0: 0,              // ❌ Loses precision
-  reserve1: 0,              // ❌ Loses precision
-  totalSupply: 0,           // ❌ Loses precision
-  volumeUSD: 0,             // ❌ Loses precision
-  txCount: 0,               // ❌ Wrong type
+  reserve0: 0, // ❌ Loses precision
+  reserve1: 0, // ❌ Loses precision
+  totalSupply: 0, // ❌ Loses precision
+  volumeUSD: 0, // ❌ Loses precision
+  txCount: 0, // ❌ Wrong type
   // ... other fields
 };
 ```
 
 **Common Mistakes to Avoid:**
+
 1. **Replacing `ZERO_BD` with `0`** - Loses precision
 2. **Replacing `ZERO_BI` with `0`** - Wrong type
 3. **Returning `number` instead of `BigDecimal`** - Loses precision
@@ -1137,6 +1210,7 @@ const pair: Pair = {
 5. **Simplifying constants to basic JavaScript types** - Breaks financial calculations
 
 **Validation Steps:**
+
 1. **Check all constants** use `BigDecimal` and `BigInt` types
 2. **Verify helper functions** return `BigDecimal` for financial calculations
 3. **Ensure entity initialization** uses `ZERO_BD` and `ZERO_BI` constants
@@ -1161,10 +1235,10 @@ Add `preload_handlers: true` to the `config.yaml` file to enable preload optimis
 
 ```ts
 // Import the Effect API from "envio"
-import { S, experimental_createEffect } from "envio";
+import { S, createEffect } from "envio";
 
 // Define an effect. It can have any name you want.
-export const getSomething = experimental_createEffect(
+export const getSomething = createEffect(
   {
     // The name for debugging purposes
     name: "getSomething",
@@ -1174,6 +1248,8 @@ export const getSomething = experimental_createEffect(
       blockNumber: S.number,
     },
     output: S.union([S.string, null]),
+    rateLimit: false,
+    cache: true,
   },
   async ({ input, context }) => {
     // Fetch or other external calls MUST always be done in an effect.
@@ -1235,27 +1311,27 @@ entity.totalShares = vault.totalSupply();
 
 ```typescript
 // src/effects/tokenMetadata.ts
-import { experimental_createEffect, S } from "envio";
+import { createEffect, S } from "envio";
 import { createPublicClient, http, parseAbi } from "viem";
 
 // ERC20 ABI for basic token functions
 const ERC20_ABI = parseAbi([
-  'function name() view returns (string)',
-  'function symbol() view returns (string)',
-  'function decimals() view returns (uint8)',
-  'function totalSupply() view returns (uint256)',
+  "function name() view returns (string)",
+  "function symbol() view returns (string)",
+  "function decimals() view returns (uint8)",
+  "function totalSupply() view returns (uint256)",
 ]);
 
 // Create a public client for reading contract state
 const publicClient = createPublicClient({
   chain: {
     id: 6342, // MegaETH Testnet - adjust for your network
-    name: 'MegaETH Testnet',
-    network: 'megaeth-testnet',
+    name: "MegaETH Testnet",
+    network: "megaeth-testnet",
     nativeCurrency: {
       decimals: 18,
-      name: 'MegaETH',
-      symbol: 'METH',
+      name: "MegaETH",
+      symbol: "METH",
     },
     rpcUrls: {
       default: {
@@ -1272,7 +1348,7 @@ const publicClient = createPublicClient({
 // Note: Pass chain-specific RPC via env per network or keep a registry keyed by event.chainId
 
 // Define the effect to fetch token metadata
-export const getTokenMetadata = experimental_createEffect(
+export const getTokenMetadata = createEffect(
   {
     name: "getTokenMetadata",
     input: S.string, // Token contract address
@@ -1282,6 +1358,8 @@ export const getTokenMetadata = experimental_createEffect(
       decimals: S.number,
       totalSupply: S.string, // BigInt as string
     }),
+    rateLimit: false,
+    cache: true,
   },
   async ({ input: tokenAddress, context }) => {
     try {
@@ -1289,22 +1367,22 @@ export const getTokenMetadata = experimental_createEffect(
         publicClient.readContract({
           address: tokenAddress as `0x${string}`,
           abi: ERC20_ABI,
-          functionName: 'name',
+          functionName: "name",
         }),
         publicClient.readContract({
           address: tokenAddress as `0x${string}`,
           abi: ERC20_ABI,
-          functionName: 'symbol',
+          functionName: "symbol",
         }),
         publicClient.readContract({
           address: tokenAddress as `0x${string}`,
           abi: ERC20_ABI,
-          functionName: 'decimals',
+          functionName: "decimals",
         }),
         publicClient.readContract({
           address: tokenAddress as `0x${string}`,
           abi: ERC20_ABI,
-          functionName: 'totalSupply',
+          functionName: "totalSupply",
         }),
       ]);
 
@@ -1315,11 +1393,13 @@ export const getTokenMetadata = experimental_createEffect(
         totalSupply: totalSupply.toString(),
       };
     } catch (error) {
-      context.log.error(`Error fetching token metadata for ${tokenAddress}: ${error}`);
+      context.log.error(
+        `Error fetching token metadata for ${tokenAddress}: ${error}`
+      );
       // Return default values on error
       return {
         name: "Unknown",
-        symbol: "Unknown", 
+        symbol: "Unknown",
         decimals: 0,
         totalSupply: "0",
       };
@@ -1343,14 +1423,20 @@ Contract.EventName.handler((event) => {
 });
 
 // NEW ENVIO PATTERN WITH EFFECT API:
-import { getTokenMetadata } from './effects/tokenMetadata';
+import { getTokenMetadata } from "./effects/tokenMetadata";
 
 Contract.EventName.handler(async ({ event, context }) => {
   try {
     // Use Effect API to fetch contract state
-    const tokenMetadata = await context.effect(getTokenMetadata, event.params.token);
-    const vaultMetadata = await context.effect(getTokenMetadata, event.params.vault); // Vault is also an ERC20 token
-    
+    const tokenMetadata = await context.effect(
+      getTokenMetadata,
+      event.params.token
+    );
+    const vaultMetadata = await context.effect(
+      getTokenMetadata,
+      event.params.vault
+    ); // Vault is also an ERC20 token
+
     // Create entity with fetched data
     const entity: Entity = {
       id: `${event.chainId}-${event.transaction.hash}-${event.logIndex}`,
@@ -1381,7 +1467,7 @@ Contract.EventName.handler(async ({ event, context }) => {
 
 ```typescript
 // Reference: original-subgraph/src/contractFactory.ts
-import { getTokenMetadata } from './effects/tokenMetadata';
+import { getTokenMetadata } from "./effects/tokenMetadata";
 
 ContractFactory.ContractCreated.contractRegister(({ event, context }) => {
   context.addContract(event.params.contract);
@@ -1413,7 +1499,7 @@ ContractFactory.ContractCreated.handler(async ({ event, context }) => {
       context.effect(getTokenMetadata, event.params.contract), // Contract is also an ERC20 token
       context.effect(getTokenMetadata, event.params.token), // Token is an ERC20 token
     ]);
-    
+
     // Get or create Token entity
     let token = await context.Token.get(event.params.token);
     if (!token) {
@@ -1460,7 +1546,6 @@ ContractFactory.ContractCreated.handler(async ({ event, context }) => {
     };
 
     context.ContractDataEntity.set(contract);
-
   } catch (error) {
     context.log.error(`Error in ContractCreated handler: ${error}`);
     // Don't throw - let the indexer continue
@@ -1473,7 +1558,7 @@ ContractFactory.ContractCreated.handler(async ({ event, context }) => {
 **Always include proper error handling for Effect API calls:**
 
 ```typescript
-import { getTokenMetadata } from './effects/tokenMetadata';
+import { getTokenMetadata } from "./effects/tokenMetadata";
 
 Contract.EventName.handler(async ({ event, context }) => {
   try {
@@ -1482,7 +1567,7 @@ Contract.EventName.handler(async ({ event, context }) => {
       context.effect(getTokenMetadata, event.params.token),
       context.effect(getTokenMetadata, event.params.vault), // Vault is also an ERC20 token
     ]);
-    
+
     // Create entity with fetched data
     const entity: Entity = {
       // ... entity fields using all metadata
@@ -1491,16 +1576,16 @@ Contract.EventName.handler(async ({ event, context }) => {
     context.Entity.set(entity);
   } catch (error) {
     context.log.error(`Error in EventName handler: ${error}`);
-    
+
     // Option 1: Use default values
     const entity: Entity = {
       // ... entity fields with defaults
     };
     context.Entity.set(entity);
-    
+
     // Option 2: Skip entity creation
     // return;
-    
+
     // Option 3: Re-throw to stop processing
     // throw error;
   }
@@ -1513,35 +1598,39 @@ Contract.EventName.handler(async ({ event, context }) => {
 
 ```yaml
 # config.yaml
-preload_handlers: true  # Enable preload optimizations for Effect API
+preload_handlers: true # Enable preload optimizations for Effect API
 
 contracts:
-- name: ContractFactory
-  address:
-    - 0xContractFactoryAddress
-  handler: src/contractFactory.ts
-  events:
-    - event: ContractCreated(address indexed contract, address indexed token, address indexed poolManager)
-      field_selection:
-        transaction_fields:
-          - hash
+  - name: ContractFactory
+    address:
+      - 0xContractFactoryAddress
+    handler: src/contractFactory.ts
+    events:
+      - event: ContractCreated(address indexed contract, address indexed token, address indexed poolManager)
+        field_selection:
+          transaction_fields:
+            - hash
 ```
 
 **✅ Effect API Implementation Quality Check:**
+
 ```bash
 # Run these commands to verify Effect API implementation
 pnpm codegen
 pnpm tsc --noEmit
 TUI_OFF=true pnpm dev
 ```
-*Note: Some failures are expected if subsequent steps aren't complete yet - that's okay!*
+
+_Note: Some failures are expected if subsequent steps aren't complete yet - that's okay!_
 
 ### Quality Check Issues
 
 #### **Issue 1: Entity Type Import Confusion**
+
 **PROBLEM:** Importing entity types from `"generated"` instead of `"generated/src/db/Entities.gen"`
 **SYMPTOM:** TypeScript errors like "Pair refers to a value, but is being used as a type"
 **SOLUTION:** Use correct import paths:
+
 ```typescript
 // ❌ WRONG - Imports contract handlers, not entity types
 import { Pair, Token } from "generated";
@@ -1551,9 +1640,11 @@ import { Pair_t, Token_t } from "generated/src/db/Entities.gen";
 ```
 
 #### **Issue 2: BigDecimal vs bigint Type Mismatches**
+
 **PROBLEM:** Using wrong types for entity fields
 **SYMPTOM:** TypeScript errors like "Type 'BigNumber' is not assignable to type 'bigint'"
 **SOLUTION:** Match entity field types exactly:
+
 ```typescript
 // ❌ WRONG - Token entity expects bigint for totalSupply
 export function fetchTokenTotalSupply(tokenAddress: string): BigDecimal {
@@ -1567,14 +1658,16 @@ export function fetchTokenTotalSupply(tokenAddress: string): bigint {
 ```
 
 #### **Issue 3: Entity Field Name Mismatches**
+
 **PROBLEM:** Using wrong field names that don't match generated types
 **SYMPTOM:** TypeScript errors like "Property 'token0' does not exist on type 'Pair_t'"
 **SOLUTION:** Use exact field names from generated types:
+
 ```typescript
 // ❌ WRONG - Field names don't match generated types
 const pair: Pair_t = {
-  token0: token0.id,  // Should be token0_id
-  token1: token1.id,  // Should be token1_id
+  token0: token0.id, // Should be token0_id
+  token1: token1.id, // Should be token1_id
 };
 
 // ✅ CORRECT - Field names match generated types
@@ -1585,30 +1678,37 @@ const pair: Pair_t = {
 ```
 
 #### **Issue 4: Missing BigDecimal Import**
+
 **PROBLEM:** Not importing BigDecimal from the correct location
 **SYMPTOM:** TypeScript errors like "Cannot find name 'BigDecimal'"
 **SOLUTION:** Import from generated types:
+
 ```typescript
 // ❌ WRONG - Direct import from bignumber.js
-import { BigDecimal } from 'bignumber.js';
+import { BigDecimal } from "bignumber.js";
 
 // ✅ CORRECT - Import from generated types (which re-exports BigNumber)
-import { BigDecimal } from 'generated';
+import { BigDecimal } from "generated";
 ```
 
 #### **Issue 5: Hardcoded Values Instead of Constants**
+
 **PROBLEM:** Using hardcoded addresses/values instead of constants defined in the original subgraph
 **SYMPTOM:** Inconsistent with original subgraph patterns, potential for errors if addresses change
 **SOLUTION:** Always use constants from the original subgraph:
+
 ```typescript
 // ❌ WRONG - Hardcoded address
-const factory = await context.UniswapFactory.get('0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f');
+const factory = await context.UniswapFactory.get(
+  "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f"
+);
 
 // ✅ CORRECT - Use constant from original subgraph
 const factory = await context.UniswapFactory.get(FACTORY_ADDRESS);
 ```
 
 **CHECKLIST for Constants:**
+
 1. **Look for hardcoded addresses** in your handlers
 2. **Check what constants the original subgraph uses** (e.g., `FACTORY_ADDRESS`, `ADDRESS_ZERO`)
 3. **Import and use those constants** instead of hardcoded values
@@ -1616,6 +1716,7 @@ const factory = await context.UniswapFactory.get(FACTORY_ADDRESS);
 
 **QUALITY CHECK CHECKLIST:**
 After each step, run these commands to verify:
+
 ```bash
 # 1. Check if codegen still works
 pnpm codegen
@@ -1630,6 +1731,7 @@ TUI_OFF=true pnpm dev
 ```
 
 **🚨 RUNTIME TESTING IS MANDATORY:**
+
 - **TypeScript compilation only catches syntax errors**
 - **Runtime errors (database issues, missing entities, logic errors) only appear when running the indexer**
 - **Test after EVERY code change to catch issues immediately**
@@ -1639,13 +1741,15 @@ TUI_OFF=true pnpm dev
 **IMPORTANT:** Never proceed to the next step until all TypeScript compilation errors are resolved and codegen works successfully.
 
 **NOTE: Some errors are expected during migration and should be ignored until later steps:**
+
 - **Expected errors:** References to entities/handlers that haven't been implemented yet
 - **Expected errors:** Missing imports for files that will be created in future steps
 - **Expected errors:** Unused variables/functions that will be implemented later
 
 **Only fix errors that prevent:**
+
 1. **Codegen from working** - These must be fixed immediately
-2. **TypeScript compilation** - These must be fixed immediately  
+2. **TypeScript compilation** - These must be fixed immediately
 3. **Basic file structure** - These must be fixed immediately
 
 **CRITICAL: Field Selection for Transaction Data**
@@ -1660,25 +1764,29 @@ When you need access to `event.transaction.hash` or other transaction fields, yo
 
 **IMPORTANT: This applies to ALL events that need transaction data, not just Transfer events.**
 **Common events that need transaction hash access:**
+
 - **Transfer events** - for transaction tracking
 - **Mint events** - for linking to transactions
-- **Burn events** - for linking to transactions  
+- **Burn events** - for linking to transactions
 - **Swap events** - for transaction tracking
 - **Any event that creates or updates Transaction entities**
 
 **ALWAYS check if your handler needs `event.transaction.hash` and add `field_selection` BEFORE implementing the handler logic.**
 
 **Without field selection:**
+
 - `event.transaction.hash` will be undefined
 - `event.transaction` will be empty `{}`
 - You'll get TypeScript errors about missing properties
 
 **With field selection:**
+
 - `event.transaction.hash` will be available
 - `event.transaction` will have the specified fields
 - Code will compile correctly
 
 **Examples of errors to ignore for now:**
+
 ```typescript
 // ❌ IGNORE - Will be fixed when we implement the handler
 // Error: Cannot find name 'handleMint'
@@ -1694,6 +1802,7 @@ const fees = calculateFees(amount);
 ```
 
 **COMMON FIXES TO APPLY AUTOMATICALLY:**
+
 1. **Fix entity type imports** - Use `"generated/src/db/Entities.gen"` for entity types
 2. **Fix type mismatches** - Match entity field types exactly (BigDecimal vs bigint)
 3. **Fix field names** - Use exact field names from generated types
@@ -1708,27 +1817,31 @@ const fees = calculateFees(amount);
 12. **🚨 CRITICAL: Check entity type mismatches and database schema compatibility** - ALWAYS verify that the types you're setting in code match the schema entity property types exactly, and ensure database schema compatibility
 
 **EXAMPLE OF COMPLETE FIX:**
+
 ```typescript
 // ❌ BEFORE - Multiple issues
 import { Pair, Token } from "generated";
-import { BigDecimal } from 'bignumber.js';
+import { BigDecimal } from "bignumber.js";
 
-const pair: Pair = {  // Wrong type
-  token0: token0.id,  // Wrong field name
-  totalSupply: ZERO_BD,  // Wrong type (should be bigint)
+const pair: Pair = {
+  // Wrong type
+  token0: token0.id, // Wrong field name
+  totalSupply: ZERO_BD, // Wrong type (should be bigint)
 };
 
 // ✅ AFTER - All issues fixed
 import { Pair_t, Token_t } from "generated/src/db/Entities.gen";
-import { BigDecimal } from 'generated';
+import { BigDecimal } from "generated";
 
-const pair: Pair_t = {  // Correct type
-  token0_id: token0.id,  // Correct field name
-  totalSupply: ZERO_BI,  // Correct type (bigint)
+const pair: Pair_t = {
+  // Correct type
+  token0_id: token0.id, // Correct field name
+  totalSupply: ZERO_BI, // Correct type (bigint)
 };
 ```
 
 **EXAMPLE OF FIELD SELECTION FIX:**
+
 ```yaml
 # ❌ BEFORE - No field selection, transaction.hash will be undefined
 - event: Transfer(address indexed from, address indexed to, uint256 value)
@@ -1741,6 +1854,7 @@ const pair: Pair_t = {  // Correct type
 ```
 
 **EXAMPLE OF @derivedFrom FIX:**
+
 ```graphql
 # ❌ BEFORE - Missing @derivedFrom, will cause "EE211: Arrays of entities is unsupported"
 type Transaction {
@@ -1758,16 +1872,20 @@ type Transaction {
 ```
 
 **EXAMPLE OF CONSTANTS FIX:**
+
 ```typescript
 // ❌ BEFORE - Hardcoded address, inconsistent with original subgraph
-const factory = await context.UniswapFactory.get('0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f');
+const factory = await context.UniswapFactory.get(
+  "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f"
+);
 
 // ✅ AFTER - Use constant from original subgraph, consistent and maintainable
 const factory = await context.UniswapFactory.get(FACTORY_ADDRESS);
 ```
 
 **A complete migration should pass ALL these checks before being considered production-ready.**
-```
+
+````
 
 ## **22. Async/Await Validation**
 
@@ -1783,7 +1901,7 @@ export function updateTokenDayData() {
 export async function updateTokenDayData() {
   const bundle = await context.Bundle.get(`${chainId}-1`); // Returns actual data
 }
-```
+````
 
 **Note: `context.Entity.set()` does NOT need `await` - it's synchronous.**
 
@@ -1794,7 +1912,9 @@ export async function updateTokenDayData() {
 **IMPORTANT: When the subgraph accesses arrays from relational entities, Envio requires a different approach.**
 
 ### **The Problem:**
+
 **Subgraph pattern:**
+
 ```typescript
 // Subgraph can directly access entity arrays
 transaction.mints.push(mint);
@@ -1803,11 +1923,13 @@ transaction.swaps.push(swap);
 ```
 
 **Envio limitation:**
+
 - `@derivedFrom` arrays are **virtual fields** - they don't exist in generated types
 - You **cannot directly access** `transaction.mints`, `transaction.burns`, etc.
 - These arrays are populated automatically by Envio when querying the API
 
 ### **The Solution:**
+
 **Use `context.Entity.getWhere.fieldName.eq(value)` to query for related entities:**
 
 ```typescript
@@ -1822,10 +1944,15 @@ const swap = await context.Swap.getWhere.transaction_id.eq(transactionId);
 ```
 
 ### **Example Implementation:**
+
 ```typescript
 // When you need to find existing entities by transaction
-const existingMint = await context.Mint.getWhere.transaction_id.eq(transactionId);
-const existingBurn = await context.Burn.getWhere.transaction_id.eq(transactionId);
+const existingMint = await context.Mint.getWhere.transaction_id.eq(
+  transactionId
+);
+const existingBurn = await context.Burn.getWhere.transaction_id.eq(
+  transactionId
+);
 
 if (existingMint) {
   // Update existing mint entity
@@ -1848,26 +1975,25 @@ if (existingMint) {
 ```
 
 ### **Key Points:**
+
 - **Use `context.Entity.getWhere.fieldName.eq(value)`** for querying related entities
 - **This simulates the subgraph's array access** by finding entities that reference the current entity
 - **Always check if entities exist** before updating or creating
 - **Use the spread operator** when updating existing entities (they're read-only)
-
-
-
-
 
 **🚨 CRITICAL: Entity Type Mismatch and Database Schema Compatibility**
 
 **Rule 12: Check entity type mismatches and database schema compatibility - ALWAYS verify that the types you're setting in code match the schema entity property types exactly**
 
 **Key Points:**
+
 - **Check the GraphQL schema** (`schema.graphql`) for each entity's field types
 - **Compare with your code** - ensure types match exactly
 - **Test with TypeScript** - `pnpm tsc --noEmit` will catch many type mismatches
 - **Test runtime execution** - `TUI_OFF=true pnpm dev` will catch database compatibility issues
 
 **Common Schema Types and Their Code Equivalents:**
+
 - `Int!` → `number` (e.g., `dayStartTimestamp`)
 - `BigInt!` → `BigInt` or constants like `ZERO_BI`, `ONE_BI`
 - `BigDecimal!` → `BigDecimal` or constants like `ZERO_BD`, `ONE_BD`
@@ -1877,6 +2003,7 @@ if (existingMint) {
 - `EntityType!` → `entityType_id: string` (for relationships - see Entity Relationships section)
 
 **Example of Type Mismatch:**
+
 ```typescript
 // ❌ WRONG - Schema expects Int!, but code sets BigInt
 // Schema: date: Int!
@@ -1886,4 +2013,3 @@ if (existingMint) {
 // Schema: date: Int!
 // Code: date: dayStartTimestamp  // dayStartTimestamp is already a number
 ```
-

@@ -32,6 +32,28 @@ type logger = {
 @@warning("-30") // Duplicated type names (input)
 @genType.import(("./Types.ts", "Effect"))
 type rec effect<'input, 'output>
+@genType @unboxed
+and rateLimitDuration =
+  | @as("second") Second
+  | @as("minute") Minute
+  | Milliseconds(int)
+@genType @unboxed
+and rateLimit =
+  | @as(false) Disable
+  | Enable({calls: int, per: rateLimitDuration})
+@genType
+and experimental_effectOptions<'input, 'output> = {
+  /** The name of the effect. Used for logging and debugging. */
+  name: string,
+  /** The input schema of the effect. */
+  input: S.t<'input>,
+  /** The output schema of the effect. */
+  output: S.t<'output>,
+  /** Rate limit for the effect. Set to false to disable or provide {calls: number, per: "second" | "minute"} to enable. */
+  rateLimit?: rateLimit,
+  /** Whether the effect should be cached. */
+  cache?: bool,
+}
 @genType
 and effectOptions<'input, 'output> = {
   /** The name of the effect. Used for logging and debugging. */
@@ -40,6 +62,8 @@ and effectOptions<'input, 'output> = {
   input: S.t<'input>,
   /** The output schema of the effect. */
   output: S.t<'output>,
+  /** Rate limit for the effect. Set to false to disable or provide {calls: number, per: "second" | "minute"} to enable. */
+  rateLimit: rateLimit,
   /** Whether the effect should be cached. */
   cache?: bool,
 }
@@ -47,6 +71,7 @@ and effectOptions<'input, 'output> = {
 and effectContext = {
   log: logger,
   effect: 'input 'output. (effect<'input, 'output>, 'input) => promise<'output>,
+  mutable cache: bool,
 }
 @genType
 and effectArgs<'input> = {
@@ -55,12 +80,23 @@ and effectArgs<'input> = {
 }
 @@warning("+30")
 
-let experimental_createEffect = (
+let durationToMs = (duration: rateLimitDuration) =>
+  switch duration {
+  | Second => 1000
+  | Minute => 60000
+  | Milliseconds(ms) => ms
+  }
+
+let createEffect = (
   options: effectOptions<'input, 'output>,
   handler: effectArgs<'input> => promise<'output>,
 ) => {
   let outputSchema =
     S.schema(_ => options.output)->(Utils.magic: S.t<S.t<'output>> => S.t<Internal.effectOutput>)
+  let itemSchema = S.schema((s): Internal.effectCacheItem => {
+    id: s.matches(S.string),
+    output: s.matches(outputSchema),
+  })
   {
     name: options.name,
     handler: handler->(
@@ -78,20 +114,48 @@ let experimental_createEffect = (
       Utils.magic: S.t<S.t<'input>> => S.t<Internal.effectInput>
     ),
     output: outputSchema,
-    cache: switch options.cache {
-    | Some(true) =>
-      let itemSchema = S.schema((s): Internal.effectCacheItem => {
-        id: s.matches(S.string),
-        output: s.matches(outputSchema),
-      })
+    storageMeta: {
+      table: Internal.makeCacheTable(~effectName=options.name),
+      outputSchema,
+      itemSchema,
+    },
+    defaultShouldCache: switch options.cache {
+    | Some(true) => true
+    | _ => false
+    },
+    rateLimit: switch options.rateLimit {
+    | Disable => None
+    | Enable({calls, per}) =>
       Some({
-        table: Internal.makeCacheTable(~effectName=options.name),
-        outputSchema,
-        itemSchema,
+        callsPerDuration: calls,
+        durationMs: per->durationToMs,
+        availableCalls: calls,
+        windowStartTime: Js.Date.now(),
+        queueCount: 0,
+        nextWindowPromise: None,
       })
-    | None
-    | Some(false) =>
-      None
     },
   }->(Utils.magic: Internal.effect => effect<'input, 'output>)
+}
+
+@deprecated(
+  "Use createEffect instead. The only difference is that rateLimit option becomes required. Set it to false to keep the same behaviour."
+)
+let experimental_createEffect = (
+  options: experimental_effectOptions<'input, 'output>,
+  handler: effectArgs<'input> => promise<'output>,
+) => {
+  createEffect(
+    {
+      name: options.name,
+      input: options.input,
+      output: options.output,
+      rateLimit: switch options.rateLimit {
+      | Some(rateLimit) => rateLimit
+      | None => Disable
+      },
+      cache: ?options.cache,
+    },
+    handler,
+  )
 }
