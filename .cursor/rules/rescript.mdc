@@ -24,3 +24,18 @@ let fieldValue = objValue["myField"]
 ```
 - Use records when working with a structured data, and objects to conviniently pass payload data between functions.
 - Never use %raw to access object fields if you know the type.
+
+## Testing Best Practices
+
+- Never use `Js.Console.log` in test files. Use `Assert` module for all verifications.
+- Tests should be silent unless they fail - rely on assertions rather than logging.
+- When testing with multiple iterations, collect results in data structures and assert on them.
+- Use try/catch as expressions instead of refs for tracking success/failure:
+  ```rescript
+  let succeeded = try {
+    // operations that might fail
+    true
+  } catch {
+  | _ => false
+  }
+  ```
