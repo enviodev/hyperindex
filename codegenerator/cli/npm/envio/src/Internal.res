@@ -281,27 +281,37 @@ let makeEnumConfig = (~name, ~variants) => {
 
 type effectInput
 type effectOutput
-type effectContext
+type effectContext = private {mutable cache: bool}
 type effectArgs = {
   input: effectInput,
   context: effectContext,
   cacheKey: string,
 }
 type effectCacheItem = {id: string, output: effectOutput}
-type effectCacheMeta = {
+type effectCacheStorageMeta = {
   itemSchema: S.t<effectCacheItem>,
   outputSchema: S.t<effectOutput>,
   table: Table.table,
 }
+type rateLimitState = {
+  callsPerDuration: int,
+  durationMs: int,
+  mutable availableCalls: int,
+  mutable windowStartTime: float,
+  mutable queueCount: int,
+  mutable nextWindowPromise: option<promise<unit>>,
+}
 type effect = {
   name: string,
   handler: effectArgs => promise<effectOutput>,
-  cache: option<effectCacheMeta>,
+  storageMeta: effectCacheStorageMeta,
+  defaultShouldCache: bool,
   output: S.t<effectOutput>,
   input: S.t<effectInput>,
   // The number of functions that are currently running.
   mutable activeCallsCount: int,
   mutable prevCallStartTimerRef: Hrtime.timeRef,
+  rateLimit: option<rateLimitState>,
 }
 let cacheTablePrefix = "envio_effect_"
 let cacheOutputSchema = S.json(~validate=false)->(Utils.magic: S.t<Js.Json.t> => S.t<effectOutput>)

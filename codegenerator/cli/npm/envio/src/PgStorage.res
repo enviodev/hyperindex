@@ -789,13 +789,7 @@ let make = (
     ~items: array<Internal.effectCacheItem>,
     ~initialize: bool,
   ) => {
-    let {table, itemSchema} = switch effect.cache {
-    | Some(cacheMeta) => cacheMeta
-    | None =>
-      Js.Exn.raiseError(
-        `Failed to set effect cache for "${effect.name}". Effect has no cache enabled.`,
-      )
-    }
+    let {table, itemSchema} = effect.storageMeta
 
     if initialize {
       let _ =

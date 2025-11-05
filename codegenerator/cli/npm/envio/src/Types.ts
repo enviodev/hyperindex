@@ -44,6 +44,11 @@ export type EffectContext = {
    * Define a new Effect using createEffect outside of the handler.
    */
   readonly effect: EffectCaller;
+  /**
+   * Whether to cache the result of the effect. Defaults to the effect's cache configuration.
+   * Set to false to disable caching for this specific call.
+   */
+  cache: boolean;
 };
 
 export type GenericContractRegister<Args> = (
