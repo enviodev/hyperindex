@@ -115,8 +115,7 @@ pub struct BlockHandler {
 fn get_event_handler_directory(language: &Language) -> String {
     match language {
         Language::ReScript => "./src/EventHandlers.res.js".to_string(),
-        Language::TypeScript => "src/EventHandlers.ts".to_string(),
-        Language::JavaScript => "./src/EventHandlers.js".to_string(),
+        Language::TypeScript => "./src/EventHandlers.ts".to_string(),
     }
 }
 
@@ -553,14 +552,11 @@ mod test {
     #[test]
     fn test_get_event_handler_directory() {
         let language_1: Language = Language::ReScript;
-        let language_2: Language = Language::JavaScript;
-        let language_3: Language = Language::TypeScript;
+        let language_2: Language = Language::TypeScript;
         let event_handler_directory_1 = super::get_event_handler_directory(&language_1);
         let event_handler_directory_2 = super::get_event_handler_directory(&language_2);
-        let event_handler_directory_3 = super::get_event_handler_directory(&language_3);
         assert_eq!(event_handler_directory_1, "./src/EventHandlers.res.js");
-        assert_eq!(event_handler_directory_2, "./src/EventHandlers.js");
-        assert_eq!(event_handler_directory_3, "src/EventHandlers.ts");
+        assert_eq!(event_handler_directory_2, "./src/EventHandlers.ts");
     }
     // Unit test to check that the correct network contract hashmap is generated
     #[tokio::test]
