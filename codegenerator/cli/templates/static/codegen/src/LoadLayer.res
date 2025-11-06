@@ -77,13 +77,13 @@ let callEffect = (
   )
 
   if hadActiveCalls {
-    Prometheus.EffectCalls.timeCounter->Prometheus.SafeCounter.incrementMany(
-      ~labels=effectName,
-      ~value=effect.prevCallStartTimerRef
-      ->Hrtime.timeSince
-      ->Hrtime.toMillis
-      ->Hrtime.intFromMillis,
-    )
+    let elapsed = Hrtime.millisBetween(~from=effect.prevCallStartTimerRef, ~to=timerRef)
+    if elapsed > 0 {
+      Prometheus.EffectCalls.timeCounter->Prometheus.SafeCounter.incrementMany(
+        ~labels=effectName,
+        ~value=Hrtime.millisBetween(~from=effect.prevCallStartTimerRef, ~to=timerRef),
+      )
+    }
   }
   effect.prevCallStartTimerRef = timerRef
 
@@ -100,14 +100,12 @@ let callEffect = (
       ~labels=effectName,
       ~value=effect.activeCallsCount,
     )
+    let newTimer = Hrtime.makeTimer()
     Prometheus.EffectCalls.timeCounter->Prometheus.SafeCounter.incrementMany(
       ~labels=effectName,
-      ~value=effect.prevCallStartTimerRef
-      ->Hrtime.timeSince
-      ->Hrtime.toMillis
-      ->Hrtime.intFromMillis,
+      ~value=Hrtime.millisBetween(~from=effect.prevCallStartTimerRef, ~to=newTimer),
     )
-    effect.prevCallStartTimerRef = Hrtime.makeTimer()
+    effect.prevCallStartTimerRef = newTimer
 
     Prometheus.EffectCalls.totalCallsCount->Prometheus.SafeCounter.increment(~labels=effectName)
     Prometheus.EffectCalls.sumTimeCounter->Prometheus.SafeCounter.incrementMany(
@@ -190,11 +188,13 @@ let rec executeWithRateLimit = (
         Prometheus.EffectQueueCount.set(~count=state.queueCount, ~effectName)
       }
 
+      let millisUntilReset = ref(0)
       let nextWindowPromise = switch state.nextWindowPromise {
       | Some(p) => p
       | None =>
-        let timeUntilReset = state.windowStartTime +. state.durationMs->Int.toFloat -. now
-        let p = Utils.delay(timeUntilReset->Float.toInt)
+        millisUntilReset :=
+          (state.windowStartTime +. state.durationMs->Int.toFloat -. now)->Float.toInt
+        let p = Utils.delay(millisUntilReset.contents)
         state.nextWindowPromise = Some(p)
         p
       }
@@ -204,6 +204,12 @@ let rec executeWithRateLimit = (
       ->Array.push(
         nextWindowPromise
         ->Promise.then(() => {
+          if millisUntilReset.contents > 0 {
+            Prometheus.EffectQueueCount.timeCounter->Prometheus.SafeCounter.incrementMany(
+              ~labels=effectName,
+              ~value=millisUntilReset.contents,
+            )
+          }
           executeWithRateLimit(~effect, ~effectArgs=queuedArgs, ~inMemTable, ~isFromQueue=true)
         })
         ->Promise.ignoreValue,
