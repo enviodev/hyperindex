@@ -335,8 +335,6 @@ impl Ecosystem {
 )]
 ///Which language do you want to write in?
 pub enum Language {
-    #[clap(name = "javascript")]
-    JavaScript,
     #[clap(name = "typescript")]
     TypeScript,
     #[clap(name = "rescript")]
@@ -349,7 +347,6 @@ impl Language {
         match self {
             Language::ReScript => "./src/EventHandlers.res.js".to_string(),
             Language::TypeScript => "src/EventHandlers.ts".to_string(),
-            Language::JavaScript => "./src/EventHandlers.js".to_string(),
         }
     }
 }
