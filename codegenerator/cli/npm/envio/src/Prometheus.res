@@ -653,6 +653,12 @@ module EffectQueueCount = {
     ~labelSchema=effectLabelsSchema,
   )
 
+  let timeCounter = SafeCounter.makeOrThrow(
+    ~name="envio_effect_queue_time",
+    ~help="The time spent waiting in the rate limit queue. (milliseconds)",
+    ~labelSchema=effectLabelsSchema,
+  )
+
   let set = (~count, ~effectName) => {
     gauge->SafeGauge.handleInt(~labels=effectName, ~value=count)
   }

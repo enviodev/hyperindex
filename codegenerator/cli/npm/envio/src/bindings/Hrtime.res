@@ -39,3 +39,7 @@ let intFromMillis = toInt
 let intFromNanos = toInt
 let intFromSeconds = toInt
 let floatFromMillis = Utils.magic
+
+let millisBetween = (~from: timeRef, ~to: timeRef): int => {
+  to->toMillis->intFromMillis - from->toMillis->intFromMillis
+}
