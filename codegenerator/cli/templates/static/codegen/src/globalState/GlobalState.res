@@ -955,7 +955,7 @@ let injectedTaskReducer = (
         | _ => None
         }
 
-        let inMemoryStore = rollbackInMemStore->Option.getWithDefault(InMemoryStore.make())
+        let inMemoryStore = rollbackInMemStore->Option.getWithDefault(InMemoryStore.make(~entities=Entities.allEntities))
 
         inMemoryStore->InMemoryStore.setBatchDcs(~batch, ~shouldSaveHistory)
 

@@ -26,7 +26,7 @@ describe("Load and save an entity with a Timestamp from DB", () => {
       ~pgSchema=Generated.storagePgSchema,
     )
 
-    let inMemoryStore = InMemoryStore.make()
+    let inMemoryStore = InMemoryStore.make(~entities=Entities.allEntities)
     let loadManager = LoadManager.make()
 
     let item = MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem
