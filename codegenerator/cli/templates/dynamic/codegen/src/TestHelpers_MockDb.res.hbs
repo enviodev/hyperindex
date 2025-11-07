@@ -44,7 +44,7 @@ let deleteDictKey: (dict<'a>, string) => unit = %raw(`
 
 let config = Generated.configWithoutRegistrations
 EventRegister.startRegistration(
-  ~ecosystem=config.ecosystem,
+  ~platform=config.platform,
   ~multichain=config.multichain,
   ~preloadHandlers=config.preloadHandlers,
 )

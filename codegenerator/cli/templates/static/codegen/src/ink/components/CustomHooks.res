@@ -34,7 +34,7 @@ module InitApi = {
     {
       envioVersion,
       envioApiToken,
-      ecosystem: (config.ecosystem :> ecosystem),
+      ecosystem: (config.platform.name :> ecosystem),
       hyperSyncNetworks,
       rpcNetworks,
     }

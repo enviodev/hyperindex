@@ -4,7 +4,7 @@ type registrations = {
 }
 
 let startRegistration: (
-  ~ecosystem: Config.ecosystem,
+  ~platform: Platform.t,
   ~multichain: Config.multichain,
   ~preloadHandlers: bool,
 ) => unit

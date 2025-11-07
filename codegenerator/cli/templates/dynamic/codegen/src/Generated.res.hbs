@@ -98,7 +98,7 @@ let configWithoutRegistrations = makeGeneratedConfig()
 
 let registerAllHandlers = () => {
   EventRegister.startRegistration(
-    ~ecosystem=configWithoutRegistrations.ecosystem,
+    ~platform=configWithoutRegistrations.platform,
     ~multichain=configWithoutRegistrations.multichain,
     ~preloadHandlers=configWithoutRegistrations.preloadHandlers,
   )
