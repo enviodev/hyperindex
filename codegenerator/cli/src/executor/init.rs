@@ -27,7 +27,7 @@ pub async fn run_init_args(init_args: InitArgs, project_paths: &ProjectPaths) ->
     let template_dirs = TemplateDirs::new();
     //get_init_args_interactive opens an interactive cli for required args to be selected
     //if they haven't already been
-    let mut init_config = prompt_missing_init_args(init_args, project_paths)
+    let init_config = prompt_missing_init_args(init_args, project_paths)
         .await
         .context("Failed during interactive input")?;
 
@@ -40,33 +40,29 @@ pub async fn run_init_args(init_args: InitArgs, project_paths: &ProjectPaths) ->
         Ecosystem::Fuel {
             init_flow: init_config::fuel::InitFlow::Template(template),
         } => {
-            init_config.language = Language::TypeScript;
-
             template_dirs
                 .get_and_extract_template(
                     template,
-                    &init_config.language,
+                    &Language::TypeScript,
                     &parsed_project_paths.project_root,
                 )
                 .context(format!(
-                    "Failed initializing Fuel template {} with language {} at path {:?}",
-                    &template, &init_config.language, &parsed_project_paths.project_root,
+                    "Failed initializing Fuel template {} at path {:?}",
+                    &template, &parsed_project_paths.project_root,
                 ))?;
         }
         Ecosystem::Evm {
             init_flow: init_config::evm::InitFlow::Template(template),
         } => {
-            init_config.language = Language::TypeScript;
-
             template_dirs
                 .get_and_extract_template(
                     template,
-                    &init_config.language,
+                    &Language::TypeScript,
                     &parsed_project_paths.project_root,
                 )
                 .context(format!(
-                    "Failed initializing Evm template {} with language {} at path {:?}",
-                    &template, &init_config.language, &parsed_project_paths.project_root,
+                    "Failed initializing Evm template {} at path {:?}",
+                    &template, &parsed_project_paths.project_root,
                 ))?;
         }
         Ecosystem::Evm {

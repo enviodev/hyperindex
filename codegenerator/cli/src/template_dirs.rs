@@ -285,12 +285,6 @@ impl<'a> TemplateDirs<'a> {
 
         let template_folder_name = format!("{}_template", template);
 
-        println!(
-            "Getting init template static dir at {}",
-            template_folder_name
-        );
-        println!("Parent path at {:?}", template_dir.parent_path);
-
         template_dir.get_dir(&template_folder_name).ok_or_else(|| {
             anyhow!(
                 "Unexpected, static {} dir does not exist at {:?}",
@@ -384,13 +378,10 @@ impl<'a> TemplateDirs<'a> {
         lang: &Language,
         project_root: &PathBuf,
     ) -> Result<()> {
-        println!("Generating template for language {}", lang);
         let lang_files = self.get_blank_lang_dir(lang).context(format!(
             "Failed getting static files for blank template with language {}",
             lang
         ))?;
-
-        println!("language files at {:?}", lang_files.parent_path);
 
         let shared_files = self
             .get_blank_shared_dir()
