@@ -8,7 +8,7 @@ let hashRawEventsKey = (key: rawEventsKey) =>
   EventUtils.getEventIdKeyString(~chainId=key.chainId, ~eventId=key.eventId)
 
 module EntityTables = {
-  type t = dict<InMemoryTable.Entity.t<Entities.internalEntity>>
+  type t = dict<InMemoryTable.Entity.t<Internal.entity>>
   exception UndefinedEntity({entityName: string})
   let make = (entities: array<Internal.entityConfig>): t => {
     let init = Js.Dict.empty()
@@ -22,7 +22,7 @@ module EntityTables = {
     switch self->Utils.Dict.dangerouslyGetNonOption(entityName) {
     | Some(table) =>
       table->(
-        Utils.magic: InMemoryTable.Entity.t<Entities.internalEntity> => InMemoryTable.Entity.t<
+        Utils.magic: InMemoryTable.Entity.t<Internal.entity> => InMemoryTable.Entity.t<
           entity,
         >
       )
@@ -51,13 +51,13 @@ type effectCacheInMemTable = {
 
 type t = {
   rawEvents: InMemoryTable.t<rawEventsKey, InternalTable.RawEvents.t>,
-  entities: dict<InMemoryTable.Entity.t<Entities.internalEntity>>,
+  entities: dict<InMemoryTable.Entity.t<Internal.entity>>,
   effects: dict<effectCacheInMemTable>,
   rollbackTargetCheckpointId: option<int>,
 }
 
 let make = (
-  ~entities: array<Internal.entityConfig>=Entities.allEntities,
+  ~entities: array<Internal.entityConfig>,
   ~rollbackTargetCheckpointId=?,
 ): t => {
   rawEvents: InMemoryTable.make(~hash=hashRawEventsKey),
@@ -106,7 +106,7 @@ let isRollingBack = (inMemoryStore: t) => inMemoryStore.rollbackTargetCheckpoint
 let setBatchDcs = (inMemoryStore: t, ~batch: Batch.t, ~shouldSaveHistory) => {
   let inMemTable =
     inMemoryStore->getInMemTable(
-      ~entityConfig=module(InternalTable.DynamicContractRegistry)->Entities.entityModToInternal,
+      ~entityConfig=InternalTable.DynamicContractRegistry.config,
     )
 
   let itemIdx = ref(0)
@@ -154,3 +154,4 @@ let setBatchDcs = (inMemoryStore: t, ~batch: Batch.t, ~shouldSaveHistory) => {
     itemIdx := itemIdx.contents + checkpointEventsProcessed
   }
 }
+

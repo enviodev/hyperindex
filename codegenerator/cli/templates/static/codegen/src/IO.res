@@ -327,7 +327,7 @@ let executeBatch = async (
 }
 
 let prepareRollbackDiff = async (~persistence: Persistence.t, ~rollbackTargetCheckpointId) => {
-  let inMemStore = InMemoryStore.make(~rollbackTargetCheckpointId)
+  let inMemStore = InMemoryStore.make(~entities=Entities.allEntities, ~rollbackTargetCheckpointId)
 
   let deletedEntities = Js.Dict.empty()
   let setEntities = Js.Dict.empty()
