@@ -27,7 +27,7 @@ pub async fn run_init_args(init_args: InitArgs, project_paths: &ProjectPaths) ->
     let template_dirs = TemplateDirs::new();
     //get_init_args_interactive opens an interactive cli for required args to be selected
     //if they haven't already been
-    let init_config = prompt_missing_init_args(init_args, project_paths)
+    let mut init_config = prompt_missing_init_args(init_args, project_paths)
         .await
         .context("Failed during interactive input")?;
 
@@ -40,6 +40,8 @@ pub async fn run_init_args(init_args: InitArgs, project_paths: &ProjectPaths) ->
         Ecosystem::Fuel {
             init_flow: init_config::fuel::InitFlow::Template(template),
         } => {
+            init_config.language = Language::TypeScript;
+
             template_dirs
                 .get_and_extract_template(
                     template,
@@ -54,6 +56,8 @@ pub async fn run_init_args(init_args: InitArgs, project_paths: &ProjectPaths) ->
         Ecosystem::Evm {
             init_flow: init_config::evm::InitFlow::Template(template),
         } => {
+            init_config.language = Language::TypeScript;
+
             template_dirs
                 .get_and_extract_template(
                     template,
