@@ -7,6 +7,7 @@ module Call = {
     input: input,
     resolve: output => unit,
     reject: exn => unit,
+    mutable exn: option<exn>,
     mutable promise: promise<output>,
     mutable isLoading: bool,
   }
@@ -16,7 +17,7 @@ module Group = {
   type t = {
     // Unique calls by input as a key
     calls: dict<Call.t>,
-    load: array<Call.input> => promise<unit>,
+    load: (array<Call.input>, ~onError: (~inputKey: string, ~exn: exn) => unit) => promise<unit>,
     getUnsafeInMemory: string => Call.output,
     hasInMemory: string => bool,
   }
@@ -66,32 +67,32 @@ let schedule = async loadManager => {
       }
     })
 
-    let isSuccess = if inputsToLoad->Utils.Array.isEmpty->not {
+    if inputsToLoad->Utils.Array.isEmpty->not {
       try {
-        await group.load(inputsToLoad)
-        true
+        await group.load(inputsToLoad, ~onError=(~inputKey, ~exn) => {
+          let call = calls->Js.Dict.unsafeGet(inputKey)
+          call.exn = Some(exn)
+        })
       } catch {
       | exn => {
           let exn = exn->Utils.prettifyExn
           currentInputKeys->Array.forEach(inputKey => {
             let call = calls->Js.Dict.unsafeGet(inputKey)
-            call.reject(exn)
+            call.exn = Some(exn)
           })
-          false
         }
       }
-    } else {
-      true
     }
 
     if currentInputKeys->Utils.Array.isEmpty->not {
-      if isSuccess {
-        currentInputKeys->Js.Array2.forEach(inputKey => {
-          let call = calls->Js.Dict.unsafeGet(inputKey)
-          calls->Utils.Dict.deleteInPlace(inputKey)
-          call.resolve(group.getUnsafeInMemory(inputKey))
-        })
-      }
+      currentInputKeys->Js.Array2.forEach(inputKey => {
+        let call = calls->Js.Dict.unsafeGet(inputKey)
+        calls->Utils.Dict.deleteInPlace(inputKey)
+        switch call.exn {
+        | Some(exn) => call.reject(exn->Utils.prettifyExn)
+        | None => call.resolve(group.getUnsafeInMemory(inputKey))
+        }
+      })
 
       // Clean up executed batch to reset
       // provided load function which
@@ -145,7 +146,12 @@ let call = (
         let g: Group.t = {
           calls: Js.Dict.empty(),
           load: load->(
-            Utils.magic: (array<'input> => promise<unit>) => array<Call.input> => promise<unit>
+            Utils.magic: (
+              (array<'input>, ~onError: (~inputKey: string, ~exn: exn) => unit) => promise<unit>
+            ) => (
+              array<Call.input>,
+              ~onError: (~inputKey: string, ~exn: exn) => unit,
+            ) => promise<unit>
           ),
           getUnsafeInMemory: getUnsafeInMemory->(
             Utils.magic: (string => 'output) => string => Call.output
@@ -166,6 +172,7 @@ let call = (
             resolve,
             reject,
             promise: %raw(`null`),
+            exn: None,
             isLoading: false,
           }
           group.calls->Js.Dict.set(inputKey, call)
