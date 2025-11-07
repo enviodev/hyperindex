@@ -12,7 +12,7 @@ let loadById = (
   let key = `${entityConfig.name}.get`
   let inMemTable = inMemoryStore->InMemoryStore.getInMemTable(~entityConfig)
 
-  let load = async idsToLoad => {
+  let load = async (idsToLoad, ~onError as _) => {
     let timerRef = Prometheus.StorageLoad.startOperation(~operation=key)
 
     // Since LoadManager.call prevents registerign entities already existing in the inMemoryStore,
@@ -67,6 +67,7 @@ let callEffect = (
   ~arg: Internal.effectArgs,
   ~inMemTable: InMemoryStore.effectCacheInMemTable,
   ~timerRef,
+  ~onError,
 ) => {
   let effectName = effect.name
   let hadActiveCalls = effect.activeCallsCount > 0
@@ -94,6 +95,9 @@ let callEffect = (
       inMemTable.idsToStore->Array.push(arg.cacheKey)->ignore
     }
   })
+  ->Promise.catchResolve(exn => {
+    onError(~inputKey=arg.cacheKey, ~exn)
+  })
   ->Promise.finally(() => {
     effect.activeCallsCount = effect.activeCallsCount - 1
     Prometheus.EffectCalls.activeCallsCount->Prometheus.SafeGauge.handleInt(
@@ -119,6 +123,7 @@ let rec executeWithRateLimit = (
   ~effect: Internal.effect,
   ~effectArgs: array<Internal.effectArgs>,
   ~inMemTable,
+  ~onError,
   ~isFromQueue: bool,
 ) => {
   let effectName = effect.name
@@ -137,6 +142,7 @@ let rec executeWithRateLimit = (
           ~arg=effectArgs->Array.getUnsafe(idx),
           ~inMemTable,
           ~timerRef,
+          ~onError,
         )->Promise.ignoreValue,
       )
       ->ignore
@@ -169,6 +175,7 @@ let rec executeWithRateLimit = (
           ~arg=immediateArgs->Array.getUnsafe(idx),
           ~inMemTable,
           ~timerRef,
+          ~onError,
         )->Promise.ignoreValue,
       )
       ->ignore
@@ -210,7 +217,13 @@ let rec executeWithRateLimit = (
               ~value=millisUntilReset.contents,
             )
           }
-          executeWithRateLimit(~effect, ~effectArgs=queuedArgs, ~inMemTable, ~isFromQueue=true)
+          executeWithRateLimit(
+            ~effect,
+            ~effectArgs=queuedArgs,
+            ~inMemTable,
+            ~onError,
+            ~isFromQueue=true,
+          )
         })
         ->Promise.ignoreValue,
       )
@@ -235,7 +248,7 @@ let loadEffect = (
   let key = `${effectName}.effect`
   let inMemTable = inMemoryStore->InMemoryStore.getEffectInMemTable(~effect)
 
-  let load = async args => {
+  let load = async (args, ~onError) => {
     let idsToLoad = args->Js.Array2.map((arg: Internal.effectArgs) => arg.cacheKey)
     let idsFromCache = Utils.Set.make()
 
@@ -255,8 +268,15 @@ let loadEffect = (
           ~ids=idsToLoad,
         )
       } catch {
-      | Persistence.StorageError({message, reason}) =>
-        reason->ErrorHandling.mkLogAndRaise(~logger=item->Logging.getItemLogger, ~msg=message)
+      | exn =>
+        item
+        ->Logging.getItemLogger
+        ->Logging.childWarn({
+          "msg": `Failed to load cache effect cache. The indexer will continue working, but the effect will not be able to use the cache.`,
+          "err": exn->Utils.prettifyExn,
+          "effect": effectName,
+        })
+        []
       }
 
       dbEntities->Js.Array2.forEach(dbEntity => {
@@ -301,6 +321,7 @@ let loadEffect = (
           ~effect,
           ~effectArgs=argsToCall,
           ~inMemTable,
+          ~onError,
           ~isFromQueue=false,
         )->Promise.ignoreValue
       }
@@ -338,7 +359,7 @@ let loadByField = (
   let key = `${entityConfig.name}.getWhere.${fieldName}.${operatorCallName}`
   let inMemTable = inMemoryStore->InMemoryStore.getInMemTable(~entityConfig)
 
-  let load = async (fieldValues: array<'fieldValue>) => {
+  let load = async (fieldValues: array<'fieldValue>, ~onError as _) => {
     let timerRef = Prometheus.StorageLoad.startOperation(~operation=key)
 
     let size = ref(0)
@@ -355,8 +376,10 @@ let loadByField = (
       await indiciesToLoad
       ->Js.Array2.map(async index => {
         inMemTable->InMemoryTable.Entity.addEmptyIndex(~index)
-        let entities = try {
-          await (persistence->Persistence.getInitializedStorageOrThrow).loadByFieldOrThrow(
+        try {
+          let entities = await (
+            persistence->Persistence.getInitializedStorageOrThrow
+          ).loadByFieldOrThrow(
             ~operator=switch index {
             | Single({operator: Gt}) => #">"
             | Single({operator: Eq}) => #"="
@@ -372,6 +395,17 @@ let loadByField = (
               Utils.magic: S.t<'fieldValue> => S.t<TableIndices.FieldValue.t>
             ),
           )
+
+          entities->Array.forEach(entity => {
+            //Set the entity in the in memory store
+            inMemTable->InMemoryTable.Entity.initValue(
+              ~allowOverWriteEntity=false,
+              ~key=Entities.getEntityId(entity),
+              ~entity=Some(entity),
+            )
+          })
+
+          size := size.contents + entities->Array.length
         } catch {
         | Persistence.StorageError({message, reason}) =>
           reason->ErrorHandling.mkLogAndRaise(
@@ -387,17 +421,6 @@ let loadByField = (
             ~msg=message,
           )
         }
-
-        entities->Array.forEach(entity => {
-          //Set the entity in the in memory store
-          inMemTable->InMemoryTable.Entity.initValue(
-            ~allowOverWriteEntity=false,
-            ~key=Entities.getEntityId(entity),
-            ~entity=Some(entity),
-          )
-        })
-
-        size := size.contents + entities->Array.length
       })
       ->Promise.all
 
