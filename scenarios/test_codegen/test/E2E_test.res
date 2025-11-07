@@ -938,4 +938,77 @@ describe("E2E tests", () => {
       ~message="Should only have test2 in DB (test1 was called with cache=false and subsequent calls used in-memory cache)",
     )
   })
+
+  Async.it("Effect error in one call shouldn't cause other calls to fail", async () => {
+    let sourceMock = Mock.Source.make(
+      [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
+      ~chain=#1337,
+    )
+    let indexerMock = await Mock.Indexer.make(
+      ~chains=[
+        {
+          chain: #1337,
+          sources: [sourceMock.source],
+        },
+      ],
+    )
+    await Utils.delay(0)
+
+    let throwingEffect = Envio.createEffect(
+      {
+        name: "throwingEffect",
+        input: S.string,
+        output: S.string,
+        rateLimit: Disable,
+        cache: true,
+      },
+      async ({input}) => {
+        if input->Js.String2.includes("should-fail") {
+          Utils.Error.make("Effect intentionally failed")->raise
+        }
+        input ++ "-output"
+      },
+    )
+
+    sourceMock.resolveGetHeightOrThrow(300)
+    await Utils.delay(0)
+    await Utils.delay(0)
+    sourceMock.resolveGetItemsOrThrow(
+      [
+        {
+          blockNumber: 100,
+          logIndex: 0,
+          handler: async ({context}) => {
+            let p1 = context.effect(throwingEffect, "should-fail")
+            let p2 = context.effect(throwingEffect, "shouldn't-fail")
+
+            // Verify p1 throws with correct error message
+            try {
+              let _ = await p1
+              Assert.fail("p1 should have thrown an error")
+            } catch {
+            | exn =>
+              Assert.deepEqual(
+                (exn->Utils.prettifyExn->Utils.magic)["message"],
+                "Effect intentionally failed",
+                ~message="p1 should throw with correct error message",
+              )
+            }
+
+            // p2 should succeed (bug: currently fails when p1 throws)
+            Assert.deepEqual(await p2, "shouldn't-fail-output", ~message="p2 should succeed")
+          },
+        },
+      ],
+      ~latestFetchedBlockNumber=100,
+    )
+    await indexerMock.getBatchWritePromise()
+
+    // Verify that only p2's successful result was cached
+    Assert.deepEqual(
+      await indexerMock.queryEffectCache("throwingEffect"),
+      [{"id": `"shouldn't-fail"`, "output": %raw(`"shouldn't-fail-output"`)}],
+      ~message="Should only cache p2's successful result, not p1's failed call",
+    )
+  })
 })
