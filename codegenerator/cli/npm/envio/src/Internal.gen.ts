@@ -53,8 +53,6 @@ export type genericHandlerWithLoader<loader,handler,eventFilters> = {
   readonly preRegisterDynamicContracts?: boolean
 };
 
-export type blockEvent = { readonly number: number; readonly chainId: number };
-
 export type eventOptions<eventFilters> = {
   readonly wildcard?: boolean; 
   readonly eventFilters?: eventFilters; 
