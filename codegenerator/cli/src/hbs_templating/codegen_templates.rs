@@ -19,7 +19,7 @@ use crate::{
     },
     persisted_state::{PersistedState, PersistedStateJsonString},
     project_paths::{
-        handler_paths::HandlerPathsTemplate, path_utils::add_trailing_relative_dot,
+        path_utils::{self, add_trailing_relative_dot},
         ParsedProjectPaths,
     },
     rescript_types::{
@@ -807,7 +807,7 @@ pub struct ContractTemplate {
     pub name: CapitalizedOptions,
     pub codegen_events: Vec<EventTemplate>,
     pub module_code: String,
-    pub handler: HandlerPathsTemplate,
+    pub handler: Option<String>,
 }
 
 impl ContractTemplate {
@@ -817,8 +817,17 @@ impl ContractTemplate {
         config: &SystemConfig,
     ) -> Result<Self> {
         let name = contract.name.to_capitalized_options();
-        let handler = HandlerPathsTemplate::from_contract(contract, project_paths)
-            .context("Failed building handler paths template")?;
+        let handler = contract.handler_path.as_ref().map(|path| {
+            let config_directory = project_paths.config.parent()
+                .expect("Config should have parent directory");
+            let handler_path_joined = config_directory.join(path);
+            let absolute_path = path_utils::normalize_path(handler_path_joined);
+            diff_paths(&absolute_path, &project_paths.project_root)
+                .expect("Could not find handler path relative to project root")
+                .to_str()
+                .expect("Handler path should be unicode")
+                .to_string()
+        });
         let codegen_events = contract
             .events
             .iter()
@@ -1371,10 +1380,6 @@ impl ProjectTemplate {
         // TODO: Remove schemas for aggreaged, since they are not used in runtime
         let aggregated_field_selection = FieldSelection::aggregated_selection(cfg);
 
-        let has_typescript = codegen_contracts
-            .iter()
-            .any(|contract| contract.handler.relative_to_config.ends_with(".ts"));
-
         let types_code = format!(
             r#"@genType
 type chainId = int
@@ -1392,7 +1397,7 @@ type chain = [{chain_id_type}]"#,
 
         Ok(ProjectTemplate {
             project_name: cfg.name.clone(),
-            has_typescript,
+            has_typescript: true,
             codegen_contracts,
             entities,
             gql_enums,

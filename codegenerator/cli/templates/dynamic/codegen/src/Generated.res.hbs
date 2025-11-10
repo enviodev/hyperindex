@@ -1,24 +1,24 @@
 @val external require: string => unit = "require"
 
-let registerContractHandlers = (
-  ~contractName,
-  ~handlerPathRelativeToRoot,
-  ~handlerPathRelativeToConfig,
-) => {
-  try {
-    require(`../${Path.relativePathToRootFromGenerated}/${handlerPathRelativeToRoot}`)
-  } catch {
-  | exn =>
-    let params = {
-      "Contract Name": contractName,
-      "Expected Handler Path": handlerPathRelativeToConfig,
-      "Code": "EE500",
-    }
-    let logger = Logging.createChild(~params)
+let registerContractHandlers = (~contractName, ~handler: option<string>) => {
+  switch handler {
+  | None => ()
+  | Some(handlerPath) =>
+    try {
+      require(handlerPath)
+    } catch {
+    | exn =>
+      let params = {
+        "Contract Name": contractName,
+        "Expected Handler Path": handlerPath,
+        "Code": "EE500",
+      }
+      let logger = Logging.createChild(~params)
 
-    let errHandler = exn->ErrorHandling.make(~msg="Failed to import handler file", ~logger)
-    errHandler->ErrorHandling.log
-    errHandler->ErrorHandling.raiseExn
+      let errHandler = exn->ErrorHandling.make(~msg="Failed to import handler file", ~logger)
+      errHandler->ErrorHandling.log
+      errHandler->ErrorHandling.raiseExn
+    }
   }
 }
 
@@ -142,8 +142,7 @@ let registerAllHandlers = async () => {
   {{#each codegen_contracts as |contract|}}
   registerContractHandlers(
     ~contractName="{{contract.name.capitalized}}",
-    ~handlerPathRelativeToRoot="{{contract.handler.relative_to_project_root}}",
-    ~handlerPathRelativeToConfig="{{contract.handler.relative_to_config}}",
+    ~handler={{#if contract.handler}}Some(`../${Path.relativePathToRootFromGenerated}/{{contract.handler}}`){{else}}None{{/if}},
   )
   {{/each}}
 

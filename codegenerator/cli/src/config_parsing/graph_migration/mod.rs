@@ -1,5 +1,4 @@
 use crate::{
-    cli_args::init_config::Language,
     config_parsing::{
         chain_helpers::{self, GraphNetwork},
         human_config::{
@@ -112,13 +111,6 @@ pub struct BlockHandler {
 }
 
 // Logic to get the event handler directory based on the language
-fn get_event_handler_directory(language: &Language) -> String {
-    match language {
-        Language::ReScript => "./src/EventHandlers.res.js".to_string(),
-        Language::TypeScript => "src/EventHandlers.ts".to_string(),
-        Language::JavaScript => "./src/EventHandlers.js".to_string(),
-    }
-}
 
 // Function to replace unsupported field types from schema
 fn update_schema_with_supported_field_types(schema_str: String) -> String {
@@ -244,7 +236,6 @@ fn valid_ipfs_cid(cid: &str) -> bool {
 pub async fn generate_config_from_subgraph_id(
     project_root_path: &PathBuf,
     subgraph_id: &str,
-    language: &Language,
 ) -> anyhow::Result<HumanConfig> {
     if !valid_ipfs_cid(subgraph_id) {
         return Err(anyhow!(
@@ -358,16 +349,16 @@ pub async fn generate_config_from_subgraph_id(
                         })
                         .collect::<anyhow::Result<Vec<_>>>()?;
 
-                    let contract = NetworkContract {
-                        name: data_source.name.to_string(),
-                        address: vec![data_source.source.address.to_string()].into(),
-                        config: Some(ContractConfig {
-                            abi_file_path: Some(format!("abis/{}.json", data_source.name)),
-                            handler: get_event_handler_directory(language),
-                            events,
-                        }),
-                        start_block: None,
-                    };
+                let contract = NetworkContract {
+                    name: data_source.name.to_string(),
+                    address: vec![data_source.source.address.to_string()].into(),
+                    config: Some(ContractConfig {
+                        abi_file_path: Some(format!("abis/{}.json", data_source.name)),
+                        handler: None,
+                        events,
+                    }),
+                    start_block: None,
+                };
 
                     // Pushing contract to network
                     network.contracts.push(contract.clone());
@@ -446,7 +437,6 @@ async fn fetch_ipfs_file_and_write_to_system(
 mod test {
     use super::GraphManifest;
     use crate::{
-        cli_args::init_config::Language,
         config_parsing::{
             chain_helpers::{GraphNetwork, Network},
             graph_migration::get_ipfs_id_from_file_path,
@@ -462,9 +452,8 @@ mod test {
         let temp_dir = TempDir::new("temp_graph_migration_folder").unwrap();
         // subgraph ID of USDC on Ethereum mainnet
         let cid: &str = "QmU5V3jy56KnFbxX2uZagvMwocYZASzy1inX828W2XWtTd";
-        let language: Language = Language::ReScript;
         let project_root = PathBuf::from(temp_dir.path());
-        super::generate_config_from_subgraph_id(&project_root, cid, &language)
+        super::generate_config_from_subgraph_id(&project_root, cid)
             .await
             .unwrap();
     }
@@ -550,18 +539,6 @@ mod test {
     }
 
     // Unit test to check that the correct event handler directory is returned based on the language
-    #[test]
-    fn test_get_event_handler_directory() {
-        let language_1: Language = Language::ReScript;
-        let language_2: Language = Language::JavaScript;
-        let language_3: Language = Language::TypeScript;
-        let event_handler_directory_1 = super::get_event_handler_directory(&language_1);
-        let event_handler_directory_2 = super::get_event_handler_directory(&language_2);
-        let event_handler_directory_3 = super::get_event_handler_directory(&language_3);
-        assert_eq!(event_handler_directory_1, "./src/EventHandlers.res.js");
-        assert_eq!(event_handler_directory_2, "./src/EventHandlers.js");
-        assert_eq!(event_handler_directory_3, "src/EventHandlers.ts");
-    }
     // Unit test to check that the correct network contract hashmap is generated
     #[tokio::test]
     async fn test_generate_network_contract_hashmap() {

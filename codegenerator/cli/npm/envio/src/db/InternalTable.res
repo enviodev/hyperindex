@@ -360,7 +360,6 @@ module PersistedState = {
     envio_version: string,
     config_hash: string,
     schema_hash: string,
-    handler_files_hash: string,
     abi_files_hash: string,
   }
 
@@ -371,7 +370,6 @@ module PersistedState = {
       mkField("envio_version", Text, ~fieldSchema=S.string),
       mkField("config_hash", Text, ~fieldSchema=S.string),
       mkField("schema_hash", Text, ~fieldSchema=S.string),
-      mkField("handler_files_hash", Text, ~fieldSchema=S.string),
       mkField("abi_files_hash", Text, ~fieldSchema=S.string),
     ],
   )

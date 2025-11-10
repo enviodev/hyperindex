@@ -82,7 +82,6 @@ pub async fn run_init_args(init_args: InitArgs, project_paths: &ProjectPaths) ->
             let evm_config = generate_config_from_subgraph_id(
                 &parsed_project_paths.project_root,
                 cid,
-                &init_config.language,
             )
             .await
             .context("Failed generating config from subgraph")?;

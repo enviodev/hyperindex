@@ -504,11 +504,13 @@ pub mod evm {
                            configured event should simply be referenced by its name"
         )]
         pub abi_file_path: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
-            description = "The relative path to a file where handlers are registered for the \
-                           given contract"
+            description = "Optional relative path to a file where handlers are registered for the \
+                           given contract. If not provided, handlers can be auto-loaded from src \
+                           directory."
         )]
-        pub handler: String,
+        pub handler: Option<String>,
         #[schemars(description = "A list of events that should be indexed on this contract")]
         pub events: Vec<EventConfig>,
     }
@@ -647,11 +649,13 @@ pub mod fuel {
     pub struct ContractConfig {
         #[schemars(description = "Relative path (from config) to a json abi.")]
         pub abi_file_path: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
-            description = "The relative path to a file where handlers are registered for the \
-                           given contract"
+            description = "Optional relative path to a file where handlers are registered for the \
+                           given contract. If not provided, handlers can be auto-loaded from src \
+                           directory."
         )]
-        pub handler: String,
+        pub handler: Option<String>,
         #[schemars(description = "A list of events that should be indexed on this contract")]
         pub events: Vec<EventConfig>,
     }
@@ -748,7 +752,7 @@ events: []
             start_block: None,
             config: Some(ContractConfig {
                 abi_file_path: None,
-                handler: "./src/EventHandler.js".to_string(),
+                handler: Some("./src/EventHandler.js".to_string()),
                 events: vec![],
             }),
         };
@@ -771,7 +775,7 @@ events: []
             start_block: None,
             config: Some(ContractConfig {
                 abi_file_path: None,
-                handler: "./src/EventHandler.js".to_string(),
+                handler: Some("./src/EventHandler.js".to_string()),
                 events: vec![],
             }),
         };
@@ -795,7 +799,7 @@ events: []
             start_block: None,
             config: Some(ContractConfig {
                 abi_file_path: None,
-                handler: "./src/EventHandler.js".to_string(),
+                handler: Some("./src/EventHandler.js".to_string()),
                 events: vec![],
             }),
         };
@@ -904,7 +908,7 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
                     start_block: None,
                     config: Some(fuel::ContractConfig {
                         abi_file_path: "../abis/greeter-abi.json".to_string(),
-                        handler: "./src/EventHandlers.js".to_string(),
+                        handler: Some("./src/EventHandlers.js".to_string()),
                         events: vec![
                             fuel::EventConfig {
                                 name: "NewGreeting".to_string(),
