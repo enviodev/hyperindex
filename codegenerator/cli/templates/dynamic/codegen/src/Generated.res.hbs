@@ -22,6 +22,38 @@ let registerContractHandlers = (
   }
 }
 
+@module("node:fs/promises") external globIterator: string => promise<'asyncIterator> = "glob"
+
+let autoLoadHandlersFromSrc = async () => {
+  let srcPattern = `${Path.relativePathToRootFromGenerated}/src/**/*.ts`
+  let handlerFiles = try {
+    // Relatvie to cwd (generated dir)
+    let iterator = await globIterator(srcPattern)
+    await iterator->Utils.Array.fromAsyncIterator
+  } catch {
+  | _ =>
+    Js.Exn.raiseError(
+      `Failed to glob src directory for auto-loading handlers. Pattern: ${srcPattern} (relative to generated dir)`,
+    )
+  }
+
+  handlerFiles->Js.Array2.forEach(file => {
+    try {
+      // Since srcPattern is relative to generated dir,
+      // and we require relative to the module (Generated.res)
+      // We need to prepend additional "../" to the file path
+      %raw(`require("../" + file)`)
+    } catch {
+    | exn =>
+      Js.Exn.raiseError(
+        `Failed to auto-load handler file: ${file} with error: ${exn
+          ->Utils.prettifyExn
+          ->Obj.magic}`,
+      )
+    }
+  })
+}
+
 let makeGeneratedConfig = () => {
   let chains = [
     {{#each chain_configs as | chain_config |}}
@@ -104,8 +136,7 @@ let registerAllHandlers = async () => {
   )
 
   // Auto-load all .js files from src directory
-  let srcPattern = `../${Path.relativePathToRootFromGenerated}/src/**/*.js`
-  await EventRegister.autoLoadHandlersFromSrc(~srcPattern)
+  await autoLoadHandlersFromSrc()
 
   // Load contract-specific handlers (existing behavior)
   {{#each codegen_contracts as |contract|}}

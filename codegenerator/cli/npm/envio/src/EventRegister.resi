@@ -10,8 +10,6 @@ let startRegistration: (
 ) => unit
 let finishRegistration: unit => registrations
 
-let autoLoadHandlersFromSrc: (~srcPattern: string) => promise<unit>
-
 type t
 let make: (~contractName: string, ~eventName: string) => t
 let setHandler: (

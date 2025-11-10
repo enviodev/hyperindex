@@ -251,25 +251,3 @@ let setContractRegister = (t: t, contractRegister, ~eventOptions, ~logger=Loggin
     t->setEventOptions(~eventOptions, ~logger)
   })
 }
-
-@module("node:fs/promises") external globIterator: string => promise<'asyncIterator> = "glob"
-
-let autoLoadHandlersFromSrc = async (~srcPattern) => {
-  let handlerFiles = try {
-    let iterator = await globIterator(srcPattern)
-    await iterator->Utils.Array.fromAsyncIterator
-  } catch {
-  | _ =>
-    Js.Exn.raiseError(
-      `Failed to glob src directory for auto-loading handlers. Pattern: ${srcPattern}`,
-    )
-  }
-
-  handlerFiles->Js.Array2.forEach(file => {
-    try {
-      %raw(`require(file)`)
-    } catch {
-    | _ => Js.Exn.raiseError(`Failed to auto-load handler file: ${file}`)
-    }
-  })
-}
