@@ -88,7 +88,7 @@ let makeGeneratedConfig = () => {
     ~preloadHandlers={{preload_handlers}},
     ~lowercaseAddresses={{lowercase_addresses}},
     ~shouldUseHypersyncClientDecoder={{should_use_hypersync_client_decoder}},
-    {{#if chain_config.is_fuel}}
+    {{#if is_fuel_ecosystem}}
     ~ecosystem=Fuel,
     {{/if}}
   )
