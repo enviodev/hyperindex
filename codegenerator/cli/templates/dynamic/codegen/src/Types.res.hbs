@@ -92,40 +92,6 @@ module Block = {
   type t = {{field_selection.block_type}}
 
   let schema = {{field_selection.block_schema}}
-  {{#if is_evm_ecosystem}}
-
-  @get
-  external getNumber: Internal.eventBlock => int = "number"
-
-  @get
-  external getTimestamp: Internal.eventBlock => int = "timestamp"
- 
-  @get
-  external getId: Internal.eventBlock => string = "hash"
-
-  let cleanUpRawEventFieldsInPlace: Js.Json.t => () = %raw(`fields => {
-    delete fields.hash
-    delete fields.number
-    delete fields.timestamp
-  }`)
-  {{/if}}
-  {{#if is_fuel_ecosystem}}
-
-  @get
-  external getNumber: Internal.eventBlock => int = "height"
-
-  @get
-  external getTimestamp: Internal.eventBlock => int = "time"
- 
-  @get
-  external getId: Internal.eventBlock => string = "id"
-
-  let cleanUpRawEventFieldsInPlace: Js.Json.t => () = %raw(`fields => {
-    delete fields.id
-    delete fields.height
-    delete fields.time
-  }`)
-  {{/if}}
 }
 
 {{!-- For internal usage. The type and schema which agreage

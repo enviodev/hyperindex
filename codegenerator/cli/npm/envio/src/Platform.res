@@ -7,6 +7,22 @@ type t = {
   blockNumberName: string,
   blockTimestampName: string,
   blockHashName: string,
+  getNumber: Internal.eventBlock => int,
+  getTimestamp: Internal.eventBlock => int,
+  getId: Internal.eventBlock => string,
+  cleanUpRawEventFieldsInPlace: Js.Json.t => unit,
+}
+
+module Evm = {
+  @get external getNumber: Internal.eventBlock => int = "number"
+  @get external getTimestamp: Internal.eventBlock => int = "timestamp"
+  @get external getId: Internal.eventBlock => string = "hash"
+  
+  let cleanUpRawEventFieldsInPlace: Js.Json.t => unit = %raw(`fields => {
+    delete fields.hash
+    delete fields.number
+    delete fields.timestamp
+  }`)
 }
 
 let evm: t = {
@@ -78,6 +94,22 @@ let evm: t = {
   blockNumberName: "number",
   blockTimestampName: "timestamp",
   blockHashName: "hash",
+  getNumber: Evm.getNumber,
+  getTimestamp: Evm.getTimestamp,
+  getId: Evm.getId,
+  cleanUpRawEventFieldsInPlace: Evm.cleanUpRawEventFieldsInPlace,
+}
+
+module Fuel = {
+  @get external getNumber: Internal.eventBlock => int = "height"
+  @get external getTimestamp: Internal.eventBlock => int = "time"
+  @get external getId: Internal.eventBlock => string = "id"
+  
+  let cleanUpRawEventFieldsInPlace: Js.Json.t => unit = %raw(`fields => {
+    delete fields.id
+    delete fields.height
+    delete fields.time
+  }`)
 }
 
 let fuel: t = {
@@ -87,6 +119,10 @@ let fuel: t = {
   blockNumberName: "height",
   blockTimestampName: "time",
   blockHashName: "id",
+  getNumber: Fuel.getNumber,
+  getTimestamp: Fuel.getTimestamp,
+  getId: Fuel.getId,
+  cleanUpRawEventFieldsInPlace: Fuel.cleanUpRawEventFieldsInPlace,
 }
 
 let fromName = (name: name): t => {

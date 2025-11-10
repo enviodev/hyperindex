@@ -47,7 +47,7 @@ let convertFieldsToJson = (fields: option<dict<unknown>>) => {
   }
 }
 
-let addItemToRawEvents = (eventItem: Internal.eventItem, ~inMemoryStore: InMemoryStore.t) => {
+let addItemToRawEvents = (eventItem: Internal.eventItem, ~inMemoryStore: InMemoryStore.t, ~config: Config.t) => {
   let {event, eventConfig, chain, blockNumber, timestamp: blockTimestamp} = eventItem
   let {block, transaction, params, logIndex, srcAddress} = event
   let chainId = chain->ChainMap.Chain.toChainId
@@ -61,7 +61,7 @@ let addItemToRawEvents = (eventItem: Internal.eventItem, ~inMemoryStore: InMemor
     ->(Utils.magic: Internal.eventTransaction => option<dict<unknown>>)
     ->convertFieldsToJson
 
-  blockFields->Types.Block.cleanUpRawEventFieldsInPlace
+  blockFields->config.platform.cleanUpRawEventFieldsInPlace
 
   // Serialize to unknown, because serializing to Js.Json.t fails for Bytes Fuel type, since it has unknown schema
   let params =
@@ -85,7 +85,7 @@ let addItemToRawEvents = (eventItem: Internal.eventItem, ~inMemoryStore: InMemor
     blockNumber,
     logIndex,
     srcAddress,
-    blockHash: block->Types.Block.getId,
+    blockHash: block->config.platform.getId,
     blockTimestamp,
     blockFields,
     transactionFields,
@@ -220,7 +220,7 @@ let runHandlerOrThrow = async (
       }
 
       if indexer.config.enableRawEvents {
-        item->Internal.castUnsafeEventItem->addItemToRawEvents(~inMemoryStore)
+        item->Internal.castUnsafeEventItem->addItemToRawEvents(~inMemoryStore, ~config=indexer.config)
       }
     }
   }

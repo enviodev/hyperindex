@@ -1,6 +1,3 @@
-open Belt
-
-
 let prepareRollbackDiff = async (~persistence: Persistence.t, ~rollbackTargetCheckpointId) => {
   let inMemStore = InMemoryStore.make(~entities=Entities.allEntities, ~rollbackTargetCheckpointId)
 

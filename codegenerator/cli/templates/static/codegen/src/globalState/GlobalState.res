@@ -197,7 +197,7 @@ let updateChainMetadataTable = (
 Takes in a chain manager and sets all chains timestamp caught up to head
 when valid state lines up and returns an updated chain manager
 */
-let updateProgressedChains = (chainManager: ChainManager.t, ~batch: Batch.t) => {
+let updateProgressedChains = (chainManager: ChainManager.t, ~batch: Batch.t, ~indexer: Indexer.t) => {
   Prometheus.ProgressBatchCount.increment()
 
   let nextQueueItemIsNone = chainManager->ChainManager.nextItemIsNone
@@ -230,7 +230,7 @@ let updateProgressedChains = (chainManager: ChainManager.t, ~batch: Batch.t) => 
         // Calculate and set latency metrics
         switch batch->Batch.findLastEventItem(~chainId=chain->ChainMap.Chain.toChainId) {
         | Some(eventItem) => {
-            let blockTimestamp = eventItem.event.block->Types.Block.getTimestamp
+            let blockTimestamp = eventItem.event.block->indexer.config.platform.getTimestamp
             let currentTimeMs = Js.Date.now()->Float.toInt
             let blockTimestampMs = blockTimestamp * 1000
             let latencyMs = currentTimeMs - blockTimestampMs
@@ -655,7 +655,7 @@ let actionReducer = (state: t, action: action) => {
       // Can safely reset rollback state, since overwrite is not possible.
       // If rollback is pending, the EventBatchProcessed will be handled by the invalid action reducer instead.
       rollbackState: NoRollback,
-      chainManager: state.chainManager->updateProgressedChains(~batch),
+      chainManager: state.chainManager->updateProgressedChains(~batch, ~indexer=state.indexer),
       currentlyProcessingBatch: false,
       processedBatches: state.processedBatches + 1,
     }
@@ -754,7 +754,7 @@ let invalidatedActionReducer = (state: t, action: action) =>
     (
       {
         ...state,
-        chainManager: state.chainManager->updateProgressedChains(~batch),
+        chainManager: state.chainManager->updateProgressedChains(~batch, ~indexer=state.indexer),
         currentlyProcessingBatch: false,
         processedBatches: state.processedBatches + 1,
       },
