@@ -47,7 +47,11 @@ let convertFieldsToJson = (fields: option<dict<unknown>>) => {
   }
 }
 
-let addItemToRawEvents = (eventItem: Internal.eventItem, ~inMemoryStore: InMemoryStore.t, ~config: Config.t) => {
+let addItemToRawEvents = (
+  eventItem: Internal.eventItem,
+  ~inMemoryStore: InMemoryStore.t,
+  ~config: Config.t,
+) => {
   let {event, eventConfig, chain, blockNumber, timestamp: blockTimestamp} = eventItem
   let {block, transaction, params, logIndex, srcAddress} = event
   let chainId = chain->ChainMap.Chain.toChainId
@@ -220,7 +224,9 @@ let runHandlerOrThrow = async (
       }
 
       if indexer.config.enableRawEvents {
-        item->Internal.castUnsafeEventItem->addItemToRawEvents(~inMemoryStore, ~config=indexer.config)
+        item
+        ->Internal.castUnsafeEventItem
+        ->addItemToRawEvents(~inMemoryStore, ~config=indexer.config)
       }
     }
   }
@@ -422,13 +428,44 @@ let processEventBatch = async (
       timeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
 
     try {
-      await indexer.persistence.sql->PgStorage.writeBatch(
-        ~allEntities=indexer.persistence.allEntities,
+      await indexer.persistence.storage.writeBatch(
         ~batch,
-        ~pgSchema=Db.publicSchema,
         ~inMemoryStore,
         ~isInReorgThreshold,
-        ~indexer,
+        ~config=indexer.config,
+        ~allEntities=indexer.persistence.allEntities,
+        ~batchCache={
+          inMemoryStore.effects
+          ->Js.Dict.keys
+          ->Belt.Array.keepMapU(effectName => {
+            let inMemTable = inMemoryStore.effects->Js.Dict.unsafeGet(effectName)
+            let {idsToStore, dict, effect, invalidationsCount} = inMemTable
+            switch idsToStore {
+            | [] => None
+            | ids => {
+                let items = Belt.Array.makeUninitializedUnsafe(ids->Belt.Array.length)
+                ids->Belt.Array.forEachWithIndex((index, id) => {
+                  items->Js.Array2.unsafe_set(
+                    index,
+                    (
+                      {
+                        id,
+                        output: dict->Js.Dict.unsafeGet(id),
+                      }: Internal.effectCacheItem
+                    ),
+                  )
+                })
+                Some(
+                  indexer.persistence->Persistence.getEffectBatchCache(
+                    ~effect,
+                    ~items,
+                    ~invalidationsCount,
+                  ),
+                )
+              }
+            }
+          })
+        },
       )
 
       let elapsedTimeAfterDbWrite = timeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis

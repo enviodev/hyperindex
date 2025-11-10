@@ -184,6 +184,25 @@ module Storage = {
         setOrThrow: (~items as _, ~table as _, ~itemSchema as _) => {
           implementBody(#setOrThrow, () => Js.Exn.raiseError("Not implemented"))
         },
+        executeUnsafe: _ => Promise.resolve(%raw(`undefined`)),
+        hasEntityHistoryRows: () => Promise.resolve(false),
+        setChainMeta: _ => Promise.resolve(%raw(`undefined`)),
+        pruneStaleCheckpoints: _ => Promise.resolve(),
+        pruneStaleEntityHistory: (~entityName as _, ~entityIndex as _, ~safeCheckpointId as _) =>
+          Promise.resolve(),
+        getRollbackTargetCheckpoint: (~reorgChainId as _, ~lastKnownValidBlockNumber as _) =>
+          Promise.resolve([]),
+        getRollbackProgressDiff: _ => Promise.resolve([]),
+        getRollbackData: (~entityConfig as _, ~rollbackTargetCheckpointId as _) =>
+          Promise.resolve(([], [])),
+        writeBatch: (
+          ~batch as _,
+          ~inMemoryStore as _,
+          ~isInReorgThreshold as _,
+          ~config as _,
+          ~allEntities as _,
+          ~batchCache as _,
+        ) => Promise.resolve(),
       },
     }
   }
@@ -277,7 +296,6 @@ module Indexer = {
       ...Generated.codegenPersistence,
       storageStatus: Persistence.Unknown,
       storage,
-      sql,
     }
 
     let indexer = {

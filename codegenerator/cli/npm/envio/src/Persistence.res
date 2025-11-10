@@ -36,6 +36,12 @@ type initialState = {
 
 type operator = [#">" | #"=" | #"<"]
 
+type effectBatchCache = {
+  effect: Internal.effect,
+  items: array<Internal.effectCacheItem>,
+  shouldInitialize: bool,
+}
+
 type storage = {
   // Should return true if we already have persisted data
   // and we can skip initialization
@@ -77,9 +83,48 @@ type storage = {
   ) => promise<unit>,
   // This is to download cache from the database to .envio/cache
   dumpEffectCache: unit => promise<unit>,
+  // Execute raw SQL query
+  executeUnsafe: string => promise<unknown>,
+  // Check if entity history has rows
+  hasEntityHistoryRows: unit => promise<bool>,
+  // Update chain metadata
+  setChainMeta: dict<InternalTable.Chains.metaFields> => promise<unknown>,
+  // Prune old checkpoints
+  pruneStaleCheckpoints: int => promise<unit>,
+  // Prune stale entity history
+  pruneStaleEntityHistory: (
+    ~entityName: string,
+    ~entityIndex: int,
+    ~safeCheckpointId: int,
+  ) => promise<unit>,
+  // Get rollback target checkpoint
+  getRollbackTargetCheckpoint: (
+    ~reorgChainId: int,
+    ~lastKnownValidBlockNumber: int,
+  ) => promise<array<{"id": int}>>,
+  // Get rollback progress diff
+  getRollbackProgressDiff: int => promise<
+    array<{
+      "chain_id": int,
+      "events_processed_diff": string,
+      "new_progress_block_number": int,
+    }>,
+  >,
+  // Get rollback data for entity
+  getRollbackData: (
+    ~entityConfig: Internal.entityConfig,
+    ~rollbackTargetCheckpointId: int,
+  ) => promise<(array<{"id": string}>, array<unknown>)>,
+  // Write batch to storage
+  writeBatch: (
+    ~batch: Batch.t,
+    ~inMemoryStore: InMemoryStore.t,
+    ~isInReorgThreshold: bool,
+    ~config: Config.t,
+    ~allEntities: array<Internal.entityConfig>,
+    ~batchCache: array<effectBatchCache>,
+  ) => promise<unit>,
 }
-
-exception StorageError({message: string, reason: exn})
 
 type storageStatus =
   | Unknown
@@ -92,10 +137,9 @@ type t = {
   allEnums: array<Internal.enumConfig<Internal.enum>>,
   mutable storageStatus: storageStatus,
   mutable storage: storage,
-  // FIXME: This is temporary to move it library
-  // Should be a part of the storage interface and db agnostic
-  mutable sql: Postgres.sql,
 }
+
+exception StorageError({message: string, reason: exn})
 
 let entityHistoryActionEnumConfig: Internal.enumConfig<EntityHistory.RowAction.t> = {
   name: EntityHistory.RowAction.name,
@@ -109,7 +153,6 @@ let make = (
   // TODO: Should only pass userEnums and create internal config in runtime
   ~allEnums,
   ~storage,
-  ~sql,
 ) => {
   let allEntities = userEntities->Js.Array2.concat([InternalTable.DynamicContractRegistry.config])
   let allEnums =
@@ -120,7 +163,6 @@ let make = (
     allEnums,
     storageStatus: Unknown,
     storage,
-    sql,
   }
 }
 
@@ -197,18 +239,12 @@ let getInitializedState = persistence => {
   }
 }
 
-let setEffectCacheOrThrow = async (
-  persistence,
-  ~effect: Internal.effect,
-  ~items,
-  ~invalidationsCount,
-) => {
+let getEffectBatchCache = (persistence, ~effect: Internal.effect, ~items, ~invalidationsCount) => {
   switch persistence.storageStatus {
   | Unknown
   | Initializing(_) =>
     Js.Exn.raiseError(`Failed to access the indexer storage. The Persistence layer is not initialized.`)
   | Ready({cache}) => {
-      let storage = persistence.storage
       let effectName = effect.name
       let effectCacheRecord = switch cache->Utils.Dict.dangerouslyGetNonOption(effectName) {
       | Some(c) => c
@@ -218,11 +254,11 @@ let setEffectCacheOrThrow = async (
           c
         }
       }
-      let initialize = effectCacheRecord.count === 0
-      await storage.setEffectCacheOrThrow(~effect, ~items, ~initialize)
+      let shouldInitialize = effectCacheRecord.count === 0
       effectCacheRecord.count =
         effectCacheRecord.count + items->Js.Array2.length - invalidationsCount
       Prometheus.EffectCacheCount.set(~count=effectCacheRecord.count, ~effectName)
+      {effect, items, shouldInitialize}
     }
   }
 }

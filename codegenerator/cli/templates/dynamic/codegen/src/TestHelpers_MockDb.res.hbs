@@ -587,6 +587,22 @@ and makeMockStorage = (mockDb: t): Persistence.storage => {
     setOrThrow: (~items as _, ~table as _, ~itemSchema as _) => Js.Exn.raiseError("Not used yet"),
     setEffectCacheOrThrow: (~effect as _, ~items as _, ~initialize as _) => Promise.resolve(),
     dumpEffectCache: () => Js.Exn.raiseError("Not used yet"),
+    executeUnsafe: _ => Js.Exn.raiseError("Not used yet"),
+    hasEntityHistoryRows: () => Promise.resolve(false),
+    setChainMeta: _ => Promise.resolve(%raw(`undefined`)),
+    pruneStaleCheckpoints: _ => Promise.resolve(),
+    pruneStaleEntityHistory: (~entityName as _, ~entityIndex as _, ~safeCheckpointId as _) => Promise.resolve(),
+    getRollbackTargetCheckpoint: (~reorgChainId as _, ~lastKnownValidBlockNumber as _) => Promise.resolve([]),
+    getRollbackProgressDiff: _ => Promise.resolve([]),
+    getRollbackData: (~entityConfig as _, ~rollbackTargetCheckpointId as _) => Promise.resolve(([], [])),
+    writeBatch: (
+      ~batch as _,
+      ~inMemoryStore as _,
+      ~isInReorgThreshold as _,
+      ~config as _,
+      ~allEntities as _,
+      ~batchCache as _,
+    ) => Promise.resolve(),
   }
 }
 and /**

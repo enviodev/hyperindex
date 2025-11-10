@@ -184,7 +184,6 @@ let codegenPersistence = Persistence.make(
   ~userEntities=Entities.userEntities,
   ~allEnums=Enums.allEnums,
   ~storage=makeStorage(~sql=initialSql),
-  ~sql=initialSql,
 )
 
 %%private(let indexer: ref<option<Indexer.t>> = ref(None))

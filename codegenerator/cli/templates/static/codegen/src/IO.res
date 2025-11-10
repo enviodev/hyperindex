@@ -9,24 +9,10 @@ let prepareRollbackDiff = async (~persistence: Persistence.t, ~rollbackTargetChe
     ->Belt.Array.map(async entityConfig => {
       let entityTable = inMemStore->InMemoryStore.getInMemTable(~entityConfig)
 
-      let (removedIdsResult, restoredEntitiesResult) = await Promise.all2((
-        // Get IDs of entities that should be deleted (created after rollback target with no prior history)
-        persistence.sql
-        ->Postgres.preparedUnsafe(
-          entityConfig.entityHistory.makeGetRollbackRemovedIdsQuery(~pgSchema=Db.publicSchema),
-          [rollbackTargetCheckpointId]->Utils.magic,
-        )
-        ->(Utils.magic: promise<unknown> => promise<array<{"id": string}>>),
-        // Get entities that should be restored to their state at or before rollback target
-        persistence.sql
-        ->Postgres.preparedUnsafe(
-          entityConfig.entityHistory.makeGetRollbackRestoredEntitiesQuery(
-            ~pgSchema=Db.publicSchema,
-          ),
-          [rollbackTargetCheckpointId]->Utils.magic,
-        )
-        ->(Utils.magic: promise<unknown> => promise<array<unknown>>),
-      ))
+      let (removedIdsResult, restoredEntitiesResult) = await persistence.storage.getRollbackData(
+        ~entityConfig,
+        ~rollbackTargetCheckpointId,
+      )
 
       // Process removed IDs
       removedIdsResult->Js.Array2.forEach(data => {

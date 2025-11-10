@@ -21,8 +21,6 @@ let makeClient = () => {
   )
 }
 
-let publicSchema = Env.Db.publicSchema
-
 let allEntityTables: array<Table.table> = Entities.allEntities->Belt.Array.map(entityConfig => {
   entityConfig.table
 })
