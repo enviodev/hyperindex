@@ -222,7 +222,7 @@ jobs:
       - name: Install node
         uses: actions/setup-node@v4
         with:
-          node-version: 22.21.1
+          node-version: 22.10.0
           registry-url: "https://registry.npmjs.org"
 
       - name: Publish to NPM
@@ -277,7 +277,7 @@ jobs:
       - name: Install Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 22.21.1
+          node-version: 22.10.0
           registry-url: "https://registry.npmjs.org"
           cache: "pnpm"
           cache-dependency-path: codegenerator/cli/npm/envio/pnpm-lock.yaml
