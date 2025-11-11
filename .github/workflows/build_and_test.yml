@@ -125,7 +125,7 @@ jobs:
         if: steps.changes.outputs.testChanges == 'true'
         uses: actions/setup-node@v4
         with:
-          node-version: 18.15.0
+          node-version: 22.21.1
 
       - name: test_codegen build
         if: steps.changes.outputs.testChanges == 'true'
