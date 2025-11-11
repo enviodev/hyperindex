@@ -876,6 +876,7 @@ let make = (
   ~pgDatabase,
   ~pgPassword,
   ~isHasuraEnabled,
+  ~mirror: option<Mirror.t>=?,
   ~onInitialize=?,
   ~onNewTables=?,
 ): Persistence.storage => {
@@ -1005,6 +1006,12 @@ let make = (
       Js.Exn.raiseError(
         `Cannot run Envio migrations on PostgreSQL schema "${pgSchema}" because it contains non-Envio tables. Running migrations would delete all data in this schema.\n\nTo resolve this:\n1. If you want to use this schema, first backup any important data, then drop it with: "pnpm envio local db-migrate down"\n2. Or specify a different schema name by setting the "ENVIO_PG_PUBLIC_SCHEMA" environment variable\n3. Or manually drop the schema in your database if you're certain the data is not needed.`,
       )
+    }
+
+    // Call mirror.initialize before executing PG queries
+    switch mirror {
+    | Some(mirror) => await mirror.initialize(~chainConfigs, ~entities, ~enums)
+    | None => ()
     }
 
     let queries = makeInitializeTransaction(
