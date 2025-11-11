@@ -31,9 +31,11 @@ let autoLoadHandlersFromSrc = async () => {
     let iterator = await globIterator(srcPattern)
     await iterator->Utils.Array.fromAsyncIterator
   } catch {
-  | _ =>
+  | exn =>
     Js.Exn.raiseError(
-      `Failed to glob src directory for auto-loading handlers. Pattern: ${srcPattern} (relative to generated dir)`,
+      `Failed to glob src directory for auto-loading handlers. Pattern: ${srcPattern} (relative to generated dir). Errorerror: ${exn
+          ->Utils.prettifyExn
+          ->Obj.magic}`,
     )
   }
 
