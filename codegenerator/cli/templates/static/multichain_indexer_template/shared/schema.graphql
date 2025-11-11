@@ -1,0 +1,23 @@
+type UniswapV3Factory_FeeAmountEnabled {
+  id: ID!
+  chainId: BigInt! @index
+  fee: BigInt!
+  tickSpacing: BigInt!
+}
+
+type UniswapV3Factory_OwnerChanged {
+  id: ID!
+  chainId: BigInt! @index
+  oldOwner: String!
+  newOwner: String!
+}
+
+type UniswapV3Factory_PoolCreated {
+  id: ID!
+  chainId: BigInt! @index
+  token0: String!
+  token1: String!
+  fee: BigInt!
+  tickSpacing: BigInt!
+  pool: String!
+}
