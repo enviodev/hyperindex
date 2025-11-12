@@ -11,11 +11,11 @@ import type {Logger as $$logger} from './Types.ts';
 
 import type {S_t as RescriptSchema_S_t} from 'rescript-schema/RescriptSchema.gen';
 
-import type {blockEvent as Internal_blockEvent} from './Internal.gen';
+export type blockEvent = { readonly number: number; readonly chainId: number };
 
-export type blockEvent = Internal_blockEvent;
+export type fuelBlockEvent = { readonly height: number; readonly chainId: number };
 
-export type onBlockArgs<context> = { readonly block: blockEvent; readonly context: context };
+export type onBlockArgs<block,context> = { readonly block: block; readonly context: context };
 
 export type onBlockOptions<chain> = {
   readonly name: string; 

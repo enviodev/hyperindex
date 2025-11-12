@@ -51,6 +51,9 @@ let catch = (promise: promise<'a>, callback: exn => promise<'a>): promise<'a> =>
   })
 }
 
+@send
+external catchResolve: (t<'a>, exn => 'a) => t<'a> = "catch"
+
 @scope("Promise") @val
 external race: array<t<'a>> => t<'a> = "race"
 

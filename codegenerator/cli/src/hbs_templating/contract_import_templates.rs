@@ -254,7 +254,7 @@ impl Event {
     pub fn get_entity_id_code(is_fuel: bool, language: &Language) -> String {
         let int_as_string = |int_var_name| match language {
             Language::ReScript => format!("{int_var_name}->Belt.Int.toString"),
-            Language::TypeScript | Language::JavaScript => int_var_name,
+            Language::TypeScript => int_var_name,
         };
         let int_event_prop_as_string =
             |event_prop: &str| int_as_string(format!("event.{event_prop}"));
@@ -283,7 +283,6 @@ impl Event {
                 let data_code = match language {
                     Language::ReScript => "%raw(`{}`)",
                     Language::TypeScript => "{}",
-                    Language::JavaScript => "{}",
                 };
                 format!(
                     "{event_module}.mock({{data: {data_code} /* It mocks event fields with \

@@ -1,7 +1,5 @@
 open Belt
 
-type ecosystem = | @as("evm") Evm | @as("fuel") Fuel
-
 type sourceSyncOptions = {
   initialBlockInterval?: int,
   backoffMultiplicative?: float,
@@ -47,7 +45,7 @@ type t = {
   multichain: multichain,
   chainMap: ChainMap.t<chain>,
   defaultChain: option<chain>,
-  ecosystem: ecosystem,
+  platform: Platform.t,
   enableRawEvents: bool,
   preloadHandlers: bool,
   maxAddrInPartition: int,
@@ -62,7 +60,7 @@ let make = (
   ~chains: array<chain>=[],
   ~enableRawEvents=false,
   ~preloadHandlers=false,
-  ~ecosystem=Evm,
+  ~ecosystem: Platform.name=Platform.Evm,
   ~batchSize=5000,
   ~lowercaseAddresses=false,
   ~multichain=Unordered,
@@ -92,6 +90,8 @@ let make = (
     })
   })
 
+  let platform = Platform.fromName(ecosystem)
+
   {
     shouldRollbackOnReorg,
     shouldSaveFullHistory,
@@ -99,7 +99,7 @@ let make = (
     chainMap,
     defaultChain: chains->Array.get(0),
     enableRawEvents,
-    ecosystem,
+    platform,
     maxAddrInPartition,
     preloadHandlers,
     batchSize,

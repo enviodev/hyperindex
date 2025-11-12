@@ -22,3 +22,5 @@ let intFromMillis: milliseconds => int
 let intFromNanos: nanoseconds => int
 let intFromSeconds: seconds => int
 let floatFromMillis: milliseconds => float
+
+let millisBetween: (~from: timeRef, ~to: timeRef) => int

@@ -12,7 +12,6 @@ pub struct InitTemplates {
     project_name: String,
     is_rescript: bool,
     is_typescript: bool,
-    is_javascript: bool,
     envio_version: String,
     //Used for the package.json reference to generated in handlers
     relative_path_from_root_to_generated: String,
@@ -48,7 +47,6 @@ impl InitTemplates {
             project_name,
             is_rescript: lang == &Language::ReScript,
             is_typescript: lang == &Language::TypeScript,
-            is_javascript: lang == &Language::JavaScript,
             envio_version,
             relative_path_from_root_to_generated,
             envio_api_token,
@@ -78,7 +76,6 @@ mod test {
             project_name: "my-project".to_string(),
             is_rescript: true,
             is_typescript: false,
-            is_javascript: false,
             envio_version: "latest".to_string(),
             relative_path_from_root_to_generated: "./generated".to_string(),
             envio_api_token: None,

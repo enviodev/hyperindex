@@ -43,12 +43,12 @@ pub async fn run_init_args(init_args: InitArgs, project_paths: &ProjectPaths) ->
             template_dirs
                 .get_and_extract_template(
                     template,
-                    &init_config.language,
+                    &Language::TypeScript,
                     &parsed_project_paths.project_root,
                 )
                 .context(format!(
-                    "Failed initializing Fuel template {} with language {} at path {:?}",
-                    &template, &init_config.language, &parsed_project_paths.project_root,
+                    "Failed initializing Fuel template {} at path {:?}",
+                    &template, &parsed_project_paths.project_root,
                 ))?;
         }
         Ecosystem::Evm {
@@ -57,12 +57,12 @@ pub async fn run_init_args(init_args: InitArgs, project_paths: &ProjectPaths) ->
             template_dirs
                 .get_and_extract_template(
                     template,
-                    &init_config.language,
+                    &Language::TypeScript,
                     &parsed_project_paths.project_root,
                 )
                 .context(format!(
-                    "Failed initializing Evm template {} with language {} at path {:?}",
-                    &template, &init_config.language, &parsed_project_paths.project_root,
+                    "Failed initializing Evm template {} at path {:?}",
+                    &template, &parsed_project_paths.project_root,
                 ))?;
         }
         Ecosystem::Evm {

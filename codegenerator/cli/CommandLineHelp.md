@@ -71,7 +71,7 @@ Initialize an indexer with one of the initialization options
 * `-n`, `--name <NAME>` — The name of your project
 * `-l`, `--language <LANGUAGE>` — The language used to write handlers
 
-  Possible values: `javascript`, `typescript`, `rescript`
+  Possible values: `typescript`, `rescript`
 
 * `--api-token <API_TOKEN>` — The hypersync API key to be initialized in your templates .env file
 

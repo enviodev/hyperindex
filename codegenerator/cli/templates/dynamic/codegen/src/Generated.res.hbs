@@ -117,7 +117,7 @@ let makeGeneratedConfig = () => {
     ~preloadHandlers={{preload_handlers}},
     ~lowercaseAddresses={{lowercase_addresses}},
     ~shouldUseHypersyncClientDecoder={{should_use_hypersync_client_decoder}},
-    {{#if chain_config.is_fuel}}
+    {{#if is_fuel_ecosystem}}
     ~ecosystem=Fuel,
     {{/if}}
   )
@@ -127,7 +127,7 @@ let configWithoutRegistrations = makeGeneratedConfig()
 
 let registerAllHandlers = async () => {
   EventRegister.startRegistration(
-    ~ecosystem=configWithoutRegistrations.ecosystem,
+    ~platform=configWithoutRegistrations.platform,
     ~multichain=configWithoutRegistrations.multichain,
     ~preloadHandlers=configWithoutRegistrations.preloadHandlers,
   )
@@ -216,7 +216,6 @@ let codegenPersistence = Persistence.make(
   ~userEntities=Entities.userEntities,
   ~allEnums=Enums.allEnums,
   ~storage=makeStorage(~sql=initialSql),
-  ~sql=initialSql,
 )
 
 %%private(let indexer: ref<option<Indexer.t>> = ref(None))

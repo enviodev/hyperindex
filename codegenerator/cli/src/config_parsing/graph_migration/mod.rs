@@ -110,8 +110,6 @@ pub struct BlockHandler {
     pub handler: String,
 }
 
-// Logic to get the event handler directory based on the language
-
 // Function to replace unsupported field types from schema
 fn update_schema_with_supported_field_types(schema_str: String) -> String {
     schema_str.replace("BigDecimal", "Float")
@@ -349,16 +347,16 @@ pub async fn generate_config_from_subgraph_id(
                         })
                         .collect::<anyhow::Result<Vec<_>>>()?;
 
-                let contract = NetworkContract {
-                    name: data_source.name.to_string(),
-                    address: vec![data_source.source.address.to_string()].into(),
-                    config: Some(ContractConfig {
-                        abi_file_path: Some(format!("abis/{}.json", data_source.name)),
-                        handler: None,
-                        events,
-                    }),
-                    start_block: None,
-                };
+                    let contract = NetworkContract {
+                        name: data_source.name.to_string(),
+                        address: vec![data_source.source.address.to_string()].into(),
+                        config: Some(ContractConfig {
+                            abi_file_path: Some(format!("abis/{}.json", data_source.name)),
+                            handler: None,
+                            events,
+                        }),
+                        start_block: None,
+                    };
 
                     // Pushing contract to network
                     network.contracts.push(contract.clone());
@@ -436,11 +434,9 @@ async fn fetch_ipfs_file_and_write_to_system(
 #[cfg(test)] // ignore from the compiler when it builds, only checked when we run cargo test
 mod test {
     use super::GraphManifest;
-    use crate::{
-        config_parsing::{
-            chain_helpers::{GraphNetwork, Network},
-            graph_migration::get_ipfs_id_from_file_path,
-        },
+    use crate::config_parsing::{
+        chain_helpers::{GraphNetwork, Network},
+        graph_migration::get_ipfs_id_from_file_path,
     };
     use std::{collections::HashMap, path::PathBuf};
     use tempdir::TempDir;
@@ -538,7 +534,6 @@ mod test {
         get_ipfs_id_from_file_path(non_unicode_string);
     }
 
-    // Unit test to check that the correct event handler directory is returned based on the language
     // Unit test to check that the correct network contract hashmap is generated
     #[tokio::test]
     async fn test_generate_network_contract_hashmap() {

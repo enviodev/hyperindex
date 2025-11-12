@@ -7,6 +7,7 @@ export type {
   rateLimitDuration as RateLimitDuration,
   rateLimit as RateLimit,
   blockEvent as BlockEvent,
+  fuelBlockEvent as FuelBlockEvent,
   onBlockArgs as OnBlockArgs,
   onBlockOptions as OnBlockOptions,
 } from "./src/Envio.gen.ts";

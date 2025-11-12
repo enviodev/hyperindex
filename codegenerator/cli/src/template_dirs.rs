@@ -431,26 +431,27 @@ mod test {
     #[test]
     fn all_init_templates_exist() {
         let template_dirs = TemplateDirs::new();
+        let template_langs = [Language::TypeScript];
 
-        for template in evm::Template::iter() {
-            for lang in Language::iter() {
+        for lang in template_langs.iter() {
+            for template in evm::Template::iter() {
                 template_dirs
                     .get_template_lang_dir(&template, &lang)
                     .expect("static lang");
+
+                template_dirs
+                    .get_template_shared_dir(&template)
+                    .expect("static templte shared");
             }
-            template_dirs
-                .get_template_shared_dir(&template)
-                .expect("static templte shared");
-        }
-        for template in fuel::Template::iter() {
-            for lang in Language::iter() {
+            for template in fuel::Template::iter() {
                 template_dirs
                     .get_template_lang_dir(&template, &lang)
                     .expect("static lang");
+
+                template_dirs
+                    .get_template_shared_dir(&template)
+                    .expect("static templte shared");
             }
-            template_dirs
-                .get_template_shared_dir(&template)
-                .expect("static templte shared");
         }
 
         template_dirs
@@ -464,23 +465,24 @@ mod test {
         let temp_dir =
             TempDir::new("init_extract_lang_test").expect("Failed creating tempdir init template");
 
-        for template in evm::Template::iter() {
-            for lang in Language::iter() {
+        let template_langs = [Language::TypeScript];
+
+        for lang in template_langs.iter() {
+            for template in evm::Template::iter() {
+                template_dirs
+                    .get_and_extract_template(&template, &lang, &(PathBuf::from(temp_dir.path())))
+                    .expect("static lang");
+            }
+            for template in fuel::Template::iter() {
                 template_dirs
                     .get_and_extract_template(&template, &lang, &(PathBuf::from(temp_dir.path())))
                     .expect("static lang");
             }
         }
-        for template in fuel::Template::iter() {
-            for lang in Language::iter() {
-                template_dirs
-                    .get_and_extract_template(&template, &lang, &(PathBuf::from(temp_dir.path())))
-                    .expect("static lang");
-            }
-        }
+
         let temp_dir =
             TempDir::new("init_extract_blank_lang_test").expect("Failed creating tempdir blank");
-        for lang in Language::iter() {
+        for lang in template_langs.iter() {
             template_dirs
                 .get_and_extract_blank_template(&lang, &temp_dir.path().into())
                 .expect("static blank");
@@ -494,7 +496,9 @@ mod test {
             .get_blank_shared_dir()
             .expect("static blank shared dir");
 
-        for lang in Language::iter() {
+        let template_langs = [Language::TypeScript];
+
+        for lang in template_langs.iter() {
             template_dirs
                 .get_blank_lang_dir(&lang)
                 .expect("static blank lang");

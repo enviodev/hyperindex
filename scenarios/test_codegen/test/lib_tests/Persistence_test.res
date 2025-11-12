@@ -4,12 +4,7 @@ describe("Test Persistence layer init", () => {
   Async.it("Should initialize the persistence layer without the user entities", async () => {
     let storageMock = Mock.Storage.make([#isInitialized, #resumeInitialState, #initialize])
 
-    let persistence = Persistence.make(
-      ~userEntities=[],
-      ~allEnums=[],
-      ~storage=storageMock.storage,
-      ~sql=Generated.codegenPersistence.sql,
-    )
+    let persistence = Persistence.make(~userEntities=[], ~allEnums=[], ~storage=storageMock.storage)
 
     Assert.deepEqual(
       persistence.allEntities,
@@ -135,12 +130,7 @@ describe("Test Persistence layer init", () => {
   Async.it("Should skip initialization when storage is already initialized", async () => {
     let storageMock = Mock.Storage.make([#isInitialized, #resumeInitialState])
 
-    let persistence = Persistence.make(
-      ~userEntities=[],
-      ~allEnums=[],
-      ~storage=storageMock.storage,
-      ~sql=Generated.codegenPersistence.sql,
-    )
+    let persistence = Persistence.make(~userEntities=[], ~allEnums=[], ~storage=storageMock.storage)
 
     let p = persistence->Persistence.init(~chainConfigs=[])
     // Additional calls to init should not do anything

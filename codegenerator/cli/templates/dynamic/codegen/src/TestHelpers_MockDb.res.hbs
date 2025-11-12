@@ -44,7 +44,7 @@ let deleteDictKey: (dict<'a>, string) => unit = %raw(`
 
 let config = Generated.configWithoutRegistrations
 EventRegister.startRegistration(
-  ~ecosystem=config.ecosystem,
+  ~platform=config.platform,
   ~multichain=config.multichain,
   ~preloadHandlers=config.preloadHandlers,
 )
@@ -272,7 +272,7 @@ let rec makeWithInMemoryStore: InMemoryStore.t => t = (inMemoryStore: InMemorySt
     ~getStore=db =>
       db
       ->InMemoryStore.getInMemTable(
-        ~entityConfig=module(InternalTable.DynamicContractRegistry)->Entities.entityModToInternal,
+        ~entityConfig=InternalTable.DynamicContractRegistry.config,
       )
       ->(
         Utils.magic: InMemoryTable.Entity.t<Internal.entity> => InMemoryTable.Entity.t<
@@ -370,12 +370,12 @@ and makeProcessEvents = (mockDb: t, ~chainId=?) => async (
         event,
         chain,
         logIndex: event.logIndex,
-        timestamp: event.block->Types.Block.getTimestamp,
-        blockNumber: event.block->Types.Block.getNumber,
+        timestamp: event.block->config.platform.getTimestamp,
+        blockNumber: event.block->config.platform.getNumber,
       })
       latestFetchedBlockNumber.contents = Pervasives.max(
         latestFetchedBlockNumber.contents,
-        event.block->Types.Block.getNumber,
+        event.block->config.platform.getNumber,
       )
       if eventConfig.contractRegister->Option.isSome {
         itemsWithContractRegister->Js.Array2.push(item)->ignore
@@ -403,7 +403,7 @@ and makeProcessEvents = (mockDb: t, ~chainId=?) => async (
     let mockDbClone = mockDb->cloneMockDb
 
     //Construct a new instance of an in memory store to run for the given event
-    let inMemoryStore = InMemoryStore.make()
+    let inMemoryStore = InMemoryStore.make(~entities=Entities.allEntities)
     let loadManager = LoadManager.make()
     let persistence = {
       ...indexer.persistence,
@@ -514,6 +514,7 @@ and makeProcessEvents = (mockDb: t, ~chainId=?) => async (
         ~persistence,
         ~inMemoryStore,
         ~chains,
+        ~platform=indexer.config.platform,
       )
       await batch->EventProcessing.runBatchHandlersOrThrow(
         ~inMemoryStore,
@@ -587,6 +588,22 @@ and makeMockStorage = (mockDb: t): Persistence.storage => {
     setOrThrow: (~items as _, ~table as _, ~itemSchema as _) => Js.Exn.raiseError("Not used yet"),
     setEffectCacheOrThrow: (~effect as _, ~items as _, ~initialize as _) => Promise.resolve(),
     dumpEffectCache: () => Js.Exn.raiseError("Not used yet"),
+    executeUnsafe: _ => Js.Exn.raiseError("Not used yet"),
+    hasEntityHistoryRows: () => Promise.resolve(false),
+    setChainMeta: _ => Promise.resolve(%raw(`undefined`)),
+    pruneStaleCheckpoints: _ => Promise.resolve(),
+    pruneStaleEntityHistory: (~entityName as _, ~entityIndex as _, ~safeCheckpointId as _) => Promise.resolve(),
+    getRollbackTargetCheckpoint: (~reorgChainId as _, ~lastKnownValidBlockNumber as _) => Promise.resolve([]),
+    getRollbackProgressDiff: _ => Promise.resolve([]),
+    getRollbackData: (~entityConfig as _, ~rollbackTargetCheckpointId as _) => Promise.resolve(([], [])),
+    writeBatch: (
+      ~batch as _,
+      ~inMemoryStore as _,
+      ~isInReorgThreshold as _,
+      ~config as _,
+      ~allEntities as _,
+      ~batchCache as _,
+    ) => Promise.resolve(),
   }
 }
 and /**
@@ -626,4 +643,4 @@ new state so you can compare states before and after.
 @genType
 let //Note: It's called createMockDb over "make" to make it more intuitive in JS and TS
 
-createMockDb = () => makeWithInMemoryStore(InMemoryStore.make())
+createMockDb = () => makeWithInMemoryStore(InMemoryStore.make(~entities=Entities.allEntities))

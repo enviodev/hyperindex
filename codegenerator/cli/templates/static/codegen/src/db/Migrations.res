@@ -1,5 +1,3 @@
-let unsafe = Postgres.unsafe
-
 let deleteAllTables: unit => promise<unit> = async () => {
   Logging.trace("Dropping all tables")
   let query = `
@@ -11,7 +9,7 @@ let deleteAllTables: unit => promise<unit> = async () => {
       GRANT ALL ON SCHEMA ${Env.Db.publicSchema} TO public;
     END $$;`
 
-  await Generated.codegenPersistence.sql->unsafe(query)
+  await Generated.codegenPersistence.storage.executeUnsafe(query)->Promise.ignoreValue
 }
 
 type t
