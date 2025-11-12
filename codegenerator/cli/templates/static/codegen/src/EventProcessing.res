@@ -188,10 +188,10 @@ let runHandlerOrThrow = async (
       await handler(
         (
           {
-            block: {
-              number: blockNumber,
-              chainId,
-            },
+            block: indexer.config.platform->Platform.makeBlockEvent(
+              ~blockNumber,
+              ~chainId,
+            ),
             context: UserContext.getHandlerContext(contextParams),
           }: Internal.onBlockArgs
         ),
@@ -238,6 +238,7 @@ let preloadBatchOrThrow = async (
   ~persistence,
   ~inMemoryStore,
   ~chains: Internal.chains,
+  ~platform: Platform.t,
 ) => {
   // On the first run of loaders, we don't care about the result,
   // whether it's an error or a return type.
@@ -287,10 +288,10 @@ let preloadBatchOrThrow = async (
         try {
           promises->Array.push(
             handler({
-              block: {
-                number: blockNumber,
-                chainId,
-              },
+              block: platform->Platform.makeBlockEvent(
+                ~blockNumber,
+                ~chainId,
+              ),
               context: UserContext.getHandlerContext({
                 item,
                 inMemoryStore,
@@ -408,6 +409,7 @@ let processEventBatch = async (
         ~persistence=indexer.persistence,
         ~inMemoryStore,
         ~chains,
+        ~platform=indexer.config.platform,
       )
     }
 

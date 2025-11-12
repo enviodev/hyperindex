@@ -80,12 +80,6 @@ let onBlockOptionsSchema = S.schema(s =>
 
 let onBlock = (rawOptions: unknown, handler: Internal.onBlockArgs => promise<unit>) => {
   withRegistration(registration => {
-    // There's no big reason for this. It's just more work
-    if registration.platform !== Platform.evm {
-      Js.Exn.raiseError(
-        "Block Handlers are not supported for non-EVM ecosystems. Please reach out to the Envio team if you need this feature.",
-      )
-    }
     // We need to get timestamp for ordered multichain mode
     switch registration.multichain {
     | Unordered => ()
