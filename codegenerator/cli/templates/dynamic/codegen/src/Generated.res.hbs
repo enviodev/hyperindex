@@ -17,9 +17,9 @@ let registerContractHandlers = (~contractName, ~handler: option<string>) => {
   }
 }
 
-@module("node:fs/promises") external globIterator: string => promise<'asyncIterator> = "glob"
+@module("node:fs/promises") external globIterator: string => promise<Utils.asyncIterator<string>> = "glob"
 
-let autoLoadHandlersFromSrc = async () => {
+let autoLoadFromSrcHandlers = async () => {
   // Relatvie to cwd (project root)
   let srcPattern = `./src/handlers/**/*.{js,ts}`
   let handlerFiles = try {
@@ -132,8 +132,8 @@ let registerAllHandlers = async () => {
     ~preloadHandlers=configWithoutRegistrations.preloadHandlers,
   )
 
-  // Auto-load all .js files from src directory
-  await autoLoadHandlersFromSrc()
+  // Auto-load all .js files from src/handlers directory
+  await autoLoadFromSrcHandlers()
 
   // Load contract-specific handlers (existing behavior)
   {{#each codegen_contracts as |contract|}}

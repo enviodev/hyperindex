@@ -198,6 +198,8 @@ module UnsafeIntOperators = {
   external \"-": (int, int) => int = "%subfloat"
 }
 
+type asyncIterator<'a>
+
 module Array = {
   @send
   external forEachAsync: (array<'a>, 'a => promise<unit>) => unit = "forEach"
@@ -362,7 +364,9 @@ Helper to check if a value exists in an array
   /**
   Converts an async iterator to an array by iterating through all values
   */
-  let fromAsyncIterator = %raw(`async (iterator) => {
+  let fromAsyncIterator: asyncIterator<string> => promise<
+    array<string>,
+  > = %raw(`async (iterator) => {
     const result = [];
     for await (const item of iterator) {
       result.push(item);

@@ -1185,7 +1185,12 @@ pub struct Contract {
 }
 
 impl Contract {
-    pub fn new(name: String, handler_path: Option<String>, events: Vec<Event>, abi: Abi) -> Result<Self> {
+    pub fn new(
+        name: String,
+        handler_path: Option<String>,
+        events: Vec<Event>,
+        abi: Abi,
+    ) -> Result<Self> {
         // TODO: Validatate that all event names are unique
         validate_names_valid_rescript(
             &events.iter().map(|e| e.name.clone()).collect(),
@@ -1198,23 +1203,6 @@ impl Contract {
             handler_path,
             abi,
         })
-    }
-
-    pub fn get_path_to_handler(&self, project_paths: &ParsedProjectPaths) -> Result<Option<PathBuf>> {
-        match &self.handler_path {
-            Some(path) => {
-                let handler_path = path_utils::get_config_path_relative_to_root(
-                    project_paths,
-                    PathBuf::from(path),
-                )
-                .context(format!(
-                    "Failed creating a relative path to handler in contract {}",
-                    self.name
-                ))?;
-                Ok(Some(handler_path))
-            }
-            None => Ok(None),
-        }
     }
 
     pub fn get_chain_ids(&self, system_config: &SystemConfig) -> Vec<u64> {
