@@ -28,8 +28,12 @@ pub mod evm {
 
     #[derive(Clone, Debug, ValueEnum, Serialize, Deserialize, EnumIter, EnumString, Display)]
     pub enum Template {
+        #[strum(serialize = "Greeter")]
         Greeter,
+        #[strum(serialize = "Erc20")]
         Erc20,
+        #[strum(serialize = "Feature: Multichain Indexer")]
+        MultichainIndexer,
     }
 
     ///A an object that holds all the values a user can select during
