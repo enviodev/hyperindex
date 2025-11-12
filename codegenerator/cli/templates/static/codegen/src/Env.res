@@ -136,6 +136,15 @@ module Db = {
 
 module ClickHouse = {
   let host = envSafe->EnvSafe.get("ENVIO_CLICKHOUSE_HOST", S.option(S.string))
+  let database = envSafe->EnvSafe.get("ENVIO_CLICKHOUSE_DATABASE", S.string, ~fallback="envio_mirror")
+  let username = switch host {
+    | None => ""
+    | Some(_) => envSafe->EnvSafe.get("ENVIO_CLICKHOUSE_USERNAME", S.string)
+  }
+  let password = switch host {
+    | None => ""
+    | Some(_) => envSafe->EnvSafe.get("ENVIO_CLICKHOUSE_PASSWORD", S.string)
+  }
 }
 
 module Hasura = {

@@ -6,14 +6,8 @@ type t = {
   ) => promise<unit>,
 }
 
-let makeClickHouse = (~host): t => {
-  initialize: (~chainConfigs=[], ~entities=[], ~enums=[]) => {
-    Js.log({
-      "host": host,
-      "chainConfigs": chainConfigs,
-      "entities": entities,
-      "enums": enums,
-    })
-    Promise.resolve()
+let makeClickHouse = (~host, ~database, ~username, ~password): t => {
+  initialize: (~chainConfigs as _=[], ~entities=[], ~enums=[]) => {
+    ClickHouse.initialize(~host, ~database, ~username, ~password, ~entities, ~enums)
   },
 }

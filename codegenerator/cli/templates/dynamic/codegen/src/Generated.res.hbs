@@ -127,7 +127,7 @@ let makeStorage = (~sql, ~pgSchema=storagePgSchema, ~isHasuraEnabled=Env.Hasura.
     ~pgPassword=Env.Db.password,
     ~mirror=?{
       switch Env.ClickHouse.host {
-      | Some(host) => Some(Mirror.makeClickHouse(~host))
+      | Some(host) => Some(Mirror.makeClickHouse(~host, ~database=Env.ClickHouse.database, ~username=Env.ClickHouse.username, ~password=Env.ClickHouse.password))
       | None => None
       }
     },
