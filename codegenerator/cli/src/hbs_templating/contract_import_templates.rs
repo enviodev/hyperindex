@@ -449,14 +449,16 @@ impl AutoSchemaHandlerTemplate {
                 .context(format!("Failed getting {} contract import templates", lang))?,
             "subgraph_migration" => template_dirs
                 .get_subgraph_migration_lang_dir(lang)
-                .context(format!("Failed getting {} subgraph migration templates", lang))?,
+                .context(format!(
+                    "Failed getting {} subgraph migration templates",
+                    lang
+                ))?,
             _ => anyhow::bail!("Unknown template type: {}", template_type),
         };
 
         // Find the EventHandlers template file
         let template_file_name = match lang {
             Language::TypeScript => "EventHandlers.ts.hbs",
-            Language::JavaScript => "EventHandlers.js.hbs",
             Language::ReScript => "EventHandlers.res.hbs",
         };
 
@@ -491,8 +493,10 @@ impl AutoSchemaHandlerTemplate {
 
         // Create handlers directory
         let handlers_dir = project_root.join("src/handlers");
-        fs::create_dir_all(&handlers_dir)
-            .context(format!("Failed creating handlers directory at {:?}", handlers_dir))?;
+        fs::create_dir_all(&handlers_dir).context(format!(
+            "Failed creating handlers directory at {:?}",
+            handlers_dir
+        ))?;
 
         // Generate one file per contract
         for contract in &self.imported_contracts {
@@ -519,7 +523,6 @@ impl AutoSchemaHandlerTemplate {
             // Determine output file name based on language
             let output_file_name = match lang {
                 Language::TypeScript => format!("{}.ts", contract.name.capitalized),
-                Language::JavaScript => format!("{}.js", contract.name.capitalized),
                 Language::ReScript => format!("{}.res", contract.name.capitalized),
             };
 

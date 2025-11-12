@@ -9,7 +9,7 @@ let registerContractHandlers = (~contractName, ~handler: option<string>) => {
     } catch {
     | exn =>
       Js.Exn.raiseError(
-        `Failed to load handler file: ${handlerPath} with error: ${exn
+        `Failed to load handler file for contract ${contractName}: ${handlerPath} with error: ${exn
           ->Utils.prettifyExn
           ->Obj.magic}`,
       )
@@ -20,15 +20,15 @@ let registerContractHandlers = (~contractName, ~handler: option<string>) => {
 @module("node:fs/promises") external globIterator: string => promise<'asyncIterator> = "glob"
 
 let autoLoadHandlersFromSrc = async () => {
-  let srcPattern = `${Path.relativePathToRootFromGenerated}/src/handlers/**/*.{js,ts}`
+  // Relatvie to cwd (project root)
+  let srcPattern = `./src/handlers/**/*.{js,ts}`
   let handlerFiles = try {
-    // Relatvie to cwd (generated dir)
     let iterator = await globIterator(srcPattern)
     await iterator->Utils.Array.fromAsyncIterator
   } catch {
   | exn =>
     Js.Exn.raiseError(
-      `Failed to glob src/handlers directory for auto-loading handlers. Pattern: ${srcPattern} (relative to generated dir). Before continuing, check that you're using Node.js 22.10.0 version. Error: ${exn
+      `Failed to glob src/handlers directory for auto-loading handlers. Pattern: ${srcPattern}. Before continuing, check that you're using Node.js 22.10.0 version. Error: ${exn
           ->Utils.prettifyExn
           ->Obj.magic}`,
     )
@@ -36,10 +36,10 @@ let autoLoadHandlersFromSrc = async () => {
 
   handlerFiles->Js.Array2.forEach(file => {
     try {
-      // Since srcPattern is relative to generated dir,
+      // Since srcPattern is relative to project root,
       // and we require relative to the module (Generated.res)
-      // We need to prepend additional "../" to the file path
-      %raw(`require("../" + file)`)
+      // We need to prepend additional "../" and {{relative_path_to_root_from_generated}} to the file path
+      %raw(`require("../{{relative_path_to_root_from_generated}}/" + file)`)
     } catch {
     | exn =>
       Js.Exn.raiseError(

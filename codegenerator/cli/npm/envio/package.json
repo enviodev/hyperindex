@@ -20,7 +20,7 @@
   },
   "homepage": "https://envio.dev",
   "engines": {
-    "node": ">=22.0.0"
+    "node": ">=22.0.0 <=22.10.0"
   },
   "dependencies": {
     "@envio-dev/hypersync-client": "0.6.6",
