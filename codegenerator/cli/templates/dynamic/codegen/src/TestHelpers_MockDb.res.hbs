@@ -514,6 +514,7 @@ and makeProcessEvents = (mockDb: t, ~chainId=?) => async (
         ~persistence,
         ~inMemoryStore,
         ~chains,
+        ~platform=indexer.config.platform,
       )
       await batch->EventProcessing.runBatchHandlersOrThrow(
         ~inMemoryStore,

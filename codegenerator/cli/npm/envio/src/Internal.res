@@ -169,11 +169,8 @@ type eventItem = private {
   event: event,
 }
 
-@genType
-type blockEvent = {
-  number: int,
-  chainId: int,
-}
+// Opaque type to support both EVM and Fuel platforms
+type blockEvent
 
 type onBlockArgs = {
   block: blockEvent,
