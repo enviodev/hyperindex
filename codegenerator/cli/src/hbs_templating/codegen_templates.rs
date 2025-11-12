@@ -19,7 +19,7 @@ use crate::{
     },
     persisted_state::{PersistedState, PersistedStateJsonString},
     project_paths::{
-        path_utils::{self, add_trailing_relative_dot},
+        path_utils::add_trailing_relative_dot,
         ParsedProjectPaths,
     },
     rescript_types::{
@@ -813,21 +813,10 @@ pub struct ContractTemplate {
 impl ContractTemplate {
     fn from_config_contract(
         contract: &system_config::Contract,
-        project_paths: &ParsedProjectPaths,
         config: &SystemConfig,
     ) -> Result<Self> {
         let name = contract.name.to_capitalized_options();
-        let handler = contract.handler_path.as_ref().map(|path| {
-            let config_directory = project_paths.config.parent()
-                .expect("Config should have parent directory");
-            let handler_path_joined = config_directory.join(path);
-            let absolute_path = path_utils::normalize_path(handler_path_joined);
-            diff_paths(&absolute_path, &project_paths.project_root)
-                .expect("Could not find handler path relative to project root")
-                .to_str()
-                .expect("Handler path should be unicode")
-                .to_string()
-        });
+        let handler = contract.handler_path.clone();
         let codegen_events = contract
             .events
             .iter()
@@ -1322,7 +1311,7 @@ impl ProjectTemplate {
             .get_contracts()
             .iter()
             .map(|cfg_contract| {
-                ContractTemplate::from_config_contract(cfg_contract, project_paths, cfg)
+                ContractTemplate::from_config_contract(cfg_contract, cfg)
             })
             .collect::<Result<_>>()
             .context("Failed generating contract template types")?;

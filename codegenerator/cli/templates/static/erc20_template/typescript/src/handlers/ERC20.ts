@@ -69,3 +69,4 @@ ERC20.Transfer.handler(async ({ event, context }) => {
     context.Account.set(accountObject);
   }
 });
+

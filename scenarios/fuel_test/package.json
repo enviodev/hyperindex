@@ -33,5 +33,8 @@
   },
   "optionalDependencies": {
     "generated": "./generated"
+  },
+  "engines": {
+    "node": ">=22.0.0"
   }
 }

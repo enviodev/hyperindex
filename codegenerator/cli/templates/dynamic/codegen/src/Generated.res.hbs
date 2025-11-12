@@ -8,16 +8,11 @@ let registerContractHandlers = (~contractName, ~handler: option<string>) => {
       require(handlerPath)
     } catch {
     | exn =>
-      let params = {
-        "Contract Name": contractName,
-        "Expected Handler Path": handlerPath,
-        "Code": "EE500",
-      }
-      let logger = Logging.createChild(~params)
-
-      let errHandler = exn->ErrorHandling.make(~msg="Failed to import handler file", ~logger)
-      errHandler->ErrorHandling.log
-      errHandler->ErrorHandling.raiseExn
+      Js.Exn.raiseError(
+        `Failed to load handler file: ${handlerPath} with error: ${exn
+          ->Utils.prettifyExn
+          ->Obj.magic}`,
+      )
     }
   }
 }
@@ -25,7 +20,7 @@ let registerContractHandlers = (~contractName, ~handler: option<string>) => {
 @module("node:fs/promises") external globIterator: string => promise<'asyncIterator> = "glob"
 
 let autoLoadHandlersFromSrc = async () => {
-  let srcPattern = `${Path.relativePathToRootFromGenerated}/src/**/*.{js,ts}`
+  let srcPattern = `${Path.relativePathToRootFromGenerated}/src/handlers/**/*.{js,ts}`
   let handlerFiles = try {
     // Relatvie to cwd (generated dir)
     let iterator = await globIterator(srcPattern)
@@ -33,7 +28,7 @@ let autoLoadHandlersFromSrc = async () => {
   } catch {
   | exn =>
     Js.Exn.raiseError(
-      `Failed to glob src directory for auto-loading handlers. Pattern: ${srcPattern} (relative to generated dir). Before continuing, check that you're using Node.js 22.10.0 version. Error: ${exn
+      `Failed to glob src/handlers directory for auto-loading handlers. Pattern: ${srcPattern} (relative to generated dir). Before continuing, check that you're using Node.js 22.10.0 version. Error: ${exn
           ->Utils.prettifyExn
           ->Obj.magic}`,
     )

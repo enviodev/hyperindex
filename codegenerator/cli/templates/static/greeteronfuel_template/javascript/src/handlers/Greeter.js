@@ -1,13 +1,13 @@
-import { Greeter, User } from "generated";
+const { Greeter } = require("generated");
 
 // Handler for the NewGreeting event
 Greeter.NewGreeting.handler(async ({ event, context }) => {
-  const userId = event.params.user.bits;
-  const latestGreeting = event.params.greeting.value;
-  const currentUserEntity: User | undefined = await context.User.get(userId);
+  const userId = event.params.user.bits; // The id for the User entity
+  const latestGreeting = event.params.greeting.value; // The greeting string that was added
+  const currentUserEntity = await context.User.get(userId); // Optional user entity that may already exist
 
   // Update or create a new User entity
-  const userEntity: User = currentUserEntity
+  const userEntity = currentUserEntity
     ? {
         id: userId,
         latestGreeting,
@@ -21,19 +21,19 @@ Greeter.NewGreeting.handler(async ({ event, context }) => {
         greetings: [latestGreeting],
       };
 
-  context.User.set(userEntity);
+  context.User.set(userEntity); // Set the User entity in the DB
 });
 
 // Handler for the ClearGreeting event
 Greeter.ClearGreeting.handler(async ({ event, context }) => {
-  const userId = event.params.user.bits;
-  const currentUserEntity: User | undefined = await context.User.get(userId);
+  const userId = event.params.user.bits; // The id for the User entity
+  const currentUserEntity = await context.User.get(userId); // Optional user entity that may already exist
 
   if (currentUserEntity) {
-    // Clear the latestGreeting
     context.User.set({
       ...currentUserEntity,
-      latestGreeting: "",
+      latestGreeting: "", // Clear the latestGreeting
     });
   }
 });
+

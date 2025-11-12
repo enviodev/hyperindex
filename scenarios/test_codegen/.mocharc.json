@@ -1,6 +1,6 @@
 {
   // Specify "require" for CommonJS
-  "require": "ts-node/esm",
+  "require": "ts-node/require",
   "extensions": ["ts", "tsx"],
   "spec": ["test/**/*.ts", "test/**/*.res.js"],
   "timeout": 30000, //Mostly integration tests so just precaution to stop ci from breaking

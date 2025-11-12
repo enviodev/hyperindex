@@ -403,25 +403,20 @@ impl AutoSchemaHandlerTemplate {
             .get_contract_import_shared_dir()
             .context("Failed getting shared contract import templates")?;
 
-        let lang_dir = template_dirs
-            .get_contract_import_lang_dir(lang)
-            .context(format!("Failed getting {} contract import templates", lang))?;
-
         // Copy shared static content into the project root (not the generated folder)
         template_dirs
             .get_shared_static_dir()?
             .extract(&project_root)
             .context("Failed extracting shared static files")?;
 
-        let hbs = HandleBarsDirGenerator::new(&lang_dir, &self, project_root);
+        // Generate schema using all contracts
         let hbs_shared = HandleBarsDirGenerator::new(&shared_dir, &self, project_root);
-        hbs.generate_hbs_templates().context(format!(
-            "Failed generating {} contract import templates",
-            lang
-        ))?;
         hbs_shared
             .generate_hbs_templates()
             .context("Failed generating shared contract import templates")?;
+
+        // Generate one handler file per contract
+        self.generate_per_contract_handlers(lang, project_root, "contract_import")?;
 
         Ok(())
     }
@@ -431,21 +426,112 @@ impl AutoSchemaHandlerTemplate {
         lang: &Language,
         project_root: &Path,
     ) -> Result<()> {
+        // Generate one handler file per contract
+        self.generate_per_contract_handlers(lang, project_root, "subgraph_migration")?;
+
+        Ok(())
+    }
+
+    fn generate_per_contract_handlers(
+        &self,
+        lang: &Language,
+        project_root: &Path,
+        template_type: &str,
+    ) -> Result<()> {
+        use handlebars::Handlebars;
+        use include_dir::DirEntry;
+        use std::fs;
+
         let template_dirs = TemplateDirs::new();
 
-        let lang_dir = template_dirs
-            .get_subgraph_migration_lang_dir(lang)
-            .context(format!(
-                "Failed getting {} subgraph migration templates",
-                lang
-            ))?;
+        let lang_dir = match template_type {
+            "contract_import" => template_dirs
+                .get_contract_import_lang_dir(lang)
+                .context(format!("Failed getting {} contract import templates", lang))?,
+            "subgraph_migration" => template_dirs
+                .get_subgraph_migration_lang_dir(lang)
+                .context(format!("Failed getting {} subgraph migration templates", lang))?,
+            _ => anyhow::bail!("Unknown template type: {}", template_type),
+        };
 
-        let hbs = HandleBarsDirGenerator::new(&lang_dir, &self, project_root);
+        // Find the EventHandlers template file
+        let template_file_name = match lang {
+            Language::TypeScript => "EventHandlers.ts.hbs",
+            Language::JavaScript => "EventHandlers.js.hbs",
+            Language::ReScript => "EventHandlers.res.hbs",
+        };
 
-        hbs.generate_hbs_templates().context(format!(
-            "Failed generating {} subgraph migration templates",
-            lang
+        // Find the template file by iterating through entries
+        let mut template_content = None;
+        for entry in lang_dir.entries() {
+            if let DirEntry::Dir(dir) = entry {
+                if dir.path().file_name().and_then(|n| n.to_str()) == Some("src") {
+                    for file_entry in dir.entries() {
+                        if let DirEntry::File(file) = file_entry {
+                            if file.path().file_name().and_then(|n| n.to_str())
+                                == Some(template_file_name)
+                            {
+                                template_content = file.contents_utf8();
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        let template_content = template_content.context(format!(
+            "Failed finding {} template file",
+            template_file_name
         ))?;
+
+        // Setup handlebars
+        let mut handlebars = Handlebars::new();
+        handlebars.set_strict_mode(true);
+        handlebars.register_escape_fn(handlebars::no_escape);
+
+        // Create handlers directory
+        let handlers_dir = project_root.join("src/handlers");
+        fs::create_dir_all(&handlers_dir)
+            .context(format!("Failed creating handlers directory at {:?}", handlers_dir))?;
+
+        // Generate one file per contract
+        for contract in &self.imported_contracts {
+            // Create a single-contract template data
+            #[derive(Serialize)]
+            struct SingleContractTemplate<'a> {
+                imported_contracts: Vec<&'a Contract>,
+                envio_api_token: Option<&'a String>,
+            }
+
+            let single_contract_data = SingleContractTemplate {
+                imported_contracts: vec![contract],
+                envio_api_token: self.envio_api_token.as_ref(),
+            };
+
+            // Render the template for this contract
+            let rendered = handlebars
+                .render_template(template_content, &single_contract_data)
+                .context(format!(
+                    "Failed rendering handler template for contract {}",
+                    contract.name.capitalized
+                ))?;
+
+            // Determine output file name based on language
+            let output_file_name = match lang {
+                Language::TypeScript => format!("{}.ts", contract.name.capitalized),
+                Language::JavaScript => format!("{}.js", contract.name.capitalized),
+                Language::ReScript => format!("{}.res", contract.name.capitalized),
+            };
+
+            let output_path = handlers_dir.join(&output_file_name);
+
+            // Write the file
+            fs::write(&output_path, rendered).context(format!(
+                "Failed writing handler file for contract {} at {:?}",
+                contract.name.capitalized, output_path
+            ))?;
+        }
 
         Ok(())
     }
